@@ -1685,6 +1685,7 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
     final agentAvatar = _agentDetail?.avatar.trim().isNotEmpty == true
         ? _agentDetail!.avatar.trim()
         : widget.conversation.agentAvatar;
+    final agentSex = _agentDetail?.sex ?? widget.conversation.agentSex;
 
     _handleKeyboardInsetChanged(keyboardInset);
 
@@ -1727,6 +1728,8 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
                               isVoicePlaybackLoading: _isVoicePlaybackLoading,
                               currentUserAvatar: currentUserAvatar,
                               agentAvatar: agentAvatar,
+                              agentName: agentName,
+                              agentSex: agentSex,
                               onAgentTap: _openAgentDetail,
                               onVoiceTap: _toggleVoicePlayback,
                               onImageTap: _previewImageMessage,
@@ -1890,6 +1893,8 @@ class _ConversationBody extends StatelessWidget {
     required this.isVoicePlaybackLoading,
     required this.currentUserAvatar,
     required this.agentAvatar,
+    required this.agentName,
+    required this.agentSex,
     required this.onAgentTap,
     required this.onVoiceTap,
     required this.onImageTap,
@@ -1906,6 +1911,8 @@ class _ConversationBody extends StatelessWidget {
   final bool isVoicePlaybackLoading;
   final String currentUserAvatar;
   final String agentAvatar;
+  final String agentName;
+  final int agentSex;
   final VoidCallback onAgentTap;
   final ValueChanged<ConversationMessage> onVoiceTap;
   final ValueChanged<ConversationMessage> onImageTap;
@@ -1949,6 +1956,8 @@ class _ConversationBody extends StatelessWidget {
           isVoicePlaybackLoading: isVoicePlaybackLoading,
           currentUserAvatar: currentUserAvatar,
           agentAvatar: agentAvatar,
+          agentName: agentName,
+          agentSex: agentSex,
           onAgentTap: onAgentTap,
           onVoiceTap: onVoiceTap,
           onImageTap: onImageTap,
@@ -2035,6 +2044,8 @@ class _MessageRow extends StatelessWidget {
     required this.isVoicePlaybackLoading,
     required this.currentUserAvatar,
     required this.agentAvatar,
+    required this.agentName,
+    required this.agentSex,
     required this.onAgentTap,
     required this.onVoiceTap,
     required this.onImageTap,
@@ -2046,6 +2057,8 @@ class _MessageRow extends StatelessWidget {
   final bool isVoicePlaybackLoading;
   final String currentUserAvatar;
   final String agentAvatar;
+  final String agentName;
+  final int agentSex;
   final VoidCallback onAgentTap;
   final ValueChanged<ConversationMessage> onVoiceTap;
   final ValueChanged<ConversationMessage> onImageTap;
@@ -2071,8 +2084,9 @@ class _MessageRow extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _BubbleAvatar(
-                    label: 'TA',
+                  _AgentBubbleAvatar(
+                    name: agentName,
+                    sex: agentSex,
                     imageUrl: agentAvatar,
                     onTap: onAgentTap,
                   ),
@@ -2105,8 +2119,9 @@ class _MessageRow extends StatelessWidget {
             : MainAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            _BubbleAvatar(
-              label: 'TA',
+            _AgentBubbleAvatar(
+              name: agentName,
+              sex: agentSex,
               imageUrl: agentAvatar,
               onTap: onAgentTap,
             ),
@@ -2525,6 +2540,89 @@ class _BubbleAvatar extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: child,
+    );
+  }
+}
+
+class _AgentBubbleAvatar extends StatelessWidget {
+  const _AgentBubbleAvatar({
+    required this.name,
+    required this.sex,
+    this.imageUrl = '',
+    this.onTap,
+  });
+
+  final String name;
+  final int sex;
+  final String imageUrl;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedUrl = imageUrl.trim();
+    final child = trimmedUrl.isNotEmpty
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 36,
+              height: 36,
+              child: Image.network(
+                trimmedUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return _AgentInitialAvatar(name: name, sex: sex);
+                },
+              ),
+            ),
+          )
+        : _AgentInitialAvatar(name: name, sex: sex);
+
+    if (onTap == null) {
+      return child;
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: child,
+    );
+  }
+}
+
+class _AgentInitialAvatar extends StatelessWidget {
+  const _AgentInitialAvatar({required this.name, required this.sex});
+
+  final String name;
+  final int sex;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedName = name.trim();
+    final title = trimmedName.isEmpty ? 'A' : trimmedName.substring(0, 1);
+    final isMale = sex == 1;
+
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isMale
+              ? const [Color(0xFFB6DBFF), Color(0xFF5D8FFF)]
+              : const [Color(0xFFFFD9E5), Color(0xFFFF8DAA)],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }
