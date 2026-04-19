@@ -919,18 +919,24 @@ enum _VipPlan { threeYearWithVoice, oneYear, permanent }
 
 extension on _VipPlan {
   String get payPrice {
-    return switch (this) {
-      _VipPlan.threeYearWithVoice => '￥299',
-      _VipPlan.oneYear => '￥99',
-      _VipPlan.permanent => '￥999',
-    };
+    switch (this) {
+      case _VipPlan.threeYearWithVoice:
+        return '￥299';
+      case _VipPlan.oneYear:
+        return '￥99';
+      case _VipPlan.permanent:
+        return '￥999';
+    }
   }
 
   String get buttonLabel {
-    return switch (this) {
-      _VipPlan.threeYearWithVoice => '立即购买',
-      _VipPlan.oneYear || _VipPlan.permanent => '升级VIP',
-    };
+    switch (this) {
+      case _VipPlan.threeYearWithVoice:
+        return '立即购买';
+      case _VipPlan.oneYear:
+      case _VipPlan.permanent:
+        return '升级VIP';
+    }
   }
 }
 

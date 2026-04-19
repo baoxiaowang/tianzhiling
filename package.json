@@ -1,0 +1,30 @@
+{
+  "name": "tianzhiling",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "prepare": "husky install",
+    "lint-staged": "lint-staged",
+    "dev:admin": "pnpm --filter ./apps/admin dev",
+    "build:admin": "pnpm --filter ./apps/admin build",
+    "preview:admin": "pnpm --filter ./apps/admin preview",
+    "typecheck:admin": "pnpm --filter ./apps/admin type:check",
+    "dev:node": "pnpm --filter ./apps/node dev",
+    "build:node": "pnpm --filter ./apps/node build",
+    "test:node": "pnpm --filter ./apps/node test",
+    "lint:node": "pnpm --filter ./apps/node lint"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^17.1.2",
+    "@commitlint/config-conventional": "^17.1.0",
+    "husky": "^8.0.1",
+    "lint-staged": "^13.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "bin-wrapper": "npm:bin-wrapper-china",
+      "rollup": "^2.56.3",
+      "gifsicle": "5.2.0"
+    }
+  }
+}

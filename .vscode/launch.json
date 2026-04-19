@@ -5,27 +5,27 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "app (iPhone 17 Pro)",
+      "name": "app (iPhone 16 Pro)",
       "cwd": "apps/app",
       "request": "launch",
       "type": "dart",
-      "deviceId": "iPhone 17 Pro"
+      "deviceId": "iPhone 16 Pro"
     },
     {
-      "name": "app (iPhone 17 Pro, profile)",
+      "name": "app (iPhone 16 Pro, profile)",
       "cwd": "apps/app",
       "request": "launch",
       "type": "dart",
       "flutterMode": "profile",
-      "deviceId": "iPhone 17 Pro"
+      "deviceId": "iPhone 16 Pro"
     },
     {
-      "name": "app (iPhone 17 Pro, release)",
+      "name": "app (iPhone 16 Pro, release)",
       "cwd": "apps/app",
       "request": "launch",
       "type": "dart",
       "flutterMode": "release",
-      "deviceId": "iPhone 17 Pro"
+      "deviceId": "iPhone 16 Pro"
     }
   ]
 }

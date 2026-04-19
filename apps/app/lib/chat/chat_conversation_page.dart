@@ -1329,16 +1329,33 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
       return;
     }
 
-    final label = switch (action) {
-      ChatMoreAction.photo => '照片',
-      ChatMoreAction.camera => '拍摄',
-      ChatMoreAction.videoCall => '视频通话',
-      ChatMoreAction.location => '位置',
-      ChatMoreAction.redPacket => '红包',
-      ChatMoreAction.gift => '礼物',
-      ChatMoreAction.transfer => '转账',
-      ChatMoreAction.voiceInput => '语音输入',
-    };
+    late final String label;
+    switch (action) {
+      case ChatMoreAction.photo:
+        label = '照片';
+        break;
+      case ChatMoreAction.camera:
+        label = '拍摄';
+        break;
+      case ChatMoreAction.videoCall:
+        label = '视频通话';
+        break;
+      case ChatMoreAction.location:
+        label = '位置';
+        break;
+      case ChatMoreAction.redPacket:
+        label = '红包';
+        break;
+      case ChatMoreAction.gift:
+        label = '礼物';
+        break;
+      case ChatMoreAction.transfer:
+        label = '转账';
+        break;
+      case ChatMoreAction.voiceInput:
+        label = '语音输入';
+        break;
+    }
     _showSnackBar('$label 功能待接入');
   }
 

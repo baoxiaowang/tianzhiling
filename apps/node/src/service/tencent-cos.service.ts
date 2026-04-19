@@ -69,8 +69,8 @@ export class TencentCosService {
     request: TencentCosSignedUploadRequest = {}
   ): TencentCosSignedUploadResult {
     const client = this.getClient();
-    const bucket = this.getRequiredConfig('bucket', 'TENCENT_COS_BUCKET');
-    const region = this.getRequiredConfig('region', 'TENCENT_COS_REGION');
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
     const objectKey = this.resolveObjectKey(request);
     const expiresInSeconds = this.normalizeSignedUrlExpiry(
       request.expiresInSeconds
@@ -129,8 +129,8 @@ export class TencentCosService {
 
     const client = this.getClient();
     const objectKey = this.resolveObjectKey(request);
-    const bucket = this.getRequiredConfig('bucket', 'TENCENT_COS_BUCKET');
-    const region = this.getRequiredConfig('region', 'TENCENT_COS_REGION');
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
     const contentType = this.normalizeContentType(request.contentType);
 
     await client.putObject({
@@ -160,8 +160,8 @@ export class TencentCosService {
     }
 
     const client = this.getClient();
-    const bucket = this.getRequiredConfig('bucket', 'TENCENT_COS_BUCKET');
-    const region = this.getRequiredConfig('region', 'TENCENT_COS_REGION');
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
     const domain = this.resolveSigningDomain();
 
     return client.getObjectUrl({
@@ -191,8 +191,14 @@ export class TencentCosService {
     const domain = this.resolveSigningDomain();
 
     this.client = new COS({
-      SecretId: this.getRequiredConfig('secretId', 'TENCENT_COS_SECRET_ID'),
-      SecretKey: this.getRequiredConfig('secretKey', 'TENCENT_COS_SECRET_KEY'),
+      SecretId: this.getRequiredConfig(
+        'secretId',
+        'NODE_TENCENT_COS_SECRET_ID'
+      ),
+      SecretKey: this.getRequiredConfig(
+        'secretKey',
+        'NODE_TENCENT_COS_SECRET_KEY'
+      ),
       ...(this.cosConfig?.securityToken?.trim()
         ? { SecurityToken: this.cosConfig.securityToken.trim() }
         : {}),
@@ -335,8 +341,8 @@ export class TencentCosService {
       )}`;
     }
 
-    const bucket = this.getRequiredConfig('bucket', 'TENCENT_COS_BUCKET');
-    const region = this.getRequiredConfig('region', 'TENCENT_COS_REGION');
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
 
     return `${this.resolveProtocol()}//${bucket}.cos.${region}.myqcloud.com`;
   }

@@ -57,42 +57,66 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
     super.dispose();
   }
 
-  String get _currentQuestion => switch (_currentStep) {
-    _AgentFormStep.memorialName => '你纪念的人是？',
-    _AgentFormStep.gender => '他的性别是？',
-    _AgentFormStep.relationToThem => '你怎么称呼 TA？',
-    _AgentFormStep.relationToMe => 'TA 怎么称呼你？',
-    _AgentFormStep.avatar => '为 TA 选一张头像吧',
-  };
+  String get _currentQuestion {
+    switch (_currentStep) {
+      case _AgentFormStep.memorialName:
+        return '你纪念的人是？';
+      case _AgentFormStep.gender:
+        return '他的性别是？';
+      case _AgentFormStep.relationToThem:
+        return '你怎么称呼 TA？';
+      case _AgentFormStep.relationToMe:
+        return 'TA 怎么称呼你？';
+      case _AgentFormStep.avatar:
+        return '为 TA 选一张头像吧';
+    }
+  }
 
-  String get _currentPlaceholder => switch (_currentStep) {
-    _AgentFormStep.memorialName => '请输入 TA 的昵称或备注名',
-    _AgentFormStep.relationToThem => '如：爷爷，奶奶',
-    _AgentFormStep.relationToMe => '如：丫头，小宝',
-    _ => '',
-  };
+  String get _currentPlaceholder {
+    switch (_currentStep) {
+      case _AgentFormStep.memorialName:
+        return '请输入 TA 的昵称或备注名';
+      case _AgentFormStep.relationToThem:
+        return '如：爷爷，奶奶';
+      case _AgentFormStep.relationToMe:
+        return '如：丫头，小宝';
+      case _AgentFormStep.gender:
+      case _AgentFormStep.avatar:
+        return '';
+    }
+  }
 
-  TextEditingController get _activeController => switch (_currentStep) {
-    _AgentFormStep.memorialName => _nameController,
-    _AgentFormStep.relationToThem => _relationToThemController,
-    _AgentFormStep.relationToMe => _relationToMeController,
-    _ => _nameController,
-  };
+  TextEditingController get _activeController {
+    switch (_currentStep) {
+      case _AgentFormStep.memorialName:
+        return _nameController;
+      case _AgentFormStep.relationToThem:
+        return _relationToThemController;
+      case _AgentFormStep.relationToMe:
+        return _relationToMeController;
+      case _AgentFormStep.gender:
+      case _AgentFormStep.avatar:
+        return _nameController;
+    }
+  }
 
   bool get _canContinue {
     if (_isSubmitting) {
       return false;
     }
 
-    return switch (_currentStep) {
-      _AgentFormStep.memorialName => _nameController.text.trim().isNotEmpty,
-      _AgentFormStep.gender => _gender != null,
-      _AgentFormStep.relationToThem =>
-        _relationToThemController.text.trim().isNotEmpty,
-      _AgentFormStep.relationToMe =>
-        _relationToMeController.text.trim().isNotEmpty,
-      _AgentFormStep.avatar => !_isUploadingAvatar,
-    };
+    switch (_currentStep) {
+      case _AgentFormStep.memorialName:
+        return _nameController.text.trim().isNotEmpty;
+      case _AgentFormStep.gender:
+        return _gender != null;
+      case _AgentFormStep.relationToThem:
+        return _relationToThemController.text.trim().isNotEmpty;
+      case _AgentFormStep.relationToMe:
+        return _relationToMeController.text.trim().isNotEmpty;
+      case _AgentFormStep.avatar:
+        return !_isUploadingAvatar;
+    }
   }
 
   List<_ChatEntry> get _history {
@@ -717,6 +741,39 @@ class _CurrentAnswerPanel extends StatelessWidget {
   final Future<void> Function() onAvatarTap;
   final Future<void> Function() onContinue;
 
+  Widget _buildStepChild() {
+    switch (step) {
+      case _AgentFormStep.gender:
+        return _GenderPanel(
+          key: const ValueKey('gender'),
+          selectedGender: selectedGender,
+          onChanged: onGenderChanged,
+        );
+      case _AgentFormStep.avatar:
+        return _AvatarActionPanel(
+          key: const ValueKey('avatar'),
+          canContinue: canContinue,
+          isSubmitting: isSubmitting,
+          hasAvatar: avatarUrl.trim().isNotEmpty,
+          onAvatarTap: onAvatarTap,
+          onContinue: onContinue,
+        );
+      case _AgentFormStep.memorialName:
+      case _AgentFormStep.relationToThem:
+      case _AgentFormStep.relationToMe:
+        return _TextAnswerPanel(
+          key: ValueKey(step.name),
+          controller: controller,
+          focusNode: focusNode,
+          placeholder: placeholder,
+          canContinue: canContinue,
+          isSubmitting: isSubmitting,
+          onChanged: onChanged,
+          onContinue: onContinue,
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
@@ -725,31 +782,7 @@ class _CurrentAnswerPanel extends StatelessWidget {
         duration: const Duration(milliseconds: 240),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
-        child: switch (step) {
-          _AgentFormStep.gender => _GenderPanel(
-            key: const ValueKey('gender'),
-            selectedGender: selectedGender,
-            onChanged: onGenderChanged,
-          ),
-          _AgentFormStep.avatar => _AvatarActionPanel(
-            key: const ValueKey('avatar'),
-            canContinue: canContinue,
-            isSubmitting: isSubmitting,
-            hasAvatar: avatarUrl.trim().isNotEmpty,
-            onAvatarTap: onAvatarTap,
-            onContinue: onContinue,
-          ),
-          _ => _TextAnswerPanel(
-            key: ValueKey(step.name),
-            controller: controller,
-            focusNode: focusNode,
-            placeholder: placeholder,
-            canContinue: canContinue,
-            isSubmitting: isSubmitting,
-            onChanged: onChanged,
-            onContinue: onContinue,
-          ),
-        },
+        child: _buildStepChild(),
       ),
     );
   }

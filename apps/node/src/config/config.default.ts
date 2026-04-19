@@ -5,18 +5,9 @@ import { resolve } from 'path';
 loadLocalEnv();
 
 function loadLocalEnv(): void {
-  const envPaths = [
-    resolve(process.cwd(), '.env'),
-    resolve(__dirname, '../../.env'),
-  ];
-  const seen = new Set<string>();
+  const envPath = resolve(__dirname, '../../../../.env');
 
-  for (const envPath of envPaths) {
-    if (seen.has(envPath) || !existsSync(envPath)) {
-      continue;
-    }
-
-    seen.add(envPath);
+  if (existsSync(envPath)) {
     loadEnvFile(envPath);
   }
 }
@@ -48,213 +39,211 @@ function loadEnvFile(envPath: string): void {
   }
 }
 
-function readString(name: string, fallback: string): string {
-  return process.env[name] ?? fallback;
-}
+function readStringFrom(names: string[], fallback: string): string {
+  for (const name of names) {
+    const raw = process.env[name];
 
-function readNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
-
-  if (!raw) {
-    return fallback;
+    if (raw != null) {
+      return raw;
+    }
   }
 
-  const parsed = Number(raw);
-
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return fallback;
 }
 
-function readOptionalNumber(name: string): number | undefined {
-  const raw = process.env[name];
+function readNumberFrom(names: string[], fallback: number): number {
+  for (const name of names) {
+    const raw = process.env[name];
 
-  if (!raw) {
-    return undefined;
+    if (!raw) {
+      continue;
+    }
+
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
   }
 
-  const parsed = Number(raw);
-
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return fallback;
 }
 
-function readBoolean(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
+function readOptionalNumberFrom(names: string[]): number | undefined {
+  for (const name of names) {
+    const raw = process.env[name];
 
-  if (!raw) {
-    return fallback;
+    if (!raw) {
+      continue;
+    }
+
+    const parsed = Number(raw);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
   }
 
-  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
+  return undefined;
+}
+
+function readBooleanFrom(names: string[], fallback: boolean): boolean {
+  for (const name of names) {
+    const raw = process.env[name];
+
+    if (!raw) {
+      continue;
+    }
+
+    return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
+  }
+
+  return fallback;
 }
 
 export default {
-  keys: readString('APP_KEYS', '1774073039411_5782'),
+  keys: readStringFrom(['NODE_APP_KEYS'], '1774073039411_5782'),
   koa: {
-    port: readNumber('PORT', 7001),
+    port: readNumberFrom(['NODE_PORT'], 7001),
   },
   jwt: {
-    secret: readString(
-      'JWT_SECRET',
-      readString(
-        'AUTH_TOKEN_SECRET',
-        readString('APP_KEYS', '1774073039411_5782')
-      )
-    ),
+    secret: readStringFrom(['NODE_JWT_SECRET'], '1774073039411_5782'),
     sign: {
-      expiresIn: readNumber(
-        'JWT_EXPIRES_IN_SECONDS',
-        readNumber('AUTH_TOKEN_EXPIRES_IN_SECONDS', 7 * 24 * 60 * 60)
+      expiresIn: readNumberFrom(
+        ['NODE_JWT_EXPIRES_IN_SECONDS'],
+        7 * 24 * 60 * 60
       ),
     },
     verify: {},
   },
   sms: {
     cloopen: {
-      enabled: readBoolean('CLOOPEN_SMS_ENABLED', true),
-      appId: readString('CLOOPEN_APP_ID', ''),
-      accountSid: readString('CLOOPEN_ACCOUNT_SID', ''),
-      authToken: readString('CLOOPEN_AUTH_TOKEN', ''),
-      templateId: readString('CLOOPEN_SMS_TEMPLATE_ID', '1'),
-      codeExpiresInSeconds: readNumber('SMS_CODE_EXPIRES_IN_SECONDS', 300),
-      resendIntervalSeconds: readNumber('SMS_RESEND_INTERVAL_SECONDS', 60),
+      enabled: readBooleanFrom(['NODE_CLOOPEN_SMS_ENABLED'], true),
+      appId: readStringFrom(['NODE_CLOOPEN_APP_ID'], ''),
+      accountSid: readStringFrom(['NODE_CLOOPEN_ACCOUNT_SID'], ''),
+      authToken: readStringFrom(['NODE_CLOOPEN_AUTH_TOKEN'], ''),
+      templateId: readStringFrom(['NODE_CLOOPEN_SMS_TEMPLATE_ID'], '1'),
+      codeExpiresInSeconds: readNumberFrom(
+        ['NODE_SMS_CODE_EXPIRES_IN_SECONDS'],
+        300
+      ),
+      resendIntervalSeconds: readNumberFrom(
+        ['NODE_SMS_RESEND_INTERVAL_SECONDS'],
+        60
+      ),
     },
   },
-  minimax: {
-    enabled: readBoolean('MINIMAX_ENABLED', true),
-    apiKey: readString('MINIMAX_API_KEY', readString('OPENAI_API_KEY', '')),
-    baseURL: readString(
-      'MINIMAX_BASE_URL',
-      readString('OPENAI_BASE_URL', 'https://api.minimax.io/v1')
-    ),
-    model: readString('MINIMAX_MODEL', 'MiniMax-M2.5'),
-    visionModel: readString(
-      'MINIMAX_VISION_MODEL',
-      readString('MINIMAX_MODEL', 'MiniMax-M2.5')
-    ),
-    visionApiKey: readString(
-      'MINIMAX_VISION_API_KEY',
-      readString('MINIMAX_API_KEY', readString('OPENAI_API_KEY', ''))
-    ),
-    visionBaseURL: readString(
-      'MINIMAX_VISION_BASE_URL',
-      readString(
-        'MINIMAX_BASE_URL',
-        readString('OPENAI_BASE_URL', 'https://api.minimax.io/v1')
-      )
-    ),
-    speechToTextApiKey: readString(
-      'SPEECH_TO_TEXT_API_KEY',
-      readString('MINIMAX_API_KEY', readString('OPENAI_API_KEY', ''))
-    ),
-    speechToTextBaseURL: readString(
-      'SPEECH_TO_TEXT_BASE_URL',
-      readString(
-        'MINIMAX_BASE_URL',
-        readString('OPENAI_BASE_URL', 'https://api.minimax.io/v1')
-      )
-    ),
-    speechToTextModel: readString('SPEECH_TO_TEXT_MODEL', ''),
-    temperature: readNumber('MINIMAX_TEMPERATURE', 1),
-    topP: readNumber('MINIMAX_TOP_P', 0.95),
-    presencePenalty: readNumber('MINIMAX_PRESENCE_PENALTY', 0.6),
-    frequencyPenalty: readNumber('MINIMAX_FREQUENCY_PENALTY', 0.3),
-    maxRetries: readNumber('MINIMAX_MAX_RETRIES', 2),
-    timeoutMs: readNumber('MINIMAX_TIMEOUT_MS', 120000),
-    reasoningSplit: readBoolean('MINIMAX_REASONING_SPLIT', true),
-    embeddingApiKey: readString(
-      'EMBEDDING_API_KEY',
-      readString(
-        'MINIMAX_EMBEDDING_API_KEY',
-        readString('MINIMAX_API_KEY', readString('OPENAI_API_KEY', ''))
-      )
-    ),
-    embeddingBaseURL: readString(
-      'EMBEDDING_BASE_URL',
-      readString(
-        'MINIMAX_EMBEDDING_BASE_URL',
-        readString(
-          'MINIMAX_BASE_URL',
-          readString('OPENAI_BASE_URL', 'https://api.minimax.io/v1')
-        )
-      )
-    ),
-    embeddingModel: readString(
-      'EMBEDDING_MODEL',
-      readString(
-        'MINIMAX_EMBEDDING_MODEL',
-        readString('OPENAI_EMBEDDING_MODEL', '')
-      )
-    ),
-    embeddingDimensions:
-      readOptionalNumber('EMBEDDING_DIMENSIONS') ??
-      readOptionalNumber('MINIMAX_EMBEDDING_DIMENSIONS'),
+  openai: {
+    enabled: readBooleanFrom(['NODE_ENABLED'], true),
+    apiKey: readStringFrom(['NODE_API_KEY'], ''),
+    baseURL: readStringFrom(['NODE_BASE_URL'], 'https://api.minimax.io/v1'),
+    model: readStringFrom(['NODE_MODEL'], 'MiniMax-M2.5'),
+    visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),
+    visionApiKey: readStringFrom(['NODE_VISION_API_KEY'], ''),
+    visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
+    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY'], ''),
+    speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], ''),
+    speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], ''),
+    temperature: readNumberFrom(['NODE_TEMPERATURE'], 1),
+    topP: readNumberFrom(['NODE_TOP_P'], 0.95),
+    presencePenalty: readNumberFrom(['NODE_PRESENCE_PENALTY'], 0.6),
+    frequencyPenalty: readNumberFrom(['NODE_FREQUENCY_PENALTY'], 0.3),
+    maxRetries: readNumberFrom(['NODE_MAX_RETRIES'], 2),
+    timeoutMs: readNumberFrom(['NODE_TIMEOUT_MS'], 120000),
+    reasoningSplit: readBooleanFrom(['NODE_REASONING_SPLIT'], true),
+    embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY'], ''),
+    embeddingBaseURL: readStringFrom(['NODE_EMBEDDING_BASE_URL'], ''),
+    embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
+    embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),
   },
   milvus: {
-    enabled: readBoolean('MILVUS_ENABLED', false),
-    address: readString('MILVUS_ADDRESS', '127.0.0.1:17953'),
-    token: readString('MILVUS_TOKEN', ''),
-    username: readString('MILVUS_USERNAME', ''),
-    password: readString('MILVUS_PASSWORD', ''),
-    database: readString('MILVUS_DATABASE', 'default'),
-    collectionName: readString(
-      'MILVUS_COLLECTION_NAME',
+    enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
+    address: readStringFrom(
+      ['NODE_MILVUS_ADDRESS', 'MILVUS_ADDRESS'],
+      '127.0.0.1:17953'
+    ),
+    token: readStringFrom(['NODE_MILVUS_TOKEN', 'MILVUS_TOKEN'], ''),
+    username: readStringFrom(['NODE_MILVUS_USERNAME', 'MILVUS_USERNAME'], ''),
+    password: readStringFrom(['NODE_MILVUS_PASSWORD', 'MILVUS_PASSWORD'], ''),
+    database: readStringFrom(
+      ['NODE_MILVUS_DATABASE', 'MILVUS_DATABASE'],
+      'default'
+    ),
+    collectionName: readStringFrom(
+      ['NODE_MILVUS_COLLECTION_NAME'],
       'conversation_message_memory'
     ),
-    maxTextLength: readNumber('MILVUS_MAX_TEXT_LENGTH', 4096),
-    topK: readNumber('MILVUS_TOP_K', 6),
-    searchEf: readNumber('MILVUS_SEARCH_EF', 64),
-    minScore: readOptionalNumber('MILVUS_MIN_SCORE'),
-    timeoutMs: readNumber('MILVUS_TIMEOUT_MS', 10000),
+    maxTextLength: readNumberFrom(['NODE_MILVUS_MAX_TEXT_LENGTH'], 4096),
+    topK: readNumberFrom(['NODE_MILVUS_TOP_K'], 6),
+    searchEf: readNumberFrom(['NODE_MILVUS_SEARCH_EF'], 64),
+    minScore: readOptionalNumberFrom(['NODE_MILVUS_MIN_SCORE']),
+    timeoutMs: readNumberFrom(['NODE_MILVUS_TIMEOUT_MS'], 10000),
   },
   oss: {
-    enabled: readBoolean('OSS_ENABLED', false),
-    region: readString('OSS_REGION', ''),
-    bucket: readString('OSS_BUCKET', ''),
-    endpoint: readString('OSS_ENDPOINT', ''),
-    publicBaseUrl: readString('OSS_PUBLIC_BASE_URL', ''),
-    accessKeyId: readString('OSS_ACCESS_KEY_ID', ''),
-    accessKeySecret: readString('OSS_ACCESS_KEY_SECRET', ''),
-    stsToken: readString('OSS_STS_TOKEN', ''),
-    secure: readBoolean('OSS_SECURE', true),
-    timeoutMs: readNumber('OSS_TIMEOUT_MS', 60000),
-    uploadPrefix: readString('OSS_UPLOAD_PREFIX', 'static'),
-    signedUrlExpireSeconds: readNumber('OSS_SIGNED_URL_EXPIRE_SECONDS', 900),
+    enabled: readBooleanFrom(['NODE_OSS_ENABLED'], false),
+    region: readStringFrom(['NODE_OSS_REGION'], ''),
+    bucket: readStringFrom(['NODE_OSS_BUCKET'], ''),
+    endpoint: readStringFrom(['NODE_OSS_ENDPOINT'], ''),
+    publicBaseUrl: readStringFrom(['NODE_OSS_PUBLIC_BASE_URL'], ''),
+    accessKeyId: readStringFrom(['NODE_OSS_ACCESS_KEY_ID'], ''),
+    accessKeySecret: readStringFrom(['NODE_OSS_ACCESS_KEY_SECRET'], ''),
+    stsToken: readStringFrom(['NODE_OSS_STS_TOKEN'], ''),
+    secure: readBooleanFrom(['NODE_OSS_SECURE'], true),
+    timeoutMs: readNumberFrom(['NODE_OSS_TIMEOUT_MS'], 60000),
+    uploadPrefix: readStringFrom(['NODE_OSS_UPLOAD_PREFIX'], 'static'),
+    signedUrlExpireSeconds: readNumberFrom(
+      ['NODE_OSS_SIGNED_URL_EXPIRE_SECONDS'],
+      900
+    ),
   },
   tencentCos: {
-    enabled: readBoolean('TENCENT_COS_ENABLED', false),
-    region: readString('TENCENT_COS_REGION', ''),
-    bucket: readString('TENCENT_COS_BUCKET', ''),
-    secretId: readString('TENCENT_COS_SECRET_ID', ''),
-    secretKey: readString('TENCENT_COS_SECRET_KEY', ''),
-    securityToken: readString('TENCENT_COS_SECURITY_TOKEN', ''),
-    protocol: readString('TENCENT_COS_PROTOCOL', 'https:'),
-    domain: readString('TENCENT_COS_DOMAIN', ''),
-    publicBaseUrl: readString('TENCENT_COS_PUBLIC_BASE_URL', ''),
-    uploadPrefix: readString('TENCENT_COS_UPLOAD_PREFIX', 'static'),
-    signedUrlExpireSeconds: readNumber(
-      'TENCENT_COS_SIGNED_URL_EXPIRE_SECONDS',
+    enabled: readBooleanFrom(['NODE_TENCENT_COS_ENABLED'], false),
+    region: readStringFrom(['NODE_TENCENT_COS_REGION'], ''),
+    bucket: readStringFrom(['NODE_TENCENT_COS_BUCKET'], ''),
+    secretId: readStringFrom(['NODE_TENCENT_COS_SECRET_ID'], ''),
+    secretKey: readStringFrom(['NODE_TENCENT_COS_SECRET_KEY'], ''),
+    securityToken: readStringFrom(['NODE_TENCENT_COS_SECURITY_TOKEN'], ''),
+    protocol: readStringFrom(['NODE_TENCENT_COS_PROTOCOL'], 'https:'),
+    domain: readStringFrom(['NODE_TENCENT_COS_DOMAIN'], ''),
+    publicBaseUrl: readStringFrom(['NODE_TENCENT_COS_PUBLIC_BASE_URL'], ''),
+    uploadPrefix: readStringFrom(['NODE_TENCENT_COS_UPLOAD_PREFIX'], 'static'),
+    signedUrlExpireSeconds: readNumberFrom(
+      ['NODE_TENCENT_COS_SIGNED_URL_EXPIRE_SECONDS'],
       900
     ),
   },
   redis: {
     client: {
-      host: readString('REDIS_HOST', '127.0.0.1'),
-      port: readNumber('REDIS_PORT', 17380),
-      password: readString('REDIS_PASSWORD', ''),
-      db: readNumber('REDIS_DB', 0),
+      host: readStringFrom(['NODE_REDIS_HOST', 'REDIS_HOST'], '127.0.0.1'),
+      port: readNumberFrom(['NODE_REDIS_PORT', 'REDIS_PORT'], 17380),
+      password: readStringFrom(['NODE_REDIS_PASSWORD', 'REDIS_PASSWORD'], ''),
+      db: readNumberFrom(['NODE_REDIS_DB', 'REDIS_DB'], 0),
     },
   },
   bullmq: {
     defaultConnection: {
-      host: readString('BULLMQ_HOST', readString('REDIS_HOST', '127.0.0.1')),
-      port: readNumber('BULLMQ_PORT', readNumber('REDIS_PORT', 17380)),
-      password: readString('BULLMQ_PASSWORD', readString('REDIS_PASSWORD', '')),
-      db: readNumber('BULLMQ_DB', readNumber('REDIS_DB', 0)),
+      host: readStringFrom(
+        ['NODE_BULLMQ_HOST', 'NODE_REDIS_HOST', 'REDIS_HOST'],
+        '127.0.0.1'
+      ),
+      port: readNumberFrom(
+        ['NODE_BULLMQ_PORT', 'NODE_REDIS_PORT', 'REDIS_PORT'],
+        17380
+      ),
+      password: readStringFrom(
+        ['NODE_BULLMQ_PASSWORD', 'NODE_REDIS_PASSWORD', 'REDIS_PASSWORD'],
+        ''
+      ),
+      db: readNumberFrom(['NODE_BULLMQ_DB', 'NODE_REDIS_DB', 'REDIS_DB'], 0),
     },
-    defaultPrefix: readString('BULLMQ_PREFIX', '{tzl-bullmq}'),
+    defaultPrefix: readStringFrom(['NODE_BULLMQ_PREFIX'], '{tzl-bullmq}'),
     defaultQueueOptions: {
       defaultJobOptions: {
-        removeOnComplete: readNumber('BULLMQ_REMOVE_ON_COMPLETE', 100),
-        removeOnFail: readNumber('BULLMQ_REMOVE_ON_FAIL', 500),
+        removeOnComplete: readNumberFrom(
+          ['NODE_BULLMQ_REMOVE_ON_COMPLETE'],
+          100
+        ),
+        removeOnFail: readNumberFrom(['NODE_BULLMQ_REMOVE_ON_FAIL'], 500),
       },
     },
   },
@@ -262,17 +251,26 @@ export default {
     dataSource: {
       default: {
         type: 'mongodb',
-        database: readString('MONGO_DB', 'tzl'),
-        host: readString('MONGO_HOST', '127.0.0.1'),
-        port: readNumber('MONGO_PORT', 17271),
-        authSource: readString('MONGO_AUTH_SOURCE', 'admin'),
-        username: readString('MONGO_USERNAME', 'admin'),
-        password: readString('MONGO_PASSWORD', 'qwerasdf'),
-        synchronize: readBoolean(
-          'DB_SYNCHRONIZE',
+        database: readStringFrom(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl'),
+        host: readStringFrom(['NODE_MONGO_HOST', 'MONGO_HOST'], '127.0.0.1'),
+        port: readNumberFrom(['NODE_MONGO_PORT', 'MONGO_PORT'], 17271),
+        authSource: readStringFrom(
+          ['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'],
+          'admin'
+        ),
+        username: readStringFrom(
+          ['NODE_MONGO_USERNAME', 'MONGO_USERNAME'],
+          'admin'
+        ),
+        password: readStringFrom(
+          ['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'],
+          'qwerasdf'
+        ),
+        synchronize: readBooleanFrom(
+          ['NODE_DB_SYNCHRONIZE'],
           process.env.NODE_ENV !== 'production'
         ),
-        logging: readBoolean('DB_LOGGING', false),
+        logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
         entities: ['entity'],
       },
     },

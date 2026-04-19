@@ -83,7 +83,7 @@ export class OpenAIService {
   @Logger()
   logger: ILogger;
 
-  @Config('minimax')
+  @Config('openai')
   openAIConfig: OpenAIServiceConfig;
 
   private client: OpenAI | null = null;
@@ -100,11 +100,7 @@ export class OpenAIService {
   }
 
   getVisionModel(): string {
-    return (
-      this.openAIConfig?.visionModel?.trim() ||
-      this.openAIConfig?.model?.trim() ||
-      'qwen3.5-plus'
-    );
+    return this.openAIConfig?.visionModel?.trim() || '';
   }
 
   getEmbeddingModel(): string {
@@ -186,10 +182,20 @@ export class OpenAIService {
       );
     }
 
+    const model = request.model?.trim() || this.getVisionModel();
+
+    if (!model) {
+      throw new AppError(
+        'MINIMAX_VISION_NOT_CONFIGURED',
+        'MiniMax vision model is not configured',
+        500
+      );
+    }
+
     const client = this.getVisionClient();
     const body = {
       ...request,
-      model: request.model?.trim() || this.getVisionModel(),
+      model,
       temperature: this.normalizeTemperature(request.temperature),
       top_p: this.normalizeTopP(request.topP),
       presence_penalty: this.normalizePenalty(
@@ -448,18 +454,13 @@ export class OpenAIService {
       return this.visionClient;
     }
 
-    const apiKey =
-      this.openAIConfig?.visionApiKey?.trim() ||
-      this.openAIConfig?.apiKey?.trim();
-    const baseURL =
-      this.openAIConfig?.visionBaseURL?.trim() ||
-      this.openAIConfig?.baseURL?.trim() ||
-      'https://api.minimax.io/v1';
+    const apiKey = this.openAIConfig?.visionApiKey?.trim();
+    const baseURL = this.openAIConfig?.visionBaseURL?.trim();
 
-    if (!apiKey) {
+    if (!apiKey || !baseURL) {
       throw new AppError(
         'MINIMAX_VISION_NOT_CONFIGURED',
-        'MiniMax vision API key is not configured',
+        'MiniMax vision configuration is incomplete',
         500
       );
     }
@@ -545,35 +546,19 @@ export class OpenAIService {
   }
 
   private resolveEmbeddingApiKey(): string {
-    return (
-      this.openAIConfig?.embeddingApiKey?.trim() ||
-      this.openAIConfig?.apiKey?.trim() ||
-      ''
-    );
+    return this.openAIConfig?.embeddingApiKey?.trim() || '';
   }
 
   private resolveEmbeddingBaseURL(): string {
-    return (
-      this.openAIConfig?.embeddingBaseURL?.trim() ||
-      this.openAIConfig?.baseURL?.trim() ||
-      ''
-    );
+    return this.openAIConfig?.embeddingBaseURL?.trim() || '';
   }
 
   private resolveSpeechToTextApiKey(): string {
-    return (
-      this.openAIConfig?.speechToTextApiKey?.trim() ||
-      this.openAIConfig?.apiKey?.trim() ||
-      ''
-    );
+    return this.openAIConfig?.speechToTextApiKey?.trim() || '';
   }
 
   private resolveSpeechToTextBaseURL(): string {
-    return (
-      this.openAIConfig?.speechToTextBaseURL?.trim() ||
-      this.openAIConfig?.baseURL?.trim() ||
-      ''
-    );
+    return this.openAIConfig?.speechToTextBaseURL?.trim() || '';
   }
 
   private resolveReasoningSplit(value?: boolean): boolean {

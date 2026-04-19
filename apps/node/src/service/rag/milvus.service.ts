@@ -72,7 +72,7 @@ export class MilvusService {
   @Config('milvus')
   milvusConfig: MilvusServiceConfig;
 
-  @Config('minimax')
+  @Config('openai')
   openAIConfig: {
     embeddingDimensions?: number;
   };
@@ -147,7 +147,7 @@ export class MilvusService {
       collection_name: this.getCollectionName(),
     });
 
-    if (!Boolean(hasCollection?.value)) {
+    if (!hasCollection?.value) {
       return [];
     }
 
@@ -269,7 +269,7 @@ export class MilvusService {
       collection_name: collectionName,
     });
 
-    if (!Boolean(hasCollection?.value)) {
+    if (!hasCollection?.value) {
       if (typeof vectorDim !== 'number' || vectorDim <= 0) {
         return;
       }
@@ -558,8 +558,7 @@ export class MilvusService {
 
   private getCollectionName(): string {
     return (
-      this.milvusConfig?.collectionName?.trim() ||
-      'conversation_message_memory'
+      this.milvusConfig?.collectionName?.trim() || 'conversation_message_memory'
     );
   }
 
@@ -590,7 +589,9 @@ export class MilvusService {
 
   private resolveSearchEf(): number {
     const searchEf = this.milvusConfig?.searchEf;
-    return typeof searchEf === 'number' && Number.isFinite(searchEf) && searchEf > 0
+    return typeof searchEf === 'number' &&
+      Number.isFinite(searchEf) &&
+      searchEf > 0
       ? Math.floor(searchEf)
       : 64;
   }
@@ -607,7 +608,9 @@ export class MilvusService {
 
   private resolveTimeoutMs(): number {
     const timeoutMs = this.milvusConfig?.timeoutMs;
-    return typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+    return typeof timeoutMs === 'number' &&
+      Number.isFinite(timeoutMs) &&
+      timeoutMs > 0
       ? Math.floor(timeoutMs)
       : 10000;
   }

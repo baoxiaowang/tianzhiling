@@ -19,6 +19,18 @@ class _MainTabPageState extends State<MainTabPage> {
   int _currentIndex = 0;
   final Set<int> _loadedIndexes = <int>{0};
 
+  Widget _buildTabPage(int index) {
+    switch (index) {
+      case 0:
+        return const MomentsPage();
+      case 1:
+        return const ContactsPage();
+      case 2:
+      default:
+        return const MyPage();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -43,11 +55,7 @@ class _MainTabPageState extends State<MainTabPage> {
               if (!_loadedIndexes.contains(index)) {
                 return const SizedBox.shrink();
               }
-              return switch (index) {
-                0 => const MomentsPage(),
-                1 => const ContactsPage(),
-                _ => const MyPage(),
-              };
+              return _buildTabPage(index);
             }),
           ),
           bottomNavigationBar: _BottomTabBar(

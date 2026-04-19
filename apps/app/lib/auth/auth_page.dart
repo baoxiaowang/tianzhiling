@@ -50,10 +50,12 @@ class _AuthPageState extends State<AuthPage> {
       return false;
     }
 
-    return switch (_mode) {
-      AuthMode.phone => _codeController.text.trim().length == 6,
-      AuthMode.password => _passwordController.text.trim().isNotEmpty,
-    };
+    switch (_mode) {
+      case AuthMode.phone:
+        return _codeController.text.trim().length == 6;
+      case AuthMode.password:
+        return _passwordController.text.trim().isNotEmpty;
+    }
   }
 
   void _refresh() {

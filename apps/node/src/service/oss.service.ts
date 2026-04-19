@@ -95,8 +95,8 @@ export class OssService {
 
     return {
       provider: 'aliyun-oss',
-      bucket: this.getRequiredConfig('bucket', 'OSS_BUCKET'),
-      region: this.getRequiredConfig('region', 'OSS_REGION'),
+      bucket: this.getRequiredConfig('bucket', 'NODE_OSS_BUCKET'),
+      region: this.getRequiredConfig('region', 'NODE_OSS_REGION'),
       endpoint: this.resolveEndpoint(),
       objectKey,
       uploadUrl,
@@ -184,15 +184,15 @@ export class OssService {
       throw new AppError('OSS_DISABLED', 'OSS integration is disabled', 503);
     }
 
-    const region = this.getRequiredConfig('region', 'OSS_REGION');
-    const bucket = this.getRequiredConfig('bucket', 'OSS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_OSS_REGION');
+    const bucket = this.getRequiredConfig('bucket', 'NODE_OSS_BUCKET');
     const accessKeyId = this.getRequiredConfig(
       'accessKeyId',
-      'OSS_ACCESS_KEY_ID'
+      'NODE_OSS_ACCESS_KEY_ID'
     );
     const accessKeySecret = this.getRequiredConfig(
       'accessKeySecret',
-      'OSS_ACCESS_KEY_SECRET'
+      'NODE_OSS_ACCESS_KEY_SECRET'
     );
     const endpoint = this.normalizeBaseUrl(this.ossConfig?.endpoint);
     const stsToken = this.ossConfig?.stsToken?.trim();
@@ -345,7 +345,7 @@ export class OssService {
       return endpoint;
     }
 
-    const region = this.getRequiredConfig('region', 'OSS_REGION');
+    const region = this.getRequiredConfig('region', 'NODE_OSS_REGION');
     const protocol = this.ossConfig?.secure === false ? 'http' : 'https';
 
     return `${protocol}://oss-${region.replace(/^oss-/, '')}.aliyuncs.com`;

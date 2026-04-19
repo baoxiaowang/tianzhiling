@@ -36,12 +36,12 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
 
 SPEC CHECKSUMS:
-  audio_session: 9bb7f6c970f21241b19f5a3658097ae459681ba0
+  audio_session: 19e9480dbdd4e5f6c4543826b2e8b0e4ab6145fe
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
-  just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
-  record_ios: 412daca2350b228e698fffcd08f1f94ceb1e3844
-  shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
+  image_picker_ios: 4f2f91b01abdb52842a8e277617df877e40f905b
+  just_audio: a42c63806f16995daf5b219ae1d679deb76e6a79
+  record_ios: 26294aaa39e4bb7665b0fef78bdc23d723b432f2
+  shared_preferences_foundation: 5086985c1d43c5ba4d5e69a4e8083a389e2909e6
 
 PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
 

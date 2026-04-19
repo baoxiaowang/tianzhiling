@@ -7,22 +7,22 @@ This service uses Midway + Koa + TypeORM (MongoDB).
 ### Development
 
 ```bash
-$ npm i
-$ cp .env.example .env
-$ npm run dev
+$ pnpm install
+$ cp ../../.env.example ../../.env
+$ pnpm run dev
 $ open http://localhost:7001/api/system/health
 ```
 
 ### Deploy
 
 ```bash
-$ npm start
+$ pnpm start
 ```
 
-### npm scripts
+### pnpm scripts
 
-- Use `npm run lint` to check code style.
-- Use `npm test` to run unit test.
+- Use `pnpm run lint` to check code style.
+- Use `pnpm test` to run unit test.
 
 ### API convention
 
