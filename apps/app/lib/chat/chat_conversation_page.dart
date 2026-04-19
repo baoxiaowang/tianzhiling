@@ -155,8 +155,7 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
 
   String get _typingDots => _typingDotFrames[_typingDotsFrameIndex];
 
-  bool get _isVoiceGestureActive =>
-      _isVoicePressing || _isVoicePressPreviewing;
+  bool get _isVoiceGestureActive => _isVoicePressing || _isVoicePressPreviewing;
 
   bool get _isVoiceOverlayVisible => _isVoiceMode && _isVoiceGestureActive;
 
@@ -2495,15 +2494,14 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _BubbleAvatar extends StatelessWidget {
-  const _BubbleAvatar({required this.label, this.imageUrl = '', this.onTap});
+  const _BubbleAvatar({required this.label, this.imageUrl = ''});
 
   final String label;
   final String imageUrl;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final child = imageUrl.trim().isNotEmpty
+    return imageUrl.trim().isNotEmpty
         ? AppAvatar(
             imageUrl: imageUrl,
             size: 36,
@@ -2531,16 +2529,6 @@ class _BubbleAvatar extends StatelessWidget {
               ),
             ),
           );
-
-    if (onTap == null) {
-      return child;
-    }
-
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: child,
-    );
   }
 }
 

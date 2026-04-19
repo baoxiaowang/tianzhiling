@@ -113,5 +113,16 @@ Content-Type: application/json
 
 配置完成后，后端会在接收用户语音消息时尝试执行语音转文字，并把识别结果存入消息表中。
 
+### AI 语音合成配置
+
+语音合成使用单独的一组模型配置，配置项在仓库根目录 `.env.example`：
+
+- `NODE_TEXT_TO_SPEECH_API_KEY`
+- `NODE_TEXT_TO_SPEECH_BASE_URL`
+- `NODE_TEXT_TO_SPEECH_MODEL`
+
+当前示例模型为 `qwen3-tts-vc-2026-01-22`。
+这组配置目前已接入后端配置层，后续接入语音播报 / TTS 调用时可直接复用。
+
 
 [midway]: https://midwayjs.org

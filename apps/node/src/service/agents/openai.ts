@@ -21,6 +21,9 @@ export interface OpenAIServiceConfig {
   speechToTextApiKey?: string;
   speechToTextBaseURL?: string;
   speechToTextModel?: string;
+  textToSpeechApiKey?: string;
+  textToSpeechBaseURL?: string;
+  textToSpeechModel?: string;
   temperature?: number;
   topP?: number;
   presencePenalty?: number;
