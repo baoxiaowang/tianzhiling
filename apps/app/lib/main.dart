@@ -25,41 +25,45 @@ class TianZhiLingApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: '天之灵',
-      locale: const Locale('zh', 'CN'),
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-      ],
-      theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFFF3F3F3),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFF9B26),
-          primary: const Color(0xFFFF9B26),
-        ),
-        useMaterial3: true,
-      ),
-      routes: {
-        AgentCreateFlowPage.routeName: (_) => const AgentCreateFlowPage(),
-        AgentCreatePage.routeName: (_) => const AgentCreatePage(),
-        AuthPage.routeName: (_) => const AuthPage(),
-        CashCouponPage.routeName: (_) => const CashCouponPage(),
-        FriendProfilePage.routeName: (_) => const FriendProfilePage(),
-        InviteRewardPage.routeName: (_) => const InviteRewardPage(),
-        MainTabPage.routeName: (_) => const MainTabPage(),
-        MyPostsPage.routeName: (_) => const MyPostsPage(),
-        UserNameEditPage.routeName: (_) => const UserNameEditPage(),
-        UserSettingsPage.routeName: (_) => const UserSettingsPage(),
-        VipSuccessNoticePage.routeName: (_) => const VipSuccessNoticePage(),
-        VipCenterPage.routeName: (_) => const VipCenterPage(),
+    return ValueListenableBuilder<AuthSessionData?>(
+      valueListenable: AuthSessionStore.session,
+      builder: (context, session, _) {
+        return MaterialApp(
+          key: ValueKey<String>(session == null ? 'auth-root' : 'app-root'),
+          debugShowCheckedModeBanner: false,
+          title: '天之灵',
+          locale: const Locale('zh', 'CN'),
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+          ],
+          theme: ThemeData(
+            scaffoldBackgroundColor: const Color(0xFFF3F3F3),
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFFF9B26),
+              primary: const Color(0xFFFF9B26),
+            ),
+            useMaterial3: true,
+          ),
+          routes: {
+            AgentCreateFlowPage.routeName: (_) => const AgentCreateFlowPage(),
+            AgentCreatePage.routeName: (_) => const AgentCreatePage(),
+            AuthPage.routeName: (_) => const AuthPage(),
+            CashCouponPage.routeName: (_) => const CashCouponPage(),
+            FriendProfilePage.routeName: (_) => const FriendProfilePage(),
+            InviteRewardPage.routeName: (_) => const InviteRewardPage(),
+            MainTabPage.routeName: (_) => const MainTabPage(),
+            MyPostsPage.routeName: (_) => const MyPostsPage(),
+            UserNameEditPage.routeName: (_) => const UserNameEditPage(),
+            UserSettingsPage.routeName: (_) => const UserSettingsPage(),
+            VipSuccessNoticePage.routeName: (_) => const VipSuccessNoticePage(),
+            VipCenterPage.routeName: (_) => const VipCenterPage(),
+          },
+          home: session == null ? const AuthPage() : const MainTabPage(),
+        );
       },
-      initialRoute: AuthSessionStore.session.value == null
-          ? AuthPage.routeName
-          : MainTabPage.routeName,
     );
   }
 }

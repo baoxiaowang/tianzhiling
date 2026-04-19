@@ -135,15 +135,21 @@ export default {
   },
   openai: {
     enabled: readBooleanFrom(['NODE_ENABLED'], true),
-    apiKey: readStringFrom(['NODE_API_KEY'], ''),
-    baseURL: readStringFrom(['NODE_BASE_URL'], 'https://api.minimax.io/v1'),
-    model: readStringFrom(['NODE_MODEL'], 'MiniMax-M2.5'),
+    apiKey: readStringFrom(['NODE_MINIMAX_API_KEY'], ''),
+    baseURL: readStringFrom(
+      ['NODE_MINIMAX_BASE_URL'],
+      'https://api.minimax.io/v1'
+    ),
+    model: readStringFrom(['NODE_MINIMAX_MODEL'], 'MiniMax-M2.5'),
+
     visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),
     visionApiKey: readStringFrom(['NODE_VISION_API_KEY'], ''),
     visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
+    // 语音转文字
     speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY'], ''),
     speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], ''),
     speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], ''),
+
     temperature: readNumberFrom(['NODE_TEMPERATURE'], 1),
     topP: readNumberFrom(['NODE_TOP_P'], 0.95),
     presencePenalty: readNumberFrom(['NODE_PRESENCE_PENALTY'], 0.6),
@@ -151,6 +157,8 @@ export default {
     maxRetries: readNumberFrom(['NODE_MAX_RETRIES'], 2),
     timeoutMs: readNumberFrom(['NODE_TIMEOUT_MS'], 120000),
     reasoningSplit: readBooleanFrom(['NODE_REASONING_SPLIT'], true),
+
+    // 嵌入
     embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY'], ''),
     embeddingBaseURL: readStringFrom(['NODE_EMBEDDING_BASE_URL'], ''),
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
