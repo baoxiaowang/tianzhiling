@@ -153,6 +153,11 @@ export default {
     textToSpeechApiKey: readStringFrom(['NODE_TEXT_TO_SPEECH_API_KEY'], ''),
     textToSpeechBaseURL: readStringFrom(['NODE_TEXT_TO_SPEECH_BASE_URL'], ''),
     textToSpeechModel: readStringFrom(['NODE_TEXT_TO_SPEECH_MODEL'], ''),
+    textToSpeechVoice: readStringFrom(['NODE_TEXT_TO_SPEECH_VOICE'], ''),
+    textToSpeechLanguageType: readStringFrom(
+      ['NODE_TEXT_TO_SPEECH_LANGUAGE_TYPE'],
+      'Chinese'
+    ),
 
     temperature: readNumberFrom(['NODE_TEMPERATURE'], 1),
     topP: readNumberFrom(['NODE_TOP_P'], 0.95),

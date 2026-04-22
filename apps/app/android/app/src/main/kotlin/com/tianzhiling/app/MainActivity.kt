@@ -1,4 +1,4 @@
-package com.example.tianzhiling_app
+package com.tianzhiling.app
 
 import io.flutter.embedding.android.FlutterActivity
 

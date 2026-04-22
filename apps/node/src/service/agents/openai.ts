@@ -1,11 +1,14 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import * as http from 'http';
+import * as https from 'https';
 import { OpenAI } from 'openai';
 import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
+import { URL } from 'url';
 import { extractTranscriptionContent } from '../../common/asr-utils';
 import { AppError } from '../../common/errors';
 import { describeErrorForLog, truncateForLog } from '../../common/log-utils';
@@ -24,6 +27,8 @@ export interface OpenAIServiceConfig {
   textToSpeechApiKey?: string;
   textToSpeechBaseURL?: string;
   textToSpeechModel?: string;
+  textToSpeechVoice?: string;
+  textToSpeechLanguageType?: string;
   temperature?: number;
   topP?: number;
   presencePenalty?: number;
@@ -81,6 +86,31 @@ export interface OpenAITranscriptionRequest {
   language?: string;
 }
 
+export interface OpenAITextToSpeechRequest {
+  text: string;
+  model?: string;
+  voice?: string;
+  languageType?: string;
+}
+
+export interface OpenAITextToSpeechResult {
+  audioUrl: string;
+  audioBuffer: Buffer;
+  mimeType?: string;
+  requestId?: string;
+}
+
+interface DashScopeTextToSpeechResponse {
+  request_id?: string;
+  code?: string;
+  message?: string;
+  output?: {
+    audio?: {
+      url?: string;
+    };
+  };
+}
+
 @Provide()
 export class OpenAIService {
   @Logger()
@@ -114,6 +144,18 @@ export class OpenAIService {
     return this.openAIConfig?.speechToTextModel?.trim() || '';
   }
 
+  getTextToSpeechModel(): string {
+    return this.openAIConfig?.textToSpeechModel?.trim() || '';
+  }
+
+  getTextToSpeechVoice(): string {
+    return this.openAIConfig?.textToSpeechVoice?.trim() || '';
+  }
+
+  getTextToSpeechLanguageType(): string {
+    return this.openAIConfig?.textToSpeechLanguageType?.trim() || '';
+  }
+
   hasDedicatedVisionConfig(): boolean {
     return Boolean(
       this.openAIConfig?.visionApiKey?.trim() &&
@@ -136,6 +178,16 @@ export class OpenAIService {
         this.getSpeechToTextModel() &&
         this.resolveSpeechToTextApiKey() &&
         this.resolveSpeechToTextBaseURL()
+    );
+  }
+
+  hasTextToSpeechConfig(): boolean {
+    return Boolean(
+      this.isEnabled() &&
+        this.getTextToSpeechModel() &&
+        this.getTextToSpeechVoice() &&
+        this.resolveTextToSpeechApiKey() &&
+        this.resolveTextToSpeechBaseURL()
     );
   }
 
@@ -397,6 +449,123 @@ export class OpenAIService {
     }
   }
 
+  async createTextToSpeech(
+    request: OpenAITextToSpeechRequest
+  ): Promise<OpenAITextToSpeechResult> {
+    const text = request.text?.trim();
+
+    if (!text) {
+      throw new AppError(
+        'MINIMAX_INVALID_TEXT_TO_SPEECH_INPUT',
+        'text to speech input is required'
+      );
+    }
+
+    const model = request.model?.trim() || this.getTextToSpeechModel();
+    const apiKey = this.resolveTextToSpeechApiKey();
+    const baseURL = this.resolveTextToSpeechBaseURL();
+    const voice = request.voice?.trim() || this.getTextToSpeechVoice();
+    const languageType =
+      request.languageType?.trim() || this.getTextToSpeechLanguageType();
+
+    if (!model || !apiKey || !baseURL || !voice) {
+      throw new AppError(
+        'MINIMAX_TEXT_TO_SPEECH_NOT_CONFIGURED',
+        'text to speech configuration is incomplete',
+        500
+      );
+    }
+
+    const endpoint = this.resolveTextToSpeechEndpoint(baseURL);
+
+    this.logger.info(
+      '[openai] create text to speech, model=%s, voice=%s, textLength=%s, textPreview=%s',
+      model,
+      voice,
+      text.length,
+      truncateForLog(text)
+    );
+
+    try {
+      const response = await this.requestJson<DashScopeTextToSpeechResponse>({
+        url: endpoint,
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: {
+          model,
+          input: {
+            text,
+            voice,
+            ...(languageType ? { language_type: languageType } : {}),
+          },
+        },
+      });
+
+      const audioUrl =
+        response.output?.audio?.url &&
+        typeof response.output.audio.url === 'string'
+          ? response.output.audio.url.trim()
+          : '';
+
+      if (!audioUrl) {
+        throw new AppError(
+          'MINIMAX_TEXT_TO_SPEECH_EMPTY_AUDIO',
+          'text to speech response is missing audio url',
+          502,
+          response
+        );
+      }
+
+      const audioResponse = await this.requestBinary({
+        url: audioUrl,
+        method: 'GET',
+        headers: {
+          Accept: 'audio/*',
+        },
+      });
+
+      if (audioResponse.statusCode < 200 || audioResponse.statusCode >= 300) {
+        throw new AppError(
+          'MINIMAX_TEXT_TO_SPEECH_AUDIO_DOWNLOAD_FAILED',
+          `text to speech audio download failed with status ${audioResponse.statusCode}`,
+          502
+        );
+      }
+
+      const mimeType =
+        this.normalizeContentType(audioResponse.headers['content-type']) ||
+        this.guessAudioMimeType(audioUrl);
+
+      this.logger.info(
+        '[openai] text to speech response received, model=%s, voice=%s, requestId=%s, mimeType=%s, size=%s',
+        model,
+        voice,
+        response.request_id?.trim() || '-',
+        mimeType || '-',
+        audioResponse.body.length
+      );
+
+      return {
+        audioUrl,
+        audioBuffer: audioResponse.body,
+        mimeType: mimeType || undefined,
+        requestId: response.request_id?.trim() || undefined,
+      };
+    } catch (error) {
+      this.logger.error(
+        '[openai] text to speech request failed, model=%s, voice=%s, reason=%s',
+        model,
+        voice,
+        describeErrorForLog(error)
+      );
+      throw error;
+    }
+  }
+
   private extractReasoning(
     message: ChatCompletion['choices'][number]['message'] | undefined
   ): string[] {
@@ -564,6 +733,14 @@ export class OpenAIService {
     return this.openAIConfig?.speechToTextBaseURL?.trim() || '';
   }
 
+  private resolveTextToSpeechApiKey(): string {
+    return this.openAIConfig?.textToSpeechApiKey?.trim() || '';
+  }
+
+  private resolveTextToSpeechBaseURL(): string {
+    return this.openAIConfig?.textToSpeechBaseURL?.trim() || '';
+  }
+
   private resolveReasoningSplit(value?: boolean): boolean {
     if (typeof value === 'boolean') {
       return value;
@@ -633,5 +810,245 @@ export class OpenAIService {
     }
 
     return Math.floor(source);
+  }
+
+  private resolveTextToSpeechEndpoint(baseURL: string): string {
+    const url = new URL(baseURL);
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
+
+    if (normalizedPath.endsWith('/services/aigc/multimodal-generation')) {
+      url.pathname = `${normalizedPath}/generation`;
+      return url.toString();
+    }
+
+    if (
+      normalizedPath.endsWith('/services/aigc/multimodal-generation/generation')
+    ) {
+      url.pathname = normalizedPath;
+      return url.toString();
+    }
+
+    if (!normalizedPath || normalizedPath === '/') {
+      url.pathname = '/api/v1/services/aigc/multimodal-generation/generation';
+      return url.toString();
+    }
+
+    if (normalizedPath.endsWith('/api/v1')) {
+      url.pathname = `${normalizedPath}/services/aigc/multimodal-generation/generation`;
+      return url.toString();
+    }
+
+    url.pathname = `${normalizedPath}/services/aigc/multimodal-generation/generation`;
+    return url.toString();
+  }
+
+  private async requestJson<T>(options: {
+    url: string;
+    method: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: unknown;
+  }): Promise<T> {
+    const serializedBody =
+      options.body === undefined ? undefined : JSON.stringify(options.body);
+    const response = await this.requestBinary({
+      url: options.url,
+      method: options.method,
+      headers: options.headers,
+      body: serializedBody,
+    });
+    const responseText = response.body.toString('utf8').trim();
+
+    if (!responseText) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new AppError(
+          'MINIMAX_PROVIDER_REQUEST_FAILED',
+          `provider request failed with status ${response.statusCode}`,
+          502
+        );
+      }
+
+      return {} as T;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(responseText);
+    } catch {
+      throw new AppError(
+        'MINIMAX_INVALID_PROVIDER_RESPONSE',
+        'provider response is not valid json',
+        502,
+        responseText
+      );
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new AppError(
+        'MINIMAX_PROVIDER_REQUEST_FAILED',
+        this.extractProviderErrorMessage(
+          parsed,
+          `provider request failed with status ${response.statusCode}`
+        ),
+        502,
+        parsed
+      );
+    }
+
+    return parsed as T;
+  }
+
+  private async requestBinary(options: {
+    url: string;
+    method: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: string | Buffer;
+    redirectCount?: number;
+  }): Promise<{
+    statusCode: number;
+    headers: http.IncomingHttpHeaders;
+    body: Buffer;
+  }> {
+    const requestUrl = new URL(options.url);
+    const bodyBuffer =
+      typeof options.body === 'string'
+        ? Buffer.from(options.body, 'utf8')
+        : options.body;
+    const headers: Record<string, string> = {
+      ...(options.headers || {}),
+    };
+
+    if (bodyBuffer && !headers['Content-Length']) {
+      headers['Content-Length'] = String(bodyBuffer.length);
+    }
+
+    const timeoutMs = this.normalizeTimeout(this.openAIConfig?.timeoutMs);
+    const transport = requestUrl.protocol === 'http:' ? http : https;
+
+    return new Promise((resolve, reject) => {
+      const request = transport.request(
+        {
+          protocol: requestUrl.protocol,
+          hostname: requestUrl.hostname,
+          port: requestUrl.port ? Number(requestUrl.port) : undefined,
+          method: options.method,
+          path: `${requestUrl.pathname}${requestUrl.search}`,
+          headers,
+          ...(timeoutMs ? { timeout: timeoutMs } : {}),
+        },
+        response => {
+          const statusCode = response.statusCode || 0;
+          const locationHeader = response.headers.location;
+          const location =
+            typeof locationHeader === 'string' ? locationHeader.trim() : '';
+
+          if (
+            location &&
+            [301, 302, 303, 307, 308].includes(statusCode) &&
+            (options.redirectCount || 0) < 3
+          ) {
+            response.resume();
+
+            void this.requestBinary({
+              url: new URL(location, requestUrl).toString(),
+              method: statusCode === 303 ? 'GET' : options.method,
+              headers: options.headers,
+              body: statusCode === 303 ? undefined : options.body,
+              redirectCount: (options.redirectCount || 0) + 1,
+            }).then(resolve, reject);
+            return;
+          }
+
+          const chunks: Buffer[] = [];
+
+          response.on('data', chunk => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+
+          response.on('end', () => {
+            resolve({
+              statusCode,
+              headers: response.headers,
+              body: Buffer.concat(chunks),
+            });
+          });
+
+          response.on('error', reject);
+        }
+      );
+
+      request.on('error', reject);
+
+      request.on('timeout', () => {
+        request.destroy(
+          new AppError(
+            'MINIMAX_PROVIDER_REQUEST_TIMEOUT',
+            'provider request timed out',
+            504
+          )
+        );
+      });
+
+      if (bodyBuffer && bodyBuffer.length > 0) {
+        request.write(bodyBuffer);
+      }
+
+      request.end();
+    });
+  }
+
+  private extractProviderErrorMessage(
+    response: unknown,
+    fallback: string
+  ): string {
+    if (!response || typeof response !== 'object') {
+      return fallback;
+    }
+
+    const message = (response as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) {
+      return message.trim();
+    }
+
+    const code = (response as { code?: unknown }).code;
+    if (typeof code === 'string' && code.trim()) {
+      return code.trim();
+    }
+
+    return fallback;
+  }
+
+  private normalizeContentType(value: unknown): string {
+    if (Array.isArray(value)) {
+      return this.normalizeContentType(value[0]);
+    }
+
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    return value.split(';')[0]?.trim().toLowerCase() || '';
+  }
+
+  private guessAudioMimeType(urlValue: string): string {
+    const lower = urlValue.trim().toLowerCase();
+
+    if (lower.endsWith('.mp3')) {
+      return 'audio/mpeg';
+    }
+    if (lower.endsWith('.wav')) {
+      return 'audio/wav';
+    }
+    if (lower.endsWith('.aac')) {
+      return 'audio/aac';
+    }
+    if (lower.endsWith('.ogg')) {
+      return 'audio/ogg';
+    }
+    if (lower.endsWith('.webm')) {
+      return 'audio/webm';
+    }
+
+    return 'audio/wav';
   }
 }

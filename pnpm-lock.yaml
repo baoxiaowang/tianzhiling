@@ -194,6 +194,9 @@ importers:
 
   apps/node:
     dependencies:
+      '@midwayjs/axios':
+        specifier: ^3.0.0
+        version: 3.20.23
       '@midwayjs/bootstrap':
         specifier: ^3.12.0
         version: 3.20.23
@@ -965,6 +968,10 @@ packages:
   '@midwayjs/async-hooks-context-manager@3.20.23':
     resolution: {integrity: sha512-zcY7zbjklisiRhYRhEHGKvxq0D4GPsznCDEq4zrZGeG7+isyccbEBdUonfyp8VFU4n3zgKZgHmUB6ArZ/2hmZw==}
     engines: {node: '>=12.17.0'}
+
+  '@midwayjs/axios@3.20.23':
+    resolution: {integrity: sha512-XoWnCD8D9GAcs4mTwprseGyFvn5ekcYgLeVsFfhqfbnOAW8wXpPc7v105SCVlNYeXnIRD/DHqQ0ztNhaXx4jEw==}
+    engines: {node: '>=12'}
 
   '@midwayjs/bootstrap@3.20.23':
     resolution: {integrity: sha512-YzpznOUT0LkBDIGDDm+qDcwRMnXlPlhzSXYCgh0QHnfgrT2ONLSiaZ6T73BzMPj6Dgg8MXc9apX4jEKGQqhzcQ==}
@@ -2155,6 +2162,9 @@ packages:
 
   axios@0.24.0:
     resolution: {integrity: sha512-Q6cWsys88HoPgAaFAVUb0WpPk0O8iTeisR9IMqy9G8AbO4NlpVknrnQS03zzF9PGAWgO3cgletO3VjV/P7VztA==}
+
+  axios@1.8.4:
+    resolution: {integrity: sha512-eBSYY4Y68NNlHbHBMdeDmKNtDgXWhQsJcGqzO3iLUM0GraQFSS9cVgPX5I9b3lbdFKyYoAEGAZF1DwhTaljNAw==}
 
   b-tween@0.3.3:
     resolution: {integrity: sha512-oEHegcRpA7fAuc9KC4nktucuZn2aS8htymCPcP3qkEGPqiBH+GfqtqoG2l7LxHngg6O0HFM7hOeOYExl1Oz4ZA==}
@@ -6245,6 +6255,9 @@ packages:
     resolution: {integrity: sha512-3wY1AxV+VBNW8Yypfd1yQY9pXnqTAN+KwQxL8iYm3/BjKYMNg4i0owhEe26PWDOMaIrzeeF98Lqd5NGz4omiIg==}
     engines: {node: '>=12.0.0'}
 
+  proxy-from-env@1.1.0:
+    resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
+
   prr@1.0.1:
     resolution: {integrity: sha512-yPw4Sng1gWghHQWj0B3ZggWUm4qVbPwPFcRG8KyxiU7J2OHFSoEHKS+EZ3fv5l1t9CyCiop6l/ZYeWbrgoQejw==}
 
@@ -9168,6 +9181,12 @@ snapshots:
 
   '@midwayjs/async-hooks-context-manager@3.20.23': {}
 
+  '@midwayjs/axios@3.20.23':
+    dependencies:
+      axios: 1.8.4
+    transitivePeerDependencies:
+      - debug
+
   '@midwayjs/bootstrap@3.20.23':
     dependencies:
       '@midwayjs/async-hooks-context-manager': 3.20.23
@@ -10644,6 +10663,14 @@ snapshots:
   axios@0.24.0:
     dependencies:
       follow-redirects: 1.16.0
+    transitivePeerDependencies:
+      - debug
+
+  axios@1.8.4:
+    dependencies:
+      follow-redirects: 1.16.0
+      form-data: 4.0.5
+      proxy-from-env: 1.1.0
     transitivePeerDependencies:
       - debug
 
@@ -15189,6 +15216,8 @@ snapshots:
       '@protobufjs/utf8': 1.1.0
       '@types/node': 14.18.63
       long: 5.3.2
+
+  proxy-from-env@1.1.0: {}
 
   prr@1.0.1:
     optional: true

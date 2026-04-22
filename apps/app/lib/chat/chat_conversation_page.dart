@@ -301,10 +301,7 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
 
       final assistantMessage = result.assistantMessage;
       if (assistantMessage != null) {
-        final assistantParts = assistantMessage.segments.isNotEmpty
-            ? assistantMessage.segments
-            : <String>[assistantMessage.content];
-        await _appendAssistantSegments(assistantMessage, assistantParts);
+        await _appendAssistantMessage(assistantMessage);
       } else {
         setState(() {
           _isSending = false;
@@ -397,6 +394,38 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
       _isSending = false;
     });
     _stopTypingDots();
+  }
+
+  Future<void> _appendAssistantMessage(
+    ConversationMessage assistantMessage, {
+    bool autoPlayVoice = false,
+  }) async {
+    if (assistantMessage.isVoice || assistantMessage.isImage) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _messages = [..._messages, assistantMessage];
+        _isSending = false;
+      });
+      _stopTypingDots();
+      _scheduleScrollToBottom();
+
+      if (assistantMessage.isVoice && autoPlayVoice) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+        if (!mounted) {
+          return;
+        }
+        await _toggleVoicePlayback(assistantMessage);
+      }
+      return;
+    }
+
+    final assistantParts = assistantMessage.segments.isNotEmpty
+        ? assistantMessage.segments
+        : <String>[assistantMessage.content];
+    await _appendAssistantSegments(assistantMessage, assistantParts);
   }
 
   void _startTypingDots() {
@@ -920,10 +949,10 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
 
       final assistantMessage = result.assistantMessage;
       if (assistantMessage != null) {
-        final assistantParts = assistantMessage.segments.isNotEmpty
-            ? assistantMessage.segments
-            : <String>[assistantMessage.content];
-        await _appendAssistantSegments(assistantMessage, assistantParts);
+        await _appendAssistantMessage(
+          assistantMessage,
+          autoPlayVoice: assistantMessage.isVoice,
+        );
       } else {
         setState(() {
           _isSending = false;
@@ -1067,6 +1096,41 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
     }
   }
 
+  void _updateVoiceMessageDuration(String messageId, Duration? duration) {
+    final durationMs = duration?.inMilliseconds;
+    if (!mounted || durationMs == null || durationMs <= 0) {
+      return;
+    }
+
+    setState(() {
+      _messages = _messages.map((message) {
+        if (message.id != messageId) {
+          return message;
+        }
+
+        final voice = message.voice;
+        if (voice == null) {
+          return message;
+        }
+
+        if (voice.durationMs != null &&
+            (voice.durationMs! - durationMs).abs() < 200) {
+          return message;
+        }
+
+        return message.copyWith(
+          voice: ConversationVoicePayload(
+            objectKey: voice.objectKey,
+            url: voice.url,
+            mimeType: voice.mimeType,
+            durationMs: durationMs,
+            transcript: voice.transcript,
+          ),
+        );
+      }).toList();
+    });
+  }
+
   Future<String> _resolvePlayableVoicePath(ConversationMessage message) async {
     final source = MediaAsset.resolveUrl(
       objectKey: message.voice?.objectKey,
@@ -1192,7 +1256,8 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
       await _voicePlayer.stop();
 
       final playablePath = await _resolvePlayableVoicePath(message);
-      await _voicePlayer.setFilePath(playablePath);
+      final duration = await _voicePlayer.setFilePath(playablePath);
+      _updateVoiceMessageDuration(message.id, duration ?? _voicePlayer.duration);
       await _voicePlayer.play();
     } catch (error, stackTrace) {
       debugPrint('Voice playback failed: $error\n$stackTrace');
@@ -1552,10 +1617,7 @@ class _ChatConversationPageState extends State<ChatConversationPage> {
 
       final assistantMessage = result.assistantMessage;
       if (assistantMessage != null) {
-        final assistantParts = assistantMessage.segments.isNotEmpty
-            ? assistantMessage.segments
-            : <String>[assistantMessage.content];
-        await _appendAssistantSegments(assistantMessage, assistantParts);
+        await _appendAssistantMessage(assistantMessage);
       } else {
         setState(() {
           _isSending = false;

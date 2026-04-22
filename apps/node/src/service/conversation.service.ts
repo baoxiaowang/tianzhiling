@@ -23,6 +23,7 @@ import { OpenAIService } from './agents/openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { ConversationMessageItem, MessageService } from './message.service';
 import { PostImageService } from './post-image.service';
+import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
 
@@ -59,6 +60,13 @@ interface PreparedIncomingMessage {
   mediaTranscript?: string;
 }
 
+interface SynthesizedAssistantVoiceReply {
+  mediaUrl: string;
+  mediaMimeType?: string;
+  mediaDurationMs?: number;
+  transcript: string;
+}
+
 @Provide()
 export class ConversationService {
   @Logger()
@@ -84,6 +92,9 @@ export class ConversationService {
 
   @Inject()
   postImageService: PostImageService;
+
+  @Inject()
+  ossService: OssService;
 
   @Inject()
   tencentCosService: TencentCosService;
@@ -192,18 +203,12 @@ export class ConversationService {
       );
       const usage = this.extractUsageFromResponse(response);
       const replyTime = new Date();
-      const assistantMessage = await this.saveMessage({
+      const assistantMessage = await this.createAssistantReplyMessage({
         conversationId: conversation.id,
-        role: MessageRole.assistant,
-        type: MessageType.text,
-        content: replyContent,
-        status: MessageStatus.sent,
-        model: usage.model,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        totalTokens: usage.totalTokens,
-        createdAt: replyTime,
-        updatedAt: replyTime,
+        replyContent,
+        preferVoiceReply: messagePayload.type === MessageType.voice,
+        replyTime,
+        usage,
       });
 
       await this.touchConversation(conversation, replyTime);
@@ -521,6 +526,242 @@ export class ConversationService {
     }
   }
 
+  private async createAssistantReplyMessage(options: {
+    conversationId: MongoObjectId;
+    replyContent: string;
+    preferVoiceReply: boolean;
+    replyTime: Date;
+    usage: {
+      model?: string;
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    };
+  }): Promise<MessageEntity> {
+    const synthesizedVoice =
+      options.preferVoiceReply && this.openAIService.hasTextToSpeechConfig()
+        ? await this.synthesizeAssistantVoiceReply(options.replyContent)
+        : undefined;
+
+    if (synthesizedVoice) {
+      return this.saveMessage({
+        conversationId: options.conversationId,
+        role: MessageRole.assistant,
+        type: MessageType.voice,
+        content: options.replyContent,
+        status: MessageStatus.sent,
+        mediaUrl: synthesizedVoice.mediaUrl,
+        mediaMimeType: synthesizedVoice.mediaMimeType,
+        mediaDurationMs: synthesizedVoice.mediaDurationMs,
+        mediaTranscript: synthesizedVoice.transcript,
+        model: options.usage.model,
+        promptTokens: options.usage.promptTokens,
+        completionTokens: options.usage.completionTokens,
+        totalTokens: options.usage.totalTokens,
+        createdAt: options.replyTime,
+        updatedAt: options.replyTime,
+      });
+    }
+
+    return this.saveMessage({
+      conversationId: options.conversationId,
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: options.replyContent,
+      status: MessageStatus.sent,
+      model: options.usage.model,
+      promptTokens: options.usage.promptTokens,
+      completionTokens: options.usage.completionTokens,
+      totalTokens: options.usage.totalTokens,
+      createdAt: options.replyTime,
+      updatedAt: options.replyTime,
+    });
+  }
+
+  private async synthesizeAssistantVoiceReply(
+    replyContent: string
+  ): Promise<SynthesizedAssistantVoiceReply | undefined> {
+    const transcript = this.buildAssistantReplySpeechText(replyContent);
+
+    if (!transcript) {
+      return undefined;
+    }
+
+    try {
+      const synthesized = await this.openAIService.createTextToSpeech({
+        text: transcript,
+      });
+      const stored = await this.storeAssistantVoiceAsset({
+        audioBuffer: synthesized.audioBuffer,
+        sourceUrl: synthesized.audioUrl,
+        mimeType: synthesized.mimeType,
+      });
+
+      return {
+        mediaUrl: stored.mediaUrl,
+        mediaMimeType: stored.mediaMimeType,
+        mediaDurationMs: this.extractWavDurationMs(
+          synthesized.audioBuffer,
+          stored.mediaMimeType || synthesized.mimeType
+        ),
+        transcript,
+      };
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] assistant voice synthesis failed, reason=%s',
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private buildAssistantReplySpeechText(replyContent: string): string {
+    const segments = this.parseAssistantSegments(replyContent)
+      .map(segment => this.sanitizeAssistantSegment(segment))
+      .filter(Boolean);
+
+    if (segments.length === 0) {
+      return '';
+    }
+
+    return segments
+      .map(segment =>
+        /[。！？!?]$/.test(segment.trim())
+          ? segment.trim()
+          : `${segment.trim()}。`
+      )
+      .join('');
+  }
+
+  private async storeAssistantVoiceAsset(input: {
+    audioBuffer: Buffer;
+    sourceUrl: string;
+    mimeType?: string;
+  }): Promise<{
+    mediaUrl: string;
+    mediaMimeType?: string;
+  }> {
+    const mimeType = input.mimeType?.trim() || 'audio/wav';
+    const fileName = this.buildAssistantVoiceFileName(mimeType);
+
+    try {
+      if (this.tencentCosService.isEnabled()) {
+        const uploaded = await this.tencentCosService.putBuffer(
+          input.audioBuffer,
+          {
+            folder: 'conversation-voice-replies',
+            fileName,
+            contentType: mimeType,
+          }
+        );
+
+        return {
+          mediaUrl: uploaded.url,
+          mediaMimeType: mimeType,
+        };
+      }
+
+      if (this.ossService.isEnabled()) {
+        const uploaded = await this.ossService.putBuffer(input.audioBuffer, {
+          folder: 'conversation-voice-replies',
+          fileName,
+          contentType: mimeType,
+        });
+
+        return {
+          mediaUrl: uploaded.url,
+          mediaMimeType: mimeType,
+        };
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] assistant voice asset upload failed, reason=%s',
+        this.describeReplyError(error)
+      );
+    }
+
+    return {
+      mediaUrl: input.sourceUrl,
+      mediaMimeType: mimeType,
+    };
+  }
+
+  private buildAssistantVoiceFileName(mimeType?: string): string {
+    return `assistant_reply_${Date.now()}.${this.resolveAudioExtension(
+      mimeType
+    )}`;
+  }
+
+  private resolveAudioExtension(mimeType?: string): string {
+    const normalized = mimeType?.trim().toLowerCase() || '';
+
+    if (normalized.includes('mpeg')) {
+      return 'mp3';
+    }
+    if (normalized.includes('aac')) {
+      return 'aac';
+    }
+    if (normalized.includes('ogg')) {
+      return 'ogg';
+    }
+    if (normalized.includes('webm')) {
+      return 'webm';
+    }
+
+    return 'wav';
+  }
+
+  private extractWavDurationMs(
+    audioBuffer: Buffer,
+    mimeType?: string
+  ): number | undefined {
+    if (
+      !Buffer.isBuffer(audioBuffer) ||
+      audioBuffer.length < 44 ||
+      !mimeType?.toLowerCase().includes('wav')
+    ) {
+      return undefined;
+    }
+
+    if (
+      audioBuffer.toString('ascii', 0, 4) !== 'RIFF' ||
+      audioBuffer.toString('ascii', 8, 12) !== 'WAVE'
+    ) {
+      return undefined;
+    }
+
+    let offset = 12;
+    let byteRate = 0;
+    let dataSize = 0;
+
+    while (offset + 8 <= audioBuffer.length) {
+      const chunkId = audioBuffer.toString('ascii', offset, offset + 4);
+      const chunkSize = audioBuffer.readUInt32LE(offset + 4);
+      const chunkStart = offset + 8;
+
+      if (
+        chunkId === 'fmt ' &&
+        chunkSize >= 16 &&
+        chunkStart + 12 <= audioBuffer.length
+      ) {
+        byteRate = audioBuffer.readUInt32LE(chunkStart + 8);
+      }
+
+      if (chunkId === 'data') {
+        dataSize = chunkSize;
+        break;
+      }
+
+      offset = chunkStart + chunkSize + (chunkSize % 2);
+    }
+
+    if (byteRate <= 0 || dataSize <= 0) {
+      return undefined;
+    }
+
+    return Math.max(1, Math.round((dataSize / byteRate) * 1000));
+  }
+
   private normalizeMessageType(rawValue?: string): MessageType {
     const value = rawValue?.trim().toLowerCase();
     if (value === MessageType.voice) {
@@ -689,7 +930,7 @@ export class ConversationService {
 
     if (hasChinese) {
       normalized = normalized.replace(
-        /(^|[\s，。！？、；：,.!?;:（）()【】\[\]'"“”‘’<>《》\-])([A-Za-z]{2,})(?=$|[\s，。！？、；：,.!?;:（）()【】\[\]'"“”‘’<>《》\-])/g,
+        /(^|[\s，。！？、；：,.!?;:（）()【】[\]'"“”‘’<>《》-])([A-Za-z]{2,})(?=$|[\s，。！？、；：,.!?;:（）()【】[\]'"“”‘’<>《》-])/g,
         (_, prefix: string) => prefix
       );
     }

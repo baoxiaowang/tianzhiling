@@ -19,7 +19,8 @@
     "cos-nodejs-sdk-v5": "^2.15.4",
     "mongodb": "^7.1.0",
     "openai": "^6.33.0",
-    "typeorm": "~0.3.0"
+    "typeorm": "~0.3.0",
+    "@midwayjs/axios": "^3.0.0"
   },
   "devDependencies": {
     "@midwayjs/mock": "^3.12.0",

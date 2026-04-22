@@ -120,9 +120,12 @@ Content-Type: application/json
 - `NODE_TEXT_TO_SPEECH_API_KEY`
 - `NODE_TEXT_TO_SPEECH_BASE_URL`
 - `NODE_TEXT_TO_SPEECH_MODEL`
+- `NODE_TEXT_TO_SPEECH_VOICE`
+- `NODE_TEXT_TO_SPEECH_LANGUAGE_TYPE`
 
 当前示例模型为 `qwen3-tts-vc-2026-01-22`。
-这组配置目前已接入后端配置层，后续接入语音播报 / TTS 调用时可直接复用。
+其中 `NODE_TEXT_TO_SPEECH_VOICE` 需要填写已复刻完成的音色名称。
+语音消息触发的联系人回复会优先尝试走这组 TTS 配置；若配置缺失或合成失败，则自动回退为文本回复。
 
 
 [midway]: https://midwayjs.org
