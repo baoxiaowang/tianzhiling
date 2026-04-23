@@ -16,9 +16,18 @@ $tzl-color-primary: #ff8a36;
 $tzl-color-primary-deep: #ff7b26;
 $tzl-color-primary-start: #fc7a4e;
 $tzl-color-primary-end: #ff603a;
+$tzl-color-success: #00a63e;
+$tzl-color-success-bright: #05df72;
+$tzl-color-tab-muted: #4a5565;
+$tzl-color-surface-muted: #f9fafb;
+$tzl-color-slate-700: #364153;
+$tzl-color-slate-500: #6a7282;
+$tzl-color-dark-surface: #1e2939;
+$tzl-color-dark-pill: #364153;
 $tzl-color-warm-start: #fdba74;
 $tzl-color-warm-end: #fb923c;
 $tzl-color-primary-soft: rgba(255, 138, 54, 0.12);
+$tzl-color-success-soft: rgba(0, 166, 62, 0.12);
 
 $tzl-color-warning-text: #c2410c;
 $tzl-color-danger-text: #dc2626;
@@ -29,10 +38,17 @@ $tzl-gradient-primary: linear-gradient(
   $tzl-color-primary-start 0%,
   $tzl-color-primary-end 100%
 );
+$tzl-gradient-success: linear-gradient(
+  135deg,
+  $tzl-color-success-bright 0%,
+  $tzl-color-success 100%
+);
 $tzl-gradient-warm: linear-gradient(135deg, $tzl-color-warm-start 0%, $tzl-color-warm-end 100%);
 
 $tzl-shadow-card: 0 12px 40px rgba(17, 24, 39, 0.08);
 $tzl-shadow-primary-sm: 0 6px 16px rgba(255, 96, 58, 0.24);
 $tzl-shadow-primary-md: 0 8px 16px rgba(255, 96, 58, 0.2);
 $tzl-shadow-primary-lg: 0 9px 18px rgba(255, 96, 58, 0.22);
+$tzl-shadow-success-sm: 0 8px 16px rgba(0, 166, 62, 0.2);
+$tzl-shadow-fab: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.1);
 $tzl-shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.8);
