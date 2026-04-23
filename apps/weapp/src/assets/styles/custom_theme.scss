@@ -1,0 +1,38 @@
+$tzl-color-text-primary: #111827;
+$tzl-color-text-secondary: #374151;
+$tzl-color-text-muted: #6b7280;
+$tzl-color-text-soft: #9ca3af;
+
+$tzl-color-surface-base: #ffffff;
+$tzl-color-surface-card: rgba(255, 255, 255, 0.94);
+$tzl-color-surface-subtle: #f3f4f6;
+$tzl-color-surface-warm: #fff7ed;
+$tzl-color-surface-danger: #fef2f2;
+
+$tzl-color-border-light: rgba(255, 255, 255, 0.9);
+$tzl-color-border-soft: #f3f4f6;
+
+$tzl-color-primary: #ff8a36;
+$tzl-color-primary-deep: #ff7b26;
+$tzl-color-primary-start: #fc7a4e;
+$tzl-color-primary-end: #ff603a;
+$tzl-color-warm-start: #fdba74;
+$tzl-color-warm-end: #fb923c;
+$tzl-color-primary-soft: rgba(255, 138, 54, 0.12);
+
+$tzl-color-warning-text: #c2410c;
+$tzl-color-danger-text: #dc2626;
+
+$tzl-gradient-page: linear-gradient(180deg, #fff2e2 0%, #fff7ed 42%, #ffffff 100%);
+$tzl-gradient-primary: linear-gradient(
+  135deg,
+  $tzl-color-primary-start 0%,
+  $tzl-color-primary-end 100%
+);
+$tzl-gradient-warm: linear-gradient(135deg, $tzl-color-warm-start 0%, $tzl-color-warm-end 100%);
+
+$tzl-shadow-card: 0 12px 40px rgba(17, 24, 39, 0.08);
+$tzl-shadow-primary-sm: 0 6px 16px rgba(255, 96, 58, 0.24);
+$tzl-shadow-primary-md: 0 8px 16px rgba(255, 96, 58, 0.2);
+$tzl-shadow-primary-lg: 0 9px 18px rgba(255, 96, 58, 0.22);
+$tzl-shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.8);

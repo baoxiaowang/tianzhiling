@@ -477,13 +477,13 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
   border-radius: 499.5px;
-  background: linear-gradient(135deg, #fc7a4e 0%, #ff603a 100%);
-  box-shadow: 0 6px 16px rgba(255, 96, 58, 0.24);
+  background: $tzl-gradient-primary;
+  box-shadow: $tzl-shadow-primary-sm;
 }
 
 .loading-state__text {
   font-size: 14px;
-  color: #6b7280;
+  color: $tzl-color-text-muted;
 }
 
 .hero {
@@ -497,7 +497,7 @@ onUnmounted(() => {
   font-size: 38px;
   line-height: 1;
   font-weight: 700;
-  color: #111827;
+  color: $tzl-color-text-primary;
   letter-spacing: -1px;
 }
 
@@ -505,22 +505,22 @@ onUnmounted(() => {
   font-size: 20px;
   line-height: 1.2;
   font-weight: 600;
-  color: #374151;
+  color: $tzl-color-text-secondary;
 }
 
 .hero__desc {
   font-size: 13px;
   line-height: 1.6;
-  color: #6b7280;
+  color: $tzl-color-text-muted;
 }
 
 .auth-card,
 .profile-card {
   padding: 18px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: 1px solid $tzl-color-border-light;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 12px 40px rgba(17, 24, 39, 0.08);
+  background: $tzl-color-surface-card;
+  box-shadow: $tzl-shadow-card;
   backdrop-filter: blur(12px);
 }
 
@@ -529,10 +529,10 @@ onUnmounted(() => {
   --nut-tabs-titles-background-color: transparent;
   --nut-tabs-horizontal-titles-height: 27px;
   --nut-tabs-titles-item-font-size: 17px;
-  --nut-tabs-titles-item-active-color: #111827;
-  --nut-tabs-titles-item-color: #9ca3af;
+  --nut-tabs-titles-item-active-color: #{$tzl-color-text-primary};
+  --nut-tabs-titles-item-color: #{$tzl-color-text-soft};
   --nut-tabs-horizontal-titles-item-active-line-width: 48px;
-  --nut-tabs-horizontal-tab-line-color: #ff8a36;
+  --nut-tabs-horizontal-tab-line-color: #{$tzl-color-primary};
 }
 
 .auth-tabs :deep(.nut-tabs__titles) {
@@ -566,7 +566,7 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: $tzl-color-text-muted;
 }
 
 .field__row {
@@ -581,11 +581,11 @@ onUnmounted(() => {
   width: 100%;
   min-height: 48px;
   padding: 0 12px;
-  border: 1px solid #f3f4f6;
+  border: 1px solid $tzl-color-border-soft;
   border-radius: 12px;
-  background: #ffffff;
+  background: $tzl-color-surface-base;
   box-sizing: border-box;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow: $tzl-shadow-inset-soft;
 }
 
 .field__control :deep(.nut-input) {
@@ -613,11 +613,11 @@ onUnmounted(() => {
   padding: 0;
   line-height: 46px;
   font-size: 15px;
-  color: #111827;
+  color: $tzl-color-text-primary;
 }
 
 .field__control :deep(.input-text::placeholder) {
-  color: #9ca3af;
+  color: $tzl-color-text-soft;
 }
 
 .field__control--code {
@@ -639,14 +639,14 @@ onUnmounted(() => {
   height: 48px;
   padding: 0 12px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #fc7a4e 0%, #ff603a 100%);
-  color: #ffffff;
+  background: $tzl-gradient-primary;
+  color: $tzl-color-surface-base;
   font-size: 14px;
   font-weight: 500;
-  box-shadow: 0 8px 16px rgba(255, 96, 58, 0.2);
+  box-shadow: $tzl-shadow-primary-md;
   --nut-button-default-padding: 0 12px;
   --nut-button-border-radius: 12px;
-  --nut-button-primary-background-color: linear-gradient(135deg, #fc7a4e 0%, #ff603a 100%);
+  --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
 .code-button :deep(.nut-button__text) {
@@ -662,12 +662,12 @@ onUnmounted(() => {
 
 .submit-button {
   margin-top: 16px;
-  box-shadow: 0 9px 18px rgba(255, 96, 58, 0.22);
+  box-shadow: $tzl-shadow-primary-lg;
   --nut-button-large-height: 50px;
   --nut-button-large-line-height: 49px;
   --nut-button-large-font-size: 16px;
   --nut-button-border-radius: 499.5px;
-  --nut-button-primary-background-color: linear-gradient(135deg, #fc7a4e 0%, #ff603a 100%);
+  --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
 .submit-button :deep(.nut-button__text) {
@@ -685,8 +685,8 @@ onUnmounted(() => {
   --nut-checkbox-label-margin-left: 8px;
   --nut-checkbox-icon-font-size: 11px;
   --nut-checkbox-label-font-size: 12px;
-  --nut-checkbox-label-color: #6b7280;
-  --nut-primary-color: #ff8a36;
+  --nut-checkbox-label-color: #{$tzl-color-text-muted};
+  --nut-primary-color: #{$tzl-color-primary};
 }
 
 .agreement__control :deep(.nut-checkbox) {
@@ -715,8 +715,8 @@ onUnmounted(() => {
   padding: 0 10px;
   margin-bottom: 14px;
   border-radius: 499.5px;
-  background: rgba(255, 138, 54, 0.12);
-  color: #ff7b26;
+  background: $tzl-color-primary-soft;
+  color: $tzl-color-primary-deep;
   font-size: 12px;
   font-weight: 600;
 }
@@ -731,15 +731,15 @@ onUnmounted(() => {
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: #f3f4f6;
+  background: $tzl-color-surface-subtle;
 }
 
 .profile-card__avatar--fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #fdba74 0%, #fb923c 100%);
-  color: #ffffff;
+  background: $tzl-gradient-warm;
+  color: $tzl-color-surface-base;
   font-size: 22px;
   font-weight: 700;
 }
@@ -754,20 +754,20 @@ onUnmounted(() => {
 .profile-card__name {
   font-size: 20px;
   font-weight: 700;
-  color: #111827;
+  color: $tzl-color-text-primary;
 }
 
 .profile-card__subline {
   font-size: 13px;
-  color: #6b7280;
+  color: $tzl-color-text-muted;
 }
 
 .profile-card__hint {
   margin-top: 14px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: #fff7ed;
-  color: #c2410c;
+  background: $tzl-color-surface-warm;
+  color: $tzl-color-warning-text;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -775,14 +775,14 @@ onUnmounted(() => {
 .profile-card__footer {
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid #f3f4f6;
+  border-top: 1px solid $tzl-color-border-soft;
 }
 
 .profile-card__expiry {
   display: block;
   margin-bottom: 12px;
   font-size: 12px;
-  color: #9ca3af;
+  color: $tzl-color-text-soft;
 }
 
 .profile-card__actions {
@@ -800,12 +800,12 @@ onUnmounted(() => {
 }
 
 .secondary-action {
-  background: #f3f4f6;
-  color: #374151;
+  background: $tzl-color-surface-subtle;
+  color: $tzl-color-text-secondary;
 }
 
 .danger-action {
-  background: #fef2f2;
-  color: #dc2626;
+  background: $tzl-color-surface-danger;
+  color: $tzl-color-danger-text;
 }
 </style>

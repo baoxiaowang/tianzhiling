@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { defineConfig, type UserConfigExport } from '@tarojs/cli'
 import TsconfigPathsPlugin from 'tsconfig-paths-webpack-plugin'
 import devConfig from './dev'
@@ -5,6 +6,11 @@ import prodConfig from './prod'
 import NutUIResolver from '@nutui/auto-import-resolver'
 import Components from 'unplugin-vue-components/webpack'
 
+const sharedThemeResource = path.resolve(
+  __dirname,
+  '..',
+  'src/assets/styles/custom_theme.scss'
+)
 
 // https://taro-docs.jd.com/docs/next/config#defineconfig-辅助函数
 export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
@@ -46,6 +52,9 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       enable: false // Webpack 持久化缓存配置，建议开启。默认配置请参考：https://docs.taro.zone/docs/config-detail#cache
     },
     mini: {
+      sass: {
+        resource: [sharedThemeResource],
+      },
       postcss: {
         pxtransform: {
           enable: true,
@@ -69,6 +78,9 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       }
     },
     h5: {
+      sass: {
+        resource: [sharedThemeResource],
+      },
       publicPath: '/',
       staticDirectory: 'static',
       output: {
