@@ -4,8 +4,11 @@
     background="#ededed"
     header-background="#f7f7f7"
     bottom-background="#f7f7f7"
-    body-padding="0"
+    :body-padding="bodyPadding"
     :scroll="true"
+    :scroll-into-view="scrollIntoViewTarget"
+    :scroll-with-animation="true"
+    :show-scrollbar="false"
     :safe-area-top="true"
     :safe-area-bottom="false"
   >
@@ -253,6 +256,14 @@ const composerStyle = computed(() => {
         : 'translateY(0)',
   }
 })
+const bodyPadding = computed(() => {
+  const bottomPadding =
+    isInputFocused.value && keyboardHeight.value > 0
+      ? `${keyboardHeight.value}px`
+      : '0px'
+
+  return `0 0 ${bottomPadding} 0`
+})
 const canSend = computed(() => draftMessage.value.trim().length > 0 && !isSending.value)
 const displayRows = computed<DisplayRow[]>(() => {
   const rows: DisplayRow[] = []
@@ -410,7 +421,12 @@ async function scrollToBottom() {
   await nextTick()
   scrollIntoViewTarget.value = ''
   await nextTick()
-  scrollIntoViewTarget.value = 'chat-bottom-anchor'
+  await new Promise<void>((resolve) => {
+    setTimeout(() => {
+      scrollIntoViewTarget.value = 'chat-bottom-anchor'
+      resolve()
+    }, 0)
+  })
 }
 
 function buildMessageText(message: ConversationMessage) {
@@ -729,7 +745,7 @@ async function handleSend() {
 .chat-message-list {
   display: flex;
   flex-direction: column;
-  padding: 16px 16px 24px;
+  padding: 0 16px;
   box-sizing: border-box;
 }
 

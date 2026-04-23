@@ -14,6 +14,9 @@
       :scroll-y="true"
       class="page-scaffold__body page-scaffold__body--scroll"
       :style="bodyStyle"
+      :scroll-into-view="scrollIntoView"
+      :scroll-with-animation="scrollWithAnimation"
+      :show-scrollbar="showScrollbar"
     >
       <slot />
     </scroll-view>
@@ -55,7 +58,6 @@ export default {
 </script>
 
 <script setup lang="ts">
-import {ScrollView} from '@tarojs/components'
 import { computed, useSlots } from 'vue'
 import { createSafeAreaCssVars } from '../../utils/safe-area'
 
@@ -66,6 +68,9 @@ const props = withDefaults(
     bottomBackground?: string
     bodyPadding?: string
     scroll?: boolean
+    scrollIntoView?: string
+    scrollWithAnimation?: boolean
+    showScrollbar?: boolean
     safeAreaTop?: boolean
     safeAreaBottom?: boolean
   }>(),
@@ -75,6 +80,9 @@ const props = withDefaults(
     bottomBackground: '',
     bodyPadding: '0',
     scroll: false,
+    scrollIntoView: '',
+    scrollWithAnimation: false,
+    showScrollbar: true,
     safeAreaTop: true,
     safeAreaBottom: true,
   },
