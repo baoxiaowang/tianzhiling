@@ -1,10 +1,12 @@
 import { createApp } from 'vue'
 import { restoreAuthSession } from './auth/session'
+import { initSafeAreaInsets } from './utils/safe-area'
 
 import './app.scss'
 
 const App = createApp({
   onLaunch() {
+    initSafeAreaInsets()
     void restoreAuthSession()
   },
   onShow() {

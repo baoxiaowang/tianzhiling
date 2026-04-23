@@ -2,9 +2,12 @@
   <page-scaffold
     class="chat-page"
     background="#ededed"
+    header-background="#f7f7f7"
+    bottom-background="#f7f7f7"
     body-padding="0"
+    :scroll="true"
     :safe-area-top="true"
-    :safe-area-bottom="true"
+    :safe-area-bottom="false"
   >
     <template #header>
       <view class="chat-page__nav">
@@ -23,13 +26,7 @@
     </template>
 
     <view class="chat-page__body">
-      <scroll-view
-        scroll-y
-        class="chat-page__scroll"
-        :scroll-into-view="scrollIntoViewTarget"
-        :scroll-with-animation="true"
-        :show-scrollbar="false"
-      >
+
         <view v-if="isCheckingAuth || isLoading" class="chat-feedback">
           <view class="chat-feedback__spinner" />
           <text class="chat-feedback__title">
@@ -105,11 +102,10 @@
 
           <view id="chat-bottom-anchor" class="chat-message-list__bottom-anchor" />
         </view>
-      </scroll-view>
     </view>
 
     <template #bottom>
-      <view class="chat-composer">
+      <view class="chat-composer" :style="composerStyle">
         <view class="chat-composer__icon-button" @tap="handlePendingAction('语音消息')">
           <view class="chat-composer__mic">
             <view class="chat-composer__mic-head" />
@@ -120,15 +116,20 @@
 
         <view class="chat-composer__input-shell">
           <input
-            v-model="draftMessage"
+            :value="draftMessage"
             class="chat-composer__input"
             type="text"
             maxlength="2000"
             confirm-type="send"
+            :adjust-position="false"
             cursor-spacing="16"
             placeholder="微信"
             placeholder-style="color: #999999;"
+            @input="handleDraftInput"
             @confirm="handleSend"
+            @focus="handleInputFocus"
+            @blur="handleInputBlur"
+            @keyboardheightchange="handleKeyboardHeightChange"
           />
         </view>
 
@@ -171,7 +172,7 @@ export default {
 </script>
 
 <script setup lang="ts">
-import Taro, { useLoad } from '@tarojs/taro'
+import Taro, { useDidHide, useLoad } from '@tarojs/taro'
 import { computed, nextTick, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
@@ -181,6 +182,7 @@ import {
 } from '../../apis/conversation'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
+import { useSafeAreaInsets } from '../../utils/safe-area'
 
 type DisplayRow =
   | {
@@ -211,12 +213,15 @@ const isLoading = ref(true)
 const isSending = ref(false)
 const loadError = ref('')
 const draftMessage = ref('')
+const keyboardHeight = ref(0)
+const isInputFocused = ref(false)
 const messages = ref<ConversationMessage[]>([])
 const scrollIntoViewTarget = ref('')
 
 let ensureSessionPromise: Promise<void> | null = null
 let refreshMessagesPromise: Promise<void> | null = null
 
+const safeAreaInsets = useSafeAreaInsets()
 const pageTitle = computed(() => {
   const trimmedName = agentName.value.trim()
   return trimmedName || '对话'
@@ -234,6 +239,19 @@ const agentAvatarFallbackClass = computed(() => {
   return agentSex.value === 1
     ? 'chat-avatar--male'
     : 'chat-avatar--female'
+})
+const composerStyle = computed(() => {
+  const basePaddingBottom = isInputFocused.value && keyboardHeight.value > 0
+    ? '12px'
+    : `calc(12px + ${safeAreaInsets.value.bottom}px)`
+
+  return {
+    paddingBottom: basePaddingBottom,
+    transform:
+      isInputFocused.value && keyboardHeight.value > 0
+        ? `translateY(-${keyboardHeight.value}px)`
+        : 'translateY(0)',
+  }
 })
 const canSend = computed(() => draftMessage.value.trim().length > 0 && !isSending.value)
 const displayRows = computed<DisplayRow[]>(() => {
@@ -500,6 +518,35 @@ function handleRetry() {
   void refreshMessages({ showLoading: true })
 }
 
+function handleDraftInput(event: { detail?: { value?: string } }) {
+  draftMessage.value = event.detail?.value ?? ''
+}
+
+function handleInputFocus() {
+  isInputFocused.value = true
+  void scrollToBottom()
+}
+
+function handleInputBlur() {
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+}
+
+function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
+  keyboardHeight.value = event.detail?.height ?? 0
+
+  if (keyboardHeight.value <= 0) {
+    isInputFocused.value = false
+  }
+
+  void scrollToBottom()
+}
+
+useDidHide(() => {
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+})
+
 async function handleSend() {
   const content = draftMessage.value.trim()
   if (!content || isSending.value || !conversationId.value) {
@@ -627,12 +674,14 @@ async function handleSend() {
 }
 
 .chat-page__body {
-  height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
 .chat-page__scroll {
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -678,6 +727,8 @@ async function handleSend() {
 }
 
 .chat-message-list {
+  display: flex;
+  flex-direction: column;
   padding: 16px 16px 24px;
   box-sizing: border-box;
 }
@@ -708,6 +759,7 @@ async function handleSend() {
 }
 
 .chat-message-list__bottom-anchor {
+  margin-top: auto;
   width: 1px;
   height: 1px;
 }
@@ -793,6 +845,7 @@ async function handleSend() {
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
+  transition: transform 0.2s ease;
 }
 
 .chat-composer__icon-button {
