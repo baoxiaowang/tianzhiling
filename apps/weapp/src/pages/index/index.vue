@@ -468,9 +468,18 @@ function handleContactsRetry() {
 }
 
 function handleConversationTap(conversation: ConversationSummary) {
-  const targetName = resolveConversationName(conversation)
+  const query = [
+    ['conversationId', conversation.id],
+    ['agentName', resolveConversationName(conversation)],
+    ['agentAvatar', conversation.agentAvatar],
+    ['agentSex', String(conversation.agentSex)],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
 
-  showToast(`与${targetName}的聊天页待接入`)
+  void Taro.navigateTo({
+    url: `/pages/chat/index?${query}`,
+  })
 }
 
 async function handleMenuTap(title: string) {

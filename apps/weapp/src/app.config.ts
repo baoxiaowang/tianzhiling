@@ -1,6 +1,7 @@
 export default {
   pages: [
     'pages/index/index',
+    'pages/chat/index',
     'pages/agent-create/index',
     'pages/agent-create-flow/index',
     'pages/auth/index',

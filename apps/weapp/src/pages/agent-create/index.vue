@@ -28,14 +28,16 @@ export default {
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import agentStartImage from '../../assets/images/agent-start.jpg'
+import { resolvePublicAssetUrl } from '../../utils/public-asset'
+
+const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
 
 function handleBack() {
   void Taro.navigateBack()
 }
 
 async function handleStart() {
-  await Taro.navigateTo({
+  await Taro.redirectTo({
     url: '/pages/agent-create-flow/index',
   })
 }

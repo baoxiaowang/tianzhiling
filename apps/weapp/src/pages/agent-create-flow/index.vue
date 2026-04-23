@@ -151,11 +151,17 @@ export default {
 import Taro from '@tarojs/taro'
 import { computed, nextTick, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
+import {
+  getConversations,
+  type ConversationSummary,
+} from '../../apis/conversation'
 import { createAgent, updateAgentAvatar } from '../../apis/agent'
 import { uploadLocalImage } from '../../apis/storage'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { clearAuthSession } from '../../auth/session'
-import agentFlowImage from '../../assets/images/agent.jpg'
+import { resolvePublicAssetUrl } from '../../utils/public-asset'
+
+const agentFlowImage = resolvePublicAssetUrl('/public/weapp/agent.jpg')
 
 type AgentFormStep =
   | 'memorialName'
@@ -337,6 +343,32 @@ function showToast(message: string) {
   })
 }
 
+function buildChatPageUrl(conversation: ConversationSummary) {
+  const query = [
+    ['conversationId', conversation.id],
+    ['agentName', conversation.agentName.trim() || '未命名联系人'],
+    ['agentAvatar', conversation.agentAvatar],
+    ['agentSex', String(conversation.agentSex)],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  return `/pages/chat/index?${query}`
+}
+
+async function openCreatedAgentConversation(agentId: string) {
+  const conversations = await getConversations()
+  const conversation = conversations.find((item) => item.agentId === agentId)
+
+  if (!conversation) {
+    throw new Error('CONVERSATION_NOT_FOUND')
+  }
+
+  await Taro.reLaunch({
+    url: buildChatPageUrl(conversation),
+  })
+}
+
 async function redirectToAuth() {
   await clearAuthSession()
   await Taro.reLaunch({
@@ -466,9 +498,16 @@ async function submitCreation() {
       icon: 'none',
       duration: 1200,
     })
-    setTimeout(() => {
-      void Taro.navigateBack({ delta: 2 })
-    }, 400)
+
+    try {
+      await openCreatedAgentConversation(agent.id)
+      return
+    } catch {
+      showToast('已创建成功，请在通讯录中进入聊天')
+      setTimeout(() => {
+        void Taro.navigateBack({ delta: 2 })
+      }, 400)
+    }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth()

@@ -24,6 +24,7 @@ declare namespace NodeJS {
      */
     TARO_APP_ID: string
     TARO_APP_API_BASE_URL?: string
+    TARO_APP_ASSET_BASE_URL?: string
   }
 }
 

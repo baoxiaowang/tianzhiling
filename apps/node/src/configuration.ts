@@ -12,6 +12,7 @@ import { NotFoundFilter } from './filter/notfound.filter';
 import { AuthMiddleware } from './middleware/auth.middleware';
 import { ReportMiddleware } from './middleware/report.middleware';
 import { FormatMiddleware } from './middleware/format.middleware';
+import { servePublicAsset } from './middleware/public-asset.middleware';
 
 @Configuration({
   imports: [
@@ -33,6 +34,7 @@ export class MainConfiguration {
   app: koa.Application;
 
   async onReady() {
+    this.app.use(servePublicAsset);
     this.app.useMiddleware([ReportMiddleware]);
     this.app.useMiddleware([AuthMiddleware]);
     this.app.useMiddleware([FormatMiddleware]);
