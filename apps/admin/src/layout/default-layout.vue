@@ -105,7 +105,7 @@
   });
 </script>
 
-<style scoped lang="less">
+<style lang="less">
   @nav-size-height: 60px;
   @layout-max-width: 1100px;
 
@@ -130,6 +130,7 @@
     z-index: 99;
     height: 100%;
     transition: all 0.2s cubic-bezier(0.34, 0.69, 0.1, 1);
+
     &::after {
       position: absolute;
       top: 0;
@@ -141,7 +142,7 @@
       content: '';
     }
 
-    > :deep(.arco-layout-sider-children) {
+    > .arco-layout-sider-children {
       overflow-y: hidden;
     }
   }
@@ -150,17 +151,18 @@
     height: 100%;
     overflow: auto;
     overflow-x: hidden;
-    :deep(.arco-menu) {
+
+    .arco-menu {
       ::-webkit-scrollbar {
         width: 12px;
         height: 4px;
       }
 
       ::-webkit-scrollbar-thumb {
-        border: 4px solid transparent;
-        background-clip: padding-box;
-        border-radius: 7px;
         background-color: var(--color-text-4);
+        background-clip: padding-box;
+        border: 4px solid transparent;
+        border-radius: 7px;
       }
 
       ::-webkit-scrollbar-thumb:hover {

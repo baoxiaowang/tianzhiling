@@ -13,7 +13,8 @@
     "build:node": "pnpm --filter ./apps/node build",
     "test:node": "pnpm --filter ./apps/node test",
     "lint:node": "pnpm --filter ./apps/node lint",
-    "dev:weapp:h5": "pnpm --filter ./apps/weapp dev:h5"
+    "dev:weapp:h5": "pnpm --filter ./apps/weapp dev:h5",
+    "dev:weapp:weapp": "pnpm --filter ./apps/weapp dev:weapp"
   },
   "devDependencies": {
     "@commitlint/cli": "^17.1.2",

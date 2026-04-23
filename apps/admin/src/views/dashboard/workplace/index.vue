@@ -60,12 +60,12 @@
   };
 </script>
 
-<style lang="less" scoped>
+<style lang="less">
   .container {
-    background-color: var(--color-fill-2);
+    display: flex;
     padding: 16px 20px;
     padding-bottom: 0;
-    display: flex;
+    background-color: var(--color-fill-2);
   }
 
   .left-side {
@@ -79,24 +79,40 @@
   }
 
   .panel {
+    overflow: auto;
     background-color: var(--color-bg-2);
     border-radius: 4px;
-    overflow: auto;
   }
-  :deep(.panel-border) {
+
+  .panel-border {
     margin-bottom: 0;
     border-bottom: 1px solid rgb(var(--gray-2));
   }
+
   .moduler-wrap {
-    border-radius: 4px;
     background-color: var(--color-bg-2);
-    :deep(.text) {
+    border-radius: 4px;
+
+    .text {
+      color: rgb(var(--gray-8));
       font-size: 12px;
       text-align: center;
-      color: rgb(var(--gray-8));
     }
 
-    :deep(.wrapper) {
+    .icon {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      margin-bottom: 4px;
+      color: rgb(var(--dark-gray-1));
+      font-size: 16px;
+      line-height: 32px;
+      text-align: center;
+      background-color: rgb(var(--gray-1));
+      border-radius: 4px;
+    }
+
+    .wrapper {
       margin-bottom: 8px;
       text-align: center;
       cursor: pointer;
@@ -106,28 +122,17 @@
           margin-bottom: 0;
         }
       }
+
       &:hover {
         .icon {
           color: rgb(var(--arcoblue-6));
           background-color: #e8f3ff;
         }
+
         .text {
           color: rgb(var(--arcoblue-6));
         }
       }
-    }
-
-    :deep(.icon) {
-      display: inline-block;
-      width: 32px;
-      height: 32px;
-      margin-bottom: 4px;
-      color: rgb(var(--dark-gray-1));
-      line-height: 32px;
-      font-size: 16px;
-      text-align: center;
-      background-color: rgb(var(--gray-1));
-      border-radius: 4px;
     }
   }
 </style>
@@ -138,11 +143,12 @@
     .container {
       display: block;
     }
+
     .right-side {
       // display: none;
       width: 100%;
-      margin-left: 0;
       margin-top: 16px;
+      margin-left: 0;
     }
   }
 </style>

@@ -35,7 +35,9 @@
     </view>
 
     <view v-if="hasFloating" class="page-scaffold__floating">
-      <slot name="floating" />
+      <view class="page-scaffold__floating-content">
+        <slot name="floating" />
+      </view>
     </view>
   </view>
 </template>
@@ -134,7 +136,7 @@ const bodyStyle = computed(() => {
   pointer-events: none;
 }
 
-.page-scaffold__floating :deep(*) {
+.page-scaffold__floating-content {
   pointer-events: auto;
 }
 </style>

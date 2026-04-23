@@ -546,22 +546,22 @@ onUnmounted(() => {
   --nut-tabs-horizontal-tab-line-color: #{$tzl-color-primary};
 }
 
-.auth-tabs :deep(.nut-tabs__titles) {
+.auth-tabs .nut-tabs__titles {
   margin-bottom: 16px;
 }
 
-.auth-tabs :deep(.nut-tabs__titles-item) {
+.auth-tabs .nut-tabs__titles-item {
   width: auto;
   min-width: 0;
   justify-content: flex-start;
   font-weight: 500;
 }
 
-.auth-tabs :deep(.nut-tabs__titles-item.active) {
+.auth-tabs .nut-tabs__titles-item.active {
   font-weight: 700;
 }
 
-.auth-tabs :deep(.nut-tabs__titles-item__text.ellipsis) {
+.auth-tabs .nut-tabs__titles-item__text.ellipsis {
   width: auto !important;
   max-width: none !important;
   overflow: visible !important;
@@ -599,26 +599,26 @@ onUnmounted(() => {
   box-shadow: $tzl-shadow-inset-soft;
 }
 
-.field__control :deep(.nut-input) {
+.field__control .nut-input {
   width: 100%;
   padding: 0;
   line-height: 46px;
   background: transparent;
 }
 
-.field__control :deep(.nut-input-value),
-.field__control :deep(.nut-input-inner),
-.field__control :deep(.nut-input-box) {
+.field__control .nut-input-value,
+.field__control .nut-input-inner,
+.field__control .nut-input-box {
   width: 100%;
 }
 
-.field__control :deep(.nut-input-inner),
-.field__control :deep(.nut-input-box) {
+.field__control .nut-input-inner,
+.field__control .nut-input-box {
   display: flex;
   align-items: center;
 }
 
-.field__control :deep(.input-text) {
+.field__control .input-text {
   width: 100%;
   height: 46px;
   padding: 0;
@@ -627,7 +627,7 @@ onUnmounted(() => {
   color: $tzl-color-text-primary;
 }
 
-.field__control :deep(.input-text::placeholder) {
+.field__control .input-text::placeholder {
   color: $tzl-color-text-soft;
 }
 
@@ -661,7 +661,7 @@ onUnmounted(() => {
   --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
-.code-button :deep(.nut-button__text) {
+.code-button .nut-button__text {
   margin-left: 0;
 }
 
@@ -682,7 +682,7 @@ onUnmounted(() => {
   --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
-.submit-button :deep(.nut-button__text) {
+.submit-button .nut-button__text {
   margin-left: 0;
   letter-spacing: 0.5px;
 }
@@ -701,17 +701,17 @@ onUnmounted(() => {
   --nut-primary-color: #{$tzl-color-primary};
 }
 
-.agreement__control :deep(.nut-checkbox) {
+.agreement__control .nut-checkbox {
   display: flex;
   align-items: flex-start;
   margin-right: 0;
 }
 
-.agreement__control :deep(.nut-checkbox__icon) {
+.agreement__control .nut-checkbox__icon {
   margin-top: 1px;
 }
 
-.agreement__control :deep(.nut-checkbox__label) {
+.agreement__control .nut-checkbox__label {
   line-height: 1.6;
 }
 

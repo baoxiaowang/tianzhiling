@@ -2,12 +2,12 @@
   "miniprogramRoot": "./dist",
   "projectname": "weapp",
   "description": "多端小程序",
-  "appid": "touristappid",
+  "appid": "wxb6bcebdb61af0461",
   "setting": {
-    "urlCheck": true,
+    "urlCheck": false,
     "es6": false,
     "enhance": false,
-    "compileHotReLoad": false,
+    "compileHotReLoad": true,
     "postcss": false,
     "minified": false
   },

@@ -211,6 +211,8 @@ const currentQuestion = computed(() => {
       return 'TA 怎么称呼你？'
     case 'avatar':
       return '为 TA 选一张头像吧'
+    default:
+      return ''
   }
 })
 const currentPlaceholder = computed(() => {
@@ -223,6 +225,8 @@ const currentPlaceholder = computed(() => {
       return '如：丫头，小宝'
     case 'gender':
     case 'avatar':
+      return ''
+    default:
       return ''
   }
 })
@@ -240,6 +244,8 @@ const activeInputValue = computed({
         return relationToMe.value
       case 'gender':
       case 'avatar':
+        return ''
+      default:
         return ''
     }
   },
@@ -276,6 +282,8 @@ const canContinue = computed(() => {
       return relationToMe.value.trim().length > 0
     case 'avatar':
       return true
+    default:
+      return false
   }
 })
 const historyEntries = computed<ChatEntry[]>(() => {
