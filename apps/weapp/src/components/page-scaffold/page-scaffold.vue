@@ -117,6 +117,8 @@ const bodyStyle = computed(() => {
 }
 
 .page-scaffold__bottom {
+  position: relative;
+  z-index: 10;
   flex-shrink: 0;
 }
 

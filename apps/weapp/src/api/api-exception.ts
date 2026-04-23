@@ -63,6 +63,21 @@ export class ApiException extends Error {
       case 'SMS_PROVIDER_INVALID_RESPONSE':
       case 'SMS_PROVIDER_NETWORK_ERROR':
         return '验证码发送失败，请稍后重试'
+      case 'INVALID_AGENT_NAME':
+        return '请输入 30 个字以内的纪念人昵称或备注名'
+      case 'INVALID_AGENT_SEX':
+        return '请选择 TA 的性别'
+      case 'INVALID_AGENT_CALL_NAME':
+        return '请输入 20 个字以内的称呼'
+      case 'AGENT_NOT_FOUND':
+        return '智能体资料不存在'
+      case 'INVALID_AGENT_AVATAR':
+        return '头像上传结果无效，请重新选择'
+      case 'TENCENT_COS_CONFIG_MISSING':
+      case 'TENCENT_COS_INVALID_FILE':
+      case 'OSS_CONFIG_MISSING':
+      case 'OSS_INVALID_FILE':
+        return '图片上传失败，请稍后重试'
       default:
         return fallback
     }
