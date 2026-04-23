@@ -21,12 +21,11 @@ function normalizePath(path: string) {
   return ApiConfig.baseUrl ? `${ApiConfig.baseUrl}${normalizedPath}` : normalizedPath
 }
 
-export async function requestMap<T extends Record<string, unknown>>(
+export async function requestMap<T>(
   path: string,
   options: RequestOptions = {}
 ) {
   const session = authSession.value
-  debugger
   console.log('11', normalizePath(path))
   try {
     const response = await Taro.request({
@@ -69,18 +68,18 @@ export async function requestMap<T extends Record<string, unknown>>(
   }
 }
 
-export function get<T extends Record<string, unknown>>(path: string) {
+export function get<T>(path: string) {
   return requestMap<T>(path)
 }
 
-export function post<T extends Record<string, unknown>>(
+export function post<T>(
   path: string,
   data?: Record<string, unknown>
 ) {
   return requestMap<T>(path, { method: 'POST', data })
 }
 
-export function patch<T extends Record<string, unknown>>(
+export function patch<T>(
   path: string,
   data?: Record<string, unknown>
 ) {

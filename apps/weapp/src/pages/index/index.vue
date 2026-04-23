@@ -37,10 +37,10 @@
           <view class="moments-notice">
             <image
               class="moments-notice__avatar"
-              :src="momentsDesign.notificationAvatarUrl"
+              :src="notificationAvatarUrl"
               mode="aspectFill"
             />
-            <text class="moments-notice__text">1条新消息</text>
+            <text class="moments-notice__text">{{ notificationText }}</text>
           </view>
 
           <view class="moments-content">
@@ -200,6 +200,11 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, onMounted, ref } from 'vue'
+import {
+  getCommentNotificationSummary,
+  type PostCommentNotificationSummary,
+} from '../../apis/post'
+import { getCurrentUser } from '../../auth/api'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 
@@ -274,8 +279,10 @@ const momentsDesign = {
 const activeTab = ref<HomeTabKey>('moments')
 const isCheckingAuth = ref(true)
 const isRedirecting = ref(false)
+const notificationSummary = ref<PostCommentNotificationSummary | null>(null)
 
 let ensureSessionPromise: Promise<void> | null = null
+let refreshHomePromise: Promise<void> | null = null
 
 const session = computed(() => authSession.value)
 const displayName = computed(() => {
@@ -288,6 +295,15 @@ const displayAccount = computed(() => {
 })
 const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
+const notificationAvatarUrl = computed(() => {
+  const latestAvatar = notificationSummary.value?.latest?.actorAvatar.trim()
+  return latestAvatar ? latestAvatar : momentsDesign.notificationAvatarUrl
+})
+const notificationText = computed(() => {
+  const unreadCount = notificationSummary.value?.unreadCount ?? 0
+
+  return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
+})
 
 async function redirectToAuth() {
   isRedirecting.value = true
@@ -329,7 +345,14 @@ function handleFeaturePending(featureName: string) {
   showToast(`${featureName} 待接入`)
 }
 
-function handleMenuTap(title: string) {
+async function handleMenuTap(title: string) {
+  if (title === '我的动态') {
+    await Taro.navigateTo({
+      url: '/pages/my-posts/index',
+    })
+    return
+  }
+
   showToast(`${title} 页面待接入`)
 }
 
@@ -341,12 +364,47 @@ function showToast(message: string) {
   })
 }
 
+async function refreshHomeData() {
+  if (refreshHomePromise) {
+    return refreshHomePromise
+  }
+
+  refreshHomePromise = Promise.all([
+    getCurrentUser().catch(() => undefined),
+    getCommentNotificationSummary()
+      .then((summary) => {
+        notificationSummary.value = summary
+      })
+      .catch(() => undefined),
+  ])
+    .then(async () => {
+      if (!authSession.value) {
+        await redirectToAuth()
+      }
+    })
+    .finally(() => {
+      refreshHomePromise = null
+    })
+
+  return refreshHomePromise
+}
+
+async function prepareHomePage() {
+  await ensureAuthenticated()
+
+  if (!authSession.value) {
+    return
+  }
+
+  await refreshHomeData()
+}
+
 onMounted(() => {
-  void ensureAuthenticated()
+  void prepareHomePage()
 })
 
 useDidShow(() => {
-  void ensureAuthenticated()
+  void prepareHomePage()
 })
 </script>
 

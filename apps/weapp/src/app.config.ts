@@ -1,7 +1,8 @@
 export default {
   pages: [
     'pages/index/index',
-    'pages/auth/index'
+    'pages/auth/index',
+    'pages/my-posts/index',
   ],
   window: {
     backgroundTextStyle: 'light',

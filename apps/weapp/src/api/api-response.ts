@@ -44,7 +44,7 @@ export class ApiResponse<T = unknown> {
     return new ApiResponse<T>(success, code, message, decoded.data)
   }
 
-  requireMapData<R extends Record<string, unknown>>() {
+  requireMapData<R>() {
     if (!this.data || typeof this.data !== 'object' || Array.isArray(this.data)) {
       return {} as R
     }

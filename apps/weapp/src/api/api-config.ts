@@ -9,7 +9,6 @@ export const ApiConfig = {
     if (configured) {
       return trimTrailingSlash(configured)
     }
-    debugger
     return ''
   },
 }
