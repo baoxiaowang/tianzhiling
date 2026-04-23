@@ -14,19 +14,18 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     designWidth (input) {
       // 配置 NutUI 375 尺寸
       if (input?.file?.replace(/\\+/g, '/').indexOf('@nutui') > -1) {
-        return 375
+        return 375;
       }
-      // 全局使用 Taro 默认的 750 尺寸
-      return 750
+      return 375;
     },
     deviceRatio: {
       640: 2.34 / 2,
       750: 1,
-      375: 2,
-      828: 1.81 / 2
+      828: 1.81 / 2,
+      375: 2 / 1,
     },
     sourceRoot: 'src',
-    outputRoot: 'dist',
+    outputRoot: 'dist/' + process.env.TARO_ENV,
     plugins: ['@tarojs/plugin-html'],
     defineConstants: {
     },
