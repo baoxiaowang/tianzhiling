@@ -32,12 +32,26 @@ services:
       NODE_MONGO_USERNAME: ${MONGO_USERNAME:-admin}
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
-    ports:
-      - ${NODE_HOST_PORT:-17707}:7001
+    expose:
+      - "7001"
     depends_on:
       - tzl_redis
       - tzl_mongo
       - standalone
+    networks:
+      - tzl-network
+    restart: always
+
+  tzl_nginx:
+    profiles: ["prod"]
+    container_name: tzl_nginx
+    image: nginx:1.27-alpine
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - tzl_node
     networks:
       - tzl-network
     restart: always
