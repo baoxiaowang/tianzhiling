@@ -1,0 +1,12 @@
+node_modules
+apps/*/node_modules
+
+apps/node/dist
+apps/node/logs
+
+.git
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
