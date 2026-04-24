@@ -8,6 +8,7 @@ export default {
     'pages/agent-create-flow/index',
     'pages/auth/index',
     'pages/my-posts/index',
+    'pages/post-create/index',
   ],
   window: {
     backgroundTextStyle: 'light',

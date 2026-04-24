@@ -2,9 +2,27 @@
   <page-scaffold
     class="moments-page"
     body-padding="0"
+    background="#ffffff"
+    scroll
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
+    <template v-if="session" #header>
+      <app-bar
+        title="朋友圈"
+        background="#ffffff"
+        :show-back="false"
+        :show-capsule="false"
+      >
+        <template #left>
+          <view class="moments-publish-button" @tap="handleCreatePost">
+            <view class="moments-publish-button__line moments-publish-button__line--horizontal" />
+            <view class="moments-publish-button__line moments-publish-button__line--vertical" />
+          </view>
+        </template>
+      </app-bar>
+    </template>
+
     <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
@@ -12,7 +30,10 @@
       </text>
     </view>
 
-    <scroll-view v-else-if="session" scroll-y class="moments-scroll">
+    <view
+      v-else-if="session"
+      class="moments-scroll"
+    >
       <view class="moments-banner">
         <view class="moments-banner__star-glow" />
         <text class="moments-banner__star">★</text>
@@ -33,7 +54,11 @@
         <view class="banner-indicator__dot" />
       </view>
 
-      <view class="moments-notice">
+      <view
+        v-if="hasUnreadNotifications"
+        class="moments-notice"
+        @tap="handleNotificationTap"
+      >
         <image
           class="moments-notice__avatar"
           :src="notificationAvatarUrl"
@@ -41,66 +66,142 @@
         />
         <text class="moments-notice__text">{{ notificationText }}</text>
       </view>
+      <view v-else class="moments-notice-spacer" />
 
-      <view class="moments-content">
-        <view class="moment-card">
-          <view class="moment-card__header">
+      <view v-if="isPostsLoading" class="moments-feedback">
+        <view class="moments-feedback__dot" />
+        <text class="moments-feedback__title">正在加载动态...</text>
+      </view>
+
+      <view v-else-if="errorMessage && posts.length === 0" class="moments-feedback">
+        <text class="moments-feedback__icon">✦</text>
+        <text class="moments-feedback__title">{{ errorMessage }}</text>
+        <view class="moments-feedback__action" @tap="handleRetry">重新加载</view>
+      </view>
+
+      <view v-else-if="posts.length === 0" class="moments-feedback">
+        <text class="moments-feedback__icon">✦</text>
+        <text class="moments-feedback__title">还没有动态</text>
+        <text class="moments-feedback__subtitle">发布第一条内容，让想念留下痕迹</text>
+      </view>
+
+      <view v-else class="moments-content">
+        <view
+          v-for="post in posts"
+          :key="post.id"
+          class="moment-card"
+        >
+          <view class="moment-card__avatar-column">
             <image
+              v-if="post.authorAvatar"
               class="moment-card__avatar"
-              :src="momentsDesign.post.avatarUrl"
+              :src="post.authorAvatar"
               mode="aspectFill"
             />
+            <view v-else class="moment-card__avatar moment-card__avatar--fallback">
+              <text>{{ getPostAuthor(post).slice(0, 1) }}</text>
+            </view>
+          </view>
+
+          <view class="moment-card__content-column">
             <view class="moment-card__meta">
-              <text class="moment-card__author">{{ momentsDesign.post.author }}</text>
-              <text class="moment-card__body-text">{{ momentsDesign.post.content }}</text>
+              <text class="moment-card__author">{{ getPostAuthor(post) }}</text>
+              <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
             </view>
-          </view>
 
-          <image
-            class="moment-card__image"
-            :src="momentsDesign.post.imageUrl"
-            mode="aspectFill"
-          />
-
-          <view class="moment-card__stats">
-            <text class="moment-card__time">{{ momentsDesign.post.time }}</text>
-            <view class="moment-card__actions">
-              <view class="moment-card__action">
-                <text class="moment-card__action-icon">♡</text>
-                <text class="moment-card__action-count">{{ momentsDesign.post.likes }}</text>
-              </view>
-              <view class="moment-card__action">
-                <text class="moment-card__action-icon">◌</text>
-                <text class="moment-card__action-count">{{ momentsDesign.post.comments }}</text>
-              </view>
-            </view>
-          </view>
-
-          <view class="moment-card__comments">
             <view
-              v-for="comment in momentsDesign.post.commentList"
-              :key="comment.id"
-              class="moment-card__comment"
+              v-if="getPostImages(post).length"
+              class="moment-card__image-grid"
+              :class="`moment-card__image-grid--${getPostImages(post).length}`"
             >
-              <text class="moment-card__comment-author">{{ comment.author }}</text>
-              <text class="moment-card__comment-text">{{ comment.content }}</text>
+              <view
+                v-for="(image, index) in getPostImages(post)"
+                :key="`${post.id}-${image}-${index}`"
+                class="moment-card__image-wrap"
+                @tap="handlePreviewImages(post, index)"
+              >
+                <image class="moment-card__image" :src="image" mode="aspectFill" />
+              </view>
+            </view>
+
+            <view class="moment-card__stats">
+              <text class="moment-card__time">
+                {{ formatMomentRelativeTime(post.updatedAt ?? post.createdAt) }}
+              </text>
+              <view class="moment-card__actions">
+                <view class="moment-card__action">
+                  <text class="moment-card__action-icon">♡</text>
+                  <text class="moment-card__action-count">0</text>
+                </view>
+                <view class="moment-card__action" @tap="handleCommentTap(post)">
+                  <text class="moment-card__action-icon">◌</text>
+                  <text class="moment-card__action-count">{{ post.commentCount }}</text>
+                </view>
+              </view>
+            </view>
+
+            <view v-if="post.comments.length" class="moment-card__comments">
+              <view
+                v-for="comment in post.comments"
+                :key="comment.id"
+                class="moment-card__comment"
+                @tap="handleCommentTap(post)"
+              >
+                <text class="moment-card__comment-author">
+                  {{ formatCommentAuthor(comment.authorName, comment.replyToUserName) }}
+                </text>
+                <text class="moment-card__comment-text">{{ comment.content }}</text>
+              </view>
             </view>
           </view>
         </view>
       </view>
-    </scroll-view>
+    </view>
 
-    <template v-if="session" #floating>
-      <view class="publish-fab-anchor">
-        <view class="publish-fab" @tap="handleFeaturePending('发布动态')">
-          <view class="publish-fab__plus">
-            <view class="publish-fab__line publish-fab__line--horizontal" />
-            <view class="publish-fab__line publish-fab__line--vertical" />
-          </view>
-          <text class="publish-fab__label">发布</text>
+    <view
+      v-if="activeCommentPost"
+      class="moment-comment-dock"
+      :style="commentComposerStyle"
+    >
+      <view class="moment-comment-composer">
+        <input
+          class="moment-comment-composer__input"
+          :value="commentDraft"
+          :focus="shouldFocusCommentInput"
+          placeholder="发表评论:"
+          placeholder-style="color: #b8b8b8;"
+          confirm-type="send"
+          :adjust-position="false"
+          @input="handleCommentInput"
+          @focus="handleCommentFocus"
+          @blur="handleCommentBlur"
+          @keyboardheightchange="handleCommentKeyboardHeightChange"
+          @confirm="handleSubmitComment"
+        />
+        <view
+          v-if="!isCommentEmojiPanelVisible"
+          class="moment-comment-composer__icon moment-comment-composer__icon--emoji"
+          @tap="handleCommentEmojiToggle"
+        >
+          ☺
+        </view>
+        <view
+          v-else
+          class="moment-comment-composer__send"
+          :class="{ 'moment-comment-composer__send--disabled': !canSubmitComment || isSubmittingComment }"
+          @tap="handleSubmitComment"
+        >
+          发送
         </view>
       </view>
-    </template>
+
+      <emoji-picker-panel
+        :visible="isCommentEmojiPanelVisible"
+        @emoji-select="handleCommentEmojiSelect"
+        @backspace="handleCommentEmojiDelete"
+      />
+    </view>
+
   </page-scaffold>
 </template>
 
@@ -111,64 +212,49 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useDidShow } from '@tarojs/taro'
-import { getCommentNotificationSummary, type PostCommentNotificationSummary } from '../../apis/post'
+import { computed, nextTick, ref } from 'vue'
+import Taro, { useDidHide, useDidShow } from '@tarojs/taro'
+import {
+  createComment,
+  getCommentNotificationSummary,
+  getPosts,
+  markCommentNotificationsRead,
+  type PostCommentNotificationSummary,
+  type PostItem,
+} from '../../apis/post'
+import { ApiException } from '../../api/api-exception'
+import AppBar from '../../components/app-bar/app-bar.vue'
+import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession } from '../../auth/session'
-import { ensureAuthenticatedSession, redirectToAuthPage, showPendingToast } from '../../utils/auth-guard'
-import { syncCustomTabBar } from '../../utils/custom-tab-bar'
-
-interface MomentComment {
-  id: string
-  author: string
-  content: string
-}
-
-interface MomentPost {
-  author: string
-  avatarUrl: string
-  content: string
-  imageUrl: string
-  time: string
-  likes: number
-  comments: number
-  commentList: MomentComment[]
-}
+import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 const momentsDesign = {
   notificationAvatarUrl: 'https://www.figma.com/api/mcp/asset/f41f54cc-8bf1-440c-9c03-648deafeb2d1',
-  post: {
-    author: '柠檬',
-    avatarUrl: 'https://www.figma.com/api/mcp/asset/245d5202-c1ef-49a7-9d99-874da30534ca',
-    content:
-      '外公，今天看到了好美的荷花，想起以前我们在院子里种的那些花儿，牡丹，月季，君子兰，茉莉。',
-    imageUrl: 'https://www.figma.com/api/mcp/asset/af0c2530-3775-4e9e-b5da-faf6054359f1',
-    time: '6分钟前',
-    likes: 99,
-    comments: 99,
-    commentList: [
-      {
-        id: 'c1',
-        author: '孙传侠：',
-        content: '仪金金啊，看到这荷花，外公心里也暖暖的呢，想起你们子里那些郁郁花',
-      },
-      {
-        id: 'c2',
-        author: '柠檬回复孙传侠：',
-        content: '仪是啊，我重喜欢这荷花，能一起赏花就好了',
-      },
-    ],
-  },
-} as const satisfies { notificationAvatarUrl: string; post: MomentPost }
+} as const
 
 const isCheckingAuth = ref(true)
 const isRedirecting = ref(false)
+const isPostsLoading = ref(false)
+const errorMessage = ref('')
+const posts = ref<PostItem[]>([])
 const notificationSummary = ref<PostCommentNotificationSummary | null>(null)
+const activeCommentPost = ref<PostItem | null>(null)
+const commentDraft = ref('')
+const commentKeyboardHeight = ref(0)
+const isCommentInputFocused = ref(false)
+const shouldFocusCommentInput = ref(false)
+const isSubmittingComment = ref(false)
+const isCommentEmojiPanelVisible = ref(false)
 
-let refreshMomentsPromise: Promise<void> | null = null
+let refreshDataPromise: Promise<void> | null = null
+let hasLoadedPosts = false
 
 const session = computed(() => authSession.value)
+const hasUnreadNotifications = computed(() => {
+  return (notificationSummary.value?.unreadCount ?? 0) > 0 && Boolean(notificationSummary.value?.latest)
+})
 const notificationAvatarUrl = computed(() => {
   const latestAvatar = notificationSummary.value?.latest?.actorAvatar.trim()
   return latestAvatar ? latestAvatar : momentsDesign.notificationAvatarUrl
@@ -177,31 +263,138 @@ const notificationText = computed(() => {
   const unreadCount = notificationSummary.value?.unreadCount ?? 0
   return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
 })
+const canSubmitComment = computed(() => commentDraft.value.trim().length > 0)
+const commentComposerStyle = computed(() => {
+  const shouldFollowKeyboard =
+    isCommentInputFocused.value &&
+    commentKeyboardHeight.value > 0 &&
+    !isCommentEmojiPanelVisible.value
 
-function handleFeaturePending(featureName: string) {
-  showPendingToast(`${featureName} 待接入`)
+  return {
+    transform: shouldFollowKeyboard
+      ? `translateY(-${commentKeyboardHeight.value}px)`
+      : 'translateY(0)',
+  }
+})
+
+function showToast(title: string) {
+  void Taro.showToast({
+    title,
+    icon: 'none',
+    duration: 1800,
+  })
 }
 
-async function refreshMomentsData() {
-  if (refreshMomentsPromise) {
-    return refreshMomentsPromise
+function getPostAuthor(post: PostItem) {
+  const authorName = post.authorName.trim()
+  return authorName ? authorName : '天之灵用户'
+}
+
+function getPostImages(post: PostItem) {
+  return post.images
+    .map((image) => image.trim())
+    .filter(Boolean)
+    .slice(0, 9)
+}
+
+function formatMomentRelativeTime(value: string | null) {
+  if (!value || !value.trim()) {
+    return '刚刚'
   }
 
-  refreshMomentsPromise = getCommentNotificationSummary()
-    .then((summary) => {
+  const parsed = new Date(value)
+
+  if (Number.isNaN(parsed.getTime())) {
+    return '刚刚'
+  }
+
+  const diffMs = Math.max(0, Date.now() - parsed.getTime())
+  const diffSeconds = Math.floor(diffMs / 1000)
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  const diffHours = Math.floor(diffMinutes / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffSeconds < 60) {
+    return '刚刚'
+  }
+
+  if (diffMinutes < 60) {
+    return `${diffMinutes}分钟前`
+  }
+
+  if (diffHours < 24) {
+    return `${diffHours}小时前`
+  }
+
+  if (diffDays < 7) {
+    return `${diffDays}天前`
+  }
+
+  const parts = [
+    parsed.getFullYear(),
+    `${parsed.getMonth() + 1}`.padStart(2, '0'),
+    `${parsed.getDate()}`.padStart(2, '0'),
+  ]
+
+  return parts.join('-')
+}
+
+function formatCommentAuthor(authorName: string, replyToUserName: string) {
+  const author = authorName.trim() || '天之灵用户'
+  const replyTo = replyToUserName.trim()
+
+  return replyTo ? `${author} 回复 ${replyTo}：` : `${author}：`
+}
+
+function sortPostsByTime(items: PostItem[]) {
+  return [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? '') || 0
+    const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? '') || 0
+    return rightTime - leftTime
+  })
+}
+
+async function refreshMomentsData(showLoading = true) {
+  if (refreshDataPromise) {
+    return refreshDataPromise
+  }
+
+  refreshDataPromise = Promise.resolve()
+    .then(async () => {
+      if (showLoading) {
+        isPostsLoading.value = true
+      }
+
+      errorMessage.value = ''
+
+      const [postItems, summary] = await Promise.all([
+        getPosts(),
+        getCommentNotificationSummary().catch(() => null),
+      ])
+
+      posts.value = sortPostsByTime(postItems)
       notificationSummary.value = summary
+      hasLoadedPosts = true
     })
-    .catch(() => undefined)
-    .then(() => undefined)
+    .catch((error) => {
+      if (error instanceof ApiException) {
+        errorMessage.value = error.message || '加载动态失败'
+      } else {
+        errorMessage.value = '加载动态失败，请稍后重试'
+      }
+    })
     .finally(() => {
-      refreshMomentsPromise = null
+      refreshDataPromise = null
+      isPostsLoading.value = false
     })
 
-  return refreshMomentsPromise
+  return refreshDataPromise
 }
 
 async function preparePage() {
-  isCheckingAuth.value = true
+  if (!hasLoadedPosts) {
+    isCheckingAuth.value = true
+  }
 
   const authenticated = await ensureAuthenticatedSession()
 
@@ -212,13 +405,199 @@ async function preparePage() {
   }
 
   isRedirecting.value = false
-  await refreshMomentsData()
+  await refreshMomentsData(!hasLoadedPosts)
   isCheckingAuth.value = false
+}
+
+function handleRetry() {
+  void refreshMomentsData(true)
+}
+
+async function handleNotificationTap() {
+  const latest = notificationSummary.value?.latest
+  const postId = latest?.postId.trim()
+
+  if (!postId) {
+    return
+  }
+
+  let targetPost = posts.value.find((post) => post.id === postId) ?? null
+
+  if (!targetPost) {
+    await refreshMomentsData(false)
+    targetPost = posts.value.find((post) => post.id === postId) ?? null
+  }
+
+  if (!targetPost) {
+    showToast('动态不存在或已删除')
+    return
+  }
+
+  openCommentComposer(targetPost)
+  void markCommentNotificationsRead(postId)
+    .then(() => getCommentNotificationSummary())
+    .then((summary) => {
+      notificationSummary.value = summary
+    })
+    .catch(() => undefined)
+}
+
+function handleCreatePost() {
+  void Taro.navigateTo({
+    url: '/pages/post-create/index',
+  })
+}
+
+function openCommentComposer(post: PostItem) {
+  activeCommentPost.value = post
+  commentDraft.value = ''
+  shouldFocusCommentInput.value = false
+  isCommentEmojiPanelVisible.value = false
+  setCustomTabBarHidden(true)
+
+  void nextTick(() => {
+    shouldFocusCommentInput.value = true
+  })
+}
+
+function handleCommentTap(post: PostItem) {
+  openCommentComposer(post)
+}
+
+function closeCommentComposer(force = false) {
+  if (isSubmittingComment.value && !force) {
+    return
+  }
+
+  activeCommentPost.value = null
+  commentDraft.value = ''
+  shouldFocusCommentInput.value = false
+  isCommentInputFocused.value = false
+  commentKeyboardHeight.value = 0
+  isCommentEmojiPanelVisible.value = false
+  setCustomTabBarHidden(false)
+}
+
+function handleCommentFocus() {
+  isCommentInputFocused.value = true
+  isCommentEmojiPanelVisible.value = false
+}
+
+function handleCommentBlur() {
+  isCommentInputFocused.value = false
+  shouldFocusCommentInput.value = false
+}
+
+function handleCommentKeyboardHeightChange(event: { detail?: { height?: number } }) {
+  commentKeyboardHeight.value = event.detail?.height ?? 0
+
+  if (commentKeyboardHeight.value <= 0) {
+    isCommentInputFocused.value = false
+  }
+}
+
+function readInputValue(event: unknown) {
+  if (!event || typeof event !== 'object' || !('detail' in event)) {
+    return ''
+  }
+
+  const detail = (event as { detail?: unknown }).detail
+
+  if (!detail || typeof detail !== 'object' || !('value' in detail)) {
+    return ''
+  }
+
+  const value = (detail as { value?: unknown }).value
+  return typeof value === 'string' ? value : ''
+}
+
+function handleCommentInput(event: unknown) {
+  commentDraft.value = readInputValue(event)
+}
+
+function handleCommentEmojiToggle() {
+  isCommentEmojiPanelVisible.value = !isCommentEmojiPanelVisible.value
+  shouldFocusCommentInput.value = false
+
+  if (isCommentEmojiPanelVisible.value) {
+    isCommentInputFocused.value = false
+    commentKeyboardHeight.value = 0
+    void Taro.hideKeyboard()
+  } else {
+    void nextTick(() => {
+      shouldFocusCommentInput.value = true
+    })
+  }
+}
+
+function handleCommentEmojiSelect(emoji: string) {
+  commentDraft.value = `${commentDraft.value}${emoji}`
+}
+
+function handleCommentEmojiDelete() {
+  const characters = Array.from(commentDraft.value)
+
+  if (!characters.length) {
+    return
+  }
+
+  characters.pop()
+  commentDraft.value = characters.join('')
+}
+
+async function handleSubmitComment() {
+  const post = activeCommentPost.value
+  const content = commentDraft.value.trim()
+
+  if (!post || !content || isSubmittingComment.value) {
+    return
+  }
+
+  isSubmittingComment.value = true
+
+  try {
+    await createComment(post.id, {
+      content,
+    })
+
+    commentDraft.value = ''
+    await refreshMomentsData(false)
+    closeCommentComposer(true)
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuthPage()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '评论失败，请稍后重试')
+  } finally {
+    isSubmittingComment.value = false
+  }
+}
+
+function handlePreviewImages(post: PostItem, index: number) {
+  const urls = getPostImages(post)
+  const current = urls[index]
+
+  if (!current) {
+    return
+  }
+
+  void Taro.previewImage({
+    urls,
+    current,
+  })
 }
 
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
+  setCustomTabBarHidden(Boolean(activeCommentPost.value))
   void preparePage()
+})
+
+useDidHide(() => {
+  setCustomTabBarHidden(false)
+  closeCommentComposer()
 })
 </script>
 
@@ -251,8 +630,30 @@ useDidShow(() => {
 
 .moments-scroll {
   box-sizing: border-box;
-  height: 100%;
+  min-height: 100%;
   padding-bottom: 128px;
+  background: $tzl-color-surface-base;
+}
+
+.moments-publish-button {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.moments-publish-button__line {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2px;
+  border-radius: 999px;
+  background: #111111;
+  transform: translate(-50%, -50%);
+}
+
+.moments-publish-button__line--vertical {
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .moments-banner {
@@ -373,6 +774,10 @@ useDidShow(() => {
   background: $tzl-color-dark-pill;
 }
 
+.moments-notice-spacer {
+  height: 12px;
+}
+
 .moments-notice__avatar {
   width: 24px;
   height: 24px;
@@ -385,25 +790,91 @@ useDidShow(() => {
   color: $tzl-color-surface-base;
 }
 
+.moments-feedback {
+  min-height: 280px;
+  padding: 96px 24px 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.moments-feedback__dot {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(0, 166, 62, 0.18);
+  border-top-color: #00a63e;
+  border-radius: 999px;
+}
+
+.moments-feedback__icon {
+  font-size: 36px;
+  line-height: 40px;
+  color: #b8c1cc;
+}
+
+.moments-feedback__title {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #364153;
+}
+
+.moments-feedback__subtitle {
+  font-size: 14px;
+  line-height: 20px;
+  color: #6a7282;
+}
+
+.moments-feedback__action {
+  margin-top: 4px;
+  padding: 8px 12px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  color: #00a63e;
+}
+
 .moments-content {
   padding: 12px 16px 0;
 }
 
 .moment-card {
-  background: $tzl-color-surface-base;
-}
-
-.moment-card__header {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  background: $tzl-color-surface-base;
+}
+
+.moment-card + .moment-card {
+  margin-top: 20px;
+}
+
+.moment-card__avatar-column {
+  flex: 0 0 40px;
+}
+
+.moment-card__content-column {
+  flex: 1;
+  min-width: 0;
 }
 
 .moment-card__avatar {
-  flex-shrink: 0;
   width: 40px;
   height: 40px;
-  border-radius: 999px;
+  border-radius: 10px;
+  background: #e5e7eb;
+}
+
+.moment-card__avatar--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6a7282;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .moment-card__meta {
@@ -426,11 +897,59 @@ useDidShow(() => {
   color: $tzl-color-slate-700;
 }
 
+.moment-card__image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.moment-card__image-grid--1 {
+  width: 68%;
+  min-width: 180px;
+  max-width: 240px;
+}
+
+.moment-card__image-grid--2,
+.moment-card__image-grid--4 {
+  width: 100%;
+  max-width: 100%;
+}
+
+.moment-card__image-grid--3,
+.moment-card__image-grid--5,
+.moment-card__image-grid--6,
+.moment-card__image-grid--7,
+.moment-card__image-grid--8,
+.moment-card__image-grid--9 {
+  width: 100%;
+}
+
+.moment-card__image-wrap {
+  position: relative;
+  width: calc((100% - 12px) / 3);
+  height: 92px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+
+.moment-card__image-grid--2 .moment-card__image-wrap,
+.moment-card__image-grid--4 .moment-card__image-wrap {
+  width: calc((100% - 6px) / 2);
+  height: 121px;
+}
+
+.moment-card__image-grid--1 .moment-card__image-wrap {
+  width: 100%;
+  height: 188px;
+  border-radius: 12px;
+}
+
 .moment-card__image {
   width: 100%;
-  height: 192px;
-  margin-top: 12px;
-  border-radius: 10px;
+  height: 100%;
+  display: block;
 }
 
 .moment-card__stats {
@@ -471,16 +990,17 @@ useDidShow(() => {
 
 .moment-card__comments {
   margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
   background: $tzl-color-surface-muted;
 }
 
 .moment-card__comment {
-  padding: 8px 12px;
-  border-radius: 4px;
+  display: block;
 }
 
 .moment-card__comment + .moment-card__comment {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .moment-card__comment-author {
@@ -496,56 +1016,63 @@ useDidShow(() => {
   color: $tzl-color-slate-700;
 }
 
-.publish-fab-anchor {
-  display: flex;
-  justify-content: flex-end;
-  padding-right: 24px;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 96px);
+.moment-comment-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 130;
+  background: #f8f8f8;
+  transition: transform 0.18s ease;
 }
 
-.publish-fab {
+.moment-comment-composer {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 999px;
-  background: $tzl-color-dark-surface;
-  box-shadow: $tzl-shadow-fab;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 16px;
+  box-sizing: border-box;
+  border-top: 1px solid #e5e7eb;
+  background: #f8f8f8;
 }
 
-.publish-fab__plus {
-  position: relative;
-  width: 28px;
-  height: 28px;
+.moment-comment-composer__input {
+  flex: 1;
+  height: 40px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #111111;
+  font-size: 16px;
+  line-height: 40px;
 }
 
-.publish-fab__line {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  background: $tzl-color-surface-base;
-  transform: translate(-50%, -50%);
+.moment-comment-composer__icon {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  color: #222222;
+  text-align: center;
+  font-size: 30px;
+  line-height: 34px;
 }
 
-.publish-fab__line--horizontal {
-  width: 18px;
-  height: 2px;
-  border-radius: 999px;
-}
-
-.publish-fab__line--vertical {
-  width: 2px;
-  height: 18px;
-  border-radius: 999px;
-}
-
-.publish-fab__label {
-  margin-top: -2px;
-  font-size: 12px;
-  line-height: 16px;
+.moment-comment-composer__send {
+  flex: 0 0 52px;
+  height: 34px;
+  border-radius: 4px;
+  background: #07c160;
+  color: #ffffff;
+  text-align: center;
+  font-size: 15px;
   font-weight: 500;
-  color: $tzl-color-surface-base;
+  line-height: 34px;
 }
+
+.moment-comment-composer__send--disabled {
+  background: #c8c9cc;
+}
+
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <view class="custom-tab-bar" :style="rootStyle">
+  <view v-if="!hidden" class="custom-tab-bar" :style="rootStyle">
     <view
       v-for="(item, index) in items"
       :key="item.key"
@@ -29,6 +29,7 @@ export default {
     return {
       items: CUSTOM_TAB_BAR_ITEMS,
       selected: 0,
+      hidden: false,
     }
   },
   computed: {
@@ -39,6 +40,9 @@ export default {
   methods: {
     setSelected(index: number) {
       this.selected = index
+    },
+    setHidden(hidden: boolean) {
+      this.hidden = hidden
     },
     async handleSwitch(pagePath: string) {
       const currentItem = this.items[this.selected]

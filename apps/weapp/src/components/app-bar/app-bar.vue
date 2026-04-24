@@ -15,6 +15,10 @@
       </template>
     </back-capsule>
 
+    <view v-if="hasLeft" class="app-bar__left" :style="leftStyle">
+      <slot name="left" />
+    </view>
+
     <view class="app-bar__content" :style="contentStyle">
       <text class="app-bar__title">{{ title }}</text>
     </view>
@@ -72,6 +76,7 @@ const props = withDefaults(
 const slots = useSlots()
 const menuButtonMetrics = readMenuButtonMetrics()
 
+const hasLeft = computed(() => Boolean(slots.left))
 const hasRight = computed(() => Boolean(slots.right))
 const hasCapsuleMenu = computed(() => Boolean(slots['capsule-menu']))
 
@@ -95,6 +100,12 @@ const contentStyle = computed(() => {
 })
 
 const rightStyle = computed(() => {
+  return {
+    top: `${menuButtonMetrics.statusBarHeight + menuButtonMetrics.navBarHeight / 2}px`,
+  }
+})
+
+const leftStyle = computed(() => {
   return {
     top: `${menuButtonMetrics.statusBarHeight + menuButtonMetrics.navBarHeight / 2}px`,
   }
@@ -139,6 +150,16 @@ function handleMenuSelect(payload: { item: { key?: string; text: string; url?: s
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.app-bar__left {
+  position: absolute;
+  left: 16px;
+  z-index: 2;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .app-bar__right {

@@ -109,7 +109,7 @@ function handleBackspaceTap() {
 <style lang="scss">
 .emoji-picker-panel {
   position: relative;
-  height: 216px;
+  height: calc(216px + env(safe-area-inset-bottom));
   border-top: 0.5px solid #e6e6e6;
   background: #f7f7f7;
   box-sizing: border-box;
@@ -117,7 +117,7 @@ function handleBackspaceTap() {
 
 .emoji-picker-panel__grid {
   height: 100%;
-  padding: 10px 10px 12px;
+  padding: 10px 10px calc(env(safe-area-inset-bottom) + 12px);
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   grid-auto-rows: calc((100vw - 20px - 42px) / 8);
@@ -148,7 +148,7 @@ function handleBackspaceTap() {
 .emoji-picker-panel__delete {
   position: absolute;
   right: 10px;
-  bottom: 12px;
+  bottom: calc(env(safe-area-inset-bottom) + 12px);
   width: calc((100vw - 20px - 42px) / 8);
   height: calc((100vw - 20px - 42px) / 8);
   border: 0.5px solid rgba(87, 96, 113, 0.14);

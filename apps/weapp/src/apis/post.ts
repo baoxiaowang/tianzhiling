@@ -1,4 +1,4 @@
-import { get } from '../api/api-client'
+import { get, post } from '../api/api-client'
 
 export type PostCommentType = 'user' | 'agent'
 
@@ -60,6 +60,47 @@ export async function getPosts() {
   return Array.isArray(data.items) ? data.items : []
 }
 
+export async function getPostDetail(postId: string) {
+  return get<PostItem>(`/api/post/${postId}`)
+}
+
 export async function getCommentNotificationSummary() {
   return get<PostCommentNotificationSummary>('/api/post/comment-notifications/summary')
+}
+
+export async function markCommentNotificationsRead(postId: string) {
+  await post<Record<string, unknown>>(`/api/post/${postId}/comment-notifications/read`)
+}
+
+export async function createPost(payload: {
+  content: string
+  images: string[]
+  remindAgentIds?: string[]
+}) {
+  return post<PostItem>('/api/post', {
+    content: payload.content,
+    images: payload.images,
+    remindAgentIds: payload.remindAgentIds ?? [],
+  })
+}
+
+export async function getComments(postId: string) {
+  const data = await get<{ items: PostCommentItem[] }>(`/api/post/${postId}/comments`)
+
+  return Array.isArray(data.items) ? data.items : []
+}
+
+export async function createComment(
+  postId: string,
+  payload: {
+    content: string
+    replyToCommentId?: string
+  },
+) {
+  return post<PostCommentItem>(`/api/post/${postId}/comments`, {
+    content: payload.content,
+    ...(payload.replyToCommentId?.trim()
+      ? { replyToCommentId: payload.replyToCommentId.trim() }
+      : {}),
+  })
 }
