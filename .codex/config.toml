@@ -1,1 +1,2 @@
 approval_policy = "on-request"
+model = "gpt-5.5"
