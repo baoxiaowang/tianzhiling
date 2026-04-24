@@ -10,10 +10,8 @@
       mode="aspectFill"
     />
     <view class="agent-create-start__shade" />
-    <view class="agent-create-start__top">
-      <view class="agent-create-start__back" @tap="handleBack">
-        <text class="agent-create-start__back-icon">‹</text>
-      </view>
+    <view class="agent-create-start__top" :style="topBarStyle">
+      <back-capsule class="agent-create-start__capsule" />
     </view>
     <view class="agent-create-start__tap-zone" @tap="handleStart" />
   </page-scaffold>
@@ -27,13 +25,15 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
+import BackCapsule from '../../components/back-capsule/back-capsule.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { resolvePublicAssetUrl } from '../../utils/public-asset'
 
 const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
-
-function handleBack() {
-  void Taro.navigateBack()
+const menuButtonMetrics = readMenuButtonMetrics()
+const topBarStyle = {
+  height: `${menuButtonMetrics.totalHeight}px`,
 }
 
 async function handleStart() {
@@ -71,25 +71,11 @@ async function handleStart() {
 .agent-create-start__top {
   position: relative;
   z-index: 1;
-  height: 56px;
-  padding-top: env(safe-area-inset-top);
-  display: flex;
-  align-items: center;
 }
 
-.agent-create-start__back {
-  width: 48px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.agent-create-start__back-icon {
-  margin-top: -4px;
-  font-size: 42px;
-  line-height: 1;
-  color: $tzl-color-surface-base;
+.agent-create-start__capsule {
+  position: absolute;
+  z-index: 2;
 }
 
 .agent-create-start__tap-zone {

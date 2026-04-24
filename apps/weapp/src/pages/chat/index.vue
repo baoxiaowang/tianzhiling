@@ -9,22 +9,18 @@
     :scroll-into-view="scrollIntoViewTarget"
     :scroll-with-animation="true"
     :show-scrollbar="false"
-    :safe-area-top="true"
+    :safe-area-top="false"
     :safe-area-bottom="false"
   >
     <template #header>
-      <view class="chat-page__nav">
-        <view class="chat-page__nav-action" @tap="handleBack">
-          <view class="chat-page__back-icon" />
-        </view>
+      <view class="chat-page__nav" :style="navStyle">
+        <back-capsule
+          class="chat-page__nav-capsule"
+          :menus="navMenus"
+          back-home-url="/pages/index/index"
+          @menu-select="handleNavMenuSelect"
+        />
         <text class="chat-page__nav-title">{{ pageTitle }}</text>
-        <view class="chat-page__nav-action chat-page__nav-action--right" @tap="handlePendingAction('更多功能')">
-          <view class="chat-page__more-icon">
-            <view class="chat-page__more-dot" />
-            <view class="chat-page__more-dot" />
-            <view class="chat-page__more-dot" />
-          </view>
-        </view>
       </view>
     </template>
 
@@ -108,61 +104,74 @@
     </view>
 
     <template #bottom>
-      <view class="chat-composer" :style="composerStyle">
-        <view class="chat-composer__icon-button" @tap="handlePendingAction('语音消息')">
-          <view class="chat-composer__mic">
-            <view class="chat-composer__mic-head" />
-            <view class="chat-composer__mic-stem" />
-            <view class="chat-composer__mic-base" />
+      <view class="chat-bottom" :style="composerStyle">
+        <view class="chat-composer">
+          <view class="chat-composer__icon-button" @tap="handlePendingAction('语音消息')">
+            <view class="chat-composer__mic">
+              <view class="chat-composer__mic-head" />
+              <view class="chat-composer__mic-stem" />
+              <view class="chat-composer__mic-base" />
+            </view>
+          </view>
+
+          <view class="chat-composer__input-shell">
+            <input
+              :value="draftMessage"
+              class="chat-composer__input"
+              type="text"
+              maxlength="2000"
+              confirm-type="send"
+              :cursor="draftCursor"
+              :adjust-position="false"
+              cursor-spacing="16"
+              placeholder="微信"
+              placeholder-style="color: #999999;"
+              @input="handleDraftInput"
+              @confirm="handleSend"
+              @focus="handleInputFocus"
+              @blur="handleInputBlur"
+              @keyboardheightchange="handleKeyboardHeightChange"
+            />
+          </view>
+
+          <view
+            class="chat-composer__icon-button"
+            :class="{ 'chat-composer__icon-button--selected': isEmojiPanelVisible }"
+            @tap="handleEmojiToggle"
+          >
+            <view class="chat-composer__emoji">
+              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--left" />
+              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--right" />
+              <view class="chat-composer__emoji-mouth" />
+            </view>
+          </view>
+
+          <view
+            v-if="!canSend"
+            class="chat-composer__icon-button"
+            @tap="handlePendingAction('更多能力')"
+          >
+            <view class="chat-composer__plus">
+              <view class="chat-composer__plus-line chat-composer__plus-line--horizontal" />
+              <view class="chat-composer__plus-line chat-composer__plus-line--vertical" />
+            </view>
+          </view>
+
+          <view
+            v-else
+            class="chat-composer__send"
+            :class="{ 'chat-composer__send--disabled': isSending }"
+            @tap="handleSend"
+          >
+            发送
           </view>
         </view>
 
-        <view class="chat-composer__input-shell">
-          <input
-            :value="draftMessage"
-            class="chat-composer__input"
-            type="text"
-            maxlength="2000"
-            confirm-type="send"
-            :adjust-position="false"
-            cursor-spacing="16"
-            placeholder="微信"
-            placeholder-style="color: #999999;"
-            @input="handleDraftInput"
-            @confirm="handleSend"
-            @focus="handleInputFocus"
-            @blur="handleInputBlur"
-            @keyboardheightchange="handleKeyboardHeightChange"
-          />
-        </view>
-
-        <view class="chat-composer__icon-button" @tap="handlePendingAction('表情')">
-          <view class="chat-composer__emoji">
-            <view class="chat-composer__emoji-eye chat-composer__emoji-eye--left" />
-            <view class="chat-composer__emoji-eye chat-composer__emoji-eye--right" />
-            <view class="chat-composer__emoji-mouth" />
-          </view>
-        </view>
-
-        <view
-          v-if="!canSend"
-          class="chat-composer__icon-button"
-          @tap="handlePendingAction('更多能力')"
-        >
-          <view class="chat-composer__plus">
-            <view class="chat-composer__plus-line chat-composer__plus-line--horizontal" />
-            <view class="chat-composer__plus-line chat-composer__plus-line--vertical" />
-          </view>
-        </view>
-
-        <view
-          v-else
-          class="chat-composer__send"
-          :class="{ 'chat-composer__send--disabled': isSending }"
-          @tap="handleSend"
-        >
-          发送
-        </view>
+        <emoji-picker-panel
+          :visible="isEmojiPanelVisible"
+          @emoji-select="handleEmojiSelect"
+          @backspace="handleEmojiDelete"
+        />
       </view>
     </template>
   </page-scaffold>
@@ -183,8 +192,11 @@ import {
   sendConversationMessage,
   type ConversationMessage,
 } from '../../apis/conversation'
+import BackCapsule from '../../components/back-capsule/back-capsule.vue'
+import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
+import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { useSafeAreaInsets } from '../../utils/safe-area'
 
 type DisplayRow =
@@ -206,6 +218,11 @@ type DisplayRow =
       isFailed: boolean
     }
 
+type NavMenuItem = {
+  key: string
+  text: string
+}
+
 const conversationId = ref('')
 const agentName = ref('')
 const agentAvatar = ref('')
@@ -216,8 +233,10 @@ const isLoading = ref(true)
 const isSending = ref(false)
 const loadError = ref('')
 const draftMessage = ref('')
+const draftCursor = ref(0)
 const keyboardHeight = ref(0)
 const isInputFocused = ref(false)
+const isEmojiPanelVisible = ref(false)
 const messages = ref<ConversationMessage[]>([])
 const scrollIntoViewTarget = ref('')
 
@@ -225,6 +244,16 @@ let ensureSessionPromise: Promise<void> | null = null
 let refreshMessagesPromise: Promise<void> | null = null
 
 const safeAreaInsets = useSafeAreaInsets()
+const menuButtonMetrics = readMenuButtonMetrics()
+const navStyle = {
+  height: `${menuButtonMetrics.totalHeight}px`,
+}
+const navMenus: NavMenuItem[] = [
+  {
+    key: 'more-actions',
+    text: '更多功能',
+  },
+]
 const pageTitle = computed(() => {
   const trimmedName = agentName.value.trim()
   return trimmedName || '对话'
@@ -245,8 +274,8 @@ const agentAvatarFallbackClass = computed(() => {
 })
 const composerStyle = computed(() => {
   const basePaddingBottom = isInputFocused.value && keyboardHeight.value > 0
-    ? '12px'
-    : `calc(12px + ${safeAreaInsets.value.bottom}px)`
+    ? '0px'
+    : `${safeAreaInsets.value.bottom}px`
 
   return {
     paddingBottom: basePaddingBottom,
@@ -520,14 +549,8 @@ function handlePendingAction(name: string) {
   showToast(`${name}待接入`)
 }
 
-async function handleBack() {
-  try {
-    await Taro.navigateBack()
-  } catch {
-    await Taro.reLaunch({
-      url: '/pages/index/index',
-    })
-  }
+function handleNavMenuSelect(payload: { item: NavMenuItem }) {
+  handlePendingAction(payload.item.text)
 }
 
 function handleRetry() {
@@ -535,11 +558,19 @@ function handleRetry() {
 }
 
 function handleDraftInput(event: { detail?: { value?: string } }) {
-  draftMessage.value = event.detail?.value ?? ''
+  const nextValue = event.detail?.value ?? ''
+  const nextCursor = (event.detail as { cursor?: number } | undefined)?.cursor
+
+  draftMessage.value = nextValue
+  draftCursor.value =
+    typeof nextCursor === 'number' && nextCursor >= 0
+      ? nextCursor
+      : nextValue.length
 }
 
 function handleInputFocus() {
   isInputFocused.value = true
+  isEmojiPanelVisible.value = false
   void scrollToBottom()
 }
 
@@ -561,7 +592,74 @@ function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
 useDidHide(() => {
   isInputFocused.value = false
   keyboardHeight.value = 0
+  isEmojiPanelVisible.value = false
 })
+
+function handleEmojiToggle() {
+  isEmojiPanelVisible.value = !isEmojiPanelVisible.value
+  if (isEmojiPanelVisible.value) {
+    isInputFocused.value = false
+    keyboardHeight.value = 0
+    void Taro.hideKeyboard()
+    void scrollToBottom()
+  }
+}
+
+function handleEmojiSelect(emoji: string) {
+  const cursor = clampCursor(draftCursor.value, draftMessage.value)
+  const nextValue =
+    draftMessage.value.slice(0, cursor) +
+    emoji +
+    draftMessage.value.slice(cursor)
+
+  draftMessage.value = nextValue
+  draftCursor.value = cursor + emoji.length
+  void scrollToBottom()
+}
+
+function handleEmojiDelete() {
+  const value = draftMessage.value
+  if (!value) {
+    return
+  }
+
+  const cursor = clampCursor(draftCursor.value, value)
+  if (cursor <= 0) {
+    return
+  }
+
+  const left = value.slice(0, cursor)
+  const right = value.slice(cursor)
+  const nextLeft = removeLastGrapheme(left)
+
+  draftMessage.value = `${nextLeft}${right}`
+  draftCursor.value = nextLeft.length
+}
+
+function clampCursor(cursor: number, value: string) {
+  if (!Number.isFinite(cursor)) {
+    return value.length
+  }
+
+  return Math.min(Math.max(Math.floor(cursor), 0), value.length)
+}
+
+function removeLastGrapheme(value: string) {
+  if (!value) {
+    return ''
+  }
+
+  const chars = Array.from(value)
+  const last = chars[chars.length - 1]
+  if (last === '\ufe0f' && chars.length > 1) {
+    chars.pop()
+    chars.pop()
+    return chars.join('')
+  }
+
+  chars.pop()
+  return chars.join('')
+}
 
 async function handleSend() {
   const content = draftMessage.value.trim()
@@ -571,8 +669,10 @@ async function handleSend() {
 
   const tempId = `local-${Date.now()}`
   const originalDraft = draftMessage.value
+  const originalDraftCursor = draftCursor.value
 
   draftMessage.value = ''
+  draftCursor.value = 0
   isSending.value = true
   messages.value = [
     ...messages.value,
@@ -613,6 +713,7 @@ async function handleSend() {
     }
 
     draftMessage.value = originalDraft
+    draftCursor.value = originalDraftCursor
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
@@ -636,57 +737,32 @@ async function handleSend() {
 }
 
 .chat-page__nav {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 52px;
-  padding: 0 16px;
+  justify-content: center;
+  padding: 0 24px;
+  box-sizing: border-box;
   background: #f7f7f7;
   border-bottom: 0.5px solid #d9d9d9;
 }
 
-.chat-page__nav-action {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-}
-
-.chat-page__nav-action--right {
-  justify-content: flex-end;
+.chat-page__nav-capsule {
+  position: absolute;
+  z-index: 2;
 }
 
 .chat-page__nav-title {
-  flex: 1;
   min-width: 0;
+  max-width: calc(100% - 144px);
   text-align: center;
   font-size: 18px;
   line-height: 28px;
   font-weight: 600;
   color: #111111;
-}
-
-.chat-page__back-icon {
-  width: 10px;
-  height: 10px;
-  border-left: 2px solid #111111;
-  border-bottom: 2px solid #111111;
-  transform: rotate(45deg);
-}
-
-.chat-page__more-icon {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.chat-page__more-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #111111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-page__body {
@@ -780,6 +856,11 @@ async function handleSend() {
   height: 1px;
 }
 
+.chat-bottom {
+  background: #f7f7f7;
+  transition: transform 0.2s ease;
+}
+
 .chat-row {
   display: flex;
   align-items: flex-start;
@@ -861,7 +942,6 @@ async function handleSend() {
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
-  transition: transform 0.2s ease;
 }
 
 .chat-composer__icon-button {
@@ -871,6 +951,18 @@ async function handleSend() {
   width: 40px;
   height: 40px;
   flex-shrink: 0;
+}
+
+.chat-composer__icon-button--selected .chat-composer__emoji {
+  border-color: #07c160;
+}
+
+.chat-composer__icon-button--selected .chat-composer__emoji-eye {
+  background: #07c160;
+}
+
+.chat-composer__icon-button--selected .chat-composer__emoji-mouth {
+  border-color: #07c160;
 }
 
 .chat-composer__input-shell {
