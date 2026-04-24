@@ -6,6 +6,14 @@
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
+    <template v-if="session" #header>
+      <app-bar
+        title="我的"
+        background="#ffffff"
+        :show-capsule="false"
+      />
+    </template>
+
     <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
@@ -87,6 +95,7 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { getCurrentUser } from '../../auth/api'
 import { authSession } from '../../auth/session'
+import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage, showPendingToast } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'

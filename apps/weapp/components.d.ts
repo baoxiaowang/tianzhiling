@@ -7,6 +7,7 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    AppBar: typeof import('./src/components/app-bar/app-bar.vue')['default']
     BackCapsule: typeof import('./src/components/back-capsule/back-capsule.vue')['default']
     EmojiPickerPanel: typeof import('./src/components/emoji-picker-panel/emoji-picker-panel.vue')['default']
     NutButton: typeof import('@nutui/nutui-taro')['Button']

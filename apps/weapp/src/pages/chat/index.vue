@@ -247,6 +247,7 @@ const safeAreaInsets = useSafeAreaInsets()
 const menuButtonMetrics = readMenuButtonMetrics()
 const navStyle = {
   height: `${menuButtonMetrics.totalHeight}px`,
+  paddingTop: `${menuButtonMetrics.statusBarHeight}px`,
 }
 const navMenus: NavMenuItem[] = [
   {

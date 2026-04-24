@@ -3,22 +3,24 @@
     class="contacts-tab-page"
     body-padding="0"
     background="#ffffff"
-    :safe-area-top="true"
+    :safe-area-top="false"
+    scroll
     :safe-area-bottom="false"
   >
     <template v-if="session" #header>
-      <view class="contacts-page__header">
-        <view class="contacts-page__header-spacer" />
-        <text class="contacts-page__title">通讯录</text>
-        <view class="contacts-page__action" @tap="handleCreateAgent">
-          <view class="contacts-page__action-icon">
-            <view class="contacts-page__action-head" />
-            <view class="contacts-page__action-body" />
-            <view class="contacts-page__action-plus contacts-page__action-plus--horizontal" />
-            <view class="contacts-page__action-plus contacts-page__action-plus--vertical" />
+      <app-bar
+        title="通讯录"
+        :menus="navMenus"
+        :show-back="false"
+        @menu-select="handleNavMenuSelect"
+      >
+        <template #capsule-menu>
+          <view class="contacts-page__capsule-add">
+            <view class="contacts-page__capsule-add-line contacts-page__capsule-add-line--horizontal" />
+            <view class="contacts-page__capsule-add-line contacts-page__capsule-add-line--vertical" />
           </view>
-        </view>
-      </view>
+        </template>
+      </app-bar>
     </template>
 
     <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
@@ -112,6 +114,7 @@ import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getConversations, type ConversationSummary } from '../../apis/conversation'
 import { authSession } from '../../auth/session'
+import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
@@ -124,6 +127,13 @@ const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 
 let refreshContactsPromise: Promise<void> | null = null
+
+const navMenus = [
+  {
+    key: 'create-agent',
+    text: '添加',
+  },
+] as const
 
 const session = computed(() => authSession.value)
 const filteredConversations = computed(() => {
@@ -156,6 +166,10 @@ async function handleCreateAgent() {
   await Taro.navigateTo({
     url: '/pages/agent-create/index',
   })
+}
+
+function handleNavMenuSelect() {
+  void handleCreateAgent()
 }
 
 function handleContactsRetry() {
@@ -312,87 +326,6 @@ useDidShow(() => {
   background: $tzl-color-surface-base;
 }
 
-.contacts-page__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 52px;
-  padding: 4px 16px 0;
-  background: $tzl-color-surface-base;
-}
-
-.contacts-page__header-spacer,
-.contacts-page__action {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-}
-
-.contacts-page__action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.contacts-page__title {
-  font-size: 18px;
-  line-height: 28px;
-  font-weight: 600;
-  color: #111111;
-}
-
-.contacts-page__action-icon {
-  position: relative;
-  width: 20px;
-  height: 20px;
-}
-
-.contacts-page__action-head,
-.contacts-page__action-body,
-.contacts-page__action-plus {
-  position: absolute;
-  box-sizing: border-box;
-}
-
-.contacts-page__action-head {
-  left: 1px;
-  top: 1px;
-  width: 7px;
-  height: 7px;
-  border: 1.6px solid #111111;
-  border-radius: 50%;
-}
-
-.contacts-page__action-body {
-  left: 0;
-  bottom: 2px;
-  width: 10px;
-  height: 7px;
-  border: 1.6px solid #111111;
-  border-top-left-radius: 7px;
-  border-top-right-radius: 7px;
-  border-bottom: 0;
-}
-
-.contacts-page__action-plus {
-  right: 0;
-  top: 50%;
-  background: #111111;
-  border-radius: 999px;
-  transform: translateY(-50%);
-}
-
-.contacts-page__action-plus--horizontal {
-  width: 9px;
-  height: 1.6px;
-}
-
-.contacts-page__action-plus--vertical {
-  right: 3.7px;
-  width: 1.6px;
-  height: 9px;
-}
-
 .contacts-search {
   display: flex;
   align-items: center;
@@ -402,6 +335,31 @@ useDidShow(() => {
   padding: 0 12px;
   border-radius: 8px;
   background: #f3f4f6;
+}
+
+.contacts-page__capsule-add {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.contacts-page__capsule-add-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  background: #111111;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.contacts-page__capsule-add-line--horizontal {
+  width: 14px;
+  height: 2px;
+}
+
+.contacts-page__capsule-add-line--vertical {
+  width: 2px;
+  height: 14px;
 }
 
 .contacts-search__icon {

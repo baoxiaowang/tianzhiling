@@ -1,22 +1,28 @@
 <template>
   <view class="back-capsule" :style="containerStyle">
     <view class="back-capsule__shell" :style="shellStyle">
-      <view class="back-capsule__action back-capsule__action--back" @tap="handleBackTap">
+      <view
+        v-if="showBack"
+        class="back-capsule__action back-capsule__action--back"
+        @tap="handleBackTap"
+      >
         <view class="back-capsule__back-icon" />
       </view>
 
       <template v-if="hasMenus">
-        <view class="back-capsule__divider" />
+        <view v-if="showBack" class="back-capsule__divider" />
 
         <view
           class="back-capsule__action back-capsule__action--menu"
           @tap.stop="handleMenuTap"
         >
-          <view class="back-capsule__menu-icon">
-            <view class="back-capsule__menu-line" />
-            <view class="back-capsule__menu-line" />
-            <view class="back-capsule__menu-line" />
-          </view>
+          <slot name="menu-icon">
+            <view class="back-capsule__menu-icon">
+              <view class="back-capsule__menu-line" />
+              <view class="back-capsule__menu-line" />
+              <view class="back-capsule__menu-line" />
+            </view>
+          </slot>
         </view>
       </template>
     </view>
@@ -72,16 +78,18 @@ export interface BackCapsuleMenuItem {
 
 const props = withDefaults(
   defineProps<{
-    menus?: BackCapsuleMenuItem[]
+    menus?: ReadonlyArray<BackCapsuleMenuItem>
     backDelta?: number
     backHomeUrl?: string
     anchorToNative?: boolean
+    showBack?: boolean
   }>(),
   {
     menus: () => [],
     backDelta: 1,
     backHomeUrl: '',
     anchorToNative: true,
+    showBack: true,
   },
 )
 
@@ -97,6 +105,7 @@ const nativeMenuMetrics = readMenuButtonMetrics()
 
 const hasMenus = computed(() => props.menus.length > 0)
 const isSingleMenu = computed(() => props.menus.length === 1)
+const showBack = computed(() => props.showBack)
 
 const containerStyle = computed(() => {
   if (!props.anchorToNative) {
@@ -111,9 +120,10 @@ const containerStyle = computed(() => {
 })
 
 const shellStyle = computed(() => {
-  const backWidth = Math.max(nativeMenuMetrics.height + 14, 44)
+  const backWidth = showBack.value ? Math.max(nativeMenuMetrics.height + 14, 44) : 0
   const menuWidth = hasMenus.value ? Math.max(nativeMenuMetrics.height + 16, 40) : 0
-  const totalWidth = backWidth + menuWidth + (hasMenus.value ? 1 : 0)
+  const dividerWidth = showBack.value && hasMenus.value ? 1 : 0
+  const totalWidth = backWidth + menuWidth + dividerWidth
 
   return {
     height: `${nativeMenuMetrics.height}px`,
