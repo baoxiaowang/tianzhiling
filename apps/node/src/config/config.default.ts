@@ -173,18 +173,12 @@ export default {
   },
   wechatPay: {
     enabled: readBooleanFrom(['NODE_WECHAT_PAY_ENABLED'], false),
-    appId: readStringFrom(
-      ['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'],
-      ''
-    ),
+    appId: readStringFrom(['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'], ''),
     appSecret: readStringFrom(
       ['NODE_WECHAT_PAY_APP_SECRET', 'WECHAT_PAY_APP_SECRET'],
       ''
     ),
-    mchId: readStringFrom(
-      ['NODE_WECHAT_PAY_MCH_ID', 'WECHAT_PAY_MCH_ID'],
-      ''
-    ),
+    mchId: readStringFrom(['NODE_WECHAT_PAY_MCH_ID', 'WECHAT_PAY_MCH_ID'], ''),
     merchantSerialNo: readStringFrom(
       ['NODE_WECHAT_PAY_MCH_SERIAL_NO', 'WECHAT_PAY_MCH_SERIAL_NO'],
       ''

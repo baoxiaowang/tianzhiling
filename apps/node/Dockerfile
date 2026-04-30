@@ -46,6 +46,7 @@ WORKDIR /workspace/apps/node
 
 COPY --from=prod-deps /workspace/node_modules /workspace/node_modules
 COPY --from=prod-deps /workspace/apps/node/node_modules ./node_modules
+COPY --from=prod-deps /workspace/packages/entities/node_modules /workspace/packages/entities/node_modules
 COPY --from=build /workspace/packages/entities/package.json /workspace/packages/entities/package.json
 COPY --from=build /workspace/packages/entities/dist /workspace/packages/entities/dist
 COPY --from=build /workspace/packages/shared/package.json /workspace/packages/shared/package.json
