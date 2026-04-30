@@ -8,6 +8,8 @@ COPY package.json /workspace/package.json
 COPY pnpm-workspace.yaml /workspace/pnpm-workspace.yaml
 COPY pnpm-lock.yaml /workspace/pnpm-lock.yaml
 COPY apps/node/package.json ./package.json
+COPY packages/entities/package.json /workspace/packages/entities/package.json
+COPY packages/shared/package.json /workspace/packages/shared/package.json
 
 RUN npm pkg delete scripts.prepare --prefix /workspace
 
@@ -17,9 +19,14 @@ RUN npx -y pnpm@9.15.9 install --frozen-lockfile --lockfile-dir=/workspace --con
 
 FROM deps AS build
 
+COPY packages/entities /workspace/packages/entities
+COPY packages/shared /workspace/packages/shared
 COPY apps/node ./
 
-RUN npx -y pnpm@9.15.9 build
+RUN npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/entities build \
+  && npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/shared build \
+  && npx -y pnpm@9.15.9 build \
+  && test -f dist/configuration.js
 
 FROM base AS prod-deps
 
@@ -39,6 +46,10 @@ WORKDIR /workspace/apps/node
 
 COPY --from=prod-deps /workspace/node_modules /workspace/node_modules
 COPY --from=prod-deps /workspace/apps/node/node_modules ./node_modules
+COPY --from=build /workspace/packages/entities/package.json /workspace/packages/entities/package.json
+COPY --from=build /workspace/packages/entities/dist /workspace/packages/entities/dist
+COPY --from=build /workspace/packages/shared/package.json /workspace/packages/shared/package.json
+COPY --from=build /workspace/packages/shared/dist /workspace/packages/shared/dist
 COPY --from=build /workspace/apps/node/package.json ./package.json
 COPY --from=build /workspace/apps/node/bootstrap.js ./bootstrap.js
 COPY --from=build /workspace/apps/node/dist ./dist
