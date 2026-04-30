@@ -1,4 +1,4 @@
-import { AgentEntity, AgentSex } from '../entity/agent.entity';
+import { AgentEntity, AgentSex } from '@tzl/entities';
 
 export interface MomentsPromptOptions {
   userId: string;

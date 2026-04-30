@@ -1,4 +1,6 @@
 packages:
   - apps/admin
+  - apps/admin-node
   - apps/node
   - apps/weapp
+  - packages/*

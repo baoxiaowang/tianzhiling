@@ -2,13 +2,13 @@ import { Inject, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
-import { AgentEntity } from '../../entity/agent.entity';
-import { ConversationEntity } from '../../entity/conversation.entity';
 import {
+  AgentEntity,
+  ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageType,
-} from '../../entity/message.entity';
+} from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
 import { buildDepartedSystemPrompt } from '../../promte/departed';
 import { RetrieveService } from '../rag/retrieve.service';

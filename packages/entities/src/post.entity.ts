@@ -9,7 +9,6 @@ export class PostEntity extends BaseEntity {
   @Column()
   content: string;
 
-  // 图片
   @Column()
   images: string[];
 

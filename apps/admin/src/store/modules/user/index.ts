@@ -3,6 +3,7 @@ import {
   login as userLogin,
   logout as userLogout,
   getUserInfo,
+  getAdminBootstrapStatus,
   LoginData,
 } from '@/api/user';
 import { setToken, clearToken } from '@/utils/auth';
@@ -28,6 +29,8 @@ const useUserStore = defineStore('user', {
     accountId: undefined,
     certification: undefined,
     role: '',
+    hasSuperAdmin: undefined,
+    bootstrapChecked: false,
   }),
 
   getters: {
@@ -57,14 +60,32 @@ const useUserStore = defineStore('user', {
     async info() {
       const res = await getUserInfo();
 
-      this.setInfo(res.data);
+      const admin = res.data as UserState & {
+        account?: string;
+        roles?: string[];
+      };
+
+      this.setInfo({
+        ...admin,
+        name: admin.name || admin.account,
+        role: admin.roles?.includes('admin') ? 'admin' : '',
+      });
+    },
+
+    async checkAdminBootstrapStatus() {
+      const res = await getAdminBootstrapStatus();
+
+      this.setInfo({
+        hasSuperAdmin: res.data.hasSuperAdmin,
+        bootstrapChecked: true,
+      });
     },
 
     // Login
     async login(loginForm: LoginData) {
       try {
         const res = await userLogin(loginForm);
-        setToken(res.data.token);
+        setToken(res.data.accessToken);
       } catch (err) {
         clearToken();
         throw err;

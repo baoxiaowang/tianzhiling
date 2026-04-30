@@ -3,7 +3,18 @@
     class="agent-create-flow"
     body-padding="0"
     :safe-area-bottom="false"
+    :safe-area-top="false"
+    :scroll="false"
   >
+    <template #header>
+      <app-bar
+        class="agent-create-flow__appbar"
+        title="创建 Agent"
+        background="transparent"
+        @back="handleBack"
+      />
+    </template>
+
     <image
       class="agent-create-flow__bg"
       :src="agentFlowImage"
@@ -11,44 +22,31 @@
     />
     <view class="agent-create-flow__shade" />
 
-    <scroll-view
-      scroll-y
-      enhanced
-      scroll-with-animation
-      :scroll-into-view="scrollIntoViewId"
-      :show-scrollbar="true"
-      class="agent-create-flow__scroll"
-    >
+    <view class="agent-create-flow__body">
       <view
         class="agent-create-flow__content"
         :class="{ 'agent-create-flow__content--avatar': currentStep === 'avatar' }"
       >
-        <view class="agent-create-flow__top">
-          <view class="agent-create-flow__back" @tap="handleBack">
-            <text class="agent-create-flow__back-icon">‹</text>
-          </view>
-        </view>
-
-        <view class="agent-create-flow__chat">
+        <view class="agent-create-flow__chat" :style="chatStyle">
           <view class="agent-create-flow__messages">
             <view class="agent-create-flow__message-stack">
+              <view class="agent-create-flow__question agent-create-flow__question--current">
+                <text class="agent-create-flow__question-text">{{ currentQuestion }}</text>
+              </view>
+
               <template
-                v-for="entry in historyEntries"
+                v-for="entry in reversedFilledEntries"
                 :key="entry.step"
               >
-                <view class="agent-create-flow__question" @tap="selectStep(entry.step)">
-                  <text class="agent-create-flow__question-text">{{ entry.question }}</text>
-                </view>
                 <view class="agent-create-flow__answer-row">
                   <view class="agent-create-flow__answer">
                     <text class="agent-create-flow__answer-text">{{ entry.answer }}</text>
                   </view>
                 </view>
+                <view class="agent-create-flow__question" @tap="selectStep(entry.step)">
+                  <text class="agent-create-flow__question-text">{{ entry.question }}</text>
+                </view>
               </template>
-
-              <view class="agent-create-flow__question agent-create-flow__question--current">
-                <text class="agent-create-flow__question-text">{{ currentQuestion }}</text>
-              </view>
             </view>
           </view>
 
@@ -73,13 +71,12 @@
               </view>
             </view>
           </view>
-          <view id="agent-create-flow-scroll-target" class="agent-create-flow__scroll-target" />
         </view>
       </view>
-    </scroll-view>
+    </view>
 
     <template #bottom>
-      <view class="agent-create-flow__panel">
+      <view class="agent-create-flow__panel" :style="panelStyle">
         <view v-if="currentStep === 'gender'" class="agent-gender-panel">
           <view
             class="agent-gender-panel__option"
@@ -117,7 +114,7 @@
 
         <view v-else class="agent-text-panel">
           <input
-            v-model="activeInputValue"
+            :value="activeInputValue"
             class="agent-text-panel__input"
             type="text"
             :maxlength="activeInputMaxLength"
@@ -125,6 +122,12 @@
             :placeholder="currentPlaceholder"
             placeholder-style="color: rgba(255, 255, 255, 0.6);"
             confirm-type="done"
+            :adjust-position="false"
+            cursor-spacing="16"
+            @input="handleActiveInput"
+            @focus="handleInputFocus"
+            @blur="handleInputBlur"
+            @keyboardheightchange="handleKeyboardHeightChange"
             @confirm="handleContinue"
           />
           <view
@@ -148,7 +151,7 @@ export default {
 </script>
 
 <script setup lang="ts">
-import Taro from '@tarojs/taro'
+import Taro, { useDidHide } from '@tarojs/taro'
 import { computed, nextTick, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
@@ -157,6 +160,7 @@ import {
 } from '../../apis/conversation'
 import { createAgent, updateAgentAvatar } from '../../apis/agent'
 import { uploadLocalImage } from '../../apis/storage'
+import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { clearAuthSession } from '../../auth/session'
 import { resolvePublicAssetUrl } from '../../utils/public-asset'
@@ -178,13 +182,15 @@ interface ChatEntry {
   answer: string
 }
 
-const formSteps: AgentFormStep[] = [
-  'memorialName',
-  'gender',
-  'relationToThem',
-  'relationToMe',
-  'avatar',
-]
+interface AgentFormStepConfig {
+  step: AgentFormStep
+  question: string
+  placeholder: string
+  maxLength: number
+  isTextInput: boolean
+  getAnswer: () => string
+  isComplete: () => boolean
+}
 
 const currentStep = ref<AgentFormStep>('memorialName')
 const name = ref('')
@@ -196,42 +202,103 @@ const avatarObjectKey = ref('')
 const isSubmitting = ref(false)
 const isUploadingAvatar = ref(false)
 const shouldFocusInput = ref(true)
-const scrollIntoViewId = ref('')
+const keyboardHeight = ref(0)
+const isInputFocused = ref(false)
+
+const formSteps: AgentFormStepConfig[] = [
+  {
+    step: 'memorialName',
+    question: '你纪念的人是？',
+    placeholder: '请输入 TA 的昵称或备注名',
+    maxLength: 30,
+    isTextInput: true,
+    getAnswer: () => name.value.trim(),
+    isComplete: () => name.value.trim().length > 0,
+  },
+  {
+    step: 'gender',
+    question: '他的性别是？',
+    placeholder: '',
+    maxLength: 0,
+    isTextInput: false,
+    getAnswer: () => {
+      if (!gender.value) {
+        return ''
+      }
+
+      return gender.value === 'male' ? '男' : '女'
+    },
+    isComplete: () => gender.value !== null,
+  },
+  {
+    step: 'relationToThem',
+    question: '你怎么称呼 TA？',
+    placeholder: '如：爷爷，奶奶',
+    maxLength: 20,
+    isTextInput: true,
+    getAnswer: () => relationToThem.value.trim(),
+    isComplete: () => relationToThem.value.trim().length > 0,
+  },
+  {
+    step: 'relationToMe',
+    question: 'TA 怎么称呼你？',
+    placeholder: '如：丫头，小宝',
+    maxLength: 20,
+    isTextInput: true,
+    getAnswer: () => relationToMe.value.trim(),
+    isComplete: () => relationToMe.value.trim().length > 0,
+  },
+  {
+    step: 'avatar',
+    question: '为 TA 选一张头像吧',
+    placeholder: '',
+    maxLength: 0,
+    isTextInput: false,
+    getAnswer: () => (avatarPreviewUrl.value ? '已选择头像' : ''),
+    isComplete: () => true,
+  },
+]
+
+const formStepKeys = formSteps.map((item) => item.step)
+const currentStepIndex = computed(() => {
+  return formSteps.findIndex((item) => item.step === currentStep.value)
+})
+const currentStepConfig = computed(() => {
+  return formSteps[currentStepIndex.value] ?? formSteps[0]
+})
 
 const isBusy = computed(() => isSubmitting.value || isUploadingAvatar.value)
-const currentQuestion = computed(() => {
-  switch (currentStep.value) {
-    case 'memorialName':
-      return '你纪念的人是？'
-    case 'gender':
-      return '他的性别是？'
-    case 'relationToThem':
-      return '你怎么称呼 TA？'
-    case 'relationToMe':
-      return 'TA 怎么称呼你？'
-    case 'avatar':
-      return '为 TA 选一张头像吧'
-    default:
-      return ''
+const isTextInputStep = computed(() => {
+  return currentStepConfig.value.isTextInput
+})
+const shouldFollowKeyboard = computed(() => {
+  return isTextInputStep.value && isInputFocused.value && keyboardHeight.value > 0
+})
+const panelStyle = computed(() => {
+  return {
+    paddingBottom: shouldFollowKeyboard.value
+      ? '8px'
+      : 'calc(env(safe-area-inset-bottom) + 24px)',
+    transform: shouldFollowKeyboard.value
+      ? `translateY(-${keyboardHeight.value}px)`
+      : 'translateY(0)',
   }
+})
+const chatStyle = computed(() => {
+  return {
+    transform: shouldFollowKeyboard.value
+      ? `translateY(-${keyboardHeight.value}px)`
+      : 'translateY(0)',
+  }
+})
+const currentQuestion = computed(() => {
+  return currentStepConfig.value.question
 })
 const currentPlaceholder = computed(() => {
-  switch (currentStep.value) {
-    case 'memorialName':
-      return '请输入 TA 的昵称或备注名'
-    case 'relationToThem':
-      return '如：爷爷，奶奶'
-    case 'relationToMe':
-      return '如：丫头，小宝'
-    case 'gender':
-    case 'avatar':
-      return ''
-    default:
-      return ''
-  }
+  return currentStepConfig.value.placeholder
 })
 const activeInputMaxLength = computed(() => {
-  return currentStep.value === 'memorialName' ? 30 : 20
+  return currentStepConfig.value.maxLength
 })
 const activeInputValue = computed({
   get() {
@@ -271,75 +338,37 @@ const canContinue = computed(() => {
     return false
   }
 
-  switch (currentStep.value) {
-    case 'memorialName':
-      return name.value.trim().length > 0
-    case 'gender':
-      return gender.value !== null
-    case 'relationToThem':
-      return relationToThem.value.trim().length > 0
-    case 'relationToMe':
-      return relationToMe.value.trim().length > 0
-    case 'avatar':
-      return true
-    default:
-      return false
-  }
+  return currentStepConfig.value.isComplete()
 })
-const historyEntries = computed<ChatEntry[]>(() => {
-  const entries: ChatEntry[] = []
-
-  if (name.value.trim()) {
-    entries.push({
-      step: 'memorialName',
-      question: '你纪念的人是？',
-      answer: name.value.trim(),
-    })
-  }
-
-  if (gender.value) {
-    entries.push({
-      step: 'gender',
-      question: '他的性别是？',
-      answer: gender.value === 'male' ? '男' : '女',
-    })
-  }
-
-  if (relationToThem.value.trim()) {
-    entries.push({
-      step: 'relationToThem',
-      question: '你怎么称呼 TA？',
-      answer: relationToThem.value.trim(),
-    })
-  }
-
-  if (relationToMe.value.trim()) {
-    entries.push({
-      step: 'relationToMe',
-      question: 'TA 怎么称呼你？',
-      answer: relationToMe.value.trim(),
-    })
-  }
-
-  const currentIndex = formSteps.indexOf(currentStep.value)
-  return entries.filter((entry) => formSteps.indexOf(entry.step) < currentIndex)
+const filledEntries = computed<ChatEntry[]>(() => {
+  return formSteps
+    .filter((entry) => entry.step !== currentStep.value)
+    .map((entry) => ({
+      step: entry.step,
+      question: entry.question,
+      answer: entry.getAnswer(),
+    }))
+    .filter((entry) => entry.answer.trim().length > 0)
 })
+const reversedFilledEntries = computed<ChatEntry[]>(() => {
+  return [...filledEntries.value].reverse()
+})
+
+function resetKeyboardState() {
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+}
 
 function syncInputFocus() {
   shouldFocusInput.value = false
-  void nextTick(() => {
-    shouldFocusInput.value = [
-      'memorialName',
-      'relationToThem',
-      'relationToMe',
-    ].includes(currentStep.value)
-  })
-}
 
-function syncScrollPosition() {
-  scrollIntoViewId.value = ''
+  if (!isTextInputStep.value) {
+    resetKeyboardState()
+  }
+
   void nextTick(() => {
-    scrollIntoViewId.value = 'agent-create-flow-scroll-target'
+    shouldFocusInput.value = isTextInputStep.value
   })
 }
 
@@ -351,12 +380,55 @@ function showToast(message: string) {
   })
 }
 
+function handleActiveInput(event: { detail?: { value?: string } }) {
+  activeInputValue.value = event.detail?.value ?? ''
+}
+
+function handleInputFocus() {
+  isInputFocused.value = true
+}
+
+function handleInputBlur() {
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+}
+
+function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
+  keyboardHeight.value = event.detail?.height ?? 0
+
+  if (keyboardHeight.value <= 0) {
+    isInputFocused.value = false
+  }
+}
+
+function isUserCanceled(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'errMsg' in error &&
+      String(error.errMsg).toLowerCase().includes('cancel'),
+  )
+}
+
+async function editAvatarImage(filePath: string) {
+  const result = await Taro.editImage({
+    src: filePath,
+  })
+
+  return result.tempFilePath
+}
+
 function buildChatPageUrl(conversation: ConversationSummary) {
   const query = [
     ['conversationId', conversation.id],
+    ['agentId', conversation.agentId],
     ['agentName', conversation.agentName.trim() || '未命名联系人'],
     ['agentAvatar', conversation.agentAvatar],
     ['agentSex', String(conversation.agentSex)],
+    ['agentCallMe', conversation.agentCallMe],
+    ['iCallAgent', conversation.iCallAgent],
+    ['preview', conversation.preview],
+    ['createdAt', conversation.createdAt?.toISOString() ?? ''],
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&')
@@ -389,15 +461,14 @@ function handleBack() {
     return
   }
 
-  const currentIndex = formSteps.indexOf(currentStep.value)
+  const currentIndex = formStepKeys.indexOf(currentStep.value)
   if (currentIndex <= 0) {
     void Taro.navigateBack()
     return
   }
 
-  currentStep.value = formSteps[currentIndex - 1]
+  currentStep.value = formStepKeys[currentIndex - 1]
   syncInputFocus()
-  syncScrollPosition()
 }
 
 function selectStep(step: AgentFormStep) {
@@ -407,7 +478,6 @@ function selectStep(step: AgentFormStep) {
 
   currentStep.value = step
   syncInputFocus()
-  syncScrollPosition()
 }
 
 function selectGender(value: AgentGender) {
@@ -435,10 +505,15 @@ async function goToNextStep() {
     return
   }
 
-  const currentIndex = formSteps.indexOf(currentStep.value)
-  currentStep.value = formSteps[currentIndex + 1]
+  const currentIndex = formStepKeys.indexOf(currentStep.value)
+  const nextStep = formStepKeys[currentIndex + 1]
+
+  if (!nextStep) {
+    return
+  }
+
+  currentStep.value = nextStep
   syncInputFocus()
-  syncScrollPosition()
 }
 
 async function handleAvatarTap() {
@@ -458,8 +533,13 @@ async function handleAvatarTap() {
       return
     }
 
+    const editedFilePath = await editAvatarImage(filePath)
+    if (!editedFilePath) {
+      return
+    }
+
     isUploadingAvatar.value = true
-    const upload = await uploadLocalImage(filePath, {
+    const upload = await uploadLocalImage(editedFilePath, {
       folder: 'avatars',
       fileName: `agent_avatar_${Date.now()}.jpg`,
     })
@@ -469,6 +549,10 @@ async function handleAvatarTap() {
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth()
+      return
+    }
+
+    if (isUserCanceled(error)) {
       return
     }
 
@@ -531,14 +615,32 @@ async function submitCreation() {
     isSubmitting.value = false
   }
 }
+
+useDidHide(() => {
+  resetKeyboardState()
+})
 </script>
 
 <style lang="scss">
+page {
+  height: 100%;
+  overflow: hidden;
+}
+
 .agent-create-flow {
   position: relative;
   height: 100vh;
   min-height: 100vh;
   background: #090d1a;
+}
+
+.agent-create-flow__appbar {
+  position: relative;
+  z-index: 3;
+}
+
+.agent-create-flow__appbar .app-bar__title {
+  color: $tzl-color-surface-base;
 }
 
 .agent-create-flow__bg,
@@ -559,10 +661,13 @@ async function submitCreation() {
   );
 }
 
-.agent-create-flow__scroll {
+.agent-create-flow__body {
   position: relative;
   z-index: 1;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .agent-create-flow__content {
@@ -570,34 +675,11 @@ async function submitCreation() {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  padding: env(safe-area-inset-top) 24px 16px;
+  padding: 0 24px 16px;
 }
 
 .agent-create-flow__content--avatar {
   padding-bottom: 16px;
-}
-
-.agent-create-flow__top {
-  height: 56px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-
-.agent-create-flow__back {
-  width: 44px;
-  height: 44px;
-  margin-left: -12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.agent-create-flow__back-icon {
-  margin-top: -4px;
-  font-size: 42px;
-  line-height: 1;
-  color: $tzl-color-surface-base;
 }
 
 .agent-create-flow__chat {
@@ -606,19 +688,24 @@ async function submitCreation() {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  transition: transform 180ms ease;
+  will-change: transform;
 }
 
 .agent-create-flow__messages {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .agent-create-flow__message-stack {
   min-height: 280px;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
   gap: 12px;
   padding: 24px 0 18px;
 }
@@ -673,6 +760,8 @@ async function submitCreation() {
     rgba(9, 13, 26, 0.46) 26%,
     rgba(9, 13, 26, 0.72) 100%
   );
+  transition: transform 180ms ease, padding-bottom 180ms ease;
+  will-change: transform;
 }
 
 .agent-text-panel {
@@ -776,11 +865,6 @@ async function submitCreation() {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.38);
   box-shadow: 0 20px 28px rgba(0, 0, 0, 0.18);
-}
-
-.agent-create-flow__scroll-target {
-  flex-shrink: 0;
-  height: 1px;
 }
 
 .agent-avatar-card__inner {

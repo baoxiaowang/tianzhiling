@@ -72,16 +72,34 @@ function detectContentType(fileName: string) {
   if (lower.endsWith('.bmp')) {
     return 'image/bmp'
   }
+  if (lower.endsWith('.m4a')) {
+    return 'audio/mp4'
+  }
+  if (lower.endsWith('.aac')) {
+    return 'audio/aac'
+  }
+  if (lower.endsWith('.mp3')) {
+    return 'audio/mpeg'
+  }
+  if (lower.endsWith('.wav')) {
+    return 'audio/wav'
+  }
+  if (lower.endsWith('.ogg')) {
+    return 'audio/ogg'
+  }
+  if (lower.endsWith('.webm')) {
+    return 'audio/webm'
+  }
 
   return 'image/jpeg'
 }
 
-function extractFileName(filePath: string) {
+function extractFileName(filePath: string, fallbackPrefix = 'upload') {
   const [pathWithoutQuery] = filePath.split('?')
   const parts = pathWithoutQuery.split(/[\\/]/)
   const name = parts[parts.length - 1]?.trim()
 
-  return name || `agent_avatar_${Date.now()}.jpg`
+  return name || `${fallbackPrefix}_${Date.now()}.bin`
 }
 
 function hasContentType(headers: Record<string, string>) {
@@ -146,11 +164,21 @@ export async function uploadLocalImage(
   filePath: string,
   options: { folder?: string; fileName?: string } = {},
 ): Promise<UploadedStorageAsset> {
+  return uploadLocalFile(filePath, {
+    folder: options.folder?.trim() || 'avatars',
+    fileName: options.fileName,
+  })
+}
+
+export async function uploadLocalFile(
+  filePath: string,
+  options: { folder: string; fileName?: string; contentType?: string },
+): Promise<UploadedStorageAsset> {
   const fileName = options.fileName?.trim() || extractFileName(filePath)
-  const contentType = detectContentType(fileName)
+  const contentType = options.contentType?.trim() || detectContentType(fileName)
   const ticket = await createCosSignedUpload(
     fileName,
-    options.folder?.trim() || 'avatars',
+    options.folder.trim(),
     contentType,
   )
 

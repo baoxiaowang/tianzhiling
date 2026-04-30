@@ -75,6 +75,22 @@ export async function updateDisplayName(name: string) {
   return user satisfies AuthUser
 }
 
+export async function updateAvatar(avatar: string) {
+  const data = await patch<Record<string, unknown>>('/api/user/me/avatar', {
+    avatar,
+  })
+  const user = parseAuthUser(data)
+
+  if (authSession.value) {
+    await saveAuthSession({
+      ...authSession.value,
+      user,
+    })
+  }
+
+  return user satisfies AuthUser
+}
+
 export async function logout() {
   try {
     await post<Record<string, unknown>>('/api/user/logout')

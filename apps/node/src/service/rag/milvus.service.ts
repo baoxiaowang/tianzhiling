@@ -8,7 +8,7 @@ import {
   MilvusClient,
   RRFRanker,
 } from '@zilliz/milvus2-sdk-node';
-import { MessageRole, MessageType } from '../../entity/message.entity';
+import { MessageRole, MessageType } from '@tzl/entities';
 import { OpenAIService } from '../agents/openai';
 
 export interface MilvusServiceConfig {

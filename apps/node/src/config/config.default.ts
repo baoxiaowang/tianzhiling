@@ -1,11 +1,29 @@
 import { MidwayConfig } from '@midwayjs/core';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { isAbsolute, resolve } from 'path';
+import {
+  AgentEntity,
+  AgentSubEntity,
+  ConversationEntity,
+  CouponLedgerEntity,
+  MessageEntity,
+  OrderEntity,
+  PostCommentEntity,
+  PostCommentNotificationEntity,
+  PostEntity,
+  UserAccountEntity,
+  UserEntitlementEntity,
+  UserEntity,
+  UserMembershipEntity,
+  VipPlanEntity,
+} from '@tzl/entities';
+
+const PROJECT_ROOT = resolve(__dirname, '../../../..');
 
 loadLocalEnv();
 
 function loadLocalEnv(): void {
-  const envPath = resolve(__dirname, '../../../../.env');
+  const envPath = resolve(PROJECT_ROOT, '.env');
 
   if (existsSync(envPath)) {
     loadEnvFile(envPath);
@@ -101,6 +119,26 @@ function readBooleanFrom(names: string[], fallback: boolean): boolean {
   return fallback;
 }
 
+function readPemFrom(
+  names: string[],
+  fallback = '',
+  pathNames: string[] = []
+): string {
+  const filePath = readStringFrom(pathNames, '').trim();
+
+  if (filePath) {
+    const absolutePath = isAbsolute(filePath)
+      ? filePath
+      : resolve(PROJECT_ROOT, filePath);
+
+    return readFileSync(absolutePath, 'utf8').trim();
+  }
+
+  const value = readStringFrom(names, fallback).trim();
+
+  return value.replace(/\\n/g, '\n');
+}
+
 export default {
   keys: readStringFrom(['NODE_APP_KEYS'], '1774073039411_5782'),
   koa: {
@@ -132,6 +170,62 @@ export default {
         60
       ),
     },
+  },
+  wechatPay: {
+    enabled: readBooleanFrom(['NODE_WECHAT_PAY_ENABLED'], false),
+    appId: readStringFrom(
+      ['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'],
+      ''
+    ),
+    appSecret: readStringFrom(
+      ['NODE_WECHAT_PAY_APP_SECRET', 'WECHAT_PAY_APP_SECRET'],
+      ''
+    ),
+    mchId: readStringFrom(
+      ['NODE_WECHAT_PAY_MCH_ID', 'WECHAT_PAY_MCH_ID'],
+      ''
+    ),
+    merchantSerialNo: readStringFrom(
+      ['NODE_WECHAT_PAY_MCH_SERIAL_NO', 'WECHAT_PAY_MCH_SERIAL_NO'],
+      ''
+    ),
+    merchantPrivateKey: readPemFrom(
+      ['NODE_WECHAT_PAY_PRIVATE_KEY', 'WECHAT_PAY_PRIVATE_KEY'],
+      '',
+      ['NODE_WECHAT_PAY_PRIVATE_KEY_PATH', 'WECHAT_PAY_PRIVATE_KEY_PATH']
+    ),
+    publicKeyId: readStringFrom(
+      [
+        'NODE_WECHAT_PAY_PUBLIC_KEY_ID',
+        'WECHAT_PAY_PUBLIC_KEY_ID',
+        'NODE_WECHAT_PAY_PLATFORM_CERT_SERIAL_NO',
+        'WECHAT_PAY_PLATFORM_CERT_SERIAL_NO',
+      ],
+      ''
+    ),
+    publicKey: readPemFrom(
+      [
+        'NODE_WECHAT_PAY_PUBLIC_KEY',
+        'WECHAT_PAY_PUBLIC_KEY',
+        'NODE_WECHAT_PAY_PLATFORM_CERT',
+        'WECHAT_PAY_PLATFORM_CERT',
+      ],
+      '',
+      [
+        'NODE_WECHAT_PAY_PUBLIC_KEY_PATH',
+        'WECHAT_PAY_PUBLIC_KEY_PATH',
+        'NODE_WECHAT_PAY_PLATFORM_CERT_PATH',
+        'WECHAT_PAY_PLATFORM_CERT_PATH',
+      ]
+    ),
+    apiV3Key: readStringFrom(
+      ['NODE_WECHAT_PAY_API_V3_KEY', 'WECHAT_PAY_API_V3_KEY'],
+      ''
+    ),
+    notifyUrl: readStringFrom(
+      ['NODE_WECHAT_PAY_NOTIFY_URL', 'WECHAT_PAY_NOTIFY_URL'],
+      ''
+    ),
   },
   openai: {
     enabled: readBooleanFrom(['NODE_ENABLED'], true),
@@ -288,7 +382,22 @@ export default {
           process.env.NODE_ENV !== 'production'
         ),
         logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
-        entities: ['entity'],
+        entities: [
+          AgentEntity,
+          AgentSubEntity,
+          ConversationEntity,
+          CouponLedgerEntity,
+          MessageEntity,
+          OrderEntity,
+          PostCommentEntity,
+          PostCommentNotificationEntity,
+          PostEntity,
+          UserAccountEntity,
+          UserEntitlementEntity,
+          UserEntity,
+          UserMembershipEntity,
+          VipPlanEntity,
+        ],
       },
     },
   },

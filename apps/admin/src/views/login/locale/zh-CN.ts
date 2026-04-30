@@ -10,6 +10,9 @@ export default {
   'login.form.forgetPassword': '忘记密码',
   'login.form.login': '登录',
   'login.form.register': '注册账号',
+  'login.form.superAdmin.exists': '已检测到超级管理员账号',
+  'login.form.superAdmin.missing':
+    '尚未检测到超级管理员账号，请先初始化后台账号',
   'login.banner.slogan1': '开箱即用的高质量模板',
   'login.banner.subSlogan1': '丰富的的页面模板，覆盖大多数典型业务场景',
   'login.banner.slogan2': '内置了常见问题的解决方案',

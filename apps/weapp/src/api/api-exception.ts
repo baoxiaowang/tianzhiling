@@ -41,6 +41,10 @@ export class ApiException extends Error {
       case 'TOKEN_REVOKED':
       case 'TOKEN_EXPIRED':
         return '登录状态已失效，请重新登录'
+      case 'INVALID_USER_NAME':
+        return '昵称格式不正确，请重新输入'
+      case 'INVALID_USER_AVATAR':
+        return '头像上传结果无效，请重新选择'
       case 'INVALID_PHONE':
         return '请输入正确的中国大陆手机号'
       case 'INVALID_SMS_CODE':

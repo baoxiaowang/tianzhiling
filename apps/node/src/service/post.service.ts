@@ -6,15 +6,15 @@ import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
-import { AgentEntity } from '../entity/agent.entity';
-import { PostEntity } from '../entity/post.entity';
-import { PostCommentNotificationEntity } from '../entity/post_comment_notification.entity';
 import {
+  AgentEntity,
+  MongoObjectId,
   PostCommentEntity,
+  PostCommentNotificationEntity,
   PostCommentType,
-} from '../entity/post_comment.entity';
-import { MongoObjectId } from '../entity/base';
-import { UserEntity } from '../entity/user.entity';
+  PostEntity,
+  UserEntity,
+} from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { OpenAIService } from './agents/openai';
 import { buildMomentsSystemPrompt } from '../promte/moments';

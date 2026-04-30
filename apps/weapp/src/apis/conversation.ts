@@ -60,6 +60,10 @@ export interface SendConversationMessageResult {
   assistantMessage?: ConversationMessage
 }
 
+interface VoiceTranscriptionResponse {
+  transcript?: unknown
+}
+
 function asRecord(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -157,10 +161,12 @@ function parseSegments(value: unknown, content: string, type: string) {
 function parseVoicePayload(value: unknown) {
   const raw = asRecord(value)
   const durationMs = asNumber(raw.durationMs)
+  const normalizedDurationMs =
+    durationMs > 0 && durationMs <= 10 * 60 * 1000 ? durationMs : 0
 
   if (
     !Object.keys(raw).length &&
-    !durationMs &&
+    !normalizedDurationMs &&
     !asString(raw.objectKey) &&
     !asString(raw.url) &&
     !asString(raw.mimeType) &&
@@ -173,7 +179,7 @@ function parseVoicePayload(value: unknown) {
     objectKey: asString(raw.objectKey) || undefined,
     url: asString(raw.url) || undefined,
     mimeType: asString(raw.mimeType) || undefined,
-    durationMs: durationMs > 0 ? durationMs : undefined,
+    durationMs: normalizedDurationMs || undefined,
     transcript: asString(raw.transcript) || undefined,
   } satisfies ConversationVoicePayload
 }
@@ -240,16 +246,42 @@ export async function getConversationMessages(conversationId: string) {
 export async function sendConversationMessage(
   conversationId: string,
   payload: {
-    content: string
+    content?: string
     type?: string
+    mediaUrl?: string
+    objectKey?: string
+    mimeType?: string
+    durationMs?: number
   }
 ): Promise<SendConversationMessageResult> {
+  const body: Record<string, unknown> = {
+    type: payload.type ?? 'text',
+  }
+  const content = payload.content?.trim()
+  const mediaUrl = payload.mediaUrl?.trim()
+  const objectKey = payload.objectKey?.trim()
+  const mimeType = payload.mimeType?.trim()
+  const durationMs = payload.durationMs
+
+  if (content) {
+    body.content = content
+  }
+  if (mediaUrl) {
+    body.mediaUrl = mediaUrl
+  }
+  if (objectKey) {
+    body.objectKey = objectKey
+  }
+  if (mimeType) {
+    body.mimeType = mimeType
+  }
+  if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
+    body.durationMs = Math.round(durationMs)
+  }
+
   const data = await post<SendConversationMessageResponse>(
     `/api/conversation/${conversationId}/messages`,
-    {
-      content: payload.content,
-      type: payload.type ?? 'text',
-    }
+    body
   )
 
   return {
@@ -258,4 +290,35 @@ export async function sendConversationMessage(
       ? parseConversationMessage(data.assistantMessage)
       : undefined,
   }
+}
+
+export async function transcribeConversationVoice(
+  conversationId: string,
+  payload: {
+    mediaUrl?: string
+    objectKey?: string
+    mimeType?: string
+  }
+) {
+  const body: Record<string, unknown> = {}
+  const mediaUrl = payload.mediaUrl?.trim()
+  const objectKey = payload.objectKey?.trim()
+  const mimeType = payload.mimeType?.trim()
+
+  if (mediaUrl) {
+    body.mediaUrl = mediaUrl
+  }
+  if (objectKey) {
+    body.objectKey = objectKey
+  }
+  if (mimeType) {
+    body.mimeType = mimeType
+  }
+
+  const data = await post<VoiceTranscriptionResponse>(
+    `/api/conversation/${conversationId}/voice-transcription`,
+    body
+  )
+
+  return asString(data.transcript).trim()
 }

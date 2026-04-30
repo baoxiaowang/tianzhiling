@@ -10,11 +10,11 @@ export class ConversationEntity extends BaseEntity {
   subAgentId?: MongoObjectId;
 
   @Column()
-  userId: MongoObjectId; // 用户id
+  userId: MongoObjectId;
 
   @Column()
-  createdAt: Date; // 创建时间
+  createdAt: Date;
 
   @Column()
-  updatedAt: Date; // 更新时间
+  updatedAt: Date;
 }

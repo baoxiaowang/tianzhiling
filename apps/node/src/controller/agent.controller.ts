@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Post,
+} from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import {
   CreateAgentDTO,

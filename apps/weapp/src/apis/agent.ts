@@ -1,4 +1,9 @@
 import { get, patch, post } from '../api/api-client'
+import type {
+  AgentProfileDTO,
+  CreateAgentDTO,
+  UpdateAgentAvatarDTO,
+} from '@tzl/shared'
 
 export interface AgentSummary {
   id: string
@@ -15,12 +20,7 @@ export interface AgentSummary {
   updatedAt: Date | null
 }
 
-interface CreateAgentPayload {
-  name: string
-  sex: number
-  iCallAgent: string
-  agentCallMe: string
-}
+type CreateAgentPayload = CreateAgentDTO
 
 function asRecord(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -82,7 +82,7 @@ export function parseAgentSummary(value: unknown): AgentSummary {
 }
 
 export async function createAgent(payload: CreateAgentPayload) {
-  const data = await post<Record<string, unknown>>('/api/agent', {
+  const data = await post<AgentProfileDTO>('/api/agent', {
     name: payload.name,
     sex: payload.sex,
     iCallAgent: payload.iCallAgent,
@@ -93,16 +93,16 @@ export async function createAgent(payload: CreateAgentPayload) {
 }
 
 export async function updateAgentAvatar(agentId: string, avatar: string) {
-  const data = await patch<Record<string, unknown>>(
+  const data = await patch<AgentProfileDTO>(
     `/api/agent/${agentId}/avatar`,
-    { avatar },
+    { avatar } satisfies UpdateAgentAvatarDTO,
   )
 
   return parseAgentSummary(data)
 }
 
 export async function getAgentDetail(agentId: string) {
-  const data = await get<Record<string, unknown>>(`/api/agent/${agentId}`)
+  const data = await get<AgentProfileDTO>(`/api/agent/${agentId}`)
 
   return parseAgentSummary(data)
 }

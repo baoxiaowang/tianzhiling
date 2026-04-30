@@ -36,6 +36,7 @@ module.exports = {
     },
   },
   rules: {
+    'no-use-before-define': 0,
     'prettier/prettier': 1,
     // Vue: Recommended rules to be closed or modify
     'vue/require-default-prop': 0,
@@ -47,6 +48,7 @@ module.exports = {
     'vue/padding-line-between-blocks': 1,
     'vue/require-direct-export': 1,
     'vue/multi-word-component-names': 0,
+    'vue/script-setup-uses-vars': 1,
     // Allow @ts-ignore comment
     '@typescript-eslint/ban-ts-comment': 0,
     '@typescript-eslint/no-unused-vars': 1,

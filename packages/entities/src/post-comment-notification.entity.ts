@@ -1,6 +1,6 @@
 import { Column, Entity } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
-import { PostCommentType } from './post_comment.entity';
+import { PostCommentType } from './post-comment.entity';
 
 @Entity(TableName.post_comment_notification)
 export class PostCommentNotificationEntity extends BaseEntity {

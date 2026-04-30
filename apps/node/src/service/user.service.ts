@@ -10,7 +10,11 @@ import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
-import { MongoObjectId } from '../entity/base';
+import {
+  MongoObjectId,
+  UserAccountEntity,
+  UserEntity,
+} from '@tzl/entities';
 import {
   AuthenticatedUserPayload,
   IUserOptions,
@@ -26,8 +30,6 @@ import {
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
 } from '../dto/user.dto';
-import { UserAccountEntity } from '../entity/user_account.entity';
-import { UserEntity } from '../entity/user.entity';
 import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
 

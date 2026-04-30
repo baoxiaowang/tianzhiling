@@ -9,8 +9,11 @@ declare module 'vue' {
   export interface GlobalComponents {
     AppBar: typeof import('./src/components/app-bar/app-bar.vue')['default']
     BackCapsule: typeof import('./src/components/back-capsule/back-capsule.vue')['default']
+    ChatMessageBubble: typeof import('./src/components/chat-message-bubble/chat-message-bubble.vue')['default']
+    ChatMorePanel: typeof import('./src/components/chat-more-panel/chat-more-panel.vue')['default']
     EmojiPickerPanel: typeof import('./src/components/emoji-picker-panel/emoji-picker-panel.vue')['default']
     NutButton: typeof import('@nutui/nutui-taro')['Button']
+    NutCell: typeof import('@nutui/nutui-taro')['Cell']
     NutCheckbox: typeof import('@nutui/nutui-taro')['Checkbox']
     NutInput: typeof import('@nutui/nutui-taro')['Input']
     NutTabPane: typeof import('@nutui/nutui-taro')['TabPane']

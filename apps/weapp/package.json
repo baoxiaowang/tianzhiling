@@ -36,6 +36,8 @@
   "license": "MIT",
   "dependencies": {
     "@babel/runtime": "^7.7.7",
+    "@nutui/icons-vue-taro": "0.0.9",
+    "@tzl/shared": "workspace:*",
     "@tarojs/components": "4.2.0",
     "@tarojs/helper": "4.2.0",
     "@tarojs/plugin-platform-weapp": "4.2.0",

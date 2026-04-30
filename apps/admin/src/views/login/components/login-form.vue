@@ -2,6 +2,17 @@
   <div class="login-form-wrapper">
     <div class="login-form-title">{{ $t('login.form.title') }}</div>
     <div class="login-form-sub-title">{{ $t('login.form.title') }}</div>
+    <a-alert
+      v-if="userStore.bootstrapChecked"
+      class="login-form-bootstrap-alert"
+      :type="userStore.hasSuperAdmin ? 'success' : 'warning'"
+      :content="
+        userStore.hasSuperAdmin
+          ? $t('login.form.superAdmin.exists')
+          : $t('login.form.superAdmin.missing')
+      "
+      show-icon
+    />
     <div class="login-form-error-msg">{{ errorMessage }}</div>
     <a-form
       ref="loginForm"
@@ -55,7 +66,12 @@
         <a-button type="primary" html-type="submit" long :loading="loading">
           {{ $t('login.form.login') }}
         </a-button>
-        <a-button type="text" long class="login-form-register-btn">
+        <a-button
+          type="text"
+          long
+          class="login-form-register-btn"
+          @click="goAdminRegister"
+        >
           {{ $t('login.form.register') }}
         </a-button>
       </a-space>
@@ -126,6 +142,10 @@
   const setRememberPassword = (value: boolean) => {
     loginConfig.value.rememberPassword = value;
   };
+
+  const goAdminRegister = () => {
+    router.push({ name: 'adminRegister' });
+  };
 </script>
 
 <style lang="less" scoped>
@@ -151,6 +171,10 @@
       height: 32px;
       color: rgb(var(--red-6));
       line-height: 32px;
+    }
+
+    &-bootstrap-alert {
+      margin-top: 16px;
     }
 
     &-password-actions {

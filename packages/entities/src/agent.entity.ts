@@ -1,5 +1,5 @@
 import { Entity, Column } from 'typeorm';
-import { BaseEntity, MongoObjectId, TableName } from './base'
+import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum AgentSex {
   woman = 0,
@@ -9,33 +9,28 @@ export enum AgentSex {
 @Entity(TableName.agent)
 export class AgentEntity extends BaseEntity {
   @Column()
-  createdUserId: MongoObjectId; // 归属哪个用户
+  createdUserId: MongoObjectId;
 
   @Column()
-  name: string; // 代理名称
+  name: string;
 
   @Column()
-  avatar: string; // 代理头像
-
+  avatar: string;
 
   @Column()
-  sex: AgentSex; // 性别
+  sex: AgentSex;
 
-
-  // agent 称呼我为
   @Column()
   agentCallMe?: string;
 
-  // 我称呼 agent 为
   @Column()
   iCallAgent?: string;
 
   @Column()
-  birthday?: Date; // 生日
+  birthday?: Date;
 
   @Column()
-  deathDate?: Date; //逝世日期
-  
+  deathDate?: Date;
 
   @Column()
   description: string;

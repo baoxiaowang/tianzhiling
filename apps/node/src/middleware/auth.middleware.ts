@@ -39,6 +39,7 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
       return (
         !ctx.path.startsWith('/api/') ||
         ctx.path === '/api/system/health' ||
+        ctx.path === '/api/pay/wechat/notify' ||
         ctx.path === '/api/user/sms-code' ||
         ctx.path === '/api/user/phone-login' ||
         ctx.path === '/api/user/password-login' ||

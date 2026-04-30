@@ -1,5 +1,6 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Inject, Provide } from '@midwayjs/core';
+import type { AgentProfileDTO } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
@@ -7,26 +8,16 @@ import {
   UpdateAgentAvatarDTO,
   UpdateAgentProfileDTO,
 } from '../dto/agent.dto';
-import { AgentEntity, AgentSex } from '../entity/agent.entity';
-import { ConversationEntity } from '../entity/conversation.entity';
-import { MongoObjectId } from '../entity/base';
+import {
+  AgentEntity,
+  AgentSex,
+  ConversationEntity,
+  MongoObjectId,
+} from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { PostImageService } from './post-image.service';
 
-export interface AgentProfile {
-  id: string;
-  name: string;
-  avatar: string;
-  sex: AgentSex;
-  agentCallMe?: string;
-  iCallAgent?: string;
-  birthday?: string;
-  deathDate?: string;
-  description: string;
-  status: number;
-  createdAt: string;
-  updatedAt: string;
-}
+export type AgentProfile = AgentProfileDTO;
 
 @Provide()
 export class AgentService {
@@ -225,8 +216,8 @@ export class AgentService {
       name: agent.name,
       avatar: this.postImageService.resolveForResponse(agent.avatar?.trim() || ''),
       sex: agent.sex,
-      agentCallMe: agent.agentCallMe,
-      iCallAgent: agent.iCallAgent,
+      agentCallMe: agent.agentCallMe ?? '',
+      iCallAgent: agent.iCallAgent ?? '',
       birthday: agent.birthday?.toISOString?.() ?? '',
       deathDate: agent.deathDate?.toISOString?.() ?? '',
       description: agent.description,

@@ -1,0 +1,434 @@
+import { AppError } from '../common/errors';
+import { Inject, Provide } from '@midwayjs/core';
+import { InjectEntityModel } from '@midwayjs/typeorm';
+import {
+  MongoObjectId,
+  OrderEntity,
+  OrderSource,
+  OrderStatus,
+  OrderType,
+  UserMembershipEntity,
+  UserMembershipStatus,
+  VipPlanEntity,
+  VipPlanStatus,
+} from '@tzl/entities';
+import type {
+  CreateVipPlanOrderDTO,
+  CreateVipPlanOrderResultDTO,
+  OrderRecordDTO,
+} from '@tzl/shared';
+import { randomBytes } from 'crypto';
+import { MongoRepository } from 'typeorm';
+import { AuthenticatedUserPayload } from '../interface';
+import {
+  WechatPayService,
+  WechatTransactionPayload,
+} from './wechat-pay.service';
+
+const WECHAT_PAY_PROVIDER = 'wechat_pay';
+
+@Provide()
+export class OrderService {
+  @Inject()
+  wechatPayService: WechatPayService;
+
+  @InjectEntityModel(OrderEntity)
+  orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(VipPlanEntity)
+  vipPlanModel: MongoRepository<VipPlanEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  async createVipPlanOrder(
+    auth: AuthenticatedUserPayload,
+    payload: CreateVipPlanOrderDTO
+  ): Promise<CreateVipPlanOrderResultDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const plan = await this.getActiveVipPlanById(payload.vipPlanId);
+    const openid = await this.wechatPayService.getOpenidByJsCode(
+      payload.jsCode
+    );
+    const now = new Date();
+    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+    const order = new OrderEntity();
+
+    Object.assign(order, {
+      orderNo: this.generateOrderNo(),
+      userId,
+      orderType: OrderType.vipPlan,
+      targetId: plan.id,
+      targetCode: plan.code,
+      title: plan.name,
+      amount: plan.priceAmount,
+      discountAmount: Math.max(
+        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+        0
+      ),
+      couponAmount: 0,
+      payableAmount: plan.priceAmount,
+      currency: plan.currency || 'CNY',
+      status: OrderStatus.pending,
+      source: OrderSource.weapp,
+      paymentProvider: WECHAT_PAY_PROVIDER,
+      paymentExpiredAt: expireAt,
+      payerOpenid: openid,
+      snapshot: {
+        vipPlan: this.buildVipPlanSnapshot(plan),
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const savedOrder = await this.orderModel.save(order);
+    const { prepayId, payment } =
+      await this.wechatPayService.createVipPlanPrepay({
+        orderNo: savedOrder.orderNo,
+        title: savedOrder.title,
+        amount: savedOrder.payableAmount,
+        openid,
+        expireAt,
+      });
+
+    savedOrder.paymentPrepayId = prepayId;
+    savedOrder.updatedAt = new Date();
+    const prepayOrder = await this.orderModel.save(savedOrder);
+
+    return {
+      order: this.buildOrderRecord(prepayOrder),
+      payment,
+    };
+  }
+
+  async getUserOrder(
+    auth: AuthenticatedUserPayload,
+    orderId: string
+  ): Promise<OrderRecordDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const objectId = this.parseObjectId(orderId, 'INVALID_ORDER_ID');
+    const order = await this.findOrderById(objectId);
+
+    if (!order || this.stringifyObjectId(order.userId) !== String(userId)) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    return this.buildOrderRecord(order);
+  }
+
+  async syncUserOrderPayment(
+    auth: AuthenticatedUserPayload,
+    orderId: string
+  ): Promise<OrderRecordDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const objectId = this.parseObjectId(orderId, 'INVALID_ORDER_ID');
+    const order = await this.findOrderById(objectId);
+
+    if (!order || this.stringifyObjectId(order.userId) !== String(userId)) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    if (
+      order.status === OrderStatus.completed ||
+      order.status === OrderStatus.granting ||
+      order.status === OrderStatus.grantFailed ||
+      order.status === OrderStatus.refunded
+    ) {
+      return this.buildOrderRecord(order);
+    }
+
+    const transaction = await this.wechatPayService.queryTransactionByOrderNo(
+      order.orderNo
+    );
+
+    if (!transaction) {
+      return this.buildOrderRecord(order);
+    }
+
+    if (transaction.trade_state === 'SUCCESS') {
+      await this.handleWechatPaymentSuccess(transaction);
+      const syncedOrder = await this.findOrderById(objectId);
+
+      return this.buildOrderRecord(syncedOrder ?? order);
+    }
+
+    if (this.isWechatTradeClosed(transaction.trade_state)) {
+      order.status = OrderStatus.closed;
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+    }
+
+    return this.buildOrderRecord(order);
+  }
+
+  async handleWechatPaymentSuccess(
+    transaction: WechatTransactionPayload
+  ): Promise<void> {
+    const orderNo = transaction.out_trade_no?.trim();
+
+    if (!orderNo) {
+      throw new AppError('WECHAT_ORDER_NO_MISSING', 'wechat order no missing');
+    }
+
+    const order = await this.orderModel.findOne({
+      where: {
+        orderNo,
+      },
+    });
+
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    if (
+      order.status === OrderStatus.completed ||
+      order.status === OrderStatus.granting
+    ) {
+      return;
+    }
+
+    if (transaction.trade_state !== 'SUCCESS') {
+      throw new AppError(
+        'WECHAT_TRADE_NOT_SUCCESS',
+        'wechat trade is not success'
+      );
+    }
+
+    const paidAmount =
+      transaction.amount?.payer_total ?? transaction.amount?.total;
+
+    if (!paidAmount || paidAmount !== order.payableAmount) {
+      throw new AppError('WECHAT_AMOUNT_MISMATCH', 'wechat amount mismatch');
+    }
+
+    const now = new Date();
+    order.status = OrderStatus.granting;
+    order.paidAmount = paidAmount;
+    order.paymentTradeNo = transaction.transaction_id;
+    order.paymentNotifyAt = now;
+    order.paidAt = transaction.success_time
+      ? new Date(transaction.success_time)
+      : now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+
+    try {
+      await this.grantVipMembership(order);
+      order.status = OrderStatus.completed;
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+    } catch (error) {
+      order.status = OrderStatus.grantFailed;
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+      throw error;
+    }
+  }
+
+  private async grantVipMembership(order: OrderEntity): Promise<void> {
+    const plan = order.targetId
+      ? await this.findVipPlanById(order.targetId)
+      : null;
+    const snapshot = this.getVipPlanSnapshot(order);
+    const lifetime = plan?.lifetime ?? Boolean(snapshot.lifetime);
+    const durationDays = plan?.durationDays ?? snapshot.durationDays;
+    const now = order.paidAt ?? new Date();
+    const existing = await this.findActiveMembership(order.userId);
+    const membership = existing ?? new UserMembershipEntity();
+
+    membership.userId = order.userId;
+    membership.vipPlanId = order.targetId ?? this.parseObjectId(snapshot.id);
+    membership.vipPlanCode = order.targetCode || snapshot.code;
+    membership.sourceOrderId = order.id;
+    membership.status = UserMembershipStatus.active;
+    membership.startedAt = existing?.startedAt ?? now;
+    membership.lifetime = lifetime;
+    membership.expiredAt = lifetime
+      ? undefined
+      : this.calculateExpiredAt(existing?.expiredAt, now, durationDays);
+    membership.createdAt = existing?.createdAt ?? now;
+    membership.updatedAt = new Date();
+
+    await this.userMembershipModel.save(membership);
+  }
+
+  private isWechatTradeClosed(tradeState?: string): boolean {
+    return (
+      tradeState === 'CLOSED' ||
+      tradeState === 'REVOKED' ||
+      tradeState === 'PAYERROR'
+    );
+  }
+
+  private calculateExpiredAt(
+    currentExpiredAt: Date | undefined,
+    paidAt: Date,
+    durationDays?: number
+  ): Date {
+    if (!durationDays) {
+      throw new AppError(
+        'INVALID_VIP_PLAN_DURATION',
+        'vip plan duration is required'
+      );
+    }
+
+    const base =
+      currentExpiredAt && currentExpiredAt > paidAt ? currentExpiredAt : paidAt;
+
+    return new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  }
+
+  private async findActiveMembership(
+    userId: MongoObjectId
+  ): Promise<UserMembershipEntity | null> {
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    const now = new Date();
+
+    return (
+      memberships.find(item =>
+        item.lifetime || Boolean(item.expiredAt && item.expiredAt > now)
+      ) ??
+      null
+    );
+  }
+
+  private async getActiveVipPlanById(planId: string): Promise<VipPlanEntity> {
+    const objectId = this.parseObjectId(planId, 'INVALID_VIP_PLAN_ID');
+    const plan = await this.findVipPlanById(objectId);
+
+    if (!plan || plan.status !== VipPlanStatus.active) {
+      throw new AppError('VIP_PLAN_NOT_FOUND', 'vip plan not found', 404);
+    }
+
+    return plan;
+  }
+
+  private async findVipPlanById(
+    planId: MongoObjectId
+  ): Promise<VipPlanEntity | null> {
+    return (
+      (await this.vipPlanModel.findOne({
+        where: {
+          id: planId,
+        },
+      })) ??
+      (await this.vipPlanModel.findOne({
+        where: {
+          _id: planId,
+        } as never,
+      }))
+    );
+  }
+
+  private async findOrderById(
+    orderId: MongoObjectId
+  ): Promise<OrderEntity | null> {
+    return (
+      (await this.orderModel.findOne({
+        where: {
+          id: orderId,
+        },
+      })) ??
+      (await this.orderModel.findOne({
+        where: {
+          _id: orderId,
+        } as never,
+      }))
+    );
+  }
+
+  private buildOrderRecord(order: OrderEntity): OrderRecordDTO {
+    return {
+      id: this.stringifyObjectId(order.id),
+      orderNo: order.orderNo,
+      orderType: order.orderType,
+      targetId: order.targetId
+        ? this.stringifyObjectId(order.targetId)
+        : undefined,
+      targetCode: order.targetCode,
+      title: order.title,
+      payableAmount: order.payableAmount,
+      currency: order.currency || 'CNY',
+      status: order.status,
+      createdAt: this.formatDate(order.createdAt),
+      paidAt: order.paidAt ? this.formatDate(order.paidAt) : undefined,
+    };
+  }
+
+  private buildVipPlanSnapshot(plan: VipPlanEntity): Record<string, unknown> {
+    return {
+      id: this.stringifyObjectId(plan.id),
+      code: plan.code,
+      name: plan.name,
+      priceAmount: plan.priceAmount,
+      originalPriceAmount: plan.originalPriceAmount,
+      currency: plan.currency || 'CNY',
+      durationDays: plan.durationDays,
+      lifetime: Boolean(plan.lifetime),
+      benefits: plan.benefits ?? [],
+    };
+  }
+
+  private getVipPlanSnapshot(order: OrderEntity): {
+    id: string;
+    code: string;
+    durationDays?: number;
+    lifetime?: boolean;
+  } {
+    const snapshot = order.snapshot?.vipPlan;
+
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new AppError(
+        'VIP_PLAN_SNAPSHOT_MISSING',
+        'vip plan snapshot missing'
+      );
+    }
+
+    const raw = snapshot as Record<string, unknown>;
+
+    return {
+      id: String(raw.id ?? ''),
+      code: String(raw.code ?? order.targetCode ?? ''),
+      durationDays:
+        typeof raw.durationDays === 'number' ? raw.durationDays : undefined,
+      lifetime: Boolean(raw.lifetime),
+    };
+  }
+
+  private generateOrderNo(): string {
+    return `VIP${Date.now()}${randomBytes(4).toString('hex').toUpperCase()}`;
+  }
+
+  private parseObjectId(
+    value: string,
+    code = 'INVALID_TOKEN'
+  ): MongoObjectId {
+    if (!MongoObjectId.isValid(value)) {
+      throw new AppError(
+        code,
+        'object id is invalid',
+        code === 'INVALID_TOKEN' ? 401 : 400
+      );
+    }
+
+    return new MongoObjectId(value);
+  }
+
+  private stringifyObjectId(value: MongoObjectId): string {
+    return value?.toHexString?.() ?? String(value);
+  }
+
+  private formatDate(value: Date): string {
+    return value instanceof Date
+      ? value.toISOString()
+      : new Date(value).toISOString();
+  }
+}

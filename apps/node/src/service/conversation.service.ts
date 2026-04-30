@@ -3,15 +3,15 @@ import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
-import { ConversationEntity } from '../entity/conversation.entity';
 import {
+  AgentEntity,
+  ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageStatus,
   MessageType,
-} from '../entity/message.entity';
-import { AgentEntity } from '../entity/agent.entity';
-import { MongoObjectId } from '../entity/base';
+  MongoObjectId,
+} from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
 import {
@@ -600,7 +600,7 @@ export class ConversationService {
       return {
         mediaUrl: stored.mediaUrl,
         mediaMimeType: stored.mediaMimeType,
-        mediaDurationMs: this.extractWavDurationMs(
+        mediaDurationMs: this.extractAudioDurationMs(
           synthesized.audioBuffer,
           stored.mediaMimeType || synthesized.mimeType
         ),
@@ -711,6 +711,17 @@ export class ConversationService {
     return 'wav';
   }
 
+  private extractAudioDurationMs(
+    audioBuffer: Buffer,
+    mimeType?: string
+  ): number | undefined {
+    return (
+      this.extractWavDurationMs(audioBuffer, mimeType) ||
+      this.extractMp3DurationMs(audioBuffer, mimeType) ||
+      this.extractAdtsAacDurationMs(audioBuffer, mimeType)
+    );
+  }
+
   private extractWavDurationMs(
     audioBuffer: Buffer,
     mimeType?: string
@@ -748,7 +759,10 @@ export class ConversationService {
       }
 
       if (chunkId === 'data') {
-        dataSize = chunkSize;
+        dataSize =
+          chunkSize === 0xffffffff
+            ? audioBuffer.length - chunkStart
+            : Math.min(chunkSize, audioBuffer.length - chunkStart);
         break;
       }
 
@@ -759,7 +773,270 @@ export class ConversationService {
       return undefined;
     }
 
-    return Math.max(1, Math.round((dataSize / byteRate) * 1000));
+    return this.normalizeVoiceDuration((dataSize / byteRate) * 1000);
+  }
+
+  private extractMp3DurationMs(
+    audioBuffer: Buffer,
+    mimeType?: string
+  ): number | undefined {
+    if (
+      !Buffer.isBuffer(audioBuffer) ||
+      audioBuffer.length < 4 ||
+      !this.isMp3MimeOrBuffer(audioBuffer, mimeType)
+    ) {
+      return undefined;
+    }
+
+    let offset = this.skipId3v2Header(audioBuffer);
+    let totalSamples = 0;
+    let sampleRate = 0;
+    let frameCount = 0;
+
+    while (offset + 4 <= audioBuffer.length) {
+      const header = audioBuffer.readUInt32BE(offset);
+      const frame = this.parseMp3FrameHeader(header);
+
+      if (!frame) {
+        offset += 1;
+        continue;
+      }
+
+      if (offset + frame.frameSize > audioBuffer.length) {
+        break;
+      }
+
+      totalSamples += frame.samplesPerFrame;
+      sampleRate = frame.sampleRate;
+      frameCount += 1;
+      offset += frame.frameSize;
+    }
+
+    if (frameCount <= 0 || totalSamples <= 0 || sampleRate <= 0) {
+      return undefined;
+    }
+
+    return Math.max(1, Math.round((totalSamples / sampleRate) * 1000));
+  }
+
+  private isMp3MimeOrBuffer(audioBuffer: Buffer, mimeType?: string): boolean {
+    const normalized = mimeType?.trim().toLowerCase() || '';
+    if (normalized.includes('mpeg') || normalized.includes('mp3')) {
+      return true;
+    }
+
+    if (audioBuffer.toString('ascii', 0, 3) === 'ID3') {
+      return true;
+    }
+
+    return (
+      audioBuffer.length >= 2 &&
+      audioBuffer[0] === 0xff &&
+      (audioBuffer[1] & 0xe0) === 0xe0
+    );
+  }
+
+  private skipId3v2Header(audioBuffer: Buffer): number {
+    if (
+      audioBuffer.length < 10 ||
+      audioBuffer.toString('ascii', 0, 3) !== 'ID3'
+    ) {
+      return 0;
+    }
+
+    const size =
+      ((audioBuffer[6] & 0x7f) << 21) |
+      ((audioBuffer[7] & 0x7f) << 14) |
+      ((audioBuffer[8] & 0x7f) << 7) |
+      (audioBuffer[9] & 0x7f);
+    const hasFooter = Boolean(audioBuffer[5] & 0x10);
+
+    return Math.min(audioBuffer.length, 10 + size + (hasFooter ? 10 : 0));
+  }
+
+  private parseMp3FrameHeader(header: number):
+    | {
+        frameSize: number;
+        sampleRate: number;
+        samplesPerFrame: number;
+      }
+    | undefined {
+    if ((header & 0xffe00000) !== 0xffe00000) {
+      return undefined;
+    }
+
+    const versionBits = (header >> 19) & 0x03;
+    const layerBits = (header >> 17) & 0x03;
+    const bitrateIndex = (header >> 12) & 0x0f;
+    const sampleRateIndex = (header >> 10) & 0x03;
+    const padding = (header >> 9) & 0x01;
+
+    if (
+      versionBits === 1 ||
+      layerBits === 0 ||
+      bitrateIndex === 0 ||
+      bitrateIndex === 15 ||
+      sampleRateIndex === 3
+    ) {
+      return undefined;
+    }
+
+    const version = versionBits === 3 ? 1 : versionBits === 2 ? 2 : 2.5;
+    const layer = layerBits === 3 ? 1 : layerBits === 2 ? 2 : 3;
+    const sampleRate = this.resolveMp3SampleRate(version, sampleRateIndex);
+    const bitrate = this.resolveMp3Bitrate(version, layer, bitrateIndex);
+
+    if (!sampleRate || !bitrate) {
+      return undefined;
+    }
+
+    const samplesPerFrame =
+      layer === 1 ? 384 : layer === 2 ? 1152 : version === 1 ? 1152 : 576;
+    const frameSize =
+      layer === 1
+        ? Math.floor(((12 * bitrate) / sampleRate + padding) * 4)
+        : Math.floor(
+            ((layer === 3 && version !== 1 ? 72 : 144) * bitrate) / sampleRate +
+              padding
+          );
+
+    if (frameSize <= 4) {
+      return undefined;
+    }
+
+    return {
+      frameSize,
+      sampleRate,
+      samplesPerFrame,
+    };
+  }
+
+  private resolveMp3SampleRate(
+    version: 1 | 2 | 2.5,
+    index: number
+  ): number | undefined {
+    const baseRates = [44100, 48000, 32000];
+    const baseRate = baseRates[index];
+    if (!baseRate) {
+      return undefined;
+    }
+
+    if (version === 1) {
+      return baseRate;
+    }
+
+    return version === 2 ? baseRate / 2 : baseRate / 4;
+  }
+
+  private resolveMp3Bitrate(
+    version: 1 | 2 | 2.5,
+    layer: 1 | 2 | 3,
+    index: number
+  ): number | undefined {
+    const mpeg1Layer1 = [
+      0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
+    ];
+    const mpeg1Layer2 = [
+      0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
+    ];
+    const mpeg1Layer3 = [
+      0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ];
+    const mpeg2Layer1 = [
+      0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
+    ];
+    const mpeg2Layer23 = [
+      0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160,
+    ];
+
+    const table =
+      version === 1
+        ? layer === 1
+          ? mpeg1Layer1
+          : layer === 2
+          ? mpeg1Layer2
+          : mpeg1Layer3
+        : layer === 1
+        ? mpeg2Layer1
+        : mpeg2Layer23;
+    const bitrateKbps = table[index];
+
+    return bitrateKbps ? bitrateKbps * 1000 : undefined;
+  }
+
+  private extractAdtsAacDurationMs(
+    audioBuffer: Buffer,
+    mimeType?: string
+  ): number | undefined {
+    if (
+      !Buffer.isBuffer(audioBuffer) ||
+      audioBuffer.length < 7 ||
+      !this.isAacMimeOrBuffer(audioBuffer, mimeType)
+    ) {
+      return undefined;
+    }
+
+    let offset = 0;
+    let frameCount = 0;
+    let sampleRate = 0;
+
+    while (offset + 7 <= audioBuffer.length) {
+      if (
+        audioBuffer[offset] !== 0xff ||
+        (audioBuffer[offset + 1] & 0xf0) !== 0xf0
+      ) {
+        offset += 1;
+        continue;
+      }
+
+      const sampleRateIndex = (audioBuffer[offset + 2] >> 2) & 0x0f;
+      const nextSampleRate = this.resolveAacSampleRate(sampleRateIndex);
+      const frameLength =
+        ((audioBuffer[offset + 3] & 0x03) << 11) |
+        (audioBuffer[offset + 4] << 3) |
+        ((audioBuffer[offset + 5] & 0xe0) >> 5);
+
+      if (
+        !nextSampleRate ||
+        frameLength < 7 ||
+        offset + frameLength > audioBuffer.length
+      ) {
+        offset += 1;
+        continue;
+      }
+
+      sampleRate = nextSampleRate;
+      frameCount += 1;
+      offset += frameLength;
+    }
+
+    if (frameCount <= 0 || sampleRate <= 0) {
+      return undefined;
+    }
+
+    return Math.max(1, Math.round(((frameCount * 1024) / sampleRate) * 1000));
+  }
+
+  private isAacMimeOrBuffer(audioBuffer: Buffer, mimeType?: string): boolean {
+    const normalized = mimeType?.trim().toLowerCase() || '';
+    if (normalized.includes('aac')) {
+      return true;
+    }
+
+    return (
+      audioBuffer.length >= 2 &&
+      audioBuffer[0] === 0xff &&
+      (audioBuffer[1] & 0xf0) === 0xf0
+    );
+  }
+
+  private resolveAacSampleRate(index: number): number | undefined {
+    const sampleRates = [
+      96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000,
+      11025, 8000, 7350,
+    ];
+
+    return sampleRates[index];
   }
 
   private normalizeMessageType(rawValue?: string): MessageType {
@@ -778,7 +1055,8 @@ export class ConversationService {
       return undefined;
     }
 
-    return Math.round(value);
+    const durationMs = Math.round(value);
+    return durationMs <= 10 * 60 * 1000 ? durationMs : undefined;
   }
 
   private resolveMediaUrlFromObjectKey(objectKey?: string): string {

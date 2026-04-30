@@ -179,9 +179,14 @@ function handleContactsRetry() {
 function handleConversationTap(conversation: ConversationSummary) {
   const query = [
     ['conversationId', conversation.id],
+    ['agentId', conversation.agentId],
     ['agentName', resolveConversationName(conversation)],
     ['agentAvatar', conversation.agentAvatar],
     ['agentSex', String(conversation.agentSex)],
+    ['agentCallMe', conversation.agentCallMe],
+    ['iCallAgent', conversation.iCallAgent],
+    ['preview', conversation.preview],
+    ['createdAt', conversation.createdAt?.toISOString() ?? ''],
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&')

@@ -23,7 +23,7 @@
 
     <scroll-view v-else-if="session" scroll-y class="me-scroll">
       <view class="me-page">
-        <view class="me-profile">
+        <view class="me-profile" @tap="handleProfileTap">
           <image
             v-if="avatarUrl"
             class="me-profile__avatar"
@@ -38,6 +38,8 @@
             <text class="me-profile__name">{{ displayName }}</text>
             <text class="me-profile__account">ID：{{ displayAccount }}</text>
           </view>
+
+          <view class="me-profile__arrow" />
         </view>
 
         <view class="me-page__spacer" />
@@ -143,6 +145,12 @@ async function handleMenuTap(title: string) {
   }
 
   showPendingToast(`${title} 页面待接入`)
+}
+
+async function handleProfileTap() {
+  await Taro.navigateTo({
+    url: '/pages/user-settings/index',
+  })
 }
 
 async function refreshProfile() {
@@ -253,6 +261,8 @@ useDidShow(() => {
 }
 
 .me-profile__meta {
+  min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -263,12 +273,25 @@ useDidShow(() => {
   line-height: 27px;
   font-weight: 600;
   color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .me-profile__account {
   font-size: 13px;
   line-height: 19.5px;
   color: #999999;
+}
+
+.me-profile__arrow {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-right: 3px;
+  border-top: 1.5px solid #cfcfcf;
+  border-right: 1.5px solid #cfcfcf;
+  transform: rotate(45deg);
 }
 
 .me-menu-section {

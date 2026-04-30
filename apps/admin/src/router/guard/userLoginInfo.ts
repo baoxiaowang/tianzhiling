@@ -28,6 +28,32 @@ export default function setupUserLoginInfoGuard(router: Router) {
       }
     } else {
       if (to.name === 'login') {
+        try {
+          await userStore.checkAdminBootstrapStatus();
+          if (userStore.bootstrapChecked && userStore.hasSuperAdmin === false) {
+            next({
+              name: 'adminRegister',
+            });
+            return;
+          }
+        } catch {
+          // Keep the login route reachable even when the bootstrap check fails.
+        }
+        next();
+        return;
+      }
+      if (to.name === 'adminRegister') {
+        try {
+          await userStore.checkAdminBootstrapStatus();
+          if (userStore.bootstrapChecked && userStore.hasSuperAdmin === true) {
+            next({
+              name: 'login',
+            });
+            return;
+          }
+        } catch {
+          // Keep the register route reachable even when the bootstrap check fails.
+        }
         next();
         return;
       }

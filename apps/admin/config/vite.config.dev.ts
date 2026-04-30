@@ -10,6 +10,12 @@ export default mergeConfig(
       fs: {
         strict: true,
       },
+      proxy: {
+        '/admin_api': {
+          target: 'http://localhost:7101',
+          changeOrigin: true,
+        },
+      },
     },
     plugins: [
       eslint({

@@ -1,5 +1,6 @@
 const baseUrl = process.env.TARO_APP_API_BASE_URL ?? ''
 const assetBaseUrl = process.env.TARO_APP_ASSET_BASE_URL ?? ''
+const mediaBaseUrl = process.env.TARO_APP_MEDIA_BASE_URL ?? 'https://oss.soullink.top'
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '')
@@ -28,5 +29,9 @@ export const ApiConfig = {
     }
 
     return this.baseUrl
+  },
+
+  get mediaBaseUrl() {
+    return normalizeConfiguredUrl(mediaBaseUrl)
   },
 }

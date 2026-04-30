@@ -1,6 +1,10 @@
 <template>
   <view class="back-capsule" :style="containerStyle">
-    <view class="back-capsule__shell" :style="shellStyle">
+    <view
+      class="back-capsule__shell"
+      :class="{ 'back-capsule__shell--single': isSingleAction }"
+      :style="shellStyle"
+    >
       <view
         v-if="showBack"
         class="back-capsule__action back-capsule__action--back"
@@ -106,6 +110,9 @@ const nativeMenuMetrics = readMenuButtonMetrics()
 const hasMenus = computed(() => props.menus.length > 0)
 const isSingleMenu = computed(() => props.menus.length === 1)
 const showBack = computed(() => props.showBack)
+const isSingleAction = computed(() => {
+  return (showBack.value ? 1 : 0) + (hasMenus.value ? 1 : 0) <= 1
+})
 
 const containerStyle = computed(() => {
   if (!props.anchorToNative) {
@@ -244,6 +251,11 @@ async function navigateWithMenuItem(item: BackCapsuleMenuItem) {
   box-shadow: 0 2px 8px rgba(17, 17, 17, 0.04);
   overflow: hidden;
   backdrop-filter: blur(10px);
+}
+
+.back-capsule__shell--single {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .back-capsule__action {

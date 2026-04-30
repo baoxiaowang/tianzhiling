@@ -62,7 +62,9 @@ export class RetrieveService {
     }
   }
 
-  private async createQueryEmbedding(query: string): Promise<number[] | undefined> {
+  private async createQueryEmbedding(
+    query: string
+  ): Promise<number[] | undefined> {
     if (!this.openAIService.hasEmbeddingConfig()) {
       return undefined;
     }

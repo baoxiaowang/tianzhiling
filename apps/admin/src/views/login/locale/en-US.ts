@@ -10,6 +10,9 @@ export default {
   'login.form.forgetPassword': 'Forgot password',
   'login.form.login': 'login',
   'login.form.register': 'register account',
+  'login.form.superAdmin.exists': 'Super admin account detected',
+  'login.form.superAdmin.missing':
+    'No super admin account detected. Initialize an admin account first.',
   'login.banner.slogan1': 'Out-of-the-box high-quality template',
   'login.banner.subSlogan1':
     'Rich page templates, covering most typical business scenarios',

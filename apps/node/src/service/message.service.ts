@@ -2,14 +2,14 @@ import { Inject, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
-import { ConversationEntity } from '../entity/conversation.entity';
 import {
+  ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageStatus,
   MessageType,
-} from '../entity/message.entity';
-import { MongoObjectId } from '../entity/base';
+  MongoObjectId,
+} from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
 
@@ -168,7 +168,8 @@ export class MessageService {
       return undefined;
     }
 
-    return Math.round(value);
+    const durationMs = Math.round(value);
+    return durationMs <= 10 * 60 * 1000 ? durationMs : undefined;
   }
 
   private resolveMediaUrl(message: MessageEntity): string | undefined {

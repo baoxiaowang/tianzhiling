@@ -36,13 +36,24 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { computed, useSlots } from 'vue'
+import Taro from '@tarojs/taro'
+import { computed, getCurrentInstance, useSlots } from 'vue'
 import BackCapsule from '../back-capsule/back-capsule.vue'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 
+type AppBarMenuOpenType = 'navigateTo' | 'redirectTo' | 'reLaunch' | 'switchTab' | 'navigateBack'
+
+interface AppBarMenuItem {
+  key?: string
+  text: string
+  url?: string
+  openType?: AppBarMenuOpenType
+  delta?: number
+}
+
 const emit = defineEmits<{
   back: []
-  menuSelect: [payload: { item: { key?: string; text: string; url?: string; openType?: string; delta?: number }; index: number }]
+  menuSelect: [payload: { item: AppBarMenuItem; index: number }]
 }>()
 
 const props = withDefaults(
@@ -50,13 +61,7 @@ const props = withDefaults(
     title: string
     background?: string
     borderColor?: string
-    menus?: ReadonlyArray<{
-      key?: string
-      text: string
-      url?: string
-      openType?: 'navigateTo' | 'redirectTo' | 'reLaunch' | 'switchTab' | 'navigateBack'
-      delta?: number
-    }>
+    menus?: ReadonlyArray<AppBarMenuItem>
     backDelta?: number
     backHomeUrl?: string
     showCapsule?: boolean
@@ -73,6 +78,7 @@ const props = withDefaults(
   },
 )
 
+const instance = getCurrentInstance()
 const slots = useSlots()
 const menuButtonMetrics = readMenuButtonMetrics()
 
@@ -111,12 +117,81 @@ const leftStyle = computed(() => {
   }
 })
 
-function handleBack() {
-  emit('back')
+function hasEventListener(listener: unknown) {
+  if (Array.isArray(listener)) {
+    return listener.length > 0
+  }
+
+  return typeof listener === 'function'
 }
 
-function handleMenuSelect(payload: { item: { key?: string; text: string; url?: string; openType?: string; delta?: number }; index: number }) {
+function hasBackListener() {
+  return hasEventListener(instance?.vnode.props?.onBack)
+}
+
+function hasMenuSelectListener() {
+  return hasEventListener(instance?.vnode.props?.onMenuSelect)
+}
+
+async function handleBack() {
+  emit('back')
+
+  if (hasBackListener()) {
+    return
+  }
+
+  try {
+    await Taro.navigateBack({
+      delta: props.backDelta,
+    })
+  } catch {
+    if (!props.backHomeUrl) {
+      return
+    }
+
+    await Taro.reLaunch({
+      url: props.backHomeUrl,
+    })
+  }
+}
+
+async function handleMenuSelect(payload: { item: AppBarMenuItem; index: number }) {
   emit('menuSelect', payload)
+
+  if (hasMenuSelectListener()) {
+    return
+  }
+
+  await navigateWithMenuItem(payload.item)
+}
+
+async function navigateWithMenuItem(item: AppBarMenuItem) {
+  const openType = item.openType ?? 'navigateTo'
+
+  if (openType === 'navigateBack') {
+    await Taro.navigateBack({
+      delta: item.delta ?? 1,
+    })
+    return
+  }
+
+  if (!item.url) {
+    return
+  }
+
+  switch (openType) {
+    case 'redirectTo':
+      await Taro.redirectTo({ url: item.url })
+      return
+    case 'reLaunch':
+      await Taro.reLaunch({ url: item.url })
+      return
+    case 'switchTab':
+      await Taro.switchTab({ url: item.url })
+      return
+    default:
+      await Taro.navigateTo({ url: item.url })
+  }
 }
 </script>
 
