@@ -8,19 +8,21 @@ import {
   AdminPasswordLoginResult,
   AppError,
 } from '@tzl/shared';
-import { AdminAccountEntity, AdminUserEntity, MongoObjectId } from '@tzl/entities';
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import {
+  AdminAccountEntity,
+  AdminUserEntity,
+  MongoObjectId,
+} from '@tzl/entities';
+import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import {
   AdminBootstrapRegisterDTO,
   AdminPasswordLoginDTO,
 } from '../dto/admin-auth.dto';
-
-interface AdminAuthConfig {
-  account: string;
-  password: string;
-  roles: string[];
-}
+import {
+  hashAdminPassword,
+  verifyAdminPassword,
+} from '../common/admin-password';
 
 interface JwtConfig {
   secret?: string;
@@ -31,9 +33,6 @@ interface JwtConfig {
 
 @Provide()
 export class AdminAuthService {
-  @Config('adminAuth')
-  adminAuthConfig: AdminAuthConfig;
-
   @Config('jwt')
   jwtConfig: JwtConfig;
 
@@ -88,7 +87,7 @@ export class AdminAuthService {
     const adminAccount = new AdminAccountEntity();
     adminAccount.adminUserId = adminUser.id;
     adminAccount.account = account;
-    adminAccount.password = this.hashPassword(password);
+    adminAccount.password = hashAdminPassword(password);
     adminAccount.createdAt = now;
     adminAccount.updatedAt = now;
     await this.adminAccountModel.save(adminAccount);
@@ -112,39 +111,25 @@ export class AdminAuthService {
       },
     });
 
-    if (adminAccount) {
-      if (!this.verifyPassword(password, adminAccount.password)) {
-        throw new AppError('INVALID_ADMIN_CREDENTIALS', '账号或密码错误', 401);
-      }
-
-      const adminUser = await this.findAdminUserById(adminAccount.adminUserId);
-
-      if (!adminUser) {
-        throw new AppError('ADMIN_USER_NOT_FOUND', '管理员用户不存在', 404);
-      }
-
-      return this.buildLoginResult(
-        this.stringifyObjectId(adminUser.id),
-        adminAccount.account,
-        adminUser.roles?.length ? adminUser.roles : ['admin']
-      );
-    }
-
-    const expectedAccount = this.adminAuthConfig.account?.trim();
-    const expectedPassword = this.adminAuthConfig.password;
-
-    if (
-      account !== expectedAccount ||
-      password !== expectedPassword
-    ) {
+    if (!adminAccount) {
       throw new AppError('INVALID_ADMIN_CREDENTIALS', '账号或密码错误', 401);
     }
 
-    const roles = this.adminAuthConfig.roles?.length
-      ? this.adminAuthConfig.roles
-      : ['admin'];
+    if (!verifyAdminPassword(password, adminAccount.password)) {
+      throw new AppError('INVALID_ADMIN_CREDENTIALS', '账号或密码错误', 401);
+    }
 
-    return this.buildLoginResult(expectedAccount, expectedAccount, roles);
+    const adminUser = await this.findAdminUserById(adminAccount.adminUserId);
+
+    if (!adminUser) {
+      throw new AppError('ADMIN_USER_NOT_FOUND', '管理员用户不存在', 404);
+    }
+
+    return this.buildLoginResult(
+      this.stringifyObjectId(adminUser.id),
+      adminAccount.account,
+      adminUser.roles?.length ? adminUser.roles : ['admin']
+    );
   }
 
   private buildLoginResult(
@@ -230,45 +215,6 @@ export class AdminAuthService {
     }
 
     return password;
-  }
-
-  private hashPassword(password: string): string {
-    const salt = randomBytes(16).toString('hex');
-    const hash = scryptSync(password, salt, 64).toString('hex');
-
-    return `scrypt$${salt}$${hash}`;
-  }
-
-  private verifyPassword(plainPassword: string, storedPassword: string): boolean {
-    if (!storedPassword) {
-      return false;
-    }
-
-    if (storedPassword.startsWith('scrypt$')) {
-      const [, salt, expectedHash] = storedPassword.split('$');
-
-      if (!salt || !expectedHash) {
-        return false;
-      }
-
-      return this.safeCompareText(
-        scryptSync(plainPassword, salt, 64).toString('hex'),
-        expectedHash
-      );
-    }
-
-    return this.safeCompareText(plainPassword, storedPassword);
-  }
-
-  private safeCompareText(left: string, right: string): boolean {
-    const leftBuffer = Buffer.from(left);
-    const rightBuffer = Buffer.from(right);
-
-    if (leftBuffer.length !== rightBuffer.length) {
-      return false;
-    }
-
-    return timingSafeEqual(leftBuffer, rightBuffer);
   }
 
   private async findAdminUserById(

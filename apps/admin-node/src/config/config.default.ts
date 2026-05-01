@@ -49,14 +49,6 @@ export default {
     },
     verify: {},
   },
-  adminAuth: {
-    account: readStringFrom(['ADMIN_API_ACCOUNT'], 'admin'),
-    password: readStringFrom(['ADMIN_API_PASSWORD'], 'admin123456'),
-    roles: readStringFrom(['ADMIN_API_ROLES'], 'admin')
-      .split(',')
-      .map(role => role.trim())
-      .filter(Boolean),
-  },
   oss: {
     enabled: readBooleanFrom(
       ['ADMIN_API_OSS_ENABLED', 'NODE_OSS_ENABLED'],

@@ -6,17 +6,20 @@
 
 ```bash
 npx -y pnpm@9 install
-npx -y pnpm@9 build:admin-node
+ADMIN_INIT_ACCOUNT=admin ADMIN_INIT_PASSWORD='replace-with-strong-password' sh scripts/init-admin-node.sh
 npx -y pnpm@9 dev:admin-node
 ```
 
 ## Env
 
 - `ADMIN_API_PORT`: 服务端口，默认 `7101`
-- `ADMIN_API_ACCOUNT`: 管理员账号，默认 `admin`
-- `ADMIN_API_PASSWORD`: 管理员密码，默认 `admin123456`
 - `ADMIN_API_JWT_SECRET`: 管理员 JWT 密钥，默认回退到 `NODE_JWT_SECRET`
 - `ADMIN_API_MONGO_*`: 管理后台 Mongo 配置，默认回退到 `NODE_MONGO_*`
+- `ADMIN_INIT_ACCOUNT`: 初始化超级管理员账号，默认 `admin`
+- `ADMIN_INIT_PASSWORD`: 初始化超级管理员密码；不配置时脚本会生成随机密码并输出一次
+- `ADMIN_INIT_NAME`: 初始化超级管理员名称，默认 `超级管理员`
+
+生产登录只校验数据库中的 `admin_account`，不再回退到固定默认账号密码。
 
 ## Routes
 

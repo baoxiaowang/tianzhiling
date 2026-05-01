@@ -11,6 +11,7 @@
     "typecheck:admin": "pnpm --filter ./apps/admin type:check",
     "dev:admin-node": "pnpm --filter @tzl/admin-node dev",
     "build:admin-node": "pnpm --filter @tzl/admin-node... build",
+    "init:admin-node": "sh scripts/init-admin-node.sh",
     "test:admin-node": "pnpm --filter @tzl/admin-node test",
     "dev:node": "pnpm --filter ./apps/node dev",
     "build:node": "pnpm --filter ./apps/node build",

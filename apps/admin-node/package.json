@@ -38,6 +38,7 @@
     "lint": "mwts check",
     "lint:fix": "mwts fix",
     "ci": "npm run cov",
-    "build": "mwtsc --cleanOutDir"
+    "build": "mwtsc --cleanOutDir",
+    "init:admin": "node ./dist/scripts/init-admin.js"
   }
 }

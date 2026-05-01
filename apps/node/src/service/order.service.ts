@@ -1,6 +1,8 @@
 import { AppError } from '../common/errors';
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
+import * as bullmq from '@midwayjs/bullmq';
 import {
   MongoObjectId,
   OrderEntity,
@@ -26,11 +28,23 @@ import {
 } from './wechat-pay.service';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
+export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
+
+export interface OrderPaymentExpireJobData {
+  orderId: string;
+  orderNo: string;
+}
 
 @Provide()
 export class OrderService {
+  @Logger()
+  logger: ILogger;
+
   @Inject()
   wechatPayService: WechatPayService;
+
+  @Inject()
+  bullmqFramework: bullmq.Framework;
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
@@ -94,6 +108,7 @@ export class OrderService {
     savedOrder.paymentPrepayId = prepayId;
     savedOrder.updatedAt = new Date();
     const prepayOrder = await this.orderModel.save(savedOrder);
+    await this.enqueueOrderPaymentExpireJob(prepayOrder);
 
     return {
       order: this.buildOrderRecord(prepayOrder),
@@ -130,9 +145,11 @@ export class OrderService {
 
     if (
       order.status === OrderStatus.completed ||
+      order.status === OrderStatus.paid ||
       order.status === OrderStatus.granting ||
       order.status === OrderStatus.grantFailed ||
-      order.status === OrderStatus.refunded
+      order.status === OrderStatus.refunded ||
+      order.status === OrderStatus.closed
     ) {
       return this.buildOrderRecord(order);
     }
@@ -142,6 +159,10 @@ export class OrderService {
     );
 
     if (!transaction) {
+      if (this.isPaymentExpired(order)) {
+        await this.closeOrder(order);
+      }
+
       return this.buildOrderRecord(order);
     }
 
@@ -152,10 +173,62 @@ export class OrderService {
       return this.buildOrderRecord(syncedOrder ?? order);
     }
 
-    if (this.isWechatTradeClosed(transaction.trade_state)) {
-      order.status = OrderStatus.closed;
-      order.updatedAt = new Date();
-      await this.orderModel.save(order);
+    if (
+      this.isWechatTradeClosed(transaction.trade_state) ||
+      this.isPaymentExpired(order)
+    ) {
+      await this.closeOrder(order);
+    }
+
+    return this.buildOrderRecord(order);
+  }
+
+  async processPaymentExpireJob(
+    data: OrderPaymentExpireJobData
+  ): Promise<void> {
+    if (!data?.orderId) {
+      return;
+    }
+
+    await this.closeExpiredWechatOrder(data.orderId);
+  }
+
+  async closeExpiredWechatOrder(
+    orderId: string
+  ): Promise<OrderRecordDTO | null> {
+    const objectId = this.parseObjectId(orderId, 'INVALID_ORDER_ID');
+    const order = await this.findOrderById(objectId);
+
+    if (!order) {
+      this.logger?.warn?.(
+        '[order-payment-expire] order not found, orderId=%s',
+        orderId
+      );
+      return null;
+    }
+
+    if (this.isFinalOrderStatus(order.status)) {
+      return this.buildOrderRecord(order);
+    }
+
+    const transaction = await this.wechatPayService.queryTransactionByOrderNo(
+      order.orderNo
+    );
+
+    if (transaction?.trade_state === 'SUCCESS') {
+      await this.handleWechatPaymentSuccess(transaction);
+      const syncedOrder = await this.findOrderById(objectId);
+
+      return syncedOrder ? this.buildOrderRecord(syncedOrder) : null;
+    }
+
+    const now = new Date();
+
+    if (
+      this.isWechatTradeClosed(transaction?.trade_state) ||
+      this.isPaymentExpired(order, now)
+    ) {
+      await this.closeOrder(order, now);
     }
 
     return this.buildOrderRecord(order);
@@ -260,6 +333,78 @@ export class OrderService {
     );
   }
 
+  private isFinalOrderStatus(status?: OrderStatus): boolean {
+    return (
+      status === OrderStatus.completed ||
+      status === OrderStatus.paid ||
+      status === OrderStatus.granting ||
+      status === OrderStatus.grantFailed ||
+      status === OrderStatus.refunded ||
+      status === OrderStatus.closed
+    );
+  }
+
+  private isPaymentExpired(order: OrderEntity, now = new Date()): boolean {
+    return Boolean(order.paymentExpiredAt && order.paymentExpiredAt <= now);
+  }
+
+  private async closeOrder(
+    order: OrderEntity,
+    now = new Date()
+  ): Promise<void> {
+    if (this.isFinalOrderStatus(order.status)) {
+      return;
+    }
+
+    order.status = OrderStatus.closed;
+    order.closedAt = now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async enqueueOrderPaymentExpireJob(
+    order: OrderEntity
+  ): Promise<void> {
+    if (!order.paymentExpiredAt) {
+      return;
+    }
+
+    const queue = this.bullmqFramework?.getQueue(ORDER_PAYMENT_EXPIRE_QUEUE);
+    const orderId = this.stringifyObjectId(order.id);
+
+    if (!queue) {
+      this.logger?.warn?.(
+        '[order-payment-expire] queue not found, skip enqueue, orderId=%s',
+        orderId
+      );
+      return;
+    }
+
+    try {
+      await queue.addJobToQueue(
+        {
+          orderId,
+          orderNo: order.orderNo,
+        },
+        {
+          jobId: `order-payment-expire:${orderId}`,
+          delay: Math.max(order.paymentExpiredAt.getTime() - Date.now(), 0),
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+        }
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order-payment-expire] enqueue failed, orderId=%s, error=%s',
+        orderId,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
   private calculateExpiredAt(
     currentExpiredAt: Date | undefined,
     paidAt: Date,
@@ -293,10 +438,9 @@ export class OrderService {
     const now = new Date();
 
     return (
-      memberships.find(item =>
-        item.lifetime || Boolean(item.expiredAt && item.expiredAt > now)
-      ) ??
-      null
+      memberships.find(
+        item => item.lifetime || Boolean(item.expiredAt && item.expiredAt > now)
+      ) ?? null
     );
   }
 
@@ -407,10 +551,7 @@ export class OrderService {
     return `VIP${Date.now()}${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
-  private parseObjectId(
-    value: string,
-    code = 'INVALID_TOKEN'
-  ): MongoObjectId {
+  private parseObjectId(value: string, code = 'INVALID_TOKEN'): MongoObjectId {
     if (!MongoObjectId.isValid(value)) {
       throw new AppError(
         code,
