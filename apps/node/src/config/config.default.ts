@@ -69,6 +69,18 @@ function readStringFrom(names: string[], fallback: string): string {
   return fallback;
 }
 
+function readNonEmptyStringFrom(names: string[], fallback: string): string {
+  for (const name of names) {
+    const raw = process.env[name]?.trim();
+
+    if (raw) {
+      return raw;
+    }
+  }
+
+  return fallback;
+}
+
 function readNumberFrom(names: string[], fallback: number): number {
   for (const name of names) {
     const raw = process.env[name];
@@ -173,7 +185,7 @@ export default {
     },
   },
   wechatMiniProgram: {
-    appId: readStringFrom(
+    appId: readNonEmptyStringFrom(
       [
         'NODE_WECHAT_MINI_PROGRAM_APP_ID',
         'WECHAT_MINI_PROGRAM_APP_ID',
@@ -184,7 +196,7 @@ export default {
       ],
       ''
     ),
-    appSecret: readStringFrom(
+    appSecret: readNonEmptyStringFrom(
       [
         'NODE_WECHAT_MINI_PROGRAM_APP_SECRET',
         'WECHAT_MINI_PROGRAM_APP_SECRET',
