@@ -265,8 +265,8 @@
   const currentOrder = ref<OrderRecord>();
   const searchForm = reactive<{
     keyword: string;
-    status?: OrderStatusDTO;
-    source?: OrderSourceDTO;
+    status?: OrderStatusDTO | '';
+    source?: OrderSourceDTO | '';
   }>({
     keyword: '',
     status: undefined,
@@ -293,9 +293,9 @@
   };
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
-    status: searchForm.status,
+    status: searchForm.status || undefined,
     orderType: 'vip_plan' as const,
-    source: searchForm.source,
+    source: searchForm.source || undefined,
     page: pagination.current,
     pageSize: pagination.pageSize,
   }));

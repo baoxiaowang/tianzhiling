@@ -18,13 +18,13 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.string().allow('').optional())
   keyword?: string;
 
-  @Rule(orderStatusRule.optional())
+  @Rule(orderStatusRule.allow('').optional())
   status?: string;
 
-  @Rule(orderTypeRule.optional())
+  @Rule(orderTypeRule.allow('').optional())
   orderType?: string;
 
-  @Rule(orderSourceRule.optional())
+  @Rule(orderSourceRule.allow('').optional())
   source?: string;
 
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
