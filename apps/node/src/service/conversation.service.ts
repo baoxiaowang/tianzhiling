@@ -5,6 +5,8 @@ import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
   AgentEntity,
+  AgentMembershipEntity,
+  AgentMembershipStatus,
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -35,6 +37,7 @@ export interface ConversationSummary {
   agentSex: number;
   agentCallMe: string;
   iCallAgent: string;
+  isVip: boolean;
   preview: string;
   updatedAt: string;
   createdAt: string;
@@ -78,6 +81,9 @@ export class ConversationService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
+  @InjectEntityModel(AgentMembershipEntity)
+  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
+
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
@@ -114,15 +120,22 @@ export class ConversationService {
         updatedAt: 'DESC',
       },
     });
+    const vipAgentIds = await this.getVipAgentIdSet(
+      userId,
+      conversations.map(conversation => conversation.agentId)
+    );
 
     return Promise.all(
       conversations.map(async conversation => {
         const agent = await this.findAgentById(conversation.agentId);
         const latestMessage = await this.findLatestMessage(conversation.id);
+        const agentId = this.stringifyObjectId(
+          agent?.id ?? conversation.agentId
+        );
 
         return {
           id: this.stringifyObjectId(conversation.id),
-          agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
+          agentId,
           agentName: agent?.name?.trim() || '联系人资料暂不可用',
           agentAvatar: this.postImageService.resolveForResponse(
             agent?.avatar?.trim() || ''
@@ -130,6 +143,7 @@ export class ConversationService {
           agentSex: agent?.sex ?? 0,
           agentCallMe: agent?.agentCallMe?.trim() || '',
           iCallAgent: agent?.iCallAgent?.trim() || '',
+          isVip: vipAgentIds.has(agentId),
           preview: this.buildPreview(agent, latestMessage),
           updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
           createdAt: conversation.createdAt?.toISOString?.() ?? '',
@@ -1374,6 +1388,44 @@ export class ConversationService {
         _id: objectId,
       } as never,
     });
+  }
+
+  private async getVipAgentIdSet(
+    userId: MongoObjectId,
+    agentIds: Array<MongoObjectId | string | undefined>
+  ): Promise<Set<string>> {
+    const uniqueAgentIds = new Map<string, MongoObjectId>();
+
+    agentIds.forEach(agentId => {
+      const objectId = this.normalizeObjectId(agentId);
+
+      if (objectId) {
+        uniqueAgentIds.set(this.stringifyObjectId(objectId), objectId);
+      }
+    });
+
+    if (uniqueAgentIds.size === 0) {
+      return new Set();
+    }
+
+    const memberships = await this.agentMembershipModel.find({
+      where: {
+        userId,
+        agentId: { $in: [...uniqueAgentIds.values()] },
+        status: AgentMembershipStatus.active,
+      } as never,
+    });
+    const now = new Date();
+
+    return new Set(
+      memberships
+        .filter(
+          membership =>
+            membership.lifetime ||
+            Boolean(membership.expiredAt && membership.expiredAt > now)
+        )
+        .map(membership => this.stringifyObjectId(membership.agentId))
+    );
   }
 
   private async findLatestMessage(

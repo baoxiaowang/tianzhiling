@@ -73,21 +73,26 @@
             class="contacts-item"
             @tap="handleConversationTap(conversation)"
           >
-            <image
-              v-if="conversation.agentAvatar"
-              class="contacts-item__avatar"
-              :src="conversation.agentAvatar"
-              mode="aspectFill"
-            />
-            <view
-              v-else
-              class="contacts-item__avatar contacts-item__avatar--fallback"
-              :class="{
-                'contacts-item__avatar--male': conversation.agentSex === 1,
-                'contacts-item__avatar--female': conversation.agentSex !== 1,
-              }"
-            >
-              {{ buildConversationFallback(conversation.agentName) }}
+            <view class="contacts-item__avatar-wrap">
+              <image
+                v-if="conversation.agentAvatar"
+                class="contacts-item__avatar"
+                :src="conversation.agentAvatar"
+                mode="aspectFill"
+              />
+              <view
+                v-else
+                class="contacts-item__avatar contacts-item__avatar--fallback"
+                :class="{
+                  'contacts-item__avatar--male': conversation.agentSex === 1,
+                  'contacts-item__avatar--female': conversation.agentSex !== 1,
+                }"
+              >
+                {{ buildConversationFallback(conversation.agentName) }}
+              </view>
+              <view v-if="conversation.isVip" class="contacts-item__vip-badge">
+                VIP
+              </view>
             </view>
 
             <view class="contacts-item__content">
@@ -447,12 +452,37 @@ useDidShow(() => {
   display: none;
 }
 
-.contacts-item__avatar {
+.contacts-item__avatar-wrap {
+  position: relative;
   flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+}
+
+.contacts-item__avatar {
   width: 48px;
   height: 48px;
   border-radius: 8px;
   background: #eef2f7;
+}
+
+.contacts-item__vip-badge {
+  position: absolute;
+  top: -5px;
+  right: -8px;
+  box-sizing: border-box;
+  min-width: 27px;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid #ffffff;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2c1d12 0%, #8a5728 100%);
+  color: #ffe7ba;
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 3px 8px rgba(67, 39, 16, 0.22);
 }
 
 .contacts-item__avatar--fallback {
