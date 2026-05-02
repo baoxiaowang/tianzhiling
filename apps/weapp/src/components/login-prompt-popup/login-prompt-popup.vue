@@ -4,6 +4,7 @@
     class="login-prompt-popup"
     position="bottom"
     round
+    :z-index="10000"
     :close-on-click-overlay="true"
     :safe-area-inset-bottom="true"
   >
@@ -18,26 +19,22 @@
         </view>
       </view>
 
-      <nut-button
+      <button
         class="login-prompt__wechat"
-        block
-        shape="round"
-        type="primary"
-        @click="handlePendingLogin"
+        :open-type="agreed ? 'getPhoneNumber' : ''"
+        :disabled="isLoggingIn"
+        @click="handlePhoneBindButtonTap"
+        @getphonenumber="handlePhoneNumberLogin"
       >
-        <view class="login-prompt__wechat-icon">
-          <text class="login-prompt__wechat-dot login-prompt__wechat-dot--large" />
-          <text class="login-prompt__wechat-dot login-prompt__wechat-dot--small" />
-        </view>
-        <text>小程序授权登录</text>
-      </nut-button>
+        <text>{{ isLoggingIn ? '绑定中...' : '授权手机号登录' }}</text>
+      </button>
 
       <nut-button
         class="login-prompt__phone"
         block
         shape="round"
         plain
-        @click="handlePendingLogin"
+        @click="handlePhoneLogin"
       >
         手机号登录
       </nut-button>
@@ -56,9 +53,6 @@
         </nut-checkbox>
       </view>
 
-      <view class="login-prompt__skip" @tap="handleClose">
-        点击遮罩或下滑可暂不登录
-      </view>
     </view>
   </nut-popup>
 </template>
@@ -72,6 +66,7 @@ export default {
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
 import { computed, ref } from 'vue'
+import { useLoginHooks } from '../../auth/login-hooks'
 
 const props = defineProps<{
   visible: boolean
@@ -79,24 +74,90 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void
+  (event: 'login-success'): void
 }>()
 
 const agreed = ref(true)
+const {
+  isLoggingIn,
+  loginErrorMessage,
+  loginWithWeappPhone,
+} = useLoginHooks()
 
 const visible = computed({
   get: () => props.visible,
   set: value => emit('update:visible', value),
 })
 
-function handleClose() {
-  visible.value = false
-}
+function ensureAgreed() {
+  if (agreed.value) {
+    return true
+  }
 
-function handlePendingLogin() {
   void Taro.showToast({
-    title: '登录功能稍后接入',
+    title: '请先阅读并同意协议',
     icon: 'none',
     duration: 1600,
+  })
+
+  return false
+}
+
+function handlePhoneBindButtonTap() {
+  if (!agreed.value) {
+    ensureAgreed()
+  }
+}
+
+async function handlePhoneNumberLogin(event: {
+  detail?: {
+    code?: string
+    errMsg?: string
+  }
+}) {
+  if (!ensureAgreed() || isLoggingIn.value) {
+    return
+  }
+
+  const phoneCode = event.detail?.code?.trim()
+
+  if (!phoneCode) {
+    void Taro.showToast({
+      title: event.detail?.errMsg?.includes('deny')
+        ? '已取消手机号授权'
+        : '请授权手机号后继续登录',
+      icon: 'none',
+      duration: 1800,
+    })
+    return
+  }
+
+  try {
+    await loginWithWeappPhone(phoneCode)
+    emit('login-success')
+    visible.value = false
+    void Taro.showToast({
+      title: '登录成功',
+      icon: 'success',
+      duration: 1400,
+    })
+  } catch {
+    void Taro.showToast({
+      title: loginErrorMessage.value || '授权登录失败，请稍后重试',
+      icon: 'none',
+      duration: 2200,
+    })
+  }
+}
+
+function handlePhoneLogin() {
+  if (!ensureAgreed()) {
+    return
+  }
+
+  visible.value = false
+  void Taro.navigateTo({
+    url: '/pages/auth/index',
   })
 }
 </script>
@@ -108,40 +169,43 @@ function handlePendingLogin() {
 }
 
 .login-prompt {
-  padding: 36px 28px 28px;
-  border-radius: 28px 28px 0 0;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px 24px 24px;
+  border-radius: 22px 22px 0 0;
   background: $tzl-color-surface-base;
+  box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.08);
 }
 
 .login-prompt__handle {
   width: 36px;
-  height: 4px;
-  margin: -18px auto 26px;
+  height: 5px;
+  margin: 0 auto 32px;
   border-radius: 999px;
-  background: #d1d5db;
+  background: #d8dde4;
 }
 
 .login-prompt__intro {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 28px;
+  gap: 14px;
+  margin-bottom: 26px;
 }
 
 .login-prompt__logo {
   flex-shrink: 0;
-  width: 62px;
-  height: 62px;
+  width: 60px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   background: $tzl-gradient-primary;
   color: $tzl-color-surface-base;
-  font-size: 40px;
+  font-size: 38px;
   line-height: 1;
   font-weight: 700;
-  box-shadow: $tzl-shadow-primary-md;
+  box-shadow: 0 8px 18px rgba(255, 96, 58, 0.18);
 }
 
 .login-prompt__copy {
@@ -152,15 +216,15 @@ function handlePendingLogin() {
 }
 
 .login-prompt__title {
-  font-size: 24px;
-  line-height: 32px;
+  font-size: 20px;
+  line-height: 31px;
   font-weight: 700;
   color: $tzl-color-text-primary;
 }
 
 .login-prompt__subtitle {
   font-size: 14px;
-  line-height: 21px;
+  line-height: 20px;
   color: $tzl-color-text-muted;
 }
 
@@ -169,32 +233,33 @@ function handlePendingLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 58px;
-  font-size: 19px;
+  box-sizing: border-box;
+  height: 52px;
+  font-size: 18px;
   font-weight: 700;
   --nut-button-border-radius: 999px;
-  --nut-button-default-padding: 0 18px;
+  --nut-button-default-padding: 0 16px;
 }
 
 .login-prompt__wechat {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   background: $tzl-gradient-primary;
   border: 0;
-  box-shadow: $tzl-shadow-primary-lg;
+  border-radius: 999px;
+  color: $tzl-color-surface-base;
+  line-height: 52px;
+  box-shadow: 0 9px 18px rgba(255, 96, 58, 0.2);
   --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
-.login-prompt__wechat .nut-button__wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
+.login-prompt__wechat::after {
+  border: 0;
 }
 
 .login-prompt__wechat-icon {
   position: relative;
-  width: 34px;
-  height: 24px;
+  width: 30px;
+  height: 22px;
 }
 
 .login-prompt__wechat-dot {
@@ -207,20 +272,20 @@ function handlePendingLogin() {
 .login-prompt__wechat-dot--large {
   left: 0;
   top: 1px;
-  width: 21px;
-  height: 17px;
+  width: 19px;
+  height: 16px;
 }
 
 .login-prompt__wechat-dot--small {
   right: 0;
   bottom: 0;
-  width: 17px;
-  height: 14px;
+  width: 15px;
+  height: 13px;
 }
 
 .login-prompt__phone {
-  margin-bottom: 22px;
-  border: 1px solid #d1d5db;
+  margin-bottom: 20px;
+  border: 1px solid #d6dae1;
   background: $tzl-color-surface-base;
   color: $tzl-color-text-primary;
 }
@@ -231,10 +296,10 @@ function handlePendingLogin() {
 }
 
 .login-prompt__agreement {
-  margin-bottom: 26px;
+  padding-bottom: 2px;
   --nut-checkbox-label-margin-left: 8px;
   --nut-checkbox-icon-font-size: 11px;
-  --nut-checkbox-label-font-size: 13px;
+  --nut-checkbox-label-font-size: 12px;
   --nut-checkbox-label-color: #{$tzl-color-text-muted};
   --nut-primary-color: #{$tzl-color-primary};
 }
@@ -249,17 +314,10 @@ function handlePendingLogin() {
 }
 
 .login-prompt__agreement .nut-checkbox__label {
-  line-height: 20px;
+  line-height: 19px;
 }
 
 .login-prompt__link {
   color: #f4511e;
-}
-
-.login-prompt__skip {
-  text-align: center;
-  font-size: 14px;
-  line-height: 20px;
-  color: $tzl-color-text-soft;
 }
 </style>

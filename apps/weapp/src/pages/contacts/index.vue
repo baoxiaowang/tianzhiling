@@ -6,11 +6,17 @@
     :safe-area-top="false"
     scroll
     :safe-area-bottom="false"
+    require-auth
+    auth-loading-text="正在恢复通讯录..."
+    login-placeholder-title="登录后查看通讯录"
+    login-placeholder-subtitle="授权后可查看已经开始聊天的联系人"
+    login-placeholder-action-text="登录查看"
   >
-    <template v-if="session" #header>
+    <template #header>
       <app-bar
         title="通讯录"
-        :menus="navMenus"
+        :menus="session ? navMenus : []"
+        :show-capsule="Boolean(session)"
         :show-back="false"
         @menu-select="handleNavMenuSelect"
       >
@@ -23,10 +29,10 @@
       </app-bar>
     </template>
 
-    <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
+    <view v-if="isCheckingAuth" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
-        {{ isRedirecting ? '正在前往登录页...' : '正在恢复通讯录...' }}
+        正在恢复通讯录...
       </text>
     </view>
 
@@ -116,11 +122,10 @@ import { getConversations, type ConversationSummary } from '../../apis/conversat
 import { authSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import { ensureAuthenticatedSession } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 const isCheckingAuth = ref(true)
-const isRedirecting = ref(false)
 const isContactsLoading = ref(true)
 const contactKeyword = ref('')
 const contactsLoadError = ref('')
@@ -279,12 +284,11 @@ async function preparePage() {
   const authenticated = await ensureAuthenticatedSession()
 
   if (!authenticated || !authSession.value) {
-    isRedirecting.value = true
-    await redirectToAuthPage()
+    isContactsLoading.value = false
+    isCheckingAuth.value = false
     return
   }
 
-  isRedirecting.value = false
   await refreshContactsData({
     showLoading: conversations.value.length === 0,
   })

@@ -60,6 +60,27 @@ export class ApiException extends Error {
         return '手机号或密码错误'
       case 'PASSWORD_NOT_SET':
         return '该账号暂未设置密码，请使用短信验证码登录'
+      case 'INVALID_WECHAT_JS_CODE':
+        return '微信登录凭证获取失败，请稍后重试'
+      case 'WECHAT_CODE_SESSION_FAILED':
+      case 'WECHAT_OPENID_MISSING':
+        return '微信授权登录失败，请稍后重试'
+      case 'INVALID_WECHAT_PHONE_CODE':
+        return '请授权手机号后继续登录'
+      case 'WECHAT_ACCESS_TOKEN_FAILED':
+      case 'WECHAT_PHONE_NUMBER_FAILED':
+      case 'WECHAT_PHONE_NUMBER_MISSING':
+        return '微信手机号授权失败，请稍后重试'
+      case 'WECHAT_PHONE_COUNTRY_UNSUPPORTED':
+        return '暂只支持中国大陆手机号登录'
+      case 'WEAPP_PHONE_BIND_REQUIRED':
+        return '请授权手机号完成登录'
+      case 'WEAPP_OPENID_BOUND_TO_OTHER_USER':
+        return '该微信已绑定其它手机号'
+      case 'WECHAT_MINI_PROGRAM_CONFIG_MISSING':
+        return '小程序登录配置缺失，请联系管理员'
+      case 'WECHAT_PAY_CONFIG_MISSING':
+        return '微信支付配置缺失，请联系管理员'
       case 'SMS_NOT_ENABLED':
       case 'SMS_CONFIG_MISSING':
       case 'SMS_PROVIDER_REQUEST_FAILED':

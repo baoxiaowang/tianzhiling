@@ -1,5 +1,6 @@
 <template>
   <page-scaffold
+    ref="pageScaffoldRef"
     class="moments-page"
     body-padding="0"
     background="#ffffff"
@@ -201,9 +202,6 @@
         @backspace="handleCommentEmojiDelete"
       />
     </view>
-
-    <login-prompt-popup v-model:visible="isLoginPromptVisible" />
-
   </page-scaffold>
 </template>
 
@@ -227,15 +225,19 @@ import {
 import { ApiException } from '../../api/api-exception'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
-import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-popup.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
+
+interface PageScaffoldController {
+  openLoginPrompt: () => void
+}
 
 const momentsDesign = {
   notificationAvatarUrl: 'https://www.figma.com/api/mcp/asset/f41f54cc-8bf1-440c-9c03-648deafeb2d1',
 } as const
 
+const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
 const isPostsLoading = ref(false)
 const hasLoadedPosts = ref(false)
@@ -249,7 +251,6 @@ const isCommentInputFocused = ref(false)
 const shouldFocusCommentInput = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
-const isLoginPromptVisible = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
 
@@ -285,6 +286,10 @@ function showToast(title: string) {
     icon: 'none',
     duration: 1800,
   })
+}
+
+function openLoginPrompt() {
+  pageScaffoldRef.value?.openLoginPrompt()
 }
 
 function getPostAuthor(post: PostItem) {
@@ -440,7 +445,7 @@ async function handleNotificationTap() {
 
 function handleCreatePost() {
   if (!session.value) {
-    isLoginPromptVisible.value = true
+    openLoginPrompt()
     return
   }
 
@@ -463,7 +468,7 @@ function openCommentComposer(post: PostItem) {
 
 function handleCommentTap(post: PostItem) {
   if (!session.value) {
-    isLoginPromptVisible.value = true
+    openLoginPrompt()
     return
   }
 
@@ -571,7 +576,7 @@ async function handleSubmitComment() {
     closeCommentComposer(true)
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      isLoginPromptVisible.value = true
+      openLoginPrompt()
       return
     }
 

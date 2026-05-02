@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
-import { restoreAuthSession } from './auth/session'
+import { silentWeappLogin } from './auth/login-hooks'
+import { authSession, restoreAuthSession } from './auth/session'
 import { initSafeAreaInsets } from './utils/safe-area'
 
 import './app.scss'
@@ -7,7 +8,11 @@ import './app.scss'
 const App = createApp({
   onLaunch() {
     initSafeAreaInsets()
-    void restoreAuthSession()
+    void restoreAuthSession().then(async () => {
+      if (!authSession.value?.accessToken) {
+        await silentWeappLogin()
+      }
+    })
   },
   onShow() {
   },

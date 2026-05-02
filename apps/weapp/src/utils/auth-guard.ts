@@ -9,6 +9,12 @@ export async function redirectToAuthPage() {
   })
 }
 
+export async function redirectToIndexPage() {
+  await Taro.switchTab({
+    url: '/pages/index/index',
+  })
+}
+
 export async function ensureAuthenticatedSession() {
   if (ensureSessionPromise) {
     return ensureSessionPromise

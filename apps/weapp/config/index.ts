@@ -55,6 +55,9 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       sass: {
         resource: [sharedThemeResource],
       },
+      miniCssExtractPluginOption: {
+        ignoreOrder: true,
+      },
       postcss: {
         pxtransform: {
           enable: true,

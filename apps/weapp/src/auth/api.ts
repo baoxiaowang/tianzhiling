@@ -45,6 +45,32 @@ export async function passwordLogin(account: string, password: string) {
   return session satisfies AuthSessionData
 }
 
+export async function weappLogin(jsCode: string) {
+  const data = await post<Record<string, unknown>>('/api/user/weapp-login', {
+    jsCode,
+  })
+  const session = parseAuthSessionData(data)
+
+  await saveAuthSession(session)
+
+  return session satisfies AuthSessionData
+}
+
+export async function weappPhoneLogin(jsCode: string, phoneCode: string) {
+  const data = await post<Record<string, unknown>>(
+    '/api/user/weapp-phone-login',
+    {
+      jsCode,
+      phoneCode,
+    },
+  )
+  const session = parseAuthSessionData(data)
+
+  await saveAuthSession(session)
+
+  return session satisfies AuthSessionData
+}
+
 export async function getCurrentUser() {
   const data = await get<Record<string, unknown>>('/api/user/me')
   const user = parseAuthUser(data)

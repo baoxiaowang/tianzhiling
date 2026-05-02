@@ -222,6 +222,7 @@ import {
   clearAuthSession,
   restoreAuthSession,
 } from '../../auth/session'
+import { redirectToIndexPage } from '../../utils/auth-guard'
 
 type AuthMode = 'phone' | 'password'
 
@@ -440,10 +441,14 @@ async function handleLogout() {
     await logout()
     await clearAuthSession()
     showToast('已退出登录')
+    await redirectToIndexPage()
   } catch (error) {
     if (error instanceof ApiException) {
       if (error.requiresReLogin) {
         await clearAuthSession()
+        showToast('已退出登录')
+        await redirectToIndexPage()
+        return
       }
 
       showToast(error.message)

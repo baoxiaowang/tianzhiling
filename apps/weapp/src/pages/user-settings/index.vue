@@ -94,7 +94,11 @@ import { getCurrentUser, logout, updateAvatar } from '../../auth/api'
 import { authSession, clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import {
+  ensureAuthenticatedSession,
+  redirectToAuthPage,
+  redirectToIndexPage,
+} from '../../utils/auth-guard'
 
 const isCheckingAuth = ref(true)
 const isRedirecting = ref(false)
@@ -222,10 +226,14 @@ async function handleLogout() {
 
   try {
     await logout()
-    await redirectToAuth()
+    await clearAuthSession()
+    showToast('已退出登录')
+    await redirectToIndexPage()
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth(error.message)
+      await clearAuthSession()
+      showToast('已退出登录')
+      await redirectToIndexPage()
       return
     }
 
