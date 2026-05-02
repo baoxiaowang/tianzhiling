@@ -18,9 +18,13 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     projectName: 'weapp',
     date: '2026-4-23',
     designWidth (input) {
+      const file = typeof input === 'object' && input !== null && 'file' in input
+        ? input.file
+        : undefined
+
       // 配置 NutUI 375 尺寸
-      if (input?.file?.replace(/\\+/g, '/').indexOf('@nutui') > -1) {
-        return 375;
+      if (typeof file === 'string' && file.replace(/\\+/g, '/').includes('@nutui')) {
+        return 375
       }
       return 375;
     },
@@ -51,14 +55,17 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     cache: {
       enable: false // Webpack 持久化缓存配置，建议开启。默认配置请参考：https://docs.taro.zone/docs/config-detail#cache
     },
+    sass: {
+      resource: [sharedThemeResource],
+    },
     mini: {
-      sass: {
-        resource: [sharedThemeResource],
-      },
       miniCssExtractPluginOption: {
         ignoreOrder: true,
       },
-      webpackChain: (chain, webpack) => {
+      optimizeMainPackage: {
+        enable: true,
+      },
+      webpackChain: (chain) => {
         chain.merge({
           plugin: {
             install: {
@@ -76,6 +83,10 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
             },
           },
         })
+        chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin)
+        chain.plugin('unplugin-vue-components').use(Components({
+          resolvers: [NutUIResolver({taro: true})]
+        }))
       },
       postcss: {
         pxtransform: {
@@ -91,18 +102,9 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
             generateScopedName: '[name]__[local]___[hash:base64:5]'
           }
         }
-      },
-      webpackChain(chain) {
-        chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin)
-        chain.plugin('unplugin-vue-components').use(Components({
-          resolvers: [NutUIResolver({taro: true})]
-        }))
       }
     },
     h5: {
-      sass: {
-        resource: [sharedThemeResource],
-      },
       publicPath: '/',
       staticDirectory: 'static',
       output: {
