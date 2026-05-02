@@ -23,6 +23,11 @@ export class PasswordLoginDTO {
   password: string;
 }
 
+export class WeappLoginDTO {
+  @Rule(requiredStringRule.max(256))
+  jsCode: string;
+}
+
 export class UpdateUserNameDTO {
   @Rule(requiredStringRule.max(20))
   name: string;

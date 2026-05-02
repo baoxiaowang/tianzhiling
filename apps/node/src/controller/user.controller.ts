@@ -7,6 +7,7 @@ import {
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
+  WeappLoginDTO,
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
 
@@ -31,6 +32,11 @@ export class UserController {
   @Post('/password-login')
   async passwordLogin(@Body() body: PasswordLoginDTO) {
     return this.userService.passwordLogin(body);
+  }
+
+  @Post('/weapp-login')
+  async weappLogin(@Body() body: WeappLoginDTO) {
+    return this.userService.weappLogin(body);
   }
 
   @Get('/me')

@@ -29,9 +29,11 @@ import {
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
+  WeappLoginDTO,
 } from '../dto/user.dto';
 import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
+import { WechatPayService } from './wechat-pay.service';
 
 interface JwtConfig {
   secret?: string;
@@ -73,6 +75,7 @@ interface SmsCodeCacheValue {
 }
 
 const PHONE_LOGIN_PURPOSE = 'phone_login';
+const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 
 @Provide()
 export class UserService {
@@ -93,6 +96,9 @@ export class UserService {
 
   @Inject()
   postImageService: PostImageService;
+
+  @Inject()
+  wechatPayService: WechatPayService;
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
@@ -397,6 +403,57 @@ export class UserService {
     return this.buildLoginResult(user, userAccount, false);
   }
 
+  async weappLogin(payload: WeappLoginDTO): Promise<PasswordLoginResult> {
+    const jsCode = payload?.jsCode?.trim();
+
+    if (!jsCode) {
+      throw new AppError('INVALID_WECHAT_JS_CODE', 'jsCode is required');
+    }
+
+    const openid = await this.wechatPayService.getOpenidByJsCode(jsCode);
+    const account = this.buildWeappAccount(openid);
+    const now = new Date();
+    let userAccount = await this.userAccountModel.findOne({
+      where: {
+        account,
+      },
+    });
+    let isNewUser = false;
+
+    if (userAccount) {
+      const user = await this.findUserById(userAccount.userId);
+
+      if (!user) {
+        throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+      }
+
+      userAccount.updatedAt = now;
+      userAccount = await this.userAccountModel.save(userAccount);
+
+      return this.buildLoginResult(user, userAccount, false);
+    }
+
+    let user = new UserEntity();
+    user.name = this.buildDefaultWeappUserName(openid);
+    user.avatar = '';
+    user.phone = '';
+    user.phoneVerified = false;
+    user.createdAt = now;
+    user.updatedAt = now;
+    user = await this.userModel.save(user);
+    isNewUser = true;
+
+    userAccount = new UserAccountEntity();
+    userAccount.userId = user.id;
+    userAccount.account = account;
+    userAccount.password = '';
+    userAccount.createdAt = now;
+    userAccount.updatedAt = now;
+    userAccount = await this.userAccountModel.save(userAccount);
+
+    return this.buildLoginResult(user, userAccount, isNewUser);
+  }
+
   async getCurrentUser(
     auth: AuthenticatedUserPayload
   ): Promise<LoginUserProfile> {
@@ -676,7 +733,7 @@ export class UserService {
       name: user.name,
       avatar: this.postImageService.resolveForResponse(user.avatar || ''),
       account,
-      phone: user.phone || account,
+      phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
     };
   }
@@ -890,6 +947,14 @@ export class UserService {
 
   private buildDefaultUserName(phone: string): string {
     return `天之灵用户${phone.slice(-4)}`;
+  }
+
+  private buildDefaultWeappUserName(openid: string): string {
+    return `天之灵用户${openid.slice(-4)}`;
+  }
+
+  private buildWeappAccount(openid: string): string {
+    return `${WEAPP_ACCOUNT_PREFIX}${openid}`;
   }
 
   private normalizeUserName(rawName?: string): string {
