@@ -534,12 +534,19 @@ export class OrderService {
     agentId: MongoObjectId,
     userId: MongoObjectId
   ): Promise<void> {
-    const agent = await this.agentModel.findOne({
-      where: {
-        id: agentId,
-        createdUserId: userId,
-      },
-    });
+    const agent =
+      (await this.agentModel.findOne({
+        where: {
+          id: agentId,
+          createdUserId: userId,
+        },
+      })) ??
+      (await this.agentModel.findOne({
+        where: {
+          _id: agentId,
+          createdUserId: userId,
+        } as never,
+      }));
 
     if (!agent) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);

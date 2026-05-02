@@ -261,4 +261,37 @@ describe('MembershipService agent membership status', () => {
     });
     expect(service.agentMembershipModel.find).not.toHaveBeenCalled();
   });
+
+  it('falls back to _id when checking agent ownership', async () => {
+    const service = new MembershipService();
+    const agent = createAgent();
+
+    service.agentModel = {
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(agent),
+    } as any;
+    service.agentMembershipModel = {
+      find: jest.fn().mockResolvedValue([]),
+    } as any;
+    service.agentEntitlementModel = {
+      find: jest.fn().mockResolvedValue([]),
+    } as any;
+    service.vipPlanModel = {
+      find: jest.fn().mockResolvedValue([createVipPlan()]),
+    } as any;
+
+    const result = await service.getMembershipCenter(auth, AGENT_ID);
+
+    expect(result.agentId).toBe(AGENT_ID);
+    expect(service.agentModel.findOne).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          _id: new MongoObjectId(AGENT_ID),
+        }),
+      })
+    );
+  });
 });

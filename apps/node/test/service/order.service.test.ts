@@ -271,6 +271,34 @@ describe('OrderService payment expiration and reconciliation', () => {
     );
   });
 
+  it('falls back to _id when validating the order agent owner', async () => {
+    const { service, queue, auth } = createService();
+
+    service.agentModel.findOne = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: new MongoObjectId(AGENT_ID),
+        createdUserId: new MongoObjectId(USER_ID),
+      });
+
+    await service.createVipPlanOrder(auth, {
+      agentId: AGENT_ID,
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(service.agentModel.findOne).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          _id: new MongoObjectId(AGENT_ID),
+        }),
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalled();
+  });
+
   it('closes an expired pending order and writes closedAt when WeChat has no transaction', async () => {
     const { service, order, orderModel, wechatPayService } = createService();
 
