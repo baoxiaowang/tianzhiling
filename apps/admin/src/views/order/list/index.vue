@@ -90,10 +90,10 @@
             <template #cell="{ record }">
               <div class="order-page__user">
                 <div class="order-page__user-name">
-                  {{ record.user?.name || '-' }}
+                  {{ resolveOrderUserName(record) }}
                 </div>
                 <div class="order-page__muted">
-                  {{ record.user?.phone || record.user?.account || '-' }}
+                  {{ resolveOrderUserContact(record) }}
                 </div>
               </div>
             </template>
@@ -213,9 +213,9 @@
           </a-tag>
         </a-descriptions-item>
         <a-descriptions-item label="用户">
-          {{ currentOrder.user?.name || '-' }}
+          {{ resolveOrderUserName(currentOrder) }}
           <span class="order-page__muted">
-            {{ currentOrder.user?.phone || currentOrder.user?.account || '' }}
+            {{ resolveOrderUserContact(currentOrder) }}
           </span>
         </a-descriptions-item>
         <a-descriptions-item label="智能体ID">
@@ -412,6 +412,14 @@
     }
 
     return provider || '-';
+  };
+
+  const resolveOrderUserName = (record: OrderRecord) => {
+    return record.user?.name || record.user?.account || '用户ID';
+  };
+
+  const resolveOrderUserContact = (record: OrderRecord) => {
+    return record.user?.phone || record.user?.account || record.userId || '-';
   };
 
   watch(routeOrderType, () => {

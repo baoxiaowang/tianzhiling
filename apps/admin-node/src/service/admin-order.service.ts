@@ -169,7 +169,7 @@ export class AdminOrderService {
     const [users, accounts] = await Promise.all([
       this.userModel.find({
         where: {
-          id: { $in: userIds },
+          $or: [{ id: { $in: userIds } }, { _id: { $in: userIds } }],
         } as never,
       }),
       this.userAccountModel.find({
@@ -187,7 +187,7 @@ export class AdminOrderService {
 
     return new Map(
       users.map(user => {
-        const id = this.stringifyObjectId(user.id);
+        const id = this.stringifyObjectId(this.getEntityObjectId(user));
 
         return [
           id,
@@ -274,8 +274,23 @@ export class AdminOrderService {
     return Math.floor(value);
   }
 
-  private stringifyObjectId(value: MongoObjectId): string {
-    return value?.toHexString?.() ?? String(value);
+  private getEntityObjectId(entity: {
+    id?: MongoObjectId;
+    _id?: MongoObjectId;
+  }): MongoObjectId | undefined {
+    return entity.id ?? entity._id;
+  }
+
+  private stringifyObjectId(value?: MongoObjectId | string | null): string {
+    if (!value) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    return value.toHexString?.() ?? String(value);
   }
 
   private formatDate(value?: Date): string | undefined {

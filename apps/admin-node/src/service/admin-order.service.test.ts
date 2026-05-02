@@ -87,6 +87,11 @@ describe('AdminOrderService', () => {
         take: 20,
       })
     );
+    expect(service.userModel.find).toHaveBeenCalledWith({
+      where: {
+        $or: [{ id: { $in: [USER_ID] } }, { _id: { $in: [USER_ID] } }],
+      },
+    });
     expect(result).toEqual({
       items: [
         expect.objectContaining({
@@ -110,6 +115,49 @@ describe('AdminOrderService', () => {
       total: 1,
       page: 1,
       pageSize: 20,
+    });
+  });
+
+  it('falls back to _id when joining order users', async () => {
+    const service = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([
+      {
+        id: ORDER_ID,
+        orderNo: 'VIP202605020002',
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        orderType: OrderType.vipPlan,
+        title: '一年会员',
+        amount: 100,
+        discountAmount: 0,
+        couponAmount: 0,
+        payableAmount: 100,
+        currency: 'CNY',
+        status: OrderStatus.pending,
+        source: OrderSource.weapp,
+        createdAt: ORDER_CREATED_AT,
+        updatedAt: ORDER_CREATED_AT,
+      },
+    ] as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([
+      {
+        _id: USER_ID,
+        name: 'ID兜底用户',
+        avatar: '',
+        phone: '13900000000',
+      },
+    ] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listOrders({});
+
+    expect(result.items[0].user).toEqual({
+      id: USER_ID.toHexString(),
+      account: '13900000000',
+      name: 'ID兜底用户',
+      phone: '13900000000',
     });
   });
 
