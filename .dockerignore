@@ -1,5 +1,7 @@
 node_modules
 apps/*/node_modules
+resource/cert
+resource/ssl
 
 apps/node/dist
 apps/node/logs
