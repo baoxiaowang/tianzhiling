@@ -3,18 +3,24 @@ import Taro from '@tarojs/taro'
 export const CUSTOM_TAB_BAR_ITEMS = [
   {
     key: 'moments',
-    text: '朋友圈',
+    text: '动态',
     pagePath: '/pages/index/index',
+    icon: require('../assets/icon/dynamic.svg'),
+    activeIcon: require('../assets/icon/dynamic-active.svg'),
   },
   {
     key: 'contacts',
-    text: '通讯录',
+    text: '聊天',
     pagePath: '/pages/contacts/index',
+    icon: require('../assets/icon/chat.svg'),
+    activeIcon: require('../assets/icon/chat-active.svg'),
   },
   {
     key: 'me',
     text: '我的',
     pagePath: '/pages/me/index',
+    icon: require('../assets/icon/mine.svg'),
+    activeIcon: require('../assets/icon/mine-active.svg'),
   },
 ] as const
 

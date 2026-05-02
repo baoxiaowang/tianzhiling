@@ -1,0 +1,16 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="聊天选中">
+  <defs>
+    <linearGradient id="chatBubble" x1="10" y1="10" x2="40" y2="39" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5F91B0"/>
+      <stop offset="1" stop-color="#346886"/>
+    </linearGradient>
+    <linearGradient id="chatStar" x1="18" y1="15" x2="31" y2="31" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF5B8"/>
+      <stop offset="1" stop-color="#F1B93D"/>
+    </linearGradient>
+  </defs>
+  <path d="M8.5 23.4C8.5 15.4 15.4 9.4 24.2 9.4C33 9.4 39.8 15.4 39.8 23.4C39.8 31.2 33 37.3 24.2 37.3C21.9 37.3 19.7 36.9 17.7 36.1L10.3 40.1L12.2 32.9C9.9 30.4 8.5 27.2 8.5 23.4Z" fill="url(#chatBubble)"/>
+  <path d="M24.2 15.6L26.6 21L32 23.4L26.6 25.8L24.2 31.2L21.8 25.8L16.4 23.4L21.8 21L24.2 15.6Z" fill="url(#chatStar)" stroke="#F8E7A2" stroke-width="0.8" stroke-linejoin="round"/>
+  <circle cx="34" cy="17.3" r="1.6" fill="#FFECA0"/>
+  <circle cx="14.5" cy="27.8" r="1.2" fill="#D9ECF2" opacity="0.9"/>
+</svg>

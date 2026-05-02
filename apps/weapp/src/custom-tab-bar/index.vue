@@ -7,9 +7,11 @@
       :class="{ 'is-active': selected === index }"
       @tap="handleSwitch(item.pagePath)"
     >
-      <view class="custom-tab-bar__icon" :class="`custom-tab-bar__icon--${item.key}`">
-        <view class="custom-tab-bar__shape" />
-      </view>
+      <image
+        class="custom-tab-bar__icon"
+        :src="selected === index ? item.activeIcon : item.icon"
+        mode="aspectFit"
+      />
       <text class="custom-tab-bar__label">{{ item.text }}</text>
     </view>
   </view>
@@ -84,7 +86,7 @@ export default {
 }
 
 .custom-tab-bar__item.is-active {
-  color: $tzl-color-success;
+  color: $tzl-color-primary;
 }
 
 .custom-tab-bar__label {
@@ -93,83 +95,8 @@ export default {
 }
 
 .custom-tab-bar__icon {
-  position: relative;
-  width: 28px;
-  height: 28px;
-}
-
-.custom-tab-bar__shape {
-  position: absolute;
-  inset: 0;
-}
-
-.custom-tab-bar__icon--moments .custom-tab-bar__shape {
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-}
-
-.custom-tab-bar__item.is-active .custom-tab-bar__icon--moments .custom-tab-bar__shape {
-  border: none;
-  background: $tzl-gradient-success;
-}
-
-.custom-tab-bar__icon--moments .custom-tab-bar__shape::after {
-  content: '';
-  position: absolute;
-  left: 8px;
-  top: 8px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.custom-tab-bar__item.is-active .custom-tab-bar__icon--moments .custom-tab-bar__shape::after {
-  background: $tzl-color-surface-base;
-}
-
-.custom-tab-bar__icon--contacts .custom-tab-bar__shape::before,
-.custom-tab-bar__icon--contacts .custom-tab-bar__shape::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  right: 5px;
-  height: 5px;
-  border-radius: 999px;
-  border: 1.5px solid currentColor;
-}
-
-.custom-tab-bar__icon--contacts .custom-tab-bar__shape::before {
-  top: 5px;
-}
-
-.custom-tab-bar__icon--contacts .custom-tab-bar__shape::after {
-  bottom: 5px;
-}
-
-.custom-tab-bar__icon--me .custom-tab-bar__shape::before,
-.custom-tab-bar__icon--me .custom-tab-bar__shape::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.custom-tab-bar__icon--me .custom-tab-bar__shape::before {
-  top: 4px;
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-}
-
-.custom-tab-bar__icon--me .custom-tab-bar__shape::after {
-  bottom: 3px;
-  width: 18px;
-  height: 10px;
-  border: 1.5px solid currentColor;
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
-  border-bottom: none;
+  width: 30px;
+  height: 30px;
+  display: block;
 }
 </style>

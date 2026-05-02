@@ -1,0 +1,8 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="动态">
+  <path d="M9.5 29.5C14.3 22.1 21.8 17.7 31.9 16.3" stroke="#9AA8B5" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M31.8 6.8L34.8 14.2L42.2 17.2L34.8 20.2L31.8 27.6L28.8 20.2L21.4 17.2L28.8 14.2L31.8 6.8Z" stroke="#8FA0AF" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M15.1 28.4L17.1 33.3L22 35.3L17.1 37.3L15.1 42.2L13.1 37.3L8.2 35.3L13.1 33.3L15.1 28.4Z" stroke="#B4BEC7" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="9" cy="14" r="1.8" fill="#C7D0D8"/>
+  <circle cx="38.5" cy="33.5" r="1.6" fill="#C7D0D8"/>
+  <circle cx="24" cy="39" r="1.2" fill="#D5DCE2"/>
+</svg>
