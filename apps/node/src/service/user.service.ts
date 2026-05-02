@@ -10,11 +10,7 @@ import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
-import {
-  MongoObjectId,
-  UserAccountEntity,
-  UserEntity,
-} from '@tzl/entities';
+import { MongoObjectId, UserAccountEntity, UserEntity } from '@tzl/entities';
 import {
   AuthenticatedUserPayload,
   IUserOptions,
@@ -30,6 +26,7 @@ import {
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
   WeappLoginDTO,
+  WeappPhoneLoginDTO,
 } from '../dto/user.dto';
 import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
@@ -76,6 +73,10 @@ interface SmsCodeCacheValue {
 
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
+
+interface VerifiedPhoneLoginOptions {
+  weappOpenid?: string;
+}
 
 @Provide()
 export class UserService {
@@ -297,15 +298,35 @@ export class UserService {
   }
 
   private async loginWithVerifiedPhone(
-    phone: string
+    phone: string,
+    options: VerifiedPhoneLoginOptions = {}
   ): Promise<PasswordLoginResult> {
     const now = new Date();
-    let user = await this.userModel.findOne({
+    let isNewUser = false;
+    let userAccount = await this.userAccountModel.findOne({
       where: {
-        phone,
+        account: phone,
       },
     });
-    let isNewUser = false;
+    let user: UserEntity | null = null;
+
+    if (userAccount) {
+      user = await this.findUserById(userAccount.userId);
+
+      if (!user) {
+        throw new AppError(
+          'USER_NOT_FOUND',
+          'user profile does not exist',
+          404
+        );
+      }
+    } else {
+      user = await this.userModel.findOne({
+        where: {
+          phone,
+        },
+      });
+    }
 
     if (!user) {
       user = new UserEntity();
@@ -324,12 +345,6 @@ export class UserService {
       user = await this.userModel.save(user);
     }
 
-    let userAccount = await this.userAccountModel.findOne({
-      where: {
-        userId: user.id,
-      },
-    });
-
     if (!userAccount) {
       userAccount = new UserAccountEntity();
       userAccount.userId = user.id;
@@ -339,9 +354,13 @@ export class UserService {
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
     } else {
-      userAccount.account = phone;
+      userAccount.userId = user.id;
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
+    }
+
+    if (options.weappOpenid) {
+      await this.bindWeappOpenidToUser(user, options.weappOpenid, now);
     }
 
     return this.buildLoginResult(user, userAccount, isNewUser);
@@ -418,13 +437,24 @@ export class UserService {
         account,
       },
     });
-    let isNewUser = false;
 
     if (userAccount) {
       const user = await this.findUserById(userAccount.userId);
 
       if (!user) {
-        throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+        throw new AppError(
+          'USER_NOT_FOUND',
+          'user profile does not exist',
+          404
+        );
+      }
+
+      if (!user.phone || !user.phoneVerified) {
+        throw new AppError(
+          'WEAPP_PHONE_BIND_REQUIRED',
+          'wechat phone binding is required',
+          428
+        );
       }
 
       userAccount.updatedAt = now;
@@ -433,15 +463,68 @@ export class UserService {
       return this.buildLoginResult(user, userAccount, false);
     }
 
-    let user = new UserEntity();
-    user.name = this.buildDefaultWeappUserName(openid);
-    user.avatar = '';
-    user.phone = '';
-    user.phoneVerified = false;
-    user.createdAt = now;
-    user.updatedAt = now;
-    user = await this.userModel.save(user);
-    isNewUser = true;
+    throw new AppError(
+      'WEAPP_PHONE_BIND_REQUIRED',
+      'wechat phone binding is required',
+      428
+    );
+  }
+
+  async weappPhoneLogin(
+    payload: WeappPhoneLoginDTO
+  ): Promise<PasswordLoginResult> {
+    const jsCode = payload?.jsCode?.trim();
+    const phoneCode = payload?.phoneCode?.trim();
+
+    if (!jsCode) {
+      throw new AppError('INVALID_WECHAT_JS_CODE', 'jsCode is required');
+    }
+
+    if (!phoneCode) {
+      throw new AppError('INVALID_WECHAT_PHONE_CODE', 'phoneCode is required');
+    }
+
+    const [openid, rawPhone] = await Promise.all([
+      this.wechatPayService.getOpenidByJsCode(jsCode),
+      this.wechatPayService.getPhoneNumberByCode(phoneCode),
+    ]);
+    const phone = this.normalizePhone(rawPhone);
+
+    return this.loginWithVerifiedPhone(phone, {
+      weappOpenid: openid,
+    });
+  }
+
+  private async bindWeappOpenidToUser(
+    user: UserEntity,
+    openid: string,
+    now: Date
+  ): Promise<UserAccountEntity> {
+    const account = this.buildWeappAccount(openid);
+    let userAccount = await this.userAccountModel.findOne({
+      where: {
+        account,
+      },
+    });
+
+    if (userAccount) {
+      if (!this.isSameObjectId(userAccount.userId, user.id)) {
+        const boundUser = await this.findUserById(userAccount.userId);
+
+        if (boundUser?.phone || boundUser?.phoneVerified) {
+          throw new AppError(
+            'WEAPP_OPENID_BOUND_TO_OTHER_USER',
+            'wechat openid has been bound to another user',
+            409
+          );
+        }
+
+        userAccount.userId = user.id;
+      }
+
+      userAccount.updatedAt = now;
+      return this.userAccountModel.save(userAccount);
+    }
 
     userAccount = new UserAccountEntity();
     userAccount.userId = user.id;
@@ -449,9 +532,8 @@ export class UserService {
     userAccount.password = '';
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
-    userAccount = await this.userAccountModel.save(userAccount);
 
-    return this.buildLoginResult(user, userAccount, isNewUser);
+    return this.userAccountModel.save(userAccount);
   }
 
   async getCurrentUser(
@@ -949,12 +1031,19 @@ export class UserService {
     return `天之灵用户${phone.slice(-4)}`;
   }
 
-  private buildDefaultWeappUserName(openid: string): string {
-    return `天之灵用户${openid.slice(-4)}`;
-  }
-
   private buildWeappAccount(openid: string): string {
     return `${WEAPP_ACCOUNT_PREFIX}${openid}`;
+  }
+
+  private isSameObjectId(
+    left: MongoObjectId | undefined,
+    right: MongoObjectId | undefined
+  ): boolean {
+    if (!left || !right) {
+      return false;
+    }
+
+    return this.stringifyObjectId(left) === this.stringifyObjectId(right);
   }
 
   private normalizeUserName(rawName?: string): string {

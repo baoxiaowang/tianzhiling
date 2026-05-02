@@ -8,6 +8,7 @@ import {
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
   WeappLoginDTO,
+  WeappPhoneLoginDTO,
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
 
@@ -37,6 +38,11 @@ export class UserController {
   @Post('/weapp-login')
   async weappLogin(@Body() body: WeappLoginDTO) {
     return this.userService.weappLogin(body);
+  }
+
+  @Post('/weapp-phone-login')
+  async weappPhoneLogin(@Body() body: WeappPhoneLoginDTO) {
+    return this.userService.weappPhoneLogin(body);
   }
 
   @Get('/me')

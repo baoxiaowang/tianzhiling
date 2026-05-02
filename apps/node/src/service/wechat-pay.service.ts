@@ -1,6 +1,7 @@
 import { AppError } from '../common/errors';
-import { Config, Logger, Provide } from '@midwayjs/core';
+import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { RedisService } from '@midwayjs/redis';
 import { createDecipheriv } from 'crypto';
 import * as https from 'https';
 import { Formatter, Rsa, Wechatpay } from 'wechatpay-axios-plugin';
@@ -29,6 +30,23 @@ interface WechatSessionResponse {
   unionid?: string;
   errcode?: number;
   errmsg?: string;
+}
+
+interface WechatAccessTokenResponse {
+  access_token?: string;
+  expires_in?: number;
+  errcode?: number;
+  errmsg?: string;
+}
+
+interface WechatPhoneNumberResponse {
+  errcode?: number;
+  errmsg?: string;
+  phone_info?: {
+    phoneNumber?: string;
+    purePhoneNumber?: string;
+    countryCode?: string;
+  };
 }
 
 interface JsapiPrepayResponse {
@@ -73,6 +91,8 @@ interface WechatPayErrorResponse {
   };
 }
 
+const WECHAT_ACCESS_TOKEN_REDIS_KEY = 'wechat:mini-program:access-token';
+
 @Provide()
 export class WechatPayService {
   @Logger()
@@ -83,6 +103,9 @@ export class WechatPayService {
 
   @Config('wechatMiniProgram')
   wechatMiniProgramConfig: WechatMiniProgramConfig;
+
+  @Inject()
+  redisService: RedisService;
 
   private wxpayClient?: unknown;
 
@@ -117,6 +140,59 @@ export class WechatPayService {
     }
 
     return response.openid;
+  }
+
+  async getPhoneNumberByCode(phoneCode: string): Promise<string> {
+    const code = phoneCode?.trim();
+
+    if (!code) {
+      throw new AppError(
+        'INVALID_WECHAT_PHONE_CODE',
+        'phoneCode is required'
+      );
+    }
+
+    const accessToken = await this.getMiniProgramAccessToken();
+    const response = await this.postJson<WechatPhoneNumberResponse>(
+      `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(accessToken)}`,
+      {
+        code,
+      }
+    );
+
+    if (response.errcode) {
+      throw new AppError(
+        'WECHAT_PHONE_NUMBER_FAILED',
+        response.errmsg || 'failed to get wechat phone number',
+        502
+      );
+    }
+
+    const phoneInfo = response.phone_info;
+    const countryCode = phoneInfo?.countryCode?.trim();
+    const phoneNumber = (
+      phoneInfo?.purePhoneNumber ||
+      phoneInfo?.phoneNumber ||
+      ''
+    ).trim();
+
+    if (!phoneNumber) {
+      throw new AppError(
+        'WECHAT_PHONE_NUMBER_MISSING',
+        'wechat phone number is missing',
+        502
+      );
+    }
+
+    if (countryCode && countryCode !== '86') {
+      throw new AppError(
+        'WECHAT_PHONE_COUNTRY_UNSUPPORTED',
+        'only mainland China mobile phone number is supported',
+        400
+      );
+    }
+
+    return phoneNumber;
   }
 
   async createVipPlanPrepay(payload: {
@@ -398,6 +474,49 @@ export class WechatPayService {
     );
   }
 
+  private async getMiniProgramAccessToken(): Promise<string> {
+    const cachedToken = await this.redisService.get(
+      WECHAT_ACCESS_TOKEN_REDIS_KEY
+    );
+
+    if (cachedToken) {
+      return cachedToken;
+    }
+
+    const appId = this.requireMiniProgramConfig('appId');
+    const appSecret = this.requireMiniProgramConfig('appSecret');
+    const params = new URLSearchParams({
+      grant_type: 'client_credential',
+      appid: appId,
+      secret: appSecret,
+    });
+    const response = await this.getJson<WechatAccessTokenResponse>(
+      `https://api.weixin.qq.com/cgi-bin/token?${params.toString()}`
+    );
+
+    if (response.errcode || !response.access_token) {
+      throw new AppError(
+        'WECHAT_ACCESS_TOKEN_FAILED',
+        response.errmsg || 'failed to get wechat access token',
+        502
+      );
+    }
+
+    const expiresInSeconds = Math.max(
+      Math.min(response.expires_in || 7200, 7200) - 300,
+      60
+    );
+
+    await this.redisService.set(
+      WECHAT_ACCESS_TOKEN_REDIS_KEY,
+      response.access_token,
+      'EX',
+      expiresInSeconds
+    );
+
+    return response.access_token;
+  }
+
   private getJson<T>(url: string): Promise<T> {
     return new Promise((resolve, reject) => {
       https
@@ -416,6 +535,42 @@ export class WechatPayService {
           });
         })
         .on('error', reject);
+    });
+  }
+
+  private postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+    const requestBody = JSON.stringify(body);
+
+    return new Promise((resolve, reject) => {
+      const request = https.request(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestBody),
+          },
+        },
+        response => {
+          const chunks: Buffer[] = [];
+
+          response.on('data', chunk => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on('end', () => {
+            try {
+              resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as T);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }
+      );
+
+      request.on('error', reject);
+      request.write(requestBody);
+      request.end();
     });
   }
 }

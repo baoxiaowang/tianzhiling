@@ -28,6 +28,14 @@ export class WeappLoginDTO {
   jsCode: string;
 }
 
+export class WeappPhoneLoginDTO {
+  @Rule(requiredStringRule.max(256))
+  jsCode: string;
+
+  @Rule(requiredStringRule.max(512))
+  phoneCode: string;
+}
+
 export class UpdateUserNameDTO {
   @Rule(requiredStringRule.max(20))
   name: string;
