@@ -28,6 +28,7 @@ export default {
   'menu.membership': 'Membership',
   'menu.membership.vipPlan': 'VIP Plans',
   'menu.membership.vipMember': 'VIP Members',
+  'menu.membership.order': 'Membership Orders',
   'menu.membership.entitlement': 'Entitlements',
   'menu.arcoWebsite': 'Arco Design',
   'menu.faq': 'FAQ',

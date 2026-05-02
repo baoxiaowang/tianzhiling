@@ -28,6 +28,7 @@ export default {
   'menu.membership': '会员权益',
   'menu.membership.vipPlan': 'VIP计划',
   'menu.membership.vipMember': 'VIP会员',
+  'menu.membership.order': '会员订单',
   'menu.membership.entitlement': '权益管理',
   'menu.arcoWebsite': 'Arco Design',
   'menu.faq': '常见问题',

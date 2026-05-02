@@ -10,6 +10,7 @@ const ORDER: AppRouteRecordRaw = {
     requiresAuth: true,
     icon: 'icon-list',
     order: 4,
+    hideChildrenInMenu: true,
   },
   redirect: '/orders/list',
   children: [
@@ -21,6 +22,7 @@ const ORDER: AppRouteRecordRaw = {
         locale: 'menu.order.list',
         requiresAuth: true,
         roles: ['*'],
+        activeMenu: 'orders',
       },
     },
   ],

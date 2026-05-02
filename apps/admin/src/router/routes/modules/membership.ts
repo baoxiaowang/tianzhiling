@@ -34,6 +34,17 @@ const MEMBERSHIP: AppRouteRecordRaw = {
       },
     },
     {
+      path: 'orders',
+      name: 'MembershipOrderList',
+      component: () => import('@/views/order/list/index.vue'),
+      meta: {
+        locale: 'menu.membership.order',
+        requiresAuth: true,
+        roles: ['*'],
+        orderType: 'vip_plan',
+      },
+    },
+    {
       path: 'entitlements',
       name: 'EntitlementList',
       component: () => import('@/views/membership/entitlement/index.vue'),

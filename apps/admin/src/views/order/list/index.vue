@@ -1,7 +1,7 @@
 <template>
   <div class="order-page">
     <a-card class="order-page__card" :bordered="false">
-      <template #title>我的订单</template>
+      <template #title>{{ pageTitle }}</template>
 
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
@@ -252,7 +252,8 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
+  import { useRoute } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { OrderSourceDTO, OrderStatusDTO } from '@tzl/shared';
@@ -260,6 +261,7 @@
   import { OrderRecord, queryOrderList } from '@/api/order';
 
   const { loading, setLoading } = useLoading();
+  const route = useRoute();
   const renderList = ref<OrderRecord[]>([]);
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
@@ -291,10 +293,14 @@
     app: 'App',
     admin: '管理端',
   };
+  const routeOrderType = computed(() => route.meta.orderType);
+  const pageTitle = computed(() =>
+    routeOrderType.value === 'vip_plan' ? '会员订单' : '我的订单'
+  );
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
     status: searchForm.status || undefined,
-    orderType: 'vip_plan' as const,
+    orderType: routeOrderType.value,
     source: searchForm.source || undefined,
     page: pagination.current,
     pageSize: pagination.pageSize,
@@ -389,6 +395,12 @@
 
     return provider || '-';
   };
+
+  watch(routeOrderType, () => {
+    pagination.current = 1;
+    closeDetail();
+    fetchData();
+  });
 
   fetchData();
 </script>
