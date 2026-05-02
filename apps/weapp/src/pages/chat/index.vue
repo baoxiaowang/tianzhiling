@@ -270,11 +270,12 @@ export default {
 </script>
 
 <script setup lang="ts">
-import Taro, { useDidHide, useLoad, useUnload } from '@tarojs/taro'
+import Taro, { useDidHide, useDidShow, useLoad, useUnload } from '@tarojs/taro'
 import type { ITouchEvent } from '@tarojs/components/types/common'
 import { computed, nextTick, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
+import { getAgentDetail } from '../../apis/agent'
 import {
   getConversationMessages,
   sendConversationMessage,
@@ -356,6 +357,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
 const loadError = ref('')
+const didInitialShow = ref(false)
 const draftMessage = ref('')
 const draftCursor = ref(0)
 const keyboardHeight = ref(0)
@@ -670,6 +672,38 @@ async function preparePage() {
 
   await refreshMessages({ showLoading: true })
 }
+
+async function refreshAgentSnapshot() {
+  if (!agentId.value) {
+    return
+  }
+
+  try {
+    const latestAgent = await getAgentDetail(agentId.value)
+    agentName.value = latestAgent.name.trim() || agentName.value
+    agentAvatar.value = latestAgent.avatar.trim()
+    agentSex.value = latestAgent.sex
+    agentCallMe.value = latestAgent.agentCallMe.trim() || agentCallMe.value
+    iCallAgent.value = latestAgent.iCallAgent.trim() || iCallAgent.value
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+    }
+  }
+}
+
+useDidShow(() => {
+  if (!didInitialShow.value) {
+    didInitialShow.value = true
+    return
+  }
+
+  if (!conversationId.value || !agentId.value || isCheckingAuth.value) {
+    return
+  }
+
+  void refreshAgentSnapshot()
+})
 
 async function refreshMessages(options: { showLoading?: boolean } = {}) {
   if (refreshMessagesPromise) {
