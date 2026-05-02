@@ -9,7 +9,7 @@ export type AppUserAgentRecord = AdminAgentRecordDTO;
 export type AppUserAgentListRes = AdminAgentListDTO;
 export type AppUserAgentListParams = Pick<
   AdminAgentListParamsDTO,
-  'page' | 'pageSize'
+  'keyword' | 'agentType' | 'page' | 'pageSize'
 >;
 
 export interface AppUserRecord {

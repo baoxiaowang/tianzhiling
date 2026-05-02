@@ -54,6 +54,7 @@ export interface AdminAgentRecordDTO extends AgentProfileDTO {
 
 export interface AdminAgentListParamsDTO {
   keyword?: string;
+  agentType?: 'normal' | 'vip';
   sex?: number;
   status?: number;
   page?: number;

@@ -4,9 +4,8 @@
       class="order-page__card"
       :class="{ 'order-page__card--embedded': embedded }"
       :bordered="false"
+      :title="embedded ? undefined : pageTitle"
     >
-      <template #title>{{ pageTitle }}</template>
-
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
           <a-input

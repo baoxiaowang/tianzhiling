@@ -8,6 +8,9 @@ function createService() {
     count: jest.fn(),
     find: jest.fn(),
   } as any;
+  service.agentMembershipModel = {
+    find: jest.fn(),
+  } as any;
   service.userModel = {
     count: jest.fn(),
     find: jest.fn(),
@@ -137,6 +140,7 @@ describe('AdminAppUserService', () => {
       .mockResolvedValue(account as never);
     jest.mocked(service.agentModel.count).mockResolvedValue(1 as never);
     jest.mocked(service.agentModel.find).mockResolvedValue([agent] as never);
+    jest.mocked(service.agentMembershipModel.find).mockResolvedValue([]);
 
     const result = await service.listUserAgents(userId.toHexString(), {
       page: '1',
@@ -176,6 +180,7 @@ describe('AdminAppUserService', () => {
           deathDate: '',
           description: '测试 agent',
           status: 1,
+          isVip: false,
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-02T00:00:00.000Z',
         },
@@ -185,6 +190,76 @@ describe('AdminAppUserService', () => {
       pageSize: 10,
     });
     expect(JSON.stringify(result)).not.toContain('hidden');
+  });
+
+  it('filters user agents by name and vip type', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const vipAgentId = new MongoObjectId();
+    const user = {
+      id: userId,
+      name: 'Alice',
+      avatar: '',
+      phone: '13800000000',
+      phoneVerified: true,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const account = {
+      id: new MongoObjectId(),
+      userId,
+      account: 'alice-account',
+      password: 'hidden',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const agent = {
+      id: vipAgentId,
+      createdUserId: userId,
+      name: '小灵 VIP',
+      avatar: '',
+      sex: AgentSex.woman,
+      agentCallMe: '主人',
+      iCallAgent: '小灵',
+      birthday: undefined,
+      deathDate: undefined,
+      description: '',
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const membership = {
+      id: new MongoObjectId(),
+      userId,
+      agentId: vipAgentId,
+      status: 'active',
+      lifetime: true,
+      expiredAt: undefined,
+    };
+
+    jest.mocked(service.userModel.findOne).mockResolvedValueOnce(user as never);
+    jest
+      .mocked(service.userAccountModel.findOne)
+      .mockResolvedValue(account as never);
+    jest
+      .mocked(service.agentMembershipModel.find)
+      .mockResolvedValue([membership] as never);
+    jest.mocked(service.agentModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.agentModel.find).mockResolvedValue([agent] as never);
+
+    const result = await service.listUserAgents(userId.toHexString(), {
+      keyword: '小灵',
+      agentType: 'vip',
+      page: '1',
+      pageSize: '10',
+    });
+
+    expect(service.agentModel.count).toHaveBeenCalledWith({
+      createdUserId: userId,
+      name: { $regex: '小灵', $options: 'i' },
+      id: { $in: [vipAgentId] },
+    });
+    expect(result.items[0].isVip).toBe(true);
   });
 
   it('updates only allowed profile fields', async () => {

@@ -69,111 +69,157 @@
     <a-card class="app-user-detail-page__tabs-card" :bordered="false">
       <a-tabs v-model:active-key="activeTab">
         <a-tab-pane key="agents" title="用户agent">
-          <a-table
-            row-key="id"
-            :data="agentList"
-            :loading="agentsLoading"
-            :pagination="false"
-            :bordered="false"
-            :scroll="{ x: 980 }"
-          >
-            <template #empty>
-              <a-empty description="暂无用户agent" />
-            </template>
-            <template #columns>
-              <a-table-column title="Agent" data-index="name" :width="260">
-                <template #cell="{ record }">
-                  <a-space>
-                    <a-avatar :size="40">
-                      <img
-                        v-if="isRenderableAvatar(record.avatar)"
-                        :src="record.avatar"
-                        alt="agent avatar"
-                      />
-                      <template v-else>
-                        {{ getAvatarFallback(record.name, 'A') }}
-                      </template>
-                    </a-avatar>
-                    <div class="app-user-detail-page__agent-identity">
-                      <div class="app-user-detail-page__agent-name">
-                        {{ record.name || '-' }}
+          <a-card :bordered="false">
+            <a-form
+              :model="agentSearchForm"
+              layout="inline"
+              class="app-user-detail-page__agent-search"
+            >
+              <a-form-item field="keyword" label="名字">
+                <a-input
+                  v-model="agentSearchForm.keyword"
+                  allow-clear
+                  placeholder="搜索 agent 名字"
+                  @press-enter="handleAgentSearch"
+                />
+              </a-form-item>
+              <a-form-item field="agentType" label="Agent类型">
+                <a-select
+                  v-model="agentSearchForm.agentType"
+                  class="app-user-detail-page__agent-type-filter"
+                >
+                  <a-option value="">全部</a-option>
+                  <a-option value="normal">普通</a-option>
+                  <a-option value="vip">VIP</a-option>
+                </a-select>
+              </a-form-item>
+              <a-form-item>
+                <a-space>
+                  <a-button
+                    type="primary"
+                    :loading="agentsLoading"
+                    @click="handleAgentSearch"
+                  >
+                    查询
+                  </a-button>
+                  <a-button @click="resetAgentSearch">重置</a-button>
+                </a-space>
+              </a-form-item>
+            </a-form>
+
+            <a-table
+              row-key="id"
+              :data="agentList"
+              :loading="agentsLoading"
+              :pagination="false"
+              :bordered="false"
+              :scroll="{ x: 1080 }"
+            >
+              <template #empty>
+                <a-empty description="暂无用户agent" />
+              </template>
+              <template #columns>
+                <a-table-column title="Agent" data-index="name" :width="260">
+                  <template #cell="{ record }">
+                    <a-space>
+                      <a-avatar :size="40">
+                        <img
+                          v-if="isRenderableAvatar(record.avatar)"
+                          :src="record.avatar"
+                          alt="agent avatar"
+                        />
+                        <template v-else>
+                          {{ getAvatarFallback(record.name, 'A') }}
+                        </template>
+                      </a-avatar>
+                      <div class="app-user-detail-page__agent-identity">
+                        <div class="app-user-detail-page__agent-name">
+                          {{ record.name || '-' }}
+                        </div>
+                        <a-tooltip :content="record.id">
+                          <a-typography-text
+                            class="app-user-detail-page__agent-id"
+                            copyable
+                          >
+                            {{ record.id }}
+                          </a-typography-text>
+                        </a-tooltip>
                       </div>
-                      <a-tooltip :content="record.id">
-                        <a-typography-text
-                          class="app-user-detail-page__agent-id"
-                          copyable
-                        >
-                          {{ record.id }}
-                        </a-typography-text>
+                    </a-space>
+                  </template>
+                </a-table-column>
+                <a-table-column title="性别" data-index="sex" :width="90">
+                  <template #cell="{ record }">
+                    <a-tag :color="record.sex === 1 ? 'blue' : 'magenta'">
+                      {{ formatSex(record.sex) }}
+                    </a-tag>
+                  </template>
+                </a-table-column>
+                <a-table-column title="类型" data-index="isVip" :width="90">
+                  <template #cell="{ record }">
+                    <a-tag :color="record.isVip ? 'gold' : 'gray'">
+                      {{ record.isVip ? 'VIP' : '普通' }}
+                    </a-tag>
+                  </template>
+                </a-table-column>
+                <a-table-column title="称呼关系" :width="220">
+                  <template #cell="{ record }">
+                    <div class="app-user-detail-page__calls">
+                      <a-tooltip
+                        :content="`用户称呼TA：${record.iCallAgent || '-'}`"
+                      >
+                        <span class="app-user-detail-page__call-line">
+                          用户称呼TA：{{ record.iCallAgent || '-' }}
+                        </span>
+                      </a-tooltip>
+                      <a-tooltip
+                        :content="`TA称呼用户：${record.agentCallMe || '-'}`"
+                      >
+                        <span class="app-user-detail-page__call-line">
+                          TA称呼用户：{{ record.agentCallMe || '-' }}
+                        </span>
                       </a-tooltip>
                     </div>
-                  </a-space>
-                </template>
-              </a-table-column>
-              <a-table-column title="性别" data-index="sex" :width="90">
-                <template #cell="{ record }">
-                  <a-tag :color="record.sex === 1 ? 'blue' : 'magenta'">
-                    {{ formatSex(record.sex) }}
-                  </a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="称呼关系" :width="220">
-                <template #cell="{ record }">
-                  <div class="app-user-detail-page__calls">
-                    <a-tooltip
-                      :content="`用户称呼TA：${record.iCallAgent || '-'}`"
-                    >
-                      <span class="app-user-detail-page__call-line">
-                        用户称呼TA：{{ record.iCallAgent || '-' }}
-                      </span>
-                    </a-tooltip>
-                    <a-tooltip
-                      :content="`TA称呼用户：${record.agentCallMe || '-'}`"
-                    >
-                      <span class="app-user-detail-page__call-line">
-                        TA称呼用户：{{ record.agentCallMe || '-' }}
-                      </span>
-                    </a-tooltip>
-                  </div>
-                </template>
-              </a-table-column>
-              <a-table-column title="状态" data-index="status" :width="100">
-                <template #cell="{ record }">
-                  <a-tag :color="record.status === 1 ? 'green' : 'gray'">
-                    {{ formatStatus(record.status) }}
-                  </a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="生日" data-index="birthday" :width="140">
-                <template #cell="{ record }">
-                  {{ formatDate(record.birthday, 'YYYY-MM-DD') }}
-                </template>
-              </a-table-column>
-              <a-table-column
-                title="更新时间"
-                data-index="updatedAt"
-                :width="180"
-              >
-                <template #cell="{ record }">
-                  {{ formatDate(record.updatedAt) }}
-                </template>
-              </a-table-column>
-            </template>
-          </a-table>
+                  </template>
+                </a-table-column>
+                <a-table-column title="状态" data-index="status" :width="100">
+                  <template #cell="{ record }">
+                    <a-tag :color="record.status === 1 ? 'green' : 'gray'">
+                      {{ formatStatus(record.status) }}
+                    </a-tag>
+                  </template>
+                </a-table-column>
+                <a-table-column title="生日" data-index="birthday" :width="140">
+                  <template #cell="{ record }">
+                    {{ formatDate(record.birthday, 'YYYY-MM-DD') }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  title="更新时间"
+                  data-index="updatedAt"
+                  :width="180"
+                >
+                  <template #cell="{ record }">
+                    {{ formatDate(record.updatedAt) }}
+                  </template>
+                </a-table-column>
+              </template>
+            </a-table>
 
-          <div class="app-user-detail-page__agent-pagination">
-            <span class="app-user-detail-page__agent-total">
-              共 {{ agentPagination.total }} 个 Agent
-            </span>
-            <a-pagination
-              :current="agentPagination.current"
-              :page-size="agentPagination.pageSize"
-              :total="agentPagination.total"
-              show-page-size
-              @change="onAgentPageChange"
-              @page-size-change="onAgentPageSizeChange"
-            />
-          </div>
+            <div class="app-user-detail-page__agent-pagination">
+              <span class="app-user-detail-page__agent-total">
+                共 {{ agentPagination.total }} 个 Agent
+              </span>
+              <a-pagination
+                :current="agentPagination.current"
+                :page-size="agentPagination.pageSize"
+                :total="agentPagination.total"
+                show-page-size
+                @change="onAgentPageChange"
+                @page-size-change="onAgentPageSizeChange"
+              />
+            </div>
+          </a-card>
         </a-tab-pane>
         <a-tab-pane key="orders" title="用户订单">
           <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
@@ -204,6 +250,13 @@
   const agentList = ref<AppUserAgentRecord[]>([]);
   const agentsLoading = ref(false);
   const activeTab = ref('agents');
+  const agentSearchForm = reactive<{
+    keyword: string;
+    agentType: '' | 'normal' | 'vip';
+  }>({
+    keyword: '',
+    agentType: '',
+  });
   const agentPagination = reactive({
     current: 1,
     pageSize: 10,
@@ -243,6 +296,8 @@
     try {
       agentsLoading.value = true;
       const { data } = await queryAppUserAgents(id, {
+        keyword: agentSearchForm.keyword.trim() || undefined,
+        agentType: agentSearchForm.agentType || undefined,
         page: agentPagination.current,
         pageSize: agentPagination.pageSize,
       });
@@ -270,6 +325,18 @@
 
   const onAgentPageSizeChange = (pageSize: number) => {
     agentPagination.pageSize = pageSize;
+    agentPagination.current = 1;
+    fetchUserAgents(userId.value);
+  };
+
+  const handleAgentSearch = () => {
+    agentPagination.current = 1;
+    fetchUserAgents(userId.value);
+  };
+
+  const resetAgentSearch = () => {
+    agentSearchForm.keyword = '';
+    agentSearchForm.agentType = '';
     agentPagination.current = 1;
     fetchUserAgents(userId.value);
   };
@@ -382,6 +449,14 @@
 
     &__agent-identity {
       min-width: 0;
+    }
+
+    &__agent-search {
+      margin-bottom: 16px;
+    }
+
+    &__agent-type-filter {
+      width: 132px;
     }
 
     &__agent-name {

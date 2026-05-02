@@ -12,6 +12,12 @@ export class ListAdminAppUsersQueryDTO {
 }
 
 export class ListAdminAppUserAgentsQueryDTO {
+  @Rule(RuleType.string().allow('').optional())
+  keyword?: string;
+
+  @Rule(RuleType.string().valid('', 'normal', 'vip').optional())
+  agentType?: '' | 'normal' | 'vip';
+
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   page?: number | string;
 
