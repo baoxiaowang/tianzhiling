@@ -356,6 +356,7 @@ const conversationCreatedAt = ref('')
 const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
+const isWaitingAgentReply = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const draftMessage = ref('')
@@ -431,6 +432,10 @@ const navMenus: NavMenuItem[] = [
   },
 ]
 const pageTitle = computed(() => {
+  if (isWaitingAgentReply.value) {
+    return '回复中...'
+  }
+
   const trimmedName = agentName.value.trim()
   return trimmedName || '对话'
 })
@@ -692,6 +697,16 @@ async function refreshAgentSnapshot() {
   }
 }
 
+async function runWithAgentReplyStatus(task: () => Promise<void>) {
+  isWaitingAgentReply.value = true
+
+  try {
+    await task()
+  } finally {
+    isWaitingAgentReply.value = false
+  }
+}
+
 useDidShow(() => {
   if (!didInitialShow.value) {
     didInitialShow.value = true
@@ -900,7 +915,7 @@ function handleAgentAvatarTap() {
 
   const query = [
     ['agentId', agentId.value],
-    ['agentName', pageTitle.value],
+    ['agentName', agentName.value.trim() || '对话'],
     ['agentAvatar', agentAvatar.value],
     ['agentSex', String(agentSex.value)],
     ['agentCallMe', agentCallMe.value],
@@ -1434,20 +1449,22 @@ async function sendTextMessageContent(
   await scrollToBottom()
 
   try {
-    const result = await sendConversationMessage(conversationId.value, {
-      content,
-      type: 'text',
-    })
+    await runWithAgentReplyStatus(async () => {
+      const result = await sendConversationMessage(conversationId.value, {
+        content,
+        type: 'text',
+      })
 
-    messages.value = messages.value.filter((message) => message.id !== tempId)
-    messages.value = [
-      ...messages.value,
-      result.userMessage,
-      ...(result.assistantMessage ? [result.assistantMessage] : []),
-    ]
-    if (result.assistantMessage) {
-      probeMissingAssistantVoiceDurations([result.assistantMessage])
-    }
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      messages.value = [
+        ...messages.value,
+        result.userMessage,
+        ...(result.assistantMessage ? [result.assistantMessage] : []),
+      ]
+      if (result.assistantMessage) {
+        probeMissingAssistantVoiceDurations([result.assistantMessage])
+      }
+    })
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
@@ -1564,21 +1581,23 @@ async function sendImageMessage(image: PickedChatImage) {
         : message
     )
 
-    const result = await sendConversationMessage(conversationId.value, {
-      type: 'image',
-      objectKey: uploaded.objectKey,
-      mimeType,
-    })
+    await runWithAgentReplyStatus(async () => {
+      const result = await sendConversationMessage(conversationId.value, {
+        type: 'image',
+        objectKey: uploaded.objectKey,
+        mimeType,
+      })
 
-    messages.value = messages.value.filter((message) => message.id !== tempId)
-    messages.value = [
-      ...messages.value,
-      result.userMessage,
-      ...(result.assistantMessage ? [result.assistantMessage] : []),
-    ]
-    if (result.assistantMessage) {
-      probeMissingAssistantVoiceDurations([result.assistantMessage])
-    }
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      messages.value = [
+        ...messages.value,
+        result.userMessage,
+        ...(result.assistantMessage ? [result.assistantMessage] : []),
+      ]
+      if (result.assistantMessage) {
+        probeMissingAssistantVoiceDurations([result.assistantMessage])
+      }
+    })
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
@@ -1657,22 +1676,24 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
         : message
     )
 
-    const result = await sendConversationMessage(conversationId.value, {
-      type: 'voice',
-      objectKey: uploaded.objectKey,
-      mimeType,
-      durationMs,
-    })
+    await runWithAgentReplyStatus(async () => {
+      const result = await sendConversationMessage(conversationId.value, {
+        type: 'voice',
+        objectKey: uploaded.objectKey,
+        mimeType,
+        durationMs,
+      })
 
-    messages.value = messages.value.filter((message) => message.id !== tempId)
-    messages.value = [
-      ...messages.value,
-      result.userMessage,
-      ...(result.assistantMessage ? [result.assistantMessage] : []),
-    ]
-    if (result.assistantMessage) {
-      probeMissingAssistantVoiceDurations([result.assistantMessage])
-    }
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      messages.value = [
+        ...messages.value,
+        result.userMessage,
+        ...(result.assistantMessage ? [result.assistantMessage] : []),
+      ]
+      if (result.assistantMessage) {
+        probeMissingAssistantVoiceDurations([result.assistantMessage])
+      }
+    })
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
