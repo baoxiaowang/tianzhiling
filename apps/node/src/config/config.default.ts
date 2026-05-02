@@ -172,6 +172,30 @@ export default {
       ),
     },
   },
+  wechatMiniProgram: {
+    appId: readStringFrom(
+      [
+        'NODE_WECHAT_MINI_PROGRAM_APP_ID',
+        'WECHAT_MINI_PROGRAM_APP_ID',
+        'NODE_WECHAT_APP_ID',
+        'WECHAT_APP_ID',
+        'NODE_WECHAT_PAY_APP_ID',
+        'WECHAT_PAY_APP_ID',
+      ],
+      ''
+    ),
+    appSecret: readStringFrom(
+      [
+        'NODE_WECHAT_MINI_PROGRAM_APP_SECRET',
+        'WECHAT_MINI_PROGRAM_APP_SECRET',
+        'NODE_WECHAT_APP_SECRET',
+        'WECHAT_APP_SECRET',
+        'NODE_WECHAT_PAY_APP_SECRET',
+        'WECHAT_PAY_APP_SECRET',
+      ],
+      ''
+    ),
+  },
   wechatPay: {
     enabled: readBooleanFrom(['NODE_WECHAT_PAY_ENABLED'], false),
     appId: readStringFrom(['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'], ''),

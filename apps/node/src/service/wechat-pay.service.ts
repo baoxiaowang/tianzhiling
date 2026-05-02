@@ -18,6 +18,11 @@ interface WechatPayConfig {
   notifyUrl?: string;
 }
 
+interface WechatMiniProgramConfig {
+  appId?: string;
+  appSecret?: string;
+}
+
 interface WechatSessionResponse {
   openid?: string;
   session_key?: string;
@@ -76,12 +81,15 @@ export class WechatPayService {
   @Config('wechatPay')
   wechatPayConfig: WechatPayConfig;
 
+  @Config('wechatMiniProgram')
+  wechatMiniProgramConfig: WechatMiniProgramConfig;
+
   private wxpayClient?: unknown;
 
   async getOpenidByJsCode(jsCode: string): Promise<string> {
     const code = jsCode?.trim();
-    const appId = this.requireConfig('appId');
-    const appSecret = this.requireConfig('appSecret');
+    const appId = this.requireMiniProgramConfig('appId');
+    const appSecret = this.requireMiniProgramConfig('appSecret');
 
     if (!code) {
       throw new AppError('INVALID_WECHAT_JS_CODE', 'jsCode is required');
@@ -370,6 +378,22 @@ export class WechatPayService {
     throw new AppError(
       'WECHAT_PAY_CONFIG_MISSING',
       `wechat pay config ${String(key)} is missing`,
+      500
+    );
+  }
+
+  private requireMiniProgramConfig(
+    key: keyof WechatMiniProgramConfig
+  ): string {
+    const value = this.wechatMiniProgramConfig?.[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+
+    throw new AppError(
+      'WECHAT_MINI_PROGRAM_CONFIG_MISSING',
+      `wechat mini program config ${String(key)} is missing`,
       500
     );
   }
