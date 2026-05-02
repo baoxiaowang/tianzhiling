@@ -17,4 +17,11 @@ export class MembershipController {
       this.ctx.state.auth as AuthenticatedUserPayload
     );
   }
+
+  @Get('/status')
+  async getMembershipStatus() {
+    return this.membershipService.getMembershipStatus(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
 }

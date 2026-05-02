@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { silentWeappLogin } from './auth/login-hooks'
 import { authSession, restoreAuthSession } from './auth/session'
+import { refreshMembershipStatus } from './membership/session'
 import { initSafeAreaInsets } from './utils/safe-area'
 
 import './app.scss'
@@ -11,6 +12,10 @@ const App = createApp({
     void restoreAuthSession().then(async () => {
       if (!authSession.value?.accessToken) {
         await silentWeappLogin()
+      }
+
+      if (authSession.value?.accessToken) {
+        await refreshMembershipStatus({ force: true }).catch(() => undefined)
       }
     })
   },

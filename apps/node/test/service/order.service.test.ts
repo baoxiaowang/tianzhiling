@@ -4,6 +4,8 @@ import {
   OrderSource,
   OrderStatus,
   OrderType,
+  UserEntitlementStatus,
+  UserEntitlementType,
   UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
@@ -129,15 +131,22 @@ function createVipPlanModel(plan: VipPlanEntity) {
   };
 }
 
-function createService(orderOverrides: Partial<OrderEntity> = {}) {
+function createService(
+  orderOverrides: Partial<OrderEntity> = {},
+  planOverrides: Partial<VipPlanEntity> = {}
+) {
   const service = new OrderService();
   const order = createOrder(orderOverrides);
-  const plan = createVipPlan();
+  const plan = createVipPlan(planOverrides);
   const orderModel = createOrderModel(order);
   const vipPlanModel = createVipPlanModel(plan);
   const userMembershipModel = {
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn(async membership => membership),
+  };
+  const userEntitlementModel = {
+    findOne: jest.fn().mockResolvedValue(null),
+    save: jest.fn(async entitlement => entitlement),
   };
   const wechatPayService = {
     getOpenidByJsCode: jest.fn().mockResolvedValue('openid-1'),
@@ -163,6 +172,7 @@ function createService(orderOverrides: Partial<OrderEntity> = {}) {
   service.orderModel = orderModel as any;
   service.vipPlanModel = vipPlanModel as any;
   service.userMembershipModel = userMembershipModel as any;
+  service.userEntitlementModel = userEntitlementModel as any;
   service.wechatPayService = wechatPayService as any;
   service.bullmqFramework = {
     getQueue: jest.fn(name =>
@@ -175,6 +185,7 @@ function createService(orderOverrides: Partial<OrderEntity> = {}) {
     order,
     orderModel,
     userMembershipModel,
+    userEntitlementModel,
     wechatPayService,
     queue,
     auth: {
@@ -287,6 +298,47 @@ describe('OrderService payment expiration and reconciliation', () => {
       OrderStatus.completed,
     ]);
     expect(result?.status).toBe(OrderStatus.completed);
+  });
+
+  it('grants vip plan entitlements after payment succeeds', async () => {
+    const { service, order, userEntitlementModel, wechatPayService } =
+      createService(
+        {},
+        {
+          entitlementGrants: [
+            {
+              type: UserEntitlementType.voiceModel,
+              totalQuota: 2,
+              durationDays: 7,
+            },
+          ],
+        }
+      );
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: ORDER_NO,
+      transaction_id: '420000000020260501000002',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 990,
+        payer_total: 990,
+      },
+    });
+
+    await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(userEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        type: UserEntitlementType.voiceModel,
+        totalQuota: 2,
+        usedQuota: 0,
+        status: UserEntitlementStatus.available,
+        sourceOrderId: order.id,
+        sourceVipPlanId: order.targetId,
+      })
+    );
   });
 
   it.each([

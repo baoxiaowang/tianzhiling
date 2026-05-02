@@ -2,6 +2,7 @@ import Taro from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException, weappLogin, weappPhoneLogin } from './api'
 import { authSession } from './session'
+import { refreshMembershipStatus } from '../membership/session'
 
 function getLoginErrorMessage(error: unknown) {
   if (error instanceof ApiException && error.message) {
@@ -45,7 +46,9 @@ export function useLoginHooks() {
         throw new Error('微信登录凭证获取失败，请稍后重试')
       }
 
-      return await weappLogin(jsCode)
+      const session = await weappLogin(jsCode)
+      await refreshMembershipAfterLogin()
+      return session
     } catch (error) {
       loginErrorMessage.value = getLoginErrorMessage(error)
       throw error
@@ -77,7 +80,9 @@ export function useLoginHooks() {
         throw new Error('微信登录凭证获取失败，请稍后重试')
       }
 
-      return await weappPhoneLogin(jsCode, normalizedPhoneCode)
+      const session = await weappPhoneLogin(jsCode, normalizedPhoneCode)
+      await refreshMembershipAfterLogin()
+      return session
     } catch (error) {
       loginErrorMessage.value = getLoginErrorMessage(error)
       throw error
@@ -111,8 +116,14 @@ export async function silentWeappLogin() {
       return null
     }
 
-    return await weappLogin(jsCode)
+    const session = await weappLogin(jsCode)
+    await refreshMembershipAfterLogin()
+    return session
   } catch {
     return null
   }
+}
+
+async function refreshMembershipAfterLogin() {
+  await refreshMembershipStatus({ force: true }).catch(() => undefined)
 }

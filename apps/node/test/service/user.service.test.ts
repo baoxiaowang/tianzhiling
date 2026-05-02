@@ -1,4 +1,14 @@
 import { UserService } from '../../src/service/user.service';
+import { createHash } from 'crypto';
+
+const WEAPP_OPENID = 'o1234567890abcdefghijklmnopqrstuvwxyz';
+
+function buildWeappAccount(openid: string) {
+  return `weapp:${createHash('sha256')
+    .update(openid)
+    .digest('hex')
+    .slice(0, 12)}`;
+}
 
 function createObjectId(value: string) {
   return {
@@ -39,6 +49,13 @@ function createService() {
   service.userAccountModel = userAccountModel as any;
   service.jwtService = {
     signSync: jest.fn().mockReturnValue('test-token'),
+  } as any;
+  service.postImageService = {
+    resolveForResponse: jest.fn((avatar: string) => avatar),
+  } as any;
+  service.wechatPayService = {
+    getOpenidByJsCode: jest.fn().mockResolvedValue(WEAPP_OPENID),
+    getPhoneNumberByCode: jest.fn().mockResolvedValue('13800138000'),
   } as any;
 
   return {
@@ -113,5 +130,68 @@ describe('UserService phoneLogin', () => {
     expect(result.user.phone).toBe('13800138000');
     expect(redisService.get).not.toHaveBeenCalled();
     expect(redisService.del).not.toHaveBeenCalled();
+  });
+
+  it('uses a short hash account when binding a new weapp user', async () => {
+    const { service, userAccountModel } = createService();
+
+    const result = await service.weappPhoneLogin({
+      jsCode: 'js-code',
+      phoneCode: 'phone-code',
+    });
+
+    expect(result.accessToken).toBe('test-token');
+    expect(userAccountModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: buildWeappAccount(WEAPP_OPENID),
+      })
+    );
+  });
+
+  it('keeps legacy weapp accounts loginable and migrates them to short hash', async () => {
+    const { service, userModel, userAccountModel } = createService();
+    const userId = createObjectId('user-legacy');
+    const accountId = createObjectId('account-legacy');
+    const user = {
+      id: userId,
+      name: '天之灵用户8000',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+    };
+    const legacyAccount = {
+      id: accountId,
+      userId,
+      account: `weapp:${WEAPP_OPENID}`,
+      password: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    userModel.findOne.mockResolvedValue(user);
+    userAccountModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (where.account === buildWeappAccount(WEAPP_OPENID)) {
+        return null;
+      }
+
+      if (where.account === `weapp:${WEAPP_OPENID}`) {
+        return legacyAccount;
+      }
+
+      return null;
+    });
+
+    const result = await service.weappLogin({
+      jsCode: 'js-code',
+    });
+
+    expect(result.user.account).toBe(buildWeappAccount(WEAPP_OPENID));
+    expect(userAccountModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: accountId,
+        userId,
+        account: buildWeappAccount(WEAPP_OPENID),
+      })
+    );
   });
 });

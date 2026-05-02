@@ -90,6 +90,7 @@ import {
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { refreshMembershipStatus } from '../../membership/session'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 type ResultType = 'processing' | 'success' | 'failed'
@@ -107,6 +108,7 @@ const queryError = ref('')
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let isPageAlive = true
+let hasRefreshedMembershipStatus = false
 
 const iconClass = computed(() => {
   return {
@@ -186,6 +188,7 @@ async function preparePage(options?: Record<string, unknown>) {
   isPageAlive = true
   clearPollTimer()
   isReadyToPoll.value = false
+  hasRefreshedMembershipStatus = false
   orderId.value = String(options?.orderId ?? '').trim()
 
   if (!orderId.value) {
@@ -233,6 +236,10 @@ async function pollOrderStatus() {
 
     if (latestOrder.status === 'completed') {
       resultType.value = 'success'
+      if (!hasRefreshedMembershipStatus) {
+        hasRefreshedMembershipStatus = true
+        await refreshMembershipStatus({ force: true }).catch(() => undefined)
+      }
       return
     }
 

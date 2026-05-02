@@ -186,6 +186,10 @@ import { createVipPlanOrder } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import {
+  refreshMembershipStatus,
+  syncMembershipStatusFromCenter,
+} from '../../membership/session'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 const center = ref<MembershipCenter | null>(null)
@@ -263,6 +267,8 @@ async function loadMembershipCenter() {
   try {
     const data = await getMembershipCenter()
     center.value = data
+    syncMembershipStatusFromCenter(data)
+    void refreshMembershipStatus({ force: true }).catch(() => undefined)
     selectedPlanId.value = data.plans[0]?.id ?? ''
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {

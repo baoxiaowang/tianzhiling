@@ -73,6 +73,7 @@ interface SmsCodeCacheValue {
 
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
+const WEAPP_ACCOUNT_HASH_LENGTH = 12;
 
 interface VerifiedPhoneLoginOptions {
   weappOpenid?: string;
@@ -430,13 +431,8 @@ export class UserService {
     }
 
     const openid = await this.wechatPayService.getOpenidByJsCode(jsCode);
-    const account = this.buildWeappAccount(openid);
     const now = new Date();
-    let userAccount = await this.userAccountModel.findOne({
-      where: {
-        account,
-      },
-    });
+    let userAccount = await this.findWeappAccountByOpenid(openid);
 
     if (userAccount) {
       const user = await this.findUserById(userAccount.userId);
@@ -457,6 +453,7 @@ export class UserService {
         );
       }
 
+      userAccount = this.normalizeWeappAccount(userAccount, openid, now);
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
 
@@ -501,11 +498,7 @@ export class UserService {
     now: Date
   ): Promise<UserAccountEntity> {
     const account = this.buildWeappAccount(openid);
-    let userAccount = await this.userAccountModel.findOne({
-      where: {
-        account,
-      },
-    });
+    let userAccount = await this.findWeappAccountByOpenid(openid);
 
     if (userAccount) {
       if (!this.isSameObjectId(userAccount.userId, user.id)) {
@@ -522,6 +515,7 @@ export class UserService {
         userAccount.userId = user.id;
       }
 
+      userAccount.account = account;
       userAccount.updatedAt = now;
       return this.userAccountModel.save(userAccount);
     }
@@ -1032,7 +1026,54 @@ export class UserService {
   }
 
   private buildWeappAccount(openid: string): string {
+    return `${WEAPP_ACCOUNT_PREFIX}${this.hashWeappOpenid(openid)}`;
+  }
+
+  private buildLegacyWeappAccount(openid: string): string {
     return `${WEAPP_ACCOUNT_PREFIX}${openid}`;
+  }
+
+  private hashWeappOpenid(openid: string): string {
+    return createHash('sha256')
+      .update(openid)
+      .digest('hex')
+      .slice(0, WEAPP_ACCOUNT_HASH_LENGTH);
+  }
+
+  private async findWeappAccountByOpenid(
+    openid: string
+  ): Promise<UserAccountEntity | null> {
+    const account = this.buildWeappAccount(openid);
+    const legacyAccount = this.buildLegacyWeappAccount(openid);
+
+    return (
+      (await this.userAccountModel.findOne({
+        where: {
+          account,
+        },
+      })) ??
+      (await this.userAccountModel.findOne({
+        where: {
+          account: legacyAccount,
+        },
+      }))
+    );
+  }
+
+  private normalizeWeappAccount(
+    userAccount: UserAccountEntity,
+    openid: string,
+    now: Date
+  ): UserAccountEntity {
+    const account = this.buildWeappAccount(openid);
+
+    if (userAccount.account === account) {
+      return userAccount;
+    }
+
+    userAccount.account = account;
+    userAccount.updatedAt = now;
+    return userAccount;
   }
 
   private isSameObjectId(

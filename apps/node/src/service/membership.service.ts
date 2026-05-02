@@ -2,14 +2,19 @@ import { Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import {
   MongoObjectId,
+  UserEntitlementEntity,
+  UserEntitlementStatus,
+  UserEntitlementType,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
 import type {
+  UserEntitlementSummaryDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
+  UserMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
@@ -23,6 +28,9 @@ export class MembershipService {
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(UserEntitlementEntity)
+  userEntitlementModel: MongoRepository<UserEntitlementEntity>;
 
   async getMembershipCenter(
     auth: AuthenticatedUserPayload
@@ -66,6 +74,43 @@ export class MembershipService {
     };
   }
 
+  async getMembershipStatus(
+    auth: AuthenticatedUserPayload
+  ): Promise<UserMembershipStatusSnapshotDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const now = new Date();
+    const memberships = await this.findActiveMemberships(userId);
+    const activeMembership = memberships.find(membership =>
+      this.isMembershipAvailable(membership, now)
+    );
+    const entitlements = await this.listAvailableEntitlementSummaries(
+      userId,
+      now
+    );
+
+    if (!activeMembership) {
+      return {
+        isVip: false,
+        entitlements,
+        serverTime: this.formatDate(now),
+      };
+    }
+
+    const membershipPlan = await this.findVipPlanById(
+      activeMembership.vipPlanId
+    );
+
+    return {
+      isVip: true,
+      membership: this.buildMembershipRecord(
+        activeMembership,
+        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+      ),
+      entitlements,
+      serverTime: this.formatDate(now),
+    };
+  }
+
   private async listActiveVipPlans(): Promise<VipPlanRecordDTO[]> {
     const plans = await this.vipPlanModel.find({
       where: {
@@ -89,6 +134,97 @@ export class MembershipService {
     }
 
     return Boolean(membership.expiredAt && membership.expiredAt > now);
+  }
+
+  private findActiveMemberships(
+    userId: MongoObjectId
+  ): Promise<UserMembershipEntity[]> {
+    return this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+  }
+
+  private async listAvailableEntitlementSummaries(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<UserEntitlementSummaryDTO[]> {
+    const entitlements = await this.userEntitlementModel.find({
+      where: {
+        userId,
+        status: UserEntitlementStatus.available,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    const summaries = new Map<UserEntitlementType, UserEntitlementSummaryDTO>();
+
+    entitlements
+      .filter(entitlement => this.isEntitlementAvailable(entitlement, now))
+      .forEach(entitlement => {
+        const usedQuota = Math.max(entitlement.usedQuota ?? 0, 0);
+        const totalQuota = Math.max(entitlement.totalQuota ?? 0, 0);
+        const availableQuota = Math.max(totalQuota - usedQuota, 0);
+        const existing = summaries.get(entitlement.type);
+
+        if (!existing) {
+          summaries.set(entitlement.type, {
+            type: entitlement.type,
+            totalQuota,
+            usedQuota,
+            availableQuota,
+            expiredAt: entitlement.expiredAt
+              ? this.formatDate(entitlement.expiredAt)
+              : undefined,
+          });
+          return;
+        }
+
+        existing.totalQuota += totalQuota;
+        existing.usedQuota += usedQuota;
+        existing.availableQuota += availableQuota;
+        existing.expiredAt = this.mergeSummaryExpiredAt(
+          existing.expiredAt,
+          entitlement.expiredAt
+        );
+      });
+
+    return Array.from(summaries.values()).sort((left, right) =>
+      left.type.localeCompare(right.type)
+    );
+  }
+
+  private isEntitlementAvailable(
+    entitlement: UserEntitlementEntity,
+    now: Date
+  ): boolean {
+    if (!entitlement.expiredAt) {
+      return true;
+    }
+
+    return entitlement.expiredAt > now;
+  }
+
+  private mergeSummaryExpiredAt(
+    currentExpiredAt: string | undefined,
+    nextExpiredAt: Date | undefined
+  ): string | undefined {
+    if (!currentExpiredAt || !nextExpiredAt) {
+      return undefined;
+    }
+
+    const currentTime = Date.parse(currentExpiredAt);
+    const nextTime = nextExpiredAt.getTime();
+
+    return nextTime > currentTime
+      ? this.formatDate(nextExpiredAt)
+      : currentExpiredAt;
   }
 
   private buildMembershipRecord(

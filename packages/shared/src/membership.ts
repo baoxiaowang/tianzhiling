@@ -11,6 +11,16 @@ export interface VipPlanEntitlementGrantDTO {
   durationDays?: number;
 }
 
+export type UserEntitlementTypeDTO = VipPlanEntitlementGrantDTO['type'];
+
+export interface UserEntitlementSummaryDTO {
+  type: UserEntitlementTypeDTO;
+  totalQuota: number;
+  usedQuota: number;
+  availableQuota: number;
+  expiredAt?: string;
+}
+
 export interface AdminVipPlanRecordDTO {
   id: string;
   code: string;
@@ -79,6 +89,13 @@ export interface UserMembershipCenterDTO {
   isVip: boolean;
   membership?: UserMembershipRecordDTO;
   plans: VipPlanRecordDTO[];
+}
+
+export interface UserMembershipStatusSnapshotDTO {
+  isVip: boolean;
+  membership?: UserMembershipRecordDTO;
+  entitlements: UserEntitlementSummaryDTO[];
+  serverTime: string;
 }
 
 export interface SaveAdminVipPlanDTO {

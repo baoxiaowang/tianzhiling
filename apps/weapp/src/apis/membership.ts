@@ -1,4 +1,6 @@
 import type {
+  UserEntitlementSummaryDTO,
+  UserMembershipStatusSnapshotDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
   VipPlanBenefitDTO,
@@ -31,10 +33,25 @@ export interface UserMembership {
   plan?: VipPlan
 }
 
+export interface UserEntitlementSummary {
+  type: UserEntitlementSummaryDTO['type']
+  totalQuota: number
+  usedQuota: number
+  availableQuota: number
+  expiredAt: Date | null
+}
+
 export interface MembershipCenter {
   isVip: boolean
   membership?: UserMembership
   plans: VipPlan[]
+}
+
+export interface MembershipStatus {
+  isVip: boolean
+  membership?: UserMembership
+  entitlements: UserEntitlementSummary[]
+  serverTime: Date | null
 }
 
 function asRecord(value: unknown) {
@@ -129,6 +146,24 @@ function parseMembership(value: unknown): UserMembership {
   }
 }
 
+function parseEntitlementSummary(value: unknown): UserEntitlementSummary {
+  const raw = asRecord(value)
+  const totalQuota = asNumber(raw.totalQuota)
+  const usedQuota = asNumber(raw.usedQuota)
+  const availableQuota =
+    raw.availableQuota == null
+      ? Math.max(totalQuota - usedQuota, 0)
+      : asNumber(raw.availableQuota)
+
+  return {
+    type: asString(raw.type) as UserEntitlementSummaryDTO['type'],
+    totalQuota,
+    usedQuota,
+    availableQuota,
+    expiredAt: asDate(raw.expiredAt),
+  }
+}
+
 function parseMembershipCenter(value: unknown): MembershipCenter {
   const raw = asRecord(value)
   const plans = Array.isArray(raw.plans) ? raw.plans.map(parseVipPlan) : []
@@ -140,14 +175,36 @@ function parseMembershipCenter(value: unknown): MembershipCenter {
   }
 }
 
+function parseMembershipStatus(value: unknown): MembershipStatus {
+  const raw = asRecord(value)
+  const entitlements = Array.isArray(raw.entitlements)
+    ? raw.entitlements.map(parseEntitlementSummary).filter((item) => item.type)
+    : []
+
+  return {
+    isVip: Boolean(raw.isVip),
+    membership: raw.membership ? parseMembership(raw.membership) : undefined,
+    entitlements,
+    serverTime: asDate(raw.serverTime),
+  }
+}
+
 export async function getMembershipCenter() {
   const data = await get<UserMembershipCenterDTO>('/api/membership/center')
 
   return parseMembershipCenter(data)
 }
 
+export async function getMembershipStatus() {
+  const data = await get<UserMembershipStatusSnapshotDTO>('/api/membership/status')
+
+  return parseMembershipStatus(data)
+}
+
 export type {
+  UserEntitlementSummaryDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
+  UserMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 }

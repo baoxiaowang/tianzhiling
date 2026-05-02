@@ -9,6 +9,9 @@ import {
   OrderSource,
   OrderStatus,
   OrderType,
+  UserEntitlementEntity,
+  UserEntitlementStatus,
+  UserEntitlementType,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
@@ -54,6 +57,9 @@ export class OrderService {
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(UserEntitlementEntity)
+  userEntitlementModel: MongoRepository<UserEntitlementEntity>;
 
   async createVipPlanOrder(
     auth: AuthenticatedUserPayload,
@@ -323,6 +329,60 @@ export class OrderService {
     membership.updatedAt = new Date();
 
     await this.userMembershipModel.save(membership);
+    await this.grantVipEntitlements(order, membership, plan, snapshot, now);
+  }
+
+  private async grantVipEntitlements(
+    order: OrderEntity,
+    membership: UserMembershipEntity,
+    plan: VipPlanEntity | null,
+    snapshot: {
+      entitlementGrants?: Array<{
+        type: UserEntitlementType;
+        totalQuota: number;
+        durationDays?: number;
+      }>;
+    },
+    now: Date
+  ): Promise<void> {
+    const entitlementGrants =
+      plan?.entitlementGrants ?? snapshot.entitlementGrants ?? [];
+
+    for (const grant of entitlementGrants) {
+      if (!grant.type || !grant.totalQuota || grant.totalQuota <= 0) {
+        continue;
+      }
+
+      const existing = await this.userEntitlementModel.findOne({
+        where: {
+          sourceOrderId: order.id,
+          type: grant.type,
+        },
+      });
+
+      if (existing) {
+        continue;
+      }
+
+      const entitlement = new UserEntitlementEntity();
+      entitlement.userId = order.userId;
+      entitlement.type = grant.type;
+      entitlement.totalQuota = grant.totalQuota;
+      entitlement.usedQuota = 0;
+      entitlement.status = UserEntitlementStatus.available;
+      entitlement.sourceOrderId = order.id;
+      entitlement.sourceVipPlanId = membership.vipPlanId;
+      entitlement.activatedAt = now;
+      entitlement.expiredAt = this.calculateEntitlementExpiredAt(
+        now,
+        grant.durationDays,
+        membership
+      );
+      entitlement.createdAt = now;
+      entitlement.updatedAt = new Date();
+
+      await this.userEntitlementModel.save(entitlement);
+    }
   }
 
   private isWechatTradeClosed(tradeState?: string): boolean {
@@ -518,6 +578,7 @@ export class OrderService {
       durationDays: plan.durationDays,
       lifetime: Boolean(plan.lifetime),
       benefits: plan.benefits ?? [],
+      entitlementGrants: plan.entitlementGrants ?? [],
     };
   }
 
@@ -526,6 +587,11 @@ export class OrderService {
     code: string;
     durationDays?: number;
     lifetime?: boolean;
+    entitlementGrants?: Array<{
+      type: UserEntitlementType;
+      totalQuota: number;
+      durationDays?: number;
+    }>;
   } {
     const snapshot = order.snapshot?.vipPlan;
 
@@ -544,7 +610,46 @@ export class OrderService {
       durationDays:
         typeof raw.durationDays === 'number' ? raw.durationDays : undefined,
       lifetime: Boolean(raw.lifetime),
+      entitlementGrants: this.parseEntitlementGrants(raw.entitlementGrants),
     };
+  }
+
+  private parseEntitlementGrants(value: unknown): Array<{
+    type: UserEntitlementType;
+    totalQuota: number;
+    durationDays?: number;
+  }> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map(item => {
+        const raw = item && typeof item === 'object' ? item : {};
+        const record = raw as Record<string, unknown>;
+        return {
+          type: record.type as UserEntitlementType,
+          totalQuota:
+            typeof record.totalQuota === 'number' ? record.totalQuota : 0,
+          durationDays:
+            typeof record.durationDays === 'number'
+              ? record.durationDays
+              : undefined,
+        };
+      })
+      .filter(item => Boolean(item.type) && item.totalQuota > 0);
+  }
+
+  private calculateEntitlementExpiredAt(
+    now: Date,
+    durationDays: number | undefined,
+    membership: UserMembershipEntity
+  ): Date | undefined {
+    if (durationDays && durationDays > 0) {
+      return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    }
+
+    return membership.lifetime ? undefined : membership.expiredAt;
   }
 
   private generateOrderNo(): string {
