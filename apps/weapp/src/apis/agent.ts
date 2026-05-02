@@ -3,6 +3,7 @@ import type {
   AgentProfileDTO,
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
+  UpdateAgentProfileDTO,
 } from '@tzl/shared'
 
 export interface AgentSummary {
@@ -21,6 +22,7 @@ export interface AgentSummary {
 }
 
 type CreateAgentPayload = CreateAgentDTO
+type UpdateAgentProfilePayload = UpdateAgentProfileDTO
 
 function asRecord(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -97,6 +99,15 @@ export async function updateAgentAvatar(agentId: string, avatar: string) {
     `/api/agent/${agentId}/avatar`,
     { avatar } satisfies UpdateAgentAvatarDTO,
   )
+
+  return parseAgentSummary(data)
+}
+
+export async function updateAgentProfile(
+  agentId: string,
+  payload: UpdateAgentProfilePayload,
+) {
+  const data = await patch<AgentProfileDTO>(`/api/agent/${agentId}`, payload)
 
   return parseAgentSummary(data)
 }

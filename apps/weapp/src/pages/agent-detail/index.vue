@@ -48,7 +48,7 @@
           </text>
         </view>
 
-        <view class="agent-detail-header__more">
+        <view class="agent-detail-header__more" @tap="handleOpenAgentForm">
           <MoreX size="18" color="#9a9ca3" />
         </view>
       </view>
@@ -127,22 +127,6 @@
         </nut-cell>
       </view>
 
-      <view class="agent-detail-hairline" />
-
-      <view class="agent-detail-section agent-detail-section--cell">
-        <nut-cell
-          center
-          class="agent-detail-cell agent-detail-action-cell"
-          @click="handlePendingTap('音视频通话')"
-        >
-          <template #title>
-            <view class="agent-detail-action">
-              <Voice size="19" color="#637897" />
-              <text class="agent-detail-action__text">音视频通话</text>
-            </view>
-          </template>
-        </nut-cell>
-      </view>
     </view>
   </page-scaffold>
 </template>
@@ -154,8 +138,8 @@ export default {
 </script>
 
 <script setup lang="ts">
-import Taro, { useLoad } from '@tarojs/taro'
-import { Message, MoreX, Voice } from '@nutui/icons-vue-taro'
+import Taro, { useDidShow, useLoad } from '@tarojs/taro'
+import { Message, MoreX } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, type AgentSummary } from '../../apis/agent'
@@ -178,6 +162,7 @@ const fallbackCreatedAt = ref<Date | null>(null)
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const loadError = ref('')
+const didInitialShow = ref(false)
 
 const displayName = computed(() => {
   const name = agent.value?.name.trim() || fallbackName.value.trim()
@@ -249,6 +234,17 @@ useLoad((options) => {
   fallbackCreatedAt.value = parseDate(decodeRouteParam(options?.createdAt))
 
   void preparePage()
+})
+
+useDidShow(() => {
+  if (!didInitialShow.value) {
+    didInitialShow.value = true
+    return
+  }
+
+  if (agentId.value && !isCheckingAuth.value) {
+    void loadAgentDetail()
+  }
 })
 
 function decodeRouteParam(value?: string) {
@@ -334,7 +330,42 @@ function handleRetry() {
 }
 
 function handleProfileTap() {
-  showToast('朋友资料编辑待接入')
+  void handleOpenAgentForm()
+}
+
+async function handleOpenAgentForm() {
+  if (!agentId.value) {
+    showToast('缺少联系人资料，请返回通讯录重新进入')
+    return
+  }
+
+  await Taro.navigateTo({
+    url: buildAgentFormUrl(),
+  })
+}
+
+function buildAgentFormUrl() {
+  const createdAt = agent.value?.createdAt ?? fallbackCreatedAt.value
+  const query = [
+    ['agentId', agentId.value],
+    ['agentName', displayName.value],
+    ['agentAvatar', displayAvatar.value],
+    ['agentSex', String(displaySex.value)],
+    [
+      'agentCallMe',
+      agent.value?.agentCallMe.trim() || fallbackAgentCallMe.value.trim(),
+    ],
+    [
+      'iCallAgent',
+      agent.value?.iCallAgent.trim() || fallbackICallAgent.value.trim(),
+    ],
+    ['preview', profileDescription.value],
+    ['createdAt', createdAt?.toISOString() ?? ''],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  return `/pages/agent-form/index?${query}`
 }
 
 function handlePendingTap(title: string) {
@@ -594,8 +625,4 @@ function handleSendMessage() {
   font-weight: 500;
 }
 
-.agent-detail-hairline {
-  height: 0.5px;
-  background: #eaecef;
-}
 </style>
