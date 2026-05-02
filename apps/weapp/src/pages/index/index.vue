@@ -7,7 +7,7 @@
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
-    <template v-if="session" #header>
+    <template #header>
       <app-bar
         title="朋友圈"
         background="#ffffff"
@@ -23,15 +23,15 @@
       </app-bar>
     </template>
 
-    <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
+    <view v-if="isCheckingAuth && !hasLoadedPosts" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
-        {{ isRedirecting ? '正在前往登录页...' : '正在恢复首页...' }}
+        正在加载动态...
       </text>
     </view>
 
     <view
-      v-else-if="session"
+      v-else
       class="moments-scroll"
     >
       <view class="moments-banner">
@@ -202,6 +202,8 @@
       />
     </view>
 
+    <login-prompt-popup v-model:visible="isLoginPromptVisible" />
+
   </page-scaffold>
 </template>
 
@@ -225,9 +227,9 @@ import {
 import { ApiException } from '../../api/api-exception'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
+import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-popup.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { authSession } from '../../auth/session'
-import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import { authSession, restoreAuthSession } from '../../auth/session'
 import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 const momentsDesign = {
@@ -235,8 +237,8 @@ const momentsDesign = {
 } as const
 
 const isCheckingAuth = ref(true)
-const isRedirecting = ref(false)
 const isPostsLoading = ref(false)
+const hasLoadedPosts = ref(false)
 const errorMessage = ref('')
 const posts = ref<PostItem[]>([])
 const notificationSummary = ref<PostCommentNotificationSummary | null>(null)
@@ -247,9 +249,9 @@ const isCommentInputFocused = ref(false)
 const shouldFocusCommentInput = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
+const isLoginPromptVisible = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
-let hasLoadedPosts = false
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = computed(() => {
@@ -369,12 +371,14 @@ async function refreshMomentsData(showLoading = true) {
 
       const [postItems, summary] = await Promise.all([
         getPosts(),
-        getCommentNotificationSummary().catch(() => null),
+        session.value
+          ? getCommentNotificationSummary().catch(() => null)
+          : Promise.resolve(null),
       ])
 
       posts.value = sortPostsByTime(postItems)
       notificationSummary.value = summary
-      hasLoadedPosts = true
+      hasLoadedPosts.value = true
     })
     .catch((error) => {
       if (error instanceof ApiException) {
@@ -392,20 +396,12 @@ async function refreshMomentsData(showLoading = true) {
 }
 
 async function preparePage() {
-  if (!hasLoadedPosts) {
+  if (!hasLoadedPosts.value) {
     isCheckingAuth.value = true
   }
 
-  const authenticated = await ensureAuthenticatedSession()
-
-  if (!authenticated || !authSession.value) {
-    isRedirecting.value = true
-    await redirectToAuthPage()
-    return
-  }
-
-  isRedirecting.value = false
-  await refreshMomentsData(!hasLoadedPosts)
+  await restoreAuthSession()
+  await refreshMomentsData(!hasLoadedPosts.value)
   isCheckingAuth.value = false
 }
 
@@ -443,6 +439,11 @@ async function handleNotificationTap() {
 }
 
 function handleCreatePost() {
+  if (!session.value) {
+    isLoginPromptVisible.value = true
+    return
+  }
+
   void Taro.navigateTo({
     url: '/pages/post-create/index',
   })
@@ -461,6 +462,11 @@ function openCommentComposer(post: PostItem) {
 }
 
 function handleCommentTap(post: PostItem) {
+  if (!session.value) {
+    isLoginPromptVisible.value = true
+    return
+  }
+
   openCommentComposer(post)
 }
 
@@ -565,7 +571,7 @@ async function handleSubmitComment() {
     closeCommentComposer(true)
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuthPage()
+      isLoginPromptVisible.value = true
       return
     }
 

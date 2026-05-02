@@ -8,7 +8,7 @@ import { AuthenticatedUserPayload } from '../interface';
 import { ConversationService } from '../service/conversation.service';
 import { MessageService } from '../service/message.service';
 
-@Controller('/api/conversation')
+@Controller('/conversation')
 export class ConversationController {
   @Inject()
   conversationService: ConversationService;

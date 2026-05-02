@@ -16,7 +16,7 @@ import {
 import { AuthenticatedUserPayload } from '../interface';
 import { AgentService } from '../service/agent.service';
 
-@Controller('/api/agent')
+@Controller('/agent')
 export class AgentController {
   @Inject()
   agentService: AgentService;

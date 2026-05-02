@@ -3,7 +3,7 @@ import { CreateOssSignedUploadDTO } from '../dto/storage.dto';
 import { OssService } from '../service/oss.service';
 import { TencentCosService } from '../service/tencent-cos.service';
 
-@Controller('/api/storage')
+@Controller('/storage')
 export class StorageController {
   @Inject()
   ossService: OssService;

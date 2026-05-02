@@ -6,7 +6,7 @@
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
-    <template v-if="session" #header>
+    <template #header>
       <app-bar
         title="我的"
         background="#ffffff"
@@ -14,10 +14,10 @@
       />
     </template>
 
-    <view v-if="isCheckingAuth || isRedirecting" class="loading-state">
+    <view v-if="isCheckingAuth" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
-        {{ isRedirecting ? '正在前往登录页...' : '正在恢复个人中心...' }}
+        正在恢复个人中心...
       </text>
     </view>
 
@@ -83,6 +83,22 @@
         </view>
       </view>
     </scroll-view>
+
+    <view v-else class="me-login-placeholder">
+      <view class="me-login-placeholder__avatar">灵</view>
+      <text class="me-login-placeholder__title">请先登录</text>
+      <text class="me-login-placeholder__subtitle">登录后可查看个人资料、动态和订单信息</text>
+      <nut-button
+        class="me-login-placeholder__button"
+        shape="round"
+        type="primary"
+        @click="handleLoginPromptTap"
+      >
+        去登录
+      </nut-button>
+    </view>
+
+    <login-prompt-popup v-model:visible="isLoginPromptVisible" />
   </page-scaffold>
 </template>
 
@@ -96,10 +112,11 @@ export default {
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { getCurrentUser } from '../../auth/api'
-import { authSession } from '../../auth/session'
+import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
+import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-popup.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { ensureAuthenticatedSession, redirectToAuthPage, showPendingToast } from '../../utils/auth-guard'
+import { showPendingToast } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 interface ProfileMenuAction {
@@ -120,7 +137,7 @@ const secondaryMenuActions = [
 ] as const satisfies ProfileMenuAction[]
 
 const isCheckingAuth = ref(true)
-const isRedirecting = ref(false)
+const isLoginPromptVisible = ref(false)
 
 let refreshProfilePromise: Promise<void> | null = null
 
@@ -137,6 +154,11 @@ const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 
 async function handleMenuTap(title: string) {
+  if (!session.value) {
+    isLoginPromptVisible.value = true
+    return
+  }
+
   if (title === '我的动态') {
     await Taro.navigateTo({
       url: '/pages/my-posts/index',
@@ -148,9 +170,18 @@ async function handleMenuTap(title: string) {
 }
 
 async function handleProfileTap() {
+  if (!session.value) {
+    isLoginPromptVisible.value = true
+    return
+  }
+
   await Taro.navigateTo({
     url: '/pages/user-settings/index',
   })
+}
+
+function handleLoginPromptTap() {
+  isLoginPromptVisible.value = true
 }
 
 async function refreshProfile() {
@@ -171,16 +202,12 @@ async function refreshProfile() {
 async function preparePage() {
   isCheckingAuth.value = true
 
-  const authenticated = await ensureAuthenticatedSession()
+  await restoreAuthSession()
 
-  if (!authenticated || !authSession.value) {
-    isRedirecting.value = true
-    await redirectToAuthPage()
-    return
+  if (authSession.value) {
+    await refreshProfile()
   }
 
-  isRedirecting.value = false
-  await refreshProfile()
   isCheckingAuth.value = false
 }
 
@@ -226,6 +253,59 @@ useDidShow(() => {
   min-height: 100%;
   padding-bottom: 110px;
   background: #f7f7f7;
+}
+
+.me-login-placeholder {
+  min-height: calc(100vh - 88px);
+  padding: 88px 28px 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: #f7f7f7;
+}
+
+.me-login-placeholder__avatar {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: $tzl-gradient-primary;
+  color: $tzl-color-surface-base;
+  font-size: 42px;
+  line-height: 1;
+  font-weight: 700;
+  box-shadow: $tzl-shadow-primary-md;
+}
+
+.me-login-placeholder__title {
+  margin-top: 22px;
+  font-size: 23px;
+  line-height: 31px;
+  font-weight: 700;
+  color: $tzl-color-text-primary;
+}
+
+.me-login-placeholder__subtitle {
+  max-width: 260px;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 21px;
+  color: $tzl-color-text-muted;
+}
+
+.me-login-placeholder__button {
+  width: 180px;
+  height: 48px;
+  margin-top: 28px;
+  background: $tzl-gradient-primary;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: $tzl-shadow-primary-lg;
+  --nut-button-border-radius: 999px;
+  --nut-button-primary-background-color: #{$tzl-gradient-primary};
 }
 
 .me-page__spacer {

@@ -10,7 +10,7 @@ import {
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
 
-@Controller('/api/user')
+@Controller('/user')
 export class UserController {
   @Inject()
   userService: UserService;

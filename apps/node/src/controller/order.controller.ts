@@ -4,7 +4,7 @@ import { CreateVipPlanOrderBodyDTO } from '../dto/order.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { OrderService } from '../service/order.service';
 
-@Controller('/api/orders')
+@Controller('/orders')
 export class OrderController {
   @Inject()
   orderService: OrderService;

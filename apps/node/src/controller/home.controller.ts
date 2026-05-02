@@ -1,6 +1,6 @@
 import { Controller, Get } from '@midwayjs/core';
 
-@Controller('/api/system')
+@Controller('/system')
 export class SystemController {
   @Get('/health')
   async health() {

@@ -11,8 +11,33 @@ interface JwtConfig {
   verify?: Record<string, unknown>;
 }
 
+interface ProtectedRoute {
+  methods?: string[];
+  path: RegExp;
+}
+
+const PROTECTED_ROUTES: ProtectedRoute[] = [
+  { path: /^\/user\/me(?:\/.*)?$/ },
+  { methods: ['POST'], path: /^\/user\/logout\/?$/ },
+  { path: /^\/agent(?:\/.*)?$/ },
+  { path: /^\/conversation(?:\/.*)?$/ },
+  { path: /^\/membership\/center\/?$/ },
+  { path: /^\/orders(?:\/.*)?$/ },
+  { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
+  { methods: ['POST'], path: /^\/post\/?$/ },
+  { methods: ['GET'], path: /^\/post\/comment-notifications\/summary\/?$/ },
+  {
+    methods: ['POST'],
+    path: /^\/post\/[^/]+\/comment-notifications\/read\/?$/,
+  },
+  { methods: ['POST'], path: /^\/post\/[^/]+\/comments\/?$/ },
+];
+
 @Middleware()
 export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
+  @Config('koa.globalPrefix')
+  globalPrefix: string;
+
   @Config('jwt')
   jwtConfig: JwtConfig;
 
@@ -34,19 +59,13 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     };
   }
 
-  ignore = [
-    (ctx: Context): boolean => {
-      return (
-        !ctx.path.startsWith('/api/') ||
-        ctx.path === '/api/system/health' ||
-        ctx.path === '/api/pay/wechat/notify' ||
-        ctx.path === '/api/user/sms-code' ||
-        ctx.path === '/api/user/phone-login' ||
-        ctx.path === '/api/user/password-login' ||
-        /^\/api\/users\/[^/]+$/.test(ctx.path)
-      );
-    },
-  ];
+  match(ctx: Context): boolean {
+    const routePath = this.stripGlobalPrefix(ctx.path);
+
+    return PROTECTED_ROUTES.some(route =>
+      this.isProtectedRoute(route, ctx.method, routePath)
+    );
+  }
 
   static getName(): string {
     return 'auth';
@@ -70,6 +89,39 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     }
 
     return token;
+  }
+
+  private isProtectedRoute(
+    route: ProtectedRoute,
+    method: string,
+    path: string
+  ): boolean {
+    if (route.methods && !route.methods.includes(method)) {
+      return false;
+    }
+
+    return route.path.test(path);
+  }
+
+  private stripGlobalPrefix(path: string): string {
+    const normalizedPath = this.normalizePath(path);
+    const prefix = this.normalizePath(this.globalPrefix || '');
+
+    if (!prefix || normalizedPath === prefix) {
+      return normalizedPath;
+    }
+
+    if (normalizedPath.startsWith(`${prefix}/`)) {
+      return normalizedPath.slice(prefix.length) || '/';
+    }
+
+    return normalizedPath;
+  }
+
+  private normalizePath(path: string): string {
+    const trimmed = path.trim().replace(/^\/+|\/+$/g, '');
+
+    return trimmed ? `/${trimmed}` : '';
   }
 
   private verifyAccessToken(token: string): AuthenticatedUserPayload {

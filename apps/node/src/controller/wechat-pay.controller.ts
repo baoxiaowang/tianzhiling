@@ -8,7 +8,7 @@ interface RawBodyRequest {
   body?: unknown;
 }
 
-@Controller('/api/pay/wechat')
+@Controller('/pay/wechat')
 export class WechatPayController {
   @Inject()
   wechatPayService: WechatPayService;

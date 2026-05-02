@@ -2,7 +2,7 @@ import { Inject, Controller, Get, Param } from '@midwayjs/core';
 import { AppError } from '../common/errors';
 import { UserService } from '../service/user.service';
 
-@Controller('/api/users')
+@Controller('/users')
 export class UserController {
   @Inject()
   userService: UserService;

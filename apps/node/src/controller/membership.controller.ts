@@ -3,7 +3,7 @@ import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import { MembershipService } from '../service/membership.service';
 
-@Controller('/api/membership')
+@Controller('/membership')
 export class MembershipController {
   @Inject()
   membershipService: MembershipService;

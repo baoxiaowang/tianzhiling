@@ -143,6 +143,7 @@ export default {
   keys: readStringFrom(['NODE_APP_KEYS'], '1774073039411_5782'),
   koa: {
     port: readNumberFrom(['NODE_PORT'], 7001),
+    globalPrefix: readStringFrom(['NODE_GLOBAL_PREFIX'], '/api'),
   },
   jwt: {
     secret: readStringFrom(['NODE_JWT_SECRET'], '1774073039411_5782'),

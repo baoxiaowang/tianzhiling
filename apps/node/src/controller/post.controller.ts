@@ -4,7 +4,7 @@ import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { PostService } from '../service/post.service';
 
-@Controller('/api/post')
+@Controller('/post')
 export class PostController {
   @Inject()
   postService: PostService;

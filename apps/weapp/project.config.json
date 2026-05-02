@@ -8,6 +8,7 @@
     "es6": false,
     "enhance": false,
     "compileHotReLoad": true,
+    "bigPackageSizeSupport": true,
     "postcss": false,
     "minified": false
   },
