@@ -5,9 +5,15 @@
 ## Scripts
 
 ```bash
-npx -y pnpm@9 install
+corepack pnpm install
 ADMIN_INIT_ACCOUNT=admin ADMIN_INIT_PASSWORD='replace-with-strong-password' sh scripts/init-admin-node.sh
-npx -y pnpm@9 dev:admin-node
+corepack pnpm dev:admin-node
+```
+
+生产服务器使用 Docker Compose 初始化，不依赖宿主机 Node/npm/pnpm：
+
+```bash
+ADMIN_INIT_ACCOUNT=admin ADMIN_INIT_PASSWORD='replace-with-strong-password' sh scripts/prd-init-admin-node.sh
 ```
 
 ## Env
