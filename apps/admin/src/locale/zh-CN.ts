@@ -23,6 +23,8 @@ export default {
   'menu.agent': 'Agent 管理',
   'menu.agent.list': 'Agent 列表',
   'menu.agent.detail': 'Agent 详情',
+  'menu.order': '订单管理',
+  'menu.order.list': '我的订单',
   'menu.membership': '会员权益',
   'menu.membership.vipPlan': 'VIP计划',
   'menu.membership.vipMember': 'VIP会员',

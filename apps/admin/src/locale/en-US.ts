@@ -23,6 +23,8 @@ export default {
   'menu.agent': 'Agent Management',
   'menu.agent.list': 'Agent List',
   'menu.agent.detail': 'Agent Detail',
+  'menu.order': 'Order Management',
+  'menu.order.list': 'Orders',
   'menu.membership': 'Membership',
   'menu.membership.vipPlan': 'VIP Plans',
   'menu.membership.vipMember': 'VIP Members',
