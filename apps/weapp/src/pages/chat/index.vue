@@ -19,7 +19,14 @@
           :menus="navMenus"
           back-home-url="/pages/index/index"
           @menu-select="handleNavMenuSelect"
-        />
+        >
+          <template #menu-icon>
+            <view class="chat-page__settings-icon">
+              <view class="chat-page__settings-ring" />
+              <view class="chat-page__settings-dot" />
+            </view>
+          </template>
+        </back-capsule>
         <text class="chat-page__nav-title">{{ pageTitle }}</text>
       </view>
     </template>
@@ -95,8 +102,13 @@
                   class="chat-avatar chat-avatar--user"
                   :src="currentUserAvatar"
                   mode="aspectFill"
+                  @tap.stop="handleCurrentUserAvatarTap"
                 />
-                <view v-else class="chat-avatar chat-avatar--user chat-avatar--fallback chat-avatar--self">
+                <view
+                  v-else
+                  class="chat-avatar chat-avatar--user chat-avatar--fallback chat-avatar--self"
+                  @tap.stop="handleCurrentUserAvatarTap"
+                >
                   {{ currentUserAvatarFallback }}
                 </view>
               </template>
@@ -412,8 +424,8 @@ const navStyle = {
 }
 const navMenus: NavMenuItem[] = [
   {
-    key: 'more-actions',
-    text: '更多功能',
+    key: 'agent-detail',
+    text: '联系人设置',
   },
 ]
 const pageTitle = computed(() => {
@@ -842,8 +854,8 @@ function handlePendingAction(name: string) {
   showToast(`${name}待接入`)
 }
 
-function handleNavMenuSelect(payload: { item: NavMenuItem }) {
-  handlePendingAction(payload.item.text)
+function handleNavMenuSelect() {
+  handleAgentAvatarTap()
 }
 
 function handleAgentAvatarTap() {
@@ -867,6 +879,12 @@ function handleAgentAvatarTap() {
 
   void Taro.navigateTo({
     url: `/pages/agent-detail/index?${query}`,
+  })
+}
+
+function handleCurrentUserAvatarTap() {
+  void Taro.switchTab({
+    url: '/pages/me/index',
   })
 }
 
@@ -1917,6 +1935,64 @@ function destroyVoiceDurationProbeContexts() {
   z-index: 2;
 }
 
+.chat-page__settings-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.chat-page__settings-ring,
+.chat-page__settings-ring::before,
+.chat-page__settings-ring::after {
+  content: '';
+  position: absolute;
+  left: 1.5px;
+  right: 1.5px;
+  height: 2px;
+  border-radius: 999px;
+  background: #111111;
+}
+
+.chat-page__settings-ring {
+  top: 2px;
+}
+
+.chat-page__settings-ring::before {
+  top: 5.5px;
+}
+
+.chat-page__settings-ring::after {
+  top: 11px;
+}
+
+.chat-page__settings-dot,
+.chat-page__settings-dot::before,
+.chat-page__settings-dot::after {
+  content: '';
+  position: absolute;
+  width: 4.5px;
+  height: 4.5px;
+  border: 1px solid #111111;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #ffffff;
+}
+
+.chat-page__settings-dot {
+  top: 0.75px;
+  right: 2.5px;
+}
+
+.chat-page__settings-dot::before {
+  top: 5.5px;
+  left: -9px;
+}
+
+.chat-page__settings-dot::after {
+  top: 11px;
+  left: 0;
+}
+
 .chat-page__nav-title {
   min-width: 0;
   max-width: calc(100% - 144px);
@@ -2081,8 +2157,8 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 72px;
-  padding: 12px;
+  min-height: 60px;
+  padding: 8px 12px;
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
