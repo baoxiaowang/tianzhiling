@@ -42,7 +42,13 @@
         </view>
 
         <view class="agent-detail-header__meta">
-          <text class="agent-detail-header__name">{{ displayName }}</text>
+          <view class="agent-detail-header__name-row">
+            <text class="agent-detail-header__name">{{ displayName }}</text>
+            <view v-if="agent?.isVip" class="agent-detail-header__vip">
+              <StarFill size="12" color="#f8d18b" />
+              <text>VIP</text>
+            </view>
+          </view>
           <text class="agent-detail-header__sub">
             {{ sexLabel }}是你正在纪念的重要存在
           </text>
@@ -139,7 +145,7 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
-import { Message, MoreX } from '@nutui/icons-vue-taro'
+import { Message, MoreX, StarFill } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, type AgentSummary } from '../../apis/agent'
@@ -370,8 +376,13 @@ function buildAgentFormUrl() {
 
 function handlePendingTap(title: string) {
   if (title === 'VIP与增值配置') {
+    if (!agentId.value) {
+      showToast('缺少联系人资料，请返回通讯录重新进入')
+      return
+    }
+
     void Taro.navigateTo({
-      url: '/pages/vip-center/index',
+      url: `/pages/vip-center/index?agentId=${encodeURIComponent(agentId.value)}`,
     })
     return
   }
@@ -488,6 +499,13 @@ function handleSendMessage() {
   gap: 4px;
 }
 
+.agent-detail-header__name-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .agent-detail-header__name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -495,6 +513,22 @@ function handleSendMessage() {
   color: #222222;
   font-size: 18px;
   line-height: 26px;
+  font-weight: 700;
+}
+
+.agent-detail-header__vip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border: 0.5px solid rgba(216, 160, 76, 0.72);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2c1d12 0%, #744823 100%);
+  color: #ffe5b8;
+  font-size: 10px;
+  line-height: 14px;
   font-weight: 700;
 }
 

@@ -262,10 +262,12 @@ useDidShow(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
 }
 
 .me-profile__name {
+  min-width: 0;
+  max-width: 100%;
   font-size: 18px;
   line-height: 27px;
   font-weight: 600;

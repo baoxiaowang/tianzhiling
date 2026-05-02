@@ -1,20 +1,21 @@
 import { Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import {
+  AgentEntitlementEntity,
+  AgentEntitlementStatus,
+  AgentEntitlementType,
+  AgentEntity,
+  AgentMembershipEntity,
+  AgentMembershipStatus,
   MongoObjectId,
-  UserEntitlementEntity,
-  UserEntitlementStatus,
-  UserEntitlementType,
-  UserMembershipEntity,
-  UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
 import type {
-  UserEntitlementSummaryDTO,
-  UserMembershipCenterDTO,
-  UserMembershipRecordDTO,
-  UserMembershipStatusSnapshotDTO,
+  AgentEntitlementSummaryDTO,
+  AgentMembershipCenterDTO,
+  AgentMembershipRecordDTO,
+  AgentMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
@@ -26,35 +27,36 @@ export class MembershipService {
   @InjectEntityModel(VipPlanEntity)
   vipPlanModel: MongoRepository<VipPlanEntity>;
 
-  @InjectEntityModel(UserMembershipEntity)
-  userMembershipModel: MongoRepository<UserMembershipEntity>;
+  @InjectEntityModel(AgentEntity)
+  agentModel: MongoRepository<AgentEntity>;
 
-  @InjectEntityModel(UserEntitlementEntity)
-  userEntitlementModel: MongoRepository<UserEntitlementEntity>;
+  @InjectEntityModel(AgentMembershipEntity)
+  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
+
+  @InjectEntityModel(AgentEntitlementEntity)
+  agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
 
   async getMembershipCenter(
-    auth: AuthenticatedUserPayload
-  ): Promise<UserMembershipCenterDTO> {
-    const userId = this.parseObjectId(auth.sub);
+    auth: AuthenticatedUserPayload,
+    agentId: string
+  ): Promise<AgentMembershipCenterDTO> {
+    const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
+    const agentObjectId = this.parseObjectId(agentId, 'INVALID_AGENT_ID');
+    await this.ensureAgentBelongsToUser(agentObjectId, userId);
+
     const now = new Date();
     const [plans, memberships] = await Promise.all([
       this.listActiveVipPlans(),
-      this.userMembershipModel.find({
-        where: {
-          userId,
-          status: UserMembershipStatus.active,
-        },
-        order: {
-          updatedAt: 'DESC',
-        },
-      }),
+      this.findActiveMemberships(userId, agentObjectId),
     ]);
     const activeMembership = memberships.find(membership =>
       this.isMembershipAvailable(membership, now)
     );
+    const agentIdText = this.stringifyObjectId(agentObjectId);
 
     if (!activeMembership) {
       return {
+        agentId: agentIdText,
         isVip: false,
         plans,
       };
@@ -65,6 +67,7 @@ export class MembershipService {
     );
 
     return {
+      agentId: agentIdText,
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
@@ -75,21 +78,28 @@ export class MembershipService {
   }
 
   async getMembershipStatus(
-    auth: AuthenticatedUserPayload
-  ): Promise<UserMembershipStatusSnapshotDTO> {
-    const userId = this.parseObjectId(auth.sub);
+    auth: AuthenticatedUserPayload,
+    agentId: string
+  ): Promise<AgentMembershipStatusSnapshotDTO> {
+    const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
+    const agentObjectId = this.parseObjectId(agentId, 'INVALID_AGENT_ID');
+    await this.ensureAgentBelongsToUser(agentObjectId, userId);
+
     const now = new Date();
-    const memberships = await this.findActiveMemberships(userId);
+    const memberships = await this.findActiveMemberships(userId, agentObjectId);
     const activeMembership = memberships.find(membership =>
       this.isMembershipAvailable(membership, now)
     );
     const entitlements = await this.listAvailableEntitlementSummaries(
       userId,
+      agentObjectId,
       now
     );
+    const agentIdText = this.stringifyObjectId(agentObjectId);
 
     if (!activeMembership) {
       return {
+        agentId: agentIdText,
         isVip: false,
         entitlements,
         serverTime: this.formatDate(now),
@@ -101,6 +111,7 @@ export class MembershipService {
     );
 
     return {
+      agentId: agentIdText,
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
@@ -109,6 +120,24 @@ export class MembershipService {
       entitlements,
       serverTime: this.formatDate(now),
     };
+  }
+
+  private async ensureAgentBelongsToUser(
+    agentId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<AgentEntity> {
+    const agent = await this.agentModel.findOne({
+      where: {
+        id: agentId,
+        createdUserId: userId,
+      },
+    });
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return agent;
   }
 
   private async listActiveVipPlans(): Promise<VipPlanRecordDTO[]> {
@@ -126,7 +155,7 @@ export class MembershipService {
   }
 
   private isMembershipAvailable(
-    membership: UserMembershipEntity,
+    membership: AgentMembershipEntity,
     now: Date
   ): boolean {
     if (membership.lifetime) {
@@ -137,12 +166,14 @@ export class MembershipService {
   }
 
   private findActiveMemberships(
-    userId: MongoObjectId
-  ): Promise<UserMembershipEntity[]> {
-    return this.userMembershipModel.find({
+    userId: MongoObjectId,
+    agentId: MongoObjectId
+  ): Promise<AgentMembershipEntity[]> {
+    return this.agentMembershipModel.find({
       where: {
         userId,
-        status: UserMembershipStatus.active,
+        agentId,
+        status: AgentMembershipStatus.active,
       },
       order: {
         updatedAt: 'DESC',
@@ -152,18 +183,23 @@ export class MembershipService {
 
   private async listAvailableEntitlementSummaries(
     userId: MongoObjectId,
+    agentId: MongoObjectId,
     now: Date
-  ): Promise<UserEntitlementSummaryDTO[]> {
-    const entitlements = await this.userEntitlementModel.find({
+  ): Promise<AgentEntitlementSummaryDTO[]> {
+    const entitlements = await this.agentEntitlementModel.find({
       where: {
         userId,
-        status: UserEntitlementStatus.available,
+        agentId,
+        status: AgentEntitlementStatus.available,
       },
       order: {
         updatedAt: 'DESC',
       },
     });
-    const summaries = new Map<UserEntitlementType, UserEntitlementSummaryDTO>();
+    const summaries = new Map<
+      AgentEntitlementType,
+      AgentEntitlementSummaryDTO
+    >();
 
     entitlements
       .filter(entitlement => this.isEntitlementAvailable(entitlement, now))
@@ -201,7 +237,7 @@ export class MembershipService {
   }
 
   private isEntitlementAvailable(
-    entitlement: UserEntitlementEntity,
+    entitlement: AgentEntitlementEntity,
     now: Date
   ): boolean {
     if (!entitlement.expiredAt) {
@@ -228,13 +264,14 @@ export class MembershipService {
   }
 
   private buildMembershipRecord(
-    membership: UserMembershipEntity,
+    membership: AgentMembershipEntity,
     plan?: VipPlanRecordDTO
-  ): UserMembershipRecordDTO {
+  ): AgentMembershipRecordDTO {
     const vipPlanId = this.stringifyObjectId(membership.vipPlanId);
 
     return {
       id: this.stringifyObjectId(membership.id),
+      agentId: this.stringifyObjectId(membership.agentId),
       vipPlanId,
       vipPlanCode: membership.vipPlanCode,
       status: membership.status,
@@ -280,9 +317,13 @@ export class MembershipService {
     };
   }
 
-  private parseObjectId(value: string): MongoObjectId {
+  private parseObjectId(value: string, code: string): MongoObjectId {
     if (!MongoObjectId.isValid(value)) {
-      throw new AppError('INVALID_TOKEN', 'token subject is invalid', 401);
+      throw new AppError(
+        code,
+        'object id is invalid',
+        code === 'INVALID_TOKEN' ? 401 : 400
+      );
     }
 
     return new MongoObjectId(value);

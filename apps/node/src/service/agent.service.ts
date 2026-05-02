@@ -10,6 +10,8 @@ import {
 } from '../dto/agent.dto';
 import {
   AgentEntity,
+  AgentMembershipEntity,
+  AgentMembershipStatus,
   AgentSex,
   ConversationEntity,
   MongoObjectId,
@@ -27,6 +29,9 @@ export class AgentService {
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
 
+  @InjectEntityModel(AgentMembershipEntity)
+  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
+
   @Inject()
   postImageService: PostImageService;
 
@@ -41,7 +46,7 @@ export class AgentService {
       },
     });
 
-    return agents.map(agent => this.buildAgentProfile(agent));
+    return Promise.all(agents.map(agent => this.buildAgentProfile(agent)));
   }
 
   async getAgentDetail(
@@ -210,7 +215,7 @@ export class AgentService {
     await this.conversationModel.save(conversation);
   }
 
-  private buildAgentProfile(agent: AgentEntity): AgentProfile {
+  private async buildAgentProfile(agent: AgentEntity): Promise<AgentProfile> {
     return {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
@@ -222,9 +227,30 @@ export class AgentService {
       deathDate: agent.deathDate?.toISOString?.() ?? '',
       description: agent.description,
       status: agent.status,
+      isVip: await this.isAgentVip(agent),
       createdAt: agent.createdAt.toISOString(),
       updatedAt: agent.updatedAt.toISOString(),
     };
+  }
+
+  private async isAgentVip(agent: AgentEntity): Promise<boolean> {
+    const memberships = await this.agentMembershipModel.find({
+      where: {
+        userId: agent.createdUserId,
+        agentId: agent.id,
+        status: AgentMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    const now = new Date();
+
+    return memberships.some(
+      membership =>
+        membership.lifetime ||
+        Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
   }
 
   private buildDescription(options: {

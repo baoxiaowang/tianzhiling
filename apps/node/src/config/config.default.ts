@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
+  AgentEntitlementEntity,
+  AgentMembershipEntity,
   AgentSubEntity,
   ConversationEntity,
   CouponLedgerEntity,
@@ -12,9 +14,7 @@ import {
   PostCommentNotificationEntity,
   PostEntity,
   UserAccountEntity,
-  UserEntitlementEntity,
   UserEntity,
-  UserMembershipEntity,
   VipPlanEntity,
 } from '@tzl/entities';
 
@@ -420,6 +420,8 @@ export default {
         logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
         entities: [
           AgentEntity,
+          AgentEntitlementEntity,
+          AgentMembershipEntity,
           AgentSubEntity,
           ConversationEntity,
           CouponLedgerEntity,
@@ -429,9 +431,7 @@ export default {
           PostCommentNotificationEntity,
           PostEntity,
           UserAccountEntity,
-          UserEntitlementEntity,
           UserEntity,
-          UserMembershipEntity,
           VipPlanEntity,
         ],
       },

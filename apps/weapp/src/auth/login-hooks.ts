@@ -2,7 +2,6 @@ import Taro from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException, weappLogin, weappPhoneLogin } from './api'
 import { authSession } from './session'
-import { refreshMembershipStatus } from '../membership/session'
 
 function getLoginErrorMessage(error: unknown) {
   if (error instanceof ApiException && error.message) {
@@ -47,7 +46,6 @@ export function useLoginHooks() {
       }
 
       const session = await weappLogin(jsCode)
-      await refreshMembershipAfterLogin()
       return session
     } catch (error) {
       loginErrorMessage.value = getLoginErrorMessage(error)
@@ -81,7 +79,6 @@ export function useLoginHooks() {
       }
 
       const session = await weappPhoneLogin(jsCode, normalizedPhoneCode)
-      await refreshMembershipAfterLogin()
       return session
     } catch (error) {
       loginErrorMessage.value = getLoginErrorMessage(error)
@@ -117,13 +114,8 @@ export async function silentWeappLogin() {
     }
 
     const session = await weappLogin(jsCode)
-    await refreshMembershipAfterLogin()
     return session
   } catch {
     return null
   }
-}
-
-async function refreshMembershipAfterLogin() {
-  await refreshMembershipStatus({ force: true }).catch(() => undefined)
 }

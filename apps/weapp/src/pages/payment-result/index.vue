@@ -90,7 +90,6 @@ import {
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { refreshMembershipStatus } from '../../membership/session'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 type ResultType = 'processing' | 'success' | 'failed'
@@ -99,6 +98,7 @@ const pollIntervalMs = 1500
 const maxPollAttempts = 20
 
 const orderId = ref('')
+const routeAgentId = ref('')
 const order = ref<OrderRecord | null>(null)
 const isPolling = ref(false)
 const isReadyToPoll = ref(false)
@@ -108,7 +108,6 @@ const queryError = ref('')
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let isPageAlive = true
-let hasRefreshedMembershipStatus = false
 
 const iconClass = computed(() => {
   return {
@@ -188,8 +187,8 @@ async function preparePage(options?: Record<string, unknown>) {
   isPageAlive = true
   clearPollTimer()
   isReadyToPoll.value = false
-  hasRefreshedMembershipStatus = false
   orderId.value = String(options?.orderId ?? '').trim()
+  routeAgentId.value = decodeRouteParam(options?.agentId)
 
   if (!orderId.value) {
     resultType.value = 'failed'
@@ -236,10 +235,6 @@ async function pollOrderStatus() {
 
     if (latestOrder.status === 'completed') {
       resultType.value = 'success'
-      if (!hasRefreshedMembershipStatus) {
-        hasRefreshedMembershipStatus = true
-        await refreshMembershipStatus({ force: true }).catch(() => undefined)
-      }
       return
     }
 
@@ -302,6 +297,18 @@ function clearPollTimer() {
   }
 }
 
+function decodeRouteParam(value?: unknown) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 function isFailedStatus(status?: OrderStatusDTO) {
   return status === 'closed' || status === 'refunded' || status === 'grant_failed'
 }
@@ -355,8 +362,11 @@ function handleRetry() {
 }
 
 async function handleBackToVipCenter() {
+  const agentId = routeAgentId.value || order.value?.agentId || ''
+  const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''
+
   await Taro.redirectTo({
-    url: '/pages/vip-center/index',
+    url: `/pages/vip-center/index${query}`,
   })
 }
 </script>

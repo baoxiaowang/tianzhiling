@@ -494,6 +494,7 @@ export class AdminAgentService {
       deathDate: this.formatDate(agent.deathDate),
       description: agent.description ?? '',
       status: agent.status,
+      isVip: false,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };

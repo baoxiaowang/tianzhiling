@@ -10,6 +10,7 @@ export interface OrderRecord {
   id: string
   orderNo: string
   orderType: 'vip_plan'
+  agentId?: string
   targetId?: string
   targetCode?: string
   title: string
@@ -72,6 +73,7 @@ function parseOrder(value: unknown): OrderRecord {
     id: asString(raw.id),
     orderNo: asString(raw.orderNo),
     orderType: 'vip_plan',
+    agentId: raw.agentId == null ? undefined : asString(raw.agentId),
     targetId: raw.targetId == null ? undefined : asString(raw.targetId),
     targetCode: raw.targetCode == null ? undefined : asString(raw.targetCode),
     title: asString(raw.title),
@@ -125,10 +127,12 @@ function parseCreateVipPlanOrderResult(
 }
 
 export async function createVipPlanOrder(payload: {
+  agentId: string
   vipPlanId: string
   jsCode: string
 }) {
   const data = await post<CreateVipPlanOrderResultDTO>('/api/orders/vip-plan', {
+    agentId: payload.agentId,
     vipPlanId: payload.vipPlanId,
     jsCode: payload.jsCode,
   })

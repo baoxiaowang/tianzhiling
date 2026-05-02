@@ -1,8 +1,8 @@
 import type {
-  UserEntitlementSummaryDTO,
-  UserMembershipStatusSnapshotDTO,
-  UserMembershipCenterDTO,
-  UserMembershipRecordDTO,
+  AgentEntitlementSummaryDTO,
+  AgentMembershipStatusSnapshotDTO,
+  AgentMembershipCenterDTO,
+  AgentMembershipRecordDTO,
   VipPlanBenefitDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared'
@@ -22,8 +22,9 @@ export interface VipPlan {
   couponGrantAmount?: number
 }
 
-export interface UserMembership {
+export interface AgentMembership {
   id: string
+  agentId: string
   vipPlanId: string
   vipPlanCode: string
   status: string
@@ -33,8 +34,8 @@ export interface UserMembership {
   plan?: VipPlan
 }
 
-export interface UserEntitlementSummary {
-  type: UserEntitlementSummaryDTO['type']
+export interface AgentEntitlementSummary {
+  type: AgentEntitlementSummaryDTO['type']
   totalQuota: number
   usedQuota: number
   availableQuota: number
@@ -42,15 +43,17 @@ export interface UserEntitlementSummary {
 }
 
 export interface MembershipCenter {
+  agentId: string
   isVip: boolean
-  membership?: UserMembership
+  membership?: AgentMembership
   plans: VipPlan[]
 }
 
 export interface MembershipStatus {
+  agentId: string
   isVip: boolean
-  membership?: UserMembership
-  entitlements: UserEntitlementSummary[]
+  membership?: AgentMembership
+  entitlements: AgentEntitlementSummary[]
   serverTime: Date | null
 }
 
@@ -130,12 +133,13 @@ function parseVipPlan(value: unknown): VipPlan {
   }
 }
 
-function parseMembership(value: unknown): UserMembership {
+function parseMembership(value: unknown): AgentMembership {
   const raw = asRecord(value)
   const plan = raw.plan ? parseVipPlan(raw.plan) : undefined
 
   return {
     id: asString(raw.id),
+    agentId: asString(raw.agentId),
     vipPlanId: asString(raw.vipPlanId),
     vipPlanCode: asString(raw.vipPlanCode),
     status: asString(raw.status),
@@ -146,7 +150,7 @@ function parseMembership(value: unknown): UserMembership {
   }
 }
 
-function parseEntitlementSummary(value: unknown): UserEntitlementSummary {
+function parseEntitlementSummary(value: unknown): AgentEntitlementSummary {
   const raw = asRecord(value)
   const totalQuota = asNumber(raw.totalQuota)
   const usedQuota = asNumber(raw.usedQuota)
@@ -156,7 +160,7 @@ function parseEntitlementSummary(value: unknown): UserEntitlementSummary {
       : asNumber(raw.availableQuota)
 
   return {
-    type: asString(raw.type) as UserEntitlementSummaryDTO['type'],
+    type: asString(raw.type) as AgentEntitlementSummaryDTO['type'],
     totalQuota,
     usedQuota,
     availableQuota,
@@ -169,6 +173,7 @@ function parseMembershipCenter(value: unknown): MembershipCenter {
   const plans = Array.isArray(raw.plans) ? raw.plans.map(parseVipPlan) : []
 
   return {
+    agentId: asString(raw.agentId),
     isVip: Boolean(raw.isVip),
     membership: raw.membership ? parseMembership(raw.membership) : undefined,
     plans,
@@ -182,6 +187,7 @@ function parseMembershipStatus(value: unknown): MembershipStatus {
     : []
 
   return {
+    agentId: asString(raw.agentId),
     isVip: Boolean(raw.isVip),
     membership: raw.membership ? parseMembership(raw.membership) : undefined,
     entitlements,
@@ -189,22 +195,26 @@ function parseMembershipStatus(value: unknown): MembershipStatus {
   }
 }
 
-export async function getMembershipCenter() {
-  const data = await get<UserMembershipCenterDTO>('/api/membership/center')
+export async function getMembershipCenter(agentId: string) {
+  const data = await get<AgentMembershipCenterDTO>(
+    `/api/membership/center/${encodeURIComponent(agentId)}`,
+  )
 
   return parseMembershipCenter(data)
 }
 
-export async function getMembershipStatus() {
-  const data = await get<UserMembershipStatusSnapshotDTO>('/api/membership/status')
+export async function getMembershipStatus(agentId: string) {
+  const data = await get<AgentMembershipStatusSnapshotDTO>(
+    `/api/membership/status/${encodeURIComponent(agentId)}`,
+  )
 
   return parseMembershipStatus(data)
 }
 
 export type {
-  UserEntitlementSummaryDTO,
-  UserMembershipCenterDTO,
-  UserMembershipRecordDTO,
-  UserMembershipStatusSnapshotDTO,
+  AgentEntitlementSummaryDTO,
+  AgentMembershipCenterDTO,
+  AgentMembershipRecordDTO,
+  AgentMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 }

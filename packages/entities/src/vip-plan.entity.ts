@@ -1,6 +1,6 @@
 import { Column, Entity } from 'typeorm';
 import { BaseEntity, TableName } from './base';
-import { UserEntitlementType } from './user-entitlement.entity';
+import { AgentEntitlementType } from './agent-entitlement.entity';
 
 export enum VipPlanStatus {
   active = 'active',
@@ -13,7 +13,7 @@ export interface VipPlanBenefit {
 }
 
 export interface VipPlanEntitlementGrant {
-  type: UserEntitlementType;
+  type: AgentEntitlementType;
   totalQuota: number;
   durationDays?: number;
 }

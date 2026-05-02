@@ -1,17 +1,20 @@
 import { Column, Entity } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
-export enum UserMembershipStatus {
+export enum AgentMembershipStatus {
   active = 'active',
   expired = 'expired',
   canceled = 'canceled',
   refunded = 'refunded',
 }
 
-@Entity(TableName.user_membership)
-export class UserMembershipEntity extends BaseEntity {
+@Entity(TableName.agent_membership)
+export class AgentMembershipEntity extends BaseEntity {
   @Column()
   userId: MongoObjectId;
+
+  @Column()
+  agentId: MongoObjectId;
 
   @Column()
   vipPlanId: MongoObjectId;
@@ -23,7 +26,7 @@ export class UserMembershipEntity extends BaseEntity {
   sourceOrderId: MongoObjectId;
 
   @Column()
-  status: UserMembershipStatus;
+  status: AgentMembershipStatus;
 
   @Column()
   startedAt: Date;

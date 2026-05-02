@@ -30,6 +30,9 @@ export class OrderEntity extends BaseEntity {
   userId: MongoObjectId;
 
   @Column()
+  agentId?: MongoObjectId;
+
+  @Column()
   orderType: OrderType;
 
   @Column()

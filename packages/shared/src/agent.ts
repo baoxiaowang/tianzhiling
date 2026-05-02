@@ -9,6 +9,7 @@ export interface AgentProfileDTO {
   deathDate: string;
   description: string;
   status: number;
+  isVip: boolean;
   createdAt: string;
   updatedAt: string;
 }

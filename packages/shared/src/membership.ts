@@ -11,10 +11,10 @@ export interface VipPlanEntitlementGrantDTO {
   durationDays?: number;
 }
 
-export type UserEntitlementTypeDTO = VipPlanEntitlementGrantDTO['type'];
+export type AgentEntitlementTypeDTO = VipPlanEntitlementGrantDTO['type'];
 
-export interface UserEntitlementSummaryDTO {
-  type: UserEntitlementTypeDTO;
+export interface AgentEntitlementSummaryDTO {
+  type: AgentEntitlementTypeDTO;
   totalQuota: number;
   usedQuota: number;
   availableQuota: number;
@@ -68,33 +68,36 @@ export interface VipPlanRecordDTO {
   couponGrantAmount?: number;
 }
 
-export type UserMembershipStatusDTO =
+export type AgentMembershipStatusDTO =
   | 'active'
   | 'expired'
   | 'canceled'
   | 'refunded';
 
-export interface UserMembershipRecordDTO {
+export interface AgentMembershipRecordDTO {
   id: string;
+  agentId: string;
   vipPlanId: string;
   vipPlanCode: string;
-  status: UserMembershipStatusDTO;
+  status: AgentMembershipStatusDTO;
   startedAt: string;
   expiredAt?: string;
   lifetime: boolean;
   plan?: VipPlanRecordDTO;
 }
 
-export interface UserMembershipCenterDTO {
+export interface AgentMembershipCenterDTO {
+  agentId: string;
   isVip: boolean;
-  membership?: UserMembershipRecordDTO;
+  membership?: AgentMembershipRecordDTO;
   plans: VipPlanRecordDTO[];
 }
 
-export interface UserMembershipStatusSnapshotDTO {
+export interface AgentMembershipStatusSnapshotDTO {
+  agentId: string;
   isVip: boolean;
-  membership?: UserMembershipRecordDTO;
-  entitlements: UserEntitlementSummaryDTO[];
+  membership?: AgentMembershipRecordDTO;
+  entitlements: AgentEntitlementSummaryDTO[];
   serverTime: string;
 }
 

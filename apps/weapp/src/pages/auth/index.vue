@@ -222,7 +222,6 @@ import {
   clearAuthSession,
   restoreAuthSession,
 } from '../../auth/session'
-import { refreshMembershipStatus } from '../../membership/session'
 import { redirectToIndexPage } from '../../utils/auth-guard'
 
 type AuthMode = 'phone' | 'password'
@@ -396,7 +395,6 @@ async function handleSubmit() {
       password.value = ''
     }
 
-    await refreshMembershipStatus({ force: true }).catch(() => undefined)
     await handleEnterApp()
   } catch (error) {
     if (error instanceof ApiException) {
@@ -468,7 +466,6 @@ onMounted(async () => {
 
   if (authSession.value) {
     void handleRefreshProfile()
-    void refreshMembershipStatus({ force: true }).catch(() => undefined)
   }
 })
 

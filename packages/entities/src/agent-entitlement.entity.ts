@@ -1,30 +1,30 @@
 import { Column, Entity } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
-export enum UserEntitlementType {
+export enum AgentEntitlementType {
   voiceModel = 'voice_model',
   chatImport = 'chat_import',
   interview = 'interview',
   familySeat = 'family_seat',
 }
 
-export enum UserEntitlementStatus {
+export enum AgentEntitlementStatus {
   available = 'available',
   used = 'used',
   expired = 'expired',
   refunded = 'refunded',
 }
 
-@Entity(TableName.user_entitlement)
-export class UserEntitlementEntity extends BaseEntity {
+@Entity(TableName.agent_entitlement)
+export class AgentEntitlementEntity extends BaseEntity {
   @Column()
   userId: MongoObjectId;
 
   @Column()
-  agentId?: MongoObjectId;
+  agentId: MongoObjectId;
 
   @Column()
-  type: UserEntitlementType;
+  type: AgentEntitlementType;
 
   @Column()
   totalQuota: number;
@@ -33,7 +33,7 @@ export class UserEntitlementEntity extends BaseEntity {
   usedQuota: number;
 
   @Column()
-  status: UserEntitlementStatus;
+  status: AgentEntitlementStatus;
 
   @Column()
   sourceOrderId?: MongoObjectId;

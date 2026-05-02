@@ -9,8 +9,8 @@ import type {
   VipPlanEntitlementGrantDTO,
 } from '@tzl/shared';
 import {
+  AgentEntitlementType,
   MongoObjectId,
-  UserEntitlementType,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
@@ -187,12 +187,12 @@ export class AdminVipPlanService {
     }));
   }
 
-  private normalizeEntitlementType(value: string): UserEntitlementType {
+  private normalizeEntitlementType(value: string): AgentEntitlementType {
     if (
-      value === UserEntitlementType.voiceModel ||
-      value === UserEntitlementType.chatImport ||
-      value === UserEntitlementType.interview ||
-      value === UserEntitlementType.familySeat
+      value === AgentEntitlementType.voiceModel ||
+      value === AgentEntitlementType.chatImport ||
+      value === AgentEntitlementType.interview ||
+      value === AgentEntitlementType.familySeat
     ) {
       return value;
     }

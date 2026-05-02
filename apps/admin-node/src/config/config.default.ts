@@ -9,7 +9,9 @@ import {
 import {
   AdminAccountEntity,
   AdminUserEntity,
+  AgentEntitlementEntity,
   AgentEntity,
+  AgentMembershipEntity,
   AgentSubEntity,
   ConversationEntity,
   CouponLedgerEntity,
@@ -19,9 +21,7 @@ import {
   PostCommentNotificationEntity,
   PostEntity,
   UserAccountEntity,
-  UserEntitlementEntity,
   UserEntity,
-  UserMembershipEntity,
   VipPlanEntity,
 } from '@tzl/entities';
 
@@ -135,7 +135,9 @@ export default {
         entities: [
           AdminAccountEntity,
           AdminUserEntity,
+          AgentEntitlementEntity,
           AgentEntity,
+          AgentMembershipEntity,
           AgentSubEntity,
           ConversationEntity,
           CouponLedgerEntity,
@@ -145,9 +147,7 @@ export default {
           PostCommentNotificationEntity,
           PostEntity,
           UserAccountEntity,
-          UserEntitlementEntity,
           UserEntity,
-          UserMembershipEntity,
           VipPlanEntity,
         ],
       },

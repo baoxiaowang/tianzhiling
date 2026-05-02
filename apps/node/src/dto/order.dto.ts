@@ -6,5 +6,8 @@ export class CreateVipPlanOrderBodyDTO implements CreateVipPlanOrderDTO {
   vipPlanId: string;
 
   @Rule(RuleType.string().required())
+  agentId: string;
+
+  @Rule(RuleType.string().required())
   jsCode: string;
 }
