@@ -12,7 +12,7 @@ export default mergeConfig(
       },
       proxy: {
         '/admin_api': {
-          target: 'http://localhost:7101',
+          target: 'http://admin.tianzhiling.chat',
           changeOrigin: true,
         },
       },
