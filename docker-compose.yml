@@ -48,6 +48,8 @@ services:
       NODE_WECHAT_PAY_NOTIFY_URL: ${NODE_WECHAT_PAY_NOTIFY_URL:-}
     expose:
       - "7001"
+    volumes:
+      - ./resource/cert:/workspace/resource/cert:ro
     depends_on:
       - tzl_redis
       - tzl_mongo

@@ -143,6 +143,10 @@ function readPemFrom(
       ? filePath
       : resolve(PROJECT_ROOT, filePath);
 
+    if (!existsSync(absolutePath)) {
+      return fallback;
+    }
+
     return readFileSync(absolutePath, 'utf8').trim();
   }
 
