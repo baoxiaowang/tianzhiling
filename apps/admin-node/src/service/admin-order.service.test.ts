@@ -211,4 +211,19 @@ describe('AdminOrderService', () => {
       $or: expect.arrayContaining([{ agentId: AGENT_ID }]),
     });
   });
+
+  it('filters orders by user id', async () => {
+    const service = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      userId: USER_ID.toHexString(),
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      userId: USER_ID,
+    });
+  });
 });

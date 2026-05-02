@@ -27,6 +27,9 @@ export class ListAdminOrdersQueryDTO {
   @Rule(orderSourceRule.allow('').optional())
   source?: string;
 
+  @Rule(RuleType.string().allow('').optional())
+  userId?: string;
+
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   page?: number | string;
 

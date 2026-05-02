@@ -234,7 +234,7 @@ useDidShow(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 141px;
+  min-height: 100px;
   padding: 0 16px;
   background: $tzl-color-surface-base;
 }

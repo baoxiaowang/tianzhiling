@@ -67,6 +67,7 @@ export class AdminOrderService {
     const status = this.normalizeOptionalStatus(query?.status);
     const orderType = this.normalizeOptionalOrderType(query?.orderType);
     const source = this.normalizeOptionalSource(query?.source);
+    const userId = this.normalizeOptionalObjectId(query?.userId);
     const keyword = query?.keyword?.trim() ?? '';
 
     if (status) {
@@ -79,6 +80,10 @@ export class AdminOrderService {
 
     if (source) {
       where.source = source;
+    }
+
+    if (userId) {
+      where.userId = userId;
     }
 
     if (!keyword) {
@@ -259,6 +264,16 @@ export class AdminOrderService {
     return Object.values(OrderSource).includes(value as OrderSource)
       ? (value as OrderSource)
       : undefined;
+  }
+
+  private normalizeOptionalObjectId(value?: string): MongoObjectId | undefined {
+    const normalizedValue = value?.trim() ?? '';
+
+    if (!MongoObjectId.isValid(normalizedValue)) {
+      return undefined;
+    }
+
+    return new MongoObjectId(normalizedValue);
   }
 
   private normalizePositiveInteger(

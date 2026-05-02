@@ -176,7 +176,7 @@
           </div>
         </a-tab-pane>
         <a-tab-pane key="orders" title="用户订单">
-          <a-empty description="暂无用户订单" />
+          <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
         </a-tab-pane>
       </a-tabs>
     </a-card>
@@ -195,6 +195,7 @@
     queryAppUserAgents,
     queryAppUserDetail,
   } from '@/api/app-user';
+  import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
 
   const route = useRoute();
   const router = useRouter();

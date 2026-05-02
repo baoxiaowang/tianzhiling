@@ -62,6 +62,7 @@ export interface AdminOrderListParamsDTO {
   status?: OrderStatusDTO;
   orderType?: 'vip_plan';
   source?: OrderSourceDTO;
+  userId?: string;
   page?: number;
   pageSize?: number;
 }
