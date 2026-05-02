@@ -271,6 +271,7 @@ export default {
     ),
     model: readStringFrom(['NODE_MINIMAX_MODEL'], 'MiniMax-M2.5'),
 
+    // 视觉理解模型
     visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),
     visionApiKey: readStringFrom(['NODE_VISION_API_KEY'], ''),
     visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
@@ -296,7 +297,7 @@ export default {
     timeoutMs: readNumberFrom(['NODE_TIMEOUT_MS'], 120000),
     reasoningSplit: readBooleanFrom(['NODE_REASONING_SPLIT'], true),
 
-    // 嵌入
+    // 嵌入模型
     embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY'], ''),
     embeddingBaseURL: readStringFrom(['NODE_EMBEDDING_BASE_URL'], ''),
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
