@@ -8,7 +8,7 @@
           <a-input
             v-model="searchForm.keyword"
             allow-clear
-            placeholder="搜索订单号、用户、手机号、交易号"
+            placeholder="搜索订单号、用户、手机号、交易号、智能体ID"
             @press-enter="handleSearch"
           />
         </a-form-item>
@@ -59,7 +59,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1480 }"
+        :scroll="{ x: 1660 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -96,6 +96,18 @@
                   {{ record.user?.phone || record.user?.account || '-' }}
                 </div>
               </div>
+            </template>
+          </a-table-column>
+          <a-table-column title="智能体ID" data-index="agentId" :width="220">
+            <template #cell="{ record }">
+              <a-typography-text
+                v-if="record.agentId"
+                class="order-page__mono order-page__agent-id"
+                copyable
+              >
+                {{ record.agentId }}
+              </a-typography-text>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="金额" data-index="payableAmount" :width="150">
@@ -205,6 +217,12 @@
           <span class="order-page__muted">
             {{ currentOrder.user?.phone || currentOrder.user?.account || '' }}
           </span>
+        </a-descriptions-item>
+        <a-descriptions-item label="智能体ID">
+          <a-typography-text v-if="currentOrder.agentId" copyable>
+            {{ currentOrder.agentId }}
+          </a-typography-text>
+          <span v-else>-</span>
         </a-descriptions-item>
         <a-descriptions-item label="应付金额">
           {{ formatAmount(currentOrder.payableAmount) }}
@@ -450,6 +468,10 @@
 
     &__order-no {
       max-width: 220px;
+    }
+
+    &__agent-id {
+      max-width: 180px;
     }
 
     &__title,

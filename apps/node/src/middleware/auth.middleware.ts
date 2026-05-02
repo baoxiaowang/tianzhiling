@@ -21,7 +21,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { methods: ['POST'], path: /^\/user\/logout\/?$/ },
   { path: /^\/agent(?:\/.*)?$/ },
   { path: /^\/conversation(?:\/.*)?$/ },
-  { path: /^\/membership\/(?:center|status)\/?$/ },
+  { path: /^\/membership\/(?:center|status)(?:\/.*)?$/ },
   { path: /^\/orders(?:\/.*)?$/ },
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
   { methods: ['POST'], path: /^\/post\/?$/ },

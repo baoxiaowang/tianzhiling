@@ -104,6 +104,7 @@ export class AdminOrderService {
       keywordFilters.push({ id: objectId });
       keywordFilters.push({ _id: objectId });
       keywordFilters.push({ userId: objectId });
+      keywordFilters.push({ agentId: objectId });
       keywordFilters.push({ targetId: objectId });
     }
 
@@ -213,6 +214,9 @@ export class AdminOrderService {
       userId,
       user: userMap.get(userId),
       orderType: order.orderType,
+      agentId: order.agentId
+        ? this.stringifyObjectId(order.agentId)
+        : undefined,
       targetId: order.targetId
         ? this.stringifyObjectId(order.targetId)
         : undefined,

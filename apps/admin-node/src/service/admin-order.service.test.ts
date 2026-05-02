@@ -7,6 +7,7 @@ import {
 import { AdminOrderService } from './admin-order.service';
 
 const USER_ID = new MongoObjectId('665000000000000000000201');
+const AGENT_ID = new MongoObjectId('665000000000000000000202');
 const ORDER_ID = new MongoObjectId('665000000000000000000301');
 const ORDER_CREATED_AT = new Date('2026-05-02T08:00:00.000Z');
 
@@ -37,6 +38,7 @@ describe('AdminOrderService', () => {
         id: ORDER_ID,
         orderNo: 'VIP202605020001',
         userId: USER_ID,
+        agentId: AGENT_ID,
         orderType: OrderType.vipPlan,
         targetCode: 'vip_year',
         title: '一年会员',
@@ -91,6 +93,7 @@ describe('AdminOrderService', () => {
           id: ORDER_ID.toHexString(),
           orderNo: 'VIP202605020001',
           userId: USER_ID.toHexString(),
+          agentId: AGENT_ID.toHexString(),
           user: {
             id: USER_ID.toHexString(),
             account: '13800000000',
@@ -141,6 +144,23 @@ describe('AdminOrderService', () => {
           ]),
         },
       ],
+    });
+  });
+
+  it('allows searching orders by agent id', async () => {
+    const service = createService();
+
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      keyword: AGENT_ID.toHexString(),
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      $or: expect.arrayContaining([{ agentId: AGENT_ID }]),
     });
   });
 });
