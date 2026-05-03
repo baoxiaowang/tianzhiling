@@ -1,5 +1,6 @@
 import { MidwayConfig } from '@midwayjs/core';
 import { existsSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
@@ -161,6 +162,32 @@ export default {
   koa: {
     port: readNumberFrom(['NODE_PORT'], 7001),
     globalPrefix: readStringFrom(['NODE_GLOBAL_PREFIX'], '/api'),
+  },
+  busboy: {
+    mode: 'file',
+    tmpdir: resolve(tmpdir(), 'tianzhiling-node-upload'),
+    cleanTimeout: 5 * 60 * 1000,
+    whitelist: [
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.webp',
+      '.gif',
+      '.heic',
+      '.heif',
+      '.bmp',
+      '.m4a',
+      '.aac',
+      '.mp3',
+      '.wav',
+      '.ogg',
+      '.webm',
+    ],
+    match: /\/api\/storage\/upload$/,
+    limits: {
+      fileSize: 20 * 1024 * 1024,
+      files: 1,
+    },
   },
   jwt: {
     secret: readStringFrom(['NODE_JWT_SECRET'], '1774073039411_5782'),

@@ -26,9 +26,46 @@ $ pnpm start
 - 使用 `pnpm run lint` 来做代码风格检查。
 - 使用 `pnpm test` 来执行单元测试。
 
-### OSS 接入
+### 文件上传
 
-项目已预留阿里云 OSS 配置，统一放在仓库根目录 `.env.example`，Node 相关配置使用 `NODE_` 前缀：
+小程序端当前通过 Node 中转上传文件，Node 接收 `multipart/form-data` 后使用腾讯云 COS SDK 存储，不再让小程序直接持有 COS 预签名上传地址。
+
+```bash
+POST /api/storage/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+file=<本地文件>
+folder=avatars
+fileName=avatar.png
+contentType=image/png
+```
+
+返回结果：
+
+- `objectKey`：COS 内对象路径，业务表保存这个值
+- `publicUrl`：上传成功后可访问的资源地址
+
+腾讯云对象存储产品名称是 `COS`。配置项在仓库根目录 `.env.example`：
+
+- `NODE_TENCENT_COS_ENABLED`
+- `NODE_TENCENT_COS_REGION`
+- `NODE_TENCENT_COS_BUCKET`
+- `NODE_TENCENT_COS_SECRET_ID`
+- `NODE_TENCENT_COS_SECRET_KEY`
+- `NODE_TENCENT_COS_SECURITY_TOKEN`
+- `NODE_TENCENT_COS_PROTOCOL`
+- `NODE_TENCENT_COS_DOMAIN`
+- `NODE_TENCENT_COS_PUBLIC_BASE_URL`
+- `NODE_TENCENT_COS_UPLOAD_PREFIX`
+
+### 历史签名上传接口
+
+项目仍保留旧的签名上传接口，便于回滚或兼容历史调用；小程序头像、聊天图片等上传链路不再使用这些接口。
+
+#### 阿里云 OSS
+
+项目仍保留阿里云 OSS 配置，统一放在仓库根目录 `.env.example`，Node 相关配置使用 `NODE_` 前缀：
 
 - `NODE_OSS_ENABLED`
 - `NODE_OSS_REGION`
@@ -64,23 +101,7 @@ Content-Type: application/json
 - `objectKey`：OSS 内对象路径
 - `headers`：上传时需要一并带上的请求头
 
-### 腾讯云 COS 接入
-
-腾讯云对象存储产品名称是 `COS`。项目已新增一套并行的腾讯云 COS 接入。
-
-配置项在仓库根目录 `.env.example`：
-
-- `NODE_TENCENT_COS_ENABLED`
-- `NODE_TENCENT_COS_REGION`
-- `NODE_TENCENT_COS_BUCKET`
-- `NODE_TENCENT_COS_SECRET_ID`
-- `NODE_TENCENT_COS_SECRET_KEY`
-- `NODE_TENCENT_COS_SECURITY_TOKEN`
-- `NODE_TENCENT_COS_PROTOCOL`
-- `NODE_TENCENT_COS_DOMAIN`
-- `NODE_TENCENT_COS_PUBLIC_BASE_URL`
-- `NODE_TENCENT_COS_UPLOAD_PREFIX`
-- `NODE_TENCENT_COS_SIGNED_URL_EXPIRE_SECONDS`
+#### 腾讯云 COS 签名上传
 
 生成腾讯云 COS 签名上传地址的接口：
 

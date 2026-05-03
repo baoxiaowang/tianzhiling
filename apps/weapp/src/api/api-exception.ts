@@ -100,6 +100,8 @@ export class ApiException extends Error {
         return '头像上传结果无效，请重新选择'
       case 'TENCENT_COS_CONFIG_MISSING':
       case 'TENCENT_COS_INVALID_FILE':
+      case 'TENCENT_COS_DISABLED':
+      case 'UPLOAD_FILE_MISSING':
       case 'OSS_CONFIG_MISSING':
       case 'OSS_INVALID_FILE':
         return '图片上传失败，请稍后重试'

@@ -23,6 +23,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { path: /^\/conversation(?:\/.*)?$/ },
   { path: /^\/membership\/(?:center|status)(?:\/.*)?$/ },
   { path: /^\/orders(?:\/.*)?$/ },
+  { methods: ['POST'], path: /^\/storage\/upload\/?$/ },
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
   { methods: ['POST'], path: /^\/post\/?$/ },
   { methods: ['GET'], path: /^\/post\/comment-notifications\/summary\/?$/ },

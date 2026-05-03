@@ -1,14 +1,8 @@
 import Taro from '@tarojs/taro'
-import { post } from '../api/api-client'
+import { ApiConfig } from '../api/api-config'
 import { ApiException } from '../api/api-exception'
-
-interface SignedUploadTicket {
-  uploadUrl: string
-  publicUrl: string
-  objectKey: string
-  method: string
-  headers: Record<string, string>
-}
+import { ApiResponse } from '../api/api-response'
+import { authSession, clearAuthSession } from '../auth/session'
 
 export interface UploadedStorageAsset {
   objectKey: string
@@ -25,29 +19,12 @@ function asString(value: unknown, fallback = '') {
   return typeof value === 'string' ? value : fallback
 }
 
-function parseHeaders(value: unknown) {
-  const raw = asRecord(value)
-  const headers: Record<string, string> = {}
-
-  Object.keys(raw).forEach((key) => {
-    const value = raw[key]
-    if (typeof value === 'string' && key.trim()) {
-      headers[key.trim()] = value.trim()
-    }
-  })
-
-  return headers
-}
-
-function parseSignedUploadTicket(value: unknown): SignedUploadTicket {
+function parseUploadedStorageAsset(value: unknown): UploadedStorageAsset {
   const raw = asRecord(value)
 
   return {
-    uploadUrl: asString(raw.uploadUrl),
     publicUrl: asString(raw.publicUrl),
     objectKey: asString(raw.objectKey),
-    method: asString(raw.method, 'PUT'),
-    headers: parseHeaders(raw.headers),
   }
 }
 
@@ -102,60 +79,73 @@ function extractFileName(filePath: string, fallbackPrefix = 'upload') {
   return name || `${fallbackPrefix}_${Date.now()}.bin`
 }
 
-function hasContentType(headers: Record<string, string>) {
-  return Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')
+function normalizePath(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  return ApiConfig.baseUrl
+    ? `${ApiConfig.baseUrl}${normalizedPath}`
+    : normalizedPath
 }
 
-async function createCosSignedUpload(
-  fileName: string,
-  folder: string,
-  contentType: string,
-) {
-  const data = await post<Record<string, unknown>>('/api/storage/cos/sign-upload', {
-    fileName,
-    folder,
-    contentType,
-  })
+function buildUploadHeader() {
+  const session = authSession.value
 
-  return parseSignedUploadTicket(data)
-}
-
-async function readFileAsArrayBuffer(filePath: string) {
-  return new Promise<ArrayBuffer>((resolve, reject) => {
-    Taro.getFileSystemManager().readFile({
-      filePath,
-      success(result) {
-        resolve(result.data as ArrayBuffer)
-      },
-      fail(error) {
-        reject(error)
-      },
-    })
-  })
-}
-
-async function putFileToSignedUrl(
-  ticket: SignedUploadTicket,
-  filePath: string,
-  contentType: string,
-) {
-  const data = await readFileAsArrayBuffer(filePath)
-  const headers = {
-    ...ticket.headers,
-    ...(hasContentType(ticket.headers) ? {} : { 'Content-Type': contentType }),
+  return {
+    Accept: 'application/json',
+    ...(session
+      ? {
+          Authorization: `${session.tokenType} ${session.accessToken}`,
+        }
+      : {}),
   }
+}
 
-  const response = await Taro.request({
-    url: ticket.uploadUrl,
-    method: 'PUT',
-    data,
-    header: headers,
+function formatUploadError(error: unknown) {
+  return error && typeof error === 'object' && 'errMsg' in error
+    ? String(error.errMsg)
+    : String(error ?? 'unknown')
+}
+
+async function uploadFileToNode(
+  filePath: string,
+  payload: { folder: string; fileName: string; contentType: string },
+) {
+  const response = await Taro.uploadFile({
+    url: normalizePath('/api/storage/upload'),
+    filePath,
+    name: 'file',
+    formData: payload,
+    header: buildUploadHeader(),
     timeout: 120000,
   })
 
-  if (![200, 201, 204].includes(response.statusCode)) {
+  const parsed = ApiResponse.fromRaw<Record<string, unknown>>(
+    response.data,
+    response.statusCode,
+  )
+
+  return parseUploadedStorageAsset(
+    parsed.requireMapData<Record<string, unknown>>(),
+  )
+}
+
+async function uploadFileWithAuthHandling(
+  filePath: string,
+  payload: { folder: string; fileName: string; contentType: string },
+) {
+  try {
+    return await uploadFileToNode(filePath, payload)
+  } catch (error) {
+    if (error instanceof ApiException) {
+      if (error.requiresReLogin) {
+        await clearAuthSession()
+      }
+
+      throw error
+    }
+
     throw new ApiException('图片上传失败，请稍后重试', {
-      details: `statusCode=${response.statusCode} objectKey=${ticket.objectKey}`,
+      details: formatUploadError(error),
     })
   }
 }
@@ -176,24 +166,15 @@ export async function uploadLocalFile(
 ): Promise<UploadedStorageAsset> {
   const fileName = options.fileName?.trim() || extractFileName(filePath)
   const contentType = options.contentType?.trim() || detectContentType(fileName)
-  const ticket = await createCosSignedUpload(
+  const uploaded = await uploadFileWithAuthHandling(filePath, {
+    folder: options.folder.trim(),
     fileName,
-    options.folder.trim(),
     contentType,
-  )
+  })
 
-  if (!ticket.uploadUrl || !ticket.publicUrl || !ticket.objectKey) {
-    throw new ApiException('上传地址生成失败，请稍后重试')
+  if (!uploaded.publicUrl || !uploaded.objectKey) {
+    throw new ApiException('上传结果无效，请稍后重试')
   }
 
-  if (ticket.method.toUpperCase() !== 'PUT') {
-    throw new ApiException('暂不支持当前上传方式，请稍后重试')
-  }
-
-  await putFileToSignedUrl(ticket, filePath, contentType)
-
-  return {
-    objectKey: ticket.objectKey,
-    publicUrl: ticket.publicUrl,
-  }
+  return uploaded
 }

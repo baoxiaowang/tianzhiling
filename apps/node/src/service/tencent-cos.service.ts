@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
+import { createReadStream } from 'fs';
 import { Config, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import COS = require('cos-nodejs-sdk-v5');
@@ -144,6 +145,44 @@ export class TencentCosService {
     const url = this.getPublicUrl(objectKey);
 
     this.logger.info('[tencent-cos] buffer uploaded, objectKey=%s', objectKey);
+
+    return {
+      objectKey,
+      url,
+    };
+  }
+
+  async putFile(
+    filePath: string,
+    request: TencentCosPutObjectRequest = {}
+  ): Promise<TencentCosPutObjectResult> {
+    const normalizedPath = filePath?.trim();
+
+    if (!normalizedPath) {
+      throw new AppError(
+        'TENCENT_COS_INVALID_FILE',
+        'upload file path is required',
+        400
+      );
+    }
+
+    const client = this.getClient();
+    const objectKey = this.resolveObjectKey(request);
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
+    const contentType = this.normalizeContentType(request.contentType);
+
+    await client.putObject({
+      Bucket: bucket,
+      Region: region,
+      Key: objectKey,
+      Body: createReadStream(normalizedPath),
+      ...(contentType ? { ContentType: contentType } : {}),
+    });
+
+    const url = this.getPublicUrl(objectKey);
+
+    this.logger.info('[tencent-cos] file uploaded, objectKey=%s', objectKey);
 
     return {
       objectKey,
