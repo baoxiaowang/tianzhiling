@@ -73,6 +73,9 @@ function createVoiceTimbre(): VoiceTimbreEntity {
     audioObjectKey: 'voice-timbres/demo.wav',
     cloneLanguage: 'Chinese',
     previewModel: 'speech-2.8-turbo',
+    speechSpeed: 1.12,
+    speechVolume: 1.1,
+    speechPitch: -1,
     status: VoiceTimbreStatus.active,
     createdAt: NOW,
     updatedAt: NOW,
@@ -260,6 +263,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       voiceId: 'TzlVoice_001',
       model: 'speech-2.8-turbo',
       languageBoost: 'Chinese',
+      speed: 1.12,
+      volume: 1.1,
+      pitch: -1,
     });
     expect(assistantMessage).toEqual(
       expect.objectContaining({

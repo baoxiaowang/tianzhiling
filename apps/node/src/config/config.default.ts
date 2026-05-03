@@ -334,22 +334,32 @@ export default {
   minimaxVoice: {
     enabled: readBooleanFrom(['NODE_MINIMAX_VOICE_ENABLED'], true),
     apiKey: readStringFrom(
-      ['NODE_MINIMAX_VOICE_API_KEY', 'NODE_MINIMAX_API_KEY'],
+      ['NODE_MINIMAX_VOICE_API_KEY', 'ADMIN_API_MINIMAX_VOICE_API_KEY'],
       ''
     ),
     baseURL: readStringFrom(
-      ['NODE_MINIMAX_VOICE_BASE_URL'],
+      ['NODE_MINIMAX_VOICE_BASE_URL', 'ADMIN_API_MINIMAX_VOICE_BASE_URL'],
       'https://api.minimaxi.com'
     ),
     defaultPreviewModel: readStringFrom(
-      ['NODE_MINIMAX_VOICE_PREVIEW_MODEL'],
+      [
+        'NODE_MINIMAX_VOICE_PREVIEW_MODEL',
+        'ADMIN_API_MINIMAX_VOICE_PREVIEW_MODEL',
+      ],
       'speech-2.8-turbo'
     ),
     defaultSpeechModel: readStringFrom(
-      ['NODE_MINIMAX_VOICE_SPEECH_MODEL', 'NODE_TEXT_TO_SPEECH_MODEL'],
+      [
+        'NODE_MINIMAX_VOICE_SPEECH_MODEL',
+        'ADMIN_API_MINIMAX_VOICE_SPEECH_MODEL',
+        'ADMIN_API_MINIMAX_VOICE_PREVIEW_MODEL',
+      ],
       'speech-2.8-turbo'
     ),
-    timeoutMs: readNumberFrom(['NODE_MINIMAX_VOICE_TIMEOUT_MS'], 120000),
+    timeoutMs: readNumberFrom(
+      ['NODE_MINIMAX_VOICE_TIMEOUT_MS', 'ADMIN_API_MINIMAX_VOICE_TIMEOUT_MS'],
+      120000
+    ),
   },
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),

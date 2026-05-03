@@ -33,6 +33,9 @@ export interface MinimaxVoiceSpeechInput {
   voiceId: string;
   model?: string;
   languageBoost?: string;
+  speed?: number;
+  volume?: number;
+  pitch?: number;
 }
 
 export interface MinimaxVoiceSpeechResult {
@@ -87,6 +90,9 @@ export class MinimaxVoiceSpeechService {
       this.config?.defaultSpeechModel?.trim() ||
       this.config?.defaultPreviewModel?.trim() ||
       'speech-2.8-turbo';
+    const speed = this.normalizeNumberInRange(input.speed, 1, 0.5, 2);
+    const volume = this.normalizeNumberInRange(input.volume, 1, 0, 10);
+    const pitch = this.normalizeNumberInRange(input.pitch, 0, -12, 12);
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -95,9 +101,9 @@ export class MinimaxVoiceSpeechService {
         output_format: 'url',
         voice_setting: {
           voice_id: voiceId,
-          speed: 1,
-          vol: 1,
-          pitch: 0,
+          speed,
+          vol: volume,
+          pitch,
         },
         audio_setting: {
           sample_rate: 32000,
@@ -112,9 +118,12 @@ export class MinimaxVoiceSpeechService {
     );
 
     this.logger.info(
-      '[minimax-voice-speech] synthesize, model=%s, voiceId=%s, textLength=%s',
+      '[minimax-voice-speech] synthesize, model=%s, voiceId=%s, speed=%s, vol=%s, pitch=%s, textLength=%s',
       model,
       voiceId,
+      speed,
+      volume,
+      pitch,
       text.length
     );
 
@@ -310,6 +319,22 @@ export class MinimaxVoiceSpeechService {
   private normalizeBaseURL(): string {
     const raw = this.config?.baseURL?.trim() || 'https://api.minimaxi.com';
     return raw.replace(/\/+$/, '');
+  }
+
+  private normalizeNumberInRange(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number
+  ): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+
+    const clamped = Math.min(max, Math.max(min, parsed));
+    return Math.round(clamped * 100) / 100;
   }
 
   private normalizeContentType(value?: string | string[]): string {

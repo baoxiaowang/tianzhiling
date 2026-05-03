@@ -8,6 +8,9 @@ const statusRule = RuleType.string().valid(
   'disabled'
 );
 const editableStatusRule = RuleType.string().valid('active', 'disabled');
+const speechSpeedRule = RuleType.number().min(0.5).max(2);
+const speechVolumeRule = RuleType.number().min(0).max(10);
+const speechPitchRule = RuleType.number().min(-12).max(12);
 
 export class ListAdminVoiceTimbresQueryDTO {
   @Rule(RuleType.string().allow('').optional())
@@ -51,6 +54,15 @@ export class CreateAdminVoiceTimbreDTO {
   @Rule(RuleType.string().allow('').max(60).optional())
   previewModel?: string;
 
+  @Rule(speechSpeedRule.optional())
+  speechSpeed?: number;
+
+  @Rule(speechVolumeRule.optional())
+  speechVolume?: number;
+
+  @Rule(speechPitchRule.optional())
+  speechPitch?: number;
+
   @Rule(RuleType.string().allow('').max(1000).optional())
   remark?: string;
 }
@@ -64,6 +76,15 @@ export class UpdateAdminVoiceTimbreDTO {
 
   @Rule(RuleType.string().allow('').max(1000).optional())
   previewText?: string;
+
+  @Rule(speechSpeedRule.optional())
+  speechSpeed?: number;
+
+  @Rule(speechVolumeRule.optional())
+  speechVolume?: number;
+
+  @Rule(speechPitchRule.optional())
+  speechPitch?: number;
 
   @Rule(RuleType.string().allow('').max(1000).optional())
   remark?: string;

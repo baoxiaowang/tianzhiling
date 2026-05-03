@@ -28,6 +28,9 @@ function createTimbre(
     previewText: '今天天气很好',
     previewModel: 'speech-2.8-turbo',
     previewAudioUrl: '',
+    speechSpeed: 1.08,
+    speechVolume: 1,
+    speechPitch: 0,
     status,
     errorCode: '',
     errorMessage: '',
@@ -97,12 +100,18 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       audioObjectKey: 'voice-timbres/demo.wav',
       cloneLanguage: 'Chinese',
       previewText: '今天天气很好',
+      speechSpeed: 1.08,
+      speechVolume: 1,
+      speechPitch: 0,
       remark: '',
     });
 
     expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
         name: '测试音色',
+        speechSpeed: 1.08,
+        speechVolume: 1,
+        speechPitch: 0,
         status: VoiceTimbreStatus.creating,
         errorCode: '',
         errorMessage: '',
@@ -123,7 +132,40 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     expect(result).toEqual(
       expect.objectContaining({
         id: TIMBRE_ID.toHexString(),
+        speechSpeed: 1.08,
+        speechVolume: 1,
+        speechPitch: 0,
         status: VoiceTimbreStatus.creating,
+      })
+    );
+  });
+
+  it('updates output speech settings without re-cloning the timbre', async () => {
+    const { service } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.updateVoiceTimbre(TIMBRE_ID.toHexString(), {
+      speechSpeed: 1.16,
+      speechVolume: 1.2,
+      speechPitch: -1,
+    });
+
+    expect(service.minimaxVoiceService.uploadCloneAudio).not.toHaveBeenCalled();
+    expect(service.minimaxVoiceService.cloneVoice).not.toHaveBeenCalled();
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        speechSpeed: 1.16,
+        speechVolume: 1.2,
+        speechPitch: -1,
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        speechSpeed: 1.16,
+        speechVolume: 1.2,
+        speechPitch: -1,
       })
     );
   });

@@ -53,7 +53,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1700 }"
+        :scroll="{ x: 1920 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -156,6 +156,23 @@
               <a-tag :color="record.status === 1 ? 'green' : 'gray'">
                 {{ formatStatus(record.status) }}
               </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="绑定音色ID"
+            data-index="voiceTimbreId"
+            :width="220"
+          >
+            <template #cell="{ record }">
+              <a-tooltip
+                v-if="record.voiceTimbreId"
+                :content="record.voiceTimbreId"
+              >
+                <a-typography-text class="agent-page__id" copyable>
+                  {{ record.voiceTimbreId }}
+                </a-typography-text>
+              </a-tooltip>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="生日" data-index="birthday" :width="150">

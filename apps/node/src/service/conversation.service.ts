@@ -74,6 +74,35 @@ interface SynthesizedAssistantVoiceReply {
   transcript: string;
 }
 
+interface ReplyRuntime {
+  auth: AuthenticatedUserPayload;
+  conversation: ConversationEntity;
+  agent: AgentEntity | null;
+}
+
+interface BeforeReplyResult {
+  messagePayload: PreparedIncomingMessage;
+  searchableText: string;
+  userMessage: MessageEntity;
+  deferReply: boolean;
+}
+
+interface ReplyUsage {
+  model?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+interface ProcessReplyResult {
+  replyContent: string;
+  usage: ReplyUsage;
+}
+
+interface AfterReplyResult {
+  assistantMessage: MessageEntity;
+}
+
 @Provide()
 export class ConversationService {
   @Logger()
@@ -167,87 +196,22 @@ export class ConversationService {
     conversationId: string,
     payload: SendConversationMessageDTO
   ): Promise<SendConversationMessageResult> {
-    const conversation = await this.getConversationForUser(
-      auth,
-      conversationId
-    );
-    const agent = await this.findAgentById(conversation.agentId);
-    const messagePayload = await this.prepareIncomingMessage(payload);
-    const searchableText = this.buildMessageSearchableText(messagePayload);
-    const now = new Date();
+    const runtime = await this.createReplyRuntime(auth, conversationId);
+    const before = await this.beforeReply(runtime, payload);
 
-    const userMessage = await this.saveMessage({
-      conversationId: conversation.id,
-      role: MessageRole.user,
-      type: messagePayload.type,
-      content: messagePayload.content,
-      status: MessageStatus.sent,
-      mediaObjectKey: messagePayload.mediaObjectKey,
-      mediaUrl: messagePayload.mediaObjectKey
-        ? undefined
-        : messagePayload.mediaUrl,
-      mediaMimeType: messagePayload.mediaMimeType,
-      mediaAnalysis: messagePayload.mediaAnalysis,
-      mediaTranscript: messagePayload.mediaTranscript,
-      mediaDurationMs: messagePayload.mediaDurationMs,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await this.touchConversation(conversation, now);
-    this.queueMilvusIndexForMessage({
-      message: userMessage,
-      conversation,
-      userId: auth.sub,
-      searchableText,
-    });
-
-    if (this.isAssistantReplyDeferred(messagePayload)) {
-      return {
-        userMessage:
-          this.messageService.buildConversationMessageItem(userMessage),
-      };
+    if (before.deferReply) {
+      return this.buildSendMessageResult(before);
     }
 
     try {
-      const context = await this.agentContextService.buildConversationContext({
-        auth,
-        conversation,
-        agent,
-        currentQuery: searchableText,
-      });
+      const processed = await this.processReply(runtime, before);
+      const after = await this.afterReply(runtime, before, processed);
 
-      const response = await this.openAIService.createChatCompletion({
-        messages: context.messages,
-      });
-      const replyContent = this.normalizeAssistantReply(
-        typeof response.choices?.[0]?.message?.content === 'string'
-          ? response.choices[0].message.content
-          : ''
-      );
-      const usage = this.extractUsageFromResponse(response);
-      const replyTime = new Date();
-      const assistantMessage = await this.createAssistantReplyMessage({
-        conversationId: conversation.id,
-        agent,
-        replyContent,
-        preferVoiceReply: messagePayload.type === MessageType.voice,
-        replyTime,
-        usage,
-      });
-
-      await this.touchConversation(conversation, replyTime);
-
-      return {
-        userMessage:
-          this.messageService.buildConversationMessageItem(userMessage),
-        assistantMessage:
-          this.messageService.buildConversationMessageItem(assistantMessage),
-      };
+      return this.buildSendMessageResult(before, after);
     } catch (error) {
       this.logger.error(
         '[conversation] assistant reply generation failed, conversationId=%s, userId=%s, reason=%s',
-        this.stringifyObjectId(conversation.id),
+        this.stringifyObjectId(runtime.conversation.id),
         auth.sub,
         this.describeReplyError(error)
       );
@@ -281,6 +245,127 @@ export class ConversationService {
     }
 
     return { transcript };
+  }
+
+  private async createReplyRuntime(
+    auth: AuthenticatedUserPayload,
+    conversationId: string
+  ): Promise<ReplyRuntime> {
+    const conversation = await this.getConversationForUser(
+      auth,
+      conversationId
+    );
+    const agent = await this.findAgentById(conversation.agentId);
+
+    return {
+      auth,
+      conversation,
+      agent,
+    };
+  }
+
+  private async beforeReply(
+    runtime: ReplyRuntime,
+    payload: SendConversationMessageDTO
+  ): Promise<BeforeReplyResult> {
+    const messagePayload = await this.prepareIncomingMessage(payload);
+    const searchableText = this.buildMessageSearchableText(messagePayload);
+    const now = new Date();
+    const userMessage = await this.saveMessage({
+      conversationId: runtime.conversation.id,
+      role: MessageRole.user,
+      type: messagePayload.type,
+      content: messagePayload.content,
+      status: MessageStatus.sent,
+      mediaObjectKey: messagePayload.mediaObjectKey,
+      mediaUrl: messagePayload.mediaObjectKey
+        ? undefined
+        : messagePayload.mediaUrl,
+      mediaMimeType: messagePayload.mediaMimeType,
+      mediaAnalysis: messagePayload.mediaAnalysis,
+      mediaTranscript: messagePayload.mediaTranscript,
+      mediaDurationMs: messagePayload.mediaDurationMs,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await this.touchConversation(runtime.conversation, now);
+    this.queueMilvusIndexForMessage({
+      message: userMessage,
+      conversation: runtime.conversation,
+      userId: runtime.auth.sub,
+      searchableText,
+    });
+
+    return {
+      messagePayload,
+      searchableText,
+      userMessage,
+      deferReply: this.isAssistantReplyDeferred(messagePayload),
+    };
+  }
+
+  private async processReply(
+    runtime: ReplyRuntime,
+    before: BeforeReplyResult
+  ): Promise<ProcessReplyResult> {
+    const context = await this.agentContextService.buildConversationContext({
+      auth: runtime.auth,
+      conversation: runtime.conversation,
+      agent: runtime.agent,
+      currentQuery: before.searchableText,
+    });
+    const response = await this.openAIService.createChatCompletion({
+      messages: context.messages,
+    });
+    const replyContent = this.normalizeAssistantReply(
+      typeof response.choices?.[0]?.message?.content === 'string'
+        ? response.choices[0].message.content
+        : ''
+    );
+
+    return {
+      replyContent,
+      usage: this.extractUsageFromResponse(response),
+    };
+  }
+
+  private async afterReply(
+    runtime: ReplyRuntime,
+    before: BeforeReplyResult,
+    processed: ProcessReplyResult
+  ): Promise<AfterReplyResult> {
+    const replyTime = new Date();
+    const assistantMessage = await this.createAssistantReplyMessage({
+      conversationId: runtime.conversation.id,
+      agent: runtime.agent,
+      replyContent: processed.replyContent,
+      preferVoiceReply: this.shouldPreferVoiceReply(before.messagePayload),
+      replyTime,
+      usage: processed.usage,
+    });
+
+    await this.touchConversation(runtime.conversation, replyTime);
+
+    return {
+      assistantMessage,
+    };
+  }
+
+  private buildSendMessageResult(
+    before: BeforeReplyResult,
+    after?: AfterReplyResult
+  ): SendConversationMessageResult {
+    return {
+      userMessage: this.messageService.buildConversationMessageItem(
+        before.userMessage
+      ),
+      assistantMessage: after?.assistantMessage
+        ? this.messageService.buildConversationMessageItem(
+            after.assistantMessage
+          )
+        : undefined,
+    };
   }
 
   private buildPreview(
@@ -369,6 +454,10 @@ export class ConversationService {
     return (
       payload.type === MessageType.voice && !payload.mediaTranscript?.trim()
     );
+  }
+
+  private shouldPreferVoiceReply(payload: PreparedIncomingMessage): boolean {
+    return payload.type === MessageType.voice;
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {
@@ -662,6 +751,9 @@ export class ConversationService {
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         languageBoost: input.voiceTimbre.cloneLanguage,
+        speed: input.voiceTimbre.speechSpeed,
+        volume: input.voiceTimbre.speechVolume,
+        pitch: input.voiceTimbre.speechPitch,
       });
     }
 

@@ -28,6 +28,9 @@ import { MinimaxVoiceService } from './minimax-voice.service';
 type MongoWhere = Record<string, unknown>;
 
 export const VOICE_TIMBRE_CREATE_QUEUE = 'voice-timbre-create';
+const DEFAULT_SPEECH_SPEED = 1;
+const DEFAULT_SPEECH_VOLUME = 1;
+const DEFAULT_SPEECH_PITCH = 0;
 
 export interface VoiceTimbreCreateJobData {
   timbreId: string;
@@ -114,6 +117,9 @@ export class AdminVoiceTimbreService {
     timbre.previewText = this.normalizeOptionalText(payload.previewText, 1000);
     timbre.previewModel = this.normalizePreviewModel(payload.previewModel);
     timbre.previewAudioUrl = '';
+    timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+    timbre.speechVolume = this.normalizeSpeechVolume(payload.speechVolume);
+    timbre.speechPitch = this.normalizeSpeechPitch(payload.speechPitch);
     timbre.status = VoiceTimbreStatus.creating;
     timbre.errorCode = '';
     timbre.errorMessage = '';
@@ -204,6 +210,21 @@ export class AdminVoiceTimbreService {
         payload.previewText,
         1000
       );
+      changed = true;
+    }
+
+    if (payload.speechSpeed !== undefined) {
+      timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+      changed = true;
+    }
+
+    if (payload.speechVolume !== undefined) {
+      timbre.speechVolume = this.normalizeSpeechVolume(payload.speechVolume);
+      changed = true;
+    }
+
+    if (payload.speechPitch !== undefined) {
+      timbre.speechPitch = this.normalizeSpeechPitch(payload.speechPitch);
       changed = true;
     }
 
@@ -407,6 +428,9 @@ export class AdminVoiceTimbreService {
       previewText: timbre.previewText ?? '',
       previewModel: timbre.previewModel ?? '',
       previewAudioUrl: timbre.previewAudioUrl ?? '',
+      speechSpeed: this.normalizeSpeechSpeed(timbre.speechSpeed),
+      speechVolume: this.normalizeSpeechVolume(timbre.speechVolume),
+      speechPitch: this.normalizeSpeechPitch(timbre.speechPitch),
       status: timbre.status as VoiceTimbreStatusDTO,
       errorCode: timbre.errorCode ?? '',
       errorMessage: timbre.errorMessage ?? '',
@@ -718,6 +742,49 @@ export class AdminVoiceTimbreService {
 
   private normalizePreviewModel(value?: string): string {
     return value?.trim() || this.minimaxVoiceService.getDefaultPreviewModel();
+  }
+
+  private normalizeSpeechSpeed(value?: number): number {
+    return this.normalizeNumberInRange(
+      value,
+      DEFAULT_SPEECH_SPEED,
+      0.5,
+      2
+    );
+  }
+
+  private normalizeSpeechVolume(value?: number): number {
+    return this.normalizeNumberInRange(
+      value,
+      DEFAULT_SPEECH_VOLUME,
+      0,
+      10
+    );
+  }
+
+  private normalizeSpeechPitch(value?: number): number {
+    return this.normalizeNumberInRange(
+      value,
+      DEFAULT_SPEECH_PITCH,
+      -12,
+      12
+    );
+  }
+
+  private normalizeNumberInRange(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number
+  ): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+
+    const clamped = Math.min(max, Math.max(min, parsed));
+    return Math.round(clamped * 100) / 100;
   }
 
   private normalizeOptionalText(

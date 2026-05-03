@@ -68,7 +68,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1720 }"
+        :scroll="{ x: 1870 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -111,6 +111,15 @@
             data-index="cloneLanguage"
             :width="120"
           />
+          <a-table-column title="输出参数" :width="220">
+            <template #cell="{ record }">
+              <div class="voice-timbre-page__speech-params">
+                <span>速度：{{ formatSpeechNumber(record.speechSpeed) }}</span>
+                <span>音量：{{ formatSpeechNumber(record.speechVolume) }}</span>
+                <span>音调：{{ formatSpeechNumber(record.speechPitch) }}</span>
+              </div>
+            </template>
+          </a-table-column>
           <a-table-column title="状态" data-index="status" :width="110">
             <template #cell="{ record }">
               <a-tooltip
@@ -299,6 +308,75 @@
           />
         </a-form-item>
 
+        <div class="voice-timbre-page__speech-settings">
+          <div class="voice-timbre-page__section-title">输出层调节</div>
+          <a-grid :cols="1" :row-gap="14">
+            <a-grid-item>
+              <a-form-item field="speechSpeed" label="语速">
+                <div class="voice-timbre-page__slider-row">
+                  <a-slider
+                    v-model="editForm.speechSpeed"
+                    :min="0.5"
+                    :max="2"
+                    :step="0.01"
+                  />
+                  <a-input-number
+                    v-model="editForm.speechSpeed"
+                    :min="0.5"
+                    :max="2"
+                    :step="0.01"
+                    :precision="2"
+                    hide-button
+                    class="voice-timbre-page__number"
+                  />
+                </div>
+              </a-form-item>
+            </a-grid-item>
+            <a-grid-item>
+              <a-form-item field="speechVolume" label="音量">
+                <div class="voice-timbre-page__slider-row">
+                  <a-slider
+                    v-model="editForm.speechVolume"
+                    :min="0"
+                    :max="10"
+                    :step="0.01"
+                  />
+                  <a-input-number
+                    v-model="editForm.speechVolume"
+                    :min="0"
+                    :max="10"
+                    :step="0.01"
+                    :precision="2"
+                    hide-button
+                    class="voice-timbre-page__number"
+                  />
+                </div>
+              </a-form-item>
+            </a-grid-item>
+            <a-grid-item>
+              <a-form-item field="speechPitch" label="音调">
+                <div class="voice-timbre-page__slider-row">
+                  <a-slider
+                    v-model="editForm.speechPitch"
+                    :min="-12"
+                    :max="12"
+                    :step="0.01"
+                  />
+                  <a-input-number
+                    v-model="editForm.speechPitch"
+                    :min="-12"
+                    :max="12"
+                    :step="0.01"
+                    :precision="2"
+                    hide-button
+                    class="voice-timbre-page__number"
+                  />
+                </div>
+              </a-form-item>
+            </a-grid-item>
+          </a-grid>
+        </div>
+
         <a-form-item
           v-if="editingRecord"
           field="status"
@@ -375,6 +453,9 @@
     cloneLanguage: 'Chinese',
     providerVoiceId: '',
     previewText: '',
+    speechSpeed: 1,
+    speechVolume: 1,
+    speechPitch: 0,
     status: 'active' as Extract<VoiceTimbreStatusDTO, 'active' | 'disabled'>,
     remark: '',
   });
@@ -457,6 +538,9 @@
     editForm.cloneLanguage = record.cloneLanguage || 'Chinese';
     editForm.providerVoiceId = record.providerVoiceId;
     editForm.previewText = record.previewText;
+    editForm.speechSpeed = normalizeSpeechFormValue(record.speechSpeed, 1);
+    editForm.speechVolume = normalizeSpeechFormValue(record.speechVolume, 1);
+    editForm.speechPitch = normalizeSpeechFormValue(record.speechPitch, 0);
     editForm.status = record.status === 'disabled' ? 'disabled' : 'active';
     editForm.remark = record.remark;
     editVisible.value = true;
@@ -478,6 +562,9 @@
     editForm.cloneLanguage = 'Chinese';
     editForm.providerVoiceId = '';
     editForm.previewText = '';
+    editForm.speechSpeed = 1;
+    editForm.speechVolume = 1;
+    editForm.speechPitch = 0;
     editForm.status = 'active';
     editForm.remark = '';
 
@@ -531,6 +618,9 @@
           name: editForm.name,
           status: editForm.status,
           previewText: editForm.previewText,
+          speechSpeed: editForm.speechSpeed,
+          speechVolume: editForm.speechVolume,
+          speechPitch: editForm.speechPitch,
           remark: editForm.remark,
         });
         Message.success('音色已更新');
@@ -549,6 +639,9 @@
           cloneLanguage: editForm.cloneLanguage,
           providerVoiceId: editForm.providerVoiceId || undefined,
           previewText: editForm.previewText,
+          speechSpeed: editForm.speechSpeed,
+          speechVolume: editForm.speechVolume,
+          speechPitch: editForm.speechPitch,
           remark: editForm.remark,
         });
         Message.success('音色创建任务已提交');
@@ -623,6 +716,17 @@
     return map[status] || status;
   };
 
+  const formatSpeechNumber = (value: number) => {
+    return normalizeSpeechFormValue(value, 0).toFixed(2);
+  };
+
+  const normalizeSpeechFormValue = (
+    value: number | undefined,
+    fallback: number
+  ) => {
+    return Number.isFinite(value) ? Number(value) : fallback;
+  };
+
   const getStatusColor = (status: VoiceTimbreStatusDTO) => {
     const map: Record<VoiceTimbreStatusDTO, string> = {
       creating: 'blue',
@@ -680,6 +784,41 @@
     &__audio {
       width: 220px;
       height: 32px;
+    }
+
+    &__speech-params {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--color-text-2);
+      font-size: 13px;
+      line-height: 18px;
+    }
+
+    &__speech-settings {
+      margin-bottom: 16px;
+      padding: 12px 16px 4px;
+      border: 1px solid var(--color-border-2);
+      border-radius: 4px;
+      background: var(--color-fill-1);
+    }
+
+    &__section-title {
+      margin-bottom: 12px;
+      color: var(--color-text-1);
+      font-weight: 500;
+    }
+
+    &__slider-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 88px;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+    }
+
+    &__number {
+      width: 88px;
     }
 
     &__pagination {

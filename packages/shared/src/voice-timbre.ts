@@ -18,6 +18,9 @@ export interface AdminVoiceTimbreRecordDTO {
   previewText: string;
   previewModel: string;
   previewAudioUrl: string;
+  speechSpeed: number;
+  speechVolume: number;
+  speechPitch: number;
   status: VoiceTimbreStatusDTO;
   errorCode: string;
   errorMessage: string;
@@ -50,6 +53,9 @@ export interface CreateAdminVoiceTimbreDTO {
   providerVoiceId?: string;
   previewText?: string;
   previewModel?: string;
+  speechSpeed?: number;
+  speechVolume?: number;
+  speechPitch?: number;
   remark?: string;
 }
 
@@ -57,5 +63,8 @@ export interface UpdateAdminVoiceTimbreDTO {
   name?: string;
   status?: Extract<VoiceTimbreStatusDTO, 'active' | 'disabled'>;
   previewText?: string;
+  speechSpeed?: number;
+  speechVolume?: number;
+  speechPitch?: number;
   remark?: string;
 }

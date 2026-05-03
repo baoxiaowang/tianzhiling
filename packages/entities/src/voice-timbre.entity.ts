@@ -47,6 +47,15 @@ export class VoiceTimbreEntity extends BaseEntity {
   previewAudioUrl?: string;
 
   @Column()
+  speechSpeed?: number;
+
+  @Column()
+  speechVolume?: number;
+
+  @Column()
+  speechPitch?: number;
+
+  @Column()
   status: VoiceTimbreStatus;
 
   @Column()
