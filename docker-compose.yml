@@ -57,6 +57,10 @@ services:
       - .env
     environment:
       ADMIN_API_PORT: 7101
+      ADMIN_API_REDIS_HOST: tzl_redis
+      ADMIN_API_REDIS_PORT: 6379
+      ADMIN_API_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ADMIN_API_REDIS_DB: ${REDIS_DB:-0}
       ADMIN_API_MONGO_HOST: tzl_mongo
       ADMIN_API_MONGO_PORT: 27017
       ADMIN_API_MONGO_DB: ${MONGO_DB:-tzl}
@@ -66,6 +70,7 @@ services:
     expose:
       - "7101"
     depends_on:
+      - tzl_redis
       - tzl_mongo
     networks:
       - tzl-network

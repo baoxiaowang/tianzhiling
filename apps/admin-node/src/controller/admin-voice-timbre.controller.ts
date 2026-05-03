@@ -21,6 +21,11 @@ export class AdminVoiceTimbreController {
     return this.adminVoiceTimbreService.createVoiceTimbre(body);
   }
 
+  @Post('/:id/retry')
+  async retry(@Param('id') id: string) {
+    return this.adminVoiceTimbreService.retryVoiceTimbreCreate(id);
+  }
+
   @Put('/:id')
   async update(
     @Param('id') id: string,

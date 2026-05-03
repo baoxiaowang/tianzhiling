@@ -5,6 +5,7 @@ import * as info from '@midwayjs/info';
 import * as jwt from '@midwayjs/jwt';
 import * as orm from '@midwayjs/typeorm';
 import * as busboy from '@midwayjs/busboy';
+import * as bullmq from '@midwayjs/bullmq';
 import { join } from 'path';
 import { DefaultErrorFilter } from './filter/default.filter';
 import { NotFoundFilter } from './filter/notfound.filter';
@@ -18,6 +19,7 @@ import { FormatMiddleware } from './middleware/format.middleware';
     jwt,
     orm,
     busboy,
+    bullmq,
     {
       component: info,
       enabledEnvironment: ['local'],

@@ -1,6 +1,8 @@
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { AppError } from '@tzl/shared';
+import * as bullmq from '@midwayjs/bullmq';
+import type { ILogger } from '@midwayjs/logger';
 import type {
   AdminVoiceTimbreListDTO,
   AdminVoiceTimbreRecordDTO,
@@ -25,10 +27,22 @@ import { MinimaxVoiceService } from './minimax-voice.service';
 
 type MongoWhere = Record<string, unknown>;
 
+export const VOICE_TIMBRE_CREATE_QUEUE = 'voice-timbre-create';
+
+export interface VoiceTimbreCreateJobData {
+  timbreId: string;
+}
+
 @Provide()
 export class AdminVoiceTimbreService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
+
+  @Inject()
+  bullmqFramework: bullmq.Framework;
 
   @Inject()
   storageFileService: AdminStorageFileService;
@@ -108,21 +122,64 @@ export class AdminVoiceTimbreService {
     timbre.updatedAt = now;
 
     const saved = await this.voiceTimbreModel.save(timbre);
-
-    try {
-      await this.createProviderVoice(saved);
-    } catch (error) {
-      saved.status = VoiceTimbreStatus.failed;
-      saved.errorCode =
-        (error as { code?: string })?.code || 'VOICE_TIMBRE_CREATE_FAILED';
-      saved.errorMessage =
-        error instanceof Error ? error.message : 'voice timbre create failed';
-      saved.updatedAt = new Date();
-      await this.voiceTimbreModel.save(saved);
-      throw error;
-    }
+    await this.enqueueCreateVoiceTimbreJob(saved);
 
     return this.buildRecord(saved);
+  }
+
+  async retryVoiceTimbreCreate(
+    timbreId: string
+  ): Promise<AdminVoiceTimbreRecordDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+
+    if (timbre.status !== VoiceTimbreStatus.failed) {
+      throw new AppError(
+        'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
+        'only failed voice timbre can be retried',
+        400
+      );
+    }
+
+    timbre.status = VoiceTimbreStatus.creating;
+    timbre.errorCode = '';
+    timbre.errorMessage = '';
+    timbre.providerFileId = '';
+    timbre.previewAudioUrl = '';
+    timbre.updatedAt = new Date();
+    const saved = await this.voiceTimbreModel.save(timbre);
+    await this.enqueueCreateVoiceTimbreJob(saved);
+
+    return this.buildRecord(saved);
+  }
+
+  async processCreateVoiceTimbreJob(
+    data: VoiceTimbreCreateJobData
+  ): Promise<void> {
+    const timbre = await this.getVoiceTimbreById(data.timbreId);
+
+    if (timbre.status === VoiceTimbreStatus.active) {
+      return;
+    }
+
+    if (timbre.status === VoiceTimbreStatus.disabled) {
+      return;
+    }
+
+    timbre.status = VoiceTimbreStatus.creating;
+    timbre.errorCode = '';
+    timbre.errorMessage = '';
+    timbre.updatedAt = new Date();
+    await this.voiceTimbreModel.save(timbre);
+
+    try {
+      await this.createProviderVoice(timbre);
+    } catch (error) {
+      await this.markCreateFailed(timbre, error);
+
+      if (this.shouldRetryCreateError(error)) {
+        throw error;
+      }
+    }
   }
 
   async updateVoiceTimbre(
@@ -205,6 +262,96 @@ export class AdminVoiceTimbreService {
     timbre.errorMessage = '';
     timbre.updatedAt = new Date();
     await this.voiceTimbreModel.save(timbre);
+  }
+
+  private async enqueueCreateVoiceTimbreJob(
+    timbre: VoiceTimbreEntity
+  ): Promise<void> {
+    const timbreId = this.stringifyObjectId(timbre.id);
+    const queue = this.bullmqFramework?.getQueue(VOICE_TIMBRE_CREATE_QUEUE);
+
+    if (!queue) {
+      await this.markCreateFailed(
+        timbre,
+        new AppError(
+          'VOICE_TIMBRE_QUEUE_NOT_FOUND',
+          'voice timbre queue is not available',
+          500
+        )
+      );
+      return;
+    }
+
+    try {
+      const jobId = `voice-timbre-create:${timbreId}:${timbre.updatedAt.getTime()}`;
+
+      await queue.addJobToQueue(
+        {
+          timbreId,
+        },
+        {
+          jobId,
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+        }
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[voice-timbre-create] enqueue failed, timbreId=%s, error=%s',
+        timbreId,
+        error instanceof Error ? error.message : String(error)
+      );
+      await this.markCreateFailed(timbre, error);
+    }
+  }
+
+  private async markCreateFailed(
+    timbre: VoiceTimbreEntity,
+    error: unknown
+  ): Promise<void> {
+    timbre.status = VoiceTimbreStatus.failed;
+    timbre.errorCode =
+      (error as { code?: string })?.code || 'VOICE_TIMBRE_CREATE_FAILED';
+    timbre.errorMessage =
+      error instanceof Error ? error.message : 'voice timbre create failed';
+    timbre.updatedAt = new Date();
+    await this.voiceTimbreModel.save(timbre);
+  }
+
+  private shouldRetryCreateError(error: unknown): boolean {
+    const code = (error as { code?: string })?.code || '';
+    const status = (error as { status?: number })?.status;
+
+    if (
+      [
+        'MINIMAX_VOICE_API_KEY_MISSING',
+        'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
+        'VOICE_TIMBRE_AUDIO_TOO_LARGE',
+        'VOICE_TIMBRE_MEDIA_TOO_LARGE',
+        'MINIMAX_INVALID_AUDIO',
+      ].includes(code)
+    ) {
+      return false;
+    }
+
+    if (this.isPermanentMinimaxError(error)) {
+      return false;
+    }
+
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isPermanentMinimaxError(error: unknown): boolean {
+    const data = (error as { data?: { status_code?: number } })?.data;
+
+    return data?.status_code === 2049;
   }
 
   private buildSearchWhere(query: ListAdminVoiceTimbresQueryDTO): MongoWhere {

@@ -152,6 +152,60 @@ export default {
       120000
     ),
   },
+  bullmq: {
+    defaultConnection: {
+      host: readStringFrom(
+        [
+          'ADMIN_API_BULLMQ_HOST',
+          'NODE_BULLMQ_HOST',
+          'NODE_REDIS_HOST',
+          'REDIS_HOST',
+        ],
+        '127.0.0.1'
+      ),
+      port: readNumberFrom(
+        [
+          'ADMIN_API_BULLMQ_PORT',
+          'NODE_BULLMQ_PORT',
+          'NODE_REDIS_PORT',
+          'REDIS_PORT',
+        ],
+        17380
+      ),
+      password: readStringFrom(
+        [
+          'ADMIN_API_BULLMQ_PASSWORD',
+          'NODE_BULLMQ_PASSWORD',
+          'NODE_REDIS_PASSWORD',
+          'REDIS_PASSWORD',
+        ],
+        ''
+      ),
+      db: readNumberFrom(
+        ['ADMIN_API_BULLMQ_DB', 'NODE_BULLMQ_DB', 'NODE_REDIS_DB', 'REDIS_DB'],
+        0
+      ),
+    },
+    defaultPrefix: readStringFrom(
+      ['ADMIN_API_BULLMQ_PREFIX', 'NODE_BULLMQ_PREFIX'],
+      '{tzl-admin-bullmq}'
+    ),
+    defaultQueueOptions: {
+      defaultJobOptions: {
+        removeOnComplete: readNumberFrom(
+          [
+            'ADMIN_API_BULLMQ_REMOVE_ON_COMPLETE',
+            'NODE_BULLMQ_REMOVE_ON_COMPLETE',
+          ],
+          100
+        ),
+        removeOnFail: readNumberFrom(
+          ['ADMIN_API_BULLMQ_REMOVE_ON_FAIL', 'NODE_BULLMQ_REMOVE_ON_FAIL'],
+          500
+        ),
+      },
+    },
+  },
   ffmpeg: {
     binaryPath: readStringFrom(
       ['ADMIN_API_FFMPEG_BINARY_PATH', 'NODE_FFMPEG_BINARY_PATH'],

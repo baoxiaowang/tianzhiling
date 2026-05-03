@@ -153,11 +153,23 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="120" fixed="right">
+          <a-table-column title="操作" :width="150" fixed="right">
             <template #cell="{ record }">
-              <a-button type="text" size="small" @click="openEdit(record)">
-                编辑
-              </a-button>
+              <a-space :size="4">
+                <a-button type="text" size="small" @click="openEdit(record)">
+                  编辑
+                </a-button>
+                <a-button
+                  v-if="record.status === 'failed'"
+                  type="text"
+                  size="small"
+                  status="warning"
+                  :loading="isRetrying(record.id)"
+                  @click="handleRetry(record)"
+                >
+                  重试
+                </a-button>
+              </a-space>
             </template>
           </a-table-column>
         </template>
@@ -332,6 +344,7 @@
   import {
     createVoiceTimbre,
     queryVoiceTimbreList,
+    retryVoiceTimbre,
     updateVoiceTimbre,
     VoiceTimbreRecord,
   } from '@/api/voice-model';
@@ -340,6 +353,7 @@
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const editVisible = ref(false);
   const saving = ref(false);
+  const retryingIds = ref<Set<string>>(new Set());
   const editingRecord = ref<VoiceTimbreRecord>();
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
@@ -537,7 +551,7 @@
           previewText: editForm.previewText,
           remark: editForm.remark,
         });
-        Message.success('音色已创建');
+        Message.success('音色创建任务已提交');
       }
 
       closeEdit();
@@ -548,6 +562,26 @@
       return false;
     } finally {
       saving.value = false;
+    }
+  };
+
+  const isRetrying = (id: string) => retryingIds.value.has(id);
+
+  const handleRetry = async (record: VoiceTimbreRecord) => {
+    const nextRetryingIds = new Set(retryingIds.value);
+    nextRetryingIds.add(record.id);
+    retryingIds.value = nextRetryingIds;
+
+    try {
+      await retryVoiceTimbre(record.id);
+      Message.success('音色创建任务已重新提交');
+      await fetchData();
+    } catch (error) {
+      Message.error('音色重试失败');
+    } finally {
+      const latestRetryingIds = new Set(retryingIds.value);
+      latestRetryingIds.delete(record.id);
+      retryingIds.value = latestRetryingIds;
     }
   };
 

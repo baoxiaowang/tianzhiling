@@ -24,3 +24,7 @@ export function createVoiceTimbre(data: CreateVoiceTimbreData) {
 export function updateVoiceTimbre(id: string, data: UpdateVoiceTimbreData) {
   return axios.put<VoiceTimbreRecord>(`/admin_api/voice-timbres/${id}`, data);
 }
+
+export function retryVoiceTimbre(id: string) {
+  return axios.post<VoiceTimbreRecord>(`/admin_api/voice-timbres/${id}/retry`);
+}

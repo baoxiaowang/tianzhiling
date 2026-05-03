@@ -1,7 +1,38 @@
 import { MidwayConfig } from '@midwayjs/core';
 import { readBooleanFrom, readNumberFrom, readStringFrom } from '@tzl/shared';
 
+const redisHost = readStringFrom(
+  ['ADMIN_API_REDIS_HOST', 'NODE_REDIS_HOST'],
+  'tzl_redis'
+);
+const redisPort = readNumberFrom(
+  ['ADMIN_API_REDIS_PORT', 'NODE_REDIS_PORT'],
+  6379
+);
+const redisPassword = readStringFrom(
+  ['ADMIN_API_REDIS_PASSWORD', 'NODE_REDIS_PASSWORD'],
+  ''
+);
+const redisDb = readNumberFrom(['ADMIN_API_REDIS_DB', 'NODE_REDIS_DB'], 0);
+
 export default {
+  bullmq: {
+    defaultConnection: {
+      host: readStringFrom(
+        ['ADMIN_API_BULLMQ_HOST', 'NODE_BULLMQ_HOST'],
+        redisHost
+      ),
+      port: readNumberFrom(
+        ['ADMIN_API_BULLMQ_PORT', 'NODE_BULLMQ_PORT'],
+        redisPort
+      ),
+      password: readStringFrom(
+        ['ADMIN_API_BULLMQ_PASSWORD', 'NODE_BULLMQ_PASSWORD'],
+        redisPassword
+      ),
+      db: readNumberFrom(['ADMIN_API_BULLMQ_DB', 'NODE_BULLMQ_DB'], redisDb),
+    },
+  },
   typeorm: {
     dataSource: {
       default: {

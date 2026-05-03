@@ -5,6 +5,7 @@
   "dependencies": {
     "@midwayjs/bootstrap": "^3.12.0",
     "@midwayjs/busboy": "^3.20.24",
+    "@midwayjs/bullmq": "^3.20.22",
     "@midwayjs/core": "^3.12.0",
     "@midwayjs/info": "^3.12.0",
     "@midwayjs/jwt": "^3.20.22",
