@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
+import { createReadStream } from 'fs';
 import { Config, Provide } from '@midwayjs/core';
+import COS = require('cos-nodejs-sdk-v5');
 import { AppError } from '@tzl/shared';
 import { CreateAdminCosSignedUploadDTO } from '../dto/admin-storage.dto';
 
@@ -26,6 +28,24 @@ export interface SignedUploadResult {
   method: 'PUT';
   headers: Record<string, string>;
   expiresInSeconds: number;
+}
+
+export interface ServerUploadedFile {
+  provider: 'tencent-cos';
+  bucket: string;
+  region: string;
+  endpoint: string;
+  objectKey: string;
+  publicUrl: string;
+  contentType: string;
+  etag?: string;
+}
+
+export interface UploadCosFileInput {
+  filePath: string;
+  fileName: string;
+  folder?: string;
+  contentType?: string;
 }
 
 @Provide()
@@ -67,6 +87,54 @@ export class AdminStorageService {
       headers,
       expiresInSeconds,
     };
+  }
+
+  async uploadCosFile(input: UploadCosFileInput): Promise<ServerUploadedFile> {
+    this.ensureCosEnabled();
+
+    const bucket = this.getRequiredConfig('bucket');
+    const region = this.getRequiredConfig('region');
+    const contentType = input.contentType?.trim() || 'application/octet-stream';
+    const objectKey = this.buildObjectKey(input.fileName, input.folder);
+    const cos = this.createCosClient();
+    const result = await cos.putObject({
+      Bucket: bucket,
+      Region: region,
+      Key: objectKey,
+      Body: createReadStream(input.filePath),
+      ContentType: contentType,
+    });
+
+    return {
+      provider: 'tencent-cos',
+      bucket,
+      region,
+      endpoint: this.resolveEndpoint(bucket, region),
+      objectKey,
+      publicUrl: this.getPublicUrl(objectKey, bucket, region),
+      contentType,
+      etag: result.ETag,
+    };
+  }
+
+  private createCosClient(): COS {
+    const options: COS.COSOptions = {
+      SecretId: this.getRequiredConfig('secretId'),
+      SecretKey: this.getRequiredConfig('secretKey'),
+      Protocol: this.cosProtocol,
+    };
+    const token = this.cosConfig.securityToken?.trim();
+    const domain = this.cosConfig.domain?.trim();
+
+    if (token) {
+      options.SecurityToken = token;
+    }
+
+    if (domain) {
+      options.Domain = domain;
+    }
+
+    return new COS(options);
   }
 
   private createSignedPutUrl(input: {
@@ -253,6 +321,10 @@ export class AdminStorageService {
       `Tencent COS ${String(key)} is missing`,
       500
     );
+  }
+
+  private get cosProtocol(): 'http' | 'https' {
+    return this.protocol === 'http' ? 'http' : 'https';
   }
 
   private get protocol(): string {

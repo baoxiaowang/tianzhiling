@@ -317,7 +317,7 @@
     VoiceTimbreStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
-  import { uploadAdminFile } from '@/api/storage';
+  import uploadAdminFile from '@/api/storage';
   import {
     createVoiceTimbre,
     queryVoiceTimbreList,

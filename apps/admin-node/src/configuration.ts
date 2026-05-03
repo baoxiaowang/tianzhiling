@@ -4,6 +4,7 @@ import * as validate from '@midwayjs/validate';
 import * as info from '@midwayjs/info';
 import * as jwt from '@midwayjs/jwt';
 import * as orm from '@midwayjs/typeorm';
+import * as busboy from '@midwayjs/busboy';
 import { join } from 'path';
 import { DefaultErrorFilter } from './filter/default.filter';
 import { NotFoundFilter } from './filter/notfound.filter';
@@ -16,6 +17,7 @@ import { FormatMiddleware } from './middleware/format.middleware';
     validate,
     jwt,
     orm,
+    busboy,
     {
       component: info,
       enabledEnvironment: ['local'],

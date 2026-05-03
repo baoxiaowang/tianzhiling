@@ -1,67 +1,33 @@
 import axios from 'axios';
 
-export interface SignedUploadTicket {
+interface UploadedAdminFile {
   provider: string;
   objectKey: string;
-  uploadUrl: string;
   publicUrl: string;
-  method: string;
-  headers?: Record<string, string>;
-  expiresInSeconds?: number;
+  contentType?: string;
+  etag?: string;
 }
 
-interface CreateSignedUploadParams {
-  fileName: string;
-  folder: string;
-  contentType: string;
-}
-
-export async function createCosSignedUpload(params: CreateSignedUploadParams) {
-  const { data } = await axios.post<SignedUploadTicket>(
-    '/admin_api/storage/cos/sign-upload',
-    params
-  );
-
-  return data;
-}
-
-export async function uploadFileToSignedUrl(
-  file: File,
-  ticket: SignedUploadTicket,
-  contentType: string
-) {
-  const response = await fetch(ticket.uploadUrl, {
-    method: ticket.method || 'PUT',
-    body: file,
-    headers: {
-      ...(ticket.headers || {}),
-      'Content-Type': contentType,
-    },
-    credentials: 'omit',
-  });
-
-  if (!response.ok) {
-    throw new Error(`文件上传失败：${response.status} ${response.statusText}`);
-  }
-}
-
-export async function uploadAdminFile(
+async function uploadAdminFile(
   file: File,
   options: { folder: string; contentType?: string }
 ) {
   const contentType =
     options.contentType || file.type || detectContentType(file.name);
-  const ticket = await createCosSignedUpload({
-    fileName: file.name,
-    folder: options.folder,
-    contentType,
-  });
+  const formData = new FormData();
 
-  await uploadFileToSignedUrl(file, ticket, contentType);
+  formData.append('file', file, file.name);
+  formData.append('folder', options.folder);
+  formData.append('contentType', contentType);
+
+  const { data } = await axios.post<UploadedAdminFile>(
+    '/admin_api/storage/cos/upload',
+    formData
+  );
 
   return {
-    objectKey: ticket.objectKey,
-    publicUrl: ticket.publicUrl,
+    objectKey: data.objectKey,
+    publicUrl: data.publicUrl,
   };
 }
 
@@ -83,6 +49,7 @@ function detectContentType(fileName: string) {
   if (ext === 'mp4') {
     return 'video/mp4';
   }
-
   return 'application/octet-stream';
 }
+
+export default uploadAdminFile;

@@ -1,5 +1,6 @@
 import { MidwayConfig } from '@midwayjs/core';
 import { resolve } from 'path';
+import { tmpdir } from 'os';
 import {
   loadEnvFileIfExists,
   readBooleanFrom,
@@ -36,6 +37,17 @@ export default {
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
     globalPrefix: '/admin_api',
+  },
+  busboy: {
+    mode: 'file',
+    tmpdir: resolve(tmpdir(), 'tianzhiling-admin-node-upload'),
+    cleanTimeout: 5 * 60 * 1000,
+    whitelist: ['.mp3', '.m4a', '.wav', '.mp4'],
+    match: /\/admin_api\/storage\/cos\/upload$/,
+    limits: {
+      fileSize: 200 * 1024 * 1024,
+      files: 1,
+    },
   },
   jwt: {
     secret: readStringFrom(
