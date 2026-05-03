@@ -68,7 +68,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1500 }"
+        :scroll="{ x: 1720 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -126,12 +126,23 @@
               </a-tag>
             </template>
           </a-table-column>
+          <a-table-column title="原始文件" :width="260">
+            <template #cell="{ record }">
+              <audio
+                v-if="record.audioUrl"
+                controls
+                :src="record.audioUrl"
+                class="voice-timbre-page__audio"
+              />
+              <span v-else>-</span>
+            </template>
+          </a-table-column>
           <a-table-column title="试听" :width="260">
             <template #cell="{ record }">
               <audio
-                v-if="record.previewAudioUrl || record.audioUrl"
+                v-if="record.previewAudioUrl"
                 controls
-                :src="record.previewAudioUrl || record.audioUrl"
+                :src="record.previewAudioUrl"
                 class="voice-timbre-page__audio"
               />
               <span v-else>-</span>
