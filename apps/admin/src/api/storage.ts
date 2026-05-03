@@ -78,5 +78,9 @@ function detectContentType(fileName: string) {
     return 'audio/wav';
   }
 
+  if (ext === 'mp4') {
+    return 'video/mp4';
+  }
+
   return 'application/octet-stream';
 }

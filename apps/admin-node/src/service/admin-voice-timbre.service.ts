@@ -19,6 +19,7 @@ import {
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
 } from '../dto/admin-voice-timbre.dto';
+import { AdminFfmpegService } from './admin-ffmpeg.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
 import { MinimaxVoiceService } from './minimax-voice.service';
 
@@ -31,6 +32,9 @@ export class AdminVoiceTimbreService {
 
   @Inject()
   storageFileService: AdminStorageFileService;
+
+  @Inject()
+  ffmpegService: AdminFfmpegService;
 
   @Inject()
   minimaxVoiceService: MinimaxVoiceService;
@@ -175,15 +179,13 @@ export class AdminVoiceTimbreService {
 
   private async createProviderVoice(timbre: VoiceTimbreEntity): Promise<void> {
     const audio = await this.storageFileService.download(timbre.audioObjectKey);
-    this.validateAudioFile(audio.buffer, audio.fileName, audio.contentType);
+    this.validateSourceMediaFile(audio.buffer, audio.fileName, audio.contentType);
+    const cloneAudio = await this.prepareCloneAudio(audio);
 
     const fileId = await this.minimaxVoiceService.uploadCloneAudio({
-      buffer: audio.buffer,
-      fileName: audio.fileName,
-      contentType: this.resolveAudioContentType(
-        audio.fileName,
-        audio.contentType
-      ),
+      buffer: cloneAudio.buffer,
+      fileName: cloneAudio.fileName,
+      contentType: cloneAudio.contentType,
     });
     const cloneResult = await this.minimaxVoiceService.cloneVoice({
       fileId,
@@ -314,7 +316,71 @@ export class AdminVoiceTimbreService {
     }
   }
 
-  private validateAudioFile(
+  private async prepareCloneAudio(input: {
+    buffer: Buffer;
+    fileName: string;
+    contentType: string;
+  }): Promise<{ buffer: Buffer; fileName: string; contentType: string }> {
+    if (!this.isMp4Media(input.fileName, input.contentType)) {
+      return {
+        buffer: input.buffer,
+        fileName: input.fileName,
+        contentType: this.resolveAudioContentType(
+          input.fileName,
+          input.contentType
+        ),
+      };
+    }
+
+    const extracted = await this.ffmpegService.extractAudioToWav({
+      buffer: input.buffer,
+      fileName: input.fileName,
+    });
+    this.validateCloneAudioFile(
+      extracted.buffer,
+      extracted.fileName,
+      extracted.contentType
+    );
+
+    return extracted;
+  }
+
+  private validateSourceMediaFile(
+    buffer: Buffer,
+    fileName: string,
+    contentType: string
+  ): void {
+    if (buffer.length > 200 * 1024 * 1024) {
+      throw new AppError(
+        'VOICE_TIMBRE_MEDIA_TOO_LARGE',
+        'media file must be <= 200MB',
+        400
+      );
+    }
+
+    const ext = this.getFileExt(fileName);
+    const normalizedContentType = contentType.toLowerCase();
+    const validExt = ['mp3', 'm4a', 'wav', 'mp4'].includes(ext);
+    const validMime =
+      normalizedContentType.includes('audio/mpeg') ||
+      normalizedContentType.includes('audio/mp3') ||
+      normalizedContentType.includes('audio/mp4') ||
+      normalizedContentType.includes('audio/x-m4a') ||
+      normalizedContentType.includes('audio/wav') ||
+      normalizedContentType.includes('audio/x-wav') ||
+      normalizedContentType.includes('video/mp4') ||
+      normalizedContentType.includes('application/octet-stream');
+
+    if (!validExt && !validMime) {
+      throw new AppError(
+        'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
+        'media file must be mp3, m4a, wav or mp4',
+        400
+      );
+    }
+  }
+
+  private validateCloneAudioFile(
     buffer: Buffer,
     fileName: string,
     contentType: string
@@ -322,7 +388,7 @@ export class AdminVoiceTimbreService {
     if (buffer.length > 20 * 1024 * 1024) {
       throw new AppError(
         'VOICE_TIMBRE_AUDIO_TOO_LARGE',
-        'audio must be <= 20MB',
+        'converted audio must be <= 20MB',
         400
       );
     }
@@ -342,7 +408,7 @@ export class AdminVoiceTimbreService {
     if (!validExt && !validMime) {
       throw new AppError(
         'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
-        'audio must be mp3, m4a or wav',
+        'clone audio must be mp3, m4a or wav',
         400
       );
     }
@@ -554,5 +620,12 @@ export class AdminVoiceTimbreService {
 
   private getFileExt(fileName: string): string {
     return fileName.split('.').pop()?.trim().toLowerCase() || '';
+  }
+
+  private isMp4Media(fileName: string, contentType: string): boolean {
+    const ext = this.getFileExt(fileName);
+    const normalizedContentType = contentType.toLowerCase();
+
+    return ext === 'mp4' || normalizedContentType.includes('video/mp4');
   }
 }

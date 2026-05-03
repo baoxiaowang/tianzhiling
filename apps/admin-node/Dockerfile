@@ -34,7 +34,7 @@ RUN npx -y pnpm@9.15.9 install --prod --frozen-lockfile --lockfile-dir=/workspac
 
 FROM node:20.18.0-alpine AS runtime
 
-RUN apk add --no-cache tzdata && npm install -g pm2@5.4.3
+RUN apk add --no-cache tzdata ffmpeg && npm install -g pm2@5.4.3
 
 ENV TZ="Asia/Shanghai"
 

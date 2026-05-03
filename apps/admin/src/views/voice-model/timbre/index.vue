@@ -242,11 +242,12 @@
             <input
               ref="fileInputRef"
               type="file"
-              accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav"
+              accept=".mp3,.m4a,.wav,.mp4,audio/mpeg,audio/mp4,audio/wav,video/mp4"
               @change="onAudioFileChange"
             />
             <a-typography-text type="secondary">
-              支持 mp3、m4a、wav，最大 20MB，建议时长 10 秒到 5 分钟
+              支持 mp3、m4a、wav、mp4；音频最大 20MB，mp4 最大 200MB，建议时长
+              10 秒到 5 分钟
             </a-typography-text>
             <a-link
               v-if="editForm.audioUrl"
@@ -469,13 +470,15 @@
     }
 
     if (!isValidAudioFile(file)) {
-      Message.error('请上传 mp3、m4a 或 wav 音频文件');
+      Message.error('请上传 mp3、m4a、wav 或 mp4 文件');
       selectedAudioFile.value = undefined;
       return;
     }
 
-    if (file.size > 20 * 1024 * 1024) {
-      Message.error('音频文件不能超过 20MB');
+    if (file.size > getMediaMaxSize(file)) {
+      Message.error(
+        isMp4File(file) ? 'mp4 文件不能超过 200MB' : '音频文件不能超过 20MB'
+      );
       selectedAudioFile.value = undefined;
       return;
     }
@@ -538,8 +541,20 @@
   };
 
   const isValidAudioFile = (file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    return ['mp3', 'm4a', 'wav'].includes(ext || '');
+    const ext = getFileExt(file);
+    return ['mp3', 'm4a', 'wav', 'mp4'].includes(ext);
+  };
+
+  const getMediaMaxSize = (file: File) => {
+    return isMp4File(file) ? 200 * 1024 * 1024 : 20 * 1024 * 1024;
+  };
+
+  const isMp4File = (file: File) => {
+    return getFileExt(file) === 'mp4' || file.type === 'video/mp4';
+  };
+
+  const getFileExt = (file: File) => {
+    return file.name.split('.').pop()?.toLowerCase() || '';
   };
 
   const formatProvider = (provider: VoiceTimbreProviderDTO) => {

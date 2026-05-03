@@ -140,6 +140,16 @@ export default {
       120000
     ),
   },
+  ffmpeg: {
+    binaryPath: readStringFrom(
+      ['ADMIN_API_FFMPEG_BINARY_PATH', 'NODE_FFMPEG_BINARY_PATH'],
+      'ffmpeg'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_FFMPEG_TIMEOUT_MS', 'NODE_FFMPEG_TIMEOUT_MS'],
+      120000
+    ),
+  },
   typeorm: {
     dataSource: {
       default: {
