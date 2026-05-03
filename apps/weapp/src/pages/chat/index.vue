@@ -301,6 +301,15 @@ import { authSession, restoreAuthSession } from '../../auth/session'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { useSafeAreaInsets } from '../../utils/safe-area'
 
+type VoiceTouchEvent = ITouchEvent | TouchEvent
+
+type DraftInputEvent = InputEvent | {
+  detail?: {
+    value?: string
+    cursor?: number
+  }
+}
+
 type DisplayRow =
   | {
       key: string
@@ -357,6 +366,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
 const isWaitingAgentReply = ref(false)
+const agentReplyDotCount = ref(1)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const draftMessage = ref('')
@@ -391,6 +401,7 @@ let lastRecorderStopResult: RecorderStopResult | null = null
 let voiceAudioContext: Taro.InnerAudioContext | null = null
 let isPickingChatImage = false
 let voicePlaybackErrorMutedUntil = 0
+let agentReplyDotsTimer: ReturnType<typeof setInterval> | null = null
 let isSwitchingComposerPanel = false
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
 
@@ -433,7 +444,7 @@ const navMenus: NavMenuItem[] = [
 ]
 const pageTitle = computed(() => {
   if (isWaitingAgentReply.value) {
-    return '回复中...'
+    return `回复中${'.'.repeat(agentReplyDotCount.value)}`
   }
 
   const trimmedName = agentName.value.trim()
@@ -697,13 +708,34 @@ async function refreshAgentSnapshot() {
   }
 }
 
+function startAgentReplyDots() {
+  stopAgentReplyDots()
+  agentReplyDotCount.value = 1
+  agentReplyDotsTimer = setInterval(() => {
+    agentReplyDotCount.value = agentReplyDotCount.value >= 3
+      ? 1
+      : agentReplyDotCount.value + 1
+  }, 450)
+}
+
+function stopAgentReplyDots() {
+  if (!agentReplyDotsTimer) {
+    return
+  }
+
+  clearInterval(agentReplyDotsTimer)
+  agentReplyDotsTimer = null
+}
+
 async function runWithAgentReplyStatus(task: () => Promise<void>) {
   isWaitingAgentReply.value = true
+  startAgentReplyDots()
 
   try {
     await task()
   } finally {
     isWaitingAgentReply.value = false
+    stopAgentReplyDots()
   }
 }
 
@@ -941,9 +973,10 @@ function handleRetry() {
   void refreshMessages({ showLoading: true })
 }
 
-function handleDraftInput(event: { detail?: { value?: string } }) {
-  const nextValue = event.detail?.value ?? ''
-  const nextCursor = (event.detail as { cursor?: number } | undefined)?.cursor
+function handleDraftInput(event: DraftInputEvent) {
+  const detail = 'detail' in event && typeof event.detail === 'object' ? event.detail : undefined
+  const nextValue = detail?.value ?? ''
+  const nextCursor = detail?.cursor
 
   draftMessage.value = nextValue
   draftCursor.value =
@@ -1009,6 +1042,7 @@ useUnload(() => {
       recorderManager.stop()
     } catch {}
   }
+  stopAgentReplyDots()
   destroyVoiceAudioContext()
 })
 
@@ -1026,7 +1060,7 @@ function handleVoiceModeToggle() {
   void scrollToBottom()
 }
 
-function handleVoiceTouchStart(event: ITouchEvent) {
+function handleVoiceTouchStart(event: VoiceTouchEvent) {
   if (
     !isVoiceMode.value ||
     isSending.value ||
@@ -1058,7 +1092,7 @@ function handleVoiceTouchStart(event: ITouchEvent) {
   }, 350)
 }
 
-function handleVoiceTouchMove(event: ITouchEvent) {
+function handleVoiceTouchMove(event: VoiceTouchEvent) {
   if (!isVoiceGestureActive.value) {
     return
   }
@@ -1072,7 +1106,7 @@ function handleVoiceTouchMove(event: ITouchEvent) {
   voiceDragTarget.value = resolveVoiceDragTarget(point)
 }
 
-function handleVoiceTouchEnd(event: ITouchEvent) {
+function handleVoiceTouchEnd(event: VoiceTouchEvent) {
   if (!isVoiceGestureActive.value) {
     return
   }
@@ -1106,7 +1140,7 @@ function handleVoiceTouchCancel() {
   resetVoiceGestureState()
 }
 
-function getTouchPoint(event: ITouchEvent): TouchPoint | null {
+function getTouchPoint(event: VoiceTouchEvent): TouchPoint | null {
   const touch = event.touches?.[0] ?? event.changedTouches?.[0]
   if (!touch) {
     return null

@@ -84,7 +84,16 @@
           class="agent-detail-cell"
           :class="{ 'agent-detail-cell--divider': index !== capabilityTiles.length - 1 }"
           @click="handlePendingTap(item)"
-        />
+        >
+          <template v-if="item === 'VIP与增值配置'" #desc>
+            <text
+              class="agent-detail-cell__status"
+              :class="{ 'agent-detail-cell__status--active': agent?.isVip }"
+            >
+              {{ agent?.isVip ? '已开通' : '待开通' }}
+            </text>
+          </template>
+        </nut-cell>
       </view>
 
       <view class="agent-detail-spacer" />
@@ -615,6 +624,18 @@ function handleSendMessage() {
   display: flex;
   justify-content: flex-end;
   align-items: center;
+}
+
+.agent-detail-cell__status {
+  flex-shrink: 0;
+  color: #b0b3ba;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.agent-detail-cell__status--active {
+  color: #d48a2f;
 }
 
 .agent-detail-moments__thumbs {
