@@ -20,6 +20,7 @@ export enum TableName {
   agent_membership = 'agent_membership',
   agent_entitlement = 'agent_entitlement',
   coupon_ledger = 'coupon_ledger',
+  voice_timbre = 'voice_timbre',
 }
 
 export class BaseEntity {

@@ -60,4 +60,7 @@ export class UpdateAdminAgentDTO {
 
   @Rule(RuleType.number().valid(0, 1).optional())
   status?: number;
+
+  @Rule(RuleType.string().allow('').max(40).optional())
+  voiceTimbreId?: string;
 }

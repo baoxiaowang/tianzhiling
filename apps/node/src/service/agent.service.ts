@@ -219,7 +219,9 @@ export class AgentService {
     return {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
-      avatar: this.postImageService.resolveForResponse(agent.avatar?.trim() || ''),
+      avatar: this.postImageService.resolveForResponse(
+        agent.avatar?.trim() || ''
+      ),
       sex: agent.sex,
       agentCallMe: agent.agentCallMe ?? '',
       iCallAgent: agent.iCallAgent ?? '',
@@ -227,6 +229,7 @@ export class AgentService {
       deathDate: agent.deathDate?.toISOString?.() ?? '',
       description: agent.description,
       status: agent.status,
+      voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       isVip: await this.isAgentVip(agent),
       createdAt: agent.createdAt.toISOString(),
       updatedAt: agent.updatedAt.toISOString(),
@@ -292,7 +295,10 @@ export class AgentService {
     const value = rawValue?.trim();
 
     if (!value) {
-      throw new AppError(code || 'INVALID_AGENT_CALL_NAME', 'value is required');
+      throw new AppError(
+        code || 'INVALID_AGENT_CALL_NAME',
+        'value is required'
+      );
     }
 
     if (value.length > 20) {
@@ -309,7 +315,11 @@ export class AgentService {
     const avatar = rawAvatar?.trim() ?? '';
 
     if (!avatar) {
-      throw new AppError('INVALID_AGENT_AVATAR', 'agent avatar is required', 400);
+      throw new AppError(
+        'INVALID_AGENT_AVATAR',
+        'agent avatar is required',
+        400
+      );
     }
 
     if (avatar.length > 1000) {
@@ -323,7 +333,10 @@ export class AgentService {
     return this.postImageService.normalizeForStorage(avatar);
   }
 
-  private normalizeOptionalDate(rawValue: string, code: string): Date | undefined {
+  private normalizeOptionalDate(
+    rawValue: string,
+    code: string
+  ): Date | undefined {
     const value = rawValue?.trim?.() ?? '';
 
     if (!value) {
@@ -371,6 +384,10 @@ export class AgentService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private stringifyOptionalObjectId(value?: MongoObjectId): string {
+    return value ? this.stringifyObjectId(value) : '';
   }
 
   private async findAgentByIdForUser(

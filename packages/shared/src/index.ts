@@ -5,3 +5,4 @@ export * from './errors';
 export * from './membership';
 export * from './order';
 export * from './response';
+export * from './voice-timbre';

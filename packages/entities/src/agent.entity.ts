@@ -39,6 +39,9 @@ export class AgentEntity extends BaseEntity {
   status: number;
 
   @Column()
+  voiceTimbreId?: MongoObjectId;
+
+  @Column()
   createdAt: Date;
 
   @Column()

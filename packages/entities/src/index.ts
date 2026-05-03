@@ -15,3 +15,4 @@ export * from './post-comment-notification.entity';
 export * from './user.entity';
 export * from './user-account.entity';
 export * from './vip-plan.entity';
+export * from './voice-timbre.entity';

@@ -9,6 +9,7 @@ export interface AgentProfileDTO {
   deathDate: string;
   description: string;
   status: number;
+  voiceTimbreId?: string;
   isVip: boolean;
   createdAt: string;
   updatedAt: string;
@@ -132,4 +133,5 @@ export interface AdminAgentConversationMessageListDTO {
 export interface UpdateAdminAgentDTO extends UpdateAgentProfileDTO {
   avatar?: string;
   status?: number;
+  voiceTimbreId?: string;
 }

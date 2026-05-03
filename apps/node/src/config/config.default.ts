@@ -16,6 +16,7 @@ import {
   UserAccountEntity,
   UserEntity,
   VipPlanEntity,
+  VoiceTimbreEntity,
 } from '@tzl/entities';
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
@@ -303,6 +304,22 @@ export default {
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
     embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),
   },
+  minimaxVoice: {
+    enabled: readBooleanFrom(['NODE_MINIMAX_VOICE_ENABLED'], true),
+    apiKey: readStringFrom(
+      ['NODE_MINIMAX_VOICE_API_KEY', 'NODE_MINIMAX_API_KEY'],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_MINIMAX_VOICE_BASE_URL'],
+      'https://api.minimax.io'
+    ),
+    defaultPreviewModel: readStringFrom(
+      ['NODE_MINIMAX_VOICE_PREVIEW_MODEL'],
+      'speech-2.8-turbo'
+    ),
+    timeoutMs: readNumberFrom(['NODE_MINIMAX_VOICE_TIMEOUT_MS'], 120000),
+  },
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(
@@ -433,6 +450,7 @@ export default {
           UserAccountEntity,
           UserEntity,
           VipPlanEntity,
+          VoiceTimbreEntity,
         ],
       },
     },

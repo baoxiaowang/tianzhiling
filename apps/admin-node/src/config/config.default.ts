@@ -23,6 +23,7 @@ import {
   UserAccountEntity,
   UserEntity,
   VipPlanEntity,
+  VoiceTimbreEntity,
 } from '@tzl/entities';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
@@ -79,6 +80,21 @@ export default {
       ['ADMIN_API_TENCENT_COS_BUCKET', 'NODE_TENCENT_COS_BUCKET'],
       ''
     ),
+    secretId: readStringFrom(
+      ['ADMIN_API_TENCENT_COS_SECRET_ID', 'NODE_TENCENT_COS_SECRET_ID'],
+      ''
+    ),
+    secretKey: readStringFrom(
+      ['ADMIN_API_TENCENT_COS_SECRET_KEY', 'NODE_TENCENT_COS_SECRET_KEY'],
+      ''
+    ),
+    securityToken: readStringFrom(
+      [
+        'ADMIN_API_TENCENT_COS_SECURITY_TOKEN',
+        'NODE_TENCENT_COS_SECURITY_TOKEN',
+      ],
+      ''
+    ),
     protocol: readStringFrom(
       ['ADMIN_API_TENCENT_COS_PROTOCOL', 'NODE_TENCENT_COS_PROTOCOL'],
       'https'
@@ -93,6 +109,35 @@ export default {
         'NODE_TENCENT_COS_PUBLIC_BASE_URL',
       ],
       ''
+    ),
+  },
+  minimaxVoice: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_MINIMAX_VOICE_ENABLED', 'NODE_MINIMAX_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      [
+        'ADMIN_API_MINIMAX_VOICE_API_KEY',
+        'NODE_MINIMAX_VOICE_API_KEY',
+        'NODE_MINIMAX_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['ADMIN_API_MINIMAX_VOICE_BASE_URL', 'NODE_MINIMAX_VOICE_BASE_URL'],
+      'https://api.minimax.io'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'ADMIN_API_MINIMAX_VOICE_PREVIEW_MODEL',
+        'NODE_MINIMAX_VOICE_PREVIEW_MODEL',
+      ],
+      'speech-2.8-turbo'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_MINIMAX_VOICE_TIMEOUT_MS', 'NODE_MINIMAX_VOICE_TIMEOUT_MS'],
+      120000
     ),
   },
   typeorm: {
@@ -149,6 +194,7 @@ export default {
           UserAccountEntity,
           UserEntity,
           VipPlanEntity,
+          VoiceTimbreEntity,
         ],
       },
     },

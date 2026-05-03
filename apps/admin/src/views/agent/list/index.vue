@@ -368,6 +368,22 @@
             placeholder="请输入描述"
           />
         </a-form-item>
+        <a-form-item field="voiceTimbreId" label="音色">
+          <a-select
+            v-model="editForm.voiceTimbreId"
+            allow-clear
+            allow-search
+            placeholder="请选择音色"
+          >
+            <a-option
+              v-for="item in activeVoiceTimbres"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ item.name }} / {{ item.providerVoiceId }}
+            </a-option>
+          </a-select>
+        </a-form-item>
         <a-form-item
           field="status"
           label="状态"
@@ -391,10 +407,12 @@
   import type { FormInstance } from '@arco-design/web-vue/es/form';
   import useLoading from '@/hooks/loading';
   import { AgentRecord, queryAgentList, updateAgent } from '@/api/agent';
+  import { queryVoiceTimbreList, VoiceTimbreRecord } from '@/api/voice-model';
 
   const router = useRouter();
   const { loading, setLoading } = useLoading();
   const renderList = ref<AgentRecord[]>([]);
+  const activeVoiceTimbres = ref<VoiceTimbreRecord[]>([]);
   const editVisible = ref(false);
   const saving = ref(false);
   const editingAgentId = ref('');
@@ -419,6 +437,7 @@
     deathDate: '',
     description: '',
     status: 1,
+    voiceTimbreId: '',
   });
   const pagination = reactive({
     current: 1,
@@ -460,6 +479,19 @@
       Message.error('Agent 列表加载失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchActiveVoiceTimbres = async () => {
+    try {
+      const { data } = await queryVoiceTimbreList({
+        status: 'active',
+        page: 1,
+        pageSize: 100,
+      });
+      activeVoiceTimbres.value = data.items;
+    } catch (error) {
+      activeVoiceTimbres.value = [];
     }
   };
 
@@ -508,6 +540,7 @@
     editForm.deathDate = formatDateValue(record.deathDate);
     editForm.description = record.description;
     editForm.status = record.status;
+    editForm.voiceTimbreId = record.voiceTimbreId || '';
     editVisible.value = true;
   };
 
@@ -524,6 +557,7 @@
     editForm.deathDate = '';
     editForm.description = '';
     editForm.status = 1;
+    editForm.voiceTimbreId = '';
     editFormRef.value?.clearValidate();
   };
 
@@ -546,6 +580,7 @@
         deathDate: editForm.deathDate || '',
         description: editForm.description,
         status: editForm.status,
+        voiceTimbreId: editForm.voiceTimbreId || '',
       });
       Message.success('Agent 资料已更新');
       closeEdit();
@@ -594,6 +629,7 @@
   };
 
   fetchData();
+  fetchActiveVoiceTimbres();
 </script>
 
 <script lang="ts">

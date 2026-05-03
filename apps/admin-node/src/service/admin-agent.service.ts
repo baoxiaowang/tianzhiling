@@ -18,6 +18,7 @@ import {
   MongoObjectId,
   UserAccountEntity,
   UserEntity,
+  VoiceTimbreEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -56,6 +57,9 @@ export class AdminAgentService {
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
+
+  @InjectEntityModel(VoiceTimbreEntity)
+  voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -265,6 +269,13 @@ export class AdminAgentService {
 
     if (payload.status !== undefined) {
       agent.status = this.normalizeStatus(payload.status);
+      changed = true;
+    }
+
+    if (payload.voiceTimbreId !== undefined) {
+      agent.voiceTimbreId = await this.normalizeVoiceTimbreId(
+        payload.voiceTimbreId
+      );
       changed = true;
     }
 
@@ -494,6 +505,7 @@ export class AdminAgentService {
       deathDate: this.formatDate(agent.deathDate),
       description: agent.description ?? '',
       status: agent.status,
+      voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       isVip: false,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
@@ -659,6 +671,49 @@ export class AdminAgentService {
     throw new AppError('INVALID_AGENT_STATUS', 'agent status is invalid', 400);
   }
 
+  private async normalizeVoiceTimbreId(
+    rawValue?: string
+  ): Promise<MongoObjectId | undefined> {
+    const value = rawValue?.trim() ?? '';
+
+    if (!value) {
+      return undefined;
+    }
+
+    if (!MongoObjectId.isValid(value)) {
+      throw new AppError(
+        'INVALID_VOICE_TIMBRE_ID',
+        'invalid voice timbre id',
+        400
+      );
+    }
+
+    const objectId = new MongoObjectId(value);
+    const timbre =
+      (await this.voiceTimbreModel.findOne({
+        where: {
+          id: objectId,
+          status: 'active',
+        },
+      })) ??
+      (await this.voiceTimbreModel.findOne({
+        where: {
+          _id: objectId,
+          status: 'active',
+        } as never,
+      }));
+
+    if (!timbre) {
+      throw new AppError(
+        'VOICE_TIMBRE_NOT_FOUND',
+        'active voice timbre not found',
+        404
+      );
+    }
+
+    return objectId;
+  }
+
   private normalizeOptionalNumber(
     rawValue: number | string | undefined
   ): number | undefined {
@@ -706,6 +761,10 @@ export class AdminAgentService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private stringifyOptionalObjectId(value?: MongoObjectId): string {
+    return value ? this.stringifyObjectId(value) : '';
   }
 
   private formatDate(value?: Date): string {
