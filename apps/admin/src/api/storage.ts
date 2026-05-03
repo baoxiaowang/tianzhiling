@@ -30,17 +30,19 @@ export async function uploadFileToSignedUrl(
   ticket: SignedUploadTicket,
   contentType: string
 ) {
-  await axios.request({
-    url: ticket.uploadUrl,
-    method: (ticket.method || 'PUT') as 'PUT',
-    data: file,
+  const response = await fetch(ticket.uploadUrl, {
+    method: ticket.method || 'PUT',
+    body: file,
     headers: {
       ...(ticket.headers || {}),
       'Content-Type': contentType,
     },
-    transformRequest: [(data) => data],
-    withCredentials: false,
+    credentials: 'omit',
   });
+
+  if (!response.ok) {
+    throw new Error(`文件上传失败：${response.status} ${response.statusText}`);
+  }
 }
 
 export async function uploadAdminFile(
