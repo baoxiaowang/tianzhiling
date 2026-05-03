@@ -32,6 +32,9 @@ function createService() {
   service.userAccountModel = {
     find: jest.fn(),
   } as any;
+  service.voiceTimbreModel = {
+    findOne: jest.fn(),
+  } as any;
   service.avatarUrlService = {
     resolve: jest.fn((avatar?: string) => {
       const value = avatar?.trim() ?? '';
@@ -53,7 +56,7 @@ describe('AdminAgentService', () => {
     const service = createService();
     const agentId = new MongoObjectId();
     const userId = new MongoObjectId();
-    const agent = {
+    const agent: any = {
       id: agentId,
       createdUserId: userId,
       name: '小灵',
@@ -143,7 +146,7 @@ describe('AdminAgentService', () => {
     const service = createService();
     const agentId = new MongoObjectId();
     const userId = new MongoObjectId();
-    const agent = {
+    const agent: any = {
       id: agentId,
       createdUserId: userId,
       name: '旧名称',
@@ -190,6 +193,50 @@ describe('AdminAgentService', () => {
     expect(agent.updatedAt).toBeInstanceOf(Date);
     expect(service.agentModel.save).toHaveBeenCalledWith(agent);
     expect(result.createdUser).toBeNull();
+  });
+
+  it('binds an active voice timbre when updating agent', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const voiceTimbreId = new MongoObjectId();
+    const agent: any = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      avatar: '',
+      sex: AgentSex.woman,
+      agentCallMe: '主人',
+      iCallAgent: '小灵',
+      description: '',
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValueOnce({
+      id: voiceTimbreId,
+      status: 'active',
+    } as never);
+    jest.mocked(service.agentModel.save).mockResolvedValue(agent as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.updateAgent(agentId.toHexString(), {
+      voiceTimbreId: voiceTimbreId.toHexString(),
+    });
+
+    expect(service.voiceTimbreModel.findOne).toHaveBeenCalledWith({
+      where: {
+        id: voiceTimbreId,
+        status: 'active',
+      },
+    });
+    expect(agent.voiceTimbreId).toEqual(voiceTimbreId);
+    expect(result.voiceTimbreId).toBe(voiceTimbreId.toHexString());
   });
 
   it('lists agent conversations with latest message and user summary', async () => {

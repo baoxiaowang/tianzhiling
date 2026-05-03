@@ -13,6 +13,9 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  VoiceTimbreEntity,
+  VoiceTimbreProvider,
+  VoiceTimbreStatus,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
@@ -28,6 +31,7 @@ import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
+import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 
 export interface ConversationSummary {
   id: string;
@@ -87,6 +91,9 @@ export class ConversationService {
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
+  @InjectEntityModel(VoiceTimbreEntity)
+  voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
+
   @Inject()
   openAIService: OpenAIService;
 
@@ -107,6 +114,9 @@ export class ConversationService {
 
   @Inject()
   milvusService: MilvusService;
+
+  @Inject()
+  minimaxVoiceSpeechService: MinimaxVoiceSpeechService;
 
   async listConversations(
     auth: AuthenticatedUserPayload
@@ -219,6 +229,7 @@ export class ConversationService {
       const replyTime = new Date();
       const assistantMessage = await this.createAssistantReplyMessage({
         conversationId: conversation.id,
+        agent,
         replyContent,
         preferVoiceReply: messagePayload.type === MessageType.voice,
         replyTime,
@@ -542,6 +553,7 @@ export class ConversationService {
 
   private async createAssistantReplyMessage(options: {
     conversationId: MongoObjectId;
+    agent?: AgentEntity | null;
     replyContent: string;
     preferVoiceReply: boolean;
     replyTime: Date;
@@ -552,10 +564,15 @@ export class ConversationService {
       totalTokens?: number;
     };
   }): Promise<MessageEntity> {
-    const synthesizedVoice =
-      options.preferVoiceReply && this.openAIService.hasTextToSpeechConfig()
-        ? await this.synthesizeAssistantVoiceReply(options.replyContent)
-        : undefined;
+    const voiceTimbre = options.preferVoiceReply
+      ? await this.findActiveVoiceTimbreForAgent(options.agent)
+      : undefined;
+    const synthesizedVoice = voiceTimbre
+      ? await this.synthesizeAssistantVoiceReply(
+          options.replyContent,
+          voiceTimbre
+        )
+      : undefined;
 
     if (synthesizedVoice) {
       return this.saveMessage({
@@ -593,7 +610,8 @@ export class ConversationService {
   }
 
   private async synthesizeAssistantVoiceReply(
-    replyContent: string
+    replyContent: string,
+    voiceTimbre: VoiceTimbreEntity
   ): Promise<SynthesizedAssistantVoiceReply | undefined> {
     const transcript = this.buildAssistantReplySpeechText(replyContent);
 
@@ -602,8 +620,9 @@ export class ConversationService {
     }
 
     try {
-      const synthesized = await this.openAIService.createTextToSpeech({
+      const synthesized = await this.synthesizeByVoiceTimbre({
         text: transcript,
+        voiceTimbre,
       });
       const stored = await this.storeAssistantVoiceAsset({
         audioBuffer: synthesized.audioBuffer,
@@ -627,6 +646,65 @@ export class ConversationService {
       );
       return undefined;
     }
+  }
+
+  private async synthesizeByVoiceTimbre(input: {
+    text: string;
+    voiceTimbre: VoiceTimbreEntity;
+  }): Promise<{
+    audioUrl: string;
+    audioBuffer: Buffer;
+    mimeType?: string;
+  }> {
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.minimax) {
+      return this.minimaxVoiceSpeechService.synthesize({
+        text: input.text,
+        voiceId: input.voiceTimbre.providerVoiceId,
+        model: input.voiceTimbre.previewModel,
+        languageBoost: input.voiceTimbre.cloneLanguage,
+      });
+    }
+
+    throw new AppError(
+      'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      'voice timbre provider is not supported for speech synthesis',
+      400
+    );
+  }
+
+  private async findActiveVoiceTimbreForAgent(
+    agent?: AgentEntity | null
+  ): Promise<VoiceTimbreEntity | undefined> {
+    const voiceTimbreId = this.normalizeObjectId(agent?.voiceTimbreId);
+
+    if (!voiceTimbreId) {
+      return undefined;
+    }
+
+    const timbre =
+      (await this.voiceTimbreModel.findOne({
+        where: {
+          id: voiceTimbreId,
+          status: VoiceTimbreStatus.active,
+        },
+      })) ??
+      (await this.voiceTimbreModel.findOne({
+        where: {
+          _id: voiceTimbreId,
+          status: VoiceTimbreStatus.active,
+        } as never,
+      }));
+
+    if (!timbre) {
+      this.logger.warn(
+        '[conversation] active voice timbre not found, agentId=%s, voiceTimbreId=%s',
+        this.stringifyObjectId(agent?.id),
+        this.stringifyObjectId(voiceTimbreId)
+      );
+      return undefined;
+    }
+
+    return timbre;
   }
 
   private buildAssistantReplySpeechText(replyContent: string): string {
@@ -1481,7 +1559,7 @@ export class ConversationService {
     }
   }
 
-  private stringifyObjectId(value: MongoObjectId): string {
+  private stringifyObjectId(value?: MongoObjectId | null): string {
     return value?.toHexString?.() ?? String(value);
   }
 

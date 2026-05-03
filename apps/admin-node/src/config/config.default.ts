@@ -138,7 +138,7 @@ export default {
     ),
     baseURL: readStringFrom(
       ['ADMIN_API_MINIMAX_VOICE_BASE_URL', 'NODE_MINIMAX_VOICE_BASE_URL'],
-      'https://api.minimax.io'
+      'https://api.minimaxi.com'
     ),
     defaultPreviewModel: readStringFrom(
       [
