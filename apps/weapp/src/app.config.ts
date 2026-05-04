@@ -8,6 +8,7 @@ export default {
     'pages/agent-detail/index',
     'pages/agent-form/index',
     'pages/vip-center/index',
+    'pages/customer-service/index',
     'pages/payment-result/index',
     'pages/agent-create/index',
     'pages/agent-create-flow/index',

@@ -206,6 +206,13 @@ async function handleMenuTap(title: string) {
     return
   }
 
+  if (title === '联系客服') {
+    await Taro.navigateTo({
+      url: '/pages/customer-service/index',
+    })
+    return
+  }
+
   showPendingToast(`${title} 页面待接入`)
 }
 
