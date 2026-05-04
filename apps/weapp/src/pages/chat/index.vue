@@ -7,7 +7,7 @@
     :body-padding="bodyPadding"
     :scroll="true"
     :scroll-into-view="scrollIntoViewTarget"
-    :scroll-with-animation="true"
+    :scroll-with-animation="scrollWithAnimation"
     :show-scrollbar="false"
     :safe-area-top="false"
     :safe-area-bottom="false"
@@ -387,6 +387,8 @@ const isVoicePlaying = ref(false)
 const isVoicePlaybackLoading = ref(false)
 const messages = ref<ConversationMessage[]>([])
 const scrollIntoViewTarget = ref('')
+const scrollWithAnimation = ref(true)
+const hasCompletedInitialMessagesScroll = ref(false)
 
 let ensureSessionPromise: Promise<void> | null = null
 let refreshMessagesPromise: Promise<void> | null = null
@@ -757,7 +759,10 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
     return refreshMessagesPromise
   }
 
-  if (options.showLoading ?? messages.value.length === 0) {
+  const shouldShowLoading = options.showLoading ?? messages.value.length === 0
+  const shouldScrollWithoutAnimation = !hasCompletedInitialMessagesScroll.value || shouldShowLoading
+
+  if (shouldShowLoading) {
     isLoading.value = true
   }
 
@@ -767,14 +772,18 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
     .then(async (items) => {
       messages.value = items
       probeMissingAssistantVoiceDurations(items)
-      await scrollToBottom()
     })
     .catch(async (error: unknown) => {
       await handleApiError(error, '加载聊天记录失败，请稍后重试')
     })
-    .finally(() => {
+    .finally(async () => {
       isLoading.value = false
       refreshMessagesPromise = null
+
+      if (!loadError.value && messages.value.length > 0) {
+        await scrollToBottom({ animated: !shouldScrollWithoutAnimation })
+        hasCompletedInitialMessagesScroll.value = true
+      }
     })
 
   return refreshMessagesPromise
@@ -794,12 +803,16 @@ async function handleApiError(error: unknown, fallbackMessage: string) {
   loadError.value = fallbackMessage
 }
 
-async function scrollToBottom() {
+async function scrollToBottom(options: { animated?: boolean } = {}) {
+  const animated = options.animated ?? true
+
+  scrollWithAnimation.value = animated
   await nextTick()
   scrollIntoViewTarget.value = ''
   await nextTick()
   await new Promise<void>((resolve) => {
     setTimeout(() => {
+      scrollWithAnimation.value = animated
       scrollIntoViewTarget.value = 'chat-bottom-anchor'
       resolve()
     }, 0)
