@@ -121,7 +121,8 @@
             :focus="shouldFocusInput"
             :placeholder="currentPlaceholder"
             placeholder-style="color: rgba(255, 255, 255, 0.6);"
-            confirm-type="done"
+            :confirm-type="activeConfirmType"
+            :confirm-hold="shouldHoldKeyboardOnConfirm"
             :adjust-position="false"
             cursor-spacing="16"
             @input="handleActiveInput"
@@ -133,6 +134,7 @@
           <view
             class="agent-text-panel__continue"
             :class="{ 'is-disabled': !canContinue }"
+            @touchstart="handleContinueTouchStart"
             @tap="handleContinue"
           >
             <view v-if="isSubmitting" class="agent-text-panel__spinner" />
@@ -168,7 +170,6 @@ import { resolvePublicAssetUrl } from '../../utils/public-asset'
 const agentFlowImage = resolvePublicAssetUrl('/public/weapp/agent.jpg')
 
 type AgentFormStep =
-  | 'memorialName'
   | 'gender'
   | 'relationToThem'
   | 'relationToMe'
@@ -192,8 +193,7 @@ interface AgentFormStepConfig {
   isComplete: () => boolean
 }
 
-const currentStep = ref<AgentFormStep>('memorialName')
-const name = ref('')
+const currentStep = ref<AgentFormStep>('gender')
 const relationToThem = ref('')
 const relationToMe = ref('')
 const gender = ref<AgentGender | null>(null)
@@ -202,22 +202,14 @@ const avatarObjectKey = ref('')
 const isSubmitting = ref(false)
 const isUploadingAvatar = ref(false)
 const shouldFocusInput = ref(true)
+const shouldRefocusAfterTextButtonTap = ref(false)
 const keyboardHeight = ref(0)
 const isInputFocused = ref(false)
 
 const formSteps: AgentFormStepConfig[] = [
   {
-    step: 'memorialName',
-    question: '你纪念的人是？',
-    placeholder: '请输入 TA 的昵称或备注名',
-    maxLength: 30,
-    isTextInput: true,
-    getAnswer: () => name.value.trim(),
-    isComplete: () => name.value.trim().length > 0,
-  },
-  {
     step: 'gender',
-    question: '他的性别是？',
+    question: 'TA 的性别是？',
     placeholder: '',
     maxLength: 0,
     isTextInput: false,
@@ -300,11 +292,18 @@ const currentPlaceholder = computed(() => {
 const activeInputMaxLength = computed(() => {
   return currentStepConfig.value.maxLength
 })
+const nextStepKey = computed(() => {
+  return formStepKeys[currentStepIndex.value + 1]
+})
+const shouldHoldKeyboardOnConfirm = computed(() => {
+  return Boolean(nextStepKey.value && isTextInputStepKey(nextStepKey.value))
+})
+const activeConfirmType = computed(() => {
+  return shouldHoldKeyboardOnConfirm.value ? 'next' : 'done'
+})
 const activeInputValue = computed({
   get() {
     switch (currentStep.value) {
-      case 'memorialName':
-        return name.value
       case 'relationToThem':
         return relationToThem.value
       case 'relationToMe':
@@ -318,9 +317,6 @@ const activeInputValue = computed({
   },
   set(value: string) {
     switch (currentStep.value) {
-      case 'memorialName':
-        name.value = value
-        break
       case 'relationToThem':
         relationToThem.value = value
         break
@@ -360,15 +356,26 @@ function resetKeyboardState() {
   void Taro.hideKeyboard()
 }
 
-function syncInputFocus() {
-  shouldFocusInput.value = false
+function isTextInputStepKey(step?: AgentFormStep) {
+  return Boolean(step && formSteps.some((item) => item.step === step && item.isTextInput))
+}
 
+function syncInputFocus(previousStep?: AgentFormStep) {
   if (!isTextInputStep.value) {
+    shouldFocusInput.value = false
     resetKeyboardState()
+    return
   }
 
+  if (previousStep && isTextInputStepKey(previousStep)) {
+    shouldFocusInput.value = true
+    return
+  }
+
+  shouldFocusInput.value = false
+
   void nextTick(() => {
-    shouldFocusInput.value = isTextInputStep.value
+    shouldFocusInput.value = true
   })
 }
 
@@ -380,8 +387,13 @@ function showToast(message: string) {
   })
 }
 
-function handleActiveInput(event: { detail?: { value?: string } }) {
-  activeInputValue.value = event.detail?.value ?? ''
+type TaroInputDetail = {
+  value?: string
+}
+
+function handleActiveInput(event: InputEvent) {
+  const detail = (event as unknown as { detail?: TaroInputDetail }).detail
+  activeInputValue.value = detail?.value ?? ''
 }
 
 function handleInputFocus() {
@@ -389,6 +401,16 @@ function handleInputFocus() {
 }
 
 function handleInputBlur() {
+  if (shouldRefocusAfterTextButtonTap.value) {
+    shouldRefocusAfterTextButtonTap.value = false
+    shouldFocusInput.value = false
+
+    void nextTick(() => {
+      shouldFocusInput.value = true
+    })
+    return
+  }
+
   isInputFocused.value = false
   keyboardHeight.value = 0
 }
@@ -467,8 +489,9 @@ function handleBack() {
     return
   }
 
+  const previousStep = currentStep.value
   currentStep.value = formStepKeys[currentIndex - 1]
-  syncInputFocus()
+  syncInputFocus(previousStep)
 }
 
 function selectStep(step: AgentFormStep) {
@@ -476,8 +499,9 @@ function selectStep(step: AgentFormStep) {
     return
   }
 
+  const previousStep = currentStep.value
   currentStep.value = step
-  syncInputFocus()
+  syncInputFocus(previousStep)
 }
 
 function selectGender(value: AgentGender) {
@@ -493,6 +517,10 @@ function selectGender(value: AgentGender) {
 
 async function handleContinue() {
   await goToNextStep()
+}
+
+function handleContinueTouchStart() {
+  shouldRefocusAfterTextButtonTap.value = shouldHoldKeyboardOnConfirm.value
 }
 
 async function goToNextStep() {
@@ -512,8 +540,9 @@ async function goToNextStep() {
     return
   }
 
+  const previousStep = currentStep.value
   currentStep.value = nextStep
-  syncInputFocus()
+  syncInputFocus(previousStep)
 }
 
 async function handleAvatarTap() {
@@ -573,9 +602,11 @@ async function submitCreation() {
 
   isSubmitting.value = true
 
+  const fallbackAgentName = relationToThem.value.trim() || 'TA'
+
   try {
     let agent = await createAgent({
-      name: name.value.trim(),
+      name: fallbackAgentName,
       sex: gender.value === 'male' ? 1 : 0,
       iCallAgent: relationToThem.value.trim(),
       agentCallMe: relationToMe.value.trim(),
@@ -586,7 +617,7 @@ async function submitCreation() {
     }
 
     await Taro.showToast({
-      title: `已创建 Agent：${agent.name || name.value.trim()}`,
+      title: `已创建 Agent：${agent.name || fallbackAgentName}`,
       icon: 'none',
       duration: 1200,
     })

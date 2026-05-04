@@ -50,9 +50,22 @@
           <text class="contacts-feedback__action" @tap="handleContactsRetry">重新加载</text>
         </view>
 
-        <view v-else-if="!conversations.length" class="contacts-feedback">
-          <text class="contacts-feedback__title">还没有联系人</text>
-          <text class="contacts-feedback__desc">通讯录会展示你已经开始聊天的联系人。</text>
+        <view v-else-if="!conversations.length" class="contacts-list">
+          <view class="contacts-create-entry" @tap="handleCreateAgentTap">
+            <view class="contacts-create-entry__avatar">
+              <view class="contacts-create-entry__halo" />
+              <text class="contacts-create-entry__plus">+</text>
+            </view>
+            <view class="contacts-create-entry__content">
+              <text class="contacts-create-entry__title">新建天之灵</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+            </view>
+          </view>
+
+          <view class="contacts-feedback contacts-feedback--empty">
+            <text class="contacts-feedback__title">还没有联系人</text>
+            <text class="contacts-feedback__desc">通讯录会展示你已经开始聊天的联系人。</text>
+          </view>
         </view>
 
         <view v-else class="contacts-list">
@@ -561,6 +574,10 @@ useDidShow(() => {
   gap: 8px;
   padding: 32px;
   text-align: center;
+}
+
+.contacts-feedback--empty {
+  min-height: calc(100vh - 332px);
 }
 
 .contacts-feedback--loading {
