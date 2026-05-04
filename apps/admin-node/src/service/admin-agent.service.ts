@@ -506,7 +506,6 @@ export class AdminAgentService {
       description: agent.description ?? '',
       status: agent.status,
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
-      isVip: false,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };

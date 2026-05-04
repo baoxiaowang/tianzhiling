@@ -7,14 +7,13 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
-  AgentEntity,
-  AgentMembershipEntity,
-  AgentMembershipStatus,
   MongoObjectId,
   OrderEntity,
   OrderSource,
   OrderStatus,
   OrderType,
+  UserMembershipEntity,
+  UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
@@ -56,11 +55,8 @@ export class OrderService {
   @InjectEntityModel(VipPlanEntity)
   vipPlanModel: MongoRepository<VipPlanEntity>;
 
-  @InjectEntityModel(AgentEntity)
-  agentModel: MongoRepository<AgentEntity>;
-
-  @InjectEntityModel(AgentMembershipEntity)
-  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
@@ -71,8 +67,6 @@ export class OrderService {
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
-    const agentId = this.parseObjectId(payload.agentId, 'INVALID_AGENT_ID');
-    await this.ensureAgentBelongsToUser(agentId, userId);
     const openid = await this.wechatPayService.getOpenidByJsCode(
       payload.jsCode
     );
@@ -83,7 +77,6 @@ export class OrderService {
     Object.assign(order, {
       orderNo: this.generateOrderNo(),
       userId,
-      agentId,
       orderType: OrderType.vipPlan,
       targetId: plan.id,
       targetCode: plan.code,
@@ -312,10 +305,6 @@ export class OrderService {
   }
 
   private async grantVipMembership(order: OrderEntity): Promise<void> {
-    if (!order.agentId) {
-      throw new AppError('ORDER_AGENT_MISSING', 'order agent is missing', 500);
-    }
-
     const plan = order.targetId
       ? await this.findVipPlanById(order.targetId)
       : null;
@@ -323,15 +312,14 @@ export class OrderService {
     const lifetime = plan?.lifetime ?? Boolean(snapshot.lifetime);
     const durationDays = plan?.durationDays ?? snapshot.durationDays;
     const now = order.paidAt ?? new Date();
-    const existing = await this.findActiveMembership(order.userId, order.agentId);
-    const membership = existing ?? new AgentMembershipEntity();
+    const existing = await this.findActiveMembership(order.userId);
+    const membership = existing ?? new UserMembershipEntity();
 
     membership.userId = order.userId;
-    membership.agentId = order.agentId;
     membership.vipPlanId = order.targetId ?? this.parseObjectId(snapshot.id);
     membership.vipPlanCode = order.targetCode || snapshot.code;
     membership.sourceOrderId = order.id;
-    membership.status = AgentMembershipStatus.active;
+    membership.status = UserMembershipStatus.active;
     membership.startedAt = existing?.startedAt ?? now;
     membership.lifetime = lifetime;
     membership.expiredAt = lifetime
@@ -340,13 +328,13 @@ export class OrderService {
     membership.createdAt = existing?.createdAt ?? now;
     membership.updatedAt = new Date();
 
-    await this.agentMembershipModel.save(membership);
+    await this.userMembershipModel.save(membership);
     await this.grantVipEntitlements(order, membership, plan, snapshot, now);
   }
 
   private async grantVipEntitlements(
     order: OrderEntity,
-    membership: AgentMembershipEntity,
+    membership: UserMembershipEntity,
     plan: VipPlanEntity | null,
     snapshot: {
       entitlementGrants?: Array<{
@@ -378,7 +366,6 @@ export class OrderService {
 
       const entitlement = new AgentEntitlementEntity();
       entitlement.userId = order.userId;
-      entitlement.agentId = membership.agentId;
       entitlement.type = grant.type;
       entitlement.totalQuota = grant.totalQuota;
       entitlement.usedQuota = 0;
@@ -497,14 +484,12 @@ export class OrderService {
   }
 
   private async findActiveMembership(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<AgentMembershipEntity | null> {
-    const memberships = await this.agentMembershipModel.find({
+    userId: MongoObjectId
+  ): Promise<UserMembershipEntity | null> {
+    const memberships = await this.userMembershipModel.find({
       where: {
         userId,
-        agentId,
-        status: AgentMembershipStatus.active,
+        status: UserMembershipStatus.active,
       },
       order: {
         updatedAt: 'DESC',
@@ -528,29 +513,6 @@ export class OrderService {
     }
 
     return plan;
-  }
-
-  private async ensureAgentBelongsToUser(
-    agentId: MongoObjectId,
-    userId: MongoObjectId
-  ): Promise<void> {
-    const agent =
-      (await this.agentModel.findOne({
-        where: {
-          id: agentId,
-          createdUserId: userId,
-        },
-      })) ??
-      (await this.agentModel.findOne({
-        where: {
-          _id: agentId,
-          createdUserId: userId,
-        } as never,
-      }));
-
-    if (!agent) {
-      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
-    }
   }
 
   private async findVipPlanById(
@@ -592,7 +554,6 @@ export class OrderService {
       id: this.stringifyObjectId(order.id),
       orderNo: order.orderNo,
       orderType: order.orderType,
-      agentId: order.agentId ? this.stringifyObjectId(order.agentId) : undefined,
       targetId: order.targetId
         ? this.stringifyObjectId(order.targetId)
         : undefined,
@@ -682,7 +643,7 @@ export class OrderService {
   private calculateEntitlementExpiredAt(
     now: Date,
     durationDays: number | undefined,
-    membership: AgentMembershipEntity
+    membership: UserMembershipEntity
   ): Date | undefined {
     if (durationDays && durationDays > 0) {
       return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);

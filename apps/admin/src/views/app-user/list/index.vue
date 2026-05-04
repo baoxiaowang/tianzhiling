@@ -94,6 +94,13 @@
               </a-tag>
             </template>
           </a-table-column>
+          <a-table-column title="会员" data-index="isVip" :width="90">
+            <template #cell="{ record }">
+              <a-tag :color="record.isVip ? 'gold' : 'gray'">
+                {{ record.isVip ? 'VIP' : '普通' }}
+              </a-tag>
+            </template>
+          </a-table-column>
           <a-table-column title="注册时间" data-index="createdAt" :width="180">
             <template #cell="{ record }">
               {{ formatDate(record.createdAt) }}

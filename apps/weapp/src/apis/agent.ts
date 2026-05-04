@@ -17,7 +17,6 @@ export interface AgentSummary {
   deathDate: Date | null
   description: string
   status: number
-  isVip: boolean
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -79,7 +78,6 @@ export function parseAgentSummary(value: unknown): AgentSummary {
     deathDate: asDate(raw.deathDate),
     description: asString(raw.description),
     status: asNumber(raw.status),
-    isVip: Boolean(raw.isVip),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
   }

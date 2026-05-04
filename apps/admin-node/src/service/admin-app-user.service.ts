@@ -7,12 +7,12 @@ import type {
   AdminAgentRecordDTO,
 } from '@tzl/shared';
 import {
-  AgentMembershipEntity,
-  AgentMembershipStatus,
   AgentEntity,
   MongoObjectId,
   UserAccountEntity,
   UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -29,6 +29,7 @@ export interface AdminAppUserItem {
   avatar: string;
   phone: string;
   phoneVerified: boolean;
+  isVip: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,14 +51,14 @@ export class AdminAppUserService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
-  @InjectEntityModel(AgentMembershipEntity)
-  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
-
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -84,12 +85,14 @@ export class AdminAppUserService {
       }),
     ]);
     const accountMap = await this.getAccountMapByUsers(users);
+    const vipUserIdSet = await this.getVipUserIdSet(users);
 
     return {
       items: users.map(user =>
         this.buildUserItem(
           user,
-          accountMap.get(this.stringifyObjectId(user.id))
+          accountMap.get(this.stringifyObjectId(user.id)),
+          vipUserIdSet.has(this.stringifyObjectId(user.id))
         )
       ),
       total,
@@ -102,7 +105,7 @@ export class AdminAppUserService {
     const user = await this.getUserById(userId);
     const account = await this.findAccountByUserId(user.id);
 
-    return this.buildUserItem(user, account);
+    return this.buildUserItem(user, account, await this.isUserVip(user.id));
   }
 
   async listUserAgents(
@@ -118,32 +121,12 @@ export class AdminAppUserService {
     const account = await this.findAccountByUserId(user.id);
     const owner = this.buildAgentOwner(user, account);
     const keyword = query?.keyword?.trim() ?? '';
-    const agentType = this.normalizeAgentType(query?.agentType);
-    const vipAgentIds = await this.findActiveVipAgentIds(user.id);
-    const vipAgentIdSet = new Set(
-      vipAgentIds.map(agentId => this.stringifyObjectId(agentId))
-    );
     const where: MongoWhere = {
       createdUserId: user.id,
     };
 
     if (keyword) {
       where.name = { $regex: this.escapeRegExp(keyword), $options: 'i' };
-    }
-
-    if (agentType === 'vip') {
-      if (vipAgentIds.length === 0) {
-        return {
-          items: [],
-          total: 0,
-          page,
-          pageSize,
-        };
-      }
-
-      where.id = { $in: vipAgentIds };
-    } else if (agentType === 'normal' && vipAgentIds.length > 0) {
-      where.id = { $nin: vipAgentIds };
     }
 
     const [total, agents] = await Promise.all([
@@ -159,9 +142,7 @@ export class AdminAppUserService {
     ]);
 
     return {
-      items: agents.map(agent =>
-        this.buildAgentItem(agent, owner, vipAgentIdSet)
-      ),
+      items: agents.map(agent => this.buildAgentItem(agent, owner)),
       total,
       page,
       pageSize,
@@ -192,7 +173,7 @@ export class AdminAppUserService {
 
     const account = await this.findAccountByUserId(user.id);
 
-    return this.buildUserItem(user, account);
+    return this.buildUserItem(user, account, await this.isUserVip(user.id));
   }
 
   private async buildUserSearchWhere(keyword: string): Promise<MongoWhere> {
@@ -282,7 +263,8 @@ export class AdminAppUserService {
 
   private buildUserItem(
     user: UserEntity,
-    account?: UserAccountEntity | null
+    account?: UserAccountEntity | null,
+    isVip = false
   ): AdminAppUserItem {
     return {
       id: this.stringifyObjectId(user.id),
@@ -291,9 +273,54 @@ export class AdminAppUserService {
       avatar: this.resolveAvatar(user.avatar),
       phone: user.phone ?? account?.account ?? '',
       phoneVerified: Boolean(user.phoneVerified),
+      isVip,
       createdAt: this.formatDate(user.createdAt),
       updatedAt: this.formatDate(user.updatedAt),
     };
+  }
+
+  private async getVipUserIdSet(users: UserEntity[]): Promise<Set<string>> {
+    if (users.length === 0) {
+      return new Set();
+    }
+
+    const userIds = users.map(user => user.id);
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId: { $in: userIds },
+        status: UserMembershipStatus.active,
+      } as never,
+    });
+    const now = new Date();
+
+    return new Set(
+      memberships
+        .filter(
+          membership =>
+            membership.lifetime ||
+            Boolean(membership.expiredAt && membership.expiredAt > now)
+        )
+        .map(membership => this.stringifyObjectId(membership.userId))
+    );
+  }
+
+  private async isUserVip(userId: MongoObjectId): Promise<boolean> {
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    const now = new Date();
+
+    return memberships.some(
+      membership =>
+        membership.lifetime ||
+        Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
   }
 
   private buildAgentOwner(
@@ -311,8 +338,7 @@ export class AdminAppUserService {
 
   private buildAgentItem(
     agent: AgentEntity,
-    owner: AdminAgentOwnerDTO,
-    vipAgentIdSet = new Set<string>()
+    owner: AdminAgentOwnerDTO
   ): AdminAppUserAgentItem {
     const agentId = this.stringifyObjectId(agent.id);
 
@@ -329,38 +355,9 @@ export class AdminAppUserService {
       deathDate: this.formatDate(agent.deathDate),
       description: agent.description ?? '',
       status: agent.status,
-      isVip: vipAgentIdSet.has(agentId),
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };
-  }
-
-  private async findActiveVipAgentIds(
-    userId: MongoObjectId
-  ): Promise<MongoObjectId[]> {
-    const memberships = await this.agentMembershipModel.find({
-      where: {
-        userId,
-        status: AgentMembershipStatus.active,
-      } as never,
-    });
-    const now = new Date();
-    const uniqueIds = new Map<string, MongoObjectId>();
-
-    memberships
-      .filter(
-        membership =>
-          membership.lifetime ||
-          Boolean(membership.expiredAt && membership.expiredAt > now)
-      )
-      .forEach(membership => {
-        uniqueIds.set(
-          this.stringifyObjectId(membership.agentId),
-          membership.agentId
-        );
-      });
-
-    return [...uniqueIds.values()];
   }
 
   private resolveAvatar(value?: string): string {
@@ -402,10 +399,6 @@ export class AdminAppUserService {
     }
 
     return Math.floor(value);
-  }
-
-  private normalizeAgentType(value?: string): 'normal' | 'vip' | undefined {
-    return value === 'normal' || value === 'vip' ? value : undefined;
   }
 
   private parseObjectId(value: string): MongoObjectId {

@@ -10,7 +10,13 @@ import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
-import { MongoObjectId, UserAccountEntity, UserEntity } from '@tzl/entities';
+import {
+  MongoObjectId,
+  UserAccountEntity,
+  UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
+} from '@tzl/entities';
 import {
   AuthenticatedUserPayload,
   IUserOptions,
@@ -104,6 +110,9 @@ export class UserService {
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -770,12 +779,12 @@ export class UserService {
     });
   }
 
-  private buildLoginResult(
+  private async buildLoginResult(
     user: UserEntity,
     userAccount: UserAccountEntity,
     isNewUser: boolean
-  ): PasswordLoginResult {
-    const profile = this.buildUserProfile(user, userAccount.account);
+  ): Promise<PasswordLoginResult> {
+    const profile = await this.buildUserProfile(user, userAccount.account);
     const issuedAt = Date.now();
     const expiresAt = issuedAt + this.getTokenExpiresInSeconds() * 1000;
     const accessToken = this.jwtService.signSync(
@@ -800,10 +809,10 @@ export class UserService {
     };
   }
 
-  private buildUserProfile(
+  private async buildUserProfile(
     user: UserEntity,
     account: string
-  ): LoginUserProfile {
+  ): Promise<LoginUserProfile> {
     return {
       id: this.stringifyObjectId(user.id),
       name: user.name,
@@ -811,7 +820,27 @@ export class UserService {
       account,
       phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
+      isVip: await this.isUserVip(user.id),
     };
+  }
+
+  private async isUserVip(userId: MongoObjectId): Promise<boolean> {
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    const now = new Date();
+
+    return memberships.some(
+      membership =>
+        membership.lifetime ||
+        Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
   }
 
   private normalizeUserAvatar(rawAvatar?: string): string {

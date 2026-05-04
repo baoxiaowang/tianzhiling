@@ -68,35 +68,32 @@ export interface VipPlanRecordDTO {
   couponGrantAmount?: number;
 }
 
-export type AgentMembershipStatusDTO =
+export type UserMembershipStatusDTO =
   | 'active'
   | 'expired'
   | 'canceled'
   | 'refunded';
 
-export interface AgentMembershipRecordDTO {
+export interface UserMembershipRecordDTO {
   id: string;
-  agentId: string;
   vipPlanId: string;
   vipPlanCode: string;
-  status: AgentMembershipStatusDTO;
+  status: UserMembershipStatusDTO;
   startedAt: string;
   expiredAt?: string;
   lifetime: boolean;
   plan?: VipPlanRecordDTO;
 }
 
-export interface AgentMembershipCenterDTO {
-  agentId: string;
+export interface UserMembershipCenterDTO {
   isVip: boolean;
-  membership?: AgentMembershipRecordDTO;
+  membership?: UserMembershipRecordDTO;
   plans: VipPlanRecordDTO[];
 }
 
-export interface AgentMembershipStatusSnapshotDTO {
-  agentId: string;
+export interface UserMembershipStatusSnapshotDTO {
   isVip: boolean;
-  membership?: AgentMembershipRecordDTO;
+  membership?: UserMembershipRecordDTO;
   entitlements: AgentEntitlementSummaryDTO[];
   serverTime: string;
 }

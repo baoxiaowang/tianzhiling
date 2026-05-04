@@ -9,7 +9,7 @@ export type AppUserAgentRecord = AdminAgentRecordDTO;
 export type AppUserAgentListRes = AdminAgentListDTO;
 export type AppUserAgentListParams = Pick<
   AdminAgentListParamsDTO,
-  'keyword' | 'agentType' | 'page' | 'pageSize'
+  'keyword' | 'page' | 'pageSize'
 >;
 
 export interface AppUserRecord {
@@ -19,6 +19,7 @@ export interface AppUserRecord {
   avatar: string;
   phone: string;
   phoneVerified: boolean;
+  isVip: boolean;
   createdAt: string;
   updatedAt: string;
 }

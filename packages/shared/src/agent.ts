@@ -10,7 +10,6 @@ export interface AgentProfileDTO {
   description: string;
   status: number;
   voiceTimbreId?: string;
-  isVip: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,7 +54,6 @@ export interface AdminAgentRecordDTO extends AgentProfileDTO {
 
 export interface AdminAgentListParamsDTO {
   keyword?: string;
-  agentType?: 'normal' | 'vip';
   sex?: number;
   status?: number;
   page?: number;

@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param } from '@midwayjs/core';
+import { Controller, Get, Inject } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import { MembershipService } from '../service/membership.service';
@@ -11,19 +11,17 @@ export class MembershipController {
   @Inject()
   ctx: Context;
 
-  @Get('/center/:agentId')
-  async getMembershipCenter(@Param('agentId') agentId: string) {
+  @Get('/center')
+  async getMembershipCenter() {
     return this.membershipService.getMembershipCenter(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      agentId
+      this.ctx.state.auth as AuthenticatedUserPayload
     );
   }
 
-  @Get('/status/:agentId')
-  async getMembershipStatus(@Param('agentId') agentId: string) {
+  @Get('/status')
+  async getMembershipStatus() {
     return this.membershipService.getMembershipStatus(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      agentId
+      this.ctx.state.auth as AuthenticatedUserPayload
     );
   }
 }

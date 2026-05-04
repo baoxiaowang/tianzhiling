@@ -17,7 +17,7 @@ export enum TableName {
   post_comment_notification = 'post_comment_notification',
   vip_plan = 'vip_plan',
   order = 'order',
-  agent_membership = 'agent_membership',
+  user_membership = 'user_membership',
   agent_entitlement = 'agent_entitlement',
   coupon_ledger = 'coupon_ledger',
   voice_timbre = 'voice_timbre',

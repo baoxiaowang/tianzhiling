@@ -1,5 +1,4 @@
 export * from './agent-entitlement.entity';
-export * from './agent-membership.entity';
 export * from './agent.entity';
 export * from './agent-sub.entity';
 export * from './admin-account.entity';
@@ -14,5 +13,6 @@ export * from './post-comment.entity';
 export * from './post-comment-notification.entity';
 export * from './user.entity';
 export * from './user-account.entity';
+export * from './user-membership.entity';
 export * from './vip-plan.entity';
 export * from './voice-timbre.entity';

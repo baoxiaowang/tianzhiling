@@ -21,7 +21,7 @@ export class AgentEntitlementEntity extends BaseEntity {
   userId: MongoObjectId;
 
   @Column()
-  agentId: MongoObjectId;
+  agentId?: MongoObjectId;
 
   @Column()
   type: AgentEntitlementType;

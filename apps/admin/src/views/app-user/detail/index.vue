@@ -39,6 +39,9 @@
               <a-tag :color="user.phoneVerified ? 'green' : 'gray'">
                 {{ user.phoneVerified ? '手机已验证' : '手机未验证' }}
               </a-tag>
+              <a-tag :color="user.isVip ? 'gold' : 'gray'">
+                {{ user.isVip ? 'VIP会员' : '普通用户' }}
+              </a-tag>
             </div>
 
             <a-descriptions
@@ -82,16 +85,6 @@
                   placeholder="搜索 agent 名字"
                   @press-enter="handleAgentSearch"
                 />
-              </a-form-item>
-              <a-form-item field="agentType" label="Agent类型">
-                <a-select
-                  v-model="agentSearchForm.agentType"
-                  class="app-user-detail-page__agent-type-filter"
-                >
-                  <a-option value="">全部</a-option>
-                  <a-option value="normal">普通</a-option>
-                  <a-option value="vip">VIP</a-option>
-                </a-select>
               </a-form-item>
               <a-form-item>
                 <a-space>
@@ -152,13 +145,6 @@
                   <template #cell="{ record }">
                     <a-tag :color="record.sex === 1 ? 'blue' : 'magenta'">
                       {{ formatSex(record.sex) }}
-                    </a-tag>
-                  </template>
-                </a-table-column>
-                <a-table-column title="类型" data-index="isVip" :width="90">
-                  <template #cell="{ record }">
-                    <a-tag :color="record.isVip ? 'gold' : 'gray'">
-                      {{ record.isVip ? 'VIP' : '普通' }}
                     </a-tag>
                   </template>
                 </a-table-column>
@@ -252,10 +238,8 @@
   const activeTab = ref('agents');
   const agentSearchForm = reactive<{
     keyword: string;
-    agentType: '' | 'normal' | 'vip';
   }>({
     keyword: '',
-    agentType: '',
   });
   const agentPagination = reactive({
     current: 1,
@@ -297,7 +281,6 @@
       agentsLoading.value = true;
       const { data } = await queryAppUserAgents(id, {
         keyword: agentSearchForm.keyword.trim() || undefined,
-        agentType: agentSearchForm.agentType || undefined,
         page: agentPagination.current,
         pageSize: agentPagination.pageSize,
       });
@@ -336,7 +319,6 @@
 
   const resetAgentSearch = () => {
     agentSearchForm.keyword = '';
-    agentSearchForm.agentType = '';
     agentPagination.current = 1;
     fetchUserAgents(userId.value);
   };
@@ -453,10 +435,6 @@
 
     &__agent-search {
       margin-bottom: 16px;
-    }
-
-    &__agent-type-filter {
-      width: 132px;
     }
 
     &__agent-name {

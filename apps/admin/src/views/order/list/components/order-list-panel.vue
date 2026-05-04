@@ -233,12 +233,6 @@
             {{ resolveOrderUserContact(currentOrder) }}
           </span>
         </a-descriptions-item>
-        <a-descriptions-item label="智能体ID">
-          <a-typography-text v-if="currentOrder.agentId" copyable>
-            {{ currentOrder.agentId }}
-          </a-typography-text>
-          <span v-else>-</span>
-        </a-descriptions-item>
         <a-descriptions-item label="应付金额">
           {{ formatAmount(currentOrder.payableAmount) }}
         </a-descriptions-item>

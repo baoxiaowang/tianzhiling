@@ -19,7 +19,6 @@ export interface OrderRecordDTO {
   id: string;
   orderNo: string;
   orderType: 'vip_plan';
-  agentId?: string;
   targetId?: string;
   targetCode?: string;
   title: string;
@@ -76,7 +75,6 @@ export interface AdminOrderListDTO {
 
 export interface CreateVipPlanOrderDTO {
   vipPlanId: string;
-  agentId: string;
   jsCode: string;
 }
 

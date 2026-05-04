@@ -98,7 +98,6 @@ const pollIntervalMs = 1500
 const maxPollAttempts = 20
 
 const orderId = ref('')
-const routeAgentId = ref('')
 const order = ref<OrderRecord | null>(null)
 const isPolling = ref(false)
 const isReadyToPoll = ref(false)
@@ -188,7 +187,6 @@ async function preparePage(options?: Record<string, unknown>) {
   clearPollTimer()
   isReadyToPoll.value = false
   orderId.value = String(options?.orderId ?? '').trim()
-  routeAgentId.value = decodeRouteParam(options?.agentId)
 
   if (!orderId.value) {
     resultType.value = 'failed'
@@ -297,18 +295,6 @@ function clearPollTimer() {
   }
 }
 
-function decodeRouteParam(value?: unknown) {
-  if (typeof value !== 'string') {
-    return ''
-  }
-
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
-
 function isFailedStatus(status?: OrderStatusDTO) {
   return status === 'closed' || status === 'refunded' || status === 'grant_failed'
 }
@@ -362,11 +348,8 @@ function handleRetry() {
 }
 
 async function handleBackToVipCenter() {
-  const agentId = routeAgentId.value || order.value?.agentId || ''
-  const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''
-
   await Taro.redirectTo({
-    url: `/pages/vip-center/index${query}`,
+    url: '/pages/vip-center/index',
   })
 }
 </script>

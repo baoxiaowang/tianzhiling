@@ -41,14 +41,10 @@
           </view>
         </view>
 
-        <view class="agent-detail-header__meta">
-          <view class="agent-detail-header__name-row">
-            <text class="agent-detail-header__name">{{ displayName }}</text>
-            <view v-if="agent?.isVip" class="agent-detail-header__vip">
-              <StarFill size="12" color="#f8d18b" />
-              <text>VIP</text>
+          <view class="agent-detail-header__meta">
+            <view class="agent-detail-header__name-row">
+              <text class="agent-detail-header__name">{{ displayName }}</text>
             </view>
-          </view>
           <text class="agent-detail-header__sub">
             {{ sexLabel }}是你正在纪念的重要存在
           </text>
@@ -86,12 +82,7 @@
           @click="handlePendingTap(item)"
         >
           <template v-if="item === 'VIP与增值配置'" #desc>
-            <text
-              class="agent-detail-cell__status"
-              :class="{ 'agent-detail-cell__status--active': agent?.isVip }"
-            >
-              {{ agent?.isVip ? '已开通' : '待开通' }}
-            </text>
+            <text class="agent-detail-cell__status">账号会员</text>
           </template>
         </nut-cell>
       </view>
@@ -154,7 +145,7 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
-import { Message, MoreX, StarFill } from '@nutui/icons-vue-taro'
+import { Message, MoreX } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, type AgentSummary } from '../../apis/agent'
@@ -391,7 +382,7 @@ function handlePendingTap(title: string) {
     }
 
     void Taro.navigateTo({
-      url: `/pages/vip-center/index?agentId=${encodeURIComponent(agentId.value)}`,
+      url: '/pages/vip-center/index',
     })
     return
   }
@@ -525,22 +516,6 @@ function handleSendMessage() {
   font-weight: 700;
 }
 
-.agent-detail-header__vip {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 20px;
-  padding: 0 7px 0 6px;
-  border: 0.5px solid rgba(216, 160, 76, 0.72);
-  border-radius: 999px;
-  background: linear-gradient(135deg, #2c1d12 0%, #744823 100%);
-  color: #ffe5b8;
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 700;
-}
-
 .agent-detail-header__sub {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -632,10 +607,6 @@ function handleSendMessage() {
   font-size: 14px;
   line-height: 20px;
   font-weight: 500;
-}
-
-.agent-detail-cell__status--active {
-  color: #d48a2f;
 }
 
 .agent-detail-moments__thumbs {

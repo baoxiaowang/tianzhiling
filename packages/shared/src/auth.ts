@@ -5,6 +5,7 @@ export interface LoginUserProfile {
   account: string;
   phone: string;
   phoneVerified: boolean;
+  isVip: boolean;
 }
 
 export interface AuthenticatedUserPayload {

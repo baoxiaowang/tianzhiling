@@ -2,11 +2,9 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
-  AgentEntity,
-  AgentMembershipEntity,
-  AgentMembershipStatus,
-  AgentSex,
   MongoObjectId,
+  UserMembershipEntity,
+  UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
@@ -15,43 +13,19 @@ import { MembershipService } from '../../src/service/membership.service';
 const NOW = new Date('2026-05-01T00:00:00.000Z');
 const USER_ID = '665000000000000000000001';
 const OTHER_USER_ID = '665000000000000000000009';
-const AGENT_ID = '665000000000000000000010';
-const OTHER_AGENT_ID = '665000000000000000000011';
 const VIP_PLAN_ID = '665000000000000000000003';
 const ORDER_ID = '665000000000000000000002';
 
-function createAgent(overrides: Partial<AgentEntity> = {}) {
-  const agent = new AgentEntity();
-
-  Object.assign(agent, {
-    id: new MongoObjectId(AGENT_ID),
-    createdUserId: new MongoObjectId(USER_ID),
-    name: '奶奶',
-    avatar: '',
-    sex: AgentSex.woman,
-    iCallAgent: '奶奶',
-    agentCallMe: '小宝',
-    description: '',
-    status: 1,
-    createdAt: NOW,
-    updatedAt: NOW,
-    ...overrides,
-  });
-
-  return agent;
-}
-
-function createMembership(overrides: Partial<AgentMembershipEntity> = {}) {
-  const membership = new AgentMembershipEntity();
+function createMembership(overrides: Partial<UserMembershipEntity> = {}) {
+  const membership = new UserMembershipEntity();
 
   Object.assign(membership, {
     id: new MongoObjectId('665000000000000000000004'),
     userId: new MongoObjectId(USER_ID),
-    agentId: new MongoObjectId(AGENT_ID),
     vipPlanId: new MongoObjectId(VIP_PLAN_ID),
     vipPlanCode: 'vip_month',
     sourceOrderId: new MongoObjectId(ORDER_ID),
-    status: AgentMembershipStatus.active,
+    status: UserMembershipStatus.active,
     startedAt: NOW,
     expiredAt: new Date('2026-06-01T00:00:00.000Z'),
     lifetime: false,
@@ -93,7 +67,6 @@ function createEntitlement(
   Object.assign(entitlement, {
     id: new MongoObjectId(),
     userId: new MongoObjectId(USER_ID),
-    agentId: new MongoObjectId(AGENT_ID),
     type: AgentEntitlementType.voiceModel,
     totalQuota: 2,
     usedQuota: 1,
@@ -115,32 +88,17 @@ function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
 }
 
 function createService(options: {
-  agent?: AgentEntity | null;
-  memberships?: AgentMembershipEntity[];
+  memberships?: UserMembershipEntity[];
   entitlements?: AgentEntitlementEntity[];
 } = {}) {
   const service = new MembershipService();
   const plan = createVipPlan();
-  const agent = options.agent === undefined ? createAgent() : options.agent;
 
-  service.agentModel = {
-    findOne: jest.fn(async ({ where }: any) => {
-      if (!agent) {
-        return null;
-      }
-
-      return sameObjectId(where?.id, agent.id) &&
-        sameObjectId(where?.createdUserId, agent.createdUserId)
-        ? agent
-        : null;
-    }),
-  } as any;
-  service.agentMembershipModel = {
+  service.userMembershipModel = {
     find: jest.fn(async ({ where }: any) =>
       (options.memberships ?? []).filter(
         membership =>
           sameObjectId(membership.userId, where?.userId) &&
-          sameObjectId(membership.agentId, where?.agentId) &&
           membership.status === where?.status
       )
     ),
@@ -150,7 +108,6 @@ function createService(options: {
       (options.entitlements ?? []).filter(
         entitlement =>
           sameObjectId(entitlement.userId, where?.userId) &&
-          sameObjectId(entitlement.agentId, where?.agentId) &&
           entitlement.status === where?.status
       )
     ),
@@ -175,7 +132,7 @@ const auth = {
   nonce: 'nonce',
 };
 
-describe('MembershipService agent membership status', () => {
+describe('MembershipService user membership status', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
   });
@@ -184,7 +141,7 @@ describe('MembershipService agent membership status', () => {
     jest.useRealTimers();
   });
 
-  it('returns active vip status and aggregated available entitlements for the selected agent', async () => {
+  it('returns active user vip status and aggregated available entitlements', async () => {
     const service = createService({
       memberships: [createMembership()],
       entitlements: [
@@ -197,11 +154,9 @@ describe('MembershipService agent membership status', () => {
       ],
     });
 
-    const result = await service.getMembershipStatus(auth, AGENT_ID);
+    const result = await service.getMembershipStatus(auth);
 
-    expect(result.agentId).toBe(AGENT_ID);
     expect(result.isVip).toBe(true);
-    expect(result.membership?.agentId).toBe(AGENT_ID);
     expect(result.membership?.plan?.name).toBe('月度会员');
     expect(result.entitlements).toEqual([
       expect.objectContaining({
@@ -214,84 +169,59 @@ describe('MembershipService agent membership status', () => {
     ]);
   });
 
-  it('does not leak a vip membership from another agent of the same user', async () => {
+  it('does not leak membership or entitlements from another user', async () => {
     const service = createService({
       memberships: [
         createMembership({
-          agentId: new MongoObjectId(OTHER_AGENT_ID),
+          userId: new MongoObjectId(OTHER_USER_ID),
         }),
       ],
       entitlements: [
         createEntitlement({
-          agentId: new MongoObjectId(OTHER_AGENT_ID),
+          userId: new MongoObjectId(OTHER_USER_ID),
         }),
       ],
     });
 
-    const result = await service.getMembershipStatus(auth, AGENT_ID);
+    const result = await service.getMembershipStatus(auth);
 
-    expect(service.agentMembershipModel.find).toHaveBeenCalledWith(
+    expect(service.userMembershipModel.find).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          agentId: new MongoObjectId(AGENT_ID),
+          userId: new MongoObjectId(USER_ID),
         }),
       })
     );
     expect(result.isVip).toBe(false);
     expect(result.membership).toBeUndefined();
+    expect(result.entitlements).toEqual([]);
   });
 
-  it('rejects agents that are not owned by the current user', async () => {
-    const service = createService({
-      agent: createAgent({
-        createdUserId: new MongoObjectId(OTHER_USER_ID),
-      }),
-    });
-
-    await expect(service.getMembershipCenter(auth, AGENT_ID)).rejects.toMatchObject({
-      code: 'AGENT_NOT_FOUND',
-    });
-  });
-
-  it('rejects invalid agent ids before querying membership tables', async () => {
+  it('returns plans and no membership for a normal user', async () => {
     const service = createService();
 
-    await expect(service.getMembershipStatus(auth, 'bad-agent-id')).rejects.toMatchObject({
-      code: 'INVALID_AGENT_ID',
-    });
-    expect(service.agentMembershipModel.find).not.toHaveBeenCalled();
+    const result = await service.getMembershipCenter(auth);
+
+    expect(result.isVip).toBe(false);
+    expect(result.membership).toBeUndefined();
+    expect(result.plans).toEqual([
+      expect.objectContaining({
+        id: VIP_PLAN_ID,
+        name: '月度会员',
+      }),
+    ]);
   });
 
-  it('falls back to _id when checking agent ownership', async () => {
-    const service = new MembershipService();
-    const agent = createAgent();
+  it('rejects invalid user ids before querying membership tables', async () => {
+    const service = createService();
+    const invalidAuth = {
+      ...auth,
+      sub: 'bad-user-id',
+    };
 
-    service.agentModel = {
-      findOne: jest
-        .fn()
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(agent),
-    } as any;
-    service.agentMembershipModel = {
-      find: jest.fn().mockResolvedValue([]),
-    } as any;
-    service.agentEntitlementModel = {
-      find: jest.fn().mockResolvedValue([]),
-    } as any;
-    service.vipPlanModel = {
-      find: jest.fn().mockResolvedValue([createVipPlan()]),
-    } as any;
-
-    const result = await service.getMembershipCenter(auth, AGENT_ID);
-
-    expect(result.agentId).toBe(AGENT_ID);
-    expect(service.agentModel.findOne).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        where: expect.objectContaining({
-          _id: new MongoObjectId(AGENT_ID),
-        }),
-      })
-    );
+    await expect(service.getMembershipStatus(invalidAuth)).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    });
+    expect(service.userMembershipModel.find).not.toHaveBeenCalled();
   });
 });

@@ -1,14 +1,12 @@
 import {
   AgentEntitlementStatus,
   AgentEntitlementType,
-  AgentEntity,
-  AgentMembershipStatus,
-  AgentSex,
   MongoObjectId,
   OrderEntity,
   OrderSource,
   OrderStatus,
   OrderType,
+  UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
@@ -21,7 +19,6 @@ const NOW = new Date('2026-05-01T00:00:00.000Z');
 const USER_ID = '665000000000000000000001';
 const ORDER_ID = '665000000000000000000002';
 const VIP_PLAN_ID = '665000000000000000000003';
-const AGENT_ID = '665000000000000000000010';
 const ORDER_NO = 'VIP202605010001';
 
 function createOrder(overrides: Partial<OrderEntity> = {}) {
@@ -32,7 +29,6 @@ function createOrder(overrides: Partial<OrderEntity> = {}) {
     id: new MongoObjectId(ORDER_ID),
     orderNo: ORDER_NO,
     userId: new MongoObjectId(USER_ID),
-    agentId: new MongoObjectId(AGENT_ID),
     orderType: OrderType.vipPlan,
     targetId: new MongoObjectId(VIP_PLAN_ID),
     targetCode: 'vip_month',
@@ -60,27 +56,6 @@ function createOrder(overrides: Partial<OrderEntity> = {}) {
   });
 
   return order;
-}
-
-function createAgent() {
-  const createdAt = new Date('2026-05-01T00:00:00.000Z');
-  const agent = new AgentEntity();
-
-  Object.assign(agent, {
-    id: new MongoObjectId(AGENT_ID),
-    createdUserId: new MongoObjectId(USER_ID),
-    name: '奶奶',
-    avatar: '',
-    sex: AgentSex.woman,
-    iCallAgent: '奶奶',
-    agentCallMe: '小宝',
-    description: '',
-    status: 1,
-    createdAt,
-    updatedAt: createdAt,
-  });
-
-  return agent;
 }
 
 function createVipPlan(overrides: Partial<VipPlanEntity> = {}) {
@@ -156,20 +131,6 @@ function createVipPlanModel(plan: VipPlanEntity) {
   };
 }
 
-function createAgentModel(agent: AgentEntity) {
-  return {
-    findOne: jest.fn(async ({ where }: any) => {
-      const id = where?.id;
-      const createdUserId = where?.createdUserId;
-
-      return sameObjectId(id, agent.id) &&
-        sameObjectId(createdUserId, agent.createdUserId)
-        ? agent
-        : null;
-    }),
-  };
-}
-
 function createService(
   orderOverrides: Partial<OrderEntity> = {},
   planOverrides: Partial<VipPlanEntity> = {}
@@ -177,11 +138,9 @@ function createService(
   const service = new OrderService();
   const order = createOrder(orderOverrides);
   const plan = createVipPlan(planOverrides);
-  const agent = createAgent();
   const orderModel = createOrderModel(order);
   const vipPlanModel = createVipPlanModel(plan);
-  const agentModel = createAgentModel(agent);
-  const agentMembershipModel = {
+  const userMembershipModel = {
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn(async membership => membership),
   };
@@ -212,8 +171,7 @@ function createService(
   } as any;
   service.orderModel = orderModel as any;
   service.vipPlanModel = vipPlanModel as any;
-  service.agentModel = agentModel as any;
-  service.agentMembershipModel = agentMembershipModel as any;
+  service.userMembershipModel = userMembershipModel as any;
   service.agentEntitlementModel = agentEntitlementModel as any;
   service.wechatPayService = wechatPayService as any;
   service.bullmqFramework = {
@@ -226,7 +184,7 @@ function createService(
     service,
     order,
     orderModel,
-    agentMembershipModel,
+    userMembershipModel,
     agentEntitlementModel,
     wechatPayService,
     queue,
@@ -254,7 +212,6 @@ describe('OrderService payment expiration and reconciliation', () => {
     const { service, queue, auth } = createService();
 
     await service.createVipPlanOrder(auth, {
-      agentId: AGENT_ID,
       vipPlanId: VIP_PLAN_ID,
       jsCode: 'wx-code',
     });
@@ -269,34 +226,6 @@ describe('OrderService payment expiration and reconciliation', () => {
         attempts: 3,
       })
     );
-  });
-
-  it('falls back to _id when validating the order agent owner', async () => {
-    const { service, queue, auth } = createService();
-
-    service.agentModel.findOne = jest
-      .fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: new MongoObjectId(AGENT_ID),
-        createdUserId: new MongoObjectId(USER_ID),
-      });
-
-    await service.createVipPlanOrder(auth, {
-      agentId: AGENT_ID,
-      vipPlanId: VIP_PLAN_ID,
-      jsCode: 'wx-code',
-    });
-
-    expect(service.agentModel.findOne).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        where: expect.objectContaining({
-          _id: new MongoObjectId(AGENT_ID),
-        }),
-      })
-    );
-    expect(queue.addJobToQueue).toHaveBeenCalled();
   });
 
   it('closes an expired pending order and writes closedAt when WeChat has no transaction', async () => {
@@ -328,7 +257,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       service,
       order,
       orderModel,
-      agentMembershipModel,
+      userMembershipModel,
       wechatPayService,
     } = createService();
     const paidAt = '2026-05-01T00:10:00+08:00';
@@ -349,15 +278,14 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(wechatPayService.queryTransactionByOrderNo).toHaveBeenCalledWith(
       ORDER_NO
     );
-    expect(agentMembershipModel.save).toHaveBeenCalledTimes(1);
-    expect(agentMembershipModel.save).toHaveBeenCalledWith(
+    expect(userMembershipModel.save).toHaveBeenCalledTimes(1);
+    expect(userMembershipModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: order.userId,
-        agentId: order.agentId,
         vipPlanId: order.targetId,
         vipPlanCode: 'vip_month',
         sourceOrderId: order.id,
-        status: AgentMembershipStatus.active,
+        status: UserMembershipStatus.active,
         lifetime: false,
       })
     );
@@ -403,7 +331,6 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(agentEntitlementModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: order.userId,
-        agentId: order.agentId,
         type: AgentEntitlementType.voiceModel,
         totalQuota: 2,
         usedQuota: 0,

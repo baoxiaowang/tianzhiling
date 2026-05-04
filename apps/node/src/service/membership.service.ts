@@ -4,18 +4,17 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
-  AgentEntity,
-  AgentMembershipEntity,
-  AgentMembershipStatus,
   MongoObjectId,
+  UserMembershipEntity,
+  UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
 } from '@tzl/entities';
 import type {
   AgentEntitlementSummaryDTO,
-  AgentMembershipCenterDTO,
-  AgentMembershipRecordDTO,
-  AgentMembershipStatusSnapshotDTO,
+  UserMembershipCenterDTO,
+  UserMembershipRecordDTO,
+  UserMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
@@ -27,36 +26,28 @@ export class MembershipService {
   @InjectEntityModel(VipPlanEntity)
   vipPlanModel: MongoRepository<VipPlanEntity>;
 
-  @InjectEntityModel(AgentEntity)
-  agentModel: MongoRepository<AgentEntity>;
-
-  @InjectEntityModel(AgentMembershipEntity)
-  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
 
   async getMembershipCenter(
-    auth: AuthenticatedUserPayload,
-    agentId: string
-  ): Promise<AgentMembershipCenterDTO> {
+    auth: AuthenticatedUserPayload
+  ): Promise<UserMembershipCenterDTO> {
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
-    const agentObjectId = this.parseObjectId(agentId, 'INVALID_AGENT_ID');
-    await this.ensureAgentBelongsToUser(agentObjectId, userId);
 
     const now = new Date();
     const [plans, memberships] = await Promise.all([
       this.listActiveVipPlans(),
-      this.findActiveMemberships(userId, agentObjectId),
+      this.findActiveMemberships(userId),
     ]);
     const activeMembership = memberships.find(membership =>
       this.isMembershipAvailable(membership, now)
     );
-    const agentIdText = this.stringifyObjectId(agentObjectId);
 
     if (!activeMembership) {
       return {
-        agentId: agentIdText,
         isVip: false,
         plans,
       };
@@ -67,7 +58,6 @@ export class MembershipService {
     );
 
     return {
-      agentId: agentIdText,
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
@@ -78,28 +68,22 @@ export class MembershipService {
   }
 
   async getMembershipStatus(
-    auth: AuthenticatedUserPayload,
-    agentId: string
-  ): Promise<AgentMembershipStatusSnapshotDTO> {
+    auth: AuthenticatedUserPayload
+  ): Promise<UserMembershipStatusSnapshotDTO> {
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
-    const agentObjectId = this.parseObjectId(agentId, 'INVALID_AGENT_ID');
-    await this.ensureAgentBelongsToUser(agentObjectId, userId);
 
     const now = new Date();
-    const memberships = await this.findActiveMemberships(userId, agentObjectId);
+    const memberships = await this.findActiveMemberships(userId);
     const activeMembership = memberships.find(membership =>
       this.isMembershipAvailable(membership, now)
     );
     const entitlements = await this.listAvailableEntitlementSummaries(
       userId,
-      agentObjectId,
       now
     );
-    const agentIdText = this.stringifyObjectId(agentObjectId);
 
     if (!activeMembership) {
       return {
-        agentId: agentIdText,
         isVip: false,
         entitlements,
         serverTime: this.formatDate(now),
@@ -111,7 +95,6 @@ export class MembershipService {
     );
 
     return {
-      agentId: agentIdText,
       isVip: true,
       membership: this.buildMembershipRecord(
         activeMembership,
@@ -120,31 +103,6 @@ export class MembershipService {
       entitlements,
       serverTime: this.formatDate(now),
     };
-  }
-
-  private async ensureAgentBelongsToUser(
-    agentId: MongoObjectId,
-    userId: MongoObjectId
-  ): Promise<AgentEntity> {
-    const agent =
-      (await this.agentModel.findOne({
-        where: {
-          id: agentId,
-          createdUserId: userId,
-        },
-      })) ??
-      (await this.agentModel.findOne({
-        where: {
-          _id: agentId,
-          createdUserId: userId,
-        } as never,
-      }));
-
-    if (!agent) {
-      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
-    }
-
-    return agent;
   }
 
   private async listActiveVipPlans(): Promise<VipPlanRecordDTO[]> {
@@ -162,7 +120,7 @@ export class MembershipService {
   }
 
   private isMembershipAvailable(
-    membership: AgentMembershipEntity,
+    membership: UserMembershipEntity,
     now: Date
   ): boolean {
     if (membership.lifetime) {
@@ -173,14 +131,12 @@ export class MembershipService {
   }
 
   private findActiveMemberships(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<AgentMembershipEntity[]> {
-    return this.agentMembershipModel.find({
+    userId: MongoObjectId
+  ): Promise<UserMembershipEntity[]> {
+    return this.userMembershipModel.find({
       where: {
         userId,
-        agentId,
-        status: AgentMembershipStatus.active,
+        status: UserMembershipStatus.active,
       },
       order: {
         updatedAt: 'DESC',
@@ -190,13 +146,11 @@ export class MembershipService {
 
   private async listAvailableEntitlementSummaries(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
     now: Date
   ): Promise<AgentEntitlementSummaryDTO[]> {
     const entitlements = await this.agentEntitlementModel.find({
       where: {
         userId,
-        agentId,
         status: AgentEntitlementStatus.available,
       },
       order: {
@@ -271,14 +225,13 @@ export class MembershipService {
   }
 
   private buildMembershipRecord(
-    membership: AgentMembershipEntity,
+    membership: UserMembershipEntity,
     plan?: VipPlanRecordDTO
-  ): AgentMembershipRecordDTO {
+  ): UserMembershipRecordDTO {
     const vipPlanId = this.stringifyObjectId(membership.vipPlanId);
 
     return {
       id: this.stringifyObjectId(membership.id),
-      agentId: this.stringifyObjectId(membership.agentId),
       vipPlanId,
       vipPlanCode: membership.vipPlanCode,
       status: membership.status,

@@ -90,9 +90,6 @@
               >
                 {{ buildConversationFallback(conversation.agentName) }}
               </view>
-              <view v-if="conversation.isVip" class="contacts-item__vip-badge">
-                VIP
-              </view>
             </view>
 
             <view class="contacts-item__content">
@@ -464,25 +461,6 @@ useDidShow(() => {
   height: 48px;
   border-radius: 8px;
   background: #eef2f7;
-}
-
-.contacts-item__vip-badge {
-  position: absolute;
-  top: -5px;
-  right: -8px;
-  box-sizing: border-box;
-  min-width: 27px;
-  height: 16px;
-  padding: 0 5px;
-  border: 1px solid #ffffff;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #2c1d12 0%, #8a5728 100%);
-  color: #ffe7ba;
-  font-size: 9px;
-  line-height: 14px;
-  font-weight: 800;
-  text-align: center;
-  box-shadow: 0 3px 8px rgba(67, 39, 16, 0.22);
 }
 
 .contacts-item__avatar--fallback {

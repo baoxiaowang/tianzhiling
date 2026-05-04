@@ -5,7 +5,6 @@ import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
   AgentEntitlementEntity,
-  AgentMembershipEntity,
   AgentSubEntity,
   ConversationEntity,
   CouponLedgerEntity,
@@ -16,6 +15,7 @@ import {
   PostEntity,
   UserAccountEntity,
   UserEntity,
+  UserMembershipEntity,
   VipPlanEntity,
   VoiceTimbreEntity,
 } from '@tzl/entities';
@@ -479,7 +479,6 @@ export default {
         entities: [
           AgentEntity,
           AgentEntitlementEntity,
-          AgentMembershipEntity,
           AgentSubEntity,
           ConversationEntity,
           CouponLedgerEntity,
@@ -490,6 +489,7 @@ export default {
           PostEntity,
           UserAccountEntity,
           UserEntity,
+          UserMembershipEntity,
           VipPlanEntity,
           VoiceTimbreEntity,
         ],

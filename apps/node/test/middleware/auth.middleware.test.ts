@@ -8,9 +8,9 @@ describe('AuthMiddleware route matching', () => {
   }
 
   it.each([
-    '/api/membership/center/69f5b418d37d566df0d3cf13',
-    '/api/membership/status/69f5b418d37d566df0d3cf13',
-  ])('protects agent-scoped membership route %s', path => {
+    '/api/membership/center',
+    '/api/membership/status',
+  ])('protects membership route %s', path => {
     const middleware = createMiddleware();
 
     expect(

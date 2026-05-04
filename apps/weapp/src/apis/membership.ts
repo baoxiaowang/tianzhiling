@@ -1,8 +1,8 @@
 import type {
   AgentEntitlementSummaryDTO,
-  AgentMembershipStatusSnapshotDTO,
-  AgentMembershipCenterDTO,
-  AgentMembershipRecordDTO,
+  UserMembershipStatusSnapshotDTO,
+  UserMembershipCenterDTO,
+  UserMembershipRecordDTO,
   VipPlanBenefitDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared'
@@ -22,9 +22,8 @@ export interface VipPlan {
   couponGrantAmount?: number
 }
 
-export interface AgentMembership {
+export interface UserMembership {
   id: string
-  agentId: string
   vipPlanId: string
   vipPlanCode: string
   status: string
@@ -43,16 +42,14 @@ export interface AgentEntitlementSummary {
 }
 
 export interface MembershipCenter {
-  agentId: string
   isVip: boolean
-  membership?: AgentMembership
+  membership?: UserMembership
   plans: VipPlan[]
 }
 
 export interface MembershipStatus {
-  agentId: string
   isVip: boolean
-  membership?: AgentMembership
+  membership?: UserMembership
   entitlements: AgentEntitlementSummary[]
   serverTime: Date | null
 }
@@ -133,13 +130,12 @@ function parseVipPlan(value: unknown): VipPlan {
   }
 }
 
-function parseMembership(value: unknown): AgentMembership {
+function parseMembership(value: unknown): UserMembership {
   const raw = asRecord(value)
   const plan = raw.plan ? parseVipPlan(raw.plan) : undefined
 
   return {
     id: asString(raw.id),
-    agentId: asString(raw.agentId),
     vipPlanId: asString(raw.vipPlanId),
     vipPlanCode: asString(raw.vipPlanCode),
     status: asString(raw.status),
@@ -173,7 +169,6 @@ function parseMembershipCenter(value: unknown): MembershipCenter {
   const plans = Array.isArray(raw.plans) ? raw.plans.map(parseVipPlan) : []
 
   return {
-    agentId: asString(raw.agentId),
     isVip: Boolean(raw.isVip),
     membership: raw.membership ? parseMembership(raw.membership) : undefined,
     plans,
@@ -187,7 +182,6 @@ function parseMembershipStatus(value: unknown): MembershipStatus {
     : []
 
   return {
-    agentId: asString(raw.agentId),
     isVip: Boolean(raw.isVip),
     membership: raw.membership ? parseMembership(raw.membership) : undefined,
     entitlements,
@@ -195,26 +189,22 @@ function parseMembershipStatus(value: unknown): MembershipStatus {
   }
 }
 
-export async function getMembershipCenter(agentId: string) {
-  const data = await get<AgentMembershipCenterDTO>(
-    `/api/membership/center/${encodeURIComponent(agentId)}`,
-  )
+export async function getMembershipCenter() {
+  const data = await get<UserMembershipCenterDTO>('/api/membership/center')
 
   return parseMembershipCenter(data)
 }
 
-export async function getMembershipStatus(agentId: string) {
-  const data = await get<AgentMembershipStatusSnapshotDTO>(
-    `/api/membership/status/${encodeURIComponent(agentId)}`,
-  )
+export async function getMembershipStatus() {
+  const data = await get<UserMembershipStatusSnapshotDTO>('/api/membership/status')
 
   return parseMembershipStatus(data)
 }
 
 export type {
   AgentEntitlementSummaryDTO,
-  AgentMembershipCenterDTO,
-  AgentMembershipRecordDTO,
-  AgentMembershipStatusSnapshotDTO,
+  UserMembershipCenterDTO,
+  UserMembershipRecordDTO,
+  UserMembershipStatusSnapshotDTO,
   VipPlanRecordDTO,
 }

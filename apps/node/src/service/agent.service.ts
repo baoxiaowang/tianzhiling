@@ -10,8 +10,6 @@ import {
 } from '../dto/agent.dto';
 import {
   AgentEntity,
-  AgentMembershipEntity,
-  AgentMembershipStatus,
   AgentSex,
   ConversationEntity,
   MongoObjectId,
@@ -28,9 +26,6 @@ export class AgentService {
 
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
-
-  @InjectEntityModel(AgentMembershipEntity)
-  agentMembershipModel: MongoRepository<AgentMembershipEntity>;
 
   @Inject()
   postImageService: PostImageService;
@@ -230,30 +225,9 @@ export class AgentService {
       description: agent.description,
       status: agent.status,
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
-      isVip: await this.isAgentVip(agent),
       createdAt: agent.createdAt.toISOString(),
       updatedAt: agent.updatedAt.toISOString(),
     };
-  }
-
-  private async isAgentVip(agent: AgentEntity): Promise<boolean> {
-    const memberships = await this.agentMembershipModel.find({
-      where: {
-        userId: agent.createdUserId,
-        agentId: agent.id,
-        status: AgentMembershipStatus.active,
-      },
-      order: {
-        updatedAt: 'DESC',
-      },
-    });
-    const now = new Date();
-
-    return memberships.some(
-      membership =>
-        membership.lifetime ||
-        Boolean(membership.expiredAt && membership.expiredAt > now)
-    );
   }
 
   private buildDescription(options: {

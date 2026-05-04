@@ -189,7 +189,6 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 const center = ref<MembershipCenter | null>(null)
-const agentId = ref('')
 const selectedPlanId = ref('')
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
@@ -240,22 +239,9 @@ const membershipPeriodText = computed(() => {
   return `自 ${formatDate(membership.startedAt)} 起生效`
 })
 
-useLoad((options) => {
-  agentId.value = decodeRouteParam(options?.agentId)
+useLoad(() => {
   void preparePage()
 })
-
-function decodeRouteParam(value?: string) {
-  if (typeof value !== 'string') {
-    return ''
-  }
-
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
 
 async function preparePage() {
   isCheckingAuth.value = true
@@ -267,26 +253,15 @@ async function preparePage() {
   }
 
   isCheckingAuth.value = false
-
-  if (!agentId.value) {
-    loadError.value = '缺少智能体信息，请从智能体详情页重新进入。'
-    return
-  }
-
   await loadMembershipCenter()
 }
 
 async function loadMembershipCenter() {
-  if (!agentId.value) {
-    loadError.value = '缺少智能体信息，请从智能体详情页重新进入。'
-    return
-  }
-
   isLoading.value = true
   loadError.value = ''
 
   try {
-    const data = await getMembershipCenter(agentId.value)
+    const data = await getMembershipCenter()
     center.value = data
     selectedPlanId.value = data.plans[0]?.id ?? ''
   } catch (error) {
@@ -340,7 +315,6 @@ async function handlePurchaseTap() {
     })
 
     const result = await createVipPlanOrder({
-      agentId: agentId.value,
       vipPlanId: selectedPlan.value.id,
       jsCode,
     })
@@ -352,7 +326,7 @@ async function handlePurchaseTap() {
       await Taro.redirectTo({
         url: `/pages/payment-result/index?orderId=${encodeURIComponent(
           result.order.id,
-        )}&agentId=${encodeURIComponent(agentId.value)}`,
+        )}`,
       })
     } catch {
       showToast('支付已完成，结果页打开失败，请稍后查看会员状态')
