@@ -1,4 +1,4 @@
-import { get, patch, post } from '../api/api-client'
+import { del, get, patch, post } from '../api/api-client'
 import type {
   AgentProfileDTO,
   CreateAgentDTO,
@@ -17,8 +17,13 @@ export interface AgentSummary {
   deathDate: Date | null
   description: string
   status: number
+  voiceTimbreId: string
   createdAt: Date | null
   updatedAt: Date | null
+}
+
+interface AgentListResponse {
+  items?: unknown[]
 }
 
 type CreateAgentPayload = CreateAgentDTO
@@ -78,6 +83,7 @@ export function parseAgentSummary(value: unknown): AgentSummary {
     deathDate: asDate(raw.deathDate),
     description: asString(raw.description),
     status: asNumber(raw.status),
+    voiceTimbreId: asString(raw.voiceTimbreId),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
   }
@@ -92,6 +98,14 @@ export async function createAgent(payload: CreateAgentPayload) {
   })
 
   return parseAgentSummary(data)
+}
+
+export async function getAgents() {
+  const data = await get<AgentListResponse>('/api/agent')
+
+  return Array.isArray(data.items)
+    ? data.items.map((item) => parseAgentSummary(item))
+    : []
 }
 
 export async function updateAgentAvatar(agentId: string, avatar: string) {
@@ -116,4 +130,8 @@ export async function getAgentDetail(agentId: string) {
   const data = await get<AgentProfileDTO>(`/api/agent/${agentId}`)
 
   return parseAgentSummary(data)
+}
+
+export async function deleteAgent(agentId: string) {
+  await del<{ deleted?: boolean }>(`/api/agent/${agentId}`)
 }

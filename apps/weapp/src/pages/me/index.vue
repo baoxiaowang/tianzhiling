@@ -2,7 +2,7 @@
   <page-scaffold
     class="me-tab-page"
     body-padding="0"
-    background="#f7f7f7"
+    background="#efeff4"
     :safe-area-top="false"
     :safe-area-bottom="false"
     require-auth
@@ -45,7 +45,7 @@
             <text class="me-profile__account">ID：{{ displayAccount }}</text>
           </view>
 
-          <view class="me-profile__arrow" />
+          <view class="me-arrow" />
         </view>
 
         <view class="me-page__spacer" />
@@ -59,7 +59,7 @@
           >
             <view class="me-menu-item">
               <text class="me-menu-item__label">{{ action.title }}</text>
-              <view class="me-menu-item__arrow" />
+              <view class="me-arrow" />
             </view>
             <view
               v-if="index !== primaryMenuActions.length - 1"
@@ -71,25 +71,58 @@
         <view class="me-page__spacer" />
 
         <view class="me-menu-section">
+          <view class="me-feature-item" @tap="handleMenuTap('VIP 服务')">
+            <text class="me-feature-item__label">VIP 服务</text>
+            <view class="me-feature-item__right">
+              <text class="me-feature-item__value">{{ vipServiceText }}</text>
+              <view class="me-arrow me-arrow--muted" />
+            </view>
+          </view>
+          <view class="me-feature-item" @tap="handleMenuTap('声音模型')">
+            <text class="me-feature-item__label">声音模型</text>
+            <view class="me-feature-item__right">
+              <view class="me-voice-stack">
+                <view
+                  v-for="agent in voicePreviewAgents"
+                  :key="agent.id"
+                  class="me-voice-stack__avatar"
+                >
+                  <image
+                    v-if="agent.avatar"
+                    class="me-voice-stack__avatar-image"
+                    :src="agent.avatar"
+                    mode="aspectFill"
+                  />
+                  <text v-else>{{ buildAgentFallback(agent.name) }}</text>
+                </view>
+              </view>
+              <text class="me-feature-item__value">{{ voiceModelCountText }}</text>
+              <view class="me-arrow me-arrow--muted" />
+            </view>
+          </view>
+        </view>
+
+        <view class="me-page__spacer" />
+
+        <view class="me-menu-section">
           <view
-            v-for="(action, index) in secondaryMenuActions"
+            v-for="(action, index) in serviceMenuActions"
             :key="action.title"
             class="me-menu-section__item"
             @tap="handleMenuTap(action.title)"
           >
             <view class="me-menu-item">
               <text class="me-menu-item__label">{{ action.title }}</text>
-              <view class="me-menu-item__arrow" />
+              <view class="me-arrow" />
             </view>
             <view
-              v-if="index !== secondaryMenuActions.length - 1"
+              v-if="index !== serviceMenuActions.length - 1"
               class="me-menu-section__divider"
             />
           </view>
         </view>
       </view>
     </scroll-view>
-
   </page-scaffold>
 </template>
 
@@ -102,6 +135,7 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
+import { getAgents, type AgentSummary } from '../../apis/agent'
 import { getCurrentUser } from '../../auth/api'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -115,18 +149,17 @@ interface ProfileMenuAction {
 
 const primaryMenuActions = [
   { title: '我的动态' },
-  { title: '现金券' },
-  { title: '订单管理' },
   { title: '我的邀请' },
-  { title: '联系客服' },
+  { title: '我的订单' },
 ] as const satisfies ProfileMenuAction[]
 
-const secondaryMenuActions = [
+const serviceMenuActions = [
+  { title: '联系客服' },
   { title: '服务协议' },
-  { title: '系统通知' },
 ] as const satisfies ProfileMenuAction[]
 
 const isCheckingAuth = ref(true)
+const agents = ref<AgentSummary[]>([])
 
 let refreshProfilePromise: Promise<void> | null = null
 
@@ -142,11 +175,33 @@ const displayAccount = computed(() => {
 const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const isVipUser = computed(() => Boolean(session.value?.user.isVip))
+const vipServiceText = computed(() => {
+  return isVipUser.value ? '已开启' : '未开通'
+})
+const voicePreviewAgents = computed(() => agents.value.slice(0, 4))
+const enabledVoiceModelCount = computed(() => {
+  return agents.value.filter((agent) => agent.voiceTimbreId.trim()).length
+})
+const voiceModelCountText = computed(() => {
+  return `${enabledVoiceModelCount.value}/${agents.value.length}`
+})
+
+function buildAgentFallback(name: string) {
+  const trimmedName = name.trim()
+  return trimmedName ? trimmedName.slice(0, 1) : '灵'
+}
 
 async function handleMenuTap(title: string) {
   if (title === '我的动态') {
     await Taro.navigateTo({
       url: '/pages/my-posts/index',
+    })
+    return
+  }
+
+  if (title === 'VIP 服务') {
+    await Taro.navigateTo({
+      url: '/pages/vip-center/index',
     })
     return
   }
@@ -165,8 +220,16 @@ async function refreshProfile() {
     return refreshProfilePromise
   }
 
-  refreshProfilePromise = getCurrentUser()
-    .catch(() => undefined)
+  refreshProfilePromise = Promise.all([
+    getCurrentUser().catch(() => undefined),
+    getAgents()
+      .then((items) => {
+        agents.value = items
+      })
+      .catch(() => {
+        agents.value = []
+      }),
+  ])
     .then(() => undefined)
     .finally(() => {
       refreshProfilePromise = null
@@ -223,33 +286,35 @@ useDidShow(() => {
 .me-scroll {
   box-sizing: border-box;
   height: 100%;
+  background: #efeff4;
 }
 
 .me-page {
   min-height: 100%;
   padding-bottom: 110px;
-  background: #f7f7f7;
+  background: #efeff4;
 }
 
 .me-page__spacer {
   height: 10px;
-  background: #f7f7f7;
+  background: #efeff4;
 }
 
 .me-profile {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 100px;
-  padding: 0 16px;
-  background: $tzl-color-surface-base;
+  gap: 16px;
+  height: 120px;
+  box-sizing: border-box;
+  padding: 0 16px 0 18px;
+  background: #ffffff;
 }
 
 .me-profile__avatar {
   flex-shrink: 0;
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
   background: $tzl-color-surface-subtle;
 }
 
@@ -257,9 +322,9 @@ useDidShow(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: $tzl-gradient-warm;
-  color: $tzl-color-surface-base;
-  font-size: 26px;
+  background: linear-gradient(135deg, #ffd9e5 0%, #ff8daa 100%);
+  color: #ffffff;
+  font-size: 28px;
   font-weight: 700;
 }
 
@@ -268,23 +333,25 @@ useDidShow(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  justify-content: center;
+  gap: 10px;
 }
 
 .me-profile__name-row {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .me-profile__name {
   min-width: 0;
   flex-shrink: 1;
-  font-size: 18px;
-  line-height: 27px;
+  font-size: 20px;
+  line-height: 29px;
   font-weight: 600;
-  color: #1a1a1a;
+  color: #000000;
+  letter-spacing: -0.08px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -292,38 +359,30 @@ useDidShow(() => {
 
 .me-profile__vip-badge {
   flex-shrink: 0;
-  height: 20px;
+  height: 17px;
   padding: 0 8px;
   border-radius: 999px;
   background: linear-gradient(135deg, #2c1d12 0%, #8a5728 100%);
   color: #ffe7ba;
   font-size: 10px;
-  line-height: 20px;
+  line-height: 17px;
   font-weight: 800;
 }
 
 .me-profile__account {
-  font-size: 13px;
-  line-height: 19.5px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
   color: #999999;
-}
-
-.me-profile__arrow {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  margin-right: 3px;
-  border-top: 1.5px solid #cfcfcf;
-  border-right: 1.5px solid #cfcfcf;
-  transform: rotate(45deg);
+  letter-spacing: -0.08px;
 }
 
 .me-menu-section {
-  background: $tzl-color-surface-base;
+  background: #ffffff;
 }
 
 .me-menu-section__item {
-  background: $tzl-color-surface-base;
+  background: #ffffff;
 }
 
 .me-menu-item {
@@ -332,6 +391,7 @@ useDidShow(() => {
   justify-content: space-between;
   height: 52px;
   padding: 0 16px;
+  box-sizing: border-box;
 }
 
 .me-menu-item__label {
@@ -339,20 +399,94 @@ useDidShow(() => {
   line-height: 24px;
   font-weight: 500;
   color: #333333;
+  letter-spacing: -0.31px;
 }
 
-.me-menu-item__arrow {
-  width: 8px;
-  height: 8px;
+.me-menu-section__divider {
+  height: 1px;
+  margin-left: 20px;
+  margin-right: 19px;
+  background: #ebebeb;
+  transform: scaleY(0.5);
+  transform-origin: center bottom;
+}
+
+.me-feature-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 58px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-bottom: 0.5px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.me-feature-item__label {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: #0a0a0a;
+  letter-spacing: -0.31px;
+}
+
+.me-feature-item__right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.me-feature-item__value {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 24px;
+  color: #999999;
+  letter-spacing: -0.31px;
+}
+
+.me-voice-stack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.me-voice-stack__avatar {
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #ff7f61;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd9e5 0%, #ff8daa 100%);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.me-voice-stack__avatar-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.me-arrow {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
   margin-right: 3px;
   border-top: 1.5px solid #cfcfcf;
   border-right: 1.5px solid #cfcfcf;
   transform: rotate(45deg);
 }
 
-.me-menu-section__divider {
-  height: 0.5px;
-  margin-left: 16px;
-  background: #ebebeb;
+.me-arrow--muted {
+  border-color: #c8c8c8;
 }
 </style>

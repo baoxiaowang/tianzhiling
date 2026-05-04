@@ -14,6 +14,10 @@
       <back-capsule class="agent-create-start__capsule" />
     </view>
     <view class="agent-create-start__tap-zone" @tap="handleStart" />
+    <login-prompt-popup
+      v-model:visible="isLoginPromptVisible"
+      @login-success="handleLoginSuccess"
+    />
   </page-scaffold>
 </template>
 
@@ -25,21 +29,47 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
+import { computed, ref } from 'vue'
 import BackCapsule from '../../components/back-capsule/back-capsule.vue'
+import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-popup.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { authSession, restoreAuthSession } from '../../auth/session'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { resolvePublicAssetUrl } from '../../utils/public-asset'
 
 const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
+const isLoginPromptVisible = ref(false)
 const menuButtonMetrics = readMenuButtonMetrics()
 const topBarStyle = {
   height: `${menuButtonMetrics.totalHeight}px`,
 }
+const isAuthenticated = computed(() => Boolean(authSession.value?.accessToken))
 
-async function handleStart() {
+async function enterCreateFlow() {
   await Taro.redirectTo({
     url: '/pages/agent-create-flow/index',
   })
+}
+
+async function handleStart() {
+  await restoreAuthSession()
+
+  if (!isAuthenticated.value) {
+    isLoginPromptVisible.value = true
+    return
+  }
+
+  await enterCreateFlow()
+}
+
+async function handleLoginSuccess() {
+  await restoreAuthSession()
+
+  if (!isAuthenticated.value) {
+    return
+  }
+
+  await enterCreateFlow()
 }
 </script>
 

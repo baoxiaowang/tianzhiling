@@ -19,6 +19,7 @@ declare module 'vue' {
     NutDatePicker: typeof import('@nutui/nutui-taro')['DatePicker']
     NutInput: typeof import('@nutui/nutui-taro')['Input']
     NutPopup: typeof import('@nutui/nutui-taro')['Popup']
+    NutSwipe: typeof import('@nutui/nutui-taro')['Swipe']
     NutTabPane: typeof import('@nutui/nutui-taro')['TabPane']
     NutTabs: typeof import('@nutui/nutui-taro')['Tabs']
     PageScaffold: typeof import('./src/components/page-scaffold/page-scaffold.vue')['default']

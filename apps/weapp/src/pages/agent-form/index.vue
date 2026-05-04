@@ -84,8 +84,12 @@
 
       <view class="agent-form-spacer" />
 
-      <view class="agent-form-delete" @tap="handleDeleteTap">
-        <text class="agent-form-delete__text">删除</text>
+      <view
+        class="agent-form-delete"
+        :class="{ 'agent-form-delete--disabled': isDeletingAgent }"
+        @tap="handleDeleteTap"
+      >
+        <text class="agent-form-delete__text">{{ isDeletingAgent ? '删除中' : '删除' }}</text>
         <Del size="17" color="#d81e06" />
       </view>
     </view>
@@ -182,6 +186,7 @@ import { computed, ref } from 'vue'
 import type { UpdateAgentProfileDTO } from '@tzl/shared'
 import { ApiException } from '../../api/api-exception'
 import {
+  deleteAgent,
   getAgentDetail,
   updateAgentAvatar,
   updateAgentProfile,
@@ -239,6 +244,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isUploadingAvatar = ref(false)
 const isSavingProfile = ref(false)
+const isDeletingAgent = ref(false)
 const keyboardHeight = ref(0)
 const loadError = ref('')
 
@@ -538,7 +544,7 @@ async function handleAvatarTap() {
 }
 
 function handleInfoRowTap(field: EditableAgentField) {
-  if (isSavingProfile.value || isUploadingAvatar.value) {
+  if (isSavingProfile.value || isUploadingAvatar.value || isDeletingAgent.value) {
     return
   }
 
@@ -628,8 +634,20 @@ function closeEditor() {
   resetKeyboardState()
 }
 
-function handleEditorInput(event: { detail?: { value?: string } }) {
-  editorValue.value = event.detail?.value ?? ''
+function handleEditorInput(event: unknown) {
+  if (!event || typeof event !== 'object') {
+    editorValue.value = ''
+    return
+  }
+
+  const detail = 'detail' in event ? event.detail : undefined
+
+  if (detail && typeof detail === 'object' && 'value' in detail) {
+    editorValue.value = typeof detail.value === 'string' ? detail.value : ''
+    return
+  }
+
+  editorValue.value = ''
 }
 
 function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
@@ -750,13 +768,53 @@ async function saveProfileField(
   }
 }
 
-function handleDeleteTap() {
-  void Taro.showModal({
+async function handleDeleteTap() {
+  if (isDeletingAgent.value || isSavingProfile.value || isUploadingAvatar.value) {
+    return
+  }
+
+  if (!agentId.value) {
+    showToast('缺少联系人资料')
+    return
+  }
+
+  const result = await Taro.showModal({
     title: '删除智能体',
-    content: '当前后端还没有删除智能体接口，暂时不能删除。',
-    confirmText: '知道了',
-    showCancel: false,
+    content: `确定要删除「${displayName.value}」吗？删除后将无法在通讯录中看到 TA。`,
+    confirmText: '删除',
+    confirmColor: '#d81e06',
+    cancelText: '取消',
   })
+
+  if (!result.confirm) {
+    return
+  }
+
+  isDeletingAgent.value = true
+
+  try {
+    await deleteAgent(agentId.value)
+    await Taro.showToast({
+      title: '已删除',
+      icon: 'success',
+      duration: 1000,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await Taro.switchTab({ url: '/pages/contacts/index' })
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth(error.message)
+      return
+    }
+
+    showToast(
+      error instanceof ApiException
+        ? error.message
+        : '删除失败，请稍后重试',
+    )
+  } finally {
+    isDeletingAgent.value = false
+  }
 }
 </script>
 
@@ -930,6 +988,10 @@ function handleDeleteTap() {
   gap: 8px;
   background: #ffffff;
   border-bottom: 0.5px solid #e5e5e5;
+}
+
+.agent-form-delete--disabled {
+  opacity: 0.55;
 }
 
 .agent-form-delete__text {

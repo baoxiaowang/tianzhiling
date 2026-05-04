@@ -4,7 +4,7 @@ import { ApiException } from './api-exception'
 import { ApiResponse } from './api-response'
 import { authSession, clearAuthSession } from '../auth/session'
 
-type HttpMethod = 'GET' | 'POST' | 'PATCH'
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 interface RequestOptions {
   method?: HttpMethod
@@ -84,4 +84,8 @@ export function patch<T>(
   data?: Record<string, unknown>
 ) {
   return requestMap<T>(path, { method: 'PATCH', data })
+}
+
+export function del<T>(path: string) {
+  return requestMap<T>(path, { method: 'DELETE' })
 }
