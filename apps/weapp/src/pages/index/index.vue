@@ -14,14 +14,7 @@
         background="#ffffff"
         :show-back="false"
         :show-capsule="false"
-      >
-        <template #left>
-          <view class="moments-publish-button" @tap="handleCreatePost">
-            <view class="moments-publish-button__line moments-publish-button__line--horizontal" />
-            <view class="moments-publish-button__line moments-publish-button__line--vertical" />
-          </view>
-        </template>
-      </app-bar>
+      />
     </template>
 
     <view v-if="isCheckingAuth && !hasLoadedPosts" class="loading-state">
@@ -157,6 +150,10 @@
           </view>
         </view>
       </view>
+    </view>
+
+    <view class="moments-floating-publish" @tap="handleCreatePost">
+      <text class="moments-floating-publish__plus">+</text>
     </view>
 
     <view
@@ -646,27 +643,6 @@ useDidHide(() => {
   background: $tzl-color-surface-base;
 }
 
-.moments-publish-button {
-  position: relative;
-  width: 40px;
-  height: 40px;
-}
-
-.moments-publish-button__line {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 20px;
-  height: 2px;
-  border-radius: 999px;
-  background: #111111;
-  transform: translate(-50%, -50%);
-}
-
-.moments-publish-button__line--vertical {
-  transform: translate(-50%, -50%) rotate(90deg);
-}
-
 .moments-banner {
   position: relative;
   height: 216px;
@@ -1025,6 +1001,29 @@ useDidHide(() => {
   font-size: 14px;
   line-height: 20px;
   color: $tzl-color-slate-700;
+}
+
+.moments-floating-publish {
+  position: fixed;
+  right: 20px;
+  bottom: calc(env(safe-area-inset-bottom) + 92px);
+  z-index: 120;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: $tzl-gradient-primary;
+  box-shadow: 0 12px 28px rgba(255, 138, 54, 0.34);
+}
+
+.moments-floating-publish__plus {
+  color: #ffffff;
+  font-size: 34px;
+  line-height: 56px;
+  font-weight: 300;
+  transform: translateY(-1px);
 }
 
 .moment-comment-dock {

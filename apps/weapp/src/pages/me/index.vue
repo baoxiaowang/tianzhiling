@@ -149,7 +149,6 @@ interface ProfileMenuAction {
 
 const primaryMenuActions = [
   { title: '我的动态' },
-  { title: '我的邀请' },
   { title: '我的订单' },
 ] as const satisfies ProfileMenuAction[]
 
