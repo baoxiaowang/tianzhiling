@@ -8,15 +8,6 @@
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
-    <template #header>
-      <app-bar
-        title="朋友圈"
-        background="#ffffff"
-        :show-back="false"
-        :show-capsule="false"
-      />
-    </template>
-
     <view v-if="isCheckingAuth && !hasLoadedPosts" class="loading-state">
       <view class="loading-state__dot" />
       <text class="loading-state__text">
@@ -28,25 +19,7 @@
       v-else
       class="moments-scroll"
     >
-      <view class="moments-banner">
-        <view class="moments-banner__star-glow" />
-        <text class="moments-banner__star">★</text>
-        <view class="moments-banner__dust moments-banner__dust--left" />
-        <view class="moments-banner__dust moments-banner__dust--right" />
-        <view class="moments-banner__dust moments-banner__dust--bottom" />
-        <view class="moments-banner__body">
-          <view class="moments-banner__headline">
-            <text class="moments-banner__title">快速了解天之灵AI</text>
-            <text class="moments-banner__arrow">›</text>
-          </view>
-          <text class="moments-banner__subtitle">和另一片星空的人，首视频互动</text>
-        </view>
-      </view>
-
-      <view class="banner-indicator">
-        <view class="banner-indicator__dot banner-indicator__dot--active" />
-        <view class="banner-indicator__dot" />
-      </view>
+      <top-promo-banner />
 
       <view
         v-if="hasUnreadNotifications"
@@ -179,6 +152,7 @@
         <view
           v-if="!isCommentEmojiPanelVisible"
           class="moment-comment-composer__icon moment-comment-composer__icon--emoji"
+          @touchstart="handleCommentInternalTouchStart"
           @tap="handleCommentEmojiToggle"
         >
           ☺
@@ -187,6 +161,7 @@
           v-else
           class="moment-comment-composer__send"
           :class="{ 'moment-comment-composer__send--disabled': !canSubmitComment || isSubmittingComment }"
+          @touchstart="handleCommentInternalTouchStart"
           @tap="handleSubmitComment"
         >
           发送
@@ -220,9 +195,9 @@ import {
   type PostItem,
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
-import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -246,6 +221,7 @@ const commentDraft = ref('')
 const commentKeyboardHeight = ref(0)
 const isCommentInputFocused = ref(false)
 const shouldFocusCommentInput = ref(false)
+const shouldKeepCommentComposerOnBlur = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
 
@@ -494,6 +470,17 @@ function handleCommentFocus() {
 function handleCommentBlur() {
   isCommentInputFocused.value = false
   shouldFocusCommentInput.value = false
+
+  if (shouldKeepCommentComposerOnBlur.value) {
+    shouldKeepCommentComposerOnBlur.value = false
+    return
+  }
+
+  closeCommentComposer()
+}
+
+function handleCommentInternalTouchStart() {
+  shouldKeepCommentComposerOnBlur.value = true
 }
 
 function handleCommentKeyboardHeightChange(event: { detail?: { height?: number } }) {
@@ -641,113 +628,6 @@ useDidHide(() => {
   min-height: 100%;
   padding-bottom: 128px;
   background: $tzl-color-surface-base;
-}
-
-.moments-banner {
-  position: relative;
-  height: 216px;
-  overflow: hidden;
-  background: #000000;
-}
-
-.moments-banner__star-glow {
-  position: absolute;
-  left: 22px;
-  top: 10px;
-  width: 108px;
-  height: 108px;
-  border-radius: 999px;
-  background: rgba(255, 223, 32, 0.6);
-  filter: blur(24px);
-}
-
-.moments-banner__star {
-  position: absolute;
-  left: 44px;
-  top: 18px;
-  font-size: 64px;
-  line-height: 1;
-  color: #ffdf20;
-}
-
-.moments-banner__dust {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.24);
-}
-
-.moments-banner__dust--left {
-  left: 40px;
-  top: 48px;
-}
-
-.moments-banner__dust--right {
-  right: 80px;
-  top: 64px;
-}
-
-.moments-banner__dust--bottom {
-  left: 98px;
-  bottom: 40px;
-}
-
-.moments-banner__body {
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  bottom: 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.moments-banner__headline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.moments-banner__title {
-  font-size: 20px;
-  line-height: 28px;
-  font-weight: 700;
-  color: $tzl-color-surface-base;
-}
-
-.moments-banner__arrow {
-  font-size: 22px;
-  line-height: 1;
-  color: $tzl-color-surface-base;
-}
-
-.moments-banner__subtitle {
-  margin-top: 8px;
-  font-size: 14px;
-  line-height: 20px;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.banner-indicator {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
-  height: 32px;
-  padding-top: 12px;
-  background: $tzl-color-surface-muted;
-}
-
-.banner-indicator__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #d1d5dc;
-}
-
-.banner-indicator__dot--active {
-  background: #155dfc;
 }
 
 .moments-notice {

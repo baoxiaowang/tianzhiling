@@ -25,5 +25,6 @@ declare module 'vue' {
     PageScaffold: typeof import('./src/components/page-scaffold/page-scaffold.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    TopPromoBanner: typeof import('./src/components/top-promo-banner/top-promo-banner.vue')['default']
   }
 }

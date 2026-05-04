@@ -21,24 +21,7 @@
 
     <view v-else-if="session" class="contacts-page">
       <scroll-view scroll-y class="contacts-list-scroll">
-        <swiper
-          class="contacts-banner-swiper"
-          :indicator-dots="contactBanners.length > 1"
-          :autoplay="contactBanners.length > 1"
-          :circular="contactBanners.length > 1"
-        >
-          <swiper-item
-            v-for="banner in contactBanners"
-            :key="banner.id"
-            class="contacts-banner-swiper__item"
-          >
-            <image
-              class="contacts-banner-swiper__image"
-              :src="banner.imageUrl"
-              mode="aspectFill"
-            />
-          </swiper-item>
-        </swiper>
+        <top-promo-banner />
 
         <view v-if="isContactsLoading" class="contacts-feedback contacts-feedback--loading">
           <view class="contacts-feedback__spinner" />
@@ -152,6 +135,7 @@ import { ApiException } from '../../api/api-exception'
 import { getConversations, type ConversationSummary } from '../../apis/conversation'
 import { authSession } from '../../auth/session'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { ensureAuthenticatedSession } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -161,13 +145,6 @@ const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 
 let refreshContactsPromise: Promise<void> | null = null
-
-const contactBanners = [
-  {
-    id: 'voice-clone',
-    imageUrl: 'https://oss.soullink.top/weapp/Banner.png',
-  },
-] as const
 
 const session = computed(() => authSession.value)
 
@@ -347,23 +324,6 @@ useDidShow(() => {
   flex: 1;
   min-height: 0;
   padding-bottom: 110px;
-}
-
-.contacts-banner-swiper {
-  height: 220px;
-  margin: 0 0 12px;
-  overflow: hidden;
-  background: #f8fafc;
-}
-
-.contacts-banner-swiper__item,
-.contacts-banner-swiper__image {
-  width: 100%;
-  height: 220px;
-}
-
-.contacts-banner-swiper__image {
-  display: block;
 }
 
 .contacts-create-entry {
