@@ -36,7 +36,12 @@
           </view>
 
           <view class="me-profile__meta">
-            <text class="me-profile__name">{{ displayName }}</text>
+            <view class="me-profile__name-row">
+              <text class="me-profile__name">{{ displayName }}</text>
+              <view v-if="isVipUser" class="me-profile__vip-badge">
+                <text>VIP</text>
+              </view>
+            </view>
             <text class="me-profile__account">ID：{{ displayAccount }}</text>
           </view>
 
@@ -136,6 +141,7 @@ const displayAccount = computed(() => {
 })
 const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
+const isVipUser = computed(() => Boolean(session.value?.user.isVip))
 
 async function handleMenuTap(title: string) {
   if (title === '我的动态') {
@@ -265,9 +271,16 @@ useDidShow(() => {
   gap: 5px;
 }
 
+.me-profile__name-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .me-profile__name {
   min-width: 0;
-  max-width: 100%;
+  flex-shrink: 1;
   font-size: 18px;
   line-height: 27px;
   font-weight: 600;
@@ -275,6 +288,18 @@ useDidShow(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.me-profile__vip-badge {
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2c1d12 0%, #8a5728 100%);
+  color: #ffe7ba;
+  font-size: 10px;
+  line-height: 20px;
+  font-weight: 800;
 }
 
 .me-profile__account {

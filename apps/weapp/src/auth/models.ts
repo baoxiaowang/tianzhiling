@@ -5,6 +5,7 @@ export interface AuthUser {
   account: string
   phone: string
   phoneVerified: boolean
+  isVip: boolean
 }
 
 export interface AuthSessionData {
@@ -49,6 +50,7 @@ export function parseAuthUser(value: unknown): AuthUser {
     account: asString(raw.account),
     phone: asString(raw.phone),
     phoneVerified: asBoolean(raw.phoneVerified),
+    isVip: asBoolean(raw.isVip),
   }
 }
 
