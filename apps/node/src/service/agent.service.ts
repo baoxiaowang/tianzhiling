@@ -12,6 +12,7 @@ import {
   AgentEntity,
   AgentSex,
   ConversationEntity,
+  MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
@@ -26,6 +27,9 @@ export class AgentService {
 
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
 
   @Inject()
   postImageService: PostImageService;
@@ -194,6 +198,42 @@ export class AgentService {
 
     const savedAgent = await this.agentModel.save(agent);
     return this.buildAgentProfile(savedAgent);
+  }
+
+  async deleteAgent(
+    auth: AuthenticatedUserPayload,
+    agentId: string
+  ): Promise<void> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    const conversations = await this.conversationModel.find({
+      where: {
+        agentId: agent.id,
+        userId: createdUserId,
+      },
+    });
+
+    await Promise.all(
+      conversations.map(async conversation => {
+        const messages = await this.messageModel.find({
+          where: {
+            conversationId: conversation.id,
+          },
+        });
+
+        await Promise.all(
+          messages.map(message => this.messageModel.remove(message))
+        );
+        await this.conversationModel.remove(conversation);
+      })
+    );
+    await this.agentModel.remove(agent);
   }
 
   private async createConversation(

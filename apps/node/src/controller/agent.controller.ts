@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Del,
   Get,
   Inject,
   Param,
@@ -63,6 +64,16 @@ export class AgentController {
       agentId,
       body
     );
+  }
+
+  @Del('/:agentId')
+  async deleteAgent(@Param('agentId') agentId: string) {
+    await this.agentService.deleteAgent(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      agentId
+    );
+
+    return { deleted: true };
   }
 
   @Post('/')
