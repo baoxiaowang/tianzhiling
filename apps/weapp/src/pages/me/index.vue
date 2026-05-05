@@ -159,6 +159,7 @@ const serviceMenuActions = [
 
 const isCheckingAuth = ref(true)
 const agents = ref<AgentSummary[]>([])
+const hasLoadedProfile = ref(false)
 
 let refreshProfilePromise: Promise<void> | null = null
 
@@ -245,7 +246,9 @@ async function refreshProfile() {
 }
 
 async function preparePage() {
-  isCheckingAuth.value = true
+  if (!hasLoadedProfile.value) {
+    isCheckingAuth.value = true
+  }
 
   await restoreAuthSession()
 
@@ -253,6 +256,7 @@ async function preparePage() {
     await refreshProfile()
   }
 
+  hasLoadedProfile.value = true
   isCheckingAuth.value = false
 }
 

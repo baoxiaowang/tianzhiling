@@ -80,11 +80,7 @@
           class="agent-detail-cell"
           :class="{ 'agent-detail-cell--divider': index !== capabilityTiles.length - 1 }"
           @click="handlePendingTap(item)"
-        >
-          <template v-if="item === 'VIP与增值配置'" #desc>
-            <text class="agent-detail-cell__status">账号会员</text>
-          </template>
-        </nut-cell>
+        />
       </view>
 
       <view class="agent-detail-spacer" />
@@ -154,7 +150,7 @@ import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
-const capabilityTiles = ['声音模型', 'VIP与增值配置', '导入聊天记录'] as const
+const capabilityTiles = ['声音模型', '导入聊天记录'] as const
 
 const agent = ref<AgentSummary | null>(null)
 const agentId = ref('')
@@ -375,18 +371,6 @@ function buildAgentFormUrl() {
 }
 
 function handlePendingTap(title: string) {
-  if (title === 'VIP与增值配置') {
-    if (!agentId.value) {
-      showToast('缺少联系人资料，请返回通讯录重新进入')
-      return
-    }
-
-    void Taro.navigateTo({
-      url: '/pages/vip-center/index',
-    })
-    return
-  }
-
   showToast(`${title}待接入`)
 }
 
@@ -599,14 +583,6 @@ function handleSendMessage() {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-}
-
-.agent-detail-cell__status {
-  flex-shrink: 0;
-  color: #b0b3ba;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 500;
 }
 
 .agent-detail-moments__thumbs {

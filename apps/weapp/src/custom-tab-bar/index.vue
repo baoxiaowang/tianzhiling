@@ -22,6 +22,14 @@ import Taro from '@tarojs/taro'
 import { createSafeAreaCssVars } from '../utils/safe-area'
 import { CUSTOM_TAB_BAR_ITEMS } from '../utils/custom-tab-bar'
 
+function resolveCurrentSelectedIndex() {
+  const routePath = Taro.getCurrentInstance().router?.path ?? ''
+  const normalizedPath = routePath.startsWith('/') ? routePath : `/${routePath}`
+  const selectedIndex = CUSTOM_TAB_BAR_ITEMS.findIndex((item) => item.pagePath === normalizedPath)
+
+  return selectedIndex >= 0 ? selectedIndex : 0
+}
+
 export default {
   name: 'CustomTabBar',
   options: {
@@ -30,7 +38,7 @@ export default {
   data() {
     return {
       items: CUSTOM_TAB_BAR_ITEMS,
-      selected: 0,
+      selected: resolveCurrentSelectedIndex(),
       hidden: false,
     }
   },

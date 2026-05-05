@@ -143,6 +143,7 @@ const isCheckingAuth = ref(true)
 const isContactsLoading = ref(true)
 const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
+const hasLoadedContacts = ref(false)
 
 let refreshContactsPromise: Promise<void> | null = null
 
@@ -264,7 +265,9 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
 }
 
 async function preparePage() {
-  isCheckingAuth.value = true
+  if (!hasLoadedContacts.value) {
+    isCheckingAuth.value = true
+  }
 
   const authenticated = await ensureAuthenticatedSession()
 
@@ -275,8 +278,10 @@ async function preparePage() {
   }
 
   await refreshContactsData({
-    showLoading: conversations.value.length === 0,
+    showLoading: !hasLoadedContacts.value,
   })
+
+  hasLoadedContacts.value = true
   isCheckingAuth.value = false
 }
 

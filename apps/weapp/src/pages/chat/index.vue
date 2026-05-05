@@ -2233,7 +2233,7 @@ function destroyVoiceDurationProbeContexts() {
 .chat-avatar--user {
   width: 40px;
   height: 40px;
-  border-radius: 999px;
+  border-radius: 8px;
   background: #eef2f7;
 }
 
