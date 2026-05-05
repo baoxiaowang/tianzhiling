@@ -1268,9 +1268,16 @@ export class ConversationService {
   }
 
   private normalizeAssistantReply(value?: string): string {
-    const segments = this.parseAssistantSegments(value)
+    const parsedSegments = this.parseAssistantSegments(value);
+    const segments = parsedSegments
+      .reduce<string[]>(
+        (result, segment) =>
+          result.concat(this.splitAssistantSegmentForChat(segment)),
+        []
+      )
       .map(segment => this.sanitizeAssistantSegment(segment))
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, 3);
 
     if (segments.length > 0) {
       return segments.join('</fenge>');
@@ -1368,6 +1375,28 @@ export class ConversationService {
     return [content];
   }
 
+  private splitAssistantSegmentForChat(value?: string): string[] {
+    const content = value?.trim() || '';
+
+    if (!content) {
+      return [];
+    }
+
+    const shouldSplit =
+      content.length > 18 || /[，。；;][^，。；;]{3,}/.test(content);
+
+    if (!shouldSplit) {
+      return [content];
+    }
+
+    const parts = content
+      .split(/[，。；;]+/)
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    return parts.length > 1 ? parts : [content];
+  }
+
   private sanitizeAssistantSegment(value?: string): string {
     const content = value?.trim() || '';
 
@@ -1386,6 +1415,9 @@ export class ConversationService {
     }
 
     return normalized
+      .replace(/^[，。！？、；：,.!?;:]+/, '')
+      .replace(/[，。；：,.;:]+$/g, '')
+      .replace(/\n+/g, ' ')
       .replace(/\s+/g, ' ')
       .replace(/\s+([，。！？、；：])/g, '$1')
       .replace(/([（【《“‘])\s+/g, '$1')
