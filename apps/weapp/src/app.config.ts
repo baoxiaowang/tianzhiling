@@ -6,6 +6,7 @@ export default {
     'pages/me/index',
     'pages/chat/index',
     'pages/agent-detail/index',
+    'pages/agent-profile/index',
     'pages/agent-form/index',
     'pages/vip-center/index',
     'pages/customer-service/index',

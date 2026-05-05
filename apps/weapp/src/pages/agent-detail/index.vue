@@ -331,7 +331,18 @@ function handleRetry() {
 }
 
 function handleProfileTap() {
-  void handleOpenAgentForm()
+  void openAgentProfile()
+}
+
+async function openAgentProfile() {
+  if (!agentId.value) {
+    showToast('缺少联系人资料，请返回通讯录重新进入')
+    return
+  }
+
+  await Taro.navigateTo({
+    url: `/pages/agent-profile/index?agentId=${encodeURIComponent(agentId.value)}`,
+  })
 }
 
 async function handleOpenAgentForm() {
