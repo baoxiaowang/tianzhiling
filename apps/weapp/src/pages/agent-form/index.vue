@@ -304,7 +304,7 @@ const infoRows = computed<InfoRow[]>(() => {
 
   return [
     {
-      label: '姓名',
+      label: '备注',
       value: displayName.value,
       field: 'name',
     },
@@ -573,11 +573,11 @@ function buildTextEditorConfig(
     case 'name':
       return {
         field,
-        title: '修改姓名',
+        title: '修改备注',
         initialValue: displayName.value === '未命名智能体' ? '' : displayName.value,
-        placeholder: '请输入姓名',
+        placeholder: '请输入备注',
         maxLength: 30,
-        successMessage: '姓名已更新',
+        successMessage: '备注已更新',
       }
     case 'iCallAgent':
       return {
