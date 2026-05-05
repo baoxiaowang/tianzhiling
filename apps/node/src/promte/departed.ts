@@ -16,6 +16,7 @@ export function buildDepartedSystemPrompt(
   const description = options.agent?.description?.trim() || '';
   const birthday = formatDate(options.agent?.birthday);
   const deathDate = formatDate(options.agent?.deathDate);
+  const profileMemories = buildProfileMemoryLines(options.agent);
 
   const roleProfile = [
     `userId=${options.userId}`,
@@ -27,6 +28,7 @@ export function buildDepartedSystemPrompt(
     birthday ? `生日：${birthday}` : '',
     deathDate ? `离开日期：${deathDate}` : '',
     description ? `人物设定：${description}` : '',
+    ...profileMemories,
   ]
     .filter(Boolean)
     .join('\n');
@@ -87,4 +89,31 @@ function formatDate(value?: Date): string {
     2,
     '0'
   )}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function buildProfileMemoryLines(agent?: AgentEntity | null): string[] {
+  if (!agent) {
+    return [];
+  }
+
+  const fixedMemories = [
+    ['生平经历', agent.lifeExperience],
+    ['性格特点', agent.personalityTraits],
+    ['语言习惯', agent.languageHabits],
+    ['兴趣爱好', agent.hobbies],
+    ['共同记忆', agent.sharedMemories],
+  ]
+    .map(([label, value]) => {
+      const content = typeof value === 'string' ? value.trim() : '';
+      return content ? `${label}：${content}` : '';
+    })
+    .filter(Boolean);
+  const additionalMemories = Array.isArray(agent.additionalMemories)
+    ? agent.additionalMemories
+        .map(item => item?.trim?.() ?? '')
+        .filter(Boolean)
+        .map((item, index) => `补充资料${index + 1}：${item}`)
+    : [];
+
+  return fixedMemories.concat(additionalMemories);
 }

@@ -42,4 +42,22 @@ export class UpdateAgentProfileDTO {
 
   @Rule(RuleType.string().max(1000))
   description?: string;
+
+  @Rule(RuleType.string().max(1000))
+  lifeExperience?: string;
+
+  @Rule(RuleType.string().max(1000))
+  personalityTraits?: string;
+
+  @Rule(RuleType.string().max(1000))
+  languageHabits?: string;
+
+  @Rule(RuleType.string().max(1000))
+  hobbies?: string;
+
+  @Rule(RuleType.string().max(1000))
+  sharedMemories?: string;
+
+  @Rule(RuleType.array().items(RuleType.string().max(1000)).max(5))
+  additionalMemories?: string[];
 }

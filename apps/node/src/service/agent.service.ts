@@ -93,6 +93,12 @@ export class AgentService {
       iCallAgent,
       agentCallMe,
     });
+    agent.lifeExperience = '';
+    agent.personalityTraits = '';
+    agent.languageHabits = '';
+    agent.hobbies = '';
+    agent.sharedMemories = '';
+    agent.additionalMemories = [];
     agent.status = 1;
     agent.createdAt = now;
     agent.updatedAt = now;
@@ -194,6 +200,47 @@ export class AgentService {
       });
     }
 
+    if (payload?.lifeExperience !== undefined) {
+      agent.lifeExperience = this.normalizeProfileMemory(
+        payload.lifeExperience,
+        'INVALID_AGENT_LIFE_EXPERIENCE'
+      );
+    }
+
+    if (payload?.personalityTraits !== undefined) {
+      agent.personalityTraits = this.normalizeProfileMemory(
+        payload.personalityTraits,
+        'INVALID_AGENT_PERSONALITY_TRAITS'
+      );
+    }
+
+    if (payload?.languageHabits !== undefined) {
+      agent.languageHabits = this.normalizeProfileMemory(
+        payload.languageHabits,
+        'INVALID_AGENT_LANGUAGE_HABITS'
+      );
+    }
+
+    if (payload?.hobbies !== undefined) {
+      agent.hobbies = this.normalizeProfileMemory(
+        payload.hobbies,
+        'INVALID_AGENT_HOBBIES'
+      );
+    }
+
+    if (payload?.sharedMemories !== undefined) {
+      agent.sharedMemories = this.normalizeProfileMemory(
+        payload.sharedMemories,
+        'INVALID_AGENT_SHARED_MEMORIES'
+      );
+    }
+
+    if (payload?.additionalMemories !== undefined) {
+      agent.additionalMemories = this.normalizeAdditionalMemories(
+        payload.additionalMemories
+      );
+    }
+
     agent.updatedAt = new Date();
 
     const savedAgent = await this.agentModel.save(agent);
@@ -263,6 +310,14 @@ export class AgentService {
       birthday: agent.birthday?.toISOString?.() ?? '',
       deathDate: agent.deathDate?.toISOString?.() ?? '',
       description: agent.description,
+      lifeExperience: agent.lifeExperience ?? '',
+      personalityTraits: agent.personalityTraits ?? '',
+      languageHabits: agent.languageHabits ?? '',
+      hobbies: agent.hobbies ?? '',
+      sharedMemories: agent.sharedMemories ?? '',
+      additionalMemories: Array.isArray(agent.additionalMemories)
+        ? agent.additionalMemories
+        : [],
       status: agent.status,
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: agent.createdAt.toISOString(),
@@ -378,6 +433,42 @@ export class AgentService {
     }
 
     return value;
+  }
+
+  private normalizeProfileMemory(rawValue: string, code: string): string {
+    const value = rawValue?.trim() ?? '';
+
+    if (value.length > 1000) {
+      throw new AppError(
+        code,
+        'profile memory must be 1000 characters or fewer',
+        400
+      );
+    }
+
+    return value;
+  }
+
+  private normalizeAdditionalMemories(rawValue: string[]): string[] {
+    if (!Array.isArray(rawValue)) {
+      throw new AppError(
+        'INVALID_AGENT_ADDITIONAL_MEMORIES',
+        'additional memories must be an array',
+        400
+      );
+    }
+
+    if (rawValue.length > 5) {
+      throw new AppError(
+        'INVALID_AGENT_ADDITIONAL_MEMORIES',
+        'additional memories must contain 5 items or fewer',
+        400
+      );
+    }
+
+    return rawValue.map(item =>
+      this.normalizeProfileMemory(item, 'INVALID_AGENT_ADDITIONAL_MEMORIES')
+    );
   }
 
   private parseObjectId(value: string): MongoObjectId {
