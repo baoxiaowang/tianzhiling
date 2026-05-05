@@ -53,32 +53,6 @@
           />
         </view>
 
-        <view
-          v-for="(value, index) in additionalMemories"
-          :key="index"
-          class="agent-profile-item"
-        >
-          <text class="agent-profile-item__title">补充资料{{ index + 1 }}</text>
-          <textarea
-            class="agent-profile-item__textarea"
-            :value="value"
-            placeholder="在这里为 TA 补充更多重要资料"
-            placeholder-class="agent-profile-item__placeholder"
-            maxlength="1000"
-            cursor-spacing="80"
-            :show-confirm-bar="false"
-            @input="handleAdditionalInput(index, $event)"
-            @blur="handleAdditionalBlur"
-          />
-        </view>
-
-        <view
-          class="agent-profile-add"
-          :class="{ 'agent-profile-add--disabled': isSavingProfile }"
-          @tap="handleAddMemory"
-        >
-          <Plus size="18" color="#6f7075" />
-        </view>
       </view>
     </view>
   </page-scaffold>
@@ -92,7 +66,6 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useLoad } from '@tarojs/taro'
-import { Plus } from '@nutui/icons-vue-taro'
 import type { UpdateAgentProfileDTO } from '@tzl/shared'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
@@ -158,7 +131,6 @@ const createEmptyProfileForm = (): Record<FixedProfileField, string> => ({
 const agent = ref<AgentSummary | null>(null)
 const agentId = ref('')
 const profileForm = ref(createEmptyProfileForm())
-const additionalMemories = ref<string[]>([])
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isSavingProfile = ref(false)
@@ -256,7 +228,6 @@ function syncProfileForm(detail: AgentSummary) {
     hobbies: detail.hobbies,
     sharedMemories: detail.sharedMemories,
   }
-  additionalMemories.value = detail.additionalMemories.slice(0, 5)
 }
 
 function handleRetry() {
@@ -267,38 +238,11 @@ function handleFixedInput(field: FixedProfileField, event: unknown) {
   profileForm.value[field] = extractInputValue(event)
 }
 
-function handleAdditionalInput(index: number, event: unknown) {
-  additionalMemories.value[index] = extractInputValue(event)
-}
-
 function handleFixedBlur(field: FixedProfileField) {
   const payload: UpdateAgentProfileDTO = {
     [field]: profileForm.value[field].trim(),
   }
   void saveProfile(payload)
-}
-
-function handleAdditionalBlur() {
-  void saveProfile({
-    additionalMemories: normalizeAdditionalMemories(),
-  })
-}
-
-function handleAddMemory() {
-  if (isSavingProfile.value) {
-    return
-  }
-
-  if (additionalMemories.value.length >= 5) {
-    showToast('最多添加 5 条补充资料')
-    return
-  }
-
-  additionalMemories.value = additionalMemories.value.concat('')
-}
-
-function normalizeAdditionalMemories() {
-  return additionalMemories.value.map((item) => item.trim()).slice(0, 5)
 }
 
 async function saveProfile(payload: UpdateAgentProfileDTO) {
@@ -320,10 +264,6 @@ async function saveProfile(payload: UpdateAgentProfileDTO) {
   try {
     const savedAgent = await updateAgentProfile(agentId.value, payload)
     agent.value = savedAgent
-
-    if (payload.additionalMemories !== undefined) {
-      additionalMemories.value = savedAgent.additionalMemories.slice(0, 5)
-    }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -470,18 +410,4 @@ function mergeProfilePayload(
   color: #999999;
 }
 
-.agent-profile-add {
-  height: 28px;
-  margin: 10px 16px 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: #efeff4;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
-
-.agent-profile-add--disabled {
-  opacity: 0.6;
-}
 </style>

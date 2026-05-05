@@ -13,7 +13,6 @@ export interface AgentProfileDTO {
   languageHabits: string;
   hobbies: string;
   sharedMemories: string;
-  additionalMemories: string[];
   status: number;
   voiceTimbreId?: string;
   createdAt: string;
@@ -48,7 +47,6 @@ export interface UpdateAgentProfileDTO {
   languageHabits?: string;
   hobbies?: string;
   sharedMemories?: string;
-  additionalMemories?: string[];
 }
 
 export interface AdminAgentOwnerDTO {

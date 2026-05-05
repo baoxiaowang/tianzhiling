@@ -359,9 +359,6 @@ export class AdminAppUserService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
-      additionalMemories: Array.isArray(agent.additionalMemories)
-        ? agent.additionalMemories
-        : [],
       status: agent.status,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),

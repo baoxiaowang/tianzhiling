@@ -509,9 +509,6 @@ export class AdminAgentService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
-      additionalMemories: Array.isArray(agent.additionalMemories)
-        ? agent.additionalMemories
-        : [],
       status: agent.status,
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: this.formatDate(agent.createdAt),

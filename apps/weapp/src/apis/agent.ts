@@ -21,7 +21,6 @@ export interface AgentSummary {
   languageHabits: string
   hobbies: string
   sharedMemories: string
-  additionalMemories: string[]
   status: number
   voiceTimbreId: string
   createdAt: Date | null
@@ -75,14 +74,6 @@ function asDate(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function asStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  return value.map((item) => asString(item))
-}
-
 export function parseAgentSummary(value: unknown): AgentSummary {
   const raw = asRecord(value)
 
@@ -101,7 +92,6 @@ export function parseAgentSummary(value: unknown): AgentSummary {
     languageHabits: asString(raw.languageHabits),
     hobbies: asString(raw.hobbies),
     sharedMemories: asString(raw.sharedMemories),
-    additionalMemories: asStringArray(raw.additionalMemories),
     status: asNumber(raw.status),
     voiceTimbreId: asString(raw.voiceTimbreId),
     createdAt: asDate(raw.createdAt),

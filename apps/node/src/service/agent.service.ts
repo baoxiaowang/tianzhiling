@@ -98,7 +98,6 @@ export class AgentService {
     agent.languageHabits = '';
     agent.hobbies = '';
     agent.sharedMemories = '';
-    agent.additionalMemories = [];
     agent.status = 1;
     agent.createdAt = now;
     agent.updatedAt = now;
@@ -235,12 +234,6 @@ export class AgentService {
       );
     }
 
-    if (payload?.additionalMemories !== undefined) {
-      agent.additionalMemories = this.normalizeAdditionalMemories(
-        payload.additionalMemories
-      );
-    }
-
     agent.updatedAt = new Date();
 
     const savedAgent = await this.agentModel.save(agent);
@@ -315,9 +308,6 @@ export class AgentService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
-      additionalMemories: Array.isArray(agent.additionalMemories)
-        ? agent.additionalMemories
-        : [],
       status: agent.status,
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: agent.createdAt.toISOString(),
@@ -447,28 +437,6 @@ export class AgentService {
     }
 
     return value;
-  }
-
-  private normalizeAdditionalMemories(rawValue: string[]): string[] {
-    if (!Array.isArray(rawValue)) {
-      throw new AppError(
-        'INVALID_AGENT_ADDITIONAL_MEMORIES',
-        'additional memories must be an array',
-        400
-      );
-    }
-
-    if (rawValue.length > 5) {
-      throw new AppError(
-        'INVALID_AGENT_ADDITIONAL_MEMORIES',
-        'additional memories must contain 5 items or fewer',
-        400
-      );
-    }
-
-    return rawValue.map(item =>
-      this.normalizeProfileMemory(item, 'INVALID_AGENT_ADDITIONAL_MEMORIES')
-    );
   }
 
   private parseObjectId(value: string): MongoObjectId {

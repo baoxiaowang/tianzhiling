@@ -152,12 +152,5 @@ function buildProfileMemoryLines(agent?: AgentEntity | null): string[] {
       return content ? `${label}：${content}` : '';
     })
     .filter(Boolean);
-  const additionalMemories = Array.isArray(agent.additionalMemories)
-    ? agent.additionalMemories
-        .map(item => item?.trim?.() ?? '')
-        .filter(Boolean)
-        .map((item, index) => `补充资料${index + 1}：${item}`)
-    : [];
-
-  return fixedMemories.concat(additionalMemories);
+  return fixedMemories;
 }

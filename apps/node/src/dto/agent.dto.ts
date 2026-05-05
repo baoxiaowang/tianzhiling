@@ -57,7 +57,4 @@ export class UpdateAgentProfileDTO {
 
   @Rule(RuleType.string().max(1000))
   sharedMemories?: string;
-
-  @Rule(RuleType.array().items(RuleType.string().max(1000)).max(5))
-  additionalMemories?: string[];
 }
