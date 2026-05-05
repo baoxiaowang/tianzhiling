@@ -958,7 +958,13 @@ function handleAgentAvatarTap() {
     return
   }
 
+  if (!conversationId.value) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
   const query = [
+    ['conversationId', conversationId.value],
     ['agentId', agentId.value],
     ['agentName', agentName.value.trim() || '对话'],
     ['agentAvatar', agentAvatar.value],

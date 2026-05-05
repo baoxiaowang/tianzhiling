@@ -51,7 +51,6 @@
         </view>
 
         <view class="agent-detail-header__tools">
-          <view class="agent-detail-header__tool agent-detail-header__tool--qr" @tap="handleQrTap" />
           <view class="agent-detail-header__tool agent-detail-header__tool--edit" @tap="handleOpenAgentForm" />
         </view>
       </view>
@@ -87,19 +86,24 @@
 
         <view class="agent-detail-list__item agent-detail-list__item--album" @tap="handleChatAlbumTap">
           <view class="agent-detail-album__main">
-            <text class="agent-detail-list__title">聊天相册</text>
-            <view class="agent-detail-album__thumbs">
-              <view
-                v-for="index in 3"
-                :key="index"
-                class="agent-detail-album__thumb"
-              >
-                <image
-                  v-if="displayAvatar"
-                  class="agent-detail-album__thumb-image"
-                  :src="displayAvatar"
-                  mode="aspectFill"
-                />
+            <view class="agent-detail-list__content">
+              <text class="agent-detail-list__title">聊天相册</text>
+              <text class="agent-detail-list__desc">自动收录聊天记录里的图片</text>
+            </view>
+            <view class="agent-detail-album__right">
+              <text class="agent-detail-list__value">{{ chatAlbumValue }}</text>
+              <view v-if="chatAlbumPreviewImages.length" class="agent-detail-album__thumbs">
+                <view
+                  v-for="imageUrl in chatAlbumPreviewImages"
+                  :key="imageUrl"
+                  class="agent-detail-album__thumb"
+                >
+                  <image
+                    class="agent-detail-album__thumb-image"
+                    :src="imageUrl"
+                    mode="aspectFill"
+                  />
+                </view>
               </view>
             </view>
           </view>
@@ -113,10 +117,6 @@
         <view class="agent-detail-action-button" @tap="handleSendMessage">
           <Message size="20" color="#0a0a0a" />
           <text class="agent-detail-action-button__text">发消息</text>
-        </view>
-        <view class="agent-detail-action-button" @tap="handleAudioCallTap">
-          <view class="agent-detail-action-button__phone" />
-          <text class="agent-detail-action-button__text">音频通话</text>
         </view>
       </view>
     </view>
@@ -133,8 +133,14 @@ export default {
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
 import { Message } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
+import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, type AgentSummary } from '../../apis/agent'
+import {
+  getConversationMessages,
+  getConversations,
+  type ConversationImagePayload,
+} from '../../apis/conversation'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -151,9 +157,12 @@ const fallbackPreview = ref('')
 const fallbackCreatedAt = ref<Date | null>(null)
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
+const isLoadingChatAlbum = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const isDefaultAgent = ref(true)
+const conversationId = ref('')
+const chatAlbumImages = ref<string[]>([])
 
 const displayName = computed(() => {
   const name = agent.value?.name.trim() || fallbackName.value.trim()
@@ -194,6 +203,14 @@ const hasFallbackSnapshot = computed(() => {
 const showBlockingError = computed(() => {
   return Boolean(loadError.value && !agent.value && !hasFallbackSnapshot.value)
 })
+const chatAlbumPreviewImages = computed(() => chatAlbumImages.value.slice(0, 3))
+const chatAlbumValue = computed(() => {
+  if (isLoadingChatAlbum.value) {
+    return '加载中'
+  }
+
+  return chatAlbumImages.value.length ? `${chatAlbumImages.value.length}张` : '暂无图片'
+})
 const profileDescription = computed(() => {
   const description = agent.value?.description.trim() || fallbackPreview.value.trim()
 
@@ -225,6 +242,7 @@ const profileDescription = computed(() => {
 })
 
 useLoad((options) => {
+  conversationId.value = decodeRouteParam(options?.conversationId)
   agentId.value = decodeRouteParam(options?.agentId)
   fallbackName.value = decodeRouteParam(options?.agentName)
   fallbackAvatar.value = decodeRouteParam(options?.agentAvatar)
@@ -245,6 +263,7 @@ useDidShow(() => {
 
   if (agentId.value && !isCheckingAuth.value) {
     void loadAgentDetail()
+    void loadChatAlbum()
   }
 })
 
@@ -296,7 +315,10 @@ async function preparePage() {
   }
 
   isCheckingAuth.value = false
-  await loadAgentDetail()
+  await Promise.all([
+    loadAgentDetail(),
+    loadChatAlbum(),
+  ])
 }
 
 async function loadAgentDetail() {
@@ -328,6 +350,54 @@ async function loadAgentDetail() {
 
 function handleRetry() {
   void loadAgentDetail()
+  void loadChatAlbum()
+}
+
+async function loadChatAlbum() {
+  if (!conversationId.value) {
+    chatAlbumImages.value = []
+    return
+  }
+
+  isLoadingChatAlbum.value = true
+
+  try {
+    const items = await getConversationMessages(conversationId.value)
+    chatAlbumImages.value = items
+      .filter((message) => message.type === 'image' && message.role !== 'system')
+      .map((message) => resolveImageMessageUrl(message.image))
+      .filter((url, index, urls) => Boolean(url) && urls.indexOf(url) === index)
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await clearAuthSession()
+      await redirectToAuthPage()
+      return
+    }
+
+    chatAlbumImages.value = []
+    showToast(error instanceof ApiException ? error.message : '聊天相册加载失败，请稍后重试')
+  } finally {
+    isLoadingChatAlbum.value = false
+  }
+}
+
+function resolveImageMessageUrl(image?: ConversationImagePayload) {
+  const directUrl = image?.url?.trim()
+  if (directUrl) {
+    return directUrl
+  }
+
+  const objectKey = image?.objectKey?.trim()
+  if (!objectKey || !ApiConfig.mediaBaseUrl) {
+    return ''
+  }
+
+  const encodedKey = objectKey
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+
+  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`
 }
 
 function handleProfileTap() {
@@ -380,16 +450,68 @@ function buildAgentFormUrl() {
   return `/pages/agent-form/index?${query}`
 }
 
-function handleSendMessage() {
-  void Taro.navigateBack({
-    delta: 1,
+async function handleSendMessage() {
+  if (!agentId.value) {
+    showToast('缺少联系人资料，请返回通讯录重新进入')
+    return
+  }
+
+  const resolvedConversationId = await resolveConversationId()
+  if (!resolvedConversationId) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
+  const createdAt = agent.value?.createdAt ?? fallbackCreatedAt.value
+  const query = [
+    ['conversationId', resolvedConversationId],
+    ['agentId', agentId.value],
+    ['agentName', displayName.value],
+    ['agentAvatar', displayAvatar.value],
+    ['agentSex', String(displaySex.value)],
+    [
+      'agentCallMe',
+      agent.value?.agentCallMe.trim() || fallbackAgentCallMe.value.trim(),
+    ],
+    [
+      'iCallAgent',
+      agent.value?.iCallAgent.trim() || fallbackICallAgent.value.trim(),
+    ],
+    ['preview', profileDescription.value],
+    ['createdAt', createdAt?.toISOString() ?? ''],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  void Taro.navigateTo({
+    url: `/pages/chat/index?${query}`,
   })
 }
 
-function handleQrTap() {
-  showToast('二维码功能待接入')
-}
+async function resolveConversationId() {
+  if (conversationId.value) {
+    return conversationId.value
+  }
 
+  if (!agentId.value) {
+    return ''
+  }
+
+  try {
+    const conversations = await getConversations()
+    const matchedConversation = conversations.find((conversation) => {
+      return conversation.agentId === agentId.value
+    })
+    conversationId.value = matchedConversation?.id ?? ''
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await clearAuthSession()
+      await redirectToAuthPage()
+    }
+  }
+
+  return conversationId.value
+}
 function handleDefaultAgentChange(event: Event) {
   const value = (event as Event & { detail?: { value?: boolean } }).detail?.value
   isDefaultAgent.value = Boolean(value)
@@ -401,11 +523,27 @@ function handleVoiceModelTap() {
 }
 
 function handleChatAlbumTap() {
-  showToast('聊天相册待接入')
-}
+  if (isLoadingChatAlbum.value) {
+    showToast('聊天相册加载中')
+    return
+  }
 
-function handleAudioCallTap() {
-  showToast('音频通话待接入')
+  if (!conversationId.value && !agentId.value) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
+  const query = [
+    ['conversationId', conversationId.value],
+    ['agentId', agentId.value],
+  ]
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  void Taro.navigateTo({
+    url: `/pages/chat-album/index?${query}`,
+  })
 }
 </script>
 
@@ -544,9 +682,8 @@ function handleAudioCallTap() {
   flex-shrink: 0;
   width: 19px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 18px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .agent-detail-header__tool {
@@ -556,49 +693,16 @@ function handleAudioCallTap() {
   color: #9a9ca3;
 }
 
-.agent-detail-header__tool--qr {
-  box-sizing: border-box;
-  border: 2px solid currentColor;
-  border-radius: 2px;
-}
-
-.agent-detail-header__tool--qr::before,
-.agent-detail-header__tool--qr::after {
-  content: '';
-  position: absolute;
-  background: currentColor;
-}
-
-.agent-detail-header__tool--qr::before {
-  left: 4px;
-  top: 4px;
-  width: 3px;
-  height: 3px;
-  box-shadow: 7px 0 0 currentColor, 0 7px 0 currentColor, 7px 7px 0 currentColor;
-}
-
 .agent-detail-header__tool--edit::before {
   content: '';
   position: absolute;
-  left: 4px;
-  top: 3px;
-  width: 10px;
-  height: 12px;
-  border: 2px solid currentColor;
-  border-top: 0;
-  transform: rotate(-35deg);
-}
-
-.agent-detail-header__tool--edit::after {
-  content: '';
-  position: absolute;
-  left: 11px;
-  top: 1px;
-  width: 3px;
-  height: 7px;
-  border-radius: 2px;
-  background: currentColor;
-  transform: rotate(-35deg);
+  right: 2px;
+  top: 4px;
+  width: 8px;
+  height: 8px;
+  border-top: 1.8px solid currentColor;
+  border-right: 1.8px solid currentColor;
+  transform: rotate(45deg);
 }
 
 .agent-detail-spacer {
@@ -622,8 +726,7 @@ function handleAudioCallTap() {
   background: #ffffff;
 }
 
-.agent-detail-list__item::after,
-.agent-detail-action-button:first-child::after {
+.agent-detail-list__item::after {
   content: '';
   position: absolute;
   left: 16px;
@@ -704,6 +807,14 @@ function handleAudioCallTap() {
   flex: 1;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-detail-album__right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
@@ -748,36 +859,4 @@ function handleAudioCallTap() {
   line-height: 24px;
   font-weight: 500;
 }
-
-.agent-detail-action-button__phone {
-  position: relative;
-  width: 20px;
-  height: 20px;
-  border: 2px solid #0a0a0a;
-  border-radius: 6px 6px 10px 10px;
-  transform: rotate(-36deg);
-}
-
-.agent-detail-action-button__phone::before {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: -5px;
-  width: 8px;
-  height: 4px;
-  border-radius: 3px;
-  background: #0a0a0a;
-}
-
-.agent-detail-action-button__phone::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  bottom: -5px;
-  width: 7px;
-  height: 4px;
-  border-radius: 3px;
-  background: #0a0a0a;
-}
-
 </style>

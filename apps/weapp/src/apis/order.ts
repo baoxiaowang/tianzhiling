@@ -2,6 +2,7 @@ import type {
   CreateVipPlanOrderResultDTO,
   OrderStatusDTO,
   OrderRecordDTO,
+  UserOrderListDTO,
   WechatPaymentParamsDTO,
 } from '@tzl/shared'
 import { get, post } from '../api/api-client'
@@ -31,6 +32,13 @@ export interface WechatPaymentParams {
 export interface CreateVipPlanOrderResult {
   order: OrderRecord
   payment: WechatPaymentParams
+}
+
+export interface UserOrderList {
+  items: OrderRecord[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 function asRecord(value: unknown) {
@@ -124,6 +132,18 @@ function parseCreateVipPlanOrderResult(
   }
 }
 
+function parseUserOrderList(value: unknown): UserOrderList {
+  const raw = asRecord(value)
+  const items = Array.isArray(raw.items) ? raw.items.map(parseOrder) : []
+
+  return {
+    items,
+    total: asNumber(raw.total) || items.length,
+    page: asNumber(raw.page) || 1,
+    pageSize: asNumber(raw.pageSize) || items.length,
+  }
+}
+
 export async function createVipPlanOrder(payload: {
   vipPlanId: string
   jsCode: string
@@ -134,6 +154,12 @@ export async function createVipPlanOrder(payload: {
   })
 
   return parseCreateVipPlanOrderResult(data)
+}
+
+export async function listOrders() {
+  const data = await get<UserOrderListDTO>('/api/orders')
+
+  return parseUserOrderList(data)
 }
 
 export async function getOrder(orderId: string) {
@@ -154,5 +180,6 @@ export type {
   CreateVipPlanOrderResultDTO,
   OrderStatusDTO,
   OrderRecordDTO,
+  UserOrderListDTO,
   WechatPaymentParamsDTO,
 }

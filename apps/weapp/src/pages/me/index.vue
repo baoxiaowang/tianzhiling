@@ -199,6 +199,13 @@ async function handleMenuTap(title: string) {
     return
   }
 
+  if (title === '我的订单') {
+    await Taro.navigateTo({
+      url: '/pages/my-orders/index',
+    })
+    return
+  }
+
   if (title === 'VIP 服务') {
     await Taro.navigateTo({
       url: '/pages/vip-center/index',

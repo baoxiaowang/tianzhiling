@@ -11,6 +11,7 @@ declare module 'vue' {
     BackCapsule: typeof import('./src/components/back-capsule/back-capsule.vue')['default']
     ChatMessageBubble: typeof import('./src/components/chat-message-bubble/chat-message-bubble.vue')['default']
     ChatMorePanel: typeof import('./src/components/chat-more-panel/chat-more-panel.vue')['default']
+    CopyableText: typeof import('./src/components/copyable-text/copyable-text.vue')['default']
     EmojiPickerPanel: typeof import('./src/components/emoji-picker-panel/emoji-picker-panel.vue')['default']
     LoginPromptPopup: typeof import('./src/components/login-prompt-popup/login-prompt-popup.vue')['default']
     MomentCard: typeof import('./src/components/moment-card/moment-card.vue')['default']
