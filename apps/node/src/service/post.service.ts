@@ -12,6 +12,7 @@ import {
   PostCommentEntity,
   PostCommentNotificationEntity,
   PostCommentType,
+  PostLikeEntity,
   PostEntity,
   UserEntity,
 } from '@tzl/entities';
@@ -35,6 +36,8 @@ export interface PostItem {
   content: string;
   images: string[];
   remindAgentIds: string[];
+  likeCount: number;
+  likedByMe: boolean;
   commentCount: number;
   comments: PostCommentItem[];
   createdAt: string;
@@ -75,6 +78,11 @@ export interface PostCommentNotificationSummary {
   latest: PostCommentNotificationItem | null;
 }
 
+interface PostLikeSummary {
+  likeCountByPostId: Map<string, number>;
+  likedPostIds: Set<string>;
+}
+
 @Provide()
 export class PostService {
   @Logger()
@@ -98,18 +106,23 @@ export class PostService {
   @InjectEntityModel(PostCommentNotificationEntity)
   commentNotificationModel: MongoRepository<PostCommentNotificationEntity>;
 
+  @InjectEntityModel(PostLikeEntity)
+  likeModel: MongoRepository<PostLikeEntity>;
+
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
-  async listPosts(): Promise<PostItem[]> {
+  async listPosts(auth?: AuthenticatedUserPayload): Promise<PostItem[]> {
     const posts = await this.postModel.find({
       order: {
         createdAt: 'DESC',
       },
     });
+    const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
+    const likeSummary = await this.buildLikeSummary(posts, currentUserId);
 
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
@@ -139,6 +152,8 @@ export class PostService {
         return this.buildPostItem(
           post,
           authorCache.get(userId) ?? null,
+          likeSummary.likeCountByPostId.get(postId) ?? 0,
+          likeSummary.likedPostIds.has(postId),
           commentCountCache.get(postId) ?? 0,
           commentsCache.get(postId) ?? []
         );
@@ -146,18 +161,31 @@ export class PostService {
     );
   }
 
-  async getPostDetail(postId: string): Promise<PostItem> {
+  async getPostDetail(
+    postId: string,
+    auth?: AuthenticatedUserPayload
+  ): Promise<PostItem> {
     const post = await this.getPostById(postId);
     const user = await this.findUserById(post.userId);
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
+    const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
+    const likeSummary = await this.buildLikeSummary([post], currentUserId);
     const comments = await this.listCommentItemsByPostId(
       post.id,
       authorCache,
       agentCache
     );
+    const normalizedPostId = this.stringifyObjectId(post.id);
 
-    return this.buildPostItem(post, user, comments.length, comments);
+    return this.buildPostItem(
+      post,
+      user,
+      likeSummary.likeCountByPostId.get(normalizedPostId) ?? 0,
+      likeSummary.likedPostIds.has(normalizedPostId),
+      comments.length,
+      comments
+    );
   }
 
   async getUnreadCommentNotificationSummary(
@@ -271,7 +299,52 @@ export class PostService {
     const savedPost = await this.postModel.save(post);
     await this.enqueueRemindReplyJobs(savedPost);
 
-    return this.buildPostItem(savedPost, user, 0, []);
+    return this.buildPostItem(savedPost, user, 0, false, 0, []);
+  }
+
+  async likePost(
+    auth: AuthenticatedUserPayload,
+    postId: string
+  ): Promise<PostItem> {
+    const post = await this.getPostById(postId);
+    const userId = this.parseObjectId(auth.sub);
+    const existing = await this.findLike(post.id, userId);
+
+    if (!existing) {
+      const now = new Date();
+      const like = new PostLikeEntity();
+      like.postId = post.id;
+      like.userId = userId;
+      like.createdAt = now;
+      like.updatedAt = now;
+
+      try {
+        await this.likeModel.save(like);
+      } catch (error) {
+        const duplicateCode = (error as { code?: number } | undefined)?.code;
+
+        if (duplicateCode !== 11000) {
+          throw error;
+        }
+      }
+    }
+
+    return this.getPostDetail(postId, auth);
+  }
+
+  async unlikePost(
+    auth: AuthenticatedUserPayload,
+    postId: string
+  ): Promise<PostItem> {
+    const post = await this.getPostById(postId);
+    const userId = this.parseObjectId(auth.sub);
+
+    await this.likeModel.deleteOne({
+      postId: post.id,
+      userId,
+    } as never);
+
+    return this.getPostDetail(postId, auth);
   }
 
   async listComments(postId: string): Promise<PostCommentItem[]> {
@@ -438,6 +511,8 @@ export class PostService {
   private buildPostItem(
     post: PostEntity,
     user?: UserEntity | null,
+    likeCount = 0,
+    likedByMe = false,
     commentCount = 0,
     comments: PostCommentItem[] = []
   ): PostItem {
@@ -461,11 +536,74 @@ export class PostService {
             .map(agentId => agentId.trim())
             .filter(Boolean)
         : [],
+      likeCount,
+      likedByMe,
       commentCount,
       comments,
       createdAt: post.createdAt?.toISOString?.() ?? '',
       updatedAt: post.updatedAt?.toISOString?.() ?? '',
     };
+  }
+
+  private async buildLikeSummary(
+    posts: PostEntity[],
+    currentUserId?: MongoObjectId | null
+  ): Promise<PostLikeSummary> {
+    const likeCountByPostId = new Map<string, number>();
+    const likedPostIds = new Set<string>();
+    const likeUserIdsByPostId = new Map<string, Set<string>>();
+
+    if (posts.length === 0) {
+      return {
+        likeCountByPostId,
+        likedPostIds,
+      };
+    }
+
+    const postIds = posts.map(post => post.id);
+    const likes = await this.likeModel.find({
+      where: {
+        postId: {
+          $in: postIds,
+        },
+      } as never,
+    });
+    const currentUserIdText = currentUserId
+      ? this.stringifyObjectId(currentUserId)
+      : '';
+
+    for (const like of likes) {
+      const postId = this.stringifyObjectId(like.postId);
+      const likeUserId = this.stringifyObjectId(like.userId);
+      const likeUserIds = likeUserIdsByPostId.get(postId) ?? new Set<string>();
+      likeUserIds.add(likeUserId);
+      likeUserIdsByPostId.set(postId, likeUserIds);
+
+      if (currentUserIdText && likeUserId === currentUserIdText) {
+        likedPostIds.add(postId);
+      }
+    }
+
+    for (const [postId, likeUserIds] of likeUserIdsByPostId.entries()) {
+      likeCountByPostId.set(postId, likeUserIds.size);
+    }
+
+    return {
+      likeCountByPostId,
+      likedPostIds,
+    };
+  }
+
+  private findLike(
+    postId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<PostLikeEntity | null> {
+    return this.likeModel.findOne({
+      where: {
+        postId,
+        userId,
+      },
+    });
   }
 
   private async listCommentItemsByPostId(

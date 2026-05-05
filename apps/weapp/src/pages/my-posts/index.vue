@@ -28,6 +28,7 @@
         v-for="post in posts"
         :key="post.id"
         :post="post"
+        @like="handleLikeTap"
         @preview="handlePreviewImages"
       />
     </view>
@@ -43,7 +44,7 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, onMounted, ref } from 'vue'
-import { getPosts, type PostItem } from '../../apis/post'
+import { getPosts, likePost, unlikePost, type PostItem } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -53,6 +54,7 @@ const posts = ref<PostItem[]>([])
 const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const errorMessage = ref('')
+const likingPostIds = ref<string[]>([])
 
 const session = computed(() => authSession.value)
 const currentUserId = computed(() => session.value?.user.id.trim() ?? '')
@@ -124,6 +126,79 @@ async function loadMyPosts(showLoading = true) {
 
 function handleRetry() {
   void loadMyPosts(false)
+}
+
+function isPostLikePending(postId: string) {
+  return likingPostIds.value.includes(postId)
+}
+
+function setPostLikePending(postId: string, pending: boolean) {
+  if (pending) {
+    if (!likingPostIds.value.includes(postId)) {
+      likingPostIds.value = [...likingPostIds.value, postId]
+    }
+    return
+  }
+
+  likingPostIds.value = likingPostIds.value.filter((item) => item !== postId)
+}
+
+function replacePostInList(updatedPost: PostItem) {
+  posts.value = posts.value.map((item) =>
+    item.id === updatedPost.id ? updatedPost : item
+  )
+}
+
+function patchPostLikeState(postId: string, likedByMe: boolean, likeCount: number) {
+  posts.value = posts.value.map((item) => {
+    if (item.id !== postId) {
+      return item
+    }
+
+    return {
+      ...item,
+      likedByMe,
+      likeCount: Math.max(0, likeCount),
+    }
+  })
+}
+
+function showToast(title: string) {
+  void Taro.showToast({
+    title,
+    icon: 'none',
+    duration: 1800,
+  })
+}
+
+async function handleLikeTap(post: PostItem) {
+  if (!session.value) {
+    await redirectToAuth()
+    return
+  }
+
+  if (isPostLikePending(post.id)) {
+    return
+  }
+
+  const nextLikedByMe = !post.likedByMe
+  const nextLikeCount = post.likeCount + (nextLikedByMe ? 1 : -1)
+
+  setPostLikePending(post.id, true)
+  patchPostLikeState(post.id, nextLikedByMe, nextLikeCount)
+
+  try {
+    const updatedPost = nextLikedByMe
+      ? await likePost(post.id)
+      : await unlikePost(post.id)
+
+    replacePostInList(updatedPost)
+  } catch (error) {
+    patchPostLikeState(post.id, post.likedByMe, post.likeCount)
+    showToast(error instanceof ApiException ? error.message : '点赞失败，请稍后重试')
+  } finally {
+    setPostLikePending(post.id, false)
+  }
 }
 
 function getPostImages(post: PostItem) {

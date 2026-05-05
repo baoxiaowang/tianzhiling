@@ -1,4 +1,4 @@
-import { get, post } from '../api/api-client'
+import { del, get, post } from '../api/api-client'
 
 export type PostCommentType = 'user' | 'agent'
 
@@ -44,6 +44,8 @@ export interface PostItem {
   content: string
   images: string[]
   remindAgentIds: string[]
+  likeCount: number
+  likedByMe: boolean
   commentCount: number
   comments: PostCommentItem[]
   createdAt: string | null
@@ -103,4 +105,12 @@ export async function createComment(
       ? { replyToCommentId: payload.replyToCommentId.trim() }
       : {}),
   })
+}
+
+export async function likePost(postId: string) {
+  return post<PostItem>(`/api/post/${postId}/likes`)
+}
+
+export async function unlikePost(postId: string) {
+  return del<PostItem>(`/api/post/${postId}/likes`)
 }

@@ -27,11 +27,18 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
   { methods: ['POST'], path: /^\/post\/?$/ },
   { methods: ['GET'], path: /^\/post\/comment-notifications\/summary\/?$/ },
+  { methods: ['POST'], path: /^\/post\/[^/]+\/likes\/?$/ },
+  { methods: ['DELETE'], path: /^\/post\/[^/]+\/likes\/?$/ },
   {
     methods: ['POST'],
     path: /^\/post\/[^/]+\/comment-notifications\/read\/?$/,
   },
   { methods: ['POST'], path: /^\/post\/[^/]+\/comments\/?$/ },
+];
+
+const OPTIONAL_AUTH_ROUTES: ProtectedRoute[] = [
+  { methods: ['GET'], path: /^\/post\/?$/ },
+  { methods: ['GET'], path: /^\/post\/[^/]+\/?$/ },
 ];
 
 @Middleware()
@@ -64,7 +71,21 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     const normalizedPath = this.normalizePath(ctx.path);
     const routePaths = this.resolveRoutePathCandidates(normalizedPath);
 
-    return PROTECTED_ROUTES.some(route =>
+    if (
+      PROTECTED_ROUTES.some(route =>
+        routePaths.some(routePath =>
+          this.isProtectedRoute(route, ctx.method, routePath)
+        )
+      )
+    ) {
+      return true;
+    }
+
+    if (!ctx.get('authorization')?.trim()) {
+      return false;
+    }
+
+    return OPTIONAL_AUTH_ROUTES.some(route =>
       routePaths.some(routePath =>
         this.isProtectedRoute(route, ctx.method, routePath)
       )

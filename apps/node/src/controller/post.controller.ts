@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Inject, Param, Post } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Del,
+  Get,
+  Inject,
+  Param,
+  Post,
+} from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
 import { AuthenticatedUserPayload } from '../interface';
@@ -15,7 +23,9 @@ export class PostController {
   @Get('/')
   async listPosts() {
     return {
-      items: await this.postService.listPosts(),
+      items: await this.postService.listPosts(
+        this.ctx.state.auth as AuthenticatedUserPayload | undefined
+      ),
     };
   }
 
@@ -43,7 +53,26 @@ export class PostController {
 
   @Get('/:postId')
   async getPostDetail(@Param('postId') postId: string) {
-    return this.postService.getPostDetail(postId);
+    return this.postService.getPostDetail(
+      postId,
+      this.ctx.state.auth as AuthenticatedUserPayload | undefined
+    );
+  }
+
+  @Post('/:postId/likes')
+  async likePost(@Param('postId') postId: string) {
+    return this.postService.likePost(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      postId
+    );
+  }
+
+  @Del('/:postId/likes')
+  async unlikePost(@Param('postId') postId: string) {
+    return this.postService.unlikePost(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      postId
+    );
   }
 
   @Post('/:postId/comment-notifications/read')

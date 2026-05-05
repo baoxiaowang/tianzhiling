@@ -38,9 +38,13 @@
           {{ relativeTime }}
         </text>
         <view class="moment-card__actions">
-          <view class="moment-card__action">
+          <view
+            class="moment-card__action"
+            :class="{ 'moment-card__action--active': post.likedByMe }"
+            @tap="emitLike"
+          >
             <image class="moment-card__action-icon" :src="likeIconUrl" mode="aspectFit" />
-            <text class="moment-card__action-count">0</text>
+            <text class="moment-card__action-count">{{ likeCount }}</text>
           </view>
           <view class="moment-card__action" @tap="emitComment">
             <image class="moment-card__action-icon" :src="commentIconUrl" mode="aspectFit" />
@@ -83,6 +87,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  like: [post: PostItem]
   comment: [post: PostItem]
   preview: [post: PostItem, index: number]
 }>()
@@ -99,6 +104,9 @@ const postImages = computed(() => {
 })
 const relativeTime = computed(() => {
   return formatMomentRelativeTime(props.post.updatedAt ?? props.post.createdAt)
+})
+const likeCount = computed(() => {
+  return Number.isFinite(props.post.likeCount) ? props.post.likeCount : 0
 })
 
 function formatMomentRelativeTime(value: string | null) {
@@ -152,6 +160,10 @@ function formatCommentAuthor(authorName: string, replyToUserName: string) {
 
 function emitComment() {
   emit('comment', props.post)
+}
+
+function emitLike() {
+  emit('like', props.post)
 }
 
 function emitPreview(index: number) {
@@ -303,6 +315,15 @@ function emitPreview(index: number) {
 .moment-card__action-count {
   font-size: 14px;
   line-height: 20px;
+}
+
+.moment-card__action--active {
+  color: #00a63e;
+}
+
+.moment-card__action--active .moment-card__action-icon {
+  filter: brightness(0) saturate(100%) invert(46%) sepia(95%) saturate(1245%) hue-rotate(116deg)
+    brightness(92%) contrast(101%);
 }
 
 .moment-card__comments {

@@ -57,6 +57,7 @@
           v-for="post in posts"
           :key="post.id"
           :post="post"
+          @like="handleLikeTap"
           @comment="handleCommentTap"
           @preview="handlePreviewImages"
         />
@@ -98,7 +99,9 @@
         <view
           v-else
           class="moment-comment-composer__send"
-          :class="{ 'moment-comment-composer__send--disabled': !canSubmitComment || isSubmittingComment }"
+          :class="{
+            'moment-comment-composer__send--disabled': !canSubmitComment || isSubmittingComment,
+          }"
           @touchstart="handleCommentInternalTouchStart"
           @tap="handleSubmitComment"
         >
@@ -128,7 +131,9 @@ import {
   createComment,
   getCommentNotificationSummary,
   getPosts,
+  likePost,
   markCommentNotificationsRead,
+  unlikePost,
   type PostCommentNotificationSummary,
   type PostItem,
 } from '../../apis/post'
@@ -163,6 +168,7 @@ const shouldFocusCommentInput = ref(false)
 const shouldKeepCommentComposerOnBlur = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
+const likingPostIds = ref<string[]>([])
 
 let refreshDataPromise: Promise<void> | null = null
 
@@ -216,6 +222,41 @@ function sortPostsByTime(items: PostItem[]) {
     const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? '') || 0
     const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? '') || 0
     return rightTime - leftTime
+  })
+}
+
+function isPostLikePending(postId: string) {
+  return likingPostIds.value.includes(postId)
+}
+
+function setPostLikePending(postId: string, pending: boolean) {
+  if (pending) {
+    if (!likingPostIds.value.includes(postId)) {
+      likingPostIds.value = [...likingPostIds.value, postId]
+    }
+    return
+  }
+
+  likingPostIds.value = likingPostIds.value.filter((item) => item !== postId)
+}
+
+function replacePostInList(updatedPost: PostItem) {
+  posts.value = posts.value.map((item) =>
+    item.id === updatedPost.id ? updatedPost : item
+  )
+}
+
+function patchPostLikeState(postId: string, likedByMe: boolean, likeCount: number) {
+  posts.value = posts.value.map((item) => {
+    if (item.id !== postId) {
+      return item
+    }
+
+    return {
+      ...item,
+      likedByMe,
+      likeCount: Math.max(0, likeCount),
+    }
   })
 }
 
@@ -331,6 +372,42 @@ function handleCommentTap(post: PostItem) {
   }
 
   openCommentComposer(post)
+}
+
+async function handleLikeTap(post: PostItem) {
+  if (!session.value) {
+    openLoginPrompt()
+    return
+  }
+
+  if (isPostLikePending(post.id)) {
+    return
+  }
+
+  const nextLikedByMe = !post.likedByMe
+  const nextLikeCount = post.likeCount + (nextLikedByMe ? 1 : -1)
+
+  setPostLikePending(post.id, true)
+  patchPostLikeState(post.id, nextLikedByMe, nextLikeCount)
+
+  try {
+    const updatedPost = nextLikedByMe
+      ? await likePost(post.id)
+      : await unlikePost(post.id)
+
+    replacePostInList(updatedPost)
+  } catch (error) {
+    patchPostLikeState(post.id, post.likedByMe, post.likeCount)
+
+    if (error instanceof ApiException && error.requiresReLogin) {
+      openLoginPrompt()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '点赞失败，请稍后重试')
+  } finally {
+    setPostLikePending(post.id, false)
+  }
 }
 
 function closeCommentComposer(force = false) {

@@ -15,6 +15,7 @@ export enum TableName {
   post = 'post',
   post_comment = 'post_comment',
   post_comment_notification = 'post_comment_notification',
+  post_like = 'post_like',
   vip_plan = 'vip_plan',
   order = 'order',
   user_membership = 'user_membership',
