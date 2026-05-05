@@ -22,39 +22,39 @@ export class UpdateAgentAvatarDTO {
 }
 
 export class UpdateAgentProfileDTO {
-  @Rule(RuleType.string().max(30))
+  @Rule(RuleType.string().max(30).optional())
   name?: string;
 
-  @Rule(RuleType.number())
+  @Rule(RuleType.number().optional())
   sex?: number;
 
-  @Rule(RuleType.string().max(20))
+  @Rule(RuleType.string().max(20).optional())
   iCallAgent?: string;
 
-  @Rule(RuleType.string().max(20))
+  @Rule(RuleType.string().max(20).optional())
   agentCallMe?: string;
 
-  @Rule(RuleType.string().max(40))
+  @Rule(RuleType.string().allow('').max(40).optional())
   birthday?: string;
 
-  @Rule(RuleType.string().max(40))
+  @Rule(RuleType.string().allow('').max(40).optional())
   deathDate?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   description?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   lifeExperience?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   personalityTraits?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   languageHabits?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   hobbies?: string;
 
-  @Rule(RuleType.string().max(1000))
+  @Rule(RuleType.string().allow('').max(1000).optional())
   sharedMemories?: string;
 }
