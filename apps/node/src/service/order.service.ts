@@ -21,6 +21,7 @@ import type {
   CreateVipPlanOrderDTO,
   CreateVipPlanOrderResultDTO,
   OrderRecordDTO,
+  UserOrderListDTO,
 } from '@tzl/shared';
 import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
@@ -119,6 +120,27 @@ export class OrderService {
     return {
       order: this.buildOrderRecord(prepayOrder),
       payment,
+    };
+  }
+
+  async listUserOrders(
+    auth: AuthenticatedUserPayload
+  ): Promise<UserOrderListDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const orders = await this.orderModel.find({
+      where: {
+        userId,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+
+    return {
+      items: orders.map(order => this.buildOrderRecord(order)),
+      total: orders.length,
+      page: 1,
+      pageSize: orders.length,
     };
   }
 

@@ -20,6 +20,13 @@ export class OrderController {
     );
   }
 
+  @Get('/')
+  async listOrders() {
+    return this.orderService.listUserOrders(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
   @Get('/:orderId')
   async getOrder(@Param('orderId') orderId: string) {
     return this.orderService.getUserOrder(

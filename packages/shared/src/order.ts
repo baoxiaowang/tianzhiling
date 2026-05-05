@@ -29,6 +29,13 @@ export interface OrderRecordDTO {
   paidAt?: string;
 }
 
+export interface UserOrderListDTO {
+  items: OrderRecordDTO[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export type OrderSourceDTO = 'app' | 'weapp' | 'admin';
 
 export interface AdminOrderUserDTO {
