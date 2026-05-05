@@ -1,13 +1,15 @@
 <template>
   <page-scaffold
     class="agent-detail-page"
-    background="#f5f5f7"
+    background="#efeff4"
+    header-background="#f6f6f6"
     body-padding="0"
     :scroll="true"
     :safe-area-top="false"
+    :safe-area-bottom="false"
   >
     <template #header>
-      <app-bar title="" background="#ffffff" />
+      <app-bar title="" background="#f6f6f6" />
     </template>
 
     <view v-if="isCheckingAuth || isLoading" class="agent-detail-state">
@@ -24,7 +26,7 @@
     </view>
 
     <view v-else class="agent-detail">
-      <view class="agent-detail-section agent-detail-header">
+      <view class="agent-detail-header">
         <view class="agent-detail-header__avatar-wrap">
           <image
             v-if="displayAvatar"
@@ -41,94 +43,82 @@
           </view>
         </view>
 
-          <view class="agent-detail-header__meta">
-            <view class="agent-detail-header__name-row">
-              <text class="agent-detail-header__name">{{ displayName }}</text>
-            </view>
-          <text class="agent-detail-header__sub">
-            {{ sexLabel }}是你正在纪念的重要存在
-          </text>
+        <view class="agent-detail-header__meta">
+          <view class="agent-detail-header__name-row">
+            <text class="agent-detail-header__name">{{ displayName }}</text>
+          </view>
+          <text class="agent-detail-header__sub">{{ headerSubtitle }}</text>
         </view>
 
-        <view class="agent-detail-header__more" @tap="handleOpenAgentForm">
-          <MoreX size="18" color="#9a9ca3" />
+        <view class="agent-detail-header__tools">
+          <view class="agent-detail-header__tool agent-detail-header__tool--qr" @tap="handleQrTap" />
+          <view class="agent-detail-header__tool agent-detail-header__tool--edit" @tap="handleOpenAgentForm" />
         </view>
       </view>
 
       <view class="agent-detail-spacer" />
 
-      <view class="agent-detail-section agent-detail-section--cell">
-        <nut-cell
-          title="朋友资料"
-          :sub-title="profileDescription"
-          is-link
-          center
-          class="agent-detail-cell agent-detail-cell--profile"
-          @click="handleProfileTap"
-        />
-      </view>
+      <view class="agent-detail-list">
+        <view class="agent-detail-list__item agent-detail-list__item--profile" @tap="handleProfileTap">
+          <view class="agent-detail-list__content">
+            <text class="agent-detail-list__title">亲友资料</text>
+            <text class="agent-detail-list__desc">完善亲友资料，有助于更自然地与 TA 对话</text>
+          </view>
+          <view class="agent-detail-list__arrow" />
+        </view>
 
-      <view class="agent-detail-spacer" />
+        <view class="agent-detail-list__item agent-detail-list__item--switch">
+          <text class="agent-detail-list__title">设为默认智能体</text>
+          <switch
+            class="agent-detail-default-switch"
+            :checked="isDefaultAgent"
+            color="#39cd80"
+            @change="handleDefaultAgentChange"
+          />
+        </view>
 
-      <view class="agent-detail-section agent-detail-section--cell">
-        <nut-cell
-          v-for="(item, index) in capabilityTiles"
-          :key="item"
-          :title="item"
-          is-link
-          center
-          class="agent-detail-cell"
-          :class="{ 'agent-detail-cell--divider': index !== capabilityTiles.length - 1 }"
-          @click="handlePendingTap(item)"
-        />
-      </view>
+        <view class="agent-detail-list__item" @tap="handleVoiceModelTap">
+          <text class="agent-detail-list__title">声音模型</text>
+          <view class="agent-detail-list__right">
+            <text v-if="voiceModelStatus" class="agent-detail-list__value">{{ voiceModelStatus }}</text>
+            <view class="agent-detail-list__arrow" />
+          </view>
+        </view>
 
-      <view class="agent-detail-spacer" />
-
-      <view class="agent-detail-section agent-detail-section--cell">
-        <nut-cell
-          title="好友动态"
-          is-link
-          center
-          class="agent-detail-cell agent-detail-cell--moments"
-          @click="handlePendingTap('好友动态')"
-        >
-          <template #desc>
-            <view class="agent-detail-moments__thumbs">
-              <view class="agent-detail-moments__thumb">
+        <view class="agent-detail-list__item agent-detail-list__item--album" @tap="handleChatAlbumTap">
+          <view class="agent-detail-album__main">
+            <text class="agent-detail-list__title">聊天相册</text>
+            <view class="agent-detail-album__thumbs">
+              <view
+                v-for="index in 3"
+                :key="index"
+                class="agent-detail-album__thumb"
+              >
                 <image
                   v-if="displayAvatar"
-                  class="agent-detail-moments__thumb-image"
-                  :src="displayAvatar"
-                  mode="aspectFill"
-                />
-              </view>
-              <view class="agent-detail-moments__thumb">
-                <image
-                  v-if="displayAvatar"
-                  class="agent-detail-moments__thumb-image"
+                  class="agent-detail-album__thumb-image"
                   :src="displayAvatar"
                   mode="aspectFill"
                 />
               </view>
             </view>
-          </template>
-        </nut-cell>
+          </view>
+          <view class="agent-detail-list__arrow" />
+        </view>
       </view>
 
       <view class="agent-detail-spacer" />
 
-      <view class="agent-detail-section agent-detail-section--cell">
-        <nut-cell center class="agent-detail-cell agent-detail-action-cell" @click="handleSendMessage">
-          <template #title>
-            <view class="agent-detail-action">
-              <Message size="19" color="#637897" />
-              <text class="agent-detail-action__text">发消息</text>
-            </view>
-          </template>
-        </nut-cell>
+      <view class="agent-detail-actions">
+        <view class="agent-detail-action-button" @tap="handleSendMessage">
+          <Message size="20" color="#0a0a0a" />
+          <text class="agent-detail-action-button__text">发消息</text>
+        </view>
+        <view class="agent-detail-action-button" @tap="handleAudioCallTap">
+          <view class="agent-detail-action-button__phone" />
+          <text class="agent-detail-action-button__text">音频通话</text>
+        </view>
       </view>
-
     </view>
   </page-scaffold>
 </template>
@@ -141,7 +131,7 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
-import { Message, MoreX } from '@nutui/icons-vue-taro'
+import { Message } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, type AgentSummary } from '../../apis/agent'
@@ -149,8 +139,6 @@ import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
-
-const capabilityTiles = ['声音模型', '导入聊天记录'] as const
 
 const agent = ref<AgentSummary | null>(null)
 const agentId = ref('')
@@ -165,6 +153,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
+const isDefaultAgent = ref(true)
 
 const displayName = computed(() => {
   const name = agent.value?.name.trim() || fallbackName.value.trim()
@@ -177,6 +166,16 @@ const displaySex = computed(() => {
   return agent.value?.sex ?? fallbackSex.value
 })
 const sexLabel = computed(() => (displaySex.value === 1 ? '他' : '她'))
+const headerSubtitle = computed(() => {
+  const description = agent.value?.description.trim() || fallbackPreview.value.trim()
+  const cleanedDescription = description ? cleanPreview(description) : ''
+
+  return cleanedDescription || `${sexLabel.value}是你正在纪念的重要存在`
+})
+const voiceModelStatus = computed(() => {
+  const timbreId = agent.value?.voiceTimbreId?.trim()
+  return timbreId ? '已设置' : ''
+})
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const avatarFallbackClass = computed(() => {
   return displaySex.value === 1
@@ -370,14 +369,32 @@ function buildAgentFormUrl() {
   return `/pages/agent-form/index?${query}`
 }
 
-function handlePendingTap(title: string) {
-  showToast(`${title}待接入`)
-}
-
 function handleSendMessage() {
   void Taro.navigateBack({
     delta: 1,
   })
+}
+
+function handleQrTap() {
+  showToast('二维码功能待接入')
+}
+
+function handleDefaultAgentChange(event: Event) {
+  const value = (event as Event & { detail?: { value?: boolean } }).detail?.value
+  isDefaultAgent.value = Boolean(value)
+  showToast(isDefaultAgent.value ? '已设为默认智能体' : '已取消默认智能体')
+}
+
+function handleVoiceModelTap() {
+  showToast('声音模型待接入')
+}
+
+function handleChatAlbumTap() {
+  showToast('聊天相册待接入')
+}
+
+function handleAudioCallTap() {
+  showToast('音频通话待接入')
 }
 </script>
 
@@ -429,30 +446,31 @@ function handleSendMessage() {
 }
 
 .agent-detail {
-  padding-bottom: 24px;
-}
-
-.agent-detail-section {
-  background: #ffffff;
+  min-height: 100%;
+  padding-bottom: 32px;
+  background: #efeff4;
 }
 
 .agent-detail-header {
   display: flex;
   align-items: center;
-  min-height: 106px;
-  padding: 18px 16px 28px 20px;
+  gap: 16px;
+  height: 120px;
+  box-sizing: border-box;
+  padding: 0 18px;
+  background: #ffffff;
 }
 
 .agent-detail-header__avatar-wrap {
   flex-shrink: 0;
-  width: 60px;
-  height: 60px;
+  width: 72px;
+  height: 72px;
 }
 
 .agent-detail-header__avatar {
-  width: 60px;
-  height: 60px;
-  border-radius: 14px;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
   background: #eef2f7;
 }
 
@@ -461,8 +479,8 @@ function handleSendMessage() {
   align-items: center;
   justify-content: center;
   color: #ffffff;
-  font-size: 24px;
-  line-height: 32px;
+  font-size: 28px;
+  line-height: 36px;
   font-weight: 700;
 }
 
@@ -477,10 +495,10 @@ function handleSendMessage() {
 .agent-detail-header__meta {
   flex: 1;
   min-width: 0;
-  margin-left: 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: center;
+  gap: 10px;
 }
 
 .agent-detail-header__name-row {
@@ -491,140 +509,264 @@ function handleSendMessage() {
 }
 
 .agent-detail-header__name {
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #222222;
-  font-size: 18px;
-  line-height: 26px;
-  font-weight: 700;
+  color: #000000;
+  font-size: 20px;
+  line-height: 29px;
+  font-weight: 500;
 }
 
 .agent-detail-header__sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #9a9ca3;
-  font-size: 13px;
-  line-height: 18px;
+  color: #999999;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
 }
 
-.agent-detail-header__more {
+.agent-detail-header__tools {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #d9dadd;
-  border-radius: 999px;
+  width: 19px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.agent-detail-header__tool {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  color: #9a9ca3;
+}
+
+.agent-detail-header__tool--qr {
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+}
+
+.agent-detail-header__tool--qr::before,
+.agent-detail-header__tool--qr::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+
+.agent-detail-header__tool--qr::before {
+  left: 4px;
+  top: 4px;
+  width: 3px;
+  height: 3px;
+  box-shadow: 7px 0 0 currentColor, 0 7px 0 currentColor, 7px 7px 0 currentColor;
+}
+
+.agent-detail-header__tool--edit::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  width: 10px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top: 0;
+  transform: rotate(-35deg);
+}
+
+.agent-detail-header__tool--edit::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: rotate(-35deg);
 }
 
 .agent-detail-spacer {
-  height: 8px;
+  height: 10px;
 }
 
-.agent-detail-section--cell {
-  --nut-cell-background: #ffffff;
-  --nut-cell-border-radius: 0;
-  --nut-cell-box-shadow: none;
-  --nut-cell-color: #111111;
-  --nut-cell-desc-color: #8a8f98;
-  --nut-cell-title-font: 16px;
-  --nut-cell-title-desc-font: 13px;
-  --nut-cell-line-height: 24px;
-  --nut-cell-padding: 0 16px;
-  --nut-cell-default-icon-margin: 0 8px 0 0;
+.agent-detail-list,
+.agent-detail-actions {
+  background: #ffffff;
 }
 
-.agent-detail-cell {
+.agent-detail-list__item {
   position: relative;
-  min-height: 60px;
-  margin: 0;
-  color: #111111;
+  min-height: 58px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  background: #ffffff;
 }
 
-.agent-detail-cell--profile,
-.agent-detail-cell--moments {
-  min-height: 72px;
-}
-
-.agent-detail-cell--divider::after {
+.agent-detail-list__item::after,
+.agent-detail-action-button:first-child::after {
   content: '';
   position: absolute;
   left: 16px;
   right: 0;
   bottom: 0;
-  height: 0.5px;
-  background: #eaecef;
+  height: 1px;
+  transform: scaleY(0.5);
+  transform-origin: bottom;
+  background: #e5e5e5;
 }
 
-.agent-detail-cell .nut-cell__title,
-.agent-detail-cell .title {
-  color: #111111;
+.agent-detail-list__item--profile {
+  min-height: 71px;
+}
+
+.agent-detail-list__item--album {
+  min-height: 80px;
+}
+
+.agent-detail-list__item--switch {
+  min-height: 58px;
+}
+
+.agent-detail-list__content {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-detail-list__title {
+  color: #0a0a0a;
   font-size: 16px;
   line-height: 24px;
   font-weight: 500;
 }
 
-.agent-detail-cell .nut-cell__title-desc {
+.agent-detail-list__desc {
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #8a8f98;
-  font-size: 13px;
+  color: #999999;
+  font-size: 14px;
   line-height: 18px;
-  margin-top: 6px;
 }
 
-.agent-detail-cell .nut-cell__value {
-  min-width: 0;
+.agent-detail-list__right {
+  flex-shrink: 0;
   display: flex;
-  justify-content: flex-end;
   align-items: center;
-}
-
-.agent-detail-moments__thumbs {
-  min-width: 0;
-  display: flex;
-  justify-content: flex-end;
   gap: 4px;
 }
 
-.agent-detail-moments__thumb {
-  width: 38px;
-  height: 38px;
-  border-radius: 2px;
-  background: #f2f3f5;
-  overflow: hidden;
+.agent-detail-list__value {
+  color: #999999;
+  font-size: 14px;
+  line-height: 20px;
 }
 
-.agent-detail-moments__thumb-image {
+.agent-detail-list__arrow {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-top: 1.6px solid #b6b6b6;
+  border-right: 1.6px solid #b6b6b6;
+  transform: rotate(45deg);
+}
+
+.agent-detail-default-switch {
+  transform: scale(0.76);
+  transform-origin: right center;
+}
+
+.agent-detail-album__main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-detail-album__thumbs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-detail-album__thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f2f3f5;
+}
+
+.agent-detail-album__thumb-image {
   width: 100%;
   height: 100%;
 }
 
-.agent-detail-action-cell {
-  min-height: 56px;
+.agent-detail-actions {
+  display: flex;
+  flex-direction: column;
 }
 
-.agent-detail-action-cell .nut-cell__title {
-  align-items: center;
-}
-
-.agent-detail-action {
+.agent-detail-action-button {
+  position: relative;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  background: #ffffff;
 }
 
-.agent-detail-action__text {
-  color: #637897;
+.agent-detail-action-button__text {
+  color: #0a0a0a;
   font-size: 16px;
   line-height: 24px;
   font-weight: 500;
+}
+
+.agent-detail-action-button__phone {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #0a0a0a;
+  border-radius: 6px 6px 10px 10px;
+  transform: rotate(-36deg);
+}
+
+.agent-detail-action-button__phone::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: -5px;
+  width: 8px;
+  height: 4px;
+  border-radius: 3px;
+  background: #0a0a0a;
+}
+
+.agent-detail-action-button__phone::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  bottom: -5px;
+  width: 7px;
+  height: 4px;
+  border-radius: 3px;
+  background: #0a0a0a;
 }
 
 </style>
