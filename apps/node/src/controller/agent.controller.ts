@@ -9,6 +9,7 @@ import {
   Post,
 } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
+import { AppError } from '../common/errors';
 import {
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
@@ -28,18 +29,13 @@ export class AgentController {
   @Get('/')
   async listAgents() {
     return {
-      items: await this.agentService.listAgents(
-        this.ctx.state.auth as AuthenticatedUserPayload
-      ),
+      items: await this.agentService.listAgents(this.requireAuth()),
     };
   }
 
   @Get('/:agentId')
   async getAgentDetail(@Param('agentId') agentId: string) {
-    return this.agentService.getAgentDetail(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      agentId
-    );
+    return this.agentService.getAgentDetail(this.requireAuth(), agentId);
   }
 
   @Patch('/:agentId')
@@ -48,7 +44,7 @@ export class AgentController {
     @Body() body: UpdateAgentProfileDTO
   ) {
     return this.agentService.updateAgentProfile(
-      this.ctx.state.auth as AuthenticatedUserPayload,
+      this.requireAuth(),
       agentId,
       body
     );
@@ -60,7 +56,7 @@ export class AgentController {
     @Body() body: UpdateAgentAvatarDTO
   ) {
     return this.agentService.updateAgentAvatar(
-      this.ctx.state.auth as AuthenticatedUserPayload,
+      this.requireAuth(),
       agentId,
       body
     );
@@ -68,19 +64,23 @@ export class AgentController {
 
   @Del('/:agentId')
   async deleteAgent(@Param('agentId') agentId: string) {
-    await this.agentService.deleteAgent(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      agentId
-    );
+    await this.agentService.deleteAgent(this.requireAuth(), agentId);
 
     return { deleted: true };
   }
 
   @Post('/')
   async createAgent(@Body() body: CreateAgentDTO) {
-    return this.agentService.createAgent(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      body
-    );
+    return this.agentService.createAgent(this.requireAuth(), body);
+  }
+
+  private requireAuth(): AuthenticatedUserPayload {
+    const auth = this.ctx.state.auth as AuthenticatedUserPayload | undefined;
+
+    if (!auth?.sub) {
+      throw new AppError('UNAUTHORIZED', 'authorization is required', 401);
+    }
+
+    return auth;
   }
 }

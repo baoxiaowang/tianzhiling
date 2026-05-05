@@ -48,11 +48,21 @@
             maxlength="1000"
             cursor-spacing="80"
             :show-confirm-bar="false"
+            :disabled="isSavingProfile"
             @input="handleFixedInput(item.field, $event)"
             @blur="handleFixedBlur(item.field)"
           />
         </view>
+      </view>
 
+      <view class="agent-profile-footer">
+        <view
+          class="agent-profile-footer__button"
+          :class="{ 'agent-profile-footer__button--disabled': isSavingProfile }"
+          @tap="handleSaveTap"
+        >
+          {{ isSavingProfile ? '保存中' : '保存资料' }}
+        </view>
       </view>
     </view>
   </page-scaffold>
@@ -245,7 +255,21 @@ function handleFixedBlur(field: FixedProfileField) {
   void saveProfile(payload)
 }
 
-async function saveProfile(payload: UpdateAgentProfileDTO) {
+function handleSaveTap() {
+  const payload: UpdateAgentProfileDTO = {
+    lifeExperience: profileForm.value.lifeExperience.trim(),
+    personalityTraits: profileForm.value.personalityTraits.trim(),
+    languageHabits: profileForm.value.languageHabits.trim(),
+    hobbies: profileForm.value.hobbies.trim(),
+    sharedMemories: profileForm.value.sharedMemories.trim(),
+  }
+  void saveProfile(payload, { successMessage: '资料已保存' })
+}
+
+async function saveProfile(
+  payload: UpdateAgentProfileDTO,
+  options: { successMessage?: string } = {},
+) {
   if (isSavingProfile.value) {
     pendingProfilePayload.value = mergeProfilePayload(
       pendingProfilePayload.value,
@@ -264,6 +288,10 @@ async function saveProfile(payload: UpdateAgentProfileDTO) {
   try {
     const savedAgent = await updateAgentProfile(agentId.value, payload)
     agent.value = savedAgent
+
+    if (options.successMessage) {
+      showToast(options.successMessage)
+    }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -348,7 +376,9 @@ function mergeProfilePayload(
 
 .agent-profile {
   min-height: 100%;
+  padding-bottom: 96px;
   background: #ffffff;
+  box-sizing: border-box;
 }
 
 .agent-profile-note {
@@ -408,6 +438,35 @@ function mergeProfilePayload(
 
 .agent-profile-item__placeholder {
   color: #999999;
+}
+
+.agent-profile-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -6px 18px rgba(17, 17, 17, 0.06);
+  box-sizing: border-box;
+}
+
+.agent-profile-footer__button {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  background: #111111;
+}
+
+.agent-profile-footer__button--disabled {
+  opacity: 0.56;
 }
 
 </style>

@@ -61,10 +61,13 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
   }
 
   match(ctx: Context): boolean {
-    const routePath = this.stripGlobalPrefix(ctx.path);
+    const normalizedPath = this.normalizePath(ctx.path);
+    const routePaths = this.resolveRoutePathCandidates(normalizedPath);
 
     return PROTECTED_ROUTES.some(route =>
-      this.isProtectedRoute(route, ctx.method, routePath)
+      routePaths.some(routePath =>
+        this.isProtectedRoute(route, ctx.method, routePath)
+      )
     );
   }
 
@@ -102,6 +105,13 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     }
 
     return route.path.test(path);
+  }
+
+  private resolveRoutePathCandidates(path: string): string[] {
+    const strippedPath = this.stripGlobalPrefix(path);
+    const paths = [path, strippedPath];
+
+    return Array.from(new Set(paths.filter(Boolean)));
   }
 
   private stripGlobalPrefix(path: string): string {
