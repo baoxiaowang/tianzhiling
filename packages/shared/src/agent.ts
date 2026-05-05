@@ -8,6 +8,12 @@ export interface AgentProfileDTO {
   birthday: string;
   deathDate: string;
   description: string;
+  lifeExperience: string;
+  personalityTraits: string;
+  languageHabits: string;
+  hobbies: string;
+  sharedMemories: string;
+  additionalMemories: string[];
   status: number;
   voiceTimbreId?: string;
   createdAt: string;
@@ -37,6 +43,12 @@ export interface UpdateAgentProfileDTO {
   birthday?: string;
   deathDate?: string;
   description?: string;
+  lifeExperience?: string;
+  personalityTraits?: string;
+  languageHabits?: string;
+  hobbies?: string;
+  sharedMemories?: string;
+  additionalMemories?: string[];
 }
 
 export interface AdminAgentOwnerDTO {

@@ -36,6 +36,24 @@ export class AgentEntity extends BaseEntity {
   description: string;
 
   @Column()
+  lifeExperience?: string;
+
+  @Column()
+  personalityTraits?: string;
+
+  @Column()
+  languageHabits?: string;
+
+  @Column()
+  hobbies?: string;
+
+  @Column()
+  sharedMemories?: string;
+
+  @Column()
+  additionalMemories?: string[];
+
+  @Column()
   status: number;
 
   @Column()
