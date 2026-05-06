@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum UserMembershipStatus {
@@ -8,6 +8,10 @@ export enum UserMembershipStatus {
   refunded = 'refunded',
 }
 
+@Index(['userId', 'status', 'updatedAt'], { background: true })
+@Index(['userId', 'status', 'expiredAt'], { background: true })
+@Index(['sourceOrderId'], { background: true })
+@Index(['vipPlanId'], { background: true })
 @Entity(TableName.user_membership)
 export class UserMembershipEntity extends BaseEntity {
   @Column()

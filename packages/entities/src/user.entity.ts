@@ -1,6 +1,8 @@
-import { Entity, Column } from 'typeorm';
+import { Entity, Column, Index } from 'typeorm';
 import { BaseEntity, TableName } from './base';
 
+@Index(['phone'], { sparse: true, background: true })
+@Index(['createdAt'], { background: true })
 @Entity(TableName.user)
 export class UserEntity extends BaseEntity {
   @Column()

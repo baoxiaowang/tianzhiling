@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum MessageRole {
@@ -18,6 +18,7 @@ export enum MessageType {
   image = 'image',
 }
 
+@Index(['conversationId', 'createdAt'], { background: true })
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()

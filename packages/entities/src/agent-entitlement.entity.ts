@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum AgentEntitlementType {
@@ -15,6 +15,9 @@ export enum AgentEntitlementStatus {
   refunded = 'refunded',
 }
 
+@Index(['userId', 'status', 'updatedAt'], { background: true })
+@Index(['sourceOrderId', 'type'], { sparse: true, background: true })
+@Index(['agentId', 'status'], { sparse: true, background: true })
 @Entity(TableName.agent_entitlement)
 export class AgentEntitlementEntity extends BaseEntity {
   @Column()

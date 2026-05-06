@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum OrderType {
@@ -21,6 +21,10 @@ export enum OrderSource {
   admin = 'admin',
 }
 
+@Index(['orderNo'], { unique: true, background: true })
+@Index(['userId', 'createdAt'], { background: true })
+@Index(['status', 'paymentExpiredAt'], { background: true })
+@Index(['paymentTradeNo'], { unique: true, sparse: true, background: true })
 @Entity(TableName.order)
 export class OrderEntity extends BaseEntity {
   @Column()

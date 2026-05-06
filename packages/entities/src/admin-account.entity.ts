@@ -1,6 +1,8 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
+@Index(['account'], { unique: true, background: true })
+@Index(['adminUserId'], { background: true })
 @Entity(TableName.admin_account)
 export class AdminAccountEntity extends BaseEntity {
   @Column()

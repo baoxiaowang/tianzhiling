@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum PostCommentType {
@@ -6,6 +6,10 @@ export enum PostCommentType {
   agent = 'agent',
 }
 
+@Index(['postId', 'createdAt'], { background: true })
+@Index(['postId', 'userId'], { sparse: true, background: true })
+@Index(['postId', 'agentId'], { sparse: true, background: true })
+@Index(['parentCommentId'], { sparse: true, background: true })
 @Entity(TableName.post_comment)
 export class PostCommentEntity extends BaseEntity {
   @Column()

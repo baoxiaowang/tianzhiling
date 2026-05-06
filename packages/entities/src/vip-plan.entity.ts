@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, TableName } from './base';
 import { AgentEntitlementType } from './agent-entitlement.entity';
 
@@ -18,6 +18,8 @@ export interface VipPlanEntitlementGrant {
   durationDays?: number;
 }
 
+@Index(['code'], { unique: true, background: true })
+@Index(['status', 'sort', 'priceAmount'], { background: true })
 @Entity(TableName.vip_plan)
 export class VipPlanEntity extends BaseEntity {
   @Column()

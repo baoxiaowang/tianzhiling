@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, TableName } from './base';
 
 export enum VoiceTimbreProvider {
@@ -14,6 +14,8 @@ export enum VoiceTimbreStatus {
   disabled = 'disabled',
 }
 
+@Index(['provider', 'providerVoiceId'], { unique: true, background: true })
+@Index(['status', 'updatedAt'], { background: true })
 @Entity(TableName.voice_timbre)
 export class VoiceTimbreEntity extends BaseEntity {
   @Column()

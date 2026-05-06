@@ -1,6 +1,8 @@
-import { Entity, Column } from 'typeorm';
+import { Entity, Column, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
+@Index(['createdAt'], { background: true })
+@Index(['userId', 'createdAt'], { background: true })
 @Entity(TableName.post)
 export class PostEntity extends BaseEntity {
   @Column()

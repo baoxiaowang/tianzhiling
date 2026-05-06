@@ -1,4 +1,4 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum CouponLedgerType {
@@ -13,6 +13,9 @@ export enum CouponLedgerStatus {
   voided = 'voided',
 }
 
+@Index(['userId', 'occurredAt'], { background: true })
+@Index(['relatedOrderId'], { sparse: true, background: true })
+@Index(['sourceOrderId'], { sparse: true, background: true })
 @Entity(TableName.coupon_ledger)
 export class CouponLedgerEntity extends BaseEntity {
   @Column()
