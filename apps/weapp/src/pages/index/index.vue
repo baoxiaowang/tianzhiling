@@ -70,8 +70,15 @@
 
     <view
       v-if="activeCommentPost"
+      class="moment-comment-backdrop"
+      @tap="handleCommentOutsideTap"
+    />
+
+    <view
+      v-if="activeCommentPost"
       class="moment-comment-dock"
       :style="commentComposerStyle"
+      @tap.stop
     >
       <view class="moment-comment-composer">
         <input
@@ -441,6 +448,10 @@ function handleCommentBlur() {
   closeCommentComposer()
 }
 
+function handleCommentOutsideTap() {
+  closeCommentComposer()
+}
+
 function handleCommentInternalTouchStart() {
   shouldKeepCommentComposerOnBlur.value = true
 }
@@ -695,6 +706,13 @@ useDidHide(() => {
   line-height: 56px;
   font-weight: 300;
   transform: translateY(-1px);
+}
+
+.moment-comment-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 125;
+  background: transparent;
 }
 
 .moment-comment-dock {

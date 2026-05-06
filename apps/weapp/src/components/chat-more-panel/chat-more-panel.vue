@@ -42,11 +42,6 @@ const emit = defineEmits<{
 const items: ChatMoreActionItem[] = [
   { key: 'photo', label: '照片' },
   { key: 'camera', label: '拍摄' },
-  { key: 'videoCall', label: '视频通话' },
-  { key: 'location', label: '位置' },
-  { key: 'redPacket', label: '红包' },
-  { key: 'gift', label: '礼物' },
-  { key: 'transfer', label: '转账' },
 ]
 
 function handleActionTap(item: ChatMoreActionItem) {
@@ -58,7 +53,7 @@ function handleActionTap(item: ChatMoreActionItem) {
 .chat-more-panel {
   display: flex;
   flex-wrap: wrap;
-  min-height: 228px;
+  height: 228px;
   padding: 18px 14px 20px;
   box-sizing: border-box;
   background: #f1f1f1;
@@ -153,110 +148,6 @@ function handleActionTap(item: ChatMoreActionItem) {
   height: 10px;
   border: 2px solid #5b5b5b;
   border-radius: 50%;
-}
-
-.chat-more-panel__icon--videoCall .chat-more-panel__icon-inner {
-  width: 27px;
-  height: 20px;
-  border: 2px solid #5b5b5b;
-  border-radius: 6px;
-}
-
-.chat-more-panel__icon--videoCall .chat-more-panel__icon-inner::after {
-  top: 3px;
-  right: -10px;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 9px solid #5b5b5b;
-}
-
-.chat-more-panel__icon--location .chat-more-panel__icon-inner {
-  width: 22px;
-  height: 28px;
-  border: 2px solid #5b5b5b;
-  border-radius: 14px 14px 14px 2px;
-  transform: rotate(-45deg);
-}
-
-.chat-more-panel__icon--location .chat-more-panel__icon-inner::after {
-  top: 7px;
-  left: 7px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #5b5b5b;
-}
-
-.chat-more-panel__icon--redPacket .chat-more-panel__icon-inner {
-  width: 25px;
-  height: 30px;
-  border-radius: 6px;
-  background: #5b5b5b;
-}
-
-.chat-more-panel__icon--redPacket .chat-more-panel__icon-inner::before {
-  top: 10px;
-  left: 0;
-  width: 25px;
-  height: 2px;
-  background: #fcfcfc;
-}
-
-.chat-more-panel__icon--redPacket .chat-more-panel__icon-inner::after {
-  top: 14px;
-  left: 8px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #fcfcfc;
-}
-
-.chat-more-panel__icon--gift .chat-more-panel__icon-inner {
-  width: 28px;
-  height: 24px;
-  border: 2px solid #5b5b5b;
-  border-radius: 4px;
-}
-
-.chat-more-panel__icon--gift .chat-more-panel__icon-inner::before {
-  top: -7px;
-  left: 6px;
-  width: 12px;
-  height: 7px;
-  border: 2px solid #5b5b5b;
-  border-radius: 8px 8px 0 0;
-}
-
-.chat-more-panel__icon--gift .chat-more-panel__icon-inner::after {
-  top: -2px;
-  left: 11px;
-  width: 2px;
-  height: 26px;
-  background: #5b5b5b;
-}
-
-.chat-more-panel__icon--transfer .chat-more-panel__icon-inner {
-  width: 15px;
-  height: 27px;
-  transform: skew(-16deg);
-}
-
-.chat-more-panel__icon--transfer .chat-more-panel__icon-inner::before {
-  top: 0;
-  left: 5px;
-  width: 8px;
-  height: 15px;
-  border-radius: 2px;
-  background: #5b5b5b;
-}
-
-.chat-more-panel__icon--transfer .chat-more-panel__icon-inner::after {
-  right: 4px;
-  bottom: 0;
-  width: 8px;
-  height: 16px;
-  border-radius: 2px;
-  background: #5b5b5b;
 }
 
 </style>

@@ -134,7 +134,13 @@
             :class="{ 'chat-composer__icon-button--selected': isVoiceMode }"
             @tap="handleVoiceModeToggle"
           >
-            <view class="chat-composer__mic">
+            <view v-if="isVoiceMode" class="chat-composer__keyboard">
+              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--1" />
+              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--2" />
+              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--3" />
+              <view class="chat-composer__keyboard-space" />
+            </view>
+            <view v-else class="chat-composer__mic">
               <view class="chat-composer__mic-head" />
               <view class="chat-composer__mic-stem" />
               <view class="chat-composer__mic-base" />
@@ -282,6 +288,7 @@ import {
   transcribeConversationVoice,
   type ConversationMessage,
   type ConversationImagePayload,
+  type SendConversationMessageResult,
   type ConversationVoicePayload,
 } from '../../apis/conversation'
 import { uploadLocalFile, uploadLocalImage } from '../../apis/storage'
@@ -302,6 +309,11 @@ import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { useSafeAreaInsets } from '../../utils/safe-area'
 
 type VoiceTouchEvent = ITouchEvent | TouchEvent
+
+type AssistantSegmentRevealTimer = {
+  timer: ReturnType<typeof setTimeout>
+  resolve: (active: boolean) => void
+}
 
 type DraftInputEvent = InputEvent | {
   detail?: {
@@ -352,6 +364,12 @@ type RecorderStopResult = {
   fileSize: number
 }
 
+const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
+  defaultDelayMs: 2200,
+  longSegmentDelayMs: 2800,
+  longSegmentLengthThreshold: 24,
+} as const
+
 const conversationId = ref('')
 const agentId = ref('')
 const agentName = ref('')
@@ -366,7 +384,6 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
 const isWaitingAgentReply = ref(false)
-const agentReplyDotCount = ref(1)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const draftMessage = ref('')
@@ -403,9 +420,10 @@ let lastRecorderStopResult: RecorderStopResult | null = null
 let voiceAudioContext: Taro.InnerAudioContext | null = null
 let isPickingChatImage = false
 let voicePlaybackErrorMutedUntil = 0
-let agentReplyDotsTimer: ReturnType<typeof setInterval> | null = null
 let isSwitchingComposerPanel = false
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
+const assistantSegmentRevealTimers = new Set<AssistantSegmentRevealTimer>()
+let assistantSegmentRevealGeneration = 0
 
 const recorderManager = Taro.getRecorderManager()
 
@@ -446,7 +464,7 @@ const navMenus: NavMenuItem[] = [
 ]
 const pageTitle = computed(() => {
   if (isWaitingAgentReply.value) {
-    return `回复中${'.'.repeat(agentReplyDotCount.value)}`
+    return '正在输入...'
   }
 
   const trimmedName = agentName.value.trim()
@@ -710,35 +728,96 @@ async function refreshAgentSnapshot() {
   }
 }
 
-function startAgentReplyDots() {
-  stopAgentReplyDots()
-  agentReplyDotCount.value = 1
-  agentReplyDotsTimer = setInterval(() => {
-    agentReplyDotCount.value = agentReplyDotCount.value >= 3
-      ? 1
-      : agentReplyDotCount.value + 1
-  }, 450)
-}
-
-function stopAgentReplyDots() {
-  if (!agentReplyDotsTimer) {
-    return
-  }
-
-  clearInterval(agentReplyDotsTimer)
-  agentReplyDotsTimer = null
-}
-
 async function runWithAgentReplyStatus(task: () => Promise<void>) {
   isWaitingAgentReply.value = true
-  startAgentReplyDots()
 
   try {
     await task()
   } finally {
     isWaitingAgentReply.value = false
-    stopAgentReplyDots()
   }
+}
+
+function getAssistantSegmentRevealDelay(segment: string) {
+  return segment.trim().length >= ASSISTANT_SEGMENT_REVEAL_CONFIG.longSegmentLengthThreshold
+    ? ASSISTANT_SEGMENT_REVEAL_CONFIG.longSegmentDelayMs
+    : ASSISTANT_SEGMENT_REVEAL_CONFIG.defaultDelayMs
+}
+
+function waitForAssistantSegmentDelay(delayMs: number) {
+  const generation = assistantSegmentRevealGeneration
+
+  return new Promise<boolean>((resolve) => {
+    const entry: AssistantSegmentRevealTimer = {
+      timer: setTimeout(() => {
+        assistantSegmentRevealTimers.delete(entry)
+        resolve(generation === assistantSegmentRevealGeneration)
+      }, delayMs),
+      resolve,
+    }
+
+    assistantSegmentRevealTimers.add(entry)
+  })
+}
+
+function clearAssistantSegmentRevealTimers() {
+  assistantSegmentRevealGeneration += 1
+  assistantSegmentRevealTimers.forEach((entry) => {
+    clearTimeout(entry.timer)
+    entry.resolve(false)
+  })
+  assistantSegmentRevealTimers.clear()
+}
+
+async function revealAssistantMessage(message: ConversationMessage) {
+  if (message.type !== 'text' || message.segments.length <= 1) {
+    messages.value = [...messages.value, message]
+    return
+  }
+
+  const fullSegments = message.segments
+  messages.value = [
+    ...messages.value,
+    {
+      ...message,
+      segments: fullSegments.slice(0, 1),
+    },
+  ]
+  await scrollToBottom()
+
+  for (let index = 1; index < fullSegments.length; index += 1) {
+    const shouldContinue = await waitForAssistantSegmentDelay(
+      getAssistantSegmentRevealDelay(fullSegments[index]),
+    )
+    if (!shouldContinue) {
+      return
+    }
+
+    messages.value = messages.value.map((item) =>
+      item.id === message.id
+        ? {
+            ...item,
+            segments: fullSegments.slice(0, index + 1),
+          }
+        : item
+    )
+    await scrollToBottom()
+  }
+}
+
+async function appendConversationResult(
+  tempMessageId: string,
+  result: SendConversationMessageResult,
+) {
+  messages.value = messages.value.filter((message) => message.id !== tempMessageId)
+  messages.value = [...messages.value, result.userMessage]
+
+  if (!result.assistantMessage) {
+    return
+  }
+
+  await revealAssistantMessage(result.assistantMessage)
+  probeMissingAssistantVoiceDurations([result.assistantMessage])
 }
 
 useDidShow(() => {
@@ -1055,13 +1134,13 @@ useDidHide(() => {
 })
 
 useUnload(() => {
+  clearAssistantSegmentRevealTimers()
   clearVoiceStartTimer()
   if (isVoiceRecording.value) {
     try {
       recorderManager.stop()
     } catch {}
   }
-  stopAgentReplyDots()
   destroyVoiceAudioContext()
 })
 
@@ -1508,15 +1587,7 @@ async function sendTextMessageContent(
         type: 'text',
       })
 
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      messages.value = [
-        ...messages.value,
-        result.userMessage,
-        ...(result.assistantMessage ? [result.assistantMessage] : []),
-      ]
-      if (result.assistantMessage) {
-        probeMissingAssistantVoiceDurations([result.assistantMessage])
-      }
+      await appendConversationResult(tempId, result)
     })
     loadError.value = ''
     await scrollToBottom()
@@ -1641,15 +1712,7 @@ async function sendImageMessage(image: PickedChatImage) {
         mimeType,
       })
 
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      messages.value = [
-        ...messages.value,
-        result.userMessage,
-        ...(result.assistantMessage ? [result.assistantMessage] : []),
-      ]
-      if (result.assistantMessage) {
-        probeMissingAssistantVoiceDurations([result.assistantMessage])
-      }
+      await appendConversationResult(tempId, result)
     })
     loadError.value = ''
     await scrollToBottom()
@@ -1737,15 +1800,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
         durationMs,
       })
 
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      messages.value = [
-        ...messages.value,
-        result.userMessage,
-        ...(result.assistantMessage ? [result.assistantMessage] : []),
-      ]
-      if (result.assistantMessage) {
-        probeMissingAssistantVoiceDurations([result.assistantMessage])
-      }
+      await appendConversationResult(tempId, result)
     })
     loadError.value = ''
     await scrollToBottom()
@@ -2306,6 +2361,15 @@ function destroyVoiceDurationProbeContexts() {
   background: #07c160;
 }
 
+.chat-composer__icon-button--selected .chat-composer__keyboard {
+  border-color: #07c160;
+}
+
+.chat-composer__icon-button--selected .chat-composer__keyboard-key,
+.chat-composer__icon-button--selected .chat-composer__keyboard-space {
+  background: #07c160;
+}
+
 .chat-composer__input-shell {
   flex: 1;
   min-width: 0;
@@ -2395,6 +2459,7 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-composer__mic,
+.chat-composer__keyboard,
 .chat-composer__emoji,
 .chat-composer__plus {
   position: relative;
@@ -2405,6 +2470,8 @@ function destroyVoiceDurationProbeContexts() {
 .chat-composer__mic-head,
 .chat-composer__mic-stem,
 .chat-composer__mic-base,
+.chat-composer__keyboard-key,
+.chat-composer__keyboard-space,
 .chat-composer__emoji-eye,
 .chat-composer__emoji-mouth,
 .chat-composer__plus-line {
@@ -2434,6 +2501,41 @@ function destroyVoiceDurationProbeContexts() {
   left: 8px;
   top: 23px;
   width: 12px;
+  height: 3px;
+  border-radius: 999px;
+  background: #5e5e5e;
+}
+
+.chat-composer__keyboard {
+  border: 2px solid #5e5e5e;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.chat-composer__keyboard-key {
+  top: 7px;
+  width: 3px;
+  height: 3px;
+  border-radius: 1px;
+  background: #5e5e5e;
+}
+
+.chat-composer__keyboard-key--1 {
+  left: 6px;
+}
+
+.chat-composer__keyboard-key--2 {
+  left: 12px;
+}
+
+.chat-composer__keyboard-key--3 {
+  left: 18px;
+}
+
+.chat-composer__keyboard-space {
+  left: 7px;
+  bottom: 6px;
+  width: 14px;
   height: 3px;
   border-radius: 999px;
   background: #5e5e5e;
