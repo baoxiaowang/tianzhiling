@@ -360,6 +360,7 @@ export class AdminAppUserService {
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
       status: agent.status,
+      isDefault: Boolean(agent.isDefault),
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };

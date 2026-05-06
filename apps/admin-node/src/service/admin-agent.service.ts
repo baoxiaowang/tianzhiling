@@ -510,6 +510,7 @@ export class AdminAgentService {
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
       status: agent.status,
+      isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
