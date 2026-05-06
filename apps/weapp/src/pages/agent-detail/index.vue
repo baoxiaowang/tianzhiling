@@ -71,6 +71,7 @@
           <switch
             class="agent-detail-default-switch"
             :checked="isDefaultAgent"
+            :disabled="isUpdatingDefaultAgent"
             color="#39cd80"
             @change="handleDefaultAgentChange"
           />
@@ -135,7 +136,7 @@ import { Message } from '@nutui/icons-vue-taro'
 import { computed, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
-import { getAgentDetail, type AgentSummary } from '../../apis/agent'
+import { getAgentDetail, updateAgentDefault, type AgentSummary } from '../../apis/agent'
 import {
   getConversationMessages,
   getConversations,
@@ -158,9 +159,10 @@ const fallbackCreatedAt = ref<Date | null>(null)
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isLoadingChatAlbum = ref(false)
+const isUpdatingDefaultAgent = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
-const isDefaultAgent = ref(true)
+const isDefaultAgent = ref(false)
 const conversationId = ref('')
 const chatAlbumImages = ref<string[]>([])
 
@@ -331,7 +333,9 @@ async function loadAgentDetail() {
   loadError.value = ''
 
   try {
-    agent.value = await getAgentDetail(agentId.value)
+    const detail = await getAgentDetail(agentId.value)
+    agent.value = detail
+    isDefaultAgent.value = detail.isDefault
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -512,10 +516,38 @@ async function resolveConversationId() {
 
   return conversationId.value
 }
-function handleDefaultAgentChange(event: Event) {
+async function handleDefaultAgentChange(event: Event) {
+  if (isUpdatingDefaultAgent.value || !agentId.value) {
+    return
+  }
+
   const value = (event as Event & { detail?: { value?: boolean } }).detail?.value
-  isDefaultAgent.value = Boolean(value)
-  showToast(isDefaultAgent.value ? '已设为默认智能体' : '已取消默认智能体')
+  const nextIsDefault = Boolean(value)
+  const previousIsDefault = isDefaultAgent.value
+
+  isDefaultAgent.value = nextIsDefault
+  isUpdatingDefaultAgent.value = true
+
+  try {
+    const detail = await updateAgentDefault(agentId.value, {
+      isDefault: nextIsDefault,
+    })
+    agent.value = detail
+    isDefaultAgent.value = detail.isDefault
+    showToast(detail.isDefault ? '已设为默认智能体' : '已取消默认智能体')
+  } catch (error) {
+    isDefaultAgent.value = previousIsDefault
+
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await clearAuthSession()
+      await redirectToAuthPage()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '默认智能体设置失败，请稍后重试')
+  } finally {
+    isUpdatingDefaultAgent.value = false
+  }
 }
 
 function handleVoiceModelTap() {

@@ -13,6 +13,7 @@ import { AppError } from '../common/errors';
 import {
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
+  UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
 } from '../dto/agent.dto';
 import { AuthenticatedUserPayload } from '../interface';
@@ -56,6 +57,18 @@ export class AgentController {
     @Body() body: UpdateAgentAvatarDTO
   ) {
     return this.agentService.updateAgentAvatar(
+      this.requireAuth(),
+      agentId,
+      body
+    );
+  }
+
+  @Patch('/:agentId/default')
+  async updateAgentDefault(
+    @Param('agentId') agentId: string,
+    @Body() body: UpdateAgentDefaultDTO
+  ) {
+    return this.agentService.updateAgentDefault(
       this.requireAuth(),
       agentId,
       body

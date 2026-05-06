@@ -217,6 +217,9 @@ async function loadAgents() {
 
   try {
     agents.value = await getAgents()
+    if (!selectedAgentId.value) {
+      selectedAgentId.value = agents.value.find((agent) => agent.isDefault)?.id ?? ''
+    }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuthPage()

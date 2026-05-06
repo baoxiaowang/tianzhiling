@@ -3,6 +3,7 @@ import type {
   AgentProfileDTO,
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
+  UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
 } from '@tzl/shared'
 
@@ -22,6 +23,7 @@ export interface AgentSummary {
   hobbies: string
   sharedMemories: string
   status: number
+  isDefault: boolean
   voiceTimbreId: string
   createdAt: Date | null
   updatedAt: Date | null
@@ -93,6 +95,7 @@ export function parseAgentSummary(value: unknown): AgentSummary {
     hobbies: asString(raw.hobbies),
     sharedMemories: asString(raw.sharedMemories),
     status: asNumber(raw.status),
+    isDefault: Boolean(raw.isDefault),
     voiceTimbreId: asString(raw.voiceTimbreId),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
@@ -132,6 +135,15 @@ export async function updateAgentProfile(
   payload: UpdateAgentProfilePayload,
 ) {
   const data = await patch<AgentProfileDTO>(`/api/agent/${agentId}`, payload)
+
+  return parseAgentSummary(data)
+}
+
+export async function updateAgentDefault(
+  agentId: string,
+  payload: UpdateAgentDefaultDTO,
+) {
+  const data = await patch<AgentProfileDTO>(`/api/agent/${agentId}/default`, payload)
 
   return parseAgentSummary(data)
 }

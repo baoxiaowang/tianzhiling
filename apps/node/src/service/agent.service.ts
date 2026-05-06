@@ -6,6 +6,7 @@ import { AppError } from '../common/errors';
 import {
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
+  UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
 } from '../dto/agent.dto';
 import {
@@ -45,7 +46,7 @@ export class AgentService {
       },
     });
 
-    return Promise.all(agents.map(agent => this.buildAgentProfile(agent)));
+    return this.buildAgentProfiles(agents);
   }
 
   async getAgentDetail(
@@ -99,6 +100,7 @@ export class AgentService {
     agent.hobbies = '';
     agent.sharedMemories = '';
     agent.status = 1;
+    agent.isDefault = await this.shouldSetCreatedAgentAsDefault(createdUserId);
     agent.createdAt = now;
     agent.updatedAt = now;
 
@@ -240,6 +242,52 @@ export class AgentService {
     return this.buildAgentProfile(savedAgent);
   }
 
+  async updateAgentDefault(
+    auth: AuthenticatedUserPayload,
+    agentId: string,
+    payload: UpdateAgentDefaultDTO
+  ): Promise<AgentProfile> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    const nextIsDefault = Boolean(payload?.isDefault);
+    const now = new Date();
+
+    if (nextIsDefault) {
+      const userAgents = await this.agentModel.find({
+        where: {
+          createdUserId,
+        },
+      });
+
+      await Promise.all(
+        userAgents
+          .filter(item => {
+            return (
+              this.stringifyObjectId(item.id) !== this.stringifyObjectId(agent.id)
+            );
+          })
+          .filter(item => item.isDefault)
+          .map(item => {
+            item.isDefault = false;
+            item.updatedAt = now;
+            return this.agentModel.save(item);
+          })
+      );
+    }
+
+    agent.isDefault = nextIsDefault;
+    agent.updatedAt = now;
+
+    const savedAgent = await this.agentModel.save(agent);
+    return this.buildAgentProfile(savedAgent);
+  }
+
   async deleteAgent(
     auth: AuthenticatedUserPayload,
     agentId: string
@@ -309,10 +357,40 @@ export class AgentService {
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
       status: agent.status,
+      isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: agent.createdAt.toISOString(),
       updatedAt: agent.updatedAt.toISOString(),
     };
+  }
+
+  private async buildAgentProfiles(
+    agents: AgentEntity[]
+  ): Promise<AgentProfile[]> {
+    return Promise.all(agents.map(agent => this.buildAgentProfile(agent)));
+  }
+
+  private async shouldSetCreatedAgentAsDefault(
+    createdUserId: MongoObjectId
+  ): Promise<boolean> {
+    const existingDefault = await this.agentModel.findOne({
+      where: {
+        createdUserId,
+        isDefault: true,
+      },
+    });
+
+    if (existingDefault) {
+      return false;
+    }
+
+    const existingAgent = await this.agentModel.findOne({
+      where: {
+        createdUserId,
+      },
+    });
+
+    return !existingAgent;
   }
 
   private buildDescription(options: {

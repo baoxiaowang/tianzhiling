@@ -7,6 +7,7 @@ export enum AgentSex {
 }
 
 @Index(['createdUserId', 'updatedAt'], { background: true })
+@Index(['createdUserId', 'isDefault'], { background: true })
 @Index(['voiceTimbreId'], { sparse: true, background: true })
 @Entity(TableName.agent)
 export class AgentEntity extends BaseEntity {
@@ -54,6 +55,9 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   status: number;
+
+  @Column()
+  isDefault?: boolean;
 
   @Column()
   voiceTimbreId?: MongoObjectId;

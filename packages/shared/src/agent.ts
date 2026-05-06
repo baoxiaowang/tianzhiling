@@ -14,6 +14,7 @@ export interface AgentProfileDTO {
   hobbies: string;
   sharedMemories: string;
   status: number;
+  isDefault: boolean;
   voiceTimbreId?: string;
   createdAt: string;
   updatedAt: string;
@@ -32,6 +33,10 @@ export interface CreateAgentDTO {
 
 export interface UpdateAgentAvatarDTO {
   avatar: string;
+}
+
+export interface UpdateAgentDefaultDTO {
+  isDefault: boolean;
 }
 
 export interface UpdateAgentProfileDTO {

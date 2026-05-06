@@ -21,6 +21,11 @@ export class UpdateAgentAvatarDTO {
   avatar: string;
 }
 
+export class UpdateAgentDefaultDTO {
+  @Rule(RuleType.boolean().required())
+  isDefault: boolean;
+}
+
 export class UpdateAgentProfileDTO {
   @Rule(RuleType.string().max(30).optional())
   name?: string;
