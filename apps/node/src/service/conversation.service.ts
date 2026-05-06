@@ -39,6 +39,7 @@ export interface ConversationSummary {
   agentSex: number;
   agentCallMe: string;
   iCallAgent: string;
+  agentIsDefault: boolean;
   preview: string;
   updatedAt: string;
   createdAt: string;
@@ -153,7 +154,7 @@ export class ConversationService {
         updatedAt: 'DESC',
       },
     });
-    return Promise.all(
+    const summaries = await Promise.all(
       conversations.map(async conversation => {
         const agent = await this.findAgentById(conversation.agentId);
         const latestMessage = await this.findLatestMessage(conversation.id);
@@ -171,12 +172,21 @@ export class ConversationService {
           agentSex: agent?.sex ?? 0,
           agentCallMe: agent?.agentCallMe?.trim() || '',
           iCallAgent: agent?.iCallAgent?.trim() || '',
+          agentIsDefault: Boolean(agent?.isDefault),
           preview: this.buildPreview(agent, latestMessage),
           updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
           createdAt: conversation.createdAt?.toISOString?.() ?? '',
         };
       })
     );
+
+    return summaries.sort((left, right) => {
+      if (left.agentIsDefault !== right.agentIsDefault) {
+        return left.agentIsDefault ? -1 : 1;
+      }
+
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
   }
 
   async sendMessage(

@@ -8,6 +8,7 @@ export interface ConversationSummary {
   agentSex: number
   agentCallMe: string
   iCallAgent: string
+  agentIsDefault: boolean
   preview: string
   createdAt: Date | null
   updatedAt: Date | null
@@ -115,6 +116,7 @@ export function parseConversationSummary(value: unknown): ConversationSummary {
     agentSex: asNumber(raw.agentSex),
     agentCallMe: asString(raw.agentCallMe),
     iCallAgent: asString(raw.iCallAgent),
+    agentIsDefault: Boolean(raw.agentIsDefault),
     preview: asString(raw.preview),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),

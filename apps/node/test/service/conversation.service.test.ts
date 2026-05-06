@@ -15,6 +15,7 @@ import { ConversationService } from '../../src/service/conversation.service';
 
 const USER_ID = '665000000000000000000001';
 const AGENT_ID = '665000000000000000000010';
+const OTHER_AGENT_ID = '665000000000000000000011';
 const CONVERSATION_ID = '665000000000000000000020';
 const TIMBRE_ID = '665000000000000000000030';
 const NOW = new Date('2026-05-03T08:00:00.000Z');
@@ -48,7 +49,9 @@ function createAgent(overrides: Partial<AgentEntity> = {}): AgentEntity {
   return agent;
 }
 
-function createConversation(): ConversationEntity {
+function createConversation(
+  overrides: Partial<ConversationEntity> = {}
+): ConversationEntity {
   const conversation = new ConversationEntity();
 
   Object.assign(conversation, {
@@ -57,6 +60,7 @@ function createConversation(): ConversationEntity {
     agentId: new MongoObjectId(AGENT_ID),
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   });
 
   return conversation;
@@ -227,7 +231,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessage).toEqual(
       expect.objectContaining({
         type: MessageType.text,
-        content: '我也想你，今天过得怎么样？',
+        content: '我也想你</fenge>今天过得怎么样？',
         status: MessageStatus.sent,
       })
     );
@@ -259,7 +263,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你，今天过得怎么样？',
+      text: '我也想你。今天过得怎么样？',
       voiceId: 'TzlVoice_001',
       model: 'speech-2.8-turbo',
       languageBoost: 'Chinese',
@@ -270,13 +274,85 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessage).toEqual(
       expect.objectContaining({
         type: MessageType.voice,
-        content: '我也想你，今天过得怎么样？',
+        content: '我也想你</fenge>今天过得怎么样？',
         mediaUrl: 'https://cdn.example.com/reply.mp3',
         mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你，今天过得怎么样？',
+        mediaTranscript: '我也想你。今天过得怎么样？',
       })
     );
     expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
     expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+});
+
+describe('ConversationService listConversations', () => {
+  it('pins the default agent conversation before newer conversations', async () => {
+    const defaultAgentId = new MongoObjectId(AGENT_ID);
+    const otherAgentId = new MongoObjectId(OTHER_AGENT_ID);
+    const defaultConversation = createConversation({
+      id: new MongoObjectId('665000000000000000000021'),
+      agentId: defaultAgentId,
+      updatedAt: new Date('2026-05-03T08:00:00.000Z'),
+    });
+    const newerConversation = createConversation({
+      id: new MongoObjectId('665000000000000000000022'),
+      agentId: otherAgentId,
+      updatedAt: new Date('2026-05-04T08:00:00.000Z'),
+    });
+    const defaultAgent = createAgent({
+      id: defaultAgentId,
+      name: '默认亲友',
+      isDefault: true,
+    });
+    const otherAgent = createAgent({
+      id: otherAgentId,
+      name: '普通亲友',
+      isDefault: false,
+    });
+    const service = new ConversationService();
+
+    service.conversationModel = {
+      find: jest.fn().mockResolvedValue([newerConversation, defaultConversation]),
+    } as any;
+    service.agentModel = {
+      findOne: jest.fn(async ({ where }: any) => {
+        const id = where?.id ?? where?._id;
+
+        if (sameObjectId(id, defaultAgent.id)) {
+          return defaultAgent;
+        }
+
+        if (sameObjectId(id, otherAgent.id)) {
+          return otherAgent;
+        }
+
+        return null;
+      }),
+    } as any;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    const result = await service.listConversations(AUTH);
+
+    expect(result.map(item => item.agentId)).toEqual([
+      defaultAgentId.toHexString(),
+      otherAgentId.toHexString(),
+    ]);
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        agentName: '默认亲友',
+        agentIsDefault: true,
+      })
+    );
+    expect(result[1]).toEqual(
+      expect.objectContaining({
+        agentName: '普通亲友',
+        agentIsDefault: false,
+      })
+    );
   });
 });

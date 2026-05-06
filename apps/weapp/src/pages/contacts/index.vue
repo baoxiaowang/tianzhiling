@@ -243,7 +243,7 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
 
   refreshContactsPromise = getConversations()
     .then((items) => {
-      conversations.value = items
+      conversations.value = sortConversationsForContacts(items)
     })
     .catch((error: unknown) => {
       if (error instanceof ApiException && error.requiresReLogin) {
@@ -262,6 +262,16 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
     })
 
   return refreshContactsPromise
+}
+
+function sortConversationsForContacts(items: ConversationSummary[]) {
+  return [...items].sort((left, right) => {
+    if (left.agentIsDefault !== right.agentIsDefault) {
+      return left.agentIsDefault ? -1 : 1
+    }
+
+    return (right.updatedAt?.getTime() ?? 0) - (left.updatedAt?.getTime() ?? 0)
+  })
 }
 
 async function preparePage() {
