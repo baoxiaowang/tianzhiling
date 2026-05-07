@@ -62,9 +62,9 @@
           shape="round"
           type="primary"
           class="payment-result-actions__button"
-          @click="handleBackToVipCenter"
+          @click="handleBackToOrderSource"
         >
-          {{ resultType === 'success' ? '查看会员权益' : '返回会员中心' }}
+          {{ actionText }}
         </nut-button>
       </view>
     </template>
@@ -118,9 +118,19 @@ const iconClass = computed(() => {
 const statusText = computed(() => {
   return getStatusText(order.value?.status)
 })
+const isVoicePackageOrder = computed(() => {
+  return order.value?.orderType === 'voice_package'
+})
+const actionText = computed(() => {
+  if (isVoicePackageOrder.value) {
+    return resultType.value === 'success' ? '查看声音任务' : '返回智能体详情'
+  }
+
+  return resultType.value === 'success' ? '查看会员权益' : '返回会员中心'
+})
 const resultTitle = computed(() => {
   if (resultType.value === 'success') {
-    return '会员已开通'
+    return isVoicePackageOrder.value ? '声音套餐已购买' : '会员已开通'
   }
 
   if (resultType.value === 'failed') {
@@ -128,12 +138,16 @@ const resultTitle = computed(() => {
   }
 
   return order.value?.status === 'granting' || order.value?.status === 'paid'
-    ? '权益同步中'
+    ? isVoicePackageOrder.value
+      ? '任务创建中'
+      : '权益同步中'
     : '正在确认支付结果'
 })
 const resultDescription = computed(() => {
   if (resultType.value === 'success') {
-    return '会员权益已经生效，可以返回会员中心查看。'
+    return isVoicePackageOrder.value
+      ? '训练任务已经创建，人工会继续跟进声音训练。'
+      : '会员权益已经生效，可以返回会员中心查看。'
   }
 
   if (resultType.value === 'failed') {
@@ -144,7 +158,9 @@ const resultDescription = computed(() => {
     return '微信支付结果同步较慢，请稍后重新查询。'
   }
 
-  return '支付完成后需要等待微信回调和权益发放，请不要重复支付。'
+  return isVoicePackageOrder.value
+    ? '支付完成后需要等待微信回调和任务创建，请不要重复支付。'
+    : '支付完成后需要等待微信回调和权益发放，请不要重复支付。'
 })
 const canRetry = computed(() => {
   return (
@@ -190,7 +206,7 @@ async function preparePage(options?: Record<string, unknown>) {
 
   if (!orderId.value) {
     resultType.value = 'failed'
-    queryError.value = '订单信息缺失，请返回会员中心重新发起支付。'
+    queryError.value = '订单信息缺失，请返回后重新发起支付。'
     return
   }
 
@@ -308,7 +324,9 @@ function getStatusText(status?: OrderStatusDTO) {
     case 'completed':
       return '已完成'
     case 'granting':
-      return '权益发放中'
+      return order.value?.orderType === 'voice_package'
+        ? '任务创建中'
+        : '权益发放中'
     case 'paid':
       return '已支付'
     case 'closed':
@@ -325,15 +343,21 @@ function getStatusText(status?: OrderStatusDTO) {
 
 function getFailedDescription(status?: OrderStatusDTO) {
   if (status === 'grant_failed') {
-    return '支付成功但权益发放失败，请联系客服处理。'
+    return order.value?.orderType === 'voice_package'
+      ? '支付成功但训练任务创建失败，请联系客服处理。'
+      : '支付成功但权益发放失败，请联系客服处理。'
   }
 
   if (status === 'closed') {
-    return '订单已关闭，请返回会员中心重新发起支付。'
+    return order.value?.orderType === 'voice_package'
+      ? '订单已关闭，请返回智能体详情重新发起支付。'
+      : '订单已关闭，请返回会员中心重新发起支付。'
   }
 
   if (status === 'refunded') {
-    return '订单已退款，如需开通会员请重新购买。'
+    return order.value?.orderType === 'voice_package'
+      ? '订单已退款，如需声音训练请重新购买。'
+      : '订单已退款，如需开通会员请重新购买。'
   }
 
   return '订单状态暂时异常，请稍后重试或联系客服处理。'
@@ -347,7 +371,16 @@ function handleRetry() {
   startPolling()
 }
 
-async function handleBackToVipCenter() {
+async function handleBackToOrderSource() {
+  if (order.value?.orderType === 'voice_package' && order.value.agentId) {
+    await Taro.redirectTo({
+      url: `/pages/agent-detail/index?agentId=${encodeURIComponent(
+        order.value.agentId
+      )}`,
+    })
+    return
+  }
+
   await Taro.redirectTo({
     url: '/pages/vip-center/index',
   })

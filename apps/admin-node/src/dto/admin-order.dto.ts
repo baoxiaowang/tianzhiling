@@ -10,7 +10,7 @@ const orderStatusRule = RuleType.string().valid(
   'grant_failed'
 );
 
-const orderTypeRule = RuleType.string().valid('vip_plan');
+const orderTypeRule = RuleType.string().valid('vip_plan', 'voice_package');
 
 const orderSourceRule = RuleType.string().valid('app', 'weapp', 'admin');
 

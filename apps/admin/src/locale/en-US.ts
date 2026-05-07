@@ -27,6 +27,8 @@ export default {
   'menu.order.list': 'Orders',
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',
+  'menu.voiceModel.package': 'Voice Packages',
+  'menu.voiceModel.trainingTask': 'Training Tasks',
   'menu.membership': 'Membership',
   'menu.membership.vipPlan': 'VIP Plans',
   'menu.membership.order': 'Membership Orders',

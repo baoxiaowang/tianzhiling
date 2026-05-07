@@ -3,6 +3,7 @@ import { BaseEntity, MongoObjectId, TableName } from './base';
 
 export enum OrderType {
   vipPlan = 'vip_plan',
+  voicePackage = 'voice_package',
 }
 
 export enum OrderStatus {
@@ -41,6 +42,9 @@ export class OrderEntity extends BaseEntity {
 
   @Column()
   targetCode?: string;
+
+  @Column()
+  agentId?: MongoObjectId;
 
   @Column()
   title: string;

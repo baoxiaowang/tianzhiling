@@ -222,6 +222,7 @@ export class AdminOrderService {
         ? this.stringifyObjectId(order.targetId)
         : undefined,
       targetCode: order.targetCode,
+      agentId: order.agentId ? this.stringifyObjectId(order.agentId) : undefined,
       title: order.title,
       amount: order.amount ?? 0,
       discountAmount: order.discountAmount ?? 0,

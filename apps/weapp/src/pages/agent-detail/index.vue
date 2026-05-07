@@ -85,6 +85,14 @@
           </view>
         </view>
 
+        <view class="agent-detail-list__item" @tap="handleVoicePackageTap">
+          <text class="agent-detail-list__title">声音套餐</text>
+          <view class="agent-detail-list__right">
+            <text v-if="voicePackageStatus" class="agent-detail-list__value">{{ voicePackageStatus }}</text>
+            <view class="agent-detail-list__arrow" />
+          </view>
+        </view>
+
         <view class="agent-detail-list__item agent-detail-list__item--album" @tap="handleChatAlbumTap">
           <view class="agent-detail-album__main">
             <view class="agent-detail-list__content">
@@ -142,6 +150,10 @@ import {
   getConversations,
   type ConversationImagePayload,
 } from '../../apis/conversation'
+import {
+  getAgentVoicePackageCenter,
+  type AgentVoicePackageCenter,
+} from '../../apis/voice-package'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -159,12 +171,14 @@ const fallbackCreatedAt = ref<Date | null>(null)
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isLoadingChatAlbum = ref(false)
+const isLoadingVoicePackage = ref(false)
 const isUpdatingDefaultAgent = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const isDefaultAgent = ref(false)
 const conversationId = ref('')
 const chatAlbumImages = ref<string[]>([])
+const voicePackageCenter = ref<AgentVoicePackageCenter | null>(null)
 
 const displayName = computed(() => {
   const name = agent.value?.name.trim() || fallbackName.value.trim()
@@ -186,6 +200,20 @@ const headerSubtitle = computed(() => {
 const voiceModelStatus = computed(() => {
   const timbreId = agent.value?.voiceTimbreId?.trim()
   return timbreId ? '已设置' : ''
+})
+const voicePackageStatus = computed(() => {
+  if (isLoadingVoicePackage.value) {
+    return '加载中'
+  }
+
+  const task = voicePackageCenter.value?.task
+
+  if (task) {
+    return formatVoiceTaskStatus(task.status)
+  }
+
+  const packageCount = voicePackageCenter.value?.packages.length ?? 0
+  return packageCount ? `${packageCount}个可选` : ''
 })
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const avatarFallbackClass = computed(() => {
@@ -266,6 +294,7 @@ useDidShow(() => {
   if (agentId.value && !isCheckingAuth.value) {
     void loadAgentDetail()
     void loadChatAlbum()
+    void loadVoicePackageCenter()
   }
 })
 
@@ -320,6 +349,7 @@ async function preparePage() {
   await Promise.all([
     loadAgentDetail(),
     loadChatAlbum(),
+    loadVoicePackageCenter(),
   ])
 }
 
@@ -355,6 +385,7 @@ async function loadAgentDetail() {
 function handleRetry() {
   void loadAgentDetail()
   void loadChatAlbum()
+  void loadVoicePackageCenter()
 }
 
 async function loadChatAlbum() {
@@ -382,6 +413,29 @@ async function loadChatAlbum() {
     showToast(error instanceof ApiException ? error.message : '聊天相册加载失败，请稍后重试')
   } finally {
     isLoadingChatAlbum.value = false
+  }
+}
+
+async function loadVoicePackageCenter() {
+  if (!agentId.value) {
+    voicePackageCenter.value = null
+    return
+  }
+
+  isLoadingVoicePackage.value = true
+
+  try {
+    voicePackageCenter.value = await getAgentVoicePackageCenter(agentId.value)
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await clearAuthSession()
+      await redirectToAuthPage()
+      return
+    }
+
+    voicePackageCenter.value = null
+  } finally {
+    isLoadingVoicePackage.value = false
   }
 }
 
@@ -552,6 +606,38 @@ async function handleDefaultAgentChange(event: Event) {
 
 function handleVoiceModelTap() {
   showToast('声音模型待接入')
+}
+
+function handleVoicePackageTap() {
+  if (!agentId.value) {
+    showToast('缺少联系人资料，请返回通讯录重新进入')
+    return
+  }
+
+  void Taro.navigateTo({
+    url: `/pages/voice-package/index?agentId=${encodeURIComponent(agentId.value)}`,
+  })
+}
+
+function formatVoiceTaskStatus(status: string) {
+  switch (status) {
+    case 'paid':
+      return '已支付'
+    case 'awaiting_material':
+      return '待补充素材'
+    case 'processing':
+      return '处理中'
+    case 'training':
+      return '训练中'
+    case 'completed':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    case 'refunded':
+      return '已退款'
+    default:
+      return ''
+  }
 }
 
 function handleChatAlbumTap() {

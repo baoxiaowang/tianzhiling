@@ -1,6 +1,9 @@
 import { Body, Controller, Get, Inject, Param, Post } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
-import { CreateVipPlanOrderBodyDTO } from '../dto/order.dto';
+import {
+  CreateVipPlanOrderBodyDTO,
+  CreateVoicePackageOrderBodyDTO,
+} from '../dto/order.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { OrderService } from '../service/order.service';
 
@@ -15,6 +18,16 @@ export class OrderController {
   @Post('/vip-plan')
   async createVipPlanOrder(@Body() body: CreateVipPlanOrderBodyDTO) {
     return this.orderService.createVipPlanOrder(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
+  @Post('/voice-package')
+  async createVoicePackageOrder(
+    @Body() body: CreateVoicePackageOrderBodyDTO
+  ) {
+    return this.orderService.createVoicePackageOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
     );

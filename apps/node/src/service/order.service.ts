@@ -4,6 +4,7 @@ import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import * as bullmq from '@midwayjs/bullmq';
 import {
+  AgentEntity,
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
@@ -16,10 +17,16 @@ import {
   UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
+  VoicePackageEntity,
+  VoicePackageStatus,
+  VoiceTrainingTaskEntity,
+  VoiceTrainingTaskStatus,
 } from '@tzl/entities';
 import type {
   CreateVipPlanOrderDTO,
   CreateVipPlanOrderResultDTO,
+  CreateVoicePackageOrderDTO,
+  CreateVoicePackageOrderResultDTO,
   OrderRecordDTO,
   UserOrderListDTO,
 } from '@tzl/shared';
@@ -53,14 +60,23 @@ export class OrderService {
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
 
+  @InjectEntityModel(AgentEntity)
+  agentModel: MongoRepository<AgentEntity>;
+
   @InjectEntityModel(VipPlanEntity)
   vipPlanModel: MongoRepository<VipPlanEntity>;
+
+  @InjectEntityModel(VoicePackageEntity)
+  voicePackageModel: MongoRepository<VoicePackageEntity>;
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
+
+  @InjectEntityModel(VoiceTrainingTaskEntity)
+  voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
 
   async createVipPlanOrder(
     auth: AuthenticatedUserPayload,
@@ -97,6 +113,75 @@ export class OrderService {
       payerOpenid: openid,
       snapshot: {
         vipPlan: this.buildVipPlanSnapshot(plan),
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const savedOrder = await this.orderModel.save(order);
+    const { prepayId, payment } =
+      await this.wechatPayService.createVipPlanPrepay({
+        orderNo: savedOrder.orderNo,
+        title: savedOrder.title,
+        amount: savedOrder.payableAmount,
+        openid,
+        expireAt,
+      });
+
+    savedOrder.paymentPrepayId = prepayId;
+    savedOrder.updatedAt = new Date();
+    const prepayOrder = await this.orderModel.save(savedOrder);
+    await this.enqueueOrderPaymentExpireJob(prepayOrder);
+
+    return {
+      order: this.buildOrderRecord(prepayOrder),
+      payment,
+    };
+  }
+
+  async createVoicePackageOrder(
+    auth: AuthenticatedUserPayload,
+    payload: CreateVoicePackageOrderDTO
+  ): Promise<CreateVoicePackageOrderResultDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const [voicePackage, agent] = await Promise.all([
+      this.getActiveVoicePackageById(payload.voicePackageId),
+      this.getUserAgentById(userId, payload.agentId),
+    ]);
+    await this.assertAgentCanBuyVoicePackage(agent.id);
+
+    const openid = await this.wechatPayService.getOpenidByJsCode(
+      payload.jsCode
+    );
+    const now = new Date();
+    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+    const order = new OrderEntity();
+
+    Object.assign(order, {
+      orderNo: this.generateOrderNo('VOICE'),
+      userId,
+      orderType: OrderType.voicePackage,
+      targetId: voicePackage.id,
+      targetCode: voicePackage.code,
+      agentId: agent.id,
+      title: voicePackage.name,
+      amount: voicePackage.priceAmount,
+      discountAmount: Math.max(
+        (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
+          voicePackage.priceAmount,
+        0
+      ),
+      couponAmount: 0,
+      payableAmount: voicePackage.priceAmount,
+      currency: voicePackage.currency || 'CNY',
+      status: OrderStatus.pending,
+      source: OrderSource.weapp,
+      paymentProvider: WECHAT_PAY_PROVIDER,
+      paymentExpiredAt: expireAt,
+      payerOpenid: openid,
+      snapshot: {
+        voicePackage: this.buildVoicePackageSnapshot(voicePackage),
+        agent: this.buildAgentSnapshot(agent),
       },
       createdAt: now,
       updatedAt: now,
@@ -314,7 +399,7 @@ export class OrderService {
     await this.orderModel.save(order);
 
     try {
-      await this.grantVipMembership(order);
+      await this.grantOrderBenefits(order);
       order.status = OrderStatus.completed;
       order.updatedAt = new Date();
       await this.orderModel.save(order);
@@ -324,6 +409,20 @@ export class OrderService {
       await this.orderModel.save(order);
       throw error;
     }
+  }
+
+  private async grantOrderBenefits(order: OrderEntity): Promise<void> {
+    if (order.orderType === OrderType.vipPlan) {
+      await this.grantVipMembership(order);
+      return;
+    }
+
+    if (order.orderType === OrderType.voicePackage) {
+      await this.createVoiceTrainingTask(order);
+      return;
+    }
+
+    throw new AppError('ORDER_TYPE_UNSUPPORTED', 'order type is unsupported');
   }
 
   private async grantVipMembership(order: OrderEntity): Promise<void> {
@@ -405,6 +504,40 @@ export class OrderService {
 
       await this.agentEntitlementModel.save(entitlement);
     }
+  }
+
+  private async createVoiceTrainingTask(order: OrderEntity): Promise<void> {
+    const snapshot = this.getVoicePackageSnapshot(order);
+    const voicePackageId =
+      order.targetId ?? this.parseObjectId(snapshot.id, 'INVALID_VOICE_PACKAGE_ID');
+    const agentId =
+      order.agentId ?? this.parseObjectId(snapshot.agentId, 'INVALID_AGENT_ID');
+    const existing = await this.voiceTrainingTaskModel.findOne({
+      where: {
+        orderId: order.id,
+      },
+    });
+
+    if (existing) {
+      return;
+    }
+
+    const now = order.paidAt ?? new Date();
+    const task = new VoiceTrainingTaskEntity();
+    task.userId = order.userId;
+    task.agentId = agentId;
+    task.orderId = order.id;
+    task.voicePackageId = voicePackageId;
+    task.voicePackageCode = order.targetCode || snapshot.code;
+    task.status = VoiceTrainingTaskStatus.paid;
+    task.assigneeName = '';
+    task.materialObjectKeys = [];
+    task.remark = '';
+    task.paidAt = now;
+    task.createdAt = now;
+    task.updatedAt = new Date();
+
+    await this.voiceTrainingTaskModel.save(task);
   }
 
   private isWechatTradeClosed(tradeState?: string): boolean {
@@ -537,6 +670,77 @@ export class OrderService {
     return plan;
   }
 
+  private async getActiveVoicePackageById(
+    voicePackageId: string
+  ): Promise<VoicePackageEntity> {
+    const objectId = this.parseObjectId(
+      voicePackageId,
+      'INVALID_VOICE_PACKAGE_ID'
+    );
+    const voicePackage = await this.findVoicePackageById(objectId);
+
+    if (!voicePackage || voicePackage.status !== VoicePackageStatus.active) {
+      throw new AppError(
+        'VOICE_PACKAGE_NOT_FOUND',
+        'voice package not found',
+        404
+      );
+    }
+
+    return voicePackage;
+  }
+
+  private async getUserAgentById(
+    userId: MongoObjectId,
+    agentId: string
+  ): Promise<AgentEntity> {
+    const objectId = this.parseObjectId(agentId, 'INVALID_AGENT_ID');
+    const agent =
+      (await this.agentModel.findOne({
+        where: {
+          id: objectId,
+        },
+      })) ??
+      (await this.agentModel.findOne({
+        where: {
+          _id: objectId,
+        } as never,
+      }));
+
+    if (!agent || this.stringifyObjectId(agent.createdUserId) !== String(userId)) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return agent;
+  }
+
+  private async assertAgentCanBuyVoicePackage(
+    agentId: MongoObjectId
+  ): Promise<void> {
+    const tasks = await this.voiceTrainingTaskModel.find({
+      where: {
+        agentId,
+        status: {
+          $in: [
+            VoiceTrainingTaskStatus.paid,
+            VoiceTrainingTaskStatus.awaitingMaterial,
+            VoiceTrainingTaskStatus.processing,
+            VoiceTrainingTaskStatus.training,
+          ],
+        },
+      } as never,
+      take: 1,
+    });
+
+    if (tasks.length > 0) {
+      throw new AppError(
+        'VOICE_TRAINING_TASK_EXISTS',
+        'voice training task already exists',
+        400
+      );
+    }
+  }
+
   private async findVipPlanById(
     planId: MongoObjectId
   ): Promise<VipPlanEntity | null> {
@@ -549,6 +753,23 @@ export class OrderService {
       (await this.vipPlanModel.findOne({
         where: {
           _id: planId,
+        } as never,
+      }))
+    );
+  }
+
+  private async findVoicePackageById(
+    voicePackageId: MongoObjectId
+  ): Promise<VoicePackageEntity | null> {
+    return (
+      (await this.voicePackageModel.findOne({
+        where: {
+          id: voicePackageId,
+        },
+      })) ??
+      (await this.voicePackageModel.findOne({
+        where: {
+          _id: voicePackageId,
         } as never,
       }))
     );
@@ -580,6 +801,7 @@ export class OrderService {
         ? this.stringifyObjectId(order.targetId)
         : undefined,
       targetCode: order.targetCode,
+      agentId: order.agentId ? this.stringifyObjectId(order.agentId) : undefined,
       title: order.title,
       payableAmount: order.payableAmount,
       currency: order.currency || 'CNY',
@@ -601,6 +823,30 @@ export class OrderService {
       lifetime: Boolean(plan.lifetime),
       benefits: plan.benefits ?? [],
       entitlementGrants: plan.entitlementGrants ?? [],
+    };
+  }
+
+  private buildVoicePackageSnapshot(
+    voicePackage: VoicePackageEntity
+  ): Record<string, unknown> {
+    return {
+      id: this.stringifyObjectId(voicePackage.id),
+      code: voicePackage.code,
+      name: voicePackage.name,
+      priceAmount: voicePackage.priceAmount,
+      originalPriceAmount: voicePackage.originalPriceAmount,
+      currency: voicePackage.currency || 'CNY',
+      deliverables: voicePackage.deliverables ?? [],
+      materialRequirement: voicePackage.materialRequirement ?? '',
+      estimatedServiceDays: voicePackage.estimatedServiceDays,
+    };
+  }
+
+  private buildAgentSnapshot(agent: AgentEntity): Record<string, unknown> {
+    return {
+      id: this.stringifyObjectId(agent.id),
+      name: agent.name ?? '',
+      avatar: agent.avatar ?? '',
     };
   }
 
@@ -633,6 +879,32 @@ export class OrderService {
         typeof raw.durationDays === 'number' ? raw.durationDays : undefined,
       lifetime: Boolean(raw.lifetime),
       entitlementGrants: this.parseEntitlementGrants(raw.entitlementGrants),
+    };
+  }
+
+  private getVoicePackageSnapshot(order: OrderEntity): {
+    id: string;
+    code: string;
+    agentId: string;
+  } {
+    const snapshot = order.snapshot?.voicePackage;
+
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new AppError(
+        'VOICE_PACKAGE_SNAPSHOT_MISSING',
+        'voice package snapshot missing'
+      );
+    }
+
+    const raw = snapshot as Record<string, unknown>;
+    const agentSnapshot = order.snapshot?.agent as
+      | Record<string, unknown>
+      | undefined;
+
+    return {
+      id: String(raw.id ?? ''),
+      code: String(raw.code ?? order.targetCode ?? ''),
+      agentId: String(agentSnapshot?.id ?? order.agentId ?? ''),
     };
   }
 
@@ -674,8 +946,8 @@ export class OrderService {
     return membership.lifetime ? undefined : membership.expiredAt;
   }
 
-  private generateOrderNo(): string {
-    return `VIP${Date.now()}${randomBytes(4).toString('hex').toUpperCase()}`;
+  private generateOrderNo(prefix = 'VIP'): string {
+    return `${prefix}${Date.now()}${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
   private parseObjectId(value: string, code = 'INVALID_TOKEN'): MongoObjectId {

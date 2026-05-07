@@ -18,7 +18,9 @@ import {
   UserEntity,
   UserMembershipEntity,
   VipPlanEntity,
+  VoicePackageEntity,
   VoiceTimbreEntity,
+  VoiceTrainingTaskEntity,
 } from '@tzl/entities';
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
@@ -493,7 +495,9 @@ export default {
           UserEntity,
           UserMembershipEntity,
           VipPlanEntity,
+          VoicePackageEntity,
           VoiceTimbreEntity,
+          VoiceTrainingTaskEntity,
         ],
       },
     },

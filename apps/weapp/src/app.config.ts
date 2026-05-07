@@ -10,6 +10,7 @@ export default {
     'pages/agent-profile/index',
     'pages/agent-form/index',
     'pages/vip-center/index',
+    'pages/voice-package/index',
     'pages/customer-service/index',
     'pages/payment-result/index',
     'pages/agent-create/index',

@@ -24,7 +24,9 @@ import {
   UserEntity,
   UserMembershipEntity,
   VipPlanEntity,
+  VoicePackageEntity,
   VoiceTimbreEntity,
+  VoiceTrainingTaskEntity,
 } from '@tzl/entities';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
@@ -270,7 +272,9 @@ export default {
           UserEntity,
           UserMembershipEntity,
           VipPlanEntity,
+          VoicePackageEntity,
           VoiceTimbreEntity,
+          VoiceTrainingTaskEntity,
         ],
       },
     },

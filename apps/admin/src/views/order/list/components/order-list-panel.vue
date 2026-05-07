@@ -290,7 +290,7 @@
   const props = withDefaults(
     defineProps<{
       title?: string;
-      orderType?: 'vip_plan';
+      orderType?: 'vip_plan' | 'voice_package';
       userId?: string;
       embedded?: boolean;
     }>(),
@@ -335,10 +335,17 @@
     app: 'App',
     admin: '管理端',
   };
-  const pageTitle = computed(
-    () =>
-      props.title || (props.orderType === 'vip_plan' ? '会员订单' : '我的订单')
-  );
+  const orderTypeTitleMap: Record<string, string> = {
+    vip_plan: '会员订单',
+    voice_package: '声音套餐订单',
+  };
+  const pageTitle = computed(() => {
+    if (props.title) {
+      return props.title;
+    }
+
+    return props.orderType ? orderTypeTitleMap[props.orderType] : '我的订单';
+  });
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
     status: searchForm.status || undefined,

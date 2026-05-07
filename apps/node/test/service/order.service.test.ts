@@ -1,4 +1,6 @@
 import {
+  AgentEntity,
+  AgentSex,
   AgentEntitlementStatus,
   AgentEntitlementType,
   MongoObjectId,
@@ -9,6 +11,10 @@ import {
   UserMembershipStatus,
   VipPlanEntity,
   VipPlanStatus,
+  VoicePackageEntity,
+  VoicePackageStatus,
+  VoiceTrainingTaskEntity,
+  VoiceTrainingTaskStatus,
 } from '@tzl/entities';
 import {
   ORDER_PAYMENT_EXPIRE_QUEUE,
@@ -19,7 +25,11 @@ const NOW = new Date('2026-05-01T00:00:00.000Z');
 const USER_ID = '665000000000000000000001';
 const ORDER_ID = '665000000000000000000002';
 const VIP_PLAN_ID = '665000000000000000000003';
+const VOICE_PACKAGE_ID = '665000000000000000000004';
+const AGENT_ID = '665000000000000000000005';
+const VOICE_TASK_ID = '665000000000000000000006';
 const ORDER_NO = 'VIP202605010001';
+const VOICE_ORDER_NO = 'VOICE202605010001';
 
 function createOrder(overrides: Partial<OrderEntity> = {}) {
   const createdAt = new Date('2026-05-01T00:00:00.000Z');
@@ -82,6 +92,104 @@ function createVipPlan(overrides: Partial<VipPlanEntity> = {}) {
   return plan;
 }
 
+function createVoicePackage(overrides: Partial<VoicePackageEntity> = {}) {
+  const createdAt = new Date('2026-05-01T00:00:00.000Z');
+  const voicePackage = new VoicePackageEntity();
+
+  Object.assign(voicePackage, {
+    id: new MongoObjectId(VOICE_PACKAGE_ID),
+    code: 'voice_standard',
+    name: '标准声音套餐',
+    description: '标准声音训练服务',
+    priceAmount: 12900,
+    originalPriceAmount: 19900,
+    currency: 'CNY',
+    deliverables: [{ title: '声音训练' }],
+    materialRequirement: '请提供清晰录音素材',
+    estimatedServiceDays: 7,
+    status: VoicePackageStatus.active,
+    sort: 1,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  });
+
+  return voicePackage;
+}
+
+function createAgent(overrides: Partial<AgentEntity> = {}) {
+  const createdAt = new Date('2026-05-01T00:00:00.000Z');
+  const agent = new AgentEntity();
+
+  Object.assign(agent, {
+    id: new MongoObjectId(AGENT_ID),
+    createdUserId: new MongoObjectId(USER_ID),
+    name: '奶奶',
+    avatar: '',
+    sex: AgentSex.woman,
+    description: '',
+    status: 1,
+    isDefault: false,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  });
+
+  return agent;
+}
+
+function createVoiceOrder(overrides: Partial<OrderEntity> = {}) {
+  return createOrder({
+    orderNo: VOICE_ORDER_NO,
+    orderType: OrderType.voicePackage,
+    targetId: new MongoObjectId(VOICE_PACKAGE_ID),
+    targetCode: 'voice_standard',
+    agentId: new MongoObjectId(AGENT_ID),
+    title: '标准声音套餐',
+    amount: 12900,
+    discountAmount: 7000,
+    payableAmount: 12900,
+    snapshot: {
+      voicePackage: {
+        id: VOICE_PACKAGE_ID,
+        code: 'voice_standard',
+        name: '标准声音套餐',
+      },
+      agent: {
+        id: AGENT_ID,
+        name: '奶奶',
+      },
+    },
+    ...overrides,
+  });
+}
+
+function createVoiceTrainingTask(
+  overrides: Partial<VoiceTrainingTaskEntity> = {}
+) {
+  const createdAt = new Date('2026-05-01T00:00:00.000Z');
+  const task = new VoiceTrainingTaskEntity();
+
+  Object.assign(task, {
+    id: new MongoObjectId(VOICE_TASK_ID),
+    userId: new MongoObjectId(USER_ID),
+    agentId: new MongoObjectId(AGENT_ID),
+    orderId: new MongoObjectId(ORDER_ID),
+    voicePackageId: new MongoObjectId(VOICE_PACKAGE_ID),
+    voicePackageCode: 'voice_standard',
+    status: VoiceTrainingTaskStatus.paid,
+    assigneeName: '',
+    materialObjectKeys: [],
+    remark: '',
+    paidAt: createdAt,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  });
+
+  return task;
+}
+
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
@@ -131,15 +239,89 @@ function createVipPlanModel(plan: VipPlanEntity) {
   };
 }
 
+function createVoicePackageModel(voicePackage: VoicePackageEntity) {
+  return {
+    findOne: jest.fn(async ({ where }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, voicePackage.id) ? voicePackage : null;
+    }),
+  };
+}
+
+function createAgentModel(agent: AgentEntity) {
+  return {
+    findOne: jest.fn(async ({ where }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, agent.id) ? agent : null;
+    }),
+  };
+}
+
+function createVoiceTrainingTaskModel(tasks: VoiceTrainingTaskEntity[] = []) {
+  return {
+    find: jest.fn(async ({ where }: any) => {
+      let result = tasks;
+
+      if (where?.agentId) {
+        result = result.filter(task => sameObjectId(task.agentId, where.agentId));
+      }
+
+      const statuses = where?.status?.$in;
+      if (Array.isArray(statuses)) {
+        result = result.filter(task => statuses.includes(task.status));
+      }
+
+      return result;
+    }),
+    findOne: jest.fn(async ({ where }: any) => {
+      if (where?.orderId) {
+        return (
+          tasks.find(task => sameObjectId(task.orderId, where.orderId)) ?? null
+        );
+      }
+
+      const id = where?.id ?? where?._id;
+
+      return id ? tasks.find(task => sameObjectId(task.id, id)) ?? null : null;
+    }),
+    save: jest.fn(async (task: VoiceTrainingTaskEntity) => {
+      task.id = task.id ?? new MongoObjectId(VOICE_TASK_ID);
+
+      const index = tasks.findIndex(item => sameObjectId(item.id, task.id));
+      if (index >= 0) {
+        tasks[index] = task;
+      } else {
+        tasks.push(task);
+      }
+
+      return task;
+    }),
+  };
+}
+
 function createService(
   orderOverrides: Partial<OrderEntity> = {},
-  planOverrides: Partial<VipPlanEntity> = {}
+  planOverrides: Partial<VipPlanEntity> = {},
+  options: {
+    voicePackageOverrides?: Partial<VoicePackageEntity>;
+    agentOverrides?: Partial<AgentEntity>;
+    voiceTrainingTasks?: VoiceTrainingTaskEntity[];
+  } = {}
 ) {
   const service = new OrderService();
   const order = createOrder(orderOverrides);
   const plan = createVipPlan(planOverrides);
+  const voicePackage = createVoicePackage(options.voicePackageOverrides);
+  const agent = createAgent(options.agentOverrides);
   const orderModel = createOrderModel(order);
   const vipPlanModel = createVipPlanModel(plan);
+  const voicePackageModel = createVoicePackageModel(voicePackage);
+  const agentModel = createAgentModel(agent);
+  const voiceTrainingTaskModel = createVoiceTrainingTaskModel(
+    options.voiceTrainingTasks
+  );
   const userMembershipModel = {
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn(async membership => membership),
@@ -171,8 +353,11 @@ function createService(
   } as any;
   service.orderModel = orderModel as any;
   service.vipPlanModel = vipPlanModel as any;
+  service.voicePackageModel = voicePackageModel as any;
+  service.agentModel = agentModel as any;
   service.userMembershipModel = userMembershipModel as any;
   service.agentEntitlementModel = agentEntitlementModel as any;
+  service.voiceTrainingTaskModel = voiceTrainingTaskModel as any;
   service.wechatPayService = wechatPayService as any;
   service.bullmqFramework = {
     getQueue: jest.fn(name =>
@@ -184,6 +369,11 @@ function createService(
     service,
     order,
     orderModel,
+    voicePackage,
+    voicePackageModel,
+    agent,
+    agentModel,
+    voiceTrainingTaskModel,
     userMembershipModel,
     agentEntitlementModel,
     wechatPayService,
@@ -339,6 +529,170 @@ describe('OrderService payment expiration and reconciliation', () => {
         sourceVipPlanId: order.targetId,
       })
     );
+  });
+
+  it('creates a voice package order for the selected user agent', async () => {
+    const {
+      service,
+      orderModel,
+      voiceTrainingTaskModel,
+      wechatPayService,
+      queue,
+      auth,
+    } = createService();
+
+    const result = await service.createVoicePackageOrder(auth, {
+      voicePackageId: VOICE_PACKAGE_ID,
+      agentId: AGENT_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(voiceTrainingTaskModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          agentId: new MongoObjectId(AGENT_ID),
+        }),
+        take: 1,
+      })
+    );
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '标准声音套餐',
+        amount: 12900,
+        openid: 'openid-1',
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderType: OrderType.voicePackage,
+        targetId: new MongoObjectId(VOICE_PACKAGE_ID),
+        targetCode: 'voice_standard',
+        agentId: new MongoObjectId(AGENT_ID),
+        payableAmount: 12900,
+        snapshot: expect.objectContaining({
+          voicePackage: expect.objectContaining({
+            id: VOICE_PACKAGE_ID,
+            code: 'voice_standard',
+          }),
+          agent: expect.objectContaining({
+            id: AGENT_ID,
+            name: '奶奶',
+          }),
+        }),
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: ORDER_ID,
+      }),
+      expect.objectContaining({
+        jobId: `order-payment-expire:${ORDER_ID}`,
+      })
+    );
+    expect(result.order).toEqual(
+      expect.objectContaining({
+        id: ORDER_ID,
+        orderType: OrderType.voicePackage,
+        targetId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        title: '标准声音套餐',
+        payableAmount: 12900,
+      })
+    );
+  });
+
+  it('rejects voice package purchase when the agent already has an active training task', async () => {
+    const { service, auth, wechatPayService } = createService(
+      {},
+      {},
+      {
+        voiceTrainingTasks: [
+          createVoiceTrainingTask({
+            status: VoiceTrainingTaskStatus.training,
+          }),
+        ],
+      }
+    );
+
+    await expect(
+      service.createVoicePackageOrder(auth, {
+        voicePackageId: VOICE_PACKAGE_ID,
+        agentId: AGENT_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_TRAINING_TASK_EXISTS',
+    });
+    expect(wechatPayService.getOpenidByJsCode).not.toHaveBeenCalled();
+  });
+
+  it('creates a voice training task after voice package payment succeeds', async () => {
+    const {
+      service,
+      order,
+      orderModel,
+      userMembershipModel,
+      voiceTrainingTaskModel,
+      wechatPayService,
+    } = createService(createVoiceOrder());
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: VOICE_ORDER_NO,
+      transaction_id: '420000000020260501000003',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 12900,
+        payer_total: 12900,
+      },
+    });
+
+    const result = await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(voiceTrainingTaskModel.save).toHaveBeenCalledTimes(1);
+    expect(voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        agentId: new MongoObjectId(AGENT_ID),
+        orderId: order.id,
+        voicePackageId: new MongoObjectId(VOICE_PACKAGE_ID),
+        voicePackageCode: 'voice_standard',
+        status: VoiceTrainingTaskStatus.paid,
+        assigneeName: '',
+        materialObjectKeys: [],
+        paidAt: new Date('2026-05-01T00:10:00+08:00'),
+      })
+    );
+    expect(orderModel.savedSnapshots.map(item => item.status)).toEqual([
+      OrderStatus.granting,
+      OrderStatus.completed,
+    ]);
+    expect(result?.status).toBe(OrderStatus.completed);
+  });
+
+  it('does not create duplicate voice training tasks for repeated payment notifications', async () => {
+    const existingTask = createVoiceTrainingTask();
+    const { service, voiceTrainingTaskModel } = createService(
+      createVoiceOrder(),
+      {},
+      {
+        voiceTrainingTasks: [existingTask],
+      }
+    );
+
+    await service.handleWechatPaymentSuccess({
+      out_trade_no: VOICE_ORDER_NO,
+      transaction_id: '420000000020260501000004',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 12900,
+        payer_total: 12900,
+      },
+    });
+
+    expect(voiceTrainingTaskModel.save).not.toHaveBeenCalled();
   });
 
   it.each([

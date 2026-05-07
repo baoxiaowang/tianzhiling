@@ -7,6 +7,8 @@ export type OrderStatusDTO =
   | 'refunded'
   | 'grant_failed';
 
+export type OrderTypeDTO = 'vip_plan' | 'voice_package';
+
 export interface WechatPaymentParamsDTO {
   timeStamp: string;
   nonceStr: string;
@@ -18,9 +20,10 @@ export interface WechatPaymentParamsDTO {
 export interface OrderRecordDTO {
   id: string;
   orderNo: string;
-  orderType: 'vip_plan';
+  orderType: OrderTypeDTO;
   targetId?: string;
   targetCode?: string;
+  agentId?: string;
   title: string;
   payableAmount: number;
   currency: string;
@@ -66,7 +69,7 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
 export interface AdminOrderListParamsDTO {
   keyword?: string;
   status?: OrderStatusDTO;
-  orderType?: 'vip_plan';
+  orderType?: OrderTypeDTO;
   source?: OrderSourceDTO;
   userId?: string;
   page?: number;
@@ -85,7 +88,15 @@ export interface CreateVipPlanOrderDTO {
   jsCode: string;
 }
 
+export interface CreateVoicePackageOrderDTO {
+  voicePackageId: string;
+  agentId: string;
+  jsCode: string;
+}
+
 export interface CreateVipPlanOrderResultDTO {
   order: OrderRecordDTO;
   payment: WechatPaymentParamsDTO;
 }
+
+export type CreateVoicePackageOrderResultDTO = CreateVipPlanOrderResultDTO;

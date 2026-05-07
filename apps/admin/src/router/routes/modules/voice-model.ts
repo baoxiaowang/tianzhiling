@@ -23,6 +23,26 @@ const VOICE_MODEL: AppRouteRecordRaw = {
         roles: ['*'],
       },
     },
+    {
+      path: 'packages',
+      name: 'VoicePackageList',
+      component: () => import('@/views/voice-model/package/index.vue'),
+      meta: {
+        locale: 'menu.voiceModel.package',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
+    {
+      path: 'training-tasks',
+      name: 'VoiceTrainingTaskList',
+      component: () => import('@/views/voice-model/training-task/index.vue'),
+      meta: {
+        locale: 'menu.voiceModel.trainingTask',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
   ],
 };
 

@@ -27,6 +27,8 @@ export default {
   'menu.order.list': '我的订单',
   'menu.voiceModel': '声音模型',
   'menu.voiceModel.timbre': '音色管理',
+  'menu.voiceModel.package': '声音套餐',
+  'menu.voiceModel.trainingTask': '训练任务',
   'menu.membership': '会员权益',
   'menu.membership.vipPlan': 'VIP计划',
   'menu.membership.order': '会员订单',

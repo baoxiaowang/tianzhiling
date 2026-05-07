@@ -1,6 +1,8 @@
 import type {
   CreateVipPlanOrderResultDTO,
+  CreateVoicePackageOrderResultDTO,
   OrderStatusDTO,
+  OrderTypeDTO,
   OrderRecordDTO,
   UserOrderListDTO,
   WechatPaymentParamsDTO,
@@ -10,9 +12,10 @@ import { get, post } from '../api/api-client'
 export interface OrderRecord {
   id: string
   orderNo: string
-  orderType: 'vip_plan'
+  orderType: OrderTypeDTO
   targetId?: string
   targetCode?: string
+  agentId?: string
   title: string
   payableAmount: number
   currency: string
@@ -33,6 +36,8 @@ export interface CreateVipPlanOrderResult {
   order: OrderRecord
   payment: WechatPaymentParams
 }
+
+export type CreateVoicePackageOrderResult = CreateVipPlanOrderResult
 
 export interface UserOrderList {
   items: OrderRecord[]
@@ -79,9 +84,10 @@ function parseOrder(value: unknown): OrderRecord {
   return {
     id: asString(raw.id),
     orderNo: asString(raw.orderNo),
-    orderType: 'vip_plan',
+    orderType: parseOrderType(raw.orderType),
     targetId: raw.targetId == null ? undefined : asString(raw.targetId),
     targetCode: raw.targetCode == null ? undefined : asString(raw.targetCode),
+    agentId: raw.agentId == null ? undefined : asString(raw.agentId),
     title: asString(raw.title),
     payableAmount: asNumber(raw.payableAmount),
     currency: asString(raw.currency) || 'CNY',
@@ -89,6 +95,12 @@ function parseOrder(value: unknown): OrderRecord {
     createdAt: asString(raw.createdAt),
     paidAt: raw.paidAt == null ? undefined : asString(raw.paidAt),
   }
+}
+
+function parseOrderType(value: unknown): OrderTypeDTO {
+  const orderType = asString(value)
+
+  return orderType === 'voice_package' ? 'voice_package' : 'vip_plan'
 }
 
 function parseOrderStatus(value: unknown): OrderStatusDTO {
@@ -156,6 +168,23 @@ export async function createVipPlanOrder(payload: {
   return parseCreateVipPlanOrderResult(data)
 }
 
+export async function createVoicePackageOrder(payload: {
+  voicePackageId: string
+  agentId: string
+  jsCode: string
+}) {
+  const data = await post<CreateVoicePackageOrderResultDTO>(
+    '/api/orders/voice-package',
+    {
+      voicePackageId: payload.voicePackageId,
+      agentId: payload.agentId,
+      jsCode: payload.jsCode,
+    }
+  )
+
+  return parseCreateVipPlanOrderResult(data)
+}
+
 export async function listOrders() {
   const data = await get<UserOrderListDTO>('/api/orders')
 
@@ -178,7 +207,9 @@ export async function syncOrderPayment(orderId: string) {
 
 export type {
   CreateVipPlanOrderResultDTO,
+  CreateVoicePackageOrderResultDTO,
   OrderStatusDTO,
+  OrderTypeDTO,
   OrderRecordDTO,
   UserOrderListDTO,
   WechatPaymentParamsDTO,
