@@ -7,6 +7,14 @@ describe('AuthMiddleware route matching', () => {
     return middleware;
   }
 
+  function createContext(path: string, method = 'GET') {
+    return {
+      path,
+      method,
+      get: () => '',
+    };
+  }
+
   it.each([
     '/api/membership/center',
     '/api/membership/status',
@@ -14,10 +22,19 @@ describe('AuthMiddleware route matching', () => {
     const middleware = createMiddleware();
 
     expect(
-      middleware.match({
-        path,
-        method: 'GET',
-      } as never)
+      middleware.match(createContext(path) as never)
+    ).toBe(true);
+  });
+
+  it('protects voice package center route', () => {
+    const middleware = createMiddleware();
+
+    expect(
+      middleware.match(
+        createContext(
+          '/api/voice-packages/agent/69fa1150b21e11e4ddf9a0cf/center'
+        ) as never
+      )
     ).toBe(true);
   });
 
@@ -25,10 +42,7 @@ describe('AuthMiddleware route matching', () => {
     const middleware = createMiddleware();
 
     expect(
-      middleware.match({
-        path: '/api/membership/plans',
-        method: 'GET',
-      } as never)
+      middleware.match(createContext('/api/membership/plans') as never)
     ).toBe(false);
   });
 });

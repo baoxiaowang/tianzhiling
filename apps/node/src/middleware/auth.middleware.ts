@@ -22,6 +22,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { path: /^\/agent(?:\/.*)?$/ },
   { path: /^\/conversation(?:\/.*)?$/ },
   { path: /^\/membership\/(?:center|status)(?:\/.*)?$/ },
+  { path: /^\/voice-packages(?:\/.*)?$/ },
   { path: /^\/orders(?:\/.*)?$/ },
   { methods: ['POST'], path: /^\/storage\/upload\/?$/ },
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
