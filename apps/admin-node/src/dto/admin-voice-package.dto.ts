@@ -100,6 +100,9 @@ export class UpdateAdminVoiceTrainingTaskDTO {
   @Rule(RuleType.array().items(RuleType.string()).optional())
   materialObjectKeys?: string[];
 
+  @Rule(RuleType.string().allow('').optional())
+  voiceTimbreId?: string;
+
   @Rule(RuleType.string().allow('').max(1000).optional())
   remark?: string;
 }

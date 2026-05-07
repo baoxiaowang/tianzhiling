@@ -210,12 +210,21 @@
         <a-form-item field="assigneeName" label="处理人">
           <a-input v-model="editForm.assigneeName" allow-clear />
         </a-form-item>
-        <a-form-item field="materialObjectKeysText" label="素材 ObjectKey">
-          <a-textarea
-            v-model="editForm.materialObjectKeysText"
+        <a-form-item field="voiceTimbreId" label="关联音色">
+          <a-select
+            v-model="editForm.voiceTimbreId"
             allow-clear
-            placeholder="一行一个 ObjectKey"
-          />
+            allow-search
+            placeholder="请选择已启用音色"
+          >
+            <a-option
+              v-for="item in activeVoiceTimbres"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ item.name }} / {{ item.providerVoiceId }}
+            </a-option>
+          </a-select>
         </a-form-item>
         <a-form-item field="remark" label="备注">
           <a-textarea v-model="editForm.remark" allow-clear />
@@ -241,14 +250,23 @@
       <a-form ref="completeFormRef" :model="completeForm" layout="vertical">
         <a-form-item
           field="voiceTimbreId"
-          label="音色ID"
-          :rules="[{ required: true, message: '请输入已启用音色ID' }]"
+          label="关联音色"
+          :rules="[{ required: true, message: '请选择已启用音色' }]"
         >
-          <a-input
+          <a-select
             v-model="completeForm.voiceTimbreId"
             allow-clear
-            placeholder="请输入 active 状态的音色ID"
-          />
+            allow-search
+            placeholder="请选择已启用音色"
+          >
+            <a-option
+              v-for="item in activeVoiceTimbres"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ item.name }} / {{ item.providerVoiceId }}
+            </a-option>
+          </a-select>
         </a-form-item>
         <a-form-item field="remark" label="完成备注">
           <a-textarea v-model="completeForm.remark" allow-clear />
@@ -271,6 +289,7 @@
     updateVoiceTrainingTask,
     VoiceTrainingTaskRecord,
   } from '@/api/voice-package';
+  import { queryVoiceTimbreList, VoiceTimbreRecord } from '@/api/voice-model';
 
   const router = useRouter();
   const loading = ref(false);
@@ -280,6 +299,7 @@
   const currentTask = ref<VoiceTrainingTaskRecord>();
   const completeFormRef = ref<FormInstance>();
   const renderList = ref<VoiceTrainingTaskRecord[]>([]);
+  const activeVoiceTimbres = ref<VoiceTimbreRecord[]>([]);
   const searchForm = reactive<{
     keyword: string;
     status?: VoiceTrainingTaskStatusDTO;
@@ -295,7 +315,7 @@
   const editForm = reactive({
     status: 'processing' as Exclude<VoiceTrainingTaskStatusDTO, 'completed'>,
     assigneeName: '',
-    materialObjectKeysText: '',
+    voiceTimbreId: '',
     remark: '',
   });
   const completeForm = reactive({
@@ -343,6 +363,19 @@
     }
   };
 
+  const fetchActiveVoiceTimbres = async () => {
+    try {
+      const { data } = await queryVoiceTimbreList({
+        status: 'active',
+        page: 1,
+        pageSize: 100,
+      });
+      activeVoiceTimbres.value = data.items;
+    } catch (error) {
+      activeVoiceTimbres.value = [];
+    }
+  };
+
   const handleSearch = () => {
     pagination.current = 1;
     fetchData();
@@ -371,7 +404,7 @@
     editForm.status =
       record.status === 'completed' ? 'processing' : record.status;
     editForm.assigneeName = record.assigneeName;
-    editForm.materialObjectKeysText = record.materialObjectKeys.join('\n');
+    editForm.voiceTimbreId = record.voiceTimbreId || '';
     editForm.remark = record.remark;
     editVisible.value = true;
   };
@@ -391,10 +424,7 @@
       await updateVoiceTrainingTask(currentTask.value.id, {
         status: editForm.status,
         assigneeName: editForm.assigneeName.trim(),
-        materialObjectKeys: editForm.materialObjectKeysText
-          .split(/\r?\n/)
-          .map((item) => item.trim())
-          .filter(Boolean),
+        voiceTimbreId: editForm.voiceTimbreId || '',
         remark: editForm.remark.trim(),
       });
       Message.success('训练任务已更新');
@@ -465,6 +495,7 @@
     value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 
   fetchData();
+  fetchActiveVoiceTimbres();
 </script>
 
 <style scoped lang="less">

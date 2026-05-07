@@ -127,6 +127,7 @@ export interface UpdateAdminVoiceTrainingTaskDTO {
   status?: Exclude<VoiceTrainingTaskStatusDTO, 'completed'>;
   assigneeName?: string;
   materialObjectKeys?: string[];
+  voiceTimbreId?: string;
   remark?: string;
 }
 

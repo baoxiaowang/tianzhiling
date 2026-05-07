@@ -3,7 +3,7 @@
     <view class="voice-package-sheet__hero">
       <image
         class="voice-package-sheet__hero-image"
-        src="https://oss.soullink.top/weapp/voice_banner.png"
+        :src="voicePackageHeroImage"
         mode="aspectFill"
       />
     </view>
@@ -65,7 +65,10 @@ export default {
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { buildOssMediaUrl } from '@tzl/shared'
 import type { VoicePackageRecord } from '../../apis/voice-package'
+
+const voicePackageHeroImage = buildOssMediaUrl('/weapp/voice_banner.png')
 
 const props = withDefaults(
   defineProps<{

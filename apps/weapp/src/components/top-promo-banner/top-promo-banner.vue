@@ -26,6 +26,8 @@ export default {
 </script>
 
 <script setup lang="ts">
+import { buildOssMediaUrl } from '@tzl/shared'
+
 interface PromoBannerItem {
   id: string
   imageUrl: string
@@ -37,7 +39,7 @@ withDefaults(defineProps<{
   banners: () => [
     {
       id: 'voice-clone',
-      imageUrl: 'https://oss.soullink.top/weapp/Banner.png',
+      imageUrl: buildOssMediaUrl('/weapp/Banner.png'),
     },
   ],
 })

@@ -51,6 +51,7 @@ export default {
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import Taro, { useLoad } from '@tarojs/taro'
+import { buildOssMediaUrl } from '@tzl/shared'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { silentWeappLogin } from '../../auth/login-hooks'
 import { createSafeAreaCssVars, initSafeAreaInsets } from '../../utils/safe-area'
@@ -58,8 +59,8 @@ import { createSafeAreaCssVars, initSafeAreaInsets } from '../../utils/safe-area
 const ONBOARDING_STORAGE_KEY = 'tzl_onboarding_seen'
 
 const onboardingImages = [
-  'https://oss.soullink.top/weapp/onboarding_1.png',
-  'https://oss.soullink.top/weapp/page4%201.png',
+  buildOssMediaUrl('/weapp/onboarding_1.png'),
+  buildOssMediaUrl('/weapp/page4%201.png'),
 ]
 
 type EntryTarget = 'onboarding' | 'index' | 'chat'

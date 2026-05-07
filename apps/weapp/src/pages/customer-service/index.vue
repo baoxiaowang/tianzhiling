@@ -49,11 +49,12 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
+import { buildOssMediaUrl } from '@tzl/shared'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 
 const customerServicePhone = '18062525425'
-const customerServiceQr = 'https://oss.soullink.top/weapp/service.png'
+const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
 
 async function handleCallCustomerService() {
   try {

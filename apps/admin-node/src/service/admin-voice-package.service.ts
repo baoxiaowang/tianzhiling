@@ -178,6 +178,14 @@ export class AdminVoicePackageService {
       changed = true;
     }
 
+    if (payload.voiceTimbreId !== undefined) {
+      const timbreId = payload.voiceTimbreId.trim();
+      task.voiceTimbreId = timbreId
+        ? (await this.getActiveVoiceTimbre(timbreId)).id
+        : undefined;
+      changed = true;
+    }
+
     if (payload.remark !== undefined) {
       task.remark = payload.remark.trim();
       changed = true;

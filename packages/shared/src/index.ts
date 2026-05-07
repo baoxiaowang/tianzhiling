@@ -3,6 +3,7 @@ export * from './auth';
 export * from './env';
 export * from './errors';
 export * from './membership';
+export * from './media';
 export * from './order';
 export * from './response';
 export * from './voice-package';
