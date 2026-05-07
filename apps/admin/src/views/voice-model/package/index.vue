@@ -497,7 +497,7 @@
     priceAmount: yuanToAmount(editForm.priceYuan),
     originalPriceAmount: yuanToOptionalAmount(editForm.originalPriceYuan),
     currency: 'CNY',
-    estimatedServiceDays: editForm.estimatedServiceDays,
+    estimatedServiceDays: toOptionalInteger(editForm.estimatedServiceDays),
     materialRequirement: editForm.materialRequirement.trim(),
     status: editForm.status,
     sort: editForm.sort,
@@ -509,10 +509,24 @@
 
   const yuanToAmount = (value?: number) => Math.round(Number(value || 0) * 100);
   const amountToYuan = (value?: number) => Number(value || 0) / 100;
-  const yuanToOptionalAmount = (value?: number) =>
-    value === undefined || value === null ? undefined : yuanToAmount(value);
+  const yuanToOptionalAmount = (value?: number) => {
+    const normalized = toOptionalNumber(value);
+    return normalized === undefined ? undefined : yuanToAmount(normalized);
+  };
   const optionalAmountToYuan = (value?: number) =>
     value === undefined || value === null ? undefined : amountToYuan(value);
+  const toOptionalNumber = (value?: unknown) => {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const normalized = Number(value);
+    return Number.isFinite(normalized) ? normalized : undefined;
+  };
+  const toOptionalInteger = (value?: unknown) => {
+    const normalized = toOptionalNumber(value);
+    return normalized === undefined ? undefined : Math.trunc(normalized);
+  };
   const formatMoney = (value?: number) =>
     value === undefined || value === null
       ? '-'

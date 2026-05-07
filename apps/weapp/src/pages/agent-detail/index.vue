@@ -85,14 +85,6 @@
           </view>
         </view>
 
-        <view class="agent-detail-list__item" @tap="handleVoicePackageTap">
-          <text class="agent-detail-list__title">声音套餐</text>
-          <view class="agent-detail-list__right">
-            <text v-if="voicePackageStatus" class="agent-detail-list__value">{{ voicePackageStatus }}</text>
-            <view class="agent-detail-list__arrow" />
-          </view>
-        </view>
-
         <view class="agent-detail-list__item agent-detail-list__item--album" @tap="handleChatAlbumTap">
           <view class="agent-detail-album__main">
             <view class="agent-detail-list__content">
@@ -129,6 +121,37 @@
         </view>
       </view>
     </view>
+
+    <nut-popup
+      v-model:visible="voicePackagePopupVisible"
+      class="agent-detail-voice-popup"
+      position="bottom"
+      round
+      :close-on-click-overlay="!isPayingVoicePackage"
+      :overlay-style="voicePackagePopupOverlayStyle"
+    >
+      <view class="agent-detail-voice-popup__content">
+        <voice-package-sheet
+          :packages="voicePackages"
+          :selected-package-id="selectedVoicePackageId"
+          :disabled="isPayingVoicePackage || hasActiveVoiceTask"
+          @select="handleVoicePackageSelect"
+        />
+        <view class="agent-detail-voice-popup__payment">
+          <nut-button
+            block
+            shape="round"
+            type="primary"
+            class="agent-detail-voice-popup__button"
+            :disabled="!selectedVoicePackage || isPayingVoicePackage || hasActiveVoiceTask"
+            :loading="isPayingVoicePackage"
+            @click="handleVoicePackagePay"
+          >
+            {{ voicePackagePaymentText }}
+          </nut-button>
+        </view>
+      </view>
+    </nut-popup>
   </page-scaffold>
 </template>
 
@@ -145,6 +168,7 @@ import { computed, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, updateAgentDefault, type AgentSummary } from '../../apis/agent'
+import { createVoicePackageOrder } from '../../apis/order'
 import {
   getConversationMessages,
   getConversations,
@@ -157,6 +181,7 @@ import {
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import VoicePackageSheet from '../../components/voice-package-sheet/voice-package-sheet.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 const agent = ref<AgentSummary | null>(null)
@@ -172,13 +197,19 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isLoadingChatAlbum = ref(false)
 const isLoadingVoicePackage = ref(false)
+const isPayingVoicePackage = ref(false)
 const isUpdatingDefaultAgent = ref(false)
+const voicePackagePopupVisible = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const isDefaultAgent = ref(false)
 const conversationId = ref('')
 const chatAlbumImages = ref<string[]>([])
 const voicePackageCenter = ref<AgentVoicePackageCenter | null>(null)
+const selectedVoicePackageId = ref('')
+const voicePackagePopupOverlayStyle = {
+  backgroundColor: 'rgba(0, 0, 0, 0.45)',
+}
 
 const displayName = computed(() => {
   const name = agent.value?.name.trim() || fallbackName.value.trim()
@@ -199,7 +230,7 @@ const headerSubtitle = computed(() => {
 })
 const voiceModelStatus = computed(() => {
   const timbreId = agent.value?.voiceTimbreId?.trim()
-  return timbreId ? '已设置' : ''
+  return timbreId ? '已设置' : voicePackageStatus.value
 })
 const voicePackageStatus = computed(() => {
   if (isLoadingVoicePackage.value) {
@@ -214,6 +245,31 @@ const voicePackageStatus = computed(() => {
 
   const packageCount = voicePackageCenter.value?.packages.length ?? 0
   return packageCount ? `${packageCount}个可选` : ''
+})
+const voicePackages = computed(() => voicePackageCenter.value?.packages ?? [])
+const selectedVoicePackage = computed(() => {
+  return voicePackages.value.find((item) => item.id === selectedVoicePackageId.value)
+})
+const voicePackagePaymentText = computed(() => {
+  if (hasActiveVoiceTask.value) {
+    return '已支付，等待人工处理'
+  }
+
+  if (!selectedVoicePackage.value) {
+    return '请选择套餐'
+  }
+
+  return `支付 ${formatVoicePackagePrice(selectedVoicePackage.value.priceAmount)} 为TA重塑声音`
+})
+const hasActiveVoiceTask = computed(() => {
+  const status = voicePackageCenter.value?.task?.status
+
+  return Boolean(
+    status &&
+      status !== 'completed' &&
+      status !== 'failed' &&
+      status !== 'refunded',
+  )
 })
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const avatarFallbackClass = computed(() => {
@@ -425,7 +481,12 @@ async function loadVoicePackageCenter() {
   isLoadingVoicePackage.value = true
 
   try {
-    voicePackageCenter.value = await getAgentVoicePackageCenter(agentId.value)
+    const center = await getAgentVoicePackageCenter(agentId.value)
+    voicePackageCenter.value = center
+
+    if (!selectedVoicePackageId.value) {
+      selectedVoicePackageId.value = center.packages[0]?.id ?? ''
+    }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -605,18 +666,81 @@ async function handleDefaultAgentChange(event: Event) {
 }
 
 function handleVoiceModelTap() {
-  showToast('声音模型待接入')
-}
-
-function handleVoicePackageTap() {
   if (!agentId.value) {
     showToast('缺少联系人资料，请返回通讯录重新进入')
     return
   }
 
-  void Taro.navigateTo({
-    url: `/pages/voice-package/index?agentId=${encodeURIComponent(agentId.value)}`,
-  })
+  if (isLoadingVoicePackage.value) {
+    showToast('声音模型加载中')
+    return
+  }
+
+  if (!voicePackageCenter.value) {
+    void openVoicePackagePopupAfterLoad()
+    return
+  }
+
+  voicePackagePopupVisible.value = true
+}
+
+async function openVoicePackagePopupAfterLoad() {
+  await loadVoicePackageCenter()
+  voicePackagePopupVisible.value = true
+}
+
+async function handleVoicePackageSelect(packageId: string) {
+  if (isPayingVoicePackage.value) {
+    return
+  }
+
+  if (hasActiveVoiceTask.value) {
+    showToast('当前智能体已有声音训练任务')
+    return
+  }
+
+  selectedVoicePackageId.value = packageId
+}
+
+async function handleVoicePackagePay() {
+  const voicePackage = selectedVoicePackage.value
+
+  if (!voicePackage || !agentId.value || isPayingVoicePackage.value) {
+    return
+  }
+
+  try {
+    isPayingVoicePackage.value = true
+    const loginResult = await Taro.login()
+    const code = loginResult.code?.trim()
+
+    if (!code) {
+      throw new Error('微信登录失败，请稍后重试')
+    }
+
+    const result = await createVoicePackageOrder({
+      voicePackageId: voicePackage.id,
+      agentId: agentId.value,
+      jsCode: code,
+    })
+
+    await Taro.requestPayment(result.payment)
+    voicePackagePopupVisible.value = false
+    await Taro.redirectTo({
+      url: `/pages/payment-result/index?orderId=${encodeURIComponent(
+        result.order.id,
+      )}`,
+    })
+  } catch (error) {
+    const message =
+      error instanceof ApiException || error instanceof Error
+        ? error.message
+        : '支付失败，请稍后重试'
+
+    showToast(message || '支付失败，请稍后重试')
+  } finally {
+    isPayingVoicePackage.value = false
+  }
 }
 
 function formatVoiceTaskStatus(status: string) {
@@ -638,6 +762,12 @@ function formatVoiceTaskStatus(status: string) {
     default:
       return ''
   }
+}
+
+function formatVoicePackagePrice(amount: number) {
+  const yuan = amount / 100
+
+  return Number.isInteger(yuan) ? `￥${yuan}` : `￥${yuan.toFixed(2)}`
 }
 
 function handleChatAlbumTap() {
@@ -976,5 +1106,35 @@ function handleChatAlbumTap() {
   font-size: 16px;
   line-height: 24px;
   font-weight: 500;
+}
+
+.agent-detail-voice-popup {
+  overflow: hidden;
+  background: transparent;
+}
+
+.agent-detail-voice-popup__content {
+  overflow: hidden;
+  border-radius: 16px 16px 0 0;
+  background: #ffffff;
+}
+
+.agent-detail-voice-popup__payment {
+  box-sizing: border-box;
+  margin-top: -1px;
+  padding: 0 33px calc(10px + env(safe-area-inset-bottom));
+  background: #ffffff;
+}
+
+.agent-detail-voice-popup__button {
+  height: 56px;
+  border: 0;
+  background: linear-gradient(90deg, #fce8cc 0%, #ecb872 94.52%);
+}
+
+.agent-detail-voice-popup__button .nut-button__text {
+  color: #602a0c;
+  font-size: 16px;
+  font-weight: 600;
 }
 </style>
