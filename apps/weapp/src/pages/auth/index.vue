@@ -192,7 +192,14 @@
           text-position="right"
           :icon-size="9"
         >
-          我已阅读并同意《天之灵用户服务协议》及《隐私政策》
+          我已阅读并同意
+          <text class="agreement__link" @tap.stop="handleAgreementTap('service')">
+            《天之灵用户服务协议》
+          </text>
+          及
+          <text class="agreement__link" @tap.stop="handleAgreementTap('privacy')">
+            《隐私政策》
+          </text>
         </nut-checkbox>
       </view>
     </template>
@@ -222,6 +229,8 @@ import {
   clearAuthSession,
   restoreAuthSession,
 } from '../../auth/session'
+import type { AgreementDocumentType } from '../../legal/agreement-documents'
+import { openAgreementDocument } from '../../utils/agreement-nav'
 import { redirectToIndexPage } from '../../utils/auth-guard'
 
 type AuthMode = 'phone' | 'password'
@@ -232,7 +241,7 @@ const mode = ref<AuthMode>('phone')
 const phone = ref('')
 const code = ref('')
 const password = ref('')
-const agreed = ref(true)
+const agreed = ref(false)
 const isSubmitting = ref(false)
 const isSendingCode = ref(false)
 const isLoggingOut = ref(false)
@@ -406,6 +415,10 @@ async function handleSubmit() {
   } finally {
     isSubmitting.value = false
   }
+}
+
+function handleAgreementTap(type: AgreementDocumentType) {
+  void openAgreementDocument(type)
 }
 
 async function handleRefreshProfile() {
@@ -718,6 +731,10 @@ onUnmounted(() => {
 
 .agreement__control .nut-checkbox__label {
   line-height: 1.6;
+}
+
+.agreement__link {
+  color: #f4511e;
 }
 
 .profile-card {

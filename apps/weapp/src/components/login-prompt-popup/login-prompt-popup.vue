@@ -47,9 +47,13 @@
           :icon-size="10"
         >
           我已阅读并同意
-          <text class="login-prompt__link">《天之灵用户服务协议》</text>
+          <text class="login-prompt__link" @tap.stop="handleAgreementTap('service')">
+            《天之灵用户服务协议》
+          </text>
           及
-          <text class="login-prompt__link">《隐私政策》</text>
+          <text class="login-prompt__link" @tap.stop="handleAgreementTap('privacy')">
+            《隐私政策》
+          </text>
         </nut-checkbox>
       </view>
 
@@ -67,17 +71,19 @@ export default {
 import Taro from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { useLoginHooks } from '../../auth/login-hooks'
+import type { AgreementDocumentType } from '../../legal/agreement-documents'
+import { openAgreementDocument } from '../../utils/agreement-nav'
 
 const props = defineProps<{
   visible: boolean
 }>()
 
-const emit = defineEmits<{
-  (event: 'update:visible', value: boolean): void
-  (event: 'login-success'): void
-}>()
+const emit = defineEmits({
+  'update:visible': (_value: boolean) => true,
+  'login-success': () => true,
+})
 
-const agreed = ref(true)
+const agreed = ref(false)
 const {
   isLoggingIn,
   loginErrorMessage,
@@ -159,6 +165,10 @@ function handlePhoneLogin() {
   void Taro.navigateTo({
     url: '/pages/auth/index',
   })
+}
+
+function handleAgreementTap(type: AgreementDocumentType) {
+  void openAgreementDocument(type)
 }
 </script>
 

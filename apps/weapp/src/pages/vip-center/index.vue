@@ -160,7 +160,14 @@
         </view>
       </nut-button>
       <text class="vip-center-payment__agreement">
-        开通即表示同意《天之灵会员协议》及《连续订阅协议》
+        开通即表示同意
+        <text class="vip-center-payment__agreement-link" @tap.stop="handleAgreementTap('service')">
+          《天之灵用户服务协议》
+        </text>
+        及
+        <text class="vip-center-payment__agreement-link" @tap.stop="handleAgreementTap('privacy')">
+          《隐私政策》
+        </text>
       </text>
     </view>
   </page-scaffold>
@@ -186,6 +193,8 @@ import { createVipPlanOrder } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import type { AgreementDocumentType } from '../../legal/agreement-documents'
+import { openAgreementDocument } from '../../utils/agreement-nav'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 
 const center = ref<MembershipCenter | null>(null)
@@ -286,6 +295,10 @@ function handleRetry() {
 
 function handlePlanSelect(planId: string) {
   selectedPlanId.value = planId
+}
+
+function handleAgreementTap(type: AgreementDocumentType) {
+  void openAgreementDocument(type)
 }
 
 async function handlePurchaseTap() {
@@ -770,5 +783,9 @@ function formatDate(value: Date | null) {
   font-size: 11px;
   line-height: 16px;
   text-align: center;
+}
+
+.vip-center-payment__agreement-link {
+  color: #f4511e;
 }
 </style>

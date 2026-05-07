@@ -140,6 +140,7 @@ import { getCurrentUser } from '../../auth/api'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { openAgreementDocument } from '../../utils/agreement-nav'
 import { showPendingToast } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -217,6 +218,11 @@ async function handleMenuTap(title: string) {
     await Taro.navigateTo({
       url: '/pages/customer-service/index',
     })
+    return
+  }
+
+  if (title === '服务协议') {
+    await openAgreementDocument('service')
     return
   }
 

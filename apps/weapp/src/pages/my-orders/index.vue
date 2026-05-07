@@ -3,7 +3,7 @@
     class="my-orders-page"
     background="#efeff4"
     body-padding="0"
-    :scroll="false"
+    :scroll="true"
     :safe-area-top="false"
     require-auth
     auth-loading-text="正在恢复订单信息..."
@@ -32,46 +32,44 @@
       <view class="my-orders-state__button" @tap="handleOpenVipCenter">去开通会员</view>
     </view>
 
-    <scroll-view v-else scroll-y class="my-orders-scroll">
-      <view class="my-orders-list">
-        <view v-for="order in sortedOrders" :key="order.id" class="my-orders-card">
-          <view class="my-orders-card__content">
-            <view class="my-orders-card__status-block">
-              <text class="my-orders-card__label my-orders-card__label--status">
-                订单状态：
-              </text>
-              <view class="my-orders-card__summary">
-                <text class="my-orders-card__status">{{ getStatusText(order.status) }}</text>
-                <text class="my-orders-card__price">{{ formatPrice(order.payableAmount) }}</text>
-              </view>
+    <view v-else class="my-orders-list">
+      <view v-for="order in sortedOrders" :key="order.id" class="my-orders-card">
+        <view class="my-orders-card__content">
+          <view class="my-orders-card__status-block">
+            <text class="my-orders-card__label my-orders-card__label--status">
+              订单状态：
+            </text>
+            <view class="my-orders-card__summary">
+              <text class="my-orders-card__status">{{ getStatusText(order.status) }}</text>
+              <text class="my-orders-card__price">{{ formatPrice(order.payableAmount) }}</text>
             </view>
+          </view>
 
-            <view class="my-orders-card__detail-list">
-              <view class="my-orders-card__row">
-                <text class="my-orders-card__label">产品名称：</text>
-                <text class="my-orders-card__value">{{ order.title || '-' }}</text>
-              </view>
-              <view class="my-orders-card__row">
-                <text class="my-orders-card__label">到期时间：</text>
-                <text class="my-orders-card__value">{{ getExpireText(order) }}</text>
-              </view>
-              <view class="my-orders-card__row">
-                <text class="my-orders-card__label">下单时间：</text>
-                <text class="my-orders-card__value">{{ formatDateTime(order.createdAt) }}</text>
-              </view>
-              <view class="my-orders-card__row">
-                <text class="my-orders-card__label">订单编号：</text>
-                <copyable-text
-                  :text="order.orderNo"
-                  content-class="my-orders-card__value my-orders-card__value--mono"
-                  success-text="订单编号已复制"
-                />
-              </view>
+          <view class="my-orders-card__detail-list">
+            <view class="my-orders-card__row">
+              <text class="my-orders-card__label">产品名称：</text>
+              <text class="my-orders-card__value">{{ order.title || '-' }}</text>
+            </view>
+            <view class="my-orders-card__row">
+              <text class="my-orders-card__label">到期时间：</text>
+              <text class="my-orders-card__value">{{ getExpireText(order) }}</text>
+            </view>
+            <view class="my-orders-card__row">
+              <text class="my-orders-card__label">下单时间：</text>
+              <text class="my-orders-card__value">{{ formatDateTime(order.createdAt) }}</text>
+            </view>
+            <view class="my-orders-card__row">
+              <text class="my-orders-card__label">订单编号：</text>
+              <copyable-text
+                :text="order.orderNo"
+                content-class="my-orders-card__value my-orders-card__value--mono"
+                success-text="订单编号已复制"
+              />
             </view>
           </view>
         </view>
       </view>
-    </scroll-view>
+    </view>
   </page-scaffold>
 </template>
 
@@ -222,12 +220,6 @@ function getTime(value: string) {
 <style lang="scss">
 .my-orders-page {
   min-height: 100vh;
-}
-
-.my-orders-scroll {
-  height: 100%;
-  box-sizing: border-box;
-  background: #efeff4;
 }
 
 .my-orders-list {
