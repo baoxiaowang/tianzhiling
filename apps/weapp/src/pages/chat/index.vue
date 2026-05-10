@@ -168,7 +168,7 @@
               :value="draftMessage"
               class="chat-composer__input"
               type="text"
-              maxlength="2000"
+              :maxlength="CHAT_TEXT_MAX_LENGTH"
               confirm-type="send"
               :cursor="draftCursor"
               :adjust-position="false"
@@ -369,6 +369,7 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentDelayMs: 2800,
   longSegmentLengthThreshold: 24,
 } as const
+const CHAT_TEXT_MAX_LENGTH = 500
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -1073,13 +1074,18 @@ function handleRetry() {
 
 function handleDraftInput(event: DraftInputEvent) {
   const detail = 'detail' in event && typeof event.detail === 'object' ? event.detail : undefined
-  const nextValue = detail?.value ?? ''
+  const rawValue = detail?.value ?? ''
+  const nextValue = limitChatText(rawValue)
   const nextCursor = detail?.cursor
+
+  if (nextValue !== rawValue) {
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+  }
 
   draftMessage.value = nextValue
   draftCursor.value =
     typeof nextCursor === 'number' && nextCursor >= 0
-      ? nextCursor
+      ? clampCursor(nextCursor, nextValue)
       : nextValue.length
 }
 
@@ -1489,9 +1495,14 @@ function handleEmojiSelect(emoji: string) {
     draftMessage.value.slice(0, cursor) +
     emoji +
     draftMessage.value.slice(cursor)
+  const limitedValue = limitChatText(nextValue)
 
-  draftMessage.value = nextValue
-  draftCursor.value = cursor + emoji.length
+  if (limitedValue !== nextValue) {
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+  }
+
+  draftMessage.value = limitedValue
+  draftCursor.value = clampCursor(cursor + emoji.length, limitedValue)
   void scrollToBottom()
 }
 
@@ -1522,6 +1533,16 @@ function clampCursor(cursor: number, value: string) {
   return Math.min(Math.max(Math.floor(cursor), 0), value.length)
 }
 
+function limitChatText(value: string) {
+  const chars = Array.from(value)
+
+  if (chars.length <= CHAT_TEXT_MAX_LENGTH) {
+    return value
+  }
+
+  return chars.slice(0, CHAT_TEXT_MAX_LENGTH).join('')
+}
+
 function removeLastGrapheme(value: string) {
   if (!value) {
     return ''
@@ -1540,13 +1561,17 @@ function removeLastGrapheme(value: string) {
 }
 
 async function handleSend() {
-  const content = draftMessage.value.trim()
+  const content = limitChatText(draftMessage.value.trim())
   if (!content || isSending.value || isTranscribingVoice.value || !conversationId.value) {
     return
   }
 
-  const originalDraft = draftMessage.value
-  const originalDraftCursor = draftCursor.value
+  if (content !== draftMessage.value.trim()) {
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+  }
+
+  const originalDraft = limitChatText(draftMessage.value)
+  const originalDraftCursor = clampCursor(draftCursor.value, originalDraft)
 
   draftMessage.value = ''
   draftCursor.value = 0

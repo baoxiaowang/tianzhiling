@@ -36,7 +36,7 @@ export interface RetrievedContextSnippet {
   score?: number;
 }
 
-const RECENT_HISTORY_MESSAGE_LIMIT = 3;
+const RECENT_HISTORY_MESSAGE_LIMIT = 20;
 
 @Provide()
 export class AgentContextService {
