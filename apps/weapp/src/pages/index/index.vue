@@ -78,6 +78,7 @@
       v-if="activeCommentPost"
       class="moment-comment-dock"
       :style="commentComposerStyle"
+      @touchstart.stop
       @tap.stop
     >
       <view class="moment-comment-composer">
@@ -90,6 +91,8 @@
           confirm-type="send"
           :adjust-position="false"
           @input="handleCommentInput"
+          @touchstart.stop="handleCommentInputTouchStart"
+          @tap.stop="handleCommentInputTap"
           @focus="handleCommentFocus"
           @blur="handleCommentBlur"
           @keyboardheightchange="handleCommentKeyboardHeightChange"
@@ -98,21 +101,20 @@
         <view
           v-if="!isCommentEmojiPanelVisible"
           class="moment-comment-composer__icon moment-comment-composer__icon--emoji"
-          @touchstart="handleCommentInternalTouchStart"
           @tap="handleCommentEmojiToggle"
         >
           ☺
         </view>
         <view
           v-else
-          class="moment-comment-composer__send"
-          :class="{
-            'moment-comment-composer__send--disabled': !canSubmitComment || isSubmittingComment,
-          }"
-          @touchstart="handleCommentInternalTouchStart"
-          @tap="handleSubmitComment"
+          class="moment-comment-composer__icon moment-comment-composer__icon--keyboard"
+          @tap="handleCommentEmojiToggle"
         >
-          发送
+          <image
+            class="moment-comment-composer__keyboard-icon"
+            :src="keyboardIconUrl"
+            mode="aspectFit"
+          />
         </view>
       </view>
 
@@ -145,6 +147,7 @@ import {
   type PostItem,
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
+import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -172,12 +175,13 @@ const commentDraft = ref('')
 const commentKeyboardHeight = ref(0)
 const isCommentInputFocused = ref(false)
 const shouldFocusCommentInput = ref(false)
-const shouldKeepCommentComposerOnBlur = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
 const likingPostIds = ref<string[]>([])
 
 let refreshDataPromise: Promise<void> | null = null
+let isSwitchingCommentInputMode = false
+let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = computed(() => {
@@ -191,7 +195,6 @@ const notificationText = computed(() => {
   const unreadCount = notificationSummary.value?.unreadCount ?? 0
   return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
 })
-const canSubmitComment = computed(() => commentDraft.value.trim().length > 0)
 const commentComposerStyle = computed(() => {
   const shouldFollowKeyboard =
     isCommentInputFocused.value &&
@@ -422,6 +425,7 @@ function closeCommentComposer(force = false) {
     return
   }
 
+  resetCommentInputModeSwitching()
   activeCommentPost.value = null
   commentDraft.value = ''
   shouldFocusCommentInput.value = false
@@ -433,27 +437,54 @@ function closeCommentComposer(force = false) {
 
 function handleCommentFocus() {
   isCommentInputFocused.value = true
-  isCommentEmojiPanelVisible.value = false
 }
 
 function handleCommentBlur() {
   isCommentInputFocused.value = false
   shouldFocusCommentInput.value = false
+}
 
-  if (shouldKeepCommentComposerOnBlur.value) {
-    shouldKeepCommentComposerOnBlur.value = false
+function handleCommentOutsideTap() {
+  if (isSwitchingCommentInputMode) {
     return
   }
 
   closeCommentComposer()
 }
 
-function handleCommentOutsideTap() {
-  closeCommentComposer()
+function markCommentInputModeSwitching() {
+  isSwitchingCommentInputMode = true
+
+  if (commentInputSwitchingTimer) {
+    clearTimeout(commentInputSwitchingTimer)
+  }
+
+  commentInputSwitchingTimer = setTimeout(() => {
+    isSwitchingCommentInputMode = false
+    commentInputSwitchingTimer = null
+  }, 180)
 }
 
-function handleCommentInternalTouchStart() {
-  shouldKeepCommentComposerOnBlur.value = true
+function resetCommentInputModeSwitching() {
+  isSwitchingCommentInputMode = false
+
+  if (commentInputSwitchingTimer) {
+    clearTimeout(commentInputSwitchingTimer)
+    commentInputSwitchingTimer = null
+  }
+}
+
+function requestCommentInputFocus() {
+  if (isCommentInputFocused.value) {
+    shouldFocusCommentInput.value = true
+    return
+  }
+
+  shouldFocusCommentInput.value = false
+
+  void nextTick(() => {
+    shouldFocusCommentInput.value = true
+  })
 }
 
 function handleCommentKeyboardHeightChange(event: { detail?: { height?: number } }) {
@@ -483,7 +514,35 @@ function handleCommentInput(event: unknown) {
   commentDraft.value = readInputValue(event)
 }
 
+function switchCommentInputToKeyboard() {
+  markCommentInputModeSwitching()
+
+  if (isCommentEmojiPanelVisible.value) {
+    isCommentEmojiPanelVisible.value = false
+  }
+
+  requestCommentInputFocus()
+}
+
+function handleCommentInputTouchStart() {
+  if (!isCommentEmojiPanelVisible.value) {
+    markCommentInputModeSwitching()
+    return
+  }
+
+  switchCommentInputToKeyboard()
+}
+
+function handleCommentInputTap() {
+  if (!isCommentEmojiPanelVisible.value && isCommentInputFocused.value) {
+    return
+  }
+
+  switchCommentInputToKeyboard()
+}
+
 function handleCommentEmojiToggle() {
+  markCommentInputModeSwitching()
   isCommentEmojiPanelVisible.value = !isCommentEmojiPanelVisible.value
   shouldFocusCommentInput.value = false
 
@@ -492,9 +551,7 @@ function handleCommentEmojiToggle() {
     commentKeyboardHeight.value = 0
     void Taro.hideKeyboard()
   } else {
-    void nextTick(() => {
-      shouldFocusCommentInput.value = true
-    })
+    requestCommentInputFocus()
   }
 }
 
@@ -758,20 +815,15 @@ useDidHide(() => {
   line-height: 34px;
 }
 
-.moment-comment-composer__send {
-  flex: 0 0 52px;
-  height: 34px;
-  border-radius: 4px;
-  background: #07c160;
-  color: #ffffff;
-  text-align: center;
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 34px;
+.moment-comment-composer__icon--keyboard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.moment-comment-composer__send--disabled {
-  background: #c8c9cc;
+.moment-comment-composer__keyboard-icon {
+  width: 30px;
+  height: 30px;
 }
 
 </style>
