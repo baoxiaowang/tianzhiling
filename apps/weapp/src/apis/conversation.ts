@@ -129,8 +129,17 @@ function asStringArray(value: unknown) {
   }
 
   return value
-    .map((item) => asString(item).trim())
+    .map((item) => stripAssistantMarkup(asString(item)).trim())
     .filter(Boolean)
+}
+
+function stripAssistantMarkup(value: string) {
+  return value
+    .replace(/<\/?fenge\s*>/gi, ' ')
+    .replace(/<\/?fense\s*>/gi, ' ')
+    .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function parseSegments(value: unknown, content: string, type: string) {
@@ -150,14 +159,14 @@ function parseSegments(value: unknown, content: string, type: string) {
 
   const legacySegments = trimmedContent
     .split('</fenge>')
-    .map((item) => item.trim())
+    .map((item) => stripAssistantMarkup(item).trim())
     .filter(Boolean)
 
   if (legacySegments.length) {
     return legacySegments
   }
 
-  return [trimmedContent]
+  return [stripAssistantMarkup(trimmedContent)]
 }
 
 function parseVoicePayload(value: unknown) {
@@ -210,7 +219,7 @@ function parseImagePayload(value: unknown) {
 export function parseConversationMessage(value: unknown): ConversationMessage {
   const raw = asRecord(value)
   const type = asString(raw.type) || 'text'
-  const content = asString(raw.content)
+  const content = stripAssistantMarkup(asString(raw.content))
 
   return {
     id: asString(raw.id),

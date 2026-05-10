@@ -95,6 +95,7 @@ function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
 function createService(options: {
   agent: AgentEntity;
   voiceTimbre?: VoiceTimbreEntity | null;
+  chatContent?: string;
 }) {
   const service = new ConversationService();
   const conversation = createConversation();
@@ -154,7 +155,7 @@ function createService(options: {
       choices: [
         {
           message: {
-            content: '我也想你，今天过得怎么样？',
+            content: options.chatContent || '我也想你，今天过得怎么样？',
           },
         },
       ],
@@ -282,6 +283,31 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
     expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
     expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
+  it('strips malformed assistant markup tags before saving replies', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: [
+          '啊 小米 真好听的名字🐱</fense>有小猫陪着你',
+          '我都记着呢</emoji>',
+        ],
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '你还记得我的猫叫啥吗',
+    });
+
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(assistantMessage?.content).toBe(
+      '啊 小米 真好听的名字🐱 有小猫陪着你</fenge>我都记着呢'
+    );
   });
 });
 

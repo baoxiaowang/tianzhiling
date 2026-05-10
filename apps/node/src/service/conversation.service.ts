@@ -1347,7 +1347,7 @@ export class ConversationService {
 
       if (segments.length > 0) {
         return segments.map(segment =>
-          segment.replace(/<\/fenge>/gi, ' ').trim()
+          this.stripAssistantMarkup(segment).trim()
         );
       }
     } catch {
@@ -1414,8 +1414,8 @@ export class ConversationService {
       return '';
     }
 
-    const hasChinese = /[\u3400-\u9FFF]/.test(content);
-    let normalized = content;
+    let normalized = this.stripAssistantMarkup(content);
+    const hasChinese = /[\u3400-\u9FFF]/.test(normalized);
 
     if (hasChinese) {
       normalized = normalized.replace(
@@ -1433,6 +1433,13 @@ export class ConversationService {
       .replace(/([（【《“‘])\s+/g, '$1')
       .replace(/\s+([）】》”’])/g, '$1')
       .trim();
+  }
+
+  private stripAssistantMarkup(value: string): string {
+    return value
+      .replace(/<\/?fenge\s*>/gi, ' ')
+      .replace(/<\/?fense\s*>/gi, ' ')
+      .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ');
   }
 
   private async saveMessage(options: {
