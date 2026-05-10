@@ -144,7 +144,9 @@ function handleVoiceTap() {
 
 <style lang="scss">
 .chat-message-bubble {
-  max-width: 264px;
+  min-width: 0;
+  max-width: var(--chat-message-bubble-max-width, 264px);
+  flex-shrink: 1;
   padding: 10px 12px;
   border-radius: 10px;
   background: #ffffff;
@@ -216,6 +218,7 @@ function handleVoiceTap() {
 .chat-message-bubble__voice {
   position: relative;
   min-width: 84px;
+  max-width: 100%;
   height: 40px;
   padding: 8px 12px;
   display: flex;

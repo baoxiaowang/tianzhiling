@@ -63,7 +63,10 @@
             <view
               v-else
               class="chat-row"
-              :class="{ 'chat-row--user': item.isUser }"
+              :class="{
+                'chat-row--agent': !item.isUser,
+                'chat-row--user': item.isUser,
+              }"
             >
               <template v-if="!item.isUser">
                 <image
@@ -2291,10 +2294,15 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-row {
+  --chat-message-bubble-max-width: 264px;
   display: flex;
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.chat-row--agent {
+  --chat-message-bubble-max-width: calc(100vw - 128px);
 }
 
 .chat-row--user {
