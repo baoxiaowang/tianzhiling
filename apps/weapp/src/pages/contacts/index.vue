@@ -36,12 +36,18 @@
         <view v-else-if="!conversations.length" class="contacts-list">
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
             <view class="contacts-create-entry__avatar">
-              <view class="contacts-create-entry__halo" />
-              <text class="contacts-create-entry__plus">+</text>
+              <image
+                class="contacts-create-entry__avatar-image"
+                :src="createAgentAvatarUrl"
+                mode="aspectFill"
+              />
             </view>
             <view class="contacts-create-entry__content">
               <text class="contacts-create-entry__title">新建天之灵</text>
               <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+            </view>
+            <view class="contacts-create-entry__action">
+              <view class="contacts-create-entry__action-plus" />
             </view>
           </view>
 
@@ -59,6 +65,7 @@
           >
             <view
               class="contacts-item"
+              :class="{ 'contacts-item--default': conversation.agentIsDefault }"
               @tap="handleConversationTap(conversation)"
             >
               <view
@@ -108,12 +115,18 @@
 
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
             <view class="contacts-create-entry__avatar">
-              <view class="contacts-create-entry__halo" />
-              <text class="contacts-create-entry__plus">+</text>
+              <image
+                class="contacts-create-entry__avatar-image"
+                :src="createAgentAvatarUrl"
+                mode="aspectFill"
+              />
             </view>
             <view class="contacts-create-entry__content">
               <text class="contacts-create-entry__title">新建天之灵</text>
               <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+            </view>
+            <view class="contacts-create-entry__action">
+              <view class="contacts-create-entry__action-plus" />
             </view>
           </view>
         </view>
@@ -129,6 +142,7 @@ export default {
 </script>
 
 <script setup lang="ts">
+import { buildOssMediaUrl } from '@tzl/shared'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
@@ -144,6 +158,7 @@ const isContactsLoading = ref(true)
 const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 const hasLoadedContacts = ref(false)
+const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
 
@@ -371,25 +386,14 @@ useDidShow(() => {
   justify-content: center;
   overflow: hidden;
   border-radius: 8px;
-  background: linear-gradient(135deg, #fff7ed 0%, #fed7aa 45%, #fb923c 100%);
+  background: #f8fafc;
 }
 
-.contacts-create-entry__halo {
-  position: absolute;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.82);
-  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.16);
-}
-
-.contacts-create-entry__plus {
-  position: relative;
-  z-index: 1;
-  color: #ffffff;
-  font-size: 28px;
-  line-height: 32px;
-  font-weight: 300;
+.contacts-create-entry__avatar-image {
+  width: 48px;
+  height: 48px;
+  display: block;
+  border-radius: 8px;
 }
 
 .contacts-create-entry__content {
@@ -415,6 +419,42 @@ useDidShow(() => {
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.contacts-create-entry__action {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.contacts-create-entry__action-plus {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.contacts-create-entry__action-plus::before,
+.contacts-create-entry__action-plus::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  background: $tzl-color-primary;
+  transform: translate(-50%, -50%);
+}
+
+.contacts-create-entry__action-plus::before {
+  width: 16px;
+  height: 2px;
+}
+
+.contacts-create-entry__action-plus::after {
+  width: 2px;
+  height: 16px;
 }
 
 .contacts-list {
@@ -449,6 +489,10 @@ useDidShow(() => {
   min-height: 72px;
   padding: 0 16px;
   background: $tzl-color-surface-base;
+}
+
+.contacts-item--default {
+  background: #f4f4f4;
 }
 
 .contacts-item::after {

@@ -26,7 +26,7 @@
     </view>
 
     <view v-else class="agent-detail">
-      <view class="agent-detail-header">
+      <view class="agent-detail-header" @tap="handleOpenAgentForm">
         <view class="agent-detail-header__avatar-wrap">
           <image
             v-if="displayAvatar"
@@ -51,7 +51,7 @@
         </view>
 
         <view class="agent-detail-header__tools">
-          <view class="agent-detail-header__tool agent-detail-header__tool--edit" @tap="handleOpenAgentForm" />
+          <view class="agent-detail-header__tool agent-detail-header__tool--edit" />
         </view>
       </view>
 
