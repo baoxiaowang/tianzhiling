@@ -45,9 +45,13 @@ export async function passwordLogin(account: string, password: string) {
   return session satisfies AuthSessionData
 }
 
-export async function weappLogin(jsCode: string) {
+export async function weappLogin(
+  jsCode: string,
+  options: { allowCreate?: boolean } = {},
+) {
   const data = await post<Record<string, unknown>>('/api/user/weapp-login', {
     jsCode,
+    allowCreate: options.allowCreate,
   })
   const session = parseAuthSessionData(data)
 
@@ -64,6 +68,17 @@ export async function weappPhoneLogin(jsCode: string, phoneCode: string) {
       phoneCode,
     },
   )
+  const session = parseAuthSessionData(data)
+
+  await saveAuthSession(session)
+
+  return session satisfies AuthSessionData
+}
+
+export async function bindWeappPhone(phoneCode: string) {
+  const data = await post<Record<string, unknown>>('/api/user/me/weapp-phone', {
+    phoneCode,
+  })
   const session = parseAuthSessionData(data)
 
   await saveAuthSession(session)

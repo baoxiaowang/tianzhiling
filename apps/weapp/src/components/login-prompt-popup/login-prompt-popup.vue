@@ -15,21 +15,19 @@
         <view class="login-prompt__logo">灵</view>
         <view class="login-prompt__copy">
           <text class="login-prompt__title">登录后继续体验</text>
-          <text class="login-prompt__subtitle">授权后可同步资料、使用聊天和个人中心</text>
+          <text class="login-prompt__subtitle">授权后可同步资料，手机号可在个人中心绑定</text>
         </view>
       </view>
 
       <button
         class="login-prompt__wechat"
-        :open-type="agreed ? 'getPhoneNumber' : ''"
         :disabled="isLoggingIn"
-        @click="handlePhoneBindButtonTap"
-        @getphonenumber="handlePhoneNumberLogin"
+        @click="handleWeappLogin"
       >
-        <text>{{ isLoggingIn ? '绑定中...' : '授权手机号登录' }}</text>
+        <text>{{ isLoggingIn ? '登录中...' : '微信授权登录' }}</text>
       </button>
 
-      <nut-button
+      <!-- <nut-button
         class="login-prompt__phone"
         block
         shape="round"
@@ -37,7 +35,7 @@
         @click="handlePhoneLogin"
       >
         手机号登录
-      </nut-button>
+      </nut-button> -->
 
       <view class="login-prompt__agreement">
         <nut-checkbox
@@ -87,7 +85,7 @@ const agreed = ref(false)
 const {
   isLoggingIn,
   loginErrorMessage,
-  loginWithWeappPhone,
+  loginWithWeapp,
 } = useLoginHooks()
 
 const visible = computed({
@@ -109,37 +107,13 @@ function ensureAgreed() {
   return false
 }
 
-function handlePhoneBindButtonTap() {
-  if (!agreed.value) {
-    ensureAgreed()
-  }
-}
-
-async function handlePhoneNumberLogin(event: {
-  detail?: {
-    code?: string
-    errMsg?: string
-  }
-}) {
+async function handleWeappLogin() {
   if (!ensureAgreed() || isLoggingIn.value) {
     return
   }
 
-  const phoneCode = event.detail?.code?.trim()
-
-  if (!phoneCode) {
-    void Taro.showToast({
-      title: event.detail?.errMsg?.includes('deny')
-        ? '已取消手机号授权'
-        : '请授权手机号后继续登录',
-      icon: 'none',
-      duration: 1800,
-    })
-    return
-  }
-
   try {
-    await loginWithWeappPhone(phoneCode)
+    await loginWithWeapp()
     emit('login-success')
     visible.value = false
     void Taro.showToast({

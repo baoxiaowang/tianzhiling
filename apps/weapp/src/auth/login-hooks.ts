@@ -113,7 +113,7 @@ export async function silentWeappLogin() {
       return null
     }
 
-    const session = await weappLogin(jsCode)
+    const session = await weappLogin(jsCode, { allowCreate: false })
     return session
   } catch {
     return null

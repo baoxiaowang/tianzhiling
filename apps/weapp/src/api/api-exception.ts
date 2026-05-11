@@ -73,6 +73,8 @@ export class ApiException extends Error {
         return '微信手机号授权失败，请稍后重试'
       case 'WECHAT_PHONE_COUNTRY_UNSUPPORTED':
         return '暂只支持中国大陆手机号登录'
+      case 'WEAPP_ACCOUNT_NOT_FOUND':
+        return '请先完成微信授权登录'
       case 'WEAPP_PHONE_BIND_REQUIRED':
         return '请授权手机号完成登录'
       case 'WEAPP_OPENID_BOUND_TO_OTHER_USER':

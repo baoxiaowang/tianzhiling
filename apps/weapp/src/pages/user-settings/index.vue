@@ -66,7 +66,18 @@
         <view class="user-settings-tile">
           <text class="user-settings-tile__title">手机号</text>
           <view class="user-settings-tile__right">
-            <text class="user-settings-tile__value">{{ maskedPhone }}</text>
+            <text v-if="hasBoundPhone" class="user-settings-tile__value">
+              {{ maskedPhone }}
+            </text>
+            <button
+              v-else
+              class="user-settings-phone-bind"
+              open-type="getPhoneNumber"
+              :disabled="isBindingPhone"
+              @getphonenumber="handlePhoneNumberBind"
+            >
+              {{ isBindingPhone ? '绑定中...' : '去绑定' }}
+            </button>
             <view class="user-settings-tile__arrow" />
           </view>
         </view>
@@ -90,7 +101,12 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { uploadLocalImage } from '../../apis/storage'
-import { getCurrentUser, logout, updateAvatar } from '../../auth/api'
+import {
+  bindWeappPhone,
+  getCurrentUser,
+  logout,
+  updateAvatar,
+} from '../../auth/api'
 import { authSession, clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -104,6 +120,7 @@ const isCheckingAuth = ref(true)
 const isRedirecting = ref(false)
 const isLoggingOut = ref(false)
 const isUpdatingAvatar = ref(false)
+const isBindingPhone = ref(false)
 
 const session = computed(() => authSession.value)
 const user = computed(() => session.value?.user ?? null)
@@ -113,6 +130,9 @@ const displayName = computed(() => {
 })
 const avatarUrl = computed(() => user.value?.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
+const hasBoundPhone = computed(() => {
+  return Boolean(user.value?.phone.trim() && user.value?.phoneVerified)
+})
 const maskedPhone = computed(() => maskPhone(user.value?.phone ?? ''))
 
 function showToast(title: string) {
@@ -215,6 +235,48 @@ async function handleNameTap() {
   await Taro.navigateTo({
     url: '/pages/user-name-edit/index',
   })
+}
+
+async function handlePhoneNumberBind(event: {
+  detail?: {
+    code?: string
+    errMsg?: string
+  }
+}) {
+  if (isBindingPhone.value) {
+    return
+  }
+
+  const phoneCode = event.detail?.code?.trim()
+
+  if (!phoneCode) {
+    showToast(
+      event.detail?.errMsg?.includes('deny')
+        ? '已取消手机号授权'
+        : '请授权手机号后继续绑定',
+    )
+    return
+  }
+
+  isBindingPhone.value = true
+
+  try {
+    await bindWeappPhone(phoneCode)
+    showToast('手机号已绑定')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth(error.message)
+      return
+    }
+
+    showToast(
+      error instanceof ApiException
+        ? error.message
+        : '手机号绑定失败，请稍后重试',
+    )
+  } finally {
+    isBindingPhone.value = false
+  }
 }
 
 async function handleLogout() {
@@ -362,6 +424,27 @@ useDidShow(() => {
   border-top: 1.5px solid #cfcfcf;
   border-right: 1.5px solid #cfcfcf;
   transform: rotate(45deg);
+}
+
+.user-settings-phone-bind {
+  min-width: 68px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: $tzl-gradient-primary;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 32px;
+  font-weight: 600;
+}
+
+.user-settings-phone-bind::after {
+  border: 0;
+}
+
+.user-settings-phone-bind[disabled] {
+  opacity: 0.72;
 }
 
 .user-settings-avatar {
