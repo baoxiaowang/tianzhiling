@@ -2,6 +2,7 @@ import { Body, Controller, Get, Inject, Patch, Post } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import {
+  BindWeappPhoneDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
   SendSmsCodeDTO,
@@ -43,6 +44,14 @@ export class UserController {
   @Post('/weapp-phone-login')
   async weappPhoneLogin(@Body() body: WeappPhoneLoginDTO) {
     return this.userService.weappPhoneLogin(body);
+  }
+
+  @Post('/me/weapp-phone')
+  async bindWeappPhone(@Body() body: BindWeappPhoneDTO) {
+    return this.userService.bindCurrentUserWeappPhone(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
   }
 
   @Get('/me')

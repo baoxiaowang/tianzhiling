@@ -26,6 +26,7 @@ import {
   SendSmsCodeResult,
 } from '../interface';
 import {
+  BindWeappPhoneDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
   SendSmsCodeDTO,
@@ -83,6 +84,8 @@ const WEAPP_ACCOUNT_HASH_LENGTH = 12;
 
 interface VerifiedPhoneLoginOptions {
   weappOpenid?: string;
+  weappUserAccount?: UserAccountEntity;
+  preferredUser?: UserEntity;
 }
 
 @Provide()
@@ -338,6 +341,14 @@ export class UserService {
       });
     }
 
+    if (!user && options.preferredUser) {
+      const preferredPhone = options.preferredUser.phone?.trim();
+
+      if (!preferredPhone || preferredPhone === phone) {
+        user = options.preferredUser;
+      }
+    }
+
     if (!user) {
       user = new UserEntity();
       user.name = this.buildDefaultUserName(phone);
@@ -371,6 +382,10 @@ export class UserService {
 
     if (options.weappOpenid) {
       await this.bindWeappOpenidToUser(user, options.weappOpenid, now);
+    }
+
+    if (options.weappUserAccount) {
+      await this.bindWeappAccountToUser(user, options.weappUserAccount, now);
     }
 
     return this.buildLoginResult(user, userAccount, isNewUser);
@@ -454,14 +469,6 @@ export class UserService {
         );
       }
 
-      if (!user.phone || !user.phoneVerified) {
-        throw new AppError(
-          'WEAPP_PHONE_BIND_REQUIRED',
-          'wechat phone binding is required',
-          428
-        );
-      }
-
       userAccount = this.normalizeWeappAccount(userAccount, openid, now);
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
@@ -469,11 +476,32 @@ export class UserService {
       return this.buildLoginResult(user, userAccount, false);
     }
 
-    throw new AppError(
-      'WEAPP_PHONE_BIND_REQUIRED',
-      'wechat phone binding is required',
-      428
-    );
+    if (payload?.allowCreate === false) {
+      throw new AppError(
+        'WEAPP_ACCOUNT_NOT_FOUND',
+        'wechat account does not exist',
+        404
+      );
+    }
+
+    const user = new UserEntity();
+    user.name = this.buildDefaultWeappUserName(openid);
+    user.avatar = '';
+    user.phone = '';
+    user.phoneVerified = false;
+    user.createdAt = now;
+    user.updatedAt = now;
+    const savedUser = await this.userModel.save(user);
+
+    userAccount = new UserAccountEntity();
+    userAccount.userId = savedUser.id;
+    userAccount.account = this.buildWeappAccount(openid);
+    userAccount.password = '';
+    userAccount.createdAt = now;
+    userAccount.updatedAt = now;
+    userAccount = await this.userAccountModel.save(userAccount);
+
+    return this.buildLoginResult(savedUser, userAccount, true);
   }
 
   async weappPhoneLogin(
@@ -501,6 +529,47 @@ export class UserService {
     });
   }
 
+  async bindCurrentUserWeappPhone(
+    auth: AuthenticatedUserPayload,
+    payload: BindWeappPhoneDTO
+  ): Promise<PasswordLoginResult> {
+    const phoneCode = payload?.phoneCode?.trim();
+
+    if (!phoneCode) {
+      throw new AppError('INVALID_WECHAT_PHONE_CODE', 'phoneCode is required');
+    }
+
+    if (!auth?.sub || !auth.accountId) {
+      throw new AppError('INVALID_TOKEN', 'token payload is incomplete', 401);
+    }
+
+    const [user, currentAccount, rawPhone] = await Promise.all([
+      this.findUserById(this.parseObjectId(auth.sub)),
+      this.findUserAccountById(this.parseObjectId(auth.accountId)),
+      this.wechatPayService.getPhoneNumberByCode(phoneCode),
+    ]);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    if (
+      !currentAccount ||
+      !this.isSameObjectId(currentAccount.userId, user.id)
+    ) {
+      throw new AppError('INVALID_TOKEN', 'token account is invalid', 401);
+    }
+
+    const phone = this.normalizePhone(rawPhone);
+
+    return this.loginWithVerifiedPhone(phone, {
+      preferredUser: user,
+      weappUserAccount: currentAccount.account.startsWith(WEAPP_ACCOUNT_PREFIX)
+        ? currentAccount
+        : undefined,
+    });
+  }
+
   private async bindWeappOpenidToUser(
     user: UserEntity,
     openid: string,
@@ -510,23 +579,8 @@ export class UserService {
     let userAccount = await this.findWeappAccountByOpenid(openid);
 
     if (userAccount) {
-      if (!this.isSameObjectId(userAccount.userId, user.id)) {
-        const boundUser = await this.findUserById(userAccount.userId);
-
-        if (boundUser?.phone || boundUser?.phoneVerified) {
-          throw new AppError(
-            'WEAPP_OPENID_BOUND_TO_OTHER_USER',
-            'wechat openid has been bound to another user',
-            409
-          );
-        }
-
-        userAccount.userId = user.id;
-      }
-
-      userAccount.account = account;
-      userAccount.updatedAt = now;
-      return this.userAccountModel.save(userAccount);
+      userAccount = this.normalizeWeappAccount(userAccount, openid, now);
+      return this.bindWeappAccountToUser(user, userAccount, now);
     }
 
     userAccount = new UserAccountEntity();
@@ -536,6 +590,29 @@ export class UserService {
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
 
+    return this.userAccountModel.save(userAccount);
+  }
+
+  private async bindWeappAccountToUser(
+    user: UserEntity,
+    userAccount: UserAccountEntity,
+    now: Date
+  ): Promise<UserAccountEntity> {
+    if (!this.isSameObjectId(userAccount.userId, user.id)) {
+      const boundUser = await this.findUserById(userAccount.userId);
+
+      if (boundUser?.phone || boundUser?.phoneVerified) {
+        throw new AppError(
+          'WEAPP_OPENID_BOUND_TO_OTHER_USER',
+          'wechat openid has been bound to another user',
+          409
+        );
+      }
+
+      userAccount.userId = user.id;
+    }
+
+    userAccount.updatedAt = now;
     return this.userAccountModel.save(userAccount);
   }
 
@@ -914,6 +991,26 @@ export class UserService {
     });
   }
 
+  private async findUserAccountById(
+    accountId: MongoObjectId
+  ): Promise<UserAccountEntity | null> {
+    const userAccountById = await this.userAccountModel.findOne({
+      where: {
+        id: accountId,
+      },
+    });
+
+    if (userAccountById) {
+      return userAccountById;
+    }
+
+    return this.userAccountModel.findOne({
+      where: {
+        _id: accountId,
+      } as never,
+    });
+  }
+
   private normalizePhone(rawPhone?: string): string {
     const phone = rawPhone?.trim();
 
@@ -1052,6 +1149,10 @@ export class UserService {
 
   private buildDefaultUserName(phone: string): string {
     return `天之灵用户${phone.slice(-4)}`;
+  }
+
+  private buildDefaultWeappUserName(openid: string): string {
+    return `天之灵用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
   private buildWeappAccount(openid: string): string {

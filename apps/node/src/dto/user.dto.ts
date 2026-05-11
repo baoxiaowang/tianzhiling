@@ -26,12 +26,20 @@ export class PasswordLoginDTO {
 export class WeappLoginDTO {
   @Rule(requiredStringRule.max(256))
   jsCode: string;
+
+  @Rule(RuleType.boolean().optional())
+  allowCreate?: boolean;
 }
 
 export class WeappPhoneLoginDTO {
   @Rule(requiredStringRule.max(256))
   jsCode: string;
 
+  @Rule(requiredStringRule.max(512))
+  phoneCode: string;
+}
+
+export class BindWeappPhoneDTO {
   @Rule(requiredStringRule.max(512))
   phoneCode: string;
 }
