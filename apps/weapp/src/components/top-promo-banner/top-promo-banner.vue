@@ -14,6 +14,7 @@
         class="top-promo-banner__image"
         :src="banner.imageUrl"
         mode="aspectFill"
+        @tap="handleBannerTap(banner)"
       />
     </swiper-item>
   </swiper>
@@ -26,11 +27,13 @@ export default {
 </script>
 
 <script setup lang="ts">
+import Taro from '@tarojs/taro'
 import { buildOssMediaUrl } from '@tzl/shared'
 
 interface PromoBannerItem {
   id: string
   imageUrl: string
+  link?: string
 }
 
 withDefaults(defineProps<{
@@ -39,10 +42,24 @@ withDefaults(defineProps<{
   banners: () => [
     {
       id: 'voice-clone',
-      imageUrl: buildOssMediaUrl('/weapp/Banner.png'),
+      imageUrl: buildOssMediaUrl('/weapp/post-banner-voice.png'),
+      link: '/pages/voice-package/index',
+    },
+    {
+      id: 'vip',
+      imageUrl: buildOssMediaUrl('/weapp/post-banner-vip.png'),
+      link: '/pages/vip-center/index',
     },
   ],
 })
+
+function handleBannerTap(banner: PromoBannerItem) {
+  if (!banner.link) {
+    return
+  }
+
+  void Taro.navigateTo({ url: banner.link })
+}
 </script>
 
 <style lang="scss">
