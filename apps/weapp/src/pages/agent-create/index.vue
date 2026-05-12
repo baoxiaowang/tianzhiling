@@ -1,28 +1,13 @@
 <template>
-  <page-scaffold
-    class="agent-create-start"
-    body-padding="0"
-    :safe-area-bottom="false"
-  >
-    <image
-      class="agent-create-start__bg"
-      :src="agentBgImage"
-      mode="aspectFill"
-    />
-    <image
-      class="agent-create-start__bubble"
-      :src="agentBubbleImage"
-      mode="widthFix"
-    />
+  <page-scaffold class="agent-create-start" body-padding="0" :safe-area-bottom="false">
+    <image class="agent-create-start__bg" :src="agentBgImage" mode="aspectFill" />
+    <image class="agent-create-start__bubble" :src="agentBubbleImage" mode="widthFix" />
     <view class="agent-create-start__shade" />
     <view class="agent-create-start__top" :style="topBarStyle">
       <back-capsule class="agent-create-start__capsule" />
     </view>
     <view class="agent-create-start__tap-zone" @tap="handleStart" />
-    <login-prompt-popup
-      v-model:visible="isLoginPromptVisible"
-      @login-success="handleLoginSuccess"
-    />
+    <login-prompt-popup v-model:visible="isLoginPromptVisible" @login-success="handleLoginSuccess" />
   </page-scaffold>
 </template>
 
@@ -98,20 +83,21 @@ async function handleLoginSuccess() {
 
 .agent-create-start__shade {
   pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(6, 8, 20, 0.1) 0%,
-    rgba(6, 8, 20, 0) 46%,
-    rgba(6, 8, 20, 0.12) 100%
-  );
+  background: linear-gradient(180deg,
+      rgba(6, 8, 20, 0.1) 0%,
+      rgba(6, 8, 20, 0) 46%,
+      rgba(6, 8, 20, 0.12) 100%);
 }
 
 .agent-create-start__bubble {
   position: absolute;
-  top: 60%; /* 大致在屏幕中间偏上/偏下，可以根据图片中“手心”的实际位置调整这个百分比 */
+  top: 50%;
+  /* 大致在屏幕中间偏上/偏下，可以根据图片中“手心”的实际位置调整这个百分比 */
   left: 50%;
-  margin-left: -112px; /* 宽度的一半，用于水平居中 */
-  width: 230px; /* 气泡的宽度，可以根据实际情况调整 */
+  margin-left: -95px;
+  /* 宽度的一半，用于水平居中 */
+  width: 200px;
+  /* 气泡的宽度，可以根据实际情况调整 */
   z-index: 1;
   animation: floatBubble 3.5s ease-in-out infinite;
 }
@@ -120,9 +106,11 @@ async function handleLoginSuccess() {
   0% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-20px);
   }
+
   100% {
     transform: translateY(0);
   }
