@@ -144,11 +144,31 @@ function handleVoiceTap() {
 
 <style lang="scss">
 .chat-message-bubble {
-  max-width: 264px;
+  position: relative;
+  max-width: 250px;
   padding: 10px 12px;
   border-radius: 10px;
   background: #ffffff;
   box-sizing: border-box;
+}
+
+.chat-message-bubble:not(.chat-message-bubble--image)::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+}
+
+.chat-message-bubble:not(.chat-message-bubble--user):not(.chat-message-bubble--image)::before {
+  left: -12px;
+  border-right-color: #ffffff;
+}
+
+.chat-message-bubble--user:not(.chat-message-bubble--image)::before {
+  right: -12px;
+  border-left-color: #95ec69;
 }
 
 .chat-message-bubble--user {

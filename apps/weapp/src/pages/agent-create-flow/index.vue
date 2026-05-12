@@ -15,10 +15,25 @@
       />
     </template>
 
+    <!-- 原来的图片逻辑 -->
+    <!--
     <image
       class="agent-create-flow__bg"
       :src="agentFlowImage"
       mode="aspectFill"
+    />
+    -->
+    <video
+      class="agent-create-flow__bg"
+      :src="agentFlowVideo"
+      :autoplay="true"
+      :loop="true"
+      :muted="true"
+      :controls="false"
+      object-fit="cover"
+      :show-play-btn="false"
+      :show-center-play-btn="false"
+      :enable-progress-gesture="false"
     />
     <view class="agent-create-flow__shade" />
 
@@ -167,7 +182,9 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { clearAuthSession } from '../../auth/session'
 import { resolvePublicAssetUrl } from '../../utils/public-asset'
 
-const agentFlowImage = resolvePublicAssetUrl('/public/weapp/agent.jpg')
+// 原来的逻辑：从后端请求
+// const agentFlowImage = resolvePublicAssetUrl('/public/weapp/agent.jpg')
+const agentFlowVideo = resolvePublicAssetUrl('/public/weapp/create-agent-bg.mp4')
 
 type AgentFormStep =
   | 'gender'

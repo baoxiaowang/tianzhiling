@@ -1,3 +1,4 @@
 {
-  "dart.flutterSdkPath": "/Users/baoxuwang/env-data/flutter"
+  "dart.flutterSdkPath": "/Users/baoxuwang/env-data/flutter",
+  "liveServer.settings.port": 5501
 }

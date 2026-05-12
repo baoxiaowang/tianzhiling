@@ -27,7 +27,14 @@
             </view>
           </template>
         </back-capsule>
-        <text class="chat-page__nav-title">{{ pageTitle }}</text>
+        <view class="chat-page__nav-title">
+          <template v-if="isWaitingAgentReply">
+            正在输入中{{ typingDots }}
+          </template>
+          <template v-else>
+            {{ pageTitle }}
+          </template>
+        </view>
       </view>
     </template>
 
@@ -134,17 +141,8 @@
             :class="{ 'chat-composer__icon-button--selected': isVoiceMode }"
             @tap="handleVoiceModeToggle"
           >
-            <view v-if="isVoiceMode" class="chat-composer__keyboard">
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--1" />
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--2" />
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--3" />
-              <view class="chat-composer__keyboard-space" />
-            </view>
-            <view v-else class="chat-composer__mic">
-              <view class="chat-composer__mic-head" />
-              <view class="chat-composer__mic-stem" />
-              <view class="chat-composer__mic-base" />
-            </view>
+            <view v-if="isVoiceMode" class="chat-composer__keyboard" />
+            <view v-else class="chat-composer__mic" />
           </view>
 
           <view
@@ -173,8 +171,6 @@
               :cursor="draftCursor"
               :adjust-position="false"
               cursor-spacing="16"
-              placeholder="微信"
-              placeholder-style="color: #999999;"
               @input="handleDraftInput"
               @confirm="handleSend"
               @focus="handleInputFocus"
@@ -188,11 +184,7 @@
             :class="{ 'chat-composer__icon-button--selected': isEmojiPanelVisible }"
             @tap="handleEmojiToggle"
           >
-            <view class="chat-composer__emoji">
-              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--left" />
-              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--right" />
-              <view class="chat-composer__emoji-mouth" />
-            </view>
+            <view class="chat-composer__emoji" />
           </view>
 
           <view
@@ -201,10 +193,7 @@
             :class="{ 'chat-composer__icon-button--selected': isMorePanelVisible }"
             @tap="handleMoreToggle"
           >
-            <view class="chat-composer__plus">
-              <view class="chat-composer__plus-line chat-composer__plus-line--horizontal" />
-              <view class="chat-composer__plus-line chat-composer__plus-line--vertical" />
-            </view>
+            <view class="chat-composer__plus" />
           </view>
 
           <view
@@ -278,7 +267,7 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidHide, useDidShow, useLoad, useUnload } from '@tarojs/taro'
 import type { ITouchEvent } from '@tarojs/components/types/common'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail } from '../../apis/agent'
@@ -462,11 +451,35 @@ const navMenus: NavMenuItem[] = [
     text: '联系人设置',
   },
 ]
-const pageTitle = computed(() => {
-  if (isWaitingAgentReply.value) {
-    return '正在输入...'
-  }
 
+const typingDots = ref('')
+let typingTimer: ReturnType<typeof setInterval> | null = null
+
+watch(isWaitingAgentReply, (isWaiting) => {
+  if (isWaiting) {
+    let count = 1
+    typingDots.value = '.'
+    typingTimer = setInterval(() => {
+      count = (count % 3) + 1
+      typingDots.value = '.'.repeat(count)
+    }, 400)
+  } else {
+    if (typingTimer) {
+      clearInterval(typingTimer)
+      typingTimer = null
+    }
+    typingDots.value = ''
+  }
+})
+
+useUnload(() => {
+  if (typingTimer) {
+    clearInterval(typingTimer)
+    typingTimer = null
+  }
+})
+
+const pageTitle = computed(() => {
   const trimmedName = agentName.value.trim()
   return trimmedName || '对话'
 })
@@ -1437,6 +1450,9 @@ function resolveVoiceDragTarget(point: TouchPoint): VoiceDragTarget {
 }
 
 function handleEmojiToggle() {
+  if (isVoiceMode.value) {
+    isVoiceMode.value = false
+  }
   markComposerPanelSwitching()
   isEmojiPanelVisible.value = !isEmojiPanelVisible.value
   if (isEmojiPanelVisible.value) {
@@ -2336,38 +2352,9 @@ function destroyVoiceDurationProbeContexts() {
   flex-shrink: 0;
 }
 
-.chat-composer__icon-button--selected .chat-composer__emoji {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__emoji-eye {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__emoji-mouth {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__plus-line {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__mic-head {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__mic-stem,
-.chat-composer__icon-button--selected .chat-composer__mic-base {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__keyboard {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__keyboard-key,
-.chat-composer__icon-button--selected .chat-composer__keyboard-space {
-  background: #07c160;
+.chat-composer__icon-button--selected .chat-composer__emoji,
+.chat-composer__icon-button--selected .chat-composer__plus {
+  background-color: #07c160;
 }
 
 .chat-composer__input-shell {
@@ -2462,131 +2449,31 @@ function destroyVoiceDurationProbeContexts() {
 .chat-composer__keyboard,
 .chat-composer__emoji,
 .chat-composer__plus {
-  position: relative;
   width: 28px;
   height: 28px;
+  background-color: #111111;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
 }
 
-.chat-composer__mic-head,
-.chat-composer__mic-stem,
-.chat-composer__mic-base,
-.chat-composer__keyboard-key,
-.chat-composer__keyboard-space,
-.chat-composer__emoji-eye,
-.chat-composer__emoji-mouth,
-.chat-composer__plus-line {
-  position: absolute;
-  box-sizing: border-box;
-}
-
-.chat-composer__mic-head {
-  left: 8px;
-  top: 3px;
-  width: 12px;
-  height: 16px;
-  border: 2px solid #5e5e5e;
-  border-radius: 10px;
-}
-
-.chat-composer__mic-stem {
-  left: 13px;
-  top: 19px;
-  width: 2px;
-  height: 5px;
-  background: #5e5e5e;
-  border-radius: 999px;
-}
-
-.chat-composer__mic-base {
-  left: 8px;
-  top: 23px;
-  width: 12px;
-  height: 3px;
-  border-radius: 999px;
-  background: #5e5e5e;
+.chat-composer__mic {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='10' y='2' width='8' height='17' rx='4'/><path d='M6 10v5a8 8 0 0 0 16 0v-5M14 23v4'/></svg>");
 }
 
 .chat-composer__keyboard {
-  border: 2px solid #5e5e5e;
-  border-radius: 4px;
-  box-sizing: border-box;
-}
-
-.chat-composer__keyboard-key {
-  top: 7px;
-  width: 3px;
-  height: 3px;
-  border-radius: 1px;
-  background: #5e5e5e;
-}
-
-.chat-composer__keyboard-key--1 {
-  left: 6px;
-}
-
-.chat-composer__keyboard-key--2 {
-  left: 12px;
-}
-
-.chat-composer__keyboard-key--3 {
-  left: 18px;
-}
-
-.chat-composer__keyboard-space {
-  left: 7px;
-  bottom: 6px;
-  width: 14px;
-  height: 3px;
-  border-radius: 999px;
-  background: #5e5e5e;
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='14' cy='14' r='11.5'/><path d='M9 10.5v.01M14 10.5v.01M19 10.5v.01M9 14.5v.01M14 14.5v.01M19 14.5v.01M12 19h4'/></svg>");
 }
 
 .chat-composer__emoji {
-  border: 2px solid #5e5e5e;
-  border-radius: 50%;
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='14' cy='14' r='11.5'/><circle cx='9.5' cy='11.5' r='1.8' fill='black' stroke='none'/><circle cx='18.5' cy='11.5' r='1.8' fill='black' stroke='none'/><path d='M8.5 16.5 a 6.5 6.5 0 0 0 11 0'/></svg>");
 }
 
-.chat-composer__emoji-eye {
-  top: 8px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #5e5e5e;
-}
-
-.chat-composer__emoji-eye--left {
-  left: 7px;
-}
-
-.chat-composer__emoji-eye--right {
-  right: 7px;
-}
-
-.chat-composer__emoji-mouth {
-  left: 7px;
-  bottom: 6px;
-  width: 10px;
-  height: 5px;
-  border-bottom: 2px solid #5e5e5e;
-  border-radius: 0 0 10px 10px;
-}
-
-.chat-composer__plus-line {
-  left: 50%;
-  top: 50%;
-  background: #5e5e5e;
-  border-radius: 999px;
-  transform: translate(-50%, -50%);
-}
-
-.chat-composer__plus-line--horizontal {
-  width: 18px;
-  height: 2px;
-}
-
-.chat-composer__plus-line--vertical {
-  width: 2px;
-  height: 18px;
+.chat-composer__plus {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 4v20M4 14h20'/></svg>");
 }
 
 @keyframes chat-spin {

@@ -19,7 +19,34 @@
       v-else
       class="moments-scroll"
     >
-      <top-promo-banner />
+      <view class="moments-banner-wrapper">
+        <swiper
+          class="moments-banner"
+          :autoplay="true"
+          :interval="5000"
+          :duration="600"
+          :circular="true"
+          @change="onBannerChange"
+        >
+          <swiper-item v-for="(banner, index) in banners" :key="index">
+            <image
+              class="moments-banner__image"
+              :src="banner"
+              mode="aspectFill"
+            />
+          </swiper-item>
+        </swiper>
+
+        <!-- 自定义指示点 -->
+        <view class="moments-banner__dots">
+          <view
+            v-for="(_, index) in banners"
+            :key="index"
+            class="moments-banner__dot"
+            :class="{ 'is-active': currentBannerIndex === index }"
+          />
+        </view>
+      </view>
 
       <view
         v-if="hasUnreadNotifications"
@@ -148,7 +175,6 @@ import { ApiException } from '../../api/api-exception'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -159,6 +185,11 @@ interface PageScaffoldController {
 const momentsDesign = {
   notificationAvatarUrl: 'https://www.figma.com/api/mcp/asset/f41f54cc-8bf1-440c-9c03-648deafeb2d1',
 } as const
+
+const banners = [
+  require('../../assets/images/banner-1.png'),
+  require('../../assets/images/banner-2.png'),
+]
 
 const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
@@ -176,6 +207,7 @@ const shouldKeepCommentComposerOnBlur = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
 const likingPostIds = ref<string[]>([])
+const currentBannerIndex = ref(0)
 
 let refreshDataPromise: Promise<void> | null = null
 
@@ -204,6 +236,10 @@ const commentComposerStyle = computed(() => {
       : 'translateY(0)',
   }
 })
+
+function onBannerChange(event: { detail?: { current?: number } }) {
+  currentBannerIndex.value = event.detail?.current ?? 0
+}
 
 function showToast(title: string) {
   void Taro.showToast({
@@ -601,6 +637,47 @@ useDidHide(() => {
   min-height: 100%;
   padding-bottom: 128px;
   background: $tzl-color-surface-base;
+}
+
+.moments-banner-wrapper {
+  position: relative;
+  width: 100%;
+  height: 220px;
+}
+
+.moments-banner {
+  width: 100%;
+  height: 100%;
+}
+
+.moments-banner__image {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.moments-banner__dots {
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+}
+
+.moments-banner__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: rgba(0, 0, 0, 0.4);
+  transition: all 0.3s ease;
+}
+
+.moments-banner__dot.is-active {
+  background-color: #ffffff;
 }
 
 .moments-notice {

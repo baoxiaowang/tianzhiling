@@ -6,8 +6,13 @@
   >
     <image
       class="agent-create-start__bg"
-      :src="agentStartImage"
+      :src="agentBgImage"
       mode="aspectFill"
+    />
+    <image
+      class="agent-create-start__bubble"
+      :src="agentBubbleImage"
+      mode="widthFix"
     />
     <view class="agent-create-start__shade" />
     <view class="agent-create-start__top" :style="topBarStyle">
@@ -37,7 +42,10 @@ import { authSession, restoreAuthSession } from '../../auth/session'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { resolvePublicAssetUrl } from '../../utils/public-asset'
 
-const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
+// 原来的逻辑：从后端请求
+// const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
+const agentBgImage = require('../../assets/images/create-background.png')
+const agentBubbleImage = require('../../assets/images/create-bubble.png')
 const isLoginPromptVisible = ref(false)
 const menuButtonMetrics = readMenuButtonMetrics()
 const topBarStyle = {
@@ -97,6 +105,29 @@ async function handleLoginSuccess() {
     rgba(6, 8, 20, 0.12) 100%
   );
 }
+
+.agent-create-start__bubble {
+  position: absolute;
+  top: 60%; /* 大致在屏幕中间偏上/偏下，可以根据图片中“手心”的实际位置调整这个百分比 */
+  left: 50%;
+  margin-left: -112px; /* 宽度的一半，用于水平居中 */
+  width: 230px; /* 气泡的宽度，可以根据实际情况调整 */
+  z-index: 1;
+  animation: floatBubble 3.5s ease-in-out infinite;
+}
+
+@keyframes floatBubble {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
 
 .agent-create-start__top {
   position: relative;

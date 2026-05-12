@@ -19,9 +19,19 @@
       </text>
     </view>
 
-    <view v-else-if="session" class="contacts-page">
-      <scroll-view scroll-y class="contacts-list-scroll">
-        <top-promo-banner />
+    <view
+      v-else-if="session"
+      class="contacts-page"
+      @touchstart="handleGlobalTouchStart"
+      @touchmove="handleGlobalTouchMove"
+      @touchend="handleGlobalTouchEnd"
+    >
+      <scroll-view
+        scroll-y
+        class="contacts-list-scroll"
+        @scroll="handleScroll"
+      >
+        <top-promo-banner ref="promoBannerRef" />
 
         <view v-if="isContactsLoading" class="contacts-feedback contacts-feedback--loading">
           <view class="contacts-feedback__spinner" />
@@ -35,14 +45,12 @@
 
         <view v-else-if="!conversations.length" class="contacts-list">
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
-            <view class="contacts-create-entry__avatar">
-              <view class="contacts-create-entry__halo" />
-              <text class="contacts-create-entry__plus">+</text>
-            </view>
+            <image class="contacts-create-entry__avatar-img" src="../../assets/images/create-orb.png" mode="aspectFill" />
             <view class="contacts-create-entry__content">
               <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+              <text class="contacts-create-entry__desc">通过对话创建 TA 的天之灵</text>
             </view>
+            <view class="contacts-create-entry__right-icon" />
           </view>
 
           <view class="contacts-feedback contacts-feedback--empty">
@@ -59,6 +67,7 @@
           >
             <view
               class="contacts-item"
+              :class="{ 'contacts-item--default': conversation.agentIsDefault }"
               @tap="handleConversationTap(conversation)"
             >
               <view
@@ -107,14 +116,12 @@
           </nut-swipe>
 
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
-            <view class="contacts-create-entry__avatar">
-              <view class="contacts-create-entry__halo" />
-              <text class="contacts-create-entry__plus">+</text>
-            </view>
+            <image class="contacts-create-entry__avatar-img" src="../../assets/images/create-orb.png" mode="aspectFill" />
             <view class="contacts-create-entry__content">
               <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+              <text class="contacts-create-entry__desc">通过对话创建 TA 的天之灵</text>
             </view>
+            <view class="contacts-create-entry__right-icon" />
           </view>
         </view>
       </scroll-view>
@@ -148,6 +155,49 @@ const hasLoadedContacts = ref(false)
 let refreshContactsPromise: Promise<void> | null = null
 
 const session = computed(() => authSession.value)
+
+const promoBannerRef = ref<InstanceType<typeof TopPromoBanner> | null>(null)
+
+let scrollTop = 0
+let startY = 0
+let currentY = 0
+let isPulling = false
+
+function handleScroll(e: any) {
+  scrollTop = e.detail.scrollTop
+}
+
+function handleGlobalTouchStart(e: any) {
+  if (e.touches && e.touches.length > 0) {
+    startY = e.touches[0].clientY
+    currentY = startY
+    if (scrollTop <= 10) {
+      isPulling = true
+    } else {
+      isPulling = false
+    }
+  }
+}
+
+function handleGlobalTouchMove(e: any) {
+  if (!isPulling) return
+  if (e.touches && e.touches.length > 0) {
+    currentY = e.touches[0].clientY
+  }
+}
+
+function handleGlobalTouchEnd() {
+  if (!isPulling) return
+  const deltaY = currentY - startY
+  if (Math.abs(deltaY) > 30) {
+    if (deltaY > 0) {
+      promoBannerRef.value?.openPanel()
+    } else if (deltaY < 0) {
+      promoBannerRef.value?.closePanel()
+    }
+  }
+  isPulling = false
+}
 
 function handleContactsRetry() {
   void refreshContactsData({ showLoading: true })
@@ -361,35 +411,27 @@ useDidShow(() => {
   background: #f0f2f5;
 }
 
-.contacts-create-entry__avatar {
-  position: relative;
+.contacts-create-entry__avatar-img {
   flex-shrink: 0;
   width: 48px;
   height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #fff7ed 0%, #fed7aa 45%, #fb923c 100%);
+  border-radius: 50%;
+  background: #f0f2f5;
 }
 
-.contacts-create-entry__halo {
-  position: absolute;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.82);
-  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.16);
-}
-
-.contacts-create-entry__plus {
-  position: relative;
-  z-index: 1;
-  color: #ffffff;
-  font-size: 28px;
-  line-height: 32px;
-  font-weight: 300;
+.contacts-create-entry__right-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  background-color: #a0a5af;
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14M5 12h14'/></svg>");
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14M5 12h14'/></svg>");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
 }
 
 .contacts-create-entry__content {
@@ -449,6 +491,10 @@ useDidShow(() => {
   min-height: 72px;
   padding: 0 16px;
   background: $tzl-color-surface-base;
+}
+
+.contacts-item--default {
+  background: #f4f4f4;
 }
 
 .contacts-item::after {

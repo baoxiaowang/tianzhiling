@@ -38,6 +38,7 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     outputRoot: 'dist/' + process.env.TARO_ENV,
     plugins: ['@tarojs/plugin-html'],
     defineConstants: {
+      'process.env': JSON.stringify(process.env)
     },
     copy: {
       patterns: [
@@ -66,6 +67,7 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
         enable: true,
       },
       webpackChain: (chain) => {
+        
         chain.merge({
           plugin: {
             install: {
@@ -87,6 +89,14 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
         chain.plugin('unplugin-vue-components').use(Components({
           resolvers: [NutUIResolver({taro: true})]
         }))
+        // chain.plugin('define').tap((args) => {
+        //   args['process'] = JSON.stringify({
+        //     env: {
+        //       NODE_ENV: process.env.NODE_ENV || 'development'
+        //     }
+        //   })
+        //   return args
+        // })
       },
       postcss: {
         pxtransform: {
