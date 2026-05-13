@@ -2,7 +2,10 @@ import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import * as bullmq from '@midwayjs/bullmq';
-import type { ChatCompletion } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletion,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
@@ -1004,7 +1007,7 @@ export class PostService {
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),
       agent,
-      momentDetail: this.buildMomentDetail(post, user),
+      momentDetail: await this.buildMomentDetail(post, user),
       commentContent: this.buildMomentCommentContext(existingComments),
       message: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
     });
@@ -1100,14 +1103,103 @@ export class PostService {
       .trim();
   }
 
-  private buildMomentDetail(post: PostEntity, user: UserEntity): string {
+  private async buildMomentDetail(
+    post: PostEntity,
+    user: UserEntity
+  ): Promise<string> {
     const imageCount = Array.isArray(post.images) ? post.images.length : 0;
+    const imageSummaries = await this.describePostImages(post);
 
     return [
       `发布者：${user.name?.trim() || '对方'}`,
       `正文：${post.content?.trim() || '无正文'}`,
       `图片数量：${imageCount}`,
-    ].join('\n');
+      imageSummaries.length > 0
+        ? `图片内容：\n${imageSummaries
+            .map((summary, index) => `${index + 1}. ${summary}`)
+            .join('\n')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private async describePostImages(post: PostEntity): Promise<string[]> {
+    const images = Array.isArray(post.images)
+      ? post.images
+          .map(image => (typeof image === 'string' ? image.trim() : ''))
+          .filter(Boolean)
+      : [];
+
+    if (images.length === 0) {
+      return [];
+    }
+
+    const results = await Promise.all(
+      images.map((image, index) =>
+        this.describePostImage(image, index).catch(() => '')
+      )
+    );
+
+    return results.map(result => result.trim()).filter(Boolean);
+  }
+
+  private async describePostImage(
+    image: string,
+    index: number
+  ): Promise<string> {
+    const imageUrl = this.postImageService.resolveForResponse(image).trim();
+
+    if (!/^https?:\/\//i.test(imageUrl)) {
+      this.logger.warn(
+        '[post-remind-reply] skip image analysis due to invalid image url, postImageIndex=%s',
+        index
+      );
+      return '';
+    }
+
+    try {
+      const response = await this.openAIService.createVisionChatCompletion({
+        model: this.openAIService.getVisionModel(),
+        temperature: 0.2,
+        topP: 0.8,
+        reasoningSplit: false,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是一个朋友圈图片理解助手。请准确描述图片中可见的主体、场景、动作、文字、情绪和能帮助评论的重点。避免猜测人物身份、关系、姓名或职业，不要回答“这是谁”。只描述肉眼可见内容，使用简洁中文，控制在80字内，不要编造看不见的内容。',
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: imageUrl,
+                },
+              },
+              {
+                type: 'text',
+                text: '请理解这张朋友圈图片，并给出可用于自然评论的简洁描述。',
+              },
+            ],
+          } as unknown as ChatCompletionMessageParam,
+        ],
+      });
+
+      return typeof response.choices?.[0]?.message?.content === 'string'
+        ? response.choices[0].message.content.trim()
+        : '';
+    } catch (error) {
+      this.logger.warn(
+        '[post-remind-reply] image analysis failed, postImageIndex=%s, url=%s, reason=%s',
+        index,
+        imageUrl,
+        error instanceof Error ? error.message : String(error)
+      );
+      return '';
+    }
   }
 
   private buildMomentCommentContext(comments: PostCommentEntity[]): string {

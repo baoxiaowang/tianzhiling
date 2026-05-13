@@ -67,6 +67,23 @@ function createUser(): UserEntity {
   return user;
 }
 
+function createPost(overrides: Partial<PostEntity> = {}): PostEntity {
+  const post = new PostEntity();
+
+  Object.assign(post, {
+    id: new MongoObjectId(POST_ID),
+    userId: new MongoObjectId(USER_ID),
+    content: '今天去公园散步',
+    images: [],
+    remindAgentIds: [],
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return post;
+}
+
 function createService(agents: AgentEntity[] = []) {
   const service = new PostService();
   const savedPosts: PostEntity[] = [];
@@ -120,10 +137,28 @@ function createService(agents: AgentEntity[] = []) {
   } as any;
   service.postImageService = {
     normalizeForStorage: jest.fn((value: string) => value),
-    resolveForResponse: jest.fn((value: string) => value),
+    resolveForResponse: jest.fn((value: string) =>
+      /^https?:\/\//i.test(value) ? value : `https://cdn.example.com/${value}`
+    ),
   } as any;
   service.bullmqFramework = {
     getQueue: jest.fn(() => ({ addJobToQueue })),
+  } as any;
+  service.commentModel = {
+    find: jest.fn(async () => []),
+  } as any;
+  service.openAIService = {
+    getVisionModel: jest.fn(() => 'vision-model'),
+    createVisionChatCompletion: jest.fn(),
+    generateText: jest.fn(async () => ({
+      content: '花开得真好看呢',
+      reasoning: [],
+      response: {},
+    })),
+  } as any;
+  service.logger = {
+    warn: jest.fn(),
+    info: jest.fn(),
   } as any;
 
   return {
@@ -185,5 +220,49 @@ describe('PostService createPost remind agent fallback', () => {
     expect(result.remindAgentIds).toEqual([]);
     expect(savedPosts[0].remindAgentIds).toEqual([]);
     expect(addJobToQueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('PostService moment image summaries', () => {
+  it('adds successful image summaries to the moment prompt and filters failed images', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const user = createUser();
+    const post = createPost({
+      images: ['moments/flower.jpg', 'moments/broken.jpg'],
+    });
+    const { service } = createService([agent]);
+    const createVisionChatCompletion = service.openAIService
+      .createVisionChatCompletion as jest.Mock;
+    const generateText = service.openAIService.generateText as jest.Mock;
+
+    createVisionChatCompletion
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: '画面里有盛开的花和公园步道，氛围轻松明亮。',
+            },
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('vision failed'));
+
+    const reply = await (service as any).generateAgentPostReply(
+      post,
+      user,
+      agent
+    );
+
+    expect(reply).toBe('花开得真好看呢');
+    expect(createVisionChatCompletion).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(1);
+
+    const systemPrompt = generateText.mock.calls[0][0].systemPrompt as string;
+    expect(systemPrompt).toContain('图片数量：2');
+    expect(systemPrompt).toContain('图片内容：');
+    expect(systemPrompt).toContain(
+      '画面里有盛开的花和公园步道，氛围轻松明亮。'
+    );
+    expect(systemPrompt).not.toContain('vision failed');
   });
 });
