@@ -15,10 +15,25 @@
       />
     </template>
 
-    <image
+    <video
+      :id="agentFlowVideoId"
       class="agent-create-flow__bg"
-      :src="agentFlowImage"
-      mode="aspectFill"
+      :src="agentFlowVideo"
+      :poster="agentFlowVideoCover"
+      autoplay
+      :loop="true"
+      :muted="true"
+      object-fit="cover"
+      :controls="false"
+      :show-center-play-btn="false"
+      :show-play-btn="false"
+      :show-fullscreen-btn="false"
+      :enable-progress-gesture="false"
+      :enable-play-gesture="false"
+      :vslide-gesture="false"
+      :show-mute-btn="false"
+      @loadedmetadata="playAgentFlowVideo"
+      @ended="restartAgentFlowVideo"
     />
     <view class="agent-create-flow__shade" />
 
@@ -153,7 +168,7 @@ export default {
 </script>
 
 <script setup lang="ts">
-import Taro, { useDidHide } from '@tarojs/taro'
+import Taro, { useDidHide, useDidShow } from '@tarojs/taro'
 import { computed, nextTick, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
@@ -165,9 +180,10 @@ import { uploadLocalImage } from '../../apis/storage'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { clearAuthSession } from '../../auth/session'
-import { resolvePublicAssetUrl } from '../../utils/public-asset'
 
-const agentFlowImage = resolvePublicAssetUrl('/public/weapp/agent.jpg')
+const agentFlowVideoId = 'agent-create-flow-bg-video'
+const agentFlowVideo = 'https://oss.soullink.top/weapp/agent-bg.mp4'
+const agentFlowVideoCover = 'https://oss.soullink.top/weapp/agent-bg-cover.png'
 
 type AgentFormStep =
   | 'gender'
@@ -354,6 +370,28 @@ function resetKeyboardState() {
   isInputFocused.value = false
   keyboardHeight.value = 0
   void Taro.hideKeyboard()
+}
+
+function playAgentFlowVideo() {
+  void nextTick(() => {
+    try {
+      Taro.createVideoContext(agentFlowVideoId).play()
+    } catch {
+      // The video may not be ready yet; autoplay and loadedmetadata will retry.
+    }
+  })
+}
+
+function restartAgentFlowVideo() {
+  void nextTick(() => {
+    try {
+      const videoContext = Taro.createVideoContext(agentFlowVideoId)
+      videoContext.seek(0)
+      videoContext.play()
+    } catch {
+      // The video may not be ready yet; loop and didShow will retry.
+    }
+  })
 }
 
 function isTextInputStepKey(step?: AgentFormStep) {
@@ -650,6 +688,10 @@ async function submitCreation() {
 useDidHide(() => {
   resetKeyboardState()
 })
+
+useDidShow(() => {
+  playAgentFlowVideo()
+})
 </script>
 
 <style lang="scss">
@@ -680,6 +722,11 @@ page {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+.agent-create-flow__bg {
+  pointer-events: none;
+  object-fit: cover;
 }
 
 .agent-create-flow__shade {

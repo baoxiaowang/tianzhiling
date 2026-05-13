@@ -28,6 +28,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     TopPromoBanner: typeof import('./src/components/top-promo-banner/top-promo-banner.vue')['default']
+    VoicePackagePaymentPanel: typeof import('./src/components/voice-package-payment-panel/voice-package-payment-panel.vue')['default']
     VoicePackageSheet: typeof import('./src/components/voice-package-sheet/voice-package-sheet.vue')['default']
   }
 }

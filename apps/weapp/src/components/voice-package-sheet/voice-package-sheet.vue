@@ -18,14 +18,20 @@
         class="voice-package-sheet__trial"
         :class="{
           'voice-package-sheet__trial--selected': selectedPackageId === featuredPackage.id,
-          'voice-package-sheet__trial--disabled': disabled,
+          'voice-package-sheet__trial--disabled': isPackageLocked(featuredPackage),
         }"
         @tap="handleSelect(featuredPackage.id)"
       >
         <text class="voice-package-sheet__trial-title">
           {{ displayPackageName(featuredPackage) }}
         </text>
-        <view class="voice-package-sheet__trial-corner">
+        <text
+          v-if="getPackageStateText(featuredPackage)"
+          class="voice-package-sheet__trial-status"
+        >
+          {{ getPackageStateText(featuredPackage) }}
+        </text>
+        <view v-else class="voice-package-sheet__trial-corner">
           <view class="voice-package-sheet__trial-corner-text-wrap">
             <text>新人特惠</text>
           </view>
@@ -39,15 +45,21 @@
           class="voice-package-sheet__option"
           :class="{
             'voice-package-sheet__option--selected': selectedPackageId === item.id,
-            'voice-package-sheet__option--disabled': disabled,
+            'voice-package-sheet__option--disabled': isPackageLocked(item),
           }"
           @tap="handleSelect(item.id)"
         >
           <text class="voice-package-sheet__option-name">
             {{ displayPackageName(item) }}
           </text>
-          <text class="voice-package-sheet__option-price">
-            {{ formatPrice(item.priceAmount) }}
+          <text
+            class="voice-package-sheet__option-price"
+            :class="{
+              'voice-package-sheet__option-price--status':
+                Boolean(getPackageStateText(item)),
+            }"
+          >
+            {{ getPackageStateText(item) || formatPrice(item.priceAmount) }}
           </text>
         </view>
       </view>
@@ -66,7 +78,10 @@ export default {
 <script setup lang="ts">
 import { computed } from 'vue'
 import { buildOssMediaUrl } from '@tzl/shared'
-import type { VoicePackageRecord } from '../../apis/voice-package'
+import type {
+  VoicePackageRecord,
+  VoiceTrainingTaskRecord,
+} from '../../apis/voice-package'
 
 const voicePackageHeroImage = buildOssMediaUrl('/weapp/voice_banner.png')
 
@@ -74,12 +89,13 @@ const props = withDefaults(
   defineProps<{
     packages: VoicePackageRecord[]
     selectedPackageId?: string
+    task?: VoiceTrainingTaskRecord
     disabled?: boolean
   }>(),
   {
     selectedPackageId: '',
     disabled: false,
-  }
+  },
 )
 
 const emit = defineEmits<{
@@ -90,11 +106,37 @@ const featuredPackage = computed(() => props.packages[0])
 const optionPackages = computed(() => props.packages.slice(1))
 
 function handleSelect(packageId: string) {
-  if (props.disabled) {
+  const voicePackage = props.packages.find((item) => item.id === packageId)
+
+  if (!voicePackage || isPackageLocked(voicePackage)) {
     return
   }
 
   emit('select', packageId)
+}
+
+function getPackageTask(voicePackage: VoicePackageRecord) {
+  if (!props.task) {
+    return undefined
+  }
+
+  if (props.task.voicePackageId === voicePackage.id) {
+    return props.task
+  }
+
+  return props.task.voicePackageCode === voicePackage.code ? props.task : undefined
+}
+
+function isPackagePaid(voicePackage: VoicePackageRecord) {
+  return getPackageTask(voicePackage)?.status === 'paid'
+}
+
+function isPackageLocked(voicePackage: VoicePackageRecord) {
+  return props.disabled || isPackagePaid(voicePackage)
+}
+
+function getPackageStateText(voicePackage: VoicePackageRecord) {
+  return isPackagePaid(voicePackage) ? '已购买' : ''
 }
 
 function displayPackageName(voicePackage: VoicePackageRecord) {
@@ -182,6 +224,14 @@ function formatPrice(amount: number) {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.voice-package-sheet__trial-status {
+  margin-top: 2px;
+  color: #ff1a00;
+  font-size: 18px;
+  line-height: 22px;
+  font-weight: 600;
 }
 
 .voice-package-sheet__trial-corner {
@@ -284,6 +334,10 @@ function formatPrice(amount: number) {
   line-height: 22px;
   font-weight: 600;
   letter-spacing: 0.32px;
+}
+
+.voice-package-sheet__option-price--status {
+  color: #ff1a00;
 }
 
 .voice-package-sheet__empty {

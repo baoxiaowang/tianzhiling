@@ -20,7 +20,7 @@
     </view>
 
     <view v-else-if="session" class="contacts-page">
-      <scroll-view scroll-y class="contacts-list-scroll">
+
         <top-promo-banner />
 
         <view v-if="isContactsLoading" class="contacts-feedback contacts-feedback--loading">
@@ -130,7 +130,6 @@
             </view>
           </view>
         </view>
-      </scroll-view>
     </view>
   </page-scaffold>
 </template>
@@ -346,8 +345,9 @@ useDidShow(() => {
 .contacts-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: $tzl-color-surface-base;
+  box-sizing: border-box;
 }
 
 .contacts-list-scroll {

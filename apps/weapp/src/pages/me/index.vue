@@ -214,6 +214,13 @@ async function handleMenuTap(title: string) {
     return
   }
 
+  if (title === '声音模型') {
+    await Taro.navigateTo({
+      url: '/pages/voice-package/index',
+    })
+    return
+  }
+
   if (title === '联系客服') {
     await Taro.navigateTo({
       url: '/pages/customer-service/index',

@@ -134,7 +134,8 @@
         <voice-package-sheet
           :packages="voicePackages"
           :selected-package-id="selectedVoicePackageId"
-          :disabled="isPayingVoicePackage || hasActiveVoiceTask"
+          :task="voicePackageTask"
+          :disabled="isPayingVoicePackage"
           @select="handleVoicePackageSelect"
         />
         <view class="agent-detail-voice-popup__payment">
@@ -143,7 +144,7 @@
             shape="round"
             type="primary"
             class="agent-detail-voice-popup__button"
-            :disabled="!selectedVoicePackage || isPayingVoicePackage || hasActiveVoiceTask"
+            :disabled="!selectedVoicePackage || isPayingVoicePackage || selectedVoicePackagePaid"
             :loading="isPayingVoicePackage"
             @click="handleVoicePackagePay"
           >
@@ -177,6 +178,7 @@ import {
 import {
   getAgentVoicePackageCenter,
   type AgentVoicePackageCenter,
+  type VoicePackageRecord,
 } from '../../apis/voice-package'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -247,11 +249,19 @@ const voicePackageStatus = computed(() => {
   return packageCount ? `${packageCount}个可选` : ''
 })
 const voicePackages = computed(() => voicePackageCenter.value?.packages ?? [])
+const voicePackageTask = computed(() => voicePackageCenter.value?.task)
 const selectedVoicePackage = computed(() => {
   return voicePackages.value.find((item) => item.id === selectedVoicePackageId.value)
 })
+const selectedVoicePackagePaid = computed(() => {
+  if (!selectedVoicePackage.value) {
+    return false
+  }
+
+  return isVoicePackagePaid(selectedVoicePackage.value)
+})
 const voicePackagePaymentText = computed(() => {
-  if (hasActiveVoiceTask.value) {
+  if (selectedVoicePackagePaid.value) {
     return '已支付，等待人工处理'
   }
 
@@ -260,16 +270,6 @@ const voicePackagePaymentText = computed(() => {
   }
 
   return `支付 ${formatVoicePackagePrice(selectedVoicePackage.value.priceAmount)} 为TA重塑声音`
-})
-const hasActiveVoiceTask = computed(() => {
-  const status = voicePackageCenter.value?.task?.status
-
-  return Boolean(
-    status &&
-      status !== 'completed' &&
-      status !== 'failed' &&
-      status !== 'refunded',
-  )
 })
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const avatarFallbackClass = computed(() => {
@@ -694,8 +694,9 @@ async function handleVoicePackageSelect(packageId: string) {
     return
   }
 
-  if (hasActiveVoiceTask.value) {
-    showToast('当前智能体已有声音训练任务')
+  const voicePackage = voicePackages.value.find((item) => item.id === packageId)
+
+  if (!voicePackage || isVoicePackagePaid(voicePackage)) {
     return
   }
 
@@ -706,6 +707,11 @@ async function handleVoicePackagePay() {
   const voicePackage = selectedVoicePackage.value
 
   if (!voicePackage || !agentId.value || isPayingVoicePackage.value) {
+    return
+  }
+
+  if (isVoicePackagePaid(voicePackage)) {
+    showToast('该声音套餐已购买')
     return
   }
 
@@ -741,6 +747,16 @@ async function handleVoicePackagePay() {
   } finally {
     isPayingVoicePackage.value = false
   }
+}
+
+function isVoicePackagePaid(voicePackage: VoicePackageRecord) {
+  const task = voicePackageTask.value
+
+  if (!task || task.status !== 'paid') {
+    return false
+  }
+
+  return task.voicePackageId === voicePackage.id || task.voicePackageCode === voicePackage.code
 }
 
 function formatVoiceTaskStatus(status: string) {

@@ -255,7 +255,9 @@ const bodyStyle = computed(() => {
 
 .page-scaffold__body--scroll {
   flex: 1;
+  height: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .page-scaffold__body > * {
