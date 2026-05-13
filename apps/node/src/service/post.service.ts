@@ -868,17 +868,17 @@ export class PostService {
     ownerUserId: MongoObjectId,
     rawAgentIds?: string[]
   ): Promise<string[]> {
-    if (!Array.isArray(rawAgentIds)) {
-      return [];
-    }
-
     const remindAgentIds = Array.from(
       new Set(
-        rawAgentIds
+        (Array.isArray(rawAgentIds) ? rawAgentIds : [])
           .map(agentId => (typeof agentId === 'string' ? agentId.trim() : ''))
           .filter(Boolean)
       )
     );
+
+    if (remindAgentIds.length === 0) {
+      return this.resolveDefaultRemindAgentIds(ownerUserId);
+    }
 
     if (remindAgentIds.length > 50) {
       throw new AppError(
@@ -915,6 +915,34 @@ export class PostService {
     }
 
     return validAgentIds;
+  }
+
+  private async resolveDefaultRemindAgentIds(
+    ownerUserId: MongoObjectId
+  ): Promise<string[]> {
+    const defaultAgent = await this.agentModel.findOne({
+      where: {
+        createdUserId: ownerUserId,
+        isDefault: true,
+      },
+    });
+
+    if (defaultAgent) {
+      return [this.stringifyObjectId(defaultAgent.id)];
+    }
+
+    const agents = await this.agentModel.find({
+      where: {
+        createdUserId: ownerUserId,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+      take: 1,
+    });
+    const fallbackAgent = agents[0];
+
+    return fallbackAgent ? [this.stringifyObjectId(fallbackAgent.id)] : [];
   }
 
   private async enqueueRemindReplyJobs(post: PostEntity): Promise<void> {
