@@ -148,6 +148,7 @@ function createService(agents: AgentEntity[] = []) {
     find: jest.fn(async () => []),
   } as any;
   service.openAIService = {
+    getDefaultModel: jest.fn(() => 'text-model'),
     getVisionModel: jest.fn(() => 'vision-model'),
     createVisionChatCompletion: jest.fn(),
     generateText: jest.fn(async () => ({
@@ -257,9 +258,17 @@ describe('PostService moment image summaries', () => {
     expect(createVisionChatCompletion).toHaveBeenCalledTimes(2);
     expect(generateText).toHaveBeenCalledTimes(1);
 
+    const visionSystemPrompt = createVisionChatCompletion.mock.calls[0][0]
+      .messages[0].content as string;
+    expect(visionSystemPrompt).toContain('浅层理解助手');
+    expect(visionSystemPrompt).toContain('不要推断或猜测人物身份');
+    expect(visionSystemPrompt).toContain('照片里的人不一定是发布用户本人');
+    expect(visionSystemPrompt).toContain('亲属关系');
+
     const systemPrompt = generateText.mock.calls[0][0].systemPrompt as string;
-    expect(systemPrompt).toContain('图片数量：2');
-    expect(systemPrompt).toContain('图片内容：');
+    expect(systemPrompt).toContain('浅层视觉摘要');
+    expect(systemPrompt).toContain('不要根据图片推断');
+    expect(systemPrompt).toContain('这是用户本人');
     expect(systemPrompt).toContain(
       '画面里有盛开的花和公园步道，氛围轻松明亮。'
     );

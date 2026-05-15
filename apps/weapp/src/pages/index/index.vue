@@ -658,6 +658,8 @@ useDidHide(() => {
   min-height: 100%;
   padding-bottom: 128px;
   background: $tzl-color-surface-base;
+  display: flex;
+  flex-direction: column;
 }
 
 .moments-notice {

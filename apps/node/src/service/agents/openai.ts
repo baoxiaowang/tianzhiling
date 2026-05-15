@@ -53,6 +53,9 @@ export interface OpenAIChatRequest
   presencePenalty?: number;
   frequencyPenalty?: number;
   reasoningSplit?: boolean;
+  thinking?: {
+    type: 'enabled' | 'disabled';
+  };
 }
 
 export interface OpenAITextRequest {
@@ -129,7 +132,7 @@ export class OpenAIService {
   }
 
   getDefaultModel(): string {
-    return this.openAIConfig?.model?.trim() || 'MiniMax-M2.5';
+    return this.openAIConfig?.model?.trim() || '';
   }
 
   getVisionModel(): string {
@@ -299,6 +302,9 @@ export class OpenAIService {
     });
 
     const response = await this.createChatCompletion({
+      thinking: {
+        type: 'disabled',
+      },
       messages,
       model: request.model,
       temperature: request.temperature,

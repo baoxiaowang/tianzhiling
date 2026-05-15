@@ -21,7 +21,11 @@ import {
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { OpenAIService } from './agents/openai';
-import { buildMomentsSystemPrompt } from '../promte/moments';
+import {
+  buildMomentsSystemPrompt,
+  MomentCommentContext,
+  MomentImageContext,
+} from '../promte/moments';
 import { PostImageService } from './post-image.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
@@ -447,6 +451,7 @@ export class PostService {
       return;
     }
 
+    // 查看是否是评论互动
     const existing = await this.commentModel.findOne({
       where: {
         postId: post.id,
@@ -1001,19 +1006,39 @@ export class PostService {
       order: {
         createdAt: 'ASC',
       },
-      take: 10,
     });
+    const momentImages = await this.buildMomentImageContext(post);
+    const commentContext = this.buildMomentCommentContext(existingComments);
+    const latestUserComment = [...commentContext]
+      .reverse()
+      .find(comment => comment.type === PostCommentType.user);
     const systemPrompt = buildMomentsSystemPrompt({
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),
       agent,
-      momentDetail: await this.buildMomentDetail(post, user),
-      commentContent: this.buildMomentCommentContext(existingComments),
-      message: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+      context: {
+        moment: {
+          id: this.stringifyObjectId(post.id),
+          userId: this.stringifyObjectId(post.userId),
+          authorName: user.name?.trim() || '天之灵用户',
+          content: post.content?.trim() || '',
+          images: momentImages,
+          createdAt: post.createdAt?.toISOString?.() ?? '',
+        },
+        comments: commentContext,
+        latestUserComment: latestUserComment ?? null,
+        userRepliedComment: latestUserComment?.repliedComment
+          ? commentContext.find(
+              comment => comment.id === latestUserComment.repliedComment?.id
+            ) ?? null
+          : null,
+        task: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+      },
     });
     const result = await this.openAIService.generateText({
       systemPrompt,
       prompt: '请直接输出一条朋友圈评论正文。',
+      model: this.openAIService.getDefaultModel(),
       temperature: 1.35,
       topP: 0.98,
       presencePenalty: 0.9,
@@ -1078,7 +1103,7 @@ export class PostService {
       .replace(/```(?:json)?/gi, ' ')
       .replace(/```/g, ' ')
       .replace(/<\/fenge>/gi, ' ')
-      .replace(/^\s*[\-#*\d.]+\s*/g, '')
+      .replace(/^\s*[-#*\d.]+\s*/g, '')
       .replace(/[“”"]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -1103,28 +1128,9 @@ export class PostService {
       .trim();
   }
 
-  private async buildMomentDetail(
-    post: PostEntity,
-    user: UserEntity
-  ): Promise<string> {
-    const imageCount = Array.isArray(post.images) ? post.images.length : 0;
-    const imageSummaries = await this.describePostImages(post);
-
-    return [
-      `发布者：${user.name?.trim() || '对方'}`,
-      `正文：${post.content?.trim() || '无正文'}`,
-      `图片数量：${imageCount}`,
-      imageSummaries.length > 0
-        ? `图片内容：\n${imageSummaries
-            .map((summary, index) => `${index + 1}. ${summary}`)
-            .join('\n')}`
-        : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  private async describePostImages(post: PostEntity): Promise<string[]> {
+  private async buildMomentImageContext(
+    post: PostEntity
+  ): Promise<MomentImageContext[]> {
     const images = Array.isArray(post.images)
       ? post.images
           .map(image => (typeof image === 'string' ? image.trim() : ''))
@@ -1135,13 +1141,17 @@ export class PostService {
       return [];
     }
 
-    const results = await Promise.all(
+    const descriptions = await Promise.all(
       images.map((image, index) =>
         this.describePostImage(image, index).catch(() => '')
       )
     );
 
-    return results.map(result => result.trim()).filter(Boolean);
+    return images.map((image, index) => ({
+      index: index + 1,
+      url: this.postImageService.resolveForResponse(image).trim(),
+      description: descriptions[index]?.trim() || '',
+    }));
   }
 
   private async describePostImage(
@@ -1168,7 +1178,7 @@ export class PostService {
           {
             role: 'system',
             content:
-              '你是一个朋友圈图片理解助手。请准确描述图片中可见的主体、场景、动作、文字、情绪和能帮助评论的重点。避免猜测人物身份、关系、姓名或职业，不要回答“这是谁”。只描述肉眼可见内容，使用简洁中文，控制在80字内，不要编造看不见的内容。',
+              '你是一个朋友圈图片浅层理解助手。只描述图片中肉眼可见的主体、场景、动作、画面氛围和可见文字。照片里的人不一定是发布用户本人，也不一定和发布者有关系；不要推断或猜测人物身份、姓名、职业、年龄、亲属关系、朋友关系，以及图片人物与发布者、评论者、智能体之间的任何关系。不要根据画面脑补故事或情感，只输出可用于自然评论的中性图片摘要，控制在80字内。',
           },
           {
             role: 'user',
@@ -1202,20 +1212,89 @@ export class PostService {
     }
   }
 
-  private buildMomentCommentContext(comments: PostCommentEntity[]): string {
+  private buildMomentCommentContext(
+    comments: PostCommentEntity[]
+  ): MomentCommentContext[] {
     if (!Array.isArray(comments) || comments.length === 0) {
-      return '';
+      return [];
     }
 
-    return comments
-      .slice(-10)
-      .map(comment => {
-        const role = comment.agentId ? 'assistant' : 'user';
-        const content = comment.content?.trim() || '';
-        return content ? `${role}: ${content}` : '';
-      })
-      .filter(Boolean)
-      .join('\n');
+    const latestComments = comments.slice(-20);
+    const commentById = new Map(
+      latestComments.map(comment => [
+        this.stringifyObjectId(comment.id),
+        comment,
+      ])
+    );
+
+    return latestComments.map(comment => {
+      const parentCommentId = comment.parentCommentId
+        ? this.stringifyObjectId(comment.parentCommentId)
+        : null;
+      const repliedComment = parentCommentId
+        ? commentById.get(parentCommentId) ?? null
+        : null;
+
+      return this.buildMomentCommentContextItem(comment, repliedComment);
+    });
+  }
+
+  private buildMomentCommentContextItem(
+    comment: PostCommentEntity,
+    repliedComment?: PostCommentEntity | null
+  ): MomentCommentContext {
+    const type =
+      comment.type === PostCommentType.agent || comment.agentId
+        ? PostCommentType.agent
+        : PostCommentType.user;
+    const authorId = comment.agentId
+      ? this.stringifyObjectId(comment.agentId)
+      : comment.userId
+      ? this.stringifyObjectId(comment.userId)
+      : '';
+    const repliedType = repliedComment
+      ? repliedComment.type === PostCommentType.agent || repliedComment.agentId
+        ? PostCommentType.agent
+        : PostCommentType.user
+      : null;
+
+    return {
+      id: this.stringifyObjectId(comment.id),
+      type,
+      authorId,
+      authorName: this.resolveMomentCommentAuthorName(comment),
+      content: comment.content?.trim() || '',
+      parentCommentId: comment.parentCommentId
+        ? this.stringifyObjectId(comment.parentCommentId)
+        : null,
+      replyToId: comment.replyToAgentId
+        ? this.stringifyObjectId(comment.replyToAgentId)
+        : comment.replyToUserId
+        ? this.stringifyObjectId(comment.replyToUserId)
+        : null,
+      replyToName: null,
+      repliedComment: repliedComment
+        ? {
+            id: this.stringifyObjectId(repliedComment.id),
+            type: repliedType ?? PostCommentType.user,
+            authorName: this.resolveMomentCommentAuthorName(repliedComment),
+            content: repliedComment.content?.trim() || '',
+          }
+        : null,
+      createdAt: comment.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
+  private resolveMomentCommentAuthorName(comment: PostCommentEntity): string {
+    if (comment.agentId) {
+      return `agent:${this.stringifyObjectId(comment.agentId)}`;
+    }
+
+    if (comment.userId) {
+      return `user:${this.stringifyObjectId(comment.userId)}`;
+    }
+
+    return 'unknown';
   }
 
   private selectMomentReply(
@@ -1280,7 +1359,8 @@ export class PostService {
 
   private normalizeCommentComparisonText(value: string): string {
     return value
-      .replace(/[\s，。！？、；：“”‘’"'`~·,.!?:;()（）【】\[\]-]/g, '')
+      .replace(/[\s，。！？、；：“”‘’"'`~·,.!?:;()（）【】-]/g, '')
+      .replace(/[[\]]/g, '')
       .trim();
   }
 
