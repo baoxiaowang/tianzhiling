@@ -25,7 +25,7 @@ import {
   buildMomentsSystemPrompt,
   MomentCommentContext,
   MomentImageContext,
-} from '../promte/moments';
+} from '../prompt/moments';
 import { PostImageService } from './post-image.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';

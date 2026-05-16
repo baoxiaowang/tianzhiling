@@ -13,6 +13,8 @@ import {
 import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
 
+const MESSAGE_SEGMENT_LIMIT = 4;
+
 export interface ConversationMessageItem {
   id: string;
   conversationId: string;
@@ -213,7 +215,7 @@ export class MessageService {
       .filter(Boolean);
 
     if (legacySegments.length > 1) {
-      return legacySegments.slice(0, 3);
+      return legacySegments.slice(0, MESSAGE_SEGMENT_LIMIT);
     }
 
     const paragraphSegments = content
@@ -222,7 +224,7 @@ export class MessageService {
       .filter(Boolean);
 
     if (paragraphSegments.length > 1) {
-      return paragraphSegments.slice(0, 3);
+      return paragraphSegments.slice(0, MESSAGE_SEGMENT_LIMIT);
     }
 
     return [content];

@@ -10,7 +10,7 @@ import {
   MessageType,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
-import { buildDepartedSystemPrompt } from '../../promte/departed';
+import { buildDepartedSystemPrompt } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
 
 export interface BuildConversationContextOptions {

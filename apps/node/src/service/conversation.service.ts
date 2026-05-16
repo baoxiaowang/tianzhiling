@@ -31,6 +31,8 @@ import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 
+const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
+
 export interface ConversationSummary {
   id: string;
   agentId: string;
@@ -313,6 +315,7 @@ export class ConversationService {
       agent: runtime.agent,
       currentQuery: before.searchableText,
     });
+    console.log(JSON.stringify(context.messages));
     const response = await this.openAIService.createChatCompletion({
       messages: context.messages,
     });
@@ -1287,7 +1290,7 @@ export class ConversationService {
       )
       .map(segment => this.sanitizeAssistantSegment(segment))
       .filter(Boolean)
-      .slice(0, 3);
+      .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
     if (segments.length > 0) {
       return segments.join('</fenge>');
@@ -1343,7 +1346,7 @@ export class ConversationService {
       const segments = rawSegments
         .map(item => (typeof item === 'string' ? item.trim() : ''))
         .filter(Boolean)
-        .slice(0, 3);
+        .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
       if (segments.length > 0) {
         return segments.map(segment =>
@@ -1370,7 +1373,7 @@ export class ConversationService {
       .filter(Boolean);
 
     if (legacySegments.length > 1) {
-      return legacySegments.slice(0, 3);
+      return legacySegments.slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
     }
 
     const paragraphSegments = content
@@ -1379,7 +1382,7 @@ export class ConversationService {
       .filter(Boolean);
 
     if (paragraphSegments.length > 1) {
-      return paragraphSegments.slice(0, 3);
+      return paragraphSegments.slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
     }
 
     return [content];
