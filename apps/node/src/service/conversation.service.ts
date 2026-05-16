@@ -317,6 +317,7 @@ export class ConversationService {
       agent: runtime.agent,
       currentQuery: before.searchableText,
     });
+    console.log(JSON.stringify(context.messages));
     const response = await this.openAIService.createChatCompletion({
       temperature: ASSISTANT_REPLY_TEMPERATURE,
       topP: ASSISTANT_REPLY_TOP_P,
