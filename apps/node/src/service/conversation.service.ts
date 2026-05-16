@@ -32,6 +32,8 @@ import { MilvusService } from './rag/milvus.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
+const ASSISTANT_REPLY_TEMPERATURE = 0.2;
+const ASSISTANT_REPLY_TOP_P = 0.8;
 
 export interface ConversationSummary {
   id: string;
@@ -317,6 +319,8 @@ export class ConversationService {
     });
     console.log(JSON.stringify(context.messages));
     const response = await this.openAIService.createChatCompletion({
+      temperature: ASSISTANT_REPLY_TEMPERATURE,
+      topP: ASSISTANT_REPLY_TOP_P,
       messages: context.messages,
     });
     const replyContent = this.normalizeAssistantReply(

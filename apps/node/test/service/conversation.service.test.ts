@@ -238,6 +238,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        temperature: 0.2,
+        topP: 0.8,
+      })
+    );
     expect(result.assistantMessage?.type).toBe(MessageType.text);
   });
 
