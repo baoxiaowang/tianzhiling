@@ -211,6 +211,43 @@ function createService(options: {
 }
 
 describe('ConversationService assistant voice reply timbre binding', () => {
+  it('does not generate an assistant reply when the user explicitly asks not to reply', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '你不要回复了',
+    });
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(result.assistantMessage).toBeUndefined();
+    expect(assistantMessage).toBeUndefined();
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(service.agentContextService.buildConversationContext).not.toHaveBeenCalled();
+    expect(result.userMessage.content).toBe('你不要回复了');
+  });
+
+  it('does not reply when the stop-reply request includes filler words and role names', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '嗯 你别回我了 妈妈',
+    });
+
+    expect(result.assistantMessage).toBeUndefined();
+    expect(
+      savedMessages.some(message => message.role === MessageRole.assistant)
+    ).toBe(false);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('falls back to text when a voice message agent has no voice timbre', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),

@@ -317,7 +317,6 @@ export class ConversationService {
       agent: runtime.agent,
       currentQuery: before.searchableText,
     });
-    console.log(JSON.stringify(context.messages));
     const response = await this.openAIService.createChatCompletion({
       temperature: ASSISTANT_REPLY_TEMPERATURE,
       topP: ASSISTANT_REPLY_TOP_P,
@@ -457,7 +456,26 @@ export class ConversationService {
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
-      payload.type === MessageType.voice && !payload.mediaTranscript?.trim()
+      this.isAssistantSilenceRequest(payload) ||
+      (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
+    );
+  }
+
+  private isAssistantSilenceRequest(payload: PreparedIncomingMessage): boolean {
+    if (payload.type !== MessageType.text) {
+      return false;
+    }
+
+    const content = payload.content?.trim();
+
+    if (!content || content.length > 40) {
+      return false;
+    }
+
+    const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
+
+    return /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
+      normalized
     );
   }
 
