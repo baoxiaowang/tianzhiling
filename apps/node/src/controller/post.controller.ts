@@ -6,6 +6,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
 } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { CreatePostCommentDTO, CreatePostDTO } from '../dto/post.dto';
@@ -21,18 +22,25 @@ export class PostController {
   ctx: Context;
 
   @Get('/')
-  async listPosts() {
-    return {
-      items: await this.postService.listPosts(
-        this.ctx.state.auth as AuthenticatedUserPayload | undefined
-      ),
-    };
+  async listPosts(@Query() query: { page?: string; pageSize?: string }) {
+    return this.postService.listPosts(
+      this.ctx.state.auth as AuthenticatedUserPayload | undefined,
+      query
+    );
   }
 
   @Get('/comment-notifications/summary')
   async getCommentNotificationSummary() {
     return this.postService.getUnreadCommentNotificationSummary(
       this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Get('/comment-notifications')
+  async listCommentNotifications(@Query() query: { page?: string; pageSize?: string }) {
+    return this.postService.listCommentNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      query
     );
   }
 
@@ -72,6 +80,13 @@ export class PostController {
     return this.postService.unlikePost(
       this.ctx.state.auth as AuthenticatedUserPayload,
       postId
+    );
+  }
+
+  @Post('/comment-notifications/read')
+  async readUnreadCommentNotifications() {
+    return this.postService.readUnreadCommentNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload
     );
   }
 

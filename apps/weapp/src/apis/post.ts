@@ -10,6 +10,8 @@ export interface PostCommentNotificationItem {
   actorName: string
   actorAvatar: string
   commentPreview: string
+  replyToUserName: string
+  postThumbnail: string
   isRead: boolean
   createdAt: string | null
 }
@@ -54,12 +56,49 @@ export interface PostItem {
 
 interface PostListResponse {
   items: PostItem[]
+  page?: number
+  pageSize?: number
+  hasMore?: boolean
 }
 
-export async function getPosts() {
-  const data = await get<PostListResponse>('/api/post')
+interface ReadUnreadCommentNotificationsResponse {
+  items: PostCommentNotificationItem[]
+  readCount: number
+  unreadCount: number
+}
 
-  return Array.isArray(data.items) ? data.items : []
+interface CommentNotificationListResponse {
+  items: PostCommentNotificationItem[]
+  page?: number
+  pageSize?: number
+  hasMore?: boolean
+}
+
+export interface GetPostsOptions {
+  page?: number
+  pageSize?: number
+}
+
+export async function getPosts(options: GetPostsOptions = {}) {
+  const queryParts: string[] = []
+
+  if (options.page) {
+    queryParts.push(`page=${encodeURIComponent(String(options.page))}`)
+  }
+
+  if (options.pageSize) {
+    queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  const url = queryParts.length ? `/api/post?${queryParts.join('&')}` : '/api/post'
+  const data = await get<PostListResponse>(url)
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    page: data.page ?? options.page ?? 1,
+    pageSize: data.pageSize ?? options.pageSize ?? 10,
+    hasMore: data.hasMore === true,
+  }
 }
 
 export async function getPostDetail(postId: string) {
@@ -70,8 +109,44 @@ export async function getCommentNotificationSummary() {
   return get<PostCommentNotificationSummary>('/api/post/comment-notifications/summary')
 }
 
+export async function getCommentNotifications(options: GetPostsOptions = {}) {
+  const queryParts: string[] = []
+
+  if (options.page) {
+    queryParts.push(`page=${encodeURIComponent(String(options.page))}`)
+  }
+
+  if (options.pageSize) {
+    queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  const url = queryParts.length
+    ? `/api/post/comment-notifications?${queryParts.join('&')}`
+    : '/api/post/comment-notifications'
+  const data = await get<CommentNotificationListResponse>(url)
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    page: data.page ?? options.page ?? 1,
+    pageSize: data.pageSize ?? options.pageSize ?? 20,
+    hasMore: data.hasMore === true,
+  }
+}
+
 export async function markCommentNotificationsRead(postId: string) {
   await post<Record<string, unknown>>(`/api/post/${postId}/comment-notifications/read`)
+}
+
+export async function readUnreadCommentNotifications() {
+  const data = await post<ReadUnreadCommentNotificationsResponse>(
+    '/api/post/comment-notifications/read'
+  )
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    readCount: data.readCount ?? 0,
+    unreadCount: data.unreadCount ?? 0,
+  }
 }
 
 export async function createPost(payload: {

@@ -27,7 +27,9 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { methods: ['POST'], path: /^\/storage\/upload\/?$/ },
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
   { methods: ['POST'], path: /^\/post\/?$/ },
+  { methods: ['GET'], path: /^\/post\/comment-notifications\/?$/ },
   { methods: ['GET'], path: /^\/post\/comment-notifications\/summary\/?$/ },
+  { methods: ['POST'], path: /^\/post\/comment-notifications\/read\/?$/ },
   { methods: ['POST'], path: /^\/post\/[^/]+\/likes\/?$/ },
   { methods: ['DELETE'], path: /^\/post\/[^/]+\/likes\/?$/ },
   {

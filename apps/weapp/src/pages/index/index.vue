@@ -4,7 +4,7 @@
     class="moments-page"
     body-padding="0"
     background="#ffffff"
-    scroll
+    :scroll="false"
     :safe-area-top="false"
     :safe-area-bottom="false"
   >
@@ -15,53 +15,63 @@
       </text>
     </view>
 
-    <view
-      v-else
-      class="moments-scroll"
-    >
-      <top-promo-banner />
+    <view v-else class="moments-main">
+      <view class="moments-leading">
+        <top-promo-banner />
 
-      <view
-        v-if="hasUnreadNotifications"
-        class="moments-notice"
-        @tap="handleNotificationTap"
+        <view
+          v-if="hasUnreadNotifications"
+          class="moments-notice"
+          @tap="handleNotificationTap"
+        >
+          <image
+            class="moments-notice__avatar"
+            :src="notificationAvatarUrl"
+            mode="aspectFill"
+          />
+          <text class="moments-notice__text">{{ notificationText }}</text>
+        </view>
+        <view v-else class="moments-notice-spacer" />
+      </view>
+
+      <view v-if="shouldShowPostsFeedback" class="moments-feedback">
+        <view v-if="isPostsLoading" class="moments-feedback__dot" />
+        <text v-else-if="errorMessage" class="moments-feedback__icon">✦</text>
+        <text v-else class="moments-feedback__icon">✦</text>
+        <text class="moments-feedback__title">{{ postsFeedbackTitle }}</text>
+        <text v-if="postsFeedbackSubtitle" class="moments-feedback__subtitle">{{ postsFeedbackSubtitle }}</text>
+        <view v-if="errorMessage && posts.length === 0" class="moments-feedback__action" @tap="handleRetry">
+          重新加载
+        </view>
+      </view>
+
+      <nut-list
+        v-else
+        class="moments-scroll"
+        :list-data="posts"
+        :container-height="momentsListHeight"
+        :estimate-row-height="340"
+        :buffer-size="4"
+        :margin="20"
+        @scroll-bottom="handleScrollBottom"
       >
-        <image
-          class="moments-notice__avatar"
-          :src="notificationAvatarUrl"
-          mode="aspectFill"
-        />
-        <text class="moments-notice__text">{{ notificationText }}</text>
-      </view>
-      <view v-else class="moments-notice-spacer" />
+        <template #default="{ item, index }">
+          <moment-card
+            :post="item"
+            @like="handleLikeTap"
+            @comment="handleCommentTap"
+            @preview="handlePreviewImages"
+          />
 
-      <view v-if="isPostsLoading" class="moments-feedback">
-        <view class="moments-feedback__dot" />
-        <text class="moments-feedback__title">正在加载动态...</text>
-      </view>
-
-      <view v-else-if="errorMessage && posts.length === 0" class="moments-feedback">
-        <text class="moments-feedback__icon">✦</text>
-        <text class="moments-feedback__title">{{ errorMessage }}</text>
-        <view class="moments-feedback__action" @tap="handleRetry">重新加载</view>
-      </view>
-
-      <view v-else-if="posts.length === 0" class="moments-feedback">
-        <text class="moments-feedback__icon">✦</text>
-        <text class="moments-feedback__title">还没有动态</text>
-        <text class="moments-feedback__subtitle">发布第一条内容，让想念留下痕迹</text>
-      </view>
-
-      <view v-else class="moments-content">
-        <moment-card
-          v-for="post in posts"
-          :key="post.id"
-          :post="post"
-          @like="handleLikeTap"
-          @comment="handleCommentTap"
-          @preview="handlePreviewImages"
-        />
-      </view>
+          <view v-if="isLastPostRow(index)" class="moments-load-footer">
+            <text v-if="isLoadingMore" class="moments-load-footer__text">正在加载更多...</text>
+            <text v-else-if="loadMoreError" class="moments-load-footer__action" @tap="handleLoadMoreRetry">
+              加载失败，点击重试
+            </text>
+            <text v-else-if="!hasMorePosts" class="moments-load-footer__text">没有更多动态了</text>
+          </view>
+        </template>
+      </nut-list>
     </view>
 
     <view class="moments-floating-publish" @tap="handleCreatePost">
@@ -138,12 +148,9 @@ import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow } from '@tarojs/taro'
 import {
   createComment,
-  getCommentNotificationSummary,
   getPosts,
   likePost,
-  markCommentNotificationsRead,
   unlikePost,
-  type PostCommentNotificationSummary,
   type PostItem,
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
@@ -153,6 +160,11 @@ import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
+import {
+  hasUnreadCommentNotifications,
+  latestUnreadCommentNotification,
+  unreadCommentNotificationCount,
+} from '../../post/comment-notification-state'
 import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 interface PageScaffoldController {
@@ -168,8 +180,8 @@ const isCheckingAuth = ref(true)
 const isPostsLoading = ref(false)
 const hasLoadedPosts = ref(false)
 const errorMessage = ref('')
+const loadMoreError = ref('')
 const posts = ref<PostItem[]>([])
-const notificationSummary = ref<PostCommentNotificationSummary | null>(null)
 const activeCommentPost = ref<PostItem | null>(null)
 const commentDraft = ref('')
 const commentKeyboardHeight = ref(0)
@@ -178,22 +190,56 @@ const shouldFocusCommentInput = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
 const likingPostIds = ref<string[]>([])
+const currentPostPage = ref(1)
+const hasMorePosts = ref(true)
+const isLoadingMore = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
+let loadMorePromise: Promise<void> | null = null
 let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 
+const POST_PAGE_SIZE = 10
+const momentsWindowHeight = Taro.getSystemInfoSync().windowHeight
+const TOP_PROMO_BANNER_HEIGHT = 220
+const NOTICE_BLOCK_HEIGHT = 52
+const NOTICE_SPACER_HEIGHT = 12
+
 const session = computed(() => authSession.value)
-const hasUnreadNotifications = computed(() => {
-  return (notificationSummary.value?.unreadCount ?? 0) > 0 && Boolean(notificationSummary.value?.latest)
-})
+const hasUnreadNotifications = hasUnreadCommentNotifications
 const notificationAvatarUrl = computed(() => {
-  const latestAvatar = notificationSummary.value?.latest?.actorAvatar.trim()
+  const latestAvatar = latestUnreadCommentNotification.value?.actorAvatar.trim()
   return latestAvatar ? latestAvatar : momentsDesign.notificationAvatarUrl
 })
 const notificationText = computed(() => {
-  const unreadCount = notificationSummary.value?.unreadCount ?? 0
+  const unreadCount = unreadCommentNotificationCount.value
   return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
+})
+const momentsListHeight = computed(() => {
+  const noticeHeight = hasUnreadNotifications.value
+    ? NOTICE_BLOCK_HEIGHT
+    : NOTICE_SPACER_HEIGHT
+
+  return Math.max(0, momentsWindowHeight - TOP_PROMO_BANNER_HEIGHT - noticeHeight)
+})
+const shouldShowPostsFeedback = computed(() => {
+  return isPostsLoading.value || (posts.value.length === 0 && (Boolean(errorMessage.value) || hasLoadedPosts.value))
+})
+const postsFeedbackTitle = computed(() => {
+  if (isPostsLoading.value) {
+    return '正在加载动态...'
+  }
+
+  if (errorMessage.value) {
+    return errorMessage.value
+  }
+
+  return '还没有动态'
+})
+const postsFeedbackSubtitle = computed(() => {
+  return !isPostsLoading.value && !errorMessage.value
+    ? '发布第一条内容，让想念留下痕迹'
+    : ''
 })
 const commentComposerStyle = computed(() => {
   const shouldFollowKeyboard =
@@ -227,14 +273,6 @@ function getPostImages(post: PostItem) {
     .slice(0, 9)
 }
 
-function sortPostsByTime(items: PostItem[]) {
-  return [...items].sort((left, right) => {
-    const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? '') || 0
-    const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? '') || 0
-    return rightTime - leftTime
-  })
-}
-
 function isPostLikePending(postId: string) {
   return likingPostIds.value.includes(postId)
 }
@@ -248,6 +286,10 @@ function setPostLikePending(postId: string, pending: boolean) {
   }
 
   likingPostIds.value = likingPostIds.value.filter((item) => item !== postId)
+}
+
+function isLastPostRow(index: unknown) {
+  return Number(index) === posts.value.length - 1
 }
 
 function replacePostInList(updatedPost: PostItem) {
@@ -283,15 +325,16 @@ async function refreshMomentsData(showLoading = true) {
 
       errorMessage.value = ''
 
-      const [postItems, summary] = await Promise.all([
-        getPosts(),
-        session.value
-          ? getCommentNotificationSummary().catch(() => null)
-          : Promise.resolve(null),
-      ])
+      loadMoreError.value = ''
 
-      posts.value = sortPostsByTime(postItems)
-      notificationSummary.value = summary
+      const postResult = await getPosts({
+        page: 1,
+        pageSize: POST_PAGE_SIZE,
+      })
+
+      posts.value = postResult.items
+      currentPostPage.value = postResult.page
+      hasMorePosts.value = postResult.hasMore
       hasLoadedPosts.value = true
     })
     .catch((error) => {
@@ -309,6 +352,39 @@ async function refreshMomentsData(showLoading = true) {
   return refreshDataPromise
 }
 
+async function loadMorePosts() {
+  if (loadMorePromise || isPostsLoading.value || !hasMorePosts.value) {
+    return loadMorePromise
+  }
+
+  isLoadingMore.value = true
+  loadMoreError.value = ''
+
+  loadMorePromise = getPosts({
+    page: currentPostPage.value + 1,
+    pageSize: POST_PAGE_SIZE,
+  })
+    .then((result) => {
+      const knownPostIds = new Set(posts.value.map((post) => post.id))
+      const nextItems = result.items.filter((post) => !knownPostIds.has(post.id))
+
+      posts.value = [...posts.value, ...nextItems]
+      currentPostPage.value = result.page
+      hasMorePosts.value = result.hasMore
+    })
+    .catch((error) => {
+      loadMoreError.value = error instanceof ApiException
+        ? error.message || '加载更多失败'
+        : '加载更多失败，请稍后重试'
+    })
+    .finally(() => {
+      isLoadingMore.value = false
+      loadMorePromise = null
+    })
+
+  return loadMorePromise
+}
+
 async function preparePage() {
   if (!hasLoadedPosts.value) {
     isCheckingAuth.value = true
@@ -323,33 +399,23 @@ function handleRetry() {
   void refreshMomentsData(true)
 }
 
-async function handleNotificationTap() {
-  const latest = notificationSummary.value?.latest
-  const postId = latest?.postId.trim()
+function handleLoadMoreRetry() {
+  void loadMorePosts()
+}
 
-  if (!postId) {
+function handleScrollBottom() {
+  void loadMorePosts()
+}
+
+function handleNotificationTap() {
+  if (!session.value) {
+    openLoginPrompt()
     return
   }
 
-  let targetPost = posts.value.find((post) => post.id === postId) ?? null
-
-  if (!targetPost) {
-    await refreshMomentsData(false)
-    targetPost = posts.value.find((post) => post.id === postId) ?? null
-  }
-
-  if (!targetPost) {
-    showToast('动态不存在或已删除')
-    return
-  }
-
-  openCommentComposer(targetPost)
-  void markCommentNotificationsRead(postId)
-    .then(() => getCommentNotificationSummary())
-    .then((summary) => {
-      notificationSummary.value = summary
-    })
-    .catch(() => undefined)
+  void Taro.navigateTo({
+    url: '/pages/my-messages/index',
+  })
 }
 
 function handleCreatePost() {
@@ -653,11 +719,27 @@ useDidHide(() => {
   color: $tzl-color-text-muted;
 }
 
+.moments-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: $tzl-color-surface-base;
+}
+
 .moments-scroll {
+  flex: 1;
   box-sizing: border-box;
   min-height: 100%;
-  padding-bottom: 128px;
   background: $tzl-color-surface-base;
+}
+
+.moments-scroll .nut-list {
+  background: $tzl-color-surface-base;
+}
+
+.moments-leading {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
@@ -690,6 +772,8 @@ useDidHide(() => {
 }
 
 .moments-feedback {
+  flex: 1;
+  background: $tzl-color-surface-base;
   min-height: 280px;
   padding: 96px 24px 0;
   box-sizing: border-box;
@@ -736,12 +820,27 @@ useDidHide(() => {
   color: #00a63e;
 }
 
-.moments-content {
-  padding: 12px 0px 0;
+.moments-scroll .nut-list-item + .nut-list-item {
+  margin-top: 20px;
 }
 
-.moments-content .moment-card + .moment-card {
-  margin-top: 20px;
+.moments-load-footer {
+  min-height: 64px;
+  padding: 18px 24px 128px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.moments-load-footer__text,
+.moments-load-footer__action {
+  font-size: 13px;
+  line-height: 20px;
+  color: #8a94a6;
+}
+
+.moments-load-footer__action {
+  color: #00a63e;
+  font-weight: 600;
 }
 
 .moments-floating-publish {

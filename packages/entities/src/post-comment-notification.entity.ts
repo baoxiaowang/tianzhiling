@@ -36,6 +36,12 @@ export class PostCommentNotificationEntity extends BaseEntity {
   commentPreview: string;
 
   @Column()
+  replyToUserName?: string;
+
+  @Column()
+  postThumbnail?: string;
+
+  @Column()
   isRead: boolean;
 
   @Column()

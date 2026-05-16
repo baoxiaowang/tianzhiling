@@ -59,7 +59,15 @@
           >
             <view class="me-menu-item">
               <text class="me-menu-item__label">{{ action.title }}</text>
-              <view class="me-arrow" />
+              <view class="me-menu-item__right">
+                <text
+                  v-if="action.title === '我的消息' && unreadMessageCountText"
+                  class="me-menu-item__badge"
+                >
+                  {{ unreadMessageCountText }}
+                </text>
+                <view class="me-arrow" />
+              </view>
             </view>
             <view
               v-if="index !== primaryMenuActions.length - 1"
@@ -140,6 +148,7 @@ import { getCurrentUser } from '../../auth/api'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { unreadCommentNotificationCount } from '../../post/comment-notification-state'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import { showPendingToast } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
@@ -149,6 +158,7 @@ interface ProfileMenuAction {
 }
 
 const primaryMenuActions = [
+  { title: '我的消息' },
   { title: '我的动态' },
   { title: '我的订单' },
 ] as const satisfies ProfileMenuAction[]
@@ -186,6 +196,15 @@ const enabledVoiceModelCount = computed(() => {
 const voiceModelCountText = computed(() => {
   return `${enabledVoiceModelCount.value}/${agents.value.length}`
 })
+const unreadMessageCountText = computed(() => {
+  const count = unreadCommentNotificationCount.value
+
+  if (count <= 0) {
+    return ''
+  }
+
+  return count > 99 ? '99+' : String(count)
+})
 
 function buildAgentFallback(name: string) {
   const trimmedName = name.trim()
@@ -193,6 +212,13 @@ function buildAgentFallback(name: string) {
 }
 
 async function handleMenuTap(title: string) {
+  if (title === '我的消息') {
+    await Taro.navigateTo({
+      url: '/pages/my-messages/index',
+    })
+    return
+  }
+
   if (title === '我的动态') {
     await Taro.navigateTo({
       url: '/pages/my-posts/index',
@@ -430,6 +456,26 @@ useDidShow(() => {
   font-weight: 500;
   color: #333333;
   letter-spacing: -0.31px;
+}
+
+.me-menu-item__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.me-menu-item__badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #ff4d4f;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .me-menu-section__divider {

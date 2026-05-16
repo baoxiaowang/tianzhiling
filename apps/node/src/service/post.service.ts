@@ -51,6 +51,13 @@ export interface PostItem {
   updatedAt: string;
 }
 
+export interface PostListResult {
+  items: PostItem[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
 export interface PostCommentItem {
   id: string;
   postId: string;
@@ -76,6 +83,8 @@ export interface PostCommentNotificationItem {
   actorName: string;
   actorAvatar: string;
   commentPreview: string;
+  replyToUserName: string;
+  postThumbnail: string;
   isRead: boolean;
   createdAt: string;
 }
@@ -85,9 +94,27 @@ export interface PostCommentNotificationSummary {
   latest: PostCommentNotificationItem | null;
 }
 
+export interface PostCommentNotificationListResult {
+  items: PostCommentNotificationItem[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+export interface ReadCommentNotificationsResult {
+  items: PostCommentNotificationItem[];
+  readCount: number;
+  unreadCount: number;
+}
+
 interface PostLikeSummary {
   likeCountByPostId: Map<string, number>;
   likedPostIds: Set<string>;
+}
+
+interface ListPostsOptions {
+  page?: number | string;
+  pageSize?: number | string;
 }
 
 @Provide()
@@ -122,22 +149,31 @@ export class PostService {
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
-  async listPosts(auth?: AuthenticatedUserPayload): Promise<PostItem[]> {
+  async listPosts(
+    auth?: AuthenticatedUserPayload,
+    options: ListPostsOptions = {}
+  ): Promise<PostListResult> {
+    const page = this.normalizePositiveInteger(options.page, 1);
+    const pageSize = this.normalizePositiveInteger(options.pageSize, 10, 20);
+    const skip = (page - 1) * pageSize;
     const posts = await this.postModel.find({
       order: {
         createdAt: 'DESC',
       },
+      skip,
+      take: pageSize + 1,
     });
+    const pagePosts = posts.slice(0, pageSize);
     const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
-    const likeSummary = await this.buildLikeSummary(posts, currentUserId);
+    const likeSummary = await this.buildLikeSummary(pagePosts, currentUserId);
 
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
     const commentCountCache = new Map<string, number>();
     const commentsCache = new Map<string, PostCommentItem[]>();
 
-    return Promise.all(
-      posts.map(async post => {
+    const items = await Promise.all(
+      pagePosts.map(async post => {
         const userId = this.stringifyObjectId(post.userId);
         const postId = this.stringifyObjectId(post.id);
 
@@ -166,6 +202,13 @@ export class PostService {
         );
       })
     );
+
+    return {
+      items,
+      page,
+      pageSize,
+      hasMore: posts.length > pageSize,
+    };
   }
 
   async getPostDetail(
@@ -199,6 +242,10 @@ export class PostService {
     auth: AuthenticatedUserPayload
   ): Promise<PostCommentNotificationSummary> {
     const userId = this.parseObjectId(auth.sub);
+    const unreadCount = await this.commentNotificationModel.count({
+      userId,
+      isRead: false,
+    });
     const notifications = await this.commentNotificationModel.find({
       where: {
         userId,
@@ -207,15 +254,85 @@ export class PostService {
       order: {
         createdAt: 'DESC',
       },
-      take: 50,
+      take: 1,
     });
 
     return {
-      unreadCount: notifications.length,
+      unreadCount,
       latest:
         notifications.length > 0
           ? this.buildCommentNotificationItem(notifications[0])
           : null,
+    };
+  }
+
+  async listCommentNotifications(
+    auth: AuthenticatedUserPayload,
+    options: ListPostsOptions = {}
+  ): Promise<PostCommentNotificationListResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const page = this.normalizePositiveInteger(options.page, 1);
+    const pageSize = this.normalizePositiveInteger(options.pageSize, 20, 50);
+    const skip = (page - 1) * pageSize;
+    const notifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      skip,
+      take: pageSize + 1,
+    });
+    const pageNotifications = notifications.slice(0, pageSize);
+
+    return {
+      items: pageNotifications.map(notification =>
+        this.buildCommentNotificationItem(notification)
+      ),
+      page,
+      pageSize,
+      hasMore: notifications.length > pageSize,
+    };
+  }
+
+  async readUnreadCommentNotifications(
+    auth: AuthenticatedUserPayload
+  ): Promise<ReadCommentNotificationsResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const notifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const items = notifications.map(notification =>
+      this.buildCommentNotificationItem(notification)
+    );
+    const now = new Date();
+
+    for (const notification of notifications) {
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    if (notifications.length > 0) {
+      await this.commentNotificationModel.save(notifications);
+    }
+
+    const unreadCount = await this.commentNotificationModel.count({
+      userId,
+      isRead: false,
+    });
+
+    return {
+      items,
+      readCount: notifications.length,
+      unreadCount,
     };
   }
 
@@ -259,10 +376,8 @@ export class PostService {
     }
 
     const unreadCount = await this.commentNotificationModel.count({
-      where: {
-        userId,
-        isRead: false,
-      },
+      userId,
+      isRead: false,
     });
 
     return {
@@ -487,8 +602,8 @@ export class PostService {
     comment.createdAt = now;
     comment.updatedAt = now;
 
-    await this.commentModel.save(comment);
-    await this.createCommentNotification(post, comment, null, agent);
+    const savedComment = await this.commentModel.save(comment);
+    await this.createCommentNotification(post, savedComment, null, agent);
     this.logger.info(
       '[post-remind-reply] created agent comment, postId=%s, agentId=%s',
       postId,
@@ -730,6 +845,12 @@ export class PostService {
         notification.actorAvatar?.trim() || ''
       ),
       commentPreview: notification.commentPreview?.trim() || '',
+      replyToUserName: notification.replyToUserName?.trim() || '',
+      postThumbnail: notification.postThumbnail
+        ? this.postImageService.resolveForResponse(
+            notification.postThumbnail?.trim() || ''
+          )
+        : '',
       isRead: notification.isRead === true,
       createdAt: notification.createdAt?.toISOString?.() ?? '',
     };
@@ -762,11 +883,32 @@ export class PostService {
     notification.actorAvatar =
       agent?.avatar?.trim() || user?.avatar?.trim() || '';
     notification.commentPreview = (comment.content?.trim() || '').slice(0, 120);
+    notification.replyToUserName = await this.resolveCommentReplyName(comment);
+    notification.postThumbnail =
+      Array.isArray(post.images) && post.images.length > 0
+        ? post.images.find(image => typeof image === 'string' && image.trim())
+        : '';
     notification.isRead = false;
     notification.createdAt = comment.createdAt ?? new Date();
     notification.updatedAt = comment.updatedAt ?? notification.createdAt;
 
     await this.commentNotificationModel.save(notification);
+  }
+
+  private async resolveCommentReplyName(
+    comment: PostCommentEntity
+  ): Promise<string> {
+    if (comment.replyToAgentId) {
+      const agent = await this.findAgentById(comment.replyToAgentId);
+      return agent?.name?.trim() || '';
+    }
+
+    if (comment.replyToUserId) {
+      const user = await this.findUserById(comment.replyToUserId);
+      return user?.name?.trim() || '';
+    }
+
+    return '';
   }
 
   private async findReplyTarget(
@@ -870,6 +1012,23 @@ export class PostService {
     return images.map(image =>
       this.postImageService.normalizeForStorage(image)
     );
+  }
+
+  private normalizePositiveInteger(
+    value: number | string | undefined,
+    fallback: number,
+    max?: number
+  ): number {
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : NaN;
+    const normalized =
+      Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+
+    return typeof max === 'number' ? Math.min(normalized, max) : normalized;
   }
 
   private async normalizeRemindAgentIds(

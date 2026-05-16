@@ -17,6 +17,7 @@ export default {
     'pages/agent-create/index',
     'pages/agent-create-flow/index',
     'pages/auth/index',
+    'pages/my-messages/index',
     'pages/my-posts/index',
     'pages/my-orders/index',
     'pages/post-create/index',

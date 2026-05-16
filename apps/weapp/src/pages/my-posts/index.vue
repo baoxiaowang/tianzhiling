@@ -99,7 +99,10 @@ async function loadMyPosts(showLoading = true) {
     }
 
     try {
-      const allPosts = await getPosts()
+      const { items: allPosts } = await getPosts({
+        page: 1,
+        pageSize: 20,
+      })
       posts.value = allPosts
         .filter((item) => item.userId.trim() === userId)
         .sort((left, right) => {
