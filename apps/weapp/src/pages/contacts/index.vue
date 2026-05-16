@@ -21,7 +21,14 @@
 
     <view v-else-if="session" class="contacts-page">
 
-        <top-promo-banner />
+        <contact-cover-banner
+          :value="contactsCoverImage"
+          :uploading="isSavingCoverImage"
+          @change="handleContactCoverChange"
+          @upload="handleContactCoverChange"
+          @error="showToast"
+          @auth-expired="redirectToAuth"
+        />
 
         <view v-if="isContactsLoading" class="contacts-feedback contacts-feedback--loading">
           <view class="contacts-feedback__spinner" />
@@ -146,10 +153,11 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getConversations, type ConversationSummary } from '../../apis/conversation'
-import { authSession } from '../../auth/session'
+import { updateUserPreferences } from '../../auth/api'
+import { authSession, clearAuthSession } from '../../auth/session'
+import ContactCoverBanner from '../../components/contact-cover-banner/contact-cover-banner.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
-import { ensureAuthenticatedSession } from '../../utils/auth-guard'
+import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 const isCheckingAuth = ref(true)
@@ -157,11 +165,58 @@ const isContactsLoading = ref(true)
 const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 const hasLoadedContacts = ref(false)
+const isSavingCoverImage = ref(false)
 const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
 
 const session = computed(() => authSession.value)
+const contactsCoverImage = computed(() => {
+  return session.value?.user.preferences.contactsCoverImage ?? ''
+})
+
+function showToast(title: string) {
+  void Taro.showToast({
+    title,
+    icon: 'none',
+    duration: 1800,
+  })
+}
+
+async function redirectToAuth(message?: string) {
+  await clearAuthSession()
+
+  if (message) {
+    showToast(message)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  await redirectToAuthPage()
+}
+
+async function handleContactCoverChange(imageReference: string) {
+  if (isSavingCoverImage.value) {
+    return
+  }
+
+  isSavingCoverImage.value = true
+
+  try {
+    await updateUserPreferences({
+      contactsCoverImage: imageReference,
+    })
+    showToast('封面已更新')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth(error.message)
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '封面更新失败，请稍后重试')
+  } finally {
+    isSavingCoverImage.value = false
+  }
+}
 
 function handleContactsRetry() {
   void refreshContactsData({ showLoading: true })

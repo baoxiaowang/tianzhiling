@@ -8,6 +8,7 @@ import {
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
+  UpdateUserPreferencesDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
 } from '../dto/user.dto';
@@ -72,6 +73,14 @@ export class UserController {
   @Patch('/me/avatar')
   async updateCurrentUserAvatar(@Body() body: UpdateUserAvatarDTO) {
     return this.userService.updateCurrentUserAvatar(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
+  @Patch('/me/preferences')
+  async updateCurrentUserPreferences(@Body() body: UpdateUserPreferencesDTO) {
+    return this.userService.updateCurrentUserPreferences(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
     );

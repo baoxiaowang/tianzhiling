@@ -32,6 +32,7 @@ import {
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
   UpdateUserNameDTO,
+  UpdateUserPreferencesDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
 } from '../dto/user.dto';
@@ -81,6 +82,10 @@ interface SmsCodeCacheValue {
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_LENGTH = 12;
+
+interface NormalizedUserPreferences {
+  contactsCoverImage: string;
+}
 
 interface VerifiedPhoneLoginOptions {
   weappOpenid?: string;
@@ -669,6 +674,33 @@ export class UserService {
     return this.buildUserProfile(savedUser, auth.account);
   }
 
+  async updateCurrentUserPreferences(
+    auth: AuthenticatedUserPayload,
+    body: UpdateUserPreferencesDTO
+  ): Promise<LoginUserProfile> {
+    const userId = this.parseObjectId(auth.sub);
+    const user = await this.findUserById(userId);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    const nextPreferences = this.normalizeUserPreferences(user.preferences);
+
+    if (Object.prototype.hasOwnProperty.call(body, 'contactsCoverImage')) {
+      nextPreferences.contactsCoverImage = this.normalizeOptionalMediaReference(
+        body?.contactsCoverImage
+      );
+    }
+
+    user.preferences = nextPreferences;
+    user.updatedAt = new Date();
+
+    const savedUser = await this.userModel.save(user);
+
+    return this.buildUserProfile(savedUser, auth.account);
+  }
+
   async logoutCurrentUser(
     auth: AuthenticatedUserPayload
   ): Promise<LogoutResult> {
@@ -890,6 +922,8 @@ export class UserService {
     user: UserEntity,
     account: string
   ): Promise<LoginUserProfile> {
+    const preferences = this.normalizeUserPreferences(user.preferences);
+
     return {
       id: this.stringifyObjectId(user.id),
       name: user.name,
@@ -898,6 +932,27 @@ export class UserService {
       phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
       isVip: await this.isUserVip(user.id),
+      preferences: {
+        contactsCoverImage: this.postImageService.resolveForResponse(
+          preferences.contactsCoverImage
+        ),
+      },
+    };
+  }
+
+  private normalizeUserPreferences(
+    value: unknown
+  ): NormalizedUserPreferences {
+    const rawPreferences =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+
+    return {
+      contactsCoverImage:
+        typeof rawPreferences.contactsCoverImage === 'string'
+          ? rawPreferences.contactsCoverImage.trim()
+          : '',
     };
   }
 
@@ -936,6 +991,24 @@ export class UserService {
     }
 
     return this.postImageService.normalizeForStorage(avatar);
+  }
+
+  private normalizeOptionalMediaReference(rawValue?: string): string {
+    const value = rawValue?.trim() ?? '';
+
+    if (!value) {
+      return '';
+    }
+
+    if (value.length > 1000) {
+      throw new AppError(
+        'INVALID_MEDIA_REFERENCE',
+        'media reference is too long',
+        400
+      );
+    }
+
+    return this.postImageService.normalizeForStorage(value);
   }
 
   private verifyPassword(

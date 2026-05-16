@@ -13,6 +13,9 @@ export interface LoginUserProfile {
   phone: string;
   phoneVerified: boolean;
   isVip: boolean;
+  preferences: {
+    contactsCoverImage: string;
+  };
 }
 
 export interface AuthenticatedUserPayload {

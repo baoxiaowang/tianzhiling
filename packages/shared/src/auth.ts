@@ -1,3 +1,7 @@
+export interface UserPreferences {
+  contactsCoverImage: string;
+}
+
 export interface LoginUserProfile {
   id: string;
   name: string;
@@ -6,6 +10,7 @@ export interface LoginUserProfile {
   phone: string;
   phoneVerified: boolean;
   isVip: boolean;
+  preferences: UserPreferences;
 }
 
 export interface AuthenticatedUserPayload {

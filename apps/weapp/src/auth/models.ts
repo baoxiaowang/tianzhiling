@@ -1,3 +1,7 @@
+export interface UserPreferences {
+  contactsCoverImage: string
+}
+
 export interface AuthUser {
   id: string
   name: string
@@ -6,6 +10,7 @@ export interface AuthUser {
   phone: string
   phoneVerified: boolean
   isVip: boolean
+  preferences: UserPreferences
 }
 
 export interface AuthSessionData {
@@ -42,6 +47,7 @@ function asBoolean(value: unknown, fallback = false) {
 
 export function parseAuthUser(value: unknown): AuthUser {
   const raw = asRecord(value)
+  const rawPreferences = asRecord(raw.preferences)
 
   return {
     id: asString(raw.id),
@@ -51,6 +57,9 @@ export function parseAuthUser(value: unknown): AuthUser {
     phone: asString(raw.phone),
     phoneVerified: asBoolean(raw.phoneVerified),
     isVip: asBoolean(raw.isVip),
+    preferences: {
+      contactsCoverImage: asString(rawPreferences.contactsCoverImage),
+    },
   }
 }
 

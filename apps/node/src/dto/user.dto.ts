@@ -53,3 +53,8 @@ export class UpdateUserAvatarDTO {
   @Rule(requiredStringRule.max(1000))
   avatar: string;
 }
+
+export class UpdateUserPreferencesDTO {
+  @Rule(RuleType.string().allow('').max(1000).optional())
+  contactsCoverImage?: string;
+}

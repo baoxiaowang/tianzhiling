@@ -8,6 +8,10 @@
 
 - After changing files under `apps/admin`, run eslint against the changed admin files before finishing.
 
+## Node
+
+- `apps/node` uses TypeORM `MongoRepository`. For Mongo repositories, `count()` takes a raw Mongo query as its first argument, not a `FindManyOptions` object. Use `model.count({ userId, isRead: false })`, not `model.count({ where: { userId, isRead: false } })`; the latter searches for a literal `where` field and returns wrong counts.
+
 ## Weapp
 
 - For `apps/weapp`, prefer `@nutui/nutui-taro` components first when building forms, buttons, tabs, dialogs, lists, feedback, and other common UI.
