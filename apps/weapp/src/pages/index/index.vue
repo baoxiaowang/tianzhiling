@@ -25,10 +25,14 @@
           @tap="handleNotificationTap"
         >
           <image
+            v-if="notificationAvatarUrl"
             class="moments-notice__avatar"
             :src="notificationAvatarUrl"
             mode="aspectFill"
           />
+          <view v-else class="moments-notice__avatar moments-notice__avatar--fallback">
+            <text>{{ notificationAvatarFallback }}</text>
+          </view>
           <text class="moments-notice__text">{{ notificationText }}</text>
         </view>
         <view v-else class="moments-notice-spacer" />
@@ -171,10 +175,6 @@ interface PageScaffoldController {
   openLoginPrompt: () => void
 }
 
-const momentsDesign = {
-  notificationAvatarUrl: 'https://www.figma.com/api/mcp/asset/f41f54cc-8bf1-440c-9c03-648deafeb2d1',
-} as const
-
 const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
 const isPostsLoading = ref(false)
@@ -208,8 +208,11 @@ const NOTICE_SPACER_HEIGHT = 12
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = hasUnreadCommentNotifications
 const notificationAvatarUrl = computed(() => {
-  const latestAvatar = latestUnreadCommentNotification.value?.actorAvatar.trim()
-  return latestAvatar ? latestAvatar : momentsDesign.notificationAvatarUrl
+  return latestUnreadCommentNotification.value?.actorAvatar.trim() ?? ''
+})
+const notificationAvatarFallback = computed(() => {
+  const actorName = latestUnreadCommentNotification.value?.actorName.trim() ?? ''
+  return actorName ? actorName.slice(0, 1) : '评'
 })
 const notificationText = computed(() => {
   const unreadCount = unreadCommentNotificationCount.value
@@ -763,6 +766,16 @@ useDidHide(() => {
   width: 24px;
   height: 24px;
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.moments-notice__avatar--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $tzl-color-surface-base;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .moments-notice__text {

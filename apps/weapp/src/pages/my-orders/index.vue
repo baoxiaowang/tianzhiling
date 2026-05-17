@@ -58,7 +58,7 @@
               <text class="my-orders-card__label">下单时间：</text>
               <text class="my-orders-card__value">{{ formatDateTime(order.createdAt) }}</text>
             </view>
-            <view class="my-orders-card__row">
+            <view class="my-orders-card__row my-orders-card__row--order-no">
               <text class="my-orders-card__label">订单编号：</text>
               <copyable-text
                 :text="order.orderNo"
@@ -245,9 +245,9 @@ function getTime(value: string) {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 21px;
+  gap: 18px;
   width: 100%;
-  padding: 20px 28px;
+  padding: 20px 20px;
 }
 
 .my-orders-card__status-block {
@@ -297,11 +297,15 @@ function getTime(value: string) {
   min-height: 24px;
 }
 
+.my-orders-card__row--order-no {
+  align-items: center;
+}
+
 .my-orders-card__label {
   flex-shrink: 0;
   color: #3d3d3d;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 15px;
+  line-height: 22px;
   font-weight: 600;
 }
 
@@ -313,15 +317,20 @@ function getTime(value: string) {
   min-width: 0;
   flex: 1;
   color: #3d3d3d;
-  font-size: 14px;
-  line-height: 24px;
+  font-size: 13px;
+  line-height: 22px;
   font-weight: 400;
   word-break: break-all;
 }
 
 .my-orders-card__value--mono {
   font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .my-orders-state {
