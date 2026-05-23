@@ -161,6 +161,7 @@ describe('UserService phoneLogin', () => {
     expect(userAccountModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
         account: buildWeappAccount(WEAPP_OPENID),
+        openId: WEAPP_OPENID,
       })
     );
   });
@@ -185,6 +186,7 @@ describe('UserService phoneLogin', () => {
     expect(userAccountModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
         account: buildWeappAccount(WEAPP_OPENID),
+        openId: WEAPP_OPENID,
       })
     );
   });
@@ -329,6 +331,7 @@ describe('UserService phoneLogin', () => {
         id: accountId,
         userId,
         account: buildWeappAccount(WEAPP_OPENID),
+        openId: WEAPP_OPENID,
       })
     );
   });

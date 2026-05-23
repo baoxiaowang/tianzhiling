@@ -502,6 +502,7 @@ export class UserService {
     userAccount.userId = savedUser.id;
     userAccount.account = this.buildWeappAccount(openid);
     userAccount.password = '';
+    userAccount.openId = openid;
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
     userAccount = await this.userAccountModel.save(userAccount);
@@ -592,6 +593,7 @@ export class UserService {
     userAccount.userId = user.id;
     userAccount.account = account;
     userAccount.password = '';
+    userAccount.openId = openid;
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
 
@@ -1252,6 +1254,11 @@ export class UserService {
     return (
       (await this.userAccountModel.findOne({
         where: {
+          openId: openid,
+        },
+      })) ??
+      (await this.userAccountModel.findOne({
+        where: {
           account,
         },
       })) ??
@@ -1271,10 +1278,12 @@ export class UserService {
     const account = this.buildWeappAccount(openid);
 
     if (userAccount.account === account) {
+      userAccount.openId = openid;
       return userAccount;
     }
 
     userAccount.account = account;
+    userAccount.openId = openid;
     userAccount.updatedAt = now;
     return userAccount;
   }
