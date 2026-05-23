@@ -275,6 +275,8 @@ export class ConversationService {
     const now = new Date();
     const userMessage = await this.saveMessage({
       conversationId: runtime.conversation.id,
+      userId: runtime.conversation.userId,
+      agentId: runtime.conversation.agentId,
       role: MessageRole.user,
       type: messagePayload.type,
       content: messagePayload.content,
@@ -343,6 +345,8 @@ export class ConversationService {
     const replyTime = new Date();
     const assistantMessage = await this.createAssistantReplyMessage({
       conversationId: runtime.conversation.id,
+      userId: runtime.conversation.userId,
+      agentId: runtime.conversation.agentId,
       agent: runtime.agent,
       replyContent: processed.replyContent,
       preferVoiceReply: this.shouldPreferVoiceReply(before.messagePayload),
@@ -666,6 +670,8 @@ export class ConversationService {
 
   private async createAssistantReplyMessage(options: {
     conversationId: MongoObjectId;
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
     agent?: AgentEntity | null;
     replyContent: string;
     preferVoiceReply: boolean;
@@ -690,6 +696,8 @@ export class ConversationService {
     if (synthesizedVoice) {
       return this.saveMessage({
         conversationId: options.conversationId,
+        userId: options.userId,
+        agentId: options.agentId,
         role: MessageRole.assistant,
         type: MessageType.voice,
         content: options.replyContent,
@@ -709,6 +717,8 @@ export class ConversationService {
 
     return this.saveMessage({
       conversationId: options.conversationId,
+      userId: options.userId,
+      agentId: options.agentId,
       role: MessageRole.assistant,
       type: MessageType.text,
       content: options.replyContent,
@@ -1470,6 +1480,8 @@ export class ConversationService {
 
   private async saveMessage(options: {
     conversationId: MongoObjectId;
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
     role: MessageRole;
     type: MessageType;
     content: string;
@@ -1489,6 +1501,8 @@ export class ConversationService {
   }): Promise<MessageEntity> {
     const message = new MessageEntity();
     message.conversationId = options.conversationId;
+    message.userId = options.userId;
+    message.agentId = options.agentId;
     message.role = options.role;
     message.type = options.type;
     message.content = options.content;

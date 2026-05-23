@@ -265,9 +265,20 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     const assistantMessage = savedMessages.find(
       message => message.role === MessageRole.assistant
     );
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
 
+    expect(userMessage).toEqual(
+      expect.objectContaining({
+        userId: new MongoObjectId(USER_ID),
+        agentId: new MongoObjectId(AGENT_ID),
+      })
+    );
     expect(assistantMessage).toEqual(
       expect.objectContaining({
+        userId: new MongoObjectId(USER_ID),
+        agentId: new MongoObjectId(AGENT_ID),
         type: MessageType.text,
         content: '我也想你</fenge>今天过得怎么样？',
         status: MessageStatus.sent,
