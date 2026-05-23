@@ -2,5 +2,6 @@ packages:
   - apps/admin
   - apps/admin-node
   - apps/node
+  - apps/transfer
   - apps/weapp
   - packages/*

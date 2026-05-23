@@ -18,6 +18,9 @@ export class AgentEntity extends BaseEntity {
   name: string;
 
   @Column()
+  realName?: string;
+
+  @Column()
   avatar: string;
 
   @Column()
