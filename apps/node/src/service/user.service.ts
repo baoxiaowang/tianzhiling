@@ -1254,12 +1254,12 @@ export class UserService {
     return (
       (await this.userAccountModel.findOne({
         where: {
-          openId: openid,
+          account,
         },
       })) ??
       (await this.userAccountModel.findOne({
         where: {
-          account,
+          openId: openid,
         },
       })) ??
       (await this.userAccountModel.findOne({

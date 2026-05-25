@@ -335,4 +335,71 @@ describe('UserService phoneLogin', () => {
       })
     );
   });
+
+  it('prefers existing short hash weapp account over legacy openId duplicates', async () => {
+    const { service, userModel, userAccountModel } = createService();
+    const shortUserId = createObjectId('user-short');
+    const legacyUserId = createObjectId('user-legacy');
+    const shortAccountId = createObjectId('account-short');
+    const shortAccount = {
+      id: shortAccountId,
+      userId: shortUserId,
+      account: buildWeappAccount(WEAPP_OPENID),
+      password: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const legacyAccount = {
+      id: createObjectId('account-legacy'),
+      userId: legacyUserId,
+      account: `weapp:${WEAPP_OPENID}`,
+      password: '',
+      openId: WEAPP_OPENID,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const shortUser = {
+      id: shortUserId,
+      name: '天之灵用户8000',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+    };
+
+    userModel.findOne.mockResolvedValue(shortUser);
+    userAccountModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (where.account === buildWeappAccount(WEAPP_OPENID)) {
+        return shortAccount;
+      }
+
+      if (
+        where.openId === WEAPP_OPENID ||
+        where.account === `weapp:${WEAPP_OPENID}`
+      ) {
+        return legacyAccount;
+      }
+
+      return null;
+    });
+
+    const result = await service.weappLogin({
+      jsCode: 'js-code',
+    });
+
+    expect(result.user.account).toBe(buildWeappAccount(WEAPP_OPENID));
+    expect(userAccountModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: shortAccountId,
+        userId: shortUserId,
+        account: buildWeappAccount(WEAPP_OPENID),
+        openId: WEAPP_OPENID,
+      })
+    );
+    expect(userAccountModel.save).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: legacyAccount.id,
+        account: buildWeappAccount(WEAPP_OPENID),
+      })
+    );
+  });
 });

@@ -9,7 +9,15 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "start": "node ./dist/index.js",
-    "dev": "ts-node ./src/index.ts"
+    "dev": "ts-node ./src/index.ts",
+    "user": "node ./src/scripts/user/index.js export",
+    "user:export": "node ./src/scripts/user/index.js export",
+    "agent": "node ./src/scripts/agent.js",
+    "agent:export": "node ./src/scripts/agent.js export",
+    "agent:import": "node ./src/scripts/agent.js import",
+    "conversation": "node ./src/scripts/conversation.js",
+    "conversation:export": "node ./src/scripts/conversation.js export",
+    "conversation:import": "node ./src/scripts/conversation.js import"
   },
   "dependencies": {
     "@tzl/entities": "workspace:*",

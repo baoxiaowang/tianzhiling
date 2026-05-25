@@ -1,5 +1,5 @@
 import { MongoClient, Db } from 'mongodb';
-import { Pool, createPool } from 'mysql2/promise';
+import { Pool, PoolOptions, createPool } from 'mysql2/promise';
 import { loadEnvFiles } from './utils/env';
 
 export interface TransferLogger {
@@ -10,6 +10,17 @@ export interface TransferLogger {
 
 export interface TransferContext {
   mysql: Pool;
+  mongoClient: MongoClient;
+  mongoDb: Db;
+  logger: TransferLogger;
+}
+
+export interface MysqlTransferContext {
+  mysql: Pool;
+  logger: TransferLogger;
+}
+
+export interface MongoTransferContext {
   mongoClient: MongoClient;
   mongoDb: Db;
   logger: TransferLogger;
@@ -32,6 +43,29 @@ export async function createTransferContext(): Promise<TransferContext> {
   };
 }
 
+export async function createMysqlTransferContext(): Promise<MysqlTransferContext> {
+  loadEnvFiles();
+
+  return {
+    mysql: createMysqlPool(),
+    logger: createLogger(),
+  };
+}
+
+export async function createMongoTransferContext(): Promise<MongoTransferContext> {
+  loadEnvFiles();
+
+  const mongoClient = new MongoClient(buildMongoUri());
+
+  await mongoClient.connect();
+
+  return {
+    mongoClient,
+    mongoDb: mongoClient.db(readEnv('TRANSFER_MONGO_DATABASE', 'tzl')),
+    logger: createLogger(),
+  };
+}
+
 export async function closeTransferConnections(
   context: TransferContext
 ): Promise<void> {
@@ -39,16 +73,99 @@ export async function closeTransferConnections(
   await context.mongoClient.close();
 }
 
+export async function closeMysqlTransferConnection(
+  context: MysqlTransferContext
+): Promise<void> {
+  await context.mysql.end();
+}
+
+export async function closeMongoTransferConnection(
+  context: MongoTransferContext
+): Promise<void> {
+  await context.mongoClient.close();
+}
+
 function createMysqlPool(): Pool {
-  return createPool({
-    host: readEnv('TRANSFER_MYSQL_HOST', '127.0.0.1'),
-    port: readNumberEnv('TRANSFER_MYSQL_PORT', 3306),
+  return createPool(buildMysqlPoolOptions());
+}
+
+function buildMysqlPoolOptions(): PoolOptions {
+  const jdbcUrl = readEnv('TRANSFER_MYSQL_JDBC_URL', '').trim();
+  const parsedJdbcUrl = jdbcUrl ? parseMysqlJdbcUrl(jdbcUrl) : {};
+
+  return {
+    ...parsedJdbcUrl.options,
+    host: readEnv('TRANSFER_MYSQL_HOST', parsedJdbcUrl.host || '127.0.0.1'),
+    port: readNumberEnv('TRANSFER_MYSQL_PORT', parsedJdbcUrl.port || 3306),
     user: readEnv('TRANSFER_MYSQL_USER', 'root'),
     password: readEnv('TRANSFER_MYSQL_PASSWORD', ''),
-    database: readEnv('TRANSFER_MYSQL_DATABASE', ''),
+    database: readEnv('TRANSFER_MYSQL_DATABASE', parsedJdbcUrl.database || ''),
+    charset: readEnv('TRANSFER_MYSQL_CHARSET', parsedJdbcUrl.charset || 'utf8mb4'),
+    timezone: readEnv('TRANSFER_MYSQL_TIMEZONE', parsedJdbcUrl.timezone || '+08:00'),
     waitForConnections: true,
     connectionLimit: readNumberEnv('TRANSFER_MYSQL_CONNECTION_LIMIT', 5),
-  });
+  };
+}
+
+function parseMysqlJdbcUrl(jdbcUrl: string): {
+  host?: string;
+  port?: number;
+  database?: string;
+  charset?: string;
+  timezone?: string;
+  options?: PoolOptions;
+} {
+  const normalized = jdbcUrl.replace(/^jdbc:/i, '');
+
+  if (!normalized.startsWith('mysql://')) {
+    throw new Error('TRANSFER_MYSQL_JDBC_URL must be a jdbc:mysql:// URL');
+  }
+
+  const url = new URL(normalized);
+  const serverTimezone = url.searchParams.get('serverTimezone') || undefined;
+  const charset =
+    url.searchParams.get('characterEncoding') ||
+    url.searchParams.get('connectionCollation') ||
+    undefined;
+
+  return {
+    host: url.hostname,
+    port: url.port ? Number(url.port) : undefined,
+    database: decodeURIComponent(url.pathname.replace(/^\/+/, '')),
+    charset: normalizeMysqlCharset(charset),
+    timezone: normalizeMysqlTimezone(serverTimezone),
+    options: {
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      dateStrings: false,
+    },
+  };
+}
+
+function normalizeMysqlCharset(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.toLowerCase().replace(/-/g, '');
+
+  if (normalized === 'utf8') {
+    return 'utf8mb4';
+  }
+
+  return value;
+}
+
+function normalizeMysqlTimezone(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value === 'Asia/Shanghai') {
+    return '+08:00';
+  }
+
+  return value;
 }
 
 function buildMongoUri(): string {
