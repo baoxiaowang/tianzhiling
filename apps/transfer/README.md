@@ -15,6 +15,15 @@
 - `pnpm conversation`：执行 `src/scripts/conversation.js`，从旧 MySQL 的 `conversation_record` 按 `conversation_id + user_id + agent_id` 抽取会话 BSON，再导入 MongoDB。
 - `pnpm conversation:export`：从旧 MySQL 的 `conversation_record` 导出 `conversation` BSON dump。
 - `pnpm conversation:import`：从 BSON dump 导入 MongoDB 的 `conversation`。
+- `pnpm message`：执行 `src/scripts/message.js`，从旧 MySQL 的 `conversation_record` 导出消息 BSON，再导入 MongoDB 的 `message`。
+- `pnpm message:export`：从旧 MySQL 的 `conversation_record` 导出 `message` BSON dump。
+- `pnpm message:import`：从 BSON dump 导入 MongoDB 的 `message`。
+- `pnpm post`：执行 `src/scripts/post.js`，从旧 MySQL 的 `moment` 导出动态 BSON，再导入 MongoDB 的 `post`。
+- `pnpm post:export`：从旧 MySQL 的 `moment` 导出 `post` BSON dump。
+- `pnpm post:import`：从 BSON dump 导入 MongoDB 的 `post`。
+- `pnpm post-comment`：执行 `src/scripts/post-comment.js`，从旧 MySQL 的 `moment_comment` / `replay_message` 导出动态评论 BSON，再导入 MongoDB 的 `post_comment`。
+- `pnpm post-comment:export`：从旧 MySQL 的动态评论表导出 `post_comment` BSON dump。
+- `pnpm post-comment:import`：从 BSON dump 导入 MongoDB 的 `post_comment`。
 
 后续迁移脚本放在 `src/scripts` 下，并在 `package.json` 的 `scripts` 中补充命令。
 
@@ -51,6 +60,22 @@
 - `TRANSFER_CONVERSATION_MODE`：`all` / `export` / `import`，默认 `all`。
 - `TRANSFER_CONVERSATION_IMPORT_BATCH_SIZE`
 - `TRANSFER_CONVERSATION_DUMP_PATH`：会话迁移 BSON dump 根目录，默认跟 `TRANSFER_AGENT_DUMP_PATH` / `TRANSFER_USER_DUMP_PATH` 一致，未配置时为 `apps/transfer/dump`。
+- `TRANSFER_MESSAGE_BATCH_SIZE`
+- `TRANSFER_MESSAGE_MODE`：`all` / `export` / `import`，默认 `all`。
+- `TRANSFER_MESSAGE_IMPORT_BATCH_SIZE`
+- `TRANSFER_MESSAGE_DUMP_PATH`：消息迁移 BSON dump 根目录，默认跟 `TRANSFER_CONVERSATION_DUMP_PATH` / `TRANSFER_AGENT_DUMP_PATH` / `TRANSFER_USER_DUMP_PATH` 一致，未配置时为 `apps/transfer/dump`。
+- `TRANSFER_MESSAGE_USER_SEND_TYPES`：可选，逗号分隔，覆盖旧 `send_type` 到 `role=user` 的映射，默认包含 `1,user,用户,member,customer,human`。
+- `TRANSFER_MESSAGE_ASSISTANT_SEND_TYPES`：可选，逗号分隔，覆盖旧 `send_type` 到 `role=assistant` 的映射，默认包含 `2,agent,assistant,ai,bot,智能体`。
+- `TRANSFER_POST_BATCH_SIZE`
+- `TRANSFER_POST_MODE`：`all` / `export` / `import`，默认 `all`。
+- `TRANSFER_POST_IMPORT_BATCH_SIZE`
+- `TRANSFER_POST_DUMP_PATH`：动态迁移 BSON dump 根目录，默认跟 `TRANSFER_MESSAGE_DUMP_PATH` / `TRANSFER_CONVERSATION_DUMP_PATH` / `TRANSFER_AGENT_DUMP_PATH` / `TRANSFER_USER_DUMP_PATH` 一致，未配置时为 `apps/transfer/dump`。
+- `TRANSFER_POST_COMMENT_BATCH_SIZE`
+- `TRANSFER_POST_COMMENT_MODE`：`all` / `export` / `import`，默认 `all`。
+- `TRANSFER_POST_COMMENT_IMPORT_BATCH_SIZE`
+- `TRANSFER_POST_COMMENT_DUMP_PATH`：动态评论迁移 BSON dump 根目录，默认跟 `TRANSFER_POST_DUMP_PATH` / `TRANSFER_MESSAGE_DUMP_PATH` / `TRANSFER_CONVERSATION_DUMP_PATH` / `TRANSFER_AGENT_DUMP_PATH` / `TRANSFER_USER_DUMP_PATH` 一致，未配置时为 `apps/transfer/dump`。
+- `TRANSFER_POST_COMMENT_INCLUDE_MOMENT_COMMENT`：是否导出旧 `moment_comment`，默认 `true`。
+- `TRANSFER_POST_COMMENT_INCLUDE_REPLAY_MESSAGE`：是否导出旧 `replay_message`，默认 `true`。
 
 旧 MySQL 可以直接配置 JDBC URL，例如：
 
@@ -68,6 +93,12 @@ pnpm agent:export ./dump
 pnpm agent:import ./dump
 pnpm conversation:export ./dump
 pnpm conversation:import ./dump
+pnpm message:export ./dump
+pnpm message:import ./dump
+pnpm post:export ./dump
+pnpm post:import ./dump
+pnpm post-comment:export ./dump
+pnpm post-comment:import ./dump
 ```
 
 导出的目录结构兼容 Studio 3T 的 `BSON - mongodump folder` 导入格式，例如：
@@ -83,6 +114,12 @@ dump/
     agent.metadata.json
     conversation.bson
     conversation.metadata.json
+    message.bson
+    message.metadata.json
+    post.bson
+    post.metadata.json
+    post_comment.bson
+    post_comment.metadata.json
 ```
 
 在 Studio 3T 导入时选择 `dump` 作为 mongodump 根目录。

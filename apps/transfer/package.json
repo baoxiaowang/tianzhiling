@@ -17,7 +17,16 @@
     "agent:import": "node ./src/scripts/agent.js import",
     "conversation": "node ./src/scripts/conversation.js",
     "conversation:export": "node ./src/scripts/conversation.js export",
-    "conversation:import": "node ./src/scripts/conversation.js import"
+    "conversation:import": "node ./src/scripts/conversation.js import",
+    "message": "node ./src/scripts/message.js",
+    "message:export": "node ./src/scripts/message.js export",
+    "message:import": "node ./src/scripts/message.js import",
+    "post": "node ./src/scripts/post.js",
+    "post:export": "node ./src/scripts/post.js export",
+    "post:import": "node ./src/scripts/post.js import",
+    "post-comment": "node ./src/scripts/post-comment.js",
+    "post-comment:export": "node ./src/scripts/post-comment.js export",
+    "post-comment:import": "node ./src/scripts/post-comment.js import"
   },
   "dependencies": {
     "@tzl/entities": "workspace:*",
