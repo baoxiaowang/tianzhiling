@@ -26,7 +26,10 @@
     "post:import": "node ./src/scripts/post.js import",
     "post-comment": "node ./src/scripts/post-comment.js",
     "post-comment:export": "node ./src/scripts/post-comment.js export",
-    "post-comment:import": "node ./src/scripts/post-comment.js import"
+    "post-comment:import": "node ./src/scripts/post-comment.js import",
+    "membership-order": "node ./src/scripts/membership-order.js export",
+    "membership-order:export": "node ./src/scripts/membership-order.js export",
+    "membership-order:test": "node ./src/scripts/membership-order.fixture-test.js"
   },
   "dependencies": {
     "@tzl/entities": "workspace:*",
