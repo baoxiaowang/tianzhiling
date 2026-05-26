@@ -10,6 +10,9 @@ function createService() {
     findOne: jest.fn(),
     save: jest.fn(),
   } as any;
+  service.voicePackageModel = {
+    findOne: jest.fn(),
+  } as any;
 
   return service;
 }
@@ -18,8 +21,14 @@ describe('AdminVipPlanService', () => {
   it('normalizes vip plan code before saving', async () => {
     const service = createService();
     const planId = new MongoObjectId();
+    const voicePackageId = new MongoObjectId();
 
     jest.mocked(service.vipPlanModel.findOne).mockResolvedValue(null as never);
+    jest.mocked(service.voicePackageModel.findOne).mockResolvedValue({
+      id: voicePackageId,
+      code: 'voice_basic',
+      name: '基础声音训练',
+    } as never);
     jest
       .mocked(service.vipPlanModel.save)
       .mockImplementation(async plan => ({ ...plan, id: planId }) as never);
@@ -35,6 +44,7 @@ describe('AdminVipPlanService', () => {
       durationDays: 365,
       status: VipPlanStatus.active,
       sort: 0,
+      voicePackageId: voicePackageId.toHexString(),
       benefits: [{ title: '无限聊天' }, { title: '动态服务' }],
     });
 
@@ -49,6 +59,9 @@ describe('AdminVipPlanService', () => {
         name: '一年会员',
         durationDays: 365,
         lifetime: false,
+        voicePackageId,
+        voicePackageCode: 'voice_basic',
+        voicePackageName: '基础声音训练',
         benefits: [{ title: '无限聊天' }, { title: '动态服务' }],
       })
     );
@@ -56,6 +69,9 @@ describe('AdminVipPlanService', () => {
       expect.objectContaining({
         id: planId.toHexString(),
         code: 'vip_year',
+        voicePackageId: voicePackageId.toHexString(),
+        voicePackageCode: 'voice_basic',
+        voicePackageName: '基础声音训练',
         status: VipPlanStatus.active,
       })
     );

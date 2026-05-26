@@ -1,5 +1,5 @@
 import { Column, Entity, Index } from 'typeorm';
-import { BaseEntity, TableName } from './base';
+import { BaseEntity, MongoObjectId, TableName } from './base';
 import { AgentEntitlementType } from './agent-entitlement.entity';
 
 export enum VipPlanStatus {
@@ -54,6 +54,15 @@ export class VipPlanEntity extends BaseEntity {
 
   @Column()
   couponGrantAmount?: number;
+
+  @Column()
+  voicePackageId?: MongoObjectId;
+
+  @Column()
+  voicePackageCode?: string;
+
+  @Column()
+  voicePackageName?: string;
 
   @Column()
   status: VipPlanStatus;

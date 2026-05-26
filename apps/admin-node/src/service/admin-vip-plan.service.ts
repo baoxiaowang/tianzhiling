@@ -13,6 +13,7 @@ import {
   MongoObjectId,
   VipPlanEntity,
   VipPlanStatus,
+  VoicePackageEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -21,11 +22,19 @@ import {
 } from '../dto/admin-vip-plan.dto';
 
 type MongoWhere = Record<string, unknown>;
+type NormalizedVipPlanData = Omit<SaveAdminVipPlanData, 'voicePackageId'> & {
+  voicePackageId?: MongoObjectId;
+  voicePackageCode?: string;
+  voicePackageName?: string;
+};
 
 @Provide()
 export class AdminVipPlanService {
   @InjectEntityModel(VipPlanEntity)
   vipPlanModel: MongoRepository<VipPlanEntity>;
+
+  @InjectEntityModel(VoicePackageEntity)
+  voicePackageModel: MongoRepository<VoicePackageEntity>;
 
   async listVipPlans(
     query: ListAdminVipPlansQueryDTO
@@ -60,7 +69,7 @@ export class AdminVipPlanService {
   async createVipPlan(
     payload: SaveAdminVipPlanDTO
   ): Promise<AdminVipPlanRecordDTO> {
-    const normalized = this.normalizePayload(payload);
+    const normalized = await this.normalizePayload(payload);
     await this.assertCodeAvailable(normalized.code);
 
     const now = new Date();
@@ -79,7 +88,7 @@ export class AdminVipPlanService {
     payload: SaveAdminVipPlanDTO
   ): Promise<AdminVipPlanRecordDTO> {
     const plan = await this.getVipPlanById(planId);
-    const normalized = this.normalizePayload(payload);
+    const normalized = await this.normalizePayload(payload);
 
     if (normalized.code !== plan.code) {
       await this.assertCodeAvailable(normalized.code, plan.id);
@@ -111,6 +120,8 @@ export class AdminVipPlanService {
       { code: { $regex: escapedKeyword, $options: 'i' } },
       { name: { $regex: escapedKeyword, $options: 'i' } },
       { description: { $regex: escapedKeyword, $options: 'i' } },
+      { voicePackageCode: { $regex: escapedKeyword, $options: 'i' } },
+      { voicePackageName: { $regex: escapedKeyword, $options: 'i' } },
     ];
 
     if (MongoObjectId.isValid(keyword)) {
@@ -126,11 +137,16 @@ export class AdminVipPlanService {
     };
   }
 
-  private normalizePayload(payload: SaveAdminVipPlanDTO): SaveAdminVipPlanData {
+  private async normalizePayload(
+    payload: SaveAdminVipPlanDTO
+  ): Promise<NormalizedVipPlanData> {
     const lifetime = Boolean(payload.lifetime);
     const durationDays = lifetime
       ? undefined
       : this.normalizeOptionalPositiveInteger(payload.durationDays);
+    const voicePackage = await this.normalizeVoicePackage(
+      payload.voicePackageId
+    );
 
     if (!lifetime && durationDays === undefined) {
       throw new AppError(
@@ -157,6 +173,9 @@ export class AdminVipPlanService {
       couponGrantAmount: this.normalizeOptionalAmount(
         payload.couponGrantAmount
       ),
+      voicePackageId: voicePackage?.id,
+      voicePackageCode: voicePackage?.code,
+      voicePackageName: voicePackage?.name,
       status: this.normalizeStatus(payload.status),
       sort: this.normalizeNonNegativeInteger(payload.sort, 0),
     };
@@ -259,6 +278,11 @@ export class AdminVipPlanService {
       benefits: plan.benefits ?? [],
       entitlementGrants: plan.entitlementGrants ?? [],
       couponGrantAmount: plan.couponGrantAmount,
+      voicePackageId: plan.voicePackageId
+        ? this.stringifyObjectId(plan.voicePackageId)
+        : undefined,
+      voicePackageCode: plan.voicePackageCode,
+      voicePackageName: plan.voicePackageName,
       status: plan.status,
       sort: plan.sort ?? 0,
       createdAt: this.formatDate(plan.createdAt),
@@ -309,6 +333,41 @@ export class AdminVipPlanService {
     return this.normalizeAmount(value);
   }
 
+  private async normalizeVoicePackage(
+    value?: string
+  ): Promise<VoicePackageEntity | undefined> {
+    const voicePackageId = this.normalizeOptionalObjectId(
+      value,
+      'INVALID_VOICE_PACKAGE_ID'
+    );
+
+    if (!voicePackageId) {
+      return undefined;
+    }
+
+    const voicePackage =
+      (await this.voicePackageModel.findOne({
+        where: {
+          id: voicePackageId,
+        },
+      })) ??
+      (await this.voicePackageModel.findOne({
+        where: {
+          _id: voicePackageId,
+        } as never,
+      }));
+
+    if (!voicePackage) {
+      throw new AppError(
+        'VOICE_PACKAGE_NOT_FOUND',
+        'voice package not found',
+        404
+      );
+    }
+
+    return voicePackage;
+  }
+
   private normalizePositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number(value);
 
@@ -352,6 +411,23 @@ export class AdminVipPlanService {
     }
 
     return new MongoObjectId(value);
+  }
+
+  private normalizeOptionalObjectId(
+    value: string | undefined,
+    code: string
+  ): MongoObjectId | undefined {
+    const trimmed = value?.trim() ?? '';
+
+    if (!trimmed) {
+      return undefined;
+    }
+
+    if (!MongoObjectId.isValid(trimmed)) {
+      throw new AppError(code, 'object id is invalid');
+    }
+
+    return new MongoObjectId(trimmed);
   }
 
   private stringifyObjectId(value: MongoObjectId): string {

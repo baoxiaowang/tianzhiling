@@ -54,7 +54,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1280 }"
+        :scroll="{ x: 1440 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -96,6 +96,19 @@
           >
             <template #cell="{ record }">
               {{ formatMoney(record.couponGrantAmount) }}
+            </template>
+          </a-table-column>
+          <a-table-column title="声音套餐" :width="180">
+            <template #cell="{ record }">
+              <template
+                v-if="record.voicePackageName || record.voicePackageCode"
+              >
+                <div>{{ record.voicePackageName || '-' }}</div>
+                <a-typography-text type="secondary">
+                  {{ record.voicePackageCode }}
+                </a-typography-text>
+              </template>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="权益" :width="260">
@@ -260,6 +273,25 @@
               </a-radio-group>
             </a-form-item>
           </a-grid-item>
+          <a-grid-item :span="2">
+            <a-form-item field="voicePackageId" label="关联声音套餐">
+              <a-select
+                v-model="editForm.voicePackageId"
+                allow-clear
+                :loading="voicePackageLoading"
+                placeholder="可选，选择该 VIP 计划包含的声音套餐"
+                class="membership-page__full"
+              >
+                <a-option
+                  v-for="item in voicePackageOptions"
+                  :key="item.id"
+                  :value="item.id"
+                >
+                  {{ formatVoicePackageOption(item) }}
+                </a-option>
+              </a-select>
+            </a-form-item>
+          </a-grid-item>
         </a-grid>
 
         <a-form-item field="description" label="描述">
@@ -314,8 +346,12 @@
     createVipPlan,
     queryVipPlanList,
     updateVipPlan,
-    VipPlanRecord,
+    type VipPlanRecord,
   } from '@/api/membership';
+  import {
+    queryVoicePackageList,
+    type VoicePackageRecord,
+  } from '@/api/voice-package';
 
   type VipPlanStatus = 'active' | 'disabled';
 
@@ -328,6 +364,7 @@
     lifetime: boolean;
     durationDays?: number;
     couponGrantYuan?: number;
+    voicePackageId?: string;
     status: VipPlanStatus;
     sort: number;
     benefits: VipPlanBenefitForm[];
@@ -344,6 +381,8 @@
   const editingPlan = ref<VipPlanRecord>();
   const editFormRef = ref<FormInstance>();
   const renderList = ref<VipPlanRecord[]>([]);
+  const voicePackageLoading = ref(false);
+  const voicePackageOptions = ref<VoicePackageRecord[]>([]);
   let benefitIdSeed = 0;
   const searchForm = reactive<{
     keyword: string;
@@ -361,6 +400,7 @@
     lifetime: false,
     durationDays: 365,
     couponGrantYuan: undefined,
+    voicePackageId: undefined,
     status: 'active',
     sort: 0,
     benefits: [],
@@ -450,6 +490,7 @@
     editForm.lifetime = record.lifetime;
     editForm.durationDays = record.durationDays;
     editForm.couponGrantYuan = optionalAmountToYuan(record.couponGrantAmount);
+    editForm.voicePackageId = record.voicePackageId;
     editForm.status = record.status;
     editForm.sort = record.sort;
     editForm.benefits =
@@ -506,6 +547,7 @@
     lifetime: editForm.lifetime,
     durationDays: editForm.lifetime ? undefined : editForm.durationDays,
     couponGrantAmount: yuanToOptionalAmount(editForm.couponGrantYuan),
+    voicePackageId: editForm.voicePackageId,
     status: editForm.status,
     sort: editForm.sort,
     benefits: buildBenefitsPayload(),
@@ -520,6 +562,7 @@
     editForm.lifetime = false;
     editForm.durationDays = 365;
     editForm.couponGrantYuan = undefined;
+    editForm.voicePackageId = undefined;
     editForm.status = 'active';
     editForm.sort = 0;
     editForm.benefits = [createBenefitRow()];
@@ -552,6 +595,21 @@
       .map((benefit) => benefit.title.trim())
       .filter(Boolean)
       .map((title) => ({ title }));
+
+  const fetchVoicePackageOptions = async () => {
+    try {
+      voicePackageLoading.value = true;
+      const { data } = await queryVoicePackageList({
+        page: 1,
+        pageSize: 100,
+      });
+      voicePackageOptions.value = data.items;
+    } catch (error) {
+      Message.error('声音套餐加载失败');
+    } finally {
+      voicePackageLoading.value = false;
+    }
+  };
 
   const yuanToAmount = (value?: number) => Math.round(Number(value || 0) * 100);
 
@@ -587,11 +645,15 @@
   const formatStatus = (status: VipPlanStatus) =>
     status === 'active' ? '启用' : '停用';
 
+  const formatVoicePackageOption = (item: VoicePackageRecord) =>
+    `${item.name}（${item.code}）`;
+
   const formatDate = (value: string) =>
     value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 
   onMounted(() => {
     fetchData();
+    fetchVoicePackageOptions();
   });
 </script>
 

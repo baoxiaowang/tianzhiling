@@ -274,6 +274,11 @@ export class MembershipService {
       lifetime: Boolean(plan.lifetime),
       benefits: plan.benefits ?? [],
       couponGrantAmount: plan.couponGrantAmount,
+      voicePackageId: plan.voicePackageId
+        ? this.stringifyObjectId(plan.voicePackageId)
+        : undefined,
+      voicePackageCode: plan.voicePackageCode,
+      voicePackageName: plan.voicePackageName,
     };
   }
 

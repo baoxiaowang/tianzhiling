@@ -20,6 +20,9 @@ export interface VipPlan {
   lifetime: boolean
   benefits: VipPlanBenefitDTO[]
   couponGrantAmount?: number
+  voicePackageId?: string
+  voicePackageCode?: string
+  voicePackageName?: string
 }
 
 export interface UserMembership {
@@ -127,6 +130,9 @@ function parseVipPlan(value: unknown): VipPlan {
     benefits: parseBenefits(raw.benefits),
     couponGrantAmount:
       raw.couponGrantAmount == null ? undefined : asNumber(raw.couponGrantAmount),
+    voicePackageId: asString(raw.voicePackageId) || undefined,
+    voicePackageCode: asString(raw.voicePackageCode) || undefined,
+    voicePackageName: asString(raw.voicePackageName) || undefined,
   }
 }
 

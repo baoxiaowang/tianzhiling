@@ -823,6 +823,11 @@ export class OrderService {
       lifetime: Boolean(plan.lifetime),
       benefits: plan.benefits ?? [],
       entitlementGrants: plan.entitlementGrants ?? [],
+      voicePackageId: plan.voicePackageId
+        ? this.stringifyObjectId(plan.voicePackageId)
+        : undefined,
+      voicePackageCode: plan.voicePackageCode,
+      voicePackageName: plan.voicePackageName,
     };
   }
 

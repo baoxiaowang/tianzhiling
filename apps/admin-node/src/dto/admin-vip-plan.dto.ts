@@ -72,6 +72,9 @@ export class SaveAdminVipPlanDTO {
   @Rule(RuleType.number().integer().min(0).max(99999999).optional())
   couponGrantAmount?: number;
 
+  @Rule(RuleType.string().allow('').optional())
+  voicePackageId?: string;
+
   @Rule(statusRule.optional())
   status?: string;
 
