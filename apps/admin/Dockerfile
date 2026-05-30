@@ -12,7 +12,7 @@ COPY packages/shared/package.json ./packages/shared/package.json
 
 RUN npm pkg delete scripts.prepare --prefix /workspace
 
-RUN npx -y pnpm@9.15.9 --dir /workspace install --ignore-scripts --frozen-lockfile --filter ./apps/admin... --config.node-linker=isolated \
+RUN npx -y pnpm@9.15.9 --dir /workspace install --ignore-scripts --frozen-lockfile --prod=false --filter ./apps/admin... --filter @tzl/shared --config.node-linker=isolated \
   && npx -y pnpm@9.15.9 --dir /workspace rebuild esbuild
 
 COPY packages/shared ./packages/shared
