@@ -1,4 +1,11 @@
-import { AgentEntity, AgentSex, MongoObjectId } from '@tzl/entities';
+import {
+  AgentEntity,
+  AgentSex,
+  MessageRole,
+  MessageStatus,
+  MessageType,
+  MongoObjectId,
+} from '@tzl/entities';
 import { AgentService } from '../../src/service/agent.service';
 
 const USER_ID = '665000000000000000000001';
@@ -87,9 +94,23 @@ function createService(agents: AgentEntity[] = []) {
     }),
   } as any;
   service.conversationModel = {
-    save: jest.fn(async entity => entity),
+    save: jest.fn(async entity => {
+      if (!entity.id) {
+        entity.id = new MongoObjectId();
+      }
+
+      return entity;
+    }),
   } as any;
-  service.messageModel = {} as any;
+  service.messageModel = {
+    save: jest.fn(async entity => {
+      if (!entity.id) {
+        entity.id = new MongoObjectId();
+      }
+
+      return entity;
+    }),
+  } as any;
   service.postImageService = {
     resolveForResponse: jest.fn((value: string) => value),
   } as any;
@@ -111,6 +132,22 @@ describe('AgentService default agent', () => {
 
     expect(result.isDefault).toBe(true);
     expect(agents[0].isDefault).toBe(true);
+    expect(service.conversationModel.save).toHaveBeenCalledTimes(1);
+    expect(service.messageModel.save).toHaveBeenCalledTimes(1);
+
+    const savedMessage = (service.messageModel.save as jest.Mock).mock
+      .calls[0][0];
+    expect(savedMessage.conversationId).toBeInstanceOf(MongoObjectId);
+    expect(sameObjectId(savedMessage.userId, new MongoObjectId(USER_ID))).toBe(
+      true
+    );
+    expect(sameObjectId(savedMessage.agentId, agents[0].id)).toBe(true);
+    expect(savedMessage.role).toBe(MessageRole.assistant);
+    expect(savedMessage.type).toBe(MessageType.text);
+    expect(savedMessage.content).toBe('小宝，好想你啊，过得好吗？');
+    expect(savedMessage.status).toBe(MessageStatus.sent);
+    expect(savedMessage.createdAt).toBeInstanceOf(Date);
+    expect(savedMessage.updatedAt).toBeInstanceOf(Date);
   });
 
   it('clears the previous default when another agent is set as default', async () => {

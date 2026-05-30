@@ -14,6 +14,9 @@ import {
   AgentSex,
   ConversationEntity,
   MessageEntity,
+  MessageRole,
+  MessageStatus,
+  MessageType,
   MongoObjectId,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
@@ -335,7 +338,30 @@ export class AgentService {
     conversation.createdAt = now;
     conversation.updatedAt = now;
 
-    await this.conversationModel.save(conversation);
+    const savedConversation = await this.conversationModel.save(conversation);
+    await this.createInitialAgentMessage(savedConversation, agent, userId, now);
+  }
+
+  private async createInitialAgentMessage(
+    conversation: ConversationEntity,
+    agent: AgentEntity,
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<void> {
+    const message = new MessageEntity();
+    const callMe = agent.agentCallMe?.trim() || '我';
+
+    message.conversationId = conversation.id;
+    message.userId = userId;
+    message.agentId = agent.id;
+    message.role = MessageRole.assistant;
+    message.type = MessageType.text;
+    message.content = `${callMe}，好想你啊，过得好吗？`;
+    message.status = MessageStatus.sent;
+    message.createdAt = now;
+    message.updatedAt = now;
+
+    await this.messageModel.save(message);
   }
 
   private async buildAgentProfile(agent: AgentEntity): Promise<AgentProfile> {
