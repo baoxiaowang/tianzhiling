@@ -7,9 +7,6 @@
     :safe-area-bottom="false"
     require-auth
     auth-loading-text="正在恢复通讯录..."
-    login-placeholder-title="登录后查看通讯录"
-    login-placeholder-subtitle="授权后可查看已经开始聊天的联系人"
-    login-placeholder-action-text="登录查看"
   >
     <view v-if="isCheckingAuth" class="loading-state">
       <view class="loading-state__dot" />

@@ -7,7 +7,6 @@
     :safe-area-top="false"
     require-auth
     auth-loading-text="正在恢复订单信息..."
-    login-placeholder-subtitle="登录后可查看你的订单记录"
   >
     <template #header>
       <app-bar title="我的订单" background="#f6f6f6" :show-capsule="true" />

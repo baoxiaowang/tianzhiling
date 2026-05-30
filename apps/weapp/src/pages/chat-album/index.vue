@@ -7,7 +7,6 @@
     :safe-area-top="false"
     require-auth
     auth-loading-text="正在恢复相册信息..."
-    login-placeholder-subtitle="登录后可查看聊天相册"
   >
     <template #header>
       <app-bar title="聊天相册" background="#f7f7f7" :show-capsule="true" />

@@ -12,7 +12,11 @@
       <view class="login-prompt__handle" />
 
       <view class="login-prompt__intro">
-        <view class="login-prompt__logo">灵</view>
+        <image
+          class="login-prompt__logo"
+          :src="loginLogoImage"
+          mode="aspectFit"
+        />
         <view class="login-prompt__copy">
           <text class="login-prompt__title">登录后继续体验</text>
           <text class="login-prompt__subtitle">授权后可同步资料，手机号可在个人中心绑定</text>
@@ -71,10 +75,13 @@ import { computed, ref } from 'vue'
 import { useLoginHooks } from '../../auth/login-hooks'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 
 const props = defineProps<{
   visible: boolean
 }>()
+
+const loginLogoImage = resolveMediaAssetUrl('/weapp/logo.png')
 
 const emit = defineEmits({
   'update:visible': (_value: boolean) => true,
@@ -155,7 +162,7 @@ function handleAgreementTap(type: AgreementDocumentType) {
 .login-prompt {
   box-sizing: border-box;
   width: 100%;
-  padding: 12px 24px 24px;
+  padding: 12px 12px 12px;
   border-radius: 22px 22px 0 0;
   background: $tzl-color-surface-base;
   box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.08);
@@ -180,16 +187,9 @@ function handleAgreementTap(type: AgreementDocumentType) {
   flex-shrink: 0;
   width: 60px;
   height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
+  overflow: hidden;
   border-radius: 50%;
-  background: $tzl-gradient-primary;
-  color: $tzl-color-surface-base;
-  font-size: 38px;
-  line-height: 1;
-  font-weight: 700;
-  box-shadow: 0 8px 18px rgba(255, 96, 58, 0.18);
 }
 
 .login-prompt__copy {
@@ -207,8 +207,8 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 .login-prompt__subtitle {
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 12px;
+  line-height: 18px;
   color: $tzl-color-text-muted;
 }
 
@@ -298,7 +298,7 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 .login-prompt__agreement .nut-checkbox__label {
-  line-height: 19px;
+  line-height: 1;
 }
 
 .login-prompt__link {

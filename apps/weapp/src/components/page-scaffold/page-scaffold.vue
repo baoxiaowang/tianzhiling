@@ -42,9 +42,6 @@
       </view>
 
       <view v-else class="page-scaffold__login-placeholder">
-        <view class="page-scaffold__login-avatar">{{ loginPlaceholderAvatar }}</view>
-        <text class="page-scaffold__login-title">{{ loginPlaceholderTitle }}</text>
-        <text class="page-scaffold__login-subtitle">{{ loginPlaceholderSubtitle }}</text>
         <nut-button
           class="page-scaffold__login-button"
           shape="round"
@@ -89,6 +86,7 @@ export default {
 import { computed, ref, useSlots, watch } from 'vue'
 import LoginPromptPopup from '../login-prompt-popup/login-prompt-popup.vue'
 import { authSession, authSessionReady, restoreAuthSession } from '../../auth/session'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 import { createSafeAreaCssVars } from '../../utils/safe-area'
 
 const props = withDefaults(
@@ -105,10 +103,8 @@ const props = withDefaults(
     safeAreaBottom?: boolean
     requireAuth?: boolean
     authLoadingText?: string
-    loginPlaceholderAvatar?: string
-    loginPlaceholderTitle?: string
-    loginPlaceholderSubtitle?: string
     loginPlaceholderActionText?: string
+    loginPlaceholderBackgroundImage?: string
   }>(),
   {
     background: 'transparent',
@@ -123,10 +119,8 @@ const props = withDefaults(
     safeAreaBottom: true,
     requireAuth: false,
     authLoadingText: '正在恢复登录状态...',
-    loginPlaceholderAvatar: '灵',
-    loginPlaceholderTitle: '请先登录',
-    loginPlaceholderSubtitle: '登录后可查看个人资料、动态和订单信息',
-    loginPlaceholderActionText: '去登录',
+    loginPlaceholderActionText: '微信一键登录',
+    loginPlaceholderBackgroundImage: '',
   },
 )
 
@@ -139,6 +133,10 @@ const isLoginPromptVisible = ref(false)
 const isAuthenticated = computed(() => Boolean(authSession.value))
 const isAuthRestoring = computed(() => props.requireAuth && !authSessionReady.value)
 const canRenderDefaultSlot = computed(() => !props.requireAuth || isAuthenticated.value)
+const shouldShowAuthFallback = computed(() => props.requireAuth && !canRenderDefaultSlot.value)
+const loginBackgroundImage = computed(() => {
+  return props.loginPlaceholderBackgroundImage || resolveMediaAssetUrl('/weapp/unlogin.png')
+})
 const hasVisibleBottom = computed(() => canRenderDefaultSlot.value && hasBottom.value)
 
 function openLoginPrompt() {
@@ -191,10 +189,19 @@ const expandPadding = (padding: string): [string, string, string, string] => {
 }
 
 const rootStyle = computed(() => {
-  return {
+  const style: Record<string, string> = {
     background: props.background,
     ...createSafeAreaCssVars('page-scaffold-safe'),
   }
+
+  if (shouldShowAuthFallback.value && loginBackgroundImage.value) {
+    style.backgroundImage = `url(${loginBackgroundImage.value})`
+    style.backgroundSize = 'cover'
+    style.backgroundPosition = 'center'
+    style.backgroundRepeat = 'no-repeat'
+  }
+
+  return style
 })
 
 const headerStyle = computed(() => {
@@ -298,49 +305,19 @@ const bodyStyle = computed(() => {
 
 .page-scaffold__login-placeholder {
   min-height: 100%;
-  padding: 88px 28px 120px;
+  padding: 0 28px 120px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
-}
-
-.page-scaffold__login-avatar {
-  width: 72px;
-  height: 72px;
-  display: flex;
-  align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: $tzl-gradient-primary;
-  color: $tzl-color-surface-base;
-  font-size: 42px;
-  line-height: 1;
-  font-weight: 700;
-  box-shadow: $tzl-shadow-primary-md;
-}
-
-.page-scaffold__login-title {
-  margin-top: 22px;
-  font-size: 23px;
-  line-height: 31px;
-  font-weight: 700;
-  color: $tzl-color-text-primary;
-}
-
-.page-scaffold__login-subtitle {
-  max-width: 260px;
-  margin-top: 8px;
-  font-size: 14px;
-  line-height: 21px;
-  color: $tzl-color-text-muted;
+  text-align: center;
 }
 
 .page-scaffold__login-button {
   width: 180px;
   height: 48px;
-  margin-top: 28px;
+  margin-top: 0;
   background: $tzl-gradient-primary;
   font-size: 16px;
   font-weight: 700;
