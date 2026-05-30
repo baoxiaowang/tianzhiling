@@ -25,6 +25,7 @@ interface ConversationMessageListResponse {
 interface SendConversationMessageResponse {
   userMessage?: unknown
   assistantMessage?: unknown
+  chatQuota?: unknown
 }
 
 export interface ConversationVoicePayload {
@@ -59,6 +60,16 @@ export interface ConversationMessage {
 export interface SendConversationMessageResult {
   userMessage: ConversationMessage
   assistantMessage?: ConversationMessage
+  chatQuota?: ConversationChatQuotaSnapshot
+}
+
+export interface ConversationChatQuotaSnapshot {
+  isVip: boolean
+  policy?: string
+  limit?: number
+  usedCount?: number
+  remainingCount?: number
+  trialDays?: number
 }
 
 interface VoiceTranscriptionResponse {
@@ -236,6 +247,26 @@ export function parseConversationMessage(value: unknown): ConversationMessage {
   }
 }
 
+function parseChatQuota(value: unknown) {
+  const raw = asRecord(value)
+
+  if (!Object.keys(raw).length) {
+    return undefined
+  }
+
+  return {
+    isVip: Boolean(raw.isVip),
+    policy: asString(raw.policy) || undefined,
+    limit: asNumber(raw.limit) || undefined,
+    usedCount: asNumber(raw.usedCount) || undefined,
+    remainingCount:
+      typeof raw.remainingCount === 'number' || typeof raw.remainingCount === 'string'
+        ? asNumber(raw.remainingCount)
+        : undefined,
+    trialDays: asNumber(raw.trialDays) || undefined,
+  } satisfies ConversationChatQuotaSnapshot
+}
+
 export async function getConversations() {
   const data = await get<ConversationListResponse>('/api/conversation')
 
@@ -252,6 +283,12 @@ export async function getConversationMessages(conversationId: string) {
   return Array.isArray(data.items)
     ? data.items.map((item) => parseConversationMessage(item))
     : []
+}
+
+export async function getConversationChatQuota(conversationId: string) {
+  const data = await get<unknown>(`/api/conversation/${conversationId}/chat-quota`)
+
+  return parseChatQuota(data)
 }
 
 export async function sendConversationMessage(
@@ -300,6 +337,7 @@ export async function sendConversationMessage(
     assistantMessage: data.assistantMessage
       ? parseConversationMessage(data.assistantMessage)
       : undefined,
+    chatQuota: parseChatQuota(data.chatQuota),
   }
 }
 

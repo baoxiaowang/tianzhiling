@@ -7,6 +7,9 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
   VoiceTimbreEntity,
   VoiceTimbreProvider,
   VoiceTimbreStatus,
@@ -66,6 +69,46 @@ function createConversation(
   return conversation;
 }
 
+function createUser(overrides: Partial<UserEntity> = {}): UserEntity {
+  const user = new UserEntity();
+
+  Object.assign(user, {
+    id: new MongoObjectId(USER_ID),
+    name: '小宝',
+    avatar: '',
+    phone: '',
+    phoneVerified: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return user;
+}
+
+function createMembership(
+  overrides: Partial<UserMembershipEntity> = {}
+): UserMembershipEntity {
+  const membership = new UserMembershipEntity();
+
+  Object.assign(membership, {
+    id: new MongoObjectId('665000000000000000000040'),
+    userId: new MongoObjectId(USER_ID),
+    vipPlanId: new MongoObjectId('665000000000000000000041'),
+    vipPlanCode: 'vip_month',
+    sourceOrderId: new MongoObjectId('665000000000000000000042'),
+    status: UserMembershipStatus.active,
+    startedAt: NOW,
+    expiredAt: new Date('2026-06-03T08:00:00.000Z'),
+    lifetime: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return membership;
+}
+
 function createVoiceTimbre(): VoiceTimbreEntity {
   const timbre = new VoiceTimbreEntity();
 
@@ -96,9 +139,13 @@ function createService(options: {
   agent: AgentEntity;
   voiceTimbre?: VoiceTimbreEntity | null;
   chatContent?: string;
+  user?: UserEntity | null;
+  memberships?: UserMembershipEntity[];
+  existingUserMessageCount?: number;
 }) {
   const service = new ConversationService();
   const conversation = createConversation();
+  const user = options.user === undefined ? createUser() : options.user;
   const savedMessages: MessageEntity[] = [];
 
   service.logger = {
@@ -139,6 +186,7 @@ function createService(options: {
     }),
   } as any;
   service.messageModel = {
+    count: jest.fn().mockResolvedValue(options.existingUserMessageCount ?? 0),
     save: jest.fn(async message => {
       if (!message.id) {
         message.id = new MongoObjectId();
@@ -147,6 +195,16 @@ function createService(options: {
       savedMessages.push(message);
       return message;
     }),
+  } as any;
+  service.userModel = {
+    findOne: jest.fn(async ({ where }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return user && sameObjectId(id, user.id) ? user : null;
+    }),
+  } as any;
+  service.userMembershipModel = {
+    find: jest.fn().mockResolvedValue(options.memberships ?? []),
   } as any;
   service.openAIService = {
     createTranscription: jest.fn().mockResolvedValue('我想你了'),
@@ -211,6 +269,142 @@ function createService(options: {
 }
 
 describe('ConversationService assistant voice reply timbre binding', () => {
+  it('blocks non-vip users after the first 3-day per-agent quota is used', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      }),
+      existingUserMessageCount: 30,
+    });
+
+    await expect(
+      service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '我想你了',
+      })
+    ).rejects.toMatchObject({
+      code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+      status: 429,
+    });
+
+    expect(savedMessages).toHaveLength(0);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(service.messageModel.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: new MongoObjectId(USER_ID),
+        agentId: new MongoObjectId(AGENT_ID),
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+      })
+    );
+  });
+
+  it('blocks non-vip users after the daily per-agent quota is used outside the trial period', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 3,
+    });
+
+    await expect(
+      service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '今天也想聊聊',
+      })
+    ).rejects.toMatchObject({
+      code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+      status: 429,
+    });
+
+    expect(savedMessages).toHaveLength(0);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(service.messageModel.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createdAt: expect.objectContaining({
+          $gte: expect.any(Date),
+          $lt: expect.any(Date),
+        }),
+      })
+    );
+  });
+
+  it('returns remaining non-vip chat quota after a successful user message', async () => {
+    const { service } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '再说一句',
+    });
+
+    expect(result.chatQuota).toEqual(
+      expect.objectContaining({
+        isVip: false,
+        policy: 'daily',
+        limit: 3,
+        usedCount: 2,
+        remainingCount: 1,
+      })
+    );
+  });
+
+  it('returns current exhausted quota without saving a message', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 3,
+    });
+
+    const result = await service.getChatQuota(AUTH, CONVERSATION_ID);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        isVip: false,
+        policy: 'daily',
+        limit: 3,
+        usedCount: 3,
+        remainingCount: 0,
+      })
+    );
+    expect(savedMessages).toHaveLength(0);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('does not apply non-vip chat limits to active vip users', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      memberships: [
+        createMembership({
+          expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        }),
+      ],
+      existingUserMessageCount: 99,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '会员继续聊天',
+    });
+
+    expect(savedMessages.some(message => message.role === MessageRole.user)).toBe(true);
+    expect(result.chatQuota).toEqual({ isVip: true });
+    expect(service.messageModel.count).not.toHaveBeenCalled();
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
+  });
+
   it('does not generate an assistant reply when the user explicitly asks not to reply', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),

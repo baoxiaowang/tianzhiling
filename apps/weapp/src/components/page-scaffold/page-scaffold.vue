@@ -72,6 +72,8 @@
       </view>
     </view>
 
+    <slot name="overlay" />
+
     <login-prompt-popup v-model:visible="isLoginPromptVisible" />
   </view>
 </template>

@@ -283,6 +283,45 @@
         </view>
       </view>
     </template>
+
+    <template #overlay>
+      <nut-dialog
+        close-on-click-overlay
+        v-model:visible="isChatQuotaDialogVisible"
+        title="温馨提示"
+        custom-class="chat-quota-dialog"
+        text-align="left"
+        :lock-scroll="true"
+        :overlay-style="chatQuotaDialogOverlayStyle"
+        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX"
+      >
+        <view class="chat-quota-dialog__content">
+          {{ chatQuotaDialogContent }}
+        </view>
+
+        <template #footer>
+          <view
+            class="chat-quota-dialog__footer"
+            :class="{ 'chat-quota-dialog__footer--single': isChatQuotaExhaustedDialog }"
+          >
+            <view
+              v-if="!isChatQuotaExhaustedDialog"
+              class="chat-quota-dialog__secondary"
+              @tap="handleChatQuotaDialogContinue"
+            >
+              再聊一句
+            </view>
+            <view
+              class="chat-quota-dialog__primary"
+              :class="{ 'chat-quota-dialog__primary--single': isChatQuotaExhaustedDialog }"
+              @tap="handleChatQuotaDialogUpgrade"
+            >
+              开通会员
+            </view>
+          </view>
+        </template>
+      </nut-dialog>
+    </template>
   </page-scaffold>
 </template>
 
@@ -304,11 +343,13 @@ import emojiIconUrl from '../../assets/icon/emoji.svg'
 import plusIconUrl from '../../assets/icon/plus.svg'
 import { getAgentDetail } from '../../apis/agent'
 import {
+  getConversationChatQuota,
   getConversationMessages,
   sendConversationMessage,
   transcribeConversationVoice,
   type ConversationMessage,
   type ConversationImagePayload,
+  type ConversationChatQuotaSnapshot,
   type SendConversationMessageResult,
   type ConversationVoicePayload,
 } from '../../apis/conversation'
@@ -374,6 +415,8 @@ type NavMenuItem = {
 
 type VoiceDragTarget = 'send' | 'cancel' | 'transcribe'
 
+type ChatQuotaDialogType = 'remaining' | 'exhausted'
+
 type TouchPoint = {
   x: number
   y: number
@@ -391,6 +434,12 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentLengthThreshold: 24,
 } as const
 const CHAT_TEXT_MAX_LENGTH = 500
+const CHAT_QUOTA_DIALOG_CONTENT = {
+  remaining: '宝，今日仅剩最后 1 句对话机会了，好好珍惜彼此吧～想畅聊点击【开通会员】',
+  exhausted:
+    '宝，今日对话结束啦（非会员试用期每天 30句）～可以明天再来哦，先好好生活吧，记得在心里牵挂TA～想畅聊点击【开通会员】',
+} as const
+const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -405,6 +454,7 @@ const conversationCreatedAt = ref('')
 const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
+const isCheckingChatQuota = ref(false)
 const isWaitingAgentReply = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
@@ -428,6 +478,13 @@ const messages = ref<ConversationMessage[]>([])
 const scrollIntoViewTarget = ref('')
 const scrollWithAnimation = ref(true)
 const hasCompletedInitialMessagesScroll = ref(false)
+const isChatQuotaDialogVisible = ref(false)
+const chatQuotaDialogType = ref<ChatQuotaDialogType>('remaining')
+const chatQuotaRemainingCount = ref<number | null>(null)
+const chatQuotaDialogOverlayStyle = {
+  background: 'rgba(0, 0, 0, 0.72)',
+  zIndex: CHAT_QUOTA_DIALOG_Z_INDEX,
+}
 
 let ensureSessionPromise: Promise<void> | null = null
 let refreshMessagesPromise: Promise<void> | null = null
@@ -528,9 +585,22 @@ const bodyPadding = computed(() => {
   return `0 0 ${bottomPadding} 0`
 })
 const canSend = computed(() => {
-  return draftMessage.value.trim().length > 0 && !isSending.value && !isTranscribingVoice.value
+  return (
+    draftMessage.value.trim().length > 0
+    && !isSending.value
+    && !isCheckingChatQuota.value
+    && !isTranscribingVoice.value
+  )
 })
 const showSendButton = computed(() => canSend.value && !isVoiceMode.value)
+const isChatQuotaExhaustedDialog = computed(() => chatQuotaDialogType.value === 'exhausted')
+const chatQuotaDialogContent = computed(() => {
+  if (isChatQuotaExhaustedDialog.value) {
+    return CHAT_QUOTA_DIALOG_CONTENT.exhausted
+  }
+
+  return CHAT_QUOTA_DIALOG_CONTENT.remaining
+})
 const isVoiceGestureActive = computed(() => {
   return isVoicePressPreviewing.value || isVoiceRecording.value
 })
@@ -836,6 +906,7 @@ async function appendConversationResult(
 ) {
   messages.value = messages.value.filter((message) => message.id !== tempMessageId)
   messages.value = [...messages.value, result.userMessage]
+  handleChatQuotaAfterSend(result)
 
   if (!result.assistantMessage) {
     return
@@ -843,6 +914,110 @@ async function appendConversationResult(
 
   await revealAssistantMessage(result.assistantMessage)
   probeMissingAssistantVoiceDurations([result.assistantMessage])
+}
+
+function handleChatQuotaAfterSend(result: SendConversationMessageResult) {
+  updateChatQuotaSnapshot(result.chatQuota)
+
+  if (result.chatQuota?.isVip) {
+    return
+  }
+
+  if (result.chatQuota?.remainingCount === 1) {
+    showChatQuotaDialog('remaining')
+  }
+}
+
+function updateChatQuotaSnapshot(chatQuota?: ConversationChatQuotaSnapshot) {
+  if (!chatQuota) {
+    return
+  }
+
+  if (chatQuota.isVip) {
+    chatQuotaRemainingCount.value = null
+    return
+  }
+
+  if (typeof chatQuota.remainingCount === 'number') {
+    chatQuotaRemainingCount.value = chatQuota.remainingCount
+  }
+}
+
+function isNonVipChatQuotaExhausted() {
+  return chatQuotaRemainingCount.value !== null && chatQuotaRemainingCount.value <= 0
+}
+
+function isChatQuotaLimitError(error: unknown) {
+  return error instanceof ApiException && error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
+}
+
+function showChatQuotaDialog(type: ChatQuotaDialogType) {
+  chatQuotaDialogType.value = type
+  isChatQuotaDialogVisible.value = true
+  hideComposerPanels()
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+}
+
+function showChatQuotaExhaustedDialog() {
+  chatQuotaRemainingCount.value = 0
+  showChatQuotaDialog('exhausted')
+}
+
+async function ensureChatQuotaAvailableBeforeSend() {
+  if (isNonVipChatQuotaExhausted()) {
+    showChatQuotaExhaustedDialog()
+    return false
+  }
+
+  if (!conversationId.value || chatQuotaRemainingCount.value !== null) {
+    return true
+  }
+
+  isCheckingChatQuota.value = true
+
+  try {
+    const chatQuota = await getConversationChatQuota(conversationId.value)
+
+    if (!chatQuota) {
+      showToast('发送前校验失败，请稍后重试')
+      return false
+    }
+
+    updateChatQuotaSnapshot(chatQuota)
+
+    if (!chatQuota.isVip && typeof chatQuota.remainingCount === 'number') {
+      if (chatQuota.remainingCount <= 0) {
+        showChatQuotaExhaustedDialog()
+        return false
+      }
+    }
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return false
+    }
+
+    showToast('发送前校验失败，请稍后重试')
+    return false
+  } finally {
+    isCheckingChatQuota.value = false
+  }
+
+  return true
+}
+
+function handleChatQuotaDialogContinue() {
+  isChatQuotaDialogVisible.value = false
+}
+
+function handleChatQuotaDialogUpgrade() {
+  isChatQuotaDialogVisible.value = false
+
+  void Taro.navigateTo({
+    url: '/pages/vip-center/index',
+  })
 }
 
 useDidShow(() => {
@@ -1586,7 +1761,17 @@ function removeLastGrapheme(value: string) {
 
 async function handleSend() {
   const content = limitChatText(draftMessage.value.trim())
-  if (!content || isSending.value || isTranscribingVoice.value || !conversationId.value) {
+  if (
+    !content
+    || isSending.value
+    || isCheckingChatQuota.value
+    || isTranscribingVoice.value
+    || !conversationId.value
+  ) {
+    return
+  }
+
+  if (!(await ensureChatQuotaAvailableBeforeSend())) {
     return
   }
 
@@ -1602,13 +1787,22 @@ async function handleSend() {
   await sendTextMessageContent(content, {
     restoreDraft: originalDraft,
     restoreCursor: originalDraftCursor,
+    skipQuotaCheck: true,
   })
 }
 
 async function sendTextMessageContent(
   content: string,
-  options: { restoreDraft?: string; restoreCursor?: number } = {},
+  options: { restoreDraft?: string; restoreCursor?: number; skipQuotaCheck?: boolean } = {},
 ) {
+  if (!options.skipQuotaCheck && !(await ensureChatQuotaAvailableBeforeSend())) {
+    if (typeof options.restoreDraft === 'string') {
+      draftMessage.value = options.restoreDraft
+      draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
+    }
+    return
+  }
+
   const tempId = `local-${Date.now()}`
 
   isSending.value = true
@@ -1649,6 +1843,17 @@ async function sendTextMessageContent(
       return
     }
 
+    if (isChatQuotaLimitError(error)) {
+      if (typeof options.restoreDraft === 'string') {
+        draftMessage.value = options.restoreDraft
+        draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
+      }
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      showChatQuotaExhaustedDialog()
+      await scrollToBottom()
+      return
+    }
+
     if (typeof options.restoreDraft === 'string') {
       draftMessage.value = options.restoreDraft
       draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
@@ -1670,7 +1875,16 @@ async function sendTextMessageContent(
 }
 
 async function pickAndSendImage(sourceType: ChatImageSourceType) {
-  if (isSending.value || isTranscribingVoice.value || !conversationId.value) {
+  if (
+    isSending.value
+    || isCheckingChatQuota.value
+    || isTranscribingVoice.value
+    || !conversationId.value
+  ) {
+    return
+  }
+
+  if (!(await ensureChatQuotaAvailableBeforeSend())) {
     return
   }
 
@@ -1771,6 +1985,13 @@ async function sendImageMessage(image: PickedChatImage) {
       return
     }
 
+    if (isChatQuotaLimitError(error)) {
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      showChatQuotaExhaustedDialog()
+      await scrollToBottom()
+      return
+    }
+
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
@@ -1788,7 +2009,11 @@ async function sendImageMessage(image: PickedChatImage) {
 
 async function sendVoiceMessage(filePath: string, durationMs: number) {
   const sourcePath = filePath.trim()
-  if (!sourcePath || isSending.value || !conversationId.value) {
+  if (!sourcePath || isSending.value || isCheckingChatQuota.value || !conversationId.value) {
+    return
+  }
+
+  if (!(await ensureChatQuotaAvailableBeforeSend())) {
     return
   }
 
@@ -1859,6 +2084,13 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
       return
     }
 
+    if (isChatQuotaLimitError(error)) {
+      messages.value = messages.value.filter((message) => message.id !== tempId)
+      showChatQuotaExhaustedDialog()
+      await scrollToBottom()
+      return
+    }
+
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
@@ -1876,7 +2108,11 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
 
 async function sendVoiceTranscription(filePath: string) {
   const sourcePath = filePath.trim()
-  if (!sourcePath || isSending.value || !conversationId.value) {
+  if (!sourcePath || isSending.value || isCheckingChatQuota.value || !conversationId.value) {
+    return
+  }
+
+  if (!(await ensureChatQuotaAvailableBeforeSend())) {
     return
   }
 
@@ -2483,6 +2719,84 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-composer__send--disabled {
   opacity: 0.6;
+}
+
+.chat-quota-dialog.nut-dialog {
+  width: 283px;
+  min-height: 176px;
+  padding: 17px 18px 16px;
+  box-sizing: border-box;
+  border-radius: 16px;
+}
+
+.chat-quota-dialog .nut-dialog__header {
+  height: 22px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #000000;
+}
+
+.chat-quota-dialog .nut-dialog__content {
+  width: 100%;
+  margin: 12px 0 10px;
+  max-height: none;
+  overflow: visible;
+  color: #000000;
+  font-size: 12px;
+  line-height: 22px;
+  text-align: left;
+}
+
+.chat-quota-dialog__content {
+  width: 100%;
+  color: #000000;
+  font-size: 12px;
+  line-height: 22px;
+  word-break: break-word;
+}
+
+.chat-quota-dialog .nut-dialog__footer {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.chat-quota-dialog__footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-quota-dialog__footer--single {
+  justify-content: center;
+}
+
+.chat-quota-dialog__secondary,
+.chat-quota-dialog__primary {
+  width: 104px;
+  height: 36px;
+  border-radius: 58px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 36px;
+  font-weight: 500;
+  letter-spacing: 0.1172px;
+  box-sizing: border-box;
+}
+
+.chat-quota-dialog__secondary {
+  background: #f6f6f6;
+  color: #6b6b6b;
+}
+
+.chat-quota-dialog__primary {
+  background: linear-gradient(90deg, #ffa404 0%, #fd5747 100%);
+  color: #ffffff;
+}
+
+.chat-quota-dialog__primary--single {
+  flex-shrink: 0;
 }
 
 .chat-composer__mic,

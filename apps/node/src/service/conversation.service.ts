@@ -11,6 +11,9 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
   VoiceTimbreEntity,
   VoiceTimbreProvider,
   VoiceTimbreStatus,
@@ -34,6 +37,12 @@ import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
+const NON_VIP_CHAT_LIMIT_POLICY = {
+  trialDays: 3, // 3 天试用期
+  trialPerAgentLimit: 30, // 3 天内每个 agent 30 句
+  dailyPerAgentLimit: 3, // 3 天后每天每个 agent 3 句
+  dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
+} as const;
 
 export interface ConversationSummary {
   id: string;
@@ -52,6 +61,7 @@ export interface ConversationSummary {
 export interface SendConversationMessageResult {
   userMessage: ConversationMessageItem;
   assistantMessage?: ConversationMessageItem;
+  chatQuota?: ConversationChatQuotaSnapshot;
 }
 
 export interface VoiceTranscriptionResult {
@@ -87,6 +97,7 @@ interface BeforeReplyResult {
   searchableText: string;
   userMessage: MessageEntity;
   deferReply: boolean;
+  chatQuota?: ConversationChatQuotaSnapshot;
 }
 
 interface ReplyUsage {
@@ -105,6 +116,22 @@ interface AfterReplyResult {
   assistantMessage: MessageEntity;
 }
 
+interface NonVipChatLimitRule {
+  policy: 'trial' | 'daily';
+  limit: number;
+  windowStart: Date;
+  windowEnd?: Date;
+}
+
+export interface ConversationChatQuotaSnapshot {
+  isVip: boolean;
+  policy?: 'trial' | 'daily';
+  limit?: number;
+  usedCount?: number;
+  remainingCount?: number;
+  trialDays?: number;
+}
+
 @Provide()
 export class ConversationService {
   @Logger()
@@ -118,6 +145,12 @@ export class ConversationService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
@@ -221,6 +254,15 @@ export class ConversationService {
     }
   }
 
+  async getChatQuota(
+    auth: AuthenticatedUserPayload,
+    conversationId: string
+  ): Promise<ConversationChatQuotaSnapshot> {
+    const runtime = await this.createReplyRuntime(auth, conversationId);
+
+    return this.resolveCurrentChatQuota(runtime, new Date());
+  }
+
   async transcribeVoice(
     auth: AuthenticatedUserPayload,
     conversationId: string,
@@ -273,6 +315,8 @@ export class ConversationService {
     const messagePayload = await this.prepareIncomingMessage(payload);
     const searchableText = this.buildMessageSearchableText(messagePayload);
     const now = new Date();
+    const chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+
     const userMessage = await this.saveMessage({
       conversationId: runtime.conversation.id,
       userId: runtime.conversation.userId,
@@ -306,7 +350,188 @@ export class ConversationService {
       searchableText,
       userMessage,
       deferReply: this.isAssistantReplyDeferred(messagePayload),
+      chatQuota,
     };
+  }
+
+  private async resolveChatQuotaForSend(
+    runtime: ReplyRuntime,
+    now: Date
+  ): Promise<ConversationChatQuotaSnapshot> {
+    const currentQuota = await this.resolveCurrentChatQuota(runtime, now);
+
+    if (currentQuota.isVip) {
+      return currentQuota;
+    }
+
+    const usedCount = currentQuota.usedCount ?? 0;
+    const limit = currentQuota.limit ?? 0;
+    const nextUsedCount = usedCount + 1;
+    const remainingCount = Math.max(limit - nextUsedCount, 0);
+
+    if (usedCount < limit) {
+      return {
+        isVip: false,
+        policy: currentQuota.policy,
+        limit,
+        usedCount: nextUsedCount,
+        remainingCount,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      };
+    }
+
+    throw new AppError(
+      'NON_VIP_CHAT_LIMIT_EXCEEDED',
+      this.buildNonVipChatLimitMessage(currentQuota.policy, limit),
+      429,
+      {
+        policy: currentQuota.policy,
+        limit,
+        usedCount,
+        remainingCount: 0,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      }
+    );
+  }
+
+  private async resolveCurrentChatQuota(
+    runtime: ReplyRuntime,
+    now: Date
+  ): Promise<ConversationChatQuotaSnapshot> {
+    if (await this.isUserVip(runtime.conversation.userId, now)) {
+      return {
+        isVip: true,
+      };
+    }
+
+    const user = await this.findUserById(runtime.conversation.userId);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    const rule = this.resolveNonVipChatLimitRule(user, now);
+    const usedCount = await this.countUserMessagesForAgent({
+      userId: runtime.conversation.userId,
+      agentId: runtime.conversation.agentId,
+      windowStart: rule.windowStart,
+      windowEnd: rule.windowEnd,
+    });
+
+    return {
+      isVip: false,
+      policy: rule.policy,
+      limit: rule.limit,
+      usedCount,
+      remainingCount: Math.max(rule.limit - usedCount, 0),
+      trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+    };
+  }
+
+  private buildNonVipChatLimitMessage(
+    policy: ConversationChatQuotaSnapshot['policy'],
+    limit: number
+  ): string {
+    if (policy === 'trial') {
+      return `非会员注册前${NON_VIP_CHAT_LIMIT_POLICY.trialDays}天内，每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+    }
+
+    return `非会员每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+  }
+
+  private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+
+    return memberships.some(
+      membership =>
+        membership.lifetime ||
+        Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
+  }
+
+  private resolveNonVipChatLimitRule(
+    user: UserEntity,
+    now: Date
+  ): NonVipChatLimitRule {
+    const registeredAt = this.normalizeUserRegisteredAt(user);
+    const trialEndsAt = new Date(
+      registeredAt.getTime() +
+        NON_VIP_CHAT_LIMIT_POLICY.trialDays * 24 * 60 * 60 * 1000
+    );
+
+    if (now < trialEndsAt) {
+      return {
+        policy: 'trial',
+        limit: NON_VIP_CHAT_LIMIT_POLICY.trialPerAgentLimit,
+        windowStart: registeredAt,
+        windowEnd: trialEndsAt,
+      };
+    }
+
+    const windowStart = this.getBeijingDayStart(now);
+    const windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000);
+
+    return {
+      policy: 'daily',
+      limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+      windowStart,
+      windowEnd,
+    };
+  }
+
+  private normalizeUserRegisteredAt(user: UserEntity): Date {
+    const registeredAt = new Date(user.createdAt ?? 0);
+
+    if (!Number.isNaN(registeredAt.getTime())) {
+      return registeredAt;
+    }
+
+    return new Date(0);
+  }
+
+  private getBeijingDayStart(value: Date): Date {
+    const offsetMs =
+      NON_VIP_CHAT_LIMIT_POLICY.dayBoundaryOffsetMinutes * 60 * 1000;
+    const shifted = new Date(value.getTime() + offsetMs);
+
+    return new Date(
+      Date.UTC(
+        shifted.getUTCFullYear(),
+        shifted.getUTCMonth(),
+        shifted.getUTCDate()
+      ) - offsetMs
+    );
+  }
+
+  private countUserMessagesForAgent(options: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    windowStart: Date;
+    windowEnd?: Date;
+  }): Promise<number> {
+    const createdAtQuery: Record<string, Date> = {
+      $gte: options.windowStart,
+    };
+
+    if (options.windowEnd) {
+      createdAtQuery.$lt = options.windowEnd;
+    }
+
+    return this.messageModel.count({
+      userId: options.userId,
+      agentId: options.agentId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      createdAt: createdAtQuery,
+    } as never);
   }
 
   private async processReply(
@@ -374,6 +599,7 @@ export class ConversationService {
             after.assistantMessage
           )
         : undefined,
+      chatQuota: before.chatQuota,
     };
   }
 
@@ -1631,6 +1857,32 @@ export class ConversationService {
     }
 
     return this.agentModel.findOne({
+      where: {
+        _id: objectId,
+      } as never,
+    });
+  }
+
+  private async findUserById(
+    value: MongoObjectId | string | undefined
+  ): Promise<UserEntity | null> {
+    const objectId = this.normalizeObjectId(value);
+
+    if (!objectId) {
+      return null;
+    }
+
+    const userById = await this.userModel.findOne({
+      where: {
+        id: objectId,
+      },
+    });
+
+    if (userById) {
+      return userById;
+    }
+
+    return this.userModel.findOne({
       where: {
         _id: objectId,
       } as never,

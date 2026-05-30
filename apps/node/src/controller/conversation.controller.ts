@@ -38,6 +38,14 @@ export class ConversationController {
     };
   }
 
+  @Get('/:conversationId/chat-quota')
+  async getChatQuota(@Param('conversationId') conversationId: string) {
+    return this.conversationService.getChatQuota(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId
+    );
+  }
+
   @Post('/:conversationId/messages')
   async sendMessage(
     @Param('conversationId') conversationId: string,
