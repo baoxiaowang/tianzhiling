@@ -114,6 +114,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         speechVolume: 1,
         speechPitch: 0,
         status: VoiceTimbreStatus.creating,
+        audioObjectKey: 'voice-timbres/demo.wav',
+        audioUrl: '',
         errorCode: '',
         errorMessage: '',
       })

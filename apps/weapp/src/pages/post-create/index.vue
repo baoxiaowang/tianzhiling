@@ -28,7 +28,11 @@
           :key="`${image}-${index}`"
           class="post-create-image-wrap"
         >
-          <image class="post-create-image" :src="image" mode="aspectFill" />
+          <image
+            class="post-create-image"
+            :src="buildImagePreviewUrl(image)"
+            mode="aspectFill"
+          />
           <view class="post-create-image-delete" @tap="handleRemoveImage(index)">×</view>
         </view>
         <view
@@ -146,6 +150,7 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { createPost } from '../../apis/post'
 import { getAgents, type AgentSummary } from '../../apis/agent'
 import { uploadLocalImage } from '../../apis/storage'
+import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
@@ -170,6 +175,26 @@ const isSubmitting = ref(false)
 const menuButtonMetrics = readMenuButtonMetrics()
 const statusStyle = {
   height: `${menuButtonMetrics.statusBarHeight}px`,
+}
+
+function buildImagePreviewUrl(image: string) {
+  const value = image.trim()
+
+  if (!value || /^https?:\/\//i.test(value)) {
+    return value
+  }
+
+  if (!ApiConfig.mediaBaseUrl) {
+    return value
+  }
+
+  const encodedKey = value
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/')
+
+  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`
 }
 
 const canSubmit = computed(() => {
@@ -302,7 +327,7 @@ async function handleChooseImages() {
 
     images.value = [
       ...images.value,
-      ...uploads.map((item) => item.publicUrl).filter(Boolean),
+      ...uploads.map((item) => item.objectKey).filter(Boolean),
     ].slice(0, maxImageCount)
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {

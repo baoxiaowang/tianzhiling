@@ -80,7 +80,7 @@ interface PreparedIncomingMessage {
 }
 
 interface SynthesizedAssistantVoiceReply {
-  mediaUrl: string;
+  mediaObjectKey: string;
   mediaMimeType?: string;
   mediaDurationMs?: number;
   transcript: string;
@@ -746,15 +746,15 @@ export class ConversationService {
     mediaMimeType?: string;
     mediaDurationMs?: number;
   } {
-    const objectKey = payload?.objectKey?.trim() || '';
     const explicitUrl = payload?.mediaUrl?.trim() || '';
-    const resolvedUrl =
-      explicitUrl ||
-      (objectKey ? this.resolveMediaUrlFromObjectKey(objectKey) : '');
+    const objectKey = this.normalizeMediaObjectKey(
+      payload?.objectKey,
+      explicitUrl
+    );
     const durationMs = this.normalizeVoiceDuration(payload?.durationMs);
     const mimeType = payload?.mimeType?.trim() || '';
 
-    if (!objectKey && !resolvedUrl) {
+    if (!objectKey) {
       throw new AppError(
         'INVALID_MESSAGE_VOICE',
         'voice message asset is required',
@@ -765,8 +765,8 @@ export class ConversationService {
     return {
       type: MessageType.voice,
       content: '[语音]',
-      mediaObjectKey: objectKey || undefined,
-      mediaUrl: !objectKey && resolvedUrl ? resolvedUrl : undefined,
+      mediaObjectKey: objectKey,
+      mediaUrl: explicitUrl || undefined,
       mediaMimeType: mimeType || undefined,
       mediaDurationMs: durationMs,
     };
@@ -810,14 +810,14 @@ export class ConversationService {
     mediaUrl?: string;
     mediaMimeType?: string;
   } {
-    const objectKey = payload?.objectKey?.trim() || '';
     const explicitUrl = payload?.mediaUrl?.trim() || '';
-    const resolvedUrl =
-      explicitUrl ||
-      (objectKey ? this.resolveMediaUrlFromObjectKey(objectKey) : '');
+    const objectKey = this.normalizeMediaObjectKey(
+      payload?.objectKey,
+      explicitUrl
+    );
     const mimeType = payload?.mimeType?.trim() || '';
 
-    if (!objectKey && !resolvedUrl) {
+    if (!objectKey) {
       throw new AppError(
         'INVALID_MESSAGE_IMAGE',
         'image message asset is required',
@@ -828,10 +828,33 @@ export class ConversationService {
     return {
       type: MessageType.image,
       content: '[图片]',
-      mediaObjectKey: objectKey || undefined,
-      mediaUrl: !objectKey && resolvedUrl ? resolvedUrl : undefined,
+      mediaObjectKey: objectKey,
+      mediaUrl: explicitUrl || undefined,
       mediaMimeType: mimeType || undefined,
     };
+  }
+
+  private normalizeMediaObjectKey(
+    rawObjectKey?: string,
+    rawMediaUrl?: string
+  ): string {
+    const objectKey = rawObjectKey?.trim() || '';
+
+    if (objectKey) {
+      return objectKey;
+    }
+
+    const mediaUrl = rawMediaUrl?.trim() || '';
+
+    if (!mediaUrl) {
+      return '';
+    }
+
+    const normalized = this.postImageService
+      .normalizeForStorage(mediaUrl)
+      .trim();
+
+    return normalized && normalized !== mediaUrl ? normalized : '';
   }
 
   private async describeImageForConversation(payload: {
@@ -928,7 +951,7 @@ export class ConversationService {
         type: MessageType.voice,
         content: options.replyContent,
         status: MessageStatus.sent,
-        mediaUrl: synthesizedVoice.mediaUrl,
+        mediaObjectKey: synthesizedVoice.mediaObjectKey,
         mediaMimeType: synthesizedVoice.mediaMimeType,
         mediaDurationMs: synthesizedVoice.mediaDurationMs,
         mediaTranscript: synthesizedVoice.transcript,
@@ -975,12 +998,11 @@ export class ConversationService {
       });
       const stored = await this.storeAssistantVoiceAsset({
         audioBuffer: synthesized.audioBuffer,
-        sourceUrl: synthesized.audioUrl,
         mimeType: synthesized.mimeType,
       });
 
       return {
-        mediaUrl: stored.mediaUrl,
+        mediaObjectKey: stored.mediaObjectKey,
         mediaMimeType: stored.mediaMimeType,
         mediaDurationMs: this.extractAudioDurationMs(
           synthesized.audioBuffer,
@@ -1079,10 +1101,9 @@ export class ConversationService {
 
   private async storeAssistantVoiceAsset(input: {
     audioBuffer: Buffer;
-    sourceUrl: string;
     mimeType?: string;
   }): Promise<{
-    mediaUrl: string;
+    mediaObjectKey: string;
     mediaMimeType?: string;
   }> {
     const mimeType = input.mimeType?.trim() || 'audio/wav';
@@ -1100,7 +1121,7 @@ export class ConversationService {
         );
 
         return {
-          mediaUrl: uploaded.url,
+          mediaObjectKey: uploaded.objectKey,
           mediaMimeType: mimeType,
         };
       }
@@ -1113,7 +1134,7 @@ export class ConversationService {
         });
 
         return {
-          mediaUrl: uploaded.url,
+          mediaObjectKey: uploaded.objectKey,
           mediaMimeType: mimeType,
         };
       }
@@ -1124,10 +1145,11 @@ export class ConversationService {
       );
     }
 
-    return {
-      mediaUrl: input.sourceUrl,
-      mediaMimeType: mimeType,
-    };
+    throw new AppError(
+      'VOICE_REPLY_STORAGE_UNAVAILABLE',
+      'assistant voice reply storage is unavailable',
+      503
+    );
   }
 
   private buildAssistantVoiceFileName(mimeType?: string): string {

@@ -242,8 +242,9 @@ function createService(options: {
       id: message.id?.toHexString?.() ?? '',
       type: message.type,
       content: message.content,
-      voice: message.mediaUrl
+      voice: message.mediaObjectKey || message.mediaUrl
         ? {
+            objectKey: message.mediaObjectKey || undefined,
             url: message.mediaUrl,
             mimeType: message.mediaMimeType,
             transcript: message.mediaTranscript,
@@ -253,13 +254,18 @@ function createService(options: {
   } as any;
   service.postImageService = {
     resolveForResponse: jest.fn(value => value),
+    normalizeForStorage: jest.fn(value => value),
   } as any;
   service.ossService = {
     isEnabled: jest.fn(() => false),
   } as any;
   service.tencentCosService = {
-    isEnabled: jest.fn(() => false),
+    isEnabled: jest.fn(() => true),
     getPublicUrl: jest.fn(value => value),
+    putBuffer: jest.fn().mockResolvedValue({
+      objectKey: 'conversation-voice-replies/reply.mp3',
+      url: 'https://cdn.example.com/conversation-voice-replies/reply.mp3',
+    }),
   } as any;
   service.milvusService = {
     indexConversationMessage: jest.fn().mockResolvedValue(undefined),
@@ -452,7 +458,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       CONVERSATION_ID,
       {
         type: 'voice',
-        mediaUrl: 'https://cdn.example.com/input.m4a',
+        objectKey: 'conversation-voice/input.m4a',
         mimeType: 'audio/mp4',
       }
     );
@@ -503,7 +509,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       CONVERSATION_ID,
       {
         type: 'voice',
-        mediaUrl: 'https://cdn.example.com/input.m4a',
+        objectKey: 'conversation-voice/input.m4a',
         mimeType: 'audio/mp4',
       }
     );
@@ -524,10 +530,19 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         type: MessageType.voice,
         content: '我也想你</fenge>今天过得怎么样？',
-        mediaUrl: 'https://cdn.example.com/reply.mp3',
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaUrl: '',
         mediaMimeType: 'audio/mpeg',
         mediaTranscript: '我也想你。今天过得怎么样？',
       })
+    );
+    expect(service.tencentCosService.putBuffer).toHaveBeenCalledWith(
+      Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      {
+        folder: 'conversation-voice-replies',
+        fileName: expect.stringMatching(/^assistant_reply_\d+\.mp3$/),
+        contentType: 'audio/mpeg',
+      }
     );
     expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
     expect(result.assistantMessage?.type).toBe(MessageType.voice);

@@ -21,10 +21,7 @@
           @menu-select="handleNavMenuSelect"
         >
           <template #menu-icon>
-            <view class="chat-page__settings-icon">
-              <view class="chat-page__settings-ring" />
-              <view class="chat-page__settings-dot" />
-            </view>
+            <Category color="#000" size="14"></Category>
           </template>
         </back-capsule>
         <text class="chat-page__nav-title">{{ pageTitle }}</text>
@@ -332,6 +329,8 @@ export default {
 </script>
 
 <script setup lang="ts">
+import { Category } from '@nutui/icons-vue-taro'
+
 import Taro, { useDidHide, useDidShow, useLoad, useUnload } from '@tarojs/taro'
 import type { ITouchEvent } from '@tarojs/components/types/common'
 import { computed, nextTick, ref } from 'vue'

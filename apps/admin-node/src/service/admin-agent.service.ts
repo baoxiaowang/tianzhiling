@@ -28,6 +28,7 @@ import {
   UpdateAdminAgentDTO,
 } from '../dto/admin-agent.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
+import { AdminStorageFileService } from './admin-storage-file.service';
 
 export type AdminAgentOwner = AdminAgentOwnerDTO;
 export type AdminAgentItem = AdminAgentRecordDTO;
@@ -63,6 +64,9 @@ export class AdminAgentService {
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
+
+  @Inject()
+  storageFileService: AdminStorageFileService;
 
   async listAgents(
     query: ListAdminAgentsQueryDTO
@@ -578,13 +582,23 @@ export class AdminAgentService {
       type: message.type,
       content: message.content ?? '',
       status: message.status,
-      mediaUrl: message.mediaUrl ?? '',
+      mediaUrl: this.resolveMediaUrl(message),
       mediaMimeType: message.mediaMimeType ?? '',
       mediaTranscript: message.mediaTranscript ?? '',
       mediaDurationMs: message.mediaDurationMs,
       createdAt: this.formatDate(message.createdAt),
       updatedAt: this.formatDate(message.updatedAt),
     };
+  }
+
+  private resolveMediaUrl(message: MessageEntity): string {
+    const objectKey = message.mediaObjectKey?.trim();
+
+    if (objectKey) {
+      return this.storageFileService?.resolve(objectKey) ?? objectKey;
+    }
+
+    return message.mediaUrl?.trim() ?? '';
   }
 
   private normalizeName(rawName?: string): string {

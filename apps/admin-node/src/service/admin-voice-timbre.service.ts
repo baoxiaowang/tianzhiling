@@ -114,7 +114,7 @@ export class AdminVoiceTimbreService {
     timbre.provider = provider;
     timbre.providerVoiceId = providerVoiceId;
     timbre.audioObjectKey = audioObjectKey;
-    timbre.audioUrl = this.storageFileService.resolve(audioObjectKey);
+    timbre.audioUrl = '';
     timbre.cloneLanguage = this.normalizeCloneLanguage(payload.cloneLanguage);
     timbre.previewText = this.normalizePreviewText(payload.previewText);
     timbre.previewModel = this.normalizePreviewModel(payload.previewModel);

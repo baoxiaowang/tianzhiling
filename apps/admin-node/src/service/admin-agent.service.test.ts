@@ -47,6 +47,13 @@ function createService() {
     }),
     normalizeForStorage: jest.fn((avatar?: string) => avatar?.trim() ?? ''),
   } as any;
+  service.storageFileService = {
+    resolve: jest.fn((objectKey?: string) => {
+      const value = objectKey?.trim() ?? '';
+
+      return value ? `https://cdn.example.com/${value}` : '';
+    }),
+  } as any;
 
   return service;
 }
@@ -397,6 +404,7 @@ describe('AdminAgentService', () => {
         content: '',
         status: MessageStatus.sent,
         mediaTranscript: '我在',
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
         mediaMimeType: 'audio/mpeg',
         mediaDurationMs: 1200,
         createdAt: new Date('2026-02-02T00:01:00.000Z'),
@@ -460,7 +468,8 @@ describe('AdminAgentService', () => {
           type: MessageType.voice,
           content: '',
           status: MessageStatus.sent,
-          mediaUrl: '',
+          mediaUrl:
+            'https://cdn.example.com/conversation-voice-replies/reply.mp3',
           mediaMimeType: 'audio/mpeg',
           mediaTranscript: '我在',
           mediaDurationMs: 1200,
