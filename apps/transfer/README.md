@@ -24,8 +24,8 @@
 - `pnpm post-comment`：执行 `src/scripts/post-comment.js`，从旧 MySQL 的 `moment_comment` / `replay_message` 导出动态评论 BSON，再导入 MongoDB 的 `post_comment`。
 - `pnpm post-comment:export`：从旧 MySQL 的动态评论表导出 `post_comment` BSON dump。
 - `pnpm post-comment:import`：从 BSON dump 导入 MongoDB 的 `post_comment`。
-- `pnpm membership-order`：执行 `src/scripts/membership-order.js`，从旧 MySQL 的 `agent` / `order` / `goods` 聚合导出会员和订单 BSON dump，不执行 MongoDB 导入。
-- `pnpm membership-order:export`：同上，仅导出 `order` / `user_membership` BSON dump 和 `membership-order.report.json` 报表。
+- `pnpm membership-order`：执行 `src/scripts/membership-order.js`，从旧 MySQL 的 `agent` / `speaker` / `order` / `goods` 聚合导出会员、订单、历史声音训练任务和历史音色素材 BSON dump，不执行 MongoDB 导入。
+- `pnpm membership-order:export`：同上，仅导出 `order` / `user_membership` / `voice_training_task` / `voice_timbre` BSON dump 和 `membership-order.report.json` 报表。
 - `pnpm membership-order:test`：执行会员订单迁移脚本级 fixture 校验。
 
 后续迁移脚本放在 `src/scripts` 下，并在 `package.json` 的 `scripts` 中补充命令。
@@ -81,7 +81,7 @@
 - `TRANSFER_POST_COMMENT_INCLUDE_REPLAY_MESSAGE`：是否导出旧 `replay_message`，默认 `true`。
 - `TRANSFER_MEMBERSHIP_ORDER_BATCH_SIZE`
 - `TRANSFER_MEMBERSHIP_ORDER_MODE`：仅支持 `export`，默认 `export`。
-- `TRANSFER_MEMBERSHIP_ORDER_DUMP_PATH`：会员订单迁移 BSON dump 根目录，默认跟其他迁移 dump 路径一致，未配置时为 `apps/transfer/dump`。
+- `TRANSFER_MEMBERSHIP_ORDER_DUMP_PATH`：会员订单和历史声音训练任务迁移 BSON dump 根目录，默认跟其他迁移 dump 路径一致，未配置时为 `apps/transfer/dump`。
 
 旧 MySQL 可以直接配置 JDBC URL，例如：
 
@@ -132,6 +132,10 @@ dump/
     user_membership.bson
     user_membership.metadata.json
     membership-order.report.json
+    voice_training_task.bson
+    voice_training_task.metadata.json
+    voice_timbre.bson
+    voice_timbre.metadata.json
 ```
 
 在 Studio 3T 导入时选择 `dump` 作为 mongodump 根目录。

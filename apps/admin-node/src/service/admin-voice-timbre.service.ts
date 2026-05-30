@@ -28,6 +28,8 @@ import { MinimaxVoiceService } from './minimax-voice.service';
 type MongoWhere = Record<string, unknown>;
 
 export const VOICE_TIMBRE_CREATE_QUEUE = 'voice-timbre-create';
+export const DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT =
+  '我好想你，最近过得好吗，有没有好好吃饭';
 const DEFAULT_SPEECH_SPEED = 1;
 const DEFAULT_SPEECH_VOLUME = 1;
 const DEFAULT_SPEECH_PITCH = 0;
@@ -114,7 +116,7 @@ export class AdminVoiceTimbreService {
     timbre.audioObjectKey = audioObjectKey;
     timbre.audioUrl = this.storageFileService.resolve(audioObjectKey);
     timbre.cloneLanguage = this.normalizeCloneLanguage(payload.cloneLanguage);
-    timbre.previewText = this.normalizeOptionalText(payload.previewText, 1000);
+    timbre.previewText = this.normalizePreviewText(payload.previewText);
     timbre.previewModel = this.normalizePreviewModel(payload.previewModel);
     timbre.previewAudioUrl = '';
     timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
@@ -138,19 +140,18 @@ export class AdminVoiceTimbreService {
   ): Promise<AdminVoiceTimbreRecordDTO> {
     const timbre = await this.getVoiceTimbreById(timbreId);
 
-    if (timbre.status !== VoiceTimbreStatus.failed) {
+    if (
+      timbre.status !== VoiceTimbreStatus.failed &&
+      timbre.status !== VoiceTimbreStatus.active
+    ) {
       throw new AppError(
         'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
-        'only failed voice timbre can be retried',
+        'only failed or active voice timbre can be retrained',
         400
       );
     }
 
-    timbre.status = VoiceTimbreStatus.creating;
-    timbre.errorCode = '';
-    timbre.errorMessage = '';
-    timbre.providerFileId = '';
-    timbre.previewAudioUrl = '';
+    this.prepareTimbreRetrain(timbre);
     timbre.updatedAt = new Date();
     const saved = await this.voiceTimbreModel.save(timbre);
     await this.enqueueCreateVoiceTimbreJob(saved);
@@ -194,6 +195,7 @@ export class AdminVoiceTimbreService {
   ): Promise<AdminVoiceTimbreRecordDTO> {
     const timbre = await this.getVoiceTimbreById(timbreId);
     let changed = false;
+    let shouldRetrain = false;
 
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
@@ -206,11 +208,9 @@ export class AdminVoiceTimbreService {
     }
 
     if (payload.previewText !== undefined) {
-      timbre.previewText = this.normalizeOptionalText(
-        payload.previewText,
-        1000
-      );
+      timbre.previewText = this.normalizePreviewText(payload.previewText);
       changed = true;
+      shouldRetrain = true;
     }
 
     if (payload.speechSpeed !== undefined) {
@@ -234,8 +234,16 @@ export class AdminVoiceTimbreService {
     }
 
     if (changed) {
+      if (shouldRetrain && timbre.status !== VoiceTimbreStatus.disabled) {
+        this.prepareTimbreRetrain(timbre);
+      }
+
       timbre.updatedAt = new Date();
-      await this.voiceTimbreModel.save(timbre);
+      const saved = await this.voiceTimbreModel.save(timbre);
+
+      if (saved.status === VoiceTimbreStatus.creating) {
+        await this.enqueueCreateVoiceTimbreJob(saved);
+      }
     }
 
     return this.buildRecord(timbre);
@@ -256,8 +264,15 @@ export class AdminVoiceTimbreService {
   }
 
   private async createProviderVoice(timbre: VoiceTimbreEntity): Promise<void> {
+    const previewText = this.normalizePreviewText(timbre.previewText);
+
+    timbre.previewText = previewText;
     const audio = await this.storageFileService.download(timbre.audioObjectKey);
-    this.validateSourceMediaFile(audio.buffer, audio.fileName, audio.contentType);
+    this.validateSourceMediaFile(
+      audio.buffer,
+      audio.fileName,
+      audio.contentType
+    );
     const cloneAudio = await this.prepareCloneAudio(audio);
 
     const fileId = await this.minimaxVoiceService.uploadCloneAudio({
@@ -265,10 +280,10 @@ export class AdminVoiceTimbreService {
       fileName: cloneAudio.fileName,
       contentType: cloneAudio.contentType,
     });
-    const cloneResult = await this.minimaxVoiceService.cloneVoice({
+    const cloneResult = await this.cloneProviderVoice({
       fileId,
       voiceId: timbre.providerVoiceId,
-      text: timbre.previewText,
+      text: previewText,
       model:
         timbre.previewModel ||
         this.minimaxVoiceService.getDefaultPreviewModel(),
@@ -283,6 +298,44 @@ export class AdminVoiceTimbreService {
     timbre.errorMessage = '';
     timbre.updatedAt = new Date();
     await this.voiceTimbreModel.save(timbre);
+  }
+
+  private prepareTimbreRetrain(timbre: VoiceTimbreEntity): void {
+    timbre.status = VoiceTimbreStatus.creating;
+    timbre.errorCode = '';
+    timbre.errorMessage = '';
+    timbre.providerFileId = '';
+    timbre.providerVoiceId = this.generateProviderVoiceId();
+    timbre.previewText = this.normalizePreviewText(timbre.previewText);
+    timbre.previewAudioUrl = '';
+  }
+
+  private async cloneProviderVoice(input: {
+    fileId: string;
+    voiceId: string;
+    text: string;
+    model: string;
+    languageBoost: string;
+  }): Promise<{ providerVoiceId: string; demoAudio: string }> {
+    try {
+      return await this.minimaxVoiceService.cloneVoice(input);
+    } catch (error) {
+      if (!this.isMinimaxVoiceIdDuplicate(error)) {
+        throw error;
+      }
+
+      const voiceId = this.generateProviderVoiceId();
+
+      this.logger?.warn?.(
+        '[voice-timbre-create] MiniMax voice_id duplicate, retry with new voiceId=%s',
+        voiceId
+      );
+
+      return this.minimaxVoiceService.cloneVoice({
+        ...input,
+        voiceId,
+      });
+    }
   }
 
   private async enqueueCreateVoiceTimbreJob(
@@ -375,6 +428,12 @@ export class AdminVoiceTimbreService {
     return data?.status_code === 2049;
   }
 
+  private isMinimaxVoiceIdDuplicate(error: unknown): boolean {
+    const data = (error as { data?: { status_code?: number } })?.data;
+
+    return data?.status_code === 2039;
+  }
+
   private buildSearchWhere(query: ListAdminVoiceTimbresQueryDTO): MongoWhere {
     const where: MongoWhere = {};
     const keyword = query?.keyword?.trim() ?? '';
@@ -424,7 +483,7 @@ export class AdminVoiceTimbreService {
       audioUrl: this.storageFileService.resolve(
         timbre.audioObjectKey || timbre.audioUrl
       ),
-      cloneLanguage: timbre.cloneLanguage || 'Chinese',
+      cloneLanguage: timbre.cloneLanguage || 'auto',
       previewText: timbre.previewText ?? '',
       previewModel: timbre.previewModel ?? '',
       previewAudioUrl: timbre.previewAudioUrl ?? '',
@@ -737,7 +796,7 @@ export class AdminVoiceTimbreService {
   }
 
   private normalizeCloneLanguage(value?: string): string {
-    return value?.trim() || 'Chinese';
+    return value?.trim() || 'auto';
   }
 
   private normalizePreviewModel(value?: string): string {
@@ -745,30 +804,15 @@ export class AdminVoiceTimbreService {
   }
 
   private normalizeSpeechSpeed(value?: number): number {
-    return this.normalizeNumberInRange(
-      value,
-      DEFAULT_SPEECH_SPEED,
-      0.5,
-      2
-    );
+    return this.normalizeNumberInRange(value, DEFAULT_SPEECH_SPEED, 0.5, 2);
   }
 
   private normalizeSpeechVolume(value?: number): number {
-    return this.normalizeNumberInRange(
-      value,
-      DEFAULT_SPEECH_VOLUME,
-      0,
-      10
-    );
+    return this.normalizeNumberInRange(value, DEFAULT_SPEECH_VOLUME, 0, 10);
   }
 
   private normalizeSpeechPitch(value?: number): number {
-    return this.normalizeNumberInRange(
-      value,
-      DEFAULT_SPEECH_PITCH,
-      -12,
-      12
-    );
+    return this.normalizeNumberInRange(value, DEFAULT_SPEECH_PITCH, -12, 12);
   }
 
   private normalizeNumberInRange(
@@ -798,6 +842,13 @@ export class AdminVoiceTimbreService {
     }
 
     return text;
+  }
+
+  private normalizePreviewText(value: string | undefined): string {
+    return (
+      this.normalizeOptionalText(value, 1000) ||
+      DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT
+    );
   }
 
   private normalizePositiveInteger(value: unknown, fallback: number): number {

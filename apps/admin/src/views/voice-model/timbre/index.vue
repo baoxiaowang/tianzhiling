@@ -162,21 +162,21 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="150" fixed="right">
+          <a-table-column title="操作" :width="120" fixed="right">
             <template #cell="{ record }">
-              <a-space :size="4">
+              <a-space direction="vertical" :size="4" align="start">
                 <a-button type="text" size="small" @click="openEdit(record)">
                   编辑
                 </a-button>
                 <a-button
-                  v-if="record.status === 'failed'"
+                  v-if="canRetry(record)"
                   type="text"
                   size="small"
-                  status="warning"
+                  :status="record.status === 'failed' ? 'warning' : 'normal'"
                   :loading="isRetrying(record.id)"
                   @click="handleRetry(record)"
                 >
-                  重试
+                  {{ getRetryButtonText(record) }}
                 </a-button>
               </a-space>
             </template>
@@ -295,6 +295,7 @@
           field="previewText"
           label="预览文本"
           :rules="[
+            { required: true, message: '请输入预览文本' },
             { maxLength: 1000, message: '预览文本不能超过 1000 个字符' },
           ]"
         >
@@ -304,7 +305,7 @@
             :max-length="1000"
             show-word-limit
             :auto-size="{ minRows: 3, maxRows: 5 }"
-            placeholder="创建时填写可生成试听音频"
+            placeholder="请输入用于生成试听音频的预览文本"
           />
         </a-form-item>
 
@@ -450,7 +451,7 @@
     provider: 'minimax' as VoiceTimbreProviderDTO,
     audioObjectKey: '',
     audioUrl: '',
-    cloneLanguage: 'Chinese',
+    cloneLanguage: 'auto',
     providerVoiceId: '',
     previewText: '',
     speechSpeed: 1,
@@ -535,7 +536,7 @@
     editForm.provider = record.provider;
     editForm.audioObjectKey = record.audioObjectKey;
     editForm.audioUrl = record.audioUrl;
-    editForm.cloneLanguage = record.cloneLanguage || 'Chinese';
+    editForm.cloneLanguage = record.cloneLanguage || 'auto';
     editForm.providerVoiceId = record.providerVoiceId;
     editForm.previewText = record.previewText;
     editForm.speechSpeed = normalizeSpeechFormValue(record.speechSpeed, 1);
@@ -559,7 +560,7 @@
     editForm.provider = 'minimax';
     editForm.audioObjectKey = '';
     editForm.audioUrl = '';
-    editForm.cloneLanguage = 'Chinese';
+    editForm.cloneLanguage = 'auto';
     editForm.providerVoiceId = '';
     editForm.previewText = '';
     editForm.speechSpeed = 1;
@@ -623,7 +624,11 @@
           speechPitch: editForm.speechPitch,
           remark: editForm.remark,
         });
-        Message.success('音色已更新');
+        Message.success(
+          editForm.status === 'disabled'
+            ? '音色已更新'
+            : '音色已更新，重新训练任务已提交'
+        );
       } else {
         const uploaded = await uploadAdminFile(
           selectedAudioFile.value as File,
@@ -659,6 +664,12 @@
   };
 
   const isRetrying = (id: string) => retryingIds.value.has(id);
+
+  const canRetry = (record: VoiceTimbreRecord) =>
+    record.status === 'failed' || record.status === 'active';
+
+  const getRetryButtonText = (record: VoiceTimbreRecord) =>
+    record.status === 'active' ? '重新训练' : '重试';
 
   const handleRetry = async (record: VoiceTimbreRecord) => {
     const nextRetryingIds = new Set(retryingIds.value);

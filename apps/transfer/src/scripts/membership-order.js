@@ -22,8 +22,16 @@ const {
 const DEFAULT_BATCH_SIZE = 500;
 const ORDER_COLLECTION = 'order';
 const USER_MEMBERSHIP_COLLECTION = 'user_membership';
+const VOICE_TRAINING_TASK_COLLECTION = 'voice_training_task';
+const VOICE_TIMBRE_COLLECTION = 'voice_timbre';
 const LEGACY_PAYMENT_PROVIDER = 'legacy_wechat';
 const CURRENCY = 'CNY';
+const VOICE_TASK_REMARK = '历史声音套餐迁移，需人工训练后完成';
+const DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT =
+  '我好想你，最近过得好吗，有没有好好吃饭';
+const LEGACY_VOICE_TIMBRE_ERROR_CODE = 'LEGACY_VOICE_PENDING_TRAINING';
+const LEGACY_VOICE_TIMBRE_ERROR_MESSAGE =
+  '历史音色素材迁移，点击重试开始训练';
 
 const LEGACY_ORDER_STATUS_TO_NEW = {
   PAY_SUCCESS: 'completed',
@@ -85,15 +93,22 @@ async function exportMembershipOrders(context, dumpPath) {
     dbName,
   });
 
-  const [validUserIds, agentsById, goodsById, orderRows] = await Promise.all([
-    fetchValidUserIds(context, batchSize),
-    fetchAgentsById(context, batchSize),
-    fetchGoodsById(context, batchSize),
-    fetchOrders(context, batchSize),
-  ]);
+  const [validUserIds, agentsById, goodsById, speakersById, orderRows] =
+    await Promise.all([
+      fetchValidUserIds(context, batchSize),
+      fetchAgentsById(context, batchSize),
+      fetchGoodsById(context, batchSize),
+      fetchSpeakersById(context, batchSize),
+      fetchOrders(context, batchSize),
+    ]);
 
   const writer = createBsonDumpWriter({
-    collectionNames: [ORDER_COLLECTION, USER_MEMBERSHIP_COLLECTION],
+    collectionNames: [
+      ORDER_COLLECTION,
+      USER_MEMBERSHIP_COLLECTION,
+      VOICE_TRAINING_TASK_COLLECTION,
+      VOICE_TIMBRE_COLLECTION,
+    ],
     dbDumpPath,
   });
   const report = createInitialReport();
@@ -120,6 +135,30 @@ async function exportMembershipOrders(context, dumpPath) {
       writer.write(ORDER_COLLECTION, result.document);
       writtenOrderIds.add(result.legacyOrderId);
       stats.exportedOrders += 1;
+
+      const voiceTimbre = buildVoiceTimbreDocument(result, {
+        now,
+        report,
+        speakersById,
+        stats,
+      });
+
+      if (voiceTimbre) {
+        writer.write(VOICE_TIMBRE_COLLECTION, voiceTimbre);
+        stats.exportedVoiceTimbres += 1;
+      }
+
+      const voiceTrainingTask = buildVoiceTrainingTaskDocument(result, {
+        now,
+        report,
+        stats,
+        voiceTimbreId: voiceTimbre?._id,
+      });
+
+      if (voiceTrainingTask) {
+        writer.write(VOICE_TRAINING_TASK_COLLECTION, voiceTrainingTask);
+        stats.exportedVoiceTrainingTasks += 1;
+      }
 
       if (
         result.isPaidMembershipOrder &&
@@ -200,6 +239,8 @@ async function fetchAgentsById(context, batchSize) {
       'expiration_time',
       'is_indefinite',
       'voice_state',
+      'voice_material',
+      'speaker_id',
       'is_customized',
       'create_time',
     ].join(', '),
@@ -219,6 +260,36 @@ async function fetchAgentsById(context, batchSize) {
   }
 
   return agentsById;
+}
+
+async function fetchSpeakersById(context, batchSize) {
+  const rows = await fetchPagedRows(context, {
+    batchSize,
+    logPrefix: '[membership-order] speaker preload',
+    orderBy: 'id ASC',
+    select: [
+      'speaker_id',
+      'audios_url',
+      'audio_format',
+      'audio_state',
+      'train_num',
+    ].join(', '),
+    table: 'speaker',
+    where: 'COALESCE(logical_del, 0) = 0',
+  });
+  const speakersById = new Map();
+
+  for (const row of rows) {
+    const legacySpeakerId = normalizeString(row.speaker_id);
+
+    if (!legacySpeakerId) {
+      continue;
+    }
+
+    speakersById.set(legacySpeakerId, row);
+  }
+
+  return speakersById;
 }
 
 async function fetchGoodsById(context, batchSize) {
@@ -428,12 +499,118 @@ function buildOrderDocument(row, context) {
   }
 
   return {
+    agent,
     document,
     goodsKind,
     isPaidMembershipOrder:
       goodsKind === 'year_member' || goodsKind === 'lifetime_member',
     legacyAgentId,
+    legacyGoodsId,
     legacyOrderId,
+  };
+}
+
+function buildVoiceTrainingTaskDocument(orderResult, context) {
+  const order = orderResult.document;
+
+  if (orderResult.goodsKind !== 'voice_package') {
+    return undefined;
+  }
+
+  if (order.status !== 'completed') {
+    context.stats.skippedVoiceTrainingTasks += 1;
+    context.stats.skippedVoiceTrainingTaskNonPaidOrders += 1;
+    context.report.skippedVoiceTrainingTaskNonPaidOrders.push(
+      buildVoiceTrainingTaskReportRow(orderResult)
+    );
+    return undefined;
+  }
+
+  if (!order.agentId) {
+    context.stats.skippedVoiceTrainingTasks += 1;
+    context.stats.skippedVoiceTrainingTaskMissingAgents += 1;
+    context.report.skippedVoiceTrainingTaskMissingAgents.push(
+      buildVoiceTrainingTaskReportRow(orderResult)
+    );
+    return undefined;
+  }
+
+  const createdAt = order.paidAt || order.createdAt || context.now;
+
+  const task = {
+    _id: legacyObjectId(`voice-training-task:${orderResult.legacyOrderId}`),
+    userId: order.userId,
+    agentId: order.agentId,
+    orderId: order._id,
+    voicePackageId: order.targetId,
+    voicePackageCode: order.targetCode,
+    status: 'paid',
+    assigneeName: '',
+    materialObjectKeys: [],
+    remark: VOICE_TASK_REMARK,
+    paidAt: createdAt,
+    createdAt,
+    updatedAt: context.now,
+  };
+
+  if (context.voiceTimbreId) {
+    task.voiceTimbreId = context.voiceTimbreId;
+  }
+
+  return task;
+}
+
+function buildVoiceTimbreDocument(orderResult, context) {
+  const order = orderResult.document;
+
+  if (
+    orderResult.goodsKind !== 'voice_package' ||
+    order.status !== 'completed'
+  ) {
+    return undefined;
+  }
+
+  if (!order.agentId) {
+    return undefined;
+  }
+
+  const source = resolveLegacyVoiceAudioSource(
+    orderResult.agent,
+    context.speakersById
+  );
+
+  if (!source.url) {
+    context.stats.skippedVoiceTimbres += 1;
+    context.stats.skippedVoiceTimbreMissingAudio += 1;
+    context.report.skippedVoiceTimbreMissingAudio.push(
+      buildVoiceTrainingTaskReportRow(orderResult)
+    );
+    return undefined;
+  }
+
+  const createdAt = order.paidAt || order.createdAt || context.now;
+
+  return {
+    _id: legacyObjectId(`voice-timbre:${orderResult.legacyOrderId}`),
+    name: buildLegacyVoiceTimbreName(orderResult),
+    provider: 'minimax',
+    providerVoiceId: buildLegacyProviderVoiceId(orderResult.legacyOrderId),
+    providerFileId: '',
+    audioObjectKey: source.url,
+    audioUrl: source.url,
+    cloneLanguage: 'auto',
+    previewText: DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
+    previewModel: '',
+    previewAudioUrl: '',
+    speechSpeed: 1,
+    speechVolume: 1,
+    speechPitch: 0,
+    status: 'failed',
+    errorCode: LEGACY_VOICE_TIMBRE_ERROR_CODE,
+    errorMessage: LEGACY_VOICE_TIMBRE_ERROR_MESSAGE,
+    remark: buildLegacyVoiceTimbreRemark(orderResult, source),
+    createdAt,
+    updatedAt: context.now,
   };
 }
 
@@ -805,6 +982,122 @@ function buildOrderReportRow(row, goods, agent) {
   };
 }
 
+function buildVoiceTrainingTaskReportRow(orderResult) {
+  const order = orderResult.document;
+
+  return {
+    orderId: orderResult.legacyOrderId,
+    agentId: orderResult.legacyAgentId,
+    goodsId: orderResult.legacyGoodsId,
+    orderStatus: order.status,
+    voicePackageCode: order.targetCode,
+  };
+}
+
+function resolveLegacyVoiceAudioSource(agent, speakersById) {
+  const materialUrl = extractFirstUrlFromVoiceMaterial(agent?.voice_material);
+
+  if (materialUrl) {
+    return {
+      source: 'agent.voice_material',
+      url: materialUrl,
+    };
+  }
+
+  const speakerId = normalizeString(agent?.speaker_id);
+  const speaker = speakerId ? speakersById.get(speakerId) : undefined;
+  const speakerUrl = normalizeString(speaker?.audios_url);
+
+  if (speakerUrl) {
+    return {
+      source: 'speaker.audios_url',
+      url: speakerUrl,
+    };
+  }
+
+  return {
+    source: '',
+    url: '',
+  };
+}
+
+function extractFirstUrlFromVoiceMaterial(value) {
+  const raw = normalizeString(value);
+
+  if (!raw || raw === '[]') {
+    return '';
+  }
+
+  if (isLikelyUrl(raw)) {
+    return raw;
+  }
+
+  try {
+    return findFirstUrl(JSON.parse(raw));
+  } catch {
+    return '';
+  }
+}
+
+function findFirstUrl(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return isLikelyUrl(value) ? value.trim() : '';
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstUrl(item);
+
+      if (found) {
+        return found;
+      }
+    }
+
+    return '';
+  }
+
+  if (typeof value === 'object') {
+    for (const key of ['url', 'audioUrl', 'audios_url', 'path']) {
+      const found = findFirstUrl(value[key]);
+
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return '';
+}
+
+function isLikelyUrl(value) {
+  return /^(https?:)?\/\//i.test(String(value).trim());
+}
+
+function buildLegacyVoiceTimbreName(orderResult) {
+  const agentName = normalizeString(orderResult.agent?.agent_name);
+  const name = agentName
+    ? `历史音色-${agentName}`
+    : `历史音色-${orderResult.legacyOrderId}`;
+
+  return name.slice(0, 60);
+}
+
+function buildLegacyProviderVoiceId(legacyOrderId) {
+  return `TzlVoice_legacy_${sanitizeCode(legacyOrderId)}`.slice(0, 256);
+}
+
+function buildLegacyVoiceTimbreRemark(orderResult, source) {
+  return [
+    '历史声音套餐素材迁移，火山音色ID已放弃，需点击重试重新训练 MiniMax 音色。',
+    `旧订单号：${orderResult.legacyOrderId}`,
+    `音频来源：${source.source}`,
+  ].join('\n');
+}
+
 function buildAgentReportRow(agent) {
   return {
     agentId: normalizeString(agent.agent_id),
@@ -821,7 +1114,14 @@ function createInitialStats() {
     scannedOrders: 0,
     exportedOrders: 0,
     exportedSyntheticOrders: 0,
+    exportedVoiceTrainingTasks: 0,
+    exportedVoiceTimbres: 0,
     skippedOrders: 0,
+    skippedVoiceTrainingTasks: 0,
+    skippedVoiceTrainingTaskMissingAgents: 0,
+    skippedVoiceTrainingTaskNonPaidOrders: 0,
+    skippedVoiceTimbres: 0,
+    skippedVoiceTimbreMissingAudio: 0,
     skippedCustomServiceOrders: 0,
     unsupportedGoodsOrders: 0,
     missingUserOrders: 0,
@@ -848,6 +1148,9 @@ function createInitialReport() {
     ownerConflicts: [],
     skippedCustomServiceOrders: [],
     skippedTrialMembershipAgents: [],
+    skippedVoiceTimbreMissingAudio: [],
+    skippedVoiceTrainingTaskMissingAgents: [],
+    skippedVoiceTrainingTaskNonPaidOrders: [],
     unsupportedGoods: [],
   };
 }
@@ -888,9 +1191,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
+  VOICE_TASK_REMARK,
   buildMembershipDocuments,
   buildOrderDocument,
   buildSyntheticMembershipOrder,
+  buildVoiceTimbreDocument,
+  buildVoiceTrainingTaskDocument,
   classifyGoods,
   normalizeLegacyOrderStatus,
 };

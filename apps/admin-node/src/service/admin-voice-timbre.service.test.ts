@@ -7,6 +7,7 @@ import {
 } from '@tzl/entities';
 import {
   AdminVoiceTimbreService,
+  DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
   VOICE_TIMBRE_CREATE_QUEUE,
 } from './admin-voice-timbre.service';
 
@@ -140,6 +141,26 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
   });
 
+  it('fills default preview text when creating without one', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    await service.createVoiceTimbre({
+      name: '测试音色',
+      provider: 'minimax',
+      providerVoiceId: 'TestVoice_001',
+      audioObjectKey: 'voice-timbres/demo.wav',
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cloneLanguage: 'auto',
+        previewText: DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
+      })
+    );
+  });
+
   it('updates output speech settings without re-cloning the timbre', async () => {
     const { service } = createService();
     const timbre = createTimbre(VoiceTimbreStatus.active);
@@ -170,6 +191,63 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
   });
 
+  it('re-trains an enabled timbre after editing preview text', async () => {
+    const { service, queue } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+    const oldProviderVoiceId = timbre.providerVoiceId;
+
+    timbre.providerFileId = 'old_file';
+    timbre.previewAudioUrl = 'https://cdn.example.com/old.mp3';
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.updateVoiceTimbre(TIMBRE_ID.toHexString(), {
+      name: '更新音色',
+      status: VoiceTimbreStatus.active,
+      previewText: '我好想你，最近过得好吗，有没有好好吃饭',
+      speechSpeed: 1.05,
+      speechVolume: 1,
+      speechPitch: 0,
+      remark: '更新后重训',
+    });
+
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        name: '更新音色',
+        status: VoiceTimbreStatus.creating,
+        providerFileId: '',
+        providerVoiceId: expect.stringMatching(/^TzlVoice_/),
+        previewAudioUrl: '',
+      })
+    );
+    expect(timbre.providerVoiceId).not.toBe(oldProviderVoiceId);
+    expect(queue.addJobToQueue).toHaveBeenCalledWith(
+      {
+        timbreId: TIMBRE_ID.toHexString(),
+      },
+      expect.objectContaining({
+        jobId: expect.stringContaining(
+          `voice-timbre-create:${TIMBRE_ID.toHexString()}:`
+        ),
+      })
+    );
+    expect(result.status).toBe(VoiceTimbreStatus.creating);
+  });
+
+  it('does not re-train a timbre when editing it to disabled', async () => {
+    const { service, queue } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.updateVoiceTimbre(TIMBRE_ID.toHexString(), {
+      status: VoiceTimbreStatus.disabled,
+      previewText: '我好想你，最近过得好吗，有没有好好吃饭',
+    });
+
+    expect(queue.addJobToQueue).not.toHaveBeenCalled();
+    expect(result.status).toBe(VoiceTimbreStatus.disabled);
+  });
+
   it('processes the create job and marks the timbre active', async () => {
     const { service } = createService();
     const timbre = createTimbre();
@@ -192,6 +270,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       expect.objectContaining({
         fileId: 'file_001',
         voiceId: 'TestVoice_001',
+        text: '今天天气很好',
         languageBoost: 'Chinese',
       })
     );
@@ -202,6 +281,55 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         status: VoiceTimbreStatus.active,
         errorCode: '',
         errorMessage: '',
+      })
+    );
+  });
+
+  it('retries MiniMax clone with a new provider voice id when duplicate', async () => {
+    const { service } = createService();
+    const timbre = createTimbre();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+    jest
+      .mocked(service.minimaxVoiceService.cloneVoice)
+      .mockRejectedValueOnce(
+        new AppError(
+          'MINIMAX_VOICE_CLONE_FAILED',
+          'voice clone voice id duplicate',
+          502,
+          {
+            status_code: 2039,
+            status_msg: 'voice clone voice id duplicate',
+          }
+        )
+      )
+      .mockImplementationOnce(async input => ({
+        providerVoiceId: input.voiceId,
+        demoAudio: 'https://cdn.example.com/demo-output.mp3',
+      }));
+
+    await service.processCreateVoiceTimbreJob({
+      timbreId: TIMBRE_ID.toHexString(),
+    });
+
+    expect(service.minimaxVoiceService.cloneVoice).toHaveBeenCalledTimes(2);
+    expect(service.minimaxVoiceService.cloneVoice).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        voiceId: 'TestVoice_001',
+      })
+    );
+    expect(service.minimaxVoiceService.cloneVoice).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        voiceId: expect.stringMatching(/^TzlVoice_/),
+      })
+    );
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        providerVoiceId: expect.stringMatching(/^TzlVoice_/),
+        previewAudioUrl: 'https://cdn.example.com/demo-output.mp3',
+        status: VoiceTimbreStatus.active,
       })
     );
   });
@@ -242,6 +370,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     timbre.errorMessage = 'timeout';
     timbre.providerFileId = 'old_file';
     timbre.previewAudioUrl = 'https://cdn.example.com/old.mp3';
+    const oldProviderVoiceId = timbre.providerVoiceId;
     jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
 
     const result = await service.retryVoiceTimbreCreate(
@@ -254,9 +383,11 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         errorCode: '',
         errorMessage: '',
         providerFileId: '',
+        providerVoiceId: expect.stringMatching(/^TzlVoice_/),
         previewAudioUrl: '',
       })
     );
+    expect(timbre.providerVoiceId).not.toBe(oldProviderVoiceId);
     expect(queue.addJobToQueue).toHaveBeenCalledWith(
       {
         timbreId: TIMBRE_ID.toHexString(),
@@ -270,12 +401,59 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     expect(result.status).toBe(VoiceTimbreStatus.creating);
   });
 
-  it('rejects retry when the timbre is not failed', async () => {
+  it('re-trains an active timbre by resetting status and enqueueing again', async () => {
+    const { service, queue } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.active);
+
+    timbre.providerFileId = 'old_file';
+    timbre.previewAudioUrl = 'https://cdn.example.com/old.mp3';
+    const oldProviderVoiceId = timbre.providerVoiceId;
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.retryVoiceTimbreCreate(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        status: VoiceTimbreStatus.creating,
+        providerFileId: '',
+        providerVoiceId: expect.stringMatching(/^TzlVoice_/),
+        previewAudioUrl: '',
+      })
+    );
+    expect(timbre.providerVoiceId).not.toBe(oldProviderVoiceId);
+    expect(queue.addJobToQueue).toHaveBeenCalledWith(
+      {
+        timbreId: TIMBRE_ID.toHexString(),
+      },
+      expect.objectContaining({
+        jobId: expect.stringContaining(
+          `voice-timbre-create:${TIMBRE_ID.toHexString()}:`
+        ),
+      })
+    );
+    expect(result.status).toBe(VoiceTimbreStatus.creating);
+  });
+
+  it('fills default preview text before retrying a failed timbre', async () => {
+    const { service } = createService();
+    const timbre = createTimbre(VoiceTimbreStatus.failed);
+
+    timbre.previewText = '';
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    await service.retryVoiceTimbreCreate(TIMBRE_ID.toHexString());
+
+    expect(timbre.previewText).toBe(DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT);
+  });
+
+  it('rejects retry when the timbre is not failed or active', async () => {
     const { service } = createService();
 
     jest
       .mocked(service.voiceTimbreModel.findOne)
-      .mockResolvedValue(createTimbre(VoiceTimbreStatus.active));
+      .mockResolvedValue(createTimbre(VoiceTimbreStatus.creating));
 
     await expect(
       service.retryVoiceTimbreCreate(TIMBRE_ID.toHexString())
