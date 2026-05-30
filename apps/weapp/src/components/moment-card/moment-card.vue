@@ -58,7 +58,7 @@
           v-for="comment in post.comments"
           :key="comment.id"
           class="moment-card__comment"
-          @tap="emitComment"
+          @tap="emitComment(comment)"
         >
           <text class="moment-card__comment-author">
             {{ formatCommentAuthor(comment.authorName, comment.replyToUserName) }}
@@ -78,7 +78,7 @@ export default {
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { PostItem } from '../../apis/post'
+import type { PostCommentItem, PostItem } from '../../apis/post'
 import likeIconUrl from '../../assets/icon/like.svg'
 import commentIconUrl from '../../assets/icon/comment.svg'
 
@@ -88,7 +88,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   like: [post: PostItem]
-  comment: [post: PostItem]
+  comment: [post: PostItem, replyToComment?: PostCommentItem]
   preview: [post: PostItem, index: number]
 }>()
 
@@ -158,8 +158,8 @@ function formatCommentAuthor(authorName: string, replyToUserName: string) {
   return replyTo ? `${author} 回复 ${replyTo}：` : `${author}：`
 }
 
-function emitComment() {
-  emit('comment', props.post)
+function emitComment(replyToComment?: PostCommentItem) {
+  emit('comment', props.post, replyToComment)
 }
 
 function emitLike() {

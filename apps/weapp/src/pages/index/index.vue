@@ -32,6 +32,7 @@
       <scroll-view
         class="moments-scroll"
         :scroll-y="true"
+        :scroll-top="momentsScrollTop"
         :show-scrollbar="false"
         :lower-threshold="120"
         @scroll="handleMomentsScroll"
@@ -117,7 +118,7 @@
           class="moment-comment-composer__input"
           :value="commentDraft"
           :focus="shouldFocusCommentInput"
-          placeholder="发表评论:"
+          :placeholder="commentInputPlaceholder"
           placeholder-style="color: #b8b8b8;"
           confirm-type="send"
           :adjust-position="false"
@@ -172,6 +173,7 @@ import {
   getPosts,
   likePost,
   unlikePost,
+  type PostCommentItem,
   type PostItem,
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
@@ -201,6 +203,7 @@ const errorMessage = ref('')
 const loadMoreError = ref('')
 const posts = ref<PostItem[]>([])
 const activeCommentPost = ref<PostItem | null>(null)
+const activeReplyComment = ref<PostCommentItem | null>(null)
 const commentDraft = ref('')
 const commentKeyboardHeight = ref(0)
 const isCommentInputFocused = ref(false)
@@ -212,16 +215,22 @@ const currentPostPage = ref(1)
 const hasMorePosts = ref(true)
 const isLoadingMore = ref(false)
 const showCollapsedAppBar = ref(false)
+const momentsScrollTop = ref(0)
 
 let refreshDataPromise: Promise<void> | null = null
 let loadMorePromise: Promise<void> | null = null
 let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
+let commentBlurCloseTimer: ReturnType<typeof setTimeout> | null = null
+let commentScrollRestoreTimers: ReturnType<typeof setTimeout>[] = []
+let lastKnownMomentsScrollTop = 0
 
 const POST_PAGE_SIZE = 10
 const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
+const COMMENT_BLUR_CLOSE_DELAY = 120
+const COMMENT_SCROLL_RESTORE_DELAYS = [60, 180, 360]
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = hasUnreadCommentNotifications
@@ -255,6 +264,13 @@ const postsFeedbackSubtitle = computed(() => {
     ? '发布第一条内容，让想念留下痕迹'
     : ''
 })
+const commentInputPlaceholder = computed(() => {
+  const replyName = activeReplyComment.value
+    ? getReplyTargetName(activeReplyComment.value)
+    : ''
+
+  return replyName ? `@${replyName}` : '发表评论:'
+})
 const commentComposerStyle = computed(() => {
   const shouldFollowKeyboard =
     isCommentInputFocused.value &&
@@ -287,6 +303,10 @@ function getPostImages(post: PostItem) {
     .slice(0, 9)
 }
 
+function getReplyTargetName(comment: PostCommentItem) {
+  return comment.replyToUserName.trim() || comment.authorName.trim() || '天之灵用户'
+}
+
 function isPostLikePending(postId: string) {
   return likingPostIds.value.includes(postId)
 }
@@ -304,6 +324,35 @@ function setPostLikePending(postId: string, pending: boolean) {
 
 function isLastPostRow(index: unknown) {
   return Number(index) === posts.value.length - 1
+}
+
+function normalizeScrollTop(value: unknown) {
+  const scrollTop = Number(value ?? 0)
+  return Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0
+}
+
+function setMomentsScrollTop(scrollTop: number) {
+  momentsScrollTop.value = normalizeScrollTop(scrollTop)
+}
+
+function forceMomentsScrollTop(scrollTop: number) {
+  const nextScrollTop = normalizeScrollTop(scrollTop)
+
+  if (momentsScrollTop.value !== nextScrollTop) {
+    momentsScrollTop.value = nextScrollTop
+    return
+  }
+
+  if (nextScrollTop <= 0) {
+    momentsScrollTop.value = 0
+    return
+  }
+
+  momentsScrollTop.value = Math.max(0, nextScrollTop - 1)
+
+  void nextTick(() => {
+    momentsScrollTop.value = nextScrollTop
+  })
 }
 
 function replacePostInList(updatedPost: PostItem) {
@@ -418,11 +467,16 @@ function handleLoadMoreRetry() {
 }
 
 function handleMomentsScroll(event: { detail?: { scrollTop?: number } }) {
-  const scrollTop = Number(event.detail?.scrollTop ?? 0)
+  const scrollTop = normalizeScrollTop(event.detail?.scrollTop)
 
-  if (Number.isNaN(scrollTop)) {
+  if (activeCommentPost.value) {
+    if (Math.abs(scrollTop - lastKnownMomentsScrollTop) > 2) {
+      forceMomentsScrollTop(lastKnownMomentsScrollTop)
+    }
     return
   }
+
+  lastKnownMomentsScrollTop = scrollTop
 
   if (showCollapsedAppBar.value) {
     if (scrollTop <= COLLAPSED_APP_BAR_HIDE_SCROLL_TOP) {
@@ -466,25 +520,31 @@ function handleCreatePost() {
   })
 }
 
-function openCommentComposer(post: PostItem) {
+function openCommentComposer(post: PostItem, replyToComment?: PostCommentItem) {
+  clearCommentBlurCloseTimer()
+  clearCommentScrollRestoreTimers()
+  setMomentsScrollTop(lastKnownMomentsScrollTop)
   activeCommentPost.value = post
+  activeReplyComment.value = replyToComment ?? null
   commentDraft.value = ''
   shouldFocusCommentInput.value = false
   isCommentEmojiPanelVisible.value = false
   setCustomTabBarHidden(true)
 
   void nextTick(() => {
+    forceMomentsScrollTop(lastKnownMomentsScrollTop)
     shouldFocusCommentInput.value = true
+    scheduleCommentScrollRestore()
   })
 }
 
-function handleCommentTap(post: PostItem) {
+function handleCommentTap(post: PostItem, replyToComment?: PostCommentItem) {
   if (!session.value) {
     openLoginPrompt()
     return
   }
 
-  openCommentComposer(post)
+  openCommentComposer(post, replyToComment)
 }
 
 async function handleLikeTap(post: PostItem) {
@@ -528,8 +588,11 @@ function closeCommentComposer(force = false) {
     return
   }
 
+  clearCommentBlurCloseTimer()
+  clearCommentScrollRestoreTimers()
   resetCommentInputModeSwitching()
   activeCommentPost.value = null
+  activeReplyComment.value = null
   commentDraft.value = ''
   shouldFocusCommentInput.value = false
   isCommentInputFocused.value = false
@@ -538,13 +601,72 @@ function closeCommentComposer(force = false) {
   setCustomTabBarHidden(false)
 }
 
+function clearCommentBlurCloseTimer() {
+  if (commentBlurCloseTimer) {
+    clearTimeout(commentBlurCloseTimer)
+    commentBlurCloseTimer = null
+  }
+}
+
+function clearCommentScrollRestoreTimers() {
+  commentScrollRestoreTimers.forEach((timer) => {
+    clearTimeout(timer)
+  })
+  commentScrollRestoreTimers = []
+}
+
+function scheduleCommentScrollRestore() {
+  clearCommentScrollRestoreTimers()
+
+  commentScrollRestoreTimers = COMMENT_SCROLL_RESTORE_DELAYS.map((delay) =>
+    setTimeout(() => {
+      if (!activeCommentPost.value) {
+        return
+      }
+
+      forceMomentsScrollTop(lastKnownMomentsScrollTop)
+    }, delay)
+  )
+}
+
+function scheduleCommentCloseAfterBlur() {
+  clearCommentBlurCloseTimer()
+
+  commentBlurCloseTimer = setTimeout(() => {
+    commentBlurCloseTimer = null
+
+    if (
+      !activeCommentPost.value ||
+      isSubmittingComment.value ||
+      isSwitchingCommentInputMode ||
+      isCommentInputFocused.value ||
+      isCommentEmojiPanelVisible.value
+    ) {
+      return
+    }
+
+    closeCommentComposer()
+  }, COMMENT_BLUR_CLOSE_DELAY)
+}
+
+function handleCommentInputLostFocus() {
+  if (isSwitchingCommentInputMode || isCommentEmojiPanelVisible.value) {
+    return
+  }
+
+  scheduleCommentCloseAfterBlur()
+}
+
 function handleCommentFocus() {
+  clearCommentBlurCloseTimer()
   isCommentInputFocused.value = true
+  forceMomentsScrollTop(lastKnownMomentsScrollTop)
 }
 
 function handleCommentBlur() {
   isCommentInputFocused.value = false
   shouldFocusCommentInput.value = false
+  handleCommentInputLostFocus()
 }
 
 function handleCommentOutsideTap() {
@@ -591,10 +713,15 @@ function requestCommentInputFocus() {
 }
 
 function handleCommentKeyboardHeightChange(event: { detail?: { height?: number } }) {
+  const wasCommentInputFocused = isCommentInputFocused.value
   commentKeyboardHeight.value = event.detail?.height ?? 0
 
   if (commentKeyboardHeight.value <= 0) {
     isCommentInputFocused.value = false
+
+    if (wasCommentInputFocused) {
+      handleCommentInputLostFocus()
+    }
   }
 }
 
@@ -686,6 +813,7 @@ async function handleSubmitComment() {
   try {
     await createComment(post.id, {
       content,
+      replyToCommentId: activeReplyComment.value?.id,
     })
 
     commentDraft.value = ''
