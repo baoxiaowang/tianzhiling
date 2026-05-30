@@ -12,3 +12,7 @@ export type OrderListRes = AdminOrderListDTO;
 export function queryOrderList(params: OrderListParams) {
   return axios.get<OrderListRes>('/admin_api/orders', { params });
 }
+
+export function refundOrder(id: string) {
+  return axios.post<OrderRecord>(`/admin_api/orders/${id}/refund`);
+}

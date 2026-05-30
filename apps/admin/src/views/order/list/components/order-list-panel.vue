@@ -175,11 +175,30 @@
               {{ formatDate(record.paidAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="110" fixed="right">
+          <a-table-column title="操作" :width="150" fixed="right">
             <template #cell="{ record }">
-              <a-button type="text" size="small" @click="openDetail(record)">
-                详情
-              </a-button>
+              <a-space>
+                <a-button type="text" size="small" @click="openDetail(record)">
+                  详情
+                </a-button>
+                <a-popconfirm
+                  v-if="canRefundOrder(record)"
+                  content="确认退订该会员订单？系统会发起微信退款并收回会员权益。"
+                  ok-text="退订"
+                  cancel-text="取消"
+                  position="left"
+                  @ok="handleRefund(record)"
+                >
+                  <a-button
+                    type="text"
+                    status="danger"
+                    size="small"
+                    :loading="refundLoadingId === record.id"
+                  >
+                    退订
+                  </a-button>
+                </a-popconfirm>
+              </a-space>
             </template>
           </a-table-column>
         </template>
@@ -285,7 +304,11 @@
   import { Message } from '@arco-design/web-vue';
   import type { OrderSourceDTO, OrderStatusDTO } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
-  import { OrderRecord, queryOrderList } from '@/api/order';
+  import {
+    OrderRecord,
+    queryOrderList,
+    refundOrder as refundOrderApi,
+  } from '@/api/order';
 
   const props = withDefaults(
     defineProps<{
@@ -307,6 +330,7 @@
   const renderList = ref<OrderRecord[]>([]);
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
+  const refundLoadingId = ref('');
   const searchForm = reactive<{
     keyword: string;
     status?: OrderStatusDTO | '';
@@ -412,6 +436,43 @@
   const closeDetail = () => {
     detailVisible.value = false;
     currentOrder.value = undefined;
+  };
+
+  const canRefundOrder = (record: OrderRecord) => {
+    return (
+      (record.orderType === 'vip_plan' ||
+        record.orderType === 'voice_package') &&
+      (record.status === 'completed' ||
+        record.status === 'paid' ||
+        record.status === 'grant_failed')
+    );
+  };
+
+  const handleRefund = async (record: OrderRecord) => {
+    if (refundLoadingId.value) {
+      return;
+    }
+
+    refundLoadingId.value = record.id;
+
+    try {
+      const { data } = await refundOrderApi(record.id);
+      const index = renderList.value.findIndex((item) => item.id === data.id);
+
+      if (index >= 0) {
+        renderList.value[index] = data;
+      }
+
+      if (currentOrder.value?.id === data.id) {
+        currentOrder.value = data;
+      }
+
+      Message.success('退订退款已提交，会员权益已收回');
+    } catch (error) {
+      Message.error('退订失败，请稍后重试');
+    } finally {
+      refundLoadingId.value = '';
+    }
   };
 
   const canOpenOrderUser = (record: OrderRecord) => {

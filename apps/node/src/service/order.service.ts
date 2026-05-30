@@ -296,6 +296,23 @@ export class OrderService {
     return this.buildOrderRecord(order);
   }
 
+  async refundUserOrder(
+    auth: AuthenticatedUserPayload,
+    orderId: string
+  ): Promise<OrderRecordDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const objectId = this.parseObjectId(orderId, 'INVALID_ORDER_ID');
+    const order = await this.findOrderById(objectId);
+
+    if (!order || this.stringifyObjectId(order.userId) !== String(userId)) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    await this.refundPaidOrder(order, '用户申请退款');
+
+    return this.buildOrderRecord(order);
+  }
+
   async processPaymentExpireJob(
     data: OrderPaymentExpireJobData
   ): Promise<void> {
@@ -425,6 +442,140 @@ export class OrderService {
     throw new AppError('ORDER_TYPE_UNSUPPORTED', 'order type is unsupported');
   }
 
+  private async refundPaidOrder(
+    order: OrderEntity,
+    reason: string
+  ): Promise<void> {
+    if (order.status === OrderStatus.refunded) {
+      return;
+    }
+
+    if (!this.isRefundableOrderType(order.orderType)) {
+      throw new AppError(
+        'ORDER_REFUND_TYPE_UNSUPPORTED',
+        'order type cannot be refunded',
+        400
+      );
+    }
+
+    if (!this.isRefundableOrderStatus(order.status)) {
+      throw new AppError(
+        'ORDER_NOT_REFUNDABLE',
+        'order is not refundable',
+        400
+      );
+    }
+
+    const refundAmount = order.paidAmount ?? order.payableAmount;
+
+    if (!refundAmount || refundAmount <= 0) {
+      throw new AppError(
+        'ORDER_REFUND_AMOUNT_INVALID',
+        'order refund amount is invalid',
+        400
+      );
+    }
+
+    await this.assertRefundableOrderBenefits(order);
+
+    await this.wechatPayService.refundOrder({
+      orderNo: order.orderNo,
+      refundNo: this.generateRefundNo(order),
+      reason,
+      amount: refundAmount,
+      totalAmount: order.paidAmount ?? order.payableAmount,
+    });
+
+    const now = new Date();
+    await this.revokeOrderBenefits(order, now);
+
+    order.status = OrderStatus.refunded;
+    order.refundAmount = refundAmount;
+    order.refundedAt = now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async assertRefundableOrderBenefits(
+    order: OrderEntity
+  ): Promise<void> {
+    if (order.orderType !== OrderType.voicePackage) {
+      return;
+    }
+
+    const task = await this.findVoiceTrainingTaskByOrderId(order.id);
+
+    if (task?.status === VoiceTrainingTaskStatus.completed) {
+      throw new AppError(
+        'VOICE_PACKAGE_ALREADY_COMPLETED',
+        'completed voice package cannot be refunded',
+        400
+      );
+    }
+  }
+
+  private async revokeOrderBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    if (order.orderType === OrderType.vipPlan) {
+      await this.revokeVipBenefits(order, now);
+      return;
+    }
+
+    if (order.orderType === OrderType.voicePackage) {
+      await this.revokeVoicePackageBenefits(order, now);
+    }
+  }
+
+  private async revokeVipBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    const membership = await this.userMembershipModel.findOne({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    if (membership && membership.status !== UserMembershipStatus.refunded) {
+      membership.status = UserMembershipStatus.refunded;
+      membership.updatedAt = now;
+      await this.userMembershipModel.save(membership);
+    }
+
+    const entitlements = await this.agentEntitlementModel.find({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    for (const entitlement of entitlements) {
+      if (entitlement.status === AgentEntitlementStatus.refunded) {
+        continue;
+      }
+
+      entitlement.status = AgentEntitlementStatus.refunded;
+      entitlement.updatedAt = now;
+      await this.agentEntitlementModel.save(entitlement);
+    }
+  }
+
+  private async revokeVoicePackageBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    const task = await this.findVoiceTrainingTaskByOrderId(order.id);
+
+    if (!task || task.status === VoiceTrainingTaskStatus.refunded) {
+      return;
+    }
+
+    task.status = VoiceTrainingTaskStatus.refunded;
+    task.updatedAt = now;
+    await this.voiceTrainingTaskModel.save(task);
+  }
+
   private async grantVipMembership(order: OrderEntity): Promise<void> {
     const plan = order.targetId
       ? await this.findVipPlanById(order.targetId)
@@ -509,7 +660,8 @@ export class OrderService {
   private async createVoiceTrainingTask(order: OrderEntity): Promise<void> {
     const snapshot = this.getVoicePackageSnapshot(order);
     const voicePackageId =
-      order.targetId ?? this.parseObjectId(snapshot.id, 'INVALID_VOICE_PACKAGE_ID');
+      order.targetId ??
+      this.parseObjectId(snapshot.id, 'INVALID_VOICE_PACKAGE_ID');
     const agentId =
       order.agentId ?? this.parseObjectId(snapshot.agentId, 'INVALID_AGENT_ID');
     const existing = await this.voiceTrainingTaskModel.findOne({
@@ -556,6 +708,20 @@ export class OrderService {
       status === OrderStatus.grantFailed ||
       status === OrderStatus.refunded ||
       status === OrderStatus.closed
+    );
+  }
+
+  private isRefundableOrderStatus(status?: OrderStatus): boolean {
+    return (
+      status === OrderStatus.completed ||
+      status === OrderStatus.paid ||
+      status === OrderStatus.grantFailed
+    );
+  }
+
+  private isRefundableOrderType(orderType?: OrderType): boolean {
+    return (
+      orderType === OrderType.vipPlan || orderType === OrderType.voicePackage
     );
   }
 
@@ -707,7 +873,10 @@ export class OrderService {
         } as never,
       }));
 
-    if (!agent || this.stringifyObjectId(agent.createdUserId) !== String(userId)) {
+    if (
+      !agent ||
+      this.stringifyObjectId(agent.createdUserId) !== String(userId)
+    ) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -792,6 +961,16 @@ export class OrderService {
     );
   }
 
+  private async findVoiceTrainingTaskByOrderId(
+    orderId: MongoObjectId
+  ): Promise<VoiceTrainingTaskEntity | null> {
+    return this.voiceTrainingTaskModel.findOne({
+      where: {
+        orderId,
+      },
+    });
+  }
+
   private buildOrderRecord(order: OrderEntity): OrderRecordDTO {
     return {
       id: this.stringifyObjectId(order.id),
@@ -801,7 +980,9 @@ export class OrderService {
         ? this.stringifyObjectId(order.targetId)
         : undefined,
       targetCode: order.targetCode,
-      agentId: order.agentId ? this.stringifyObjectId(order.agentId) : undefined,
+      agentId: order.agentId
+        ? this.stringifyObjectId(order.agentId)
+        : undefined,
       title: order.title,
       payableAmount: order.payableAmount,
       currency: order.currency || 'CNY',
@@ -952,7 +1133,13 @@ export class OrderService {
   }
 
   private generateOrderNo(prefix = 'VIP'): string {
-    return `${prefix}${Date.now()}${randomBytes(4).toString('hex').toUpperCase()}`;
+    return `${prefix}${Date.now()}${randomBytes(4)
+      .toString('hex')
+      .toUpperCase()}`;
+  }
+
+  private generateRefundNo(order: OrderEntity): string {
+    return `R${order.orderNo}`;
   }
 
   private parseObjectId(value: string, code = 'INVALID_TOKEN'): MongoObjectId {

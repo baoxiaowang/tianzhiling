@@ -1,5 +1,6 @@
 import { MidwayConfig } from '@midwayjs/core';
-import { resolve } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { isAbsolute, resolve } from 'path';
 import { tmpdir } from 'os';
 import {
   loadEnvFileIfExists,
@@ -30,6 +31,32 @@ import {
 } from '@tzl/entities';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
+
+const PROJECT_ROOT = resolve(__dirname, '../../../..');
+
+function readPemFrom(
+  names: string[],
+  fallback = '',
+  pathNames: string[] = []
+): string {
+  const filePath = readStringFrom(pathNames, '').trim();
+
+  if (filePath) {
+    const absolutePath = isAbsolute(filePath)
+      ? filePath
+      : resolve(PROJECT_ROOT, filePath);
+
+    if (!existsSync(absolutePath)) {
+      return fallback;
+    }
+
+    return readFileSync(absolutePath, 'utf8').trim();
+  }
+
+  const value = readStringFrom(names, fallback).trim();
+
+  return value.replace(/\\n/g, '\n');
+}
 
 export default {
   keys: readStringFrom(
@@ -152,6 +179,71 @@ export default {
     timeoutMs: readNumberFrom(
       ['ADMIN_API_MINIMAX_VOICE_TIMEOUT_MS', 'NODE_MINIMAX_VOICE_TIMEOUT_MS'],
       120000
+    ),
+  },
+  wechatPay: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_WECHAT_PAY_ENABLED', 'NODE_WECHAT_PAY_ENABLED'],
+      false
+    ),
+    mchId: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_PAY_MCH_ID',
+        'NODE_WECHAT_PAY_MCH_ID',
+        'WECHAT_PAY_MCH_ID',
+      ],
+      ''
+    ),
+    merchantSerialNo: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_PAY_MCH_SERIAL_NO',
+        'NODE_WECHAT_PAY_MCH_SERIAL_NO',
+        'WECHAT_PAY_MCH_SERIAL_NO',
+      ],
+      ''
+    ),
+    merchantPrivateKey: readPemFrom(
+      [
+        'ADMIN_API_WECHAT_PAY_PRIVATE_KEY',
+        'NODE_WECHAT_PAY_PRIVATE_KEY',
+        'WECHAT_PAY_PRIVATE_KEY',
+      ],
+      '',
+      [
+        'ADMIN_API_WECHAT_PAY_PRIVATE_KEY_PATH',
+        'NODE_WECHAT_PAY_PRIVATE_KEY_PATH',
+        'WECHAT_PAY_PRIVATE_KEY_PATH',
+      ]
+    ),
+    publicKeyId: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_PAY_PUBLIC_KEY_ID',
+        'NODE_WECHAT_PAY_PUBLIC_KEY_ID',
+        'WECHAT_PAY_PUBLIC_KEY_ID',
+        'ADMIN_API_WECHAT_PAY_PLATFORM_CERT_SERIAL_NO',
+        'NODE_WECHAT_PAY_PLATFORM_CERT_SERIAL_NO',
+        'WECHAT_PAY_PLATFORM_CERT_SERIAL_NO',
+      ],
+      ''
+    ),
+    publicKey: readPemFrom(
+      [
+        'ADMIN_API_WECHAT_PAY_PUBLIC_KEY',
+        'NODE_WECHAT_PAY_PUBLIC_KEY',
+        'WECHAT_PAY_PUBLIC_KEY',
+        'ADMIN_API_WECHAT_PAY_PLATFORM_CERT',
+        'NODE_WECHAT_PAY_PLATFORM_CERT',
+        'WECHAT_PAY_PLATFORM_CERT',
+      ],
+      '',
+      [
+        'ADMIN_API_WECHAT_PAY_PUBLIC_KEY_PATH',
+        'NODE_WECHAT_PAY_PUBLIC_KEY_PATH',
+        'WECHAT_PAY_PUBLIC_KEY_PATH',
+        'ADMIN_API_WECHAT_PAY_PLATFORM_CERT_PATH',
+        'NODE_WECHAT_PAY_PLATFORM_CERT_PATH',
+        'WECHAT_PAY_PLATFORM_CERT_PATH',
+      ]
     ),
   },
   bullmq: {

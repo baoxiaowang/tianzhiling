@@ -1,11 +1,14 @@
-import { Provide } from '@midwayjs/core';
+import { Inject, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminOrderListDTO,
   AdminOrderRecordDTO,
   AdminOrderUserDTO,
 } from '@tzl/shared';
+import { AppError } from '@tzl/shared';
 import {
+  AgentEntitlementEntity,
+  AgentEntitlementStatus,
   MongoObjectId,
   OrderEntity,
   OrderSource,
@@ -13,14 +16,22 @@ import {
   OrderType,
   UserAccountEntity,
   UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
+  VoiceTrainingTaskEntity,
+  VoiceTrainingTaskStatus,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import { ListAdminOrdersQueryDTO } from '../dto/admin-order.dto';
+import { AdminWechatPayService } from './admin-wechat-pay.service';
 
 type MongoWhere = Record<string, unknown>;
 
 @Provide()
 export class AdminOrderService {
+  @Inject()
+  adminWechatPayService: AdminWechatPayService;
+
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
 
@@ -30,9 +41,16 @@ export class AdminOrderService {
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
 
-  async listOrders(
-    query: ListAdminOrdersQueryDTO
-  ): Promise<AdminOrderListDTO> {
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(AgentEntitlementEntity)
+  agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
+
+  @InjectEntityModel(VoiceTrainingTaskEntity)
+  voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
+
+  async listOrders(query: ListAdminOrdersQueryDTO): Promise<AdminOrderListDTO> {
     const page = this.normalizePositiveInteger(query?.page, 1);
     const pageSize = Math.min(
       this.normalizePositiveInteger(query?.pageSize, 20),
@@ -58,6 +76,149 @@ export class AdminOrderService {
       page,
       pageSize,
     };
+  }
+
+  async refundOrder(orderId: string): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+
+    await this.refundPaidOrder(order, '管理端退订退款');
+    const userMap = await this.getOrderUserMap([order]);
+
+    return this.buildOrderRecord(order, userMap);
+  }
+
+  private async refundPaidOrder(
+    order: OrderEntity,
+    reason: string
+  ): Promise<void> {
+    if (order.status === OrderStatus.refunded) {
+      return;
+    }
+
+    if (!this.isRefundableOrderType(order.orderType)) {
+      throw new AppError(
+        'ORDER_REFUND_TYPE_UNSUPPORTED',
+        'order type cannot be refunded',
+        400
+      );
+    }
+
+    if (!this.isRefundableOrderStatus(order.status)) {
+      throw new AppError(
+        'ORDER_NOT_REFUNDABLE',
+        'order is not refundable',
+        400
+      );
+    }
+
+    const refundAmount = order.paidAmount ?? order.payableAmount;
+
+    if (!refundAmount || refundAmount <= 0) {
+      throw new AppError(
+        'ORDER_REFUND_AMOUNT_INVALID',
+        'order refund amount is invalid',
+        400
+      );
+    }
+
+    await this.assertRefundableOrderBenefits(order);
+
+    await this.adminWechatPayService.refundOrder({
+      orderNo: order.orderNo,
+      refundNo: this.generateRefundNo(order),
+      reason,
+      amount: refundAmount,
+      totalAmount: order.paidAmount ?? order.payableAmount,
+    });
+
+    const now = new Date();
+    await this.revokeOrderBenefits(order, now);
+
+    order.status = OrderStatus.refunded;
+    order.refundAmount = refundAmount;
+    order.refundedAt = now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async assertRefundableOrderBenefits(
+    order: OrderEntity
+  ): Promise<void> {
+    if (order.orderType !== OrderType.voicePackage) {
+      return;
+    }
+
+    const task = await this.findVoiceTrainingTaskByOrderId(order.id);
+
+    if (task?.status === VoiceTrainingTaskStatus.completed) {
+      throw new AppError(
+        'VOICE_PACKAGE_ALREADY_COMPLETED',
+        'completed voice package cannot be refunded',
+        400
+      );
+    }
+  }
+
+  private async revokeOrderBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    if (order.orderType === OrderType.vipPlan) {
+      await this.revokeVipBenefits(order, now);
+      return;
+    }
+
+    if (order.orderType === OrderType.voicePackage) {
+      await this.revokeVoicePackageBenefits(order, now);
+    }
+  }
+
+  private async revokeVipBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    const membership = await this.userMembershipModel.findOne({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    if (membership && membership.status !== UserMembershipStatus.refunded) {
+      membership.status = UserMembershipStatus.refunded;
+      membership.updatedAt = now;
+      await this.userMembershipModel.save(membership);
+    }
+
+    const entitlements = await this.agentEntitlementModel.find({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    for (const entitlement of entitlements) {
+      if (entitlement.status === AgentEntitlementStatus.refunded) {
+        continue;
+      }
+
+      entitlement.status = AgentEntitlementStatus.refunded;
+      entitlement.updatedAt = now;
+      await this.agentEntitlementModel.save(entitlement);
+    }
+  }
+
+  private async revokeVoicePackageBenefits(
+    order: OrderEntity,
+    now: Date
+  ): Promise<void> {
+    const task = await this.findVoiceTrainingTaskByOrderId(order.id);
+
+    if (!task || task.status === VoiceTrainingTaskStatus.refunded) {
+      return;
+    }
+
+    task.status = VoiceTrainingTaskStatus.refunded;
+    task.updatedAt = now;
+    await this.voiceTrainingTaskModel.save(task);
   }
 
   private async buildSearchWhere(
@@ -222,7 +383,9 @@ export class AdminOrderService {
         ? this.stringifyObjectId(order.targetId)
         : undefined,
       targetCode: order.targetCode,
-      agentId: order.agentId ? this.stringifyObjectId(order.agentId) : undefined,
+      agentId: order.agentId
+        ? this.stringifyObjectId(order.agentId)
+        : undefined,
       title: order.title,
       amount: order.amount ?? 0,
       discountAmount: order.discountAmount ?? 0,
@@ -243,6 +406,59 @@ export class AdminOrderService {
       refundedAt: this.formatDate(order.refundedAt),
       updatedAt: this.formatDate(order.updatedAt),
     };
+  }
+
+  private async getOrderById(orderId: string): Promise<OrderEntity> {
+    if (!MongoObjectId.isValid(orderId)) {
+      throw new AppError('INVALID_ORDER_ID', 'order id is invalid', 400);
+    }
+
+    const objectId = new MongoObjectId(orderId);
+    const order =
+      (await this.orderModel.findOne({
+        where: {
+          id: objectId,
+        },
+      })) ??
+      (await this.orderModel.findOne({
+        where: {
+          _id: objectId,
+        } as never,
+      }));
+
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    return order;
+  }
+
+  private isRefundableOrderStatus(status?: OrderStatus): boolean {
+    return (
+      status === OrderStatus.completed ||
+      status === OrderStatus.paid ||
+      status === OrderStatus.grantFailed
+    );
+  }
+
+  private isRefundableOrderType(orderType?: OrderType): boolean {
+    return (
+      orderType === OrderType.vipPlan || orderType === OrderType.voicePackage
+    );
+  }
+
+  private async findVoiceTrainingTaskByOrderId(
+    orderId: MongoObjectId
+  ): Promise<VoiceTrainingTaskEntity | null> {
+    return this.voiceTrainingTaskModel.findOne({
+      where: {
+        orderId,
+      },
+    });
+  }
+
+  private generateRefundNo(order: OrderEntity): string {
+    return `R${order.orderNo}`;
   }
 
   private normalizeOptionalStatus(value?: string): OrderStatus | undefined {

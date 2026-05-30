@@ -11,6 +11,7 @@ export default {
     'pages/agent-form/index',
     'pages/vip-center/index',
     'pages/voice-package/index',
+    'pages/voice-package-success/index',
     'pages/customer-service/index',
     'pages/agreement/index',
     'pages/payment-result/index',

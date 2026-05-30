@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Query } from '@midwayjs/core';
+import { Controller, Get, Inject, Param, Post, Query } from '@midwayjs/core';
 import { ListAdminOrdersQueryDTO } from '../dto/admin-order.dto';
 import { AdminOrderService } from '../service/admin-order.service';
 
@@ -10,5 +10,10 @@ export class AdminOrderController {
   @Get('/')
   async list(@Query() query: ListAdminOrdersQueryDTO) {
     return this.adminOrderService.listOrders(query);
+  }
+
+  @Post('/:id/refund')
+  async refund(@Param('id') id: string) {
+    return this.adminOrderService.refundOrder(id);
   }
 }

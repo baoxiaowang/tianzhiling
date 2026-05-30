@@ -205,6 +205,12 @@ export async function syncOrderPayment(orderId: string) {
   return parseOrder(data)
 }
 
+export async function refundOrder(orderId: string) {
+  const data = await post<OrderRecordDTO>(`/api/orders/${orderId}/refund`)
+
+  return parseOrder(data)
+}
+
 export type {
   CreateVipPlanOrderResultDTO,
   CreateVoicePackageOrderResultDTO,

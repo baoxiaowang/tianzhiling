@@ -24,9 +24,7 @@ export class OrderController {
   }
 
   @Post('/voice-package')
-  async createVoicePackageOrder(
-    @Body() body: CreateVoicePackageOrderBodyDTO
-  ) {
+  async createVoicePackageOrder(@Body() body: CreateVoicePackageOrderBodyDTO) {
     return this.orderService.createVoicePackageOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
@@ -51,6 +49,14 @@ export class OrderController {
   @Post('/:orderId/sync-payment')
   async syncOrderPayment(@Param('orderId') orderId: string) {
     return this.orderService.syncUserOrderPayment(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      orderId
+    );
+  }
+
+  @Post('/:orderId/refund')
+  async refundOrder(@Param('orderId') orderId: string) {
+    return this.orderService.refundUserOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       orderId
     );

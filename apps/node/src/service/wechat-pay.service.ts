@@ -80,6 +80,28 @@ export interface WechatTransactionPayload {
   };
 }
 
+export interface WechatRefundPayload {
+  refund_id?: string;
+  out_refund_no?: string;
+  transaction_id?: string;
+  out_trade_no?: string;
+  channel?: string;
+  user_received_account?: string;
+  success_time?: string;
+  create_time?: string;
+  status?: string;
+  amount?: {
+    total?: number;
+    refund?: number;
+    payer_total?: number;
+    payer_refund?: number;
+    settlement_refund?: number;
+    settlement_total?: number;
+    discount_refund?: number;
+    currency?: string;
+  };
+}
+
 interface WechatPayErrorResponse {
   response?: {
     status?: number;
@@ -146,15 +168,14 @@ export class WechatPayService {
     const code = phoneCode?.trim();
 
     if (!code) {
-      throw new AppError(
-        'INVALID_WECHAT_PHONE_CODE',
-        'phoneCode is required'
-      );
+      throw new AppError('INVALID_WECHAT_PHONE_CODE', 'phoneCode is required');
     }
 
     const accessToken = await this.getMiniProgramAccessToken();
     const response = await this.postJson<WechatPhoneNumberResponse>(
-      `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(accessToken)}`,
+      `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(
+        accessToken
+      )}`,
       {
         code,
       }
@@ -297,6 +318,67 @@ export class WechatPayService {
         response?.data?.message ||
           response?.statusText ||
           'failed to query wechat transaction',
+        response?.status && response.status >= 400 ? response.status : 502,
+        response?.data ?? null
+      );
+    }
+  }
+
+  async refundOrder(payload: {
+    orderNo: string;
+    refundNo: string;
+    reason: string;
+    amount: number;
+    totalAmount: number;
+  }): Promise<WechatRefundPayload> {
+    const orderNo = payload.orderNo?.trim();
+    const refundNo = payload.refundNo?.trim();
+
+    if (!orderNo) {
+      throw new AppError('WECHAT_ORDER_NO_MISSING', 'wechat order no missing');
+    }
+
+    if (!refundNo) {
+      throw new AppError(
+        'WECHAT_REFUND_NO_MISSING',
+        'wechat refund no missing'
+      );
+    }
+
+    this.ensureEnabled();
+    const wxpay = this.getWxpayClient() as {
+      v3: {
+        refund: {
+          domestic: {
+            refunds: {
+              post: (data: unknown) => Promise<{ data: WechatRefundPayload }>;
+            };
+          };
+        };
+      };
+    };
+
+    try {
+      const { data } = await wxpay.v3.refund.domestic.refunds.post({
+        out_trade_no: orderNo,
+        out_refund_no: refundNo,
+        reason: payload.reason,
+        amount: {
+          refund: payload.amount,
+          total: payload.totalAmount,
+          currency: 'CNY',
+        },
+      });
+
+      return data ?? {};
+    } catch (error) {
+      const response = (error as WechatPayErrorResponse)?.response;
+
+      throw new AppError(
+        'WECHAT_REFUND_FAILED',
+        response?.data?.message ||
+          response?.statusText ||
+          'failed to refund wechat order',
         response?.status && response.status >= 400 ? response.status : 502,
         response?.data ?? null
       );
@@ -458,9 +540,7 @@ export class WechatPayService {
     );
   }
 
-  private requireMiniProgramConfig(
-    key: keyof WechatMiniProgramConfig
-  ): string {
+  private requireMiniProgramConfig(key: keyof WechatMiniProgramConfig): string {
     const value = this.wechatMiniProgramConfig?.[key];
 
     if (typeof value === 'string' && value.trim()) {

@@ -484,8 +484,10 @@ async function loadVoicePackageCenter() {
     const center = await getAgentVoicePackageCenter(agentId.value)
     voicePackageCenter.value = center
 
-    if (!selectedVoicePackageId.value) {
-      selectedVoicePackageId.value = center.packages[0]?.id ?? ''
+    const paidPackage = findVoiceTaskPackage(center)
+
+    if (paidPackage || !selectedVoicePackageId.value) {
+      selectedVoicePackageId.value = paidPackage?.id ?? center.packages[0]?.id ?? ''
     }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
@@ -665,7 +667,22 @@ async function handleDefaultAgentChange(event: Event) {
   }
 }
 
-function handleVoiceModelTap() {
+function findVoiceTaskPackage(center: AgentVoicePackageCenter) {
+  const task = center.task
+
+  if (!task || !isPaidVoiceTaskStatus(task.status)) {
+    return undefined
+  }
+
+  return center.packages.find((voicePackage) => {
+    return (
+      voicePackage.id === task.voicePackageId ||
+      voicePackage.code === task.voicePackageCode
+    )
+  })
+}
+
+async function handleVoiceModelTap() {
   if (!agentId.value) {
     showToast('缺少联系人资料，请返回通讯录重新进入')
     return
@@ -677,15 +694,22 @@ function handleVoiceModelTap() {
   }
 
   if (!voicePackageCenter.value) {
-    void openVoicePackagePopupAfterLoad()
+    await loadVoicePackageCenter()
+  }
+
+  const center = voicePackageCenter.value
+
+  if (!center) {
     return
   }
 
-  voicePackagePopupVisible.value = true
-}
+  if (findVoiceTaskPackage(center)) {
+    void Taro.navigateTo({
+      url: `/pages/voice-package-success/index?agentId=${encodeURIComponent(agentId.value)}`,
+    })
+    return
+  }
 
-async function openVoicePackagePopupAfterLoad() {
-  await loadVoicePackageCenter()
   voicePackagePopupVisible.value = true
 }
 
@@ -752,11 +776,21 @@ async function handleVoicePackagePay() {
 function isVoicePackagePaid(voicePackage: VoicePackageRecord) {
   const task = voicePackageTask.value
 
-  if (!task || task.status !== 'paid') {
+  if (!task || !isPaidVoiceTaskStatus(task.status)) {
     return false
   }
 
   return task.voicePackageId === voicePackage.id || task.voicePackageCode === voicePackage.code
+}
+
+function isPaidVoiceTaskStatus(status: string) {
+  return (
+    status === 'paid' ||
+    status === 'awaiting_material' ||
+    status === 'processing' ||
+    status === 'training' ||
+    status === 'completed'
+  )
 }
 
 function formatVoiceTaskStatus(status: string) {

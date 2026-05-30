@@ -67,6 +67,19 @@
               />
             </view>
           </view>
+
+          <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
+            <nut-button
+              class="my-orders-card__refund-button"
+              size="small"
+              plain
+              type="danger"
+              :loading="refundingOrderId === order.id"
+              @click="handleRefundOrder(order)"
+            >
+              退款
+            </nut-button>
+          </view>
         </view>
       </view>
     </view>
@@ -83,7 +96,12 @@ export default {
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
-import { listOrders, type OrderRecord, type OrderStatusDTO } from '../../apis/order'
+import {
+  listOrders,
+  refundOrder,
+  type OrderRecord,
+  type OrderStatusDTO,
+} from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import CopyableText from '../../components/copyable-text/copyable-text.vue'
@@ -95,6 +113,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const loadError = ref('')
 const hasLoadedOrders = ref(false)
+const refundingOrderId = ref('')
 
 const sortedOrders = computed(() => {
   return [...orders.value].sort((first, second) => {
@@ -157,6 +176,49 @@ async function handleOpenVipCenter() {
   })
 }
 
+function canRefundOrder(order: OrderRecord) {
+  return (
+    (order.orderType === 'vip_plan' || order.orderType === 'voice_package') &&
+    (order.status === 'completed' ||
+      order.status === 'paid' ||
+      order.status === 'grant_failed')
+  )
+}
+
+async function handleRefundOrder(order: OrderRecord) {
+  if (refundingOrderId.value) {
+    return
+  }
+
+  const result = await Taro.showModal({
+    title: '确认退款',
+    content: '退款后将收回会员权益，确认继续？',
+    confirmText: '退款',
+    confirmColor: '#d81e06',
+  })
+
+  if (!result.confirm) {
+    return
+  }
+
+  refundingOrderId.value = order.id
+
+  try {
+    const refundedOrder = await refundOrder(order.id)
+    const index = orders.value.findIndex(item => item.id === refundedOrder.id)
+
+    if (index >= 0) {
+      orders.value[index] = refundedOrder
+    }
+
+    showToast('退款已提交，会员权益已收回')
+  } catch (error) {
+    showToast(error instanceof ApiException ? error.message : '退款失败，请稍后重试')
+  } finally {
+    refundingOrderId.value = ''
+  }
+}
+
 function getStatusText(status: OrderStatusDTO) {
   const statusMap: Record<OrderStatusDTO, string> = {
     pending: '支付中',
@@ -214,6 +276,13 @@ function getTime(value: string) {
   const time = new Date(value).getTime()
 
   return Number.isNaN(time) ? 0 : time
+}
+
+function showToast(title: string) {
+  void Taro.showToast({
+    title,
+    icon: 'none',
+  })
 }
 </script>
 
@@ -288,6 +357,18 @@ function getTime(value: string) {
   flex-direction: column;
   gap: 4px;
   width: 100%;
+}
+
+.my-orders-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  padding-top: 2px;
+}
+
+.my-orders-card__refund-button {
+  --nut-button-border-radius: 999px;
+  --nut-button-default-padding: 0 18px;
 }
 
 .my-orders-card__row {

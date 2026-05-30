@@ -128,7 +128,9 @@ function getPackageTask(voicePackage: VoicePackageRecord) {
 }
 
 function isPackagePaid(voicePackage: VoicePackageRecord) {
-  return getPackageTask(voicePackage)?.status === 'paid'
+  const task = getPackageTask(voicePackage)
+
+  return Boolean(task && isPaidVoiceTaskStatus(task.status))
 }
 
 function isPackageLocked(voicePackage: VoicePackageRecord) {
@@ -137,6 +139,16 @@ function isPackageLocked(voicePackage: VoicePackageRecord) {
 
 function getPackageStateText(voicePackage: VoicePackageRecord) {
   return isPackagePaid(voicePackage) ? '已购买' : ''
+}
+
+function isPaidVoiceTaskStatus(status: string) {
+  return (
+    status === 'paid' ||
+    status === 'awaiting_material' ||
+    status === 'processing' ||
+    status === 'training' ||
+    status === 'completed'
+  )
 }
 
 function displayPackageName(voicePackage: VoicePackageRecord) {
