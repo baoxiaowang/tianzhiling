@@ -5,6 +5,8 @@ import configVisualizerPlugin from './plugin/visualizer';
 import configArcoResolverPlugin from './plugin/arcoResolver';
 import configImageminPlugin from './plugin/imagemin';
 
+const enableImagemin = process.env.VITE_ENABLE_IMAGEMIN !== 'false';
+
 export default mergeConfig(
   {
     mode: 'production',
@@ -12,7 +14,7 @@ export default mergeConfig(
       configCompressPlugin('gzip'),
       configVisualizerPlugin(),
       configArcoResolverPlugin(),
-      configImageminPlugin(),
+      ...(enableImagemin ? [configImageminPlugin()] : []),
     ],
     build: {
       rollupOptions: {

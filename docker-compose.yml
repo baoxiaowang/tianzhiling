@@ -76,6 +76,18 @@ services:
       - tzl-network
     restart: always
 
+  tzl_admin_web:
+    profiles: ["prod"]
+    container_name: tzl_admin_web
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    expose:
+      - "80"
+    networks:
+      - tzl-network
+    restart: always
+
   tzl_nginx:
     profiles: ["prod"]
     container_name: tzl_nginx
@@ -86,10 +98,11 @@ services:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
     volumes:
-      - ./resource/ssl:/etc/nginx/ssl:ro
+      - ./apps/gateway/ssl:/etc/nginx/ssl:ro
     depends_on:
       - tzl_node
       - tzl_admin_node
+      - tzl_admin_web
     networks:
       - tzl-network
     restart: always
