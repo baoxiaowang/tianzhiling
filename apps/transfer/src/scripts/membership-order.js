@@ -32,6 +32,7 @@ const DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT =
 const LEGACY_VOICE_TIMBRE_ERROR_CODE = 'LEGACY_VOICE_PENDING_TRAINING';
 const LEGACY_VOICE_TIMBRE_ERROR_MESSAGE =
   '历史音色素材迁移，点击重试开始训练';
+const LEGACY_VOICE_TIMBRE_NAME_MAX_LENGTH = 60;
 
 const LEGACY_ORDER_STATUS_TO_NEW = {
   PAY_SUCCESS: 'completed',
@@ -1079,11 +1080,23 @@ function isLikelyUrl(value) {
 
 function buildLegacyVoiceTimbreName(orderResult) {
   const agentName = normalizeString(orderResult.agent?.agent_name);
-  const name = agentName
+  const legacyAgentId = normalizeString(orderResult.legacyAgentId);
+  const baseName = agentName
     ? `历史音色-${agentName}`
     : `历史音色-${orderResult.legacyOrderId}`;
 
-  return name.slice(0, 60);
+  if (!legacyAgentId) {
+    return baseName.slice(0, LEGACY_VOICE_TIMBRE_NAME_MAX_LENGTH);
+  }
+
+  const suffix = `-${legacyAgentId}`;
+  const baseNameMaxLength = LEGACY_VOICE_TIMBRE_NAME_MAX_LENGTH - suffix.length;
+
+  if (baseNameMaxLength <= 0) {
+    return legacyAgentId.slice(0, LEGACY_VOICE_TIMBRE_NAME_MAX_LENGTH);
+  }
+
+  return `${baseName.slice(0, baseNameMaxLength)}${suffix}`;
 }
 
 function buildLegacyProviderVoiceId(legacyOrderId) {

@@ -183,6 +183,7 @@ async function main() {
     legacyHex('voice-timbre:o-voice')
   );
   assert.strictEqual(voiceTimbre.provider, 'minimax');
+  assert.strictEqual(voiceTimbre.name, '历史音色-测试智能体-a-1');
   assert.strictEqual(voiceTimbre.providerVoiceId, 'TzlVoice_legacy_o_voice');
   assert.strictEqual(
     voiceTimbre.audioObjectKey,
