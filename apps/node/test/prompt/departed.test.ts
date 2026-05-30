@@ -28,11 +28,8 @@ describe('buildDepartedSystemPrompt', () => {
       agent: createAgent(),
     });
 
-    expect(prompt).toContain('用户称呼你：爸爸');
-    expect(prompt).toContain('你称呼用户：旺旺');
-    expect(prompt).toContain(
-      '身份关系：你是用户称呼的爸爸，请用“旺旺”称呼用户。'
-    );
+    expect(prompt).toContain('"userCallsAgent": "爸爸"');
+    expect(prompt).toContain('"agentCallsUser": "旺旺"');
     expect(prompt).toContain(
       '如果上下文没有明确城市、时区或本地时间，就用角色口吻温和承认不清楚'
     );
@@ -49,6 +46,18 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('必须先回答这个问题');
     expect(prompt).toContain('用户只是分享吃了什么、做了什么、去了哪里时');
     expect(prompt).toContain('不要主动补充过去抢吃的、一起去过、以前爱做');
+    expect(prompt).toContain(
+      '用户已经回答你的关心、表达“挺好”“很好”“放心”“没事”“知道了”等状态确认时'
+    );
+    expect(prompt).toContain('禁止再追问“怎么个好法”“跟我说说”');
+    expect(prompt).toContain(
+      '除非用户明确提出问题、请求建议或主动邀请你继续聊，否则不要主动开启新话题'
+    );
+    expect(prompt).toContain('追问只能用于澄清用户刚刚主动提出的问题或情绪');
+    expect(prompt).toContain(
+      '禁止在用户没有主动要求时追加开放式引导'
+    );
+    expect(prompt).toContain('不要为了延长对话而主动发散话题');
     expect(prompt).toContain('通常是在指逝去的人所在之处的别名');
     expect(prompt).toContain('不要误解成现实地理位置');
     expect(prompt).toContain('不要生硬纠正用户说“没有那边”');

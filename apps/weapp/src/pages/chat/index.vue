@@ -129,6 +129,12 @@
         </view>
     </view>
 
+    <view
+      v-if="isComposerPanelVisible"
+      class="chat-composer-backdrop"
+      @tap="hideComposerPanels"
+    />
+
     <template #bottom>
       <view class="chat-bottom" :style="composerStyle">
         <view class="chat-composer">
@@ -529,6 +535,9 @@ const isVoiceGestureActive = computed(() => {
   return isVoicePressPreviewing.value || isVoiceRecording.value
 })
 const isVoiceOverlayVisible = computed(() => isVoiceMode.value && isVoiceGestureActive.value)
+const isComposerPanelVisible = computed(() => {
+  return isEmojiPanelVisible.value || isMorePanelVisible.value
+})
 const voiceComposerButtonLabel = computed(() => {
   if (isTranscribingVoice.value) {
     return '转文字中...'
@@ -2303,6 +2312,13 @@ function destroyVoiceDurationProbeContexts() {
 .chat-bottom {
   background: #f7f7f7;
   transition: transform 0.2s ease;
+}
+
+.chat-composer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: transparent;
 }
 
 .chat-row {
