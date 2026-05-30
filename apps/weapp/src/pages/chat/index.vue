@@ -138,15 +138,18 @@
             @tap="handleVoiceModeToggle"
           >
             <view v-if="isVoiceMode" class="chat-composer__keyboard">
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--1" />
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--2" />
-              <view class="chat-composer__keyboard-key chat-composer__keyboard-key--3" />
-              <view class="chat-composer__keyboard-space" />
+              <image
+                class="chat-composer__keyboard-icon"
+                :src="keyboardIconUrl"
+                mode="aspectFit"
+              />
             </view>
             <view v-else class="chat-composer__mic">
-              <view class="chat-composer__mic-head" />
-              <view class="chat-composer__mic-stem" />
-              <view class="chat-composer__mic-base" />
+              <image
+                class="chat-composer__mic-icon"
+                :src="micIconUrl"
+                mode="aspectFit"
+              />
             </view>
           </view>
 
@@ -192,9 +195,11 @@
             @tap="handleEmojiToggle"
           >
             <view class="chat-composer__emoji">
-              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--left" />
-              <view class="chat-composer__emoji-eye chat-composer__emoji-eye--right" />
-              <view class="chat-composer__emoji-mouth" />
+              <image
+                class="chat-composer__emoji-icon"
+                :src="emojiIconUrl"
+                mode="aspectFit"
+              />
             </view>
           </view>
 
@@ -205,8 +210,11 @@
             @tap="handleMoreToggle"
           >
             <view class="chat-composer__plus">
-              <view class="chat-composer__plus-line chat-composer__plus-line--horizontal" />
-              <view class="chat-composer__plus-line chat-composer__plus-line--vertical" />
+              <image
+                class="chat-composer__plus-icon"
+                :src="plusIconUrl"
+                mode="aspectFit"
+              />
             </view>
           </view>
 
@@ -284,6 +292,10 @@ import type { ITouchEvent } from '@tarojs/components/types/common'
 import { computed, nextTick, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
+import keyboardIconUrl from '../../assets/icon/keyboard.svg'
+import micIconUrl from '../../assets/icon/mic.svg'
+import emojiIconUrl from '../../assets/icon/emoji.svg'
+import plusIconUrl from '../../assets/icon/plus.svg'
 import { getAgentDetail } from '../../apis/agent'
 import {
   getConversationMessages,
@@ -2354,7 +2366,7 @@ function destroyVoiceDurationProbeContexts() {
   align-items: center;
   gap: 8px;
   min-height: 60px;
-  padding: 8px 12px;
+  padding: 8px 8px;
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
@@ -2364,43 +2376,9 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   flex-shrink: 0;
-}
-
-.chat-composer__icon-button--selected .chat-composer__emoji {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__emoji-eye {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__emoji-mouth {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__plus-line {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__mic-head {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__mic-stem,
-.chat-composer__icon-button--selected .chat-composer__mic-base {
-  background: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__keyboard {
-  border-color: #07c160;
-}
-
-.chat-composer__icon-button--selected .chat-composer__keyboard-key,
-.chat-composer__icon-button--selected .chat-composer__keyboard-space {
-  background: #07c160;
 }
 
 .chat-composer__input-shell {
@@ -2496,130 +2474,56 @@ function destroyVoiceDurationProbeContexts() {
 .chat-composer__emoji,
 .chat-composer__plus {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 38px;
+  height: 38px;
 }
 
-.chat-composer__mic-head,
-.chat-composer__mic-stem,
-.chat-composer__mic-base,
-.chat-composer__keyboard-key,
-.chat-composer__keyboard-space,
-.chat-composer__emoji-eye,
-.chat-composer__emoji-mouth,
-.chat-composer__plus-line {
-  position: absolute;
-  box-sizing: border-box;
+.chat-composer__mic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-composer__mic-head {
-  left: 8px;
-  top: 3px;
-  width: 12px;
-  height: 16px;
-  border: 2px solid #5e5e5e;
-  border-radius: 10px;
-}
-
-.chat-composer__mic-stem {
-  left: 13px;
-  top: 19px;
-  width: 2px;
-  height: 5px;
-  background: #5e5e5e;
-  border-radius: 999px;
-}
-
-.chat-composer__mic-base {
-  left: 8px;
-  top: 23px;
-  width: 12px;
-  height: 3px;
-  border-radius: 999px;
-  background: #5e5e5e;
+.chat-composer__mic-icon {
+  width: 38px;
+  height: 38px;
+  display: block;
 }
 
 .chat-composer__keyboard {
-  border: 2px solid #5e5e5e;
-  border-radius: 4px;
-  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-composer__keyboard-key {
-  top: 7px;
-  width: 3px;
-  height: 3px;
-  border-radius: 1px;
-  background: #5e5e5e;
-}
-
-.chat-composer__keyboard-key--1 {
-  left: 6px;
-}
-
-.chat-composer__keyboard-key--2 {
-  left: 12px;
-}
-
-.chat-composer__keyboard-key--3 {
-  left: 18px;
-}
-
-.chat-composer__keyboard-space {
-  left: 7px;
-  bottom: 6px;
-  width: 14px;
-  height: 3px;
-  border-radius: 999px;
-  background: #5e5e5e;
+.chat-composer__keyboard-icon {
+  width: 38px;
+  height: 38px;
+  display: block;
 }
 
 .chat-composer__emoji {
-  border: 2px solid #5e5e5e;
-  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-composer__emoji-eye {
-  top: 8px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #5e5e5e;
+.chat-composer__emoji-icon {
+  width: 38px;
+  height: 38px;
+  display: block;
 }
 
-.chat-composer__emoji-eye--left {
-  left: 7px;
+.chat-composer__plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-composer__emoji-eye--right {
-  right: 7px;
-}
-
-.chat-composer__emoji-mouth {
-  left: 7px;
-  bottom: 6px;
-  width: 10px;
-  height: 5px;
-  border-bottom: 2px solid #5e5e5e;
-  border-radius: 0 0 10px 10px;
-}
-
-.chat-composer__plus-line {
-  left: 50%;
-  top: 50%;
-  background: #5e5e5e;
-  border-radius: 999px;
-  transform: translate(-50%, -50%);
-}
-
-.chat-composer__plus-line--horizontal {
-  width: 18px;
-  height: 2px;
-}
-
-.chat-composer__plus-line--vertical {
-  width: 2px;
-  height: 18px;
+.chat-composer__plus-icon {
+  width: 38px;
+  height: 38px;
+  display: block;
 }
 
 @keyframes chat-spin {
