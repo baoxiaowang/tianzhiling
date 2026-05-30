@@ -16,66 +16,83 @@
     </view>
 
     <view v-else class="moments-main">
-      <view class="moments-leading">
-        <top-promo-banner />
-
-        <view
-          v-if="hasUnreadNotifications"
-          class="moments-notice"
-          @tap="handleNotificationTap"
-        >
-          <image
-            v-if="notificationAvatarUrl"
-            class="moments-notice__avatar"
-            :src="notificationAvatarUrl"
-            mode="aspectFill"
-          />
-          <view v-else class="moments-notice__avatar moments-notice__avatar--fallback">
-            <text>{{ notificationAvatarFallback }}</text>
-          </view>
-          <text class="moments-notice__text">{{ notificationText }}</text>
-        </view>
-        <view v-else class="moments-notice-spacer" />
-      </view>
-
-      <view v-if="shouldShowPostsFeedback" class="moments-feedback">
-        <view v-if="isPostsLoading" class="moments-feedback__dot" />
-        <text v-else-if="errorMessage" class="moments-feedback__icon">✦</text>
-        <text v-else class="moments-feedback__icon">✦</text>
-        <text class="moments-feedback__title">{{ postsFeedbackTitle }}</text>
-        <text v-if="postsFeedbackSubtitle" class="moments-feedback__subtitle">{{ postsFeedbackSubtitle }}</text>
-        <view v-if="errorMessage && posts.length === 0" class="moments-feedback__action" @tap="handleRetry">
-          重新加载
-        </view>
-      </view>
-
-      <nut-list
-        v-else
-        class="moments-scroll"
-        :list-data="posts"
-        :container-height="momentsListHeight"
-        :estimate-row-height="340"
-        :buffer-size="4"
-        :margin="20"
-        @scroll-bottom="handleScrollBottom"
+      <view
+        class="moments-collapsed-app-bar"
+        :class="{ 'moments-collapsed-app-bar--visible': showCollapsedAppBar }"
       >
-        <template #default="{ item, index }">
-          <moment-card
-            :post="item"
-            @like="handleLikeTap"
-            @comment="handleCommentTap"
-            @preview="handlePreviewImages"
-          />
+        <app-bar
+          title="动态"
+          background="#ffffff"
+          border-color="#eeeeee"
+          :show-capsule="false"
+          :show-back="false"
+        />
+      </view>
 
-          <view v-if="isLastPostRow(index)" class="moments-load-footer">
-            <text v-if="isLoadingMore" class="moments-load-footer__text">正在加载更多...</text>
-            <text v-else-if="loadMoreError" class="moments-load-footer__action" @tap="handleLoadMoreRetry">
-              加载失败，点击重试
-            </text>
-            <text v-else-if="!hasMorePosts" class="moments-load-footer__text">没有更多动态了</text>
+      <scroll-view
+        class="moments-scroll"
+        :scroll-y="true"
+        :show-scrollbar="false"
+        :lower-threshold="120"
+        @scroll="handleMomentsScroll"
+        @scrolltolower="handleScrollBottom"
+      >
+        <view class="moments-leading">
+          <top-promo-banner />
+
+          <view
+            v-if="hasUnreadNotifications"
+            class="moments-notice"
+            @tap="handleNotificationTap"
+          >
+            <image
+              v-if="notificationAvatarUrl"
+              class="moments-notice__avatar"
+              :src="notificationAvatarUrl"
+              mode="aspectFill"
+            />
+            <view v-else class="moments-notice__avatar moments-notice__avatar--fallback">
+              <text>{{ notificationAvatarFallback }}</text>
+            </view>
+            <text class="moments-notice__text">{{ notificationText }}</text>
           </view>
-        </template>
-      </nut-list>
+          <view v-else class="moments-notice-spacer" />
+        </view>
+
+        <view v-if="shouldShowPostsFeedback" class="moments-feedback">
+          <view v-if="isPostsLoading" class="moments-feedback__dot" />
+          <text v-else-if="errorMessage" class="moments-feedback__icon">✦</text>
+          <text v-else class="moments-feedback__icon">✦</text>
+          <text class="moments-feedback__title">{{ postsFeedbackTitle }}</text>
+          <text v-if="postsFeedbackSubtitle" class="moments-feedback__subtitle">{{ postsFeedbackSubtitle }}</text>
+          <view v-if="errorMessage && posts.length === 0" class="moments-feedback__action" @tap="handleRetry">
+            重新加载
+          </view>
+        </view>
+
+        <view v-else class="moments-feed">
+          <view
+            v-for="(item, index) in posts"
+            :key="item.id"
+            class="moments-feed__item"
+          >
+            <moment-card
+              :post="item"
+              @like="handleLikeTap"
+              @comment="handleCommentTap"
+              @preview="handlePreviewImages"
+            />
+
+            <view v-if="isLastPostRow(index)" class="moments-load-footer">
+              <text v-if="isLoadingMore" class="moments-load-footer__text">正在加载更多...</text>
+              <text v-else-if="loadMoreError" class="moments-load-footer__action" @tap="handleLoadMoreRetry">
+                加载失败，点击重试
+              </text>
+              <text v-else-if="!hasMorePosts" class="moments-load-footer__text">没有更多动态了</text>
+            </view>
+          </view>
+        </view>
+      </scroll-view>
     </view>
 
     <view class="moments-floating-publish" @tap="handleCreatePost">
@@ -159,6 +176,7 @@ import {
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
 import keyboardIconUrl from '../../assets/icon/keyboard.svg'
+import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -193,6 +211,7 @@ const likingPostIds = ref<string[]>([])
 const currentPostPage = ref(1)
 const hasMorePosts = ref(true)
 const isLoadingMore = ref(false)
+const showCollapsedAppBar = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
 let loadMorePromise: Promise<void> | null = null
@@ -200,10 +219,9 @@ let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 
 const POST_PAGE_SIZE = 10
-const momentsWindowHeight = Taro.getSystemInfoSync().windowHeight
 const TOP_PROMO_BANNER_HEIGHT = 220
-const NOTICE_BLOCK_HEIGHT = 52
-const NOTICE_SPACER_HEIGHT = 12
+const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
+const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = hasUnreadCommentNotifications
@@ -217,13 +235,6 @@ const notificationAvatarFallback = computed(() => {
 const notificationText = computed(() => {
   const unreadCount = unreadCommentNotificationCount.value
   return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
-})
-const momentsListHeight = computed(() => {
-  const noticeHeight = hasUnreadNotifications.value
-    ? NOTICE_BLOCK_HEIGHT
-    : NOTICE_SPACER_HEIGHT
-
-  return Math.max(0, momentsWindowHeight - TOP_PROMO_BANNER_HEIGHT - noticeHeight)
 })
 const shouldShowPostsFeedback = computed(() => {
   return isPostsLoading.value || (posts.value.length === 0 && (Boolean(errorMessage.value) || hasLoadedPosts.value))
@@ -406,7 +417,30 @@ function handleLoadMoreRetry() {
   void loadMorePosts()
 }
 
+function handleMomentsScroll(event: { detail?: { scrollTop?: number } }) {
+  const scrollTop = Number(event.detail?.scrollTop ?? 0)
+
+  if (Number.isNaN(scrollTop)) {
+    return
+  }
+
+  if (showCollapsedAppBar.value) {
+    if (scrollTop <= COLLAPSED_APP_BAR_HIDE_SCROLL_TOP) {
+      showCollapsedAppBar.value = false
+    }
+    return
+  }
+
+  if (scrollTop >= COLLAPSED_APP_BAR_SHOW_SCROLL_TOP) {
+    showCollapsedAppBar.value = true
+  }
+}
+
 function handleScrollBottom() {
+  if (shouldShowPostsFeedback.value) {
+    return
+  }
+
   void loadMorePosts()
 }
 
@@ -723,6 +757,7 @@ useDidHide(() => {
 }
 
 .moments-main {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -730,14 +765,30 @@ useDidHide(() => {
   background: $tzl-color-surface-base;
 }
 
-.moments-scroll {
-  flex: 1;
-  box-sizing: border-box;
-  min-height: 100%;
-  background: $tzl-color-surface-base;
+.moments-collapsed-app-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 118;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
-.moments-scroll .nut-list {
+.moments-collapsed-app-bar--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.moments-scroll {
+  flex: 1;
+  height: 100%;
+  box-sizing: border-box;
+  min-height: 0;
   background: $tzl-color-surface-base;
 }
 
@@ -833,7 +884,11 @@ useDidHide(() => {
   color: #00a63e;
 }
 
-.moments-scroll .nut-list-item + .nut-list-item {
+.moments-feed {
+  background: $tzl-color-surface-base;
+}
+
+.moments-feed__item + .moments-feed__item {
   margin-top: 20px;
 }
 

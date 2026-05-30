@@ -4,7 +4,6 @@
     body-padding="0"
     background="#ffffff"
     :safe-area-top="false"
-    scroll
     :safe-area-bottom="false"
     require-auth
     auth-loading-text="正在恢复通讯录..."
@@ -20,7 +19,26 @@
     </view>
 
     <view v-else-if="session" class="contacts-page">
+      <view
+        class="contacts-collapsed-app-bar"
+        :class="{ 'contacts-collapsed-app-bar--visible': showCollapsedAppBar }"
+      >
+        <app-bar
+          title="通讯录"
+          background="#ffffff"
+          border-color="#eeeeee"
+          :show-capsule="false"
+          :show-back="false"
+        />
+      </view>
 
+      <scroll-view
+        class="contacts-scroll"
+        :scroll-y="true"
+        :show-scrollbar="false"
+        @scroll="handleContactsScroll"
+      >
+        <view class="contacts-content">
         <contact-cover-banner
           :value="contactsCoverImage"
           :uploading="isSavingCoverImage"
@@ -137,6 +155,8 @@
             </view>
           </view>
         </view>
+        </view>
+      </scroll-view>
     </view>
   </page-scaffold>
 </template>
@@ -155,6 +175,7 @@ import { ApiException } from '../../api/api-exception'
 import { getConversations, type ConversationSummary } from '../../apis/conversation'
 import { updateUserPreferences } from '../../auth/api'
 import { authSession, clearAuthSession } from '../../auth/session'
+import AppBar from '../../components/app-bar/app-bar.vue'
 import ContactCoverBanner from '../../components/contact-cover-banner/contact-cover-banner.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
@@ -166,9 +187,14 @@ const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 const hasLoadedContacts = ref(false)
 const isSavingCoverImage = ref(false)
+const showCollapsedAppBar = ref(false)
 const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
+
+const CONTACT_COVER_BANNER_HEIGHT = 230
+const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT + 12
+const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT - 16
 
 const session = computed(() => authSession.value)
 const contactsCoverImage = computed(() => {
@@ -220,6 +246,25 @@ async function handleContactCoverChange(imageReference: string) {
 
 function handleContactsRetry() {
   void refreshContactsData({ showLoading: true })
+}
+
+function handleContactsScroll(event: { detail?: { scrollTop?: number } }) {
+  const scrollTop = Number(event.detail?.scrollTop ?? 0)
+
+  if (Number.isNaN(scrollTop)) {
+    return
+  }
+
+  if (showCollapsedAppBar.value) {
+    if (scrollTop <= COLLAPSED_APP_BAR_HIDE_SCROLL_TOP) {
+      showCollapsedAppBar.value = false
+    }
+    return
+  }
+
+  if (scrollTop >= COLLAPSED_APP_BAR_SHOW_SCROLL_TOP) {
+    showCollapsedAppBar.value = true
+  }
 }
 
 function handleCreateAgentTap() {
@@ -398,17 +443,46 @@ useDidShow(() => {
 }
 
 .contacts-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: $tzl-color-surface-base;
   box-sizing: border-box;
 }
 
-.contacts-list-scroll {
+.contacts-collapsed-app-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 118;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.contacts-collapsed-app-bar--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.contacts-scroll {
   flex: 1;
+  height: 100%;
   min-height: 0;
-  padding-bottom: 110px;
+  background: $tzl-color-surface-base;
+}
+
+.contacts-content {
+  min-height: 100%;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  background: $tzl-color-surface-base;
+  box-sizing: border-box;
 }
 
 .contacts-create-entry {
