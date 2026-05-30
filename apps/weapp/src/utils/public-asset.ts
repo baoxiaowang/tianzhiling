@@ -7,3 +7,11 @@ export function resolvePublicAssetUrl(path: string) {
     ? `${ApiConfig.assetBaseUrl}${normalizedPath}`
     : normalizedPath
 }
+
+export function resolveMediaAssetUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  return ApiConfig.mediaBaseUrl
+    ? `${ApiConfig.mediaBaseUrl}${normalizedPath}`
+    : normalizedPath
+}

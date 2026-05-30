@@ -10,10 +10,31 @@
       mode="aspectFill"
     />
     <view class="agent-create-start__shade" />
+    <image
+      class="agent-create-start__header"
+      :src="headerLoadingImage"
+      mode="aspectFit"
+    />
+    <view class="agent-create-start__intro">
+      <text class="agent-create-start__intro-line agent-create-start__intro-line--1">
+        我是Ta的@天之灵
+      </text>
+      <text class="agent-create-start__intro-line agent-create-start__intro-line--2">
+        你的每句话，都在唤醒我的记忆
+      </text>
+      <text class="agent-create-start__intro-line agent-create-start__intro-line--3">
+        准备唤醒我了吗?
+      </text>
+    </view>
+    <image
+      class="agent-create-start__button"
+      :src="startButtonImage"
+      mode="widthFix"
+      @tap="handleStart"
+    />
     <view class="agent-create-start__top" :style="topBarStyle">
       <back-capsule class="agent-create-start__capsule" />
     </view>
-    <view class="agent-create-start__tap-zone" @tap="handleStart" />
     <login-prompt-popup
       v-model:visible="isLoginPromptVisible"
       @login-success="handleLoginSuccess"
@@ -35,9 +56,11 @@ import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-p
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
-import { resolvePublicAssetUrl } from '../../utils/public-asset'
+import { resolveMediaAssetUrl } from '../../utils/public-asset'
 
-const agentStartImage = resolvePublicAssetUrl('/public/weapp/agent-start.jpg')
+const agentStartImage = resolveMediaAssetUrl('/weapp/agent-guid2.png')
+const headerLoadingImage = resolveMediaAssetUrl('/weapp/agent-create-header.png')
+const startButtonImage = resolveMediaAssetUrl('/weapp/start.png')
 const isLoginPromptVisible = ref(false)
 const menuButtonMetrics = readMenuButtonMetrics()
 const topBarStyle = {
@@ -100,20 +123,85 @@ async function handleLoginSuccess() {
 
 .agent-create-start__top {
   position: relative;
-  z-index: 1;
+  z-index: 4;
 }
 
 .agent-create-start__capsule {
   position: absolute;
-  z-index: 2;
+  z-index: 5;
 }
 
-.agent-create-start__tap-zone {
+.agent-create-start__header {
   position: absolute;
   z-index: 2;
-  left: 19%;
-  right: 19%;
-  bottom: calc(env(safe-area-inset-bottom) + 112px);
-  height: 228px;
+  top: 15%;
+  left: 50%;
+  display: block;
+  width: 60px;
+  height: 60px;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.agent-create-start__intro {
+  position: absolute;
+  z-index: 2;
+  top: 28%;
+  left: 50%;
+  display: flex;
+  width: 100%;
+  padding: 0 32px;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.agent-create-start__intro-line {
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+  opacity: 0;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transform: translateY(8px);
+  animation: agent-create-intro-line-in 520ms ease-out forwards;
+}
+
+.agent-create-start__intro-line--1 {
+  animation-delay: 220ms;
+}
+
+.agent-create-start__intro-line--2 {
+  animation-delay: 760ms;
+}
+
+.agent-create-start__intro-line--3 {
+  animation-delay: 1300ms;
+}
+
+.agent-create-start__button {
+  position: absolute;
+  z-index: 3;
+  top: 65%;
+  left: 50%;
+  display: block;
+  width: 38%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes agent-create-intro-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

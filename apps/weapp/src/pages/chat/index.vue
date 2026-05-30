@@ -185,7 +185,7 @@
               :cursor="draftCursor"
               :adjust-position="false"
               cursor-spacing="16"
-              placeholder="微信"
+              placeholder=""
               placeholder-style="color: #999999;"
               @input="handleDraftInput"
               @confirm="handleSend"
