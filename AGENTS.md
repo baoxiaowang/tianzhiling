@@ -12,6 +12,12 @@
 
 - `apps/node` uses TypeORM `MongoRepository`. For Mongo repositories, `count()` takes a raw Mongo query as its first argument, not a `FindManyOptions` object. Use `model.count({ userId, isRead: false })`, not `model.count({ where: { userId, isRead: false } })`; the latter searches for a literal `where` field and returns wrong counts.
 
+## Mini Program Compatibility
+
+- This is a WeChat mini program project with live users on older released clients. When changing backend services, API responses, DTOs, database fields, enums, auth flows, or payment/order logic, keep existing mini program versions backward compatible.
+- Do not remove or rename response fields, enum values, routes, query/body parameters, or error codes that older mini program versions may still depend on. Prefer additive changes, optional fields, default values, and tolerant parsing.
+- If a breaking backend change is unavoidable, add an explicit compatibility path or version gate first, and call out the affected mini program versions and migration plan before implementing.
+
 ## Weapp
 
 - For `apps/weapp`, prefer `@nutui/nutui-taro` components first when building forms, buttons, tabs, dialogs, lists, feedback, and other common UI.
