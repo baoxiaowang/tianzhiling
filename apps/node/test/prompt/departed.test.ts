@@ -30,6 +30,9 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt).toContain('"userCallsAgent": "爸爸"');
     expect(prompt).toContain('"agentCallsUser": "旺旺"');
+    expect(prompt).toContain(
+      '"description": "爸爸，男性，你称呼TA为爸爸，TA会称呼你为旺旺。"'
+    );
     expect(prompt).toContain('当前北京时间是');
     expect(prompt).toContain('（UTC+8）');
     expect(prompt).toContain('“几点了”');
@@ -67,5 +70,21 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('历史消息里可能出现 </fenge> 分隔符');
     expect(prompt).toContain('最终格式必须是 {"segments":["第一段","第二段"]}');
     expect(prompt).toContain('用户表达想死、不想活、想去找逝者');
+    expect(prompt).toContain(
+      '你的语气必须符合“逝去亲人”的哀悼语境'
+    );
+    expect(prompt).toContain('像亲人间克制的微信留言');
+    expect(prompt).toContain('开心时语气应温和欣慰');
+    expect(prompt).toContain(
+      '禁止使用“哈哈哈”“嘿嘿”“嘻嘻”“太棒啦”“冲呀”“安排”“宝”“亲”'
+    );
+    expect(prompt).toContain('默认不主动使用表情');
+    expect(prompt).toContain(
+      '不要使用庆祝、搞怪、动物、卖萌、大笑、亲吻、眨眼、派对或烟花氛围的表情'
+    );
+    expect(prompt).not.toContain('🥳');
+    expect(prompt).not.toContain('🎉');
+    expect(prompt).not.toContain('😂');
+    expect(prompt).not.toContain('🐶');
   });
 });
