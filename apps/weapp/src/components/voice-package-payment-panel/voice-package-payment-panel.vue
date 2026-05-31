@@ -209,7 +209,7 @@ const paymentText = computed(() => {
   }
 
   if (selectedPackagePurchased.value) {
-    return '已支付，等待人工处理'
+    return getTaskPaymentText(currentPackageTask.value)
   }
 
   return `支付 ${formatPrice(selectedPackage.value.priceAmount)} 为TA重塑声音`
@@ -234,9 +234,15 @@ const benefitItems = computed(() => {
   return deliverables?.length ? deliverables : fallbackBenefits
 })
 const panelHint = computed(() => {
-  return currentPackageTask.value?.status === 'paid'
-    ? '已支付成功，工作人员会继续处理声音训练'
-    : ''
+  const task = currentPackageTask.value
+
+  if (!task || !isPaidVoiceTaskStatus(task.status)) {
+    return ''
+  }
+
+  return task.status === 'completed'
+    ? '声音模型已完成，可继续购买其他套餐'
+    : '已支付成功，工作人员会继续处理声音训练'
 })
 
 function getPackageTask(voicePackage: VoicePackageRecord) {
@@ -254,7 +260,7 @@ function getPackageTask(voicePackage: VoicePackageRecord) {
 function isPackagePurchased(voicePackage: VoicePackageRecord) {
   const task = getPackageTask(voicePackage)
 
-  return task?.status === 'paid'
+  return Boolean(task && isPaidVoiceTaskStatus(task.status))
 }
 
 function isPackageLocked(voicePackage: VoicePackageRecord) {
@@ -262,11 +268,43 @@ function isPackageLocked(voicePackage: VoicePackageRecord) {
 }
 
 function getPackageStateText(voicePackage: VoicePackageRecord) {
-  if (isPackagePurchased(voicePackage)) {
-    return '已购买'
+  const task = getPackageTask(voicePackage)
+
+  if (task && isPaidVoiceTaskStatus(task.status)) {
+    return task.status === 'completed' ? '已完成' : '已购买'
   }
 
   return ''
+}
+
+function isPaidVoiceTaskStatus(status: string) {
+  return (
+    status === 'paid' ||
+    status === 'awaiting_material' ||
+    status === 'processing' ||
+    status === 'training' ||
+    status === 'completed'
+  )
+}
+
+function getTaskPaymentText(task?: VoiceTrainingTaskRecord) {
+  if (!task) {
+    return '已支付，等待人工处理'
+  }
+
+  if (task.status === 'completed') {
+    return '声音模型已完成'
+  }
+
+  if (
+    task.status === 'awaiting_material' ||
+    task.status === 'processing' ||
+    task.status === 'training'
+  ) {
+    return '声音模型处理中'
+  }
+
+  return '已支付，等待人工处理'
 }
 
 function displayPackageName(voicePackage: VoicePackageRecord) {

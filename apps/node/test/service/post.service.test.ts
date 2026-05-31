@@ -597,11 +597,18 @@ describe('PostService moment image summaries', () => {
     expect(visionSystemPrompt).toContain('不要推断或猜测人物身份');
     expect(visionSystemPrompt).toContain('照片里的人不一定是发布用户本人');
     expect(visionSystemPrompt).toContain('亲属关系');
+    expect(visionSystemPrompt).toContain(
+      '不要把图片中的地点、人物或动物扩写成“某人现在在哪里、正在和谁做什么”的事实'
+    );
+    expect(visionSystemPrompt).toContain('逝去后的状态');
 
     const systemPrompt = generateText.mock.calls[0][0].systemPrompt as string;
     expect(systemPrompt).toContain('浅层视觉摘要');
     expect(systemPrompt).toContain('不要根据图片推断');
     expect(systemPrompt).toContain('这是用户本人');
+    expect(systemPrompt).toContain('事实边界优先级高于口语化和亲密感');
+    expect(systemPrompt).toContain('不要把逝去后的“现在”写成具体生活现场');
+    expect(systemPrompt).toContain('禁止输出“我和爸在后院玩”');
     expect(systemPrompt).toContain(
       '画面里有盛开的花和公园步道，氛围轻松明亮。'
     );

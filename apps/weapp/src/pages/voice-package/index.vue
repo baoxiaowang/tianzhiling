@@ -96,6 +96,44 @@
         @pay="handlePay"
         @open-agreement="handleOpenAgreement"
       />
+
+      <view v-if="currentAgentHasVoicePackageOrder" class="voice-package-service">
+        <view class="voice-package-service-card voice-package-service-card--qr">
+          <text class="voice-package-service-card__title">添加客服：</text>
+          <image
+            class="voice-package-service-qr"
+            :src="customerServiceQr"
+            mode="aspectFill"
+            show-menu-by-longpress
+            @tap="handlePreviewQr"
+            @longpress="handleSaveQr"
+          />
+          <text class="voice-package-service-card__hint">
+            长按二维码保存至相册，使用微信扫一扫
+          </text>
+        </view>
+
+        <view class="voice-package-service-card voice-package-service-card--phone">
+          <view class="voice-package-service-phone__header">
+            <text class="voice-package-service-card__title">客服热线：</text>
+            <text class="voice-package-service-phone__time">
+              工作时间：周一至周日 9:00--21:00
+            </text>
+          </view>
+
+          <view class="voice-package-service-phone__panel">
+            <text class="voice-package-service-phone__number">
+              {{ customerServicePhone }}
+            </text>
+            <view
+              class="voice-package-service-phone__button"
+              @tap="handleCallCustomerService"
+            >
+              立即拨打
+            </view>
+          </view>
+        </view>
+      </view>
     </view>
 
     <template #bottom>
@@ -124,6 +162,7 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
+import { buildOssMediaUrl } from '@tzl/shared'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgents, type AgentSummary } from '../../apis/agent'
@@ -152,6 +191,15 @@ const isLoadingAgents = ref(false)
 const isLoadingCenter = ref(false)
 const isPaying = ref(false)
 const agentsLoadError = ref('')
+const customerServicePhone = '18062525425'
+const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
+const orderedVoiceTaskStatuses = new Set([
+  'paid',
+  'awaiting_material',
+  'processing',
+  'training',
+  'completed',
+])
 
 const selectedAgent = computed(() => {
   return agents.value.find((agent) => agent.id === selectedAgentId.value) ?? null
@@ -196,6 +244,11 @@ const selectedPackagePaid = computed(() => {
     task.voicePackageId === voicePackage.id || task.voicePackageCode === voicePackage.code
 
   return matchesPackage && task.status === 'paid'
+})
+const currentAgentHasVoicePackageOrder = computed(() => {
+  const status = currentCenter.value?.task?.status
+
+  return Boolean(status && orderedVoiceTaskStatuses.has(status))
 })
 const shouldShowPaymentBar = computed(() => {
   return Boolean(
@@ -455,6 +508,43 @@ function handleCreateAgent() {
 function handleOpenAgreement(type: AgreementDocumentType) {
   void openAgreementDocument(type)
 }
+
+async function handleCallCustomerService() {
+  try {
+    await Taro.makePhoneCall({
+      phoneNumber: customerServicePhone,
+    })
+  } catch {
+  }
+}
+
+function handlePreviewQr() {
+  void Taro.previewImage({
+    urls: [customerServiceQr],
+    current: customerServiceQr,
+  })
+}
+
+async function handleSaveQr() {
+  try {
+    const imageInfo = await Taro.getImageInfo({
+      src: customerServiceQr,
+    })
+
+    await Taro.saveImageToPhotosAlbum({
+      filePath: imageInfo.path,
+    })
+    await Taro.showToast({
+      title: '已保存到相册',
+      icon: 'success',
+    })
+  } catch {
+    await Taro.showToast({
+      title: '可通过图片菜单保存',
+      icon: 'none',
+    })
+  }
+}
 </script>
 
 <style lang="scss">
@@ -516,6 +606,110 @@ function handleOpenAgreement(type: AgreementDocumentType) {
 .voice-package-content {
   min-height: calc(100vh - 44px);
   background: #ffffff;
+}
+
+.voice-package-service {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 24px 48px;
+  background: #ffffff;
+}
+
+.voice-package-service-card {
+  box-sizing: border-box;
+  width: 327px;
+  max-width: 100%;
+  border: 2px dashed #bdbdbd;
+  border-radius: 12px;
+  background: #f2f2f2;
+}
+
+.voice-package-service-card__title {
+  color: #3d3d3d;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.voice-package-service-card--qr {
+  min-height: 326px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 16px 20px 22px;
+}
+
+.voice-package-service-qr {
+  align-self: center;
+  width: 188px;
+  height: 199px;
+  margin-top: 23px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.voice-package-service-card__hint {
+  align-self: center;
+  margin-top: 26px;
+  color: #8f8f8f;
+  font-size: 12px;
+  line-height: 32px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.voice-package-service-card--phone {
+  min-height: 159px;
+  padding: 16px 20px 22px;
+}
+
+.voice-package-service-phone__header {
+  display: flex;
+  flex-direction: column;
+}
+
+.voice-package-service-phone__time {
+  margin-top: 0;
+  color: #333333;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.voice-package-service-phone__panel {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 17px;
+  padding: 7px 11px 8px 12px;
+  border-radius: 6px;
+  background: #ededed;
+}
+
+.voice-package-service-phone__number {
+  color: #3d3d3d;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.voice-package-service-phone__button {
+  width: 89px;
+  height: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50px;
+  background: #3873ac;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 600;
 }
 
 .voice-package-hero {

@@ -48,6 +48,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('其中包含当前角色时');
     expect(prompt).toContain('用“我们”“你爸和我”“妈和你爸”承接');
     expect(prompt).toContain('不要说“他们”');
+    expect(prompt).toContain('你们现在在干嘛');
+    expect(prompt).toContain('禁止编造具体地点、动作、场景、日程或正在发生的事');
     expect(prompt).toContain('用户提出明确问题时');
     expect(prompt).toContain('必须先回答这个问题');
     expect(prompt).toContain('用户只是分享吃了什么、做了什么、去了哪里时');
@@ -70,6 +72,9 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('历史消息里可能出现 </fenge> 分隔符');
     expect(prompt).toContain('最终格式必须是 {"segments":["第一段","第二段"]}');
     expect(prompt).toContain('用户表达想死、不想活、想去找逝者');
+    expect(prompt).toContain(
+      '禁止把图片、用户随口提到的人名或宠物名，扩写成“我和谁在某地做某事”'
+    );
     expect(prompt).toContain(
       '你的语气必须符合“逝去亲人”的哀悼语境'
     );

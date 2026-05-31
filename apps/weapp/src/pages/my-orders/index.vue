@@ -67,7 +67,7 @@
             </view>
           </view>
 
-          <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
+          <!-- <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
             <nut-button
               class="my-orders-card__refund-button"
               size="small"
@@ -78,7 +78,7 @@
             >
               退款
             </nut-button>
-          </view>
+          </view> -->
         </view>
       </view>
     </view>

@@ -1,0 +1,63 @@
+import { AgentEntity, AgentSex, MongoObjectId } from '@tzl/entities';
+import { buildMomentsSystemPrompt } from '../../src/prompt/moments';
+
+const USER_ID = '665000000000000000000001';
+const AGENT_ID = '665000000000000000000010';
+const POST_ID = '665000000000000000000020';
+
+function createAgent(): AgentEntity {
+  const agent = new AgentEntity();
+
+  Object.assign(agent, {
+    id: new MongoObjectId(AGENT_ID),
+    name: 'Hachi',
+    sex: AgentSex.man,
+    iCallAgent: 'Hachi',
+    agentCallMe: '姐姐',
+    description: 'Hachi 是家里曾经养过的小狗。',
+  });
+
+  return agent;
+}
+
+describe('buildMomentsSystemPrompt', () => {
+  it('keeps anti-hallucination rules explicit for moment comments', () => {
+    const prompt = buildMomentsSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent: createAgent(),
+      context: {
+        moment: {
+          id: POST_ID,
+          userId: USER_ID,
+          authorName: '苗苗',
+          content: '爸，想你和Hachi了，你们现在在干嘛',
+          images: [
+            {
+              index: 1,
+              url: 'https://cdn.example.com/moments/dad-dog.jpg',
+              description: '画面里有一名男子和一只小狗站在山景木平台上。',
+            },
+          ],
+          createdAt: '2026-05-31T08:00:00.000Z',
+        },
+        comments: [],
+        latestUserComment: null,
+        userRepliedComment: null,
+        task: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+      },
+    });
+
+    expect(prompt).toContain('事实边界优先级高于口语化和亲密感');
+    expect(prompt).toContain('不能为了自然而脑补事实');
+    expect(prompt).toContain('正在做的事或逝去后的生活状态');
+    expect(prompt).toContain('你们现在在干嘛');
+    expect(prompt).toContain('禁止回答“我和某某在后院玩/散步/吃饭/看你/等你”');
+    expect(prompt).toContain('我们都还好');
+    expect(prompt).toContain('如果 agent 是宠物、孩子或其他亲近角色');
+    expect(prompt).toContain('不要把逝去后的“现在”写成具体生活现场');
+    expect(prompt).toContain(
+      '禁止输出“我和爸在后院玩”“我和某某在一起玩”'
+    );
+  });
+});
