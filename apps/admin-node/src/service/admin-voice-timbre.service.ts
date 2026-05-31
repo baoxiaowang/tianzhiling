@@ -66,7 +66,25 @@ export class AdminVoiceTimbreService {
       this.normalizePositiveInteger(query?.pageSize, 20),
       100
     );
+    const shouldListAll = this.normalizeBoolean(query?.all);
     const where = this.buildSearchWhere(query);
+
+    if (shouldListAll) {
+      const timbres = await this.voiceTimbreModel.find({
+        where: where as never,
+        order: {
+          updatedAt: 'DESC',
+        },
+      });
+
+      return {
+        items: timbres.map(timbre => this.buildRecord(timbre)),
+        total: timbres.length,
+        page: 1,
+        pageSize: timbres.length,
+      };
+    }
+
     const [total, timbres] = await Promise.all([
       this.voiceTimbreModel.count(where),
       this.voiceTimbreModel.find({
@@ -859,6 +877,10 @@ export class AdminVoiceTimbreService {
     }
 
     return fallback;
+  }
+
+  private normalizeBoolean(value: unknown): boolean {
+    return value === true || value === 'true' || value === '1';
   }
 
   private parseObjectId(value: string): MongoObjectId {

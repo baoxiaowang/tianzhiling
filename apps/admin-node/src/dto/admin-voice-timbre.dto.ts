@@ -22,6 +22,9 @@ export class ListAdminVoiceTimbresQueryDTO {
   @Rule(statusRule.allow('').optional())
   status?: string;
 
+  @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
+  all?: boolean | string;
+
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   page?: number | string;
 

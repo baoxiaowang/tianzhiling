@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@midwayjs/core';
 import {
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,

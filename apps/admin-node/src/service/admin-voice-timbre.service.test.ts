@@ -89,6 +89,41 @@ function createService() {
 }
 
 describe('AdminVoiceTimbreService voice timbre create queue', () => {
+  it('lists all timbres without pagination when all is true', async () => {
+    const { service } = createService();
+    const activeTimbre = createTimbre(VoiceTimbreStatus.active);
+    const disabledTimbre = {
+      ...createTimbre(VoiceTimbreStatus.disabled),
+      id: new MongoObjectId('665000000000000000000502'),
+      name: '已禁用音色',
+    } as VoiceTimbreEntity;
+
+    jest
+      .mocked(service.voiceTimbreModel.find)
+      .mockResolvedValue([activeTimbre, disabledTimbre]);
+
+    const result = await service.listVoiceTimbres({ all: 'true' });
+
+    expect(service.voiceTimbreModel.count).not.toHaveBeenCalled();
+    expect(service.voiceTimbreModel.find).toHaveBeenCalledWith({
+      where: {},
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        total: 2,
+        page: 1,
+        pageSize: 2,
+      })
+    );
+    expect(result.items.map(item => item.status)).toEqual([
+      VoiceTimbreStatus.active,
+      VoiceTimbreStatus.disabled,
+    ]);
+  });
+
   it('creates a creating timbre and enqueues provider creation', async () => {
     const { service, queue } = createService();
 

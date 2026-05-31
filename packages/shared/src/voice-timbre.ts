@@ -33,6 +33,7 @@ export interface AdminVoiceTimbreListParamsDTO {
   keyword?: string;
   provider?: VoiceTimbreProviderDTO;
   status?: VoiceTimbreStatusDTO;
+  all?: boolean;
   page?: number;
   pageSize?: number;
 }

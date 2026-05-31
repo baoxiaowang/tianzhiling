@@ -215,14 +215,24 @@
             v-model="editForm.voiceTimbreId"
             allow-clear
             allow-search
-            placeholder="请选择已启用音色"
+            :loading="voiceTimbreLoading"
+            placeholder="请选择音色（仅已启用可用）"
           >
             <a-option
-              v-for="item in activeVoiceTimbres"
+              v-for="item in voiceTimbres"
               :key="item.id"
               :value="item.id"
+              :disabled="item.status !== 'active'"
             >
-              {{ item.name }} / {{ item.providerVoiceId }}
+              <div class="voice-task-page__timbre-option">
+                <span>{{ item.name }} / {{ item.providerVoiceId }}</span>
+                <a-tag
+                  size="small"
+                  :color="getVoiceTimbreStatusColor(item.status)"
+                >
+                  {{ getVoiceTimbreStatusText(item.status) }}
+                </a-tag>
+              </div>
             </a-option>
           </a-select>
         </a-form-item>
@@ -257,14 +267,24 @@
             v-model="completeForm.voiceTimbreId"
             allow-clear
             allow-search
-            placeholder="请选择已启用音色"
+            :loading="voiceTimbreLoading"
+            placeholder="请选择音色（仅已启用可完成）"
           >
             <a-option
-              v-for="item in activeVoiceTimbres"
+              v-for="item in voiceTimbres"
               :key="item.id"
               :value="item.id"
+              :disabled="item.status !== 'active'"
             >
-              {{ item.name }} / {{ item.providerVoiceId }}
+              <div class="voice-task-page__timbre-option">
+                <span>{{ item.name }} / {{ item.providerVoiceId }}</span>
+                <a-tag
+                  size="small"
+                  :color="getVoiceTimbreStatusColor(item.status)"
+                >
+                  {{ getVoiceTimbreStatusText(item.status) }}
+                </a-tag>
+              </div>
             </a-option>
           </a-select>
         </a-form-item>
@@ -282,7 +302,10 @@
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue';
-  import type { VoiceTrainingTaskStatusDTO } from '@tzl/shared';
+  import type {
+    VoiceTimbreStatusDTO,
+    VoiceTrainingTaskStatusDTO,
+  } from '@tzl/shared';
   import {
     completeVoiceTrainingTask,
     queryVoiceTrainingTaskList,
@@ -294,12 +317,13 @@
   const router = useRouter();
   const loading = ref(false);
   const saving = ref(false);
+  const voiceTimbreLoading = ref(false);
   const editVisible = ref(false);
   const completeVisible = ref(false);
   const currentTask = ref<VoiceTrainingTaskRecord>();
   const completeFormRef = ref<FormInstance>();
   const renderList = ref<VoiceTrainingTaskRecord[]>([]);
-  const activeVoiceTimbres = ref<VoiceTimbreRecord[]>([]);
+  const voiceTimbres = ref<VoiceTimbreRecord[]>([]);
   const searchForm = reactive<{
     keyword: string;
     status?: VoiceTrainingTaskStatusDTO;
@@ -335,6 +359,15 @@
     failed: { text: '失败', color: 'red' },
     refunded: { text: '已退款', color: 'gray' },
   };
+  const voiceTimbreStatusMap: Record<
+    VoiceTimbreStatusDTO,
+    { text: string; color: string }
+  > = {
+    creating: { text: '创建中', color: 'orange' },
+    active: { text: '已启用', color: 'green' },
+    failed: { text: '失败', color: 'red' },
+    disabled: { text: '已禁用', color: 'gray' },
+  };
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
     status: searchForm.status,
@@ -363,16 +396,18 @@
     }
   };
 
-  const fetchActiveVoiceTimbres = async () => {
+  const fetchVoiceTimbres = async () => {
     try {
+      voiceTimbreLoading.value = true;
       const { data } = await queryVoiceTimbreList({
-        status: 'active',
-        page: 1,
-        pageSize: 100,
+        all: true,
       });
-      activeVoiceTimbres.value = data.items;
+      voiceTimbres.value = data.items;
     } catch (error) {
-      activeVoiceTimbres.value = [];
+      voiceTimbres.value = [];
+      Message.error('音色列表加载失败');
+    } finally {
+      voiceTimbreLoading.value = false;
     }
   };
 
@@ -407,6 +442,7 @@
     editForm.voiceTimbreId = record.voiceTimbreId || '';
     editForm.remark = record.remark;
     editVisible.value = true;
+    fetchVoiceTimbres();
   };
 
   const closeEdit = () => {
@@ -444,6 +480,7 @@
     completeForm.voiceTimbreId = record.voiceTimbreId || '';
     completeForm.remark = record.remark;
     completeVisible.value = true;
+    fetchVoiceTimbres();
   };
 
   const closeComplete = () => {
@@ -491,11 +528,14 @@
     statusMap[status]?.text ?? status;
   const getStatusColor = (status: VoiceTrainingTaskStatusDTO) =>
     statusMap[status]?.color ?? 'gray';
+  const getVoiceTimbreStatusText = (status: VoiceTimbreStatusDTO) =>
+    voiceTimbreStatusMap[status]?.text ?? status;
+  const getVoiceTimbreStatusColor = (status: VoiceTimbreStatusDTO) =>
+    voiceTimbreStatusMap[status]?.color ?? 'gray';
   const formatDate = (value?: string) =>
     value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 
   fetchData();
-  fetchActiveVoiceTimbres();
 </script>
 
 <style scoped lang="less">
@@ -535,6 +575,14 @@
     text-overflow: ellipsis;
     vertical-align: bottom;
     white-space: nowrap;
+  }
+
+  .voice-task-page__timbre-option {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
   }
 
   .voice-task-page__alert {
