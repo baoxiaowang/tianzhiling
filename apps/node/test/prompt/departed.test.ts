@@ -30,8 +30,11 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt).toContain('"userCallsAgent": "爸爸"');
     expect(prompt).toContain('"agentCallsUser": "旺旺"');
+    expect(prompt).toContain('当前北京时间是');
+    expect(prompt).toContain('（UTC+8）');
+    expect(prompt).toContain('“几点了”');
     expect(prompt).toContain(
-      '如果上下文没有明确城市、时区或本地时间，就用角色口吻温和承认不清楚'
+      '用户询问当前日期、今天几号或北京时间几点时，可以基于实时系统信息里的当前北京时间回答'
     );
     expect(prompt).toContain('不要解释“无法读取设备”“没有权限”“模型不知道”');
     expect(prompt).toContain('不要为了显得亲密而编造共同记忆');

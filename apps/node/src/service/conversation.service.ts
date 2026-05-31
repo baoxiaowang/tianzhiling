@@ -20,6 +20,7 @@ import {
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
+import { containsUnsafeAssistantMessageContent } from '../common/message-content-safety';
 import {
   SendConversationMessageDTO,
   TranscribeConversationVoiceDTO,
@@ -544,7 +545,6 @@ export class ConversationService {
       agent: runtime.agent,
       currentQuery: before.searchableText,
     });
-    console.log('1', JSON.stringify(context.messages));
     const response = await this.openAIService.createChatCompletion({
       temperature: ASSISTANT_REPLY_TEMPERATURE,
       topP: ASSISTANT_REPLY_TOP_P,
@@ -1708,7 +1708,7 @@ export class ConversationService {
       );
     }
 
-    return normalized
+    normalized = normalized
       .replace(/^[，。！？、；：,.!?;:]+/, '')
       .replace(/[，。；：,.;:]+$/g, '')
       .replace(/\n+/g, ' ')
@@ -1717,6 +1717,12 @@ export class ConversationService {
       .replace(/([（【《“‘])\s+/g, '$1')
       .replace(/\s+([）】》”’])/g, '$1')
       .trim();
+
+    if (containsUnsafeAssistantMessageContent(normalized)) {
+      return '';
+    }
+
+    return normalized;
   }
 
   private stripAssistantMarkup(value: string): string {

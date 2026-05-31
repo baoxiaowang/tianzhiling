@@ -572,6 +572,34 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       '啊 小米 真好听的名字🐱 有小猫陪着你</fenge>我都记着呢'
     );
   });
+
+  it('filters legacy media url segments before saving assistant replies', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: [
+          '早安媳妇儿',
+          'https://zk.yaoxuankeji.club:8199/images/aiDeceased/b9a71d6a9e144fbca8d99ba89a6ec036.mp3 1',
+          '新的一天',
+          'images/aiDeceased/9ec41cd4123f45079066c5e6576796ef.mp3 1',
+        ],
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '老公，早安！',
+    });
+
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(assistantMessage?.content).toBe('早安媳妇儿</fenge>新的一天');
+    expect(assistantMessage?.content).not.toContain('http');
+    expect(assistantMessage?.content).not.toContain('aiDeceased');
+    expect(assistantMessage?.content).not.toContain('.mp3');
+  });
 });
 
 describe('ConversationService listConversations', () => {

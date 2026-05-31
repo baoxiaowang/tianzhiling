@@ -467,6 +467,7 @@ const isVoiceMode = ref(false)
 const isVoicePressPreviewing = ref(false)
 const isVoiceRecording = ref(false)
 const isTranscribingVoice = ref(false)
+const isCheckingRecordPermission = ref(false)
 const voiceDragTarget = ref<VoiceDragTarget>('send')
 const voiceGestureStartPoint = ref<TouchPoint | null>(null)
 const recordingStartedAt = ref<number | null>(null)
@@ -1348,12 +1349,22 @@ useUnload(() => {
   destroyVoiceAudioContext()
 })
 
-function handleVoiceModeToggle() {
-  if (isSending.value || isTranscribingVoice.value || isVoiceGestureActive.value) {
+async function handleVoiceModeToggle() {
+  if (
+    isSending.value ||
+    isTranscribingVoice.value ||
+    isVoiceGestureActive.value ||
+    isCheckingRecordPermission.value
+  ) {
     return
   }
 
-  isVoiceMode.value = !isVoiceMode.value
+  const nextIsVoiceMode = !isVoiceMode.value
+  if (nextIsVoiceMode && !(await ensureRecordPermission())) {
+    return
+  }
+
+  isVoiceMode.value = nextIsVoiceMode
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
   isInputFocused.value = false
@@ -1472,6 +1483,12 @@ function resetVoiceGestureState() {
 }
 
 async function ensureRecordPermission() {
+  if (isCheckingRecordPermission.value) {
+    return false
+  }
+
+  isCheckingRecordPermission.value = true
+
   try {
     const setting = await Taro.getSetting()
     const authSetting = setting.authSetting as Record<string, boolean | undefined>
@@ -1481,15 +1498,36 @@ async function ensureRecordPermission() {
     }
 
     if (authSetting['scope.record'] === false) {
-      showToast('请在设置中开启麦克风权限')
-      void Taro.openSetting()
-      return false
+      return await showRecordPermissionSettingPrompt()
     }
 
     await Taro.authorize({ scope: 'scope.record' })
     return true
   } catch {
-    showToast('请先开启麦克风权限')
+    return await showRecordPermissionSettingPrompt()
+  } finally {
+    isCheckingRecordPermission.value = false
+  }
+}
+
+async function showRecordPermissionSettingPrompt() {
+  const result = await Taro.showModal({
+    title: '麦克风权限未开启',
+    content: '需要开启麦克风权限后才能发送语音消息和语音转文字',
+    confirmText: '去开启',
+    cancelText: '取消',
+    confirmColor: '#22c55e',
+  })
+
+  if (!result.confirm) {
+    return false
+  }
+
+  try {
+    const setting = await Taro.openSetting()
+    const authSetting = setting.authSetting as Record<string, boolean | undefined>
+    return Boolean(authSetting['scope.record'])
+  } catch {
     return false
   }
 }

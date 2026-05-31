@@ -31,6 +31,11 @@ export default {
     navigationBarTitleText: '天之灵',
     navigationBarTextStyle: 'black'
   },
+  permission: {
+    'scope.record': {
+      desc: '用于发送语音消息和语音转文字',
+    },
+  },
   tabBar: {
     custom: true,
     color: '#9ca3af',

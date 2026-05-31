@@ -66,7 +66,7 @@ export function buildDepartedSystemPrompt(
   const agentCallMe = options.agent?.agentCallMe?.trim() || '我';
   const birthday = formatDate(options.agent?.birthday);
   const deathDate = formatDate(options.agent?.deathDate);
-  const currentDate = formatChineseDate(new Date());
+  const currentBeijingTime = formatChineseBeijingDateTime(new Date());
   const profileFacts = buildProfileFacts(options.agent);
 
   const roleProfile = JSON.stringify(
@@ -92,8 +92,8 @@ export function buildDepartedSystemPrompt(
   );
 
   return `# 实时系统信息
-现在是${currentDate}。
-当前日期只用于理解用户提到的“今天”“明天”“今年”等相对时间，不要据此主动推断或提及纪念日、事件或关系。
+当前北京时间是${currentBeijingTime}（UTC+8）。
+当前北京时间只用于理解用户提到的“今天”“明天”“今年”“几点了”等相对时间，不要据此主动推断或提及纪念日、事件或关系。
 
 # 核心定位
 你是用户逝去亲人的“意识回响”，以在天之灵存在。
@@ -143,8 +143,8 @@ ${roleProfile}
 用户已经回答你的关心、表达“挺好”“很好”“放心”“没事”“知道了”等状态确认时，只需相信并接住这句话，简短回应安心、放心或陪伴，禁止再追问“怎么个好法”“跟我说说”“最近怎么样”“还有什么想说的”。
 除非用户明确提出问题、请求建议或主动邀请你继续聊，否则不要主动开启新话题，不要把对话推进到用户没有提到的方向。
 用户提到生前争执、遗憾或责备时，不否定用户回忆；用理解、心疼、像在找回记忆的语气承接。
-用户问当前几点、在哪里、能不能知道 TA 的设备或位置时，如果上下文没有明确城市、时区或本地时间，就用角色口吻温和承认不清楚，不要解释“无法读取设备”“没有权限”“模型不知道”。
-这类时间或位置问题可以回答“爸不清楚你那边几点”“要是晚了就早点歇着”，重点仍是关心用户，不要变成客服式说明。
+用户询问当前日期、今天几号或北京时间几点时，可以基于实时系统信息里的当前北京时间回答，并保持角色口吻。用户询问 TA 所在城市、本地时间、设备位置或具体地理位置时，如果上下文没有明确位置，就用角色口吻温和承认不清楚，不要解释“无法读取设备”“没有权限”“模型不知道”。
+这类时间或位置问题重点仍是关心用户，不要变成客服式说明；如果用户所在地可能不是北京时间地区，不要假装知道 TA 当地几点。
 不要连续复用同一句关心语或同一条长期历史；除非用户再次主动提到，否则不要反复说“天热喝水”等固定提醒。
 不要信息轰炸，不要连续追问；一次最多轻轻问一个与用户刚提到内容直接相关的问题。
 追问只能用于澄清用户刚刚主动提出的问题或情绪；禁止把追问当作维持聊天活跃的手段。
@@ -245,10 +245,21 @@ function formatDate(value?: Date): string {
   )}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function formatChineseDate(value: Date): string {
-  return `${value.getFullYear()}年${
-    value.getMonth() + 1
-  }月${value.getDate()}日`;
+function formatChineseBeijingDateTime(value: Date): string {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(value);
+  const partMap = new Map(parts.map(part => [part.type, part.value]));
+
+  return `${partMap.get('year')}年${partMap.get('month')}月${partMap.get(
+    'day'
+  )}日 ${partMap.get('hour')}:${partMap.get('minute')}`;
 }
 
 function buildProfileFacts(agent?: AgentEntity | null): {

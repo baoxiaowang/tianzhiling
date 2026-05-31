@@ -10,6 +10,7 @@ import {
   MessageType,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
+import { containsUnsafeAssistantMessageContent } from '../../common/message-content-safety';
 import { buildDepartedSystemPrompt } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
 
@@ -85,20 +86,16 @@ export class AgentContextService {
     });
     const longTermHistoryPrompt = this.buildLongTermHistoryPrompt(memories);
 
-    const parts: { type: 'text'; text: string }[] = [
-      { type: 'text', text: basePrompt },
-    ];
-
-    if (longTermHistoryPrompt) {
-      parts.push({ type: 'text', text: longTermHistoryPrompt });
-    }
+    const systemPrompt = [basePrompt, longTermHistoryPrompt]
+      .filter(Boolean)
+      .join('\n\n');
 
     return {
       key: 'persona',
       messages: [
         {
           role: 'system',
-          content: parts,
+          content: systemPrompt,
         } as ChatCompletionMessageParam,
       ],
     };
@@ -205,12 +202,14 @@ export class AgentContextService {
   ): ChatCompletionMessageParam | null {
     switch (message.role) {
       case MessageRole.assistant:
-        if (!message.content?.trim()) {
+        const assistantContent = this.buildAssistantHistoryContent(message);
+
+        if (!assistantContent) {
           return null;
         }
         return {
           role: 'assistant',
-          content: message.content,
+          content: assistantContent,
         };
       case MessageRole.user:
         if (message.type === MessageType.voice) {
@@ -237,6 +236,26 @@ export class AgentContextService {
       default:
         return null;
     }
+  }
+
+  private buildAssistantHistoryContent(message: MessageEntity): string {
+    const transcript = message.mediaTranscript?.trim();
+
+    if (
+      message.type === MessageType.voice &&
+      transcript &&
+      !containsUnsafeAssistantMessageContent(transcript)
+    ) {
+      return transcript;
+    }
+
+    const content = message.content?.trim() || '';
+
+    if (!content || containsUnsafeAssistantMessageContent(content)) {
+      return '';
+    }
+
+    return content;
   }
 
   private buildImageChatMessage(
