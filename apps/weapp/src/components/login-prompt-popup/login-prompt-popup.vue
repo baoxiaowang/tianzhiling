@@ -31,6 +31,10 @@
         <text>{{ isLoggingIn ? '登录中...' : '微信授权登录' }}</text>
       </button>
 
+      <view class="login-prompt__cancel" @tap="handleCancel">
+        <text>取消</text>
+      </view>
+
       <!-- <nut-button
         class="login-prompt__phone"
         block
@@ -148,6 +152,10 @@ function handlePhoneLogin() {
   })
 }
 
+function handleCancel() {
+  visible.value = false
+}
+
 function handleAgreementTap(type: AgreementDocumentType) {
   void openAgreementDocument(type)
 }
@@ -160,12 +168,25 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 .login-prompt {
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   padding: 12px 12px 12px;
   border-radius: 22px 22px 0 0;
   background: $tzl-color-surface-base;
-  box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 -14px 36px rgba(15, 23, 42, 0.12);
+}
+
+.login-prompt::before {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: -10px;
+  height: 10px;
+  border-radius: 999px 999px 0 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0));
+  content: '';
+  pointer-events: none;
 }
 
 .login-prompt__handle {
@@ -226,7 +247,7 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 .login-prompt__wechat {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   background: $tzl-gradient-primary;
   border: 0;
   border-radius: 999px;
@@ -234,6 +255,17 @@ function handleAgreementTap(type: AgreementDocumentType) {
   line-height: 52px;
   box-shadow: 0 9px 18px rgba(255, 96, 58, 0.2);
   --nut-button-primary-background-color: #{$tzl-gradient-primary};
+}
+
+.login-prompt__cancel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  line-height: 22px;
+  color: $tzl-color-text-muted;
 }
 
 .login-prompt__wechat::after {
