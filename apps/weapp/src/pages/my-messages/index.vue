@@ -50,7 +50,7 @@
           </view>
 
           <view class="my-messages-item__body">
-            <text class="my-messages-item__name">{{ item.actorName || '新评论' }}</text>
+            <text class="my-messages-item__name">{{ item.actorName || '新消息' }}</text>
             <text class="my-messages-item__content">{{ formatNotificationContent(item) }}</text>
             <text class="my-messages-item__time">{{ formatNotificationTime(item.createdAt) }}</text>
           </view>
@@ -86,9 +86,9 @@ export default {
 import Taro from '@tarojs/taro'
 import { onMounted, ref } from 'vue'
 import {
-  getCommentNotifications,
-  readUnreadCommentNotifications,
-  type PostCommentNotificationItem,
+  getPostNotifications,
+  readUnreadPostNotifications,
+  type PostNotificationItem,
 } from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
 import { authSession, restoreAuthSession } from '../../auth/session'
@@ -96,7 +96,7 @@ import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { refreshCommentNotificationSummary } from '../../post/comment-notification-state'
 
-const notifications = ref<PostCommentNotificationItem[]>([])
+const notifications = ref<PostNotificationItem[]>([])
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
@@ -137,7 +137,7 @@ async function loadMessages() {
 
       isCheckingAuth.value = false
 
-      const result = await getCommentNotifications({
+      const result = await getPostNotifications({
         page: 1,
         pageSize: MESSAGE_PAGE_SIZE,
       })
@@ -145,7 +145,7 @@ async function loadMessages() {
       currentPage.value = result.page
       hasMoreNotifications.value = result.hasMore
 
-      await readUnreadCommentNotifications()
+      await readUnreadPostNotifications()
       void refreshCommentNotificationSummary()
     })
     .catch((error) => {
@@ -176,7 +176,7 @@ async function loadMoreMessages() {
   isLoadingMore.value = true
   loadMoreError.value = ''
 
-  loadMorePromise = getCommentNotifications({
+  loadMorePromise = getPostNotifications({
     page: currentPage.value + 1,
     pageSize: MESSAGE_PAGE_SIZE,
   })
@@ -211,11 +211,15 @@ function handleLoadMoreRetry() {
 
 function getAvatarFallback(name: string) {
   const trimmedName = name.trim()
-  return trimmedName ? trimmedName.slice(0, 1) : '评'
+  return trimmedName ? trimmedName.slice(0, 1) : '消'
 }
 
-function formatNotificationContent(item: PostCommentNotificationItem) {
-  const content = item.commentPreview.trim() || '评论了你的动态'
+function formatNotificationContent(item: PostNotificationItem) {
+  if (item.type === 'like') {
+    return item.contentPreview.trim() || '与你的动态产生了共鸣'
+  }
+
+  const content = item.contentPreview.trim() || '评论了你的动态'
   const replyToUserName = item.replyToUserName.trim()
 
   return replyToUserName ? `回复 ${replyToUserName}：${content}` : content

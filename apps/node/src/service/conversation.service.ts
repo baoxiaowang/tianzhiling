@@ -1,6 +1,8 @@
 import { Inject, Logger } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
+import * as bullmq from '@midwayjs/bullmq';
+import { RedisService } from '@midwayjs/redis';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
@@ -38,6 +40,9 @@ import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
+const CONVERSATION_REPLY_JOB_DELAY_MS = 1200;
+const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const NON_VIP_CHAT_LIMIT_POLICY = {
   trialDays: 3, // 3 天试用期
   trialPerAgentLimit: 30, // 3 天内每个 agent 30 句
@@ -63,6 +68,13 @@ export interface SendConversationMessageResult {
   userMessage: ConversationMessageItem;
   assistantMessage?: ConversationMessageItem;
   chatQuota?: ConversationChatQuotaSnapshot;
+  replyPending?: boolean;
+}
+
+export interface ConversationReplyJobData {
+  conversationId: string;
+  userId: string;
+  afterUserCreatedAt?: string;
 }
 
 export interface VoiceTranscriptionResult {
@@ -180,6 +192,12 @@ export class ConversationService {
   @Inject()
   minimaxVoiceSpeechService: MinimaxVoiceSpeechService;
 
+  @Inject()
+  bullmqFramework: bullmq.Framework;
+
+  @Inject()
+  redisService: RedisService;
+
   async listConversations(
     auth: AuthenticatedUserPayload
   ): Promise<ConversationSummary[]> {
@@ -252,6 +270,126 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       throw this.wrapReplyError(error);
+    }
+  }
+
+  async sendMessageAsync(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    payload: SendConversationMessageDTO
+  ): Promise<SendConversationMessageResult> {
+    const runtime = await this.createReplyRuntime(auth, conversationId);
+    const messageType = this.normalizeMessageType(payload?.type);
+
+    if (messageType !== MessageType.text) {
+      throw new AppError(
+        'ASYNC_CONVERSATION_MESSAGE_UNSUPPORTED',
+        'async conversation messages only support text',
+        400
+      );
+    }
+
+    const before = await this.beforeReply(runtime, {
+      ...payload,
+      type: MessageType.text,
+    });
+    const shouldReply = !before.deferReply;
+
+    if (shouldReply) {
+      await this.enqueueConversationReplyJob({
+        conversationId: this.stringifyObjectId(runtime.conversation.id),
+        userId: auth.sub,
+      });
+    }
+
+    return {
+      ...this.buildSendMessageResult(before),
+      replyPending: shouldReply,
+    };
+  }
+
+  async processConversationReplyJob(
+    data: ConversationReplyJobData
+  ): Promise<void> {
+    const conversationId = this.stringifyObjectId(
+      this.parseObjectId(data.conversationId)
+    );
+    const userId = this.stringifyObjectId(this.parseObjectId(data.userId));
+    const lock = await this.acquireConversationReplyLock(conversationId);
+
+    if (!lock.acquired) {
+      await this.enqueueConversationReplyJob(data);
+      return;
+    }
+
+    try {
+      const conversation = await this.findConversationById(
+        this.parseObjectId(conversationId),
+        this.parseObjectId(userId)
+      );
+
+      if (!conversation) {
+        this.logger.warn(
+          '[conversation-reply] conversation not found, conversationId=%s, userId=%s',
+          conversationId,
+          userId
+        );
+        return;
+      }
+
+      const pendingUserMessages = await this.findPendingUserMessagesForReply({
+        conversationId: conversation.id,
+        afterUserCreatedAt: this.parseOptionalDate(data.afterUserCreatedAt),
+      });
+
+      if (pendingUserMessages.length === 0) {
+        return;
+      }
+
+      const latestPendingUserMessage =
+        pendingUserMessages[pendingUserMessages.length - 1];
+      const runtime: ReplyRuntime = {
+        auth: {
+          sub: userId,
+          accountId: '',
+          account: '',
+          iat: 0,
+          exp: 0,
+          nonce: '',
+        },
+        conversation,
+        agent: await this.findAgentById(conversation.agentId),
+      };
+      const before = this.buildQueuedBeforeReplyResult(pendingUserMessages);
+
+      try {
+        const processed = await this.processReply(runtime, before);
+        await this.afterReply(runtime, before, processed);
+      } catch (error) {
+        this.logger.error(
+          '[conversation-reply] assistant reply generation failed, conversationId=%s, userId=%s, reason=%s',
+          conversationId,
+          userId,
+          this.describeReplyError(error)
+        );
+        throw this.wrapReplyError(error);
+      }
+
+      if (
+        await this.hasUserMessageAfter(
+          conversation.id,
+          latestPendingUserMessage.createdAt
+        )
+      ) {
+        await this.enqueueConversationReplyJob({
+          conversationId,
+          userId,
+          afterUserCreatedAt:
+            latestPendingUserMessage.createdAt?.toISOString?.(),
+        });
+      }
+    } finally {
+      await this.releaseConversationReplyLock(conversationId, lock.token);
     }
   }
 
@@ -584,6 +722,166 @@ export class ConversationService {
     return {
       assistantMessage,
     };
+  }
+
+  private async enqueueConversationReplyJob(
+    data: ConversationReplyJobData
+  ): Promise<void> {
+    const queue = this.bullmqFramework?.getQueue(CONVERSATION_REPLY_QUEUE);
+    if (!queue) {
+      this.logger.warn(
+        '[conversation-reply] queue not found, skip enqueue, conversationId=%s',
+        data.conversationId
+      );
+      return;
+    }
+
+    await queue.addJobToQueue(data, {
+      jobId: `conversation-reply:${data.conversationId}:${Date.now()}:${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      delay: CONVERSATION_REPLY_JOB_DELAY_MS,
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000,
+      },
+    });
+  }
+
+  private async acquireConversationReplyLock(
+    conversationId: string
+  ): Promise<{ acquired: boolean; token: string }> {
+    const token = `${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    const result = await this.redisService?.set(
+      this.getConversationReplyLockKey(conversationId),
+      token,
+      'PX',
+      CONVERSATION_REPLY_LOCK_TTL_MS,
+      'NX'
+    );
+
+    return {
+      acquired: result === 'OK',
+      token,
+    };
+  }
+
+  private async releaseConversationReplyLock(
+    conversationId: string,
+    token: string
+  ): Promise<void> {
+    const key = this.getConversationReplyLockKey(conversationId);
+    const currentToken = await this.redisService?.get(key);
+
+    if (currentToken === token) {
+      await this.redisService?.del(key);
+    }
+  }
+
+  private getConversationReplyLockKey(conversationId: string): string {
+    return `conversation:reply:lock:${conversationId}`;
+  }
+
+  private async findPendingUserMessagesForReply(options: {
+    conversationId: MongoObjectId;
+    afterUserCreatedAt?: Date;
+  }): Promise<MessageEntity[]> {
+    const messages = await this.messageModel.find({
+      where: {
+        conversationId: options.conversationId,
+      },
+      order: {
+        createdAt: 'ASC',
+      },
+    });
+    const sentMessages = messages.filter(
+      message => message.status === MessageStatus.sent
+    );
+
+    if (options.afterUserCreatedAt) {
+      return sentMessages.filter(
+        message =>
+          message.role === MessageRole.user &&
+          message.createdAt > options.afterUserCreatedAt!
+      );
+    }
+
+    const latestAssistantIndex = sentMessages.reduce(
+      (latestIndex, message, index) =>
+        message.role === MessageRole.assistant ? index : latestIndex,
+      -1
+    );
+
+    return sentMessages
+      .slice(latestAssistantIndex + 1)
+      .filter(message => message.role === MessageRole.user);
+  }
+
+  private async hasUserMessageAfter(
+    conversationId: MongoObjectId,
+    after: Date
+  ): Promise<boolean> {
+    const count = await this.messageModel.count({
+      conversationId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      createdAt: {
+        $gt: after,
+      },
+    } as never);
+
+    return count > 0;
+  }
+
+  private buildQueuedBeforeReplyResult(
+    pendingUserMessages: MessageEntity[]
+  ): BeforeReplyResult {
+    const latestUserMessage = pendingUserMessages[pendingUserMessages.length - 1];
+    const searchableTexts = pendingUserMessages
+      .map(message => this.buildSearchableTextFromMessage(message))
+      .filter(Boolean);
+
+    return {
+      messagePayload: {
+        type: MessageType.text,
+        content: latestUserMessage.content,
+      },
+      searchableText: this.buildQueuedSearchableText(searchableTexts),
+      userMessage: latestUserMessage,
+      deferReply: false,
+    };
+  }
+
+  private buildQueuedSearchableText(searchableTexts: string[]): string {
+    if (searchableTexts.length <= 1) {
+      return searchableTexts[0] ?? '';
+    }
+
+    return `用户连续补充了${searchableTexts.length}句话：\n${searchableTexts
+      .map((content, index) => `${index + 1}. ${content}`)
+      .join('\n')}`;
+  }
+
+  private buildSearchableTextFromMessage(message: MessageEntity): string {
+    if (message.type === MessageType.image) {
+      return message.mediaAnalysis?.trim() || message.content?.trim() || '';
+    }
+
+    if (message.type === MessageType.voice) {
+      return message.mediaTranscript?.trim() || message.content?.trim() || '';
+    }
+
+    return message.content?.trim() || '';
+  }
+
+  private parseOptionalDate(value?: string): Date | undefined {
+    if (!value?.trim()) {
+      return undefined;
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
   }
 
   private buildSendMessageResult(

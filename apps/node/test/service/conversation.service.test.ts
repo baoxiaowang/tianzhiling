@@ -14,7 +14,10 @@ import {
   VoiceTimbreProvider,
   VoiceTimbreStatus,
 } from '@tzl/entities';
-import { ConversationService } from '../../src/service/conversation.service';
+import {
+  CONVERSATION_REPLY_QUEUE,
+  ConversationService,
+} from '../../src/service/conversation.service';
 
 const USER_ID = '665000000000000000000001';
 const AGENT_ID = '665000000000000000000010';
@@ -131,6 +134,26 @@ function createVoiceTimbre(): VoiceTimbreEntity {
   return timbre;
 }
 
+function createMessage(overrides: Partial<MessageEntity> = {}): MessageEntity {
+  const message = new MessageEntity();
+
+  Object.assign(message, {
+    id: new MongoObjectId(),
+    conversationId: new MongoObjectId(CONVERSATION_ID),
+    userId: new MongoObjectId(USER_ID),
+    agentId: new MongoObjectId(AGENT_ID),
+    role: MessageRole.user,
+    type: MessageType.text,
+    content: '我想你了',
+    status: MessageStatus.sent,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return message;
+}
+
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
@@ -142,11 +165,13 @@ function createService(options: {
   user?: UserEntity | null;
   memberships?: UserMembershipEntity[];
   existingUserMessageCount?: number;
+  existingMessages?: MessageEntity[];
 }) {
   const service = new ConversationService();
   const conversation = createConversation();
   const user = options.user === undefined ? createUser() : options.user;
-  const savedMessages: MessageEntity[] = [];
+  const savedMessages: MessageEntity[] = [...(options.existingMessages ?? [])];
+  const addJobToQueue = jest.fn().mockResolvedValue(undefined);
 
   service.logger = {
     warn: jest.fn(),
@@ -186,7 +211,25 @@ function createService(options: {
     }),
   } as any;
   service.messageModel = {
-    count: jest.fn().mockResolvedValue(options.existingUserMessageCount ?? 0),
+    count: jest.fn(async (query: any) => {
+      if (query?.createdAt?.$gt) {
+        return savedMessages.filter(
+          message =>
+            message.conversationId?.toHexString?.() ===
+              query.conversationId?.toHexString?.() &&
+            message.role === query.role &&
+            message.status === query.status &&
+            message.createdAt > query.createdAt.$gt
+        ).length;
+      }
+
+      return options.existingUserMessageCount ?? 0;
+    }),
+    find: jest.fn(async () =>
+      [...savedMessages].sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+      )
+    ),
     save: jest.fn(async message => {
       if (!message.id) {
         message.id = new MongoObjectId();
@@ -270,8 +313,16 @@ function createService(options: {
   service.milvusService = {
     indexConversationMessage: jest.fn().mockResolvedValue(undefined),
   } as any;
+  service.bullmqFramework = {
+    getQueue: jest.fn(() => ({ addJobToQueue })),
+  } as any;
+  service.redisService = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue('OK'),
+    del: jest.fn().mockResolvedValue(1),
+  } as any;
 
-  return { service, savedMessages };
+  return { service, savedMessages, addJobToQueue };
 }
 
 describe('ConversationService assistant voice reply timbre binding', () => {
@@ -359,6 +410,143 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         usedCount: 2,
         remainingCount: 1,
       })
+    );
+  });
+
+  it('saves text and enqueues async reply without generating assistant inline', async () => {
+    const { service, savedMessages, addJobToQueue } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+    });
+
+    const result = await service.sendMessageAsync(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我现在可以连续发了吗',
+    });
+
+    expect(result.replyPending).toBe(true);
+    expect(result.assistantMessage).toBeUndefined();
+    expect(result.userMessage.content).toBe('我现在可以连续发了吗');
+    expect(savedMessages).toHaveLength(1);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(service.bullmqFramework.getQueue).toHaveBeenCalledWith(
+      CONVERSATION_REPLY_QUEUE
+    );
+    expect(addJobToQueue).toHaveBeenCalledWith(
+      {
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+      },
+      expect.objectContaining({
+        delay: 1200,
+        attempts: 3,
+      })
+    );
+  });
+
+  it('does not enqueue async reply when quota is exhausted', async () => {
+    const { service, savedMessages, addJobToQueue } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 3,
+    });
+
+    await expect(
+      service.sendMessageAsync(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '超额了',
+      })
+    ).rejects.toMatchObject({
+      code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+      status: 429,
+    });
+
+    expect(savedMessages).toHaveLength(0);
+    expect(addJobToQueue).not.toHaveBeenCalled();
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('combines consecutive pending user messages in one queued reply', async () => {
+    const previousAssistant = createMessage({
+      role: MessageRole.assistant,
+      content: '上一句回复',
+      createdAt: new Date('2026-05-03T08:00:00.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:00.000Z'),
+    });
+    const firstUser = createMessage({
+      content: '第一句',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const secondUser = createMessage({
+      content: '第二句',
+      createdAt: new Date('2026-05-03T08:00:02.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:02.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [previousAssistant, firstUser, secondUser],
+    });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(service.agentContextService.buildConversationContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: '用户连续补充了2句话：\n1. 第一句\n2. 第二句',
+      })
+    );
+    expect(
+      savedMessages.filter(message => message.role === MessageRole.assistant)
+    ).toHaveLength(2);
+  });
+
+  it('enqueues a follow-up reply when a new user message arrives during processing', async () => {
+    const firstUser = createMessage({
+      content: '先发一句',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const secondUser = createMessage({
+      content: '回复期间又补一句',
+      createdAt: new Date('2026-05-03T08:00:02.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:02.000Z'),
+    });
+    const { service, savedMessages, addJobToQueue } = createService({
+      agent: createAgent(),
+      existingMessages: [firstUser],
+    });
+
+    (service.openAIService.createChatCompletion as jest.Mock).mockImplementationOnce(
+      async () => {
+        savedMessages.push(secondUser);
+        return {
+          model: 'MiniMax-M2.5',
+          choices: [{ message: { content: '我听见了' } }],
+          usage: {},
+        };
+      }
+    );
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(addJobToQueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+        afterUserCreatedAt: firstUser.createdAt.toISOString(),
+      }),
+      expect.any(Object)
     );
   });
 

@@ -1,6 +1,7 @@
 import { del, get, post } from '../api/api-client'
 
 export type PostCommentType = 'user' | 'agent'
+export type PostNotificationType = 'comment' | 'like'
 
 export interface PostCommentNotificationItem {
   id: string
@@ -19,6 +20,26 @@ export interface PostCommentNotificationItem {
 export interface PostCommentNotificationSummary {
   unreadCount: number
   latest: PostCommentNotificationItem | null
+}
+
+export interface PostNotificationItem {
+  id: string
+  postId: string
+  type: PostNotificationType
+  commentId: string
+  commentType: PostCommentType | ''
+  actorName: string
+  actorAvatar: string
+  contentPreview: string
+  replyToUserName: string
+  postThumbnail: string
+  isRead: boolean
+  createdAt: string | null
+}
+
+export interface PostNotificationSummary {
+  unreadCount: number
+  latest: PostNotificationItem | null
 }
 
 export interface PostCommentItem {
@@ -67,8 +88,21 @@ interface ReadUnreadCommentNotificationsResponse {
   unreadCount: number
 }
 
+interface ReadUnreadPostNotificationsResponse {
+  items: PostNotificationItem[]
+  readCount: number
+  unreadCount: number
+}
+
 interface CommentNotificationListResponse {
   items: PostCommentNotificationItem[]
+  page?: number
+  pageSize?: number
+  hasMore?: boolean
+}
+
+interface PostNotificationListResponse {
+  items: PostNotificationItem[]
   page?: number
   pageSize?: number
   hasMore?: boolean
@@ -109,6 +143,10 @@ export async function getCommentNotificationSummary() {
   return get<PostCommentNotificationSummary>('/api/post/comment-notifications/summary')
 }
 
+export async function getPostNotificationSummary() {
+  return get<PostNotificationSummary>('/api/post/notifications/summary')
+}
+
 export async function getCommentNotifications(options: GetPostsOptions = {}) {
   const queryParts: string[] = []
 
@@ -133,6 +171,30 @@ export async function getCommentNotifications(options: GetPostsOptions = {}) {
   }
 }
 
+export async function getPostNotifications(options: GetPostsOptions = {}) {
+  const queryParts: string[] = []
+
+  if (options.page) {
+    queryParts.push(`page=${encodeURIComponent(String(options.page))}`)
+  }
+
+  if (options.pageSize) {
+    queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  const url = queryParts.length
+    ? `/api/post/notifications?${queryParts.join('&')}`
+    : '/api/post/notifications'
+  const data = await get<PostNotificationListResponse>(url)
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    page: data.page ?? options.page ?? 1,
+    pageSize: data.pageSize ?? options.pageSize ?? 20,
+    hasMore: data.hasMore === true,
+  }
+}
+
 export async function markCommentNotificationsRead(postId: string) {
   await post<Record<string, unknown>>(`/api/post/${postId}/comment-notifications/read`)
 }
@@ -140,6 +202,18 @@ export async function markCommentNotificationsRead(postId: string) {
 export async function readUnreadCommentNotifications() {
   const data = await post<ReadUnreadCommentNotificationsResponse>(
     '/api/post/comment-notifications/read'
+  )
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    readCount: data.readCount ?? 0,
+    unreadCount: data.unreadCount ?? 0,
+  }
+}
+
+export async function readUnreadPostNotifications() {
+  const data = await post<ReadUnreadPostNotificationsResponse>(
+    '/api/post/notifications/read'
   )
 
   return {

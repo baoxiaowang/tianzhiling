@@ -6,11 +6,15 @@ import {
   PostCommentNotificationEntity,
   PostCommentType,
   PostEntity,
+  PostLikeEntity,
+  PostNotificationEntity,
+  PostNotificationType,
   UserEntity,
 } from '@tzl/entities';
 import { PostService } from '../../src/service/post.service';
 
 const USER_ID = '665000000000000000000001';
+const OTHER_USER_ID = '665000000000000000000002';
 const AGENT_A_ID = '665000000000000000000010';
 const AGENT_B_ID = '665000000000000000000011';
 const POST_ID = '665000000000000000000100';
@@ -18,6 +22,7 @@ const POST_2_ID = '665000000000000000000101';
 const POST_3_ID = '665000000000000000000102';
 const COMMENT_ID = '665000000000000000000200';
 const NOTIFICATION_ID = '665000000000000000000300';
+const POST_NOTIFICATION_ID = '665000000000000000000400';
 const NOW = new Date('2026-05-13T08:00:00.000Z');
 const AUTH = {
   sub: USER_ID,
@@ -26,6 +31,12 @@ const AUTH = {
   iat: 1778659200,
   exp: 1778688000,
   nonce: 'nonce',
+};
+const OTHER_AUTH = {
+  ...AUTH,
+  sub: OTHER_USER_ID,
+  accountId: 'account-2',
+  account: 'other-user',
 };
 
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
@@ -116,19 +127,49 @@ function createNotification(
   return notification;
 }
 
+function createPostNotification(
+  overrides: Partial<PostNotificationEntity> = {}
+): PostNotificationEntity {
+  const notification = new PostNotificationEntity();
+
+  Object.assign(notification, {
+    id: new MongoObjectId(POST_NOTIFICATION_ID),
+    userId: new MongoObjectId(USER_ID),
+    postId: new MongoObjectId(POST_ID),
+    type: PostNotificationType.comment,
+    commentId: new MongoObjectId(COMMENT_ID),
+    commentType: PostCommentType.user,
+    actorName: '小宁',
+    actorAvatar: 'avatars/xiaoning.png',
+    contentPreview: '我也好想她！',
+    replyToUserName: '柠檬',
+    postThumbnail: 'moments/flower.jpg',
+    isRead: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return notification;
+}
+
 function createService(
   agents: AgentEntity[] = [],
   options: {
     posts?: PostEntity[];
     notifications?: PostCommentNotificationEntity[];
+    postNotifications?: PostNotificationEntity[];
     comments?: PostCommentEntity[];
+    likes?: PostLikeEntity[];
   } = {}
 ) {
   const service = new PostService();
   const savedPosts: PostEntity[] = [];
   const posts = options.posts ?? [];
   const notifications = options.notifications ?? [];
+  const postNotifications = options.postNotifications ?? [];
   const comments = options.comments ?? [];
+  const likes = options.likes ?? [];
   const addJobToQueue = jest.fn(async () => undefined);
 
   service.postModel = {
@@ -284,8 +325,111 @@ function createService(
       return value;
     }),
   } as any;
+  service.notificationModel = {
+    find: jest.fn(async ({ where, order, skip = 0, take }: any = {}) => {
+      let result = postNotifications.filter(notification => {
+        const matchesUser = where?.userId
+          ? sameObjectId(notification.userId, where.userId)
+          : true;
+        const matchesRead =
+          where?.isRead === undefined || notification.isRead === where.isRead;
+        const matchesPost = where?.postId
+          ? sameObjectId(notification.postId, where.postId)
+          : true;
+
+        return matchesUser && matchesRead && matchesPost;
+      });
+
+      if (order?.createdAt === 'DESC') {
+        result = result.sort(
+          (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+        );
+      }
+
+      return typeof take === 'number'
+        ? result.slice(skip, skip + take)
+        : result.slice(skip);
+    }),
+    count: jest.fn(async (query: any = {}) => {
+      return postNotifications.filter(notification => {
+        const matchesUser = query.userId
+          ? sameObjectId(notification.userId, query.userId)
+          : true;
+        const matchesRead =
+          query.isRead === undefined || notification.isRead === query.isRead;
+
+        return matchesUser && matchesRead;
+      }).length;
+    }),
+    save: jest.fn(async value => {
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      value.id = value.id ?? new MongoObjectId(POST_NOTIFICATION_ID);
+      postNotifications.push(value);
+      return value;
+    }),
+    deleteOne: jest.fn(async (query: any = {}) => {
+      const index = postNotifications.findIndex(notification => {
+        const matchesPost = query.postId
+          ? sameObjectId(notification.postId, query.postId)
+          : true;
+        const matchesActor = query.actorUserId
+          ? sameObjectId(notification.actorUserId, query.actorUserId)
+          : true;
+        const matchesType =
+          query.type === undefined || notification.type === query.type;
+
+        return matchesPost && matchesActor && matchesType;
+      });
+
+      if (index >= 0) {
+        postNotifications.splice(index, 1);
+      }
+
+      return { deletedCount: index >= 0 ? 1 : 0 };
+    }),
+  } as any;
   service.likeModel = {
-    find: jest.fn(async () => []),
+    find: jest.fn(async () => likes),
+    findOne: jest.fn(async ({ where }: any = {}) => {
+      return (
+        likes.find(like => {
+          const matchesPost = where?.postId
+            ? sameObjectId(like.postId, where.postId)
+            : true;
+          const matchesUser = where?.userId
+            ? sameObjectId(like.userId, where.userId)
+            : true;
+
+          return matchesPost && matchesUser;
+        }) ?? null
+      );
+    }),
+    save: jest.fn(async (like: PostLikeEntity) => {
+      like.id = like.id ?? new MongoObjectId('665000000000000000000500');
+      likes.push(like);
+      return like;
+    }),
+    deleteOne: jest.fn(async (query: any = {}) => {
+      const index = likes.findIndex(like => {
+        const matchesPost = query.postId
+          ? sameObjectId(like.postId, query.postId)
+          : true;
+        const matchesUser = query.userId
+          ? sameObjectId(like.userId, query.userId)
+          : true;
+
+        return matchesPost && matchesUser;
+      });
+
+      if (index >= 0) {
+        likes.splice(index, 1);
+      }
+
+      return { deletedCount: index >= 0 ? 1 : 0 };
+    }),
   } as any;
   service.openAIService = {
     getDefaultModel: jest.fn(() => 'text-model'),
@@ -308,7 +452,9 @@ function createService(
     addJobToQueue,
     posts,
     notifications,
+    postNotifications,
     comments,
+    likes,
   };
 }
 
@@ -554,6 +700,187 @@ describe('PostService comment notification reads', () => {
     expect(service.commentNotificationModel.save).toHaveBeenCalledWith(
       expect.arrayContaining([unread, unreadLater])
     );
+  });
+});
+
+describe('PostService post notifications', () => {
+  it('creates a like notification for the post owner without touching comment notifications', async () => {
+    const post = createPost({
+      userId: new MongoObjectId(OTHER_USER_ID),
+      images: ['moments/flower.jpg'],
+    });
+    const { service, postNotifications, notifications } = createService([], {
+      posts: [post],
+    });
+
+    await service.likePost(AUTH, POST_ID);
+
+    expect(notifications).toHaveLength(0);
+    expect(postNotifications).toHaveLength(1);
+    expect(postNotifications[0]).toEqual(
+      expect.objectContaining({
+        userId: new MongoObjectId(OTHER_USER_ID),
+        postId: new MongoObjectId(POST_ID),
+        type: PostNotificationType.like,
+        actorUserId: new MongoObjectId(USER_ID),
+        actorName: '用户',
+        contentPreview: '与你的动态产生了共鸣',
+        isRead: false,
+      })
+    );
+
+    const summary = await service.getUnreadPostNotificationSummary(OTHER_AUTH);
+    expect(summary.unreadCount).toBe(1);
+    expect(summary.latest).toEqual(
+      expect.objectContaining({
+        type: PostNotificationType.like,
+        actorName: '用户',
+        contentPreview: '与你的动态产生了共鸣',
+        postThumbnail: 'https://cdn.example.com/moments/flower.jpg',
+      })
+    );
+  });
+
+  it('does not create a like notification when the owner likes their own post', async () => {
+    const post = createPost();
+    const { service, postNotifications } = createService([], {
+      posts: [post],
+    });
+
+    await service.likePost(AUTH, POST_ID);
+
+    expect(postNotifications).toHaveLength(0);
+  });
+
+  it('removes the like notification when a user cancels resonance', async () => {
+    const post = createPost({
+      userId: new MongoObjectId(OTHER_USER_ID),
+    });
+    const like = new PostLikeEntity();
+    Object.assign(like, {
+      id: new MongoObjectId('665000000000000000000500'),
+      postId: new MongoObjectId(POST_ID),
+      userId: new MongoObjectId(USER_ID),
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const likeNotification = createPostNotification({
+      type: PostNotificationType.like,
+      userId: new MongoObjectId(OTHER_USER_ID),
+      actorUserId: new MongoObjectId(USER_ID),
+      contentPreview: '与你的动态产生了共鸣',
+    });
+    const { service, postNotifications } = createService([], {
+      posts: [post],
+      likes: [like],
+      postNotifications: [likeNotification],
+    });
+
+    await service.unlikePost(AUTH, POST_ID);
+
+    expect(postNotifications).toHaveLength(0);
+  });
+
+  it('writes comment replies to both legacy comment notifications and post notifications', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost({
+      remindAgentIds: [AGENT_A_ID],
+      images: ['moments/flower.jpg'],
+    });
+    const { service, notifications, postNotifications } = createService([agent], {
+      posts: [post],
+    });
+
+    await service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+    });
+
+    expect(notifications).toHaveLength(1);
+    expect(postNotifications).toHaveLength(1);
+    expect(postNotifications[0]).toEqual(
+      expect.objectContaining({
+        type: PostNotificationType.comment,
+        commentType: PostCommentType.agent,
+        actorName: '奶奶',
+        contentPreview: '花开得真好看呢',
+        isRead: false,
+      })
+    );
+  });
+
+  it('returns unread post notification snapshots before marking them as read', async () => {
+    const commentNotification = createPostNotification({
+      id: new MongoObjectId(POST_NOTIFICATION_ID),
+      type: PostNotificationType.comment,
+      createdAt: new Date('2026-05-13T08:00:00.000Z'),
+      contentPreview: '较早的评论',
+    });
+    const likeNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      type: PostNotificationType.like,
+      commentId: undefined,
+      commentType: undefined,
+      createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      contentPreview: '与你的动态产生了共鸣',
+    });
+    const { service } = createService([], {
+      postNotifications: [commentNotification, likeNotification],
+    });
+
+    const result = await service.readUnreadPostNotifications(AUTH);
+
+    expect(result.items.map(item => item.contentPreview)).toEqual([
+      '与你的动态产生了共鸣',
+      '较早的评论',
+    ]);
+    expect(result.readCount).toBe(2);
+    expect(result.unreadCount).toBe(0);
+    expect(commentNotification.isRead).toBe(true);
+    expect(likeNotification.isRead).toBe(true);
+    expect(commentNotification.readAt).toBeInstanceOf(Date);
+  });
+
+  it('keeps legacy comment notifications visible through the new post notification API', async () => {
+    const legacyComment = createNotification({
+      id: new MongoObjectId(NOTIFICATION_ID),
+      commentId: new MongoObjectId(COMMENT_ID),
+      commentPreview: '旧版评论通知',
+      createdAt: new Date('2026-05-13T09:00:00.000Z'),
+    });
+    const legacyOnlyComment = createNotification({
+      id: new MongoObjectId('665000000000000000000301'),
+      commentId: new MongoObjectId('665000000000000000000201'),
+      commentPreview: '仅旧集合存在的评论',
+      createdAt: new Date('2026-05-13T08:00:00.000Z'),
+    });
+    const duplicatePostComment = createPostNotification({
+      id: new MongoObjectId(POST_NOTIFICATION_ID),
+      commentId: new MongoObjectId(COMMENT_ID),
+      contentPreview: '新版评论通知',
+      createdAt: new Date('2026-05-13T09:00:00.000Z'),
+    });
+    const likeNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      type: PostNotificationType.like,
+      commentId: undefined,
+      commentType: undefined,
+      contentPreview: '与你的动态产生了共鸣',
+      createdAt: new Date('2026-05-13T10:00:00.000Z'),
+    });
+    const { service } = createService([], {
+      notifications: [legacyComment, legacyOnlyComment],
+      postNotifications: [duplicatePostComment, likeNotification],
+    });
+
+    const result = await service.listPostNotifications(AUTH);
+
+    expect(result.items.map(item => item.contentPreview)).toEqual([
+      '与你的动态产生了共鸣',
+      '新版评论通知',
+      '仅旧集合存在的评论',
+    ]);
+    expect(result.items).toHaveLength(3);
   });
 });
 

@@ -133,115 +133,36 @@
     />
 
     <template #bottom>
-      <view class="chat-bottom" :style="composerStyle">
-        <view class="chat-composer">
-          <view
-            class="chat-composer__icon-button"
-            :class="{ 'chat-composer__icon-button--selected': isVoiceMode }"
-            @tap="handleVoiceModeToggle"
-          >
-            <view v-if="isVoiceMode" class="chat-composer__keyboard">
-              <image
-                class="chat-composer__keyboard-icon"
-                :src="keyboardIconUrl"
-                mode="aspectFit"
-              />
-            </view>
-            <view v-else class="chat-composer__mic">
-              <image
-                class="chat-composer__mic-icon"
-                :src="micIconUrl"
-                mode="aspectFit"
-              />
-            </view>
-          </view>
-
-          <view
-            v-if="isVoiceMode"
-            class="chat-composer__voice-button"
-            :class="{
-              'chat-composer__voice-button--pressing': isVoiceGestureActive,
-              'chat-composer__voice-button--loading': isTranscribingVoice,
-            }"
-            @touchstart="handleVoiceTouchStart"
-            @touchmove="handleVoiceTouchMove"
-            @touchend="handleVoiceTouchEnd"
-            @touchcancel="handleVoiceTouchCancel"
-          >
-            <view v-if="isTranscribingVoice" class="chat-composer__voice-loading" />
-            <text class="chat-composer__voice-button-text">{{ voiceComposerButtonLabel }}</text>
-          </view>
-
-          <view v-else class="chat-composer__input-shell">
-            <input
-              :value="draftMessage"
-              class="chat-composer__input"
-              type="text"
-              :maxlength="CHAT_TEXT_MAX_LENGTH"
-              confirm-type="send"
-              :cursor="draftCursor"
-              :adjust-position="false"
-              cursor-spacing="16"
-              placeholder=""
-              placeholder-style="color: #999999;"
-              @input="handleDraftInput"
-              @confirm="handleSend"
-              @focus="handleInputFocus"
-              @blur="handleInputBlur"
-              @keyboardheightchange="handleKeyboardHeightChange"
-            />
-          </view>
-
-          <view
-            class="chat-composer__icon-button"
-            :class="{ 'chat-composer__icon-button--selected': isEmojiPanelVisible }"
-            @tap="handleEmojiToggle"
-          >
-            <view class="chat-composer__emoji">
-              <image
-                class="chat-composer__emoji-icon"
-                :src="emojiIconUrl"
-                mode="aspectFit"
-              />
-            </view>
-          </view>
-
-          <view
-            v-if="!showSendButton"
-            class="chat-composer__icon-button"
-            :class="{ 'chat-composer__icon-button--selected': isMorePanelVisible }"
-            @tap="handleMoreToggle"
-          >
-            <view class="chat-composer__plus">
-              <image
-                class="chat-composer__plus-icon"
-                :src="plusIconUrl"
-                mode="aspectFit"
-              />
-            </view>
-          </view>
-
-          <view
-            v-else
-            class="chat-composer__send"
-            :class="{ 'chat-composer__send--disabled': isSending }"
-            @tap="handleSend"
-          >
-            发送
-          </view>
-        </view>
-
-        <emoji-picker-panel
-          :visible="isEmojiPanelVisible"
-          @emoji-select="handleEmojiSelect"
-          @backspace="handleEmojiDelete"
-        />
-
-        <chat-more-panel
-          :visible="isMorePanelVisible"
-          @action="handleMoreAction"
-        />
-      </view>
+      <chat-composer
+        :composer-style="composerStyle"
+        :draft-message="draftMessage"
+        :draft-cursor="draftCursor"
+        :cursor-control-enabled="isDraftCursorControlled"
+        :max-length="CHAT_TEXT_MAX_LENGTH"
+        :is-voice-mode="isVoiceMode"
+        :is-voice-gesture-active="isVoiceGestureActive"
+        :is-transcribing-voice="isTranscribingVoice"
+        :voice-button-label="voiceComposerButtonLabel"
+        :is-emoji-panel-visible="isEmojiPanelVisible"
+        :is-more-panel-visible="isMorePanelVisible"
+        :show-send-button="showSendButton"
+        :is-send-disabled="isTextSendSubmitting"
+        @voice-mode-toggle="handleVoiceModeToggle"
+        @voice-touch-start="handleVoiceTouchStart"
+        @voice-touch-move="handleVoiceTouchMove"
+        @voice-touch-end="handleVoiceTouchEnd"
+        @voice-touch-cancel="handleVoiceTouchCancel"
+        @draft-input="handleDraftInput"
+        @send="handleSend"
+        @input-focus="handleInputFocus"
+        @input-blur="handleInputBlur"
+        @keyboard-height-change="handleKeyboardHeightChange"
+        @emoji-toggle="handleEmojiToggle"
+        @more-toggle="handleMoreToggle"
+        @emoji-select="handleEmojiSelect"
+        @emoji-delete="handleEmojiDelete"
+        @more-action="handleMoreAction"
+      />
     </template>
 
     <template #floating>
@@ -336,14 +257,11 @@ import type { ITouchEvent } from '@tarojs/components/types/common'
 import { computed, nextTick, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
-import keyboardIconUrl from '../../assets/icon/keyboard.svg'
-import micIconUrl from '../../assets/icon/mic.svg'
-import emojiIconUrl from '../../assets/icon/emoji.svg'
-import plusIconUrl from '../../assets/icon/plus.svg'
 import { getAgentDetail } from '../../apis/agent'
 import {
   getConversationChatQuota,
   getConversationMessages,
+  sendConversationMessageAsync,
   sendConversationMessage,
   transcribeConversationVoice,
   type ConversationMessage,
@@ -354,8 +272,8 @@ import {
 } from '../../apis/conversation'
 import { uploadLocalFile, uploadLocalImage } from '../../apis/storage'
 import BackCapsule from '../../components/back-capsule/back-capsule.vue'
+import ChatComposer from '../../components/chat-composer/chat-composer.vue'
 import ChatMessageBubble from '../../components/chat-message-bubble/chat-message-bubble.vue'
-import ChatMorePanel from '../../components/chat-more-panel/chat-more-panel.vue'
 import {
   isChatImageOperationCanceled,
   pickChatImageForSend,
@@ -363,7 +281,6 @@ import {
   type PickedChatImage,
 } from '../../components/chat-more-panel/image'
 import type { ChatMoreActionItem } from '../../components/chat-more-panel/types'
-import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
@@ -433,6 +350,9 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentLengthThreshold: 24,
 } as const
 const CHAT_TEXT_MAX_LENGTH = 500
+const AGENT_REPLY_POLL_INTERVAL_MS = 1500
+const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
+const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
 const CHAT_QUOTA_DIALOG_CONTENT = {
   remaining: '宝，今日仅剩最后 1 句对话机会了，好好珍惜彼此吧～想畅聊点击【开通会员】',
   exhausted:
@@ -453,12 +373,14 @@ const conversationCreatedAt = ref('')
 const isCheckingAuth = ref(true)
 const isLoading = ref(true)
 const isSending = ref(false)
+const isTextSendSubmitting = ref(false)
 const isCheckingChatQuota = ref(false)
 const isWaitingAgentReply = ref(false)
 const loadError = ref('')
 const didInitialShow = ref(false)
 const draftMessage = ref('')
 const draftCursor = ref(0)
+const isDraftCursorControlled = ref(false)
 const keyboardHeight = ref(0)
 const isInputFocused = ref(false)
 const isEmojiPanelVisible = ref(false)
@@ -500,6 +422,10 @@ let voiceAudioContext: Taro.InnerAudioContext | null = null
 let isPickingChatImage = false
 let voicePlaybackErrorMutedUntil = 0
 let isSwitchingComposerPanel = false
+let replyPollingTimer: ReturnType<typeof setTimeout> | null = null
+let replyPollingStartedAt = 0
+let replyPollingAfterUserCreatedAt: Date | null = null
+let scrollToBottomPromise: Promise<void> | null = null
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
 const assistantSegmentRevealTimers = new Set<AssistantSegmentRevealTimer>()
 let assistantSegmentRevealGeneration = 0
@@ -588,6 +514,7 @@ const canSend = computed(() => {
   return (
     draftMessage.value.trim().length > 0
     && !isSending.value
+    && !isTextSendSubmitting.value
     && !isCheckingChatQuota.value
     && !isTranscribingVoice.value
   )
@@ -1031,6 +958,7 @@ useDidShow(() => {
   }
 
   void refreshAgentSnapshot()
+  void refreshMessages()
 })
 
 async function refreshMessages(options: { showLoading?: boolean } = {}) {
@@ -1051,6 +979,7 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
     .then(async (items) => {
       messages.value = items
       probeMissingAssistantVoiceDurations(items)
+      resumePendingReplyPollingFromMessages(items)
     })
     .catch(async (error: unknown) => {
       await handleApiError(error, '加载聊天记录失败，请稍后重试')
@@ -1066,6 +995,142 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
     })
 
   return refreshMessagesPromise
+}
+
+function resumePendingReplyPollingFromMessages(items: ConversationMessage[]) {
+  const latestAssistantTime = findLatestMessageCreatedAt(items, 'assistant')
+  const latestUserTime = findLatestMessageCreatedAt(items, 'user')
+
+  if (
+    latestUserTime
+    && Date.now() - latestUserTime.getTime() <= AGENT_REPLY_RESUME_WINDOW_MS
+    && (!latestAssistantTime || latestUserTime > latestAssistantTime)
+  ) {
+    startReplyPolling(latestUserTime)
+    return
+  }
+
+  stopReplyPolling()
+}
+
+function findLatestMessageCreatedAt(
+  items: ConversationMessage[],
+  role: 'user' | 'assistant',
+) {
+  return items.reduce<Date | null>((latest, message) => {
+    if (message.role !== role || message.status !== 'sent') {
+      return latest
+    }
+
+    const createdAt = message.createdAt ?? message.updatedAt
+    if (!createdAt) {
+      return latest
+    }
+
+    return !latest || createdAt > latest ? createdAt : latest
+  }, null)
+}
+
+function startReplyPolling(afterUserCreatedAt: Date) {
+  replyPollingAfterUserCreatedAt = afterUserCreatedAt
+  replyPollingStartedAt = Date.now()
+  isWaitingAgentReply.value = true
+  scheduleReplyPolling(0)
+}
+
+function scheduleReplyPolling(delayMs = AGENT_REPLY_POLL_INTERVAL_MS) {
+  if (!conversationId.value || !replyPollingAfterUserCreatedAt) {
+    stopReplyPolling()
+    return
+  }
+
+  if (replyPollingTimer) {
+    clearTimeout(replyPollingTimer)
+  }
+
+  replyPollingTimer = setTimeout(() => {
+    replyPollingTimer = null
+    void pollConversationReply()
+  }, delayMs)
+}
+
+async function pollConversationReply() {
+  const pendingAfter = replyPollingAfterUserCreatedAt
+  if (!conversationId.value || !pendingAfter) {
+    stopReplyPolling()
+    return
+  }
+
+  if (Date.now() - replyPollingStartedAt >= AGENT_REPLY_POLL_TIMEOUT_MS) {
+    stopReplyPolling()
+    showToast('TA 还在想，稍后下拉刷新看看')
+    return
+  }
+
+  try {
+    const items = await getConversationMessages(conversationId.value)
+    await reconcilePolledMessages(items, pendingAfter)
+    probeMissingAssistantVoiceDurations(items)
+
+    if (hasAssistantReplyAfter(messages.value, pendingAfter)) {
+      stopReplyPolling()
+      return
+    }
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      stopReplyPolling()
+      await redirectToAuth()
+      return
+    }
+  }
+
+  scheduleReplyPolling()
+}
+
+async function reconcilePolledMessages(
+  items: ConversationMessage[],
+  pendingAfter: Date,
+) {
+  const currentMessageIds = new Set(messages.value.map((message) => message.id))
+  const newAssistantMessages = items.filter((message) => {
+    const createdAt = message.createdAt ?? message.updatedAt
+    return (
+      message.role === 'assistant'
+      && message.status === 'sent'
+      && Boolean(createdAt && createdAt > pendingAfter)
+      && !currentMessageIds.has(message.id)
+    )
+  })
+  const newAssistantIds = new Set(newAssistantMessages.map((message) => message.id))
+
+  messages.value = items.filter((message) => !newAssistantIds.has(message.id))
+
+  for (const message of newAssistantMessages) {
+    await revealAssistantMessage(message)
+  }
+
+  await scrollToBottom()
+}
+
+function hasAssistantReplyAfter(items: ConversationMessage[], after: Date) {
+  return items.some((message) => {
+    const createdAt = message.createdAt ?? message.updatedAt
+    return (
+      message.role === 'assistant'
+      && message.status === 'sent'
+      && Boolean(createdAt && createdAt > after)
+    )
+  })
+}
+
+function stopReplyPolling() {
+  if (replyPollingTimer) {
+    clearTimeout(replyPollingTimer)
+    replyPollingTimer = null
+  }
+
+  replyPollingAfterUserCreatedAt = null
+  isWaitingAgentReply.value = false
 }
 
 async function handleApiError(error: unknown, fallbackMessage: string) {
@@ -1085,17 +1150,29 @@ async function handleApiError(error: unknown, fallbackMessage: string) {
 async function scrollToBottom(options: { animated?: boolean } = {}) {
   const animated = options.animated ?? true
 
-  scrollWithAnimation.value = animated
-  await nextTick()
-  scrollIntoViewTarget.value = ''
-  await nextTick()
-  await new Promise<void>((resolve) => {
-    setTimeout(() => {
+  if (scrollToBottomPromise) {
+    return scrollToBottomPromise
+  }
+
+  scrollToBottomPromise = Promise.resolve()
+    .then(async () => {
       scrollWithAnimation.value = animated
-      scrollIntoViewTarget.value = 'chat-bottom-anchor'
-      resolve()
-    }, 0)
-  })
+      await nextTick()
+      scrollIntoViewTarget.value = ''
+      await nextTick()
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          scrollWithAnimation.value = animated
+          scrollIntoViewTarget.value = 'chat-bottom-anchor'
+          resolve()
+        }, 0)
+      })
+    })
+    .finally(() => {
+      scrollToBottomPromise = null
+    })
+
+  return scrollToBottomPromise
 }
 
 function buildMessageText(message: ConversationMessage) {
@@ -1282,6 +1359,7 @@ function handleDraftInput(event: DraftInputEvent) {
   }
 
   draftMessage.value = nextValue
+  isDraftCursorControlled.value = false
   draftCursor.value =
     typeof nextCursor === 'number' && nextCursor >= 0
       ? clampCursor(nextCursor, nextValue)
@@ -1325,6 +1403,7 @@ function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
 }
 
 useDidHide(() => {
+  stopReplyPolling()
   isInputFocused.value = false
   keyboardHeight.value = 0
   isEmojiPanelVisible.value = false
@@ -1339,6 +1418,7 @@ useDidHide(() => {
 })
 
 useUnload(() => {
+  stopReplyPolling()
   clearAssistantSegmentRevealTimers()
   clearVoiceStartTimer()
   if (isVoiceRecording.value) {
@@ -1352,6 +1432,7 @@ useUnload(() => {
 async function handleVoiceModeToggle() {
   if (
     isSending.value ||
+    isWaitingAgentReply.value ||
     isTranscribingVoice.value ||
     isVoiceGestureActive.value ||
     isCheckingRecordPermission.value
@@ -1377,6 +1458,7 @@ function handleVoiceTouchStart(event: VoiceTouchEvent) {
   if (
     !isVoiceMode.value ||
     isSending.value ||
+    isWaitingAgentReply.value ||
     isTranscribingVoice.value ||
     isVoiceGestureActive.value
   ) {
@@ -1537,6 +1619,7 @@ async function startVoiceRecording() {
     !isVoicePressPreviewing.value ||
     isVoiceRecording.value ||
     isSending.value ||
+    isWaitingAgentReply.value ||
     isTranscribingVoice.value
   ) {
     return
@@ -1738,7 +1821,7 @@ function handleEmojiSelect(emoji: string) {
   }
 
   draftMessage.value = limitedValue
-  draftCursor.value = clampCursor(cursor + emoji.length, limitedValue)
+  setDraftCursor(clampCursor(cursor + emoji.length, limitedValue))
   void scrollToBottom()
 }
 
@@ -1758,7 +1841,15 @@ function handleEmojiDelete() {
   const nextLeft = removeLastGrapheme(left)
 
   draftMessage.value = `${nextLeft}${right}`
-  draftCursor.value = nextLeft.length
+  setDraftCursor(nextLeft.length)
+}
+
+function setDraftCursor(cursor: number) {
+  draftCursor.value = cursor
+  isDraftCursorControlled.value = true
+  setTimeout(() => {
+    isDraftCursorControlled.value = false
+  }, 80)
 }
 
 function clampCursor(cursor: number, value: string) {
@@ -1800,6 +1891,7 @@ async function handleSend() {
   const content = limitChatText(draftMessage.value.trim())
   if (
     !content
+    || isTextSendSubmitting.value
     || isSending.value
     || isCheckingChatQuota.value
     || isTranscribingVoice.value
@@ -1842,7 +1934,7 @@ async function sendTextMessageContent(
 
   const tempId = `local-${Date.now()}`
 
-  isSending.value = true
+  isTextSendSubmitting.value = true
   isMorePanelVisible.value = false
   messages.value = [
     ...messages.value,
@@ -1861,21 +1953,22 @@ async function sendTextMessageContent(
   await scrollToBottom()
 
   try {
-    await runWithAgentReplyStatus(async () => {
-      const result = await sendConversationMessage(conversationId.value, {
-        content,
-        type: 'text',
-      })
-
-      await appendConversationResult(tempId, result)
+    const result = await sendConversationMessageAsync(conversationId.value, {
+      content,
+      type: 'text',
     })
+
+    await appendConversationResult(tempId, result)
+    if (result.replyPending) {
+      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
+      startReplyPolling(pendingAfter)
+    }
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
-    isSending.value = false
+    isTextSendSubmitting.value = false
 
     if (error instanceof ApiException && error.requiresReLogin) {
-      isSending.value = false
       await redirectToAuth()
       return
     }
@@ -1908,12 +2001,13 @@ async function sendTextMessageContent(
     return
   }
 
-  isSending.value = false
+  isTextSendSubmitting.value = false
 }
 
 async function pickAndSendImage(sourceType: ChatImageSourceType) {
   if (
     isSending.value
+    || isWaitingAgentReply.value
     || isCheckingChatQuota.value
     || isTranscribingVoice.value
     || !conversationId.value
@@ -1954,7 +2048,7 @@ async function pickAndSendImage(sourceType: ChatImageSourceType) {
 
 async function sendImageMessage(image: PickedChatImage) {
   const sourcePath = image.filePath.trim()
-  if (!sourcePath || isSending.value || !conversationId.value) {
+  if (!sourcePath || isSending.value || isWaitingAgentReply.value || !conversationId.value) {
     return
   }
 
@@ -2046,7 +2140,13 @@ async function sendImageMessage(image: PickedChatImage) {
 
 async function sendVoiceMessage(filePath: string, durationMs: number) {
   const sourcePath = filePath.trim()
-  if (!sourcePath || isSending.value || isCheckingChatQuota.value || !conversationId.value) {
+  if (
+    !sourcePath
+    || isSending.value
+    || isWaitingAgentReply.value
+    || isCheckingChatQuota.value
+    || !conversationId.value
+  ) {
     return
   }
 
@@ -2145,7 +2245,13 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
 
 async function sendVoiceTranscription(filePath: string) {
   const sourcePath = filePath.trim()
-  if (!sourcePath || isSending.value || isCheckingChatQuota.value || !conversationId.value) {
+  if (
+    !sourcePath
+    || isSending.value
+    || isWaitingAgentReply.value
+    || isCheckingChatQuota.value
+    || !conversationId.value
+  ) {
     return
   }
 
@@ -2584,7 +2690,6 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-bottom {
   background: #f7f7f7;
-  transition: transform 0.2s ease;
 }
 
 .chat-composer-backdrop {

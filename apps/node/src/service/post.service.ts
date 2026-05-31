@@ -16,6 +16,8 @@ import {
   PostCommentNotificationEntity,
   PostCommentType,
   PostLikeEntity,
+  PostNotificationEntity,
+  PostNotificationType,
   PostEntity,
   UserEntity,
 } from '@tzl/entities';
@@ -107,6 +109,39 @@ export interface ReadCommentNotificationsResult {
   unreadCount: number;
 }
 
+export interface PostNotificationItem {
+  id: string;
+  postId: string;
+  type: PostNotificationType;
+  commentId: string;
+  commentType: PostCommentType | '';
+  actorName: string;
+  actorAvatar: string;
+  contentPreview: string;
+  replyToUserName: string;
+  postThumbnail: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface PostNotificationSummary {
+  unreadCount: number;
+  latest: PostNotificationItem | null;
+}
+
+export interface PostNotificationListResult {
+  items: PostNotificationItem[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+export interface ReadPostNotificationsResult {
+  items: PostNotificationItem[];
+  readCount: number;
+  unreadCount: number;
+}
+
 interface PostLikeSummary {
   likeCountByPostId: Map<string, number>;
   likedPostIds: Set<string>;
@@ -142,6 +177,9 @@ export class PostService {
 
   @InjectEntityModel(PostLikeEntity)
   likeModel: MongoRepository<PostLikeEntity>;
+
+  @InjectEntityModel(PostNotificationEntity)
+  notificationModel: MongoRepository<PostNotificationEntity>;
 
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
@@ -296,6 +334,159 @@ export class PostService {
     };
   }
 
+  async getUnreadPostNotificationSummary(
+    auth: AuthenticatedUserPayload
+  ): Promise<PostNotificationSummary> {
+    const userId = this.parseObjectId(auth.sub);
+    const notifications = await this.notificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const items = this.mergePostNotificationItems(
+      notifications,
+      legacyCommentNotifications
+    );
+
+    return {
+      unreadCount: items.length,
+      latest: items[0] ?? null,
+    };
+  }
+
+  async listPostNotifications(
+    auth: AuthenticatedUserPayload,
+    options: ListPostsOptions = {}
+  ): Promise<PostNotificationListResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const page = this.normalizePositiveInteger(options.page, 1);
+    const pageSize = this.normalizePositiveInteger(options.pageSize, 20, 50);
+    const skip = (page - 1) * pageSize;
+    const take = skip + pageSize + 1;
+    const notifications = await this.notificationModel.find({
+      where: {
+        userId,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      take,
+    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      take,
+    });
+    const items = this.mergePostNotificationItems(
+      notifications,
+      legacyCommentNotifications
+    );
+    const pageItems = items.slice(skip, skip + pageSize);
+
+    return {
+      items: pageItems,
+      page,
+      pageSize,
+      hasMore: items.length > skip + pageSize,
+    };
+  }
+
+  async readUnreadPostNotifications(
+    auth: AuthenticatedUserPayload
+  ): Promise<ReadPostNotificationsResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const notifications = await this.notificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const items = this.mergePostNotificationItems(
+      notifications,
+      legacyCommentNotifications
+    );
+    const now = new Date();
+
+    for (const notification of notifications) {
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    for (const notification of legacyCommentNotifications) {
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    if (notifications.length > 0) {
+      await this.notificationModel.save(notifications);
+    }
+
+    if (legacyCommentNotifications.length > 0) {
+      await this.commentNotificationModel.save(legacyCommentNotifications);
+    }
+
+    const unreadCount = await this.countUnreadPostNotifications(userId);
+
+    return {
+      items,
+      readCount: items.length,
+      unreadCount,
+    };
+  }
+
+  private async countUnreadPostNotifications(
+    userId: MongoObjectId
+  ): Promise<number> {
+    const notifications = await this.notificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+    });
+
+    return this.mergePostNotificationItems(
+      notifications,
+      legacyCommentNotifications
+    ).length;
+  }
+
   async readUnreadCommentNotifications(
     auth: AuthenticatedUserPayload
   ): Promise<ReadCommentNotificationsResult> {
@@ -431,6 +622,7 @@ export class PostService {
     const post = await this.getPostById(postId);
     const userId = this.parseObjectId(auth.sub);
     const existing = await this.findLike(post.id, userId);
+    let shouldCreateNotification = false;
 
     if (!existing) {
       const now = new Date();
@@ -442,6 +634,7 @@ export class PostService {
 
       try {
         await this.likeModel.save(like);
+        shouldCreateNotification = true;
       } catch (error) {
         const duplicateCode = (error as { code?: number } | undefined)?.code;
 
@@ -449,6 +642,11 @@ export class PostService {
           throw error;
         }
       }
+    }
+
+    if (shouldCreateNotification) {
+      const user = await this.findUserById(userId);
+      await this.createLikeNotification(post, userId, user);
     }
 
     return this.getPostDetail(postId, auth);
@@ -465,6 +663,7 @@ export class PostService {
       postId: post.id,
       userId,
     } as never);
+    await this.deleteLikeNotification(post.id, userId);
 
     return this.getPostDetail(postId, auth);
   }
@@ -856,6 +1055,106 @@ export class PostService {
     };
   }
 
+  private buildPostNotificationItem(
+    notification: PostNotificationEntity
+  ): PostNotificationItem {
+    return {
+      id: this.stringifyObjectId(notification.id),
+      postId: this.stringifyObjectId(notification.postId),
+      type:
+        notification.type === PostNotificationType.like
+          ? PostNotificationType.like
+          : PostNotificationType.comment,
+      commentId: notification.commentId
+        ? this.stringifyObjectId(notification.commentId)
+        : '',
+      commentType:
+        notification.commentType === PostCommentType.agent
+          ? PostCommentType.agent
+          : notification.commentType === PostCommentType.user
+          ? PostCommentType.user
+          : '',
+      actorName:
+        notification.actorName?.trim() ||
+        (notification.type === PostNotificationType.like ? '新共鸣' : '新评论'),
+      actorAvatar: this.postImageService.resolveForResponse(
+        notification.actorAvatar?.trim() || ''
+      ),
+      contentPreview: notification.contentPreview?.trim() || '',
+      replyToUserName: notification.replyToUserName?.trim() || '',
+      postThumbnail: notification.postThumbnail
+        ? this.postImageService.resolveForResponse(
+            notification.postThumbnail?.trim() || ''
+          )
+        : '',
+      isRead: notification.isRead === true,
+      createdAt: notification.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
+  private buildPostNotificationItemFromComment(
+    notification: PostCommentNotificationEntity
+  ): PostNotificationItem {
+    return {
+      id: this.stringifyObjectId(notification.id),
+      postId: this.stringifyObjectId(notification.postId),
+      type: PostNotificationType.comment,
+      commentId: this.stringifyObjectId(notification.commentId),
+      commentType:
+        notification.commentType === PostCommentType.agent
+          ? PostCommentType.agent
+          : PostCommentType.user,
+      actorName: notification.actorName?.trim() || '新评论',
+      actorAvatar: this.postImageService.resolveForResponse(
+        notification.actorAvatar?.trim() || ''
+      ),
+      contentPreview: notification.commentPreview?.trim() || '',
+      replyToUserName: notification.replyToUserName?.trim() || '',
+      postThumbnail: notification.postThumbnail
+        ? this.postImageService.resolveForResponse(
+            notification.postThumbnail?.trim() || ''
+          )
+        : '',
+      isRead: notification.isRead === true,
+      createdAt: notification.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
+  private mergePostNotificationItems(
+    notifications: PostNotificationEntity[],
+    legacyCommentNotifications: PostCommentNotificationEntity[]
+  ): PostNotificationItem[] {
+    const items = notifications.map(notification =>
+      this.buildPostNotificationItem(notification)
+    );
+    const knownCommentIds = new Set(
+      items
+        .filter(item => item.type === PostNotificationType.comment)
+        .map(item => item.commentId)
+        .filter(Boolean)
+    );
+
+    for (const notification of legacyCommentNotifications) {
+      const commentId = this.stringifyObjectId(notification.commentId);
+
+      if (knownCommentIds.has(commentId)) {
+        continue;
+      }
+
+      items.push(this.buildPostNotificationItemFromComment(notification));
+    }
+
+    return items.sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt);
+      const rightTime = Date.parse(right.createdAt);
+
+      return (
+        (Number.isFinite(rightTime) ? rightTime : 0) -
+        (Number.isFinite(leftTime) ? leftTime : 0)
+      );
+    });
+  }
+
   private async createCommentNotification(
     post: PostEntity,
     comment: PostCommentEntity,
@@ -893,6 +1192,82 @@ export class PostService {
     notification.updatedAt = comment.updatedAt ?? notification.createdAt;
 
     await this.commentNotificationModel.save(notification);
+    await this.createPostCommentNotification(post, comment, notification);
+  }
+
+  private async createPostCommentNotification(
+    post: PostEntity,
+    comment: PostCommentEntity,
+    commentNotification: PostCommentNotificationEntity
+  ): Promise<void> {
+    const notification = new PostNotificationEntity();
+    notification.userId = post.userId;
+    notification.postId = post.id;
+    notification.type = PostNotificationType.comment;
+    notification.commentId = comment.id;
+    notification.commentType = comment.type;
+    notification.actorUserId = comment.userId;
+    notification.actorAgentId = comment.agentId;
+    notification.actorName = commentNotification.actorName;
+    notification.actorAvatar = commentNotification.actorAvatar;
+    notification.contentPreview = commentNotification.commentPreview;
+    notification.replyToUserName = commentNotification.replyToUserName;
+    notification.postThumbnail = commentNotification.postThumbnail;
+    notification.isRead = false;
+    notification.createdAt = comment.createdAt ?? new Date();
+    notification.updatedAt = notification.createdAt;
+
+    await this.notificationModel.save(notification);
+  }
+
+  private async createLikeNotification(
+    post: PostEntity,
+    userId: MongoObjectId,
+    user?: UserEntity | null
+  ): Promise<void> {
+    if (
+      this.stringifyObjectId(userId) === this.stringifyObjectId(post.userId)
+    ) {
+      return;
+    }
+
+    const now = new Date();
+    const notification = new PostNotificationEntity();
+    notification.userId = post.userId;
+    notification.postId = post.id;
+    notification.type = PostNotificationType.like;
+    notification.actorUserId = userId;
+    notification.actorName = user?.name?.trim() || '新共鸣';
+    notification.actorAvatar = user?.avatar?.trim() || '';
+    notification.contentPreview = '与你的动态产生了共鸣';
+    notification.postThumbnail =
+      Array.isArray(post.images) && post.images.length > 0
+        ? post.images.find(image => typeof image === 'string' && image.trim())
+        : '';
+    notification.isRead = false;
+    notification.createdAt = now;
+    notification.updatedAt = now;
+
+    try {
+      await this.notificationModel.save(notification);
+    } catch (error) {
+      const duplicateCode = (error as { code?: number } | undefined)?.code;
+
+      if (duplicateCode !== 11000) {
+        throw error;
+      }
+    }
+  }
+
+  private async deleteLikeNotification(
+    postId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<void> {
+    await this.notificationModel.deleteOne({
+      postId,
+      actorUserId: userId,
+      type: PostNotificationType.like,
+    } as never);
   }
 
   private async resolveCommentReplyName(

@@ -12,6 +12,7 @@ export * from './post.entity';
 export * from './post-comment.entity';
 export * from './post-comment-notification.entity';
 export * from './post-like.entity';
+export * from './post-notification.entity';
 export * from './user.entity';
 export * from './user-account.entity';
 export * from './user-membership.entity';

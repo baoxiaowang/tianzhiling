@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import {
-  getCommentNotificationSummary,
-  type PostCommentNotificationSummary,
+  getPostNotificationSummary,
+  type PostNotificationSummary,
 } from '../apis/post'
 import { ApiException } from '../api/api-exception'
 import {
@@ -12,7 +12,7 @@ import {
 
 const NOTIFICATION_POLL_INTERVAL_MS = 10000
 
-const notificationSummary = ref<PostCommentNotificationSummary | null>(null)
+const notificationSummary = ref<PostNotificationSummary | null>(null)
 
 let notificationPollingTimer: ReturnType<typeof setInterval> | null = null
 let isRefreshingNotificationSummary = false
@@ -42,7 +42,7 @@ export async function refreshCommentNotificationSummary() {
   isRefreshingNotificationSummary = true
 
   try {
-    notificationSummary.value = await getCommentNotificationSummary()
+    notificationSummary.value = await getPostNotificationSummary()
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       notificationSummary.value = null

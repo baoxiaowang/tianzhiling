@@ -30,6 +30,9 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { methods: ['GET'], path: /^\/post\/comment-notifications\/?$/ },
   { methods: ['GET'], path: /^\/post\/comment-notifications\/summary\/?$/ },
   { methods: ['POST'], path: /^\/post\/comment-notifications\/read\/?$/ },
+  { methods: ['GET'], path: /^\/post\/notifications\/?$/ },
+  { methods: ['GET'], path: /^\/post\/notifications\/summary\/?$/ },
+  { methods: ['POST'], path: /^\/post\/notifications\/read\/?$/ },
   { methods: ['POST'], path: /^\/post\/[^/]+\/likes\/?$/ },
   { methods: ['DELETE'], path: /^\/post\/[^/]+\/likes\/?$/ },
   {

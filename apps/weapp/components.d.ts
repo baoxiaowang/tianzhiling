@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AppBar: typeof import('./src/components/app-bar/app-bar.vue')['default']
     BackCapsule: typeof import('./src/components/back-capsule/back-capsule.vue')['default']
+    ChatComposer: typeof import('./src/components/chat-composer/chat-composer.vue')['default']
     ChatMessageBubble: typeof import('./src/components/chat-message-bubble/chat-message-bubble.vue')['default']
     ChatMorePanel: typeof import('./src/components/chat-more-panel/chat-more-panel.vue')['default']
     ContactCoverBanner: typeof import('./src/components/contact-cover-banner/contact-cover-banner.vue')['default']

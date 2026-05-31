@@ -58,6 +58,18 @@ export class ConversationController {
     );
   }
 
+  @Post('/:conversationId/messages/async')
+  async sendMessageAsync(
+    @Param('conversationId') conversationId: string,
+    @Body() body: SendConversationMessageDTO
+  ) {
+    return this.conversationService.sendMessageAsync(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      body
+    );
+  }
+
   @Post('/:conversationId/voice-transcription')
   async transcribeVoice(
     @Param('conversationId') conversationId: string,

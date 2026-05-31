@@ -44,6 +44,28 @@ export class PostController {
     );
   }
 
+  @Get('/notifications/summary')
+  async getPostNotificationSummary() {
+    return this.postService.getUnreadPostNotificationSummary(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Get('/notifications')
+  async listPostNotifications(@Query() query: { page?: string; pageSize?: string }) {
+    return this.postService.listPostNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      query
+    );
+  }
+
+  @Post('/notifications/read')
+  async readUnreadPostNotifications() {
+    return this.postService.readUnreadPostNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
   @Post('/')
   async createPost(@Body() body: CreatePostDTO) {
     return this.postService.createPost(

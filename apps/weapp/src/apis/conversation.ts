@@ -26,6 +26,7 @@ interface SendConversationMessageResponse {
   userMessage?: unknown
   assistantMessage?: unknown
   chatQuota?: unknown
+  replyPending?: unknown
 }
 
 export interface ConversationVoicePayload {
@@ -61,6 +62,7 @@ export interface SendConversationMessageResult {
   userMessage: ConversationMessage
   assistantMessage?: ConversationMessage
   chatQuota?: ConversationChatQuotaSnapshot
+  replyPending?: boolean
 }
 
 export interface ConversationChatQuotaSnapshot {
@@ -338,6 +340,38 @@ export async function sendConversationMessage(
       ? parseConversationMessage(data.assistantMessage)
       : undefined,
     chatQuota: parseChatQuota(data.chatQuota),
+    replyPending: Boolean(data.replyPending),
+  }
+}
+
+export async function sendConversationMessageAsync(
+  conversationId: string,
+  payload: {
+    content?: string
+    type?: string
+  }
+): Promise<SendConversationMessageResult> {
+  const body: Record<string, unknown> = {
+    type: payload.type ?? 'text',
+  }
+  const content = payload.content?.trim()
+
+  if (content) {
+    body.content = content
+  }
+
+  const data = await post<SendConversationMessageResponse>(
+    `/api/conversation/${conversationId}/messages/async`,
+    body
+  )
+
+  return {
+    userMessage: parseConversationMessage(data.userMessage),
+    assistantMessage: data.assistantMessage
+      ? parseConversationMessage(data.assistantMessage)
+      : undefined,
+    chatQuota: parseChatQuota(data.chatQuota),
+    replyPending: Boolean(data.replyPending),
   }
 }
 
