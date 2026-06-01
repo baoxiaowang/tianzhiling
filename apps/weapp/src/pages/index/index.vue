@@ -32,7 +32,7 @@
       <scroll-view
         class="moments-scroll"
         :scroll-y="true"
-        :scroll-top="momentsScrollTop"
+        :scroll-top="controlledMomentsScrollTop"
         :show-scrollbar="false"
         :lower-threshold="120"
         @scroll="handleMomentsScroll"
@@ -216,6 +216,7 @@ const hasMorePosts = ref(true)
 const isLoadingMore = ref(false)
 const showCollapsedAppBar = ref(false)
 const momentsScrollTop = ref(0)
+const isMomentsScrollTopControlled = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
 let loadMorePromise: Promise<void> | null = null
@@ -223,6 +224,7 @@ let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 let commentBlurCloseTimer: ReturnType<typeof setTimeout> | null = null
 let commentScrollRestoreTimers: ReturnType<typeof setTimeout>[] = []
+let momentsScrollTopReleaseTimer: ReturnType<typeof setTimeout> | null = null
 let lastKnownMomentsScrollTop = 0
 
 const POST_PAGE_SIZE = 10
@@ -283,6 +285,9 @@ const commentComposerStyle = computed(() => {
       : 'translateY(0)',
   }
 })
+const controlledMomentsScrollTop = computed(() => {
+  return isMomentsScrollTopControlled.value ? momentsScrollTop.value : undefined
+})
 
 function showToast(title: string) {
   void Taro.showToast({
@@ -333,10 +338,12 @@ function normalizeScrollTop(value: unknown) {
 
 function setMomentsScrollTop(scrollTop: number) {
   momentsScrollTop.value = normalizeScrollTop(scrollTop)
+  isMomentsScrollTopControlled.value = true
 }
 
 function forceMomentsScrollTop(scrollTop: number) {
   const nextScrollTop = normalizeScrollTop(scrollTop)
+  isMomentsScrollTopControlled.value = true
 
   if (momentsScrollTop.value !== nextScrollTop) {
     momentsScrollTop.value = nextScrollTop
@@ -353,6 +360,30 @@ function forceMomentsScrollTop(scrollTop: number) {
   void nextTick(() => {
     momentsScrollTop.value = nextScrollTop
   })
+}
+
+function releaseMomentsScrollTopControl() {
+  if (momentsScrollTopReleaseTimer) {
+    clearTimeout(momentsScrollTopReleaseTimer)
+    momentsScrollTopReleaseTimer = null
+  }
+  isMomentsScrollTopControlled.value = false
+}
+
+function scrollMomentsToTopOnce() {
+  if (momentsScrollTopReleaseTimer) {
+    clearTimeout(momentsScrollTopReleaseTimer)
+    momentsScrollTopReleaseTimer = null
+  }
+
+  lastKnownMomentsScrollTop = 0
+  showCollapsedAppBar.value = false
+  isMomentsScrollTopControlled.value = true
+  momentsScrollTop.value = 0
+  momentsScrollTopReleaseTimer = setTimeout(() => {
+    momentsScrollTopReleaseTimer = null
+    isMomentsScrollTopControlled.value = false
+  }, 120)
 }
 
 function replacePostInList(updatedPost: PostItem) {
@@ -448,13 +479,16 @@ async function loadMorePosts() {
   return loadMorePromise
 }
 
-async function preparePage() {
+async function preparePage(options: { scrollToTop?: boolean } = {}) {
   if (!hasLoadedPosts.value) {
     isCheckingAuth.value = true
   }
 
   await restoreAuthSession()
   await refreshMomentsData(!hasLoadedPosts.value)
+  if (options.scrollToTop) {
+    scrollMomentsToTopOnce()
+  }
   isCheckingAuth.value = false
 }
 
@@ -598,6 +632,7 @@ function closeCommentComposer(force = false) {
   isCommentInputFocused.value = false
   commentKeyboardHeight.value = 0
   isCommentEmojiPanelVisible.value = false
+  releaseMomentsScrollTopControl()
   setCustomTabBarHidden(false)
 }
 
@@ -848,7 +883,7 @@ function handlePreviewImages(post: PostItem, index: number) {
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
   setCustomTabBarHidden(Boolean(activeCommentPost.value))
-  void preparePage()
+  void preparePage({ scrollToTop: true })
 })
 
 useDidHide(() => {
@@ -938,7 +973,7 @@ useDidHide(() => {
 }
 
 .moments-notice-spacer {
-  height: 12px;
+  height: 52px;
 }
 
 .moments-notice__avatar {

@@ -172,6 +172,7 @@ const agentsLoadError = ref('')
 const agentPickerVisible = ref(false)
 const isUploading = ref(false)
 const isSubmitting = ref(false)
+let isSubmitLocked = false
 const menuButtonMetrics = readMenuButtonMetrics()
 const statusStyle = {
   height: `${menuButtonMetrics.statusBarHeight}px`,
@@ -354,10 +355,16 @@ function handleRemoveImage(index: number) {
 }
 
 async function handleSubmit() {
-  if (!canSubmit.value || isSubmitting.value || isUploading.value) {
+  if (
+    isSubmitLocked ||
+    !canSubmit.value ||
+    isSubmitting.value ||
+    isUploading.value
+  ) {
     return
   }
 
+  isSubmitLocked = true
   isSubmitting.value = true
 
   try {
@@ -382,6 +389,7 @@ async function handleSubmit() {
     showToast(error instanceof ApiException ? error.message : '发布失败，请稍后重试')
   } finally {
     isSubmitting.value = false
+    isSubmitLocked = false
   }
 }
 
