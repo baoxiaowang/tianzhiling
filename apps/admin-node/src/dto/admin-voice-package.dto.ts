@@ -63,6 +63,9 @@ export class SaveAdminVoicePackageDTO {
   @Rule(RuleType.number().integer().min(1).max(365).optional())
   estimatedServiceDays?: number;
 
+  @Rule(RuleType.string().allow('').max(128).optional())
+  virtualPaymentProductId?: string;
+
   @Rule(packageStatusRule.optional())
   status?: string;
 

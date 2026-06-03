@@ -17,6 +17,7 @@ export interface VoicePackageRecord {
   deliverables: Array<{ title: string; description?: string }>
   materialRequirement: string
   estimatedServiceDays?: number
+  virtualPaymentProductId?: string
 }
 
 export interface VoiceTrainingTaskRecord {
@@ -121,6 +122,7 @@ function parsePackage(value: unknown): VoicePackageRecord {
       raw.estimatedServiceDays == null
         ? undefined
         : asNumber(raw.estimatedServiceDays),
+    virtualPaymentProductId: asString(raw.virtualPaymentProductId) || undefined,
   }
 }
 

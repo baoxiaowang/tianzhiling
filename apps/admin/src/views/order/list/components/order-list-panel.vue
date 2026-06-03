@@ -469,7 +469,11 @@
 
       Message.success('退订退款已提交，会员权益已收回');
     } catch (error) {
-      Message.error('退订失败，请稍后重试');
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '退订失败，请稍后重试'
+      );
     } finally {
       refundLoadingId.value = '';
     }

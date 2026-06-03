@@ -37,6 +37,7 @@ export interface AdminVipPlanRecordDTO {
   voicePackageId?: string;
   voicePackageCode?: string;
   voicePackageName?: string;
+  virtualPaymentProductId?: string;
   status: VipPlanStatusDTO;
   sort: number;
   createdAt: string;
@@ -72,6 +73,7 @@ export interface VipPlanRecordDTO {
   voicePackageId?: string;
   voicePackageCode?: string;
   voicePackageName?: string;
+  virtualPaymentProductId?: string;
 }
 
 export type UserMembershipStatusDTO =
@@ -117,6 +119,7 @@ export interface SaveAdminVipPlanDTO {
   entitlementGrants?: VipPlanEntitlementGrantDTO[];
   couponGrantAmount?: number;
   voicePackageId?: string;
+  virtualPaymentProductId?: string;
   status?: VipPlanStatusDTO;
   sort?: number;
 }

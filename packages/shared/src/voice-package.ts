@@ -16,6 +16,7 @@ export interface AdminVoicePackageRecordDTO {
   deliverables: VoicePackageDeliverableDTO[];
   materialRequirement: string;
   estimatedServiceDays?: number;
+  virtualPaymentProductId?: string;
   status: VoicePackageStatusDTO;
   sort: number;
   createdAt: string;
@@ -47,6 +48,7 @@ export interface VoicePackageRecordDTO {
   deliverables: VoicePackageDeliverableDTO[];
   materialRequirement: string;
   estimatedServiceDays?: number;
+  virtualPaymentProductId?: string;
 }
 
 export interface SaveAdminVoicePackageDTO {
@@ -59,6 +61,7 @@ export interface SaveAdminVoicePackageDTO {
   deliverables?: VoicePackageDeliverableDTO[];
   materialRequirement?: string;
   estimatedServiceDays?: number;
+  virtualPaymentProductId?: string;
   status?: VoicePackageStatusDTO;
   sort?: number;
 }

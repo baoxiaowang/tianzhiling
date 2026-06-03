@@ -17,6 +17,13 @@ export interface WechatPaymentParamsDTO {
   paySign: string;
 }
 
+export interface WechatVirtualPaymentParamsDTO {
+  mode: 'short_series_goods';
+  signData: string;
+  paySig: string;
+  signature: string;
+}
+
 export interface OrderRecordDTO {
   id: string;
   orderNo: string;
@@ -100,3 +107,11 @@ export interface CreateVipPlanOrderResultDTO {
 }
 
 export type CreateVoicePackageOrderResultDTO = CreateVipPlanOrderResultDTO;
+
+export interface CreateVipPlanVirtualPaymentOrderResultDTO {
+  order: OrderRecordDTO;
+  virtualPayment: WechatVirtualPaymentParamsDTO;
+}
+
+export type CreateVoicePackageVirtualPaymentOrderResultDTO =
+  CreateVipPlanVirtualPaymentOrderResultDTO;

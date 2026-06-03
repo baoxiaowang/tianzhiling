@@ -27,6 +27,8 @@ import { AdminWechatPayService } from './admin-wechat-pay.service';
 
 type MongoWhere = Record<string, unknown>;
 
+const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
+
 @Provide()
 export class AdminOrderService {
   @Inject()
@@ -123,13 +125,17 @@ export class AdminOrderService {
 
     await this.assertRefundableOrderBenefits(order);
 
-    await this.adminWechatPayService.refundOrder({
-      orderNo: order.orderNo,
-      refundNo: this.generateRefundNo(order),
-      reason,
-      amount: refundAmount,
-      totalAmount: order.paidAmount ?? order.payableAmount,
-    });
+    if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      await this.refundVirtualPaymentOrder(order, refundAmount, reason);
+    } else {
+      await this.adminWechatPayService.refundOrder({
+        orderNo: order.orderNo,
+        refundNo: this.generateRefundNo(order),
+        reason,
+        amount: refundAmount,
+        totalAmount: order.paidAmount ?? order.payableAmount,
+      });
+    }
 
     const now = new Date();
     await this.revokeOrderBenefits(order, now);
@@ -157,6 +163,32 @@ export class AdminOrderService {
         400
       );
     }
+  }
+
+  private async refundVirtualPaymentOrder(
+    order: OrderEntity,
+    refundAmount: number,
+    reason: string
+  ): Promise<void> {
+    if (!order.payerOpenid) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_OPENID_MISSING',
+        'wechat virtual pay openid missing',
+        500
+      );
+    }
+
+    await this.adminWechatPayService.refundVirtualOrder({
+      openid: order.payerOpenid,
+      orderNo: order.orderNo,
+      refundNo: this.generateRefundNo(order),
+      leftFee: order.paidAmount ?? refundAmount,
+      refundFee: refundAmount,
+      reason,
+      env:
+        order.virtualPaymentEnv ??
+        this.adminWechatPayService.getVirtualPayEnv(),
+    });
   }
 
   private async revokeOrderBenefits(

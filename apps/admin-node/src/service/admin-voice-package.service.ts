@@ -252,6 +252,7 @@ export class AdminVoicePackageService {
       { name: { $regex: escapedKeyword, $options: 'i' } },
       { description: { $regex: escapedKeyword, $options: 'i' } },
       { materialRequirement: { $regex: escapedKeyword, $options: 'i' } },
+      { virtualPaymentProductId: { $regex: escapedKeyword, $options: 'i' } },
     ];
 
     if (MongoObjectId.isValid(keyword)) {
@@ -343,6 +344,7 @@ export class AdminVoicePackageService {
       estimatedServiceDays: this.normalizeOptionalPositiveInteger(
         payload.estimatedServiceDays
       ),
+      virtualPaymentProductId: payload.virtualPaymentProductId?.trim() || '',
       status: this.normalizePackageStatus(payload.status),
       sort: this.normalizeNonNegativeInteger(payload.sort, 0),
     };
@@ -373,6 +375,7 @@ export class AdminVoicePackageService {
       deliverables: voicePackage.deliverables ?? [],
       materialRequirement: voicePackage.materialRequirement ?? '',
       estimatedServiceDays: voicePackage.estimatedServiceDays,
+      virtualPaymentProductId: voicePackage.virtualPaymentProductId ?? '',
       status: voicePackage.status,
       sort: voicePackage.sort,
       createdAt: this.formatDate(voicePackage.createdAt),

@@ -25,8 +25,10 @@ import {
 import type {
   CreateVipPlanOrderDTO,
   CreateVipPlanOrderResultDTO,
+  CreateVipPlanVirtualPaymentOrderResultDTO,
   CreateVoicePackageOrderDTO,
   CreateVoicePackageOrderResultDTO,
+  CreateVoicePackageVirtualPaymentOrderResultDTO,
   OrderRecordDTO,
   UserOrderListDTO,
 } from '@tzl/shared';
@@ -36,10 +38,42 @@ import { AuthenticatedUserPayload } from '../interface';
 import {
   WechatPayService,
   WechatTransactionPayload,
+  WechatVirtualOrderPayload,
 } from './wechat-pay.service';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
+const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
+
+export interface WechatVirtualPaymentNotifyPayload {
+  Event?: string;
+  OpenId?: string;
+  OutTradeNo?: string;
+  Env?: number;
+  WxRefundId?: string;
+  MchRefundId?: string;
+  WxOrderId?: string;
+  MchOrderId?: string;
+  RefundFee?: number;
+  RetCode?: number;
+  RetMsg?: string;
+  RefundStartTimestamp?: number;
+  RefundSuccTimestamp?: number;
+  WxpayRefundTransactionId?: string;
+  RetryTimes?: number;
+  WeChatPayInfo?: {
+    MchOrderNo?: string;
+    TransactionId?: string;
+    PaidTime?: number;
+  };
+  GoodsInfo?: {
+    ProductId?: string;
+    Quantity?: number;
+    OrigPrice?: number;
+    ActualPrice?: number;
+    Attach?: string;
+  };
+}
 
 export interface OrderPaymentExpireJobData {
   orderId: string;
@@ -208,6 +242,141 @@ export class OrderService {
     };
   }
 
+  async createVipPlanVirtualPaymentOrder(
+    auth: AuthenticatedUserPayload,
+    payload: CreateVipPlanOrderDTO
+  ): Promise<CreateVipPlanVirtualPaymentOrderResultDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const plan = await this.getActiveVipPlanById(payload.vipPlanId);
+    const productId = this.requireVirtualPaymentProductId(
+      plan.virtualPaymentProductId,
+      'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
+    );
+    const session = await this.wechatPayService.getSessionByJsCode(
+      payload.jsCode
+    );
+    const now = new Date();
+    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+    const env = this.wechatPayService.getVirtualPayEnv();
+    const order = new OrderEntity();
+
+    Object.assign(order, {
+      orderNo: this.generateOrderNo(),
+      userId,
+      orderType: OrderType.vipPlan,
+      targetId: plan.id,
+      targetCode: plan.code,
+      title: plan.name,
+      amount: plan.priceAmount,
+      discountAmount: Math.max(
+        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+        0
+      ),
+      couponAmount: 0,
+      payableAmount: plan.priceAmount,
+      currency: plan.currency || 'CNY',
+      status: OrderStatus.pending,
+      source: OrderSource.weapp,
+      paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+      paymentExpiredAt: expireAt,
+      payerOpenid: session.openid,
+      virtualPaymentProductId: productId,
+      virtualPaymentEnv: env,
+      snapshot: {
+        vipPlan: this.buildVipPlanSnapshot(plan),
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const savedOrder = await this.orderModel.save(order);
+    const virtualPayment = this.wechatPayService.buildVirtualPaymentParams({
+      sessionKey: session.sessionKey,
+      productId,
+      orderNo: savedOrder.orderNo,
+      amount: savedOrder.payableAmount,
+      attach: this.buildVirtualPaymentAttach(savedOrder),
+    });
+
+    await this.enqueueOrderPaymentExpireJob(savedOrder);
+
+    return {
+      order: this.buildOrderRecord(savedOrder),
+      virtualPayment,
+    };
+  }
+
+  async createVoicePackageVirtualPaymentOrder(
+    auth: AuthenticatedUserPayload,
+    payload: CreateVoicePackageOrderDTO
+  ): Promise<CreateVoicePackageVirtualPaymentOrderResultDTO> {
+    const userId = this.parseObjectId(auth.sub);
+    const [voicePackage, agent] = await Promise.all([
+      this.getActiveVoicePackageById(payload.voicePackageId),
+      this.getUserAgentById(userId, payload.agentId),
+    ]);
+    await this.assertAgentCanBuyVoicePackage(agent.id);
+    const productId = this.requireVirtualPaymentProductId(
+      voicePackage.virtualPaymentProductId,
+      'VOICE_PACKAGE_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
+    );
+    const session = await this.wechatPayService.getSessionByJsCode(
+      payload.jsCode
+    );
+    const now = new Date();
+    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+    const env = this.wechatPayService.getVirtualPayEnv();
+    const order = new OrderEntity();
+
+    Object.assign(order, {
+      orderNo: this.generateOrderNo('VOICE'),
+      userId,
+      orderType: OrderType.voicePackage,
+      targetId: voicePackage.id,
+      targetCode: voicePackage.code,
+      agentId: agent.id,
+      title: voicePackage.name,
+      amount: voicePackage.priceAmount,
+      discountAmount: Math.max(
+        (voicePackage.originalPriceAmount ?? voicePackage.priceAmount) -
+          voicePackage.priceAmount,
+        0
+      ),
+      couponAmount: 0,
+      payableAmount: voicePackage.priceAmount,
+      currency: voicePackage.currency || 'CNY',
+      status: OrderStatus.pending,
+      source: OrderSource.weapp,
+      paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+      paymentExpiredAt: expireAt,
+      payerOpenid: session.openid,
+      virtualPaymentProductId: productId,
+      virtualPaymentEnv: env,
+      snapshot: {
+        voicePackage: this.buildVoicePackageSnapshot(voicePackage),
+        agent: this.buildAgentSnapshot(agent),
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const savedOrder = await this.orderModel.save(order);
+    const virtualPayment = this.wechatPayService.buildVirtualPaymentParams({
+      sessionKey: session.sessionKey,
+      productId,
+      orderNo: savedOrder.orderNo,
+      amount: savedOrder.payableAmount,
+      attach: this.buildVirtualPaymentAttach(savedOrder),
+    });
+
+    await this.enqueueOrderPaymentExpireJob(savedOrder);
+
+    return {
+      order: this.buildOrderRecord(savedOrder),
+      virtualPayment,
+    };
+  }
+
   async listUserOrders(
     auth: AuthenticatedUserPayload
   ): Promise<UserOrderListDTO> {
@@ -265,6 +434,13 @@ export class OrderService {
       order.status === OrderStatus.closed
     ) {
       return this.buildOrderRecord(order);
+    }
+
+    if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      await this.syncVirtualPaymentOrder(order);
+      const syncedOrder = await this.findOrderById(objectId);
+
+      return this.buildOrderRecord(syncedOrder ?? order);
     }
 
     const transaction = await this.wechatPayService.queryTransactionByOrderNo(
@@ -339,6 +515,13 @@ export class OrderService {
 
     if (this.isFinalOrderStatus(order.status)) {
       return this.buildOrderRecord(order);
+    }
+
+    if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      await this.syncVirtualPaymentOrder(order);
+      const syncedOrder = await this.findOrderById(objectId);
+
+      return syncedOrder ? this.buildOrderRecord(syncedOrder) : null;
     }
 
     const transaction = await this.wechatPayService.queryTransactionByOrderNo(
@@ -428,6 +611,345 @@ export class OrderService {
     }
   }
 
+  async handleWechatVirtualPaymentNotify(
+    payload: WechatVirtualPaymentNotifyPayload
+  ): Promise<void> {
+    if (payload.Event === 'xpay_refund_notify') {
+      await this.handleWechatVirtualRefundNotify(payload);
+      return;
+    }
+
+    if (payload.Event !== 'xpay_goods_deliver_notify') {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_EVENT_UNSUPPORTED',
+        'wechat virtual pay event is unsupported',
+        400
+      );
+    }
+
+    const orderNo = payload.OutTradeNo?.trim();
+
+    if (!orderNo) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_ORDER_NO_MISSING',
+        'wechat virtual pay order no missing',
+        400
+      );
+    }
+
+    const order = await this.orderModel.findOne({
+      where: {
+        orderNo,
+      },
+    });
+
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    this.assertVirtualPaymentNotifyMatchesOrder(order, payload);
+    const virtualOrder = await this.queryVirtualPaymentOrder(order);
+
+    if (!virtualOrder || !this.isVirtualPaymentPaid(virtualOrder.status)) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_NOT_PAID',
+        'wechat virtual pay order is not paid',
+        400
+      );
+    }
+
+    await this.handleVirtualPaymentSuccess(order, virtualOrder, payload);
+  }
+
+  private async handleWechatVirtualRefundNotify(
+    payload: WechatVirtualPaymentNotifyPayload
+  ): Promise<void> {
+    const orderNo = payload.MchOrderId?.trim() || payload.OutTradeNo?.trim();
+
+    if (!orderNo) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_REFUND_ORDER_NO_MISSING',
+        'wechat virtual refund order no missing',
+        400
+      );
+    }
+
+    const order = await this.orderModel.findOne({
+      where: {
+        orderNo,
+      },
+    });
+
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    this.assertVirtualRefundNotifyMatchesOrder(order, payload);
+
+    if (order.status === OrderStatus.refunded) {
+      return;
+    }
+
+    if (payload.RetCode === undefined) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_REFUND_STATUS_MISSING',
+        'wechat virtual refund status is missing',
+        400
+      );
+    }
+
+    if (payload.RetCode !== 0) {
+      this.logger?.warn?.(
+        `wechat virtual refund notify failed: orderNo=${
+          order.orderNo
+        }, retCode=${payload.RetCode}, retMsg=${payload.RetMsg ?? ''}`
+      );
+      return;
+    }
+
+    const refundAmount =
+      payload.RefundFee ?? order.paidAmount ?? order.payableAmount;
+
+    if (!refundAmount || refundAmount <= 0) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_REFUND_AMOUNT_INVALID',
+        'wechat virtual refund amount is invalid',
+        400
+      );
+    }
+
+    const paidAmount = order.paidAmount ?? order.payableAmount;
+
+    if (paidAmount && refundAmount > paidAmount) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_REFUND_AMOUNT_MISMATCH',
+        'wechat virtual refund amount mismatch',
+        400
+      );
+    }
+
+    const virtualOrder = await this.queryVirtualPaymentOrder(order);
+
+    if (!this.isVirtualPaymentRefunded(virtualOrder?.status)) {
+      this.logger?.warn?.(
+        `wechat virtual refund notify ignored before query_order confirms refund: orderNo=${
+          order.orderNo
+        }, status=${virtualOrder?.status ?? 'none'}`
+      );
+      return;
+    }
+
+    const confirmedRefundAmount = virtualOrder?.refund_fee ?? 0;
+    const confirmedLeftFee = virtualOrder?.left_fee;
+
+    if (confirmedRefundAmount < paidAmount && confirmedLeftFee !== 0) {
+      this.logger?.warn?.(
+        `wechat virtual refund notify ignored for partial refund: orderNo=${
+          order.orderNo
+        }, refundFee=${confirmedRefundAmount}, leftFee=${
+          confirmedLeftFee ?? 'unknown'
+        }, paidAmount=${paidAmount}`
+      );
+      return;
+    }
+
+    const now = payload.RefundSuccTimestamp
+      ? new Date(payload.RefundSuccTimestamp * 1000)
+      : new Date();
+    await this.markOrderRefunded(order, paidAmount, now);
+  }
+
+  private async syncVirtualPaymentOrder(order: OrderEntity): Promise<void> {
+    if (!order.payerOpenid || order.virtualPaymentEnv === undefined) {
+      return;
+    }
+
+    const virtualOrder = await this.queryVirtualPaymentOrder(order);
+
+    if (!virtualOrder) {
+      if (this.isPaymentExpired(order)) {
+        await this.closeOrder(order);
+      }
+
+      return;
+    }
+
+    if (this.isVirtualPaymentPaid(virtualOrder.status)) {
+      await this.handleVirtualPaymentSuccess(order, virtualOrder);
+      return;
+    }
+
+    if (this.isVirtualPaymentClosed(virtualOrder.status)) {
+      await this.closeOrder(order);
+    }
+  }
+
+  private async queryVirtualPaymentOrder(
+    order: OrderEntity
+  ): Promise<WechatVirtualOrderPayload | null> {
+    if (!order.payerOpenid || order.virtualPaymentEnv === undefined) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_ORDER_INCOMPLETE',
+        'wechat virtual pay order is incomplete',
+        500
+      );
+    }
+
+    return this.wechatPayService.queryVirtualOrder({
+      openid: order.payerOpenid,
+      orderNo: order.orderNo,
+      env: order.virtualPaymentEnv,
+    });
+  }
+
+  private async handleVirtualPaymentSuccess(
+    order: OrderEntity,
+    virtualOrder: WechatVirtualOrderPayload,
+    notify?: WechatVirtualPaymentNotifyPayload
+  ): Promise<void> {
+    if (
+      order.status === OrderStatus.completed ||
+      order.status === OrderStatus.granting
+    ) {
+      return;
+    }
+
+    const paidAmount =
+      virtualOrder.paid_fee ??
+      notify?.GoodsInfo?.ActualPrice ??
+      notify?.GoodsInfo?.OrigPrice ??
+      virtualOrder.order_fee;
+
+    if (!paidAmount || paidAmount !== order.payableAmount) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_AMOUNT_MISMATCH',
+        'wechat virtual pay amount mismatch'
+      );
+    }
+
+    const now = new Date();
+    order.status = OrderStatus.granting;
+    order.paidAmount = paidAmount;
+    order.paymentTradeNo =
+      virtualOrder.wxpay_order_id ||
+      virtualOrder.wx_order_id ||
+      notify?.WeChatPayInfo?.TransactionId ||
+      notify?.WeChatPayInfo?.MchOrderNo;
+    order.paymentNotifyAt = now;
+    order.paidAt =
+      virtualOrder.paid_time || notify?.WeChatPayInfo?.PaidTime
+        ? new Date(
+            (virtualOrder.paid_time ?? notify?.WeChatPayInfo?.PaidTime ?? 0) *
+              1000
+          )
+        : now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+
+    try {
+      await this.grantOrderBenefits(order);
+      order.status = OrderStatus.completed;
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+    } catch (error) {
+      order.status = OrderStatus.grantFailed;
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+      throw error;
+    }
+  }
+
+  private assertVirtualPaymentNotifyMatchesOrder(
+    order: OrderEntity,
+    payload: WechatVirtualPaymentNotifyPayload
+  ): void {
+    if (order.paymentProvider !== WECHAT_VIRTUAL_PAY_PROVIDER) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_PROVIDER_MISMATCH',
+        'order is not a wechat virtual pay order',
+        400
+      );
+    }
+
+    if (payload.OpenId && payload.OpenId !== order.payerOpenid) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_OPENID_MISMATCH',
+        'wechat virtual pay openid mismatch',
+        400
+      );
+    }
+
+    if (
+      payload.Env !== undefined &&
+      order.virtualPaymentEnv !== undefined &&
+      Number(payload.Env) !== order.virtualPaymentEnv
+    ) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_ENV_MISMATCH',
+        'wechat virtual pay env mismatch',
+        400
+      );
+    }
+
+    const productId = payload.GoodsInfo?.ProductId?.trim();
+
+    if (
+      productId &&
+      order.virtualPaymentProductId &&
+      productId !== order.virtualPaymentProductId
+    ) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_PRODUCT_MISMATCH',
+        'wechat virtual pay product mismatch',
+        400
+      );
+    }
+
+    const actualPrice =
+      payload.GoodsInfo?.ActualPrice ?? payload.GoodsInfo?.OrigPrice;
+
+    if (actualPrice !== undefined && actualPrice !== order.payableAmount) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_AMOUNT_MISMATCH',
+        'wechat virtual pay amount mismatch',
+        400
+      );
+    }
+  }
+
+  private assertVirtualRefundNotifyMatchesOrder(
+    order: OrderEntity,
+    payload: WechatVirtualPaymentNotifyPayload
+  ): void {
+    if (order.paymentProvider !== WECHAT_VIRTUAL_PAY_PROVIDER) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_PROVIDER_MISMATCH',
+        'order is not a wechat virtual pay order',
+        400
+      );
+    }
+
+    if (payload.OpenId && payload.OpenId !== order.payerOpenid) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_OPENID_MISMATCH',
+        'wechat virtual pay openid mismatch',
+        400
+      );
+    }
+  }
+
+  private isVirtualPaymentPaid(status?: number): boolean {
+    return status === 2 || status === 3 || status === 4;
+  }
+
+  private isVirtualPaymentClosed(status?: number): boolean {
+    return status === 5 || status === 6 || status === 8;
+  }
+
+  private isVirtualPaymentRefunded(status?: number): boolean {
+    return status === 5 || status === 8;
+  }
+
   private async grantOrderBenefits(order: OrderEntity): Promise<void> {
     if (order.orderType === OrderType.vipPlan) {
       await this.grantVipMembership(order);
@@ -478,15 +1000,26 @@ export class OrderService {
 
     await this.assertRefundableOrderBenefits(order);
 
-    await this.wechatPayService.refundOrder({
-      orderNo: order.orderNo,
-      refundNo: this.generateRefundNo(order),
-      reason,
-      amount: refundAmount,
-      totalAmount: order.paidAmount ?? order.payableAmount,
-    });
+    if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      await this.refundVirtualPaymentOrder(order, refundAmount, reason);
+    } else {
+      await this.wechatPayService.refundOrder({
+        orderNo: order.orderNo,
+        refundNo: this.generateRefundNo(order),
+        reason,
+        amount: refundAmount,
+        totalAmount: order.paidAmount ?? order.payableAmount,
+      });
+    }
 
-    const now = new Date();
+    await this.markOrderRefunded(order, refundAmount, new Date());
+  }
+
+  private async markOrderRefunded(
+    order: OrderEntity,
+    refundAmount: number,
+    now: Date
+  ): Promise<void> {
     await this.revokeOrderBenefits(order, now);
 
     order.status = OrderStatus.refunded;
@@ -512,6 +1045,33 @@ export class OrderService {
         400
       );
     }
+  }
+
+  private async refundVirtualPaymentOrder(
+    order: OrderEntity,
+    refundAmount: number,
+    reason: string
+  ): Promise<void> {
+    const virtualOrder = await this.queryVirtualPaymentOrder(order);
+    const leftFee = virtualOrder?.left_fee ?? order.paidAmount ?? refundAmount;
+
+    if (leftFee < refundAmount) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_REFUND_AMOUNT_INVALID',
+        'wechat virtual pay refund amount is invalid',
+        400
+      );
+    }
+
+    await this.wechatPayService.refundVirtualOrder({
+      openid: order.payerOpenid ?? '',
+      orderNo: order.orderNo,
+      refundNo: this.generateRefundNo(order),
+      leftFee,
+      refundFee: refundAmount,
+      reason,
+      env: order.virtualPaymentEnv ?? this.wechatPayService.getVirtualPayEnv(),
+    });
   }
 
   private async revokeOrderBenefits(
@@ -1009,6 +1569,7 @@ export class OrderService {
         : undefined,
       voicePackageCode: plan.voicePackageCode,
       voicePackageName: plan.voicePackageName,
+      virtualPaymentProductId: plan.virtualPaymentProductId,
     };
   }
 
@@ -1025,6 +1586,7 @@ export class OrderService {
       deliverables: voicePackage.deliverables ?? [],
       materialRequirement: voicePackage.materialRequirement ?? '',
       estimatedServiceDays: voicePackage.estimatedServiceDays,
+      virtualPaymentProductId: voicePackage.virtualPaymentProductId,
     };
   }
 
@@ -1130,6 +1692,26 @@ export class OrderService {
     }
 
     return membership.lifetime ? undefined : membership.expiredAt;
+  }
+
+  private requireVirtualPaymentProductId(
+    value: string | undefined,
+    code: string
+  ): string {
+    const productId = value?.trim() ?? '';
+
+    if (!productId) {
+      throw new AppError(code, 'wechat virtual pay product id is missing', 400);
+    }
+
+    return productId;
+  }
+
+  private buildVirtualPaymentAttach(order: OrderEntity): string {
+    return JSON.stringify({
+      orderId: this.stringifyObjectId(order.id),
+      orderType: order.orderType,
+    });
   }
 
   private generateOrderNo(prefix = 'VIP'): string {

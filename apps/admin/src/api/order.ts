@@ -1,9 +1,14 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 import type {
   AdminOrderListDTO,
   AdminOrderListParamsDTO,
   AdminOrderRecordDTO,
 } from '@tzl/shared';
+
+interface TzlAxiosRequestConfig extends AxiosRequestConfig {
+  hideErrorMessage?: boolean;
+}
 
 export type OrderRecord = AdminOrderRecordDTO;
 export type OrderListParams = AdminOrderListParamsDTO;
@@ -14,5 +19,7 @@ export function queryOrderList(params: OrderListParams) {
 }
 
 export function refundOrder(id: string) {
-  return axios.post<OrderRecord>(`/admin_api/orders/${id}/refund`);
+  return axios.post<OrderRecord>(`/admin_api/orders/${id}/refund`, undefined, {
+    hideErrorMessage: true,
+  } as TzlAxiosRequestConfig);
 }

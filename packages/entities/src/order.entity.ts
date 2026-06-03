@@ -95,6 +95,12 @@ export class OrderEntity extends BaseEntity {
   paymentNotifyAt?: Date;
 
   @Column()
+  virtualPaymentProductId?: string;
+
+  @Column()
+  virtualPaymentEnv?: number;
+
+  @Column()
   snapshot?: Record<string, unknown>;
 
   @Column()

@@ -54,7 +54,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1320 }"
+        :scroll="{ x: 1490 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -68,6 +68,14 @@
           <a-table-column title="套餐编码" data-index="code" :width="180">
             <template #cell="{ record }">
               <a-typography-text copyable>{{ record.code }}</a-typography-text>
+            </template>
+          </a-table-column>
+          <a-table-column title="微信道具ID" :width="170">
+            <template #cell="{ record }">
+              <a-typography-text v-if="record.virtualPaymentProductId" copyable>
+                {{ record.virtualPaymentProductId }}
+              </a-typography-text>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="价格" data-index="priceAmount" :width="120">
@@ -170,6 +178,19 @@
                 v-model="editForm.code"
                 allow-clear
                 placeholder="例如：voice_basic"
+              />
+            </a-form-item>
+          </a-grid-item>
+          <a-grid-item :span="2">
+            <a-form-item
+              field="virtualPaymentProductId"
+              label="微信虚拟支付道具 ID"
+              extra="需与微信公众平台虚拟支付后台发布的道具 ID 完全一致"
+            >
+              <a-input
+                v-model="editForm.virtualPaymentProductId"
+                allow-clear
+                placeholder="例如：voice_basic_goods"
               />
             </a-form-item>
           </a-grid-item>
@@ -304,6 +325,7 @@
     originalPriceYuan?: number;
     estimatedServiceDays?: number;
     materialRequirement: string;
+    virtualPaymentProductId: string;
     status: VoicePackageStatus;
     sort: number;
     deliverables: DeliverableForm[];
@@ -336,6 +358,7 @@
     originalPriceYuan: undefined,
     estimatedServiceDays: undefined,
     materialRequirement: '',
+    virtualPaymentProductId: '',
     status: 'active',
     sort: 0,
     deliverables: [],
@@ -414,6 +437,7 @@
     );
     editForm.estimatedServiceDays = record.estimatedServiceDays;
     editForm.materialRequirement = record.materialRequirement;
+    editForm.virtualPaymentProductId = record.virtualPaymentProductId ?? '';
     editForm.status = record.status;
     editForm.sort = record.sort;
     editForm.deliverables =
@@ -468,6 +492,7 @@
     editForm.originalPriceYuan = undefined;
     editForm.estimatedServiceDays = undefined;
     editForm.materialRequirement = '';
+    editForm.virtualPaymentProductId = '';
     editForm.status = 'active';
     editForm.sort = 0;
     editForm.deliverables = [createDeliverable()];
@@ -499,6 +524,7 @@
     currency: 'CNY',
     estimatedServiceDays: toOptionalInteger(editForm.estimatedServiceDays),
     materialRequirement: editForm.materialRequirement.trim(),
+    virtualPaymentProductId: editForm.virtualPaymentProductId.trim(),
     status: editForm.status,
     sort: editForm.sort,
     deliverables: editForm.deliverables

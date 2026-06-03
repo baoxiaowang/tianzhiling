@@ -246,6 +246,60 @@ export default {
       ]
     ),
   },
+  wechatMiniProgram: {
+    appId: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_MINI_PROGRAM_APP_ID',
+        'NODE_WECHAT_MINI_PROGRAM_APP_ID',
+        'WECHAT_MINI_PROGRAM_APP_ID',
+        'ADMIN_API_WECHAT_APP_ID',
+        'NODE_WECHAT_APP_ID',
+        'WECHAT_APP_ID',
+        'ADMIN_API_WECHAT_PAY_APP_ID',
+        'NODE_WECHAT_PAY_APP_ID',
+        'WECHAT_PAY_APP_ID',
+      ],
+      ''
+    ),
+    appSecret: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_MINI_PROGRAM_APP_SECRET',
+        'NODE_WECHAT_MINI_PROGRAM_APP_SECRET',
+        'WECHAT_MINI_PROGRAM_APP_SECRET',
+        'ADMIN_API_WECHAT_APP_SECRET',
+        'NODE_WECHAT_APP_SECRET',
+        'WECHAT_APP_SECRET',
+        'ADMIN_API_WECHAT_PAY_APP_SECRET',
+        'NODE_WECHAT_PAY_APP_SECRET',
+        'WECHAT_PAY_APP_SECRET',
+      ],
+      ''
+    ),
+  },
+  wechatVirtualPay: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_WECHAT_VIRTUAL_PAY_ENABLED', 'NODE_WECHAT_VIRTUAL_PAY_ENABLED'],
+      false
+    ),
+    env: readNumberFrom(
+      ['ADMIN_API_WECHAT_VIRTUAL_PAY_ENV', 'NODE_WECHAT_VIRTUAL_PAY_ENV'],
+      process.env.NODE_ENV === 'production' ? 0 : 1
+    ),
+    sandboxAppKey: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_VIRTUAL_PAY_SANDBOX_APP_KEY',
+        'NODE_WECHAT_VIRTUAL_PAY_SANDBOX_APP_KEY',
+      ],
+      ''
+    ),
+    productionAppKey: readStringFrom(
+      [
+        'ADMIN_API_WECHAT_VIRTUAL_PAY_PRODUCTION_APP_KEY',
+        'NODE_WECHAT_VIRTUAL_PAY_PRODUCTION_APP_KEY',
+      ],
+      ''
+    ),
+  },
   bullmq: {
     defaultConnection: {
       host: readStringFrom(

@@ -75,6 +75,9 @@ export class SaveAdminVipPlanDTO {
   @Rule(RuleType.string().allow('').optional())
   voicePackageId?: string;
 
+  @Rule(RuleType.string().allow('').max(128).optional())
+  virtualPaymentProductId?: string;
+
   @Rule(statusRule.optional())
   status?: string;
 

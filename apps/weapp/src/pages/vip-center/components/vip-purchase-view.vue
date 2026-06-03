@@ -58,6 +58,20 @@
                 </view>
               </view>
           </template>
+          <template v-else>
+            <view class="plan__header">
+                {{ plan.name }}
+              </view>
+              <view class="plan__subtitle">
+                <view class="plan__subtitle-price">
+                  {{ formatPrice(plan.priceAmount) }}
+                </view>
+                /
+                <view class="plan__subtitle-original">
+                  {{ formatPrice(plan.originalPriceAmount || 0) }}
+                </view>
+              </view>
+          </template>
             <!-- <view v-if="isFeaturedVipPlan(plan)" class="vip-purchase-view__plan-badge">
               更多购买
             </view>

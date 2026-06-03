@@ -23,9 +23,29 @@ export class OrderController {
     );
   }
 
+  @Post('/vip-plan/virtual-payment')
+  async createVipPlanVirtualPaymentOrder(
+    @Body() body: CreateVipPlanOrderBodyDTO
+  ) {
+    return this.orderService.createVipPlanVirtualPaymentOrder(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
   @Post('/voice-package')
   async createVoicePackageOrder(@Body() body: CreateVoicePackageOrderBodyDTO) {
     return this.orderService.createVoicePackageOrder(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
+  @Post('/voice-package/virtual-payment')
+  async createVoicePackageVirtualPaymentOrder(
+    @Body() body: CreateVoicePackageOrderBodyDTO
+  ) {
+    return this.orderService.createVoicePackageVirtualPaymentOrder(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
     );

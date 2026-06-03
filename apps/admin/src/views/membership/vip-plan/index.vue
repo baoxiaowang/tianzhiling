@@ -54,7 +54,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1440 }"
+        :scroll="{ x: 1600 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -68,6 +68,14 @@
           <a-table-column title="计划编码" data-index="code" :width="180">
             <template #cell="{ record }">
               <a-typography-text copyable>{{ record.code }}</a-typography-text>
+            </template>
+          </a-table-column>
+          <a-table-column title="微信道具ID" :width="170">
+            <template #cell="{ record }">
+              <a-typography-text v-if="record.virtualPaymentProductId" copyable>
+                {{ record.virtualPaymentProductId }}
+              </a-typography-text>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column title="价格" data-index="priceAmount" :width="120">
@@ -194,6 +202,19 @@
                 v-model="editForm.code"
                 allow-clear
                 placeholder="例如：vip_year"
+              />
+            </a-form-item>
+          </a-grid-item>
+          <a-grid-item :span="2">
+            <a-form-item
+              field="virtualPaymentProductId"
+              label="微信虚拟支付道具 ID"
+              extra="需与微信公众平台虚拟支付后台发布的道具 ID 完全一致"
+            >
+              <a-input
+                v-model="editForm.virtualPaymentProductId"
+                allow-clear
+                placeholder="例如：vip_year_goods"
               />
             </a-form-item>
           </a-grid-item>
@@ -365,6 +386,7 @@
     durationDays?: number;
     couponGrantYuan?: number;
     voicePackageId?: string;
+    virtualPaymentProductId: string;
     status: VipPlanStatus;
     sort: number;
     benefits: VipPlanBenefitForm[];
@@ -401,6 +423,7 @@
     durationDays: 365,
     couponGrantYuan: undefined,
     voicePackageId: undefined,
+    virtualPaymentProductId: '',
     status: 'active',
     sort: 0,
     benefits: [],
@@ -491,6 +514,7 @@
     editForm.durationDays = record.durationDays;
     editForm.couponGrantYuan = optionalAmountToYuan(record.couponGrantAmount);
     editForm.voicePackageId = record.voicePackageId;
+    editForm.virtualPaymentProductId = record.virtualPaymentProductId ?? '';
     editForm.status = record.status;
     editForm.sort = record.sort;
     editForm.benefits =
@@ -548,6 +572,7 @@
     durationDays: editForm.lifetime ? undefined : editForm.durationDays,
     couponGrantAmount: yuanToOptionalAmount(editForm.couponGrantYuan),
     voicePackageId: editForm.voicePackageId,
+    virtualPaymentProductId: editForm.virtualPaymentProductId.trim(),
     status: editForm.status,
     sort: editForm.sort,
     benefits: buildBenefitsPayload(),
@@ -563,6 +588,7 @@
     editForm.durationDays = 365;
     editForm.couponGrantYuan = undefined;
     editForm.voicePackageId = undefined;
+    editForm.virtualPaymentProductId = '';
     editForm.status = 'active';
     editForm.sort = 0;
     editForm.benefits = [createBenefitRow()];

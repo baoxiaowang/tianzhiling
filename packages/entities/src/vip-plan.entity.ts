@@ -65,6 +65,9 @@ export class VipPlanEntity extends BaseEntity {
   voicePackageName?: string;
 
   @Column()
+  virtualPaymentProductId?: string;
+
+  @Column()
   status: VipPlanStatus;
 
   @Column()

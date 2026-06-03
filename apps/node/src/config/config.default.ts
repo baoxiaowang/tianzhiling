@@ -294,6 +294,22 @@ export default {
       ''
     ),
   },
+  wechatVirtualPay: {
+    enabled: readBooleanFrom(['NODE_WECHAT_VIRTUAL_PAY_ENABLED'], false),
+    offerId: readStringFrom(['NODE_WECHAT_VIRTUAL_PAY_OFFER_ID'], ''),
+    env: readNumberFrom(
+      ['NODE_WECHAT_VIRTUAL_PAY_ENV'],
+      process.env.NODE_ENV === 'production' ? 0 : 1
+    ),
+    sandboxAppKey: readStringFrom(
+      ['NODE_WECHAT_VIRTUAL_PAY_SANDBOX_APP_KEY'],
+      ''
+    ),
+    productionAppKey: readStringFrom(
+      ['NODE_WECHAT_VIRTUAL_PAY_PRODUCTION_APP_KEY'],
+      ''
+    ),
+  },
   openai: {
     enabled: readBooleanFrom(['NODE_ENABLED'], true),
     apiKey: readStringFrom(['NODE_MINIMAX_API_KEY'], ''),

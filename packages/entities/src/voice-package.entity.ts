@@ -43,6 +43,9 @@ export class VoicePackageEntity extends BaseEntity {
   estimatedServiceDays?: number;
 
   @Column()
+  virtualPaymentProductId?: string;
+
+  @Column()
   status: VoicePackageStatus;
 
   @Column()

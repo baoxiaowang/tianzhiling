@@ -390,6 +390,10 @@ function createService(
   };
   const wechatPayService = {
     getOpenidByJsCode: jest.fn().mockResolvedValue('openid-1'),
+    getSessionByJsCode: jest.fn().mockResolvedValue({
+      openid: 'openid-1',
+      sessionKey: 'session-key-1',
+    }),
     createVipPlanPrepay: jest.fn().mockResolvedValue({
       prepayId: 'prepay-id',
       payment: {
@@ -400,10 +404,21 @@ function createService(
         paySign: 'sign',
       },
     }),
+    buildVirtualPaymentParams: jest.fn().mockReturnValue({
+      mode: 'short_series_goods',
+      signData: '{"mock":true}',
+      paySig: 'pay-sig',
+      signature: 'signature',
+    }),
+    getVirtualPayEnv: jest.fn().mockReturnValue(1),
+    queryVirtualOrder: jest.fn(),
     queryTransactionByOrderNo: jest.fn(),
     refundOrder: jest.fn().mockResolvedValue({
       out_refund_no: `R${ORDER_NO}`,
       status: 'SUCCESS',
+    }),
+    refundVirtualOrder: jest.fn().mockResolvedValue({
+      refund_order_id: `R${ORDER_NO}`,
     }),
   };
   const queue = {
@@ -663,6 +678,93 @@ describe('OrderService payment expiration and reconciliation', () => {
     );
   });
 
+  it('creates a vip virtual payment order with product id and virtual params', async () => {
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        virtualPaymentProductId: 'vip_month_goods',
+      }
+    );
+
+    const result = await service.createVipPlanVirtualPaymentOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.getSessionByJsCode).toHaveBeenCalledWith(
+      'wx-code'
+    );
+    expect(wechatPayService.buildVirtualPaymentParams).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: 'session-key-1',
+        productId: 'vip_month_goods',
+        amount: 990,
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentProvider: 'wechat_virtual_pay',
+        virtualPaymentProductId: 'vip_month_goods',
+        virtualPaymentEnv: 1,
+        payerOpenid: 'openid-1',
+      })
+    );
+    expect(result.virtualPayment).toEqual({
+      mode: 'short_series_goods',
+      signData: '{"mock":true}',
+      paySig: 'pay-sig',
+      signature: 'signature',
+    });
+  });
+
+  it('creates a voice package virtual payment order with product id', async () => {
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {},
+      {
+        voicePackageOverrides: {
+          virtualPaymentProductId: 'voice_standard_goods',
+        },
+      }
+    );
+
+    await service.createVoicePackageVirtualPaymentOrder(auth, {
+      voicePackageId: VOICE_PACKAGE_ID,
+      agentId: AGENT_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.buildVirtualPaymentParams).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: 'voice_standard_goods',
+        orderNo: expect.stringMatching(/^VOICE/),
+        amount: 12900,
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderType: OrderType.voicePackage,
+        paymentProvider: 'wechat_virtual_pay',
+        virtualPaymentProductId: 'voice_standard_goods',
+        virtualPaymentEnv: 1,
+      })
+    );
+  });
+
+  it('rejects virtual payment order when product id is missing', async () => {
+    const { service, auth, wechatPayService } = createService();
+
+    await expect(
+      service.createVipPlanVirtualPaymentOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({
+      code: 'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING',
+    });
+    expect(wechatPayService.getSessionByJsCode).not.toHaveBeenCalled();
+  });
+
   it('rejects voice package purchase when the agent already has an active training task', async () => {
     const { service, auth, wechatPayService } = createService(
       {},
@@ -733,6 +835,353 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result?.status).toBe(OrderStatus.completed);
   });
 
+  it('grants membership after virtual payment goods delivery notify succeeds', async () => {
+    const { service, order, userMembershipModel, wechatPayService } =
+      createService({
+        paymentProvider: 'wechat_virtual_pay',
+        payerOpenid: 'openid-1',
+        virtualPaymentProductId: 'vip_month_goods',
+        virtualPaymentEnv: 1,
+      });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 2,
+      paid_fee: 990,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-1',
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_goods_deliver_notify',
+      OpenId: 'openid-1',
+      OutTradeNo: ORDER_NO,
+      Env: 1,
+      GoodsInfo: {
+        ProductId: 'vip_month_goods',
+        ActualPrice: 990,
+      },
+    });
+
+    expect(wechatPayService.queryVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: ORDER_NO,
+      env: 1,
+    });
+    expect(userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        sourceOrderId: order.id,
+        status: UserMembershipStatus.active,
+      })
+    );
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.paymentTradeNo).toBe('wxpay-virtual-1');
+  });
+
+  it('creates a voice training task after virtual payment notify succeeds', async () => {
+    const { service, order, voiceTrainingTaskModel, wechatPayService } =
+      createService(
+        createVoiceOrder({
+          paymentProvider: 'wechat_virtual_pay',
+          payerOpenid: 'openid-1',
+          virtualPaymentProductId: 'voice_standard_goods',
+          virtualPaymentEnv: 1,
+        })
+      );
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: VOICE_ORDER_NO,
+      status: 2,
+      paid_fee: 12900,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-2',
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_goods_deliver_notify',
+      OpenId: 'openid-1',
+      OutTradeNo: VOICE_ORDER_NO,
+      Env: 1,
+      GoodsInfo: {
+        ProductId: 'voice_standard_goods',
+        ActualPrice: 12900,
+      },
+    });
+
+    expect(voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        agentId: new MongoObjectId(AGENT_ID),
+        orderId: order.id,
+        voicePackageId: new MongoObjectId(VOICE_PACKAGE_ID),
+        status: VoiceTrainingTaskStatus.paid,
+      })
+    );
+    expect(order.status).toBe(OrderStatus.completed);
+  });
+
+  it('does not duplicate benefits for repeated virtual payment notify', async () => {
+    const { service, userMembershipModel, wechatPayService } = createService({
+      status: OrderStatus.completed,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+    });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 4,
+      paid_fee: 990,
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_goods_deliver_notify',
+      OpenId: 'openid-1',
+      OutTradeNo: ORDER_NO,
+      Env: 1,
+      GoodsInfo: {
+        ProductId: 'vip_month_goods',
+        ActualPrice: 990,
+      },
+    });
+
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects virtual payment notify when amount does not match', async () => {
+    const { service, wechatPayService } = createService({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+    });
+
+    await expect(
+      service.handleWechatVirtualPaymentNotify({
+        Event: 'xpay_goods_deliver_notify',
+        OpenId: 'openid-1',
+        OutTradeNo: ORDER_NO,
+        Env: 1,
+        GoodsInfo: {
+          ProductId: 'vip_month_goods',
+          ActualPrice: 980,
+        },
+      })
+    ).rejects.toMatchObject({
+      code: 'WECHAT_VIRTUAL_PAY_AMOUNT_MISMATCH',
+    });
+    expect(wechatPayService.queryVirtualOrder).not.toHaveBeenCalled();
+  });
+
+  it('marks a virtual payment order refunded after refund notify succeeds', async () => {
+    const membership = createMembership();
+    const entitlement = createEntitlement();
+    const {
+      service,
+      order,
+      orderModel,
+      userMembershipModel,
+      agentEntitlementModel,
+      wechatPayService,
+    } = createService(
+      {
+        status: OrderStatus.completed,
+        paymentProvider: 'wechat_virtual_pay',
+        payerOpenid: 'openid-1',
+        paidAmount: 990,
+        virtualPaymentEnv: 1,
+      },
+      {},
+      {
+        memberships: [membership],
+        entitlements: [entitlement],
+      }
+    );
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 5,
+      refund_fee: 990,
+      left_fee: 0,
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_refund_notify',
+      OpenId: 'openid-1',
+      MchOrderId: ORDER_NO,
+      RefundFee: 990,
+      RetCode: 0,
+      RefundSuccTimestamp: 1777601000,
+    });
+
+    expect(wechatPayService.queryVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: ORDER_NO,
+      env: 1,
+    });
+    expect(userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: UserMembershipStatus.refunded,
+      })
+    );
+    expect(agentEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: AgentEntitlementStatus.refunded,
+      })
+    );
+    expect(order.status).toBe(OrderStatus.refunded);
+    expect(order.refundAmount).toBe(990);
+    expect(order.refundedAt).toEqual(new Date(1777601000 * 1000));
+    expect(
+      orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
+    ).toEqual(
+      expect.objectContaining({
+        status: OrderStatus.refunded,
+        refundAmount: 990,
+      })
+    );
+  });
+
+  it('ignores repeated virtual payment refund notify for refunded orders', async () => {
+    const { service, orderModel, userMembershipModel, agentEntitlementModel } =
+      createService(
+        {
+          status: OrderStatus.refunded,
+          paymentProvider: 'wechat_virtual_pay',
+          payerOpenid: 'openid-1',
+          paidAmount: 990,
+          refundAmount: 990,
+          refundedAt: new Date('2026-05-01T00:20:00.000Z'),
+        },
+        {},
+        {
+          memberships: [
+            createMembership({ status: UserMembershipStatus.refunded }),
+          ],
+          entitlements: [
+            createEntitlement({ status: AgentEntitlementStatus.refunded }),
+          ],
+        }
+      );
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_refund_notify',
+      OpenId: 'openid-1',
+      MchOrderId: ORDER_NO,
+      RefundFee: 990,
+      RetCode: 0,
+    });
+
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(agentEntitlementModel.save).not.toHaveBeenCalled();
+    expect(orderModel.save).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a virtual payment order refunded before xpay query_order confirms refund', async () => {
+    const { service, order, orderModel, userMembershipModel, wechatPayService } =
+      createService(
+        {
+          status: OrderStatus.completed,
+          paymentProvider: 'wechat_virtual_pay',
+          payerOpenid: 'openid-1',
+          paidAmount: 990,
+          virtualPaymentEnv: 1,
+        },
+        {},
+        {
+          memberships: [createMembership()],
+        }
+      );
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 4,
+      refund_fee: 0,
+      left_fee: 990,
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_refund_notify',
+      OpenId: 'openid-1',
+      MchOrderId: ORDER_NO,
+      RefundFee: 990,
+      RetCode: 0,
+    });
+
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.refundAmount).toBeUndefined();
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(orderModel.save).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a virtual payment order refunded for partial refunds', async () => {
+    const { service, order, orderModel, userMembershipModel, wechatPayService } =
+      createService(
+        {
+          status: OrderStatus.completed,
+          paymentProvider: 'wechat_virtual_pay',
+          payerOpenid: 'openid-1',
+          paidAmount: 990,
+          virtualPaymentEnv: 1,
+        },
+        {},
+        {
+          memberships: [createMembership()],
+        }
+      );
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 5,
+      refund_fee: 500,
+      left_fee: 490,
+    });
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_refund_notify',
+      OpenId: 'openid-1',
+      MchOrderId: ORDER_NO,
+      RefundFee: 500,
+      RetCode: 0,
+    });
+
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.refundAmount).toBeUndefined();
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(orderModel.save).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a virtual payment order refunded when refund notify failed', async () => {
+    const { service, order, orderModel, userMembershipModel } = createService(
+      {
+        status: OrderStatus.completed,
+        paymentProvider: 'wechat_virtual_pay',
+        payerOpenid: 'openid-1',
+        paidAmount: 990,
+      },
+      {},
+      {
+        memberships: [createMembership()],
+      }
+    );
+
+    await service.handleWechatVirtualPaymentNotify({
+      Event: 'xpay_refund_notify',
+      OpenId: 'openid-1',
+      MchOrderId: ORDER_NO,
+      RefundFee: 990,
+      RetCode: 1,
+      RetMsg: 'refund failed',
+    });
+
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.refundAmount).toBeUndefined();
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(orderModel.save).not.toHaveBeenCalled();
+  });
+
   it('does not create duplicate voice training tasks for repeated payment notifications', async () => {
     const existingTask = createVoiceTrainingTask();
     const { service, voiceTrainingTaskModel } = createService(
@@ -774,6 +1223,35 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(wechatPayService.queryTransactionByOrderNo).not.toHaveBeenCalled();
     expect(orderModel.save).not.toHaveBeenCalled();
     expect(result.status).toBe(status);
+  });
+
+  it('syncs virtual payment order through xpay query_order', async () => {
+    const { service, order, auth, wechatPayService } = createService({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+      paymentExpiredAt: new Date(NOW.getTime() + 5 * 60 * 1000),
+    });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 2,
+      paid_fee: 990,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-3',
+    });
+
+    const result = await service.syncUserOrderPayment(auth, ORDER_ID);
+
+    expect(wechatPayService.queryTransactionByOrderNo).not.toHaveBeenCalled();
+    expect(wechatPayService.queryVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: ORDER_NO,
+      env: 1,
+    });
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(result.status).toBe(OrderStatus.completed);
   });
 
   it('keeps a non-expired pending order open when WeChat trade state is not final', async () => {

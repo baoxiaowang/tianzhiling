@@ -279,6 +279,7 @@ export class MembershipService {
         : undefined,
       voicePackageCode: plan.voicePackageCode,
       voicePackageName: plan.voicePackageName,
+      virtualPaymentProductId: plan.virtualPaymentProductId ?? '',
     };
   }
 

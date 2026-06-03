@@ -60,13 +60,18 @@ import {
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
-import { createVipPlanOrder } from '../../apis/order'
+import { createVipPlanOrder, createVipPlanPaymentOrder } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import {
+  isWechatPaymentCancel,
+  requestWechatVirtualPaymentWithFallback,
+  showWechatVirtualPaymentError,
+} from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
 import VipPurchaseView from './components/vip-purchase-view.vue'
 
@@ -204,12 +209,29 @@ async function handlePurchaseTap() {
       mask: true,
     })
 
-    const result = await createVipPlanOrder({
+    const result = await createVipPlanPaymentOrder({
       vipPlanId: selectedPlan.value.id,
       jsCode,
     })
 
-    await Taro.requestPayment(result.payment)
+    if (result.paymentKind === 'virtual') {
+      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
+        const fallbackLoginResult = await Taro.login()
+        const fallbackJsCode = fallbackLoginResult.code?.trim()
+
+        if (!fallbackJsCode) {
+          throw new Error('微信登录凭证获取失败，请稍后重试')
+        }
+
+        return createVipPlanOrder({
+          vipPlanId: selectedPlan.value.id,
+          jsCode: fallbackJsCode,
+        })
+      })
+      result.order = paidOrder
+    } else {
+      await Taro.requestPayment(result.payment)
+    }
     void Taro.hideLoading()
 
     try {
@@ -223,8 +245,12 @@ async function handlePurchaseTap() {
       void loadMembershipCenter()
     }
   } catch (error) {
-    if (isPaymentCancel(error)) {
+    if (isWechatPaymentCancel(error)) {
       showToast('支付已取消')
+      return
+    }
+
+    if (await showWechatVirtualPaymentError(error)) {
       return
     }
 
@@ -238,15 +264,6 @@ async function handlePurchaseTap() {
     void Taro.hideLoading()
     isPaying.value = false
   }
-}
-
-function isPaymentCancel(error: unknown) {
-  const errMsg =
-    error && typeof error === 'object' && 'errMsg' in error
-      ? String(error.errMsg)
-      : ''
-
-  return /cancel|取消/.test(errMsg)
 }
 
 function showToast(title: string) {

@@ -122,6 +122,7 @@ export class AdminVipPlanService {
       { description: { $regex: escapedKeyword, $options: 'i' } },
       { voicePackageCode: { $regex: escapedKeyword, $options: 'i' } },
       { voicePackageName: { $regex: escapedKeyword, $options: 'i' } },
+      { virtualPaymentProductId: { $regex: escapedKeyword, $options: 'i' } },
     ];
 
     if (MongoObjectId.isValid(keyword)) {
@@ -176,6 +177,7 @@ export class AdminVipPlanService {
       voicePackageId: voicePackage?.id,
       voicePackageCode: voicePackage?.code,
       voicePackageName: voicePackage?.name,
+      virtualPaymentProductId: payload.virtualPaymentProductId?.trim() || '',
       status: this.normalizeStatus(payload.status),
       sort: this.normalizeNonNegativeInteger(payload.sort, 0),
     };
@@ -283,6 +285,7 @@ export class AdminVipPlanService {
         : undefined,
       voicePackageCode: plan.voicePackageCode,
       voicePackageName: plan.voicePackageName,
+      virtualPaymentProductId: plan.virtualPaymentProductId ?? '',
       status: plan.status,
       sort: plan.sort ?? 0,
       createdAt: this.formatDate(plan.createdAt),

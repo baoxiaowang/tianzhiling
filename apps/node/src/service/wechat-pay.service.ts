@@ -2,7 +2,7 @@ import { AppError } from '../common/errors';
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
-import { createDecipheriv } from 'crypto';
+import { createDecipheriv, createHmac } from 'crypto';
 import * as https from 'https';
 import { Formatter, Rsa, Wechatpay } from 'wechatpay-axios-plugin';
 
@@ -24,6 +24,14 @@ interface WechatMiniProgramConfig {
   appSecret?: string;
 }
 
+interface WechatVirtualPayConfig {
+  enabled?: boolean;
+  offerId?: string;
+  env?: number;
+  sandboxAppKey?: string;
+  productionAppKey?: string;
+}
+
 interface WechatSessionResponse {
   openid?: string;
   session_key?: string;
@@ -37,6 +45,53 @@ interface WechatAccessTokenResponse {
   expires_in?: number;
   errcode?: number;
   errmsg?: string;
+}
+
+interface WechatXPayResponse {
+  errcode?: number;
+  errmsg?: string;
+}
+
+export interface WechatSessionPayload {
+  openid: string;
+  sessionKey: string;
+}
+
+export interface WechatVirtualPaymentParams {
+  mode: 'short_series_goods';
+  signData: string;
+  paySig: string;
+  signature: string;
+}
+
+export interface WechatVirtualOrderPayload {
+  order_id?: string;
+  create_time?: number;
+  update_time?: number;
+  status?: number;
+  order_type?: number;
+  order_fee?: number;
+  paid_fee?: number;
+  refund_fee?: number;
+  paid_time?: number;
+  provide_time?: number;
+  biz_meta?: string;
+  env_type?: number;
+  left_fee?: number;
+  wx_order_id?: string;
+  channel_order_id?: string;
+  wxpay_order_id?: string;
+}
+
+export interface WechatVirtualOrderResponse extends WechatXPayResponse {
+  order?: WechatVirtualOrderPayload;
+}
+
+export interface WechatVirtualRefundResponse extends WechatXPayResponse {
+  refund_order_id?: string;
+  refund_wx_order_id?: string;
+  pay_order_id?: string;
+  pay_wx_order_id?: string;
 }
 
 interface WechatPhoneNumberResponse {
@@ -126,12 +181,15 @@ export class WechatPayService {
   @Config('wechatMiniProgram')
   wechatMiniProgramConfig: WechatMiniProgramConfig;
 
+  @Config('wechatVirtualPay')
+  wechatVirtualPayConfig: WechatVirtualPayConfig;
+
   @Inject()
   redisService: RedisService;
 
   private wxpayClient?: unknown;
 
-  async getOpenidByJsCode(jsCode: string): Promise<string> {
+  private async exchangeJsCode(jsCode: string): Promise<WechatSessionResponse> {
     const code = jsCode?.trim();
     const appId = this.requireMiniProgramConfig('appId');
     const appSecret = this.requireMiniProgramConfig('appSecret');
@@ -157,11 +215,37 @@ export class WechatPayService {
       );
     }
 
+    return response;
+  }
+
+  async getOpenidByJsCode(jsCode: string): Promise<string> {
+    const response = await this.exchangeJsCode(jsCode);
+
     if (!response.openid) {
       throw new AppError('WECHAT_OPENID_MISSING', 'wechat openid is missing');
     }
 
     return response.openid;
+  }
+
+  async getSessionByJsCode(jsCode: string): Promise<WechatSessionPayload> {
+    const response = await this.exchangeJsCode(jsCode);
+
+    if (!response.openid) {
+      throw new AppError('WECHAT_OPENID_MISSING', 'wechat openid is missing');
+    }
+
+    if (!response.session_key) {
+      throw new AppError(
+        'WECHAT_SESSION_KEY_MISSING',
+        'wechat session key is missing'
+      );
+    }
+
+    return {
+      openid: response.openid,
+      sessionKey: response.session_key,
+    };
   }
 
   async getPhoneNumberByCode(phoneCode: string): Promise<string> {
@@ -385,6 +469,96 @@ export class WechatPayService {
     }
   }
 
+  buildVirtualPaymentParams(payload: {
+    sessionKey: string;
+    productId: string;
+    orderNo: string;
+    amount: number;
+    attach: string;
+  }): WechatVirtualPaymentParams {
+    this.ensureVirtualPayEnabled();
+    const env = this.getVirtualPayEnv();
+    const signData = JSON.stringify({
+      offerId: this.requireVirtualPayConfig('offerId'),
+      buyQuantity: 1,
+      env,
+      currencyType: 'CNY',
+      productId: payload.productId,
+      goodsPrice: payload.amount,
+      outTradeNo: payload.orderNo,
+      attach: payload.attach,
+      mode: 'short_series_goods',
+    });
+
+    return {
+      mode: 'short_series_goods',
+      signData,
+      paySig: this.calcVirtualPaySig('requestVirtualPayment', signData, env),
+      signature: this.calcSignature(signData, payload.sessionKey),
+    };
+  }
+
+  getVirtualPayEnv(): number {
+    return this.wechatVirtualPayConfig?.env === 0 ? 0 : 1;
+  }
+
+  async queryVirtualOrder(payload: {
+    openid: string;
+    orderNo: string;
+    env: number;
+  }): Promise<WechatVirtualOrderPayload | null> {
+    const body = this.stringifyXPayBody({
+      openid: payload.openid,
+      env: payload.env,
+      order_id: payload.orderNo,
+    });
+    let response: WechatVirtualOrderResponse;
+
+    try {
+      response = await this.postXPay<WechatVirtualOrderResponse>(
+        '/xpay/query_order',
+        body,
+        payload.env
+      );
+    } catch (error) {
+      if (this.isWechatVirtualPayDataNotExists(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+
+    return response.order ?? null;
+  }
+
+  async refundVirtualOrder(payload: {
+    openid: string;
+    orderNo: string;
+    refundNo: string;
+    leftFee: number;
+    refundFee: number;
+    reason?: string;
+    env: number;
+  }): Promise<WechatVirtualRefundResponse> {
+    const body = this.stringifyXPayBody({
+      openid: payload.openid,
+      order_id: payload.orderNo,
+      refund_order_id: payload.refundNo,
+      left_fee: payload.leftFee,
+      refund_fee: payload.refundFee,
+      biz_meta: payload.reason || '',
+      refund_reason: '3',
+      req_from: '2',
+      env: payload.env,
+    });
+
+    return this.postXPay<WechatVirtualRefundResponse>(
+      '/xpay/refund_order',
+      body,
+      payload.env
+    );
+  }
+
   verifyNotifySignature(rawBody: string, headers: Record<string, string>) {
     const timestamp = headers['wechatpay-timestamp'];
     const nonce = headers['wechatpay-nonce'];
@@ -526,6 +700,16 @@ export class WechatPayService {
     }
   }
 
+  private ensureVirtualPayEnabled(): void {
+    if (!this.wechatVirtualPayConfig?.enabled) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_NOT_ENABLED',
+        'wechat virtual pay is not enabled',
+        503
+      );
+    }
+  }
+
   private requireConfig(key: keyof WechatPayConfig): string {
     const value = this.wechatPayConfig?.[key];
 
@@ -552,6 +736,79 @@ export class WechatPayService {
       `wechat mini program config ${String(key)} is missing`,
       500
     );
+  }
+
+  private requireVirtualPayConfig(key: keyof WechatVirtualPayConfig): string {
+    const value = this.wechatVirtualPayConfig?.[key];
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+
+    throw new AppError(
+      'WECHAT_VIRTUAL_PAY_CONFIG_MISSING',
+      `wechat virtual pay config ${String(key)} is missing`,
+      500
+    );
+  }
+
+  private requireVirtualPayAppKey(env: number): string {
+    return env === 0
+      ? this.requireVirtualPayConfig('productionAppKey')
+      : this.requireVirtualPayConfig('sandboxAppKey');
+  }
+
+  private calcVirtualPaySig(uri: string, body: string, env: number): string {
+    return createHmac('sha256', this.requireVirtualPayAppKey(env))
+      .update(`${uri}&${body}`)
+      .digest('hex');
+  }
+
+  private calcSignature(body: string, sessionKey: string): string {
+    return createHmac('sha256', sessionKey).update(body).digest('hex');
+  }
+
+  private stringifyXPayBody(body: Record<string, unknown>): string {
+    return JSON.stringify(body);
+  }
+
+  private isWechatVirtualPayDataNotExists(error: unknown): boolean {
+    const response = error instanceof AppError ? error.data : null;
+    const xpayResponse = response as WechatXPayResponse | null;
+
+    return (
+      error instanceof AppError &&
+      error.code === 'WECHAT_VIRTUAL_PAY_API_FAILED' &&
+      xpayResponse?.errcode === 268490002 &&
+      /数据不存在/.test(xpayResponse.errmsg ?? '')
+    );
+  }
+
+  private async postXPay<T extends WechatXPayResponse>(
+    uri: string,
+    body: string,
+    env: number
+  ): Promise<T> {
+    this.ensureVirtualPayEnabled();
+    const accessToken = await this.getMiniProgramAccessToken();
+    const paySig = this.calcVirtualPaySig(uri, body, env);
+    const response = await this.postJson<T>(
+      `https://api.weixin.qq.com${uri}?access_token=${encodeURIComponent(
+        accessToken
+      )}&pay_sig=${encodeURIComponent(paySig)}`,
+      body
+    );
+
+    if (response.errcode) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_API_FAILED',
+        response.errmsg || 'wechat virtual pay api failed',
+        502,
+        response
+      );
+    }
+
+    return response;
   }
 
   private async getMiniProgramAccessToken(): Promise<string> {
@@ -618,8 +875,11 @@ export class WechatPayService {
     });
   }
 
-  private postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-    const requestBody = JSON.stringify(body);
+  private postJson<T>(
+    url: string,
+    body: Record<string, unknown> | string
+  ): Promise<T> {
+    const requestBody = typeof body === 'string' ? body : JSON.stringify(body);
 
     return new Promise((resolve, reject) => {
       const request = https.request(

@@ -175,6 +175,10 @@ function createService() {
       out_refund_no: 'RVIP202605020001',
       status: 'SUCCESS',
     }),
+    refundVirtualOrder: jest.fn().mockResolvedValue({
+      refund_order_id: 'RVIP202605020001',
+    }),
+    getVirtualPayEnv: jest.fn().mockReturnValue(0),
   } as any;
 
   return {
@@ -414,6 +418,37 @@ describe('AdminOrderService', () => {
     expect(result.refundAmount).toBe(9900);
 
     jest.useRealTimers();
+  });
+
+  it('refunds a virtual payment vip order through xpay', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders, memberships, entitlements } = createService();
+    const order = createCompletedVipOrder({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentEnv: 0,
+    });
+
+    orders.push(order);
+    memberships.push(createMembership());
+    entitlements.push(createEntitlement());
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(service.adminWechatPayService.refundVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: 'VIP202605020001',
+      refundNo: 'RVIP202605020001',
+      leftFee: 9900,
+      refundFee: 9900,
+      reason: '管理端退订退款',
+      env: 0,
+    });
+    expect(result.status).toBe(OrderStatus.refunded);
+    expect(result.refundAmount).toBe(9900);
   });
 
   it('refunds a voice package order and marks the training task refunded', async () => {

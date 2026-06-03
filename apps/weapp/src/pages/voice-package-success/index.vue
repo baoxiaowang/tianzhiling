@@ -96,7 +96,7 @@ export default {
 import Taro, { useDidShow, useLoad } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
-import { createVoicePackageOrder } from '../../apis/order'
+import { createVoicePackageOrder, createVoicePackagePaymentOrder } from '../../apis/order'
 import {
   getAgentVoicePackageCenter,
   type AgentVoicePackageCenter,
@@ -108,6 +108,11 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import VoiceCustomerServiceCard from '../../components/voice-customer-service-card/voice-customer-service-card.vue'
 import VoicePackageSheet from '../../components/voice-package-sheet/voice-package-sheet.vue'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import {
+  isWechatPaymentCancel,
+  requestWechatVirtualPaymentWithFallback,
+  showWechatVirtualPaymentError,
+} from '../../utils/virtual-payment'
 
 const agentId = ref('')
 const voicePackageCenter = ref<AgentVoicePackageCenter | null>(null)
@@ -309,18 +314,45 @@ async function handlePay() {
       throw new Error('微信登录失败，请稍后重试')
     }
 
-    const result = await createVoicePackageOrder({
+    const result = await createVoicePackagePaymentOrder({
       voicePackageId: voicePackage.id,
       agentId: agentId.value,
       jsCode: code,
     })
 
-    await Taro.requestPayment(result.payment)
+    if (result.paymentKind === 'virtual') {
+      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
+        const fallbackLoginResult = await Taro.login()
+        const fallbackCode = fallbackLoginResult.code?.trim()
+
+        if (!fallbackCode) {
+          throw new Error('微信登录失败，请稍后重试')
+        }
+
+        return createVoicePackageOrder({
+          voicePackageId: voicePackage.id,
+          agentId: agentId.value,
+          jsCode: fallbackCode,
+        })
+      })
+      result.order = paidOrder
+    } else {
+      await Taro.requestPayment(result.payment)
+    }
     voicePackagePopupVisible.value = false
     await Taro.redirectTo({
       url: `/pages/payment-result/index?orderId=${encodeURIComponent(result.order.id)}`,
     })
   } catch (error) {
+    if (isWechatPaymentCancel(error)) {
+      showToast('支付已取消')
+      return
+    }
+
+    if (await showWechatVirtualPaymentError(error)) {
+      return
+    }
+
     const message =
       error instanceof ApiException && error.code === 'VOICE_TRAINING_TASK_EXISTS'
         ? '已有声音训练任务处理中，请完成后再购买其他套餐'

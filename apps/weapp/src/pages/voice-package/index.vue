@@ -166,7 +166,7 @@ import { buildOssMediaUrl } from '@tzl/shared'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { getAgents, type AgentSummary } from '../../apis/agent'
-import { createVoicePackageOrder } from '../../apis/order'
+import { createVoicePackageOrder, createVoicePackagePaymentOrder } from '../../apis/order'
 import {
   getAgentVoicePackageCenter,
   type AgentVoicePackageCenter,
@@ -179,6 +179,11 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import VoicePackagePaymentPanel from '../../components/voice-package-payment-panel/voice-package-payment-panel.vue'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import {
+  isWechatPaymentCancel,
+  requestWechatVirtualPaymentWithFallback,
+  showWechatVirtualPaymentError,
+} from '../../utils/virtual-payment'
 
 const initialAgentId = ref('')
 const agents = ref<AgentSummary[]>([])
@@ -467,17 +472,44 @@ async function handlePay() {
       throw new Error('微信登录失败，请稍后重试')
     }
 
-    const result = await createVoicePackageOrder({
+    const result = await createVoicePackagePaymentOrder({
       voicePackageId: voicePackage.id,
       agentId,
       jsCode: code,
     })
 
-    await Taro.requestPayment(result.payment)
+    if (result.paymentKind === 'virtual') {
+      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
+        const fallbackLoginResult = await Taro.login()
+        const fallbackCode = fallbackLoginResult.code?.trim()
+
+        if (!fallbackCode) {
+          throw new Error('微信登录失败，请稍后重试')
+        }
+
+        return createVoicePackageOrder({
+          voicePackageId: voicePackage.id,
+          agentId,
+          jsCode: fallbackCode,
+        })
+      })
+      result.order = paidOrder
+    } else {
+      await Taro.requestPayment(result.payment)
+    }
     await Taro.redirectTo({
       url: `/pages/payment-result/index?orderId=${encodeURIComponent(result.order.id)}`,
     })
   } catch (error) {
+    if (isWechatPaymentCancel(error)) {
+      showToast('支付已取消')
+      return
+    }
+
+    if (await showWechatVirtualPaymentError(error)) {
+      return
+    }
+
     const message =
       error instanceof ApiException || error instanceof Error
         ? error.message

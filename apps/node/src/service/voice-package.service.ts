@@ -95,7 +95,10 @@ export class VoicePackageService {
         } as never,
       }));
 
-    if (!agent || this.stringifyObjectId(agent.createdUserId) !== String(userId)) {
+    if (
+      !agent ||
+      this.stringifyObjectId(agent.createdUserId) !== String(userId)
+    ) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -116,6 +119,7 @@ export class VoicePackageService {
       deliverables: voicePackage.deliverables ?? [],
       materialRequirement: voicePackage.materialRequirement ?? '',
       estimatedServiceDays: voicePackage.estimatedServiceDays,
+      virtualPaymentProductId: voicePackage.virtualPaymentProductId ?? '',
     };
   }
 
@@ -155,7 +159,11 @@ export class VoicePackageService {
 
   private parseObjectId(value: string, code: string): MongoObjectId {
     if (!MongoObjectId.isValid(value)) {
-      throw new AppError(code, 'object id is invalid', code === 'INVALID_TOKEN' ? 401 : 400);
+      throw new AppError(
+        code,
+        'object id is invalid',
+        code === 'INVALID_TOKEN' ? 401 : 400
+      );
     }
 
     return new MongoObjectId(value);
