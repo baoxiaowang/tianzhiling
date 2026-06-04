@@ -92,13 +92,17 @@ const emit = defineEmits<{
   preview: [post: PostItem, index: number]
 }>()
 
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 const authorName = computed(() => {
-  const name = props.post.authorName.trim()
+  const name = normalizeText(props.post.authorName)
   return name ? name : '天之灵用户'
 })
 const postImages = computed(() => {
   return props.post.images
-    .map((image) => image.trim())
+    .map(normalizeText)
     .filter(Boolean)
     .slice(0, 9)
 })
@@ -151,9 +155,9 @@ function formatMomentRelativeTime(value: string | null) {
   return parts.join('-')
 }
 
-function formatCommentAuthor(authorName: string, replyToUserName: string) {
-  const author = authorName.trim() || '天之灵用户'
-  const replyTo = replyToUserName.trim()
+function formatCommentAuthor(authorName: unknown, replyToUserName: unknown) {
+  const author = normalizeText(authorName) || '天之灵用户'
+  const replyTo = normalizeText(replyToUserName)
 
   return replyTo ? `${author} 回复 ${replyTo}：` : `${author}：`
 }

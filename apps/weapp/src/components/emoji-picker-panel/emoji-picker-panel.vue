@@ -109,6 +109,7 @@ function handleBackspaceTap() {
 <style lang="scss">
 .emoji-picker-panel {
   position: relative;
+  z-index: 1;
   height: calc(216px + env(safe-area-inset-bottom));
   border-top: 0.5px solid #e6e6e6;
   background: #f7f7f7;

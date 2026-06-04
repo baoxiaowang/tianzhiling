@@ -60,6 +60,7 @@ const session = computed(() => authSession.value)
 const currentUserId = computed(() => session.value?.user.id.trim() ?? '')
 
 let loadingPromise: Promise<void> | null = null
+let isPreviewingPostImage = false
 
 async function redirectToAuth() {
   await Taro.reLaunch({
@@ -219,6 +220,7 @@ function handlePreviewImages(post: PostItem, index: number) {
     return
   }
 
+  isPreviewingPostImage = true
   void Taro.previewImage({
     urls,
     current,
@@ -230,6 +232,11 @@ onMounted(() => {
 })
 
 useDidShow(() => {
+  if (isPreviewingPostImage) {
+    isPreviewingPostImage = false
+    return
+  }
+
   void loadMyPosts(false)
 })
 </script>

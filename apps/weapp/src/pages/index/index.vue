@@ -32,7 +32,6 @@
       <scroll-view
         class="moments-scroll"
         :scroll-y="true"
-        :scroll-top="controlledMomentsScrollTop"
         :show-scrollbar="false"
         :lower-threshold="120"
         @scroll="handleMomentsScroll"
@@ -100,62 +99,65 @@
       <text class="moments-floating-publish__plus">+</text>
     </view>
 
-    <view
-      v-if="activeCommentPost"
-      class="moment-comment-backdrop"
-      @tap="handleCommentOutsideTap"
-    />
-
-    <view
-      v-if="activeCommentPost"
-      class="moment-comment-dock"
-      :style="commentComposerStyle"
-      @touchstart.stop
-      @tap.stop
-    >
-      <view class="moment-comment-composer">
-        <input
-          class="moment-comment-composer__input"
-          :value="commentDraft"
-          :focus="shouldFocusCommentInput"
-          :placeholder="commentInputPlaceholder"
-          placeholder-style="color: #b8b8b8;"
-          confirm-type="send"
-          :adjust-position="false"
-          @input="handleCommentInput"
-          @touchstart.stop="handleCommentInputTouchStart"
-          @tap.stop="handleCommentInputTap"
-          @focus="handleCommentFocus"
-          @blur="handleCommentBlur"
-          @keyboardheightchange="handleCommentKeyboardHeightChange"
-          @confirm="handleSubmitComment"
-        />
-        <view
-          v-if="!isCommentEmojiPanelVisible"
-          class="moment-comment-composer__icon moment-comment-composer__icon--emoji"
-          @tap="handleCommentEmojiToggle"
-        >
-          ☺
-        </view>
-        <view
-          v-else
-          class="moment-comment-composer__icon moment-comment-composer__icon--keyboard"
-          @tap="handleCommentEmojiToggle"
-        >
-          <image
-            class="moment-comment-composer__keyboard-icon"
-            :src="keyboardIconUrl"
-            mode="aspectFit"
-          />
-        </view>
-      </view>
-
-      <emoji-picker-panel
-        :visible="isCommentEmojiPanelVisible"
-        @emoji-select="handleCommentEmojiSelect"
-        @backspace="handleCommentEmojiDelete"
+    <template #overlay>
+      <view
+        v-show="activeCommentPost"
+        class="moment-comment-backdrop"
+        @tap="handleCommentOutsideTap"
       />
-    </view>
+
+      <view
+        v-show="activeCommentPost"
+        class="moment-comment-dock"
+        :style="commentComposerStyle"
+        @touchstart.stop
+        @tap.stop
+      >
+        <view class="moment-comment-composer">
+          <input
+            class="moment-comment-composer__input"
+            :value="commentDraft"
+            :focus="shouldFocusCommentInput"
+            :placeholder="commentInputPlaceholder"
+            placeholder-style="color: #b8b8b8;"
+            confirm-type="send"
+            :adjust-position="false"
+            cursor-spacing="16"
+            @input="handleCommentInput"
+            @touchstart.stop="handleCommentInputTouchStart"
+            @tap.stop="handleCommentInputTap"
+            @focus="handleCommentFocus"
+            @blur="handleCommentBlur"
+            @keyboardheightchange="handleCommentKeyboardHeightChange"
+            @confirm="handleSubmitComment"
+          />
+          <view
+            v-if="!isCommentEmojiPanelVisible"
+            class="moment-comment-composer__icon moment-comment-composer__icon--emoji"
+            @tap="handleCommentEmojiToggle"
+          >
+            ☺
+          </view>
+          <view
+            v-else
+            class="moment-comment-composer__icon moment-comment-composer__icon--keyboard"
+            @tap="handleCommentEmojiToggle"
+          >
+            <image
+              class="moment-comment-composer__keyboard-icon"
+              :src="keyboardIconUrl"
+              mode="aspectFit"
+            />
+          </view>
+        </view>
+
+        <emoji-picker-panel
+          :visible="isCommentEmojiPanelVisible"
+          @emoji-select="handleCommentEmojiSelect"
+          @backspace="handleCommentEmojiDelete"
+        />
+      </view>
+    </template>
   </page-scaffold>
 </template>
 
@@ -189,7 +191,7 @@ import {
   latestUnreadCommentNotification,
   unreadCommentNotificationCount,
 } from '../../post/comment-notification-state'
-import { setCustomTabBarHidden, syncCustomTabBar } from '../../utils/custom-tab-bar'
+import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
 interface PageScaffoldController {
   openLoginPrompt: () => void
@@ -215,32 +217,29 @@ const currentPostPage = ref(1)
 const hasMorePosts = ref(true)
 const isLoadingMore = ref(false)
 const showCollapsedAppBar = ref(false)
-const momentsScrollTop = ref(0)
-const isMomentsScrollTopControlled = ref(false)
 
 let refreshDataPromise: Promise<void> | null = null
 let loadMorePromise: Promise<void> | null = null
 let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 let commentBlurCloseTimer: ReturnType<typeof setTimeout> | null = null
-let commentScrollRestoreTimers: ReturnType<typeof setTimeout>[] = []
-let momentsScrollTopReleaseTimer: ReturnType<typeof setTimeout> | null = null
+let commentFocusTimer: ReturnType<typeof setTimeout> | null = null
 let lastKnownMomentsScrollTop = 0
+let isPreviewingPostImage = false
 
 const POST_PAGE_SIZE = 10
 const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const COMMENT_SCROLL_RESTORE_DELAYS = [60, 180, 360]
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = hasUnreadCommentNotifications
 const notificationAvatarUrl = computed(() => {
-  return latestUnreadCommentNotification.value?.actorAvatar.trim() ?? ''
+  return normalizeText(latestUnreadCommentNotification.value?.actorAvatar)
 })
 const notificationAvatarFallback = computed(() => {
-  const actorName = latestUnreadCommentNotification.value?.actorName.trim() ?? ''
+  const actorName = normalizeText(latestUnreadCommentNotification.value?.actorName)
   return actorName ? actorName.slice(0, 1) : '评'
 })
 const notificationText = computed(() => {
@@ -285,9 +284,6 @@ const commentComposerStyle = computed(() => {
       : 'translateY(0)',
   }
 })
-const controlledMomentsScrollTop = computed(() => {
-  return isMomentsScrollTopControlled.value ? momentsScrollTop.value : undefined
-})
 
 function showToast(title: string) {
   void Taro.showToast({
@@ -301,15 +297,19 @@ function openLoginPrompt() {
   pageScaffoldRef.value?.openLoginPrompt()
 }
 
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
 function getPostImages(post: PostItem) {
   return post.images
-    .map((image) => image.trim())
+    .map(normalizeText)
     .filter(Boolean)
     .slice(0, 9)
 }
 
 function getReplyTargetName(comment: PostCommentItem) {
-  return comment.replyToUserName.trim() || comment.authorName.trim() || '天之灵用户'
+  return normalizeText(comment.replyToUserName) || normalizeText(comment.authorName) || '天之灵用户'
 }
 
 function isPostLikePending(postId: string) {
@@ -334,56 +334,6 @@ function isLastPostRow(index: unknown) {
 function normalizeScrollTop(value: unknown) {
   const scrollTop = Number(value ?? 0)
   return Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0
-}
-
-function setMomentsScrollTop(scrollTop: number) {
-  momentsScrollTop.value = normalizeScrollTop(scrollTop)
-  isMomentsScrollTopControlled.value = true
-}
-
-function forceMomentsScrollTop(scrollTop: number) {
-  const nextScrollTop = normalizeScrollTop(scrollTop)
-  isMomentsScrollTopControlled.value = true
-
-  if (momentsScrollTop.value !== nextScrollTop) {
-    momentsScrollTop.value = nextScrollTop
-    return
-  }
-
-  if (nextScrollTop <= 0) {
-    momentsScrollTop.value = 0
-    return
-  }
-
-  momentsScrollTop.value = Math.max(0, nextScrollTop - 1)
-
-  void nextTick(() => {
-    momentsScrollTop.value = nextScrollTop
-  })
-}
-
-function releaseMomentsScrollTopControl() {
-  if (momentsScrollTopReleaseTimer) {
-    clearTimeout(momentsScrollTopReleaseTimer)
-    momentsScrollTopReleaseTimer = null
-  }
-  isMomentsScrollTopControlled.value = false
-}
-
-function scrollMomentsToTopOnce() {
-  if (momentsScrollTopReleaseTimer) {
-    clearTimeout(momentsScrollTopReleaseTimer)
-    momentsScrollTopReleaseTimer = null
-  }
-
-  lastKnownMomentsScrollTop = 0
-  showCollapsedAppBar.value = false
-  isMomentsScrollTopControlled.value = true
-  momentsScrollTop.value = 0
-  momentsScrollTopReleaseTimer = setTimeout(() => {
-    momentsScrollTopReleaseTimer = null
-    isMomentsScrollTopControlled.value = false
-  }, 120)
 }
 
 function replacePostInList(updatedPost: PostItem) {
@@ -479,16 +429,13 @@ async function loadMorePosts() {
   return loadMorePromise
 }
 
-async function preparePage(options: { scrollToTop?: boolean } = {}) {
+async function preparePage() {
   if (!hasLoadedPosts.value) {
     isCheckingAuth.value = true
   }
 
   await restoreAuthSession()
   await refreshMomentsData(!hasLoadedPosts.value)
-  if (options.scrollToTop) {
-    scrollMomentsToTopOnce()
-  }
   isCheckingAuth.value = false
 }
 
@@ -502,13 +449,6 @@ function handleLoadMoreRetry() {
 
 function handleMomentsScroll(event: { detail?: { scrollTop?: number } }) {
   const scrollTop = normalizeScrollTop(event.detail?.scrollTop)
-
-  if (activeCommentPost.value) {
-    if (Math.abs(scrollTop - lastKnownMomentsScrollTop) > 2) {
-      forceMomentsScrollTop(lastKnownMomentsScrollTop)
-    }
-    return
-  }
 
   lastKnownMomentsScrollTop = scrollTop
 
@@ -556,19 +496,21 @@ function handleCreatePost() {
 
 function openCommentComposer(post: PostItem, replyToComment?: PostCommentItem) {
   clearCommentBlurCloseTimer()
-  clearCommentScrollRestoreTimers()
-  setMomentsScrollTop(lastKnownMomentsScrollTop)
+  clearCommentFocusTimer()
   activeCommentPost.value = post
   activeReplyComment.value = replyToComment ?? null
   commentDraft.value = ''
   shouldFocusCommentInput.value = false
   isCommentEmojiPanelVisible.value = false
-  setCustomTabBarHidden(true)
 
   void nextTick(() => {
-    forceMomentsScrollTop(lastKnownMomentsScrollTop)
-    shouldFocusCommentInput.value = true
-    scheduleCommentScrollRestore()
+    commentFocusTimer = setTimeout(() => {
+      commentFocusTimer = null
+
+      if (activeCommentPost.value) {
+        shouldFocusCommentInput.value = true
+      }
+    }, 80)
   })
 }
 
@@ -623,7 +565,7 @@ function closeCommentComposer(force = false) {
   }
 
   clearCommentBlurCloseTimer()
-  clearCommentScrollRestoreTimers()
+  clearCommentFocusTimer()
   resetCommentInputModeSwitching()
   activeCommentPost.value = null
   activeReplyComment.value = null
@@ -632,8 +574,6 @@ function closeCommentComposer(force = false) {
   isCommentInputFocused.value = false
   commentKeyboardHeight.value = 0
   isCommentEmojiPanelVisible.value = false
-  releaseMomentsScrollTopControl()
-  setCustomTabBarHidden(false)
 }
 
 function clearCommentBlurCloseTimer() {
@@ -643,25 +583,11 @@ function clearCommentBlurCloseTimer() {
   }
 }
 
-function clearCommentScrollRestoreTimers() {
-  commentScrollRestoreTimers.forEach((timer) => {
-    clearTimeout(timer)
-  })
-  commentScrollRestoreTimers = []
-}
-
-function scheduleCommentScrollRestore() {
-  clearCommentScrollRestoreTimers()
-
-  commentScrollRestoreTimers = COMMENT_SCROLL_RESTORE_DELAYS.map((delay) =>
-    setTimeout(() => {
-      if (!activeCommentPost.value) {
-        return
-      }
-
-      forceMomentsScrollTop(lastKnownMomentsScrollTop)
-    }, delay)
-  )
+function clearCommentFocusTimer() {
+  if (commentFocusTimer) {
+    clearTimeout(commentFocusTimer)
+    commentFocusTimer = null
+  }
 }
 
 function scheduleCommentCloseAfterBlur() {
@@ -695,7 +621,6 @@ function handleCommentInputLostFocus() {
 function handleCommentFocus() {
   clearCommentBlurCloseTimer()
   isCommentInputFocused.value = true
-  forceMomentsScrollTop(lastKnownMomentsScrollTop)
 }
 
 function handleCommentBlur() {
@@ -874,6 +799,7 @@ function handlePreviewImages(post: PostItem, index: number) {
     return
   }
 
+  isPreviewingPostImage = true
   void Taro.previewImage({
     urls,
     current,
@@ -882,12 +808,16 @@ function handlePreviewImages(post: PostItem, index: number) {
 
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
-  setCustomTabBarHidden(Boolean(activeCommentPost.value))
-  void preparePage({ scrollToTop: true })
+
+  if (isPreviewingPostImage) {
+    isPreviewingPostImage = false
+    return
+  }
+
+  void preparePage()
 })
 
 useDidHide(() => {
-  setCustomTabBarHidden(false)
   closeCommentComposer()
 })
 </script>
@@ -1098,18 +1028,18 @@ useDidHide(() => {
 }
 
 .moment-comment-backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 125;
+  z-index: 10000;
   background: transparent;
 }
 
 .moment-comment-dock {
-  position: fixed;
+  position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 130;
+  z-index: 10001;
   background: #f8f8f8;
   transition: transform 0.18s ease;
 }
