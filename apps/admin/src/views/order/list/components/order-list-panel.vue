@@ -6,6 +6,15 @@
       :bordered="false"
       :title="embedded ? undefined : pageTitle"
     >
+      <template v-if="canCreateAdminOrder" #extra>
+        <a-button type="primary" @click="openCreateModal">
+          <template #icon>
+            <icon-plus />
+          </template>
+          创建订单
+        </a-button>
+      </template>
+
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
           <a-input
@@ -175,15 +184,27 @@
               {{ formatDate(record.paidAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="150" fixed="right">
+          <a-table-column title="操作" :width="220" fixed="right">
             <template #cell="{ record }">
               <a-space>
                 <a-button type="text" size="small" @click="openDetail(record)">
                   详情
                 </a-button>
+                <a-button
+                  v-if="canSyncPaymentStatus(record)"
+                  type="text"
+                  size="small"
+                  :loading="syncLoadingId === record.id"
+                  @click="handleSyncPaymentStatus(record)"
+                >
+                  <template #icon>
+                    <icon-refresh />
+                  </template>
+                  刷新状态
+                </a-button>
                 <a-popconfirm
                   v-if="canRefundOrder(record)"
-                  content="确认退订该会员订单？系统会发起微信退款并收回会员权益。"
+                  :content="getRefundConfirmContent(record)"
                   ok-text="退订"
                   cancel-text="取消"
                   position="left"
@@ -294,6 +315,138 @@
         </a-descriptions-item>
       </a-descriptions>
     </a-drawer>
+
+    <a-modal
+      v-model:visible="createVisible"
+      :title="createModalTitle"
+      :footer="false"
+      unmount-on-close
+      @cancel="closeCreateModal"
+    >
+      <a-form :model="createForm" layout="vertical">
+        <a-form-item
+          field="orderType"
+          label="订单类型"
+          :rules="[{ required: true, message: '请选择订单类型' }]"
+        >
+          <a-select
+            v-model="createForm.orderType"
+            class="order-page__full"
+            @change="handleCreateOrderTypeChange"
+          >
+            <a-option value="vip_plan">会员订单</a-option>
+            <a-option value="voice_package">声音套餐订单</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          field="userId"
+          label="用户"
+          :rules="[{ required: true, message: '请选择用户' }]"
+        >
+          <a-select
+            v-model="createForm.userId"
+            allow-clear
+            allow-search
+            :filter-option="false"
+            :loading="userOptionsLoading"
+            placeholder="搜索手机号、昵称或用户ID"
+            class="order-page__full"
+            @change="handleCreateUserChange"
+            @search="handleUserSearch"
+          >
+            <a-option
+              v-for="item in userOptions"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ formatUserOption(item) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          v-if="isCreateVipPlanOrder"
+          field="vipPlanId"
+          label="VIP计划"
+          :rules="[{ required: true, message: '请选择VIP计划' }]"
+        >
+          <a-select
+            v-model="createForm.vipPlanId"
+            allow-clear
+            :loading="vipPlanOptionsLoading"
+            placeholder="选择启用中的VIP计划"
+            class="order-page__full"
+          >
+            <a-option
+              v-for="item in vipPlanOptions"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ formatVipPlanOption(item) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          v-if="isCreateVoicePackageOrder"
+          field="voicePackageId"
+          label="声音套餐"
+          :rules="[{ required: true, message: '请选择声音套餐' }]"
+        >
+          <a-select
+            v-model="createForm.voicePackageId"
+            allow-clear
+            :loading="voicePackageOptionsLoading"
+            placeholder="选择启用中的声音套餐"
+            class="order-page__full"
+          >
+            <a-option
+              v-for="item in voicePackageOptions"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ formatVoicePackageOption(item) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          v-if="isCreateVoicePackageOrder"
+          field="agentId"
+          label="智能体"
+          :rules="[{ required: true, message: '请选择智能体' }]"
+        >
+          <a-select
+            v-model="createForm.agentId"
+            allow-clear
+            allow-search
+            :disabled="!createForm.userId"
+            :filter-option="false"
+            :loading="agentOptionsLoading"
+            placeholder="先选择用户，再选择该用户的智能体"
+            class="order-page__full"
+            @search="handleAgentSearch"
+          >
+            <a-option
+              v-for="item in agentOptions"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ formatAgentOption(item) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+      </a-form>
+      <div class="order-page__modal-footer">
+        <a-space>
+          <a-button @click="closeCreateModal">取消</a-button>
+          <a-button
+            type="primary"
+            :loading="createSubmitting"
+            @click="handleCreateOrder"
+          >
+            {{ createSubmitText }}
+          </a-button>
+        </a-space>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -302,12 +455,29 @@
   import { useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type { OrderSourceDTO, OrderStatusDTO } from '@tzl/shared';
+  import type {
+    OrderSourceDTO,
+    OrderStatusDTO,
+    OrderTypeDTO,
+  } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
   import {
+    queryAppUserAgents,
+    queryAppUserList,
+    type AppUserAgentRecord,
+    type AppUserRecord,
+  } from '@/api/app-user';
+  import { queryVipPlanList, type VipPlanRecord } from '@/api/membership';
+  import {
+    queryVoicePackageList,
+    type VoicePackageRecord,
+  } from '@/api/voice-package';
+  import {
+    createAdminOrder as createAdminOrderApi,
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
+    syncOrderPaymentStatus as syncOrderPaymentStatusApi,
   } from '@/api/order';
 
   const props = withDefaults(
@@ -331,6 +501,19 @@
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
+  const syncLoadingId = ref('');
+  const createVisible = ref(false);
+  const createSubmitting = ref(false);
+  const userOptionsLoading = ref(false);
+  const vipPlanOptionsLoading = ref(false);
+  const voicePackageOptionsLoading = ref(false);
+  const agentOptionsLoading = ref(false);
+  const userOptions = ref<AppUserRecord[]>([]);
+  const vipPlanOptions = ref<VipPlanRecord[]>([]);
+  const voicePackageOptions = ref<VoicePackageRecord[]>([]);
+  const agentOptions = ref<AppUserAgentRecord[]>([]);
+  let userSearchRequestId = 0;
+  let agentSearchRequestId = 0;
   const searchForm = reactive<{
     keyword: string;
     status?: OrderStatusDTO | '';
@@ -339,6 +522,19 @@
     keyword: '',
     status: undefined,
     source: undefined,
+  });
+  const createForm = reactive<{
+    orderType: OrderTypeDTO;
+    userId: string;
+    vipPlanId: string;
+    voicePackageId: string;
+    agentId: string;
+  }>({
+    orderType: 'vip_plan',
+    userId: '',
+    vipPlanId: '',
+    voicePackageId: '',
+    agentId: '',
   });
   const pagination = reactive({
     current: 1,
@@ -387,6 +583,21 @@
   );
   const emptyDescription = computed(() =>
     hasSearchCondition.value ? '未找到匹配订单' : '暂无订单数据'
+  );
+  const canCreateAdminOrder = computed(
+    () => !props.orderType && !props.embedded && !props.userId
+  );
+  const isCreateVipPlanOrder = computed(
+    () => createForm.orderType === 'vip_plan'
+  );
+  const isCreateVoicePackageOrder = computed(
+    () => createForm.orderType === 'voice_package'
+  );
+  const createModalTitle = computed(() =>
+    isCreateVoicePackageOrder.value ? '创建声音套餐订单' : '创建会员订单'
+  );
+  const createSubmitText = computed(() =>
+    isCreateVoicePackageOrder.value ? '创建声音套餐订单' : '创建会员订单'
   );
 
   const fetchData = async () => {
@@ -448,6 +659,259 @@
     );
   };
 
+  const canSyncPaymentStatus = (record: OrderRecord) => {
+    const isWechatPayment =
+      !record.paymentProvider ||
+      record.paymentProvider === 'wechat_pay' ||
+      record.paymentProvider === 'wechat_virtual_pay';
+
+    return (
+      isWechatPayment &&
+      (record.status === 'pending' || record.status === 'closed')
+    );
+  };
+
+  const replaceOrderRecord = (record: OrderRecord) => {
+    const index = renderList.value.findIndex((item) => item.id === record.id);
+
+    if (index >= 0) {
+      renderList.value[index] = record;
+    }
+
+    if (currentOrder.value?.id === record.id) {
+      currentOrder.value = record;
+    }
+  };
+
+  const handleSyncPaymentStatus = async (record: OrderRecord) => {
+    if (syncLoadingId.value) {
+      return;
+    }
+
+    const previousStatus = record.status;
+    syncLoadingId.value = record.id;
+
+    try {
+      const { data } = await syncOrderPaymentStatusApi(record.id);
+
+      replaceOrderRecord(data);
+      Message.success(
+        data.status === previousStatus
+          ? '已从微信刷新订单状态'
+          : `已从微信同步为${getStatusText(data.status)}`
+      );
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '刷新订单状态失败，请稍后重试'
+      );
+    } finally {
+      syncLoadingId.value = '';
+    }
+  };
+
+  const openCreateModal = () => {
+    resetCreateForm();
+    createVisible.value = true;
+    fetchUserOptions();
+    fetchVipPlanOptions();
+    fetchVoicePackageOptions();
+  };
+
+  const closeCreateModal = () => {
+    if (createSubmitting.value) {
+      return;
+    }
+
+    createVisible.value = false;
+  };
+
+  const resetCreateForm = () => {
+    createForm.orderType = 'vip_plan';
+    createForm.userId = '';
+    createForm.vipPlanId = '';
+    createForm.voicePackageId = '';
+    createForm.agentId = '';
+    agentOptions.value = [];
+  };
+
+  const fetchUserOptions = async (keyword = '') => {
+    userSearchRequestId += 1;
+    const requestId = userSearchRequestId;
+
+    try {
+      userOptionsLoading.value = true;
+      const { data } = await queryAppUserList({
+        keyword: keyword.trim() || undefined,
+        page: 1,
+        pageSize: 20,
+      });
+
+      if (requestId === userSearchRequestId) {
+        userOptions.value = data.items;
+      }
+    } catch (error) {
+      if (requestId === userSearchRequestId) {
+        userOptions.value = [];
+        Message.error('用户列表加载失败');
+      }
+    } finally {
+      if (requestId === userSearchRequestId) {
+        userOptionsLoading.value = false;
+      }
+    }
+  };
+
+  const handleUserSearch = (value: string) => {
+    fetchUserOptions(value);
+  };
+
+  const handleCreateOrderTypeChange = () => {
+    createForm.vipPlanId = '';
+    createForm.voicePackageId = '';
+    createForm.agentId = '';
+
+    if (isCreateVoicePackageOrder.value && createForm.userId) {
+      fetchAgentOptions(createForm.userId);
+    }
+  };
+
+  const handleCreateUserChange = () => {
+    createForm.agentId = '';
+    agentOptions.value = [];
+
+    if (isCreateVoicePackageOrder.value && createForm.userId) {
+      fetchAgentOptions(createForm.userId);
+    }
+  };
+
+  const fetchVipPlanOptions = async () => {
+    try {
+      vipPlanOptionsLoading.value = true;
+      const { data } = await queryVipPlanList({
+        status: 'active',
+        page: 1,
+        pageSize: 100,
+      });
+
+      vipPlanOptions.value = data.items;
+    } catch (error) {
+      vipPlanOptions.value = [];
+      Message.error('VIP计划加载失败');
+    } finally {
+      vipPlanOptionsLoading.value = false;
+    }
+  };
+
+  const fetchVoicePackageOptions = async () => {
+    try {
+      voicePackageOptionsLoading.value = true;
+      const { data } = await queryVoicePackageList({
+        status: 'active',
+        page: 1,
+        pageSize: 100,
+      });
+
+      voicePackageOptions.value = data.items;
+    } catch (error) {
+      voicePackageOptions.value = [];
+      Message.error('声音套餐加载失败');
+    } finally {
+      voicePackageOptionsLoading.value = false;
+    }
+  };
+
+  const fetchAgentOptions = async (userId: string, keyword = '') => {
+    if (!userId) {
+      agentOptions.value = [];
+      return;
+    }
+
+    agentSearchRequestId += 1;
+    const requestId = agentSearchRequestId;
+
+    try {
+      agentOptionsLoading.value = true;
+      const { data } = await queryAppUserAgents(userId, {
+        keyword: keyword.trim() || undefined,
+        page: 1,
+        pageSize: 20,
+      });
+
+      if (requestId === agentSearchRequestId) {
+        agentOptions.value = data.items;
+      }
+    } catch (error) {
+      if (requestId === agentSearchRequestId) {
+        agentOptions.value = [];
+        Message.error('智能体列表加载失败');
+      }
+    } finally {
+      if (requestId === agentSearchRequestId) {
+        agentOptionsLoading.value = false;
+      }
+    }
+  };
+
+  const handleAgentSearch = (value: string) => {
+    fetchAgentOptions(createForm.userId, value);
+  };
+
+  const handleCreateOrder = async () => {
+    if (createSubmitting.value) {
+      return;
+    }
+
+    if (!createForm.userId) {
+      Message.warning('请选择用户');
+      return;
+    }
+
+    if (isCreateVipPlanOrder.value && !createForm.vipPlanId) {
+      Message.warning('请选择VIP计划');
+      return;
+    }
+
+    if (isCreateVoicePackageOrder.value && !createForm.voicePackageId) {
+      Message.warning('请选择声音套餐');
+      return;
+    }
+
+    if (isCreateVoicePackageOrder.value && !createForm.agentId) {
+      Message.warning('请选择智能体');
+      return;
+    }
+
+    try {
+      createSubmitting.value = true;
+      await createAdminOrderApi({
+        orderType: createForm.orderType,
+        userId: createForm.userId,
+        vipPlanId: isCreateVipPlanOrder.value
+          ? createForm.vipPlanId
+          : undefined,
+        voicePackageId: isCreateVoicePackageOrder.value
+          ? createForm.voicePackageId
+          : undefined,
+        agentId: isCreateVoicePackageOrder.value
+          ? createForm.agentId
+          : undefined,
+      });
+      createVisible.value = false;
+      Message.success(`${createSubmitText.value}已创建`);
+      fetchData();
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '创建订单失败，请稍后重试'
+      );
+    } finally {
+      createSubmitting.value = false;
+    }
+  };
+
   const handleRefund = async (record: OrderRecord) => {
     if (refundLoadingId.value) {
       return;
@@ -457,17 +921,10 @@
 
     try {
       const { data } = await refundOrderApi(record.id);
-      const index = renderList.value.findIndex((item) => item.id === data.id);
 
-      if (index >= 0) {
-        renderList.value[index] = data;
-      }
+      replaceOrderRecord(data);
 
-      if (currentOrder.value?.id === data.id) {
-        currentOrder.value = data;
-      }
-
-      Message.success('退订退款已提交，会员权益已收回');
+      Message.success(getRefundSuccessText(record));
     } catch (error) {
       Message.error(
         error instanceof Error && error.message
@@ -525,7 +982,39 @@
       return '微信支付';
     }
 
+    if (provider === 'wechat_virtual_pay') {
+      return '微信虚拟支付';
+    }
+
+    if (provider === 'admin_manual') {
+      return '管理端创建';
+    }
+
     return provider || '-';
+  };
+
+  const getRefundConfirmContent = (record: OrderRecord) => {
+    if (record.paymentProvider === 'admin_manual') {
+      return record.orderType === 'voice_package'
+        ? '确认退订该声音套餐订单？系统会撤回声音训练任务。'
+        : '确认退订该会员订单？系统会收回会员权益。';
+    }
+
+    return record.orderType === 'voice_package'
+      ? '确认退订该声音套餐订单？系统会发起微信退款并撤回声音训练任务。'
+      : '确认退订该会员订单？系统会发起微信退款并收回会员权益。';
+  };
+
+  const getRefundSuccessText = (record: OrderRecord) => {
+    if (record.paymentProvider === 'admin_manual') {
+      return record.orderType === 'voice_package'
+        ? '退订成功，声音训练任务已撤回'
+        : '退订成功，会员权益已收回';
+    }
+
+    return record.orderType === 'voice_package'
+      ? '退订退款已提交，声音训练任务已撤回'
+      : '退订退款已提交，会员权益已收回';
   };
 
   const resolveOrderUserName = (record: OrderRecord) => {
@@ -534,6 +1023,34 @@
 
   const resolveOrderUserContact = (record: OrderRecord) => {
     return record.user?.phone || record.user?.account || record.userId || '-';
+  };
+
+  const formatUserOption = (record: AppUserRecord) => {
+    return [
+      record.name || record.account || record.phone || record.id,
+      record.phone && record.phone !== record.name ? record.phone : '',
+      record.account &&
+      record.account !== record.phone &&
+      record.account !== record.name
+        ? record.account
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' / ');
+  };
+
+  const formatVipPlanOption = (record: VipPlanRecord) => {
+    const duration = record.lifetime ? '永久' : `${record.durationDays ?? 0}天`;
+
+    return `${record.name} / ${formatAmount(record.priceAmount)} / ${duration}`;
+  };
+
+  const formatVoicePackageOption = (record: VoicePackageRecord) => {
+    return `${record.name} / ${formatAmount(record.priceAmount)}`;
+  };
+
+  const formatAgentOption = (record: AppUserAgentRecord) => {
+    return record.name ? `${record.name} / ${record.id}` : record.id;
   };
 
   watch(
@@ -580,6 +1097,10 @@
 
     &__filter {
       width: 140px;
+    }
+
+    &__full {
+      width: 100%;
     }
 
     &__pagination {
@@ -636,6 +1157,12 @@
       margin-top: 4px;
       color: rgb(var(--red-6));
       font-size: 12px;
+    }
+
+    &__modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 24px;
     }
   }
 </style>

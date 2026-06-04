@@ -37,6 +37,48 @@ interface WechatXPayResponse {
   errmsg?: string;
 }
 
+export interface AdminWechatTransactionPayload {
+  appid?: string;
+  mchid?: string;
+  out_trade_no?: string;
+  transaction_id?: string;
+  trade_state?: string;
+  trade_state_desc?: string;
+  success_time?: string;
+  payer?: {
+    openid?: string;
+  };
+  amount?: {
+    total?: number;
+    payer_total?: number;
+    currency?: string;
+    payer_currency?: string;
+  };
+}
+
+export interface AdminWechatVirtualOrderPayload {
+  order_id?: string;
+  create_time?: number;
+  update_time?: number;
+  status?: number;
+  order_type?: number;
+  order_fee?: number;
+  paid_fee?: number;
+  refund_fee?: number;
+  paid_time?: number;
+  provide_time?: number;
+  biz_meta?: string;
+  env_type?: number;
+  left_fee?: number;
+  wx_order_id?: string;
+  channel_order_id?: string;
+  wxpay_order_id?: string;
+}
+
+interface WechatVirtualOrderResponse extends WechatXPayResponse {
+  order?: AdminWechatVirtualOrderPayload;
+}
+
 interface WechatVirtualRefundResponse extends WechatXPayResponse {
   refund_order_id?: string;
   refund_wx_order_id?: string;
@@ -80,6 +122,63 @@ export class AdminWechatPayService {
   wechatVirtualPayConfig: WechatVirtualPayConfig;
 
   private wxpayClient?: unknown;
+
+  async queryTransactionByOrderNo(
+    orderNo: string
+  ): Promise<AdminWechatTransactionPayload | null> {
+    const normalizedOrderNo = orderNo?.trim();
+
+    if (!normalizedOrderNo) {
+      throw new AppError('WECHAT_ORDER_NO_MISSING', 'wechat order no missing');
+    }
+
+    this.ensureEnabled();
+    const mchId = this.requireConfig('mchId');
+    const wxpay = this.getWxpayClient() as {
+      v3: {
+        pay: {
+          transactions: {
+            outTradeNo: {
+              $out_trade_no$: {
+                get: (config: {
+                  params: { mchid: string };
+                  out_trade_no: string;
+                }) => Promise<{ data: AdminWechatTransactionPayload }>;
+              };
+            };
+          };
+        };
+      };
+    };
+
+    try {
+      const { data } =
+        await wxpay.v3.pay.transactions.outTradeNo.$out_trade_no$.get({
+          params: {
+            mchid: mchId,
+          },
+          out_trade_no: normalizedOrderNo,
+        });
+
+      return data ?? null;
+    } catch (error) {
+      const response = (error as WechatPayErrorResponse)?.response;
+      const code = response?.data?.code;
+
+      if (response?.status === 404 || code === 'RESOURCE_NOT_EXISTS') {
+        return null;
+      }
+
+      throw new AppError(
+        'WECHAT_TRANSACTION_QUERY_FAILED',
+        response?.data?.message ||
+          response?.statusText ||
+          'failed to query wechat transaction',
+        response?.status && response.status >= 400 ? response.status : 502,
+        response?.data ?? null
+      );
+    }
+  }
 
   async refundOrder(payload: {
     orderNo: string;
@@ -195,6 +294,35 @@ export class AdminWechatPayService {
       body,
       payload.env
     );
+  }
+
+  async queryVirtualOrder(payload: {
+    openid: string;
+    orderNo: string;
+    env: number;
+  }): Promise<AdminWechatVirtualOrderPayload | null> {
+    const body = JSON.stringify({
+      openid: payload.openid,
+      env: payload.env,
+      order_id: payload.orderNo,
+    });
+    let response: WechatVirtualOrderResponse;
+
+    try {
+      response = await this.postXPay<WechatVirtualOrderResponse>(
+        '/xpay/query_order',
+        body,
+        payload.env
+      );
+    } catch (error) {
+      if (this.isWechatVirtualPayDataNotExists(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+
+    return response.order ?? null;
   }
 
   private getWxpayClient(): unknown {
@@ -325,6 +453,18 @@ export class AdminWechatPayService {
   private isIosVirtualRefundUnsupported(response: WechatXPayResponse): boolean {
     return /OS订单不支持开发者发起退款|iOS订单不支持开发者发起退款/i.test(
       response.errmsg ?? ''
+    );
+  }
+
+  private isWechatVirtualPayDataNotExists(error: unknown): boolean {
+    const response = error instanceof AppError ? error.data : null;
+    const xpayResponse = response as WechatXPayResponse | null;
+
+    return (
+      error instanceof AppError &&
+      error.code === 'WECHAT_VIRTUAL_PAY_API_FAILED' &&
+      xpayResponse?.errcode === 268490002 &&
+      /数据不存在/.test(xpayResponse.errmsg ?? '')
     );
   }
 

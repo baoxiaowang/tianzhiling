@@ -90,6 +90,14 @@ export interface AdminOrderListDTO {
   pageSize: number;
 }
 
+export interface CreateAdminOrderDTO {
+  orderType: OrderTypeDTO;
+  userId: string;
+  vipPlanId?: string;
+  voicePackageId?: string;
+  agentId?: string;
+}
+
 export interface CreateVipPlanOrderDTO {
   vipPlanId: string;
   jsCode: string;

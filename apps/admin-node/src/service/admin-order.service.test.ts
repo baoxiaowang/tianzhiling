@@ -6,12 +6,17 @@ import {
   OrderStatus,
   OrderType,
   UserMembershipStatus,
+  VipPlanStatus,
+  VoicePackageStatus,
   VoiceTrainingTaskStatus,
 } from '@tzl/entities';
 import { AdminOrderService } from './admin-order.service';
 
 const USER_ID = new MongoObjectId('665000000000000000000201');
 const ORDER_ID = new MongoObjectId('665000000000000000000301');
+const VIP_PLAN_ID = new MongoObjectId('665000000000000000000402');
+const AGENT_ID = new MongoObjectId('665000000000000000000405');
+const VOICE_PACKAGE_ID = new MongoObjectId('665000000000000000000406');
 const ORDER_CREATED_AT = new Date('2026-05-02T08:00:00.000Z');
 
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
@@ -104,15 +109,75 @@ function createVoiceTrainingTask(overrides: Record<string, unknown> = {}) {
   return {
     id: new MongoObjectId('665000000000000000000404'),
     userId: USER_ID,
-    agentId: new MongoObjectId('665000000000000000000405'),
+    agentId: AGENT_ID,
     orderId: ORDER_ID,
-    voicePackageId: new MongoObjectId('665000000000000000000406'),
+    voicePackageId: VOICE_PACKAGE_ID,
     voicePackageCode: 'voice_standard',
     status: VoiceTrainingTaskStatus.paid,
     assigneeName: '',
     materialObjectKeys: [],
     remark: '',
     paidAt: ORDER_CREATED_AT,
+    createdAt: ORDER_CREATED_AT,
+    updatedAt: ORDER_CREATED_AT,
+    ...overrides,
+  };
+}
+
+function createAgent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: AGENT_ID,
+    createdUserId: USER_ID,
+    name: '方方',
+    avatar: '',
+    status: 1,
+    createdAt: ORDER_CREATED_AT,
+    updatedAt: ORDER_CREATED_AT,
+    ...overrides,
+  };
+}
+
+function createVipPlan(overrides: Record<string, unknown> = {}) {
+  return {
+    id: VIP_PLAN_ID,
+    code: 'vip_year',
+    name: '一年会员',
+    description: '',
+    priceAmount: 9900,
+    originalPriceAmount: 19900,
+    currency: 'CNY',
+    durationDays: 365,
+    lifetime: false,
+    benefits: [],
+    entitlementGrants: [
+      {
+        type: AgentEntitlementType.voiceModel,
+        totalQuota: 1,
+        durationDays: 30,
+      },
+    ],
+    status: VipPlanStatus.active,
+    sort: 1,
+    createdAt: ORDER_CREATED_AT,
+    updatedAt: ORDER_CREATED_AT,
+    ...overrides,
+  };
+}
+
+function createVoicePackage(overrides: Record<string, unknown> = {}) {
+  return {
+    id: VOICE_PACKAGE_ID,
+    code: 'voice_standard',
+    name: '标准声音套餐',
+    description: '',
+    priceAmount: 12900,
+    originalPriceAmount: 19900,
+    currency: 'CNY',
+    deliverables: [],
+    materialRequirement: '',
+    estimatedServiceDays: 7,
+    status: VoicePackageStatus.active,
+    sort: 1,
     createdAt: ORDER_CREATED_AT,
     updatedAt: ORDER_CREATED_AT,
     ...overrides,
@@ -131,18 +196,50 @@ function createService() {
     find: jest.fn(),
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
+      const orderNo = where?.orderNo;
 
-      return orders.find(order => id && sameObjectId(order.id, id)) ?? null;
+      return (
+        orders.find(order => id && sameObjectId(order.id, id)) ??
+        orders.find(order => orderNo && order.orderNo === orderNo) ??
+        null
+      );
     }),
-    save: jest.fn(async order => order),
+    save: jest.fn(async order => {
+      if (order?.orderNo && !order.id) {
+        order.id = ORDER_ID;
+      }
+
+      if (order?.orderNo && !orders.includes(order)) {
+        orders.push(order);
+      }
+
+      return order;
+    }),
   } as any;
   service.userModel = {
     find: jest.fn(),
+    findOne: jest.fn(),
   } as any;
   service.userAccountModel = {
     find: jest.fn(),
   } as any;
+  service.vipPlanModel = {
+    findOne: jest.fn(),
+  } as any;
+  service.voicePackageModel = {
+    findOne: jest.fn(),
+  } as any;
+  service.agentModel = {
+    findOne: jest.fn(),
+  } as any;
   service.userMembershipModel = {
+    find: jest.fn(async ({ where }: any) => {
+      return memberships.filter(
+        membership =>
+          sameObjectId(membership.userId, where?.userId) &&
+          (!where?.status || membership.status === where.status)
+      );
+    }),
     findOne: jest.fn(async ({ where }: any) => {
       return (
         memberships.find(membership =>
@@ -158,9 +255,25 @@ function createService() {
         sameObjectId(entitlement.sourceOrderId, where?.sourceOrderId)
       );
     }),
+    findOne: jest.fn(async ({ where }: any) => {
+      return (
+        entitlements.find(
+          entitlement =>
+            sameObjectId(entitlement.sourceOrderId, where?.sourceOrderId) &&
+            entitlement.type === where?.type
+        ) ?? null
+      );
+    }),
     save: jest.fn(async entitlement => entitlement),
   } as any;
   service.voiceTrainingTaskModel = {
+    find: jest.fn(async ({ where }: any) => {
+      return voiceTrainingTasks.filter(
+        task =>
+          sameObjectId(task.agentId, where?.agentId) &&
+          (!where?.status?.$in || where.status.$in.includes(task.status))
+      );
+    }),
     findOne: jest.fn(async ({ where }: any) => {
       return (
         voiceTrainingTasks.find(task =>
@@ -171,10 +284,12 @@ function createService() {
     save: jest.fn(async task => task),
   } as any;
   service.adminWechatPayService = {
+    queryTransactionByOrderNo: jest.fn(),
     refundOrder: jest.fn().mockResolvedValue({
       out_refund_no: 'RVIP202605020001',
       status: 'SUCCESS',
     }),
+    queryVirtualOrder: jest.fn(),
     refundVirtualOrder: jest.fn().mockResolvedValue({
       refund_order_id: 'RVIP202605020001',
     }),
@@ -373,6 +488,248 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('creates an admin vip order and grants membership benefits', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const user = {
+      id: USER_ID,
+      name: '测试用户',
+      avatar: '',
+      phone: '13800000000',
+    };
+    const plan = createVipPlan();
+
+    jest.mocked(service.userModel.findOne).mockImplementation(async ({
+      where,
+    }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, USER_ID) ? (user as never) : null;
+    });
+    jest.mocked(service.vipPlanModel.findOne).mockImplementation(async ({
+      where,
+    }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, VIP_PLAN_ID) ? (plan as never) : null;
+    });
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([
+      {
+        userId: USER_ID,
+        account: '13800000000',
+      },
+    ] as never);
+
+    const result = await service.createOrder({
+      orderType: OrderType.vipPlan,
+      userId: USER_ID.toHexString(),
+      vipPlanId: VIP_PLAN_ID.toHexString(),
+    });
+
+    expect(orders[0]).toEqual(
+      expect.objectContaining({
+        id: ORDER_ID,
+        userId: USER_ID,
+        orderType: OrderType.vipPlan,
+        targetId: VIP_PLAN_ID,
+        targetCode: 'vip_year',
+        source: OrderSource.admin,
+        paymentProvider: 'admin_manual',
+        status: OrderStatus.completed,
+        paidAmount: 9900,
+      })
+    );
+    expect(service.userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        vipPlanId: VIP_PLAN_ID,
+        vipPlanCode: 'vip_year',
+        sourceOrderId: ORDER_ID,
+        status: UserMembershipStatus.active,
+      })
+    );
+    expect(service.agentEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        sourceOrderId: ORDER_ID,
+        type: AgentEntitlementType.voiceModel,
+        totalQuota: 1,
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: ORDER_ID.toHexString(),
+        userId: USER_ID.toHexString(),
+        source: OrderSource.admin,
+        paymentProvider: 'admin_manual',
+        status: OrderStatus.completed,
+      })
+    );
+
+    jest.useRealTimers();
+  });
+
+  it('creates an admin voice package order and a training task', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const user = {
+      id: USER_ID,
+      name: '测试用户',
+      avatar: '',
+      phone: '13800000000',
+    };
+    const voicePackage = createVoicePackage();
+    const agent = createAgent();
+
+    jest.mocked(service.userModel.findOne).mockImplementation(async ({
+      where,
+    }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, USER_ID) ? (user as never) : null;
+    });
+    jest.mocked(service.voicePackageModel.findOne).mockImplementation(async ({
+      where,
+    }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, VOICE_PACKAGE_ID)
+        ? (voicePackage as never)
+        : null;
+    });
+    jest.mocked(service.agentModel.findOne).mockImplementation(async ({
+      where,
+    }: any) => {
+      const id = where?.id ?? where?._id;
+
+      return id && sameObjectId(id, AGENT_ID) ? (agent as never) : null;
+    });
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([
+      {
+        userId: USER_ID,
+        account: '13800000000',
+      },
+    ] as never);
+
+    const result = await service.createOrder({
+      orderType: OrderType.voicePackage,
+      userId: USER_ID.toHexString(),
+      voicePackageId: VOICE_PACKAGE_ID.toHexString(),
+      agentId: AGENT_ID.toHexString(),
+    });
+
+    expect(orders[0]).toEqual(
+      expect.objectContaining({
+        id: ORDER_ID,
+        userId: USER_ID,
+        orderType: OrderType.voicePackage,
+        targetId: VOICE_PACKAGE_ID,
+        targetCode: 'voice_standard',
+        agentId: AGENT_ID,
+        source: OrderSource.admin,
+        paymentProvider: 'admin_manual',
+        status: OrderStatus.completed,
+        paidAmount: 12900,
+      })
+    );
+    expect(service.voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        orderId: ORDER_ID,
+        voicePackageId: VOICE_PACKAGE_ID,
+        voicePackageCode: 'voice_standard',
+        status: VoiceTrainingTaskStatus.paid,
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: ORDER_ID.toHexString(),
+        userId: USER_ID.toHexString(),
+        orderType: OrderType.voicePackage,
+        source: OrderSource.admin,
+        paymentProvider: 'admin_manual',
+        status: OrderStatus.completed,
+      })
+    );
+
+    jest.useRealTimers();
+  });
+
+  it('syncs a pending vip order from WeChat and grants membership benefits', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.pending,
+      paidAmount: undefined,
+      paymentTradeNo: undefined,
+      paidAt: undefined,
+      snapshot: {
+        vipPlan: {
+          id: '665000000000000000000402',
+          code: 'vip_year',
+          durationDays: 365,
+          lifetime: false,
+          entitlementGrants: [
+            {
+              type: AgentEntitlementType.voiceModel,
+              totalQuota: 1,
+              durationDays: 30,
+            },
+          ],
+        },
+      },
+    });
+
+    orders.push(order);
+    jest
+      .mocked(service.adminWechatPayService.queryTransactionByOrderNo)
+      .mockResolvedValue({
+        out_trade_no: 'VIP202605020001',
+        transaction_id: '420000000020260502999999',
+        trade_state: 'SUCCESS',
+        success_time: '2026-05-02T08:05:00+08:00',
+        amount: {
+          total: 9900,
+          payer_total: 9900,
+        },
+      } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.syncPaymentStatus(ORDER_ID.toHexString());
+
+    expect(
+      service.adminWechatPayService.queryTransactionByOrderNo
+    ).toHaveBeenCalledWith('VIP202605020001');
+    expect(service.userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        vipPlanCode: 'vip_year',
+        sourceOrderId: ORDER_ID,
+        status: UserMembershipStatus.active,
+        lifetime: false,
+      })
+    );
+    expect(service.agentEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        type: AgentEntitlementType.voiceModel,
+        totalQuota: 1,
+        status: AgentEntitlementStatus.available,
+        sourceOrderId: ORDER_ID,
+      })
+    );
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.paidAmount).toBe(9900);
+    expect(order.paymentTradeNo).toBe('420000000020260502999999');
+    expect(result.status).toBe(OrderStatus.completed);
+
+    jest.useRealTimers();
+  });
+
   it('refunds a completed vip order and revokes membership benefits', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders, memberships, entitlements } = createService();
@@ -418,6 +775,30 @@ describe('AdminOrderService', () => {
     expect(result.refundAmount).toBe(9900);
 
     jest.useRealTimers();
+  });
+
+  it('refunds an admin manual vip order without calling WeChat', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders, memberships, entitlements } = createService();
+    const order = createCompletedVipOrder({
+      source: OrderSource.admin,
+      paymentProvider: 'admin_manual',
+    });
+
+    orders.push(order);
+    memberships.push(createMembership());
+    entitlements.push(createEntitlement());
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).not.toHaveBeenCalled();
+    expect(result.status).toBe(OrderStatus.refunded);
+    expect(result.refundAmount).toBe(9900);
   });
 
   it('refunds a virtual payment vip order through xpay', async () => {
