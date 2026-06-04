@@ -24,6 +24,11 @@ import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
 import { containsUnsafeAssistantMessageContent } from '../common/message-content-safety';
 import {
+  hasConversationMessageSegmentSeparator,
+  splitConversationMessageSegments,
+  stripConversationMessageSegmentMarkup,
+} from '../common/conversation-message-segments';
+import {
   SendConversationMessageDTO,
   TranscribeConversationVoiceDTO,
 } from '../dto/conversation.dto';
@@ -1946,12 +1951,13 @@ export class ConversationService {
       return [];
     }
 
-    const legacySegments = content
-      .split('</fenge>')
-      .map(item => item.trim())
-      .filter(Boolean);
+    const legacySegments = splitConversationMessageSegments(content);
 
-    if (legacySegments.length > 1) {
+    if (
+      legacySegments.length > 1 ||
+      (legacySegments.length > 0 &&
+        hasConversationMessageSegmentSeparator(content))
+    ) {
       return legacySegments.slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
     }
 
@@ -2024,8 +2030,7 @@ export class ConversationService {
   }
 
   private stripAssistantMarkup(value: string): string {
-    return value
-      .replace(/<\/?fenge\s*>/gi, ' ')
+    return stripConversationMessageSegmentMarkup(value)
       .replace(/<\/?fense\s*>/gi, ' ')
       .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ');
   }

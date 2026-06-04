@@ -8,7 +8,6 @@ import type {
   WechatPaymentParamsDTO,
   WechatVirtualPaymentParamsDTO,
 } from '@tzl/shared'
-import { ApiException } from '../api/api-exception'
 import { get, post } from '../api/api-client'
 
 export interface OrderRecord {
@@ -55,14 +54,6 @@ export interface CreateVipPlanVirtualPaymentOrderResult {
 
 export type CreateVoicePackageVirtualPaymentOrderResult =
   CreateVipPlanVirtualPaymentOrderResult
-
-export type CreateVipPlanPaymentOrderResult =
-  | (CreateVipPlanVirtualPaymentOrderResult & { paymentKind: 'virtual' })
-  | (CreateVipPlanOrderResult & { paymentKind: 'wechat' })
-
-export type CreateVoicePackagePaymentOrderResult =
-  | (CreateVoicePackageVirtualPaymentOrderResult & { paymentKind: 'virtual' })
-  | (CreateVoicePackageOrderResult & { paymentKind: 'wechat' })
 
 export interface UserOrderList {
   items: OrderRecord[]
@@ -231,35 +222,6 @@ export async function createVipPlanVirtualPaymentOrder(payload: {
   return parseCreateVipPlanVirtualPaymentOrderResult(data)
 }
 
-export async function createVipPlanPaymentOrder(payload: {
-  vipPlanId: string
-  jsCode: string
-}): Promise<CreateVipPlanPaymentOrderResult> {
-  try {
-    const result = await createVipPlanVirtualPaymentOrder(payload)
-
-    return {
-      ...result,
-      paymentKind: 'virtual',
-    }
-  } catch (error) {
-    if (!isVirtualPaymentProductIdMissingError(error)) {
-      throw error
-    }
-
-    console.warn(
-      '[order] vip virtual payment product id missing, fallback to wechat payment',
-      { vipPlanId: payload.vipPlanId }
-    )
-    const result = await createVipPlanOrder(payload)
-
-    return {
-      ...result,
-      paymentKind: 'wechat',
-    }
-  }
-}
-
 export async function createVoicePackageOrder(payload: {
   voicePackageId: string
   agentId: string
@@ -292,47 +254,6 @@ export async function createVoicePackageVirtualPaymentOrder(payload: {
   )
 
   return parseCreateVipPlanVirtualPaymentOrderResult(data)
-}
-
-export async function createVoicePackagePaymentOrder(payload: {
-  voicePackageId: string
-  agentId: string
-  jsCode: string
-}): Promise<CreateVoicePackagePaymentOrderResult> {
-  try {
-    const result = await createVoicePackageVirtualPaymentOrder(payload)
-
-    return {
-      ...result,
-      paymentKind: 'virtual',
-    }
-  } catch (error) {
-    if (!isVirtualPaymentProductIdMissingError(error)) {
-      throw error
-    }
-
-    console.warn(
-      '[order] voice package virtual payment product id missing, fallback to wechat payment',
-      {
-        voicePackageId: payload.voicePackageId,
-        agentId: payload.agentId,
-      }
-    )
-    const result = await createVoicePackageOrder(payload)
-
-    return {
-      ...result,
-      paymentKind: 'wechat',
-    }
-  }
-}
-
-function isVirtualPaymentProductIdMissingError(error: unknown) {
-  return (
-    error instanceof ApiException &&
-    (error.code === 'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING' ||
-      error.code === 'VOICE_PACKAGE_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING')
-  )
 }
 
 export async function listOrders() {

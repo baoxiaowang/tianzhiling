@@ -169,7 +169,10 @@ import { computed, ref } from 'vue'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail, updateAgentDefault, type AgentSummary } from '../../apis/agent'
-import { createVoicePackageOrder, createVoicePackagePaymentOrder } from '../../apis/order'
+import {
+  createVoicePackageOrder,
+  createVoicePackageVirtualPaymentOrder,
+} from '../../apis/order'
 import {
   getConversationMessages,
   getConversations,
@@ -753,13 +756,14 @@ async function handleVoicePackagePay() {
       throw new Error('微信登录失败，请稍后重试')
     }
 
-    const result = await createVoicePackagePaymentOrder({
-      voicePackageId: voicePackage.id,
-      agentId: agentId.value,
-      jsCode: code,
-    })
+    let paidOrderId = ''
 
-    if (result.paymentKind === 'virtual') {
+    if (voicePackage.virtualPaymentProductId) {
+      const result = await createVoicePackageVirtualPaymentOrder({
+        voicePackageId: voicePackage.id,
+        agentId: agentId.value,
+        jsCode: code,
+      })
       const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
         const fallbackLoginResult = await Taro.login()
         const fallbackCode = fallbackLoginResult.code?.trim()
@@ -774,14 +778,21 @@ async function handleVoicePackagePay() {
           jsCode: fallbackCode,
         })
       })
-      result.order = paidOrder
+      paidOrderId = paidOrder.id
     } else {
+      const result = await createVoicePackageOrder({
+        voicePackageId: voicePackage.id,
+        agentId: agentId.value,
+        jsCode: code,
+      })
+
       await Taro.requestPayment(result.payment)
+      paidOrderId = result.order.id
     }
     voicePackagePopupVisible.value = false
     await Taro.redirectTo({
       url: `/pages/payment-result/index?orderId=${encodeURIComponent(
-        result.order.id,
+        paidOrderId,
       )}`,
     })
   } catch (error) {

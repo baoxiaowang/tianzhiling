@@ -410,6 +410,7 @@ const chatQuotaDialogOverlayStyle = {
 
 let ensureSessionPromise: Promise<void> | null = null
 let refreshMessagesPromise: Promise<void> | null = null
+let refreshChatQuotaPromise: Promise<ConversationChatQuotaSnapshot | undefined> | null = null
 let voiceStartTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRecorderStop:
   | {
@@ -905,14 +906,12 @@ async function ensureChatQuotaAvailableBeforeSend() {
   isCheckingChatQuota.value = true
 
   try {
-    const chatQuota = await getConversationChatQuota(conversationId.value)
+    const chatQuota = await refreshChatQuotaSnapshot()
 
     if (!chatQuota) {
       showToast('发送前校验失败，请稍后重试')
       return false
     }
-
-    updateChatQuotaSnapshot(chatQuota)
 
     if (!chatQuota.isVip && typeof chatQuota.remainingCount === 'number') {
       if (chatQuota.remainingCount <= 0) {
@@ -959,7 +958,45 @@ useDidShow(() => {
 
   void refreshAgentSnapshot()
   void refreshMessages()
+  void refreshChatQuotaSnapshot({ resetBeforeFetch: true })
 })
+
+async function refreshChatQuotaSnapshot(
+  options: { resetBeforeFetch?: boolean } = {},
+) {
+  if (!conversationId.value) {
+    return undefined
+  }
+
+  if (options.resetBeforeFetch) {
+    chatQuotaRemainingCount.value = null
+  }
+
+  if (refreshChatQuotaPromise) {
+    return refreshChatQuotaPromise
+  }
+
+  refreshChatQuotaPromise = getConversationChatQuota(conversationId.value)
+    .then((chatQuota) => {
+      if (chatQuota) {
+        updateChatQuotaSnapshot(chatQuota)
+      }
+
+      return chatQuota
+    })
+    .catch(async (error: unknown) => {
+      if (error instanceof ApiException && error.requiresReLogin) {
+        await redirectToAuth()
+      }
+
+      return undefined
+    })
+    .finally(() => {
+      refreshChatQuotaPromise = null
+    })
+
+  return refreshChatQuotaPromise
+}
 
 async function refreshMessages(options: { showLoading?: boolean } = {}) {
   if (refreshMessagesPromise) {

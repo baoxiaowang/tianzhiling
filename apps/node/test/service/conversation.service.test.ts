@@ -761,6 +761,26 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('normalizes malformed legacy fenge separators before saving replies', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: '芳芳 我就在这儿</fenge]你慢慢来 [fenge] 我都在',
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '方方，在等等',
+    });
+
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(assistantMessage?.content).toBe(
+      '芳芳 我就在这儿</fenge>你慢慢来</fenge>我都在'
+    );
+  });
+
   it('filters legacy media url segments before saving assistant replies', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),

@@ -60,7 +60,7 @@ import {
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
-import { createVipPlanOrder, createVipPlanPaymentOrder } from '../../apis/order'
+import { createVipPlanOrder, createVipPlanVirtualPaymentOrder } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -184,7 +184,9 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 async function handlePurchaseTap() {
-  if (!selectedPlan.value) {
+  const plan = selectedPlan.value
+
+  if (!plan) {
     showToast('暂无可购买的会员套餐')
     return
   }
@@ -209,12 +211,13 @@ async function handlePurchaseTap() {
       mask: true,
     })
 
-    const result = await createVipPlanPaymentOrder({
-      vipPlanId: selectedPlan.value.id,
-      jsCode,
-    })
+    let paidOrderId = ''
 
-    if (result.paymentKind === 'virtual') {
+    if (plan.virtualPaymentProductId) {
+      const result = await createVipPlanVirtualPaymentOrder({
+        vipPlanId: plan.id,
+        jsCode,
+      })
       const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
         const fallbackLoginResult = await Taro.login()
         const fallbackJsCode = fallbackLoginResult.code?.trim()
@@ -224,20 +227,26 @@ async function handlePurchaseTap() {
         }
 
         return createVipPlanOrder({
-          vipPlanId: selectedPlan.value.id,
+          vipPlanId: plan.id,
           jsCode: fallbackJsCode,
         })
       })
-      result.order = paidOrder
+      paidOrderId = paidOrder.id
     } else {
+      const result = await createVipPlanOrder({
+        vipPlanId: plan.id,
+        jsCode,
+      })
+
       await Taro.requestPayment(result.payment)
+      paidOrderId = result.order.id
     }
     void Taro.hideLoading()
 
     try {
       await Taro.redirectTo({
         url: `/pages/payment-result/index?orderId=${encodeURIComponent(
-          result.order.id,
+          paidOrderId,
         )}`,
       })
     } catch {

@@ -3,6 +3,11 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
+  hasConversationMessageSegmentSeparator,
+  splitConversationMessageSegments,
+  stripConversationMessageSegmentMarkup,
+} from '../common/conversation-message-segments';
+import {
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -85,13 +90,17 @@ export class MessageService {
       type === MessageType.text
         ? this.extractSegmentsFromContent(message.content)
         : [];
+    const content =
+      type === MessageType.text
+        ? this.normalizeTextContentForClient(message.content, segments)
+        : message.content;
 
     return {
       id: this.stringifyObjectId(message.id),
       conversationId: this.stringifyObjectId(message.conversationId),
       role: message.role,
       type,
-      content: message.content,
+      content,
       segments,
       status: message.status,
       voice:
@@ -209,12 +218,13 @@ export class MessageService {
       return [];
     }
 
-    const legacySegments = content
-      .split('</fenge>')
-      .map(item => item.trim())
-      .filter(Boolean);
+    const legacySegments = splitConversationMessageSegments(content);
 
-    if (legacySegments.length > 1) {
+    if (
+      legacySegments.length > 1 ||
+      (legacySegments.length > 0 &&
+        hasConversationMessageSegmentSeparator(content))
+    ) {
       return legacySegments.slice(0, MESSAGE_SEGMENT_LIMIT);
     }
 
@@ -228,6 +238,19 @@ export class MessageService {
     }
 
     return [content];
+  }
+
+  private normalizeTextContentForClient(
+    value: string | undefined,
+    segments: string[]
+  ): string {
+    if (segments.length > 1) {
+      return segments.join('</fenge>');
+    }
+
+    return stripConversationMessageSegmentMarkup(value?.trim() || '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private async getConversationForUser(

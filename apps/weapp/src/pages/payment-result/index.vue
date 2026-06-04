@@ -87,6 +87,7 @@ import {
   type OrderRecord,
   type OrderStatusDTO,
 } from '../../apis/order'
+import { getCurrentUser } from '../../auth/api'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -248,6 +249,7 @@ async function pollOrderStatus() {
     queryError.value = ''
 
     if (latestOrder.status === 'completed') {
+      await refreshCurrentUserAfterCompletedOrder(latestOrder)
       resultType.value = 'success'
       return
     }
@@ -317,6 +319,18 @@ function isFailedStatus(status?: OrderStatusDTO) {
 
 function isRetryableOrderQueryError(error: ApiException) {
   return !['INVALID_ORDER_ID', 'ORDER_NOT_FOUND'].includes(error.code ?? '')
+}
+
+async function refreshCurrentUserAfterCompletedOrder(latestOrder: OrderRecord) {
+  if (latestOrder.orderType !== 'vip_plan') {
+    return
+  }
+
+  try {
+    await getCurrentUser()
+  } catch {
+    // Payment succeeded; keep the result page successful even if profile refresh is slow.
+  }
 }
 
 function getStatusText(status?: OrderStatusDTO) {
