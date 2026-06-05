@@ -86,6 +86,8 @@ interface WechatVirtualRefundResponse extends WechatXPayResponse {
   pay_wx_order_id?: string;
 }
 
+interface WechatVirtualProvideGoodsResponse extends WechatXPayResponse {}
+
 interface WechatRefundPayload {
   refund_id?: string;
   out_refund_no?: string;
@@ -323,6 +325,34 @@ export class AdminWechatPayService {
     }
 
     return response.order ?? null;
+  }
+
+  async notifyVirtualGoodsProvided(payload: {
+    orderNo?: string;
+    wxOrderId?: string;
+    env: number;
+  }): Promise<WechatVirtualProvideGoodsResponse> {
+    const orderNo = payload.orderNo?.trim();
+    const wxOrderId = payload.wxOrderId?.trim();
+
+    if (!orderNo && !wxOrderId) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_ORDER_NO_MISSING',
+        'wechat virtual pay order no missing',
+        400
+      );
+    }
+
+    const body = JSON.stringify({
+      ...(orderNo ? { order_id: orderNo } : { wx_order_id: wxOrderId }),
+      env: payload.env,
+    });
+
+    return this.postXPay<WechatVirtualProvideGoodsResponse>(
+      '/xpay/notify_provide_goods',
+      body,
+      payload.env
+    );
   }
 
   private getWxpayClient(): unknown {

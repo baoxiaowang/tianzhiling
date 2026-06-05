@@ -9,6 +9,7 @@ import {
   OrderStatus,
   OrderType,
   UserMembershipStatus,
+  VirtualGoodsProvideStatus,
   VipPlanEntity,
   VipPlanStatus,
   VoicePackageEntity,
@@ -242,6 +243,10 @@ function snapshotOrder(order: OrderEntity) {
     paidAt: order.paidAt,
     closedAt: order.closedAt,
     refundedAt: order.refundedAt,
+    virtualGoodsProvideStatus: order.virtualGoodsProvideStatus,
+    virtualGoodsProvidedAt: order.virtualGoodsProvidedAt,
+    virtualGoodsProvideFailedAt: order.virtualGoodsProvideFailedAt,
+    virtualGoodsProvideError: order.virtualGoodsProvideError,
     updatedAt: order.updatedAt,
   };
 }
@@ -412,6 +417,7 @@ function createService(
     }),
     getVirtualPayEnv: jest.fn().mockReturnValue(1),
     queryVirtualOrder: jest.fn(),
+    notifyVirtualGoodsProvided: jest.fn().mockResolvedValue({}),
     queryTransactionByOrderNo: jest.fn(),
     refundOrder: jest.fn().mockResolvedValue({
       out_refund_no: `R${ORDER_NO}`,
@@ -1250,7 +1256,92 @@ describe('OrderService payment expiration and reconciliation', () => {
       orderNo: ORDER_NO,
       env: 1,
     });
+    expect(wechatPayService.notifyVirtualGoodsProvided).toHaveBeenCalledWith({
+      orderNo: ORDER_NO,
+      wxOrderId: 'wxpay-virtual-3',
+      env: 1,
+    });
     expect(order.status).toBe(OrderStatus.completed);
+    expect((order as any).virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.provided
+    );
+    expect((order as any).virtualGoodsProvidedAt).toBeInstanceOf(Date);
+    expect(result.status).toBe(OrderStatus.completed);
+  });
+
+  it('notifies virtual goods delivery for a completed local order when WeChat is still pending provide', async () => {
+    const { service, order, auth, wechatPayService } = createService({
+      status: OrderStatus.completed,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+      paidAmount: 990,
+      paidAt: NOW,
+    });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 2,
+      paid_fee: 990,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-4',
+    });
+
+    const result = await service.syncUserOrderPayment(auth, ORDER_ID);
+
+    expect(wechatPayService.queryVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: ORDER_NO,
+      env: 1,
+    });
+    expect(wechatPayService.notifyVirtualGoodsProvided).toHaveBeenCalledWith({
+      orderNo: ORDER_NO,
+      wxOrderId: 'wxpay-virtual-4',
+      env: 1,
+    });
+    expect((order as any).virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.provided
+    );
+    expect((order as any).virtualGoodsProvidedAt).toBeInstanceOf(Date);
+    expect(result.status).toBe(OrderStatus.completed);
+  });
+
+  it('records virtual goods delivery failure without breaking user sync', async () => {
+    const { service, order, auth, wechatPayService } = createService({
+      status: OrderStatus.completed,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+      paidAmount: 990,
+      paidAt: NOW,
+    });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 2,
+      paid_fee: 990,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-5',
+    });
+    wechatPayService.notifyVirtualGoodsProvided.mockRejectedValue(
+      new Error('bad signature')
+    );
+
+    const result = await service.syncUserOrderPayment(auth, ORDER_ID);
+
+    expect(wechatPayService.notifyVirtualGoodsProvided).toHaveBeenCalledWith({
+      orderNo: ORDER_NO,
+      wxOrderId: 'wxpay-virtual-5',
+      env: 1,
+    });
+    expect((order as any).virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.failed
+    );
+    expect((order as any).virtualGoodsProvidedAt).toBeUndefined();
+    expect((order as any).virtualGoodsProvideFailedAt).toEqual(NOW);
+    expect((order as any).virtualGoodsProvideError).toBe('bad signature');
     expect(result.status).toBe(OrderStatus.completed);
   });
 

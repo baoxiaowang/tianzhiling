@@ -71,7 +71,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1660 }"
+        :scroll="{ x: 1780 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -155,6 +155,31 @@
           >
             <template #cell="{ record }">
               {{ getPaymentProviderText(record.paymentProvider) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="微信发货"
+            data-index="virtualGoodsProvideStatus"
+            :width="130"
+          >
+            <template #cell="{ record }">
+              <template v-if="getVirtualGoodsProvideStatus(record)">
+                <a-tooltip
+                  v-if="getVirtualGoodsProvideError(record)"
+                  :content="getVirtualGoodsProvideError(record)"
+                >
+                  <a-tag :color="getVirtualGoodsProvideStatusColor(record)">
+                    {{ getVirtualGoodsProvideStatusText(record) }}
+                  </a-tag>
+                </a-tooltip>
+                <a-tag
+                  v-else
+                  :color="getVirtualGoodsProvideStatusColor(record)"
+                >
+                  {{ getVirtualGoodsProvideStatusText(record) }}
+                </a-tag>
+              </template>
+              <span v-else>-</span>
             </template>
           </a-table-column>
           <a-table-column
@@ -294,6 +319,46 @@
         </a-descriptions-item>
         <a-descriptions-item label="支付渠道">
           {{ getPaymentProviderText(currentOrder.paymentProvider) }}
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="isVirtualPaymentOrder(currentOrder)"
+          label="微信发货状态"
+        >
+          <a-tooltip
+            v-if="getVirtualGoodsProvideError(currentOrder)"
+            :content="getVirtualGoodsProvideError(currentOrder)"
+          >
+            <a-tag :color="getVirtualGoodsProvideStatusColor(currentOrder)">
+              {{ getVirtualGoodsProvideStatusText(currentOrder) }}
+            </a-tag>
+          </a-tooltip>
+          <a-tag
+            v-else
+            :color="getVirtualGoodsProvideStatusColor(currentOrder)"
+          >
+            {{ getVirtualGoodsProvideStatusText(currentOrder) }}
+          </a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="isVirtualPaymentOrder(currentOrder)"
+          label="微信发货时间"
+        >
+          {{ formatDate(currentOrder.virtualGoodsProvidedAt) }}
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="isVirtualPaymentOrder(currentOrder)"
+          label="发货失败时间"
+        >
+          {{ formatDate(currentOrder.virtualGoodsProvideFailedAt) }}
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="
+            isVirtualPaymentOrder(currentOrder) &&
+            currentOrder.virtualGoodsProvideError
+          "
+          label="发货失败原因"
+        >
+          {{ currentOrder.virtualGoodsProvideError }}
         </a-descriptions-item>
         <a-descriptions-item label="微信交易号">
           <a-typography-text v-if="currentOrder.paymentTradeNo" copyable>
@@ -459,6 +524,7 @@
     OrderSourceDTO,
     OrderStatusDTO,
     OrderTypeDTO,
+    VirtualGoodsProvideStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
   import {
@@ -554,6 +620,14 @@
     weapp: '小程序',
     app: 'App',
     admin: '管理端',
+  };
+  const virtualGoodsProvideStatusMap: Record<
+    VirtualGoodsProvideStatusDTO,
+    { text: string; color: string }
+  > = {
+    pending: { text: '待发货', color: 'orange' },
+    provided: { text: '已发货', color: 'green' },
+    failed: { text: '发货失败', color: 'red' },
   };
   const orderTypeTitleMap: Record<string, string> = {
     vip_plan: '会员订单',
@@ -660,6 +734,14 @@
   };
 
   const canSyncPaymentStatus = (record: OrderRecord) => {
+    if (
+      isVirtualPaymentOrder(record) &&
+      record.status === 'completed' &&
+      !isVirtualGoodsProvided(record)
+    ) {
+      return true;
+    }
+
     const isWechatPayment =
       !record.paymentProvider ||
       record.paymentProvider === 'wechat_pay' ||
@@ -689,16 +771,18 @@
     }
 
     const previousStatus = record.status;
+    const previousVirtualGoodsProvideStatus =
+      getVirtualGoodsProvideStatus(record);
     syncLoadingId.value = record.id;
 
     try {
       const { data } = await syncOrderPaymentStatusApi(record.id);
 
       replaceOrderRecord(data);
-      Message.success(
-        data.status === previousStatus
-          ? '已从微信刷新订单状态'
-          : `已从微信同步为${getStatusText(data.status)}`
+      showSyncPaymentStatusMessage(
+        data,
+        previousStatus,
+        previousVirtualGoodsProvideStatus
       );
     } catch (error) {
       Message.error(
@@ -991,6 +1075,85 @@
     }
 
     return provider || '-';
+  };
+
+  const isVirtualPaymentOrder = (record: OrderRecord) => {
+    return record.paymentProvider === 'wechat_virtual_pay';
+  };
+
+  const getVirtualGoodsProvideStatus = (
+    record: OrderRecord
+  ): VirtualGoodsProvideStatusDTO | undefined => {
+    if (!isVirtualPaymentOrder(record)) {
+      return undefined;
+    }
+
+    if (record.virtualGoodsProvideStatus) {
+      return record.virtualGoodsProvideStatus;
+    }
+
+    if (record.virtualGoodsProvidedAt) {
+      return 'provided';
+    }
+
+    return record.status === 'completed' ? 'pending' : undefined;
+  };
+
+  const isVirtualGoodsProvided = (record: OrderRecord) => {
+    return getVirtualGoodsProvideStatus(record) === 'provided';
+  };
+
+  const getVirtualGoodsProvideStatusText = (record: OrderRecord) => {
+    const status = getVirtualGoodsProvideStatus(record);
+    return status ? virtualGoodsProvideStatusMap[status].text : '-';
+  };
+
+  const getVirtualGoodsProvideStatusColor = (record: OrderRecord) => {
+    const status = getVirtualGoodsProvideStatus(record);
+    return status ? virtualGoodsProvideStatusMap[status].color : 'gray';
+  };
+
+  const getVirtualGoodsProvideError = (record: OrderRecord) => {
+    return getVirtualGoodsProvideStatus(record) === 'failed'
+      ? record.virtualGoodsProvideError || ''
+      : '';
+  };
+
+  const showSyncPaymentStatusMessage = (
+    record: OrderRecord,
+    previousStatus: OrderStatusDTO,
+    previousVirtualGoodsProvideStatus?: VirtualGoodsProvideStatusDTO
+  ) => {
+    if (isVirtualPaymentOrder(record) && record.status === 'completed') {
+      const virtualGoodsProvideStatus = getVirtualGoodsProvideStatus(record);
+
+      if (virtualGoodsProvideStatus === 'failed') {
+        Message.error(
+          record.virtualGoodsProvideError ||
+            '微信发货同步失败，请检查配置后重试'
+        );
+        return;
+      }
+
+      if (
+        virtualGoodsProvideStatus === 'provided' &&
+        previousVirtualGoodsProvideStatus !== 'provided'
+      ) {
+        Message.success('微信发货状态已同步为已发货');
+        return;
+      }
+
+      if (virtualGoodsProvideStatus === 'pending') {
+        Message.warning('订单状态已刷新，微信发货仍待确认');
+        return;
+      }
+    }
+
+    Message.success(
+      record.status === previousStatus
+        ? '已从微信刷新订单状态'
+        : `已从微信同步为${getStatusText(record.status)}`
+    );
   };
 
   const getRefundConfirmContent = (record: OrderRecord) => {

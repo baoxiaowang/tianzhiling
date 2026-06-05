@@ -22,6 +22,12 @@ export enum OrderSource {
   admin = 'admin',
 }
 
+export enum VirtualGoodsProvideStatus {
+  pending = 'pending',
+  provided = 'provided',
+  failed = 'failed',
+}
+
 @Index(['orderNo'], { unique: true, background: true })
 @Index(['userId', 'createdAt'], { background: true })
 @Index(['status', 'paymentExpiredAt'], { background: true })
@@ -99,6 +105,18 @@ export class OrderEntity extends BaseEntity {
 
   @Column()
   virtualPaymentEnv?: number;
+
+  @Column()
+  virtualGoodsProvideStatus?: VirtualGoodsProvideStatus;
+
+  @Column()
+  virtualGoodsProvidedAt?: Date;
+
+  @Column()
+  virtualGoodsProvideFailedAt?: Date;
+
+  @Column()
+  virtualGoodsProvideError?: string;
 
   @Column()
   snapshot?: Record<string, unknown>;

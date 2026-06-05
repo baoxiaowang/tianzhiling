@@ -6,6 +6,7 @@ import {
   OrderStatus,
   OrderType,
   UserMembershipStatus,
+  VirtualGoodsProvideStatus,
   VipPlanStatus,
   VoicePackageStatus,
   VoiceTrainingTaskStatus,
@@ -290,6 +291,7 @@ function createService() {
       status: 'SUCCESS',
     }),
     queryVirtualOrder: jest.fn(),
+    notifyVirtualGoodsProvided: jest.fn().mockResolvedValue({}),
     refundVirtualOrder: jest.fn().mockResolvedValue({
       refund_order_id: 'RVIP202605020001',
     }),
@@ -726,6 +728,108 @@ describe('AdminOrderService', () => {
     expect(order.paidAmount).toBe(9900);
     expect(order.paymentTradeNo).toBe('420000000020260502999999');
     expect(result.status).toBe(OrderStatus.completed);
+
+    jest.useRealTimers();
+  });
+
+  it('notifies virtual goods delivery for a completed local order when WeChat is still pending provide', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentEnv: 0,
+      virtualGoodsProvidedAt: undefined,
+    });
+
+    orders.push(order);
+    jest.mocked(service.adminWechatPayService.queryVirtualOrder).mockResolvedValue({
+      order_id: 'VIP202605020001',
+      status: 2,
+      paid_fee: 9900,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-admin-1',
+    } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.syncPaymentStatus(ORDER_ID.toHexString());
+
+    expect(service.adminWechatPayService.queryVirtualOrder).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      orderNo: 'VIP202605020001',
+      env: 0,
+    });
+    expect(
+      service.adminWechatPayService.notifyVirtualGoodsProvided
+    ).toHaveBeenCalledWith({
+      orderNo: 'VIP202605020001',
+      wxOrderId: 'wxpay-virtual-admin-1',
+      env: 0,
+    });
+    expect((order as any).virtualGoodsProvidedAt).toEqual(ORDER_CREATED_AT);
+    expect((order as any).virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.provided
+    );
+    expect(result.status).toBe(OrderStatus.completed);
+    expect(result.virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.provided
+    );
+    expect(result.virtualGoodsProvidedAt).toBe('2026-05-02T08:00:00.000Z');
+
+    jest.useRealTimers();
+  });
+
+  it('returns virtual goods delivery failure when WeChat provide notify fails', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentEnv: 0,
+      virtualGoodsProvidedAt: undefined,
+    });
+
+    orders.push(order);
+    jest.mocked(service.adminWechatPayService.queryVirtualOrder).mockResolvedValue({
+      order_id: 'VIP202605020001',
+      status: 2,
+      paid_fee: 9900,
+      paid_time: 1777600000,
+      wxpay_order_id: 'wxpay-virtual-admin-2',
+    } as never);
+    jest
+      .mocked(service.adminWechatPayService.notifyVirtualGoodsProvided)
+      .mockRejectedValue(new Error('bad signature') as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.syncPaymentStatus(ORDER_ID.toHexString());
+
+    expect(
+      service.adminWechatPayService.notifyVirtualGoodsProvided
+    ).toHaveBeenCalledWith({
+      orderNo: 'VIP202605020001',
+      wxOrderId: 'wxpay-virtual-admin-2',
+      env: 0,
+    });
+    expect((order as any).virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.failed
+    );
+    expect((order as any).virtualGoodsProvidedAt).toBeUndefined();
+    expect((order as any).virtualGoodsProvideFailedAt).toEqual(
+      ORDER_CREATED_AT
+    );
+    expect((order as any).virtualGoodsProvideError).toBe('bad signature');
+    expect(result.status).toBe(OrderStatus.completed);
+    expect(result.virtualGoodsProvideStatus).toBe(
+      VirtualGoodsProvideStatus.failed
+    );
+    expect(result.virtualGoodsProvidedAt).toBeUndefined();
+    expect(result.virtualGoodsProvideFailedAt).toBe(
+      '2026-05-02T08:00:00.000Z'
+    );
+    expect(result.virtualGoodsProvideError).toBe('bad signature');
 
     jest.useRealTimers();
   });

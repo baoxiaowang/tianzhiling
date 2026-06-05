@@ -15,6 +15,7 @@ import {
   OrderType,
   UserMembershipEntity,
   UserMembershipStatus,
+  VirtualGoodsProvideStatus,
   VipPlanEntity,
   VipPlanStatus,
   VoicePackageEntity,
@@ -425,6 +426,13 @@ export class OrderService {
       throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
     }
 
+    if (this.shouldSyncCompletedVirtualGoods(order)) {
+      await this.syncVirtualPaymentOrder(order);
+      const syncedOrder = await this.findOrderById(objectId);
+
+      return this.buildOrderRecord(syncedOrder ?? order);
+    }
+
     if (
       order.status === OrderStatus.completed ||
       order.status === OrderStatus.paid ||
@@ -776,6 +784,7 @@ export class OrderService {
 
     if (this.isVirtualPaymentPaid(virtualOrder.status)) {
       await this.handleVirtualPaymentSuccess(order, virtualOrder);
+      await this.syncVirtualGoodsProvided(order, virtualOrder);
       return;
     }
 
@@ -859,6 +868,113 @@ export class OrderService {
     }
   }
 
+  private async syncVirtualGoodsProvided(
+    order: OrderEntity,
+    virtualOrder: WechatVirtualOrderPayload
+  ): Promise<void> {
+    if (this.isVirtualPaymentDelivered(virtualOrder.status)) {
+      await this.markVirtualGoodsProvided(order, virtualOrder.provide_time);
+      return;
+    }
+
+    if (
+      !this.shouldNotifyVirtualGoodsProvided(order, virtualOrder) ||
+      this.isVirtualGoodsProvided(order)
+    ) {
+      return;
+    }
+
+    await this.markVirtualGoodsProvidePending(order);
+
+    try {
+      await this.wechatPayService.notifyVirtualGoodsProvided({
+        orderNo: order.orderNo,
+        wxOrderId: this.getVirtualPaymentWechatOrderId(virtualOrder),
+        env:
+          order.virtualPaymentEnv ?? this.wechatPayService.getVirtualPayEnv(),
+      });
+    } catch (error) {
+      await this.markVirtualGoodsProvideFailed(order, error);
+      this.logger?.warn?.(
+        '[wechat-virtual-pay] notify_provide_goods failed: orderNo=%s, status=%s, error=%s',
+        order.orderNo,
+        virtualOrder.status ?? 'none',
+        this.getVirtualGoodsProvideError(error)
+      );
+      return;
+    }
+
+    await this.markVirtualGoodsProvided(order);
+  }
+
+  private shouldNotifyVirtualGoodsProvided(
+    order: OrderEntity,
+    virtualOrder: WechatVirtualOrderPayload
+  ): boolean {
+    return (
+      order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER &&
+      order.status === OrderStatus.completed &&
+      this.isVirtualPaymentProvidePending(virtualOrder.status)
+    );
+  }
+
+  private async markVirtualGoodsProvided(
+    order: OrderEntity,
+    provideTime?: number
+  ): Promise<void> {
+    if (
+      order.virtualGoodsProvideStatus === VirtualGoodsProvideStatus.provided &&
+      order.virtualGoodsProvidedAt
+    ) {
+      return;
+    }
+
+    order.virtualGoodsProvideStatus = VirtualGoodsProvideStatus.provided;
+    order.virtualGoodsProvidedAt = provideTime
+      ? new Date(provideTime * 1000)
+      : new Date();
+    order.virtualGoodsProvideFailedAt = undefined;
+    order.virtualGoodsProvideError = undefined;
+    order.updatedAt = new Date();
+    await this.orderModel.save(order);
+  }
+
+  private async markVirtualGoodsProvidePending(
+    order: OrderEntity
+  ): Promise<void> {
+    order.virtualGoodsProvideStatus = VirtualGoodsProvideStatus.pending;
+    order.virtualGoodsProvideFailedAt = undefined;
+    order.virtualGoodsProvideError = undefined;
+    order.updatedAt = new Date();
+    await this.orderModel.save(order);
+  }
+
+  private async markVirtualGoodsProvideFailed(
+    order: OrderEntity,
+    error: unknown
+  ): Promise<void> {
+    order.virtualGoodsProvideStatus = VirtualGoodsProvideStatus.failed;
+    order.virtualGoodsProvideFailedAt = new Date();
+    order.virtualGoodsProvideError = this.getVirtualGoodsProvideError(error);
+    order.updatedAt = new Date();
+    await this.orderModel.save(order);
+  }
+
+  private getVirtualGoodsProvideError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.slice(0, 300);
+  }
+
+  private getVirtualPaymentWechatOrderId(
+    virtualOrder: WechatVirtualOrderPayload
+  ): string | undefined {
+    return (
+      virtualOrder.wxpay_order_id ||
+      virtualOrder.wx_order_id ||
+      virtualOrder.channel_order_id
+    );
+  }
+
   private assertVirtualPaymentNotifyMatchesOrder(
     order: OrderEntity,
     payload: WechatVirtualPaymentNotifyPayload
@@ -940,6 +1056,14 @@ export class OrderService {
 
   private isVirtualPaymentPaid(status?: number): boolean {
     return status === 2 || status === 3 || status === 4;
+  }
+
+  private isVirtualPaymentDelivered(status?: number): boolean {
+    return status === 4;
+  }
+
+  private isVirtualPaymentProvidePending(status?: number): boolean {
+    return status === 2 || status === 3;
   }
 
   private isVirtualPaymentClosed(status?: number): boolean {
@@ -1268,6 +1392,21 @@ export class OrderService {
       status === OrderStatus.grantFailed ||
       status === OrderStatus.refunded ||
       status === OrderStatus.closed
+    );
+  }
+
+  private shouldSyncCompletedVirtualGoods(order: OrderEntity): boolean {
+    return (
+      order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER &&
+      order.status === OrderStatus.completed &&
+      !this.isVirtualGoodsProvided(order)
+    );
+  }
+
+  private isVirtualGoodsProvided(order: OrderEntity): boolean {
+    return (
+      order.virtualGoodsProvideStatus === VirtualGoodsProvideStatus.provided ||
+      (!order.virtualGoodsProvideStatus && Boolean(order.virtualGoodsProvidedAt))
     );
   }
 

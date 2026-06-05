@@ -48,6 +48,11 @@ export interface UserOrderListDTO {
 
 export type OrderSourceDTO = 'app' | 'weapp' | 'admin';
 
+export type VirtualGoodsProvideStatusDTO =
+  | 'pending'
+  | 'provided'
+  | 'failed';
+
 export interface AdminOrderUserDTO {
   id: string;
   account: string;
@@ -67,6 +72,10 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   paymentProvider?: string;
   paymentTradeNo?: string;
   paymentNotifyAt?: string;
+  virtualGoodsProvideStatus?: VirtualGoodsProvideStatusDTO;
+  virtualGoodsProvidedAt?: string;
+  virtualGoodsProvideFailedAt?: string;
+  virtualGoodsProvideError?: string;
   paymentExpiredAt?: string;
   closedAt?: string;
   refundedAt?: string;
