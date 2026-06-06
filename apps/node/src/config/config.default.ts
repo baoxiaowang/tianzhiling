@@ -381,6 +381,80 @@ export default {
       120000
     ),
   },
+  cosyVoice: {
+    enabled: readBooleanFrom(['NODE_COSYVOICE_ENABLED'], true),
+    apiKey: readStringFrom(
+      [
+        'NODE_COSYVOICE_API_KEY',
+        'ADMIN_API_COSYVOICE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_COSYVOICE_BASE_URL', 'ADMIN_API_COSYVOICE_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'NODE_COSYVOICE_PREVIEW_MODEL',
+        'ADMIN_API_COSYVOICE_PREVIEW_MODEL',
+      ],
+      'cosyvoice-v3.5-plus'
+    ),
+    defaultSpeechModel: readStringFrom(
+      [
+        'NODE_COSYVOICE_SPEECH_MODEL',
+        'ADMIN_API_COSYVOICE_SPEECH_MODEL',
+        'NODE_COSYVOICE_PREVIEW_MODEL',
+        'ADMIN_API_COSYVOICE_PREVIEW_MODEL',
+      ],
+      'cosyvoice-v3.5-plus'
+    ),
+    defaultLanguageHint: readStringFrom(
+      ['NODE_COSYVOICE_LANGUAGE_HINT', 'ADMIN_API_COSYVOICE_LANGUAGE_HINT'],
+      'zh'
+    ),
+    outputFormat: readStringFrom(['NODE_COSYVOICE_OUTPUT_FORMAT'], 'mp3'),
+    sampleRate: readNumberFrom(['NODE_COSYVOICE_SAMPLE_RATE'], 24000),
+    timeoutMs: readNumberFrom(
+      ['NODE_COSYVOICE_TIMEOUT_MS', 'ADMIN_API_COSYVOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
+  qwenVoice: {
+    enabled: readBooleanFrom(
+      ['NODE_QWEN_VOICE_ENABLED', 'ADMIN_API_QWEN_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      [
+        'NODE_QWEN_VOICE_API_KEY',
+        'ADMIN_API_QWEN_VOICE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_QWEN_VOICE_BASE_URL', 'ADMIN_API_QWEN_VOICE_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    defaultSpeechModel: readStringFrom(
+      [
+        'NODE_QWEN_VOICE_SPEECH_MODEL',
+        'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL',
+      ],
+      'qwen3-tts-vc-2026-01-22'
+    ),
+    defaultLanguageType: readStringFrom(
+      ['NODE_QWEN_VOICE_LANGUAGE_TYPE', 'NODE_QWEN_VOICE_LANGUAGE'],
+      'Auto'
+    ),
+    timeoutMs: readNumberFrom(
+      ['NODE_QWEN_VOICE_TIMEOUT_MS', 'ADMIN_API_QWEN_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(

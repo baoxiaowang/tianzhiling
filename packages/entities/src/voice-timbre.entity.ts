@@ -3,6 +3,7 @@ import { BaseEntity, TableName } from './base';
 
 export enum VoiceTimbreProvider {
   minimax = 'minimax',
+  cosyvoice = 'cosyvoice',
   qwen = 'qwen',
   doubao = 'doubao',
 }

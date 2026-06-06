@@ -40,7 +40,9 @@ import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
+import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
+import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
@@ -196,6 +198,12 @@ export class ConversationService {
 
   @Inject()
   minimaxVoiceSpeechService: MinimaxVoiceSpeechService;
+
+  @Inject()
+  cosyVoiceSpeechService: CosyVoiceSpeechService;
+
+  @Inject()
+  qwenVoiceSpeechService: QwenVoiceSpeechService;
 
   @Inject()
   bullmqFramework: bullmq.Framework;
@@ -1339,6 +1347,27 @@ export class ConversationService {
         speed: input.voiceTimbre.speechSpeed,
         volume: input.voiceTimbre.speechVolume,
         pitch: input.voiceTimbre.speechPitch,
+      });
+    }
+
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.cosyvoice) {
+      return this.cosyVoiceSpeechService.synthesize({
+        text: input.text,
+        voiceId: input.voiceTimbre.providerVoiceId,
+        model: input.voiceTimbre.previewModel,
+        languageHint: input.voiceTimbre.cloneLanguage,
+        speed: input.voiceTimbre.speechSpeed,
+        volume: input.voiceTimbre.speechVolume,
+        pitch: input.voiceTimbre.speechPitch,
+      });
+    }
+
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.qwen) {
+      return this.qwenVoiceSpeechService.synthesize({
+        text: input.text,
+        voiceId: input.voiceTimbre.providerVoiceId,
+        model: input.voiceTimbre.previewModel,
+        language: input.voiceTimbre.cloneLanguage,
       });
     }
 

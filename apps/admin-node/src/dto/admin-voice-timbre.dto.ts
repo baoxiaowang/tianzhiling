@@ -1,6 +1,11 @@
 import { Rule, RuleType } from '@midwayjs/validate';
 
-const providerRule = RuleType.string().valid('minimax', 'qwen', 'doubao');
+const providerRule = RuleType.string().valid(
+  'minimax',
+  'cosyvoice',
+  'qwen',
+  'doubao'
+);
 const statusRule = RuleType.string().valid(
   'creating',
   'active',

@@ -66,6 +66,14 @@ function createService() {
       buffer: Buffer.from('wav'),
       fileName: 'demo.wav',
       contentType: 'audio/wav',
+      url: 'https://cdn.example.com/voice-timbres/demo.wav',
+    }),
+  } as any;
+  service.storageService = {
+    uploadCosBuffer: jest.fn().mockResolvedValue({
+      objectKey: 'voice-timbre-previews/preview.mp3',
+      publicUrl: 'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+      contentType: 'audio/mpeg',
     }),
   } as any;
   service.ffmpegService = {
@@ -77,6 +85,34 @@ function createService() {
     cloneVoice: jest.fn().mockResolvedValue({
       providerVoiceId: 'TestVoice_001',
       demoAudio: 'https://cdn.example.com/demo-output.mp3',
+    }),
+  } as any;
+  service.cosyVoiceVoiceService = {
+    getDefaultPreviewModel: jest.fn(() => 'cosyvoice-v3.5-plus'),
+    cloneVoice: jest.fn().mockResolvedValue({
+      providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      demoAudio: '',
+      requestId: 'dashscope-request-001',
+    }),
+    synthesizePreview: jest.fn().mockResolvedValue({
+      audioUrl: '',
+      audioBuffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      mimeType: 'audio/mpeg',
+      requestId: 'dashscope-preview-001',
+    }),
+  } as any;
+  service.qwenVoiceService = {
+    getDefaultPreviewModel: jest.fn(() => 'qwen3-tts-vc-2026-01-22'),
+    cloneVoice: jest.fn().mockResolvedValue({
+      providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+      targetModel: 'qwen3-tts-vc-2026-01-22',
+      requestId: 'qwen-request-001',
+    }),
+    synthesizePreview: jest.fn().mockResolvedValue({
+      audioUrl: '',
+      audioBuffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      mimeType: 'audio/wav',
+      requestId: 'qwen-preview-001',
     }),
   } as any;
   service.bullmqFramework = {
@@ -196,6 +232,82 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         previewText: DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
       })
     );
+  });
+
+  it('creates a CosyVoice timbre with a prefix and provider default model', async () => {
+    const { service, queue } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '百炼音色',
+      provider: 'cosyvoice',
+      providerVoiceId: 'tzlvoice',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      cloneLanguage: 'zh',
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.cosyvoice,
+        providerVoiceId: 'tzlvoice',
+        cloneLanguage: 'zh',
+        previewModel: 'cosyvoice-v3.5-plus',
+        status: VoiceTimbreStatus.creating,
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.cosyvoice,
+        providerVoiceId: 'tzlvoice',
+      })
+    );
+  });
+
+  it('creates a Qwen timbre with a preferred name and provider default model', async () => {
+    const { service, queue } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '千问音色',
+      provider: 'qwen',
+      providerVoiceId: 'tzlvoice',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      cloneLanguage: 'zh',
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.qwen,
+        providerVoiceId: 'tzlvoice',
+        cloneLanguage: 'zh',
+        previewModel: 'qwen3-tts-vc-2026-01-22',
+        status: VoiceTimbreStatus.creating,
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.qwen,
+        providerVoiceId: 'tzlvoice',
+      })
+    );
+  });
+
+  it('rejects reserved providers that are still not connected', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.createVoiceTimbre({
+        name: '豆包音色',
+        provider: 'doubao',
+        audioObjectKey: 'voice-timbres/demo.wav',
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+    });
   });
 
   it('updates output speech settings without re-cloning the timbre', async () => {
@@ -318,6 +430,103 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         status: VoiceTimbreStatus.active,
         errorCode: '',
         errorMessage: '',
+      })
+    );
+  });
+
+  it('processes a CosyVoice create job with the public audio url', async () => {
+    const { service } = createService();
+    const timbre = {
+      ...createTimbre(),
+      provider: VoiceTimbreProvider.cosyvoice,
+      providerVoiceId: 'tzlvoice',
+      cloneLanguage: 'zh',
+      previewModel: 'cosyvoice-v3.5-plus',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    await service.processCreateVoiceTimbreJob({
+      timbreId: TIMBRE_ID.toHexString(),
+    });
+
+    expect(service.minimaxVoiceService.uploadCloneAudio).not.toHaveBeenCalled();
+    expect(service.minimaxVoiceService.cloneVoice).not.toHaveBeenCalled();
+    expect(service.cosyVoiceVoiceService.cloneVoice).toHaveBeenCalledWith({
+      audioUrl: 'https://cdn.example.com/voice-timbres/demo.wav',
+      prefix: 'tzlvoice',
+      targetModel: 'cosyvoice-v3.5-plus',
+      languageHint: 'zh',
+    });
+    expect(service.cosyVoiceVoiceService.synthesizePreview).toHaveBeenCalledWith(
+      {
+        text: '今天天气很好',
+        voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+        model: 'cosyvoice-v3.5-plus',
+        languageHint: 'zh',
+        speed: 1.08,
+        volume: 1,
+        pitch: 0,
+      }
+    );
+    expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith({
+      buffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      fileName: expect.stringMatching(/^voice_timbre_preview_\d+\.mp3$/),
+      folder: 'voice-timbre-previews',
+      contentType: 'audio/mpeg',
+    });
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        providerFileId: 'dashscope-request-001',
+        providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+        previewAudioUrl: 'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+        status: VoiceTimbreStatus.active,
+      })
+    );
+  });
+
+  it('processes a Qwen create job with the public audio url', async () => {
+    const { service } = createService();
+    const timbre = {
+      ...createTimbre(),
+      provider: VoiceTimbreProvider.qwen,
+      providerVoiceId: 'tzlvoice',
+      cloneLanguage: 'zh',
+      previewModel: 'qwen3-tts-vc-2026-01-22',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    await service.processCreateVoiceTimbreJob({
+      timbreId: TIMBRE_ID.toHexString(),
+    });
+
+    expect(service.minimaxVoiceService.uploadCloneAudio).not.toHaveBeenCalled();
+    expect(service.minimaxVoiceService.cloneVoice).not.toHaveBeenCalled();
+    expect(service.qwenVoiceService.cloneVoice).toHaveBeenCalledWith({
+      audioUrl: 'https://cdn.example.com/voice-timbres/demo.wav',
+      preferredName: 'tzlvoice',
+      targetModel: 'qwen3-tts-vc-2026-01-22',
+      language: 'zh',
+    });
+    expect(service.qwenVoiceService.synthesizePreview).toHaveBeenCalledWith({
+      text: '今天天气很好',
+      voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+      model: 'qwen3-tts-vc-2026-01-22',
+      language: 'zh',
+    });
+    expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith({
+      buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      fileName: expect.stringMatching(/^voice_timbre_preview_\d+\.wav$/),
+      folder: 'voice-timbre-previews',
+      contentType: 'audio/wav',
+    });
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        providerFileId: 'qwen-request-001',
+        providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+        previewAudioUrl: 'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+        status: VoiceTimbreStatus.active,
       })
     );
   });
@@ -471,6 +680,115 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       })
     );
     expect(result.status).toBe(VoiceTimbreStatus.creating);
+  });
+
+  it('generates missing CosyVoice preview audio without cloning a new active timbre', async () => {
+    const { service, queue } = createService();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      provider: VoiceTimbreProvider.cosyvoice,
+      providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      cloneLanguage: 'zh',
+      previewModel: 'cosyvoice-v3.5-plus',
+      previewAudioUrl: '',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.retryVoiceTimbreCreate(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(queue.addJobToQueue).not.toHaveBeenCalled();
+    expect(service.cosyVoiceVoiceService.cloneVoice).not.toHaveBeenCalled();
+    expect(service.cosyVoiceVoiceService.synthesizePreview).toHaveBeenCalledWith(
+      {
+        text: '今天天气很好',
+        voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+        model: 'cosyvoice-v3.5-plus',
+        languageHint: 'zh',
+        speed: 1.08,
+        volume: 1,
+        pitch: 0,
+      }
+    );
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        status: VoiceTimbreStatus.active,
+        providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+        previewAudioUrl:
+          'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+      })
+    );
+    expect(result.status).toBe(VoiceTimbreStatus.active);
+  });
+
+  it('generates missing Qwen preview audio without cloning a new active timbre', async () => {
+    const { service, queue } = createService();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      provider: VoiceTimbreProvider.qwen,
+      providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+      cloneLanguage: 'zh',
+      previewModel: 'qwen3-tts-vc-2026-01-22',
+      previewAudioUrl: '',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.retryVoiceTimbreCreate(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(queue.addJobToQueue).not.toHaveBeenCalled();
+    expect(service.qwenVoiceService.cloneVoice).not.toHaveBeenCalled();
+    expect(service.qwenVoiceService.synthesizePreview).toHaveBeenCalledWith({
+      text: '今天天气很好',
+      voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+      model: 'qwen3-tts-vc-2026-01-22',
+      language: 'zh',
+    });
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        status: VoiceTimbreStatus.active,
+        providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+        previewAudioUrl:
+          'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+      })
+    );
+    expect(result.status).toBe(VoiceTimbreStatus.active);
+  });
+
+  it('falls back to CosyVoice provider preview url when preview audio buffer is unavailable', async () => {
+    const { service } = createService();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      provider: VoiceTimbreProvider.cosyvoice,
+      providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      cloneLanguage: 'zh',
+      previewModel: 'cosyvoice-v3.5-plus',
+      previewAudioUrl: '',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+    jest.mocked(service.cosyVoiceVoiceService.synthesizePreview).mockResolvedValue({
+      audioUrl: 'https://dashscope-result.example.com/preview.mp3',
+      audioBuffer: Buffer.alloc(0),
+      mimeType: 'audio/mpeg',
+      requestId: 'dashscope-preview-002',
+    });
+
+    const result = await service.retryVoiceTimbreCreate(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(service.storageService.uploadCosBuffer).not.toHaveBeenCalled();
+    expect(timbre.previewAudioUrl).toBe(
+      'https://dashscope-result.example.com/preview.mp3'
+    );
+    expect(result.previewAudioUrl).toBe(
+      'https://dashscope-result.example.com/preview.mp3'
+    );
   });
 
   it('fills default preview text before retrying a failed timbre', async () => {

@@ -275,6 +275,20 @@ function createService(options: {
       mimeType: 'audio/mpeg',
     }),
   } as any;
+  service.cosyVoiceSpeechService = {
+    synthesize: jest.fn().mockResolvedValue({
+      audioUrl: 'https://cdn.example.com/cosyvoice-reply.mp3',
+      audioBuffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      mimeType: 'audio/mpeg',
+    }),
+  } as any;
+  service.qwenVoiceSpeechService = {
+    synthesize: jest.fn().mockResolvedValue({
+      audioUrl: 'https://cdn.example.com/qwen-reply.wav',
+      audioBuffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      mimeType: 'audio/wav',
+    }),
+  } as any;
   service.agentContextService = {
     buildConversationContext: jest.fn().mockResolvedValue({
       messages: [{ role: 'user', content: '我想你了' }],
@@ -733,6 +747,107 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       }
     );
     expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
+  it('uses the bound active CosyVoice timbre for assistant voice replies', async () => {
+    const voiceTimbre = createVoiceTimbre();
+
+    voiceTimbre.provider = VoiceTimbreProvider.cosyvoice;
+    voiceTimbre.providerVoiceId = 'cosyvoice-v3.5-plus-tzlvoice-abc123';
+    voiceTimbre.previewModel = 'cosyvoice-v3.5-plus';
+    voiceTimbre.cloneLanguage = 'zh';
+
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(
+      AUTH,
+      CONVERSATION_ID,
+      {
+        type: 'voice',
+        objectKey: 'conversation-voice/input.m4a',
+        mimeType: 'audio/mp4',
+      }
+    );
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(service.cosyVoiceSpeechService.synthesize).toHaveBeenCalledWith({
+      text: '我也想你。今天过得怎么样？',
+      voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      model: 'cosyvoice-v3.5-plus',
+      languageHint: 'zh',
+      speed: 1.12,
+      volume: 1.1,
+      pitch: -1,
+    });
+    expect(assistantMessage).toEqual(
+      expect.objectContaining({
+        type: MessageType.voice,
+        content: '我也想你</fenge>今天过得怎么样？',
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaUrl: '',
+        mediaMimeType: 'audio/mpeg',
+        mediaTranscript: '我也想你。今天过得怎么样？',
+      })
+    );
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
+  it('uses the bound active Qwen timbre for assistant voice replies', async () => {
+    const voiceTimbre = createVoiceTimbre();
+
+    voiceTimbre.provider = VoiceTimbreProvider.qwen;
+    voiceTimbre.providerVoiceId =
+      'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd';
+    voiceTimbre.previewModel = 'qwen3-tts-vc-2026-01-22';
+    voiceTimbre.cloneLanguage = 'zh';
+
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(
+      AUTH,
+      CONVERSATION_ID,
+      {
+        type: 'voice',
+        objectKey: 'conversation-voice/input.m4a',
+        mimeType: 'audio/mp4',
+      }
+    );
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(service.cosyVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(service.qwenVoiceSpeechService.synthesize).toHaveBeenCalledWith({
+      text: '我也想你。今天过得怎么样？',
+      voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
+      model: 'qwen3-tts-vc-2026-01-22',
+      language: 'zh',
+    });
+    expect(assistantMessage).toEqual(
+      expect.objectContaining({
+        type: MessageType.voice,
+        content: '我也想你</fenge>今天过得怎么样？',
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaUrl: '',
+        mediaMimeType: 'audio/wav',
+        mediaTranscript: '我也想你。今天过得怎么样？',
+      })
+    );
     expect(result.assistantMessage?.type).toBe(MessageType.voice);
   });
 

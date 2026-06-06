@@ -1,4 +1,8 @@
-export type VoiceTimbreProviderDTO = 'minimax' | 'qwen' | 'doubao';
+export type VoiceTimbreProviderDTO =
+  | 'minimax'
+  | 'cosyvoice'
+  | 'qwen'
+  | 'doubao';
 
 export type VoiceTimbreStatusDTO =
   | 'creating'

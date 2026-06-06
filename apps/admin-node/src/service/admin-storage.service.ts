@@ -48,6 +48,13 @@ export interface UploadCosFileInput {
   contentType?: string;
 }
 
+export interface UploadCosBufferInput {
+  buffer: Buffer;
+  fileName: string;
+  folder?: string;
+  contentType?: string;
+}
+
 @Provide()
 export class AdminStorageService {
   @Config('tencentCos')
@@ -102,6 +109,40 @@ export class AdminStorageService {
       Region: region,
       Key: objectKey,
       Body: createReadStream(input.filePath),
+      ContentType: contentType,
+    });
+
+    return {
+      provider: 'tencent-cos',
+      bucket,
+      region,
+      endpoint: this.resolveEndpoint(bucket, region),
+      objectKey,
+      publicUrl: this.getPublicUrl(objectKey, bucket, region),
+      contentType,
+      etag: result.ETag,
+    };
+  }
+
+  async uploadCosBuffer(
+    input: UploadCosBufferInput
+  ): Promise<ServerUploadedFile> {
+    this.ensureCosEnabled();
+
+    if (!Buffer.isBuffer(input.buffer) || input.buffer.length === 0) {
+      throw new AppError('UPLOAD_FILE_MISSING', 'upload file is missing', 400);
+    }
+
+    const bucket = this.getRequiredConfig('bucket');
+    const region = this.getRequiredConfig('region');
+    const contentType = input.contentType?.trim() || 'application/octet-stream';
+    const objectKey = this.buildObjectKey(input.fileName, input.folder);
+    const cos = this.createCosClient();
+    const result = await cos.putObject({
+      Bucket: bucket,
+      Region: region,
+      Key: objectKey,
+      Body: input.buffer,
       ContentType: contentType,
     });
 

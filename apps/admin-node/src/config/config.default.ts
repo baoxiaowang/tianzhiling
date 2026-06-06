@@ -181,6 +181,89 @@ export default {
       120000
     ),
   },
+  cosyVoice: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_COSYVOICE_ENABLED', 'NODE_COSYVOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      [
+        'ADMIN_API_COSYVOICE_API_KEY',
+        'NODE_COSYVOICE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['ADMIN_API_COSYVOICE_BASE_URL', 'NODE_COSYVOICE_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'ADMIN_API_COSYVOICE_PREVIEW_MODEL',
+        'NODE_COSYVOICE_PREVIEW_MODEL',
+      ],
+      'cosyvoice-v3.5-plus'
+    ),
+    defaultLanguageHint: readStringFrom(
+      [
+        'ADMIN_API_COSYVOICE_LANGUAGE_HINT',
+        'NODE_COSYVOICE_LANGUAGE_HINT',
+      ],
+      'zh'
+    ),
+    maxPromptAudioLength: readNumberFrom(
+      [
+        'ADMIN_API_COSYVOICE_MAX_PROMPT_AUDIO_LENGTH',
+        'NODE_COSYVOICE_MAX_PROMPT_AUDIO_LENGTH',
+      ],
+      20
+    ),
+    enablePreprocess: readBooleanFrom(
+      [
+        'ADMIN_API_COSYVOICE_ENABLE_PREPROCESS',
+        'NODE_COSYVOICE_ENABLE_PREPROCESS',
+      ],
+      false
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_COSYVOICE_TIMEOUT_MS', 'NODE_COSYVOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
+  qwenVoice: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_QWEN_VOICE_ENABLED', 'NODE_QWEN_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      [
+        'ADMIN_API_QWEN_VOICE_API_KEY',
+        'NODE_QWEN_VOICE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['ADMIN_API_QWEN_VOICE_BASE_URL', 'NODE_QWEN_VOICE_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL',
+        'NODE_QWEN_VOICE_SPEECH_MODEL',
+      ],
+      'qwen3-tts-vc-2026-01-22'
+    ),
+    defaultLanguage: readStringFrom(
+      ['ADMIN_API_QWEN_VOICE_LANGUAGE', 'NODE_QWEN_VOICE_LANGUAGE'],
+      'zh'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_QWEN_VOICE_TIMEOUT_MS', 'NODE_QWEN_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
   wechatPay: {
     enabled: readBooleanFrom(
       ['ADMIN_API_WECHAT_PAY_ENABLED', 'NODE_WECHAT_PAY_ENABLED'],

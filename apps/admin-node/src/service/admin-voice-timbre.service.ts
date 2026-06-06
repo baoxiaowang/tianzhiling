@@ -23,7 +23,10 @@ import {
 } from '../dto/admin-voice-timbre.dto';
 import { AdminFfmpegService } from './admin-ffmpeg.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
+import { AdminStorageService } from './admin-storage.service';
+import { CosyVoiceVoiceService } from './cosyvoice-voice.service';
 import { MinimaxVoiceService } from './minimax-voice.service';
+import { QwenVoiceService } from './qwen-voice.service';
 
 type MongoWhere = Record<string, unknown>;
 
@@ -53,10 +56,19 @@ export class AdminVoiceTimbreService {
   storageFileService: AdminStorageFileService;
 
   @Inject()
+  storageService: AdminStorageService;
+
+  @Inject()
   ffmpegService: AdminFfmpegService;
 
   @Inject()
   minimaxVoiceService: MinimaxVoiceService;
+
+  @Inject()
+  cosyVoiceVoiceService: CosyVoiceVoiceService;
+
+  @Inject()
+  qwenVoiceService: QwenVoiceService;
 
   async listVoiceTimbres(
     query: ListAdminVoiceTimbresQueryDTO
@@ -109,20 +121,14 @@ export class AdminVoiceTimbreService {
     payload: CreateAdminVoiceTimbreDTO
   ): Promise<AdminVoiceTimbreRecordDTO> {
     const provider = this.normalizeProvider(payload.provider);
-
-    if (provider !== 'minimax') {
-      throw new AppError(
-        'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
-        'only minimax provider is supported now',
-        400
-      );
-    }
+    this.assertCreatableProvider(provider);
 
     const audioObjectKey = this.normalizeAudioObjectKey(
       payload.audioObjectKey || payload.audioUrl
     );
-    const providerVoiceId = this.normalizeProviderVoiceId(
-      payload.providerVoiceId || this.generateProviderVoiceId()
+    const providerVoiceId = this.normalizeInitialProviderVoiceId(
+      provider,
+      payload.providerVoiceId
     );
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
@@ -135,7 +141,10 @@ export class AdminVoiceTimbreService {
     timbre.audioUrl = '';
     timbre.cloneLanguage = this.normalizeCloneLanguage(payload.cloneLanguage);
     timbre.previewText = this.normalizePreviewText(payload.previewText);
-    timbre.previewModel = this.normalizePreviewModel(payload.previewModel);
+    timbre.previewModel = this.normalizePreviewModel(
+      payload.previewModel,
+      provider
+    );
     timbre.previewAudioUrl = '';
     timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
     timbre.speechVolume = this.normalizeSpeechVolume(payload.speechVolume);
@@ -167,6 +176,20 @@ export class AdminVoiceTimbreService {
         'only failed or active voice timbre can be retrained',
         400
       );
+    }
+
+    if (this.shouldGenerateMissingProviderPreview(timbre)) {
+      timbre.previewText = this.normalizePreviewText(timbre.previewText);
+      timbre.previewAudioUrl = await this.createProviderPreviewAudio(
+        timbre,
+        timbre.providerVoiceId,
+        timbre.previewText
+      );
+      timbre.errorCode = '';
+      timbre.errorMessage = '';
+      timbre.updatedAt = new Date();
+
+      return this.buildRecord(await this.voiceTimbreModel.save(timbre));
     }
 
     this.prepareTimbreRetrain(timbre);
@@ -291,14 +314,45 @@ export class AdminVoiceTimbreService {
       audio.fileName,
       audio.contentType
     );
-    const cloneAudio = await this.prepareCloneAudio(audio);
 
+    if (timbre.provider === VoiceTimbreProvider.minimax) {
+      await this.createMinimaxProviderVoice(timbre, audio, previewText);
+      return;
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.cosyvoice) {
+      await this.createCosyVoiceProviderVoice(timbre, audio, previewText);
+      return;
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.qwen) {
+      await this.createQwenProviderVoice(timbre, audio, previewText);
+      return;
+    }
+
+    throw new AppError(
+      'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      'voice timbre provider is not supported',
+      400
+    );
+  }
+
+  private async createMinimaxProviderVoice(
+    timbre: VoiceTimbreEntity,
+    audio: {
+      buffer: Buffer;
+      fileName: string;
+      contentType: string;
+    },
+    previewText: string
+  ): Promise<void> {
+    const cloneAudio = await this.prepareCloneAudio(audio);
     const fileId = await this.minimaxVoiceService.uploadCloneAudio({
       buffer: cloneAudio.buffer,
       fileName: cloneAudio.fileName,
       contentType: cloneAudio.contentType,
     });
-    const cloneResult = await this.cloneProviderVoice({
+    const cloneResult = await this.cloneMinimaxProviderVoice({
       fileId,
       voiceId: timbre.providerVoiceId,
       text: previewText,
@@ -308,9 +362,193 @@ export class AdminVoiceTimbreService {
       languageBoost: timbre.cloneLanguage,
     });
 
-    timbre.providerFileId = fileId;
-    timbre.providerVoiceId = cloneResult.providerVoiceId;
-    timbre.previewAudioUrl = cloneResult.demoAudio;
+    await this.markProviderVoiceActive(timbre, {
+      providerFileId: fileId,
+      providerVoiceId: cloneResult.providerVoiceId,
+      previewAudioUrl: cloneResult.demoAudio,
+    });
+  }
+
+  private async createCosyVoiceProviderVoice(
+    timbre: VoiceTimbreEntity,
+    audio: {
+      buffer: Buffer;
+      fileName: string;
+      contentType: string;
+      url: string;
+    },
+    previewText: string
+  ): Promise<void> {
+    if (this.isMp4Media(audio.fileName, audio.contentType)) {
+      throw new AppError(
+        'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
+        'CosyVoice clone audio must be mp3, m4a or wav',
+        400
+      );
+    }
+
+    this.validateCloneAudioFile(
+      audio.buffer,
+      audio.fileName,
+      audio.contentType
+    );
+
+    const cloneResult = await this.cosyVoiceVoiceService.cloneVoice({
+      audioUrl: audio.url,
+      prefix: timbre.providerVoiceId,
+      targetModel:
+        timbre.previewModel ||
+        this.cosyVoiceVoiceService.getDefaultPreviewModel(),
+      languageHint: timbre.cloneLanguage,
+    });
+    const previewAudioUrl = await this.createCosyVoicePreviewAudio(
+      timbre,
+      cloneResult.providerVoiceId,
+      previewText
+    );
+
+    await this.markProviderVoiceActive(timbre, {
+      providerFileId: cloneResult.requestId || '',
+      providerVoiceId: cloneResult.providerVoiceId,
+      previewAudioUrl,
+    });
+  }
+
+  private async createQwenProviderVoice(
+    timbre: VoiceTimbreEntity,
+    audio: {
+      buffer: Buffer;
+      fileName: string;
+      contentType: string;
+      url: string;
+    },
+    previewText: string
+  ): Promise<void> {
+    this.validateQwenCloneAudioFile(
+      audio.buffer,
+      audio.fileName,
+      audio.contentType
+    );
+
+    const cloneResult = await this.qwenVoiceService.cloneVoice({
+      audioUrl: audio.url,
+      preferredName: timbre.providerVoiceId,
+      targetModel:
+        timbre.previewModel ||
+        this.qwenVoiceService.getDefaultPreviewModel(),
+      language: timbre.cloneLanguage,
+    });
+    const previewAudioUrl = await this.createQwenPreviewAudio(
+      timbre,
+      cloneResult.providerVoiceId,
+      previewText
+    );
+
+    if (cloneResult.fallbackMode) {
+      this.logger?.warn?.(
+        '[voice-timbre-create] Qwen voice fallback mode, timbreId=%s, reason=%s',
+        this.stringifyObjectId(timbre.id),
+        cloneResult.fallbackReason || ''
+      );
+    }
+
+    await this.markProviderVoiceActive(timbre, {
+      providerFileId: cloneResult.requestId || '',
+      providerVoiceId: cloneResult.providerVoiceId,
+      previewAudioUrl,
+    });
+  }
+
+  private async createCosyVoicePreviewAudio(
+    timbre: VoiceTimbreEntity,
+    voiceId: string,
+    previewText: string
+  ): Promise<string> {
+    const previewAudio = await this.cosyVoiceVoiceService.synthesizePreview({
+      text: previewText,
+      voiceId,
+      model:
+        timbre.previewModel ||
+        this.cosyVoiceVoiceService.getDefaultPreviewModel(),
+      languageHint: timbre.cloneLanguage,
+      speed: timbre.speechSpeed,
+      volume: timbre.speechVolume,
+      pitch: timbre.speechPitch,
+    });
+
+    if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
+      return previewAudio.audioUrl;
+    }
+
+    const previewFile = await this.storageService.uploadCosBuffer({
+      buffer: previewAudio.audioBuffer,
+      fileName: this.buildPreviewAudioFileName(previewAudio.mimeType),
+      folder: 'voice-timbre-previews',
+      contentType: previewAudio.mimeType,
+    });
+
+    return previewFile.publicUrl;
+  }
+
+  private async createQwenPreviewAudio(
+    timbre: VoiceTimbreEntity,
+    voiceId: string,
+    previewText: string
+  ): Promise<string> {
+    const previewAudio = await this.qwenVoiceService.synthesizePreview({
+      text: previewText,
+      voiceId,
+      model:
+        timbre.previewModel ||
+        this.qwenVoiceService.getDefaultPreviewModel(),
+      language: timbre.cloneLanguage,
+    });
+
+    if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
+      return previewAudio.audioUrl;
+    }
+
+    const previewFile = await this.storageService.uploadCosBuffer({
+      buffer: previewAudio.audioBuffer,
+      fileName: this.buildPreviewAudioFileName(previewAudio.mimeType),
+      folder: 'voice-timbre-previews',
+      contentType: previewAudio.mimeType,
+    });
+
+    return previewFile.publicUrl;
+  }
+
+  private async createProviderPreviewAudio(
+    timbre: VoiceTimbreEntity,
+    voiceId: string,
+    previewText: string
+  ): Promise<string> {
+    if (timbre.provider === VoiceTimbreProvider.cosyvoice) {
+      return this.createCosyVoicePreviewAudio(timbre, voiceId, previewText);
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.qwen) {
+      return this.createQwenPreviewAudio(timbre, voiceId, previewText);
+    }
+
+    throw new AppError(
+      'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      'voice timbre provider is not supported for preview audio',
+      400
+    );
+  }
+
+  private async markProviderVoiceActive(
+    timbre: VoiceTimbreEntity,
+    input: {
+      providerFileId: string;
+      providerVoiceId: string;
+      previewAudioUrl: string;
+    }
+  ): Promise<void> {
+    timbre.providerFileId = input.providerFileId;
+    timbre.providerVoiceId = input.providerVoiceId;
+    timbre.previewAudioUrl = input.previewAudioUrl;
     timbre.status = VoiceTimbreStatus.active;
     timbre.errorCode = '';
     timbre.errorMessage = '';
@@ -323,12 +561,14 @@ export class AdminVoiceTimbreService {
     timbre.errorCode = '';
     timbre.errorMessage = '';
     timbre.providerFileId = '';
-    timbre.providerVoiceId = this.generateProviderVoiceId();
+    timbre.providerVoiceId = this.generateInitialProviderVoiceId(
+      timbre.provider
+    );
     timbre.previewText = this.normalizePreviewText(timbre.previewText);
     timbre.previewAudioUrl = '';
   }
 
-  private async cloneProviderVoice(input: {
+  private async cloneMinimaxProviderVoice(input: {
     fileId: string;
     voiceId: string;
     text: string;
@@ -342,7 +582,7 @@ export class AdminVoiceTimbreService {
         throw error;
       }
 
-      const voiceId = this.generateProviderVoiceId();
+      const voiceId = this.generateMinimaxProviderVoiceId();
 
       this.logger?.warn?.(
         '[voice-timbre-create] MiniMax voice_id duplicate, retry with new voiceId=%s',
@@ -419,6 +659,12 @@ export class AdminVoiceTimbreService {
 
     if (
       [
+        'COSYVOICE_API_KEY_MISSING',
+        'COSYVOICE_AUDIO_URL_MISSING',
+        'INVALID_COSYVOICE_PREFIX',
+        'QWEN_VOICE_API_KEY_MISSING',
+        'QWEN_VOICE_AUDIO_URL_MISSING',
+        'INVALID_QWEN_PREFERRED_NAME',
         'MINIMAX_VOICE_API_KEY_MISSING',
         'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
         'VOICE_TIMBRE_AUDIO_TOO_LARGE',
@@ -450,6 +696,19 @@ export class AdminVoiceTimbreService {
     const data = (error as { data?: { status_code?: number } })?.data;
 
     return data?.status_code === 2039;
+  }
+
+  private shouldGenerateMissingProviderPreview(
+    timbre: VoiceTimbreEntity
+  ): boolean {
+    return Boolean(
+      [VoiceTimbreProvider.cosyvoice, VoiceTimbreProvider.qwen].includes(
+        timbre.provider
+      ) &&
+        timbre.status === VoiceTimbreStatus.active &&
+        timbre.providerVoiceId?.trim() &&
+        !timbre.previewAudioUrl?.trim()
+    );
   }
 
   private buildSearchWhere(query: ListAdminVoiceTimbresQueryDTO): MongoWhere {
@@ -564,6 +823,22 @@ export class AdminVoiceTimbreService {
     }
   }
 
+  private assertCreatableProvider(provider: VoiceTimbreProvider): void {
+    if (
+      provider === VoiceTimbreProvider.minimax ||
+      provider === VoiceTimbreProvider.cosyvoice ||
+      provider === VoiceTimbreProvider.qwen
+    ) {
+      return;
+    }
+
+    throw new AppError(
+      'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      'voice timbre provider is not supported now',
+      400
+    );
+  }
+
   private async prepareCloneAudio(input: {
     buffer: Buffer;
     fileName: string;
@@ -662,6 +937,40 @@ export class AdminVoiceTimbreService {
     }
   }
 
+  private validateQwenCloneAudioFile(
+    buffer: Buffer,
+    fileName: string,
+    contentType: string
+  ): void {
+    if (buffer.length > 10 * 1024 * 1024) {
+      throw new AppError(
+        'VOICE_TIMBRE_AUDIO_TOO_LARGE',
+        'Qwen clone audio must be <= 10MB',
+        400
+      );
+    }
+
+    const ext = this.getFileExt(fileName);
+    const normalizedContentType = contentType.toLowerCase();
+    const validExt = ['mp3', 'm4a', 'wav'].includes(ext);
+    const validMime =
+      normalizedContentType.includes('audio/mpeg') ||
+      normalizedContentType.includes('audio/mp3') ||
+      normalizedContentType.includes('audio/mp4') ||
+      normalizedContentType.includes('audio/x-m4a') ||
+      normalizedContentType.includes('audio/wav') ||
+      normalizedContentType.includes('audio/x-wav') ||
+      normalizedContentType.includes('application/octet-stream');
+
+    if (!validExt && !validMime) {
+      throw new AppError(
+        'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
+        'Qwen clone audio must be mp3, m4a or wav',
+        400
+      );
+    }
+  }
+
   private resolveAudioContentType(
     fileName: string,
     contentType: string
@@ -694,6 +1003,7 @@ export class AdminVoiceTimbreService {
 
     if (
       provider === 'minimax' ||
+      provider === 'cosyvoice' ||
       provider === 'qwen' ||
       provider === 'doubao'
     ) {
@@ -794,7 +1104,44 @@ export class AdminVoiceTimbreService {
     return normalized;
   }
 
-  private normalizeProviderVoiceId(value: string): string {
+  private normalizeInitialProviderVoiceId(
+    provider: VoiceTimbreProvider,
+    value?: string
+  ): string {
+    const rawValue = value?.trim();
+
+    if (provider === VoiceTimbreProvider.cosyvoice) {
+      return this.normalizeCosyVoicePrefix(
+        rawValue || this.generateCosyVoicePrefix()
+      );
+    }
+
+    if (provider === VoiceTimbreProvider.qwen) {
+      return this.normalizeQwenPreferredName(
+        rawValue || this.generateQwenPreferredName()
+      );
+    }
+
+    return this.normalizeMinimaxProviderVoiceId(
+      rawValue || this.generateMinimaxProviderVoiceId()
+    );
+  }
+
+  private generateInitialProviderVoiceId(
+    provider: VoiceTimbreProvider
+  ): string {
+    if (provider === VoiceTimbreProvider.cosyvoice) {
+      return this.generateCosyVoicePrefix();
+    }
+
+    if (provider === VoiceTimbreProvider.qwen) {
+      return this.generateQwenPreferredName();
+    }
+
+    return this.generateMinimaxProviderVoiceId();
+  }
+
+  private normalizeMinimaxProviderVoiceId(value: string): string {
     const voiceId = value.trim();
 
     if (!/^[A-Za-z][A-Za-z0-9_-]{6,254}[A-Za-z0-9]$/.test(voiceId)) {
@@ -808,17 +1155,72 @@ export class AdminVoiceTimbreService {
     return voiceId;
   }
 
-  private generateProviderVoiceId(): string {
+  private normalizeCosyVoicePrefix(value: string): string {
+    const prefix = value.trim().toLowerCase();
+
+    if (!/^[a-z0-9]{1,10}$/.test(prefix)) {
+      throw new AppError(
+        'INVALID_COSYVOICE_PREFIX',
+        'CosyVoice prefix must be 1-10 lowercase letters or digits',
+        400
+      );
+    }
+
+    return prefix;
+  }
+
+  private normalizeQwenPreferredName(value: string): string {
+    const preferredName = value.trim();
+
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(preferredName)) {
+      throw new AppError(
+        'INVALID_QWEN_PREFERRED_NAME',
+        'Qwen preferred name must be 1-16 letters, digits or _',
+        400
+      );
+    }
+
+    return preferredName;
+  }
+
+  private generateMinimaxProviderVoiceId(): string {
     const random = Math.random().toString(36).slice(2, 10);
     return `TzlVoice_${Date.now()}_${random}`;
+  }
+
+  private generateCosyVoicePrefix(): string {
+    const timestamp = Date.now().toString(36).slice(-5);
+    const random = Math.random().toString(36).slice(2, 4);
+    return `tzl${timestamp}${random}`;
+  }
+
+  private generateQwenPreferredName(): string {
+    const timestamp = Date.now().toString(36).slice(-7);
+    const random = Math.random().toString(36).slice(2, 5);
+    return `tzl_${timestamp}${random}`;
   }
 
   private normalizeCloneLanguage(value?: string): string {
     return value?.trim() || 'auto';
   }
 
-  private normalizePreviewModel(value?: string): string {
-    return value?.trim() || this.minimaxVoiceService.getDefaultPreviewModel();
+  private normalizePreviewModel(
+    value: string | undefined,
+    provider: VoiceTimbreProvider
+  ): string {
+    if (value?.trim()) {
+      return value.trim();
+    }
+
+    if (provider === VoiceTimbreProvider.cosyvoice) {
+      return this.cosyVoiceVoiceService.getDefaultPreviewModel();
+    }
+
+    if (provider === VoiceTimbreProvider.qwen) {
+      return this.qwenVoiceService.getDefaultPreviewModel();
+    }
+
+    return this.minimaxVoiceService.getDefaultPreviewModel();
   }
 
   private normalizeSpeechSpeed(value?: number): number {
@@ -903,6 +1305,21 @@ export class AdminVoiceTimbreService {
 
   private escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private buildPreviewAudioFileName(mimeType?: string): string {
+    const map: Record<string, string> = {
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/wav': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/pcm': 'pcm',
+      'audio/opus': 'opus',
+    };
+    const normalized = mimeType?.split(';')[0]?.trim().toLowerCase() || '';
+    const ext = map[normalized] || 'mp3';
+
+    return `voice_timbre_preview_${Date.now()}.${ext}`;
   }
 
   private getFileExt(fileName: string): string {

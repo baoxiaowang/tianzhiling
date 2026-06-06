@@ -32,6 +32,7 @@
             class="voice-timbre-page__filter"
           >
             <a-option value="minimax">MiniMax</a-option>
+            <a-option value="cosyvoice">CosyVoice</a-option>
             <a-option value="qwen">千问</a-option>
             <a-option value="doubao">豆包</a-option>
           </a-select>
@@ -234,9 +235,14 @@
               label="服务商"
               :rules="[{ required: true, message: '请选择服务商' }]"
             >
-              <a-select v-model="editForm.provider" placeholder="请选择服务商">
+              <a-select
+                v-model="editForm.provider"
+                placeholder="请选择服务商"
+                @change="onProviderChange"
+              >
                 <a-option value="minimax">MiniMax</a-option>
-                <a-option value="qwen" disabled>千问（未接入）</a-option>
+                <a-option value="cosyvoice">CosyVoice</a-option>
+                <a-option value="qwen">千问 Qwen3-TTS-VC</a-option>
                 <a-option value="doubao" disabled>豆包（未接入）</a-option>
               </a-select>
             </a-form-item>
@@ -247,10 +253,13 @@
                 v-model="editForm.cloneLanguage"
                 placeholder="请选择语言"
               >
-                <a-option value="Chinese">普通话</a-option>
-                <a-option value="Chinese,Yue">粤语</a-option>
-                <a-option value="English">英语</a-option>
-                <a-option value="auto">自动识别</a-option>
+                <a-option
+                  v-for="option in cloneLanguageOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </a-option>
               </a-select>
             </a-form-item>
           </a-grid-item>
@@ -259,13 +268,13 @@
         <a-form-item
           v-if="!editingRecord"
           field="providerVoiceId"
-          label="服务商音色ID"
+          :label="providerVoiceIdLabel"
         >
           <a-input
             v-model="editForm.providerVoiceId"
             allow-clear
-            :max-length="256"
-            placeholder="不填则后端自动生成，需以英文字母开头"
+            :max-length="providerVoiceIdMaxLength"
+            :placeholder="providerVoiceIdPlaceholder"
           />
         </a-form-item>
 
@@ -274,12 +283,11 @@
             <input
               ref="fileInputRef"
               type="file"
-              accept=".mp3,.m4a,.wav,.mp4,audio/mpeg,audio/mp4,audio/wav,video/mp4"
+              :accept="audioAccept"
               @change="onAudioFileChange"
             />
             <a-typography-text type="secondary">
-              支持 mp3、m4a、wav、mp4；音频最大 20MB，mp4 最大 200MB，建议时长
-              10 秒到 5 分钟
+              {{ uploadHint }}
             </a-typography-text>
             <a-link
               v-if="editForm.audioUrl"
@@ -320,6 +328,7 @@
                     :min="0.5"
                     :max="2"
                     :step="0.01"
+                    :disabled="!supportsSpeechParams"
                   />
                   <a-input-number
                     v-model="editForm.speechSpeed"
@@ -328,6 +337,7 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
+                    :disabled="!supportsSpeechParams"
                     class="voice-timbre-page__number"
                   />
                 </div>
@@ -341,6 +351,7 @@
                     :min="0"
                     :max="10"
                     :step="0.01"
+                    :disabled="!supportsSpeechParams"
                   />
                   <a-input-number
                     v-model="editForm.speechVolume"
@@ -349,6 +360,7 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
+                    :disabled="!supportsSpeechParams"
                     class="voice-timbre-page__number"
                   />
                 </div>
@@ -362,6 +374,7 @@
                     :min="-12"
                     :max="12"
                     :step="0.01"
+                    :disabled="!supportsSpeechParams"
                   />
                   <a-input-number
                     v-model="editForm.speechPitch"
@@ -370,6 +383,7 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
+                    :disabled="!supportsSpeechParams"
                     class="voice-timbre-page__number"
                   />
                 </div>
@@ -437,6 +451,7 @@
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
+  const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'cosyvoice';
   const searchForm = reactive<{
     keyword: string;
     provider?: VoiceTimbreProviderDTO;
@@ -448,7 +463,7 @@
   });
   const editForm = reactive({
     name: '',
-    provider: 'minimax' as VoiceTimbreProviderDTO,
+    provider: DEFAULT_VOICE_TIMBRE_PROVIDER,
     audioObjectKey: '',
     audioUrl: '',
     cloneLanguage: 'auto',
@@ -485,6 +500,92 @@
   const editModalTitle = computed(() =>
     editingRecord.value ? `编辑音色：${editingRecord.value.name}` : '新建音色'
   );
+  const isCosyVoiceProvider = computed(() => editForm.provider === 'cosyvoice');
+  const isQwenProvider = computed(() => editForm.provider === 'qwen');
+  const supportsSpeechParams = computed(() => !isQwenProvider.value);
+  const cloneLanguageOptions = computed(() => {
+    if (isCosyVoiceProvider.value) {
+      return [
+        { label: '中文', value: 'zh' },
+        { label: '英语', value: 'en' },
+        { label: '法语', value: 'fr' },
+        { label: '德语', value: 'de' },
+        { label: '日语', value: 'ja' },
+        { label: '韩语', value: 'ko' },
+        { label: '俄语', value: 'ru' },
+        { label: '葡萄牙语', value: 'pt' },
+        { label: '泰语', value: 'th' },
+        { label: '印尼语', value: 'id' },
+        { label: '越南语', value: 'vi' },
+        { label: '自动识别', value: 'auto' },
+      ];
+    }
+
+    if (isQwenProvider.value) {
+      return [
+        { label: '中文', value: 'zh' },
+        { label: '英语', value: 'en' },
+        { label: '德语', value: 'de' },
+        { label: '意大利语', value: 'it' },
+        { label: '葡萄牙语', value: 'pt' },
+        { label: '西班牙语', value: 'es' },
+        { label: '日语', value: 'ja' },
+        { label: '韩语', value: 'ko' },
+        { label: '法语', value: 'fr' },
+        { label: '俄语', value: 'ru' },
+      ];
+    }
+
+    return [
+      { label: '普通话', value: 'Chinese' },
+      { label: '粤语', value: 'Chinese,Yue' },
+      { label: '英语', value: 'English' },
+      { label: '自动识别', value: 'auto' },
+    ];
+  });
+  const providerVoiceIdLabel = computed(() =>
+    isCosyVoiceProvider.value || isQwenProvider.value
+      ? '音色前缀'
+      : '服务商音色ID'
+  );
+  const providerVoiceIdPlaceholder = computed(() => {
+    if (isCosyVoiceProvider.value) {
+      return '不填则后端自动生成，仅支持 10 位内小写字母或数字';
+    }
+
+    if (isQwenProvider.value) {
+      return '不填则后端自动生成，仅支持 16 位内字母、数字或下划线';
+    }
+
+    return '不填则后端自动生成，需以英文字母开头';
+  });
+  const providerVoiceIdMaxLength = computed(() => {
+    if (isCosyVoiceProvider.value) {
+      return 10;
+    }
+
+    if (isQwenProvider.value) {
+      return 16;
+    }
+
+    return 256;
+  });
+  const audioAccept = computed(() =>
+    isCosyVoiceProvider.value || isQwenProvider.value
+      ? '.mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav'
+      : '.mp3,.m4a,.wav,.mp4,audio/mpeg,audio/mp4,audio/wav,video/mp4'
+  );
+  const uploadHint = computed(() => {
+    if (isCosyVoiceProvider.value) {
+      return '支持 mp3、m4a、wav；音频最大 20MB，建议时长 10 到 20 秒';
+    }
+
+    if (isQwenProvider.value) {
+      return '支持 mp3、m4a、wav；音频最大 10MB，建议时长 10 到 20 秒';
+    }
+
+    return '支持 mp3、m4a、wav、mp4；音频最大 20MB，mp4 最大 200MB，建议时长 10 秒到 5 分钟';
+  });
 
   const fetchData = async () => {
     try {
@@ -557,7 +658,7 @@
     editingRecord.value = undefined;
     selectedAudioFile.value = undefined;
     editForm.name = '';
-    editForm.provider = 'minimax';
+    editForm.provider = DEFAULT_VOICE_TIMBRE_PROVIDER;
     editForm.audioObjectKey = '';
     editForm.audioUrl = '';
     editForm.cloneLanguage = 'auto';
@@ -574,6 +675,26 @@
     }
   };
 
+  const onProviderChange = () => {
+    editForm.providerVoiceId = '';
+    const languageValues = cloneLanguageOptions.value.map(
+      (option) => option.value
+    );
+
+    if (!languageValues.includes(editForm.cloneLanguage)) {
+      editForm.cloneLanguage =
+        isCosyVoiceProvider.value || isQwenProvider.value ? 'zh' : 'auto';
+    }
+
+    if (selectedAudioFile.value && !isValidAudioFile(selectedAudioFile.value)) {
+      selectedAudioFile.value = undefined;
+
+      if (fileInputRef.value) {
+        fileInputRef.value.value = '';
+      }
+    }
+  };
+
   const onAudioFileChange = (event: Event) => {
     const file = (event.target as HTMLInputElement).files?.[0];
 
@@ -583,15 +704,17 @@
     }
 
     if (!isValidAudioFile(file)) {
-      Message.error('请上传 mp3、m4a、wav 或 mp4 文件');
+      Message.error(
+        isCosyVoiceProvider.value || isQwenProvider.value
+          ? '请上传 mp3、m4a 或 wav 文件'
+          : '请上传 mp3、m4a、wav 或 mp4 文件'
+      );
       selectedAudioFile.value = undefined;
       return;
     }
 
     if (file.size > getMediaMaxSize(file)) {
-      Message.error(
-        isMp4File(file) ? 'mp4 文件不能超过 200MB' : '音频文件不能超过 20MB'
-      );
+      Message.error(getMediaSizeError(file));
       selectedAudioFile.value = undefined;
       return;
     }
@@ -691,11 +814,32 @@
 
   const isValidAudioFile = (file: File) => {
     const ext = getFileExt(file);
+
+    if (isCosyVoiceProvider.value || isQwenProvider.value) {
+      return ['mp3', 'm4a', 'wav'].includes(ext);
+    }
+
     return ['mp3', 'm4a', 'wav', 'mp4'].includes(ext);
   };
 
   const getMediaMaxSize = (file: File) => {
+    if (isQwenProvider.value) {
+      return 10 * 1024 * 1024;
+    }
+
     return isMp4File(file) ? 200 * 1024 * 1024 : 20 * 1024 * 1024;
+  };
+
+  const getMediaSizeError = (file: File) => {
+    if (isQwenProvider.value) {
+      return '千问复刻音频不能超过 10MB';
+    }
+
+    if (isMp4File(file)) {
+      return 'mp4 文件不能超过 200MB';
+    }
+
+    return '音频文件不能超过 20MB';
   };
 
   const isMp4File = (file: File) => {
@@ -709,6 +853,7 @@
   const formatProvider = (provider: VoiceTimbreProviderDTO) => {
     const map: Record<VoiceTimbreProviderDTO, string> = {
       minimax: 'MiniMax',
+      cosyvoice: 'CosyVoice',
       qwen: '千问',
       doubao: '豆包',
     };
