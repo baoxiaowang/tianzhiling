@@ -36,6 +36,7 @@
             <a-option value="granting">发放中</a-option>
             <a-option value="completed">已完成</a-option>
             <a-option value="closed">已关闭</a-option>
+            <a-option value="refund_requested">申请退款</a-option>
             <a-option value="refunded">已退款</a-option>
             <a-option value="grant_failed">发放失败</a-option>
           </a-select>
@@ -613,6 +614,7 @@
     granting: { text: '发放中', color: 'arcoblue' },
     completed: { text: '已完成', color: 'green' },
     closed: { text: '已关闭', color: 'gray' },
+    refund_requested: { text: '申请退款', color: 'orange' },
     refunded: { text: '已退款', color: 'purple' },
     grant_failed: { text: '发放失败', color: 'red' },
   };
@@ -729,6 +731,7 @@
         record.orderType === 'voice_package') &&
       (record.status === 'completed' ||
         record.status === 'paid' ||
+        record.status === 'refund_requested' ||
         record.status === 'grant_failed')
     );
   };

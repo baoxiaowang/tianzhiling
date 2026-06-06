@@ -21,6 +21,7 @@ export interface OrderRecord {
   payableAmount: number
   currency: string
   status: OrderStatusDTO
+  paymentProvider?: string
   createdAt: string
   paidAt?: string
 }
@@ -108,6 +109,8 @@ function parseOrder(value: unknown): OrderRecord {
     payableAmount: asNumber(raw.payableAmount),
     currency: asString(raw.currency) || 'CNY',
     status: parseOrderStatus(raw.status),
+    paymentProvider:
+      raw.paymentProvider == null ? undefined : asString(raw.paymentProvider),
     createdAt: asString(raw.createdAt),
     paidAt: raw.paidAt == null ? undefined : asString(raw.paidAt),
   }
@@ -128,6 +131,7 @@ function parseOrderStatus(value: unknown): OrderStatusDTO {
     status === 'granting' ||
     status === 'completed' ||
     status === 'closed' ||
+    status === 'refund_requested' ||
     status === 'refunded' ||
     status === 'grant_failed'
   ) {

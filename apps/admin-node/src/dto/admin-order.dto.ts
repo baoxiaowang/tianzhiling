@@ -6,6 +6,7 @@ const orderStatusRule = RuleType.string().valid(
   'granting',
   'completed',
   'closed',
+  'refund_requested',
   'refunded',
   'grant_failed'
 );

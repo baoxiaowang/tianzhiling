@@ -1620,12 +1620,41 @@ async function ensureRecordPermission() {
       return await showRecordPermissionSettingPrompt()
     }
 
+    return await requestRecordPermission()
+  } catch {
+    showRecordPermissionUnavailablePrompt()
+    return false
+  } finally {
+    isCheckingRecordPermission.value = false
+  }
+}
+
+async function requestRecordPermission() {
+  const result = await Taro.showModal({
+    title: '开启语音授权',
+    content: '需要开启麦克风权限后才能发送语音消息和语音转文字',
+    confirmText: '开启',
+    cancelText: '取消',
+    confirmColor: '#22c55e',
+  })
+
+  if (!result.confirm) {
+    return false
+  }
+
+  try {
     await Taro.authorize({ scope: 'scope.record' })
     return true
   } catch {
-    return await showRecordPermissionSettingPrompt()
-  } finally {
-    isCheckingRecordPermission.value = false
+    const setting = await Taro.getSetting()
+    const authSetting = setting.authSetting as Record<string, boolean | undefined>
+
+    if (authSetting['scope.record'] === false) {
+      return await showRecordPermissionSettingPrompt()
+    }
+
+    showRecordPermissionUnavailablePrompt()
+    return false
   }
 }
 
@@ -1649,6 +1678,16 @@ async function showRecordPermissionSettingPrompt() {
   } catch {
     return false
   }
+}
+
+function showRecordPermissionUnavailablePrompt() {
+  void Taro.showModal({
+    title: '无法开启麦克风',
+    content: '请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音',
+    confirmText: '知道了',
+    showCancel: false,
+    confirmColor: '#22c55e',
+  })
 }
 
 async function startVoiceRecording() {

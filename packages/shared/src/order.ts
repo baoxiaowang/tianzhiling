@@ -4,6 +4,7 @@ export type OrderStatusDTO =
   | 'granting'
   | 'completed'
   | 'closed'
+  | 'refund_requested'
   | 'refunded'
   | 'grant_failed';
 
@@ -35,6 +36,7 @@ export interface OrderRecordDTO {
   payableAmount: number;
   currency: string;
   status: OrderStatusDTO;
+  paymentProvider?: string;
   createdAt: string;
   paidAt?: string;
 }

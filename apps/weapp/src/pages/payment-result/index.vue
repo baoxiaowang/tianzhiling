@@ -345,6 +345,8 @@ function getStatusText(status?: OrderStatusDTO) {
       return '已支付'
     case 'closed':
       return '已关闭'
+    case 'refund_requested':
+      return '申请退款'
     case 'refunded':
       return '已退款'
     case 'grant_failed':
@@ -372,6 +374,10 @@ function getFailedDescription(status?: OrderStatusDTO) {
     return order.value?.orderType === 'voice_package'
       ? '订单已退款，如需声音训练请重新购买。'
       : '订单已退款，如需开通会员请重新购买。'
+  }
+
+  if (status === 'refund_requested') {
+    return '订单已提交退款申请，请等待工作人员处理。'
   }
 
   return '订单状态暂时异常，请稍后重试或联系客服处理。'

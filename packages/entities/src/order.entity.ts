@@ -12,6 +12,7 @@ export enum OrderStatus {
   granting = 'granting',
   completed = 'completed',
   closed = 'closed',
+  refundRequested = 'refund_requested',
   refunded = 'refunded',
   grantFailed = 'grant_failed',
 }

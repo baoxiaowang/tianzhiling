@@ -224,8 +224,8 @@ function emitPreview(index: number) {
 .moment-card__body-text {
   display: block;
   margin-top: 4px;
-  font-size: 14px;
-  line-height: 22.75px;
+  font-size: 16px;
+  line-height: 25px;
   color: $tzl-color-slate-700;
 }
 

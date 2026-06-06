@@ -67,7 +67,7 @@
             </view>
           </view>
 
-          <!-- <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
+          <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
             <nut-button
               class="my-orders-card__refund-button"
               size="small"
@@ -76,9 +76,9 @@
               :loading="refundingOrderId === order.id"
               @click="handleRefundOrder(order)"
             >
-              退款
+              申请退款
             </nut-button>
-          </view> -->
+          </view>
         </view>
       </view>
     </view>
@@ -113,6 +113,13 @@ const isLoading = ref(false)
 const loadError = ref('')
 const hasLoadedOrders = ref(false)
 const refundingOrderId = ref('')
+const systemPlatform = (() => {
+  try {
+    return Taro.getSystemInfoSync().platform?.toLowerCase() ?? ''
+  } catch {
+    return ''
+  }
+})()
 
 const sortedOrders = computed(() => {
   return [...orders.value].sort((first, second) => {
@@ -189,10 +196,21 @@ async function handleRefundOrder(order: OrderRecord) {
     return
   }
 
+  if (isIosPlatform() && isVirtualPaymentOrder(order)) {
+    await Taro.showModal({
+      title: '前往 App Store 退款',
+      content: '该订单为 iOS 虚拟支付订单，请在 Apple App Store 的购买记录中发起退款申请。',
+      confirmText: '知道了',
+      showCancel: false,
+      confirmColor: '#22c55e',
+    })
+    return
+  }
+
   const result = await Taro.showModal({
-    title: '确认退款',
-    content: '退款后将收回会员权益，确认继续？',
-    confirmText: '退款',
+    title: '申请退款',
+    content: '提交后订单将进入申请退款状态，工作人员审核后处理退款，确认继续？',
+    confirmText: '提交',
     confirmColor: '#d81e06',
   })
 
@@ -210,12 +228,22 @@ async function handleRefundOrder(order: OrderRecord) {
       orders.value[index] = refundedOrder
     }
 
-    showToast('退款已提交，会员权益已收回')
+    showToast('退款申请已提交')
   } catch (error) {
-    showToast(error instanceof ApiException ? error.message : '退款失败，请稍后重试')
+    showToast(
+      error instanceof ApiException ? error.message : '退款申请失败，请稍后重试'
+    )
   } finally {
     refundingOrderId.value = ''
   }
+}
+
+function isIosPlatform() {
+  return systemPlatform === 'ios'
+}
+
+function isVirtualPaymentOrder(order: OrderRecord) {
+  return order.paymentProvider === 'wechat_virtual_pay'
 }
 
 function getStatusText(status: OrderStatusDTO) {
@@ -225,6 +253,7 @@ function getStatusText(status: OrderStatusDTO) {
     granting: '发放中',
     completed: '已完成',
     closed: '已关闭',
+    refund_requested: '申请退款',
     refunded: '已退款',
     grant_failed: '发放失败',
   }

@@ -881,6 +881,48 @@ describe('AdminOrderService', () => {
     jest.useRealTimers();
   });
 
+  it('refunds a refund requested vip order and revokes membership benefits', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders, memberships, entitlements } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.refundRequested,
+    });
+    const membership = createMembership();
+    const entitlement = createEntitlement();
+
+    orders.push(order);
+    memberships.push(membership);
+    entitlements.push(entitlement);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(service.adminWechatPayService.refundOrder).toHaveBeenCalledWith({
+      orderNo: 'VIP202605020001',
+      refundNo: 'RVIP202605020001',
+      reason: '管理端退订退款',
+      amount: 9900,
+      totalAmount: 9900,
+    });
+    expect(service.userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: UserMembershipStatus.refunded,
+        updatedAt: ORDER_CREATED_AT,
+      })
+    );
+    expect(service.agentEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: AgentEntitlementStatus.refunded,
+        updatedAt: ORDER_CREATED_AT,
+      })
+    );
+    expect(result.status).toBe(OrderStatus.refunded);
+    expect(result.refundAmount).toBe(9900);
+
+    jest.useRealTimers();
+  });
+
   it('refunds an admin manual vip order without calling WeChat', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders, memberships, entitlements } = createService();

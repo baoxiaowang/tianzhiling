@@ -438,6 +438,7 @@ export class OrderService {
       order.status === OrderStatus.paid ||
       order.status === OrderStatus.granting ||
       order.status === OrderStatus.grantFailed ||
+      order.status === OrderStatus.refundRequested ||
       order.status === OrderStatus.refunded ||
       order.status === OrderStatus.closed
     ) {
@@ -492,7 +493,20 @@ export class OrderService {
       throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
     }
 
-    await this.refundPaidOrder(order, '用户申请退款');
+    await this.requestOrderRefund(order);
+
+    return this.buildOrderRecord(order);
+  }
+
+  async refundAdminOrder(orderId: string): Promise<OrderRecordDTO> {
+    const objectId = this.parseObjectId(orderId, 'INVALID_ORDER_ID');
+    const order = await this.findOrderById(objectId);
+
+    if (!order) {
+      throw new AppError('ORDER_NOT_FOUND', 'order not found', 404);
+    }
+
+    await this.refundPaidOrder(order, '管理端执行退款');
 
     return this.buildOrderRecord(order);
   }
@@ -1139,6 +1153,37 @@ export class OrderService {
     await this.markOrderRefunded(order, refundAmount, new Date());
   }
 
+  private async requestOrderRefund(order: OrderEntity): Promise<void> {
+    if (order.status === OrderStatus.refundRequested) {
+      return;
+    }
+
+    if (order.status === OrderStatus.refunded) {
+      return;
+    }
+
+    if (!this.isRefundableOrderType(order.orderType)) {
+      throw new AppError(
+        'ORDER_REFUND_TYPE_UNSUPPORTED',
+        'order type cannot be refunded',
+        400
+      );
+    }
+
+    if (!this.isRefundableOrderStatus(order.status)) {
+      throw new AppError(
+        'ORDER_NOT_REFUNDABLE',
+        'order is not refundable',
+        400
+      );
+    }
+
+    const now = new Date();
+    order.status = OrderStatus.refundRequested;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
   private async markOrderRefunded(
     order: OrderEntity,
     refundAmount: number,
@@ -1390,6 +1435,7 @@ export class OrderService {
       status === OrderStatus.paid ||
       status === OrderStatus.granting ||
       status === OrderStatus.grantFailed ||
+      status === OrderStatus.refundRequested ||
       status === OrderStatus.refunded ||
       status === OrderStatus.closed
     );
@@ -1414,6 +1460,7 @@ export class OrderService {
     return (
       status === OrderStatus.completed ||
       status === OrderStatus.paid ||
+      status === OrderStatus.refundRequested ||
       status === OrderStatus.grantFailed
     );
   }
@@ -1686,6 +1733,7 @@ export class OrderService {
       payableAmount: order.payableAmount,
       currency: order.currency || 'CNY',
       status: order.status,
+      paymentProvider: order.paymentProvider,
       createdAt: this.formatDate(order.createdAt),
       paidAt: order.paidAt ? this.formatDate(order.paidAt) : undefined,
     };

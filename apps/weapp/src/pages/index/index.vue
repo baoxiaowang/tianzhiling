@@ -982,7 +982,7 @@ useDidHide(() => {
 }
 
 .moments-feed__item + .moments-feed__item {
-  margin-top: 20px;
+  // margin-top: 20px;
 }
 
 .moments-load-footer {

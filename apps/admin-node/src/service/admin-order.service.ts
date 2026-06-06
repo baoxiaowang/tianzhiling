@@ -1231,6 +1231,7 @@ export class AdminOrderService {
     return (
       status === OrderStatus.completed ||
       status === OrderStatus.paid ||
+      status === OrderStatus.refundRequested ||
       status === OrderStatus.grantFailed
     );
   }

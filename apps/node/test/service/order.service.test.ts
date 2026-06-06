@@ -1216,6 +1216,7 @@ describe('OrderService payment expiration and reconciliation', () => {
     OrderStatus.completed,
     OrderStatus.paid,
     OrderStatus.closed,
+    OrderStatus.refundRequested,
     OrderStatus.refunded,
     OrderStatus.granting,
     OrderStatus.grantFailed,
@@ -1369,7 +1370,7 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result?.status).toBe(OrderStatus.pending);
   });
 
-  it('refunds a completed vip order and revokes membership benefits', async () => {
+  it('marks a completed vip order refund requested without revoking benefits', async () => {
     const membership = createMembership();
     const entitlement = createEntitlement();
     const {
@@ -1395,10 +1396,51 @@ describe('OrderService payment expiration and reconciliation', () => {
 
     const result = await service.refundUserOrder(auth, ORDER_ID);
 
+    expect(wechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(userMembershipModel.save).not.toHaveBeenCalled();
+    expect(agentEntitlementModel.save).not.toHaveBeenCalled();
+    expect(order.status).toBe(OrderStatus.refundRequested);
+    expect(order.refundAmount).toBeUndefined();
+    expect(order.refundedAt).toBeUndefined();
+    expect(
+      orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
+    ).toEqual(
+      expect.objectContaining({
+        status: OrderStatus.refundRequested,
+      })
+    );
+    expect(result.status).toBe(OrderStatus.refundRequested);
+  });
+
+  it('executes an admin refund for a refund requested vip order', async () => {
+    const membership = createMembership();
+    const entitlement = createEntitlement();
+    const {
+      service,
+      order,
+      orderModel,
+      userMembershipModel,
+      agentEntitlementModel,
+      wechatPayService,
+    } = createService(
+      {
+        status: OrderStatus.refundRequested,
+        paidAmount: 990,
+        paidAt: NOW,
+      },
+      {},
+      {
+        memberships: [membership],
+        entitlements: [entitlement],
+      }
+    );
+
+    const result = await service.refundAdminOrder(ORDER_ID);
+
     expect(wechatPayService.refundOrder).toHaveBeenCalledWith({
       orderNo: ORDER_NO,
       refundNo: `R${ORDER_NO}`,
-      reason: '用户申请退款',
+      reason: '管理端执行退款',
       amount: 990,
       totalAmount: 990,
     });
@@ -1429,7 +1471,7 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result.status).toBe(OrderStatus.refunded);
   });
 
-  it('refunds a voice package order and marks the training task refunded', async () => {
+  it('marks a voice package order refund requested without revoking the training task', async () => {
     const task = createVoiceTrainingTask({
       status: VoiceTrainingTaskStatus.paid,
     });
@@ -1455,36 +1497,23 @@ describe('OrderService payment expiration and reconciliation', () => {
 
     const result = await service.refundUserOrder(auth, ORDER_ID);
 
-    expect(wechatPayService.refundOrder).toHaveBeenCalledWith({
-      orderNo: VOICE_ORDER_NO,
-      refundNo: `R${VOICE_ORDER_NO}`,
-      reason: '用户申请退款',
-      amount: 12900,
-      totalAmount: 12900,
-    });
+    expect(wechatPayService.refundOrder).not.toHaveBeenCalled();
     expect(userMembershipModel.save).not.toHaveBeenCalled();
-    expect(voiceTrainingTaskModel.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: VoiceTrainingTaskStatus.refunded,
-        updatedAt: NOW,
-      })
-    );
-    expect(order.status).toBe(OrderStatus.refunded);
-    expect(order.refundAmount).toBe(12900);
-    expect(order.refundedAt).toEqual(NOW);
+    expect(voiceTrainingTaskModel.save).not.toHaveBeenCalled();
+    expect(order.status).toBe(OrderStatus.refundRequested);
+    expect(order.refundAmount).toBeUndefined();
+    expect(order.refundedAt).toBeUndefined();
     expect(
       orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
     ).toEqual(
       expect.objectContaining({
-        status: OrderStatus.refunded,
-        refundAmount: 12900,
-        refundedAt: NOW,
+        status: OrderStatus.refundRequested,
       })
     );
-    expect(result.status).toBe(OrderStatus.refunded);
+    expect(result.status).toBe(OrderStatus.refundRequested);
   });
 
-  it('rejects voice package refund after the training task is completed', async () => {
+  it('allows requesting a voice package refund after the training task is completed', async () => {
     const { service, auth, wechatPayService } = createService(
       createVoiceOrder({
         status: OrderStatus.completed,
@@ -1501,12 +1530,10 @@ describe('OrderService payment expiration and reconciliation', () => {
       }
     );
 
-    await expect(service.refundUserOrder(auth, ORDER_ID)).rejects.toMatchObject(
-      {
-        code: 'VOICE_PACKAGE_ALREADY_COMPLETED',
-      }
-    );
+    const result = await service.refundUserOrder(auth, ORDER_ID);
+
     expect(wechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(result.status).toBe(OrderStatus.refundRequested);
   });
 
   it('rejects user refund for pending orders', async () => {
