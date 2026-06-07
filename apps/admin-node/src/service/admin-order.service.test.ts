@@ -490,6 +490,42 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('filters orders by created time range and virtual payment type', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      createdAtStart: '2026-05-01T00:00:00.000Z',
+      createdAtEnd: '2026-05-02T23:59:59.999Z',
+      paymentType: 'virtual',
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      paymentProvider: 'wechat_virtual_pay',
+      createdAt: {
+        $gte: new Date('2026-05-01T00:00:00.000Z'),
+        $lte: new Date('2026-05-02T23:59:59.999Z'),
+      },
+    });
+  });
+
+  it('filters normal payment orders as non virtual payment orders', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      paymentType: 'normal',
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      paymentProvider: { $ne: 'wechat_virtual_pay' },
+    });
+  });
+
   it('creates an admin vip order and grants membership benefits', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders } = createService();

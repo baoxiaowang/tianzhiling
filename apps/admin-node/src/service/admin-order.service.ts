@@ -995,6 +995,9 @@ export class AdminOrderService {
     const status = this.normalizeOptionalStatus(query?.status);
     const orderType = this.normalizeOptionalOrderType(query?.orderType);
     const source = this.normalizeOptionalSource(query?.source);
+    const paymentType = this.normalizeOptionalPaymentType(query?.paymentType);
+    const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
+    const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
     const userId = this.normalizeOptionalObjectId(query?.userId);
     const keyword = query?.keyword?.trim() ?? '';
 
@@ -1008,6 +1011,26 @@ export class AdminOrderService {
 
     if (source) {
       where.source = source;
+    }
+
+    if (paymentType === 'virtual') {
+      where.paymentProvider = WECHAT_VIRTUAL_PAY_PROVIDER;
+    } else if (paymentType === 'normal') {
+      where.paymentProvider = { $ne: WECHAT_VIRTUAL_PAY_PROVIDER };
+    }
+
+    if (createdAtStart || createdAtEnd) {
+      const createdAtQuery: Record<string, Date> = {};
+
+      if (createdAtStart) {
+        createdAtQuery.$gte = createdAtStart;
+      }
+
+      if (createdAtEnd) {
+        createdAtQuery.$lte = createdAtEnd;
+      }
+
+      where.createdAt = createdAtQuery;
     }
 
     if (userId) {
@@ -1519,6 +1542,24 @@ export class AdminOrderService {
     return Object.values(OrderSource).includes(value as OrderSource)
       ? (value as OrderSource)
       : undefined;
+  }
+
+  private normalizeOptionalPaymentType(
+    value?: string
+  ): 'normal' | 'virtual' | undefined {
+    return value === 'normal' || value === 'virtual' ? value : undefined;
+  }
+
+  private normalizeOptionalDate(value?: string): Date | undefined {
+    const normalizedValue = value?.trim() ?? '';
+
+    if (!normalizedValue) {
+      return undefined;
+    }
+
+    const date = new Date(normalizedValue);
+
+    return Number.isNaN(date.getTime()) ? undefined : date;
   }
 
   private normalizeOptionalObjectId(value?: string): MongoObjectId | undefined {

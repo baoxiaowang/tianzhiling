@@ -53,6 +53,27 @@
             <a-option value="admin">管理端</a-option>
           </a-select>
         </a-form-item>
+        <a-form-item field="paymentType" label="支付类型">
+          <a-select
+            v-model="searchForm.paymentType"
+            allow-clear
+            placeholder="全部"
+            class="order-page__filter"
+          >
+            <a-option value="normal">普通支付</a-option>
+            <a-option value="virtual">虚拟支付</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item field="createdAtRange" label="下单时间">
+          <a-range-picker
+            v-model="searchForm.createdAtRange"
+            allow-clear
+            show-time
+            value-format="YYYY-MM-DD HH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            class="order-page__range-filter"
+          />
+        </a-form-item>
         <a-form-item>
           <a-space>
             <a-button type="primary" :loading="loading" @click="handleSearch">
@@ -522,6 +543,7 @@
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
+    AdminOrderPaymentTypeDTO,
     OrderSourceDTO,
     OrderStatusDTO,
     OrderTypeDTO,
@@ -585,10 +607,14 @@
     keyword: string;
     status?: OrderStatusDTO | '';
     source?: OrderSourceDTO | '';
+    paymentType?: AdminOrderPaymentTypeDTO | '';
+    createdAtRange: string[];
   }>({
     keyword: '',
     status: undefined,
     source: undefined,
+    paymentType: undefined,
+    createdAtRange: [],
   });
   const createForm = reactive<{
     orderType: OrderTypeDTO;
@@ -642,11 +668,22 @@
 
     return props.orderType ? orderTypeTitleMap[props.orderType] : '我的订单';
   });
+  const normalizedCreatedAtRange = computed(() => {
+    const [start, end] = searchForm.createdAtRange;
+
+    return {
+      createdAtStart: start ? dayjs(start).toISOString() : undefined,
+      createdAtEnd: end ? dayjs(end).toISOString() : undefined,
+    };
+  });
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
     status: searchForm.status || undefined,
     orderType: props.orderType,
     source: searchForm.source || undefined,
+    paymentType: searchForm.paymentType || undefined,
+    createdAtStart: normalizedCreatedAtRange.value.createdAtStart,
+    createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
     userId: props.userId || undefined,
     page: pagination.current,
     pageSize: pagination.pageSize,
@@ -655,7 +692,9 @@
     () =>
       Boolean(searchForm.keyword.trim()) ||
       Boolean(searchForm.status) ||
-      Boolean(searchForm.source)
+      Boolean(searchForm.source) ||
+      Boolean(searchForm.paymentType) ||
+      searchForm.createdAtRange.length > 0
   );
   const emptyDescription = computed(() =>
     hasSearchCondition.value ? '未找到匹配订单' : '暂无订单数据'
@@ -700,6 +739,8 @@
     searchForm.keyword = '';
     searchForm.status = undefined;
     searchForm.source = undefined;
+    searchForm.paymentType = undefined;
+    searchForm.createdAtRange = [];
     pagination.current = 1;
     fetchData();
   };
@@ -1263,6 +1304,10 @@
 
     &__filter {
       width: 140px;
+    }
+
+    &__range-filter {
+      width: 340px;
     }
 
     &__full {

@@ -15,6 +15,8 @@ const orderTypeRule = RuleType.string().valid('vip_plan', 'voice_package');
 
 const orderSourceRule = RuleType.string().valid('app', 'weapp', 'admin');
 
+const adminOrderPaymentTypeRule = RuleType.string().valid('normal', 'virtual');
+
 export class CreateAdminOrderDTO {
   @Rule(orderTypeRule.required())
   orderType: string;
@@ -44,6 +46,15 @@ export class ListAdminOrdersQueryDTO {
 
   @Rule(orderSourceRule.allow('').optional())
   source?: string;
+
+  @Rule(adminOrderPaymentTypeRule.allow('').optional())
+  paymentType?: string;
+
+  @Rule(RuleType.string().allow('').optional())
+  createdAtStart?: string;
+
+  @Rule(RuleType.string().allow('').optional())
+  createdAtEnd?: string;
 
   @Rule(RuleType.string().allow('').optional())
   userId?: string;

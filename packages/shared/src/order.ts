@@ -50,6 +50,8 @@ export interface UserOrderListDTO {
 
 export type OrderSourceDTO = 'app' | 'weapp' | 'admin';
 
+export type AdminOrderPaymentTypeDTO = 'normal' | 'virtual';
+
 export type VirtualGoodsProvideStatusDTO =
   | 'pending'
   | 'provided'
@@ -89,6 +91,9 @@ export interface AdminOrderListParamsDTO {
   status?: OrderStatusDTO;
   orderType?: OrderTypeDTO;
   source?: OrderSourceDTO;
+  paymentType?: AdminOrderPaymentTypeDTO;
+  createdAtStart?: string;
+  createdAtEnd?: string;
   userId?: string;
   page?: number;
   pageSize?: number;
