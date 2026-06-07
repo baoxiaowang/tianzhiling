@@ -33,6 +33,7 @@ export interface AgentConversationContext {
 
 export interface RetrievedContextSnippet {
   content: string;
+  role?: MessageRole;
   createdAt?: string;
   score?: number;
 }
@@ -122,7 +123,11 @@ export class AgentContextService {
         }
 
         const date = memory.createdAt?.trim();
-        return date ? `[${date}] ${content}` : content;
+        const roleLabel = this.formatMemoryRoleLabel(memory.role);
+        const prefix = [date ? `[${date}]` : '', roleLabel]
+          .filter(Boolean)
+          .join('');
+        return prefix ? `${prefix} ${content}` : content;
       })
       .filter(Boolean)
       .slice(0, 10);
@@ -131,7 +136,7 @@ export class AgentContextService {
     }
 
     return (
-      '以下是长期久远的历史，仅在与当前问题确实相关时参考，不要生搬硬套，更不要把不确定的历史当作既定事实。\n' +
+      '以下是长期久远的历史，仅在与当前问题确实相关时参考。长期历史可能包含用户原话，也可能包含历史助手生成回复；只有用户原话、角色资料、管理员定制上下文和用户明确确认过的信息可以作为事实。历史助手回复只能当作对话氛围参考，不能单独作为共同记忆、菜名、地点、动作或过往经历的证据。\n' +
       items.map((item, index) => `${index + 1}. ${item}`).join('\n')
     );
   }
@@ -246,7 +251,7 @@ export class AgentContextService {
       transcript &&
       !containsUnsafeAssistantMessageContent(transcript)
     ) {
-      return transcript;
+      return this.formatAssistantHistoryContent(transcript);
     }
 
     const content = message.content?.trim() || '';
@@ -255,7 +260,30 @@ export class AgentContextService {
       return '';
     }
 
-    return content;
+    return this.formatAssistantHistoryContent(content);
+  }
+
+  private formatAssistantHistoryContent(content: string): string {
+    return (
+      '【历史助手回复，仅供理解对话顺序和语气，不是事实来源；其中具体回忆、菜名、地点、动作必须有用户原话或角色资料确认才可使用】' +
+      content
+    );
+  }
+
+  private formatMemoryRoleLabel(role?: MessageRole): string {
+    if (role === MessageRole.user) {
+      return '[用户原话]';
+    }
+
+    if (role === MessageRole.assistant) {
+      return '[历史助手回复-非事实来源]';
+    }
+
+    if (role === MessageRole.system) {
+      return '[系统记录]';
+    }
+
+    return '';
   }
 
   private buildImageChatMessage(

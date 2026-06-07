@@ -19,7 +19,13 @@ describe('AgentContextService', () => {
       retrieveConversationMemories: jest.fn().mockResolvedValue([
         {
           content: '记得用户说过最近睡得晚',
+          role: MessageRole.user,
           createdAt: '2026-05-30',
+        },
+        {
+          content: '用户最爱吃红烧鲫鱼',
+          role: MessageRole.assistant,
+          createdAt: '2026-05-29',
         },
       ]),
     } as never;
@@ -53,6 +59,13 @@ describe('AgentContextService', () => {
     expect(typeof systemMessage.content).toBe('string');
     expect(systemMessage.content).toContain('当前北京时间是');
     expect(systemMessage.content).toContain('以下是长期久远的历史');
+    expect(systemMessage.content).toContain('[2026-05-30][用户原话]');
+    expect(systemMessage.content).toContain(
+      '[2026-05-29][历史助手回复-非事实来源]'
+    );
+    expect(systemMessage.content).toContain(
+      '历史助手回复只能当作对话氛围参考'
+    );
   });
 
   it('does not include legacy media url assistant messages in chat history', async () => {
@@ -118,10 +131,12 @@ describe('AgentContextService', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
-          content: '早安媳妇儿',
+          content: expect.stringContaining('早安媳妇儿'),
         }),
       ])
     );
+    expect(JSON.stringify(context.messages)).toContain('历史助手回复，仅供理解对话顺序和语气');
+    expect(JSON.stringify(context.messages)).toContain('不是事实来源');
     expect(JSON.stringify(context.messages)).not.toContain('aiDeceased');
     expect(JSON.stringify(context.messages)).not.toContain('zk.yaoxuankeji.club');
   });

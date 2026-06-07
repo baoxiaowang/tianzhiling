@@ -1,5 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { MessageRole } from '@tzl/entities';
 import type { RetrievedContextSnippet } from '../agents/agent.context';
 import { OpenAIService } from '../agents/openai';
 import { MilvusService } from './milvus.service';
@@ -46,11 +47,14 @@ export class RetrieveService {
         limit: options.limit,
       });
 
-      return memories.map(memory => ({
-        content: memory.searchableText,
-        createdAt: this.formatMemoryDate(memory.createdAtTs),
-        score: memory.score,
-      }));
+      return memories
+        .filter(memory => memory.role === MessageRole.user)
+        .map(memory => ({
+          content: memory.searchableText,
+          role: memory.role,
+          createdAt: this.formatMemoryDate(memory.createdAtTs),
+          score: memory.score,
+        }));
     } catch (error) {
       this.logger.warn(
         '[retrieve] memory retrieval failed, conversationId=%s, userId=%s, reason=%s',

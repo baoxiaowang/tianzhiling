@@ -38,6 +38,12 @@ describe('buildDepartedSystemPrompt', () => {
       '"customContext": "客户要求：不要主动提起春节和祭拜。"'
     );
     expect(prompt).toContain('customContext 是后台管理员根据客户需求配置的定制上下文');
+    expect(prompt).toContain('事实来源白名单');
+    expect(prompt).toContain('可以当作事实使用的只有四类');
+    expect(prompt).toContain('历史助手回复、模型自己以前说过的话');
+    expect(prompt).toContain('历史助手回复只能帮助理解对话顺序和语气');
+    expect(prompt).toContain('不能单独证明“用户小时候怎样”');
+    expect(prompt).toContain('如果历史里只有助手说过某个细节，而用户没有确认');
     expect(prompt).toContain('当前北京时间是');
     expect(prompt).toContain('（UTC+8）');
     expect(prompt).toContain('“几点了”');
@@ -59,12 +65,20 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('背着书包');
     expect(prompt).toContain('老师催促');
     expect(prompt).toContain('手心出汗');
+    expect(prompt).toContain('当用户表达怀旧、想念从前、想念你在的日子');
+    expect(prompt).toContain('禁止补出“你小时候”“你总爱跑来找我”');
+    expect(prompt).toContain('当用户说“想吃你做的鱼/饭/菜”');
+    expect(prompt).toContain('禁止补出“红烧鲫鱼”“清蒸鱼”“你最爱吃”');
     expect(prompt).toContain('必须以当前角色的第一人称回应');
     expect(prompt).toContain('你是妈妈时，不要说“你妈妈”');
     expect(prompt).toContain('用户同时提到另一个逝去亲人时');
     expect(prompt).toContain('其中包含当前角色时');
     expect(prompt).toContain('用“我们”“你爸和我”“妈和你爸”承接');
     expect(prompt).toContain('不要说“他们”');
+    expect(prompt).toContain('禁止使用表示长期习惯或确定记忆的词');
+    expect(prompt).toContain('总是、总爱、常常、每次');
+    expect(prompt).toContain('爸记着呢、妈记着呢');
+    expect(prompt).toContain('想吃爸做的鱼了啊');
     expect(prompt).toContain('你们现在在干嘛');
     expect(prompt).toContain('禁止编造具体地点、动作、场景、日程或正在发生的事');
     expect(prompt).toContain('用户提出明确问题时');
@@ -76,6 +90,8 @@ describe('buildDepartedSystemPrompt', () => {
       '不要用“是啊 那天你……”开头后追加用户没有说过的画面'
     );
     expect(prompt).toContain('你这么一说 我心里就清楚些了');
+    expect(prompt).toContain('涉及“做的鱼/做的饭/做的菜”时');
+    expect(prompt).toContain('不能说红烧、清蒸、鲫鱼、鲤鱼、最爱吃');
     expect(prompt).toContain(
       '用户已经回答你的关心、表达“挺好”“很好”“放心”“没事”“知道了”等状态确认时'
     );
@@ -119,6 +135,9 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '常见但未明说的物品和动作也算编造'
     );
+    expect(prompt).toContain('禁止把“怀念从前”扩写成用户未提供的旧日画面');
+    expect(prompt).toContain('禁止把“想吃你做的鱼”扩写成具体菜名或偏好');
+    expect(prompt).toContain('连汤都喝完');
     expect(prompt).toContain(
       '你的语气必须符合“逝去亲人”的哀悼语境'
     );
@@ -135,5 +154,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).not.toContain('🎉');
     expect(prompt).not.toContain('😂');
     expect(prompt).not.toContain('🐶');
+    expect(prompt).toContain(
+      '不要说“我记得”“我记着呢”“我想起来了”'
+    );
   });
 });
