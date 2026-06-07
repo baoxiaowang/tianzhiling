@@ -115,7 +115,11 @@
                 <a-table-column title="Agent" data-index="name" :width="260">
                   <template #cell="{ record }">
                     <a-space>
-                      <a-avatar :size="40">
+                      <a-avatar
+                        :size="40"
+                        class="app-user-detail-page__agent-avatar"
+                        @click="goAgentDetail(record.id)"
+                      >
                         <img
                           v-if="isRenderableAvatar(record.avatar)"
                           :src="record.avatar"
@@ -127,7 +131,9 @@
                       </a-avatar>
                       <div class="app-user-detail-page__agent-identity">
                         <div class="app-user-detail-page__agent-name">
-                          {{ record.name || '-' }}
+                          <a-link @click="goAgentDetail(record.id)">
+                            {{ record.name || '-' }}
+                          </a-link>
                         </div>
                         <a-tooltip :content="record.id">
                           <a-typography-text
@@ -301,6 +307,14 @@
     router.push({ name: 'AppUserList' });
   };
 
+  const goAgentDetail = (agentId: string) => {
+    if (!agentId) {
+      return;
+    }
+
+    router.push({ name: 'AgentDetail', params: { id: agentId } });
+  };
+
   const onAgentPageChange = (page: number) => {
     agentPagination.current = page;
     fetchUserAgents(userId.value);
@@ -437,9 +451,17 @@
       margin-bottom: 16px;
     }
 
+    &__agent-avatar {
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+
+      &:hover {
+        opacity: 0.82;
+      }
+    }
+
     &__agent-name {
       margin-bottom: 4px;
-      color: var(--color-text-1);
       font-weight: 500;
       line-height: 20px;
     }

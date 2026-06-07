@@ -59,7 +59,7 @@ import { createSafeAreaCssVars, initSafeAreaInsets } from '../../utils/safe-area
 const ONBOARDING_STORAGE_KEY = 'tzl_onboarding_seen'
 
 const onboardingImages = [
-  buildOssMediaUrl('/weapp/onboarding_1.png'),
+  buildOssMediaUrl('/weapp/onboarding_2.png'),
   buildOssMediaUrl('/weapp/page4%201.png'),
 ]
 
