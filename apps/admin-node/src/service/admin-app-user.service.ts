@@ -359,6 +359,7 @@ export class AdminAppUserService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
+      customContext: agent.customContext ?? '',
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       createdAt: this.formatDate(agent.createdAt),

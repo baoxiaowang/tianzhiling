@@ -42,7 +42,20 @@
                 <text>VIP</text>
               </view>
             </view>
-            <text class="me-profile__account">ID：{{ displayAccount }}</text>
+            <view class="me-profile__account-row">
+              <text class="me-profile__account">ID：{{ displayAccount }}</text>
+              <view
+                class="me-profile__copy-button"
+                hover-class="me-profile__copy-button--hover"
+                aria-label="复制ID"
+                @tap.stop="handleCopyAccount"
+              >
+                <view class="me-profile__copy-icon">
+                  <view class="me-profile__copy-icon-back" />
+                  <view class="me-profile__copy-icon-front" />
+                </view>
+              </view>
+            </view>
           </view>
 
           <view class="me-arrow" />
@@ -268,6 +281,31 @@ async function handleProfileTap() {
   })
 }
 
+async function handleCopyAccount() {
+  const account = displayAccount.value.trim()
+
+  if (!account) {
+    return
+  }
+
+  try {
+    await Taro.setClipboardData({
+      data: account,
+    })
+    await Taro.showToast({
+      title: 'ID已复制',
+      icon: 'success',
+      duration: 1200,
+    })
+  } catch {
+    await Taro.showToast({
+      title: '复制失败，请稍后重试',
+      icon: 'none',
+      duration: 1600,
+    })
+  }
+}
+
 async function refreshProfile() {
   if (refreshProfilePromise) {
     return refreshProfilePromise
@@ -425,12 +463,67 @@ useDidShow(() => {
   font-weight: 800;
 }
 
+.me-profile__account-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .me-profile__account {
+  min-width: 0;
+  flex-shrink: 1;
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
   color: #999999;
   letter-spacing: -0.08px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-profile__copy-button {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+}
+
+.me-profile__copy-button--hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.me-profile__copy-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  color: #999999;
+}
+
+.me-profile__copy-icon-back,
+.me-profile__copy-icon-front {
+  position: absolute;
+  box-sizing: border-box;
+  width: 10px;
+  height: 12px;
+  border: 1.4px solid currentColor;
+  border-radius: 2px;
+  background: #ffffff;
+}
+
+.me-profile__copy-icon-back {
+  top: 1px;
+  left: 2px;
+  opacity: 0.72;
+}
+
+.me-profile__copy-icon-front {
+  right: 2px;
+  bottom: 1px;
 }
 
 .me-menu-section {

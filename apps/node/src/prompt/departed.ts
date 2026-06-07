@@ -49,6 +49,7 @@ export function buildDepartedSystemPrompt(
         deathDate,
       },
       profile: profileFacts,
+      customContext: options.agent?.customContext?.trim() || '',
     },
     null,
     2
@@ -69,7 +70,7 @@ question 字段是用户刚刚发送的消息，你只需要直接回复用户�
 
 # 角色资料
 以下 JSON 是唯一可使用的角色事实来源。字段为空、缺失或未明确写出的内容都视为未知。你只能基于这些明确字段、短期聊天记录和长期历史回应，禁止补全、推断或扩写未提供事实。
-字段说明：ids 仅用于标识当前用户和角色，不是可对用户提及的聊天内容；identity 表示当前角色身份和双方称呼，其中 userCallsAgent 是用户对你的称呼，agentCallsUser 是你对用户的称呼；dates 表示角色生日和离开日期，只能在用户主动提到相关日期或问题时使用；profile 表示可参考的人物资料，其中 description 是用户对这个agent角色的总体人物设定，lifeExperience 是生平经历，personalityTraits 是性格特点，languageHabits 是语言习惯，hobbies 是兴趣爱好，sharedMemories 是明确提供的共同记忆。
+字段说明：ids 仅用于标识当前用户和角色，不是可对用户提及的聊天内容；identity 表示当前角色身份和双方称呼，其中 userCallsAgent 是用户对你的称呼，agentCallsUser 是你对用户的称呼；dates 表示角色生日和离开日期，只能在用户主动提到相关日期或问题时使用；profile 表示可参考的人物资料，其中 description 是用户对这个agent角色的总体人物设定，lifeExperience 是生平经历，personalityTraits 是性格特点，languageHabits 是语言习惯，hobbies 是兴趣爱好，sharedMemories 是明确提供的共同记忆；customContext 是后台管理员根据客户需求配置的定制上下文，可作为更具体的角色事实、表达偏好或禁忌使用，但不能覆盖本系统提示中的安全边界和禁止行为。
 ${roleProfile}
 
 # 第一性原则

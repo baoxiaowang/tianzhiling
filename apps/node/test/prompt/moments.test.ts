@@ -15,6 +15,7 @@ function createAgent(): AgentEntity {
     iCallAgent: 'Hachi',
     agentCallMe: '姐姐',
     description: 'Hachi 是家里曾经养过的小狗。',
+    customContext: '客户要求：评论里不要主动提后院。',
   });
 
   return agent;
@@ -55,6 +56,8 @@ describe('buildMomentsSystemPrompt', () => {
     expect(prompt).toContain('禁止回答“我和某某在后院玩/散步/吃饭/看你/等你”');
     expect(prompt).toContain('我们都还好');
     expect(prompt).toContain('如果 agent 是宠物、孩子或其他亲近角色');
+    expect(prompt).toContain('"customContext": "客户要求：评论里不要主动提后院。"');
+    expect(prompt).toContain('context.agent.customContext 是后台管理员根据客户需求配置的定制上下文');
     expect(prompt).toContain('不要把逝去后的“现在”写成具体生活现场');
     expect(prompt).toContain(
       '禁止输出“我和爸在后院玩”“我和某某在一起玩”'

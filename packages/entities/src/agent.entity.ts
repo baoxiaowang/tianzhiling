@@ -57,6 +57,9 @@ export class AgentEntity extends BaseEntity {
   sharedMemories?: string;
 
   @Column()
+  customContext?: string;
+
+  @Column()
   status: number;
 
   @Column()

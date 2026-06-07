@@ -14,6 +14,7 @@ function createAgent(overrides: Partial<AgentEntity> = {}): AgentEntity {
     iCallAgent: '爸爸',
     agentCallMe: '旺旺',
     description: '爸爸，男性，你称呼TA为爸爸，TA会称呼你为旺旺。',
+    customContext: '客户要求：不要主动提起春节和祭拜。',
     ...overrides,
   });
 
@@ -33,6 +34,10 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '"description": "爸爸，男性，你称呼TA为爸爸，TA会称呼你为旺旺。"'
     );
+    expect(prompt).toContain(
+      '"customContext": "客户要求：不要主动提起春节和祭拜。"'
+    );
+    expect(prompt).toContain('customContext 是后台管理员根据客户需求配置的定制上下文');
     expect(prompt).toContain('当前北京时间是');
     expect(prompt).toContain('（UTC+8）');
     expect(prompt).toContain('“几点了”');

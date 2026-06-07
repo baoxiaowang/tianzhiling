@@ -65,6 +65,7 @@ export interface AdminAgentOwnerDTO {
 export interface AdminAgentRecordDTO extends AgentProfileDTO {
   createdUserId: string;
   createdUser: AdminAgentOwnerDTO | null;
+  customContext: string;
 }
 
 export interface AdminAgentListParamsDTO {
@@ -147,4 +148,5 @@ export interface UpdateAdminAgentDTO extends UpdateAgentProfileDTO {
   avatar?: string;
   status?: number;
   voiceTimbreId?: string;
+  customContext?: string;
 }

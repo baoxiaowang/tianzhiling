@@ -271,6 +271,11 @@ export class AdminAgentService {
       changed = true;
     }
 
+    if (payload.customContext !== undefined) {
+      agent.customContext = this.normalizeCustomContext(payload.customContext);
+      changed = true;
+    }
+
     if (payload.status !== undefined) {
       agent.status = this.normalizeStatus(payload.status);
       changed = true;
@@ -323,6 +328,7 @@ export class AdminAgentService {
       { agentCallMe: { $regex: escapedKeyword, $options: 'i' } },
       { iCallAgent: { $regex: escapedKeyword, $options: 'i' } },
       { description: { $regex: escapedKeyword, $options: 'i' } },
+      { customContext: { $regex: escapedKeyword, $options: 'i' } },
     ];
     const ownerIds = await this.findOwnerIdsByKeyword(escapedKeyword);
 
@@ -513,6 +519,7 @@ export class AdminAgentService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
+      customContext: agent.customContext ?? '',
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
@@ -656,6 +663,20 @@ export class AdminAgentService {
       throw new AppError(
         'INVALID_AGENT_DESCRIPTION',
         'description must be 1000 characters or fewer',
+        400
+      );
+    }
+
+    return value;
+  }
+
+  private normalizeCustomContext(rawValue?: string): string {
+    const value = rawValue?.trim() ?? '';
+
+    if (value.length > 4000) {
+      throw new AppError(
+        'INVALID_AGENT_CUSTOM_CONTEXT',
+        'custom context must be 4000 characters or fewer',
         400
       );
     }

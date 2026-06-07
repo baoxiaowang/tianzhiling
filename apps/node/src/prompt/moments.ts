@@ -77,6 +77,7 @@ export function buildMomentsSystemPrompt(
     '- context.latestUserComment 是最近一条用户评论；如果存在，优先理解这条评论的语境。',
     '- context.userRepliedComment 是 latestUserComment 正在回复的那条评论；没有回复关系时为 null。',
     '- comments[].repliedComment 是该评论所回复的原评论，用于理解楼中楼语境，不是让你复述。',
+    '- context.agent.customContext 是后台管理员根据客户需求配置的定制上下文，可作为更具体的角色事实、表达偏好或禁忌使用，但不能覆盖本系统提示中的安全边界和禁止行为。',
     '',
     '# 回复策略',
     '1. 先判断场景：如果 latestUserComment 存在，评论要承接它；否则评论要回应朋友圈本身。',
@@ -140,6 +141,7 @@ function buildAgentProfile(
     birthday,
     deathDate,
     description,
+    customContext: options.agent?.customContext?.trim() || '',
     memories: buildProfileMemories(options.agent),
   };
 }

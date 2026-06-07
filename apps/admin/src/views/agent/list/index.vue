@@ -385,6 +385,22 @@
             placeholder="请输入描述"
           />
         </a-form-item>
+        <a-form-item
+          field="customContext"
+          label="定制上下文"
+          :rules="[
+            { maxLength: 4000, message: '定制上下文不能超过 4000 个字符' },
+          ]"
+        >
+          <a-textarea
+            v-model="editForm.customContext"
+            allow-clear
+            :max-length="4000"
+            show-word-limit
+            :auto-size="{ minRows: 4, maxRows: 10 }"
+            placeholder="请输入管理员配置的定制记忆、表达偏好或禁忌"
+          />
+        </a-form-item>
         <a-form-item field="voiceTimbreId" label="音色">
           <a-select
             v-model="editForm.voiceTimbreId"
@@ -453,6 +469,7 @@
     birthday: '',
     deathDate: '',
     description: '',
+    customContext: '',
     status: 1,
     voiceTimbreId: '',
   });
@@ -556,6 +573,7 @@
     editForm.birthday = formatDateValue(record.birthday);
     editForm.deathDate = formatDateValue(record.deathDate);
     editForm.description = record.description;
+    editForm.customContext = record.customContext || '';
     editForm.status = record.status;
     editForm.voiceTimbreId = record.voiceTimbreId || '';
     editVisible.value = true;
@@ -573,6 +591,7 @@
     editForm.birthday = '';
     editForm.deathDate = '';
     editForm.description = '';
+    editForm.customContext = '';
     editForm.status = 1;
     editForm.voiceTimbreId = '';
     editFormRef.value?.clearValidate();
@@ -596,6 +615,7 @@
         birthday: editForm.birthday || '',
         deathDate: editForm.deathDate || '',
         description: editForm.description,
+        customContext: editForm.customContext,
         status: editForm.status,
         voiceTimbreId: editForm.voiceTimbreId || '',
       });

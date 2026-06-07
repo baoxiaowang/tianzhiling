@@ -74,6 +74,7 @@ describe('AdminAgentService', () => {
       birthday: new Date('2020-01-01T00:00:00.000Z'),
       deathDate: undefined,
       description: '测试 agent',
+      customContext: '客户要求：回复要更短一点',
       status: 1,
       isDefault: true,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -141,6 +142,7 @@ describe('AdminAgentService', () => {
           languageHabits: '',
           hobbies: '',
           sharedMemories: '',
+          customContext: '客户要求：回复要更短一点',
           voiceTimbreId: '',
           status: 1,
           isDefault: true,
@@ -170,6 +172,7 @@ describe('AdminAgentService', () => {
       birthday: undefined,
       deathDate: new Date('2021-01-01T00:00:00.000Z'),
       description: '',
+      customContext: '',
       status: 1,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -191,6 +194,7 @@ describe('AdminAgentService', () => {
       birthday: '2020-01-01T00:00:00.000Z',
       deathDate: '',
       description: ' 新描述 ',
+      customContext: ' 客户要求：不要主动提春节 ',
       status: 0,
     });
 
@@ -202,6 +206,7 @@ describe('AdminAgentService', () => {
     expect(agent.birthday).toEqual(new Date('2020-01-01T00:00:00.000Z'));
     expect(agent.deathDate).toBeUndefined();
     expect(agent.description).toBe('新描述');
+    expect(agent.customContext).toBe('客户要求：不要主动提春节');
     expect(agent.status).toBe(0);
     expect(agent.updatedAt).toBeInstanceOf(Date);
     expect(service.agentModel.save).toHaveBeenCalledWith(agent);

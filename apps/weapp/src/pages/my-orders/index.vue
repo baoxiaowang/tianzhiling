@@ -31,7 +31,7 @@
       <view class="my-orders-state__button" @tap="handleOpenVipCenter">去开通会员</view>
     </view>
 
-    <view v-else class="my-orders-list">
+    <view v-else class="my-orders-list" @tap="closeOrderActionMenu">
       <view v-for="order in sortedOrders" :key="order.id" class="my-orders-card">
         <view class="my-orders-card__content">
           <view class="my-orders-card__status-block">
@@ -68,16 +68,40 @@
           </view>
 
           <view v-if="canRefundOrder(order)" class="my-orders-card__actions">
-            <nut-button
-              class="my-orders-card__refund-button"
-              size="small"
-              plain
-              type="danger"
-              :loading="refundingOrderId === order.id"
-              @click="handleRefundOrder(order)"
-            >
-              申请退款
-            </nut-button>
+            <view class="my-orders-card__more-wrap">
+              <view
+                class="my-orders-card__more-button"
+                :class="{
+                  'my-orders-card__more-button--active':
+                    openActionOrderId === order.id,
+                }"
+                hover-class="my-orders-card__more-button--hover"
+                aria-label="更多操作"
+                @tap.stop="toggleOrderActionMenu(order)"
+              >
+                <view class="my-orders-card__more-dot" />
+                <view class="my-orders-card__more-dot" />
+                <view class="my-orders-card__more-dot" />
+              </view>
+              <view
+                v-if="openActionOrderId === order.id"
+                class="my-orders-card__action-menu"
+                @tap.stop
+              >
+                <view
+                  class="my-orders-card__action-menu-item"
+                  :class="{
+                    'my-orders-card__action-menu-item--loading':
+                      refundingOrderId === order.id,
+                  }"
+                  @tap="handleRefundMenuTap(order)"
+                >
+                  <text>
+                    {{ refundingOrderId === order.id ? '提交中...' : '申请退款' }}
+                  </text>
+                </view>
+              </view>
+            </view>
           </view>
         </view>
       </view>
@@ -113,6 +137,7 @@ const isLoading = ref(false)
 const loadError = ref('')
 const hasLoadedOrders = ref(false)
 const refundingOrderId = ref('')
+const openActionOrderId = ref('')
 const systemPlatform = (() => {
   try {
     return Taro.getSystemInfoSync().platform?.toLowerCase() ?? ''
@@ -189,6 +214,27 @@ function canRefundOrder(order: OrderRecord) {
       order.status === 'paid' ||
       order.status === 'grant_failed')
   )
+}
+
+function closeOrderActionMenu() {
+  openActionOrderId.value = ''
+}
+
+function toggleOrderActionMenu(order: OrderRecord) {
+  if (refundingOrderId.value) {
+    return
+  }
+
+  openActionOrderId.value = openActionOrderId.value === order.id ? '' : order.id
+}
+
+async function handleRefundMenuTap(order: OrderRecord) {
+  if (refundingOrderId.value) {
+    return
+  }
+
+  closeOrderActionMenu()
+  await handleRefundOrder(order)
 }
 
 async function handleRefundOrder(order: OrderRecord) {
@@ -335,7 +381,7 @@ function showToast(title: string) {
   box-sizing: border-box;
   border-radius: 12px;
   background: #ffffff;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .my-orders-card__content {
@@ -388,15 +434,69 @@ function showToast(title: string) {
 }
 
 .my-orders-card__actions {
+  position: relative;
   display: flex;
   justify-content: flex-end;
   width: 100%;
   padding-top: 2px;
 }
 
-.my-orders-card__refund-button {
-  --nut-button-border-radius: 999px;
-  --nut-button-default-padding: 0 18px;
+.my-orders-card__more-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.my-orders-card__more-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: #999999;
+}
+
+.my-orders-card__more-button--hover,
+.my-orders-card__more-button--active {
+  background: #f5f5f5;
+  color: #666666;
+}
+
+.my-orders-card__more-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.my-orders-card__action-menu {
+  position: absolute;
+  z-index: 3;
+  top: 36px;
+  right: 0;
+  width: 104px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 0.5px solid #eeeeee;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.my-orders-card__action-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  color: #d81e06;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.my-orders-card__action-menu-item--loading {
+  color: #999999;
 }
 
 .my-orders-card__row {

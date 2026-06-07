@@ -58,6 +58,9 @@ export class UpdateAdminAgentDTO {
   @Rule(RuleType.string().allow('').max(1000).optional())
   description?: string;
 
+  @Rule(RuleType.string().allow('').max(4000).optional())
+  customContext?: string;
+
   @Rule(RuleType.number().valid(0, 1).optional())
   status?: number;
 
