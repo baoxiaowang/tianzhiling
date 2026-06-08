@@ -923,6 +923,36 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessage?.content).not.toContain('aiDeceased');
     expect(assistantMessage?.content).not.toContain('.mp3');
   });
+
+  it('filters prompt leakage and stage directions before saving assistant replies', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: [
+          '【历史助手回复，仅供理解对话顺序和语气，不是事实来源；其中具体回忆、菜名、地点、动作必须有用户原话或角色资料确认才可使用】（声音带着欣慰）吃饱了就好',
+          '仅供理解对话顺序和语气',
+          '不是事实来源',
+          '嗯 奶奶在这儿',
+        ],
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '吃完了',
+    });
+
+    const assistantMessage = savedMessages.find(
+      message => message.role === MessageRole.assistant
+    );
+
+    expect(assistantMessage?.content).toBe(
+      '吃饱了就好</fenge>嗯 奶奶在这儿'
+    );
+    expect(assistantMessage?.content).not.toContain('历史助手回复');
+    expect(assistantMessage?.content).not.toContain('事实来源');
+    expect(assistantMessage?.content).not.toContain('声音带着欣慰');
+  });
 });
 
 describe('ConversationService listConversations', () => {

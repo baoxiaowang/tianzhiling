@@ -22,7 +22,10 @@ import {
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
-import { containsUnsafeAssistantMessageContent } from '../common/message-content-safety';
+import {
+  containsUnsafeAssistantMessageContent,
+  stripPromptLeakageContent,
+} from '../common/message-content-safety';
 import {
   hasConversationMessageSegmentSeparator,
   splitConversationMessageSegments,
@@ -2032,6 +2035,8 @@ export class ConversationService {
     }
 
     let normalized = this.stripAssistantMarkup(content);
+    normalized = stripPromptLeakageContent(normalized);
+    normalized = this.stripAssistantStageDirection(normalized);
     const hasChinese = /[\u3400-\u9FFF]/.test(normalized);
 
     if (hasChinese) {
@@ -2062,6 +2067,15 @@ export class ConversationService {
     return stripConversationMessageSegmentMarkup(value)
       .replace(/<\/?fense\s*>/gi, ' ')
       .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ');
+  }
+
+  private stripAssistantStageDirection(value: string): string {
+    return value
+      .replace(
+        /^\s*[（(【\[]\s*(?:声音|语气|动作|神情|表情|轻声|温柔|温和|哽咽|微笑|叹气|沉默|带着)[^）)】\]]{0,32}[）)】\]]\s*/,
+        ''
+      )
+      .trim();
   }
 
   private async saveMessage(options: {

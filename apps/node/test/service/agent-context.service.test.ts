@@ -92,7 +92,8 @@ describe('AgentContextService', () => {
       agentId: new MongoObjectId('665000000000000000000010'),
       role: MessageRole.assistant,
       type: MessageType.text,
-      content: '早安媳妇儿',
+      content:
+        '【历史助手回复，仅供理解对话顺序和语气，不是事实来源；其中具体回忆、菜名、地点、动作必须有用户原话或角色资料确认才可使用】早安媳妇儿',
       status: MessageStatus.sent,
       createdAt: new Date('2026-05-30T08:01:00.000Z'),
       updatedAt: new Date('2026-05-30T08:01:00.000Z'),
@@ -131,12 +132,15 @@ describe('AgentContextService', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
-          content: expect.stringContaining('早安媳妇儿'),
+          content: '早安媳妇儿',
         }),
       ])
     );
-    expect(JSON.stringify(context.messages)).toContain('历史助手回复，仅供理解对话顺序和语气');
-    expect(JSON.stringify(context.messages)).toContain('不是事实来源');
+    const assistantHistoryMessage = context.messages.find(
+      message => message.role === 'assistant'
+    );
+    expect(assistantHistoryMessage?.content).not.toContain('历史助手回复');
+    expect(assistantHistoryMessage?.content).not.toContain('不是事实来源');
     expect(JSON.stringify(context.messages)).not.toContain('aiDeceased');
     expect(JSON.stringify(context.messages)).not.toContain('zk.yaoxuankeji.club');
   });

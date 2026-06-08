@@ -10,7 +10,10 @@ import {
   MessageType,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
-import { containsUnsafeAssistantMessageContent } from '../../common/message-content-safety';
+import {
+  containsUnsafeAssistantMessageContent,
+  stripPromptLeakageContent,
+} from '../../common/message-content-safety';
 import { buildDepartedSystemPrompt } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
 
@@ -244,30 +247,23 @@ export class AgentContextService {
   }
 
   private buildAssistantHistoryContent(message: MessageEntity): string {
-    const transcript = message.mediaTranscript?.trim();
+    const transcript = stripPromptLeakageContent(message.mediaTranscript);
 
     if (
       message.type === MessageType.voice &&
       transcript &&
       !containsUnsafeAssistantMessageContent(transcript)
     ) {
-      return this.formatAssistantHistoryContent(transcript);
+      return transcript;
     }
 
-    const content = message.content?.trim() || '';
+    const content = stripPromptLeakageContent(message.content);
 
     if (!content || containsUnsafeAssistantMessageContent(content)) {
       return '';
     }
 
-    return this.formatAssistantHistoryContent(content);
-  }
-
-  private formatAssistantHistoryContent(content: string): string {
-    return (
-      '【历史助手回复，仅供理解对话顺序和语气，不是事实来源；其中具体回忆、菜名、地点、动作必须有用户原话或角色资料确认才可使用】' +
-      content
-    );
+    return content;
   }
 
   private formatMemoryRoleLabel(role?: MessageRole): string {
