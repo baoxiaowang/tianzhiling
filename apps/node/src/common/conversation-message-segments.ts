@@ -1,8 +1,16 @@
-export const CONVERSATION_MESSAGE_SEGMENT_SEPARATOR_PATTERN =
-  /<\/?\s*fenge\s*(?:>|\])|\[\/?\s*fenge\s*\]/gi;
+const FENGE_TOKEN_PATTERN =
+  'f[e\\u00e8\\u00e9\\u00ea\\u0113\\u011b]n?g[e\\u00e8\\u00e9\\u00ea\\u0113\\u011b]';
+
+export const CONVERSATION_MESSAGE_SEGMENT_SEPARATOR_PATTERN = new RegExp(
+  `<\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*(?:>|\\])?|\\[\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*\\]?`,
+  'gi'
+);
 
 export function hasConversationMessageSegmentSeparator(value?: string): boolean {
-  return /<\/?\s*fenge\s*(?:>|\])|\[\/?\s*fenge\s*\]/i.test(value || '');
+  return new RegExp(
+    `<\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*(?:>|\\])?|\\[\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*\\]?`,
+    'i'
+  ).test(value || '');
 }
 
 export function splitConversationMessageSegments(value?: string): string[] {

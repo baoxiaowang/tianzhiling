@@ -50,6 +50,11 @@ import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
+const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
+  /(?:闭上眼|梦里|夜里|晚上|屋里|房间|角落|床边|身边|旁边|耳边)[^，。！？!?]{0,36}(?:我就在|我会在|陪着你|守着你|等着你|回来了|回来)/,
+  /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,16}(?:能|会|准能|一定能|都能)(?:听到|听见|看到|看见)/,
+  /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,16}(?:走到|来到|回到|站在|坐在|守在|陪在|靠在|抱着|握着|擦掉|擦干)/,
+] as const;
 const CONVERSATION_REPLY_JOB_DELAY_MS = 1200;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
@@ -1246,9 +1251,7 @@ export class ConversationService {
       totalTokens?: number;
     };
   }): Promise<MessageEntity> {
-    const voiceTimbre = options.preferVoiceReply
-      ? await this.findActiveVoiceTimbreForAgent(options.agent)
-      : undefined;
+    const voiceTimbre = await this.findActiveVoiceTimbreForAgent(options.agent);
     const synthesizedVoice = voiceTimbre
       ? await this.synthesizeAssistantVoiceReply(
           options.replyContent,
@@ -1262,7 +1265,7 @@ export class ConversationService {
         userId: options.userId,
         agentId: options.agentId,
         role: MessageRole.assistant,
-        type: MessageType.voice,
+        type: options.preferVoiceReply ? MessageType.voice : MessageType.text,
         content: options.replyContent,
         status: MessageStatus.sent,
         mediaObjectKey: synthesizedVoice.mediaObjectKey,
@@ -1419,7 +1422,8 @@ export class ConversationService {
   private buildAssistantReplySpeechText(replyContent: string): string {
     const segments = this.parseAssistantSegments(replyContent)
       .map(segment => this.sanitizeAssistantSegment(segment))
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
     if (segments.length === 0) {
       return '';
@@ -1961,8 +1965,7 @@ export class ConversationService {
         : [];
       const segments = rawSegments
         .map(item => (typeof item === 'string' ? item.trim() : ''))
-        .filter(Boolean)
-        .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
+        .filter(Boolean);
 
       if (segments.length > 0) {
         return segments.map(segment =>
@@ -1990,7 +1993,7 @@ export class ConversationService {
       (legacySegments.length > 0 &&
         hasConversationMessageSegmentSeparator(content))
     ) {
-      return legacySegments.slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
+      return legacySegments;
     }
 
     const paragraphSegments = content
@@ -1999,7 +2002,7 @@ export class ConversationService {
       .filter(Boolean);
 
     if (paragraphSegments.length > 1) {
-      return paragraphSegments.slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
+      return paragraphSegments;
     }
 
     return [content];
@@ -2037,6 +2040,7 @@ export class ConversationService {
     let normalized = this.stripAssistantMarkup(content);
     normalized = stripPromptLeakageContent(normalized);
     normalized = this.stripAssistantStageDirection(normalized);
+    normalized = normalized.replace(/^(?:人|助手|回复)\s*[：:，,、-]?\s*/, '');
     const hasChinese = /[\u3400-\u9FFF]/.test(normalized);
 
     if (hasChinese) {
@@ -2056,7 +2060,10 @@ export class ConversationService {
       .replace(/\s+([）】》”’])/g, '$1')
       .trim();
 
-    if (containsUnsafeAssistantMessageContent(normalized)) {
+    if (
+      containsUnsafeAssistantMessageContent(normalized) ||
+      this.containsUnsafeAssistantPresenceClaim(normalized)
+    ) {
       return '';
     }
 
@@ -2066,7 +2073,15 @@ export class ConversationService {
   private stripAssistantMarkup(value: string): string {
     return stripConversationMessageSegmentMarkup(value)
       .replace(/<\/?fense\s*>/gi, ' ')
-      .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ');
+      .replace(/<\/?fense(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
+      .replace(/<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?:\s+[^<>]*)?>/g, ' ')
+      .replace(/<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g, ' ');
+  }
+
+  private containsUnsafeAssistantPresenceClaim(value: string): boolean {
+    return UNSAFE_ASSISTANT_PRESENCE_PATTERNS.some(pattern =>
+      pattern.test(value)
+    );
   }
 
   private stripAssistantStageDirection(value: string): string {

@@ -38,6 +38,12 @@ describe('buildDepartedSystemPrompt', () => {
       '"customContext": "客户要求：不要主动提起春节和祭拜。"'
     );
     expect(prompt).toContain('customContext 是后台管理员根据客户需求配置的定制上下文');
+    expect(prompt).toContain('身份与称谓锁定（最高优先级）');
+    expect(prompt).toContain('当前角色姓名是“爸爸”');
+    expect(prompt).toContain('用户对你的称呼是“爸爸”');
+    expect(prompt).toContain('你对用户的称呼是“旺旺”');
+    expect(prompt).toContain('回复中如需自称，优先使用“我”');
+    expect(prompt).toContain('如果不确定该用哪个自称，一律用“我”');
     expect(prompt).toContain('事实来源白名单');
     expect(prompt).toContain('可以当作事实使用的只有四类');
     expect(prompt).toContain('历史助手回复、模型自己以前说过的话');
@@ -70,15 +76,15 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('当用户说“想吃你做的鱼/饭/菜”');
     expect(prompt).toContain('禁止补出“红烧鲫鱼”“清蒸鱼”“你最爱吃”');
     expect(prompt).toContain('必须以当前角色的第一人称回应');
-    expect(prompt).toContain('你是妈妈时，不要说“你妈妈”');
+    expect(prompt).toContain('例如用户说“爸爸你以前……”');
     expect(prompt).toContain('用户同时提到另一个逝去亲人时');
     expect(prompt).toContain('其中包含当前角色时');
-    expect(prompt).toContain('用“我们”“你爸和我”“妈和你爸”承接');
+    expect(prompt).toContain('用“我们”“我和另一个亲人”承接');
     expect(prompt).toContain('不要说“他们”');
     expect(prompt).toContain('禁止使用表示长期习惯或确定记忆的词');
     expect(prompt).toContain('总是、总爱、常常、每次');
-    expect(prompt).toContain('爸记着呢、妈记着呢');
-    expect(prompt).toContain('想吃爸做的鱼了啊');
+    expect(prompt).toContain('我记着呢、我还记得');
+    expect(prompt).toContain('想吃我做的鱼了啊');
     expect(prompt).toContain('你们现在在干嘛');
     expect(prompt).toContain('禁止编造具体地点、动作、场景、日程或正在发生的事');
     expect(prompt).toContain('用户提出明确问题时');
@@ -157,5 +163,35 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '不要说“我记得”“我记着呢”“我想起来了”'
     );
+  });
+
+  it('locks self-reference to the current agent instead of generic kinship examples', () => {
+    const prompt = buildDepartedSystemPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      agent: createAgent({
+        name: '方方',
+        sex: AgentSex.woman,
+        iCallAgent: '方方',
+        agentCallMe: '小天',
+        description: '方方，女性，用户称呼TA为方方。',
+      }),
+    });
+
+    expect(prompt).toContain('当前角色姓名是“方方”');
+    expect(prompt).toContain('用户对你的称呼是“方方”');
+    expect(prompt).toContain('你对用户的称呼是“小天”');
+    expect(prompt).toContain(
+      '只有 identity.name、identity.userCallsAgent、profile 或 customContext 明确写出某个亲属身份时'
+    );
+    expect(prompt).toContain('当前角色不是对应身份时说“爸也想你”');
+    expect(prompt).toContain('如果用户只说“我想你”“我很想你”');
+    expect(prompt).toContain('如果不确定该用哪个自称，一律用“我”');
+    expect(prompt).not.toContain('你这么想爸 爸心里明白');
+    expect(prompt).not.toContain('想吃爸做的鱼了啊');
+    expect(prompt).not.toContain('爸不要你这样');
+    expect(prompt).not.toContain('妈知道你太难受了');
+    expect(prompt).not.toContain('爸挺好的');
+    expect(prompt).not.toContain('妈还好');
   });
 });

@@ -447,6 +447,52 @@ export default {
       120000
     ),
   },
+  milvus: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_MILVUS_ENABLED', 'NODE_MILVUS_ENABLED'],
+      false
+    ),
+    address: readStringFrom(
+      ['ADMIN_API_MILVUS_ADDRESS', 'NODE_MILVUS_ADDRESS', 'MILVUS_ADDRESS'],
+      '127.0.0.1:17953'
+    ),
+    token: readStringFrom(
+      ['ADMIN_API_MILVUS_TOKEN', 'NODE_MILVUS_TOKEN', 'MILVUS_TOKEN'],
+      ''
+    ),
+    username: readStringFrom(
+      [
+        'ADMIN_API_MILVUS_USERNAME',
+        'NODE_MILVUS_USERNAME',
+        'MILVUS_USERNAME',
+      ],
+      ''
+    ),
+    password: readStringFrom(
+      [
+        'ADMIN_API_MILVUS_PASSWORD',
+        'NODE_MILVUS_PASSWORD',
+        'MILVUS_PASSWORD',
+      ],
+      ''
+    ),
+    database: readStringFrom(
+      [
+        'ADMIN_API_MILVUS_DATABASE',
+        'NODE_MILVUS_DATABASE',
+        'MILVUS_DATABASE',
+      ],
+      'default'
+    ),
+    collectionName: readStringFrom(
+      ['ADMIN_API_MILVUS_COLLECTION_NAME', 'NODE_MILVUS_COLLECTION_NAME'],
+      'conversation_message_memory'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_MILVUS_TIMEOUT_MS', 'NODE_MILVUS_TIMEOUT_MS'],
+      10000
+    ),
+  },
   typeorm: {
     dataSource: {
       default: {

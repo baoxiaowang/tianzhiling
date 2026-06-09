@@ -1,9 +1,16 @@
-import { MessageRole, MessageType } from '@tzl/entities';
+import {
+  MessageEntity,
+  MessageRole,
+  MessageType,
+  MongoObjectId,
+} from '@tzl/entities';
 import { RetrieveService } from '../../src/service/rag/retrieve.service';
 
 describe('RetrieveService', () => {
   it('returns only user-authored memories as factual retrieval context', async () => {
     const service = new RetrieveService();
+    const activeMessageId = new MongoObjectId('665000000000000000000101');
+    const assistantMessageId = new MongoObjectId('665000000000000000000102');
     service.logger = {
       warn: jest.fn(),
     } as never;
@@ -14,6 +21,7 @@ describe('RetrieveService', () => {
     service.milvusService = {
       searchConversationMemories: jest.fn().mockResolvedValue([
         {
+          id: activeMessageId.toHexString(),
           searchableText: '用户想念爸爸做的鱼',
           role: MessageRole.user,
           type: MessageType.text,
@@ -21,12 +29,21 @@ describe('RetrieveService', () => {
           score: 0.92,
         },
         {
+          id: assistantMessageId.toHexString(),
           searchableText: '用户最爱吃红烧鲫鱼',
           role: MessageRole.assistant,
           type: MessageType.text,
           createdAtTs: new Date('2026-06-01T08:01:00.000Z').getTime(),
           score: 0.91,
         },
+      ]),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([
+        Object.assign(new MessageEntity(), {
+          id: activeMessageId,
+          isArchived: false,
+        }),
       ]),
     } as never;
 
@@ -44,5 +61,69 @@ describe('RetrieveService', () => {
       }),
     ]);
     expect(JSON.stringify(memories)).not.toContain('红烧鲫鱼');
+  });
+
+  it('filters archived memories after vector retrieval', async () => {
+    const service = new RetrieveService();
+    const activeMessageId = new MongoObjectId('665000000000000000000201');
+    const archivedMessageId = new MongoObjectId('665000000000000000000202');
+    service.logger = {
+      warn: jest.fn(),
+    } as never;
+    service.openAIService = {
+      hasEmbeddingConfig: jest.fn().mockReturnValue(true),
+      createEmbedding: jest.fn().mockResolvedValue([0.1, 0.2]),
+    } as never;
+    service.milvusService = {
+      searchConversationMemories: jest.fn().mockResolvedValue([
+        {
+          id: activeMessageId.toHexString(),
+          searchableText: '用户说很想你',
+          role: MessageRole.user,
+          type: MessageType.text,
+          createdAtTs: new Date('2026-06-01T08:00:00.000Z').getTime(),
+          score: 0.92,
+        },
+        {
+          id: archivedMessageId.toHexString(),
+          searchableText: '归档掉的错误消息',
+          role: MessageRole.user,
+          type: MessageType.text,
+          createdAtTs: new Date('2026-06-01T08:01:00.000Z').getTime(),
+          score: 0.91,
+        },
+      ]),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([
+        Object.assign(new MessageEntity(), {
+          id: activeMessageId,
+          isArchived: false,
+        }),
+      ]),
+    } as never;
+
+    const memories = await service.retrieveConversationMemories({
+      query: '想你',
+      userId: '665000000000000000000001',
+      agentId: '665000000000000000000010',
+    });
+
+    expect(service.messageModel.find).toHaveBeenCalledWith({
+      where: {
+        id: {
+          $in: [activeMessageId, archivedMessageId],
+        },
+        isArchived: {
+          $ne: true,
+        },
+      },
+    });
+    expect(memories).toEqual([
+      expect.objectContaining({
+        content: '用户说很想你',
+      }),
+    ]);
+    expect(JSON.stringify(memories)).not.toContain('归档掉的错误消息');
   });
 });

@@ -4,6 +4,7 @@ import {
   Get,
   Inject,
   Param,
+  Post,
   Put,
   Query,
 } from '@midwayjs/core';
@@ -43,6 +44,19 @@ export class AdminAgentController {
       id,
       conversationId,
       query
+    );
+  }
+
+  @Post('/:id/conversations/:conversationId/messages/:messageId/archive')
+  async archiveConversationMessage(
+    @Param('id') id: string,
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.adminAgentService.archiveAgentConversationMessage(
+      id,
+      conversationId,
+      messageId
     );
   }
 

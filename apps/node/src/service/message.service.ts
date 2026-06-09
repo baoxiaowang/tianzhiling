@@ -103,16 +103,7 @@ export class MessageService {
       content,
       segments,
       status: message.status,
-      voice:
-        type === MessageType.voice
-          ? {
-              objectKey: message.mediaObjectKey?.trim() || undefined,
-              url: this.buildClientMediaUrlField(message),
-              mimeType: message.mediaMimeType?.trim() || undefined,
-              durationMs: this.normalizeVoiceDuration(message.mediaDurationMs),
-              transcript: message.mediaTranscript?.trim() || undefined,
-            }
-          : undefined,
+      voice: this.buildVoiceItem(message, type),
       image:
         type === MessageType.image
           ? {
@@ -162,6 +153,45 @@ export class MessageService {
       return MessageType.image;
     }
     return MessageType.text;
+  }
+
+  private buildVoiceItem(
+    message: MessageEntity,
+    type: MessageType
+  ): ConversationMessageItem['voice'] | undefined {
+    const canExposeVoice =
+      type === MessageType.voice ||
+      (type === MessageType.text && message.role === MessageRole.assistant);
+
+    if (!canExposeVoice) {
+      return undefined;
+    }
+
+    const objectKey = message.mediaObjectKey?.trim() || undefined;
+    const url = this.buildClientMediaUrlField(message);
+    const mimeType = message.mediaMimeType?.trim() || undefined;
+    const durationMs = this.normalizeVoiceDuration(message.mediaDurationMs);
+    const transcript = message.mediaTranscript?.trim() || undefined;
+
+    if (
+      type === MessageType.text &&
+      !objectKey &&
+      !message.mediaUrl?.trim()
+    ) {
+      return undefined;
+    }
+
+    if (!objectKey && !url && !mimeType && !durationMs && !transcript) {
+      return undefined;
+    }
+
+    return {
+      objectKey,
+      url,
+      mimeType,
+      durationMs,
+      transcript,
+    };
   }
 
   private buildClientMediaUrlField(message: MessageEntity): string | undefined {

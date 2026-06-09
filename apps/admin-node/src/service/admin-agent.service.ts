@@ -1,4 +1,5 @@
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import type { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { AppError } from '@tzl/shared';
 import type {
@@ -15,6 +16,7 @@ import {
   ConversationEntity,
   MessageEntity,
   AgentSex,
+  MessageRole,
   MongoObjectId,
   UserAccountEntity,
   UserEntity,
@@ -28,6 +30,7 @@ import {
   UpdateAdminAgentDTO,
 } from '../dto/admin-agent.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
+import { AdminMilvusService } from './admin-milvus.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
 
 export type AdminAgentOwner = AdminAgentOwnerDTO;
@@ -44,6 +47,9 @@ type MongoWhere = Record<string, unknown>;
 
 @Provide()
 export class AdminAgentService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
@@ -64,6 +70,9 @@ export class AdminAgentService {
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
+
+  @Inject()
+  milvusService: AdminMilvusService;
 
   @Inject()
   storageFileService: AdminStorageFileService;
@@ -210,6 +219,42 @@ export class AdminAgentService {
       page,
       pageSize,
     };
+  }
+
+  async archiveAgentConversationMessage(
+    agentId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<AdminAgentConversationMessageItem> {
+    const agent = await this.getAgentById(agentId);
+    const conversation = await this.getConversationForAgent(
+      agent.id,
+      conversationId
+    );
+    const message = await this.getMessageForConversation(
+      conversation.id,
+      messageId
+    );
+
+    if (message.role !== MessageRole.assistant) {
+      throw new AppError(
+        'MESSAGE_ARCHIVE_NOT_ALLOWED',
+        'only assistant messages can be archived',
+        400
+      );
+    }
+
+    if (!message.isArchived) {
+      const now = new Date();
+      message.isArchived = true;
+      message.archivedAt = now;
+      message.updatedAt = now;
+      await this.messageModel.save(message);
+    }
+
+    await this.deleteMessageVector(message);
+
+    return this.buildConversationMessageItem(message);
   }
 
   async updateAgent(
@@ -477,6 +522,32 @@ export class AdminAgentService {
     return conversation;
   }
 
+  private async getMessageForConversation(
+    conversationObjectId: MongoObjectId,
+    messageId: string
+  ): Promise<MessageEntity> {
+    const objectId = this.parseMessageObjectId(messageId);
+    const message =
+      (await this.messageModel.findOne({
+        where: {
+          id: objectId,
+          conversationId: conversationObjectId,
+        },
+      })) ??
+      (await this.messageModel.findOne({
+        where: {
+          _id: objectId,
+          conversationId: conversationObjectId,
+        } as never,
+      }));
+
+    if (!message) {
+      throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
+    }
+
+    return message;
+  }
+
   private async getAgentById(agentId: string): Promise<AgentEntity> {
     const objectId = this.parseObjectId(agentId);
     const agent =
@@ -556,6 +627,8 @@ export class AdminAgentService {
             type: latestMessage.type,
             content: latestMessage.content ?? '',
             status: latestMessage.status,
+            isArchived: Boolean(latestMessage.isArchived),
+            archivedAt: this.formatDate(latestMessage.archivedAt),
             createdAt: this.formatDate(latestMessage.createdAt),
           }
         : null,
@@ -589,6 +662,8 @@ export class AdminAgentService {
       type: message.type,
       content: message.content ?? '',
       status: message.status,
+      isArchived: Boolean(message.isArchived),
+      archivedAt: this.formatDate(message.archivedAt),
       mediaUrl: this.resolveMediaUrl(message),
       mediaMimeType: message.mediaMimeType ?? '',
       mediaTranscript: message.mediaTranscript ?? '',
@@ -797,6 +872,28 @@ export class AdminAgentService {
     }
 
     return new MongoObjectId(value);
+  }
+
+  private parseMessageObjectId(value: string): MongoObjectId {
+    try {
+      return new MongoObjectId(value);
+    } catch {
+      throw new AppError('INVALID_MESSAGE_ID', 'message id is invalid', 400);
+    }
+  }
+
+  private async deleteMessageVector(message: MessageEntity): Promise<void> {
+    try {
+      await this.milvusService?.deleteConversationMessage(
+        this.stringifyObjectId(message.id)
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[admin-agent] failed to delete archived message vector, messageId=%s, reason=%s',
+        this.stringifyObjectId(message.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private stringifyObjectId(value: MongoObjectId): string {

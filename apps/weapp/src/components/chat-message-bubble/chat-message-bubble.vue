@@ -6,6 +6,9 @@
       'chat-message-bubble--image': type === 'image',
       'chat-message-bubble--voice': type === 'voice',
       'chat-message-bubble--voice-active': type === 'voice' && isVoiceActive,
+      'chat-message-bubble--with-text-voice': type === 'text' && hasVoicePlayback,
+      'chat-message-bubble--text-voice-active':
+        type === 'text' && hasVoicePlayback && isVoiceActive,
     }"
   >
     <template v-if="type === 'image'">
@@ -66,7 +69,24 @@
         <view class="chat-message-bubble__spinner" />
       </view>
     </view>
-    <text v-else class="chat-message-bubble__text">{{ text }}</text>
+    <view v-else class="chat-message-bubble__text-wrap">
+      <text class="chat-message-bubble__text">{{ text }}</text>
+      <view
+        v-if="hasVoicePlayback"
+        class="chat-message-bubble__text-voice-button"
+        :class="{
+          'chat-message-bubble__text-voice-button--active': isVoiceActive,
+          'chat-message-bubble__text-voice-button--playing': isVoicePlaying,
+        }"
+        @tap.stop="handleVoiceTap"
+      >
+        <view v-if="isVoiceLoading" class="chat-message-bubble__text-voice-loading">
+          <view class="chat-message-bubble__spinner" />
+        </view>
+        <PlayStop v-else-if="isVoicePlaying" size="14" color="#078c49" />
+        <PlayStart v-else size="14" color="#111111" />
+      </view>
+    </view>
   </view>
 </template>
 
@@ -77,6 +97,7 @@ export default {
 </script>
 
 <script setup lang="ts">
+import { PlayStart, PlayStop } from '@nutui/icons-vue-taro'
 import Taro from '@tarojs/taro'
 import { computed } from 'vue'
 
@@ -86,6 +107,7 @@ const props = withDefaults(
     text?: string
     imageUrl?: string
     voiceDurationMs?: number
+    hasVoicePlayback?: boolean
     isVoiceActive?: boolean
     isVoicePlaying?: boolean
     isVoiceLoading?: boolean
@@ -97,6 +119,7 @@ const props = withDefaults(
     text: '',
     imageUrl: '',
     voiceDurationMs: 0,
+    hasVoicePlayback: false,
     isVoiceActive: false,
     isVoicePlaying: false,
     isVoiceLoading: false,
@@ -105,9 +128,7 @@ const props = withDefaults(
   },
 )
 
-const emit = defineEmits<{
-  (event: 'voice-tap'): void
-}>()
+const emit = defineEmits(['voice-tap'])
 
 const voiceSeconds = computed(() => {
   return Math.max(1, Math.round(props.voiceDurationMs / 1000))
@@ -173,13 +194,58 @@ function handleVoiceTap() {
   box-shadow: 0 0 0 1px rgba(7, 193, 96, 0.28);
 }
 
+.chat-message-bubble--with-text-voice {
+  padding-right: 10px;
+}
+
+.chat-message-bubble--text-voice-active {
+  box-shadow: 0 0 0 1px rgba(7, 193, 96, 0.22);
+}
+
+.chat-message-bubble__text-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .chat-message-bubble__text {
   display: block;
+  min-width: 0;
+  flex: 1;
   color: #111111;
   font-size: 16px;
   line-height: 22.4px;
   word-break: break-word;
   white-space: pre-wrap;
+}
+
+.chat-message-bubble__text-voice-button {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #f2f4f7;
+  box-sizing: border-box;
+}
+
+.chat-message-bubble__text-voice-button--active {
+  background: #eaf9f0;
+}
+
+.chat-message-bubble__text-voice-button--playing {
+  box-shadow: inset 0 0 0 1px rgba(7, 193, 96, 0.28);
+}
+
+.chat-message-bubble__text-voice-loading .chat-message-bubble__spinner {
+  width: 14px;
+  height: 14px;
+  border-color: rgba(7, 193, 96, 0.18);
+  border-top-color: #07c160;
 }
 
 .chat-message-bubble__image {

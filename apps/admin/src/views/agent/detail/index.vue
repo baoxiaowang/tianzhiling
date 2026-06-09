@@ -208,6 +208,26 @@
                         <a-tag size="small">
                           {{ formatMessageType(message.type) }}
                         </a-tag>
+                        <a-tag
+                          v-if="message.isArchived"
+                          size="small"
+                          color="orange"
+                        >
+                          已归档
+                        </a-tag>
+                        <a-popconfirm
+                          v-else-if="canArchiveMessage(message)"
+                          content="归档后不会影响聊天展示，但不会再进入后续 AI 召回。确认归档？"
+                          @ok="() => archiveMessage(message)"
+                        >
+                          <a-button
+                            type="text"
+                            size="mini"
+                            :loading="isArchivingMessage(message.id)"
+                          >
+                            归档
+                          </a-button>
+                        </a-popconfirm>
                       </div>
                       <div class="agent-detail-page__message-bubble">
                         {{ formatMessageContent(message) }}
@@ -250,6 +270,7 @@
     AgentConversationMessageRecord,
     AgentConversationRecord,
     AgentRecord,
+    archiveAgentConversationMessage,
     queryAgentConversationMessages,
     queryAgentConversations,
     queryAgentDetail,
@@ -270,6 +291,7 @@
   const selectedConversationId = ref('');
   const conversationsLoading = ref(false);
   const messagesLoading = ref(false);
+  const archivingMessageIds = ref<Set<string>>(new Set());
   const conversationPagination = reactive({
     current: 1,
     pageSize: 10,
@@ -423,6 +445,54 @@
   const onMessagePageChange = (page: number) => {
     messagePagination.current = page;
     fetchConversationMessages(agentId.value, selectedConversationId.value);
+  };
+
+  const canArchiveMessage = (message: AgentConversationMessageRecord) => {
+    return message.role === 'assistant' && !message.isArchived;
+  };
+
+  const isArchivingMessage = (messageId: string) => {
+    return archivingMessageIds.value.has(messageId);
+  };
+
+  const setMessageArchiving = (messageId: string, value: boolean) => {
+    const nextIds = new Set(archivingMessageIds.value);
+
+    if (value) {
+      nextIds.add(messageId);
+    } else {
+      nextIds.delete(messageId);
+    }
+
+    archivingMessageIds.value = nextIds;
+  };
+
+  const archiveMessage = async (message: AgentConversationMessageRecord) => {
+    if (
+      !agentId.value ||
+      !selectedConversationId.value ||
+      !canArchiveMessage(message) ||
+      isArchivingMessage(message.id)
+    ) {
+      return;
+    }
+
+    try {
+      setMessageArchiving(message.id, true);
+      const { data } = await archiveAgentConversationMessage(
+        agentId.value,
+        selectedConversationId.value,
+        message.id
+      );
+      messageList.value = messageList.value.map((item) =>
+        item.id === data.id ? { ...item, ...data } : item
+      );
+      Message.success('已归档');
+    } catch (error) {
+      Message.error('归档失败');
+    } finally {
+      setMessageArchiving(message.id, false);
+    }
   };
 
   const formatConversationTitle = (conversation: AgentConversationRecord) => {

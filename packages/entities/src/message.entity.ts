@@ -21,6 +21,7 @@ export enum MessageType {
 @Index(['conversationId', 'createdAt'], { background: true })
 @Index(['userId', 'createdAt'], { background: true })
 @Index(['agentId', 'userId', 'createdAt'], { background: true })
+@Index(['conversationId', 'isArchived', 'createdAt'], { background: true })
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()
@@ -43,6 +44,12 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   status: MessageStatus;
+
+  @Column()
+  isArchived?: boolean;
+
+  @Column()
+  archivedAt?: Date;
 
   @Column()
   mediaObjectKey?: string;

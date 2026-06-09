@@ -91,6 +91,8 @@ export interface AdminAgentConversationLatestMessageDTO {
   type: string;
   content: string;
   status: string;
+  isArchived?: boolean;
+  archivedAt?: string;
   createdAt: string;
 }
 
@@ -124,6 +126,8 @@ export interface AdminAgentConversationMessageRecordDTO {
   type: string;
   content: string;
   status: string;
+  isArchived?: boolean;
+  archivedAt?: string;
   mediaUrl: string;
   mediaMimeType: string;
   mediaTranscript: string;

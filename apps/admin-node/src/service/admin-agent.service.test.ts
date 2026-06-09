@@ -25,6 +25,7 @@ function createService() {
     count: jest.fn(),
     find: jest.fn(),
     findOne: jest.fn(),
+    save: jest.fn(async (message: unknown) => message),
   } as any;
   service.userModel = {
     find: jest.fn(),
@@ -53,6 +54,12 @@ function createService() {
 
       return value ? `https://cdn.example.com/${value}` : '';
     }),
+  } as any;
+  service.milvusService = {
+    deleteConversationMessage: jest.fn().mockResolvedValue(undefined),
+  } as any;
+  service.logger = {
+    warn: jest.fn(),
   } as any;
 
   return service;
@@ -351,6 +358,8 @@ describe('AdminAgentService', () => {
             type: MessageType.text,
             content: '你好',
             status: MessageStatus.sent,
+            isArchived: false,
+            archivedAt: '',
             createdAt: '2026-02-02T00:00:00.000Z',
           },
           messageCount: 2,
@@ -459,6 +468,8 @@ describe('AdminAgentService', () => {
           type: MessageType.text,
           content: '你好',
           status: MessageStatus.sent,
+          isArchived: false,
+          archivedAt: '',
           mediaUrl: '',
           mediaMimeType: '',
           mediaTranscript: '',
@@ -473,6 +484,8 @@ describe('AdminAgentService', () => {
           type: MessageType.voice,
           content: '',
           status: MessageStatus.sent,
+          isArchived: false,
+          archivedAt: '',
           mediaUrl:
             'https://cdn.example.com/conversation-voice-replies/reply.mp3',
           mediaMimeType: 'audio/mpeg',
@@ -486,6 +499,130 @@ describe('AdminAgentService', () => {
       page: 1,
       pageSize: 50,
     });
+  });
+
+  it('archives assistant messages and removes their vector memory', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const conversationId = new MongoObjectId();
+    const messageId = new MongoObjectId();
+    const agent = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      sex: AgentSex.woman,
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const conversation = {
+      id: conversationId,
+      agentId,
+      userId,
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-02T00:00:00.000Z'),
+    };
+    const message: any = {
+      id: messageId,
+      conversationId,
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '爸也想你',
+      status: MessageStatus.sent,
+      isArchived: false,
+      createdAt: new Date('2026-02-02T00:01:00.000Z'),
+      updatedAt: new Date('2026-02-02T00:01:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest
+      .mocked(service.conversationModel.findOne)
+      .mockResolvedValueOnce(conversation as never);
+    jest
+      .mocked(service.messageModel.findOne)
+      .mockResolvedValueOnce(message as never);
+
+    const result = await service.archiveAgentConversationMessage(
+      agentId.toHexString(),
+      conversationId.toHexString(),
+      messageId.toHexString()
+    );
+
+    expect(message.isArchived).toBe(true);
+    expect(message.archivedAt).toBeInstanceOf(Date);
+    expect(service.messageModel.save).toHaveBeenCalledWith(message);
+    expect(service.milvusService.deleteConversationMessage).toHaveBeenCalledWith(
+      messageId.toHexString()
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: messageId.toHexString(),
+        role: MessageRole.assistant,
+        isArchived: true,
+        archivedAt: expect.any(String),
+      })
+    );
+  });
+
+  it('rejects archiving user messages', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const conversationId = new MongoObjectId();
+    const messageId = new MongoObjectId();
+    const agent = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      sex: AgentSex.woman,
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const conversation = {
+      id: conversationId,
+      agentId,
+      userId,
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-02T00:00:00.000Z'),
+    };
+    const message = {
+      id: messageId,
+      conversationId,
+      role: MessageRole.user,
+      type: MessageType.text,
+      content: '我很想你',
+      status: MessageStatus.sent,
+      createdAt: new Date('2026-02-02T00:01:00.000Z'),
+      updatedAt: new Date('2026-02-02T00:01:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest
+      .mocked(service.conversationModel.findOne)
+      .mockResolvedValueOnce(conversation as never);
+    jest
+      .mocked(service.messageModel.findOne)
+      .mockResolvedValueOnce(message as never);
+
+    await expect(
+      service.archiveAgentConversationMessage(
+        agentId.toHexString(),
+        conversationId.toHexString(),
+        messageId.toHexString()
+      )
+    ).rejects.toMatchObject({
+      code: 'MESSAGE_ARCHIVE_NOT_ALLOWED',
+    });
+    expect(service.messageModel.save).not.toHaveBeenCalled();
+    expect(
+      service.milvusService.deleteConversationMessage
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects invalid id, blank name and invalid status', async () => {

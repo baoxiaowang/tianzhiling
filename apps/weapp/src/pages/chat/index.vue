@@ -88,6 +88,7 @@
                 :text="item.text"
                 :image-url="item.imageUrl"
                 :voice-duration-ms="item.voiceDurationMs"
+                :has-voice-playback="item.hasVoicePlayback"
                 :is-voice-active="activeVoiceMessageId === item.messageId"
                 :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
                 :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
@@ -319,6 +320,7 @@ type DisplayRow =
       text: string
       imageUrl: string
       voiceDurationMs: number
+      hasVoicePlayback: boolean
       isUser: boolean
       isSending: boolean
       isFailed: boolean
@@ -601,6 +603,7 @@ const displayRows = computed<DisplayRow[]>(() => {
         text: normalizedText,
         imageUrl: resolveImageMessageUrl(message.image),
         voiceDurationMs: 0,
+        hasVoicePlayback: false,
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: message.status === 'failed',
@@ -609,6 +612,23 @@ const displayRows = computed<DisplayRow[]>(() => {
     }
 
     if (message.type === 'voice' && message.role !== 'system') {
+      if (message.role === 'assistant') {
+        rows.push({
+          key: `message-${message.id}-voice-text`,
+          kind: 'message',
+          messageId: message.id,
+          type: 'text',
+          text: normalizedText,
+          imageUrl: '',
+          voiceDurationMs: message.voice?.durationMs ?? 1000,
+          hasVoicePlayback: hasResolvableVoicePayload(message.voice),
+          isUser: false,
+          isSending: message.status === 'sending',
+          isFailed: message.status === 'failed',
+        })
+        return
+      }
+
       rows.push({
         key: `message-${message.id}-voice`,
         kind: 'message',
@@ -617,6 +637,7 @@ const displayRows = computed<DisplayRow[]>(() => {
         text: normalizedText,
         imageUrl: '',
         voiceDurationMs: message.voice?.durationMs ?? 1000,
+        hasVoicePlayback: hasResolvableVoicePayload(message.voice),
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: message.status === 'failed',
@@ -643,6 +664,11 @@ const displayRows = computed<DisplayRow[]>(() => {
     }
 
     textSegments.forEach((segment, segmentIndex) => {
+      const shouldAttachVoicePlayback =
+        message.role === 'assistant'
+        && segmentIndex === textSegments.length - 1
+        && hasResolvableVoicePayload(message.voice)
+
       rows.push({
         key: `message-${message.id}-${segmentIndex}`,
         kind: 'message',
@@ -650,7 +676,10 @@ const displayRows = computed<DisplayRow[]>(() => {
         type: 'text',
         text: segment,
         imageUrl: '',
-        voiceDurationMs: 0,
+        voiceDurationMs: shouldAttachVoicePlayback
+          ? message.voice?.durationMs ?? 1000
+          : 0,
+        hasVoicePlayback: shouldAttachVoicePlayback,
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
@@ -1267,6 +1296,10 @@ function resolveVoiceMessageUrl(voice?: ConversationVoicePayload) {
     .join('/')
 
   return `${ApiConfig.mediaBaseUrl}/${encodedKey}`
+}
+
+function hasResolvableVoicePayload(voice?: ConversationVoicePayload) {
+  return Boolean(resolveVoiceMessageUrl(voice))
 }
 
 function shouldShowTimeDivider(message: ConversationMessage, previous?: ConversationMessage) {
@@ -2373,7 +2406,7 @@ async function sendVoiceTranscription(filePath: string) {
 
 function handleVoiceMessageTap(messageId: string) {
   const message = messages.value.find((item) => item.id === messageId)
-  if (!message || message.type !== 'voice') {
+  if (!message) {
     return
   }
 
@@ -2416,7 +2449,7 @@ function updateVoiceMessageDuration(messageId: string, durationMs: number) {
   const normalizedDurationMs = Math.round(durationMs)
 
   messages.value = messages.value.map((message) => {
-    if (message.id !== messageId || message.type !== 'voice' || !message.voice) {
+    if (message.id !== messageId || !message.voice) {
       return message
     }
 
@@ -2451,7 +2484,7 @@ function probeMissingAssistantVoiceDurations(items: ConversationMessage[]) {
   items.forEach((message) => {
     if (
       message.role !== 'assistant' ||
-      message.type !== 'voice' ||
+      !message.voice ||
       message.status === 'sending' ||
       (message.voice?.durationMs ?? 0) > 0 ||
       voiceDurationProbeContexts.has(message.id)

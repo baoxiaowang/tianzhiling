@@ -144,4 +144,73 @@ describe('AgentContextService', () => {
     expect(JSON.stringify(context.messages)).not.toContain('aiDeceased');
     expect(JSON.stringify(context.messages)).not.toContain('zk.yaoxuankeji.club');
   });
+
+  it('does not include archived messages in recent chat history', async () => {
+    const service = new AgentContextService();
+    const archivedAssistantMessage = new MessageEntity();
+    Object.assign(archivedAssistantMessage, {
+      id: new MongoObjectId('665000000000000000000041'),
+      conversationId: new MongoObjectId('665000000000000000000020'),
+      userId: new MongoObjectId('665000000000000000000001'),
+      agentId: new MongoObjectId('665000000000000000000010'),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '傻孩子 爸也想你',
+      status: MessageStatus.sent,
+      isArchived: true,
+      archivedAt: new Date('2026-05-30T08:02:00.000Z'),
+      createdAt: new Date('2026-05-30T08:02:00.000Z'),
+      updatedAt: new Date('2026-05-30T08:02:00.000Z'),
+    });
+    const activeAssistantMessage = new MessageEntity();
+    Object.assign(activeAssistantMessage, {
+      id: new MongoObjectId('665000000000000000000042'),
+      conversationId: new MongoObjectId('665000000000000000000020'),
+      userId: new MongoObjectId('665000000000000000000001'),
+      agentId: new MongoObjectId('665000000000000000000010'),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '我也想你',
+      status: MessageStatus.sent,
+      createdAt: new Date('2026-05-30T08:03:00.000Z'),
+      updatedAt: new Date('2026-05-30T08:03:00.000Z'),
+    });
+    service.messageModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([archivedAssistantMessage, activeAssistantMessage]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+
+    const agent = new AgentEntity();
+    agent.id = new MongoObjectId('665000000000000000000010');
+    agent.name = '方方';
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent,
+      currentQuery: '我很想你',
+    });
+
+    const assistantHistoryMessages = context.messages.filter(
+      message => message.role === 'assistant'
+    );
+    expect(JSON.stringify(assistantHistoryMessages)).toContain('我也想你');
+    expect(JSON.stringify(assistantHistoryMessages)).not.toContain('爸也想你');
+  });
 });

@@ -57,6 +57,16 @@ export function queryAgentConversationMessages(
   );
 }
 
+export function archiveAgentConversationMessage(
+  id: string,
+  conversationId: string,
+  messageId: string
+) {
+  return axios.post<AgentConversationMessageRecord>(
+    `/admin_api/agents/${id}/conversations/${conversationId}/messages/${messageId}/archive`
+  );
+}
+
 export function updateAgent(id: string, data: UpdateAgentData) {
   return axios.put<AgentRecord>(`/admin_api/agents/${id}`, data);
 }

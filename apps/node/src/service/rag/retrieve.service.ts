@@ -1,9 +1,18 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
-import { MessageRole } from '@tzl/entities';
+import { InjectEntityModel } from '@midwayjs/typeorm';
+import {
+  MessageEntity,
+  MessageRole,
+  MongoObjectId,
+} from '@tzl/entities';
+import { MongoRepository } from 'typeorm';
 import type { RetrievedContextSnippet } from '../agents/agent.context';
 import { OpenAIService } from '../agents/openai';
-import { MilvusService } from './milvus.service';
+import {
+  MilvusService,
+  RetrievedConversationMemory,
+} from './milvus.service';
 
 export interface RetrieveConversationMemoriesOptions {
   query: string;
@@ -26,6 +35,9 @@ export class RetrieveService {
   @Inject()
   openAIService: OpenAIService;
 
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
+
   async retrieveConversationMemories(
     options: RetrieveConversationMemoriesOptions
   ): Promise<RetrievedContextSnippet[]> {
@@ -47,8 +59,11 @@ export class RetrieveService {
         limit: options.limit,
       });
 
-      return memories
-        .filter(memory => memory.role === MessageRole.user)
+      const activeUserMemories = await this.filterArchivedMemories(
+        memories.filter(memory => memory.role === MessageRole.user)
+      );
+
+      return activeUserMemories
         .map(memory => ({
           content: memory.searchableText,
           role: memory.role,
@@ -64,6 +79,35 @@ export class RetrieveService {
       );
       return [];
     }
+  }
+
+  private async filterArchivedMemories(
+    memories: RetrievedConversationMemory[]
+  ): Promise<RetrievedConversationMemory[]> {
+    if (!memories.length) {
+      return [];
+    }
+
+    const ids = memories
+      .map(memory => memory.id?.trim())
+      .filter((id): id is string => Boolean(id && MongoObjectId.isValid(id)));
+
+    if (!ids.length) {
+      return [];
+    }
+
+    const objectIds = ids.map(id => new MongoObjectId(id));
+    const messages = await this.messageModel.find({
+      where: {
+        id: { $in: objectIds },
+        isArchived: { $ne: true },
+      } as never,
+    });
+    const activeIds = new Set(
+      messages.map(message => this.stringifyObjectId(message.id))
+    );
+
+    return memories.filter(memory => activeIds.has(memory.id));
   }
 
   private async createQueryEmbedding(
@@ -92,5 +136,9 @@ export class RetrieveService {
     }
 
     return String(error);
+  }
+
+  private stringifyObjectId(value: MongoObjectId): string {
+    return value?.toHexString?.() ?? String(value);
   }
 }

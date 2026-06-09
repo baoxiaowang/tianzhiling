@@ -168,7 +168,7 @@ export class AgentContextService {
   private async listConversationMessages(
     conversation: ConversationEntity
   ): Promise<MessageEntity[]> {
-    return this.messageModel.find({
+    const messages = await this.messageModel.find({
       where: {
         conversationId: conversation.id,
       },
@@ -176,6 +176,8 @@ export class AgentContextService {
         createdAt: 'ASC',
       },
     });
+
+    return messages.filter(message => !message.isArchived);
   }
 
   private buildRecentHistoryMessages(

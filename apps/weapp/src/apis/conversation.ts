@@ -78,6 +78,9 @@ interface VoiceTranscriptionResponse {
   transcript?: unknown
 }
 
+const SEGMENT_MARKUP_PATTERN =
+  /<\/?\s*f[e\u00e8\u00e9\u00ea\u0113\u011b]n?g[e\u00e8\u00e9\u00ea\u0113\u011b]\s*(?:>|\])?|\[\/?\s*f[e\u00e8\u00e9\u00ea\u0113\u011b]n?g[e\u00e8\u00e9\u00ea\u0113\u011b]\s*\]?/gi
+
 function asRecord(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -148,9 +151,11 @@ function asStringArray(value: unknown) {
 
 function stripAssistantMarkup(value: string) {
   return value
-    .replace(/<\/?fenge\s*>/gi, ' ')
+    .replace(SEGMENT_MARKUP_PATTERN, ' ')
     .replace(/<\/?fense\s*>/gi, ' ')
-    .replace(/<\/?[A-Za-z][A-Za-z0-9_-]*(?:\s+[^<>]*)?>/g, ' ')
+    .replace(/<\/?fense(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
+    .replace(/<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?:\s+[^<>]*)?>/g, ' ')
+    .replace(/<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -171,7 +176,7 @@ function parseSegments(value: unknown, content: string, type: string) {
   }
 
   const legacySegments = trimmedContent
-    .split('</fenge>')
+    .split(SEGMENT_MARKUP_PATTERN)
     .map((item) => stripAssistantMarkup(item).trim())
     .filter(Boolean)
 
@@ -232,7 +237,8 @@ function parseImagePayload(value: unknown) {
 export function parseConversationMessage(value: unknown): ConversationMessage {
   const raw = asRecord(value)
   const type = asString(raw.type) || 'text'
-  const content = stripAssistantMarkup(asString(raw.content))
+  const rawContent = asString(raw.content)
+  const content = stripAssistantMarkup(rawContent)
 
   return {
     id: asString(raw.id),
@@ -240,7 +246,7 @@ export function parseConversationMessage(value: unknown): ConversationMessage {
     role: asString(raw.role) || 'assistant',
     type,
     content,
-    segments: parseSegments(raw.segments, content, type),
+    segments: parseSegments(raw.segments, rawContent, type),
     status: asString(raw.status) || 'sent',
     voice: parseVoicePayload(raw.voice),
     image: parseImagePayload(raw.image),
