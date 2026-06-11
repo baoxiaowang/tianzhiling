@@ -32,6 +32,9 @@ export class CreateAdminOrderDTO {
 
   @Rule(RuleType.string().allow('').optional())
   agentId?: string;
+
+  @Rule(RuleType.boolean().optional())
+  replaceActiveVoiceTrainingTask?: boolean;
 }
 
 export class ListAdminOrdersQueryDTO {

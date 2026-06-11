@@ -36,6 +36,9 @@
               <a-tag :color="agent.status === 1 ? 'green' : 'gray'">
                 {{ formatStatus(agent.status) }}
               </a-tag>
+              <a-tag :color="agent.voiceTimbreId ? 'green' : 'orange'">
+                {{ agent.voiceTimbreId ? '已配置音色' : '未配置音色' }}
+              </a-tag>
             </a-space>
           </div>
 
@@ -62,6 +65,18 @@
             </a-descriptions-item>
             <a-descriptions-item label="TA称呼用户">
               {{ agent.agentCallMe || '-' }}
+            </a-descriptions-item>
+            <a-descriptions-item label="音色配置">
+              <a-space v-if="agent.voiceTimbreId">
+                <a-tag color="green">已配置</a-tag>
+                <a-typography-text
+                  class="agent-detail-page__timbre-id"
+                  copyable
+                >
+                  {{ agent.voiceTimbreId }}
+                </a-typography-text>
+              </a-space>
+              <a-tag v-else color="orange">未配置</a-tag>
             </a-descriptions-item>
             <a-descriptions-item label="生日">
               {{ formatDate(agent.birthday, 'YYYY-MM-DD') }}
@@ -694,7 +709,8 @@
     }
 
     &__id,
-    &__user-id {
+    &__user-id,
+    &__timbre-id {
       display: inline-block;
       max-width: 100%;
       overflow: hidden;

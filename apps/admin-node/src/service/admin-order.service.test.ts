@@ -18,6 +18,7 @@ const ORDER_ID = new MongoObjectId('665000000000000000000301');
 const VIP_PLAN_ID = new MongoObjectId('665000000000000000000402');
 const AGENT_ID = new MongoObjectId('665000000000000000000405');
 const VOICE_PACKAGE_ID = new MongoObjectId('665000000000000000000406');
+const OLD_VOICE_TASK_ORDER_ID = new MongoObjectId('665000000000000000000407');
 const ORDER_CREATED_AT = new Date('2026-05-02T08:00:00.000Z');
 
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
@@ -305,6 +306,50 @@ function createService() {
     entitlements,
     voiceTrainingTasks,
   };
+}
+
+function mockVoicePackageOrderLookups(service: AdminOrderService) {
+  const user = {
+    id: USER_ID,
+    name: '测试用户',
+    avatar: '',
+    phone: '13800000000',
+  };
+  const voicePackage = createVoicePackage();
+  const agent = createAgent();
+
+  jest.mocked(service.userModel.findOne).mockImplementation(async ({
+    where,
+  }: any) => {
+    const id = where?.id ?? where?._id;
+
+    return id && sameObjectId(id, USER_ID) ? (user as never) : null;
+  });
+  jest.mocked(service.voicePackageModel.findOne).mockImplementation(async ({
+    where,
+  }: any) => {
+    const id = where?.id ?? where?._id;
+
+    return id && sameObjectId(id, VOICE_PACKAGE_ID)
+      ? (voicePackage as never)
+      : null;
+  });
+  jest.mocked(service.agentModel.findOne).mockImplementation(async ({
+    where,
+  }: any) => {
+    const id = where?.id ?? where?._id;
+
+    return id && sameObjectId(id, AGENT_ID) ? (agent as never) : null;
+  });
+  jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+  jest.mocked(service.userAccountModel.find).mockResolvedValue([
+    {
+      userId: USER_ID,
+      account: '13800000000',
+    },
+  ] as never);
+
+  return { user, voicePackage, agent };
 }
 
 describe('AdminOrderService', () => {
@@ -692,6 +737,67 @@ describe('AdminOrderService', () => {
         status: OrderStatus.completed,
       })
     );
+
+    jest.useRealTimers();
+  });
+
+  it('rejects an admin voice package order when the agent has an active training task by default', async () => {
+    const { service, voiceTrainingTasks } = createService();
+    mockVoicePackageOrderLookups(service);
+    voiceTrainingTasks.push(
+      createVoiceTrainingTask({
+        orderId: OLD_VOICE_TASK_ORDER_ID,
+        status: VoiceTrainingTaskStatus.training,
+      })
+    );
+
+    await expect(
+      service.createOrder({
+        orderType: OrderType.voicePackage,
+        userId: USER_ID.toHexString(),
+        voicePackageId: VOICE_PACKAGE_ID.toHexString(),
+        agentId: AGENT_ID.toHexString(),
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_TRAINING_TASK_EXISTS',
+    });
+    expect(service.orderModel.save).not.toHaveBeenCalled();
+  });
+
+  it('replaces active voice training tasks when creating an admin voice package order with override enabled', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, voiceTrainingTasks } = createService();
+    mockVoicePackageOrderLookups(service);
+    const oldTask = createVoiceTrainingTask({
+      orderId: OLD_VOICE_TASK_ORDER_ID,
+      status: VoiceTrainingTaskStatus.processing,
+      remark: '旧任务备注',
+    });
+    voiceTrainingTasks.push(oldTask);
+
+    const result = await service.createOrder({
+      orderType: OrderType.voicePackage,
+      userId: USER_ID.toHexString(),
+      voicePackageId: VOICE_PACKAGE_ID.toHexString(),
+      agentId: AGENT_ID.toHexString(),
+      replaceActiveVoiceTrainingTask: true,
+    });
+
+    expect(service.voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: ORDER_ID,
+        status: VoiceTrainingTaskStatus.paid,
+      })
+    );
+    expect(service.voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: oldTask.id,
+        status: VoiceTrainingTaskStatus.failed,
+        remark: expect.stringContaining('管理端创建新声音套餐订单时覆盖关闭'),
+      })
+    );
+    expect(oldTask.remark).toContain('旧任务备注');
+    expect(result.status).toBe(OrderStatus.completed);
 
     jest.useRealTimers();
   });

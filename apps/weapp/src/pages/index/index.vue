@@ -169,7 +169,7 @@ export default {
 
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import Taro, { useDidHide, useDidShow } from '@tarojs/taro'
+import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
 import {
   createComment,
   getPosts,
@@ -232,6 +232,8 @@ const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 const COMMENT_BLUR_CLOSE_DELAY = 120
+const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
+const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
 const hasUnreadNotifications = hasUnreadCommentNotifications
@@ -806,8 +808,24 @@ function handlePreviewImages(post: PostItem, index: number) {
   })
 }
 
+function showMomentsShareMenu() {
+  void Taro.showShareMenu({
+    showShareItems: ['shareAppMessage', 'shareTimeline'],
+  }).catch(() => undefined)
+}
+
+useShareAppMessage(() => ({
+  title: MOMENTS_SHARE_TITLE,
+  path: MOMENTS_SHARE_PATH,
+}))
+
+useShareTimeline(() => ({
+  title: MOMENTS_SHARE_TITLE,
+}))
+
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
+  showMomentsShareMenu()
 
   if (isPreviewingPostImage) {
     isPreviewingPostImage = false

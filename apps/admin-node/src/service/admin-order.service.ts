@@ -46,6 +46,14 @@ type MongoWhere = Record<string, unknown>;
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
 const ADMIN_MANUAL_PAYMENT_PROVIDER = 'admin_manual';
+const ACTIVE_VOICE_TRAINING_TASK_STATUSES = [
+  VoiceTrainingTaskStatus.paid,
+  VoiceTrainingTaskStatus.awaitingMaterial,
+  VoiceTrainingTaskStatus.processing,
+  VoiceTrainingTaskStatus.training,
+];
+const VOICE_TRAINING_TASK_REPLACED_REMARK =
+  '管理端创建新声音套餐订单时覆盖关闭。';
 
 @Provide()
 export class AdminOrderService {
@@ -197,7 +205,15 @@ export class AdminOrderService {
       this.getActiveVoicePackageById(payload.voicePackageId ?? ''),
       this.getUserAgentById(userId, payload.agentId ?? ''),
     ]);
-    await this.assertAgentCanBuyVoicePackage(agent.id);
+    const activeTasks = await this.findActiveVoiceTrainingTasks(agent.id);
+
+    if (activeTasks.length && !payload.replaceActiveVoiceTrainingTask) {
+      throw new AppError(
+        'VOICE_TRAINING_TASK_EXISTS',
+        'voice training task already exists',
+        400
+      );
+    }
 
     const now = new Date();
     const order = new OrderEntity();
@@ -237,6 +253,7 @@ export class AdminOrderService {
 
     try {
       await this.grantOrderBenefits(savedOrder);
+      await this.replaceActiveVoiceTrainingTasks(activeTasks);
       savedOrder.status = OrderStatus.completed;
       savedOrder.updatedAt = new Date();
       await this.orderModel.save(savedOrder);
@@ -961,31 +978,47 @@ export class AdminOrderService {
     return agent;
   }
 
-  private async assertAgentCanBuyVoicePackage(
-    agentId: MongoObjectId
-  ): Promise<void> {
-    const tasks = await this.voiceTrainingTaskModel.find({
+  private async findActiveVoiceTrainingTasks(
+    agentId: MongoObjectId,
+    take?: number
+  ): Promise<VoiceTrainingTaskEntity[]> {
+    return this.voiceTrainingTaskModel.find({
       where: {
         agentId,
         status: {
-          $in: [
-            VoiceTrainingTaskStatus.paid,
-            VoiceTrainingTaskStatus.awaitingMaterial,
-            VoiceTrainingTaskStatus.processing,
-            VoiceTrainingTaskStatus.training,
-          ],
+          $in: ACTIVE_VOICE_TRAINING_TASK_STATUSES,
         },
       } as never,
-      take: 1,
+      ...(take ? { take } : {}),
     });
+  }
 
-    if (tasks.length > 0) {
-      throw new AppError(
-        'VOICE_TRAINING_TASK_EXISTS',
-        'voice training task already exists',
-        400
-      );
+  private async replaceActiveVoiceTrainingTasks(
+    tasks: VoiceTrainingTaskEntity[]
+  ): Promise<void> {
+    if (!tasks.length) {
+      return;
     }
+
+    const now = new Date();
+    await Promise.all(
+      tasks.map(task => {
+        task.status = VoiceTrainingTaskStatus.failed;
+        task.remark = this.appendTaskRemark(
+          task.remark,
+          VOICE_TRAINING_TASK_REPLACED_REMARK
+        );
+        task.updatedAt = now;
+
+        return this.voiceTrainingTaskModel.save(task);
+      })
+    );
+  }
+
+  private appendTaskRemark(remark: string | undefined, nextRemark: string): string {
+    const current = remark?.trim();
+
+    return current ? `${current}\n${nextRemark}` : nextRemark;
   }
 
   private async buildSearchWhere(

@@ -7,35 +7,9 @@
     }"
   >
     <view v-if="!paymentOnly && packages.length" class="voice-package-payment-panel__plans">
-      <view
-        v-if="featuredPackage"
-        class="voice-package-payment-panel__trial"
-        :class="{
-          'voice-package-payment-panel__trial--selected':
-            selectedPackageId === featuredPackage.id,
-          'voice-package-payment-panel__trial--disabled': isPackageLocked(featuredPackage),
-        }"
-        @tap="handleSelect(featuredPackage.id)"
-      >
-        <text class="voice-package-payment-panel__trial-title">
-          {{ displayPackageName(featuredPackage) }}
-        </text>
-        <text
-          v-if="getPackageStateText(featuredPackage)"
-          class="voice-package-payment-panel__trial-status"
-        >
-          {{ getPackageStateText(featuredPackage) }}
-        </text>
-        <view v-else class="voice-package-payment-panel__trial-corner">
-          <view class="voice-package-payment-panel__trial-corner-text-wrap">
-            <text>新人特惠</text>
-          </view>
-        </view>
-      </view>
-
-      <view v-if="optionPackages.length" class="voice-package-payment-panel__options">
+      <view class="voice-package-payment-panel__options">
         <view
-          v-for="item in optionPackages"
+          v-for="item in packages"
           :key="item.id"
           class="voice-package-payment-panel__option"
           :class="{
@@ -176,8 +150,6 @@ const emit = defineEmits<{
   openAgreement: [type: AgreementDocumentType]
 }>()
 
-const featuredPackage = computed(() => props.packages[0])
-const optionPackages = computed(() => props.packages.slice(1))
 const selectedPackage = computed(() => {
   return props.packages.find((item) => item.id === props.selectedPackageId)
 })
@@ -361,112 +333,14 @@ function handleAgreementTap(type: AgreementDocumentType) {
   margin: 0 auto;
 }
 
-.voice-package-payment-panel__trial {
-  position: relative;
-  box-sizing: border-box;
-  min-height: 72px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid #e4e4e4;
-  border-radius: 12px;
-  background: #f9f9f9;
-}
-
-.voice-package-payment-panel__trial--selected {
-  border-color: #d48658;
-  background: linear-gradient(90deg, #fff5df 0%, #ffdca8 100%);
-  box-shadow: 0 8px 20px rgba(187, 121, 82, 0.16);
-}
-
-.voice-package-payment-panel__trial--disabled,
 .voice-package-payment-panel__option--disabled {
   opacity: 0.62;
-}
-
-.voice-package-payment-panel__trial-title {
-  max-width: 220px;
-  overflow: hidden;
-  color: #ff1a00;
-  font-size: 24px;
-  line-height: 32px;
-  font-weight: 600;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.voice-package-payment-panel__trial-status {
-  margin-top: 2px;
-  color: #ff1a00;
-  font-size: 18px;
-  line-height: 22px;
-  font-weight: 600;
-}
-
-.voice-package-payment-panel__trial-corner {
-  position: absolute;
-  top: 0;
-  right: 1px;
-  width: 50px;
-  height: 50px;
-  overflow: hidden;
-}
-
-.voice-package-payment-panel__trial-corner::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  content: '';
-  display: block;
-  width: 0;
-  height: 0;
-  border-top: 50px solid #ffd94f;
-  border-left: 50px solid transparent;
-}
-
-.voice-package-payment-panel__trial-corner::after {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  content: '';
-  display: block;
-  width: 12px;
-  height: 12px;
-  border-radius: 0 12px 0 0;
-  background: #ffc928;
-}
-
-.voice-package-payment-panel__trial-corner-text-wrap {
-  position: absolute;
-  top: 2px;
-  right: -6px;
-  z-index: 1;
-  width: 48px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transform: rotate(45deg);
-  transform-origin: center;
-}
-
-.voice-package-payment-panel__trial-corner-text-wrap text {
-  color: #ffffff;
-  font-size: 8px;
-  line-height: 16px;
-  font-weight: 600;
-  text-align: center;
-  white-space: nowrap;
 }
 
 .voice-package-payment-panel__options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 16px;
 }
 
 .voice-package-payment-panel__option {

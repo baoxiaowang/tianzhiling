@@ -112,6 +112,7 @@ export interface CreateAdminOrderDTO {
   vipPlanId?: string;
   voicePackageId?: string;
   agentId?: string;
+  replaceActiveVoiceTrainingTask?: boolean;
 }
 
 export interface CreateVipPlanOrderDTO {

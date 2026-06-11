@@ -520,6 +520,23 @@
             </a-option>
           </a-select>
         </a-form-item>
+        <a-form-item
+          v-if="isCreateVoicePackageOrder"
+          field="replaceActiveVoiceTrainingTask"
+        >
+          <a-checkbox v-model="createForm.replaceActiveVoiceTrainingTask">
+            覆盖未完成训练任务
+          </a-checkbox>
+        </a-form-item>
+        <a-alert
+          v-if="
+            isCreateVoicePackageOrder &&
+            createForm.replaceActiveVoiceTrainingTask
+          "
+          type="warning"
+          show-icon
+          content="会将该智能体现有未完成声音训练任务标记为失败，再创建新的训练任务。"
+        />
       </a-form>
       <div class="order-page__modal-footer">
         <a-space>
@@ -622,12 +639,14 @@
     vipPlanId: string;
     voicePackageId: string;
     agentId: string;
+    replaceActiveVoiceTrainingTask: boolean;
   }>({
     orderType: 'vip_plan',
     userId: '',
     vipPlanId: '',
     voicePackageId: '',
     agentId: '',
+    replaceActiveVoiceTrainingTask: false,
   });
   const pagination = reactive({
     current: 1,
@@ -861,6 +880,7 @@
     createForm.vipPlanId = '';
     createForm.voicePackageId = '';
     createForm.agentId = '';
+    createForm.replaceActiveVoiceTrainingTask = false;
     agentOptions.value = [];
   };
 
@@ -899,6 +919,7 @@
     createForm.vipPlanId = '';
     createForm.voicePackageId = '';
     createForm.agentId = '';
+    createForm.replaceActiveVoiceTrainingTask = false;
 
     if (isCreateVoicePackageOrder.value && createForm.userId) {
       fetchAgentOptions(createForm.userId);
@@ -1024,6 +1045,9 @@
           : undefined,
         agentId: isCreateVoicePackageOrder.value
           ? createForm.agentId
+          : undefined,
+        replaceActiveVoiceTrainingTask: isCreateVoicePackageOrder.value
+          ? createForm.replaceActiveVoiceTrainingTask
           : undefined,
       });
       createVisible.value = false;
