@@ -195,6 +195,9 @@ async function handlePurchaseTap() {
     return
   }
 
+  const vipPlanId = plan.id
+  const virtualPaymentProductId = plan.virtualPaymentProductId
+
   isPaying.value = true
 
   try {
@@ -213,9 +216,9 @@ async function handlePurchaseTap() {
 
     let paidOrderId = ''
 
-    if (plan.virtualPaymentProductId) {
+    if (virtualPaymentProductId) {
       const result = await createVipPlanVirtualPaymentOrder({
-        vipPlanId: plan.id,
+        vipPlanId,
         jsCode,
       })
       const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
@@ -227,14 +230,14 @@ async function handlePurchaseTap() {
         }
 
         return createVipPlanOrder({
-          vipPlanId: plan.id,
+          vipPlanId,
           jsCode: fallbackJsCode,
         })
       })
       paidOrderId = paidOrder.id
     } else {
       const result = await createVipPlanOrder({
-        vipPlanId: plan.id,
+        vipPlanId,
         jsCode,
       })
 

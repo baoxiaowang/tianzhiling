@@ -240,6 +240,43 @@
           </view>
         </template>
       </nut-dialog>
+
+      <nut-dialog
+        v-model:visible="isVoicePrivacyDialogVisible"
+        title="语音功能授权"
+        custom-class="chat-privacy-dialog"
+        text-align="left"
+        :close-on-click-overlay="false"
+        :lock-scroll="true"
+        :overlay-style="chatQuotaDialogOverlayStyle"
+        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 1"
+      >
+        <view class="chat-privacy-dialog__content">
+          发送语音需要你同意{{ voicePrivacyContractName }}，我们会使用麦克风录制语音消息和语音转文字。
+        </view>
+        <view class="chat-privacy-dialog__link" @tap="handleVoicePrivacyContractTap">
+          查看隐私保护指引
+        </view>
+
+        <template #footer>
+          <view class="chat-privacy-dialog__footer">
+            <view
+              class="chat-privacy-dialog__secondary"
+              @tap="handleVoicePrivacyDisagree"
+            >
+              暂不使用
+            </view>
+            <button
+              :id="VOICE_PRIVACY_AGREE_BUTTON_ID"
+              class="chat-privacy-dialog__primary"
+              open-type="agreePrivacyAuthorization"
+              @agreeprivacyauthorization="handleVoicePrivacyAgree"
+            >
+              同意并继续
+            </button>
+          </view>
+        </template>
+      </nut-dialog>
     </template>
   </page-scaffold>
 </template>
@@ -335,6 +372,58 @@ type VoiceDragTarget = 'send' | 'cancel' | 'transcribe'
 
 type ChatQuotaDialogType = 'remaining' | 'exhausted'
 
+type WechatAppMicrophoneAuthorizeStatus =
+  | 'authorized'
+  | 'denied'
+  | 'not determined'
+  | 'unknown'
+
+type TaroSystemPermissionApi = typeof Taro & {
+  getAppAuthorizeSetting?: () => {
+    microphoneAuthorized?: unknown
+  }
+  openAppAuthorizeSetting?: (option?: Record<string, unknown>) => Promise<unknown>
+  getSystemInfoSync?: () => {
+    microphoneAuthorized?: boolean
+  }
+}
+
+type VoicePrivacyResolveOption =
+  | {
+      event: 'exposureAuthorization'
+    }
+  | {
+      event: 'agree'
+      buttonId: string
+    }
+  | {
+      event: 'disagree'
+    }
+
+type VoicePrivacyResolve = (option: VoicePrivacyResolveOption) => void
+
+type VoicePrivacySettingResult = {
+  needAuthorization?: boolean
+  privacyContractName?: string
+}
+
+type TaroPrivacyApi = typeof Taro & {
+  getPrivacySetting?: (option: {
+    success?: (result: VoicePrivacySettingResult) => void
+    fail?: (error: unknown) => void
+  }) => void
+  requirePrivacyAuthorize?: (option: {
+    success?: () => void
+    fail?: (error: unknown) => void
+  }) => void
+  openPrivacyContract?: (option?: {
+    fail?: (error: unknown) => void
+  }) => void
+  onNeedPrivacyAuthorization?: (
+    listener: (resolve: VoicePrivacyResolve) => void
+  ) => void
+}
+
 type TouchPoint = {
   x: number
   y: number
@@ -346,6 +435,10 @@ type RecorderStopResult = {
   fileSize: number
 }
 
+type RecorderErrorLike = {
+  errMsg?: string
+}
+
 const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   defaultDelayMs: 2200,
   longSegmentDelayMs: 2800,
@@ -355,6 +448,8 @@ const CHAT_TEXT_MAX_LENGTH = 500
 const AGENT_REPLY_POLL_INTERVAL_MS = 1500
 const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
 const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
+const VOICE_PRIVACY_AGREE_BUTTON_ID = 'chat-voice-privacy-agree-btn'
+const VOICE_PLAYBACK_ERROR_MUTE_MS = 3000
 const CHAT_QUOTA_DIALOG_CONTENT = {
   remaining: '宝，今日仅剩最后 1 句对话机会了，好好珍惜彼此吧～想畅聊点击【开通会员】',
   exhausted:
@@ -392,6 +487,8 @@ const isVoicePressPreviewing = ref(false)
 const isVoiceRecording = ref(false)
 const isTranscribingVoice = ref(false)
 const isCheckingRecordPermission = ref(false)
+const isVoicePrivacyDialogVisible = ref(false)
+const voicePrivacyContractName = ref('《天之灵隐私保护指引》')
 const voiceDragTarget = ref<VoiceDragTarget>('send')
 const voiceGestureStartPoint = ref<TouchPoint | null>(null)
 const recordingStartedAt = ref<number | null>(null)
@@ -404,6 +501,7 @@ const scrollWithAnimation = ref(true)
 const hasCompletedInitialMessagesScroll = ref(false)
 const isChatQuotaDialogVisible = ref(false)
 const chatQuotaDialogType = ref<ChatQuotaDialogType>('remaining')
+const chatQuotaIsVip = ref(false)
 const chatQuotaRemainingCount = ref<number | null>(null)
 const chatQuotaDialogOverlayStyle = {
   background: 'rgba(0, 0, 0, 0.72)',
@@ -421,8 +519,12 @@ let pendingRecorderStop:
     }
   | null = null
 let lastRecorderStopResult: RecorderStopResult | null = null
+let lastRecorderErrorMessage = ''
+let pendingVoicePrivacyResolves: VoicePrivacyResolve[] = []
+let voicePrivacyAuthorizationPromise: Promise<boolean> | null = null
 let voiceAudioContext: Taro.InnerAudioContext | null = null
 let isPickingChatImage = false
+let isChatPageVisible = true
 let voicePlaybackErrorMutedUntil = 0
 let isSwitchingComposerPanel = false
 let replyPollingTimer: ReturnType<typeof setTimeout> | null = null
@@ -436,6 +538,7 @@ let assistantSegmentRevealGeneration = 0
 const recorderManager = Taro.getRecorderManager()
 
 recorderManager.onStop((result) => {
+  lastRecorderErrorMessage = ''
   const normalizedResult = {
     tempFilePath: result.tempFilePath,
     duration: result.duration,
@@ -452,11 +555,15 @@ recorderManager.onStop((result) => {
 })
 
 recorderManager.onError((error) => {
+  lastRecorderErrorMessage = normalizeRecorderErrorMessage(error)
+
   if (pendingRecorderStop) {
     pendingRecorderStop.reject(error)
     pendingRecorderStop = null
   }
 })
+
+registerVoicePrivacyAuthorizationListener()
 
 const safeAreaInsets = useSafeAreaInsets()
 const menuButtonMetrics = readMenuButtonMetrics()
@@ -479,6 +586,7 @@ const pageTitle = computed(() => {
   return trimmedName || '对话'
 })
 const currentUserAvatar = computed(() => authSession.value?.user.avatar.trim() ?? '')
+const isCurrentUserVip = computed(() => Boolean(authSession.value?.user.isVip) || chatQuotaIsVip.value)
 const currentUserAvatarFallback = computed(() => {
   const name = authSession.value?.user.name.trim()
   return name ? name.slice(0, 1) : '我'
@@ -891,9 +999,12 @@ function updateChatQuotaSnapshot(chatQuota?: ConversationChatQuotaSnapshot) {
   }
 
   if (chatQuota.isVip) {
+    chatQuotaIsVip.value = true
     chatQuotaRemainingCount.value = null
     return
   }
+
+  chatQuotaIsVip.value = false
 
   if (typeof chatQuota.remainingCount === 'number') {
     chatQuotaRemainingCount.value = chatQuota.remainingCount
@@ -901,7 +1012,9 @@ function updateChatQuotaSnapshot(chatQuota?: ConversationChatQuotaSnapshot) {
 }
 
 function isNonVipChatQuotaExhausted() {
-  return chatQuotaRemainingCount.value !== null && chatQuotaRemainingCount.value <= 0
+  return !isCurrentUserVip.value
+    && chatQuotaRemainingCount.value !== null
+    && chatQuotaRemainingCount.value <= 0
 }
 
 function isChatQuotaLimitError(error: unknown) {
@@ -918,11 +1031,17 @@ function showChatQuotaDialog(type: ChatQuotaDialogType) {
 }
 
 function showChatQuotaExhaustedDialog() {
+  chatQuotaIsVip.value = false
   chatQuotaRemainingCount.value = 0
   showChatQuotaDialog('exhausted')
 }
 
 async function ensureChatQuotaAvailableBeforeSend() {
+  if (isCurrentUserVip.value) {
+    chatQuotaRemainingCount.value = null
+    return true
+  }
+
   if (isNonVipChatQuotaExhausted()) {
     showChatQuotaExhaustedDialog()
     return false
@@ -995,6 +1114,12 @@ async function refreshChatQuotaSnapshot(
 ) {
   if (!conversationId.value) {
     return undefined
+  }
+
+  if (isCurrentUserVip.value) {
+    chatQuotaIsVip.value = true
+    chatQuotaRemainingCount.value = null
+    return { isVip: true } satisfies ConversationChatQuotaSnapshot
   }
 
   if (options.resetBeforeFetch) {
@@ -1370,6 +1495,13 @@ function showToast(title: string) {
   })
 }
 
+function muteVoicePlaybackErrors(durationMs = VOICE_PLAYBACK_ERROR_MUTE_MS) {
+  voicePlaybackErrorMutedUntil = Math.max(
+    voicePlaybackErrorMutedUntil,
+    Date.now() + durationMs
+  )
+}
+
 function handlePendingAction(name: string) {
   showToast(`${name}待接入`)
 }
@@ -1472,7 +1604,13 @@ function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
   void scrollToBottom()
 }
 
+useDidShow(() => {
+  isChatPageVisible = true
+  muteVoicePlaybackErrors(800)
+})
+
 useDidHide(() => {
+  isChatPageVisible = false
   stopReplyPolling()
   isInputFocused.value = false
   keyboardHeight.value = 0
@@ -1484,10 +1622,11 @@ useDidHide(() => {
   } else {
     resetVoiceGestureState()
   }
-  stopVoicePlayback()
+  destroyVoiceAudioContext({ muteErrors: true })
 })
 
 useUnload(() => {
+  isChatPageVisible = false
   stopReplyPolling()
   clearAssistantSegmentRevealTimers()
   clearVoiceStartTimer()
@@ -1496,7 +1635,7 @@ useUnload(() => {
       recorderManager.stop()
     } catch {}
   }
-  destroyVoiceAudioContext()
+  destroyVoiceAudioContext({ muteErrors: true })
 })
 
 async function handleVoiceModeToggle() {
@@ -1642,6 +1781,22 @@ async function ensureRecordPermission() {
   isCheckingRecordPermission.value = true
 
   try {
+    const hasPrivacyAuthorization = await ensureVoicePrivacyAuthorization()
+
+    if (!hasPrivacyAuthorization) {
+      return false
+    }
+
+    const wechatAppMicStatus = getWechatAppMicrophoneAuthorizeStatus()
+
+    if (wechatAppMicStatus === 'denied') {
+      const hasWechatAppMicPermission = await showWechatAppMicrophoneSettingPrompt()
+
+      if (!hasWechatAppMicPermission) {
+        return false
+      }
+    }
+
     const setting = await Taro.getSetting()
     const authSetting = setting.authSetting as Record<string, boolean | undefined>
 
@@ -1660,6 +1815,188 @@ async function ensureRecordPermission() {
   } finally {
     isCheckingRecordPermission.value = false
   }
+}
+
+async function ensureVoicePrivacyAuthorization() {
+  if (voicePrivacyAuthorizationPromise) {
+    return await voicePrivacyAuthorizationPromise
+  }
+
+  voicePrivacyAuthorizationPromise = doEnsureVoicePrivacyAuthorization()
+
+  try {
+    return await voicePrivacyAuthorizationPromise
+  } finally {
+    voicePrivacyAuthorizationPromise = null
+  }
+}
+
+async function doEnsureVoicePrivacyAuthorization() {
+  const privacyApi = Taro as TaroPrivacyApi
+
+  if (
+    typeof privacyApi.getPrivacySetting !== 'function' ||
+    typeof privacyApi.requirePrivacyAuthorize !== 'function'
+  ) {
+    return true
+  }
+
+  const privacySetting = await getVoicePrivacySetting()
+  const contractName = privacySetting.privacyContractName?.trim()
+
+  if (contractName) {
+    voicePrivacyContractName.value = `《${contractName}》`
+  }
+
+  if (!privacySetting.needAuthorization) {
+    return true
+  }
+
+  return await requestVoicePrivacyAuthorization()
+}
+
+function getVoicePrivacySetting() {
+  const privacyApi = Taro as TaroPrivacyApi
+
+  return new Promise<VoicePrivacySettingResult>((resolve, reject) => {
+    privacyApi.getPrivacySetting?.({
+      success: resolve,
+      fail: reject,
+    })
+  }).catch(() => ({}))
+}
+
+function requestVoicePrivacyAuthorization() {
+  const privacyApi = Taro as TaroPrivacyApi
+
+  return new Promise<boolean>((resolve) => {
+    privacyApi.requirePrivacyAuthorize?.({
+      success: () => {
+        isVoicePrivacyDialogVisible.value = false
+        resolve(true)
+      },
+      fail: (error) => {
+        const message = describeRecorderErrorForUser(error)
+
+        if (message) {
+          showToast(message)
+        }
+
+        resolve(false)
+      },
+    })
+  })
+}
+
+function registerVoicePrivacyAuthorizationListener() {
+  const privacyApi = Taro as TaroPrivacyApi
+
+  if (typeof privacyApi.onNeedPrivacyAuthorization !== 'function') {
+    return
+  }
+
+  privacyApi.onNeedPrivacyAuthorization((resolve) => {
+    pendingVoicePrivacyResolves.push(resolve)
+    isVoicePrivacyDialogVisible.value = true
+
+    try {
+      resolve({
+        event: 'exposureAuthorization',
+      })
+    } catch {}
+  })
+}
+
+function handleVoicePrivacyAgree() {
+  resolveVoicePrivacyAuthorization('agree')
+}
+
+function handleVoicePrivacyDisagree() {
+  resolveVoicePrivacyAuthorization('disagree')
+}
+
+function handleVoicePrivacyContractTap() {
+  const privacyApi = Taro as TaroPrivacyApi
+
+  if (typeof privacyApi.openPrivacyContract !== 'function') {
+    return
+  }
+
+  privacyApi.openPrivacyContract({
+    fail: () => {
+      showToast('隐私保护指引打开失败，请稍后重试')
+    },
+  })
+}
+
+function resolveVoicePrivacyAuthorization(event: 'agree' | 'disagree') {
+  const resolves = pendingVoicePrivacyResolves
+  pendingVoicePrivacyResolves = []
+  isVoicePrivacyDialogVisible.value = false
+
+  resolves.forEach((resolve) => {
+    try {
+      if (event === 'agree') {
+        resolve({
+          event,
+          buttonId: VOICE_PRIVACY_AGREE_BUTTON_ID,
+        })
+        return
+      }
+
+      resolve({
+        event,
+      })
+    } catch {}
+  })
+}
+
+function getWechatAppMicrophoneAuthorizeStatus(): WechatAppMicrophoneAuthorizeStatus {
+  const taroSystemPermission = Taro as TaroSystemPermissionApi
+
+  if (typeof taroSystemPermission.getAppAuthorizeSetting === 'function') {
+    try {
+      const status = normalizeWechatAppMicrophoneAuthorizeStatus(
+        taroSystemPermission.getAppAuthorizeSetting().microphoneAuthorized
+      )
+
+      if (status !== 'unknown') {
+        return status
+      }
+    } catch {
+      // Fall through to the legacy system info field for older clients.
+    }
+  }
+
+  if (typeof taroSystemPermission.getSystemInfoSync === 'function') {
+    try {
+      return normalizeWechatAppMicrophoneAuthorizeStatus(
+        taroSystemPermission.getSystemInfoSync().microphoneAuthorized
+      )
+    } catch {
+      return 'unknown'
+    }
+  }
+
+  return 'unknown'
+}
+
+function normalizeWechatAppMicrophoneAuthorizeStatus(
+  value: unknown
+): WechatAppMicrophoneAuthorizeStatus {
+  if (value === 'authorized' || value === true) {
+    return 'authorized'
+  }
+
+  if (value === 'denied' || value === false) {
+    return 'denied'
+  }
+
+  if (value === 'not determined' || value === 'non determined') {
+    return 'not determined'
+  }
+
+  return 'unknown'
 }
 
 async function requestRecordPermission() {
@@ -1689,6 +2026,36 @@ async function requestRecordPermission() {
     showRecordPermissionUnavailablePrompt()
     return false
   }
+}
+
+async function showWechatAppMicrophoneSettingPrompt() {
+  const result = await Taro.showModal({
+    title: '无法开启麦克风',
+    content: '请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音',
+    confirmText: '去设置',
+    cancelText: '取消',
+    confirmColor: '#22c55e',
+  })
+
+  if (!result.confirm) {
+    return false
+  }
+
+  const taroSystemPermission = Taro as TaroSystemPermissionApi
+
+  if (typeof taroSystemPermission.openAppAuthorizeSetting === 'function') {
+    try {
+      await taroSystemPermission.openAppAuthorizeSetting({})
+    } catch {
+      showRecordPermissionUnavailablePrompt()
+      return false
+    }
+  } else {
+    showRecordPermissionUnavailablePrompt()
+    return false
+  }
+
+  return getWechatAppMicrophoneAuthorizeStatus() !== 'denied'
 }
 
 async function showRecordPermissionSettingPrompt() {
@@ -1723,6 +2090,49 @@ function showRecordPermissionUnavailablePrompt() {
   })
 }
 
+function normalizeRecorderErrorMessage(error: unknown) {
+  if (!error) {
+    return ''
+  }
+
+  if (typeof error === 'string') {
+    return error.trim()
+  }
+
+  if (error instanceof Error) {
+    return error.message.trim()
+  }
+
+  const errMsg = (error as RecorderErrorLike).errMsg
+  return typeof errMsg === 'string' ? errMsg.trim() : ''
+}
+
+function describeRecorderErrorForUser(error: unknown) {
+  const message = normalizeRecorderErrorMessage(error) || lastRecorderErrorMessage
+
+  if (!message) {
+    return ''
+  }
+
+  if (/privacy|隐私/i.test(message)) {
+    return '请先同意隐私保护指引后再发送语音'
+  }
+
+  if (/auth|authorize|permission|scope\.record|麦克风|录音权限/i.test(message)) {
+    return '请在权限设置中允许使用麦克风后再发送语音'
+  }
+
+  if (/interruption|interrupt|occupied|takeover|system|background|中断|占用/i.test(message)) {
+    return '录音被系统中断，请稍后重试'
+  }
+
+  return ''
+}
+
+function showRecorderFailureToast(error?: unknown) {
+  showToast(describeRecorderErrorForUser(error) || '录音失败，请稍后重试')
+}
+
 async function startVoiceRecording() {
   if (
     !isVoicePressPreviewing.value ||
@@ -1742,6 +2152,7 @@ async function startVoiceRecording() {
 
   try {
     lastRecorderStopResult = null
+    lastRecorderErrorMessage = ''
     recorderManager.start({
       duration: 600000,
       sampleRate: 44100,
@@ -1753,9 +2164,9 @@ async function startVoiceRecording() {
     recordingStartedAt.value = Date.now()
     isVoicePressPreviewing.value = false
     isVoiceRecording.value = true
-  } catch {
+  } catch (error) {
     resetVoiceGestureState()
-    showToast('录音启动失败，请稍后重试')
+    showToast(describeRecorderErrorForUser(error) || '录音启动失败，请稍后重试')
   }
 }
 
@@ -1792,9 +2203,11 @@ async function finishVoiceGesture(options: { cancelledBySystem?: boolean } = {})
   }
 
   let recorded: RecorderStopResult | null = null
+  let recorderError: unknown
   try {
     recorded = await stopRecorder()
-  } catch {
+  } catch (error) {
+    recorderError = error
     recorded = null
   }
 
@@ -1808,7 +2221,7 @@ async function finishVoiceGesture(options: { cancelledBySystem?: boolean } = {})
     if (shouldTranscribe) {
       isTranscribingVoice.value = false
     }
-    showToast('录音失败，请稍后重试')
+    showRecorderFailureToast(recorderError)
     return
   }
 
@@ -2129,7 +2542,7 @@ async function pickAndSendImage(sourceType: ChatImageSourceType) {
   }
 
   isPickingChatImage = true
-  voicePlaybackErrorMutedUntil = Date.now() + 3000
+  muteVoicePlaybackErrors()
   destroyVoiceAudioContext()
 
   try {
@@ -2561,10 +2974,16 @@ function ensureVoiceAudioContext() {
     activeVoiceMessageId.value = ''
   })
   audio.onError(() => {
+    const failedMessageId = activeVoiceMessageId.value
     isVoicePlaying.value = false
     isVoicePlaybackLoading.value = false
     activeVoiceMessageId.value = ''
-    if (isPickingChatImage || Date.now() < voicePlaybackErrorMutedUntil) {
+    if (
+      !failedMessageId ||
+      !isChatPageVisible ||
+      isPickingChatImage ||
+      Date.now() < voicePlaybackErrorMutedUntil
+    ) {
       return
     }
     showToast('语音播放失败，请稍后重试')
@@ -2574,9 +2993,13 @@ function ensureVoiceAudioContext() {
   return audio
 }
 
-function stopVoicePlayback() {
+function stopVoicePlayback(options: { muteErrors?: boolean } = {}) {
   if (!voiceAudioContext) {
     return
+  }
+
+  if (options.muteErrors) {
+    muteVoicePlaybackErrors()
   }
 
   try {
@@ -2587,7 +3010,11 @@ function stopVoicePlayback() {
   isVoicePlaybackLoading.value = false
 }
 
-function destroyVoiceAudioContext() {
+function destroyVoiceAudioContext(options: { muteErrors?: boolean } = {}) {
+  if (options.muteErrors) {
+    muteVoicePlaybackErrors()
+  }
+
   if (!voiceAudioContext) {
     destroyVoiceDurationProbeContexts()
     return
@@ -3048,6 +3475,91 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-quota-dialog__primary--single {
   flex-shrink: 0;
+}
+
+.chat-privacy-dialog.nut-dialog {
+  width: 300px;
+  min-height: 188px;
+  padding: 17px 18px 16px;
+  box-sizing: border-box;
+  border-radius: 16px;
+}
+
+.chat-privacy-dialog .nut-dialog__header {
+  height: 22px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #000000;
+}
+
+.chat-privacy-dialog .nut-dialog__content {
+  width: 100%;
+  margin: 12px 0 10px;
+  max-height: none;
+  overflow: visible;
+  color: #000000;
+  font-size: 12px;
+  line-height: 22px;
+  text-align: left;
+}
+
+.chat-privacy-dialog__content {
+  width: 100%;
+  color: #000000;
+  font-size: 12px;
+  line-height: 22px;
+  word-break: break-word;
+}
+
+.chat-privacy-dialog__link {
+  margin-top: 8px;
+  color: #07c160;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.chat-privacy-dialog .nut-dialog__footer {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.chat-privacy-dialog__footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-privacy-dialog__secondary,
+.chat-privacy-dialog__primary {
+  width: 116px;
+  height: 36px;
+  border-radius: 58px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 36px;
+  font-weight: 500;
+  letter-spacing: 0;
+  box-sizing: border-box;
+}
+
+.chat-privacy-dialog__secondary {
+  background: #f6f6f6;
+  color: #6b6b6b;
+}
+
+.chat-privacy-dialog__primary {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #07c160;
+  color: #ffffff;
+}
+
+.chat-privacy-dialog__primary::after {
+  border: 0;
 }
 
 .chat-composer__mic,

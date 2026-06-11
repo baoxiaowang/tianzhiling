@@ -40,11 +40,11 @@ withDefaults(defineProps<{
   banners?: readonly PromoBannerItem[]
 }>(), {
   banners: () => [
-    {
-      id: 'voice-clone',
-      imageUrl: buildOssMediaUrl('/weapp/post-banner-voice.png'),
-      link: '/pages/voice-package/index',
-    },
+    // {
+    //   id: 'voice-clone',
+    //   imageUrl: buildOssMediaUrl('/weapp/post-banner-voice.png'),
+    //   link: '/pages/voice-package/index',
+    // },
     {
       id: 'vip',
       imageUrl: buildOssMediaUrl('/weapp/post-banner-vip.png'),
