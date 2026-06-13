@@ -32,9 +32,14 @@ import {
   stripConversationMessageSegmentMarkup,
 } from '../common/conversation-message-segments';
 import {
+  GenerateMemorialPhotoDTO,
   SendConversationMessageDTO,
   TranscribeConversationVoiceDTO,
 } from '../dto/conversation.dto';
+import {
+  MEMORIAL_PHOTO_CUSTOM_PROMPT_MAX_LENGTH,
+  normalizeMemorialPhotoCustomPrompt,
+} from '../prompt/memorial-photo';
 import { AgentContextService } from './agents/agent.context';
 import { OpenAIService } from './agents/openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -46,6 +51,7 @@ import { MilvusService } from './rag/milvus.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
+import { BailianImageService } from './bailian-image.service';
 
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
@@ -213,6 +219,9 @@ export class ConversationService {
 
   @Inject()
   qwenVoiceSpeechService: QwenVoiceSpeechService;
+
+  @Inject()
+  bailianImageService: BailianImageService;
 
   @Inject()
   bullmqFramework: bullmq.Framework;
@@ -527,6 +536,63 @@ export class ConversationService {
     const savedMessage = await this.messageModel.save(message);
 
     return this.messageService.buildConversationMessageItem(savedMessage);
+  }
+
+  async generateMemorialPhoto(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    payload: GenerateMemorialPhotoDTO
+  ): Promise<ConversationMessageItem> {
+    const runtime = await this.createReplyRuntime(auth, conversationId);
+    const agentPhotoObjectKeys = this.normalizeMemorialAgentPhotoObjectKeys(
+      payload?.agentPhotoObjectKeys
+    );
+    const userPhotoObjectKey = this.normalizeMemorialPhotoObjectKey(
+      payload?.userPhotoObjectKey,
+      'INVALID_MEMORIAL_USER_PHOTO',
+      '请上传你的照片'
+    );
+    const customPrompt = this.normalizeMemorialCustomPrompt(
+      payload?.customPrompt
+    );
+    const agentPhotoUrls = agentPhotoObjectKeys.map(objectKey =>
+      this.resolveRequiredMemorialPhotoUrl(objectKey)
+    );
+    const userPhotoUrl =
+      this.resolveRequiredMemorialPhotoUrl(userPhotoObjectKey);
+    const generatedPhoto = await this.bailianImageService.generateMemorialPhoto({
+      agentPhotoUrls,
+      userPhotoUrl,
+      agentName: runtime.agent?.name,
+      ...(customPrompt ? { customPrompt } : {}),
+    });
+    const now = new Date();
+    const uploaded = await this.tencentCosService.putBuffer(
+      generatedPhoto.imageBuffer,
+      {
+        folder: 'memorial-photos',
+        fileName: this.buildMemorialPhotoFileName(generatedPhoto.mimeType, now),
+        contentType: generatedPhoto.mimeType,
+      }
+    );
+    const message = await this.saveMessage({
+      conversationId: runtime.conversation.id,
+      userId: runtime.conversation.userId,
+      agentId: runtime.conversation.agentId,
+      role: MessageRole.assistant,
+      type: MessageType.image,
+      content: 'AI生成纪念合照',
+      status: MessageStatus.sent,
+      mediaObjectKey: uploaded.objectKey,
+      mediaMimeType: generatedPhoto.mimeType,
+      mediaAnalysis: 'AI生成纪念合照',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await this.touchConversation(runtime.conversation, now);
+
+    return this.messageService.buildConversationMessageItem(message);
   }
 
   private async createReplyRuntime(
@@ -1288,6 +1354,130 @@ export class ConversationService {
       .trim();
 
     return normalized && normalized !== mediaUrl ? normalized : '';
+  }
+
+  private normalizeMemorialAgentPhotoObjectKeys(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      throw new AppError(
+        'INVALID_MEMORIAL_AGENT_PHOTOS',
+        '请上传 TA 的照片',
+        400
+      );
+    }
+
+    const objectKeys = value
+      .map(item =>
+        this.normalizeMemorialPhotoObjectKey(
+          item,
+          'INVALID_MEMORIAL_AGENT_PHOTOS',
+          '请上传 TA 的照片'
+        )
+      )
+      .filter(Boolean);
+
+    if (objectKeys.length === 0) {
+      throw new AppError(
+        'INVALID_MEMORIAL_AGENT_PHOTOS',
+        '请上传 TA 的照片',
+        400
+      );
+    }
+
+    if (objectKeys.length > 3) {
+      throw new AppError(
+        'INVALID_MEMORIAL_AGENT_PHOTOS',
+        'TA 的照片最多上传 3 张',
+        400
+      );
+    }
+
+    return Array.from(new Set(objectKeys));
+  }
+
+  private normalizeMemorialPhotoObjectKey(
+    value: unknown,
+    code: string,
+    message: string
+  ): string {
+    const rawValue = typeof value === 'string' ? value.trim() : '';
+
+    if (!rawValue) {
+      throw new AppError(code, message, 400);
+    }
+
+    if (rawValue.length > 1024) {
+      throw new AppError(code, '图片引用过长，请重新上传', 400);
+    }
+
+    const objectKey = this.postImageService.normalizeForStorage(rawValue).trim();
+
+    if (!objectKey || /^https?:\/\//i.test(objectKey)) {
+      throw new AppError(code, '图片上传结果无效，请重新上传', 400);
+    }
+
+    return objectKey;
+  }
+
+  private normalizeMemorialCustomPrompt(value: unknown): string {
+    if (value === undefined || value === null) {
+      return '';
+    }
+
+    if (typeof value !== 'string') {
+      throw new AppError(
+        'INVALID_MEMORIAL_CUSTOM_PROMPT',
+        '提示词格式不正确',
+        400
+      );
+    }
+
+    const normalizedForLength = value.replace(/\s+/g, ' ').trim();
+
+    if (normalizedForLength.length > MEMORIAL_PHOTO_CUSTOM_PROMPT_MAX_LENGTH) {
+      throw new AppError(
+        'INVALID_MEMORIAL_CUSTOM_PROMPT',
+        `提示词最多 ${MEMORIAL_PHOTO_CUSTOM_PROMPT_MAX_LENGTH} 字`,
+        400
+      );
+    }
+
+    return normalizeMemorialPhotoCustomPrompt(value);
+  }
+
+  private resolveRequiredMemorialPhotoUrl(objectKey: string): string {
+    const mediaUrl = this.resolveMediaUrlFromObjectKey(objectKey);
+
+    if (!mediaUrl) {
+      throw new AppError(
+        'MEMORIAL_PHOTO_ASSET_UNAVAILABLE',
+        '图片暂不可访问，请重新上传后再试',
+        400
+      );
+    }
+
+    return mediaUrl;
+  }
+
+  private buildMemorialPhotoFileName(mimeType: string, createdAt: Date): string {
+    return `memorial-photo-${createdAt.getTime()}${this.resolveImageExtension(
+      mimeType
+    )}`;
+  }
+
+  private resolveImageExtension(mimeType: string): string {
+    const value = mimeType.trim().toLowerCase();
+
+    if (value === 'image/jpeg' || value === 'image/jpg') {
+      return '.jpg';
+    }
+    if (value === 'image/webp') {
+      return '.webp';
+    }
+    if (value === 'image/gif') {
+      return '.gif';
+    }
+
+    return '.png';
   }
 
   private async describeImageForConversation(payload: {

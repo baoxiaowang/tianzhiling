@@ -409,6 +409,32 @@ export async function generateConversationMessageVoice(
   return parseConversationMessage(data)
 }
 
+export async function generateConversationMemorialPhoto(
+  conversationId: string,
+  payload: {
+    agentPhotoObjectKeys: string[]
+    userPhotoObjectKey: string
+    customPrompt?: string
+  },
+) {
+  const customPrompt = payload.customPrompt?.trim()
+  const body: Record<string, unknown> = {
+    agentPhotoObjectKeys: payload.agentPhotoObjectKeys,
+    userPhotoObjectKey: payload.userPhotoObjectKey,
+  }
+
+  if (customPrompt) {
+    body.customPrompt = customPrompt
+  }
+
+  const data = await post<unknown>(
+    `/api/conversation/${encodeURIComponent(conversationId)}/memorial-photo`,
+    body,
+  )
+
+  return parseConversationMessage(data)
+}
+
 export async function transcribeConversationVoice(
   conversationId: string,
   payload: {

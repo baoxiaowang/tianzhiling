@@ -42,6 +42,7 @@ const emit = defineEmits<{
 const items: ChatMoreActionItem[] = [
   { key: 'photo', label: '照片' },
   { key: 'camera', label: '拍摄' },
+  { key: 'memorial-photo', label: '合照' },
 ]
 
 function handleActionTap(item: ChatMoreActionItem) {
@@ -148,6 +149,51 @@ function handleActionTap(item: ChatMoreActionItem) {
   height: 10px;
   border: 2px solid #5b5b5b;
   border-radius: 50%;
+}
+
+.chat-more-panel__icon--memorial-photo .chat-more-panel__icon-inner {
+  width: 28px;
+  height: 22px;
+  border: 2px solid #5b5b5b;
+  border-radius: 6px;
+}
+
+.chat-more-panel__icon--memorial-photo .chat-more-panel__icon-inner::before {
+  top: 5px;
+  left: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5b5b5b;
+}
+
+.chat-more-panel__icon--memorial-photo .chat-more-panel__icon-inner::after {
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5b5b5b;
+}
+
+.chat-more-panel__icon--memorial-photo::before {
+  bottom: 15px;
+  left: 18px;
+  width: 10px;
+  height: 5px;
+  border: 2px solid #5b5b5b;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.chat-more-panel__icon--memorial-photo::after {
+  right: 18px;
+  bottom: 15px;
+  width: 10px;
+  height: 5px;
+  border: 2px solid #5b5b5b;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
 }
 
 </style>

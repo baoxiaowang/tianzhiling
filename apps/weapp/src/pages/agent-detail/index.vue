@@ -85,6 +85,14 @@
           </view>
         </view>
 
+        <view class="agent-detail-list__item" @tap="handleMemorialPhotoTap">
+          <view class="agent-detail-list__content">
+            <text class="agent-detail-list__title">纪念合照</text>
+            <text class="agent-detail-list__desc">生成后自动保存到聊天相册</text>
+          </view>
+          <view class="agent-detail-list__arrow" />
+        </view>
+
         <view class="agent-detail-list__item agent-detail-list__item--album" @tap="handleChatAlbumTap">
           <view class="agent-detail-album__main">
             <view class="agent-detail-list__content">
@@ -861,6 +869,26 @@ function formatVoicePackagePrice(amount: number) {
   const yuan = amount / 100
 
   return Number.isInteger(yuan) ? `￥${yuan}` : `￥${yuan.toFixed(2)}`
+}
+
+function handleMemorialPhotoTap() {
+  if (!conversationId.value && !agentId.value) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
+  const query = [
+    ['conversationId', conversationId.value],
+    ['agentId', agentId.value],
+    ['agentName', displayName.value],
+  ]
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  void Taro.navigateTo({
+    url: `/pages/memorial-photo/index?${query}`,
+  })
 }
 
 function handleChatAlbumTap() {

@@ -1,6 +1,7 @@
 import { Body, Controller, Del, Get, Inject, Param, Post } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import {
+  GenerateMemorialPhotoDTO,
   SendConversationMessageDTO,
   TranscribeConversationVoiceDTO,
 } from '../dto/conversation.dto';
@@ -93,6 +94,18 @@ export class ConversationController {
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
       messageId
+    );
+  }
+
+  @Post('/:conversationId/memorial-photo')
+  async generateMemorialPhoto(
+    @Param('conversationId') conversationId: string,
+    @Body() body: GenerateMemorialPhotoDTO
+  ) {
+    return this.conversationService.generateMemorialPhoto(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      body
     );
   }
 

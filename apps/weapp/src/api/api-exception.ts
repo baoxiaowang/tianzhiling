@@ -100,6 +100,22 @@ export class ApiException extends Error {
         return '智能体资料不存在'
       case 'INVALID_AGENT_AVATAR':
         return '头像上传结果无效，请重新选择'
+      case 'INVALID_MEMORIAL_AGENT_PHOTOS':
+        return '请上传 1-3 张 TA 的照片'
+      case 'INVALID_MEMORIAL_USER_PHOTO':
+        return '请上传你的照片'
+      case 'MEMORIAL_PHOTO_ASSET_UNAVAILABLE':
+        return '图片暂不可访问，请重新上传后再试'
+      case 'BAILIAN_IMAGE_DISABLED':
+      case 'BAILIAN_IMAGE_API_KEY_MISSING':
+      case 'BAILIAN_IMAGE_HTTP_ERROR':
+      case 'BAILIAN_IMAGE_GENERATION_FAILED':
+      case 'BAILIAN_IMAGE_INVALID_RESPONSE':
+      case 'BAILIAN_IMAGE_EMPTY_RESULT':
+      case 'BAILIAN_IMAGE_DOWNLOAD_FAILED':
+      case 'BAILIAN_IMAGE_DOWNLOAD_EMPTY':
+      case 'BAILIAN_IMAGE_REQUEST_FAILED':
+        return '合照生成失败，请稍后重试'
       case 'TENCENT_COS_CONFIG_MISSING':
       case 'TENCENT_COS_INVALID_FILE':
       case 'TENCENT_COS_DISABLED':

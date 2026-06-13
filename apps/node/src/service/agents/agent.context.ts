@@ -41,7 +41,7 @@ export interface RetrievedContextSnippet {
   score?: number;
 }
 
-const RECENT_HISTORY_MESSAGE_LIMIT = 20;
+const RECENT_HISTORY_MESSAGE_LIMIT = 30;
 
 @Provide()
 export class AgentContextService {
@@ -183,7 +183,9 @@ export class AgentContextService {
   private buildRecentHistoryMessages(
     messages: MessageEntity[]
   ): MessageEntity[] {
-    return messages.slice(-RECENT_HISTORY_MESSAGE_LIMIT);
+    return messages
+      .filter(message => this.buildChatMessage(message))
+      .slice(-RECENT_HISTORY_MESSAGE_LIMIT);
   }
 
   private resolveLongTermHistoryCutoff(
@@ -257,6 +259,10 @@ export class AgentContextService {
       !containsUnsafeAssistantMessageContent(transcript)
     ) {
       return transcript;
+    }
+
+    if (message.type !== MessageType.text) {
+      return '';
     }
 
     const content = stripPromptLeakageContent(message.content);

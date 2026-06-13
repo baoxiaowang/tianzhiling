@@ -1539,6 +1539,35 @@ function handlePendingAction(name: string) {
   showToast(`${name}待接入`)
 }
 
+function handleMemorialPhotoAction() {
+  if (!agentId.value) {
+    showToast('缺少联系人资料，请从通讯录重新进入')
+    return
+  }
+
+  if (!conversationId.value) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
+  hideComposerPanels()
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+
+  const query = [
+    ['conversationId', conversationId.value],
+    ['agentId', agentId.value],
+    ['agentName', agentName.value.trim() || 'TA'],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  void Taro.navigateTo({
+    url: `/pages/memorial-photo/index?${query}`,
+  })
+}
+
 function handleNavMenuSelect() {
   handleAgentAvatarTap()
 }
@@ -2510,6 +2539,11 @@ function handleMoreAction(item: ChatMoreActionItem) {
 
   if (action === 'camera') {
     void pickAndSendImage('camera')
+    return
+  }
+
+  if (action === 'memorial-photo') {
+    handleMemorialPhotoAction()
     return
   }
 

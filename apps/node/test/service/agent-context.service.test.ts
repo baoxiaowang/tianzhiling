@@ -145,6 +145,80 @@ describe('AgentContextService', () => {
     expect(JSON.stringify(context.messages)).not.toContain('zk.yaoxuankeji.club');
   });
 
+  it('does not include assistant image messages or let them crowd recent chat history', async () => {
+    const service = new AgentContextService();
+    const textAssistantMessage = new MessageEntity();
+    Object.assign(textAssistantMessage, {
+      id: new MongoObjectId('665000000000000000000051'),
+      conversationId: new MongoObjectId('665000000000000000000020'),
+      userId: new MongoObjectId('665000000000000000000001'),
+      agentId: new MongoObjectId('665000000000000000000010'),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '这是真正的聊天内容',
+      status: MessageStatus.sent,
+      createdAt: new Date('2026-05-30T08:04:00.000Z'),
+      updatedAt: new Date('2026-05-30T08:04:00.000Z'),
+    });
+    const assistantImageMessages = Array.from({ length: 30 }, (_, index) => {
+      const message = new MessageEntity();
+      Object.assign(message, {
+        id: new MongoObjectId(
+          `6650000000000000000000${String(52 + index).padStart(2, '0')}`
+        ),
+        conversationId: new MongoObjectId('665000000000000000000020'),
+        userId: new MongoObjectId('665000000000000000000001'),
+        agentId: new MongoObjectId('665000000000000000000010'),
+        role: MessageRole.assistant,
+        type: MessageType.image,
+        content: 'AI生成纪念合照',
+        mediaAnalysis: 'AI生成纪念合照',
+        mediaObjectKey: `memorial-photos/generated-${index}.png`,
+        status: MessageStatus.sent,
+        createdAt: new Date(`2026-05-30T08:${String(5 + index).padStart(2, '0')}:00.000Z`),
+        updatedAt: new Date(`2026-05-30T08:${String(5 + index).padStart(2, '0')}:00.000Z`),
+      });
+      return message;
+    });
+
+    service.messageModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([textAssistantMessage, ...assistantImageMessages]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+
+    const agent = new AgentEntity();
+    agent.id = new MongoObjectId('665000000000000000000010');
+    agent.name = '方方';
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent,
+      currentQuery: '继续说',
+    });
+
+    const serializedMessages = JSON.stringify(context.messages);
+    expect(serializedMessages).toContain('这是真正的聊天内容');
+    expect(serializedMessages).not.toContain('AI生成纪念合照');
+    expect(serializedMessages).not.toContain('memorial-photos');
+  });
+
   it('does not include archived messages in recent chat history', async () => {
     const service = new AgentContextService();
     const archivedAssistantMessage = new MessageEntity();

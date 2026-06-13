@@ -7,6 +7,7 @@ export default {
     'pages/chat/index',
     'pages/agent-detail/index',
     'pages/chat-album/index',
+    'pages/memorial-photo/index',
     'pages/agent-profile/index',
     'pages/agent-form/index',
     'pages/vip-center/index',

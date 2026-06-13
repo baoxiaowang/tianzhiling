@@ -30,3 +30,20 @@ export class TranscribeConversationVoiceDTO {
   @Rule(RuleType.string().max(128))
   mimeType?: string;
 }
+
+export class GenerateMemorialPhotoDTO {
+  @Rule(
+    RuleType.array()
+      .items(RuleType.string().max(1024))
+      .min(1)
+      .max(3)
+      .required()
+  )
+  agentPhotoObjectKeys: string[];
+
+  @Rule(RuleType.string().max(1024).required())
+  userPhotoObjectKey: string;
+
+  @Rule(RuleType.string().max(500))
+  customPrompt?: string;
+}

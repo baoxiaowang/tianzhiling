@@ -106,6 +106,25 @@ describe('MessageService buildConversationMessageItem', () => {
 
     expect(item.voice).toBeUndefined();
   });
+
+  it('exposes generated memorial photos as image payloads', () => {
+    const service = new MessageService();
+    const message = createTextMessage('AI生成纪念合照');
+    message.type = MessageType.image;
+    message.mediaObjectKey = 'memorial-photos/generated.png';
+    message.mediaMimeType = 'image/png';
+    message.mediaAnalysis = 'AI生成纪念合照';
+
+    const item = service.buildConversationMessageItem(message);
+
+    expect(item.type).toBe(MessageType.image);
+    expect(item.image).toEqual({
+      objectKey: 'memorial-photos/generated.png',
+      url: undefined,
+      mimeType: 'image/png',
+      analysis: 'AI生成纪念合照',
+    });
+  });
 });
 
 describe('MessageService listMessages', () => {

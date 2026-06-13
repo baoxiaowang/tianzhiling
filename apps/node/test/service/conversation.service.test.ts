@@ -320,6 +320,14 @@ function createService(options: {
       mimeType: 'audio/wav',
     }),
   } as any;
+  service.bailianImageService = {
+    generateMemorialPhoto: jest.fn().mockResolvedValue({
+      imageUrl: 'https://dashscope-result.example.com/memorial.png',
+      imageBuffer: Buffer.from('memorial-image'),
+      mimeType: 'image/png',
+      requestId: 'request-1',
+    }),
+  } as any;
   service.agentContextService = {
     buildConversationContext: jest.fn().mockResolvedValue({
       messages: [{ role: 'user', content: '我想你了' }],
@@ -328,16 +336,32 @@ function createService(options: {
   service.messageService = {
     buildConversationMessageItem: jest.fn(message => ({
       id: message.id?.toHexString?.() ?? '',
+      conversationId: message.conversationId?.toHexString?.() ?? '',
+      role: message.role,
       type: message.type,
       content: message.content,
-      voice: message.mediaObjectKey || message.mediaUrl
-        ? {
-            objectKey: message.mediaObjectKey || undefined,
-            url: message.mediaUrl,
-            mimeType: message.mediaMimeType,
-            transcript: message.mediaTranscript,
-          }
-        : undefined,
+      status: message.status,
+      voice:
+        message.type !== MessageType.image &&
+        (message.mediaObjectKey || message.mediaUrl)
+          ? {
+              objectKey: message.mediaObjectKey || undefined,
+              url: message.mediaUrl,
+              mimeType: message.mediaMimeType,
+              transcript: message.mediaTranscript,
+            }
+          : undefined,
+      image:
+        message.type === MessageType.image
+          ? {
+              objectKey: message.mediaObjectKey || undefined,
+              url: message.mediaUrl,
+              mimeType: message.mediaMimeType,
+              analysis: message.mediaAnalysis,
+            }
+          : undefined,
+      createdAt: message.createdAt?.toISOString?.() ?? '',
+      updatedAt: message.updatedAt?.toISOString?.() ?? '',
     })),
   } as any;
   service.postImageService = {
@@ -369,6 +393,224 @@ function createService(options: {
 
   return { service, savedMessages, addJobToQueue };
 }
+
+describe('ConversationService generateMemorialPhoto', () => {
+  it('generates a memorial photo, stores it as an assistant image message, and touches the conversation', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent({ name: '外婆' }),
+    });
+
+    (service.tencentCosService.getPublicUrl as jest.Mock).mockImplementation(
+      (objectKey: string) => `https://cdn.example.com/${objectKey}`
+    );
+    (service.tencentCosService.putBuffer as jest.Mock).mockResolvedValue({
+      objectKey: 'memorial-photos/generated.png',
+      url: 'https://cdn.example.com/memorial-photos/generated.png',
+    });
+
+    const result = await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+      agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+      userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+    });
+
+    expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledWith(
+      {
+        agentPhotoUrls: [
+          'https://cdn.example.com/memorial-source-photos/agent-1.jpg',
+        ],
+        userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
+        agentName: '外婆',
+      }
+    );
+    expect(service.tencentCosService.putBuffer).toHaveBeenCalledWith(
+      Buffer.from('memorial-image'),
+      expect.objectContaining({
+        folder: 'memorial-photos',
+        fileName: expect.stringMatching(/^memorial-photo-\d+\.png$/),
+        contentType: 'image/png',
+      })
+    );
+
+    const imageMessage = savedMessages.find(
+      message => message.type === MessageType.image
+    );
+    expect(imageMessage).toEqual(
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        content: 'AI生成纪念合照',
+        mediaObjectKey: 'memorial-photos/generated.png',
+        mediaMimeType: 'image/png',
+        mediaAnalysis: 'AI生成纪念合照',
+        status: MessageStatus.sent,
+      })
+    );
+    expect(service.conversationModel.save).toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        type: MessageType.image,
+        content: 'AI生成纪念合照',
+        image: expect.objectContaining({
+          objectKey: 'memorial-photos/generated.png',
+          mimeType: 'image/png',
+          analysis: 'AI生成纪念合照',
+        }),
+      })
+    );
+  });
+
+  it('passes a normalized custom memorial prompt to Bailian', async () => {
+    const { service } = createService({
+      agent: createAgent({ name: '小白' }),
+    });
+
+    (service.tencentCosService.getPublicUrl as jest.Mock).mockImplementation(
+      (objectKey: string) => `https://cdn.example.com/${objectKey}`
+    );
+    (service.tencentCosService.putBuffer as jest.Mock).mockResolvedValue({
+      objectKey: 'memorial-photos/generated.png',
+      url: 'https://cdn.example.com/memorial-photos/generated.png',
+    });
+
+    await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+      agentPhotoObjectKeys: ['memorial-source-photos/cat.jpg'],
+      userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      customPrompt: '  我和猫坐在窗边，猫保持真实样子。\n不要出现第二个人。  ',
+    });
+
+    expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledWith(
+      {
+        agentPhotoUrls: [
+          'https://cdn.example.com/memorial-source-photos/cat.jpg',
+        ],
+        userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
+        agentName: '小白',
+        customPrompt: '我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
+      }
+    );
+  });
+
+  it('rejects memorial photo generation outside the current user conversation', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    await expect(
+      service.generateMemorialPhoto(
+        {
+          ...AUTH,
+          sub: '665000000000000000000999',
+        },
+        CONVERSATION_ID,
+        {
+          agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+          userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'CONVERSATION_NOT_FOUND',
+      status: 404,
+    });
+
+    expect(savedMessages).toHaveLength(0);
+    expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+    expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
+  });
+
+  it('validates memorial photo source image inputs before calling Bailian', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: [],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_MEMORIAL_AGENT_PHOTOS',
+      status: 400,
+    });
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: [
+          'memorial-source-photos/agent-1.jpg',
+          'memorial-source-photos/agent-2.jpg',
+          'memorial-source-photos/agent-3.jpg',
+          'memorial-source-photos/agent-4.jpg',
+        ],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_MEMORIAL_AGENT_PHOTOS',
+      status: 400,
+    });
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: '',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_MEMORIAL_USER_PHOTO',
+      status: 400,
+    });
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+        customPrompt: '太'.repeat(501),
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_MEMORIAL_CUSTOM_PROMPT',
+      status: 400,
+    });
+
+    expect(savedMessages).toHaveLength(0);
+    expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+    expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
+  });
+
+  it('does not save a memorial image message when generation fails', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    (service.bailianImageService.generateMemorialPhoto as jest.Mock).mockRejectedValue(
+      new Error('generation failed')
+    );
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      })
+    ).rejects.toThrow('generation failed');
+
+    expect(savedMessages).toHaveLength(0);
+    expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
+  });
+
+  it('does not save a memorial image message when storage fails', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    (service.tencentCosService.putBuffer as jest.Mock).mockRejectedValue(
+      new Error('storage failed')
+    );
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      })
+    ).rejects.toThrow('storage failed');
+
+    expect(savedMessages).toHaveLength(0);
+  });
+});
 
 describe('ConversationService assistant voice reply timbre binding', () => {
   it('blocks non-vip users after the first 3-day per-agent quota is used', async () => {

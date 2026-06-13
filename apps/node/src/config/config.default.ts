@@ -455,6 +455,36 @@ export default {
       120000
     ),
   },
+  bailianImage: {
+    enabled: readBooleanFrom(
+      ['NODE_BAILIAN_IMAGE_ENABLED', 'ADMIN_API_BAILIAN_IMAGE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      [
+        'NODE_BAILIAN_IMAGE_API_KEY',
+        'ADMIN_API_BAILIAN_IMAGE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_BAILIAN_IMAGE_BASE_URL', 'ADMIN_API_BAILIAN_IMAGE_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    model: readStringFrom(
+      ['NODE_BAILIAN_IMAGE_MODEL', 'ADMIN_API_BAILIAN_IMAGE_MODEL'],
+      'wan2.7-image-pro'
+    ),
+    size: readStringFrom(
+      ['NODE_BAILIAN_IMAGE_SIZE', 'ADMIN_API_BAILIAN_IMAGE_SIZE'],
+      '2K'
+    ),
+    timeoutMs: readNumberFrom(
+      ['NODE_BAILIAN_IMAGE_TIMEOUT_MS', 'ADMIN_API_BAILIAN_IMAGE_TIMEOUT_MS'],
+      180000
+    ),
+  },
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(
