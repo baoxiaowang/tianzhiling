@@ -125,4 +125,86 @@ describe('WechatPayService virtual payment signing', () => {
       },
     });
   });
+
+  it('calls msgSecCheck v2 with the comment scene', async () => {
+    const service = createVirtualPayService();
+
+    (service as any).getMiniProgramAccessToken = jest
+      .fn()
+      .mockResolvedValue('access-token');
+    (service as any).postJson = jest.fn().mockResolvedValue({
+      errcode: 0,
+      result: {
+        suggest: 'pass',
+        label: 100,
+      },
+    });
+
+    const result = await service.checkMessageContentSafety({
+      openid: 'openid-1',
+      content: '普通评论',
+      scene: 2,
+    });
+
+    expect(result.isSafe).toBe(true);
+    expect((service as any).postJson).toHaveBeenCalledWith(
+      'https://api.weixin.qq.com/wxa/msg_sec_check?access_token=access-token',
+      {
+        version: 2,
+        openid: 'openid-1',
+        scene: 2,
+        content: '普通评论',
+      }
+    );
+  });
+
+  it('treats non-pass msgSecCheck suggestions as unsafe', async () => {
+    const service = createVirtualPayService();
+
+    (service as any).getMiniProgramAccessToken = jest
+      .fn()
+      .mockResolvedValue('access-token');
+    (service as any).postJson = jest.fn().mockResolvedValue({
+      errcode: 0,
+      result: {
+        suggest: 'review',
+        label: 20001,
+      },
+    });
+
+    const result = await service.checkMessageContentSafety({
+      openid: 'openid-1',
+      content: '待复核评论',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        isSafe: false,
+        suggest: 'review',
+        label: 20001,
+      })
+    );
+  });
+
+  it('rejects msgSecCheck API failures', async () => {
+    const service = createVirtualPayService();
+
+    (service as any).getMiniProgramAccessToken = jest
+      .fn()
+      .mockResolvedValue('access-token');
+    (service as any).postJson = jest.fn().mockResolvedValue({
+      errcode: 40001,
+      errmsg: 'invalid credential',
+    });
+
+    await expect(
+      service.checkMessageContentSafety({
+        openid: 'openid-1',
+        content: '普通评论',
+      })
+    ).rejects.toMatchObject({
+      code: 'WECHAT_MSG_SEC_CHECK_FAILED',
+      status: 502,
+    });
+  });
 });

@@ -52,9 +52,27 @@ interface WechatXPayResponse {
   errmsg?: string;
 }
 
+export interface WechatMsgSecCheckResponse {
+  errcode?: number;
+  errmsg?: string;
+  result?: {
+    suggest?: string;
+    label?: number;
+  };
+  detail?: unknown[];
+  trace_id?: string;
+}
+
 export interface WechatSessionPayload {
   openid: string;
   sessionKey: string;
+}
+
+export interface WechatMessageContentSafetyResult {
+  isSafe: boolean;
+  suggest: string;
+  label?: number;
+  response: WechatMsgSecCheckResponse;
 }
 
 export interface WechatVirtualPaymentParams {
@@ -300,6 +318,62 @@ export class WechatPayService {
     }
 
     return phoneNumber;
+  }
+
+  async checkMessageContentSafety(payload: {
+    openid: string;
+    content: string;
+    scene?: 1 | 2 | 3 | 4;
+  }): Promise<WechatMessageContentSafetyResult> {
+    const openid = payload?.openid?.trim();
+    const content = payload?.content?.trim();
+
+    if (!openid) {
+      throw new AppError(
+        'WECHAT_MSG_SEC_CHECK_OPENID_MISSING',
+        'wechat msg sec check openid is missing',
+        400
+      );
+    }
+
+    if (!content) {
+      throw new AppError(
+        'WECHAT_MSG_SEC_CHECK_CONTENT_MISSING',
+        'wechat msg sec check content is missing',
+        400
+      );
+    }
+
+    const accessToken = await this.getMiniProgramAccessToken();
+    const response = await this.postJson<WechatMsgSecCheckResponse>(
+      `https://api.weixin.qq.com/wxa/msg_sec_check?access_token=${encodeURIComponent(
+        accessToken
+      )}`,
+      {
+        version: 2,
+        openid,
+        scene: payload.scene ?? 2,
+        content,
+      }
+    );
+
+    if (response.errcode) {
+      throw new AppError(
+        'WECHAT_MSG_SEC_CHECK_FAILED',
+        response.errmsg || 'wechat msg sec check failed',
+        502,
+        response
+      );
+    }
+
+    const suggest = response.result?.suggest?.trim() || '';
+
+    return {
+      isSafe: suggest === 'pass',
+      suggest,
+      label: response.result?.label,
+      response,
+    };
   }
 
   async createVipPlanPrepay(payload: {

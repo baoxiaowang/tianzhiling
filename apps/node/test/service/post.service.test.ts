@@ -10,6 +10,7 @@ import {
   PostNotificationEntity,
   PostNotificationType,
   UserEntity,
+  UserAccountEntity,
 } from '@tzl/entities';
 import { PostService } from '../../src/service/post.service';
 
@@ -23,10 +24,11 @@ const POST_3_ID = '665000000000000000000102';
 const COMMENT_ID = '665000000000000000000200';
 const NOTIFICATION_ID = '665000000000000000000300';
 const POST_NOTIFICATION_ID = '665000000000000000000400';
+const ACCOUNT_ID = '665000000000000000000600';
 const NOW = new Date('2026-05-13T08:00:00.000Z');
 const AUTH = {
   sub: USER_ID,
-  accountId: 'account-1',
+  accountId: ACCOUNT_ID,
   account: 'user',
   iat: 1778659200,
   exp: 1778688000,
@@ -83,6 +85,25 @@ function createUser(): UserEntity {
   });
 
   return user;
+}
+
+function createUserAccount(
+  overrides: Partial<UserAccountEntity> = {}
+): UserAccountEntity {
+  const account = new UserAccountEntity();
+
+  Object.assign(account, {
+    id: new MongoObjectId(ACCOUNT_ID),
+    userId: new MongoObjectId(USER_ID),
+    account: 'weapp:account-hash',
+    password: '',
+    openId: 'openid-1',
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return account;
 }
 
 function createPost(overrides: Partial<PostEntity> = {}): PostEntity {
@@ -161,6 +182,7 @@ function createService(
     postNotifications?: PostNotificationEntity[];
     comments?: PostCommentEntity[];
     likes?: PostLikeEntity[];
+    userAccounts?: UserAccountEntity[];
   } = {}
 ) {
   const service = new PostService();
@@ -170,6 +192,7 @@ function createService(
   const postNotifications = options.postNotifications ?? [];
   const comments = options.comments ?? [];
   const likes = options.likes ?? [];
+  const userAccounts = options.userAccounts ?? [createUserAccount()];
   const addJobToQueue = jest.fn(async () => undefined);
 
   service.postModel = {
@@ -204,6 +227,15 @@ function createService(
         ? createUser()
         : null
     ),
+  } as any;
+  service.userAccountModel = {
+    findOne: jest.fn(async ({ where }: any = {}) => {
+      return (
+        userAccounts.find(account =>
+          sameObjectId(account.id, where?.id ?? where?._id)
+        ) ?? null
+      );
+    }),
   } as any;
   service.agentModel = {
     findOne: jest.fn(async ({ where }: any) => {
@@ -441,6 +473,20 @@ function createService(
       response: {},
     })),
   } as any;
+  service.wechatPayService = {
+    checkMessageContentSafety: jest.fn(async () => ({
+      isSafe: true,
+      suggest: 'pass',
+      label: 100,
+      response: {
+        errcode: 0,
+        result: {
+          suggest: 'pass',
+          label: 100,
+        },
+      },
+    })),
+  } as any;
   service.logger = {
     warn: jest.fn(),
     info: jest.fn(),
@@ -539,6 +585,145 @@ describe('PostService createPost remind agent fallback', () => {
         postId: POST_ID,
       })
     );
+  });
+});
+
+describe('PostService comment content safety', () => {
+  it('checks user comments with WeChat msgSecCheck before saving', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+    });
+
+    const result = await service.createComment(AUTH, POST_ID, {
+      content: '我也很想她',
+    });
+
+    expect(
+      service.wechatPayService.checkMessageContentSafety
+    ).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      content: '我也很想她',
+      scene: 2,
+    });
+    expect(comments).toHaveLength(1);
+    expect(result.content).toBe('我也很想她');
+  });
+
+  it('rejects unsafe user comments without saving the comment', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+    });
+
+    (
+      service.wechatPayService.checkMessageContentSafety as jest.Mock
+    ).mockResolvedValue({
+      isSafe: false,
+      suggest: 'risky',
+      label: 20001,
+      response: {
+        errcode: 0,
+        result: {
+          suggest: 'risky',
+          label: 20001,
+        },
+      },
+    });
+
+    await expect(
+      service.createComment(AUTH, POST_ID, {
+        content: '违规评论',
+      })
+    ).rejects.toMatchObject({
+      code: 'POST_COMMENT_CONTENT_UNSAFE',
+      status: 400,
+    });
+
+    expect(comments).toHaveLength(0);
+    expect(service.commentModel.save).not.toHaveBeenCalled();
+  });
+
+  it('falls back to Mongo _id when resolving the current weapp account', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+    });
+    const account = createUserAccount();
+
+    service.userAccountModel.findOne = jest.fn(async ({ where }: any = {}) => {
+      return where?._id && sameObjectId(account.id, where._id) ? account : null;
+    });
+
+    await service.createComment(AUTH, POST_ID, {
+      content: '我也很想她',
+    });
+
+    expect(service.userAccountModel.findOne).toHaveBeenCalledWith({
+      where: {
+        id: new MongoObjectId(ACCOUNT_ID),
+      },
+    });
+    expect(service.userAccountModel.findOne).toHaveBeenCalledWith({
+      where: {
+        _id: new MongoObjectId(ACCOUNT_ID),
+      },
+    });
+    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
+      {
+        openid: 'openid-1',
+        content: '我也很想她',
+        scene: 2,
+      }
+    );
+    expect(comments).toHaveLength(1);
+  });
+
+  it('does not save comments when WeChat content safety is unavailable', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+    });
+
+    (
+      service.wechatPayService.checkMessageContentSafety as jest.Mock
+    ).mockRejectedValue(new Error('wechat network failed'));
+
+    await expect(
+      service.createComment(AUTH, POST_ID, {
+        content: '普通评论',
+      })
+    ).rejects.toThrow('wechat network failed');
+
+    expect(comments).toHaveLength(0);
+    expect(service.commentModel.save).not.toHaveBeenCalled();
+  });
+
+  it('blocks legacy hashed weapp accounts without a recoverable openid', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+      userAccounts: [
+        createUserAccount({
+          openId: '',
+          account: 'weapp:abcdef123456',
+        }),
+      ],
+    });
+
+    await expect(
+      service.createComment(AUTH, POST_ID, {
+        content: '普通评论',
+      })
+    ).rejects.toMatchObject({
+      code: 'POST_COMMENT_SECURITY_UNAVAILABLE',
+      status: 503,
+    });
+
+    expect(
+      service.wechatPayService.checkMessageContentSafety
+    ).not.toHaveBeenCalled();
+    expect(comments).toHaveLength(0);
   });
 });
 

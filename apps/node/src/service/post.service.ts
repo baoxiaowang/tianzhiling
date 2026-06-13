@@ -19,6 +19,7 @@ import {
   PostNotificationEntity,
   PostNotificationType,
   PostEntity,
+  UserAccountEntity,
   UserEntity,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
@@ -29,8 +30,11 @@ import {
   MomentImageContext,
 } from '../prompt/moments';
 import { PostImageService } from './post-image.service';
+import { WechatPayService } from './wechat-pay.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
+const WEAPP_ACCOUNT_PREFIX = 'weapp:';
+const WEAPP_ACCOUNT_HASH_PATTERN = /^[a-f0-9]{12}$/i;
 
 export interface PostRemindReplyJobData {
   postId: string;
@@ -164,6 +168,9 @@ export class PostService {
   openAIService: OpenAIService;
 
   @Inject()
+  wechatPayService: WechatPayService;
+
+  @Inject()
   bullmqFramework: bullmq.Framework;
 
   @InjectEntityModel(PostEntity)
@@ -186,6 +193,9 @@ export class PostService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
+
+  @InjectEntityModel(UserAccountEntity)
+  userAccountModel: MongoRepository<UserAccountEntity>;
 
   async listPosts(
     auth?: AuthenticatedUserPayload,
@@ -347,15 +357,17 @@ export class PostService {
         createdAt: 'DESC',
       },
     });
-    const legacyCommentNotifications = await this.commentNotificationModel.find({
-      where: {
-        userId,
-        isRead: false,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find(
+      {
+        where: {
+          userId,
+          isRead: false,
+        },
+        order: {
+          createdAt: 'DESC',
+        },
+      }
+    );
     const items = this.mergePostNotificationItems(
       notifications,
       legacyCommentNotifications
@@ -385,15 +397,17 @@ export class PostService {
       },
       take,
     });
-    const legacyCommentNotifications = await this.commentNotificationModel.find({
-      where: {
-        userId,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-      take,
-    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find(
+      {
+        where: {
+          userId,
+        },
+        order: {
+          createdAt: 'DESC',
+        },
+        take,
+      }
+    );
     const items = this.mergePostNotificationItems(
       notifications,
       legacyCommentNotifications
@@ -421,15 +435,17 @@ export class PostService {
         createdAt: 'DESC',
       },
     });
-    const legacyCommentNotifications = await this.commentNotificationModel.find({
-      where: {
-        userId,
-        isRead: false,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find(
+      {
+        where: {
+          userId,
+          isRead: false,
+        },
+        order: {
+          createdAt: 'DESC',
+        },
+      }
+    );
     const items = this.mergePostNotificationItems(
       notifications,
       legacyCommentNotifications
@@ -474,12 +490,14 @@ export class PostService {
         isRead: false,
       },
     });
-    const legacyCommentNotifications = await this.commentNotificationModel.find({
-      where: {
-        userId,
-        isRead: false,
-      },
-    });
+    const legacyCommentNotifications = await this.commentNotificationModel.find(
+      {
+        where: {
+          userId,
+          isRead: false,
+        },
+      }
+    );
 
     return this.mergePostNotificationItems(
       notifications,
@@ -682,6 +700,9 @@ export class PostService {
   ): Promise<PostCommentItem> {
     const post = await this.getPostById(postId);
     const userId = this.parseObjectId(auth.sub);
+    const content = this.normalizeCommentContent(payload?.content);
+    await this.checkCommentContentSafety(auth, content);
+
     const user = await this.findUserById(userId);
     const replyToComment = await this.findReplyTarget(
       post.id,
@@ -697,7 +718,6 @@ export class PostService {
       : replyToComment?.agentId
       ? await this.findAgentById(replyToComment.agentId)
       : null;
-    const content = this.normalizeCommentContent(payload?.content);
     const now = new Date();
     const comment = new PostCommentEntity();
 
@@ -1355,6 +1375,92 @@ export class PostService {
     }
 
     return content;
+  }
+
+  private async checkCommentContentSafety(
+    auth: AuthenticatedUserPayload,
+    content: string
+  ): Promise<void> {
+    const openid = await this.resolveCurrentWeappOpenid(auth);
+
+    if (!openid) {
+      return;
+    }
+
+    const result = await this.wechatPayService.checkMessageContentSafety({
+      openid,
+      content,
+      scene: 2,
+    });
+
+    if (result.isSafe) {
+      return;
+    }
+
+    this.logger.warn(
+      '[post-comment-content-safety] rejected unsafe comment, userId=%s, suggest=%s, label=%s',
+      auth.sub,
+      result.suggest || '-',
+      result.label ?? '-'
+    );
+
+    throw new AppError(
+      'POST_COMMENT_CONTENT_UNSAFE',
+      '发布内容含违规信息，请修改后再试',
+      400
+    );
+  }
+
+  private async resolveCurrentWeappOpenid(
+    auth: AuthenticatedUserPayload
+  ): Promise<string> {
+    const accountId = auth?.accountId?.trim();
+
+    if (!accountId) {
+      throw new AppError('INVALID_TOKEN', 'token account is invalid', 401);
+    }
+
+    const objectId = this.parseObjectId(accountId);
+    const accountById = await this.userAccountModel.findOne({
+      where: {
+        id: objectId,
+      },
+    });
+    const account =
+      accountById ??
+      (await this.userAccountModel.findOne({
+        where: {
+          _id: objectId,
+        } as never,
+      }));
+
+    if (!account) {
+      throw new AppError('INVALID_TOKEN', 'token account is invalid', 401);
+    }
+
+    const openid = account.openId?.trim();
+
+    if (openid) {
+      return openid;
+    }
+
+    const rawAccount = account.account?.trim() || '';
+
+    if (!rawAccount.startsWith(WEAPP_ACCOUNT_PREFIX)) {
+      return '';
+    }
+
+    const legacyOpenid = rawAccount.slice(WEAPP_ACCOUNT_PREFIX.length).trim();
+
+    if (legacyOpenid && !WEAPP_ACCOUNT_HASH_PATTERN.test(legacyOpenid)) {
+      return legacyOpenid;
+    }
+
+    throw new AppError(
+      'POST_COMMENT_SECURITY_UNAVAILABLE',
+      'comment content security check is unavailable',
+      503
+    );
   }
 
   private normalizeImages(rawImages?: string[]): string[] {

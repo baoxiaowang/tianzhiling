@@ -83,6 +83,13 @@ export class ApiException extends Error {
         return '小程序登录配置缺失，请联系管理员'
       case 'WECHAT_PAY_CONFIG_MISSING':
         return '微信支付配置缺失，请联系管理员'
+      case 'POST_COMMENT_CONTENT_UNSAFE':
+        return '发布内容含违规信息，请修改后再试'
+      case 'POST_COMMENT_SECURITY_UNAVAILABLE':
+      case 'WECHAT_MSG_SEC_CHECK_FAILED':
+      case 'WECHAT_MSG_SEC_CHECK_OPENID_MISSING':
+      case 'WECHAT_MSG_SEC_CHECK_CONTENT_MISSING':
+        return '评论发布失败，请稍后重试'
       case 'SMS_NOT_ENABLED':
       case 'SMS_CONFIG_MISSING':
       case 'SMS_PROVIDER_REQUEST_FAILED':
