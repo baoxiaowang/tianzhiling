@@ -29,104 +29,107 @@
     </template>
 
     <view class="chat-page__body" @tap="handleChatBodyTap">
+      <view v-if="isCheckingAuth || isLoading" class="chat-feedback">
+        <view class="chat-feedback__spinner" />
+        <text class="chat-feedback__title">
+          {{ isCheckingAuth ? '正在恢复会话...' : '正在加载聊天记录...' }}
+        </text>
+      </view>
 
-        <view v-if="isCheckingAuth || isLoading" class="chat-feedback">
-          <view class="chat-feedback__spinner" />
-          <text class="chat-feedback__title">
-            {{ isCheckingAuth ? '正在恢复会话...' : '正在加载聊天记录...' }}
-          </text>
-        </view>
+      <view v-else-if="loadError && !displayRows.length" class="chat-feedback">
+        <text class="chat-feedback__title">{{ loadError }}</text>
+        <text class="chat-feedback__action" @tap="handleRetry">重新加载</text>
+      </view>
 
-        <view v-else-if="loadError && !displayRows.length" class="chat-feedback">
-          <text class="chat-feedback__title">{{ loadError }}</text>
-          <text class="chat-feedback__action" @tap="handleRetry">重新加载</text>
-        </view>
+      <view v-else-if="!displayRows.length" class="chat-feedback">
+        <text class="chat-feedback__title">还没有消息</text>
+        <text class="chat-feedback__desc">和 TA 打个招呼，开始第一句对话吧</text>
+      </view>
 
-        <view v-else-if="!displayRows.length" class="chat-feedback">
-          <text class="chat-feedback__title">还没有消息</text>
-          <text class="chat-feedback__desc">和 TA 打个招呼，开始第一句对话吧</text>
-        </view>
+      <view v-else class="chat-message-list">
+        <template v-for="item in displayRows" :key="item.key">
+          <view v-if="item.kind === 'time'" class="chat-message-list__time">
+            {{ item.label }}
+          </view>
 
-        <view v-else class="chat-message-list">
-          <template v-for="item in displayRows" :key="item.key">
-            <view v-if="item.kind === 'time'" class="chat-message-list__time">
-              {{ item.label }}
-            </view>
+          <view v-else-if="item.kind === 'system'" class="chat-message-list__system">
+            {{ item.text }}
+          </view>
 
-            <view v-else-if="item.kind === 'system'" class="chat-message-list__system">
-              {{ item.text }}
-            </view>
-
-            <view
-              v-else
-              class="chat-row"
-              :class="{
-                'chat-row--agent': !item.isUser,
-                'chat-row--user': item.isUser,
-              }"
-            >
-              <template v-if="!item.isUser">
-                <image
-                  v-if="agentAvatar"
-                  class="chat-avatar chat-avatar--agent"
-                  :src="agentAvatar"
-                  mode="aspectFill"
-                  @tap.stop="handleAgentAvatarTap"
-                />
-                <view
-                  v-else
-                  class="chat-avatar chat-avatar--agent chat-avatar--fallback"
-                  :class="agentAvatarFallbackClass"
-                  @tap.stop="handleAgentAvatarTap"
-                >
-                  {{ agentAvatarFallback }}
-                </view>
-              </template>
-
-              <chat-message-bubble
-                :type="item.type"
-                :text="item.text"
-                :image-url="item.imageUrl"
-                :voice-duration-ms="item.voiceDurationMs"
-                :has-voice-playback="item.hasVoicePlayback"
-                :is-voice-active="activeVoiceMessageId === item.messageId"
-                :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
-                :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
-                :is-user="item.isUser"
-                :is-sending="item.isSending"
-                @message-tap="handleMessageTap(item.messageId)"
-                @voice-tap="handleVoiceMessageTap(item.messageId)"
-                @message-long-press="handleMessageLongPress(item.messageId)"
+          <view
+            v-else
+            class="chat-row"
+            :class="{
+              'chat-row--agent': !item.isUser,
+              'chat-row--user': item.isUser,
+            }"
+          >
+            <template v-if="!item.isUser">
+              <image
+                v-if="agentAvatar"
+                class="chat-avatar chat-avatar--agent"
+                :src="agentAvatar"
+                mode="aspectFill"
+                @tap.stop="handleAgentAvatarTap"
               />
+              <view
+                v-else
+                class="chat-avatar chat-avatar--agent chat-avatar--fallback"
+                :class="agentAvatarFallbackClass"
+                @tap.stop="handleAgentAvatarTap"
+              >
+                {{ agentAvatarFallback }}
+              </view>
+            </template>
 
-              <template v-if="item.isUser">
-                <image
-                  v-if="currentUserAvatar"
-                  class="chat-avatar chat-avatar--user"
-                  :src="currentUserAvatar"
-                  mode="aspectFill"
-                  @tap.stop="handleCurrentUserAvatarTap"
-                />
-                <view
-                  v-else
-                  class="chat-avatar chat-avatar--user chat-avatar--fallback chat-avatar--self"
-                  @tap.stop="handleCurrentUserAvatarTap"
-                >
-                  {{ currentUserAvatarFallback }}
-                </view>
-              </template>
-            </view>
+            <chat-message-bubble
+              :type="item.type"
+              :text="item.text"
+              :image-url="item.imageUrl"
+              :voice-duration-ms="item.voiceDurationMs"
+              :has-voice-playback="item.hasVoicePlayback"
+              :is-voice-active="activeVoiceMessageId === item.messageId"
+              :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
+              :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
+              :is-user="item.isUser"
+              :is-sending="item.isSending"
+              @message-tap="handleMessageTap(item.messageId)"
+              @voice-tap="handleVoiceMessageTap(item.messageId)"
+              @message-long-press="handleMessageLongPress(item.messageId)"
+            />
 
-            <view
-              v-if="item.kind === 'message' && item.isFailed"
-              class="chat-message-list__failed"
-            >
-              发送失败
-            </view>
-          </template>
+            <template v-if="item.isUser">
+              <image
+                v-if="currentUserAvatar"
+                class="chat-avatar chat-avatar--user"
+                :src="currentUserAvatar"
+                mode="aspectFill"
+                @tap.stop="handleCurrentUserAvatarTap"
+              />
+              <view
+                v-else
+                class="chat-avatar chat-avatar--user chat-avatar--fallback chat-avatar--self"
+                @tap.stop="handleCurrentUserAvatarTap"
+              >
+                {{ currentUserAvatarFallback }}
+              </view>
+            </template>
+          </view>
 
-          <view id="chat-bottom-anchor" class="chat-message-list__bottom-anchor" />
-        </view>
+          <view
+            v-if="item.kind === 'message' && item.isFailed"
+            class="chat-message-list__failed"
+          >
+            发送失败
+          </view>
+        </template>
+
+        <view id="chat-bottom-anchor" class="chat-message-list__bottom-anchor" />
+      </view>
+
+      <view class="chat-page__ai-watermark">
+        <text>由AI生成</text>
+      </view>
     </view>
 
     <view
@@ -3354,6 +3357,7 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-page__body {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -3407,9 +3411,10 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-message-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding: 0 16px;
+  padding: 0 16px 30px;
   box-sizing: border-box;
 }
 
@@ -3442,6 +3447,18 @@ function destroyVoiceDurationProbeContexts() {
   margin-top: auto;
   width: 1px;
   height: 1px;
+}
+
+.chat-page__ai-watermark {
+  position: absolute;
+  right: 22px;
+  bottom: 12px;
+  z-index: 2;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: rgba(17, 17, 17, 0.36);
 }
 
 .chat-bottom {

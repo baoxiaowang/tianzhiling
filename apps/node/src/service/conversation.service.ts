@@ -13,6 +13,7 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -70,6 +71,7 @@ const NON_VIP_CHAT_LIMIT_POLICY = {
   dailyPerAgentLimit: 3, // 3 天后每天每个 agent 3 句
   dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
 } as const;
+const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 
 export interface ConversationSummary {
   id: string;
@@ -183,6 +185,9 @@ export class ConversationService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
+
+  @InjectEntityModel(UserAccountEntity)
+  userAccountModel: MongoRepository<UserAccountEntity>;
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
@@ -714,7 +719,8 @@ export class ConversationService {
       throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
     }
 
-    const rule = this.resolveNonVipChatLimitRule(user, now);
+    const registeredAt = await this.resolveEffectiveRegisteredAt(runtime, user);
+    const rule = this.resolveNonVipChatLimitRule(registeredAt, now);
     const usedCount = await this.countUserMessagesForAgent({
       userId: runtime.conversation.userId,
       agentId: runtime.conversation.agentId,
@@ -762,10 +768,9 @@ export class ConversationService {
   }
 
   private resolveNonVipChatLimitRule(
-    user: UserEntity,
+    registeredAt: Date,
     now: Date
   ): NonVipChatLimitRule {
-    const registeredAt = this.normalizeUserRegisteredAt(user);
     const trialEndsAt = new Date(
       registeredAt.getTime() +
         NON_VIP_CHAT_LIMIT_POLICY.trialDays * 24 * 60 * 60 * 1000
@@ -791,8 +796,60 @@ export class ConversationService {
     };
   }
 
+  private async resolveEffectiveRegisteredAt(
+    runtime: ReplyRuntime,
+    user: UserEntity
+  ): Promise<Date> {
+    const userRegisteredAt = this.normalizeUserRegisteredAt(user);
+    const accountRegisteredAt = await this.resolveCurrentWeappAccountCreatedAt(
+      runtime
+    );
+
+    if (
+      accountRegisteredAt &&
+      accountRegisteredAt.getTime() > userRegisteredAt.getTime()
+    ) {
+      return accountRegisteredAt;
+    }
+
+    return userRegisteredAt;
+  }
+
+  private async resolveCurrentWeappAccountCreatedAt(
+    runtime: ReplyRuntime
+  ): Promise<Date | null> {
+    if (
+      !runtime.auth?.account?.startsWith(WEAPP_ACCOUNT_PREFIX) ||
+      !runtime.auth?.accountId
+    ) {
+      return null;
+    }
+
+    const accountId = this.normalizeObjectId(runtime.auth.accountId);
+
+    if (!accountId) {
+      return null;
+    }
+
+    const account = await this.findUserAccountById(accountId);
+
+    if (
+      !account ||
+      account.account !== runtime.auth.account ||
+      !this.isSameObjectId(account.userId, runtime.conversation.userId)
+    ) {
+      return null;
+    }
+
+    return this.normalizeDate(account.createdAt);
+  }
+
   private normalizeUserRegisteredAt(user: UserEntity): Date {
-    const registeredAt = new Date(user.createdAt ?? 0);
+    return this.normalizeDate(user.createdAt);
+  }
+
+  private normalizeDate(value: Date | string | number | undefined): Date {
+    const registeredAt = new Date(value ?? 0);
 
     if (!Number.isNaN(registeredAt.getTime())) {
       return registeredAt;
@@ -2575,6 +2632,32 @@ export class ConversationService {
     });
   }
 
+  private async findUserAccountById(
+    value: MongoObjectId | string | undefined
+  ): Promise<UserAccountEntity | null> {
+    const objectId = this.normalizeObjectId(value);
+
+    if (!objectId) {
+      return null;
+    }
+
+    const userAccountById = await this.userAccountModel.findOne({
+      where: {
+        id: objectId,
+      },
+    });
+
+    if (userAccountById) {
+      return userAccountById;
+    }
+
+    return this.userAccountModel.findOne({
+      where: {
+        _id: objectId,
+      } as never,
+    });
+  }
+
   private async findLatestMessage(
     conversationId: MongoObjectId | string | undefined
   ): Promise<MessageEntity | null> {
@@ -2656,6 +2739,20 @@ export class ConversationService {
 
   private stringifyObjectId(value?: MongoObjectId | null): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private isSameObjectId(
+    left: MongoObjectId | string | undefined,
+    right: MongoObjectId | string | undefined
+  ): boolean {
+    const leftObjectId = this.normalizeObjectId(left);
+    const rightObjectId = this.normalizeObjectId(right);
+
+    return Boolean(
+      leftObjectId &&
+        rightObjectId &&
+        leftObjectId.toHexString() === rightObjectId.toHexString()
+    );
   }
 
   private describeReplyError(error: unknown): string {

@@ -7,6 +7,7 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -20,6 +21,7 @@ import {
 } from '../../src/service/conversation.service';
 
 const USER_ID = '665000000000000000000001';
+const ACCOUNT_ID = '665000000000000000000002';
 const AGENT_ID = '665000000000000000000010';
 const OTHER_AGENT_ID = '665000000000000000000011';
 const CONVERSATION_ID = '665000000000000000000020';
@@ -87,6 +89,25 @@ function createUser(overrides: Partial<UserEntity> = {}): UserEntity {
   });
 
   return user;
+}
+
+function createUserAccount(
+  overrides: Partial<UserAccountEntity> = {}
+): UserAccountEntity {
+  const account = new UserAccountEntity();
+
+  Object.assign(account, {
+    id: new MongoObjectId(ACCOUNT_ID),
+    userId: new MongoObjectId(USER_ID),
+    account: 'weapp:4e07c4e70663',
+    password: '',
+    openId: 'o4e07c4e70663',
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return account;
 }
 
 function createMembership(
@@ -173,6 +194,7 @@ function createService(options: {
   voiceTimbre?: VoiceTimbreEntity | null;
   chatContent?: string;
   user?: UserEntity | null;
+  currentUserAccount?: UserAccountEntity | null;
   memberships?: UserMembershipEntity[];
   existingUserMessageCount?: number;
   existingMessages?: MessageEntity[];
@@ -275,6 +297,18 @@ function createService(options: {
       const id = where?.id ?? where?._id;
 
       return user && sameObjectId(id, user.id) ? user : null;
+    }),
+  } as any;
+  service.userAccountModel = {
+    findOne: jest.fn(async ({ where }: any) => {
+      const account = options.currentUserAccount;
+      const id = where?.id ?? where?._id;
+
+      if (!account) {
+        return null;
+      }
+
+      return sameObjectId(id, account.id) ? account : null;
     }),
   } as any;
   service.userMembershipModel = {
@@ -673,6 +707,45 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         }),
       })
     );
+  });
+
+  it('uses the current weapp account creation time for the 3-day trial window', async () => {
+    const accountCreatedAt = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const { service } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      currentUserAccount: createUserAccount({
+        createdAt: accountCreatedAt,
+        updatedAt: accountCreatedAt,
+      }),
+      existingUserMessageCount: 29,
+    });
+
+    const result = await service.sendMessage(
+      {
+        ...AUTH,
+        accountId: ACCOUNT_ID,
+        account: 'weapp:4e07c4e70663',
+      },
+      CONVERSATION_ID,
+      {
+        type: 'text',
+        content: '第 30 句还在试用期内',
+      }
+    );
+
+    expect(result.chatQuota).toEqual(
+      expect.objectContaining({
+        isVip: false,
+        policy: 'trial',
+        limit: 30,
+        usedCount: 30,
+        remainingCount: 0,
+      })
+    );
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
   });
 
   it('returns remaining non-vip chat quota after a successful user message', async () => {

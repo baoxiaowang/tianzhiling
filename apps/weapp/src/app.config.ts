@@ -6,25 +6,84 @@ export default {
     'pages/me/index',
     'pages/chat/index',
     'pages/agent-detail/index',
-    'pages/chat-album/index',
-    'pages/memorial-photo/index',
-    'pages/agent-profile/index',
-    'pages/agent-form/index',
-    'pages/vip-center/index',
-    'pages/voice-package/index',
-    'pages/voice-package-success/index',
-    'pages/customer-service/index',
-    'pages/agreement/index',
-    'pages/payment-result/index',
-    'pages/agent-create/index',
-    'pages/agent-create-flow/index',
-    'pages/auth/index',
-    'pages/my-messages/index',
-    'pages/my-posts/index',
-    'pages/my-orders/index',
-    'pages/post-create/index',
-    'pages/user-settings/index',
-    'pages/user-name-edit/index',
+  ],
+  subPackages: [
+    {
+      root: 'pages/chat-album',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/memorial-photo',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/agent-profile',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/agent-form',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/vip-center',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/voice-package',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/voice-package-success',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/customer-service',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/agreement',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/payment-result',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/agent-create',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/agent-create-flow',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/auth',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/my-messages',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/my-posts',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/my-orders',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/post-create',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/user-settings',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/user-name-edit',
+      pages: ['index'],
+    },
   ],
   window: {
     backgroundTextStyle: 'light',
