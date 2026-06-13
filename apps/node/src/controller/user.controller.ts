@@ -7,8 +7,10 @@ import {
   PhoneLoginDTO,
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
+  UpdateUserGenderDTO,
   UpdateUserNameDTO,
   UpdateUserPreferencesDTO,
+  UpdateUserRegionDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
 } from '../dto/user.dto';
@@ -73,6 +75,22 @@ export class UserController {
   @Patch('/me/avatar')
   async updateCurrentUserAvatar(@Body() body: UpdateUserAvatarDTO) {
     return this.userService.updateCurrentUserAvatar(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
+  @Patch('/me/gender')
+  async updateCurrentUserGender(@Body() body: UpdateUserGenderDTO) {
+    return this.userService.updateCurrentUserGender(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
+    );
+  }
+
+  @Patch('/me/region')
+  async updateCurrentUserRegion(@Body() body: UpdateUserRegionDTO) {
+    return this.userService.updateCurrentUserRegion(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
     );

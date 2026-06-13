@@ -54,6 +54,19 @@ export class UpdateUserAvatarDTO {
   avatar: string;
 }
 
+export class UpdateUserGenderDTO {
+  @Rule(RuleType.string().valid('male', 'female', 'unknown').required())
+  gender: string;
+}
+
+export class UpdateUserRegionDTO {
+  @Rule(requiredStringRule.max(16))
+  provinceCode: string;
+
+  @Rule(requiredStringRule.max(16))
+  cityCode: string;
+}
+
 export class UpdateUserPreferencesDTO {
   @Rule(RuleType.string().allow('').max(1000).optional())
   contactsCoverImage?: string;

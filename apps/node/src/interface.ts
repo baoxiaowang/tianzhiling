@@ -1,3 +1,5 @@
+import type { UserRegion } from '@tzl/shared';
+
 /**
  * @description User-Service parameters
  */
@@ -12,11 +14,15 @@ export interface LoginUserProfile {
   account: string;
   phone: string;
   phoneVerified: boolean;
+  gender: UserGender;
+  region: UserRegion | null;
   isVip: boolean;
   preferences: {
     contactsCoverImage: string;
   };
 }
+
+export type UserGender = 'male' | 'female' | 'unknown';
 
 export interface AuthenticatedUserPayload {
   sub: string;

@@ -4,6 +4,8 @@ import {
   AuthSessionData,
   AuthUser,
   SendSmsCodeResult,
+  UserGender,
+  UserRegion,
   parseAuthSessionData,
   parseAuthUser,
   parseSendSmsCodeResult,
@@ -11,7 +13,13 @@ import {
 import { authSession, clearAuthSession, saveAuthSession } from './session'
 
 export { ApiException }
-export type { AuthSessionData, AuthUser, SendSmsCodeResult }
+export type {
+  AuthSessionData,
+  AuthUser,
+  SendSmsCodeResult,
+  UserGender,
+  UserRegion,
+}
 
 export async function sendSmsCode(phone: string) {
   const data = await post<Record<string, unknown>>('/api/user/sms-code', {
@@ -120,6 +128,39 @@ export async function updateAvatar(avatar: string) {
   const data = await patch<Record<string, unknown>>('/api/user/me/avatar', {
     avatar,
   })
+  const user = parseAuthUser(data)
+
+  if (authSession.value) {
+    await saveAuthSession({
+      ...authSession.value,
+      user,
+    })
+  }
+
+  return user satisfies AuthUser
+}
+
+export async function updateGender(gender: UserGender) {
+  const data = await patch<Record<string, unknown>>('/api/user/me/gender', {
+    gender,
+  })
+  const user = parseAuthUser(data)
+
+  if (authSession.value) {
+    await saveAuthSession({
+      ...authSession.value,
+      user,
+    })
+  }
+
+  return user satisfies AuthUser
+}
+
+export async function updateRegion(payload: {
+  provinceCode: string
+  cityCode: string
+}) {
+  const data = await patch<Record<string, unknown>>('/api/user/me/region', payload)
   const user = parseAuthUser(data)
 
   if (authSession.value) {

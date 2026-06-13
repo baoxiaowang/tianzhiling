@@ -33,12 +33,32 @@
         class="moments-scroll"
         :scroll-y="true"
         :show-scrollbar="false"
+        :refresher-enabled="true"
+        :refresher-triggered="isPullRefreshing"
+        refresher-background="#ffffff"
         :lower-threshold="120"
         @scroll="handleMomentsScroll"
+        @refresherrefresh="handlePullRefresh"
         @scrolltolower="handleScrollBottom"
       >
         <view class="moments-leading">
           <top-promo-banner />
+
+          <view
+            class="moments-profile-entry"
+            hover-class="moments-profile-entry--pressed"
+            @tap="handleProfileEntryTap"
+          >
+            <image
+              v-if="currentUserAvatar"
+              class="moments-profile-entry__avatar"
+              :src="currentUserAvatar"
+              mode="aspectFill"
+            />
+            <view v-else class="moments-profile-entry__fallback">
+              {{ currentUserAvatarFallback }}
+            </view>
+          </view>
 
           <view
             v-if="hasUnreadNotifications"
@@ -200,6 +220,7 @@ interface PageScaffoldController {
 const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
 const isPostsLoading = ref(false)
+const isPullRefreshing = ref(false)
 const hasLoadedPosts = ref(false)
 const errorMessage = ref('')
 const loadMoreError = ref('')
@@ -236,6 +257,14 @@ const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
+const currentUserAvatar = computed(() => session.value?.user.avatar.trim() ?? '')
+const currentUserAvatarFallback = computed(() => {
+  const name = session.value?.user.name.trim()
+  const account = session.value?.user.account.trim()
+  const fallback = name || account || '我'
+
+  return fallback.slice(0, 1)
+})
 const hasUnreadNotifications = hasUnreadCommentNotifications
 const notificationAvatarUrl = computed(() => {
   return normalizeText(latestUnreadCommentNotification.value?.actorAvatar)
@@ -445,6 +474,24 @@ function handleRetry() {
   void refreshMomentsData(true)
 }
 
+async function handlePullRefresh() {
+  if (isPullRefreshing.value) {
+    return
+  }
+
+  isPullRefreshing.value = true
+
+  try {
+    await refreshMomentsData(false)
+
+    if (errorMessage.value && posts.value.length > 0) {
+      showToast(errorMessage.value)
+    }
+  } finally {
+    isPullRefreshing.value = false
+  }
+}
+
 function handleLoadMoreRetry() {
   void loadMorePosts()
 }
@@ -472,6 +519,17 @@ function handleScrollBottom() {
   }
 
   void loadMorePosts()
+}
+
+function handleProfileEntryTap() {
+  if (!session.value) {
+    openLoginPrompt()
+    return
+  }
+
+  void Taro.switchTab({
+    url: '/pages/me/index',
+  })
 }
 
 function handleNotificationTap() {
@@ -904,9 +962,50 @@ useDidHide(() => {
 }
 
 .moments-leading {
+  position: relative;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+}
+
+.moments-profile-entry {
+  position: absolute;
+  top: 188px;
+  right: 22px;
+  z-index: 3;
+  width: 64px;
+  height: 64px;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.moments-profile-entry--pressed {
+  opacity: 0.82;
+}
+
+.moments-profile-entry__avatar,
+.moments-profile-entry__fallback {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+}
+
+.moments-profile-entry__avatar {
+  display: block;
+  background: $tzl-color-surface-subtle;
+}
+
+.moments-profile-entry__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ffd9e5 0%, #ff8daa 100%);
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 700;
 }
 
 .moments-notice {

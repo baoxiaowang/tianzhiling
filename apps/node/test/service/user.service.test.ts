@@ -402,4 +402,225 @@ describe('UserService phoneLogin', () => {
       })
     );
   });
+
+  it('returns unknown gender for legacy user profiles without gender', async () => {
+    const { service, userModel } = createService();
+    const userId = createObjectId(CURRENT_USER_ID);
+    const user = {
+      id: userId,
+      name: '天之灵用户',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+    };
+
+    userModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        matchesObjectId(where.id, CURRENT_USER_ID) ||
+        matchesObjectId(where._id, CURRENT_USER_ID)
+      ) {
+        return user;
+      }
+
+      return null;
+    });
+
+    const result = await service.getCurrentUser({
+      sub: CURRENT_USER_ID,
+      accountId: CURRENT_ACCOUNT_ID,
+      account: '13800138000',
+      iat: 0,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      nonce: 'nonce',
+    });
+
+    expect(result.gender).toBe('unknown');
+  });
+
+  it('updates current user gender', async () => {
+    const { service, userModel } = createService();
+    const userId = createObjectId(CURRENT_USER_ID);
+    const user = {
+      id: userId,
+      name: '天之灵用户',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+      gender: 'unknown',
+    };
+
+    userModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        matchesObjectId(where.id, CURRENT_USER_ID) ||
+        matchesObjectId(where._id, CURRENT_USER_ID)
+      ) {
+        return user;
+      }
+
+      return null;
+    });
+
+    const result = await service.updateCurrentUserGender(
+      {
+        sub: CURRENT_USER_ID,
+        accountId: CURRENT_ACCOUNT_ID,
+        account: '13800138000',
+        iat: 0,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        nonce: 'nonce',
+      },
+      {
+        gender: 'female',
+      }
+    );
+
+    expect(result.gender).toBe('female');
+    expect(userModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: userId,
+        gender: 'female',
+        updatedAt: expect.any(Date),
+      })
+    );
+  });
+
+  it('rejects invalid current user gender', async () => {
+    const { service, userModel } = createService();
+
+    await expect(
+      service.updateCurrentUserGender(
+        {
+          sub: CURRENT_USER_ID,
+          accountId: CURRENT_ACCOUNT_ID,
+          account: '13800138000',
+          iat: 0,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          nonce: 'nonce',
+        },
+        {
+          gender: 'other',
+        } as any
+      )
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_GENDER',
+      status: 400,
+    });
+    expect(userModel.save).not.toHaveBeenCalled();
+  });
+
+  it('returns null region for legacy user profiles without region', async () => {
+    const { service, userModel } = createService();
+    const userId = createObjectId(CURRENT_USER_ID);
+    const user = {
+      id: userId,
+      name: '天之灵用户',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+      gender: 'unknown',
+    };
+
+    userModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        matchesObjectId(where.id, CURRENT_USER_ID) ||
+        matchesObjectId(where._id, CURRENT_USER_ID)
+      ) {
+        return user;
+      }
+
+      return null;
+    });
+
+    const result = await service.getCurrentUser({
+      sub: CURRENT_USER_ID,
+      accountId: CURRENT_ACCOUNT_ID,
+      account: '13800138000',
+      iat: 0,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      nonce: 'nonce',
+    });
+
+    expect(result.region).toBeNull();
+  });
+
+  it('updates current user region from province and city codes', async () => {
+    const { service, userModel } = createService();
+    const userId = createObjectId(CURRENT_USER_ID);
+    const user = {
+      id: userId,
+      name: '天之灵用户',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+      gender: 'unknown',
+      region: null,
+    };
+
+    userModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        matchesObjectId(where.id, CURRENT_USER_ID) ||
+        matchesObjectId(where._id, CURRENT_USER_ID)
+      ) {
+        return user;
+      }
+
+      return null;
+    });
+
+    const result = await service.updateCurrentUserRegion(
+      {
+        sub: CURRENT_USER_ID,
+        accountId: CURRENT_ACCOUNT_ID,
+        account: '13800138000',
+        iat: 0,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        nonce: 'nonce',
+      },
+      {
+        provinceCode: '44',
+        cityCode: '4403',
+      }
+    );
+
+    expect(result.region).toEqual({
+      countryCode: 'CN',
+      countryName: '中国',
+      provinceCode: '44',
+      provinceName: '广东省',
+      cityCode: '4403',
+      cityName: '深圳市',
+    });
+    expect(userModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: userId,
+        region: result.region,
+        updatedAt: expect.any(Date),
+      })
+    );
+  });
+
+  it('rejects invalid current user region codes', async () => {
+    const { service, userModel } = createService();
+
+    await expect(
+      service.updateCurrentUserRegion(
+        {
+          sub: CURRENT_USER_ID,
+          accountId: CURRENT_ACCOUNT_ID,
+          account: '13800138000',
+          iat: 0,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          nonce: 'nonce',
+        },
+        {
+          provinceCode: '44',
+          cityCode: '1101',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_REGION',
+      status: 400,
+    });
+    expect(userModel.save).not.toHaveBeenCalled();
+  });
 });

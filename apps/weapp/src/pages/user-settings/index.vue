@@ -47,21 +47,38 @@
           </view>
         </view>
 
-        <view class="user-settings-tile">
+        <view class="user-settings-tile" @tap="handleGenderTap">
           <text class="user-settings-tile__title">性别</text>
           <view class="user-settings-tile__right">
-            <text class="user-settings-tile__value">男</text>
+            <text class="user-settings-tile__value">
+              {{ isUpdatingGender ? '保存中...' : genderLabel }}
+            </text>
             <view class="user-settings-tile__arrow" />
           </view>
         </view>
 
-        <view class="user-settings-tile">
-          <text class="user-settings-tile__title">地区</text>
-          <view class="user-settings-tile__right">
-            <text class="user-settings-tile__value">中国大陆</text>
-            <view class="user-settings-tile__arrow" />
+        <picker
+          class="user-settings-picker"
+          mode="multiSelector"
+          range-key="name"
+          :range="regionPickerRange"
+          :value="regionPickerValue"
+          :disabled="isUpdatingRegion"
+          @tap="prepareRegionPicker"
+          @change="handleRegionConfirm"
+          @cancel="handleRegionCancel"
+          @columnchange="handleRegionColumnChange"
+        >
+          <view class="user-settings-tile">
+            <text class="user-settings-tile__title">地区</text>
+            <view class="user-settings-tile__right">
+              <text class="user-settings-tile__value">
+                {{ isUpdatingRegion ? '保存中...' : regionLabel }}
+              </text>
+              <view class="user-settings-tile__arrow" />
+            </view>
           </view>
-        </view>
+        </picker>
 
         <view class="user-settings-tile">
           <text class="user-settings-tile__title">手机号</text>
@@ -97,8 +114,13 @@ export default {
 </script>
 
 <script setup lang="ts">
+import {
+  CHINA_PROVINCE_CITY_REGIONS,
+  formatUserRegion,
+  type UserRegion,
+} from '@tzl/shared'
 import Taro, { useDidShow } from '@tarojs/taro'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import { uploadLocalImage } from '../../apis/storage'
 import {
@@ -106,7 +128,10 @@ import {
   getCurrentUser,
   logout,
   updateAvatar,
+  updateGender,
+  updateRegion,
 } from '../../auth/api'
+import type { UserGender } from '../../auth/models'
 import { authSession, clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -120,7 +145,10 @@ const isCheckingAuth = ref(true)
 const isRedirecting = ref(false)
 const isLoggingOut = ref(false)
 const isUpdatingAvatar = ref(false)
+const isUpdatingGender = ref(false)
+const isUpdatingRegion = ref(false)
 const isBindingPhone = ref(false)
+const regionPickerValue = ref<RegionPickerValue>([0, 0])
 
 const session = computed(() => authSession.value)
 const user = computed(() => session.value?.user ?? null)
@@ -130,10 +158,42 @@ const displayName = computed(() => {
 })
 const avatarUrl = computed(() => user.value?.avatar.trim() ?? '')
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
+const genderLabel = computed(() => formatGender(user.value?.gender ?? 'unknown'))
+const regionLabel = computed(() => {
+  return formatUserRegion(user.value?.region ?? null) || '未设置'
+})
+const regionPickerRange = computed(() => {
+  const province = CHINA_PROVINCE_CITY_REGIONS[regionPickerValue.value[0]]
+
+  return [CHINA_PROVINCE_CITY_REGIONS, province?.children ?? []]
+})
 const hasBoundPhone = computed(() => {
   return Boolean(user.value?.phone.trim() && user.value?.phoneVerified)
 })
 const maskedPhone = computed(() => maskPhone(user.value?.phone ?? ''))
+
+type RegionPickerValue = [number, number]
+
+type RegionPickerChangeEvent = {
+  detail?: {
+    value?: number[]
+  }
+}
+
+type RegionPickerColumnChangeEvent = {
+  detail?: {
+    column?: number
+    value?: number
+  }
+}
+
+watch(
+  () => user.value?.region ?? null,
+  (region) => {
+    regionPickerValue.value = resolveRegionPickerValue(region)
+  },
+  { immediate: true },
+)
 
 function showToast(title: string) {
   void Taro.showToast({
@@ -158,6 +218,63 @@ function maskPhone(phone: string) {
   }
 
   return `${phone.slice(0, 3)}******${phone.slice(-2)}`
+}
+
+function formatGender(gender: UserGender) {
+  if (gender === 'male') {
+    return '男'
+  }
+
+  if (gender === 'female') {
+    return '女'
+  }
+
+  return '不透露'
+}
+
+function resolveRegionPickerValue(region: UserRegion | null): RegionPickerValue {
+  if (!region) {
+    return [0, 0]
+  }
+
+  const provinceIndex = CHINA_PROVINCE_CITY_REGIONS.findIndex(
+    (province) => province.code === region.provinceCode,
+  )
+  const normalizedProvinceIndex = provinceIndex >= 0 ? provinceIndex : 0
+  const cityIndex = CHINA_PROVINCE_CITY_REGIONS[
+    normalizedProvinceIndex
+  ]?.children.findIndex((city) => city.code === region.cityCode)
+
+  return [normalizedProvinceIndex, cityIndex && cityIndex >= 0 ? cityIndex : 0]
+}
+
+function prepareRegionPicker() {
+  if (isUpdatingRegion.value) {
+    return
+  }
+
+  regionPickerValue.value = resolveRegionPickerValue(user.value?.region ?? null)
+}
+
+function handleRegionCancel() {
+  regionPickerValue.value = resolveRegionPickerValue(user.value?.region ?? null)
+}
+
+function handleRegionColumnChange(event: RegionPickerColumnChangeEvent) {
+  const column = Number(event.detail?.column ?? 0)
+  const value = Number(event.detail?.value ?? 0)
+
+  if (column === 0) {
+    regionPickerValue.value = [Number.isFinite(value) ? value : 0, 0]
+    return
+  }
+
+  if (column === 1) {
+    regionPickerValue.value = [
+      regionPickerValue.value[0],
+      Number.isFinite(value) ? value : 0,
+    ]
+  }
 }
 
 async function editAvatarImage(filePath: string) {
@@ -235,6 +352,98 @@ async function handleNameTap() {
   await Taro.navigateTo({
     url: '/pages/user-name-edit/index',
   })
+}
+
+async function handleGenderTap() {
+  if (isUpdatingGender.value) {
+    return
+  }
+
+  try {
+    const result = await Taro.showActionSheet({
+      itemList: ['男', '女', '不透露'],
+    })
+    const genderOptions: UserGender[] = ['male', 'female', 'unknown']
+    const gender = genderOptions[result.tapIndex] ?? 'unknown'
+
+    if (gender === (user.value?.gender ?? 'unknown')) {
+      return
+    }
+
+    isUpdatingGender.value = true
+    await updateGender(gender)
+    showToast('性别已更新')
+  } catch (error) {
+    if (isUserCanceled(error)) {
+      return
+    }
+
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth(error.message)
+      return
+    }
+
+    showToast(
+      error instanceof ApiException
+        ? error.message
+        : '性别更新失败，请稍后重试',
+    )
+  } finally {
+    isUpdatingGender.value = false
+  }
+}
+
+async function handleRegionConfirm(event: RegionPickerChangeEvent) {
+  if (isUpdatingRegion.value) {
+    return
+  }
+
+  const value = Array.isArray(event.detail?.value)
+    ? event.detail?.value
+    : regionPickerValue.value
+  const provinceIndex = Number(value?.[0] ?? 0)
+  const cityIndex = Number(value?.[1] ?? 0)
+  const province = CHINA_PROVINCE_CITY_REGIONS[provinceIndex]
+  const city = province?.children[cityIndex]
+
+  if (!province || !city) {
+    showToast('请选择地区')
+    handleRegionCancel()
+    return
+  }
+
+  regionPickerValue.value = [provinceIndex, cityIndex]
+
+  if (
+    user.value?.region?.provinceCode === province.code &&
+    user.value?.region?.cityCode === city.code
+  ) {
+    return
+  }
+
+  try {
+    isUpdatingRegion.value = true
+    await updateRegion({
+      provinceCode: province.code,
+      cityCode: city.code,
+    })
+    showToast('地区已更新')
+  } catch (error) {
+    handleRegionCancel()
+
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth(error.message)
+      return
+    }
+
+    showToast(
+      error instanceof ApiException
+        ? error.message
+        : '地区更新失败，请稍后重试',
+    )
+  } finally {
+    isUpdatingRegion.value = false
+  }
 }
 
 async function handlePhoneNumberBind(event: {
@@ -371,6 +580,10 @@ useDidShow(() => {
 .user-settings-list {
   padding-top: 10px;
   padding-bottom: 40px;
+}
+
+.user-settings-picker {
+  display: block;
 }
 
 .user-settings-tile {

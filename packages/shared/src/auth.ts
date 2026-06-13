@@ -1,6 +1,10 @@
+import type { UserRegion } from './china-region';
+
 export interface UserPreferences {
   contactsCoverImage: string;
 }
+
+export type UserGender = 'male' | 'female' | 'unknown';
 
 export interface LoginUserProfile {
   id: string;
@@ -9,6 +13,8 @@ export interface LoginUserProfile {
   account: string;
   phone: string;
   phoneVerified: boolean;
+  gender: UserGender;
+  region: UserRegion | null;
   isVip: boolean;
   preferences: UserPreferences;
 }

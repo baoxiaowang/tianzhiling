@@ -1,3 +1,5 @@
+import type { UserRegion } from '@tzl/shared'
+
 export interface UserPreferences {
   contactsCoverImage: string
 }
@@ -9,9 +11,13 @@ export interface AuthUser {
   account: string
   phone: string
   phoneVerified: boolean
+  gender: UserGender
+  region: UserRegion | null
   isVip: boolean
   preferences: UserPreferences
 }
+
+export type UserGender = 'male' | 'female' | 'unknown'
 
 export interface AuthSessionData {
   accessToken: string
@@ -56,10 +62,48 @@ export function parseAuthUser(value: unknown): AuthUser {
     account: asString(raw.account),
     phone: asString(raw.phone),
     phoneVerified: asBoolean(raw.phoneVerified),
+    gender: parseUserGender(raw.gender),
+    region: parseUserRegion(raw.region),
     isVip: asBoolean(raw.isVip),
     preferences: {
       contactsCoverImage: asString(rawPreferences.contactsCoverImage),
     },
+  }
+}
+
+export function parseUserGender(value: unknown): UserGender {
+  return value === 'male' || value === 'female' || value === 'unknown'
+    ? value
+    : 'unknown'
+}
+
+export function parseUserRegion(value: unknown): UserRegion | null {
+  const raw = asRecord(value)
+  const countryCode = asString(raw.countryCode)
+  const countryName = asString(raw.countryName)
+  const provinceCode = asString(raw.provinceCode)
+  const provinceName = asString(raw.provinceName)
+  const cityCode = asString(raw.cityCode)
+  const cityName = asString(raw.cityName)
+
+  if (
+    countryCode !== 'CN' ||
+    !countryName ||
+    !provinceCode ||
+    !provinceName ||
+    !cityCode ||
+    !cityName
+  ) {
+    return null
+  }
+
+  return {
+    countryCode: 'CN',
+    countryName,
+    provinceCode,
+    provinceName,
+    cityCode,
+    cityName,
   }
 }
 

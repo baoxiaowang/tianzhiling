@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "sync:china-regions": "node scripts/sync-china-regions.mjs"
   },
   "devDependencies": {
     "@types/node": "14",

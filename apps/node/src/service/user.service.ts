@@ -17,6 +17,7 @@ import {
   UserMembershipEntity,
   UserMembershipStatus,
 } from '@tzl/entities';
+import { findChinaCityRegion, type UserRegion } from '@tzl/shared';
 import {
   AuthenticatedUserPayload,
   IUserOptions,
@@ -24,6 +25,7 @@ import {
   LogoutResult,
   PasswordLoginResult,
   SendSmsCodeResult,
+  UserGender,
 } from '../interface';
 import {
   BindWeappPhoneDTO,
@@ -31,8 +33,10 @@ import {
   PhoneLoginDTO,
   SendSmsCodeDTO,
   UpdateUserAvatarDTO,
+  UpdateUserGenderDTO,
   UpdateUserNameDTO,
   UpdateUserPreferencesDTO,
+  UpdateUserRegionDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
 } from '../dto/user.dto';
@@ -82,6 +86,7 @@ interface SmsCodeCacheValue {
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_LENGTH = 12;
+const USER_GENDERS: UserGender[] = ['male', 'female', 'unknown'];
 
 interface NormalizedUserPreferences {
   contactsCoverImage: string;
@@ -360,6 +365,8 @@ export class UserService {
       user.avatar = '';
       user.phone = phone;
       user.phoneVerified = true;
+      user.gender = 'unknown';
+      user.region = null;
       user.createdAt = now;
       user.updatedAt = now;
       user = await this.userModel.save(user);
@@ -494,6 +501,8 @@ export class UserService {
     user.avatar = '';
     user.phone = '';
     user.phoneVerified = false;
+    user.gender = 'unknown';
+    user.region = null;
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -669,6 +678,49 @@ export class UserService {
     }
 
     user.avatar = avatar;
+    user.updatedAt = new Date();
+
+    const savedUser = await this.userModel.save(user);
+
+    return this.buildUserProfile(savedUser, auth.account);
+  }
+
+  async updateCurrentUserGender(
+    auth: AuthenticatedUserPayload,
+    body: UpdateUserGenderDTO
+  ): Promise<LoginUserProfile> {
+    const userId = this.parseObjectId(auth.sub);
+    const gender = this.normalizeUserGender(body?.gender);
+    const user = await this.findUserById(userId);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    user.gender = gender;
+    user.updatedAt = new Date();
+
+    const savedUser = await this.userModel.save(user);
+
+    return this.buildUserProfile(savedUser, auth.account);
+  }
+
+  async updateCurrentUserRegion(
+    auth: AuthenticatedUserPayload,
+    body: UpdateUserRegionDTO
+  ): Promise<LoginUserProfile> {
+    const userId = this.parseObjectId(auth.sub);
+    const region = this.resolveUserRegionForUpdate(
+      body?.provinceCode,
+      body?.cityCode
+    );
+    const user = await this.findUserById(userId);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    user.region = region;
     user.updatedAt = new Date();
 
     const savedUser = await this.userModel.save(user);
@@ -933,6 +985,8 @@ export class UserService {
       account,
       phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
+      gender: this.normalizeUserGender(user.gender),
+      region: this.normalizeUserRegionForProfile(user.region),
       isVip: await this.isUserVip(user.id),
       preferences: {
         contactsCoverImage: this.postImageService.resolveForResponse(
@@ -942,9 +996,7 @@ export class UserService {
     };
   }
 
-  private normalizeUserPreferences(
-    value: unknown
-  ): NormalizedUserPreferences {
+  private normalizeUserPreferences(value: unknown): NormalizedUserPreferences {
     const rawPreferences =
       value && typeof value === 'object' && !Array.isArray(value)
         ? (value as Record<string, unknown>)
@@ -993,6 +1045,55 @@ export class UserService {
     }
 
     return this.postImageService.normalizeForStorage(avatar);
+  }
+
+  private normalizeUserGender(rawGender?: string): UserGender {
+    const gender = rawGender?.trim() as UserGender | undefined;
+
+    if (gender && USER_GENDERS.includes(gender)) {
+      return gender;
+    }
+
+    if (!gender) {
+      return 'unknown';
+    }
+
+    throw new AppError(
+      'INVALID_USER_GENDER',
+      'user gender must be male, female, or unknown',
+      400
+    );
+  }
+
+  private resolveUserRegionForUpdate(
+    provinceCode?: string,
+    cityCode?: string
+  ): UserRegion {
+    const region = findChinaCityRegion(provinceCode ?? '', cityCode ?? '');
+
+    if (!region) {
+      throw new AppError(
+        'INVALID_USER_REGION',
+        'user region must be a valid province and city',
+        400
+      );
+    }
+
+    return region;
+  }
+
+  private normalizeUserRegionForProfile(value: unknown): UserRegion | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const rawRegion = value as Record<string, unknown>;
+    const provinceCode =
+      typeof rawRegion.provinceCode === 'string' ? rawRegion.provinceCode : '';
+    const cityCode =
+      typeof rawRegion.cityCode === 'string' ? rawRegion.cityCode : '';
+
+    return findChinaCityRegion(provinceCode, cityCode);
   }
 
   private normalizeOptionalMediaReference(rawValue?: string): string {
