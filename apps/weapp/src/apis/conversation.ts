@@ -1,4 +1,4 @@
-import { get, post } from '../api/api-client'
+import { del, get, post } from '../api/api-client'
 
 export interface ConversationSummary {
   id: string
@@ -25,6 +25,7 @@ interface ConversationMessageListResponse {
 interface SendConversationMessageResponse {
   userMessage?: unknown
   assistantMessage?: unknown
+  assistantMessages?: unknown
   chatQuota?: unknown
   replyPending?: unknown
 }
@@ -61,6 +62,7 @@ export interface ConversationMessage {
 export interface SendConversationMessageResult {
   userMessage: ConversationMessage
   assistantMessage?: ConversationMessage
+  assistantMessages?: ConversationMessage[]
   chatQuota?: ConversationChatQuotaSnapshot
   replyPending?: boolean
 }
@@ -293,6 +295,15 @@ export async function getConversationMessages(conversationId: string) {
     : []
 }
 
+export async function deleteConversationMessage(
+  conversationId: string,
+  messageId: string
+) {
+  await del(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`
+  )
+}
+
 export async function getConversationChatQuota(conversationId: string) {
   const data = await get<unknown>(`/api/conversation/${conversationId}/chat-quota`)
 
@@ -345,6 +356,9 @@ export async function sendConversationMessage(
     assistantMessage: data.assistantMessage
       ? parseConversationMessage(data.assistantMessage)
       : undefined,
+    assistantMessages: Array.isArray(data.assistantMessages)
+      ? data.assistantMessages.map((item) => parseConversationMessage(item))
+      : undefined,
     chatQuota: parseChatQuota(data.chatQuota),
     replyPending: Boolean(data.replyPending),
   }
@@ -376,9 +390,23 @@ export async function sendConversationMessageAsync(
     assistantMessage: data.assistantMessage
       ? parseConversationMessage(data.assistantMessage)
       : undefined,
+    assistantMessages: Array.isArray(data.assistantMessages)
+      ? data.assistantMessages.map((item) => parseConversationMessage(item))
+      : undefined,
     chatQuota: parseChatQuota(data.chatQuota),
     replyPending: Boolean(data.replyPending),
   }
+}
+
+export async function generateConversationMessageVoice(
+  conversationId: string,
+  messageId: string
+) {
+  const data = await post<unknown>(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/voice`
+  )
+
+  return parseConversationMessage(data)
 }
 
 export async function transcribeConversationVoice(

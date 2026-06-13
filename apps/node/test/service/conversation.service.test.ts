@@ -154,6 +154,16 @@ function createMessage(overrides: Partial<MessageEntity> = {}): MessageEntity {
   return message;
 }
 
+function getAssistantMessages(messages: MessageEntity[]): MessageEntity[] {
+  return messages
+    .filter(message => message.role === MessageRole.assistant)
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+}
+
+function getAssistantContents(messages: MessageEntity[]): string[] {
+  return getAssistantMessages(messages).map(message => message.content);
+}
+
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
@@ -230,12 +240,33 @@ function createService(options: {
         (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
       )
     ),
+    findOne: jest.fn(async ({ where }: any) => {
+      const id = where?.id ?? where?._id;
+      const conversationId = where?.conversationId;
+
+      return (
+        savedMessages.find(
+          message =>
+            sameObjectId(id, message.id) &&
+            sameObjectId(conversationId, message.conversationId)
+        ) ?? null
+      );
+    }),
     save: jest.fn(async message => {
       if (!message.id) {
         message.id = new MongoObjectId();
       }
 
-      savedMessages.push(message);
+      const existingIndex = savedMessages.findIndex(item =>
+        sameObjectId(item.id, message.id)
+      );
+
+      if (existingIndex >= 0) {
+        savedMessages[existingIndex] = message;
+      } else {
+        savedMessages.push(message);
+      }
+
       return message;
     }),
   } as any;
@@ -517,12 +548,38 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         currentQuery: '用户连续补充了2句话：\n1. 第一句\n2. 第二句',
       })
     );
-    expect(
-      savedMessages.filter(message => message.role === MessageRole.assistant)
-    ).toHaveLength(2);
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '上一句回复',
+      '我也想你',
+      '今天过得怎么样？',
+    ]);
   });
 
-  it('attaches generated voice audio to queued text assistant replies when the agent has a timbre', async () => {
+  it('does not reply to archived pending user messages', async () => {
+    const archivedUserMessage = createMessage({
+      content: '这句已经删了',
+      isArchived: true,
+      archivedAt: new Date('2026-05-03T08:00:03.000Z'),
+      createdAt: new Date('2026-05-03T08:00:02.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:03.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [archivedUserMessage],
+    });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(service.agentContextService.buildConversationContext).not.toHaveBeenCalled();
+    expect(
+      savedMessages.filter(message => message.role === MessageRole.assistant)
+    ).toHaveLength(0);
+  });
+
+  it('saves queued assistant replies as real text segments without auto voice', async () => {
     const voiceTimbre = createVoiceTimbre();
     const userMessage = createMessage({
       content: '文字也想听语音',
@@ -542,28 +599,23 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
+    const assistantMessages = getAssistantMessages(savedMessages);
 
-    expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
-      voiceId: 'TzlVoice_001',
-      model: 'speech-2.8-turbo',
-      languageBoost: 'Chinese',
-      speed: 1.12,
-      volume: 1.1,
-      pitch: -1,
-    });
-    expect(assistantMessage).toEqual(
-      expect.objectContaining({
-        type: MessageType.text,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
-      })
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(assistantMessages.map(message => message.content)).toEqual([
+      '我也想你',
+      '今天过得怎么样？',
+    ]);
+    expect(assistantMessages.map(message => message.replySegmentIndex)).toEqual([
+      0,
+      1,
+    ]);
+    expect(assistantMessages[0].replyGroupId).toBeTruthy();
+    expect(assistantMessages[1].replyGroupId).toBe(
+      assistantMessages[0].replyGroupId
     );
+    expect(assistantMessages[0].totalTokens).toBe(22);
+    expect(assistantMessages[1].totalTokens).toBeUndefined();
   });
 
   it('enqueues a follow-up reply when a new user message arrives during processing', async () => {
@@ -694,7 +746,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('falls back to text when a voice message agent has no voice timbre', async () => {
+  it('returns segmented assistantMessages and a legacy aggregated assistantMessage', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
     });
@@ -726,7 +778,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         userId: new MongoObjectId(USER_ID),
         agentId: new MongoObjectId(AGENT_ID),
         type: MessageType.text,
-        content: '我也想你</fenge>今天过得怎么样？',
+        content: '我也想你',
         status: MessageStatus.sent,
       })
     );
@@ -739,9 +791,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     );
     expect(result.assistantMessage?.type).toBe(MessageType.text);
+    expect(result.assistantMessage?.content).toBe(
+      '我也想你</fenge>今天过得怎么样？'
+    );
+    expect(result.assistantMessages?.map(message => message.content)).toEqual([
+      '我也想你',
+      '今天过得怎么样？',
+    ]);
   });
 
-  it('attaches generated voice audio to text assistant replies when the agent has a timbre', async () => {
+  it('does not auto-generate voice audio for text assistant replies when the agent has a timbre', async () => {
     const voiceTimbre = createVoiceTimbre();
     const { service, savedMessages } = createService({
       agent: createAgent({
@@ -754,97 +813,38 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       type: 'text',
       content: '文字回复也要能播放',
     });
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
 
-    expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
-      voiceId: 'TzlVoice_001',
-      model: 'speech-2.8-turbo',
-      languageBoost: 'Chinese',
-      speed: 1.12,
-      volume: 1.1,
-      pitch: -1,
-    });
-    expect(assistantMessage).toEqual(
-      expect.objectContaining({
-        type: MessageType.text,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaUrl: '',
-        mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
-      })
-    );
-    expect(result.assistantMessage?.type).toBe(MessageType.text);
-    expect(result.assistantMessage?.voice).toEqual(
-      expect.objectContaining({
-        objectKey: 'conversation-voice-replies/reply.mp3',
-        mimeType: 'audio/mpeg',
-        transcript: '我也想你。今天过得怎么样？',
-      })
-    );
-  });
-
-  it('keeps text replies when voice synthesis fails for text messages', async () => {
-    const voiceTimbre = createVoiceTimbre();
-    const { service, savedMessages } = createService({
-      agent: createAgent({
-        voiceTimbreId: voiceTimbre.id,
-      }),
-      voiceTimbre,
-    });
-
-    (service.minimaxVoiceSpeechService.synthesize as jest.Mock).mockRejectedValueOnce(
-      new Error('tts failed')
-    );
-
-    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
-      type: 'text',
-      content: '合成失败也要有文字',
-    });
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
-
-    expect(assistantMessage).toEqual(
-      expect.objectContaining({
-        type: MessageType.text,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: '',
-        mediaMimeType: '',
-        mediaTranscript: '',
-      })
-    );
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我也想你',
+      '今天过得怎么样？',
+    ]);
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessage?.voice).toBeUndefined();
   });
 
-  it('uses the bound active MiniMax voice timbre for assistant voice replies', async () => {
+  it('generates voice for an assistant text message on demand', async () => {
     const voiceTimbre = createVoiceTimbre();
-    const { service, savedMessages } = createService({
+    const assistantMessage = createMessage({
+      role: MessageRole.assistant,
+      content: '我也想你',
+    });
+    const { service } = createService({
       agent: createAgent({
         voiceTimbreId: voiceTimbre.id,
       }),
       voiceTimbre,
+      existingMessages: [assistantMessage],
     });
 
-    const result = await service.sendMessage(
+    const result = await service.generateMessageVoice(
       AUTH,
       CONVERSATION_ID,
-      {
-        type: 'voice',
-        objectKey: 'conversation-voice/input.m4a',
-        mimeType: 'audio/mp4',
-      }
-    );
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
+      assistantMessage.id.toHexString()
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
+      text: '我也想你。',
       voiceId: 'TzlVoice_001',
       model: 'speech-2.8-turbo',
       languageBoost: 'Chinese',
@@ -852,29 +852,106 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       volume: 1.1,
       pitch: -1,
     });
-    expect(assistantMessage).toEqual(
+    expect(assistantMessage.mediaObjectKey).toBe(
+      'conversation-voice-replies/reply.mp3'
+    );
+    expect(result.voice).toEqual(
       expect.objectContaining({
-        type: MessageType.voice,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaUrl: '',
-        mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
+        objectKey: 'conversation-voice-replies/reply.mp3',
+        mimeType: 'audio/mpeg',
+        transcript: '我也想你。',
       })
     );
-    expect(service.tencentCosService.putBuffer).toHaveBeenCalledWith(
-      Buffer.from([0xff, 0xfb, 0x90, 0x64]),
-      {
-        folder: 'conversation-voice-replies',
-        fileName: expect.stringMatching(/^assistant_reply_\d+\.mp3$/),
-        contentType: 'audio/mpeg',
-      }
-    );
-    expect(service.openAIService.createTextToSpeech).not.toHaveBeenCalled();
-    expect(result.assistantMessage?.type).toBe(MessageType.voice);
   });
 
-  it('uses the bound active CosyVoice timbre for assistant voice replies', async () => {
+  it('returns existing generated voice without synthesizing again', async () => {
+    const voiceTimbre = createVoiceTimbre();
+    const assistantMessage = createMessage({
+      role: MessageRole.assistant,
+      content: '我也想你',
+      mediaObjectKey: 'conversation-voice-replies/existing.mp3',
+      mediaMimeType: 'audio/mpeg',
+      mediaTranscript: '我也想你。',
+    });
+    const { service } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+      existingMessages: [assistantMessage],
+    });
+
+    const result = await service.generateMessageVoice(
+      AUTH,
+      CONVERSATION_ID,
+      assistantMessage.id.toHexString()
+    );
+
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(result.voice?.objectKey).toBe('conversation-voice-replies/existing.mp3');
+  });
+
+  it('rejects on-demand voice generation when the agent has no voice timbre', async () => {
+    const assistantMessage = createMessage({
+      role: MessageRole.assistant,
+      content: '我也想你',
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [assistantMessage],
+    });
+
+    await expect(
+      service.generateMessageVoice(
+        AUTH,
+        CONVERSATION_ID,
+        assistantMessage.id.toHexString()
+      )
+    ).rejects.toMatchObject({
+      code: 'VOICE_TIMBRE_NOT_AVAILABLE',
+      status: 400,
+    });
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+  });
+
+  it('rejects on-demand voice generation for non-assistant or archived messages', async () => {
+    const userMessage = createMessage({
+      role: MessageRole.user,
+      content: '我想你',
+    });
+    const archivedAssistantMessage = createMessage({
+      role: MessageRole.assistant,
+      content: '已删除',
+      isArchived: true,
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage, archivedAssistantMessage],
+    });
+
+    await expect(
+      service.generateMessageVoice(
+        AUTH,
+        CONVERSATION_ID,
+        userMessage.id.toHexString()
+      )
+    ).rejects.toMatchObject({
+      code: 'MESSAGE_VOICE_UNSUPPORTED',
+      status: 400,
+    });
+    await expect(
+      service.generateMessageVoice(
+        AUTH,
+        CONVERSATION_ID,
+        archivedAssistantMessage.id.toHexString()
+      )
+    ).rejects.toMatchObject({
+      code: 'MESSAGE_NOT_FOUND',
+      status: 404,
+    });
+  });
+
+  it('uses the bound active CosyVoice timbre for on-demand assistant voice generation', async () => {
     const voiceTimbre = createVoiceTimbre();
 
     voiceTimbre.provider = VoiceTimbreProvider.cosyvoice;
@@ -887,24 +964,24 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         voiceTimbreId: voiceTimbre.id,
       }),
       voiceTimbre,
+      existingMessages: [
+        createMessage({
+          role: MessageRole.assistant,
+          content: '我也想你',
+        }),
+      ],
     });
+    const assistantMessage = getAssistantMessages(savedMessages)[0];
 
-    const result = await service.sendMessage(
+    const result = await service.generateMessageVoice(
       AUTH,
       CONVERSATION_ID,
-      {
-        type: 'voice',
-        objectKey: 'conversation-voice/input.m4a',
-        mimeType: 'audio/mp4',
-      }
-    );
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
+      assistantMessage.id.toHexString()
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(service.cosyVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
+      text: '我也想你。',
       voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
       model: 'cosyvoice-v3.5-plus',
       languageHint: 'zh',
@@ -912,20 +989,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       volume: 1.1,
       pitch: -1,
     });
-    expect(assistantMessage).toEqual(
-      expect.objectContaining({
-        type: MessageType.voice,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaUrl: '',
-        mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
-      })
-    );
-    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+    expect(result.voice?.mimeType).toBe('audio/mpeg');
   });
 
-  it('uses the bound active Qwen timbre for assistant voice replies', async () => {
+  it('uses the bound active Qwen timbre for on-demand assistant voice generation', async () => {
     const voiceTimbre = createVoiceTimbre();
 
     voiceTimbre.provider = VoiceTimbreProvider.qwen;
@@ -939,40 +1006,30 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         voiceTimbreId: voiceTimbre.id,
       }),
       voiceTimbre,
+      existingMessages: [
+        createMessage({
+          role: MessageRole.assistant,
+          content: '我也想你',
+        }),
+      ],
     });
+    const assistantMessage = getAssistantMessages(savedMessages)[0];
 
-    const result = await service.sendMessage(
+    const result = await service.generateMessageVoice(
       AUTH,
       CONVERSATION_ID,
-      {
-        type: 'voice',
-        objectKey: 'conversation-voice/input.m4a',
-        mimeType: 'audio/mp4',
-      }
-    );
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
+      assistantMessage.id.toHexString()
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(service.cosyVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(service.qwenVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
+      text: '我也想你。',
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
     });
-    expect(assistantMessage).toEqual(
-      expect.objectContaining({
-        type: MessageType.voice,
-        content: '我也想你</fenge>今天过得怎么样？',
-        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaUrl: '',
-        mediaMimeType: 'audio/wav',
-        mediaTranscript: '我也想你。今天过得怎么样？',
-      })
-    );
-    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+    expect(result.voice?.mimeType).toBe('audio/wav');
   });
 
   it('strips malformed assistant markup tags before saving replies', async () => {
@@ -991,13 +1048,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '你还记得我的猫叫啥吗',
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
-
-    expect(assistantMessage?.content).toBe(
-      '啊 小米 真好听的名字🐱 有小猫陪着你</fenge>我都记着呢'
-    );
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '啊 小米 真好听的名字🐱 有小猫陪着你',
+      '我都记着呢',
+    ]);
   });
 
   it('normalizes malformed legacy fenge separators before saving replies', async () => {
@@ -1011,13 +1065,11 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '方方，在等等',
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
-
-    expect(assistantMessage?.content).toBe(
-      '芳芳 我就在这儿</fenge>你慢慢来</fenge>我都在'
-    );
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '芳芳 我就在这儿',
+      '你慢慢来',
+      '我都在',
+    ]);
   });
 
   it('strips accented malformed segment tags and unsafe presence claims before saving replies', async () => {
@@ -1043,17 +1095,17 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '想你了咪',
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
+    const assistantContent = getAssistantContents(savedMessages).join('\n');
 
-    expect(assistantMessage?.content).toBe(
-      '我也想你 一直想着呢</fenge>好好睡一觉 明天还长 我一直都在</fenge>乖 先歇着 我在这儿呢'
-    );
-    expect(assistantMessage?.content).not.toContain(malformedSeparator);
-    expect(assistantMessage?.content).not.toContain('闭上眼');
-    expect(assistantMessage?.content).not.toContain('屋里哪个角落');
-    expect(assistantMessage?.content).not.toContain('准能听到');
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我也想你 一直想着呢',
+      '好好睡一觉 明天还长 我一直都在',
+      '乖 先歇着 我在这儿呢',
+    ]);
+    expect(assistantContent).not.toContain(malformedSeparator);
+    expect(assistantContent).not.toContain('闭上眼');
+    expect(assistantContent).not.toContain('屋里哪个角落');
+    expect(assistantContent).not.toContain('准能听到');
   });
 
   it('filters legacy media url segments before saving assistant replies', async () => {
@@ -1074,14 +1126,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '老公，早安！',
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
+    const assistantContent = getAssistantContents(savedMessages).join('\n');
 
-    expect(assistantMessage?.content).toBe('早安媳妇儿</fenge>新的一天');
-    expect(assistantMessage?.content).not.toContain('http');
-    expect(assistantMessage?.content).not.toContain('aiDeceased');
-    expect(assistantMessage?.content).not.toContain('.mp3');
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '早安媳妇儿',
+      '新的一天',
+    ]);
+    expect(assistantContent).not.toContain('http');
+    expect(assistantContent).not.toContain('aiDeceased');
+    expect(assistantContent).not.toContain('.mp3');
   });
 
   it('filters prompt leakage and stage directions before saving assistant replies', async () => {
@@ -1102,20 +1155,61 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '吃完了',
     });
 
-    const assistantMessage = savedMessages.find(
-      message => message.role === MessageRole.assistant
-    );
+    const assistantContent = getAssistantContents(savedMessages).join('\n');
 
-    expect(assistantMessage?.content).toBe(
-      '吃饱了就好</fenge>嗯 奶奶在这儿'
-    );
-    expect(assistantMessage?.content).not.toContain('历史助手回复');
-    expect(assistantMessage?.content).not.toContain('事实来源');
-    expect(assistantMessage?.content).not.toContain('声音带着欣慰');
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '吃饱了就好',
+      '嗯 奶奶在这儿',
+    ]);
+    expect(assistantContent).not.toContain('历史助手回复');
+    expect(assistantContent).not.toContain('事实来源');
+    expect(assistantContent).not.toContain('声音带着欣慰');
   });
 });
 
 describe('ConversationService listConversations', () => {
+  it('uses only non-archived messages for conversation preview', async () => {
+    const conversation = createConversation();
+    const agent = createAgent({
+      name: '奶奶',
+      isDefault: false,
+    });
+    const latestActiveMessage = createMessage({
+      role: MessageRole.user,
+      content: '今天想你了',
+    });
+    const service = new ConversationService();
+
+    service.conversationModel = {
+      find: jest.fn().mockResolvedValue([conversation]),
+    } as any;
+    service.agentModel = {
+      findOne: jest.fn(async ({ where }: any) => {
+        const id = where?.id ?? where?._id;
+        return sameObjectId(id, agent.id) ? agent : null;
+      }),
+    } as any;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(latestActiveMessage),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    const result = await service.listConversations(AUTH);
+
+    expect(service.messageModel.findOne).toHaveBeenCalledWith({
+      where: {
+        conversationId: conversation.id,
+        isArchived: { $ne: true },
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    expect(result[0].preview).toBe('你：今天想你了');
+  });
+
   it('pins the default agent conversation before newer conversations', async () => {
     const defaultAgentId = new MongoObjectId(AGENT_ID);
     const otherAgentId = new MongoObjectId(OTHER_AGENT_ID);

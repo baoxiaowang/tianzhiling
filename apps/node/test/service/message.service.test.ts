@@ -1,4 +1,5 @@
 import {
+  ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageStatus,
@@ -6,6 +7,17 @@ import {
   MongoObjectId,
 } from '@tzl/entities';
 import { MessageService } from '../../src/service/message.service';
+
+const USER_ID = '665000000000000000000001';
+const CONVERSATION_ID = '665000000000000000000102';
+const AUTH = {
+  sub: USER_ID,
+  accountId: 'account-1',
+  account: 'user',
+  iat: 1777795200,
+  exp: 1777824000,
+  nonce: 'nonce',
+};
 
 function createTextMessage(content: string): MessageEntity {
   const message = new MessageEntity();
@@ -93,5 +105,84 @@ describe('MessageService buildConversationMessageItem', () => {
     const item = service.buildConversationMessageItem(message);
 
     expect(item.voice).toBeUndefined();
+  });
+});
+
+describe('MessageService listMessages', () => {
+  it('loads only non-archived conversation messages', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const activeMessage = createTextMessage('还在的消息');
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([activeMessage]),
+    } as never;
+
+    const items = await service.listMessages(AUTH, CONVERSATION_ID);
+
+    expect(service.messageModel.find).toHaveBeenCalledWith({
+      where: {
+        conversationId: conversation.id,
+        isArchived: { $ne: true },
+      },
+      order: {
+        createdAt: 'ASC',
+      },
+    });
+    expect(items.map(item => item.content)).toEqual(['还在的消息']);
+  });
+});
+
+describe('MessageService deleteMessage', () => {
+  it('marks the message as archived without removing it', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const message = createTextMessage('要删除的消息');
+    message.conversationId = conversation.id;
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(message),
+      save: jest.fn(async item => item),
+    } as never;
+
+    await service.deleteMessage(AUTH, CONVERSATION_ID, message.id.toHexString());
+
+    expect(message.isArchived).toBe(true);
+    expect(message.archivedAt).toBeInstanceOf(Date);
+    expect(message.updatedAt).toBe(message.archivedAt);
+    expect(service.messageModel.save).toHaveBeenCalledWith(message);
+  });
+
+  it('does not save an already archived message again', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const message = createTextMessage('已经删除的消息');
+    message.conversationId = conversation.id;
+    message.isArchived = true;
+    message.archivedAt = new Date('2026-05-03T09:00:00.000Z');
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(message),
+      save: jest.fn(),
+    } as never;
+
+    await service.deleteMessage(AUTH, CONVERSATION_ID, message.id.toHexString());
+
+    expect(service.messageModel.save).not.toHaveBeenCalled();
   });
 });

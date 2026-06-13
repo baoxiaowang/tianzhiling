@@ -10,12 +10,14 @@
       'chat-message-bubble--text-voice-active':
         type === 'text' && hasVoicePlayback && isVoiceActive,
     }"
+    @tap="handleBubbleTap"
+    @longpress.stop="handleLongPress"
   >
     <template v-if="type === 'image'">
       <view
         v-if="imageUrl"
         class="chat-message-bubble__image"
-        @tap="handleImagePreview"
+        @tap.stop="handleImagePreview"
       >
         <image
           class="chat-message-bubble__image-content"
@@ -42,7 +44,7 @@
       v-else-if="type === 'voice'"
       class="chat-message-bubble__voice"
       :style="voiceStyle"
-      @tap="handleVoiceTap"
+      @tap.stop="handleVoiceTap"
     >
       <view
         v-if="!isUser"
@@ -128,7 +130,11 @@ const props = withDefaults(
   },
 )
 
-const emit = defineEmits(['voice-tap'])
+const emit = defineEmits<{
+  'message-tap': []
+  'voice-tap': []
+  'message-long-press': []
+}>()
 
 const voiceSeconds = computed(() => {
   return Math.max(1, Math.round(props.voiceDurationMs / 1000))
@@ -160,6 +166,14 @@ function handleImagePreview() {
 
 function handleVoiceTap() {
   emit('voice-tap')
+}
+
+function handleBubbleTap() {
+  emit('message-tap')
+}
+
+function handleLongPress() {
+  emit('message-long-press')
 }
 </script>
 

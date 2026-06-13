@@ -82,6 +82,7 @@ export interface ConversationSummary {
 export interface SendConversationMessageResult {
   userMessage: ConversationMessageItem;
   assistantMessage?: ConversationMessageItem;
+  assistantMessages?: ConversationMessageItem[];
   chatQuota?: ConversationChatQuotaSnapshot;
   replyPending?: boolean;
 }
@@ -136,12 +137,12 @@ interface ReplyUsage {
 }
 
 interface ProcessReplyResult {
-  replyContent: string;
+  replySegments: string[];
   usage: ReplyUsage;
 }
 
 interface AfterReplyResult {
-  assistantMessage: MessageEntity;
+  assistantMessages: MessageEntity[];
 }
 
 interface NonVipChatLimitRule {
@@ -451,6 +452,83 @@ export class ConversationService {
     return { transcript };
   }
 
+  async generateMessageVoice(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    messageId: string
+  ): Promise<ConversationMessageItem> {
+    const conversation = await this.getConversationForUser(
+      auth,
+      conversationId
+    );
+    const message = await this.findMessageById(
+      this.parseObjectId(messageId),
+      conversation.id
+    );
+
+    if (!message || message.isArchived) {
+      throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
+    }
+
+    if (
+      message.role !== MessageRole.assistant ||
+      message.type !== MessageType.text
+    ) {
+      throw new AppError(
+        'MESSAGE_VOICE_UNSUPPORTED',
+        'only assistant text messages can be converted to voice',
+        400
+      );
+    }
+
+    if (!message.content?.trim()) {
+      throw new AppError(
+        'INVALID_MESSAGE_CONTENT',
+        'message content is required',
+        400
+      );
+    }
+
+    if (message.mediaObjectKey?.trim() || message.mediaUrl?.trim()) {
+      return this.messageService.buildConversationMessageItem(message);
+    }
+
+    const agent = await this.findAgentById(conversation.agentId);
+    const voiceTimbre = await this.findActiveVoiceTimbreForAgent(agent);
+
+    if (!voiceTimbre) {
+      throw new AppError(
+        'VOICE_TIMBRE_NOT_AVAILABLE',
+        '该联系人暂未设置声音',
+        400
+      );
+    }
+
+    const synthesizedVoice = await this.synthesizeAssistantVoiceReply(
+      message.content,
+      voiceTimbre
+    );
+
+    if (!synthesizedVoice) {
+      throw new AppError(
+        'ASSISTANT_VOICE_SYNTHESIS_FAILED',
+        '语音生成失败，请稍后重试',
+        502
+      );
+    }
+
+    message.mediaObjectKey = synthesizedVoice.mediaObjectKey;
+    message.mediaUrl = '';
+    message.mediaMimeType = synthesizedVoice.mediaMimeType || '';
+    message.mediaDurationMs = synthesizedVoice.mediaDurationMs;
+    message.mediaTranscript = synthesizedVoice.transcript;
+    message.updatedAt = new Date();
+
+    const savedMessage = await this.messageModel.save(message);
+
+    return this.messageService.buildConversationMessageItem(savedMessage);
+  }
+
   private async createReplyRuntime(
     auth: AuthenticatedUserPayload,
     conversationId: string
@@ -709,14 +787,14 @@ export class ConversationService {
       topP: ASSISTANT_REPLY_TOP_P,
       messages: context.messages,
     });
-    const replyContent = this.normalizeAssistantReply(
+    const replySegments = this.normalizeAssistantReplySegments(
       typeof response.choices?.[0]?.message?.content === 'string'
         ? response.choices[0].message.content
         : ''
     );
 
     return {
-      replyContent,
+      replySegments,
       usage: this.extractUsageFromResponse(response),
     };
   }
@@ -727,21 +805,22 @@ export class ConversationService {
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
-    const assistantMessage = await this.createAssistantReplyMessage({
+    const assistantMessages = await this.createAssistantReplyMessages({
       conversationId: runtime.conversation.id,
       userId: runtime.conversation.userId,
       agentId: runtime.conversation.agentId,
-      agent: runtime.agent,
-      replyContent: processed.replyContent,
-      preferVoiceReply: this.shouldPreferVoiceReply(before.messagePayload),
+      replySegments: processed.replySegments,
       replyTime,
       usage: processed.usage,
     });
 
-    await this.touchConversation(runtime.conversation, replyTime);
+    await this.touchConversation(
+      runtime.conversation,
+      assistantMessages[assistantMessages.length - 1]?.updatedAt ?? replyTime
+    );
 
     return {
-      assistantMessage,
+      assistantMessages,
     };
   }
 
@@ -811,13 +890,14 @@ export class ConversationService {
     const messages = await this.messageModel.find({
       where: {
         conversationId: options.conversationId,
-      },
+        isArchived: { $ne: true },
+      } as never,
       order: {
         createdAt: 'ASC',
       },
     });
     const sentMessages = messages.filter(
-      message => message.status === MessageStatus.sent
+      message => message.status === MessageStatus.sent && !message.isArchived
     );
 
     if (options.afterUserCreatedAt) {
@@ -847,6 +927,7 @@ export class ConversationService {
       conversationId,
       role: MessageRole.user,
       status: MessageStatus.sent,
+      isArchived: { $ne: true },
       createdAt: {
         $gt: after,
       },
@@ -909,17 +990,54 @@ export class ConversationService {
     before: BeforeReplyResult,
     after?: AfterReplyResult
   ): SendConversationMessageResult {
+    const assistantMessages = after?.assistantMessages ?? [];
+
     return {
       userMessage: this.messageService.buildConversationMessageItem(
         before.userMessage
       ),
-      assistantMessage: after?.assistantMessage
-        ? this.messageService.buildConversationMessageItem(
-            after.assistantMessage
+      assistantMessage: this.buildLegacyAssistantMessageItem(
+        assistantMessages
+      ),
+      assistantMessages: assistantMessages.length
+        ? assistantMessages.map(message =>
+            this.messageService.buildConversationMessageItem(message)
           )
         : undefined,
       chatQuota: before.chatQuota,
     };
+  }
+
+  private buildLegacyAssistantMessageItem(
+    messages: MessageEntity[]
+  ): ConversationMessageItem | undefined {
+    if (messages.length === 0) {
+      return undefined;
+    }
+
+    if (messages.length === 1) {
+      return this.messageService.buildConversationMessageItem(messages[0]);
+    }
+
+    const firstMessage = messages[0];
+    const lastMessage = messages[messages.length - 1];
+    const legacyMessage = new MessageEntity();
+    Object.assign(legacyMessage, firstMessage, {
+      content: messages
+        .map(message => message.content?.trim())
+        .filter(Boolean)
+        .join('</fenge>'),
+      type: MessageType.text,
+      mediaObjectKey: '',
+      mediaUrl: '',
+      mediaMimeType: '',
+      mediaAnalysis: '',
+      mediaTranscript: '',
+      mediaDurationMs: undefined,
+      updatedAt: lastMessage.updatedAt,
+    });
+
+    return this.messageService.buildConversationMessageItem(legacyMessage);
   }
 
   private buildPreview(
@@ -1027,10 +1145,6 @@ export class ConversationService {
     return /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
       normalized
     );
-  }
-
-  private shouldPreferVoiceReply(payload: PreparedIncomingMessage): boolean {
-    return payload.type === MessageType.voice;
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {
@@ -1236,13 +1350,11 @@ export class ConversationService {
     }
   }
 
-  private async createAssistantReplyMessage(options: {
+  private async createAssistantReplyMessages(options: {
     conversationId: MongoObjectId;
     userId: MongoObjectId;
     agentId: MongoObjectId;
-    agent?: AgentEntity | null;
-    replyContent: string;
-    preferVoiceReply: boolean;
+    replySegments: string[];
     replyTime: Date;
     usage: {
       model?: string;
@@ -1250,52 +1362,38 @@ export class ConversationService {
       completionTokens?: number;
       totalTokens?: number;
     };
-  }): Promise<MessageEntity> {
-    const voiceTimbre = await this.findActiveVoiceTimbreForAgent(options.agent);
-    const synthesizedVoice = voiceTimbre
-      ? await this.synthesizeAssistantVoiceReply(
-          options.replyContent,
-          voiceTimbre
-        )
-      : undefined;
+  }): Promise<MessageEntity[]> {
+    const replyGroupId = new MongoObjectId().toHexString();
+    const messages: MessageEntity[] = [];
 
-    if (synthesizedVoice) {
-      return this.saveMessage({
-        conversationId: options.conversationId,
-        userId: options.userId,
-        agentId: options.agentId,
-        role: MessageRole.assistant,
-        type: options.preferVoiceReply ? MessageType.voice : MessageType.text,
-        content: options.replyContent,
-        status: MessageStatus.sent,
-        mediaObjectKey: synthesizedVoice.mediaObjectKey,
-        mediaMimeType: synthesizedVoice.mediaMimeType,
-        mediaDurationMs: synthesizedVoice.mediaDurationMs,
-        mediaTranscript: synthesizedVoice.transcript,
-        model: options.usage.model,
-        promptTokens: options.usage.promptTokens,
-        completionTokens: options.usage.completionTokens,
-        totalTokens: options.usage.totalTokens,
-        createdAt: options.replyTime,
-        updatedAt: options.replyTime,
-      });
+    for (const [index, segment] of options.replySegments.entries()) {
+      const segmentTime = new Date(options.replyTime.getTime() + index);
+      const isFirstSegment = index === 0;
+
+      messages.push(
+        await this.saveMessage({
+          conversationId: options.conversationId,
+          userId: options.userId,
+          agentId: options.agentId,
+          role: MessageRole.assistant,
+          type: MessageType.text,
+          content: segment,
+          status: MessageStatus.sent,
+          replyGroupId,
+          replySegmentIndex: index,
+          model: isFirstSegment ? options.usage.model : undefined,
+          promptTokens: isFirstSegment ? options.usage.promptTokens : undefined,
+          completionTokens: isFirstSegment
+            ? options.usage.completionTokens
+            : undefined,
+          totalTokens: isFirstSegment ? options.usage.totalTokens : undefined,
+          createdAt: segmentTime,
+          updatedAt: segmentTime,
+        })
+      );
     }
 
-    return this.saveMessage({
-      conversationId: options.conversationId,
-      userId: options.userId,
-      agentId: options.agentId,
-      role: MessageRole.assistant,
-      type: MessageType.text,
-      content: options.replyContent,
-      status: MessageStatus.sent,
-      model: options.usage.model,
-      promptTokens: options.usage.promptTokens,
-      completionTokens: options.usage.completionTokens,
-      totalTokens: options.usage.totalTokens,
-      createdAt: options.replyTime,
-      updatedAt: options.replyTime,
-    });
+    return messages;
   }
 
   private async synthesizeAssistantVoiceReply(
@@ -1900,7 +1998,7 @@ export class ConversationService {
     return `[语音] ${seconds}"`;
   }
 
-  private normalizeAssistantReply(value?: string): string {
+  private normalizeAssistantReplySegments(value?: string): string[] {
     const parsedSegments = this.parseAssistantSegments(value);
     const segments = parsedSegments
       .reduce<string[]>(
@@ -1913,7 +2011,7 @@ export class ConversationService {
       .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
     if (segments.length > 0) {
-      return segments.join('</fenge>');
+      return segments;
     }
 
     throw new AppError(
@@ -2101,6 +2199,8 @@ export class ConversationService {
     type: MessageType;
     content: string;
     status: MessageStatus;
+    replyGroupId?: string;
+    replySegmentIndex?: number;
     mediaObjectKey?: string;
     mediaUrl?: string;
     mediaMimeType?: string;
@@ -2122,6 +2222,13 @@ export class ConversationService {
     message.type = options.type;
     message.content = options.content;
     message.status = options.status;
+    message.replyGroupId = options.replyGroupId?.trim() || '';
+    message.replySegmentIndex =
+      typeof options.replySegmentIndex === 'number' &&
+      Number.isFinite(options.replySegmentIndex) &&
+      options.replySegmentIndex >= 0
+        ? Math.floor(options.replySegmentIndex)
+        : undefined;
     message.mediaObjectKey = options.mediaObjectKey?.trim() || '';
     message.mediaUrl = options.mediaUrl?.trim() || '';
     message.mediaMimeType = options.mediaMimeType?.trim() || '';
@@ -2290,10 +2397,36 @@ export class ConversationService {
     return this.messageModel.findOne({
       where: {
         conversationId: objectId,
-      },
+        isArchived: { $ne: true },
+      } as never,
       order: {
         createdAt: 'DESC',
       },
+    });
+  }
+
+  private async findMessageById(
+    messageId: MongoObjectId,
+    conversationId: MongoObjectId
+  ): Promise<MessageEntity | null> {
+    const messageById = await this.messageModel.findOne({
+      where: {
+        id: messageId,
+        conversationId,
+        isArchived: { $ne: true },
+      } as never,
+    });
+
+    if (messageById) {
+      return messageById;
+    }
+
+    return this.messageModel.findOne({
+      where: {
+        _id: messageId,
+        conversationId,
+        isArchived: { $ne: true },
+      } as never,
     });
   }
 

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post } from '@midwayjs/core';
+import { Body, Controller, Del, Get, Inject, Param, Post } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import {
   SendConversationMessageDTO,
@@ -38,6 +38,20 @@ export class ConversationController {
     };
   }
 
+  @Del('/:conversationId/messages/:messageId')
+  async deleteMessage(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    await this.messageService.deleteMessage(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId
+    );
+
+    return { deleted: true };
+  }
+
   @Get('/:conversationId/chat-quota')
   async getChatQuota(@Param('conversationId') conversationId: string) {
     return this.conversationService.getChatQuota(
@@ -67,6 +81,18 @@ export class ConversationController {
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
       body
+    );
+  }
+
+  @Post('/:conversationId/messages/:messageId/voice')
+  async generateMessageVoice(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.conversationService.generateMessageVoice(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId
     );
   }
 

@@ -73,13 +73,44 @@ export class MessageService {
     const messages = await this.messageModel.find({
       where: {
         conversationId: conversation.id,
-      },
+        isArchived: { $ne: true },
+      } as never,
       order: {
         createdAt: 'ASC',
       },
     });
 
-    return messages.map(message => this.buildConversationMessageItem(message));
+    return messages
+      .filter(message => !message.isArchived)
+      .map(message => this.buildConversationMessageItem(message));
+  }
+
+  async deleteMessage(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    messageId: string
+  ): Promise<void> {
+    const conversation = await this.getConversationForUser(
+      auth,
+      conversationId
+    );
+    const objectId = this.parseObjectId(messageId);
+    const message = await this.findMessageById(objectId, conversation.id);
+
+    if (!message) {
+      throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
+    }
+
+    if (message.isArchived) {
+      return;
+    }
+
+    const now = new Date();
+    message.isArchived = true;
+    message.archivedAt = now;
+    message.updatedAt = now;
+
+    await this.messageModel.save(message);
   }
 
   buildConversationMessageItem(
@@ -321,6 +352,29 @@ export class MessageService {
       where: {
         _id: conversationId,
         userId,
+      } as never,
+    });
+  }
+
+  private async findMessageById(
+    messageId: MongoObjectId,
+    conversationId: MongoObjectId
+  ): Promise<MessageEntity | null> {
+    const messageById = await this.messageModel.findOne({
+      where: {
+        id: messageId,
+        conversationId,
+      },
+    });
+
+    if (messageById) {
+      return messageById;
+    }
+
+    return this.messageModel.findOne({
+      where: {
+        _id: messageId,
+        conversationId,
       } as never,
     });
   }

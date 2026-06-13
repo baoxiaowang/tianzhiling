@@ -94,7 +94,9 @@
                 :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
                 :is-user="item.isUser"
                 :is-sending="item.isSending"
+                @message-tap="handleMessageTap(item.messageId)"
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
+                @message-long-press="handleMessageLongPress(item.messageId)"
               />
 
               <template v-if="item.isUser">
@@ -297,6 +299,8 @@ import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import { getAgentDetail } from '../../apis/agent'
 import {
+  deleteConversationMessage,
+  generateConversationMessageVoice,
   getConversationChatQuota,
   getConversationMessages,
   sendConversationMessageAsync,
@@ -456,6 +460,8 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
     '宝，今日对话结束啦（非会员试用期每天 30句）～可以明天再来哦，先好好生活吧，记得在心里牵挂TA～想畅聊点击【开通会员】',
 } as const
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
+const DELETE_MESSAGE_ACTION_INDEX = 0
+const GENERATE_VOICE_ACTION_INDEX = 0
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -531,6 +537,8 @@ let replyPollingTimer: ReturnType<typeof setTimeout> | null = null
 let replyPollingStartedAt = 0
 let replyPollingAfterUserCreatedAt: Date | null = null
 let scrollToBottomPromise: Promise<void> | null = null
+const deletingMessageIds = new Set<string>()
+const generatingVoiceMessageIds = new Set<string>()
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
 const assistantSegmentRevealTimers = new Set<AssistantSegmentRevealTimer>()
 let assistantSegmentRevealGeneration = 0
@@ -965,6 +973,33 @@ async function revealAssistantMessage(message: ConversationMessage) {
   }
 }
 
+async function revealAssistantMessages(items: ConversationMessage[]) {
+  for (let index = 0; index < items.length; index += 1) {
+    const message = items[index]
+
+    if (index > 0) {
+      const shouldContinue = await waitForAssistantSegmentDelay(
+        getAssistantSegmentRevealDelay(buildMessageText(message)),
+      )
+
+      if (!shouldContinue) {
+        return
+      }
+    }
+
+    await revealAssistantMessage(message)
+    await scrollToBottom()
+  }
+}
+
+function getAssistantMessagesFromResult(result: SendConversationMessageResult) {
+  if (result.assistantMessages?.length) {
+    return result.assistantMessages
+  }
+
+  return result.assistantMessage ? [result.assistantMessage] : []
+}
+
 async function appendConversationResult(
   tempMessageId: string,
   result: SendConversationMessageResult,
@@ -973,12 +1008,13 @@ async function appendConversationResult(
   messages.value = [...messages.value, result.userMessage]
   handleChatQuotaAfterSend(result)
 
-  if (!result.assistantMessage) {
+  const assistantMessages = getAssistantMessagesFromResult(result)
+  if (!assistantMessages.length) {
     return
   }
 
-  await revealAssistantMessage(result.assistantMessage)
-  probeMissingAssistantVoiceDurations([result.assistantMessage])
+  await revealAssistantMessages(assistantMessages)
+  probeMissingAssistantVoiceDurations(assistantMessages)
 }
 
 function handleChatQuotaAfterSend(result: SendConversationMessageResult) {
@@ -1296,10 +1332,7 @@ async function reconcilePolledMessages(
 
   messages.value = items.filter((message) => !newAssistantIds.has(message.id))
 
-  for (const message of newAssistantMessages) {
-    await revealAssistantMessage(message)
-  }
-
+  await revealAssistantMessages(newAssistantMessages)
   await scrollToBottom()
 }
 
@@ -1592,6 +1625,159 @@ function handleChatBodyTap() {
 function hideComposerPanels() {
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
+}
+
+function handleMessageTap(messageId: string) {
+  void showMessageVoiceAction(messageId)
+}
+
+async function showMessageVoiceAction(messageId: string) {
+  const message = messages.value.find((item) => item.id === messageId)
+  if (!shouldOfferVoiceGeneration(message)) {
+    return
+  }
+
+  hideComposerPanels()
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+
+  try {
+    const result = await Taro.showActionSheet({
+      itemList: ['转语音'],
+    })
+
+    if (result.tapIndex === GENERATE_VOICE_ACTION_INDEX) {
+      await generateMessageVoice(message)
+    }
+  } catch {}
+}
+
+function shouldOfferVoiceGeneration(message?: ConversationMessage) {
+  return Boolean(
+    message
+      && message.role === 'assistant'
+      && message.type === 'text'
+      && message.status === 'sent'
+      && !hasResolvableVoicePayload(message.voice),
+  )
+}
+
+async function generateMessageVoice(message: ConversationMessage) {
+  if (!conversationId.value || generatingVoiceMessageIds.has(message.id)) {
+    if (generatingVoiceMessageIds.has(message.id)) {
+      showToast('语音生成中')
+    }
+    return
+  }
+
+  generatingVoiceMessageIds.add(message.id)
+
+  try {
+    showToast('语音生成中')
+    const updatedMessage = await generateConversationMessageVoice(
+      conversationId.value,
+      message.id,
+    )
+    messages.value = messages.value.map((item) =>
+      item.id === updatedMessage.id ? updatedMessage : item
+    )
+    probeMissingAssistantVoiceDurations([updatedMessage])
+    showToast('已生成语音')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '语音生成失败，请稍后重试')
+  } finally {
+    generatingVoiceMessageIds.delete(message.id)
+  }
+}
+
+function handleMessageLongPress(messageId: string) {
+  void showMessageDeleteAction(messageId)
+}
+
+async function showMessageDeleteAction(messageId: string) {
+  const message = messages.value.find((item) => item.id === messageId)
+  if (!message) {
+    return
+  }
+
+  hideComposerPanels()
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+
+  try {
+    const result = await Taro.showActionSheet({
+      itemList: ['删除'],
+      itemColor: '#e54d42',
+    })
+
+    if (result.tapIndex === DELETE_MESSAGE_ACTION_INDEX) {
+      await deleteMessageFromConversation(message)
+    }
+  } catch {}
+}
+
+async function deleteMessageFromConversation(message: ConversationMessage) {
+  if (message.status === 'sending') {
+    showToast('消息发送中，暂不能删除')
+    return
+  }
+
+  if (isLocalOnlyMessageId(message.id)) {
+    if (message.status === 'failed') {
+      removeMessageFromState(message.id)
+      return
+    }
+
+    showToast('消息发送中，暂不能删除')
+    return
+  }
+
+  if (!conversationId.value || deletingMessageIds.has(message.id)) {
+    return
+  }
+
+  deletingMessageIds.add(message.id)
+
+  try {
+    await deleteConversationMessage(conversationId.value, message.id)
+    removeMessageFromState(message.id)
+    showToast('已删除')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '删除失败，请稍后重试')
+  } finally {
+    deletingMessageIds.delete(message.id)
+  }
+}
+
+function removeMessageFromState(messageId: string) {
+  const removedMessage = messages.value.find((message) => message.id === messageId)
+
+  if (activeVoiceMessageId.value === messageId) {
+    stopVoicePlayback({ muteErrors: true })
+  }
+
+  const nextMessages = messages.value.filter((message) => message.id !== messageId)
+  messages.value = nextMessages
+
+  if (removedMessage?.role === 'user') {
+    resumePendingReplyPollingFromMessages(nextMessages)
+  }
+}
+
+function isLocalOnlyMessageId(messageId: string) {
+  return messageId.startsWith('local-')
 }
 
 function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
