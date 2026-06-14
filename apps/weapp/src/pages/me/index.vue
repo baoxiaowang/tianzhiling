@@ -3,6 +3,7 @@
     class="me-tab-page"
     body-padding="0"
     background="#efeff4"
+    :scroll="true"
     :safe-area-top="false"
     :safe-area-bottom="false"
     require-auth
@@ -22,128 +23,126 @@
       </text>
     </view>
 
-    <scroll-view v-else-if="session" scroll-y class="me-scroll">
-      <view class="me-page">
-        <view class="me-profile" @tap="handleProfileTap">
-          <image
-            v-if="avatarUrl"
-            class="me-profile__avatar"
-            :src="avatarUrl"
-            mode="aspectFill"
-          />
-          <view v-else class="me-profile__avatar me-profile__avatar--fallback">
-            {{ avatarFallback }}
-          </view>
-
-          <view class="me-profile__meta">
-            <view class="me-profile__name-row">
-              <text class="me-profile__name">{{ displayName }}</text>
-              <view v-if="isVipUser" class="me-profile__vip-badge">
-                <text>VIP</text>
-              </view>
-            </view>
-            <view class="me-profile__account-row">
-              <text class="me-profile__account">ID：{{ displayAccount }}</text>
-              <view
-                class="me-profile__copy-button"
-                hover-class="me-profile__copy-button--hover"
-                aria-label="复制ID"
-                @tap.stop="handleCopyAccount"
-              >
-                <view class="me-profile__copy-icon">
-                  <view class="me-profile__copy-icon-back" />
-                  <view class="me-profile__copy-icon-front" />
-                </view>
-              </view>
-            </view>
-          </view>
-
-          <view class="me-arrow" />
+    <view v-else-if="session" class="me-page">
+      <view class="me-profile" @tap="handleProfileTap">
+        <image
+          v-if="avatarUrl"
+          class="me-profile__avatar"
+          :src="avatarUrl"
+          mode="aspectFill"
+        />
+        <view v-else class="me-profile__avatar me-profile__avatar--fallback">
+          {{ avatarFallback }}
         </view>
 
-        <view class="me-page__spacer" />
-
-        <view class="me-menu-section">
-          <view
-            v-for="(action, index) in primaryMenuActions"
-            :key="action.title"
-            class="me-menu-section__item"
-            @tap="handleMenuTap(action.title)"
-          >
-            <view class="me-menu-item">
-              <text class="me-menu-item__label">{{ action.title }}</text>
-              <view class="me-menu-item__right">
-                <text
-                  v-if="action.title === '我的消息' && unreadMessageCountText"
-                  class="me-menu-item__badge"
-                >
-                  {{ unreadMessageCountText }}
-                </text>
-                <view class="me-arrow" />
-              </view>
+        <view class="me-profile__meta">
+          <view class="me-profile__name-row">
+            <text class="me-profile__name">{{ displayName }}</text>
+            <view v-if="isVipUser" class="me-profile__vip-badge">
+              <text>VIP</text>
             </view>
+          </view>
+          <view class="me-profile__account-row">
+            <text class="me-profile__account">ID：{{ displayAccount }}</text>
             <view
-              v-if="index !== primaryMenuActions.length - 1"
-              class="me-menu-section__divider"
-            />
-          </view>
-        </view>
-
-        <view class="me-page__spacer" />
-
-        <view class="me-menu-section">
-          <view class="me-feature-item" @tap="handleMenuTap('VIP 服务')">
-            <text class="me-feature-item__label">VIP 服务</text>
-            <view class="me-feature-item__right">
-              <text class="me-feature-item__value">{{ vipServiceText }}</text>
-              <view class="me-arrow me-arrow--muted" />
-            </view>
-          </view>
-          <view class="me-feature-item" @tap="handleMenuTap('声音模型')">
-            <text class="me-feature-item__label">声音模型</text>
-            <view class="me-feature-item__right">
-              <view class="me-voice-stack">
-                <view
-                  v-for="agent in voicePreviewAgents"
-                  :key="agent.id"
-                  class="me-voice-stack__avatar"
-                >
-                  <image
-                    v-if="agent.avatar"
-                    class="me-voice-stack__avatar-image"
-                    :src="agent.avatar"
-                    mode="aspectFill"
-                  />
-                  <text v-else>{{ buildAgentFallback(agent.name) }}</text>
-                </view>
+              class="me-profile__copy-button"
+              hover-class="me-profile__copy-button--hover"
+              aria-label="复制ID"
+              @tap.stop="handleCopyAccount"
+            >
+              <view class="me-profile__copy-icon">
+                <view class="me-profile__copy-icon-back" />
+                <view class="me-profile__copy-icon-front" />
               </view>
-              <text class="me-feature-item__value">{{ voiceModelCountText }}</text>
-              <view class="me-arrow me-arrow--muted" />
             </view>
           </view>
         </view>
 
-        <view class="me-page__spacer" />
+        <view class="me-arrow" />
+      </view>
 
-        <view class="me-menu-section">
-          <view
-            v-for="(action, index) in serviceMenuActions"
-            :key="action.title"
-            class="me-menu-section__item"
-            @tap="handleMenuTap(action.title)"
-          >
-            <view class="me-menu-item">
-              <text class="me-menu-item__label">{{ action.title }}</text>
+      <view class="me-page__spacer" />
+
+      <view class="me-menu-section">
+        <view
+          v-for="(action, index) in primaryMenuActions"
+          :key="action.title"
+          class="me-menu-section__item"
+          @tap="handleMenuTap(action.title)"
+        >
+          <view class="me-menu-item">
+            <text class="me-menu-item__label">{{ action.title }}</text>
+            <view class="me-menu-item__right">
+              <text
+                v-if="action.title === '我的消息' && unreadMessageCountText"
+                class="me-menu-item__badge"
+              >
+                {{ unreadMessageCountText }}
+              </text>
               <view class="me-arrow" />
             </view>
-            <view
-              v-if="index !== serviceMenuActions.length - 1"
-              class="me-menu-section__divider"
-            />
+          </view>
+          <view
+            v-if="index !== primaryMenuActions.length - 1"
+            class="me-menu-section__divider"
+          />
+        </view>
+      </view>
+
+      <view class="me-page__spacer" />
+
+      <view class="me-menu-section">
+        <view class="me-feature-item" @tap="handleMenuTap('VIP 服务')">
+          <text class="me-feature-item__label">VIP 服务</text>
+          <view class="me-feature-item__right">
+            <text class="me-feature-item__value">{{ vipServiceText }}</text>
+            <view class="me-arrow me-arrow--muted" />
+          </view>
+        </view>
+        <view class="me-feature-item" @tap="handleMenuTap('声音模型')">
+          <text class="me-feature-item__label">声音模型</text>
+          <view class="me-feature-item__right">
+            <view class="me-voice-stack">
+              <view
+                v-for="agent in voicePreviewAgents"
+                :key="agent.id"
+                class="me-voice-stack__avatar"
+              >
+                <image
+                  v-if="agent.avatar"
+                  class="me-voice-stack__avatar-image"
+                  :src="agent.avatar"
+                  mode="aspectFill"
+                />
+                <text v-else>{{ buildAgentFallback(agent.name) }}</text>
+              </view>
+            </view>
+            <text class="me-feature-item__value">{{ voiceModelCountText }}</text>
+            <view class="me-arrow me-arrow--muted" />
           </view>
         </view>
       </view>
-    </scroll-view>
+
+      <view class="me-page__spacer" />
+
+      <view class="me-menu-section">
+        <view
+          v-for="(action, index) in serviceMenuActions"
+          :key="action.title"
+          class="me-menu-section__item"
+          @tap="handleMenuTap(action.title)"
+        >
+          <view class="me-menu-item">
+            <text class="me-menu-item__label">{{ action.title }}</text>
+            <view class="me-arrow" />
+          </view>
+          <view
+            v-if="index !== serviceMenuActions.length - 1"
+            class="me-menu-section__divider"
+          />
+        </view>
+      </view>
+    </view>
   </page-scaffold>
 </template>
 
@@ -375,12 +374,6 @@ useDidShow(() => {
 .loading-state__text {
   font-size: 14px;
   color: $tzl-color-text-muted;
-}
-
-.me-scroll {
-  box-sizing: border-box;
-  height: 100%;
-  background: #efeff4;
 }
 
 .me-page {

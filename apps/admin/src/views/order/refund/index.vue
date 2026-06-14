@@ -3,6 +3,7 @@
     title="退款管理"
     status="refund_requested"
     hide-status-filter
+    exclude-admin-manual
     empty-description="暂无退款申请"
   />
 </template>

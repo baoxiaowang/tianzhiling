@@ -32,6 +32,12 @@ export function refundOrder(id: string) {
   } as TzlAxiosRequestConfig);
 }
 
+export function revokeAdminManualOrder(id: string) {
+  return axios.post<OrderRecord>(`/admin_api/orders/${id}/revoke`, undefined, {
+    hideErrorMessage: true,
+  } as TzlAxiosRequestConfig);
+}
+
 export function syncOrderPaymentStatus(id: string) {
   return axios.post<OrderRecord>(
     `/admin_api/orders/${id}/sync-payment`,

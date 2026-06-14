@@ -89,13 +89,33 @@
       </view>
 
       <view class="memorial-photo-section memorial-photo-prompt">
-        <view class="memorial-photo-section__header">
-          <text class="memorial-photo-section__title">合照提示词</text>
-          <text class="memorial-photo-section__count">
-            {{ customPromptLength }}/{{ MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH }}
-          </text>
+        <view
+          class="memorial-photo-section__header memorial-photo-prompt__header"
+          :class="{ 'memorial-photo-prompt__header--open': isCustomPromptVisible }"
+          @tap="toggleCustomPromptVisible"
+        >
+          <view class="memorial-photo-prompt__title-group">
+            <text class="memorial-photo-section__title">自定义提示词</text>
+            <text class="memorial-photo-prompt__optional">选填</text>
+          </view>
+          <view class="memorial-photo-prompt__meta">
+            <text
+              v-if="isCustomPromptVisible || customPromptLength"
+              class="memorial-photo-section__count"
+            >
+              {{ customPromptLength }}/{{ MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH }}
+            </text>
+            <text class="memorial-photo-prompt__toggle">
+              {{ isCustomPromptVisible ? '收起' : '展开' }}
+            </text>
+            <view
+              class="memorial-photo-prompt__arrow"
+              :class="{ 'memorial-photo-prompt__arrow--open': isCustomPromptVisible }"
+            />
+          </view>
         </view>
         <textarea
+          v-if="isCustomPromptVisible"
           class="memorial-photo-prompt__textarea"
           :value="customPrompt"
           :maxlength="MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH"
@@ -106,7 +126,7 @@
           cursor-spacing="16"
           @input="handleCustomPromptInput"
         />
-        <text class="memorial-photo-prompt__hint">
+        <text v-if="isCustomPromptVisible" class="memorial-photo-prompt__hint">
           不填会使用默认纪念合照效果；填写后优先按你描述的动作、表情、风格和场景生成。
         </text>
       </view>
@@ -212,6 +232,7 @@ const isUploadingAgentPhotos = shallowRef(false)
 const isUploadingUserPhoto = shallowRef(false)
 const isGenerating = shallowRef(false)
 const isConsentChecked = shallowRef(false)
+const isCustomPromptVisible = shallowRef(false)
 const loadError = shallowRef('')
 
 const isBusy = computed(() => {
@@ -439,6 +460,10 @@ function removeUserPhoto() {
   }
 
   userPhoto.value = null
+}
+
+function toggleCustomPromptVisible() {
+  isCustomPromptVisible.value = !isCustomPromptVisible.value
 }
 
 function handleCustomPromptInput(event: { detail?: { value?: string } }) {
@@ -749,6 +774,52 @@ function buildObjectKeyUrl(objectKey?: string) {
   line-height: 21px;
   background: #f6f7f9;
   box-sizing: border-box;
+}
+
+.memorial-photo-prompt__header {
+  margin-bottom: 0;
+}
+
+.memorial-photo-prompt__header--open {
+  margin-bottom: 12px;
+}
+
+.memorial-photo-prompt__title-group,
+.memorial-photo-prompt__meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memorial-photo-prompt__title-group {
+  flex: 1;
+}
+
+.memorial-photo-prompt__meta {
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.memorial-photo-prompt__optional,
+.memorial-photo-prompt__toggle {
+  flex-shrink: 0;
+  color: #8a8f98;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.memorial-photo-prompt__arrow {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid #98a2b3;
+  border-bottom: 1.5px solid #98a2b3;
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.memorial-photo-prompt__arrow--open {
+  transform: rotate(225deg);
 }
 
 .memorial-photo-prompt__placeholder {

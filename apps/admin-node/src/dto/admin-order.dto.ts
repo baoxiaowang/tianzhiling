@@ -53,6 +53,9 @@ export class ListAdminOrdersQueryDTO {
   @Rule(adminOrderPaymentTypeRule.allow('').optional())
   paymentType?: string;
 
+  @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
+  excludeAdminManual?: boolean | string;
+
   @Rule(RuleType.string().allow('').optional())
   createdAtStart?: string;
 

@@ -25,6 +25,11 @@ export class AdminOrderController {
     return this.adminOrderService.refundOrder(id);
   }
 
+  @Post('/:id/revoke')
+  async revoke(@Param('id') id: string) {
+    return this.adminOrderService.revokeAdminManualOrder(id);
+  }
+
   @Post('/:id/sync-payment')
   async syncPayment(@Param('id') id: string) {
     return this.adminOrderService.syncPaymentStatus(id);

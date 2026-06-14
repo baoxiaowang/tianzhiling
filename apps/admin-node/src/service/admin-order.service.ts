@@ -278,6 +278,15 @@ export class AdminOrderService {
     return this.buildOrderRecord(order, userMap);
   }
 
+  async revokeAdminManualOrder(orderId: string): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+
+    await this.revokeAdminManualPaidOrder(order);
+    const userMap = await this.getOrderUserMap([order]);
+
+    return this.buildOrderRecord(order, userMap);
+  }
+
   async syncPaymentStatus(orderId: string): Promise<AdminOrderRecordDTO> {
     const order = await this.getOrderById(orderId);
 
@@ -676,7 +685,11 @@ export class AdminOrderService {
     await this.assertRefundableOrderBenefits(order);
 
     if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
-      // Manual admin orders have no external payment to refund.
+      throw new AppError(
+        'ORDER_REFUND_PROVIDER_UNSUPPORTED',
+        'admin manual order cannot be refunded',
+        400
+      );
     } else if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
       await this.refundVirtualPaymentOrder(order, refundAmount, reason);
     } else {
@@ -695,6 +708,42 @@ export class AdminOrderService {
     order.status = OrderStatus.refunded;
     order.refundAmount = refundAmount;
     order.refundedAt = now;
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async revokeAdminManualPaidOrder(order: OrderEntity): Promise<void> {
+    if (order.status === OrderStatus.closed) {
+      return;
+    }
+
+    if (order.paymentProvider !== ADMIN_MANUAL_PAYMENT_PROVIDER) {
+      throw new AppError(
+        'ORDER_REVOKE_PROVIDER_UNSUPPORTED',
+        'only admin manual order can be revoked',
+        400
+      );
+    }
+
+    if (!this.isRefundableOrderType(order.orderType)) {
+      throw new AppError(
+        'ORDER_REVOKE_TYPE_UNSUPPORTED',
+        'order type cannot be revoked',
+        400
+      );
+    }
+
+    if (!this.isRefundableOrderStatus(order.status)) {
+      throw new AppError('ORDER_NOT_REVOKABLE', 'order is not revocable', 400);
+    }
+
+    await this.assertRefundableOrderBenefits(order);
+
+    const now = new Date();
+    await this.revokeOrderBenefits(order, now);
+
+    order.status = OrderStatus.closed;
+    order.closedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
   }
@@ -1056,6 +1105,7 @@ export class AdminOrderService {
     const orderType = this.normalizeOptionalOrderType(query?.orderType);
     const source = this.normalizeOptionalSource(query?.source);
     const paymentType = this.normalizeOptionalPaymentType(query?.paymentType);
+    const excludeAdminManual = this.normalizeBoolean(query?.excludeAdminManual);
     const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
     const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
     const userId = this.normalizeOptionalObjectId(query?.userId);
@@ -1076,7 +1126,13 @@ export class AdminOrderService {
     if (paymentType === 'virtual') {
       where.paymentProvider = WECHAT_VIRTUAL_PAY_PROVIDER;
     } else if (paymentType === 'normal') {
-      where.paymentProvider = { $ne: WECHAT_VIRTUAL_PAY_PROVIDER };
+      where.paymentProvider = excludeAdminManual
+        ? {
+            $nin: [WECHAT_VIRTUAL_PAY_PROVIDER, ADMIN_MANUAL_PAYMENT_PROVIDER],
+          }
+        : { $ne: WECHAT_VIRTUAL_PAY_PROVIDER };
+    } else if (excludeAdminManual) {
+      where.paymentProvider = { $ne: ADMIN_MANUAL_PAYMENT_PROVIDER };
     }
 
     if (createdAtStart || createdAtEnd) {
@@ -1630,6 +1686,10 @@ export class AdminOrderService {
     }
 
     return new MongoObjectId(normalizedValue);
+  }
+
+  private normalizeBoolean(value: unknown): boolean {
+    return value === true || value === 'true' || value === '1';
   }
 
   private normalizePositiveInteger(

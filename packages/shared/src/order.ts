@@ -92,6 +92,7 @@ export interface AdminOrderListParamsDTO {
   orderType?: OrderTypeDTO;
   source?: OrderSourceDTO;
   paymentType?: AdminOrderPaymentTypeDTO;
+  excludeAdminManual?: boolean;
   createdAtStart?: string;
   createdAtEnd?: string;
   userId?: string;

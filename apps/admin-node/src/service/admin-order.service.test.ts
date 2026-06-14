@@ -574,6 +574,39 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('excludes admin manual orders when requested', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      status: OrderStatus.refundRequested,
+      excludeAdminManual: true,
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      status: OrderStatus.refundRequested,
+      paymentProvider: { $ne: 'admin_manual' },
+    });
+  });
+
+  it('excludes admin manual orders from normal payment filters when requested', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({
+      paymentType: 'normal',
+      excludeAdminManual: 'true',
+    });
+
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      paymentProvider: { $nin: ['wechat_virtual_pay', 'admin_manual'] },
+    });
+  });
+
   it('creates an admin vip order and grants membership benefits', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders } = createService();
@@ -1109,7 +1142,7 @@ describe('AdminOrderService', () => {
     jest.useRealTimers();
   });
 
-  it('refunds an admin manual vip order without calling WeChat', async () => {
+  it('rejects refund for admin manual vip orders', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders, memberships, entitlements } = createService();
     const order = createCompletedVipOrder({
@@ -1123,14 +1156,78 @@ describe('AdminOrderService', () => {
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
     jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
 
-    const result = await service.refundOrder(ORDER_ID.toHexString());
+    await expect(
+      service.refundOrder(ORDER_ID.toHexString())
+    ).rejects.toMatchObject({
+      code: 'ORDER_REFUND_PROVIDER_UNSUPPORTED',
+      status: 400,
+    });
 
     expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
     expect(
       service.adminWechatPayService.refundVirtualOrder
     ).not.toHaveBeenCalled();
-    expect(result.status).toBe(OrderStatus.refunded);
-    expect(result.refundAmount).toBe(9900);
+    expect(service.userMembershipModel.save).not.toHaveBeenCalled();
+    expect(service.agentEntitlementModel.save).not.toHaveBeenCalled();
+    expect(service.orderModel.save).not.toHaveBeenCalled();
+  });
+
+  it('revokes an admin manual vip order without calling payment refund', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders, memberships, entitlements } = createService();
+    const order = createCompletedVipOrder({
+      source: OrderSource.admin,
+      paymentProvider: 'admin_manual',
+    });
+
+    orders.push(order);
+    memberships.push(createMembership());
+    entitlements.push(createEntitlement());
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.revokeAdminManualOrder(ORDER_ID.toHexString());
+
+    expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).not.toHaveBeenCalled();
+    expect(service.userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: UserMembershipStatus.refunded,
+        updatedAt: ORDER_CREATED_AT,
+      })
+    );
+    expect(service.agentEntitlementModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: AgentEntitlementStatus.refunded,
+        updatedAt: ORDER_CREATED_AT,
+      })
+    );
+    expect(service.orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: OrderStatus.closed,
+        closedAt: ORDER_CREATED_AT,
+      })
+    );
+    expect(result.status).toBe(OrderStatus.closed);
+    expect(result.refundAmount).toBeUndefined();
+    expect(result.closedAt).toBe(ORDER_CREATED_AT.toISOString());
+  });
+
+  it('rejects revoke for payment orders', async () => {
+    const { service, orders } = createService();
+
+    orders.push(createCompletedVipOrder());
+
+    await expect(
+      service.revokeAdminManualOrder(ORDER_ID.toHexString())
+    ).rejects.toMatchObject({
+      code: 'ORDER_REVOKE_PROVIDER_UNSUPPORTED',
+      status: 400,
+    });
+    expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
+    expect(service.orderModel.save).not.toHaveBeenCalled();
   });
 
   it('refunds a virtual payment vip order through xpay', async () => {

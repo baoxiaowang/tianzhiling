@@ -153,15 +153,18 @@
           <a-table-column title="金额" data-index="payableAmount" :width="150">
             <template #cell="{ record }">
               <div>{{ formatAmount(record.payableAmount) }}</div>
-              <div v-if="record.refundAmount" class="order-page__refund-amount">
+              <div
+                v-if="record.refundAmount && !isAdminManualOrder(record)"
+                class="order-page__refund-amount"
+              >
                 退 {{ formatAmount(record.refundAmount) }}
               </div>
             </template>
           </a-table-column>
           <a-table-column title="状态" data-index="status" :width="120">
             <template #cell="{ record }">
-              <a-tag :color="getStatusColor(record.status)">
-                {{ getStatusText(record.status) }}
+              <a-tag :color="getRecordStatusColor(record)">
+                {{ getRecordStatusText(record) }}
               </a-tag>
             </template>
           </a-table-column>
@@ -266,6 +269,23 @@
                     退订
                   </a-button>
                 </a-popconfirm>
+                <a-popconfirm
+                  v-if="canRevokeAdminManualOrder(record)"
+                  :content="getRevokeConfirmContent(record)"
+                  ok-text="回收"
+                  cancel-text="取消"
+                  position="left"
+                  @ok="handleRevokeAdminManualOrder(record)"
+                >
+                  <a-button
+                    type="text"
+                    status="danger"
+                    size="small"
+                    :loading="revokeLoadingId === record.id"
+                  >
+                    回收
+                  </a-button>
+                </a-popconfirm>
               </a-space>
             </template>
           </a-table-column>
@@ -304,8 +324,8 @@
           {{ currentOrder.title || '-' }}
         </a-descriptions-item>
         <a-descriptions-item label="订单状态">
-          <a-tag :color="getStatusColor(currentOrder.status)">
-            {{ getStatusText(currentOrder.status) }}
+          <a-tag :color="getRecordStatusColor(currentOrder)">
+            {{ getRecordStatusText(currentOrder) }}
           </a-tag>
         </a-descriptions-item>
         <a-descriptions-item label="用户">
@@ -336,7 +356,10 @@
         <a-descriptions-item label="已付金额">
           {{ formatOptionalAmount(currentOrder.paidAmount) }}
         </a-descriptions-item>
-        <a-descriptions-item label="退款金额">
+        <a-descriptions-item
+          v-if="!isAdminManualOrder(currentOrder)"
+          label="退款金额"
+        >
           {{ formatOptionalAmount(currentOrder.refundAmount) }}
         </a-descriptions-item>
         <a-descriptions-item label="支付渠道">
@@ -394,10 +417,13 @@
         <a-descriptions-item label="支付时间">
           {{ formatDate(currentOrder.paidAt) }}
         </a-descriptions-item>
-        <a-descriptions-item label="关闭时间">
+        <a-descriptions-item :label="getClosedAtLabel(currentOrder)">
           {{ formatDate(currentOrder.closedAt) }}
         </a-descriptions-item>
-        <a-descriptions-item label="退款时间">
+        <a-descriptions-item
+          v-if="!isAdminManualOrder(currentOrder)"
+          label="退款时间"
+        >
           {{ formatDate(currentOrder.refundedAt) }}
         </a-descriptions-item>
       </a-descriptions>
@@ -583,6 +609,7 @@
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
+    revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
   } from '@/api/order';
 
@@ -593,6 +620,7 @@
       status?: OrderStatusDTO;
       hideStatusFilter?: boolean;
       emptyDescription?: string;
+      excludeAdminManual?: boolean;
       userId?: string;
       embedded?: boolean;
     }>(),
@@ -602,6 +630,7 @@
       status: undefined,
       hideStatusFilter: false,
       emptyDescription: '',
+      excludeAdminManual: false,
       userId: '',
       embedded: false,
     }
@@ -613,6 +642,7 @@
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
+  const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
   const createVisible = ref(false);
   const createSubmitting = ref(false);
@@ -707,6 +737,7 @@
     orderType: props.orderType,
     source: searchForm.source || undefined,
     paymentType: searchForm.paymentType || undefined,
+    excludeAdminManual: props.excludeAdminManual || undefined,
     createdAtStart: normalizedCreatedAtRange.value.createdAtStart,
     createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
     userId: props.userId || undefined,
@@ -799,6 +830,19 @@
     return (
       (record.orderType === 'vip_plan' ||
         record.orderType === 'voice_package') &&
+      !isAdminManualOrder(record) &&
+      (record.status === 'completed' ||
+        record.status === 'paid' ||
+        record.status === 'refund_requested' ||
+        record.status === 'grant_failed')
+    );
+  };
+
+  const canRevokeAdminManualOrder = (record: OrderRecord) => {
+    return (
+      (record.orderType === 'vip_plan' ||
+        record.orderType === 'voice_package') &&
+      isAdminManualOrder(record) &&
       (record.status === 'completed' ||
         record.status === 'paid' ||
         record.status === 'refund_requested' ||
@@ -1111,6 +1155,30 @@
     }
   };
 
+  const handleRevokeAdminManualOrder = async (record: OrderRecord) => {
+    if (revokeLoadingId.value) {
+      return;
+    }
+
+    revokeLoadingId.value = record.id;
+
+    try {
+      const { data } = await revokeAdminManualOrderApi(record.id);
+
+      replaceOrderRecord(data);
+
+      Message.success(getRevokeSuccessText(record));
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '回收失败，请稍后重试'
+      );
+    } finally {
+      revokeLoadingId.value = '';
+    }
+  };
+
   const canOpenOrderUser = (record: OrderRecord) => {
     return Boolean(record.userId);
   };
@@ -1148,6 +1216,18 @@
     return statusMap[status]?.color ?? 'gray';
   };
 
+  const getRecordStatusText = (record: OrderRecord) => {
+    return isRevokedAdminManualOrder(record)
+      ? '已回收'
+      : getStatusText(record.status);
+  };
+
+  const getRecordStatusColor = (record: OrderRecord) => {
+    return isRevokedAdminManualOrder(record)
+      ? 'gray'
+      : getStatusColor(record.status);
+  };
+
   const getSourceText = (source: OrderSourceDTO) => {
     return sourceMap[source] ?? source;
   };
@@ -1170,6 +1250,14 @@
 
   const isVirtualPaymentOrder = (record: OrderRecord) => {
     return record.paymentProvider === 'wechat_virtual_pay';
+  };
+
+  const isAdminManualOrder = (record: OrderRecord) => {
+    return record.paymentProvider === 'admin_manual';
+  };
+
+  const isRevokedAdminManualOrder = (record: OrderRecord) => {
+    return isAdminManualOrder(record) && record.status === 'closed';
   };
 
   const getVirtualGoodsProvideStatus = (
@@ -1248,27 +1336,31 @@
   };
 
   const getRefundConfirmContent = (record: OrderRecord) => {
-    if (record.paymentProvider === 'admin_manual') {
-      return record.orderType === 'voice_package'
-        ? '确认退订该声音套餐订单？系统会撤回声音训练任务。'
-        : '确认退订该会员订单？系统会收回会员权益。';
-    }
-
     return record.orderType === 'voice_package'
       ? '确认退订该声音套餐订单？系统会发起微信退款并撤回声音训练任务。'
       : '确认退订该会员订单？系统会发起微信退款并收回会员权益。';
   };
 
   const getRefundSuccessText = (record: OrderRecord) => {
-    if (record.paymentProvider === 'admin_manual') {
-      return record.orderType === 'voice_package'
-        ? '退订成功，声音训练任务已撤回'
-        : '退订成功，会员权益已收回';
-    }
-
     return record.orderType === 'voice_package'
       ? '退订退款已提交，声音训练任务已撤回'
       : '退订退款已提交，会员权益已收回';
+  };
+
+  const getRevokeConfirmContent = (record: OrderRecord) => {
+    return record.orderType === 'voice_package'
+      ? '确认回收该声音套餐订单？系统会撤回声音训练任务，不涉及支付退款。'
+      : '确认回收该会员订单？系统会收回会员权益，不涉及支付退款。';
+  };
+
+  const getRevokeSuccessText = (record: OrderRecord) => {
+    return record.orderType === 'voice_package'
+      ? '回收成功，声音训练任务已撤回'
+      : '回收成功，会员权益已收回';
+  };
+
+  const getClosedAtLabel = (record: OrderRecord) => {
+    return isAdminManualOrder(record) ? '回收时间' : '关闭时间';
   };
 
   const resolveOrderUserName = (record: OrderRecord) => {
