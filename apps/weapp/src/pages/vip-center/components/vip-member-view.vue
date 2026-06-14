@@ -88,7 +88,7 @@ defineProps<{
   thanksLines: string[]
 }>()
 
-const customerServicePhone = '18062525425'
+const customerServicePhone = '19986943631'
 const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
 
 async function handleCallCustomerService() {

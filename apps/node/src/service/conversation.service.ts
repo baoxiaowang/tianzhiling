@@ -66,9 +66,9 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 1200;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const NON_VIP_CHAT_LIMIT_POLICY = {
-  trialDays: 3, // 3 天试用期
-  trialPerAgentLimit: 30, // 3 天内每个 agent 30 句
-  dailyPerAgentLimit: 3, // 3 天后每天每个 agent 3 句
+  trialDays: 3, // 3 个北京时间自然日试用期
+  trialPerAgentLimit: 30, // 试用期内每个 agent 30 句
+  dailyPerAgentLimit: 3, // 试用期后每天每个 agent 3 句
   dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
 } as const;
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
@@ -743,7 +743,7 @@ export class ConversationService {
     limit: number
   ): string {
     if (policy === 'trial') {
-      return `非会员注册前${NON_VIP_CHAT_LIMIT_POLICY.trialDays}天内，每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+      return `非会员注册当日起${NON_VIP_CHAT_LIMIT_POLICY.trialDays}个自然日内，每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
     }
 
     return `非会员每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
@@ -771,8 +771,9 @@ export class ConversationService {
     registeredAt: Date,
     now: Date
   ): NonVipChatLimitRule {
+    const registeredDayStart = this.getBeijingDayStart(registeredAt);
     const trialEndsAt = new Date(
-      registeredAt.getTime() +
+      registeredDayStart.getTime() +
         NON_VIP_CHAT_LIMIT_POLICY.trialDays * 24 * 60 * 60 * 1000
     );
 

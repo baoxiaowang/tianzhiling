@@ -69,6 +69,8 @@ services:
       ADMIN_API_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
     expose:
       - "7101"
+    volumes:
+      - ./resource/cert:/workspace/resource/cert:ro
     depends_on:
       - tzl_redis
       - tzl_mongo

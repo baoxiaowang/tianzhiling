@@ -748,6 +748,73 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
   });
 
+  it('treats the 3-day trial as Beijing calendar days', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T15:59:00.000Z'));
+    try {
+      const { service } = createService({
+        agent: createAgent(),
+        user: createUser({
+          createdAt: new Date('2026-06-11T17:00:00.000Z'),
+        }),
+        existingUserMessageCount: 29,
+      });
+
+      const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '14 号晚上还在试用期内',
+      });
+
+      expect(result.chatQuota).toEqual(
+        expect.objectContaining({
+          isVip: false,
+          policy: 'trial',
+          limit: 30,
+          usedCount: 30,
+          remainingCount: 0,
+        })
+      );
+      expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('switches to the daily quota after the Beijing 3rd calendar day ends', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T16:00:00.000Z'));
+    try {
+      const { service, savedMessages } = createService({
+        agent: createAgent(),
+        user: createUser({
+          createdAt: new Date('2026-06-11T17:00:00.000Z'),
+        }),
+        existingUserMessageCount: 3,
+      });
+
+      await expect(
+        service.sendMessage(AUTH, CONVERSATION_ID, {
+          type: 'text',
+          content: '15 号开始按每天 3 条',
+        })
+      ).rejects.toMatchObject({
+        code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+        status: 429,
+      });
+
+      expect(savedMessages).toHaveLength(0);
+      expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+      expect(service.messageModel.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdAt: expect.objectContaining({
+            $gte: new Date('2026-06-14T16:00:00.000Z'),
+            $lt: new Date('2026-06-15T16:00:00.000Z'),
+          }),
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('returns remaining non-vip chat quota after a successful user message', async () => {
     const { service } = createService({
       agent: createAgent(),
