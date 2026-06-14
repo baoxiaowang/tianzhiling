@@ -25,6 +25,7 @@ export default {
   'menu.agent.detail': 'Agent Detail',
   'menu.order': 'Order Management',
   'menu.order.list': 'Orders',
+  'menu.order.refund': 'Refunds',
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',
   'menu.voiceModel.package': 'Voice Packages',

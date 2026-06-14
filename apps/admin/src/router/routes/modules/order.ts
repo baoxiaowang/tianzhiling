@@ -10,7 +10,6 @@ const ORDER: AppRouteRecordRaw = {
     requiresAuth: true,
     icon: 'icon-list',
     order: 4,
-    hideChildrenInMenu: true,
   },
   redirect: '/orders/list',
   children: [
@@ -22,7 +21,16 @@ const ORDER: AppRouteRecordRaw = {
         locale: 'menu.order.list',
         requiresAuth: true,
         roles: ['*'],
-        activeMenu: 'orders',
+      },
+    },
+    {
+      path: 'refunds',
+      name: 'OrderRefundList',
+      component: () => import('@/views/order/refund/index.vue'),
+      meta: {
+        locale: 'menu.order.refund',
+        requiresAuth: true,
+        roles: ['*'],
       },
     },
   ],

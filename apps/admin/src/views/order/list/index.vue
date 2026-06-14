@@ -15,7 +15,7 @@
       : undefined
   );
   const pageTitle = computed(() =>
-    routeOrderType.value === 'vip_plan' ? '会员订单' : '我的订单'
+    routeOrderType.value === 'vip_plan' ? '会员订单' : '订单列表'
   );
 </script>
 

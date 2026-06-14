@@ -24,7 +24,7 @@
             @press-enter="handleSearch"
           />
         </a-form-item>
-        <a-form-item field="status" label="订单状态">
+        <a-form-item v-if="!hideStatusFilter" field="status" label="订单状态">
           <a-select
             v-model="searchForm.status"
             allow-clear
@@ -590,12 +590,18 @@
     defineProps<{
       title?: string;
       orderType?: 'vip_plan' | 'voice_package';
+      status?: OrderStatusDTO;
+      hideStatusFilter?: boolean;
+      emptyDescription?: string;
       userId?: string;
       embedded?: boolean;
     }>(),
     {
       title: '',
       orderType: undefined,
+      status: undefined,
+      hideStatusFilter: false,
+      emptyDescription: '',
       userId: '',
       embedded: false,
     }
@@ -628,7 +634,7 @@
     createdAtRange: string[];
   }>({
     keyword: '',
-    status: undefined,
+    status: props.status,
     source: undefined,
     paymentType: undefined,
     createdAtRange: [],
@@ -697,7 +703,7 @@
   });
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
-    status: searchForm.status || undefined,
+    status: props.status || searchForm.status || undefined,
     orderType: props.orderType,
     source: searchForm.source || undefined,
     paymentType: searchForm.paymentType || undefined,
@@ -710,16 +716,20 @@
   const hasSearchCondition = computed(
     () =>
       Boolean(searchForm.keyword.trim()) ||
-      Boolean(searchForm.status) ||
+      Boolean(!props.status && searchForm.status) ||
       Boolean(searchForm.source) ||
       Boolean(searchForm.paymentType) ||
       searchForm.createdAtRange.length > 0
   );
-  const emptyDescription = computed(() =>
-    hasSearchCondition.value ? '未找到匹配订单' : '暂无订单数据'
-  );
+  const emptyDescription = computed(() => {
+    if (hasSearchCondition.value) {
+      return '未找到匹配订单';
+    }
+
+    return props.emptyDescription || '暂无订单数据';
+  });
   const canCreateAdminOrder = computed(
-    () => !props.orderType && !props.embedded && !props.userId
+    () => !props.status && !props.orderType && !props.embedded && !props.userId
   );
   const isCreateVipPlanOrder = computed(
     () => createForm.orderType === 'vip_plan'
@@ -756,7 +766,7 @@
 
   const resetSearch = () => {
     searchForm.keyword = '';
-    searchForm.status = undefined;
+    searchForm.status = props.status;
     searchForm.source = undefined;
     searchForm.paymentType = undefined;
     searchForm.createdAtRange = [];
@@ -817,6 +827,19 @@
   };
 
   const replaceOrderRecord = (record: OrderRecord) => {
+    if (props.status && record.status !== props.status) {
+      renderList.value = renderList.value.filter(
+        (item) => item.id !== record.id
+      );
+      pagination.total = Math.max(0, pagination.total - 1);
+
+      if (currentOrder.value?.id === record.id) {
+        currentOrder.value = record;
+      }
+
+      return;
+    }
+
     const index = renderList.value.findIndex((item) => item.id === record.id);
 
     if (index >= 0) {
