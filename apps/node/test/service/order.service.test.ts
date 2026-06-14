@@ -573,6 +573,52 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result?.status).toBe(OrderStatus.completed);
   });
 
+  it('returns minimal amount mismatch details when WeChat paid amount differs from local order amount', async () => {
+    const { service, order, wechatPayService } = createService({
+      payableAmount: 12900,
+    });
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: ORDER_NO,
+      transaction_id: '420000000020260501000001',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 990,
+        payer_total: 990,
+      },
+    });
+
+    let error: unknown;
+
+    try {
+      await service.closeExpiredWechatOrder(ORDER_ID);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toMatchObject({
+      code: 'WECHAT_AMOUNT_MISMATCH',
+      data: expect.objectContaining({
+        orderId: ORDER_ID,
+        orderNo: ORDER_NO,
+        expectedAmount: 12900,
+        actualAmount: 990,
+      }),
+    });
+    expect(service.logger.warn).toHaveBeenCalled();
+    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
+      'wechatTotal'
+    );
+    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
+      'wechatPayerTotal'
+    );
+    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
+      'transactionId'
+    );
+    expect(order.status).toBe(OrderStatus.pending);
+  });
+
   it('grants vip plan entitlements after payment succeeds', async () => {
     const { service, order, agentEntitlementModel, wechatPayService } =
       createService(

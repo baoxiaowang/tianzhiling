@@ -375,7 +375,34 @@ export class AdminOrderService {
       transaction.amount?.payer_total ?? transaction.amount?.total;
 
     if (!paidAmount || paidAmount !== order.payableAmount) {
-      throw new AppError('WECHAT_AMOUNT_MISMATCH', 'wechat amount mismatch');
+      const data = {
+        orderId: this.stringifyObjectId(order.id),
+        orderNo: order.orderNo,
+        orderType: order.orderType,
+        paymentProvider: order.paymentProvider,
+        expectedAmount: order.payableAmount,
+        actualAmount: paidAmount ?? null,
+        wechatTotal: transaction.amount?.total ?? null,
+        wechatPayerTotal: transaction.amount?.payer_total ?? null,
+        transactionId: transaction.transaction_id,
+      };
+
+      this.logger?.warn?.(
+        '[wechat-pay] amount mismatch: orderNo=%s expected=%s actual=%s total=%s payerTotal=%s transactionId=%s',
+        data.orderNo,
+        data.expectedAmount,
+        data.actualAmount,
+        data.wechatTotal,
+        data.wechatPayerTotal,
+        data.transactionId ?? ''
+      );
+
+      throw new AppError(
+        'WECHAT_AMOUNT_MISMATCH',
+        'wechat amount mismatch',
+        400,
+        data
+      );
     }
 
     const now = new Date();

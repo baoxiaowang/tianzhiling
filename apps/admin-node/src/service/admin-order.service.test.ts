@@ -193,6 +193,9 @@ function createService() {
   const entitlements: any[] = [];
   const voiceTrainingTasks: any[] = [];
 
+  service.logger = {
+    warn: jest.fn(),
+  } as any;
   service.orderModel = {
     count: jest.fn(),
     find: jest.fn(),
@@ -872,6 +875,47 @@ describe('AdminOrderService', () => {
     expect(result.status).toBe(OrderStatus.completed);
 
     jest.useRealTimers();
+  });
+
+  it('returns amount mismatch details when WeChat paid amount differs from local order amount', async () => {
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.pending,
+      paidAmount: undefined,
+      payableAmount: 12900,
+      paymentTradeNo: undefined,
+      paidAt: undefined,
+    });
+
+    orders.push(order);
+    jest
+      .mocked(service.adminWechatPayService.queryTransactionByOrderNo)
+      .mockResolvedValue({
+        out_trade_no: 'VIP202605020001',
+        transaction_id: '420000000020260502999999',
+        trade_state: 'SUCCESS',
+        success_time: '2026-05-02T08:05:00+08:00',
+        amount: {
+          total: 9900,
+          payer_total: 9900,
+        },
+      } as never);
+
+    await expect(
+      service.syncPaymentStatus(ORDER_ID.toHexString())
+    ).rejects.toMatchObject({
+      code: 'WECHAT_AMOUNT_MISMATCH',
+      data: expect.objectContaining({
+        orderId: ORDER_ID.toHexString(),
+        orderNo: 'VIP202605020001',
+        expectedAmount: 12900,
+        actualAmount: 9900,
+        wechatTotal: 9900,
+        wechatPayerTotal: 9900,
+        transactionId: '420000000020260502999999',
+      }),
+    });
+    expect(service.logger.warn).toHaveBeenCalled();
   });
 
   it('notifies virtual goods delivery for a completed local order when WeChat is still pending provide', async () => {
