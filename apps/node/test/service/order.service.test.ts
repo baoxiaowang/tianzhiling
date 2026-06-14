@@ -542,7 +542,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       success_time: paidAt,
       amount: {
         total: 990,
-        payer_total: 990,
+        payer_total: 976,
       },
     });
 
@@ -585,7 +585,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       success_time: '2026-05-01T00:10:00+08:00',
       amount: {
         total: 990,
-        payer_total: 990,
+        payer_total: 976,
       },
     });
 

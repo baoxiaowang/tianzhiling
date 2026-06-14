@@ -372,7 +372,7 @@ export class AdminOrderService {
     }
 
     const paidAmount =
-      transaction.amount?.payer_total ?? transaction.amount?.total;
+      transaction.amount?.total ?? transaction.amount?.payer_total;
 
     if (!paidAmount || paidAmount !== order.payableAmount) {
       const data = {

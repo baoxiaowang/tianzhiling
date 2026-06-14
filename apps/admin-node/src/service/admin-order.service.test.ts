@@ -840,7 +840,7 @@ describe('AdminOrderService', () => {
         success_time: '2026-05-02T08:05:00+08:00',
         amount: {
           total: 9900,
-          payer_total: 9900,
+          payer_total: 9876,
         },
       } as never);
     jest.mocked(service.userModel.find).mockResolvedValue([] as never);
@@ -897,7 +897,7 @@ describe('AdminOrderService', () => {
         success_time: '2026-05-02T08:05:00+08:00',
         amount: {
           total: 9900,
-          payer_total: 9900,
+          payer_total: 9876,
         },
       } as never);
 
@@ -911,7 +911,7 @@ describe('AdminOrderService', () => {
         expectedAmount: 12900,
         actualAmount: 9900,
         wechatTotal: 9900,
-        wechatPayerTotal: 9900,
+        wechatPayerTotal: 9876,
         transactionId: '420000000020260502999999',
       }),
     });
