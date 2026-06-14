@@ -82,21 +82,51 @@
               </view>
             </template>
 
-            <chat-message-bubble
-              :type="item.type"
-              :text="item.text"
-              :image-url="item.imageUrl"
-              :voice-duration-ms="item.voiceDurationMs"
-              :has-voice-playback="item.hasVoicePlayback"
-              :is-voice-active="activeVoiceMessageId === item.messageId"
-              :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
-              :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
-              :is-user="item.isUser"
-              :is-sending="item.isSending"
-              @message-tap="handleMessageTap(item.messageId)"
-              @voice-tap="handleVoiceMessageTap(item.messageId)"
-              @message-long-press="handleMessageLongPress(item.messageId)"
-            />
+            <view
+              class="chat-message-unit"
+              :class="{
+                'chat-message-unit--agent': !item.isUser,
+                'chat-message-unit--user': item.isUser,
+              }"
+            >
+              <view
+                v-if="activeMessageActionRowKey === item.key"
+                class="chat-message-actions"
+                :class="{
+                  'chat-message-actions--agent': !item.isUser,
+                  'chat-message-actions--user': item.isUser,
+                }"
+                @tap.stop
+              >
+                <view class="chat-message-actions__panel">
+                  <view
+                    v-for="action in MESSAGE_ACTION_ITEMS"
+                    :key="action.key"
+                    class="chat-message-actions__button"
+                    @tap.stop="handleMessageActionTap(item.messageId, action.key)"
+                  >
+                    <text>{{ action.label }}</text>
+                  </view>
+                </view>
+                <view class="chat-message-actions__arrow" />
+              </view>
+
+              <chat-message-bubble
+                :type="item.type"
+                :text="item.text"
+                :image-url="item.imageUrl"
+                :voice-duration-ms="item.voiceDurationMs"
+                :has-voice-playback="item.hasVoicePlayback"
+                :is-voice-active="activeVoiceMessageId === item.messageId"
+                :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
+                :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
+                :is-user="item.isUser"
+                :is-sending="item.isSending"
+                @message-tap="handleMessageTap(item.messageId)"
+                @voice-tap="handleVoiceMessageTap(item.messageId)"
+                @message-long-press="handleMessageLongPress(item.messageId, item.key)"
+              />
+            </view>
 
             <template v-if="item.isUser">
               <image
@@ -446,6 +476,13 @@ type RecorderErrorLike = {
   errMsg?: string
 }
 
+type MessageActionKey = 'delete'
+
+type MessageActionItem = {
+  key: MessageActionKey
+  label: string
+}
+
 const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   defaultDelayMs: 2200,
   longSegmentDelayMs: 2800,
@@ -465,6 +502,9 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
 const DELETE_MESSAGE_ACTION_INDEX = 0
 const GENERATE_VOICE_ACTION_INDEX = 0
+const MESSAGE_ACTION_ITEMS: MessageActionItem[] = [
+  { key: 'delete', label: '删除' },
+]
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -488,6 +528,8 @@ const draftMessage = ref('')
 const draftCursor = ref(0)
 const isDraftCursorControlled = ref(false)
 const keyboardHeight = ref(0)
+const activeMessageActionRowKey = ref('')
+let messageActionTapMutedUntil = 0
 const isInputFocused = ref(false)
 const isEmojiPanelVisible = ref(false)
 const isMorePanelVisible = ref(false)
@@ -808,6 +850,19 @@ const displayRows = computed<DisplayRow[]>(() => {
 
   return rows
 })
+const messageDisplayRowCounts = computed(() => {
+  const counts = new Map<string, number>()
+
+  displayRows.value.forEach((row) => {
+    if (row.kind !== 'message') {
+      return
+    }
+
+    counts.set(row.messageId, (counts.get(row.messageId) ?? 0) + 1)
+  })
+
+  return counts
+})
 
 useLoad((options) => {
   conversationId.value = decodeRouteParam(options?.conversationId)
@@ -1064,6 +1119,7 @@ function showChatQuotaDialog(type: ChatQuotaDialogType) {
   chatQuotaDialogType.value = type
   isChatQuotaDialogVisible.value = true
   hideComposerPanels()
+  hideMessageActions()
   isInputFocused.value = false
   keyboardHeight.value = 0
   void Taro.hideKeyboard()
@@ -1634,6 +1690,7 @@ function handleDraftInput(event: DraftInputEvent) {
 }
 
 function handleInputFocus() {
+  hideMessageActions()
   isInputFocused.value = true
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
@@ -1651,6 +1708,11 @@ function handleInputBlur() {
 }
 
 function handleChatBodyTap() {
+  if (isMessageActionTapMuted()) {
+    return
+  }
+
+  hideMessageActions()
   hideComposerPanels()
 }
 
@@ -1659,7 +1721,29 @@ function hideComposerPanels() {
   isMorePanelVisible.value = false
 }
 
+function hideMessageActions() {
+  const wasVisible = Boolean(activeMessageActionRowKey.value)
+  activeMessageActionRowKey.value = ''
+  return wasVisible
+}
+
+function muteMessageActionTap(durationMs = 350) {
+  messageActionTapMutedUntil = Date.now() + durationMs
+}
+
+function isMessageActionTapMuted() {
+  return Date.now() < messageActionTapMutedUntil
+}
+
 function handleMessageTap(messageId: string) {
+  if (isMessageActionTapMuted()) {
+    return
+  }
+
+  if (hideMessageActions()) {
+    return
+  }
+
   void showMessageVoiceAction(messageId)
 }
 
@@ -1728,16 +1812,41 @@ async function generateMessageVoice(message: ConversationMessage) {
   }
 }
 
-function handleMessageLongPress(messageId: string) {
-  void showMessageDeleteAction(messageId)
+function handleMessageLongPress(messageId: string, rowKey: string) {
+  void showMessageActions(messageId, rowKey)
 }
 
-async function showMessageDeleteAction(messageId: string) {
+async function showMessageActions(messageId: string, rowKey: string) {
   const message = messages.value.find((item) => item.id === messageId)
   if (!message) {
     return
   }
 
+  if (hasMultipleDisplayRowsForMessage(messageId)) {
+    await showLegacyMessageDeleteAction(message)
+    return
+  }
+
+  if (activeMessageActionRowKey.value === rowKey) {
+    hideMessageActions()
+    muteMessageActionTap()
+    return
+  }
+
+  hideComposerPanels()
+  isInputFocused.value = false
+  keyboardHeight.value = 0
+  void Taro.hideKeyboard()
+  activeMessageActionRowKey.value = rowKey
+  muteMessageActionTap()
+}
+
+function hasMultipleDisplayRowsForMessage(messageId: string) {
+  return (messageDisplayRowCounts.value.get(messageId) ?? 0) > 1
+}
+
+async function showLegacyMessageDeleteAction(message: ConversationMessage) {
+  hideMessageActions()
   hideComposerPanels()
   isInputFocused.value = false
   keyboardHeight.value = 0
@@ -1753,6 +1862,19 @@ async function showMessageDeleteAction(messageId: string) {
       await deleteMessageFromConversation(message)
     }
   } catch {}
+}
+
+async function handleMessageActionTap(messageId: string, action: MessageActionKey) {
+  const message = messages.value.find((item) => item.id === messageId)
+  hideMessageActions()
+
+  if (!message) {
+    return
+  }
+
+  if (action === 'delete') {
+    await deleteMessageFromConversation(message)
+  }
 }
 
 async function deleteMessageFromConversation(message: ConversationMessage) {
@@ -1796,6 +1918,8 @@ async function deleteMessageFromConversation(message: ConversationMessage) {
 function removeMessageFromState(messageId: string) {
   const removedMessage = messages.value.find((message) => message.id === messageId)
 
+  hideMessageActions()
+
   if (activeVoiceMessageId.value === messageId) {
     stopVoicePlayback({ muteErrors: true })
   }
@@ -1834,6 +1958,7 @@ useDidHide(() => {
   keyboardHeight.value = 0
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
+  activeMessageActionRowKey.value = ''
   clearVoiceStartTimer()
   if (isVoiceRecording.value) {
     void finishVoiceGesture({ cancelledBySystem: true })
@@ -1872,6 +1997,7 @@ async function handleVoiceModeToggle() {
     return
   }
 
+  hideMessageActions()
   isVoiceMode.value = nextIsVoiceMode
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
@@ -2502,6 +2628,7 @@ function resolveVoiceDragTarget(point: TouchPoint): VoiceDragTarget {
 }
 
 function handleEmojiToggle() {
+  hideMessageActions()
   markComposerPanelSwitching()
   isEmojiPanelVisible.value = !isEmojiPanelVisible.value
   if (isEmojiPanelVisible.value) {
@@ -2514,6 +2641,7 @@ function handleEmojiToggle() {
 }
 
 function handleMoreToggle() {
+  hideMessageActions()
   markComposerPanelSwitching()
   isMorePanelVisible.value = !isMorePanelVisible.value
   if (isMorePanelVisible.value) {
@@ -2648,6 +2776,8 @@ async function handleSend() {
   if (!(await ensureChatQuotaAvailableBeforeSend())) {
     return
   }
+
+  hideMessageActions()
 
   if (content !== draftMessage.value.trim()) {
     showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
@@ -3041,6 +3171,8 @@ async function sendVoiceTranscription(filePath: string) {
 }
 
 function handleVoiceMessageTap(messageId: string) {
+  hideMessageActions()
+
   const message = messages.value.find((item) => item.id === messageId)
   if (!message) {
     return
@@ -3486,6 +3618,84 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-row--user {
   justify-content: flex-end;
+}
+
+.chat-message-unit {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  max-width: var(--chat-message-bubble-max-width, 264px);
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.chat-message-unit--user {
+  align-items: flex-end;
+}
+
+.chat-message-actions {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.chat-message-actions--agent {
+  left: 0;
+}
+
+.chat-message-actions--user {
+  right: 0;
+}
+
+.chat-message-actions__panel {
+  display: flex;
+  min-width: 68px;
+  max-width: calc(100vw - 32px);
+  height: 42px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(22, 22, 22, 0.96);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.chat-message-actions__button {
+  display: flex;
+  min-width: 68px;
+  height: 42px;
+  padding: 0 16px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: #ffffff;
+  font-size: 15px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.chat-message-actions__button + .chat-message-actions__button {
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.chat-message-actions__arrow {
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 1px;
+  background: rgba(22, 22, 22, 0.96);
+  transform: rotate(45deg);
+}
+
+.chat-message-actions--agent .chat-message-actions__arrow {
+  margin-left: 24px;
+  align-self: flex-start;
+}
+
+.chat-message-actions--user .chat-message-actions__arrow {
+  margin-right: 24px;
+  align-self: flex-end;
 }
 
 .chat-avatar {

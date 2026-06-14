@@ -201,8 +201,12 @@ function createService(
       savedPosts.push(post);
       return post;
     }),
-    find: jest.fn(async ({ order, skip = 0, take }: any) => {
+    find: jest.fn(async ({ where, order, skip = 0, take }: any) => {
       let result = [...posts];
+
+      if (where?.userId) {
+        result = result.filter(post => sameObjectId(post.userId, where.userId));
+      }
 
       if (order?.createdAt === 'DESC') {
         result = result.sort(
@@ -787,6 +791,41 @@ describe('PostService post pagination', () => {
     expect(result.items.map(item => item.id)).toEqual([POST_3_ID]);
     expect(result.hasMore).toBe(false);
     expect(clamped.pageSize).toBe(20);
+  });
+
+  it('filters to the authenticated user when listing my posts', async () => {
+    const posts = [
+      createPost({
+        id: new MongoObjectId('665000000000000000000110'),
+        userId: new MongoObjectId(OTHER_USER_ID),
+        createdAt: new Date('2026-05-13T12:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId('665000000000000000000111'),
+        userId: new MongoObjectId(OTHER_USER_ID),
+        createdAt: new Date('2026-05-13T11:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_ID),
+        userId: new MongoObjectId(USER_ID),
+        createdAt: new Date('2026-05-13T10:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_2_ID),
+        userId: new MongoObjectId(USER_ID),
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      }),
+    ];
+    const { service } = createService([], { posts });
+
+    const result = await service.listPosts(AUTH, {
+      page: 1,
+      pageSize: 2,
+      mine: '1',
+    });
+
+    expect(result.items.map(item => item.id)).toEqual([POST_ID, POST_2_ID]);
+    expect(result.hasMore).toBe(false);
   });
 });
 

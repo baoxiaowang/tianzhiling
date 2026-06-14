@@ -111,6 +111,7 @@ interface PostNotificationListResponse {
 export interface GetPostsOptions {
   page?: number
   pageSize?: number
+  mine?: boolean
 }
 
 export async function getPosts(options: GetPostsOptions = {}) {
@@ -122,6 +123,10 @@ export async function getPosts(options: GetPostsOptions = {}) {
 
   if (options.pageSize) {
     queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  if (options.mine) {
+    queryParts.push('mine=1')
   }
 
   const url = queryParts.length ? `/api/post?${queryParts.join('&')}` : '/api/post'

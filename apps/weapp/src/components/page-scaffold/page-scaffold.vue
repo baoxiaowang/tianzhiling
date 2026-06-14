@@ -17,6 +17,7 @@
       :scroll-into-view="scrollIntoView"
       :scroll-with-animation="scrollWithAnimation"
       :show-scrollbar="showScrollbar"
+      @scrolltolower="emit('scroll-to-lower')"
     >
       <slot />
     </scroll-view>
@@ -125,6 +126,9 @@ const props = withDefaults(
     loginPlaceholderBackgroundImage: '',
   },
 )
+const emit = defineEmits<{
+  'scroll-to-lower': []
+}>()
 
 const slots = useSlots()
 

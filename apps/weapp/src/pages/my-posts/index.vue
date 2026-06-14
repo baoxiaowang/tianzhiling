@@ -5,6 +5,7 @@
     body-padding="0"
     :scroll="true"
     :safe-area-top="false"
+    @scroll-to-lower="handleScrollToLower"
   >
     <view v-if="isCheckingAuth || isLoading" class="my-posts-state">
       <view class="my-posts-state__dot" />
@@ -31,6 +32,17 @@
         @like="handleLikeTap"
         @preview="handlePreviewImages"
       />
+      <view class="my-posts-load-footer">
+        <text v-if="isLoadingMore" class="my-posts-load-footer__text">正在加载更多...</text>
+        <text
+          v-else-if="loadMoreError"
+          class="my-posts-load-footer__action"
+          @tap="handleLoadMoreRetry"
+        >
+          加载失败，点此重试
+        </text>
+        <text v-else-if="!hasMorePosts" class="my-posts-load-footer__text">没有更多动态了</text>
+      </view>
     </view>
   </page-scaffold>
 </template>
@@ -53,13 +65,18 @@ import { authSession, restoreAuthSession } from '../../auth/session'
 const posts = ref<PostItem[]>([])
 const isCheckingAuth = ref(true)
 const isLoading = ref(true)
+const isLoadingMore = ref(false)
 const errorMessage = ref('')
+const loadMoreError = ref('')
 const likingPostIds = ref<string[]>([])
+const currentPostPage = ref(1)
+const hasMorePosts = ref(true)
 
 const session = computed(() => authSession.value)
-const currentUserId = computed(() => session.value?.user.id.trim() ?? '')
+const MY_POSTS_PAGE_SIZE = 20
 
 let loadingPromise: Promise<void> | null = null
+let loadMorePromise: Promise<void> | null = null
 let isPreviewingPostImage = false
 
 async function redirectToAuth() {
@@ -85,32 +102,24 @@ async function loadMyPosts(showLoading = true) {
 
     if (!authSession.value) {
       posts.value = []
+      currentPostPage.value = 1
+      hasMorePosts.value = false
       await redirectToAuth()
       return
     }
 
     isCheckingAuth.value = false
-
-    const userId = currentUserId.value
-
-    if (!userId) {
-      posts.value = []
-      isLoading.value = false
-      return
-    }
+    loadMoreError.value = ''
 
     try {
-      const { items: allPosts } = await getPosts({
+      const postResult = await getPosts({
         page: 1,
-        pageSize: 20,
+        pageSize: MY_POSTS_PAGE_SIZE,
+        mine: true,
       })
-      posts.value = allPosts
-        .filter((item) => item.userId.trim() === userId)
-        .sort((left, right) => {
-          const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? '') || 0
-          const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? '') || 0
-          return rightTime - leftTime
-        })
+      posts.value = postResult.items
+      currentPostPage.value = postResult.page
+      hasMorePosts.value = postResult.hasMore
     } catch (error) {
       if (error instanceof ApiException) {
         errorMessage.value = error.message || '加载动态失败'
@@ -128,8 +137,56 @@ async function loadMyPosts(showLoading = true) {
   return loadingPromise
 }
 
+async function loadMoreMyPosts() {
+  if (
+    loadingPromise ||
+    loadMorePromise ||
+    isLoading.value ||
+    isLoadingMore.value ||
+    !hasMorePosts.value
+  ) {
+    return loadMorePromise
+  }
+
+  isLoadingMore.value = true
+  loadMoreError.value = ''
+
+  loadMorePromise = getPosts({
+    page: currentPostPage.value + 1,
+    pageSize: MY_POSTS_PAGE_SIZE,
+    mine: true,
+  })
+    .then((result) => {
+      const knownPostIds = new Set(posts.value.map((post) => post.id))
+      const nextItems = result.items.filter((post) => !knownPostIds.has(post.id))
+
+      posts.value = [...posts.value, ...nextItems]
+      currentPostPage.value = result.page
+      hasMorePosts.value = result.hasMore
+    })
+    .catch((error) => {
+      loadMoreError.value = error instanceof ApiException
+        ? error.message || '加载更多失败'
+        : '加载更多失败，请稍后重试'
+    })
+    .finally(() => {
+      loadMorePromise = null
+      isLoadingMore.value = false
+    })
+
+  return loadMorePromise
+}
+
 function handleRetry() {
   void loadMyPosts(false)
+}
+
+function handleLoadMoreRetry() {
+  void loadMoreMyPosts()
+}
+
+function handleScrollToLower() {
+  void loadMoreMyPosts()
 }
 
 function isPostLikePending(postId: string) {
@@ -302,6 +359,26 @@ useDidShow(() => {
 
 .my-posts-list .moment-card + .moment-card {
   margin-top: 20px;
+}
+
+.my-posts-load-footer {
+  min-height: 40px;
+  padding: 16px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.my-posts-load-footer__text,
+.my-posts-load-footer__action {
+  color: #98a2b3;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.my-posts-load-footer__action {
+  color: #4f8f6f;
 }
 
 </style>

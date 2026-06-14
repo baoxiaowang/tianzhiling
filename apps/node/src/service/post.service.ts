@@ -154,6 +154,7 @@ interface PostLikeSummary {
 interface ListPostsOptions {
   page?: number | string;
   pageSize?: number | string;
+  mine?: boolean | string;
 }
 
 @Provide()
@@ -204,7 +205,15 @@ export class PostService {
     const page = this.normalizePositiveInteger(options.page, 1);
     const pageSize = this.normalizePositiveInteger(options.pageSize, 10, 20);
     const skip = (page - 1) * pageSize;
+    const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
+    const onlyMine = this.normalizeBoolean(options.mine);
+
+    if (onlyMine && !currentUserId) {
+      throw new AppError('UNAUTHORIZED', 'login required', 401);
+    }
+
     const posts = await this.postModel.find({
+      where: onlyMine && currentUserId ? { userId: currentUserId } : undefined,
       order: {
         createdAt: 'DESC',
       },
@@ -212,7 +221,6 @@ export class PostService {
       take: pageSize + 1,
     });
     const pagePosts = posts.slice(0, pageSize);
-    const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
     const likeSummary = await this.buildLikeSummary(pagePosts, currentUserId);
 
     const authorCache = new Map<string, UserEntity | null>();
@@ -1510,6 +1518,18 @@ export class PostService {
       Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 
     return typeof max === 'number' ? Math.min(normalized, max) : normalized;
+  }
+
+  private normalizeBoolean(value: boolean | string | undefined): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (typeof value !== 'string') {
+      return false;
+    }
+
+    return ['1', 'true', 'yes'].includes(value.trim().toLowerCase());
   }
 
   private async normalizeRemindAgentIds(
