@@ -27,6 +27,7 @@ const OTHER_AGENT_ID = '665000000000000000000011';
 const CONVERSATION_ID = '665000000000000000000020';
 const TIMBRE_ID = '665000000000000000000030';
 const NOW = new Date('2026-05-03T08:00:00.000Z');
+const MEMORIAL_PHOTO_CONTENT = 'AI生成纪念合照';
 const AUTH = {
   sub: USER_ID,
   accountId: 'account-1',
@@ -175,6 +176,21 @@ function createMessage(overrides: Partial<MessageEntity> = {}): MessageEntity {
   return message;
 }
 
+function createMemorialPhotoMessage(
+  overrides: Partial<MessageEntity> = {}
+): MessageEntity {
+  return createMessage({
+    role: MessageRole.assistant,
+    type: MessageType.image,
+    content: MEMORIAL_PHOTO_CONTENT,
+    status: MessageStatus.sent,
+    mediaObjectKey: 'memorial-photos/generated.png',
+    mediaMimeType: 'image/png',
+    mediaAnalysis: MEMORIAL_PHOTO_CONTENT,
+    ...overrides,
+  });
+}
+
 function getAssistantMessages(messages: MessageEntity[]): MessageEntity[] {
   return messages
     .filter(message => message.role === MessageRole.assistant)
@@ -187,6 +203,54 @@ function getAssistantContents(messages: MessageEntity[]): string[] {
 
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
+}
+
+function matchesCreatedAtQuery(createdAt: Date, query: any): boolean {
+  if (!query) {
+    return true;
+  }
+
+  if (query.$gt && !(createdAt > query.$gt)) {
+    return false;
+  }
+
+  if (query.$gte && !(createdAt >= query.$gte)) {
+    return false;
+  }
+
+  if (query.$lt && !(createdAt < query.$lt)) {
+    return false;
+  }
+
+  return true;
+}
+
+function matchesMemorialPhotoCountQuery(
+  message: MessageEntity,
+  query: any
+): boolean {
+  const matchesMemorialMarker = Array.isArray(query?.$or)
+    ? query.$or.some((condition: any) => {
+        if (condition?.content) {
+          return message.content === condition.content;
+        }
+
+        if (condition?.mediaAnalysis) {
+          return message.mediaAnalysis === condition.mediaAnalysis;
+        }
+
+        return false;
+      })
+    : true;
+
+  return (
+    sameObjectId(message.userId, query?.userId) &&
+    message.role === query?.role &&
+    message.type === query?.type &&
+    message.status === query?.status &&
+    matchesCreatedAtQuery(message.createdAt, query?.createdAt) &&
+    matchesMemorialMarker
+  );
 }
 
 function createService(options: {
@@ -255,7 +319,20 @@ function createService(options: {
         ).length;
       }
 
-      return options.existingUserMessageCount ?? 0;
+      if (
+        query?.role === MessageRole.assistant &&
+        query?.type === MessageType.image
+      ) {
+        return savedMessages.filter(message =>
+          matchesMemorialPhotoCountQuery(message, query)
+        ).length;
+      }
+
+      if (query?.role === MessageRole.user) {
+        return options.existingUserMessageCount ?? 0;
+      }
+
+      return 0;
     }),
     find: jest.fn(async () =>
       [...savedMessages].sort(
@@ -521,6 +598,149 @@ describe('ConversationService generateMemorialPhoto', () => {
         customPrompt: '我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
       }
     );
+  });
+
+  it('blocks non-vip users after three memorial photos in the Beijing day', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T17:00:00.000Z'));
+    try {
+      const { service, savedMessages } = createService({
+        agent: createAgent(),
+        existingMessages: [
+          createMemorialPhotoMessage({
+            createdAt: new Date('2026-06-14T15:59:00.000Z'),
+            updatedAt: new Date('2026-06-14T15:59:00.000Z'),
+          }),
+          createMemorialPhotoMessage({
+            createdAt: new Date('2026-06-14T16:30:00.000Z'),
+            updatedAt: new Date('2026-06-14T16:30:00.000Z'),
+          }),
+          createMemorialPhotoMessage({
+            createdAt: new Date('2026-06-14T16:31:00.000Z'),
+            updatedAt: new Date('2026-06-14T16:31:00.000Z'),
+          }),
+          createMemorialPhotoMessage({
+            createdAt: new Date('2026-06-14T16:32:00.000Z'),
+            updatedAt: new Date('2026-06-14T16:32:00.000Z'),
+          }),
+        ],
+      });
+
+      await expect(
+        service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+          agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+          userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+        })
+      ).rejects.toMatchObject({
+        code: 'MEMORIAL_PHOTO_DAILY_LIMIT_EXCEEDED',
+        status: 429,
+        data: expect.objectContaining({
+          isVip: false,
+          limit: 3,
+          usedCount: 3,
+          remainingCount: 0,
+          windowStart: '2026-06-14T16:00:00.000Z',
+          windowEnd: '2026-06-15T16:00:00.000Z',
+        }),
+      });
+
+      expect(savedMessages).toHaveLength(4);
+      expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+      expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
+      expect(service.messageModel.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: new MongoObjectId(USER_ID),
+          role: MessageRole.assistant,
+          type: MessageType.image,
+          status: MessageStatus.sent,
+          createdAt: {
+            $gte: new Date('2026-06-14T16:00:00.000Z'),
+            $lt: new Date('2026-06-15T16:00:00.000Z'),
+          },
+          $or: expect.any(Array),
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('allows a vip user to generate the 10th memorial photo and blocks the 11th in the same day', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T17:00:00.000Z'));
+    try {
+      const existingMemorialPhotos = Array.from({ length: 9 }, (_, index) =>
+        createMemorialPhotoMessage({
+          createdAt: new Date(`2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`),
+          updatedAt: new Date(`2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`),
+        })
+      );
+      const { service, savedMessages } = createService({
+        agent: createAgent(),
+        memberships: [
+          createMembership({
+            expiredAt: new Date('2026-07-01T00:00:00.000Z'),
+          }),
+        ],
+        existingMessages: existingMemorialPhotos,
+      });
+
+      await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      });
+
+      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledTimes(1);
+      expect(
+        savedMessages.filter(message => message.content === MEMORIAL_PHOTO_CONTENT)
+      ).toHaveLength(10);
+
+      await expect(
+        service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+          agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+          userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+        })
+      ).rejects.toMatchObject({
+        code: 'MEMORIAL_PHOTO_DAILY_LIMIT_EXCEEDED',
+        status: 429,
+        data: expect.objectContaining({
+          isVip: true,
+          limit: 10,
+          usedCount: 10,
+          remainingCount: 0,
+        }),
+      });
+      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not count ordinary assistant images against the memorial photo limit', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T17:00:00.000Z'));
+    try {
+      const { service } = createService({
+        agent: createAgent(),
+        existingMessages: [
+          createMessage({
+            role: MessageRole.assistant,
+            type: MessageType.image,
+            content: '普通图片',
+            status: MessageStatus.sent,
+            mediaObjectKey: 'conversation-images/ordinary.png',
+            createdAt: new Date('2026-06-14T16:30:00.000Z'),
+            updatedAt: new Date('2026-06-14T16:30:00.000Z'),
+          }),
+        ],
+      });
+
+      await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      });
+
+      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('rejects memorial photo generation outside the current user conversation', async () => {

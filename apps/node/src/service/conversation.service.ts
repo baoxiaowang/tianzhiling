@@ -71,6 +71,11 @@ const NON_VIP_CHAT_LIMIT_POLICY = {
   dailyPerAgentLimit: 3, // 试用期后每天每个 agent 3 句
   dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
 } as const;
+const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
+const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
+  nonVipLimit: 3,
+  vipLimit: 10,
+} as const;
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 
 export interface ConversationSummary {
@@ -158,6 +163,15 @@ interface NonVipChatLimitRule {
   limit: number;
   windowStart: Date;
   windowEnd?: Date;
+}
+
+interface MemorialPhotoDailyQuotaSnapshot {
+  isVip: boolean;
+  limit: number;
+  usedCount: number;
+  remainingCount: number;
+  windowStart: Date;
+  windowEnd: Date;
 }
 
 export interface ConversationChatQuotaSnapshot {
@@ -549,6 +563,7 @@ export class ConversationService {
     payload: GenerateMemorialPhotoDTO
   ): Promise<ConversationMessageItem> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
+    const now = new Date();
     const agentPhotoObjectKeys = this.normalizeMemorialAgentPhotoObjectKeys(
       payload?.agentPhotoObjectKeys
     );
@@ -560,18 +575,22 @@ export class ConversationService {
     const customPrompt = this.normalizeMemorialCustomPrompt(
       payload?.customPrompt
     );
+
+    await this.assertMemorialPhotoDailyQuota(runtime, now);
+
     const agentPhotoUrls = agentPhotoObjectKeys.map(objectKey =>
       this.resolveRequiredMemorialPhotoUrl(objectKey)
     );
     const userPhotoUrl =
       this.resolveRequiredMemorialPhotoUrl(userPhotoObjectKey);
-    const generatedPhoto = await this.bailianImageService.generateMemorialPhoto({
-      agentPhotoUrls,
-      userPhotoUrl,
-      agentName: runtime.agent?.name,
-      ...(customPrompt ? { customPrompt } : {}),
-    });
-    const now = new Date();
+    const generatedPhoto = await this.bailianImageService.generateMemorialPhoto(
+      {
+        agentPhotoUrls,
+        userPhotoUrl,
+        agentName: runtime.agent?.name,
+        ...(customPrompt ? { customPrompt } : {}),
+      }
+    );
     const uploaded = await this.tencentCosService.putBuffer(
       generatedPhoto.imageBuffer,
       {
@@ -586,11 +605,11 @@ export class ConversationService {
       agentId: runtime.conversation.agentId,
       role: MessageRole.assistant,
       type: MessageType.image,
-      content: 'AI生成纪念合照',
+      content: MEMORIAL_PHOTO_MESSAGE_CONTENT,
       status: MessageStatus.sent,
       mediaObjectKey: uploaded.objectKey,
       mediaMimeType: generatedPhoto.mimeType,
-      mediaAnalysis: 'AI生成纪念合照',
+      mediaAnalysis: MEMORIAL_PHOTO_MESSAGE_CONTENT,
       createdAt: now,
       updatedAt: now,
     });
@@ -701,6 +720,68 @@ export class ConversationService {
         trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
       }
     );
+  }
+
+  private async assertMemorialPhotoDailyQuota(
+    runtime: ReplyRuntime,
+    now: Date
+  ): Promise<void> {
+    const quota = await this.resolveMemorialPhotoDailyQuota(runtime, now);
+
+    if (quota.usedCount < quota.limit) {
+      return;
+    }
+
+    throw new AppError(
+      'MEMORIAL_PHOTO_DAILY_LIMIT_EXCEEDED',
+      this.buildMemorialPhotoDailyLimitMessage(quota.isVip, quota.limit),
+      429,
+      {
+        isVip: quota.isVip,
+        limit: quota.limit,
+        usedCount: quota.usedCount,
+        remainingCount: 0,
+        windowStart: quota.windowStart.toISOString(),
+        windowEnd: quota.windowEnd.toISOString(),
+      }
+    );
+  }
+
+  private async resolveMemorialPhotoDailyQuota(
+    runtime: ReplyRuntime,
+    now: Date
+  ): Promise<MemorialPhotoDailyQuotaSnapshot> {
+    const isVip = await this.isUserVip(runtime.conversation.userId, now);
+    const limit = isVip
+      ? MEMORIAL_PHOTO_DAILY_LIMIT_POLICY.vipLimit
+      : MEMORIAL_PHOTO_DAILY_LIMIT_POLICY.nonVipLimit;
+    const windowStart = this.getBeijingDayStart(now);
+    const windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000);
+    const usedCount = await this.countMemorialPhotoMessagesForUser({
+      userId: runtime.conversation.userId,
+      windowStart,
+      windowEnd,
+    });
+
+    return {
+      isVip,
+      limit,
+      usedCount,
+      remainingCount: Math.max(limit - usedCount, 0),
+      windowStart,
+      windowEnd,
+    };
+  }
+
+  private buildMemorialPhotoDailyLimitMessage(
+    isVip: boolean,
+    limit: number
+  ): string {
+    if (isVip) {
+      return `会员每天可生成${limit}次纪念合照，今日次数已用完。`;
+    }
+
+    return `非会员每天可生成${limit}次纪念合照，开通会员后每天可生成${MEMORIAL_PHOTO_DAILY_LIMIT_POLICY.vipLimit}次。`;
   }
 
   private async resolveCurrentChatQuota(
@@ -893,6 +974,27 @@ export class ConversationService {
       role: MessageRole.user,
       status: MessageStatus.sent,
       createdAt: createdAtQuery,
+    } as never);
+  }
+
+  private countMemorialPhotoMessagesForUser(options: {
+    userId: MongoObjectId;
+    windowStart: Date;
+    windowEnd: Date;
+  }): Promise<number> {
+    return this.messageModel.count({
+      userId: options.userId,
+      role: MessageRole.assistant,
+      type: MessageType.image,
+      status: MessageStatus.sent,
+      createdAt: {
+        $gte: options.windowStart,
+        $lt: options.windowEnd,
+      },
+      $or: [
+        { content: MEMORIAL_PHOTO_MESSAGE_CONTENT },
+        { mediaAnalysis: MEMORIAL_PHOTO_MESSAGE_CONTENT },
+      ],
     } as never);
   }
 
