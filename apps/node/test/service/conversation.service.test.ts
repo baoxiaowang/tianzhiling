@@ -329,7 +329,18 @@ function createService(options: {
       }
 
       if (query?.role === MessageRole.user) {
-        return options.existingUserMessageCount ?? 0;
+        if (options.existingUserMessageCount !== undefined) {
+          return options.existingUserMessageCount;
+        }
+
+        return savedMessages.filter(
+          message =>
+            sameObjectId(message.userId, query?.userId) &&
+            sameObjectId(message.agentId, query?.agentId) &&
+            message.role === query.role &&
+            message.status === query.status &&
+            matchesCreatedAtQuery(message.createdAt, query?.createdAt)
+        ).length;
       }
 
       return 0;
@@ -867,7 +878,7 @@ describe('ConversationService generateMemorialPhoto', () => {
 });
 
 describe('ConversationService assistant voice reply timbre binding', () => {
-  it('blocks non-vip users after the first 3-day per-agent quota is used', async () => {
+  it('blocks non-vip users after the trial daily per-agent quota is used', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       user: createUser({
@@ -994,6 +1005,95 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         })
       );
       expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('resets the 30-message trial quota on each Beijing day', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-15T12:48:00.000Z'));
+    try {
+      const { service } = createService({
+        agent: createAgent(),
+        user: createUser({
+          createdAt: new Date('2026-06-13T12:42:00.000Z'),
+        }),
+        existingMessages: Array.from({ length: 30 }, (_, index) =>
+          createMessage({
+            content: `前一天第 ${index + 1} 句`,
+            createdAt: new Date('2026-06-14T12:00:00.000Z'),
+            updatedAt: new Date('2026-06-14T12:00:00.000Z'),
+          })
+        ),
+      });
+
+      const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '今天还可以继续聊',
+      });
+
+      expect(result.chatQuota).toEqual(
+        expect.objectContaining({
+          isVip: false,
+          policy: 'trial',
+          limit: 30,
+          usedCount: 1,
+          remainingCount: 29,
+        })
+      );
+      expect(service.messageModel.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdAt: expect.objectContaining({
+            $gte: new Date('2026-06-14T16:00:00.000Z'),
+            $lt: new Date('2026-06-15T16:00:00.000Z'),
+          }),
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('starts the first trial-day quota window at registration time', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-13T13:00:00.000Z'));
+    try {
+      const registeredAt = new Date('2026-06-13T12:42:00.000Z');
+      const { service } = createService({
+        agent: createAgent(),
+        user: createUser({
+          createdAt: registeredAt,
+        }),
+        existingMessages: [
+          createMessage({
+            content: '注册前历史消息不应计入',
+            createdAt: new Date('2026-06-13T12:30:00.000Z'),
+            updatedAt: new Date('2026-06-13T12:30:00.000Z'),
+          }),
+        ],
+      });
+
+      const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '注册当天第一句',
+      });
+
+      expect(result.chatQuota).toEqual(
+        expect.objectContaining({
+          isVip: false,
+          policy: 'trial',
+          limit: 30,
+          usedCount: 1,
+          remainingCount: 29,
+        })
+      );
+      expect(service.messageModel.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdAt: expect.objectContaining({
+            $gte: registeredAt,
+            $lt: new Date('2026-06-13T16:00:00.000Z'),
+          }),
+        })
+      );
     } finally {
       jest.useRealTimers();
     }
@@ -1423,6 +1523,79 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessage?.voice).toBeUndefined();
+  });
+
+  it('generates a real assistant voice message when the user sends voice', async () => {
+    const voiceTimbre = createVoiceTimbre();
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.openAIService.createTranscription).toHaveBeenCalled();
+    expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
+      text: '我也想你。今天过得怎么样？',
+      voiceId: 'TzlVoice_001',
+      model: 'speech-2.8-turbo',
+      languageBoost: 'Chinese',
+      speed: 1.12,
+      volume: 1.1,
+      pitch: -1,
+    });
+
+    const assistantMessages = getAssistantMessages(savedMessages);
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]).toEqual(
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        type: MessageType.voice,
+        content: '我也想你。今天过得怎么样？',
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaMimeType: 'audio/mpeg',
+        mediaTranscript: '我也想你。今天过得怎么样？',
+        status: MessageStatus.sent,
+      })
+    );
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+    expect(result.assistantMessages?.map(message => message.type)).toEqual([
+      MessageType.voice,
+    ]);
+    expect(result.assistantMessage?.voice).toEqual(
+      expect.objectContaining({
+        objectKey: 'conversation-voice-replies/reply.mp3',
+        mimeType: 'audio/mpeg',
+        transcript: '我也想你。今天过得怎么样？',
+      })
+    );
+  });
+
+  it('falls back to text assistant replies for user voice when the agent has no timbre', async () => {
+    const { service } = createService({
+      agent: createAgent(),
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(result.assistantMessage?.type).toBe(MessageType.text);
+    expect(result.assistantMessages?.map(message => message.type)).toEqual([
+      MessageType.text,
+      MessageType.text,
+    ]);
   });
 
   it('generates voice for an assistant text message on demand', async () => {

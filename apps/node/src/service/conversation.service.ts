@@ -67,7 +67,7 @@ const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const NON_VIP_CHAT_LIMIT_POLICY = {
   trialDays: 3, // 3 个北京时间自然日试用期
-  trialPerAgentLimit: 30, // 试用期内每个 agent 30 句
+  trialDailyPerAgentLimit: 30, // 试用期内每天每个 agent 30 句
   dailyPerAgentLimit: 3, // 试用期后每天每个 agent 3 句
   dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
 } as const;
@@ -824,7 +824,7 @@ export class ConversationService {
     limit: number
   ): string {
     if (policy === 'trial') {
-      return `非会员注册当日起${NON_VIP_CHAT_LIMIT_POLICY.trialDays}个自然日内，每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+      return `非会员注册当日起${NON_VIP_CHAT_LIMIT_POLICY.trialDays}个自然日内，每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
     }
 
     return `非会员每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
@@ -857,24 +857,31 @@ export class ConversationService {
       registeredDayStart.getTime() +
         NON_VIP_CHAT_LIMIT_POLICY.trialDays * 24 * 60 * 60 * 1000
     );
+    const currentDayStart = this.getBeijingDayStart(now);
+    const currentDayEnd = new Date(
+      currentDayStart.getTime() + 24 * 60 * 60 * 1000
+    );
 
     if (now < trialEndsAt) {
       return {
         policy: 'trial',
-        limit: NON_VIP_CHAT_LIMIT_POLICY.trialPerAgentLimit,
-        windowStart: registeredAt,
-        windowEnd: trialEndsAt,
+        limit: NON_VIP_CHAT_LIMIT_POLICY.trialDailyPerAgentLimit,
+        windowStart:
+          registeredAt.getTime() > currentDayStart.getTime()
+            ? registeredAt
+            : currentDayStart,
+        windowEnd:
+          currentDayEnd.getTime() < trialEndsAt.getTime()
+            ? currentDayEnd
+            : trialEndsAt,
       };
     }
-
-    const windowStart = this.getBeijingDayStart(now);
-    const windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000);
 
     return {
       policy: 'daily',
       limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
-      windowStart,
-      windowEnd,
+      windowStart: currentDayStart,
+      windowEnd: currentDayEnd,
     };
   }
 
@@ -1031,14 +1038,22 @@ export class ConversationService {
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
-    const assistantMessages = await this.createAssistantReplyMessages({
-      conversationId: runtime.conversation.id,
-      userId: runtime.conversation.userId,
-      agentId: runtime.conversation.agentId,
-      replySegments: processed.replySegments,
-      replyTime,
-      usage: processed.usage,
-    });
+    const assistantMessages =
+      (await this.createAssistantVoiceReplyMessages({
+        runtime,
+        before,
+        replySegments: processed.replySegments,
+        replyTime,
+        usage: processed.usage,
+      })) ??
+      (await this.createAssistantReplyMessages({
+        conversationId: runtime.conversation.id,
+        userId: runtime.conversation.userId,
+        agentId: runtime.conversation.agentId,
+        replySegments: processed.replySegments,
+        replyTime,
+        usage: processed.usage,
+      }));
 
     await this.touchConversation(
       runtime.conversation,
@@ -1744,6 +1759,63 @@ export class ConversationService {
     }
 
     return messages;
+  }
+
+  private async createAssistantVoiceReplyMessages(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    replySegments: string[];
+    replyTime: Date;
+    usage: {
+      model?: string;
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    };
+  }): Promise<MessageEntity[] | undefined> {
+    if (options.before.messagePayload.type !== MessageType.voice) {
+      return undefined;
+    }
+
+    const voiceTimbre = await this.findActiveVoiceTimbreForAgent(
+      options.runtime.agent
+    );
+
+    if (!voiceTimbre) {
+      return undefined;
+    }
+
+    const replyContent = options.replySegments.join('</fenge>');
+    const synthesizedVoice = await this.synthesizeAssistantVoiceReply(
+      replyContent,
+      voiceTimbre
+    );
+
+    if (!synthesizedVoice) {
+      return undefined;
+    }
+
+    const message = await this.saveMessage({
+      conversationId: options.runtime.conversation.id,
+      userId: options.runtime.conversation.userId,
+      agentId: options.runtime.conversation.agentId,
+      role: MessageRole.assistant,
+      type: MessageType.voice,
+      content: synthesizedVoice.transcript,
+      status: MessageStatus.sent,
+      mediaObjectKey: synthesizedVoice.mediaObjectKey,
+      mediaMimeType: synthesizedVoice.mediaMimeType,
+      mediaTranscript: synthesizedVoice.transcript,
+      mediaDurationMs: synthesizedVoice.mediaDurationMs,
+      model: options.usage.model,
+      promptTokens: options.usage.promptTokens,
+      completionTokens: options.usage.completionTokens,
+      totalTokens: options.usage.totalTokens,
+      createdAt: options.replyTime,
+      updatedAt: options.replyTime,
+    });
+
+    return [message];
   }
 
   private async synthesizeAssistantVoiceReply(

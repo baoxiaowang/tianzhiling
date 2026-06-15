@@ -100,7 +100,7 @@
               >
                 <view class="chat-message-actions__panel">
                   <view
-                    v-for="action in MESSAGE_ACTION_ITEMS"
+                    v-for="action in item.actions"
                     :key="action.key"
                     class="chat-message-actions__button"
                     @tap.stop="handleMessageActionTap(item.messageId, action.key)"
@@ -122,7 +122,7 @@
                 :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
                 :is-user="item.isUser"
                 :is-sending="item.isSending"
-                @message-tap="handleMessageTap(item.messageId)"
+                @message-tap="handleMessageTap"
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
                 @message-long-press="handleMessageLongPress(item.messageId, item.key)"
               />
@@ -395,6 +395,7 @@ type DisplayRow =
       imageUrl: string
       voiceDurationMs: number
       hasVoicePlayback: boolean
+      actions: MessageActionItem[]
       isUser: boolean
       isSending: boolean
       isFailed: boolean
@@ -476,7 +477,7 @@ type RecorderErrorLike = {
   errMsg?: string
 }
 
-type MessageActionKey = 'delete'
+type MessageActionKey = 'generateVoice' | 'delete'
 
 type MessageActionItem = {
   key: MessageActionKey
@@ -500,11 +501,11 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
     '宝，今日对话结束啦（非会员试用期每天 30句）～可以明天再来哦，先好好生活吧，记得在心里牵挂TA～想畅聊点击【开通会员】',
 } as const
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
-const DELETE_MESSAGE_ACTION_INDEX = 0
-const GENERATE_VOICE_ACTION_INDEX = 0
-const MESSAGE_ACTION_ITEMS: MessageActionItem[] = [
-  { key: 'delete', label: '删除' },
-]
+const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
+  key: 'generateVoice',
+  label: '转语音',
+}
+const DELETE_MESSAGE_ACTION: MessageActionItem = { key: 'delete', label: '删除' }
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -765,6 +766,7 @@ const displayRows = computed<DisplayRow[]>(() => {
         imageUrl: resolveImageMessageUrl(message.image),
         voiceDurationMs: 0,
         hasVoicePlayback: false,
+        actions: getMessageActionItems(message),
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: message.status === 'failed',
@@ -773,23 +775,6 @@ const displayRows = computed<DisplayRow[]>(() => {
     }
 
     if (message.type === 'voice' && message.role !== 'system') {
-      if (message.role === 'assistant') {
-        rows.push({
-          key: `message-${message.id}-voice-text`,
-          kind: 'message',
-          messageId: message.id,
-          type: 'text',
-          text: normalizedText,
-          imageUrl: '',
-          voiceDurationMs: message.voice?.durationMs ?? 1000,
-          hasVoicePlayback: hasResolvableVoicePayload(message.voice),
-          isUser: false,
-          isSending: message.status === 'sending',
-          isFailed: message.status === 'failed',
-        })
-        return
-      }
-
       rows.push({
         key: `message-${message.id}-voice`,
         kind: 'message',
@@ -799,6 +784,7 @@ const displayRows = computed<DisplayRow[]>(() => {
         imageUrl: '',
         voiceDurationMs: message.voice?.durationMs ?? 1000,
         hasVoicePlayback: hasResolvableVoicePayload(message.voice),
+        actions: getMessageActionItems(message),
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: message.status === 'failed',
@@ -841,6 +827,7 @@ const displayRows = computed<DisplayRow[]>(() => {
           ? message.voice?.durationMs ?? 1000
           : 0,
         hasVoicePlayback: shouldAttachVoicePlayback,
+        actions: getMessageActionItems(message),
         isUser: message.role === 'user',
         isSending: message.status === 'sending',
         isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
@@ -1735,7 +1722,7 @@ function isMessageActionTapMuted() {
   return Date.now() < messageActionTapMutedUntil
 }
 
-function handleMessageTap(messageId: string) {
+function handleMessageTap() {
   if (isMessageActionTapMuted()) {
     return
   }
@@ -1743,30 +1730,6 @@ function handleMessageTap(messageId: string) {
   if (hideMessageActions()) {
     return
   }
-
-  void showMessageVoiceAction(messageId)
-}
-
-async function showMessageVoiceAction(messageId: string) {
-  const message = messages.value.find((item) => item.id === messageId)
-  if (!shouldOfferVoiceGeneration(message)) {
-    return
-  }
-
-  hideComposerPanels()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
-
-  try {
-    const result = await Taro.showActionSheet({
-      itemList: ['转语音'],
-    })
-
-    if (result.tapIndex === GENERATE_VOICE_ACTION_INDEX) {
-      await generateMessageVoice(message)
-    }
-  } catch {}
 }
 
 function shouldOfferVoiceGeneration(message?: ConversationMessage) {
@@ -1777,6 +1740,17 @@ function shouldOfferVoiceGeneration(message?: ConversationMessage) {
       && message.status === 'sent'
       && !hasResolvableVoicePayload(message.voice),
   )
+}
+
+function getMessageActionItems(message?: ConversationMessage): MessageActionItem[] {
+  if (!message) {
+    return []
+  }
+
+  return [
+    ...(shouldOfferVoiceGeneration(message) ? [GENERATE_VOICE_MESSAGE_ACTION] : []),
+    DELETE_MESSAGE_ACTION,
+  ]
 }
 
 async function generateMessageVoice(message: ConversationMessage) {
@@ -1823,7 +1797,7 @@ async function showMessageActions(messageId: string, rowKey: string) {
   }
 
   if (hasMultipleDisplayRowsForMessage(messageId)) {
-    await showLegacyMessageDeleteAction(message)
+    await showLegacyMessageActionSheet(message)
     return
   }
 
@@ -1845,7 +1819,12 @@ function hasMultipleDisplayRowsForMessage(messageId: string) {
   return (messageDisplayRowCounts.value.get(messageId) ?? 0) > 1
 }
 
-async function showLegacyMessageDeleteAction(message: ConversationMessage) {
+async function showLegacyMessageActionSheet(message: ConversationMessage) {
+  const actions = getMessageActionItems(message)
+  if (!actions.length) {
+    return
+  }
+
   hideMessageActions()
   hideComposerPanels()
   isInputFocused.value = false
@@ -1854,12 +1833,15 @@ async function showLegacyMessageDeleteAction(message: ConversationMessage) {
 
   try {
     const result = await Taro.showActionSheet({
-      itemList: ['删除'],
-      itemColor: '#e54d42',
+      itemList: actions.map((action) => action.label),
+      ...(actions.length === 1 && actions[0].key === 'delete'
+        ? { itemColor: '#e54d42' }
+        : {}),
     })
+    const action = actions[result.tapIndex]
 
-    if (result.tapIndex === DELETE_MESSAGE_ACTION_INDEX) {
-      await deleteMessageFromConversation(message)
+    if (action) {
+      await runMessageAction(message, action.key)
     }
   } catch {}
 }
@@ -1869,6 +1851,15 @@ async function handleMessageActionTap(messageId: string, action: MessageActionKe
   hideMessageActions()
 
   if (!message) {
+    return
+  }
+
+  await runMessageAction(message, action)
+}
+
+async function runMessageAction(message: ConversationMessage, action: MessageActionKey) {
+  if (action === 'generateVoice') {
+    await generateMessageVoice(message)
     return
   }
 
