@@ -358,6 +358,7 @@ import {
 import type { ChatMoreActionItem } from '../../components/chat-more-panel/types'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
+import { ensureInnerAudioPlaybackOptions } from '../../utils/audio'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { useSafeAreaInsets } from '../../utils/safe-area'
 
@@ -3161,7 +3162,7 @@ async function sendVoiceTranscription(filePath: string) {
   }
 }
 
-function handleVoiceMessageTap(messageId: string) {
+async function handleVoiceMessageTap(messageId: string) {
   hideMessageActions()
 
   const message = messages.value.find((item) => item.id === messageId)
@@ -3176,6 +3177,7 @@ function handleVoiceMessageTap(messageId: string) {
   }
 
   voicePlaybackErrorMutedUntil = 0
+  await ensureInnerAudioPlaybackOptions()
   const audio = ensureVoiceAudioContext()
 
   if (activeVoiceMessageId.value === messageId) {

@@ -166,11 +166,10 @@
           class="memorial-photo-actions__button memorial-photo-actions__button--secondary"
           block
           shape="round"
-          :disabled="isBusy || !canGenerate"
-          :loading="isGenerating"
-          @click="handleGenerate"
+          :disabled="isBusy"
+          @click="handleReturnToChat"
         >
-          重新生成
+          返回聊天
         </nut-button>
         <nut-button
           class="memorial-photo-actions__button"
@@ -215,6 +214,12 @@ type UploadedPhoto = {
   objectKey: string
   url: string
 }
+
+type PageStackEntry = {
+  route?: string
+}
+
+declare function getCurrentPages(): PageStackEntry[]
 
 const MAX_AGENT_PHOTO_COUNT = 3
 const MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH = 500
@@ -548,6 +553,68 @@ async function handleOpenAlbum() {
   await Taro.navigateTo({
     url: `/pages/chat-album/index?${query}`,
   })
+}
+
+async function handleReturnToChat() {
+  if (isBusy.value) {
+    return
+  }
+
+  if (getPreviousPageRoute() === 'pages/chat/index') {
+    try {
+      await Taro.navigateBack()
+      return
+    } catch {
+      // Fall back to direct chat navigation below.
+    }
+  }
+
+  await redirectToChatPage()
+}
+
+function getPreviousPageRoute() {
+  if (typeof getCurrentPages !== 'function') {
+    return ''
+  }
+
+  const pages = getCurrentPages()
+  const previousPage = pages[pages.length - 2]
+
+  return normalizePageRoute(previousPage?.route)
+}
+
+function normalizePageRoute(route?: string) {
+  return route?.trim().replace(/^\/+/, '') ?? ''
+}
+
+async function redirectToChatPage() {
+  const url = buildChatPageUrl()
+
+  if (!url) {
+    showToast('缺少会话信息，请返回通讯录重新进入')
+    return
+  }
+
+  await Taro.redirectTo({ url })
+}
+
+function buildChatPageUrl() {
+  const resolvedConversationId = conversationId.value
+
+  if (!resolvedConversationId) {
+    return ''
+  }
+
+  const query = [
+    ['conversationId', resolvedConversationId],
+    ['agentId', agentId.value],
+    ['agentName', agentName.value],
+  ]
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')
+
+  return `/pages/chat/index?${query}`
 }
 
 function resolveImageMessageUrl(image?: ConversationImagePayload) {

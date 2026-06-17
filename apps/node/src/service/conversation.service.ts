@@ -57,6 +57,8 @@ import { BailianImageService } from './bailian-image.service';
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
+const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
+const MEMORIAL_PHOTO_REPLY_TOP_P = 0.8;
 const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
   /(?:闭上眼|梦里|夜里|晚上|屋里|房间|角落|床边|身边|旁边|耳边)[^，。！？!?]{0,36}(?:我就在|我会在|陪着你|守着你|等着你|回来了|回来)/,
   /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,16}(?:能|会|准能|一定能|都能)(?:听到|听见|看到|看见)/,
@@ -72,6 +74,13 @@ const NON_VIP_CHAT_LIMIT_POLICY = {
   dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
 } as const;
 const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
+const MEMORIAL_PHOTO_REPLY_SYSTEM_PROMPT = [
+  '用户刚生成了一张与聊天对象的纪念合照。请以聊天对象的身份主动回应这张合照。',
+  '回复必须自然、克制、像聊天里顺手说的一句话或两句话，可以结合画面里真实可见的场景、动作、光线、氛围，也可以适当参考用户生成合照时填写的提示词。',
+  '不要说“我是AI”、不要解释图片生成过程、不要分点、不要加括号动作或舞台提示。',
+  '不要承诺现实陪伴、不要说自己真的回来/就在用户身边/能看到用户现实生活，只围绕这张合照表达温柔、珍惜或回应。',
+  '只输出中文正文，控制在60字以内。',
+].join('\n');
 const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
   nonVipLimit: 3,
   vipLimit: 10,
@@ -613,10 +622,150 @@ export class ConversationService {
       createdAt: now,
       updatedAt: now,
     });
+    const assistantReply = await this.createMemorialPhotoAssistantReply({
+      runtime,
+      imageMessage: message,
+      imageUrl:
+        uploaded.url?.trim() ||
+        this.resolveMediaUrlFromObjectKey(uploaded.objectKey) ||
+        generatedPhoto.imageUrl?.trim() ||
+        '',
+      customPrompt,
+      replyTime: new Date(now.getTime() + 1),
+    });
 
-    await this.touchConversation(runtime.conversation, now);
+    await this.touchConversation(
+      runtime.conversation,
+      assistantReply?.updatedAt ?? now
+    );
 
     return this.messageService.buildConversationMessageItem(message);
+  }
+
+  private async createMemorialPhotoAssistantReply(options: {
+    runtime: ReplyRuntime;
+    imageMessage: MessageEntity;
+    imageUrl: string;
+    customPrompt: string;
+    replyTime: Date;
+  }): Promise<MessageEntity | undefined> {
+    const imageUrl = options.imageUrl.trim();
+
+    if (!imageUrl) {
+      this.logger.warn(
+        '[conversation] memorial photo assistant reply skipped, image url unavailable, conversationId=%s, messageId=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.stringifyObjectId(options.imageMessage.id)
+      );
+      return undefined;
+    }
+
+    try {
+      const context = await this.agentContextService.buildConversationContext({
+        auth: options.runtime.auth,
+        conversation: options.runtime.conversation,
+        agent: options.runtime.agent,
+        currentQuery: this.buildMemorialPhotoAssistantReplyQuery(
+          options.customPrompt
+        ),
+      });
+      const response = await this.openAIService.createVisionChatCompletion({
+        model: this.openAIService.getVisionModel(),
+        temperature: MEMORIAL_PHOTO_REPLY_TEMPERATURE,
+        topP: MEMORIAL_PHOTO_REPLY_TOP_P,
+        reasoningSplit: false,
+        messages: [
+          ...context.messages,
+          {
+            role: 'system',
+            content: MEMORIAL_PHOTO_REPLY_SYSTEM_PROMPT,
+          } as ChatCompletionMessageParam,
+          this.buildMemorialPhotoAssistantReplyUserMessage(
+            imageUrl,
+            options.customPrompt
+          ),
+        ],
+      });
+      const replyContent = this.normalizeMemorialPhotoAssistantReplyContent(
+        typeof response.choices?.[0]?.message?.content === 'string'
+          ? response.choices[0].message.content
+          : ''
+      );
+
+      if (!replyContent) {
+        return undefined;
+      }
+
+      const usage = this.extractUsageFromResponse(response);
+
+      return this.saveMessage({
+        conversationId: options.runtime.conversation.id,
+        userId: options.runtime.conversation.userId,
+        agentId: options.runtime.conversation.agentId,
+        role: MessageRole.assistant,
+        type: MessageType.text,
+        content: replyContent,
+        status: MessageStatus.sent,
+        model: usage.model,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        createdAt: options.replyTime,
+        updatedAt: options.replyTime,
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] memorial photo assistant reply failed, conversationId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.stringifyObjectId(options.imageMessage.id),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private buildMemorialPhotoAssistantReplyQuery(customPrompt: string): string {
+    const prompt = customPrompt.trim();
+
+    return prompt
+      ? `用户刚生成了一张纪念合照，画面提示词：${prompt}`
+      : '用户刚生成了一张纪念合照';
+  }
+
+  private buildMemorialPhotoAssistantReplyUserMessage(
+    imageUrl: string,
+    customPrompt: string
+  ): ChatCompletionMessageParam {
+    const prompt = customPrompt.trim();
+    const promptText = prompt
+      ? `用户生成合照时填写的场景/画面提示词：${prompt}`
+      : '用户没有填写额外场景提示词。';
+
+    return {
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: {
+            url: imageUrl,
+          },
+        },
+        {
+          type: 'text',
+          text: [
+            '请观察这张用户刚生成的纪念合照，并替聊天对象主动发一条自然的聊天消息。',
+            promptText,
+            '请优先依据图片实际可见内容，提示词只作为场景和氛围参考。',
+          ].join('\n'),
+        },
+      ],
+    } as unknown as ChatCompletionMessageParam;
+  }
+
+  private normalizeMemorialPhotoAssistantReplyContent(value?: string): string {
+    const segments = this.normalizeAssistantReplySegments(value).slice(0, 2);
+
+    return segments.join('，').trim();
   }
 
   private async createReplyRuntime(

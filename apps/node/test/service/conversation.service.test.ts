@@ -419,6 +419,22 @@ function createService(options: {
         total_tokens: 22,
       },
     }),
+    createVisionChatCompletion: jest.fn().mockResolvedValue({
+      model: 'qwen-vl-max',
+      choices: [
+        {
+          message: {
+            content: '这张合照真温柔，画面里的光也很暖。',
+          },
+        },
+      ],
+      usage: {
+        prompt_tokens: 18,
+        completion_tokens: 14,
+        total_tokens: 32,
+      },
+    }),
+    getVisionModel: jest.fn(() => 'qwen-vl-max'),
     createTextToSpeech: jest.fn(),
   } as any;
   service.minimaxVoiceSpeechService = {
@@ -566,6 +582,49 @@ describe('ConversationService generateMemorialPhoto', () => {
         status: MessageStatus.sent,
       })
     );
+    const assistantMessages = getAssistantMessages(savedMessages);
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages[0]).toEqual(imageMessage);
+    expect(assistantMessages[1]).toEqual(
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        type: MessageType.text,
+        content: '这张合照真温柔，画面里的光也很暖',
+        model: 'qwen-vl-max',
+        promptTokens: 18,
+        completionTokens: 14,
+        totalTokens: 32,
+      })
+    );
+    expect(assistantMessages[1].createdAt.getTime()).toBe(
+      imageMessage!.createdAt.getTime() + 1
+    );
+    expect(service.openAIService.createVisionChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'qwen-vl-max',
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('用户刚生成了一张与聊天对象的纪念合照'),
+          }),
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'image_url',
+                image_url: {
+                  url: 'https://cdn.example.com/memorial-photos/generated.png',
+                },
+              }),
+              expect.objectContaining({
+                type: 'text',
+                text: expect.stringContaining('用户没有填写额外场景提示词'),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
     expect(service.conversationModel.save).toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
@@ -608,6 +667,67 @@ describe('ConversationService generateMemorialPhoto', () => {
         agentName: '小白',
         customPrompt: '我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
       }
+    );
+    expect(service.agentContextService.buildConversationContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery:
+          '用户刚生成了一张纪念合照，画面提示词：我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
+      })
+    );
+    expect(service.openAIService.createVisionChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'text',
+                text: expect.stringContaining(
+                  '用户生成合照时填写的场景/画面提示词：我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。'
+                ),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('keeps the memorial photo result when the proactive assistant reply fails', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    (service.openAIService.createVisionChatCompletion as jest.Mock).mockRejectedValue(
+      new Error('vision failed')
+    );
+
+    const result = await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+      agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+      userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        type: MessageType.image,
+        content: MEMORIAL_PHOTO_CONTENT,
+      })
+    );
+    expect(
+      savedMessages.filter(message => message.type === MessageType.image)
+    ).toHaveLength(1);
+    expect(
+      savedMessages.filter(
+        message =>
+          message.role === MessageRole.assistant &&
+          message.type === MessageType.text
+      )
+    ).toHaveLength(0);
+    expect(service.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('memorial photo assistant reply failed'),
+      expect.any(String),
+      expect.any(String),
+      expect.stringContaining('vision failed')
     );
   });
 

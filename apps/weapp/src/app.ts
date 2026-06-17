@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { silentWeappLogin } from './auth/login-hooks'
 import { authSession, restoreAuthSession } from './auth/session'
 import { initCommentNotificationPolling } from './post/comment-notification-state'
+import { ensureInnerAudioPlaybackOptions } from './utils/audio'
 import { initSafeAreaInsets } from './utils/safe-area'
 
 import './app.scss'
@@ -9,6 +10,7 @@ import './app.scss'
 const App = createApp({
   onLaunch() {
     initSafeAreaInsets()
+    void ensureInnerAudioPlaybackOptions()
     void restoreAuthSession().then(async () => {
       if (!authSession.value?.accessToken) {
         await silentWeappLogin()
