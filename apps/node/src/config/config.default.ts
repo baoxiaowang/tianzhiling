@@ -396,10 +396,7 @@ export default {
       'https://dashscope.aliyuncs.com'
     ),
     defaultPreviewModel: readStringFrom(
-      [
-        'NODE_COSYVOICE_PREVIEW_MODEL',
-        'ADMIN_API_COSYVOICE_PREVIEW_MODEL',
-      ],
+      ['NODE_COSYVOICE_PREVIEW_MODEL', 'ADMIN_API_COSYVOICE_PREVIEW_MODEL'],
       'cosyvoice-v3.5-plus'
     ),
     defaultSpeechModel: readStringFrom(
@@ -440,10 +437,7 @@ export default {
       'https://dashscope.aliyuncs.com'
     ),
     defaultSpeechModel: readStringFrom(
-      [
-        'NODE_QWEN_VOICE_SPEECH_MODEL',
-        'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL',
-      ],
+      ['NODE_QWEN_VOICE_SPEECH_MODEL', 'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL'],
       'qwen3-tts-vc-2026-01-22'
     ),
     defaultLanguageType: readStringFrom(

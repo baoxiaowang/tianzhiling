@@ -19,7 +19,7 @@ import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
 
 const MESSAGE_SEGMENT_LIMIT = 4;
-const DEFAULT_MESSAGE_PAGE_SIZE = 30;
+const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 const MAX_MESSAGE_PAGE_SIZE = 100;
 
 export interface ListConversationMessagesOptions {

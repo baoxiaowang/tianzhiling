@@ -39,6 +39,14 @@ export class WeappPhoneLoginDTO {
   phoneCode: string;
 }
 
+export class DevLoginDTO {
+  @Rule(requiredStringRule.max(128))
+  account: string;
+
+  @Rule(requiredStringRule.max(128))
+  openid: string;
+}
+
 export class BindWeappPhoneDTO {
   @Rule(requiredStringRule.max(512))
   phoneCode: string;

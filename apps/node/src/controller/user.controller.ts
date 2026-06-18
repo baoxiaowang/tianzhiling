@@ -3,6 +3,7 @@ import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import {
   BindWeappPhoneDTO,
+  DevLoginDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
   SendSmsCodeDTO,
@@ -47,6 +48,11 @@ export class UserController {
   @Post('/weapp-phone-login')
   async weappPhoneLogin(@Body() body: WeappPhoneLoginDTO) {
     return this.userService.weappPhoneLogin(body);
+  }
+
+  @Post('/dev-login')
+  async devLogin(@Body() body: DevLoginDTO) {
+    return this.userService.devLogin(body);
   }
 
   @Post('/me/weapp-phone')

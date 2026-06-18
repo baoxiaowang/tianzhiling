@@ -4,6 +4,18 @@ import { createHash } from 'crypto';
 const WEAPP_OPENID = 'o1234567890abcdefghijklmnopqrstuvwxyz';
 const CURRENT_USER_ID = '507f1f77bcf86cd799439011';
 const CURRENT_ACCOUNT_ID = '507f1f77bcf86cd799439012';
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+const ORIGINAL_DEV_LOGIN_ENABLED = process.env.NODE_DEV_LOGIN_ENABLED;
+
+afterEach(() => {
+  process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+
+  if (ORIGINAL_DEV_LOGIN_ENABLED == null) {
+    delete process.env.NODE_DEV_LOGIN_ENABLED;
+  } else {
+    process.env.NODE_DEV_LOGIN_ENABLED = ORIGINAL_DEV_LOGIN_ENABLED;
+  }
+});
 
 function buildWeappAccount(openid: string) {
   return `weapp:${createHash('sha256')
@@ -54,6 +66,10 @@ function createService() {
   const userMembershipModel = {
     find: jest.fn().mockResolvedValue([]),
   };
+  const wechatPayService = {
+    getOpenidByJsCode: jest.fn().mockResolvedValue(WEAPP_OPENID),
+    getPhoneNumberByCode: jest.fn().mockResolvedValue('13800138000'),
+  };
 
   service.logger = {
     info: jest.fn(),
@@ -69,10 +85,7 @@ function createService() {
   service.postImageService = {
     resolveForResponse: jest.fn((avatar: string) => avatar),
   } as any;
-  service.wechatPayService = {
-    getOpenidByJsCode: jest.fn().mockResolvedValue(WEAPP_OPENID),
-    getPhoneNumberByCode: jest.fn().mockResolvedValue('13800138000'),
-  } as any;
+  service.wechatPayService = wechatPayService as any;
 
   return {
     service,
@@ -80,6 +93,7 @@ function createService() {
     userModel,
     userAccountModel,
     userMembershipModel,
+    wechatPayService,
   };
 }
 
@@ -205,6 +219,99 @@ describe('UserService phoneLogin', () => {
     });
     expect(userModel.save).not.toHaveBeenCalled();
     expect(userAccountModel.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps dev login disabled unless explicitly enabled', async () => {
+    const { service, userModel } = createService();
+
+    process.env.NODE_ENV = 'development';
+    delete process.env.NODE_DEV_LOGIN_ENABLED;
+
+    await expect(
+      service.devLogin({
+        account: buildWeappAccount(WEAPP_OPENID),
+        openid: WEAPP_OPENID,
+      })
+    ).rejects.toMatchObject({
+      code: 'DEV_LOGIN_DISABLED',
+      status: 404,
+    });
+    expect(userModel.findOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects dev login when account and openid do not match', async () => {
+    const { service, userAccountModel } = createService();
+
+    process.env.NODE_ENV = 'development';
+    process.env.NODE_DEV_LOGIN_ENABLED = 'true';
+    userAccountModel.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.devLogin({
+        account: buildWeappAccount(WEAPP_OPENID),
+        openid: WEAPP_OPENID,
+      })
+    ).rejects.toMatchObject({
+      code: 'DEV_LOGIN_ACCOUNT_OPENID_MISMATCH',
+      status: 404,
+    });
+  });
+
+  it('returns a normal session for dev login when account and openid match', async () => {
+    const { service, userModel, userAccountModel } = createService();
+    const userId = createObjectId(CURRENT_USER_ID);
+    const accountId = createObjectId(CURRENT_ACCOUNT_ID);
+    const user = {
+      id: userId,
+      name: '天之灵用户',
+      avatar: '',
+      phone: '13800138000',
+      phoneVerified: true,
+      gender: 'unknown',
+      region: null,
+    };
+    const userAccount = {
+      id: accountId,
+      userId,
+      account: buildWeappAccount(WEAPP_OPENID),
+      password: '',
+      openId: WEAPP_OPENID,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    process.env.NODE_ENV = 'development';
+    process.env.NODE_DEV_LOGIN_ENABLED = 'true';
+    userModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        matchesObjectId(where.id, CURRENT_USER_ID) ||
+        matchesObjectId(where._id, CURRENT_USER_ID)
+      ) {
+        return user;
+      }
+
+      return null;
+    });
+    userAccountModel.findOne.mockImplementation(async ({ where }: any) => {
+      if (
+        where.account === buildWeappAccount(WEAPP_OPENID) &&
+        where.openId === WEAPP_OPENID
+      ) {
+        return userAccount;
+      }
+
+      return null;
+    });
+
+    const result = await service.devLogin({
+      account: buildWeappAccount(WEAPP_OPENID),
+      openid: WEAPP_OPENID,
+    });
+
+    expect(result.accessToken).toBe('test-token');
+    expect(result.isNewUser).toBe(false);
+    expect(result.user.id).toBe(CURRENT_USER_ID);
+    expect(result.user.account).toBe(buildWeappAccount(WEAPP_OPENID));
   });
 
   it('binds a weapp session phone from the current user profile', async () => {

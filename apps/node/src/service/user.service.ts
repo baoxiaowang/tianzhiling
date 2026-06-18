@@ -29,6 +29,7 @@ import {
 } from '../interface';
 import {
   BindWeappPhoneDTO,
+  DevLoginDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
   SendSmsCodeDTO,
@@ -86,6 +87,7 @@ interface SmsCodeCacheValue {
 const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_LENGTH = 12;
+const DEV_LOGIN_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const USER_GENDERS: UserGender[] = ['male', 'female', 'unknown'];
 
 interface NormalizedUserPreferences {
@@ -542,6 +544,55 @@ export class UserService {
     return this.loginWithVerifiedPhone(phone, {
       weappOpenid: openid,
     });
+  }
+
+  async devLogin(payload: DevLoginDTO): Promise<PasswordLoginResult> {
+    if (!this.isDevLoginEnabled()) {
+      throw new AppError('DEV_LOGIN_DISABLED', 'dev login is disabled', 404);
+    }
+
+    const account = payload?.account?.trim();
+    const openid = payload?.openid?.trim();
+
+    if (!account) {
+      throw new AppError(
+        'INVALID_DEV_LOGIN_ACCOUNT',
+        'account is required',
+        400
+      );
+    }
+
+    if (!openid) {
+      throw new AppError('INVALID_DEV_LOGIN_OPENID', 'openid is required', 400);
+    }
+
+    const userAccount = await this.findWeappAccountByAccountAndOpenid(
+      account,
+      openid
+    );
+
+    if (!userAccount) {
+      throw new AppError(
+        'DEV_LOGIN_ACCOUNT_OPENID_MISMATCH',
+        'account and openid do not match',
+        404
+      );
+    }
+
+    const user = await this.findUserById(userAccount.userId);
+
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
+    }
+
+    this.logger.warn(
+      '[dev-login] targetUserId=%s openid=%s targetAccount=%s',
+      this.stringifyObjectId(user.id),
+      openid,
+      userAccount.account
+    );
+
+    return this.buildLoginResult(user, userAccount, false);
   }
 
   async bindCurrentUserWeappPhone(
@@ -1187,6 +1238,18 @@ export class UserService {
     });
   }
 
+  private async findWeappAccountByAccountAndOpenid(
+    account: string,
+    openid: string
+  ): Promise<UserAccountEntity | null> {
+    return this.userAccountModel.findOne({
+      where: {
+        account,
+        openId: openid,
+      },
+    });
+  }
+
   private normalizePhone(rawPhone?: string): string {
     const phone = rawPhone?.trim();
 
@@ -1236,6 +1299,16 @@ export class UserService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private isDevLoginEnabled(): boolean {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
+
+    return DEV_LOGIN_ENABLED_VALUES.has(
+      (process.env.NODE_DEV_LOGIN_ENABLED ?? '').trim().toLowerCase()
+    );
   }
 
   private getTokenSecret(): string {
