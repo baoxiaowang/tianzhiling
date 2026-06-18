@@ -17,6 +17,7 @@
       :scroll-into-view="scrollIntoView"
       :scroll-with-animation="scrollWithAnimation"
       :show-scrollbar="showScrollbar"
+      @scrolltoupper="emit('scroll-to-upper')"
       @scrolltolower="emit('scroll-to-lower')"
     >
       <slot />
@@ -127,6 +128,7 @@ const props = withDefaults(
   },
 )
 const emit = defineEmits<{
+  'scroll-to-upper': []
   'scroll-to-lower': []
 }>()
 

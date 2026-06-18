@@ -19,6 +19,13 @@ import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
 
 const MESSAGE_SEGMENT_LIMIT = 4;
+const DEFAULT_MESSAGE_PAGE_SIZE = 30;
+const MAX_MESSAGE_PAGE_SIZE = 100;
+
+export interface ListConversationMessagesOptions {
+  beforeCreatedAt?: string;
+  pageSize?: number | string;
+}
 
 export interface ConversationMessageItem {
   id: string;
@@ -51,6 +58,12 @@ export interface ConversationMessageItem {
   createdAt: string;
 }
 
+export interface ConversationMessageListResult {
+  items: ConversationMessageItem[];
+  pageSize?: number;
+  hasMore?: boolean;
+}
+
 @Provide()
 export class MessageService {
   @InjectEntityModel(ConversationEntity)
@@ -64,25 +77,60 @@ export class MessageService {
 
   async listMessages(
     auth: AuthenticatedUserPayload,
-    conversationId: string
-  ): Promise<ConversationMessageItem[]> {
+    conversationId: string,
+    options: ListConversationMessagesOptions = {}
+  ): Promise<ConversationMessageListResult> {
     const conversation = await this.getConversationForUser(
       auth,
       conversationId
     );
+    const pageSize = this.normalizeOptionalPageSize(options.pageSize);
+    const beforeCreatedAt = this.normalizeOptionalDate(options.beforeCreatedAt);
+    const where: Record<string, unknown> = {
+      conversationId: conversation.id,
+      isArchived: { $ne: true },
+    };
+
+    if (beforeCreatedAt) {
+      where.createdAt = { $lt: beforeCreatedAt };
+    }
+
+    if (!pageSize) {
+      const messages = await this.messageModel.find({
+        where: where as never,
+        order: {
+          createdAt: 'ASC',
+        },
+      });
+
+      return {
+        items: messages
+          .filter(message => !message.isArchived)
+          .map(message => this.buildConversationMessageItem(message)),
+      };
+    }
+
     const messages = await this.messageModel.find({
       where: {
-        conversationId: conversation.id,
-        isArchived: { $ne: true },
+        ...where,
       } as never,
       order: {
-        createdAt: 'ASC',
+        createdAt: 'DESC',
       },
+      take: pageSize + 1,
     });
-
-    return messages
+    const pageMessages = messages
       .filter(message => !message.isArchived)
-      .map(message => this.buildConversationMessageItem(message));
+      .slice(0, pageSize)
+      .reverse();
+
+    return {
+      items: pageMessages.map(message =>
+        this.buildConversationMessageItem(message)
+      ),
+      pageSize,
+      hasMore: messages.length > pageSize,
+    };
   }
 
   async deleteMessage(
@@ -204,11 +252,7 @@ export class MessageService {
     const durationMs = this.normalizeVoiceDuration(message.mediaDurationMs);
     const transcript = message.mediaTranscript?.trim() || undefined;
 
-    if (
-      type === MessageType.text &&
-      !objectKey &&
-      !message.mediaUrl?.trim()
-    ) {
+    if (type === MessageType.text && !objectKey && !message.mediaUrl?.trim()) {
       return undefined;
     }
 
@@ -397,5 +441,33 @@ export class MessageService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private normalizeOptionalPageSize(
+    value: number | string | null | undefined
+  ): number | null {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_MESSAGE_PAGE_SIZE;
+    }
+
+    return Math.min(Math.floor(parsed), MAX_MESSAGE_PAGE_SIZE);
+  }
+
+  private normalizeOptionalDate(value: string | undefined): Date | null {
+    if (typeof value !== 'string' || !value.trim()) {
+      return null;
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new AppError('INVALID_CURSOR', 'beforeCreatedAt is invalid', 400);
+    }
+
+    return parsed;
   }
 }

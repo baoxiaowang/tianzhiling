@@ -19,16 +19,19 @@ const AUTH = {
   nonce: 'nonce',
 };
 
-function createTextMessage(content: string): MessageEntity {
+function createTextMessage(
+  content: string,
+  options: { id?: string; createdAt?: string } = {}
+): MessageEntity {
   const message = new MessageEntity();
-  message.id = new MongoObjectId('665000000000000000000101');
+  message.id = new MongoObjectId(options.id ?? '665000000000000000000101');
   message.conversationId = new MongoObjectId('665000000000000000000102');
   message.role = MessageRole.assistant;
   message.type = MessageType.text;
   message.content = content;
   message.status = MessageStatus.sent;
-  message.createdAt = new Date('2026-05-03T08:00:00.000Z');
-  message.updatedAt = new Date('2026-05-03T08:00:00.000Z');
+  message.createdAt = new Date(options.createdAt ?? '2026-05-03T08:00:00.000Z');
+  message.updatedAt = message.createdAt;
 
   return message;
 }
@@ -142,7 +145,7 @@ describe('MessageService listMessages', () => {
       find: jest.fn().mockResolvedValue([activeMessage]),
     } as never;
 
-    const items = await service.listMessages(AUTH, CONVERSATION_ID);
+    const result = await service.listMessages(AUTH, CONVERSATION_ID);
 
     expect(service.messageModel.find).toHaveBeenCalledWith({
       where: {
@@ -153,7 +156,107 @@ describe('MessageService listMessages', () => {
         createdAt: 'ASC',
       },
     });
-    expect(items.map(item => item.content)).toEqual(['还在的消息']);
+    expect(result).toEqual({
+      items: [
+        expect.objectContaining({
+          content: '还在的消息',
+        }),
+      ],
+    });
+  });
+
+  it('loads the latest message page in chronological order', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const newestMessage = createTextMessage('第三条', {
+      id: '665000000000000000000203',
+      createdAt: '2026-05-03T08:02:00.000Z',
+    });
+    const middleMessage = createTextMessage('第二条', {
+      id: '665000000000000000000202',
+      createdAt: '2026-05-03T08:01:00.000Z',
+    });
+    const oldestMessage = createTextMessage('第一条', {
+      id: '665000000000000000000201',
+      createdAt: '2026-05-03T08:00:00.000Z',
+    });
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([
+        newestMessage,
+        middleMessage,
+        oldestMessage,
+      ]),
+    } as never;
+
+    const result = await service.listMessages(AUTH, CONVERSATION_ID, {
+      pageSize: '2',
+    });
+
+    expect(service.messageModel.find).toHaveBeenCalledWith({
+      where: {
+        conversationId: conversation.id,
+        isArchived: { $ne: true },
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      take: 3,
+    });
+    expect(result.items.map(item => item.content)).toEqual(['第二条', '第三条']);
+    expect(result.pageSize).toBe(2);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('loads older messages before the provided createdAt cursor', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const cursor = '2026-05-03T08:03:00.000Z';
+    const messages = [
+      createTextMessage('第二条', {
+        id: '665000000000000000000302',
+        createdAt: '2026-05-03T08:01:00.000Z',
+      }),
+      createTextMessage('第一条', {
+        id: '665000000000000000000301',
+        createdAt: '2026-05-03T08:00:00.000Z',
+      }),
+    ];
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue(messages),
+    } as never;
+
+    const result = await service.listMessages(AUTH, CONVERSATION_ID, {
+      pageSize: 20,
+      beforeCreatedAt: cursor,
+    });
+
+    expect(service.messageModel.find).toHaveBeenCalledWith({
+      where: {
+        conversationId: conversation.id,
+        isArchived: { $ne: true },
+        createdAt: {
+          $lt: new Date(cursor),
+        },
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+      take: 21,
+    });
+    expect(result.items.map(item => item.content)).toEqual(['第一条', '第二条']);
+    expect(result.hasMore).toBe(false);
   });
 });
 

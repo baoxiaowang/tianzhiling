@@ -1,4 +1,13 @@
-import { Body, Controller, Del, Get, Inject, Param, Post } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Del,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+} from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import {
   GenerateMemorialPhotoDTO,
@@ -8,6 +17,7 @@ import {
 import { AuthenticatedUserPayload } from '../interface';
 import { ConversationService } from '../service/conversation.service';
 import { MessageService } from '../service/message.service';
+import type { ListConversationMessagesOptions } from '../service/message.service';
 
 @Controller('/conversation')
 export class ConversationController {
@@ -30,13 +40,15 @@ export class ConversationController {
   }
 
   @Get('/:conversationId/messages')
-  async listMessages(@Param('conversationId') conversationId: string) {
-    return {
-      items: await this.messageService.listMessages(
-        this.ctx.state.auth as AuthenticatedUserPayload,
-        conversationId
-      ),
-    };
+  async listMessages(
+    @Param('conversationId') conversationId: string,
+    @Query() query: ListConversationMessagesOptions
+  ) {
+    return this.messageService.listMessages(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      query
+    );
   }
 
   @Del('/:conversationId/messages/:messageId')

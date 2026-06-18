@@ -20,6 +20,8 @@ interface ConversationListResponse {
 
 interface ConversationMessageListResponse {
   items: unknown[]
+  pageSize?: number
+  hasMore?: boolean
 }
 
 interface SendConversationMessageResponse {
@@ -65,6 +67,17 @@ export interface SendConversationMessageResult {
   assistantMessages?: ConversationMessage[]
   chatQuota?: ConversationChatQuotaSnapshot
   replyPending?: boolean
+}
+
+export interface GetConversationMessagesPageOptions {
+  beforeCreatedAt?: Date | string | null
+  pageSize?: number
+}
+
+export interface ConversationMessageListResult {
+  items: ConversationMessage[]
+  pageSize: number
+  hasMore: boolean
 }
 
 export interface ConversationChatQuotaSnapshot {
@@ -293,6 +306,40 @@ export async function getConversationMessages(conversationId: string) {
   return Array.isArray(data.items)
     ? data.items.map((item) => parseConversationMessage(item))
     : []
+}
+
+export async function getConversationMessagesPage(
+  conversationId: string,
+  options: GetConversationMessagesPageOptions = {}
+): Promise<ConversationMessageListResult> {
+  const queryParts: string[] = []
+
+  if (options.pageSize) {
+    queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  if (options.beforeCreatedAt) {
+    const beforeCreatedAt = options.beforeCreatedAt instanceof Date
+      ? options.beforeCreatedAt.toISOString()
+      : String(options.beforeCreatedAt)
+
+    if (beforeCreatedAt.trim()) {
+      queryParts.push(`beforeCreatedAt=${encodeURIComponent(beforeCreatedAt)}`)
+    }
+  }
+
+  const query = queryParts.length ? `?${queryParts.join('&')}` : ''
+  const data = await get<ConversationMessageListResponse>(
+    `/api/conversation/${conversationId}/messages${query}`
+  )
+
+  return {
+    items: Array.isArray(data.items)
+      ? data.items.map((item) => parseConversationMessage(item))
+      : [],
+    pageSize: data.pageSize ?? options.pageSize ?? 0,
+    hasMore: data.hasMore === true,
+  }
 }
 
 export async function deleteConversationMessage(

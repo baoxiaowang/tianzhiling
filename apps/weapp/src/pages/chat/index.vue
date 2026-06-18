@@ -11,6 +11,7 @@
     :show-scrollbar="false"
     :safe-area-top="false"
     :safe-area-bottom="false"
+    @scroll-to-upper="handleChatScrollToUpper"
   >
     <template #header>
       <view class="chat-page__nav" :style="navStyle">
@@ -47,6 +48,26 @@
       </view>
 
       <view v-else class="chat-message-list">
+        <view
+          v-if="isLoadingHistory"
+          class="chat-message-list__history-status"
+        >
+          正在加载更早消息...
+        </view>
+        <view
+          v-else-if="historyLoadError"
+          class="chat-message-list__history-status chat-message-list__history-status--action"
+          @tap.stop="loadOlderMessages"
+        >
+          加载失败，点此重试
+        </view>
+        <view
+          v-else-if="showNoMoreHistoryHint"
+          class="chat-message-list__history-status"
+        >
+          没有更早消息了
+        </view>
+
         <template v-for="item in displayRows" :key="item.key">
           <view v-if="item.kind === 'time'" class="chat-message-list__time">
             {{ item.label }}
@@ -58,6 +79,7 @@
 
           <view
             v-else
+            :id="item.anchorId"
             class="chat-row"
             :class="{
               'chat-row--agent': !item.isUser,
@@ -335,7 +357,7 @@ import {
   deleteConversationMessage,
   generateConversationMessageVoice,
   getConversationChatQuota,
-  getConversationMessages,
+  getConversationMessagesPage,
   sendConversationMessageAsync,
   sendConversationMessage,
   transcribeConversationVoice,
@@ -400,6 +422,7 @@ type DisplayRow =
       isUser: boolean
       isSending: boolean
       isFailed: boolean
+      anchorId: string
     }
 
 type NavMenuItem = {
@@ -491,6 +514,7 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentLengthThreshold: 24,
 } as const
 const CHAT_TEXT_MAX_LENGTH = 500
+const CHAT_MESSAGE_PAGE_SIZE = 30
 const AGENT_REPLY_POLL_INTERVAL_MS = 1500
 const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
 const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
@@ -502,6 +526,7 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
     '宝，今日对话结束啦（非会员试用期每天 30句）～可以明天再来哦，先好好生活吧，记得在心里牵挂TA～想畅聊点击【开通会员】',
 } as const
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
+const CHAT_MESSAGE_RENDER_FALLBACK_TEXT = '该消息暂无法显示'
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
   key: 'generateVoice',
   label: '转语音',
@@ -525,6 +550,9 @@ const isTextSendSubmitting = ref(false)
 const isCheckingChatQuota = ref(false)
 const isWaitingAgentReply = ref(false)
 const loadError = ref('')
+const isLoadingHistory = ref(false)
+const historyLoadError = ref('')
+const hasMoreHistory = ref(false)
 const didInitialShow = ref(false)
 const draftMessage = ref('')
 const draftCursor = ref(0)
@@ -701,6 +729,14 @@ const isVoiceOverlayVisible = computed(() => isVoiceMode.value && isVoiceGesture
 const isComposerPanelVisible = computed(() => {
   return isEmojiPanelVisible.value || isMorePanelVisible.value
 })
+const showNoMoreHistoryHint = computed(() => {
+  return (
+    !hasMoreHistory.value
+    && !isLoadingHistory.value
+    && !historyLoadError.value
+    && messages.value.length >= CHAT_MESSAGE_PAGE_SIZE
+  )
+})
 const voiceComposerButtonLabel = computed(() => {
   if (isTranscribingVoice.value) {
     return '转文字中...'
@@ -747,93 +783,11 @@ const displayRows = computed<DisplayRow[]>(() => {
   const rows: DisplayRow[] = []
 
   messages.value.forEach((message, messageIndex) => {
-    if (shouldShowTimeDivider(message, messages.value[messageIndex - 1])) {
-      rows.push({
-        key: `time-${message.id}`,
-        kind: 'time',
-        label: formatMessageTime(message.createdAt ?? message.updatedAt),
-      })
+    try {
+      appendMessageDisplayRows(rows, message, messages.value[messageIndex - 1])
+    } catch {
+      rows.push(buildMessageRenderFallbackRow(message, messageIndex))
     }
-
-    const normalizedText = buildMessageText(message)
-
-    if (message.type === 'image' && message.role !== 'system') {
-      rows.push({
-        key: `message-${message.id}-image`,
-        kind: 'message',
-        messageId: message.id,
-        type: 'image',
-        text: normalizedText,
-        imageUrl: resolveImageMessageUrl(message.image),
-        voiceDurationMs: 0,
-        hasVoicePlayback: false,
-        actions: getMessageActionItems(message),
-        isUser: message.role === 'user',
-        isSending: message.status === 'sending',
-        isFailed: message.status === 'failed',
-      })
-      return
-    }
-
-    if (message.type === 'voice' && message.role !== 'system') {
-      rows.push({
-        key: `message-${message.id}-voice`,
-        kind: 'message',
-        messageId: message.id,
-        type: 'voice',
-        text: normalizedText,
-        imageUrl: '',
-        voiceDurationMs: message.voice?.durationMs ?? 1000,
-        hasVoicePlayback: hasResolvableVoicePayload(message.voice),
-        actions: getMessageActionItems(message),
-        isUser: message.role === 'user',
-        isSending: message.status === 'sending',
-        isFailed: message.status === 'failed',
-      })
-      return
-    }
-
-    const textSegments =
-      message.type === 'text' && message.segments.length
-        ? message.segments
-        : normalizedText
-          ? [normalizedText]
-          : []
-
-    if (message.role === 'system') {
-      if (normalizedText) {
-        rows.push({
-          key: `system-${message.id}`,
-          kind: 'system',
-          text: normalizedText,
-        })
-      }
-      return
-    }
-
-    textSegments.forEach((segment, segmentIndex) => {
-      const shouldAttachVoicePlayback =
-        message.role === 'assistant'
-        && segmentIndex === textSegments.length - 1
-        && hasResolvableVoicePayload(message.voice)
-
-      rows.push({
-        key: `message-${message.id}-${segmentIndex}`,
-        kind: 'message',
-        messageId: message.id,
-        type: 'text',
-        text: segment,
-        imageUrl: '',
-        voiceDurationMs: shouldAttachVoicePlayback
-          ? message.voice?.durationMs ?? 1000
-          : 0,
-        hasVoicePlayback: shouldAttachVoicePlayback,
-        actions: getMessageActionItems(message),
-        isUser: message.role === 'user',
-        isSending: message.status === 'sending',
-        isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
-      })
-    })
   })
 
   return rows
@@ -851,6 +805,118 @@ const messageDisplayRowCounts = computed(() => {
 
   return counts
 })
+
+function appendMessageDisplayRows(
+  rows: DisplayRow[],
+  message: ConversationMessage,
+  previous?: ConversationMessage,
+) {
+  if (shouldShowTimeDivider(message, previous)) {
+    rows.push({
+      key: `time-${message.id}`,
+      kind: 'time',
+      label: formatMessageTime(message.createdAt ?? message.updatedAt),
+    })
+  }
+
+  const normalizedText = buildMessageText(message)
+
+  if (message.type === 'image' && message.role !== 'system') {
+    rows.push({
+      key: `message-${message.id}-image`,
+      kind: 'message',
+      messageId: message.id,
+      type: 'image',
+      text: normalizedText,
+      imageUrl: resolveImageMessageUrl(message.image),
+      voiceDurationMs: 0,
+      hasVoicePlayback: false,
+      actions: getMessageActionItems(message),
+      isUser: message.role === 'user',
+      isSending: message.status === 'sending',
+      isFailed: message.status === 'failed',
+      anchorId: buildMessageAnchorId(message.id),
+    })
+    return
+  }
+
+  if (message.type === 'voice' && message.role !== 'system') {
+    rows.push({
+      key: `message-${message.id}-voice`,
+      kind: 'message',
+      messageId: message.id,
+      type: 'voice',
+      text: normalizedText,
+      imageUrl: '',
+      voiceDurationMs: message.voice?.durationMs ?? 1000,
+      hasVoicePlayback: hasResolvableVoicePayload(message.voice),
+      actions: getMessageActionItems(message),
+      isUser: message.role === 'user',
+      isSending: message.status === 'sending',
+      isFailed: message.status === 'failed',
+      anchorId: buildMessageAnchorId(message.id),
+    })
+    return
+  }
+
+  const textSegments =
+    message.type === 'text' && message.segments.length
+      ? message.segments
+      : normalizedText
+        ? [normalizedText]
+        : []
+
+  if (message.role === 'system') {
+    if (normalizedText) {
+      rows.push({
+        key: `system-${message.id}`,
+        kind: 'system',
+        text: normalizedText,
+      })
+    }
+    return
+  }
+
+  textSegments.forEach((segment, segmentIndex) => {
+    const shouldAttachVoicePlayback =
+      message.role === 'assistant'
+      && segmentIndex === textSegments.length - 1
+      && hasResolvableVoicePayload(message.voice)
+
+    rows.push({
+      key: `message-${message.id}-${segmentIndex}`,
+      kind: 'message',
+      messageId: message.id,
+      type: 'text',
+      text: segment,
+      imageUrl: '',
+      voiceDurationMs: shouldAttachVoicePlayback
+        ? message.voice?.durationMs ?? 1000
+        : 0,
+      hasVoicePlayback: shouldAttachVoicePlayback,
+      actions: getMessageActionItems(message),
+      isUser: message.role === 'user',
+      isSending: message.status === 'sending',
+      isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
+      anchorId: segmentIndex === 0 ? buildMessageAnchorId(message.id) : '',
+    })
+  })
+}
+
+function buildMessageRenderFallbackRow(
+  message: Partial<ConversationMessage> | null | undefined,
+  messageIndex: number,
+): DisplayRow {
+  const messageId = typeof message?.id === 'string' && message.id
+    ? message.id
+    : `unknown-${messageIndex}`
+
+  return {
+    key: `message-render-fallback-${messageId}-${messageIndex}`,
+    kind: 'system',
+    text: CHAT_MESSAGE_RENDER_FALLBACK_TEXT,
+  }
+}
 
 useLoad((options) => {
   conversationId.value = decodeRouteParam(options?.conversationId)
@@ -921,6 +987,49 @@ async function preparePage() {
   }
 
   await refreshMessages({ showLoading: true })
+}
+
+function buildMessageAnchorId(messageId: string) {
+  return `chat-message-${messageId.replace(/[^A-Za-z0-9_-]/g, '-')}`
+}
+
+function getMessageTimeValue(message: ConversationMessage) {
+  return (message.createdAt ?? message.updatedAt)?.getTime() ?? 0
+}
+
+function compareConversationMessages(
+  left: ConversationMessage,
+  right: ConversationMessage,
+) {
+  const timeDiff = getMessageTimeValue(left) - getMessageTimeValue(right)
+
+  if (timeDiff !== 0) {
+    return timeDiff
+  }
+
+  return left.id.localeCompare(right.id)
+}
+
+function mergeConversationMessages(
+  currentMessages: ConversationMessage[],
+  nextMessages: ConversationMessage[],
+) {
+  const messageById = new Map<string, ConversationMessage>()
+
+  currentMessages.forEach((message) => {
+    messageById.set(message.id, message)
+  })
+  nextMessages.forEach((message) => {
+    messageById.set(message.id, message)
+  })
+
+  return Array.from(messageById.values()).sort(compareConversationMessages)
+}
+
+function findOldestLoadedMessage() {
+  return messages.value.find((message) => {
+    return !message.id.startsWith('local-') && Boolean(message.createdAt ?? message.updatedAt)
+  })
 }
 
 async function refreshAgentSnapshot() {
@@ -1249,11 +1358,15 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
 
   loadError.value = ''
 
-  refreshMessagesPromise = getConversationMessages(conversationId.value)
-    .then(async (items) => {
-      messages.value = items
-      probeMissingAssistantVoiceDurations(items)
-      resumePendingReplyPollingFromMessages(items)
+  refreshMessagesPromise = getConversationMessagesPage(conversationId.value, {
+    pageSize: CHAT_MESSAGE_PAGE_SIZE,
+  })
+    .then(async (result) => {
+      messages.value = result.items
+      hasMoreHistory.value = result.hasMore
+      historyLoadError.value = ''
+      probeMissingAssistantVoiceDurations(result.items)
+      resumePendingReplyPollingFromMessages(result.items)
     })
     .catch(async (error: unknown) => {
       await handleApiError(error, '加载聊天记录失败，请稍后重试')
@@ -1269,6 +1382,55 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
     })
 
   return refreshMessagesPromise
+}
+
+async function loadOlderMessages() {
+  if (
+    isLoadingHistory.value
+    || isLoading.value
+    || !hasMoreHistory.value
+    || !conversationId.value
+  ) {
+    return
+  }
+
+  const oldestMessage = findOldestLoadedMessage()
+  const beforeCreatedAt = oldestMessage?.createdAt ?? oldestMessage?.updatedAt
+
+  if (!oldestMessage || !beforeCreatedAt) {
+    hasMoreHistory.value = false
+    return
+  }
+
+  const anchorId = buildMessageAnchorId(oldestMessage.id)
+
+  isLoadingHistory.value = true
+  historyLoadError.value = ''
+
+  try {
+    const result = await getConversationMessagesPage(conversationId.value, {
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      beforeCreatedAt,
+    })
+
+    messages.value = mergeConversationMessages(messages.value, result.items)
+    hasMoreHistory.value = result.hasMore
+    probeMissingAssistantVoiceDurations(result.items)
+    await scrollToMessageAnchor(anchorId)
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    historyLoadError.value = '加载失败'
+  } finally {
+    isLoadingHistory.value = false
+  }
+}
+
+function handleChatScrollToUpper() {
+  void loadOlderMessages()
 }
 
 function resumePendingReplyPollingFromMessages(items: ConversationMessage[]) {
@@ -1342,7 +1504,11 @@ async function pollConversationReply() {
   }
 
   try {
-    const items = await getConversationMessages(conversationId.value)
+    const result = await getConversationMessagesPage(conversationId.value, {
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+    })
+    const items = result.items
+
     await reconcilePolledMessages(items, pendingAfter)
     probeMissingAssistantVoiceDurations(items)
 
@@ -1377,7 +1543,10 @@ async function reconcilePolledMessages(
   })
   const newAssistantIds = new Set(newAssistantMessages.map((message) => message.id))
 
-  messages.value = items.filter((message) => !newAssistantIds.has(message.id))
+  messages.value = mergeConversationMessages(
+    messages.value,
+    items.filter((message) => !newAssistantIds.has(message.id)),
+  )
 
   await revealAssistantMessages(newAssistantMessages)
   await scrollToBottom()
@@ -1444,6 +1613,24 @@ async function scrollToBottom(options: { animated?: boolean } = {}) {
     })
 
   return scrollToBottomPromise
+}
+
+async function scrollToMessageAnchor(anchorId: string) {
+  if (!anchorId) {
+    return
+  }
+
+  scrollWithAnimation.value = false
+  await nextTick()
+  scrollIntoViewTarget.value = ''
+  await nextTick()
+  await new Promise<void>((resolve) => {
+    setTimeout(() => {
+      scrollWithAnimation.value = false
+      scrollIntoViewTarget.value = anchorId
+      resolve()
+    }, 0)
+  })
 }
 
 function buildMessageText(message: ConversationMessage) {
@@ -3541,6 +3728,20 @@ function destroyVoiceDurationProbeContexts() {
   flex-direction: column;
   padding: 0 16px 30px;
   box-sizing: border-box;
+}
+
+.chat-message-list__history-status {
+  margin: 2px auto 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 18px;
+  color: #9a9a9a;
+}
+
+.chat-message-list__history-status--action {
+  color: #576b95;
 }
 
 .chat-message-list__time {
