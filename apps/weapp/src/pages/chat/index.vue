@@ -49,23 +49,14 @@
 
       <view v-else class="chat-message-list">
         <view
-          v-if="isLoadingHistory"
           class="chat-message-list__history-status"
+          :class="{
+            'chat-message-list__history-status--action': isHistoryStatusAction,
+            'chat-message-list__history-status--hidden': !historyStatusText,
+          }"
+          @tap.stop="handleHistoryStatusTap"
         >
-          正在加载更早消息...
-        </view>
-        <view
-          v-else-if="historyLoadError"
-          class="chat-message-list__history-status chat-message-list__history-status--action"
-          @tap.stop="loadOlderMessages"
-        >
-          加载失败，点此重试
-        </view>
-        <view
-          v-else-if="showNoMoreHistoryHint"
-          class="chat-message-list__history-status"
-        >
-          没有更早消息了
+          {{ historyStatusText || '占位' }}
         </view>
 
         <template v-for="item in displayRows" :key="item.key">
@@ -514,7 +505,7 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentLengthThreshold: 24,
 } as const
 const CHAT_TEXT_MAX_LENGTH = 500
-const CHAT_MESSAGE_PAGE_SIZE = 30
+const CHAT_MESSAGE_PAGE_SIZE = 50
 const AGENT_REPLY_POLL_INTERVAL_MS = 1500
 const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
 const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
@@ -736,6 +727,24 @@ const showNoMoreHistoryHint = computed(() => {
     && !historyLoadError.value
     && messages.value.length >= CHAT_MESSAGE_PAGE_SIZE
   )
+})
+const historyStatusText = computed(() => {
+  if (isLoadingHistory.value) {
+    return '正在加载更早消息...'
+  }
+
+  if (historyLoadError.value) {
+    return '加载失败，点此重试'
+  }
+
+  if (showNoMoreHistoryHint.value) {
+    return '没有更早消息了'
+  }
+
+  return ''
+})
+const isHistoryStatusAction = computed(() => {
+  return Boolean(historyLoadError.value && !isLoadingHistory.value)
 })
 const voiceComposerButtonLabel = computed(() => {
   if (isTranscribingVoice.value) {
@@ -1406,6 +1415,7 @@ async function loadOlderMessages() {
 
   isLoadingHistory.value = true
   historyLoadError.value = ''
+  let shouldDelayHideLoading = false
 
   try {
     const result = await getConversationMessagesPage(conversationId.value, {
@@ -1417,6 +1427,7 @@ async function loadOlderMessages() {
     hasMoreHistory.value = result.hasMore
     probeMissingAssistantVoiceDurations(result.items)
     await scrollToMessageAnchor(anchorId)
+    shouldDelayHideLoading = true
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth()
@@ -1425,11 +1436,23 @@ async function loadOlderMessages() {
 
     historyLoadError.value = '加载失败'
   } finally {
+    if (shouldDelayHideLoading) {
+      await waitForHistoryScrollSettle()
+    }
+
     isLoadingHistory.value = false
   }
 }
 
 function handleChatScrollToUpper() {
+  void loadOlderMessages()
+}
+
+function handleHistoryStatusTap() {
+  if (!isHistoryStatusAction.value) {
+    return
+  }
+
   void loadOlderMessages()
 }
 
@@ -1630,6 +1653,13 @@ async function scrollToMessageAnchor(anchorId: string) {
       scrollIntoViewTarget.value = anchorId
       resolve()
     }, 0)
+  })
+}
+
+async function waitForHistoryScrollSettle() {
+  await nextTick()
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 80)
   })
 }
 
@@ -3733,6 +3763,7 @@ function destroyVoiceDurationProbeContexts() {
 .chat-message-list__history-status {
   margin: 2px auto 14px;
   padding: 4px 10px;
+  min-height: 18px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
   font-size: 12px;
@@ -3742,6 +3773,11 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-message-list__history-status--action {
   color: #576b95;
+}
+
+.chat-message-list__history-status--hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .chat-message-list__time {

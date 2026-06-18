@@ -83,6 +83,18 @@ export async function weappPhoneLogin(jsCode: string, phoneCode: string) {
   return session satisfies AuthSessionData
 }
 
+export async function devLogin(account: string, openid: string) {
+  const data = await post<Record<string, unknown>>('/api/user/dev-login', {
+    account,
+    openid,
+  })
+  const session = parseAuthSessionData(data)
+
+  await saveAuthSession(session)
+
+  return session satisfies AuthSessionData
+}
+
 export async function bindWeappPhone(phoneCode: string) {
   const data = await post<Record<string, unknown>>('/api/user/me/weapp-phone', {
     phoneCode,

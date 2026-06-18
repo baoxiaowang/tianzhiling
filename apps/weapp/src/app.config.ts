@@ -84,6 +84,10 @@ export default {
       root: 'pages/user-name-edit',
       pages: ['index'],
     },
+    {
+      root: 'pages/dev-login',
+      pages: ['index'],
+    },
   ],
   window: {
     backgroundTextStyle: 'light',

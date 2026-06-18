@@ -81,6 +81,12 @@ export class ApiException extends Error {
         return '该微信已绑定其它手机号'
       case 'WECHAT_MINI_PROGRAM_CONFIG_MISSING':
         return '小程序登录配置缺失，请联系管理员'
+      case 'INVALID_DEV_LOGIN_ACCOUNT':
+        return '请输入用户 Account'
+      case 'INVALID_DEV_LOGIN_OPENID':
+        return '请输入用户 OpenID'
+      case 'DEV_LOGIN_ACCOUNT_OPENID_MISMATCH':
+        return 'Account 和 OpenID 不匹配'
       case 'WECHAT_PAY_CONFIG_MISSING':
         return '微信支付配置缺失，请联系管理员'
       case 'POST_COMMENT_CONTENT_UNSAFE':
