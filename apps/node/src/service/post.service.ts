@@ -1446,22 +1446,21 @@ export class PostService {
       throw new AppError('INVALID_TOKEN', 'token account is invalid', 401);
     }
 
-    const openid = account.openId?.trim();
+    const openid =
+      account.openId?.trim() ||
+      this.resolveLegacyWeappOpenid(account.account) ||
+      this.resolveLegacyWeappOpenid(auth.account) ||
+      (await this.findRecoverableWeappOpenid(account.userId));
 
     if (openid) {
       return openid;
     }
 
-    const rawAccount = account.account?.trim() || '';
-
-    if (!rawAccount.startsWith(WEAPP_ACCOUNT_PREFIX)) {
+    if (
+      !this.isWeappAccount(account.account) &&
+      !this.isWeappAccount(auth.account)
+    ) {
       return '';
-    }
-
-    const legacyOpenid = rawAccount.slice(WEAPP_ACCOUNT_PREFIX.length).trim();
-
-    if (legacyOpenid && !WEAPP_ACCOUNT_HASH_PATTERN.test(legacyOpenid)) {
-      return legacyOpenid;
     }
 
     throw new AppError(
@@ -1469,6 +1468,50 @@ export class PostService {
       'comment content security check is unavailable',
       503
     );
+  }
+
+  private async findRecoverableWeappOpenid(
+    userId?: MongoObjectId
+  ): Promise<string> {
+    if (!userId) {
+      return '';
+    }
+
+    const accounts = await this.userAccountModel.find({
+      where: {
+        userId,
+      },
+    });
+
+    for (const account of accounts) {
+      const openid =
+        account.openId?.trim() ||
+        this.resolveLegacyWeappOpenid(account.account);
+
+      if (openid) {
+        return openid;
+      }
+    }
+
+    return '';
+  }
+
+  private resolveLegacyWeappOpenid(rawAccount?: string): string {
+    const account = rawAccount?.trim() || '';
+
+    if (!this.isWeappAccount(account)) {
+      return '';
+    }
+
+    const legacyOpenid = account.slice(WEAPP_ACCOUNT_PREFIX.length).trim();
+
+    return legacyOpenid && !WEAPP_ACCOUNT_HASH_PATTERN.test(legacyOpenid)
+      ? legacyOpenid
+      : '';
+  }
+
+  private isWeappAccount(rawAccount?: string): boolean {
+    return (rawAccount?.trim() || '').startsWith(WEAPP_ACCOUNT_PREFIX);
   }
 
   private normalizeImages(rawImages?: string[]): string[] {

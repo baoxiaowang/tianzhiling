@@ -240,6 +240,15 @@ function createService(
         ) ?? null
       );
     }),
+    find: jest.fn(async ({ where }: any = {}) => {
+      return userAccounts.filter(account => {
+        const matchesUser = where?.userId
+          ? sameObjectId(account.userId, where.userId)
+          : true;
+
+        return matchesUser;
+      });
+    }),
   } as any;
   service.agentModel = {
     findOne: jest.fn(async ({ where }: any) => {
@@ -677,6 +686,75 @@ describe('PostService comment content safety', () => {
       {
         openid: 'openid-1',
         content: '我也很想她',
+        scene: 2,
+      }
+    );
+    expect(comments).toHaveLength(1);
+  });
+
+  it('uses legacy weapp openid from the current auth payload', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+      userAccounts: [
+        createUserAccount({
+          openId: '',
+          account: 'weapp:abcdef123456',
+        }),
+      ],
+    });
+
+    await service.createComment(
+      {
+        ...AUTH,
+        account: 'weapp:openid-from-token',
+      },
+      POST_ID,
+      {
+        content: '我也很想她',
+      }
+    );
+
+    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
+      {
+        openid: 'openid-from-token',
+        content: '我也很想她',
+        scene: 2,
+      }
+    );
+    expect(comments).toHaveLength(1);
+  });
+
+  it('uses another weapp account openId from the current user', async () => {
+    const post = createPost();
+    const { service, comments } = createService([], {
+      posts: [post],
+      userAccounts: [
+        createUserAccount({
+          openId: '',
+          account: 'weapp:abcdef123456',
+        }),
+        createUserAccount({
+          id: new MongoObjectId('665000000000000000000601'),
+          account: 'weapp:anotherhash',
+          openId: 'openid-linked-account',
+        }),
+      ],
+    });
+
+    await service.createComment(AUTH, POST_ID, {
+      content: '普通评论',
+    });
+
+    expect(service.userAccountModel.find).toHaveBeenCalledWith({
+      where: {
+        userId: new MongoObjectId(USER_ID),
+      },
+    });
+    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
+      {
+        openid: 'openid-linked-account',
+        content: '普通评论',
         scene: 2,
       }
     );
