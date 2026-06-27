@@ -182,8 +182,8 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { clearAuthSession } from '../../auth/session'
 
 const agentFlowVideoId = 'agent-create-flow-bg-video'
-const agentFlowVideo = 'https://oss.tianzhiling.chat/weapp/agent-bg.mp4'
-const agentFlowVideoCover = 'https://oss.tianzhiling.chat/weapp/agent-bg-cover.png'
+const agentFlowVideo = 'https://oss.voloian.cn/weapp/agent-bg.mp4'
+const agentFlowVideoCover = 'https://oss.voloian.cn/weapp/agent-bg-cover.png'
 
 type AgentFormStep =
   | 'gender'

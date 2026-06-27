@@ -13,7 +13,7 @@ export default mergeConfig(
       },
       proxy: {
         '/admin_api': {
-          // target: 'https://admin.tianzhiling.chat/',
+          // target: 'https://admin.voloian.cn/',
           // target: 'http://192.168.0.111:7101',
           // target: 'http://192.168.19.31:7101',
           target: 'http://127.0.0.1:7101',

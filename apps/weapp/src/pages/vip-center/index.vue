@@ -81,7 +81,7 @@ const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isPaying = ref(false)
 const loadError = ref('')
-const vipBenefitsImageUrl = 'https://oss.tianzhiling.chat/weapp/vip-diff.png'
+const vipBenefitsImageUrl = 'https://oss.voloian.cn/weapp/vip-diff.png'
 const specialThanksLines = [
   '每一个生命都有独特的故事，',
   '每一份记忆都值得被珍藏。',
