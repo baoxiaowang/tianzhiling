@@ -5,7 +5,7 @@ class ApiConfig {
 
   static const String _localhostBaseUrl = 'http://192.168.0.111:7001';
   static const String _androidEmulatorBaseUrl = 'http://10.0.2.2:7001';
-  static const String _defaultMediaBaseUrl = 'https://oss.soullink.top';
+  static const String _defaultMediaBaseUrl = 'https://oss.tianzhiling.chat';
 
   static String get baseUrl {
     const configured = String.fromEnvironment('API_BASE_URL');
