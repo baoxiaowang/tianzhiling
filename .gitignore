@@ -3,8 +3,6 @@
 Thumbs.db
 
 # 环境变量与密钥（示例文件可保留）
-.env
-.env.*
 !.env.example
 /resource/cert/
 
