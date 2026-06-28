@@ -5,6 +5,7 @@ import * as bullmq from '@midwayjs/bullmq';
 import type { ILogger } from '@midwayjs/logger';
 import type {
   AdminVoiceTimbreListDTO,
+  AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   VoiceTimbreProviderDTO,
   VoiceTimbreStatusDTO,
@@ -302,6 +303,44 @@ export class AdminVoiceTimbreService {
     }
 
     return timbre;
+  }
+
+  async validateProviderVoice(
+    timbreId: string
+  ): Promise<AdminVoiceTimbreProviderValidationDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+
+    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+      throw new AppError(
+        'VOICE_TIMBRE_PROVIDER_VALIDATE_UNSUPPORTED',
+        'only CosyVoice timbres support provider validation now',
+        400
+      );
+    }
+
+    const providerVoiceId = timbre.providerVoiceId?.trim();
+
+    if (!providerVoiceId) {
+      throw new AppError(
+        'VOICE_TIMBRE_PROVIDER_VOICE_ID_MISSING',
+        'provider voice id is missing',
+        400
+      );
+    }
+
+    const result = await this.cosyVoiceVoiceService.queryVoice(providerVoiceId);
+    this.syncCosyVoiceProviderStatus(timbre, result.status);
+    const saved = await this.voiceTimbreModel.save(timbre);
+
+    return {
+      provider: saved.provider as VoiceTimbreProviderDTO,
+      providerVoiceId: saved.providerVoiceId ?? providerVoiceId,
+      providerStatus: result.status,
+      targetModel: result.targetModel,
+      resourceLink: result.resourceLink,
+      requestId: result.requestId,
+      record: this.buildRecord(saved),
+    };
   }
 
   private async createProviderVoice(timbre: VoiceTimbreEntity): Promise<void> {
@@ -651,6 +690,46 @@ export class AdminVoiceTimbreService {
       error instanceof Error ? error.message : 'voice timbre create failed';
     timbre.updatedAt = new Date();
     await this.voiceTimbreModel.save(timbre);
+  }
+
+  private syncCosyVoiceProviderStatus(
+    timbre: VoiceTimbreEntity,
+    providerStatus: string
+  ): void {
+    const normalizedStatus = providerStatus.trim().toUpperCase();
+
+    if (this.isCosyVoiceProviderStatusActive(normalizedStatus)) {
+      timbre.status = VoiceTimbreStatus.active;
+      timbre.errorCode = '';
+      timbre.errorMessage = '';
+      timbre.updatedAt = new Date();
+      return;
+    }
+
+    if (this.isCosyVoiceProviderStatusPending(normalizedStatus)) {
+      timbre.status = VoiceTimbreStatus.creating;
+      timbre.errorCode = 'COSYVOICE_VOICE_DEPLOYING';
+      timbre.errorMessage = `CosyVoice 音色仍在部署：${normalizedStatus}`;
+      timbre.updatedAt = new Date();
+      return;
+    }
+
+    timbre.status = VoiceTimbreStatus.failed;
+    timbre.errorCode = `COSYVOICE_VOICE_${normalizedStatus || 'UNAVAILABLE'}`;
+    timbre.errorMessage = `CosyVoice 音色不可用：${
+      normalizedStatus || 'UNKNOWN'
+    }`;
+    timbre.updatedAt = new Date();
+  }
+
+  private isCosyVoiceProviderStatusActive(providerStatus: string): boolean {
+    return ['OK', 'DEPLOYED', 'SUCCEEDED', 'SUCCESS'].includes(providerStatus);
+  }
+
+  private isCosyVoiceProviderStatusPending(providerStatus: string): boolean {
+    return ['CREATING', 'PENDING', 'DEPLOYING', 'RUNNING'].includes(
+      providerStatus
+    );
   }
 
   private shouldRetryCreateError(error: unknown): boolean {

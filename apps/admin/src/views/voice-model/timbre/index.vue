@@ -163,11 +163,20 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="120" fixed="right">
+          <a-table-column title="操作" :width="140" fixed="right">
             <template #cell="{ record }">
               <a-space direction="vertical" :size="4" align="start">
                 <a-button type="text" size="small" @click="openEdit(record)">
                   编辑
+                </a-button>
+                <a-button
+                  v-if="canValidate(record)"
+                  type="text"
+                  size="small"
+                  :loading="isValidating(record.id)"
+                  @click="handleValidate(record)"
+                >
+                  校验
                 </a-button>
                 <a-button
                   v-if="canRetry(record)"
@@ -420,6 +429,67 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <a-modal
+      v-model:visible="validationVisible"
+      title="音色校验结果"
+      :footer="false"
+      width="min(680px, calc(100vw - 32px))"
+    >
+      <a-descriptions
+        v-if="validationResult"
+        :column="1"
+        bordered
+        size="medium"
+        class="voice-timbre-page__validation"
+      >
+        <a-descriptions-item label="音色名称">
+          {{ validationResult.record.name }}
+        </a-descriptions-item>
+        <a-descriptions-item label="服务商">
+          {{ formatProvider(validationResult.provider) }}
+        </a-descriptions-item>
+        <a-descriptions-item label="服务商音色ID">
+          <a-typography-text copyable>
+            {{ validationResult.providerVoiceId }}
+          </a-typography-text>
+        </a-descriptions-item>
+        <a-descriptions-item label="服务商状态">
+          <a-tag
+            :color="getProviderStatusColor(validationResult.providerStatus)"
+          >
+            {{ validationResult.providerStatus }}
+          </a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item label="本地同步状态">
+          <a-tag :color="getStatusColor(validationResult.record.status)">
+            {{ formatStatus(validationResult.record.status) }}
+          </a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="validationResult.record.errorMessage"
+          label="失败原因"
+        >
+          {{ validationResult.record.errorMessage }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="validationResult.targetModel" label="模型">
+          {{ validationResult.targetModel }}
+        </a-descriptions-item>
+        <a-descriptions-item v-if="validationResult.requestId" label="请求ID">
+          <a-typography-text copyable>
+            {{ validationResult.requestId }}
+          </a-typography-text>
+        </a-descriptions-item>
+        <a-descriptions-item
+          v-if="validationResult.resourceLink"
+          label="资源链接"
+        >
+          <a-link :href="validationResult.resourceLink" target="_blank">
+            打开资源
+          </a-link>
+        </a-descriptions-item>
+      </a-descriptions>
+    </a-modal>
   </div>
 </template>
 
@@ -439,19 +509,38 @@
     queryVoiceTimbreList,
     retryVoiceTimbre,
     updateVoiceTimbre,
+    validateVoiceTimbre,
     VoiceTimbreRecord,
   } from '@/api/voice-model';
+  import type { ValidateVoiceTimbreRes } from '@/api/voice-model';
 
   const { loading, setLoading } = useLoading();
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const editVisible = ref(false);
+  const validationVisible = ref(false);
   const saving = ref(false);
   const retryingIds = ref<Set<string>>(new Set());
+  const validatingIds = ref<Set<string>>(new Set());
+  const validationResult = ref<ValidateVoiceTimbreRes>();
   const editingRecord = ref<VoiceTimbreRecord>();
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
   const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'cosyvoice';
+  type VoiceTimbreEditForm = {
+    name: string;
+    provider: VoiceTimbreProviderDTO;
+    audioObjectKey: string;
+    audioUrl: string;
+    cloneLanguage: string;
+    providerVoiceId: string;
+    previewText: string;
+    speechSpeed: number;
+    speechVolume: number;
+    speechPitch: number;
+    status: Extract<VoiceTimbreStatusDTO, 'active' | 'disabled'>;
+    remark: string;
+  };
   const searchForm = reactive<{
     keyword: string;
     provider?: VoiceTimbreProviderDTO;
@@ -461,7 +550,7 @@
     provider: undefined,
     status: undefined,
   });
-  const editForm = reactive({
+  const editForm = reactive<VoiceTimbreEditForm>({
     name: '',
     provider: DEFAULT_VOICE_TIMBRE_PROVIDER,
     audioObjectKey: '',
@@ -788,8 +877,13 @@
 
   const isRetrying = (id: string) => retryingIds.value.has(id);
 
+  const isValidating = (id: string) => validatingIds.value.has(id);
+
   const canRetry = (record: VoiceTimbreRecord) =>
     record.status === 'failed' || record.status === 'active';
+
+  const canValidate = (record: VoiceTimbreRecord) =>
+    record.provider === 'cosyvoice' && Boolean(record.providerVoiceId);
 
   const getRetryButtonText = (record: VoiceTimbreRecord) =>
     record.status === 'active' ? '重新训练' : '重试';
@@ -809,6 +903,26 @@
       const latestRetryingIds = new Set(retryingIds.value);
       latestRetryingIds.delete(record.id);
       retryingIds.value = latestRetryingIds;
+    }
+  };
+
+  const handleValidate = async (record: VoiceTimbreRecord) => {
+    const nextValidatingIds = new Set(validatingIds.value);
+    nextValidatingIds.add(record.id);
+    validatingIds.value = nextValidatingIds;
+
+    try {
+      const { data } = await validateVoiceTimbre(record.id);
+      validationResult.value = data;
+      validationVisible.value = true;
+      Message.success('音色校验完成，已同步本地状态');
+      await fetchData();
+    } catch (error) {
+      Message.error('音色校验失败');
+    } finally {
+      const latestValidatingIds = new Set(validatingIds.value);
+      latestValidatingIds.delete(record.id);
+      validatingIds.value = latestValidatingIds;
     }
   };
 
@@ -892,6 +1006,22 @@
     };
 
     return map[status] || 'gray';
+  };
+
+  const getProviderStatusColor = (status: string) => {
+    const normalizedStatus = status.trim().toUpperCase();
+
+    if (['OK', 'DEPLOYED', 'SUCCEEDED', 'SUCCESS'].includes(normalizedStatus)) {
+      return 'green';
+    }
+
+    if (
+      ['CREATING', 'PENDING', 'DEPLOYING', 'RUNNING'].includes(normalizedStatus)
+    ) {
+      return 'blue';
+    }
+
+    return 'red';
   };
 
   const formatDate = (value: string) => {
@@ -993,6 +1123,12 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+
+    &__validation {
+      :deep(.arco-descriptions-item-label) {
+        width: 128px;
+      }
     }
   }
 </style>

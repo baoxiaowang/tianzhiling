@@ -94,6 +94,12 @@ function createService() {
       demoAudio: '',
       requestId: 'dashscope-request-001',
     }),
+    queryVoice: jest.fn().mockResolvedValue({
+      voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      status: 'OK',
+      targetModel: 'cosyvoice-v3.5-plus',
+      requestId: 'dashscope-query-001',
+    }),
     synthesizePreview: jest.fn().mockResolvedValue({
       audioUrl: '',
       audioBuffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
@@ -757,6 +763,103 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       })
     );
     expect(result.status).toBe(VoiceTimbreStatus.active);
+  });
+
+  it('validates an OK CosyVoice provider voice and syncs it active', async () => {
+    const { service } = createService();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.failed),
+      provider: VoiceTimbreProvider.cosyvoice,
+      providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      errorCode: 'COSYVOICE_VOICE_UNDEPLOYED',
+      errorMessage: 'CosyVoice 音色不可用：UNDEPLOYED',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+
+    const result = await service.validateProviderVoice(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(service.cosyVoiceVoiceService.queryVoice).toHaveBeenCalledWith(
+      'cosyvoice-v3.5-plus-tzlvoice-abc123'
+    );
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: VoiceTimbreStatus.active,
+        errorCode: '',
+        errorMessage: '',
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.cosyvoice,
+        providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+        providerStatus: 'OK',
+        targetModel: 'cosyvoice-v3.5-plus',
+        requestId: 'dashscope-query-001',
+        record: expect.objectContaining({
+          status: VoiceTimbreStatus.active,
+          errorCode: '',
+          errorMessage: '',
+        }),
+      })
+    );
+  });
+
+  it('validates an UNDEPLOYED CosyVoice provider voice and syncs it failed', async () => {
+    const { service } = createService();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      provider: VoiceTimbreProvider.cosyvoice,
+      providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
+    jest.mocked(service.cosyVoiceVoiceService.queryVoice).mockResolvedValue({
+      voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      status: 'UNDEPLOYED',
+      targetModel: 'cosyvoice-v3.5-plus',
+      requestId: 'dashscope-query-002',
+    });
+
+    const result = await service.validateProviderVoice(
+      TIMBRE_ID.toHexString()
+    );
+
+    expect(timbre).toEqual(
+      expect.objectContaining({
+        status: VoiceTimbreStatus.failed,
+        errorCode: 'COSYVOICE_VOICE_UNDEPLOYED',
+        errorMessage: 'CosyVoice 音色不可用：UNDEPLOYED',
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        providerStatus: 'UNDEPLOYED',
+        requestId: 'dashscope-query-002',
+        record: expect.objectContaining({
+          status: VoiceTimbreStatus.failed,
+          errorCode: 'COSYVOICE_VOICE_UNDEPLOYED',
+          errorMessage: 'CosyVoice 音色不可用：UNDEPLOYED',
+        }),
+      })
+    );
+  });
+
+  it('rejects provider voice validation for non-CosyVoice timbres', async () => {
+    const { service } = createService();
+
+    jest
+      .mocked(service.voiceTimbreModel.findOne)
+      .mockResolvedValue(createTimbre(VoiceTimbreStatus.active));
+
+    await expect(
+      service.validateProviderVoice(TIMBRE_ID.toHexString())
+    ).rejects.toMatchObject({
+      code: 'VOICE_TIMBRE_PROVIDER_VALIDATE_UNSUPPORTED',
+    });
+    expect(service.cosyVoiceVoiceService.queryVoice).not.toHaveBeenCalled();
   });
 
   it('falls back to CosyVoice provider preview url when preview audio buffer is unavailable', async () => {

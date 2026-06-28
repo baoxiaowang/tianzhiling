@@ -20,6 +20,9 @@ interface CosyVoiceResp {
   request_id?: string;
   output?: {
     voice_id?: string;
+    status?: string;
+    target_model?: string;
+    resource_link?: string;
     preview_audio?: {
       data?: string;
       sample_rate?: number;
@@ -74,6 +77,14 @@ export interface CosyVoicePreviewSpeechResult {
   audioUrl: string;
   audioBuffer: Buffer;
   mimeType: string;
+  requestId?: string;
+}
+
+export interface CosyVoiceQueryVoiceResult {
+  voiceId: string;
+  status: string;
+  targetModel?: string;
+  resourceLink?: string;
   requestId?: string;
 }
 
@@ -236,6 +247,52 @@ export class CosyVoiceVoiceService {
       502,
       response
     );
+  }
+
+  async queryVoice(voiceId: string): Promise<CosyVoiceQueryVoiceResult> {
+    this.ensureEnabled();
+
+    const normalizedVoiceId = voiceId?.trim();
+
+    if (!normalizedVoiceId) {
+      throw new AppError(
+        'COSYVOICE_VOICE_ID_MISSING',
+        'CosyVoice voice id is missing',
+        400
+      );
+    }
+
+    const payload = {
+      model: 'voice-enrollment',
+      input: {
+        action: 'query_voice',
+        voice_id: normalizedVoiceId,
+      },
+    };
+    const response = await this.requestJson<CosyVoiceResp>({
+      path: '/api/v1/services/audio/tts/customization',
+      method: 'POST',
+      body: Buffer.from(JSON.stringify(payload)),
+    });
+    const output = response?.output;
+    const providerStatus = output?.status?.trim();
+
+    if (!providerStatus) {
+      throw new AppError(
+        'COSYVOICE_VOICE_STATUS_MISSING',
+        'CosyVoice voice status is missing',
+        502,
+        response
+      );
+    }
+
+    return {
+      voiceId: output?.voice_id?.trim() || normalizedVoiceId,
+      status: providerStatus,
+      targetModel: output?.target_model?.trim() || undefined,
+      resourceLink: output?.resource_link?.trim() || undefined,
+      requestId: response.request_id?.trim() || undefined,
+    };
   }
 
   private ensureEnabled(): void {
