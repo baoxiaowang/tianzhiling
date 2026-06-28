@@ -35,6 +35,11 @@ export class AdminVoiceTimbreController {
     return this.adminVoiceTimbreService.retryVoiceTimbreCreate(id);
   }
 
+  @Post('/:id/validate')
+  async validate(@Param('id') id: string) {
+    return this.adminVoiceTimbreService.validateProviderVoice(id);
+  }
+
   @Put('/:id')
   async update(
     @Param('id') id: string,

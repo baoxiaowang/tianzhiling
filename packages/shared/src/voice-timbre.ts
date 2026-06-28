@@ -49,6 +49,16 @@ export interface AdminVoiceTimbreListDTO {
   pageSize: number;
 }
 
+export interface AdminVoiceTimbreProviderValidationDTO {
+  provider: VoiceTimbreProviderDTO;
+  providerVoiceId: string;
+  providerStatus: string;
+  targetModel?: string;
+  resourceLink?: string;
+  requestId?: string;
+  record: AdminVoiceTimbreRecordDTO;
+}
+
 export interface CreateAdminVoiceTimbreDTO {
   name: string;
   provider: VoiceTimbreProviderDTO;

@@ -14,6 +14,7 @@
     "init:admin-node": "sh scripts/init-admin-node.sh",
     "test:admin-node": "pnpm --filter @tzl/admin-node test",
     "dev:node": "pnpm --filter ./apps/node dev",
+    "online:node": "pnpm --filter ./apps/node online",
     "build:node": "pnpm --filter ./apps/node build",
     "test:node": "pnpm --filter ./apps/node test",
     "lint:node": "pnpm --filter ./apps/node lint",

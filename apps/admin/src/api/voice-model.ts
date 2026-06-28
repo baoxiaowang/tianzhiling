@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AdminVoiceTimbreListDTO,
   AdminVoiceTimbreListParamsDTO,
+  AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   CreateAdminVoiceTimbreDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -12,6 +13,7 @@ export type VoiceTimbreListParams = AdminVoiceTimbreListParamsDTO;
 export type VoiceTimbreListRes = AdminVoiceTimbreListDTO;
 export type CreateVoiceTimbreData = CreateAdminVoiceTimbreDTO;
 export type UpdateVoiceTimbreData = UpdateAdminVoiceTimbreDTO;
+export type ValidateVoiceTimbreRes = AdminVoiceTimbreProviderValidationDTO;
 
 export function queryVoiceTimbreList(params: VoiceTimbreListParams) {
   return axios.get<VoiceTimbreListRes>('/admin_api/voice-timbres', { params });
@@ -27,4 +29,10 @@ export function updateVoiceTimbre(id: string, data: UpdateVoiceTimbreData) {
 
 export function retryVoiceTimbre(id: string) {
   return axios.post<VoiceTimbreRecord>(`/admin_api/voice-timbres/${id}/retry`);
+}
+
+export function validateVoiceTimbre(id: string) {
+  return axios.post<ValidateVoiceTimbreRes>(
+    `/admin_api/voice-timbres/${id}/validate`
+  );
 }
