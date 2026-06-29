@@ -4,7 +4,7 @@ WORKDIR /workspace
 
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
   PNPM_VERSION=9.15.9 \
-  PNPM_INSTALL_FLAGS="--config.registry=https://registry.npmmirror.com --config.fetch-retries=5 --config.fetch-retry-mintimeout=20000 --config.fetch-retry-maxtimeout=120000 --config.network-timeout=300000"
+  PNPM_INSTALL_FLAGS="--config.registry=https://registry.npmmirror.com --config.fetch-retries=5 --config.network-timeout=300000"
 
 RUN corepack enable
 
