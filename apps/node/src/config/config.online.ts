@@ -1,6 +1,6 @@
 import { MidwayConfig } from '@midwayjs/core';
 
-const ONLINE_HOST = '1.13.18.200';
+const ONLINE_HOST = '175.27.140.78';
 
 const ONLINE_REDIS_PORT = 17380;
 const ONLINE_REDIS_PASSWORD = '';
