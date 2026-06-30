@@ -329,6 +329,11 @@ export class AdminVoiceTimbreService {
     }
 
     const result = await this.cosyVoiceVoiceService.queryVoice(providerVoiceId);
+
+    if (result.targetModel?.trim()) {
+      timbre.previewModel = result.targetModel.trim();
+    }
+
     this.syncCosyVoiceProviderStatus(timbre, result.status);
     const saved = await this.voiceTimbreModel.save(timbre);
 
@@ -440,6 +445,11 @@ export class AdminVoiceTimbreService {
         this.cosyVoiceVoiceService.getDefaultPreviewModel(),
       languageHint: timbre.cloneLanguage,
     });
+
+    if (cloneResult.targetModel?.trim()) {
+      timbre.previewModel = cloneResult.targetModel.trim();
+    }
+
     const previewAudioUrl = await this.createCosyVoicePreviewAudio(
       timbre,
       cloneResult.providerVoiceId,

@@ -84,11 +84,7 @@ export class CosyVoiceSpeechService {
 
     const format = this.normalizeOutputFormat();
     const sampleRate = this.normalizeSampleRate();
-    const model =
-      input.model?.trim() ||
-      this.config?.defaultSpeechModel?.trim() ||
-      this.config?.defaultPreviewModel?.trim() ||
-      'cosyvoice-v3.5-plus';
+    const model = this.resolveSpeechModel(input.model, voiceId);
     const languageHint = this.normalizeLanguageHint(input.languageHint);
     const body = Buffer.from(
       JSON.stringify({
@@ -309,6 +305,57 @@ export class CosyVoiceSpeechService {
     const raw =
       this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
     return raw.replace(/\/+$/, '');
+  }
+
+  private resolveSpeechModel(
+    inputModel: string | undefined,
+    voiceId: string
+  ): string {
+    const modelFromVoiceId = this.inferModelFromVoiceId(voiceId);
+    const normalizedInputModel = inputModel?.trim();
+
+    if (modelFromVoiceId) {
+      if (normalizedInputModel && normalizedInputModel !== modelFromVoiceId) {
+        this.logger?.warn?.(
+          '[cosyvoice-speech] model mismatch, inputModel=%s, voiceModel=%s, voiceId=%s',
+          normalizedInputModel,
+          modelFromVoiceId,
+          voiceId
+        );
+      }
+
+      return modelFromVoiceId;
+    }
+
+    return (
+      normalizedInputModel ||
+      this.config?.defaultSpeechModel?.trim() ||
+      this.config?.defaultPreviewModel?.trim() ||
+      'cosyvoice-v3.5-plus'
+    );
+  }
+
+  private inferModelFromVoiceId(voiceId: string): string {
+    const normalizedVoiceId = voiceId?.trim().toLowerCase();
+    const knownModels = [
+      'cosyvoice-v3.5-plus',
+      'cosyvoice-v3-plus',
+      'cosyvoice-v2',
+      'cosyvoice-v1',
+    ];
+    const knownModel = knownModels.find(model =>
+      normalizedVoiceId.startsWith(`${model}-`)
+    );
+
+    if (knownModel) {
+      return knownModel;
+    }
+
+    return (
+      normalizedVoiceId.match(
+        /^(cosyvoice-v\d+(?:\.\d+)?(?:-[a-z0-9]+)*?)-[a-z0-9]{1,10}$/
+      )?.[1] || ''
+    );
   }
 
   private normalizeOutputFormat(): string {
