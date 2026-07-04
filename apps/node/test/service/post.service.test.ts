@@ -7,6 +7,7 @@ import {
   PostCommentType,
   PostEntity,
   PostLikeEntity,
+  PostModerationStatus,
   PostNotificationEntity,
   PostNotificationType,
   UserEntity,
@@ -206,6 +207,20 @@ function createService(
 
       if (where?.userId) {
         result = result.filter(post => sameObjectId(post.userId, where.userId));
+      }
+
+      if (where?.isDeleted?.$ne === true) {
+        result = result.filter(post => post.isDeleted !== true);
+      }
+
+      if (where?.moderationStatus?.$ne) {
+        result = result.filter(
+          post => post.moderationStatus !== where.moderationStatus.$ne
+        );
+      } else if (where?.moderationStatus) {
+        result = result.filter(
+          post => post.moderationStatus === where.moderationStatus
+        );
       }
 
       if (order?.createdAt === 'DESC') {
@@ -904,6 +919,111 @@ describe('PostService post pagination', () => {
 
     expect(result.items.map(item => item.id)).toEqual([POST_ID, POST_2_ID]);
     expect(result.hasMore).toBe(false);
+  });
+
+  it('hides deleted and risk-controlled posts from public feed', async () => {
+    const posts = [
+      createPost({
+        id: new MongoObjectId(POST_ID),
+        createdAt: new Date('2026-05-13T10:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_2_ID),
+        moderationStatus: PostModerationStatus.riskControlled,
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_3_ID),
+        isDeleted: true,
+        createdAt: new Date('2026-05-13T08:00:00.000Z'),
+      }),
+    ];
+    const { service } = createService([], { posts });
+
+    const result = await service.listPosts(undefined, {
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(result.items.map(item => item.id)).toEqual([POST_ID]);
+  });
+
+  it('keeps risk-controlled posts visible in my posts with status', async () => {
+    const posts = [
+      createPost({
+        id: new MongoObjectId(POST_ID),
+        moderationStatus: PostModerationStatus.riskControlled,
+        moderationReason: '疑似违规',
+        createdAt: new Date('2026-05-13T10:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_2_ID),
+        isDeleted: true,
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      }),
+    ];
+    const { service } = createService([], { posts });
+
+    const result = await service.listPosts(AUTH, {
+      mine: '1',
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: POST_ID,
+        moderationStatus: PostModerationStatus.riskControlled,
+        moderationReason: '疑似违规',
+        isRiskControlled: true,
+      }),
+    ]);
+  });
+
+  it('soft deletes a post only for its owner', async () => {
+    const post = createPost();
+    const { service } = createService([], { posts: [post] });
+
+    await expect(service.deletePost(OTHER_AUTH, POST_ID)).rejects.toMatchObject(
+      {
+        code: 'POST_NOT_FOUND',
+        status: 404,
+      }
+    );
+
+    const result = await service.deletePost(AUTH, POST_ID);
+
+    expect(result).toEqual({
+      id: POST_ID,
+      deleted: true,
+    });
+    expect(post.isDeleted).toBe(true);
+    expect(post.deletedAt).toBeInstanceOf(Date);
+    expect(post.deletedByUserId).toEqual(new MongoObjectId(USER_ID));
+    expect(service.postModel.save).toHaveBeenCalledWith(post);
+  });
+
+  it('allows only the owner to view a risk-controlled post detail', async () => {
+    const post = createPost({
+      moderationStatus: PostModerationStatus.riskControlled,
+    });
+    const { service } = createService([], { posts: [post] });
+
+    await expect(
+      service.getPostDetail(POST_ID, OTHER_AUTH)
+    ).rejects.toMatchObject({
+      code: 'POST_NOT_FOUND',
+      status: 404,
+    });
+
+    const result = await service.getPostDetail(POST_ID, AUTH);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: POST_ID,
+        isRiskControlled: true,
+      })
+    );
   });
 });
 

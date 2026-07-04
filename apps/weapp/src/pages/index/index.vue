@@ -98,8 +98,13 @@
           >
             <moment-card
               :post="item"
+              :show-owner-actions="isMyPost(item)"
+              :show-moderation-status="isMyPost(item)"
+              show-comment-action
+              :is-deleting="isPostDeletePending(item.id)"
               @like="handleLikeTap"
               @comment="handleCommentTap"
+              @delete="handleDeleteTap"
               @preview="handlePreviewImages"
             />
 
@@ -192,6 +197,7 @@ import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
 import {
   createComment,
+  deletePost,
   getPosts,
   likePost,
   unlikePost,
@@ -234,6 +240,7 @@ const shouldFocusCommentInput = ref(false)
 const isSubmittingComment = ref(false)
 const isCommentEmojiPanelVisible = ref(false)
 const likingPostIds = ref<string[]>([])
+const deletingPostIds = ref<string[]>([])
 const currentPostPage = ref(1)
 const hasMorePosts = ref(true)
 const isLoadingMore = ref(false)
@@ -347,6 +354,14 @@ function isPostLikePending(postId: string) {
   return likingPostIds.value.includes(postId)
 }
 
+function isPostDeletePending(postId: string) {
+  return deletingPostIds.value.includes(postId)
+}
+
+function isMyPost(post: PostItem) {
+  return Boolean(session.value?.user.id && post.userId === session.value.user.id)
+}
+
 function setPostLikePending(postId: string, pending: boolean) {
   if (pending) {
     if (!likingPostIds.value.includes(postId)) {
@@ -356,6 +371,17 @@ function setPostLikePending(postId: string, pending: boolean) {
   }
 
   likingPostIds.value = likingPostIds.value.filter((item) => item !== postId)
+}
+
+function setPostDeletePending(postId: string, pending: boolean) {
+  if (pending) {
+    if (!deletingPostIds.value.includes(postId)) {
+      deletingPostIds.value = [...deletingPostIds.value, postId]
+    }
+    return
+  }
+
+  deletingPostIds.value = deletingPostIds.value.filter((item) => item !== postId)
 }
 
 function isLastPostRow(index: unknown) {
@@ -383,6 +409,31 @@ function patchPostLikeState(postId: string, likedByMe: boolean, likeCount: numbe
       ...item,
       likedByMe,
       likeCount: Math.max(0, likeCount),
+    }
+  })
+}
+
+function appendCommentToPost(postId: string, comment: PostCommentItem) {
+  posts.value = posts.value.map((item) => {
+    if (item.id !== postId) {
+      return item
+    }
+
+    const currentComments = Array.isArray(item.comments) ? item.comments : []
+
+    if (currentComments.some((existingComment) => existingComment.id === comment.id)) {
+      return item
+    }
+
+    const nextComments = [...currentComments, comment]
+    const currentCommentCount = Number.isFinite(item.commentCount)
+      ? item.commentCount
+      : currentComments.length
+
+    return {
+      ...item,
+      comments: nextComments,
+      commentCount: Math.max(currentCommentCount + 1, nextComments.length),
     }
   })
 }
@@ -619,6 +670,50 @@ async function handleLikeTap(post: PostItem) {
   }
 }
 
+async function handleDeleteTap(post: PostItem) {
+  if (!session.value) {
+    openLoginPrompt()
+    return
+  }
+
+  if (!isMyPost(post) || isPostDeletePending(post.id)) {
+    return
+  }
+
+  const result = await Taro.showModal({
+    title: '删除动态',
+    content: '删除后这条动态将不再展示，确认删除吗？',
+    confirmText: '删除',
+    confirmColor: '#cf1322',
+  })
+
+  if (!result.confirm) {
+    return
+  }
+
+  setPostDeletePending(post.id, true)
+
+  try {
+    await deletePost(post.id)
+    posts.value = posts.value.filter((item) => item.id !== post.id)
+
+    if (activeCommentPost.value?.id === post.id) {
+      closeCommentComposer(true)
+    }
+
+    showToast('动态已删除')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      openLoginPrompt()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '删除失败，请稍后重试')
+  } finally {
+    setPostDeletePending(post.id, false)
+  }
+}
+
 function closeCommentComposer(force = false) {
   if (isSubmittingComment.value && !force) {
     return
@@ -831,13 +926,13 @@ async function handleSubmitComment() {
   isSubmittingComment.value = true
 
   try {
-    await createComment(post.id, {
+    const comment = await createComment(post.id, {
       content,
       replyToCommentId: activeReplyComment.value?.id,
     })
 
+    appendCommentToPost(post.id, comment)
     commentDraft.value = ''
-    await refreshMomentsData(false)
     closeCommentComposer(true)
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {

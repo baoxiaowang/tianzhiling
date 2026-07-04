@@ -2,6 +2,7 @@ import { del, get, post } from '../api/api-client'
 
 export type PostCommentType = 'user' | 'agent'
 export type PostNotificationType = 'comment' | 'like'
+export type PostModerationStatus = 'normal' | 'risk_controlled'
 
 export interface PostCommentNotificationItem {
   id: string
@@ -67,6 +68,9 @@ export interface PostItem {
   content: string
   images: string[]
   remindAgentIds: string[]
+  moderationStatus?: PostModerationStatus
+  moderationReason?: string
+  isRiskControlled?: boolean
   likeCount: number
   likedByMe: boolean
   commentCount: number
@@ -267,4 +271,8 @@ export async function likePost(postId: string) {
 
 export async function unlikePost(postId: string) {
   return del<PostItem>(`/api/post/${postId}/likes`)
+}
+
+export async function deletePost(postId: string) {
+  return del<{ id: string; deleted: true }>(`/api/post/${postId}`)
 }

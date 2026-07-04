@@ -158,6 +158,80 @@ describe('WechatPayService virtual payment signing', () => {
     );
   });
 
+  it('refreshes access_token and retries msgSecCheck when cached token is invalid', async () => {
+    const service = createVirtualPayService();
+    const redisService = {
+      get: jest.fn().mockResolvedValue('stale-token'),
+      del: jest.fn().mockResolvedValue(1),
+      set: jest.fn().mockResolvedValue('OK'),
+    };
+    const postJson = jest.fn(async (url: string) => {
+      if (
+        url ===
+        'https://api.weixin.qq.com/wxa/msg_sec_check?access_token=stale-token'
+      ) {
+        return {
+          errcode: 40001,
+          errmsg: 'invalid credential',
+        };
+      }
+
+      if (url === 'https://api.weixin.qq.com/cgi-bin/stable_token') {
+        return {
+          access_token: 'fresh-token',
+          expires_in: 7200,
+        };
+      }
+
+      if (
+        url ===
+        'https://api.weixin.qq.com/wxa/msg_sec_check?access_token=fresh-token'
+      ) {
+        return {
+          errcode: 0,
+          result: {
+            suggest: 'pass',
+            label: 100,
+          },
+        };
+      }
+
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    (service as any).redisService = redisService;
+    (service as any).logger = {
+      warn: jest.fn(),
+    };
+    (service as any).postJson = postJson;
+
+    const result = await service.checkMessageContentSafety({
+      openid: 'openid-1',
+      content: '普通评论',
+      scene: 2,
+    });
+
+    expect(result.isSafe).toBe(true);
+    expect(redisService.del).toHaveBeenCalledWith(
+      'wechat:mini-program:access-token'
+    );
+    expect(redisService.set).toHaveBeenCalledWith(
+      'wechat:mini-program:access-token',
+      'fresh-token',
+      'EX',
+      6900
+    );
+    expect(postJson).toHaveBeenCalledWith(
+      'https://api.weixin.qq.com/cgi-bin/stable_token',
+      {
+        grant_type: 'client_credential',
+        appid: 'mini-app-id',
+        secret: 'mini-app-secret',
+        force_refresh: true,
+      }
+    );
+  });
+
   it('treats non-pass msgSecCheck suggestions as unsafe', async () => {
     const service = createVirtualPayService();
 

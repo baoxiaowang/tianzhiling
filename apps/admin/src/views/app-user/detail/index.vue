@@ -36,12 +36,14 @@
                   {{ user.id }}
                 </a-typography-text>
               </div>
-              <a-tag :color="user.phoneVerified ? 'green' : 'gray'">
-                {{ user.phoneVerified ? '手机已验证' : '手机未验证' }}
-              </a-tag>
-              <a-tag :color="user.isVip ? 'gold' : 'gray'">
-                {{ user.isVip ? 'VIP会员' : '普通用户' }}
-              </a-tag>
+              <a-space class="app-user-detail-page__profile-tags">
+                <a-tag :color="user.phoneVerified ? 'green' : 'gray'">
+                  {{ user.phoneVerified ? '手机已验证' : '手机未验证' }}
+                </a-tag>
+                <a-tag :color="user.isVip ? 'gold' : 'gray'">
+                  {{ user.isVip ? 'VIP会员' : '普通用户' }}
+                </a-tag>
+              </a-space>
             </div>
 
             <a-descriptions
@@ -71,7 +73,7 @@
 
     <a-card class="app-user-detail-page__tabs-card" :bordered="false">
       <a-tabs v-model:active-key="activeTab">
-        <a-tab-pane key="agents" title="用户agent">
+        <a-tab-pane key="agents" title="用户 Agent">
           <a-card :bordered="false">
             <a-form
               :model="agentSearchForm"
@@ -82,7 +84,7 @@
                 <a-input
                   v-model="agentSearchForm.keyword"
                   allow-clear
-                  placeholder="搜索 agent 名字"
+                  placeholder="搜索 Agent 名字"
                   @press-enter="handleAgentSearch"
                 />
               </a-form-item>
@@ -109,7 +111,7 @@
               :scroll="{ x: 1080 }"
             >
               <template #empty>
-                <a-empty description="暂无用户agent" />
+                <a-empty description="暂无用户 Agent" />
               </template>
               <template #columns>
                 <a-table-column title="Agent" data-index="name" :width="260">
@@ -213,6 +215,9 @@
             </div>
           </a-card>
         </a-tab-pane>
+        <a-tab-pane key="posts" title="用户动态">
+          <post-list-panel title="用户动态" :user-id="userId || ''" embedded />
+        </a-tab-pane>
         <a-tab-pane key="orders" title="用户订单">
           <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
         </a-tab-pane>
@@ -234,6 +239,7 @@
     queryAppUserDetail,
   } from '@/api/app-user';
   import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
+  import PostListPanel from '@/views/post/components/post-list-panel.vue';
 
   const route = useRoute();
   const router = useRouter();
@@ -297,7 +303,7 @@
     } catch (error) {
       agentList.value = [];
       agentPagination.total = 0;
-      Message.error('用户agent加载失败');
+      Message.error('用户 Agent 加载失败');
     } finally {
       agentsLoading.value = false;
     }
@@ -412,6 +418,10 @@
       align-items: flex-start;
       justify-content: space-between;
       margin-bottom: 16px;
+    }
+
+    &__profile-tags {
+      flex-shrink: 0;
     }
 
     &__name {

@@ -3,6 +3,8 @@ import type {
   AdminAgentListDTO,
   AdminAgentListParamsDTO,
   AdminAgentRecordDTO,
+  AdminPostListDTO,
+  AdminPostListParamsDTO,
 } from '@tzl/shared';
 
 export type AppUserAgentRecord = AdminAgentRecordDTO;
@@ -10,6 +12,11 @@ export type AppUserAgentListRes = AdminAgentListDTO;
 export type AppUserAgentListParams = Pick<
   AdminAgentListParamsDTO,
   'keyword' | 'page' | 'pageSize'
+>;
+export type AppUserPostListRes = AdminPostListDTO;
+export type AppUserPostListParams = Pick<
+  AdminPostListParamsDTO,
+  'keyword' | 'moderationStatus' | 'page' | 'pageSize'
 >;
 
 export interface AppUserRecord {
@@ -52,6 +59,12 @@ export function queryAppUserDetail(id: string) {
 
 export function queryAppUserAgents(id: string, params: AppUserAgentListParams) {
   return axios.get<AppUserAgentListRes>(`/admin_api/app-users/${id}/agents`, {
+    params,
+  });
+}
+
+export function queryAppUserPosts(id: string, params: AppUserPostListParams) {
+  return axios.get<AppUserPostListRes>(`/admin_api/app-users/${id}/posts`, {
     params,
   });
 }

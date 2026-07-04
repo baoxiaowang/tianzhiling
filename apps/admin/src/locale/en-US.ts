@@ -26,6 +26,8 @@ export default {
   'menu.order': 'Order Management',
   'menu.order.list': 'Orders',
   'menu.order.refund': 'Refunds',
+  'menu.post': 'Post Management',
+  'menu.post.list': 'Posts',
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',
   'menu.voiceModel.package': 'Voice Packages',

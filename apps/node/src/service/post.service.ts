@@ -19,6 +19,7 @@ import {
   PostNotificationEntity,
   PostNotificationType,
   PostEntity,
+  PostModerationStatus,
   UserAccountEntity,
   UserEntity,
 } from '@tzl/entities';
@@ -49,6 +50,9 @@ export interface PostItem {
   content: string;
   images: string[];
   remindAgentIds: string[];
+  moderationStatus: PostModerationStatus;
+  moderationReason: string;
+  isRiskControlled: boolean;
   likeCount: number;
   likedByMe: boolean;
   commentCount: number;
@@ -157,6 +161,8 @@ interface ListPostsOptions {
   mine?: boolean | string;
 }
 
+type MongoWhere = Record<string, unknown>;
+
 @Provide()
 export class PostService {
   @Logger()
@@ -212,8 +218,9 @@ export class PostService {
       throw new AppError('UNAUTHORIZED', 'login required', 401);
     }
 
+    const where = this.buildListPostsWhere(onlyMine, currentUserId);
     const posts = await this.postModel.find({
-      where: onlyMine && currentUserId ? { userId: currentUserId } : undefined,
+      where: where as never,
       order: {
         createdAt: 'DESC',
       },
@@ -272,6 +279,7 @@ export class PostService {
     auth?: AuthenticatedUserPayload
   ): Promise<PostItem> {
     const post = await this.getPostById(postId);
+    this.assertPostViewable(post, auth);
     const user = await this.findUserById(post.userId);
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
@@ -632,6 +640,8 @@ export class PostService {
     post.content = content;
     post.images = images;
     post.remindAgentIds = remindAgentIds;
+    post.moderationStatus = PostModerationStatus.normal;
+    post.isDeleted = false;
     post.createdAt = now;
     post.updatedAt = now;
 
@@ -641,12 +651,39 @@ export class PostService {
     return this.buildPostItem(savedPost, user, 0, false, 0, []);
   }
 
+  async deletePost(
+    auth: AuthenticatedUserPayload,
+    postId: string
+  ): Promise<{ id: string; deleted: true }> {
+    const post = await this.getPostById(postId);
+    const userId = this.parseObjectId(auth.sub);
+
+    if (!this.isSameObjectId(post.userId, userId)) {
+      throw new AppError('POST_NOT_FOUND', 'post not found', 404);
+    }
+
+    if (post.isDeleted !== true) {
+      const now = new Date();
+      post.isDeleted = true;
+      post.deletedAt = now;
+      post.deletedByUserId = userId;
+      post.updatedAt = now;
+      await this.postModel.save(post);
+    }
+
+    return {
+      id: this.stringifyObjectId(post.id),
+      deleted: true,
+    };
+  }
+
   async likePost(
     auth: AuthenticatedUserPayload,
     postId: string
   ): Promise<PostItem> {
     const post = await this.getPostById(postId);
     const userId = this.parseObjectId(auth.sub);
+    this.assertPostViewableByUser(post, userId);
     const existing = await this.findLike(post.id, userId);
     let shouldCreateNotification = false;
 
@@ -684,6 +721,7 @@ export class PostService {
   ): Promise<PostItem> {
     const post = await this.getPostById(postId);
     const userId = this.parseObjectId(auth.sub);
+    this.assertPostViewableByUser(post, userId);
 
     await this.likeModel.deleteOne({
       postId: post.id,
@@ -694,8 +732,12 @@ export class PostService {
     return this.getPostDetail(postId, auth);
   }
 
-  async listComments(postId: string): Promise<PostCommentItem[]> {
+  async listComments(
+    postId: string,
+    auth?: AuthenticatedUserPayload
+  ): Promise<PostCommentItem[]> {
     const post = await this.getPostById(postId);
+    this.assertPostViewable(post, auth);
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
     return this.listCommentItemsByPostId(post.id, authorCache, agentCache);
@@ -708,6 +750,7 @@ export class PostService {
   ): Promise<PostCommentItem> {
     const post = await this.getPostById(postId);
     const userId = this.parseObjectId(auth.sub);
+    this.assertPostViewableByUser(post, userId);
     const content = this.normalizeCommentContent(payload?.content);
     await this.checkCommentContentSafety(auth, content);
 
@@ -767,6 +810,16 @@ export class PostService {
     }
 
     const post = await this.getPostById(postId);
+
+    if (this.isPostDeleted(post) || this.isPostRiskControlled(post)) {
+      this.logger.info(
+        '[post-remind-reply] skip hidden post, postId=%s, agentId=%s',
+        postId,
+        agentId
+      );
+      return;
+    }
+
     const agent = await this.findAgentById(agentId);
     const user = await this.findUserById(post.userId);
 
@@ -838,6 +891,91 @@ export class PostService {
     );
   }
 
+  private buildListPostsWhere(
+    onlyMine: boolean,
+    currentUserId?: MongoObjectId | null
+  ): MongoWhere {
+    const where: MongoWhere = {
+      isDeleted: {
+        $ne: true,
+      },
+    };
+
+    if (onlyMine && currentUserId) {
+      where.userId = currentUserId;
+      return where;
+    }
+
+    where.moderationStatus = {
+      $ne: PostModerationStatus.riskControlled,
+    };
+
+    return where;
+  }
+
+  private assertPostViewable(
+    post: PostEntity,
+    auth?: AuthenticatedUserPayload
+  ): void {
+    const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
+    this.assertPostViewableByUser(post, currentUserId);
+  }
+
+  private assertPostViewableByUser(
+    post: PostEntity,
+    currentUserId?: MongoObjectId | null
+  ): void {
+    if (this.isPostDeleted(post)) {
+      throw new AppError('POST_NOT_FOUND', 'post not found', 404);
+    }
+
+    if (
+      this.isPostRiskControlled(post) &&
+      !this.isPostOwner(post, currentUserId)
+    ) {
+      throw new AppError('POST_NOT_FOUND', 'post not found', 404);
+    }
+  }
+
+  private isPostOwner(
+    post: PostEntity,
+    currentUserId?: MongoObjectId | null
+  ): boolean {
+    return Boolean(
+      currentUserId && this.isSameObjectId(post.userId, currentUserId)
+    );
+  }
+
+  private isPostDeleted(post: PostEntity): boolean {
+    return post.isDeleted === true;
+  }
+
+  private isPostRiskControlled(post: PostEntity): boolean {
+    return (
+      this.normalizePostModerationStatus(post.moderationStatus) ===
+      PostModerationStatus.riskControlled
+    );
+  }
+
+  private normalizePostModerationStatus(
+    value?: PostModerationStatus | string
+  ): PostModerationStatus {
+    return value === PostModerationStatus.riskControlled
+      ? PostModerationStatus.riskControlled
+      : PostModerationStatus.normal;
+  }
+
+  private isSameObjectId(
+    left?: MongoObjectId | null,
+    right?: MongoObjectId | null
+  ): boolean {
+    return Boolean(
+      left &&
+        right &&
+        this.stringifyObjectId(left) === this.stringifyObjectId(right)
+    );
+  }
+
   private async findUserById(
     userId: MongoObjectId
   ): Promise<UserEntity | null> {
@@ -866,6 +1004,10 @@ export class PostService {
     commentCount = 0,
     comments: PostCommentItem[] = []
   ): PostItem {
+    const moderationStatus = this.normalizePostModerationStatus(
+      post.moderationStatus
+    );
+
     return {
       id: this.stringifyObjectId(post.id),
       userId: this.stringifyObjectId(post.userId),
@@ -886,6 +1028,10 @@ export class PostService {
             .map(agentId => agentId.trim())
             .filter(Boolean)
         : [],
+      moderationStatus,
+      moderationReason: post.moderationReason?.trim() || '',
+      isRiskControlled:
+        moderationStatus === PostModerationStatus.riskControlled,
       likeCount,
       likedByMe,
       commentCount,

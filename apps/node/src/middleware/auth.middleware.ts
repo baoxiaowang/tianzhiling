@@ -35,6 +35,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { methods: ['POST'], path: /^\/post\/notifications\/read\/?$/ },
   { methods: ['POST'], path: /^\/post\/[^/]+\/likes\/?$/ },
   { methods: ['DELETE'], path: /^\/post\/[^/]+\/likes\/?$/ },
+  { methods: ['DELETE'], path: /^\/post\/[^/]+\/?$/ },
   {
     methods: ['POST'],
     path: /^\/post\/[^/]+\/comment-notifications\/read\/?$/,
@@ -45,6 +46,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
 const OPTIONAL_AUTH_ROUTES: ProtectedRoute[] = [
   { methods: ['GET'], path: /^\/post\/?$/ },
   { methods: ['GET'], path: /^\/post\/[^/]+\/?$/ },
+  { methods: ['GET'], path: /^\/post\/[^/]+\/comments\/?$/ },
 ];
 
 @Middleware()

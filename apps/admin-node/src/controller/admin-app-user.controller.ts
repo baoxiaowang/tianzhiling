@@ -12,12 +12,17 @@ import {
   ListAdminAppUsersQueryDTO,
   UpdateAdminAppUserDTO,
 } from '../dto/admin-app-user.dto';
+import { ListAdminPostsQueryDTO } from '../dto/admin-post.dto';
 import { AdminAppUserService } from '../service/admin-app-user.service';
+import { AdminPostService } from '../service/admin-post.service';
 
 @Controller('/app-users')
 export class AdminAppUserController {
   @Inject()
   adminAppUserService: AdminAppUserService;
+
+  @Inject()
+  adminPostService: AdminPostService;
 
   @Get('/')
   async list(@Query() query: ListAdminAppUsersQueryDTO) {
@@ -30,6 +35,14 @@ export class AdminAppUserController {
     @Query() query: ListAdminAppUserAgentsQueryDTO
   ) {
     return this.adminAppUserService.listUserAgents(id, query);
+  }
+
+  @Get('/:id/posts')
+  async posts(
+    @Param('id') id: string,
+    @Query() query: ListAdminPostsQueryDTO
+  ) {
+    return this.adminPostService.listUserPosts(id, query);
   }
 
   @Get('/:id')
