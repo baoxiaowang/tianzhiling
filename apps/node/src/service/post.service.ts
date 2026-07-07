@@ -22,6 +22,8 @@ import {
   PostModerationStatus,
   UserAccountEntity,
   UserEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { OpenAIService } from './agents/openai';
@@ -34,12 +36,14 @@ import { PostImageService } from './post-image.service';
 import { WechatPayService } from './wechat-pay.service';
 
 export const POST_REMIND_REPLY_QUEUE = 'post-remind-reply';
+export const POST_COMMENT_AGENT_REPLY_QUEUE = 'post-comment-agent-reply';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_PATTERN = /^[a-f0-9]{12}$/i;
 
 export interface PostRemindReplyJobData {
   postId: string;
   agentId: string;
+  triggerCommentId?: string;
 }
 
 export interface PostItem {
@@ -200,6 +204,9 @@ export class PostService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @InjectEntityModel(UserAccountEntity)
   userAccountModel: MongoRepository<UserAccountEntity>;
@@ -786,6 +793,7 @@ export class PostService {
 
     const savedComment = await this.commentModel.save(comment);
     await this.createCommentNotification(post, savedComment, user, null);
+    await this.enqueueAgentCommentReplyJob(post, savedComment, replyToComment);
 
     return this.buildCommentItem(
       savedComment,
@@ -799,6 +807,7 @@ export class PostService {
   async processRemindReplyJob(data: PostRemindReplyJobData): Promise<void> {
     const postId = data?.postId?.trim();
     const agentId = data?.agentId?.trim();
+    const triggerCommentId = data?.triggerCommentId?.trim();
 
     if (!postId || !agentId) {
       this.logger.warn(
@@ -833,8 +842,26 @@ export class PostService {
     }
 
     const ownerUserId = this.stringifyObjectId(post.userId);
+    if (this.stringifyObjectId(agent.createdUserId) !== ownerUserId) {
+      this.logger.info(
+        '[post-remind-reply] skip unauthorized or stale remind target, postId=%s, agentId=%s',
+        postId,
+        agentId
+      );
+      return;
+    }
+
+    if (triggerCommentId) {
+      await this.processAgentCommentReplyJob(
+        post,
+        user,
+        agent,
+        triggerCommentId
+      );
+      return;
+    }
+
     if (
-      this.stringifyObjectId(agent.createdUserId) !== ownerUserId ||
       !Array.isArray(post.remindAgentIds) ||
       !post.remindAgentIds.includes(agentId)
     ) {
@@ -846,7 +873,6 @@ export class PostService {
       return;
     }
 
-    // 查看是否是评论互动
     const existing = await this.commentModel.findOne({
       where: {
         postId: post.id,
@@ -873,22 +899,116 @@ export class PostService {
       return;
     }
 
+    await this.saveAgentReplyComment(post, agent, content);
+    this.logger.info(
+      '[post-remind-reply] created agent comment, postId=%s, agentId=%s',
+      postId,
+      agentId
+    );
+  }
+
+  private async processAgentCommentReplyJob(
+    post: PostEntity,
+    user: UserEntity,
+    agent: AgentEntity,
+    triggerCommentId: string
+  ): Promise<void> {
+    const postId = this.stringifyObjectId(post.id);
+    const agentId = this.stringifyObjectId(agent.id);
+    const triggerComment = await this.findCommentById(
+      post.id,
+      triggerCommentId
+    );
+
+    const repliedComment = triggerComment?.parentCommentId
+      ? await this.findCommentById(post.id, triggerComment.parentCommentId)
+      : null;
+
+    if (
+      !triggerComment ||
+      !this.isAgentCommentReplyTrigger(triggerComment, agent, repliedComment)
+    ) {
+      this.logger.info(
+        '[post-remind-reply] skip invalid comment reply trigger, postId=%s, agentId=%s, triggerCommentId=%s',
+        postId,
+        agentId,
+        triggerCommentId
+      );
+      return;
+    }
+
+    if (!(await this.isUserVip(post.userId, new Date()))) {
+      this.logger.info(
+        '[post-remind-reply] skip non-vip comment reply, postId=%s, agentId=%s, triggerCommentId=%s',
+        postId,
+        agentId,
+        triggerCommentId
+      );
+      return;
+    }
+
+    const existing = await this.commentModel.findOne({
+      where: {
+        postId: post.id,
+        agentId: agent.id,
+        parentCommentId: triggerComment.id,
+      } as never,
+    });
+
+    if (existing) {
+      this.logger.info(
+        '[post-remind-reply] agent comment reply already exists, postId=%s, agentId=%s, triggerCommentId=%s',
+        postId,
+        agentId,
+        triggerCommentId
+      );
+      return;
+    }
+
+    const content = await this.generateAgentPostReply(
+      post,
+      user,
+      agent,
+      triggerComment.id
+    );
+    if (!content) {
+      this.logger.warn(
+        '[post-remind-reply] skip empty generated reply, postId=%s, agentId=%s',
+        postId,
+        agentId
+      );
+      return;
+    }
+
+    await this.saveAgentReplyComment(post, agent, content, triggerComment);
+    this.logger.info(
+      '[post-remind-reply] created agent comment reply, postId=%s, agentId=%s, triggerCommentId=%s',
+      postId,
+      agentId,
+      triggerCommentId
+    );
+  }
+
+  private async saveAgentReplyComment(
+    post: PostEntity,
+    agent: AgentEntity,
+    content: string,
+    triggerComment?: PostCommentEntity
+  ): Promise<PostCommentEntity> {
     const now = new Date();
     const comment = new PostCommentEntity();
     comment.postId = post.id;
     comment.agentId = agent.id;
     comment.type = PostCommentType.agent;
     comment.content = content;
+    comment.parentCommentId = triggerComment?.id;
+    comment.replyToUserId = triggerComment?.userId;
     comment.createdAt = now;
     comment.updatedAt = now;
 
     const savedComment = await this.commentModel.save(comment);
     await this.createCommentNotification(post, savedComment, null, agent);
-    this.logger.info(
-      '[post-remind-reply] created agent comment, postId=%s, agentId=%s',
-      postId,
-      agentId
-    );
+    return savedComment;
   }
 
   private buildListPostsWhere(
@@ -1495,6 +1615,88 @@ export class PostService {
     return replyTarget;
   }
 
+  private async findCommentById(
+    postId: MongoObjectId,
+    commentId: MongoObjectId | string
+  ): Promise<PostCommentEntity | null> {
+    const objectId = this.normalizeObjectId(commentId);
+
+    if (!objectId) {
+      return null;
+    }
+
+    const commentById = await this.commentModel.findOne({
+      where: {
+        id: objectId,
+      },
+    });
+    const comment =
+      commentById ??
+      (await this.commentModel.findOne({
+        where: {
+          _id: objectId,
+        } as never,
+      }));
+
+    if (
+      !comment ||
+      this.stringifyObjectId(comment.postId) !== this.stringifyObjectId(postId)
+    ) {
+      return null;
+    }
+
+    return comment;
+  }
+
+  private isAgentCommentReplyTrigger(
+    comment: PostCommentEntity,
+    agent: AgentEntity,
+    repliedComment?: PostCommentEntity | null
+  ): boolean {
+    return (
+      comment.type === PostCommentType.user &&
+      Boolean(comment.userId) &&
+      Boolean(comment.replyToAgentId) &&
+      this.stringifyObjectId(comment.replyToAgentId!) ===
+        this.stringifyObjectId(agent.id) &&
+      this.isCommentAuthoredByAgent(repliedComment, agent.id)
+    );
+  }
+
+  private isCommentAuthoredByAgent(
+    comment: PostCommentEntity | null | undefined,
+    agentId: MongoObjectId
+  ): boolean {
+    if (!comment?.agentId) {
+      return false;
+    }
+
+    return (
+      this.stringifyObjectId(comment.agentId) === this.stringifyObjectId(agentId)
+    );
+  }
+
+  private async isUserVip(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<boolean> {
+    const memberships = await this.userMembershipModel.find({
+      where: {
+        userId,
+        status: UserMembershipStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+
+    return memberships.some(
+      membership =>
+        membership.lifetime ||
+        Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
+  }
+
   private normalizeContent(rawContent?: string): string {
     const content = rawContent?.trim() ?? '';
 
@@ -1843,10 +2045,60 @@ export class PostService {
     }
   }
 
+  private async enqueueAgentCommentReplyJob(
+    post: PostEntity,
+    comment: PostCommentEntity,
+    replyToComment?: PostCommentEntity | null
+  ): Promise<void> {
+    if (
+      comment.type !== PostCommentType.user ||
+      !comment.replyToAgentId ||
+      !this.isCommentAuthoredByAgent(replyToComment, comment.replyToAgentId)
+    ) {
+      return;
+    }
+
+    if (!(await this.isUserVip(post.userId, new Date()))) {
+      return;
+    }
+
+    const queue = this.bullmqFramework.getQueue(POST_COMMENT_AGENT_REPLY_QUEUE);
+    if (!queue) {
+      this.logger.warn(
+        '[post-remind-reply] queue not found, skip enqueue comment reply, postId=%s, commentId=%s',
+        this.stringifyObjectId(post.id),
+        this.stringifyObjectId(comment.id)
+      );
+      return;
+    }
+
+    const postId = this.stringifyObjectId(post.id);
+    const agentId = this.stringifyObjectId(comment.replyToAgentId);
+    const triggerCommentId = this.stringifyObjectId(comment.id);
+
+    await queue.addJobToQueue(
+      {
+        postId,
+        agentId,
+        triggerCommentId,
+      },
+      {
+        jobId: `post:${postId}:agent:${agentId}:comment:${triggerCommentId}`,
+        delay: 3000,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000,
+        },
+      }
+    );
+  }
+
   private async generateAgentPostReply(
     post: PostEntity,
     user: UserEntity,
-    agent: AgentEntity
+    agent: AgentEntity,
+    triggerCommentId?: MongoObjectId
   ): Promise<string> {
     const existingComments = await this.commentModel.find({
       where: {
@@ -1858,9 +2110,15 @@ export class PostService {
     });
     const momentImages = await this.buildMomentImageContext(post);
     const commentContext = this.buildMomentCommentContext(existingComments);
-    const latestUserComment = [...commentContext]
-      .reverse()
-      .find(comment => comment.type === PostCommentType.user);
+    const latestUserComment =
+      (triggerCommentId
+        ? commentContext.find(
+            comment => comment.id === this.stringifyObjectId(triggerCommentId)
+          )
+        : null) ??
+      [...commentContext]
+        .reverse()
+        .find(comment => comment.type === PostCommentType.user);
     const systemPrompt = buildMomentsSystemPrompt({
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),

@@ -116,7 +116,7 @@
                     v-for="action in item.actions"
                     :key="action.key"
                     class="chat-message-actions__button"
-                    @tap.stop="handleMessageActionTap(item.messageId, action.key)"
+                    @tap.stop="handleMessageActionTap(item.messageId, action.key, item.text)"
                   >
                     <text>{{ action.label }}</text>
                   </view>
@@ -137,7 +137,7 @@
                 :is-sending="item.isSending"
                 @message-tap="handleMessageTap"
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
-                @message-long-press="handleMessageLongPress(item.messageId, item.key)"
+                @message-long-press="handleMessageLongPress(item.messageId, item.key, item.text)"
               />
             </view>
 
@@ -492,7 +492,7 @@ type RecorderErrorLike = {
   errMsg?: string
 }
 
-type MessageActionKey = 'generateVoice' | 'delete'
+type MessageActionKey = 'copy' | 'generateVoice' | 'delete'
 
 type MessageActionItem = {
   key: MessageActionKey
@@ -518,6 +518,7 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
 } as const
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
 const CHAT_MESSAGE_RENDER_FALLBACK_TEXT = '该消息暂无法显示'
+const COPY_MESSAGE_ACTION: MessageActionItem = { key: 'copy', label: '复制' }
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
   key: 'generateVoice',
   label: '转语音',
@@ -903,7 +904,7 @@ function appendMessageDisplayRows(
         ? message.voice?.durationMs ?? 1000
         : 0,
       hasVoicePlayback: shouldAttachVoicePlayback,
-      actions: getMessageActionItems(message),
+      actions: getMessageActionItems(message, segment),
       isUser: message.role === 'user',
       isSending: message.status === 'sending',
       isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
@@ -1960,12 +1961,16 @@ function shouldOfferVoiceGeneration(message?: ConversationMessage) {
   )
 }
 
-function getMessageActionItems(message?: ConversationMessage): MessageActionItem[] {
+function getMessageActionItems(
+  message?: ConversationMessage,
+  copyText = '',
+): MessageActionItem[] {
   if (!message) {
     return []
   }
 
   return [
+    ...(copyText.trim() ? [COPY_MESSAGE_ACTION] : []),
     ...(shouldOfferVoiceGeneration(message) ? [GENERATE_VOICE_MESSAGE_ACTION] : []),
     DELETE_MESSAGE_ACTION,
   ]
@@ -2004,18 +2009,18 @@ async function generateMessageVoice(message: ConversationMessage) {
   }
 }
 
-function handleMessageLongPress(messageId: string, rowKey: string) {
-  void showMessageActions(messageId, rowKey)
+function handleMessageLongPress(messageId: string, rowKey: string, copyText = '') {
+  void showMessageActions(messageId, rowKey, copyText)
 }
 
-async function showMessageActions(messageId: string, rowKey: string) {
+async function showMessageActions(messageId: string, rowKey: string, copyText = '') {
   const message = messages.value.find((item) => item.id === messageId)
   if (!message) {
     return
   }
 
   if (hasMultipleDisplayRowsForMessage(messageId)) {
-    await showLegacyMessageActionSheet(message)
+    await showLegacyMessageActionSheet(message, copyText)
     return
   }
 
@@ -2037,8 +2042,8 @@ function hasMultipleDisplayRowsForMessage(messageId: string) {
   return (messageDisplayRowCounts.value.get(messageId) ?? 0) > 1
 }
 
-async function showLegacyMessageActionSheet(message: ConversationMessage) {
-  const actions = getMessageActionItems(message)
+async function showLegacyMessageActionSheet(message: ConversationMessage, copyText = '') {
+  const actions = getMessageActionItems(message, copyText)
   if (!actions.length) {
     return
   }
@@ -2059,12 +2064,16 @@ async function showLegacyMessageActionSheet(message: ConversationMessage) {
     const action = actions[result.tapIndex]
 
     if (action) {
-      await runMessageAction(message, action.key)
+      await runMessageAction(message, action.key, copyText)
     }
   } catch {}
 }
 
-async function handleMessageActionTap(messageId: string, action: MessageActionKey) {
+async function handleMessageActionTap(
+  messageId: string,
+  action: MessageActionKey,
+  copyText = '',
+) {
   const message = messages.value.find((item) => item.id === messageId)
   hideMessageActions()
 
@@ -2072,10 +2081,19 @@ async function handleMessageActionTap(messageId: string, action: MessageActionKe
     return
   }
 
-  await runMessageAction(message, action)
+  await runMessageAction(message, action, copyText)
 }
 
-async function runMessageAction(message: ConversationMessage, action: MessageActionKey) {
+async function runMessageAction(
+  message: ConversationMessage,
+  action: MessageActionKey,
+  copyText = '',
+) {
+  if (action === 'copy') {
+    await copyMessageContent(copyText)
+    return
+  }
+
   if (action === 'generateVoice') {
     await generateMessageVoice(message)
     return
@@ -2083,6 +2101,22 @@ async function runMessageAction(message: ConversationMessage, action: MessageAct
 
   if (action === 'delete') {
     await deleteMessageFromConversation(message)
+  }
+}
+
+async function copyMessageContent(content: string) {
+  const text = content.trim()
+  if (!text) {
+    return
+  }
+
+  try {
+    await Taro.setClipboardData({
+      data: text,
+    })
+    showToast('已复制')
+  } catch {
+    showToast('复制失败，请稍后重试')
   }
 }
 

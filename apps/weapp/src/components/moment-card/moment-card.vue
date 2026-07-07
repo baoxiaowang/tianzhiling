@@ -13,9 +13,20 @@
     </view>
 
     <view class="moment-card__content-column">
-      <view class="moment-card__meta">
-        <text class="moment-card__author">{{ authorName }}</text>
-        <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
+      <view class="moment-card__header">
+        <view class="moment-card__meta">
+          <text class="moment-card__author">{{ authorName }}</text>
+          <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
+        </view>
+
+        <view
+          v-if="showOwnerActions"
+          class="moment-card__delete"
+          :class="{ 'moment-card__delete--disabled': isDeleting }"
+          @tap.stop="emitDelete"
+        >
+          {{ isDeleting ? '删除中' : '删除' }}
+        </view>
       </view>
 
       <view
@@ -57,14 +68,6 @@
           <view v-if="showCommentAction" class="moment-card__action" @tap="emitComment">
             <image class="moment-card__action-icon" :src="commentIconUrl" mode="aspectFit" />
             <text class="moment-card__action-count">{{ post.commentCount }}</text>
-          </view>
-          <view
-            v-if="showOwnerActions"
-            class="moment-card__delete"
-            :class="{ 'moment-card__delete--disabled': isDeleting }"
-            @tap.stop="emitDelete"
-          >
-            {{ isDeleting ? '删除中' : '删除' }}
           </view>
         </view>
       </view>
@@ -256,8 +259,16 @@ function emitDelete() {
   font-weight: 600;
 }
 
+.moment-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .moment-card__meta {
   flex: 1;
+  min-width: 0;
 }
 
 .moment-card__author {
@@ -393,6 +404,7 @@ function emitDelete() {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   border-radius: 999px;
   color: #8c8c8c;
   font-size: 14px;
