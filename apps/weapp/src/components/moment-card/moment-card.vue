@@ -13,9 +13,20 @@
     </view>
 
     <view class="moment-card__content-column">
-      <view class="moment-card__meta">
-        <text class="moment-card__author">{{ authorName }}</text>
-        <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
+      <view class="moment-card__header">
+        <view class="moment-card__meta">
+          <text class="moment-card__author">{{ authorName }}</text>
+          <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
+        </view>
+
+        <view
+          v-if="showOwnerActions"
+          class="moment-card__delete"
+          :class="{ 'moment-card__delete--disabled': isDeleting }"
+          @tap.stop="emitDelete"
+        >
+          {{ isDeleting ? '删除中' : '删除' }}
+        </view>
       </view>
 
       <view
@@ -34,9 +45,17 @@
       </view>
 
       <view class="moment-card__stats">
-        <text class="moment-card__time">
-          {{ relativeTime }}
-        </text>
+        <view class="moment-card__status-row">
+          <text class="moment-card__time">
+            {{ relativeTime }}
+          </text>
+          <text
+            v-if="showModerationStatus && isRiskControlled"
+            class="moment-card__risk-tag"
+          >
+            风控中
+          </text>
+        </view>
         <view class="moment-card__actions">
           <view
             class="moment-card__action"
@@ -46,7 +65,7 @@
             <image class="moment-card__action-icon" :src="likeIconUrl" mode="aspectFit" />
             <text class="moment-card__action-count">{{ likeCount }}</text>
           </view>
-          <view class="moment-card__action" @tap="emitComment">
+          <view v-if="showCommentAction" class="moment-card__action" @tap="emitComment">
             <image class="moment-card__action-icon" :src="commentIconUrl" mode="aspectFit" />
             <text class="moment-card__action-count">{{ post.commentCount }}</text>
           </view>
@@ -82,14 +101,27 @@ import type { PostCommentItem, PostItem } from '../../apis/post'
 import likeIconUrl from '../../assets/icon/like.svg'
 import commentIconUrl from '../../assets/icon/comment.svg'
 
-const props = defineProps<{
-  post: PostItem
-}>()
+const props = withDefaults(
+  defineProps<{
+    post: PostItem
+    showOwnerActions?: boolean
+    showModerationStatus?: boolean
+    showCommentAction?: boolean
+    isDeleting?: boolean
+  }>(),
+  {
+    showOwnerActions: false,
+    showModerationStatus: false,
+    showCommentAction: true,
+    isDeleting: false,
+  },
+)
 
 const emit = defineEmits<{
   like: [post: PostItem]
   comment: [post: PostItem, replyToComment?: PostCommentItem]
   preview: [post: PostItem, index: number]
+  delete: [post: PostItem]
 }>()
 
 function normalizeText(value: unknown) {
@@ -111,6 +143,16 @@ const relativeTime = computed(() => {
 })
 const likeCount = computed(() => {
   return Number.isFinite(props.post.likeCount) ? props.post.likeCount : 0
+})
+const showOwnerActions = computed(() => props.showOwnerActions)
+const showModerationStatus = computed(() => props.showModerationStatus)
+const showCommentAction = computed(() => props.showCommentAction)
+const isDeleting = computed(() => props.isDeleting)
+const isRiskControlled = computed(() => {
+  return (
+    props.post.isRiskControlled === true ||
+    props.post.moderationStatus === 'risk_controlled'
+  )
 })
 
 function formatMomentRelativeTime(value: string | null) {
@@ -173,6 +215,14 @@ function emitLike() {
 function emitPreview(index: number) {
   emit('preview', props.post, index)
 }
+
+function emitDelete() {
+  if (isDeleting.value) {
+    return
+  }
+
+  emit('delete', props.post)
+}
 </script>
 
 <style lang="scss">
@@ -209,8 +259,16 @@ function emitPreview(index: number) {
   font-weight: 600;
 }
 
+.moment-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .moment-card__meta {
   flex: 1;
+  min-width: 0;
 }
 
 .moment-card__author {
@@ -291,10 +349,27 @@ function emitPreview(index: number) {
   margin-top: 12px;
 }
 
+.moment-card__status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .moment-card__time {
   font-size: 14px;
   line-height: 20px;
   color: $tzl-color-slate-500;
+}
+
+.moment-card__risk-tag {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #fff1f0;
+  color: #cf1322;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .moment-card__actions {
@@ -319,6 +394,25 @@ function emitPreview(index: number) {
 .moment-card__action-count {
   font-size: 14px;
   line-height: 20px;
+}
+
+.moment-card__delete {
+  min-width: 40px;
+  height: 32px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 999px;
+  color: #8c8c8c;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.moment-card__delete--disabled {
+  color: #c0c4cc;
 }
 
 .moment-card__action--active {

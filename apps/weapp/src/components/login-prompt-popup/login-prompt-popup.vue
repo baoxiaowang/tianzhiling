@@ -35,16 +35,6 @@
         <text>取消</text>
       </view>
 
-      <!-- <nut-button
-        class="login-prompt__phone"
-        block
-        shape="round"
-        plain
-        @click="handlePhoneLogin"
-      >
-        手机号登录
-      </nut-button> -->
-
       <view class="login-prompt__agreement">
         <nut-checkbox
           v-model="agreed"
@@ -139,17 +129,6 @@ async function handleWeappLogin() {
       duration: 2200,
     })
   }
-}
-
-function handlePhoneLogin() {
-  if (!ensureAgreed()) {
-    return
-  }
-
-  visible.value = false
-  void Taro.navigateTo({
-    url: '/pages/auth/index',
-  })
 }
 
 function handleCancel() {

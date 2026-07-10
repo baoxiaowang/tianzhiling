@@ -77,7 +77,10 @@ export class PostController {
   @Get('/:postId/comments')
   async listComments(@Param('postId') postId: string) {
     return {
-      items: await this.postService.listComments(postId),
+      items: await this.postService.listComments(
+        postId,
+        this.ctx.state.auth as AuthenticatedUserPayload | undefined
+      ),
     };
   }
 
@@ -100,6 +103,14 @@ export class PostController {
   @Del('/:postId/likes')
   async unlikePost(@Param('postId') postId: string) {
     return this.postService.unlikePost(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      postId
+    );
+  }
+
+  @Del('/:postId')
+  async deletePost(@Param('postId') postId: string) {
+    return this.postService.deletePost(
       this.ctx.state.auth as AuthenticatedUserPayload,
       postId
     );

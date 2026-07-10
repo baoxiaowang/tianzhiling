@@ -189,6 +189,7 @@ interface WechatPayErrorResponse {
 }
 
 const WECHAT_ACCESS_TOKEN_REDIS_KEY = 'wechat:mini-program:access-token';
+const WECHAT_ACCESS_TOKEN_INVALID_ERRCODES = new Set([40001, 40014, 42001]);
 
 @Provide()
 export class WechatPayService {
@@ -275,15 +276,13 @@ export class WechatPayService {
       throw new AppError('INVALID_WECHAT_PHONE_CODE', 'phoneCode is required');
     }
 
-    const accessToken = await this.getMiniProgramAccessToken();
-    const response = await this.postJson<WechatPhoneNumberResponse>(
-      `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(
-        accessToken
-      )}`,
-      {
-        code,
-      }
-    );
+    const response =
+      await this.postMiniProgramJsonWithAccessToken<WechatPhoneNumberResponse>(
+        '/wxa/business/getuserphonenumber',
+        {
+          code,
+        }
+      );
 
     if (response.errcode) {
       throw new AppError(
@@ -344,18 +343,16 @@ export class WechatPayService {
       );
     }
 
-    const accessToken = await this.getMiniProgramAccessToken();
-    const response = await this.postJson<WechatMsgSecCheckResponse>(
-      `https://api.weixin.qq.com/wxa/msg_sec_check?access_token=${encodeURIComponent(
-        accessToken
-      )}`,
-      {
-        version: 2,
-        openid,
-        scene: payload.scene ?? 2,
-        content,
-      }
-    );
+    const response =
+      await this.postMiniProgramJsonWithAccessToken<WechatMsgSecCheckResponse>(
+        '/wxa/msg_sec_check',
+        {
+          version: 2,
+          openid,
+          scene: payload.scene ?? 2,
+          content,
+        }
+      );
 
     if (response.errcode) {
       throw new AppError(
@@ -894,13 +891,13 @@ export class WechatPayService {
     env: number
   ): Promise<T> {
     this.ensureVirtualPayEnabled();
-    const accessToken = await this.getMiniProgramAccessToken();
     const paySig = this.calcVirtualPaySig(uri, body, env);
-    const response = await this.postJson<T>(
-      `https://api.weixin.qq.com${uri}?access_token=${encodeURIComponent(
-        accessToken
-      )}&pay_sig=${encodeURIComponent(paySig)}`,
-      body
+    const response = await this.postMiniProgramJsonWithAccessToken<T>(
+      uri,
+      body,
+      {
+        pay_sig: paySig,
+      }
     );
 
     if (response.errcode) {
@@ -915,31 +912,91 @@ export class WechatPayService {
     return response;
   }
 
-  private async getMiniProgramAccessToken(): Promise<string> {
-    const cachedToken = await this.redisService.get(
-      WECHAT_ACCESS_TOKEN_REDIS_KEY
+  private async postMiniProgramJsonWithAccessToken<
+    T extends { errcode?: number; errmsg?: string }
+  >(
+    uri: string,
+    body: Record<string, unknown> | string,
+    extraQuery: Record<string, string> = {}
+  ): Promise<T> {
+    const accessToken = await this.getMiniProgramAccessToken();
+    const response = await this.postJson<T>(
+      this.buildMiniProgramApiUrl(uri, accessToken, extraQuery),
+      body
     );
 
-    if (cachedToken) {
-      return cachedToken;
+    if (!this.isAccessTokenInvalidResponse(response)) {
+      return response;
+    }
+
+    this.logger?.warn?.(
+      '[wechat-mini-program] access_token invalid, refreshing and retrying, errcode=%s, errmsg=%s',
+      response.errcode,
+      response.errmsg || '-'
+    );
+
+    const refreshedAccessToken = await this.getMiniProgramAccessToken({
+      forceRefresh: true,
+    });
+
+    return this.postJson<T>(
+      this.buildMiniProgramApiUrl(uri, refreshedAccessToken, extraQuery),
+      body
+    );
+  }
+
+  private buildMiniProgramApiUrl(
+    uri: string,
+    accessToken: string,
+    extraQuery: Record<string, string> = {}
+  ): string {
+    const params = new URLSearchParams({
+      access_token: accessToken,
+      ...extraQuery,
+    });
+
+    return `https://api.weixin.qq.com${uri}?${params.toString()}`;
+  }
+
+  private isAccessTokenInvalidResponse(response: {
+    errcode?: number;
+  }): boolean {
+    return WECHAT_ACCESS_TOKEN_INVALID_ERRCODES.has(Number(response?.errcode));
+  }
+
+  private async getMiniProgramAccessToken(
+    options: { forceRefresh?: boolean } = {}
+  ): Promise<string> {
+    if (!options.forceRefresh) {
+      const cachedToken = await this.redisService.get(
+        WECHAT_ACCESS_TOKEN_REDIS_KEY
+      );
+
+      if (cachedToken) {
+        return cachedToken;
+      }
+    } else {
+      await this.redisService.del(WECHAT_ACCESS_TOKEN_REDIS_KEY);
     }
 
     const appId = this.requireMiniProgramConfig('appId');
     const appSecret = this.requireMiniProgramConfig('appSecret');
-    const params = new URLSearchParams({
-      grant_type: 'client_credential',
-      appid: appId,
-      secret: appSecret,
-    });
-    const response = await this.getJson<WechatAccessTokenResponse>(
-      `https://api.weixin.qq.com/cgi-bin/token?${params.toString()}`
+    const response = await this.postJson<WechatAccessTokenResponse>(
+      'https://api.weixin.qq.com/cgi-bin/stable_token',
+      {
+        grant_type: 'client_credential',
+        appid: appId,
+        secret: appSecret,
+        force_refresh: options.forceRefresh === true,
+      }
     );
 
     if (response.errcode || !response.access_token) {
       throw new AppError(
         'WECHAT_ACCESS_TOKEN_FAILED',
         response.errmsg || 'failed to get wechat access token',
-        502
+        502,
+        response
       );
     }
 

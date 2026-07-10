@@ -7,12 +7,18 @@ import {
   PostCommentType,
   PostEntity,
   PostLikeEntity,
+  PostModerationStatus,
   PostNotificationEntity,
   PostNotificationType,
   UserEntity,
   UserAccountEntity,
+  UserMembershipEntity,
+  UserMembershipStatus,
 } from '@tzl/entities';
-import { PostService } from '../../src/service/post.service';
+import {
+  POST_COMMENT_AGENT_REPLY_QUEUE,
+  PostService,
+} from '../../src/service/post.service';
 
 const USER_ID = '665000000000000000000001';
 const OTHER_USER_ID = '665000000000000000000002';
@@ -22,9 +28,13 @@ const POST_ID = '665000000000000000000100';
 const POST_2_ID = '665000000000000000000101';
 const POST_3_ID = '665000000000000000000102';
 const COMMENT_ID = '665000000000000000000200';
+const AGENT_COMMENT_ID = '665000000000000000000201';
+const USER_REPLY_COMMENT_ID = '665000000000000000000202';
 const NOTIFICATION_ID = '665000000000000000000300';
 const POST_NOTIFICATION_ID = '665000000000000000000400';
 const ACCOUNT_ID = '665000000000000000000600';
+const MEMBERSHIP_ID = '665000000000000000000700';
+const VIP_PLAN_ID = '665000000000000000000701';
 const NOW = new Date('2026-05-13T08:00:00.000Z');
 const AUTH = {
   sub: USER_ID,
@@ -123,6 +133,48 @@ function createPost(overrides: Partial<PostEntity> = {}): PostEntity {
   return post;
 }
 
+function createPostCommentEntity(
+  overrides: Partial<PostCommentEntity> = {}
+): PostCommentEntity {
+  const comment = new PostCommentEntity();
+
+  Object.assign(comment, {
+    id: new MongoObjectId(COMMENT_ID),
+    postId: new MongoObjectId(POST_ID),
+    userId: new MongoObjectId(USER_ID),
+    type: PostCommentType.user,
+    content: '我也很想她',
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return comment;
+}
+
+function createMembership(
+  overrides: Partial<UserMembershipEntity> = {}
+): UserMembershipEntity {
+  const membership = new UserMembershipEntity();
+
+  Object.assign(membership, {
+    id: new MongoObjectId(MEMBERSHIP_ID),
+    userId: new MongoObjectId(USER_ID),
+    vipPlanId: new MongoObjectId(VIP_PLAN_ID),
+    vipPlanCode: 'vip_month',
+    sourceOrderId: new MongoObjectId('665000000000000000000702'),
+    status: UserMembershipStatus.active,
+    startedAt: new Date('2026-05-01T08:00:00.000Z'),
+    expiredAt: new Date('2099-05-01T08:00:00.000Z'),
+    lifetime: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return membership;
+}
+
 function createNotification(
   overrides: Partial<PostCommentNotificationEntity> = {}
 ): PostCommentNotificationEntity {
@@ -183,6 +235,7 @@ function createService(
     comments?: PostCommentEntity[];
     likes?: PostLikeEntity[];
     userAccounts?: UserAccountEntity[];
+    memberships?: UserMembershipEntity[];
   } = {}
 ) {
   const service = new PostService();
@@ -193,6 +246,7 @@ function createService(
   const comments = options.comments ?? [];
   const likes = options.likes ?? [];
   const userAccounts = options.userAccounts ?? [createUserAccount()];
+  const memberships = options.memberships ?? [];
   const addJobToQueue = jest.fn(async () => undefined);
 
   service.postModel = {
@@ -206,6 +260,20 @@ function createService(
 
       if (where?.userId) {
         result = result.filter(post => sameObjectId(post.userId, where.userId));
+      }
+
+      if (where?.isDeleted?.$ne === true) {
+        result = result.filter(post => post.isDeleted !== true);
+      }
+
+      if (where?.moderationStatus?.$ne) {
+        result = result.filter(
+          post => post.moderationStatus !== where.moderationStatus.$ne
+        );
+      } else if (where?.moderationStatus) {
+        result = result.filter(
+          post => post.moderationStatus === where.moderationStatus
+        );
       }
 
       if (order?.createdAt === 'DESC') {
@@ -247,6 +315,19 @@ function createService(
           : true;
 
         return matchesUser;
+      });
+    }),
+  } as any;
+  service.userMembershipModel = {
+    find: jest.fn(async ({ where }: any = {}) => {
+      return memberships.filter(membership => {
+        const matchesUser = where?.userId
+          ? sameObjectId(membership.userId, where.userId)
+          : true;
+        const matchesStatus =
+          where?.status === undefined || membership.status === where.status;
+
+        return matchesUser && matchesStatus;
       });
     }),
   } as any;
@@ -294,32 +375,52 @@ function createService(
   service.commentModel = {
     find: jest.fn(async ({ where }: any = {}) => {
       return comments.filter(comment => {
+        const id = where?.id ?? where?._id;
+        const matchesId = id ? sameObjectId(comment.id, id) : true;
         const matchesPost = where?.postId
           ? sameObjectId(comment.postId, where.postId)
           : true;
         const matchesAgent = where?.agentId
           ? sameObjectId(comment.agentId, where.agentId)
           : true;
+        const matchesParent = where?.parentCommentId
+          ? sameObjectId(comment.parentCommentId, where.parentCommentId)
+          : true;
 
-        return matchesPost && matchesAgent;
+        return matchesId && matchesPost && matchesAgent && matchesParent;
       });
     }),
     findOne: jest.fn(async ({ where }: any = {}) => {
       return (
         comments.find(comment => {
+          const id = where?.id ?? where?._id;
+          const matchesId = id ? sameObjectId(comment.id, id) : true;
           const matchesPost = where?.postId
             ? sameObjectId(comment.postId, where.postId)
             : true;
           const matchesAgent = where?.agentId
             ? sameObjectId(comment.agentId, where.agentId)
             : true;
+          const matchesParent = where?.parentCommentId
+            ? sameObjectId(comment.parentCommentId, where.parentCommentId)
+            : true;
 
-          return matchesPost && matchesAgent;
+          return matchesId && matchesPost && matchesAgent && matchesParent;
         }) ?? null
       );
     }),
     save: jest.fn(async (comment: PostCommentEntity) => {
-      comment.id = comment.id ?? new MongoObjectId(COMMENT_ID);
+      if (!comment.id) {
+        const nextCommentId =
+          comments.length === 0
+            ? COMMENT_ID
+            : `665000000000000000000${String(800 + comments.length).padStart(
+                3,
+                '0'
+              )}`;
+
+        comment.id = new MongoObjectId(nextCommentId);
+      }
       comments.push(comment);
       return comment;
     }),
@@ -809,6 +910,238 @@ describe('PostService comment content safety', () => {
   });
 });
 
+describe('PostService agent comment follow-up replies', () => {
+  function createAgentComment(agent: AgentEntity) {
+    return createPostCommentEntity({
+      id: new MongoObjectId(AGENT_COMMENT_ID),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      content: '花开得真好看呢',
+    });
+  }
+
+  function createUserReplyToAgent(agent: AgentEntity) {
+    return createPostCommentEntity({
+      id: new MongoObjectId(USER_REPLY_COMMENT_ID),
+      parentCommentId: new MongoObjectId(AGENT_COMMENT_ID),
+      replyToAgentId: agent.id,
+      content: '奶奶你听得到吗',
+      createdAt: new Date('2026-05-13T08:01:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:01:00.000Z'),
+    });
+  }
+
+  it('does not enqueue follow-up replies for non-vip or expired users', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost();
+    const expiredMembership = createMembership({
+      expiredAt: new Date('2000-01-01T00:00:00.000Z'),
+    });
+    const nonVip = createService([agent], {
+      posts: [post],
+      comments: [createAgentComment(agent)],
+    });
+    const expiredVip = createService([agent], {
+      posts: [post],
+      comments: [createAgentComment(agent)],
+      memberships: [expiredMembership],
+    });
+
+    await nonVip.service.createComment(AUTH, POST_ID, {
+      content: '奶奶你听得到吗',
+      replyToCommentId: AGENT_COMMENT_ID,
+    });
+    await expiredVip.service.createComment(AUTH, POST_ID, {
+      content: '奶奶你听得到吗',
+      replyToCommentId: AGENT_COMMENT_ID,
+    });
+
+    expect(nonVip.addJobToQueue).not.toHaveBeenCalled();
+    expect(expiredVip.addJobToQueue).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a follow-up reply for active vip users replying to an agent', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const post = createPost();
+    const { service, addJobToQueue } = createService([agent], {
+      posts: [post],
+      comments: [createAgentComment(agent)],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+
+    const result = await service.createComment(AUTH, POST_ID, {
+      content: '奶奶你听得到吗',
+      replyToCommentId: AGENT_COMMENT_ID,
+    });
+
+    expect(service.bullmqFramework.getQueue).toHaveBeenCalledWith(
+      POST_COMMENT_AGENT_REPLY_QUEUE
+    );
+    expect(addJobToQueue).toHaveBeenCalledWith(
+      {
+        postId: POST_ID,
+        agentId: AGENT_A_ID,
+        triggerCommentId: result.id,
+      },
+      expect.objectContaining({
+        jobId: `post:${POST_ID}:agent:${AGENT_A_ID}:comment:${result.id}`,
+      })
+    );
+  });
+
+  it('does not enqueue when users reply to a user comment', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const userReplyToAgent = createUserReplyToAgent(agent);
+    const { service, addJobToQueue } = createService([agent], {
+      posts: [createPost()],
+      comments: [createAgentComment(agent), userReplyToAgent],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+
+    await service.createComment(AUTH, POST_ID, {
+      content: '我也这样想',
+      replyToCommentId: USER_REPLY_COMMENT_ID,
+    });
+
+    expect(addJobToQueue).not.toHaveBeenCalled();
+  });
+
+  it('creates an agent follow-up comment for a valid trigger comment', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const agentComment = createAgentComment(agent);
+    const userReply = createUserReplyToAgent(agent);
+    const { service, comments, notifications } = createService([agent], {
+      posts: [createPost()],
+      comments: [agentComment, userReply],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '我在呢，慢慢说',
+      reasoning: [],
+      response: {},
+    });
+
+    await service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+      triggerCommentId: USER_REPLY_COMMENT_ID,
+    });
+
+    const savedReply = comments[2];
+    expect(savedReply).toEqual(
+      expect.objectContaining({
+        postId: new MongoObjectId(POST_ID),
+        agentId: new MongoObjectId(AGENT_A_ID),
+        type: PostCommentType.agent,
+        content: '我在呢，慢慢说',
+        parentCommentId: new MongoObjectId(USER_REPLY_COMMENT_ID),
+        replyToUserId: new MongoObjectId(USER_ID),
+      })
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toEqual(
+      expect.objectContaining({
+        actorName: '奶奶',
+        commentPreview: '我在呢，慢慢说',
+      })
+    );
+  });
+
+  it('does not duplicate an agent follow-up for the same trigger comment', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const userReply = createUserReplyToAgent(agent);
+    const existingReply = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000203'),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      parentCommentId: userReply.id,
+      replyToUserId: userReply.userId,
+      content: '我听着呢',
+    });
+    const { service, comments } = createService([agent], {
+      posts: [createPost()],
+      comments: [createAgentComment(agent), userReply, existingReply],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+
+    await service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+      triggerCommentId: USER_REPLY_COMMENT_ID,
+    });
+
+    expect(comments).toHaveLength(3);
+    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+  });
+
+  it('skips invalid follow-up triggers and hidden posts', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      createdUserId: new MongoObjectId(OTHER_USER_ID),
+    });
+    const userReply = createUserReplyToAgent(agent);
+    const unauthorized = createService([agent], {
+      posts: [createPost()],
+      comments: [userReply],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+    const hidden = createService([createAgent(AGENT_A_ID)], {
+      posts: [createPost({ isDeleted: true })],
+      comments: [userReply],
+      memberships: [createMembership({ lifetime: true, expiredAt: undefined })],
+    });
+
+    await unauthorized.service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+      triggerCommentId: USER_REPLY_COMMENT_ID,
+    });
+    await hidden.service.processRemindReplyJob({
+      postId: POST_ID,
+      agentId: AGENT_A_ID,
+      triggerCommentId: USER_REPLY_COMMENT_ID,
+    });
+
+    expect(unauthorized.comments).toHaveLength(1);
+    expect(hidden.comments).toHaveLength(1);
+  });
+
+  it('uses the trigger comment as latest user comment in the prompt context', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const user = createUser();
+    const laterUserComment = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000204'),
+      content: '后来的普通评论',
+      createdAt: new Date('2026-05-13T08:02:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:02:00.000Z'),
+    });
+    const { service } = createService([agent], {
+      comments: [
+        createAgentComment(agent),
+        createUserReplyToAgent(agent),
+        laterUserComment,
+      ],
+    });
+
+    await (service as any).generateAgentPostReply(
+      createPost(),
+      user,
+      agent,
+      new MongoObjectId(USER_REPLY_COMMENT_ID)
+    );
+
+    const systemPrompt = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0].systemPrompt as string;
+    const contextJson = systemPrompt.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    const context = JSON.parse(contextJson ?? '{}');
+
+    expect(context.latestUserComment.id).toBe(USER_REPLY_COMMENT_ID);
+    expect(context.latestUserComment.content).toBe('奶奶你听得到吗');
+    expect(context.userRepliedComment.id).toBe(AGENT_COMMENT_ID);
+  });
+});
+
 describe('PostService post pagination', () => {
   it('returns the first post page with hasMore', async () => {
     const posts = [
@@ -904,6 +1237,111 @@ describe('PostService post pagination', () => {
 
     expect(result.items.map(item => item.id)).toEqual([POST_ID, POST_2_ID]);
     expect(result.hasMore).toBe(false);
+  });
+
+  it('hides deleted and risk-controlled posts from public feed', async () => {
+    const posts = [
+      createPost({
+        id: new MongoObjectId(POST_ID),
+        createdAt: new Date('2026-05-13T10:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_2_ID),
+        moderationStatus: PostModerationStatus.riskControlled,
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_3_ID),
+        isDeleted: true,
+        createdAt: new Date('2026-05-13T08:00:00.000Z'),
+      }),
+    ];
+    const { service } = createService([], { posts });
+
+    const result = await service.listPosts(undefined, {
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(result.items.map(item => item.id)).toEqual([POST_ID]);
+  });
+
+  it('keeps risk-controlled posts visible in my posts with status', async () => {
+    const posts = [
+      createPost({
+        id: new MongoObjectId(POST_ID),
+        moderationStatus: PostModerationStatus.riskControlled,
+        moderationReason: '疑似违规',
+        createdAt: new Date('2026-05-13T10:00:00.000Z'),
+      }),
+      createPost({
+        id: new MongoObjectId(POST_2_ID),
+        isDeleted: true,
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+      }),
+    ];
+    const { service } = createService([], { posts });
+
+    const result = await service.listPosts(AUTH, {
+      mine: '1',
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: POST_ID,
+        moderationStatus: PostModerationStatus.riskControlled,
+        moderationReason: '疑似违规',
+        isRiskControlled: true,
+      }),
+    ]);
+  });
+
+  it('soft deletes a post only for its owner', async () => {
+    const post = createPost();
+    const { service } = createService([], { posts: [post] });
+
+    await expect(service.deletePost(OTHER_AUTH, POST_ID)).rejects.toMatchObject(
+      {
+        code: 'POST_NOT_FOUND',
+        status: 404,
+      }
+    );
+
+    const result = await service.deletePost(AUTH, POST_ID);
+
+    expect(result).toEqual({
+      id: POST_ID,
+      deleted: true,
+    });
+    expect(post.isDeleted).toBe(true);
+    expect(post.deletedAt).toBeInstanceOf(Date);
+    expect(post.deletedByUserId).toEqual(new MongoObjectId(USER_ID));
+    expect(service.postModel.save).toHaveBeenCalledWith(post);
+  });
+
+  it('allows only the owner to view a risk-controlled post detail', async () => {
+    const post = createPost({
+      moderationStatus: PostModerationStatus.riskControlled,
+    });
+    const { service } = createService([], { posts: [post] });
+
+    await expect(
+      service.getPostDetail(POST_ID, OTHER_AUTH)
+    ).rejects.toMatchObject({
+      code: 'POST_NOT_FOUND',
+      status: 404,
+    });
+
+    const result = await service.getPostDetail(POST_ID, AUTH);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: POST_ID,
+        isRiskControlled: true,
+      })
+    );
   });
 });
 

@@ -60,6 +60,7 @@ export interface CosyVoiceCloneInput {
 export interface CosyVoiceCloneResult {
   providerVoiceId: string;
   demoAudio: string;
+  targetModel?: string;
   requestId?: string;
 }
 
@@ -159,6 +160,7 @@ export class CosyVoiceVoiceService {
     return {
       providerVoiceId: voiceId,
       demoAudio: '',
+      targetModel: response?.output?.target_model?.trim() || targetModel,
       requestId: response.request_id?.trim() || undefined,
     };
   }
@@ -189,9 +191,10 @@ export class CosyVoiceVoiceService {
 
     const format = 'mp3';
     const languageHint = this.normalizeLanguageHint(input.languageHint);
+    const model = this.resolveSpeechModel(input.model, voiceId);
     const body = Buffer.from(
       JSON.stringify({
-        model: input.model?.trim() || this.getDefaultPreviewModel(),
+        model,
         input: {
           text,
           voice: voiceId,
@@ -375,6 +378,52 @@ export class CosyVoiceVoiceService {
     }
 
     return normalized;
+  }
+
+  private resolveSpeechModel(
+    inputModel: string | undefined,
+    voiceId: string
+  ): string {
+    const modelFromVoiceId = this.inferModelFromVoiceId(voiceId);
+    const normalizedInputModel = inputModel?.trim();
+
+    if (modelFromVoiceId) {
+      if (normalizedInputModel && normalizedInputModel !== modelFromVoiceId) {
+        this.logger?.warn?.(
+          '[cosyvoice] preview model mismatch, inputModel=%s, voiceModel=%s, voiceId=%s',
+          normalizedInputModel,
+          modelFromVoiceId,
+          voiceId
+        );
+      }
+
+      return modelFromVoiceId;
+    }
+
+    return normalizedInputModel || this.getDefaultPreviewModel();
+  }
+
+  private inferModelFromVoiceId(voiceId: string): string {
+    const normalizedVoiceId = voiceId?.trim().toLowerCase();
+    const knownModels = [
+      'cosyvoice-v3.5-plus',
+      'cosyvoice-v3-plus',
+      'cosyvoice-v2',
+      'cosyvoice-v1',
+    ];
+    const knownModel = knownModels.find(model =>
+      normalizedVoiceId.startsWith(`${model}-`)
+    );
+
+    if (knownModel) {
+      return knownModel;
+    }
+
+    return (
+      normalizedVoiceId.match(
+        /^(cosyvoice-v\d+(?:\.\d+)?(?:-[a-z0-9]+)*?)-[a-z0-9]{1,10}$/
+      )?.[1] || ''
+    );
   }
 
   private normalizeRate(value: unknown): number {

@@ -786,6 +786,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
     expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
+        previewModel: 'cosyvoice-v3.5-plus',
         status: VoiceTimbreStatus.active,
         errorCode: '',
         errorMessage: '',
@@ -799,6 +800,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         targetModel: 'cosyvoice-v3.5-plus',
         requestId: 'dashscope-query-001',
         record: expect.objectContaining({
+          previewModel: 'cosyvoice-v3.5-plus',
           status: VoiceTimbreStatus.active,
           errorCode: '',
           errorMessage: '',

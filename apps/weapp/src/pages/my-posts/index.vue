@@ -29,7 +29,12 @@
         v-for="post in posts"
         :key="post.id"
         :post="post"
+        show-owner-actions
+        show-moderation-status
+        :show-comment-action="false"
+        :is-deleting="isPostDeletePending(post.id)"
         @like="handleLikeTap"
+        @delete="handleDeleteTap"
         @preview="handlePreviewImages"
       />
       <view class="my-posts-load-footer">
@@ -56,7 +61,13 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, onMounted, ref } from 'vue'
-import { getPosts, likePost, unlikePost, type PostItem } from '../../apis/post'
+import {
+  deletePost,
+  getPosts,
+  likePost,
+  unlikePost,
+  type PostItem,
+} from '../../apis/post'
 import { ApiException } from '../../api/api-exception'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
@@ -69,6 +80,7 @@ const isLoadingMore = ref(false)
 const errorMessage = ref('')
 const loadMoreError = ref('')
 const likingPostIds = ref<string[]>([])
+const deletingPostIds = ref<string[]>([])
 const currentPostPage = ref(1)
 const hasMorePosts = ref(true)
 
@@ -204,6 +216,21 @@ function setPostLikePending(postId: string, pending: boolean) {
   likingPostIds.value = likingPostIds.value.filter((item) => item !== postId)
 }
 
+function isPostDeletePending(postId: string) {
+  return deletingPostIds.value.includes(postId)
+}
+
+function setPostDeletePending(postId: string, pending: boolean) {
+  if (pending) {
+    if (!deletingPostIds.value.includes(postId)) {
+      deletingPostIds.value = [...deletingPostIds.value, postId]
+    }
+    return
+  }
+
+  deletingPostIds.value = deletingPostIds.value.filter((item) => item !== postId)
+}
+
 function replacePostInList(updatedPost: PostItem) {
   posts.value = posts.value.map((item) =>
     item.id === updatedPost.id ? updatedPost : item
@@ -259,6 +286,45 @@ async function handleLikeTap(post: PostItem) {
     showToast(error instanceof ApiException ? error.message : '点赞失败，请稍后重试')
   } finally {
     setPostLikePending(post.id, false)
+  }
+}
+
+async function handleDeleteTap(post: PostItem) {
+  if (!session.value) {
+    await redirectToAuth()
+    return
+  }
+
+  if (isPostDeletePending(post.id)) {
+    return
+  }
+
+  const result = await Taro.showModal({
+    title: '删除动态',
+    content: '删除后这条动态将不再展示，确认删除吗？',
+    confirmText: '删除',
+    confirmColor: '#cf1322',
+  })
+
+  if (!result.confirm) {
+    return
+  }
+
+  setPostDeletePending(post.id, true)
+
+  try {
+    await deletePost(post.id)
+    posts.value = posts.value.filter((item) => item.id !== post.id)
+    showToast('动态已删除')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '删除失败，请稍后重试')
+  } finally {
+    setPostDeletePending(post.id, false)
   }
 }
 

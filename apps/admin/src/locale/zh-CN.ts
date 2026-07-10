@@ -26,6 +26,8 @@ export default {
   'menu.order': '订单管理',
   'menu.order.list': '订单列表',
   'menu.order.refund': '退款管理',
+  'menu.post': '动态管理',
+  'menu.post.list': '动态列表',
   'menu.voiceModel': '声音模型',
   'menu.voiceModel.timbre': '音色管理',
   'menu.voiceModel.package': '声音套餐',

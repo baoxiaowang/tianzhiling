@@ -7,11 +7,11 @@ describe('AuthMiddleware route matching', () => {
     return middleware;
   }
 
-  function createContext(path: string, method = 'GET') {
+  function createContext(path: string, method = 'GET', authorization = '') {
     return {
       path,
       method,
-      get: () => '',
+      get: () => authorization,
     };
   }
 
@@ -36,6 +36,43 @@ describe('AuthMiddleware route matching', () => {
         ) as never
       )
     ).toBe(true);
+  });
+
+  it('protects deleting a post', () => {
+    const middleware = createMiddleware();
+
+    expect(
+      middleware.match(
+        createContext('/api/post/665000000000000000000100', 'DELETE') as never
+      )
+    ).toBe(true);
+  });
+
+  it('accepts optional auth for post comments', () => {
+    const middleware = createMiddleware();
+
+    expect(
+      middleware.match(
+        createContext(
+          '/api/post/665000000000000000000100/comments',
+          'GET',
+          'Bearer token'
+        ) as never
+      )
+    ).toBe(true);
+  });
+
+  it('leaves public post comments readable without auth', () => {
+    const middleware = createMiddleware();
+
+    expect(
+      middleware.match(
+        createContext(
+          '/api/post/665000000000000000000100/comments',
+          'GET'
+        ) as never
+      )
+    ).toBe(false);
   });
 
   it('does not protect unrelated membership route names', () => {
