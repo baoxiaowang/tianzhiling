@@ -263,7 +263,7 @@ describe('UserService phoneLogin', () => {
     const accountId = createObjectId(CURRENT_ACCOUNT_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -320,7 +320,7 @@ describe('UserService phoneLogin', () => {
     const accountId = createObjectId(CURRENT_ACCOUNT_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '',
       phoneVerified: false,
@@ -401,7 +401,7 @@ describe('UserService phoneLogin', () => {
     const accountId = createObjectId('account-legacy');
     const user = {
       id: userId,
-      name: '天之灵用户8000',
+      name: '未了言用户8000',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -467,7 +467,7 @@ describe('UserService phoneLogin', () => {
     };
     const shortUser = {
       id: shortUserId,
-      name: '天之灵用户8000',
+      name: '未了言用户8000',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -515,7 +515,7 @@ describe('UserService phoneLogin', () => {
     const userId = createObjectId(CURRENT_USER_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -549,7 +549,7 @@ describe('UserService phoneLogin', () => {
     const userId = createObjectId(CURRENT_USER_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -620,7 +620,7 @@ describe('UserService phoneLogin', () => {
     const userId = createObjectId(CURRENT_USER_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,
@@ -655,7 +655,7 @@ describe('UserService phoneLogin', () => {
     const userId = createObjectId(CURRENT_USER_ID);
     const user = {
       id: userId,
-      name: '天之灵用户',
+      name: '未了言用户',
       avatar: '',
       phone: '13800138000',
       phoneVerified: true,

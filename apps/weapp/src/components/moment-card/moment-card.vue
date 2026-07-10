@@ -130,7 +130,7 @@ function normalizeText(value: unknown) {
 
 const authorName = computed(() => {
   const name = normalizeText(props.post.authorName)
-  return name ? name : '天之灵用户'
+  return name ? name : '未了言用户'
 })
 const postImages = computed(() => {
   return props.post.images
@@ -198,7 +198,7 @@ function formatMomentRelativeTime(value: string | null) {
 }
 
 function formatCommentAuthor(authorName: unknown, replyToUserName: unknown) {
-  const author = normalizeText(authorName) || '天之灵用户'
+  const author = normalizeText(authorName) || '未了言用户'
   const replyTo = normalizeText(replyToUserName)
 
   return replyTo ? `${author} 回复 ${replyTo}：` : `${author}：`

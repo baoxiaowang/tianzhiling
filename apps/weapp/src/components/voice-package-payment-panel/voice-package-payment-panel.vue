@@ -82,7 +82,7 @@
           class="voice-package-payment-panel__agreement-link"
           @tap.stop="handleAgreementTap('service')"
         >
-          《天之灵会员协议》
+          《未了言会员协议》
         </text>
         及
         <text

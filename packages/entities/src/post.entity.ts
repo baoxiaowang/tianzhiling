@@ -29,7 +29,7 @@ export class PostEntity extends BaseEntity {
   @Column()
   images: string[];
 
-  /** 发帖时要提醒回复的天之灵 Agent ID 列表，用于触发自动评论 */
+  /** 发帖时要提醒回复的未了言 Agent ID 列表，用于触发自动评论 */
   @Column()
   remindAgentIds: string[];
 

@@ -1131,7 +1131,7 @@ export class PostService {
     return {
       id: this.stringifyObjectId(post.id),
       userId: this.stringifyObjectId(post.userId),
-      authorName: user?.name?.trim() || '天之灵用户',
+      authorName: user?.name?.trim() || '未了言用户',
       authorAvatar: this.postImageService.resolveForResponse(
         user?.avatar?.trim() || ''
       ),
@@ -1301,7 +1301,7 @@ export class PostService {
           : PostCommentType.user,
       userId: comment.userId ? this.stringifyObjectId(comment.userId) : '',
       agentId: comment.agentId ? this.stringifyObjectId(comment.agentId) : '',
-      authorName: agent?.name?.trim() || user?.name?.trim() || '天之灵用户',
+      authorName: agent?.name?.trim() || user?.name?.trim() || '未了言用户',
       authorAvatar: this.postImageService.resolveForResponse(
         agent?.avatar?.trim() || user?.avatar?.trim() || ''
       ),
@@ -2127,7 +2127,7 @@ export class PostService {
         moment: {
           id: this.stringifyObjectId(post.id),
           userId: this.stringifyObjectId(post.userId),
-          authorName: user.name?.trim() || '天之灵用户',
+          authorName: user.name?.trim() || '未了言用户',
           content: post.content?.trim() || '',
           images: momentImages,
           createdAt: post.createdAt?.toISOString?.() ?? '',

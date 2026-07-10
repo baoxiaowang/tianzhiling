@@ -136,7 +136,7 @@ export class UserService {
     return {
       uid: options.uid,
       username: 'mockedName',
-      nickname: '天之灵用户',
+      nickname: '未了言用户',
       phone: '12345678901',
       email: 'xxx.xxx@xxx.com',
       avatar: '',
@@ -1397,11 +1397,11 @@ export class UserService {
   }
 
   private buildDefaultUserName(phone: string): string {
-    return `天之灵用户${phone.slice(-4)}`;
+    return `未了言用户${phone.slice(-4)}`;
   }
 
   private buildDefaultWeappUserName(openid: string): string {
-    return `天之灵用户${this.hashWeappOpenid(openid).slice(-4)}`;
+    return `未了言用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
   private buildWeappAccount(openid: string): string {

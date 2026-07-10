@@ -389,7 +389,7 @@ class _GreetingBlock extends StatelessWidget {
         ),
         SizedBox(height: 8 * scale),
         Text(
-          '欢迎使用天之灵',
+          '欢迎使用未了言',
           style: TextStyle(
             fontSize: 20 * scale,
             fontWeight: FontWeight.w600,
@@ -1018,7 +1018,7 @@ class _AgreementFooter extends StatelessWidget {
                 children: const [
                   TextSpan(text: '我已阅读并同意'),
                   TextSpan(
-                    text: '《天之灵用户服务协议》',
+                    text: '《未了言用户服务协议》',
                     style: TextStyle(color: Color(0xFF374151)),
                   ),
                   TextSpan(text: '及'),

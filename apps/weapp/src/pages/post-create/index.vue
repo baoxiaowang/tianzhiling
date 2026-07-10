@@ -53,7 +53,7 @@
       <view class="post-create-option" @tap="handleAgentPickerTap">
         <view class="post-create-option__main">
           <view class="post-create-option__icon post-create-option__icon--at">@</view>
-          <text class="post-create-option__label">天之灵</text>
+          <text class="post-create-option__label">未了言</text>
         </view>
         <view class="post-create-option__right">
           <text v-if="selectedAgent" class="post-create-option__value">{{ selectedAgent.name }}</text>
@@ -86,7 +86,7 @@
       <view class="post-agent-picker">
         <view class="post-agent-picker__header">
           <text class="post-agent-picker__cancel" @tap="closeAgentPicker">取消</text>
-          <text class="post-agent-picker__title">选择天之灵</text>
+          <text class="post-agent-picker__title">选择未了言</text>
           <text class="post-agent-picker__confirm" @tap="confirmAgentPicker">确定</text>
         </view>
 
@@ -95,7 +95,7 @@
           <text>{{ agentsLoadError }}</text>
           <text class="post-agent-picker__retry" @tap="loadAgents">重试</text>
         </view>
-        <view v-else-if="!agents.length" class="post-agent-picker__state">暂无天之灵</view>
+        <view v-else-if="!agents.length" class="post-agent-picker__state">暂无未了言</view>
         <scroll-view v-else scroll-y class="post-agent-picker__list">
           <view
             v-for="agent in agents"
@@ -112,7 +112,7 @@
             <view v-else class="post-agent-picker__avatar post-agent-picker__avatar--fallback">
               {{ buildAgentFallback(agent.name) }}
             </view>
-            <text class="post-agent-picker__name">{{ agent.name || '未命名天之灵' }}</text>
+            <text class="post-agent-picker__name">{{ agent.name || '未命名未了言' }}</text>
             <view
               class="post-agent-picker__radio"
               :class="{ 'post-agent-picker__radio--checked': draftSelectedAgentId === agent.id }"
@@ -254,7 +254,7 @@ async function loadAgents() {
 
     agentsLoadError.value = error instanceof ApiException
       ? error.message
-      : '天之灵加载失败'
+      : '未了言加载失败'
   } finally {
     isAgentsLoading.value = false
   }

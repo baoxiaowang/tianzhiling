@@ -11,7 +11,7 @@ describe('test/controller/home.test.ts', () => {
     expect(result.body.success).toBe(true);
     expect(result.body.code).toBe('OK');
     expect(result.body.data.uid).toBe(123);
-    expect(result.body.data.nickname).toBe('天之灵用户');
+    expect(result.body.data.nickname).toBe('未了言用户');
 
     await close(app);
   });

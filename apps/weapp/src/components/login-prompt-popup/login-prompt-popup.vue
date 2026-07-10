@@ -44,7 +44,7 @@
         >
           我已阅读并同意
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('service')">
-            《天之灵用户服务协议》
+            《未了言用户服务协议》
           </text>
           及
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('privacy')">

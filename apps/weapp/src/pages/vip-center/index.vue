@@ -85,7 +85,7 @@ const vipBenefitsImageUrl = 'https://oss.voloian.cn/weapp/vip-diff.png'
 const specialThanksLines = [
   '每一个生命都有独特的故事，',
   '每一份记忆都值得被珍藏。',
-  '"天之灵" 定制服务，',
+  '"未了言" 定制服务，',
   '用专业与用心，',
   '为您打造最真实的数字亲人。',
   '感谢您的选择，',

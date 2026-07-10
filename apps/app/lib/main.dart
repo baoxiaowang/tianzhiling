@@ -31,7 +31,7 @@ class TianZhiLingApp extends StatelessWidget {
         return MaterialApp(
           key: ValueKey<String>(session == null ? 'auth-root' : 'app-root'),
           debugShowCheckedModeBanner: false,
-          title: '天之灵',
+          title: '未了言',
           locale: const Locale('zh', 'CN'),
           supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
           localizationsDelegates: const [

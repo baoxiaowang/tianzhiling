@@ -6,7 +6,7 @@
           alt="logo"
           src="//p3-armor.byteimg.com/tos-cn-i-49unhts6dw/dfdba5317c0c20ce20e64fac803d52bc.svg~tplv-49unhts6dw-image.image"
         />
-        <span>天之灵 Admin</span>
+        <span>未了言 Admin</span>
       </div>
       <div class="admin-register__header">
         <div class="admin-register__title">初始化超级管理员</div>

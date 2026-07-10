@@ -260,7 +260,7 @@ const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
+const MOMENTS_SHARE_TITLE = '来未了言看看新的动态'
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
@@ -347,7 +347,7 @@ function getPostImages(post: PostItem) {
 }
 
 function getReplyTargetName(comment: PostCommentItem) {
-  return normalizeText(comment.replyToUserName) || normalizeText(comment.authorName) || '天之灵用户'
+  return normalizeText(comment.replyToUserName) || normalizeText(comment.authorName) || '未了言用户'
 }
 
 function isPostLikePending(postId: string) {

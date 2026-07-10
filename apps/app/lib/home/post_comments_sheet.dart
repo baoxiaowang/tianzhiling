@@ -218,6 +218,6 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
 
   String _replyTargetName(PostCommentItem comment) {
     final name = comment.authorName.trim();
-    return name.isEmpty ? '天之灵用户' : name;
+    return name.isEmpty ? '未了言用户' : name;
   }
 }

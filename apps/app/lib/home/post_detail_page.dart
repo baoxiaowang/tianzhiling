@@ -203,7 +203,7 @@ class _DetailPostCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  post.authorName.trim().isEmpty ? '天之灵用户' : post.authorName,
+                  post.authorName.trim().isEmpty ? '未了言用户' : post.authorName,
                   style: const TextStyle(
                     color: Color(0xFF111111),
                     fontSize: 18,
@@ -371,7 +371,7 @@ class _DetailCommentLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authorName = comment.authorName.trim().isEmpty
-        ? '天之灵用户'
+        ? '未了言用户'
         : comment.authorName;
     final replyTargetName = comment.replyToUserName.trim();
 

@@ -15,7 +15,7 @@
         {{ session ? '已登录' : '登录后继续体验' }}
       </text>
       <text class="auth-fallback-page__subtitle">
-        {{ session ? '正在进入天之灵' : '使用微信授权登录' }}
+        {{ session ? '正在进入未了言' : '使用微信授权登录' }}
       </text>
       <nut-button
         class="auth-fallback-page__action"

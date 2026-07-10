@@ -273,7 +273,7 @@ class _IntroMessage extends StatelessWidget {
         SizedBox(width: 13 * scale),
         Expanded(
           child: Text(
-            '尊敬的会员，感谢支持天之灵，请添加我们的专业客服，获取会员服务。',
+            '尊敬的会员，感谢支持未了言，请添加我们的专业客服，获取会员服务。',
             style: TextStyle(
               color: const Color(0xFF000000),
               fontSize: 16 * scale,

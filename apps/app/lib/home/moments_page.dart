@@ -218,7 +218,7 @@ class _MomentsBanner extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: const [
                       Text(
-                        '快速了解天之灵AI',
+                        '快速了解未了言AI',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 20,

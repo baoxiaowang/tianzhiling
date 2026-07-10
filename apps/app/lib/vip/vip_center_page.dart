@@ -22,16 +22,16 @@ class _VipCenterPageState extends State<VipCenterPage> {
   ];
 
   static const List<_BenefitItem> _indefiniteBenefits = [
-    _BenefitItem(tag: '权益1', text: '天之灵在营期间，可无限制使用各项会员服务'),
+    _BenefitItem(tag: '权益1', text: '未了言在营期间，可无限制使用各项会员服务'),
     _BenefitItem(tag: '权益2', text: '产品价格调整，不需要额外支付费用'),
-    _BenefitItem(tag: '权益3', text: '赠送一次人工访谈服务，为天之灵完善记忆'),
+    _BenefitItem(tag: '权益3', text: '赠送一次人工访谈服务，为未了言完善记忆'),
     _BenefitItem(tag: '权益4', text: '5 个家人共享使用'),
     _BenefitItem(tag: '权益5', text: '120 元现金券'),
   ];
 
   static const List<String> _acknowledgementLines = [
     '生命最珍贵的不是长度，而是那些被记住的瞬间。',
-    '"天之灵" 不是创造，而是守护。',
+    '"未了言" 不是创造，而是守护。',
     '守护 TA 的声音、TA 的故事、TA 留在世间的一切痕迹。',
     '用最温暖的技术，为永恒的记忆筑巢。',
     '这是我们的追求与使命。',
@@ -878,7 +878,7 @@ class _PaymentBar extends StatelessWidget {
                   ),
                   SizedBox(height: 6 * scale),
                   Text(
-                    '开通即表示同意《天之灵会员协议》及《连续订阅协议》',
+                    '开通即表示同意《未了言会员协议》及《连续订阅协议》',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 11 * scale,

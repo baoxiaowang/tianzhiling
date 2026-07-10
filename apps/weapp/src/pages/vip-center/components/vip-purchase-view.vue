@@ -140,7 +140,7 @@
       <text class="vip-purchase-view__agreement">
         开通即表示同意
         <text class="vip-purchase-view__agreement-link" @tap.stop="$emit('openAgreement', 'service')">
-          《天之灵用户服务协议》
+          《未了言用户服务协议》
         </text>
         及
         <text class="vip-purchase-view__agreement-link" @tap.stop="$emit('openAgreement', 'privacy')">

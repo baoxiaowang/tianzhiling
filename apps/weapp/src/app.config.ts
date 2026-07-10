@@ -92,7 +92,7 @@ export default {
   window: {
     backgroundTextStyle: 'light',
     navigationBarBackgroundColor: '#fffaf3',
-    navigationBarTitleText: '天之灵',
+    navigationBarTitleText: '未了言',
     navigationBarTextStyle: 'black'
   },
   permission: {

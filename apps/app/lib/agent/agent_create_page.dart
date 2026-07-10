@@ -152,7 +152,7 @@ class _AnimatedIntroText extends StatefulWidget {
 }
 
 class _AnimatedIntroTextState extends State<_AnimatedIntroText> {
-  static const String _fullText = '我是Ta的@天之灵\n你的每句话，都在唤醒我的记忆\n准备唤醒我了吗？';
+  static const String _fullText = '我是Ta的@未了言\n你的每句话，都在唤醒我的记忆\n准备唤醒我了吗？';
   static const Duration _baseDelay = Duration(milliseconds: 78);
 
   late final List<int> _runes = _fullText.runes.toList();
