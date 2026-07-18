@@ -12,6 +12,7 @@ import {
   AgentEntitlementType,
   MongoObjectId,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
   VoicePackageEntity,
 } from '@tzl/entities';
@@ -160,6 +161,7 @@ export class AdminVipPlanService {
       code: this.normalizeCode(payload.code),
       name: payload.name.trim(),
       description: payload.description?.trim() ?? '',
+      planGroup: this.normalizePlanGroup(payload.planGroup),
       priceAmount: this.normalizeAmount(payload.priceAmount),
       originalPriceAmount: this.normalizeOptionalAmount(
         payload.originalPriceAmount
@@ -272,6 +274,7 @@ export class AdminVipPlanService {
       code: plan.code,
       name: plan.name,
       description: plan.description ?? '',
+      planGroup: this.normalizeStoredPlanGroup(plan.planGroup),
       priceAmount: plan.priceAmount,
       originalPriceAmount: plan.originalPriceAmount,
       currency: plan.currency || 'CNY',
@@ -315,6 +318,24 @@ export class AdminVipPlanService {
     }
 
     throw new AppError('INVALID_VIP_PLAN_STATUS', 'invalid vip plan status');
+  }
+
+  private normalizePlanGroup(value?: string): VipPlanGroup {
+    if (value === undefined || value === '') {
+      return VipPlanGroup.basic;
+    }
+
+    if (value === VipPlanGroup.basic || value === VipPlanGroup.voice) {
+      return value;
+    }
+
+    throw new AppError('INVALID_VIP_PLAN_GROUP', 'invalid vip plan group');
+  }
+
+  private normalizeStoredPlanGroup(value?: string): VipPlanGroup {
+    return value === VipPlanGroup.voice
+      ? VipPlanGroup.voice
+      : VipPlanGroup.basic;
   }
 
   private normalizeAmount(value?: number): number {

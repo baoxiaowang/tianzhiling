@@ -1,6 +1,7 @@
 import { Rule, RuleType } from '@midwayjs/validate';
 
 const statusRule = RuleType.string().valid('active', 'disabled');
+const planGroupRule = RuleType.string().valid('basic', 'voice').allow('');
 
 const benefitRule = RuleType.object({
   title: RuleType.string().trim().min(1).max(80).required(),
@@ -43,6 +44,9 @@ export class SaveAdminVipPlanDTO {
 
   @Rule(RuleType.string().allow('').max(500).optional())
   description?: string;
+
+  @Rule(planGroupRule.optional())
+  planGroup?: string;
 
   @Rule(RuleType.number().integer().min(0).max(99999999).required())
   priceAmount: number;

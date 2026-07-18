@@ -7,6 +7,11 @@ export enum VipPlanStatus {
   disabled = 'disabled',
 }
 
+export enum VipPlanGroup {
+  basic = 'basic',
+  voice = 'voice',
+}
+
 export interface VipPlanBenefit {
   title: string;
   description?: string;
@@ -30,6 +35,9 @@ export class VipPlanEntity extends BaseEntity {
 
   @Column()
   description?: string;
+
+  @Column()
+  planGroup?: VipPlanGroup;
 
   @Column()
   priceAmount: number;

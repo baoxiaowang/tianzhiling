@@ -17,6 +17,7 @@ import {
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
   VoicePackageEntity,
   VoicePackageStatus,
@@ -1776,6 +1777,7 @@ export class OrderService {
       id: this.stringifyObjectId(plan.id),
       code: plan.code,
       name: plan.name,
+      planGroup: this.normalizePlanGroup(plan.planGroup),
       priceAmount: plan.priceAmount,
       originalPriceAmount: plan.originalPriceAmount,
       currency: plan.currency || 'CNY',
@@ -1807,6 +1809,12 @@ export class OrderService {
       estimatedServiceDays: voicePackage.estimatedServiceDays,
       virtualPaymentProductId: voicePackage.virtualPaymentProductId,
     };
+  }
+
+  private normalizePlanGroup(value?: string): VipPlanGroup {
+    return value === VipPlanGroup.voice
+      ? VipPlanGroup.voice
+      : VipPlanGroup.basic;
   }
 
   private buildAgentSnapshot(agent: AgentEntity): Record<string, unknown> {

@@ -3,6 +3,8 @@ import type {
   UserMembershipStatusSnapshotDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
+  VipPurchaseCenterDTO,
+  VipPlanGroupDTO,
   VipPlanBenefitDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared'
@@ -13,6 +15,7 @@ export interface VipPlan {
   code: string
   name: string
   description: string
+  planGroup: VipPlanGroupDTO
   priceAmount: number
   originalPriceAmount?: number
   currency: string
@@ -116,12 +119,14 @@ function parseBenefits(value: unknown): VipPlanBenefitDTO[] {
 
 function parseVipPlan(value: unknown): VipPlan {
   const raw = asRecord(value)
+  const planGroup = asString(raw.planGroup)
 
   return {
     id: asString(raw.id),
     code: asString(raw.code),
     name: asString(raw.name),
     description: asString(raw.description),
+    planGroup: planGroup === 'voice' ? 'voice' : 'basic',
     priceAmount: asNumber(raw.priceAmount),
     originalPriceAmount:
       raw.originalPriceAmount == null ? undefined : asNumber(raw.originalPriceAmount),
@@ -203,6 +208,12 @@ export async function getMembershipCenter() {
   return parseMembershipCenter(data)
 }
 
+export async function getVipPurchaseCenter() {
+  const data = await get<VipPurchaseCenterDTO>('/api/membership/purchase-center')
+
+  return parseMembershipCenter(data)
+}
+
 export async function getMembershipStatus() {
   const data = await get<UserMembershipStatusSnapshotDTO>('/api/membership/status')
 
@@ -214,5 +225,6 @@ export type {
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
   UserMembershipStatusSnapshotDTO,
+  VipPurchaseCenterDTO,
   VipPlanRecordDTO,
 }

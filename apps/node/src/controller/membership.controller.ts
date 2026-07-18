@@ -18,6 +18,13 @@ export class MembershipController {
     );
   }
 
+  @Get('/purchase-center')
+  async getVipPurchaseCenter() {
+    return this.membershipService.getVipPurchaseCenter(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
   @Get('/status')
   async getMembershipStatus() {
     return this.membershipService.getMembershipStatus(

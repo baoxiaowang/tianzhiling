@@ -1,13 +1,13 @@
 <template>
   <page-scaffold
     class="vip-center-page"
-    background="#ffffff"
+    :background="pageBackground"
     body-padding="0"
     :scroll="true"
     :safe-area-top="false"
   >
     <template #header>
-      <app-bar title="会员中心" background="#ffffff" />
+      <app-bar :title="pageTitle" :background="pageBackground" />
     </template>
 
     <view v-if="isCheckingAuth || isLoading" class="vip-center-state">
@@ -56,7 +56,7 @@ import Taro, { useLoad } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
-  getMembershipCenter,
+  getVipPurchaseCenter,
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
@@ -73,7 +73,7 @@ import {
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
-import VipPurchaseView from './components/vip-purchase-view.vue'
+import VipPurchaseView from './components/vip-purchase-modern-view.vue'
 
 const center = ref<MembershipCenter | null>(null)
 const selectedPlanId = ref('')
@@ -95,6 +95,8 @@ const specialThanksLines = [
 const selectedPlan = computed(() => {
   return center.value?.plans.find((plan) => plan.id === selectedPlanId.value)
 })
+const pageTitle = computed(() => (center.value?.isVip ? '会员中心' : '选择会员服务'))
+const pageBackground = computed(() => (center.value?.isVip ? '#ffffff' : '#f6f6f6'))
 const activeMembership = computed(() => center.value?.membership)
 const activePlan = computed(() => {
   const membership = activeMembership.value
@@ -148,7 +150,7 @@ async function loadMembershipCenter() {
   loadError.value = ''
 
   try {
-    const data = await getMembershipCenter()
+    const data = await getVipPurchaseCenter()
     center.value = data
     selectedPlanId.value = getDefaultSelectedPlan(data.plans)?.id ?? ''
   } catch (error) {
@@ -176,7 +178,14 @@ function handlePlanSelect(planId: string) {
 }
 
 function getDefaultSelectedPlan(plans: VipPlan[]) {
-  return plans.find(isFeaturedVipPlan) ?? plans[0]
+  const basicPlans = plans.filter((plan) => plan.planGroup === 'basic')
+
+  return (
+    basicPlans.find(isOneYearVipPlan) ??
+    basicPlans[0] ??
+    plans.find(isOneYearVipPlan) ??
+    plans[0]
+  )
 }
 
 function handleAgreementTap(type: AgreementDocumentType) {
@@ -286,8 +295,8 @@ function showToast(title: string) {
   })
 }
 
-function isFeaturedVipPlan(plan: VipPlan) {
-  return /声音|三年|3年|更多/.test(plan.name)
+function isOneYearVipPlan(plan: VipPlan) {
+  return !plan.lifetime && Boolean(plan.durationDays && plan.durationDays <= 370)
 }
 
 function formatDate(value: Date | null) {

@@ -8,6 +8,7 @@ import {
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
 } from '@tzl/entities';
 import type {
@@ -15,6 +16,7 @@ import type {
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
   UserMembershipStatusSnapshotDTO,
+  VipPurchaseCenterDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
@@ -35,6 +37,41 @@ export class MembershipService {
   async getMembershipCenter(
     auth: AuthenticatedUserPayload
   ): Promise<UserMembershipCenterDTO> {
+    const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
+
+    const now = new Date();
+    const [plans, memberships] = await Promise.all([
+      this.listActiveVipPlans(),
+      this.findActiveMemberships(userId),
+    ]);
+    const activeMembership = memberships.find(membership =>
+      this.isMembershipAvailable(membership, now)
+    );
+
+    if (!activeMembership) {
+      return {
+        isVip: false,
+        plans,
+      };
+    }
+
+    const membershipPlan = await this.findVipPlanById(
+      activeMembership.vipPlanId
+    );
+
+    return {
+      isVip: true,
+      membership: this.buildMembershipRecord(
+        activeMembership,
+        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+      ),
+      plans,
+    };
+  }
+
+  async getVipPurchaseCenter(
+    auth: AuthenticatedUserPayload
+  ): Promise<VipPurchaseCenterDTO> {
     const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
 
     const now = new Date();
@@ -267,6 +304,7 @@ export class MembershipService {
       code: plan.code,
       name: plan.name,
       description: plan.description ?? '',
+      planGroup: this.normalizePlanGroup(plan.planGroup),
       priceAmount: plan.priceAmount,
       originalPriceAmount: plan.originalPriceAmount,
       currency: plan.currency || 'CNY',
@@ -297,6 +335,12 @@ export class MembershipService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private normalizePlanGroup(value?: string): VipPlanGroup {
+    return value === VipPlanGroup.voice
+      ? VipPlanGroup.voice
+      : VipPlanGroup.basic;
   }
 
   private formatDate(value: Date): string {

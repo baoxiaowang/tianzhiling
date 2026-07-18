@@ -54,7 +54,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1600 }"
+        :scroll="{ x: 1710 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -68,6 +68,15 @@
           <a-table-column title="计划编码" data-index="code" :width="180">
             <template #cell="{ record }">
               <a-typography-text copyable>{{ record.code }}</a-typography-text>
+            </template>
+          </a-table-column>
+          <a-table-column title="计划分组" data-index="planGroup" :width="110">
+            <template #cell="{ record }">
+              <a-tag
+                :color="record.planGroup === 'voice' ? 'purple' : 'orange'"
+              >
+                {{ formatPlanGroup(record.planGroup) }}
+              </a-tag>
             </template>
           </a-table-column>
           <a-table-column title="微信道具ID" :width="170">
@@ -203,6 +212,18 @@
                 allow-clear
                 placeholder="例如：vip_year"
               />
+            </a-form-item>
+          </a-grid-item>
+          <a-grid-item :span="2">
+            <a-form-item
+              field="planGroup"
+              label="计划分组"
+              :rules="[{ required: true, message: '请选择计划分组' }]"
+            >
+              <a-radio-group v-model="editForm.planGroup" type="button">
+                <a-radio value="basic">基础版</a-radio>
+                <a-radio value="voice">声音版</a-radio>
+              </a-radio-group>
             </a-form-item>
           </a-grid-item>
           <a-grid-item :span="2">
@@ -367,6 +388,7 @@
     createVipPlan,
     queryVipPlanList,
     updateVipPlan,
+    type VipPlanGroup,
     type VipPlanRecord,
   } from '@/api/membership';
   import {
@@ -380,6 +402,7 @@
     code: string;
     name: string;
     description: string;
+    planGroup: VipPlanGroup;
     priceYuan: number;
     originalPriceYuan?: number;
     lifetime: boolean;
@@ -417,6 +440,7 @@
     code: '',
     name: '',
     description: '',
+    planGroup: 'basic',
     priceYuan: 0,
     originalPriceYuan: undefined,
     lifetime: false,
@@ -506,6 +530,7 @@
     editForm.code = record.code;
     editForm.name = record.name;
     editForm.description = record.description;
+    editForm.planGroup = record.planGroup ?? 'basic';
     editForm.priceYuan = amountToYuan(record.priceAmount);
     editForm.originalPriceYuan = optionalAmountToYuan(
       record.originalPriceAmount
@@ -565,6 +590,7 @@
     code: editForm.code.trim(),
     name: editForm.name.trim(),
     description: editForm.description.trim(),
+    planGroup: editForm.planGroup,
     priceAmount: yuanToAmount(editForm.priceYuan),
     originalPriceAmount: yuanToOptionalAmount(editForm.originalPriceYuan),
     currency: 'CNY',
@@ -582,6 +608,7 @@
     editForm.code = '';
     editForm.name = '';
     editForm.description = '';
+    editForm.planGroup = 'basic';
     editForm.priceYuan = 0;
     editForm.originalPriceYuan = undefined;
     editForm.lifetime = false;
@@ -670,6 +697,9 @@
 
   const formatStatus = (status: VipPlanStatus) =>
     status === 'active' ? '启用' : '停用';
+
+  const formatPlanGroup = (planGroup: VipPlanGroup) =>
+    planGroup === 'voice' ? '声音版' : '基础版';
 
   const formatVoicePackageOption = (item: VoicePackageRecord) =>
     `${item.name}（${item.code}）`;
