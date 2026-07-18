@@ -17,6 +17,7 @@ export interface UserRegion {
 }
 
 @Index(['phone'], { sparse: true, background: true })
+@Index(['riskControlUntilAt'], { sparse: true, background: true })
 @Index(['createdAt'], { background: true })
 @Entity(TableName.user)
 export class UserEntity extends BaseEntity {
@@ -40,6 +41,9 @@ export class UserEntity extends BaseEntity {
 
   @Column()
   preferences?: UserPreferences;
+
+  @Column()
+  riskControlUntilAt?: Date;
 
   @Column()
   createdAt?: Date;

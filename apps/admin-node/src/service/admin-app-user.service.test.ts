@@ -94,6 +94,8 @@ describe('AdminAppUserService', () => {
           phone: '13800000000',
           phoneVerified: true,
           isVip: true,
+          isRiskControlled: false,
+          riskControlUntilAt: '',
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-02T00:00:00.000Z',
         },
@@ -193,6 +195,7 @@ describe('AdminAppUserService', () => {
           languageHabits: '',
           hobbies: '',
           sharedMemories: '',
+          customContext: '',
           status: 1,
           isDefault: true,
           createdAt: '2026-01-01T00:00:00.000Z',
@@ -263,7 +266,7 @@ describe('AdminAppUserService', () => {
     expect(result.items[0].id).toBe(agentId.toHexString());
   });
 
-  it('updates only allowed profile fields', async () => {
+  it('updates allowed profile and risk control fields', async () => {
     const service = createService();
     const userId = new MongoObjectId();
     const user = {
@@ -272,6 +275,7 @@ describe('AdminAppUserService', () => {
       avatar: '',
       phone: '13900000000',
       phoneVerified: true,
+      riskControlUntilAt: undefined,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     };
@@ -294,14 +298,51 @@ describe('AdminAppUserService', () => {
     const result = await service.updateUser(userId.toHexString(), {
       name: ' New name ',
       avatar: ' https://example.com/new.png ',
+      riskControlUntilAt: '2026-02-01T00:00:00.000Z',
     });
 
     expect(user.name).toBe('New name');
     expect(user.avatar).toBe('https://example.com/new.png');
+    expect(user.riskControlUntilAt).toEqual(
+      new Date('2026-02-01T00:00:00.000Z')
+    );
     expect(user.updatedAt).toBeInstanceOf(Date);
     expect(service.userModel.save).toHaveBeenCalledWith(user);
     expect(result.name).toBe('New name');
+    expect(result.riskControlUntilAt).toBe('2026-02-01T00:00:00.000Z');
     expect(JSON.stringify(result)).not.toContain('hidden');
+  });
+
+  it('clears user risk control and rejects invalid risk control time', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const user = {
+      id: userId,
+      name: 'Alice',
+      avatar: '',
+      riskControlUntilAt: new Date('2026-02-01T00:00:00.000Z'),
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest.mocked(service.userModel.findOne).mockResolvedValue(user as never);
+    jest.mocked(service.userModel.save).mockResolvedValue(user as never);
+    jest.mocked(service.userAccountModel.findOne).mockResolvedValue(null);
+    jest.mocked(service.userMembershipModel.find).mockResolvedValue([]);
+
+    await service.updateUser(userId.toHexString(), {
+      riskControlUntilAt: '',
+    });
+
+    expect(user.riskControlUntilAt).toBeUndefined();
+
+    await expect(
+      service.updateUser(userId.toHexString(), {
+        riskControlUntilAt: 'not-a-date',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_RISK_CONTROL_UNTIL_AT',
+    });
   });
 
   it('rejects invalid user id and blank name', async () => {

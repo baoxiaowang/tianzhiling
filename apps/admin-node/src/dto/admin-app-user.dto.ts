@@ -28,4 +28,7 @@ export class UpdateAdminAppUserDTO {
 
   @Rule(RuleType.string().allow('').max(1000).optional())
   avatar?: string;
+
+  @Rule(RuleType.string().allow('').optional())
+  riskControlUntilAt?: string;
 }

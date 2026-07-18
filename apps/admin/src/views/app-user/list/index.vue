@@ -31,7 +31,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1120 }"
+        :scroll="{ x: 1320 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -99,6 +99,25 @@
               <a-tag :color="record.isVip ? 'gold' : 'gray'">
                 {{ record.isVip ? 'VIP' : '普通' }}
               </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="人员风控"
+            data-index="isRiskControlled"
+            :width="190"
+          >
+            <template #cell="{ record }">
+              <a-space direction="vertical" :size="2">
+                <a-tag :color="getRiskControlColor(record)">
+                  {{ getRiskControlStatusText(record) }}
+                </a-tag>
+                <span
+                  v-if="record.riskControlUntilAt"
+                  class="app-user-page__risk-until"
+                >
+                  至 {{ formatDate(record.riskControlUntilAt) }}
+                </span>
+              </a-space>
             </template>
           </a-table-column>
           <a-table-column title="注册时间" data-index="createdAt" :width="180">
@@ -184,6 +203,20 @@
             placeholder="请输入头像 URL 或资源标识"
           />
         </a-form-item>
+        <a-form-item field="riskControlUntilAt" label="风控截止时间">
+          <a-date-picker
+            v-model="editForm.riskControlUntilAt"
+            allow-clear
+            show-time
+            value-format="YYYY-MM-DD HH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            placeholder="清空表示解除风控"
+            style="width: 100%"
+          />
+          <template #extra>
+            截止时间前该用户不能发布朋友圈，清空后立即解除风控。
+          </template>
+        </a-form-item>
         <div class="app-user-page__avatar-preview">
           <span>头像预览</span>
           <a-avatar :size="48">
@@ -227,6 +260,7 @@
   const editForm = reactive({
     name: '',
     avatar: '',
+    riskControlUntilAt: '',
   });
   const pagination = reactive({
     current: 1,
@@ -300,6 +334,9 @@
     editingUserId.value = record.id;
     editForm.name = record.name;
     editForm.avatar = record.avatar;
+    editForm.riskControlUntilAt = formatRiskControlPickerValue(
+      record.riskControlUntilAt
+    );
     editVisible.value = true;
   };
 
@@ -309,6 +346,7 @@
     editingUser.value = undefined;
     editForm.name = '';
     editForm.avatar = '';
+    editForm.riskControlUntilAt = '';
     editFormRef.value?.clearValidate();
   };
 
@@ -324,6 +362,9 @@
       await updateAppUser(editingUserId.value, {
         name: editForm.name,
         avatar: editForm.avatar,
+        riskControlUntilAt: formatRiskControlPayloadValue(
+          editForm.riskControlUntilAt
+        ),
       });
       Message.success('用户资料已更新');
       closeEdit();
@@ -339,6 +380,30 @@
 
   const formatDate = (value: string) => {
     return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
+  };
+
+  const formatRiskControlPickerValue = (value: string) => {
+    return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '';
+  };
+
+  const formatRiskControlPayloadValue = (value: string) => {
+    return value ? dayjs(value).toISOString() : '';
+  };
+
+  const getRiskControlStatusText = (record: AppUserRecord) => {
+    if (record.isRiskControlled) {
+      return '风控中';
+    }
+
+    return record.riskControlUntilAt ? '已过期' : '正常';
+  };
+
+  const getRiskControlColor = (record: AppUserRecord) => {
+    if (record.isRiskControlled) {
+      return 'red';
+    }
+
+    return record.riskControlUntilAt ? 'orange' : 'green';
   };
 
   const getAvatarFallback = (name: string) => {
@@ -422,6 +487,13 @@
       white-space: nowrap;
       text-overflow: ellipsis;
       vertical-align: bottom;
+    }
+
+    &__risk-until {
+      color: var(--color-text-3);
+      font-size: 12px;
+      line-height: 18px;
+      white-space: nowrap;
     }
 
     &__edit-context {
