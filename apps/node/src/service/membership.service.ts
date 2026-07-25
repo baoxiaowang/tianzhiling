@@ -4,6 +4,10 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
+  ConversationEntity,
+  MessageEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -13,6 +17,7 @@ import {
 } from '@tzl/entities';
 import type {
   AgentEntitlementSummaryDTO,
+  MembershipActivityStatsDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
   UserMembershipStatusSnapshotDTO,
@@ -33,6 +38,12 @@ export class MembershipService {
 
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
+
+  @InjectEntityModel(ConversationEntity)
+  conversationModel: MongoRepository<ConversationEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
 
   async getMembershipCenter(
     auth: AuthenticatedUserPayload
@@ -87,12 +98,14 @@ export class MembershipService {
       return {
         isVip: false,
         plans,
+        serverTime: this.formatDate(now),
       };
     }
 
-    const membershipPlan = await this.findVipPlanById(
-      activeMembership.vipPlanId
-    );
+    const [membershipPlan, activityStats] = await Promise.all([
+      this.findVipPlanById(activeMembership.vipPlanId),
+      this.getMembershipActivityStats(userId, now),
+    ]);
 
     return {
       isVip: true,
@@ -101,6 +114,8 @@ export class MembershipService {
         membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
       ),
       plans,
+      serverTime: this.formatDate(now),
+      activityStats,
     };
   }
 
@@ -179,6 +194,55 @@ export class MembershipService {
         updatedAt: 'DESC',
       },
     });
+  }
+
+  private async getMembershipActivityStats(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<MembershipActivityStatsDTO> {
+    const [firstConversations, conversationCount] = await Promise.all([
+      this.conversationModel.find({
+        where: {
+          userId,
+        },
+        order: {
+          createdAt: 'ASC',
+        },
+        take: 1,
+      }),
+      this.messageModel.count({
+        userId,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        isArchived: { $ne: true },
+      } as never),
+    ]);
+    const firstConversation = firstConversations[0];
+
+    return {
+      companionshipDays: firstConversation
+        ? this.countBeijingNaturalDaySpan(firstConversation.createdAt, now)
+        : 0,
+      conversationCount: Math.max(Math.trunc(conversationCount), 0),
+    };
+  }
+
+  private countBeijingNaturalDaySpan(start: Date, end: Date): number {
+    const beijingOffsetMs = 8 * 60 * 60 * 1000;
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const toBeijingDayNumber = (value: Date) => {
+      const shifted = new Date(value.getTime() + beijingOffsetMs);
+
+      return (
+        Date.UTC(
+          shifted.getUTCFullYear(),
+          shifted.getUTCMonth(),
+          shifted.getUTCDate()
+        ) / millisecondsPerDay
+      );
+    };
+
+    return Math.max(toBeijingDayNumber(end) - toBeijingDayNumber(start), 0);
   }
 
   private async listAvailableEntitlementSummaries(

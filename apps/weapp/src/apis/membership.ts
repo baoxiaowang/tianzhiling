@@ -52,6 +52,11 @@ export interface MembershipCenter {
   isVip: boolean
   membership?: UserMembership
   plans: VipPlan[]
+  serverTime: Date | null
+  activityStats: {
+    companionshipDays: number
+    conversationCount: number
+  }
 }
 
 export interface MembershipStatus {
@@ -101,6 +106,10 @@ function asDate(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+function asNonNegativeInteger(value: unknown) {
+  return Math.max(Math.trunc(asNumber(value)), 0)
+}
+
 function parseBenefits(value: unknown): VipPlanBenefitDTO[] {
   if (!Array.isArray(value)) {
     return []
@@ -129,13 +138,18 @@ function parseVipPlan(value: unknown): VipPlan {
     planGroup: planGroup === 'voice' ? 'voice' : 'basic',
     priceAmount: asNumber(raw.priceAmount),
     originalPriceAmount:
-      raw.originalPriceAmount == null ? undefined : asNumber(raw.originalPriceAmount),
+      raw.originalPriceAmount == null
+        ? undefined
+        : asNumber(raw.originalPriceAmount),
     currency: asString(raw.currency) || 'CNY',
-    durationDays: raw.durationDays == null ? undefined : asNumber(raw.durationDays),
+    durationDays:
+      raw.durationDays == null ? undefined : asNumber(raw.durationDays),
     lifetime: Boolean(raw.lifetime),
     benefits: parseBenefits(raw.benefits),
     couponGrantAmount:
-      raw.couponGrantAmount == null ? undefined : asNumber(raw.couponGrantAmount),
+      raw.couponGrantAmount == null
+        ? undefined
+        : asNumber(raw.couponGrantAmount),
     voicePackageId: asString(raw.voicePackageId) || undefined,
     voicePackageCode: asString(raw.voicePackageCode) || undefined,
     voicePackageName: asString(raw.voicePackageName) || undefined,
@@ -180,11 +194,17 @@ function parseEntitlementSummary(value: unknown): AgentEntitlementSummary {
 function parseMembershipCenter(value: unknown): MembershipCenter {
   const raw = asRecord(value)
   const plans = Array.isArray(raw.plans) ? raw.plans.map(parseVipPlan) : []
+  const activityStats = asRecord(raw.activityStats)
 
   return {
     isVip: Boolean(raw.isVip),
     membership: raw.membership ? parseMembership(raw.membership) : undefined,
     plans,
+    serverTime: asDate(raw.serverTime),
+    activityStats: {
+      companionshipDays: asNonNegativeInteger(activityStats.companionshipDays),
+      conversationCount: asNonNegativeInteger(activityStats.conversationCount),
+    },
   }
 }
 
@@ -209,13 +229,17 @@ export async function getMembershipCenter() {
 }
 
 export async function getVipPurchaseCenter() {
-  const data = await get<VipPurchaseCenterDTO>('/api/membership/purchase-center')
+  const data = await get<VipPurchaseCenterDTO>(
+    '/api/membership/purchase-center'
+  )
 
   return parseMembershipCenter(data)
 }
 
 export async function getMembershipStatus() {
-  const data = await get<UserMembershipStatusSnapshotDTO>('/api/membership/status')
+  const data = await get<UserMembershipStatusSnapshotDTO>(
+    '/api/membership/status'
+  )
 
   return parseMembershipStatus(data)
 }

@@ -2,6 +2,9 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
+  ConversationEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -87,10 +90,14 @@ function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
 
-function createService(options: {
-  memberships?: UserMembershipEntity[];
-  entitlements?: AgentEntitlementEntity[];
-} = {}) {
+function createService(
+  options: {
+    memberships?: UserMembershipEntity[];
+    entitlements?: AgentEntitlementEntity[];
+    conversationCreatedAt?: Date;
+    conversationCount?: number;
+  } = {}
+) {
   const service = new MembershipService();
   const plan = createVipPlan();
 
@@ -118,6 +125,26 @@ function createService(options: {
       const id = where?.id ?? where?._id;
       return id?.toHexString?.() === VIP_PLAN_ID ? plan : null;
     }),
+  } as any;
+  service.conversationModel = {
+    find: jest.fn(async ({ where }: any) => {
+      if (
+        !options.conversationCreatedAt ||
+        !sameObjectId(where?.userId, new MongoObjectId(USER_ID))
+      ) {
+        return [];
+      }
+
+      return [
+        Object.assign(new ConversationEntity(), {
+          userId: new MongoObjectId(USER_ID),
+          createdAt: options.conversationCreatedAt,
+        }),
+      ];
+    }),
+  } as any;
+  service.messageModel = {
+    count: jest.fn().mockResolvedValue(options.conversationCount ?? 0),
   } as any;
 
   return service;
@@ -212,6 +239,57 @@ describe('MembershipService user membership status', () => {
     ]);
   });
 
+  it('returns Beijing-day activity stats for a vip purchase center', async () => {
+    const service = createService({
+      memberships: [createMembership()],
+      conversationCreatedAt: new Date('2026-04-28T15:30:00.000Z'),
+      conversationCount: 3286,
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        isVip: true,
+        serverTime: NOW.toISOString(),
+        activityStats: {
+          companionshipDays: 3,
+          conversationCount: 3286,
+        },
+      })
+    );
+    expect(service.messageModel.count).toHaveBeenCalledWith({
+      userId: new MongoObjectId(USER_ID),
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      isArchived: { $ne: true },
+    });
+  });
+
+  it('returns zero activity stats when a vip user has no conversation', async () => {
+    const service = createService({
+      memberships: [createMembership()],
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result.activityStats).toEqual({
+      companionshipDays: 0,
+      conversationCount: 0,
+    });
+  });
+
+  it('does not query activity tables for a normal purchase-center user', async () => {
+    const service = createService();
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result.isVip).toBe(false);
+    expect(result.plans).toHaveLength(1);
+    expect(service.conversationModel.find).not.toHaveBeenCalled();
+    expect(service.messageModel.count).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid user ids before querying membership tables', async () => {
     const service = createService();
     const invalidAuth = {
@@ -219,9 +297,25 @@ describe('MembershipService user membership status', () => {
       sub: 'bad-user-id',
     };
 
-    await expect(service.getMembershipStatus(invalidAuth)).rejects.toMatchObject({
+    await expect(
+      service.getMembershipStatus(invalidAuth)
+    ).rejects.toMatchObject({
       code: 'INVALID_TOKEN',
     });
     expect(service.userMembershipModel.find).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid purchase-center user ids before querying any tables', async () => {
+    const service = createService();
+
+    await expect(
+      service.getVipPurchaseCenter({ ...auth, sub: 'bad-user-id' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    });
+    expect(service.vipPlanModel.find).not.toHaveBeenCalled();
+    expect(service.userMembershipModel.find).not.toHaveBeenCalled();
+    expect(service.conversationModel.find).not.toHaveBeenCalled();
+    expect(service.messageModel.count).not.toHaveBeenCalled();
   });
 });

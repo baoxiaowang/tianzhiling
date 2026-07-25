@@ -102,10 +102,17 @@ export interface UserMembershipCenterDTO {
   plans: VipPlanRecordDTO[];
 }
 
+export interface MembershipActivityStatsDTO {
+  companionshipDays: number;
+  conversationCount: number;
+}
+
 export interface VipPurchaseCenterDTO {
   isVip: boolean;
   membership?: UserMembershipRecordDTO;
   plans: VipPlanRecordDTO[];
+  serverTime?: string;
+  activityStats?: MembershipActivityStatsDTO;
 }
 
 export interface UserMembershipStatusSnapshotDTO {
