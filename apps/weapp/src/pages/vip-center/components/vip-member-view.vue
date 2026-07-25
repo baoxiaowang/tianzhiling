@@ -161,11 +161,7 @@
             >
               <text class="vip-member-view__currency">¥</text>
               <text class="vip-member-view__price-value">
-                {{
-                  formatPrice(
-                    upgradePlan.originalPriceAmount ?? upgradePlan.priceAmount
-                  )
-                }}
+                {{ formatPrice(upgradePlan.priceAmount) }}
               </text>
             </view>
             <view class="vip-member-view__price-divider" />
