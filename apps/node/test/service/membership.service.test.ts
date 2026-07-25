@@ -6,9 +6,14 @@ import {
   MessageRole,
   MessageStatus,
   MongoObjectId,
+  OrderEntity,
+  OrderSource,
+  OrderStatus,
+  OrderType,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
 } from '@tzl/entities';
 import { MembershipService } from '../../src/service/membership.service';
@@ -40,7 +45,7 @@ function createMembership(overrides: Partial<UserMembershipEntity> = {}) {
   return membership;
 }
 
-function createVipPlan() {
+function createVipPlan(overrides: Partial<VipPlanEntity> = {}) {
   const plan = new VipPlanEntity();
 
   Object.assign(plan, {
@@ -57,6 +62,7 @@ function createVipPlan() {
     sort: 1,
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   });
 
   return plan;
@@ -86,6 +92,31 @@ function createEntitlement(
   return entitlement;
 }
 
+function createPaidVipOrder(overrides: Partial<OrderEntity> = {}) {
+  const order = new OrderEntity();
+
+  Object.assign(order, {
+    id: new MongoObjectId(),
+    orderNo: `VIP${new MongoObjectId().toHexString()}`,
+    userId: new MongoObjectId(USER_ID),
+    orderType: OrderType.vipPlan,
+    title: '会员订单',
+    amount: 990,
+    discountAmount: 0,
+    couponAmount: 0,
+    payableAmount: 990,
+    paidAmount: 990,
+    currency: 'CNY',
+    status: OrderStatus.completed,
+    source: OrderSource.weapp,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return order;
+}
+
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
@@ -96,10 +127,13 @@ function createService(
     entitlements?: AgentEntitlementEntity[];
     conversationCreatedAt?: Date;
     conversationCount?: number;
+    plans?: VipPlanEntity[];
+    orders?: OrderEntity[];
   } = {}
 ) {
   const service = new MembershipService();
   const plan = createVipPlan();
+  const plans = options.plans ?? [plan];
 
   service.userMembershipModel = {
     find: jest.fn(async ({ where }: any) =>
@@ -109,6 +143,9 @@ function createService(
           membership.status === where?.status
       )
     ),
+  } as any;
+  service.orderModel = {
+    find: jest.fn().mockResolvedValue(options.orders ?? []),
   } as any;
   service.agentEntitlementModel = {
     find: jest.fn(async ({ where }: any) =>
@@ -120,10 +157,10 @@ function createService(
     ),
   } as any;
   service.vipPlanModel = {
-    find: jest.fn().mockResolvedValue([plan]),
+    find: jest.fn().mockResolvedValue(plans),
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
-      return id?.toHexString?.() === VIP_PLAN_ID ? plan : null;
+      return plans.find(item => sameObjectId(item.id, id)) ?? null;
     }),
   } as any;
   service.conversationModel = {
@@ -264,6 +301,38 @@ describe('MembershipService user membership status', () => {
       status: MessageStatus.sent,
       isArchived: { $ne: true },
     });
+  });
+
+  it('returns upgrade payable amounts after deducting historical vip payments', async () => {
+    const voiceLifetimePlan = createVipPlan({
+      id: new MongoObjectId('665000000000000000000010'),
+      code: 'vip_voice_lifetime',
+      name: '声音永久会员',
+      planGroup: VipPlanGroup.voice,
+      priceAmount: 29900,
+      originalPriceAmount: 39900,
+      durationDays: undefined,
+      lifetime: true,
+    });
+    const service = createService({
+      memberships: [createMembership()],
+      plans: [createVipPlan(), voiceLifetimePlan],
+      orders: [
+        createPaidVipOrder({ paidAmount: undefined, payableAmount: 990 }),
+        createPaidVipOrder({
+          paidAmount: 2000,
+          refundAmount: 2000,
+          status: OrderStatus.refunded,
+        }),
+      ],
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+    const upgradePlan = result.plans.find(
+      plan => plan.id === voiceLifetimePlan.id.toHexString()
+    );
+
+    expect(upgradePlan?.upgradePayableAmount).toBe(28910);
   });
 
   it('returns zero activity stats when a vip user has no conversation', async () => {

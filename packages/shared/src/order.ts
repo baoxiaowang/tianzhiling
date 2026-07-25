@@ -119,6 +119,7 @@ export interface CreateAdminOrderDTO {
 export interface CreateVipPlanOrderDTO {
   vipPlanId: string;
   jsCode: string;
+  supportsZeroAmountOrder?: boolean;
 }
 
 export interface CreateVoicePackageOrderDTO {
@@ -129,15 +130,20 @@ export interface CreateVoicePackageOrderDTO {
 
 export interface CreateVipPlanOrderResultDTO {
   order: OrderRecordDTO;
+  payment?: WechatPaymentParamsDTO;
+}
+
+export interface CreateVoicePackageOrderResultDTO
+  extends CreateVipPlanOrderResultDTO {
   payment: WechatPaymentParamsDTO;
 }
 
-export type CreateVoicePackageOrderResultDTO = CreateVipPlanOrderResultDTO;
-
 export interface CreateVipPlanVirtualPaymentOrderResultDTO {
   order: OrderRecordDTO;
-  virtualPayment: WechatVirtualPaymentParamsDTO;
+  virtualPayment?: WechatVirtualPaymentParamsDTO;
 }
 
-export type CreateVoicePackageVirtualPaymentOrderResultDTO =
-  CreateVipPlanVirtualPaymentOrderResultDTO;
+export interface CreateVoicePackageVirtualPaymentOrderResultDTO
+  extends CreateVipPlanVirtualPaymentOrderResultDTO {
+  virtualPayment: WechatVirtualPaymentParamsDTO;
+}

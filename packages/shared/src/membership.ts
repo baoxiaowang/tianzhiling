@@ -77,6 +77,7 @@ export interface VipPlanRecordDTO {
   voicePackageCode?: string;
   voicePackageName?: string;
   virtualPaymentProductId?: string;
+  upgradePayableAmount?: number;
 }
 
 export type UserMembershipStatusDTO =

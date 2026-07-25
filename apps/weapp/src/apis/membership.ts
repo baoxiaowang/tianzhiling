@@ -27,6 +27,7 @@ export interface VipPlan {
   voicePackageCode?: string
   voicePackageName?: string
   virtualPaymentProductId?: string
+  upgradePayableAmount?: number
 }
 
 export interface UserMembership {
@@ -154,6 +155,10 @@ function parseVipPlan(value: unknown): VipPlan {
     voicePackageCode: asString(raw.voicePackageCode) || undefined,
     voicePackageName: asString(raw.voicePackageName) || undefined,
     virtualPaymentProductId: asString(raw.virtualPaymentProductId) || undefined,
+    upgradePayableAmount:
+      raw.upgradePayableAmount == null
+        ? undefined
+        : Math.max(asNumber(raw.upgradePayableAmount), 0),
   }
 }
 

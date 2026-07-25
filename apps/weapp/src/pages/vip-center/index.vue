@@ -337,30 +337,47 @@ async function handlePurchaseTap() {
         vipPlanId,
         jsCode,
       })
-      const paidOrder = await requestWechatVirtualPaymentWithFallback(
-        result,
-        async () => {
-          const fallbackLoginResult = await Taro.login()
-          const fallbackJsCode = fallbackLoginResult.code?.trim()
+      paidOrderId = result.order.id
 
-          if (!fallbackJsCode) {
-            throw new Error('微信登录凭证获取失败，请稍后重试')
-          }
-
-          return createVipPlanOrder({
-            vipPlanId,
-            jsCode: fallbackJsCode,
-          })
+      if (result.order.payableAmount > 0) {
+        if (!result.virtualPayment) {
+          throw new Error('支付参数获取失败，请稍后重试')
         }
-      )
-      paidOrderId = paidOrder.id
+
+        const paidOrder = await requestWechatVirtualPaymentWithFallback(
+          {
+            order: result.order,
+            virtualPayment: result.virtualPayment,
+          },
+          async () => {
+            const fallbackLoginResult = await Taro.login()
+            const fallbackJsCode = fallbackLoginResult.code?.trim()
+
+            if (!fallbackJsCode) {
+              throw new Error('微信登录凭证获取失败，请稍后重试')
+            }
+
+            return createVipPlanOrder({
+              vipPlanId,
+              jsCode: fallbackJsCode,
+            })
+          }
+        )
+        paidOrderId = paidOrder.id
+      }
     } else {
       const result = await createVipPlanOrder({
         vipPlanId,
         jsCode,
       })
 
-      await Taro.requestPayment(result.payment)
+      if (result.order.payableAmount > 0) {
+        if (!result.payment) {
+          throw new Error('支付参数获取失败，请稍后重试')
+        }
+
+        await Taro.requestPayment(result.payment)
+      }
       paidOrderId = result.order.id
     }
     isAwaitingPaymentResult.value = true

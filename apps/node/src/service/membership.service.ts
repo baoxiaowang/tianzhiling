@@ -9,6 +9,7 @@ import {
   MessageRole,
   MessageStatus,
   MongoObjectId,
+  OrderEntity,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
@@ -27,6 +28,11 @@ import type {
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { AuthenticatedUserPayload } from '../interface';
+import {
+  calculateVipUpgradePricing,
+  getHistoricalVipPaidAmount,
+  isVipPlanUpgrade,
+} from './vip-upgrade-pricing';
 
 @Provide()
 export class MembershipService {
@@ -35,6 +41,9 @@ export class MembershipService {
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(OrderEntity)
+  orderModel: MongoRepository<OrderEntity>;
 
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
@@ -102,10 +111,25 @@ export class MembershipService {
       };
     }
 
-    const [membershipPlan, activityStats] = await Promise.all([
-      this.findVipPlanById(activeMembership.vipPlanId),
-      this.getMembershipActivityStats(userId, now),
-    ]);
+    const [membershipPlan, activityStats, historicalPaidAmount] =
+      await Promise.all([
+        this.findVipPlanById(activeMembership.vipPlanId),
+        this.getMembershipActivityStats(userId, now),
+        getHistoricalVipPaidAmount(this.orderModel, userId),
+      ]);
+    const upgradePlans = plans.map(plan => {
+      if (!isVipPlanUpgrade(activeMembership, membershipPlan, plan)) {
+        return plan;
+      }
+
+      return {
+        ...plan,
+        upgradePayableAmount: calculateVipUpgradePricing(
+          plan.priceAmount,
+          historicalPaidAmount
+        ).payableAmount,
+      };
+    });
 
     return {
       isVip: true,
@@ -113,7 +137,7 @@ export class MembershipService {
         activeMembership,
         membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
       ),
-      plans,
+      plans: upgradePlans,
       serverTime: this.formatDate(now),
       activityStats,
     };

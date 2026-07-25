@@ -42,9 +42,16 @@ import {
   WechatTransactionPayload,
   WechatVirtualOrderPayload,
 } from './wechat-pay.service';
+import {
+  calculateVipUpgradePricing,
+  getHistoricalVipPaidAmount,
+  isVipPlanUpgrade,
+} from './vip-upgrade-pricing';
+import type { VipUpgradePricing } from './vip-upgrade-pricing';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
+const VIP_UPGRADE_CREDIT_PROVIDER = 'vip_upgrade_credit';
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
 
 export interface WechatVirtualPaymentNotifyPayload {
@@ -120,6 +127,17 @@ export class OrderService {
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
+    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+    if (pricing.payableAmount === 0) {
+      return this.createZeroAmountVipPlanOrder(
+        userId,
+        plan,
+        pricing,
+        payload.supportsZeroAmountOrder
+      );
+    }
+
     const openid = await this.wechatPayService.getOpenidByJsCode(
       payload.jsCode
     );
@@ -140,7 +158,7 @@ export class OrderService {
         0
       ),
       couponAmount: 0,
-      payableAmount: plan.priceAmount,
+      payableAmount: pricing.payableAmount,
       currency: plan.currency || 'CNY',
       status: OrderStatus.pending,
       source: OrderSource.weapp,
@@ -149,6 +167,7 @@ export class OrderService {
       payerOpenid: openid,
       snapshot: {
         vipPlan: this.buildVipPlanSnapshot(plan),
+        vipUpgrade: pricing,
       },
       createdAt: now,
       updatedAt: now,
@@ -250,6 +269,17 @@ export class OrderService {
   ): Promise<CreateVipPlanVirtualPaymentOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
+    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+    if (pricing.payableAmount === 0) {
+      return this.createZeroAmountVipPlanOrder(
+        userId,
+        plan,
+        pricing,
+        payload.supportsZeroAmountOrder
+      );
+    }
+
     const productId = this.requireVirtualPaymentProductId(
       plan.virtualPaymentProductId,
       'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
@@ -275,7 +305,7 @@ export class OrderService {
         0
       ),
       couponAmount: 0,
-      payableAmount: plan.priceAmount,
+      payableAmount: pricing.payableAmount,
       currency: plan.currency || 'CNY',
       status: OrderStatus.pending,
       source: OrderSource.weapp,
@@ -286,6 +316,7 @@ export class OrderService {
       virtualPaymentEnv: env,
       snapshot: {
         vipPlan: this.buildVipPlanSnapshot(plan),
+        vipUpgrade: pricing,
       },
       createdAt: now,
       updatedAt: now,
@@ -1485,7 +1516,8 @@ export class OrderService {
   private isVirtualGoodsProvided(order: OrderEntity): boolean {
     return (
       order.virtualGoodsProvideStatus === VirtualGoodsProvideStatus.provided ||
-      (!order.virtualGoodsProvideStatus && Boolean(order.virtualGoodsProvidedAt))
+      (!order.virtualGoodsProvideStatus &&
+        Boolean(order.virtualGoodsProvidedAt))
     );
   }
 
@@ -1602,6 +1634,98 @@ export class OrderService {
         item => item.lifetime || Boolean(item.expiredAt && item.expiredAt > now)
       ) ?? null
     );
+  }
+
+  private async getVipPlanOrderPricing(
+    userId: MongoObjectId,
+    targetPlan: VipPlanEntity
+  ): Promise<VipUpgradePricing> {
+    const membership = await this.findActiveMembership(userId);
+
+    if (!membership) {
+      return calculateVipUpgradePricing(targetPlan.priceAmount, 0);
+    }
+
+    const currentPlan = await this.findVipPlanById(membership.vipPlanId);
+
+    if (!isVipPlanUpgrade(membership, currentPlan, targetPlan)) {
+      return calculateVipUpgradePricing(targetPlan.priceAmount, 0);
+    }
+
+    const historicalPaidAmount = await getHistoricalVipPaidAmount(
+      this.orderModel,
+      userId
+    );
+
+    return calculateVipUpgradePricing(
+      targetPlan.priceAmount,
+      historicalPaidAmount
+    );
+  }
+
+  private async createZeroAmountVipPlanOrder(
+    userId: MongoObjectId,
+    plan: VipPlanEntity,
+    pricing: VipUpgradePricing,
+    supportsZeroAmountOrder?: boolean
+  ): Promise<CreateVipPlanOrderResultDTO> {
+    if (!supportsZeroAmountOrder) {
+      throw new AppError(
+        'VIP_UPGRADE_ZERO_AMOUNT_UNSUPPORTED',
+        '当前会员增购无需支付，请更新小程序后重试',
+        409
+      );
+    }
+
+    const now = new Date();
+    const order = new OrderEntity();
+
+    Object.assign(order, {
+      orderNo: this.generateOrderNo(),
+      userId,
+      orderType: OrderType.vipPlan,
+      targetId: plan.id,
+      targetCode: plan.code,
+      title: plan.name,
+      amount: plan.priceAmount,
+      discountAmount: Math.max(
+        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+        0
+      ),
+      couponAmount: 0,
+      payableAmount: 0,
+      paidAmount: 0,
+      currency: plan.currency || 'CNY',
+      status: OrderStatus.granting,
+      source: OrderSource.weapp,
+      paymentProvider: VIP_UPGRADE_CREDIT_PROVIDER,
+      paymentNotifyAt: now,
+      paidAt: now,
+      snapshot: {
+        vipPlan: this.buildVipPlanSnapshot(plan),
+        vipUpgrade: pricing,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const savedOrder = await this.orderModel.save(order);
+
+    try {
+      await this.grantOrderBenefits(savedOrder);
+      savedOrder.status = OrderStatus.completed;
+      savedOrder.updatedAt = new Date();
+      await this.orderModel.save(savedOrder);
+    } catch (error) {
+      savedOrder.status = OrderStatus.grantFailed;
+      savedOrder.updatedAt = new Date();
+      await this.orderModel.save(savedOrder);
+      throw error;
+    }
+
+    return {
+      order: this.buildOrderRecord(savedOrder),
+    };
   }
 
   private async getActiveVipPlanById(planId: string): Promise<VipPlanEntity> {
