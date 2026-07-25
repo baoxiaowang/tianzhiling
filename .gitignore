@@ -4,7 +4,6 @@ Thumbs.db
 
 # 环境变量与密钥（示例文件可保留）
 !.env.example
-/resource/cert/
 
 # Docker 本地持久化数据（mongo / milvus / minio 等，见 docker-compose）
 /volumes/
