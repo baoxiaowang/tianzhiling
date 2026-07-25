@@ -217,11 +217,13 @@ import {
   Star,
   StarFill,
 } from '@nutui/icons-vue-taro'
+import { buildOssMediaUrl } from '@tzl/shared'
 import { computed } from 'vue'
 import currentMemberArt from '../../../assets/images/vip-center/current-member-star.png'
-import lifetimeDiamondArt from '../../../assets/images/vip-center/lifetime-diamond.png'
-import voiceStarArt from '../../../assets/images/vip-center/voice-star.png'
 import type { UserMembership, VipPlan } from '../../../apis/membership'
+
+const lifetimeDiamondArt = buildOssMediaUrl('/weapp/lifetime-diamond.png')
+const voiceStarArt = buildOssMediaUrl('/weapp/voice-star.png')
 
 const props = defineProps<{
   membership: UserMembership
