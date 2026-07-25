@@ -22,6 +22,7 @@ Thumbs.db
 
 # 若将来在仓库根目录放置 Node 项目
 /node_modules/
+/.pnpm-store/
 /dist/
 
 /volumes/

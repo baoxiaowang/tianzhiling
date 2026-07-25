@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "clean": "rm -rf dist",
     "sync:china-regions": "node scripts/sync-china-regions.mjs"
   },
