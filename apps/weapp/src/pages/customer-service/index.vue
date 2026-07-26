@@ -53,7 +53,7 @@ import { buildOssMediaUrl } from '@tzl/shared'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 
-const customerServicePhone = '19986943631'
+const customerServicePhone = '15129115313'
 const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
 
 async function handleCallCustomerService() {
