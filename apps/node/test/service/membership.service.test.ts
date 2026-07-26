@@ -2,10 +2,18 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
+  ConversationEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
+  OrderEntity,
+  OrderSource,
+  OrderStatus,
+  OrderType,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
 } from '@tzl/entities';
 import { MembershipService } from '../../src/service/membership.service';
@@ -37,7 +45,7 @@ function createMembership(overrides: Partial<UserMembershipEntity> = {}) {
   return membership;
 }
 
-function createVipPlan() {
+function createVipPlan(overrides: Partial<VipPlanEntity> = {}) {
   const plan = new VipPlanEntity();
 
   Object.assign(plan, {
@@ -54,6 +62,7 @@ function createVipPlan() {
     sort: 1,
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   });
 
   return plan;
@@ -83,16 +92,48 @@ function createEntitlement(
   return entitlement;
 }
 
+function createPaidVipOrder(overrides: Partial<OrderEntity> = {}) {
+  const order = new OrderEntity();
+
+  Object.assign(order, {
+    id: new MongoObjectId(),
+    orderNo: `VIP${new MongoObjectId().toHexString()}`,
+    userId: new MongoObjectId(USER_ID),
+    orderType: OrderType.vipPlan,
+    title: '会员订单',
+    amount: 990,
+    discountAmount: 0,
+    couponAmount: 0,
+    payableAmount: 990,
+    paidAmount: 990,
+    currency: 'CNY',
+    status: OrderStatus.completed,
+    source: OrderSource.weapp,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+
+  return order;
+}
+
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
 
-function createService(options: {
-  memberships?: UserMembershipEntity[];
-  entitlements?: AgentEntitlementEntity[];
-} = {}) {
+function createService(
+  options: {
+    memberships?: UserMembershipEntity[];
+    entitlements?: AgentEntitlementEntity[];
+    conversationCreatedAt?: Date;
+    conversationCount?: number;
+    plans?: VipPlanEntity[];
+    orders?: OrderEntity[];
+  } = {}
+) {
   const service = new MembershipService();
   const plan = createVipPlan();
+  const plans = options.plans ?? [plan];
 
   service.userMembershipModel = {
     find: jest.fn(async ({ where }: any) =>
@@ -102,6 +143,9 @@ function createService(options: {
           membership.status === where?.status
       )
     ),
+  } as any;
+  service.orderModel = {
+    find: jest.fn().mockResolvedValue(options.orders ?? []),
   } as any;
   service.agentEntitlementModel = {
     find: jest.fn(async ({ where }: any) =>
@@ -113,11 +157,31 @@ function createService(options: {
     ),
   } as any;
   service.vipPlanModel = {
-    find: jest.fn().mockResolvedValue([plan]),
+    find: jest.fn().mockResolvedValue(plans),
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
-      return id?.toHexString?.() === VIP_PLAN_ID ? plan : null;
+      return plans.find(item => sameObjectId(item.id, id)) ?? null;
     }),
+  } as any;
+  service.conversationModel = {
+    find: jest.fn(async ({ where }: any) => {
+      if (
+        !options.conversationCreatedAt ||
+        !sameObjectId(where?.userId, new MongoObjectId(USER_ID))
+      ) {
+        return [];
+      }
+
+      return [
+        Object.assign(new ConversationEntity(), {
+          userId: new MongoObjectId(USER_ID),
+          createdAt: options.conversationCreatedAt,
+        }),
+      ];
+    }),
+  } as any;
+  service.messageModel = {
+    count: jest.fn().mockResolvedValue(options.conversationCount ?? 0),
   } as any;
 
   return service;
@@ -212,6 +276,89 @@ describe('MembershipService user membership status', () => {
     ]);
   });
 
+  it('returns Beijing-day activity stats for a vip purchase center', async () => {
+    const service = createService({
+      memberships: [createMembership()],
+      conversationCreatedAt: new Date('2026-04-28T15:30:00.000Z'),
+      conversationCount: 3286,
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        isVip: true,
+        serverTime: NOW.toISOString(),
+        activityStats: {
+          companionshipDays: 3,
+          conversationCount: 3286,
+        },
+      })
+    );
+    expect(service.messageModel.count).toHaveBeenCalledWith({
+      userId: new MongoObjectId(USER_ID),
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      isArchived: { $ne: true },
+    });
+  });
+
+  it('returns upgrade payable amounts after deducting historical vip payments', async () => {
+    const voiceLifetimePlan = createVipPlan({
+      id: new MongoObjectId('665000000000000000000010'),
+      code: 'vip_voice_lifetime',
+      name: '声音永久会员',
+      planGroup: VipPlanGroup.voice,
+      priceAmount: 29900,
+      originalPriceAmount: 39900,
+      durationDays: undefined,
+      lifetime: true,
+    });
+    const service = createService({
+      memberships: [createMembership()],
+      plans: [createVipPlan(), voiceLifetimePlan],
+      orders: [
+        createPaidVipOrder({ paidAmount: undefined, payableAmount: 990 }),
+        createPaidVipOrder({
+          paidAmount: 2000,
+          refundAmount: 2000,
+          status: OrderStatus.refunded,
+        }),
+      ],
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+    const upgradePlan = result.plans.find(
+      plan => plan.id === voiceLifetimePlan.id.toHexString()
+    );
+
+    expect(upgradePlan?.upgradePayableAmount).toBe(28910);
+  });
+
+  it('returns zero activity stats when a vip user has no conversation', async () => {
+    const service = createService({
+      memberships: [createMembership()],
+    });
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result.activityStats).toEqual({
+      companionshipDays: 0,
+      conversationCount: 0,
+    });
+  });
+
+  it('does not query activity tables for a normal purchase-center user', async () => {
+    const service = createService();
+
+    const result = await service.getVipPurchaseCenter(auth);
+
+    expect(result.isVip).toBe(false);
+    expect(result.plans).toHaveLength(1);
+    expect(service.conversationModel.find).not.toHaveBeenCalled();
+    expect(service.messageModel.count).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid user ids before querying membership tables', async () => {
     const service = createService();
     const invalidAuth = {
@@ -219,9 +366,25 @@ describe('MembershipService user membership status', () => {
       sub: 'bad-user-id',
     };
 
-    await expect(service.getMembershipStatus(invalidAuth)).rejects.toMatchObject({
+    await expect(
+      service.getMembershipStatus(invalidAuth)
+    ).rejects.toMatchObject({
       code: 'INVALID_TOKEN',
     });
     expect(service.userMembershipModel.find).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid purchase-center user ids before querying any tables', async () => {
+    const service = createService();
+
+    await expect(
+      service.getVipPurchaseCenter({ ...auth, sub: 'bad-user-id' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_TOKEN',
+    });
+    expect(service.vipPlanModel.find).not.toHaveBeenCalled();
+    expect(service.userMembershipModel.find).not.toHaveBeenCalled();
+    expect(service.conversationModel.find).not.toHaveBeenCalled();
+    expect(service.messageModel.count).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@
     <view class="voice-customer-service-card__copy">
       <text class="voice-customer-service-card__title">添加客服：</text>
       <text class="voice-customer-service-card__subtitle">
-        支付后，可添加客服微信，进行声音定制
+        {{ props.subtitle }}
       </text>
     </view>
 
@@ -34,6 +34,14 @@ export default {
 import Taro from '@tarojs/taro'
 import { buildOssMediaUrl } from '@tzl/shared'
 
+const props = withDefaults(
+  defineProps<{
+    subtitle?: string
+  }>(),
+  {
+    subtitle: '支付后，可添加客服微信，进行声音定制',
+  },
+)
 const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
 
 function handlePreviewQr() {
@@ -68,8 +76,7 @@ async function handleSaveQr() {
 <style lang="scss">
 .voice-customer-service-card {
   box-sizing: border-box;
-  width: 327px;
-  max-width: calc(100% - 48px);
+  width: 100%;
   height: auto;
   display: flex;
   flex-direction: column;

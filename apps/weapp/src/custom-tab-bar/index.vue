@@ -77,7 +77,7 @@ export default {
   left: 0;
   z-index: 100;
   display: flex;
-  padding: 8px 10px calc(var(--custom-tab-bar-safe-bottom, env(safe-area-inset-bottom)) + 8px);
+  padding: 4px 10px calc(var(--custom-tab-bar-safe-bottom, env(safe-area-inset-bottom)) + 5px);
   border-top: 1px solid rgba(17, 24, 39, 0.06);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(14px);
@@ -88,8 +88,8 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding-top: 6px;
+  gap: 2px;
+  padding-top: 2px;
   color: $tzl-color-tab-muted;
 }
 
@@ -103,8 +103,8 @@ export default {
 }
 
 .custom-tab-bar__icon {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: block;
 }
 </style>

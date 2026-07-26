@@ -11,6 +11,7 @@ import {
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
   VoicePackageEntity,
   VoicePackageStatus,
@@ -251,10 +252,14 @@ function snapshotOrder(order: OrderEntity) {
   };
 }
 
-function createOrderModel(order: OrderEntity) {
+function createOrderModel(
+  order: OrderEntity,
+  historicalVipOrders: OrderEntity[] = []
+) {
   const savedSnapshots: ReturnType<typeof snapshotOrder>[] = [];
   const model = {
     savedSnapshots,
+    find: jest.fn().mockResolvedValue(historicalVipOrders),
     findOne: jest.fn(async ({ where }: any) => {
       if (where?.orderNo) {
         return where.orderNo === order.orderNo ? order : null;
@@ -357,6 +362,7 @@ function createService(
     voiceTrainingTasks?: VoiceTrainingTaskEntity[];
     memberships?: any[];
     entitlements?: any[];
+    historicalVipOrders?: OrderEntity[];
   } = {}
 ) {
   const service = new OrderService();
@@ -364,7 +370,7 @@ function createService(
   const plan = createVipPlan(planOverrides);
   const voicePackage = createVoicePackage(options.voicePackageOverrides);
   const agent = createAgent(options.agentOverrides);
-  const orderModel = createOrderModel(order);
+  const orderModel = createOrderModel(order, options.historicalVipOrders);
   const vipPlanModel = createVipPlanModel(plan);
   const voicePackageModel = createVoicePackageModel(voicePackage);
   const agentModel = createAgentModel(agent);
@@ -499,6 +505,141 @@ describe('OrderService payment expiration and reconciliation', () => {
         attempts: 3,
       })
     );
+  });
+
+  it('deducts historical vip payments from a member upgrade order', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000011'),
+      status: OrderStatus.completed,
+      paidAmount: 990,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000012'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_voice_lifetime',
+        name: '声音永久会员',
+        planGroup: VipPlanGroup.voice,
+        priceAmount: 5000,
+        originalPriceAmount: 6000,
+        durationDays: undefined,
+        lifetime: true,
+      },
+      {
+        memberships: [membership],
+        historicalVipOrders: [historicalOrder],
+      }
+    );
+
+    const result = await service.createVipPlanOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 4010,
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payableAmount: 4010,
+        snapshot: expect.objectContaining({
+          vipUpgrade: {
+            historicalPaidAmount: 990,
+            deductedAmount: 990,
+            payableAmount: 4010,
+          },
+        }),
+      })
+    );
+    expect(result.order.payableAmount).toBe(4010);
+  });
+
+  it('completes a zero-amount member upgrade without calling WeChat Pay', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000013'),
+      status: OrderStatus.completed,
+      paidAmount: 7000,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000014'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, userMembershipModel, wechatPayService, auth } =
+      createService(
+        {},
+        {
+          code: 'vip_voice_lifetime',
+          name: '声音永久会员',
+          planGroup: VipPlanGroup.voice,
+          priceAmount: 5000,
+          durationDays: undefined,
+          lifetime: true,
+        },
+        {
+          memberships: [membership],
+          historicalVipOrders: [historicalOrder],
+        }
+      );
+
+    const result = await service.createVipPlanOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+      supportsZeroAmountOrder: true,
+    });
+
+    expect(result.order.payableAmount).toBe(0);
+    expect(result.order.status).toBe(OrderStatus.completed);
+    expect(result.payment).toBeUndefined();
+    expect(wechatPayService.getOpenidByJsCode).not.toHaveBeenCalled();
+    expect(wechatPayService.createVipPlanPrepay).not.toHaveBeenCalled();
+    expect(userMembershipModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vipPlanCode: 'vip_voice_lifetime',
+        lifetime: true,
+      })
+    );
+  });
+
+  it('rejects zero-amount upgrades from clients without zero-order support', async () => {
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000015'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_voice_lifetime',
+        planGroup: VipPlanGroup.voice,
+        priceAmount: 5000,
+        durationDays: undefined,
+        lifetime: true,
+      },
+      {
+        memberships: [membership],
+        historicalVipOrders: [
+          createOrder({
+            status: OrderStatus.completed,
+            paidAmount: 5000,
+          }),
+        ],
+      }
+    );
+
+    await expect(
+      service.createVipPlanOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({
+      code: 'VIP_UPGRADE_ZERO_AMOUNT_UNSUPPORTED',
+    });
+    expect(orderModel.save).not.toHaveBeenCalled();
+    expect(wechatPayService.getOpenidByJsCode).not.toHaveBeenCalled();
   });
 
   it('closes an expired pending order and writes closedAt when WeChat has no transaction', async () => {

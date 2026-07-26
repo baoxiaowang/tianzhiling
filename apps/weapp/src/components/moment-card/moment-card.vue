@@ -18,15 +18,6 @@
           <text class="moment-card__author">{{ authorName }}</text>
           <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
         </view>
-
-        <view
-          v-if="showOwnerActions"
-          class="moment-card__delete"
-          :class="{ 'moment-card__delete--disabled': isDeleting }"
-          @tap.stop="emitDelete"
-        >
-          {{ isDeleting ? '删除中' : '删除' }}
-        </view>
       </view>
 
       <view
@@ -49,6 +40,14 @@
           <text class="moment-card__time">
             {{ relativeTime }}
           </text>
+          <view
+            v-if="showOwnerActions"
+            class="moment-card__delete"
+            :class="{ 'moment-card__delete--disabled': isDeleting }"
+            @tap.stop="emitDelete"
+          >
+            <view class="moment-card__delete-icon" />
+          </view>
           <text
             v-if="showModerationStatus && isRiskControlled"
             class="moment-card__risk-tag"
@@ -56,23 +55,39 @@
             风控中
           </text>
         </view>
-        <view class="moment-card__actions">
-          <view
-            class="moment-card__action"
-            :class="{ 'moment-card__action--active': post.likedByMe }"
-            @tap="emitLike"
-          >
-            <image class="moment-card__action-icon" :src="likeIconUrl" mode="aspectFit" />
-            <text class="moment-card__action-count">{{ likeCount }}</text>
-          </view>
-          <view v-if="showCommentAction" class="moment-card__action" @tap="emitComment">
-            <image class="moment-card__action-icon" :src="commentIconUrl" mode="aspectFit" />
-            <text class="moment-card__action-count">{{ post.commentCount }}</text>
+        <view class="moment-card__actions" @tap.stop="toggleActionMenu">
+          <view class="moment-card__more" />
+          <view v-if="isActionMenuVisible" class="moment-card__action-menu">
+            <view
+              class="moment-card__action-menu-item"
+              :class="{ 'moment-card__action-menu-item--active': post.likedByMe }"
+              @tap.stop="handleLikeAction"
+            >
+              <view class="moment-card__action-menu-icon moment-card__action-menu-icon--like" />
+              <text>{{ post.likedByMe ? '取消' : '赞' }}</text>
+            </view>
+            <view v-if="showCommentAction" class="moment-card__action-menu-divider" />
+            <view
+              v-if="showCommentAction"
+              class="moment-card__action-menu-item"
+              @tap.stop="handleCommentAction"
+            >
+              <view class="moment-card__action-menu-icon moment-card__action-menu-icon--comment" />
+              <text>评论</text>
+            </view>
           </view>
         </view>
       </view>
 
-      <view v-if="post.comments.length" class="moment-card__comments">
+      <view v-if="shouldShowInteractionBox" class="moment-card__comments">
+        <view v-if="shouldShowLikeSummary" class="moment-card__likes">
+          <view class="moment-card__likes-icon" />
+          <text class="moment-card__likes-name">{{ likeSummaryText }}</text>
+        </view>
+        <view
+          v-if="shouldShowLikeSummary && post.comments.length"
+          class="moment-card__interaction-divider"
+        />
         <view
           v-for="comment in post.comments"
           :key="comment.id"
@@ -80,8 +95,13 @@
           @tap="emitComment(comment)"
         >
           <text class="moment-card__comment-author">
-            {{ formatCommentAuthor(comment.authorName, comment.replyToUserName) }}
+            {{ formatCommentAuthor(comment.authorName) }}
           </text>
+          <text v-if="comment.replyToUserName" class="moment-card__comment-reply"> 回复 </text>
+          <text v-if="comment.replyToUserName" class="moment-card__comment-author">
+            {{ formatCommentAuthor(comment.replyToUserName) }}
+          </text>
+          <text class="moment-card__comment-colon">：</text>
           <text class="moment-card__comment-text">{{ comment.content }}</text>
         </view>
       </view>
@@ -96,10 +116,8 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PostCommentItem, PostItem } from '../../apis/post'
-import likeIconUrl from '../../assets/icon/like.svg'
-import commentIconUrl from '../../assets/icon/comment.svg'
 
 const props = withDefaults(
   defineProps<{
@@ -154,6 +172,24 @@ const isRiskControlled = computed(() => {
     props.post.moderationStatus === 'risk_controlled'
   )
 })
+const isActionMenuVisible = ref(false)
+const shouldShowLikeSummary = computed(() => {
+  return props.post.likedByMe || likeCount.value > 0
+})
+const shouldShowInteractionBox = computed(() => {
+  return shouldShowLikeSummary.value || props.post.comments.length > 0
+})
+const likeSummaryText = computed(() => {
+  if (props.post.likedByMe) {
+    if (likeCount.value <= 1) {
+      return '我'
+    }
+
+    return `我等${likeCount.value}人`
+  }
+
+  return `${likeCount.value}人觉得很赞`
+})
 
 function formatMomentRelativeTime(value: string | null) {
   if (!value || !value.trim()) {
@@ -197,11 +233,28 @@ function formatMomentRelativeTime(value: string | null) {
   return parts.join('-')
 }
 
-function formatCommentAuthor(authorName: unknown, replyToUserName: unknown) {
+function formatCommentAuthor(authorName: unknown, replyToUserName?: unknown) {
   const author = normalizeText(authorName) || '未了言用户'
-  const replyTo = normalizeText(replyToUserName)
 
-  return replyTo ? `${author} 回复 ${replyTo}：` : `${author}：`
+  return author
+}
+
+function toggleActionMenu() {
+  isActionMenuVisible.value = !isActionMenuVisible.value
+}
+
+function closeActionMenu() {
+  isActionMenuVisible.value = false
+}
+
+function handleLikeAction() {
+  closeActionMenu()
+  emitLike()
+}
+
+function handleCommentAction() {
+  closeActionMenu()
+  emitComment()
 }
 
 function emitComment(replyToComment?: PostCommentItem) {
@@ -228,9 +281,9 @@ function emitDelete() {
 <style lang="scss">
 .moment-card {
   display: flex;
-  gap: 12px;
-  padding: 16px;
-  border-bottom: 1px solid #eef2f7;
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #eeeeee;
   background: #ffffff;
 }
 
@@ -246,7 +299,7 @@ function emitDelete() {
 .moment-card__avatar {
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: #e5e7eb;
 }
 
@@ -260,10 +313,7 @@ function emitDelete() {
 }
 
 .moment-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  display: block;
 }
 
 .moment-card__meta {
@@ -273,25 +323,25 @@ function emitDelete() {
 
 .moment-card__author {
   display: block;
-  font-size: 18px;
-  line-height: 27px;
+  font-size: 16px;
+  line-height: 22px;
   font-weight: 500;
-  color: #0a0a0a;
+  color: #576b95;
 }
 
 .moment-card__body-text {
   display: block;
-  margin-top: 4px;
+  margin-top: 3px;
   font-size: 16px;
-  line-height: 25px;
-  color: $tzl-color-slate-700;
+  line-height: 24px;
+  color: #191919;
 }
 
 .moment-card__image-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+  gap: 4px;
+  margin-top: 9px;
 }
 
 .moment-card__image-grid--1 {
@@ -317,23 +367,23 @@ function emitDelete() {
 
 .moment-card__image-wrap {
   position: relative;
-  width: calc((100% - 12px) / 3);
+  width: calc((100% - 8px) / 3);
   height: 92px;
   overflow: hidden;
-  border-radius: 8px;
-  background: #f1f5f9;
+  border-radius: 3px;
+  background: #f2f2f2;
 }
 
 .moment-card__image-grid--2 .moment-card__image-wrap,
 .moment-card__image-grid--4 .moment-card__image-wrap {
-  width: calc((100% - 6px) / 2);
+  width: calc((100% - 4px) / 2);
   height: 121px;
 }
 
 .moment-card__image-grid--1 .moment-card__image-wrap {
   width: 100%;
   height: 188px;
-  border-radius: 12px;
+  border-radius: 3px;
 }
 
 .moment-card__image {
@@ -346,21 +396,22 @@ function emitDelete() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 12px;
+  margin-top: 8px;
+  min-height: 24px;
 }
 
 .moment-card__status-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .moment-card__time {
-  font-size: 14px;
-  line-height: 20px;
-  color: $tzl-color-slate-500;
+  font-size: 13px;
+  line-height: 18px;
+  color: #8a8a8a;
 }
 
 .moment-card__risk-tag {
@@ -373,82 +424,179 @@ function emitDelete() {
 }
 
 .moment-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.moment-card__action {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: $tzl-color-slate-500;
-}
-
-.moment-card__action-icon {
-  width: 18px;
-  height: 18px;
-  display: block;
-}
-
-.moment-card__action-count {
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.moment-card__delete {
-  min-width: 40px;
-  height: 32px;
-  padding: 0 8px;
-  box-sizing: border-box;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  border-radius: 999px;
-  color: #8c8c8c;
+  width: 32px;
+  height: 20px;
+  margin-left: 10px;
+  border-radius: 3px;
+  background: #f2f3f5;
+}
+
+.moment-card__more {
+  position: relative;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #576b95;
+  box-shadow: -7px 0 0 #576b95, 7px 0 0 #576b95;
+}
+
+.moment-card__action-menu {
+  position: absolute;
+  right: 40px;
+  top: -10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 4px;
+  background: #4c5157;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.moment-card__action-menu::after {
+  content: '';
+  position: absolute;
+  right: -6px;
+  top: 15px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid #4c5157;
+}
+
+.moment-card__action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 4px;
   font-size: 14px;
   line-height: 20px;
 }
 
+.moment-card__action-menu-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 10px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.moment-card__action-menu-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 18px 18px;
+}
+
+.moment-card__action-menu-icon--like {
+  background-image: url('../../assets/icon/moments-like-white.svg');
+}
+
+.moment-card__action-menu-icon--comment {
+  background-image: url('../../assets/icon/moments-comment-white.svg');
+}
+
+.moment-card__delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #576b95;
+}
+
 .moment-card__delete--disabled {
-  color: #c0c4cc;
+  color: #b8b8b8;
 }
 
-.moment-card__action--active {
-  color: #00a63e;
-}
-
-.moment-card__action--active .moment-card__action-icon {
-  filter: brightness(0) saturate(100%) invert(46%) sepia(95%) saturate(1245%) hue-rotate(116deg)
-    brightness(92%) contrast(101%);
+.moment-card__delete-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  background: url('../../assets/icon/moments-delete-blue.svg') center / 14px 14px no-repeat;
 }
 
 .moment-card__comments {
-  margin-top: 12px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: $tzl-color-surface-muted;
+  position: relative;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 0;
+  background: #f0f0f0;
+}
+
+.moment-card__comments::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #f0f0f0;
+}
+
+.moment-card__likes {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+}
+
+.moment-card__likes-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  background: url('../../assets/icon/moments-like-blue.svg') center / 16px 16px no-repeat;
+}
+
+.moment-card__likes-name {
+  font-size: 14px;
+  line-height: 20px;
+  color: #576b95;
+}
+
+.moment-card__interaction-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: #e4e4e6;
 }
 
 .moment-card__comment {
   display: block;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .moment-card__comment + .moment-card__comment {
-  margin-top: 8px;
+  margin-top: 2px;
 }
 
 .moment-card__comment-author {
   font-size: 14px;
-  line-height: 20px;
+  line-height: 21px;
   font-weight: 500;
-  color: #101828;
+  color: #576b95;
+}
+
+.moment-card__comment-reply,
+.moment-card__comment-colon {
+  color: #191919;
 }
 
 .moment-card__comment-text {
   font-size: 14px;
-  line-height: 20px;
-  color: $tzl-color-slate-700;
+  line-height: 21px;
+  color: #191919;
 }
 </style>

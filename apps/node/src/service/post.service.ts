@@ -625,6 +625,9 @@ export class PostService {
   ): Promise<PostItem> {
     const userId = this.parseObjectId(auth.sub);
     const user = await this.findUserById(userId);
+    const now = new Date();
+
+    this.assertUserCanCreatePost(user, now);
 
     const content = this.normalizeContent(payload?.content);
     const images = this.normalizeImages(payload?.images);
@@ -641,7 +644,6 @@ export class PostService {
       );
     }
 
-    const now = new Date();
     const post = new PostEntity();
     post.userId = userId;
     post.content = content;
@@ -1083,6 +1085,33 @@ export class PostService {
     return value === PostModerationStatus.riskControlled
       ? PostModerationStatus.riskControlled
       : PostModerationStatus.normal;
+  }
+
+  private assertUserCanCreatePost(user: UserEntity | null, now: Date): void {
+    const riskControlUntilAt = this.normalizeDate(user?.riskControlUntilAt);
+
+    if (!riskControlUntilAt || riskControlUntilAt <= now) {
+      return;
+    }
+
+    throw new AppError(
+      'USER_RISK_CONTROLLED',
+      '账号处于风控状态，暂时不能发布朋友圈',
+      403,
+      {
+        riskControlUntilAt: riskControlUntilAt.toISOString(),
+      }
+    );
+  }
+
+  private normalizeDate(value?: Date): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const parsed = value instanceof Date ? value : new Date(value);
+
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
   }
 
   private isSameObjectId(

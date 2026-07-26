@@ -43,18 +43,23 @@ export interface WechatVirtualPaymentParams {
 
 export interface CreateVipPlanOrderResult {
   order: OrderRecord
+  payment?: WechatPaymentParams
+}
+
+export interface CreateVoicePackageOrderResult
+  extends CreateVipPlanOrderResult {
   payment: WechatPaymentParams
 }
 
-export type CreateVoicePackageOrderResult = CreateVipPlanOrderResult
-
 export interface CreateVipPlanVirtualPaymentOrderResult {
   order: OrderRecord
-  virtualPayment: WechatVirtualPaymentParams
+  virtualPayment?: WechatVirtualPaymentParams
 }
 
-export type CreateVoicePackageVirtualPaymentOrderResult =
-  CreateVipPlanVirtualPaymentOrderResult
+export interface CreateVoicePackageVirtualPaymentOrderResult
+  extends CreateVipPlanVirtualPaymentOrderResult {
+  virtualPayment: WechatVirtualPaymentParams
+}
 
 export interface UserOrderList {
   items: OrderRecord[]
@@ -172,13 +177,37 @@ function parseCreateVipPlanOrderResult(
 
   return {
     order: parseOrder(raw.order),
-    payment: parsePayment(raw.payment),
+    payment: raw.payment ? parsePayment(raw.payment) : undefined,
   }
 }
 
 function parseCreateVipPlanVirtualPaymentOrderResult(
   value: unknown
 ): CreateVipPlanVirtualPaymentOrderResult {
+  const raw = asRecord(value)
+
+  return {
+    order: parseOrder(raw.order),
+    virtualPayment: raw.virtualPayment
+      ? parseVirtualPayment(raw.virtualPayment)
+      : undefined,
+  }
+}
+
+function parseCreateVoicePackageOrderResult(
+  value: unknown
+): CreateVoicePackageOrderResult {
+  const raw = asRecord(value)
+
+  return {
+    order: parseOrder(raw.order),
+    payment: parsePayment(raw.payment),
+  }
+}
+
+function parseCreateVoicePackageVirtualPaymentOrderResult(
+  value: unknown
+): CreateVoicePackageVirtualPaymentOrderResult {
   const raw = asRecord(value)
 
   return {
@@ -206,6 +235,7 @@ export async function createVipPlanOrder(payload: {
   const data = await post<CreateVipPlanOrderResultDTO>('/api/orders/vip-plan', {
     vipPlanId: payload.vipPlanId,
     jsCode: payload.jsCode,
+    supportsZeroAmountOrder: true,
   })
 
   return parseCreateVipPlanOrderResult(data)
@@ -220,6 +250,7 @@ export async function createVipPlanVirtualPaymentOrder(payload: {
     {
       vipPlanId: payload.vipPlanId,
       jsCode: payload.jsCode,
+      supportsZeroAmountOrder: true,
     }
   )
 
@@ -240,7 +271,7 @@ export async function createVoicePackageOrder(payload: {
     }
   )
 
-  return parseCreateVipPlanOrderResult(data)
+  return parseCreateVoicePackageOrderResult(data)
 }
 
 export async function createVoicePackageVirtualPaymentOrder(payload: {
@@ -257,7 +288,7 @@ export async function createVoicePackageVirtualPaymentOrder(payload: {
     }
   )
 
-  return parseCreateVipPlanVirtualPaymentOrderResult(data)
+  return parseCreateVoicePackageVirtualPaymentOrderResult(data)
 }
 
 export async function listOrders() {

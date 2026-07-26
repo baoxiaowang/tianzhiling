@@ -4,9 +4,11 @@ import type {
   AdminVipPlanListParamsDTO,
   AdminVipPlanRecordDTO,
   SaveAdminVipPlanDTO,
+  VipPlanGroupDTO,
 } from '@tzl/shared';
 
 export type VipPlanRecord = AdminVipPlanRecordDTO;
+export type VipPlanGroup = VipPlanGroupDTO;
 export type VipPlanListParams = AdminVipPlanListParamsDTO;
 export type VipPlanListRes = AdminVipPlanListDTO;
 export type SaveVipPlanData = SaveAdminVipPlanDTO;

@@ -17,7 +17,7 @@
       <view class="chat-page__nav" :style="navStyle">
         <back-capsule
           class="chat-page__nav-capsule"
-          :menus="navMenus"
+          :menus="[]"
           back-home-url="/pages/index/index"
           @menu-select="handleNavMenuSelect"
         >
@@ -416,11 +416,6 @@ type DisplayRow =
       anchorId: string
     }
 
-type NavMenuItem = {
-  key: string
-  text: string
-}
-
 type VoiceDragTarget = 'send' | 'cancel' | 'transcribe'
 
 type ChatQuotaDialogType = 'remaining' | 'exhausted'
@@ -646,12 +641,6 @@ const navStyle = {
   height: `${menuButtonMetrics.totalHeight}px`,
   paddingTop: `${menuButtonMetrics.statusBarHeight}px`,
 }
-const navMenus: NavMenuItem[] = [
-  {
-    key: 'agent-detail',
-    text: '联系人设置',
-  },
-]
 const pageTitle = computed(() => {
   if (isWaitingAgentReply.value) {
     return '正在输入...'
@@ -3790,12 +3779,12 @@ function destroyVoiceDurationProbeContexts() {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 0 16px 30px;
+  padding: 0 12px 24px;
   box-sizing: border-box;
 }
 
 .chat-message-list__history-status {
-  margin: 2px auto 14px;
+  margin: 2px auto 12px;
   padding: 4px 10px;
   min-height: 18px;
   border-radius: 999px;
@@ -3815,19 +3804,19 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-message-list__time {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   text-align: center;
   font-size: 12px;
   line-height: 16px;
-  color: #b2b2b2;
+  color: #9b9b9b;
 }
 
 .chat-message-list__system {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   text-align: center;
   font-size: 12px;
   line-height: 16px;
-  color: #b2b2b2;
+  color: #9b9b9b;
 }
 
 .chat-message-list__failed {
@@ -3873,7 +3862,7 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .chat-row--agent {
@@ -3973,14 +3962,14 @@ function destroyVoiceDurationProbeContexts() {
 .chat-avatar--agent {
   width: 40px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: #eef2f7;
 }
 
 .chat-avatar--user {
   width: 40px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: #eef2f7;
 }
 
@@ -4006,8 +3995,8 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 60px;
-  padding: 8px 8px;
+  min-height: 52px;
+  padding: 6px 8px;
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
@@ -4017,34 +4006,34 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
 }
 
 .chat-composer__input-shell {
   flex: 1;
   min-width: 0;
-  height: 40px;
-  padding: 0 12px;
+  height: 36px;
+  padding: 0 10px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   border: 0.5px solid #e5e5e5;
-  border-radius: 10px;
+  border-radius: 5px;
   background: #ffffff;
 }
 
 .chat-composer__voice-button {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 0.5px solid #e5e5e5;
-  border-radius: 10px;
+  border-radius: 5px;
   background: #ffffff;
   color: #111111;
   font-size: 15px;
@@ -4095,10 +4084,10 @@ function destroyVoiceDurationProbeContexts() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
+  width: 48px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   background: #07c160;
   color: #ffffff;
   font-size: 14px;

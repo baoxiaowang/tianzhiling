@@ -41,7 +41,7 @@ interface WechatVirtualPaymentOrderResult {
 
 interface WechatPaymentOrderResult {
   order: OrderRecord
-  payment: WechatPaymentParams
+  payment?: WechatPaymentParams
 }
 
 export class WechatVirtualPaymentError extends Error {
@@ -153,7 +153,14 @@ export async function requestWechatVirtualPaymentWithFallback(
       }
     )
     const fallbackResult = await createFallbackOrder()
-    await Taro.requestPayment(fallbackResult.payment)
+
+    if (fallbackResult.order.payableAmount > 0) {
+      if (!fallbackResult.payment) {
+        throw new Error('支付参数获取失败，请稍后重试')
+      }
+
+      await Taro.requestPayment(fallbackResult.payment)
+    }
 
     return fallbackResult.order
   }

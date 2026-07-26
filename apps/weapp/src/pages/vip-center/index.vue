@@ -1,13 +1,26 @@
 <template>
   <page-scaffold
     class="vip-center-page"
-    background="#ffffff"
+    :background="pageBackground"
+    :bottom-background="pageBackground"
     body-padding="0"
     :scroll="true"
     :safe-area-top="false"
   >
     <template #header>
-      <app-bar title="会员中心" background="#ffffff" />
+      <app-bar :title="pageTitle" :background="pageBackground" />
+    </template>
+
+    <template #bottom>
+      <view v-if="canShowUpgradeAction" class="vip-center-page__upgrade-bar">
+        <view
+          class="vip-center-page__upgrade-button"
+          :class="{ 'vip-center-page__upgrade-button--disabled': isPaying }"
+          @tap="handlePurchaseTap"
+        >
+          {{ isPaying ? '支付处理中...' : '立即升级' }}
+        </view>
+      </view>
     </template>
 
     <view v-if="isCheckingAuth || isLoading" class="vip-center-state">
@@ -24,11 +37,14 @@
     </view>
 
     <vip-member-view
-      v-else-if="center?.isVip"
-      :plan-name="activePlanName"
-      :period-text="membershipPeriodText"
-      :benefits-image-url="vipBenefitsImageUrl"
-      :thanks-lines="specialThanksLines"
+      v-else-if="center?.isVip && activeMembership"
+      :membership="activeMembership"
+      :plan="activePlan"
+      :upgrade-plans="upgradePlans"
+      :selected-plan-id="selectedPlanId"
+      :server-time="center.serverTime"
+      :activity-stats="center.activityStats"
+      @select-plan="handlePlanSelect"
     />
 
     <vip-purchase-view
@@ -56,30 +72,37 @@ import Taro, { useLoad } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
-  getMembershipCenter,
+  getVipPurchaseCenter,
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
-import { createVipPlanOrder, createVipPlanVirtualPaymentOrder } from '../../apis/order'
+import {
+  createVipPlanOrder,
+  createVipPlanVirtualPaymentOrder,
+} from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
-import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import {
+  ensureAuthenticatedSession,
+  redirectToAuthPage,
+} from '../../utils/auth-guard'
 import {
   isWechatPaymentCancel,
   requestWechatVirtualPaymentWithFallback,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
-import VipPurchaseView from './components/vip-purchase-view.vue'
+import VipPurchaseView from './components/vip-purchase-modern-view.vue'
 
 const center = ref<MembershipCenter | null>(null)
 const selectedPlanId = ref('')
 const isCheckingAuth = ref(true)
 const isLoading = ref(false)
 const isPaying = ref(false)
+const isAwaitingPaymentResult = ref(false)
 const loadError = ref('')
 const vipBenefitsImageUrl = 'https://oss.voloian.cn/weapp/vip-diff.png'
 const specialThanksLines = [
@@ -95,6 +118,12 @@ const specialThanksLines = [
 const selectedPlan = computed(() => {
   return center.value?.plans.find((plan) => plan.id === selectedPlanId.value)
 })
+const pageTitle = computed(() =>
+  center.value?.isVip ? '会员详情' : '选择会员服务'
+)
+const pageBackground = computed(() =>
+  center.value?.isVip ? '#ffffff' : '#f6f6f6'
+)
 const activeMembership = computed(() => center.value?.membership)
 const activePlan = computed(() => {
   const membership = activeMembership.value
@@ -103,27 +132,34 @@ const activePlan = computed(() => {
     return undefined
   }
 
-  return membership.plan ?? center.value?.plans.find((plan) => plan.id === membership.vipPlanId)
+  return (
+    membership.plan ??
+    center.value?.plans.find((plan) => plan.id === membership.vipPlanId)
+  )
 })
-const activePlanName = computed(() => {
-  return activePlan.value?.name || activeMembership.value?.vipPlanCode || 'VIP会员'
-})
-const membershipPeriodText = computed(() => {
+const upgradePlans = computed(() => {
   const membership = activeMembership.value
 
   if (!membership) {
-    return '会员权益已生效'
+    return []
   }
 
-  if (membership.lifetime) {
-    return `永久有效 · ${formatDate(membership.startedAt)}开通`
-  }
-
-  if (membership.expiredAt) {
-    return `有效期至 ${formatDate(membership.expiredAt)}`
-  }
-
-  return `自 ${formatDate(membership.startedAt)} 起生效`
+  return getUpgradeablePlans(
+    center.value?.plans ?? [],
+    membership,
+    activePlan.value
+  )
+})
+const canShowUpgradeAction = computed(() => {
+  return Boolean(
+    center.value?.isVip &&
+      activeMembership.value &&
+      upgradePlans.value.length &&
+      !isCheckingAuth.value &&
+      !isLoading.value &&
+      !loadError.value &&
+      !isAwaitingPaymentResult.value
+  )
 })
 
 useLoad(() => {
@@ -148,9 +184,11 @@ async function loadMembershipCenter() {
   loadError.value = ''
 
   try {
-    const data = await getMembershipCenter()
+    const data = await getVipPurchaseCenter()
     center.value = data
-    selectedPlanId.value = getDefaultSelectedPlan(data.plans)?.id ?? ''
+    selectedPlanId.value = data.isVip
+      ? getDefaultUpgradePlan(data)?.id ?? ''
+      : getDefaultSelectedPlan(data.plans)?.id ?? ''
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -176,7 +214,85 @@ function handlePlanSelect(planId: string) {
 }
 
 function getDefaultSelectedPlan(plans: VipPlan[]) {
-  return plans.find(isFeaturedVipPlan) ?? plans[0]
+  const basicPlans = plans.filter((plan) => plan.planGroup === 'basic')
+
+  return (
+    basicPlans.find(isOneYearVipPlan) ??
+    basicPlans[0] ??
+    plans.find(isOneYearVipPlan) ??
+    plans[0]
+  )
+}
+
+function getDefaultUpgradePlan(data: MembershipCenter) {
+  const membership = data.membership
+
+  if (!membership) {
+    return undefined
+  }
+
+  const membershipPlan =
+    membership.plan ??
+    data.plans.find((plan) => plan.id === membership.vipPlanId)
+  const plans = getUpgradeablePlans(data.plans, membership, membershipPlan)
+
+  return plans.find((plan) => plan.planGroup === 'voice') ?? plans[0]
+}
+
+function getUpgradeablePlans(
+  plans: VipPlan[],
+  membership: NonNullable<MembershipCenter['membership']>,
+  membershipPlan?: VipPlan
+) {
+  const currentGroup = getCurrentPlanGroup(
+    membership.vipPlanCode,
+    membershipPlan
+  )
+  const currentIsLifetime =
+    membership.lifetime || Boolean(membershipPlan?.lifetime)
+
+  if (currentGroup === 'voice' && currentIsLifetime) {
+    return []
+  }
+
+  return plans
+    .filter((plan) => {
+      if (!plan.lifetime) {
+        return false
+      }
+
+      if (
+        plan.id === membership.vipPlanId ||
+        plan.code === membership.vipPlanCode
+      ) {
+        return false
+      }
+
+      if (currentGroup === 'voice') {
+        return plan.planGroup === 'voice'
+      }
+
+      if (plan.planGroup === 'basic') {
+        return !currentIsLifetime
+      }
+
+      return plan.planGroup === 'voice'
+    })
+    .sort((left, right) => {
+      if (left.planGroup !== right.planGroup) {
+        return left.planGroup === 'basic' ? -1 : 1
+      }
+
+      return left.priceAmount - right.priceAmount
+    })
+}
+
+function getCurrentPlanGroup(code: string, plan?: VipPlan) {
+  if (plan?.planGroup) {
+    return plan.planGroup
+  }
+
+  return code.toLowerCase().includes('voice') ? 'voice' : 'basic'
 }
 
 function handleAgreementTap(type: AgreementDocumentType) {
@@ -184,6 +300,15 @@ function handleAgreementTap(type: AgreementDocumentType) {
 }
 
 async function handlePurchaseTap() {
+  if (
+    isCheckingAuth.value ||
+    isLoading.value ||
+    loadError.value ||
+    isAwaitingPaymentResult.value
+  ) {
+    return
+  }
+
   const plan = selectedPlan.value
 
   if (!plan) {
@@ -221,35 +346,56 @@ async function handlePurchaseTap() {
         vipPlanId,
         jsCode,
       })
-      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
-        const fallbackLoginResult = await Taro.login()
-        const fallbackJsCode = fallbackLoginResult.code?.trim()
+      paidOrderId = result.order.id
 
-        if (!fallbackJsCode) {
-          throw new Error('微信登录凭证获取失败，请稍后重试')
+      if (result.order.payableAmount > 0) {
+        if (!result.virtualPayment) {
+          throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        return createVipPlanOrder({
-          vipPlanId,
-          jsCode: fallbackJsCode,
-        })
-      })
-      paidOrderId = paidOrder.id
+        const paidOrder = await requestWechatVirtualPaymentWithFallback(
+          {
+            order: result.order,
+            virtualPayment: result.virtualPayment,
+          },
+          async () => {
+            const fallbackLoginResult = await Taro.login()
+            const fallbackJsCode = fallbackLoginResult.code?.trim()
+
+            if (!fallbackJsCode) {
+              throw new Error('微信登录凭证获取失败，请稍后重试')
+            }
+
+            return createVipPlanOrder({
+              vipPlanId,
+              jsCode: fallbackJsCode,
+            })
+          }
+        )
+        paidOrderId = paidOrder.id
+      }
     } else {
       const result = await createVipPlanOrder({
         vipPlanId,
         jsCode,
       })
 
-      await Taro.requestPayment(result.payment)
+      if (result.order.payableAmount > 0) {
+        if (!result.payment) {
+          throw new Error('支付参数获取失败，请稍后重试')
+        }
+
+        await Taro.requestPayment(result.payment)
+      }
       paidOrderId = result.order.id
     }
+    isAwaitingPaymentResult.value = true
     void Taro.hideLoading()
 
     try {
       await Taro.redirectTo({
         url: `/pages/payment-result/index?orderId=${encodeURIComponent(
-          paidOrderId,
+          paidOrderId
         )}`,
       })
     } catch {
@@ -286,26 +432,40 @@ function showToast(title: string) {
   })
 }
 
-function isFeaturedVipPlan(plan: VipPlan) {
-  return /声音|三年|3年|更多/.test(plan.name)
-}
-
-function formatDate(value: Date | null) {
-  if (!value) {
-    return ''
-  }
-
-  const year = value.getFullYear()
-  const month = `${value.getMonth() + 1}`.padStart(2, '0')
-  const day = `${value.getDate()}`.padStart(2, '0')
-
-  return `${year}.${month}.${day}`
+function isOneYearVipPlan(plan: VipPlan) {
+  return (
+    !plan.lifetime && Boolean(plan.durationDays && plan.durationDays <= 370)
+  )
 }
 </script>
 
 <style lang="scss">
 .vip-center-page {
   min-height: 100vh;
+}
+
+.vip-center-page__upgrade-bar {
+  padding: 10px 14px 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 -8px 24px rgba(65, 47, 63, 0.04);
+}
+
+.vip-center-page__upgrade-button {
+  height: 50px;
+  border-radius: 25px;
+  background: linear-gradient(105deg, #ff3f73 0%, #ff665c 50%, #ffb23d 100%);
+  box-shadow: 0 8px 18px rgba(255, 83, 96, 0.2);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+}
+
+.vip-center-page__upgrade-button--disabled {
+  opacity: 0.62;
 }
 
 .vip-center-state {

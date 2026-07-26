@@ -121,7 +121,9 @@
     </view>
 
     <view class="moments-floating-publish" @tap="handleCreatePost">
-      <text class="moments-floating-publish__plus">+</text>
+      <view class="moments-floating-publish__camera">
+        <view class="moments-floating-publish__lens" />
+      </view>
     </view>
 
     <template #overlay>
@@ -1219,24 +1221,60 @@ useDidHide(() => {
 .moments-floating-publish {
   position: fixed;
   right: 20px;
-  bottom: calc(env(safe-area-inset-bottom) + 92px);
+  bottom: calc(env(safe-area-inset-bottom) + 148px);
   z-index: 120;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  background: $tzl-gradient-primary;
-  box-shadow: 0 12px 28px rgba(255, 138, 54, 0.34);
+  border-radius: 50%;
+  background: rgba(42, 42, 42, 0.92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.26);
 }
 
-.moments-floating-publish__plus {
-  color: #ffffff;
-  font-size: 34px;
-  line-height: 56px;
-  font-weight: 300;
-  transform: translateY(-1px);
+.moments-floating-publish__camera {
+  position: relative;
+  width: 25px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 2px solid #ffffff;
+  border-radius: 4px;
+}
+
+.moments-floating-publish__camera::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: -6px;
+  width: 10px;
+  height: 5px;
+  box-sizing: border-box;
+  border: 2px solid #ffffff;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+}
+
+.moments-floating-publish__camera::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.moments-floating-publish__lens {
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
 }
 
 .moment-comment-backdrop {

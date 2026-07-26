@@ -5,7 +5,6 @@ Thumbs.db
 # 环境变量与密钥（示例文件可保留）
 !.env.example
 
-
 # Docker 本地持久化数据（mongo / milvus / minio 等，见 docker-compose）
 /volumes/
 
@@ -22,6 +21,7 @@ Thumbs.db
 
 # 若将来在仓库根目录放置 Node 项目
 /node_modules/
+/.pnpm-store/
 /dist/
 
 /volumes/

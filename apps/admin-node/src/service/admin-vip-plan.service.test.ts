@@ -1,4 +1,4 @@
-import { MongoObjectId, VipPlanStatus } from '@tzl/entities';
+import { MongoObjectId, VipPlanGroup, VipPlanStatus } from '@tzl/entities';
 import { AdminVipPlanService } from './admin-vip-plan.service';
 
 function createService() {
@@ -37,6 +37,7 @@ describe('AdminVipPlanService', () => {
       code: ' VIP_YEAR ',
       name: '一年会员',
       description: '',
+      planGroup: VipPlanGroup.voice,
       priceAmount: 9900,
       originalPriceAmount: 19900,
       currency: 'CNY',
@@ -57,6 +58,7 @@ describe('AdminVipPlanService', () => {
       expect.objectContaining({
         code: 'vip_year',
         name: '一年会员',
+        planGroup: VipPlanGroup.voice,
         durationDays: 365,
         lifetime: false,
         voicePackageId,
@@ -69,6 +71,7 @@ describe('AdminVipPlanService', () => {
       expect.objectContaining({
         id: planId.toHexString(),
         code: 'vip_year',
+        planGroup: VipPlanGroup.voice,
         voicePackageId: voicePackageId.toHexString(),
         voicePackageCode: 'voice_basic',
         voicePackageName: '基础声音训练',

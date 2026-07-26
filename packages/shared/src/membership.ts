@@ -1,4 +1,5 @@
 export type VipPlanStatusDTO = 'active' | 'disabled';
+export type VipPlanGroupDTO = 'basic' | 'voice';
 
 export interface VipPlanBenefitDTO {
   title: string;
@@ -26,6 +27,7 @@ export interface AdminVipPlanRecordDTO {
   code: string;
   name: string;
   description: string;
+  planGroup: VipPlanGroupDTO;
   priceAmount: number;
   originalPriceAmount?: number;
   currency: string;
@@ -63,6 +65,7 @@ export interface VipPlanRecordDTO {
   code: string;
   name: string;
   description: string;
+  planGroup: VipPlanGroupDTO;
   priceAmount: number;
   originalPriceAmount?: number;
   currency: string;
@@ -74,6 +77,7 @@ export interface VipPlanRecordDTO {
   voicePackageCode?: string;
   voicePackageName?: string;
   virtualPaymentProductId?: string;
+  upgradePayableAmount?: number;
 }
 
 export type UserMembershipStatusDTO =
@@ -99,6 +103,19 @@ export interface UserMembershipCenterDTO {
   plans: VipPlanRecordDTO[];
 }
 
+export interface MembershipActivityStatsDTO {
+  companionshipDays: number;
+  conversationCount: number;
+}
+
+export interface VipPurchaseCenterDTO {
+  isVip: boolean;
+  membership?: UserMembershipRecordDTO;
+  plans: VipPlanRecordDTO[];
+  serverTime?: string;
+  activityStats?: MembershipActivityStatsDTO;
+}
+
 export interface UserMembershipStatusSnapshotDTO {
   isVip: boolean;
   membership?: UserMembershipRecordDTO;
@@ -110,6 +127,7 @@ export interface SaveAdminVipPlanDTO {
   code: string;
   name: string;
   description?: string;
+  planGroup?: VipPlanGroupDTO;
   priceAmount: number;
   originalPriceAmount?: number;
   currency?: string;

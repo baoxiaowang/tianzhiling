@@ -10,6 +10,9 @@ export class CreateVipPlanOrderBodyDTO implements CreateVipPlanOrderDTO {
 
   @Rule(RuleType.string().required())
   jsCode: string;
+
+  @Rule(RuleType.boolean().optional())
+  supportsZeroAmountOrder?: boolean;
 }
 
 export class CreateVoicePackageOrderBodyDTO

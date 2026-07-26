@@ -43,6 +43,9 @@
                 <a-tag :color="user.isVip ? 'gold' : 'gray'">
                   {{ user.isVip ? 'VIP会员' : '普通用户' }}
                 </a-tag>
+                <a-tag :color="getRiskControlColor(user)">
+                  {{ getRiskControlStatusText(user) }}
+                </a-tag>
               </a-space>
             </div>
 
@@ -56,6 +59,9 @@
               </a-descriptions-item>
               <a-descriptions-item label="手机号">
                 {{ user.phone || '-' }}
+              </a-descriptions-item>
+              <a-descriptions-item label="人员风控">
+                {{ formatRiskControlText(user) }}
               </a-descriptions-item>
               <a-descriptions-item label="注册时间">
                 {{ formatDate(user.createdAt) }}
@@ -357,6 +363,32 @@
 
   const formatStatus = (status: number) => {
     return status === 1 ? '启用' : '禁用';
+  };
+
+  const getRiskControlStatusText = (record: AppUserRecord) => {
+    if (record.isRiskControlled) {
+      return '风控中';
+    }
+
+    return record.riskControlUntilAt ? '风控已过期' : '未风控';
+  };
+
+  const getRiskControlColor = (record: AppUserRecord) => {
+    if (record.isRiskControlled) {
+      return 'red';
+    }
+
+    return record.riskControlUntilAt ? 'orange' : 'green';
+  };
+
+  const formatRiskControlText = (record: AppUserRecord) => {
+    if (!record.riskControlUntilAt) {
+      return '未风控';
+    }
+
+    return `${getRiskControlStatusText(record)}，截止时间：${formatDate(
+      record.riskControlUntilAt
+    )}`;
   };
 
   const isRenderableAvatar = (avatar: string) => {

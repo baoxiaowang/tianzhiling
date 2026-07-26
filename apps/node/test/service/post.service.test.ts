@@ -85,13 +85,14 @@ function createAgent(
   return agent;
 }
 
-function createUser(): UserEntity {
+function createUser(overrides: Partial<UserEntity> = {}): UserEntity {
   const user = new UserEntity();
 
   Object.assign(user, {
     id: new MongoObjectId(USER_ID),
     name: '用户',
     avatar: '',
+    ...overrides,
   });
 
   return user;
@@ -236,6 +237,7 @@ function createService(
     likes?: PostLikeEntity[];
     userAccounts?: UserAccountEntity[];
     memberships?: UserMembershipEntity[];
+    users?: UserEntity[];
   } = {}
 ) {
   const service = new PostService();
@@ -247,6 +249,7 @@ function createService(
   const likes = options.likes ?? [];
   const userAccounts = options.userAccounts ?? [createUserAccount()];
   const memberships = options.memberships ?? [];
+  const users = options.users ?? [createUser()];
   const addJobToQueue = jest.fn(async () => undefined);
 
   service.postModel = {
@@ -295,9 +298,7 @@ function createService(
   } as any;
   service.userModel = {
     findOne: jest.fn(async ({ where }: any) =>
-      sameObjectId(where?.id ?? where?._id, new MongoObjectId(USER_ID))
-        ? createUser()
-        : null
+      users.find(user => sameObjectId(user.id, where?.id ?? where?._id)) ?? null
     ),
   } as any;
   service.userAccountModel = {
@@ -669,6 +670,31 @@ describe('PostService createPost remind agent fallback', () => {
 
     expect(result.remindAgentIds).toEqual([]);
     expect(savedPosts[0].remindAgentIds).toEqual([]);
+    expect(addJobToQueue).not.toHaveBeenCalled();
+  });
+
+  it('blocks post creation when the user is risk controlled', async () => {
+    const riskControlledUser = createUser({
+      riskControlUntilAt: new Date('2099-01-01T00:00:00.000Z'),
+    });
+    const { service, savedPosts, addJobToQueue } = createService([], {
+      users: [riskControlledUser],
+    });
+
+    await expect(
+      service.createPost(AUTH, {
+        content: '今天很好',
+      })
+    ).rejects.toMatchObject({
+      code: 'USER_RISK_CONTROLLED',
+      status: 403,
+      data: {
+        riskControlUntilAt: '2099-01-01T00:00:00.000Z',
+      },
+    });
+
+    expect(savedPosts).toHaveLength(0);
+    expect(service.postModel.save).not.toHaveBeenCalled();
     expect(addJobToQueue).not.toHaveBeenCalled();
   });
 

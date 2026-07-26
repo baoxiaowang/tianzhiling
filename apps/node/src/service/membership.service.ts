@@ -4,22 +4,35 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
+  ConversationEntity,
+  MessageEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
+  OrderEntity,
   UserMembershipEntity,
   UserMembershipStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
 } from '@tzl/entities';
 import type {
   AgentEntitlementSummaryDTO,
+  MembershipActivityStatsDTO,
   UserMembershipCenterDTO,
   UserMembershipRecordDTO,
   UserMembershipStatusSnapshotDTO,
+  VipPurchaseCenterDTO,
   VipPlanRecordDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import { AuthenticatedUserPayload } from '../interface';
+import {
+  calculateVipUpgradePricing,
+  getHistoricalVipPaidAmount,
+  isVipPlanUpgrade,
+} from './vip-upgrade-pricing';
 
 @Provide()
 export class MembershipService {
@@ -29,8 +42,17 @@ export class MembershipService {
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
 
+  @InjectEntityModel(OrderEntity)
+  orderModel: MongoRepository<OrderEntity>;
+
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
+
+  @InjectEntityModel(ConversationEntity)
+  conversationModel: MongoRepository<ConversationEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
 
   async getMembershipCenter(
     auth: AuthenticatedUserPayload
@@ -64,6 +86,60 @@ export class MembershipService {
         membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
       ),
       plans,
+    };
+  }
+
+  async getVipPurchaseCenter(
+    auth: AuthenticatedUserPayload
+  ): Promise<VipPurchaseCenterDTO> {
+    const userId = this.parseObjectId(auth.sub, 'INVALID_TOKEN');
+
+    const now = new Date();
+    const [plans, memberships] = await Promise.all([
+      this.listActiveVipPlans(),
+      this.findActiveMemberships(userId),
+    ]);
+    const activeMembership = memberships.find(membership =>
+      this.isMembershipAvailable(membership, now)
+    );
+
+    if (!activeMembership) {
+      return {
+        isVip: false,
+        plans,
+        serverTime: this.formatDate(now),
+      };
+    }
+
+    const [membershipPlan, activityStats, historicalPaidAmount] =
+      await Promise.all([
+        this.findVipPlanById(activeMembership.vipPlanId),
+        this.getMembershipActivityStats(userId, now),
+        getHistoricalVipPaidAmount(this.orderModel, userId),
+      ]);
+    const upgradePlans = plans.map(plan => {
+      if (!isVipPlanUpgrade(activeMembership, membershipPlan, plan)) {
+        return plan;
+      }
+
+      return {
+        ...plan,
+        upgradePayableAmount: calculateVipUpgradePricing(
+          plan.priceAmount,
+          historicalPaidAmount
+        ).payableAmount,
+      };
+    });
+
+    return {
+      isVip: true,
+      membership: this.buildMembershipRecord(
+        activeMembership,
+        membershipPlan ? this.buildVipPlanRecord(membershipPlan) : undefined
+      ),
+      plans: upgradePlans,
+      serverTime: this.formatDate(now),
+      activityStats,
     };
   }
 
@@ -142,6 +218,55 @@ export class MembershipService {
         updatedAt: 'DESC',
       },
     });
+  }
+
+  private async getMembershipActivityStats(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<MembershipActivityStatsDTO> {
+    const [firstConversations, conversationCount] = await Promise.all([
+      this.conversationModel.find({
+        where: {
+          userId,
+        },
+        order: {
+          createdAt: 'ASC',
+        },
+        take: 1,
+      }),
+      this.messageModel.count({
+        userId,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        isArchived: { $ne: true },
+      } as never),
+    ]);
+    const firstConversation = firstConversations[0];
+
+    return {
+      companionshipDays: firstConversation
+        ? this.countBeijingNaturalDaySpan(firstConversation.createdAt, now)
+        : 0,
+      conversationCount: Math.max(Math.trunc(conversationCount), 0),
+    };
+  }
+
+  private countBeijingNaturalDaySpan(start: Date, end: Date): number {
+    const beijingOffsetMs = 8 * 60 * 60 * 1000;
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const toBeijingDayNumber = (value: Date) => {
+      const shifted = new Date(value.getTime() + beijingOffsetMs);
+
+      return (
+        Date.UTC(
+          shifted.getUTCFullYear(),
+          shifted.getUTCMonth(),
+          shifted.getUTCDate()
+        ) / millisecondsPerDay
+      );
+    };
+
+    return Math.max(toBeijingDayNumber(end) - toBeijingDayNumber(start), 0);
   }
 
   private async listAvailableEntitlementSummaries(
@@ -267,6 +392,7 @@ export class MembershipService {
       code: plan.code,
       name: plan.name,
       description: plan.description ?? '',
+      planGroup: this.normalizePlanGroup(plan.planGroup),
       priceAmount: plan.priceAmount,
       originalPriceAmount: plan.originalPriceAmount,
       currency: plan.currency || 'CNY',
@@ -297,6 +423,12 @@ export class MembershipService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private normalizePlanGroup(value?: string): VipPlanGroup {
+    return value === VipPlanGroup.voice
+      ? VipPlanGroup.voice
+      : VipPlanGroup.basic;
   }
 
   private formatDate(value: Date): string {

@@ -27,6 +27,8 @@ export interface AppUserRecord {
   phone: string;
   phoneVerified: boolean;
   isVip: boolean;
+  isRiskControlled: boolean;
+  riskControlUntilAt: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +49,7 @@ export interface AppUserListRes {
 export interface UpdateAppUserData {
   name?: string;
   avatar?: string;
+  riskControlUntilAt?: string;
 }
 
 export function queryAppUserList(params: AppUserListParams) {

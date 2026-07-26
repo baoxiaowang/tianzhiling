@@ -30,6 +30,8 @@ export interface AdminAppUserItem {
   phone: string;
   phoneVerified: boolean;
   isVip: boolean;
+  isRiskControlled: boolean;
+  riskControlUntilAt: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -166,6 +168,13 @@ export class AdminAppUserService {
       changed = true;
     }
 
+    if (payload.riskControlUntilAt !== undefined) {
+      user.riskControlUntilAt = this.normalizeRiskControlUntilAt(
+        payload.riskControlUntilAt
+      );
+      changed = true;
+    }
+
     if (changed) {
       user.updatedAt = new Date();
       await this.userModel.save(user);
@@ -266,6 +275,8 @@ export class AdminAppUserService {
     account?: UserAccountEntity | null,
     isVip = false
   ): AdminAppUserItem {
+    const riskControlUntilAt = this.normalizeDate(user.riskControlUntilAt);
+
     return {
       id: this.stringifyObjectId(user.id),
       account: account?.account ?? user.phone ?? '',
@@ -274,6 +285,8 @@ export class AdminAppUserService {
       phone: user.phone ?? account?.account ?? '',
       phoneVerified: Boolean(user.phoneVerified),
       isVip,
+      isRiskControlled: this.isRiskControlled(riskControlUntilAt),
+      riskControlUntilAt: this.formatDate(riskControlUntilAt),
       createdAt: this.formatDate(user.createdAt),
       updatedAt: this.formatDate(user.updatedAt),
     };
@@ -393,6 +406,40 @@ export class AdminAppUserService {
     }
 
     return name;
+  }
+
+  private normalizeRiskControlUntilAt(rawValue?: string): Date | undefined {
+    const value = rawValue?.trim() ?? '';
+
+    if (!value) {
+      return undefined;
+    }
+
+    const parsed = new Date(value);
+
+    if (Number.isNaN(parsed.getTime())) {
+      throw new AppError(
+        'INVALID_RISK_CONTROL_UNTIL_AT',
+        'risk control until time is invalid',
+        400
+      );
+    }
+
+    return parsed;
+  }
+
+  private normalizeDate(value?: Date): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const parsed = value instanceof Date ? value : new Date(value);
+
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
+  private isRiskControlled(riskControlUntilAt?: Date): boolean {
+    return Boolean(riskControlUntilAt && riskControlUntilAt > new Date());
   }
 
   private normalizePositiveInteger(
