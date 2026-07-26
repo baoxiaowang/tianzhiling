@@ -76,8 +76,7 @@ async function handleSaveQr() {
 <style lang="scss">
 .voice-customer-service-card {
   box-sizing: border-box;
-  width: 327px;
-  max-width: calc(100% - 48px);
+  width: 100%;
   height: auto;
   display: flex;
   flex-direction: column;

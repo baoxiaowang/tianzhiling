@@ -57,6 +57,7 @@ import { silentWeappLogin } from '../../auth/login-hooks'
 import { createSafeAreaCssVars, initSafeAreaInsets } from '../../utils/safe-area'
 
 const ONBOARDING_STORAGE_KEY = 'tzl_onboarding_seen'
+const ENTRY_CHECK_TIMEOUT_MS = 3500
 
 const onboardingImages = [
   buildOssMediaUrl('/weapp/onboarding_2.png'),
@@ -96,11 +97,12 @@ async function goToChatTab() {
 
 async function resolveEntryTarget(): Promise<EntryTarget> {
   await restoreAuthSession()
-  console.log(authSession.value,'authSession.value')
+
   if (authSession.value?.accessToken) {
     return 'chat'
   }
-  const session = await silentWeappLogin()
+
+  const session = await withTimeout(silentWeappLogin(), ENTRY_CHECK_TIMEOUT_MS, null)
   if (session?.accessToken) {
     return 'chat'
   }
@@ -112,6 +114,24 @@ async function resolveEntryTarget(): Promise<EntryTarget> {
   }
 
   return 'index'
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T) {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(fallback)
+    }, timeoutMs)
+
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch(() => {
+        clearTimeout(timer)
+        resolve(fallback)
+      })
+  })
 }
 
 function handleSwiperChange(event: { detail?: { current?: number } }) {

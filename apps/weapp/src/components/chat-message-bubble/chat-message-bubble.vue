@@ -179,29 +179,49 @@ function handleLongPress() {
 
 <style lang="scss">
 .chat-message-bubble {
+  position: relative;
   min-width: 0;
   max-width: var(--chat-message-bubble-max-width, 264px);
   flex-shrink: 1;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 6px;
   background: #ffffff;
   box-sizing: border-box;
+}
+
+.chat-message-bubble::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: -3px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  transform: rotate(45deg);
 }
 
 .chat-message-bubble--user {
   background: #95ec69;
 }
 
+.chat-message-bubble--user::before {
+  right: -3px;
+  left: auto;
+}
+
 .chat-message-bubble--image {
   padding: 0;
-  border-radius: 16px;
+  border-radius: 4px;
   background: transparent;
+}
+
+.chat-message-bubble--image::before {
+  display: none;
 }
 
 .chat-message-bubble--voice {
   padding: 0;
   border-radius: 6px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
 .chat-message-bubble--voice-active {
@@ -213,7 +233,7 @@ function handleLongPress() {
 }
 
 .chat-message-bubble--text-voice-active {
-  box-shadow: 0 0 0 1px rgba(7, 193, 96, 0.22);
+  box-shadow: none;
 }
 
 .chat-message-bubble__text-wrap {
@@ -267,7 +287,7 @@ function handleLongPress() {
   width: 180px;
   height: 240px;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 4px;
   background: #f1f2f4;
 }
 

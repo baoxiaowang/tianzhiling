@@ -46,15 +46,9 @@
               <text>{{ formatGroupPrice(group.key) }}</text>
             </text>
           </view>
-          <view class="vip-purchase-modern__level-tag-row">
-            <text
-              class="vip-purchase-modern__level-tag"
-              :class="`vip-purchase-modern__level-tag--${group.key}`"
-            >
-              {{ group.tag }}
-            </text>
-          </view>
-          <text class="vip-purchase-modern__level-desc">{{ group.description }}</text>
+          <text class="vip-purchase-modern__level-desc">
+            {{ formatGroupDescription(group.key) }}
+          </text>
 
           <view class="vip-purchase-modern__features">
             <view
@@ -174,8 +168,6 @@ type VipPlanGroup = VipPlan['planGroup']
 interface PlanGroupConfig {
   key: VipPlanGroup
   title: string
-  tag: string
-  description: string
   features: PlanGroupFeature[]
   warning?: string
 }
@@ -198,8 +190,6 @@ const PLAN_GROUPS: PlanGroupConfig[] = [
   {
     key: 'basic',
     title: '基础版',
-    tag: '入门体验',
-    description: '基础陪伴，轻松开启',
     features: [
       { icon: '■', text: '无限聊天' },
       { icon: '▣', text: '记忆唤醒' },
@@ -209,9 +199,7 @@ const PLAN_GROUPS: PlanGroupConfig[] = [
   {
     key: 'voice',
     title: '声音版',
-    tag: '温暖陪伴',
-    description: '声音互动，陪伴更温暖',
-    features: [{ icon: '♬', text: '人工复刻音色，保障最佳输出效果' }],
+    features: [{ icon: '♬', text: '人工复刻音色，请主动添加客服微信' }],
     warning: '如果没有声音素材或方言口音较重，请勿购买',
   },
 ]
@@ -346,6 +334,35 @@ function formatGroupPrice(group: VipPlanGroup) {
   return plan ? formatPriceAmount(plan.priceAmount) : '--'
 }
 
+function formatGroupDescription(group: VipPlanGroup) {
+  const plan =
+    findPlan(group, selectedDurationKey.value) ?? findFirstPlanByGroup(group)
+
+  if (!plan) {
+    return group === 'voice' ? '声音陪伴服务' : '走心陪伴服务'
+  }
+
+  const durationType = getPlanDurationType(plan)
+
+  if (group === 'voice') {
+    if (durationType === 'lifetime') {
+      return '让熟悉的声音一直在身边'
+    }
+
+    return durationType === 'threeYears'
+      ? '用熟悉音色延续思念'
+      : '开启熟悉音色的温暖回应'
+  }
+
+  if (durationType === 'lifetime') {
+    return '余生很长，把想说的话慢慢说完'
+  }
+
+  return durationType === 'threeYears'
+    ? '重要记忆更安心地留存'
+    : '从日常聊天再次靠近'
+}
+
 function formatDurationDaily(durationKey: string) {
   const plan = findPlan(selectedPlanGroup.value, durationKey)
 
@@ -362,6 +379,14 @@ function formatPriceAmount(amount: number) {
   const yuan = amount / 100
 
   return Number.isInteger(yuan) ? `${yuan}` : yuan.toFixed(2)
+}
+
+function getPlanDurationType(plan: VipPlan) {
+  if (plan.lifetime) {
+    return 'lifetime'
+  }
+
+  return (plan.durationDays ?? 0) >= 365 * 3 ? 'threeYears' : 'oneYear'
 }
 
 function formatDailyText(plan: VipPlan) {
@@ -526,31 +551,8 @@ function formatDailyText(plan: VipPlan) {
   font-weight: 800;
 }
 
-.vip-purchase-modern__level-tag-row {
-  margin-top: 4px;
-  display: flex;
-}
-
-.vip-purchase-modern__level-tag {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 600;
-}
-
-.vip-purchase-modern__level-tag--basic {
-  color: #ff8c42;
-  background: #fff3e6;
-}
-
-.vip-purchase-modern__level-tag--voice {
-  color: #9b7ed8;
-  background: #f3e8ff;
-}
-
 .vip-purchase-modern__level-desc {
-  margin-top: 3px;
+  margin-top: 6px;
   display: block;
   color: #8c8c8c;
   font-size: 15px;

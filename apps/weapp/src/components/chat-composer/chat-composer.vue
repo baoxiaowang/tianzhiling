@@ -31,23 +31,23 @@
       </view>
 
       <view v-else class="chat-composer__input-shell">
-        <input
+        <textarea
           :value="draftMessage"
           class="chat-composer__input"
-          type="text"
           :maxlength="maxLength"
-          confirm-type="send"
-          :cursor="cursorControlEnabled ? draftCursor : undefined"
+          :auto-height="true"
           :adjust-position="false"
+          :show-confirm-bar="false"
+          :disable-default-padding="true"
           cursor-spacing="16"
+          confirm-type="return"
           placeholder=""
           placeholder-style="color: #999999;"
           @input="emit('draftInput', $event)"
-          @confirm="emit('send')"
           @focus="emit('inputFocus')"
           @blur="emit('inputBlur')"
           @keyboardheightchange="emit('keyboardHeightChange', $event)"
-        />
+        ></textarea>
       </view>
 
       <view
@@ -184,10 +184,10 @@ const emit = defineEmits<{
 
 .chat-composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
-  min-height: 60px;
-  padding: 8px 8px;
+  min-height: 52px;
+  padding: 6px 8px;
   box-sizing: border-box;
   background: #f7f7f7;
   border-top: 0.5px solid #d9d9d9;
@@ -197,34 +197,37 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 1px;
   flex-shrink: 0;
 }
 
 .chat-composer__input-shell {
   flex: 1;
   min-width: 0;
-  height: 40px;
-  padding: 0 12px;
+  min-height: 36px;
+  max-height: 78px;
+  padding: 7px 10px;
   box-sizing: border-box;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   border: 0.5px solid #e5e5e5;
-  border-radius: 10px;
+  border-radius: 5px;
   background: #ffffff;
+  overflow: hidden;
 }
 
 .chat-composer__voice-button {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 0.5px solid #e5e5e5;
-  border-radius: 10px;
+  border-radius: 5px;
   background: #ffffff;
   color: #111111;
   font-size: 15px;
@@ -266,19 +269,23 @@ const emit = defineEmits<{
 .chat-composer__input {
   flex: 1;
   min-width: 0;
-  height: 100%;
+  min-height: 22px;
+  max-height: 64px;
   font-size: 15px;
+  line-height: 22px;
   color: #111111;
+  overflow-y: auto;
 }
 
 .chat-composer__send {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
+  width: 48px;
   height: 32px;
+  margin-bottom: 2px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   background: #07c160;
   color: #ffffff;
   font-size: 14px;
@@ -295,8 +302,8 @@ const emit = defineEmits<{
 .chat-composer__emoji,
 .chat-composer__plus {
   position: relative;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
 }
 
 .chat-composer__mic,
@@ -312,8 +319,8 @@ const emit = defineEmits<{
 .chat-composer__keyboard-icon,
 .chat-composer__emoji-icon,
 .chat-composer__plus-icon {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: block;
 }
 

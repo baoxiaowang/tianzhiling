@@ -99,28 +99,6 @@
             <view class="me-arrow me-arrow--muted" />
           </view>
         </view>
-        <view class="me-feature-item" @tap="handleMenuTap('声音模型')">
-          <text class="me-feature-item__label">声音模型</text>
-          <view class="me-feature-item__right">
-            <view class="me-voice-stack">
-              <view
-                v-for="agent in voicePreviewAgents"
-                :key="agent.id"
-                class="me-voice-stack__avatar"
-              >
-                <image
-                  v-if="agent.avatar"
-                  class="me-voice-stack__avatar-image"
-                  :src="agent.avatar"
-                  mode="aspectFill"
-                />
-                <text v-else>{{ buildAgentFallback(agent.name) }}</text>
-              </view>
-            </view>
-            <text class="me-feature-item__value">{{ voiceModelCountText }}</text>
-            <view class="me-arrow me-arrow--muted" />
-          </view>
-        </view>
       </view>
 
       <view class="me-page__spacer" />
@@ -155,7 +133,6 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
-import { getAgents, type AgentSummary } from '../../apis/agent'
 import { getCurrentUser } from '../../auth/api'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -181,7 +158,6 @@ const serviceMenuActions = [
 ] as const satisfies ProfileMenuAction[]
 
 const isCheckingAuth = ref(true)
-const agents = ref<AgentSummary[]>([])
 const hasLoadedProfile = ref(false)
 
 let refreshProfilePromise: Promise<void> | null = null
@@ -201,13 +177,6 @@ const isVipUser = computed(() => Boolean(session.value?.user.isVip))
 const vipServiceText = computed(() => {
   return isVipUser.value ? '已开启' : '未开通'
 })
-const voicePreviewAgents = computed(() => agents.value.slice(0, 4))
-const enabledVoiceModelCount = computed(() => {
-  return agents.value.filter((agent) => agent.voiceTimbreId.trim()).length
-})
-const voiceModelCountText = computed(() => {
-  return `${enabledVoiceModelCount.value}/${agents.value.length}`
-})
 const unreadMessageCountText = computed(() => {
   const count = unreadCommentNotificationCount.value
 
@@ -217,11 +186,6 @@ const unreadMessageCountText = computed(() => {
 
   return count > 99 ? '99+' : String(count)
 })
-
-function buildAgentFallback(name: string) {
-  const trimmedName = name.trim()
-  return trimmedName ? trimmedName.slice(0, 1) : '灵'
-}
 
 async function handleMenuTap(title: string) {
   if (title === '我的消息') {
@@ -248,13 +212,6 @@ async function handleMenuTap(title: string) {
   if (title === 'VIP 服务') {
     await Taro.navigateTo({
       url: '/pages/vip-center/index',
-    })
-    return
-  }
-
-  if (title === '声音模型') {
-    await Taro.navigateTo({
-      url: '/pages/voice-package/index',
     })
     return
   }
@@ -310,17 +267,8 @@ async function refreshProfile() {
     return refreshProfilePromise
   }
 
-  refreshProfilePromise = Promise.all([
-    getCurrentUser().catch(() => undefined),
-    getAgents()
-      .then((items) => {
-        agents.value = items
-      })
-      .catch(() => {
-        agents.value = []
-      }),
-  ])
-    .then(() => undefined)
+  refreshProfilePromise = getCurrentUser()
+    .catch(() => undefined)
     .finally(() => {
       refreshProfilePromise = null
     })
@@ -607,35 +555,6 @@ useDidShow(() => {
   line-height: 24px;
   color: #999999;
   letter-spacing: -0.31px;
-}
-
-.me-voice-stack {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.me-voice-stack__avatar {
-  width: 28px;
-  height: 28px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid #ff7f61;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #ffd9e5 0%, #ff8daa 100%);
-  color: #ffffff;
-  font-size: 12px;
-  line-height: 28px;
-  font-weight: 700;
-}
-
-.me-voice-stack__avatar-image {
-  width: 100%;
-  height: 100%;
-  border-radius: 999px;
 }
 
 .me-arrow {

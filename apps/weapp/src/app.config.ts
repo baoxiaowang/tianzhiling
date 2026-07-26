@@ -1,7 +1,7 @@
 export default {
   pages: [
-    'pages/onboarding/index',
     'pages/index/index',
+    'pages/onboarding/index',
     'pages/contacts/index',
     'pages/me/index',
     'pages/chat/index',
