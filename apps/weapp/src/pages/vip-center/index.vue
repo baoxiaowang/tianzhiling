@@ -81,8 +81,6 @@ import {
   createVipPlanVirtualPaymentOrder,
 } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
-import AppBar from '../../components/app-bar/app-bar.vue'
-import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import {
@@ -428,6 +426,7 @@ function isOneYearVipPlan(plan: VipPlan) {
     !plan.lifetime && Boolean(plan.durationDays && plan.durationDays <= 370)
   )
 }
+
 </script>
 
 <style lang="scss">

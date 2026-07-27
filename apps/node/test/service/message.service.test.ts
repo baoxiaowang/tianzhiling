@@ -68,6 +68,18 @@ describe('MessageService buildConversationMessageItem', () => {
     expect(item.segments).toEqual(['第一段', '第二段']);
   });
 
+  it('does not split stored assistant reply segments again for the client', () => {
+    const service = new MessageService();
+    const message = createTextMessage('第一句</fenge>第二句');
+    message.replyGroupId = 'reply-group-1';
+    message.replySegmentIndex = 0;
+
+    const item = service.buildConversationMessageItem(message);
+
+    expect(item.content).toBe('第一句 第二句');
+    expect(item.segments).toEqual(['第一句 第二句']);
+  });
+
   it('strips a trailing malformed separator from a single segment', () => {
     const service = new MessageService();
     const item = service.buildConversationMessageItem(
@@ -126,6 +138,23 @@ describe('MessageService buildConversationMessageItem', () => {
       url: undefined,
       mimeType: 'image/png',
       analysis: 'AI生成纪念合照',
+    });
+  });
+
+  it('exposes quoted message snapshots', () => {
+    const service = new MessageService();
+    const message = createTextMessage('不是这个意思');
+    message.role = MessageRole.user;
+    message.quotedMessageId = new MongoObjectId('665000000000000000000111');
+    message.quotedMessageRole = MessageRole.assistant;
+    message.quotedMessageContent = '你以前总爱吃辣';
+
+    const item = service.buildConversationMessageItem(message);
+
+    expect(item.quote).toEqual({
+      messageId: '665000000000000000000111',
+      role: MessageRole.assistant,
+      content: '你以前总爱吃辣',
     });
   });
 });

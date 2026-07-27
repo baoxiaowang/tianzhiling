@@ -486,11 +486,15 @@ function handleRetry() {
 }
 
 async function editAvatarImage(filePath: string) {
-  const result = await Taro.editImage({
-    src: filePath,
-  })
+  try {
+    const result = await Taro.editImage({
+      src: filePath,
+    })
 
-  return result.tempFilePath
+    return result.tempFilePath || filePath
+  } catch {
+    return filePath
+  }
 }
 
 async function handleAvatarTap() {

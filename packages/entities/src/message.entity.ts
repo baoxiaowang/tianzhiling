@@ -61,6 +61,15 @@ export class MessageEntity extends BaseEntity {
   replySegmentIndex?: number;
 
   @Column()
+  quotedMessageId?: MongoObjectId;
+
+  @Column()
+  quotedMessageRole?: MessageRole;
+
+  @Column()
+  quotedMessageContent?: string;
+
+  @Column()
   mediaObjectKey?: string;
 
   @Column()

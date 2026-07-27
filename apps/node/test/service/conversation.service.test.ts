@@ -194,7 +194,9 @@ function createMemorialPhotoMessage(
 function getAssistantMessages(messages: MessageEntity[]): MessageEntity[] {
   return messages
     .filter(message => message.role === MessageRole.assistant)
-    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    .sort(
+      (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+    );
 }
 
 function getAssistantContents(messages: MessageEntity[]): string[] {
@@ -262,12 +264,15 @@ function createService(options: {
   memberships?: UserMembershipEntity[];
   existingUserMessageCount?: number;
   existingMessages?: MessageEntity[];
+  queueAvailable?: boolean;
 }) {
   const service = new ConversationService();
   const conversation = createConversation();
   const user = options.user === undefined ? createUser() : options.user;
   const savedMessages: MessageEntity[] = [...(options.existingMessages ?? [])];
+  const savedFeedbacks: any[] = [];
   const addJobToQueue = jest.fn().mockResolvedValue(undefined);
+  const getJob = jest.fn().mockResolvedValue(null);
 
   service.logger = {
     warn: jest.fn(),
@@ -380,6 +385,15 @@ function createService(options: {
       return message;
     }),
   } as any;
+  service.messageFeedbackModel = {
+    save: jest.fn(async feedback => {
+      if (!feedback.id) {
+        feedback.id = new MongoObjectId();
+      }
+      savedFeedbacks.push(feedback);
+      return feedback;
+    }),
+  } as any;
   service.userModel = {
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
@@ -471,6 +485,12 @@ function createService(options: {
       messages: [{ role: 'user', content: '我想你了' }],
     }),
   } as any;
+  service.agentEmotionStateService = {
+    recognizeAndUpsertFromUserMessage: jest.fn().mockResolvedValue(null),
+  } as any;
+  service.agentMemoryFactService = {
+    extractAndUpsertFromUserMessage: jest.fn().mockResolvedValue([]),
+  } as any;
   service.messageService = {
     buildConversationMessageItem: jest.fn(message => ({
       id: message.id?.toHexString?.() ?? '',
@@ -521,7 +541,9 @@ function createService(options: {
     indexConversationMessage: jest.fn().mockResolvedValue(undefined),
   } as any;
   service.bullmqFramework = {
-    getQueue: jest.fn(() => ({ addJobToQueue })),
+    getQueue: jest.fn(() =>
+      options.queueAvailable === false ? undefined : { addJobToQueue, getJob }
+    ),
   } as any;
   service.redisService = {
     get: jest.fn().mockResolvedValue(null),
@@ -529,7 +551,7 @@ function createService(options: {
     del: jest.fn().mockResolvedValue(1),
   } as any;
 
-  return { service, savedMessages, addJobToQueue };
+  return { service, savedMessages, savedFeedbacks, addJobToQueue, getJob };
 }
 
 describe('ConversationService generateMemorialPhoto', () => {
@@ -551,15 +573,15 @@ describe('ConversationService generateMemorialPhoto', () => {
       userPhotoObjectKey: 'memorial-source-photos/user.jpg',
     });
 
-    expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledWith(
-      {
-        agentPhotoUrls: [
-          'https://cdn.example.com/memorial-source-photos/agent-1.jpg',
-        ],
-        userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
-        agentName: '外婆',
-      }
-    );
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).toHaveBeenCalledWith({
+      agentPhotoUrls: [
+        'https://cdn.example.com/memorial-source-photos/agent-1.jpg',
+      ],
+      userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
+      agentName: '外婆',
+    });
     expect(service.tencentCosService.putBuffer).toHaveBeenCalledWith(
       Buffer.from('memorial-image'),
       expect.objectContaining({
@@ -599,13 +621,16 @@ describe('ConversationService generateMemorialPhoto', () => {
     expect(assistantMessages[1].createdAt.getTime()).toBe(
       imageMessage!.createdAt.getTime() + 1
     );
-    expect(service.openAIService.createVisionChatCompletion).toHaveBeenCalledWith(
+    expect(
+      service.openAIService.createVisionChatCompletion
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'qwen-vl-max',
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: 'system',
-            content: expect.stringContaining('用户刚生成了一张与聊天对象的纪念合照'),
+            content:
+              expect.stringContaining('用户刚生成了一张与聊天对象的纪念合照'),
           }),
           expect.objectContaining({
             role: 'user',
@@ -658,23 +683,27 @@ describe('ConversationService generateMemorialPhoto', () => {
       customPrompt: '  我和猫坐在窗边，猫保持真实样子。\n不要出现第二个人。  ',
     });
 
-    expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledWith(
-      {
-        agentPhotoUrls: [
-          'https://cdn.example.com/memorial-source-photos/cat.jpg',
-        ],
-        userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
-        agentName: '小白',
-        customPrompt: '我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
-      }
-    );
-    expect(service.agentContextService.buildConversationContext).toHaveBeenCalledWith(
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).toHaveBeenCalledWith({
+      agentPhotoUrls: [
+        'https://cdn.example.com/memorial-source-photos/cat.jpg',
+      ],
+      userPhotoUrl: 'https://cdn.example.com/memorial-source-photos/user.jpg',
+      agentName: '小白',
+      customPrompt: '我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
+    });
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         currentQuery:
           '用户刚生成了一张纪念合照，画面提示词：我和猫坐在窗边，猫保持真实样子。 不要出现第二个人。',
       })
     );
-    expect(service.openAIService.createVisionChatCompletion).toHaveBeenCalledWith(
+    expect(
+      service.openAIService.createVisionChatCompletion
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: expect.arrayContaining([
           expect.objectContaining({
@@ -698,9 +727,9 @@ describe('ConversationService generateMemorialPhoto', () => {
       agent: createAgent(),
     });
 
-    (service.openAIService.createVisionChatCompletion as jest.Mock).mockRejectedValue(
-      new Error('vision failed')
-    );
+    (
+      service.openAIService.createVisionChatCompletion as jest.Mock
+    ).mockRejectedValue(new Error('vision failed'));
 
     const result = await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
       agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
@@ -775,7 +804,9 @@ describe('ConversationService generateMemorialPhoto', () => {
       });
 
       expect(savedMessages).toHaveLength(4);
-      expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+      expect(
+        service.bailianImageService.generateMemorialPhoto
+      ).not.toHaveBeenCalled();
       expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
       expect(service.messageModel.count).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -800,8 +831,12 @@ describe('ConversationService generateMemorialPhoto', () => {
     try {
       const existingMemorialPhotos = Array.from({ length: 9 }, (_, index) =>
         createMemorialPhotoMessage({
-          createdAt: new Date(`2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`),
-          updatedAt: new Date(`2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`),
+          createdAt: new Date(
+            `2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`
+          ),
+          updatedAt: new Date(
+            `2026-06-14T16:${String(index).padStart(2, '0')}:00.000Z`
+          ),
         })
       );
       const { service, savedMessages } = createService({
@@ -819,9 +854,13 @@ describe('ConversationService generateMemorialPhoto', () => {
         userPhotoObjectKey: 'memorial-source-photos/user.jpg',
       });
 
-      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledTimes(1);
       expect(
-        savedMessages.filter(message => message.content === MEMORIAL_PHOTO_CONTENT)
+        service.bailianImageService.generateMemorialPhoto
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        savedMessages.filter(
+          message => message.content === MEMORIAL_PHOTO_CONTENT
+        )
       ).toHaveLength(10);
 
       await expect(
@@ -839,7 +878,9 @@ describe('ConversationService generateMemorialPhoto', () => {
           remainingCount: 0,
         }),
       });
-      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalledTimes(1);
+      expect(
+        service.bailianImageService.generateMemorialPhoto
+      ).toHaveBeenCalledTimes(1);
     } finally {
       jest.useRealTimers();
     }
@@ -868,7 +909,9 @@ describe('ConversationService generateMemorialPhoto', () => {
         userPhotoObjectKey: 'memorial-source-photos/user.jpg',
       });
 
-      expect(service.bailianImageService.generateMemorialPhoto).toHaveBeenCalled();
+      expect(
+        service.bailianImageService.generateMemorialPhoto
+      ).toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
@@ -897,7 +940,9 @@ describe('ConversationService generateMemorialPhoto', () => {
     });
 
     expect(savedMessages).toHaveLength(0);
-    expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).not.toHaveBeenCalled();
     expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
   });
 
@@ -953,7 +998,9 @@ describe('ConversationService generateMemorialPhoto', () => {
     });
 
     expect(savedMessages).toHaveLength(0);
-    expect(service.bailianImageService.generateMemorialPhoto).not.toHaveBeenCalled();
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).not.toHaveBeenCalled();
     expect(service.tencentCosService.putBuffer).not.toHaveBeenCalled();
   });
 
@@ -962,9 +1009,9 @@ describe('ConversationService generateMemorialPhoto', () => {
       agent: createAgent(),
     });
 
-    (service.bailianImageService.generateMemorialPhoto as jest.Mock).mockRejectedValue(
-      new Error('generation failed')
-    );
+    (
+      service.bailianImageService.generateMemorialPhoto as jest.Mock
+    ).mockRejectedValue(new Error('generation failed'));
 
     await expect(
       service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
@@ -994,6 +1041,126 @@ describe('ConversationService generateMemorialPhoto', () => {
     ).rejects.toThrow('storage failed');
 
     expect(savedMessages).toHaveLength(0);
+  });
+});
+
+describe('ConversationService submitMessageFeedback', () => {
+  it('records assistant message feedback and feeds correction text into memory facts', async () => {
+    const assistantMessage = new MessageEntity();
+    Object.assign(assistantMessage, {
+      id: new MongoObjectId('665000000000000000000060'),
+      conversationId: new MongoObjectId(CONVERSATION_ID),
+      userId: new MongoObjectId(USER_ID),
+      agentId: new MongoObjectId(AGENT_ID),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '我记得以前你最爱吃辣子',
+      status: MessageStatus.sent,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const { service, savedFeedbacks } = createService({
+      agent: createAgent(),
+      existingMessages: [assistantMessage],
+    });
+
+    await expect(
+      service.submitMessageFeedback(AUTH, CONVERSATION_ID, assistantMessage.id.toHexString(), {
+        type: 'fabricated',
+        content: '我啥时候也没爱吃辣子',
+      })
+    ).resolves.toEqual({ submitted: true });
+
+    expect(savedFeedbacks[0]).toEqual(
+      expect.objectContaining({
+        conversationId: expect.any(MongoObjectId),
+        messageId: assistantMessage.id,
+        type: 'fabricated',
+        content: '我啥时候也没爱吃辣子',
+        assistantContent: '我记得以前你最爱吃辣子',
+      })
+    );
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        searchableText: '别瞎编，胡编乱造。我啥时候也没爱吃辣子',
+      })
+    );
+  });
+});
+
+describe('ConversationService markMessageMemory', () => {
+  it('indexes a user message and feeds it into memory facts', async () => {
+    const userMessage = new MessageEntity();
+    Object.assign(userMessage, {
+      id: new MongoObjectId('665000000000000000000061'),
+      conversationId: new MongoObjectId(CONVERSATION_ID),
+      userId: new MongoObjectId(USER_ID),
+      agentId: new MongoObjectId(AGENT_ID),
+      role: MessageRole.user,
+      type: MessageType.text,
+      content: '我小时候最喜欢和你一起包饺子',
+      status: MessageStatus.sent,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+
+    await expect(
+      service.markMessageMemory(AUTH, CONVERSATION_ID, userMessage.id.toHexString())
+    ).resolves.toEqual({ remembered: true });
+
+    expect(service.milvusService.indexConversationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: userMessage.id.toHexString(),
+        userId: USER_ID,
+        conversationId: CONVERSATION_ID,
+        agentId: AGENT_ID,
+        role: MessageRole.user,
+        type: MessageType.text,
+        searchableText: '我小时候最喜欢和你一起包饺子',
+      })
+    );
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: userMessage,
+        searchableText: '我小时候最喜欢和你一起包饺子',
+      })
+    );
+  });
+
+  it('rejects assistant messages', async () => {
+    const assistantMessage = new MessageEntity();
+    Object.assign(assistantMessage, {
+      id: new MongoObjectId('665000000000000000000062'),
+      conversationId: new MongoObjectId(CONVERSATION_ID),
+      userId: new MongoObjectId(USER_ID),
+      agentId: new MongoObjectId(AGENT_ID),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '我记住了',
+      status: MessageStatus.sent,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [assistantMessage],
+    });
+
+    await expect(
+      service.markMessageMemory(
+        AUTH,
+        CONVERSATION_ID,
+        assistantMessage.id.toHexString()
+      )
+    ).rejects.toThrow('only user messages can be remembered');
   });
 });
 
@@ -1097,6 +1264,133 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     );
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
+  });
+
+  it('extracts memory facts from the saved user message before replying', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '你不记得我是男生女生了吗？我是女生呀。',
+    });
+
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
+
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).toHaveBeenCalledWith({
+      message: userMessage,
+      searchableText: '你不记得我是男生女生了吗？我是女生呀。',
+    });
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalled();
+  });
+
+  it('recognizes emotion state from the saved user message before memory extraction', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我好想你',
+    });
+
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
+
+    expect(
+      service.agentEmotionStateService.recognizeAndUpsertFromUserMessage
+    ).toHaveBeenCalledWith({
+      message: userMessage,
+      searchableText: '我好想你',
+    });
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).toHaveBeenCalledWith({
+      message: userMessage,
+      searchableText: '我好想你',
+    });
+  });
+
+  it('does not block replies when emotion recognition fails', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+    });
+    (
+      service.agentEmotionStateService
+        .recognizeAndUpsertFromUserMessage as jest.Mock
+    ).mockRejectedValueOnce(
+      new Error('emotion unavailable')
+    );
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我好想你',
+    });
+
+    expect(result.assistantMessage?.content).toBeTruthy();
+    expect(savedMessages.some(message => message.role === MessageRole.user)).toBe(
+      true
+    );
+    expect(service.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('emotion state recognition failed'),
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+      expect.stringContaining('emotion unavailable')
+    );
+  });
+
+  it('saves a quoted message snapshot before replying', async () => {
+    const quotedMessage = new MessageEntity();
+    Object.assign(quotedMessage, {
+      id: new MongoObjectId('665000000000000000000301'),
+      conversationId: new MongoObjectId(CONVERSATION_ID),
+      userId: new MongoObjectId(USER_ID),
+      agentId: new MongoObjectId(AGENT_ID),
+      role: MessageRole.assistant,
+      type: MessageType.text,
+      content: '你以前总爱吃辣',
+      status: MessageStatus.sent,
+      createdAt: new Date('2026-06-01T08:00:00.000Z'),
+      updatedAt: new Date('2026-06-01T08:00:00.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [quotedMessage],
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我不爱吃辣',
+      quotedMessageId: quotedMessage.id.toHexString(),
+    });
+
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
+
+    expect(userMessage).toEqual(
+      expect.objectContaining({
+        quotedMessageId: quotedMessage.id,
+        quotedMessageRole: MessageRole.assistant,
+        quotedMessageContent: '你以前总爱吃辣',
+      })
+    );
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: '我不爱吃辣',
+      })
+    );
   });
 
   it('treats the 3-day trial as Beijing calendar days', async () => {
@@ -1308,10 +1602,119 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         userId: USER_ID,
       },
       expect.objectContaining({
-        delay: 1200,
+        jobId: `conversation-reply:${CONVERSATION_ID}:latest`,
+        delay: 2500,
         attempts: 3,
       })
     );
+  });
+
+  it('saves voice and enqueues async reply without generating assistant inline', async () => {
+    const { service, savedMessages, addJobToQueue } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+    });
+
+    const result = await service.sendMessageAsync(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2800,
+    });
+
+    expect(result.replyPending).toBe(true);
+    expect(result.assistantMessage).toBeUndefined();
+    expect(result.userMessage.type).toBe(MessageType.voice);
+    expect(result.userMessage.voice).toEqual(
+      expect.objectContaining({
+        objectKey: 'conversation-voice/user.aac',
+        mimeType: 'audio/aac',
+      })
+    );
+    expect(savedMessages).toHaveLength(1);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(addJobToQueue).toHaveBeenCalledWith(
+      {
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+      },
+      expect.objectContaining({
+        jobId: `conversation-reply:${CONVERSATION_ID}:latest`,
+        delay: 2500,
+        attempts: 3,
+      })
+    );
+  });
+
+  it('debounces async replies by replacing the existing delayed conversation job', async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const getState = jest.fn().mockResolvedValue('delayed');
+    const { service, addJobToQueue, getJob } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+    });
+
+    getJob.mockResolvedValueOnce({ getState, remove });
+
+    await service.sendMessageAsync(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '第一句',
+    });
+
+    expect(getJob).toHaveBeenCalledWith(
+      `conversation-reply:${CONVERSATION_ID}:latest`
+    );
+    expect(remove).toHaveBeenCalled();
+    expect(addJobToQueue).toHaveBeenCalledWith(
+      {
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+      },
+      expect.objectContaining({
+        jobId: `conversation-reply:${CONVERSATION_ID}:latest`,
+        delay: 2500,
+      })
+    );
+  });
+
+  it('returns a failed assistant message when the async reply queue is unavailable', async () => {
+    const { service, savedMessages, addJobToQueue } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+      queueAvailable: false,
+    });
+
+    const result = await service.sendMessageAsync(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '你还在吗',
+    });
+
+    expect(result.replyPending).toBeUndefined();
+    expect(result.userMessage.content).toBe('你还在吗');
+    expect(result.assistantMessage).toEqual(
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        status: MessageStatus.failed,
+        content: '刚才没能回复成功，请稍后再试',
+      })
+    );
+    expect(addJobToQueue).not.toHaveBeenCalled();
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        status: MessageStatus.failed,
+        content: '刚才没能回复成功，请稍后再试',
+      }),
+    ]);
   });
 
   it('does not enqueue async reply when quota is exhausted', async () => {
@@ -1365,15 +1768,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(service.agentContextService.buildConversationContext).toHaveBeenCalledWith(
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         currentQuery: '用户连续补充了2句话：\n1. 第一句\n2. 第二句',
       })
     );
     expect(getAssistantContents(savedMessages)).toEqual([
       '上一句回复',
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
   });
 
@@ -1395,7 +1799,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(service.agentContextService.buildConversationContext).not.toHaveBeenCalled();
+    expect(
+      service.agentContextService.buildConversationContext
+    ).not.toHaveBeenCalled();
     expect(
       savedMessages.filter(message => message.role === MessageRole.assistant)
     ).toHaveLength(0);
@@ -1425,19 +1831,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(assistantMessages.map(message => message.content)).toEqual([
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
-    expect(assistantMessages.map(message => message.replySegmentIndex)).toEqual([
-      0,
-      1,
-    ]);
-    expect(assistantMessages[0].replyGroupId).toBeTruthy();
-    expect(assistantMessages[1].replyGroupId).toBe(
-      assistantMessages[0].replyGroupId
+    expect(assistantMessages.map(message => message.replySegmentIndex)).toEqual(
+      [0]
     );
+    expect(assistantMessages[0].replyGroupId).toBeTruthy();
     expect(assistantMessages[0].totalTokens).toBe(22);
-    expect(assistantMessages[1].totalTokens).toBeUndefined();
   });
 
   it('enqueues a follow-up reply when a new user message arrives during processing', async () => {
@@ -1456,16 +1856,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       existingMessages: [firstUser],
     });
 
-    (service.openAIService.createChatCompletion as jest.Mock).mockImplementationOnce(
-      async () => {
-        savedMessages.push(secondUser);
-        return {
-          model: 'MiniMax-M2.5',
-          choices: [{ message: { content: '我听见了' } }],
-          usage: {},
-        };
-      }
-    );
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockImplementationOnce(async () => {
+      savedMessages.push(secondUser);
+      return {
+        model: 'MiniMax-M2.5',
+        choices: [{ message: { content: '我听见了' } }],
+        usage: {},
+      };
+    });
 
     await service.processConversationReplyJob({
       conversationId: CONVERSATION_ID,
@@ -1480,6 +1880,72 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       }),
       expect.any(Object)
     );
+  });
+
+  it('does not save a failed assistant reply before the final async retry', async () => {
+    const userMessage = createMessage({
+      content: '会失败吗',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockRejectedValueOnce(new Error('model timeout'));
+
+    await expect(
+      service.processConversationReplyJob(
+        {
+          conversationId: CONVERSATION_ID,
+          userId: USER_ID,
+        },
+        { isFinalAttempt: false }
+      )
+    ).rejects.toMatchObject({
+      code: 'MINIMAX_REPLY_FAILED',
+    });
+
+    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+  });
+
+  it('saves a failed assistant reply on the final async retry failure', async () => {
+    const userMessage = createMessage({
+      content: '这次也失败吗',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockRejectedValueOnce(new Error('model timeout'));
+
+    await expect(
+      service.processConversationReplyJob(
+        {
+          conversationId: CONVERSATION_ID,
+          userId: USER_ID,
+        },
+        { isFinalAttempt: true }
+      )
+    ).rejects.toMatchObject({
+      code: 'MINIMAX_REPLY_FAILED',
+    });
+
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        status: MessageStatus.failed,
+        content: '刚才没能回复成功，请稍后再试',
+      }),
+    ]);
   });
 
   it('returns current exhausted quota without saving a message', async () => {
@@ -1525,7 +1991,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       content: '会员继续聊天',
     });
 
-    expect(savedMessages.some(message => message.role === MessageRole.user)).toBe(true);
+    expect(
+      savedMessages.some(message => message.role === MessageRole.user)
+    ).toBe(true);
     expect(result.chatQuota).toEqual({ isVip: true });
     expect(service.messageModel.count).not.toHaveBeenCalled();
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
@@ -1547,7 +2015,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(result.assistantMessage).toBeUndefined();
     expect(assistantMessage).toBeUndefined();
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
-    expect(service.agentContextService.buildConversationContext).not.toHaveBeenCalled();
+    expect(
+      service.agentContextService.buildConversationContext
+    ).not.toHaveBeenCalled();
     expect(result.userMessage.content).toBe('你不要回复了');
   });
 
@@ -1573,15 +2043,11 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
     });
 
-    const result = await service.sendMessage(
-      AUTH,
-      CONVERSATION_ID,
-      {
-        type: 'voice',
-        objectKey: 'conversation-voice/input.m4a',
-        mimeType: 'audio/mp4',
-      }
-    );
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/input.m4a',
+      mimeType: 'audio/mp4',
+    });
     const assistantMessage = savedMessages.find(
       message => message.role === MessageRole.assistant
     );
@@ -1600,7 +2066,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         userId: new MongoObjectId(USER_ID),
         agentId: new MongoObjectId(AGENT_ID),
         type: MessageType.text,
-        content: '我也想你',
+        content: '我也想你，今天过得怎么样？',
         status: MessageStatus.sent,
       })
     );
@@ -1613,12 +2079,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     );
     expect(result.assistantMessage?.type).toBe(MessageType.text);
-    expect(result.assistantMessage?.content).toBe(
-      '我也想你</fenge>今天过得怎么样？'
-    );
+    expect(result.assistantMessage?.content).toBe('我也想你，今天过得怎么样？');
     expect(result.assistantMessages?.map(message => message.content)).toEqual([
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
   });
 
@@ -1638,8 +2101,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(getAssistantContents(savedMessages)).toEqual([
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessage?.voice).toBeUndefined();
@@ -1663,7 +2125,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.openAIService.createTranscription).toHaveBeenCalled();
     expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
+      text: '我也想你，今天过得怎么样？',
       voiceId: 'TzlVoice_001',
       model: 'speech-2.8-turbo',
       languageBoost: 'Chinese',
@@ -1678,10 +2140,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         type: MessageType.voice,
-        content: '我也想你。今天过得怎么样？',
+        content: '我也想你，今天过得怎么样？',
         mediaObjectKey: 'conversation-voice-replies/reply.mp3',
         mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
+        mediaTranscript: '我也想你，今天过得怎么样？',
         status: MessageStatus.sent,
       })
     );
@@ -1693,7 +2155,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         objectKey: 'conversation-voice-replies/reply.mp3',
         mimeType: 'audio/mpeg',
-        transcript: '我也想你。今天过得怎么样？',
+        transcript: '我也想你，今天过得怎么样？',
       })
     );
   });
@@ -1713,7 +2175,6 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessages?.map(message => message.type)).toEqual([
-      MessageType.text,
       MessageType.text,
     ]);
   });
@@ -1783,7 +2244,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
-    expect(result.voice?.objectKey).toBe('conversation-voice-replies/existing.mp3');
+    expect(result.voice?.objectKey).toBe(
+      'conversation-voice-replies/existing.mp3'
+    );
   });
 
   it('rejects on-demand voice generation when the agent has no voice timbre', async () => {
@@ -1949,6 +2412,25 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
+  it('removes repeated sad emojis before saving assistant replies', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: ['好好照顾自己 丫头😔', '我心里也疼🥺'],
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我现在很好 不用担心我',
+    });
+
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '好好照顾自己 丫头',
+      '我心里也疼',
+    ]);
+  });
+
   it('normalizes malformed legacy fenge separators before saving replies', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
@@ -1962,8 +2444,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '芳芳 我就在这儿',
-      '你慢慢来',
-      '我都在',
+      '你慢慢来 我都在',
     ]);
   });
 
@@ -1994,13 +2475,53 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '我也想你 一直想着呢',
-      '好好睡一觉 明天还长 我一直都在',
-      '乖 先歇着 我在这儿呢',
+      '好好睡一觉 明天还长 我一直都在 乖 先歇着 我在这儿呢',
     ]);
     expect(assistantContent).not.toContain(malformedSeparator);
     expect(assistantContent).not.toContain('闭上眼');
     expect(assistantContent).not.toContain('屋里哪个角落');
     expect(assistantContent).not.toContain('准能听到');
+  });
+
+  it('keeps dream-only companionship replies while filtering reality presence claims', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: [
+          '会去的 今晚去你梦里看看你',
+          '晚上去你梦里陪着你 梦里见到了就让我好好抱抱你',
+          '醒来以后我还会在你床边陪着你',
+        ],
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '你什么时候能来我梦里一次',
+    });
+
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '会去的 今晚去你梦里看看你',
+      '晚上去你梦里陪着你 梦里见到了就让我好好抱抱你',
+    ]);
+  });
+
+  it('keeps seeing-family language in an afterlife scene', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      chatContent: JSON.stringify({
+        text: '我在天上能看见你们，这些我都看在眼里。',
+      }),
+    });
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '妈妈你在那边过得好吗？我们都很想你。',
+    });
+
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我在天上能看见你们，这些我都看在眼里',
+    ]);
   });
 
   it('filters legacy media url segments before saving assistant replies', async () => {
@@ -2131,7 +2652,9 @@ describe('ConversationService listConversations', () => {
     const service = new ConversationService();
 
     service.conversationModel = {
-      find: jest.fn().mockResolvedValue([newerConversation, defaultConversation]),
+      find: jest
+        .fn()
+        .mockResolvedValue([newerConversation, defaultConversation]),
     } as any;
     service.agentModel = {
       findOne: jest.fn(async ({ where }: any) => {

@@ -34,6 +34,7 @@
         :scroll-y="true"
         :show-scrollbar="false"
         @scroll="handleContactsScroll"
+        @scrolltolower="handleContactsScrollToLower"
       >
         <view class="contacts-content">
         <contact-cover-banner
@@ -80,60 +81,55 @@
         </view>
 
         <view v-else class="contacts-list">
-          <nut-swipe
-            v-for="conversation in conversations"
+          <view
+            v-for="conversation in visibleConversations"
             :key="conversation.id"
-            class="contacts-swipe"
+            class="contacts-item"
+            :class="{ 'contacts-item--default': conversation.agentIsDefault }"
+            @tap="handleConversationTap(conversation)"
           >
             <view
-              class="contacts-item"
-              :class="{ 'contacts-item--default': conversation.agentIsDefault }"
-              @tap="handleConversationTap(conversation)"
+              class="contacts-item__avatar-wrap"
+              @tap.stop="handleAgentDetailTap(conversation)"
             >
+              <image
+                v-if="conversation.agentAvatar"
+                class="contacts-item__avatar"
+                :src="conversation.agentAvatar"
+                mode="aspectFill"
+              />
               <view
-                class="contacts-item__avatar-wrap"
-                @tap.stop="handleAgentDetailTap(conversation)"
+                v-else
+                class="contacts-item__avatar contacts-item__avatar--fallback"
+                :class="{
+                  'contacts-item__avatar--male': conversation.agentSex === 1,
+                  'contacts-item__avatar--female': conversation.agentSex !== 1,
+                }"
               >
-                <image
-                  v-if="conversation.agentAvatar"
-                  class="contacts-item__avatar"
-                  :src="conversation.agentAvatar"
-                  mode="aspectFill"
-                />
-                <view
-                  v-else
-                  class="contacts-item__avatar contacts-item__avatar--fallback"
-                  :class="{
-                    'contacts-item__avatar--male': conversation.agentSex === 1,
-                    'contacts-item__avatar--female': conversation.agentSex !== 1,
-                  }"
-                >
-                  {{ buildConversationFallback(conversation.agentName) }}
-                </view>
-              </view>
-
-              <view class="contacts-item__content">
-                <view class="contacts-item__headline">
-                  <text class="contacts-item__name">{{ resolveConversationName(conversation) }}</text>
-                  <text class="contacts-item__time">
-                    {{ formatConversationUpdatedAt(conversation.updatedAt) }}
-                  </text>
-                </view>
-                <text class="contacts-item__preview">
-                  {{ buildConversationPreview(conversation.preview) }}
-                </text>
+                {{ buildConversationFallback(conversation.agentName) }}
               </view>
             </view>
 
-            <template #right>
-              <view
-                class="contacts-swipe__action contacts-swipe__action--detail"
-                @tap.stop="handleAgentDetailTap(conversation)"
-              >
-                详情
+            <view class="contacts-item__content">
+              <view class="contacts-item__headline">
+                <text class="contacts-item__name">{{ resolveConversationName(conversation) }}</text>
+                <text class="contacts-item__time">
+                  {{ formatConversationUpdatedAt(conversation.updatedAt) }}
+                </text>
               </view>
-            </template>
-          </nut-swipe>
+              <text class="contacts-item__preview">
+                {{ buildConversationPreview(conversation.preview) }}
+              </text>
+            </view>
+          </view>
+
+          <view
+            v-if="hasMoreVisibleConversations"
+            class="contacts-load-more"
+            @tap="showMoreConversations"
+          >
+            查看更多
+          </view>
 
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
             <view class="contacts-create-entry__avatar">
@@ -169,7 +165,11 @@ import { buildOssMediaUrl } from '@tzl/shared'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
-import { getConversations, type ConversationSummary } from '../../apis/conversation'
+import {
+  getCachedConversations,
+  getConversations,
+  type ConversationSummary,
+} from '../../apis/conversation'
 import { updateUserPreferences } from '../../auth/api'
 import { authSession, clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -182,20 +182,31 @@ const isCheckingAuth = ref(true)
 const isContactsLoading = ref(true)
 const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
+const visibleConversationLimit = ref(40)
 const hasLoadedContacts = ref(false)
 const isSavingCoverImage = ref(false)
 const showCollapsedAppBar = ref(false)
 const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
+let lastContactsRefreshAt = 0
 
 const CONTACT_COVER_BANNER_HEIGHT = 230
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT - 16
+const CONTACTS_REFRESH_INTERVAL = 30 * 1000
+const CONTACTS_INITIAL_RENDER_LIMIT = 40
+const CONTACTS_RENDER_LIMIT_STEP = 40
 
 const session = computed(() => authSession.value)
 const contactsCoverImage = computed(() => {
   return session.value?.user.preferences.contactsCoverImage ?? ''
+})
+const visibleConversations = computed(() => {
+  return conversations.value.slice(0, visibleConversationLimit.value)
+})
+const hasMoreVisibleConversations = computed(() => {
+  return visibleConversationLimit.value < conversations.value.length
 })
 
 function showToast(title: string) {
@@ -262,6 +273,18 @@ function handleContactsScroll(event: { detail?: { scrollTop?: number } }) {
   if (scrollTop >= COLLAPSED_APP_BAR_SHOW_SCROLL_TOP) {
     showCollapsedAppBar.value = true
   }
+}
+
+function handleContactsScrollToLower() {
+  showMoreConversations()
+}
+
+function showMoreConversations() {
+  if (!hasMoreVisibleConversations.value) {
+    return
+  }
+
+  visibleConversationLimit.value += CONTACTS_RENDER_LIMIT_STEP
 }
 
 function handleCreateAgentTap() {
@@ -346,6 +369,15 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
     return refreshContactsPromise
   }
 
+  if (
+    !options.showLoading &&
+    conversations.value.length > 0 &&
+    lastContactsRefreshAt &&
+    Date.now() - lastContactsRefreshAt < CONTACTS_REFRESH_INTERVAL
+  ) {
+    return
+  }
+
   if (options.showLoading ?? conversations.value.length === 0) {
     isContactsLoading.value = true
   }
@@ -355,6 +387,11 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
   refreshContactsPromise = getConversations()
     .then((items) => {
       conversations.value = sortConversationsForContacts(items)
+      visibleConversationLimit.value = Math.max(
+        CONTACTS_INITIAL_RENDER_LIMIT,
+        Math.min(visibleConversationLimit.value, conversations.value.length),
+      )
+      lastContactsRefreshAt = Date.now()
     })
     .catch((error: unknown) => {
       if (error instanceof ApiException && error.requiresReLogin) {
@@ -398,12 +435,21 @@ async function preparePage() {
     return
   }
 
-  await refreshContactsData({
-    showLoading: !hasLoadedContacts.value,
-  })
-
   hasLoadedContacts.value = true
   isCheckingAuth.value = false
+
+  if (!conversations.value.length) {
+    const cachedConversations = getCachedConversations()
+    if (cachedConversations.length) {
+      conversations.value = sortConversationsForContacts(cachedConversations)
+      visibleConversationLimit.value = CONTACTS_INITIAL_RENDER_LIMIT
+      isContactsLoading.value = false
+    }
+  }
+
+  void refreshContactsData({
+    showLoading: conversations.value.length === 0,
+  })
 }
 
 useDidShow(() => {
@@ -587,26 +633,6 @@ useDidShow(() => {
   background: $tzl-color-surface-base;
 }
 
-.contacts-swipe {
-  display: block;
-  background: $tzl-color-surface-base;
-}
-
-.contacts-swipe__action {
-  width: 84px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: $tzl-color-surface-base;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.contacts-swipe__action--detail {
-  background: #3b82f6;
-}
-
 .contacts-item {
   position: relative;
   display: flex;
@@ -708,6 +734,16 @@ useDidShow(() => {
   font-size: 14px;
   line-height: 20px;
   color: #99a1af;
+}
+
+.contacts-load-more {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $tzl-color-text-muted;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .contacts-feedback {

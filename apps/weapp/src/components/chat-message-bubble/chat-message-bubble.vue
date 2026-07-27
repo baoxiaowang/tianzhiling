@@ -72,21 +72,42 @@
       </view>
     </view>
     <view v-else class="chat-message-bubble__text-wrap">
-      <text class="chat-message-bubble__text">{{ text }}</text>
-      <view
-        v-if="hasVoicePlayback"
-        class="chat-message-bubble__text-voice-button"
-        :class="{
-          'chat-message-bubble__text-voice-button--active': isVoiceActive,
-          'chat-message-bubble__text-voice-button--playing': isVoicePlaying,
-        }"
-        @tap.stop="handleVoiceTap"
-      >
-        <view v-if="isVoiceLoading" class="chat-message-bubble__text-voice-loading">
-          <view class="chat-message-bubble__spinner" />
+      <view class="chat-message-bubble__text-row">
+        <text
+          class="chat-message-bubble__text"
+          :class="{ 'chat-message-bubble__text--collapsed': isLongText && isTextCollapsed }"
+        >
+          {{ text }}
+        </text>
+        <view
+          v-if="hasVoicePlayback"
+          class="chat-message-bubble__text-voice-button"
+          :class="{
+            'chat-message-bubble__text-voice-button--active': isVoiceActive,
+            'chat-message-bubble__text-voice-button--playing': isVoicePlaying,
+          }"
+          @tap.stop="handleVoiceTap"
+        >
+          <view v-if="isVoiceLoading" class="chat-message-bubble__text-voice-loading">
+            <view class="chat-message-bubble__spinner" />
+          </view>
+          <PlayStop v-else-if="isVoicePlaying" size="14" color="#078c49" />
+          <PlayStart v-else size="14" color="#111111" />
         </view>
-        <PlayStop v-else-if="isVoicePlaying" size="14" color="#078c49" />
-        <PlayStart v-else size="14" color="#111111" />
+      </view>
+      <view
+        v-if="isLongText"
+        class="chat-message-bubble__expand"
+        @tap.stop="handleExpandToggle"
+      >
+        <text class="chat-message-bubble__expand-text">
+          {{ isTextCollapsed ? '展开' : '收起' }}
+        </text>
+      </view>
+      <view v-if="quotedText" class="chat-message-bubble__quote">
+        <text class="chat-message-bubble__quote-text">
+          {{ quotedLabel ? `${quotedLabel}：${quotedText}` : quotedText }}
+        </text>
       </view>
     </view>
   </view>
@@ -101,7 +122,7 @@ export default {
 <script setup lang="ts">
 import { PlayStart, PlayStop } from '@nutui/icons-vue-taro'
 import Taro from '@tarojs/taro'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -115,6 +136,9 @@ const props = withDefaults(
     isVoiceLoading?: boolean
     isUser?: boolean
     isSending?: boolean
+    collapseThreshold?: number
+    quotedText?: string
+    quotedLabel?: string
   }>(),
   {
     type: 'text',
@@ -127,6 +151,9 @@ const props = withDefaults(
     isVoiceLoading: false,
     isUser: false,
     isSending: false,
+    collapseThreshold: 45,
+    quotedText: '',
+    quotedLabel: '',
   },
 )
 
@@ -141,6 +168,23 @@ const voiceSeconds = computed(() => {
 })
 
 const voiceDurationLabel = computed(() => `${voiceSeconds.value}"`)
+
+const isTextCollapsed = ref(true)
+
+const normalizedCollapseThreshold = computed(() => {
+  return Math.max(20, Math.floor(props.collapseThreshold))
+})
+
+const isLongText = computed(() => {
+  return props.type === 'text' && props.text.length > normalizedCollapseThreshold.value
+})
+
+watch(
+  () => props.text,
+  () => {
+    isTextCollapsed.value = true
+  },
+)
 
 const voiceStyle = computed(() => {
   const normalizedSeconds = Math.min(Math.max(voiceSeconds.value, 2), 60)
@@ -170,6 +214,10 @@ function handleVoiceTap() {
 
 function handleBubbleTap() {
   emit('message-tap')
+}
+
+function handleExpandToggle() {
+  isTextCollapsed.value = !isTextCollapsed.value
 }
 
 function handleLongPress() {
@@ -239,6 +287,13 @@ function handleLongPress() {
 .chat-message-bubble__text-wrap {
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-message-bubble__text-row {
+  min-width: 0;
+  display: flex;
   align-items: flex-end;
   gap: 8px;
 }
@@ -252,6 +307,43 @@ function handleLongPress() {
   line-height: 22.4px;
   word-break: break-word;
   white-space: pre-wrap;
+}
+
+.chat-message-bubble__text--collapsed {
+  max-height: 67.2px;
+  overflow: hidden;
+}
+
+.chat-message-bubble__expand {
+  align-self: flex-start;
+  padding-top: 1px;
+}
+
+.chat-message-bubble--user .chat-message-bubble__expand {
+  align-self: flex-end;
+}
+
+.chat-message-bubble__expand-text {
+  color: #576b95;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.chat-message-bubble__quote {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.chat-message-bubble__quote-text {
+  display: block;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  line-height: 18px;
+  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-message-bubble__text-voice-button {

@@ -13,7 +13,11 @@ import {
   AdminUserEntity,
   AgentEntitlementEntity,
   AgentEntity,
+  AgentMemoryFactEntity,
+  AgentProfileFactEntity,
   AgentSubEntity,
+  ConversationEmotionStateEntity,
+  ConversationMessageFeedbackEntity,
   ConversationEntity,
   CouponLedgerEntity,
   MessageEntity,
@@ -200,17 +204,11 @@ export default {
       'https://dashscope.aliyuncs.com'
     ),
     defaultPreviewModel: readStringFrom(
-      [
-        'ADMIN_API_COSYVOICE_PREVIEW_MODEL',
-        'NODE_COSYVOICE_PREVIEW_MODEL',
-      ],
+      ['ADMIN_API_COSYVOICE_PREVIEW_MODEL', 'NODE_COSYVOICE_PREVIEW_MODEL'],
       'cosyvoice-v3.5-plus'
     ),
     defaultLanguageHint: readStringFrom(
-      [
-        'ADMIN_API_COSYVOICE_LANGUAGE_HINT',
-        'NODE_COSYVOICE_LANGUAGE_HINT',
-      ],
+      ['ADMIN_API_COSYVOICE_LANGUAGE_HINT', 'NODE_COSYVOICE_LANGUAGE_HINT'],
       'zh'
     ),
     maxPromptAudioLength: readNumberFrom(
@@ -250,10 +248,7 @@ export default {
       'https://dashscope.aliyuncs.com'
     ),
     defaultPreviewModel: readStringFrom(
-      [
-        'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL',
-        'NODE_QWEN_VOICE_SPEECH_MODEL',
-      ],
+      ['ADMIN_API_QWEN_VOICE_PREVIEW_MODEL', 'NODE_QWEN_VOICE_SPEECH_MODEL'],
       'qwen3-tts-vc-2026-01-22'
     ),
     defaultLanguage: readStringFrom(
@@ -362,7 +357,10 @@ export default {
   },
   wechatVirtualPay: {
     enabled: readBooleanFrom(
-      ['ADMIN_API_WECHAT_VIRTUAL_PAY_ENABLED', 'NODE_WECHAT_VIRTUAL_PAY_ENABLED'],
+      [
+        'ADMIN_API_WECHAT_VIRTUAL_PAY_ENABLED',
+        'NODE_WECHAT_VIRTUAL_PAY_ENABLED',
+      ],
       false
     ),
     env: readNumberFrom(
@@ -462,27 +460,15 @@ export default {
       ''
     ),
     username: readStringFrom(
-      [
-        'ADMIN_API_MILVUS_USERNAME',
-        'NODE_MILVUS_USERNAME',
-        'MILVUS_USERNAME',
-      ],
+      ['ADMIN_API_MILVUS_USERNAME', 'NODE_MILVUS_USERNAME', 'MILVUS_USERNAME'],
       ''
     ),
     password: readStringFrom(
-      [
-        'ADMIN_API_MILVUS_PASSWORD',
-        'NODE_MILVUS_PASSWORD',
-        'MILVUS_PASSWORD',
-      ],
+      ['ADMIN_API_MILVUS_PASSWORD', 'NODE_MILVUS_PASSWORD', 'MILVUS_PASSWORD'],
       ''
     ),
     database: readStringFrom(
-      [
-        'ADMIN_API_MILVUS_DATABASE',
-        'NODE_MILVUS_DATABASE',
-        'MILVUS_DATABASE',
-      ],
+      ['ADMIN_API_MILVUS_DATABASE', 'NODE_MILVUS_DATABASE', 'MILVUS_DATABASE'],
       'default'
     ),
     collectionName: readStringFrom(
@@ -536,7 +522,11 @@ export default {
           AdminUserEntity,
           AgentEntitlementEntity,
           AgentEntity,
+          AgentMemoryFactEntity,
+          AgentProfileFactEntity,
           AgentSubEntity,
+          ConversationEmotionStateEntity,
+          ConversationMessageFeedbackEntity,
           ConversationEntity,
           CouponLedgerEntity,
           MessageEntity,

@@ -88,6 +88,8 @@ const PHONE_LOGIN_PURPOSE = 'phone_login';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_LENGTH = 12;
 const DEV_LOGIN_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
+const LOCAL_DEV_LOGIN_ACCOUNT = 'dev-test';
+const LOCAL_DEV_LOGIN_OPENID = 'dev-openid';
 const USER_GENDERS: UserGender[] = ['male', 'female', 'unknown'];
 
 interface NormalizedUserPreferences {
@@ -566,10 +568,18 @@ export class UserService {
       throw new AppError('INVALID_DEV_LOGIN_OPENID', 'openid is required', 400);
     }
 
-    const userAccount = await this.findWeappAccountByAccountAndOpenid(
+    let userAccount = await this.findWeappAccountByAccountAndOpenid(
       account,
       openid
     );
+
+    if (
+      !userAccount &&
+      account === LOCAL_DEV_LOGIN_ACCOUNT &&
+      openid === LOCAL_DEV_LOGIN_OPENID
+    ) {
+      userAccount = await this.createLocalDevLoginUser(account, openid);
+    }
 
     if (!userAccount) {
       throw new AppError(
@@ -1248,6 +1258,33 @@ export class UserService {
         openId: openid,
       },
     });
+  }
+
+  private async createLocalDevLoginUser(
+    account: string,
+    openid: string
+  ): Promise<UserAccountEntity> {
+    const now = new Date();
+    const user = new UserEntity();
+    user.name = '本地测试用户';
+    user.avatar = '';
+    user.phone = '';
+    user.phoneVerified = false;
+    user.gender = 'unknown';
+    user.region = null;
+    user.createdAt = now;
+    user.updatedAt = now;
+    const savedUser = await this.userModel.save(user);
+
+    const userAccount = new UserAccountEntity();
+    userAccount.userId = savedUser.id;
+    userAccount.account = account;
+    userAccount.password = '';
+    userAccount.openId = openid;
+    userAccount.createdAt = now;
+    userAccount.updatedAt = now;
+
+    return this.userAccountModel.save(userAccount);
   }
 
   private normalizePhone(rawPhone?: string): string {

@@ -36,6 +36,7 @@
         @like="handleLikeTap"
         @delete="handleDeleteTap"
         @preview="handlePreviewImages"
+        @open="handlePostOpen"
       />
       <view class="my-posts-load-footer">
         <text v-if="isLoadingMore" class="my-posts-load-footer__text">正在加载更多...</text>
@@ -199,6 +200,16 @@ function handleLoadMoreRetry() {
 
 function handleScrollToLower() {
   void loadMoreMyPosts()
+}
+
+function handlePostOpen(post: PostItem) {
+  if (!post.id) {
+    return
+  }
+
+  void Taro.navigateTo({
+    url: `/pages/post-detail/index?postId=${encodeURIComponent(post.id)}`,
+  })
 }
 
 function isPostLikePending(postId: string) {
@@ -421,6 +432,10 @@ useDidShow(() => {
   display: flex;
   flex-direction: column;
   padding: 12px 16px 28px;
+}
+
+.my-posts-list .moment-card {
+  border-bottom-color: #e1e4ea;
 }
 
 .my-posts-list .moment-card + .moment-card {

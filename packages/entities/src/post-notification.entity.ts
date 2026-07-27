@@ -8,6 +8,7 @@ export enum PostNotificationType {
 }
 
 @Index(['userId', 'isRead', 'createdAt'], { background: true })
+@Index(['userId', 'createdAt'], { background: true })
 @Index(['userId', 'postId', 'isRead'], { background: true })
 @Index(['postId', 'createdAt'], { background: true })
 @Index(['type', 'postId', 'actorUserId'], { sparse: true, background: true })
@@ -49,6 +50,12 @@ export class PostNotificationEntity extends BaseEntity {
 
   @Column()
   postThumbnail?: string;
+
+  @Column()
+  isSeen?: boolean;
+
+  @Column()
+  seenAt?: Date;
 
   @Column()
   isRead: boolean;

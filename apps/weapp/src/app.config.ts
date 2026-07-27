@@ -69,6 +69,10 @@ export default {
       pages: ['index'],
     },
     {
+      root: 'pages/post-detail',
+      pages: ['index'],
+    },
+    {
       root: 'pages/my-orders',
       pages: ['index'],
     },
@@ -98,6 +102,24 @@ export default {
   permission: {
     'scope.record': {
       desc: '用于发送语音消息和语音转文字',
+    },
+  },
+  preloadRule: {
+    'pages/index/index': {
+      network: 'all',
+      packages: ['pages/vip-center'],
+    },
+    'pages/chat/index': {
+      network: 'all',
+      packages: ['pages/vip-center'],
+    },
+    'pages/contacts/index': {
+      network: 'all',
+      packages: ['pages/agent-create'],
+    },
+    'pages/agent-create/index': {
+      network: 'all',
+      packages: ['pages/agent-create-flow'],
     },
   },
   tabBar: {

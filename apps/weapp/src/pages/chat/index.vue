@@ -30,16 +30,21 @@
     </template>
 
     <view class="chat-page__body" @tap="handleChatBodyTap">
-      <view v-if="isCheckingAuth || isLoading" class="chat-feedback">
+      <view v-if="isCheckingAuth" class="chat-feedback">
         <view class="chat-feedback__spinner" />
         <text class="chat-feedback__title">
-          {{ isCheckingAuth ? '正在恢复会话...' : '正在加载聊天记录...' }}
+          正在恢复会话...
         </text>
       </view>
 
       <view v-else-if="loadError && !displayRows.length" class="chat-feedback">
         <text class="chat-feedback__title">{{ loadError }}</text>
         <text class="chat-feedback__action" @tap="handleRetry">重新加载</text>
+      </view>
+
+      <view v-else-if="isLoading && !displayRows.length" class="chat-feedback">
+        <view class="chat-feedback__spinner" />
+        <text class="chat-feedback__title">正在加载聊天记录...</text>
       </view>
 
       <view v-else-if="!displayRows.length" class="chat-feedback">
@@ -59,7 +64,7 @@
           {{ historyStatusText || '占位' }}
         </view>
 
-        <template v-for="item in displayRows" :key="item.key">
+        <template v-for="item in visibleDisplayRows" :key="item.key">
           <view v-if="item.kind === 'time'" class="chat-message-list__time">
             {{ item.label }}
           </view>
@@ -135,6 +140,8 @@
                 :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
                 :is-user="item.isUser"
                 :is-sending="item.isSending"
+                :quoted-text="item.quotedText"
+                :quoted-label="item.quotedLabel"
                 @message-tap="handleMessageTap"
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
                 @message-long-press="handleMessageLongPress(item.messageId, item.key, item.text)"
@@ -163,7 +170,7 @@
             v-if="item.kind === 'message' && item.isFailed"
             class="chat-message-list__failed"
           >
-            发送失败
+            {{ item.isUser ? '发送失败' : '回复失败' }}
           </view>
         </template>
 
@@ -196,6 +203,8 @@
         :is-more-panel-visible="isMorePanelVisible"
         :show-send-button="showSendButton"
         :is-send-disabled="isTextSendSubmitting"
+        :quoted-text="quotedMessageText"
+        :quoted-label="quotedMessageLabel"
         @voice-mode-toggle="handleVoiceModeToggle"
         @voice-touch-start="handleVoiceTouchStart"
         @voice-touch-move="handleVoiceTouchMove"
@@ -211,6 +220,7 @@
         @emoji-select="handleEmojiSelect"
         @emoji-delete="handleEmojiDelete"
         @more-action="handleMoreAction"
+        @quote-cancel="clearQuotedMessage"
       />
     </template>
 
@@ -325,6 +335,61 @@
           </view>
         </template>
       </nut-dialog>
+
+      <nut-popup
+        v-model:visible="isFeedbackPopupVisible"
+        position="bottom"
+        round
+        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 2"
+        closeable
+        close-icon-position="top-right"
+        :safe-area-inset-bottom="true"
+      >
+        <view class="chat-feedback-popup">
+          <view class="chat-feedback-popup__title">反馈这条回复</view>
+          <view class="chat-feedback-popup__desc">
+            选择原因后提交，Ta 会调整后续回复
+          </view>
+
+          <view class="chat-feedback-popup__options">
+            <view
+              v-for="option in FEEDBACK_OPTIONS"
+              :key="option.type"
+              class="chat-feedback-popup__option"
+              :class="{
+                'chat-feedback-popup__option--active':
+                  selectedFeedbackType === option.type,
+              }"
+              @tap="selectedFeedbackType = option.type"
+            >
+              {{ option.label }}
+            </view>
+          </view>
+
+          <textarea
+            class="chat-feedback-popup__textarea"
+            :value="feedbackContent"
+            maxlength="500"
+            :placeholder="feedbackTextareaPlaceholder"
+            placeholder-class="chat-feedback-popup__textarea-placeholder"
+            :show-confirm-bar="false"
+            @input="handleFeedbackContentInput"
+          />
+
+          <view class="chat-feedback-popup__footer">
+            <view class="chat-feedback-popup__cancel" @tap="closeFeedbackPopup">
+              取消
+            </view>
+            <view
+              class="chat-feedback-popup__submit"
+              :class="{ 'chat-feedback-popup__submit--disabled': isSubmittingFeedback }"
+              @tap="handleFeedbackSubmit"
+            >
+              {{ isSubmittingFeedback ? '提交中...' : '提交' }}
+            </view>
+          </view>
+        </view>
+      </nut-popup>
     </template>
   </page-scaffold>
 </template>
@@ -349,15 +414,18 @@ import {
   generateConversationMessageVoice,
   getConversationChatQuota,
   getConversationMessagesPage,
+  markConversationMessageMemory,
   sendConversationMessageAsync,
-  sendConversationMessage,
+  submitConversationMessageFeedback,
   transcribeConversationVoice,
   type ConversationMessage,
+  type ConversationMessageFeedbackType,
   type ConversationImagePayload,
   type ConversationChatQuotaSnapshot,
   type SendConversationMessageResult,
   type ConversationVoicePayload,
 } from '../../apis/conversation'
+import { preloadVipPurchaseCenter } from '../../apis/membership'
 import { uploadLocalFile, uploadLocalImage } from '../../apis/storage'
 import BackCapsule from '../../components/back-capsule/back-capsule.vue'
 import ChatComposer from '../../components/chat-composer/chat-composer.vue'
@@ -372,6 +440,7 @@ import type { ChatMoreActionItem } from '../../components/chat-more-panel/types'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import { ensureInnerAudioPlaybackOptions } from '../../utils/audio'
+import { normalizeEmojiText } from '../../utils/emoji-text'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import { useSafeAreaInsets } from '../../utils/safe-area'
 
@@ -414,6 +483,8 @@ type DisplayRow =
       isSending: boolean
       isFailed: boolean
       anchorId: string
+      quotedText: string
+      quotedLabel: string
     }
 
 type VoiceDragTarget = 'send' | 'cancel' | 'transcribe'
@@ -487,7 +558,7 @@ type RecorderErrorLike = {
   errMsg?: string
 }
 
-type MessageActionKey = 'copy' | 'generateVoice' | 'delete'
+type MessageActionKey = 'quote' | 'generateVoice' | 'feedback' | 'remember' | 'delete'
 
 type MessageActionItem = {
   key: MessageActionKey
@@ -500,7 +571,9 @@ const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   longSegmentLengthThreshold: 24,
 } as const
 const CHAT_TEXT_MAX_LENGTH = 500
-const CHAT_MESSAGE_PAGE_SIZE = 50
+const CHAT_MESSAGE_PAGE_SIZE = 30
+const CHAT_MAX_LOADED_MESSAGES = 180
+const CHAT_RENDER_MESSAGE_WINDOW = 120
 const AGENT_REPLY_POLL_INTERVAL_MS = 1500
 const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
 const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
@@ -513,12 +586,31 @@ const CHAT_QUOTA_DIALOG_CONTENT = {
 } as const
 const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
 const CHAT_MESSAGE_RENDER_FALLBACK_TEXT = '该消息暂无法显示'
-const COPY_MESSAGE_ACTION: MessageActionItem = { key: 'copy', label: '复制' }
+const QUOTE_MESSAGE_ACTION: MessageActionItem = { key: 'quote', label: '引用' }
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
   key: 'generateVoice',
   label: '转语音',
 }
+const FEEDBACK_MESSAGE_ACTION: MessageActionItem = {
+  key: 'feedback',
+  label: '反馈',
+}
+const REMEMBER_MESSAGE_ACTION: MessageActionItem = {
+  key: 'remember',
+  label: '记忆！',
+}
 const DELETE_MESSAGE_ACTION: MessageActionItem = { key: 'delete', label: '删除' }
+const FEEDBACK_OPTIONS: Array<{
+  type: ConversationMessageFeedbackType
+  label: string
+}> = [
+  { type: 'accurate', label: '很贴切' },
+  { type: 'unlike', label: '不像本人' },
+  { type: 'wrong_fact', label: '说错了' },
+  { type: 'fabricated', label: '瞎编了' },
+  { type: 'uncomfortable', label: '回复不舒服' },
+  { type: 'other', label: '其他' },
+]
 
 const conversationId = ref('')
 const agentId = ref('')
@@ -540,6 +632,7 @@ const loadError = ref('')
 const isLoadingHistory = ref(false)
 const historyLoadError = ref('')
 const hasMoreHistory = ref(false)
+const isViewingHistoryWindow = ref(false)
 const didInitialShow = ref(false)
 const draftMessage = ref('')
 const draftCursor = ref(0)
@@ -571,6 +664,21 @@ const isChatQuotaDialogVisible = ref(false)
 const chatQuotaDialogType = ref<ChatQuotaDialogType>('remaining')
 const chatQuotaIsVip = ref(false)
 const chatQuotaRemainingCount = ref<number | null>(null)
+const isFeedbackPopupVisible = ref(false)
+const selectedFeedbackMessageId = ref('')
+const selectedFeedbackType = ref<ConversationMessageFeedbackType>('unlike')
+const feedbackContent = ref('')
+const feedbackTextareaPlaceholder = computed(() => {
+  if (selectedFeedbackType.value === 'accurate') {
+    return '可以补充哪里好，Ta 会持续优化'
+  }
+
+  return '可以补充哪里不对，Ta 会记住并调整'
+})
+const isSubmittingFeedback = ref(false)
+const quotedMessageId = ref('')
+const quotedMessageText = ref('')
+const quotedMessageLabel = ref('引用')
 const chatQuotaDialogOverlayStyle = {
   background: 'rgba(0, 0, 0, 0.72)',
   zIndex: CHAT_QUOTA_DIALOG_Z_INDEX,
@@ -781,9 +889,9 @@ const voiceOverlayPanelStyle = computed(() => {
 const displayRows = computed<DisplayRow[]>(() => {
   const rows: DisplayRow[] = []
 
-  messages.value.forEach((message, messageIndex) => {
+  renderMessages.value.forEach((message, messageIndex) => {
     try {
-      appendMessageDisplayRows(rows, message, messages.value[messageIndex - 1])
+      appendMessageDisplayRows(rows, message, renderMessages.value[messageIndex - 1])
     } catch {
       rows.push(buildMessageRenderFallbackRow(message, messageIndex))
     }
@@ -791,6 +899,16 @@ const displayRows = computed<DisplayRow[]>(() => {
 
   return rows
 })
+const renderMessages = computed(() => {
+  if (messages.value.length <= CHAT_RENDER_MESSAGE_WINDOW) {
+    return messages.value
+  }
+
+  return isViewingHistoryWindow.value
+    ? messages.value.slice(0, CHAT_RENDER_MESSAGE_WINDOW)
+    : messages.value.slice(-CHAT_RENDER_MESSAGE_WINDOW)
+})
+const visibleDisplayRows = computed(() => displayRows.value)
 const messageDisplayRowCounts = computed(() => {
   const counts = new Map<string, number>()
 
@@ -818,7 +936,7 @@ function appendMessageDisplayRows(
     })
   }
 
-  const normalizedText = buildMessageText(message)
+  const normalizedText = normalizeEmojiText(buildMessageText(message))
 
   if (message.type === 'image' && message.role !== 'system') {
     rows.push({
@@ -835,6 +953,8 @@ function appendMessageDisplayRows(
       isSending: message.status === 'sending',
       isFailed: message.status === 'failed',
       anchorId: buildMessageAnchorId(message.id),
+      quotedText: '',
+      quotedLabel: '',
     })
     return
   }
@@ -854,13 +974,15 @@ function appendMessageDisplayRows(
       isSending: message.status === 'sending',
       isFailed: message.status === 'failed',
       anchorId: buildMessageAnchorId(message.id),
+      quotedText: '',
+      quotedLabel: '',
     })
     return
   }
 
   const textSegments =
     message.type === 'text' && message.segments.length
-      ? message.segments
+      ? message.segments.map((segment) => normalizeEmojiText(segment))
       : normalizedText
         ? [normalizedText]
         : []
@@ -898,6 +1020,12 @@ function appendMessageDisplayRows(
       isSending: message.status === 'sending',
       isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
       anchorId: segmentIndex === 0 ? buildMessageAnchorId(message.id) : '',
+      quotedText: shouldShowQuotedMessageInRow(message, segmentIndex, textSegments.length)
+        ? getQuotedMessageText(message)
+        : '',
+      quotedLabel: shouldShowQuotedMessageInRow(message, segmentIndex, textSegments.length)
+        ? getQuotedMessageLabel(message)
+        : '',
     })
   })
 }
@@ -917,6 +1045,14 @@ function buildMessageRenderFallbackRow(
   }
 }
 
+function limitLoadedMessages(items: ConversationMessage[]) {
+  if (items.length <= CHAT_MAX_LOADED_MESSAGES) {
+    return items
+  }
+
+  return items.slice(-CHAT_MAX_LOADED_MESSAGES)
+}
+
 useLoad((options) => {
   conversationId.value = decodeRouteParam(options?.conversationId)
   agentId.value = decodeRouteParam(options?.agentId)
@@ -928,6 +1064,7 @@ useLoad((options) => {
   conversationPreview.value = decodeRouteParam(options?.preview)
   conversationCreatedAt.value = decodeRouteParam(options?.createdAt)
 
+  preloadVipCenterWhenAuthenticated()
   void preparePage()
 })
 
@@ -941,6 +1078,10 @@ function decodeRouteParam(value?: string) {
   } catch {
     return value
   }
+}
+
+function scheduleAfterInitialRender(task: () => void) {
+  setTimeout(task, 300)
 }
 
 async function redirectToAuth() {
@@ -979,13 +1120,20 @@ async function preparePage() {
     return
   }
 
+  preloadVipCenterWhenAuthenticated()
+
   if (!conversationId.value) {
     loadError.value = '缺少会话信息，请返回通讯录重新进入'
     isLoading.value = false
     return
   }
 
-  await refreshMessages({ showLoading: true })
+  isLoading.value = messages.value.length === 0
+  void refreshMessages({ showLoading: messages.value.length === 0 })
+  scheduleAfterInitialRender(() => {
+    void refreshAgentSnapshot()
+    void refreshChatQuotaSnapshot()
+  })
 }
 
 function buildMessageAnchorId(messageId: string) {
@@ -1093,18 +1241,18 @@ function clearAssistantSegmentRevealTimers() {
 
 async function revealAssistantMessage(message: ConversationMessage) {
   if (message.type !== 'text' || message.segments.length <= 1) {
-    messages.value = [...messages.value, message]
+    messages.value = limitLoadedMessages([...messages.value, message])
     return
   }
 
   const fullSegments = message.segments
-  messages.value = [
+  messages.value = limitLoadedMessages([
     ...messages.value,
     {
       ...message,
       segments: fullSegments.slice(0, 1),
     },
-  ]
+  ])
   await scrollToBottom()
 
   for (let index = 1; index < fullSegments.length; index += 1) {
@@ -1158,8 +1306,9 @@ async function appendConversationResult(
   tempMessageId: string,
   result: SendConversationMessageResult,
 ) {
+  isViewingHistoryWindow.value = false
   messages.value = messages.value.filter((message) => message.id !== tempMessageId)
-  messages.value = [...messages.value, result.userMessage]
+  messages.value = limitLoadedMessages([...messages.value, result.userMessage])
   handleChatQuotaAfterSend(result)
 
   const assistantMessages = getAssistantMessagesFromResult(result)
@@ -1295,9 +1444,11 @@ useDidShow(() => {
     return
   }
 
-  void refreshAgentSnapshot()
-  void refreshMessages()
-  void refreshChatQuotaSnapshot({ resetBeforeFetch: true })
+  void refreshMessages({ showLoading: false })
+  scheduleAfterInitialRender(() => {
+    void refreshAgentSnapshot()
+    void refreshChatQuotaSnapshot({ resetBeforeFetch: true })
+  })
 })
 
 async function refreshChatQuotaSnapshot(
@@ -1359,9 +1510,11 @@ async function refreshMessages(options: { showLoading?: boolean } = {}) {
 
   refreshMessagesPromise = getConversationMessagesPage(conversationId.value, {
     pageSize: CHAT_MESSAGE_PAGE_SIZE,
+    lightweight: true,
   })
     .then(async (result) => {
-      messages.value = result.items
+      isViewingHistoryWindow.value = false
+      messages.value = limitLoadedMessages(result.items)
       hasMoreHistory.value = result.hasMore
       historyLoadError.value = ''
       probeMissingAssistantVoiceDurations(result.items)
@@ -1411,9 +1564,11 @@ async function loadOlderMessages() {
     const result = await getConversationMessagesPage(conversationId.value, {
       pageSize: CHAT_MESSAGE_PAGE_SIZE,
       beforeCreatedAt,
+      lightweight: true,
     })
 
     messages.value = mergeConversationMessages(messages.value, result.items)
+    isViewingHistoryWindow.value = true
     hasMoreHistory.value = result.hasMore
     probeMissingAssistantVoiceDurations(result.items)
     await scrollToMessageAnchor(anchorId)
@@ -1519,13 +1674,14 @@ async function pollConversationReply() {
   try {
     const result = await getConversationMessagesPage(conversationId.value, {
       pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      lightweight: true,
     })
     const items = result.items
 
     await reconcilePolledMessages(items, pendingAfter)
     probeMissingAssistantVoiceDurations(items)
 
-    if (hasAssistantReplyAfter(messages.value, pendingAfter)) {
+    if (hasAssistantReplyResultAfter(messages.value, pendingAfter)) {
       stopReplyPolling()
       return
     }
@@ -1544,36 +1700,43 @@ async function reconcilePolledMessages(
   items: ConversationMessage[],
   pendingAfter: Date,
 ) {
+  isViewingHistoryWindow.value = false
   const currentMessageIds = new Set(messages.value.map((message) => message.id))
   const newAssistantMessages = items.filter((message) => {
     const createdAt = message.createdAt ?? message.updatedAt
     return (
       message.role === 'assistant'
-      && message.status === 'sent'
+      && isAssistantReplyResultStatus(message.status)
       && Boolean(createdAt && createdAt > pendingAfter)
       && !currentMessageIds.has(message.id)
     )
   })
   const newAssistantIds = new Set(newAssistantMessages.map((message) => message.id))
 
-  messages.value = mergeConversationMessages(
-    messages.value,
-    items.filter((message) => !newAssistantIds.has(message.id)),
+  messages.value = limitLoadedMessages(
+    mergeConversationMessages(
+      messages.value,
+      items.filter((message) => !newAssistantIds.has(message.id)),
+    )
   )
 
   await revealAssistantMessages(newAssistantMessages)
   await scrollToBottom()
 }
 
-function hasAssistantReplyAfter(items: ConversationMessage[], after: Date) {
+function hasAssistantReplyResultAfter(items: ConversationMessage[], after: Date) {
   return items.some((message) => {
     const createdAt = message.createdAt ?? message.updatedAt
     return (
       message.role === 'assistant'
-      && message.status === 'sent'
+      && isAssistantReplyResultStatus(message.status)
       && Boolean(createdAt && createdAt > after)
     )
   })
+}
+
+function isAssistantReplyResultStatus(status: string) {
+  return status === 'sent' || status === 'failed'
 }
 
 function stopReplyPolling() {
@@ -1670,6 +1833,44 @@ function buildMessageText(message: ConversationMessage) {
   }
 
   return message.content.trim()
+}
+
+function shouldShowQuotedMessageInRow(
+  message: ConversationMessage,
+  segmentIndex: number,
+  segmentCount: number,
+) {
+  return (
+    message.role === 'user' &&
+    message.type === 'text' &&
+    segmentIndex === segmentCount - 1 &&
+    Boolean(getQuotedMessageText(message))
+  )
+}
+
+function getQuotedMessageText(message: ConversationMessage) {
+  const content = message.quote?.content?.trim()
+
+  if (!content) {
+    return ''
+  }
+
+  return normalizeEmojiText(content.replace(/\s+/g, ' '))
+}
+
+function getQuotedMessageLabel(message: ConversationMessage) {
+  const quote = message.quote
+  const role = quote?.role?.trim()
+
+  if (role === 'user') {
+    return '我'
+  }
+
+  if (role === 'assistant') {
+    return pageTitle.value
+  }
+
+  return ''
 }
 
 function resolveImageMessageUrl(image?: ConversationImagePayload) {
@@ -1950,6 +2151,16 @@ function shouldOfferVoiceGeneration(message?: ConversationMessage) {
   )
 }
 
+function shouldOfferFeedback(message?: ConversationMessage) {
+  return Boolean(
+    message
+      && message.role === 'assistant'
+      && message.type === 'text'
+      && message.status === 'sent'
+      && !isLocalOnlyMessageId(message.id),
+  )
+}
+
 function getMessageActionItems(
   message?: ConversationMessage,
   copyText = '',
@@ -1958,9 +2169,20 @@ function getMessageActionItems(
     return []
   }
 
+  if (message.role === 'user') {
+    return [
+      ...(copyText.trim() ? [QUOTE_MESSAGE_ACTION] : []),
+      ...(message.status === 'sent' && !isLocalOnlyMessageId(message.id)
+        ? [REMEMBER_MESSAGE_ACTION]
+        : []),
+      DELETE_MESSAGE_ACTION,
+    ]
+  }
+
   return [
-    ...(copyText.trim() ? [COPY_MESSAGE_ACTION] : []),
+    ...(copyText.trim() ? [QUOTE_MESSAGE_ACTION] : []),
     ...(shouldOfferVoiceGeneration(message) ? [GENERATE_VOICE_MESSAGE_ACTION] : []),
+    ...(shouldOfferFeedback(message) ? [FEEDBACK_MESSAGE_ACTION] : []),
     DELETE_MESSAGE_ACTION,
   ]
 }
@@ -2078,8 +2300,8 @@ async function runMessageAction(
   action: MessageActionKey,
   copyText = '',
 ) {
-  if (action === 'copy') {
-    await copyMessageContent(copyText)
+  if (action === 'quote') {
+    quoteMessageContent(message, copyText)
     return
   }
 
@@ -2088,24 +2310,161 @@ async function runMessageAction(
     return
   }
 
+  if (action === 'feedback') {
+    openFeedbackPopup(message)
+    return
+  }
+
+  if (action === 'remember') {
+    await rememberMessageInConversation(message)
+    return
+  }
+
   if (action === 'delete') {
     await deleteMessageFromConversation(message)
   }
 }
 
-async function copyMessageContent(content: string) {
+function openFeedbackPopup(message: ConversationMessage) {
+  if (!shouldOfferFeedback(message)) {
+    showToast('回复生成中，稍后再反馈')
+    return
+  }
+
+  selectedFeedbackMessageId.value = message.id
+  selectedFeedbackType.value = 'unlike'
+  feedbackContent.value = ''
+  isFeedbackPopupVisible.value = true
+}
+
+function closeFeedbackPopup() {
+  if (isSubmittingFeedback.value) {
+    return
+  }
+
+  isFeedbackPopupVisible.value = false
+}
+
+function handleFeedbackContentInput(event: InputEvent | { detail?: { value?: string } }) {
+  const value = 'detail' in event ? event.detail?.value : undefined
+  feedbackContent.value = typeof value === 'string' ? value : ''
+}
+
+function buildFeedbackPayload() {
+  if (selectedFeedbackType.value !== 'accurate') {
+    return {
+      type: selectedFeedbackType.value,
+      content: feedbackContent.value,
+    }
+  }
+
+  const content = feedbackContent.value.trim()
+
+  return {
+    type: 'other' as const,
+    content: content ? `很贴切。${content}` : '很贴切',
+  }
+}
+
+async function handleFeedbackSubmit() {
+  if (
+    !conversationId.value ||
+    !selectedFeedbackMessageId.value ||
+    isSubmittingFeedback.value
+  ) {
+    return
+  }
+
+  isSubmittingFeedback.value = true
+  const currentConversationId = conversationId.value
+  const currentFeedbackMessageId = selectedFeedbackMessageId.value
+  const payload = buildFeedbackPayload()
+
+  isFeedbackPopupVisible.value = false
+  isSubmittingFeedback.value = false
+  showToast('已收到反馈')
+
+  void submitConversationMessageFeedback(
+    currentConversationId,
+    currentFeedbackMessageId,
+    payload,
+  ).catch(async (error) => {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    console.warn('[chat] feedback submission failed', error)
+  })
+}
+
+function quoteMessageContent(message: ConversationMessage, content: string) {
   const text = content.trim()
   if (!text) {
     return
   }
 
+  if (message.status !== 'sent' || isLocalOnlyMessageId(message.id)) {
+    showToast('消息发送中，暂不能引用')
+    return
+  }
+
+  quotedMessageId.value = message.id
+  quotedMessageText.value = text
+  quotedMessageLabel.value = message.role === 'user' ? '引用自己' : `引用${pageTitle.value}`
+  isVoiceMode.value = false
+  hideComposerPanels()
+}
+
+function clearQuotedMessage() {
+  quotedMessageId.value = ''
+  quotedMessageText.value = ''
+  quotedMessageLabel.value = '引用'
+}
+
+function restoreQuotedMessageFromOptions(options: {
+  restoreQuoteMessageId?: string
+  restoreQuoteText?: string
+  restoreQuoteLabel?: string
+}) {
+  if (!options.restoreQuoteMessageId || !options.restoreQuoteText) {
+    return
+  }
+
+  quotedMessageId.value = options.restoreQuoteMessageId
+  quotedMessageText.value = options.restoreQuoteText
+  quotedMessageLabel.value = options.restoreQuoteLabel || '引用'
+}
+
+async function rememberMessageInConversation(message: ConversationMessage) {
+  if (message.role !== 'user') {
+    return
+  }
+
+  if (message.status !== 'sent' || isLocalOnlyMessageId(message.id)) {
+    showToast('消息发送中，暂不能记忆')
+    return
+  }
+
+  if (!conversationId.value) {
+    return
+  }
+
   try {
-    await Taro.setClipboardData({
-      data: text,
-    })
-    showToast('已复制')
-  } catch {
-    showToast('复制失败，请稍后重试')
+    await markConversationMessageMemory(conversationId.value, message.id)
+    showToast('Ta 会永远记住这句话的')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth()
+      return
+    }
+
+    if (error instanceof ApiException && error.code === 'RESOURCE_NOT_FOUND') {
+      showToast('Ta 会永远记住这句话的')
+      return
+    }
+
+    showToast(error instanceof ApiException ? error.message : '记忆失败，请稍后重试')
   }
 }
 
@@ -2181,7 +2540,14 @@ function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
 useDidShow(() => {
   isChatPageVisible = true
   muteVoicePlaybackErrors(800)
+  preloadVipCenterWhenAuthenticated()
 })
+
+function preloadVipCenterWhenAuthenticated() {
+  if (authSession.value) {
+    preloadVipPurchaseCenter()
+  }
+}
 
 useDidHide(() => {
   isChatPageVisible = false
@@ -3017,24 +3383,39 @@ async function handleSend() {
 
   const originalDraft = limitChatText(draftMessage.value)
   const originalDraftCursor = clampCursor(draftCursor.value, originalDraft)
+  const originalQuotedMessageId = quotedMessageId.value
+  const originalQuotedMessageText = quotedMessageText.value
+  const originalQuotedMessageLabel = quotedMessageLabel.value
 
   draftMessage.value = ''
   draftCursor.value = 0
+  clearQuotedMessage()
   await sendTextMessageContent(content, {
     restoreDraft: originalDraft,
     restoreCursor: originalDraftCursor,
+    restoreQuoteMessageId: originalQuotedMessageId,
+    restoreQuoteText: originalQuotedMessageText,
+    restoreQuoteLabel: originalQuotedMessageLabel,
     skipQuotaCheck: true,
   })
 }
 
 async function sendTextMessageContent(
   content: string,
-  options: { restoreDraft?: string; restoreCursor?: number; skipQuotaCheck?: boolean } = {},
+  options: {
+    restoreDraft?: string
+    restoreCursor?: number
+    restoreQuoteMessageId?: string
+    restoreQuoteText?: string
+    restoreQuoteLabel?: string
+    skipQuotaCheck?: boolean
+  } = {},
 ) {
   if (!options.skipQuotaCheck && !(await ensureChatQuotaAvailableBeforeSend())) {
     if (typeof options.restoreDraft === 'string') {
       draftMessage.value = options.restoreDraft
       draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
+      restoreQuotedMessageFromOptions(options)
     }
     return
   }
@@ -3043,7 +3424,8 @@ async function sendTextMessageContent(
 
   isTextSendSubmitting.value = true
   isMorePanelVisible.value = false
-  messages.value = [
+  isViewingHistoryWindow.value = false
+  messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
@@ -3053,16 +3435,22 @@ async function sendTextMessageContent(
       content,
       segments: [content],
       status: 'sending',
+      quote: options.restoreQuoteMessageId
+        ? {
+            messageId: options.restoreQuoteMessageId,
+            role: options.restoreQuoteLabel === '引用自己' ? 'user' : 'assistant',
+            content: options.restoreQuoteText,
+          }
+        : undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
-  ]
+  ])
   await scrollToBottom()
 
   try {
-    const result = await sendConversationMessageAsync(conversationId.value, {
-      content,
-      type: 'text',
+    const result = await sendTextMessageWithQuoteFallback(content, {
+      quotedMessageId: options.restoreQuoteMessageId,
     })
 
     await appendConversationResult(tempId, result)
@@ -3084,6 +3472,7 @@ async function sendTextMessageContent(
       if (typeof options.restoreDraft === 'string') {
         draftMessage.value = options.restoreDraft
         draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
+        restoreQuotedMessageFromOptions(options)
       }
       messages.value = messages.value.filter((message) => message.id !== tempId)
       showChatQuotaExhaustedDialog()
@@ -3094,6 +3483,7 @@ async function sendTextMessageContent(
     if (typeof options.restoreDraft === 'string') {
       draftMessage.value = options.restoreDraft
       draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
+      restoreQuotedMessageFromOptions(options)
     }
     messages.value = messages.value.map((message) =>
       message.id === tempId
@@ -3109,6 +3499,32 @@ async function sendTextMessageContent(
   }
 
   isTextSendSubmitting.value = false
+}
+
+async function sendTextMessageWithQuoteFallback(
+  content: string,
+  options: { quotedMessageId?: string } = {},
+) {
+  try {
+    return await sendConversationMessageAsync(conversationId.value, {
+      content,
+      type: 'text',
+      quotedMessageId: options.quotedMessageId,
+    })
+  } catch (error) {
+    if (
+      !options.quotedMessageId ||
+      (error instanceof ApiException &&
+        (error.requiresReLogin || isChatQuotaLimitError(error)))
+    ) {
+      throw error
+    }
+
+    return sendConversationMessageAsync(conversationId.value, {
+      content,
+      type: 'text',
+    })
+  }
 }
 
 async function pickAndSendImage(sourceType: ChatImageSourceType) {
@@ -3166,7 +3582,8 @@ async function sendImageMessage(image: PickedChatImage) {
 
   isSending.value = true
   isMorePanelVisible.value = false
-  messages.value = [
+  isViewingHistoryWindow.value = false
+  messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
@@ -3183,7 +3600,7 @@ async function sendImageMessage(image: PickedChatImage) {
       createdAt: now,
       updatedAt: now,
     },
-  ]
+  ])
   await scrollToBottom()
 
   try {
@@ -3206,15 +3623,17 @@ async function sendImageMessage(image: PickedChatImage) {
         : message
     )
 
-    await runWithAgentReplyStatus(async () => {
-      const result = await sendConversationMessage(conversationId.value, {
-        type: 'image',
-        objectKey: uploaded.objectKey,
-        mimeType,
-      })
-
-      await appendConversationResult(tempId, result)
+    const result = await sendConversationMessageAsync(conversationId.value, {
+      type: 'image',
+      objectKey: uploaded.objectKey,
+      mimeType,
     })
+
+    await appendConversationResult(tempId, result)
+    if (result.replyPending) {
+      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
+      startReplyPolling(pendingAfter)
+    }
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
@@ -3267,7 +3686,8 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
 
   isSending.value = true
   isMorePanelVisible.value = false
-  messages.value = [
+  isViewingHistoryWindow.value = false
+  messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
@@ -3285,7 +3705,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
       createdAt: now,
       updatedAt: now,
     },
-  ]
+  ])
   await scrollToBottom()
 
   try {
@@ -3310,16 +3730,18 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
         : message
     )
 
-    await runWithAgentReplyStatus(async () => {
-      const result = await sendConversationMessage(conversationId.value, {
-        type: 'voice',
-        objectKey: uploaded.objectKey,
-        mimeType,
-        durationMs,
-      })
-
-      await appendConversationResult(tempId, result)
+    const result = await sendConversationMessageAsync(conversationId.value, {
+      type: 'voice',
+      objectKey: uploaded.objectKey,
+      mimeType,
+      durationMs,
     })
+
+    await appendConversationResult(tempId, result)
+    if (result.replyPending) {
+      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
+      startReplyPolling(pendingAfter)
+    }
     loadError.value = ''
     await scrollToBottom()
   } catch (error) {
@@ -3773,6 +4195,106 @@ function destroyVoiceDurationProbeContexts() {
   line-height: 22px;
   font-weight: 600;
   color: #111111;
+}
+
+.chat-feedback-popup {
+  padding: 24px 20px 18px;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.chat-feedback-popup__title {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.chat-feedback-popup__desc {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: #667085;
+}
+
+.chat-feedback-popup__options {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chat-feedback-popup__option {
+  min-width: 82px;
+  height: 36px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 20px;
+  color: #344054;
+}
+
+.chat-feedback-popup__option--active {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.chat-feedback-popup__textarea {
+  margin-top: 16px;
+  width: 100%;
+  height: 92px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f6f7f8;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 20px;
+  color: #111111;
+}
+
+.chat-feedback-popup__textarea-placeholder {
+  color: #98a2b3;
+}
+
+.chat-feedback-popup__footer {
+  margin-top: 18px;
+  display: flex;
+  gap: 10px;
+}
+
+.chat-feedback-popup__cancel,
+.chat-feedback-popup__submit {
+  height: 44px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+.chat-feedback-popup__cancel {
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.chat-feedback-popup__submit {
+  background: #111111;
+  color: #ffffff;
+}
+
+.chat-feedback-popup__submit--disabled {
+  opacity: 0.56;
 }
 
 .chat-message-list {

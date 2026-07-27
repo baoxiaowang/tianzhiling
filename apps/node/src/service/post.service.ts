@@ -132,6 +132,8 @@ export interface PostNotificationItem {
   contentPreview: string;
   replyToUserName: string;
   postThumbnail: string;
+  postContentPreview: string;
+  isSeen: boolean;
   isRead: boolean;
   createdAt: string;
 }
@@ -139,6 +141,13 @@ export interface PostNotificationItem {
 export interface PostNotificationSummary {
   unreadCount: number;
   latest: PostNotificationItem | null;
+  unseenCount: number;
+  latestUnseen: PostNotificationItem | null;
+}
+
+export interface PostNotificationEntrySummary {
+  unseenCount: number;
+  latestUnseen: PostNotificationItem | null;
 }
 
 export interface PostNotificationListResult {
@@ -146,11 +155,24 @@ export interface PostNotificationListResult {
   page: number;
   pageSize: number;
   hasMore: boolean;
+  readFilterApplied?: boolean;
 }
 
 export interface ReadPostNotificationsResult {
   items: PostNotificationItem[];
   readCount: number;
+  unreadCount: number;
+}
+
+export interface ReadPostNotificationResult {
+  notificationId: string;
+  readCount: number;
+  unreadCount: number;
+}
+
+export interface SeePostNotificationsResult {
+  seenCount: number;
+  unseenCount: number;
   unreadCount: number;
 }
 
@@ -163,6 +185,7 @@ interface ListPostsOptions {
   page?: number | string;
   pageSize?: number | string;
   mine?: boolean | string;
+  read?: boolean | string;
 }
 
 type MongoWhere = Record<string, unknown>;
@@ -371,34 +394,90 @@ export class PostService {
     auth: AuthenticatedUserPayload
   ): Promise<PostNotificationSummary> {
     const userId = this.parseObjectId(auth.sub);
-    const notifications = await this.notificationModel.find({
-      where: {
-        userId,
-        isRead: false,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    });
-    const legacyCommentNotifications = await this.commentNotificationModel.find(
-      {
-        where: {
-          userId,
-          isRead: false,
-        },
-        order: {
-          createdAt: 'DESC',
-        },
-      }
+    const unreadQuery = { userId, isRead: false };
+    const [notifications, legacyCommentNotifications, user] = await Promise.all(
+      [
+        this.notificationModel.find({
+          where: unreadQuery,
+          order: {
+            createdAt: 'DESC',
+          },
+        }),
+        this.commentNotificationModel.find({
+          where: unreadQuery,
+          order: {
+            createdAt: 'DESC',
+          },
+        }),
+        this.findUserById(userId),
+      ]
     );
-    const items = this.mergePostNotificationItems(
+    const validNotifications = await this.filterAndPrunePostNotifications(
       notifications,
       legacyCommentNotifications
+    );
+    const items = this.mergePostNotificationItems(
+      validNotifications.notifications,
+      validNotifications.legacyCommentNotifications,
+      validNotifications.postContentPreviewById
+    );
+    const unseenItems = this.filterUnseenPostNotificationItems(
+      items,
+      user?.postNotificationSeenAt
     );
 
     return {
       unreadCount: items.length,
       latest: items[0] ?? null,
+      unseenCount: unseenItems.length,
+      latestUnseen: unseenItems[0] ?? null,
+    };
+  }
+
+  async getPostNotificationEntrySummary(
+    auth: AuthenticatedUserPayload
+  ): Promise<PostNotificationEntrySummary> {
+    const userId = this.parseObjectId(auth.sub);
+    const user = await this.findUserById(userId);
+    const seenAt = this.normalizeDate(user?.postNotificationSeenAt);
+    const where = seenAt
+      ? {
+          userId,
+          createdAt: {
+            $gt: seenAt,
+          },
+        }
+      : { userId };
+    const [notifications, legacyCommentNotifications] = await Promise.all([
+      this.notificationModel.find({
+        where: where as never,
+        order: {
+          createdAt: 'DESC',
+        },
+      }),
+      this.commentNotificationModel.find({
+        where: where as never,
+        order: {
+          createdAt: 'DESC',
+        },
+      }),
+    ]);
+    const validNotifications = await this.filterAndPrunePostNotifications(
+      notifications,
+      legacyCommentNotifications
+    );
+    const unseenItems = this.filterUnseenPostNotificationItems(
+      this.mergePostNotificationItems(
+        validNotifications.notifications,
+        validNotifications.legacyCommentNotifications,
+        validNotifications.postContentPreviewById
+      ),
+      seenAt
+    );
+
+    return {
+      unseenCount: unseenItems.length,
+      latestUnseen: unseenItems[0] ?? null,
     };
   }
 
@@ -411,10 +490,13 @@ export class PostService {
     const pageSize = this.normalizePositiveInteger(options.pageSize, 20, 50);
     const skip = (page - 1) * pageSize;
     const take = skip + pageSize + 1;
+    const readFilter = this.normalizeOptionalBoolean(options.read);
+    const where = {
+      userId,
+      ...(readFilter === undefined ? {} : { isRead: readFilter }),
+    };
     const notifications = await this.notificationModel.find({
-      where: {
-        userId,
-      },
+      where,
       order: {
         createdAt: 'DESC',
       },
@@ -422,18 +504,21 @@ export class PostService {
     });
     const legacyCommentNotifications = await this.commentNotificationModel.find(
       {
-        where: {
-          userId,
-        },
+        where,
         order: {
           createdAt: 'DESC',
         },
         take,
       }
     );
-    const items = this.mergePostNotificationItems(
+    const validNotifications = await this.filterAndPrunePostNotifications(
       notifications,
       legacyCommentNotifications
+    );
+    const items = this.mergePostNotificationItems(
+      validNotifications.notifications,
+      validNotifications.legacyCommentNotifications,
+      validNotifications.postContentPreviewById
     );
     const pageItems = items.slice(skip, skip + pageSize);
 
@@ -442,6 +527,7 @@ export class PostService {
       page,
       pageSize,
       hasMore: items.length > skip + pageSize,
+      readFilterApplied: readFilter !== undefined,
     };
   }
 
@@ -469,30 +555,41 @@ export class PostService {
         },
       }
     );
-    const items = this.mergePostNotificationItems(
+    const validNotifications = await this.filterAndPrunePostNotifications(
       notifications,
       legacyCommentNotifications
     );
+    const items = this.mergePostNotificationItems(
+      validNotifications.notifications,
+      validNotifications.legacyCommentNotifications,
+      validNotifications.postContentPreviewById
+    );
     const now = new Date();
 
-    for (const notification of notifications) {
+    for (const notification of validNotifications.notifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
       notification.isRead = true;
       notification.readAt = now;
       notification.updatedAt = now;
     }
 
-    for (const notification of legacyCommentNotifications) {
+    for (const notification of validNotifications.legacyCommentNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
       notification.isRead = true;
       notification.readAt = now;
       notification.updatedAt = now;
     }
 
-    if (notifications.length > 0) {
-      await this.notificationModel.save(notifications);
+    if (validNotifications.notifications.length > 0) {
+      await this.notificationModel.save(validNotifications.notifications);
     }
 
-    if (legacyCommentNotifications.length > 0) {
-      await this.commentNotificationModel.save(legacyCommentNotifications);
+    if (validNotifications.legacyCommentNotifications.length > 0) {
+      await this.commentNotificationModel.save(
+        validNotifications.legacyCommentNotifications
+      );
     }
 
     const unreadCount = await this.countUnreadPostNotifications(userId);
@@ -501,6 +598,208 @@ export class PostService {
       items,
       readCount: items.length,
       unreadCount,
+    };
+  }
+
+  async seePostNotifications(
+    auth: AuthenticatedUserPayload
+  ): Promise<SeePostNotificationsResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const unreadQuery = { userId, isRead: false };
+    const [notifications, legacyCommentNotifications, user] = await Promise.all(
+      [
+        this.notificationModel.find({
+          where: unreadQuery,
+          order: {
+            createdAt: 'DESC',
+          },
+        }),
+        this.commentNotificationModel.find({
+          where: unreadQuery,
+          order: {
+            createdAt: 'DESC',
+          },
+        }),
+        this.findUserById(userId),
+      ]
+    );
+    const validNotifications = await this.filterAndPrunePostNotifications(
+      notifications,
+      legacyCommentNotifications
+    );
+    const unseenItems = this.filterUnseenPostNotificationItems(
+      this.mergePostNotificationItems(
+        validNotifications.notifications,
+        validNotifications.legacyCommentNotifications,
+        validNotifications.postContentPreviewById
+      ),
+      user?.postNotificationSeenAt
+    );
+    const unseenNotifications = validNotifications.notifications.filter(
+      notification => notification.isSeen !== true
+    );
+    const unseenLegacyNotifications =
+      validNotifications.legacyCommentNotifications.filter(
+        notification => notification.isSeen !== true
+      );
+    const now = new Date();
+
+    for (const notification of unseenNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = now;
+      notification.updatedAt = now;
+    }
+
+    for (const notification of unseenLegacyNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = now;
+      notification.updatedAt = now;
+    }
+
+    if (unseenNotifications.length > 0) {
+      await this.notificationModel.save(unseenNotifications);
+    }
+
+    if (unseenLegacyNotifications.length > 0) {
+      await this.commentNotificationModel.save(unseenLegacyNotifications);
+    }
+
+    if (user) {
+      const latestCreatedAt = this.getLatestPostNotificationCreatedAt(
+        validNotifications.notifications,
+        validNotifications.legacyCommentNotifications
+      );
+      const previousSeenAt = this.normalizeDate(user.postNotificationSeenAt);
+      const nextSeenAt =
+        latestCreatedAt && (!previousSeenAt || latestCreatedAt > previousSeenAt)
+          ? latestCreatedAt
+          : previousSeenAt ?? new Date();
+
+      user.postNotificationSeenAt = nextSeenAt;
+      await this.userModel.save(user);
+    }
+
+    return {
+      seenCount: unseenItems.length,
+      unseenCount: 0,
+      unreadCount: await this.countUnreadPostNotifications(userId),
+    };
+  }
+
+  async readPostNotification(
+    auth: AuthenticatedUserPayload,
+    notificationId: string
+  ): Promise<ReadPostNotificationResult> {
+    const userId = this.parseObjectId(auth.sub);
+    const normalizedNotificationId = this.normalizeObjectId(notificationId);
+
+    if (!normalizedNotificationId) {
+      throw new AppError(
+        'POST_NOTIFICATION_NOT_FOUND',
+        'post notification not found',
+        404
+      );
+    }
+
+    const [targetNotification, targetLegacyNotification] = await Promise.all([
+      this.findPostNotificationByIdForUser(userId, normalizedNotificationId),
+      this.findLegacyCommentNotificationByIdForUser(
+        userId,
+        normalizedNotificationId
+      ),
+    ]);
+    const targetNotifications = targetNotification ? [targetNotification] : [];
+    const targetLegacyNotifications = targetLegacyNotification
+      ? [targetLegacyNotification]
+      : [];
+
+    if (
+      targetNotifications.length === 0 &&
+      targetLegacyNotifications.length === 0
+    ) {
+      throw new AppError(
+        'POST_NOTIFICATION_NOT_FOUND',
+        'post notification not found',
+        404
+      );
+    }
+
+    const relatedCommentIds = new Set<string>();
+
+    for (const notification of targetNotifications) {
+      if (
+        notification.type === PostNotificationType.comment &&
+        notification.commentId
+      ) {
+        relatedCommentIds.add(this.stringifyObjectId(notification.commentId));
+      }
+    }
+
+    for (const notification of targetLegacyNotifications) {
+      relatedCommentIds.add(this.stringifyObjectId(notification.commentId));
+    }
+
+    const relatedCommentId = Array.from(relatedCommentIds)[0];
+    const [mirroredNotifications, mirroredLegacyNotifications] =
+      relatedCommentId
+        ? await Promise.all([
+            this.notificationModel.find({
+              where: {
+                userId,
+                commentId: this.parseObjectId(relatedCommentId),
+                type: PostNotificationType.comment,
+              },
+            }),
+            this.commentNotificationModel.find({
+              where: {
+                userId,
+                commentId: this.parseObjectId(relatedCommentId),
+              },
+            }),
+          ])
+        : [[], []];
+    const notificationsToRead = Array.from(
+      new Set([...targetNotifications, ...mirroredNotifications])
+    );
+    const legacyNotificationsToRead = Array.from(
+      new Set([...targetLegacyNotifications, ...mirroredLegacyNotifications])
+    );
+    const now = new Date();
+    const unreadNotifications = notificationsToRead.filter(
+      notification => notification.isRead !== true
+    );
+    const unreadLegacyNotifications = legacyNotificationsToRead.filter(
+      notification => notification.isRead !== true
+    );
+
+    for (const notification of unreadNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    for (const notification of unreadLegacyNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    if (unreadNotifications.length > 0) {
+      await this.notificationModel.save(unreadNotifications);
+    }
+
+    if (unreadLegacyNotifications.length > 0) {
+      await this.commentNotificationModel.save(unreadLegacyNotifications);
+    }
+
+    return {
+      notificationId: this.stringifyObjectId(normalizedNotificationId),
+      readCount: unreadNotifications.length + unreadLegacyNotifications.length,
+      unreadCount: await this.countUnreadPostNotifications(userId),
     };
   }
 
@@ -522,10 +821,103 @@ export class PostService {
       }
     );
 
-    return this.mergePostNotificationItems(
+    const validNotifications = await this.filterAndPrunePostNotifications(
       notifications,
       legacyCommentNotifications
+    );
+
+    return this.mergePostNotificationItems(
+      validNotifications.notifications,
+      validNotifications.legacyCommentNotifications,
+      validNotifications.postContentPreviewById
     ).length;
+  }
+
+  private async findPostNotificationByIdForUser(
+    userId: MongoObjectId,
+    notificationId: MongoObjectId
+  ): Promise<PostNotificationEntity | null> {
+    const byId = await this.notificationModel.findOne({
+      where: {
+        id: notificationId,
+        userId,
+      },
+    });
+
+    if (byId) {
+      return byId;
+    }
+
+    return this.notificationModel.findOne({
+      where: {
+        _id: notificationId,
+        userId,
+      } as never,
+    });
+  }
+
+  private async findLegacyCommentNotificationByIdForUser(
+    userId: MongoObjectId,
+    notificationId: MongoObjectId
+  ): Promise<PostCommentNotificationEntity | null> {
+    const byId = await this.commentNotificationModel.findOne({
+      where: {
+        id: notificationId,
+        userId,
+      },
+    });
+
+    if (byId) {
+      return byId;
+    }
+
+    return this.commentNotificationModel.findOne({
+      where: {
+        _id: notificationId,
+        userId,
+      } as never,
+    });
+  }
+
+  private async markMirroredPostCommentNotificationsRead(
+    userId: MongoObjectId,
+    commentIds: MongoObjectId[],
+    now: Date
+  ): Promise<void> {
+    const normalizedCommentIds = new Set(
+      commentIds.map(commentId => this.stringifyObjectId(commentId))
+    );
+
+    if (normalizedCommentIds.size === 0) {
+      return;
+    }
+
+    const notifications = await this.notificationModel.find({
+      where: {
+        userId,
+        isRead: false,
+      },
+    });
+    const mirroredNotifications = notifications.filter(
+      notification =>
+        notification.type === PostNotificationType.comment &&
+        Boolean(notification.commentId) &&
+        normalizedCommentIds.has(
+          this.stringifyObjectId(notification.commentId!)
+        )
+    );
+
+    for (const notification of mirroredNotifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
+      notification.isRead = true;
+      notification.readAt = now;
+      notification.updatedAt = now;
+    }
+
+    if (mirroredNotifications.length > 0) {
+      await this.notificationModel.save(mirroredNotifications);
+    }
   }
 
   async readUnreadCommentNotifications(
@@ -547,6 +939,8 @@ export class PostService {
     const now = new Date();
 
     for (const notification of notifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
       notification.isRead = true;
       notification.readAt = now;
       notification.updatedAt = now;
@@ -554,6 +948,11 @@ export class PostService {
 
     if (notifications.length > 0) {
       await this.commentNotificationModel.save(notifications);
+      await this.markMirroredPostCommentNotificationsRead(
+        userId,
+        notifications.map(notification => notification.commentId),
+        now
+      );
     }
 
     const unreadCount = await this.commentNotificationModel.count({
@@ -598,6 +997,8 @@ export class PostService {
 
     const now = new Date();
     for (const notification of notifications) {
+      notification.isSeen = true;
+      notification.seenAt = notification.seenAt ?? now;
       notification.isRead = true;
       notification.readAt = now;
       notification.updatedAt = now;
@@ -605,6 +1006,11 @@ export class PostService {
 
     if (notifications.length > 0) {
       await this.commentNotificationModel.save(notifications);
+      await this.markMirroredPostCommentNotificationsRead(
+        userId,
+        notifications.map(notification => notification.commentId),
+        now
+      );
     }
 
     const unreadCount = await this.commentNotificationModel.count({
@@ -680,6 +1086,8 @@ export class PostService {
       await this.postModel.save(post);
     }
 
+    await this.deleteNotificationsByPostId(post.id);
+
     return {
       id: this.stringifyObjectId(post.id),
       deleted: true,
@@ -718,7 +1126,24 @@ export class PostService {
 
     if (shouldCreateNotification) {
       const user = await this.findUserById(userId);
-      await this.createLikeNotification(post, userId, user);
+      try {
+        await this.createLikeNotification(post, userId, user);
+      } catch (error) {
+        await this.likeModel
+          .deleteOne({
+            postId: post.id,
+            userId,
+          } as never)
+          .catch(cleanupError => {
+            this.logger.warn(
+              '[post-like] failed to roll back like after notification failure, postId=%s, userId=%s, error=%s',
+              postId,
+              auth.sub,
+              String(cleanupError)
+            );
+          });
+        throw error;
+      }
     }
 
     return this.getPostDetail(postId, auth);
@@ -732,11 +1157,11 @@ export class PostService {
     const userId = this.parseObjectId(auth.sub);
     this.assertPostViewableByUser(post, userId);
 
+    await this.deleteLikeNotification(post.id, userId);
     await this.likeModel.deleteOne({
       postId: post.id,
       userId,
     } as never);
-    await this.deleteLikeNotification(post.id, userId);
 
     return this.getPostDetail(postId, auth);
   }
@@ -794,8 +1219,13 @@ export class PostService {
     comment.updatedAt = now;
 
     const savedComment = await this.commentModel.save(comment);
-    await this.createCommentNotification(post, savedComment, user, null);
-    await this.enqueueAgentCommentReplyJob(post, savedComment, replyToComment);
+    try {
+      await this.createCommentNotification(post, savedComment, user, null);
+      await this.enqueueAgentCommentReplyJob(post, savedComment, replyToComment);
+    } catch (error) {
+      await this.rollbackCreatedComment(savedComment);
+      throw error;
+    }
 
     return this.buildCommentItem(
       savedComment,
@@ -1009,8 +1439,14 @@ export class PostService {
     comment.updatedAt = now;
 
     const savedComment = await this.commentModel.save(comment);
-    await this.createCommentNotification(post, savedComment, null, agent);
-    return savedComment;
+
+    try {
+      await this.createCommentNotification(post, savedComment, null, agent);
+      return savedComment;
+    } catch (error) {
+      await this.rollbackCreatedComment(savedComment);
+      throw error;
+    }
   }
 
   private buildListPostsWhere(
@@ -1112,6 +1548,49 @@ export class PostService {
     const parsed = value instanceof Date ? value : new Date(value);
 
     return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
+  private filterUnseenPostNotificationItems(
+    items: PostNotificationItem[],
+    seenAt?: Date
+  ): PostNotificationItem[] {
+    const normalizedSeenAt = this.normalizeDate(seenAt);
+
+    return items.filter(item => {
+      if (item.isSeen === true) {
+        return false;
+      }
+
+      if (!normalizedSeenAt) {
+        return true;
+      }
+
+      const createdAt = this.normalizeDate(
+        item.createdAt ? new Date(item.createdAt) : undefined
+      );
+
+      return Boolean(createdAt && createdAt > normalizedSeenAt);
+    });
+  }
+
+  private getLatestPostNotificationCreatedAt(
+    notifications: PostNotificationEntity[],
+    legacyCommentNotifications: PostCommentNotificationEntity[]
+  ): Date | undefined {
+    let latestCreatedAt: Date | undefined;
+
+    for (const notification of [
+      ...notifications,
+      ...legacyCommentNotifications,
+    ]) {
+      const createdAt = this.normalizeDate(notification.createdAt);
+
+      if (createdAt && (!latestCreatedAt || createdAt > latestCreatedAt)) {
+        latestCreatedAt = createdAt;
+      }
+    }
+
+    return latestCreatedAt;
   }
 
   private isSameObjectId(
@@ -1379,7 +1858,8 @@ export class PostService {
   }
 
   private buildPostNotificationItem(
-    notification: PostNotificationEntity
+    notification: PostNotificationEntity,
+    postContentPreview = ''
   ): PostNotificationItem {
     return {
       id: this.stringifyObjectId(notification.id),
@@ -1410,13 +1890,16 @@ export class PostService {
             notification.postThumbnail?.trim() || ''
           )
         : '',
+      postContentPreview,
+      isSeen: notification.isSeen === true || notification.isRead === true,
       isRead: notification.isRead === true,
       createdAt: notification.createdAt?.toISOString?.() ?? '',
     };
   }
 
   private buildPostNotificationItemFromComment(
-    notification: PostCommentNotificationEntity
+    notification: PostCommentNotificationEntity,
+    postContentPreview = ''
   ): PostNotificationItem {
     return {
       id: this.stringifyObjectId(notification.id),
@@ -1438,18 +1921,134 @@ export class PostService {
             notification.postThumbnail?.trim() || ''
           )
         : '',
+      postContentPreview,
+      isSeen: notification.isSeen === true || notification.isRead === true,
       isRead: notification.isRead === true,
       createdAt: notification.createdAt?.toISOString?.() ?? '',
     };
   }
 
-  private mergePostNotificationItems(
+  private async filterAndPrunePostNotifications(
     notifications: PostNotificationEntity[],
     legacyCommentNotifications: PostCommentNotificationEntity[]
-  ): PostNotificationItem[] {
-    const items = notifications.map(notification =>
-      this.buildPostNotificationItem(notification)
+  ): Promise<{
+    notifications: PostNotificationEntity[];
+    legacyCommentNotifications: PostCommentNotificationEntity[];
+    postContentPreviewById: Map<string, string>;
+  }> {
+    const postIds = Array.from(
+      new Set(
+        [
+          ...notifications.map(notification => notification.postId),
+          ...legacyCommentNotifications.map(notification => notification.postId),
+        ].map(postId => this.stringifyObjectId(postId))
+      )
     );
+    const validPostIds = new Set<string>();
+    const postContentPreviewById = new Map<string, string>();
+    const postObjectIds = postIds
+      .map(postId => this.normalizeObjectId(postId))
+      .filter((postId): postId is MongoObjectId => Boolean(postId));
+    const posts =
+      postObjectIds.length > 0
+        ? await this.postModel.find({
+            where: {
+              _id: {
+                $in: postObjectIds,
+              },
+            } as never,
+          })
+        : [];
+
+    for (const post of posts) {
+      const postId = this.stringifyObjectId(post.id);
+
+      if (post.isDeleted !== true) {
+        validPostIds.add(postId);
+        postContentPreviewById.set(
+          postId,
+          this.buildPostContentPreview(post.content)
+        );
+      }
+    }
+
+    const validNotifications = notifications.filter(notification =>
+      validPostIds.has(this.stringifyObjectId(notification.postId))
+    );
+    const validLegacyCommentNotifications = legacyCommentNotifications.filter(
+      notification =>
+        validPostIds.has(this.stringifyObjectId(notification.postId))
+    );
+    const deletedNotifications = notifications.filter(
+      notification => !validNotifications.includes(notification)
+    );
+    const deletedLegacyCommentNotifications = legacyCommentNotifications.filter(
+      notification => !validLegacyCommentNotifications.includes(notification)
+    );
+
+    await Promise.all([
+      ...deletedNotifications.map(notification =>
+        this.notificationModel.deleteOne({
+          _id: notification.id,
+        } as never)
+      ),
+      ...deletedLegacyCommentNotifications.map(notification =>
+        this.commentNotificationModel.deleteOne({
+          _id: notification.id,
+        } as never)
+      ),
+    ]);
+
+    return {
+      notifications: validNotifications,
+      legacyCommentNotifications: validLegacyCommentNotifications,
+      postContentPreviewById,
+    };
+  }
+
+  private async deleteNotificationsByPostId(
+    postId: MongoObjectId
+  ): Promise<void> {
+    const [notifications, legacyCommentNotifications] = await Promise.all([
+      this.notificationModel.find({
+        where: {
+          postId,
+        },
+      }),
+      this.commentNotificationModel.find({
+        where: {
+          postId,
+        },
+      }),
+    ]);
+
+    await Promise.all([
+      ...notifications.map(notification =>
+        this.notificationModel.deleteOne({
+          _id: notification.id,
+        } as never)
+      ),
+      ...legacyCommentNotifications.map(notification =>
+        this.commentNotificationModel.deleteOne({
+          _id: notification.id,
+        } as never)
+      ),
+    ]);
+  }
+
+  private mergePostNotificationItems(
+    notifications: PostNotificationEntity[],
+    legacyCommentNotifications: PostCommentNotificationEntity[],
+    postContentPreviewById = new Map<string, string>()
+  ): PostNotificationItem[] {
+    const items = notifications.map(notification => {
+      const postId = this.stringifyObjectId(notification.postId);
+
+      return this.buildPostNotificationItem(
+        notification,
+        postContentPreviewById.get(postId) ?? ''
+      );
+    });
     const knownCommentIds = new Set(
       items
         .filter(item => item.type === PostNotificationType.comment)
@@ -1464,7 +2063,14 @@ export class PostService {
         continue;
       }
 
-      items.push(this.buildPostNotificationItemFromComment(notification));
+      items.push(
+        this.buildPostNotificationItemFromComment(
+          notification,
+          postContentPreviewById.get(
+            this.stringifyObjectId(notification.postId)
+          ) ?? ''
+        )
+      );
     }
 
     return items.sort((left, right) => {
@@ -1476,6 +2082,10 @@ export class PostService {
         (Number.isFinite(leftTime) ? leftTime : 0)
       );
     });
+  }
+
+  private buildPostContentPreview(content?: string): string {
+    return (content || '').replace(/\s+/g, ' ').trim().slice(0, 60);
   }
 
   private async createCommentNotification(
@@ -1510,12 +2120,25 @@ export class PostService {
       Array.isArray(post.images) && post.images.length > 0
         ? post.images.find(image => typeof image === 'string' && image.trim())
         : '';
+    notification.isSeen = false;
     notification.isRead = false;
     notification.createdAt = comment.createdAt ?? new Date();
     notification.updatedAt = comment.updatedAt ?? notification.createdAt;
 
     await this.commentNotificationModel.save(notification);
-    await this.createPostCommentNotification(post, comment, notification);
+
+    try {
+      await this.createPostCommentNotification(post, comment, notification);
+    } catch (error) {
+      await this.deleteNotificationsByCommentId(comment.id).catch(cleanupError => {
+        this.logger.warn(
+          '[post-comment-notification] failed to roll back partial notifications, commentId=%s, error=%s',
+          this.stringifyObjectId(comment.id),
+          String(cleanupError)
+        );
+      });
+      throw error;
+    }
   }
 
   private async createPostCommentNotification(
@@ -1536,6 +2159,7 @@ export class PostService {
     notification.contentPreview = commentNotification.commentPreview;
     notification.replyToUserName = commentNotification.replyToUserName;
     notification.postThumbnail = commentNotification.postThumbnail;
+    notification.isSeen = false;
     notification.isRead = false;
     notification.createdAt = comment.createdAt ?? new Date();
     notification.updatedAt = notification.createdAt;
@@ -1567,6 +2191,7 @@ export class PostService {
       Array.isArray(post.images) && post.images.length > 0
         ? post.images.find(image => typeof image === 'string' && image.trim())
         : '';
+    notification.isSeen = false;
     notification.isRead = false;
     notification.createdAt = now;
     notification.updatedAt = now;
@@ -1591,6 +2216,45 @@ export class PostService {
       actorUserId: userId,
       type: PostNotificationType.like,
     } as never);
+  }
+
+  private async deleteNotificationsByCommentId(
+    commentId: MongoObjectId
+  ): Promise<void> {
+    await Promise.all([
+      this.notificationModel.deleteOne({
+        commentId,
+        type: PostNotificationType.comment,
+      } as never),
+      this.commentNotificationModel.deleteOne({
+        commentId,
+      } as never),
+    ]);
+  }
+
+  private async rollbackCreatedComment(
+    comment: PostCommentEntity
+  ): Promise<void> {
+    const commentId = this.stringifyObjectId(comment.id);
+
+    await this.deleteNotificationsByCommentId(comment.id).catch(error => {
+      this.logger.warn(
+        '[post-comment] failed to roll back notifications, commentId=%s, error=%s',
+        commentId,
+        String(error)
+      );
+    });
+    await this.commentModel
+      .deleteOne({
+        _id: comment.id,
+      } as never)
+      .catch(error => {
+        this.logger.warn(
+          '[post-comment] failed to roll back comment, commentId=%s, error=%s',
+          commentId,
+          String(error)
+        );
+      });
   }
 
   private async resolveCommentReplyName(
@@ -1701,14 +2365,12 @@ export class PostService {
     }
 
     return (
-      this.stringifyObjectId(comment.agentId) === this.stringifyObjectId(agentId)
+      this.stringifyObjectId(comment.agentId) ===
+      this.stringifyObjectId(agentId)
     );
   }
 
-  private async isUserVip(
-    userId: MongoObjectId,
-    now: Date
-  ): Promise<boolean> {
+  private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {
     const memberships = await this.userMembershipModel.find({
       where: {
         userId,
@@ -1952,6 +2614,30 @@ export class PostService {
     return ['1', 'true', 'yes'].includes(value.trim().toLowerCase());
   }
 
+  private normalizeOptionalBoolean(
+    value: boolean | string | undefined
+  ): boolean | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    const normalizedValue = value.trim().toLowerCase();
+
+    if (['1', 'true', 'yes'].includes(normalizedValue)) {
+      return true;
+    }
+
+    if (['0', 'false', 'no'].includes(normalizedValue)) {
+      return false;
+    }
+
+    return undefined;
+  }
+
   private async normalizeRemindAgentIds(
     ownerUserId: MongoObjectId,
     rawAgentIds?: string[]
@@ -2148,6 +2834,7 @@ export class PostService {
       [...commentContext]
         .reverse()
         .find(comment => comment.type === PostCommentType.user);
+    const isFollowUpReply = Boolean(triggerCommentId && latestUserComment);
     const systemPrompt = buildMomentsSystemPrompt({
       userId: this.stringifyObjectId(post.userId),
       agentId: this.stringifyObjectId(agent.id),
@@ -2168,17 +2855,21 @@ export class PostService {
               comment => comment.id === latestUserComment.repliedComment?.id
             ) ?? null
           : null,
-        task: '请基于这条朋友圈内容发表一条自然简短、不要重复现有评论的评论',
+        task: isFollowUpReply
+          ? '请直接回复 context.latestUserComment。context.userRepliedComment 是上一句；先回答问题或承认纠正，不要转回动态正文。'
+          : '请基于这条动态内容发表一条自然简短、不要重复现有评论的评论；正文有明确问题时必须直接回答。',
       },
     });
     const result = await this.openAIService.generateText({
       systemPrompt,
-      prompt: '请直接输出一条朋友圈评论正文。',
+      prompt: isFollowUpReply
+        ? '请直接输出对当前用户评论的楼中楼回复正文。'
+        : '请直接输出一条动态评论正文。',
       model: this.openAIService.getDefaultModel(),
-      temperature: 1.35,
-      topP: 0.98,
-      presencePenalty: 0.9,
-      frequencyPenalty: 0.45,
+      temperature: isFollowUpReply ? 0.45 : 1.05,
+      topP: isFollowUpReply ? 0.85 : 0.95,
+      presencePenalty: isFollowUpReply ? 0.1 : 0.6,
+      frequencyPenalty: isFollowUpReply ? 0.1 : 0.35,
       maxTokens: 120,
       reasoningSplit: false,
     });
@@ -2188,9 +2879,13 @@ export class PostService {
       post,
       agent,
       reply,
-      existingComments
+      existingComments,
+      latestUserComment
     );
-    return selected || this.buildFallbackMomentReply(post, agent);
+    return (
+      selected ||
+      this.buildFallbackMomentReply(post, agent, latestUserComment)
+    );
   }
 
   private normalizeGeneratedPostReply(result: {
@@ -2437,22 +3132,111 @@ export class PostService {
     post: PostEntity,
     agent: AgentEntity,
     reply: string,
-    existingComments: PostCommentEntity[]
+    existingComments: PostCommentEntity[],
+    latestUserComment?: MomentCommentContext | null
   ): string {
     const cleaned = reply.trim();
     if (!cleaned) {
       return '';
     }
 
+    if (
+      this.isUnsafeOrUnresponsiveMomentReply(
+        post,
+        cleaned,
+        existingComments,
+        latestUserComment
+      )
+    ) {
+      return this.buildFallbackMomentReply(post, agent, latestUserComment);
+    }
+
     if (this.isGenericMomentReply(cleaned)) {
-      return this.buildFallbackMomentReply(post, agent);
+      return this.buildFallbackMomentReply(post, agent, latestUserComment);
     }
 
     if (this.isDuplicateMomentReply(cleaned, existingComments)) {
-      return this.buildFallbackMomentReply(post, agent);
+      return this.buildFallbackMomentReply(post, agent, latestUserComment);
     }
 
     return cleaned;
+  }
+
+  private isUnsafeOrUnresponsiveMomentReply(
+    post: PostEntity,
+    reply: string,
+    existingComments: PostCommentEntity[],
+    latestUserComment?: MomentCommentContext | null
+  ): boolean {
+    const currentUserText =
+      latestUserComment?.content?.trim() || post.content?.trim() || '';
+    const repliedAgentText =
+      latestUserComment?.repliedComment?.type === PostCommentType.agent
+        ? latestUserComment.repliedComment.content?.trim() || ''
+        : '';
+    const userFactText = [
+      post.content?.trim() || '',
+      ...existingComments
+        .filter(comment => comment.type === PostCommentType.user)
+        .map(comment => comment.content?.trim() || ''),
+    ].join('\n');
+
+    if (
+      /(?:明天|一会儿|待会儿).{0,8}(?:上班|工作)|(?:还要|得|要去).{0,4}(?:上班|工作)/.test(
+        reply
+      ) &&
+      !/(?:明天|一会儿|待会儿).{0,8}(?:上班|工作)|(?:还要|得|要去).{0,4}(?:上班|工作)/.test(
+        userFactText
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /(?:老|总|经常|又).{0,5}(?:熬夜|不睡|睡得晚)|(?:不能|不要|别).{0,5}熬夜|对身体不好/.test(
+        reply
+      ) &&
+      !/(?:老|总|经常|又).{0,5}(?:熬夜|不睡|睡得晚)|(?:睡不着|失眠|熬夜)/.test(
+        currentUserText
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /还不睡|怎么还没睡|这么晚了还不睡/.test(reply) &&
+      !/(?:还没睡|没睡|不睡|睡不着|失眠|熬夜)/.test(currentUserText)
+    ) {
+      return true;
+    }
+
+    if (
+      this.isMomentCurrentActivityQuestion(currentUserText) &&
+      !/(?:没忙|没干|正回|在回|歇着|休息|这边(?:挺好|还好)|正(?:在)?(?:和|跟)你说话)/.test(
+        reply
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      this.isMomentCurrentTimeQuestion(currentUserText) &&
+      !/(?:现在|已经).{0,8}(?:\d{1,2}|[零一二两三四五六七八九十]+)(?:点|[:：])/.test(
+        reply
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      this.isMomentContextCorrection(currentUserText, repliedAgentText) &&
+      (/(?:那也|但是|不过|还是|不能)/.test(reply) ||
+        !/(?:说错|记错|不该|乱猜|知道了|明白了|哦|嗯)/.test(reply))
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   private isDuplicateMomentReply(
@@ -2502,11 +3286,37 @@ export class PostService {
 
   private buildFallbackMomentReply(
     post: PostEntity,
-    agent: AgentEntity
+    agent: AgentEntity,
+    latestUserComment?: MomentCommentContext | null
   ): string {
-    const content = post.content?.trim() || '';
+    const content =
+      latestUserComment?.content?.trim() || post.content?.trim() || '';
+    const repliedAgentText =
+      latestUserComment?.repliedComment?.type === PostCommentType.agent
+        ? latestUserComment.repliedComment.content?.trim() || ''
+        : '';
     const callMe = agent.agentCallMe?.trim() || '';
     const prefix = callMe ? `${callMe}，` : '';
+
+    if (this.isMomentContextCorrection(content, repliedAgentText)) {
+      if (/(?:不|没)(?:上班|工作)/.test(content)) {
+        return '哦，是我说错了。你现在不上班，刚才不该乱猜。';
+      }
+
+      return '哦，是我说错了。刚才不该乱猜你的情况。';
+    }
+
+    if (this.isMomentCurrentTimeQuestion(content)) {
+      return `知道，现在是${this.formatCurrentBeijingClock()}。刚才我没先回答你的话。`;
+    }
+
+    if (this.isMomentCurrentActivityQuestion(content)) {
+      return `${prefix}没忙什么，正回你呢。`;
+    }
+
+    if (latestUserComment && /(?:不|没)(?:上班|工作)/.test(content)) {
+      return '哦，知道了，你现在不上班。';
+    }
 
     if (
       /(受伤|伤了|脚扭|扭伤|摔了|疼|痛|流血|崴脚|骨折|住院|难受|不舒服|生病|发烧)/.test(
@@ -2526,7 +3336,45 @@ export class PostService {
       return `${prefix}嗯，看你这样，我心里也踏实些。`;
     }
 
-    return `${prefix}嗯，我听见啦，你也照顾好自己。`;
+    return latestUserComment
+      ? `${prefix}嗯，我听着呢。`
+      : `${prefix}嗯，我听见啦，你也照顾好自己。`;
+  }
+
+  private isMomentCurrentActivityQuestion(value: string): boolean {
+    return /(?:你|您)(?:现在|这会儿|这时候)?(?:在)?(?:干嘛|干什么|做什么)(?:呢|呀|啊|吗|[？?]|$)/.test(
+      value
+    );
+  }
+
+  private isMomentCurrentTimeQuestion(value: string): boolean {
+    return /(?:现在|这会儿)?(?:是)?几点|几点了|几点了吗/.test(value);
+  }
+
+  private isMomentContextCorrection(
+    currentUserText: string,
+    repliedAgentText: string
+  ): boolean {
+    if (!currentUserText || !repliedAgentText) {
+      return false;
+    }
+
+    return (
+      /(?:我)?(?:现在)?(?:不|没)(?:上班|工作)/.test(currentUserText) &&
+      /(?:上班|工作)/.test(repliedAgentText)
+    );
+  }
+
+  private formatCurrentBeijingClock(value = new Date()): string {
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(value);
+    const partMap = new Map(parts.map(part => [part.type, part.value]));
+
+    return `${partMap.get('hour')}:${partMap.get('minute')}`;
   }
 
   private async findAgentById(

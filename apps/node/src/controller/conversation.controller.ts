@@ -12,6 +12,7 @@ import { Context } from '@midwayjs/koa';
 import {
   GenerateMemorialPhotoDTO,
   SendConversationMessageDTO,
+  SubmitConversationMessageFeedbackDTO,
   TranscribeConversationVoiceDTO,
 } from '../dto/conversation.dto';
 import { AuthenticatedUserPayload } from '../interface';
@@ -103,6 +104,32 @@ export class ConversationController {
     @Param('messageId') messageId: string
   ) {
     return this.conversationService.generateMessageVoice(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId
+    );
+  }
+
+  @Post('/:conversationId/messages/:messageId/feedback')
+  async submitMessageFeedback(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() body: SubmitConversationMessageFeedbackDTO
+  ) {
+    return this.conversationService.submitMessageFeedback(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId,
+      body
+    );
+  }
+
+  @Post('/:conversationId/messages/:messageId/memory')
+  async markMessageMemory(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.conversationService.markMessageMemory(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
       messageId

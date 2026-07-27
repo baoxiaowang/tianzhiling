@@ -48,6 +48,20 @@ describe('AuthMiddleware route matching', () => {
     ).toBe(true);
   });
 
+  it.each([
+    ['/api/post/notifications/entry-summary', 'GET'],
+    ['/api/post/notifications/seen', 'POST'],
+    ['/api/post/notifications/entry-seen', 'POST'],
+    [
+      '/api/post/notifications/665000000000000000000400/read',
+      'POST',
+    ],
+  ])('protects post notification route %s', (path, method) => {
+    const middleware = createMiddleware();
+
+    expect(middleware.match(createContext(path, method) as never)).toBe(true);
+  });
+
   it('accepts optional auth for post comments', () => {
     const middleware = createMiddleware();
 

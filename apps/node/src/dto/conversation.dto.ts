@@ -18,6 +18,9 @@ export class SendConversationMessageDTO {
 
   @Rule(RuleType.number().min(0).max(60 * 60 * 1000))
   durationMs?: number;
+
+  @Rule(RuleType.string().max(64))
+  quotedMessageId?: string;
 }
 
 export class TranscribeConversationVoiceDTO {
@@ -46,4 +49,23 @@ export class GenerateMemorialPhotoDTO {
 
   @Rule(RuleType.string().max(500))
   customPrompt?: string;
+}
+
+export class SubmitConversationMessageFeedbackDTO {
+  @Rule(
+    RuleType.string()
+      .valid(
+        'accurate',
+        'unlike',
+        'wrong_fact',
+        'fabricated',
+        'uncomfortable',
+        'other'
+      )
+      .required()
+  )
+  type: string;
+
+  @Rule(RuleType.string().max(500).allow(''))
+  content?: string;
 }

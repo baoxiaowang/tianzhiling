@@ -10,6 +10,16 @@ import type {
 } from '@tzl/shared'
 import { get } from '../api/api-client'
 
+const VIP_PURCHASE_CENTER_CACHE_TTL = 30 * 1000
+
+let vipPurchaseCenterCache:
+  | {
+      data: MembershipCenter
+      expiresAt: number
+    }
+  | null = null
+let vipPurchaseCenterPromise: Promise<MembershipCenter> | null = null
+
 export interface VipPlan {
   id: string
   code: string
@@ -234,11 +244,40 @@ export async function getMembershipCenter() {
 }
 
 export async function getVipPurchaseCenter() {
+  if (
+    vipPurchaseCenterCache &&
+    vipPurchaseCenterCache.expiresAt > Date.now()
+  ) {
+    return vipPurchaseCenterCache.data
+  }
+
+  if (vipPurchaseCenterPromise) {
+    return vipPurchaseCenterPromise
+  }
+
+  vipPurchaseCenterPromise = fetchVipPurchaseCenter().finally(() => {
+    vipPurchaseCenterPromise = null
+  })
+
+  return vipPurchaseCenterPromise
+}
+
+export function preloadVipPurchaseCenter() {
+  void getVipPurchaseCenter().catch(() => undefined)
+}
+
+async function fetchVipPurchaseCenter() {
   const data = await get<VipPurchaseCenterDTO>(
     '/api/membership/purchase-center'
   )
 
-  return parseMembershipCenter(data)
+  const center = parseMembershipCenter(data)
+  vipPurchaseCenterCache = {
+    data: center,
+    expiresAt: Date.now() + VIP_PURCHASE_CENTER_CACHE_TTL,
+  }
+
+  return center
 }
 
 export async function getMembershipStatus() {

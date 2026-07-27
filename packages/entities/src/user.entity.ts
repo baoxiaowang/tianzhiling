@@ -46,6 +46,9 @@ export class UserEntity extends BaseEntity {
   riskControlUntilAt?: Date;
 
   @Column()
+  postNotificationSeenAt?: Date;
+
+  @Column()
   createdAt?: Date;
 
   @Column()

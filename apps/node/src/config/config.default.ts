@@ -5,7 +5,11 @@ import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
   AgentEntitlementEntity,
+  AgentMemoryFactEntity,
+  AgentProfileFactEntity,
   AgentSubEntity,
+  ConversationEmotionStateEntity,
+  ConversationMessageFeedbackEntity,
   ConversationEntity,
   CouponLedgerEntity,
   MessageEntity,
@@ -597,7 +601,11 @@ export default {
         entities: [
           AgentEntity,
           AgentEntitlementEntity,
+          AgentMemoryFactEntity,
+          AgentProfileFactEntity,
           AgentSubEntity,
+          ConversationEmotionStateEntity,
+          ConversationMessageFeedbackEntity,
           ConversationEntity,
           CouponLedgerEntity,
           MessageEntity,

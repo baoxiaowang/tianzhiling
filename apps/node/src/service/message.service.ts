@@ -25,6 +25,7 @@ const MAX_MESSAGE_PAGE_SIZE = 100;
 export interface ListConversationMessagesOptions {
   beforeCreatedAt?: string;
   pageSize?: number | string;
+  lightweight?: boolean | string;
 }
 
 export interface ConversationMessageItem {
@@ -47,6 +48,11 @@ export interface ConversationMessageItem {
     url?: string;
     mimeType?: string;
     analysis?: string;
+  };
+  quote?: {
+    messageId?: string;
+    role?: MessageRole;
+    content?: string;
   };
   usage?: {
     model?: string;
@@ -86,6 +92,7 @@ export class MessageService {
     );
     const pageSize = this.normalizeOptionalPageSize(options.pageSize);
     const beforeCreatedAt = this.normalizeOptionalDate(options.beforeCreatedAt);
+    const lightweight = this.normalizeBoolean(options.lightweight);
     const where: Record<string, unknown> = {
       conversationId: conversation.id,
       isArchived: { $ne: true },
@@ -106,7 +113,9 @@ export class MessageService {
       return {
         items: messages
           .filter(message => !message.isArchived)
-          .map(message => this.buildConversationMessageItem(message)),
+          .map(message =>
+            this.buildConversationMessageItem(message, { lightweight })
+          ),
       };
     }
 
@@ -126,7 +135,7 @@ export class MessageService {
 
     return {
       items: pageMessages.map(message =>
-        this.buildConversationMessageItem(message)
+        this.buildConversationMessageItem(message, { lightweight })
       ),
       pageSize,
       hasMore: messages.length > pageSize,
@@ -162,12 +171,13 @@ export class MessageService {
   }
 
   buildConversationMessageItem(
-    message: MessageEntity
+    message: MessageEntity,
+    options: { lightweight?: boolean } = {}
   ): ConversationMessageItem {
     const type = this.normalizeMessageType(message.type);
     const segments =
       type === MessageType.text
-        ? this.extractSegmentsFromContent(message.content)
+        ? this.extractSegmentsFromContent(message)
         : [];
     const content =
       type === MessageType.text
@@ -192,9 +202,25 @@ export class MessageService {
               analysis: message.mediaAnalysis?.trim() || undefined,
             }
           : undefined,
-      usage: this.buildUsageItem(message),
+      quote: this.buildQuoteItem(message),
+      usage: options.lightweight ? undefined : this.buildUsageItem(message),
       updatedAt: message.updatedAt?.toISOString?.() ?? '',
       createdAt: message.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
+  private buildQuoteItem(message: MessageEntity): ConversationMessageItem['quote'] {
+    const messageId = this.stringifyObjectId(message.quotedMessageId);
+    const content = message.quotedMessageContent?.trim() || '';
+
+    if (!messageId && !content) {
+      return undefined;
+    }
+
+    return {
+      messageId: messageId || undefined,
+      role: message.quotedMessageRole,
+      content: content || undefined,
     };
   }
 
@@ -316,7 +342,18 @@ export class MessageService {
     }
   }
 
-  private extractSegmentsFromContent(value?: string): string[] {
+  private extractSegmentsFromContent(message: MessageEntity): string[] {
+    if (this.isStoredAssistantReplySegment(message)) {
+      const content = stripConversationMessageSegmentMarkup(
+        message.content?.trim() || ''
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      return content ? [content] : [];
+    }
+
+    const value = message.content;
     const content = value?.trim();
 
     if (!content) {
@@ -343,6 +380,16 @@ export class MessageService {
     }
 
     return [content];
+  }
+
+  private isStoredAssistantReplySegment(message: MessageEntity): boolean {
+    return (
+      message.role === MessageRole.assistant &&
+      message.type === MessageType.text &&
+      Boolean(message.replyGroupId?.trim()) &&
+      typeof message.replySegmentIndex === 'number' &&
+      Number.isFinite(message.replySegmentIndex)
+    );
   }
 
   private normalizeTextContentForClient(
@@ -456,6 +503,19 @@ export class MessageService {
     }
 
     return Math.min(Math.floor(parsed), MAX_MESSAGE_PAGE_SIZE);
+  }
+
+  private normalizeBoolean(value: boolean | string | null | undefined): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (typeof value !== 'string') {
+      return false;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
   }
 
   private normalizeOptionalDate(value: string | undefined): Date | null {

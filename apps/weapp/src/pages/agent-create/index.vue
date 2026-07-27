@@ -14,6 +14,7 @@
       class="agent-create-start__header"
       :src="headerLoadingImage"
       mode="aspectFit"
+      lazy-load
     />
     <view class="agent-create-start__intro">
       <view
@@ -48,6 +49,7 @@
       <back-capsule class="agent-create-start__capsule" />
     </view>
     <login-prompt-popup
+      v-if="isLoginPromptVisible"
       v-model:visible="isLoginPromptVisible"
       @login-success="handleLoginSuccess"
     />

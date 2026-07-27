@@ -9,6 +9,7 @@ type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 interface RequestOptions {
   method?: HttpMethod
   data?: Record<string, unknown>
+  timeout?: number
 }
 
 function normalizePath(path: string) {
@@ -26,13 +27,13 @@ export async function requestMap<T>(
   options: RequestOptions = {}
 ) {
   const session = authSession.value
-  console.log('11', normalizePath(path))
+  const url = normalizePath(path)
   try {
     const response = await Taro.request({
-      url: normalizePath(path),
+      url,
       method: options.method ?? 'GET',
       data: options.data,
-      timeout: 120000,
+      timeout: options.timeout ?? 120000,
       header: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
@@ -63,13 +64,17 @@ export async function requestMap<T>(
 
     throw new ApiException(
       '无法连接到服务端，请确认 node 服务已启动并检查代理或接口地址配置',
-      { details }
+      { details: `${options.method ?? 'GET'} ${url}: ${details}` }
     )
   }
 }
 
 export function get<T>(path: string) {
   return requestMap<T>(path)
+}
+
+export function getWithOptions<T>(path: string, options: RequestOptions = {}) {
+  return requestMap<T>(path, { ...options, method: 'GET' })
 }
 
 export function post<T>(

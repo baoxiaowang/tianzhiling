@@ -422,12 +422,15 @@ export class OrderService {
         createdAt: 'DESC',
       },
     });
+    const visibleOrders = orders.filter(order => {
+      return order.status !== OrderStatus.closed && order.source !== OrderSource.admin;
+    });
 
     return {
-      items: orders.map(order => this.buildOrderRecord(order)),
-      total: orders.length,
+      items: visibleOrders.map(order => this.buildOrderRecord(order)),
+      total: visibleOrders.length,
       page: 1,
-      pageSize: orders.length,
+      pageSize: visibleOrders.length,
     };
   }
 

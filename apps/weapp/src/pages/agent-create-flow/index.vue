@@ -15,7 +15,14 @@
       />
     </template>
 
+    <image
+      v-if="!shouldMountBackgroundVideo"
+      class="agent-create-flow__bg"
+      :src="agentFlowVideoCover"
+      mode="aspectFill"
+    />
     <video
+      v-else
       :id="agentFlowVideoId"
       class="agent-create-flow__bg"
       :src="agentFlowVideo"
@@ -169,7 +176,7 @@ export default {
 
 <script setup lang="ts">
 import Taro, { useDidHide, useDidShow } from '@tarojs/taro'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
   getConversations,
@@ -218,9 +225,11 @@ const avatarObjectKey = ref('')
 const isSubmitting = ref(false)
 const isUploadingAvatar = ref(false)
 const shouldFocusInput = ref(true)
+const shouldMountBackgroundVideo = ref(false)
 const shouldRefocusAfterTextButtonTap = ref(false)
 const keyboardHeight = ref(0)
 const isInputFocused = ref(false)
+let backgroundVideoTimer: ReturnType<typeof setTimeout> | undefined
 
 const formSteps: AgentFormStepConfig[] = [
   {
@@ -373,6 +382,10 @@ function resetKeyboardState() {
 }
 
 function playAgentFlowVideo() {
+  if (!shouldMountBackgroundVideo.value) {
+    return
+  }
+
   void nextTick(() => {
     try {
       Taro.createVideoContext(agentFlowVideoId).play()
@@ -383,6 +396,10 @@ function playAgentFlowVideo() {
 }
 
 function restartAgentFlowVideo() {
+  if (!shouldMountBackgroundVideo.value) {
+    return
+  }
+
   void nextTick(() => {
     try {
       const videoContext = Taro.createVideoContext(agentFlowVideoId)
@@ -471,11 +488,15 @@ function isUserCanceled(error: unknown) {
 }
 
 async function editAvatarImage(filePath: string) {
-  const result = await Taro.editImage({
-    src: filePath,
-  })
+  try {
+    const result = await Taro.editImage({
+      src: filePath,
+    })
 
-  return result.tempFilePath
+    return result.tempFilePath || filePath
+  } catch {
+    return filePath
+  }
 }
 
 function buildChatPageUrl(conversation: ConversationSummary) {
@@ -691,6 +712,20 @@ useDidHide(() => {
 
 useDidShow(() => {
   playAgentFlowVideo()
+})
+
+onMounted(() => {
+  backgroundVideoTimer = setTimeout(() => {
+    shouldMountBackgroundVideo.value = true
+    playAgentFlowVideo()
+  }, 600)
+})
+
+onUnmounted(() => {
+  if (backgroundVideoTimer) {
+    clearTimeout(backgroundVideoTimer)
+    backgroundVideoTimer = undefined
+  }
 })
 </script>
 

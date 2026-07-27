@@ -1,5 +1,5 @@
 <template>
-  <view class="moment-card">
+  <view class="moment-card" @tap="emitOpen">
     <view class="moment-card__avatar-column">
       <image
         v-if="post.authorAvatar"
@@ -16,7 +16,21 @@
       <view class="moment-card__header">
         <view class="moment-card__meta">
           <text class="moment-card__author">{{ authorName }}</text>
-          <text v-if="post.content" class="moment-card__body-text">{{ post.content }}</text>
+          <view v-if="postContent" class="moment-card__body">
+            <text
+              class="moment-card__body-text"
+              :class="{ 'moment-card__body-text--collapsed': shouldCollapseContent }"
+            >
+              {{ postContent }}
+            </text>
+            <text
+              v-if="shouldShowExpandAction"
+              class="moment-card__body-expand"
+              @tap.stop="toggleContentExpanded"
+            >
+              {{ isContentExpanded ? '收起' : '全文' }}
+            </text>
+          </view>
         </view>
       </view>
 
@@ -29,7 +43,7 @@
           v-for="(image, index) in postImages"
           :key="`${post.id}-${image}-${index}`"
           class="moment-card__image-wrap"
-          @tap="emitPreview(index)"
+          @tap.stop="emitPreview(index)"
         >
           <image class="moment-card__image" :src="image" mode="aspectFill" />
         </view>
@@ -89,10 +103,10 @@
           class="moment-card__interaction-divider"
         />
         <view
-          v-for="comment in post.comments"
+          v-for="comment in visibleComments"
           :key="comment.id"
           class="moment-card__comment"
-          @tap="emitComment(comment)"
+          @tap.stop="emitComment(comment)"
         >
           <text class="moment-card__comment-author">
             {{ formatCommentAuthor(comment.authorName) }}
@@ -102,8 +116,15 @@
             {{ formatCommentAuthor(comment.replyToUserName) }}
           </text>
           <text class="moment-card__comment-colon">：</text>
-          <text class="moment-card__comment-text">{{ comment.content }}</text>
+          <text class="moment-card__comment-text">{{ formatCommentContent(comment.content) }}</text>
         </view>
+        <text
+          v-if="hiddenCommentCount"
+          class="moment-card__comments-more"
+          @tap.stop="expandComments"
+        >
+          查看{{ hiddenCommentCount }}条评论
+        </text>
       </view>
     </view>
   </view>
@@ -118,6 +139,7 @@ export default {
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { PostCommentItem, PostItem } from '../../apis/post'
+import { normalizeEmojiText } from '../../utils/emoji-text'
 
 const props = withDefaults(
   defineProps<{
@@ -140,7 +162,10 @@ const emit = defineEmits<{
   comment: [post: PostItem, replyToComment?: PostCommentItem]
   preview: [post: PostItem, index: number]
   delete: [post: PostItem]
+  open: [post: PostItem]
 }>()
+
+const VISIBLE_COMMENT_COUNT = 2
 
 function normalizeText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -173,11 +198,31 @@ const isRiskControlled = computed(() => {
   )
 })
 const isActionMenuVisible = ref(false)
+const isContentExpanded = ref(false)
+const areCommentsExpanded = ref(false)
+const postContent = computed(() => normalizeEmojiText(normalizeText(props.post.content)))
+const shouldShowExpandAction = computed(() => {
+  const content = postContent.value
+  const lineBreakCount = content.split(/\r?\n/).length
+
+  return content.length > 72 || lineBreakCount > 4
+})
+const shouldCollapseContent = computed(() => {
+  return shouldShowExpandAction.value && !isContentExpanded.value
+})
 const shouldShowLikeSummary = computed(() => {
   return props.post.likedByMe || likeCount.value > 0
 })
 const shouldShowInteractionBox = computed(() => {
   return shouldShowLikeSummary.value || props.post.comments.length > 0
+})
+const visibleComments = computed(() => {
+  return areCommentsExpanded.value
+    ? props.post.comments
+    : props.post.comments.slice(0, VISIBLE_COMMENT_COUNT)
+})
+const hiddenCommentCount = computed(() => {
+  return Math.max(0, props.post.comments.length - visibleComments.value.length)
 })
 const likeSummaryText = computed(() => {
   if (props.post.likedByMe) {
@@ -239,12 +284,24 @@ function formatCommentAuthor(authorName: unknown) {
   return author
 }
 
+function formatCommentContent(content: unknown) {
+  return normalizeEmojiText(normalizeText(content))
+}
+
 function toggleActionMenu() {
   isActionMenuVisible.value = !isActionMenuVisible.value
 }
 
 function closeActionMenu() {
   isActionMenuVisible.value = false
+}
+
+function toggleContentExpanded() {
+  isContentExpanded.value = !isContentExpanded.value
+}
+
+function expandComments() {
+  areCommentsExpanded.value = true
 }
 
 function handleLikeAction() {
@@ -276,14 +333,18 @@ function emitDelete() {
 
   emit('delete', props.post)
 }
+
+function emitOpen() {
+  emit('open', props.post)
+}
 </script>
 
 <style lang="scss">
 .moment-card {
   display: flex;
   gap: 10px;
-  padding: 12px 12px 10px;
-  border-bottom: 1px solid #eeeeee;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #f2f2f2;
   background: #ffffff;
 }
 
@@ -329,18 +390,39 @@ function emitDelete() {
   color: #576b95;
 }
 
+.moment-card__body {
+  margin-top: 3px;
+}
+
 .moment-card__body-text {
   display: block;
-  margin-top: 3px;
   font-size: 16px;
   line-height: 24px;
   color: #191919;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.moment-card__body-text--collapsed {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.moment-card__body-expand {
+  display: inline-block;
+  margin-top: 3px;
+  color: #576b95;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .moment-card__image-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   margin-top: 9px;
 }
 
@@ -367,7 +449,7 @@ function emitDelete() {
 
 .moment-card__image-wrap {
   position: relative;
-  width: calc((100% - 8px) / 3);
+  width: calc((100% - 10px) / 3);
   height: 92px;
   overflow: hidden;
   border-radius: 3px;
@@ -376,7 +458,7 @@ function emitDelete() {
 
 .moment-card__image-grid--2 .moment-card__image-wrap,
 .moment-card__image-grid--4 .moment-card__image-wrap {
-  width: calc((100% - 4px) / 2);
+  width: calc((100% - 5px) / 2);
   height: 121px;
 }
 
@@ -428,11 +510,11 @@ function emitDelete() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 30px;
   height: 20px;
   margin-left: 10px;
   border-radius: 3px;
-  background: #f2f3f5;
+  background: #f7f7f7;
 }
 
 .moment-card__more {
@@ -440,8 +522,8 @@ function emitDelete() {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #576b95;
-  box-shadow: -7px 0 0 #576b95, 7px 0 0 #576b95;
+  background: #6b7a99;
+  box-shadow: -6px 0 0 #6b7a99, 6px 0 0 #6b7a99;
 }
 
 .moment-card__action-menu {
@@ -528,10 +610,10 @@ function emitDelete() {
 
 .moment-card__comments {
   position: relative;
-  margin-top: 6px;
-  padding: 6px 8px;
+  margin-top: 8px;
+  padding: 5px 7px;
   border-radius: 0;
-  background: #f0f0f0;
+  background: #f5f5f5;
 }
 
 .moment-card__comments::before {
@@ -543,7 +625,7 @@ function emitDelete() {
   height: 0;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-bottom: 5px solid #f0f0f0;
+  border-bottom: 5px solid #f5f5f5;
 }
 
 .moment-card__likes {
@@ -575,7 +657,7 @@ function emitDelete() {
 .moment-card__comment {
   display: block;
   font-size: 14px;
-  line-height: 21px;
+  line-height: 20px;
 }
 
 .moment-card__comment + .moment-card__comment {
@@ -584,7 +666,7 @@ function emitDelete() {
 
 .moment-card__comment-author {
   font-size: 14px;
-  line-height: 21px;
+  line-height: 20px;
   font-weight: 500;
   color: #576b95;
 }
@@ -596,7 +678,15 @@ function emitDelete() {
 
 .moment-card__comment-text {
   font-size: 14px;
-  line-height: 21px;
+  line-height: 20px;
   color: #191919;
+}
+
+.moment-card__comments-more {
+  display: block;
+  margin-top: 3px;
+  font-size: 14px;
+  line-height: 20px;
+  color: #576b95;
 }
 </style>

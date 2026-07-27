@@ -1,5 +1,13 @@
 <template>
   <view class="chat-bottom" :style="composerStyle">
+    <view v-if="quotedText" class="chat-composer-quote">
+      <view class="chat-composer-quote__content">
+        <text class="chat-composer-quote__label">{{ quotedLabel }}</text>
+        <text class="chat-composer-quote__text">{{ quotedText }}</text>
+      </view>
+      <view class="chat-composer-quote__close" @tap="emit('quoteCancel')">×</view>
+    </view>
+
     <view class="chat-composer">
       <view
         class="chat-composer__icon-button"
@@ -141,6 +149,8 @@ withDefaults(
     isMorePanelVisible?: boolean
     showSendButton?: boolean
     isSendDisabled?: boolean
+    quotedText?: string
+    quotedLabel?: string
   }>(),
   {
     composerStyle: () => ({}),
@@ -155,6 +165,8 @@ withDefaults(
     isMorePanelVisible: false,
     showSendButton: false,
     isSendDisabled: false,
+    quotedText: '',
+    quotedLabel: '引用',
   },
 )
 
@@ -174,12 +186,66 @@ const emit = defineEmits<{
   emojiSelect: [emoji: string]
   emojiDelete: []
   moreAction: [item: ChatMoreActionItem]
+  quoteCancel: []
 }>()
 </script>
 
 <style lang="scss">
 .chat-bottom {
   background: #f7f7f7;
+}
+
+.chat-composer-quote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+  box-sizing: border-box;
+  background: #f7f7f7;
+  border-top: 0.5px solid #d9d9d9;
+}
+
+.chat-composer-quote__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: #e9e9e9;
+}
+
+.chat-composer-quote__label {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: #666666;
+}
+
+.chat-composer-quote__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 18px;
+  color: #333333;
+}
+
+.chat-composer-quote__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #777777;
+  font-size: 22px;
+  line-height: 28px;
 }
 
 .chat-composer {

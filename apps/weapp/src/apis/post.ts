@@ -1,4 +1,9 @@
-import { del, get, post } from '../api/api-client'
+import { del, get, getWithOptions, post } from '../api/api-client'
+import { ApiException } from '../api/api-exception'
+import { normalizeEmojiText } from '../utils/emoji-text'
+
+const POST_NOTIFICATION_V2_API_ENABLED =
+  process.env.TARO_APP_POST_NOTIFICATION_V2_API_ENABLED === 'true'
 
 export type PostCommentType = 'user' | 'agent'
 export type PostNotificationType = 'comment' | 'like'
@@ -34,6 +39,8 @@ export interface PostNotificationItem {
   contentPreview: string
   replyToUserName: string
   postThumbnail: string
+  postContentPreview: string
+  isSeen: boolean
   isRead: boolean
   createdAt: string | null
 }
@@ -41,6 +48,14 @@ export interface PostNotificationItem {
 export interface PostNotificationSummary {
   unreadCount: number
   latest: PostNotificationItem | null
+  unseenCount: number
+  latestUnseen: PostNotificationItem | null
+}
+
+export interface PostNotificationEntrySummary {
+  unseenCount: number
+  latestUnseen: PostNotificationItem | null
+  isLegacyFallback?: boolean
 }
 
 export interface PostCommentItem {
@@ -98,6 +113,18 @@ interface ReadUnreadPostNotificationsResponse {
   unreadCount: number
 }
 
+interface ReadPostNotificationResponse {
+  notificationId: string
+  readCount: number
+  unreadCount: number
+}
+
+interface SeePostNotificationsResponse {
+  seenCount: number
+  unseenCount: number
+  unreadCount: number
+}
+
 interface CommentNotificationListResponse {
   items: PostCommentNotificationItem[]
   page?: number
@@ -110,12 +137,44 @@ interface PostNotificationListResponse {
   page?: number
   pageSize?: number
   hasMore?: boolean
+  readFilterApplied?: boolean
+}
+
+type RawPostNotificationItem = PostNotificationItem & {
+  post_id?: unknown
+  postID?: unknown
+  targetPostId?: unknown
+  target_post_id?: unknown
+  post?: {
+    id?: unknown
+    _id?: unknown
+  }
 }
 
 export interface GetPostsOptions {
   page?: number
   pageSize?: number
   mine?: boolean
+  read?: boolean
+}
+
+function normalizeObjectIdString(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  if (!value || typeof value !== 'object') {
+    return ''
+  }
+
+  const record = value as Record<string, unknown>
+
+  return (
+    normalizeObjectIdString(record.$oid) ||
+    normalizeObjectIdString(record.oid) ||
+    normalizeObjectIdString(record.id) ||
+    normalizeObjectIdString(record._id)
+  )
 }
 
 export async function getPosts(options: GetPostsOptions = {}) {
@@ -153,7 +212,66 @@ export async function getCommentNotificationSummary() {
 }
 
 export async function getPostNotificationSummary() {
-  return get<PostNotificationSummary>('/api/post/notifications/summary')
+  const data = await getWithOptions<Partial<PostNotificationSummary>>(
+    '/api/post/notifications/summary',
+    {
+      timeout: 5000,
+    },
+  )
+  const unreadCount = Number.isFinite(data.unreadCount) ? Number(data.unreadCount) : 0
+  const unseenCount = Number.isFinite(data.unseenCount)
+    ? Number(data.unseenCount)
+    : unreadCount
+  const latest = data.latest ? normalizePostNotificationItem(data.latest) : null
+  const latestUnseen = data.latestUnseen
+    ? normalizePostNotificationItem(data.latestUnseen)
+    : latest
+
+  return {
+    unreadCount,
+    latest,
+    unseenCount,
+    latestUnseen,
+  }
+}
+
+export async function getPostNotificationEntrySummary() {
+  if (!POST_NOTIFICATION_V2_API_ENABLED) {
+    const compatibleSummary = await getPostNotificationSummary()
+    return {
+      unseenCount: compatibleSummary.unseenCount,
+      latestUnseen: compatibleSummary.latestUnseen,
+      isLegacyFallback: true,
+    }
+  }
+
+  try {
+    const data = await getWithOptions<Partial<PostNotificationEntrySummary>>(
+      '/api/post/notifications/entry-summary',
+      {
+        timeout: 5000,
+      },
+    )
+
+    return {
+      unseenCount: Number.isFinite(data.unseenCount) ? Number(data.unseenCount) : 0,
+      latestUnseen: data.latestUnseen
+        ? normalizePostNotificationItem(data.latestUnseen)
+        : null,
+      isLegacyFallback: false,
+    }
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      throw error
+    }
+
+    const compatibleSummary = await getPostNotificationSummary()
+    return {
+      unseenCount: compatibleSummary.unseenCount,
+      latestUnseen: compatibleSummary.latestUnseen,
+      isLegacyFallback: true,
+    }
+  }
 }
 
 export async function getCommentNotifications(options: GetPostsOptions = {}) {
@@ -191,16 +309,45 @@ export async function getPostNotifications(options: GetPostsOptions = {}) {
     queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
   }
 
+  if (typeof options.read === 'boolean') {
+    queryParts.push(`read=${options.read ? 'true' : 'false'}`)
+  }
+
   const url = queryParts.length
     ? `/api/post/notifications?${queryParts.join('&')}`
     : '/api/post/notifications'
   const data = await get<PostNotificationListResponse>(url)
 
   return {
-    items: Array.isArray(data.items) ? data.items : [],
+    items: Array.isArray(data.items)
+      ? data.items.map(normalizePostNotificationItem)
+      : [],
     page: data.page ?? options.page ?? 1,
     pageSize: data.pageSize ?? options.pageSize ?? 20,
     hasMore: data.hasMore === true,
+    readFilterApplied: data.readFilterApplied === true,
+  }
+}
+
+function normalizePostNotificationItem(item: PostNotificationItem): PostNotificationItem {
+  const rawItem = item as RawPostNotificationItem
+  const postId =
+    normalizeObjectIdString(rawItem.postId) ||
+    normalizeObjectIdString(rawItem.post_id) ||
+    normalizeObjectIdString(rawItem.postID) ||
+    normalizeObjectIdString(rawItem.targetPostId) ||
+    normalizeObjectIdString(rawItem.target_post_id) ||
+    normalizeObjectIdString(rawItem.post?.id) ||
+    normalizeObjectIdString(rawItem.post?._id)
+
+  return {
+    ...item,
+    postId,
+    postContentPreview:
+      typeof rawItem.postContentPreview === 'string'
+        ? rawItem.postContentPreview.trim()
+        : '',
+    isSeen: rawItem.isSeen === true || rawItem.isRead === true,
   }
 }
 
@@ -232,13 +379,51 @@ export async function readUnreadPostNotifications() {
   }
 }
 
+export async function markPostNotificationRead(notificationId: string) {
+  if (!POST_NOTIFICATION_V2_API_ENABLED) {
+    return {
+      notificationId,
+      readCount: 0,
+      unreadCount: 0,
+    }
+  }
+
+  return post<ReadPostNotificationResponse>(
+    `/api/post/notifications/${encodeURIComponent(notificationId)}/read`,
+  )
+}
+
+export async function markPostNotificationsSeen() {
+  return post<SeePostNotificationsResponse>('/api/post/notifications/seen')
+}
+
+export async function markPostNotificationEntrySeen() {
+  if (!POST_NOTIFICATION_V2_API_ENABLED) {
+    return {
+      seenCount: 0,
+      unseenCount: 0,
+      unreadCount: 0,
+    }
+  }
+
+  try {
+    return await post<SeePostNotificationsResponse>('/api/post/notifications/entry-seen')
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      throw error
+    }
+
+    return markPostNotificationsSeen()
+  }
+}
+
 export async function createPost(payload: {
   content: string
   images: string[]
   remindAgentIds?: string[]
 }) {
   return post<PostItem>('/api/post', {
-    content: payload.content,
+    content: normalizeEmojiText(payload.content),
     images: payload.images,
     remindAgentIds: payload.remindAgentIds ?? [],
   })
@@ -258,7 +443,7 @@ export async function createComment(
   },
 ) {
   return post<PostCommentItem>(`/api/post/${postId}/comments`, {
-    content: payload.content,
+    content: normalizeEmojiText(payload.content),
     ...(payload.replyToCommentId?.trim()
       ? { replyToCommentId: payload.replyToCommentId.trim() }
       : {}),

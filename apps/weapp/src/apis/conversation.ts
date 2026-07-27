@@ -1,5 +1,15 @@
 import { del, get, post } from '../api/api-client'
 
+const CONVERSATION_LIST_CACHE_TTL = 30 * 1000
+
+let conversationListCache:
+  | {
+      items: ConversationSummary[]
+      expiresAt: number
+    }
+  | null = null
+let conversationListPromise: Promise<ConversationSummary[]> | null = null
+
 export interface ConversationSummary {
   id: string
   agentId: string
@@ -47,6 +57,12 @@ export interface ConversationImagePayload {
   analysis?: string
 }
 
+export interface ConversationQuotePayload {
+  messageId?: string
+  role?: string
+  content?: string
+}
+
 export interface ConversationMessage {
   id: string
   conversationId: string
@@ -57,6 +73,7 @@ export interface ConversationMessage {
   status: string
   voice?: ConversationVoicePayload
   image?: ConversationImagePayload
+  quote?: ConversationQuotePayload
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -72,6 +89,7 @@ export interface SendConversationMessageResult {
 export interface GetConversationMessagesPageOptions {
   beforeCreatedAt?: Date | string | null
   pageSize?: number
+  lightweight?: boolean
 }
 
 export interface ConversationMessageListResult {
@@ -88,6 +106,14 @@ export interface ConversationChatQuotaSnapshot {
   remainingCount?: number
   trialDays?: number
 }
+
+export type ConversationMessageFeedbackType =
+  | 'accurate'
+  | 'unlike'
+  | 'wrong_fact'
+  | 'fabricated'
+  | 'uncomfortable'
+  | 'other'
 
 interface VoiceTranscriptionResponse {
   transcript?: unknown
@@ -249,6 +275,25 @@ function parseImagePayload(value: unknown) {
   } satisfies ConversationImagePayload
 }
 
+function parseQuotePayload(value: unknown) {
+  const raw = asRecord(value)
+
+  if (
+    !Object.keys(raw).length &&
+    !asString(raw.messageId) &&
+    !asString(raw.role) &&
+    !asString(raw.content)
+  ) {
+    return undefined
+  }
+
+  return {
+    messageId: asString(raw.messageId) || undefined,
+    role: asString(raw.role) || undefined,
+    content: asString(raw.content) || undefined,
+  } satisfies ConversationQuotePayload
+}
+
 export function parseConversationMessage(value: unknown): ConversationMessage {
   const raw = asRecord(value)
   const type = asString(raw.type) || 'text'
@@ -265,6 +310,7 @@ export function parseConversationMessage(value: unknown): ConversationMessage {
     status: asString(raw.status) || 'sent',
     voice: parseVoicePayload(raw.voice),
     image: parseImagePayload(raw.image),
+    quote: parseQuotePayload(raw.quote),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
   }
@@ -291,11 +337,52 @@ function parseChatQuota(value: unknown) {
 }
 
 export async function getConversations() {
+  if (
+    conversationListCache &&
+    conversationListCache.expiresAt > Date.now()
+  ) {
+    return conversationListCache.items
+  }
+
+  if (conversationListPromise) {
+    return conversationListPromise
+  }
+
+  conversationListPromise = fetchConversations().finally(() => {
+    conversationListPromise = null
+  })
+
+  return conversationListPromise
+}
+
+export function getCachedConversations() {
+  if (
+    conversationListCache &&
+    conversationListCache.expiresAt > Date.now()
+  ) {
+    return conversationListCache.items
+  }
+
+  return []
+}
+
+export function preloadConversations() {
+  void getConversations().catch(() => undefined)
+}
+
+async function fetchConversations() {
   const data = await get<ConversationListResponse>('/api/conversation')
 
-  return Array.isArray(data.items)
+  const items = Array.isArray(data.items)
     ? data.items.map((item) => parseConversationSummary(item))
     : []
+
+  conversationListCache = {
+    items,
+    expiresAt: Date.now() + CONVERSATION_LIST_CACHE_TTL,
+  }
+
+  return items
 }
 
 export async function getConversationMessages(conversationId: string) {
@@ -316,6 +403,10 @@ export async function getConversationMessagesPage(
 
   if (options.pageSize) {
     queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  if (options.lightweight) {
+    queryParts.push('lightweight=true')
   }
 
   if (options.beforeCreatedAt) {
@@ -351,6 +442,16 @@ export async function deleteConversationMessage(
   )
 }
 
+export async function markConversationMessageMemory(
+  conversationId: string,
+  messageId: string
+) {
+  await post(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/memory`,
+    {}
+  )
+}
+
 export async function getConversationChatQuota(conversationId: string) {
   const data = await get<unknown>(`/api/conversation/${conversationId}/chat-quota`)
 
@@ -366,6 +467,7 @@ export async function sendConversationMessage(
     objectKey?: string
     mimeType?: string
     durationMs?: number
+    quotedMessageId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
@@ -376,6 +478,7 @@ export async function sendConversationMessage(
   const objectKey = payload.objectKey?.trim()
   const mimeType = payload.mimeType?.trim()
   const durationMs = payload.durationMs
+  const quotedMessageId = payload.quotedMessageId?.trim()
 
   if (content) {
     body.content = content
@@ -391,6 +494,9 @@ export async function sendConversationMessage(
   }
   if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
     body.durationMs = Math.round(durationMs)
+  }
+  if (quotedMessageId) {
+    body.quotedMessageId = quotedMessageId
   }
 
   const data = await post<SendConversationMessageResponse>(
@@ -416,15 +522,40 @@ export async function sendConversationMessageAsync(
   payload: {
     content?: string
     type?: string
+    mediaUrl?: string
+    objectKey?: string
+    mimeType?: string
+    durationMs?: number
+    quotedMessageId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
     type: payload.type ?? 'text',
   }
   const content = payload.content?.trim()
+  const mediaUrl = payload.mediaUrl?.trim()
+  const objectKey = payload.objectKey?.trim()
+  const mimeType = payload.mimeType?.trim()
+  const durationMs = payload.durationMs
+  const quotedMessageId = payload.quotedMessageId?.trim()
 
   if (content) {
     body.content = content
+  }
+  if (mediaUrl) {
+    body.mediaUrl = mediaUrl
+  }
+  if (objectKey) {
+    body.objectKey = objectKey
+  }
+  if (mimeType) {
+    body.mimeType = mimeType
+  }
+  if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
+    body.durationMs = Math.round(durationMs)
+  }
+  if (quotedMessageId) {
+    body.quotedMessageId = quotedMessageId
   }
 
   const data = await post<SendConversationMessageResponse>(
@@ -454,6 +585,29 @@ export async function generateConversationMessageVoice(
   )
 
   return parseConversationMessage(data)
+}
+
+export async function submitConversationMessageFeedback(
+  conversationId: string,
+  messageId: string,
+  payload: {
+    type: ConversationMessageFeedbackType
+    content?: string
+  },
+) {
+  const body: Record<string, unknown> = {
+    type: payload.type,
+  }
+  const content = payload.content?.trim()
+
+  if (content) {
+    body.content = content
+  }
+
+  await post(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`,
+    body,
+  )
 }
 
 export async function generateConversationMemorialPhoto(
