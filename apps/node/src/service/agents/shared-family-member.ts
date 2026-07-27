@@ -21,7 +21,8 @@ export function extractSharedFamilyMemberDeclarations(
   ];
 
   for (const [index, pattern] of patterns.entries()) {
-    for (const match of text.matchAll(pattern)) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
       const name = normalizeSharedFamilyMemberName(
         index === 0 ? match[1] : match[2]
       );

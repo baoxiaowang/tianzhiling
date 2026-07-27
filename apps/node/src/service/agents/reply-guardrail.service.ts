@@ -594,7 +594,8 @@ export class ReplyGuardrailService {
         continue;
       }
 
-      for (const match of message.content.matchAll(pattern)) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(message.content))) {
         if (match[1]) {
           names.push(match[1]);
         }

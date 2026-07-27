@@ -336,6 +336,9 @@ importers:
       ali-oss:
         specifier: ^6.23.0
         version: 6.23.0
+      bullmq:
+        specifier: 5.51.1
+        version: 5.51.1
       cos-nodejs-sdk-v5:
         specifier: ^2.15.4
         version: 2.15.4

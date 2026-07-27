@@ -20,6 +20,7 @@
     "@tzl/shared": "workspace:*",
     "@zilliz/milvus2-sdk-node": "^2.6.13",
     "ali-oss": "^6.23.0",
+    "bullmq": "5.51.1",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "mongodb": "^7.1.0",
     "openai": "^6.33.0",
