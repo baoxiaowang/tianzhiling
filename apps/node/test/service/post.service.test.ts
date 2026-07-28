@@ -1304,6 +1304,34 @@ describe('PostService agent comment follow-up replies', () => {
     expect(request.prompt).toBe('请直接输出一条动态评论正文。');
   });
 
+  it('replaces a moment reply that fixes the agent in heaven and claims real-world viewing', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '儿子',
+      sex: AgentSex.man,
+    });
+    const post = createPost({
+      content: '爸爸，我想你了',
+    });
+    const { service } = createService([agent]);
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '儿子，爸爸一直在天上看着你，你的事我都看在眼里。',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      post,
+      createUser(),
+      agent
+    );
+
+    expect(reply).toBe('儿子，我知道呢，心意我收到了。');
+    expect(reply).not.toContain('天上');
+    expect(reply).not.toContain('看着你');
+  });
+
   it('answers the current time instead of inventing a work schedule', async () => {
     const agent = createAgent(AGENT_A_ID, {
       name: '爸爸',

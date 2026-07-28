@@ -1,18 +1,11 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import {
-  MessageEntity,
-  MessageRole,
-  MongoObjectId,
-} from '@tzl/entities';
+import { MessageEntity, MessageRole, MongoObjectId } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import type { RetrievedContextSnippet } from '../agents/agent.context';
 import { OpenAIService } from '../agents/openai';
-import {
-  MilvusService,
-  RetrievedConversationMemory,
-} from './milvus.service';
+import { MilvusService, RetrievedConversationMemory } from './milvus.service';
 
 export interface RetrieveConversationMemoriesOptions {
   query: string;
@@ -47,6 +40,13 @@ export class RetrieveService {
       return [];
     }
 
+    if (
+      typeof this.milvusService?.isEnabled === 'function' &&
+      !this.milvusService.isEnabled()
+    ) {
+      return [];
+    }
+
     try {
       const queryEmbedding = await this.createQueryEmbedding(query);
       const memories = await this.milvusService.searchConversationMemories({
@@ -63,13 +63,12 @@ export class RetrieveService {
         memories.filter(memory => memory.role === MessageRole.user)
       );
 
-      return activeUserMemories
-        .map(memory => ({
-          content: memory.searchableText,
-          role: memory.role,
-          createdAt: this.formatMemoryDate(memory.createdAtTs),
-          score: memory.score,
-        }));
+      return activeUserMemories.map(memory => ({
+        content: memory.searchableText,
+        role: memory.role,
+        createdAt: this.formatMemoryDate(memory.createdAtTs),
+        score: memory.score,
+      }));
     } catch (error) {
       this.logger.warn(
         '[retrieve] memory retrieval failed, conversationId=%s, userId=%s, reason=%s',

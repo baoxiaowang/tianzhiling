@@ -172,10 +172,26 @@ export class AgentProfileFactService {
     sourceText: string,
     options: { fromFeedback?: boolean; feedbackType?: string } = {}
   ): Promise<AgentProfileFactSummary[]> {
+    if (!options.fromFeedback && this.isQuestionOnly(sourceText)) {
+      return [];
+    }
+
     const llmFacts = await this.extractFactsWithLLM(sourceText, options);
     const fallbackFacts = this.extractFactsWithRules(sourceText, options);
 
     return this.dedupeFacts([...llmFacts, ...fallbackFacts]);
+  }
+
+  private isQuestionOnly(sourceText: string): boolean {
+    const text = this.normalizeCompactText(sourceText);
+
+    return (
+      /[?？]/.test(text) ||
+      /^(?:那)?(?:你|您)?(?:为什么|为何|怎么|怎样|是不是|有没有|会不会|能不能|可不可以)/.test(
+        text
+      ) ||
+      /(?:吗|么|呢|什么|谁|哪里|哪儿|几时|何时)$/.test(text)
+    );
   }
 
   private async extractFactsWithLLM(

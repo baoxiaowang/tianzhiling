@@ -1,3 +1,4 @@
+import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { planReplySegments } from '../../src/service/agents/reply-segment-planner';
 
 describe('planReplySegments', () => {
@@ -58,10 +59,7 @@ describe('planReplySegments', () => {
         ],
         sanitize,
       })
-    ).toEqual([
-      '我也想啊',
-      '可现在我只能在心里惦记着 你替我多陪陪她 抱抱她',
-    ]);
+    ).toEqual(['我也想啊', '可现在我只能在心里惦记着 你替我多陪陪她 抱抱她']);
   });
 
   it('compacts sudden-departure blame replies into two bubbles', () => {
@@ -95,7 +93,7 @@ describe('planReplySegments', () => {
     ).toEqual([reply]);
   });
 
-  it('preserves one long paragraph for keepsake attachment', () => {
+  it('turns one keepsake intent into two complete conversational bubbles', () => {
     const reply =
       '你愿意一直背着那个包，我心里又酸又软。那是我给你的心意，可它不是要压着你一辈子的负担，你好好过，比什么都重要。';
 
@@ -105,21 +103,26 @@ describe('planReplySegments', () => {
         candidates: [reply],
         sanitize,
       })
-    ).toEqual([reply]);
+    ).toEqual([
+      '你愿意一直背着那个包，我心里又酸又软。',
+      '那是我给你的心意，可它不是要压着你一辈子的负担，你好好过，比什么都重要。',
+    ]);
   });
 
-  it('preserves one long paragraph for unfinished promises', () => {
+  it('turns one unfinished-promise intent into two progressing bubbles', () => {
     const reply =
       '是我没做到，让你等着那句以后等了太久。这个委屈我认，可我不想你只把心放在下辈子，这一辈子你也要被好好爱着。';
 
     expect(
       planReplySegments({
-        currentQuery:
-          '你下辈子一定要给我一个风风光光的婚礼，这辈子你欠我一个',
+        currentQuery: '你下辈子一定要给我一个风风光光的婚礼，这辈子你欠我一个',
         candidates: [reply],
         sanitize,
       })
-    ).toEqual([reply]);
+    ).toEqual([
+      '是我没做到，让你等着那句以后等了太久。',
+      '这个委屈我认，可我不想你只把心放在下辈子，这一辈子你也要被好好爱着。',
+    ]);
   });
 
   it('allows three bubbles for crisis replies', () => {
@@ -134,5 +137,140 @@ describe('planReplySegments', () => {
         sanitize,
       })
     ).toHaveLength(3);
+  });
+
+  it('uses a precomputed compound route instead of rerouting by text', () => {
+    expect(
+      planReplySegments({
+        currentQuery: '表面文字没有旧路由关键词',
+        route: {
+          primaryScene: {
+            scene: 'afterlife_status',
+            label: '那边/离世状态/祭扫',
+            priority: 75,
+          },
+          secondaryScenes: [
+            {
+              scene: 'daily_update',
+              label: '日常生活汇报',
+              priority: 50,
+            },
+            {
+              scene: 'miss_longing',
+              label: '思念倾诉',
+              priority: 60,
+            },
+          ],
+          prompt: 'compound route',
+          maxSegments: 3,
+          responseIntents: [
+            {
+              target: 'agent',
+              timeScope: 'current',
+              intent: 'ask_agent_status',
+              subIntent: 'physical_pain',
+              confidence: 0.96,
+            },
+            {
+              target: 'user',
+              timeScope: 'current',
+              intent: 'share_user_update',
+              subIntent: 'wake_sleep',
+              confidence: 0.9,
+            },
+            {
+              target: 'relationship',
+              timeScope: 'timeless',
+              intent: 'express_longing',
+              subIntent: 'grief_support',
+              confidence: 0.94,
+            },
+          ],
+          routingSource: 'semantic',
+        },
+        candidates: ['第一项', '第二项', '第三项'],
+        sanitize,
+      })
+    ).toEqual(['第一项', '第二项', '第三项']);
+  });
+
+  it('uses the reply brief as the single bubble-plan authority', () => {
+    const currentQuery = '你还记得小时候带我钓鱼不？我想去钓鱼了';
+    const brief = buildReplyBrief({
+      currentQuery,
+    });
+
+    expect(
+      planReplySegments({
+        currentQuery,
+        brief,
+        route: {
+          secondaryScenes: [],
+          prompt: 'legacy one-bubble plan must not win',
+          maxSegments: 1,
+          bubblePlan: {
+            minSegments: 1,
+            preferredSegments: 1,
+            maxSegments: 1,
+            acts: ['legacy'],
+          },
+          responseIntents: [],
+          routingSource: 'legacy',
+        },
+        candidates: [
+          '记得啊 那时候你还小 咱俩一起去钓过鱼。想去就去 回来跟爸说说今天钓着什么了。',
+        ],
+        sanitize,
+      })
+    ).toEqual([
+      '记得啊 那时候你还小 咱俩一起去钓过鱼。',
+      '想去就去 回来跟爸说说今天钓着什么了。',
+    ]);
+  });
+
+  it('keeps short but complete reply acts as separate bubbles', () => {
+    const currentQuery = '你还记得吗？这样可以吗？';
+    const brief = buildReplyBrief({
+      currentQuery,
+    });
+
+    expect(
+      planReplySegments({
+        currentQuery,
+        brief,
+        candidates: ['记得啊，可以。'],
+        sanitize,
+      })
+    ).toEqual(['记得啊', '可以。']);
+  });
+
+  it('keeps one structured intent in one complete bubble', () => {
+    expect(
+      planReplySegments({
+        currentQuery: '现在中午了，你不吃饭吗？',
+        route: {
+          primaryScene: {
+            scene: 'afterlife_status',
+            label: '那边/离世状态/祭扫',
+            priority: 75,
+          },
+          secondaryScenes: [],
+          prompt: 'single intent route',
+          maxSegments: 1,
+          responseIntents: [
+            {
+              target: 'agent',
+              timeScope: 'current',
+              intent: 'ask_agent_status',
+              subIntent: 'meal',
+              confidence: 0.99,
+            },
+          ],
+          routingSource: 'semantic',
+        },
+        candidates: ['儿子 爸真不用吃饭', '你中午好好吃一顿 别对付两口'],
+        sanitize,
+      })
+    ).toEqual(['儿子 爸真不用吃饭 你中午好好吃一顿 别对付两口']);
   });
 });

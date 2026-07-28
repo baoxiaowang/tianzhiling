@@ -6,7 +6,9 @@ export const CONVERSATION_MESSAGE_SEGMENT_SEPARATOR_PATTERN = new RegExp(
   'gi'
 );
 
-export function hasConversationMessageSegmentSeparator(value?: string): boolean {
+export function hasConversationMessageSegmentSeparator(
+  value?: string
+): boolean {
   return new RegExp(
     `<\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*(?:>|\\])?|\\[\\/?\\s*${FENGE_TOKEN_PATTERN}\\s*\\]?`,
     'i'

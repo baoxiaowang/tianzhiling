@@ -73,6 +73,7 @@ import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
   getVipPurchaseCenter,
+  invalidateVipPurchaseCenterCache,
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
@@ -378,6 +379,7 @@ async function handlePurchaseTap() {
       }
       paidOrderId = result.order.id
     }
+    invalidateVipPurchaseCenterCache()
     isAwaitingPaymentResult.value = true
     void Taro.hideLoading()
 

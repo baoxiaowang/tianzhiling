@@ -48,9 +48,19 @@ import { AgentContextService } from './agents/agent.context';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentProfileFactService } from './agents/agent-profile-fact.service';
+import { AgentRelationshipSignalService } from './agents/agent-relationship-signal.service';
 import { OpenAIService } from './agents/openai';
-import { ReplyGuardrailService } from './agents/reply-guardrail.service';
 import {
+  ReplyGuardrailService,
+  ValidateAssistantReplyResult,
+} from './agents/reply-guardrail.service';
+import { buildReplyBrief, type ReplyBrief } from './agents/reply-brief.service';
+import {
+  GRIEF_CRISIS_INTENT_PATTERN,
+  type StructuredReplyIntent,
+} from './agents/reply-intent';
+import {
+  ReplySceneRoute,
   resolveReplySceneMaxSegments,
   routeReplyScene,
 } from './agents/reply-scene-router';
@@ -69,7 +79,9 @@ import { BailianImageService } from './bailian-image.service';
 const ASSISTANT_REPLY_SEGMENT_LIMIT = 3;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
-const DISCOURAGED_ASSISTANT_EMOJI_PATTERN = /[😔😢😞😟😕😣😖😭😿☹️🙁😮‍💨🥺]/gu;
+const ASSISTANT_REPLY_TIMEOUT_MS = 20000;
+const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
+  /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
 const MEMORIAL_PHOTO_REPLY_TOP_P = 0.8;
 const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
@@ -170,6 +182,7 @@ interface BeforeReplyResult {
   searchableText: string;
   userMessage: MessageEntity;
   deferReply: boolean;
+  isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
 }
 
@@ -183,6 +196,16 @@ interface ReplyUsage {
 interface ProcessReplyResult {
   replySegments: string[];
   usage: ReplyUsage;
+  routing?: ReplyRoutingAudit;
+}
+
+interface ReplyRoutingAudit {
+  intent?: StructuredReplyIntent;
+  route?: ReplySceneRoute;
+  brief?: ReplyBrief;
+  fallbackSource?: string;
+  guardrailRewritten?: boolean;
+  guardrailReason?: string;
 }
 
 interface AfterReplyResult {
@@ -257,6 +280,9 @@ export class ConversationService {
 
   @Inject()
   agentProfileFactService: AgentProfileFactService;
+
+  @Inject()
+  agentRelationshipSignalService: AgentRelationshipSignalService;
 
   @Inject()
   replyGuardrailService: ReplyGuardrailService;
@@ -349,7 +375,14 @@ export class ConversationService {
     const runtime = await this.createReplyRuntime(auth, conversationId);
     const before = await this.beforeReply(runtime, payload);
 
-    if (before.deferReply) {
+    if (!before.isDuplicate) {
+      await this.enrichUserMessageForReply(
+        before.userMessage,
+        before.searchableText
+      );
+    }
+
+    if (before.deferReply || before.isDuplicate) {
       return this.buildSendMessageResult(before);
     }
 
@@ -394,6 +427,13 @@ export class ConversationService {
 
         return this.buildSendMessageResult(before, after);
       }
+    }
+
+    if (!before.isDuplicate) {
+      this.scheduleUserMessageEnrichment(
+        before.userMessage,
+        before.searchableText
+      );
     }
 
     return {
@@ -811,6 +851,7 @@ export class ConversationService {
         currentQuery: this.buildMemorialPhotoAssistantReplyQuery(
           options.customPrompt
         ),
+        classifyIntent: false,
       });
       const response = await this.openAIService.createVisionChatCompletion({
         model: this.openAIService.getVisionModel(),
@@ -932,6 +973,30 @@ export class ConversationService {
     runtime: ReplyRuntime,
     payload: SendConversationMessageDTO
   ): Promise<BeforeReplyResult> {
+    const clientRequestId = payload?.clientRequestId?.trim() || '';
+    const existingUserMessage = clientRequestId
+      ? await this.findUserMessageByClientRequestId(
+          runtime.conversation.id,
+          runtime.conversation.userId,
+          clientRequestId
+        )
+      : null;
+
+    if (existingUserMessage) {
+      const messagePayload =
+        this.buildPreparedIncomingMessageFromStored(existingUserMessage);
+
+      return {
+        messagePayload,
+        searchableText:
+          this.buildSearchableTextFromMessage(existingUserMessage),
+        userMessage: existingUserMessage,
+        deferReply: this.isAssistantReplyDeferred(messagePayload),
+        isDuplicate: true,
+        chatQuota: await this.resolveCurrentChatQuota(runtime, new Date()),
+      };
+    }
+
     const messagePayload = await this.prepareIncomingMessage(payload);
     await this.attachQuotedMessageSnapshot(
       runtime.conversation,
@@ -949,6 +1014,7 @@ export class ConversationService {
       type: messagePayload.type,
       content: messagePayload.content,
       status: MessageStatus.sent,
+      clientRequestId: clientRequestId || undefined,
       quotedMessageId:
         this.normalizeObjectId(messagePayload.quotedMessageId) ?? undefined,
       quotedMessageRole: messagePayload.quotedMessageRole,
@@ -966,15 +1032,12 @@ export class ConversationService {
     });
 
     await this.touchConversation(runtime.conversation, now);
-    await this.recognizeEmotionStateForUserMessage(userMessage, searchableText);
     this.queueMilvusIndexForMessage({
       message: userMessage,
       conversation: runtime.conversation,
       userId: runtime.auth.sub,
       searchableText,
     });
-    await this.extractMemoryFactsForUserMessage(userMessage, searchableText);
-    await this.extractProfileFactsForUserMessage(userMessage, searchableText);
 
     return {
       messagePayload,
@@ -983,6 +1046,31 @@ export class ConversationService {
       deferReply: this.isAssistantReplyDeferred(messagePayload),
       chatQuota,
     };
+  }
+
+  private async enrichUserMessageForReply(
+    message: MessageEntity,
+    searchableText: string
+  ): Promise<void> {
+    await this.recognizeEmotionStateForUserMessage(message, searchableText);
+    await this.extractMemoryFactsForUserMessage(message, searchableText);
+    await this.extractProfileFactsForUserMessage(message, searchableText);
+  }
+
+  private scheduleUserMessageEnrichment(
+    message: MessageEntity,
+    searchableText: string
+  ): void {
+    void this.enrichUserMessageForReply(message, searchableText).catch(
+      error => {
+        this.logger.warn(
+          '[conversation] background user message enrichment failed, conversationId=%s, messageId=%s, reason=%s',
+          this.stringifyObjectId(message.conversationId),
+          this.stringifyObjectId(message.id),
+          this.describeReplyError(error)
+        );
+      }
+    );
   }
 
   private async recognizeEmotionStateForUserMessage(
@@ -1049,6 +1137,30 @@ export class ConversationService {
     } catch (error) {
       this.logger.warn(
         '[conversation] profile fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(message.userId),
+        this.describeReplyError(error)
+      );
+    }
+  }
+
+  private async rememberRelationshipSignals(
+    message: MessageEntity,
+    intent?: StructuredReplyIntent
+  ): Promise<void> {
+    if (!this.agentRelationshipSignalService || !intent) {
+      return;
+    }
+
+    try {
+      await this.agentRelationshipSignalService.upsertFromUserMessage({
+        message,
+        intent,
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] relationship signal persistence failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
         this.stringifyObjectId(message.userId),
@@ -1520,52 +1632,233 @@ export class ConversationService {
     runtime: ReplyRuntime,
     before: BeforeReplyResult
   ): Promise<ProcessReplyResult> {
-    const context = await this.agentContextService.buildConversationContext({
-      auth: runtime.auth,
-      conversation: runtime.conversation,
-      agent: runtime.agent,
-      currentQuery: before.searchableText,
-    });
-    const response = await this.openAIService.createChatCompletion({
-      temperature: ASSISTANT_REPLY_TEMPERATURE,
-      topP: ASSISTANT_REPLY_TOP_P,
-      messages: context.messages,
-    });
-    const replySegments = this.normalizeAssistantReplySegments(
-      typeof response.choices?.[0]?.message?.content === 'string'
-        ? response.choices[0].message.content
-        : '',
-      before.searchableText
+    let context;
+
+    try {
+      context = await this.agentContextService.buildConversationContext({
+        auth: runtime.auth,
+        conversation: runtime.conversation,
+        agent: runtime.agent,
+        currentQuery: before.searchableText,
+      });
+    } catch (error) {
+      const emergencyIntent: StructuredReplyIntent | undefined =
+        GRIEF_CRISIS_INTENT_PATTERN.test(before.searchableText)
+          ? {
+              intents: [
+                {
+                  target: 'user',
+                  timeScope: 'current',
+                  intent: 'crisis_support',
+                  subIntent: 'grief_support',
+                  confidence: 1,
+                },
+              ],
+              emotion: 'sadness',
+              riskLevel: 'high',
+              confidence: 1,
+              source: 'hard_rule',
+            }
+          : undefined;
+      const fallbackBrief = buildReplyBrief({
+        currentQuery: before.searchableText,
+        intent: emergencyIntent,
+      });
+
+      return this.buildGenerationFailureReply(
+        before.searchableText,
+        undefined,
+        emergencyIntent,
+        fallbackBrief,
+        error,
+        'context'
+      );
+    }
+
+    const replyBrief =
+      context.replyBrief ??
+      buildReplyBrief({
+        currentQuery: before.searchableText,
+        intent: context.replyIntent ?? context.replyRoute?.intent,
+        route: context.replyRoute,
+      });
+    await this.rememberRelationshipSignals(
+      before.userMessage,
+      context.replyIntent ?? context.replyRoute?.intent
     );
+    const primaryIntent =
+      context.replyRoute?.responseIntents?.[0] ??
+      context.replyIntent?.intents?.[0];
+    this.logger?.info?.(
+      '[conversation] reply routed, intent=%s, target=%s, timeScope=%s, confidence=%s, scene=%s, source=%s',
+      primaryIntent?.intent || '-',
+      primaryIntent?.target || '-',
+      primaryIntent?.timeScope || '-',
+      context.replyIntent?.confidence ?? '-',
+      context.replyRoute?.primaryScene?.scene || '-',
+      context.replyRoute?.routingSource || 'legacy'
+    );
+    if (replyBrief.capabilityConstraints.length) {
+      this.logger?.info?.(
+        '[conversation] capability constraints resolved, policies=%s',
+        replyBrief.capabilityConstraints
+          .map(item => `${item.policyId}:${item.access}`)
+          .join(',')
+      );
+    }
+    const preplanned = this.replyGuardrailService?.resolvePreplannedSafetyReply(
+      {
+        userQuery: before.searchableText,
+        replyRoute: context.replyRoute,
+        replyBrief,
+      }
+    );
+
+    if (preplanned?.segments.length) {
+      this.logger?.info?.(
+        '[conversation] preplanned safety-critical reply selected, scene=%s, segments=%s',
+        context.replyRoute?.primaryScene?.scene || '-',
+        preplanned.segments.length
+      );
+
+      return {
+        replySegments: this.limitAssistantReplySegmentsByScene(
+          before.searchableText,
+          preplanned.segments,
+          replyBrief.bubblePlan.maxSegments
+        ),
+        usage: {},
+        routing: {
+          intent: context.replyIntent ?? context.replyRoute?.intent,
+          route: context.replyRoute,
+          brief: replyBrief,
+          guardrailRewritten: preplanned.rewritten,
+          guardrailReason: preplanned.reason,
+        },
+      };
+    }
+
+    let response;
+    let replySegments: string[];
+
+    try {
+      response = await this.openAIService.createChatCompletion(
+        {
+          temperature: ASSISTANT_REPLY_TEMPERATURE,
+          topP: ASSISTANT_REPLY_TOP_P,
+          messages: context.messages,
+        },
+        {
+          timeout: ASSISTANT_REPLY_TIMEOUT_MS,
+          maxRetries: 0,
+        }
+      );
+      replySegments = this.normalizeAssistantReplySegments(
+        typeof response.choices?.[0]?.message?.content === 'string'
+          ? response.choices[0].message.content
+          : '',
+        before.searchableText,
+        context.replyRoute,
+        replyBrief
+      );
+    } catch (error) {
+      return this.buildGenerationFailureReply(
+        before.searchableText,
+        context.replyRoute,
+        context.replyIntent ?? context.replyRoute?.intent,
+        replyBrief,
+        error,
+        'completion'
+      );
+    }
+
     const guarded = await this.validateAssistantReply({
       contextMessages: context.messages,
       userQuery: before.searchableText,
       replySegments,
+      replyRoute: context.replyRoute,
+      replyBrief,
     });
 
     return {
       replySegments: this.limitAssistantReplySegmentsByScene(
         before.searchableText,
-        guarded
+        guarded.segments,
+        replyBrief.bubblePlan.maxSegments
       ),
       usage: this.extractUsageFromResponse(response),
+      routing: {
+        intent: context.replyIntent ?? context.replyRoute?.intent,
+        route: context.replyRoute,
+        brief: replyBrief,
+        guardrailRewritten: guarded.rewritten,
+        guardrailReason: guarded.reason,
+      },
+    };
+  }
+
+  private buildGenerationFailureReply(
+    userQuery: string,
+    replyRoute: ReplySceneRoute | undefined,
+    replyIntent: StructuredReplyIntent | undefined,
+    replyBrief: ReplyBrief,
+    error: unknown,
+    stage: 'context' | 'completion'
+  ): ProcessReplyResult {
+    const fallback = this.replyGuardrailService?.resolveGenerationFailureReply({
+      userQuery,
+      replyBrief,
+    });
+
+    if (!fallback?.segments.length) {
+      throw error;
+    }
+
+    this.logger?.warn?.(
+      '[conversation] assistant %s unavailable, safe fallback selected, scene=%s, reason=%s',
+      stage,
+      replyRoute?.primaryScene?.scene || '-',
+      this.describeReplyError(error)
+    );
+
+    return {
+      replySegments: this.limitAssistantReplySegmentsByScene(
+        userQuery,
+        fallback.segments,
+        replyBrief.bubblePlan.maxSegments
+      ),
+      usage: {},
+      routing: {
+        intent: replyIntent ?? replyRoute?.intent,
+        route: replyRoute,
+        brief: replyBrief,
+        fallbackSource: 'reply_brief',
+        guardrailRewritten: fallback.rewritten,
+        guardrailReason: fallback.reason,
+      },
     };
   }
 
   private limitAssistantReplySegmentsByScene(
     userQuery: string,
-    replySegments: string[]
+    replySegments: string[],
+    routedMaxSegments?: number
   ): string[] {
     return replySegments.slice(
       0,
-      this.resolveAssistantReplySegmentLimit(userQuery)
+      this.resolveAssistantReplySegmentLimit(userQuery, routedMaxSegments)
     );
   }
 
-  private resolveAssistantReplySegmentLimit(userQuery = ''): number {
-    const maxSegments = resolveReplySceneMaxSegments({
-      currentQuery: userQuery,
-    });
+  private resolveAssistantReplySegmentLimit(
+    userQuery = '',
+    routedMaxSegments?: number
+  ): number {
+    const maxSegments =
+      routedMaxSegments ??
+      resolveReplySceneMaxSegments({
+        currentQuery: userQuery,
+      });
 
     return Math.max(
       1,
@@ -1577,9 +1870,14 @@ export class ConversationService {
     contextMessages: ChatCompletionMessageParam[];
     userQuery: string;
     replySegments: string[];
-  }): Promise<string[]> {
+    replyRoute?: ReplySceneRoute;
+    replyBrief?: ReplyBrief;
+  }): Promise<ValidateAssistantReplyResult> {
     if (!this.replyGuardrailService) {
-      return options.replySegments;
+      return {
+        segments: options.replySegments,
+        rewritten: false,
+      };
     }
 
     try {
@@ -1587,6 +1885,8 @@ export class ConversationService {
         messages: options.contextMessages,
         userQuery: options.userQuery,
         replySegments: options.replySegments,
+        replyRoute: options.replyRoute,
+        replyBrief: options.replyBrief,
       });
 
       if (result.rewritten) {
@@ -1596,13 +1896,21 @@ export class ConversationService {
         );
       }
 
-      return result.segments.length ? result.segments : options.replySegments;
+      return {
+        ...result,
+        segments: result.segments.length
+          ? result.segments
+          : options.replySegments,
+      };
     } catch (error) {
       this.logger.warn(
         '[conversation] assistant reply guardrail failed, reason=%s',
         this.describeReplyError(error)
       );
-      return options.replySegments;
+      return {
+        segments: options.replySegments,
+        rewritten: false,
+      };
     }
   }
 
@@ -1619,6 +1927,7 @@ export class ConversationService {
         replySegments: processed.replySegments,
         replyTime,
         usage: processed.usage,
+        routing: processed.routing,
       })) ??
       (await this.createAssistantReplyMessages({
         conversationId: runtime.conversation.id,
@@ -1628,6 +1937,7 @@ export class ConversationService {
         userQuery: before.searchableText,
         replyTime,
         usage: processed.usage,
+        routing: processed.routing,
       }));
 
     await this.touchConversation(
@@ -1640,7 +1950,9 @@ export class ConversationService {
     };
   }
 
-  private async afterReplyFailed(runtime: ReplyRuntime): Promise<AfterReplyResult> {
+  private async afterReplyFailed(
+    runtime: ReplyRuntime
+  ): Promise<AfterReplyResult> {
     const replyTime = new Date();
     const assistantMessage = await this.saveMessage({
       conversationId: runtime.conversation.id,
@@ -1673,14 +1985,25 @@ export class ConversationService {
       return false;
     }
 
-    const jobId = this.buildConversationReplyJobId(data);
+    const reusableJobId = this.buildConversationReplyJobId(data);
     const delay = await this.resolveConversationReplyJobDelay(data);
-    await this.removeExistingDelayedConversationReplyJob(queue, jobId);
+    const existingState = await this.removeReusableConversationReplyJob(
+      queue,
+      reusableJobId
+    );
+    const jobId =
+      existingState === 'active' ? `${reusableJobId}:follow-up` : reusableJobId;
+
+    if (jobId !== reusableJobId) {
+      await this.removeReusableConversationReplyJob(queue, jobId);
+    }
 
     await queue.addJobToQueue(data, {
       jobId,
       delay,
       attempts: 3,
+      removeOnComplete: true,
+      removeOnFail: true,
       backoff: {
         type: 'exponential',
         delay: 2000,
@@ -1693,8 +2016,7 @@ export class ConversationService {
   private buildConversationReplyJobId(data: ConversationReplyJobData): string {
     const suffix = data.afterUserCreatedAt
       ? `after:${
-          new Date(data.afterUserCreatedAt).getTime() ||
-          data.afterUserCreatedAt
+          new Date(data.afterUserCreatedAt).getTime() || data.afterUserCreatedAt
         }`
       : 'latest';
 
@@ -1754,10 +2076,10 @@ export class ConversationService {
     }
   }
 
-  private async removeExistingDelayedConversationReplyJob(
+  private async removeReusableConversationReplyJob(
     queue: unknown,
     jobId: string
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const queueWithGetJob = queue as {
       getJob?: (id: string) => Promise<{
         getState?: () => Promise<string>;
@@ -1766,22 +2088,30 @@ export class ConversationService {
     };
 
     if (!queueWithGetJob.getJob) {
-      return;
+      return undefined;
     }
 
     try {
       const existingJob = await queueWithGetJob.getJob(jobId);
       const state = await existingJob?.getState?.();
 
-      if (state === 'delayed' || state === 'waiting') {
+      if (
+        state === 'delayed' ||
+        state === 'waiting' ||
+        state === 'completed' ||
+        state === 'failed'
+      ) {
         await existingJob?.remove?.();
       }
+
+      return state;
     } catch (error) {
       this.logger.warn(
-        '[conversation-reply] remove existing delayed job failed, jobId=%s, reason=%s',
+        '[conversation-reply] remove reusable job failed, jobId=%s, reason=%s',
         jobId,
         this.describeReplyError(error)
       );
+      return undefined;
     }
   }
 
@@ -1912,6 +2242,25 @@ export class ConversationService {
       searchableText: this.buildQueuedSearchableText(searchableTexts),
       userMessage: latestUserMessage,
       deferReply: false,
+      isDuplicate: false,
+    };
+  }
+
+  private buildPreparedIncomingMessageFromStored(
+    message: MessageEntity
+  ): PreparedIncomingMessage {
+    return {
+      type: this.normalizeMessageType(message.type),
+      content: message.content?.trim() || '',
+      quotedMessageId: this.stringifyOptionalObjectId(message.quotedMessageId),
+      quotedMessageRole: message.quotedMessageRole,
+      quotedMessageContent: message.quotedMessageContent?.trim() || undefined,
+      mediaObjectKey: message.mediaObjectKey?.trim() || undefined,
+      mediaUrl: message.mediaUrl?.trim() || undefined,
+      mediaMimeType: message.mediaMimeType?.trim() || undefined,
+      mediaDurationMs: message.mediaDurationMs,
+      mediaAnalysis: message.mediaAnalysis?.trim() || undefined,
+      mediaTranscript: message.mediaTranscript?.trim() || undefined,
     };
   }
 
@@ -1952,7 +2301,7 @@ export class ConversationService {
   ): SendConversationMessageResult {
     const assistantMessages = (after?.assistantMessages ?? []).slice(
       0,
-      this.resolveAssistantReplySegmentLimit(before.searchableText)
+      ASSISTANT_REPLY_SEGMENT_LIMIT
     );
 
     return {
@@ -1995,6 +2344,8 @@ export class ConversationService {
       mediaAnalysis: '',
       mediaTranscript: '',
       mediaDurationMs: undefined,
+      replyGroupId: '',
+      replySegmentIndex: undefined,
       updatedAt: lastMessage.updatedAt,
     });
 
@@ -2494,12 +2845,17 @@ export class ConversationService {
       completionTokens?: number;
       totalTokens?: number;
     };
+    routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[]> {
     const replyGroupId = new MongoObjectId().toHexString();
     const messages: MessageEntity[] = [];
     const replySegments = options.replySegments.slice(
       0,
-      this.resolveAssistantReplySegmentLimit(options.userQuery)
+      this.resolveAssistantReplySegmentLimit(
+        options.userQuery,
+        options.routing?.brief?.bubblePlan.maxSegments ??
+          options.routing?.route?.maxSegments
+      )
     );
 
     for (const [index, segment] of replySegments.entries()) {
@@ -2523,6 +2879,9 @@ export class ConversationService {
             ? options.usage.completionTokens
             : undefined,
           totalTokens: isFirstSegment ? options.usage.totalTokens : undefined,
+          ...(isFirstSegment
+            ? this.buildReplyRoutingMessageFields(options.routing)
+            : {}),
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -2543,6 +2902,7 @@ export class ConversationService {
       completionTokens?: number;
       totalTokens?: number;
     };
+    routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[] | undefined> {
     if (options.before.messagePayload.type !== MessageType.voice) {
       return undefined;
@@ -2559,7 +2919,11 @@ export class ConversationService {
     const replyContent = options.replySegments
       .slice(
         0,
-        this.resolveAssistantReplySegmentLimit(options.before.searchableText)
+        this.resolveAssistantReplySegmentLimit(
+          options.before.searchableText,
+          options.routing?.brief?.bubblePlan.maxSegments ??
+            options.routing?.route?.maxSegments
+        )
       )
       .join('</fenge>');
     const synthesizedVoice = await this.synthesizeAssistantVoiceReply(
@@ -2587,6 +2951,7 @@ export class ConversationService {
       promptTokens: options.usage.promptTokens,
       completionTokens: options.usage.completionTokens,
       totalTokens: options.usage.totalTokens,
+      ...this.buildReplyRoutingMessageFields(options.routing),
       createdAt: options.replyTime,
       updatedAt: options.replyTime,
     });
@@ -3198,14 +3563,17 @@ export class ConversationService {
 
   private normalizeAssistantReplySegments(
     value?: string,
-    userQuery = ''
+    userQuery = '',
+    replyRoute?: ReplySceneRoute,
+    replyBrief?: ReplyBrief
   ): string[] {
     const parsedSegments = this.parseAssistantReplyCandidates(value);
     const segments = planReplySegments({
       currentQuery: userQuery,
+      route: replyRoute,
+      brief: replyBrief,
       candidates: parsedSegments,
-      sanitize: segment =>
-        this.sanitizeAssistantSegment(segment, userQuery),
+      sanitize: segment => this.sanitizeAssistantSegment(segment, userQuery),
     }).slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
     if (segments.length > 0) {
@@ -3375,14 +3743,9 @@ export class ConversationService {
     }).primaryScene?.scene;
     const valueToCheck =
       primaryScene === 'dream_companionship'
-        ? value.replace(
-            /(?:梦里|梦中)[^，。！？!?]{0,48}/g,
-            ''
-          )
+        ? value.replace(/(?:梦里|梦中)[^，。！？!?]{0,48}/g, '')
         : primaryScene === 'afterlife_status' &&
-          !/(?:现实|醒来|醒着|屋里|房间|床边|身边|旁边|这里|这儿)/.test(
-            value
-          )
+          !/(?:现实|醒来|醒着|屋里|房间|床边|身边|旁边|这里|这儿)/.test(value)
         ? value.replace(
             /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,20}(?:看见|看到|看着|看在眼里)[^，。！？!?]{0,20}/g,
             ''
@@ -3403,6 +3766,63 @@ export class ConversationService {
       .trim();
   }
 
+  private buildReplyRoutingMessageFields(routing?: ReplyRoutingAudit): {
+    replyIntentTarget?: string;
+    replyIntentTimeScope?: string;
+    replyIntent?: string;
+    replyIntentSubIntent?: string;
+    replyIntentSecondary?: string[];
+    replyIntents?: MessageEntity['replyIntents'];
+    replyIntentConfidence?: number;
+    replyIntentSource?: string;
+    replyScene?: string;
+    replySecondaryScenes?: string[];
+    replyRoutingSource?: string;
+    replyBriefVersion?: string;
+    replyBriefMode?: string;
+    replyBriefStrictGrounding?: boolean;
+    replyBriefPreferredSegments?: number;
+    replyRelationshipSignals?: string[];
+    replyFallbackSource?: string;
+    replyGuardrailRewritten?: boolean;
+    replyGuardrailReason?: string;
+  } {
+    const responseIntents = routing?.route?.responseIntents?.length
+      ? routing.route.responseIntents
+      : routing?.intent?.intents;
+    const primaryIntent = responseIntents?.[0];
+
+    return {
+      replyIntentTarget: primaryIntent?.target,
+      replyIntentTimeScope: primaryIntent?.timeScope,
+      replyIntent: primaryIntent?.intent,
+      replyIntentSubIntent: primaryIntent?.subIntent,
+      replyIntentSecondary: responseIntents?.slice(1).map(item => item.intent),
+      replyIntents: responseIntents?.map(item => ({ ...item })),
+      replyIntentConfidence: routing?.intent?.confidence,
+      replyIntentSource: routing?.intent?.source,
+      replyScene: routing?.route?.primaryScene?.scene,
+      replySecondaryScenes: routing?.route?.secondaryScenes.map(
+        scene => scene.scene
+      ),
+      replyRoutingSource: routing?.route?.routingSource,
+      replyBriefVersion: routing?.brief?.version,
+      replyBriefMode: routing?.brief?.mode,
+      replyBriefStrictGrounding: routing?.brief?.strictGrounding,
+      replyBriefPreferredSegments:
+        routing?.brief?.bubblePlan?.preferredSegments,
+      replyRelationshipSignals: routing?.brief?.relationshipContext?.map(
+        item => item.key
+      ),
+      replyFallbackSource: routing?.fallbackSource?.trim() || undefined,
+      replyGuardrailRewritten:
+        typeof routing?.guardrailRewritten === 'boolean'
+          ? routing.guardrailRewritten
+          : undefined,
+      replyGuardrailReason: routing?.guardrailReason?.trim() || undefined,
+    };
+  }
+
   private async saveMessage(options: {
     conversationId: MongoObjectId;
     userId: MongoObjectId;
@@ -3413,6 +3833,7 @@ export class ConversationService {
     status: MessageStatus;
     replyGroupId?: string;
     replySegmentIndex?: number;
+    clientRequestId?: string;
     quotedMessageId?: MongoObjectId;
     quotedMessageRole?: MessageRole;
     quotedMessageContent?: string;
@@ -3426,6 +3847,25 @@ export class ConversationService {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    replyIntentTarget?: string;
+    replyIntentTimeScope?: string;
+    replyIntent?: string;
+    replyIntentSubIntent?: string;
+    replyIntentSecondary?: string[];
+    replyIntents?: MessageEntity['replyIntents'];
+    replyIntentConfidence?: number;
+    replyIntentSource?: string;
+    replyScene?: string;
+    replySecondaryScenes?: string[];
+    replyRoutingSource?: string;
+    replyBriefVersion?: string;
+    replyBriefMode?: string;
+    replyBriefStrictGrounding?: boolean;
+    replyBriefPreferredSegments?: number;
+    replyRelationshipSignals?: string[];
+    replyFallbackSource?: string;
+    replyGuardrailRewritten?: boolean;
+    replyGuardrailReason?: string;
     createdAt: Date;
     updatedAt: Date;
   }): Promise<MessageEntity> {
@@ -3444,6 +3884,7 @@ export class ConversationService {
       options.replySegmentIndex >= 0
         ? Math.floor(options.replySegmentIndex)
         : undefined;
+    message.clientRequestId = options.clientRequestId?.trim() || undefined;
     message.quotedMessageId = options.quotedMessageId;
     message.quotedMessageRole = options.quotedMessageRole;
     message.quotedMessageContent = options.quotedMessageContent?.trim() || '';
@@ -3461,6 +3902,37 @@ export class ConversationService {
       options.completionTokens
     );
     message.totalTokens = this.normalizeTokenCount(options.totalTokens);
+    message.replyIntentTarget = options.replyIntentTarget?.trim() || undefined;
+    message.replyIntentTimeScope =
+      options.replyIntentTimeScope?.trim() || undefined;
+    message.replyIntent = options.replyIntent?.trim() || undefined;
+    message.replyIntentSubIntent =
+      options.replyIntentSubIntent?.trim() || undefined;
+    message.replyIntentSecondary =
+      options.replyIntentSecondary?.filter(Boolean);
+    message.replyIntents = options.replyIntents?.map(item => ({ ...item }));
+    message.replyIntentConfidence = this.normalizeConfidence(
+      options.replyIntentConfidence
+    );
+    message.replyIntentSource = options.replyIntentSource?.trim() || undefined;
+    message.replyScene = options.replyScene?.trim() || undefined;
+    message.replySecondaryScenes =
+      options.replySecondaryScenes?.filter(Boolean);
+    message.replyRoutingSource =
+      options.replyRoutingSource?.trim() || undefined;
+    message.replyBriefVersion = options.replyBriefVersion?.trim() || undefined;
+    message.replyBriefMode = options.replyBriefMode?.trim() || undefined;
+    message.replyBriefStrictGrounding = options.replyBriefStrictGrounding;
+    message.replyBriefPreferredSegments = this.normalizeTokenCount(
+      options.replyBriefPreferredSegments
+    );
+    message.replyRelationshipSignals =
+      options.replyRelationshipSignals?.filter(Boolean);
+    message.replyFallbackSource =
+      options.replyFallbackSource?.trim() || undefined;
+    message.replyGuardrailRewritten = options.replyGuardrailRewritten;
+    message.replyGuardrailReason =
+      options.replyGuardrailReason?.trim() || undefined;
     message.createdAt = options.createdAt;
     message.updatedAt = options.updatedAt;
 
@@ -3674,12 +4146,47 @@ export class ConversationService {
     });
   }
 
+  private findUserMessageByClientRequestId(
+    conversationId: MongoObjectId,
+    userId: MongoObjectId,
+    clientRequestId: string
+  ): Promise<MessageEntity | null> {
+    return this.messageModel.findOne({
+      where: {
+        conversationId,
+        userId,
+        role: MessageRole.user,
+        clientRequestId,
+        isArchived: { $ne: true },
+      } as never,
+    });
+  }
+
+  private stringifyOptionalObjectId(
+    value: MongoObjectId | undefined
+  ): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const normalized = this.stringifyObjectId(value).trim();
+    return normalized || undefined;
+  }
+
   private normalizeTokenCount(value: unknown): number | undefined {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
       return undefined;
     }
 
     return Math.floor(value);
+  }
+
+  private normalizeConfidence(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return undefined;
+    }
+
+    return Math.max(0, Math.min(1, value));
   }
 
   private normalizeFeedbackType(

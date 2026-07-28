@@ -381,16 +381,31 @@ export async function readUnreadPostNotifications() {
 
 export async function markPostNotificationRead(notificationId: string) {
   if (!POST_NOTIFICATION_V2_API_ENABLED) {
+    const result = await readUnreadPostNotifications()
+
     return {
       notificationId,
-      readCount: 0,
-      unreadCount: 0,
+      readCount: result.readCount,
+      unreadCount: result.unreadCount,
     }
   }
 
-  return post<ReadPostNotificationResponse>(
-    `/api/post/notifications/${encodeURIComponent(notificationId)}/read`,
-  )
+  try {
+    return await post<ReadPostNotificationResponse>(
+      `/api/post/notifications/${encodeURIComponent(notificationId)}/read`,
+    )
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      throw error
+    }
+
+    const result = await readUnreadPostNotifications()
+    return {
+      notificationId,
+      readCount: result.readCount,
+      unreadCount: result.unreadCount,
+    }
+  }
 }
 
 export async function markPostNotificationsSeen() {
@@ -399,11 +414,7 @@ export async function markPostNotificationsSeen() {
 
 export async function markPostNotificationEntrySeen() {
   if (!POST_NOTIFICATION_V2_API_ENABLED) {
-    return {
-      seenCount: 0,
-      unseenCount: 0,
-      unreadCount: 0,
-    }
+    return markPostNotificationsSeen()
   }
 
   try {

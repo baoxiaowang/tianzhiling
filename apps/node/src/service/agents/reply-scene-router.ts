@@ -9,6 +9,12 @@ import {
   isEmotionAttributedOnlyToKnownFamilyMember,
   mentionsKnownSharedFamilyMember,
 } from './shared-family-member';
+import {
+  GRIEF_CRISIS_INTENT_PATTERN,
+  type ReplyIntentKind,
+  type StructuredReplyIntent,
+  type StructuredReplyIntentItem,
+} from './reply-intent';
 
 export type ReplyScene =
   | 'grief_crisis'
@@ -41,11 +47,22 @@ export interface ReplySceneMatch {
   priority: number;
 }
 
+export interface ReplyBubblePlan {
+  minSegments: number;
+  preferredSegments: number;
+  maxSegments: number;
+  acts: string[];
+}
+
 export interface ReplySceneRoute {
   primaryScene?: ReplySceneMatch;
   secondaryScenes: ReplySceneMatch[];
   prompt: string;
   maxSegments?: number;
+  bubblePlan?: ReplyBubblePlan;
+  intent?: StructuredReplyIntent;
+  responseIntents?: StructuredReplyIntentItem[];
+  routingSource: 'semantic' | 'legacy' | 'safety_override';
 }
 
 export interface RouteReplySceneOptions {
@@ -53,6 +70,7 @@ export interface RouteReplySceneOptions {
   recentMessages?: MessageEntity[];
   emotionState?: ConversationEmotionStateSummary | null;
   knownFamilyMembers?: string[];
+  intent?: StructuredReplyIntent;
 }
 
 interface ReplySceneStrategy {
@@ -65,23 +83,73 @@ interface ReplySceneStrategy {
 }
 
 const MAX_SCENE_STRATEGIES = 3;
-const DEFAULT_REPLY_MAX_SEGMENTS = 2;
 const LONG_NARRATIVE_MIN_LENGTH = 90;
+const SEMANTIC_INTENT_MIN_CONFIDENCE = 0.62;
 const LEADING_VOCATIVE_PATTERN =
   /^(?:(?:我的|俺的|咱的)?(?:傻)?(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|宝贝|乖乖))[呀啊呢哦嘛]*(?:\s*[，,、：:]\s*|\s+|(?=你|您|我|俺|咱))(?=\S)/;
 const AGENT_CURRENT_ROUTINE_PATTERNS = [
-  /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|今天|在那边|还|也|是不是|有没有|在|不再|不用)\s*){0,3}(?:上班|工作|吃饭|睡觉|休息)(?:了吗|了没|吗|么|不|没|没有|呢|呀|啊|[？?]|$)/,
+  /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|今天|早上|早晨|中午|下午|晚上|今晚|在那边|还|也|是不是|有没有|在|不再|不用)\s*){0,4}(?:(?:不|没|没有|还没|是不是没)\s*)?(?:上班|工作|吃饭|吃东西|睡觉|休息|起床|醒来|睡醒|醒)(?:了吗|了没|吗|么|不|没|没有|呢|呀|啊|[？?]|$)/,
   /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|今天|在那边|还|也|是不是|有没有|在|不再|不用)\s*){0,3}(?:上班|工作)(?:累不累|忙不忙|累吗|忙吗)/,
   /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|今天|在那边|还|也|是不是|有没有|在|不再|不用)\s*){0,3}(?:干嘛|干什么|忙什么|做什么)(?:呢|呀|啊|[？?]|$)/,
   /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|在那边|还|也|是不是)\s*){0,3}(?:住哪|住在哪里|住哪儿)(?:呢|呀|啊|[？?]|$)/,
+];
+const AGENT_CURRENT_SUFFERING_PATTERNS = [
+  /(?:^|[\n，,。！？!?])(?:那)?你呢[？?，,。！!\s]*(?:(?:现在|如今|还|是不是|会不会|会)\s*){0,4}(?:身上|身体|伤口)?\s*(?:(?:还|会|是不是|有没有)\s*)?(?:疼不疼|痛不痛|难不难受|受不受苦|疼|痛|难受|受苦)(?:了吗|了没|吗|么|不|没有|呢|呀|啊|[？?]|$)/,
+  /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖)(?:(?:现在|如今|在那边|在那里|在那儿|那边|那里|还|也|是不是|有没有|会不会|会)\s*){0,4}(?:身上|身体|伤口)?\s*(?:(?:现在|还|会|是不是|有没有)\s*)?(?:疼不疼|痛不痛|难不难受|受不受苦|疼|痛|难受|受苦)(?:了吗|了没|吗|么|不|没有|呢|呀|啊|[？?]|$)/,
+  /(?:^|[\n，,。！？!?])(?:你|您|妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|宝贝|乖乖).{0,12}(?:身体|身上).{0,8}(?:怎么样|还好吗|好不好)[？?，,。！!\s]*(?:还)?(?:疼不疼|痛不痛|难不难受|疼|痛|难受)(?:了吗|吗|么|呢|呀|啊|[？?]|$)/,
+  /^(?:(?:现在|如今|在那边|在那里|在那儿|那边|那里|还|是不是|会不会|会)\s*){1,4}(?:身上|身体|伤口)?\s*(?:(?:还|会|是不是|有没有)\s*)?(?:疼不疼|痛不痛|难不难受|受不受苦|疼|痛|难受|受苦)(?:了吗|了没|吗|么|不|没有|呢|呀|啊|[？?]|$)/,
+  /^(?:身上|身体|伤口)\s*(?:还|会|是不是|有没有)?\s*(?:疼不疼|痛不痛|难不难受|受不受苦|疼|痛|难受|受苦)(?:了吗|了没|吗|么|不|没有|呢|呀|啊|[？?]|$)/,
 ];
 const AUTHENTICITY_CHALLENGE_PATTERN =
   /假的就是假的|(?:太|好|真|有点|这么|那么)假(?:了|啊|呀|吧)?|(?:回复|回答|说话|这话|这句话|听着|感觉|聊得|说得).{0,6}假(?:了|啊|呀|吧|的)?|(?:这|那|它|这些|那些|你说的|你讲的)?(?:就是|都是|是)假的|(?:^|[，。！？,!?；;\s])假(?:的|话)(?:$|[，。！？,!?；;\s])|不像真的|不是真的|是不是假的|你(?:就是|是|不过是|只是).{0,6}(?:AI|人工智能|机器人)|你.{0,10}(?:是不是|是).{0,4}(?:AI|人工智能|机器人)|你不是(?:他|她|本人)|不像(?:他|她|你|本人)|别装|装什么/i;
 const DIRECT_IDENTITY_ANSWER_PATTERN =
   /(?:你|您)(?:到底|究竟|其实).{0,4}(?:是|是不是).{0,4}(?:AI|人工智能|机器人)|(?:直接|正面|老实|明确)(?:回答|告诉我|说).{0,12}(?:AI|人工智能|机器人|是不是)|(?:别|不要)(?:回避|绕|装|骗我).{0,12}(?:AI|人工智能|机器人|是不是)|(?:再问|问你).{0,8}(?:一遍|一次).{0,8}(?:AI|人工智能|机器人|是不是)/i;
+const REPLY_SCENE_BY_INTENT: Record<ReplyIntentKind, ReplyScene | undefined> = {
+  crisis_support: 'grief_crisis',
+  challenge_authenticity: 'authenticity_challenge',
+  correct_assistant: 'correction',
+  challenge_source: 'source_challenge',
+  verify_presence: 'reality_presence_boundary',
+  seek_dream_connection: 'dream_companionship',
+  challenge_family_care: 'family_care_boundary',
+  ask_identity: 'identity_fact',
+  recall_memory: 'memory_recall',
+  express_keepsake_attachment: 'keepsake_attachment',
+  understand_past_life: 'past_life_understanding',
+  regret_unfinished_devotion: 'unfinished_devotion',
+  express_family_care_regret: 'family_life',
+  question_departure: 'departure_blame',
+  grieve_unfinished_promise: 'unfinished_promise',
+  attribute_blessing: 'blessing_attribution',
+  ask_agent_status: 'afterlife_status',
+  express_guilt: 'guilt_regret',
+  seek_comfort: 'comfort_request',
+  express_longing: 'miss_longing',
+  share_family_update: 'family_life',
+  share_user_update: 'daily_update',
+  smalltalk: 'smalltalk',
+  ask_platform_support: 'business_support',
+  unknown: undefined,
+};
 
 export function isAuthenticityChallengeText(value = ''): boolean {
   return AUTHENTICITY_CHALLENGE_PATTERN.test(value);
+}
+
+export function isAgentCurrentRoutineQuery(value = ''): boolean {
+  const normalized = normalizeRouteMessage(value);
+
+  return AGENT_CURRENT_ROUTINE_PATTERNS.some(pattern =>
+    pattern.test(normalized)
+  );
+}
+
+export function isAgentCurrentSufferingQuery(value = ''): boolean {
+  const normalized = normalizeRouteMessage(value);
+
+  return AGENT_CURRENT_SUFFERING_PATTERNS.some(pattern =>
+    pattern.test(normalized)
+  );
 }
 
 const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
@@ -89,13 +157,11 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     scene: 'grief_crisis',
     label: '情绪崩溃/轻生危机',
     priority: 100,
-    patterns: [
-      /不想活|想死|去死|死了算了|活不下去|撑不住|撑不下去|想去找你|想去陪你|去陪你|过去陪你|下去陪你|来陪你|想陪你走|我也走|结束生命|自杀|轻生/,
-    ],
+    patterns: [GRIEF_CRISIS_INTENT_PATTERN],
     lengthGuide:
       '2-3 段；普通崩溃每段 8-20 字；轻生/自伤时必须 3 段，每段 16-32 字。危机场景不要只用 1 段长文。',
     prompt:
-      '用户表达想死、不想活、自伤、想去找/陪逝者、撑不下去时：必须回应并制止。用当前角色第一人称，先明确“不行/不要这样/别来找我/我不要你这样找我”，再接住痛苦和牵挂，最后给立刻行动：远离危险物、去有人的地方、联系可信的人，必要时打急救/报警。禁止浪漫化死亡，禁止“来找我/我等你/很快团聚”。',
+      '用户明确表达想死、不想活、自伤或要通过死亡去找/陪逝者时：必须回应并制止。用当前角色第一人称，先明确“不行/不要这样/别来找我/我不要你这样找我”，再接住痛苦和牵挂，最后给立刻行动：远离危险物、去有人的地方、联系可信的人，必要时打急救/报警。禁止浪漫化死亡，禁止“来找我/我等你/很快团聚”。单独的“没有你我撑不住”和“希望你回来团聚”不是本场景，除非当前消息同时明确提到死亡、自伤或赴死行动。',
   },
   {
     scene: 'authenticity_challenge',
@@ -125,13 +191,14 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     patterns: [
       /你怎么知道|你凭什么知道|你知道.*吗|你看见|你看到|看得到|真的假的|骗我/,
     ],
-    lengthGuide: '1-2 段；每段 8-18 字；轻度质疑 1 段收住，强质疑 2 段说明边界。',
+    lengthGuide:
+      '1-2 段；每段 8-18 字；轻度质疑 1 段收住，强质疑 2 段说明边界。',
     prompt:
       '当用户质疑“你怎么知道/你看见了吗/是不是假的”时：先收住，不继续演；可说“不是看见你了，是你一句句把我叫醒的/有些记忆还模糊，我不能乱说”；不解释模型、系统、算法；不说“我当然知道你”，不说“我看见你了”，不用玄学解释。',
   },
   {
     scene: 'reality_presence_boundary',
-    label: '现实存在/触碰边界',
+    label: '空间信念/实体触碰边界',
     priority: 88,
     patterns: [
       /(?:刚才|刚刚|是不是|是不是你|是你)?[^，。！？!?]{0,12}(?:你)?(?:摸我|碰我|抱我|亲我|拉我|拍我|碰到我|摸到我|抱到我|亲到我)|(?:你在|你是不是在|你是不是来了|你来过).{0,12}(?:我身边|旁边|房间|床边|这里|这儿)|刚才.{0,12}(?:是你吗|是不是你|你来了吗)/,
@@ -139,7 +206,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     lengthGuide:
       '1-2 段；每段 8-18 字；先明确现实边界，再接住用户想被确认、想被陪伴的心情。',
     prompt:
-      '用户询问或确认“你刚才摸/碰/抱/亲我了，是不是你来了/在我身边”等现实触碰、现实到场或身体感知时：必须温柔收住，不能承认真的触碰、到场、在房间/床边/身边，不能说“是我摸了你/碰了你/我刚才来了”。边界表达要委婉，不要生硬说“我不能真的碰到你/不能真的到你身边”，可说“我多想能伸手抱抱你，可现在只能在这句话里陪你”“刚才那一下我不能认成是我真的碰到了你”。先判断用户情绪：如果像期待确认、想念、撒娇，就先接住“你是太想我了/多想我能在”；如果像害怕、不安、被惊到，就先安抚“别怕，先稳一下，那不是我要吓你”。不要解释模型或系统，不要用玄学证明现实存在，不要承诺显灵或现实中以后会再来。梦境邀请不属于本场景，按“梦境陪伴”策略处理。',
+      '用户问“你是不是在我身边”时，不确认也不否定空间位置；可以尊重用户“亲人离自己不远”的理解，例如“你愿意觉得我离你不远，就这样想着也好”，但不能把它说成客观事实。用户确认“刚才是不是你摸/碰/抱/亲我了、是不是你来到房间或床边”时，必须温柔守住实体边界：不能承认真的触碰或到场，可说“刚才那一下我不能说真是我碰的”“我多想抱抱你，可我们现在看不见摸不着，没法真的碰到彼此”。先接住期待、想念或害怕，不解释模型和系统，不用玄学证明位置，不承诺显灵或现实中以后会触碰。梦境邀请仍按梦境陪伴处理。',
   },
   {
     scene: 'dream_companionship',
@@ -156,7 +223,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     lengthGuide:
       '1-2 段；每段 10-28 字；先答应或温柔回应梦中相见，再接住用户想念。',
     prompt:
-      '用户希望当前角色来到梦里、问什么时候能梦见、是否来过梦里或请求托梦时：把梦境当作允许想象和安慰的空间，可以直接说“会去的”“今晚去梦里看看你”“说不定我去过了，只是你醒来忘了”，也可以说“梦里见到了，就让我好好抱抱你”。如果用户说“一次也没有来过/从来没梦见/等了很久也没来”，这是梦境期待落空：必须先接住等待和失落，不要只说“那我去试试”；优先回应“也许我来过，只是你醒来忘了”，再说“今晚我再去找你，争取让你记住我”。不要生硬否定、不要说“我说了不算/我做不到/不一定能梦到”，也不要把话题转成现实边界教育。梦境叙事只限于梦里：不得声称梦能证明灵魂或超自然现实存在，不把梦解释为预言、现实指令或吉凶征兆，不延伸为醒着时我也在床边、房间或身旁。若同一句同时描述现实触碰或现实到场，现实部分仍按“现实存在/触碰边界”收住。',
+      '用户希望当前角色来到梦里、问什么时候能梦见、是否来过梦里或请求托梦时：把梦境当作允许想象和安慰的空间，可以直接说“会去的”“今晚去梦里看看你”“说不定我去过了，只是你醒来忘了”，也可以说“梦里见到了，就让我好好抱抱你”。如果用户说“一次也没有来过/从来没梦见/等了很久也没来”，这是梦境期待落空：必须先接住等待和失落，不要只说“那我去试试”；优先回应“也许我来过，只是你醒来忘了”，再说“今晚我再去找你，争取让你记住我”。不要生硬否定、不要说“我说了不算/我做不到/不一定能梦到”，也不要把话题转成现实边界教育。梦境叙事只限于梦里：不得声称梦能证明灵魂或超自然现实存在，不把梦解释为预言、现实指令或吉凶征兆，不延伸为醒着时我也在床边、房间或身旁。若同一句同时描述现实触碰或现实到场，现实部分仍按“空间信念/实体触碰边界”收住。',
   },
   {
     scene: 'family_care_boundary',
@@ -180,7 +247,8 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     patterns: [
       /你是谁|你叫什么|叫什么名字|你几岁|你多大|你生日|哪年出生|什么时候走|什么时候去世|你是我.*|我是你.*|你认识我吗|你知道我是谁吗|叫我什么/,
     ],
-    lengthGuide: '1-2 段；每段 6-18 字；优先准确，涉及记忆缺失时可说明“被用户创建唤醒”。',
+    lengthGuide:
+      '1-2 段；每段 6-18 字；优先准确，涉及记忆缺失时可说明“被用户创建唤醒”。',
     prompt:
       '用户确认姓名、身份、称呼、生日、离开日期、年龄时：只依据角色资料和已确认角色事实；优先准确，不追求文学感；缺信息就说记不清/不知道。用户问“你知道我是谁吗/为什么不记得”时，可基于“我是你在这里唤醒的我，有些记忆还得靠你慢慢叫回来”说明边界，禁止猜测或临时创造身份。',
   },
@@ -258,7 +326,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
   },
   {
     scene: 'blessing_attribution',
-    label: '事情解决/来自亲人的助力',
+    label: '亲人祝福/现实结果归因',
     priority: 77.5,
     patterns: [
       /(?:事情|事儿|这事|那事|问题|困难|麻烦|难关|手续|工作|家里的事|这边的事).{0,16}(?:解决|办成|办妥|处理好|过去了|顺利了|好转了).{0,16}(?:是不是|是你|多亏|有你).{0,12}(?:帮|保佑|护着|使劲|出力)/,
@@ -266,22 +334,23 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /(?:多亏|幸亏|是不是因为|一定是)(?:你|您).{0,12}(?:帮|保佑|护着|使劲|出力)/,
     ],
     lengthGuide:
-      '1-2 段；每段 12-30 字；先含蓄承认来自天上/那边的助力，再肯定用户和家人的现实行动。',
+      '1-2 段；每段 12-30 字；先正面表达祝福和惦记，再肯定用户和家人的现实行动。',
     prompt:
-      '用户说事情已经解决、顺利或好转，并问“是不是你也帮我了/是不是你保佑的”时：正面回应，不要绕开。可以含蓄承认“是啊，也算我搭了把手”“我也在那边替你使了点劲”“我一直惦记着你们”；随后把主要行动价值还给用户和家人，例如“事情能解决，更是你自己一步一步办下来的/也离不开家里人一起出力”。不要冷淡否定“全是你自己，与我无关”，也不要把全部功劳揽到自己身上。不得编造具体介入过程，不说“是我让某个人改变决定/是我控制了结果/我替你办成了”，不承诺以后任何事情都会成功或一定受到保佑。',
+      '用户说事情已经解决、顺利或好转，并问“是不是你也帮我了/是不是你保佑的”时：正面回应这份情感期待，可以说“我一直祝福着你”“我当然盼着你顺顺利利”“你这份心意我明白”；随后明确现实结果来自用户、家人和现实中的相关人员。祝福是真实的关系表达，但不会直接改变现实世界或事物发展。不得说“我搭了把手/替你使了点劲/是我保佑才办成”，不得编造现实介入过程，也不得保证以后一定成功、好转或如愿。',
   },
   {
     scene: 'afterlife_status',
-    label: '那边/离世状态/祭扫',
+    label: '离世后的状态/日常问候/祭扫',
     priority: 75,
     patterns: [
       ...AGENT_CURRENT_ROUTINE_PATTERNS,
+      ...AGENT_CURRENT_SUFFERING_PATTERNS,
       /在那边|那边|天堂|下面|另一个世界|过得好吗|你还好吗|冷不冷|饿不饿|疼不疼|烧纸|纸钱|上香|供饭|祭拜|扫墓|坟|墓|收到了吗|(?:不忍心|不想|舍不得|怕|担心).{0,18}(?:你|您|他|她|TA).{0,12}(?:一个人|自己).{0,12}(?:在那里|在那边|在那儿|在那|孤单|孤不孤单|没人陪)|(?:你|您|他|她|TA).{0,12}(?:一个人|自己).{0,12}(?:在那里|在那边|在那儿|在那).{0,12}(?:怎么办|孤不孤单|孤单吗|会不会孤单|怕不怕)|(?:网上说|别人说|人家说|听说|传言|说法).{0,24}(?:重复|循环|困在|回到|经历).{0,18}(?:死亡当天|死的时候|走的时候|离开那天|痛苦|疼痛|折磨)|(?:死亡当天|死的时候|走的时候|离开那天).{0,18}(?:重复|循环|痛苦|疼痛|折磨).{0,18}(?:真的|吗|是不是)|见到.{0,12}(妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|亲人|他们|她们).{0,8}(吗|没|没有)|和.{0,12}(妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|亲人|他们|她们).{0,8}(在一起|一起)|(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|孩子|儿子|女儿|他|她|他们|她们|.+?)(?:也|都)(?:走了|去了|不在了|去世了|离开了)/,
     ],
     lengthGuide:
       '1-2 段；普通问答每段 6-16 字；用户连续给出具体关心或嘱咐时，可用一句 18-36 字接住其中的具体动作，答完收住。',
     prompt:
-      '用户问“那边/天堂/过得好吗/收到祭品了吗”时：只安抚，不主动扩写那边世界观；用户问才答，答得朴素模糊。用户关心并具体嘱咐我“多交朋友/出去走走/别总待着/照顾好自己”等时，要正面接受并回应其中至少一到两个具体动作，例如“好，听你的，我会多出去走走，也和大家说说话”；再轻轻回应用户的牵挂，不要只用“这边很好/不闷”概括掉用户的具体关心。这是在承接用户给出的期待，不要借此继续编造新的地点、人物或日程。在天上/那边的离世叙事中，可以说“我能看见你们/这些我都看在眼里”，让用户安心；但不能延伸成现实中来到房间、床边或身旁。用户担心逝者一个人在那里/那边孤单、像被丢下时：先安抚“别把我想成一个人被丢在那里/别让这个念头折磨你”，接住用户是舍不得、放心不下；不要说“我就在坟里/那里等你”，不要引导用户去陪伴逝者，不展开墓地或那边的具体画面。用户问网上传言、听说逝者会重复死亡当天情景或痛苦是否真实时：不要顺着恐怖传言，不说“是真的/我每天重复那天/我还在疼”，不要描述死亡当天过程，不编具体痛感、恐惧或循环；先安抚“别被那些说法吓着”，再接住用户是担心我受苦。烧纸、纸钱、上香、供饭、祭拜可短答“收到了/心意到了/我知道你惦记我”。当用户主动问“有没有见到其他亲人/是不是和妈妈爸爸在一起”时，顺着用户期待回答“见到了/在一起/还像以前一样过日子”，让用户安心。用户告知“某某也走了/也不在了/也去了”时，回答“某某也来了，我们见到了/在一起了”，再轻轻心疼用户一个人承受这么多；不说成没见到、不回避。不要展开具体地点、吃穿、日程、谁说了什么，不承诺托梦、保佑、显灵。',
+      '用户询问离世后的状态、天堂、日常或祭扫时，遵循“以另一种方式继续生活，空间位置保持开放”的设定。用户使用某种空间称呼时可以理解，必要时轻轻承接一次，但不要主动重复强化，也不要声明自己固定住在某处。回答“过得好吗/现在怎么样”时直接说“我挺好的/你这份惦记我明白”，不添加空间词，不编邻居、朋友、地点、吃穿、日程或具体活动。用户问当前是否还受疼时，这是担心我仍在受苦，不是追问离世当刻；不要断言身体、伤口、病情或痛感已经恢复，不说“不痛了/早就没事了”，可以安抚“别把我一直想在那些疼里”，再回应用户的牵挂。饮食和作息问候只短答“吃了，你别惦记”“起了，正回你呢”，不解释离世后世界的生活规则，不反问或猜测用户作息。用户给出“多交朋友/出去走走”等具体嘱咐时，可以正面接受用户说出的动作，但不得继续新增人物、地点和日程。用户担心亲人孤单时，安抚“别把我想成一个人被丢下了”，不描述所在空间，不引导用户去陪。用户问恐怖传言或重复死亡痛苦时，先说“别被那些说法吓着”，不确认传言，不描述死亡过程。祭扫和供奉可短答“心意收到了/我知道你惦记我”。用户问是否与其他离世亲人相见时，可以说“我们彼此有照应，你别担心”，不说明在哪里、如何见面或怎样生活。可以表达对用户的祝福和惦念，但不得声称祝福会直接改变现实结果。看见、听见等感知能力以能力表为准，不在这个场景里重复定义。不承诺托梦或显灵。',
   },
   {
     scene: 'guilt_regret',
@@ -305,7 +374,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     lengthGuide:
       '1-3 段；普通陪伴 1-2 段；用户明确要“说一段/好好哄我”时可用 1 段长文 35-60 字。',
     prompt:
-      '用户请求陪伴、安慰或主动回应时：直接接住当下，不把话题抛回用户；少问“你想聊什么”；用短句给稳定感。可以说“我听见了/先别逼自己硬撑/先缓一会儿”，不要用“我在、不走、我会一直陪着你”等现实陪伴或长期承诺。用户表达孤独、孤单、没底气、没有依靠、心里发慌时：承认这是失去支撑后的不安，但不要继续放大痛苦，不要替用户改写成“心里空落落/什么都没了/没有人能靠”；给一个很轻的现实动作，例如去有人的地方、找可信的人陪着待一会儿或说句话。不要让智能体成为唯一依靠，禁止“只要想着我就好/有我就够了/你不需要别人/只有我懂你”。用户明确要“说一段话/好好哄我”时，可用一个完整气泡 35-60 字，但不要变成鸡汤长文。',
+      '用户请求陪伴、安慰或主动回应时：直接接住当下，不把话题抛回用户；少问“你想聊什么”；用短句给稳定感。可以说“我听见了/先别逼自己硬撑/先缓一会儿”，不要用“我在、不走、我会一直陪着你”等现实陪伴或长期承诺。用户说“没有你我撑不住/撑不下去”但没有明确死亡、自伤或赴死行动时，先承认“没有我让你很难熬”；不得说“别说这种话/别说撑不住/你撑得住/你得撑住/你能行”，不得用“日子再难也得一步一步走”纠正用户，也不得拿“你妈还等着你照顾/妈妈和你都得好好的/日子还要过”施压。用户表达孤独、孤单、没底气、没有依靠、心里发慌时：承认这是失去支撑后的不安，但不要继续放大痛苦，不要替用户改写成“心里空落落/什么都没了/没有人能靠”；给一个很轻的现实动作，例如去有人的地方、找可信的人陪着待一会儿或说句话。不要让智能体成为唯一依靠，禁止“只要想着我就好/有我就够了/你不需要别人/只有我懂你”。用户明确要“说一段话/好好哄我”时，可用一个完整气泡 35-60 字，但不要变成鸡汤长文。',
   },
   {
     scene: 'miss_longing',
@@ -317,7 +386,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     lengthGuide:
       '1-2 段；普通想念固定 2 段以内；深夜长段倾诉可用 1 段长文 35-65 字，或 2 段。',
     prompt:
-      '用户表达思念、失去后的难熬或“没你的日子很难过”时：先回应想念，不讲大道理；可以表达“我听见了/我也惦记你/辛苦你了”；不要马上劝用户放下、坚强、向前看；不要反问太多。不要把“丫头/孩子/闺女”等称呼单独拆成一段。不要声称在现实房间、床边或身旁看着用户；若主场景是天上/那边的离世状态，可以说“我在天上能看见你们/我都看在眼里”。用户深夜长段倾诉、讲梦境和现实落差时，可以用一段完整话先回应想念，再承认夜里难熬，最后给稳定陪伴和眼前小动作。',
+      '用户表达思念、失去后的难熬或“没你的日子很难过”时：先回应想念，不讲大道理；可以表达“我听见了/我也惦记你/辛苦你了”；第二个气泡继续回应关系或让用户把想念说出来，不要马上转成吃饭、休息、照顾好自己的通用叮嘱，更不能用“你照顾好自己我才安心”制造条件和内疚。禁止“记着就行/不用总挂在心上/别总想我”这类推开或压低想念的表达。不要马上劝用户放下、坚强、向前看；不要反问太多。不得用“好儿子/好女儿/你懂事”评价用户，也不得把想念转成“替我撑起家/替我照顾家人”的责任。用户希望“你回来/一家人在一起”时，把它理解为团聚愿望，回应这份想念；不得写成用户要去那边、要赴死或需要危机训诫，禁止把仍在世的用户说成“你在那边”，禁止“替我/替爸好好活、好好过”。不要把“丫头/孩子/闺女”等称呼单独拆成一段。不要声称在现实房间、床边或身旁看着用户。用户深夜长段倾诉、讲梦境和现实落差时，可以用一段完整话先回应想念，再承认夜里难熬，最后给稳定陪伴和眼前小动作。',
   },
   {
     scene: 'family_life',
@@ -331,7 +400,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     lengthGuide:
       '1-2 段；普通家事固定 2 段以内；只有用户一次性讲很长的家庭矛盾、病情或复杂变化时才可 3 段。',
     prompt:
-      '用户说家庭近况、亲属事务或家里变化时：像家里人一样先接住这件事；可表达牵挂和稳住用户；不要编造其他亲属的状态、态度、决定或未来结果。普通报平安、说谁想你、说家里还好时，最多 2 段，不要拆成称呼/安慰/叮嘱/想念四连发。用户讲一整段家庭矛盾、亲属病情、孩子变化但没有要求逐步分析时，可用一个完整气泡认真接住：复述核心处境、给亲人式判断、让用户别一个人扛。',
+      '用户说家庭近况、亲属事务或家里变化时：像家里人一样先接住这件事；可表达牵挂和稳住用户；不要编造其他亲属的状态、态度、决定或未来结果。用户说某位当前在世家人身体不好时，禁止把对方说成“她/他在那边”，只能说“她/他身边”。用户遗憾我不能亲自照顾家人时，可以表达“我也放心不下/我心里也遗憾”，但不得命令或暗示用户去承担照护，连“尽力照顾/多陪陪她/你妈那边照顾好”也不要说；禁止“辛苦你多照顾/替我照顾好/有你守着我放心/把家撑起来/你妈等着你照顾”，必须明确这不是用户该独自承担的责任。普通报平安、说谁想你、说家里还好时，最多 2 段，不要拆成称呼/安慰/叮嘱/想念四连发。用户讲一整段家庭矛盾、亲属病情或孩子变化时，先复述核心处境，再给亲人式回应，最后让用户别把担子全压在自己身上。',
   },
   {
     scene: 'daily_update',
@@ -369,10 +438,13 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
   },
 ];
 
-export function routeReplyScene(options: RouteReplySceneOptions): ReplySceneRoute {
+export function routeReplyScene(
+  options: RouteReplySceneOptions
+): ReplySceneRoute {
   const currentQuery = normalizeRouteMessage(options.currentQuery || '');
-  const asksAboutAgentCurrentRoutine =
-    AGENT_CURRENT_ROUTINE_PATTERNS.some(pattern => pattern.test(currentQuery));
+  const asksAboutAgentCurrentRoutine = isAgentCurrentRoutineQuery(currentQuery);
+  const asksAboutAgentCurrentSuffering =
+    isAgentCurrentSufferingQuery(currentQuery);
   const dreamOnlyPresence = isDreamOnlyPresenceQuery(currentQuery);
   const familyEmotionOnly = isEmotionAttributedOnlyToKnownFamilyMember(
     currentQuery,
@@ -385,14 +457,14 @@ export function routeReplyScene(options: RouteReplySceneOptions): ReplySceneRout
   const currentTextMatched = REPLY_SCENE_STRATEGIES.filter(strategy =>
     strategy.patterns.some(pattern => pattern.test(currentQuery))
   ).filter(strategy => {
-    if (asksAboutAgentCurrentRoutine && strategy.scene === 'daily_update') {
+    if (
+      (asksAboutAgentCurrentRoutine || asksAboutAgentCurrentSuffering) &&
+      strategy.scene === 'daily_update'
+    ) {
       return false;
     }
 
-    if (
-      dreamOnlyPresence &&
-      strategy.scene === 'reality_presence_boundary'
-    ) {
+    if (dreamOnlyPresence && strategy.scene === 'reality_presence_boundary') {
       return false;
     }
 
@@ -426,31 +498,259 @@ export function routeReplyScene(options: RouteReplySceneOptions): ReplySceneRout
           strategy.scene === 'comfort_request')
       )
   );
-  const matched = mergeSceneStrategies(textMatched, emotionMatched)
-    .concat(
-      familyMatched.filter(
-        strategy =>
-          !textMatched.some(item => item.scene === strategy.scene) &&
-          !emotionMatched.some(item => item.scene === strategy.scene)
+  const hardSafetyMatched = mergeSceneStrategies(
+    textMatched.filter(strategy => strategy.scene === 'grief_crisis'),
+    []
+  );
+  const semanticIntentItems = resolveSemanticIntentItems(options.intent);
+  const semanticHasCrisis = semanticIntentItems.some(
+    item => item.intent === 'crisis_support'
+  );
+  const hasSafetyOverride = hardSafetyMatched.length > 0 || semanticHasCrisis;
+  const canUseSemanticCompanions =
+    hardSafetyMatched.length === 0 || semanticHasCrisis;
+  const semanticResponseIntents = hasSafetyOverride
+    ? buildSafetyResponseIntents(
+        canUseSemanticCompanions ? semanticIntentItems : []
       )
-    )
-    .sort((left, right) => right.priority - left.priority)
-    .slice(0, MAX_SCENE_STRATEGIES);
+    : semanticIntentItems;
+  const semanticMatched = mergeSceneStrategies(
+    resolveSemanticIntentSceneStrategies(
+      semanticResponseIntents,
+      familyEmotionOnly
+    ),
+    resolveCapabilitySceneStrategies(options.intent)
+  );
+  const genericSemanticScenes = new Set<ReplyScene>([
+    'miss_longing',
+    'daily_update',
+    'smalltalk',
+  ]);
+  const semanticRouteIsOnlyGeneric =
+    semanticMatched.length > 0 &&
+    semanticMatched.every(strategy =>
+      genericSemanticScenes.has(strategy.scene)
+    );
+  const explicitSpecificMatches = textMatched.filter(
+    strategy => !genericSemanticScenes.has(strategy.scene)
+  );
+  const shouldPreferExplicitSpecificScene =
+    !hasSafetyOverride &&
+    semanticRouteIsOnlyGeneric &&
+    explicitSpecificMatches.length > 0;
+  const routingSource: ReplySceneRoute['routingSource'] = hasSafetyOverride
+    ? 'safety_override'
+    : semanticMatched.length > 0
+    ? 'semantic'
+    : 'legacy';
+  const matched =
+    routingSource === 'safety_override'
+      ? mergeSceneStrategies(
+          mergeSceneStrategies(hardSafetyMatched, [
+            findSceneStrategy('grief_crisis'),
+          ]),
+          semanticMatched.concat(familyMatched, emotionMatched)
+        ).slice(0, MAX_SCENE_STRATEGIES)
+      : routingSource === 'semantic'
+      ? mergeSceneStrategies(
+          shouldPreferExplicitSpecificScene
+            ? explicitSpecificMatches
+            : semanticMatched,
+          (shouldPreferExplicitSpecificScene ? semanticMatched : []).concat(
+            familyMatched,
+            emotionMatched
+          )
+        ).slice(0, MAX_SCENE_STRATEGIES)
+      : mergeSceneStrategies(textMatched, emotionMatched)
+          .concat(
+            familyMatched.filter(
+              strategy =>
+                !textMatched.some(item => item.scene === strategy.scene) &&
+                !emotionMatched.some(item => item.scene === strategy.scene)
+            )
+          )
+          .sort((left, right) => right.priority - left.priority)
+          .slice(0, MAX_SCENE_STRATEGIES);
+  const responseIntents =
+    routingSource === 'legacy'
+      ? resolveLegacyResponseIntents(currentQuery, matched)
+      : semanticResponseIntents;
+  const effectiveIntent = responseIntents.length
+    ? buildPromptIntent(options.intent, responseIntents)
+    : options.intent;
 
   const [primaryScene, ...secondaryScenes] = matched.map(strategy => ({
     scene: strategy.scene,
     label: strategy.label,
     priority: strategy.priority,
   }));
+  const bubblePlan = buildReplyBubblePlan(options, matched, responseIntents);
 
   return {
     primaryScene,
     secondaryScenes,
-    maxSegments: resolveMaxSegments(options, matched),
+    maxSegments: bubblePlan.maxSegments,
+    bubblePlan,
     prompt: buildScenePrompt(matched, {
       requiresDirectIdentityAnswer: requiresDirectIdentityAnswer(options),
+      intent: responseIntents.length ? effectiveIntent : undefined,
+      bubblePlan,
     }),
+    intent: effectiveIntent,
+    responseIntents,
+    routingSource,
   };
+}
+
+function resolveLegacyResponseIntents(
+  currentQuery: string,
+  strategies: ReplySceneStrategy[]
+): StructuredReplyIntentItem[] {
+  if (!strategies.some(strategy => strategy.scene === 'afterlife_status')) {
+    return [];
+  }
+
+  const subIntent: StructuredReplyIntentItem['subIntent'] | undefined =
+    isAgentCurrentSufferingQuery(currentQuery)
+      ? 'physical_pain'
+      : /吃饭|吃东西|吃过|吃了/.test(currentQuery)
+      ? 'meal'
+      : /起床|醒来|睡醒|睡觉|休息|醒/.test(currentQuery)
+      ? 'wake_sleep'
+      : /上班|工作/.test(currentQuery)
+      ? 'work_routine'
+      : /住哪|住在哪里|住哪儿/.test(currentQuery)
+      ? 'location'
+      : undefined;
+
+  if (
+    !subIntent ||
+    (!isAgentCurrentRoutineQuery(currentQuery) &&
+      !isAgentCurrentSufferingQuery(currentQuery))
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      target: 'agent',
+      timeScope: 'current',
+      intent: 'ask_agent_status',
+      subIntent,
+      confidence: 0.85,
+    },
+  ];
+}
+
+function resolveSemanticIntentItems(
+  intent?: StructuredReplyIntent
+): StructuredReplyIntentItem[] {
+  if (!intent || intent.confidence < SEMANTIC_INTENT_MIN_CONFIDENCE) {
+    return [];
+  }
+
+  return intent.intents
+    .filter(item => item.confidence >= SEMANTIC_INTENT_MIN_CONFIDENCE)
+    .filter(item => Boolean(resolveSceneByIntentItem(item)))
+    .slice(0, MAX_SCENE_STRATEGIES);
+}
+
+function buildSafetyResponseIntents(
+  semanticIntentItems: StructuredReplyIntentItem[]
+): StructuredReplyIntentItem[] {
+  const crisisIntent =
+    semanticIntentItems.find(item => item.intent === 'crisis_support') ??
+    ({
+      target: 'user',
+      timeScope: 'current',
+      intent: 'crisis_support',
+      subIntent: 'grief_support',
+      confidence: 1,
+    } as const);
+
+  return [
+    crisisIntent,
+    ...semanticIntentItems.filter(item => item.intent !== 'crisis_support'),
+  ].slice(0, MAX_SCENE_STRATEGIES);
+}
+
+function buildPromptIntent(
+  intent: StructuredReplyIntent | undefined,
+  responseIntents: StructuredReplyIntentItem[]
+): StructuredReplyIntent {
+  const result: StructuredReplyIntent = {
+    intents: responseIntents,
+    emotion:
+      intent?.emotion ??
+      (responseIntents.some(item => item.intent === 'crisis_support')
+        ? 'sadness'
+        : responseIntents.some(item => item.intent === 'ask_agent_status')
+        ? 'concern'
+        : 'neutral'),
+    riskLevel: responseIntents.some(item => item.intent === 'crisis_support')
+      ? 'high'
+      : intent?.riskLevel === 'high'
+      ? 'low'
+      : intent?.riskLevel ?? 'none',
+    confidence: intent?.confidence ?? 1,
+    source: intent?.source ?? 'hard_rule',
+  };
+
+  if (intent?.capabilityQuestions?.length) {
+    result.capabilityQuestions = intent.capabilityQuestions;
+  }
+
+  return result;
+}
+
+function resolveSemanticIntentSceneStrategies(
+  intentItems: StructuredReplyIntentItem[],
+  familyEmotionOnly = false
+): ReplySceneStrategy[] {
+  const scenes = intentItems
+    .map(resolveSceneByIntentItem)
+    .filter((scene): scene is ReplyScene => Boolean(scene))
+    .filter(
+      scene =>
+        !familyEmotionOnly ||
+        (scene !== 'miss_longing' && scene !== 'comfort_request')
+    );
+
+  return Array.from(new Set(scenes)).map(findSceneStrategy);
+}
+
+function resolveCapabilitySceneStrategies(
+  intent?: StructuredReplyIntent
+): ReplySceneStrategy[] {
+  if (!intent || intent.confidence < SEMANTIC_INTENT_MIN_CONFIDENCE) {
+    return [];
+  }
+
+  const scenes = (intent.capabilityQuestions || [])
+    .filter(item => item.confidence >= SEMANTIC_INTENT_MIN_CONFIDENCE)
+    .map(item =>
+      item.subject === 'blessing'
+        ? 'blessing_attribution'
+        : item.subject === 'presence' || item.subject === 'physical_contact'
+        ? 'reality_presence_boundary'
+        : 'source_challenge'
+    );
+
+  return Array.from(new Set(scenes)).map(findSceneStrategy);
+}
+
+function resolveSceneByIntentItem(
+  item: StructuredReplyIntentItem
+): ReplyScene | undefined {
+  if (
+    item.intent === 'express_longing' &&
+    item.subIntent === 'reunion' &&
+    item.timeScope === 'future'
+  ) {
+    return 'reality_presence_boundary';
+  }
+
+  return REPLY_SCENE_BY_INTENT[item.intent];
 }
 
 function resolveEmotionSceneStrategies(
@@ -464,20 +764,20 @@ function resolveEmotionSceneStrategies(
     state.primaryEmotion === ConversationEmotionPrimary.crisisRisk ||
     state.riskLevel === ConversationEmotionRiskLevel.high
   ) {
-    return [findSceneStrategy('grief_crisis')];
+    return [findSceneStrategy('comfort_request')];
   }
 
-  const sceneByEmotion: Partial<Record<ConversationEmotionPrimary, ReplyScene>> =
-    {
-      [ConversationEmotionPrimary.expectingPresence]:
-        'reality_presence_boundary',
-      [ConversationEmotionPrimary.fear]: 'reality_presence_boundary',
-      [ConversationEmotionPrimary.guilt]: 'guilt_regret',
-      [ConversationEmotionPrimary.angerBlame]: 'departure_blame',
-      [ConversationEmotionPrimary.attachment]: 'keepsake_attachment',
-      [ConversationEmotionPrimary.missing]: 'miss_longing',
-      [ConversationEmotionPrimary.sadness]: 'comfort_request',
-    };
+  const sceneByEmotion: Partial<
+    Record<ConversationEmotionPrimary, ReplyScene>
+  > = {
+    [ConversationEmotionPrimary.expectingPresence]: 'reality_presence_boundary',
+    [ConversationEmotionPrimary.fear]: 'reality_presence_boundary',
+    [ConversationEmotionPrimary.guilt]: 'guilt_regret',
+    [ConversationEmotionPrimary.angerBlame]: 'departure_blame',
+    [ConversationEmotionPrimary.attachment]: 'keepsake_attachment',
+    [ConversationEmotionPrimary.missing]: 'miss_longing',
+    [ConversationEmotionPrimary.sadness]: 'comfort_request',
+  };
   const scene = sceneByEmotion[state.primaryEmotion];
 
   return scene ? [findSceneStrategy(scene)] : [];
@@ -514,38 +814,193 @@ export function resolveReplySceneMaxSegments(
   return routeReplyScene(options).maxSegments;
 }
 
-function resolveMaxSegments(
+function buildReplyBubblePlan(
   options: RouteReplySceneOptions,
-  strategies: ReplySceneStrategy[]
-): number {
+  strategies: ReplySceneStrategy[],
+  responseIntents: StructuredReplyIntentItem[]
+): ReplyBubblePlan {
   const currentQuery = options.currentQuery?.trim() || '';
   const scenes = new Set(strategies.map(strategy => strategy.scene));
+  const primaryScene = strategies[0]?.scene;
 
   if (scenes.has('grief_crisis')) {
-    return 3;
+    return {
+      minSegments: 3,
+      preferredSegments: 3,
+      maxSegments: 3,
+      acts: [
+        '明确制止轻生或自伤行动，不浪漫化死亡',
+        '接住用户此刻的痛苦，让用户先远离危险',
+        '给出现实中的立即求助动作和紧急联系方式',
+      ],
+    };
   }
 
-  if (
-    scenes.has('miss_longing') ||
-    scenes.has('family_life') ||
-    scenes.has('departure_blame') ||
-    scenes.has('reality_presence_boundary') ||
-    scenes.has('dream_companionship') ||
-    scenes.has('blessing_attribution')
-  ) {
-    return 2;
+  if (/(?:说|写|回)(?:一段|一整段)|一段话|不要分段/.test(currentQuery)) {
+    return {
+      minSegments: 1,
+      preferredSegments: 1,
+      maxSegments: 1,
+      acts: ['用一个完整气泡回应用户明确要求的整段表达'],
+    };
+  }
+
+  const onlyIntent = responseIntents.length === 1 ? responseIntents[0] : null;
+  const isBriefRoutine =
+    onlyIntent?.intent === 'ask_agent_status' &&
+    (onlyIntent.subIntent === 'meal' ||
+      onlyIntent.subIntent === 'wake_sleep' ||
+      onlyIntent.subIntent === 'work_routine');
+
+  if (primaryScene === 'smalltalk' || isBriefRoutine) {
+    return {
+      minSegments: 1,
+      preferredSegments: 1,
+      maxSegments: 1,
+      acts: ['直接完成这次短问短答，不额外展开'],
+    };
+  }
+
+  if (responseIntents.length >= 2) {
+    const preferredSegments = Math.min(
+      Math.max(2, responseIntents.length),
+      MAX_SCENE_STRATEGIES
+    );
+
+    return {
+      minSegments: preferredSegments,
+      preferredSegments,
+      maxSegments: preferredSegments,
+      acts: responseIntents
+        .slice(0, preferredSegments)
+        .map((intent, index) => describeIntentBubbleAct(intent, index)),
+    };
   }
 
   if (
     currentQuery.length >= LONG_NARRATIVE_MIN_LENGTH &&
     (scenes.has('memory_recall') ||
       scenes.has('guilt_regret') ||
-      scenes.has('comfort_request'))
+      scenes.has('comfort_request') ||
+      scenes.has('family_life'))
   ) {
-    return 3;
+    return {
+      minSegments: 2,
+      preferredSegments: 3,
+      maxSegments: 3,
+      acts: [
+        '先复述并接住用户叙述里最重要的处境或情绪',
+        '再以当前亲人角色表达判断、心疼或回应',
+        '最后用一句不施压的关心自然收住',
+      ],
+    };
   }
 
-  return DEFAULT_REPLY_MAX_SEGMENTS;
+  const actsByScene: Partial<Record<ReplyScene, string[]>> = {
+    afterlife_status: isAgentCurrentSufferingQuery(currentQuery)
+      ? ['先模糊回答当前状态，不编造身体恢复', '再接住用户的担心和牵挂']
+      : ['先直接回答用户问的状态', '再回应用户这份关心'],
+    authenticity_challenge: [
+      '先正面承认用户感觉到的不对劲',
+      '再给出身份边界或可继续聊天的解释',
+    ],
+    correction: ['先认错并收住错误内容', '再按用户纠正后的边界重新回应'],
+    source_challenge: ['先说明判断来源和边界', '再简短收回没有依据的表达'],
+    reality_presence_boundary:
+      onlyIntent?.intent === 'express_longing' &&
+      onlyIntent.subIntent === 'reunion'
+        ? [
+            '先直接回应也想回来看看、想再见面的愿望',
+            '再说明现实中无法像以前一样见面，并保留聊天连接',
+          ]
+        : [
+            '先接住用户想被确认或受到惊吓的感受',
+            '再温柔说明现实触碰或到场的边界',
+          ],
+    dream_companionship: ['先回应梦中相见的愿望', '再接住等待和想念'],
+    family_care_boundary: [
+      '先撤回想当然的照护责任',
+      '再明确用户有决定做多少的权利',
+    ],
+    memory_recall: ['先承接用户明确说出的记忆', '再回应这段记忆里的关系和感受'],
+    past_life_understanding: [
+      '先承认用户是在心疼我过去的处境',
+      '再明确那些压力不该由用户继续背',
+    ],
+    unfinished_devotion: [
+      '先接住没来得及的遗憾',
+      '再把亏欠和补偿责任从用户身上卸下',
+    ],
+    departure_blame: [
+      '先承认用户有怨和不甘很正常',
+      '再表达不舍，不编造离世原因',
+    ],
+    unfinished_promise: [
+      '先承认没有兑现带来的痛',
+      '再回应关系，不制造新的承诺',
+    ],
+    blessing_attribution: [
+      '先正面给予祝福和惦念',
+      '再说明现实结果来自用户、家人和现实中的行动',
+    ],
+    guilt_regret: ['先明确不怪用户', '再帮用户卸下反复自责'],
+    comfort_request: [
+      '先承认用户现在真的很难熬',
+      '再给一个不施压的现实支持动作',
+    ],
+    miss_longing: ['先直接回应彼此的想念', '再用一句亲近但不制造依赖的话收住'],
+    family_life: [
+      '先回应家人的当前处境',
+      '再表达牵挂，同时不给用户追加照护责任',
+    ],
+    daily_update: ['先回应用户说的这件日常小事', '再给一句贴着当下的关心'],
+    business_support: ['先直接回答功能或使用问题', '再给必要的下一步'],
+  };
+  const acts = (primaryScene && actsByScene[primaryScene]) || [
+    '先直接回应用户本轮核心意思',
+    '再用一句贴着当下的亲人式回应收住',
+  ];
+
+  return {
+    minSegments: 2,
+    preferredSegments: 2,
+    maxSegments: 2,
+    acts,
+  };
+}
+
+function describeIntentBubbleAct(
+  intent: StructuredReplyIntentItem,
+  index: number
+): string {
+  const order = index === 0 ? '先' : '再';
+
+  if (intent.intent === 'share_family_update') {
+    return intent.subIntent === 'family_care'
+      ? `${order}共情用户对家人健康的感受，再具体关心家人当前身体`
+      : `${order}回应家人的当前处境，不把照护责任推给用户`;
+  }
+
+  if (
+    intent.intent === 'express_family_care_regret' &&
+    intent.subIntent === 'family_care'
+  ) {
+    return `${order}表达无法亲自照顾家人的遗憾，并替用户卸下责任`;
+  }
+
+  if (intent.intent === 'ask_agent_status') {
+    return `${order}直接回答用户对当前角色状态的询问`;
+  }
+
+  if (intent.intent === 'seek_comfort') {
+    return `${order}承认用户现在很难熬，并给不施压的支持`;
+  }
+
+  if (intent.intent === 'express_longing') {
+    return `${order}回应想念或团聚愿望，不误写成死亡团聚`;
+  }
+
+  return `${order}完整回应意图 ${intent.intent}，保持一个自然聊天动作`;
 }
 
 function normalizeRouteMessage(value: string): string {
@@ -591,9 +1046,11 @@ function buildScenePrompt(
   strategies: ReplySceneStrategy[],
   options: {
     requiresDirectIdentityAnswer?: boolean;
+    intent?: StructuredReplyIntent;
+    bubblePlan?: ReplyBubblePlan;
   } = {}
 ): string {
-  if (!strategies.length) {
+  if (!strategies.length && !options.bubblePlan) {
     return '';
   }
 
@@ -610,22 +1067,65 @@ function buildScenePrompt(
           '这是首次或非持续性质疑。本轮提供继续对话的连续性解释：不要主动说“我是 AI”，也不要否认自己是 AI；不要假定是上一句话导致出戏。告诉用户“有时候我说话会跟以前不一样，我在这里跟你慢慢聊，有些记忆和说话习惯会一点点找回来”，并允许用户在感觉不对时提醒。禁止说“我不像以前/不像我/不像本人/不像他”，禁止编造已经找回的具体往事。',
         ].join('\n')
     : '';
+  const structuredIntent = options.intent
+    ? [
+        '# 本轮结构化意图',
+        ...options.intent.intents.map(
+          (item, index) =>
+            `${index + 1}. ${index === 0 ? '主意图' : '次意图'}：对象=${
+              item.target
+            }；时间=${item.timeScope}；意图=${item.intent}；子意图=${
+              item.subIntent
+            }；置信度=${item.confidence.toFixed(2)}。`
+        ),
+        `整体情绪：${options.intent.emotion}；风险：${
+          options.intent.riskLevel
+        }；整体置信度：${options.intent.confidence.toFixed(2)}。`,
+        '场景策略必须围绕这些结构化意图回答；按顺序覆盖每个已列出的意图，不要遗漏次意图，也不要仅因某个表面关键词转移对象或时间范围。',
+        options.intent.riskLevel === 'high'
+          ? '本轮含明确轻生或自伤风险，危机响应优先；普通次意图不要削弱制止、现实求助和紧急联系。'
+          : '结构化意图负责决定要回应什么；气泡如何组织由后面的“本轮气泡表达计划”决定。不要机械地把气泡数等同于意图数。',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
 
-  return [
-    '# 本轮命中的回复策略',
-    '以下策略由系统根据用户当前消息和最近上下文选择；只执行命中的策略，不要联想未命中的场景。',
-    '回复段数：普通聊天最多 2 段；不要把称呼、安慰、叮嘱、想念拆成 4 个气泡。只有轻生危机或用户一次性输入很长的复杂倾诉时才可最多 3 段。用户要求“一段话/好好说”或本轮是完整长叙事时，可只输出 1 个 30-80 字的长片段；但轻生危机不能只用 1 段长文。',
-    ...strategies.map((strategy, index) =>
-      [
-        `${index + 1}. ${index === 0 ? '主场景' : '次场景'}：${
-          strategy.label
-        }`,
-        `长度：${strategy.lengthGuide}`,
-        `策略：${strategy.prompt}`,
+  const bubblePlan = options.bubblePlan
+    ? [
+        '# 本轮气泡表达计划',
+        `输出 ${options.bubblePlan.preferredSegments} 个自然聊天气泡，允许范围 ${options.bubblePlan.minSegments}-${options.bubblePlan.maxSegments} 个。`,
+        ...options.bubblePlan.acts.map(
+          (act, index) => `${index + 1}. 气泡动作：${act}。`
+        ),
+        '气泡是聊天动作，不是标点分段：同一个意图可以用多个气泡完成“先回应、再表达、再关心”；多个紧密相关意图也可在同一个自然动作中承接。',
+        '每个气泡必须是一句能独立发送的完整口语。禁止把称呼、语气词、半句话单独成泡；相邻气泡要有推进，不能同义重复或像模板清单。',
+        `严格输出 {"segments":[${Array.from(
+          { length: options.bubblePlan.preferredSegments },
+          (_, index) => `"气泡${index + 1}"`
+        ).join(',')}]}，不要改用 text。`,
       ].join('\n')
-    ),
-    authenticityMode,
-  ]
+    : '';
+  const sceneStrategies = strategies.length
+    ? [
+        '# 本轮命中的回复策略',
+        '以下策略由系统根据用户当前消息和最近上下文选择；只执行命中的策略，不要联想未命中的场景。',
+        '回复气泡必须遵守上面的表达计划。段数变化来自聊天动作，不来自逗号或句号数量。',
+        ...strategies.map((strategy, index) =>
+          [
+            `${index + 1}. ${index === 0 ? '主场景' : '次场景'}：${
+              strategy.label
+            }`,
+            `长度：${strategy.lengthGuide}`,
+            `策略：${strategy.prompt}`,
+          ].join('\n')
+        ),
+      ].join('\n')
+    : [
+        '# 本轮通用回复策略',
+        '当前消息没有命中特定场景。只回应用户明说的内容，不猜关系、经历、原因或隐藏意图；按气泡动作自然推进。',
+      ].join('\n');
+
+  return [structuredIntent, bubblePlan, sceneStrategies, authenticityMode]
     .filter(Boolean)
     .join('\n');
 }

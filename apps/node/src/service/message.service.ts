@@ -176,9 +176,7 @@ export class MessageService {
   ): ConversationMessageItem {
     const type = this.normalizeMessageType(message.type);
     const segments =
-      type === MessageType.text
-        ? this.extractSegmentsFromContent(message)
-        : [];
+      type === MessageType.text ? this.extractSegmentsFromContent(message) : [];
     const content =
       type === MessageType.text
         ? this.normalizeTextContentForClient(message.content, segments)
@@ -209,8 +207,12 @@ export class MessageService {
     };
   }
 
-  private buildQuoteItem(message: MessageEntity): ConversationMessageItem['quote'] {
-    const messageId = this.stringifyObjectId(message.quotedMessageId);
+  private buildQuoteItem(
+    message: MessageEntity
+  ): ConversationMessageItem['quote'] {
+    const messageId = message.quotedMessageId
+      ? this.stringifyObjectId(message.quotedMessageId)
+      : '';
     const content = message.quotedMessageContent?.trim() || '';
 
     if (!messageId && !content) {
@@ -505,7 +507,9 @@ export class MessageService {
     return Math.min(Math.floor(parsed), MAX_MESSAGE_PAGE_SIZE);
   }
 
-  private normalizeBoolean(value: boolean | string | null | undefined): boolean {
+  private normalizeBoolean(
+    value: boolean | string | null | undefined
+  ): boolean {
     if (typeof value === 'boolean') {
       return value;
     }

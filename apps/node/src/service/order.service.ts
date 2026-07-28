@@ -423,7 +423,10 @@ export class OrderService {
       },
     });
     const visibleOrders = orders.filter(order => {
-      return order.status !== OrderStatus.closed && order.source !== OrderSource.admin;
+      return (
+        order.status !== OrderStatus.closed &&
+        order.source !== OrderSource.admin
+      );
     });
 
     return {

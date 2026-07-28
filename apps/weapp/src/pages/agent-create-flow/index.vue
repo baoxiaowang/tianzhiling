@@ -518,7 +518,7 @@ function buildChatPageUrl(conversation: ConversationSummary) {
 }
 
 async function openCreatedAgentConversation(agentId: string) {
-  const conversations = await getConversations()
+  const conversations = await getConversations({ force: true })
   const conversation = conversations.find((item) => item.agentId === agentId)
 
   if (!conversation) {

@@ -357,7 +357,8 @@ export class AgentMemoryFactService {
     facts.push({
       type: AgentMemoryFactType.safetySignal,
       key: 'safety_signal.self_harm_concern',
-      value: '用户身边的人担心用户想不开或出现自伤风险；遇到类似表达时必须优先安全干预',
+      value:
+        '用户身边的人担心用户想不开或出现自伤风险；遇到类似表达时必须优先安全干预',
       polarity: AgentMemoryFactPolarity.positive,
       priority: 3,
     });

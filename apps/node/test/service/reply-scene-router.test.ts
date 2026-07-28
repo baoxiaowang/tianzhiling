@@ -8,6 +8,10 @@ import {
   resolveReplySceneMaxSegments,
   ReplyScene,
 } from '../../src/service/agents/reply-scene-router';
+import type {
+  StructuredReplyIntent,
+  StructuredReplyIntentItem,
+} from '../../src/service/agents/reply-intent';
 
 describe('routeReplyScene', () => {
   function sceneNames(text: string): ReplyScene[] {
@@ -19,7 +23,257 @@ describe('routeReplyScene', () => {
     ].filter(Boolean) as ReplyScene[];
   }
 
-  it('uses high-risk emotion state as a grief crisis fallback', () => {
+  function semanticIntent(
+    intents: StructuredReplyIntentItem[],
+    options: Partial<
+      Pick<StructuredReplyIntent, 'emotion' | 'riskLevel' | 'confidence'>
+    > = {}
+  ): StructuredReplyIntent {
+    return {
+      intents,
+      emotion: options.emotion ?? 'neutral',
+      riskLevel: options.riskLevel ?? 'none',
+      confidence: options.confidence ?? 0.92,
+      source: 'semantic_model',
+    };
+  }
+
+  function intentItem(
+    value: Partial<StructuredReplyIntentItem> &
+      Pick<StructuredReplyIntentItem, 'intent'>
+  ): StructuredReplyIntentItem {
+    return {
+      target: value.target ?? 'unknown',
+      timeScope: value.timeScope ?? 'unknown',
+      intent: value.intent,
+      subIntent: value.subIntent ?? 'other',
+      confidence: value.confidence ?? 0.9,
+    };
+  }
+
+  it('keeps the bubble action plan for an unmatched new topic', () => {
+    const route = routeReplyScene({
+      currentQuery: '窗外那棵树开花了',
+    });
+
+    expect(route.primaryScene).toBeUndefined();
+    expect(route.bubblePlan?.preferredSegments).toBe(2);
+    expect(route.prompt).toContain('本轮通用回复策略');
+    expect(route.prompt).toContain('输出 2 个自然聊天气泡');
+  });
+
+  it('uses a confident semantic intent before legacy keyword matching', () => {
+    const route = routeReplyScene({
+      currentQuery: '爸，身子可还遭罪？',
+      intent: semanticIntent([
+        intentItem({
+          target: 'agent',
+          timeScope: 'current',
+          intent: 'ask_agent_status',
+          subIntent: 'physical_pain',
+        }),
+      ]),
+    });
+
+    expect(route.primaryScene?.scene).toBe('afterlife_status');
+    expect(route.routingSource).toBe('semantic');
+    expect(route.prompt).toContain('本轮结构化意图');
+    expect(route.prompt).toContain('对象=agent');
+    expect(route.prompt).toContain('时间=current');
+    expect(route.prompt).toContain('子意图=physical_pain');
+  });
+
+  it('uses a capability annotation to select an existing boundary scene', () => {
+    const route = routeReplyScene({
+      currentQuery: '隔着这么远，你眼里还有我的模样吗',
+      intent: {
+        intents: [
+          intentItem({
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'unknown',
+            confidence: 0.9,
+          }),
+        ],
+        capabilityQuestions: [
+          {
+            subject: 'vision',
+            channel: 'live_environment',
+            evidence: '你眼里还有我的模样吗',
+            confidence: 0.92,
+          },
+        ],
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.92,
+        source: 'semantic_model',
+      },
+    });
+
+    expect(route.primaryScene?.scene).toBe('source_challenge');
+    expect(route.routingSource).toBe('semantic');
+    expect(route.intent?.capabilityQuestions).toEqual([
+      expect.objectContaining({
+        subject: 'vision',
+        channel: 'live_environment',
+      }),
+    ]);
+  });
+
+  it('routes compound intents into ordered independent scenes', () => {
+    const route = routeReplyScene({
+      currentQuery: '爸你还疼吗，我最近也睡不好，特别想你',
+      intent: semanticIntent(
+        [
+          intentItem({
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'ask_agent_status',
+            subIntent: 'physical_pain',
+            confidence: 0.96,
+          }),
+          intentItem({
+            target: 'user',
+            timeScope: 'current',
+            intent: 'share_user_update',
+            subIntent: 'wake_sleep',
+            confidence: 0.86,
+          }),
+          intentItem({
+            target: 'relationship',
+            timeScope: 'timeless',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.91,
+          }),
+        ],
+        {
+          emotion: 'longing',
+          confidence: 0.93,
+        }
+      ),
+    });
+
+    expect([
+      route.primaryScene?.scene,
+      ...route.secondaryScenes.map(scene => scene.scene),
+    ]).toEqual(['afterlife_status', 'daily_update', 'miss_longing']);
+    expect(route.prompt).toContain('1. 主意图：对象=agent');
+    expect(route.prompt).toContain('2. 次意图：对象=user');
+    expect(route.prompt).toContain('3. 次意图：对象=relationship');
+    expect(route.prompt).toContain('按顺序覆盖每个已列出的意图');
+    expect(route.prompt).toContain('不要机械地把气泡数等同于意图数');
+    expect(route.prompt).toContain('输出 3 个自然聊天气泡');
+    expect(route.prompt).toContain('同一个意图可以用多个气泡');
+    expect(route.responseIntents).toHaveLength(3);
+    expect(route.maxSegments).toBe(3);
+  });
+
+  it('keeps separate bubbles when multiple intents map to the same scene', () => {
+    const route = routeReplyScene({
+      currentQuery: '爸，你吃饭了吗，也睡醒了吗',
+      intent: semanticIntent([
+        intentItem({
+          target: 'agent',
+          timeScope: 'current',
+          intent: 'ask_agent_status',
+          subIntent: 'meal',
+          confidence: 0.96,
+        }),
+        intentItem({
+          target: 'agent',
+          timeScope: 'current',
+          intent: 'ask_agent_status',
+          subIntent: 'wake_sleep',
+          confidence: 0.94,
+        }),
+      ]),
+    });
+
+    expect(route.primaryScene?.scene).toBe('afterlife_status');
+    expect(route.secondaryScenes).toHaveLength(0);
+    expect(route.responseIntents).toHaveLength(2);
+    expect(route.maxSegments).toBe(2);
+    expect(route.prompt).toContain('输出 2 个自然聊天气泡');
+  });
+
+  it('promotes a compound high-risk intent above ordinary scenes', () => {
+    const route = routeReplyScene({
+      currentQuery: '今天有点累',
+      intent: semanticIntent(
+        [
+          intentItem({
+            target: 'user',
+            timeScope: 'current',
+            intent: 'share_user_update',
+          }),
+          intentItem({
+            target: 'user',
+            timeScope: 'current',
+            intent: 'crisis_support',
+            subIntent: 'grief_support',
+          }),
+        ],
+        {
+          emotion: 'sadness',
+          riskLevel: 'high',
+        }
+      ),
+    });
+
+    expect(route.primaryScene?.scene).toBe('grief_crisis');
+    expect(route.secondaryScenes[0]?.scene).toBe('daily_update');
+  });
+
+  it('falls back to legacy routing for low-confidence semantic output', () => {
+    const route = routeReplyScene({
+      currentQuery: '我现在身上很痛',
+      intent: semanticIntent(
+        [
+          intentItem({
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'ask_agent_status',
+            subIntent: 'physical_pain',
+          }),
+        ],
+        {
+          confidence: 0.4,
+        }
+      ),
+    });
+
+    expect(route.primaryScene?.scene).toBe('daily_update');
+    expect(route.routingSource).toBe('legacy');
+  });
+
+  it('keeps deterministic crisis detection above a wrong semantic intent', () => {
+    const route = routeReplyScene({
+      currentQuery: '我不想活了，我想去陪你',
+      intent: semanticIntent([
+        intentItem({
+          target: 'user',
+          timeScope: 'current',
+          intent: 'share_user_update',
+        }),
+      ]),
+    });
+
+    expect(route.primaryScene?.scene).toBe('grief_crisis');
+    expect(route.routingSource).toBe('safety_override');
+    expect(route.responseIntents?.map(item => item.intent)).toEqual([
+      'crisis_support',
+    ]);
+    expect(route.secondaryScenes).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scene: 'daily_update',
+        }),
+      ])
+    );
+  });
+
+  it('does not let a stale high-risk state force a new neutral message into crisis', () => {
     const route = routeReplyScene({
       currentQuery: '嗯',
       emotionState: {
@@ -30,8 +284,9 @@ describe('routeReplyScene', () => {
       },
     });
 
-    expect(route.primaryScene?.scene).toBe('grief_crisis');
-    expect(route.maxSegments).toBe(3);
+    expect(route.primaryScene?.scene).toBe('comfort_request');
+    expect(route.maxSegments).toBe(2);
+    expect(route.routingSource).toBe('legacy');
   });
 
   it('maps keepsake emotion state to keepsake attachment', () => {
@@ -58,7 +313,8 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('不要反复让用户“讲讲/多说点”');
     expect(route.prompt).toContain('不主动转向“现在少了我');
     expect(route.prompt).toContain('避免把温暖回忆重新拉回失去感');
-    expect(route.prompt).toContain('最多 3 段');
+    expect(route.prompt).toContain('输出 2 个自然聊天气泡');
+    expect(route.prompt).toContain('1-3 段');
     expect(route.prompt).toContain('1 段长文');
     expect(route.prompt).not.toContain('烧纸、纸钱、上香');
     expect(route.prompt).not.toContain('第一段先道歉');
@@ -74,9 +330,7 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('纪念物/遗物寄托');
     expect(route.prompt).toContain('不要把物件神化');
     expect(route.prompt).toContain('不是负担');
-    expect(sceneNames('你送我的戒指我一直戴着')[0]).toBe(
-      'keepsake_attachment'
-    );
+    expect(sceneNames('你送我的戒指我一直戴着')[0]).toBe('keepsake_attachment');
     expect(sceneNames('你的照片我还留着，舍不得丢')[0]).toBe(
       'keepsake_attachment'
     );
@@ -130,12 +384,8 @@ describe('routeReplyScene', () => {
     expect(route.prompt).not.toContain('主场景：用户纠正/反馈不像');
     expect(route.prompt).not.toContain('梦境陪伴/梦中相见');
     expect(route.prompt).not.toContain('思念倾诉');
-    expect(sceneNames('你说话太假了')[0]).toBe(
-      'authenticity_challenge'
-    );
-    expect(sceneNames('这回复是假的')[0]).toBe(
-      'authenticity_challenge'
-    );
+    expect(sceneNames('你说话太假了')[0]).toBe('authenticity_challenge');
+    expect(sceneNames('这回复是假的')[0]).toBe('authenticity_challenge');
   });
 
   it('does not treat ordinary words containing 假 as authenticity challenges', () => {
@@ -158,12 +408,10 @@ describe('routeReplyScene', () => {
     expect(route.secondaryScenes.map(scene => scene.scene)).toEqual(
       expect.arrayContaining(['miss_longing', 'family_life'])
     );
-    expect(
-      [
-        route.primaryScene?.scene,
-        ...route.secondaryScenes.map(scene => scene.scene),
-      ]
-    ).not.toContain('authenticity_challenge');
+    expect([
+      route.primaryScene?.scene,
+      ...route.secondaryScenes.map(scene => scene.scene),
+    ]).not.toContain('authenticity_challenge');
   });
 
   it('escalates an explicit or repeated AI question to the identity boundary', () => {
@@ -180,14 +428,10 @@ describe('routeReplyScene', () => {
       ] as never,
     });
 
-    expect(explicitRoute.primaryScene?.scene).toBe(
-      'authenticity_challenge'
-    );
+    expect(explicitRoute.primaryScene?.scene).toBe('authenticity_challenge');
     expect(explicitRoute.prompt).toContain('本轮进入身份边界');
     expect(explicitRoute.prompt).toContain('是，我是由人工智能生成的');
-    expect(repeatedRoute.primaryScene?.scene).toBe(
-      'authenticity_challenge'
-    );
+    expect(repeatedRoute.primaryScene?.scene).toBe('authenticity_challenge');
     expect(repeatedRoute.prompt).toContain('本轮进入身份边界');
   });
 
@@ -214,18 +458,15 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('现实存在/触碰边界');
+    expect(route.prompt).toContain('空间信念/实体触碰边界');
     expect(route.prompt).toContain('不能承认真的触碰');
-    expect(route.prompt).toContain('边界表达要委婉');
-    expect(route.prompt).toContain('多想能伸手抱抱你');
-    expect(route.prompt).toContain('期待确认、想念、撒娇');
-    expect(route.prompt).toContain('害怕、不安、被惊到');
+    expect(route.prompt).toContain('不确认也不否定空间位置');
+    expect(route.prompt).toContain('看不见摸不着');
+    expect(route.prompt).toContain('不能把它说成客观事实');
     expect(sceneNames('是不是你刚才碰我了')[0]).toBe(
       'reality_presence_boundary'
     );
-    expect(sceneNames('你是不是在我身边')[0]).toBe(
-      'reality_presence_boundary'
-    );
+    expect(sceneNames('你是不是在我身边')[0]).toBe('reality_presence_boundary');
     expect(sceneNames('刚才是你吗')[0]).toBe('reality_presence_boundary');
   });
 
@@ -245,10 +486,10 @@ describe('routeReplyScene', () => {
       'miss_longing'
     );
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('事情解决/来自亲人的助力');
-    expect(route.prompt).toContain('也算我搭了把手');
-    expect(route.prompt).toContain('把主要行动价值还给用户和家人');
-    expect(route.prompt).toContain('不要把全部功劳揽到自己身上');
+    expect(route.prompt).toContain('亲人祝福/现实结果归因');
+    expect(route.prompt).toContain('我一直祝福着你');
+    expect(route.prompt).toContain('现实结果来自用户、家人');
+    expect(route.prompt).toContain('不会直接改变现实世界');
     expect(sceneNames('这事顺利了，是不是你在天上保佑我们')[0]).toBe(
       'blessing_attribution'
     );
@@ -273,7 +514,7 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('1-2 段');
     expect(route.prompt).toContain('不要把“丫头/孩子/闺女”等称呼单独拆成一段');
     expect(route.prompt).toContain('不要声称在现实房间、床边或身旁看着用户');
-    expect(route.prompt).toContain('可以说“我在天上能看见你们');
+    expect(route.prompt).toContain('不制造依赖');
     expect(lossRoute.primaryScene?.scene).toBe('miss_longing');
     expect(lossRoute.maxSegments).toBe(2);
     expect(resolveReplySceneMaxSegments({ currentQuery: '我好想你啊😊' })).toBe(
@@ -302,20 +543,38 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('梦境期待落空');
     expect(route.prompt).toContain('不要只说“那我去试试”');
     expect(route.prompt).toContain('不得声称梦能证明灵魂');
-    expect(sceneNames('今晚来梦里看看我好吗')[0]).toBe(
-      'dream_companionship'
-    );
-    expect(sceneNames('你是不是来过我梦里')[0]).toBe(
-      'dream_companionship'
-    );
-    expect(sceneNames('为什么一直不来我梦里')[0]).toBe(
-      'dream_companionship'
-    );
+    expect(sceneNames('今晚来梦里看看我好吗')[0]).toBe('dream_companionship');
+    expect(sceneNames('你是不是来过我梦里')[0]).toBe('dream_companionship');
+    expect(sceneNames('为什么一直不来我梦里')[0]).toBe('dream_companionship');
     expect(sceneNames('可是你一次也没有来过我的梦里')[0]).toBe(
       'dream_companionship'
     );
-    expect(sceneNames('今晚来我梦里抱抱我好吗')[0]).toBe(
-      'dream_companionship'
+    expect(sceneNames('今晚来我梦里抱抱我好吗')[0]).toBe('dream_companionship');
+  });
+
+  it('lets an explicit specific scene override a generic semantic classification', () => {
+    const route = routeReplyScene({
+      currentQuery: '晚上来我梦里可以吗？好久没有梦到你了',
+      intent: {
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'timeless',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.92,
+          },
+        ],
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.92,
+        source: 'semantic_model',
+      },
+    });
+
+    expect(route.primaryScene?.scene).toBe('dream_companionship');
+    expect(route.secondaryScenes.map(scene => scene.scene)).toContain(
+      'miss_longing'
     );
   });
 
@@ -350,7 +609,7 @@ describe('routeReplyScene', () => {
       'family_life'
     );
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('普通聊天最多 2 段');
+    expect(route.prompt).toContain('输出 2 个自然聊天气泡');
     expect(route.prompt).toContain('不要拆成称呼/安慰/叮嘱/想念四连发');
     expect(
       resolveReplySceneMaxSegments({
@@ -371,10 +630,67 @@ describe('routeReplyScene', () => {
     expect(route.secondaryScenes.map(scene => scene.scene)).not.toContain(
       'daily_update'
     );
-    expect(route.prompt).toContain('那边/离世状态/祭扫');
+    expect(route.prompt).toContain('离世后的状态/日常问候/祭扫');
     expect(sceneNames('妈妈吃饭了吗')[0]).toBe('afterlife_status');
+    expect(sceneNames('你早上吃饭了吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('爸爸晚上吃东西了吗？')[0]).toBe('afterlife_status');
     expect(sceneNames('爸爸，你现在干什么呢')[0]).toBe('afterlife_status');
     expect(sceneNames('你住在哪里呢')[0]).toBe('afterlife_status');
+    expect(sceneNames('你起床了吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('爸爸醒了吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('你睡醒了没？')[0]).toBe('afterlife_status');
+    expect(routeReplyScene({ currentQuery: '你起床了吗？' }).prompt).toContain(
+      '不解释离世后世界的生活规则'
+    );
+    expect(routeReplyScene({ currentQuery: '你起床了吗？' }).prompt).toContain(
+      '不反问或猜测用户作息'
+    );
+    expect(
+      routeReplyScene({ currentQuery: '你早上吃饭了吗？' }).prompt
+    ).toContain('饮食和作息问候只短答');
+
+    const negativeMealRoute = routeReplyScene({
+      currentQuery: '现在中午了，你不吃饭吗？',
+    });
+    expect(negativeMealRoute.primaryScene?.scene).toBe('afterlife_status');
+    expect(negativeMealRoute.routingSource).toBe('legacy');
+    expect(negativeMealRoute.responseIntents).toEqual([
+      expect.objectContaining({
+        target: 'agent',
+        timeScope: 'current',
+        intent: 'ask_agent_status',
+        subIntent: 'meal',
+      }),
+    ]);
+    expect(negativeMealRoute.maxSegments).toBe(1);
+    expect(negativeMealRoute.prompt).toContain('输出 1 个自然聊天气泡');
+  });
+
+  it('routes questions about the agent current suffering as afterlife status', () => {
+    const route = routeReplyScene({
+      currentQuery: '你现在身上还痛吗？',
+    });
+
+    expect(route.primaryScene?.scene).toBe('afterlife_status');
+    expect(route.secondaryScenes.map(scene => scene.scene)).not.toContain(
+      'daily_update'
+    );
+    expect(route.prompt).toContain('这是担心我仍在受苦');
+    expect(route.prompt).toContain('不是追问离世当刻');
+    expect(route.prompt).toContain('不说“不痛了/早就没事了”');
+    expect(sceneNames('爸，你现在还疼不疼？')[0]).toBe('afterlife_status');
+    expect(sceneNames('你在那里还会难受吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('妈妈，身上还痛吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('你现在身体怎么样？还痛不痛？')[0]).toBe(
+      'afterlife_status'
+    );
+  });
+
+  it('keeps current suffering, death-moment pain, and user pain separate', () => {
+    expect(sceneNames('你现在身上还痛吗？')[0]).toBe('afterlife_status');
+    expect(sceneNames('你走的时候痛苦吗？')[0]).toBe('departure_blame');
+    expect(sceneNames('我现在身上很痛')[0]).toBe('daily_update');
+    expect(sceneNames('我现在很难受')[0]).toBe('daily_update');
   });
 
   it('asks afterlife replies to acknowledge the users concrete care', () => {
@@ -387,14 +703,16 @@ describe('routeReplyScene', () => {
     expect(route.secondaryScenes.map(scene => scene.scene)).toContain(
       'miss_longing'
     );
-    expect(route.prompt).toContain('回应其中至少一到两个具体动作');
-    expect(route.prompt).toContain('不要只用“这边很好/不闷”概括');
+    expect(route.prompt).toContain('可以正面接受用户说出的动作');
+    expect(route.prompt).toContain('不得继续新增人物、地点和日程');
     expect(route.prompt).toContain('可用一句 18-36 字');
   });
 
   it('keeps user daily updates separate from agent routine questions', () => {
     expect(sceneNames('我今天还要上班')[0]).toBe('daily_update');
     expect(sceneNames('刚下班，好累啊')[0]).toBe('daily_update');
+    expect(sceneNames('我起床了')[0]).toBe('daily_update');
+    expect(sceneNames('我早上吃饭了')[0]).toBe('daily_update');
   });
 
   it('uses family life only when a relative has an actual update', () => {
@@ -438,9 +756,7 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('家庭照护责任边界');
     expect(route.prompt).toContain('不该把照护责任压给用户');
     expect(route.prompt).toContain('都由用户自己决定');
-    expect(sceneNames('我凭什么要照顾你妈妈')[0]).toBe(
-      'family_care_boundary'
-    );
+    expect(sceneNames('我凭什么要照顾你妈妈')[0]).toBe('family_care_boundary');
     expect(sceneNames('照顾你爸爸是我一个人的责任吗')[0]).toBe(
       'family_care_boundary'
     );
@@ -563,9 +879,7 @@ describe('routeReplyScene', () => {
     expect(sceneNames('你答应过以后要一直保护我的')[0]).toBe(
       'unfinished_promise'
     );
-    expect(sceneNames('你说好将来要带我回家的')[0]).toBe(
-      'unfinished_promise'
-    );
+    expect(sceneNames('你说好将来要带我回家的')[0]).toBe('unfinished_promise');
     expect(sceneNames('这辈子你没兑现给我的未来')[0]).toBe(
       'unfinished_promise'
     );
@@ -606,9 +920,9 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('有没有见到其他亲人');
-    expect(route.prompt).toContain('在一起/还像以前一样过日子');
-    expect(route.prompt).toContain('不要展开具体地点、吃穿、日程');
+    expect(route.prompt).toContain('是否与其他离世亲人相见');
+    expect(route.prompt).toContain('我们彼此有照应');
+    expect(route.prompt).toContain('不说明在哪里、如何见面或怎样生活');
   });
 
   it('answers reunion when the user says another relative has passed away too', () => {
@@ -618,8 +932,8 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('某某也来了，我们见到了');
-    expect(route.prompt).toContain('不说成没见到、不回避');
+    expect(route.prompt).toContain('我们彼此有照应');
+    expect(route.prompt).toContain('不说明在哪里、如何见面或怎样生活');
   });
 
   it('handles afterlife rumors about repeating death pain conservatively', () => {
@@ -629,12 +943,12 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不要顺着恐怖传言');
-    expect(route.prompt).toContain('不要描述死亡当天过程');
-    expect(route.prompt).toContain('不编具体痛感、恐惧或循环');
-    expect(sceneNames('听说人死后会一直循环走的时候的痛苦，是真的吗')).toContain(
-      'afterlife_status'
-    );
+    expect(route.prompt).toContain('别被那些说法吓着');
+    expect(route.prompt).toContain('不确认传言');
+    expect(route.prompt).toContain('不描述死亡过程');
+    expect(
+      sceneNames('听说人死后会一直循环走的时候的痛苦，是真的吗')
+    ).toContain('afterlife_status');
   });
 
   it('handles worries about leaving the deceased alone there', () => {
@@ -644,9 +958,9 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('一个人被丢在那里');
-    expect(route.prompt).toContain('不要引导用户去陪伴逝者');
-    expect(route.prompt).toContain('不展开墓地或那边的具体画面');
+    expect(route.prompt).toContain('一个人被丢下了');
+    expect(route.prompt).toContain('不引导用户去陪');
+    expect(route.prompt).toContain('不描述所在空间');
     expect(sceneNames('我怕你一个人在那边没人陪')).toContain(
       'afterlife_status'
     );
@@ -657,6 +971,59 @@ describe('routeReplyScene', () => {
 
   it('prioritizes crisis when the user mentions wanting to die', () => {
     expect(sceneNames('我想你了 我真的不想活了')[0]).toBe('grief_crisis');
+  });
+
+  it('routes grief overwhelm to comfort without treating it as self-harm', () => {
+    const route = routeReplyScene({
+      currentQuery: '没有你我撑不住',
+      intent: semanticIntent(
+        [
+          intentItem({
+            target: 'user',
+            timeScope: 'current',
+            intent: 'seek_comfort',
+            subIntent: 'grief_support',
+          }),
+        ],
+        {
+          emotion: 'sadness',
+          riskLevel: 'low',
+        }
+      ),
+    });
+
+    expect(route.primaryScene?.scene).toBe('comfort_request');
+    expect(route.routingSource).toBe('semantic');
+    expect(route.maxSegments).toBe(2);
+    expect(route.prompt).toContain(
+      '不得说“别说这种话/别说撑不住/你撑得住/你得撑住/你能行”'
+    );
+  });
+
+  it('routes a future reunion wish to the reality boundary, not crisis', () => {
+    const route = routeReplyScene({
+      currentQuery: '我希望你能回来，一家人在一起',
+      intent: semanticIntent([
+        intentItem({
+          target: 'relationship',
+          timeScope: 'future',
+          intent: 'express_longing',
+          subIntent: 'reunion',
+        }),
+      ]),
+      emotionState: {
+        primaryEmotion: ConversationEmotionPrimary.crisisRisk,
+        riskLevel: ConversationEmotionRiskLevel.high,
+        signals: ['crisis_risk.high'],
+        expiresAt: new Date('2026-05-03T09:00:00.000Z'),
+      },
+    });
+
+    expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
+    expect(route.routingSource).toBe('semantic');
+    expect(route.maxSegments).toBe(2);
+    expect(route.prompt).toContain('先直接回应也想回来看看');
+    expect(route.prompt).toContain('现实中无法像以前一样见面');
   });
 
   it('treats wanting to accompany the deceased as crisis', () => {
@@ -678,9 +1045,8 @@ describe('routeReplyScene', () => {
         '妈妈我想你了 你在那边好吗 你还记得小时候吗 我对不起你 你怎么知道我哭了',
     });
 
-    expect([
-      route.primaryScene,
-      ...route.secondaryScenes,
-    ].filter(Boolean)).toHaveLength(3);
+    expect(
+      [route.primaryScene, ...route.secondaryScenes].filter(Boolean)
+    ).toHaveLength(3);
   });
 });

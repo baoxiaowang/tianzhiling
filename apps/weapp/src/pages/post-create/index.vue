@@ -177,6 +177,7 @@ import { uploadLocalImage } from '../../apis/storage'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { openAgentCreatePage } from '../../utils/agent-create-navigation'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import { normalizeEmojiText } from '../../utils/emoji-text'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
@@ -298,11 +299,14 @@ function closeCreateAgentPrompt() {
   createAgentPromptVisible.value = false
 }
 
-function goCreateAgent() {
+async function goCreateAgent() {
   closeCreateAgentPrompt()
-  void Taro.navigateTo({
-    url: '/pages/agent-create/index',
-  })
+
+  try {
+    await openAgentCreatePage()
+  } catch {
+    showToast('页面打开失败，请重试')
+  }
 }
 
 async function loadAgents() {

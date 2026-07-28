@@ -37,6 +37,15 @@ function createTextMessage(
 }
 
 describe('MessageService buildConversationMessageItem', () => {
+  it('omits quote data when a message has no quoted snapshot', () => {
+    const service = new MessageService();
+    const item = service.buildConversationMessageItem(
+      createTextMessage('没有引用任何消息')
+    );
+
+    expect(item.quote).toBeUndefined();
+  });
+
   it('normalizes malformed legacy fenge separators for old messages', () => {
     const service = new MessageService();
     const item = service.buildConversationMessageItem(

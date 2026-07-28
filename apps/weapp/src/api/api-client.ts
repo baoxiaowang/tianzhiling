@@ -10,6 +10,7 @@ interface RequestOptions {
   method?: HttpMethod
   data?: Record<string, unknown>
   timeout?: number
+  headers?: Record<string, string>
 }
 
 function normalizePath(path: string) {
@@ -37,6 +38,7 @@ export async function requestMap<T>(
       header: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...options.headers,
         ...(session
           ? {
               Authorization: `${session.tokenType} ${session.accessToken}`,
@@ -79,9 +81,10 @@ export function getWithOptions<T>(path: string, options: RequestOptions = {}) {
 
 export function post<T>(
   path: string,
-  data?: Record<string, unknown>
+  data?: Record<string, unknown>,
+  options: Pick<RequestOptions, 'headers' | 'timeout'> = {},
 ) {
-  return requestMap<T>(path, { method: 'POST', data })
+  return requestMap<T>(path, { ...options, method: 'POST', data })
 }
 
 export function patch<T>(

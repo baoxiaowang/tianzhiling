@@ -1,11 +1,13 @@
 export default {
   pages: [
-    'pages/index/index',
     'pages/onboarding/index',
+    'pages/index/index',
     'pages/contacts/index',
     'pages/me/index',
     'pages/chat/index',
     'pages/agent-detail/index',
+    'pages/agent-create/index',
+    'pages/agent-create-flow/index',
   ],
   subPackages: [
     {
@@ -46,14 +48,6 @@ export default {
     },
     {
       root: 'pages/payment-result',
-      pages: ['index'],
-    },
-    {
-      root: 'pages/agent-create',
-      pages: ['index'],
-    },
-    {
-      root: 'pages/agent-create-flow',
       pages: ['index'],
     },
     {
@@ -112,14 +106,6 @@ export default {
     'pages/chat/index': {
       network: 'all',
       packages: ['pages/vip-center'],
-    },
-    'pages/contacts/index': {
-      network: 'all',
-      packages: ['pages/agent-create'],
-    },
-    'pages/agent-create/index': {
-      network: 'all',
-      packages: ['pages/agent-create-flow'],
     },
   },
   tabBar: {

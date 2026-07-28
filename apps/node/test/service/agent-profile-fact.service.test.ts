@@ -237,6 +237,49 @@ describe('AgentProfileFactService', () => {
         searchableText: '你为什么这么放心我会照顾你爸爸',
       })
     ).resolves.toEqual([]);
+    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.factModel.save).not.toHaveBeenCalled();
+  });
+
+  it('skips profile extraction model calls for a current pain question', async () => {
+    const service = new AgentProfileFactService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn(),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    } as never;
+
+    await expect(
+      service.extractAndUpsertFromUserMessage({
+        message: createUserMessage('那你呢？现在身上还疼吗？'),
+        searchableText: '那你呢？现在身上还疼吗？',
+      })
+    ).resolves.toEqual([]);
+    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.factModel.save).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a guessed occupation question into a profile fact', async () => {
+    const service = new AgentProfileFactService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn(),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    } as never;
+
+    await expect(
+      service.extractAndUpsertFromUserMessage({
+        message: createUserMessage('你以前是木匠吗？'),
+        searchableText: '你以前是木匠吗？',
+      })
+    ).resolves.toEqual([]);
+    expect(service.openAIService.generateText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
   });
 });

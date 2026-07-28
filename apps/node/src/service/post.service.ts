@@ -1221,7 +1221,11 @@ export class PostService {
     const savedComment = await this.commentModel.save(comment);
     try {
       await this.createCommentNotification(post, savedComment, user, null);
-      await this.enqueueAgentCommentReplyJob(post, savedComment, replyToComment);
+      await this.enqueueAgentCommentReplyJob(
+        post,
+        savedComment,
+        replyToComment
+      );
     } catch (error) {
       await this.rollbackCreatedComment(savedComment);
       throw error;
@@ -1940,7 +1944,9 @@ export class PostService {
       new Set(
         [
           ...notifications.map(notification => notification.postId),
-          ...legacyCommentNotifications.map(notification => notification.postId),
+          ...legacyCommentNotifications.map(
+            notification => notification.postId
+          ),
         ].map(postId => this.stringifyObjectId(postId))
       )
     );
@@ -2130,13 +2136,15 @@ export class PostService {
     try {
       await this.createPostCommentNotification(post, comment, notification);
     } catch (error) {
-      await this.deleteNotificationsByCommentId(comment.id).catch(cleanupError => {
-        this.logger.warn(
-          '[post-comment-notification] failed to roll back partial notifications, commentId=%s, error=%s',
-          this.stringifyObjectId(comment.id),
-          String(cleanupError)
-        );
-      });
+      await this.deleteNotificationsByCommentId(comment.id).catch(
+        cleanupError => {
+          this.logger.warn(
+            '[post-comment-notification] failed to roll back partial notifications, commentId=%s, error=%s',
+            this.stringifyObjectId(comment.id),
+            String(cleanupError)
+          );
+        }
+      );
       throw error;
     }
   }
@@ -2883,8 +2891,7 @@ export class PostService {
       latestUserComment
     );
     return (
-      selected ||
-      this.buildFallbackMomentReply(post, agent, latestUserComment)
+      selected || this.buildFallbackMomentReply(post, agent, latestUserComment)
     );
   }
 
@@ -3211,8 +3218,16 @@ export class PostService {
     }
 
     if (
+      /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:(?:现在|一直|就|还|也)\s*){0,3}(?:在|住在|待在|留在)(?:那边|这边|天堂|天上|彼岸|另一个世界|你身边|你旁边)|(?:我|爸|爸爸|妈|妈妈).{0,8}(?:在天上)?(?:看着你|看见你|都看在眼里)/.test(
+        reply
+      )
+    ) {
+      return true;
+    }
+
+    if (
       this.isMomentCurrentActivityQuestion(currentUserText) &&
-      !/(?:没忙|没干|正回|在回|歇着|休息|这边(?:挺好|还好)|正(?:在)?(?:和|跟)你说话)/.test(
+      !/(?:没忙|没干|正回|在回|歇着|休息|我挺好|我们都还好|正(?:在)?(?:和|跟)你说话)/.test(
         reply
       )
     ) {

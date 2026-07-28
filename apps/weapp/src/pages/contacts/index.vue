@@ -175,6 +175,7 @@ import { authSession, clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import ContactCoverBanner from '../../components/contact-cover-banner/contact-cover-banner.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { openAgentCreatePage } from '../../utils/agent-create-navigation'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -189,12 +190,10 @@ const showCollapsedAppBar = ref(false)
 const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
-let lastContactsRefreshAt = 0
 
 const CONTACT_COVER_BANNER_HEIGHT = 230
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT - 16
-const CONTACTS_REFRESH_INTERVAL = 30 * 1000
 const CONTACTS_INITIAL_RENDER_LIMIT = 40
 const CONTACTS_RENDER_LIMIT_STEP = 40
 
@@ -287,10 +286,12 @@ function showMoreConversations() {
   visibleConversationLimit.value += CONTACTS_RENDER_LIMIT_STEP
 }
 
-function handleCreateAgentTap() {
-  void Taro.navigateTo({
-    url: '/pages/agent-create/index',
-  })
+async function handleCreateAgentTap() {
+  try {
+    await openAgentCreatePage()
+  } catch {
+    showToast('页面打开失败，请重试')
+  }
 }
 
 function buildConversationRouteQuery(conversation: ConversationSummary) {
@@ -369,15 +370,6 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
     return refreshContactsPromise
   }
 
-  if (
-    !options.showLoading &&
-    conversations.value.length > 0 &&
-    lastContactsRefreshAt &&
-    Date.now() - lastContactsRefreshAt < CONTACTS_REFRESH_INTERVAL
-  ) {
-    return
-  }
-
   if (options.showLoading ?? conversations.value.length === 0) {
     isContactsLoading.value = true
   }
@@ -391,7 +383,6 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
         CONTACTS_INITIAL_RENDER_LIMIT,
         Math.min(visibleConversationLimit.value, conversations.value.length),
       )
-      lastContactsRefreshAt = Date.now()
     })
     .catch((error: unknown) => {
       if (error instanceof ApiException && error.requiresReLogin) {

@@ -7,7 +7,6 @@ import {
   ConversationEmotionRiskLevel,
   ConversationEmotionStateEntity,
   MessageEntity,
-  MessageRole,
   MongoObjectId,
 } from '@tzl/entities';
 import { AgentProfileFactService } from './agent-profile-fact.service';
@@ -15,6 +14,11 @@ import {
   extractSharedFamilyMemberDeclarations,
   stripKnownFamilyMemberEmotionClauses,
 } from './shared-family-member';
+import {
+  GRIEF_CRISIS_INTENT_PATTERN,
+  GRIEF_OVERWHELMED_INTENT_PATTERN,
+  RETURN_REUNION_WISH_INTENT_PATTERN,
+} from './reply-intent';
 
 export interface RecognizeEmotionStateOptions {
   message: MessageEntity;
@@ -56,9 +60,9 @@ const EMOTION_RULES: EmotionRule[] = [
     riskLevel: ConversationEmotionRiskLevel.high,
     signal: 'crisis_risk.high',
     priority: 100,
-    ttlMs: 24 * HOUR_MS,
+    ttlMs: 2 * HOUR_MS,
     patterns: [
-      /不想活|想死|去死|死了算了|活不下去|撑不住|撑不下去|想去陪你|去陪你|过去陪你|下去陪你|来陪你|想去找你|想陪你走|我也走|结束生命|自杀|轻生|想不开/,
+      GRIEF_CRISIS_INTENT_PATTERN,
       /怕我想不开|不让我靠近殡仪馆|怕我.*(?:自杀|轻生|出事)/,
     ],
   },
@@ -113,6 +117,14 @@ const EMOTION_RULES: EmotionRule[] = [
     ],
   },
   {
+    emotion: ConversationEmotionPrimary.sadness,
+    riskLevel: ConversationEmotionRiskLevel.low,
+    signal: 'grief.overwhelmed',
+    priority: 68,
+    ttlMs: 2 * HOUR_MS,
+    patterns: [GRIEF_OVERWHELMED_INTENT_PATTERN],
+  },
+  {
     emotion: ConversationEmotionPrimary.missing,
     riskLevel: ConversationEmotionRiskLevel.none,
     signal: 'grief.missing',
@@ -121,6 +133,7 @@ const EMOTION_RULES: EmotionRule[] = [
     patterns: [
       /想你|想您|好想|特别想|梦见|梦到|思念|舍不得|念你|没你|没有你|你不在/,
       /(?:来|到|进|回|见|找|陪|抱).{0,10}梦里|梦里.{0,10}(?:来|到|见|找|陪|抱)|托梦/,
+      RETURN_REUNION_WISH_INTENT_PATTERN,
     ],
   },
   {
@@ -150,7 +163,9 @@ export class AgentEmotionStateService {
     options: RecognizeEmotionStateOptions
   ): Promise<ConversationEmotionStateSummary | null> {
     const now = options.now ?? new Date();
-    const familyMemberNames = await this.resolveSharedFamilyMemberNames(options);
+    const familyMemberNames = await this.resolveSharedFamilyMemberNames(
+      options
+    );
     const text = this.buildRecognitionText(options, familyMemberNames);
     const matches = this.matchRules(text);
 
@@ -207,24 +222,10 @@ export class AgentEmotionStateService {
     options: RecognizeEmotionStateOptions,
     familyMemberNames: string[]
   ): string {
-    const recent = (options.recentMessages || [])
-      .slice(-4)
-      .map(message =>
-        message.role === MessageRole.user
-          ? stripKnownFamilyMemberEmotionClauses(
-              message.content?.trim() || '',
-              familyMemberNames
-            )
-          : ''
-      )
-      .filter(Boolean)
-      .join('\n');
-    const current = stripKnownFamilyMemberEmotionClauses(
+    return stripKnownFamilyMemberEmotionClauses(
       options.searchableText.trim(),
       familyMemberNames
-    );
-
-    return [recent, current].filter(Boolean).join('\n').slice(-1200);
+    ).slice(-1200);
   }
 
   private async resolveSharedFamilyMemberNames(

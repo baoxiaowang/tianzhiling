@@ -13,7 +13,7 @@ import {
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
 import {
-  containsUnsafeAssistantMessageContent,
+  containsUnsafeAssistantHistoryContent,
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
 import { buildDepartedSystemPrompt } from '../../prompt/departed';
@@ -27,10 +27,21 @@ import {
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
 import {
+  AgentRelationshipSignalService,
+  AgentRelationshipSignalSummary,
+} from './agent-relationship-signal.service';
+import {
   AgentEmotionStateService,
   ConversationEmotionStateSummary,
 } from './agent-emotion-state.service';
-import { routeReplyScene } from './reply-scene-router';
+import { ReplyIntentClassifierService } from './reply-intent-classifier.service';
+import type { StructuredReplyIntent } from './reply-intent';
+import {
+  buildReplyBrief,
+  ReplyBrief,
+  ReplyBriefService,
+} from './reply-brief.service';
+import { ReplySceneRoute, routeReplyScene } from './reply-scene-router';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 
 export interface BuildConversationContextOptions {
@@ -38,6 +49,7 @@ export interface BuildConversationContextOptions {
   conversation: ConversationEntity;
   agent: AgentEntity | null;
   currentQuery?: string;
+  classifyIntent?: boolean;
 }
 
 export interface AgentContextLayer {
@@ -48,6 +60,9 @@ export interface AgentContextLayer {
 export interface AgentConversationContext {
   layers: AgentContextLayer[];
   messages: ChatCompletionMessageParam[];
+  replyIntent?: StructuredReplyIntent;
+  replyRoute: ReplySceneRoute;
+  replyBrief: ReplyBrief;
 }
 
 export interface RetrievedContextSnippet {
@@ -74,7 +89,16 @@ export class AgentContextService {
   agentProfileFactService: AgentProfileFactService;
 
   @Inject()
+  agentRelationshipSignalService: AgentRelationshipSignalService;
+
+  @Inject()
   agentEmotionStateService: AgentEmotionStateService;
+
+  @Inject()
+  replyIntentClassifierService: ReplyIntentClassifierService;
+
+  @Inject()
+  replyBriefService: ReplyBriefService;
 
   async buildConversationContext(
     options: BuildConversationContextOptions
@@ -84,21 +108,68 @@ export class AgentContextService {
     );
     const recentHistoryMessages =
       this.buildRecentHistoryMessages(conversationMessages);
-    const retrievedMemories = await this.retrieveLongTermHistory(
-      options,
-      this.resolveLongTermHistoryCutoff(recentHistoryMessages)
-    );
-    const hardFacts = await this.listHardFacts(options);
     const profileFacts = await this.listProfileFacts(options);
-    const emotionState = await this.getCurrentEmotionState(options);
+    const knownFamilyMembers = (profileFacts || [])
+      .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
+      .filter((name): name is string => Boolean(name));
+    const [
+      retrievedMemories,
+      hardFacts,
+      emotionState,
+      replyIntent,
+      storedRelationshipSignals,
+    ] = await Promise.all([
+      this.retrieveLongTermHistory(
+        options,
+        this.resolveLongTermHistoryCutoff(recentHistoryMessages)
+      ),
+      this.listHardFacts(options),
+      this.getCurrentEmotionState(options),
+      this.classifyReplyIntent(
+        {
+          currentQuery: options.currentQuery || '',
+          recentMessages: recentHistoryMessages,
+          knownFamilyMembers,
+        },
+        options.classifyIntent !== false
+      ),
+      this.listRelationshipSignals(options),
+    ]);
+    const relationshipSignals =
+      this.agentRelationshipSignalService?.selectRelevantSignals(
+        storedRelationshipSignals,
+        replyIntent
+      ) || [];
+    const replyRoute = routeReplyScene({
+      currentQuery: options.currentQuery,
+      recentMessages: recentHistoryMessages,
+      emotionState,
+      knownFamilyMembers,
+      intent: replyIntent,
+    });
+    const replyBriefOptions = {
+      currentQuery: options.currentQuery || '',
+      intent: replyRoute.intent ?? replyIntent,
+      route: replyRoute,
+      confirmedFacts: [...(profileFacts || []), ...(hardFacts || [])]
+        .map(fact => fact.value?.trim())
+        .filter((value): value is string => Boolean(value)),
+      recentMessages: recentHistoryMessages,
+      retrievedMemories,
+      relationshipSignals,
+    };
+    const replyBrief = this.replyBriefService
+      ? this.replyBriefService.build(replyBriefOptions)
+      : buildReplyBrief(replyBriefOptions);
     const layers = [
       this.buildSystemLayer(
         options,
-        recentHistoryMessages,
         retrievedMemories,
         hardFacts,
         profileFacts,
-        emotionState
+        emotionState,
+        replyRoute,
+        replyBrief
       ),
       this.buildHistoryLayer(recentHistoryMessages),
     ];
@@ -109,16 +180,20 @@ export class AgentContextService {
         (result, layer) => result.concat(layer.messages),
         []
       ),
+      replyIntent: replyRoute.intent,
+      replyRoute,
+      replyBrief,
     };
   }
 
   private buildSystemLayer(
     options: BuildConversationContextOptions,
-    recentHistoryMessages: MessageEntity[],
     memories?: RetrievedContextSnippet[],
     hardFacts?: AgentMemoryFactSummary[],
     profileFacts?: AgentProfileFactSummary[],
-    emotionState?: ConversationEmotionStateSummary | null
+    emotionState?: ConversationEmotionStateSummary | null,
+    replyRoute?: ReplySceneRoute,
+    replyBrief?: ReplyBrief
   ): AgentContextLayer {
     const basePrompt = buildDepartedSystemPrompt({
       userId: options.auth.sub,
@@ -130,13 +205,11 @@ export class AgentContextService {
     const hardFactPrompt = this.buildHardFactPrompt(hardFacts);
     const profileFactPrompt = this.buildProfileFactPrompt(profileFacts);
     const longTermHistoryPrompt = this.buildLongTermHistoryPrompt(memories);
-    const emotionStatePrompt = this.buildEmotionStatePrompt(emotionState);
-    const sceneStrategyPrompt = this.buildSceneStrategyPrompt(
-      options,
-      recentHistoryMessages,
+    const emotionStatePrompt = this.buildEmotionStatePrompt(
       emotionState,
-      profileFacts
+      replyRoute
     );
+    const replyBriefPrompt = replyBrief?.prompt || '';
 
     const systemPrompt = [
       basePrompt,
@@ -144,7 +217,7 @@ export class AgentContextService {
       hardFactPrompt,
       longTermHistoryPrompt,
       emotionStatePrompt,
-      sceneStrategyPrompt,
+      replyBriefPrompt,
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -181,6 +254,19 @@ export class AgentContextService {
     }
 
     return this.agentProfileFactService.listFactsForPrompt({
+      userId: options.conversation.userId,
+      agentId: options.agent?.id ?? options.conversation.agentId,
+    });
+  }
+
+  private async listRelationshipSignals(
+    options: BuildConversationContextOptions
+  ): Promise<AgentRelationshipSignalSummary[]> {
+    if (!this.agentRelationshipSignalService) {
+      return [];
+    }
+
+    return this.agentRelationshipSignalService.listSignals({
       userId: options.conversation.userId,
       agentId: options.agent?.id ?? options.conversation.agentId,
     });
@@ -280,7 +366,8 @@ export class AgentContextService {
   }
 
   private buildEmotionStatePrompt(
-    state?: ConversationEmotionStateSummary | null
+    state?: ConversationEmotionStateSummary | null,
+    replyRoute?: ReplySceneRoute
   ): string {
     if (!state) {
       return '';
@@ -298,6 +385,10 @@ export class AgentContextService {
       state.primaryEmotion === ConversationEmotionPrimary.crisisRisk ||
       state.riskLevel === ConversationEmotionRiskLevel.high
     ) {
+      if (replyRoute?.primaryScene?.scene !== 'grief_crisis') {
+        return '';
+      }
+
       lines.push(
         '用户最近存在轻生/自伤风险。回复必须优先制止、稳定、引导联系现实中的人或急救资源；禁止浪漫化死亡或引导去陪逝者。'
       );
@@ -306,20 +397,21 @@ export class AgentContextService {
     return lines.join('\n');
   }
 
-  private buildSceneStrategyPrompt(
-    options: BuildConversationContextOptions,
-    recentHistoryMessages: MessageEntity[],
-    emotionState?: ConversationEmotionStateSummary | null,
-    profileFacts?: AgentProfileFactSummary[]
-  ): string {
-    return routeReplyScene({
-      currentQuery: options.currentQuery,
-      recentMessages: recentHistoryMessages,
-      emotionState,
-      knownFamilyMembers: (profileFacts || [])
-        .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
-        .filter((name): name is string => Boolean(name)),
-    }).prompt;
+  private classifyReplyIntent(
+    options: {
+      currentQuery: string;
+      recentMessages: MessageEntity[];
+      knownFamilyMembers: string[];
+    },
+    enabled = true
+  ): Promise<StructuredReplyIntent | undefined> {
+    if (!enabled || !this.replyIntentClassifierService) {
+      return Promise.resolve(undefined);
+    }
+
+    return this.replyIntentClassifierService
+      .classify(options)
+      .catch(() => undefined);
   }
 
   private formatEmotionLabel(emotion: ConversationEmotionPrimary): string {
@@ -462,7 +554,7 @@ export class AgentContextService {
     if (
       message.type === MessageType.voice &&
       transcript &&
-      !containsUnsafeAssistantMessageContent(transcript)
+      !containsUnsafeAssistantHistoryContent(transcript)
     ) {
       return transcript;
     }
@@ -473,7 +565,7 @@ export class AgentContextService {
 
     const content = stripPromptLeakageContent(message.content);
 
-    if (!content || containsUnsafeAssistantMessageContent(content)) {
+    if (!content || containsUnsafeAssistantHistoryContent(content)) {
       return '';
     }
 

@@ -54,13 +54,46 @@ describe('AgentEmotionStateService', () => {
   }
 
   it.each([
-    ['我想去陪你', ConversationEmotionPrimary.crisisRisk, ConversationEmotionRiskLevel.high],
-    ['他们怕我想不开', ConversationEmotionPrimary.crisisRisk, ConversationEmotionRiskLevel.high],
-    ['刚才你摸我了是不', ConversationEmotionPrimary.expectingPresence, ConversationEmotionRiskLevel.none],
-    ['我好想你', ConversationEmotionPrimary.missing, ConversationEmotionRiskLevel.none],
-    ['你什么时候能来我梦里一次', ConversationEmotionPrimary.missing, ConversationEmotionRiskLevel.none],
-    ['对不起都是我不好', ConversationEmotionPrimary.guilt, ConversationEmotionRiskLevel.none],
-    ['我自己好孤独，心里没有底气', ConversationEmotionPrimary.sadness, ConversationEmotionRiskLevel.low],
+    [
+      '我想去陪你',
+      ConversationEmotionPrimary.crisisRisk,
+      ConversationEmotionRiskLevel.high,
+    ],
+    [
+      '他们怕我想不开',
+      ConversationEmotionPrimary.crisisRisk,
+      ConversationEmotionRiskLevel.high,
+    ],
+    [
+      '刚才你摸我了是不',
+      ConversationEmotionPrimary.expectingPresence,
+      ConversationEmotionRiskLevel.none,
+    ],
+    [
+      '我好想你',
+      ConversationEmotionPrimary.missing,
+      ConversationEmotionRiskLevel.none,
+    ],
+    [
+      '没有你我撑不住',
+      ConversationEmotionPrimary.sadness,
+      ConversationEmotionRiskLevel.low,
+    ],
+    [
+      '你什么时候能来我梦里一次',
+      ConversationEmotionPrimary.missing,
+      ConversationEmotionRiskLevel.none,
+    ],
+    [
+      '对不起都是我不好',
+      ConversationEmotionPrimary.guilt,
+      ConversationEmotionRiskLevel.none,
+    ],
+    [
+      '我自己好孤独，心里没有底气',
+      ConversationEmotionPrimary.sadness,
+      ConversationEmotionRiskLevel.low,
+    ],
   ])('recognizes %s', async (text, emotion, riskLevel) => {
     const { summary, savedStates } = await recognize(text);
 
@@ -141,6 +174,28 @@ describe('AgentEmotionStateService', () => {
       })
     ).resolves.toMatchObject({
       primaryEmotion: ConversationEmotionPrimary.missing,
+    });
+  });
+
+  it('does not reclassify a current reunion wish from an older crisis message', async () => {
+    const service = new AgentEmotionStateService();
+    service.stateModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async state => state),
+    } as never;
+    const oldMessage = createMessage('我不想活了');
+    const currentMessage = createMessage('我希望你能回来，一家人在一起');
+
+    await expect(
+      service.recognizeAndUpsertFromUserMessage({
+        message: currentMessage,
+        searchableText: currentMessage.content,
+        recentMessages: [oldMessage],
+        now: NOW,
+      })
+    ).resolves.toMatchObject({
+      primaryEmotion: ConversationEmotionPrimary.missing,
+      riskLevel: ConversationEmotionRiskLevel.none,
     });
   });
 });

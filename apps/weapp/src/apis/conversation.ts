@@ -1,4 +1,8 @@
 import { del, get, post } from '../api/api-client'
+import {
+  authSession,
+  registerAuthSessionClearListener,
+} from '../auth/session'
 
 const CONVERSATION_LIST_CACHE_TTL = 30 * 1000
 
@@ -6,9 +10,16 @@ let conversationListCache:
   | {
       items: ConversationSummary[]
       expiresAt: number
+      ownerId: string
     }
   | null = null
-let conversationListPromise: Promise<ConversationSummary[]> | null = null
+let conversationListPromise:
+  | {
+      ownerId: string
+      promise: Promise<ConversationSummary[]>
+    }
+  | null = null
+let conversationListCacheVersion = 0
 
 export interface ConversationSummary {
   id: string
@@ -336,28 +347,45 @@ function parseChatQuota(value: unknown) {
   } satisfies ConversationChatQuotaSnapshot
 }
 
-export async function getConversations() {
+export async function getConversations(options: { force?: boolean } = {}) {
+  if (options.force) {
+    invalidateConversationListCache()
+  }
+
+  const ownerId = getConversationCacheOwnerId()
+
   if (
     conversationListCache &&
+    conversationListCache.ownerId === ownerId &&
     conversationListCache.expiresAt > Date.now()
   ) {
     return conversationListCache.items
   }
 
-  if (conversationListPromise) {
-    return conversationListPromise
+  if (
+    conversationListPromise &&
+    conversationListPromise.ownerId === ownerId
+  ) {
+    return conversationListPromise.promise
   }
 
-  conversationListPromise = fetchConversations().finally(() => {
-    conversationListPromise = null
+  const requestVersion = conversationListCacheVersion
+  const promise = fetchConversations(ownerId, requestVersion).finally(() => {
+    if (conversationListPromise?.promise === promise) {
+      conversationListPromise = null
+    }
   })
+  conversationListPromise = { ownerId, promise }
 
-  return conversationListPromise
+  return promise
 }
 
 export function getCachedConversations() {
+  const ownerId = getConversationCacheOwnerId()
+
   if (
     conversationListCache &&
+    conversationListCache.ownerId === ownerId &&
     conversationListCache.expiresAt > Date.now()
   ) {
     return conversationListCache.items
@@ -370,20 +398,38 @@ export function preloadConversations() {
   void getConversations().catch(() => undefined)
 }
 
-async function fetchConversations() {
+export function invalidateConversationListCache() {
+  conversationListCacheVersion += 1
+  conversationListCache = null
+  conversationListPromise = null
+}
+
+function getConversationCacheOwnerId() {
+  return authSession.value?.user.id.trim() || ''
+}
+
+async function fetchConversations(ownerId: string, requestVersion: number) {
   const data = await get<ConversationListResponse>('/api/conversation')
 
   const items = Array.isArray(data.items)
     ? data.items.map((item) => parseConversationSummary(item))
     : []
 
-  conversationListCache = {
-    items,
-    expiresAt: Date.now() + CONVERSATION_LIST_CACHE_TTL,
+  if (
+    requestVersion === conversationListCacheVersion &&
+    ownerId === getConversationCacheOwnerId()
+  ) {
+    conversationListCache = {
+      items,
+      expiresAt: Date.now() + CONVERSATION_LIST_CACHE_TTL,
+      ownerId,
+    }
   }
 
   return items
 }
+
+registerAuthSessionClearListener(invalidateConversationListCache)
 
 export async function getConversationMessages(conversationId: string) {
   const data = await get<ConversationMessageListResponse>(
@@ -440,6 +486,7 @@ export async function deleteConversationMessage(
   await del(
     `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`
   )
+  invalidateConversationListCache()
 }
 
 export async function markConversationMessageMemory(
@@ -468,6 +515,7 @@ export async function sendConversationMessage(
     mimeType?: string
     durationMs?: number
     quotedMessageId?: string
+    clientRequestId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
@@ -479,6 +527,7 @@ export async function sendConversationMessage(
   const mimeType = payload.mimeType?.trim()
   const durationMs = payload.durationMs
   const quotedMessageId = payload.quotedMessageId?.trim()
+  const clientRequestId = payload.clientRequestId?.trim()
 
   if (content) {
     body.content = content
@@ -498,11 +547,16 @@ export async function sendConversationMessage(
   if (quotedMessageId) {
     body.quotedMessageId = quotedMessageId
   }
-
   const data = await post<SendConversationMessageResponse>(
     `/api/conversation/${conversationId}/messages`,
-    body
+    body,
+    {
+      headers: clientRequestId
+        ? { 'X-Client-Request-Id': clientRequestId }
+        : undefined,
+    },
   )
+  invalidateConversationListCache()
 
   return {
     userMessage: parseConversationMessage(data.userMessage),
@@ -527,6 +581,7 @@ export async function sendConversationMessageAsync(
     mimeType?: string
     durationMs?: number
     quotedMessageId?: string
+    clientRequestId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
@@ -538,6 +593,7 @@ export async function sendConversationMessageAsync(
   const mimeType = payload.mimeType?.trim()
   const durationMs = payload.durationMs
   const quotedMessageId = payload.quotedMessageId?.trim()
+  const clientRequestId = payload.clientRequestId?.trim()
 
   if (content) {
     body.content = content
@@ -557,11 +613,16 @@ export async function sendConversationMessageAsync(
   if (quotedMessageId) {
     body.quotedMessageId = quotedMessageId
   }
-
   const data = await post<SendConversationMessageResponse>(
     `/api/conversation/${conversationId}/messages/async`,
-    body
+    body,
+    {
+      headers: clientRequestId
+        ? { 'X-Client-Request-Id': clientRequestId }
+        : undefined,
+    },
   )
+  invalidateConversationListCache()
 
   return {
     userMessage: parseConversationMessage(data.userMessage),

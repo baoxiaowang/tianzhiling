@@ -112,7 +112,7 @@ export interface WechatVirtualRefundResponse extends WechatXPayResponse {
   pay_wx_order_id?: string;
 }
 
-export interface WechatVirtualProvideGoodsResponse extends WechatXPayResponse {}
+export type WechatVirtualProvideGoodsResponse = WechatXPayResponse;
 
 interface WechatPhoneNumberResponse {
   errcode?: number;

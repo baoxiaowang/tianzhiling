@@ -14,6 +14,10 @@ const sharedThemeResource = path.resolve(
 
 // https://taro-docs.jd.com/docs/next/config#defineconfig-辅助函数
 export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
+  const outputTarget = process.env.TARO_ENV || 'weapp'
+  const outputRoot =
+    process.env.TARO_BUILD_OUTPUT_ROOT || `dist/${outputTarget}`
+
   const baseConfig: UserConfigExport<'webpack5'> = {
     projectName: 'weapp',
     date: '2026-4-23',
@@ -35,7 +39,7 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       375: 2 / 1,
     },
     sourceRoot: 'src',
-    outputRoot: 'dist/' + process.env.TARO_ENV,
+    outputRoot,
     plugins: ['@tarojs/plugin-html'],
     defineConstants: {
     },

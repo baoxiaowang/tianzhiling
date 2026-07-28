@@ -49,6 +49,7 @@
     "cov": "jest --coverage",
     "lint": "mwts check",
     "lint:fix": "mwts fix",
+    "migrate:relationship-signals": "node ./scripts/ensure-agent-relationship-signal-indexes.js",
     "ci": "npm run cov",
     "build": "mwtsc --cleanOutDir"
   },

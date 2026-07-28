@@ -82,7 +82,7 @@ export class ConversationController {
     return this.conversationService.sendMessage(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
-      body
+      this.withClientRequestId(body)
     );
   }
 
@@ -94,7 +94,7 @@ export class ConversationController {
     return this.conversationService.sendMessageAsync(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
-      body
+      this.withClientRequestId(body)
     );
   }
 
@@ -158,5 +158,25 @@ export class ConversationController {
       conversationId,
       body
     );
+  }
+
+  private withClientRequestId(
+    body: SendConversationMessageDTO
+  ): SendConversationMessageDTO {
+    if (body.clientRequestId?.trim()) {
+      return body;
+    }
+
+    const clientRequestId = this.ctx
+      .get('x-client-request-id')
+      .trim()
+      .slice(0, 64);
+
+    return clientRequestId
+      ? {
+          ...body,
+          clientRequestId,
+        }
+      : body;
   }
 }

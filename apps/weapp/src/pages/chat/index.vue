@@ -11,7 +11,9 @@
     :show-scrollbar="false"
     :safe-area-top="false"
     :safe-area-bottom="false"
+    @scroll="handleChatScroll"
     @scroll-to-upper="handleChatScrollToUpper"
+    @scroll-to-lower="handleChatScrollToLower"
   >
     <template #header>
       <view class="chat-page__nav" :style="navStyle">
@@ -458,6 +460,12 @@ type DraftInputEvent = InputEvent | {
   }
 }
 
+type ChatScrollEvent = {
+  detail?: {
+    scrollTop?: number
+  }
+}
+
 type DisplayRow =
   | {
       key: string
@@ -574,9 +582,13 @@ const CHAT_TEXT_MAX_LENGTH = 500
 const CHAT_MESSAGE_PAGE_SIZE = 30
 const CHAT_MAX_LOADED_MESSAGES = 180
 const CHAT_RENDER_MESSAGE_WINDOW = 120
-const AGENT_REPLY_POLL_INTERVAL_MS = 1500
-const AGENT_REPLY_POLL_TIMEOUT_MS = 60 * 1000
+const AGENT_REPLY_POLL_INTERVAL_MS = 2000
+const AGENT_REPLY_POLL_MAX_INTERVAL_MS = 15000
+const AGENT_REPLY_POLL_TIMEOUT_MS = 5 * 60 * 1000
 const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
+const AGENT_REPLY_POLL_WARNING_FAILURE_COUNT = 3
+const CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD = 8
+const CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS = 360
 const VOICE_PRIVACY_AGREE_BUTTON_ID = 'chat-voice-privacy-agree-btn'
 const VOICE_PLAYBACK_ERROR_MUTE_MS = 3000
 const CHAT_QUOTA_DIALOG_CONTENT = {
@@ -706,7 +718,14 @@ let isSwitchingComposerPanel = false
 let replyPollingTimer: ReturnType<typeof setTimeout> | null = null
 let replyPollingStartedAt = 0
 let replyPollingAfterUserCreatedAt: Date | null = null
+let replyPollingFailureCount = 0
+let hasShownReplyPollingNetworkWarning = false
 let scrollToBottomPromise: Promise<void> | null = null
+let scrollToBottomGeneration = 0
+let scrollIntoViewResetTimer: ReturnType<typeof setTimeout> | null = null
+let shouldAutoFollowNewMessages = true
+let lastChatScrollTop = 0
+let hasTrackedChatScrollTop = false
 const deletingMessageIds = new Set<string>()
 const generatingVoiceMessageIds = new Set<string>()
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
@@ -1253,7 +1272,7 @@ async function revealAssistantMessage(message: ConversationMessage) {
       segments: fullSegments.slice(0, 1),
     },
   ])
-  await scrollToBottom()
+  await scrollToBottom({ respectUserScroll: true })
 
   for (let index = 1; index < fullSegments.length; index += 1) {
     const shouldContinue = await waitForAssistantSegmentDelay(
@@ -1271,7 +1290,7 @@ async function revealAssistantMessage(message: ConversationMessage) {
           }
         : item
     )
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   }
 }
 
@@ -1290,7 +1309,7 @@ async function revealAssistantMessages(items: ConversationMessage[]) {
     }
 
     await revealAssistantMessage(message)
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   }
 }
 
@@ -1306,7 +1325,7 @@ async function appendConversationResult(
   tempMessageId: string,
   result: SendConversationMessageResult,
 ) {
-  isViewingHistoryWindow.value = false
+  showLatestMessageWindowIfFollowing()
   messages.value = messages.value.filter((message) => message.id !== tempMessageId)
   messages.value = limitLoadedMessages([...messages.value, result.userMessage])
   handleChatQuotaAfterSend(result)
@@ -1589,8 +1608,58 @@ async function loadOlderMessages() {
   }
 }
 
+function getChatScrollTop(event: unknown) {
+  const detail =
+    event && typeof event === 'object' && 'detail' in event
+      ? (event as ChatScrollEvent).detail
+      : undefined
+  const scrollTop = detail?.scrollTop
+
+  if (typeof scrollTop !== 'number' || !Number.isFinite(scrollTop)) {
+    return null
+  }
+
+  return scrollTop
+}
+
+function handleChatScroll(event: unknown) {
+  const scrollTop = getChatScrollTop(event)
+  if (scrollTop === null) {
+    return
+  }
+
+  if (
+    hasTrackedChatScrollTop
+    && scrollTop < lastChatScrollTop - CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD
+  ) {
+    stopAutoFollowingNewMessages()
+  }
+
+  lastChatScrollTop = Math.max(0, scrollTop)
+  hasTrackedChatScrollTop = true
+}
+
 function handleChatScrollToUpper() {
+  stopAutoFollowingNewMessages()
   void loadOlderMessages()
+}
+
+function handleChatScrollToLower() {
+  shouldAutoFollowNewMessages = true
+}
+
+function stopAutoFollowingNewMessages() {
+  shouldAutoFollowNewMessages = false
+  scrollToBottomGeneration += 1
+  scrollToBottomPromise = null
+  clearScrollIntoViewResetTimer()
+  scrollIntoViewTarget.value = ''
+}
+
+function showLatestMessageWindowIfFollowing() {
+  if (shouldAutoFollowNewMessages) {
+    isViewingHistoryWindow.value = false
+  }
 }
 
 function handleHistoryStatusTap() {
@@ -1638,6 +1707,8 @@ function findLatestMessageCreatedAt(
 function startReplyPolling(afterUserCreatedAt: Date) {
   replyPollingAfterUserCreatedAt = afterUserCreatedAt
   replyPollingStartedAt = Date.now()
+  replyPollingFailureCount = 0
+  hasShownReplyPollingNetworkWarning = false
   isWaitingAgentReply.value = true
   scheduleReplyPolling(0)
 }
@@ -1667,7 +1738,7 @@ async function pollConversationReply() {
 
   if (Date.now() - replyPollingStartedAt >= AGENT_REPLY_POLL_TIMEOUT_MS) {
     stopReplyPolling()
-    showToast('TA 还在想，稍后下拉刷新看看')
+    showToast('TA 还在想，稍后重新进入会自动继续查询')
     return
   }
 
@@ -1677,6 +1748,8 @@ async function pollConversationReply() {
       lightweight: true,
     })
     const items = result.items
+    replyPollingFailureCount = 0
+    hasShownReplyPollingNetworkWarning = false
 
     await reconcilePolledMessages(items, pendingAfter)
     probeMissingAssistantVoiceDurations(items)
@@ -1691,16 +1764,37 @@ async function pollConversationReply() {
       await redirectToAuth()
       return
     }
+
+    replyPollingFailureCount += 1
+    if (
+      replyPollingFailureCount >= AGENT_REPLY_POLL_WARNING_FAILURE_COUNT
+      && !hasShownReplyPollingNetworkWarning
+    ) {
+      hasShownReplyPollingNetworkWarning = true
+      showToast('网络连接异常，正在自动重试')
+    }
+
+    scheduleReplyPolling(resolveReplyPollingRetryDelay())
+    return
   }
 
   scheduleReplyPolling()
+}
+
+function resolveReplyPollingRetryDelay() {
+  const failureExponent = Math.max(0, replyPollingFailureCount - 1)
+
+  return Math.min(
+    AGENT_REPLY_POLL_MAX_INTERVAL_MS,
+    AGENT_REPLY_POLL_INTERVAL_MS * 2 ** failureExponent,
+  )
 }
 
 async function reconcilePolledMessages(
   items: ConversationMessage[],
   pendingAfter: Date,
 ) {
-  isViewingHistoryWindow.value = false
+  showLatestMessageWindowIfFollowing()
   const currentMessageIds = new Set(messages.value.map((message) => message.id))
   const newAssistantMessages = items.filter((message) => {
     const createdAt = message.createdAt ?? message.updatedAt
@@ -1721,7 +1815,7 @@ async function reconcilePolledMessages(
   )
 
   await revealAssistantMessages(newAssistantMessages)
-  await scrollToBottom()
+  await scrollToBottom({ respectUserScroll: true })
 }
 
 function hasAssistantReplyResultAfter(items: ConversationMessage[], after: Date) {
@@ -1746,6 +1840,8 @@ function stopReplyPolling() {
   }
 
   replyPollingAfterUserCreatedAt = null
+  replyPollingFailureCount = 0
+  hasShownReplyPollingNetworkWarning = false
   isWaitingAgentReply.value = false
 }
 
@@ -1763,12 +1859,27 @@ async function handleApiError(error: unknown, fallbackMessage: string) {
   loadError.value = fallbackMessage
 }
 
-async function scrollToBottom(options: { animated?: boolean } = {}) {
+async function scrollToBottom(
+  options: { animated?: boolean; respectUserScroll?: boolean } = {},
+) {
   const animated = options.animated ?? true
+  const respectUserScroll = options.respectUserScroll ?? false
+
+  if (respectUserScroll && !shouldAutoFollowNewMessages) {
+    return
+  }
+
+  if (!respectUserScroll) {
+    shouldAutoFollowNewMessages = true
+  }
 
   if (scrollToBottomPromise) {
     return scrollToBottomPromise
   }
+
+  const generation = scrollToBottomGeneration + 1
+  scrollToBottomGeneration = generation
+  clearScrollIntoViewResetTimer()
 
   scrollToBottomPromise = Promise.resolve()
     .then(async () => {
@@ -1778,8 +1889,14 @@ async function scrollToBottom(options: { animated?: boolean } = {}) {
       await nextTick()
       await new Promise<void>((resolve) => {
         setTimeout(() => {
+          if (generation !== scrollToBottomGeneration) {
+            resolve()
+            return
+          }
+
           scrollWithAnimation.value = animated
           scrollIntoViewTarget.value = 'chat-bottom-anchor'
+          scheduleScrollIntoViewTargetReset(generation)
           resolve()
         }, 0)
       })
@@ -1789,6 +1906,23 @@ async function scrollToBottom(options: { animated?: boolean } = {}) {
     })
 
   return scrollToBottomPromise
+}
+
+function clearScrollIntoViewResetTimer() {
+  if (scrollIntoViewResetTimer) {
+    clearTimeout(scrollIntoViewResetTimer)
+    scrollIntoViewResetTimer = null
+  }
+}
+
+function scheduleScrollIntoViewTargetReset(generation: number) {
+  clearScrollIntoViewResetTimer()
+  scrollIntoViewResetTimer = setTimeout(() => {
+    scrollIntoViewResetTimer = null
+    if (generation === scrollToBottomGeneration) {
+      scrollIntoViewTarget.value = ''
+    }
+  }, CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS)
 }
 
 async function scrollToMessageAnchor(anchorId: string) {
@@ -2557,6 +2691,7 @@ useDidHide(() => {
   isEmojiPanelVisible.value = false
   isMorePanelVisible.value = false
   activeMessageActionRowKey.value = ''
+  clearScrollIntoViewResetTimer()
   clearVoiceStartTimer()
   if (isVoiceRecording.value) {
     void finishVoiceGesture({ cancelledBySystem: true })
@@ -2570,6 +2705,7 @@ useUnload(() => {
   isChatPageVisible = false
   stopReplyPolling()
   clearAssistantSegmentRevealTimers()
+  clearScrollIntoViewResetTimer()
   clearVoiceStartTimer()
   if (isVoiceRecording.value) {
     try {
@@ -3449,8 +3585,9 @@ async function sendTextMessageContent(
   await scrollToBottom()
 
   try {
-    const result = await sendTextMessageWithQuoteFallback(content, {
+    const result = await sendTextMessage(content, {
       quotedMessageId: options.restoreQuoteMessageId,
+      clientRequestId: tempId,
     })
 
     await appendConversationResult(tempId, result)
@@ -3459,7 +3596,7 @@ async function sendTextMessageContent(
       startReplyPolling(pendingAfter)
     }
     loadError.value = ''
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   } catch (error) {
     isTextSendSubmitting.value = false
 
@@ -3476,7 +3613,7 @@ async function sendTextMessageContent(
       }
       messages.value = messages.value.filter((message) => message.id !== tempId)
       showChatQuotaExhaustedDialog()
-      await scrollToBottom()
+      await scrollToBottom({ respectUserScroll: true })
       return
     }
 
@@ -3494,37 +3631,26 @@ async function sendTextMessageContent(
         : message
     )
     showToast(error instanceof ApiException ? error.message : '发送失败，请稍后重试')
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
     return
   }
 
   isTextSendSubmitting.value = false
 }
 
-async function sendTextMessageWithQuoteFallback(
+async function sendTextMessage(
   content: string,
-  options: { quotedMessageId?: string } = {},
+  options: {
+    quotedMessageId?: string
+    clientRequestId: string
+  },
 ) {
-  try {
-    return await sendConversationMessageAsync(conversationId.value, {
-      content,
-      type: 'text',
-      quotedMessageId: options.quotedMessageId,
-    })
-  } catch (error) {
-    if (
-      !options.quotedMessageId ||
-      (error instanceof ApiException &&
-        (error.requiresReLogin || isChatQuotaLimitError(error)))
-    ) {
-      throw error
-    }
-
-    return sendConversationMessageAsync(conversationId.value, {
-      content,
-      type: 'text',
-    })
-  }
+  return sendConversationMessageAsync(conversationId.value, {
+    content,
+    type: 'text',
+    quotedMessageId: options.quotedMessageId,
+    clientRequestId: options.clientRequestId,
+  })
 }
 
 async function pickAndSendImage(sourceType: ChatImageSourceType) {
@@ -3627,6 +3753,7 @@ async function sendImageMessage(image: PickedChatImage) {
       type: 'image',
       objectKey: uploaded.objectKey,
       mimeType,
+      clientRequestId: tempId,
     })
 
     await appendConversationResult(tempId, result)
@@ -3635,7 +3762,7 @@ async function sendImageMessage(image: PickedChatImage) {
       startReplyPolling(pendingAfter)
     }
     loadError.value = ''
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth()
@@ -3645,7 +3772,7 @@ async function sendImageMessage(image: PickedChatImage) {
     if (isChatQuotaLimitError(error)) {
       messages.value = messages.value.filter((message) => message.id !== tempId)
       showChatQuotaExhaustedDialog()
-      await scrollToBottom()
+      await scrollToBottom({ respectUserScroll: true })
       return
     }
 
@@ -3658,7 +3785,7 @@ async function sendImageMessage(image: PickedChatImage) {
         : message
     )
     showToast(error instanceof ApiException ? error.message : '发送图片失败，请稍后重试')
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   } finally {
     isSending.value = false
   }
@@ -3735,6 +3862,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
       objectKey: uploaded.objectKey,
       mimeType,
       durationMs,
+      clientRequestId: tempId,
     })
 
     await appendConversationResult(tempId, result)
@@ -3743,7 +3871,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
       startReplyPolling(pendingAfter)
     }
     loadError.value = ''
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth()
@@ -3753,7 +3881,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
     if (isChatQuotaLimitError(error)) {
       messages.value = messages.value.filter((message) => message.id !== tempId)
       showChatQuotaExhaustedDialog()
-      await scrollToBottom()
+      await scrollToBottom({ respectUserScroll: true })
       return
     }
 
@@ -3766,7 +3894,7 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
         : message
     )
     showToast(error instanceof ApiException ? error.message : '发送语音失败，请稍后重试')
-    await scrollToBottom()
+    await scrollToBottom({ respectUserScroll: true })
   } finally {
     isSending.value = false
   }
