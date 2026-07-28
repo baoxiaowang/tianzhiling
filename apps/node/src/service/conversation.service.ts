@@ -1844,10 +1844,23 @@ export class ConversationService {
     replySegments: string[],
     routedMaxSegments?: number
   ): string[] {
-    return replySegments.slice(
-      0,
-      this.resolveAssistantReplySegmentLimit(userQuery, routedMaxSegments)
+    const limit = this.resolveAssistantReplySegmentLimit(
+      userQuery,
+      routedMaxSegments
     );
+    const segments = replySegments.map(item => item.trim()).filter(Boolean);
+
+    if (segments.length <= limit) {
+      return segments;
+    }
+
+    if (limit === 1) {
+      return [segments.join(' ')];
+    }
+
+    return segments
+      .slice(0, limit - 1)
+      .concat(segments.slice(limit - 1).join(' '));
   }
 
   private resolveAssistantReplySegmentLimit(
@@ -3568,6 +3581,18 @@ export class ConversationService {
     replyBrief?: ReplyBrief
   ): string[] {
     const parsedSegments = this.parseAssistantReplyCandidates(value);
+    const shouldUseStrictPlan = this.shouldUseStrictReplyPlan(replyBrief);
+    if (!shouldUseStrictPlan) {
+      const naturalSegments = this.normalizeModelFirstReplySegments(
+        parsedSegments,
+        userQuery
+      );
+
+      if (naturalSegments.length > 0) {
+        return naturalSegments;
+      }
+    }
+
     const segments = planReplySegments({
       currentQuery: userQuery,
       route: replyRoute,
@@ -3585,6 +3610,37 @@ export class ConversationService {
       'MiniMax returned an empty reply',
       502
     );
+  }
+
+  private shouldUseStrictReplyPlan(replyBrief?: ReplyBrief): boolean {
+    return Boolean(
+      replyBrief &&
+        ['safety', 'boundary', 'memory', 'platform'].includes(replyBrief.mode)
+    );
+  }
+
+  private normalizeModelFirstReplySegments(
+    segments: string[],
+    userQuery = ''
+  ): string[] {
+    const sanitized = segments
+      .map(segment => this.sanitizeAssistantSegment(segment, userQuery))
+      .filter(Boolean);
+
+    if (sanitized.length <= ASSISTANT_REPLY_SEGMENT_LIMIT) {
+      return sanitized;
+    }
+
+    return sanitized
+      .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT - 1)
+      .concat(
+        sanitized
+          .slice(ASSISTANT_REPLY_SEGMENT_LIMIT - 1)
+          .map(segment => segment.trim())
+          .filter(Boolean)
+          .join(' ')
+      )
+      .filter(Boolean);
   }
 
   private extractUsageFromResponse(response: {

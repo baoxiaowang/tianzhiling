@@ -2430,6 +2430,81 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('preserves model text for open-scene replies instead of forcing the brief bubble plan', async () => {
+    const userQuery = '妈妈身体不好，可惜你不能照顾她';
+    const naturalReply =
+      '听你说妈妈身体不好，我心里也挂着。不能亲自照顾她，这份遗憾我懂，你也别把所有担子都压在自己身上';
+    const userMessage = createMessage({
+      content: userQuery,
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+      chatContent: JSON.stringify({
+        text: naturalReply,
+      }),
+    });
+    const intent = {
+      intents: [
+        {
+          target: 'family' as const,
+          timeScope: 'current' as const,
+          intent: 'share_family_update' as const,
+          subIntent: 'family_care' as const,
+          confidence: 0.98,
+        },
+        {
+          target: 'relationship' as const,
+          timeScope: 'current' as const,
+          intent: 'express_family_care_regret' as const,
+          subIntent: 'family_care' as const,
+          confidence: 0.96,
+        },
+      ],
+      emotion: 'sadness' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.97,
+      source: 'hard_rule' as const,
+    };
+    const route = routeReplyScene({
+      currentQuery: userQuery,
+      intent,
+    });
+    const replyBrief = buildReplyBrief({
+      currentQuery: userQuery,
+      intent,
+      route,
+    });
+    const guardrail = new ReplyGuardrailService();
+    guardrail.logger = service.logger;
+    guardrail.openAIService = service.openAIService;
+    service.replyGuardrailService = guardrail;
+    (
+      service.agentContextService.buildConversationContext as jest.Mock
+    ).mockResolvedValue({
+      messages: [{ role: 'user', content: userQuery }],
+      replyIntent: intent,
+      replyRoute: route,
+      replyBrief,
+    });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(getAssistantContents(savedMessages)).toEqual([naturalReply]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
+      expect.objectContaining({
+        replyBriefMode: 'family',
+        replyBriefPreferredSegments: 2,
+        replyGuardrailRewritten: false,
+      })
+    );
+  });
+
   it('enqueues a follow-up reply when a new user message arrives during processing', async () => {
     const firstUser = createMessage({
       content: '先发一句',

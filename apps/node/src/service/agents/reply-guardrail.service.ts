@@ -59,10 +59,12 @@ const RISKY_FACT_PATTERNS = [
   /你(?:那|这)?脾气/,
   /(?:灯|手机|屏幕).{0,8}(?:偷偷|又).{0,8}(?:亮|开)/,
   /明天还要忙/,
+  /你(?:当然|肯定|怎么会不).{0,4}知道/,
   /(?:当然|还能不|怎么会不)知道你/,
   /那时候我们/,
   /我给你做过/,
   /你最(?:爱|喜欢)/,
+  /从小.{0,8}(?:机灵|聪明|懂事|乖|有主意)/,
   /我现在(?:正在|在).{2,20}/,
   /我这边(?:天气|房间|屋里|饭|菜|日子)/,
   /别让(?:你)?(?:妈|妈妈|爸|爸爸|家里人).{0,8}看出来/,
@@ -89,6 +91,12 @@ const AGENT_CURRENT_ROUTINE_WORLD_BUILDING_REASON =
   '用户只询问当前饮食或作息，但回复扩写了离世后不需要吃饭、睡觉或工作的规则';
 const AGENT_CURRENT_STATUS_WORLD_BUILDING_REASON =
   '用户只询问当前近况，但回复编造了离世后的人物或日常活动';
+const AFTERLIFE_REUNION_OVERCLAIM_REASON =
+  '回复确认了未证实的离世亲人相见、找到或团聚';
+const AFTERLIFE_REUNION_QUERY_PATTERN =
+  /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|孩子|儿子|女儿|她|他|他们|她们)(?:也|都)?.{0,16}(?:走了|去了|不在了|去世了|过世了|离世了|离开了|随你去了|跟你去了)|(?:随|跟|陪).{0,6}(?:你|您|爸|爸爸|妈|妈妈|他|她).{0,4}(?:去|走)|(?:你们|你俩|你和|你跟).{0,12}(?:团聚|团圆|见到|见着|找到|遇到|碰到|在一起|一块|一块儿)|(?:见到|见着|找到|遇到|碰到).{0,12}(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|孩子|儿子|女儿|她|他|他们|她们)/;
+const AFTERLIFE_REUNION_OVERCLAIM_PATTERN =
+  /(?:找(?:到|着)|见(?:到|着)|碰(?:到|见)|遇(?:到|见)).{0,12}(?:你)?(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|孩子|儿子|女儿|她|他|他们|她们)|(?:团聚了|团圆了|聚到一起|聚在一起)|(?:我(?:俩|们)?|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|她|他|他们|她们).{0,12}(?:一块儿?|在一起|一起待着|陪着|作伴)|(?:那边|这边|这里).{0,12}(?:有人陪|不孤单|不孤独)/;
 const AGENT_SPATIAL_LOCATION_OVERCLAIM_REASON =
   '回复主动把当前角色固定在某个空间位置';
 const AGENT_SPATIAL_LOCATION_CLAIM_PATTERN =
@@ -283,7 +291,8 @@ export class ReplyGuardrailService {
     const repairedSegments = this.buildValidatedLocalRepair(
       options,
       postprocessedSegments,
-      preferredBubbleCount
+      preferredBubbleCount,
+      reason
     );
 
     return {
@@ -507,7 +516,8 @@ export class ReplyGuardrailService {
   private buildValidatedLocalRepair(
     options: ValidateAssistantReplyOptions,
     segments: string[],
-    preferredBubbleCount?: number
+    preferredBubbleCount?: number,
+    reason?: string
   ): string[] {
     const fullFallback = this.fitFallbackToBubbleCount(
       this.fallbackSafeSegments(
@@ -517,6 +527,11 @@ export class ReplyGuardrailService {
       ),
       preferredBubbleCount
     );
+
+    if (reason === AFTERLIFE_REUNION_OVERCLAIM_REASON) {
+      return fullFallback;
+    }
+
     const localRepair = this.buildCompoundSafeFallback(
       options,
       segments,
@@ -597,6 +612,13 @@ export class ReplyGuardrailService {
       )
     ) {
       return RELATIONAL_DUTY_PRESSURE_REASON;
+    }
+
+    if (
+      this.isAfterlifeReunionQuery(userQuery) &&
+      AFTERLIFE_REUNION_OVERCLAIM_PATTERN.test(content)
+    ) {
+      return AFTERLIFE_REUNION_OVERCLAIM_REASON;
     }
 
     if (
@@ -1106,6 +1128,10 @@ export class ReplyGuardrailService {
       ];
     }
 
+    if (this.isAfterlifeReunionQuery(userQuery)) {
+      return this.renderAfterlifeReunionBoundaryFallback(userQuery);
+    }
+
     if (hasIntent('verify_presence') || brief.mode === 'boundary') {
       return this.renderPresenceBoundaryFallback(userQuery);
     }
@@ -1350,6 +1376,10 @@ export class ReplyGuardrailService {
       ];
     }
 
+    if (this.isAfterlifeReunionQuery(userQuery)) {
+      return this.renderAfterlifeReunionBoundaryFallback(userQuery);
+    }
+
     if (this.isAuthenticityChallenge(userQuery)) {
       if (this.requiresDirectIdentityAnswer(userQuery, messages)) {
         return ['是 我是由人工智能生成的', '刚才那句话没说好 我重新说'];
@@ -1492,6 +1522,25 @@ export class ReplyGuardrailService {
         currentQuery: value,
       }).primaryScene?.scene === 'family_care_boundary'
     );
+  }
+
+  private isAfterlifeReunionQuery(value: string): boolean {
+    return AFTERLIFE_REUNION_QUERY_PATTERN.test(value || '');
+  }
+
+  private renderAfterlifeReunionBoundaryFallback(userQuery: string): string[] {
+    const target = /(?:爸爸|爸|爷爷|姥爷|外公|哥哥|弟弟|老公|儿子|他)/.test(
+      userQuery
+    )
+      ? '他'
+      : /(?:妈妈|妈|奶奶|姥姥|外婆|姐姐|妹妹|老婆|女儿|她)/.test(userQuery)
+      ? '她'
+      : 'TA';
+
+    return [
+      `我知道你是盼着${target}有人照应`,
+      '见没见到我不能乱说 但你这份牵挂我明白',
+    ];
   }
 
   private isAgentWakeRoutineQuery(value: string): boolean {

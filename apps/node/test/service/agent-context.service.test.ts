@@ -142,7 +142,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).not.toContain('主场景：');
   });
 
-  it('injects structured semantic intent and its routed scenes', async () => {
+  it('keeps structured semantic intent metadata without injecting open-scene reply brief', async () => {
     const service = new AgentContextService();
     service.messageModel = {
       find: jest.fn().mockResolvedValue([]),
@@ -208,11 +208,11 @@ describe('AgentContextService', () => {
       '回答用户对当前角色状态的询问，不编造具体生活',
       '直接回应想念或团聚愿望',
     ]);
-    expect(systemMessage.content).toContain('本轮唯一回复简报');
-    expect(systemMessage.content).toContain(
+    expect(systemMessage.content).not.toContain('模式：status');
+    expect(systemMessage.content).not.toContain(
       '回答用户对当前角色状态的询问，不编造具体生活'
     );
-    expect(systemMessage.content).toContain('直接回应想念或团聚愿望');
+    expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).not.toContain('本轮结构化意图');
   });
 
@@ -358,10 +358,11 @@ describe('AgentContextService', () => {
       '大宝是用户与当前角色共同的重要家人'
     );
     expect(context.replyBrief.mode).toBe('family');
-    expect(systemMessage.content).toContain('模式：family');
-    expect(systemMessage.content).toContain(
-      '不得要求用户替当前角色照顾、陪伴或撑起家人'
-    );
+    expect(systemMessage.content).not.toContain('模式：family');
+    expect(context.replyBrief.replyMoves).toEqual([
+      '回应家人的当前处境',
+      '表达牵挂，但不给用户追加责任',
+    ]);
     expect(systemMessage.content).not.toContain('主场景：');
   });
 
@@ -751,8 +752,12 @@ describe('AgentContextService', () => {
         text: expect.stringContaining('多次表达'),
       })
     );
-    expect(context.messages[0].content).toContain('关系背景（不是主体事实）');
-    expect(context.messages[0].content).toContain(
+    expect(context.replyBrief.prompt).toContain('关系背景（不是主体事实）');
+    expect(context.replyBrief.prompt).toContain(
+      '不得据此推断疾病、伤口、病因或治疗经历'
+    );
+    expect(context.messages[0].content).not.toContain('关系背景（不是主体事实）');
+    expect(context.messages[0].content).not.toContain(
       '不得据此推断疾病、伤口、病因或治疗经历'
     );
   });

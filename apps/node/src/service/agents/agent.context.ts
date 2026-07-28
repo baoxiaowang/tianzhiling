@@ -209,7 +209,7 @@ export class AgentContextService {
       emotionState,
       replyRoute
     );
-    const replyBriefPrompt = replyBrief?.prompt || '';
+    const replyBriefPrompt = this.buildModelReplyBriefPrompt(replyBrief);
 
     const systemPrompt = [
       basePrompt,
@@ -231,6 +231,20 @@ export class AgentContextService {
         } as ChatCompletionMessageParam,
       ],
     };
+  }
+
+  private buildModelReplyBriefPrompt(replyBrief?: ReplyBrief): string {
+    if (!replyBrief || !this.shouldUseStrictReplyBriefPrompt(replyBrief)) {
+      return '';
+    }
+
+    return replyBrief.prompt || '';
+  }
+
+  private shouldUseStrictReplyBriefPrompt(replyBrief: ReplyBrief): boolean {
+    return ['safety', 'boundary', 'memory', 'platform'].includes(
+      replyBrief.mode
+    );
   }
 
   private async listHardFacts(
