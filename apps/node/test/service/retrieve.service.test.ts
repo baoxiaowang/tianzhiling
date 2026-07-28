@@ -7,6 +7,34 @@ import {
 import { RetrieveService } from '../../src/service/rag/retrieve.service';
 
 describe('RetrieveService', () => {
+  it('skips embedding when Milvus retrieval is disabled', async () => {
+    const service = new RetrieveService();
+    service.logger = {
+      warn: jest.fn(),
+    } as never;
+    service.openAIService = {
+      hasEmbeddingConfig: jest.fn().mockReturnValue(true),
+      createEmbedding: jest.fn(),
+    } as never;
+    service.milvusService = {
+      isEnabled: jest.fn().mockReturnValue(false),
+      searchConversationMemories: jest.fn(),
+    } as never;
+
+    await expect(
+      service.retrieveConversationMemories({
+        query: '爸爸你现在怎么样',
+        userId: '665000000000000000000001',
+        agentId: '665000000000000000000010',
+      })
+    ).resolves.toEqual([]);
+
+    expect(service.openAIService.createEmbedding).not.toHaveBeenCalled();
+    expect(
+      service.milvusService.searchConversationMemories
+    ).not.toHaveBeenCalled();
+  });
+
   it('returns only user-authored memories as factual retrieval context', async () => {
     const service = new RetrieveService();
     const activeMessageId = new MongoObjectId('665000000000000000000101');

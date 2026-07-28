@@ -3,6 +3,7 @@ import { BaseEntity, MongoObjectId, TableName } from './base';
 import { PostCommentType } from './post-comment.entity';
 
 @Index(['userId', 'isRead', 'createdAt'], { background: true })
+@Index(['userId', 'createdAt'], { background: true })
 @Index(['userId', 'postId', 'isRead'], { background: true })
 @Index(['postId', 'createdAt'], { background: true })
 @Index(['commentId'], { background: true })
@@ -40,6 +41,12 @@ export class PostCommentNotificationEntity extends BaseEntity {
 
   @Column()
   postThumbnail?: string;
+
+  @Column()
+  isSeen?: boolean;
+
+  @Column()
+  seenAt?: Date;
 
   @Column()
   isRead: boolean;

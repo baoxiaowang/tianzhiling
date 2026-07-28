@@ -63,6 +63,7 @@
           <view
             v-if="hasUnreadNotifications"
             class="moments-notice"
+            hover-class="moments-notice--pressed"
             @tap="handleNotificationTap"
           >
             <image
@@ -206,6 +207,8 @@ import {
   type PostCommentItem,
   type PostItem,
 } from '../../apis/post'
+import { preloadConversations } from '../../apis/conversation'
+import { preloadVipPurchaseCenter } from '../../apis/membership'
 import { ApiException } from '../../api/api-exception'
 import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -215,9 +218,11 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import {
-  hasUnreadCommentNotifications,
-  latestUnreadCommentNotification,
-  unreadCommentNotificationCount,
+  hasUnseenPostNotifications,
+  initCommentNotificationPolling,
+  latestUnseenPostNotification,
+  refreshCommentNotificationSummary,
+  unseenPostNotificationCount,
 } from '../../post/comment-notification-state'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
 
@@ -274,17 +279,18 @@ const currentUserAvatarFallback = computed(() => {
 
   return fallback.slice(0, 1)
 })
-const hasUnreadNotifications = hasUnreadCommentNotifications
+const hasUnreadNotifications = hasUnseenPostNotifications
 const notificationAvatarUrl = computed(() => {
-  return normalizeText(latestUnreadCommentNotification.value?.actorAvatar)
+  return normalizeText(latestUnseenPostNotification.value?.actorAvatar)
 })
 const notificationAvatarFallback = computed(() => {
-  const actorName = normalizeText(latestUnreadCommentNotification.value?.actorName)
+  const actorName = normalizeText(latestUnseenPostNotification.value?.actorName)
   return actorName ? actorName.slice(0, 1) : '评'
 })
 const notificationText = computed(() => {
-  const unreadCount = unreadCommentNotificationCount.value
-  return unreadCount > 0 ? `${unreadCount}条新消息` : '暂无新消息'
+  const unseenCount = unseenPostNotificationCount.value
+  const displayCount = unseenCount > 99 ? '99+' : String(unseenCount)
+  return unseenCount > 0 ? `${displayCount}条新消息` : '暂无新消息'
 })
 const shouldShowPostsFeedback = computed(() => {
   return isPostsLoading.value || (posts.value.length === 0 && (Boolean(errorMessage.value) || hasLoadedPosts.value))
@@ -519,6 +525,7 @@ async function preparePage() {
   }
 
   await restoreAuthSession()
+  preloadVipCenterWhenAuthenticated()
   await refreshMomentsData(!hasLoadedPosts.value)
   isCheckingAuth.value = false
 }
@@ -591,8 +598,24 @@ function handleNotificationTap() {
     return
   }
 
+  const latestNotification = latestUnseenPostNotification.value
+  const queryParts = [
+    `unseenCount=${encodeURIComponent(String(unseenPostNotificationCount.value))}`,
+  ]
+
+  if (latestNotification?.id) {
+    queryParts.push(`latestNotificationId=${encodeURIComponent(latestNotification.id)}`)
+  }
+
+  if (latestNotification?.createdAt) {
+    queryParts.push(`latestCreatedAt=${encodeURIComponent(latestNotification.createdAt)}`)
+  }
+
   void Taro.navigateTo({
-    url: '/pages/my-messages/index',
+    url: `/pages/my-messages/index?${queryParts.join('&')}`,
+  }).catch(() => {
+    void refreshCommentNotificationSummary()
+    showToast('打开消息失败，请稍后重试')
   })
 }
 
@@ -703,6 +726,7 @@ async function handleDeleteTap(post: PostItem) {
       closeCommentComposer(true)
     }
 
+    void refreshCommentNotificationSummary()
     showToast('动态已删除')
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
@@ -981,6 +1005,8 @@ useShareTimeline(() => ({
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
   showMomentsShareMenu()
+  preloadVipCenterWhenAuthenticated()
+  initCommentNotificationPolling()
 
   if (isPreviewingPostImage) {
     isPreviewingPostImage = false
@@ -989,6 +1015,13 @@ useDidShow(() => {
 
   void preparePage()
 })
+
+function preloadVipCenterWhenAuthenticated() {
+  if (authSession.value) {
+    preloadVipPurchaseCenter()
+    preloadConversations()
+  }
+}
 
 useDidHide(() => {
   closeCommentComposer()
@@ -1109,11 +1142,15 @@ useDidHide(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  margin: 12px auto 0;
-  padding: 0 16px;
-  border-radius: 999px;
-  background: $tzl-color-dark-pill;
+  height: 36px;
+  margin: 14px auto 2px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: #4c4c4c;
+}
+
+.moments-notice--pressed {
+  opacity: 0.82;
 }
 
 .moments-notice-spacer {
@@ -1192,6 +1229,8 @@ useDidHide(() => {
 }
 
 .moments-feed {
+  padding: 0 4px;
+  box-sizing: border-box;
   background: $tzl-color-surface-base;
 }
 

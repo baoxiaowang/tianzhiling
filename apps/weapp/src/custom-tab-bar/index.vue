@@ -54,14 +54,14 @@ export default {
     setHidden(hidden: boolean) {
       this.hidden = hidden
     },
-    async handleSwitch(pagePath: string) {
+    handleSwitch(pagePath: string) {
       const currentItem = this.items[this.selected]
 
       if (currentItem?.pagePath === pagePath) {
         return
       }
 
-      await Taro.switchTab({
+      void Taro.switchTab({
         url: pagePath,
       })
     },
@@ -98,13 +98,13 @@ export default {
 }
 
 .custom-tab-bar__label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .custom-tab-bar__icon {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: block;
 }
 </style>

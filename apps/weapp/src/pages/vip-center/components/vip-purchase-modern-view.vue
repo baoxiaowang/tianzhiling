@@ -2,7 +2,7 @@
   <view class="vip-purchase-modern">
     <view class="vip-purchase-modern__subtitle">
       <text class="vip-purchase-modern__sparkle">✦</text>
-      <text>选择最适合你的方案</text>
+      <text>天之灵会一直在</text>
     </view>
 
     <view v-if="availablePlanGroups.length" class="vip-purchase-modern__cards">
@@ -157,6 +157,12 @@
     </view>
   </view>
 </template>
+
+<script lang="ts">
+export default {
+  name: 'VipPurchaseModernView',
+}
+</script>
 
 <script setup lang="ts">
 import { computed } from 'vue'

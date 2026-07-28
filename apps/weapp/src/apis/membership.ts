@@ -9,6 +9,27 @@ import type {
   VipPlanRecordDTO,
 } from '@tzl/shared'
 import { get } from '../api/api-client'
+import {
+  authSession,
+  registerAuthSessionClearListener,
+} from '../auth/session'
+
+const VIP_PURCHASE_CENTER_CACHE_TTL = 30 * 1000
+
+let vipPurchaseCenterCache:
+  | {
+      data: MembershipCenter
+      expiresAt: number
+      ownerId: string
+    }
+  | null = null
+let vipPurchaseCenterPromise:
+  | {
+      ownerId: string
+      promise: Promise<MembershipCenter>
+    }
+  | null = null
+let vipPurchaseCenterCacheVersion = 0
 
 export interface VipPlan {
   id: string
@@ -233,13 +254,74 @@ export async function getMembershipCenter() {
   return parseMembershipCenter(data)
 }
 
-export async function getVipPurchaseCenter() {
+export async function getVipPurchaseCenter(options: { force?: boolean } = {}) {
+  if (options.force) {
+    invalidateVipPurchaseCenterCache()
+  }
+
+  const ownerId = getVipPurchaseCenterCacheOwnerId()
+
+  if (
+    vipPurchaseCenterCache &&
+    vipPurchaseCenterCache.ownerId === ownerId &&
+    vipPurchaseCenterCache.expiresAt > Date.now()
+  ) {
+    return vipPurchaseCenterCache.data
+  }
+
+  if (
+    vipPurchaseCenterPromise &&
+    vipPurchaseCenterPromise.ownerId === ownerId
+  ) {
+    return vipPurchaseCenterPromise.promise
+  }
+
+  const requestVersion = vipPurchaseCenterCacheVersion
+  const promise = fetchVipPurchaseCenter(ownerId, requestVersion).finally(() => {
+    if (vipPurchaseCenterPromise?.promise === promise) {
+      vipPurchaseCenterPromise = null
+    }
+  })
+  vipPurchaseCenterPromise = { ownerId, promise }
+
+  return promise
+}
+
+export function preloadVipPurchaseCenter() {
+  void getVipPurchaseCenter().catch(() => undefined)
+}
+
+export function invalidateVipPurchaseCenterCache() {
+  vipPurchaseCenterCacheVersion += 1
+  vipPurchaseCenterCache = null
+  vipPurchaseCenterPromise = null
+}
+
+function getVipPurchaseCenterCacheOwnerId() {
+  return authSession.value?.user.id.trim() || ''
+}
+
+async function fetchVipPurchaseCenter(ownerId: string, requestVersion: number) {
   const data = await get<VipPurchaseCenterDTO>(
     '/api/membership/purchase-center'
   )
 
-  return parseMembershipCenter(data)
+  const center = parseMembershipCenter(data)
+  if (
+    requestVersion === vipPurchaseCenterCacheVersion &&
+    ownerId === getVipPurchaseCenterCacheOwnerId()
+  ) {
+    vipPurchaseCenterCache = {
+      data: center,
+      expiresAt: Date.now() + VIP_PURCHASE_CENTER_CACHE_TTL,
+      ownerId,
+    }
+  }
+
+  return center
 }
+
+registerAuthSessionClearListener(invalidateVipPurchaseCenterCache)
 
 export async function getMembershipStatus() {
   const data = await get<UserMembershipStatusSnapshotDTO>(

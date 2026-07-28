@@ -1,4 +1,25 @@
 import { del, get, post } from '../api/api-client'
+import {
+  authSession,
+  registerAuthSessionClearListener,
+} from '../auth/session'
+
+const CONVERSATION_LIST_CACHE_TTL = 30 * 1000
+
+let conversationListCache:
+  | {
+      items: ConversationSummary[]
+      expiresAt: number
+      ownerId: string
+    }
+  | null = null
+let conversationListPromise:
+  | {
+      ownerId: string
+      promise: Promise<ConversationSummary[]>
+    }
+  | null = null
+let conversationListCacheVersion = 0
 
 export interface ConversationSummary {
   id: string
@@ -47,6 +68,12 @@ export interface ConversationImagePayload {
   analysis?: string
 }
 
+export interface ConversationQuotePayload {
+  messageId?: string
+  role?: string
+  content?: string
+}
+
 export interface ConversationMessage {
   id: string
   conversationId: string
@@ -57,6 +84,7 @@ export interface ConversationMessage {
   status: string
   voice?: ConversationVoicePayload
   image?: ConversationImagePayload
+  quote?: ConversationQuotePayload
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -72,6 +100,7 @@ export interface SendConversationMessageResult {
 export interface GetConversationMessagesPageOptions {
   beforeCreatedAt?: Date | string | null
   pageSize?: number
+  lightweight?: boolean
 }
 
 export interface ConversationMessageListResult {
@@ -88,6 +117,14 @@ export interface ConversationChatQuotaSnapshot {
   remainingCount?: number
   trialDays?: number
 }
+
+export type ConversationMessageFeedbackType =
+  | 'accurate'
+  | 'unlike'
+  | 'wrong_fact'
+  | 'fabricated'
+  | 'uncomfortable'
+  | 'other'
 
 interface VoiceTranscriptionResponse {
   transcript?: unknown
@@ -249,6 +286,25 @@ function parseImagePayload(value: unknown) {
   } satisfies ConversationImagePayload
 }
 
+function parseQuotePayload(value: unknown) {
+  const raw = asRecord(value)
+
+  if (
+    !Object.keys(raw).length &&
+    !asString(raw.messageId) &&
+    !asString(raw.role) &&
+    !asString(raw.content)
+  ) {
+    return undefined
+  }
+
+  return {
+    messageId: asString(raw.messageId) || undefined,
+    role: asString(raw.role) || undefined,
+    content: asString(raw.content) || undefined,
+  } satisfies ConversationQuotePayload
+}
+
 export function parseConversationMessage(value: unknown): ConversationMessage {
   const raw = asRecord(value)
   const type = asString(raw.type) || 'text'
@@ -265,6 +321,7 @@ export function parseConversationMessage(value: unknown): ConversationMessage {
     status: asString(raw.status) || 'sent',
     voice: parseVoicePayload(raw.voice),
     image: parseImagePayload(raw.image),
+    quote: parseQuotePayload(raw.quote),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
   }
@@ -290,13 +347,89 @@ function parseChatQuota(value: unknown) {
   } satisfies ConversationChatQuotaSnapshot
 }
 
-export async function getConversations() {
+export async function getConversations(options: { force?: boolean } = {}) {
+  if (options.force) {
+    invalidateConversationListCache()
+  }
+
+  const ownerId = getConversationCacheOwnerId()
+
+  if (
+    conversationListCache &&
+    conversationListCache.ownerId === ownerId &&
+    conversationListCache.expiresAt > Date.now()
+  ) {
+    return conversationListCache.items
+  }
+
+  if (
+    conversationListPromise &&
+    conversationListPromise.ownerId === ownerId
+  ) {
+    return conversationListPromise.promise
+  }
+
+  const requestVersion = conversationListCacheVersion
+  const promise = fetchConversations(ownerId, requestVersion).finally(() => {
+    if (conversationListPromise?.promise === promise) {
+      conversationListPromise = null
+    }
+  })
+  conversationListPromise = { ownerId, promise }
+
+  return promise
+}
+
+export function getCachedConversations() {
+  const ownerId = getConversationCacheOwnerId()
+
+  if (
+    conversationListCache &&
+    conversationListCache.ownerId === ownerId &&
+    conversationListCache.expiresAt > Date.now()
+  ) {
+    return conversationListCache.items
+  }
+
+  return []
+}
+
+export function preloadConversations() {
+  void getConversations().catch(() => undefined)
+}
+
+export function invalidateConversationListCache() {
+  conversationListCacheVersion += 1
+  conversationListCache = null
+  conversationListPromise = null
+}
+
+function getConversationCacheOwnerId() {
+  return authSession.value?.user.id.trim() || ''
+}
+
+async function fetchConversations(ownerId: string, requestVersion: number) {
   const data = await get<ConversationListResponse>('/api/conversation')
 
-  return Array.isArray(data.items)
+  const items = Array.isArray(data.items)
     ? data.items.map((item) => parseConversationSummary(item))
     : []
+
+  if (
+    requestVersion === conversationListCacheVersion &&
+    ownerId === getConversationCacheOwnerId()
+  ) {
+    conversationListCache = {
+      items,
+      expiresAt: Date.now() + CONVERSATION_LIST_CACHE_TTL,
+      ownerId,
+    }
+  }
+
+  return items
 }
+
+registerAuthSessionClearListener(invalidateConversationListCache)
 
 export async function getConversationMessages(conversationId: string) {
   const data = await get<ConversationMessageListResponse>(
@@ -316,6 +449,10 @@ export async function getConversationMessagesPage(
 
   if (options.pageSize) {
     queryParts.push(`pageSize=${encodeURIComponent(String(options.pageSize))}`)
+  }
+
+  if (options.lightweight) {
+    queryParts.push('lightweight=true')
   }
 
   if (options.beforeCreatedAt) {
@@ -349,6 +486,17 @@ export async function deleteConversationMessage(
   await del(
     `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`
   )
+  invalidateConversationListCache()
+}
+
+export async function markConversationMessageMemory(
+  conversationId: string,
+  messageId: string
+) {
+  await post(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/memory`,
+    {}
+  )
 }
 
 export async function getConversationChatQuota(conversationId: string) {
@@ -366,6 +514,8 @@ export async function sendConversationMessage(
     objectKey?: string
     mimeType?: string
     durationMs?: number
+    quotedMessageId?: string
+    clientRequestId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
@@ -376,6 +526,8 @@ export async function sendConversationMessage(
   const objectKey = payload.objectKey?.trim()
   const mimeType = payload.mimeType?.trim()
   const durationMs = payload.durationMs
+  const quotedMessageId = payload.quotedMessageId?.trim()
+  const clientRequestId = payload.clientRequestId?.trim()
 
   if (content) {
     body.content = content
@@ -392,11 +544,19 @@ export async function sendConversationMessage(
   if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
     body.durationMs = Math.round(durationMs)
   }
-
+  if (quotedMessageId) {
+    body.quotedMessageId = quotedMessageId
+  }
   const data = await post<SendConversationMessageResponse>(
     `/api/conversation/${conversationId}/messages`,
-    body
+    body,
+    {
+      headers: clientRequestId
+        ? { 'X-Client-Request-Id': clientRequestId }
+        : undefined,
+    },
   )
+  invalidateConversationListCache()
 
   return {
     userMessage: parseConversationMessage(data.userMessage),
@@ -416,21 +576,53 @@ export async function sendConversationMessageAsync(
   payload: {
     content?: string
     type?: string
+    mediaUrl?: string
+    objectKey?: string
+    mimeType?: string
+    durationMs?: number
+    quotedMessageId?: string
+    clientRequestId?: string
   }
 ): Promise<SendConversationMessageResult> {
   const body: Record<string, unknown> = {
     type: payload.type ?? 'text',
   }
   const content = payload.content?.trim()
+  const mediaUrl = payload.mediaUrl?.trim()
+  const objectKey = payload.objectKey?.trim()
+  const mimeType = payload.mimeType?.trim()
+  const durationMs = payload.durationMs
+  const quotedMessageId = payload.quotedMessageId?.trim()
+  const clientRequestId = payload.clientRequestId?.trim()
 
   if (content) {
     body.content = content
   }
-
+  if (mediaUrl) {
+    body.mediaUrl = mediaUrl
+  }
+  if (objectKey) {
+    body.objectKey = objectKey
+  }
+  if (mimeType) {
+    body.mimeType = mimeType
+  }
+  if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0) {
+    body.durationMs = Math.round(durationMs)
+  }
+  if (quotedMessageId) {
+    body.quotedMessageId = quotedMessageId
+  }
   const data = await post<SendConversationMessageResponse>(
     `/api/conversation/${conversationId}/messages/async`,
-    body
+    body,
+    {
+      headers: clientRequestId
+        ? { 'X-Client-Request-Id': clientRequestId }
+        : undefined,
+    },
   )
+  invalidateConversationListCache()
 
   return {
     userMessage: parseConversationMessage(data.userMessage),
@@ -454,6 +646,29 @@ export async function generateConversationMessageVoice(
   )
 
   return parseConversationMessage(data)
+}
+
+export async function submitConversationMessageFeedback(
+  conversationId: string,
+  messageId: string,
+  payload: {
+    type: ConversationMessageFeedbackType
+    content?: string
+  },
+) {
+  const body: Record<string, unknown> = {
+    type: payload.type,
+  }
+  const content = payload.content?.trim()
+
+  if (content) {
+    body.content = content
+  }
+
+  await post(
+    `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`,
+    body,
+  )
 }
 
 export async function generateConversationMemorialPhoto(

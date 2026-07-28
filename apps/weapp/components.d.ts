@@ -24,7 +24,6 @@ declare module 'vue' {
     NutDialog: typeof import('@nutui/nutui-taro')['Dialog']
     NutInput: typeof import('@nutui/nutui-taro')['Input']
     NutPopup: typeof import('@nutui/nutui-taro')['Popup']
-    NutSwipe: typeof import('@nutui/nutui-taro')['Swipe']
     PageScaffold: typeof import('./src/components/page-scaffold/page-scaffold.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

@@ -56,7 +56,7 @@
           <text class="post-create-option__label">未了言</text>
         </view>
         <view class="post-create-option__right">
-          <text v-if="selectedAgent" class="post-create-option__value">{{ selectedAgent.name }}</text>
+          <text v-if="selectedAgentName" class="post-create-option__value">{{ selectedAgentName }}</text>
           <image class="post-create-option__chevron" :src="chevronIconUrl" mode="aspectFit" />
         </view>
       </view>
@@ -124,6 +124,30 @@
       </view>
     </nut-popup>
 
+    <view
+      v-if="createAgentPromptVisible"
+      class="post-create-agent-prompt"
+      @tap="closeCreateAgentPrompt"
+    >
+      <view class="post-create-agent-prompt__dialog" @tap.stop>
+        <view class="post-create-agent-prompt__close" @tap="closeCreateAgentPrompt">×</view>
+        <view class="post-create-agent-prompt__title">温馨提示</view>
+        <view class="post-create-agent-prompt__content">
+          <text>你需要先创建@天之灵</text>
+          <text>才能得到亲人的回复哦</text>
+        </view>
+        <view class="post-create-agent-prompt__actions">
+          <view class="post-create-agent-prompt__action" @tap="closeCreateAgentPrompt">取消</view>
+          <view
+            class="post-create-agent-prompt__action post-create-agent-prompt__action--primary"
+            @tap="goCreateAgent"
+          >
+            去创建
+          </view>
+        </view>
+      </view>
+    </view>
+
     <template #bottom>
       <view class="post-create-bottom">
         <view
@@ -146,14 +170,16 @@ export default {
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import Taro, { useDidShow } from '@tarojs/taro'
+import Taro, { useDidHide, useDidShow, useUnload } from '@tarojs/taro'
 import { createPost } from '../../apis/post'
 import { getAgents, type AgentSummary } from '../../apis/agent'
 import { uploadLocalImage } from '../../apis/storage'
 import { ApiConfig } from '../../api/api-config'
 import { ApiException } from '../../api/api-exception'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import { openAgentCreatePage } from '../../utils/agent-create-navigation'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
+import { normalizeEmojiText } from '../../utils/emoji-text'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 
 const chevronIconUrl = 'https://www.figma.com/api/mcp/asset/8282532d-5461-450c-9288-bb6e6d9d8a2c'
@@ -170,9 +196,12 @@ const visibility = ref<PostVisibility>('public')
 const isAgentsLoading = ref(false)
 const agentsLoadError = ref('')
 const agentPickerVisible = ref(false)
+const createAgentPromptVisible = ref(false)
 const isUploading = ref(false)
 const isSubmitting = ref(false)
 let isSubmitLocked = false
+let hasShownCreateAgentPrompt = false
+let createAgentPromptTimer: ReturnType<typeof setTimeout> | null = null
 const menuButtonMetrics = readMenuButtonMetrics()
 const statusStyle = {
   height: `${menuButtonMetrics.statusBarHeight}px`,
@@ -204,6 +233,9 @@ const canSubmit = computed(() => {
 const selectedAgent = computed(() => {
   return agents.value.find((agent) => agent.id === selectedAgentId.value) ?? null
 })
+const selectedAgentName = computed(() => {
+  return selectedAgent.value?.name?.trim() || ''
+})
 const visibilityLabel = computed(() => {
   return visibility.value === 'private' ? '私密' : '公开'
 })
@@ -225,12 +257,56 @@ function isChooseImageCancel(error: unknown) {
 }
 
 function handleContentInput(event: { detail?: { value?: string } }) {
-  content.value = event.detail?.value ?? ''
+  content.value = normalizeEmojiText(event.detail?.value ?? '')
 }
 
 function buildAgentFallback(name: string) {
   const trimmedName = name.trim()
   return trimmedName ? trimmedName.slice(0, 1) : '灵'
+}
+
+function clearCreateAgentPromptTimer() {
+  if (!createAgentPromptTimer) {
+    return
+  }
+
+  clearTimeout(createAgentPromptTimer)
+  createAgentPromptTimer = null
+}
+
+function promptCreateAgentIfNeeded() {
+  if (hasShownCreateAgentPrompt || agents.value.length) {
+    return
+  }
+
+  hasShownCreateAgentPrompt = true
+  agentPickerVisible.value = false
+
+  clearCreateAgentPromptTimer()
+  createAgentPromptTimer = setTimeout(() => {
+    createAgentPromptTimer = null
+
+    if (agents.value.length) {
+      return
+    }
+
+    createAgentPromptVisible.value = true
+  }, 1000)
+}
+
+function closeCreateAgentPrompt() {
+  clearCreateAgentPromptTimer()
+  createAgentPromptVisible.value = false
+}
+
+async function goCreateAgent() {
+  closeCreateAgentPrompt()
+
+  try {
+    await openAgentCreatePage()
+  } catch {
+    showToast('页面打开失败，请重试')
+  }
 }
 
 async function loadAgents() {
@@ -244,7 +320,15 @@ async function loadAgents() {
   try {
     agents.value = await getAgents()
     if (!selectedAgentId.value) {
-      selectedAgentId.value = agents.value.find((agent) => agent.isDefault)?.id ?? ''
+      selectedAgentId.value = agents.value.find((agent) => agent.isDefault)?.id
+        ?? agents.value[0]?.id
+        ?? ''
+    }
+
+    if (agents.value.length) {
+      hasShownCreateAgentPrompt = false
+    } else {
+      promptCreateAgentIfNeeded()
     }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
@@ -261,12 +345,17 @@ async function loadAgents() {
 }
 
 async function handleAgentPickerTap() {
-  draftSelectedAgentId.value = selectedAgentId.value
-  agentPickerVisible.value = true
-
   if (!agents.value.length) {
     await loadAgents()
   }
+
+  if (!agents.value.length) {
+    promptCreateAgentIfNeeded()
+    return
+  }
+
+  draftSelectedAgentId.value = selectedAgentId.value
+  agentPickerVisible.value = true
 }
 
 function closeAgentPicker() {
@@ -369,7 +458,7 @@ async function handleSubmit() {
 
   try {
     await createPost({
-      content: content.value.trim(),
+      content: normalizeEmojiText(content.value).trim(),
       images: images.value,
       remindAgentIds: selectedAgentId.value ? [selectedAgentId.value] : [],
     })
@@ -397,8 +486,21 @@ useDidShow(() => {
   void ensureAuthenticatedSession().then((authenticated) => {
     if (!authenticated) {
       void redirectToAuthPage()
+      return
     }
+
+    void loadAgents()
   })
+})
+
+useDidHide(() => {
+  clearCreateAgentPromptTimer()
+  createAgentPromptVisible.value = false
+})
+
+useUnload(() => {
+  clearCreateAgentPromptTimer()
+  createAgentPromptVisible.value = false
 })
 </script>
 
@@ -733,6 +835,82 @@ useDidShow(() => {
 
 .post-agent-picker__radio--checked .post-agent-picker__radio-dot {
   background: $tzl-color-primary;
+}
+
+.post-create-agent-prompt {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 42px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.post-create-agent-prompt__dialog {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.post-create-agent-prompt__close {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 24px;
+  height: 24px;
+  color: #9ca3af;
+  font-size: 20px;
+  line-height: 22px;
+  text-align: center;
+}
+
+.post-create-agent-prompt__title {
+  padding: 24px 42px 8px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 26px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.post-create-agent-prompt__content {
+  padding: 0 28px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #374151;
+  font-size: 16px;
+  line-height: 24px;
+  text-align: center;
+}
+
+.post-create-agent-prompt__actions {
+  display: flex;
+  border-top: 1px solid #eef0f3;
+}
+
+.post-create-agent-prompt__action {
+  flex: 1;
+  height: 48px;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 48px;
+  text-align: center;
+}
+
+.post-create-agent-prompt__action + .post-create-agent-prompt__action {
+  border-left: 1px solid #eef0f3;
+}
+
+.post-create-agent-prompt__action--primary {
+  color: $tzl-color-primary;
+  font-weight: 600;
 }
 
 .post-create-bottom {

@@ -192,6 +192,7 @@ function createNotification(
     commentPreview: '我也好想她！',
     replyToUserName: '柠檬',
     postThumbnail: 'moments/flower.jpg',
+    isSeen: false,
     isRead: false,
     createdAt: NOW,
     updatedAt: NOW,
@@ -218,6 +219,7 @@ function createPostNotification(
     contentPreview: '我也好想她！',
     replyToUserName: '柠檬',
     postThumbnail: 'moments/flower.jpg',
+    isSeen: false,
     isRead: false,
     createdAt: NOW,
     updatedAt: NOW,
@@ -265,6 +267,12 @@ function createService(
         result = result.filter(post => sameObjectId(post.userId, where.userId));
       }
 
+      if (Array.isArray(where?._id?.$in)) {
+        result = result.filter(post =>
+          where._id.$in.some((id: MongoObjectId) => sameObjectId(post.id, id))
+        );
+      }
+
       if (where?.isDeleted?.$ne === true) {
         result = result.filter(post => post.isDeleted !== true);
       }
@@ -300,6 +308,7 @@ function createService(
     findOne: jest.fn(async ({ where }: any) =>
       users.find(user => sameObjectId(user.id, where?.id ?? where?._id)) ?? null
     ),
+    save: jest.fn(async (user: UserEntity) => user),
   } as any;
   service.userAccountModel = {
     findOne: jest.fn(async ({ where }: any = {}) => {
@@ -425,6 +434,18 @@ function createService(
       comments.push(comment);
       return comment;
     }),
+    deleteOne: jest.fn(async (query: any = {}) => {
+      const index = comments.findIndex(comment => {
+        const id = query.id ?? query._id;
+        return id ? sameObjectId(comment.id, id) : false;
+      });
+
+      if (index >= 0) {
+        comments.splice(index, 1);
+      }
+
+      return { deletedCount: index >= 0 ? 1 : 0 };
+    }),
   } as any;
   service.commentNotificationModel = {
     find: jest.fn(async ({ where, order, skip = 0, take }: any) => {
@@ -437,8 +458,20 @@ function createService(
         const matchesPost = where?.postId
           ? sameObjectId(notification.postId, where.postId)
           : true;
+        const matchesComment = where?.commentId
+          ? sameObjectId(notification.commentId, where.commentId)
+          : true;
+        const matchesCreatedAt = where?.createdAt?.$gt
+          ? notification.createdAt > where.createdAt.$gt
+          : true;
 
-        return matchesUser && matchesRead && matchesPost;
+        return (
+          matchesUser &&
+          matchesRead &&
+          matchesPost &&
+          matchesComment &&
+          matchesCreatedAt
+        );
       });
 
       if (order?.createdAt === 'DESC') {
@@ -450,6 +483,19 @@ function createService(
       return typeof take === 'number'
         ? result.slice(skip, skip + take)
         : result.slice(skip);
+    }),
+    findOne: jest.fn(async ({ where }: any = {}) => {
+      return (
+        notifications.find(notification => {
+          const id = where?.id ?? where?._id;
+          const matchesId = id ? sameObjectId(notification.id, id) : true;
+          const matchesUser = where?.userId
+            ? sameObjectId(notification.userId, where.userId)
+            : true;
+
+          return matchesId && matchesUser;
+        }) ?? null
+      );
     }),
     count: jest.fn(async (query: any = {}) => {
       return notifications.filter(notification => {
@@ -471,6 +517,26 @@ function createService(
       notifications.push(value);
       return value;
     }),
+    deleteOne: jest.fn(async (query: any = {}) => {
+      const index = notifications.findIndex(notification => {
+        const id = query.id ?? query._id;
+        const matchesId = id ? sameObjectId(notification.id, id) : true;
+        const matchesPost = query.postId
+          ? sameObjectId(notification.postId, query.postId)
+          : true;
+        const matchesComment = query.commentId
+          ? sameObjectId(notification.commentId, query.commentId)
+          : true;
+
+        return matchesId && matchesPost && matchesComment;
+      });
+
+      if (index >= 0) {
+        notifications.splice(index, 1);
+      }
+
+      return { deletedCount: index >= 0 ? 1 : 0 };
+    }),
   } as any;
   service.notificationModel = {
     find: jest.fn(async ({ where, order, skip = 0, take }: any = {}) => {
@@ -483,8 +549,23 @@ function createService(
         const matchesPost = where?.postId
           ? sameObjectId(notification.postId, where.postId)
           : true;
+        const matchesComment = where?.commentId
+          ? sameObjectId(notification.commentId, where.commentId)
+          : true;
+        const matchesType =
+          where?.type === undefined || notification.type === where.type;
+        const matchesCreatedAt = where?.createdAt?.$gt
+          ? notification.createdAt > where.createdAt.$gt
+          : true;
 
-        return matchesUser && matchesRead && matchesPost;
+        return (
+          matchesUser &&
+          matchesRead &&
+          matchesPost &&
+          matchesComment &&
+          matchesType &&
+          matchesCreatedAt
+        );
       });
 
       if (order?.createdAt === 'DESC') {
@@ -496,6 +577,19 @@ function createService(
       return typeof take === 'number'
         ? result.slice(skip, skip + take)
         : result.slice(skip);
+    }),
+    findOne: jest.fn(async ({ where }: any = {}) => {
+      return (
+        postNotifications.find(notification => {
+          const id = where?.id ?? where?._id;
+          const matchesId = id ? sameObjectId(notification.id, id) : true;
+          const matchesUser = where?.userId
+            ? sameObjectId(notification.userId, where.userId)
+            : true;
+
+          return matchesId && matchesUser;
+        }) ?? null
+      );
     }),
     count: jest.fn(async (query: any = {}) => {
       return postNotifications.filter(notification => {
@@ -519,16 +613,27 @@ function createService(
     }),
     deleteOne: jest.fn(async (query: any = {}) => {
       const index = postNotifications.findIndex(notification => {
+        const id = query.id ?? query._id;
+        const matchesId = id ? sameObjectId(notification.id, id) : true;
         const matchesPost = query.postId
           ? sameObjectId(notification.postId, query.postId)
           : true;
         const matchesActor = query.actorUserId
           ? sameObjectId(notification.actorUserId, query.actorUserId)
           : true;
+        const matchesComment = query.commentId
+          ? sameObjectId(notification.commentId, query.commentId)
+          : true;
         const matchesType =
           query.type === undefined || notification.type === query.type;
 
-        return matchesPost && matchesActor && matchesType;
+        return (
+          matchesId &&
+          matchesPost &&
+          matchesActor &&
+          matchesComment &&
+          matchesType
+        );
       });
 
       if (index >= 0) {
@@ -1166,6 +1271,165 @@ describe('PostService agent comment follow-up replies', () => {
     expect(context.latestUserComment.content).toBe('奶奶你听得到吗');
     expect(context.userRepliedComment.id).toBe(AGENT_COMMENT_ID);
   });
+
+  it('answers a direct current-activity question from the dynamic post', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '儿子',
+      sex: AgentSex.man,
+    });
+    const post = createPost({
+      content: '你现在在干嘛？',
+    });
+    const { service } = createService([agent]);
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '儿子，这么晚了还不睡啊？',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      post,
+      createUser(),
+      agent
+    );
+
+    expect(reply).toBe('儿子，没忙什么，正回你呢。');
+    const request = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0];
+    expect(request.systemPrompt).toContain(
+      '正文有明确问题时必须直接回答'
+    );
+    expect(request.prompt).toBe('请直接输出一条动态评论正文。');
+  });
+
+  it('replaces a moment reply that fixes the agent in heaven and claims real-world viewing', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '儿子',
+      sex: AgentSex.man,
+    });
+    const post = createPost({
+      content: '爸爸，我想你了',
+    });
+    const { service } = createService([agent]);
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '儿子，爸爸一直在天上看着你，你的事我都看在眼里。',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      post,
+      createUser(),
+      agent
+    );
+
+    expect(reply).toBe('儿子，我知道呢，心意我收到了。');
+    expect(reply).not.toContain('天上');
+    expect(reply).not.toContain('看着你');
+  });
+
+  it('answers the current time instead of inventing a work schedule', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '儿子',
+      sex: AgentSex.man,
+    });
+    const agentComment = createPostCommentEntity({
+      id: new MongoObjectId(AGENT_COMMENT_ID),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      content: '儿子，这么晚了还不睡啊？',
+    });
+    const userReply = createPostCommentEntity({
+      id: new MongoObjectId(USER_REPLY_COMMENT_ID),
+      parentCommentId: agentComment.id,
+      replyToAgentId: agent.id,
+      content: '你知道现在几点了吗？',
+      createdAt: new Date('2026-05-13T08:01:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:01:00.000Z'),
+    });
+    const { service } = createService([agent], {
+      comments: [agentComment, userReply],
+    });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '这么晚了还不睡，明天咋上班啊。',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      createPost({ content: '你现在在干嘛？' }),
+      createUser(),
+      agent,
+      userReply.id
+    );
+
+    expect(reply).toMatch(
+      /^知道，现在是\d{2}:\d{2}。刚才我没先回答你的话。$/
+    );
+    expect(reply).not.toContain('上班');
+    const request = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0];
+    expect(request.temperature).toBe(0.45);
+    expect(request.topP).toBe(0.85);
+    expect(request.prompt).toBe(
+      '请直接输出对当前用户评论的楼中楼回复正文。'
+    );
+    expect(request.systemPrompt).toContain(
+      '先回答问题或承认纠正，不要转回动态正文'
+    );
+  });
+
+  it('accepts a contextual correction without changing the reason to lecture', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      agentCallMe: '儿子',
+      sex: AgentSex.man,
+    });
+    const agentComment = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000203'),
+      userId: undefined,
+      agentId: agent.id,
+      type: PostCommentType.agent,
+      content: '这么晚了还不睡，明天咋上班啊。',
+    });
+    const userReply = createPostCommentEntity({
+      id: new MongoObjectId('665000000000000000000204'),
+      parentCommentId: agentComment.id,
+      replyToAgentId: agent.id,
+      content: '我现在不上班的',
+      createdAt: new Date('2026-05-13T08:02:00.000Z'),
+      updatedAt: new Date('2026-05-13T08:02:00.000Z'),
+    });
+    const { service } = createService([agent], {
+      comments: [agentComment, userReply],
+    });
+    (service.openAIService.generateText as jest.Mock).mockResolvedValueOnce({
+      content: '那也不能老熬夜，对身体不好。',
+      reasoning: [],
+      response: {},
+    });
+
+    const reply = await (service as any).generateAgentPostReply(
+      createPost({ content: '你现在在干嘛？' }),
+      createUser(),
+      agent,
+      userReply.id
+    );
+
+    expect(reply).toBe(
+      '哦，是我说错了。你现在不上班，刚才不该乱猜。'
+    );
+    expect(reply).not.toContain('熬夜');
+    expect(reply).not.toContain('身体不好');
+  });
 });
 
 describe('PostService post pagination', () => {
@@ -1326,7 +1590,21 @@ describe('PostService post pagination', () => {
 
   it('soft deletes a post only for its owner', async () => {
     const post = createPost();
-    const { service } = createService([], { posts: [post] });
+    const postNotification = createPostNotification();
+    const unrelatedPostNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000402'),
+      postId: new MongoObjectId(POST_2_ID),
+    });
+    const legacyNotification = createNotification();
+    const unrelatedLegacyNotification = createNotification({
+      id: new MongoObjectId('665000000000000000000302'),
+      postId: new MongoObjectId(POST_2_ID),
+    });
+    const { service, notifications, postNotifications } = createService([], {
+      posts: [post],
+      notifications: [legacyNotification, unrelatedLegacyNotification],
+      postNotifications: [postNotification, unrelatedPostNotification],
+    });
 
     await expect(service.deletePost(OTHER_AUTH, POST_ID)).rejects.toMatchObject(
       {
@@ -1345,6 +1623,8 @@ describe('PostService post pagination', () => {
     expect(post.deletedAt).toBeInstanceOf(Date);
     expect(post.deletedByUserId).toEqual(new MongoObjectId(USER_ID));
     expect(service.postModel.save).toHaveBeenCalledWith(post);
+    expect(notifications).toEqual([unrelatedLegacyNotification]);
+    expect(postNotifications).toEqual([unrelatedPostNotification]);
   });
 
   it('allows only the owner to view a risk-controlled post detail', async () => {
@@ -1449,7 +1729,17 @@ describe('PostService comment notification reads', () => {
       commentPreview: '后来的评论',
     });
     const notifications = [unread, unreadLater];
-    const { service } = createService([], { notifications });
+    const mirroredUnread = createPostNotification({
+      commentId: unread.commentId,
+    });
+    const mirroredUnreadLater = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      commentId: unreadLater.commentId,
+    });
+    const { service } = createService([], {
+      notifications,
+      postNotifications: [mirroredUnread, mirroredUnreadLater],
+    });
 
     const result = await service.readUnreadCommentNotifications(AUTH);
 
@@ -1463,6 +1753,8 @@ describe('PostService comment notification reads', () => {
     expect(unreadLater.isRead).toBe(true);
     expect(unread.readAt).toBeInstanceOf(Date);
     expect(unread.updatedAt).toBe(unread.readAt);
+    expect(mirroredUnread.isRead).toBe(true);
+    expect(mirroredUnreadLater.isRead).toBe(true);
     expect(service.commentNotificationModel.save).toHaveBeenCalledWith(
       expect.arrayContaining([unread, unreadLater])
     );
@@ -1497,6 +1789,7 @@ describe('PostService post notifications', () => {
 
     const summary = await service.getUnreadPostNotificationSummary(OTHER_AUTH);
     expect(summary.unreadCount).toBe(1);
+    expect(summary.unseenCount).toBe(1);
     expect(summary.latest).toEqual(
       expect.objectContaining({
         type: PostNotificationType.like,
@@ -1591,6 +1884,7 @@ describe('PostService post notifications', () => {
       contentPreview: '与你的动态产生了共鸣',
     });
     const { service } = createService([], {
+      posts: [createPost()],
       postNotifications: [commentNotification, likeNotification],
     });
 
@@ -1605,6 +1899,131 @@ describe('PostService post notifications', () => {
     expect(commentNotification.isRead).toBe(true);
     expect(likeNotification.isRead).toBe(true);
     expect(commentNotification.readAt).toBeInstanceOf(Date);
+  });
+
+  it('marks the message entrance seen without clearing item unread state', async () => {
+    const user = createUser();
+    const legacyComment = createNotification({
+      id: new MongoObjectId(NOTIFICATION_ID),
+      commentId: new MongoObjectId(COMMENT_ID),
+    });
+    const commentNotification = createPostNotification({
+      id: new MongoObjectId(POST_NOTIFICATION_ID),
+      type: PostNotificationType.comment,
+      commentId: new MongoObjectId(COMMENT_ID),
+    });
+    const likeNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      type: PostNotificationType.like,
+      commentId: undefined,
+      commentType: undefined,
+    });
+    const { service } = createService([], {
+      posts: [createPost()],
+      notifications: [legacyComment],
+      postNotifications: [commentNotification, likeNotification],
+      users: [user],
+    });
+
+    const result = await service.seePostNotifications(AUTH);
+    const summary = await service.getUnreadPostNotificationSummary(AUTH);
+
+    expect(result).toEqual({
+      seenCount: 2,
+      unseenCount: 0,
+      unreadCount: 2,
+    });
+    expect(commentNotification.isSeen).toBe(true);
+    expect(legacyComment.isSeen).toBe(true);
+    expect(likeNotification.isSeen).toBe(true);
+    expect(commentNotification.isRead).toBe(false);
+    expect(legacyComment.isRead).toBe(false);
+    expect(likeNotification.isRead).toBe(false);
+    expect(user.postNotificationSeenAt).toEqual(NOW);
+    expect(summary.unreadCount).toBe(2);
+    expect(summary.unseenCount).toBe(0);
+    expect(summary.latestUnseen).toBeNull();
+  });
+
+  it('shows only interactions created after the message entrance cursor', async () => {
+    const user = createUser();
+    const olderNotification = createPostNotification({
+      createdAt: new Date('2026-05-13T08:00:00.000Z'),
+      contentPreview: '较早的互动',
+    });
+    const { service, postNotifications } = createService([], {
+      posts: [createPost()],
+      postNotifications: [olderNotification],
+      users: [user],
+    });
+
+    expect(await service.getPostNotificationEntrySummary(AUTH)).toEqual(
+      expect.objectContaining({
+        unseenCount: 1,
+      })
+    );
+
+    await service.seePostNotifications(AUTH);
+
+    postNotifications.push(
+      createPostNotification({
+        id: new MongoObjectId('665000000000000000000401'),
+        type: PostNotificationType.like,
+        commentId: undefined,
+        commentType: undefined,
+        createdAt: new Date('2026-05-13T09:00:00.000Z'),
+        contentPreview: '新的互动',
+      })
+    );
+
+    const entrySummary = await service.getPostNotificationEntrySummary(AUTH);
+    const compatibleSummary =
+      await service.getUnreadPostNotificationSummary(AUTH);
+
+    expect(entrySummary.unseenCount).toBe(1);
+    expect(entrySummary.latestUnseen?.contentPreview).toBe('新的互动');
+    expect(compatibleSummary.unreadCount).toBe(2);
+    expect(compatibleSummary.unseenCount).toBe(1);
+    expect(compatibleSummary.latestUnseen?.contentPreview).toBe('新的互动');
+  });
+
+  it('marks only the selected notification and its legacy duplicate as read', async () => {
+    const legacyComment = createNotification({
+      id: new MongoObjectId(NOTIFICATION_ID),
+      commentId: new MongoObjectId(COMMENT_ID),
+    });
+    const commentNotification = createPostNotification({
+      id: new MongoObjectId(POST_NOTIFICATION_ID),
+      type: PostNotificationType.comment,
+      commentId: new MongoObjectId(COMMENT_ID),
+    });
+    const likeNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      type: PostNotificationType.like,
+      commentId: undefined,
+      commentType: undefined,
+    });
+    const { service } = createService([], {
+      posts: [createPost()],
+      notifications: [legacyComment],
+      postNotifications: [commentNotification, likeNotification],
+    });
+
+    const result = await service.readPostNotification(
+      AUTH,
+      POST_NOTIFICATION_ID
+    );
+
+    expect(result).toEqual({
+      notificationId: POST_NOTIFICATION_ID,
+      readCount: 2,
+      unreadCount: 1,
+    });
+    expect(commentNotification.isRead).toBe(true);
+    expect(commentNotification.isSeen).toBe(true);
+    expect(legacyComment.isRead).toBe(true);
+    expect(legacyComment.isSeen).toBe(true);
+    expect(likeNotification.isRead).toBe(false);
   });
 
   it('keeps legacy comment notifications visible through the new post notification API', async () => {
@@ -1635,6 +2054,7 @@ describe('PostService post notifications', () => {
       createdAt: new Date('2026-05-13T10:00:00.000Z'),
     });
     const { service } = createService([], {
+      posts: [createPost()],
       notifications: [legacyComment, legacyOnlyComment],
       postNotifications: [duplicatePostComment, likeNotification],
     });
@@ -1646,7 +2066,143 @@ describe('PostService post notifications', () => {
       '新版评论通知',
       '仅旧集合存在的评论',
     ]);
+    expect(result.items.map(item => item.postContentPreview)).toEqual([
+      '今天去公园散步',
+      '今天去公园散步',
+      '今天去公园散步',
+    ]);
     expect(result.items).toHaveLength(3);
+  });
+
+  it('filters unread and history notification pages independently', async () => {
+    const unreadNotification = createPostNotification({
+      contentPreview: '未读互动',
+      isRead: false,
+    });
+    const readNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      contentPreview: '历史互动',
+      isRead: true,
+    });
+    const { service } = createService([], {
+      posts: [createPost()],
+      postNotifications: [unreadNotification, readNotification],
+    });
+
+    const unreadResult = await service.listPostNotifications(AUTH, {
+      read: false,
+    });
+    const historyResult = await service.listPostNotifications(AUTH, {
+      read: true,
+    });
+
+    expect(unreadResult.items.map(item => item.contentPreview)).toEqual([
+      '未读互动',
+    ]);
+    expect(historyResult.items.map(item => item.contentPreview)).toEqual([
+      '历史互动',
+    ]);
+    expect(unreadResult.readFilterApplied).toBe(true);
+    expect(historyResult.readFilterApplied).toBe(true);
+  });
+
+  it('removes notifications whose posts have been deleted', async () => {
+    const deletedPost = createPost({
+      isDeleted: true,
+    });
+    const validPost = createPost({
+      id: new MongoObjectId('665000000000000000000901'),
+    });
+    const deletedPostNotification = createPostNotification({
+      id: new MongoObjectId(POST_NOTIFICATION_ID),
+      postId: new MongoObjectId(POST_ID),
+      contentPreview: '已删除动态的新通知',
+      createdAt: new Date('2026-05-13T10:00:00.000Z'),
+    });
+    const deletedLegacyNotification = createNotification({
+      id: new MongoObjectId(NOTIFICATION_ID),
+      postId: new MongoObjectId(POST_ID),
+      commentPreview: '已删除动态的旧通知',
+      createdAt: new Date('2026-05-13T09:00:00.000Z'),
+    });
+    const validNotification = createPostNotification({
+      id: new MongoObjectId('665000000000000000000401'),
+      postId: validPost.id,
+      contentPreview: '保留的通知',
+      createdAt: new Date('2026-05-13T08:00:00.000Z'),
+    });
+    const notifications = [deletedLegacyNotification];
+    const postNotifications = [deletedPostNotification, validNotification];
+    const { service } = createService([], {
+      posts: [deletedPost, validPost],
+      notifications,
+      postNotifications,
+    });
+
+    const result = await service.listPostNotifications(AUTH);
+    const summary = await service.getUnreadPostNotificationSummary(AUTH);
+
+    expect(result.items.map(item => item.contentPreview)).toEqual(['保留的通知']);
+    expect(summary.unreadCount).toBe(1);
+    expect(summary.latest?.contentPreview).toBe('保留的通知');
+    expect(notifications).toHaveLength(0);
+    expect(postNotifications).toEqual([validNotification]);
+  });
+
+  it('does not prune notifications when loading the related post fails transiently', async () => {
+    const notification = createPostNotification();
+    const { service, postNotifications } = createService([], {
+      posts: [createPost()],
+      postNotifications: [notification],
+    });
+    (service.postModel.find as jest.Mock).mockRejectedValueOnce(
+      new Error('database temporarily unavailable')
+    );
+
+    await expect(service.listPostNotifications(AUTH)).rejects.toThrow(
+      'database temporarily unavailable'
+    );
+    expect(postNotifications).toEqual([notification]);
+    expect(service.notificationModel.deleteOne).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a new like when creating its notification fails', async () => {
+    const post = createPost({
+      userId: new MongoObjectId(OTHER_USER_ID),
+    });
+    const { service, likes } = createService([], {
+      posts: [post],
+    });
+    (service.notificationModel.save as jest.Mock).mockRejectedValueOnce(
+      new Error('notification write failed')
+    );
+
+    await expect(service.likePost(AUTH, POST_ID)).rejects.toThrow(
+      'notification write failed'
+    );
+    expect(likes).toHaveLength(0);
+  });
+
+  it('rolls back a new comment and partial notifications when notification creation fails', async () => {
+    const post = createPost({
+      userId: new MongoObjectId(OTHER_USER_ID),
+    });
+    const { service, comments, notifications, postNotifications } =
+      createService([], {
+        posts: [post],
+      });
+    (service.notificationModel.save as jest.Mock).mockRejectedValueOnce(
+      new Error('notification write failed')
+    );
+
+    await expect(
+      service.createComment(AUTH, POST_ID, {
+        content: '这是一条评论',
+      })
+    ).rejects.toThrow('notification write failed');
+    expect(comments).toHaveLength(0);
+    expect(notifications).toHaveLength(0);
+    expect(postNotifications).toHaveLength(0);
   });
 });
 

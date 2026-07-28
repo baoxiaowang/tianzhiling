@@ -1,0 +1,5 @@
+export default {
+  navigationBarTitleText: '动态详情',
+  navigationBarBackgroundColor: '#ffffff',
+  navigationBarTextStyle: 'black',
+}

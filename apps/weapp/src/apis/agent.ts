@@ -6,6 +6,7 @@ import type {
   UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
 } from '@tzl/shared'
+import { invalidateConversationListCache } from './conversation'
 
 export interface AgentSummary {
   id: string
@@ -109,6 +110,7 @@ export async function createAgent(payload: CreateAgentPayload) {
     iCallAgent: payload.iCallAgent,
     agentCallMe: payload.agentCallMe,
   })
+  invalidateConversationListCache()
 
   return parseAgentSummary(data)
 }
@@ -126,6 +128,7 @@ export async function updateAgentAvatar(agentId: string, avatar: string) {
     `/api/agent/${agentId}/avatar`,
     { avatar } satisfies UpdateAgentAvatarDTO,
   )
+  invalidateConversationListCache()
 
   return parseAgentSummary(data)
 }
@@ -135,6 +138,7 @@ export async function updateAgentProfile(
   payload: UpdateAgentProfilePayload,
 ) {
   const data = await patch<AgentProfileDTO>(`/api/agent/${agentId}`, payload)
+  invalidateConversationListCache()
 
   return parseAgentSummary(data)
 }
@@ -144,6 +148,7 @@ export async function updateAgentDefault(
   payload: UpdateAgentDefaultDTO,
 ) {
   const data = await patch<AgentProfileDTO>(`/api/agent/${agentId}/default`, payload)
+  invalidateConversationListCache()
 
   return parseAgentSummary(data)
 }
@@ -156,4 +161,5 @@ export async function getAgentDetail(agentId: string) {
 
 export async function deleteAgent(agentId: string) {
   await del<{ deleted?: boolean }>(`/api/agent/${agentId}`)
+  invalidateConversationListCache()
 }

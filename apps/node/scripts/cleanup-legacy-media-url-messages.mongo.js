@@ -1,3 +1,5 @@
+/* global db, printjson */
+
 // Usage:
 //   mongosh "mongodb://127.0.0.1:27017/tzl" apps/node/scripts/cleanup-legacy-media-url-messages.mongo.js
 //

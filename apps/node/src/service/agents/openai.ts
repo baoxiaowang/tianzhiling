@@ -58,6 +58,12 @@ export interface OpenAIChatRequest
   };
 }
 
+export interface OpenAIRequestOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  maxRetries?: number;
+}
+
 export interface OpenAITextRequest {
   prompt: string;
   systemPrompt?: string;
@@ -195,7 +201,8 @@ export class OpenAIService {
   }
 
   async createChatCompletion(
-    request: OpenAIChatRequest
+    request: OpenAIChatRequest,
+    options?: OpenAIRequestOptions
   ): Promise<ChatCompletion> {
     if (!request?.messages?.length) {
       throw new AppError(
@@ -227,7 +234,7 @@ export class OpenAIService {
       request.messages.length
     );
 
-    return client.chat.completions.create(body);
+    return client.chat.completions.create(body, options as never);
   }
 
   async createVisionChatCompletion(

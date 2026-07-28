@@ -12,12 +12,6 @@ const ONLINE_MONGO_AUTH_SOURCE = 'admin';
 const ONLINE_MONGO_USERNAME = 'admin';
 const ONLINE_MONGO_PASSWORD = 'qwerasdf';
 
-const ONLINE_DEV_LOGIN_ENABLED = true;
-
-process.env.NODE_DEV_LOGIN_ENABLED ??= ONLINE_DEV_LOGIN_ENABLED
-  ? 'true'
-  : 'false';
-
 export default {
   koa: {
     port: 7001,

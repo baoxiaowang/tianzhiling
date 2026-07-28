@@ -5,7 +5,12 @@ import { isAbsolute, resolve } from 'path';
 import {
   AgentEntity,
   AgentEntitlementEntity,
+  AgentMemoryFactEntity,
+  AgentProfileFactEntity,
+  AgentRelationshipSignalEntity,
   AgentSubEntity,
+  ConversationEmotionStateEntity,
+  ConversationMessageFeedbackEntity,
   ConversationEntity,
   CouponLedgerEntity,
   MessageEntity,
@@ -29,6 +34,14 @@ const PROJECT_ROOT = resolve(__dirname, '../../../..');
 loadLocalEnv();
 
 function loadLocalEnv(): void {
+  if (process.env.NODE_ENV !== 'production') {
+    const localEnvPath = resolve(PROJECT_ROOT, '.env.local');
+
+    if (existsSync(localEnvPath)) {
+      loadEnvFile(localEnvPath);
+    }
+  }
+
   const envPath = resolve(PROJECT_ROOT, '.env');
 
   if (existsSync(envPath)) {
@@ -351,6 +364,11 @@ export default {
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
     embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),
   },
+  replyIntent: {
+    enabled: readBooleanFrom(['NODE_REPLY_INTENT_ENABLED'], true),
+    model: readStringFrom(['NODE_REPLY_INTENT_MODEL'], ''),
+    timeoutMs: readNumberFrom(['NODE_REPLY_INTENT_TIMEOUT_MS'], 8000),
+  },
   minimaxVoice: {
     enabled: readBooleanFrom(['NODE_MINIMAX_VOICE_ENABLED'], true),
     apiKey: readStringFrom(
@@ -597,7 +615,12 @@ export default {
         entities: [
           AgentEntity,
           AgentEntitlementEntity,
+          AgentMemoryFactEntity,
+          AgentProfileFactEntity,
+          AgentRelationshipSignalEntity,
           AgentSubEntity,
+          ConversationEmotionStateEntity,
+          ConversationMessageFeedbackEntity,
           ConversationEntity,
           CouponLedgerEntity,
           MessageEntity,

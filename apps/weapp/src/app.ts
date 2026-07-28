@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 import { silentWeappLogin } from './auth/login-hooks'
 import { authSession, restoreAuthSession } from './auth/session'
-import { initCommentNotificationPolling } from './post/comment-notification-state'
 import { ensureInnerAudioPlaybackOptions } from './utils/audio'
 import { initSafeAreaInsets } from './utils/safe-area'
 
@@ -15,12 +14,7 @@ const App = createApp({
       if (!authSession.value?.accessToken) {
         await silentWeappLogin()
       }
-
-      initCommentNotificationPolling()
     })
-  },
-  onShow() {
-    initCommentNotificationPolling()
   },
   // 入口组件不需要实现 render 方法，即使实现了也会被 taro 所覆盖
 })

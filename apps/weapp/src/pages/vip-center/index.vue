@@ -73,6 +73,7 @@ import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
 import {
   getVipPurchaseCenter,
+  invalidateVipPurchaseCenterCache,
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
@@ -81,8 +82,6 @@ import {
   createVipPlanVirtualPaymentOrder,
 } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
-import AppBar from '../../components/app-bar/app-bar.vue'
-import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import {
@@ -389,6 +388,7 @@ async function handlePurchaseTap() {
       }
       paidOrderId = result.order.id
     }
+    invalidateVipPurchaseCenterCache()
     isAwaitingPaymentResult.value = true
     void Taro.hideLoading()
 
@@ -437,6 +437,7 @@ function isOneYearVipPlan(plan: VipPlan) {
     !plan.lifetime && Boolean(plan.durationDays && plan.durationDays <= 370)
   )
 }
+
 </script>
 
 <style lang="scss">

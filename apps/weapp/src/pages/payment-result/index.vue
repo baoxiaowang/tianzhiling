@@ -87,6 +87,7 @@ import {
   type OrderRecord,
   type OrderStatusDTO,
 } from '../../apis/order'
+import { invalidateVipPurchaseCenterCache } from '../../apis/membership'
 import { getCurrentUser } from '../../auth/api'
 import { clearAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -325,6 +326,8 @@ async function refreshCurrentUserAfterCompletedOrder(latestOrder: OrderRecord) {
   if (latestOrder.orderType !== 'vip_plan') {
     return
   }
+
+  invalidateVipPurchaseCenterCache()
 
   try {
     await getCurrentUser()

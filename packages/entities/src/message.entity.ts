@@ -18,6 +18,14 @@ export enum MessageType {
   image = 'image',
 }
 
+export interface MessageReplyIntentItem {
+  target: string;
+  timeScope: string;
+  intent: string;
+  subIntent: string;
+  confidence: number;
+}
+
 @Index(['conversationId', 'createdAt'], { background: true })
 @Index(['userId', 'createdAt'], { background: true })
 @Index(['agentId', 'userId', 'createdAt'], { background: true })
@@ -61,6 +69,18 @@ export class MessageEntity extends BaseEntity {
   replySegmentIndex?: number;
 
   @Column()
+  clientRequestId?: string;
+
+  @Column()
+  quotedMessageId?: MongoObjectId;
+
+  @Column()
+  quotedMessageRole?: MessageRole;
+
+  @Column()
+  quotedMessageContent?: string;
+
+  @Column()
   mediaObjectKey?: string;
 
   @Column()
@@ -89,6 +109,63 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   totalTokens?: number;
+
+  @Column()
+  replyIntentTarget?: string;
+
+  @Column()
+  replyIntentTimeScope?: string;
+
+  @Column()
+  replyIntent?: string;
+
+  @Column()
+  replyIntentSubIntent?: string;
+
+  @Column()
+  replyIntentSecondary?: string[];
+
+  @Column()
+  replyIntents?: MessageReplyIntentItem[];
+
+  @Column()
+  replyIntentConfidence?: number;
+
+  @Column()
+  replyIntentSource?: string;
+
+  @Column()
+  replyScene?: string;
+
+  @Column()
+  replySecondaryScenes?: string[];
+
+  @Column()
+  replyRoutingSource?: string;
+
+  @Column()
+  replyBriefVersion?: string;
+
+  @Column()
+  replyBriefMode?: string;
+
+  @Column()
+  replyBriefStrictGrounding?: boolean;
+
+  @Column()
+  replyBriefPreferredSegments?: number;
+
+  @Column()
+  replyRelationshipSignals?: string[];
+
+  @Column()
+  replyFallbackSource?: string;
+
+  @Column()
+  replyGuardrailRewritten?: boolean;
+
+  @Column()
+  replyGuardrailReason?: string;
 
   @Column()
   createdAt: Date;

@@ -77,14 +77,6 @@
           />
         </view>
 
-        <view class="agent-detail-list__item" @tap="handleVoiceModelTap">
-          <text class="agent-detail-list__title">声音模型</text>
-          <view class="agent-detail-list__right">
-            <text v-if="voiceModelStatus" class="agent-detail-list__value">{{ voiceModelStatus }}</text>
-            <view class="agent-detail-list__arrow" />
-          </view>
-        </view>
-
         <view class="agent-detail-list__item" @tap="handleMemorialPhotoTap">
           <view class="agent-detail-list__content">
             <text class="agent-detail-list__title">纪念合照</text>

@@ -89,33 +89,29 @@
       </view>
 
       <view class="memorial-photo-section memorial-photo-prompt">
-        <view
-          class="memorial-photo-section__header memorial-photo-prompt__header"
-          :class="{ 'memorial-photo-prompt__header--open': isCustomPromptVisible }"
-          @tap="toggleCustomPromptVisible"
-        >
+        <view class="memorial-photo-section__header memorial-photo-prompt__header">
           <view class="memorial-photo-prompt__title-group">
-            <text class="memorial-photo-section__title">自定义提示词</text>
-            <text class="memorial-photo-prompt__optional">选填</text>
+            <text class="memorial-photo-section__title">提示词</text>
           </view>
           <view class="memorial-photo-prompt__meta">
-            <text
-              v-if="isCustomPromptVisible || customPromptLength"
-              class="memorial-photo-section__count"
-            >
-              {{ customPromptLength }}/{{ MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH }}
-            </text>
-            <text class="memorial-photo-prompt__toggle">
-              {{ isCustomPromptVisible ? '收起' : '展开' }}
-            </text>
             <view
-              class="memorial-photo-prompt__arrow"
-              :class="{ 'memorial-photo-prompt__arrow--open': isCustomPromptVisible }"
-            />
+              class="memorial-photo-prompt-template__button"
+              :class="{ 'memorial-photo-prompt-template__button--disabled': isBusy }"
+              @tap.stop="handleOpenPromptTemplatePicker"
+            >
+              <view class="memorial-photo-prompt-template__button-icon" />
+            </view>
           </view>
         </view>
+        <view class="memorial-photo-prompt-template">
+          <text class="memorial-photo-prompt-template__name">
+            当前模板：{{ currentPromptTemplateTitle }}
+          </text>
+          <text class="memorial-photo-section__count">
+            {{ customPromptLength }}/{{ MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH }}
+          </text>
+        </view>
         <textarea
-          v-if="isCustomPromptVisible"
           class="memorial-photo-prompt__textarea"
           :value="customPrompt"
           :maxlength="MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH"
@@ -126,9 +122,6 @@
           cursor-spacing="16"
           @input="handleCustomPromptInput"
         />
-        <text v-if="isCustomPromptVisible" class="memorial-photo-prompt__hint">
-          不填会使用默认纪念合照效果；填写后优先按你描述的动作、表情、风格和场景生成。
-        </text>
       </view>
 
       <view v-if="generatedImageUrl" class="memorial-photo-result">
@@ -151,10 +144,46 @@
           text-position="right"
           :icon-size="10"
         >
-          我确认有权使用这些照片，并理解这是 AI 生成内容
+          我已获授权，并知晓图片由 AI 生成
         </nut-checkbox>
       </view>
     </view>
+
+    <nut-popup
+      v-model:visible="isPromptTemplatePickerVisible"
+      class="memorial-photo-template-picker-popup"
+      position="bottom"
+      round
+      :close-on-click-overlay="!isBusy"
+    >
+      <view class="memorial-photo-template-picker">
+        <view class="memorial-photo-template-picker__header">
+          <text class="memorial-photo-template-picker__title">选择提示词模板</text>
+          <text class="memorial-photo-template-picker__close" @tap="closePromptTemplatePicker">
+            取消
+          </text>
+        </view>
+        <scroll-view scroll-y class="memorial-photo-template-picker__list">
+          <view
+            v-for="(template, index) in MEMORIAL_PROMPT_TEMPLATES"
+            :key="template.title"
+            class="memorial-photo-template-picker__item"
+            :class="{
+              'memorial-photo-template-picker__item--active':
+                index === currentPromptTemplateIndex,
+            }"
+            @tap="handleSelectPromptTemplate(index)"
+          >
+            <text class="memorial-photo-template-picker__item-title">
+              {{ template.title }}
+            </text>
+            <text class="memorial-photo-template-picker__item-desc">
+              {{ template.prompt }}
+            </text>
+          </view>
+        </scroll-view>
+      </view>
+    </nut-popup>
 
     <template #bottom>
       <view
@@ -223,6 +252,58 @@ declare function getCurrentPages(): PageStackEntry[]
 
 const MAX_AGENT_PHOTO_COUNT = 3
 const MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH = 500
+const MEMORIAL_PROMPT_TEMPLATES = [
+  {
+    title: '家中团圆饭',
+    prompt:
+      '温暖真实的家庭团圆饭场景，TA和我坐在餐桌旁，桌上有家常菜和热汤，两个人自然微笑看向镜头，室内暖光，像家人真实合照。',
+  },
+  {
+    title: '客厅沙发聊天',
+    prompt:
+      'TA和我并肩坐在家里客厅沙发上，身体自然靠近，像平常聊天一样放松微笑，背景有柔和灯光和生活气息，真实照片风格。',
+  },
+  {
+    title: '公园散步',
+    prompt:
+      '阳光明媚的公园里，TA和我一起慢慢散步，身边有树荫和小路，两个人自然看向镜头，表情温柔，纪实家庭照片风格。',
+  },
+  {
+    title: '节日全家福',
+    prompt:
+      '节日团聚氛围，TA和我穿着整洁自然的衣服站在家中或院子里，背景有温馨节日装饰，两个人亲切微笑，像珍贵全家福。',
+  },
+  {
+    title: '厨房一起做饭',
+    prompt:
+      'TA和我在家里厨房一起准备饭菜，桌面有食材和碗筷，TA自然地看着我或看向镜头，画面温暖、生活化、真实。',
+  },
+  {
+    title: '生日陪伴',
+    prompt:
+      '温馨生日场景，TA和我坐在生日蛋糕旁，桌上有简单生日装饰和蜡烛，两个人自然微笑，像家人陪伴过生日的真实照片。',
+  },
+  {
+    title: '院子晒太阳',
+    prompt:
+      '午后阳光下，TA和我坐在院子或阳台晒太阳，旁边有绿植和椅子，两个人放松地靠近，氛围安静、柔和、真实。',
+  },
+  {
+    title: '旅行合影',
+    prompt:
+      'TA和我在旅行途中合影，背景是自然风景或城市街道，两个人肩并肩看向镜头，表情轻松开心，真实手机照片风格。',
+  },
+  {
+    title: '温暖拥抱',
+    prompt:
+      'TA和我在温暖明亮的家中或户外阳光下自然拥抱，彼此靠近，表情安心温柔，画面真实细腻，表达家人之间久别重逢的陪伴与想念。',
+  },
+  {
+    title: '牵手陪伴',
+    prompt:
+      'TA和我坐在安静温暖的室内或公园长椅上，轻轻牵着手或靠得很近，表情自然温柔，画面表达家人之间的陪伴与想念。',
+  },
+]
 
 const conversationId = shallowRef('')
 const agentId = shallowRef('')
@@ -237,7 +318,8 @@ const isUploadingAgentPhotos = shallowRef(false)
 const isUploadingUserPhoto = shallowRef(false)
 const isGenerating = shallowRef(false)
 const isConsentChecked = shallowRef(false)
-const isCustomPromptVisible = shallowRef(false)
+const currentPromptTemplateIndex = shallowRef(0)
+const isPromptTemplatePickerVisible = shallowRef(false)
 const loadError = shallowRef('')
 
 const isBusy = computed(() => {
@@ -259,6 +341,9 @@ const canGenerate = computed(() => {
   )
 })
 const customPromptLength = computed(() => customPrompt.value.trim().length)
+const currentPromptTemplateTitle = computed(() => {
+  return MEMORIAL_PROMPT_TEMPLATES[currentPromptTemplateIndex.value]?.title ?? '自定义'
+})
 
 useLoad((options) => {
   conversationId.value = decodeRouteParam(options?.conversationId)
@@ -288,6 +373,7 @@ async function preparePage() {
     return
   }
 
+  applyPromptTemplate(currentPromptTemplateIndex.value)
   isCheckingAuth.value = false
   await resolveConversation()
 }
@@ -467,13 +553,45 @@ function removeUserPhoto() {
   userPhoto.value = null
 }
 
-function toggleCustomPromptVisible() {
-  isCustomPromptVisible.value = !isCustomPromptVisible.value
-}
-
 function handleCustomPromptInput(event: { detail?: { value?: string } }) {
   const value = String(event.detail?.value ?? '')
   customPrompt.value = value.slice(0, MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH)
+}
+
+function handleOpenPromptTemplatePicker() {
+  if (isBusy.value) {
+    return
+  }
+
+  isPromptTemplatePickerVisible.value = true
+}
+
+function closePromptTemplatePicker() {
+  if (isBusy.value) {
+    return
+  }
+
+  isPromptTemplatePickerVisible.value = false
+}
+
+function handleSelectPromptTemplate(index: number) {
+  if (isBusy.value) {
+    return
+  }
+
+  applyPromptTemplate(index)
+  isPromptTemplatePickerVisible.value = false
+}
+
+function applyPromptTemplate(index: number) {
+  const template = MEMORIAL_PROMPT_TEMPLATES[index]
+
+  if (!template) {
+    return
+  }
+
+  currentPromptTemplateIndex.value = index
+  customPrompt.value = template.prompt.slice(0, MEMORIAL_CUSTOM_PROMPT_MAX_LENGTH)
 }
 
 async function handleGenerate() {
@@ -844,11 +962,8 @@ function buildObjectKeyUrl(objectKey?: string) {
 }
 
 .memorial-photo-prompt__header {
-  margin-bottom: 0;
-}
-
-.memorial-photo-prompt__header--open {
   margin-bottom: 12px;
+  align-items: flex-start;
 }
 
 .memorial-photo-prompt__title-group,
@@ -861,6 +976,9 @@ function buildObjectKeyUrl(objectKey?: string) {
 
 .memorial-photo-prompt__title-group {
   flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
 }
 
 .memorial-photo-prompt__meta {
@@ -868,51 +986,154 @@ function buildObjectKeyUrl(objectKey?: string) {
   justify-content: flex-end;
 }
 
-.memorial-photo-prompt__optional,
-.memorial-photo-prompt__toggle {
-  flex-shrink: 0;
-  color: #8a8f98;
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.memorial-photo-prompt__arrow {
-  width: 8px;
-  height: 8px;
-  border-right: 1.5px solid #98a2b3;
-  border-bottom: 1.5px solid #98a2b3;
-  transform: rotate(45deg);
-  transition: transform 0.18s ease;
-}
-
-.memorial-photo-prompt__arrow--open {
-  transform: rotate(225deg);
-}
-
 .memorial-photo-prompt__placeholder {
   color: #98a2b3;
 }
 
-.memorial-photo-prompt__hint {
-  display: block;
-  margin-top: 8px;
-  color: #8a8f98;
+.memorial-photo-prompt-template {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.memorial-photo-prompt-template__name {
+  min-width: 0;
+  flex: 1;
+  color: #98a2b3;
   font-size: 12px;
   line-height: 18px;
 }
 
+.memorial-photo-prompt-template__button {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eaf3ff;
+}
+
+.memorial-photo-prompt-template__button-icon {
+  position: relative;
+  width: 15px;
+  height: 13px;
+  border-top: 2px solid #1677ff;
+  border-bottom: 2px solid #1677ff;
+  box-sizing: border-box;
+}
+
+.memorial-photo-prompt-template__button-icon::before,
+.memorial-photo-prompt-template__button-icon::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: #1677ff;
+}
+
+.memorial-photo-prompt-template__button-icon::before {
+  top: 4px;
+}
+
+.memorial-photo-prompt-template__button-icon::after {
+  top: 8px;
+}
+
+.memorial-photo-prompt-template__button--disabled {
+  opacity: 0.55;
+}
+
 .memorial-photo-agreement {
   color: #667085;
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .memorial-photo-agreement .nut-checkbox {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .memorial-photo-agreement .nut-checkbox__label {
-  line-height: 19px;
+  min-width: 0;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.memorial-photo-template-picker-popup {
+  overflow: hidden;
+  background: transparent;
+}
+
+.memorial-photo-template-picker {
+  height: 64vh;
+  overflow: hidden;
+  border-radius: 16px 16px 0 0;
+  background: #ffffff;
+}
+
+.memorial-photo-template-picker__header {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  box-sizing: border-box;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.memorial-photo-template-picker__title {
+  color: #111111;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.memorial-photo-template-picker__close {
+  color: #8a8f98;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.memorial-photo-template-picker__list {
+  height: calc(64vh - 52px);
+  padding: 8px 12px calc(12px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.memorial-photo-template-picker__item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.memorial-photo-template-picker__item + .memorial-photo-template-picker__item {
+  margin-top: 6px;
+}
+
+.memorial-photo-template-picker__item--active {
+  background: #f0f7ff;
+}
+
+.memorial-photo-template-picker__item-title {
+  display: block;
+  color: #111111;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.memorial-photo-template-picker__item-desc {
+  display: block;
+  margin-top: 4px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .memorial-photo-actions {

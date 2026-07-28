@@ -1,4 +1,4 @@
-FROM node:20.18.0-alpine AS base
+FROM node:20.19-alpine AS base
 
 WORKDIR /workspace/apps/node
 
@@ -36,7 +36,7 @@ FROM base AS prod-deps
 
 RUN npx -y pnpm@${PNPM_VERSION} install --prod --frozen-lockfile --lockfile-dir=/workspace --config.recursive-install=false --config.node-linker=isolated ${PNPM_INSTALL_FLAGS}
 
-FROM node:20.18.0-alpine AS runtime
+FROM node:20.19-alpine AS runtime
 
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 

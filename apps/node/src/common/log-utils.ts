@@ -1,6 +1,6 @@
 import { AppError } from './errors';
 
-export function truncateForLog(value: string, maxLength: number = 240): string {
+export function truncateForLog(value: string, maxLength = 240): string {
   const normalized = value.trim();
 
   if (!normalized) {

@@ -12,6 +12,7 @@ import { Context } from '@midwayjs/koa';
 import {
   GenerateMemorialPhotoDTO,
   SendConversationMessageDTO,
+  SubmitConversationMessageFeedbackDTO,
   TranscribeConversationVoiceDTO,
 } from '../dto/conversation.dto';
 import { AuthenticatedUserPayload } from '../interface';
@@ -81,7 +82,7 @@ export class ConversationController {
     return this.conversationService.sendMessage(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
-      body
+      this.withClientRequestId(body)
     );
   }
 
@@ -93,7 +94,7 @@ export class ConversationController {
     return this.conversationService.sendMessageAsync(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
-      body
+      this.withClientRequestId(body)
     );
   }
 
@@ -103,6 +104,32 @@ export class ConversationController {
     @Param('messageId') messageId: string
   ) {
     return this.conversationService.generateMessageVoice(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId
+    );
+  }
+
+  @Post('/:conversationId/messages/:messageId/feedback')
+  async submitMessageFeedback(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() body: SubmitConversationMessageFeedbackDTO
+  ) {
+    return this.conversationService.submitMessageFeedback(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId,
+      body
+    );
+  }
+
+  @Post('/:conversationId/messages/:messageId/memory')
+  async markMessageMemory(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.conversationService.markMessageMemory(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId,
       messageId
@@ -131,5 +158,25 @@ export class ConversationController {
       conversationId,
       body
     );
+  }
+
+  private withClientRequestId(
+    body: SendConversationMessageDTO
+  ): SendConversationMessageDTO {
+    if (body.clientRequestId?.trim()) {
+      return body;
+    }
+
+    const clientRequestId = this.ctx
+      .get('x-client-request-id')
+      .trim()
+      .slice(0, 64);
+
+    return clientRequestId
+      ? {
+          ...body,
+          clientRequestId,
+        }
+      : body;
   }
 }

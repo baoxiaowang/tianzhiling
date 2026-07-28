@@ -1,11 +1,13 @@
 export default {
   pages: [
-    'pages/index/index',
     'pages/onboarding/index',
+    'pages/index/index',
     'pages/contacts/index',
     'pages/me/index',
     'pages/chat/index',
     'pages/agent-detail/index',
+    'pages/agent-create/index',
+    'pages/agent-create-flow/index',
   ],
   subPackages: [
     {
@@ -49,14 +51,6 @@ export default {
       pages: ['index'],
     },
     {
-      root: 'pages/agent-create',
-      pages: ['index'],
-    },
-    {
-      root: 'pages/agent-create-flow',
-      pages: ['index'],
-    },
-    {
       root: 'pages/auth',
       pages: ['index'],
     },
@@ -66,6 +60,10 @@ export default {
     },
     {
       root: 'pages/my-posts',
+      pages: ['index'],
+    },
+    {
+      root: 'pages/post-detail',
       pages: ['index'],
     },
     {
@@ -98,6 +96,16 @@ export default {
   permission: {
     'scope.record': {
       desc: '用于发送语音消息和语音转文字',
+    },
+  },
+  preloadRule: {
+    'pages/index/index': {
+      network: 'all',
+      packages: ['pages/vip-center'],
+    },
+    'pages/chat/index': {
+      network: 'all',
+      packages: ['pages/vip-center'],
     },
   },
   tabBar: {

@@ -99,6 +99,13 @@
             <view class="me-arrow me-arrow--muted" />
           </view>
         </view>
+        <view class="me-menu-section__divider" />
+        <view class="me-menu-section__item" @tap="handleMenuTap('联系客服')">
+          <view class="me-menu-item">
+            <text class="me-menu-item__label">联系客服</text>
+            <view class="me-arrow" />
+          </view>
+        </view>
       </view>
 
       <view class="me-page__spacer" />
@@ -133,11 +140,15 @@ export default {
 <script setup lang="ts">
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
+import { preloadConversations } from '../../apis/conversation'
 import { getCurrentUser } from '../../auth/api'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { unreadCommentNotificationCount } from '../../post/comment-notification-state'
+import {
+  initCommentNotificationPolling,
+  unseenPostNotificationCount,
+} from '../../post/comment-notification-state'
 import { openAgreementDocument } from '../../utils/agreement-nav'
 import { showPendingToast } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
@@ -153,7 +164,6 @@ const primaryMenuActions = [
 ] as const satisfies ProfileMenuAction[]
 
 const serviceMenuActions = [
-  { title: '联系客服' },
   { title: '服务协议' },
 ] as const satisfies ProfileMenuAction[]
 
@@ -161,6 +171,9 @@ const isCheckingAuth = ref(true)
 const hasLoadedProfile = ref(false)
 
 let refreshProfilePromise: Promise<void> | null = null
+let lastProfileRefreshAt = 0
+
+const PROFILE_REFRESH_INTERVAL = 30 * 1000
 
 const session = computed(() => authSession.value)
 const displayName = computed(() => {
@@ -178,7 +191,7 @@ const vipServiceText = computed(() => {
   return isVipUser.value ? '已开启' : '未开通'
 })
 const unreadMessageCountText = computed(() => {
-  const count = unreadCommentNotificationCount.value
+  const count = unseenPostNotificationCount.value
 
   if (count <= 0) {
     return ''
@@ -267,7 +280,17 @@ async function refreshProfile() {
     return refreshProfilePromise
   }
 
+  if (
+    lastProfileRefreshAt &&
+    Date.now() - lastProfileRefreshAt < PROFILE_REFRESH_INTERVAL
+  ) {
+    return
+  }
+
   refreshProfilePromise = getCurrentUser()
+    .then(() => {
+      lastProfileRefreshAt = Date.now()
+    })
     .catch(() => undefined)
     .finally(() => {
       refreshProfilePromise = null
@@ -282,13 +305,14 @@ async function preparePage() {
   }
 
   await restoreAuthSession()
-
-  if (authSession.value) {
-    await refreshProfile()
-  }
-
   hasLoadedProfile.value = true
   isCheckingAuth.value = false
+
+  if (authSession.value) {
+    preloadConversations()
+    initCommentNotificationPolling()
+    void refreshProfile()
+  }
 }
 
 useDidShow(() => {
@@ -528,7 +552,6 @@ useDidShow(() => {
   height: 58px;
   box-sizing: border-box;
   padding: 0 16px;
-  border-bottom: 0.5px solid #e5e5e5;
   background: #ffffff;
 }
 

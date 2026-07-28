@@ -2,6 +2,7 @@ import type {
   CreateVipPlanOrderResultDTO,
   CreateVoicePackageOrderResultDTO,
   OrderStatusDTO,
+  OrderSourceDTO,
   OrderTypeDTO,
   OrderRecordDTO,
   UserOrderListDTO,
@@ -21,6 +22,7 @@ export interface OrderRecord {
   payableAmount: number
   currency: string
   status: OrderStatusDTO
+  source?: OrderSourceDTO
   paymentProvider?: string
   createdAt: string
   paidAt?: string
@@ -114,6 +116,7 @@ function parseOrder(value: unknown): OrderRecord {
     payableAmount: asNumber(raw.payableAmount),
     currency: asString(raw.currency) || 'CNY',
     status: parseOrderStatus(raw.status),
+    source: parseOrderSource(raw.source),
     paymentProvider:
       raw.paymentProvider == null ? undefined : asString(raw.paymentProvider),
     createdAt: asString(raw.createdAt),
@@ -144,6 +147,16 @@ function parseOrderStatus(value: unknown): OrderStatusDTO {
   }
 
   return 'pending'
+}
+
+function parseOrderSource(value: unknown): OrderSourceDTO | undefined {
+  const source = asString(value)
+
+  if (source === 'app' || source === 'weapp' || source === 'admin') {
+    return source
+  }
+
+  return undefined
 }
 
 function parsePayment(value: unknown): WechatPaymentParams {
@@ -218,7 +231,9 @@ function parseCreateVoicePackageVirtualPaymentOrderResult(
 
 function parseUserOrderList(value: unknown): UserOrderList {
   const raw = asRecord(value)
-  const items = Array.isArray(raw.items) ? raw.items.map(parseOrder) : []
+  const items = Array.isArray(raw.items)
+    ? raw.items.map(parseOrder).filter(shouldShowUserOrder)
+    : []
 
   return {
     items,
@@ -226,6 +241,10 @@ function parseUserOrderList(value: unknown): UserOrderList {
     page: asNumber(raw.page) || 1,
     pageSize: asNumber(raw.pageSize) || items.length,
   }
+}
+
+function shouldShowUserOrder(order: OrderRecord) {
+  return order.status !== 'closed' && order.source !== 'admin'
 }
 
 export async function createVipPlanOrder(payload: {
@@ -321,6 +340,7 @@ export type {
   CreateVipPlanOrderResultDTO,
   CreateVoicePackageOrderResultDTO,
   OrderStatusDTO,
+  OrderSourceDTO,
   OrderTypeDTO,
   OrderRecordDTO,
   UserOrderListDTO,

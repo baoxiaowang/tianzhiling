@@ -16,8 +16,18 @@ export class SendConversationMessageDTO {
   @Rule(RuleType.string().max(128))
   mimeType?: string;
 
-  @Rule(RuleType.number().min(0).max(60 * 60 * 1000))
+  @Rule(
+    RuleType.number()
+      .min(0)
+      .max(60 * 60 * 1000)
+  )
   durationMs?: number;
+
+  @Rule(RuleType.string().max(64))
+  quotedMessageId?: string;
+
+  @Rule(RuleType.string().max(64))
+  clientRequestId?: string;
 }
 
 export class TranscribeConversationVoiceDTO {
@@ -33,11 +43,7 @@ export class TranscribeConversationVoiceDTO {
 
 export class GenerateMemorialPhotoDTO {
   @Rule(
-    RuleType.array()
-      .items(RuleType.string().max(1024))
-      .min(1)
-      .max(3)
-      .required()
+    RuleType.array().items(RuleType.string().max(1024)).min(1).max(3).required()
   )
   agentPhotoObjectKeys: string[];
 
@@ -46,4 +52,23 @@ export class GenerateMemorialPhotoDTO {
 
   @Rule(RuleType.string().max(500))
   customPrompt?: string;
+}
+
+export class SubmitConversationMessageFeedbackDTO {
+  @Rule(
+    RuleType.string()
+      .valid(
+        'accurate',
+        'unlike',
+        'wrong_fact',
+        'fabricated',
+        'uncomfortable',
+        'other'
+      )
+      .required()
+  )
+  type: string;
+
+  @Rule(RuleType.string().max(500).allow(''))
+  content?: string;
 }

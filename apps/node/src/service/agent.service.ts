@@ -272,7 +272,8 @@ export class AgentService {
         userAgents
           .filter(item => {
             return (
-              this.stringifyObjectId(item.id) !== this.stringifyObjectId(agent.id)
+              this.stringifyObjectId(item.id) !==
+              this.stringifyObjectId(agent.id)
             );
           })
           .filter(item => item.isDefault)

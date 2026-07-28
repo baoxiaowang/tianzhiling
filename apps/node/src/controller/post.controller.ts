@@ -22,7 +22,9 @@ export class PostController {
   ctx: Context;
 
   @Get('/')
-  async listPosts(@Query() query: { page?: string; pageSize?: string; mine?: string }) {
+  async listPosts(
+    @Query() query: { page?: string; pageSize?: string; mine?: string }
+  ) {
     return this.postService.listPosts(
       this.ctx.state.auth as AuthenticatedUserPayload | undefined,
       query
@@ -37,7 +39,9 @@ export class PostController {
   }
 
   @Get('/comment-notifications')
-  async listCommentNotifications(@Query() query: { page?: string; pageSize?: string }) {
+  async listCommentNotifications(
+    @Query() query: { page?: string; pageSize?: string }
+  ) {
     return this.postService.listCommentNotifications(
       this.ctx.state.auth as AuthenticatedUserPayload,
       query
@@ -51,8 +55,17 @@ export class PostController {
     );
   }
 
+  @Get('/notifications/entry-summary')
+  async getPostNotificationEntrySummary() {
+    return this.postService.getPostNotificationEntrySummary(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
   @Get('/notifications')
-  async listPostNotifications(@Query() query: { page?: string; pageSize?: string }) {
+  async listPostNotifications(
+    @Query() query: { page?: string; pageSize?: string; read?: string }
+  ) {
     return this.postService.listPostNotifications(
       this.ctx.state.auth as AuthenticatedUserPayload,
       query
@@ -63,6 +76,28 @@ export class PostController {
   async readUnreadPostNotifications() {
     return this.postService.readUnreadPostNotifications(
       this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Post('/notifications/seen')
+  async seePostNotifications() {
+    return this.postService.seePostNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Post('/notifications/entry-seen')
+  async seePostNotificationEntry() {
+    return this.postService.seePostNotifications(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Post('/notifications/:notificationId/read')
+  async readPostNotification(@Param('notificationId') notificationId: string) {
+    return this.postService.readPostNotification(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      notificationId
     );
   }
 
