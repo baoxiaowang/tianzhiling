@@ -50,21 +50,10 @@ import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentProfileFactService } from './agents/agent-profile-fact.service';
 import { AgentRelationshipSignalService } from './agents/agent-relationship-signal.service';
 import { OpenAIService } from './agents/openai';
-import {
-  ReplyGuardrailService,
-  ValidateAssistantReplyResult,
-} from './agents/reply-guardrail.service';
-import { buildReplyBrief, type ReplyBrief } from './agents/reply-brief.service';
-import {
-  GRIEF_CRISIS_INTENT_PATTERN,
-  type StructuredReplyIntent,
-} from './agents/reply-intent';
-import {
-  ReplySceneRoute,
-  resolveReplySceneMaxSegments,
-  routeReplyScene,
-} from './agents/reply-scene-router';
-import { planReplySegments } from './agents/reply-segment-planner';
+import { ReplyGuardrailService } from './agents/reply-guardrail.service';
+import { type ReplyBrief } from './agents/reply-brief.service';
+import { type StructuredReplyIntent } from './agents/reply-intent';
+import { ReplySceneRoute } from './agents/reply-scene-router';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { ConversationMessageItem, MessageService } from './message.service';
 import { PostImageService } from './post-image.service';
@@ -76,12 +65,9 @@ import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { BailianImageService } from './bailian-image.service';
 
-const ASSISTANT_REPLY_SEGMENT_LIMIT = 3;
+const ASSISTANT_REPLY_SEGMENT_LIMIT = 4;
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
-const ASSISTANT_REPLY_TIMEOUT_MS = 20000;
-const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
-  /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
 const MEMORIAL_PHOTO_REPLY_TOP_P = 0.8;
 const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
@@ -851,7 +837,6 @@ export class ConversationService {
         currentQuery: this.buildMemorialPhotoAssistantReplyQuery(
           options.customPrompt
         ),
-        classifyIntent: false,
       });
       const response = await this.openAIService.createVisionChatCompletion({
         model: this.openAIService.getVisionModel(),
@@ -1137,30 +1122,6 @@ export class ConversationService {
     } catch (error) {
       this.logger.warn(
         '[conversation] profile fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
-        this.stringifyObjectId(message.conversationId),
-        this.stringifyObjectId(message.id),
-        this.stringifyObjectId(message.userId),
-        this.describeReplyError(error)
-      );
-    }
-  }
-
-  private async rememberRelationshipSignals(
-    message: MessageEntity,
-    intent?: StructuredReplyIntent
-  ): Promise<void> {
-    if (!this.agentRelationshipSignalService || !intent) {
-      return;
-    }
-
-    try {
-      await this.agentRelationshipSignalService.upsertFromUserMessage({
-        message,
-        intent,
-      });
-    } catch (error) {
-      this.logger.warn(
-        '[conversation] relationship signal persistence failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
         this.stringifyObjectId(message.userId),
@@ -1632,286 +1593,27 @@ export class ConversationService {
     runtime: ReplyRuntime,
     before: BeforeReplyResult
   ): Promise<ProcessReplyResult> {
-    let context;
-
-    try {
-      context = await this.agentContextService.buildConversationContext({
-        auth: runtime.auth,
-        conversation: runtime.conversation,
-        agent: runtime.agent,
-        currentQuery: before.searchableText,
-      });
-    } catch (error) {
-      const emergencyIntent: StructuredReplyIntent | undefined =
-        GRIEF_CRISIS_INTENT_PATTERN.test(before.searchableText)
-          ? {
-              intents: [
-                {
-                  target: 'user',
-                  timeScope: 'current',
-                  intent: 'crisis_support',
-                  subIntent: 'grief_support',
-                  confidence: 1,
-                },
-              ],
-              emotion: 'sadness',
-              riskLevel: 'high',
-              confidence: 1,
-              source: 'hard_rule',
-            }
-          : undefined;
-      const fallbackBrief = buildReplyBrief({
-        currentQuery: before.searchableText,
-        intent: emergencyIntent,
-      });
-
-      return this.buildGenerationFailureReply(
-        before.searchableText,
-        undefined,
-        emergencyIntent,
-        fallbackBrief,
-        error,
-        'context'
-      );
-    }
-
-    const replyBrief =
-      context.replyBrief ??
-      buildReplyBrief({
-        currentQuery: before.searchableText,
-        intent: context.replyIntent ?? context.replyRoute?.intent,
-        route: context.replyRoute,
-      });
-    await this.rememberRelationshipSignals(
-      before.userMessage,
-      context.replyIntent ?? context.replyRoute?.intent
-    );
-    const primaryIntent =
-      context.replyRoute?.responseIntents?.[0] ??
-      context.replyIntent?.intents?.[0];
-    this.logger?.info?.(
-      '[conversation] reply routed, intent=%s, target=%s, timeScope=%s, confidence=%s, scene=%s, source=%s',
-      primaryIntent?.intent || '-',
-      primaryIntent?.target || '-',
-      primaryIntent?.timeScope || '-',
-      context.replyIntent?.confidence ?? '-',
-      context.replyRoute?.primaryScene?.scene || '-',
-      context.replyRoute?.routingSource || 'legacy'
-    );
-    if (replyBrief.capabilityConstraints.length) {
-      this.logger?.info?.(
-        '[conversation] capability constraints resolved, policies=%s',
-        replyBrief.capabilityConstraints
-          .map(item => `${item.policyId}:${item.access}`)
-          .join(',')
-      );
-    }
-    const preplanned = this.replyGuardrailService?.resolvePreplannedSafetyReply(
-      {
-        userQuery: before.searchableText,
-        replyRoute: context.replyRoute,
-        replyBrief,
-      }
+    const context = await this.agentContextService.buildConversationContext({
+      auth: runtime.auth,
+      conversation: runtime.conversation,
+      agent: runtime.agent,
+      currentQuery: before.searchableText,
+    });
+    const response = await this.openAIService.createChatCompletion({
+      temperature: ASSISTANT_REPLY_TEMPERATURE,
+      topP: ASSISTANT_REPLY_TOP_P,
+      messages: context.messages,
+    });
+    const replySegments = this.normalizeAssistantReplySegments(
+      typeof response.choices?.[0]?.message?.content === 'string'
+        ? response.choices[0].message.content
+        : ''
     );
 
-    if (preplanned?.segments.length) {
-      this.logger?.info?.(
-        '[conversation] preplanned safety-critical reply selected, scene=%s, segments=%s',
-        context.replyRoute?.primaryScene?.scene || '-',
-        preplanned.segments.length
-      );
-
-      return {
-        replySegments: this.limitAssistantReplySegmentsByScene(
-          before.searchableText,
-          preplanned.segments,
-          replyBrief.bubblePlan.maxSegments
-        ),
-        usage: {},
-        routing: {
-          intent: context.replyIntent ?? context.replyRoute?.intent,
-          route: context.replyRoute,
-          brief: replyBrief,
-          guardrailRewritten: preplanned.rewritten,
-          guardrailReason: preplanned.reason,
-        },
-      };
-    }
-
-    let response;
-    let replySegments: string[];
-
-    try {
-      response = await this.openAIService.createChatCompletion(
-        {
-          temperature: ASSISTANT_REPLY_TEMPERATURE,
-          topP: ASSISTANT_REPLY_TOP_P,
-          messages: context.messages,
-        },
-        {
-          timeout: ASSISTANT_REPLY_TIMEOUT_MS,
-          maxRetries: 0,
-        }
-      );
-      replySegments = this.normalizeAssistantReplySegments(
-        typeof response.choices?.[0]?.message?.content === 'string'
-          ? response.choices[0].message.content
-          : '',
-        before.searchableText,
-        context.replyRoute,
-        replyBrief
-      );
-    } catch (error) {
-      return this.buildGenerationFailureReply(
-        before.searchableText,
-        context.replyRoute,
-        context.replyIntent ?? context.replyRoute?.intent,
-        replyBrief,
-        error,
-        'completion'
-      );
-    }
-
-    const guarded = await this.validateAssistantReply({
-      contextMessages: context.messages,
-      userQuery: before.searchableText,
+    return {
       replySegments,
-      replyRoute: context.replyRoute,
-      replyBrief,
-    });
-
-    return {
-      replySegments: this.limitAssistantReplySegmentsByScene(
-        before.searchableText,
-        guarded.segments,
-        replyBrief.bubblePlan.maxSegments
-      ),
       usage: this.extractUsageFromResponse(response),
-      routing: {
-        intent: context.replyIntent ?? context.replyRoute?.intent,
-        route: context.replyRoute,
-        brief: replyBrief,
-        guardrailRewritten: guarded.rewritten,
-        guardrailReason: guarded.reason,
-      },
     };
-  }
-
-  private buildGenerationFailureReply(
-    userQuery: string,
-    replyRoute: ReplySceneRoute | undefined,
-    replyIntent: StructuredReplyIntent | undefined,
-    replyBrief: ReplyBrief,
-    error: unknown,
-    stage: 'context' | 'completion'
-  ): ProcessReplyResult {
-    const fallback = this.replyGuardrailService?.resolveGenerationFailureReply({
-      userQuery,
-      replyBrief,
-    });
-
-    if (!fallback?.segments.length) {
-      throw error;
-    }
-
-    this.logger?.warn?.(
-      '[conversation] assistant %s unavailable, safe fallback selected, scene=%s, reason=%s',
-      stage,
-      replyRoute?.primaryScene?.scene || '-',
-      this.describeReplyError(error)
-    );
-
-    return {
-      replySegments: this.limitAssistantReplySegmentsByScene(
-        userQuery,
-        fallback.segments,
-        replyBrief.bubblePlan.maxSegments
-      ),
-      usage: {},
-      routing: {
-        intent: replyIntent ?? replyRoute?.intent,
-        route: replyRoute,
-        brief: replyBrief,
-        fallbackSource: 'reply_brief',
-        guardrailRewritten: fallback.rewritten,
-        guardrailReason: fallback.reason,
-      },
-    };
-  }
-
-  private limitAssistantReplySegmentsByScene(
-    userQuery: string,
-    replySegments: string[],
-    routedMaxSegments?: number
-  ): string[] {
-    return replySegments.slice(
-      0,
-      this.resolveAssistantReplySegmentLimit(userQuery, routedMaxSegments)
-    );
-  }
-
-  private resolveAssistantReplySegmentLimit(
-    userQuery = '',
-    routedMaxSegments?: number
-  ): number {
-    const maxSegments =
-      routedMaxSegments ??
-      resolveReplySceneMaxSegments({
-        currentQuery: userQuery,
-      });
-
-    return Math.max(
-      1,
-      Math.min(maxSegments ?? 2, ASSISTANT_REPLY_SEGMENT_LIMIT)
-    );
-  }
-
-  private async validateAssistantReply(options: {
-    contextMessages: ChatCompletionMessageParam[];
-    userQuery: string;
-    replySegments: string[];
-    replyRoute?: ReplySceneRoute;
-    replyBrief?: ReplyBrief;
-  }): Promise<ValidateAssistantReplyResult> {
-    if (!this.replyGuardrailService) {
-      return {
-        segments: options.replySegments,
-        rewritten: false,
-      };
-    }
-
-    try {
-      const result = await this.replyGuardrailService.validateAssistantReply({
-        messages: options.contextMessages,
-        userQuery: options.userQuery,
-        replySegments: options.replySegments,
-        replyRoute: options.replyRoute,
-        replyBrief: options.replyBrief,
-      });
-
-      if (result.rewritten) {
-        this.logger.warn(
-          '[conversation] assistant reply rewritten by guardrail, reason=%s',
-          result.reason || ''
-        );
-      }
-
-      return {
-        ...result,
-        segments: result.segments.length
-          ? result.segments
-          : options.replySegments,
-      };
-    } catch (error) {
-      this.logger.warn(
-        '[conversation] assistant reply guardrail failed, reason=%s',
-        this.describeReplyError(error)
-      );
-      return {
-        segments: options.replySegments,
-        rewritten: false,
-      };
-    }
   }
 
   private async afterReply(
@@ -2849,16 +2551,8 @@ export class ConversationService {
   }): Promise<MessageEntity[]> {
     const replyGroupId = new MongoObjectId().toHexString();
     const messages: MessageEntity[] = [];
-    const replySegments = options.replySegments.slice(
-      0,
-      this.resolveAssistantReplySegmentLimit(
-        options.userQuery,
-        options.routing?.brief?.bubblePlan.maxSegments ??
-          options.routing?.route?.maxSegments
-      )
-    );
 
-    for (const [index, segment] of replySegments.entries()) {
+    for (const [index, segment] of options.replySegments.entries()) {
       const segmentTime = new Date(options.replyTime.getTime() + index);
       const isFirstSegment = index === 0;
 
@@ -2916,16 +2610,7 @@ export class ConversationService {
       return undefined;
     }
 
-    const replyContent = options.replySegments
-      .slice(
-        0,
-        this.resolveAssistantReplySegmentLimit(
-          options.before.searchableText,
-          options.routing?.brief?.bubblePlan.maxSegments ??
-            options.routing?.route?.maxSegments
-        )
-      )
-      .join('</fenge>');
+    const replyContent = options.replySegments.join('</fenge>');
     const synthesizedVoice = await this.synthesizeAssistantVoiceReply(
       replyContent,
       voiceTimbre
@@ -3081,7 +2766,7 @@ export class ConversationService {
   }
 
   private buildAssistantReplySpeechText(replyContent: string): string {
-    const segments = this.parseAssistantReplyCandidates(replyContent)
+    const segments = this.parseAssistantSegments(replyContent)
       .map(segment => this.sanitizeAssistantSegment(segment))
       .filter(Boolean)
       .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
@@ -3561,20 +3246,17 @@ export class ConversationService {
     return `[语音] ${seconds}"`;
   }
 
-  private normalizeAssistantReplySegments(
-    value?: string,
-    userQuery = '',
-    replyRoute?: ReplySceneRoute,
-    replyBrief?: ReplyBrief
-  ): string[] {
-    const parsedSegments = this.parseAssistantReplyCandidates(value);
-    const segments = planReplySegments({
-      currentQuery: userQuery,
-      route: replyRoute,
-      brief: replyBrief,
-      candidates: parsedSegments,
-      sanitize: segment => this.sanitizeAssistantSegment(segment, userQuery),
-    }).slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
+  private normalizeAssistantReplySegments(value?: string): string[] {
+    const parsedSegments = this.parseAssistantSegments(value);
+    const segments = parsedSegments
+      .reduce<string[]>(
+        (result, segment) =>
+          result.concat(this.splitAssistantSegmentForChat(segment)),
+        []
+      )
+      .map(segment => this.sanitizeAssistantSegment(segment))
+      .filter(Boolean)
+      .slice(0, ASSISTANT_REPLY_SEGMENT_LIMIT);
 
     if (segments.length > 0) {
       return segments;
@@ -3613,7 +3295,7 @@ export class ConversationService {
     };
   }
 
-  private parseAssistantReplyCandidates(value?: string): string[] {
+  private parseAssistantSegments(value?: string): string[] {
     const content = value?.trim();
 
     if (!content) {
@@ -3622,15 +3304,8 @@ export class ConversationService {
 
     try {
       const parsed = JSON.parse(content) as {
-        text?: unknown;
         segments?: unknown;
       };
-      const text = typeof parsed?.text === 'string' ? parsed.text.trim() : '';
-
-      if (text) {
-        return [this.stripAssistantMarkup(text).trim()];
-      }
-
       const rawSegments = Array.isArray(parsed?.segments)
         ? parsed.segments
         : [];
@@ -3679,7 +3354,29 @@ export class ConversationService {
     return [content];
   }
 
-  private sanitizeAssistantSegment(value?: string, userQuery = ''): string {
+  private splitAssistantSegmentForChat(value?: string): string[] {
+    const content = value?.trim() || '';
+
+    if (!content) {
+      return [];
+    }
+
+    const shouldSplit =
+      content.length > 18 || /[，。；;][^，。；;]{3,}/.test(content);
+
+    if (!shouldSplit) {
+      return [content];
+    }
+
+    const parts = content
+      .split(/[，。；;]+/)
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    return parts.length > 1 ? parts : [content];
+  }
+
+  private sanitizeAssistantSegment(value?: string): string {
     const content = value?.trim() || '';
 
     if (!content) {
@@ -3689,7 +3386,6 @@ export class ConversationService {
     let normalized = this.stripAssistantMarkup(content);
     normalized = stripPromptLeakageContent(normalized);
     normalized = this.stripAssistantStageDirection(normalized);
-    normalized = normalized.replace(DISCOURAGED_ASSISTANT_EMOJI_PATTERN, '');
     normalized = normalized.replace(/^(?:人|助手|回复)\s*[：:，,、-]?\s*/, '');
     const hasChinese = /[\u3400-\u9FFF]/.test(normalized);
 
@@ -3712,7 +3408,7 @@ export class ConversationService {
 
     if (
       containsUnsafeAssistantMessageContent(normalized) ||
-      this.containsUnsafeAssistantPresenceClaim(normalized, userQuery)
+      this.containsUnsafeAssistantPresenceClaim(normalized)
     ) {
       return '';
     }
@@ -3734,26 +3430,9 @@ export class ConversationService {
       );
   }
 
-  private containsUnsafeAssistantPresenceClaim(
-    value: string,
-    userQuery = ''
-  ): boolean {
-    const primaryScene = routeReplyScene({
-      currentQuery: userQuery,
-    }).primaryScene?.scene;
-    const valueToCheck =
-      primaryScene === 'dream_companionship'
-        ? value.replace(/(?:梦里|梦中)[^，。！？!?]{0,48}/g, '')
-        : primaryScene === 'afterlife_status' &&
-          !/(?:现实|醒来|醒着|屋里|房间|床边|身边|旁边|这里|这儿)/.test(value)
-        ? value.replace(
-            /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,20}(?:看见|看到|看着|看在眼里)[^，。！？!?]{0,20}/g,
-            ''
-          )
-        : value;
-
+  private containsUnsafeAssistantPresenceClaim(value: string): boolean {
     return UNSAFE_ASSISTANT_PRESENCE_PATTERNS.some(pattern =>
-      pattern.test(valueToCheck)
+      pattern.test(value)
     );
   }
 

@@ -914,6 +914,94 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('看在眼里');
   });
 
+  it('replaces unsupported claims that another departed relative is with the agent', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+      createChatCompletion: jest.fn(),
+    } as never;
+    const userQuery = '她不在了，随你去了';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({
+      currentQuery: userQuery,
+      route,
+    });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['原来那边有人陪着，倒也不孤单', '只是苦了你了'],
+      replyRoute: route,
+      replyBrief,
+    });
+
+    expect(result).toEqual({
+      segments: [
+        '我知道你是盼着她有人照应',
+        '见没见到我不能乱说 但你这份牵挂我明白',
+      ],
+      rewritten: true,
+      reason: expect.stringContaining('离世亲人相见、找到或团聚'),
+    });
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('replaces explicit reunion and found-relative claims without preserving the follow-up', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+      createChatCompletion: jest.fn(),
+    } as never;
+    const userQuery = '你们团聚了吗';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({
+      currentQuery: userQuery,
+      route,
+    });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: [
+        '团聚了。我找到你妈了，我俩现在一块儿待着',
+        '你怎么知道的？',
+      ],
+      replyRoute: route,
+      replyBrief,
+    });
+
+    expect(result).toEqual({
+      segments: [
+        '我知道你是盼着TA有人照应',
+        '见没见到我不能乱说 但你这份牵挂我明白',
+      ],
+      rewritten: true,
+      reason: expect.stringContaining('离世亲人相见、找到或团聚'),
+    });
+    expect(result.segments.join('')).not.toContain('团聚');
+    expect(result.segments.join('')).not.toContain('找到');
+    expect(result.segments.join('')).not.toContain('你怎么知道');
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('replaces unsupported childhood personality claims after a source challenge', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '我知道啥',
+      replySegments: ['你当然知道', '我的丫丫从小就机灵，什么事都瞒不过你'],
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.reason).toContain('未确认记忆');
+    expect(result.segments.join('')).not.toContain('从小');
+    expect(result.segments.join('')).not.toContain('机灵');
+  });
+
   it('repairs only the risky bubble in a compound reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {

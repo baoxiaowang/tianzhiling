@@ -708,6 +708,17 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('可用一句 18-36 字');
   });
 
+  it('keeps other-departed reunion questions inside an uncertainty boundary', () => {
+    const route = routeReplyScene({
+      currentQuery: '她不在了，随你去了',
+    });
+
+    expect(route.primaryScene?.scene).toBe('afterlife_status');
+    expect(sceneNames('你们团聚了吗')[0]).toBe('afterlife_status');
+    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
+    expect(route.prompt).toContain('不得补写他们在哪里、怎么相处');
+  });
+
   it('keeps user daily updates separate from agent routine questions', () => {
     expect(sceneNames('我今天还要上班')[0]).toBe('daily_update');
     expect(sceneNames('刚下班，好累啊')[0]).toBe('daily_update');
@@ -913,27 +924,27 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('不要要求用户以后补偿我');
   });
 
-  it('allows reunion answers when the user asks about other deceased relatives', () => {
+  it('keeps reunion answers uncertain when the user asks about other deceased relatives', () => {
     const route = routeReplyScene({
       currentQuery: '你在那边有没有见到妈妈，你们在一起吗',
     });
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('是否与其他离世亲人相见');
-    expect(route.prompt).toContain('我们彼此有照应');
-    expect(route.prompt).toContain('不说明在哪里、如何见面或怎样生活');
+    expect(route.prompt).toContain('只承接用户希望亲人有照应的心愿');
+    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
+    expect(route.prompt).toContain('不得补写他们在哪里、怎么相处');
   });
 
-  it('answers reunion when the user says another relative has passed away too', () => {
+  it('does not confirm reunion when the user says another relative has passed away too', () => {
     const route = routeReplyScene({
       currentQuery: '妈妈也不在了，随你去了',
     });
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('我们彼此有照应');
-    expect(route.prompt).toContain('不说明在哪里、如何见面或怎样生活');
+    expect(route.prompt).toContain('只承接用户希望亲人有照应的心愿');
+    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
   });
 
   it('handles afterlife rumors about repeating death pain conservatively', () => {
