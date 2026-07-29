@@ -72,21 +72,23 @@ function findPatternMatches(
   rule: UnsafeAssistantMessageContentMatch['rule'],
   patterns: RegExp[]
 ): UnsafeAssistantMessageContentMatch[] {
-  return patterns.flatMap((pattern, patternIndex) => {
+  const matches: UnsafeAssistantMessageContentMatch[] = [];
+
+  patterns.forEach((pattern, patternIndex) => {
     const match = pattern.exec(content);
     pattern.lastIndex = 0;
 
-    return match?.[0]
-      ? [
-          {
-            rule,
-            patternIndex,
-            pattern: pattern.source,
-            matchedText: match[0],
-          },
-        ]
-      : [];
+    if (match?.[0]) {
+      matches.push({
+        rule,
+        patternIndex,
+        pattern: pattern.source,
+        matchedText: match[0],
+      });
+    }
   });
+
+  return matches;
 }
 
 export function findUnsafeAssistantMessageContentMatches(

@@ -4477,22 +4477,22 @@ export class ConversationService {
           )
         : value;
 
-    return UNSAFE_ASSISTANT_PRESENCE_PATTERNS.flatMap(
-      (pattern, patternIndex) => {
-        const match = pattern.exec(valueToCheck);
-        pattern.lastIndex = 0;
+    const matches: AssistantPresenceSafetyMatch[] = [];
 
-        return match?.[0]
-          ? [
-              {
-                patternIndex,
-                pattern: pattern.source,
-                matchedText: match[0],
-              },
-            ]
-          : [];
+    UNSAFE_ASSISTANT_PRESENCE_PATTERNS.forEach((pattern, patternIndex) => {
+      const match = pattern.exec(valueToCheck);
+      pattern.lastIndex = 0;
+
+      if (match?.[0]) {
+        matches.push({
+          patternIndex,
+          pattern: pattern.source,
+          matchedText: match[0],
+        });
       }
-    );
+    });
+
+    return matches;
   }
 
   private stripAssistantStageDirection(value: string): string {
