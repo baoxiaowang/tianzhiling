@@ -16,6 +16,21 @@ export class ConversationEntity extends BaseEntity {
   userId: MongoObjectId;
 
   @Column()
+  continuitySummary?: string;
+
+  @Column()
+  continuitySummaryCoveredMessageId?: MongoObjectId;
+
+  @Column()
+  continuitySummaryEvidenceMessageIds?: MongoObjectId[];
+
+  @Column()
+  continuitySummaryVersion?: string;
+
+  @Column()
+  continuitySummaryUpdatedAt?: Date;
+
+  @Column()
   createdAt: Date;
 
   @Column()

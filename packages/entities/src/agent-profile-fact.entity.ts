@@ -32,9 +32,16 @@ export enum AgentProfileFactConfidence {
 
 export enum AgentProfileFactStatus {
   active = "active",
+  candidate = "candidate",
+  conflicted = "conflicted",
   pending = "pending",
   rejected = "rejected",
   archived = "archived",
+}
+
+export enum AgentProfileFactAssertionPolicy {
+  canAssert = "can_assert",
+  contextOnly = "context_only",
 }
 
 @Index(["userId", "agentId", "key"], { unique: true, background: true })
@@ -74,10 +81,25 @@ export class AgentProfileFactEntity extends BaseEntity {
   sourceMessageId?: MongoObjectId;
 
   @Column()
+  sourceMessageIds?: MongoObjectId[];
+
+  @Column()
   sourceFeedbackId?: MongoObjectId;
 
   @Column()
   sourceText?: string;
+
+  @Column()
+  supportCount?: number;
+
+  @Column()
+  conflictingValues?: string[];
+
+  @Column()
+  assertionPolicy?: AgentProfileFactAssertionPolicy;
+
+  @Column()
+  lastUsedAt?: Date;
 
   @Column()
   createdAt: Date;

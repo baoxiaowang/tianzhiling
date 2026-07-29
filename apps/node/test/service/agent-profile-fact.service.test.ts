@@ -133,6 +133,179 @@ describe('AgentProfileFactService', () => {
     );
   });
 
+  it('keeps model-only facts as candidates until repeated evidence confirms them', async () => {
+    const service = new AgentProfileFactService();
+    let storedFact: AgentProfileFactEntity | null = null;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'occupation',
+            key: 'occupation.primary',
+            value: '当前角色以前做木工',
+            polarity: 'positive',
+            confidence: 'confirmed',
+            priority: 2,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(async () => storedFact),
+      save: jest.fn(async fact => {
+        if (!fact.id) {
+          fact.id = new MongoObjectId();
+        }
+        storedFact = fact;
+        return fact;
+      }),
+    } as never;
+
+    const firstMessage =
+      createUserMessage('补充一下，过去主要靠木工手艺过日子');
+    await service.extractAndUpsertFromUserMessage({
+      message: firstMessage,
+      searchableText: firstMessage.content,
+    });
+
+    expect(storedFact).toEqual(
+      expect.objectContaining({
+        value: '当前角色以前做木工',
+        status: AgentProfileFactStatus.candidate,
+        supportCount: 1,
+      })
+    );
+
+    const secondMessage =
+      createUserMessage('我再说一次，过去主要靠木工手艺过日子');
+    secondMessage.id = new MongoObjectId('665000000000000000000102');
+    await service.extractAndUpsertFromUserMessage({
+      message: secondMessage,
+      searchableText: secondMessage.content,
+    });
+
+    expect(storedFact).toEqual(
+      expect.objectContaining({
+        status: AgentProfileFactStatus.active,
+        supportCount: 2,
+      })
+    );
+    expect(storedFact?.sourceMessageIds).toHaveLength(2);
+  });
+
+  it('activates a model-extracted fact when the user explicitly asks to remember it', async () => {
+    const service = new AgentProfileFactService();
+    let storedFact: AgentProfileFactEntity | null = null;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'preference',
+            key: 'user.preference.communication',
+            value: '用户不喜欢被说教',
+            polarity: 'negative',
+            confidence: 'confirmed',
+            priority: 3,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(async () => storedFact),
+      save: jest.fn(async fact => {
+        storedFact = fact;
+        return fact;
+      }),
+    } as never;
+
+    const message = createUserMessage('记住，我不喜欢被说教');
+    await service.extractAndUpsertFromUserMessage({
+      message,
+      searchableText: message.content,
+    });
+
+    expect(storedFact).toEqual(
+      expect.objectContaining({
+        value: '用户不喜欢被说教',
+        status: AgentProfileFactStatus.active,
+      })
+    );
+  });
+
+  it('archives a matching active profile fact for an explicit forget request', async () => {
+    const service = new AgentProfileFactService();
+    const fact = new AgentProfileFactEntity();
+    Object.assign(fact, {
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      key: 'user.preference.communication',
+      value: '用户不喜欢被说教',
+      status: AgentProfileFactStatus.active,
+      updatedAt: new Date(),
+    });
+    service.factModel = {
+      find: jest.fn().mockResolvedValue([fact]),
+      save: jest.fn(async value => value),
+    } as never;
+
+    await expect(
+      service.archiveMatchingFacts({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        requestText: '删除我不喜欢被说教这条记忆',
+      })
+    ).resolves.toBe(1);
+    expect(fact.status).toBe(AgentProfileFactStatus.archived);
+    expect(service.factModel.save).toHaveBeenCalledWith(fact);
+  });
+
+  it('archives the most recent profile fact group when the user says that thing', async () => {
+    const service = new AgentProfileFactService();
+    const latestSourceId = new MongoObjectId('665000000000000000000181');
+    const olderSourceId = new MongoObjectId('665000000000000000000182');
+    const latestFacts = ['profile.sleep', 'profile.stress'].map(key => {
+      const fact = new AgentProfileFactEntity();
+      Object.assign(fact, {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        sourceMessageId: latestSourceId,
+        key,
+        value: key,
+        status: AgentProfileFactStatus.active,
+        updatedAt: new Date('2026-07-28T10:00:00.000Z'),
+      });
+      return fact;
+    });
+    const olderFact = new AgentProfileFactEntity();
+    Object.assign(olderFact, {
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      sourceMessageId: olderSourceId,
+      key: 'profile.preference',
+      value: '用户不喜欢说教',
+      status: AgentProfileFactStatus.active,
+      updatedAt: new Date('2026-07-27T10:00:00.000Z'),
+    });
+    service.factModel = {
+      find: jest.fn().mockResolvedValue([...latestFacts, olderFact]),
+      save: jest.fn(async fact => fact),
+    } as never;
+
+    await expect(
+      service.archiveMatchingFacts({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        requestText: '刚才那件事你别记了，忘掉吧。',
+      })
+    ).resolves.toBe(2);
+    expect(
+      latestFacts.every(fact => fact.status === AgentProfileFactStatus.archived)
+    ).toBe(true);
+    expect(olderFact.status).toBe(AgentProfileFactStatus.active);
+  });
+
   it('stores a named shared family member without guessing the relationship', async () => {
     const service = new AgentProfileFactService();
     const savedFacts: AgentProfileFactEntity[] = [];

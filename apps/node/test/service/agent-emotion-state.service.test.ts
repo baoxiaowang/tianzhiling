@@ -56,13 +56,13 @@ describe('AgentEmotionStateService', () => {
   it.each([
     [
       '我想去陪你',
-      ConversationEmotionPrimary.crisisRisk,
-      ConversationEmotionRiskLevel.high,
+      ConversationEmotionPrimary.sadness,
+      ConversationEmotionRiskLevel.none,
     ],
     [
       '他们怕我想不开',
-      ConversationEmotionPrimary.crisisRisk,
-      ConversationEmotionRiskLevel.high,
+      ConversationEmotionPrimary.sadness,
+      ConversationEmotionRiskLevel.none,
     ],
     [
       '刚才你摸我了是不',
@@ -77,7 +77,7 @@ describe('AgentEmotionStateService', () => {
     [
       '没有你我撑不住',
       ConversationEmotionPrimary.sadness,
-      ConversationEmotionRiskLevel.low,
+      ConversationEmotionRiskLevel.none,
     ],
     [
       '你什么时候能来我梦里一次',

@@ -54,6 +54,70 @@ const AFTERLIFE_REALITY_OVERCLAIM_PATTERNS = [
   /(?:那边|这边).{0,10}没什么(?:疼不疼|痛不痛|难不难受)|早就不得事/,
 ];
 
+export interface UnsafeAssistantMessageContentMatch {
+  rule:
+    | 'url'
+    | 'media_file'
+    | 'legacy_media_path'
+    | 'prompt_leakage'
+    | 'harmful_relationship'
+    | 'unsupported_memory_detail';
+  patternIndex: number;
+  pattern: string;
+  matchedText: string;
+}
+
+function findPatternMatches(
+  content: string,
+  rule: UnsafeAssistantMessageContentMatch['rule'],
+  patterns: RegExp[]
+): UnsafeAssistantMessageContentMatch[] {
+  return patterns.flatMap((pattern, patternIndex) => {
+    const match = pattern.exec(content);
+    pattern.lastIndex = 0;
+
+    return match?.[0]
+      ? [
+          {
+            rule,
+            patternIndex,
+            pattern: pattern.source,
+            matchedText: match[0],
+          },
+        ]
+      : [];
+  });
+}
+
+export function findUnsafeAssistantMessageContentMatches(
+  value?: string
+): UnsafeAssistantMessageContentMatch[] {
+  const content = value?.trim();
+
+  if (!content) {
+    return [];
+  }
+
+  return [
+    ...findPatternMatches(content, 'url', [URL_PATTERN]),
+    ...findPatternMatches(content, 'media_file', [MEDIA_FILE_PATTERN]),
+    ...findPatternMatches(content, 'legacy_media_path', [
+      LEGACY_MEDIA_PATH_PATTERN,
+    ]),
+    ...findPatternMatches(content, 'prompt_leakage', PROMPT_LEAKAGE_PATTERNS),
+    ...findPatternMatches(
+      content,
+      'harmful_relationship',
+      HARMFUL_RELATIONSHIP_REPLY_PATTERNS
+    ),
+    ...findPatternMatches(
+      content,
+      'unsupported_memory_detail',
+      UNSUPPORTED_MEMORY_DETAIL_PATTERNS
+    ),
+  ];
+}
+
 export function stripPromptLeakageContent(value?: string): string {
   let content = value?.trim() || '';
 
@@ -81,22 +145,7 @@ export function containsPromptLeakageContent(value?: string): boolean {
 }
 
 export function containsUnsafeAssistantMessageContent(value?: string): boolean {
-  const content = value?.trim();
-
-  if (!content) {
-    return false;
-  }
-
-  return (
-    URL_PATTERN.test(content) ||
-    MEDIA_FILE_PATTERN.test(content) ||
-    LEGACY_MEDIA_PATH_PATTERN.test(content) ||
-    containsPromptLeakageContent(content) ||
-    HARMFUL_RELATIONSHIP_REPLY_PATTERNS.some(pattern =>
-      pattern.test(content)
-    ) ||
-    UNSUPPORTED_MEMORY_DETAIL_PATTERNS.some(pattern => pattern.test(content))
-  );
+  return findUnsafeAssistantMessageContentMatches(value).length > 0;
 }
 
 export function containsUnsafeAssistantHistoryContent(value?: string): boolean {

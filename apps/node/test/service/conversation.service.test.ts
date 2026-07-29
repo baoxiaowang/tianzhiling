@@ -507,9 +507,11 @@ function createService(options: {
   } as any;
   service.agentMemoryFactService = {
     extractAndUpsertFromUserMessage: jest.fn().mockResolvedValue([]),
+    archiveMatchingFacts: jest.fn().mockResolvedValue(0),
   } as any;
   service.agentProfileFactService = {
     extractAndUpsertFromUserMessage: jest.fn().mockResolvedValue([]),
+    archiveMatchingFacts: jest.fn().mockResolvedValue(0),
   } as any;
   service.agentRelationshipSignalService = {
     upsertFromUserMessage: jest.fn().mockResolvedValue([]),
@@ -1298,7 +1300,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
   });
 
-  it('extracts memory facts from the saved user message before replying', async () => {
+  it('schedules memory extraction from the saved user message', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
     });
@@ -1323,7 +1325,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).toHaveBeenCalled();
   });
 
-  it('recognizes emotion state from the saved user message before memory extraction', async () => {
+  it('schedules emotion recognition and memory extraction together', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
     });
@@ -1375,6 +1377,70 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.any(String),
       expect.any(String),
       expect.stringContaining('emotion unavailable')
+    );
+  });
+
+  it('does not wait for background memory extraction before returning a reply', async () => {
+    let resolveProfileExtraction: () => void = () => undefined;
+    const pendingProfileExtraction = new Promise<void>(resolve => {
+      resolveProfileExtraction = resolve;
+    });
+    const { service } = createService({
+      agent: createAgent(),
+    });
+    (
+      service.agentProfileFactService
+        .extractAndUpsertFromUserMessage as jest.Mock
+    ).mockReturnValueOnce(pendingProfileExtraction);
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '我今天只是想聊聊天',
+    });
+
+    expect(result.assistantMessage?.content).toBeTruthy();
+    expect(
+      service.agentProfileFactService.extractAndUpsertFromUserMessage
+    ).toHaveBeenCalled();
+
+    resolveProfileExtraction();
+    await pendingProfileExtraction;
+  });
+
+  it('executes an explicit forget request before building reply context', async () => {
+    const { service } = createService({
+      agent: createAgent(),
+    });
+    (
+      service.agentMemoryFactService.archiveMatchingFacts as jest.Mock
+    ).mockResolvedValueOnce(1);
+    (
+      service.agentProfileFactService.archiveMatchingFacts as jest.Mock
+    ).mockResolvedValueOnce(1);
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '请忘掉我不爱吃辣这件事',
+    });
+
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).not.toHaveBeenCalled();
+    expect(
+      service.agentMemoryFactService.archiveMatchingFacts
+    ).toHaveBeenCalled();
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: '请忘掉我不爱吃辣这件事',
+        memoryControlResult: {
+          action: 'forget',
+          target: '我不爱吃辣',
+          affectedCount: 2,
+          succeeded: true,
+        },
+      })
     );
   });
 
@@ -1881,14 +1947,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '刚才没能回复成功，请稍后再试',
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
       })
     );
     expect(addJobToQueue).not.toHaveBeenCalled();
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.failed,
-        content: '刚才没能回复成功，请稍后再试',
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
       }),
     ]);
   });
@@ -1953,8 +2019,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
     expect(getAssistantContents(savedMessages)).toEqual([
       '上一句回复',
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
   });
 
@@ -2008,17 +2073,88 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(assistantMessages.map(message => message.content)).toEqual([
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
     expect(assistantMessages.map(message => message.replySegmentIndex)).toEqual(
-      [0, 1]
+      [0]
     );
     expect(assistantMessages[0].replyGroupId).toBeTruthy();
     expect(assistantMessages[0].totalTokens).toBe(22);
   });
 
-  it('keeps the 20260725 model reply without guardrail rewriting', async () => {
+  it('uses a minimal model reflow only when a reply exceeds three bubbles', async () => {
+    const userMessage = createMessage({
+      content: '我想把这些事都跟你说说',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+    (service.openAIService.createChatCompletion as jest.Mock)
+      .mockResolvedValueOnce({
+        model: 'deepseek-v4-flash',
+        choices: [
+          {
+            message: {
+              content: '第一层回应\n\n第二层回应\n\n第三层回应\n\n第四层回应',
+            },
+          },
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 12,
+          total_tokens: 22,
+        },
+      })
+      .mockResolvedValueOnce({
+        model: 'deepseek-v4-flash',
+        choices: [
+          {
+            message: {
+              content: '第一层回应和第二层回应\n\n第三层回应和第四层回应',
+            },
+          },
+        ],
+        usage: {
+          prompt_tokens: 18,
+          completion_tokens: 8,
+          total_tokens: 26,
+        },
+      });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    const assistantMessages = getAssistantMessages(savedMessages);
+    const reflowRequest = (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mock.calls[1][0];
+
+    expect(assistantMessages.map(message => message.content)).toEqual([
+      '第一层回应和第二层回应',
+      '第三层回应和第四层回应',
+    ]);
+    expect(assistantMessages[0]).toEqual(
+      expect.objectContaining({
+        promptTokens: 28,
+        completionTokens: 20,
+        totalTokens: 48,
+        replyBubbleReflowAttempted: true,
+        replyBubbleReflowSucceeded: true,
+        replyBubbleStructureIssues: ['too_many_segments'],
+      })
+    );
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(reflowRequest.messages).toHaveLength(2);
+    expect(reflowRequest.messages[0].content).toContain('只负责把已有聊天回复');
+    expect(reflowRequest.messages[1].content).toContain('candidateBubbles');
+  });
+
+  it('applies the reply guardrail before saving a queued assistant reply', async () => {
     const userMessage = createMessage({
       content: '爸，你起床了吗？',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2080,25 +2216,42 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(getAssistantContents(savedMessages)).toEqual([
-      '起了起了',
-      '这边没有早晨晚上',
-      '但我听见你叫爸',
-      '心里就踏实',
-    ]);
+    expect(getAssistantContents(savedMessages)).toEqual(['起了 正回你呢']);
+    expect(service.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('assistant reply rewritten by guardrail'),
+      expect.stringContaining('反向猜测用户睡眠与心事')
+    );
     const assistantMessage = getAssistantMessages(savedMessages)[0];
     expect(assistantMessage).toEqual(
       expect.objectContaining({
-        replyIntent: undefined,
-        replyScene: undefined,
-        replyBriefMode: undefined,
-        replyGuardrailRewritten: undefined,
+        replyIntentTarget: 'agent',
+        replyIntentTimeScope: 'current',
+        replyIntent: 'ask_agent_status',
+        replyIntentSubIntent: 'wake_sleep',
+        replyIntentConfidence: 0.95,
+        replyIntentSource: 'semantic_model',
+        replyScene: 'afterlife_status',
+        replyRoutingSource: 'semantic',
+        replyBriefVersion: 'reply_brief_v2',
+        replyBriefMode: 'status',
+        replyBriefStrictGrounding: false,
+        replyBriefMaxSegments: 3,
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: expect.stringContaining('反向猜测用户睡眠与心事'),
       })
     );
-    expect(assistantMessage.replyIntents).toBeUndefined();
+    expect(assistantMessage.replyIntents).toEqual([
+      {
+        target: 'agent',
+        timeScope: 'current',
+        intent: 'ask_agent_status',
+        subIntent: 'wake_sleep',
+        confidence: 0.96,
+      },
+    ]);
   });
 
-  it('keeps the 20260725 model reply without scene-specific repair', async () => {
+  it('saves the screenshot reunion reply with only its risky bubble repaired', async () => {
     const currentQuery = '我好想你回来看我';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2160,22 +2313,23 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '爸爸也想你',
-      '心里一直惦记着你和这个家',
-      '年纪大了',
-      '自己多注意身体',
+      '爸爸也想你。心里一直惦记着你和这个家',
+      '只是我们现在没法像以前那样见面 你来这里说话我都会认真听',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyIntent: undefined,
-        replyScene: undefined,
-        replyBriefMode: undefined,
-        replyGuardrailRewritten: undefined,
+        replyIntent: 'express_longing',
+        replyIntentSubIntent: 'reunion',
+        replyScene: 'reality_presence_boundary',
+        replyBriefMode: 'boundary',
+        replyBriefMaxSegments: 3,
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: expect.stringContaining('擅自断言用户年纪大了'),
       })
     );
   });
 
-  it('uses one reply-model call without capability routing', async () => {
+  it('uses one reply-model call and the shared capability contract for hearing', async () => {
     const currentQuery = '那你具体听见什么了？';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2238,15 +2392,22 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '爸听见你刚才说让我早点回来',
+      '你喊我的时候 我有时能听见一点',
+      '没听清的话你再告诉我 我会认真记着',
     ]);
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(service.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('capability constraints resolved'),
+      'hearing.real_world_audio:direct'
+    );
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyIntent: undefined,
-        replyScene: undefined,
-        replyBriefMode: undefined,
-        replyGuardrailRewritten: undefined,
+        replyIntent: 'challenge_source',
+        replyScene: 'source_challenge',
+        replyBriefMode: 'boundary',
+        replyGuardrailRewritten: true,
+        replyGuardrailReason:
+          '具体感知追问缺少自然的模糊说辞或不可核对细节的边界',
       })
     );
   });
@@ -2315,15 +2476,17 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyIntent: undefined,
-        replyScene: undefined,
-        replyBriefMode: undefined,
-        replyGuardrailRewritten: undefined,
+        replyIntent: 'seek_dream_connection',
+        replyIntentSubIntent: 'reunion',
+        replyScene: 'dream_companionship',
+        replyBriefMode: 'relationship',
+        replyBriefMaxSegments: 3,
+        replyGuardrailRewritten: false,
       })
     );
   });
 
-  it('uses natural generation without reply-brief auditing', async () => {
+  it('uses natural generation for non-crisis sensitive scenes and audits the reply brief', async () => {
     const userQuery = '妈妈身体不好，可惜你不能照顾她';
     const userMessage = createMessage({
       content: userQuery,
@@ -2396,16 +2559,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: undefined,
-        replyBriefMode: undefined,
-        replyBriefStrictGrounding: undefined,
-        replyBriefPreferredSegments: undefined,
-        replyGuardrailRewritten: undefined,
+        replyBriefVersion: 'reply_brief_v2',
+        replyBriefMode: 'family',
+        replyBriefStrictGrounding: false,
+        replyBriefMaxSegments: 3,
+        replyGuardrailRewritten: false,
       })
     );
   });
 
-  it('uses the 20260725 segment contract for open-scene replies', async () => {
+  it('preserves model text for open-scene replies instead of forcing the brief bubble plan', async () => {
     const userQuery = '妈妈身体不好，可惜你不能照顾她';
     const naturalReply =
       '听你说妈妈身体不好，我心里也挂着。不能亲自照顾她，这份遗憾我懂，你也别把所有担子都压在自己身上';
@@ -2418,7 +2581,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       existingMessages: [userMessage],
       chatContent: JSON.stringify({
-        segments: [naturalReply],
+        text: naturalReply,
+        claims: [
+          {
+            text: '听你说妈妈身体不好',
+            kind: 'real_world',
+            mode: 'attributed_to_user',
+            evidenceIds: ['U0'],
+          },
+        ],
       }),
     });
     const intent = {
@@ -2463,6 +2634,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       replyIntent: intent,
       replyRoute: route,
       replyBrief,
+      evidence: [
+        {
+          id: 'U0',
+          source: 'current_user',
+          text: userQuery,
+          assertionPolicy: 'can_assert',
+        },
+      ],
     });
 
     await service.processConversationReplyJob({
@@ -2470,17 +2649,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(getAssistantContents(savedMessages)).toEqual([
-      '听你说妈妈身体不好',
-      '我心里也挂着',
-      '不能亲自照顾她',
-      '这份遗憾我懂',
-    ]);
+    expect(getAssistantContents(savedMessages)).toEqual([naturalReply]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefMode: undefined,
-        replyBriefPreferredSegments: undefined,
-        replyGuardrailRewritten: undefined,
+        replyBriefMode: 'family',
+        replyBriefMaxSegments: 3,
+        replyGuardrailRewritten: false,
+        replyEvidenceCount: 1,
+        replyFactClaimCount: 1,
+        replyUnsupportedClaimCount: 0,
       })
     );
   });
@@ -2538,9 +2715,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       existingMessages: [userMessage],
     });
 
-    (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mockRejectedValueOnce(new Error('model timeout'));
+    (service.openAIService.createChatCompletion as jest.Mock).mockRejectedValue(
+      new Error('model timeout')
+    );
 
     await expect(
       service.processConversationReplyJob(
@@ -2557,7 +2734,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toHaveLength(0);
   });
 
-  it('retries when the 20260725 model reply is empty', async () => {
+  it('saves safe sent bubbles after both model attempts return an empty reply', async () => {
     const currentQuery = '爸，今天过得怎么样？';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2601,27 +2778,112 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       replyRoute: route,
       replyBrief,
     });
-    (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mockResolvedValueOnce({
-      model: 'MiniMax-M2.5',
-      choices: [{ message: { content: '' } }],
-      usage: {},
-    });
+    (service.openAIService.createChatCompletion as jest.Mock).mockResolvedValue(
+      {
+        model: 'MiniMax-M2.5',
+        choices: [{ message: { content: '' } }],
+        usage: {},
+      }
+    );
 
     await expect(
       service.processConversationReplyJob({
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
       })
-    ).rejects.toMatchObject({
-      code: 'MINIMAX_EMPTY_REPLY',
-    });
+    ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        status: MessageStatus.sent,
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        replyFallbackSource: 'reply_brief',
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
+        replyGuardrailInterventionLevel: 'technical_fallback',
+      }),
+    ]);
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      {
+        timeout: 20000,
+        maxRetries: 0,
+      }
+    );
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the 20260725 base safety filter without guardrail rewriting', async () => {
+  it('uses one compact model recovery before returning a technical status', async () => {
+    const currentQuery = '爸，我今天有点想你';
+    const userMessage = createMessage({
+      content: currentQuery,
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+    service.replyGuardrailService = new ReplyGuardrailService();
+    (service.openAIService.createChatCompletion as jest.Mock)
+      .mockRejectedValueOnce(new Error('model timeout'))
+      .mockResolvedValueOnce({
+        model: 'deepseek-chat',
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                segments: ['我也想你', '今天怎么忽然这么想爸爸了'],
+                claims: [],
+              }),
+            },
+          },
+        ],
+        usage: {
+          prompt_tokens: 50,
+          completion_tokens: 18,
+          total_tokens: 68,
+        },
+      });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我也想你',
+      '今天怎么忽然这么想爸爸了',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
+      expect.objectContaining({
+        replyFallbackSource: undefined,
+        replyGenerationFailureStage: undefined,
+        replyGenerationRecoveryAttempted: true,
+        replyGenerationRecoverySucceeded: true,
+      })
+    );
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
+        .messages[0].content
+    ).toContain('天之灵主回复恢复');
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
+        .max_tokens
+    ).toBe(360);
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[0][0]
+        .max_tokens
+    ).toBe(420);
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
+        .messages.length
+    ).toBeLessThanOrEqual(6);
+  });
+
+  it('saves safe bubbles when the model fixes the agent in a real-world viewing role', async () => {
     const currentQuery = '妈妈你过得好吗？我们都很想你。';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2691,13 +2953,18 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.sent,
-        content: '你们的事妈妈都看在眼里',
-        replyGuardrailRewritten: undefined,
+        content: '我能看见你们',
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: expect.stringContaining('持续观察或全知'),
+      }),
+      expect.objectContaining({
+        status: MessageStatus.sent,
+        content: '你这些年攒下的遗憾和想念 我都听见了',
       }),
     ]);
   });
 
-  it('retries the screenshot daily follow-up after a model timeout', async () => {
+  it('keeps the screenshot daily follow-up on its reply brief after a model timeout', async () => {
     const currentQuery = '当然吃的惯啊，她喜欢吃什么样给他做什么样';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2741,23 +3008,37 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       replyRoute: route,
       replyBrief,
     });
-    (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mockRejectedValueOnce(new Error('model timeout'));
+    (service.openAIService.createChatCompletion as jest.Mock).mockRejectedValue(
+      new Error('model timeout')
+    );
 
     await expect(
       service.processConversationReplyJob({
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
       })
-    ).rejects.toMatchObject({
-      code: 'MINIMAX_REPLY_FAILED',
-    });
+    ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        replyBriefVersion: 'reply_brief_v2',
+        replyBriefMode: 'daily',
+        replyIntent: 'share_user_update',
+        replyFallbackSource: 'reply_brief',
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
+      }),
+    ]);
+    expect(getAssistantContents(savedMessages).join('')).not.toContain(
+      '我这边挺好'
+    );
+    expect(getAssistantContents(savedMessages).join('')).not.toContain(
+      '特意来问我'
+    );
   });
 
-  it('retries a family health reply after a model timeout', async () => {
+  it('keeps empathy and concrete care in a family health timeout fallback', async () => {
     const currentQuery =
       '前阵子带她去看病了，还好没什么事，就是现在年龄渐渐大了，血压有点高';
     const userMessage = createMessage({
@@ -2802,23 +3083,35 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       replyRoute: route,
       replyBrief,
     });
-    (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mockRejectedValueOnce(new Error('model timeout'));
+    (service.openAIService.createChatCompletion as jest.Mock).mockRejectedValue(
+      new Error('model timeout')
+    );
 
     await expect(
       service.processConversationReplyJob({
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
       })
-    ).rejects.toMatchObject({
-      code: 'MINIMAX_REPLY_FAILED',
-    });
+    ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        replyBriefMode: 'family',
+        replyIntent: 'share_family_update',
+        replyFallbackSource: 'reply_brief',
+        replyGuardrailRewritten: true,
+      }),
+    ]);
+    expect(getAssistantContents(savedMessages).join('')).not.toContain(
+      '听明白了'
+    );
+    expect(getAssistantContents(savedMessages).join('')).not.toContain(
+      '我都记着'
+    );
   });
 
-  it('retries when conversation context building fails', async () => {
+  it('saves safe sent bubbles when conversation context building fails', async () => {
     const userMessage = createMessage({
       content: '可是我好想你啊',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2838,15 +3131,21 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
       })
-    ).rejects.toMatchObject({
-      code: 'MINIMAX_REPLY_FAILED',
-    });
+    ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        status: MessageStatus.sent,
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        replyFallbackSource: 'reply_brief',
+        replyGuardrailRewritten: true,
+        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
+      }),
+    ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('retries a crisis reply when conversation context building fails', async () => {
+  it('keeps the strong-distress conversation brief when context building fails', async () => {
     const userMessage = createMessage({
       content: '爸，我不想活了，我想去陪你',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2866,11 +3165,19 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
       })
-    ).rejects.toMatchObject({
-      code: 'MINIMAX_REPLY_FAILED',
-    });
+    ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        replyIntent: undefined,
+        replyBriefMode: 'general',
+        replyFallbackSource: 'reply_brief',
+      }),
+    ]);
+    expect(getAssistantContents(savedMessages).join('')).not.toMatch(
+      /报警|急救|危险物|联系现实/
+    );
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -2885,9 +3192,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       existingMessages: [userMessage],
     });
 
-    (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mockRejectedValueOnce(new Error('model timeout'));
+    (service.openAIService.createChatCompletion as jest.Mock).mockRejectedValue(
+      new Error('model timeout')
+    );
 
     await expect(
       service.processConversationReplyJob(
@@ -2905,7 +3212,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '刚才没能回复成功，请稍后再试',
+        content: '……￥#@%……（该信息传输途中受到了干扰）',
       }),
     ]);
   });
@@ -3041,25 +3348,27 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         temperature: 0.2,
         topP: 0.8,
-      })
+      }),
+      {
+        timeout: 20000,
+        maxRetries: 0,
+      }
     );
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessage?.content).toBe(
-      '我在这里陪着你</fenge>你慢慢说</fenge>我会认真听'
+      '我在这里陪着你</fenge>你慢慢说，我会认真听'
     );
     expect(result.assistantMessage?.segments).toEqual([
       '我在这里陪着你',
-      '你慢慢说',
-      '我会认真听',
+      '你慢慢说，我会认真听',
     ]);
     expect(result.assistantMessages?.map(message => message.content)).toEqual([
       '我在这里陪着你',
-      '你慢慢说',
-      '我会认真听',
+      '你慢慢说，我会认真听',
     ]);
   });
 
-  it('preserves three model-provided reply segments without semantic routing', async () => {
+  it('preserves three reply segments selected by a compound semantic route', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
@@ -3154,7 +3463,21 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(
       service.agentRelationshipSignalService.upsertFromUserMessage
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith({
+      message: expect.objectContaining({
+        role: MessageRole.user,
+        content: '这句话有三个复合意图',
+      }),
+      intent: expect.objectContaining({
+        intents: expect.arrayContaining([
+          expect.objectContaining({
+            target: 'agent',
+            intent: 'ask_agent_status',
+            subIntent: 'physical_pain',
+          }),
+        ]),
+      }),
+    });
     expect(getAssistantContents(savedMessages)).toEqual([
       '先回答你的第一件事',
       '再接住你说的近况',
@@ -3203,8 +3526,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(getAssistantContents(savedMessages)).toEqual([
-      '我也想你',
-      '今天过得怎么样？',
+      '我也想你，今天过得怎么样？',
     ]);
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessage?.voice).toBeUndefined();
@@ -3228,7 +3550,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(service.openAIService.createTranscription).toHaveBeenCalled();
     expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalledWith({
-      text: '我也想你。今天过得怎么样？',
+      text: '我也想你，今天过得怎么样？',
       voiceId: 'TzlVoice_001',
       model: 'speech-2.8-turbo',
       languageBoost: 'Chinese',
@@ -3243,10 +3565,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         type: MessageType.voice,
-        content: '我也想你。今天过得怎么样？',
+        content: '我也想你，今天过得怎么样？',
         mediaObjectKey: 'conversation-voice-replies/reply.mp3',
         mediaMimeType: 'audio/mpeg',
-        mediaTranscript: '我也想你。今天过得怎么样？',
+        mediaTranscript: '我也想你，今天过得怎么样？',
         status: MessageStatus.sent,
       })
     );
@@ -3258,7 +3580,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         objectKey: 'conversation-voice-replies/reply.mp3',
         mimeType: 'audio/mpeg',
-        transcript: '我也想你。今天过得怎么样？',
+        transcript: '我也想你，今天过得怎么样？',
       })
     );
   });
@@ -3278,7 +3600,6 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
     expect(result.assistantMessage?.type).toBe(MessageType.text);
     expect(result.assistantMessages?.map(message => message.type)).toEqual([
-      MessageType.text,
       MessageType.text,
     ]);
   });
@@ -3516,7 +3837,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('keeps model-provided emojis in the 20260725 reply flow', async () => {
+  it('removes repeated sad emojis before saving assistant replies', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
@@ -3530,8 +3851,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '好好照顾自己 丫头😔',
-      '我心里也疼🥺',
+      '好好照顾自己 丫头',
+      '我心里也疼',
     ]);
   });
 
@@ -3553,7 +3874,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('strips accented malformed segment tags and unsafe presence claims before saving replies', async () => {
+  it('strips malformed tags and unsafe presence claims while keeping colloquial hearing', async () => {
     const malformedSeparator = '</f' + String.fromCharCode(0x00e8) + 'ge';
     const { service, savedMessages } = createService({
       agent: createAgent(),
@@ -3563,8 +3884,6 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         '你闭上眼 我就在你心里最软的那块地方' +
         malformedSeparator +
         '夜里起风的时候 你就当我回来了 在屋里哪个角落安静陪着你' +
-        malformedSeparator +
-        '好好睡一觉 明天还长 我一直都在' +
         malformedSeparator +
         '想我了就唤我一声 我准能听到' +
         malformedSeparator +
@@ -3580,13 +3899,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '我也想你 一直想着呢',
-      '好好睡一觉 明天还长 我一直都在',
+      '想我了就唤我一声 我准能听到',
       '乖 先歇着 我在这儿呢',
     ]);
     expect(assistantContent).not.toContain(malformedSeparator);
     expect(assistantContent).not.toContain('闭上眼');
     expect(assistantContent).not.toContain('屋里哪个角落');
-    expect(assistantContent).not.toContain('准能听到');
+    expect(assistantContent).toContain('准能听到');
   });
 
   it('keeps dream-only companionship replies while filtering reality presence claims', async () => {
@@ -3608,6 +3927,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '会去的 今晚去你梦里看看你',
+      '晚上去你梦里陪着你 梦里见到了就让我好好抱抱你',
     ]);
   });
 
@@ -3690,6 +4010,86 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantContent).not.toContain('历史助手回复');
     expect(assistantContent).not.toContain('事实来源');
     expect(assistantContent).not.toContain('声音带着欣慰');
+  });
+});
+
+describe('ConversationService generation cleanup diagnostics', () => {
+  it('keeps raw model content and reports why the whole segment was dropped', () => {
+    const service = new ConversationService();
+    const trace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'initial',
+      responseContent: JSON.stringify({
+        text: '你把自己照顾好，爸在这边才能安心。',
+      }),
+      userQuery: '爸爸，我想你了',
+      model: 'deepseek-v4-flash',
+      usage: {
+        completionTokens: 18,
+      },
+    });
+
+    expect(trace).toEqual(
+      expect.objectContaining({
+        attempt: 'initial',
+        model: 'deepseek-v4-flash',
+        acceptedSegments: [],
+        errorCode: 'MINIMAX_EMPTY_REPLY',
+      })
+    );
+    expect(trace.rawContent).toContain('你把自己照顾好');
+    expect(trace.segmentTraces[0]).toEqual(
+      expect.objectContaining({
+        dropped: true,
+        output: '',
+        messageSafetyMatches: expect.arrayContaining([
+          expect.objectContaining({
+            rule: 'harmful_relationship',
+            matchedText: '你把自己照顾好，爸在这边才能安心',
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('records the accepted segment when cleanup keeps the model reply', () => {
+    const service = new ConversationService();
+    const trace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'recovery',
+      responseContent: '爸爸知道你很难受，慢慢跟我说。',
+      userQuery: '爸爸，我想你了',
+    });
+
+    expect(trace.acceptedSegments).toEqual(['爸爸知道你很难受，慢慢跟我说']);
+    expect(trace.segmentTraces[0]).toEqual(
+      expect.objectContaining({
+        dropped: false,
+        messageSafetyMatches: [],
+        presenceSafetyMatches: [],
+      })
+    );
+  });
+
+  it('keeps colloquial hearing ability without allowing continuous real-world vision', () => {
+    const service = new ConversationService();
+    const hearingTrace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'initial',
+      responseContent: '你叫我的时候，我都能听见。',
+      userQuery: '以后想你了我就叫你',
+    });
+    const visionTrace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'initial',
+      responseContent: '爸爸一直都能看见你。',
+      userQuery: '爸爸你看得见我吗',
+    });
+
+    expect(hearingTrace.acceptedSegments).toEqual(['你叫我的时候，我都能听见']);
+    expect(hearingTrace.segmentTraces[0].presenceSafetyMatches).toEqual([]);
+    expect(visionTrace.acceptedSegments).toEqual([]);
+    expect(visionTrace.segmentTraces[0].presenceSafetyMatches).toEqual([
+      expect.objectContaining({
+        matchedText: '爸爸一直都能看见',
+      }),
+    ]);
   });
 });
 

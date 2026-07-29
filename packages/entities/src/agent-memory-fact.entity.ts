@@ -50,6 +50,12 @@ export class AgentMemoryFactEntity extends BaseEntity {
   sourceMessageId?: MongoObjectId;
 
   @Column()
+  isArchived?: boolean;
+
+  @Column()
+  archivedAt?: Date;
+
+  @Column()
   createdAt: Date;
 
   @Column()

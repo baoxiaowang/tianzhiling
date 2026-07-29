@@ -64,6 +64,7 @@ export class RetrieveService {
       );
 
       return activeUserMemories.map(memory => ({
+        id: memory.id,
         content: memory.searchableText,
         role: memory.role,
         createdAt: this.formatMemoryDate(memory.createdAtTs),
