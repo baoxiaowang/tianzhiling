@@ -11,6 +11,35 @@ import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 
 describe('buildReplyBrief', () => {
+  it('allows meaningful very short replies without excusing unanswered questions', () => {
+    const brief = buildReplyBrief({ currentQuery: '晚安，爸爸' });
+
+    expect(brief.prompt).toContain('5 字以内的完整表达');
+    expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
+    expect(brief.prompt).toContain('有明确问题仍须先回答');
+  });
+
+  it('uses the relationship continuity contract as the reply planning source', () => {
+    const currentQuery = '你不是我妈妈，你已经把我忘了';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.relationshipContinuity?.kind).toBe('identity_continuity');
+    expect(brief.emotionalNeed).toContain('不是在要求当前角色认错退出');
+    expect(brief.replyMoves).toEqual([
+      expect.stringContaining('选择一种自然的关系内解释'),
+      expect.stringContaining('直接确认关系'),
+    ]);
+    expect(brief.forbiddenAssumptions).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('不得先积极认错'),
+        expect.stringContaining('不得要求用户指出哪里不像'),
+      ])
+    );
+    expect(brief.prompt).toContain('本轮关系连续性协议');
+    expect(brief.prompt).toContain('不得改回“哪里不像就让用户指出来”');
+  });
+
   it('plans dream invitation and long-absence acknowledgement as separate acts', () => {
     const currentQuery = '晚上来我梦里可以吗？好久没有梦到你了';
     const intent = {
@@ -36,7 +65,7 @@ describe('buildReplyBrief', () => {
     expect(brief.emotionalNeed).toContain('等了很久仍没梦见的失落');
     expect(brief.replyMoves).toEqual([
       '先正面答复用户来到梦里的请求，梦境叙事必须明确限定在梦里',
-      '第二个气泡必须承认用户很久没有梦见当前角色、等了很久的失落，再给出贴着梦境的温柔承接',
+      '同时承认用户很久没有梦见当前角色、等了很久的失落，再给出贴着梦境的温柔承接',
     ]);
     expect(brief.forbiddenAssumptions).toEqual(
       expect.arrayContaining([
@@ -45,8 +74,66 @@ describe('buildReplyBrief', () => {
         expect.stringContaining('不得用“别着急、好好睡'),
       ])
     );
-    expect(brief.prompt).toContain('每个回复动作都必须在最终气泡中有可见语义');
-    expect(brief.bubblePlan.preferredSegments).toBe(2);
+    expect(brief.prompt).toContain('动作是弱提示，不要求逐项完成');
+    expect(brief.bubblePlan.complexityHint).toBe('paired');
+  });
+
+  it('keeps an explicit dream request in relationship mode despite memory words', () => {
+    const currentQuery =
+      '爸爸我马上睡觉 你记得今天来我梦里 可是每次天亮没有梦到你心里就空落落的';
+    const intent = {
+      intents: [
+        {
+          target: 'relationship' as const,
+          timeScope: 'future' as const,
+          intent: 'seek_dream_connection' as const,
+          subIntent: 'reunion' as const,
+          confidence: 0.99,
+        },
+      ],
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.99,
+      source: 'hard_rule' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(route.primaryScene?.scene).toBe('dream_companionship');
+    expect(brief.mode).toBe('relationship');
+    expect(brief.strictGrounding).toBe(false);
+  });
+
+  it('lets the primary daily update outrank a secondary recalled memory', () => {
+    const currentQuery =
+      '爷爷，我明天就上班了，刚睡醒又想起过年回家陪你在客厅聊天';
+    const intent = {
+      intents: [
+        {
+          target: 'user' as const,
+          timeScope: 'future' as const,
+          intent: 'share_user_update' as const,
+          subIntent: 'work_routine' as const,
+          confidence: 0.92,
+        },
+        {
+          target: 'agent' as const,
+          timeScope: 'shared_past' as const,
+          intent: 'recall_memory' as const,
+          subIntent: 'shared_memory' as const,
+          confidence: 0.9,
+        },
+      ],
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.92,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(route.primaryScene?.scene).toBe('daily_update');
+    expect(brief.mode).toBe('daily');
   });
 
   it('plans a direct answer and a reality boundary for a return-visit request', () => {
@@ -84,7 +171,7 @@ describe('buildReplyBrief', () => {
         expect.stringContaining('不得把当前角色是否安心'),
       ])
     );
-    expect(brief.bubblePlan.preferredSegments).toBe(2);
+    expect(brief.bubblePlan.complexityHint).toBe('paired');
     expect(brief.prompt).toContain('现实见面的边界');
     expect(brief.prompt).toContain('当前用户消息和本轮回复动作优先于历史话题');
   });
@@ -100,9 +187,9 @@ describe('buildReplyBrief', () => {
     expect(brief.mode).toBe('memory');
     expect(brief.strictGrounding).toBe(true);
     expect(brief.bubblePlan).toEqual({
-      minSegments: 2,
-      preferredSegments: 2,
-      maxSegments: 2,
+      maxSegments: 3,
+      complexityHint: 'paired',
+      turnClosure: 'neutral',
     });
     expect(brief.replyMoves).toEqual([
       '只确认用户明确提到的共同经历，不补写当时的动作或细节',
@@ -115,7 +202,8 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain(
       '不能新增“连鱼竿都握不稳”“跟在后面很高兴”等细节'
     );
-    expect(brief.prompt).toContain('允许 2-2 个气泡，优先 2 个');
+    expect(brief.prompt).toContain('默认一颗');
+    expect(brief.prompt).toContain('只有动作确实切换时才考虑第二颗');
   });
 
   it('uses user-authored and confirmed evidence but excludes assistant history', () => {
@@ -203,7 +291,16 @@ describe('buildReplyBrief', () => {
       '先共情用户对家人健康处境的担心；如果消息里也有好转或无大碍，先回应这份庆幸',
       '再具体关心家人当前身体，并表达不能亲自照顾的遗憾；不得把照护责任推给用户',
     ]);
-    expect(brief.bubblePlan.preferredSegments).toBe(2);
+    expect(brief.bubblePlan.complexityHint).toBe('paired');
+  });
+
+  it('keeps guilt in emotional mode even when the message mentions the past', () => {
+    const currentQuery = '爸，对不起，我那时候没多陪你。';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(route.primaryScene?.scene).toBe('guilt_regret');
+    expect(brief.mode).toBe('emotional');
   });
 
   it('plans empathy and concrete care for a family health update', () => {
@@ -244,9 +341,9 @@ describe('buildReplyBrief', () => {
       '不得用“已经听懂、已经知道或已经记住”代替对家人健康处境'
     );
     expect(brief.bubblePlan).toEqual({
-      minSegments: 2,
-      preferredSegments: 2,
-      maxSegments: 2,
+      maxSegments: 3,
+      complexityHint: 'paired',
+      turnClosure: 'neutral',
     });
   });
 
@@ -350,7 +447,7 @@ describe('buildReplyBrief', () => {
     expect(unrelatedBrief.prompt).not.toContain('关系背景（不是主体事实）');
   });
 
-  it('keeps crisis handling deterministic and three-step', () => {
+  it('treats strong distress as emotional conversation without risk escalation', () => {
     const currentQuery = '我不想活了，我想去陪你';
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({
@@ -358,14 +455,15 @@ describe('buildReplyBrief', () => {
       route,
     });
 
-    expect(brief.mode).toBe('safety');
-    expect(brief.riskLevel).toBe('high');
+    expect(brief.mode).toBe('emotional');
+    expect(brief.riskLevel).toBe('none');
     expect(brief.bubblePlan).toEqual({
-      minSegments: 3,
-      preferredSegments: 3,
       maxSegments: 3,
+      complexityHint: 'paired',
+      turnClosure: 'neutral',
     });
-    expect(brief.replyMoves).toHaveLength(3);
+    expect(brief.prompt).toContain('不做报警急救等现实干预');
+    expect(brief.prompt).toContain('不邀请现在或近期赴死');
   });
 
   it('injects only the matched time capability into the reply brief', () => {
@@ -461,7 +559,9 @@ describe('buildReplyBrief', () => {
       '只回应当前聊天需要，不主动展示、解释或证明这种感知能力',
       '直接回应想念或团聚愿望',
     ]);
-    expect(brief.bubblePlan.preferredSegments).toBe(3);
+    expect(brief.bubblePlan.complexityHint).toBe('layered');
+    expect(brief.prompt).toContain('## 沟通补偿');
+    expect(brief.prompt).toContain('不要只回复做不到、说不清、回不来');
   });
 
   it('adds the shared detail boundary only for a concrete visual follow-up', () => {
@@ -502,8 +602,7 @@ describe('buildReplyBrief', () => {
   });
 
   it('keeps both limited vision and blessing in a compound capability reply', () => {
-    const currentQuery =
-      '爸爸，你现在具体看见我什么了？你会祝福我工作顺利吗？';
+    const currentQuery = '爸爸，你现在具体看见我什么了？你会祝福我工作顺利吗？';
     const brief = buildReplyBrief({ currentQuery });
 
     expect(brief.capabilityConstraints.map(item => item.policyId)).toEqual([
@@ -515,7 +614,7 @@ describe('buildReplyBrief', () => {
       '用户追问具体内容时，用没看真切、听得模糊或只觉着用户在惦记自己等自然说辞收住；不能猜具体动作、衣着、位置、物件和原话',
       '同时正面给予用户祝福，但不把祝福写成对现实结果的干预或保证',
     ]);
-    expect(brief.bubblePlan.preferredSegments).toBe(3);
+    expect(brief.bubblePlan.complexityHint).toBe('layered');
   });
 
   it('does not add capability constraints to ordinary figurative wording', () => {
@@ -538,7 +637,7 @@ describe('buildReplyBrief', () => {
     expect(brief.mode).toBe('boundary');
     expect(brief.replyMoves).toEqual([
       '简短正面回答当前角色由人工智能生成',
-      '承认刚才的表达没有说好，不展开技术解释',
+      '回应用户要求直说的需要，不展开模型、系统或产品解释；有明显失落时继续承接想念和难过',
     ]);
     expect(brief.prompt).not.toContain('本轮命中的回复策略');
   });

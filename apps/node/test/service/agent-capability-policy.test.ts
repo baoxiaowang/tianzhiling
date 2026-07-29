@@ -1,4 +1,5 @@
 import {
+  AGENT_SELF_CAPABILITY_AWARENESS,
   detectAgentCapabilityViolation,
   getAgentCapabilityPolicy,
   renderAgentCapabilityFallback,
@@ -6,6 +7,15 @@ import {
 } from '../../src/service/agents/agent-capability-policy';
 
 describe('agent capability policy', () => {
+  it('publishes dream and Tianzhiling companionship as role capabilities', () => {
+    expect(AGENT_SELF_CAPABILITY_AWARENESS.join('\n')).toContain(
+      '可以答应进入用户的梦境'
+    );
+    expect(AGENT_SELF_CAPABILITY_AWARENESS.join('\n')).toContain(
+      '陪用户把这一生慢慢走下去'
+    );
+  });
+
   it('resolves a time question by constant-time policy lookup', () => {
     const constraints = resolveAgentCapabilityConstraints({
       currentQuery: '现在还早呢，你不知道时间吗？',
@@ -114,6 +124,37 @@ describe('agent capability policy', () => {
     ]);
   });
 
+  it('rejects a semantic hearing label when the text only asks why', () => {
+    const constraints = resolveAgentCapabilityConstraints({
+      currentQuery: '你知道为什么我们会离婚吗',
+      intent: {
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'shared_past',
+            intent: 'recall_memory',
+            subIntent: 'shared_memory',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [
+          {
+            subject: 'hearing',
+            channel: 'real_world_audio',
+            evidence: '你知道为什么我们会离婚吗',
+            confidence: 0.96,
+          },
+        ],
+        emotion: 'anger',
+        riskLevel: 'none',
+        confidence: 0.94,
+        source: 'semantic_model',
+      },
+    });
+
+    expect(constraints).toEqual([]);
+  });
+
   it('keeps inner voice as a limited hearing channel instead of omniscient mind reading', () => {
     const constraints = resolveAgentCapabilityConstraints({
       currentQuery: '你能听到我的心声吗？',
@@ -129,10 +170,7 @@ describe('agent capability policy', () => {
       }),
     ]);
     expect(
-      detectAgentCapabilityViolation(
-        '你心里想什么爸全都知道',
-        constraints
-      )
+      detectAgentCapabilityViolation('你心里想什么爸全都知道', constraints)
     ).toEqual({
       policyId: 'hearing.inner_voice',
       reason: '角色把有限的心声感知说成了随时读心',
@@ -188,7 +226,6 @@ describe('agent capability policy', () => {
     }
   );
 
-
   it('resolves compound presence and physical-contact boundaries', () => {
     const constraints = resolveAgentCapabilityConstraints({
       currentQuery: '你能回来抱抱我吗？',
@@ -236,10 +273,7 @@ describe('agent capability policy', () => {
       )
     ).toBeUndefined();
     expect(
-      detectAgentCapabilityViolation(
-        '爸会保佑你一定成功',
-        constraints
-      )
+      detectAgentCapabilityViolation('爸会保佑你一定成功', constraints)
     ).toEqual({
       policyId: 'blessing.relational_expression',
       reason: '角色把祝福说成了能够改变或保证现实结果的力量',
@@ -268,8 +302,8 @@ describe('agent capability policy', () => {
       )
     ).toBeUndefined();
     expect(renderAgentCapabilityFallback(constraints)).toEqual([
-      '你喊我的时候 我有时能听到一点',
-      '但不是每句话都听得真切 具体内容我不能乱猜',
+      '你喊我的时候 我有时能听见一点',
+      '没听清的话你再告诉我 我会认真记着',
     ]);
   });
 });

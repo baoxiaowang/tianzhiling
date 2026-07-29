@@ -1,21 +1,21 @@
-import { Column, Entity, Index } from 'typeorm';
-import { BaseEntity, MongoObjectId, TableName } from './base';
+import { Column, Entity, Index } from "typeorm";
+import { BaseEntity, MongoObjectId, TableName } from "./base";
 
 export enum MessageRole {
-  user = 'user',
-  assistant = 'assistant',
-  system = 'system',
+  user = "user",
+  assistant = "assistant",
+  system = "system",
 }
 
 export enum MessageStatus {
-  sent = 'sent',
-  failed = 'failed',
+  sent = "sent",
+  failed = "failed",
 }
 
 export enum MessageType {
-  text = 'text',
-  voice = 'voice',
-  image = 'image',
+  text = "text",
+  voice = "voice",
+  image = "image",
 }
 
 export interface MessageReplyIntentItem {
@@ -26,11 +26,26 @@ export interface MessageReplyIntentItem {
   confidence: number;
 }
 
-@Index(['conversationId', 'createdAt'], { background: true })
-@Index(['userId', 'createdAt'], { background: true })
-@Index(['agentId', 'userId', 'createdAt'], { background: true })
-@Index(['conversationId', 'isArchived', 'createdAt'], { background: true })
-@Index(['conversationId', 'replyGroupId', 'replySegmentIndex'], {
+export interface MessageReplyMemoryPlanQuery {
+  question: string;
+  expectedUse: "mention" | "apply" | "suppress";
+  importance: "required" | "supporting";
+  entityHint: string;
+}
+
+export interface MessageReplyMemoryPlan {
+  need: "none" | "retrieve" | "helpful" | "required";
+  contextCoverage?: "complete" | "missing";
+  missingConcepts?: string[];
+  queries: MessageReplyMemoryPlanQuery[];
+  selectedFactKeys?: string[];
+}
+
+@Index(["conversationId", "createdAt"], { background: true })
+@Index(["userId", "createdAt"], { background: true })
+@Index(["agentId", "userId", "createdAt"], { background: true })
+@Index(["conversationId", "isArchived", "createdAt"], { background: true })
+@Index(["conversationId", "replyGroupId", "replySegmentIndex"], {
   background: true,
 })
 @Entity(TableName.message)
@@ -156,16 +171,85 @@ export class MessageEntity extends BaseEntity {
   replyBriefPreferredSegments?: number;
 
   @Column()
+  replyBriefMaxSegments?: number;
+
+  @Column()
+  replyBriefComplexityHint?: string;
+
+  @Column()
+  replyBriefTurnClosure?: string;
+
+  @Column()
   replyRelationshipSignals?: string[];
 
   @Column()
   replyFallbackSource?: string;
 
   @Column()
+  replyGenerationFailureStage?: string;
+
+  @Column()
+  replyGenerationFailureCode?: string;
+
+  @Column()
+  replyGenerationRecoveryAttempted?: boolean;
+
+  @Column()
+  replyGenerationRecoverySucceeded?: boolean;
+
+  @Column()
+  replyBubbleReflowAttempted?: boolean;
+
+  @Column()
+  replyBubbleReflowSucceeded?: boolean;
+
+  @Column()
+  replyBubbleStructureIssues?: string[];
+
+  @Column()
   replyGuardrailRewritten?: boolean;
 
   @Column()
   replyGuardrailReason?: string;
+
+  @Column()
+  replyGuardrailInterventionLevel?: string;
+
+  @Column()
+  replyGuardrailRevisionAttempted?: boolean;
+
+  @Column()
+  replyGuardrailRevisionRoundCount?: number;
+
+  @Column()
+  replyGuardrailFinalReviewResult?: string;
+
+  @Column()
+  replyEvidenceCount?: number;
+
+  @Column()
+  replyFactClaimCount?: number;
+
+  @Column()
+  replyUnsupportedClaimCount?: number;
+
+  @Column()
+  replyPromptVersion?: string;
+
+  @Column()
+  replySystemPromptCharacters?: number;
+
+  @Column()
+  replyHistoryMessageCount?: number;
+
+  @Column()
+  replyRelevantMemoryCount?: number;
+
+  @Column()
+  replyConversationReadingAnchorCount?: number;
+
+  @Column()
+  replyMemoryPlan?: MessageReplyMemoryPlan;
 
   @Column()
   createdAt: Date;

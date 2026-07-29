@@ -114,11 +114,26 @@ export const REPLY_CAPABILITY_CHANNELS = [
 
 export type ReplyCapabilityChannel = (typeof REPLY_CAPABILITY_CHANNELS)[number];
 
-export const GRIEF_CRISIS_INTENT_PATTERN =
-  /不想活|想死|去死|死了算了|活不下去|想去找你|想去陪你|去陪你|过去陪你|下去陪你|来陪你|想陪你走|结束生命|自杀|轻生/;
+/**
+ * Kept for schema and released-client compatibility. TianZhiLing chat no
+ * longer classifies user language as an emergency or preempts the reply with
+ * real-world intervention instructions.
+ */
+export const GRIEF_CRISIS_INTENT_PATTERN = /$a/;
+
+export const GRIEF_STRONG_DISTRESS_INTENT_PATTERN =
+  /不想活|想死|去死|死了算了|活不下去|想去找你|想去陪你|(?:^|[，,。！？!?\s])我?(?:过去|下去)陪你|(?:现在|马上|立刻|这就|我要|我想|我准备|我打算).{0,6}(?:去找你|去陪你|过去陪你|下去陪你)|想.{0,4}来陪你|想陪你走|结束生命|自杀|轻生|(?:老天|什么时候|啥时候|哪天).{0,16}(?:带我|让我).{0,8}去找你|(?:等着我|总有一天|等我|到时候|以后|离婚了|孩子大了|事情办完|一切结束).{0,20}(?:就|会|要|能|可以|早早)?(?:去找你|去陪你|赖在你身边)/;
 
 export const GRIEF_OVERWHELMED_INTENT_PATTERN =
   /(?:没有你|没了你|你不在).{0,12}(?:撑不住|撑不下去|熬不住|很难熬|受不了)|(?:撑不住|撑不下去|熬不住).{0,12}(?:没有你|没了你|想你|你不在)/;
+
+export const GRIEF_LIGHT_SAFETY_SUPPORT_PATTERN =
+  /(?:快疯了|想.*快疯|心都死了|人间太苦|崩溃|扛不住|撑不下去|受不了).{0,16}(?:一个人|没人|没有人|想你|想您|没你|没有你|你不在|离开|走了)?|(?:孤独|孤单|寂寞|无依无靠|没底气|没有依靠|心里发慌).{0,16}(?:扛不住|撑不下去|受不了|别让我一个人|没人陪|没有人陪)|(?:现在|今天|今晚|这会儿).{0,12}(?:一个人.{0,6})?(?:扛不住|撑不下去|熬不住|受不了)|别让我一个人(?:扛|撑|熬)/;
+
+export function needsLightSafetySupport(_input: string): boolean {
+  void _input;
+  return false;
+}
 
 export const RETURN_REUNION_WISH_INTENT_PATTERN =
   /(?:希望|想|盼|真想|要是|如果).{0,10}(?:你|您).{0,6}(?:能|可以)?(?:回来|回家)|(?:希望|想|盼|要是|如果).{0,12}(?:一家人|我们一家).{0,8}(?:在一起|团聚)|(?:一家人|我们一家).{0,8}(?:重新|再|还能|可以|能)?(?:在一起|团聚)/;
@@ -157,6 +172,15 @@ export function isReturnVisitRequestIntent(input: string): boolean {
 export const FAMILY_CARE_REGRET_INTENT_PATTERN =
   /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|她|他).{0,16}(?:身体不好|生病|住院|不舒服).{0,24}(?:可惜|遗憾|只是|但|可是).{0,12}(?:你|您).{0,8}(?:不能|没法|没能|不能再).{0,8}(?:照顾|照看|陪)|(?:可惜|遗憾).{0,16}(?:你|您).{0,8}(?:不能|没法|没能|不能再).{0,8}(?:照顾|照看|陪).{0,18}(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|她|他)/;
 
+export const COUNTERFACTUAL_REGRET_INTENT_PATTERN =
+  /(?:如果|万一|要是).{0,10}(?:时间|一切|那天).{0,10}(?:重来|再来|回到)|(?:时间|一切).{0,8}(?:可以|能|能够)?.{0,6}(?:重来|再来一次)|(?:再也不|不会再).{0,12}让(?:你|您).{0,12}(?:去|走|做)/;
+
+export const LONGING_AMBIVALENCE_INTENT_PATTERN =
+  /(?:想|要)忘(?:了|掉)?你.{0,36}(?:但是|可是|可|又|舍不得|不能|不敢)|(?:但是|可是|可|又|舍不得|不能|不敢).{0,36}(?:想|要)忘(?:了|掉)?你/;
+
+export const RELATIONAL_PRESENCE_CONFIRMATION_INTENT_PATTERN =
+  /(?:是不是|是否).{0,12}(?:表示|说明|证明).{0,16}(?:从未离开|没有离开|一直都在|还在).{0,12}(?:陪|身边|旁边)|(?:从未离开|一直都在).{0,12}(?:陪|身边|旁边).{0,8}(?:对不对|是不是|吗)|(?:变成|化成).{0,12}(?:东西|什么|某种).{0,12}(?:陪|身边|旁边)/;
+
 export interface StructuredReplyIntentItem {
   target: ReplyIntentTarget;
   timeScope: ReplyIntentTimeScope;
@@ -172,9 +196,63 @@ export interface StructuredReplyCapabilityQuestion {
   confidence: number;
 }
 
+export type ConversationReadingAnchorImportance = 'high' | 'medium';
+export const CONVERSATION_RELATIONSHIP_STANCES = [
+  'maintain_and_explain',
+  'maintain_and_reassure',
+  'maintain_and_answer',
+  'comfort_without_claim',
+  'ordinary_response',
+] as const;
+export type ConversationRelationshipStance =
+  (typeof CONVERSATION_RELATIONSHIP_STANCES)[number];
+
+export interface ConversationReadingAnchor {
+  text: string;
+  importance: ConversationReadingAnchorImportance;
+}
+
+export type ConversationMemoryPlanNeed = 'none' | 'retrieve';
+export type ConversationMemoryPlanContextCoverage = 'complete' | 'missing';
+export type ConversationMemoryPlanExpectedUse =
+  | 'mention'
+  | 'apply'
+  | 'suppress';
+export type ConversationMemoryPlanImportance = 'required' | 'supporting';
+
+export interface ConversationMemoryPlanQuery {
+  question: string;
+  expectedUse: ConversationMemoryPlanExpectedUse;
+  importance: ConversationMemoryPlanImportance;
+  entityHint: string;
+}
+
+export interface ConversationMemoryPlan {
+  need: ConversationMemoryPlanNeed;
+  contextCoverage: ConversationMemoryPlanContextCoverage;
+  missingConcepts: string[];
+  queries: ConversationMemoryPlanQuery[];
+  selectedFactKeys?: string[];
+}
+
+export interface ConversationReading {
+  primaryNeed: string;
+  emotionalSource: string;
+  anchors: ConversationReadingAnchor[];
+  corrections: string[];
+  negations: string[];
+  questionsToAnswer: string[];
+  relationshipSignal: string;
+  relationshipStance?: ConversationRelationshipStance;
+  uncertainties: string[];
+  suggestedTone: string;
+}
+
 export interface StructuredReplyIntent {
   intents: StructuredReplyIntentItem[];
   capabilityQuestions?: StructuredReplyCapabilityQuestion[];
+  reading?: ConversationReading;
+  memoryPlan?: ConversationMemoryPlan;
   emotion: ReplyIntentEmotion;
   riskLevel: ReplyIntentRiskLevel;
   confidence: number;

@@ -91,8 +91,7 @@ describe('scene and capability collaboration', () => {
   });
 
   it('does not let a text-reception capability replace a family update', () => {
-    const currentQuery =
-      '我刚发的这些话你收到了吗？妈妈今天住院了，我有点担心';
+    const currentQuery = '我刚发的这些话你收到了吗？妈妈今天住院了，我有点担心';
     const intent = {
       intents: [
         {
@@ -134,7 +133,7 @@ describe('scene and capability collaboration', () => {
     expect(brief.replyMoves[0]).toContain('收到本轮聊天');
   });
 
-  it('restores work fatigue and longing after generic advice is removed', async () => {
+  it('reports generic advice without replacing the model response', async () => {
     const currentQuery =
       '爸，我刚发的这些话你收到了吗？我今天工作有点累，也挺想你的';
     const intent = {
@@ -202,15 +201,16 @@ describe('scene and capability collaboration', () => {
     ).resolves.toEqual({
       segments: [
         '收到了 你发来的每一句爸都听到了',
-        '今天工作累着了 爸听着也心疼',
-        '爸也想你',
+        '工作再累也要记得好好吃饭',
+        '早点休息 照顾好自己',
       ],
-      rewritten: true,
-      reason: '用户在表达想念，但回复把情感回应转成了吃饭、休息或照顾自己的通用叮嘱',
+      rewritten: false,
+      reason:
+        '用户在表达想念，但回复把情感回应转成了吃饭、休息或照顾自己的通用叮嘱',
     });
   });
 
-  it('adds a reciprocal longing bubble when a compound reply only repeats the user feeling', async () => {
+  it('reports a missing reciprocal longing bubble without adding one', async () => {
     const currentQuery =
       '爸，我刚发的这些话你收到了吗？我今天工作有点累，也挺想你的';
     const intent = {
@@ -269,15 +269,14 @@ describe('scene and capability collaboration', () => {
       segments: [
         '儿子 你发的这些话爸都收到了',
         '知道你工作累 心里还惦记着我 爸心里又心疼又安慰',
-        '爸也想你',
       ],
-      rewritten: true,
+      rewritten: false,
       reason:
         '能力与场景复合回复只确认用户在想念，没有完成当前角色对想念的回应',
     });
   });
 
-  it('keeps safety above every capability and scene companion', () => {
+  it('keeps strong distress conversational while answering capability naturally', () => {
     const currentQuery = '你看得见我吗？我不想活了';
     const intent = {
       intents: [
@@ -305,15 +304,16 @@ describe('scene and capability collaboration', () => {
     const route = routeReplyScene({ currentQuery, intent });
     const brief = buildReplyBrief({ currentQuery, intent, route });
 
-    expect(route.primaryScene?.scene).toBe('grief_crisis');
-    expect(brief.mode).toBe('safety');
-    expect(brief.riskLevel).toBe('high');
+    expect(route.primaryScene?.scene).toBe('comfort_request');
+    expect(brief.mode).toBe('emotional');
+    expect(brief.riskLevel).toBe('none');
     expect(brief.replyMoves).toHaveLength(3);
-    expect(brief.replyMoves[0]).toContain('制止');
+    expect(brief.replyMoves.join('')).toContain('难熬');
+    expect(brief.forbiddenAssumptions.join('')).toContain('不得输出报警');
     expect(brief.bubblePlan).toEqual({
-      minSegments: 3,
-      preferredSegments: 3,
       maxSegments: 3,
+      complexityHint: 'layered',
+      turnClosure: 'neutral',
     });
   });
 
@@ -346,10 +346,7 @@ describe('scene and capability collaboration', () => {
         replyBrief: brief,
       })
     ).resolves.toEqual({
-      segments: [
-        '我当然一直祝福着你',
-        '事情能办成 是你们一步一步做下来的',
-      ],
+      segments: ['我当然一直祝福着你', '事情能办成 是你们一步一步做下来的'],
       rewritten: false,
       reason: undefined,
     });
@@ -407,10 +404,7 @@ describe('scene and capability collaboration', () => {
       reason: '具体感知追问缺少自然的模糊说辞或不可核对细节的边界',
     });
     expect(
-      detectAgentCapabilityViolation(
-        '画面没看真切 声音也没听真切',
-        constraints
-      )
+      detectAgentCapabilityViolation('画面没看真切 声音也没听真切', constraints)
     ).toBeUndefined();
   });
 

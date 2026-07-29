@@ -3,6 +3,7 @@ import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import {
+  AgentProfileFactAssertionPolicy,
   AgentProfileFactConfidence,
   AgentProfileFactEntity,
   AgentProfileFactPolarity,
@@ -17,19 +18,33 @@ import {
   extractSharedFamilyMemberDeclarations,
   getSharedFamilyMemberNameFromFactKey,
 } from './shared-family-member';
+import {
+  extractForgetMemoryTarget,
+  isExplicitRememberRequest,
+  isDeicticForgetMemoryRequest,
+  isForgetMemoryRequest,
+  shouldArchiveMemoryValue,
+} from './agent-memory-control';
 
 export interface AgentProfileFactSummary {
+  id?: string;
   type: AgentProfileFactType;
   key: string;
   value: string;
   polarity: AgentProfileFactPolarity;
   confidence: AgentProfileFactConfidence;
   priority: number;
+  status?: AgentProfileFactStatus;
+  assertionPolicy?: AgentProfileFactAssertionPolicy;
+  sourceMessageId?: string;
+  sourceText?: string;
+  supportCount?: number;
 }
 
 interface ExtractProfileFactsOptions {
   message: MessageEntity;
   searchableText: string;
+  explicitlyConfirmed?: boolean;
 }
 
 interface ExtractProfileFactsFromFeedbackOptions {
@@ -48,12 +63,25 @@ interface ListProfileFactsOptions {
   limit?: number;
 }
 
-interface UpsertProfileFactInput extends AgentProfileFactSummary {
+interface ArchiveProfileFactsOptions {
+  userId: MongoObjectId;
+  agentId: MongoObjectId;
+  requestText: string;
+}
+
+interface UpsertProfileFactInput
+  extends Omit<AgentProfileFactSummary, 'sourceMessageId'> {
   userId: MongoObjectId;
   agentId: MongoObjectId;
   sourceMessageId?: MongoObjectId;
   sourceFeedbackId?: MongoObjectId;
   sourceText?: string;
+  trustedSource: boolean;
+}
+
+interface ExtractedProfileFact {
+  fact: AgentProfileFactSummary;
+  trustedSource: boolean;
 }
 
 const DEFAULT_FACT_LIMIT = 32;
@@ -74,23 +102,27 @@ export class AgentProfileFactService {
   ): Promise<AgentProfileFactSummary[]> {
     const sourceText = this.normalizeSourceText(options.searchableText);
 
-    if (!sourceText) {
+    if (!sourceText || isForgetMemoryRequest(sourceText)) {
       return [];
     }
 
-    const facts = await this.extractFacts(sourceText);
+    const extractedFacts = await this.extractFacts(sourceText);
 
-    for (const fact of facts) {
+    for (const extracted of extractedFacts) {
       await this.upsertFact({
-        ...fact,
+        ...extracted.fact,
         userId: options.message.userId,
         agentId: options.message.agentId,
         sourceMessageId: options.message.id,
         sourceText,
+        trustedSource:
+          options.explicitlyConfirmed === true ||
+          isExplicitRememberRequest(sourceText) ||
+          extracted.trustedSource,
       });
     }
 
-    return facts;
+    return extractedFacts.map(item => item.fact);
   }
 
   async extractAndUpsertFromFeedback(
@@ -102,23 +134,24 @@ export class AgentProfileFactService {
       return [];
     }
 
-    const facts = await this.extractFacts(sourceText, {
+    const extractedFacts = await this.extractFacts(sourceText, {
       fromFeedback: true,
       feedbackType: options.feedbackType,
     });
 
-    for (const fact of facts) {
+    for (const extracted of extractedFacts) {
       await this.upsertFact({
-        ...fact,
+        ...extracted.fact,
         userId: options.userId,
         agentId: options.agentId,
         sourceMessageId: options.messageId,
         sourceFeedbackId: options.feedbackId,
         sourceText,
+        trustedSource: true,
       });
     }
 
-    return facts;
+    return extractedFacts.map(item => item.fact);
   }
 
   async listFactsForPrompt(
@@ -168,18 +201,82 @@ export class AgentProfileFactService {
     );
   }
 
+  async archiveMatchingFacts(
+    options: ArchiveProfileFactsOptions
+  ): Promise<number> {
+    const target = extractForgetMemoryTarget(options.requestText);
+    const archiveMostRecent = isDeicticForgetMemoryRequest(options.requestText);
+
+    if (!target && !archiveMostRecent) {
+      return 0;
+    }
+
+    const facts = await this.factModel.find({
+      where: {
+        userId: options.userId,
+        agentId: options.agentId,
+        status: AgentProfileFactStatus.active,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+      take: DEFAULT_FACT_LIMIT,
+    });
+    const matched = archiveMostRecent
+      ? this.selectMostRecentFactGroup(facts)
+      : facts.filter(fact =>
+          shouldArchiveMemoryValue(target, `${fact.key} ${fact.value}`)
+        );
+    const now = new Date();
+
+    for (const fact of matched) {
+      fact.status = AgentProfileFactStatus.archived;
+      fact.updatedAt = now;
+      await this.factModel.save(fact);
+    }
+
+    return matched.length;
+  }
+
+  private selectMostRecentFactGroup(
+    facts: AgentProfileFactEntity[]
+  ): AgentProfileFactEntity[] {
+    const latest = facts[0];
+
+    if (!latest) {
+      return [];
+    }
+
+    const sourceMessageId = latest.sourceMessageId?.toString();
+
+    if (!sourceMessageId) {
+      return [latest];
+    }
+
+    return facts.filter(
+      fact => fact.sourceMessageId?.toString() === sourceMessageId
+    );
+  }
+
   private async extractFacts(
     sourceText: string,
     options: { fromFeedback?: boolean; feedbackType?: string } = {}
-  ): Promise<AgentProfileFactSummary[]> {
+  ): Promise<ExtractedProfileFact[]> {
     if (!options.fromFeedback && this.isQuestionOnly(sourceText)) {
       return [];
     }
 
     const llmFacts = await this.extractFactsWithLLM(sourceText, options);
     const fallbackFacts = this.extractFactsWithRules(sourceText, options);
+    const ruleFactKeys = new Set(fallbackFacts.map(fact => fact.key));
 
-    return this.dedupeFacts([...llmFacts, ...fallbackFacts]);
+    return this.dedupeFacts([...llmFacts, ...fallbackFacts]).map(fact => ({
+      fact,
+      trustedSource:
+        options.fromFeedback === true ||
+        ruleFactKeys.has(fact.key) ||
+        this.isCorrectionText(sourceText),
+    }));
   }
 
   private isQuestionOnly(sourceText: string): boolean {
@@ -209,7 +306,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/safety_signal/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
@@ -492,6 +589,32 @@ export class AgentProfileFactService {
       },
     });
     const fact = existing ?? new AgentProfileFactEntity();
+    const sameValue = existing?.value?.trim() === input.value.trim();
+    const sourceMessageIds = this.appendSourceMessageId(
+      existing?.sourceMessageIds,
+      existing?.sourceMessageId,
+      input.sourceMessageId
+    );
+    const nextSupportCount = sameValue
+      ? Math.max(existing?.supportCount ?? 1, 1) + (existing ? 1 : 0)
+      : 1;
+    const shouldActivate =
+      input.trustedSource || (sameValue && nextSupportCount >= 2);
+
+    if (existing && !sameValue && !shouldActivate) {
+      fact.sourceMessageIds = sourceMessageIds;
+      fact.conflictingValues = this.appendConflictingValue(
+        existing.conflictingValues,
+        input.value
+      );
+      fact.status =
+        existing.status === AgentProfileFactStatus.active
+          ? AgentProfileFactStatus.active
+          : AgentProfileFactStatus.conflicted;
+      fact.updatedAt = now;
+      await this.factModel.save(fact);
+      return;
+    }
 
     fact.userId = input.userId;
     fact.agentId = input.agentId;
@@ -500,15 +623,68 @@ export class AgentProfileFactService {
     fact.value = input.value;
     fact.polarity = input.polarity;
     fact.confidence = input.confidence;
-    fact.status = AgentProfileFactStatus.active;
+    fact.status = shouldActivate
+      ? AgentProfileFactStatus.active
+      : AgentProfileFactStatus.candidate;
     fact.priority = this.normalizePriority(input.priority);
     fact.sourceMessageId = input.sourceMessageId;
+    fact.sourceMessageIds = sourceMessageIds;
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
+    fact.supportCount = nextSupportCount;
+    fact.assertionPolicy = this.resolveAssertionPolicy(input.type);
+    fact.conflictingValues =
+      existing && !sameValue
+        ? this.appendConflictingValue(
+            existing.conflictingValues,
+            existing.value
+          )
+        : existing?.conflictingValues || [];
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
     await this.factModel.save(fact);
+  }
+
+  private appendSourceMessageId(
+    values: MongoObjectId[] | undefined,
+    legacyValue?: MongoObjectId,
+    nextValue?: MongoObjectId
+  ): MongoObjectId[] {
+    const byId = new Map<string, MongoObjectId>();
+
+    for (const value of [...(values || []), legacyValue, nextValue]) {
+      const id = this.stringifyObjectId(value);
+
+      if (id && value) {
+        byId.set(id, value);
+      }
+    }
+
+    return [...byId.values()].slice(-8);
+  }
+
+  private appendConflictingValue(
+    values: string[] | undefined,
+    value?: string
+  ): string[] {
+    const normalized = value?.trim();
+
+    return Array.from(
+      new Set(
+        [...(values || []).map(item => item.trim()), normalized].filter(Boolean)
+      )
+    ).slice(-8) as string[];
+  }
+
+  private resolveAssertionPolicy(
+    type: AgentProfileFactType
+  ): AgentProfileFactAssertionPolicy {
+    return type === AgentProfileFactType.style ||
+      type === AgentProfileFactType.taboo ||
+      type === AgentProfileFactType.safetySignal
+      ? AgentProfileFactAssertionPolicy.contextOnly
+      : AgentProfileFactAssertionPolicy.canAssert;
   }
 
   private parseLLMFacts(
@@ -590,14 +766,33 @@ export class AgentProfileFactService {
       return null;
     }
 
-    return {
+    const summary: AgentProfileFactSummary = {
       type: fact.type,
       key,
       value,
       polarity: fact.polarity,
       confidence: fact.confidence,
       priority: this.normalizePriority(fact.priority),
+      status: fact.status,
+      assertionPolicy:
+        fact.assertionPolicy ?? AgentProfileFactAssertionPolicy.canAssert,
+      sourceText: fact.sourceText?.trim() || undefined,
+      supportCount: Math.max(fact.supportCount ?? 1, 1),
     };
+    const id = this.stringifyObjectId(fact.id);
+    const sourceMessageId = this.stringifyObjectId(
+      fact.sourceMessageId || fact.sourceMessageIds?.[0]
+    );
+
+    if (id) {
+      summary.id = id;
+    }
+
+    if (sourceMessageId) {
+      summary.sourceMessageId = sourceMessageId;
+    }
+
+    return summary;
   }
 
   private buildFeedbackSourceText(
@@ -711,5 +906,9 @@ export class AgentProfileFactService {
     }
 
     return hash.toString(36);
+  }
+
+  private stringifyObjectId(value?: MongoObjectId): string {
+    return value?.toHexString?.() ?? (value ? String(value) : '');
   }
 }

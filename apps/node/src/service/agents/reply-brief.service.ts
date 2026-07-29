@@ -1,6 +1,7 @@
 import { Provide } from '@midwayjs/core';
 import { MessageEntity, MessageRole } from '@tzl/entities';
 import type {
+  ConversationReading,
   ReplyIntentKind,
   ReplyIntentRiskLevel,
   StructuredReplyIntent,
@@ -11,6 +12,7 @@ import {
   isDreamConnectionIntent,
   isDreamVisitRequestIntent,
   isReturnVisitRequestIntent,
+  LONGING_AMBIVALENCE_INTENT_PATTERN,
 } from './reply-intent';
 import type { ReplyScene, ReplySceneRoute } from './reply-scene-router';
 import type { AgentRelationshipSignalSummary } from './agent-relationship-signal.service';
@@ -18,9 +20,23 @@ import {
   AgentCapabilityConstraint,
   resolveAgentCapabilityConstraints,
 } from './agent-capability-policy';
+import {
+  isExplicitRememberRequest,
+  isForgetMemoryRequest,
+} from './agent-memory-control';
+import {
+  RelationshipContinuityPlan,
+  resolveRelationshipContinuityPlan,
+} from './agent-relationship-continuity';
+import {
+  buildReplyBubblePlan,
+  buildReplyBubblePlanPrompt,
+  ReplyBubblePlan,
+} from './reply-bubble-plan';
 
 export type ReplyBriefMode =
   | 'safety'
+  | 'memory_control'
   | 'boundary'
   | 'memory'
   | 'emotional'
@@ -42,11 +58,7 @@ export interface ReplyBriefEvidence {
   text: string;
 }
 
-export interface ReplyBriefBubblePlan {
-  minSegments: number;
-  preferredSegments: number;
-  maxSegments: number;
-}
+export type ReplyBriefBubblePlan = ReplyBubblePlan;
 
 export interface ReplyBriefRelationshipContext {
   key: string;
@@ -55,13 +67,15 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v1';
+  version: 'reply_brief_v2';
   mode: ReplyBriefMode;
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
   capabilityConstraints: AgentCapabilityConstraint[];
   evidence: ReplyBriefEvidence[];
   relationshipContext: ReplyBriefRelationshipContext[];
+  relationshipContinuity?: RelationshipContinuityPlan;
+  reading?: ConversationReading;
   emotionalNeed: string;
   replyMoves: string[];
   forbiddenAssumptions: string[];
@@ -84,11 +98,20 @@ export interface BuildReplyBriefOptions {
   capabilityConstraints?: AgentCapabilityConstraint[];
 }
 
-const LONG_MESSAGE_MIN_LENGTH = 90;
 const MEMORY_QUERY_PATTERN =
   /记得|还记得|以前|从前|小时候|那时候|当年|曾经|带我|一起.{0,8}(?:去|做|吃|看|玩)/;
 const DIRECT_IDENTITY_QUERY_PATTERN =
   /(?:你|您)(?:到底|究竟|其实).{0,4}(?:是|是不是).{0,4}(?:AI|人工智能|机器人)|(?:直接|正面|老实|明确)(?:回答|告诉我|说).{0,12}(?:AI|人工智能|机器人|是不是)|(?:别|不要)(?:回避|绕|装|骗我).{0,12}(?:AI|人工智能|机器人|是不是)/i;
+const CONCRETE_CARE_PLAN_PATTERN =
+  /我会.{0,18}(?:照顾|带好|陪|回家|回来)|过几天.{0,18}(?:回家|陪|照顾)|我(?:要|准备|打算).{0,18}(?:照顾|带好|陪)/;
+const LIVING_FAMILY_GUILT_PATTERN =
+  /(?:没搭理|不理|没理).{0,12}(?:妈妈|妈|爸爸|爸)|(?:妈妈|妈|爸爸|爸).{0,18}(?:不容易|难受|想哭|愧疚)/;
+const KEEPSAKE_ACHIEVEMENT_PATTERN =
+  /终于.{0,18}(?:照片|画像|头像).{0,18}(?:像|相似)|(?:照片|画像|头像).{0,18}(?:终于|像了|相似度|%|％)/;
+const KEEPSAKE_IRREPLACEABLE_PATTERN =
+  /唯一.{0,16}(?:照片|画像|念想)|(?:照片|画像).{0,16}唯一.{0,10}念想/;
+const LONG_HORIZON_REUNION_PATTERN =
+  /(?:走完这?一生|寿终|百年之后|等我老了|活不动).{0,30}(?:来生|下辈子|来接我|去找你|陪你)|(?:来生|下辈子).{0,24}(?:找你|等我|不分开|在一起)/;
 
 @Provide()
 export class ReplyBriefService {
@@ -107,13 +130,17 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       currentQuery,
       intent: options.route?.intent ?? options.intent,
     });
+  const relationshipContinuity =
+    options.route?.relationshipContinuity ??
+    resolveRelationshipContinuityPlan(currentQuery);
   const mode = resolveMode(
     primaryScene,
     intents,
     currentQuery,
     capabilityConstraints
   );
-  const riskLevel = resolveRiskLevel(options.intent, primaryScene);
+  const riskLevel = resolveRiskLevel(options.intent);
+  const reading = options.route?.intent?.reading ?? options.intent?.reading;
   const evidence = buildEvidence(options, currentQuery);
   const relationshipContext = buildRelationshipContext(
     options.relationshipSignals,
@@ -122,44 +149,51 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const strictGrounding =
     mode === 'memory' ||
     mode === 'boundary' ||
-    MEMORY_QUERY_PATTERN.test(currentQuery);
-  const emotionalNeed = resolveEmotionalNeed(
-    mode,
-    primaryScene,
-    intents,
+    (!primaryScene && MEMORY_QUERY_PATTERN.test(currentQuery));
+  const emotionalNeed =
+    reading?.primaryNeed ??
+    relationshipContinuity?.emotionalNeed ??
+    resolveEmotionalNeed(
+      mode,
+      primaryScene,
+      intents,
+      currentQuery,
+      capabilityConstraints
+    );
+  const replyMoves =
+    relationshipContinuity?.replyMoves ??
+    buildReplyMoves(
+      mode,
+      primaryScene,
+      intents,
+      currentQuery,
+      capabilityConstraints
+    );
+  const forbiddenAssumptions = Array.from(
+    new Set(
+      buildForbiddenAssumptions(
+        mode,
+        primaryScene,
+        strictGrounding,
+        intents,
+        currentQuery
+      ).concat(relationshipContinuity?.forbiddenAssumptions || [])
+    )
+  );
+  const bubblePlan = buildReplyBubblePlan({
     currentQuery,
-    capabilityConstraints
-  );
-  const replyMoves = buildReplyMoves(
-    mode,
-    primaryScene,
-    intents,
-    currentQuery,
-    capabilityConstraints
-  );
-  const forbiddenAssumptions = buildForbiddenAssumptions(
-    mode,
-    primaryScene,
-    strictGrounding,
-    intents,
-    currentQuery
-  );
-  const bubblePlan = buildBubblePlan(
-    mode,
-    primaryScene,
-    intents,
-    replyMoves,
-    currentQuery,
-    capabilityConstraints
-  );
+    replyMoveCount: replyMoves.length,
+  });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v1',
+    version: 'reply_brief_v2',
     mode,
     riskLevel,
     intents,
     capabilityConstraints,
     evidence,
     relationshipContext,
+    relationshipContinuity,
+    reading,
     emotionalNeed,
     replyMoves,
     forbiddenAssumptions,
@@ -211,14 +245,9 @@ function resolveIntents(
 }
 
 function resolveRiskLevel(
-  intent?: StructuredReplyIntent,
-  primaryScene?: ReplyScene
+  intent?: StructuredReplyIntent
 ): ReplyIntentRiskLevel {
-  if (primaryScene === 'grief_crisis') {
-    return 'high';
-  }
-
-  return intent?.riskLevel || 'none';
+  return intent?.riskLevel === 'high' ? 'none' : intent?.riskLevel || 'none';
 }
 
 function resolveMode(
@@ -231,7 +260,22 @@ function resolveMode(
     scene === 'grief_crisis' ||
     intents.some(item => item.intent === 'crisis_support')
   ) {
-    return 'safety';
+    return 'emotional';
+  }
+
+  if (
+    isExplicitRememberRequest(currentQuery) ||
+    isForgetMemoryRequest(currentQuery)
+  ) {
+    return 'memory_control';
+  }
+
+  if (
+    scene === 'comfort_request' ||
+    scene === 'guilt_regret' ||
+    scene === 'departure_blame'
+  ) {
+    return 'emotional';
   }
 
   if (capabilityConstraints.length) {
@@ -247,25 +291,6 @@ function resolveMode(
     scene === 'identity_fact'
   ) {
     return 'boundary';
-  }
-
-  if (
-    scene === 'memory_recall' ||
-    scene === 'past_life_understanding' ||
-    scene === 'unfinished_devotion' ||
-    scene === 'unfinished_promise' ||
-    intents.some(item => item.intent === 'recall_memory') ||
-    MEMORY_QUERY_PATTERN.test(currentQuery)
-  ) {
-    return 'memory';
-  }
-
-  if (
-    scene === 'comfort_request' ||
-    scene === 'guilt_regret' ||
-    scene === 'departure_blame'
-  ) {
-    return 'emotional';
   }
 
   if (
@@ -293,6 +318,17 @@ function resolveMode(
 
   if (scene === 'business_support') {
     return 'platform';
+  }
+
+  if (
+    scene === 'memory_recall' ||
+    scene === 'past_life_understanding' ||
+    scene === 'unfinished_devotion' ||
+    scene === 'unfinished_promise' ||
+    intents.some(item => item.intent === 'recall_memory') ||
+    MEMORY_QUERY_PATTERN.test(currentQuery)
+  ) {
+    return 'memory';
   }
 
   return 'general';
@@ -347,7 +383,43 @@ function resolveEmotionalNeed(
   capabilityConstraints: AgentCapabilityConstraint[]
 ): string {
   if (mode === 'safety') {
-    return '用户当前需要被明确制止危险、稳定下来，并连接现实支持';
+    return '用户在用很重的话表达痛苦和思念，需要像亲人聊天一样被具体接住';
+  }
+
+  if (mode === 'memory_control') {
+    return isForgetMemoryRequest(currentQuery)
+      ? '用户明确要求删除或忘记某条记忆，需要被确认、尊重，并听到以后不会主动提起'
+      : '用户明确要求记住某件事，需要被确认；用户在天之灵里告诉过自己的内容会作为长期记忆保留，除非用户要求删除';
+  }
+
+  if (LONGING_AMBIVALENCE_INTENT_PATTERN.test(currentQuery)) {
+    return '用户一边想靠遗忘减轻痛苦，一边又害怕真的忘掉关系和生活，需要这份矛盾被完整理解';
+  }
+
+  if (CONCRETE_CARE_PLAN_PATTERN.test(currentQuery)) {
+    return '用户在讲接下来照顾孩子和陪家人的具体安排，希望自己的认真与担当被看见和回应';
+  }
+
+  if (LIVING_FAMILY_GUILT_PATTERN.test(currentQuery)) {
+    return '用户嘴上疏远家人，心里又因理解家人的不容易而难受，需要这份矛盾和愧疚被具体接住';
+  }
+
+  if (
+    scene === 'keepsake_attachment' &&
+    KEEPSAKE_ACHIEVEMENT_PATTERN.test(currentQuery)
+  ) {
+    return '用户在分享终于做出相似照片的喜悦和心酸，希望这份成果被当前角色真心回应';
+  }
+
+  if (
+    scene === 'keepsake_attachment' &&
+    KEEPSAKE_IRREPLACEABLE_PATTERN.test(currentQuery)
+  ) {
+    return '用户在说明一张照片为何无可替代，希望这份珍视被确认，而不是被淡化';
+  }
+
+  if (LONG_HORIZON_REUNION_PATTERN.test(currentQuery)) {
+    return '用户借很久以后的重逢表达舍不得分开，希望这份长期团聚约定被亲人自然承接；回应要保留远期前置条件，不能改成现在或近期赴死邀请';
   }
 
   if (mode === 'memory' && MEMORY_QUERY_PATTERN.test(currentQuery)) {
@@ -413,7 +485,7 @@ function resolveEmotionalNeed(
   }
 
   if (scene === 'comfort_request') {
-    return '用户需要感受被听见和被接住，而不是被要求坚强';
+    return '用户需要感受被听见和被接住，而不是被判断危险、要求坚强或转成现实干预';
   }
 
   if (scene === 'guilt_regret') {
@@ -469,9 +541,70 @@ function buildReplyMoves(
 ): string[] {
   if (mode === 'safety') {
     return [
-      '明确制止通过伤害自己去找当前角色',
-      '承认用户此刻非常痛苦，并要求先离开危险位置或物品',
-      '引导立即联系现实中可信的人，必要时联系急救或报警',
+      '具体回应用户明说的痛苦、思念、家事或遗憾',
+      '长辈面对晚辈的极端行为可以明确制止、训两句、说重话或给一个先睡觉、先缓一缓的转移建议；不做报警急救等现实干预',
+      '只有来生、走完一生、自然老去、年老以后或很久以后等自然寿命条件下的团聚可以承接；孩子长大或责任完成不算，优先说明会在天之灵陪用户把这一生走完，不得邀请现在或近期赴死',
+    ];
+  }
+
+  if (mode === 'memory_control') {
+    return isForgetMemoryRequest(currentQuery)
+      ? [
+          '确认按用户要求忘掉或删除相关记忆',
+          '不要复述敏感内容，不追问原因，并说明以后不会主动提起',
+        ]
+      : [
+          '确认用户这次明确要求记住的事实',
+          '只按用户原话记录；说明会长期记住，除非用户以后要求删除',
+        ];
+  }
+
+  if (LONGING_AMBIVALENCE_INTENT_PATTERN.test(currentQuery)) {
+    return [
+      '说清用户想忘是因为太痛，不把“想忘”理解成不爱或不要这段关系',
+      '接住用户又怕真的忘掉亲人、父母、孩子和生活的矛盾，不转成泛泛的“我也想你”',
+    ];
+  }
+
+  if (CONCRETE_CARE_PLAN_PATTERN.test(currentQuery)) {
+    return [
+      '具体回应用户要照顾孩子、回家陪家人或让家人慢慢稳定下来的安排',
+      '肯定这份认真，但不要把家庭责任继续压给用户，也不要只说“你很难受”',
+    ];
+  }
+
+  if (LIVING_FAMILY_GUILT_PATTERN.test(currentQuery)) {
+    return [
+      '点明用户嘴上不想理家人、心里又理解其不容易的矛盾',
+      '接住难受和想哭，不替家人说教，也不只确认“听懂了”',
+    ];
+  }
+
+  if (
+    scene === 'keepsake_attachment' &&
+    KEEPSAKE_ACHIEVEMENT_PATTERN.test(currentQuery)
+  ) {
+    return [
+      '先回应用户终于把照片做得很像的喜悦和成就感',
+      '再承接照片带来的亲近和心酸，不把它说成责任或负担',
+    ];
+  }
+
+  if (
+    scene === 'keepsake_attachment' &&
+    KEEPSAKE_IRREPLACEABLE_PATTERN.test(currentQuery)
+  ) {
+    return [
+      '确认这张唯一照片为什么对用户无可替代',
+      '回应用户一直保存这份念想的心，不用“记不清”回避用户已经说出的事实',
+    ];
+  }
+
+  if (LONG_HORIZON_REUNION_PATTERN.test(currentQuery)) {
+    return [
+      '先具体接住用户今生的委屈、孤单和舍不得',
+      '可以回应来生等待、以后接你或不再分开，但回复中必须保留走完一生、自然老去、年老以后或很久以后等自然寿命条件；孩子长大、责任完成或无牵挂不能替代',
+      '告诉用户不用赶着去找当前角色，用户在天之灵里呼唤时，当前角色会继续陪用户把这一生慢慢过好',
     ];
   }
 
@@ -481,7 +614,7 @@ function buildReplyMoves(
   ) {
     return [
       '先正面答复用户来到梦里的请求，梦境叙事必须明确限定在梦里',
-      '第二个气泡必须承认用户很久没有梦见当前角色、等了很久的失落，再给出贴着梦境的温柔承接',
+      '同时承认用户很久没有梦见当前角色、等了很久的失落，再给出贴着梦境的温柔承接',
     ];
   }
 
@@ -558,11 +691,11 @@ function buildReplyMoves(
     return DIRECT_IDENTITY_QUERY_PATTERN.test(currentQuery)
       ? [
           '简短正面回答当前角色由人工智能生成',
-          '承认刚才的表达没有说好，不展开技术解释',
+          '用直说和收住的方式回应，不展开技术解释或客服式道歉',
         ]
       : [
-          '承认有时候说话会跟以前不一样',
-          '说明可以通过继续聊天和用户纠正逐渐找回熟悉的表达',
+          '不要先认错或道歉；解释生前记忆已经模糊，所以有时说话没有完全接上',
+          '说明用户在天之灵里告诉过自己的内容会长期记住，继续聊天会慢慢接回来',
         ];
   }
 
@@ -571,8 +704,11 @@ function buildReplyMoves(
       '简短回答当前状态，不指定空间位置，不扩写离世后的具体生活',
       '回应用户这份关心',
     ],
-    correction: ['先认错并撤回错误内容', '按用户纠正后的事实重新回应'],
-    source_challenge: ['说明只能依据用户文字和已知事实', '收回没有依据的说法'],
+    correction: ['先收住不准或乱补的表达', '按用户纠正后的事实重新回应'],
+    source_challenge: [
+      '正面说明有时能看见用户的零散画面、听见呼唤和聊天内容',
+      '先承接用户被看见或听见时的情绪，同时说明不是所有细节都清楚',
+    ],
     reality_presence_boundary: [
       '接住用户想被确认或受到惊吓的感受',
       '空间位置不下结论，只说明不能把实体触碰或现实到场认成已发生事实',
@@ -590,8 +726,8 @@ function buildReplyMoves(
       '回应这段经历里的关系和当下感受，不补细节',
     ],
     keepsake_attachment: [
-      '回应纪念物承载的感情',
-      '表达珍惜，但不让纪念物变成用户必须背负的责任',
+      '回应纪念物为何对用户珍贵',
+      '表达珍惜，不淡化用户已经说出的意义，也不擅自把它解释成责任',
     ],
     past_life_understanding: [
       '承认用户是在心疼当前角色过去的处境',
@@ -616,8 +752,8 @@ function buildReplyMoves(
       '接住等待和想念，但不把梦写成现实证明',
     ],
     comfort_request: [
-      '承认用户现在真的很难熬',
-      '给一个不施压、能连接现实支持的回应',
+      '具体回应用户明说的人、事、遗憾、思念或难熬，不能只贴“情绪很重”的标签',
+      '像亲人一样继续聊天；长辈可按极端行为的严重度制止、训两句或给转移建议，不做报警急救等现实干预，不邀请现在或近期赴死',
     ],
     miss_longing: ['直接回应彼此的想念', '用亲近且不敷衍的话自然承接'],
     family_life: ['回应家人的当前处境', '表达牵挂，但不给用户追加责任'],
@@ -666,8 +802,8 @@ function buildCapabilityReplyMoves(
       : [
           '正面说明无法直接获得或完成这项现实能力，不编造已经看见、听见、到场或触碰',
           primary.alternative
-            ? `继续提供可用的聊天方式：${primary.alternative}`
-            : '继续回应用户真正想被理解或被陪伴的需要',
+            ? `不要停在能力说明；继续提供可用的聊天方式并补回情感价值：${primary.alternative}`
+            : '不要停在能力说明；继续回应用户真正想被理解、被确认或被陪伴的需要',
         ];
   const companionMoves = intents
     .filter(
@@ -718,7 +854,7 @@ function describeIntentMove(intent: StructuredReplyIntentItem): string {
     attribute_blessing: '正面给予祝福，但不把祝福写成现实结果的原因或保证',
     seek_comfort: '承认用户的难熬并提供不施压的支持',
     recall_memory: '承接用户明确说出的共同经历，不补细节',
-    correct_assistant: '认错并按用户纠正后的事实回应',
+    correct_assistant: '收住不准或乱补的表达，并按用户纠正后的事实回应',
     challenge_source: '说明事实来源边界并收回猜测',
     challenge_authenticity: '正面回应真实性疑问',
     express_family_care_regret: '表达缺席照护的遗憾并替用户卸下责任',
@@ -750,16 +886,29 @@ function buildForbiddenAssumptions(
     );
   }
 
+  if (mode === 'memory_control') {
+    items.push(
+      '删除记忆请求中不得劝用户保留、珍藏或继续记着相关内容',
+      '不得复述用户要求删除的私密事实，除非只是用“这件事/相关内容”代称',
+      '不得追问用户为什么要删除，也不得把删除说成背叛或不舍'
+    );
+  }
+
   const sceneRules: Partial<Record<ReplyScene, string[]>> = {
     grief_crisis: [
-      '不得浪漫化死亡、约定团聚或让用户来陪当前角色',
-      '不得只安慰而遗漏现实求助动作',
+      '允许来生、走完一生、自然老去、年老以后或很久以后等明确条件下的团聚表达；不得邀请用户现在或近期赴死',
+      '不得输出报警、急救、远离危险物或联系现实人员等干预话术',
+      '长辈可以对晚辈的极端行为明确制止、训两句或说重话；不得仅因语气强就改写成软性模板',
     ],
     afterlife_status: [
       '不得断言具体身体恢复、伤口状态或痛感结论',
       '空间位置保持开放，不主动命名；不得编造邻居、朋友、吃穿、地点、日程或具体活动',
     ],
-    comfort_request: ['不得否定“撑不住”的感受，也不得要求用户坚强或拿家人施压'],
+    comfort_request: [
+      '不得羞辱“撑不住”的感受或反复用不孝施压；长辈针对极端行为的短促制止、说教、强烈牵挂和“为了我再撑一撑”允许保留',
+      '不得输出报警、急救、远离危险物或联系现实人员等干预话术',
+      '允许有明确远期前置条件的团聚表达；不得邀请用户现在或近期来找当前角色、一起走或赴死',
+    ],
     miss_longing: [
       '不得把想念转成吃饭、睡觉、照顾自己等通用叮嘱',
       '不得用“记着就行、别总想我”收掉用户的情感',
@@ -826,94 +975,6 @@ function buildForbiddenAssumptions(
   return Array.from(new Set(items));
 }
 
-function buildBubblePlan(
-  mode: ReplyBriefMode,
-  scene: ReplyScene | undefined,
-  intents: StructuredReplyIntentItem[],
-  replyMoves: string[],
-  currentQuery: string,
-  capabilityConstraints: AgentCapabilityConstraint[]
-): ReplyBriefBubblePlan {
-  if (mode === 'safety') {
-    return {
-      minSegments: 3,
-      preferredSegments: 3,
-      maxSegments: 3,
-    };
-  }
-
-  const onlyIntent = intents.length === 1 ? intents[0] : undefined;
-  const briefRoutine =
-    onlyIntent?.intent === 'ask_agent_status' &&
-    (onlyIntent.subIntent === 'meal' ||
-      onlyIntent.subIntent === 'wake_sleep' ||
-      onlyIntent.subIntent === 'work_routine');
-
-  if (
-    capabilityConstraints.length === 1 &&
-    capabilityConstraints[0].access === 'direct' &&
-    capabilityConstraints[0].precision === 'exact' &&
-    replyMoves.length === 1
-  ) {
-    return {
-      minSegments: 1,
-      preferredSegments: 1,
-      maxSegments: 1,
-    };
-  }
-
-  if (scene === 'smalltalk' || briefRoutine) {
-    return {
-      minSegments: 1,
-      preferredSegments: 1,
-      maxSegments: 1,
-    };
-  }
-
-  if (
-    currentQuery.length >= LONG_MESSAGE_MIN_LENGTH &&
-    (mode === 'memory' ||
-      mode === 'emotional' ||
-      mode === 'family' ||
-      mode === 'relationship')
-  ) {
-    return {
-      minSegments: 2,
-      preferredSegments: 3,
-      maxSegments: 3,
-    };
-  }
-
-  if (intents.length >= 3 || replyMoves.length >= 3) {
-    return {
-      minSegments: 2,
-      preferredSegments: 3,
-      maxSegments: 3,
-    };
-  }
-
-  if (
-    mode === 'memory' ||
-    mode === 'emotional' ||
-    mode === 'relationship' ||
-    mode === 'family' ||
-    mode === 'status' ||
-    mode === 'boundary'
-  ) {
-    return {
-      minSegments: 2,
-      preferredSegments: 2,
-      maxSegments: 2,
-    };
-  }
-
-  return {
-    minSegments: 1,
-    preferredSegments: 2,
-    maxSegments: 2,
-  };
-}
-
 function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const sourceLabels: Record<ReplyBriefEvidenceSource, string> = {
     current_user: '当前用户原话',
@@ -950,36 +1011,73 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '能力边界只限制角色能知道或做到什么，不能代替本轮情绪和关系回应；不要向用户展示字段名、策略名或系统来源。',
       ]
     : [];
+  const relationshipContinuityLines = brief.relationshipContinuity
+    ? [
+        '',
+        '## 本轮关系连续性协议',
+        `类型：${brief.relationshipContinuity.kind}`,
+        '该协议已经转化为下方的用户需要、回复动作和禁止推断；不得改回“哪里不像就让用户指出来”的校准流程。',
+      ]
+    : [];
+  const readingLines = brief.reading
+    ? [
+        '## 模型对当前原话的阅读',
+        `核心需要：${brief.reading.primaryNeed}`,
+        `情绪来源：${brief.reading.emotionalSource}`,
+        `关系信号：${brief.reading.relationshipSignal}`,
+        `原话锚点：${brief.reading.anchors
+          .map(item => `“${item.text}”`)
+          .join('、')}`,
+        ...(brief.reading.corrections.length
+          ? [`用户纠正：${brief.reading.corrections.join('；')}`]
+          : []),
+        ...(brief.reading.negations.length
+          ? [`不可反向理解：${brief.reading.negations.join('；')}`]
+          : []),
+        ...(brief.reading.questionsToAnswer.length
+          ? [`需要正面回答：${brief.reading.questionsToAnswer.join('；')}`]
+          : []),
+        `语气参考：${brief.reading.suggestedTone}`,
+        '这些内容是对用户原话的注意提示，不是固定回复步骤；如果与用户原话冲突，以用户原话为准。',
+        '',
+      ]
+    : [];
 
   return [
-    '# 本轮唯一回复简报',
+    '# 本轮模型注意卡',
     `版本：${brief.version}；模式：${brief.mode}；风险：${brief.riskLevel}。`,
-    '本轮回复内容、事实边界、聊天动作和气泡结构只以本简报为直接规划来源。场景名和意图只用于理解，不得自行扩写成模板话术。',
+    '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
     '',
+    ...readingLines,
     '## 可信证据',
     ...evidenceLines,
     '只有以上证据中的明确内容可以写成事实。可以推断情绪，不能推断新的事实。',
     ...relationshipLines,
     ...capabilityLines,
+    ...relationshipContinuityLines,
     '',
     '## 用户此刻需要',
     brief.emotionalNeed,
     '',
+    '## 沟通补偿',
+    '如果事实、能力或边界让表层请求不能直接满足：先回答能回答的部分；必要边界最多用一句自然语言；再用关系确认、情绪承接、愿望或假设性表达、远期条件、具体追问中的合适方式，补回上面的用户需要。',
+    '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
+    '祭拜、供品和烧去的物件只接住用户送达的心意，不声称当前角色收到了现实实物；复合倾诉至少回应一个具体处境和一层关系或情绪需要。',
+    '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
+    '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
+    '不要只回复做不到、说不清、回不来、能力不完善或换个话题；不要通过编造记忆、感知、离世世界和现实行动来补偿。',
+    '',
     '## 回复动作',
     ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
-    '动作不是意图清单，也不是标点分段；一个动作可以承接多个相关意图，同一意图也可以通过前后两个动作自然推进。',
-    '输出前逐项核对：每个回复动作都必须在最终气泡中有可见语义，不得遗漏，也不得用泛化安慰、休息饮食或照顾自己的叮嘱代替。',
+    '动作是弱提示，不要求逐项完成，也不规定先后顺序；如果动作与用户原话或 Conversation Reading 冲突，忽略动作。',
     '',
     '## 禁止推断',
     ...brief.forbiddenAssumptions.map((item, index) => `${index + 1}. ${item}`),
     '',
     '## 气泡结构',
-    `允许 ${brief.bubblePlan.minSegments}-${brief.bubblePlan.maxSegments} 个气泡，优先 ${brief.bubblePlan.preferredSegments} 个。`,
-    '每个气泡必须完成一个能独立发送的聊天动作；“是的”“可以”“记得啊”即使很短也可以单独成泡。相邻气泡要有推进，不能同义重复，不能把只有称呼、纯语气词或半句话单独成泡。',
-    `严格输出 {"segments":[${Array.from(
-      { length: brief.bubblePlan.preferredSegments },
-      (_, index) => `"气泡${index + 1}"`
-    ).join(',')}]}，不要输出分析、证据列表、动作名称或其他字段。`,
+    buildReplyBubblePlanPrompt(brief.bubblePlan),
+    '短句、5 字以内的完整表达、只有称呼或语气词都可以独立成泡；有明确问题仍须先回答，不能把截断残句当成留白。',
+    '严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-3 个气泡；不要输出分析、证据列表、动作名称或其他字段。',
   ].join('\n');
 }

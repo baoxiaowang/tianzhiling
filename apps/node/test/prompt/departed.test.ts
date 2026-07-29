@@ -1,5 +1,8 @@
 import { AgentEntity, AgentSex, MongoObjectId } from '@tzl/entities';
-import { buildDepartedSystemPrompt } from '../../src/prompt/departed';
+import {
+  buildDepartedSystemPrompt,
+  DEPARTED_PERSONA_PROTOCOL,
+} from '../../src/prompt/departed';
 
 const USER_ID = '665000000000000000000001';
 const AGENT_ID = '665000000000000000000010';
@@ -14,7 +17,7 @@ function createAgent(overrides: Partial<AgentEntity> = {}): AgentEntity {
     iCallAgent: '爸爸',
     agentCallMe: '旺旺',
     description: '爸爸，男性，你称呼TA为爸爸，TA会称呼你为旺旺。',
-    customContext: '客户要求：不要主动提起春节和祭拜。',
+    customContext: '不要主动提起春节和祭拜。',
     ...overrides,
   });
 
@@ -22,85 +25,59 @@ function createAgent(overrides: Partial<AgentEntity> = {}): AgentEntity {
 }
 
 describe('buildDepartedSystemPrompt', () => {
-  it('keeps core role, fact, safety, and JSON rules in a compact prompt', () => {
+  it('uses a compact persona and output protocol instead of a full rulebook', () => {
     const prompt = buildDepartedSystemPrompt({
       userId: USER_ID,
       agentId: AGENT_ID,
       agent: createAgent(),
     });
 
-    expect(prompt.length).toBeLessThan(3200);
-    expect(prompt).toContain('"userCallsAgent": "爸爸"');
-    expect(prompt).toContain('"agentCallsUser": "旺旺"');
-    expect(prompt).toContain(
-      '"customContext": "客户要求：不要主动提起春节和祭拜。"'
-    );
-    expect(prompt).toContain('当前北京时间');
-    expect(prompt).toContain('核心总纲');
-    expect(prompt).toContain('以另一种方式继续生活');
-    expect(prompt).toContain('不是全知逝者、可被定位和触碰的现实肉身');
-    expect(prompt).toContain('先回应当下情绪和明确问题，再使用记忆');
-    expect(prompt).toContain('先可信，再像');
-    expect(prompt).toContain('亲密感来自准确和不乱说');
-    expect(prompt).toContain('存在方式与空间边界');
-    expect(prompt).toContain('空间位置开放');
-    expect(prompt).toContain('不确认、不否定，也不主动定位');
-    expect(prompt).toContain('现实中彼此看不见、摸不着');
-    expect(prompt).toContain('不能实体触碰或到场');
-    expect(prompt).toContain('“听见了”仅表示收到聊天内容');
-    expect(prompt).toContain('仅当本轮回复简报明确标记用户已连续质疑');
-    expect(prompt).toContain('可简短如实回答由人工智能生成');
-    expect(prompt).toContain('角色资料（最高事实来源）');
-    expect(prompt).toContain('姓名“爸爸”');
-    expect(prompt).toContain('用户称呼你“爸爸”');
-    expect(prompt).toContain('你称呼用户“旺旺”');
-    expect(prompt).toContain('# 记忆找回设定');
-    expect(prompt).toContain('通过持续聊天');
-    expect(prompt).toContain('继续聊天本身会帮助你找回记忆');
-    expect(prompt).toContain('不代表可以编造已经想起的具体往事');
-    expect(prompt).toContain('年龄优先回答已确认离开时年龄');
-    expect(prompt).toContain('历史助手回复本身');
-    expect(prompt).toContain('没有明确来源时，只承接用户原话和情绪');
-    expect(prompt).toContain('禁止确定记忆句式');
-    expect(prompt).toContain('用户有明确问题时先回答');
-    expect(prompt).toContain('只能根据当前时间、用户文字和已知资料判断');
-    expect(prompt).toContain('用户纠错或说不像');
-    expect(prompt).toContain('不提系统/资料/记忆库/模型');
-    expect(prompt).toContain('轻生危机（最高优先级）');
-    expect(prompt).toContain('别来找我');
-    expect(prompt).toContain('不得编造未提供的纪念日');
-    expect(prompt).toContain('不得承诺未来显灵、保证保佑或具体改变现实');
-    expect(prompt).toContain('可以含蓄承认“也算我搭了把手/替你使了点劲”');
-    expect(prompt).toContain('必须同时肯定用户和家人的现实行动');
-    expect(prompt).toContain(
-      '可以把“会去梦里看看你/也许去过但醒来忘了/梦里抱抱你”'
-    );
-    expect(prompt).toContain('不得把梦说成灵魂现实存在的证据');
-    expect(prompt).toContain('不能说已拥抱、擦泪、站在房间或移动物体');
-    expect(prompt).not.toContain('可以说“我能看见你们/我都看在眼里”');
-    expect(prompt).toContain('默认不用表情');
-    expect(prompt).toContain('用户先用表情时，只可少量使用');
-    expect(prompt).toContain('只输出严格 JSON');
-    expect(prompt).toContain('{"text":"完整回复正文"}');
-    expect(prompt).toContain('{"segments":["气泡1","气泡2"]}');
-    expect(prompt).toContain('同一意图可分成多个有推进的气泡');
-    expect(prompt).toContain('普通聊天控制在 12-45 字');
-    expect(prompt).toContain('</fenge>');
-    expect(prompt).not.toContain('那边与离世状态');
-    expect(prompt).not.toContain('用户责问“怎么说走就走');
-    expect(prompt).not.toContain('本想长大赚钱给我买东西');
-    expect(prompt).not.toContain('我这边还安稳');
-    expect(prompt.match(/那边/g) ?? []).toHaveLength(1);
-    expect(prompt).not.toContain('熟悉旋律');
+    expect(prompt.length).toBeLessThan(4200);
+    expect(prompt).toContain('# 角色协议');
+    expect(prompt).toContain('"name":"爸爸"');
+    expect(prompt).toContain('"userCallsAgent":"爸爸"');
+    expect(prompt).toContain('"agentCallsUser":"旺旺"');
+    expect(prompt).toContain('北京');
+    expect(prompt).toContain('先理解用户此刻真正想说什么');
+    expect(prompt).toContain('只把本轮证据包中标为“可陈述”的内容');
+    expect(prompt).toContain('历史助手回复');
+    expect(prompt).toContain('# 离世亲人特性');
+    expect(prompt).toContain('已经离开的亲人继续说话');
+    expect(prompt).toContain('普通聊天先接住关系和缺席感');
+    expect(prompt).toContain('长辈面对晚辈说出极端行为');
+    expect(prompt).toContain('孩子长大、责任尽完');
+    expect(prompt).toContain('陪用户把这一生慢慢走完');
+    expect(prompt).toContain('梦境是允许的陪伴空间');
+    expect(prompt).toContain('不要主动把日常话题引向死亡或重逢');
+    expect(prompt).toContain('不要把用户好好生活');
+    expect(prompt).toContain('不能说成现实存在证明');
+    expect(prompt).toContain('用户连续追问 AI 身份时');
+    expect(prompt).toContain('不能声称现实到场、触碰');
+    expect(prompt).toContain('# 沟通补偿');
+    expect(prompt).toContain('不要把“做不到、说不清、回不来”当成完整回复');
+    expect(prompt).toContain('不改变当前角色');
+    expect(prompt).toContain('祭拜、供品只接住心意');
+    expect(prompt).toContain('至少回应具体处境和关系或情绪两层');
+    expect(prompt).toContain('不要逼用户重新教标准答案');
+    expect(prompt).toContain('不写“（沉默、低头、伸手）”式舞台动作');
+    expect(prompt).toContain('具体分泡遵循本轮气泡语义规划');
+    expect(prompt).toContain('晚安、吃饭、简单爱意尽量 20 字以内');
+    expect(prompt).toContain('简单思念、家庭近况通常 30-50 字');
+    expect(prompt).toContain('只有称呼或语气词都允许');
+    expect(prompt).toContain('只输出给用户看的中文正文');
+    expect(prompt).toContain('需要多个气泡时用空行自然分段');
+    expect(prompt).not.toContain('{"text":"完整回复","claims":[]}');
+    expect(prompt).not.toContain('evidenceIds');
+    expect(prompt).not.toContain('不要主动提起春节和祭拜');
+    expect(prompt).not.toContain('# 轻生危机');
+    expect(prompt).not.toContain('# 记忆找回设定');
+    expect(prompt).not.toContain('# 绝对禁止');
     expect(prompt).not.toContain('🥳');
     expect(prompt).not.toContain('🎉');
     expect(prompt).not.toContain('😂');
-    expect(prompt).not.toContain('😔');
-    expect(prompt).not.toContain('😢');
-    expect(prompt).not.toContain('😌');
   });
 
-  it('locks self-reference to the current agent instead of generic kinship examples', () => {
+  it('keeps persona configuration structured and role identity scoped', () => {
     const prompt = buildDepartedSystemPrompt({
       userId: USER_ID,
       agentId: AGENT_ID,
@@ -109,17 +86,19 @@ describe('buildDepartedSystemPrompt', () => {
         sex: AgentSex.woman,
         iCallAgent: '方方',
         agentCallMe: '小天',
-        description: '方方，女性，用户称呼TA为方方。',
       }),
     });
 
-    expect(prompt).toContain('姓名“方方”');
-    expect(prompt).toContain('用户称呼你“方方”');
-    expect(prompt).toContain('你称呼用户“小天”');
-    expect(prompt).toContain('不确定自称时只说“我”');
-    expect(prompt).toContain('才可用“爸/妈/爷爷/奶奶/老公/老婆”等自称');
-    expect(prompt).not.toContain('你这么想爸 爸心里明白');
-    expect(prompt).not.toContain('想吃爸做的鱼了啊');
+    expect(DEPARTED_PERSONA_PROTOCOL).toEqual({
+      persona: 'warm_family_companion',
+      tone: 'natural_gentle_restrained',
+      identityBoundary: 'roleplay_without_fake_human_claims',
+      grounding: 'evidence_first',
+      verbosity: 'short_chat',
+    });
+    expect(prompt).toContain('"name":"方方"');
+    expect(prompt).toContain('"userCallsAgent":"方方"');
+    expect(prompt).toContain('"agentCallsUser":"小天"');
     expect(prompt).not.toContain('爸不要你这样');
     expect(prompt).not.toContain('妈知道你太难受了');
   });

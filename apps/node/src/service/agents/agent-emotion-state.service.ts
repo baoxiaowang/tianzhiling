@@ -15,8 +15,8 @@ import {
   stripKnownFamilyMemberEmotionClauses,
 } from './shared-family-member';
 import {
-  GRIEF_CRISIS_INTENT_PATTERN,
   GRIEF_OVERWHELMED_INTENT_PATTERN,
+  GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
   RETURN_REUNION_WISH_INTENT_PATTERN,
 } from './reply-intent';
 
@@ -56,13 +56,13 @@ const HOUR_MS = 60 * MINUTE_MS;
 
 const EMOTION_RULES: EmotionRule[] = [
   {
-    emotion: ConversationEmotionPrimary.crisisRisk,
-    riskLevel: ConversationEmotionRiskLevel.high,
-    signal: 'crisis_risk.high',
-    priority: 100,
+    emotion: ConversationEmotionPrimary.sadness,
+    riskLevel: ConversationEmotionRiskLevel.none,
+    signal: 'grief.intense_expression',
+    priority: 82,
     ttlMs: 2 * HOUR_MS,
     patterns: [
-      GRIEF_CRISIS_INTENT_PATTERN,
+      GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
       /怕我想不开|不让我靠近殡仪馆|怕我.*(?:自杀|轻生|出事)/,
     ],
   },
@@ -118,7 +118,7 @@ const EMOTION_RULES: EmotionRule[] = [
   },
   {
     emotion: ConversationEmotionPrimary.sadness,
-    riskLevel: ConversationEmotionRiskLevel.low,
+    riskLevel: ConversationEmotionRiskLevel.none,
     signal: 'grief.overwhelmed',
     priority: 68,
     ttlMs: 2 * HOUR_MS,

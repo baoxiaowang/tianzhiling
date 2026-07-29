@@ -1,6 +1,7 @@
 import {
   containsUnsafeAssistantHistoryContent,
   containsUnsafeAssistantMessageContent,
+  findUnsafeAssistantMessageContentMatches,
 } from '../../src/common/message-content-safety';
 
 describe('message content safety', () => {
@@ -34,6 +35,22 @@ describe('message content safety', () => {
         '听你说妈妈身体不好，我也放心不下，你别把担子全压在自己身上。'
       )
     ).toBe(false);
+  });
+
+  it('reports the exact rule and matched text used by assistant cleanup', () => {
+    const matches =
+      findUnsafeAssistantMessageContentMatches(
+        '你把自己照顾好，爸在这边才能安心。'
+      );
+
+    expect(matches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: 'harmful_relationship',
+          matchedText: '你把自己照顾好，爸在这边才能安心',
+        }),
+      ])
+    );
   });
 
   it.each([

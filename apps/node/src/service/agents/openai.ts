@@ -137,6 +137,14 @@ export class OpenAIService {
     return this.openAIConfig?.enabled !== false;
   }
 
+  supportsGuardrailRevision(): boolean {
+    return this.isEnabled();
+  }
+
+  supportsDedicatedHardBoundaryReview(): boolean {
+    return this.isEnabled();
+  }
+
   getDefaultModel(): string {
     return this.openAIConfig?.model?.trim() || '';
   }
