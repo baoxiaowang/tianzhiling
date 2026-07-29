@@ -577,10 +577,15 @@ export class AgentContextService {
       memoryPlan?.contextCoverage === 'missing'
         ? [
             ...memoryPlan.missingConcepts,
-            ...memoryPlan.queries.flatMap(query => [
-              query.question,
-              query.entityHint,
-            ]),
+            ...memoryPlan.queries.reduce<string[]>((values, query) => {
+              if (query.question) {
+                values.push(query.question);
+              }
+              if (query.entityHint) {
+                values.push(query.entityHint);
+              }
+              return values;
+            }, []),
             ...(memoryPlan.selectedFactKeys || []),
           ]
             .map(value => value?.trim())
@@ -622,10 +627,15 @@ export class AgentContextService {
     const concepts = [
       ...memoryPlan.missingConcepts,
       ...(memoryPlan.selectedFactKeys || []),
-      ...memoryPlan.queries.flatMap(query => [
-        query.question,
-        query.entityHint,
-      ]),
+      ...memoryPlan.queries.reduce<string[]>((values, query) => {
+        if (query.question) {
+          values.push(query.question);
+        }
+        if (query.entityHint) {
+          values.push(query.entityHint);
+        }
+        return values;
+      }, []),
     ]
       .map(value => value?.trim())
       .filter((value): value is string => Boolean(value));
