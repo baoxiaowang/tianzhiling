@@ -64,6 +64,9 @@ describe('reply length plan', () => {
       replyMoveCount: 2,
       semanticPlan: true,
       shortTurnParticipation: true,
+      assistantContribution: 'self_expression',
+      continuationGoal: 'repair',
+      closureReadiness: 'blocked',
       turnClosure: 'continue',
     });
 
@@ -150,6 +153,26 @@ describe('reply length plan', () => {
         currentQuery: '爷爷，多和我说几句话吧',
         mode: 'daily',
         scene: 'smalltalk',
+        replyMoveCount: 1,
+        semanticPlan: true,
+        assistantContribution: 'self_expression',
+        continuationGoal: 'deepen',
+        closureReadiness: 'blocked',
+        turnClosure: 'continue',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it('caps a short explicit self-expression request at standard instead of extended', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '想听你说两句，别光说挺好的。',
+        mode: 'emotional',
+        scene: 'comfort_request',
         replyMoveCount: 1,
         semanticPlan: true,
         assistantContribution: 'self_expression',

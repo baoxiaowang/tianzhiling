@@ -27,7 +27,7 @@ export interface ReplyBubbleStructureInspection {
 const EXPLICIT_SINGLE_BUBBLE_PATTERN =
   /(?:说|写|回)(?:一段|一整段)|一段话|不要分段|别分段/;
 const CLOSING_TURN_PATTERN =
-  /(?:先这样|不聊了|别回了|不用回|晚安|睡了|去睡了|休息了|再见|拜拜|回头聊|下次聊)[。！!…~～]*$/;
+  /(?:先这样|不聊了|别回了|不用回|晚安|睡了|先睡吧|去睡了|休息了|再见|拜拜|回头聊|下次聊)[。！!…~～]*$/;
 const CONTINUING_TURN_PATTERN =
   /[?？]\s*$|(?:你说|告诉我|怎么办|怎么想|还记得吗|可以吗|行吗|好吗)[。！!…~～]*$/;
 const PARENTHETICAL_ASIDE_PATTERN = /[（(【[][^）)】\]]{1,64}[）)】\]]/gu;

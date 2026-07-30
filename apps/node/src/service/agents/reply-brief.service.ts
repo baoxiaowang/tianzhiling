@@ -80,6 +80,7 @@ export interface ReplyBriefRelationshipContext {
 export interface ReplyBrief {
   version: 'reply_brief_v6';
   mode: ReplyBriefMode;
+  primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
   capabilityConstraints: AgentCapabilityConstraint[];
@@ -249,6 +250,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const brief: Omit<ReplyBrief, 'prompt'> = {
     version: 'reply_brief_v6',
     mode,
+    primaryScene,
     riskLevel,
     intents,
     capabilityConstraints,
@@ -298,6 +300,7 @@ function resolveReplyParticipationStrategy(options: {
     ) ||
     engagement?.continuationGoal === 'repair' ||
     engagement?.continuationGoal === 'close' ||
+    engagement?.assistantContribution === 'self_expression' ||
     engagement?.assistantContribution === 'strategic_silence' ||
     ['repairing', 'withdrawing', 'closing'].includes(
       engagement?.userConversationState || ''
@@ -320,10 +323,7 @@ function resolveReplyParticipationStrategy(options: {
     return undefined;
   }
 
-  if (
-    engagement?.assistantContribution === 'affection' ||
-    engagement?.assistantContribution === 'self_expression'
-  ) {
+  if (engagement?.assistantContribution === 'affection') {
     return 'reciprocal_self_expression';
   }
   if ((options.conversationPlan?.moves.length || 0) >= 2) {
@@ -1239,6 +1239,11 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const correctionLines =
+    brief.primaryScene === 'correction' ||
+    brief.intents.some(item => item.intent === 'correct_assistant')
+      ? ['## 本轮纠正', '只承认刚才说法不对，不补任何新旧事实细节。', '']
+      : [];
 
   return [
     '# 本轮模型注意卡',
@@ -1249,6 +1254,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...readingLines,
     ...conversationPlanLines,
     ...participationLines,
+    ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
     '只有以上证据中的明确内容可以写成事实。可以推断情绪，不能推断新的事实。',
