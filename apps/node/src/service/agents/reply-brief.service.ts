@@ -73,7 +73,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v3';
+  version: 'reply_brief_v4';
   mode: ReplyBriefMode;
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
@@ -208,7 +208,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     turnClosure: bubblePlan.turnClosure,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v3',
+    version: 'reply_brief_v4',
     mode,
     riskLevel,
     intents,
@@ -1140,7 +1140,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '',
     '## 气泡结构',
     buildReplyBubblePlanPrompt(brief.bubblePlan),
-    '短句、5 字以内的完整表达、只有称呼或语气词都可以独立成泡；有明确问题仍须先回答，不能把截断残句当成留白。',
-    '严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-3 个气泡；不要输出分析、证据列表、动作名称或其他字段。',
+    '短句、5 字以内的表达、只有称呼或语气词都可以独立成泡；不为回复完整性补泡，不能把截断残句当成留白。',
+    '只写真正会发在微信里的话，不使用任何括号旁白；“（偷偷笑）”“（轻声）”“（叹气）”等动作、神态或语气都直接融入措辞。',
+    `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出分析、证据列表、动作名称或其他字段。`,
   ].join('\n');
 }

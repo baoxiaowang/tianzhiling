@@ -69,8 +69,26 @@ describe('reply length plan', () => {
       })
     ).toEqual({
       lengthClass: 'extended',
-      targetCharacters: 60,
-      reviewCharacters: 85,
+      targetCharacters: 50,
+      reviewCharacters: 70,
+    });
+  });
+
+  it('does not turn a long user message into a long reply budget', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery:
+          '老公，家里的花终于开了，可今天又收到法院通知，账户也被冻结了，我和孩子现在都不知道该怎么办，这些事情一下子全挤在一起了',
+        mode: 'family',
+        scene: 'family_update',
+        replyMoveCount: 2,
+        semanticPlan: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
   });
 

@@ -1947,14 +1947,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
       })
     );
     expect(addJobToQueue).not.toHaveBeenCalled();
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.failed,
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
       }),
     ]);
   });
@@ -2082,7 +2082,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessages[0].totalTokens).toBe(22);
   });
 
-  it('uses a minimal model reflow only when a reply exceeds three bubbles', async () => {
+  it('uses a minimal model reflow when a reply exceeds two bubbles', async () => {
     const userMessage = createMessage({
       content: '我想把这些事都跟你说说',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2098,7 +2098,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         choices: [
           {
             message: {
-              content: '第一层回应\n\n第二层回应\n\n第三层回应\n\n第四层回应',
+              content: '第一层回应\n\n第二层回应\n\n第三层回应',
             },
           },
         ],
@@ -2113,7 +2113,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         choices: [
           {
             message: {
-              content: '第一层回应和第二层回应\n\n第三层回应和第四层回应',
+              content: '第一层回应\n\n第二层回应和第三层回应',
             },
           },
         ],
@@ -2135,8 +2135,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).mock.calls[1][0];
 
     expect(assistantMessages.map(message => message.content)).toEqual([
-      '第一层回应和第二层回应',
-      '第三层回应和第四层回应',
+      '第一层回应',
+      '第二层回应和第三层回应',
     ]);
     expect(assistantMessages[0]).toEqual(
       expect.objectContaining({
@@ -2235,10 +2235,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v3',
+        replyBriefVersion: 'reply_brief_v4',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
-        replyBriefMaxSegments: 3,
+        replyBriefMaxSegments: 2,
         replyBriefLengthClass: 'micro',
         replyBriefTargetCharacters: 18,
         replyBriefReviewCharacters: 24,
@@ -2328,7 +2328,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSubIntent: 'reunion',
         replyScene: 'reality_presence_boundary',
         replyBriefMode: 'boundary',
-        replyBriefMaxSegments: 3,
+        replyBriefMaxSegments: 2,
         replyGuardrailRewritten: true,
         replyGuardrailReason: expect.stringContaining('擅自断言用户年纪大了'),
       })
@@ -2486,7 +2486,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSubIntent: 'reunion',
         replyScene: 'dream_companionship',
         replyBriefMode: 'relationship',
-        replyBriefMaxSegments: 3,
+        replyBriefMaxSegments: 2,
         replyGuardrailRewritten: false,
       })
     );
@@ -2565,10 +2565,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v3',
+        replyBriefVersion: 'reply_brief_v4',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
-        replyBriefMaxSegments: 3,
+        replyBriefMaxSegments: 2,
         replyGuardrailRewritten: false,
       })
     );
@@ -2659,7 +2659,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         replyBriefMode: 'family',
-        replyBriefMaxSegments: 3,
+        replyBriefMaxSegments: 2,
         replyGuardrailRewritten: false,
         replyEvidenceCount: 1,
         replyFactClaimCount: 1,
@@ -2803,7 +2803,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.sent,
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
         replyFallbackSource: 'reply_brief',
         replyGuardrailRewritten: true,
         replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
@@ -3027,8 +3027,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
-        replyBriefVersion: 'reply_brief_v3',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        replyBriefVersion: 'reply_brief_v4',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'reply_brief',
@@ -3102,7 +3102,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
         replyBriefMode: 'family',
         replyIntent: 'share_family_update',
         replyFallbackSource: 'reply_brief',
@@ -3142,7 +3142,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.sent,
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
         replyFallbackSource: 'reply_brief',
         replyGuardrailRewritten: true,
         replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
@@ -3175,7 +3175,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
         replyIntent: undefined,
         replyBriefMode: 'general',
         replyFallbackSource: 'reply_brief',
@@ -3218,7 +3218,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……（该信息传输途中受到了干扰）',
+        content: '……￥#@%……“该信息传输途中受到了干扰”',
       }),
     ]);
   });
@@ -3374,7 +3374,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('preserves three reply segments selected by a compound semantic route', async () => {
+  it('compacts three reply segments selected by a compound semantic route', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
@@ -3434,7 +3434,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
           },
         ],
         prompt: 'compound route',
-        maxSegments: 3,
+        maxSegments: 2,
         responseIntents: [
           {
             target: 'agent',
@@ -3486,13 +3486,11 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
     expect(getAssistantContents(savedMessages)).toEqual([
       '先回答你的第一件事',
-      '再接住你说的近况',
-      '我也很想你',
+      '再接住你说的近况 我也很想你',
     ]);
     expect(result.assistantMessages?.map(message => message.content)).toEqual([
       '先回答你的第一件事',
-      '再接住你说的近况',
-      '我也很想你',
+      '再接住你说的近况 我也很想你',
     ]);
   });
 
@@ -3875,8 +3873,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '芳芳 我就在这儿',
-      '你慢慢来',
-      '我都在',
+      '你慢慢来 我都在',
     ]);
   });
 
@@ -3905,8 +3902,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '我也想你 一直想着呢',
-      '想我了就唤我一声 我准能听到',
-      '乖 先歇着 我在这儿呢',
+      '想我了就唤我一声 我准能听到 乖 先歇着 我在这儿呢',
     ]);
     expect(assistantContent).not.toContain(malformedSeparator);
     expect(assistantContent).not.toContain('闭上眼');

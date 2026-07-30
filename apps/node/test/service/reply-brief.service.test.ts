@@ -16,10 +16,10 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(brief.prompt).toContain('5 字以内的完整表达');
+    expect(brief.prompt).toContain('5 字以内的表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
-    expect(brief.prompt).toContain('有明确问题仍须先回答');
-    expect(brief.version).toBe('reply_brief_v3');
+    expect(brief.prompt).toContain('不为回复完整性补泡');
+    expect(brief.version).toBe('reply_brief_v4');
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
@@ -256,7 +256,7 @@ describe('buildReplyBrief', () => {
     expect(brief.mode).toBe('memory');
     expect(brief.strictGrounding).toBe(true);
     expect(brief.bubblePlan).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
     });
@@ -410,7 +410,7 @@ describe('buildReplyBrief', () => {
       '不得用“已经听懂、已经知道或已经记住”代替对家人健康处境'
     );
     expect(brief.bubblePlan).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
     });
@@ -527,7 +527,7 @@ describe('buildReplyBrief', () => {
     expect(brief.mode).toBe('emotional');
     expect(brief.riskLevel).toBe('none');
     expect(brief.bubblePlan).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
     });
