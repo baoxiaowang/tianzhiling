@@ -56,6 +56,24 @@ describe('reply length plan', () => {
     );
   });
 
+  it('keeps an active participation strategy micro even when semantic routing resembles correction', () => {
+    const plan = buildReplyLengthPlan({
+      currentQuery: '你还是没说想我',
+      mode: 'relationship',
+      scene: 'correction',
+      replyMoveCount: 2,
+      semanticPlan: true,
+      shortTurnParticipation: true,
+      turnClosure: 'continue',
+    });
+
+    expect(plan).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 24,
+    });
+  });
+
   it('lets a multi-action semantic plan expand a short daily-routed turn', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '我一气之下把家族群退了。',

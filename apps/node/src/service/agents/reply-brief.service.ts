@@ -1283,6 +1283,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '第二颗不能只是第一颗的同义改写。',
     '短句、5 字以内的表达、只有称呼或语气词都可以独立成泡；不为回复完整性补泡，不能把截断残句当成留白。',
     '只写真正会发在微信里的话，不使用任何括号旁白；“（偷偷笑）”“（轻声）”“（叹气）”等动作、神态或语气都直接融入措辞。',
-    `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出分析、证据列表、动作名称或其他字段。`,
+    brief.bubblePlan.preferTwoSegments
+      ? '严格输出 {"segments":["第一颗","第二颗"]}，恰好两颗且语义不同；不要输出其他字段。'
+      : `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出其他字段。`,
   ].join('\n');
 }

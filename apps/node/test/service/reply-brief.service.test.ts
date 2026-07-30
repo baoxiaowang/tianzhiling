@@ -42,6 +42,8 @@ describe('buildReplyBrief', () => {
       reviewCharacters: 24,
     });
     expect(brief.prompt).toContain('只输出 {"segments":["第一颗","第二颗"]}');
+    expect(brief.prompt).toContain('恰好两颗且语义不同');
+    expect(brief.prompt).not.toContain('由本轮表达需要决定 1-2 个气泡');
     expect(brief.prompt).toContain('不能把第一颗换词再说');
     expect(brief.prompt).toContain(
       '不再使用想、爱、惦记、舍不得或陪伴等关系表达'

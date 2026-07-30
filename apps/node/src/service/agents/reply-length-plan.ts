@@ -81,10 +81,10 @@ export function buildReplyLengthPlan(
     lengthClass = 'standard';
   } else if (options.turnClosure === 'close') {
     lengthClass = 'micro';
-  } else if (options.scene === 'correction') {
-    lengthClass = 'brief';
   } else if (options.shortTurnParticipation) {
     lengthClass = 'micro';
+  } else if (options.scene === 'correction') {
+    lengthClass = 'brief';
   } else if (options.mode === 'emotional') {
     lengthClass = 'extended';
   } else if (options.semanticPlan && replyMoveCount >= 3) {
