@@ -13,7 +13,12 @@ import {
   isReturnVisitRequestIntent,
   REPLY_CAPABILITY_CHANNELS,
   REPLY_CAPABILITY_SUBJECTS,
+  CONVERSATION_MOVE_TYPES,
+  CONVERSATION_QUESTION_NEEDS,
   CONVERSATION_RELATIONSHIP_STANCES,
+  CONVERSATION_SOCIAL_STRATEGIES,
+  CONVERSATION_STANCES,
+  CONVERSATION_TURN_CLOSURES,
   REPLY_INTENT_EMOTIONS,
   REPLY_INTENT_KINDS,
   REPLY_INTENT_RISK_LEVELS,
@@ -22,6 +27,8 @@ import {
   REPLY_INTENT_TIME_SCOPES,
   ConversationMemoryPlan,
   ConversationMemoryPlanQuery,
+  ConversationMove,
+  ConversationMovePlan,
   ConversationReading,
   ConversationReadingAnchor,
   ConversationRelationshipStance,
@@ -49,6 +56,7 @@ export interface ClassifyReplyIntentOptions {
   recentMessages?: MessageEntity[];
   knownFamilyMembers?: string[];
   memoryCandidates?: ReplyIntentMemoryCandidate[];
+  agentPersonaContext?: string;
 }
 
 export interface ReplyIntentMemoryCandidate {
@@ -61,7 +69,7 @@ const CLASSIFIER_MAX_HISTORY_MESSAGES = 6;
 const CLASSIFIER_MAX_MESSAGE_LENGTH = 180;
 const CLASSIFIER_MAX_MEMORY_CANDIDATES = 10;
 const CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH = 90;
-const CLASSIFIER_MAX_TOKENS = 1100;
+const CLASSIFIER_MAX_TOKENS = 1320;
 const FIRST_PERSON_REFERENCE_PATTERN = /(?:^|[，,。！？!?\s])(?:我|俺|咱)/;
 const DEATH_MOMENT_REFERENCE_PATTERN =
   /走的时候|离开的时候|临走|临走前|去世|过世|死的时候|那一刻/;
@@ -112,6 +120,20 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   'reading.relationshipSignal：用简短中文判断是在倾诉、求确认、求解释、事实纠正、风格反馈、责骂、玩笑、告别或普通分享；“不像话你/真不像话”是责骂或不满，不是“你不像亲人”。',
   'reading.relationshipStance：只表示这一轮应保持的关系立场。质疑“不像亲人/是不是亲人”用 maintain_and_explain，不先认错退出，也不让用户教模型校准；关系不安用 maintain_and_reassure；明确提问用 maintain_and_answer；超自然或无证据事实只能 comfort_without_claim；其余用 ordinary_response。',
   'reading.uncertainties：只能列本轮不能确定、不能写成事实的内容；reading.suggestedTone：给出朴素的语气建议，不得提供固定句式。',
+  '除 reading 外，还必须输出 conversationPlan。它是给回复模型的本轮交谈规划，不是固定文案，也不能覆盖用户原话。',
+  'conversationPlan.stance 表示明确态度。亲人聊天不能每轮只安慰：可以赞同、反对、制止、心疼、打趣或暂时不追问。stanceTarget 用简短中文说明态度针对什么。',
+  'conversationPlan.moves 选择一到三个真正有用的聊天行动并说明 goal。结合最近对话避免连续重复同一种行动；用户已经说清时不要为了延续而硬提问。',
+  '不要把 tender 当默认态度，也不要把 acknowledge+comfort+affirm 当默认动作。先看最近两次当前角色回复做过什么；如果已经连续安慰、肯定或建议，本轮优先选择回答、表达不同意见、给台阶、追问新信息、打趣、留白或收住中的合适行动。',
+  '用户说“别安慰我/别讲道理/不用劝”时，本轮不得换一套肯定话继续安慰。承认这个要求后，可直接表态、陪着生气、讨论事实、留白或收住；后续出现新事实时再重新判断。',
+  '家庭矛盾必须把感受和行为分开：可以明确站在用户受委屈的感受一边，但要独立判断退群、绝交、冲动回击等行为。用户问“我做错了吗”必须给有分寸的真实立场，不能为表示亲近而一概说“没错、做得对”。',
+  '如果最近对话已经明确用户做了退群、绝交、摔东西、冲动回击等行为，随后追问“你也觉得我做错了吗”，优先用 mixed 或 disagreeing：说明情绪有来由，同时判断这个做法是否冲动、是否不是最好办法。不得只因亲人要站在用户一边就规划 affirm。',
+  '用户谈生前被刻薄、否定或伤害时，可以承认伤害，但不要连续多轮认错。第一轮承认之后，后续应根据新问题解释当时局限、表达现在的判断、保留人物原有棱角，或问一个真正有助于理解的具体问题。',
+  'conversationPlan.questionNeed：none 表示这一轮不问也完整，helpful 表示自然追问有帮助，necessary 仅用于缺少本轮无法回应的关键信息。沉默、接话、评价和收住都可以是完整回复。',
+  '提问机会：用户带来尚未展开的新事件、矛盾或转折，而且最近两次当前角色回复没有提问时，可选 helpful 并只问一个具体问题。用户明确收尾、要求安静、刚拒绝安慰、已经说出下一步，或当前有明确问题待答时，优先 none。目标是自然变化，不是每轮提问，也不是整段永远不问。',
+  'conversationPlan.socialStrategy 可以使用给台阶、善意含混、顺势陪演、保护性掩饰、故意听岔、幽默化解、转移或留白等高情商策略。善意策略只能保护情绪和关系，不能编造用户现实状态、具体往事、医疗结果、可验证事实或现实能力。',
+  'direct 不是默认策略。最近回复已经直说、当前存在难堪、冲突、嘴硬、撒娇或需要收住时，主动比较 save_face、smooth_over、defuse_humor、benevolent_ambiguity、redirect、strategic_silence 是否更自然；只有正面回答、明确制止或无需绕弯时再用 direct。',
+  '年龄、性别和关系决定称呼、态度分寸与权威位置，但不得套刻板印象：长辈平常不无端说教，晚辈明显过激时可严厉制止；晚辈关心长辈但不长期反向管教；伴侣保持平等熟稔。人格上下文优先控制说法，不决定事实。',
+  'conversationPlan.personaActivation 只列本轮确实需要激活的一到三个画像特点，如“长辈保护欲”“伴侣式打趣”“含蓄肯定”；无必要可为空。',
   '除 reading 外，还必须在 JSON 顶层独立输出 memoryPlan；它只供后台检索，不是回复内容。',
   'memoryPlan 第一步只判断当前消息和最近对话是否已经明确给出本轮回复所需的全部用户个性化事实。全部给出时 contextCoverage=complete、missingConcepts=[]、queries=[]；只要缺少一项就用 contextCoverage=missing。',
   '用户明确限定为临时、今天或只聊当前安排，而且人物、动作、地点或待办已在当前消息说清时，必须判为 complete；普通地点词或“记一下”不能单独触发长期记忆。',
@@ -135,12 +157,25 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `riskLevel 只能是：${REPLY_INTENT_RISK_LEVELS.join(', ')}`,
   `capability subject 只能是：${REPLY_CAPABILITY_SUBJECTS.join(', ')}`,
   `capability channel 只能是：${REPLY_CAPABILITY_CHANNELS.join(', ')}`,
+  `conversationPlan.stance 只能是：${CONVERSATION_STANCES.join(', ')}`,
+  `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(
+    ', '
+  )}`,
+  `conversationPlan.socialStrategy 只能是：${CONVERSATION_SOCIAL_STRATEGIES.join(
+    ', '
+  )}`,
+  `conversationPlan.questionNeed 只能是：${CONVERSATION_QUESTION_NEEDS.join(
+    ', '
+  )}`,
+  `conversationPlan.turnClosure 只能是：${CONVERSATION_TURN_CLOSURES.join(
+    ', '
+  )}`,
   '每个意图的 confidence 和顶层 confidence 都是 0 到 1 的数字。只有语义非常明确时才高于 0.85；信息不足或依赖上下文时应降低。',
   '严格输出一个 JSON 对象，顶层先写 memoryPlan，再写其余字段；不要 Markdown，不要解释，不要添加其他字段：',
   `reading.relationshipStance 只能是：${CONVERSATION_RELATIONSHIP_STANCES.join(
     ', '
   )}`,
-  '{"memoryPlan":{"contextCoverage":"complete","missingConcepts":[],"selectedFactKeys":[],"queries":[]},"intents":[{"target":"agent","timeScope":"current","intent":"ask_agent_status","subIntent":"physical_pain","confidence":0.96}],"capabilityQuestions":[],"reading":{"primaryNeed":"想确认亲人现在是否还在受疼","emotionalSource":"对亲人曾经受苦的牵挂","anchors":[{"text":"身子可还遭罪","importance":"high"}],"corrections":[],"negations":[],"questionsToAnswer":["身子可还遭罪"],"relationshipSignal":"关心并求确认","relationshipStance":"maintain_and_answer","uncertainties":["当前真实身体状态"],"suggestedTone":"直接、朴素、安稳"},"emotion":"concern","riskLevel":"none","confidence":0.96}',
+  '{"memoryPlan":{"contextCoverage":"complete","missingConcepts":[],"selectedFactKeys":[],"queries":[]},"intents":[{"target":"agent","timeScope":"current","intent":"ask_agent_status","subIntent":"physical_pain","confidence":0.96}],"capabilityQuestions":[],"reading":{"primaryNeed":"想确认亲人现在是否还在受疼","emotionalSource":"对亲人曾经受苦的牵挂","anchors":[{"text":"身子可还遭罪","importance":"high"}],"corrections":[],"negations":[],"questionsToAnswer":["身子可还遭罪"],"relationshipSignal":"关心并求确认","relationshipStance":"maintain_and_answer","uncertainties":["当前真实身体状态"],"suggestedTone":"直接、朴素、安稳"},"conversationPlan":{"stance":"tender","stanceTarget":"用户对亲人受苦的牵挂","moves":[{"type":"answer","goal":"先直接回应是否还受疼"},{"type":"comfort","goal":"让用户放下一点担心"}],"socialStrategy":"direct","strategyPurpose":"正面回答比绕开更能安稳用户","questionNeed":"none","turnClosure":"close","personaActivation":["亲人的安稳语气"]},"emotion":"concern","riskLevel":"none","confidence":0.96}',
 ].join('\n');
 
 @Provide()
@@ -262,6 +297,11 @@ export class ReplyIntentClassifierService {
         ...(semanticIntent.reading
           ? {
               reading: semanticIntent.reading,
+            }
+          : {}),
+        ...(semanticIntent.conversationPlan
+          ? {
+              conversationPlan: semanticIntent.conversationPlan,
             }
           : {}),
         ...(semanticIntent.memoryPlan
@@ -651,6 +691,12 @@ export class ReplyIntentClassifierService {
       ]);
 
     return [
+      options.agentPersonaContext?.trim()
+        ? `当前角色关系与人格上下文：${options.agentPersonaContext
+            .trim()
+            .replace(/\s+/g, ' ')
+            .slice(0, 760)}`
+        : '当前角色关系与人格上下文：未提供，请仅按最近对话保守判断',
       knownFamilyMembers
         ? `已确认的其他共同家人：${knownFamilyMembers}`
         : '已确认的其他共同家人：无',
@@ -713,6 +759,9 @@ export class ReplyIntentClassifierService {
         parsed.reading && typeof parsed.reading === 'object'
           ? (parsed.reading as Record<string, unknown>)
           : undefined;
+      const conversationPlan = this.parseConversationMovePlan(
+        parsed.conversationPlan
+      );
       const memoryPlan = this.parseConversationMemoryPlan(
         parsed.memoryPlan ?? rawReading?.memoryPlan,
         memoryCandidates
@@ -774,6 +823,9 @@ export class ReplyIntentClassifierService {
       }
       if (reading) {
         result.reading = reading;
+      }
+      if (conversationPlan) {
+        result.conversationPlan = conversationPlan;
       }
       if (memoryPlan) {
         result.memoryPlan = memoryPlan;
@@ -898,6 +950,75 @@ export class ReplyIntentClassifierService {
       uncertainties: this.parseShortTextList(item.uncertainties, 4, 100),
       suggestedTone,
     };
+  }
+
+  private parseConversationMovePlan(
+    value: unknown
+  ): ConversationMovePlan | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const stance = this.readEnum(item.stance, CONVERSATION_STANCES);
+    const stanceTarget = this.readShortText(item.stanceTarget, 100);
+    const socialStrategy = this.readEnum(
+      item.socialStrategy,
+      CONVERSATION_SOCIAL_STRATEGIES
+    );
+    const strategyPurpose = this.readShortText(item.strategyPurpose, 120);
+    const questionNeed = this.readEnum(
+      item.questionNeed,
+      CONVERSATION_QUESTION_NEEDS
+    );
+    const turnClosure = this.readEnum(
+      item.turnClosure,
+      CONVERSATION_TURN_CLOSURES
+    );
+    const moves = Array.isArray(item.moves)
+      ? item.moves
+          .slice(0, 3)
+          .map(raw => this.parseConversationMove(raw))
+          .filter((move): move is ConversationMove => Boolean(move))
+      : [];
+
+    if (
+      !stance ||
+      !stanceTarget ||
+      !socialStrategy ||
+      !strategyPurpose ||
+      !questionNeed ||
+      !turnClosure ||
+      !moves.length
+    ) {
+      return undefined;
+    }
+
+    return {
+      stance,
+      stanceTarget,
+      moves,
+      socialStrategy,
+      strategyPurpose,
+      questionNeed,
+      turnClosure,
+      personaActivation: this.parseShortTextList(
+        item.personaActivation,
+        3,
+        70
+      ),
+    };
+  }
+
+  private parseConversationMove(value: unknown): ConversationMove | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const type = this.readEnum(item.type, CONVERSATION_MOVE_TYPES);
+    const goal = this.readShortText(item.goal, 110);
+    return type && goal ? { type, goal } : undefined;
   }
 
   private parseConversationMemoryPlan(

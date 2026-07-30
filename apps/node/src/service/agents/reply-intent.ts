@@ -248,10 +248,90 @@ export interface ConversationReading {
   suggestedTone: string;
 }
 
+export const CONVERSATION_STANCES = [
+  'tender',
+  'concerned',
+  'affirming',
+  'disagreeing',
+  'protective',
+  'stern',
+  'playful',
+  'neutral',
+  'mixed',
+] as const;
+export type ConversationStance = (typeof CONVERSATION_STANCES)[number];
+
+export const CONVERSATION_MOVE_TYPES = [
+  'acknowledge',
+  'answer',
+  'ask',
+  'affirm',
+  'disagree',
+  'stop',
+  'comfort',
+  'suggest',
+  'share_stance',
+  'save_face',
+  'play_along',
+  'redirect',
+  'leave_space',
+  'close',
+] as const;
+export type ConversationMoveType = (typeof CONVERSATION_MOVE_TYPES)[number];
+
+export const CONVERSATION_SOCIAL_STRATEGIES = [
+  'direct',
+  'save_face',
+  'protective_concealment',
+  'benevolent_ambiguity',
+  'protective_fiction',
+  'play_along',
+  'deliberate_misunderstanding',
+  'smooth_over',
+  'defuse_humor',
+  'redirect',
+  'strategic_silence',
+] as const;
+export type ConversationSocialStrategy =
+  (typeof CONVERSATION_SOCIAL_STRATEGIES)[number];
+
+export const CONVERSATION_QUESTION_NEEDS = [
+  'none',
+  'helpful',
+  'necessary',
+] as const;
+export type ConversationQuestionNeed =
+  (typeof CONVERSATION_QUESTION_NEEDS)[number];
+
+export const CONVERSATION_TURN_CLOSURES = [
+  'close',
+  'continue',
+  'neutral',
+] as const;
+export type ConversationTurnClosure =
+  (typeof CONVERSATION_TURN_CLOSURES)[number];
+
+export interface ConversationMove {
+  type: ConversationMoveType;
+  goal: string;
+}
+
+export interface ConversationMovePlan {
+  stance: ConversationStance;
+  stanceTarget: string;
+  moves: ConversationMove[];
+  socialStrategy: ConversationSocialStrategy;
+  strategyPurpose: string;
+  questionNeed: ConversationQuestionNeed;
+  turnClosure: ConversationTurnClosure;
+  personaActivation: string[];
+}
+
 export interface StructuredReplyIntent {
   intents: StructuredReplyIntentItem[];
   capabilityQuestions?: StructuredReplyCapabilityQuestion[];
   reading?: ConversationReading;
+  conversationPlan?: ConversationMovePlan;
   memoryPlan?: ConversationMemoryPlan;
   emotion: ReplyIntentEmotion;
   riskLevel: ReplyIntentRiskLevel;
