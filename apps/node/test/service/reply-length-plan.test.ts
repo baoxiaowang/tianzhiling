@@ -21,6 +21,22 @@ describe('reply length plan', () => {
     });
   });
 
+  it('keeps a two-bubble short-turn strategy inside the micro total budget', () => {
+    const plan = buildReplyLengthPlan({
+      currentQuery: '妈，我想你了',
+      mode: 'relationship',
+      replyMoveCount: 2,
+      shortTurnParticipation: true,
+      turnClosure: 'neutral',
+    });
+
+    expect(plan).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 24,
+    });
+  });
+
   it('keeps a correction brief instead of explaining and comforting repeatedly', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '你刚才说的故事不是和我的，你怎么胡说啊',
@@ -36,7 +52,7 @@ describe('reply length plan', () => {
       reviewCharacters: 38,
     });
     expect(buildReplyLengthPlanPrompt(plan)).toContain(
-      '删除同义安慰、解释、总结和通用叮嘱'
+      '删重复、解释、总结和通用叮嘱'
     );
   });
 
@@ -107,6 +123,65 @@ describe('reply length plan', () => {
       lengthClass: 'standard',
       targetCharacters: 40,
       reviewCharacters: 55,
+    });
+  });
+
+  it('reserves room for semantic self-expression on a short request', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '爷爷，多和我说几句话吧',
+        mode: 'daily',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        semanticPlan: true,
+        assistantContribution: 'self_expression',
+        continuationGoal: 'deepen',
+        closureReadiness: 'blocked',
+        turnClosure: 'continue',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it('gives relationship repair a brief floor without forcing a long reply', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '你是不是不想理我',
+        mode: 'daily',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        semanticPlan: true,
+        assistantContribution: 'answer',
+        continuationGoal: 'repair',
+        closureReadiness: 'blocked',
+        turnClosure: 'continue',
+      })
+    ).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+    });
+  });
+
+  it('keeps explicit strategic silence micro', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '先别说话，陪我安静一会',
+        mode: 'relationship',
+        replyMoveCount: 1,
+        semanticPlan: true,
+        assistantContribution: 'strategic_silence',
+        continuationGoal: 'close',
+        closureReadiness: 'ready',
+        turnClosure: 'close',
+      })
+    ).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 24,
     });
   });
 

@@ -19,13 +19,60 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('5 字以内的表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
     expect(brief.prompt).toContain('不为回复完整性补泡');
-    expect(brief.version).toBe('reply_brief_v4');
+    expect(brief.version).toBe('reply_brief_v6');
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
       reviewCharacters: 24,
     });
     expect(brief.prompt).toContain('## 总字数预算');
+  });
+
+  it('injects one non-repeating participation action into an eligible short turn', () => {
+    const currentQuery = '妈，我想你了';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.participationStrategy).toBe('reciprocal_self_expression');
+    expect(brief.bubblePlan.complexityHint).toBe('paired');
+    expect(brief.bubblePlan.preferTwoSegments).toBe(true);
+    expect(brief.lengthPlan).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 24,
+    });
+    expect(brief.prompt).toContain('只输出 {"segments":["第一颗","第二颗"]}');
+    expect(brief.prompt).toContain('不能把第一颗换词再说');
+    expect(brief.prompt).toContain(
+      '不再使用想、爱、惦记、舍不得或陪伴等关系表达'
+    );
+  });
+
+  it('does not inject short-turn participation into a closing turn', () => {
+    const currentQuery = '妈妈晚安';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.participationStrategy).toBeUndefined();
+    expect(brief.lengthPlan.lengthClass).toBe('micro');
+    expect(brief.prompt).not.toContain('## 短轮参与');
+  });
+
+  it('cools down short-turn participation after the previous assistant reply used it', () => {
+    const currentQuery = '今天吃了吗';
+    const route = routeReplyScene({ currentQuery });
+    const previousAssistant = {
+      role: MessageRole.assistant,
+      content: '吃了，你别惦记',
+      replyParticipationStrategy: 'light_self_disclosure',
+    } as MessageEntity;
+    const brief = buildReplyBrief({
+      currentQuery,
+      route,
+      recentMessages: [previousAssistant],
+    });
+
+    expect(brief.participationStrategy).toBeUndefined();
   });
 
   it('passes semantic stance and social action planning through as weak guidance', () => {
@@ -58,6 +105,15 @@ describe('buildReplyBrief', () => {
         questionNeed: 'none' as const,
         turnClosure: 'close' as const,
         personaActivation: ['父亲式含蓄肯定'],
+        engagement: {
+          userConversationState: 'repairing' as const,
+          openLoop: '用户需要父亲用实际回应修复被敷衍的感觉',
+          continuationGoal: 'repair' as const,
+          assistantContribution: 'stance' as const,
+          mustContribute: '明确反对用户全盘否定，并给出真实态度',
+          avoidRepeatingMove: '不要只解释、道歉或泛泛安慰',
+          closureReadiness: 'blocked' as const,
+        },
       },
       emotion: 'sadness' as const,
       riskLevel: 'none' as const,
@@ -73,6 +129,114 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('save_face');
     expect(brief.prompt).toContain('父亲式含蓄肯定');
     expect(brief.prompt).toContain('不要把计划中的回答或解释改成反问');
+    expect(brief.prompt).toContain(
+      '用户仍在等：用户需要父亲用实际回应修复被敷衍的感觉'
+    );
+    expect(brief.prompt).toContain('当轮实际改变说法或聊天行动');
+    expect(brief.prompt).toContain(
+      '必须把规划中已有的一个具体上下文锚点自然写进正文'
+    );
+    expect(brief.prompt).toContain('开放点尚未解决');
+  });
+
+  it('asks the agent to contribute before returning the turn to the user', () => {
+    const currentQuery = '爷爷，您多跟我说几句吧。';
+    const intent = {
+      intents: [
+        {
+          target: 'relationship' as const,
+          timeScope: 'current' as const,
+          intent: 'express_longing' as const,
+          subIntent: 'grief_support' as const,
+          confidence: 0.95,
+        },
+      ],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户希望爷爷主动说话',
+        moves: [
+          {
+            type: 'self_disclose' as const,
+            goal: '主动说一段有内容的话',
+          },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '当前角色先承担表达',
+        questionNeed: 'none' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: ['爷爷式主动关心'],
+        engagement: {
+          userConversationState: 'deepening' as const,
+          openLoop: '用户仍在等爷爷主动多说几句',
+          continuationGoal: 'deepen' as const,
+          assistantContribution: 'self_expression' as const,
+          mustContribute: '主动说出一段有内容的话',
+          avoidRepeatingMove: '不要只说你说我听着',
+          closureReadiness: 'blocked' as const,
+        },
+      },
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.prompt).toContain('先真正说出一段有内容的话');
+    expect(brief.prompt).toContain('不把表达劳动退回用户');
+    expect(brief.prompt).toContain('只承诺“以后/那我多说几句”');
+    expect(brief.prompt).toContain('不要只说你说我听着');
+    expect(brief.lengthPlan.targetCharacters).toBeGreaterThanOrEqual(40);
+  });
+
+  it('does not reopen a turn that the user has clearly closed', () => {
+    const currentQuery = '爷爷晚安，我先睡了。';
+    const intent = {
+      intents: [
+        {
+          target: 'relationship' as const,
+          timeScope: 'current' as const,
+          intent: 'express_longing' as const,
+          subIntent: 'other' as const,
+          confidence: 0.9,
+        },
+      ],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户正在道晚安',
+        moves: [
+          {
+            type: 'close' as const,
+            goal: '自然回应晚安并收住',
+          },
+        ],
+        socialStrategy: 'strategic_silence' as const,
+        strategyPurpose: '尊重用户明确结束本轮',
+        questionNeed: 'none' as const,
+        turnClosure: 'close' as const,
+        personaActivation: ['爷爷式简短道别'],
+        engagement: {
+          userConversationState: 'closing' as const,
+          openLoop: '用户已经明确结束本轮',
+          continuationGoal: 'close' as const,
+          assistantContribution: 'affection' as const,
+          mustContribute: '简短回应晚安',
+          avoidRepeatingMove: '不要重新提问或展开新话题',
+          closureReadiness: 'ready' as const,
+        },
+      },
+      emotion: 'attachment' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.9,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.lengthPlan.lengthClass).toBe('micro');
+    expect(brief.prompt).not.toContain('开放点尚未解决');
+    expect(brief.prompt).not.toContain('先真正说出一段有内容的话');
   });
 
   it('gives a factual correction a brief total reply budget', () => {
@@ -268,11 +432,9 @@ describe('buildReplyBrief', () => {
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
     expect(brief.prompt).toContain('可以推断情绪，不能推断新的事实');
-    expect(brief.prompt).toContain(
-      '不能新增“连鱼竿都握不稳”“跟在后面很高兴”等细节'
-    );
+    expect(brief.prompt).toContain('不补当时的动作、话语、感受或表现');
     expect(brief.prompt).toContain('默认一颗');
-    expect(brief.prompt).toContain('只有动作确实切换时才考虑第二颗');
+    expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
   });
 
   it('uses user-authored and confirmed evidence but excludes assistant history', () => {
@@ -530,6 +692,7 @@ describe('buildReplyBrief', () => {
       maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
+      preferTwoSegments: true,
     });
     expect(brief.prompt).toContain('不做报警急救等现实干预');
     expect(brief.prompt).toContain('不邀请现在或近期赴死');
@@ -630,7 +793,7 @@ describe('buildReplyBrief', () => {
     ]);
     expect(brief.bubblePlan.complexityHint).toBe('layered');
     expect(brief.prompt).toContain('## 沟通补偿');
-    expect(brief.prompt).toContain('不要只回复做不到、说不清、回不来');
+    expect(brief.prompt).toContain('不要只回复做不到');
   });
 
   it('adds the shared detail boundary only for a concrete visual follow-up', () => {

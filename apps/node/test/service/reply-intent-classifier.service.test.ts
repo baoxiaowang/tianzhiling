@@ -7,6 +7,7 @@ describe('ReplyIntentClassifierService', () => {
     service.config = {
       enabled: true,
       model: 'intent-fast',
+      hybridEnabled: false,
     };
     service.logger = {
       warn: jest.fn(),
@@ -62,14 +63,14 @@ describe('ReplyIntentClassifierService', () => {
       expect.objectContaining({
         model: 'intent-fast',
         temperature: 0,
-        max_tokens: 1320,
+        max_tokens: 720,
         response_format: {
           type: 'json_object',
         },
       }),
       expect.objectContaining({
         signal: expect.any(AbortSignal),
-        timeout: 8000,
+        timeout: 10000,
       })
     );
   });
@@ -104,6 +105,15 @@ describe('ReplyIntentClassifierService', () => {
           questionNeed: 'none',
           turnClosure: 'close',
           personaActivation: ['父亲式含蓄肯定'],
+          engagement: {
+            userConversationState: 'deepening',
+            openLoop: '用户需要父亲回应自我否定背后的挫败',
+            continuationGoal: 'hold',
+            assistantContribution: 'stance',
+            mustContribute: '明确反对用户全盘否定，并肯定具体努力',
+            avoidRepeatingMove: '不要只说别难过或反问发生了什么',
+            closureReadiness: 'possible',
+          },
         },
         emotion: 'sadness',
         riskLevel: 'none',
@@ -114,6 +124,7 @@ describe('ReplyIntentClassifierService', () => {
     const intent = await service.classify({
       currentQuery: '爸，我又搞砸了，我就是没用。',
       agentPersonaContext: '关系：父亲；离世年龄约 76 岁；表达含蓄',
+      includeAnalysisFields: true,
     });
 
     expect(intent?.conversationPlan).toEqual({
@@ -134,11 +145,415 @@ describe('ReplyIntentClassifierService', () => {
       questionNeed: 'none',
       turnClosure: 'close',
       personaActivation: ['父亲式含蓄肯定'],
+      engagement: {
+        userConversationState: 'deepening',
+        openLoop: '用户需要父亲回应自我否定背后的挫败',
+        continuationGoal: 'hold',
+        assistantContribution: 'stance',
+        mustContribute: '明确反对用户全盘否定，并肯定具体努力',
+        avoidRepeatingMove: '不要只说别难过或反问发生了什么',
+        closureReadiness: 'possible',
+      },
     });
-    const input = (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mock.calls[0][0].messages[1].content;
+    const input = (service.openAIService.createChatCompletion as jest.Mock).mock
+      .calls[0][0].messages[1].content;
     expect(input).toContain('离世年龄约 76 岁');
+  });
+
+  it('requires self-expression when the user asks the agent to talk', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.95,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '用户希望爷爷主动陪自己说话',
+          moves: [
+            {
+              type: 'self_disclose',
+              goal: '由爷爷主动说一段有内容的话',
+            },
+          ],
+          socialStrategy: 'direct',
+          strategyPurpose: '满足用户希望亲人主动开口的关系请求',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: ['爷爷式主动关心'],
+          engagement: {
+            userConversationState: 'deepening',
+            openLoop: '用户仍在等待爷爷主动多说几句话',
+            continuationGoal: 'deepen',
+            assistantContribution: 'self_expression',
+            mustContribute: '先由爷爷主动说出一段有内容的话',
+            avoidRepeatingMove: '不要只说你说我听着，也不要反问想听什么',
+            closureReadiness: 'blocked',
+          },
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.95,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '爷爷，再多和我说几句话吧，我很想您。',
+      includeAnalysisFields: true,
+    });
+
+    expect(intent?.conversationPlan?.engagement).toEqual({
+      userConversationState: 'deepening',
+      openLoop: '用户仍在等待爷爷主动多说几句话',
+      continuationGoal: 'deepen',
+      assistantContribution: 'self_expression',
+      mustContribute: '先由爷爷主动说出一段有内容的话',
+      avoidRepeatingMove: '不要只说你说我听着，也不要反问想听什么',
+      closureReadiness: 'blocked',
+    });
+    const systemPrompt = (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mock.calls[0][0].messages[0].content;
+    expect(systemPrompt).toContain('本次是离线评测');
+    expect(systemPrompt).toContain('承诺以后多说');
+  });
+
+  it.each([
+    '怎么话这么少了',
+    '你是不是不想和我说话',
+    '爷爷，再多和我说几句话吧',
+    '可惜已无人回我',
+    '对不起孩子，对不起啊',
+    '跟你说了也没用',
+    '我再说什么也没有用',
+    '讲了又有什么用',
+    '跟你说了你也不懂',
+  ])(
+    'routes an engagement-friction turn through semantic planning: %s',
+    currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'semantic',
+        reason: 'engagement_friction',
+      });
+    }
+  );
+
+  it.each(['这个办法没有用', '我就是没用'])(
+    'does not treat unrelated “没用” wording as engagement friction: %s',
+    currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      expect(service.getPlanningDecision({ currentQuery }).reason).not.toBe(
+        'engagement_friction'
+      );
+    }
+  );
+
+  it('derives a weak engagement plan from semantic moves when the model omits it', async () => {
+    const service = createService(
+      JSON.stringify({
+        memoryPlan: {
+          contextCoverage: 'complete',
+          missingConcepts: [],
+          selectedFactKeys: [],
+          queries: [],
+        },
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.94,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '用户觉得当前角色话少',
+          moves: [
+            {
+              type: 'self_disclose',
+              goal: '主动说一段具体内容',
+            },
+          ],
+          socialStrategy: 'direct',
+          strategyPurpose: '修复关系疏离感',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+        },
+        emotion: 'concern',
+        riskLevel: 'none',
+        confidence: 0.94,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '怎么话这么少了',
+      includeAnalysisFields: true,
+    });
+
+    expect(intent?.conversationPlan?.engagement).toEqual({
+      userConversationState: 'repairing',
+      openLoop: '等待完成：主动说一段具体内容',
+      continuationGoal: 'repair',
+      assistantContribution: 'self_expression',
+      mustContribute: '主动说一段具体内容',
+      avoidRepeatingMove: '不要只重复最近一次回复或承诺以后再改变',
+      closureReadiness: 'blocked',
+    });
+  });
+
+  it('keeps a useful semantic plan when the model returns a compact schema', async () => {
+    const service = createService(
+      JSON.stringify({
+        memoryPlan: {
+          status: 'complete',
+          missingConcepts: [],
+          queries: [],
+          selectedFactKeys: [],
+        },
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'seek_comfort',
+            subIntent: 'grief_support',
+            confidence: 0.9,
+          },
+          'withdrawing',
+        ],
+        capabilityQuestions: [],
+        conversationPlan: {
+          stance: 'tender',
+          moves: [
+            {
+              type: 'acknowledge',
+              content: '回应用户已经说出的工作压力和领导问题',
+            },
+          ],
+          socialStrategy: 'direct',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          engagement: {
+            userConversationState: 'withdrawing',
+            continuationGoal: 'repair',
+            assistantContribution: 'stance',
+            closureReadiness: 'blocked',
+          },
+        },
+        emotion: 'concern',
+        riskLevel: 'none',
+      })
+    );
+    service.config.hybridEnabled = true;
+
+    const intent = await service.classify({
+      currentQuery: '跟你说了也没用',
+      recentMessages: [
+        {
+          role: MessageRole.assistant,
+          content: '这种人确实难搞，多留个心眼，别往心里去',
+        } as MessageEntity,
+      ],
+    });
+
+    expect(intent?.source).toBe('semantic_model');
+    expect(intent?.intents).toEqual([
+      {
+        target: 'agent',
+        timeScope: 'current',
+        intent: 'seek_comfort',
+        subIntent: 'grief_support',
+        confidence: 0.9,
+      },
+    ]);
+    expect(intent?.conversationPlan).toMatchObject({
+      stanceTarget: '跟你说了也没用',
+      strategyPurpose: '回应用户已经说出的工作压力和领导问题',
+      moves: [
+        {
+          type: 'acknowledge',
+          goal: '回应用户已经说出的工作压力和领导问题',
+        },
+      ],
+      engagement: {
+        userConversationState: 'withdrawing',
+        continuationGoal: 'repair',
+        assistantContribution: 'stance',
+        mustContribute: '回应用户已经说出的工作压力和领导问题',
+        closureReadiness: 'blocked',
+      },
+    });
+    expect(intent?.memoryPlan).toMatchObject({
+      need: 'none',
+      contextCoverage: 'complete',
+    });
+  });
+
+  it.each(['晚安妈妈', '吃饭了吗', '我想你了'])(
+    'sends an ordinary short message directly without a semantic call: %s',
+    async currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      const intent = await service.classify({ currentQuery });
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      });
+      expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+      expect(intent?.source).not.toBe('semantic_model');
+    }
+  );
+
+  it.each(['这不是一回事', '你呢', '再说也一样', '你刚才说得太轻巧了'])(
+    'does not equate a short unresolved utterance with a simple turn: %s',
+    async currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+      const options = {
+        currentQuery,
+        recentMessages: [
+          {
+            role: MessageRole.assistant,
+            content: '别想太多，缓一缓就好了。',
+          } as MessageEntity,
+        ],
+      };
+
+      expect(service.getPlanningDecision(options)).toMatchObject({
+        mode: 'semantic',
+        reason: 'unresolved_semantics',
+      });
+
+      await service.classify(options);
+
+      expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(
+        1
+      );
+    }
+  );
+
+  it.each(['工作不太顺心', '今天刚下班，有点累', '妈妈身体挺好的'])(
+    'keeps an explicitly self-contained daily update on the direct path: %s',
+    currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      });
+    }
+  );
+
+  it.each([
+    ['你还记得小时候带我去公园吗', 'complex_scene'],
+    ['你能看见我现在在做什么吗', 'capability_boundary'],
+    ['不对，你把那件事记错了', 'complex_scene'],
+  ])(
+    'keeps a complex message on the semantic planner: %s',
+    async (currentQuery, reason) => {
+      const service = createService(
+        JSON.stringify({
+          memoryPlan: {
+            contextCoverage: 'complete',
+            missingConcepts: [],
+            selectedFactKeys: [],
+            queries: [],
+          },
+          intents: [
+            {
+              target: 'relationship',
+              timeScope: 'current',
+              intent: 'challenge_authenticity',
+              subIntent: 'other',
+              confidence: 0.93,
+            },
+          ],
+          capabilityQuestions: [],
+          emotion: 'concern',
+          riskLevel: 'none',
+          confidence: 0.93,
+        })
+      );
+      service.config.hybridEnabled = true;
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'semantic',
+        reason,
+      });
+
+      await service.classify({ currentQuery });
+
+      expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(
+        1
+      );
+    }
+  );
+
+  it('uses the semantic planner when relevant memory candidates exist', async () => {
+    const service = createService(
+      JSON.stringify({
+        memoryPlan: {
+          contextCoverage: 'missing',
+          missingConcepts: ['常用称呼'],
+          selectedFactKeys: ['relationship.user_address'],
+          queries: [
+            {
+              question: '用户习惯被怎样称呼？',
+              expectedUse: 'apply',
+              importance: 'required',
+              entityHint: 'relationship.user_address',
+            },
+          ],
+        },
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'smalltalk',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        emotion: 'neutral',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+    service.config.hybridEnabled = true;
+    const options = {
+      currentQuery: '还是照以前那样叫我吧',
+      memoryCandidates: [
+        {
+          key: 'relationship.user_address',
+          slot: 'relationship.address',
+          summary: '用户喜欢被叫闺女',
+        },
+      ],
+    };
+
+    expect(service.getPlanningDecision(options)).toMatchObject({
+      mode: 'semantic',
+      reason: 'memory_candidate',
+    });
+
+    await service.classify(options);
+
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -277,7 +692,10 @@ describe('ReplyIntentClassifierService', () => {
       })
     );
 
-    const intent = await service.classify({ currentQuery });
+    const intent = await service.classify({
+      currentQuery,
+      includeAnalysisFields: true,
+    });
 
     expect(intent?.source).toBe('semantic_model');
     expect(intent?.reading).toEqual({
@@ -360,7 +778,10 @@ describe('ReplyIntentClassifierService', () => {
       })
     );
 
-    const intent = await service.classify({ currentQuery });
+    const intent = await service.classify({
+      currentQuery,
+      includeAnalysisFields: true,
+    });
 
     expect(intent?.memoryPlan).toEqual({
       need: 'retrieve',
@@ -437,9 +858,8 @@ describe('ReplyIntentClassifierService', () => {
       selectedFactKeys: ['relationship.agent_calls_user'],
     });
 
-    const request = (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mock.calls[0][0];
+    const request = (service.openAIService.createChatCompletion as jest.Mock)
+      .mock.calls[0][0];
     const classifierInput = request.messages[1].content as string;
     expect(classifierInput).toContain(
       '["address.current","relationship.agent_calls_user","用户希望当前角色称呼用户为安安"]'
@@ -491,7 +911,10 @@ describe('ReplyIntentClassifierService', () => {
       })
     );
 
-    const intent = await service.classify({ currentQuery });
+    const intent = await service.classify({
+      currentQuery,
+      includeAnalysisFields: true,
+    });
 
     expect(intent?.reading).not.toHaveProperty('memoryPlan');
     expect(intent?.memoryPlan).toEqual({
@@ -507,6 +930,80 @@ describe('ReplyIntentClassifierService', () => {
         },
       ],
     });
+  });
+
+  it('strips offline reading but keeps the engagement plan online', async () => {
+    const service = createService(
+      JSON.stringify({
+        memoryPlan: {
+          contextCoverage: 'complete',
+          missingConcepts: [],
+          selectedFactKeys: [],
+          queries: [],
+        },
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'challenge_authenticity',
+            subIntent: 'other',
+            confidence: 0.94,
+          },
+        ],
+        reading: {
+          primaryNeed: '恢复熟悉感',
+          emotionalSource: '当前回复不像亲人',
+          anchors: [{ text: '不像你', importance: 'high' }],
+          corrections: [],
+          negations: [],
+          questionsToAnswer: [],
+          relationshipSignal: '真实性质疑',
+          uncertainties: [],
+          suggestedTone: '自然',
+        },
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '关系断点',
+          moves: [{ type: 'answer', goal: '回应质疑' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '恢复熟悉感',
+          questionNeed: 'none',
+          turnClosure: 'close',
+          personaActivation: [],
+          engagement: {
+            userConversationState: 'repairing',
+            openLoop: '等待关系回应',
+            continuationGoal: 'repair',
+            assistantContribution: 'stance',
+            mustContribute: '改变说法',
+            avoidRepeatingMove: '不重复道歉',
+            closureReadiness: 'blocked',
+          },
+        },
+        emotion: 'concern',
+        riskLevel: 'none',
+        confidence: 0.94,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery: '这句话不像你' });
+
+    expect(intent?.reading).toBeUndefined();
+    expect(intent?.conversationPlan?.engagement).toEqual({
+      userConversationState: 'repairing',
+      openLoop: '等待关系回应',
+      continuationGoal: 'repair',
+      assistantContribution: 'stance',
+      mustContribute: '改变说法',
+      avoidRepeatingMove: '不重复道歉',
+      closureReadiness: 'blocked',
+    });
+    const systemPrompt = (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mock.calls[0][0].messages[0].content;
+    expect(systemPrompt).toContain('线上不要输出 reading 或解释');
+    expect(systemPrompt).toContain('承诺以后多说');
+    expect(systemPrompt).toContain('即使继续说仍无效');
   });
 
   it('forces an explicitly complete context plan to have no missing concepts or queries', async () => {

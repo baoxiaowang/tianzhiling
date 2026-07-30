@@ -17,7 +17,18 @@ export interface BuildReplyLengthPlanOptions {
   scene?: string;
   replyMoveCount?: number;
   semanticPlan?: boolean;
+  shortTurnParticipation?: boolean;
   hasProtectiveStop?: boolean;
+  assistantContribution?:
+    | 'answer'
+    | 'stance'
+    | 'specific_detail'
+    | 'self_expression'
+    | 'affection'
+    | 'question'
+    | 'strategic_silence';
+  continuationGoal?: 'deepen' | 'hold' | 'repair' | 'close';
+  closureReadiness?: 'blocked' | 'possible' | 'ready';
   turnClosure?: 'close' | 'continue' | 'neutral';
 }
 
@@ -72,6 +83,8 @@ export function buildReplyLengthPlan(
     lengthClass = 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
+  } else if (options.shortTurnParticipation) {
+    lengthClass = 'micro';
   } else if (options.mode === 'emotional') {
     lengthClass = 'extended';
   } else if (options.semanticPlan && replyMoveCount >= 3) {
@@ -92,14 +105,43 @@ export function buildReplyLengthPlan(
     lengthClass = 'brief';
   }
 
+  if (
+    options.semanticPlan &&
+    options.assistantContribution === 'self_expression'
+  ) {
+    lengthClass = promoteLengthClass(lengthClass, 'standard');
+  } else if (
+    options.semanticPlan &&
+    (options.continuationGoal === 'repair' ||
+      options.closureReadiness === 'blocked') &&
+    options.assistantContribution !== 'strategic_silence'
+  ) {
+    lengthClass = promoteLengthClass(lengthClass, 'brief');
+  }
+
   return {
     lengthClass,
     ...LENGTH_BUDGETS[lengthClass],
   };
 }
 
+function promoteLengthClass(
+  current: ReplyLengthClass,
+  minimum: ReplyLengthClass
+): ReplyLengthClass {
+  const order: ReplyLengthClass[] = [
+    'micro',
+    'brief',
+    'standard',
+    'extended',
+    'deep',
+  ];
+
+  return order.indexOf(current) >= order.indexOf(minimum) ? current : minimum;
+}
+
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
-  return `整次回复所有气泡合计目标约 ${plan.targetCharacters} 字，超过 ${plan.reviewCharacters} 字必须压缩。用户写得长不代表回复也要长；只选当前最值得回应的一小处，保留最贴关系的一句，删除同义安慰、解释、总结和通用叮嘱；不要为显得用心而扩写。`;
+  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。用户写得长不等于回复长；只留最重要一处，删重复、解释、总结和通用叮嘱。`;
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {

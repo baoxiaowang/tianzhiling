@@ -2209,6 +2209,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         maxSegments: 2,
         routingSource: 'semantic',
       },
+      diagnostics: {
+        promptVersion: 'agent_chat_v3',
+        userConversationState: 'exploring',
+        openLoop: '用户仍在等待爸爸直接回答是否已经起床',
+        continuationGoal: 'hold',
+        assistantContribution: 'answer',
+        mustContribute: '先直接回答当前状态',
+        avoidRepeatingMove: '不要只反问用户为什么起得早',
+        closureReadiness: 'possible',
+      },
     });
 
     await service.processConversationReplyJob({
@@ -2235,7 +2245,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v4',
+        replyBriefVersion: 'reply_brief_v6',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -2244,6 +2254,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyBriefReviewCharacters: 24,
         replyVisibleCharacters: 50,
         replyGuardrailRewritten: false,
+        replyPromptVersion: 'agent_chat_v3',
+        replyUserConversationState: 'exploring',
+        replyOpenLoop: '用户仍在等待爸爸直接回答是否已经起床',
+        replyContinuationGoal: 'hold',
+        replyAssistantContribution: 'answer',
+        replyMustContribute: '先直接回答当前状态',
+        replyAvoidRepeatingMove: '不要只反问用户为什么起得早',
+        replyClosureReadiness: 'possible',
       })
     );
     expect(assistantMessage.replyIntents).toEqual([
@@ -2565,7 +2583,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v4',
+        replyBriefVersion: 'reply_brief_v6',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -2877,6 +2895,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).toContain('天之灵主回复恢复');
     expect(
       (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
+        .messages[0].content
+    ).toContain('离世世界的人物、住处、饭菜、作息和活动可以');
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
+        .messages[0].content
+    ).not.toContain('不编造共同经历、生物学关系和离世后生活');
+    expect(
+      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
         .max_tokens
     ).toBe(360);
     expect(
@@ -3028,7 +3054,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         content: '……￥#@%……“该信息传输途中受到了干扰”',
-        replyBriefVersion: 'reply_brief_v4',
+        replyBriefVersion: 'reply_brief_v6',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'reply_brief',
@@ -3512,6 +3538,42 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(fields.replyRelationshipSignals).toEqual([
       'concern.agent_physical_suffering',
     ]);
+  });
+
+  it('persists the selected conversation strategy for later trajectory analysis', () => {
+    const { service } = createService({
+      agent: createAgent(),
+    });
+
+    const fields = (service as any).buildReplyRoutingMessageFields({
+      strategyVersion: 'conversation_strategy_v2',
+      strategySource: 'semantic_plan',
+      participationStrategy: 'reciprocal_self_expression',
+      conversationStance: 'tender',
+      conversationStanceTarget: '用户正在等待关系修复',
+      conversationMoves: ['acknowledge', 'self_disclose'],
+      conversationMoveGoals: ['承接质疑', '主动表达关系态度'],
+      socialStrategy: 'smooth_over',
+      strategyPurpose: '恢复熟悉感',
+      questionNeed: 'none',
+      conversationTurnClosure: 'continue',
+    });
+
+    expect(fields).toEqual(
+      expect.objectContaining({
+        replyStrategyVersion: 'conversation_strategy_v2',
+        replyStrategySource: 'semantic_plan',
+        replyParticipationStrategy: 'reciprocal_self_expression',
+        replyConversationStance: 'tender',
+        replyConversationStanceTarget: '用户正在等待关系修复',
+        replyConversationMoves: ['acknowledge', 'self_disclose'],
+        replyConversationMoveGoals: ['承接质疑', '主动表达关系态度'],
+        replySocialStrategy: 'smooth_over',
+        replyStrategyPurpose: '恢复熟悉感',
+        replyQuestionNeed: 'none',
+        replyConversationTurnClosure: 'continue',
+      })
+    );
   });
 
   it('does not auto-generate voice audio for text assistant replies when the agent has a timbre', async () => {
@@ -4145,6 +4207,29 @@ describe('ConversationService generation cleanup diagnostics', () => {
       segments: ['我在听，你接着说。'],
       claims: [],
     });
+  });
+
+  it('materializes model-authored short-turn actions into two bubbles without rewriting text', () => {
+    const service = new ConversationService();
+    const materialize = (
+      service as any
+    ).materializeParticipationReplySegments.bind(service);
+
+    expect(
+      materialize(
+        ['妈也想你。这大半夜的，心里闷得慌了吧。'],
+        'reciprocal_self_expression'
+      )
+    ).toEqual(['妈也想你。', '这大半夜的，心里闷得慌了吧。']);
+    expect(
+      materialize(['吃过了。  \n这里挺好的。'], 'light_self_disclosure')
+    ).toEqual(['吃过了。', '这里挺好的。']);
+    expect(materialize(['一句完整回复'], 'reciprocal_self_expression')).toEqual(
+      ['一句完整回复']
+    );
+    expect(materialize(['普通回复。还有一句。'], undefined)).toEqual([
+      '普通回复。还有一句。',
+    ]);
   });
 
   it('still drops structural output pollution before Guardrail', () => {

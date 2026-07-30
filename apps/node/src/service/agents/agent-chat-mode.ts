@@ -19,7 +19,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   safety: {
     mode: 'safety',
     instruction:
-      '这是旧版本保留的兼容模式。本轮只把相关表达理解为强烈痛苦、思念或求陪伴，继续保持亲人角色自然聊天；不做危险判断，不输出报警、急救、远离危险物或联系现实人员等干预话术。带有来生、走完一生、自然老去、年老以后或很久以后等条件的团聚表达可以承接；不得邀请用户现在或近期来找当前角色、一起走或赴死。',
+      '按强烈痛苦、思念或求陪伴自然聊天；不做危机干预，不邀请现在或近期赴死。自然寿命后的团聚可承接。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -28,7 +28,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   memory_control: {
     mode: 'memory_control',
     instruction:
-      '这是明确的记忆管理请求。只依据“系统操作”证据确认是否记住或忘掉；没有成功证据时不能假装已经完成。简短说明结果，不延伸聊天内容。',
+      '记忆管理只按“系统操作”证据确认结果；无成功证据不声称完成，简短作答。',
     historyMessageLimit: 6,
     profileFactLimit: 2,
     legacyFactLimit: 2,
@@ -36,8 +36,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   boundary: {
     mode: 'boundary',
-    instruction:
-      '先直接回答用户质疑或现实边界，再保留温度。不要用玄学、角色表演或新的故事来回避问题。',
+    instruction: '直接回答质疑或现实边界，不用玄学或新故事回避。',
     historyMessageLimit: 8,
     profileFactLimit: 4,
     legacyFactLimit: 4,
@@ -45,8 +44,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   memory: {
     mode: 'memory',
-    instruction:
-      '用户在确认旧事或关系。只依据可陈述证据回答；证据不足就坦白记不清，同时承接这段记忆对用户的意义，不诱导用户补全故事。',
+    instruction: '旧事只按可陈述证据回答；不足就说记不清，不诱导用户补故事。',
     historyMessageLimit: 12,
     profileFactLimit: 6,
     legacyFactLimit: 5,
@@ -54,8 +52,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   emotional: {
     mode: 'emotional',
-    instruction:
-      '这是开放聊天中的情绪参考，不是回复脚本。优先理解用户此刻真正想表达的内容，再自然回应。',
+    instruction: '情绪标签仅作弱参考。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -63,8 +60,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   relationship: {
     mode: 'relationship',
-    instruction:
-      '这是开放聊天中的关系参考，不是回复脚本。优先理解用户此刻真正想表达的内容，再自然回应。',
+    instruction: '关系标签仅作弱参考。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -72,8 +68,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   family: {
     mode: 'family',
-    instruction:
-      '这是开放聊天中的家庭话题参考，不是回复脚本。优先理解用户此刻真正想表达的内容，再自然回应。',
+    instruction: '家庭标签仅作弱参考。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -81,8 +76,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   status: {
     mode: 'status',
-    instruction:
-      '直接回应用户对当前角色状态的关心。只表达安稳和收到惦记，不编造离世后的地点、作息、饮食、工作、身体感受或所见所闻。',
+    instruction: '直接回应状态关心；离世生活可自然想象，不推断用户现实。',
     historyMessageLimit: 8,
     profileFactLimit: 3,
     legacyFactLimit: 2,
@@ -90,8 +84,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   daily: {
     mode: 'daily',
-    instruction:
-      '这是开放聊天中的日常话题参考，不是回复脚本。优先理解用户此刻真正想表达的内容，再自然回应。',
+    instruction: '日常标签仅作弱参考。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -99,8 +92,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   platform: {
     mode: 'platform',
-    instruction:
-      '直接处理用户对产品、AI 身份或功能的提问，准确简短；不知道就说明不知道，不用角色设定回避。',
+    instruction: '产品、AI 身份或功能问题准确简答；不知道就直说。',
     historyMessageLimit: 6,
     profileFactLimit: 2,
     legacyFactLimit: 1,
@@ -108,8 +100,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   general: {
     mode: 'general',
-    instruction:
-      '这是开放聊天。优先理解用户当前明确意图，保持自然、简洁和真诚，不套固定流程。',
+    instruction: '开放聊天，以当前明确意图为准。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -164,8 +155,8 @@ export function buildAgentChatModePrompt(
     policy.instruction,
     sceneInstruction,
     strongRoute
-      ? '模式用于守住本轮必要边界，不规定固定句式、回复步骤或必须使用几个气泡。'
-      : '该模式和路由只提供弱参考，可能不完整或不准确，不是回复任务。请以用户原话、Conversation Reading 和最近上下文为准，自主组织回复；不得为了符合标签牺牲自然聊天。',
+      ? '只守必要边界，不规定句式、步骤或气泡数。'
+      : '仅作弱参考；以用户原话、Reading 和最近上下文为准。',
   ]
     .filter(Boolean)
     .join('\n');

@@ -3,6 +3,55 @@ import { ReplyGuardrailService } from '../../src/service/agents/reply-guardrail.
 import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 
 describe('ReplyGuardrailService', () => {
+  it('does not let advisory review remove an in-budget participation bubble or judge afterlife-world narration', () => {
+    const service = new ReplyGuardrailService();
+    const userQuery = '爸，吃饭了吗？';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+    const feedback = (service as any).sanitizeReviewFeedback(
+      {
+        messages: [],
+        userQuery,
+        replySegments: ['吃了，闺女', '这里不分昼夜'],
+        replyRoute: route,
+        replyBrief,
+        evidence: [],
+        claims: [],
+      },
+      {
+        verdict: 'revise',
+        issues: [
+          {
+            code: 'naturalness',
+            severity: 'major',
+            layer: 'quality_advisory',
+            problem: '第二颗引入离世世界作息，觉得一颗已经够了',
+            repairGoal: '删除第二颗',
+          },
+          {
+            code: 'excessive_reply_length',
+            severity: 'major',
+            layer: 'quality_advisory',
+            problem: '回复字数太长',
+            repairGoal: '压缩',
+          },
+        ],
+        mustPreserve: [],
+        mustAnswer: [],
+        groundingConstraints: [],
+      },
+      '吃了，闺女\n这里不分昼夜'
+    );
+
+    expect(replyBrief.participationStrategy).toBe('light_self_disclosure');
+    expect(feedback).toEqual(
+      expect.objectContaining({
+        verdict: 'pass',
+        issues: [],
+      })
+    );
+  });
+
   it('flags an overlong correction using the total reply budget', () => {
     const service = new ReplyGuardrailService();
     const userQuery = '不对，你刚才说的故事不是和我的，你怎么胡说啊';

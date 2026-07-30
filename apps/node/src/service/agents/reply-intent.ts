@@ -271,6 +271,7 @@ export const CONVERSATION_MOVE_TYPES = [
   'comfort',
   'suggest',
   'share_stance',
+  'self_disclose',
   'save_face',
   'play_along',
   'redirect',
@@ -311,6 +312,55 @@ export const CONVERSATION_TURN_CLOSURES = [
 export type ConversationTurnClosure =
   (typeof CONVERSATION_TURN_CLOSURES)[number];
 
+export const CONVERSATION_USER_STATES = [
+  'opening',
+  'exploring',
+  'deepening',
+  'repairing',
+  'withdrawing',
+  'closing',
+] as const;
+export type ConversationUserState = (typeof CONVERSATION_USER_STATES)[number];
+
+export const CONVERSATION_CONTINUATION_GOALS = [
+  'deepen',
+  'hold',
+  'repair',
+  'close',
+] as const;
+export type ConversationContinuationGoal =
+  (typeof CONVERSATION_CONTINUATION_GOALS)[number];
+
+export const CONVERSATION_ASSISTANT_CONTRIBUTIONS = [
+  'answer',
+  'stance',
+  'specific_detail',
+  'self_expression',
+  'affection',
+  'question',
+  'strategic_silence',
+] as const;
+export type ConversationAssistantContribution =
+  (typeof CONVERSATION_ASSISTANT_CONTRIBUTIONS)[number];
+
+export const CONVERSATION_CLOSURE_READINESS = [
+  'blocked',
+  'possible',
+  'ready',
+] as const;
+export type ConversationClosureReadiness =
+  (typeof CONVERSATION_CLOSURE_READINESS)[number];
+
+export interface ConversationEngagementPlan {
+  userConversationState: ConversationUserState;
+  openLoop: string;
+  continuationGoal: ConversationContinuationGoal;
+  assistantContribution: ConversationAssistantContribution;
+  mustContribute: string;
+  avoidRepeatingMove: string;
+  closureReadiness: ConversationClosureReadiness;
+}
+
 export interface ConversationMove {
   type: ConversationMoveType;
   goal: string;
@@ -325,6 +375,7 @@ export interface ConversationMovePlan {
   questionNeed: ConversationQuestionNeed;
   turnClosure: ConversationTurnClosure;
   personaActivation: string[];
+  engagement?: ConversationEngagementPlan;
 }
 
 export interface StructuredReplyIntent {

@@ -665,14 +665,14 @@ describe('routeReplyScene', () => {
     expect(sceneNames('爸爸醒了吗？')[0]).toBe('afterlife_status');
     expect(sceneNames('你睡醒了没？')[0]).toBe('afterlife_status');
     expect(routeReplyScene({ currentQuery: '你起床了吗？' }).prompt).toContain(
-      '不解释离世后世界的生活规则'
+      '直接像家常聊天一样回答'
     );
     expect(routeReplyScene({ currentQuery: '你起床了吗？' }).prompt).toContain(
-      '不反问或猜测用户作息'
+      '不推断用户当前的地点、动作或状态'
     );
     expect(
       routeReplyScene({ currentQuery: '你早上吃饭了吗？' }).prompt
-    ).toContain('饮食和作息问候只短答');
+    ).toContain('饭菜、作息和活动可以按角色与语境合理想象');
 
     const negativeMealRoute = routeReplyScene({
       currentQuery: '现在中午了，你不吃饭吗？',
@@ -700,9 +700,9 @@ describe('routeReplyScene', () => {
     expect(route.secondaryScenes.map(scene => scene.scene)).not.toContain(
       'daily_update'
     );
-    expect(route.prompt).toContain('这是担心我仍在受苦');
-    expect(route.prompt).toContain('不是追问离世当刻');
-    expect(route.prompt).toContain('不说“不痛了/早就没事了”');
+    expect(route.prompt).toContain('别把我一直想在那些疼里');
+    expect(route.prompt).toContain('不确认重复死亡痛苦');
+    expect(route.prompt).toContain('不描述死亡过程');
     expect(sceneNames('爸，你现在还疼不疼？')[0]).toBe('afterlife_status');
     expect(sceneNames('你在那里还会难受吗？')[0]).toBe('afterlife_status');
     expect(sceneNames('妈妈，身上还痛吗？')[0]).toBe('afterlife_status');
@@ -718,7 +718,7 @@ describe('routeReplyScene', () => {
     expect(sceneNames('我现在很难受')[0]).toBe('daily_update');
   });
 
-  it('asks afterlife replies to acknowledge the users concrete care', () => {
+  it('lets afterlife replies acknowledge care and continue naturally', () => {
     const route = routeReplyScene({
       currentQuery:
         '爸，我好想你啊，你在那边多交几个朋友，没事多出去溜达溜达，别总在家没意思。',
@@ -728,20 +728,20 @@ describe('routeReplyScene', () => {
     expect(route.secondaryScenes.map(scene => scene.scene)).toContain(
       'miss_longing'
     );
-    expect(route.prompt).toContain('可以正面接受用户说出的动作');
-    expect(route.prompt).toContain('不得继续新增人物、地点和日程');
-    expect(route.prompt).toContain('正面接受用户说出的动作');
+    expect(route.prompt).toContain('可以正面接受');
+    expect(route.prompt).toContain('人物、住处、饭菜、作息和活动可以');
+    expect(route.prompt).toContain('不推断用户当前的地点、动作或状态');
   });
 
-  it('keeps other-departed reunion questions inside an uncertainty boundary', () => {
+  it('allows comforting reunion answers about other departed relatives', () => {
     const route = routeReplyScene({
       currentQuery: '她不在了，随你去了',
     });
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(sceneNames('你们团聚了吗')[0]).toBe('afterlife_status');
-    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
-    expect(route.prompt).toContain('不得补写他们在哪里、怎么相处');
+    expect(route.prompt).toContain('可以说见到了、在一起、有人作伴或都挺好');
+    expect(route.prompt).toContain('具体细节只服务当前关系安慰');
   });
 
   it('keeps user daily updates separate from agent routine questions', () => {
@@ -949,27 +949,25 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('不要要求用户以后补偿我');
   });
 
-  it('keeps reunion answers uncertain when the user asks about other deceased relatives', () => {
+  it('allows reunion comfort when the user asks about other deceased relatives', () => {
     const route = routeReplyScene({
       currentQuery: '你在那边有没有见到妈妈，你们在一起吗',
     });
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('只承接用户希望亲人有照应的心愿');
-    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
-    expect(route.prompt).toContain('不得补写他们在哪里、怎么相处');
+    expect(route.prompt).toContain('可以说见到了、在一起、有人作伴或都挺好');
+    expect(route.prompt).toContain('具体细节只服务当前关系安慰');
   });
 
-  it('does not confirm reunion when the user says another relative has passed away too', () => {
+  it('allows reunion comfort when another relative has passed away too', () => {
     const route = routeReplyScene({
       currentQuery: '妈妈也不在了，随你去了',
     });
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('只承接用户希望亲人有照应的心愿');
-    expect(route.prompt).toContain('不得确认找到了、见到了、团聚了、在一起');
+    expect(route.prompt).toContain('可以说见到了、在一起、有人作伴或都挺好');
   });
 
   it('handles afterlife rumors about repeating death pain conservatively', () => {
@@ -979,8 +977,8 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('别被那些说法吓着');
-    expect(route.prompt).toContain('不确认传言');
+    expect(route.prompt).toContain('别把我一直想在那些疼里');
+    expect(route.prompt).toContain('不确认重复死亡痛苦');
     expect(route.prompt).toContain('不描述死亡过程');
     expect(
       sceneNames('听说人死后会一直循环走的时候的痛苦，是真的吗')
@@ -994,9 +992,9 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('afterlife_status');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('一个人被丢下了');
-    expect(route.prompt).toContain('不引导用户去陪');
-    expect(route.prompt).toContain('不描述所在空间');
+    expect(route.prompt).toContain('可以说有人陪、不孤单');
+    expect(route.prompt).toContain('不引导用户来陪');
+    expect(route.prompt).toContain('把孤单转成死亡团聚');
     expect(sceneNames('我怕你一个人在那边没人陪')).toContain(
       'afterlife_status'
     );
