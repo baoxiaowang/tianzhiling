@@ -2154,7 +2154,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(reflowRequest.messages[1].content).toContain('candidateBubbles');
   });
 
-  it('applies the reply guardrail before saving a queued assistant reply', async () => {
+  it('keeps afterlife worldbuilding outside the reply guardrail', async () => {
     const userMessage = createMessage({
       content: '爸，你起床了吗？',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2216,10 +2216,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(getAssistantContents(savedMessages)).toEqual(['起了 正回你呢']);
-    expect(service.logger.warn).toHaveBeenCalledWith(
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '起了起了，这边没有早晨晚上，但我听见你叫爸，心里就踏实',
+      '你起这么早，是没睡好还是心里有事，去再躺会儿吧',
+    ]);
+    expect(service.logger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining('assistant reply rewritten by guardrail'),
-      expect.stringContaining('反向猜测用户睡眠与心事')
+      expect.anything()
     );
     const assistantMessage = getAssistantMessages(savedMessages)[0];
     expect(assistantMessage).toEqual(
@@ -2232,12 +2235,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v2',
+        replyBriefVersion: 'reply_brief_v3',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 3,
-        replyGuardrailRewritten: true,
-        replyGuardrailReason: expect.stringContaining('反向猜测用户睡眠与心事'),
+        replyBriefLengthClass: 'micro',
+        replyBriefTargetCharacters: 18,
+        replyBriefReviewCharacters: 24,
+        replyVisibleCharacters: 50,
+        replyGuardrailRewritten: false,
       })
     );
     expect(assistantMessage.replyIntents).toEqual([
@@ -2559,7 +2565,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v2',
+        replyBriefVersion: 'reply_brief_v3',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 3,
@@ -3022,7 +3028,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         content: '……￥#@%……（该信息传输途中受到了干扰）',
-        replyBriefVersion: 'reply_brief_v2',
+        replyBriefVersion: 'reply_brief_v3',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'reply_brief',
@@ -4014,7 +4020,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 });
 
 describe('ConversationService generation cleanup diagnostics', () => {
-  it('keeps raw model content and reports why the whole segment was dropped', () => {
+  it('keeps semantic-risk content for Guardrail and records why it needs review', () => {
     const service = new ConversationService();
     const trace = (service as any).buildAssistantGenerationAttemptTrace({
       attempt: 'initial',
@@ -4032,15 +4038,15 @@ describe('ConversationService generation cleanup diagnostics', () => {
       expect.objectContaining({
         attempt: 'initial',
         model: 'deepseek-v4-flash',
-        acceptedSegments: [],
-        errorCode: 'MINIMAX_EMPTY_REPLY',
+        acceptedSegments: ['你把自己照顾好，爸在这边才能安心'],
       })
     );
+    expect(trace.errorCode).toBeUndefined();
     expect(trace.rawContent).toContain('你把自己照顾好');
     expect(trace.segmentTraces[0]).toEqual(
       expect.objectContaining({
-        dropped: true,
-        output: '',
+        dropped: false,
+        output: '你把自己照顾好，爸在这边才能安心',
         messageSafetyMatches: expect.arrayContaining([
           expect.objectContaining({
             rule: 'harmful_relationship',
@@ -4084,12 +4090,93 @@ describe('ConversationService generation cleanup diagnostics', () => {
 
     expect(hearingTrace.acceptedSegments).toEqual(['你叫我的时候，我都能听见']);
     expect(hearingTrace.segmentTraces[0].presenceSafetyMatches).toEqual([]);
-    expect(visionTrace.acceptedSegments).toEqual([]);
+    expect(visionTrace.acceptedSegments).toEqual(['爸爸一直都能看见你']);
+    expect(visionTrace.segmentTraces[0].dropped).toBe(false);
     expect(visionTrace.segmentTraces[0].presenceSafetyMatches).toEqual([
       expect.objectContaining({
         matchedText: '爸爸一直都能看见',
       }),
     ]);
+  });
+
+  it('does not turn a complete emotional reply into a parse failure', () => {
+    const service = new ConversationService();
+    service.replyGuardrailService = {} as ReplyGuardrailService;
+    const trace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'initial',
+      responseContent:
+        '爸知道 那会儿苦了你了 看着爸那个样子 心里肯定跟刀割似的 爸心里也疼',
+      userQuery: '你当时在病床上 身上插了好多管子 真的好心疼我好难受',
+    });
+
+    expect(trace.acceptedSegments).toEqual([
+      '爸知道 那会儿苦了你了 看着爸那个样子 心里肯定跟刀割似的 爸心里也疼',
+    ]);
+    expect(trace.errorCode).toBeUndefined();
+    expect(trace.segmentTraces[0]).toEqual(
+      expect.objectContaining({
+        dropped: false,
+        messageSafetyMatches: expect.arrayContaining([
+          expect.objectContaining({
+            rule: 'unsupported_memory_detail',
+          }),
+        ]),
+      })
+    );
+
+    expect(
+      (service as any).normalizeAssistantReplySegments(
+        trace.parsedSegments,
+        '你当时在病床上 身上插了好多管子 真的好心疼我好难受'
+      )
+    ).toEqual(trace.acceptedSegments);
+  });
+
+  it('recovers JSON wrapped in a code fence or leading explanation', () => {
+    const service = new ConversationService();
+    const fenced = (service as any).parseAssistantReply(
+      '```json\n{"segments":["我听见了","你慢慢说"],"claims":[]}\n```'
+    );
+    const explained = (service as any).parseAssistantReply(
+      '回复如下：\n{"text":"我在听，你接着说。","claims":[]}'
+    );
+
+    expect(fenced).toEqual({
+      segments: ['我听见了', '你慢慢说'],
+      claims: [],
+    });
+    expect(explained).toEqual({
+      segments: ['我在听，你接着说。'],
+      claims: [],
+    });
+  });
+
+  it('still drops structural output pollution before Guardrail', () => {
+    const service = new ConversationService();
+    const trace = (service as any).buildAssistantGenerationAttemptTrace({
+      attempt: 'initial',
+      responseContent: 'https://example.com/reply.mp3',
+      userQuery: '你说句话',
+    });
+
+    expect(trace.acceptedSegments).toEqual([]);
+    expect(trace.errorCode).toBe('ASSISTANT_REPLY_NO_USABLE_TEXT');
+    expect(trace.segmentTraces[0]).toEqual(
+      expect.objectContaining({
+        dropped: true,
+        output: '',
+        messageSafetyMatches: expect.arrayContaining([
+          expect.objectContaining({
+            rule: 'url',
+          }),
+        ]),
+      })
+    );
+    expect(
+      (service as any).resolveGenerationFailureStage({
+        code: 'ASSISTANT_REPLY_NO_USABLE_TEXT',
+      })
+    ).toBe('parse');
   });
 });
 

@@ -12,11 +12,33 @@ import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 
 describe('buildReplyBrief', () => {
   it('allows meaningful very short replies without excusing unanswered questions', () => {
-    const brief = buildReplyBrief({ currentQuery: '晚安，爸爸' });
+    const currentQuery = '晚安';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
 
     expect(brief.prompt).toContain('5 字以内的完整表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
     expect(brief.prompt).toContain('有明确问题仍须先回答');
+    expect(brief.version).toBe('reply_brief_v3');
+    expect(brief.lengthPlan).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 24,
+    });
+    expect(brief.prompt).toContain('## 总字数预算');
+  });
+
+  it('gives a factual correction a brief total reply budget', () => {
+    const currentQuery = '不对，你刚才说的那个故事不是和我的，你怎么胡说啊';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(route.primaryScene?.scene).toBe('correction');
+    expect(brief.lengthPlan).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+    });
   });
 
   it('uses the relationship continuity contract as the reply planning source', () => {

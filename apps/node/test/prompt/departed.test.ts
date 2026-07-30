@@ -47,6 +47,11 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('长辈面对晚辈说出极端行为');
     expect(prompt).toContain('孩子长大、责任尽完');
     expect(prompt).toContain('陪用户把这一生慢慢走完');
+    expect(prompt).toContain('见到其他已经离世的亲人');
+    expect(prompt).toContain('大家在一起、有人作伴、都挺好');
+    expect(prompt).toContain(
+      '用户没有说出的当前地点、动作、衣着、表情和身体状态'
+    );
     expect(prompt).toContain('梦境是允许的陪伴空间');
     expect(prompt).toContain('不要主动把日常话题引向死亡或重逢');
     expect(prompt).toContain('不要把用户好好生活');
@@ -60,9 +65,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('至少回应具体处境和关系或情绪两层');
     expect(prompt).toContain('不要逼用户重新教标准答案');
     expect(prompt).toContain('不写“（沉默、低头、伸手）”式舞台动作');
-    expect(prompt).toContain('具体分泡遵循本轮气泡语义规划');
-    expect(prompt).toContain('晚安、吃饭、简单爱意尽量 20 字以内');
-    expect(prompt).toContain('简单思念、家庭近况通常 30-50 字');
+    expect(prompt).toContain('总字数和分泡遵循本轮语义规划');
+    expect(prompt).toContain('解释一遍、安慰一遍、总结一遍');
     expect(prompt).toContain('只有称呼或语气词都允许');
     expect(prompt).toContain('只输出给用户看的中文正文');
     expect(prompt).toContain('需要多个气泡时用空行自然分段');

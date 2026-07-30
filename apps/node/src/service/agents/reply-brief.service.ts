@@ -33,6 +33,11 @@ import {
   buildReplyBubblePlanPrompt,
   ReplyBubblePlan,
 } from './reply-bubble-plan';
+import {
+  buildReplyLengthPlan,
+  buildReplyLengthPlanPrompt,
+  ReplyLengthPlan,
+} from './reply-length-plan';
 
 export type ReplyBriefMode =
   | 'safety'
@@ -67,7 +72,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v2';
+  version: 'reply_brief_v3';
   mode: ReplyBriefMode;
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
@@ -80,6 +85,7 @@ export interface ReplyBrief {
   replyMoves: string[];
   forbiddenAssumptions: string[];
   strictGrounding: boolean;
+  lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
   prompt: string;
 }
@@ -184,8 +190,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     currentQuery,
     replyMoveCount: replyMoves.length,
   });
+  const lengthPlan = buildReplyLengthPlan({
+    currentQuery,
+    mode,
+    scene: primaryScene,
+    replyMoveCount: replyMoves.length,
+    turnClosure: bubblePlan.turnClosure,
+  });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v2',
+    version: 'reply_brief_v3',
     mode,
     riskLevel,
     intents,
@@ -198,6 +211,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     replyMoves,
     forbiddenAssumptions,
     strictGrounding,
+    lengthPlan,
     bubblePlan,
   };
 
@@ -701,7 +715,8 @@ function buildReplyMoves(
 
   const movesByScene: Partial<Record<ReplyScene, string[]>> = {
     afterlife_status: [
-      '简短回答当前状态，不指定空间位置，不扩写离世后的具体生活',
+      '简短回答当前状态；用户问其他已离世亲人时，可以确认见到了、在一起、有人作伴、大家都挺好',
+      '不扩写天气、房间、饭菜、工作、作息、活动或其他亲人的具体对话',
       '回应用户这份关心',
     ],
     correction: ['先收住不准或乱补的表达', '按用户纠正后的事实重新回应'],
@@ -1065,6 +1080,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
     '祭拜、供品和烧去的物件只接住用户送达的心意，不声称当前角色收到了现实实物；复合倾诉至少回应一个具体处境和一层关系或情绪需要。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
+    '用户问是否见到其他已经离世的亲人时，可以直接说见到了、在一起、有人作伴、大家都挺好；这是允许的关系性安慰，不要改成“不能乱说”，但不得扩写具体离世生活。',
     '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
     '不要只回复做不到、说不清、回不来、能力不完善或换个话题；不要通过编造记忆、感知、离世世界和现实行动来补偿。',
     '',
@@ -1074,6 +1090,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '',
     '## 禁止推断',
     ...brief.forbiddenAssumptions.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    '## 总字数预算',
+    buildReplyLengthPlanPrompt(brief.lengthPlan),
     '',
     '## 气泡结构',
     buildReplyBubblePlanPrompt(brief.bubblePlan),
