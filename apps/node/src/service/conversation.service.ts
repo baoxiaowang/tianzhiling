@@ -2058,12 +2058,16 @@ export class ConversationService {
     if (guardedBubbleReflow.trace) {
       generationAttemptTraces.push(guardedBubbleReflow.trace);
     }
+    const finalReplySegments = this.materializeParticipationReplySegments(
+      guardedBubbleReflow.segments,
+      replyBrief.participationStrategy
+    );
     const bubbleStructureIssues = Array.from(
       new Set(generatedBubbleReflow.issues.concat(guardedBubbleReflow.issues))
     );
 
     return {
-      replySegments: guardedBubbleReflow.segments,
+      replySegments: finalReplySegments,
       usage: this.mergeReplyUsage(
         this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
         guardedBubbleReflow.usage
