@@ -189,7 +189,12 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('不把表达劳动退回用户');
     expect(brief.prompt).toContain('只承诺“以后/那我多说几句”');
     expect(brief.prompt).toContain('不要只说你说我听着');
-    expect(brief.lengthPlan.targetCharacters).toBeGreaterThanOrEqual(40);
+    expect(brief.participationStrategy).toBeUndefined();
+    expect(brief.lengthPlan).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
   });
 
   it('does not reopen a turn that the user has clearly closed', () => {
@@ -252,6 +257,7 @@ describe('buildReplyBrief', () => {
       targetCharacters: 28,
       reviewCharacters: 38,
     });
+    expect(brief.prompt).toContain('只承认刚才说法不对，不补任何新旧事实细节');
   });
 
   it('uses the relationship continuity contract as the reply planning source', () => {

@@ -279,6 +279,12 @@ export class MessageEntity extends BaseEntity {
   replyParticipationStrategy?: string;
 
   @Column()
+  replyParticipationExecution?: string;
+
+  @Column()
+  replyParticipationFallbackReason?: string;
+
+  @Column()
   replyConversationStance?: string;
 
   @Column()

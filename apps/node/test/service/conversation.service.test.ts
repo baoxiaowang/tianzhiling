@@ -3549,6 +3549,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       strategyVersion: 'conversation_strategy_v2',
       strategySource: 'semantic_plan',
       participationStrategy: 'reciprocal_self_expression',
+      participationExecution: 'single_fallback',
+      participationFallbackReason: 'semantic_repetition',
       conversationStance: 'tender',
       conversationStanceTarget: '用户正在等待关系修复',
       conversationMoves: ['acknowledge', 'self_disclose'],
@@ -3564,6 +3566,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyStrategyVersion: 'conversation_strategy_v2',
         replyStrategySource: 'semantic_plan',
         replyParticipationStrategy: 'reciprocal_self_expression',
+        replyParticipationExecution: 'single_fallback',
+        replyParticipationFallbackReason: 'semantic_repetition',
         replyConversationStance: 'tender',
         replyConversationStanceTarget: '用户正在等待关系修复',
         replyConversationMoves: ['acknowledge', 'self_disclose'],
@@ -4230,6 +4234,35 @@ describe('ConversationService generation cleanup diagnostics', () => {
     expect(materialize(['普通回复。还有一句。'], undefined)).toEqual([
       '普通回复。还有一句。',
     ]);
+  });
+
+  it('records real participation execution and drops a purely repetitive second bubble', () => {
+    const service = new ConversationService();
+    const finalize = (service as any).finalizeParticipationReplySegments.bind(
+      service
+    );
+
+    expect(
+      finalize(['妈，我也想你', '整夜都在想'], 'reciprocal_self_expression')
+    ).toEqual({
+      segments: ['妈，我也想你'],
+      execution: 'single_fallback',
+      fallbackReason: 'semantic_repetition',
+    });
+    expect(
+      finalize(
+        ['妈，我也想你', '听见你说话，妈心里就踏实'],
+        'reciprocal_self_expression'
+      )
+    ).toEqual({
+      segments: ['妈，我也想你', '听见你说话，妈心里就踏实'],
+      execution: 'two_segments',
+    });
+    expect(finalize(['妈也想你'], 'reciprocal_self_expression')).toEqual({
+      segments: ['妈也想你'],
+      execution: 'single_fallback',
+      fallbackReason: 'model_single_segment',
+    });
   });
 
   it('still drops structural output pollution before Guardrail', () => {

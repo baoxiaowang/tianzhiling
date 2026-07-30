@@ -233,6 +233,11 @@ describe('ReplyIntentClassifierService', () => {
     '我再说什么也没有用',
     '讲了又有什么用',
     '跟你说了你也不懂',
+    '想听你说两句',
+    '说点不一样的',
+    '说说你自己',
+    '别光说挺好的',
+    '你还没回答我',
   ])(
     'routes an engagement-friction turn through semantic planning: %s',
     currentQuery => {

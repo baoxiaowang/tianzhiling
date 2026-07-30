@@ -105,18 +105,23 @@ export function buildReplyLengthPlan(
     lengthClass = 'brief';
   }
 
-  if (
-    options.semanticPlan &&
-    options.assistantContribution === 'self_expression'
-  ) {
-    lengthClass = promoteLengthClass(lengthClass, 'standard');
-  } else if (
-    options.semanticPlan &&
-    (options.continuationGoal === 'repair' ||
-      options.closureReadiness === 'blocked') &&
-    options.assistantContribution !== 'strategic_silence'
-  ) {
-    lengthClass = promoteLengthClass(lengthClass, 'brief');
+  if (!options.shortTurnParticipation) {
+    if (
+      options.semanticPlan &&
+      options.assistantContribution === 'self_expression'
+    ) {
+      lengthClass =
+        Array.from(options.currentQuery.replace(/\s/gu, '')).length <= 24
+          ? 'standard'
+          : promoteLengthClass(lengthClass, 'standard');
+    } else if (
+      options.semanticPlan &&
+      (options.continuationGoal === 'repair' ||
+        options.closureReadiness === 'blocked') &&
+      options.assistantContribution !== 'strategic_silence'
+    ) {
+      lengthClass = promoteLengthClass(lengthClass, 'brief');
+    }
   }
 
   return {

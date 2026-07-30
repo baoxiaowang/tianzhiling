@@ -318,6 +318,8 @@ interface ReplyRoutingAudit {
   strategyVersion?: string;
   strategySource?: string;
   participationStrategy?: string;
+  participationExecution?: string;
+  participationFallbackReason?: string;
   conversationStance?: string;
   conversationStanceTarget?: string;
   conversationMoves?: string[];
@@ -2058,7 +2060,7 @@ export class ConversationService {
     if (guardedBubbleReflow.trace) {
       generationAttemptTraces.push(guardedBubbleReflow.trace);
     }
-    const finalReplySegments = this.materializeParticipationReplySegments(
+    const participationResult = this.finalizeParticipationReplySegments(
       guardedBubbleReflow.segments,
       replyBrief.participationStrategy
     );
@@ -2067,7 +2069,7 @@ export class ConversationService {
     );
 
     return {
-      replySegments: finalReplySegments,
+      replySegments: participationResult.segments,
       usage: this.mergeReplyUsage(
         this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
         guardedBubbleReflow.usage
@@ -2101,6 +2103,8 @@ export class ConversationService {
               (!guardedBubbleReflow.attempted || guardedBubbleReflow.succeeded)
             : undefined,
         bubbleStructureIssues,
+        participationExecution: participationResult.execution,
+        participationFallbackReason: participationResult.fallbackReason,
         evidenceCount: contextEvidence.length,
         factClaimCount: (guarded.claims || replyClaims).length,
         unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
@@ -4266,6 +4270,62 @@ export class ConversationService {
     return [sentenceBoundary[1].trim(), sentenceBoundary[2].trim()];
   }
 
+  private finalizeParticipationReplySegments(
+    segments: string[],
+    strategy?: ReplyBrief['participationStrategy']
+  ): {
+    segments: string[];
+    execution?: 'two_segments' | 'single_fallback';
+    fallbackReason?: 'model_single_segment' | 'semantic_repetition';
+  } {
+    const materialized = this.materializeParticipationReplySegments(
+      segments,
+      strategy
+    );
+
+    if (!strategy) {
+      return { segments: materialized };
+    }
+    if (materialized.length !== 2) {
+      return {
+        segments: materialized,
+        execution: 'single_fallback',
+        fallbackReason: 'model_single_segment',
+      };
+    }
+    if (
+      this.isRedundantParticipationSegment(materialized[0], materialized[1])
+    ) {
+      return {
+        segments: [materialized[0]],
+        execution: 'single_fallback',
+        fallbackReason: 'semantic_repetition',
+      };
+    }
+
+    return {
+      segments: materialized,
+      execution: 'two_segments',
+    };
+  }
+
+  private isRedundantParticipationSegment(
+    firstSegment: string,
+    secondSegment: string
+  ): boolean {
+    if (!/(?:想|思念|惦记|挂念|爱|疼)/u.test(firstSegment)) {
+      return false;
+    }
+
+    const normalizedSecond = secondSegment
+      .replace(/[\s，。！？、,.!?~～]/gu, '')
+      .trim();
+
+    return /^(?:我)?(?:也|一直|天天|每天|整夜|总是|真的|特别|很|好)?(?:都|还)?(?:在)?(?:想(?:你|您)?|思念(?:你|您)?|惦记(?:你|您)?|挂念(?:你|您)?|爱你|疼你)(?:了|呢|啊|呀|嘛)*$/u.test(
+      normalizedSecond
+    );
+  }
+
   private normalizeModelFirstReplySegments(
     segments: string[],
     userQuery = ''
@@ -4726,6 +4786,8 @@ export class ConversationService {
     replyStrategyVersion?: string;
     replyStrategySource?: string;
     replyParticipationStrategy?: string;
+    replyParticipationExecution?: string;
+    replyParticipationFallbackReason?: string;
     replyConversationStance?: string;
     replyConversationStanceTarget?: string;
     replyConversationMoves?: string[];
@@ -4830,6 +4892,10 @@ export class ConversationService {
       replyStrategySource: routing?.strategySource?.trim() || undefined,
       replyParticipationStrategy:
         routing?.participationStrategy?.trim() || undefined,
+      replyParticipationExecution:
+        routing?.participationExecution?.trim() || undefined,
+      replyParticipationFallbackReason:
+        routing?.participationFallbackReason?.trim() || undefined,
       replyConversationStance: routing?.conversationStance?.trim() || undefined,
       replyConversationStanceTarget:
         routing?.conversationStanceTarget?.trim() || undefined,
@@ -4940,6 +5006,8 @@ export class ConversationService {
     replyStrategyVersion?: string;
     replyStrategySource?: string;
     replyParticipationStrategy?: string;
+    replyParticipationExecution?: string;
+    replyParticipationFallbackReason?: string;
     replyConversationStance?: string;
     replyConversationStanceTarget?: string;
     replyConversationMoves?: string[];
@@ -5096,6 +5164,10 @@ export class ConversationService {
       options.replyStrategySource?.trim() || undefined;
     message.replyParticipationStrategy =
       options.replyParticipationStrategy?.trim() || undefined;
+    message.replyParticipationExecution =
+      options.replyParticipationExecution?.trim() || undefined;
+    message.replyParticipationFallbackReason =
+      options.replyParticipationFallbackReason?.trim() || undefined;
     message.replyConversationStance =
       options.replyConversationStance?.trim() || undefined;
     message.replyConversationStanceTarget =

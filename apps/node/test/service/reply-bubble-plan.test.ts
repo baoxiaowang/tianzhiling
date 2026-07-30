@@ -63,6 +63,13 @@ describe('reply bubble plan', () => {
 
     expect(plan.turnClosure).toBe('close');
     expect(buildReplyBubblePlanPrompt(plan)).toContain('不提问或开新话题');
+
+    expect(
+      buildReplyBubblePlan({
+        currentQuery: '还行，有点困了，先睡吧。',
+        replyMoveCount: 1,
+      }).turnClosure
+    ).toBe('close');
   });
 
   it('removes deterministic noise without changing valid bubble semantics', () => {

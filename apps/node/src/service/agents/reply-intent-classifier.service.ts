@@ -124,6 +124,8 @@ const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
   /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
   /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
+const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
+  /说点不一样|说说你自己|想听你说(?:两句|点什么)|别光(?:说|问|听|安慰)|你还没(?:说|回答)/;
 const CONVERSATION_FUTILITY_PATTERN =
   /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
 const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
@@ -453,6 +455,7 @@ export class ReplyIntentClassifierService {
 
     if (
       ENGAGEMENT_SEMANTIC_PLANNING_PATTERN.test(currentQuery) ||
+      ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(currentQuery) ||
       CONVERSATION_FUTILITY_PATTERN.test(currentQuery)
     ) {
       return { mode: 'semantic', reason: 'engagement_friction' };
