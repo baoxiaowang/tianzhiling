@@ -83,6 +83,10 @@ import {
   MAX_ASSISTANT_REPLY_SEGMENTS,
   ReplyBubbleStructureIssue,
 } from './agents/reply-bubble-plan';
+import {
+  buildReplyLengthPlanPrompt,
+  countReplyVisibleCharacters,
+} from './agents/reply-length-plan';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { ConversationMessageItem, MessageService } from './message.service';
 import { PostImageService } from './post-image.service';
@@ -2102,7 +2106,8 @@ export class ConversationService {
       '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
       '不编造共同经历、生物学关系和离世后生活；带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
-      '像微信聊天，直接回答，温和朴素。整次回复合计：晚安、吃饭、简单爱意尽量 20 字以内；简单思念、家庭近况通常 30-50 字；5 字以内的完整表达、只有称呼或语气词也允许。复杂倾诉再按需要展开。',
+      '像微信聊天，直接回答，温和朴素。不要把同一个意思解释、安慰、总结三遍。',
+      buildReplyLengthPlanPrompt(options.replyBrief.lengthPlan),
       '默认 1-3 个短气泡。',
       '只输出给用户看的中文正文。多个气泡用空行分段；不要 JSON、字段名、代码块、分析或内部说明。',
     ].join('\n');
@@ -2263,7 +2268,9 @@ export class ConversationService {
   ): 'completion' | 'parse' {
     const code = this.resolveGenerationFailureCode(error);
 
-    return /(?:EMPTY_REPLY|INVALID_REPLY|PARSE|STRUCTURE)/i.test(code)
+    return /(?:EMPTY_REPLY|NO_USABLE_TEXT|INVALID_REPLY|PARSE|STRUCTURE)/i.test(
+      code
+    )
       ? 'parse'
       : 'completion';
   }
@@ -2296,8 +2303,12 @@ export class ConversationService {
   }): Promise<ValidateAssistantReplyResult> {
     if (!this.replyGuardrailService) {
       return {
-        segments: options.replySegments,
-        rewritten: false,
+        segments: this.sanitizeAssistantSegmentsForFinalOutput(
+          options.replySegments,
+          options.userQuery
+        ),
+        rewritten: true,
+        reason: 'Guardrail unavailable; deterministic final-output filter used',
       };
     }
 
@@ -2331,8 +2342,12 @@ export class ConversationService {
         this.describeReplyError(error)
       );
       return {
-        segments: options.replySegments,
-        rewritten: false,
+        segments: this.sanitizeAssistantSegmentsForFinalOutput(
+          options.replySegments,
+          options.userQuery
+        ),
+        rewritten: true,
+        reason: 'Guardrail failed; deterministic final-output filter used',
       };
     }
   }
@@ -3295,6 +3310,7 @@ export class ConversationService {
       0,
       MAX_ASSISTANT_REPLY_SEGMENTS
     );
+    const replyVisibleCharacters = countReplyVisibleCharacters(replySegments);
 
     for (const [index, segment] of replySegments.entries()) {
       const segmentTime = new Date(options.replyTime.getTime() + index);
@@ -3317,6 +3333,9 @@ export class ConversationService {
             ? options.usage.completionTokens
             : undefined,
           totalTokens: isFirstSegment ? options.usage.totalTokens : undefined,
+          replyVisibleCharacters: isFirstSegment
+            ? replyVisibleCharacters
+            : undefined,
           ...(isFirstSegment
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
@@ -3357,6 +3376,9 @@ export class ConversationService {
     const replyContent = options.replySegments
       .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
       .join('</fenge>');
+    const replyVisibleCharacters = countReplyVisibleCharacters(
+      options.replySegments.slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
+    );
     const synthesizedVoice = await this.synthesizeAssistantVoiceReply(
       replyContent,
       voiceTimbre
@@ -3382,6 +3404,7 @@ export class ConversationService {
       promptTokens: options.usage.promptTokens,
       completionTokens: options.usage.completionTokens,
       totalTokens: options.usage.totalTokens,
+      replyVisibleCharacters,
       ...this.buildReplyRoutingMessageFields(options.routing),
       createdAt: options.replyTime,
       updatedAt: options.replyTime,
@@ -4116,8 +4139,8 @@ export class ConversationService {
     }
 
     throw new AppError(
-      'MINIMAX_EMPTY_REPLY',
-      'MiniMax returned an empty reply',
+      'ASSISTANT_REPLY_NO_USABLE_TEXT',
+      'assistant reply did not contain usable text',
       502
     );
   }
@@ -4148,7 +4171,9 @@ export class ConversationService {
       segmentTraces,
       errorCode:
         options.errorCode ||
-        (acceptedSegments.length ? undefined : 'MINIMAX_EMPTY_REPLY'),
+        (acceptedSegments.length
+          ? undefined
+          : 'ASSISTANT_REPLY_NO_USABLE_TEXT'),
     };
   }
 
@@ -4157,7 +4182,12 @@ export class ConversationService {
     userQuery = ''
   ): string[] {
     const sanitized = segments
-      .map(segment => this.sanitizeAssistantSegment(segment, userQuery))
+      .map(
+        segment =>
+          this.inspectAssistantSegmentSanitization(segment, userQuery, {
+            dropSemanticRisks: !this.replyGuardrailService,
+          }).output
+      )
       .filter(Boolean);
 
     return inspectReplyBubbleStructure(sanitized).segments;
@@ -4229,21 +4259,12 @@ export class ConversationService {
       };
     }
 
-    try {
-      const parsed = JSON.parse(content) as {
-        claims?: unknown;
-      };
+    const parsed = this.parseAssistantReplyEnvelope(content);
 
-      return {
-        segments: this.parseAssistantReplyCandidates(content),
-        claims: this.normalizeAssistantFactClaims(parsed?.claims),
-      };
-    } catch {
-      return {
-        segments: this.parseAssistantReplyCandidates(content),
-        claims: [],
-      };
-    }
+    return {
+      segments: this.parseAssistantReplyCandidates(content),
+      claims: this.normalizeAssistantFactClaims(parsed?.claims),
+    };
   }
 
   private normalizeAssistantFactClaims(value: unknown): AssistantFactClaim[] {
@@ -4322,11 +4343,9 @@ export class ConversationService {
       return [];
     }
 
-    try {
-      const parsed = JSON.parse(content) as {
-        text?: unknown;
-        segments?: unknown;
-      };
+    const parsed = this.parseAssistantReplyEnvelope(content);
+
+    if (parsed) {
       const text = typeof parsed?.text === 'string' ? parsed.text.trim() : '';
 
       if (text) {
@@ -4345,11 +4364,44 @@ export class ConversationService {
           this.stripAssistantMarkup(segment).trim()
         );
       }
-    } catch {
-      // Fall back to legacy text splitting so older prompts still render.
     }
 
     return this.extractSegmentsFromContent(content);
+  }
+
+  private parseAssistantReplyEnvelope(
+    content: string
+  ): Record<string, unknown> | null {
+    const candidates = [content];
+    const withoutFence = content
+      .replace(/^\s*```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+
+    if (withoutFence && withoutFence !== content) {
+      candidates.push(withoutFence);
+    }
+
+    const objectStart = withoutFence.indexOf('{');
+    const objectEnd = withoutFence.lastIndexOf('}');
+
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      candidates.push(withoutFence.slice(objectStart, objectEnd + 1));
+    }
+
+    for (const candidate of Array.from(new Set(candidates))) {
+      try {
+        const parsed = JSON.parse(candidate);
+
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Try the next recoverable envelope, then fall back to plain text.
+      }
+    }
+
+    return null;
   }
 
   private extractSegmentsFromContent(value?: string): string[] {
@@ -4385,9 +4437,30 @@ export class ConversationService {
     return this.inspectAssistantSegmentSanitization(value, userQuery).output;
   }
 
+  private sanitizeAssistantSegmentsForFinalOutput(
+    segments: string[],
+    userQuery = ''
+  ): string[] {
+    const sanitized = inspectReplyBubbleStructure(
+      segments
+        .map(
+          segment =>
+            this.inspectAssistantSegmentSanitization(segment, userQuery, {
+              dropSemanticRisks: true,
+            }).output
+        )
+        .filter(Boolean)
+    ).segments;
+
+    return sanitized.length ? sanitized : [ASSISTANT_REPLY_FAILED_CONTENT];
+  }
+
   private inspectAssistantSegmentSanitization(
     value?: string,
-    userQuery = ''
+    userQuery = '',
+    options: {
+      dropSemanticRisks?: boolean;
+    } = {}
   ): AssistantSegmentSanitizationTrace {
     const content = value?.trim() || '';
 
@@ -4432,8 +4505,18 @@ export class ConversationService {
       normalized,
       userQuery
     );
+    const structuralSafetyMatches = messageSafetyMatches.filter(match =>
+      ['url', 'media_file', 'legacy_media_path', 'prompt_leakage'].includes(
+        match.rule
+      )
+    );
+    const semanticSafetyMatches = messageSafetyMatches.filter(
+      match => !structuralSafetyMatches.includes(match)
+    );
     const dropped =
-      messageSafetyMatches.length > 0 || presenceSafetyMatches.length > 0;
+      structuralSafetyMatches.length > 0 ||
+      (options.dropSemanticRisks === true &&
+        (semanticSafetyMatches.length > 0 || presenceSafetyMatches.length > 0));
 
     return {
       input: content,
@@ -4522,6 +4605,9 @@ export class ConversationService {
     replyBriefMaxSegments?: number;
     replyBriefComplexityHint?: string;
     replyBriefTurnClosure?: string;
+    replyBriefLengthClass?: string;
+    replyBriefTargetCharacters?: number;
+    replyBriefReviewCharacters?: number;
     replyRelationshipSignals?: string[];
     replyFallbackSource?: string;
     replyGenerationFailureStage?: string;
@@ -4572,6 +4658,9 @@ export class ConversationService {
       replyBriefMaxSegments: routing?.brief?.bubblePlan?.maxSegments,
       replyBriefComplexityHint: routing?.brief?.bubblePlan?.complexityHint,
       replyBriefTurnClosure: routing?.brief?.bubblePlan?.turnClosure,
+      replyBriefLengthClass: routing?.brief?.lengthPlan?.lengthClass,
+      replyBriefTargetCharacters: routing?.brief?.lengthPlan?.targetCharacters,
+      replyBriefReviewCharacters: routing?.brief?.lengthPlan?.reviewCharacters,
       replyRelationshipSignals: routing?.brief?.relationshipContext?.map(
         item => item.key
       ),
@@ -4660,6 +4749,7 @@ export class ConversationService {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    replyVisibleCharacters?: number;
     replyIntentTarget?: string;
     replyIntentTimeScope?: string;
     replyIntent?: string;
@@ -4677,6 +4767,9 @@ export class ConversationService {
     replyBriefMaxSegments?: number;
     replyBriefComplexityHint?: string;
     replyBriefTurnClosure?: string;
+    replyBriefLengthClass?: string;
+    replyBriefTargetCharacters?: number;
+    replyBriefReviewCharacters?: number;
     replyRelationshipSignals?: string[];
     replyFallbackSource?: string;
     replyGenerationFailureStage?: string;
@@ -4737,6 +4830,9 @@ export class ConversationService {
       options.completionTokens
     );
     message.totalTokens = this.normalizeTokenCount(options.totalTokens);
+    message.replyVisibleCharacters = this.normalizeTokenCount(
+      options.replyVisibleCharacters
+    );
     message.replyIntentTarget = options.replyIntentTarget?.trim() || undefined;
     message.replyIntentTimeScope =
       options.replyIntentTimeScope?.trim() || undefined;
@@ -4765,6 +4861,14 @@ export class ConversationService {
       options.replyBriefComplexityHint?.trim() || undefined;
     message.replyBriefTurnClosure =
       options.replyBriefTurnClosure?.trim() || undefined;
+    message.replyBriefLengthClass =
+      options.replyBriefLengthClass?.trim() || undefined;
+    message.replyBriefTargetCharacters = this.normalizeTokenCount(
+      options.replyBriefTargetCharacters
+    );
+    message.replyBriefReviewCharacters = this.normalizeTokenCount(
+      options.replyBriefReviewCharacters
+    );
     message.replyRelationshipSignals =
       options.replyRelationshipSignals?.filter(Boolean);
     message.replyFallbackSource =

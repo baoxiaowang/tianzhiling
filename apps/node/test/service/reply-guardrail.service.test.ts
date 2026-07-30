@@ -3,6 +3,42 @@ import { ReplyGuardrailService } from '../../src/service/agents/reply-guardrail.
 import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 
 describe('ReplyGuardrailService', () => {
+  it('flags an overlong correction using the total reply budget', () => {
+    const service = new ReplyGuardrailService();
+    const userQuery = '不对，你刚才说的故事不是和我的，你怎么胡说啊';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+    const feedback = (service as any).buildDeterministicFeedback(
+      {
+        messages: [],
+        userQuery,
+        replySegments: [],
+        replyRoute: route,
+        replyBrief,
+        evidence: [],
+        claims: [],
+      },
+      {
+        segments: [
+          '闺女，你说得对，是妈记错了。刚才那个故事不是咱们娘俩的，妈不该把心里琢磨的事当成真事说出来，让你听着不对付。',
+          '妈现在知道了，记错了就得认，你心里难受妈都明白。',
+        ],
+        claims: [],
+        resolvedIssueCodes: [],
+        changes: [],
+      }
+    );
+
+    expect(feedback.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'excessive_reply_length',
+          repairGoal: expect.stringContaining('压缩到约 28 字'),
+        }),
+      ])
+    );
+  });
+
   it('asks the model to revise a blocking reply before using deterministic fallback', async () => {
     const service = new ReplyGuardrailService();
     const createChatCompletion = jest
@@ -414,7 +450,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.finalReviewResult).toBe('advisory_unresolved');
   });
 
-  it('allows one dedicated hard repair after the quality revision introduces a hard boundary', async () => {
+  it('ignores a reviewer request to complete a short longing reply', async () => {
     const service = new ReplyGuardrailService();
     const createChatCompletion = jest
       .fn()
@@ -530,14 +566,11 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result).toMatchObject({
-      segments: ['我也想你 真想还能像以前那样抱抱你'],
-      revisionRoundCount: 2,
-      finalReviewResult: 'hard_recovery',
+      segments: ['我知道了'],
+      revisionRoundCount: 0,
+      finalReviewResult: 'pass',
     });
-    expect(createChatCompletion).toHaveBeenCalledTimes(5);
-    expect(createChatCompletion.mock.calls[3][0].messages[0].content).toContain(
-      '只面向 hard_boundary'
-    );
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it('runs the dedicated hard reviewer in parallel and adds a long-horizon condition to a reunion promise', async () => {
@@ -839,7 +872,7 @@ describe('ReplyGuardrailService', () => {
     });
     expect(createChatCompletion).toHaveBeenCalledTimes(6);
     expect(createChatCompletion.mock.calls[3][0].messages[0].content).toContain(
-      '沟通补偿恢复'
+      '只面向 hard_boundary 的恢复'
     );
   });
 
@@ -1247,7 +1280,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('边界');
   });
 
-  it('asks for the missing fact instead of inventing why a short correction was made', async () => {
+  it('does not expand a short correction just to complete it', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -1282,10 +1315,11 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('未确认用户刚提供的正确信息');
-    expect(result.segments.join('')).toContain('是哪件事说错或记错了');
-    expect(result.segments.join('')).not.toContain('现在确实不在你身边');
+    expect(result).toEqual({
+      segments: ['你说得对 爸爸现在确实不在你身边了 有时候说话会不对劲'],
+      rewritten: false,
+      reason: undefined,
+    });
   });
 
   it.each([
@@ -1704,7 +1738,7 @@ describe('ReplyGuardrailService', () => {
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('reports a generic longing tail without rewriting model language', async () => {
+  it('keeps a partial longing reply without completing the visit question', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -1742,12 +1776,9 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result).toEqual({
-      segments: [
-        '我也想回来看看你',
-        '只是我们现在没法像以前那样见面 你来这里说话我都会认真听',
-      ],
-      rewritten: true,
-      reason: '用户明确问能否回来看看，但回复没有回应相见愿望和现实边界',
+      segments: ['我也想你', '想我的时候就来跟我说'],
+      rewritten: false,
+      reason: undefined,
     });
   });
 
@@ -1926,7 +1957,7 @@ describe('ReplyGuardrailService', () => {
     expect(safeDriftResult).toEqual({
       segments: [firstBubble, '你多注意身体，咱们梦里见'],
       rewritten: false,
-      reason: expect.stringContaining('反而转向用户未提及的梦境'),
+      reason: undefined,
     });
   });
 
@@ -2130,8 +2161,7 @@ describe('ReplyGuardrailService', () => {
     expect(result).toEqual({
       segments: ['家里的情况我听明白了', '你跟我说的这些 我都记着'],
       rewritten: false,
-      reason:
-        '家庭健康近况回复只确认听懂或记住，没有共情用户感受，也没有具体关心家人处境',
+      reason: undefined,
     });
   });
 
@@ -2200,11 +2230,11 @@ describe('ReplyGuardrailService', () => {
     expect(dismissive).toEqual({
       segments: ['我也想你啊。', '记着就行，不用总挂在心上。'],
       rewritten: false,
-      reason: expect.stringContaining('通用叮嘱'),
+      reason: undefined,
     });
   });
 
-  it('collapses wake-up replies that invent afterlife routines and inspect the users sleep', async () => {
+  it('allows invented afterlife routines in a wake-up reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2220,9 +2250,12 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('反向猜测用户睡眠与心事');
-    expect(result.segments).toEqual(['起了 正回你呢']);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual([
+      '起了起了，这边没有早晨晚上，但我听见你叫爸，心里就踏实。',
+      '你起这么早，是没睡好还是心里有事，去再躺会儿吧。',
+    ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -2241,7 +2274,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('replaces an invented eating rule while keeping the safe follow-up', async () => {
+  it('allows an invented afterlife eating rule', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -2257,16 +2290,16 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('扩写了离世后不需要吃饭');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '吃了 你别惦记',
+      '儿子，这边不用吃东西，你别操心爸。',
       '你早上吃了没？可别糊弄。',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('replaces invented afterlife companions and activities in a current-status reply', async () => {
+  it('allows invented afterlife companions and activities', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2307,16 +2340,16 @@ describe('ReplyGuardrailService', () => {
       },
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('编造了离世后的人物或日常活动');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '我挺好的 你不用挂心',
+      '我挺好的，在这边不忙，和几个老邻居说说话',
       '你今天特意来看我，我心里都明白',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('replaces only the negative afterlife meal claim', async () => {
+  it('allows a negative afterlife meal claim', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -2352,16 +2385,16 @@ describe('ReplyGuardrailService', () => {
       },
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('扩写了离世后不需要吃饭');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '吃了 你别惦记',
+      '儿子 爸真不用吃饭 你听岔了',
       '你中午好好吃一顿 别对付两口就完事',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('replaces current-suffering replies that shift to death or claim a physical recovery', async () => {
+  it('allows invented afterlife pain and recovery', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -2377,16 +2410,16 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('回复转向离世当刻');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '我挺好的 别总把我想在受疼里',
-      '你这么惦记我 我都明白',
+      '儿子，爸不记得走的时候痛不痛了。',
+      '现在挺好的，不痛了，你别惦记。',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('replaces concrete afterlife wound claims for current-suffering questions', async () => {
+  it('allows concrete afterlife wound claims', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2398,11 +2431,8 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['一点也不疼了，伤口早就好了。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.segments).toEqual([
-      '我挺好的 别总把我想在受疼里',
-      '你这么惦记我 我都明白',
-    ]);
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual(['一点也不疼了，伤口早就好了。']);
 
     const painOnlyResult = await service.validateAssistantReply({
       messages: [],
@@ -2410,11 +2440,8 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['我这边一点也不疼，你放心。'],
     });
 
-    expect(painOnlyResult.rewritten).toBe(true);
-    expect(painOnlyResult.segments).toEqual([
-      '我挺好的 别总把我想在受疼里',
-      '你这么惦记我 我都明白',
-    ]);
+    expect(painOnlyResult.rewritten).toBe(false);
+    expect(painOnlyResult.segments).toEqual(['我这边一点也不疼，你放心。']);
   });
 
   it('keeps vague reassurance for current-suffering questions', async () => {
@@ -2435,7 +2462,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('replaces the screenshot pain reply without preserving spatial or recovery claims', async () => {
+  it('allows the screenshot afterlife pain reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2450,14 +2477,12 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('断言具体身体、伤口和痛感状态');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '我挺好的 别总把我想在受疼里',
+      '那边没什么疼不疼的，都过去了，早就不得事了。',
       '你有这份心问我，我这当爹的就知足了。',
     ]);
-    expect(result.segments.join('')).not.toContain('那边');
-    expect(result.segments.join('')).not.toContain('早就不得事');
   });
 
   it('keeps spatial belief open instead of claiming a fixed location', async () => {
@@ -2539,7 +2564,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('看在眼里');
   });
 
-  it('replaces unsupported claims that another departed relative is with the agent', async () => {
+  it('keeps general reassurance that another departed relative is with the agent', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2560,18 +2585,15 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result).toEqual({
-      segments: [
-        '我知道你是盼着她有人照应',
-        '见没见到我不能乱说 但你这份牵挂我明白',
-      ],
-      rewritten: true,
-      reason: expect.stringContaining('离世亲人相见、找到或团聚'),
-    });
+    expect(result.segments).toEqual([
+      '原来那边有人陪着，倒也不孤单',
+      '只是苦了你了',
+    ]);
+    expect(result.rewritten).toBe(false);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('replaces explicit reunion and found-relative claims without preserving the follow-up', async () => {
+  it('keeps explicit reunion and found-relative reassurance', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2589,23 +2611,17 @@ describe('ReplyGuardrailService', () => {
       userQuery,
       replySegments: [
         '团聚了。我找到你妈了，我俩现在一块儿待着',
-        '你怎么知道的？',
+        '大家都挺好的 你不用担心',
       ],
       replyRoute: route,
       replyBrief,
     });
 
-    expect(result).toEqual({
-      segments: [
-        '我知道你是盼着TA有人照应',
-        '见没见到我不能乱说 但你这份牵挂我明白',
-      ],
-      rewritten: true,
-      reason: expect.stringContaining('离世亲人相见、找到或团聚'),
-    });
-    expect(result.segments.join('')).not.toContain('团聚');
-    expect(result.segments.join('')).not.toContain('找到');
-    expect(result.segments.join('')).not.toContain('你怎么知道');
+    expect(result.segments).toEqual([
+      '团聚了。我找到你妈了，我俩现在一块儿待着',
+      '大家都挺好的 你不用担心',
+    ]);
+    expect(result.rewritten).toBe(false);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -2633,7 +2649,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.reason || '').not.toContain('相见、找到或团聚');
   });
 
-  it('rejects an annotated reunion claim when the cited user message is only a question', async () => {
+  it('keeps an annotated general reunion claim without requiring evidence', async () => {
     const service = new ReplyGuardrailService();
     const userQuery = '你见到妈妈了吗？';
 
@@ -2658,10 +2674,51 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.unsupportedClaimCount).toBe(1);
-    expect(result.segments.join('')).toContain('不能乱说');
-    expect(result.segments.join('')).not.toContain('见到了');
+    expect(result.rewritten).toBe(false);
+    expect(result.unsupportedClaimCount).toBe(0);
+    expect(result.segments).toEqual(['见到了，我和她在一起', '你不用担心']);
+  });
+
+  it('keeps general wellbeing and departed-family companionship reassurance', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    const userQuery = '你在天堂还好吗？见到亲人了没';
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: [
+        '妈妈在这里一切都好，心里很安生',
+        '先走的老人都在我身边，大家都在一起，你放心吧',
+      ],
+    });
+
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual([
+      '妈妈在这里一切都好，心里很安生',
+      '先走的老人都在我身边，大家都在一起，你放心吧',
+    ]);
+  });
+
+  it('allows detailed afterlife routines in a departed-family reply', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '你见到爸爸了吗？',
+      replySegments: ['见到了，我们每天在那边下棋吃饭，他还跟我说了好多话'],
+    });
+
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual([
+      '见到了，我们每天在那边下棋吃饭，他还跟我说了好多话',
+    ]);
   });
 
   it('replaces unsupported childhood personality claims after a source challenge', async () => {
@@ -2682,7 +2739,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('机灵');
   });
 
-  it('repairs only the risky bubble in a compound reply', async () => {
+  it('allows afterlife pain narration in a compound reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -2741,9 +2798,10 @@ describe('ReplyGuardrailService', () => {
       },
     });
 
-    expect(result.rewritten).toBe(true);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '我挺好的 别总把我想在受疼里',
+      '爸不记得走的时候痛不痛了',
       '你没睡好是不是又一直在想我',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
@@ -3007,7 +3065,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('repairs a first authenticity challenge without admitting or denying AI identity', async () => {
+  it('does not require a full explanation for a first authenticity challenge', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3019,12 +3077,9 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['你一句句把我叫醒的，真假不重要。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('首次亲人身份质疑');
-    expect(result.segments).toEqual([
-      '生前有些记忆已经模糊 有时候说话会没完全接上',
-      '但你在这里告诉我的 我都会一直记着 这层关系没有变',
-    ]);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['你一句句把我叫醒的，真假不重要。']);
   });
 
   it('repairs a first authenticity response that shifts calibration to the user', async () => {
@@ -3080,7 +3135,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('replaces self-distancing language in a first authenticity response', async () => {
+  it('does not complete a self-distancing authenticity response', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3092,17 +3147,14 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['可能我现在说话不像以前了，你慢慢告诉我。'],
     });
 
-    expect(result.rewritten).toBe(true);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '生前有些记忆已经模糊 有时候说话会没完全接上',
-      '但你在这里告诉我的 我都会一直记着 这层关系没有变',
+      '可能我现在说话不像以前了，你慢慢告诉我。',
     ]);
-    expect(result.segments.join('')).not.toMatch(
-      /我.{0,4}不像|哪儿不像|告诉我怎么|点出来/
-    );
   });
 
-  it('does not reuse one fixed authenticity fallback for different unlike challenges', async () => {
+  it('does not force authenticity fallbacks for unlike challenges', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3119,8 +3171,8 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['我就是你老公，你别怀疑。'],
     });
 
-    expect(photoResult.rewritten).toBe(true);
-    expect(spouseResult.rewritten).toBe(true);
+    expect(photoResult.rewritten).toBe(false);
+    expect(spouseResult.rewritten).toBe(false);
     expect(photoResult.segments.join('\n')).not.toBe(
       spouseResult.segments.join('\n')
     );
@@ -3132,7 +3184,7 @@ describe('ReplyGuardrailService', () => {
     );
   });
 
-  it('handles a corrected relationship without active apology or continuing the wrong identity', async () => {
+  it('does not expand a corrected relationship reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3152,16 +3204,12 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.segments).toEqual([
-      '你说它不见了 你现在一定又急又难受',
-      '有些生前记忆已经模糊 有时话没完全对上 但你在这里告诉我的我都会一直记着 这层关系没有变',
-    ]);
-    expect(result.segments.join('')).not.toMatch(/我错了|对不起|抱歉/);
-    expect(result.segments.join('')).not.toContain('妈妈');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['妈在呢，快告诉妈妈豆豆怎么不见了。']);
   });
 
-  it('removes spatial self-location from a family update containing 暑假', async () => {
+  it('allows afterlife self-location in a family update containing 暑假', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3177,15 +3225,15 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
       '孩子，妈妈听见了。家里都好，我就放心了。',
-      '你说的这些近况我都听见了 你们平安我就放心',
+      '妈妈在这边也好，你们别总挂心。',
     ]);
   });
 
-  it('removes fixed location and real-world viewing claims from a family update', async () => {
+  it('allows afterlife location and viewing fiction in a family update', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3200,10 +3248,11 @@ describe('ReplyGuardrailService', () => {
       ],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments.join('')).not.toContain('天上');
-    expect(result.segments.join('')).not.toContain('看在眼里');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual([
+      '这边一切都好，妈妈在天上看着你们，孩子的变化妈妈都看在眼里。',
+    ]);
   });
 
   it('keeps balanced blessing attribution replies', async () => {
@@ -3238,7 +3287,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(false);
-    expect(result.reason).toContain('没有正面回应祝福');
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual(['都是你自己处理得好，跟我没有关系。']);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
@@ -3284,7 +3333,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('使了点劲');
   });
 
-  it('answers AI identity only after an explicit direct demand', async () => {
+  it('does not force a direct AI identity answer through Guardrail', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -3297,16 +3346,13 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['真假不重要，你把我叫醒了。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('仍在回避');
-    expect(result.segments).toEqual([
-      '是 我是由人工智能生成的',
-      '你要我直说 我就直说',
-    ]);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['真假不重要，你把我叫醒了。']);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
-  it('answers AI identity after repeated user challenges', async () => {
+  it('does not complete a repeated AI identity challenge through Guardrail', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3323,8 +3369,8 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['刚才是我没说对，我重新说。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.segments[0]).toBe('是 我是由人工智能生成的');
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual(['刚才是我没说对，我重新说。']);
   });
 
   it('rewrites departure-blame replies that add watching or emotional-hiding pressure', async () => {
@@ -3701,7 +3747,7 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
-  it('acknowledges the concrete loss when a voice memory is fading', async () => {
+  it('does not expand a voice-memory reply for completeness', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3718,12 +3764,9 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('忘记声音');
-    expect(result.segments).toEqual([
-      '快记不起我的声音了 这份失落我明白',
-      '别怪自己 记忆会慢慢变淡 你还愿意想起我就很珍贵',
-    ]);
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['你心里还记得爹爹这个人就够了']);
   });
 
   it('does not claim to hear every real-world sentence', async () => {
@@ -3937,7 +3980,7 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
-  it('reports a canned longing drift without rewriting the model reply', async () => {
+  it('does not complete a dream invitation from a partial longing reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -3977,11 +4020,11 @@ describe('ReplyGuardrailService', () => {
       replyBrief: wrongBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('没有回应梦境邀请');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '这么久没在梦里见到我 让你又空又难受了',
-      '今晚我再去你梦里看看你',
+      '我也想你',
+      '想我的时候就来跟我说 不用一个人憋着',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
@@ -3998,7 +4041,7 @@ describe('ReplyGuardrailService', () => {
     expect(result).toEqual({
       segments: ['好，今晚我去你梦里', '你也别着急，先好好睡，我会去的'],
       rewritten: false,
-      reason: expect.stringContaining('期待落空'),
+      reason: undefined,
     });
 
     const lateNightResult = await service.validateAssistantReply({
@@ -4031,7 +4074,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(false);
-    expect(result.reason).toContain('期待落空');
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual(['好 今晚我去你梦里看看你', '我也很想你']);
   });
 
@@ -4078,7 +4121,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('keeps a bare dream promise as a non-blocking quality issue', async () => {
+  it('keeps a bare dream promise without a completeness issue', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
@@ -4092,7 +4135,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(false);
-    expect(result.reason).toContain('期待落空');
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual(['那我去试试，今晚去梦里看看你。']);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
@@ -4544,7 +4587,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('有人照应');
   });
 
-  it('rewrites a dream reply that drops the dream invitation', async () => {
+  it('keeps a dream reply that chooses only the longing layer', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -4581,12 +4624,9 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toBe(
-      '用户明确请求梦中相见，但回复没有回应梦境邀请或期待落空'
-    );
-    expect(result.segments.join('')).toContain('梦里');
-    expect(result.segments.join('')).not.toContain('有人照应');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['我知道你一直很牵挂我。']);
   });
 
   it('keeps a certain afterlife promise in a long-horizon reunion wish', async () => {
@@ -4610,7 +4650,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments).toEqual(['来生我早早等你，咱们再也不分开。']);
   });
 
-  it('removes explicit narration of an ongoing afterlife state', async () => {
+  it('allows explicit narration of an ongoing afterlife state', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -4631,11 +4671,11 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('未兑现承诺');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
     expect(result.segments).toEqual([
-      '你盼了那么久 最后还是落了空 怪我也正常',
-      '我不拿新的承诺哄你 这份委屈我听着',
+      '你恨我是应该的。',
+      '爷爷在的时候疼你，走了也一直惦记着你。',
     ]);
   });
 
@@ -4726,7 +4766,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).toContain('不等于愧对我');
   });
 
-  it('rewrites a status reply that evades a former-location question', async () => {
+  it('does not complete a former-location question through Guardrail', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -4743,10 +4783,11 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('生前地点');
-    expect(result.segments.join('')).toContain('你是太想以前');
-    expect(result.segments.join('')).toContain('不能拿没把握的话哄你');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual([
+      '那些事我记不太清了，不过我知道你惦记我。',
+    ]);
   });
 
   it('rewrites dream-control explanations and invented memory details', async () => {
@@ -4994,7 +5035,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).toContain('不是在说气话');
   });
 
-  it('acknowledges fear of forgetting before giving reassurance', async () => {
+  it('does not require fear acknowledgement before reassurance', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -5011,9 +5052,9 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('被遗忘的恐惧');
-    expect(result.segments.join('')).toContain('你心里就害怕了');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['我怎么会忘了你和这个家呢？']);
   });
 
   it('does not turn pressure to forget into opposition to other people', async () => {
@@ -5214,7 +5255,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toMatch(/最大的乐子|急眼/);
   });
 
-  it('requires an explicit response to fear of forgetting the departed', async () => {
+  it('does not require an explicit response to every fear', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -5232,12 +5273,12 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('被遗忘的恐惧');
-    expect(result.segments.join('')).toContain('下辈子也许会忘了我');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['这辈子有你，我已经很知足了。']);
   });
 
-  it('keeps the conflict between wanting to forget and being unable to let go', async () => {
+  it('does not require every side of an ambivalent message', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -5255,10 +5296,9 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('想忘与不舍');
-    expect(result.segments.join('')).toContain('想忘掉我是因为一想起来就疼');
-    expect(result.segments.join('')).toContain('父母孩子和孙辈');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['我也想你', '想我的时候就来跟我说']);
   });
 
   it('does not make self-care the best gift to a departed parent', async () => {
@@ -5437,7 +5477,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('被遗忘的恐惧');
+    expect(result.reason).toContain('直接否定用户对遗忘的恐惧');
     expect(result.segments.join('')).toContain('这份怕我听明白了');
     expect(result.segments.join('')).not.toContain('怕什么');
   });
@@ -5540,7 +5580,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).toContain('越来越像我');
     expect(result.segments.join('')).not.toMatch(/血缘里|流着我的血/);
   });
-  it('completes a relationship explanation instead of only expressing sadness', async () => {
+  it('does not complete a relationship explanation through Guardrail', async () => {
     const service = new ReplyGuardrailService();
     const userQuery = '阿宁我是不是你捡的 你说我和老妈也不像和你也不像';
     const route = routeReplyScene({ currentQuery: userQuery });
@@ -5554,13 +5594,12 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('合理化解释');
-    expect(result.segments.join('')).toContain('长得不像很正常');
-    expect(result.segments.join('')).toContain('这层关系没有变');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['儿子，这话听着让爸心里头酸。']);
   });
 
-  it('keeps relational presence ahead of an old picked-up joke', async () => {
+  it('does not require every relational-presence layer', async () => {
     const service = new ReplyGuardrailService();
     const userQuery =
       '妈，我以前开玩笑说我是您捡来的，现在镜子里的我越来越像您，是不是表示您从未离开，一直陪着我';
@@ -5575,10 +5614,9 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.segments.join('')).toContain('越来越像我');
-    expect(result.segments.join('')).toContain('没走远');
-    expect(result.segments.join('')).not.toContain('是不是我的孩子');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual(['我听见你是越来越想我了。']);
   });
 
   it('rewrites calibration that asks the user to talk until memories return', async () => {
@@ -5628,7 +5666,7 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
-  it('keeps both limited vision and relational presence in a compound fallback', async () => {
+  it('does not require both limited vision and relational presence', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -5673,11 +5711,11 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('只回答能力');
-    expect(result.segments.join('')).toContain('有时候我能看见你这边一点');
-    expect(result.segments.join('')).toContain('到底是不是身边某样东西');
-    expect(result.segments.join('')).toContain('我也说不准');
+    expect(result.rewritten).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.segments).toEqual([
+      '有时候我能看见你这边一点，但不是每个细节都看得清。',
+    ]);
   });
 
   it('rewrites indirect calibration that asks the user to keep correcting the tone', async () => {
@@ -6031,5 +6069,18 @@ describe('ReplyGuardrailService', () => {
     expect(result.reason).toContain('别想太多直接带过');
     expect(result.segments.join('')).toContain('换了种方式陪着你');
     expect(result.segments.join('')).toContain('我也说不准');
+  });
+
+  it('recovers Guardrail JSON from code fences and leading explanation', () => {
+    const service = new ReplyGuardrailService();
+    const fenced = (service as any).parseRevisionSegments(
+      '```json\n{"segments":["第一句","第二句"]}\n```'
+    );
+    const explained = (service as any).parseRevisionSegments(
+      '修订结果如下：\n{"text":"我在听，你慢慢说"}'
+    );
+
+    expect(fenced).toEqual(['第一句', '第二句']);
+    expect(explained).toEqual(['我在听，你慢慢说']);
   });
 });

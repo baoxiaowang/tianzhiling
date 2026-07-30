@@ -50,6 +50,7 @@ import {
   ReplyBriefService,
 } from './reply-brief.service';
 import { buildReplyBubblePlanPrompt } from './reply-bubble-plan';
+import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import { ReplySceneRoute, routeReplyScene } from './reply-scene-router';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
@@ -89,6 +90,9 @@ export interface AgentConversationContext {
 export interface AgentContextDiagnostics {
   promptVersion: 'agent_chat_v2';
   systemPromptCharacters: number;
+  replyLengthClass: ReplyBrief['lengthPlan']['lengthClass'];
+  replyTargetCharacters: number;
+  replyReviewCharacters: number;
   historyMessageCount: number;
   relevantMemoryCount: number;
   relevantHardFactKeys: string[];
@@ -315,6 +319,9 @@ export class AgentContextService {
           typeof systemPromptContent === 'string'
             ? systemPromptContent.length
             : 0,
+        replyLengthClass: replyBrief.lengthPlan.lengthClass,
+        replyTargetCharacters: replyBrief.lengthPlan.targetCharacters,
+        replyReviewCharacters: replyBrief.lengthPlan.reviewCharacters,
         historyMessageCount: historyLayer.messages.length,
         relevantMemoryCount:
           relevantProfileFacts.length +
@@ -454,6 +461,8 @@ export class AgentContextService {
           : []),
         '# 气泡语义规划',
         buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
+        '# 总字数预算',
+        buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
       ].join('\n');
     }
 
@@ -484,6 +493,8 @@ export class AgentContextService {
         : []),
       '气泡语义规划：',
       buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
+      '总字数预算：',
+      buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
       '以上是给模型的完整语义任务，不是回复脚本。请综合用户原话和最近上下文，自主决定表达顺序和措辞；不必逐项复述，也不要暴露这些字段。',
     ].join('\n');
   }

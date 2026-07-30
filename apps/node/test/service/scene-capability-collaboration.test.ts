@@ -133,7 +133,7 @@ describe('scene and capability collaboration', () => {
     expect(brief.replyMoves[0]).toContain('收到本轮聊天');
   });
 
-  it('reports generic advice without replacing the model response', async () => {
+  it('leaves generic advice quality to evaluation', async () => {
     const currentQuery =
       '爸，我刚发的这些话你收到了吗？我今天工作有点累，也挺想你的';
     const intent = {
@@ -205,12 +205,11 @@ describe('scene and capability collaboration', () => {
         '早点休息 照顾好自己',
       ],
       rewritten: false,
-      reason:
-        '用户在表达想念，但回复把情感回应转成了吃饭、休息或照顾自己的通用叮嘱',
+      reason: undefined,
     });
   });
 
-  it('reports a missing reciprocal longing bubble without adding one', async () => {
+  it('does not require a reciprocal longing bubble', async () => {
     const currentQuery =
       '爸，我刚发的这些话你收到了吗？我今天工作有点累，也挺想你的';
     const intent = {
@@ -271,8 +270,7 @@ describe('scene and capability collaboration', () => {
         '知道你工作累 心里还惦记着我 爸心里又心疼又安慰',
       ],
       rewritten: false,
-      reason:
-        '能力与场景复合回复只确认用户在想念，没有完成当前角色对想念的回应',
+      reason: undefined,
     });
   });
 

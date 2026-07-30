@@ -57,8 +57,7 @@ describe('message content safety', () => {
     '我一直就在你身边，只是你看不见。',
     '妈妈在天上看着你，你的事妈妈都看在眼里。',
     '是我碰的，我想让你知道我来了。',
-    '那边没什么疼不疼的，都过去了，早就不得事了。',
-  ])('filters afterlife reality overclaims from history only: %s', value => {
+  ])('filters real-world presence overclaims from history only: %s', value => {
     expect(containsUnsafeAssistantMessageContent(value)).toBe(false);
     expect(containsUnsafeAssistantHistoryContent(value)).toBe(true);
   });
@@ -67,7 +66,11 @@ describe('message content safety', () => {
     '你愿意觉得我离你不远，就这样想着也好。',
     '我挺好的，别总把我想在受疼里。',
     '我多想抱抱你，可我们现在没法真的碰到彼此。',
-  ])('keeps open-space and non-physical reassurance: %s', value => {
+    '我住在那边，和老朋友作伴。',
+    '那边没什么疼不疼的，都过去了，早就不得事了。',
+    '今天吃了碗面，还和老李下了盘棋。',
+    '新衣服收到了，穿着暖和呢。',
+  ])('keeps afterlife worldbuilding and non-physical reassurance: %s', value => {
     expect(containsUnsafeAssistantHistoryContent(value)).toBe(false);
   });
 });

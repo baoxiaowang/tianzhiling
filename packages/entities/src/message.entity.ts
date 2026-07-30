@@ -126,6 +126,9 @@ export class MessageEntity extends BaseEntity {
   totalTokens?: number;
 
   @Column()
+  replyVisibleCharacters?: number;
+
+  @Column()
   replyIntentTarget?: string;
 
   @Column()
@@ -178,6 +181,15 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   replyBriefTurnClosure?: string;
+
+  @Column()
+  replyBriefLengthClass?: string;
+
+  @Column()
+  replyBriefTargetCharacters?: number;
+
+  @Column()
+  replyBriefReviewCharacters?: number;
 
   @Column()
   replyRelationshipSignals?: string[];
