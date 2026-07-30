@@ -694,6 +694,12 @@ function buildPromptIntent(
   if (intent?.reading) {
     result.reading = intent.reading;
   }
+  if (intent?.conversationPlan) {
+    result.conversationPlan = intent.conversationPlan;
+  }
+  if (intent?.memoryPlan) {
+    result.memoryPlan = intent.memoryPlan;
+  }
 
   return result;
 }

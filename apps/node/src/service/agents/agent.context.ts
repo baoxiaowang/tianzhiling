@@ -36,6 +36,7 @@ import {
   ConversationEmotionStateSummary,
 } from './agent-emotion-state.service';
 import {
+  ClassifyReplyIntentOptions,
   ReplyIntentClassifierService,
   ReplyIntentMemoryCandidate,
 } from './reply-intent-classifier.service';
@@ -62,6 +63,11 @@ import {
   resolveAgentChatModePolicy,
 } from './agent-chat-mode';
 import type { AgentMemoryControlResult } from './agent-memory-control';
+import {
+  AgentPersonaPromptResult,
+  buildAgentPersonaPrompt,
+  hasUsableAgentPersonaProfile,
+} from './agent-persona';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -106,6 +112,14 @@ export interface AgentContextDiagnostics {
   memoryRetrievalMode: MemoryRetrievalMode;
   memoryRetrievalRequestCount: number;
   memoryRetrievalConceptCount: number;
+  conversationStance?: string;
+  conversationMoves: string[];
+  conversationMoveGoals: string[];
+  socialStrategy?: string;
+  questionNeed?: string;
+  personaActivations: string[];
+  personaSource: AgentPersonaPromptResult['source'];
+  personaEvidenceSnippetCount: number;
 }
 
 export interface RetrievedContextSnippet {
@@ -167,6 +181,10 @@ export class AgentContextService {
     );
     const routingHistoryMessages =
       this.buildRecentHistoryMessages(conversationMessages);
+    const persona = buildAgentPersonaPrompt({
+      agent: options.agent,
+      recentMessages: routingHistoryMessages,
+    });
     const profileFacts = await this.listProfileFacts(options);
     const knownFamilyMembers = (profileFacts || [])
       .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
@@ -189,6 +207,7 @@ export class AgentContextService {
             recentMessages: routingHistoryMessages,
             knownFamilyMembers,
             memoryCandidates: [],
+            agentPersonaContext: persona.classifierContext,
           },
           options.classifyIntent !== false
         ),
@@ -300,7 +319,8 @@ export class AgentContextService {
       evidence,
       emotionState,
       replyRoute,
-      replyBrief
+      replyBrief,
+      persona
     );
     const historyLayer = this.buildHistoryLayer(recentHistoryMessages);
     const layers = [systemLayer, historyLayer];
@@ -338,6 +358,17 @@ export class AgentContextService {
         memoryRetrievalMode: memoryRetrieval.mode,
         memoryRetrievalRequestCount: memoryRetrieval.query ? 1 : 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
+        conversationStance: replyBrief.conversationPlan?.stance,
+        conversationMoves:
+          replyBrief.conversationPlan?.moves.map(move => move.type) || [],
+        conversationMoveGoals:
+          replyBrief.conversationPlan?.moves.map(move => move.goal) || [],
+        socialStrategy: replyBrief.conversationPlan?.socialStrategy,
+        questionNeed: replyBrief.conversationPlan?.questionNeed,
+        personaActivations:
+          replyBrief.conversationPlan?.personaActivation || [],
+        personaSource: persona.source,
+        personaEvidenceSnippetCount: persona.evidenceSnippetCount,
       },
       replyIntent: replyRoute.intent,
       replyRoute,
@@ -350,7 +381,8 @@ export class AgentContextService {
     evidence: AgentEvidenceItem[],
     emotionState?: ConversationEmotionStateSummary | null,
     replyRoute?: ReplySceneRoute,
-    replyBrief?: ReplyBrief
+    replyBrief?: ReplyBrief,
+    persona?: AgentPersonaPromptResult
   ): AgentContextLayer {
     const basePrompt = buildDepartedSystemPrompt({
       userId: options.auth.sub,
@@ -371,6 +403,7 @@ export class AgentContextService {
 
     const systemPrompt = [
       basePrompt,
+      persona?.prompt,
       conversationReadingPrompt,
       modePrompt,
       continuitySummaryPrompt,
@@ -449,6 +482,31 @@ export class AgentContextService {
     const rules = Array.from(new Set([...constraints, ...platformRules]));
     const preservesMemoryFlow =
       replyBrief.mode === 'memory' || replyBrief.mode === 'memory_control';
+    const conversationPlanLines = replyBrief.conversationPlan
+      ? [
+          '# 本轮交谈规划',
+          `态度：${replyBrief.conversationPlan.stance}（针对：${replyBrief.conversationPlan.stanceTarget}）`,
+          `行动：${replyBrief.conversationPlan.moves
+            .map(move => `${move.type}:${move.goal}`)
+            .join('；')}`,
+          `关系策略：${replyBrief.conversationPlan.socialStrategy}；目的：${replyBrief.conversationPlan.strategyPurpose}`,
+          `提问：${replyBrief.conversationPlan.questionNeed}；收束：${replyBrief.conversationPlan.turnClosure}`,
+          ...(replyBrief.conversationPlan.personaActivation.length
+            ? [
+                `人格激活：${replyBrief.conversationPlan.personaActivation.join(
+                  '；'
+                )}`,
+              ]
+            : []),
+          ...(replyBrief.conversationPlan.questionNeed !== 'none' &&
+          replyBrief.conversationPlan.moves.some(move => move.type === 'ask')
+            ? [
+                '本轮规划明确需要提问：实际提出一个清楚、贴着新信息的问题，不要把 ask 只实现成安慰或陈述；最多一个问题。',
+              ]
+            : []),
+          '这是结合最近对话生成的弱规划，不是固定脚本。自然实现其目的；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+        ]
+      : [];
 
     if (preservesMemoryFlow) {
       return [
@@ -459,6 +517,7 @@ export class AgentContextService {
               '这些内容只限制不能声称的能力或事实，不规定回复步骤、措辞、气泡数量和情绪表达。',
             ]
           : []),
+        ...conversationPlanLines,
         '# 气泡语义规划',
         buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
         '# 总字数预算',
@@ -469,6 +528,7 @@ export class AgentContextService {
     return [
       '# 本轮回复任务',
       `用户此刻最需要：${replyBrief.emotionalNeed}`,
+      ...conversationPlanLines,
       ...(replyBrief.replyMoves.length
         ? [
             '可选择完成的回应目标：',
@@ -1603,25 +1663,30 @@ export class AgentContextService {
       }
     }
 
+    const styleCandidates = hasUsableAgentPersonaProfile(agent.personaProfile)
+      ? []
+      : [
+          {
+            key: 'customContext',
+            value: agent.customContext,
+            assertionPolicy: 'context_only' as const,
+            baseScore: 6,
+          },
+          {
+            key: 'languageHabits',
+            value: agent.languageHabits,
+            assertionPolicy: 'context_only' as const,
+            baseScore: 5,
+          },
+          {
+            key: 'personalityTraits',
+            value: agent.personalityTraits,
+            assertionPolicy: 'context_only' as const,
+            baseScore: 2,
+          },
+        ];
     const detailCandidates = [
-      {
-        key: 'customContext',
-        value: agent.customContext,
-        assertionPolicy: 'context_only' as const,
-        baseScore: 6,
-      },
-      {
-        key: 'languageHabits',
-        value: agent.languageHabits,
-        assertionPolicy: 'context_only' as const,
-        baseScore: 5,
-      },
-      {
-        key: 'personalityTraits',
-        value: agent.personalityTraits,
-        assertionPolicy: 'context_only' as const,
-        baseScore: 2,
-      },
+      ...styleCandidates,
       {
         key: 'sharedMemories',
         value: agent.sharedMemories,
@@ -2000,8 +2065,7 @@ export class AgentContextService {
   }
 
   private classifyReplyIntent(
-    options: {
-      currentQuery: string;
+    options: ClassifyReplyIntentOptions & {
       recentMessages: MessageEntity[];
       knownFamilyMembers: string[];
       memoryCandidates: ReplyIntentMemoryCandidate[];

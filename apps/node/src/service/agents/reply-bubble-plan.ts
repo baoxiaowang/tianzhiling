@@ -35,10 +35,13 @@ const STAGE_DIRECTION_ONLY_PATTERN =
 export function buildReplyBubblePlan(options: {
   currentQuery: string;
   replyMoveCount?: number;
+  turnClosureHint?: ReplyTurnClosure;
 }): ReplyBubblePlan {
   const currentQuery = options.currentQuery.trim();
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
-  const turnClosure = resolveReplyTurnClosure(currentQuery);
+  const ruleClosure = resolveReplyTurnClosure(currentQuery);
+  const turnClosure =
+    ruleClosure === 'close' ? 'close' : options.turnClosureHint || ruleClosure;
   const complexityHint = EXPLICIT_SINGLE_BUBBLE_PATTERN.test(currentQuery)
     ? 'concise'
     : replyMoveCount >= 3 || currentQuery.length >= 90

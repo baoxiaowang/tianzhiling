@@ -16,6 +16,8 @@ export interface BuildReplyLengthPlanOptions {
   mode: string;
   scene?: string;
   replyMoveCount?: number;
+  semanticPlan?: boolean;
+  hasProtectiveStop?: boolean;
   turnClosure?: 'close' | 'continue' | 'neutral';
 }
 
@@ -62,22 +64,30 @@ export function buildReplyLengthPlan(
   let lengthClass: ReplyLengthClass;
 
   if (
-    options.turnClosure === 'close' ||
-    options.mode === 'daily' ||
-    options.mode === 'status' ||
-    options.scene === 'smalltalk' ||
-    options.scene === 'daily_update'
+    options.semanticPlan &&
+    options.hasProtectiveStop &&
+    replyMoveCount >= 2
   ) {
+    lengthClass = 'standard';
+  } else if (options.turnClosure === 'close') {
     lengthClass = 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
   } else if (queryCharacters >= 100) {
     lengthClass = 'deep';
+  } else if (options.mode === 'emotional') {
+    lengthClass = 'extended';
+  } else if (options.semanticPlan && replyMoveCount >= 3) {
+    lengthClass = 'standard';
   } else if (
-    queryCharacters >= 45 ||
-    replyMoveCount >= 3 ||
-    options.mode === 'emotional'
+    options.mode === 'daily' ||
+    options.mode === 'status' ||
+    options.scene === 'smalltalk' ||
+    options.scene === 'daily_update'
   ) {
+    lengthClass =
+      options.semanticPlan && replyMoveCount >= 2 ? 'brief' : 'micro';
+  } else if (queryCharacters >= 45) {
     lengthClass = 'extended';
   } else if (BRIEF_MODES.has(options.mode)) {
     lengthClass = 'brief';

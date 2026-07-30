@@ -6,6 +6,46 @@ export enum AgentSex {
   man = 1,
 }
 
+export interface AgentPersonaLanguageProfile {
+  sentenceLength?: string;
+  directness?: string;
+  emotionalExpression?: string;
+  addressStyle?: string;
+  distinctiveRhythm?: string;
+}
+
+export interface AgentDepartedTransformation {
+  released?: string[];
+  strengthened?: string[];
+  retainedEdges?: string[];
+}
+
+export interface AgentPersonaProfile {
+  version?: string;
+  demographics?: {
+    relationshipType?: string;
+    sex?: string;
+    ageAtDeath?: number;
+    ageBand?: string;
+  };
+  lifeTraits?: string[];
+  coreValues?: string[];
+  personalityContradictions?: string[];
+  careStyle?: string;
+  praiseStyle?: string;
+  criticismStyle?: string;
+  conflictStyle?: string;
+  concealmentStyle?: string;
+  questionStyle?: string;
+  humorStyle?: string;
+  languageProfile?: AgentPersonaLanguageProfile;
+  departedTransformation?: AgentDepartedTransformation;
+  highEqStrategies?: string[];
+  evidenceSummary?: string[];
+  uncertainties?: string[];
+  confidence?: number;
+}
+
 @Index(['createdUserId', 'updatedAt'], { background: true })
 @Index(['createdUserId', 'isDefault'], { background: true })
 @Index(['voiceTimbreId'], { sparse: true, background: true })
@@ -58,6 +98,13 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   customContext?: string;
+
+  /**
+   * Optional chat-derived style profile. It guides expression only and never
+   * overrides confirmed facts, capability boundaries, or released clients.
+   */
+  @Column()
+  personaProfile?: AgentPersonaProfile;
 
   @Column()
   status: number;

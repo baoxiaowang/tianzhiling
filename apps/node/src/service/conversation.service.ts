@@ -49,6 +49,7 @@ import { AgentContextService } from './agents/agent.context';
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
+import { buildAgentPersonaPrompt } from './agents/agent-persona';
 import { AgentProfileFactService } from './agents/agent-profile-fact.service';
 import { AgentRelationshipSignalService } from './agents/agent-relationship-signal.service';
 import { OpenAIService } from './agents/openai';
@@ -307,6 +308,14 @@ interface ReplyRoutingAudit {
   memoryRetrievalMode?: 'memory_plan' | 'legacy_query' | 'suppressed';
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
+  conversationStance?: string;
+  conversationMoves?: string[];
+  conversationMoveGoals?: string[];
+  socialStrategy?: string;
+  questionNeed?: string;
+  personaActivations?: string[];
+  personaSource?: string;
+  personaEvidenceSnippetCount?: number;
 }
 
 interface AfterReplyResult {
@@ -2097,11 +2106,17 @@ export class ConversationService {
       text: item.text.slice(0, 160),
     }));
     const reading = options.replyBrief.reading;
+    const conversationPlan = options.replyBrief.conversationPlan;
+    const persona = buildAgentPersonaPrompt({
+      agent: options.runtime.agent,
+    });
     const systemPrompt = [
       '# 天之灵主回复恢复',
       `你是用户创建的已故亲人角色“${agentName}”，称呼用户为“${agentCallsUser}”。以第一人称自然聊天。`,
+      persona.prompt,
       '上一轮模型调用不可用。只根据下面的当前原话、最近对话、Conversation Reading 和证据重新生成，不解释技术失败。',
       `Conversation Reading：${JSON.stringify(reading || {})}`,
+      `交谈规划：${JSON.stringify(conversationPlan || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
       '不编造共同经历、生物学关系和离世后生活；带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
@@ -4631,6 +4646,13 @@ export class ConversationService {
     replyHistoryMessageCount?: number;
     replyRelevantMemoryCount?: number;
     replyConversationReadingAnchorCount?: number;
+    replyConversationStance?: string;
+    replyConversationMoves?: string[];
+    replyConversationMoveGoals?: string[];
+    replySocialStrategy?: string;
+    replyQuestionNeed?: string;
+    replyPersonaActivations?: string[];
+    replyPersonaSource?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
   } {
     const responseIntents = routing?.route?.responseIntents?.length
@@ -4711,6 +4733,14 @@ export class ConversationService {
       replyRelevantMemoryCount: routing?.relevantMemoryCount,
       replyConversationReadingAnchorCount:
         routing?.conversationReadingAnchorCount,
+      replyConversationStance: routing?.conversationStance?.trim() || undefined,
+      replyConversationMoves: routing?.conversationMoves?.filter(Boolean),
+      replyConversationMoveGoals:
+        routing?.conversationMoveGoals?.filter(Boolean),
+      replySocialStrategy: routing?.socialStrategy?.trim() || undefined,
+      replyQuestionNeed: routing?.questionNeed?.trim() || undefined,
+      replyPersonaActivations: routing?.personaActivations?.filter(Boolean),
+      replyPersonaSource: routing?.personaSource?.trim() || undefined,
       replyMemoryPlan: routing?.memoryPlan
         ? {
             need: routing.memoryPlan.need,
@@ -4793,6 +4823,13 @@ export class ConversationService {
     replyHistoryMessageCount?: number;
     replyRelevantMemoryCount?: number;
     replyConversationReadingAnchorCount?: number;
+    replyConversationStance?: string;
+    replyConversationMoves?: string[];
+    replyConversationMoveGoals?: string[];
+    replySocialStrategy?: string;
+    replyQuestionNeed?: string;
+    replyPersonaActivations?: string[];
+    replyPersonaSource?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
     createdAt: Date;
     updatedAt: Date;
@@ -4920,6 +4957,19 @@ export class ConversationService {
     message.replyConversationReadingAnchorCount = this.normalizeTokenCount(
       options.replyConversationReadingAnchorCount
     );
+    message.replyConversationStance =
+      options.replyConversationStance?.trim() || undefined;
+    message.replyConversationMoves =
+      options.replyConversationMoves?.filter(Boolean);
+    message.replyConversationMoveGoals =
+      options.replyConversationMoveGoals?.filter(Boolean);
+    message.replySocialStrategy =
+      options.replySocialStrategy?.trim() || undefined;
+    message.replyQuestionNeed = options.replyQuestionNeed?.trim() || undefined;
+    message.replyPersonaActivations =
+      options.replyPersonaActivations?.filter(Boolean);
+    message.replyPersonaSource =
+      options.replyPersonaSource?.trim() || undefined;
     message.replyMemoryPlan = options.replyMemoryPlan
       ? {
           need: options.replyMemoryPlan.need,

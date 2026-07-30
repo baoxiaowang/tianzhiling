@@ -40,6 +40,23 @@ describe('reply length plan', () => {
     );
   });
 
+  it('lets a multi-action semantic plan expand a short daily-routed turn', () => {
+    const plan = buildReplyLengthPlan({
+      currentQuery: '我一气之下把家族群退了。',
+      mode: 'daily',
+      scene: 'daily_update',
+      replyMoveCount: 3,
+      semanticPlan: true,
+      turnClosure: 'neutral',
+    });
+
+    expect(plan).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
   it('reserves larger budgets only for genuinely complex messages', () => {
     expect(
       buildReplyLengthPlan({
@@ -54,6 +71,24 @@ describe('reply length plan', () => {
       lengthClass: 'extended',
       targetCharacters: 60,
       reviewCharacters: 85,
+    });
+  });
+
+  it('keeps a protective stop complete even when the semantic plan closes', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '我今天真的撑不住了，真想现在就去找你。',
+        mode: 'emotional',
+        scene: 'strong_grief',
+        replyMoveCount: 3,
+        semanticPlan: true,
+        hasProtectiveStop: true,
+        turnClosure: 'close',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
   });
 

@@ -62,7 +62,7 @@ describe('ReplyIntentClassifierService', () => {
       expect.objectContaining({
         model: 'intent-fast',
         temperature: 0,
-        max_tokens: 1100,
+        max_tokens: 1320,
         response_format: {
           type: 'json_object',
         },
@@ -72,6 +72,73 @@ describe('ReplyIntentClassifierService', () => {
         timeout: 8000,
       })
     );
+  });
+
+  it('parses a relationship-aware conversation move plan from the semantic call', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'current',
+            intent: 'share_user_update',
+            subIntent: 'other',
+            confidence: 0.93,
+          },
+        ],
+        conversationPlan: {
+          stance: 'disagreeing',
+          stanceTarget: '用户把一次失误说成自己没用',
+          moves: [
+            {
+              type: 'disagree',
+              goal: '明确不接受用户对自己的全盘否定',
+            },
+            {
+              type: 'affirm',
+              goal: '肯定用户已经做过的努力',
+            },
+          ],
+          socialStrategy: 'save_face',
+          strategyPurpose: '纠正结论但不让用户难堪',
+          questionNeed: 'none',
+          turnClosure: 'close',
+          personaActivation: ['父亲式含蓄肯定'],
+        },
+        emotion: 'sadness',
+        riskLevel: 'none',
+        confidence: 0.93,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '爸，我又搞砸了，我就是没用。',
+      agentPersonaContext: '关系：父亲；离世年龄约 76 岁；表达含蓄',
+    });
+
+    expect(intent?.conversationPlan).toEqual({
+      stance: 'disagreeing',
+      stanceTarget: '用户把一次失误说成自己没用',
+      moves: [
+        {
+          type: 'disagree',
+          goal: '明确不接受用户对自己的全盘否定',
+        },
+        {
+          type: 'affirm',
+          goal: '肯定用户已经做过的努力',
+        },
+      ],
+      socialStrategy: 'save_face',
+      strategyPurpose: '纠正结论但不让用户难堪',
+      questionNeed: 'none',
+      turnClosure: 'close',
+      personaActivation: ['父亲式含蓄肯定'],
+    });
+    const input = (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mock.calls[0][0].messages[1].content;
+    expect(input).toContain('离世年龄约 76 岁');
   });
 
   it.each([

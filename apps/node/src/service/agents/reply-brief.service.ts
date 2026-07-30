@@ -1,6 +1,7 @@
 import { Provide } from '@midwayjs/core';
 import { MessageEntity, MessageRole } from '@tzl/entities';
 import type {
+  ConversationMovePlan,
   ConversationReading,
   ReplyIntentKind,
   ReplyIntentRiskLevel,
@@ -81,6 +82,7 @@ export interface ReplyBrief {
   relationshipContext: ReplyBriefRelationshipContext[];
   relationshipContinuity?: RelationshipContinuityPlan;
   reading?: ConversationReading;
+  conversationPlan?: ConversationMovePlan;
   emotionalNeed: string;
   replyMoves: string[];
   forbiddenAssumptions: string[];
@@ -147,6 +149,9 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   );
   const riskLevel = resolveRiskLevel(options.intent);
   const reading = options.route?.intent?.reading ?? options.intent?.reading;
+  const conversationPlan =
+    options.route?.intent?.conversationPlan ??
+    options.intent?.conversationPlan;
   const evidence = buildEvidence(options, currentQuery);
   const relationshipContext = buildRelationshipContext(
     options.relationshipSignals,
@@ -188,13 +193,18 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   );
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
-    replyMoveCount: replyMoves.length,
+    replyMoveCount: conversationPlan?.moves.length || replyMoves.length,
+    turnClosureHint: conversationPlan?.turnClosure,
   });
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
     mode,
     scene: primaryScene,
-    replyMoveCount: replyMoves.length,
+    replyMoveCount: conversationPlan?.moves.length || replyMoves.length,
+    semanticPlan: Boolean(conversationPlan),
+    hasProtectiveStop: Boolean(
+      conversationPlan?.moves.some(move => move.type === 'stop')
+    ),
     turnClosure: bubblePlan.turnClosure,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
@@ -207,6 +217,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     relationshipContext,
     relationshipContinuity,
     reading,
+    conversationPlan,
     emotionalNeed,
     replyMoves,
     forbiddenAssumptions,
@@ -1057,6 +1068,38 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const conversationPlanLines = brief.conversationPlan
+    ? [
+        '## 本轮交谈规划',
+        `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
+        `聊天行动：${brief.conversationPlan.moves
+          .map(move => `${move.type}（${move.goal}）`)
+          .join('；')}`,
+        `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
+        `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
+        ...(brief.conversationPlan.personaActivation.length
+          ? [
+              `本轮人格激活：${brief.conversationPlan.personaActivation.join(
+                '；'
+              )}`,
+            ]
+          : []),
+        ...(brief.conversationPlan.questionNeed !== 'none' &&
+        brief.conversationPlan.moves.some(move => move.type === 'ask')
+          ? [
+              '规划已经判断本轮提问有价值：回复中实际提出一个清楚、贴着新信息的问题，不要把 ask 只写成安慰或陈述；仍然最多一个问题。',
+            ]
+          : []),
+        ...(brief.conversationPlan.questionNeed === 'none' &&
+        brief.conversationPlan.moves.some(move => move.type === 'answer')
+          ? [
+              '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
+            ]
+          : []),
+        '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+        '',
+      ]
+    : [];
 
   return [
     '# 本轮模型注意卡',
@@ -1065,6 +1108,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
     '',
     ...readingLines,
+    ...conversationPlanLines,
     '## 可信证据',
     ...evidenceLines,
     '只有以上证据中的明确内容可以写成事实。可以推断情绪，不能推断新的事实。',

@@ -28,6 +28,53 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('## 总字数预算');
   });
 
+  it('passes semantic stance and social action planning through as weak guidance', () => {
+    const currentQuery = '爸，我又搞砸了，我就是没用。';
+    const intent = {
+      intents: [
+        {
+          target: 'user' as const,
+          timeScope: 'current' as const,
+          intent: 'share_user_update' as const,
+          subIntent: 'other' as const,
+          confidence: 0.93,
+        },
+      ],
+      conversationPlan: {
+        stance: 'disagreeing' as const,
+        stanceTarget: '用户对自己的全盘否定',
+        moves: [
+          {
+            type: 'disagree' as const,
+            goal: '不接受用户把一次失误等同于没用',
+          },
+          {
+            type: 'answer' as const,
+            goal: '直接说明一次失误不能定义整个人',
+          },
+        ],
+        socialStrategy: 'save_face' as const,
+        strategyPurpose: '纠正结论但不让用户难堪',
+        questionNeed: 'none' as const,
+        turnClosure: 'close' as const,
+        personaActivation: ['父亲式含蓄肯定'],
+      },
+      emotion: 'sadness' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.93,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.conversationPlan).toEqual(intent.conversationPlan);
+    expect(brief.bubblePlan.turnClosure).toBe('close');
+    expect(brief.prompt).toContain('## 本轮交谈规划');
+    expect(brief.prompt).toContain('save_face');
+    expect(brief.prompt).toContain('父亲式含蓄肯定');
+    expect(brief.prompt).toContain('不要把计划中的回答或解释改成反问');
+  });
+
   it('gives a factual correction a brief total reply budget', () => {
     const currentQuery = '不对，你刚才说的那个故事不是和我的，你怎么胡说啊';
     const route = routeReplyScene({ currentQuery });

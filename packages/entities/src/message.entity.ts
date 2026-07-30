@@ -261,6 +261,27 @@ export class MessageEntity extends BaseEntity {
   replyConversationReadingAnchorCount?: number;
 
   @Column()
+  replyConversationStance?: string;
+
+  @Column()
+  replyConversationMoves?: string[];
+
+  @Column()
+  replyConversationMoveGoals?: string[];
+
+  @Column()
+  replySocialStrategy?: string;
+
+  @Column()
+  replyQuestionNeed?: string;
+
+  @Column()
+  replyPersonaActivations?: string[];
+
+  @Column()
+  replyPersonaSource?: string;
+
+  @Column()
   replyMemoryPlan?: MessageReplyMemoryPlan;
 
   @Column()
