@@ -37,7 +37,10 @@ import {
   isDirectAiIdentityQuestion,
   resolveRelationshipContinuityPlan,
 } from './agent-relationship-continuity';
-import { compactReplyBubblesPreservingContent } from './reply-bubble-plan';
+import {
+  compactReplyBubblesPreservingContent,
+  MAX_ASSISTANT_REPLY_SEGMENTS,
+} from './reply-bubble-plan';
 import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
@@ -262,7 +265,7 @@ const GENERATION_FAILURE_FALLBACK_REASON =
 const GENERATION_TECHNICAL_RETRY_REASON =
   '模型回复不可用，返回信息传输途中受干扰提示';
 export const ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT =
-  '……￥#@%……（该信息传输途中受到了干扰）';
+  '……￥#@%……“该信息传输途中受到了干扰”';
 const TECHNICAL_RETRY_SEGMENTS = [ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT];
 const GUARDRAIL_REVISION_MAX_TOKENS = 650;
 const GUARDRAIL_REVISION_TIMEOUT_MS = 20000;
@@ -1203,6 +1206,7 @@ export class ReplyGuardrailService {
       '你只审阅候选回复，不回复用户，不提供新的亲人回复。',
       '只检查回复已经说出的内容是否误读、跑题、关系错位、事实失真、施压或明显不自然。硬边界由另一个专用审阅负责。',
       '不检查回复完整性。微信聊天允许本轮只回应一个问题、一层情绪、一个称呼或一句语气词；没有回答其他问题、没有覆盖全部情绪、没有逐项承接都不是问题，也不得要求补写。',
+      '检查已有气泡是否重复：如果删掉某一颗后，核心信息、态度和关系动作都没有减少，标记 redundant_bubble；要求合并或删除重复泡，不得补写新内容。短称呼或语气词只要承担真实停顿、回应或强调，就不是重复。',
       '所有问题都输出为 quality_advisory，不要把普通措辞、气泡数、长短或柔性想象升级成 hard_boundary。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
       '身份质疑时不要先认错退出身份，也不要把扮演亲人的责任交给用户。“生前记忆已经模糊，但用户在这里说过的会记住”是允许的合理解释；一句关系确认或一句自然回应也可以独立成立。“哪里不像你教我、我学着改”才是把校准责任推给用户。',
@@ -1422,7 +1426,7 @@ export class ReplyGuardrailService {
       addIssue(
         'excessive_reply_length',
         `候选整次回复共 ${visibleCharacters} 字，超过本轮 ${lengthPlan.reviewCharacters} 字复核线`,
-        `压缩到约 ${lengthPlan.targetCharacters} 字，只保留当前最重要的回答或情感动作；删除同义解释、重复安慰、总结和通用叮嘱`,
+        `压缩到约 ${lengthPlan.targetCharacters} 字，只保留当前最重要的回答或情感动作，并保留最贴近当前关系的一句；删除同义解释、重复安慰、总结、通用叮嘱和责任劝导`,
         'quality_advisory'
       );
     }
@@ -1648,7 +1652,8 @@ export class ReplyGuardrailService {
       '20. 用户说走完一生再来陪时，可以简短承接远期团聚条件，不要求同时增加生活劝导。',
       '21. 离世世界的天气、房间、饭菜、工作、作息、活动、具体对话和收到供品都不属于 Guardrail，不得因这些内容触发或扩大修订。',
       '22. 优先用更少的字解决反馈；不要把每个 issue 分别解释一遍，不补完整，不在修复后追加安慰和总结。',
-      '23. 输出 1-3 个自然气泡。resolvedIssueCodes 必须覆盖每个 issue.code；changes 说明实际改动。',
+      `23. 输出 1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个自然气泡；第二颗必须提供不可替代的新动作。resolvedIssueCodes 必须覆盖每个 issue.code；changes 说明实际改动。`,
+      '24. 不输出任何括号旁白；“（偷偷笑）”“（轻声）”“（叹气）”等动作、神态或语气只保留自然聊天含义。',
       '严格输出 JSON：{"segments":["气泡1"],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
     ].join('\n');
 
@@ -1790,7 +1795,7 @@ export class ReplyGuardrailService {
       Array.isArray(parsed?.segments)
         ? parsed.segments
             .filter((item): item is string => typeof item === 'string')
-            .slice(0, 3)
+            .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
         : typeof parsed?.text === 'string'
         ? [parsed.text]
         : []
@@ -2188,7 +2193,7 @@ export class ReplyGuardrailService {
       '1. 先理解当前用户原话，不得反向改写否定、频率、事实纠正和因果关系。',
       '2. 只修触发问题的内容，不补齐候选没有回应的问题、情绪或信息，也不要求逐项承接。',
       '3. 不输出系统说明、审查原因、道歉模板或证据字段。',
-      '4. 保持亲人角色的自然口气，1-3 个气泡；允许只保留一句称呼、语气词或短回应。',
+      `4. 保持亲人角色的自然口气，1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；允许只保留一句称呼、语气词或短回应。`,
       '5. 删除重复解释、同义安慰、总结和通用叮嘱，不因修复问题而扩写。',
       '6. 只输出严格 JSON：{"segments":["气泡1"],"claims":[]}。',
     ].join('\n');
@@ -2289,7 +2294,7 @@ export class ReplyGuardrailService {
     return this.normalizeSegments(
       values
         .filter((item): item is string => typeof item === 'string')
-        .slice(0, 3)
+        .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
     );
   }
 

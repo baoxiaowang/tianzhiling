@@ -38,12 +38,12 @@ const LENGTH_BUDGETS: Record<
     reviewCharacters: 55,
   },
   extended: {
-    targetCharacters: 60,
-    reviewCharacters: 85,
+    targetCharacters: 50,
+    reviewCharacters: 70,
   },
   deep: {
-    targetCharacters: 90,
-    reviewCharacters: 125,
+    targetCharacters: 60,
+    reviewCharacters: 85,
   },
 };
 
@@ -59,7 +59,6 @@ const STANDARD_MODES = new Set(['relationship', 'family', 'memory']);
 export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
 ): ReplyLengthPlan {
-  const queryCharacters = countReplyVisibleCharacters(options.currentQuery);
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
   let lengthClass: ReplyLengthClass;
 
@@ -73,8 +72,6 @@ export function buildReplyLengthPlan(
     lengthClass = 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
-  } else if (queryCharacters >= 100) {
-    lengthClass = 'deep';
   } else if (options.mode === 'emotional') {
     lengthClass = 'extended';
   } else if (options.semanticPlan && replyMoveCount >= 3) {
@@ -87,8 +84,6 @@ export function buildReplyLengthPlan(
   ) {
     lengthClass =
       options.semanticPlan && replyMoveCount >= 2 ? 'brief' : 'micro';
-  } else if (queryCharacters >= 45) {
-    lengthClass = 'extended';
   } else if (BRIEF_MODES.has(options.mode)) {
     lengthClass = 'brief';
   } else if (STANDARD_MODES.has(options.mode)) {
@@ -104,7 +99,7 @@ export function buildReplyLengthPlan(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
-  return `整次回复所有气泡合计目标约 ${plan.targetCharacters} 字，超过 ${plan.reviewCharacters} 字必须压缩。只保留当前最重要的回应，删除同义安慰、解释、总结和通用叮嘱；不要为显得用心而扩写。`;
+  return `整次回复所有气泡合计目标约 ${plan.targetCharacters} 字，超过 ${plan.reviewCharacters} 字必须压缩。用户写得长不代表回复也要长；只选当前最值得回应的一小处，保留最贴关系的一句，删除同义安慰、解释、总结和通用叮嘱；不要为显得用心而扩写。`;
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {

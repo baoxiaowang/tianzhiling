@@ -13,7 +13,7 @@ describe('reply bubble plan', () => {
     });
 
     expect(plan).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'concise',
       turnClosure: 'neutral',
     });
@@ -28,7 +28,7 @@ describe('reply bubble plan', () => {
         replyMoveCount: 3,
       })
     ).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'layered',
       turnClosure: 'neutral',
     });
@@ -55,23 +55,60 @@ describe('reply bubble plan', () => {
     const inspected = inspectReplyBubbleStructure([
       '我听着呢',
       '（轻轻叹气）',
+      '（偷偷笑）真拿你没办法',
       '我听着呢',
-      '你慢慢说',
     ]);
 
     expect(inspected).toEqual({
-      segments: ['我听着呢', '你慢慢说'],
+      segments: ['我听着呢', '真拿你没办法'],
       issues: ['stage_direction_segment', 'exact_duplicate_segment'],
       requiresReflow: false,
     });
   });
 
-  it('requests model reflow only when usable content exceeds three bubbles', () => {
+  it('removes parenthetical asides from both inline and leading positions', () => {
+    const inspected = inspectReplyBubbleStructure([
+      '（带点笑意）爸(轻声说)真拿你（偷偷笑了一下）没办法',
+      '医保（新农合）记得续上',
+    ]);
+
+    expect(inspected).toEqual({
+      segments: ['爸真拿你没办法', '医保记得续上'],
+      issues: ['stage_direction_segment'],
+      requiresReflow: false,
+    });
+  });
+
+  it('drops unfamiliar leading performance notes without enumerating actions', () => {
+    const inspected = inspectReplyBubbleStructure([
+      '（轻轻亲一口）好，我的宝贝',
+      '【歪着头想了一会儿】还是听你的',
+    ]);
+
+    expect(inspected).toEqual({
+      segments: ['好，我的宝贝', '还是听你的'],
+      issues: ['stage_direction_segment'],
+      requiresReflow: false,
+    });
+  });
+
+  it('preserves the quoted transmission interruption marker', () => {
+    expect(
+      inspectReplyBubbleStructure([
+        '……￥#@%……“该信息传输途中受到了干扰”',
+      ])
+    ).toEqual({
+      segments: ['……￥#@%……“该信息传输途中受到了干扰”'],
+      issues: [],
+      requiresReflow: false,
+    });
+  });
+
+  it('requests model reflow when usable content exceeds two bubbles', () => {
     const inspected = inspectReplyBubbleStructure([
       '第一层回应',
       '第二层回应',
       '第三层回应',
-      '第四层回应',
     ]);
 
     expect(inspected.requiresReflow).toBe(true);
@@ -84,8 +121,20 @@ describe('reply bubble plan', () => {
         '第一层回应',
         '第二层回应',
         '第三层回应',
-        '第四层回应',
       ])
-    ).toEqual(['第一层回应', '第二层回应', '第三层回应 第四层回应']);
+    ).toEqual(['第一层回应', '第二层回应 第三层回应']);
+  });
+
+  it('does not turn user message length into a third bubble allowance', () => {
+    const plan = buildReplyBubblePlan({
+      currentQuery: '这是一段很长的用户消息'.repeat(20),
+      replyMoveCount: 1,
+    });
+
+    expect(plan).toEqual({
+      maxSegments: 2,
+      complexityHint: 'concise',
+      turnClosure: 'neutral',
+    });
   });
 });

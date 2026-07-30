@@ -1116,6 +1116,90 @@ describe('ReplyGuardrailService', () => {
     expect(result.interventionLevel).not.toBe('technical_fallback');
   });
 
+  it('uses the existing review loop to merge semantically redundant bubbles', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                verdict: 'revise',
+                issues: [
+                  {
+                    code: 'redundant_bubble',
+                    severity: 'major',
+                    layer: 'quality_advisory',
+                    problem: '两颗气泡都只是在重复说爸爸在',
+                    evidence: '哎，在呢；哎，爸在呢',
+                    repairGoal: '合并成一颗短回应，不增加其他内容',
+                  },
+                ],
+                mustPreserve: ['爸爸回应用户的呼唤'],
+                mustAnswer: [],
+                groundingConstraints: [],
+              }),
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                segments: ['哎，爸在呢'],
+                resolvedIssueCodes: ['redundant_bubble'],
+                changes: [
+                  {
+                    before: '哎，在呢；哎，爸在呢',
+                    after: '哎，爸在呢',
+                    reason: '删除同义重复气泡',
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                verdict: 'pass',
+                issues: [],
+                mustPreserve: [],
+                mustAnswer: [],
+                groundingConstraints: [],
+              }),
+            },
+          },
+        ],
+      });
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      supportsGuardrailRevision: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸，我想你了',
+      replySegments: ['哎，在呢', '哎，爸在呢'],
+    });
+
+    expect(createChatCompletion.mock.calls[0][0].messages[0].content).toContain(
+      'redundant_bubble'
+    );
+    expect(result).toMatchObject({
+      segments: ['哎，爸在呢'],
+      rewritten: true,
+      finalReviewResult: 'pass',
+    });
+  });
+
   it('keeps fear of forgetting the departed out of the guilt fallback', () => {
     const service = new ReplyGuardrailService();
     const userQuery =
@@ -2200,7 +2284,7 @@ describe('ReplyGuardrailService', () => {
         prompt: 'two natural bubbles',
         maxSegments: 2,
         bubblePlan: {
-          maxSegments: 3,
+          maxSegments: 2,
           complexityHint: 'paired',
           turnClosure: 'neutral',
         },
@@ -2323,7 +2407,7 @@ describe('ReplyGuardrailService', () => {
         prompt: 'keep afterlife status vague',
         maxSegments: 2,
         bubblePlan: {
-          maxSegments: 3,
+          maxSegments: 2,
           complexityHint: 'paired',
           turnClosure: 'neutral',
         },

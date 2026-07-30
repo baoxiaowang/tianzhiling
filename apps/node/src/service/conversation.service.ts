@@ -2123,7 +2123,7 @@ export class ConversationService {
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
       '像微信聊天，直接回答，温和朴素。不要把同一个意思解释、安慰、总结三遍。',
       buildReplyLengthPlanPrompt(options.replyBrief.lengthPlan),
-      '默认 1-3 个短气泡。',
+      `默认一颗、最多 ${MAX_ASSISTANT_REPLY_SEGMENTS} 颗；第二颗必须有不可替代的新动作。`,
       '只输出给用户看的中文正文。多个气泡用空行分段；不要 JSON、字段名、代码块、分析或内部说明。',
     ].join('\n');
     const hasCurrentUserMessage = recentMessages.some(

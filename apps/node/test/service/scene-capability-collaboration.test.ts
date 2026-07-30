@@ -309,7 +309,7 @@ describe('scene and capability collaboration', () => {
     expect(brief.replyMoves.join('')).toContain('难熬');
     expect(brief.forbiddenAssumptions.join('')).toContain('不得输出报警');
     expect(brief.bubblePlan).toEqual({
-      maxSegments: 3,
+      maxSegments: 2,
       complexityHint: 'layered',
       turnClosure: 'neutral',
     });
