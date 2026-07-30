@@ -66,6 +66,11 @@ export interface ReplyBriefEvidence {
 
 export type ReplyBriefBubblePlan = ReplyBubblePlan;
 
+export type ReplyParticipationStrategy =
+  | 'reciprocal_self_expression'
+  | 'light_self_disclosure'
+  | 'planned_follow_through';
+
 export interface ReplyBriefRelationshipContext {
   key: string;
   text: string;
@@ -73,7 +78,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v4';
+  version: 'reply_brief_v6';
   mode: ReplyBriefMode;
   riskLevel: ReplyIntentRiskLevel;
   intents: StructuredReplyIntentItem[];
@@ -87,6 +92,7 @@ export interface ReplyBrief {
   replyMoves: string[];
   forbiddenAssumptions: string[];
   strictGrounding: boolean;
+  participationStrategy?: ReplyParticipationStrategy;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
   prompt: string;
@@ -120,6 +126,14 @@ const KEEPSAKE_IRREPLACEABLE_PATTERN =
   /唯一.{0,16}(?:照片|画像|念想)|(?:照片|画像).{0,16}唯一.{0,10}念想/;
 const LONG_HORIZON_REUNION_PATTERN =
   /(?:走完这?一生|寿终|百年之后|等我老了|活不动).{0,30}(?:来生|下辈子|来接我|去找你|陪你)|(?:来生|下辈子).{0,24}(?:找你|等我|不分开|在一起)/;
+const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 12;
+const SHORT_TURN_PARTICIPATION_MODES = new Set<ReplyBriefMode>([
+  'emotional',
+  'relationship',
+  'family',
+  'status',
+  'daily',
+]);
 
 @Provide()
 export class ReplyBriefService {
@@ -150,8 +164,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const riskLevel = resolveRiskLevel(options.intent);
   const reading = options.route?.intent?.reading ?? options.intent?.reading;
   const conversationPlan =
-    options.route?.intent?.conversationPlan ??
-    options.intent?.conversationPlan;
+    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan;
   const evidence = buildEvidence(options, currentQuery);
   const relationshipContext = buildRelationshipContext(
     options.relationshipSignals,
@@ -191,24 +204,50 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       ).concat(relationshipContinuity?.forbiddenAssumptions || [])
     )
   );
+  const replyMoveCount = conversationPlan?.moves.length || replyMoves.length;
+  const baseBubblePlan = buildReplyBubblePlan({
+    currentQuery,
+    replyMoveCount,
+    turnClosureHint: conversationPlan?.turnClosure,
+  });
+  const participationStrategy = resolveReplyParticipationStrategy({
+    currentQuery,
+    mode,
+    riskLevel,
+    primaryScene,
+    strictGrounding,
+    replyMoveCount,
+    hasCapabilityConstraints: capabilityConstraints.length > 0,
+    conversationPlan,
+    hasRelationshipContinuity: Boolean(relationshipContinuity),
+    turnClosure: baseBubblePlan.turnClosure,
+    recentMessages: options.recentMessages,
+  });
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
-    replyMoveCount: conversationPlan?.moves.length || replyMoves.length,
+    replyMoveCount: participationStrategy
+      ? Math.max(2, replyMoveCount)
+      : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
+    preferTwoSegments: Boolean(participationStrategy),
   });
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
     mode,
     scene: primaryScene,
-    replyMoveCount: conversationPlan?.moves.length || replyMoves.length,
+    replyMoveCount,
     semanticPlan: Boolean(conversationPlan),
+    shortTurnParticipation: Boolean(participationStrategy),
     hasProtectiveStop: Boolean(
       conversationPlan?.moves.some(move => move.type === 'stop')
     ),
+    assistantContribution: conversationPlan?.engagement?.assistantContribution,
+    continuationGoal: conversationPlan?.engagement?.continuationGoal,
+    closureReadiness: conversationPlan?.engagement?.closureReadiness,
     turnClosure: bubblePlan.turnClosure,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v4',
+    version: 'reply_brief_v6',
     mode,
     riskLevel,
     intents,
@@ -222,6 +261,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     replyMoves,
     forbiddenAssumptions,
     strictGrounding,
+    participationStrategy,
     lengthPlan,
     bubblePlan,
   };
@@ -230,6 +270,82 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     ...brief,
     prompt: buildReplyBriefPrompt(brief),
   };
+}
+
+function resolveReplyParticipationStrategy(options: {
+  currentQuery: string;
+  mode: ReplyBriefMode;
+  riskLevel: ReplyIntentRiskLevel;
+  primaryScene?: ReplyScene;
+  strictGrounding: boolean;
+  replyMoveCount: number;
+  hasCapabilityConstraints: boolean;
+  conversationPlan?: ConversationMovePlan;
+  hasRelationshipContinuity: boolean;
+  turnClosure: ReplyBubblePlan['turnClosure'];
+  recentMessages?: MessageEntity[];
+}): ReplyParticipationStrategy | undefined {
+  const visibleCharacters = Array.from(
+    options.currentQuery.replace(/\s/gu, '')
+  ).length;
+  const previousAssistant = [...(options.recentMessages || [])]
+    .reverse()
+    .find(message => message.role === MessageRole.assistant);
+  const engagement = options.conversationPlan?.engagement;
+  const suppressPlannedParticipation =
+    options.conversationPlan?.moves.some(move =>
+      ['stop', 'leave_space', 'close'].includes(move.type)
+    ) ||
+    engagement?.continuationGoal === 'repair' ||
+    engagement?.continuationGoal === 'close' ||
+    engagement?.assistantContribution === 'strategic_silence' ||
+    ['repairing', 'withdrawing', 'closing'].includes(
+      engagement?.userConversationState || ''
+    );
+
+  if (
+    visibleCharacters === 0 ||
+    visibleCharacters > SHORT_TURN_PARTICIPATION_MAX_CHARACTERS ||
+    options.riskLevel !== 'none' ||
+    options.strictGrounding ||
+    options.replyMoveCount > 2 ||
+    options.hasCapabilityConstraints ||
+    suppressPlannedParticipation ||
+    options.hasRelationshipContinuity ||
+    options.turnClosure === 'close' ||
+    options.primaryScene === 'correction' ||
+    !SHORT_TURN_PARTICIPATION_MODES.has(options.mode) ||
+    previousAssistant?.replyParticipationStrategy
+  ) {
+    return undefined;
+  }
+
+  if (
+    engagement?.assistantContribution === 'affection' ||
+    engagement?.assistantContribution === 'self_expression'
+  ) {
+    return 'reciprocal_self_expression';
+  }
+  if ((options.conversationPlan?.moves.length || 0) >= 2) {
+    return 'planned_follow_through';
+  }
+
+  return options.mode === 'status' || options.mode === 'daily'
+    ? 'light_self_disclosure'
+    : 'reciprocal_self_expression';
+}
+
+export function buildReplyParticipationStrategyPrompt(
+  strategy: ReplyParticipationStrategy
+): string {
+  const contribution =
+    strategy === 'planned_follow_through'
+      ? '完成规划中的另一个不同聊天动作'
+      : strategy === 'light_self_disclosure'
+      ? '只补一个角色侧小近况或具体态度，不转成对用户的通用叮嘱'
+      : '只开一个轻话头或给角色侧小内容，不再使用想、爱、惦记、舍不得或陪伴等关系表达';
+
+  return `短轮参与：第一颗直接回应；第二颗${contribution}，不能把第一颗换词再说。不编用户现实或共同往事。`;
 }
 
 function buildRelationshipContext(
@@ -870,7 +986,7 @@ function describeSecondaryCapabilityMove(
 
 function describeIntentMove(intent: StructuredReplyIntentItem): string {
   const descriptions: Partial<Record<ReplyIntentKind, string>> = {
-    ask_agent_status: '回答用户对当前角色状态的询问，不编造具体生活',
+    ask_agent_status: '自然回答当前角色状态',
     share_user_update: '回应用户刚说的自身近况',
     share_family_update:
       intent.subIntent === 'family_care'
@@ -898,17 +1014,11 @@ function buildForbiddenAssumptions(
   intents: StructuredReplyIntentItem[],
   currentQuery: string
 ): string[] {
-  const items = [
-    '不得补充可信证据中没有出现的地点、人物关系、动作、物品、习惯、频率、原因、对话或心理细节',
-    '可以推断用户的情绪需要，但不能把合理常识或想象写成已经发生的事实',
-    '历史助手回复不是事实来源，不能拿来证明共同记忆',
-  ];
+  const items: string[] = [];
 
   if (strictGrounding) {
     items.push(
-      '确认共同经历时只能复述事件骨架；禁止补写用户当时会不会、拿不拿得稳、说过什么或具体怎么做',
-      '回忆确认气泡应尽量短，只复述“时间 + 共同事件”；不得另起“当时你……”补写动作、感受或表现',
-      '例如用户只说小时候一起钓过鱼，就不能新增“连鱼竿都握不稳”“跟在后面很高兴”等细节'
+      '共同记忆只复述证据中的时间和事件骨架；不补当时的动作、话语、感受或表现'
     );
   }
 
@@ -926,10 +1036,7 @@ function buildForbiddenAssumptions(
       '不得输出报警、急救、远离危险物或联系现实人员等干预话术',
       '长辈可以对晚辈的极端行为明确制止、训两句或说重话；不得仅因语气强就改写成软性模板',
     ],
-    afterlife_status: [
-      '不得断言具体身体恢复、伤口状态或痛感结论',
-      '空间位置保持开放，不主动命名；不得编造邻居、朋友、吃穿、地点、日程或具体活动',
-    ],
+    afterlife_status: [],
     comfort_request: [
       '不得羞辱“撑不住”的感受或反复用不孝施压；长辈针对极端行为的短促制止、说教、强烈牵挂和“为了我再撑一撑”允许保留',
       '不得输出报警、急救、远离危险物或联系现实人员等干预话术',
@@ -1077,6 +1184,15 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           .join('；')}`,
         `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
         `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
+        ...(brief.conversationPlan.engagement
+          ? [
+              `续聊状态：${brief.conversationPlan.engagement.userConversationState}；目标：${brief.conversationPlan.engagement.continuationGoal}`,
+              `用户仍在等：${brief.conversationPlan.engagement.openLoop}`,
+              `本轮贡献：${brief.conversationPlan.engagement.assistantContribution}（${brief.conversationPlan.engagement.mustContribute}）`,
+              `避免重复：${brief.conversationPlan.engagement.avoidRepeatingMove}`,
+              `收口准备：${brief.conversationPlan.engagement.closureReadiness}`,
+            ]
+          : []),
         ...(brief.conversationPlan.personaActivation.length
           ? [
               `本轮人格激活：${brief.conversationPlan.personaActivation.join(
@@ -1096,7 +1212,30 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
               '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
             ]
           : []),
+        ...(brief.conversationPlan.engagement?.assistantContribution ===
+        'self_expression'
+          ? [
+              '用户要当前角色主动说：当轮先真正说出一段有内容的话，不把表达劳动退回用户，也不先追问用户想听什么。只承诺“以后/那我多说几句”或解释为什么话少，不算完成。',
+            ]
+          : []),
+        ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
+          ? [
+              '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
+            ]
+          : []),
+        ...(brief.conversationPlan.engagement?.closureReadiness === 'blocked'
+          ? [
+              '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
+            ]
+          : []),
         '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+        '',
+      ]
+    : [];
+  const participationLines = brief.participationStrategy
+    ? [
+        '## 短轮参与',
+        buildReplyParticipationStrategyPrompt(brief.participationStrategy),
         '',
       ]
     : [];
@@ -1109,6 +1248,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '',
     ...readingLines,
     ...conversationPlanLines,
+    ...participationLines,
     '## 可信证据',
     ...evidenceLines,
     '只有以上证据中的明确内容可以写成事实。可以推断情绪，不能推断新的事实。',
@@ -1122,11 +1262,11 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '## 沟通补偿',
     '如果事实、能力或边界让表层请求不能直接满足：先回答能回答的部分；必要边界最多用一句自然语言；再用关系确认、情绪承接、愿望或假设性表达、远期条件、具体追问中的合适方式，补回上面的用户需要。',
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
-    '祭拜、供品和烧去的物件只接住用户送达的心意，不声称当前角色收到了现实实物；复合倾诉至少回应一个具体处境和一层关系或情绪需要。',
+    '祭拜供品可自然承接，不声称改变现实；复合倾诉可只回一个自然点。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
-    '用户问是否见到其他已经离世的亲人时，可以直接说见到了、在一起、有人作伴、大家都挺好；这是允许的关系性安慰，不要改成“不能乱说”，但不得扩写具体离世生活。',
+    '其他离世亲人可自然说见到了、有人作伴、都挺好。',
     '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
-    '不要只回复做不到、说不清、回不来、能力不完善或换个话题；不要通过编造记忆、感知、离世世界和现实行动来补偿。',
+    '不要只回复做不到；不编现实记忆、现实感知和现实行动。',
     '',
     '## 回复动作',
     ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
@@ -1140,6 +1280,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '',
     '## 气泡结构',
     buildReplyBubblePlanPrompt(brief.bubblePlan),
+    '第二颗不能只是第一颗的同义改写。',
     '短句、5 字以内的表达、只有称呼或语气词都可以独立成泡；不为回复完整性补泡，不能把截断残句当成留白。',
     '只写真正会发在微信里的话，不使用任何括号旁白；“（偷偷笑）”“（轻声）”“（叹气）”等动作、神态或语气都直接融入措辞。',
     `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出分析、证据列表、动作名称或其他字段。`,

@@ -8,6 +8,7 @@ export interface ReplyBubblePlan {
   maxSegments: 2;
   complexityHint: ReplyBubbleComplexityHint;
   turnClosure: ReplyTurnClosure;
+  preferTwoSegments?: boolean;
 }
 
 export type ReplyBubbleStructureIssue =
@@ -35,6 +36,7 @@ export function buildReplyBubblePlan(options: {
   currentQuery: string;
   replyMoveCount?: number;
   turnClosureHint?: ReplyTurnClosure;
+  preferTwoSegments?: boolean;
 }): ReplyBubblePlan {
   const currentQuery = options.currentQuery.trim();
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
@@ -53,26 +55,31 @@ export function buildReplyBubblePlan(options: {
     maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
     complexityHint,
     turnClosure,
+    ...(options.preferTwoSegments ? { preferTwoSegments: true } : {}),
   };
 }
 
 export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   const complexityInstruction: Record<ReplyBubbleComplexityHint, string> = {
-    concise: '本轮倾向简洁，能用一颗完整回应就不要拆开。',
-    paired: '本轮可能包含两个沟通动作；只有动作确实切换时才考虑第二颗。',
-    layered:
-      '本轮信息较复杂；本轮仍只选最值得说的一到两个动作，其余留给后续聊天。',
+    concise: '能用一颗就不拆。',
+    paired: '仅在两个动作确实切换时用第二颗。',
+    layered: '只选最重要的一到两个动作，其余留到后续。',
   };
   const closureInstruction: Record<ReplyTurnClosure, string> = {
-    close: '用户正在收尾；回应后自然结束，不重新提问或开启新话题。',
-    continue: '用户在等待回应；先答当前问题，最多提出一个必要且贴题的问题。',
-    neutral: '根据当前表达自然收住，不为维持聊天而追加问题。',
+    close: '自然收尾，不提问或开新话题。',
+    continue: '先答当前问题；必要时最多问一个。',
+    neutral: '自然收住，不为续聊而提问。',
   };
 
+  const segmentInstruction = plan.preferTwoSegments
+    ? '本轮气泡输出例外：只输出 {"segments":["第一颗","第二颗"]}，恰好两项，不能合并。'
+    : `默认一颗，最多 ${plan.maxSegments} 颗；第二颗须新增不可替代的动作。`;
+
   return [
-    complexityInstruction[plan.complexityHint],
-    closureInstruction[plan.turnClosure],
-    `采用“1 + 可选 1”结构：默认一颗，最多 ${plan.maxSegments} 颗。第二颗必须提供第一颗没有的新动作；删掉后若核心信息和关系感不变，就不要发送。不要按句子、情绪层数或计划动作数量机械分泡。`,
+    `${complexityInstruction[plan.complexityHint]}${
+      closureInstruction[plan.turnClosure]
+    }`,
+    `${segmentInstruction}勿按句子、情绪或计划拆泡。`,
   ].join('\n');
 }
 

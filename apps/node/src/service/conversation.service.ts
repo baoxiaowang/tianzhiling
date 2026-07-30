@@ -60,7 +60,11 @@ import {
   ReplyGuardrailService,
   ValidateAssistantReplyResult,
 } from './agents/reply-guardrail.service';
-import { buildReplyBrief, type ReplyBrief } from './agents/reply-brief.service';
+import {
+  buildReplyBrief,
+  buildReplyParticipationStrategyPrompt,
+  type ReplyBrief,
+} from './agents/reply-brief.service';
 import {
   type ConversationMemoryPlan,
   type StructuredReplyIntent,
@@ -308,11 +312,27 @@ interface ReplyRoutingAudit {
   memoryRetrievalMode?: 'memory_plan' | 'legacy_query' | 'suppressed';
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
+  replyPlanningMode?: string;
+  replyPlanningReason?: string;
+  replyIntentModelCallCount?: number;
+  strategyVersion?: string;
+  strategySource?: string;
+  participationStrategy?: string;
   conversationStance?: string;
+  conversationStanceTarget?: string;
   conversationMoves?: string[];
   conversationMoveGoals?: string[];
   socialStrategy?: string;
+  strategyPurpose?: string;
   questionNeed?: string;
+  conversationTurnClosure?: string;
+  userConversationState?: string;
+  openLoop?: string;
+  continuationGoal?: string;
+  assistantContribution?: string;
+  mustContribute?: string;
+  avoidRepeatingMove?: string;
+  closureReadiness?: string;
   personaActivations?: string[];
   personaSource?: string;
   personaEvidenceSnippetCount?: number;
@@ -1895,10 +1915,15 @@ export class ConversationService {
           ? response.choices[0].message.content
           : '';
       const parsedReply = this.parseAssistantReply(responseContent);
+      const plannedSegments = this.materializeParticipationReplySegments(
+        parsedReply.segments,
+        replyBrief.participationStrategy
+      );
       generationAttemptTraces.push(
         this.buildAssistantGenerationAttemptTrace({
           attempt: 'initial',
           responseContent,
+          parsedSegments: plannedSegments,
           userQuery: before.searchableText,
           model:
             typeof response.model === 'string' ? response.model : undefined,
@@ -1907,7 +1932,7 @@ export class ConversationService {
       );
       replyClaims = parsedReply.claims;
       replySegments = this.normalizeAssistantReplySegments(
-        parsedReply.segments,
+        plannedSegments,
         before.searchableText
       );
     } catch (initialError) {
@@ -1951,10 +1976,15 @@ export class ConversationService {
             ? response.choices[0].message.content
             : '';
         const parsedReply = this.parseAssistantReply(responseContent);
+        const plannedSegments = this.materializeParticipationReplySegments(
+          parsedReply.segments,
+          replyBrief.participationStrategy
+        );
         generationAttemptTraces.push(
           this.buildAssistantGenerationAttemptTrace({
             attempt: 'recovery',
             responseContent,
+            parsedSegments: plannedSegments,
             userQuery: before.searchableText,
             model:
               typeof response.model === 'string' ? response.model : undefined,
@@ -1963,7 +1993,7 @@ export class ConversationService {
         );
         replyClaims = parsedReply.claims;
         replySegments = this.normalizeAssistantReplySegments(
-          parsedReply.segments,
+          plannedSegments,
           before.searchableText
         );
         generationRecoverySucceeded = true;
@@ -2119,12 +2149,21 @@ export class ConversationService {
       `交谈规划：${JSON.stringify(conversationPlan || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
-      '不编造共同经历、生物学关系和离世后生活；带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
+      '不编造共同经历、生物学关系或用户现实状态；离世世界的人物、住处、饭菜、作息和活动可以按角色与语境自然想象，但不得写成现实证明。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
       '像微信聊天，直接回答，温和朴素。不要把同一个意思解释、安慰、总结三遍。',
       buildReplyLengthPlanPrompt(options.replyBrief.lengthPlan),
+      ...(options.replyBrief.participationStrategy
+        ? [
+            buildReplyParticipationStrategyPrompt(
+              options.replyBrief.participationStrategy
+            ),
+          ]
+        : []),
       `默认一颗、最多 ${MAX_ASSISTANT_REPLY_SEGMENTS} 颗；第二颗必须有不可替代的新动作。`,
-      '只输出给用户看的中文正文。多个气泡用空行分段；不要 JSON、字段名、代码块、分析或内部说明。',
+      options.replyBrief.participationStrategy
+        ? '只输出气泡 JSON，不要正文外解释。'
+        : '只输出给用户看的中文正文。多个气泡用空行分段；不要 JSON、字段名、代码块、分析或内部说明。',
     ].join('\n');
     const hasCurrentUserMessage = recentMessages.some(
       message =>
@@ -4163,13 +4202,15 @@ export class ConversationService {
   private buildAssistantGenerationAttemptTrace(options: {
     attempt: AssistantGenerationAttemptTrace['attempt'];
     responseContent: string;
+    parsedSegments?: string[];
     userQuery: string;
     model?: string;
     usage?: ReplyUsage;
     errorCode?: string;
   }): AssistantGenerationAttemptTrace {
     const parsedReply = this.parseAssistantReply(options.responseContent);
-    const segmentTraces = parsedReply.segments.map(segment =>
+    const parsedSegments = options.parsedSegments || parsedReply.segments;
+    const segmentTraces = parsedSegments.map(segment =>
       this.inspectAssistantSegmentSanitization(segment, options.userQuery)
     );
     const acceptedSegments = inspectReplyBubbleStructure(
@@ -4181,7 +4222,7 @@ export class ConversationService {
       model: options.model,
       usage: options.usage || {},
       rawContent: options.responseContent,
-      parsedSegments: parsedReply.segments,
+      parsedSegments,
       acceptedSegments,
       segmentTraces,
       errorCode:
@@ -4190,6 +4231,35 @@ export class ConversationService {
           ? undefined
           : 'ASSISTANT_REPLY_NO_USABLE_TEXT'),
     };
+  }
+
+  private materializeParticipationReplySegments(
+    segments: string[],
+    strategy?: ReplyBrief['participationStrategy']
+  ): string[] {
+    if (!strategy || segments.length !== 1) {
+      return segments;
+    }
+
+    const segment = segments[0]?.trim();
+    if (!segment) {
+      return segments;
+    }
+
+    const lines = segment
+      .split(/\r?\n+/u)
+      .map(item => item.trim())
+      .filter(Boolean);
+    if (lines.length >= 2) {
+      return [lines[0], lines.slice(1).join(' ')];
+    }
+
+    const sentenceBoundary = segment.match(/^(.+?[。！？!?])\s*(.+)$/u);
+    if (!sentenceBoundary) {
+      return segments;
+    }
+
+    return [sentenceBoundary[1].trim(), sentenceBoundary[2].trim()];
   }
 
   private normalizeModelFirstReplySegments(
@@ -4611,6 +4681,9 @@ export class ConversationService {
     replyIntents?: MessageEntity['replyIntents'];
     replyIntentConfidence?: number;
     replyIntentSource?: string;
+    replyPlanningMode?: string;
+    replyPlanningReason?: string;
+    replyIntentModelCallCount?: number;
     replyScene?: string;
     replySecondaryScenes?: string[];
     replyRoutingSource?: string;
@@ -4646,11 +4719,24 @@ export class ConversationService {
     replyHistoryMessageCount?: number;
     replyRelevantMemoryCount?: number;
     replyConversationReadingAnchorCount?: number;
+    replyStrategyVersion?: string;
+    replyStrategySource?: string;
+    replyParticipationStrategy?: string;
     replyConversationStance?: string;
+    replyConversationStanceTarget?: string;
     replyConversationMoves?: string[];
     replyConversationMoveGoals?: string[];
     replySocialStrategy?: string;
+    replyStrategyPurpose?: string;
     replyQuestionNeed?: string;
+    replyConversationTurnClosure?: string;
+    replyUserConversationState?: string;
+    replyOpenLoop?: string;
+    replyContinuationGoal?: string;
+    replyAssistantContribution?: string;
+    replyMustContribute?: string;
+    replyAvoidRepeatingMove?: string;
+    replyClosureReadiness?: string;
     replyPersonaActivations?: string[];
     replyPersonaSource?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
@@ -4669,6 +4755,9 @@ export class ConversationService {
       replyIntents: responseIntents?.map(item => ({ ...item })),
       replyIntentConfidence: routing?.intent?.confidence,
       replyIntentSource: routing?.intent?.source,
+      replyPlanningMode: routing?.replyPlanningMode?.trim() || undefined,
+      replyPlanningReason: routing?.replyPlanningReason?.trim() || undefined,
+      replyIntentModelCallCount: routing?.replyIntentModelCallCount,
       replyScene: routing?.route?.primaryScene?.scene,
       replySecondaryScenes: routing?.route?.secondaryScenes.map(
         scene => scene.scene
@@ -4733,12 +4822,30 @@ export class ConversationService {
       replyRelevantMemoryCount: routing?.relevantMemoryCount,
       replyConversationReadingAnchorCount:
         routing?.conversationReadingAnchorCount,
+      replyStrategyVersion: routing?.strategyVersion?.trim() || undefined,
+      replyStrategySource: routing?.strategySource?.trim() || undefined,
+      replyParticipationStrategy:
+        routing?.participationStrategy?.trim() || undefined,
       replyConversationStance: routing?.conversationStance?.trim() || undefined,
+      replyConversationStanceTarget:
+        routing?.conversationStanceTarget?.trim() || undefined,
       replyConversationMoves: routing?.conversationMoves?.filter(Boolean),
       replyConversationMoveGoals:
         routing?.conversationMoveGoals?.filter(Boolean),
       replySocialStrategy: routing?.socialStrategy?.trim() || undefined,
+      replyStrategyPurpose: routing?.strategyPurpose?.trim() || undefined,
       replyQuestionNeed: routing?.questionNeed?.trim() || undefined,
+      replyConversationTurnClosure:
+        routing?.conversationTurnClosure?.trim() || undefined,
+      replyUserConversationState:
+        routing?.userConversationState?.trim() || undefined,
+      replyOpenLoop: routing?.openLoop?.trim() || undefined,
+      replyContinuationGoal: routing?.continuationGoal?.trim() || undefined,
+      replyAssistantContribution:
+        routing?.assistantContribution?.trim() || undefined,
+      replyMustContribute: routing?.mustContribute?.trim() || undefined,
+      replyAvoidRepeatingMove: routing?.avoidRepeatingMove?.trim() || undefined,
+      replyClosureReadiness: routing?.closureReadiness?.trim() || undefined,
       replyPersonaActivations: routing?.personaActivations?.filter(Boolean),
       replyPersonaSource: routing?.personaSource?.trim() || undefined,
       replyMemoryPlan: routing?.memoryPlan
@@ -4788,6 +4895,9 @@ export class ConversationService {
     replyIntents?: MessageEntity['replyIntents'];
     replyIntentConfidence?: number;
     replyIntentSource?: string;
+    replyPlanningMode?: string;
+    replyPlanningReason?: string;
+    replyIntentModelCallCount?: number;
     replyScene?: string;
     replySecondaryScenes?: string[];
     replyRoutingSource?: string;
@@ -4823,11 +4933,24 @@ export class ConversationService {
     replyHistoryMessageCount?: number;
     replyRelevantMemoryCount?: number;
     replyConversationReadingAnchorCount?: number;
+    replyStrategyVersion?: string;
+    replyStrategySource?: string;
+    replyParticipationStrategy?: string;
     replyConversationStance?: string;
+    replyConversationStanceTarget?: string;
     replyConversationMoves?: string[];
     replyConversationMoveGoals?: string[];
     replySocialStrategy?: string;
+    replyStrategyPurpose?: string;
     replyQuestionNeed?: string;
+    replyConversationTurnClosure?: string;
+    replyUserConversationState?: string;
+    replyOpenLoop?: string;
+    replyContinuationGoal?: string;
+    replyAssistantContribution?: string;
+    replyMustContribute?: string;
+    replyAvoidRepeatingMove?: string;
+    replyClosureReadiness?: string;
     replyPersonaActivations?: string[];
     replyPersonaSource?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
@@ -4883,6 +5006,12 @@ export class ConversationService {
       options.replyIntentConfidence
     );
     message.replyIntentSource = options.replyIntentSource?.trim() || undefined;
+    message.replyPlanningMode = options.replyPlanningMode?.trim() || undefined;
+    message.replyPlanningReason =
+      options.replyPlanningReason?.trim() || undefined;
+    message.replyIntentModelCallCount = this.normalizeTokenCount(
+      options.replyIntentModelCallCount
+    );
     message.replyScene = options.replyScene?.trim() || undefined;
     message.replySecondaryScenes =
       options.replySecondaryScenes?.filter(Boolean);
@@ -4957,15 +5086,40 @@ export class ConversationService {
     message.replyConversationReadingAnchorCount = this.normalizeTokenCount(
       options.replyConversationReadingAnchorCount
     );
+    message.replyStrategyVersion =
+      options.replyStrategyVersion?.trim() || undefined;
+    message.replyStrategySource =
+      options.replyStrategySource?.trim() || undefined;
+    message.replyParticipationStrategy =
+      options.replyParticipationStrategy?.trim() || undefined;
     message.replyConversationStance =
       options.replyConversationStance?.trim() || undefined;
+    message.replyConversationStanceTarget =
+      options.replyConversationStanceTarget?.trim() || undefined;
     message.replyConversationMoves =
       options.replyConversationMoves?.filter(Boolean);
     message.replyConversationMoveGoals =
       options.replyConversationMoveGoals?.filter(Boolean);
     message.replySocialStrategy =
       options.replySocialStrategy?.trim() || undefined;
+    message.replyStrategyPurpose =
+      options.replyStrategyPurpose?.trim() || undefined;
     message.replyQuestionNeed = options.replyQuestionNeed?.trim() || undefined;
+    message.replyConversationTurnClosure =
+      options.replyConversationTurnClosure?.trim() || undefined;
+    message.replyUserConversationState =
+      options.replyUserConversationState?.trim() || undefined;
+    message.replyOpenLoop = options.replyOpenLoop?.trim() || undefined;
+    message.replyContinuationGoal =
+      options.replyContinuationGoal?.trim() || undefined;
+    message.replyAssistantContribution =
+      options.replyAssistantContribution?.trim() || undefined;
+    message.replyMustContribute =
+      options.replyMustContribute?.trim() || undefined;
+    message.replyAvoidRepeatingMove =
+      options.replyAvoidRepeatingMove?.trim() || undefined;
+    message.replyClosureReadiness =
+      options.replyClosureReadiness?.trim() || undefined;
     message.replyPersonaActivations =
       options.replyPersonaActivations?.filter(Boolean);
     message.replyPersonaSource =

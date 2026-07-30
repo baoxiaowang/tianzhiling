@@ -153,6 +153,15 @@ export class MessageEntity extends BaseEntity {
   replyIntentSource?: string;
 
   @Column()
+  replyPlanningMode?: string;
+
+  @Column()
+  replyPlanningReason?: string;
+
+  @Column()
+  replyIntentModelCallCount?: number;
+
+  @Column()
   replyScene?: string;
 
   @Column()
@@ -261,7 +270,19 @@ export class MessageEntity extends BaseEntity {
   replyConversationReadingAnchorCount?: number;
 
   @Column()
+  replyStrategyVersion?: string;
+
+  @Column()
+  replyStrategySource?: string;
+
+  @Column()
+  replyParticipationStrategy?: string;
+
+  @Column()
   replyConversationStance?: string;
+
+  @Column()
+  replyConversationStanceTarget?: string;
 
   @Column()
   replyConversationMoves?: string[];
@@ -273,7 +294,34 @@ export class MessageEntity extends BaseEntity {
   replySocialStrategy?: string;
 
   @Column()
+  replyStrategyPurpose?: string;
+
+  @Column()
   replyQuestionNeed?: string;
+
+  @Column()
+  replyConversationTurnClosure?: string;
+
+  @Column()
+  replyUserConversationState?: string;
+
+  @Column()
+  replyOpenLoop?: string;
+
+  @Column()
+  replyContinuationGoal?: string;
+
+  @Column()
+  replyAssistantContribution?: string;
+
+  @Column()
+  replyMustContribute?: string;
+
+  @Column()
+  replyAvoidRepeatingMove?: string;
+
+  @Column()
+  replyClosureReadiness?: string;
 
   @Column()
   replyPersonaActivations?: string[];

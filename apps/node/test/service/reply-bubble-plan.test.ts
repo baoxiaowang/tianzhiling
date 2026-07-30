@@ -41,6 +41,20 @@ describe('reply bubble plan', () => {
     ).toBe('concise');
   });
 
+  it('requires two separated bubbles only when a participation strategy selected two actions', () => {
+    const plan = buildReplyBubblePlan({
+      currentQuery: '妈，我想你了',
+      replyMoveCount: 2,
+      preferTwoSegments: true,
+    });
+
+    expect(plan.preferTwoSegments).toBe(true);
+    expect(buildReplyBubblePlanPrompt(plan)).toContain(
+      '只输出 {"segments":["第一颗","第二颗"]}'
+    );
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('默认一颗');
+  });
+
   it('marks closing turns so the model does not reopen the conversation', () => {
     const plan = buildReplyBubblePlan({
       currentQuery: '我先睡了，晚安',
@@ -48,7 +62,7 @@ describe('reply bubble plan', () => {
     });
 
     expect(plan.turnClosure).toBe('close');
-    expect(buildReplyBubblePlanPrompt(plan)).toContain('不重新提问');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('不提问或开新话题');
   });
 
   it('removes deterministic noise without changing valid bubble semantics', () => {
@@ -94,9 +108,7 @@ describe('reply bubble plan', () => {
 
   it('preserves the quoted transmission interruption marker', () => {
     expect(
-      inspectReplyBubbleStructure([
-        '……￥#@%……“该信息传输途中受到了干扰”',
-      ])
+      inspectReplyBubbleStructure(['……￥#@%……“该信息传输途中受到了干扰”'])
     ).toEqual({
       segments: ['……￥#@%……“该信息传输途中受到了干扰”'],
       issues: [],

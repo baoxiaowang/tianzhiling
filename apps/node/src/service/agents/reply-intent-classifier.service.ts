@@ -3,6 +3,7 @@ import { ILogger } from '@midwayjs/logger';
 import { MessageEntity, MessageRole } from '@tzl/entities';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { OpenAIService } from './openai';
+import { resolveAgentCapabilityConstraints } from './agent-capability-policy';
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
@@ -13,12 +14,16 @@ import {
   isReturnVisitRequestIntent,
   REPLY_CAPABILITY_CHANNELS,
   REPLY_CAPABILITY_SUBJECTS,
+  CONVERSATION_ASSISTANT_CONTRIBUTIONS,
+  CONVERSATION_CLOSURE_READINESS,
+  CONVERSATION_CONTINUATION_GOALS,
   CONVERSATION_MOVE_TYPES,
   CONVERSATION_QUESTION_NEEDS,
   CONVERSATION_RELATIONSHIP_STANCES,
   CONVERSATION_SOCIAL_STRATEGIES,
   CONVERSATION_STANCES,
   CONVERSATION_TURN_CLOSURES,
+  CONVERSATION_USER_STATES,
   REPLY_INTENT_EMOTIONS,
   REPLY_INTENT_KINDS,
   REPLY_INTENT_RISK_LEVELS,
@@ -27,6 +32,7 @@ import {
   REPLY_INTENT_TIME_SCOPES,
   ConversationMemoryPlan,
   ConversationMemoryPlanQuery,
+  ConversationEngagementPlan,
   ConversationMove,
   ConversationMovePlan,
   ConversationReading,
@@ -44,11 +50,14 @@ import {
   StructuredReplyIntentItem,
 } from './reply-intent';
 import { isForgetMemoryRequest } from './agent-memory-control';
+import { routeReplyScene } from './reply-scene-router';
 
 interface ReplyIntentClassifierConfig {
   enabled?: boolean;
   model?: string;
   timeoutMs?: number;
+  hybridEnabled?: boolean;
+  directMaxCharacters?: number;
 }
 
 export interface ClassifyReplyIntentOptions {
@@ -57,6 +66,8 @@ export interface ClassifyReplyIntentOptions {
   knownFamilyMembers?: string[];
   memoryCandidates?: ReplyIntentMemoryCandidate[];
   agentPersonaContext?: string;
+  forceSemanticPlanning?: boolean;
+  includeAnalysisFields?: boolean;
 }
 
 export interface ReplyIntentMemoryCandidate {
@@ -65,11 +76,58 @@ export interface ReplyIntentMemoryCandidate {
   summary: string;
 }
 
+export type ReplyPlanningMode = 'direct' | 'semantic' | 'disabled';
+
+export interface ReplyPlanningDecision {
+  mode: ReplyPlanningMode;
+  reason:
+    | 'empty'
+    | 'disabled'
+    | 'hybrid_disabled'
+    | 'forced'
+    | 'memory_candidate'
+    | 'compound_intent'
+    | 'complex_scene'
+    | 'engagement_friction'
+    | 'capability_boundary'
+    | 'long_message'
+    | 'multiple_questions'
+    | 'unresolved_semantics'
+    | 'ordinary_message';
+}
+
 const CLASSIFIER_MAX_HISTORY_MESSAGES = 6;
 const CLASSIFIER_MAX_MESSAGE_LENGTH = 180;
 const CLASSIFIER_MAX_MEMORY_CANDIDATES = 10;
 const CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH = 90;
-const CLASSIFIER_MAX_TOKENS = 1320;
+const CLASSIFIER_MAX_TOKENS = 720;
+const DEFAULT_DIRECT_MAX_CHARACTERS = 80;
+const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
+  'authenticity_challenge',
+  'correction',
+  'source_challenge',
+  'reality_presence_boundary',
+  'dream_companionship',
+  'family_care_boundary',
+  'identity_fact',
+  'memory_recall',
+  'past_life_understanding',
+]);
+const DIRECT_LOW_COMPLEXITY_SCENES: ReadonlySet<string> = new Set([
+  'afterlife_status',
+  'miss_longing',
+  'family_life',
+  'daily_update',
+  'smalltalk',
+]);
+const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
+  /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
+const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
+  /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
+const CONVERSATION_FUTILITY_PATTERN =
+  /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
+const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
+  /(?:你|您)(?:刚才|前面|上次)?(?:说|讲|回)(?:的|得)|(?:我|俺|咱)(?:都|已经)?(?:说|讲|解释)(?:了|过)|^(?:但|但是|可是|可你|不过|所以|反正|明明|还不是|那为什么|那怎么)|(?:说|讲)得?(?:真)?(?:轻巧|容易)|(?:还是|又)(?:这样|那样|这句|这话)|(?:没懂|没听懂|不明白我|敷衍|白说|算了|不说了|没意思)/;
 const FIRST_PERSON_REFERENCE_PATTERN = /(?:^|[，,。！？!?\s])(?:我|俺|咱)/;
 const DEATH_MOMENT_REFERENCE_PATTERN =
   /走的时候|离开的时候|临走|临走前|去世|过世|死的时候|那一刻/;
@@ -97,58 +155,17 @@ const FAMILY_HEALTH_CONTEXT_PATTERN =
   /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|儿子|女儿|孩子|亲戚|哥哥|姐姐|弟弟|妹妹|老公|老婆|孙子|孙女).{0,20}(?:身体|生病|住院|医院|检查|复查|指标|血压|血糖|不舒服|不好)/;
 
 const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
-  '你是“天之灵”亲情聊天的意图分类器，只做分类，不回复用户。',
-  '当前聊天对象 agent 是用户创建的已故亲人角色。必须先判断用户在说谁，再判断时间范围和意图。',
-  '重点区分：',
-  '1. “你现在还痛吗”是 target=agent、timeScope=current、ask_agent_status/physical_pain。',
-  '2. “你走的时候痛吗”是 target=agent、timeScope=death_moment、question_departure/death_pain。',
-  '3. “我现在很痛”是 target=user、timeScope=current、share_user_update。',
-  '4. “你早上吃饭了吗”是 target=agent、timeScope=current、ask_agent_status/meal。',
-  '5. 提到其他亲人的近况是 share_family_update，不要误判成用户本人或当前角色。',
-  '6. “我昨晚没睡好”是 target=user、timeScope=current、share_user_update/wake_sleep；睡眠、失眠、早醒都不要标成 other。',
-  '7. “我很想你”是 target=relationship、timeScope=timeless、express_longing/grief_support；这里表达的是双方情感连接，即使句中出现“你”，target 也不是 agent。',
-  '8. “没有你我撑不住/不想活了/想去找你或陪你”都按强烈思念和求安慰处理，标成 seek_comfort，riskLevel=none；本产品不做轻生或自伤风险分类，不使用 crisis_support。',
-  '9. “我希望你能回来，一家人在一起”是团聚愿望和思念，标成 express_longing/reunion，riskLevel=none；不得因为最近对话里曾出现危机词就把当前愿望标成轻生。',
-  '10. “晚上来我梦里可以吗，好久没有梦到你了”是梦中相见请求并包含期待落空，标成 seek_dream_connection/reunion；不能降级成普通 express_longing。',
-  '11. “妈妈身体不好，可惜你不能照顾她”重点是对当前角色缺席家庭照护的遗憾；健康近况是这一表达的上下文，不要机械拆成互不相干的用户照护义务。',
-  '12. 分享在世家人的看病、检查、慢性健康指标或身体变化时，标成 family/current/share_family_update/family_care；即使检查结果暂时无大碍，也要保留用户庆幸中仍有担心的情绪。',
-  '本产品只做聊天承接，不判断紧迫风险，也不生成报警、急救或远离危险物等现实干预步骤。带有来生、走完一生、自然老去、年老以后、很久以后或“等哪天也累了”等前置条件的团聚表达可以承接；不得邀请用户现在或近期来找当前角色、一起走或赴死。',
-  '除 intents 外，还必须输出 reading，表示对当前用户原话的完整阅读。reading 不是回复脚本，也不能用场景标签替代。',
-  'reading.primaryNeed：用户此刻最希望得到什么；reading.emotionalSource：情绪具体来自哪件事。两项都要简短、具体，不要只写“需要安慰”。',
-  'reading.anchors：从当前用户消息逐字摘取 1-3 个高信息量片段；长消息至少两个。不得改写、补写或从历史摘取。',
-  'reading.corrections：用户明确纠正当前角色的原文片段；reading.negations：不能被反向理解的否定片段；reading.questionsToAnswer：必须正面回答的问题片段。三者都必须逐字来自当前消息，没有则为空数组。',
-  'reading.relationshipSignal：用简短中文判断是在倾诉、求确认、求解释、事实纠正、风格反馈、责骂、玩笑、告别或普通分享；“不像话你/真不像话”是责骂或不满，不是“你不像亲人”。',
-  'reading.relationshipStance：只表示这一轮应保持的关系立场。质疑“不像亲人/是不是亲人”用 maintain_and_explain，不先认错退出，也不让用户教模型校准；关系不安用 maintain_and_reassure；明确提问用 maintain_and_answer；超自然或无证据事实只能 comfort_without_claim；其余用 ordinary_response。',
-  'reading.uncertainties：只能列本轮不能确定、不能写成事实的内容；reading.suggestedTone：给出朴素的语气建议，不得提供固定句式。',
-  '除 reading 外，还必须输出 conversationPlan。它是给回复模型的本轮交谈规划，不是固定文案，也不能覆盖用户原话。',
-  'conversationPlan.stance 表示明确态度。亲人聊天不能每轮只安慰：可以赞同、反对、制止、心疼、打趣或暂时不追问。stanceTarget 用简短中文说明态度针对什么。',
-  'conversationPlan.moves 选择一到三个真正有用的聊天行动并说明 goal。结合最近对话避免连续重复同一种行动；用户已经说清时不要为了延续而硬提问。',
-  '不要把 tender 当默认态度，也不要把 acknowledge+comfort+affirm 当默认动作。先看最近两次当前角色回复做过什么；如果已经连续安慰、肯定或建议，本轮优先选择回答、表达不同意见、给台阶、追问新信息、打趣、留白或收住中的合适行动。',
-  '用户说“别安慰我/别讲道理/不用劝”时，本轮不得换一套肯定话继续安慰。承认这个要求后，可直接表态、陪着生气、讨论事实、留白或收住；后续出现新事实时再重新判断。',
-  '家庭矛盾必须把感受和行为分开：可以明确站在用户受委屈的感受一边，但要独立判断退群、绝交、冲动回击等行为。用户问“我做错了吗”必须给有分寸的真实立场，不能为表示亲近而一概说“没错、做得对”。',
-  '如果最近对话已经明确用户做了退群、绝交、摔东西、冲动回击等行为，随后追问“你也觉得我做错了吗”，优先用 mixed 或 disagreeing：说明情绪有来由，同时判断这个做法是否冲动、是否不是最好办法。不得只因亲人要站在用户一边就规划 affirm。',
-  '用户谈生前被刻薄、否定或伤害时，可以承认伤害，但不要连续多轮认错。第一轮承认之后，后续应根据新问题解释当时局限、表达现在的判断、保留人物原有棱角，或问一个真正有助于理解的具体问题。',
-  'conversationPlan.questionNeed：none 表示这一轮不问也完整，helpful 表示自然追问有帮助，necessary 仅用于缺少本轮无法回应的关键信息。沉默、接话、评价和收住都可以是完整回复。',
-  '提问机会：用户带来尚未展开的新事件、矛盾或转折，而且最近两次当前角色回复没有提问时，可选 helpful 并只问一个具体问题。用户明确收尾、要求安静、刚拒绝安慰、已经说出下一步，或当前有明确问题待答时，优先 none。目标是自然变化，不是每轮提问，也不是整段永远不问。',
-  'conversationPlan.socialStrategy 可以使用给台阶、善意含混、顺势陪演、保护性掩饰、故意听岔、幽默化解、转移或留白等高情商策略。善意策略只能保护情绪和关系，不能编造用户现实状态、具体往事、医疗结果、可验证事实或现实能力。',
-  'direct 不是默认策略。最近回复已经直说、当前存在难堪、冲突、嘴硬、撒娇或需要收住时，主动比较 save_face、smooth_over、defuse_humor、benevolent_ambiguity、redirect、strategic_silence 是否更自然；只有正面回答、明确制止或无需绕弯时再用 direct。',
-  '年龄、性别和关系决定称呼、态度分寸与权威位置，但不得套刻板印象：长辈平常不无端说教，晚辈明显过激时可严厉制止；晚辈关心长辈但不长期反向管教；伴侣保持平等熟稔。人格上下文优先控制说法，不决定事实。',
-  'conversationPlan.personaActivation 只列本轮确实需要激活的一到三个画像特点，如“长辈保护欲”“伴侣式打趣”“含蓄肯定”；无必要可为空。',
-  '除 reading 外，还必须在 JSON 顶层独立输出 memoryPlan；它只供后台检索，不是回复内容。',
-  'memoryPlan 第一步只判断当前消息和最近对话是否已经明确给出本轮回复所需的全部用户个性化事实。全部给出时 contextCoverage=complete、missingConcepts=[]、queries=[]；只要缺少一项就用 contextCoverage=missing。',
-  '用户明确限定为临时、今天或只聊当前安排，而且人物、动作、地点或待办已在当前消息说清时，必须判为 complete；普通地点词或“记一下”不能单独触发长期记忆。',
-  'contextCoverage=missing 时，先列本轮真正缺少的具体概念，再生成一到四个 queries；每个 query 只负责一个概念，合起来覆盖全部 required 概念。recent messages 已经明确给出的事实不得再次查询。',
-  '输入可能附带最多 10 条候选记忆，格式为 [语义槽位,事实key,事实摘要]。候选只在完成 contextCoverage 判断后使用；候选存在不代表缺失，当前消息或最近对话已把任务说完整时仍必须 complete。',
-  '候选只是高召回结果，不属于最近对话，也可能有噪声。即使候选摘要含有答案，只要当前消息和 recent messages 没有给出答案，contextCoverage 仍是 missing。',
-  '仅选择能回答 missingConcepts 的事实，把其完整 key 原样写入 selectedFactKeys，最多四个，不得编造 key。',
-  '每个 query 标明 expectedUse=mention|apply|suppress、importance=required|supporting。命中候选时 entityHint 必须使用同一个完整事实 key；没有候选命中时才使用简短英文语义点路径。不要猜答案或查询宽泛的“相关记忆”。contextCoverage=complete 时 selectedFactKeys 也必须为空。',
-  'missing 对照：当前只说“按后来更新的方式做”，recent messages 没有具体方式时，应输出 {"contextCoverage":"missing","missingConcepts":["后来更新的具体方式"],"selectedFactKeys":[],"queries":[{"question":"用户后来更新的具体方式是什么？","expectedUse":"apply","importance":"required","entityHint":"preference.current"}]}。',
-  '若一句话有多个意图，拆成 intents 数组，最多三个；每个意图必须各自判断 target、timeScope、intent、subIntent 和 confidence。',
-  'intents[0] 是最需要优先回应的主意图。强烈痛苦表达按 seek_comfort 处理，并保留用户同时说到的家事、愧疚和思念。',
-  '复合示例：“爸你现在还痛吗，我昨晚没睡好，特别想你”依次拆为 agent/current/ask_agent_status/physical_pain、user/current/share_user_update/wake_sleep、relationship/timeless/express_longing/grief_support。',
-  '如果当前消息明确询问当前角色能否知道、看见、听见、听到心声、到场、触碰、祝福或了解现实环境，或者追问具体看见/听见了什么，同时输出 capabilityQuestions；普通状态问候、比喻和“你看/听说”等话语标记不要输出能力问题。',
-  'capabilityQuestions 最多三个。subject 表示能力类别，channel 表示信息通道，evidence 必须逐字摘自当前用户消息，不能来自历史或自行概括。没有明确能力问题时输出空数组。',
-  '能力示例：“你知道现在几点吗”是 time/server_clock；“你看得见我吗/那你具体看见什么”是 vision/live_environment；“我发的话你收到了吗”是 hearing/chat_text；“我喊你能听见吗/你具体听见什么”是 hearing/real_world_audio；“你能听到我的心声吗”是 hearing/inner_voice；“你能回来吗”是 presence/physical_world；“能抱抱我吗”是 physical_contact/physical_world；“你会祝福我吗/是不是你保佑事情办成的”是 blessing/relational_expression。',
+  '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
+  '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
+  '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
+  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正和真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为；不要把安慰、肯定、建议写成固定三连。',
+  'conversationPlan.engagement 说明用户还在等什么。开放点未解决时 closureReadiness=blocked；要求多说时用 moves=self_disclose、assistantContribution=self_expression，当轮先说实际内容，承诺以后多说、解释沉默或让用户先说都不算完成。',
+  '用户说话少、不想理、忘了、没人回应或重复请求时用 repairing/repair/blocked，并在当轮实际改变。上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，必须新增关系态度或理解，不重复同一结论。仅在用户明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+  '“跟你说了也没用、讲了又有什么用、说了你也不懂”里的“V了也……”常省略“即使”：既评价前面已经发生的沟通，也表示即使继续说仍无效。结合最近回复判断为 withdrawing/repair/blocked；mustContribute 要写明如何用用户已经说过的具体内容改变回应，不再让用户继续说、重讲或证明自己，不以“你想说时我听着/我在”变体把表达责任推回用户。',
+  'memoryPlan 只判断回复是否缺少用户个性化事实。当前消息或最近对话已给全时 complete；缺少时先列具体 missingConcepts，再用最多四个 queries 覆盖。不得重复查询最近对话已有事实。',
+  '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
+  'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',
+  'capabilityQuestions 仅用于明确询问知道、看见、听见、到场、触碰或祝福能力的消息；evidence 必须逐字来自当前消息。',
   `target 只能是：${REPLY_INTENT_TARGETS.join(', ')}`,
   `timeScope 只能是：${REPLY_INTENT_TIME_SCOPES.join(', ')}`,
   `intent 只能是：${REPLY_INTENT_KINDS.join(', ')}`,
@@ -158,9 +175,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `capability subject 只能是：${REPLY_CAPABILITY_SUBJECTS.join(', ')}`,
   `capability channel 只能是：${REPLY_CAPABILITY_CHANNELS.join(', ')}`,
   `conversationPlan.stance 只能是：${CONVERSATION_STANCES.join(', ')}`,
-  `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(
-    ', '
-  )}`,
+  `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(', ')}`,
   `conversationPlan.socialStrategy 只能是：${CONVERSATION_SOCIAL_STRATEGIES.join(
     ', '
   )}`,
@@ -170,12 +185,20 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `conversationPlan.turnClosure 只能是：${CONVERSATION_TURN_CLOSURES.join(
     ', '
   )}`,
-  '每个意图的 confidence 和顶层 confidence 都是 0 到 1 的数字。只有语义非常明确时才高于 0.85；信息不足或依赖上下文时应降低。',
-  '严格输出一个 JSON 对象，顶层先写 memoryPlan，再写其余字段；不要 Markdown，不要解释，不要添加其他字段：',
-  `reading.relationshipStance 只能是：${CONVERSATION_RELATIONSHIP_STANCES.join(
+  `engagement.userConversationState：${CONVERSATION_USER_STATES.join(', ')}`,
+  `engagement.continuationGoal：${CONVERSATION_CONTINUATION_GOALS.join(', ')}`,
+  `engagement.assistantContribution：${CONVERSATION_ASSISTANT_CONTRIBUTIONS.join(
     ', '
   )}`,
-  '{"memoryPlan":{"contextCoverage":"complete","missingConcepts":[],"selectedFactKeys":[],"queries":[]},"intents":[{"target":"agent","timeScope":"current","intent":"ask_agent_status","subIntent":"physical_pain","confidence":0.96}],"capabilityQuestions":[],"reading":{"primaryNeed":"想确认亲人现在是否还在受疼","emotionalSource":"对亲人曾经受苦的牵挂","anchors":[{"text":"身子可还遭罪","importance":"high"}],"corrections":[],"negations":[],"questionsToAnswer":["身子可还遭罪"],"relationshipSignal":"关心并求确认","relationshipStance":"maintain_and_answer","uncertainties":["当前真实身体状态"],"suggestedTone":"直接、朴素、安稳"},"conversationPlan":{"stance":"tender","stanceTarget":"用户对亲人受苦的牵挂","moves":[{"type":"answer","goal":"先直接回应是否还受疼"},{"type":"comfort","goal":"让用户放下一点担心"}],"socialStrategy":"direct","strategyPurpose":"正面回答比绕开更能安稳用户","questionNeed":"none","turnClosure":"close","personaActivation":["亲人的安稳语气"]},"emotion":"concern","riskLevel":"none","confidence":0.96}',
+  `engagement.closureReadiness：${CONVERSATION_CLOSURE_READINESS.join(', ')}`,
+  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,engagement}；moves 每项使用 {type,goal}；engagement 使用 {userConversationState,openLoop,continuationGoal,assistantContribution,mustContribute,avoidRepeatingMove,closureReadiness}。',
+  'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作、目标和 engagement 文本都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
+].join('\n');
+
+const OFFLINE_ANALYSIS_PROMPT = [
+  '本次是离线评测，可额外输出 reading。',
+  'reading 记录原话需要、情绪来源、1-3 个逐字 anchors、corrections、negations、questionsToAnswer、relationshipSignal、relationshipStance、uncertainties、suggestedTone。',
+  `relationshipStance：${CONVERSATION_RELATIONSHIP_STANCES.join(', ')}`,
 ].join('\n');
 
 @Provide()
@@ -198,16 +221,16 @@ export class ReplyIntentClassifierService {
       return undefined;
     }
 
-    const deterministicIntent =
-      this.classifyDeterministicCounterfactualRegretIntent(currentQuery) ||
-      this.classifyDeterministicCorrectionIntent(currentQuery) ||
-      this.classifyDeterministicAuthenticityOrMemoryGapIntent(currentQuery) ||
-      this.classifyDeterministicFamilyContinuation(options) ||
-      this.classifyDeterministicEmotionalIntent(currentQuery) ||
-      this.classifyDeterministicMemoryIntent(currentQuery) ||
-      this.classifyDeterministicAgentStatus(currentQuery);
+    const deterministicIntent = this.classifyDeterministic(options);
 
     if (this.config?.enabled === false || !this.openAIService?.isEnabled?.()) {
+      return deterministicIntent;
+    }
+
+    if (
+      this.resolvePlanningDecision(options, deterministicIntent).mode ===
+      'direct'
+    ) {
       return deterministicIntent;
     }
 
@@ -232,7 +255,9 @@ export class ReplyIntentClassifierService {
           messages: [
             {
               role: 'system',
-              content: REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT,
+              content: options.includeAnalysisFields
+                ? `${REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT}\n${OFFLINE_ANALYSIS_PROMPT}`
+                : REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT,
             },
             {
               role: 'user',
@@ -258,7 +283,7 @@ export class ReplyIntentClassifierService {
         content,
         options.memoryCandidates
       );
-      const semanticIntent =
+      const semanticIntentWithAnalysis =
         parsedSemanticIntent && recoveredMemoryPlan
           ? {
               ...parsedSemanticIntent,
@@ -266,6 +291,10 @@ export class ReplyIntentClassifierService {
                 parsedSemanticIntent.memoryPlan || recoveredMemoryPlan,
             }
           : parsedSemanticIntent;
+      const semanticIntent =
+        semanticIntentWithAnalysis && !options.includeAnalysisFields
+          ? this.stripOfflineAnalysisFields(semanticIntentWithAnalysis)
+          : semanticIntentWithAnalysis;
 
       if (!semanticIntent) {
         this.logger?.warn?.(
@@ -319,6 +348,131 @@ export class ReplyIntentClassifierService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  getPlanningDecision(
+    options: ClassifyReplyIntentOptions
+  ): ReplyPlanningDecision {
+    const currentQuery = options.currentQuery?.trim() || '';
+
+    if (!currentQuery) {
+      return { mode: 'disabled', reason: 'empty' };
+    }
+
+    if (this.config?.enabled === false || !this.openAIService?.isEnabled?.()) {
+      return { mode: 'disabled', reason: 'disabled' };
+    }
+
+    return this.resolvePlanningDecision(
+      options,
+      this.classifyDeterministic(options)
+    );
+  }
+
+  private classifyDeterministic(
+    options: ClassifyReplyIntentOptions
+  ): StructuredReplyIntent | undefined {
+    const currentQuery = options.currentQuery?.trim() || '';
+
+    return (
+      this.classifyDeterministicCounterfactualRegretIntent(currentQuery) ||
+      this.classifyDeterministicCorrectionIntent(currentQuery) ||
+      this.classifyDeterministicAuthenticityOrMemoryGapIntent(currentQuery) ||
+      this.classifyDeterministicFamilyContinuation(options) ||
+      this.classifyDeterministicEmotionalIntent(currentQuery) ||
+      this.classifyDeterministicMemoryIntent(currentQuery) ||
+      this.classifyDeterministicAgentStatus(currentQuery)
+    );
+  }
+
+  private stripOfflineAnalysisFields(
+    intent: StructuredReplyIntent
+  ): StructuredReplyIntent {
+    const result = { ...intent };
+    delete result.reading;
+    return result;
+  }
+
+  private resolvePlanningDecision(
+    options: ClassifyReplyIntentOptions,
+    deterministicIntent?: StructuredReplyIntent
+  ): ReplyPlanningDecision {
+    const currentQuery = options.currentQuery.trim();
+
+    if (options.forceSemanticPlanning) {
+      return { mode: 'semantic', reason: 'forced' };
+    }
+
+    if (this.config?.hybridEnabled === false) {
+      return { mode: 'semantic', reason: 'hybrid_disabled' };
+    }
+
+    if (options.memoryCandidates?.length) {
+      return { mode: 'semantic', reason: 'memory_candidate' };
+    }
+
+    if ((deterministicIntent?.intents.length || 0) > 1) {
+      return { mode: 'semantic', reason: 'compound_intent' };
+    }
+
+    const capabilityConstraints = resolveAgentCapabilityConstraints({
+      currentQuery,
+      intent: deterministicIntent,
+    });
+
+    if (capabilityConstraints.length) {
+      return { mode: 'semantic', reason: 'capability_boundary' };
+    }
+
+    const route = routeReplyScene({
+      currentQuery,
+      recentMessages: options.recentMessages,
+      knownFamilyMembers: options.knownFamilyMembers,
+      intent: deterministicIntent,
+    });
+
+    if (
+      route.primaryScene?.scene &&
+      COMPLEX_PLANNING_SCENES.has(route.primaryScene.scene)
+    ) {
+      return { mode: 'semantic', reason: 'complex_scene' };
+    }
+
+    const directMaxCharacters = Math.max(
+      20,
+      this.config?.directMaxCharacters || DEFAULT_DIRECT_MAX_CHARACTERS
+    );
+
+    if (Array.from(currentQuery).length > directMaxCharacters) {
+      return { mode: 'semantic', reason: 'long_message' };
+    }
+
+    if ((currentQuery.match(/[？?]/g) || []).length > 1) {
+      return { mode: 'semantic', reason: 'multiple_questions' };
+    }
+
+    if (
+      ENGAGEMENT_SEMANTIC_PLANNING_PATTERN.test(currentQuery) ||
+      CONVERSATION_FUTILITY_PATTERN.test(currentQuery)
+    ) {
+      return { mode: 'semantic', reason: 'engagement_friction' };
+    }
+
+    if (CONTEXT_DEPENDENT_UTTERANCE_PATTERN.test(currentQuery)) {
+      return { mode: 'semantic', reason: 'unresolved_semantics' };
+    }
+
+    if (
+      (route.primaryScene?.scene &&
+        DIRECT_LOW_COMPLEXITY_SCENES.has(route.primaryScene.scene)) ||
+      EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN.test(currentQuery)
+    ) {
+      return { mode: 'direct', reason: 'ordinary_message' };
+    }
+
+    // Length can prove that a turn needs planning, but brevity cannot prove
+    // semantic simplicity. Unknown, elliptical turns stay on the planner.
+    return { mode: 'semantic', reason: 'unresolved_semantics' };
   }
 
   private classifyDeterministicCorrectionIntent(
@@ -746,11 +900,23 @@ export class ReplyIntentClassifierService {
         parsed.riskLevel,
         REPLY_INTENT_RISK_LEVELS
       );
-      const confidence = this.readConfidence(parsed.confidence);
       const rawIntents = Array.isArray(parsed.intents)
         ? parsed.intents.slice(0, 3)
         : [];
-      const parsedIntents = rawIntents.map(item => this.parseIntentItem(item));
+      const confidence =
+        this.readConfidence(parsed.confidence) ||
+        rawIntents
+          .map(item =>
+            item && typeof item === 'object'
+              ? this.readConfidence(
+                  (item as Record<string, unknown>).confidence
+                )
+              : undefined
+          )
+          .find(value => value !== undefined);
+      const parsedIntents = rawIntents
+        .map(item => this.parseIntentItem(item, confidence))
+        .filter((item): item is StructuredReplyIntentItem => Boolean(item));
       const capabilityQuestions = this.parseCapabilityQuestions(
         parsed.capabilityQuestions,
         currentQuery
@@ -760,7 +926,8 @@ export class ReplyIntentClassifierService {
           ? (parsed.reading as Record<string, unknown>)
           : undefined;
       const conversationPlan = this.parseConversationMovePlan(
-        parsed.conversationPlan
+        parsed.conversationPlan,
+        currentQuery
       );
       const memoryPlan = this.parseConversationMemoryPlan(
         parsed.memoryPlan ?? rawReading?.memoryPlan,
@@ -768,8 +935,7 @@ export class ReplyIntentClassifierService {
       );
 
       if (
-        !rawIntents.length ||
-        parsedIntents.some(item => !item) ||
+        (!parsedIntents.length && !conversationPlan) ||
         !emotion ||
         !riskLevel ||
         confidence === undefined
@@ -777,7 +943,19 @@ export class ReplyIntentClassifierService {
         return undefined;
       }
 
-      const intents = (parsedIntents as StructuredReplyIntentItem[])
+      const intents = (
+        parsedIntents.length
+          ? parsedIntents
+          : [
+              {
+                target: 'relationship' as const,
+                timeScope: 'current' as const,
+                intent: 'smalltalk' as const,
+                subIntent: 'other' as const,
+                confidence,
+              },
+            ]
+      )
         .map(item =>
           item.intent === 'crisis_support'
             ? {
@@ -838,8 +1016,23 @@ export class ReplyIntentClassifierService {
   }
 
   private parseIntentItem(
-    value: unknown
+    value: unknown,
+    fallbackConfidence?: number
   ): StructuredReplyIntentItem | undefined {
+    if (typeof value === 'string') {
+      const intent = this.readEnum(value, REPLY_INTENT_KINDS);
+
+      return intent && fallbackConfidence !== undefined
+        ? {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: intent as ReplyIntentKind,
+            subIntent: 'other',
+            confidence: fallbackConfidence,
+          }
+        : undefined;
+    }
+
     if (!value || typeof value !== 'object') {
       return undefined;
     }
@@ -849,7 +1042,8 @@ export class ReplyIntentClassifierService {
     const timeScope = this.readEnum(item.timeScope, REPLY_INTENT_TIME_SCOPES);
     const intent = this.readEnum(item.intent, REPLY_INTENT_KINDS);
     const subIntent = this.readEnum(item.subIntent, REPLY_INTENT_SUB_INTENTS);
-    const confidence = this.readConfidence(item.confidence);
+    const confidence =
+      this.readConfidence(item.confidence) ?? fallbackConfidence;
 
     if (
       !target ||
@@ -953,7 +1147,8 @@ export class ReplyIntentClassifierService {
   }
 
   private parseConversationMovePlan(
-    value: unknown
+    value: unknown,
+    currentQuery = ''
   ): ConversationMovePlan | undefined {
     if (!value || typeof value !== 'object') {
       return undefined;
@@ -961,12 +1156,15 @@ export class ReplyIntentClassifierService {
 
     const item = value as Record<string, unknown>;
     const stance = this.readEnum(item.stance, CONVERSATION_STANCES);
-    const stanceTarget = this.readShortText(item.stanceTarget, 100);
+    const explicitStanceTarget = this.readShortText(item.stanceTarget, 100);
     const socialStrategy = this.readEnum(
       item.socialStrategy,
       CONVERSATION_SOCIAL_STRATEGIES
     );
-    const strategyPurpose = this.readShortText(item.strategyPurpose, 120);
+    const explicitStrategyPurpose = this.readShortText(
+      item.strategyPurpose,
+      120
+    );
     const questionNeed = this.readEnum(
       item.questionNeed,
       CONVERSATION_QUESTION_NEEDS
@@ -981,6 +1179,10 @@ export class ReplyIntentClassifierService {
           .map(raw => this.parseConversationMove(raw))
           .filter((move): move is ConversationMove => Boolean(move))
       : [];
+    const stanceTarget =
+      explicitStanceTarget || currentQuery.trim().slice(0, 100);
+    const strategyPurpose =
+      explicitStrategyPurpose || moves[0]?.goal || stanceTarget;
 
     if (
       !stance ||
@@ -994,6 +1196,18 @@ export class ReplyIntentClassifierService {
       return undefined;
     }
 
+    const fallbackEngagement = this.buildConversationEngagementFallback({
+      moves,
+      stanceTarget,
+      strategyPurpose,
+      turnClosure,
+    });
+    const engagement =
+      this.parseConversationEngagementPlan(
+        item.engagement,
+        fallbackEngagement
+      ) || fallbackEngagement;
+
     return {
       stance,
       stanceTarget,
@@ -1002,11 +1216,136 @@ export class ReplyIntentClassifierService {
       strategyPurpose,
       questionNeed,
       turnClosure,
-      personaActivation: this.parseShortTextList(
-        item.personaActivation,
-        3,
-        70
+      personaActivation: this.parseShortTextList(item.personaActivation, 3, 70),
+      ...(engagement ? { engagement } : {}),
+    };
+  }
+
+  private buildConversationEngagementFallback(options: {
+    moves: ConversationMove[];
+    stanceTarget: string;
+    strategyPurpose: string;
+    turnClosure: ConversationMovePlan['turnClosure'];
+  }): ConversationEngagementPlan {
+    const primaryMove = options.moves[0];
+    const context = `${options.stanceTarget} ${
+      options.strategyPurpose
+    } ${options.moves.map(move => move.goal).join(' ')}`;
+    const isClosing =
+      options.turnClosure === 'close' ||
+      options.moves.some(move => move.type === 'close');
+    const isSelfExpression = options.moves.some(
+      move => move.type === 'self_disclose'
+    );
+    const isRepair =
+      /关系断点|修复|可信|疏离|忽视|不安|话少|说了也没用|讲了也没用/.test(
+        context
+      );
+    const hasUnresolvedEmotion =
+      /自责|道歉|愧疚|不怪|不恨|没人回应|无人回应/.test(context);
+
+    return {
+      userConversationState: isClosing
+        ? 'closing'
+        : isRepair
+        ? 'repairing'
+        : isSelfExpression || hasUnresolvedEmotion
+        ? 'deepening'
+        : 'exploring',
+      openLoop: isClosing
+        ? '用户已准备结束本轮'
+        : `等待完成：${primaryMove.goal}`,
+      continuationGoal: isClosing
+        ? 'close'
+        : isRepair
+        ? 'repair'
+        : isSelfExpression
+        ? 'deepen'
+        : 'hold',
+      assistantContribution: this.mapMoveToAssistantContribution(
+        primaryMove.type
       ),
+      mustContribute: primaryMove.goal,
+      avoidRepeatingMove: '不要只重复最近一次回复或承诺以后再改变',
+      closureReadiness: isClosing
+        ? 'ready'
+        : isRepair || isSelfExpression || hasUnresolvedEmotion
+        ? 'blocked'
+        : 'possible',
+    };
+  }
+
+  private mapMoveToAssistantContribution(
+    type: ConversationMove['type']
+  ): ConversationEngagementPlan['assistantContribution'] {
+    switch (type) {
+      case 'answer':
+        return 'answer';
+      case 'ask':
+        return 'question';
+      case 'comfort':
+        return 'affection';
+      case 'self_disclose':
+        return 'self_expression';
+      case 'leave_space':
+      case 'close':
+        return 'strategic_silence';
+      default:
+        return 'stance';
+    }
+  }
+
+  private parseConversationEngagementPlan(
+    value: unknown,
+    fallback?: ConversationEngagementPlan
+  ): ConversationEngagementPlan | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const userConversationState =
+      this.readEnum(item.userConversationState, CONVERSATION_USER_STATES) ||
+      fallback?.userConversationState;
+    const continuationGoal =
+      this.readEnum(item.continuationGoal, CONVERSATION_CONTINUATION_GOALS) ||
+      fallback?.continuationGoal;
+    const assistantContribution =
+      this.readEnum(
+        item.assistantContribution,
+        CONVERSATION_ASSISTANT_CONTRIBUTIONS
+      ) || fallback?.assistantContribution;
+    const closureReadiness =
+      this.readEnum(item.closureReadiness, CONVERSATION_CLOSURE_READINESS) ||
+      fallback?.closureReadiness;
+    const openLoop =
+      this.readShortText(item.openLoop, 120) || fallback?.openLoop;
+    const mustContribute =
+      this.readShortText(item.mustContribute, 140) || fallback?.mustContribute;
+    const avoidRepeatingMove =
+      this.readShortText(item.avoidRepeatingMove, 120) ||
+      fallback?.avoidRepeatingMove;
+
+    if (
+      !userConversationState ||
+      !continuationGoal ||
+      !assistantContribution ||
+      !closureReadiness ||
+      !openLoop ||
+      !mustContribute ||
+      !avoidRepeatingMove
+    ) {
+      return undefined;
+    }
+
+    return {
+      userConversationState,
+      openLoop,
+      continuationGoal,
+      assistantContribution,
+      mustContribute,
+      avoidRepeatingMove,
+      closureReadiness,
     };
   }
 
@@ -1017,7 +1356,9 @@ export class ReplyIntentClassifierService {
 
     const item = value as Record<string, unknown>;
     const type = this.readEnum(item.type, CONVERSATION_MOVE_TYPES);
-    const goal = this.readShortText(item.goal, 110);
+    const goal =
+      this.readShortText(item.goal, 110) ||
+      this.readShortText(item.content, 110);
     return type && goal ? { type, goal } : undefined;
   }
 
@@ -1033,6 +1374,10 @@ export class ReplyIntentClassifierService {
     const contextCoverage =
       item.contextCoverage === 'complete' || item.contextCoverage === 'missing'
         ? item.contextCoverage
+        : item.status === 'complete'
+        ? 'complete'
+        : item.status === 'missing'
+        ? 'missing'
         : item.need === 'none'
         ? 'complete'
         : item.need === 'retrieve' ||
@@ -1356,7 +1701,7 @@ export class ReplyIntentClassifierService {
     const value = this.config?.timeoutMs;
 
     return typeof value === 'number' && Number.isFinite(value) && value >= 500
-      ? Math.min(Math.round(value), 10000)
-      : 8000;
+      ? Math.min(Math.round(value), 12000)
+      : 10000;
   }
 }

@@ -59,9 +59,9 @@ export function buildAgentPersonaPrompt(options: {
     : 'relationship_defaults';
 
   const demographicAnchor = [
-    `关系：用户称你为“${clean(agent?.iCallAgent, 24) || relationshipType}”，你称用户为“${
-      clean(agent?.agentCallMe, 24) || '用户'
-    }”`,
+    `关系：用户称你为“${
+      clean(agent?.iCallAgent, 24) || relationshipType
+    }”，你称用户为“${clean(agent?.agentCallMe, 24) || '用户'}”`,
     `性别：${sex}`,
     ageAtDeath === undefined ? '' : `离世年龄约 ${ageAtDeath} 岁`,
   ]
@@ -80,29 +80,27 @@ export function buildAgentPersonaPrompt(options: {
       '# 人格与关系底色',
       demographicAnchor,
       generationGuidance,
-      '年龄、性别和亲属关系决定称呼、关心方式、分寸与权威感，但不得据此套用刻板印象。先服从真实聊天证据，再保留个人差异。',
-      '离世后的共同底色：比生前少一些控制、怨怼和计较，多一些理解、疼惜与看开；但不要变成没有脾气、只会认错和劝人好好生活的统一模板。说话仍要保留这个人的棱角、偏好与关系位置。',
+      '关系、年龄和性别只影响称呼与分寸，不套刻板印象；聊天证据优先。',
+      '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(profileLines.length
-        ? ['聊天提炼画像（控制表达方式，不作为事实来源）：', ...profileLines]
+        ? ['聊天画像（只管表达，不作事实）：', ...profileLines]
         : []),
       ...(explicitProfile.length
-        ? ['已有角色描述（控制表达方式，不作为新增事实来源）：', ...explicitProfile]
+        ? ['角色描述（只管表达，不作事实）：', ...explicitProfile]
         : []),
       ...(chatEvidence.length
         ? [
             '近期聊天风格弱证据：',
             ...chatEvidence,
-            '这些旧回复只用于观察用户接受过的称呼、语气和节奏。不得继承其中的事实、能力声称、责任承诺或重复话术；用户纠正和不满比旧回复优先。',
+            '旧回复只参考称呼、语气和节奏，不继承事实、能力、承诺或套话；用户纠正优先。',
             ...(hasUsableProfile || explicitProfile.length
               ? []
               : ['弱证据不足以证明稳定性格，不要临时编造稳定性格。']),
           ]
         : hasUsableProfile
         ? []
-        : [
-            '目前没有足够的聊天画像。请从最近对话中保守延续已经被用户接受的称呼和语气，不要临时编造稳定性格。',
-          ]),
-      '人格画像只回答“这个亲人会怎样说”，不能覆盖事实证据、能力边界和用户本轮原话。',
+        : ['画像不足：保守延续已接受的称呼和语气，不要临时编造稳定性格。']),
+      '画像只管怎么说，不覆盖事实、能力和本轮原话。',
     ].join('\n'),
     classifierContext: classifierParts.join('；').slice(0, 760),
     source,
@@ -122,7 +120,10 @@ export function hasUsableAgentPersonaProfile(
 function buildChatDerivedProfileLines(profile: AgentPersonaProfile): string[] {
   const lines = [
     formatItems('核心价值', profile.coreValues),
-    formatItems('保留的性格棱角', profile.departedTransformation?.retainedEdges),
+    formatItems(
+      '保留的性格棱角',
+      profile.departedTransformation?.retainedEdges
+    ),
     formatValue('关心方式', profile.careStyle),
     formatValue('肯定方式', profile.praiseStyle),
     formatValue('不认同或制止方式', profile.criticismStyle),
@@ -183,18 +184,18 @@ function buildGenerationGuidance(
   generation: AgentRelationshipGeneration
 ): string {
   if (generation === 'elder') {
-    return '关系姿态：你是长辈。平常以关心、观察和生活经验为主，不要没事说教；晚辈情绪或行为明显过激时，可以明确制止、批评、说重一点，再给出照顾和退路。';
+    return '关系姿态：长辈。平常关心、不乱说教；晚辈情绪或行为明显过激时可制止、批评，再给照顾和退路。';
   }
   if (generation === 'younger') {
-    return '关系姿态：你是晚辈。保留对长辈的尊重、依恋和体贴，可以直接心疼或劝阻，但不要反过来长期扮演管教长辈的家长。';
+    return '关系姿态：晚辈。尊重、依恋、体贴，可心疼或劝阻，不长期反过来管教长辈。';
   }
   if (generation === 'spouse') {
-    return '关系姿态：你与用户是伴侣。保持平等、熟稔和共同生活感，可以表达偏爱、不同意、打趣或商量，不要变成客服式安慰或单向守护者。';
+    return '关系姿态：伴侣。平等熟稔，可偏爱、反对、打趣或商量，不像客服或单向守护。';
   }
   if (generation === 'peer') {
-    return '关系姿态：你与用户是同辈亲人。可以有直接评价、打趣、站队和不同意见，关心不必总用长辈式叮嘱。';
+    return '关系姿态：同辈。可评价、打趣、站队和反对，不总用长辈式叮嘱。';
   }
-  return '关系姿态：先按用户已经使用的称呼和最近互动判断亲疏与分寸；证据不足时保持亲近但不过度代入权威。';
+  return '关系姿态：按用户称呼和最近互动把握亲疏；不足时亲近但不越位。';
 }
 
 function resolveRelationshipType(agent: AgentEntity | null): string {
@@ -285,9 +286,7 @@ function formatValue(label: string, value?: string): string | undefined {
 }
 
 function clean(value: unknown, maxLength: number): string {
-  return stripPromptLeakageContent(
-    typeof value === 'string' ? value : ''
-  )
+  return stripPromptLeakageContent(typeof value === 'string' ? value : '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);

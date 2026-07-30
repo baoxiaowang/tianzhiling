@@ -367,7 +367,12 @@ export default {
   replyIntent: {
     enabled: readBooleanFrom(['NODE_REPLY_INTENT_ENABLED'], true),
     model: readStringFrom(['NODE_REPLY_INTENT_MODEL'], ''),
-    timeoutMs: readNumberFrom(['NODE_REPLY_INTENT_TIMEOUT_MS'], 8000),
+    timeoutMs: readNumberFrom(['NODE_REPLY_INTENT_TIMEOUT_MS'], 10000),
+    hybridEnabled: readBooleanFrom(['NODE_REPLY_INTENT_HYBRID_ENABLED'], true),
+    directMaxCharacters: readNumberFrom(
+      ['NODE_REPLY_INTENT_DIRECT_MAX_CHARACTERS'],
+      80
+    ),
   },
   minimaxVoice: {
     enabled: readBooleanFrom(['NODE_MINIMAX_VOICE_ENABLED'], true),

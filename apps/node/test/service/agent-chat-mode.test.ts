@@ -40,7 +40,7 @@ describe('agent chat mode', () => {
     );
 
     expect(prompt).toContain('# 当前对话参考模式：relationship');
-    expect(prompt).toContain('路由只提供弱参考');
+    expect(prompt).toContain('仅作弱参考');
     expect(prompt).not.toContain('梦中相见作为安慰性想象');
   });
 
@@ -55,7 +55,7 @@ describe('agent chat mode', () => {
     );
 
     expect(prompt).toContain('# 当前对话参考模式：boundary');
-    expect(prompt).toContain('路由只提供弱参考');
+    expect(prompt).toContain('仅作弱参考');
     expect(prompt).not.toContain('先认错并采用用户刚纠正的事实');
     expect(prompt).not.toContain('守住本轮必要边界');
   });

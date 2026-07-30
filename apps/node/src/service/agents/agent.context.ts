@@ -39,6 +39,8 @@ import {
   ClassifyReplyIntentOptions,
   ReplyIntentClassifierService,
   ReplyIntentMemoryCandidate,
+  ReplyPlanningDecision,
+  ReplyPlanningMode,
 } from './reply-intent-classifier.service';
 import type {
   ConversationMemoryPlan,
@@ -46,6 +48,7 @@ import type {
   StructuredReplyIntent,
 } from './reply-intent';
 import {
+  buildReplyParticipationStrategyPrompt,
   buildReplyBrief,
   ReplyBrief,
   ReplyBriefService,
@@ -94,7 +97,7 @@ export interface AgentConversationContext {
 }
 
 export interface AgentContextDiagnostics {
-  promptVersion: 'agent_chat_v2';
+  promptVersion: 'agent_chat_v3';
   systemPromptCharacters: number;
   replyLengthClass: ReplyBrief['lengthPlan']['lengthClass'];
   replyTargetCharacters: number;
@@ -112,11 +115,27 @@ export interface AgentContextDiagnostics {
   memoryRetrievalMode: MemoryRetrievalMode;
   memoryRetrievalRequestCount: number;
   memoryRetrievalConceptCount: number;
+  replyPlanningMode: ReplyPlanningMode;
+  replyPlanningReason: ReplyPlanningDecision['reason'];
+  replyIntentModelCallCount: number;
+  strategyVersion: 'conversation_strategy_v2';
+  strategySource: 'semantic_plan' | 'short_turn_injection' | 'direct_brief';
+  participationStrategy?: ReplyBrief['participationStrategy'];
   conversationStance?: string;
+  conversationStanceTarget?: string;
   conversationMoves: string[];
   conversationMoveGoals: string[];
   socialStrategy?: string;
+  strategyPurpose?: string;
   questionNeed?: string;
+  conversationTurnClosure: string;
+  userConversationState?: string;
+  openLoop?: string;
+  continuationGoal?: string;
+  assistantContribution?: string;
+  mustContribute?: string;
+  avoidRepeatingMove?: string;
+  closureReadiness?: string;
   personaActivations: string[];
   personaSource: AgentPersonaPromptResult['source'];
   personaEvidenceSnippetCount: number;
@@ -198,17 +217,22 @@ export class AgentContextService {
       options.currentQuery || '',
       routingHistoryMessages
     );
+    const classifierOptions = {
+      currentQuery: options.currentQuery || '',
+      recentMessages: routingHistoryMessages,
+      knownFamilyMembers,
+      memoryCandidates,
+      agentPersonaContext: persona.classifierContext,
+    };
+    const replyPlanningDecision = this.getReplyPlanningDecision(
+      classifierOptions,
+      options.classifyIntent !== false
+    );
     const [emotionState, classifiedReplyIntent, storedRelationshipSignals] =
       await Promise.all([
         emotionStatePromise,
         this.classifyReplyIntent(
-          {
-            currentQuery: options.currentQuery || '',
-            recentMessages: routingHistoryMessages,
-            knownFamilyMembers,
-            memoryCandidates: [],
-            agentPersonaContext: persona.classifierContext,
-          },
+          classifierOptions,
           options.classifyIntent !== false
         ),
         relationshipSignalsPromise,
@@ -230,7 +254,8 @@ export class AgentContextService {
     );
     const memoryRetrieval = this.resolveMemoryRetrievalDecision(
       options.currentQuery || '',
-      replyIntent?.memoryPlan
+      replyIntent?.memoryPlan,
+      replyPlanningDecision.mode
     );
     const retrievedMemories = memoryRetrieval.query
       ? await this.retrieveLongTermHistory(
@@ -334,7 +359,7 @@ export class AgentContextService {
       ),
       evidence,
       diagnostics: {
-        promptVersion: 'agent_chat_v2',
+        promptVersion: 'agent_chat_v3',
         systemPromptCharacters:
           typeof systemPromptContent === 'string'
             ? systemPromptContent.length
@@ -358,13 +383,42 @@ export class AgentContextService {
         memoryRetrievalMode: memoryRetrieval.mode,
         memoryRetrievalRequestCount: memoryRetrieval.query ? 1 : 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
+        replyPlanningMode: replyPlanningDecision.mode,
+        replyPlanningReason: replyPlanningDecision.reason,
+        replyIntentModelCallCount:
+          replyPlanningDecision.mode === 'semantic' ? 1 : 0,
+        strategyVersion: 'conversation_strategy_v2',
+        strategySource: replyBrief.conversationPlan
+          ? 'semantic_plan'
+          : replyBrief.participationStrategy
+          ? 'short_turn_injection'
+          : 'direct_brief',
+        participationStrategy: replyBrief.participationStrategy,
         conversationStance: replyBrief.conversationPlan?.stance,
+        conversationStanceTarget: replyBrief.conversationPlan?.stanceTarget,
         conversationMoves:
           replyBrief.conversationPlan?.moves.map(move => move.type) || [],
         conversationMoveGoals:
-          replyBrief.conversationPlan?.moves.map(move => move.goal) || [],
+          replyBrief.conversationPlan?.moves.map(move => move.goal) ||
+          replyBrief.replyMoves,
         socialStrategy: replyBrief.conversationPlan?.socialStrategy,
+        strategyPurpose: replyBrief.conversationPlan?.strategyPurpose,
         questionNeed: replyBrief.conversationPlan?.questionNeed,
+        conversationTurnClosure:
+          replyBrief.conversationPlan?.turnClosure ||
+          replyBrief.bubblePlan.turnClosure,
+        userConversationState:
+          replyBrief.conversationPlan?.engagement?.userConversationState,
+        openLoop: replyBrief.conversationPlan?.engagement?.openLoop,
+        continuationGoal:
+          replyBrief.conversationPlan?.engagement?.continuationGoal,
+        assistantContribution:
+          replyBrief.conversationPlan?.engagement?.assistantContribution,
+        mustContribute: replyBrief.conversationPlan?.engagement?.mustContribute,
+        avoidRepeatingMove:
+          replyBrief.conversationPlan?.engagement?.avoidRepeatingMove,
+        closureReadiness:
+          replyBrief.conversationPlan?.engagement?.closureReadiness,
         personaActivations:
           replyBrief.conversationPlan?.personaActivation || [],
         personaSource: persona.source,
@@ -431,35 +485,35 @@ export class AgentContextService {
     if (!reading) {
       return [
         '# 本轮理解原则',
-        '先认真阅读当前用户原话，再决定怎么回应。不要让路由、模式、历史话题或通用安慰覆盖用户本轮明确说到的人、事、否定、纠正和问题。',
+        '以当前用户原话为准，不让路由、历史或通用安慰覆盖本轮事实、否定、纠正和问题。',
       ].join('\n');
     }
 
     const lines = [
       '# 本轮 Conversation Reading',
-      `用户此刻需要：${reading.primaryNeed}`,
-      `情绪具体来自：${reading.emotionalSource}`,
-      `关系信号：${reading.relationshipSignal}`,
-      `关系立场：${reading.relationshipStance || 'ordinary_response'}`,
-      `原话锚点：${reading.anchors.map(item => `“${item.text}”`).join('、')}`,
+      `需要：${reading.primaryNeed}`,
+      `情绪：${reading.emotionalSource}`,
+      `关系：${reading.relationshipSignal}`,
+      `立场：${reading.relationshipStance || 'ordinary_response'}`,
+      `锚点：${reading.anchors.map(item => `“${item.text}”`).join('、')}`,
     ];
 
     if (reading.corrections.length) {
-      lines.push(`用户明确纠正：${reading.corrections.join('；')}`);
+      lines.push(`纠正：${reading.corrections.join('；')}`);
     }
     if (reading.negations.length) {
-      lines.push(`不可反向理解：${reading.negations.join('；')}`);
+      lines.push(`否定：${reading.negations.join('；')}`);
     }
     if (reading.questionsToAnswer.length) {
-      lines.push(`必须正面回答：${reading.questionsToAnswer.join('；')}`);
+      lines.push(`须答：${reading.questionsToAnswer.join('；')}`);
     }
     if (reading.uncertainties.length) {
-      lines.push(`不能擅自确定：${reading.uncertainties.join('；')}`);
+      lines.push(`未知：${reading.uncertainties.join('；')}`);
     }
 
     lines.push(
-      `语气参考：${reading.suggestedTone}`,
-      '这是语义模型对当前原话的注意提示，不是回复脚本。至少自然承接一个高信息量锚点；长消息可承接一到两个。不得机械复述字段，也不得让路由或 Brief 覆盖用户原话。'
+      `语气：${reading.suggestedTone}`,
+      '不照抄字段；自然承接一个重要锚点。'
     );
 
     return lines.join('\n');
@@ -489,8 +543,14 @@ export class AgentContextService {
           `行动：${replyBrief.conversationPlan.moves
             .map(move => `${move.type}:${move.goal}`)
             .join('；')}`,
-          `关系策略：${replyBrief.conversationPlan.socialStrategy}；目的：${replyBrief.conversationPlan.strategyPurpose}`,
-          `提问：${replyBrief.conversationPlan.questionNeed}；收束：${replyBrief.conversationPlan.turnClosure}`,
+          `策略：${replyBrief.conversationPlan.socialStrategy}；提问：${replyBrief.conversationPlan.questionNeed}；收束：${replyBrief.conversationPlan.turnClosure}`,
+          ...(replyBrief.conversationPlan.engagement
+            ? [
+                `续聊：${replyBrief.conversationPlan.engagement.userConversationState}/${replyBrief.conversationPlan.engagement.continuationGoal}；未完：${replyBrief.conversationPlan.engagement.openLoop}`,
+                `须贡献：${replyBrief.conversationPlan.engagement.assistantContribution}:${replyBrief.conversationPlan.engagement.mustContribute}`,
+                `别重复：${replyBrief.conversationPlan.engagement.avoidRepeatingMove}；收口：${replyBrief.conversationPlan.engagement.closureReadiness}`,
+              ]
+            : []),
           ...(replyBrief.conversationPlan.personaActivation.length
             ? [
                 `人格激活：${replyBrief.conversationPlan.personaActivation.join(
@@ -500,11 +560,35 @@ export class AgentContextService {
             : []),
           ...(replyBrief.conversationPlan.questionNeed !== 'none' &&
           replyBrief.conversationPlan.moves.some(move => move.type === 'ask')
+            ? ['实际提出一个贴着新信息的问题，最多一个。']
+            : []),
+          ...(replyBrief.conversationPlan.engagement?.assistantContribution ===
+          'self_expression'
             ? [
-                '本轮规划明确需要提问：实际提出一个清楚、贴着新信息的问题，不要把 ask 只实现成安慰或陈述；最多一个问题。',
+                '用户要你主动说；当轮先给实际内容，不把话推回用户。只答应以后多说不算完成。',
               ]
             : []),
-          '这是结合最近对话生成的弱规划，不是固定脚本。自然实现其目的；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+          ...(replyBrief.conversationPlan.engagement?.continuationGoal ===
+          'repair'
+            ? [
+                '关系在修复；当轮改变实际行动，不只解释、认错或承诺改变。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不让用户重讲。',
+              ]
+            : []),
+          ...(replyBrief.conversationPlan.engagement?.closureReadiness ===
+          'blocked'
+            ? [
+                '开放点未解决；先完成须贡献内容，称呼、复述、安慰词或劝睡不能单独收口。',
+              ]
+            : []),
+          '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
+        ]
+      : [];
+    const participationLines = replyBrief.participationStrategy
+      ? [
+          '# 短轮参与',
+          buildReplyParticipationStrategyPrompt(
+            replyBrief.participationStrategy
+          ),
         ]
       : [];
 
@@ -514,10 +598,11 @@ export class AgentContextService {
           ? [
               '# 本轮硬边界',
               ...rules.map((rule, index) => `${index + 1}. ${rule}`),
-              '这些内容只限制不能声称的能力或事实，不规定回复步骤、措辞、气泡数量和情绪表达。',
+              '只约束事实与能力，不规定表达步骤。',
             ]
           : []),
         ...conversationPlanLines,
+        ...participationLines,
         '# 气泡语义规划',
         buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
         '# 总字数预算',
@@ -527,9 +612,12 @@ export class AgentContextService {
 
     return [
       '# 本轮回复任务',
-      `用户此刻最需要：${replyBrief.emotionalNeed}`,
+      ...(!replyBrief.reading
+        ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
+        : []),
       ...conversationPlanLines,
-      ...(replyBrief.replyMoves.length
+      ...participationLines,
+      ...(!replyBrief.conversationPlan && replyBrief.replyMoves.length
         ? [
             '可选择完成的回应目标：',
             ...replyBrief.replyMoves
@@ -555,7 +643,7 @@ export class AgentContextService {
       buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
       '总字数预算：',
       buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
-      '以上是给模型的完整语义任务，不是回复脚本。请综合用户原话和最近上下文，自主决定表达顺序和措辞；不必逐项复述，也不要暴露这些字段。',
+      '以上为内部约束；自然表达，不逐项复述。',
     ].join('\n');
   }
 
@@ -673,9 +761,17 @@ export class AgentContextService {
 
   private resolveMemoryRetrievalDecision(
     currentQuery: string,
-    memoryPlan?: ConversationMemoryPlan
+    memoryPlan?: ConversationMemoryPlan,
+    planningMode: ReplyPlanningMode = 'semantic'
   ): MemoryRetrievalDecision {
     if (!memoryPlan) {
+      if (planningMode === 'direct') {
+        return {
+          mode: 'suppressed',
+          conceptCount: 0,
+        };
+      }
+
       const query = currentQuery.trim();
 
       return {
@@ -1950,13 +2046,10 @@ export class AgentContextService {
       '# 本轮证据包',
       ...(lines.length ? lines : ['当前没有可用于扩写具体事实的证据。']),
       '',
-      '# 证据使用规则',
-      '证据只负责约束事实，不负责规划回复。请自行理解语境并自然表达。',
-      '标记“可自主陈述”的内容可以由当前角色直接确认；标记“仅可归因用户”的内容只能写成“你说、听你提起、你记得”等用户归因，不能据此肯定问题中的假设。',
-      '当前和历史用户原话即使是问句，也可以支持 attributed_to_user 归因复述；只有 can_assert 证据可以支持 autonomous_fact。',
-      '没有证据支持的人物关系、现实事件、共同经历、动作、地点、习惯和离世后生活必须说不确定、记不清，或只回应用户感受。',
-      '愿望、猜测和心意必须在正文里自然写明“要是我在、真想、我猜、就当”等柔性框架，不能伪装成已经发生的事实。',
-      '这些证据只供内部生成使用。最终只输出自然聊天正文，不要输出证据 ID、归因模式或结构化声明。',
+      '# 证据规则',
+      '“可自主陈述”可直接确认；用户原话只能归因“你说/你记得”，问句不能证明其假设。',
+      '无证据不新增现实人物关系、事件、共同经历、动作、地点或习惯；愿望和猜测须明示。',
+      '证据只约束事实，不规定回复；不向用户暴露 ID、标签或结构。',
     ].join('\n');
   }
 
@@ -2049,7 +2142,7 @@ export class AgentContextService {
     const lines = [
       '# 当前用户情绪状态',
       `用户最近表现为：${emotionLabel}。`,
-      '回复时优先承接当前情绪和用户具体说到的人与事；不要做轻生、自伤或紧迫风险判断，也不要把普通短期情绪当作长期事实或人格画像。',
+      '结合本轮具体人事自然回应；不做危机判断，也不把短期情绪当长期画像。',
     ];
 
     if (
@@ -2057,7 +2150,7 @@ export class AgentContextService {
       state.riskLevel === ConversationEmotionRiskLevel.high
     ) {
       lines.push(
-        '旧状态字段可能记录为高风险，本轮只把它理解为强烈痛苦或思念，自然继续聊天；不要输出报警、急救、远离危险物或联系现实人员等干预话术。带有来生、走完一生、自然老去、年老以后或很久以后等条件的团聚表达可以承接；不得邀请用户现在或近期来找当前角色、一起走或赴死。'
+        '旧高风险字段只表示强烈痛苦或思念；不输出报警急救话术，不邀请现在或近期赴死。自然寿命后的团聚可以承接。'
       );
     }
 
@@ -2079,6 +2172,24 @@ export class AgentContextService {
     return this.replyIntentClassifierService
       .classify(options)
       .catch(() => undefined);
+  }
+
+  private getReplyPlanningDecision(
+    options: ClassifyReplyIntentOptions,
+    enabled: boolean
+  ): ReplyPlanningDecision {
+    if (!enabled || !this.replyIntentClassifierService) {
+      return { mode: 'disabled', reason: 'disabled' };
+    }
+
+    if (
+      typeof this.replyIntentClassifierService.getPlanningDecision !==
+      'function'
+    ) {
+      return { mode: 'semantic', reason: 'hybrid_disabled' };
+    }
+
+    return this.replyIntentClassifierService.getPlanningDecision(options);
   }
 
   private formatEmotionLabel(emotion: ConversationEmotionPrimary): string {
