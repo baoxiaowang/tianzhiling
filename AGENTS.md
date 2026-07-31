@@ -18,6 +18,15 @@
 - Do not remove or rename response fields, enum values, routes, query/body parameters, or error codes that older mini program versions may still depend on. Prefer additive changes, optional fields, default values, and tolerant parsing.
 - If a breaking backend change is unavoidable, add an explicit compatibility path or version gate first, and call out the affected mini program versions and migration plan before implementing.
 
+## Mini Program Release Payments
+
+- TianZhiLing and Weiliaoyan use different payment policies during WeChat review. Never copy one brand's review payment configuration to the other brand.
+- TianZhiLing review submissions may keep the normal WeChat Pay flow. Do not force TianZhiLing to use WeChat Mini Program Virtual Payment unless the user explicitly requests it.
+- Weiliaoyan review submissions must use official WeChat Mini Program Virtual Payment for all visible virtual-goods and membership purchase entries before submitting for review.
+- Before a Weiliaoyan review submission, back up the current production payment configuration, verify the selected Royal TSX connection is the Weiliaoyan server, enable the production virtual-payment environment, and ensure every active plan has a published and verified virtual-payment product ID. Temporarily disable plans whose product IDs cannot be verified so they cannot fall back to normal WeChat Pay.
+- After Weiliaoyan passes review, restore its pre-review normal WeChat Pay configuration from the recorded backup and verify the public health endpoint and visible plans again.
+- When only the backend-managed payment switch changes, do not rebuild, upload, or redeploy the mini program. Resubmit the existing version in the WeChat public platform after verifying the live configuration.
+
 ## Weapp
 
 - For `apps/weapp`, prefer `@nutui/nutui-taro` components first when building forms, buttons, tabs, dialogs, lists, feedback, and other common UI.

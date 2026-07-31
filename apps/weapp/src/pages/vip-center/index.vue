@@ -77,10 +77,7 @@ import {
   type MembershipCenter,
   type VipPlan,
 } from '../../apis/membership'
-import {
-  createVipPlanOrder,
-  createVipPlanVirtualPaymentOrder,
-} from '../../apis/order'
+import { createVipPlanVirtualPaymentOrder } from '../../apis/order'
 import { clearAuthSession } from '../../auth/session'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import { openAgreementDocument } from '../../utils/agreement-nav'
@@ -90,7 +87,7 @@ import {
 } from '../../utils/auth-guard'
 import {
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPaymentForOrder,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
@@ -340,53 +337,26 @@ async function handlePurchaseTap() {
 
     let paidOrderId = ''
 
-    if (virtualPaymentProductId) {
-      const result = await createVipPlanVirtualPaymentOrder({
-        vipPlanId,
-        jsCode,
-      })
-      paidOrderId = result.order.id
+    if (!virtualPaymentProductId) {
+      throw new Error('当前套餐暂不可购买，请稍后重试')
+    }
 
-      if (result.order.payableAmount > 0) {
-        if (!result.virtualPayment) {
-          throw new Error('支付参数获取失败，请稍后重试')
-        }
+    const result = await createVipPlanVirtualPaymentOrder({
+      vipPlanId,
+      jsCode,
+    })
+    paidOrderId = result.order.id
 
-        const paidOrder = await requestWechatVirtualPaymentWithFallback(
-          {
-            order: result.order,
-            virtualPayment: result.virtualPayment,
-          },
-          async () => {
-            const fallbackLoginResult = await Taro.login()
-            const fallbackJsCode = fallbackLoginResult.code?.trim()
-
-            if (!fallbackJsCode) {
-              throw new Error('微信登录凭证获取失败，请稍后重试')
-            }
-
-            return createVipPlanOrder({
-              vipPlanId,
-              jsCode: fallbackJsCode,
-            })
-          }
-        )
-        paidOrderId = paidOrder.id
+    if (result.order.payableAmount > 0) {
+      if (!result.virtualPayment) {
+        throw new Error('支付参数获取失败，请稍后重试')
       }
-    } else {
-      const result = await createVipPlanOrder({
-        vipPlanId,
-        jsCode,
+
+      const paidOrder = await requestWechatVirtualPaymentForOrder({
+        order: result.order,
+        virtualPayment: result.virtualPayment,
       })
-
-      if (result.order.payableAmount > 0) {
-        if (!result.payment) {
-          throw new Error('支付参数获取失败，请稍后重试')
-        }
-
-        await Taro.requestPayment(result.payment)
-      }
-      paidOrderId = result.order.id
+      paidOrderId = paidOrder.id
     }
     invalidateVipPurchaseCenterCache()
     isAwaitingPaymentResult.value = true
