@@ -2014,7 +2014,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       service.agentContextService.buildConversationContext
     ).toHaveBeenCalledWith(
       expect.objectContaining({
-        currentQuery: '用户连续补充了2句话：\n1. 第一句\n2. 第二句',
+        currentQuery:
+          '用户连续输入（按发送顺序，共2条）：\n1. 第一句\n2. 第二句',
+        currentTurnMessageIds: [
+          firstUser.id.toHexString(),
+          secondUser.id.toHexString(),
+        ],
+        forceSemanticPlanning: true,
       })
     );
     expect(getAssistantContents(savedMessages)).toEqual([
@@ -2686,7 +2692,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
-  it('enqueues a follow-up reply when a new user message arrives during processing', async () => {
+  it('discards a stale draft and replans all user input that arrived during processing', async () => {
     const firstUser = createMessage({
       content: '先发一句',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2718,14 +2724,36 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
+    expect(getAssistantMessages(savedMessages)).toHaveLength(0);
     expect(addJobToQueue).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         conversationId: CONVERSATION_ID,
         userId: USER_ID,
-        afterUserCreatedAt: firstUser.createdAt.toISOString(),
-      }),
+      },
       expect.any(Object)
     );
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        currentQuery:
+          '用户连续输入（按发送顺序，共2条）：\n1. 先发一句\n2. 回复期间又补一句',
+        currentTurnMessageIds: [
+          firstUser.id.toHexString(),
+          secondUser.id.toHexString(),
+        ],
+        forceSemanticPlanning: true,
+      })
+    );
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我也想你，今天过得怎么样？',
+    ]);
   });
 
   it('does not save a failed assistant reply before the final async retry', async () => {
@@ -3546,11 +3574,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     const fields = (service as any).buildReplyRoutingMessageFields({
+      brief: {
+        factClaimMode: 'grounded',
+      },
       strategyVersion: 'conversation_strategy_v2',
       strategySource: 'semantic_plan',
       participationStrategy: 'reciprocal_self_expression',
       participationExecution: 'single_fallback',
-      participationFallbackReason: 'semantic_repetition',
+      participationFallbackReason: 'model_single_segment',
+      guardrailReviewMode: 'deterministic_first',
       conversationStance: 'tender',
       conversationStanceTarget: '用户正在等待关系修复',
       conversationMoves: ['acknowledge', 'self_disclose'],
@@ -3567,7 +3599,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyStrategySource: 'semantic_plan',
         replyParticipationStrategy: 'reciprocal_self_expression',
         replyParticipationExecution: 'single_fallback',
-        replyParticipationFallbackReason: 'semantic_repetition',
+        replyParticipationFallbackReason: 'model_single_segment',
+        replyGuardrailReviewMode: 'deterministic_first',
+        replyBriefFactClaimMode: 'grounded',
         replyConversationStance: 'tender',
         replyConversationStanceTarget: '用户正在等待关系修复',
         replyConversationMoves: ['acknowledge', 'self_disclose'],
@@ -4236,7 +4270,7 @@ describe('ConversationService generation cleanup diagnostics', () => {
     ]);
   });
 
-  it('records real participation execution and drops a purely repetitive second bubble', () => {
+  it('records real participation execution without rejecting emotional repetition', () => {
     const service = new ConversationService();
     const finalize = (service as any).finalizeParticipationReplySegments.bind(
       service
@@ -4245,9 +4279,8 @@ describe('ConversationService generation cleanup diagnostics', () => {
     expect(
       finalize(['妈，我也想你', '整夜都在想'], 'reciprocal_self_expression')
     ).toEqual({
-      segments: ['妈，我也想你'],
-      execution: 'single_fallback',
-      fallbackReason: 'semantic_repetition',
+      segments: ['妈，我也想你', '整夜都在想'],
+      execution: 'two_segments',
     });
     expect(
       finalize(
@@ -4263,6 +4296,46 @@ describe('ConversationService generation cleanup diagnostics', () => {
       execution: 'single_fallback',
       fallbackReason: 'model_single_segment',
     });
+  });
+
+  it('uses deterministic-first review only for simple direct replies', () => {
+    const service = new ConversationService();
+    const resolveMode = (service as any).resolveGuardrailReviewMode.bind(
+      service
+    );
+    const brief = buildReplyBrief({
+      currentQuery: '妈，我想你了',
+      route: routeReplyScene({ currentQuery: '妈，我想你了' }),
+    });
+
+    expect(
+      resolveMode({
+        planningMode: 'direct',
+        replyBrief: brief,
+        claims: [],
+      })
+    ).toBe('deterministic_first');
+    expect(
+      resolveMode({
+        planningMode: 'semantic',
+        replyBrief: brief,
+        claims: [],
+      })
+    ).toBe('full');
+    expect(
+      resolveMode({
+        planningMode: 'direct',
+        replyBrief: brief,
+        claims: [
+          {
+            text: '一条事实',
+            kind: 'other',
+            mode: 'autonomous_fact',
+            evidenceIds: [],
+          },
+        ],
+      })
+    ).toBe('deterministic_first');
   });
 
   it('still drops structural output pollution before Guardrail', () => {

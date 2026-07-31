@@ -180,6 +180,9 @@ export class MessageEntity extends BaseEntity {
   replyBriefStrictGrounding?: boolean;
 
   @Column()
+  replyBriefFactClaimMode?: string;
+
+  @Column()
   replyBriefPreferredSegments?: number;
 
   @Column()
@@ -244,6 +247,9 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   replyGuardrailFinalReviewResult?: string;
+
+  @Column()
+  replyGuardrailReviewMode?: string;
 
   @Column()
   replyEvidenceCount?: number;

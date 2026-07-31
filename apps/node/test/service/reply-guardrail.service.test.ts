@@ -3,6 +3,202 @@ import { ReplyGuardrailService } from '../../src/service/agents/reply-guardrail.
 import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 
 describe('ReplyGuardrailService', () => {
+  it('skips model review for a clean deterministic-first reply', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest.fn();
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+    const userQuery = '妈，我想你了';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['妈也想你'],
+      replyRoute: route,
+      replyBrief,
+      evidence: [],
+      claims: [],
+      reviewMode: 'deterministic_first',
+    });
+
+    expect(result.segments).toEqual(['妈也想你']);
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('escalates missing grounded claims and undeclared shared-past narration', () => {
+    const service = new ReplyGuardrailService();
+    const groundedQuery =
+      '你之前爱旅游爬山玩水，现在你不在了，在天上也能四处转转';
+    const grounded = {
+      requestedMode: 'deterministic_first' as const,
+      userQuery: groundedQuery,
+      replyBrief: buildReplyBrief({
+        currentQuery: groundedQuery,
+      }),
+      evidence: [],
+      claims: [],
+    };
+
+    expect(
+      service.resolveEffectiveReviewMode({
+        ...grounded,
+        replySegments: ['爸在天上也能看看风景'],
+      })
+    ).toBe('full');
+    expect(
+      service.resolveEffectiveReviewMode({
+        requestedMode: 'deterministic_first',
+        userQuery: '爸，你在天上也四处转转吧',
+        replySegments: ['跟当年背你上西山看枫叶是一样的'],
+        replyBrief: buildReplyBrief({
+          currentQuery: '爸，你在天上也四处转转吧',
+        }),
+        evidence: [],
+        claims: [],
+      })
+    ).toBe('full');
+    expect(
+      service.resolveEffectiveReviewMode({
+        requestedMode: 'deterministic_first',
+        userQuery: '爸，你在天上也四处转转吧',
+        replySegments: ['爸在这边多走走，多看看'],
+        replyBrief: buildReplyBrief({
+          currentQuery: '爸，你在天上也四处转转吧',
+        }),
+        evidence: [],
+        claims: [],
+      })
+    ).toBe('deterministic_first');
+  });
+
+  it('does not let afterlife context exempt an unsupported shared-past claim', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    const userQuery =
+      '你之前爱旅游爬山玩水，现在你不在了，在天上也能四处转转';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: [
+        '爸在天上也能四处转转',
+        '当年爸背你上过西山',
+      ],
+      replyRoute: route,
+      replyBrief,
+      evidence: [
+        {
+          id: 'U0',
+          source: 'current_user',
+          text: userQuery,
+          assertionPolicy: 'context_only',
+        },
+      ],
+      claims: [
+        {
+          text: '爸在天上也能四处转转',
+          kind: 'other',
+          mode: 'soft_imagination',
+          evidenceIds: [],
+        },
+        {
+          text: '当年爸背你上过西山',
+          kind: 'memory',
+          mode: 'autonomous_fact',
+          evidenceIds: [],
+        },
+      ],
+      reviewMode: 'deterministic_first',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.unsupportedClaimCount).toBe(1);
+    expect(result.segments.join('')).toContain('爸在天上也能四处转转');
+    expect(result.segments.join('')).not.toContain('背你上过西山');
+  });
+
+  it('allows role-side afterlife imagination but not invented shared past', () => {
+    const service = new ReplyGuardrailService();
+    const currentQuery = '妈，想听你说说今天的事';
+    const intent = {
+      intents: [
+        {
+          target: 'agent' as const,
+          timeScope: 'current' as const,
+          intent: 'ask_agent_status' as const,
+          subIntent: 'other' as const,
+          confidence: 0.95,
+        },
+      ],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户想听妈妈主动分享',
+        moves: [
+          {
+            type: 'self_disclose' as const,
+            goal: '分享一个当下小内容',
+          },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '主动贡献',
+        questionNeed: 'none' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: [],
+        engagement: {
+          userConversationState: 'deepening' as const,
+          openLoop: '用户仍在等妈妈说点自己的事',
+          continuationGoal: 'deepen' as const,
+          assistantContribution: 'self_expression' as const,
+          mustContribute: '分享一个当下小内容',
+          avoidRepeatingMove: '不要只说挺好的',
+          closureReadiness: 'blocked' as const,
+        },
+      },
+      emotion: 'neutral' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const replyBrief = buildReplyBrief({ currentQuery, intent, route });
+    const detectRisk = (service as any).detectRisk.bind(service);
+
+    expect(
+      detectRisk(
+        currentQuery,
+        '今天去河边走了走，晒了会儿太阳',
+        [],
+        replyBrief
+      )
+    ).toBeFalsy();
+    expect(
+      detectRisk(
+        currentQuery,
+        '想起你小时候在院子里放风筝的样子',
+        [],
+        replyBrief
+      )
+    ).toContain('共同记忆');
+    const sharedPastRisk = detectRisk(
+      currentQuery,
+      '你小时候总爱趴我肚子上',
+      [],
+      replyBrief
+    );
+    expect(sharedPastRisk).toContain('共同记忆');
+    expect(
+      (service as any).guardrailRepairGoal(sharedPastRisk, replyBrief)
+    ).toContain('保留角色当前的离世世界小事');
+  });
+
   it('does not let advisory review remove an in-budget participation bubble or judge afterlife-world narration', () => {
     const service = new ReplyGuardrailService();
     const userQuery = '爸，吃饭了吗？';

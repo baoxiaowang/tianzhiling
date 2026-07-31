@@ -22,6 +22,120 @@ describe('ReplyIntentClassifierService', () => {
     return service;
   }
 
+  it('includes the previous reply strategy when planning a repeated need', () => {
+    const service = createService('{}');
+    const assistant = new MessageEntity();
+    assistant.role = MessageRole.assistant;
+    assistant.content = '挺好的，别担心。';
+    assistant.replyContinuationGoal = 'hold';
+    assistant.replyAssistantContribution = 'affection';
+    assistant.replyMustContribute = '让用户安心';
+
+    const input = (service as any).buildClassifierInput({
+      currentQuery: '想听你说两句，别光说挺好的。',
+      recentMessages: [assistant],
+    });
+
+    expect(input).toContain('当前亲人角色：挺好的，别担心。');
+    expect(input).toContain('上轮策略：hold/affection/让用户安心');
+  });
+
+  it('lets the semantic planner relocate the primary intent after a consecutive-input turn', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'ask_agent_status',
+            subIntent: 'meal',
+            confidence: 0.98,
+          },
+        ],
+        emotion: 'concern',
+        riskLevel: 'none',
+        confidence: 0.97,
+      })
+    );
+    const currentQuery =
+      '用户连续输入（按发送顺序，共2条）：\n1. 你是不是不认识我了\n2. 先不说这个，爸，你吃饭了吗';
+
+    const result = await service.classify({
+      currentQuery,
+      recentMessages: [],
+      forceSemanticPlanning: true,
+    });
+
+    expect(result?.intents[0]).toEqual(
+      expect.objectContaining({
+        intent: 'ask_agent_status',
+        subIntent: 'meal',
+      })
+    );
+    const request = (service.openAIService.createChatCompletion as jest.Mock)
+      .mock.calls[0][0];
+    const input = request.messages[1].content as string;
+
+    expect(input).toContain(
+      '后句改变核心意图时，主意图必须切换到最新仍有效的核心意图'
+    );
+    expect(input).toContain(`当前用户消息：${currentQuery}`);
+  });
+
+  it('normalizes a correction plan so it stops guessing without asking the user to repair it', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'current',
+            intent: 'correct_assistant',
+            subIntent: 'other',
+            confidence: 0.97,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: 'user',
+          moves: [
+            { type: 'acknowledge', goal: '承认错误' },
+            { type: 'ask', goal: '请用户提供正确答案' },
+          ],
+          socialStrategy: 'direct',
+          strategyPurpose: '修复错误',
+          questionNeed: 'helpful',
+          turnClosure: 'continue',
+          personaActivation: [],
+          engagement: {
+            userConversationState: 'repairing',
+            openLoop: '等待用户纠正',
+            continuationGoal: 'repair',
+            assistantContribution: 'question',
+            mustContribute: '请用户说明正确答案',
+            avoidRepeatingMove: '不重复错误细节',
+            closureReadiness: 'blocked',
+          },
+        },
+        emotion: 'neutral',
+        riskLevel: 'none',
+        confidence: 0.97,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '不对，你又说错了。',
+    });
+
+    expect(intent?.conversationPlan).toMatchObject({
+      moves: [{ type: 'acknowledge', goal: '承认错误' }],
+      questionNeed: 'none',
+      engagement: {
+        assistantContribution: 'answer',
+        mustContribute: '承认说错并停止猜测，不索要正确答案',
+      },
+    });
+  });
+
   it('classifies agent current pain into a structured intent', async () => {
     const service = createService(
       JSON.stringify({
@@ -234,6 +348,7 @@ describe('ReplyIntentClassifierService', () => {
     '讲了又有什么用',
     '跟你说了你也不懂',
     '想听你说两句',
+    '想听你说点别的',
     '说点不一样的',
     '说说你自己',
     '别光说挺好的',

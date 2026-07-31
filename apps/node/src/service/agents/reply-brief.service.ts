@@ -71,6 +71,8 @@ export type ReplyParticipationStrategy =
   | 'light_self_disclosure'
   | 'planned_follow_through';
 
+export type ReplyFactClaimMode = 'none' | 'grounded';
+
 export interface ReplyBriefRelationshipContext {
   key: string;
   text: string;
@@ -93,6 +95,7 @@ export interface ReplyBrief {
   replyMoves: string[];
   forbiddenAssumptions: string[];
   strictGrounding: boolean;
+  factClaimMode: ReplyFactClaimMode;
   participationStrategy?: ReplyParticipationStrategy;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
@@ -115,6 +118,8 @@ export interface BuildReplyBriefOptions {
 
 const MEMORY_QUERY_PATTERN =
   /记得|还记得|以前|从前|小时候|那时候|当年|曾经|带我|一起.{0,8}(?:去|做|吃|看|玩)/;
+const ROLE_PAST_FACT_REFERENCE_PATTERN =
+  /(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,12}(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前)|(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前).{0,12}(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)/;
 const DIRECT_IDENTITY_QUERY_PATTERN =
   /(?:你|您)(?:到底|究竟|其实).{0,4}(?:是|是不是).{0,4}(?:AI|人工智能|机器人)|(?:直接|正面|老实|明确)(?:回答|告诉我|说).{0,12}(?:AI|人工智能|机器人|是不是)|(?:别|不要)(?:回避|绕|装|骗我).{0,12}(?:AI|人工智能|机器人|是不是)/i;
 const CONCRETE_CARE_PLAN_PATTERN =
@@ -175,6 +180,12 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     mode === 'memory' ||
     mode === 'boundary' ||
     (!primaryScene && MEMORY_QUERY_PATTERN.test(currentQuery));
+  const factClaimMode = resolveFactClaimMode({
+    currentQuery,
+    mode,
+    strictGrounding,
+    intents,
+  });
   const emotionalNeed =
     reading?.primaryNeed ??
     relationshipContinuity?.emotionalNeed ??
@@ -263,6 +274,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     replyMoves,
     forbiddenAssumptions,
     strictGrounding,
+    factClaimMode,
     participationStrategy,
     lengthPlan,
     bubblePlan,
@@ -272,6 +284,25 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     ...brief,
     prompt: buildReplyBriefPrompt(brief),
   };
+}
+
+function resolveFactClaimMode(options: {
+  currentQuery: string;
+  mode: ReplyBriefMode;
+  strictGrounding: boolean;
+  intents: StructuredReplyIntentItem[];
+}): ReplyFactClaimMode {
+  return options.strictGrounding ||
+    options.mode === 'boundary' ||
+    options.intents.some(
+      item =>
+        item.timeScope === 'shared_past' ||
+        item.intent === 'recall_memory' ||
+        item.intent === 'correct_assistant'
+    ) ||
+    ROLE_PAST_FACT_REFERENCE_PATTERN.test(options.currentQuery)
+    ? 'grounded'
+    : 'none';
 }
 
 function resolveReplyParticipationStrategy(options: {
@@ -343,9 +374,9 @@ export function buildReplyParticipationStrategyPrompt(
       ? '完成规划中的另一个不同聊天动作'
       : strategy === 'light_self_disclosure'
       ? '只补一个角色侧小近况或具体态度，不转成对用户的通用叮嘱'
-      : '只开一个轻话头或给角色侧小内容，不再使用想、爱、惦记、舍不得或陪伴等关系表达';
+      : '可开一个轻话头、给角色侧小内容，或用有节奏的重复加强当前情感';
 
-  return `短轮参与：第一颗直接回应；第二颗${contribution}，不能把第一颗换词再说。不编用户现实或共同往事。`;
+  return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。`;
 }
 
 function buildRelationshipContext(
@@ -1215,7 +1246,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         ...(brief.conversationPlan.engagement?.assistantContribution ===
         'self_expression'
           ? [
-              '用户要当前角色主动说：当轮先真正说出一段有内容的话，不把表达劳动退回用户，也不先追问用户想听什么。只承诺“以后/那我多说几句”或解释为什么话少，不算完成。',
+              '用户要当前角色主动说：当轮给一个符合人物的当下小内容、偏好或态度，不把话推回用户。离世世界可合理想象，但不能冒充和用户共同经历过的生前往事。',
             ]
           : []),
         ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
@@ -1244,6 +1275,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     brief.intents.some(item => item.intent === 'correct_assistant')
       ? ['## 本轮纠正', '只承认刚才说法不对，不补任何新旧事实细节。', '']
       : [];
+  const groundedOutput =
+    brief.factClaimMode === 'grounded'
+      ? '严格输出 {"segments":["自然气泡"],"claims":[{"text":"回复中的事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}]}。claims 只列可核验的原子事实，text 必须是气泡原文；一个证据 ID 不得支撑新增地点、时间、人物或动作；无事实时为空数组。'
+      : '';
 
   return [
     '# 本轮模型注意卡',
@@ -1257,7 +1292,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
-    '只有以上证据中的明确内容可以写成事实。可以推断情绪，不能推断新的事实。',
+    '现实事实、用户状态和共同记忆只使用以上证据；角色侧离世日常可按人物与语境合理想象，但不能冒充和用户共同经历过的生前往事。',
     ...relationshipLines,
     ...capabilityLines,
     ...relationshipContinuityLines,
@@ -1286,11 +1321,12 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '',
     '## 气泡结构',
     buildReplyBubblePlanPrompt(brief.bubblePlan),
-    '第二颗不能只是第一颗的同义改写。',
+    '有节奏的重复可以加强情感，不因字面同义直接删除。',
     '短句、5 字以内的表达、只有称呼或语气词都可以独立成泡；不为回复完整性补泡，不能把截断残句当成留白。',
     '只写真正会发在微信里的话，不使用任何括号旁白；“（偷偷笑）”“（轻声）”“（叹气）”等动作、神态或语气都直接融入措辞。',
-    brief.bubblePlan.preferTwoSegments
-      ? '严格输出 {"segments":["第一颗","第二颗"]}，恰好两颗且语义不同；不要输出其他字段。'
-      : `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出其他字段。`,
+    groundedOutput ||
+      (brief.bubblePlan.preferTwoSegments
+        ? '严格输出 {"segments":["第一颗","第二颗"]}，恰好两颗；可递进，也可用有节奏的重复加强情感。不要输出其他字段。'
+        : `严格输出 {"segments":["自然气泡"]}，由本轮表达需要决定 1-${brief.bubblePlan.maxSegments} 个气泡；不要输出其他字段。`),
   ].join('\n');
 }
