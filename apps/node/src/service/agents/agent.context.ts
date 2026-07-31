@@ -77,6 +77,8 @@ export interface BuildConversationContextOptions {
   conversation: ConversationEntity;
   agent: AgentEntity | null;
   currentQuery?: string;
+  currentTurnMessageIds?: string[];
+  forceSemanticPlanning?: boolean;
   classifyIntent?: boolean;
   memoryControlResult?: AgentMemoryControlResult;
 }
@@ -198,8 +200,18 @@ export class AgentContextService {
     const conversationMessages = await this.listConversationMessages(
       options.conversation
     );
-    const routingHistoryMessages =
-      this.buildRecentHistoryMessages(conversationMessages);
+    const currentTurnMessages = this.selectCurrentTurnMessages(
+      conversationMessages,
+      options.currentTurnMessageIds
+    );
+    const historicalConversationMessages =
+      this.excludeCurrentTurnMessagesFromHistory(
+        conversationMessages,
+        options.currentTurnMessageIds
+      );
+    const routingHistoryMessages = this.buildRecentHistoryMessages(
+      historicalConversationMessages
+    );
     const persona = buildAgentPersonaPrompt({
       agent: options.agent,
       recentMessages: routingHistoryMessages,
@@ -223,6 +235,7 @@ export class AgentContextService {
       knownFamilyMembers,
       memoryCandidates,
       agentPersonaContext: persona.classifierContext,
+      forceSemanticPlanning: options.forceSemanticPlanning,
     };
     const replyPlanningDecision = this.getReplyPlanningDecision(
       classifierOptions,
@@ -292,7 +305,7 @@ export class AgentContextService {
       : buildReplyBrief(replyBriefOptions);
     const modePolicy = resolveAgentChatModePolicy(replyBrief);
     const recentHistoryMessages = this.buildRecentHistoryMessages(
-      conversationMessages,
+      historicalConversationMessages,
       modePolicy.historyMessageLimit
     );
     const relevanceText = this.buildFactRelevanceText(
@@ -348,6 +361,7 @@ export class AgentContextService {
       persona
     );
     const historyLayer = this.buildHistoryLayer(recentHistoryMessages);
+    this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
     const systemPromptContent = systemLayer.messages[0]?.content;
 
@@ -446,8 +460,10 @@ export class AgentContextService {
       agent: options.agent,
     });
     const evidencePrompt = this.buildEvidencePrompt(evidence);
-    const conversationReadingPrompt =
-      this.buildConversationReadingPrompt(replyBrief);
+    const conversationReadingPrompt = this.buildConversationReadingPrompt(
+      replyBrief,
+      options.currentQuery
+    );
     const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
     const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
@@ -479,17 +495,28 @@ export class AgentContextService {
     };
   }
 
-  private buildConversationReadingPrompt(replyBrief?: ReplyBrief): string {
+  private buildConversationReadingPrompt(
+    replyBrief?: ReplyBrief,
+    currentQuery = ''
+  ): string {
     const reading = replyBrief?.reading;
+    const consecutiveInputGuidance = this.isConsecutiveInputQuery(currentQuery)
+      ? [
+          '# 连续输入理解',
+          '这些消息属于同一用户轮次。逐条判断延续、补充、修正、否定或转向；后句改变核心意图时，以最新仍有效的核心意图为主，前句只保留仍有效的事实和情绪，不平均逐句作答。',
+        ]
+      : [];
 
     if (!reading) {
       return [
+        ...consecutiveInputGuidance,
         '# 本轮理解原则',
         '以当前用户原话为准，不让路由、历史或通用安慰覆盖本轮事实、否定、纠正和问题。',
       ].join('\n');
     }
 
     const lines = [
+      ...consecutiveInputGuidance,
       '# 本轮 Conversation Reading',
       `需要：${reading.primaryNeed}`,
       `情绪：${reading.emotionalSource}`,
@@ -565,7 +592,7 @@ export class AgentContextService {
           ...(replyBrief.conversationPlan.engagement?.assistantContribution ===
           'self_expression'
             ? [
-                '用户要你主动说；当轮先给实际内容，不把话推回用户。只答应以后多说不算完成。',
+                '用户要你主动说；给一个符合人物的当下小内容、偏好或态度，不把话推回用户。离世世界可合理想象，不冒充生前共同往事。',
               ]
             : []),
           ...(replyBrief.conversationPlan.engagement?.continuationGoal ===
@@ -591,6 +618,16 @@ export class AgentContextService {
           ),
         ]
       : [];
+    const factClaimLines =
+      replyBrief.factClaimMode === 'grounded'
+        ? [
+            '# 事实申报',
+            '本轮只输出严格 JSON：{"segments":["气泡"],"claims":[{"text":"气泡中的事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}]}。',
+            'claims 只列可核验事实，每项只写一个原子事实，text 必须是 segments 中连续原文；没有事实就用空数组。',
+            '用户提供的事实用 attributed_to_user 并引用用户证据；自主事实只能引用“可自主陈述”证据。角色当前的离世生活可用 soft_imagination；生前共同往事始终按 memory 核验。',
+            '一个证据 ID 不能支撑证据中没有的新地点、时间、人物或动作。',
+          ]
+        : [];
 
     if (preservesMemoryFlow) {
       return [
@@ -607,6 +644,7 @@ export class AgentContextService {
         buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
         '# 总字数预算',
         buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
+        ...factClaimLines,
       ].join('\n');
     }
 
@@ -644,6 +682,7 @@ export class AgentContextService {
       '总字数预算：',
       buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
       '以上为内部约束；自然表达，不逐项复述。',
+      ...factClaimLines,
     ].join('\n');
   }
 
@@ -2129,6 +2168,68 @@ export class AgentContextService {
         .map(message => this.buildChatMessage(message))
         .filter(Boolean) as ChatCompletionMessageParam[],
     };
+  }
+
+  private excludeCurrentTurnMessagesFromHistory(
+    messages: MessageEntity[],
+    currentTurnMessageIds: string[] = []
+  ): MessageEntity[] {
+    const currentTurnIds = new Set(
+      currentTurnMessageIds.map(id => id.trim()).filter(Boolean)
+    );
+
+    if (!currentTurnIds.size) {
+      return messages;
+    }
+
+    return messages.filter(
+      message => !currentTurnIds.has(this.stringifyObjectId(message.id))
+    );
+  }
+
+  private selectCurrentTurnMessages(
+    messages: MessageEntity[],
+    currentTurnMessageIds: string[] = []
+  ): MessageEntity[] {
+    const currentTurnIds = new Set(
+      currentTurnMessageIds.map(id => id.trim()).filter(Boolean)
+    );
+
+    return currentTurnIds.size
+      ? messages.filter(message =>
+          currentTurnIds.has(this.stringifyObjectId(message.id))
+        )
+      : [];
+  }
+
+  private appendCurrentTurnToHistory(
+    historyLayer: AgentContextLayer,
+    options: BuildConversationContextOptions,
+    currentTurnMessages: MessageEntity[]
+  ): void {
+    const currentQuery = options.currentQuery?.trim();
+
+    if (!currentQuery || !options.currentTurnMessageIds?.length) {
+      return;
+    }
+
+    if (currentTurnMessages.length === 1) {
+      const currentMessage = this.buildChatMessage(currentTurnMessages[0]);
+
+      if (currentMessage?.role === 'user') {
+        historyLayer.messages.push(currentMessage);
+        return;
+      }
+    }
+
+    historyLayer.messages.push({
+      role: 'user',
+      content: currentQuery,
+    });
+  }
+
+  private isConsecutiveInputQuery(value = ''): boolean {
+    return /^用户连续输入（按发送顺序，共\d+条）：/.test(value.trim());
   }
 
   private buildEmotionStatePrompt(

@@ -394,6 +394,118 @@ describe('AgentContextService', () => {
     );
   });
 
+  it('places a merged consecutive-input turn after the latest assistant reply', async () => {
+    const previousUser = new MessageEntity();
+    previousUser.id = new MongoObjectId();
+    previousUser.role = MessageRole.user;
+    previousUser.type = MessageType.text;
+    previousUser.content = '我最近工作有点累';
+    previousUser.status = MessageStatus.sent;
+    previousUser.createdAt = new Date('2026-07-31T03:53:07.000Z');
+
+    const firstCurrent = new MessageEntity();
+    firstCurrent.id = new MongoObjectId();
+    firstCurrent.role = MessageRole.user;
+    firstCurrent.type = MessageType.text;
+    firstCurrent.content = '先不说工作了';
+    firstCurrent.status = MessageStatus.sent;
+    firstCurrent.createdAt = new Date('2026-07-31T03:53:13.000Z');
+
+    const secondCurrent = new MessageEntity();
+    secondCurrent.id = new MongoObjectId();
+    secondCurrent.role = MessageRole.user;
+    secondCurrent.type = MessageType.text;
+    secondCurrent.content = '爸，你吃饭了吗';
+    secondCurrent.status = MessageStatus.sent;
+    secondCurrent.createdAt = new Date('2026-07-31T03:53:17.000Z');
+
+    const assistantReply = new MessageEntity();
+    assistantReply.id = new MongoObjectId();
+    assistantReply.role = MessageRole.assistant;
+    assistantReply.type = MessageType.text;
+    assistantReply.content = '工作慢慢来，别太累';
+    assistantReply.status = MessageStatus.sent;
+    assistantReply.createdAt = new Date('2026-07-31T03:53:19.000Z');
+
+    const service = new AgentContextService();
+    service.messageModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          previousUser,
+          firstCurrent,
+          secondCurrent,
+          assistantReply,
+        ]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+    service.agentEmotionStateService = {
+      getCurrentState: jest.fn().mockResolvedValue(null),
+    } as never;
+    service.replyIntentClassifierService = {
+      getPlanningDecision: jest
+        .fn()
+        .mockReturnValue({ mode: 'semantic', reason: 'forced' }),
+      classify: jest.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+    const currentQuery =
+      '用户连续输入（按发送顺序，共2条）：\n1. 先不说工作了\n2. 爸，你吃饭了吗';
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent: null,
+      currentQuery,
+      currentTurnMessageIds: [
+        firstCurrent.id.toHexString(),
+        secondCurrent.id.toHexString(),
+      ],
+      forceSemanticPlanning: true,
+    });
+
+    expect(context.layers[1].messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: previousUser.content,
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: assistantReply.content,
+      }),
+      {
+        role: 'user',
+        content: currentQuery,
+      },
+    ]);
+    expect(context.messages[0].content).toContain('# 连续输入理解');
+    expect(context.messages[0].content).toContain(
+      '后句改变核心意图时，以最新仍有效的核心意图为主'
+    );
+    expect(
+      service.replyIntentClassifierService.classify
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery,
+        recentMessages: [previousUser, assistantReply],
+        forceSemanticPlanning: true,
+      })
+    );
+  });
+
   it('marks a memory question as context-only evidence without injecting a reply plan', async () => {
     const service = new AgentContextService();
     service.messageModel = {
@@ -433,6 +545,7 @@ describe('AgentContextService', () => {
 
     expect(context.replyBrief.mode).toBe('memory');
     expect(context.replyBrief.strictGrounding).toBe(true);
+    expect(context.replyBrief.factClaimMode).toBe('grounded');
     expect(systemMessage.content).toContain('本轮证据包');
     expect(systemMessage.content).toContain('# 当前对话参考模式：memory');
     expect(systemMessage.content).toContain('不足就说记不清');
@@ -441,6 +554,9 @@ describe('AgentContextService', () => {
     );
     expect(systemMessage.content).toContain('问句不能证明其假设');
     expect(systemMessage.content).toContain('证据只约束事实，不规定回复');
+    expect(systemMessage.content).toContain('# 事实申报');
+    expect(systemMessage.content).toContain('"claims"');
+    expect(systemMessage.content).toContain('生前共同往事始终按 memory 核验');
     expect(context.evidence[0]).toEqual(
       expect.objectContaining({
         id: 'U0',
@@ -1418,6 +1534,7 @@ describe('AgentContextService', () => {
       conversation,
       agent,
       currentQuery: '我不爱吃辣',
+      currentTurnMessageIds: [userMessage.id.toHexString()],
     });
 
     const historyMessage = context.messages.find(

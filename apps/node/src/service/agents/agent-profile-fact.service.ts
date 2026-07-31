@@ -45,6 +45,7 @@ interface ExtractProfileFactsOptions {
   message: MessageEntity;
   searchableText: string;
   explicitlyConfirmed?: boolean;
+  previousAssistantContent?: string;
 }
 
 interface ExtractProfileFactsFromFeedbackOptions {
@@ -106,7 +107,9 @@ export class AgentProfileFactService {
       return [];
     }
 
-    const extractedFacts = await this.extractFacts(sourceText);
+    const extractedFacts = await this.extractFacts(sourceText, {
+      previousAssistantContent: options.previousAssistantContent,
+    });
 
     for (const extracted of extractedFacts) {
       await this.upsertFact({
@@ -260,7 +263,11 @@ export class AgentProfileFactService {
 
   private async extractFacts(
     sourceText: string,
-    options: { fromFeedback?: boolean; feedbackType?: string } = {}
+    options: {
+      fromFeedback?: boolean;
+      feedbackType?: string;
+      previousAssistantContent?: string;
+    } = {}
   ): Promise<ExtractedProfileFact[]> {
     if (!options.fromFeedback && this.isQuestionOnly(sourceText)) {
       return [];
@@ -293,7 +300,11 @@ export class AgentProfileFactService {
 
   private async extractFactsWithLLM(
     sourceText: string,
-    options: { fromFeedback?: boolean; feedbackType?: string }
+    options: {
+      fromFeedback?: boolean;
+      feedbackType?: string;
+      previousAssistantContent?: string;
+    }
   ): Promise<AgentProfileFactSummary[]> {
     if (!this.openAIService?.isEnabled?.()) {
       return [];
@@ -306,10 +317,15 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。上一条助手回复只可帮助识别用户正在否认什么，绝不是事实来源；指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
+          options.previousAssistantContent?.trim()
+            ? `上一条助手回复（仅作被否认对象）：${options.previousAssistantContent
+                .trim()
+                .slice(0, 300)}`
+            : '',
           `文本：${sourceText}`,
         ]
           .filter(Boolean)
@@ -328,7 +344,11 @@ export class AgentProfileFactService {
 
   private extractFactsWithRules(
     sourceText: string,
-    options: { fromFeedback?: boolean; feedbackType?: string }
+    options: {
+      fromFeedback?: boolean;
+      feedbackType?: string;
+      previousAssistantContent?: string;
+    }
   ): AgentProfileFactSummary[] {
     const text = this.normalizeCompactText(sourceText);
     const facts: AgentProfileFactSummary[] = [];
@@ -344,6 +364,12 @@ export class AgentProfileFactService {
     this.addFamilyFacts(facts, text, confidence);
     this.addStyleFacts(facts, text, confidence);
     this.addMemoryAndTabooFacts(facts, text, confidence);
+    this.addRejectedAssistantClaimFact(
+      facts,
+      text,
+      options.previousAssistantContent,
+      confidence
+    );
 
     if (options.feedbackType === 'unlike') {
       facts.push({
@@ -577,6 +603,35 @@ export class AgentProfileFactService {
         });
       }
     }
+  }
+
+  private addRejectedAssistantClaimFact(
+    facts: AgentProfileFactSummary[],
+    text: string,
+    previousAssistantContent: string | undefined,
+    confidence: AgentProfileFactConfidence
+  ): void {
+    const rejectedContent = this.normalizeSourceText(
+      previousAssistantContent || ''
+    ).slice(0, 160);
+
+    if (
+      !rejectedContent ||
+      !/(?:没有这(?:回)?事|没这(?:回)?事|根本没这回事|不是这样的?|我不记得.{0,8}(?:有|发生|这事)|你(?:又|在)?(?:瞎编|胡编|乱编|乱说)|别(?:再)?编)/.test(
+        text
+      )
+    ) {
+      return;
+    }
+
+    facts.push({
+      type: AgentProfileFactType.memory,
+      key: `memory.rejected_assistant.${this.hashKey(rejectedContent)}`,
+      value: `用户否认上一条助手所述共同往事：${rejectedContent}`,
+      polarity: AgentProfileFactPolarity.negative,
+      confidence,
+      priority: 3,
+    });
   }
 
   private async upsertFact(input: UpsertProfileFactInput): Promise<void> {

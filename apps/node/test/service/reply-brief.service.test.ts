@@ -42,12 +42,10 @@ describe('buildReplyBrief', () => {
       reviewCharacters: 24,
     });
     expect(brief.prompt).toContain('只输出 {"segments":["第一颗","第二颗"]}');
-    expect(brief.prompt).toContain('恰好两颗且语义不同');
+    expect(brief.prompt).toContain('有节奏的重复加强情感');
     expect(brief.prompt).not.toContain('由本轮表达需要决定 1-2 个气泡');
-    expect(brief.prompt).toContain('不能把第一颗换词再说');
-    expect(brief.prompt).toContain(
-      '不再使用想、爱、惦记、舍不得或陪伴等关系表达'
-    );
+    expect(brief.prompt).toContain('不因字面同义直接删除');
+    expect(brief.prompt).toContain('不机械复读');
   });
 
   it('does not inject short-turn participation into a closing turn', () => {
@@ -185,9 +183,9 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery, intent });
     const brief = buildReplyBrief({ currentQuery, intent, route });
 
-    expect(brief.prompt).toContain('先真正说出一段有内容的话');
-    expect(brief.prompt).toContain('不把表达劳动退回用户');
-    expect(brief.prompt).toContain('只承诺“以后/那我多说几句”');
+    expect(brief.prompt).toContain('符合人物的当下小内容、偏好或态度');
+    expect(brief.prompt).toContain('不把话推回用户');
+    expect(brief.prompt).toContain('不能冒充和用户共同经历过的生前往事');
     expect(brief.prompt).toContain('不要只说你说我听着');
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan).toEqual({
@@ -439,10 +437,23 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain(
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
-    expect(brief.prompt).toContain('可以推断情绪，不能推断新的事实');
+    expect(brief.prompt).toContain(
+      '现实事实、用户状态和共同记忆只使用以上证据'
+    );
     expect(brief.prompt).toContain('不补当时的动作、话语、感受或表现');
     expect(brief.prompt).toContain('默认一颗');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
+  });
+
+  it('requires grounded fact claims when afterlife talk also mentions the role past', () => {
+    const currentQuery =
+      '你之前爱旅游爬山玩水，现在你不在了，在天上也能四处转转';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.factClaimMode).toBe('grounded');
+    expect(brief.prompt).toContain('"claims"');
+    expect(brief.prompt).toContain('text 必须是气泡原文');
   });
 
   it('uses user-authored and confirmed evidence but excludes assistant history', () => {

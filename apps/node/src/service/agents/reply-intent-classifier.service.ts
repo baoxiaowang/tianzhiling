@@ -125,7 +125,7 @@ const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
   /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
-  /说点不一样|说说你自己|想听你说(?:两句|点什么)|别光(?:说|问|听|安慰)|你还没(?:说|回答)/;
+  /说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|别光(?:说|问|听|安慰)|你还没(?:说|回答)/;
 const CONVERSATION_FUTILITY_PATTERN =
   /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
 const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
@@ -160,9 +160,10 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
   '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
-  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正和真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为；不要把安慰、肯定、建议写成固定三连。',
+  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先认错、停猜，用户未主动给出时不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为；不要把安慰、肯定、建议写成固定三连。',
   'conversationPlan.engagement 说明用户还在等什么。开放点未解决时 closureReadiness=blocked；要求多说时用 moves=self_disclose、assistantContribution=self_expression，当轮先说实际内容，承诺以后多说、解释沉默或让用户先说都不算完成。',
-  '用户说话少、不想理、忘了、没人回应或重复请求时用 repairing/repair/blocked，并在当轮实际改变。上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，必须新增关系态度或理解，不重复同一结论。仅在用户明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+  '用户说话少、不想理、忘了、没人回应或重复请求时用 repairing/repair/blocked，并比较上轮实际回复与策略：avoidRepeatingMove 写明旧动作，mustContribute 写明本轮新动作。上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，必须新增关系态度或理解。仅在用户明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+  '用户要求角色主动说时，self_expression 优先给符合人物的当下小内容、偏好或态度；可以合理想象离世世界，但不能写成和用户共同经历过的生前往事。',
   '“跟你说了也没用、讲了又有什么用、说了你也不懂”里的“V了也……”常省略“即使”：既评价前面已经发生的沟通，也表示即使继续说仍无效。结合最近回复判断为 withdrawing/repair/blocked；mustContribute 要写明如何用用户已经说过的具体内容改变回应，不再让用户继续说、重讲或证明自己，不以“你想说时我听着/我在”变体把表达责任推回用户。',
   'memoryPlan 只判断回复是否缺少用户个性化事实。当前消息或最近对话已给全时 complete；缺少时先列具体 missingConcepts，再用最多四个 queries 覆盖。不得重复查询最近对话已有事实。',
   '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
@@ -318,6 +319,15 @@ export class ReplyIntentClassifierService {
           : deterministicIntent;
       }
 
+      if (options.forceSemanticPlanning) {
+        return semanticIntent;
+      }
+
+      const conversationPlan = this.normalizeDeterministicConversationPlan(
+        deterministicIntent,
+        semanticIntent.conversationPlan
+      );
+
       return {
         ...deterministicIntent,
         ...(semanticIntent.capabilityQuestions?.length
@@ -330,9 +340,9 @@ export class ReplyIntentClassifierService {
               reading: semanticIntent.reading,
             }
           : {}),
-        ...(semanticIntent.conversationPlan
+        ...(conversationPlan
           ? {
-              conversationPlan: semanticIntent.conversationPlan,
+              conversationPlan,
             }
           : {}),
         ...(semanticIntent.memoryPlan
@@ -350,6 +360,40 @@ export class ReplyIntentClassifierService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private normalizeDeterministicConversationPlan(
+    deterministicIntent: StructuredReplyIntent,
+    conversationPlan?: ConversationMovePlan
+  ): ConversationMovePlan | undefined {
+    if (
+      !conversationPlan ||
+      deterministicIntent.intents[0]?.intent !== 'correct_assistant'
+    ) {
+      return conversationPlan;
+    }
+
+    const moves = conversationPlan.moves.filter(
+      move => move.type !== 'ask' && move.type !== 'self_disclose'
+    );
+
+    return {
+      ...conversationPlan,
+      moves: moves.length
+        ? moves
+        : [{ type: 'acknowledge', goal: '承认说错并停止猜测' }],
+      questionNeed: 'none',
+      engagement: {
+        userConversationState: 'repairing',
+        openLoop: '用户需要错误说法被明确撤回',
+        continuationGoal: 'repair',
+        assistantContribution: 'answer',
+        mustContribute: '承认说错并停止猜测，不索要正确答案',
+        avoidRepeatingMove:
+          conversationPlan.engagement?.avoidRepeatingMove || '不继续猜测',
+        closureReadiness: 'possible',
+      },
+    };
   }
 
   getPlanningDecision(
@@ -816,9 +860,22 @@ export class ReplyIntentClassifierService {
       .map(message => {
         const role =
           message.role === MessageRole.user ? '用户' : '当前亲人角色';
+        const strategyHint =
+          message.role === MessageRole.assistant
+            ? [
+                message.replyContinuationGoal,
+                message.replyAssistantContribution,
+                message.replyMustContribute,
+              ]
+                .map(value => value?.trim())
+                .filter(Boolean)
+                .join('/')
+            : '';
         return `${role}：${message.content
           .trim()
-          .slice(0, CLASSIFIER_MAX_MESSAGE_LENGTH)}`;
+          .slice(0, CLASSIFIER_MAX_MESSAGE_LENGTH)}${
+          strategyHint ? ` [上轮策略：${strategyHint.slice(0, 180)}]` : ''
+        }`;
       })
       .join('\n');
     const knownFamilyMembers = Array.from(
@@ -847,6 +904,11 @@ export class ReplyIntentClassifierService {
           .slice(0, CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH),
       ]);
 
+    const consecutiveInputGuidance =
+      /^用户连续输入（按发送顺序，共\d+条）：/.test(currentQuery)
+        ? '连续输入判断：逐条识别延续、补充、修正、否定或转向。后句改变核心意图时，主意图必须切换到最新仍有效的核心意图；前句只保留仍有效的事实、情绪和未解决事项，不要平均分配回复。'
+        : '';
+
     return [
       options.agentPersonaContext?.trim()
         ? `当前角色关系与人格上下文：${options.agentPersonaContext
@@ -858,13 +920,16 @@ export class ReplyIntentClassifierService {
         ? `已确认的其他共同家人：${knownFamilyMembers}`
         : '已确认的其他共同家人：无',
       history ? `最近对话：\n${history}` : '最近对话：无',
+      consecutiveInputGuidance,
       `当前用户消息：${currentQuery}`,
       memoryCandidates.length
         ? `候选记忆（[slot,key,summary]，可全部不选）：${JSON.stringify(
             memoryCandidates
           )}`
         : '候选记忆：无',
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   private findLastDuplicateCurrentMessageIndex(

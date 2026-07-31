@@ -133,6 +133,44 @@ describe('AgentProfileFactService', () => {
     );
   });
 
+  it('stores a deictically rejected assistant memory as a negative fact', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+
+    const facts = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我不记得了，没有这事'),
+      searchableText: '我不记得了，没有这事',
+      previousAssistantContent:
+        '就是城西边那座山。你小时候我背你上去过一回。',
+    });
+
+    expect(facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: AgentProfileFactType.memory,
+          key: expect.stringContaining('memory.rejected_assistant.'),
+          value: expect.stringContaining(
+            '用户否认上一条助手所述共同往事：就是城西边那座山'
+          ),
+          polarity: AgentProfileFactPolarity.negative,
+          confidence: AgentProfileFactConfidence.userCorrected,
+          priority: 3,
+        }),
+      ])
+    );
+    expect(savedFacts).toHaveLength(facts.length);
+  });
+
   it('keeps model-only facts as candidates until repeated evidence confirms them', async () => {
     const service = new AgentProfileFactService();
     let storedFact: AgentProfileFactEntity | null = null;

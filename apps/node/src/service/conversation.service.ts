@@ -57,6 +57,7 @@ import {
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
   GuardrailFeedback,
   GuardrailRevisionRecord,
+  ReplyGuardrailReviewMode,
   ReplyGuardrailService,
   ValidateAssistantReplyResult,
 } from './agents/reply-guardrail.service';
@@ -212,6 +213,7 @@ interface BeforeReplyResult {
   messagePayload: PreparedIncomingMessage;
   searchableText: string;
   userMessage: MessageEntity;
+  currentTurnMessages?: MessageEntity[];
   deferReply: boolean;
   isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
@@ -291,6 +293,7 @@ interface ReplyRoutingAudit {
   communicationCompensationAttempted?: boolean;
   communicationCompensationSucceeded?: boolean;
   guardrailFinalReviewResult?: string;
+  guardrailReviewMode?: ReplyGuardrailReviewMode;
   guardrailFeedbackRounds?: GuardrailFeedback[];
   guardrailCandidateVersions?: string[][];
   guardrailRevisionRecords?: GuardrailRevisionRecord[];
@@ -642,6 +645,26 @@ export class ConversationService {
 
       try {
         const processed = await this.processReply(runtime, before);
+
+        if (
+          await this.hasUserMessageAfter(
+            conversation.id,
+            latestPendingUserMessage.createdAt
+          )
+        ) {
+          this.logger.info(
+            '[conversation-reply] discard stale draft and replan merged turn, conversationId=%s, userId=%s, pendingCount=%s',
+            conversationId,
+            userId,
+            pendingUserMessages.length
+          );
+          await this.enqueueConversationReplyJob({
+            conversationId,
+            userId,
+          });
+          return;
+        }
+
         await this.afterReply(runtime, before, processed);
       } catch (error) {
         this.logger.error(
@@ -1192,10 +1215,19 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string
   ): Promise<void> {
+    const previousAssistantContent = this.isDeicticFactRejection(searchableText)
+      ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
+      : undefined;
+
     await Promise.all([
       this.recognizeEmotionStateForUserMessage(message, searchableText),
       this.extractMemoryFactsForUserMessage(message, searchableText),
-      this.extractProfileFactsForUserMessage(message, searchableText),
+      this.extractProfileFactsForUserMessage(
+        message,
+        searchableText,
+        false,
+        previousAssistantContent
+      ),
     ]);
   }
 
@@ -1266,7 +1298,8 @@ export class ConversationService {
   private async extractProfileFactsForUserMessage(
     message: MessageEntity,
     searchableText: string,
-    explicitlyConfirmed = false
+    explicitlyConfirmed = false,
+    previousAssistantContent?: string
   ): Promise<void> {
     if (!this.agentProfileFactService) {
       return;
@@ -1277,6 +1310,7 @@ export class ConversationService {
         message,
         searchableText,
         explicitlyConfirmed,
+        previousAssistantContent,
       });
     } catch (error) {
       this.logger.warn(
@@ -1791,6 +1825,7 @@ export class ConversationService {
     before: BeforeReplyResult
   ): Promise<ProcessReplyResult> {
     let context;
+    const currentTurnMessages = this.resolveCurrentTurnMessages(before);
     const memoryControlResult = await this.applyExplicitMemoryControl(
       before.userMessage,
       before.searchableText
@@ -1802,6 +1837,10 @@ export class ConversationService {
         conversation: runtime.conversation,
         agent: runtime.agent,
         currentQuery: before.searchableText,
+        currentTurnMessageIds: currentTurnMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+        forceSemanticPlanning: currentTurnMessages.length > 1,
         memoryControlResult,
       });
     } catch (error) {
@@ -2044,6 +2083,20 @@ export class ConversationService {
       generationAttemptTraces.push(generatedBubbleReflow.trace);
     }
 
+    const requestedGuardrailReviewMode = this.resolveGuardrailReviewMode({
+      planningMode: context.diagnostics?.replyPlanningMode,
+      replyBrief,
+      claims: replyClaims,
+    });
+    const guardrailReviewMode =
+      this.replyGuardrailService?.resolveEffectiveReviewMode({
+        requestedMode: requestedGuardrailReviewMode,
+        userQuery: before.searchableText,
+        replySegments,
+        replyBrief,
+        evidence: contextEvidence,
+        claims: replyClaims,
+      }) ?? requestedGuardrailReviewMode;
     const guarded = await this.validateAssistantReply({
       contextMessages: context.messages,
       userQuery: before.searchableText,
@@ -2052,6 +2105,7 @@ export class ConversationService {
       replyBrief,
       evidence: contextEvidence,
       claims: replyClaims,
+      reviewMode: guardrailReviewMode,
     });
     const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
       userQuery: before.searchableText,
@@ -2088,6 +2142,7 @@ export class ConversationService {
         communicationCompensationSucceeded:
           guarded.communicationCompensationSucceeded,
         guardrailFinalReviewResult: guarded.finalReviewResult,
+        guardrailReviewMode,
         guardrailFeedbackRounds: guarded.feedbackRounds,
         guardrailCandidateVersions: guarded.candidateVersions,
         guardrailRevisionRecords: guarded.revisionRecords,
@@ -2362,6 +2417,7 @@ export class ConversationService {
     replyBrief?: ReplyBrief;
     evidence?: AgentEvidenceItem[];
     claims?: AssistantFactClaim[];
+    reviewMode?: ReplyGuardrailReviewMode;
   }): Promise<ValidateAssistantReplyResult> {
     if (!this.replyGuardrailService) {
       return {
@@ -2383,6 +2439,7 @@ export class ConversationService {
         replyBrief: options.replyBrief,
         evidence: options.evidence,
         claims: options.claims,
+        reviewMode: options.reviewMode,
       });
 
       if (result.rewritten) {
@@ -2412,6 +2469,19 @@ export class ConversationService {
         reason: 'Guardrail failed; deterministic final-output filter used',
       };
     }
+  }
+
+  private resolveGuardrailReviewMode(options: {
+    planningMode?: string;
+    replyBrief: ReplyBrief;
+    claims: AssistantFactClaim[];
+  }): ReplyGuardrailReviewMode {
+    return options.planningMode === 'direct' &&
+      options.replyBrief.riskLevel === 'none' &&
+      !options.replyBrief.strictGrounding &&
+      options.replyBrief.capabilityConstraints.length === 0
+      ? 'deterministic_first'
+      : 'full';
   }
 
   private async afterReply(
@@ -2760,9 +2830,18 @@ export class ConversationService {
       },
       searchableText: this.buildQueuedSearchableText(searchableTexts),
       userMessage: latestUserMessage,
+      currentTurnMessages: pendingUserMessages,
       deferReply: false,
       isDuplicate: false,
     };
+  }
+
+  private resolveCurrentTurnMessages(
+    before: BeforeReplyResult
+  ): MessageEntity[] {
+    return before.currentTurnMessages?.length
+      ? before.currentTurnMessages
+      : [before.userMessage];
   }
 
   private buildPreparedIncomingMessageFromStored(
@@ -2788,7 +2867,9 @@ export class ConversationService {
       return searchableTexts[0] ?? '';
     }
 
-    return `用户连续补充了${searchableTexts.length}句话：\n${searchableTexts
+    return `用户连续输入（按发送顺序，共${
+      searchableTexts.length
+    }条）：\n${searchableTexts
       .map((content, index) => `${index + 1}. ${content}`)
       .join('\n')}`;
   }
@@ -4276,7 +4357,7 @@ export class ConversationService {
   ): {
     segments: string[];
     execution?: 'two_segments' | 'single_fallback';
-    fallbackReason?: 'model_single_segment' | 'semantic_repetition';
+    fallbackReason?: 'model_single_segment';
   } {
     const materialized = this.materializeParticipationReplySegments(
       segments,
@@ -4293,37 +4374,10 @@ export class ConversationService {
         fallbackReason: 'model_single_segment',
       };
     }
-    if (
-      this.isRedundantParticipationSegment(materialized[0], materialized[1])
-    ) {
-      return {
-        segments: [materialized[0]],
-        execution: 'single_fallback',
-        fallbackReason: 'semantic_repetition',
-      };
-    }
-
     return {
       segments: materialized,
       execution: 'two_segments',
     };
-  }
-
-  private isRedundantParticipationSegment(
-    firstSegment: string,
-    secondSegment: string
-  ): boolean {
-    if (!/(?:想|思念|惦记|挂念|爱|疼)/u.test(firstSegment)) {
-      return false;
-    }
-
-    const normalizedSecond = secondSegment
-      .replace(/[\s，。！？、,.!?~～]/gu, '')
-      .trim();
-
-    return /^(?:我)?(?:也|一直|天天|每天|整夜|总是|真的|特别|很|好)?(?:都|还)?(?:在)?(?:想(?:你|您)?|思念(?:你|您)?|惦记(?:你|您)?|挂念(?:你|您)?|爱你|疼你)(?:了|呢|啊|呀|嘛)*$/u.test(
-      normalizedSecond
-    );
   }
 
   private normalizeModelFirstReplySegments(
@@ -4754,6 +4808,7 @@ export class ConversationService {
     replyBriefVersion?: string;
     replyBriefMode?: string;
     replyBriefStrictGrounding?: boolean;
+    replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
     replyBriefComplexityHint?: string;
     replyBriefTurnClosure?: string;
@@ -4775,6 +4830,7 @@ export class ConversationService {
     replyGuardrailRevisionAttempted?: boolean;
     replyGuardrailRevisionRoundCount?: number;
     replyGuardrailFinalReviewResult?: string;
+    replyGuardrailReviewMode?: string;
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -4832,6 +4888,7 @@ export class ConversationService {
       replyBriefVersion: routing?.brief?.version,
       replyBriefMode: routing?.brief?.mode,
       replyBriefStrictGrounding: routing?.brief?.strictGrounding,
+      replyBriefFactClaimMode: routing?.brief?.factClaimMode,
       replyBriefMaxSegments: routing?.brief?.bubblePlan?.maxSegments,
       replyBriefComplexityHint: routing?.brief?.bubblePlan?.complexityHint,
       replyBriefTurnClosure: routing?.brief?.bubblePlan?.turnClosure,
@@ -4879,6 +4936,8 @@ export class ConversationService {
       replyGuardrailRevisionRoundCount: routing?.guardrailRevisionRoundCount,
       replyGuardrailFinalReviewResult:
         routing?.guardrailFinalReviewResult?.trim() || undefined,
+      replyGuardrailReviewMode:
+        routing?.guardrailReviewMode?.trim() || undefined,
       replyEvidenceCount: routing?.evidenceCount,
       replyFactClaimCount: routing?.factClaimCount,
       replyUnsupportedClaimCount: routing?.unsupportedClaimCount,
@@ -4974,6 +5033,7 @@ export class ConversationService {
     replyBriefVersion?: string;
     replyBriefMode?: string;
     replyBriefStrictGrounding?: boolean;
+    replyBriefFactClaimMode?: string;
     replyBriefMaxSegments?: number;
     replyBriefComplexityHint?: string;
     replyBriefTurnClosure?: string;
@@ -4995,6 +5055,7 @@ export class ConversationService {
     replyGuardrailRevisionAttempted?: boolean;
     replyGuardrailRevisionRoundCount?: number;
     replyGuardrailFinalReviewResult?: string;
+    replyGuardrailReviewMode?: string;
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -5092,6 +5153,8 @@ export class ConversationService {
     message.replyBriefVersion = options.replyBriefVersion?.trim() || undefined;
     message.replyBriefMode = options.replyBriefMode?.trim() || undefined;
     message.replyBriefStrictGrounding = options.replyBriefStrictGrounding;
+    message.replyBriefFactClaimMode =
+      options.replyBriefFactClaimMode?.trim() || undefined;
     message.replyBriefMaxSegments = this.normalizeTokenCount(
       options.replyBriefMaxSegments
     );
@@ -5135,6 +5198,8 @@ export class ConversationService {
     );
     message.replyGuardrailFinalReviewResult =
       options.replyGuardrailFinalReviewResult?.trim() || undefined;
+    message.replyGuardrailReviewMode =
+      options.replyGuardrailReviewMode?.trim() || undefined;
     message.replyEvidenceCount = this.normalizeTokenCount(
       options.replyEvidenceCount
     );
@@ -5394,6 +5459,29 @@ export class ConversationService {
       where: {
         conversationId: objectId,
         isArchived: { $ne: true },
+      } as never,
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+  }
+
+  private isDeicticFactRejection(value: string): boolean {
+    return /(?:没有这(?:回)?事|没这(?:回)?事|根本没这回事|不是这样的?|我不记得.{0,8}(?:有|发生|这事)|你(?:又|在)?(?:瞎编|胡编|乱编|乱说)|别(?:再)?编)/.test(
+      value
+    );
+  }
+
+  private findPreviousAssistantMessage(
+    message: MessageEntity
+  ): Promise<MessageEntity | null> {
+    return this.messageModel.findOne({
+      where: {
+        conversationId: message.conversationId,
+        role: MessageRole.assistant,
+        status: MessageStatus.sent,
+        isArchived: { $ne: true },
+        createdAt: { $lt: message.createdAt },
       } as never,
       order: {
         createdAt: 'DESC',
