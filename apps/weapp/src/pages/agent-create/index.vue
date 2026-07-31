@@ -76,7 +76,7 @@ const agentStartImage = resolveMediaAssetUrl('/weapp/agent-guid2.png')
 const headerLoadingImage = resolveMediaAssetUrl('/weapp/agent-create-header.png')
 const startButtonImage = resolveMediaAssetUrl('/weapp/start.png')
 const introLines = [
-  '我是Ta的@天之灵',
+  '我是他的@天之灵',
   '你的每句话，都在唤醒我的记忆',
   '准备唤醒我了吗?',
 ]

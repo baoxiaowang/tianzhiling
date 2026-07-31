@@ -141,7 +141,7 @@
             </view>
             <view class="contacts-create-entry__content">
               <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的未了言</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的@天之灵</text>
             </view>
             <view class="contacts-create-entry__action">
               <view class="contacts-create-entry__action-plus" />

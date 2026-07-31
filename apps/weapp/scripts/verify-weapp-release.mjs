@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const releaseRoot = path.resolve(scriptDirectory, '../dist/weapp')
+const productionOrigin = 'https://voloian.cn'
 const forbiddenOrigins = [
   'http://127.0.0.1',
   'https://127.0.0.1',
@@ -11,6 +12,9 @@ const forbiddenOrigins = [
   'https://localhost',
   'http://0.0.0.0',
   'https://0.0.0.0',
+  'https://tianzhiling.chat',
+  'https://www.tianzhiling.chat',
+  'https://oss.tianzhiling.chat',
 ]
 const scannableExtensions = new Set(['.js', '.json', '.wxml'])
 
@@ -34,7 +38,7 @@ let hasProductionOrigin = false
 
 for (const file of scannableFiles) {
   const content = await readFile(file, 'utf8')
-  hasProductionOrigin ||= content.includes('https://tianzhiling.chat')
+  hasProductionOrigin ||= content.includes(productionOrigin)
 
   for (const origin of forbiddenOrigins) {
     if (content.includes(origin)) {
@@ -45,12 +49,12 @@ for (const file of scannableFiles) {
 
 if (violations.length > 0) {
   throw new Error(
-    `发布包包含本地服务地址：\n${violations.map((item) => `- ${item}`).join('\n')}`
+    `发布包包含禁止地址：\n${violations.map((item) => `- ${item}`).join('\n')}`
   )
 }
 
 if (!hasProductionOrigin) {
-  throw new Error('发布包未包含生产接口地址 https://tianzhiling.chat')
+  throw new Error(`发布包未包含生产接口地址 ${productionOrigin}`)
 }
 
-console.log('微信小程序发布包检查通过：未发现本地服务地址。')
+console.log('微信小程序发布包检查通过：未发现本地或天之灵生产地址。')
