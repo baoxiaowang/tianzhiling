@@ -157,12 +157,9 @@ function buildExplicitProfile(agent: AgentEntity | null): string[] {
     return [];
   }
 
-  return [
-    formatValue('性格描述', agent.personalityTraits),
-    formatValue('语言习惯', agent.languageHabits),
-    formatValue('生活经历形成的表达底色', agent.lifeExperience),
-    formatValue('定制背景', agent.customContext),
-  ].filter((line): line is string => Boolean(line));
+  return [formatValue('定制背景', agent.customContext)].filter(
+    (line): line is string => Boolean(line)
+  );
 }
 
 function buildChatStyleEvidence(messages?: MessageEntity[]): string[] {

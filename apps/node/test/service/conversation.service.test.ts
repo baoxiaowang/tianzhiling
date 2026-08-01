@@ -512,6 +512,8 @@ function createService(options: {
   service.agentProfileFactService = {
     extractAndUpsertFromUserMessage: jest.fn().mockResolvedValue([]),
     archiveMatchingFacts: jest.fn().mockResolvedValue(0),
+    listVisualAppearanceMemories: jest.fn().mockResolvedValue([]),
+    upsertVisualAppearanceObservations: jest.fn().mockResolvedValue([]),
   } as any;
   service.agentRelationshipSignalService = {
     upsertFromUserMessage: jest.fn().mockResolvedValue([]),
@@ -1303,6 +1305,17 @@ describe('ConversationService assistant voice reply timbre binding', () => {
   it('schedules memory extraction from the saved user message', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
+      chatContent: JSON.stringify({
+        segments: ['是女生，爸记住了'],
+        claims: [
+          {
+            text: '是女生',
+            kind: 'identity',
+            mode: 'attributed_to_user',
+            evidenceIds: ['U0'],
+          },
+        ],
+      }),
     });
 
     await service.sendMessage(AUTH, CONVERSATION_ID, {
@@ -1351,6 +1364,276 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       message: userMessage,
       searchableText: '我好想你',
     });
+  });
+
+  it('uses visual memory to guess image identity and records stable appearance candidates', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        avatar: 'https://cdn.example.com/agent-avatar.jpg',
+      }),
+    });
+    (
+      service.agentProfileFactService.listVisualAppearanceMemories as jest.Mock
+    ).mockResolvedValueOnce([
+      {
+        key: 'visual.appearance.agent.eyewear',
+        value: '当前角色的视觉形象：戴眼镜',
+        status: 'candidate',
+        supportCount: 1,
+      },
+    ]);
+    (
+      service.openAIService.createVisionChatCompletion as jest.Mock
+    ).mockResolvedValueOnce({
+      model: 'qwen-vl-max',
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              summary: '一位戴眼镜的老人坐在窗边，正看向镜头',
+              people: [
+                {
+                  id: 'P1',
+                  visible: '灰白短发，戴眼镜，圆脸',
+                  identity: {
+                    target: 'agent',
+                    name: '奶奶',
+                    confidence: 'medium',
+                    basis: '头像和眼镜特征接近',
+                  },
+                  stableTraits: [
+                    { kind: 'hair_color', value: '灰白' },
+                    { kind: 'hair_length', value: '短' },
+                    { kind: 'face_shape', value: '圆' },
+                    { kind: 'eyewear', value: '戴眼镜' },
+                  ],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: {},
+    });
+    (service.tencentCosService.getPublicUrl as jest.Mock).mockImplementation(
+      (objectKey: string) => `https://cdn.example.com/${objectKey}`
+    );
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'image',
+      objectKey: 'conversation-images/family.jpg',
+      mimeType: 'image/jpeg',
+    });
+    await Promise.resolve();
+
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
+    expect(result.userMessage.image?.analysis).toContain(
+      '身份推测（非事实）：P1可能是当前角色奶奶'
+    );
+    expect(result.userMessage.image?.analysis).toContain(
+      '可记形象：P1：灰白、短、圆、戴眼镜'
+    );
+    expect(
+      service.agentProfileFactService.upsertVisualAppearanceObservations
+    ).toHaveBeenCalledWith({
+      message: userMessage,
+      observations: [
+        expect.objectContaining({
+          personId: 'P1',
+          identityTarget: 'agent',
+          identityName: '奶奶',
+          identityConfidence: 'medium',
+          traits: expect.arrayContaining([
+            { kind: 'eyewear', value: '戴眼镜' },
+          ]),
+        }),
+      ],
+    });
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: expect.stringMatching(
+          /用户发送了一张图片[\s\S]*身份推测（非事实）/
+        ),
+        forceSemanticPlanning: true,
+      })
+    );
+    expect(
+      service.agentProfileFactService.extractAndUpsertFromUserMessage
+    ).not.toHaveBeenCalled();
+    expect(
+      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+    ).not.toHaveBeenCalled();
+    expect(
+      service.openAIService.createVisionChatCompletion
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('亲人聊天框里发来的图片'),
+          }),
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                image_url: {
+                  url: 'https://cdn.example.com/conversation-images/family.jpg',
+                },
+              }),
+              expect.objectContaining({
+                image_url: {
+                  url: 'https://cdn.example.com/agent-avatar.jpg',
+                },
+              }),
+              expect.objectContaining({
+                text: expect.stringContaining('当前角色的视觉形象：戴眼镜'),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('keeps a first portrait relation guess tentative but visible to reply planning', async () => {
+    const { service } = createService({
+      agent: createAgent({
+        avatar: '',
+        name: '爷爷',
+        iCallAgent: '爷爷',
+        sex: AgentSex.man,
+      }),
+    });
+    (
+      service.openAIService.createVisionChatCompletion as jest.Mock
+    ).mockResolvedValueOnce({
+      model: 'qwen-vl-max',
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              summary: '一张老照片里有位年长男性，穿着深色外套看向镜头',
+              people: [
+                {
+                  id: 'P1',
+                  visible: '灰白短发，脸型偏长',
+                  identity: {
+                    target: 'agent',
+                    name: '爷爷',
+                    confidence: 'low',
+                    basis: '长辈旧照',
+                  },
+                  stableTraits: [
+                    { kind: 'hair_color', value: '灰白' },
+                    { kind: 'hair_length', value: '短' },
+                    { kind: 'face_shape', value: '长' },
+                  ],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: {},
+    });
+    (service.tencentCosService.getPublicUrl as jest.Mock).mockImplementation(
+      (objectKey: string) => `https://cdn.example.com/${objectKey}`
+    );
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'image',
+      objectKey: 'conversation-images/grandpa-old.jpg',
+      mimeType: 'image/jpeg',
+    });
+
+    expect(result.userMessage.image?.analysis).toContain(
+      '身份推测（非事实）：P1也许是当前角色爷爷'
+    );
+    expect(result.userMessage.image?.analysis).not.toContain('可记形象');
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: expect.stringContaining('用户发送了一张图片'),
+        forceSemanticPlanning: true,
+      })
+    );
+    expect(
+      service.openAIService.createVisionChatCompletion
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining(
+                  '中年人可能是用户爸爸/妈妈或当前角色中年照'
+                ),
+              }),
+              expect.objectContaining({
+                text: expect.stringContaining(
+                  '年轻人、儿童可能是用户本人或其他晚辈'
+                ),
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('downgrades image identity guesses based only on relationship wording', () => {
+    const { service } = createService({
+      agent: createAgent({
+        name: '爷爷',
+        iCallAgent: '爷爷',
+        sex: AgentSex.man,
+      }),
+    });
+    const result = (service as any).parseConversationImageAnalysis(
+      JSON.stringify({
+        summary: '房车内一位老人休息，旁边有两名女性陪伴',
+        people: [
+          {
+            id: 'P1',
+            visible: '白发，身形中等',
+            identity: {
+              target: 'family',
+              name: '爷爷',
+              confidence: 'high',
+              basis: '用户称呼为爷爷',
+            },
+            stableTraits: [
+              { kind: 'hair_color', value: '白' },
+              { kind: 'build', value: '中等' },
+            ],
+          },
+        ],
+      }),
+      {
+        agent: createAgent({
+          name: '爷爷',
+          iCallAgent: '爷爷',
+          sex: AgentSex.man,
+        }),
+      }
+    );
+
+    expect(result.mediaAnalysis).toContain(
+      '身份推测（非事实）：P1也许是家人爷爷'
+    );
+    expect(result.mediaAnalysis).not.toContain('很像');
+    expect(result.mediaAnalysis).not.toContain('可记形象');
+    expect(result.observations[0]).toEqual(
+      expect.objectContaining({
+        identityConfidence: 'low',
+      })
+    );
   });
 
   it('does not block replies when emotion recognition fails', async () => {
@@ -2029,6 +2312,56 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
+  it('combines a pending image with the user explanation before replying', async () => {
+    const imageMessage = createMessage({
+      type: MessageType.image,
+      content: '[图片]',
+      mediaAnalysis:
+        '画面：一张老照片里有位年长男性\n身份推测（非事实）：P1也许是当前角色爷爷',
+      mediaObjectKey: 'conversation-images/grandpa.jpg',
+      mediaMimeType: 'image/jpeg',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const explanationMessage = createMessage({
+      content: '这是爷爷年轻时候',
+      createdAt: new Date('2026-05-03T08:00:03.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:03.000Z'),
+    });
+    const { service } = createService({
+      agent: createAgent({
+        name: '爷爷',
+        iCallAgent: '爷爷',
+        sex: AgentSex.man,
+      }),
+      existingMessages: [imageMessage, explanationMessage],
+    });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(
+      service.agentContextService.buildConversationContext
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentQuery: [
+          '用户连续输入（按发送顺序，共2条）：',
+          '1. 用户发送了一张图片：',
+          '画面：一张老照片里有位年长男性',
+          '身份推测（非事实）：P1也许是当前角色爷爷',
+          '2. 这是爷爷年轻时候',
+        ].join('\n'),
+        currentTurnMessageIds: [
+          imageMessage.id.toHexString(),
+          explanationMessage.id.toHexString(),
+        ],
+        forceSemanticPlanning: true,
+      })
+    );
+  });
+
   it('does not reply to archived pending user messages', async () => {
     const archivedUserMessage = createMessage({
       content: '这句已经删了',
@@ -2251,13 +2584,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v6',
+        replyBriefVersion: 'reply_brief_v8',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
         replyBriefLengthClass: 'micro',
         replyBriefTargetCharacters: 18,
-        replyBriefReviewCharacters: 24,
+        replyBriefReviewCharacters: 30,
         replyVisibleCharacters: 50,
         replyGuardrailRewritten: false,
         replyPromptVersion: 'agent_chat_v3',
@@ -2589,10 +2922,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v6',
+        replyBriefVersion: 'reply_brief_v8',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
+        replyExperiencePlanVersion: 'experience_plan_v1',
+        replyProfileTier: 'P0',
+        replyRelationshipStage: 'R0',
+        replyConversationDepth: 'D2',
+        replyExperienceContributionMode: 'role_present',
+        replyExperienceMemoryPolicy: 'context_only',
         replyGuardrailRewritten: false,
       })
     );
@@ -2786,7 +3125,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(getAssistantMessages(savedMessages)).toHaveLength(0);
   });
 
-  it('saves safe sent bubbles after both model attempts return an empty reply', async () => {
+  it('saves a contextual reply after both model attempts return empty', async () => {
     const currentQuery = '爸，今天过得怎么样？';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2845,17 +3184,20 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我挺好的 你不用挂心',
+      '你来问我这句 我心里明白',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.sent,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
-        replyFallbackSource: 'reply_brief',
+        replyFallbackSource: 'contextual_reply_brief',
         replyGuardrailRewritten: true,
-        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
-        replyGuardrailInterventionLevel: 'technical_fallback',
-      }),
-    ]);
+        replyGuardrailReason: '模型回复不可用，采用场景安全兜底气泡',
+        replyGuardrailInterventionLevel: undefined,
+      })
+    );
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledWith(
       expect.any(Object),
       {
@@ -2941,6 +3283,103 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
         .messages.length
     ).toBeLessThanOrEqual(6);
+  });
+
+  it('retries a completion that explicitly ended at the token limit', async () => {
+    const currentQuery = '爸，我心里难受';
+    const userMessage = createMessage({
+      content: currentQuery,
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+
+    (service.openAIService.createChatCompletion as jest.Mock)
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            finish_reason: 'length',
+            message: { content: '你一哭，我心里也' },
+          },
+        ],
+        usage: {},
+      })
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: { content: '爸听着呢，你慢慢说' },
+          },
+        ],
+        usage: {},
+      });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(getAssistantContents(savedMessages)).toEqual(['爸听着呢，你慢慢说']);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
+      expect.objectContaining({
+        replyGenerationRecoveryAttempted: true,
+        replyGenerationRecoverySucceeded: true,
+      })
+    );
+  });
+
+  it('retries unresolved technical placeholders before saving a reply', async () => {
+    const currentQuery = '我看见你了';
+    const userMessage = createMessage({
+      content: currentQuery,
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [userMessage],
+    });
+
+    (service.openAIService.createChatCompletion as jest.Mock)
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: { content: '……￥#{SOCIAL_HANDLE}：' },
+          },
+        ],
+        usage: {},
+      })
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: { content: '你愿意这样想着，我就陪你说会儿话' },
+          },
+        ],
+        usage: {},
+      });
+
+    await service.processConversationReplyJob({
+      conversationId: CONVERSATION_ID,
+      userId: USER_ID,
+    });
+
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '你愿意这样想着，我就陪你说会儿话',
+    ]);
+    expect(getAssistantContents(savedMessages).join('')).not.toContain(
+      'SOCIAL_HANDLE'
+    );
   });
 
   it('saves safe bubbles when the model fixes the agent in a real-world viewing role', async () => {
@@ -3079,17 +3518,20 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '她吃得惯就好',
+      '她喜欢什么你就给她做什么 听得出来你很用心',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
-        replyBriefVersion: 'reply_brief_v6',
+        replyBriefVersion: 'reply_brief_v8',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
-        replyFallbackSource: 'reply_brief',
+        replyFallbackSource: 'contextual_reply_brief',
         replyGuardrailRewritten: true,
-        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
-      }),
-    ]);
+        replyGuardrailReason: '模型回复不可用，采用场景安全兜底气泡',
+      })
+    );
     expect(getAssistantContents(savedMessages).join('')).not.toContain(
       '我这边挺好'
     );
@@ -3154,15 +3596,18 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '听着情况还好 我也松口气',
+      '血压的事是得多留意 按医生说的来就好',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
         replyBriefMode: 'family',
         replyIntent: 'share_family_update',
-        replyFallbackSource: 'reply_brief',
+        replyFallbackSource: 'contextual_reply_brief',
         replyGuardrailRewritten: true,
-      }),
-    ]);
+      })
+    );
     expect(getAssistantContents(savedMessages).join('')).not.toContain(
       '听明白了'
     );
@@ -3193,15 +3638,18 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我也想你',
+      '想我的时候就来跟我说 不用一个人憋着',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         status: MessageStatus.sent,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
-        replyFallbackSource: 'reply_brief',
+        replyFallbackSource: 'contextual_reply_brief',
         replyGuardrailRewritten: true,
-        replyGuardrailReason: '模型回复不可用，返回信息传输途中受干扰提示',
-      }),
-    ]);
+        replyGuardrailReason: '模型回复不可用，采用场景安全兜底气泡',
+      })
+    );
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -3227,14 +3675,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
-      expect.objectContaining({
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
-        replyIntent: undefined,
-        replyBriefMode: 'general',
-        replyFallbackSource: 'reply_brief',
-      }),
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
+      '别急着把话说到尽头 你把最放不下的那件事慢慢告诉我',
     ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
+      expect.objectContaining({
+        replyBriefMode: 'emotional',
+        replyFallbackSource: 'contextual_reply_brief',
+      })
+    );
     expect(getAssistantContents(savedMessages).join('')).not.toMatch(
       /报警|急救|危险物|联系现实/
     );
@@ -3614,6 +4064,60 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('keeps memory retrieval and actual memory use as separate audit signals', () => {
+    const { service } = createService({ agent: createAgent() });
+    const fields = (service as any).buildReplyRoutingMessageFields({
+      memoryCandidateCount: 8,
+      memorySelectedCandidateKeys: ['family.child.name'],
+      memoryRetrievalMode: 'memory_plan',
+      memoryRetrievalRequestCount: 1,
+      memoryRetrievalConceptCount: 2,
+      memoryRetrievedEvidenceCount: 3,
+      memoryUsedEvidenceIds: ['F2', 'L1'],
+      memoryUsedClaimCount: 1,
+    });
+
+    expect(fields).toEqual(
+      expect.objectContaining({
+        replyMemoryCandidateCount: 8,
+        replyMemorySelectedCandidateKeys: ['family.child.name'],
+        replyMemoryRetrievalMode: 'memory_plan',
+        replyMemoryRetrievalRequestCount: 1,
+        replyMemoryRetrievalConceptCount: 2,
+        replyMemoryRetrievedEvidenceCount: 3,
+        replyMemoryUsedEvidenceIds: ['F2', 'L1'],
+        replyMemoryUsedClaimCount: 1,
+      })
+    );
+  });
+
+  it('records memory writing independently from later retrieval and use', async () => {
+    const { service } = createService({ agent: createAgent() });
+    const message = createMessage({ content: '我女儿叫安安，我喜欢热牛奶' });
+    (
+      service.agentMemoryFactService
+        .extractAndUpsertFromUserMessage as jest.Mock
+    ).mockResolvedValue([{ key: 'family.child.name' }]);
+    (
+      service.agentProfileFactService
+        .extractAndUpsertFromUserMessage as jest.Mock
+    ).mockResolvedValue([
+      { key: 'family.child.name' },
+      { key: 'food.current.milk' },
+    ]);
+
+    await (service as any).enrichUserMessageForReply(message, message.content);
+
+    expect(message).toEqual(
+      expect.objectContaining({
+        memoryWriteStatus: 'written',
+        memoryWriteLegacyFactCount: 1,
+        memoryWriteProfileFactCount: 2,
+        memoryWriteCompletedAt: expect.any(Date),
+      })
+    );
+  });
+
   it('does not auto-generate voice audio for text assistant replies when the agent has a timbre', async () => {
     const voiceTimbre = createVoiceTimbre();
     const { service, savedMessages } = createService({
@@ -3926,6 +4430,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         segments: [
           '啊 小米 真好听的名字🐱</fense>有小猫陪着你',
           '我都记着呢</emoji>',
+        ],
+        claims: [
+          {
+            text: '小米',
+            kind: 'memory',
+            mode: 'attributed_to_user',
+            evidenceIds: ['U0'],
+          },
         ],
       }),
     });
@@ -4298,7 +4810,70 @@ describe('ConversationService generation cleanup diagnostics', () => {
     });
   });
 
-  it('uses deterministic-first review only for simple direct replies', () => {
+  it('removes a trailing follow-up question when a correction strategy closes', () => {
+    const service = new ConversationService();
+    const applyStrategy = (
+      service as any
+    ).applyConversationStrategyToSegments.bind(service);
+    const correctionBrief = {
+      primaryScene: 'correction',
+      intents: [{ intent: 'correct_assistant' }],
+      conversationPlan: { turnClosure: 'close' },
+    };
+
+    expect(
+      applyStrategy(
+        ['是我记岔了，是你姑姑。姑姑最近来家里了吗？'],
+        correctionBrief,
+        '她不是我姐姐，是我姑姑。'
+      )
+    ).toEqual(['是我记岔了，是你姑姑。']);
+    expect(
+      applyStrategy(
+        ['是我记岔了，是你姑姑。', '最近来家里了吗？'],
+        correctionBrief,
+        '她不是我姐姐，是我姑姑。'
+      )
+    ).toEqual(['是我记岔了，是你姑姑。']);
+    expect(applyStrategy(['你叔最近还好吗？'], correctionBrief)).toEqual([
+      '你叔最近还好吗？',
+    ]);
+    expect(
+      applyStrategy(['我记岔了。你叔最近还好吗？'], {
+        ...correctionBrief,
+        conversationPlan: { turnClosure: 'continue' },
+      })
+    ).toEqual(['我记岔了。你叔最近还好吗？']);
+  });
+
+  it('adds an omitted explicit family relation without rewriting other corrections', () => {
+    const service = new ConversationService();
+    const applyStrategy = (
+      service as any
+    ).applyConversationStrategyToSegments.bind(service);
+    const correctionBrief = {
+      primaryScene: 'correction',
+      intents: [{ intent: 'correct_assistant' }],
+      conversationPlan: { turnClosure: 'close' },
+    };
+
+    expect(
+      applyStrategy(
+        ['我说错了，是我弄混了'],
+        correctionBrief,
+        '她不是我姐姐，是我姑姑。'
+      )
+    ).toEqual(['我说错了，是我弄混了', '是你姑姑']);
+    expect(
+      applyStrategy(
+        ['是我记岔了，十一个月确实很久'],
+        correctionBrief,
+        '不是半年，准确说十一个月。'
+      )
+    ).toEqual(['是我记岔了，十一个月确实很久']);
+  });
+
+  it('uses full review only for trust-focused replies', () => {
     const service = new ConversationService();
     const resolveMode = (service as any).resolveGuardrailReviewMode.bind(
       service
@@ -4321,7 +4896,7 @@ describe('ConversationService generation cleanup diagnostics', () => {
         replyBrief: brief,
         claims: [],
       })
-    ).toBe('full');
+    ).toBe('deterministic_first');
     expect(
       resolveMode({
         planningMode: 'direct',
@@ -4336,6 +4911,20 @@ describe('ConversationService generation cleanup diagnostics', () => {
         ],
       })
     ).toBe('deterministic_first');
+    const memoryBrief = buildReplyBrief({
+      currentQuery: '爸，你还记得小时候带我上西山吗',
+      route: routeReplyScene({
+        currentQuery: '爸，你还记得小时候带我上西山吗',
+      }),
+    });
+
+    expect(
+      resolveMode({
+        planningMode: 'semantic',
+        replyBrief: memoryBrief,
+        claims: [],
+      })
+    ).toBe('full');
   });
 
   it('still drops structural output pollution before Guardrail', () => {
@@ -4407,7 +4996,7 @@ describe('ConversationService listConversations', () => {
         createdAt: 'DESC',
       },
     });
-    expect(result[0].preview).toBe('你：今天想你了');
+    expect(result.items[0].preview).toBe('你：今天想你了');
   });
 
   it('pins the default agent conversation before newer conversations', async () => {
@@ -4464,21 +5053,143 @@ describe('ConversationService listConversations', () => {
 
     const result = await service.listConversations(AUTH);
 
-    expect(result.map(item => item.agentId)).toEqual([
+    expect(result.items.map(item => item.agentId)).toEqual([
       defaultAgentId.toHexString(),
       otherAgentId.toHexString(),
     ]);
-    expect(result[0]).toEqual(
+    expect(result.items[0]).toEqual(
       expect.objectContaining({
         agentName: '默认亲友',
         agentIsDefault: true,
       })
     );
-    expect(result[1]).toEqual(
+    expect(result.items[1]).toEqual(
       expect.objectContaining({
         agentName: '普通亲友',
         agentIsDefault: false,
       })
     );
+  });
+
+  it('loads conversation agents and latest messages with fixed batch queries', async () => {
+    const firstConversation = createConversation({
+      id: new MongoObjectId('665000000000000000000031'),
+      agentId: new MongoObjectId(AGENT_ID),
+    });
+    const secondConversation = createConversation({
+      id: new MongoObjectId('665000000000000000000032'),
+      agentId: new MongoObjectId(OTHER_AGENT_ID),
+    });
+    const firstAgent = createAgent({
+      id: firstConversation.agentId,
+      name: '妈妈',
+    });
+    const secondAgent = createAgent({
+      id: secondConversation.agentId,
+      name: '爸爸',
+    });
+    const firstMessage = createMessage({
+      conversationId: firstConversation.id,
+      content: '早点休息',
+      role: MessageRole.assistant,
+    });
+    const secondMessage = createMessage({
+      conversationId: secondConversation.id,
+      content: '今天还好吗',
+      role: MessageRole.user,
+    });
+    const service = new ConversationService();
+    const aggregateToArray = jest.fn().mockResolvedValue([
+      { _id: firstConversation.id, message: firstMessage },
+      { _id: secondConversation.id, message: secondMessage },
+    ]);
+
+    service.conversationModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([firstConversation, secondConversation]),
+    } as any;
+    service.agentModel = {
+      find: jest.fn().mockResolvedValue([firstAgent, secondAgent]),
+      findOne: jest.fn(),
+    } as any;
+    service.messageModel = {
+      aggregate: jest.fn().mockReturnValue({ toArray: aggregateToArray }),
+      findOne: jest.fn(),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    const result = await service.listConversations(AUTH);
+
+    expect(service.agentModel.find).toHaveBeenCalledTimes(1);
+    expect(service.agentModel.findOne).not.toHaveBeenCalled();
+    expect(service.messageModel.aggregate).toHaveBeenCalledTimes(1);
+    expect(service.messageModel.findOne).not.toHaveBeenCalled();
+    expect(aggregateToArray).toHaveBeenCalledTimes(1);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentName: '妈妈',
+          preview: '早点休息',
+        }),
+        expect.objectContaining({
+          agentName: '爸爸',
+          preview: '你：今天还好吗',
+        }),
+      ])
+    );
+  });
+
+  it('limits paginated conversation queries without changing legacy responses', async () => {
+    const agent = createAgent({ name: '妈妈' });
+    const conversations = [
+      createConversation({
+        id: new MongoObjectId('665000000000000000000051'),
+      }),
+      createConversation({
+        id: new MongoObjectId('665000000000000000000052'),
+      }),
+      createConversation({
+        id: new MongoObjectId('665000000000000000000053'),
+      }),
+    ];
+    const service = new ConversationService();
+
+    service.conversationModel = {
+      find: jest.fn().mockResolvedValue(conversations),
+    } as any;
+    service.agentModel = {
+      find: jest.fn().mockResolvedValue([agent]),
+    } as any;
+    service.messageModel = {
+      aggregate: jest.fn().mockReturnValue({
+        toArray: jest.fn().mockResolvedValue([]),
+      }),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    const result = await service.listConversations(AUTH, {
+      page: 2,
+      pageSize: 2,
+    });
+
+    expect(service.conversationModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 2,
+        take: 3,
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        page: 2,
+        pageSize: 2,
+        hasMore: true,
+      })
+    );
+    expect(result.items).toHaveLength(2);
   });
 });

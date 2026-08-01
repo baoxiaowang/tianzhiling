@@ -74,17 +74,21 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.prompt).toContain('不要临时编造稳定性格');
   });
 
-  it('keeps explicit profile fields when a stored persona profile is empty', () => {
+  it('does not inject profile-page source paragraphs directly into persona', () => {
     const result = buildAgentPersonaPrompt({
       agent: {
         iCallAgent: '爸爸',
         personalityTraits: '嘴硬心软，说话直接',
+        languageHabits: '常说慢慢来',
+        lifeExperience: '年轻时做木匠',
         personaProfile: {},
       } as AgentEntity,
     });
 
-    expect(result.source).toBe('explicit_profile');
-    expect(result.prompt).toContain('嘴硬心软，说话直接');
+    expect(result.source).toBe('relationship_defaults');
+    expect(result.prompt).not.toContain('嘴硬心软，说话直接');
+    expect(result.prompt).not.toContain('常说慢慢来');
+    expect(result.prompt).not.toContain('年轻时做木匠');
   });
 
   it('marks a relationship-only fallback without claiming chat evidence', () => {

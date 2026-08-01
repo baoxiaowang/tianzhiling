@@ -5,6 +5,8 @@ import { ILogger } from '@midwayjs/logger';
 import COS = require('cos-nodejs-sdk-v5');
 import { AppError } from '../common/errors';
 
+const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
 export interface TencentCosConfig {
   enabled?: boolean;
   region?: string;
@@ -52,6 +54,12 @@ export interface TencentCosPutObjectResult {
   url: string;
 }
 
+export interface TencentCosGetObjectResult {
+  objectKey: string;
+  buffer: Buffer;
+  contentType?: string;
+}
+
 @Provide()
 export class TencentCosService {
   @Logger()
@@ -77,7 +85,9 @@ export class TencentCosService {
       request.expiresInSeconds
     );
     const contentType = this.normalizeContentType(request.contentType);
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'Cache-Control': IMMUTABLE_ASSET_CACHE_CONTROL,
+    };
     const domain = this.resolveSigningDomain();
 
     if (contentType) {
@@ -93,7 +103,7 @@ export class TencentCosService {
       Expires: expiresInSeconds,
       Protocol: this.resolveProtocol(),
       ...(domain ? { Domain: domain } : {}),
-      ...(contentType ? { Headers: { 'Content-Type': contentType } } : {}),
+      Headers: headers,
     });
 
     this.logger.info(
@@ -139,6 +149,7 @@ export class TencentCosService {
       Region: region,
       Key: objectKey,
       Body: input,
+      CacheControl: IMMUTABLE_ASSET_CACHE_CONTROL,
       ...(contentType ? { ContentType: contentType } : {}),
     });
 
@@ -177,6 +188,7 @@ export class TencentCosService {
       Region: region,
       Key: objectKey,
       Body: createReadStream(normalizedPath),
+      CacheControl: IMMUTABLE_ASSET_CACHE_CONTROL,
       ...(contentType ? { ContentType: contentType } : {}),
     });
 
@@ -187,6 +199,38 @@ export class TencentCosService {
     return {
       objectKey,
       url,
+    };
+  }
+
+  async getBuffer(objectKey: string): Promise<TencentCosGetObjectResult> {
+    const normalizedObjectKey = this.normalizeObjectKey(objectKey);
+    const client = this.getClient();
+    const bucket = this.getRequiredConfig('bucket', 'NODE_TENCENT_COS_BUCKET');
+    const region = this.getRequiredConfig('region', 'NODE_TENCENT_COS_REGION');
+    const result = await client.getObject({
+      Bucket: bucket,
+      Region: region,
+      Key: normalizedObjectKey,
+    });
+
+    if (!Buffer.isBuffer(result.Body) || result.Body.length === 0) {
+      throw new AppError(
+        'TENCENT_COS_EMPTY_OBJECT',
+        'Tencent COS object is empty',
+        422
+      );
+    }
+
+    this.logger.info(
+      '[tencent-cos] object downloaded, objectKey=%s, bytes=%s',
+      normalizedObjectKey,
+      result.Body.length
+    );
+
+    return {
+      objectKey: normalizedObjectKey,
+      buffer: result.Body,
+      contentType: result.headers?.['content-type'],
     };
   }
 
@@ -227,8 +271,6 @@ export class TencentCosService {
       );
     }
 
-    const domain = this.resolveSigningDomain();
-
     this.client = new COS({
       SecretId: this.getRequiredConfig(
         'secretId',
@@ -241,7 +283,6 @@ export class TencentCosService {
       ...(this.cosConfig?.securityToken?.trim()
         ? { SecurityToken: this.cosConfig.securityToken.trim() }
         : {}),
-      ...(domain ? { Domain: domain } : {}),
       Protocol: this.resolveProtocol(),
     });
 

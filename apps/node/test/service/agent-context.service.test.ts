@@ -18,6 +18,38 @@ import {
 } from '@tzl/entities';
 
 describe('AgentContextService', () => {
+  it('keeps only the current correction as assertable evidence after a fact reset', () => {
+    const service = new AgentContextService();
+    const evidence = (
+      service as unknown as {
+        buildEvidencePack: (options: Record<string, unknown>) => Array<{
+          id: string;
+          source: string;
+          text: string;
+          assertionPolicy: string;
+        }>;
+      }
+    ).buildEvidencePack({
+      currentQuery: '没有这回事，你别再编了',
+      recentMessages: [],
+      agent: null,
+      profileFacts: [],
+      hardFacts: [],
+      retrievedMemories: [],
+      suppressPriorFacts: true,
+      currentUserCanAssert: true,
+    });
+
+    expect(evidence).toEqual([
+      {
+        id: 'U0',
+        source: 'current_user',
+        text: '没有这回事，你别再编了',
+        assertionPolicy: 'can_assert',
+      },
+    ]);
+  });
+
   it('scopes memory candidates to the current request instead of old topics', () => {
     const service = new AgentContextService();
     const candidates = (
@@ -380,7 +412,7 @@ describe('AgentContextService', () => {
     );
     expect(context.diagnostics).toEqual(
       expect.objectContaining({
-        promptVersion: 'agent_chat_v3',
+        promptVersion: 'agent_chat_v5',
         historyMessageCount: 0,
         relevantMemoryCount: 3,
       })
@@ -495,13 +527,127 @@ describe('AgentContextService', () => {
     expect(context.messages[0].content).toContain(
       '后句改变核心意图时，以最新仍有效的核心意图为主'
     );
-    expect(
-      service.replyIntentClassifierService.classify
-    ).toHaveBeenCalledWith(
+    expect(service.replyIntentClassifierService.classify).toHaveBeenCalledWith(
       expect.objectContaining({
         currentQuery,
         recentMessages: [previousUser, assistantReply],
         forceSemanticPlanning: true,
+      })
+    );
+  });
+
+  it('keeps low-confidence image guesses question-first without user explanation', () => {
+    const service = new AgentContextService();
+    const prompt = (
+      service as unknown as {
+        buildConversationReadingPrompt: (
+          replyBrief: undefined,
+          currentQuery: string
+        ) => string;
+      }
+    ).buildConversationReadingPrompt(
+      undefined,
+      [
+        '用户发送了一张图片：',
+        '画面：照片里有一位中年男性站在门口',
+        '身份推测（非事实）：P1也许是家人爸爸，依据：年龄阶段和当前称呼',
+      ].join('\n')
+    );
+
+    expect(prompt).toContain('# 图片消息策略');
+    expect(prompt).toContain('低置信“也许是”只是试探线索');
+    expect(prompt).toContain('以试探性确认和提问为主');
+    expect(prompt).toContain('不要直接把人物关系说定');
+  });
+
+  it('uses user relation explanation after a low-confidence image guess', () => {
+    const service = new AgentContextService();
+    const prompt = (
+      service as unknown as {
+        buildConversationReadingPrompt: (
+          replyBrief: undefined,
+          currentQuery: string
+        ) => string;
+      }
+    ).buildConversationReadingPrompt(
+      undefined,
+      [
+        '用户连续输入（按发送顺序，共2条）：',
+        '1. 用户发送了一张图片：',
+        '画面：一张老照片里有位年长男性',
+        '身份推测（非事实）：P1也许是当前角色爷爷',
+        '2. 这是爷爷年轻时候',
+      ].join('\n')
+    );
+
+    expect(prompt).toContain('# 图片消息策略');
+    expect(prompt).toContain('以用户说明为准自然承接');
+    expect(prompt).not.toContain('用户本轮没有补充关系说明');
+  });
+
+  it('uses profile-source facts from memory instead of raw profile paragraphs', async () => {
+    const service = new AgentContextService();
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+    service.agentProfileFactService = {
+      listFactsForPrompt: jest.fn().mockResolvedValue([
+        {
+          type: 'preference',
+          key: 'profile_source.hobbies',
+          value: '当前角色兴趣爱好：下象棋',
+          polarity: 'positive',
+          confidence: 'confirmed',
+          priority: 2,
+          assertionPolicy: 'can_assert',
+        },
+      ]),
+    } as never;
+    service.agentEmotionStateService = {
+      getCurrentState: jest.fn().mockResolvedValue(null),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+    const agent = new AgentEntity();
+    agent.id = conversation.agentId;
+    agent.name = '爸爸';
+    agent.iCallAgent = '爸爸';
+    agent.lifeExperience = '原资料字段：年轻时在码头工作';
+    agent.personalityTraits = '原资料字段：脾气很急';
+    agent.languageHabits = '原资料字段：常说快一点';
+    agent.hobbies = '原资料字段：喜欢钓鱼';
+    agent.sharedMemories = '原资料字段：一起去过海边';
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent,
+      currentQuery: '爸，你以前有什么爱好',
+    });
+
+    const systemContent = String(context.messages[0].content);
+
+    expect(systemContent).toContain('当前角色兴趣爱好：下象棋');
+    expect(systemContent).not.toContain('原资料字段');
+    expect(
+      service.agentProfileFactService.listFactsForPrompt
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: conversation.userId,
+        agentId: conversation.agentId,
       })
     );
   });
@@ -556,7 +702,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain('证据只约束事实，不规定回复');
     expect(systemMessage.content).toContain('# 事实申报');
     expect(systemMessage.content).toContain('"claims"');
-    expect(systemMessage.content).toContain('生前共同往事始终按 memory 核验');
+    expect(systemMessage.content).toContain('证据没有的细节不写');
     expect(context.evidence[0]).toEqual(
       expect.objectContaining({
         id: 'U0',
@@ -1078,7 +1224,7 @@ describe('AgentContextService', () => {
         replyPlanningMode: 'direct',
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
-        strategyVersion: 'conversation_strategy_v2',
+        strategyVersion: 'conversation_strategy_v5',
         strategySource: 'direct_brief',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),
@@ -1087,6 +1233,7 @@ describe('AgentContextService', () => {
       })
     );
     expect(context.diagnostics.conversationMoveGoals.length).toBeGreaterThan(0);
+    expect(context.messages[0].content).toContain('体验：P0/R0/D0');
   });
 
   it('does not let a stale high-risk state override a new neutral message', async () => {
@@ -1417,6 +1564,32 @@ describe('AgentContextService', () => {
     expect(serializedMessages).toContain('这是真正的聊天内容');
     expect(serializedMessages).not.toContain('AI生成纪念合照');
     expect(serializedMessages).not.toContain('memorial-photos');
+  });
+
+  it('allows memory-grounded image identity guesses without presenting them as facts', () => {
+    const service = new AgentContextService();
+    const message = new MessageEntity();
+    Object.assign(message, {
+      role: MessageRole.user,
+      type: MessageType.image,
+      content: '[图片]',
+      mediaAnalysis:
+        '画面：一位戴眼镜的老人坐在窗边\n身份推测（非事实）：P1可能是当前角色奶奶',
+    });
+
+    const built = (service as any).buildImageChatMessage(message);
+
+    expect(built.content).toContain('亲人聊天里的记忆材料');
+    expect(built.content).toContain('当前角色口吻接住图片本身');
+    expect(built.content).toContain('只有图片理解明确写出“身份推测”');
+    expect(built.content).toContain('不能说成确定事实');
+    expect(built.content).toContain('“也许是”视为低置信');
+    expect(built.content).toContain('以试探性确认和提问为主');
+    expect(built.content).toContain('不要直接把人物关系说定');
+    expect(built.content).toContain('直接问这是谁');
+    expect(built.content).toContain('不得补编闺女、儿子、爸妈');
+    expect(built.content).toContain('不要说成识别失败');
+    expect(built.content).not.toContain('不要猜测图片中的人是谁');
   });
 
   it('does not include archived messages in recent chat history', async () => {

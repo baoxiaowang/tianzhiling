@@ -1,6 +1,51 @@
+export const AGENT_PROFILE_RETURNING_GREETING =
+  "你好，又见面了。我还记得你之前讲过的那些事。今天想从哪里继续，都可以。";
+
+export const AGENT_CREATE_MESSENGER_GREETING =
+  "你好，我是天之灵小使者。先告诉我，你想创建谁的天之灵？";
+export const AGENT_CREATE_NAME_QUESTION =
+  "你希望他在聊天列表里叫什么？建议用微信昵称或备注名，也可以使用你对他的称呼或真实姓名。";
+export const AGENT_CREATE_GENDER_QUESTION =
+  "谢谢，我记住了。他是男性还是女性？";
+export const AGENT_CREATE_USER_CALL_QUESTION =
+  "还差一个称呼。他平时会怎么叫你？";
+export const AGENT_CREATE_AVATAR_QUESTION =
+  "基本信息都记好了。为他选张头像吧，也可以稍后再补。";
+
+export type AgentCreateGuideField =
+  | "relationToThem"
+  | "agentName"
+  | "relationToMe";
+
+export type AgentCreateGuideGender = "male" | "female" | "";
+
+export interface AgentCreateGuideDraftDTO {
+  relationToThem: string;
+  realName: string;
+  agentName: string;
+  gender: AgentCreateGuideGender;
+  relationToMe: string;
+}
+
+export interface AgentCreateGuideRequestDTO {
+  input: string;
+  draft?: Partial<AgentCreateGuideDraftDTO>;
+  focusField?: AgentCreateGuideField | "";
+  turnCount?: number;
+}
+
+export interface AgentCreateGuideResultDTO {
+  reply: string;
+  draft: AgentCreateGuideDraftDTO;
+  coveredFields: AgentCreateGuideField[];
+  nextFocusField: AgentCreateGuideField | "";
+  isComplete: boolean;
+}
+
 export interface AgentProfileDTO {
   id: string;
   name: string;
+  realName?: string;
   avatar: string;
   sex: number;
   agentCallMe: string;
@@ -13,6 +58,8 @@ export interface AgentProfileDTO {
   languageHabits: string;
   hobbies: string;
   sharedMemories: string;
+  hasUnreadAgentHomeGuide: boolean;
+  hasUnreadAgentProfileGuide: boolean;
   status: number;
   isDefault: boolean;
   voiceTimbreId?: string;
@@ -26,6 +73,7 @@ export interface AgentListDTO {
 
 export interface CreateAgentDTO {
   name: string;
+  realName?: string;
   sex: number;
   iCallAgent: string;
   agentCallMe: string;
@@ -41,6 +89,7 @@ export interface UpdateAgentDefaultDTO {
 
 export interface UpdateAgentProfileDTO {
   name?: string;
+  realName?: string;
   sex?: number;
   iCallAgent?: string;
   agentCallMe?: string;
@@ -52,6 +101,42 @@ export interface UpdateAgentProfileDTO {
   languageHabits?: string;
   hobbies?: string;
   sharedMemories?: string;
+}
+
+export type AgentProfileMemoryField =
+  | "lifeExperience"
+  | "personalityTraits"
+  | "languageHabits"
+  | "hobbies"
+  | "sharedMemories";
+
+export type AgentProfileInterviewDraftDTO = Record<
+  AgentProfileMemoryField,
+  string
+>;
+
+export interface AgentProfileInterviewRequestDTO {
+  input: string;
+  draft?: Partial<AgentProfileInterviewDraftDTO>;
+  focusField?: AgentProfileMemoryField | "";
+  turnCount?: number;
+}
+
+export interface AgentProfileInterviewResultDTO {
+  reply: string;
+  draft: AgentProfileInterviewDraftDTO;
+  coveredFields: AgentProfileMemoryField[];
+  nextFocusField: AgentProfileMemoryField | "";
+  isComplete: boolean;
+}
+
+export interface AgentProfileMessengerSpeechRequestDTO {
+  text: string;
+}
+
+export interface AgentProfileMessengerSpeechResultDTO {
+  url: string;
+  voice: string;
 }
 
 export interface AdminAgentOwnerDTO {

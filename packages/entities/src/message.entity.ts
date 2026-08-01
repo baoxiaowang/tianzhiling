@@ -48,6 +48,7 @@ export interface MessageReplyMemoryPlan {
 @Index(["conversationId", "replyGroupId", "replySegmentIndex"], {
   background: true,
 })
+@Index(["traceId", "createdAt"], { background: true })
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()
@@ -85,6 +86,9 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   clientRequestId?: string;
+
+  @Column()
+  traceId?: string;
 
   @Column()
   quotedMessageId?: MongoObjectId;
@@ -252,6 +256,9 @@ export class MessageEntity extends BaseEntity {
   replyGuardrailReviewMode?: string;
 
   @Column()
+  replyGuardrailFocuses?: string[];
+
+  @Column()
   replyEvidenceCount?: number;
 
   @Column()
@@ -342,7 +349,109 @@ export class MessageEntity extends BaseEntity {
   replyPersonaSource?: string;
 
   @Column()
+  replyRealityDependencyKinds?: string[];
+
+  @Column()
+  replyCorrectionFactMode?: string;
+
+  @Column()
+  replyActiveContributionSource?: string;
+
+  @Column()
+  replyStrategyRepeatedMoves?: string[];
+
+  @Column()
+  replyStrategyAlternative?: string;
+
+  @Column()
+  replyExperiencePlanVersion?: string;
+
+  @Column()
+  replyProfileTier?: string;
+
+  @Column()
+  replyProfileScore?: number;
+
+  @Column()
+  replyProfileDimensionCount?: number;
+
+  @Column()
+  replyProfileTrustedFactCount?: number;
+
+  @Column()
+  replyRelationshipStage?: string;
+
+  @Column()
+  replyRelationshipMaturity?: string;
+
+  @Column()
+  replyRelationshipState?: string;
+
+  @Column()
+  replyRelationshipUserTurnCount?: number;
+
+  @Column()
+  replyRelationshipActiveDayCount?: number;
+
+  @Column()
+  replyConversationDepth?: string;
+
+  @Column()
+  replyExperienceFactScope?: string;
+
+  @Column()
+  replyExperienceIntimacyLevel?: string;
+
+  @Column()
+  replyExperienceContributionMode?: string;
+
+  @Column()
+  replyExperienceMemoryPolicy?: string;
+
+  @Column()
+  replyExperienceQuestionPolicy?: string;
+
+  @Column()
+  replyExperienceClosurePolicy?: string;
+
+  @Column()
   replyMemoryPlan?: MessageReplyMemoryPlan;
+
+  @Column()
+  replyMemoryCandidateCount?: number;
+
+  @Column()
+  replyMemorySelectedCandidateKeys?: string[];
+
+  @Column()
+  replyMemoryRetrievalMode?: string;
+
+  @Column()
+  replyMemoryRetrievalRequestCount?: number;
+
+  @Column()
+  replyMemoryRetrievalConceptCount?: number;
+
+  @Column()
+  replyMemoryRetrievedEvidenceCount?: number;
+
+  @Column()
+  replyMemoryUsedEvidenceIds?: string[];
+
+  @Column()
+  replyMemoryUsedClaimCount?: number;
+
+  @Column()
+  memoryWriteStatus?: string;
+
+  @Column()
+  memoryWriteLegacyFactCount?: number;
+
+  @Column()
+  memoryWriteProfileFactCount?: number;
+
+  @Column()
+  memoryWriteCompletedAt?: Date;
 
   @Column()
   createdAt: Date;

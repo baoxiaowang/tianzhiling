@@ -38,7 +38,7 @@ const LENGTH_BUDGETS: Record<
 > = {
   micro: {
     targetCharacters: 18,
-    reviewCharacters: 24,
+    reviewCharacters: 30,
   },
   brief: {
     targetCharacters: 28,
@@ -85,6 +85,13 @@ export function buildReplyLengthPlan(
     lengthClass = 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
+  } else if (
+    options.semanticPlan &&
+    options.assistantContribution === 'self_expression' &&
+    (options.continuationGoal === 'hold' ||
+      Array.from(options.currentQuery.replace(/\s/gu, '')).length <= 24)
+  ) {
+    lengthClass = 'standard';
   } else if (options.mode === 'emotional') {
     lengthClass = 'extended';
   } else if (options.semanticPlan && replyMoveCount >= 3) {

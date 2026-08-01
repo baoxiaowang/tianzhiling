@@ -75,4 +75,43 @@ describe('ConversationController', () => {
 
     expect(sendMessageAsync.mock.calls[0][2].clientRequestId).toHaveLength(64);
   });
+
+  it('combines messages, agent metadata, and quota in chat bootstrap', async () => {
+    const { controller } = createController();
+    const listMessages = jest.fn().mockResolvedValue({
+      items: [{ id: 'message-1' }],
+      pageSize: 30,
+      hasMore: true,
+    });
+    const getChatBootstrapMetadata = jest.fn().mockResolvedValue({
+      agent: { id: 'agent-1', name: '妈妈' },
+      chatQuota: { isVip: false, remainingCount: 2 },
+    });
+    controller.messageService = { listMessages } as any;
+    controller.conversationService = {
+      ...controller.conversationService,
+      getChatBootstrapMetadata,
+    } as any;
+
+    const result = await controller.getChatBootstrap('conversation-1', {
+      pageSize: '30',
+      lightweight: 'true',
+    });
+
+    expect(listMessages).toHaveBeenCalledWith(auth, 'conversation-1', {
+      pageSize: '30',
+      lightweight: 'true',
+    });
+    expect(getChatBootstrapMetadata).toHaveBeenCalledWith(
+      auth,
+      'conversation-1'
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        items: [{ id: 'message-1' }],
+        agent: { id: 'agent-1', name: '妈妈' },
+        chatQuota: { isVip: false, remainingCount: 2 },
+      })
+    );
+  });
 });

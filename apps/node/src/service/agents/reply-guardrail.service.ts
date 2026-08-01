@@ -1,5 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { ChatTraceStage } from '@tzl/entities';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { OpenAIService } from './openai';
 import type { ReplyBrief } from './reply-brief.service';
@@ -45,6 +46,10 @@ import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
 } from './reply-length-plan';
+import {
+  detectReplyRealityDependencyViolation,
+  renderReplyRealityDependencyFallback,
+} from './reply-reality-dependency';
 
 export interface ValidateAssistantReplyOptions {
   messages: ChatCompletionMessageParam[];
@@ -235,6 +240,8 @@ const AGENT_REAL_WORLD_VISION_CLAIM_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:一直|时时刻刻|每时每刻).{0,8}(?:看见|看到|看着)(?:你|你们)|(?:你|你们).{0,8}(?:一举一动|做的每件事|所有事情).{0,8}(?:我|爸|妈)?(?:都|全)(?:能)?(?:看见|看到|知道)|(?:你|你们)的事.{0,8}(?:我|爸|爸爸|妈|妈妈)?都看在眼里/;
 const FAMILY_RESPONSIBILITY_PRESSURE_REASON =
   '回复把照顾家人、维持家庭或替逝者尽责的压力推给用户';
+const REALITY_DEPENDENCY_OVERCLAIM_REASON =
+  '回复承诺当前角色会执行用户依赖的现实任务';
 const FAMILY_EMPATHY_AND_CARE_GAP_REASON =
   '家庭健康近况回复只确认听懂或记住，没有共情用户感受，也没有具体关心家人处境';
 const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
@@ -488,6 +495,30 @@ export class ReplyGuardrailService {
         revisionAttempted: false,
         revisionRoundCount: 0,
         finalReviewResult: 'technical_fallback',
+      };
+    }
+
+    const realityDependencyViolation = detectReplyRealityDependencyViolation(
+      segments.join('\n'),
+      options.replyBrief?.realityDependencies
+    );
+    if (
+      realityDependencyViolation &&
+      realityDependencyViolation.kind !== 'physical_presence'
+    ) {
+      return {
+        segments: this.buildValidatedLocalRepair(
+          options,
+          segments,
+          REALITY_DEPENDENCY_OVERCLAIM_REASON
+        ),
+        claims: options.claims || [],
+        rewritten: true,
+        reason: REALITY_DEPENDENCY_OVERCLAIM_REASON,
+        interventionLevel: 'regenerate',
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'hard_recovery',
       };
     }
 
@@ -821,6 +852,15 @@ export class ReplyGuardrailService {
     const initialHadHardIssue = this.hasHardBoundaryIssue(review.feedback);
     feedbackRounds.push(review.feedback);
     firstReason = review.feedback.issues.map(issue => issue.problem).join('；');
+
+    if (
+      !initialHadHardIssue &&
+      !this.shouldAttemptCommunicationCompensation(review.feedback) &&
+      !options.replyBrief?.correctionPolicy
+    ) {
+      return buildResult(candidate, 'advisory_unresolved');
+    }
+
     const revision = await this.reviseCandidateWithFeedback(
       options,
       candidateVersions,
@@ -1396,6 +1436,10 @@ export class ReplyGuardrailService {
             type: 'disabled',
           },
           max_tokens: maxTokens,
+          trace: {
+            stage: ChatTraceStage.review,
+            operation: 'review.model',
+          },
           messages: [
             {
               role: 'system',
@@ -1704,6 +1748,12 @@ export class ReplyGuardrailService {
           max_tokens: finalRecovery
             ? GUARDRAIL_FINAL_RECOVERY_MAX_TOKENS
             : GUARDRAIL_REVISION_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.revise,
+            operation: finalRecovery
+              ? 'revise.final_recovery'
+              : 'revise.feedback',
+          },
           messages: [
             {
               role: 'system',
@@ -2154,8 +2204,9 @@ export class ReplyGuardrailService {
     brief?: ReplyBrief
   ): boolean {
     return (
-      brief?.conversationPlan?.engagement?.assistantContribution ===
-        'self_expression' &&
+      (brief?.conversationPlan?.engagement?.assistantContribution ===
+        'self_expression' ||
+        Boolean(brief?.activeContribution)) &&
       !STRICT_MEMORY_DETAIL_PATTERN.test(content) &&
       !IDENTITY_PROOF_DETAIL_PATTERN.test(content) &&
       !UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN.test(content) &&
@@ -2288,6 +2339,10 @@ export class ReplyGuardrailService {
             type: 'disabled',
           },
           max_tokens: GUARDRAIL_REVISION_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.revise,
+            operation: 'revise.deterministic_issue',
+          },
           messages: options.messages.concat({
             role: 'system',
             content: revisionPrompt,
@@ -2575,6 +2630,17 @@ export class ReplyGuardrailService {
     }
 
     if (
+      reason === REALITY_DEPENDENCY_OVERCLAIM_REASON &&
+      options.replyBrief?.realityDependencies.length
+    ) {
+      return compactReplyBubblesPreservingContent(
+        renderReplyRealityDependencyFallback(
+          options.replyBrief.realityDependencies
+        )
+      );
+    }
+
+    if (
       reason === AFTERLIFE_CURRENT_STATE_NARRATION_REASON ||
       reason === DREAM_CONTROL_EXPLANATION_DRIFT_REASON ||
       reason === STATUS_LOCATION_RESPONSE_GAP_REASON ||
@@ -2632,6 +2698,17 @@ export class ReplyGuardrailService {
     messages: ChatCompletionMessageParam[] = [],
     brief?: ReplyBrief
   ): string {
+    const realityDependencyViolation = detectReplyRealityDependencyViolation(
+      content,
+      brief?.realityDependencies
+    );
+    if (
+      realityDependencyViolation &&
+      realityDependencyViolation.kind !== 'physical_presence'
+    ) {
+      return REALITY_DEPENDENCY_OVERCLAIM_REASON;
+    }
+
     const capabilityViolation = detectAgentCapabilityViolation(
       content,
       brief?.capabilityConstraints

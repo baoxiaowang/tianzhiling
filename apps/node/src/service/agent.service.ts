@@ -1,9 +1,17 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Inject, Provide } from '@midwayjs/core';
-import type { AgentProfileDTO } from '@tzl/shared';
+import type {
+  AgentCreateGuideResultDTO,
+  AgentProfileDTO,
+  AgentProfileInterviewResultDTO,
+  AgentProfileMessengerSpeechResultDTO,
+} from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
+  AgentCreateGuideDTO,
+  AgentProfileInterviewDTO,
+  AgentProfileMessengerSpeechDTO,
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
   UpdateAgentDefaultDTO,
@@ -21,8 +29,12 @@ import {
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { PostImageService } from './post-image.service';
+import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
+import { AgentCreateGuideService } from './agents/agent-create-guide.service';
+import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
 
 export type AgentProfile = AgentProfileDTO;
+export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
 
 @Provide()
 export class AgentService {
@@ -37,6 +49,31 @@ export class AgentService {
 
   @Inject()
   postImageService: PostImageService;
+
+  @Inject()
+  agentMemoryProfileService: AgentMemoryProfileService;
+
+  @Inject()
+  agentCreateGuideService: AgentCreateGuideService;
+
+  async interviewAgentCreation(
+    _auth: AuthenticatedUserPayload,
+    payload: AgentCreateGuideDTO
+  ): Promise<AgentCreateGuideResultDTO> {
+    return this.agentCreateGuideService.buildTurn({
+      input: payload.input,
+      draft: payload.draft,
+      focusField: payload.focusField,
+      turnCount: payload.turnCount,
+    });
+  }
+
+  async createAgentCreationMessengerSpeech(
+    _auth: AuthenticatedUserPayload,
+    payload: AgentProfileMessengerSpeechDTO
+  ): Promise<AgentProfileMessengerSpeechResultDTO> {
+    return this.agentMemoryProfileService.createMessengerSpeech(payload.text);
+  }
 
   async listAgents(auth: AuthenticatedUserPayload): Promise<AgentProfile[]> {
     const createdUserId = this.parseUserId(auth.sub);
@@ -67,12 +104,110 @@ export class AgentService {
     return this.buildAgentProfile(agent);
   }
 
+  async getAgentMemoryProfile(
+    auth: AuthenticatedUserPayload,
+    agentId: string
+  ): Promise<AgentProfile> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    const refreshedAgent =
+      await this.agentMemoryProfileService.refreshFromMemoryForView({
+        agent,
+        userId: createdUserId,
+      });
+
+    return this.buildAgentProfile(refreshedAgent);
+  }
+
+  async interviewAgentProfile(
+    auth: AuthenticatedUserPayload,
+    agentId: string,
+    payload: AgentProfileInterviewDTO
+  ): Promise<AgentProfileInterviewResultDTO> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return this.agentMemoryProfileService.buildInterviewTurn({
+      agent,
+      input: payload.input,
+      draft: payload.draft,
+      focusField: payload.focusField,
+      turnCount: payload.turnCount,
+    });
+  }
+
+  async createAgentProfileMessengerSpeech(
+    auth: AuthenticatedUserPayload,
+    agentId: string,
+    payload: AgentProfileMessengerSpeechDTO
+  ): Promise<AgentProfileMessengerSpeechResultDTO> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return this.agentMemoryProfileService.createMessengerSpeech(payload.text);
+  }
+
+  async markAgentGuideSeen(
+    auth: AuthenticatedUserPayload,
+    agentId: string,
+    target: string
+  ): Promise<AgentProfile> {
+    const createdUserId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    if (target !== 'agent-home' && target !== 'agent-profile') {
+      throw new AppError(
+        'INVALID_AGENT_GUIDE_TARGET',
+        'agent guide target is invalid',
+        400
+      );
+    }
+
+    if (!agent.profileCompletionGuideCreatedAt) {
+      return this.buildAgentProfile(agent);
+    }
+
+    const field =
+      target === 'agent-home'
+        ? 'agentHomeGuideSeenAt'
+        : 'agentProfileGuideSeenAt';
+
+    if (!agent[field]) {
+      agent[field] = new Date();
+      await this.agentModel.save(agent);
+    }
+
+    return this.buildAgentProfile(agent);
+  }
+
   async createAgent(
     auth: AuthenticatedUserPayload,
     payload: CreateAgentDTO
   ): Promise<AgentProfile> {
     const createdUserId = this.parseUserId(auth.sub);
     const name = this.normalizeName(payload?.name);
+    const realName = this.normalizeOptionalRealName(payload?.realName);
     const sex = this.normalizeSex(payload?.sex);
     const iCallAgent = this.normalizeCallName(
       payload?.iCallAgent,
@@ -87,6 +222,7 @@ export class AgentService {
     const agent = new AgentEntity();
     agent.createdUserId = createdUserId;
     agent.name = name;
+    agent.realName = realName;
     agent.avatar = '';
     agent.sex = sex;
     agent.iCallAgent = iCallAgent;
@@ -102,6 +238,7 @@ export class AgentService {
     agent.languageHabits = '';
     agent.hobbies = '';
     agent.sharedMemories = '';
+    agent.profileCompletionGuideCreatedAt = now;
     agent.status = 1;
     agent.isDefault = await this.shouldSetCreatedAgentAsDefault(createdUserId);
     agent.createdAt = now;
@@ -156,9 +293,16 @@ export class AgentService {
       payload?.description === undefined &&
       (!agent.description?.trim() ||
         agent.description.trim() === previousAutoDescription);
+    const profileMemorySources: Partial<
+      Record<AgentProfileMemorySourceField, string>
+    > = {};
 
     if (payload?.name !== undefined) {
       agent.name = this.normalizeName(payload.name);
+    }
+
+    if (payload?.realName !== undefined) {
+      agent.realName = this.normalizeOptionalRealName(payload.realName);
     }
 
     if (payload?.sex !== undefined) {
@@ -209,6 +353,7 @@ export class AgentService {
         payload.lifeExperience,
         'INVALID_AGENT_LIFE_EXPERIENCE'
       );
+      profileMemorySources.lifeExperience = agent.lifeExperience;
     }
 
     if (payload?.personalityTraits !== undefined) {
@@ -216,6 +361,7 @@ export class AgentService {
         payload.personalityTraits,
         'INVALID_AGENT_PERSONALITY_TRAITS'
       );
+      profileMemorySources.personalityTraits = agent.personalityTraits;
     }
 
     if (payload?.languageHabits !== undefined) {
@@ -223,6 +369,7 @@ export class AgentService {
         payload.languageHabits,
         'INVALID_AGENT_LANGUAGE_HABITS'
       );
+      profileMemorySources.languageHabits = agent.languageHabits;
     }
 
     if (payload?.hobbies !== undefined) {
@@ -230,6 +377,7 @@ export class AgentService {
         payload.hobbies,
         'INVALID_AGENT_HOBBIES'
       );
+      profileMemorySources.hobbies = agent.hobbies;
     }
 
     if (payload?.sharedMemories !== undefined) {
@@ -237,11 +385,21 @@ export class AgentService {
         payload.sharedMemories,
         'INVALID_AGENT_SHARED_MEMORIES'
       );
+      profileMemorySources.sharedMemories = agent.sharedMemories;
     }
 
     agent.updatedAt = new Date();
 
-    const savedAgent = await this.agentModel.save(agent);
+    let savedAgent = await this.agentModel.save(agent);
+    if (Object.keys(profileMemorySources).length) {
+      savedAgent = await this.agentMemoryProfileService.alignManualProfileEdits(
+        {
+          agent: savedAgent,
+          userId: createdUserId,
+          sources: profileMemorySources,
+        }
+      );
+    }
     return this.buildAgentProfile(savedAgent);
   }
 
@@ -369,6 +527,7 @@ export class AgentService {
     return {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
+      realName: agent.realName?.trim() || '',
       avatar: this.postImageService.resolveForResponse(
         agent.avatar?.trim() || ''
       ),
@@ -383,6 +542,12 @@ export class AgentService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
+      hasUnreadAgentHomeGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentHomeGuideSeenAt
+      ),
+      hasUnreadAgentProfileGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
+      ),
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
@@ -426,8 +591,13 @@ export class AgentService {
     iCallAgent: string;
     agentCallMe: string;
   }): string {
-    const sexText = options.sex === AgentSex.man ? '男性' : '女性';
-    return `${options.name}，${sexText}，你称呼TA为${options.iCallAgent}，TA会称呼你为${options.agentCallMe}。`;
+    const sexText =
+      options.sex === AgentSex.man
+        ? '男性'
+        : options.sex === AgentSex.woman
+        ? '女性'
+        : '性别未确定';
+    return `${options.name}，${sexText}，你称呼他为${options.iCallAgent}，他会称呼你为${options.agentCallMe}。`;
   }
 
   private normalizeName(rawName?: string): string {
@@ -447,8 +617,25 @@ export class AgentService {
     return name;
   }
 
+  private normalizeOptionalRealName(rawName?: string): string {
+    const name = rawName?.trim() || '';
+
+    if (name.length > 30) {
+      throw new AppError(
+        'INVALID_AGENT_REAL_NAME',
+        'agent real name must be 30 characters or fewer'
+      );
+    }
+
+    return name;
+  }
+
   private normalizeSex(rawSex?: number): AgentSex {
-    if (rawSex === AgentSex.woman || rawSex === AgentSex.man) {
+    if (
+      rawSex === AgentSex.woman ||
+      rawSex === AgentSex.man ||
+      rawSex === AgentSex.unknown
+    ) {
       return rawSex;
     }
 

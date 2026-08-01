@@ -1,6 +1,6 @@
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
-import { MessageEntity, MessageRole } from '@tzl/entities';
+import { ChatTraceStage, MessageEntity, MessageRole } from '@tzl/entities';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { OpenAIService } from './openai';
 import { resolveAgentCapabilityConstraints } from './agent-capability-policy';
@@ -51,6 +51,7 @@ import {
 } from './reply-intent';
 import { isForgetMemoryRequest } from './agent-memory-control';
 import { routeReplyScene } from './reply-scene-router';
+import { detectReplyRealityDependencies } from './reply-reality-dependency';
 
 interface ReplyIntentClassifierConfig {
   enabled?: boolean;
@@ -90,6 +91,7 @@ export interface ReplyPlanningDecision {
     | 'complex_scene'
     | 'engagement_friction'
     | 'capability_boundary'
+    | 'reality_dependency'
     | 'long_message'
     | 'multiple_questions'
     | 'unresolved_semantics'
@@ -121,7 +123,7 @@ const DIRECT_LOW_COMPLEXITY_SCENES: ReadonlySet<string> = new Set([
   'smalltalk',
 ]);
 const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
-  /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
+  /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你)|(?:你|您)(?:也)?(?:想我|爱我)(?:吗|不))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
   /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
@@ -160,10 +162,10 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
   '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
-  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先认错、停猜，用户未主动给出时不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为；不要把安慰、肯定、建议写成固定三连。',
+  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
   'conversationPlan.engagement 说明用户还在等什么。开放点未解决时 closureReadiness=blocked；要求多说时用 moves=self_disclose、assistantContribution=self_expression，当轮先说实际内容，承诺以后多说、解释沉默或让用户先说都不算完成。',
   '用户说话少、不想理、忘了、没人回应或重复请求时用 repairing/repair/blocked，并比较上轮实际回复与策略：avoidRepeatingMove 写明旧动作，mustContribute 写明本轮新动作。上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，必须新增关系态度或理解。仅在用户明确晚安、去忙、安静或结束时使用 closing/close/ready。',
-  '用户要求角色主动说时，self_expression 优先给符合人物的当下小内容、偏好或态度；可以合理想象离世世界，但不能写成和用户共同经历过的生前往事。',
+  '用户要求角色主动说时，self_expression 只给一个短小的角色侧当下片段；可想象离世世界，但不编用户偏好，不写成共同往事。',
   '“跟你说了也没用、讲了又有什么用、说了你也不懂”里的“V了也……”常省略“即使”：既评价前面已经发生的沟通，也表示即使继续说仍无效。结合最近回复判断为 withdrawing/repair/blocked；mustContribute 要写明如何用用户已经说过的具体内容改变回应，不再让用户继续说、重讲或证明自己，不以“你想说时我听着/我在”变体把表达责任推回用户。',
   'memoryPlan 只判断回复是否缺少用户个性化事实。当前消息或最近对话已给全时 complete；缺少时先列具体 missingConcepts，再用最多四个 queries 覆盖。不得重复查询最近对话已有事实。',
   '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
@@ -255,6 +257,10 @@ export class ReplyIntentClassifierService {
             type: 'json_object',
           },
           max_tokens: CLASSIFIER_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.plan,
+            operation: 'plan.intent_classifier',
+          },
           messages: [
             {
               role: 'system',
@@ -455,6 +461,10 @@ export class ReplyIntentClassifierService {
 
     if (options.memoryCandidates?.length) {
       return { mode: 'semantic', reason: 'memory_candidate' };
+    }
+
+    if (detectReplyRealityDependencies(currentQuery).length) {
+      return { mode: 'semantic', reason: 'reality_dependency' };
     }
 
     if ((deterministicIntent?.intents.length || 0) > 1) {

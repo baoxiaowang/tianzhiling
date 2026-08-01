@@ -1,5 +1,6 @@
-import { Config, Logger, Provide } from '@midwayjs/core';
+import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { ChatSpanAttributeValue, ChatTraceStage } from '@tzl/entities';
 import * as http from 'http';
 import * as https from 'https';
 import { OpenAI } from 'openai';
@@ -12,6 +13,7 @@ import { URL } from 'url';
 import { extractTranscriptionContent } from '../../common/asr-utils';
 import { AppError } from '../../common/errors';
 import { describeErrorForLog, truncateForLog } from '../../common/log-utils';
+import { ChatTraceService } from '../chat-trace.service';
 
 export interface OpenAIServiceConfig {
   enabled?: boolean;
@@ -55,6 +57,11 @@ export interface OpenAIChatRequest
   reasoningSplit?: boolean;
   thinking?: {
     type: 'enabled' | 'disabled';
+  };
+  trace?: {
+    stage?: ChatTraceStage;
+    operation?: string;
+    attributes?: Record<string, ChatSpanAttributeValue | undefined>;
   };
 }
 
@@ -127,6 +134,9 @@ export class OpenAIService {
 
   @Config('openai')
   openAIConfig: OpenAIServiceConfig;
+
+  @Inject()
+  chatTraceService: ChatTraceService;
 
   private client: OpenAI | null = null;
   private visionClient: OpenAI | null = null;
@@ -220,8 +230,11 @@ export class OpenAIService {
     }
 
     const client = this.getClient();
+    const trace = request.trace;
+    const providerRequest = { ...request };
+    delete providerRequest.trace;
     const body = {
-      ...request,
+      ...providerRequest,
       model: request.model?.trim() || this.getDefaultModel(),
       temperature: this.normalizeTemperature(request.temperature),
       top_p: this.normalizeTopP(request.topP),
@@ -242,7 +255,45 @@ export class OpenAIService {
       request.messages.length
     );
 
-    return client.chat.completions.create(body, options as never);
+    const createCompletion = async () =>
+      client.chat.completions.create(body, options as never);
+
+    if (!this.chatTraceService) {
+      return createCompletion();
+    }
+
+    const stage =
+      trace?.stage ||
+      this.chatTraceService.getCurrentStage() ||
+      ChatTraceStage.generate;
+    return this.chatTraceService.withSpan(
+      stage,
+      trace?.operation || 'model.chat_completion',
+      async recorder => {
+        recorder.setModelUsage({ model: body.model });
+        const response = await createCompletion();
+        recorder.setModelUsage({
+          model: response.model || body.model,
+          promptTokens: response.usage?.prompt_tokens,
+          completionTokens: response.usage?.completion_tokens,
+          totalTokens: response.usage?.total_tokens,
+        });
+        recorder.setResultCode(
+          response.choices?.[0]?.finish_reason || 'completed'
+        );
+        return response;
+      },
+      {
+        attributes: {
+          messageCount: request.messages.length,
+          maxTokens:
+            typeof request.max_tokens === 'number'
+              ? request.max_tokens
+              : undefined,
+          ...(trace?.attributes || {}),
+        },
+      }
+    );
   }
 
   async createVisionChatCompletion(

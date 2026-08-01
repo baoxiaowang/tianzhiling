@@ -62,6 +62,17 @@ export class PostImageService {
     );
   }
 
+  resolveFeedThumbnailForResponse(rawValue: string): string {
+    const resolvedUrl = this.resolveForResponse(rawValue);
+
+    if (!resolvedUrl || !this.extractTencentObjectKey(resolvedUrl)) {
+      return resolvedUrl;
+    }
+
+    const separator = resolvedUrl.includes('?') ? '&' : '?';
+    return `${resolvedUrl}${separator}imageMogr2/thumbnail/480x/format/jpg/quality/75`;
+  }
+
   private resolveTencentPublicUrl(objectKey: string): string {
     if (!this.tencentCosService.isEnabled()) {
       return '';

@@ -7,6 +7,8 @@ import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
   AgentEntity,
+  ChatSpanStatus,
+  ChatTraceStage,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationEntity,
@@ -50,7 +52,14 @@ import { AgentConversationSummaryService } from './agents/agent-conversation-sum
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { buildAgentPersonaPrompt } from './agents/agent-persona';
-import { AgentProfileFactService } from './agents/agent-profile-fact.service';
+import {
+  AgentProfileFactService,
+  AgentVisualAppearanceObservation,
+  AgentVisualAppearanceTrait,
+  AgentVisualAppearanceTraitKind,
+  AgentVisualIdentityConfidence,
+  AgentVisualIdentityTarget,
+} from './agents/agent-profile-fact.service';
 import { AgentRelationshipSignalService } from './agents/agent-relationship-signal.service';
 import { OpenAIService } from './agents/openai';
 import {
@@ -103,6 +112,7 @@ import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { BailianImageService } from './bailian-image.service';
+import { ChatTraceService } from './chat-trace.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -115,6 +125,7 @@ const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
 const MEMORIAL_PHOTO_REPLY_TOP_P = 0.8;
+const CONVERSATION_IMAGE_ANALYSIS_MAX_TOKENS = 700;
 const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
   /(?:闭上眼|夜里|晚上|屋里|房间|角落|床边|身边|旁边|耳边)[^，。！？!?]{0,36}(?:我就在|我会在|陪着你|守着你|等着你|回来了|回来)/,
   /(?:我|妈|妈妈|爸|爸爸|奶奶|爷爷)[^，。！？!?]{0,16}(?:能|会|准能|一定能|都能)(?:看到|看见)/,
@@ -145,6 +156,14 @@ const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
   vipLimit: 10,
 } as const;
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
+const CONVERSATION_IMAGE_ANALYSIS_SYSTEM_PROMPT = [
+  '理解聊天图片，严格输出JSON：{"summary":"可见画面摘要","people":[{"id":"P1","visible":"人物可见特征","identity":{"target":"agent|user|family|unknown","name":"","confidence":"high|medium|low","basis":"匹配依据"},"stableTraits":[{"kind":"hair_color|hair_length|face_shape|eyewear|facial_hair|build|distinctive","value":"短标准词"}]}]}。',
+  'summary只写主体、场景、动作、文字和情绪，80字内；people最多4人。',
+  '这是用户在亲人聊天框里发来的图片。可结合当前角色姓名、用户称呼、最近对话、参考头像和历史视觉记忆做关系候选；第一次没有历史视觉记忆时，根据聊天对象关系与人物年龄/性别/年代感只能给low置信候选。',
+  '不要因为聊天对象是谁就默认图中是TA；只有参考头像、历史视觉记忆、用户文字说明或照片文字能支持时，才可给medium/high。仅凭“用户称呼/当前角色/年龄阶段/关系推测”不能给medium/high。',
+  '只输出紧凑JSON，不要Markdown代码块，不要解释文字；字段值尽量短，避免超长输出。',
+  'stableTraits只留较稳定外形，不写衣服、动作、表情或背景，最多4项；value尽量用黑/灰白/白、短/中/长、圆/椭圆/方/长、戴眼镜、胡须、偏瘦/中等/偏壮等稳定词。',
+].join('\n');
 
 export interface ConversationSummary {
   id: string;
@@ -160,6 +179,18 @@ export interface ConversationSummary {
   createdAt: string;
 }
 
+export interface ListConversationsOptions {
+  page?: number | string;
+  pageSize?: number | string;
+}
+
+export interface ConversationListResult {
+  items: ConversationSummary[];
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}
+
 export interface SendConversationMessageResult {
   userMessage: ConversationMessageItem;
   assistantMessage?: ConversationMessageItem;
@@ -172,10 +203,15 @@ export interface ConversationReplyJobData {
   conversationId: string;
   userId: string;
   afterUserCreatedAt?: string;
+  traceId?: string;
+  enqueuedAt?: string;
+  triggerMessageIds?: string[];
 }
 
 export interface ProcessConversationReplyJobOptions {
   isFinalAttempt?: boolean;
+  attempt?: number;
+  queueJobId?: string;
 }
 
 export interface VoiceTranscriptionResult {
@@ -194,6 +230,26 @@ interface PreparedIncomingMessage {
   mediaDurationMs?: number;
   mediaAnalysis?: string;
   mediaTranscript?: string;
+  visualAppearanceObservations?: AgentVisualAppearanceObservation[];
+}
+
+interface ConversationImageIdentityGuess {
+  target: AgentVisualIdentityTarget;
+  name?: string;
+  confidence: AgentVisualIdentityConfidence;
+  basis?: string;
+}
+
+interface ConversationImagePersonAnalysis {
+  id: string;
+  visible: string;
+  identity: ConversationImageIdentityGuess;
+  stableTraits: AgentVisualAppearanceTrait[];
+}
+
+interface ConversationImageAnalysisResult {
+  mediaAnalysis: string;
+  observations: AgentVisualAppearanceObservation[];
 }
 
 interface SynthesizedAssistantVoiceReply {
@@ -294,6 +350,7 @@ interface ReplyRoutingAudit {
   communicationCompensationSucceeded?: boolean;
   guardrailFinalReviewResult?: string;
   guardrailReviewMode?: ReplyGuardrailReviewMode;
+  guardrailFocuses?: string[];
   guardrailFeedbackRounds?: GuardrailFeedback[];
   guardrailCandidateVersions?: string[][];
   guardrailRevisionRecords?: GuardrailRevisionRecord[];
@@ -315,6 +372,9 @@ interface ReplyRoutingAudit {
   memoryRetrievalMode?: 'memory_plan' | 'legacy_query' | 'suppressed';
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
+  memoryRetrievedEvidenceCount?: number;
+  memoryUsedEvidenceIds?: string[];
+  memoryUsedClaimCount?: number;
   replyPlanningMode?: string;
   replyPlanningReason?: string;
   replyIntentModelCallCount?: number;
@@ -341,10 +401,30 @@ interface ReplyRoutingAudit {
   personaActivations?: string[];
   personaSource?: string;
   personaEvidenceSnippetCount?: number;
+  realityDependencyKinds?: string[];
+  correctionFactMode?: string;
+  activeContributionSource?: string;
+  strategyRepeatedMoves?: string[];
+  strategyAlternative?: string;
+  experiencePlanVersion?: string;
+  profileTier?: string;
+  relationshipStage?: string;
+  conversationDepth?: string;
 }
 
 interface AfterReplyResult {
   assistantMessages: MessageEntity[];
+}
+
+interface PreparedChatReplyTrace {
+  traceId: string;
+  acceptedAt: Date;
+  triggerMessageIds: string[];
+}
+
+interface MemoryFactExtractionAudit {
+  succeeded: boolean;
+  count: number;
 }
 
 interface NonVipChatLimitRule {
@@ -370,6 +450,21 @@ export interface ConversationChatQuotaSnapshot {
   usedCount?: number;
   remainingCount?: number;
   trialDays?: number;
+}
+
+export interface ConversationChatBootstrapMetadata {
+  agent: {
+    id: string;
+    name: string;
+    avatar: string;
+    sex: number;
+    agentCallMe: string;
+    iCallAgent: string;
+    hasUnreadAgentHomeGuide: boolean;
+    hasUnreadAgentProfileGuide: boolean;
+    isDefault: boolean;
+  } | null;
+  chatQuota: ConversationChatQuotaSnapshot;
 }
 
 @Provide()
@@ -458,10 +553,20 @@ export class ConversationService {
   @Inject()
   redisService: RedisService;
 
+  @Inject()
+  chatTraceService: ChatTraceService;
+
   async listConversations(
-    auth: AuthenticatedUserPayload
-  ): Promise<ConversationSummary[]> {
+    auth: AuthenticatedUserPayload,
+    options: ListConversationsOptions = {}
+  ): Promise<ConversationListResult> {
     const userId = this.parseObjectId(auth.sub);
+    const pageSize = this.normalizeOptionalConversationPageSize(
+      options.pageSize
+    );
+    const page = pageSize
+      ? this.normalizeConversationPage(options.page)
+      : undefined;
     const conversations = await this.conversationModel.find({
       where: {
         userId,
@@ -469,40 +574,95 @@ export class ConversationService {
       order: {
         updatedAt: 'DESC',
       },
+      ...(pageSize && page
+        ? {
+            skip: (page - 1) * pageSize,
+            take: pageSize + 1,
+          }
+        : {}),
     });
-    const summaries = await Promise.all(
-      conversations.map(async conversation => {
-        const agent = await this.findAgentById(conversation.agentId);
-        const latestMessage = await this.findLatestMessage(conversation.id);
-        const agentId = this.stringifyObjectId(
-          agent?.id ?? conversation.agentId
-        );
+    const pageConversations = pageSize
+      ? conversations.slice(0, pageSize)
+      : conversations;
+    const [agentsById, latestMessagesByConversationId] = await Promise.all([
+      this.listAgentsByIds(pageConversations.map(item => item.agentId)),
+      this.listLatestMessagesByConversationIds(
+        pageConversations.map(item => item.id)
+      ),
+    ]);
+    const summaries = pageConversations.map(conversation => {
+      const agent = agentsById.get(
+        this.stringifyObjectId(conversation.agentId)
+      );
+      const latestMessage = latestMessagesByConversationId.get(
+        this.stringifyObjectId(conversation.id)
+      );
+      return this.buildConversationSummary(conversation, agent, latestMessage);
+    });
 
-        return {
-          id: this.stringifyObjectId(conversation.id),
-          agentId,
-          agentName: agent?.name?.trim() || '联系人资料暂不可用',
-          agentAvatar: this.postImageService.resolveForResponse(
-            agent?.avatar?.trim() || ''
-          ),
-          agentSex: agent?.sex ?? 0,
-          agentCallMe: agent?.agentCallMe?.trim() || '',
-          iCallAgent: agent?.iCallAgent?.trim() || '',
-          agentIsDefault: Boolean(agent?.isDefault),
-          preview: this.buildPreview(agent, latestMessage),
-          updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
-          createdAt: conversation.createdAt?.toISOString?.() ?? '',
-        };
-      })
-    );
-
-    return summaries.sort((left, right) => {
+    const items = summaries.sort((left, right) => {
       if (left.agentIsDefault !== right.agentIsDefault) {
         return left.agentIsDefault ? -1 : 1;
       }
 
       return right.updatedAt.localeCompare(left.updatedAt);
     });
+
+    return {
+      items,
+      ...(pageSize && page
+        ? {
+            page,
+            pageSize,
+            hasMore: conversations.length > pageSize,
+          }
+        : {}),
+    };
+  }
+
+  async getEntryConversation(
+    auth: AuthenticatedUserPayload
+  ): Promise<ConversationSummary | null> {
+    const userId = this.parseObjectId(auth.sub);
+    const defaultAgent = await this.agentModel.findOne({
+      where: {
+        createdUserId: userId,
+        isDefault: true,
+      },
+    });
+    let conversation = defaultAgent
+      ? await this.conversationModel.findOne({
+          where: {
+            userId,
+            agentId: defaultAgent.id,
+          },
+        })
+      : null;
+
+    if (!conversation) {
+      conversation = await this.conversationModel.findOne({
+        where: {
+          userId,
+        },
+        order: {
+          updatedAt: 'DESC',
+        },
+      });
+    }
+
+    if (!conversation) {
+      return null;
+    }
+
+    const agent =
+      defaultAgent &&
+      this.stringifyObjectId(defaultAgent.id) ===
+        this.stringifyObjectId(conversation.agentId)
+        ? defaultAgent
+        : await this.findAgentById(conversation.agentId);
+    const latestMessage = await this.findLatestMessage(conversation.id);
+
+    return this.buildConversationSummary(conversation, agent, latestMessage);
   }
 
   async sendMessage(
@@ -512,6 +672,10 @@ export class ConversationService {
   ): Promise<SendConversationMessageResult> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
     const before = await this.beforeReply(runtime, payload);
+    const trace =
+      !before.deferReply && !before.isDuplicate
+        ? await this.prepareChatReplyTrace(runtime, before, false)
+        : undefined;
 
     if (!before.isDuplicate) {
       if (!this.isExplicitMemoryControlRequest(before.searchableText)) {
@@ -526,20 +690,43 @@ export class ConversationService {
       return this.buildSendMessageResult(before);
     }
 
-    try {
-      const processed = await this.processReply(runtime, before);
-      const after = await this.afterReply(runtime, before, processed);
+    const execute = async () => {
+      try {
+        const processed = await this.processReply(runtime, before);
+        const after = await this.withTraceSpan(
+          ChatTraceStage.persistReply,
+          'persist.reply',
+          () => this.afterReply(runtime, before, processed)
+        );
+        await this.completeChatReplyTrace(trace, processed, after);
 
-      return this.buildSendMessageResult(before, after);
-    } catch (error) {
-      this.logger.error(
-        '[conversation] assistant reply generation failed, conversationId=%s, userId=%s, reason=%s',
-        this.stringifyObjectId(runtime.conversation.id),
-        auth.sub,
-        this.describeReplyError(error)
-      );
-      throw this.wrapReplyError(error);
+        return this.buildSendMessageResult(before, after);
+      } catch (error) {
+        if (trace) {
+          await this.chatTraceService?.markFailed(
+            trace.traceId,
+            error,
+            this.chatTraceService?.getCurrentStage()
+          );
+        }
+        this.logger.error(
+          '[conversation] assistant reply generation failed, conversationId=%s, userId=%s, reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          auth.sub,
+          this.describeReplyError(error)
+        );
+        throw this.wrapReplyError(error);
+      }
+    };
+
+    if (!trace || !this.chatTraceService) {
+      return execute();
     }
+
+    await this.chatTraceService.markRunning(trace.traceId, { attempt: 1 });
+    return this.chatTraceService.runWithTrace(trace.traceId, execute, {
+      attempt: 1,
+    });
   }
 
   async sendMessageAsync(
@@ -555,15 +742,47 @@ export class ConversationService {
       type: messageType,
     });
     const shouldReply = !before.deferReply;
+    const trace = shouldReply
+      ? await this.prepareChatReplyTrace(runtime, before, true)
+      : undefined;
 
     if (shouldReply) {
       const enqueued = await this.enqueueConversationReplyJob({
         conversationId: this.stringifyObjectId(runtime.conversation.id),
         userId: auth.sub,
+        traceId: trace?.traceId,
+        enqueuedAt: trace?.acceptedAt.toISOString(),
+        triggerMessageIds: trace?.triggerMessageIds,
       });
 
       if (!enqueued) {
-        const after = await this.afterReplyFailed(runtime);
+        const persistFailedReply = () =>
+          this.withTraceSpan(
+            ChatTraceStage.persistReply,
+            'persist.failed_reply',
+            () => this.afterReplyFailed(runtime)
+          );
+        const after =
+          trace && this.chatTraceService
+            ? await this.chatTraceService.runWithTrace(
+                trace.traceId,
+                persistFailedReply
+              )
+            : await persistFailedReply();
+        if (trace) {
+          await this.chatTraceService?.markCompleted(trace.traceId, {
+            responseCompletedAt: new Date(),
+            replyMessageIds: after.assistantMessages.map(message =>
+              this.stringifyObjectId(message.id)
+            ),
+            acceptedAt: trace.acceptedAt,
+          });
+          await this.chatTraceService?.markFailed(
+            trace.traceId,
+            'QUEUE_UNAVAILABLE',
+            ChatTraceStage.queueWait
+          );
+        }
 
         return this.buildSendMessageResult(before, after);
       }
@@ -588,6 +807,66 @@ export class ConversationService {
     data: ConversationReplyJobData,
     options: ProcessConversationReplyJobOptions = {}
   ): Promise<void> {
+    if (!this.chatTraceService) {
+      return this.processConversationReplyJobCore(data, options);
+    }
+
+    const workerStartedAt = new Date();
+    const traceId = await this.chatTraceService.ensureTrace({
+      traceId: data.traceId,
+      conversationId: data.conversationId,
+      userId: data.userId,
+      triggerMessageIds: data.triggerMessageIds,
+      queueJobId: options.queueJobId,
+      acceptedAt: this.parseOptionalDate(data.enqueuedAt),
+      releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+    });
+    const tracedData = { ...data, traceId };
+
+    return this.chatTraceService.runWithTrace(
+      traceId,
+      async () => {
+        const queueStartedAt =
+          this.parseOptionalDate(data.enqueuedAt) || workerStartedAt;
+        this.chatTraceService.recordCompletedSpan({
+          stage: ChatTraceStage.queueWait,
+          operation: 'queue.wait',
+          startedAt: queueStartedAt,
+          completedAt: workerStartedAt,
+          attempt: options.attempt,
+          attributes: {
+            queueJobId: options.queueJobId,
+          },
+        });
+        await this.chatTraceService.markRunning(traceId, {
+          workerStartedAt,
+          attempt: options.attempt,
+          queueJobId: options.queueJobId,
+        });
+
+        try {
+          await this.processConversationReplyJobCore(tracedData, options);
+        } catch (error) {
+          if (options.isFinalAttempt) {
+            await this.chatTraceService.markFailed(
+              traceId,
+              error,
+              this.chatTraceService.getCurrentStage()
+            );
+          } else {
+            await this.chatTraceService.markQueued(traceId);
+          }
+          throw error;
+        }
+      },
+      { attempt: options.attempt }
+    );
+  }
+
+  private async processConversationReplyJobCore(
+    data: ConversationReplyJobData,
+    options: ProcessConversationReplyJobOptions = {}
+  ): Promise<void> {
     const conversationId = this.stringifyObjectId(
       this.parseObjectId(data.conversationId)
     );
@@ -596,6 +875,9 @@ export class ConversationService {
 
     if (!lock.acquired) {
       await this.enqueueConversationReplyJob(data);
+      if (data.traceId) {
+        await this.chatTraceService?.markQueued(data.traceId);
+      }
       return;
     }
 
@@ -604,9 +886,14 @@ export class ConversationService {
         await this.clearConversationReplyDebounce(conversationId);
       }
 
-      const conversation = await this.findConversationById(
-        this.parseObjectId(conversationId),
-        this.parseObjectId(userId)
+      const conversation = await this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.conversation',
+        () =>
+          this.findConversationById(
+            this.parseObjectId(conversationId),
+            this.parseObjectId(userId)
+          )
       );
 
       if (!conversation) {
@@ -615,16 +902,49 @@ export class ConversationService {
           conversationId,
           userId
         );
+        if (data.traceId) {
+          await this.chatTraceService?.markSkipped(
+            data.traceId,
+            'CONVERSATION_NOT_FOUND'
+          );
+        }
         return;
       }
 
-      const pendingUserMessages = await this.findPendingUserMessagesForReply({
-        conversationId: conversation.id,
-        afterUserCreatedAt: this.parseOptionalDate(data.afterUserCreatedAt),
-      });
+      const pendingUserMessages = await this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.pending_messages',
+        () =>
+          this.findPendingUserMessagesForReply({
+            conversationId: conversation.id,
+            afterUserCreatedAt: this.parseOptionalDate(data.afterUserCreatedAt),
+          })
+      );
 
       if (pendingUserMessages.length === 0) {
+        if (data.traceId) {
+          await this.chatTraceService?.markSkipped(
+            data.traceId,
+            'NO_PENDING_MESSAGES'
+          );
+        }
         return;
+      }
+
+      await this.attachTraceToMessages(data.traceId, pendingUserMessages);
+      if (data.traceId) {
+        await this.chatTraceService?.ensureTrace({
+          traceId: data.traceId,
+          conversationId,
+          userId,
+          agentId: this.stringifyObjectId(conversation.agentId),
+          triggerMessageIds: pendingUserMessages.map(message =>
+            this.stringifyObjectId(message.id)
+          ),
+          acceptedAt:
+            this.parseOptionalDate(data.enqueuedAt) ||
+            pendingUserMessages[0].createdAt,
+        });
       }
 
       const latestPendingUserMessage =
@@ -639,7 +959,11 @@ export class ConversationService {
           nonce: '',
         },
         conversation,
-        agent: await this.findAgentById(conversation.agentId),
+        agent: await this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.agent',
+          () => this.findAgentById(conversation.agentId)
+        ),
       };
       const before = this.buildQueuedBeforeReplyResult(pendingUserMessages);
 
@@ -658,14 +982,54 @@ export class ConversationService {
             userId,
             pendingUserMessages.length
           );
+          this.chatTraceService?.recordCompletedSpan({
+            stage: ChatTraceStage.generate,
+            operation: 'generate.draft_discarded',
+            startedAt: new Date(),
+            status: ChatSpanStatus.discarded,
+            attempt: options.attempt,
+            attributes: {
+              pendingMessageCount: pendingUserMessages.length,
+            },
+          });
           await this.enqueueConversationReplyJob({
+            ...data,
             conversationId,
             userId,
+            ...(data.traceId
+              ? {
+                  triggerMessageIds: pendingUserMessages.map(message =>
+                    this.stringifyObjectId(message.id)
+                  ),
+                }
+              : {}),
           });
+          if (data.traceId) {
+            await this.chatTraceService?.markQueued(data.traceId);
+          }
           return;
         }
 
-        await this.afterReply(runtime, before, processed);
+        const after = await this.withTraceSpan(
+          ChatTraceStage.persistReply,
+          'persist.reply',
+          () => this.afterReply(runtime, before, processed)
+        );
+        await this.completeChatReplyTrace(
+          data.traceId
+            ? {
+                traceId: data.traceId,
+                acceptedAt:
+                  this.parseOptionalDate(data.enqueuedAt) ||
+                  pendingUserMessages[0].createdAt,
+                triggerMessageIds: pendingUserMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                ),
+              }
+            : undefined,
+          processed,
+          after
+        );
       } catch (error) {
         this.logger.error(
           '[conversation-reply] assistant reply generation failed, conversationId=%s, userId=%s, reason=%s',
@@ -674,7 +1038,22 @@ export class ConversationService {
           this.describeReplyError(error)
         );
         if (options.isFinalAttempt) {
-          await this.afterReplyFailed(runtime);
+          const failedAfter = await this.withTraceSpan(
+            ChatTraceStage.persistReply,
+            'persist.failed_reply',
+            () => this.afterReplyFailed(runtime)
+          );
+          if (data.traceId) {
+            await this.chatTraceService?.markCompleted(data.traceId, {
+              responseCompletedAt: new Date(),
+              replyMessageIds: failedAfter.assistantMessages.map(message =>
+                this.stringifyObjectId(message.id)
+              ),
+              acceptedAt:
+                this.parseOptionalDate(data.enqueuedAt) ||
+                pendingUserMessages[0].createdAt,
+            });
+          }
         }
         throw this.wrapReplyError(error);
       }
@@ -704,6 +1083,40 @@ export class ConversationService {
     const runtime = await this.createReplyRuntime(auth, conversationId);
 
     return this.resolveCurrentChatQuota(runtime, new Date());
+  }
+
+  async getChatBootstrapMetadata(
+    auth: AuthenticatedUserPayload,
+    conversationId: string
+  ): Promise<ConversationChatBootstrapMetadata> {
+    const runtime = await this.createReplyRuntime(auth, conversationId);
+    const chatQuota = await this.resolveCurrentChatQuota(runtime, new Date());
+    const agent = runtime.agent;
+
+    return {
+      agent: agent
+        ? {
+            id: this.stringifyObjectId(agent.id),
+            name: agent.name?.trim() || '',
+            avatar: this.postImageService.resolveForResponse(
+              agent.avatar?.trim() || ''
+            ),
+            sex: agent.sex ?? 0,
+            agentCallMe: agent.agentCallMe?.trim() || '',
+            iCallAgent: agent.iCallAgent?.trim() || '',
+            hasUnreadAgentHomeGuide: Boolean(
+              agent.profileCompletionGuideCreatedAt &&
+                !agent.agentHomeGuideSeenAt
+            ),
+            hasUnreadAgentProfileGuide: Boolean(
+              agent.profileCompletionGuideCreatedAt &&
+                !agent.agentProfileGuideSeenAt
+            ),
+            isDefault: Boolean(agent.isDefault),
+          }
+        : null,
+      chatQuota,
+    };
   }
 
   async transcribeVoice(
@@ -1160,7 +1573,7 @@ export class ConversationService {
       };
     }
 
-    const messagePayload = await this.prepareIncomingMessage(payload);
+    const messagePayload = await this.prepareIncomingMessage(payload, runtime);
     await this.attachQuotedMessageSnapshot(
       runtime.conversation,
       messagePayload
@@ -1195,6 +1608,10 @@ export class ConversationService {
     });
 
     await this.touchConversation(runtime.conversation, now);
+    this.scheduleVisualAppearanceMemory(
+      userMessage,
+      messagePayload.visualAppearanceObservations
+    );
     this.queueMilvusIndexForMessage({
       message: userMessage,
       conversation: runtime.conversation,
@@ -1215,11 +1632,15 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string
   ): Promise<void> {
+    if (message.type === MessageType.image) {
+      return;
+    }
+
     const previousAssistantContent = this.isDeicticFactRejection(searchableText)
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
 
-    await Promise.all([
+    const [, memoryFacts, profileFacts] = await Promise.all([
       this.recognizeEmotionStateForUserMessage(message, searchableText),
       this.extractMemoryFactsForUserMessage(message, searchableText),
       this.extractProfileFactsForUserMessage(
@@ -1229,22 +1650,100 @@ export class ConversationService {
         previousAssistantContent
       ),
     ]);
+    const writtenCount = memoryFacts.count + profileFacts.count;
+    message.memoryWriteStatus =
+      memoryFacts.succeeded && profileFacts.succeeded
+        ? writtenCount > 0
+          ? 'written'
+          : 'none'
+        : memoryFacts.succeeded || profileFacts.succeeded
+        ? 'partial'
+        : 'failed';
+    message.memoryWriteLegacyFactCount = memoryFacts.count;
+    message.memoryWriteProfileFactCount = profileFacts.count;
+    message.memoryWriteCompletedAt = new Date();
+    await this.messageModel.save(message);
   }
 
   private scheduleUserMessageEnrichment(
     message: MessageEntity,
     searchableText: string
   ): void {
-    void this.enrichUserMessageForReply(message, searchableText).catch(
-      error => {
+    const traceId = message.traceId;
+    const enrich = async () => {
+      if (!traceId || !this.chatTraceService) {
+        return this.enrichUserMessageForReply(message, searchableText);
+      }
+
+      return this.chatTraceService.runDetachedWithTrace(traceId, () =>
+        this.chatTraceService.withSpan(
+          ChatTraceStage.asyncWrite,
+          'async_write.user_enrichment',
+          async recorder => {
+            await this.enrichUserMessageForReply(message, searchableText);
+            recorder.setAttribute(
+              'memoryWriteStatus',
+              message.memoryWriteStatus
+            );
+            recorder.setAttribute(
+              'legacyFactCount',
+              message.memoryWriteLegacyFactCount
+            );
+            recorder.setAttribute(
+              'profileFactCount',
+              message.memoryWriteProfileFactCount
+            );
+          }
+        )
+      );
+    };
+
+    void enrich()
+      .catch(error => {
         this.logger.warn(
           '[conversation] background user message enrichment failed, conversationId=%s, messageId=%s, reason=%s',
           this.stringifyObjectId(message.conversationId),
           this.stringifyObjectId(message.id),
           this.describeReplyError(error)
         );
-      }
-    );
+      })
+      .finally(() => {
+        if (traceId) {
+          void this.chatTraceService?.markBackgroundCompleted(
+            traceId,
+            new Date(),
+            message.createdAt
+          );
+        }
+      });
+  }
+
+  private scheduleVisualAppearanceMemory(
+    message: MessageEntity,
+    observations?: AgentVisualAppearanceObservation[]
+  ): void {
+    if (
+      !observations?.length ||
+      !this.agentProfileFactService ||
+      typeof this.agentProfileFactService.upsertVisualAppearanceObservations !==
+        'function'
+    ) {
+      return;
+    }
+
+    void this.agentProfileFactService
+      .upsertVisualAppearanceObservations({
+        message,
+        observations,
+      })
+      .catch(error => {
+        this.logger.warn(
+          '[conversation] visual appearance memory failed, conversationId=%s, messageId=%s, reason=%s',
+          this.stringifyObjectId(message.conversationId),
+          this.stringifyObjectId(message.id),
+          this.describeReplyError(error)
+        );
+      });
   }
 
   private async recognizeEmotionStateForUserMessage(
@@ -1274,16 +1773,18 @@ export class ConversationService {
   private async extractMemoryFactsForUserMessage(
     message: MessageEntity,
     searchableText: string
-  ): Promise<void> {
+  ): Promise<MemoryFactExtractionAudit> {
     if (!this.agentMemoryFactService) {
-      return;
+      return { succeeded: true, count: 0 };
     }
 
     try {
-      await this.agentMemoryFactService.extractAndUpsertFromUserMessage({
-        message,
-        searchableText,
-      });
+      const facts =
+        await this.agentMemoryFactService.extractAndUpsertFromUserMessage({
+          message,
+          searchableText,
+        });
+      return { succeeded: true, count: facts.length };
     } catch (error) {
       this.logger.warn(
         '[conversation] memory fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
@@ -1292,6 +1793,7 @@ export class ConversationService {
         this.stringifyObjectId(message.userId),
         this.describeReplyError(error)
       );
+      return { succeeded: false, count: 0 };
     }
   }
 
@@ -1300,18 +1802,20 @@ export class ConversationService {
     searchableText: string,
     explicitlyConfirmed = false,
     previousAssistantContent?: string
-  ): Promise<void> {
+  ): Promise<MemoryFactExtractionAudit> {
     if (!this.agentProfileFactService) {
-      return;
+      return { succeeded: true, count: 0 };
     }
 
     try {
-      await this.agentProfileFactService.extractAndUpsertFromUserMessage({
-        message,
-        searchableText,
-        explicitlyConfirmed,
-        previousAssistantContent,
-      });
+      const facts =
+        await this.agentProfileFactService.extractAndUpsertFromUserMessage({
+          message,
+          searchableText,
+          explicitlyConfirmed,
+          previousAssistantContent,
+        });
+      return { succeeded: true, count: facts.length };
     } catch (error) {
       this.logger.warn(
         '[conversation] profile fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
@@ -1320,6 +1824,7 @@ export class ConversationService {
         this.stringifyObjectId(message.userId),
         this.describeReplyError(error)
       );
+      return { succeeded: false, count: 0 };
     }
   }
 
@@ -1351,14 +1856,38 @@ export class ConversationService {
     message: MessageEntity,
     intent?: StructuredReplyIntent
   ): void {
-    void this.rememberRelationshipSignals(message, intent).catch(error => {
-      this.logger.warn(
-        '[conversation] relationship signal scheduling failed, conversationId=%s, messageId=%s, reason=%s',
-        this.stringifyObjectId(message.conversationId),
-        this.stringifyObjectId(message.id),
-        this.describeReplyError(error)
-      );
-    });
+    const traceId =
+      message.traceId || this.chatTraceService?.getCurrentTraceId();
+    const persist = () => this.rememberRelationshipSignals(message, intent);
+    const scheduled =
+      traceId && this.chatTraceService
+        ? this.chatTraceService.runDetachedWithTrace(traceId, () =>
+            this.chatTraceService.withSpan(
+              ChatTraceStage.asyncWrite,
+              'async_write.relationship_signals',
+              persist
+            )
+          )
+        : persist();
+
+    void scheduled
+      .catch(error => {
+        this.logger.warn(
+          '[conversation] relationship signal scheduling failed, conversationId=%s, messageId=%s, reason=%s',
+          this.stringifyObjectId(message.conversationId),
+          this.stringifyObjectId(message.id),
+          this.describeReplyError(error)
+        );
+      })
+      .finally(() => {
+        if (traceId) {
+          void this.chatTraceService?.markBackgroundCompleted(
+            traceId,
+            new Date(),
+            message.createdAt
+          );
+        }
+      });
   }
 
   private async extractMemoryFactsForFeedback(
@@ -1830,28 +2359,42 @@ export class ConversationService {
       before.userMessage,
       before.searchableText
     );
+    const containsImage = currentTurnMessages.some(
+      message => message.type === MessageType.image
+    );
 
     try {
-      context = await this.agentContextService.buildConversationContext({
-        auth: runtime.auth,
-        conversation: runtime.conversation,
-        agent: runtime.agent,
-        currentQuery: before.searchableText,
-        currentTurnMessageIds: currentTurnMessages.map(message =>
-          this.stringifyObjectId(message.id)
-        ),
-        forceSemanticPlanning: currentTurnMessages.length > 1,
-        memoryControlResult,
-      });
+      context = await this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.build',
+        () =>
+          this.agentContextService.buildConversationContext({
+            auth: runtime.auth,
+            conversation: runtime.conversation,
+            agent: runtime.agent,
+            currentQuery: before.searchableText,
+            currentTurnMessageIds: currentTurnMessages.map(message =>
+              this.stringifyObjectId(message.id)
+            ),
+            forceSemanticPlanning:
+              currentTurnMessages.length > 1 || containsImage,
+            memoryControlResult,
+          })
+      );
     } catch (error) {
+      const fallbackRoute = routeReplyScene({
+        currentQuery: before.searchableText,
+      });
       const fallbackBrief = buildReplyBrief({
         currentQuery: before.searchableText,
+        intent: fallbackRoute.intent,
+        route: fallbackRoute,
       });
 
       return this.buildGenerationFailureReply(
         before.searchableText,
-        undefined,
-        undefined,
+        fallbackRoute,
+        fallbackRoute.intent,
         fallbackBrief,
         error,
         'context'
@@ -1941,6 +2484,10 @@ export class ConversationService {
           topP: ASSISTANT_REPLY_TOP_P,
           max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
           messages: context.messages,
+          trace: {
+            stage: ChatTraceStage.generate,
+            operation: 'generate.primary',
+          },
         },
         {
           timeout: ASSISTANT_REPLY_TIMEOUT_MS,
@@ -1955,6 +2502,7 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
+      this.assertAssistantCompletionNotTruncated(response);
       const parsedReply = this.parseAssistantReply(responseContent);
       const plannedSegments = this.materializeParticipationReplySegments(
         parsedReply.segments,
@@ -2002,6 +2550,10 @@ export class ConversationService {
               replyBrief,
               evidence: contextEvidence,
             }),
+            trace: {
+              stage: ChatTraceStage.generate,
+              operation: 'generate.recovery',
+            },
           },
           {
             timeout: ASSISTANT_REPLY_TIMEOUT_MS,
@@ -2016,6 +2568,7 @@ export class ConversationService {
           typeof response.choices?.[0]?.message?.content === 'string'
             ? response.choices[0].message.content
             : '';
+        this.assertAssistantCompletionNotTruncated(response);
         const parsedReply = this.parseAssistantReply(responseContent);
         const plannedSegments = this.materializeParticipationReplySegments(
           parsedReply.segments,
@@ -2084,7 +2637,6 @@ export class ConversationService {
     }
 
     const requestedGuardrailReviewMode = this.resolveGuardrailReviewMode({
-      planningMode: context.diagnostics?.replyPlanningMode,
       replyBrief,
       claims: replyClaims,
     });
@@ -2097,16 +2649,21 @@ export class ConversationService {
         evidence: contextEvidence,
         claims: replyClaims,
       }) ?? requestedGuardrailReviewMode;
-    const guarded = await this.validateAssistantReply({
-      contextMessages: context.messages,
-      userQuery: before.searchableText,
-      replySegments,
-      replyRoute: context.replyRoute,
-      replyBrief,
-      evidence: contextEvidence,
-      claims: replyClaims,
-      reviewMode: guardrailReviewMode,
-    });
+    const guarded = await this.withTraceSpan(
+      ChatTraceStage.review,
+      'review.reply',
+      () =>
+        this.validateAssistantReply({
+          contextMessages: context.messages,
+          userQuery: before.searchableText,
+          replySegments,
+          replyRoute: context.replyRoute,
+          replyBrief,
+          evidence: contextEvidence,
+          claims: replyClaims,
+          reviewMode: guardrailReviewMode,
+        })
+    );
     const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
       userQuery: before.searchableText,
       replySegments: guarded.segments,
@@ -2114,10 +2671,29 @@ export class ConversationService {
     if (guardedBubbleReflow.trace) {
       generationAttemptTraces.push(guardedBubbleReflow.trace);
     }
-    const participationResult = this.finalizeParticipationReplySegments(
+    const strategyAlignedSegments = this.applyConversationStrategyToSegments(
       guardedBubbleReflow.segments,
+      replyBrief,
+      before.searchableText
+    );
+    const participationResult = this.finalizeParticipationReplySegments(
+      strategyAlignedSegments,
       replyBrief.participationStrategy
     );
+    const finalClaims = guarded.claims || replyClaims;
+    const memoryUsedEvidenceIds = Array.from(
+      new Set(
+        finalClaims
+          .reduce<string[]>(
+            (ids, claim) => ids.concat(claim.evidenceIds || []),
+            []
+          )
+          .filter(id => /^(?:F|L)\d+$/.test(id))
+      )
+    );
+    const memoryUsedClaimCount = finalClaims.filter(claim =>
+      (claim.evidenceIds || []).some(id => /^(?:F|L)\d+$/.test(id))
+    ).length;
     const bubbleStructureIssues = Array.from(
       new Set(generatedBubbleReflow.issues.concat(guardedBubbleReflow.issues))
     );
@@ -2143,6 +2719,7 @@ export class ConversationService {
           guarded.communicationCompensationSucceeded,
         guardrailFinalReviewResult: guarded.finalReviewResult,
         guardrailReviewMode,
+        guardrailFocuses: replyBrief.guardrailFocuses,
         guardrailFeedbackRounds: guarded.feedbackRounds,
         guardrailCandidateVersions: guarded.candidateVersions,
         guardrailRevisionRecords: guarded.revisionRecords,
@@ -2161,8 +2738,10 @@ export class ConversationService {
         participationExecution: participationResult.execution,
         participationFallbackReason: participationResult.fallbackReason,
         evidenceCount: contextEvidence.length,
-        factClaimCount: (guarded.claims || replyClaims).length,
+        factClaimCount: finalClaims.length,
         unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
+        memoryUsedEvidenceIds,
+        memoryUsedClaimCount,
         ...context.diagnostics,
       },
     };
@@ -2194,6 +2773,7 @@ export class ConversationService {
         content: (message.content as string).trim().slice(0, 500),
       })) as ChatCompletionMessageParam[];
     const evidence = options.evidence.slice(0, 8).map(item => ({
+      id: item.id,
       source: item.source,
       assertionPolicy: item.assertionPolicy,
       text: item.text.slice(0, 160),
@@ -2343,8 +2923,12 @@ export class ConversationService {
     messages?: ChatCompletionMessageParam[],
     generationAttemptTraces: AssistantGenerationAttemptTrace[] = []
   ): ProcessReplyResult {
-    const fallback =
-      this.replyGuardrailService?.resolveTechnicalGenerationFailureReply();
+    const fallback = this.replyGuardrailService?.resolveGenerationFailureReply({
+      userQuery,
+      replyRoute,
+      replyBrief,
+      messages,
+    });
 
     if (!fallback?.segments.length) {
       throw error;
@@ -2364,7 +2948,7 @@ export class ConversationService {
         intent: replyIntent ?? replyRoute?.intent,
         route: replyRoute,
         brief: replyBrief,
-        fallbackSource: 'reply_brief',
+        fallbackSource: 'contextual_reply_brief',
         generationFailureStage: stage,
         generationFailureCode:
           this.resolveGenerationFailureCode(error) ||
@@ -2472,16 +3056,14 @@ export class ConversationService {
   }
 
   private resolveGuardrailReviewMode(options: {
-    planningMode?: string;
     replyBrief: ReplyBrief;
     claims: AssistantFactClaim[];
   }): ReplyGuardrailReviewMode {
-    return options.planningMode === 'direct' &&
-      options.replyBrief.riskLevel === 'none' &&
-      !options.replyBrief.strictGrounding &&
-      options.replyBrief.capabilityConstraints.length === 0
-      ? 'deterministic_first'
-      : 'full';
+    return options.replyBrief.guardrailFocuses.length ||
+      (options.replyBrief.factClaimMode === 'grounded' &&
+        !options.claims.length)
+      ? 'full'
+      : 'deterministic_first';
   }
 
   private async afterReply(
@@ -2528,14 +3110,32 @@ export class ConversationService {
       return;
     }
 
-    void this.agentConversationSummaryService
-      .refresh(conversation)
+    const traceId = this.chatTraceService?.getCurrentTraceId();
+    const refresh = () =>
+      this.agentConversationSummaryService.refresh(conversation);
+    const scheduled =
+      traceId && this.chatTraceService
+        ? this.chatTraceService.runDetachedWithTrace(traceId, () =>
+            this.chatTraceService.withSpan(
+              ChatTraceStage.asyncWrite,
+              'async_write.conversation_summary',
+              refresh
+            )
+          )
+        : refresh();
+
+    void scheduled
       .catch(error => {
         this.logger.warn(
           '[conversation] continuity summary refresh failed, conversationId=%s, reason=%s',
           this.stringifyObjectId(conversation.id),
           this.describeReplyError(error)
         );
+      })
+      .finally(() => {
+        if (traceId) {
+          void this.chatTraceService?.markBackgroundCompleted(traceId);
+        }
       });
   }
 
@@ -2562,6 +3162,105 @@ export class ConversationService {
     };
   }
 
+  private async prepareChatReplyTrace(
+    runtime: ReplyRuntime,
+    before: BeforeReplyResult,
+    includePendingMessages: boolean
+  ): Promise<PreparedChatReplyTrace | undefined> {
+    if (!this.chatTraceService) {
+      return undefined;
+    }
+
+    const currentMessages = includePendingMessages
+      ? await this.findPendingUserMessagesForReply({
+          conversationId: runtime.conversation.id,
+        })
+      : this.resolveCurrentTurnMessages(before);
+    if (
+      !currentMessages.some(
+        message =>
+          Boolean(message.id) &&
+          this.stringifyObjectId(message.id) ===
+            this.stringifyObjectId(before.userMessage.id)
+      )
+    ) {
+      currentMessages.push(before.userMessage);
+    }
+    currentMessages.sort(
+      (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+    );
+    const acceptedAt = currentMessages[0]?.createdAt || new Date();
+    const triggerMessageIds = currentMessages.map(message =>
+      this.stringifyObjectId(message.id)
+    );
+    const existingTraceId = currentMessages.find(
+      message => message.traceId
+    )?.traceId;
+    const traceId = await this.chatTraceService.ensureTrace({
+      traceId: existingTraceId,
+      conversationId: this.stringifyObjectId(runtime.conversation.id),
+      userId: this.stringifyObjectId(runtime.conversation.userId),
+      agentId: this.stringifyObjectId(runtime.conversation.agentId),
+      triggerMessageIds,
+      acceptedAt,
+      releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+    });
+    await this.attachTraceToMessages(traceId, currentMessages);
+
+    return { traceId, acceptedAt, triggerMessageIds };
+  }
+
+  private async attachTraceToMessages(
+    traceId: string | undefined,
+    messages: MessageEntity[]
+  ): Promise<void> {
+    if (!traceId) {
+      return;
+    }
+
+    for (const message of messages) {
+      if (message.traceId === traceId) {
+        continue;
+      }
+      message.traceId = traceId;
+      await this.messageModel.save(message);
+    }
+  }
+
+  private async completeChatReplyTrace(
+    trace: PreparedChatReplyTrace | undefined,
+    processed: ProcessReplyResult,
+    after: AfterReplyResult
+  ): Promise<void> {
+    if (!trace || !this.chatTraceService) {
+      return;
+    }
+
+    const firstMessage = after.assistantMessages[0];
+    await this.chatTraceService.markCompleted(trace.traceId, {
+      responseCompletedAt: new Date(),
+      replyMessageIds: after.assistantMessages.map(message =>
+        this.stringifyObjectId(message.id)
+      ),
+      replyGroupId: firstMessage?.replyGroupId,
+      promptVersion: processed.routing?.promptVersion,
+      strategyVersion: processed.routing?.strategyVersion,
+      acceptedAt: trace.acceptedAt,
+    });
+  }
+
+  private withTraceSpan<T>(
+    stage: ChatTraceStage,
+    operation: string,
+    task: () => Promise<T> | T
+  ): Promise<T> {
+    if (!this.chatTraceService) {
+      return Promise.resolve(task());
+    }
+
+    return this.chatTraceService.withSpan(stage, operation, () => task());
+  }
+
   private async enqueueConversationReplyJob(
     data: ConversationReplyJobData
   ): Promise<boolean> {
@@ -2574,8 +3273,26 @@ export class ConversationService {
       return false;
     }
 
-    const reusableJobId = this.buildConversationReplyJobId(data);
-    const delay = await this.resolveConversationReplyJobDelay(data);
+    let queuedData = data;
+    if (this.chatTraceService) {
+      const enqueuedAt = this.parseOptionalDate(data.enqueuedAt) || new Date();
+      const traceId = await this.chatTraceService.ensureTrace({
+        traceId: data.traceId,
+        conversationId: data.conversationId,
+        userId: data.userId,
+        triggerMessageIds: data.triggerMessageIds,
+        acceptedAt: enqueuedAt,
+        releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+      });
+      queuedData = {
+        ...data,
+        traceId,
+        enqueuedAt: enqueuedAt.toISOString(),
+      };
+    }
+
+    const reusableJobId = this.buildConversationReplyJobId(queuedData);
+    const delay = await this.resolveConversationReplyJobDelay(queuedData);
     const existingState = await this.removeReusableConversationReplyJob(
       queue,
       reusableJobId
@@ -2587,7 +3304,18 @@ export class ConversationService {
       await this.removeReusableConversationReplyJob(queue, jobId);
     }
 
-    await queue.addJobToQueue(data, {
+    if (queuedData.traceId) {
+      await this.chatTraceService?.ensureTrace({
+        traceId: queuedData.traceId,
+        conversationId: queuedData.conversationId,
+        userId: queuedData.userId,
+        triggerMessageIds: queuedData.triggerMessageIds,
+        queueJobId: jobId,
+        acceptedAt: this.parseOptionalDate(queuedData.enqueuedAt),
+      });
+    }
+
+    await queue.addJobToQueue(queuedData, {
       jobId,
       delay,
       attempts: 3,
@@ -2876,7 +3604,10 @@ export class ConversationService {
 
   private buildSearchableTextFromMessage(message: MessageEntity): string {
     if (message.type === MessageType.image) {
-      return message.mediaAnalysis?.trim() || message.content?.trim() || '';
+      return this.buildImageSearchableText(
+        message.mediaAnalysis,
+        message.content
+      );
     }
 
     if (message.type === MessageType.voice) {
@@ -2952,6 +3683,28 @@ export class ConversationService {
     return this.messageService.buildConversationMessageItem(legacyMessage);
   }
 
+  private buildConversationSummary(
+    conversation: ConversationEntity,
+    agent?: AgentEntity | null,
+    latestMessage?: MessageEntity | null
+  ): ConversationSummary {
+    return {
+      id: this.stringifyObjectId(conversation.id),
+      agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
+      agentName: agent?.name?.trim() || '联系人资料暂不可用',
+      agentAvatar: this.postImageService.resolveForResponse(
+        agent?.avatar?.trim() || ''
+      ),
+      agentSex: agent?.sex ?? 0,
+      agentCallMe: agent?.agentCallMe?.trim() || '',
+      iCallAgent: agent?.iCallAgent?.trim() || '',
+      agentIsDefault: Boolean(agent?.isDefault),
+      preview: this.buildPreview(agent, latestMessage),
+      updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
+      createdAt: conversation.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
   private buildPreview(
     agent?: AgentEntity | null,
     latestMessage?: MessageEntity | null
@@ -2992,6 +3745,23 @@ export class ConversationService {
     return '点击开始和 TA 对话';
   }
 
+  private normalizeOptionalConversationPageSize(
+    value?: number | string
+  ): number | undefined {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+
+    return Math.min(Math.floor(parsed), 50);
+  }
+
+  private normalizeConversationPage(value?: number | string): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 1;
+  }
+
   private normalizeMessageContent(rawValue?: string): string {
     const value = rawValue?.trim();
 
@@ -3013,7 +3783,8 @@ export class ConversationService {
   }
 
   private async prepareIncomingMessage(
-    payload?: SendConversationMessageDTO
+    payload: SendConversationMessageDTO | undefined,
+    runtime: ReplyRuntime
   ): Promise<PreparedIncomingMessage> {
     const message = this.normalizeIncomingMessage(payload);
 
@@ -3023,11 +3794,18 @@ export class ConversationService {
           ...message,
           mediaTranscript: await this.transcribeVoiceForConversation(message),
         };
-      case MessageType.image:
+      case MessageType.image: {
+        const imageAnalysis = await this.describeImageForConversation(
+          message,
+          runtime
+        );
+
         return {
           ...message,
-          mediaAnalysis: await this.describeImageForConversation(message),
+          mediaAnalysis: imageAnalysis?.mediaAnalysis,
+          visualAppearanceObservations: imageAnalysis?.observations,
         };
+      }
       case MessageType.text:
       default:
         return message;
@@ -3372,11 +4150,14 @@ export class ConversationService {
     return '.png';
   }
 
-  private async describeImageForConversation(payload: {
-    mediaUrl?: string;
-    mediaObjectKey?: string;
-    mediaMimeType?: string;
-  }): Promise<string | undefined> {
+  private async describeImageForConversation(
+    payload: {
+      mediaUrl?: string;
+      mediaObjectKey?: string;
+      mediaMimeType?: string;
+    },
+    runtime: ReplyRuntime
+  ): Promise<ConversationImageAnalysisResult | undefined> {
     const imageUrl =
       payload.mediaUrl?.trim() ||
       this.resolveMediaUrlFromObjectKey(payload.mediaObjectKey);
@@ -3386,31 +4167,59 @@ export class ConversationService {
     }
 
     try {
+      const visualMemories = await this.listVisualAppearanceMemoriesForImage(
+        runtime
+      );
+      const referenceAvatarUrl = this.resolveAgentAvatarReferenceUrl(
+        runtime.agent
+      );
+      const imageContent: Array<Record<string, unknown>> = [
+        {
+          type: 'text',
+          text: '待分析的用户聊天图片：',
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: imageUrl,
+          },
+        },
+      ];
+
+      if (referenceAvatarUrl && referenceAvatarUrl !== imageUrl) {
+        imageContent.push(
+          {
+            type: 'text',
+            text: '当前角色参考头像，仅用于判断“是否可能是当前角色”：',
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: referenceAvatarUrl,
+            },
+          }
+        );
+      }
+
+      imageContent.push({
+        type: 'text',
+        text: this.buildImageIdentityReference(runtime, visualMemories),
+      });
+
       const response = await this.openAIService.createVisionChatCompletion({
         model: this.openAIService.getVisionModel(),
         temperature: 0.2,
         topP: 0.8,
+        max_tokens: CONVERSATION_IMAGE_ANALYSIS_MAX_TOKENS,
         reasoningSplit: false,
         messages: [
           {
             role: 'system',
-            content:
-              '你是一个图片理解助手。请准确描述图片中可见的主体、场景、动作、文字、情绪和可能与聊天相关的重点。避免猜测人物身份、关系、姓名或职业，不要回答“这是谁”。只描述肉眼可见内容，使用简洁中文，控制在120字内，不要编造看不见的内容。',
+            content: CONVERSATION_IMAGE_ANALYSIS_SYSTEM_PROMPT,
           },
           {
             role: 'user',
-            content: [
-              {
-                type: 'image_url',
-                image_url: {
-                  url: imageUrl,
-                },
-              },
-              {
-                type: 'text',
-                text: '请理解这张用户准备发送给聊天对象的图片，并给出简洁描述。',
-              },
-            ],
+            content: imageContent,
           } as unknown as ChatCompletionMessageParam,
         ],
       });
@@ -3420,7 +4229,7 @@ export class ConversationService {
           ? response.choices[0].message.content.trim()
           : '';
 
-      return content || undefined;
+      return this.parseConversationImageAnalysis(content, runtime);
     } catch (error) {
       this.logger.warn(
         '[conversation] image analysis failed, objectKey=%s, url=%s, reason=%s',
@@ -3430,6 +4239,381 @@ export class ConversationService {
       );
       return undefined;
     }
+  }
+
+  private async listVisualAppearanceMemoriesForImage(
+    runtime: ReplyRuntime
+  ): Promise<
+    Array<{
+      value: string;
+      status?: string;
+      supportCount?: number;
+    }>
+  > {
+    if (
+      !this.agentProfileFactService ||
+      typeof this.agentProfileFactService.listVisualAppearanceMemories !==
+        'function'
+    ) {
+      return [];
+    }
+
+    try {
+      return await this.agentProfileFactService.listVisualAppearanceMemories({
+        userId: runtime.conversation.userId,
+        agentId: runtime.agent?.id ?? runtime.conversation.agentId,
+        limit: 8,
+      });
+    } catch (error) {
+      this.logger.warn(
+        '[conversation] visual appearance memory lookup failed, conversationId=%s, reason=%s',
+        this.stringifyObjectId(runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+      return [];
+    }
+  }
+
+  private buildImageIdentityReference(
+    runtime: ReplyRuntime,
+    visualMemories: Array<{
+      value: string;
+      status?: string;
+      supportCount?: number;
+    }>
+  ): string {
+    const agentName = runtime.agent?.name?.trim() || '当前角色';
+    const agentAddress = runtime.agent?.iCallAgent?.trim();
+    const lines = [
+      `身份参考：当前角色是${agentName}${
+        agentAddress && agentAddress !== agentName
+          ? `，用户通常称呼TA为${agentAddress}`
+          : ''
+      }。`,
+      this.buildImageRelationshipInferenceGuide(agentAddress || agentName),
+    ];
+
+    if (visualMemories.length) {
+      lines.push(
+        '历史视觉记忆（含候选，只能辅助比较）：',
+        ...visualMemories.slice(0, 8).map(memory => {
+          const state = memory.status === 'active' ? '重复观察' : '单次候选';
+          return `- [${state}] ${memory.value.trim().slice(0, 60)}`;
+        })
+      );
+    } else {
+      lines.push('历史视觉记忆：暂无。');
+    }
+
+    lines.push('请分析待分析图片，而不是把参考头像当成用户发送内容。');
+    return lines.join('\n');
+  }
+
+  private buildImageRelationshipInferenceGuide(userCallsAgent: string): string {
+    const relation = userCallsAgent.trim();
+    const isGrandparent = /^(?:爷爷|奶奶|外公|外婆|姥爷|姥姥|祖父|祖母)$/.test(
+      relation
+    );
+    const isParent = /^(?:爸爸|爸|父亲|妈妈|妈|母亲)$/.test(relation);
+    const isPartner = /^(?:老公|老婆|丈夫|妻子|爱人|伴侣)$/.test(relation);
+    const guide = [
+      '关系推测提示：人物年龄阶段、照片年代感和用户文字优先于聊天对象身份；不要只因当前角色是谁就把图中人物归为当前角色。',
+      '若人物明显比当前角色关系应有年龄更年轻，应优先考虑用户本人、用户父母、当前角色子女或其他家人；无法区分时用low或unknown。',
+      'family.name可填爸爸、妈妈、儿子、女儿、孙子、孙女、外孙、外孙女等常用称呼；用户本人请用target=user。',
+    ];
+
+    if (isGrandparent) {
+      guide.push(
+        '当前角色是祖辈时：老人旧照或有明确旧照年代感才优先候选当前角色；中年人可能是用户爸爸/妈妈或当前角色中年照；年轻人、儿童可能是用户本人或其他晚辈。'
+      );
+    } else if (isParent) {
+      guide.push(
+        '当前角色是父母时：中年或老年人可候选当前角色；年轻人、儿童可能是用户本人或兄弟姐妹；更年长的人可能是用户祖辈。'
+      );
+    } else if (isPartner) {
+      guide.push(
+        '当前角色是伴侣时：同龄成人且年代感匹配时才优先候选当前角色；儿童、老人或代际明显不符的人更可能是家人或未知。'
+      );
+    }
+
+    return guide.join('\n');
+  }
+
+  private resolveAgentAvatarReferenceUrl(agent: AgentEntity | null): string {
+    const avatar = agent?.avatar?.trim();
+
+    if (!avatar) {
+      return '';
+    }
+
+    const resolved = this.postImageService.resolveForResponse(avatar).trim();
+
+    if (/^https?:\/\//i.test(resolved)) {
+      return resolved;
+    }
+
+    const objectUrl = this.resolveMediaUrlFromObjectKey(avatar);
+    return /^https?:\/\//i.test(objectUrl) ? objectUrl : '';
+  }
+
+  private parseConversationImageAnalysis(
+    content: string,
+    runtime: ReplyRuntime
+  ): ConversationImageAnalysisResult | undefined {
+    const normalizedContent = content?.trim();
+
+    if (!normalizedContent) {
+      return undefined;
+    }
+
+    const parsed = this.parseAssistantReplyEnvelope(normalizedContent);
+
+    if (!parsed) {
+      return {
+        mediaAnalysis: normalizedContent.slice(0, 300),
+        observations: [],
+      };
+    }
+
+    const summary = this.normalizeImageAnalysisText(parsed.summary, 120);
+    const people = (Array.isArray(parsed.people) ? parsed.people : [])
+      .slice(0, 4)
+      .map((person, index) => this.normalizeImagePerson(person, index))
+      .filter((person): person is ConversationImagePersonAnalysis =>
+        Boolean(person)
+      );
+    const mediaAnalysis = this.formatConversationImageAnalysis(
+      summary,
+      people,
+      runtime.agent
+    );
+
+    if (!mediaAnalysis) {
+      return undefined;
+    }
+
+    return {
+      mediaAnalysis,
+      observations: people.map(person => ({
+        personId: person.id,
+        identityTarget: person.identity.target,
+        identityName: person.identity.name,
+        identityConfidence: person.identity.confidence,
+        traits: person.stableTraits,
+      })),
+    };
+  }
+
+  private normalizeImagePerson(
+    value: unknown,
+    index: number
+  ): ConversationImagePersonAnalysis | null {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+
+    const person = value as Record<string, unknown>;
+    const identity =
+      person.identity && typeof person.identity === 'object'
+        ? (person.identity as Record<string, unknown>)
+        : {};
+    const target = this.normalizeVisualIdentityTarget(identity.target);
+    const basis =
+      this.normalizeImageAnalysisText(identity.basis, 20) || undefined;
+    const confidence = this.constrainVisualIdentityConfidence({
+      target,
+      confidence: this.normalizeVisualIdentityConfidence(identity.confidence),
+      basis,
+    });
+    const stableTraits = (
+      Array.isArray(person.stableTraits) ? person.stableTraits : []
+    )
+      .map(trait => this.normalizeVisualAppearanceTrait(trait))
+      .filter((trait): trait is AgentVisualAppearanceTrait => Boolean(trait))
+      .slice(0, 4);
+
+    return {
+      id: this.normalizeImageAnalysisText(person.id, 8) || `P${index + 1}`,
+      visible: this.normalizeImageAnalysisText(person.visible, 60),
+      identity: {
+        target,
+        name: this.normalizeImageAnalysisText(identity.name, 16) || undefined,
+        confidence,
+        basis,
+      },
+      stableTraits,
+    };
+  }
+
+  private constrainVisualIdentityConfidence(options: {
+    target: AgentVisualIdentityTarget;
+    confidence: AgentVisualIdentityConfidence;
+    basis?: string;
+  }): AgentVisualIdentityConfidence {
+    if (
+      options.target === 'unknown' ||
+      options.confidence === 'low' ||
+      this.hasStrongVisualIdentityBasis(options.basis)
+    ) {
+      return options.confidence;
+    }
+
+    return this.hasWeakRelationshipOnlyIdentityBasis(options.basis)
+      ? 'low'
+      : options.confidence;
+  }
+
+  private hasStrongVisualIdentityBasis(value?: string): boolean {
+    return /参考头像|头像|历史视觉|视觉记忆|五官|脸型|眼镜|胡须|发型|相似|接近|特征|照片文字|用户文字|用户说明|明确说明/.test(
+      value || ''
+    );
+  }
+
+  private hasWeakRelationshipOnlyIdentityBasis(value?: string): boolean {
+    return /用户称呼|当前角色|聊天对象|关系推测|年龄阶段|年龄|性别|年代感|长辈|祖辈|父母|晚辈/.test(
+      value || ''
+    );
+  }
+
+  private normalizeVisualAppearanceTrait(
+    value: unknown
+  ): AgentVisualAppearanceTrait | null {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+
+    const trait = value as Record<string, unknown>;
+    const kind = this.normalizeVisualAppearanceTraitKind(trait.kind);
+    const traitValue = this.normalizeImageAnalysisText(trait.value, 24);
+
+    return kind && traitValue && !/不清楚|未知|无法判断/.test(traitValue)
+      ? { kind, value: traitValue }
+      : null;
+  }
+
+  private normalizeVisualAppearanceTraitKind(
+    value: unknown
+  ): AgentVisualAppearanceTraitKind | null {
+    switch (value) {
+      case 'hair_color':
+      case 'hair_length':
+      case 'face_shape':
+      case 'eyewear':
+      case 'facial_hair':
+      case 'build':
+      case 'distinctive':
+        return value;
+      default:
+        return null;
+    }
+  }
+
+  private normalizeVisualIdentityTarget(
+    value: unknown
+  ): AgentVisualIdentityTarget {
+    switch (value) {
+      case 'agent':
+      case 'user':
+      case 'family':
+      case 'unknown':
+        return value;
+      default:
+        return 'unknown';
+    }
+  }
+
+  private normalizeVisualIdentityConfidence(
+    value: unknown
+  ): AgentVisualIdentityConfidence {
+    switch (value) {
+      case 'high':
+      case 'medium':
+      case 'low':
+        return value;
+      default:
+        return 'low';
+    }
+  }
+
+  private normalizeImageAnalysisText(value: unknown, limit: number): string {
+    return typeof value === 'string'
+      ? value.replace(/\s+/g, ' ').trim().slice(0, limit)
+      : '';
+  }
+
+  private formatConversationImageAnalysis(
+    summary: string,
+    people: ConversationImagePersonAnalysis[],
+    agent: AgentEntity | null
+  ): string {
+    const lines = summary ? [`画面：${summary}`] : [];
+    const identityGuesses = people
+      .filter(person => person.identity.target !== 'unknown')
+      .map(person => {
+        const subject = this.formatImageIdentitySubject(person.identity, agent);
+        const wording = this.formatImageIdentityConfidenceWording(
+          person.identity.confidence
+        );
+        const basis = person.identity.basis
+          ? `，依据：${person.identity.basis}`
+          : '';
+        return `${person.id}${wording}${subject}${basis}`;
+      });
+
+    if (identityGuesses.length) {
+      lines.push(`身份推测（非事实）：${identityGuesses.join('；')}`);
+    }
+
+    const appearance = people
+      .filter(
+        person =>
+          person.identity.target !== 'unknown' &&
+          person.identity.confidence !== 'low' &&
+          person.stableTraits.length > 0
+      )
+      .map(
+        person =>
+          `${person.id}：${person.stableTraits
+            .map(trait => trait.value)
+            .join('、')}`
+      );
+
+    if (appearance.length) {
+      lines.push(`可记形象：${appearance.join('；')}`);
+    }
+
+    return lines.join('\n').slice(0, 600);
+  }
+
+  private formatImageIdentityConfidenceWording(
+    confidence: AgentVisualIdentityConfidence
+  ): string {
+    switch (confidence) {
+      case 'high':
+        return '很像';
+      case 'medium':
+        return '可能是';
+      case 'low':
+      default:
+        return '也许是';
+    }
+  }
+
+  private formatImageIdentitySubject(
+    identity: ConversationImageIdentityGuess,
+    agent: AgentEntity | null
+  ): string {
+    if (identity.target === 'agent') {
+      return `当前角色${agent?.name?.trim() || ''}`;
+    }
+    if (identity.target === 'user') {
+      return '用户本人';
+    }
+    if (identity.target === 'family') {
+      return identity.name?.trim() ? `家人${identity.name.trim()}` : '某位家人';
+    }
+
+    return '身份未知的人';
   }
 
   private async createAssistantReplyMessages(options: {
@@ -4139,13 +5323,29 @@ export class ConversationService {
   private buildMessageSearchableText(payload: PreparedIncomingMessage): string {
     switch (payload.type) {
       case MessageType.image:
-        return payload.mediaAnalysis?.trim() || '';
+        return this.buildImageSearchableText(
+          payload.mediaAnalysis,
+          payload.content
+        );
       case MessageType.voice:
         return payload.mediaTranscript?.trim() || '';
       case MessageType.text:
       default:
         return payload.content?.trim() || '';
     }
+  }
+
+  private buildImageSearchableText(
+    mediaAnalysis?: string,
+    fallbackContent?: string
+  ): string {
+    const analysis = mediaAnalysis?.trim();
+
+    if (analysis) {
+      return `用户发送了一张图片：\n${analysis}`;
+    }
+
+    return fallbackContent?.trim() || '';
   }
 
   private buildVoicePreviewLabel(message: MessageEntity): string {
@@ -4182,6 +5382,10 @@ export class ConversationService {
           temperature: 0.1,
           topP: 0.8,
           max_tokens: ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.generate,
+            operation: 'generate.bubble_reflow',
+          },
           messages: [
             {
               role: 'system',
@@ -4213,6 +5417,7 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
+      this.assertAssistantCompletionNotTruncated(response);
       const parsedReply = this.parseAssistantReply(responseContent);
       const reflowedSegments = this.normalizeModelFirstReplySegments(
         parsedReply.segments,
@@ -4284,6 +5489,22 @@ export class ConversationService {
     throw new AppError(
       'ASSISTANT_REPLY_NO_USABLE_TEXT',
       'assistant reply did not contain usable text',
+      502
+    );
+  }
+
+  private assertAssistantCompletionNotTruncated(response: {
+    choices?: Array<{
+      finish_reason?: unknown;
+    }>;
+  }): void {
+    if (response.choices?.[0]?.finish_reason !== 'length') {
+      return;
+    }
+
+    throw new AppError(
+      'ASSISTANT_REPLY_TRUNCATED',
+      'assistant reply reached the model token limit',
       502
     );
   }
@@ -4378,6 +5599,57 @@ export class ConversationService {
       segments: materialized,
       execution: 'two_segments',
     };
+  }
+
+  private applyConversationStrategyToSegments(
+    segments: string[],
+    replyBrief: ReplyBrief,
+    userQuery = ''
+  ): string[] {
+    const closesCorrection =
+      replyBrief.conversationPlan?.turnClosure === 'close' &&
+      (replyBrief.primaryScene === 'correction' ||
+        replyBrief.intents.some(item => item.intent === 'correct_assistant'));
+
+    if (!closesCorrection || !segments.length) {
+      return segments;
+    }
+
+    const result = [...segments];
+    while (result.length && /[?？]\s*$/u.test(result[result.length - 1])) {
+      if (result.length > 1) {
+        result.pop();
+        continue;
+      }
+
+      const segment = result[0];
+      const statementEnd = Math.max(
+        segment.lastIndexOf('。'),
+        segment.lastIndexOf('！'),
+        segment.lastIndexOf('!')
+      );
+      if (statementEnd < 0) {
+        break;
+      }
+
+      result[0] = segment.slice(0, statementEnd + 1).trim();
+      break;
+    }
+
+    const filtered = result.filter(Boolean);
+    const relationCorrection = userQuery
+      .replace(/\s+/gu, '')
+      .match(
+        /不是我[\u4e00-\u9fff]{1,4}[，,、；;]*(?:他|她|这人|那人)?是我([\u4e00-\u9fff]{1,4})(?:[。！？!?]|$)/u
+      )?.[1];
+    if (
+      relationCorrection &&
+      !filtered.some(segment => segment.includes(relationCorrection))
+    ) {
+      filtered.push(`是你${relationCorrection}`);
+    }
+
+    return filtered.length ? filtered : segments;
   }
 
   private normalizeModelFirstReplySegments(
@@ -4709,9 +5981,13 @@ export class ConversationService {
       userQuery
     );
     const structuralSafetyMatches = messageSafetyMatches.filter(match =>
-      ['url', 'media_file', 'legacy_media_path', 'prompt_leakage'].includes(
-        match.rule
-      )
+      [
+        'url',
+        'media_file',
+        'legacy_media_path',
+        'prompt_leakage',
+        'technical_fragment',
+      ].includes(match.rule)
     );
     const semanticSafetyMatches = messageSafetyMatches.filter(
       match => !structuralSafetyMatches.includes(match)
@@ -4831,6 +6107,7 @@ export class ConversationService {
     replyGuardrailRevisionRoundCount?: number;
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
+    replyGuardrailFocuses?: string[];
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -4861,7 +6138,37 @@ export class ConversationService {
     replyClosureReadiness?: string;
     replyPersonaActivations?: string[];
     replyPersonaSource?: string;
+    replyRealityDependencyKinds?: string[];
+    replyCorrectionFactMode?: string;
+    replyActiveContributionSource?: string;
+    replyStrategyRepeatedMoves?: string[];
+    replyStrategyAlternative?: string;
+    replyExperiencePlanVersion?: string;
+    replyProfileTier?: string;
+    replyProfileScore?: number;
+    replyProfileDimensionCount?: number;
+    replyProfileTrustedFactCount?: number;
+    replyRelationshipStage?: string;
+    replyRelationshipMaturity?: string;
+    replyRelationshipState?: string;
+    replyRelationshipUserTurnCount?: number;
+    replyRelationshipActiveDayCount?: number;
+    replyConversationDepth?: string;
+    replyExperienceFactScope?: string;
+    replyExperienceIntimacyLevel?: string;
+    replyExperienceContributionMode?: string;
+    replyExperienceMemoryPolicy?: string;
+    replyExperienceQuestionPolicy?: string;
+    replyExperienceClosurePolicy?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
+    replyMemoryCandidateCount?: number;
+    replyMemorySelectedCandidateKeys?: string[];
+    replyMemoryRetrievalMode?: string;
+    replyMemoryRetrievalRequestCount?: number;
+    replyMemoryRetrievalConceptCount?: number;
+    replyMemoryRetrievedEvidenceCount?: number;
+    replyMemoryUsedEvidenceIds?: string[];
+    replyMemoryUsedClaimCount?: number;
   } {
     const responseIntents = routing?.route?.responseIntents?.length
       ? routing.route.responseIntents
@@ -4938,6 +6245,7 @@ export class ConversationService {
         routing?.guardrailFinalReviewResult?.trim() || undefined,
       replyGuardrailReviewMode:
         routing?.guardrailReviewMode?.trim() || undefined,
+      replyGuardrailFocuses: routing?.guardrailFocuses?.filter(Boolean),
       replyEvidenceCount: routing?.evidenceCount,
       replyFactClaimCount: routing?.factClaimCount,
       replyUnsupportedClaimCount: routing?.unsupportedClaimCount,
@@ -4977,6 +6285,53 @@ export class ConversationService {
       replyClosureReadiness: routing?.closureReadiness?.trim() || undefined,
       replyPersonaActivations: routing?.personaActivations?.filter(Boolean),
       replyPersonaSource: routing?.personaSource?.trim() || undefined,
+      replyRealityDependencyKinds:
+        routing?.realityDependencyKinds?.filter(Boolean),
+      replyCorrectionFactMode: routing?.correctionFactMode?.trim() || undefined,
+      replyActiveContributionSource:
+        routing?.activeContributionSource?.trim() || undefined,
+      replyStrategyRepeatedMoves:
+        routing?.strategyRepeatedMoves?.filter(Boolean),
+      replyStrategyAlternative:
+        routing?.strategyAlternative?.trim() || undefined,
+      replyExperiencePlanVersion:
+        routing?.brief?.experiencePlan?.version ||
+        routing?.experiencePlanVersion?.trim() ||
+        undefined,
+      replyProfileTier:
+        routing?.brief?.experiencePlan?.profileTier ||
+        routing?.profileTier?.trim() ||
+        undefined,
+      replyProfileScore: routing?.brief?.experiencePlan?.profileScore,
+      replyProfileDimensionCount:
+        routing?.brief?.experiencePlan?.profileDimensionCount,
+      replyProfileTrustedFactCount:
+        routing?.brief?.experiencePlan?.profileTrustedFactCount,
+      replyRelationshipStage:
+        routing?.brief?.experiencePlan?.relationshipStage ||
+        routing?.relationshipStage?.trim() ||
+        undefined,
+      replyRelationshipMaturity:
+        routing?.brief?.experiencePlan?.relationshipMaturity,
+      replyRelationshipState: routing?.brief?.experiencePlan?.relationshipState,
+      replyRelationshipUserTurnCount:
+        routing?.brief?.experiencePlan?.relationshipUserTurnCount,
+      replyRelationshipActiveDayCount:
+        routing?.brief?.experiencePlan?.relationshipActiveDayCount,
+      replyConversationDepth:
+        routing?.brief?.experiencePlan?.conversationDepth ||
+        routing?.conversationDepth?.trim() ||
+        undefined,
+      replyExperienceFactScope: routing?.brief?.experiencePlan?.factScope,
+      replyExperienceIntimacyLevel:
+        routing?.brief?.experiencePlan?.intimacyLevel,
+      replyExperienceContributionMode:
+        routing?.brief?.experiencePlan?.contributionMode,
+      replyExperienceMemoryPolicy: routing?.brief?.experiencePlan?.memoryPolicy,
+      replyExperienceQuestionPolicy:
+        routing?.brief?.experiencePlan?.questionPolicy,
+      replyExperienceClosurePolicy:
+        routing?.brief?.experiencePlan?.closurePolicy,
       replyMemoryPlan: routing?.memoryPlan
         ? {
             need: routing.memoryPlan.need,
@@ -4988,6 +6343,17 @@ export class ConversationService {
               : undefined,
           }
         : undefined,
+      replyMemoryCandidateCount: routing?.memoryCandidateCount,
+      replyMemorySelectedCandidateKeys:
+        routing?.memorySelectedCandidateKeys?.filter(Boolean),
+      replyMemoryRetrievalMode:
+        routing?.memoryRetrievalMode?.trim() || undefined,
+      replyMemoryRetrievalRequestCount: routing?.memoryRetrievalRequestCount,
+      replyMemoryRetrievalConceptCount: routing?.memoryRetrievalConceptCount,
+      replyMemoryRetrievedEvidenceCount: routing?.memoryRetrievedEvidenceCount,
+      replyMemoryUsedEvidenceIds:
+        routing?.memoryUsedEvidenceIds?.filter(Boolean),
+      replyMemoryUsedClaimCount: routing?.memoryUsedClaimCount,
     };
   }
 
@@ -5002,6 +6368,7 @@ export class ConversationService {
     replyGroupId?: string;
     replySegmentIndex?: number;
     clientRequestId?: string;
+    traceId?: string;
     quotedMessageId?: MongoObjectId;
     quotedMessageRole?: MessageRole;
     quotedMessageContent?: string;
@@ -5056,6 +6423,7 @@ export class ConversationService {
     replyGuardrailRevisionRoundCount?: number;
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
+    replyGuardrailFocuses?: string[];
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -5086,7 +6454,37 @@ export class ConversationService {
     replyClosureReadiness?: string;
     replyPersonaActivations?: string[];
     replyPersonaSource?: string;
+    replyRealityDependencyKinds?: string[];
+    replyCorrectionFactMode?: string;
+    replyActiveContributionSource?: string;
+    replyStrategyRepeatedMoves?: string[];
+    replyStrategyAlternative?: string;
+    replyExperiencePlanVersion?: string;
+    replyProfileTier?: string;
+    replyProfileScore?: number;
+    replyProfileDimensionCount?: number;
+    replyProfileTrustedFactCount?: number;
+    replyRelationshipStage?: string;
+    replyRelationshipMaturity?: string;
+    replyRelationshipState?: string;
+    replyRelationshipUserTurnCount?: number;
+    replyRelationshipActiveDayCount?: number;
+    replyConversationDepth?: string;
+    replyExperienceFactScope?: string;
+    replyExperienceIntimacyLevel?: string;
+    replyExperienceContributionMode?: string;
+    replyExperienceMemoryPolicy?: string;
+    replyExperienceQuestionPolicy?: string;
+    replyExperienceClosurePolicy?: string;
     replyMemoryPlan?: MessageEntity['replyMemoryPlan'];
+    replyMemoryCandidateCount?: number;
+    replyMemorySelectedCandidateKeys?: string[];
+    replyMemoryRetrievalMode?: string;
+    replyMemoryRetrievalRequestCount?: number;
+    replyMemoryRetrievalConceptCount?: number;
+    replyMemoryRetrievedEvidenceCount?: number;
+    replyMemoryUsedEvidenceIds?: string[];
+    replyMemoryUsedClaimCount?: number;
     createdAt: Date;
     updatedAt: Date;
   }): Promise<MessageEntity> {
@@ -5106,6 +6504,8 @@ export class ConversationService {
         ? Math.floor(options.replySegmentIndex)
         : undefined;
     message.clientRequestId = options.clientRequestId?.trim() || undefined;
+    message.traceId =
+      options.traceId?.trim() || this.chatTraceService?.getCurrentTraceId();
     message.quotedMessageId = options.quotedMessageId;
     message.quotedMessageRole = options.quotedMessageRole;
     message.quotedMessageContent = options.quotedMessageContent?.trim() || '';
@@ -5200,6 +6600,8 @@ export class ConversationService {
       options.replyGuardrailFinalReviewResult?.trim() || undefined;
     message.replyGuardrailReviewMode =
       options.replyGuardrailReviewMode?.trim() || undefined;
+    message.replyGuardrailFocuses =
+      options.replyGuardrailFocuses?.filter(Boolean);
     message.replyEvidenceCount = this.normalizeTokenCount(
       options.replyEvidenceCount
     );
@@ -5265,6 +6667,54 @@ export class ConversationService {
       options.replyPersonaActivations?.filter(Boolean);
     message.replyPersonaSource =
       options.replyPersonaSource?.trim() || undefined;
+    message.replyRealityDependencyKinds =
+      options.replyRealityDependencyKinds?.filter(Boolean);
+    message.replyCorrectionFactMode =
+      options.replyCorrectionFactMode?.trim() || undefined;
+    message.replyActiveContributionSource =
+      options.replyActiveContributionSource?.trim() || undefined;
+    message.replyStrategyRepeatedMoves =
+      options.replyStrategyRepeatedMoves?.filter(Boolean);
+    message.replyStrategyAlternative =
+      options.replyStrategyAlternative?.trim() || undefined;
+    message.replyExperiencePlanVersion =
+      options.replyExperiencePlanVersion?.trim() || undefined;
+    message.replyProfileTier = options.replyProfileTier?.trim() || undefined;
+    message.replyProfileScore = this.normalizeTokenCount(
+      options.replyProfileScore
+    );
+    message.replyProfileDimensionCount = this.normalizeTokenCount(
+      options.replyProfileDimensionCount
+    );
+    message.replyProfileTrustedFactCount = this.normalizeTokenCount(
+      options.replyProfileTrustedFactCount
+    );
+    message.replyRelationshipStage =
+      options.replyRelationshipStage?.trim() || undefined;
+    message.replyRelationshipMaturity =
+      options.replyRelationshipMaturity?.trim() || undefined;
+    message.replyRelationshipState =
+      options.replyRelationshipState?.trim() || undefined;
+    message.replyRelationshipUserTurnCount = this.normalizeTokenCount(
+      options.replyRelationshipUserTurnCount
+    );
+    message.replyRelationshipActiveDayCount = this.normalizeTokenCount(
+      options.replyRelationshipActiveDayCount
+    );
+    message.replyConversationDepth =
+      options.replyConversationDepth?.trim() || undefined;
+    message.replyExperienceFactScope =
+      options.replyExperienceFactScope?.trim() || undefined;
+    message.replyExperienceIntimacyLevel =
+      options.replyExperienceIntimacyLevel?.trim() || undefined;
+    message.replyExperienceContributionMode =
+      options.replyExperienceContributionMode?.trim() || undefined;
+    message.replyExperienceMemoryPolicy =
+      options.replyExperienceMemoryPolicy?.trim() || undefined;
+    message.replyExperienceQuestionPolicy =
+      options.replyExperienceQuestionPolicy?.trim() || undefined;
+    message.replyExperienceClosurePolicy =
+      options.replyExperienceClosurePolicy?.trim() || undefined;
     message.replyMemoryPlan = options.replyMemoryPlan
       ? {
           need: options.replyMemoryPlan.need,
@@ -5278,6 +6728,27 @@ export class ConversationService {
             : undefined,
         }
       : undefined;
+    message.replyMemoryCandidateCount = this.normalizeTokenCount(
+      options.replyMemoryCandidateCount
+    );
+    message.replyMemorySelectedCandidateKeys =
+      options.replyMemorySelectedCandidateKeys?.filter(Boolean);
+    message.replyMemoryRetrievalMode =
+      options.replyMemoryRetrievalMode?.trim() || undefined;
+    message.replyMemoryRetrievalRequestCount = this.normalizeTokenCount(
+      options.replyMemoryRetrievalRequestCount
+    );
+    message.replyMemoryRetrievalConceptCount = this.normalizeTokenCount(
+      options.replyMemoryRetrievalConceptCount
+    );
+    message.replyMemoryRetrievedEvidenceCount = this.normalizeTokenCount(
+      options.replyMemoryRetrievedEvidenceCount
+    );
+    message.replyMemoryUsedEvidenceIds =
+      options.replyMemoryUsedEvidenceIds?.filter(Boolean);
+    message.replyMemoryUsedClaimCount = this.normalizeTokenCount(
+      options.replyMemoryUsedClaimCount
+    );
     message.createdAt = options.createdAt;
     message.updatedAt = options.updatedAt;
 
@@ -5464,6 +6935,117 @@ export class ConversationService {
         createdAt: 'DESC',
       },
     });
+  }
+
+  private async listAgentsByIds(
+    values: Array<MongoObjectId | string | undefined>
+  ): Promise<Map<string, AgentEntity | null>> {
+    const ids = this.uniqueObjectIds(values);
+    const result = new Map<string, AgentEntity | null>();
+
+    if (ids.length === 0) {
+      return result;
+    }
+
+    if (typeof this.agentModel.find !== 'function') {
+      const agents = await Promise.all(ids.map(id => this.findAgentById(id)));
+      ids.forEach((id, index) => {
+        result.set(this.stringifyObjectId(id), agents[index] ?? null);
+      });
+      return result;
+    }
+
+    const agents = await this.agentModel.find({
+      where: {
+        _id: {
+          $in: ids,
+        },
+      } as never,
+    });
+
+    for (const agent of agents) {
+      result.set(this.stringifyObjectId(agent.id), agent);
+    }
+
+    for (const id of ids) {
+      const key = this.stringifyObjectId(id);
+      if (!result.has(key)) {
+        result.set(key, null);
+      }
+    }
+
+    return result;
+  }
+
+  private async listLatestMessagesByConversationIds(
+    values: Array<MongoObjectId | string | undefined>
+  ): Promise<Map<string, MessageEntity | null>> {
+    const ids = this.uniqueObjectIds(values);
+    const result = new Map<string, MessageEntity | null>();
+
+    if (ids.length === 0) {
+      return result;
+    }
+
+    if (typeof this.messageModel.aggregate !== 'function') {
+      const messages = await Promise.all(
+        ids.map(id => this.findLatestMessage(id))
+      );
+      ids.forEach((id, index) => {
+        result.set(this.stringifyObjectId(id), messages[index] ?? null);
+      });
+      return result;
+    }
+
+    const rows = await this.messageModel
+      .aggregate<{ _id: MongoObjectId; message: MessageEntity }>([
+        {
+          $match: {
+            conversationId: { $in: ids },
+            isArchived: { $ne: true },
+          },
+        },
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+        {
+          $group: {
+            _id: '$conversationId',
+            message: { $first: '$$ROOT' },
+          },
+        },
+      ])
+      .toArray();
+
+    for (const row of rows) {
+      result.set(this.stringifyObjectId(row._id), row.message);
+    }
+
+    for (const id of ids) {
+      const key = this.stringifyObjectId(id);
+      if (!result.has(key)) {
+        result.set(key, null);
+      }
+    }
+
+    return result;
+  }
+
+  private uniqueObjectIds(
+    values: Array<MongoObjectId | string | undefined>
+  ): MongoObjectId[] {
+    const result = new Map<string, MongoObjectId>();
+
+    for (const value of values) {
+      const objectId = this.normalizeObjectId(value);
+      if (objectId) {
+        result.set(this.stringifyObjectId(objectId), objectId);
+      }
+    }
+
+    return [...result.values()];
   }
 
   private isDeicticFactRejection(value: string): boolean {

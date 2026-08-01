@@ -15,6 +15,8 @@ export class ConversationReplyProcessor implements IProcessor {
   async execute(data: ConversationReplyJobData, job?: Job): Promise<void> {
     await this.conversationService.processConversationReplyJob(data, {
       isFinalAttempt: this.isFinalAttempt(job),
+      attempt: Number(job?.attemptsMade ?? 0) + 1,
+      queueJobId: job?.id != null ? String(job.id) : undefined,
     });
   }
 

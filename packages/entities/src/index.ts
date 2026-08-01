@@ -7,6 +7,8 @@ export * from "./agent-sub.entity";
 export * from "./admin-account.entity";
 export * from "./admin-user.entity";
 export * from "./base";
+export * from "./chat-span.entity";
+export * from "./chat-trace.entity";
 export * from "./conversation-message-feedback.entity";
 export * from "./conversation-emotion-state.entity";
 export * from "./conversation.entity";

@@ -32,9 +32,29 @@ export class ConversationController {
   ctx: Context;
 
   @Get('/')
-  async listConversations() {
+  async listConversations(
+    @Query() query: { page?: string; pageSize?: string }
+  ) {
+    const auth = this.ctx.state.auth as AuthenticatedUserPayload;
+    const shouldIncludeEntry =
+      Boolean(query.pageSize) && (!query.page || Number(query.page) === 1);
+    const [result, entryItem] = await Promise.all([
+      this.conversationService.listConversations(auth, query),
+      shouldIncludeEntry
+        ? this.conversationService.getEntryConversation(auth)
+        : Promise.resolve(null),
+    ]);
+
     return {
-      items: await this.conversationService.listConversations(
+      ...result,
+      ...(shouldIncludeEntry ? { entryItem } : {}),
+    };
+  }
+
+  @Get('/entry')
+  async getEntryConversation() {
+    return {
+      item: await this.conversationService.getEntryConversation(
         this.ctx.state.auth as AuthenticatedUserPayload
       ),
     };
@@ -50,6 +70,23 @@ export class ConversationController {
       conversationId,
       query
     );
+  }
+
+  @Get('/:conversationId/bootstrap')
+  async getChatBootstrap(
+    @Param('conversationId') conversationId: string,
+    @Query() query: ListConversationMessagesOptions
+  ) {
+    const auth = this.ctx.state.auth as AuthenticatedUserPayload;
+    const [messages, metadata] = await Promise.all([
+      this.messageService.listMessages(auth, conversationId, query),
+      this.conversationService.getChatBootstrapMetadata(auth, conversationId),
+    ]);
+
+    return {
+      ...messages,
+      ...metadata,
+    };
   }
 
   @Del('/:conversationId/messages/:messageId')

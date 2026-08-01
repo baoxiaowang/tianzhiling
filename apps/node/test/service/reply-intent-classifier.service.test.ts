@@ -40,6 +40,17 @@ describe('ReplyIntentClassifierService', () => {
     expect(input).toContain('上轮策略：hold/affection/让用户安心');
   });
 
+  it('routes a real-world dependency through semantic planning', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery: '爸，你能替我接孩子放学吗',
+      })
+    ).toEqual({ mode: 'semantic', reason: 'reality_dependency' });
+  });
+
   it('lets the semantic planner relocate the primary intent after a consecutive-input turn', async () => {
     const service = createService(
       JSON.stringify({
@@ -520,7 +531,7 @@ describe('ReplyIntentClassifierService', () => {
     });
   });
 
-  it.each(['晚安妈妈', '吃饭了吗', '我想你了'])(
+  it.each(['晚安妈妈', '吃饭了吗', '我想你了', '你也想我吗'])(
     'sends an ordinary short message directly without a semantic call: %s',
     async currentQuery => {
       const service = createService('{}');

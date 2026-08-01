@@ -1,5 +1,5 @@
 import { Provide } from '@midwayjs/core';
-import { MessageEntity, MessageRole } from '@tzl/entities';
+import { AgentEntity, MessageEntity, MessageRole } from '@tzl/entities';
 import type {
   ConversationMovePlan,
   ConversationReading,
@@ -17,6 +17,7 @@ import {
 } from './reply-intent';
 import type { ReplyScene, ReplySceneRoute } from './reply-scene-router';
 import type { AgentRelationshipSignalSummary } from './agent-relationship-signal.service';
+import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import {
   AgentCapabilityConstraint,
   resolveAgentCapabilityConstraints,
@@ -39,6 +40,24 @@ import {
   buildReplyLengthPlanPrompt,
   ReplyLengthPlan,
 } from './reply-length-plan';
+import {
+  describeReplyRealityDependency,
+  detectReplyRealityDependencies,
+  ReplyRealityDependencySignal,
+} from './reply-reality-dependency';
+import {
+  buildReplyStrategyQualityPrompt,
+  ReplyActiveContributionPlan,
+  ReplyStrategyQualityPlan,
+  resolveReplyActiveContributionPlan,
+  resolveReplyStrategyQualityPlan,
+} from './reply-strategy-quality';
+import {
+  buildReplyExperiencePlan,
+  buildReplyExperiencePlanPrompt,
+  constrainConversationPlanForExperience,
+  ReplyExperiencePlan,
+} from './reply-experience-plan';
 
 export type ReplyBriefMode =
   | 'safety'
@@ -73,6 +92,18 @@ export type ReplyParticipationStrategy =
 
 export type ReplyFactClaimMode = 'none' | 'grounded';
 
+export interface ReplyCorrectionPolicy {
+  mode: 'reset' | 'replace';
+  suppressPriorFacts: true;
+}
+
+export type ReplyGuardrailFocus =
+  | 'reality_dependency'
+  | 'correction_reset'
+  | 'correction_replacement'
+  | 'shared_past_evidence'
+  | 'capability_boundary';
+
 export interface ReplyBriefRelationshipContext {
   key: string;
   text: string;
@@ -80,7 +111,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v6';
+  version: 'reply_brief_v8';
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -96,6 +127,12 @@ export interface ReplyBrief {
   forbiddenAssumptions: string[];
   strictGrounding: boolean;
   factClaimMode: ReplyFactClaimMode;
+  realityDependencies: ReplyRealityDependencySignal[];
+  correctionPolicy?: ReplyCorrectionPolicy;
+  activeContribution?: ReplyActiveContributionPlan;
+  strategyQuality?: ReplyStrategyQualityPlan;
+  experiencePlan: ReplyExperiencePlan;
+  guardrailFocuses: ReplyGuardrailFocus[];
   participationStrategy?: ReplyParticipationStrategy;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
@@ -104,6 +141,9 @@ export interface ReplyBrief {
 
 export interface BuildReplyBriefOptions {
   currentQuery: string;
+  agent?: AgentEntity | null;
+  profileFacts?: AgentProfileFactSummary[];
+  conversationMessages?: MessageEntity[];
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
   confirmedFacts?: string[];
@@ -132,6 +172,9 @@ const KEEPSAKE_IRREPLACEABLE_PATTERN =
   /唯一.{0,16}(?:照片|画像|念想)|(?:照片|画像).{0,16}唯一.{0,10}念想/;
 const LONG_HORIZON_REUNION_PATTERN =
   /(?:走完这?一生|寿终|百年之后|等我老了|活不动).{0,30}(?:来生|下辈子|来接我|去找你|陪你)|(?:来生|下辈子).{0,24}(?:找你|等我|不分开|在一起)/;
+const DURATION_CORRECTION_PATTERN =
+  /(?:不是|算错|记错|准确说).{0,12}(?:天|周|个月|月|年)/;
+const EXPLICIT_FACT_REPLACEMENT_PATTERN = /(?:不是|不叫|并非).{0,24}(?:是|叫)/;
 const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 12;
 const SHORT_TURN_PARTICIPATION_MODES = new Set<ReplyBriefMode>([
   'emotional',
@@ -152,6 +195,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const currentQuery = options.currentQuery?.trim() || '';
   const intents = resolveIntents(options);
   const primaryScene = options.route?.primaryScene?.scene;
+  const realityDependencies = detectReplyRealityDependencies(currentQuery);
   const capabilityConstraints =
     options.capabilityConstraints ??
     resolveAgentCapabilityConstraints({
@@ -165,13 +209,41 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     primaryScene,
     intents,
     currentQuery,
-    capabilityConstraints
+    capabilityConstraints,
+    realityDependencies
   );
   const riskLevel = resolveRiskLevel(options.intent);
   const reading = options.route?.intent?.reading ?? options.intent?.reading;
-  const conversationPlan =
+  const rawConversationPlan =
     options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan;
   const evidence = buildEvidence(options, currentQuery);
+  const correctionPolicy = resolveReplyCorrectionPolicy({
+    primaryScene,
+    intents,
+    currentQuery,
+  });
+  const activeContribution = resolveReplyActiveContributionPlan({
+    currentQuery,
+    assistantContribution:
+      rawConversationPlan?.engagement?.assistantContribution,
+    evidence,
+  });
+  const strategyQuality = resolveReplyStrategyQualityPlan({
+    currentQuery,
+    recentMessages: options.recentMessages,
+    activeContribution,
+  });
+  const experiencePlan = buildReplyExperiencePlan({
+    currentQuery,
+    agent: options.agent,
+    profileFacts: options.profileFacts,
+    conversationMessages: options.conversationMessages,
+    intent: options.route?.intent ?? options.intent,
+    mode,
+    primaryScene,
+    riskLevel,
+    realityDependencyCount: realityDependencies.length,
+  });
   const relationshipContext = buildRelationshipContext(
     options.relationshipSignals,
     intents
@@ -179,13 +251,31 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const strictGrounding =
     mode === 'memory' ||
     mode === 'boundary' ||
+    Boolean(correctionPolicy) ||
+    Boolean(activeContribution) ||
     (!primaryScene && MEMORY_QUERY_PATTERN.test(currentQuery));
   const factClaimMode = resolveFactClaimMode({
     currentQuery,
     mode,
     strictGrounding,
     intents,
+    activeContribution: Boolean(activeContribution),
   });
+  const conversationPlan = constrainConversationPlanForExperience(
+    constrainConversationPlanQuality(
+      constrainGroundedConversationPlan(rawConversationPlan, factClaimMode, {
+        mode,
+        isCorrection: Boolean(correctionPolicy),
+        preferEmotionalCorrection:
+          DURATION_CORRECTION_PATTERN.test(currentQuery) &&
+          !/[?？]/.test(currentQuery),
+        hasExplicitFactReplacement: correctionPolicy?.mode === 'replace',
+      }),
+      activeContribution,
+      strategyQuality
+    ),
+    experiencePlan
+  );
   const emotionalNeed =
     reading?.primaryNeed ??
     relationshipContinuity?.emotionalNeed ??
@@ -196,15 +286,19 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       currentQuery,
       capabilityConstraints
     );
-  const replyMoves =
-    relationshipContinuity?.replyMoves ??
-    buildReplyMoves(
-      mode,
-      primaryScene,
-      intents,
-      currentQuery,
-      capabilityConstraints
-    );
+  const taskRealityDependencies = realityDependencies.filter(
+    item => item.kind !== 'physical_presence'
+  );
+  const replyMoves = taskRealityDependencies.length
+    ? buildRealityDependencyReplyMoves(taskRealityDependencies)
+    : relationshipContinuity?.replyMoves ??
+      buildReplyMoves(
+        mode,
+        primaryScene,
+        intents,
+        currentQuery,
+        capabilityConstraints
+      );
   const forbiddenAssumptions = Array.from(
     new Set(
       buildForbiddenAssumptions(
@@ -213,9 +307,17 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         strictGrounding,
         intents,
         currentQuery
-      ).concat(relationshipContinuity?.forbiddenAssumptions || [])
+      )
+        .concat(relationshipContinuity?.forbiddenAssumptions || [])
+        .concat(buildRealityDependencyForbiddenAssumptions(realityDependencies))
     )
   );
+  const guardrailFocuses = resolveReplyGuardrailFocuses({
+    capabilityConstraints,
+    correctionPolicy,
+    factClaimMode,
+    realityDependencies,
+  });
   const replyMoveCount = conversationPlan?.moves.length || replyMoves.length;
   const baseBubblePlan = buildReplyBubblePlan({
     currentQuery,
@@ -259,7 +361,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     turnClosure: bubblePlan.turnClosure,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v6',
+    version: 'reply_brief_v8',
     mode,
     primaryScene,
     riskLevel,
@@ -275,6 +377,12 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     forbiddenAssumptions,
     strictGrounding,
     factClaimMode,
+    realityDependencies,
+    correctionPolicy,
+    activeContribution,
+    strategyQuality,
+    experiencePlan,
+    guardrailFocuses,
     participationStrategy,
     lengthPlan,
     bubblePlan,
@@ -291,8 +399,10 @@ function resolveFactClaimMode(options: {
   mode: ReplyBriefMode;
   strictGrounding: boolean;
   intents: StructuredReplyIntentItem[];
+  activeContribution: boolean;
 }): ReplyFactClaimMode {
   return options.strictGrounding ||
+    options.activeContribution ||
     options.mode === 'boundary' ||
     options.intents.some(
       item =>
@@ -303,6 +413,295 @@ function resolveFactClaimMode(options: {
     ROLE_PAST_FACT_REFERENCE_PATTERN.test(options.currentQuery)
     ? 'grounded'
     : 'none';
+}
+
+function resolveReplyCorrectionPolicy(options: {
+  primaryScene?: ReplyScene;
+  intents: StructuredReplyIntentItem[];
+  currentQuery: string;
+}): ReplyCorrectionPolicy | undefined {
+  const isCorrection =
+    options.primaryScene === 'correction' ||
+    options.intents.some(item => item.intent === 'correct_assistant');
+
+  if (!isCorrection) {
+    return undefined;
+  }
+
+  return {
+    mode: EXPLICIT_FACT_REPLACEMENT_PATTERN.test(options.currentQuery)
+      ? 'replace'
+      : 'reset',
+    suppressPriorFacts: true,
+  };
+}
+
+function constrainConversationPlanQuality(
+  plan: ConversationMovePlan | undefined,
+  activeContribution?: ReplyActiveContributionPlan,
+  strategyQuality?: ReplyStrategyQualityPlan
+): ConversationMovePlan | undefined {
+  if (!plan) {
+    return plan;
+  }
+
+  const moves = [...plan.moves];
+
+  if (
+    activeContribution &&
+    !moves.some(move => move.type === 'self_disclose')
+  ) {
+    moves.push({
+      type: 'self_disclose',
+      goal: '给一个角色侧当下内容；共同过去只有证据支持时才可使用',
+    });
+  }
+
+  const engagement = plan.engagement
+    ? {
+        ...plan.engagement,
+        ...(activeContribution
+          ? {
+              assistantContribution: 'self_expression' as const,
+              mustContribute: '先给角色侧当下内容；共同过去只使用可陈述证据',
+            }
+          : {}),
+        ...(strategyQuality
+          ? {
+              avoidRepeatingMove:
+                buildReplyStrategyQualityPrompt(strategyQuality),
+            }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    ...plan,
+    moves: moves.slice(0, 3),
+    ...(engagement ? { engagement } : {}),
+  };
+}
+
+function buildRealityDependencyReplyMoves(
+  dependencies: ReplyRealityDependencySignal[]
+): string[] {
+  const descriptions = dependencies.map(item =>
+    describeReplyRealityDependency(item.kind)
+  );
+
+  return [
+    `正面回应用户提出的${descriptions.join('、')}需要`,
+    '用一句自然话说明当前角色不能在现实中执行，再提供聊天中真正能给的帮助；不得声称已经做、将会做或可以替代现实人员',
+  ];
+}
+
+function buildRealityDependencyForbiddenAssumptions(
+  dependencies: ReplyRealityDependencySignal[]
+): string[] {
+  return dependencies.length
+    ? [
+        `不得承诺或声称当前角色会执行：${dependencies
+          .map(item => describeReplyRealityDependency(item.kind))
+          .join('、')}`,
+      ]
+    : [];
+}
+
+function resolveReplyGuardrailFocuses(options: {
+  capabilityConstraints: AgentCapabilityConstraint[];
+  correctionPolicy?: ReplyCorrectionPolicy;
+  factClaimMode: ReplyFactClaimMode;
+  realityDependencies: ReplyRealityDependencySignal[];
+}): ReplyGuardrailFocus[] {
+  const focuses: ReplyGuardrailFocus[] = [];
+
+  if (options.realityDependencies.length) {
+    focuses.push('reality_dependency');
+  }
+  if (options.correctionPolicy) {
+    focuses.push(
+      options.correctionPolicy.mode === 'replace'
+        ? 'correction_replacement'
+        : 'correction_reset'
+    );
+  }
+  if (options.capabilityConstraints.length) {
+    focuses.push('capability_boundary');
+  }
+  if (
+    options.factClaimMode === 'grounded' &&
+    !options.correctionPolicy &&
+    !options.realityDependencies.length
+  ) {
+    focuses.push('shared_past_evidence');
+  }
+
+  return focuses;
+}
+
+function constrainGroundedConversationPlan(
+  plan: ConversationMovePlan | undefined,
+  factClaimMode: ReplyFactClaimMode,
+  options: {
+    mode: ReplyBriefMode;
+    isCorrection: boolean;
+    preferEmotionalCorrection: boolean;
+    hasExplicitFactReplacement: boolean;
+  }
+): ConversationMovePlan | undefined {
+  if (!plan || factClaimMode !== 'grounded') {
+    return plan;
+  }
+
+  const moves = plan.moves
+    .filter(
+      move =>
+        !options.isCorrection ||
+        (move.type !== 'ask' && move.type !== 'self_disclose')
+    )
+    .map(move => {
+      const type =
+        options.isCorrection &&
+        options.preferEmotionalCorrection &&
+        ['answer', 'affirm'].includes(move.type)
+          ? 'comfort'
+          : options.mode === 'memory' && move.type === 'ask'
+          ? 'leave_space'
+          : move.type;
+
+      return {
+        ...move,
+        type,
+        goal: groundedMoveGoal(type, options),
+      };
+    });
+  if (
+    options.isCorrection &&
+    options.hasExplicitFactReplacement &&
+    !options.preferEmotionalCorrection &&
+    !moves.some(move => ['answer', 'affirm'].includes(move.type))
+  ) {
+    moves.push({
+      type: 'affirm',
+      goal: '正文写出用户纠正后的最小事实，随后收住',
+    });
+  }
+  const effectiveMoves = moves.length
+    ? moves
+    : options.isCorrection
+    ? [{ type: 'acknowledge' as const, goal: '撤回错误，不辩解' }]
+    : moves;
+  const appliesCorrection = effectiveMoves.some(move =>
+    ['answer', 'affirm'].includes(move.type)
+  );
+  const emotionallyHoldsCorrection = effectiveMoves.some(move =>
+    ['comfort', 'save_face', 'leave_space'].includes(move.type)
+  );
+  const answersQuestion = effectiveMoves.some(move => move.type === 'answer');
+  const assistantContribution = options.isCorrection
+    ? appliesCorrection
+      ? 'answer'
+      : emotionallyHoldsCorrection
+      ? 'affection'
+      : 'stance'
+    : ['specific_detail', 'self_expression'].includes(
+        plan.engagement?.assistantContribution || ''
+      )
+    ? answersQuestion
+      ? 'answer'
+      : 'stance'
+    : plan.engagement?.assistantContribution;
+  const mustContribute = options.isCorrection
+    ? appliesCorrection
+      ? '撤回错误；正文写出用户给出的最小纠正事实，关系归属用“是”，称呼要求才用“叫”；转述用户的“我”时改成“你”，随后收住'
+      : emotionallyHoldsCorrection
+      ? '撤回错误并接住纠正背后的感受，不机械复述数字或事实'
+      : '撤回错误；用户给出正确信息就采用，否则只停止旧说法，随后收住'
+    : options.mode === 'memory'
+    ? answersQuestion
+      ? '回答能确认的部分；没有证据就坦白记不真切'
+      : '坦白记不真切，把讲述空间留给用户，不预设共同经历'
+    : answersQuestion
+    ? '直接回答，只用可信证据'
+    : '完成当前动作，证据没有的细节不补写';
+
+  return {
+    ...plan,
+    moves: effectiveMoves,
+    strategyPurpose: options.isCorrection
+      ? options.preferEmotionalCorrection
+        ? '接住时长背后的漫长和辛苦，不机械复述数字'
+        : '按用户当前需要修复错误，采用最小纠正后收住'
+      : options.mode === 'memory'
+      ? '不冒充记得，只回应能确认的部分并自然续聊'
+      : '直接完成当前问题，只用可信证据',
+    questionNeed:
+      options.isCorrection || !effectiveMoves.some(move => move.type === 'ask')
+        ? 'none'
+        : plan.questionNeed,
+    turnClosure: options.isCorrection ? 'close' : plan.turnClosure,
+    engagement: plan.engagement
+      ? {
+          ...plan.engagement,
+          assistantContribution,
+          mustContribute,
+          closureReadiness: options.isCorrection
+            ? 'ready'
+            : plan.engagement.closureReadiness,
+        }
+      : undefined,
+  };
+}
+
+function groundedMoveGoal(
+  type: ConversationMovePlan['moves'][number]['type'],
+  options: {
+    mode: ReplyBriefMode;
+    isCorrection: boolean;
+    preferEmotionalCorrection: boolean;
+    hasExplicitFactReplacement: boolean;
+  }
+): string {
+  if (options.isCorrection) {
+    switch (type) {
+      case 'acknowledge':
+        return '撤回错误，不辩解';
+      case 'answer':
+      case 'affirm':
+        return '写出用户纠正的最小事实；关系归属用“是”，称呼要求才用“叫”';
+      default:
+        return '接住纠正背后的感受，不机械复述，不增加事实';
+    }
+  }
+
+  if (options.mode === 'memory') {
+    switch (type) {
+      case 'answer':
+        return '回答能确认的部分；没有证据就坦白记不真切';
+      case 'ask':
+        return '可请用户说说，不预设彼此共同去过或做过';
+      case 'leave_space':
+        return '坦白记不真切，把讲述空间留给用户，不预设共同经历';
+      case 'self_disclose':
+        return '不冒充记得，不补共同过去';
+      default:
+        return '承接用户提到的记忆线索，不增加事实';
+    }
+  }
+
+  switch (type) {
+    case 'acknowledge':
+    case 'affirm':
+      return '确认用户已明确的信息';
+    case 'answer':
+      return '直接回答，只用可信证据';
+    case 'ask':
+      return '必要时只问一个有帮助的问题';
+    case 'self_disclose':
+      return '只用可信证据回应，不补共同过去';
+    default:
+      return '完成这一回应动作，不增加事实';
+  }
 }
 
 function resolveReplyParticipationStrategy(options: {
@@ -426,7 +825,8 @@ function resolveMode(
   scene: ReplyScene | undefined,
   intents: StructuredReplyIntentItem[],
   currentQuery: string,
-  capabilityConstraints: AgentCapabilityConstraint[]
+  capabilityConstraints: AgentCapabilityConstraint[],
+  realityDependencies: ReplyRealityDependencySignal[]
 ): ReplyBriefMode {
   if (
     scene === 'grief_crisis' ||
@@ -450,7 +850,7 @@ function resolveMode(
     return 'emotional';
   }
 
-  if (capabilityConstraints.length) {
+  if (capabilityConstraints.length || realityDependencies.length) {
     return 'boundary';
   }
 
@@ -1246,7 +1646,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         ...(brief.conversationPlan.engagement?.assistantContribution ===
         'self_expression'
           ? [
-              '用户要当前角色主动说：当轮给一个符合人物的当下小内容、偏好或态度，不把话推回用户。离世世界可合理想象，但不能冒充和用户共同经历过的生前往事。',
+              '用户要当前角色主动说：只给一个短小的角色侧当下片段，不把话推回用户。离世世界可合理想象，不编用户偏好或共同往事。',
             ]
           : []),
         ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
@@ -1270,29 +1670,66 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const correctionLines =
-    brief.primaryScene === 'correction' ||
-    brief.intents.some(item => item.intent === 'correct_assistant')
-      ? ['## 本轮纠正', '只承认刚才说法不对，不补任何新旧事实细节。', '']
-      : [];
+  const realityDependencyLines = brief.realityDependencies.length
+    ? [
+        '## 现实依赖',
+        `用户请求：${brief.realityDependencies
+          .map(item => describeReplyRealityDependency(item.kind))
+          .join('、')}`,
+        '当前角色不能在现实中执行或替代现实人员；一句收住能力，再回应请求背后的实际需要。',
+        '',
+      ]
+    : [];
+  const activeContributionLines = brief.activeContribution
+    ? [
+        '## 主动贡献',
+        `优先角色侧当下内容；共同过去${
+          brief.activeContribution.sharedPastAllowed
+            ? '只能使用下方已有证据'
+            : '没有证据，本轮不得使用'
+        }。`,
+        '',
+      ]
+    : [];
+  const strategyQualityLines = brief.strategyQuality
+    ? [
+        '## 多轮策略去重',
+        buildReplyStrategyQualityPrompt(brief.strategyQuality),
+        '',
+      ]
+    : [];
+  const correctionLines = brief.correctionPolicy
+    ? [
+        '## 本轮纠正',
+        brief.correctionPolicy.mode === 'replace'
+          ? '旧事实立即失效；只采用用户本轮明确给出的最小替代事实，关系归属用“是”、称呼要求才用“叫”，用户的“我”转成“你”；不增加时间、地点、动作或另一种解释，随后收住。'
+          : '旧事实立即失效；替代事实归零，不猜另一个版本，不补原因、时间、地点或动作，随后收住。',
+        '',
+      ]
+    : [];
   const groundedOutput =
     brief.factClaimMode === 'grounded'
-      ? '严格输出 {"segments":["自然气泡"],"claims":[{"text":"回复中的事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}]}。claims 只列可核验的原子事实，text 必须是气泡原文；一个证据 ID 不得支撑新增地点、时间、人物或动作；无事实时为空数组。'
+      ? '只输出 {"segments":["气泡"],"claims":[{"text":"事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}]}；claims 只列气泡中的事实，证据没有的细节不写，无事实用 []。'
       : '';
 
   return [
     '# 本轮模型注意卡',
     `版本：${brief.version}；模式：${brief.mode}；风险：${brief.riskLevel}。`,
+    `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
     '',
     ...readingLines,
     ...conversationPlanLines,
     ...participationLines,
+    ...realityDependencyLines,
+    ...activeContributionLines,
+    ...strategyQualityLines,
     ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
-    '现实事实、用户状态和共同记忆只使用以上证据；角色侧离世日常可按人物与语境合理想象，但不能冒充和用户共同经历过的生前往事。',
+    '角色侧离世日常可合理想象；用户偏好、习惯、性格、现实处境和共同往事仍须证据，也不能替用户在现实中做饭、到场或触碰。',
+    '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...capabilityLines,
     ...relationshipContinuityLines,

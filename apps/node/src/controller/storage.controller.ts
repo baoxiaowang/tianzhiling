@@ -1,4 +1,4 @@
-import { Body, Controller, Files, Inject, Post } from '@midwayjs/core';
+import { Body, Controller, Fields, Files, Inject, Post } from '@midwayjs/core';
 import { UploadFileInfo, UploadMiddleware } from '@midwayjs/busboy';
 import { CreateOssSignedUploadDTO } from '../dto/storage.dto';
 import { AppError } from '../common/errors';
@@ -28,7 +28,7 @@ export class StorageController {
   })
   async uploadFile(
     @Files() files: UploadFileInfo[],
-    @Body() body: Record<string, string>
+    @Fields() fields: Record<string, string>
   ) {
     const file = files?.[0];
 
@@ -36,11 +36,25 @@ export class StorageController {
       throw new AppError('UPLOAD_FILE_MISSING', 'upload file is missing', 400);
     }
 
-    const uploaded = await this.tencentCosService.putFile(file.data, {
-      fileName: body?.fileName || file.filename,
-      folder: body?.folder,
-      contentType: body?.contentType || file.mimeType,
-    });
+    let uploaded;
+
+    try {
+      uploaded = await this.tencentCosService.putFile(file.data, {
+        fileName: fields?.fileName || file.filename,
+        folder: fields?.folder,
+        contentType: fields?.contentType || file.mimeType,
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError(
+        'TENCENT_COS_UPLOAD_FAILED',
+        '文件上传失败，请稍后重试',
+        502
+      );
+    }
 
     return {
       provider: 'tencent-cos',

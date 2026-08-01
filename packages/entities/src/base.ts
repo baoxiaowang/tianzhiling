@@ -16,6 +16,8 @@ export enum TableName {
   conversation = "conversation",
   conversation_emotion_state = "conversation_emotion_state",
   conversation_message_feedback = "conversation_message_feedback",
+  chat_trace = "chat_trace",
+  chat_span = "chat_span",
   message = "message",
   post = "post",
   post_comment = "post_comment",

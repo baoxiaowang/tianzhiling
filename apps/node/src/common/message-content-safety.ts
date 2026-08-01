@@ -21,6 +21,10 @@ const BRACKETED_PROMPT_LEAKAGE_PATTERN =
   /[【[][^】\]]*(?:历史助手回复|事实来源|角色资料|用户原话|输出格式|系统提示|提示词|生成规则)[^】\]]*[】\]]/g;
 const PROMPT_LEAKAGE_PREFIX_PATTERN =
   /^(?:仅供理解对话顺序和语气|不是事实来源|其中具体回忆[^】\]\n]*确认才可使用|必须有用户原话或角色资料确认才可使用)[】\]\s、，。；;:：-]*/;
+const TECHNICAL_FRAGMENT_PATTERNS = [
+  /(?:#|\$)\{[A-Za-z_][A-Za-z0-9_]*\}/,
+  /\[object Object\]/i,
+];
 const HARMFUL_RELATIONSHIP_REPLY_PATTERNS = [
   /替我.{0,12}(?:照顾|照看|守着|撑起|把家撑)/,
   /(?:你妈|你爸|妈妈|爸爸|家里人).{0,12}(?:等着|还得|需要|指望).{0,8}你.{0,8}(?:照顾|照看|陪|撑|扛)/,
@@ -59,6 +63,7 @@ export interface UnsafeAssistantMessageContentMatch {
     | 'media_file'
     | 'legacy_media_path'
     | 'prompt_leakage'
+    | 'technical_fragment'
     | 'harmful_relationship'
     | 'unsupported_memory_detail';
   patternIndex: number;
@@ -106,6 +111,11 @@ export function findUnsafeAssistantMessageContentMatches(
       LEGACY_MEDIA_PATH_PATTERN,
     ]),
     ...findPatternMatches(content, 'prompt_leakage', PROMPT_LEAKAGE_PATTERNS),
+    ...findPatternMatches(
+      content,
+      'technical_fragment',
+      TECHNICAL_FRAGMENT_PATTERNS
+    ),
     ...findPatternMatches(
       content,
       'harmful_relationship',

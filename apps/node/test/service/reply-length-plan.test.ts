@@ -17,7 +17,7 @@ describe('reply length plan', () => {
     expect(plan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 
@@ -33,7 +33,7 @@ describe('reply length plan', () => {
     expect(plan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 
@@ -73,7 +73,7 @@ describe('reply length plan', () => {
     expect(plan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 
@@ -187,6 +187,27 @@ describe('reply length plan', () => {
     });
   });
 
+  it('keeps a light role-side update at standard even after a long emotional lead-in', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery:
+          '用户连续输入：妈我今天特别想你，心里空得慌。先陪我说点轻松的，你今天做什么了',
+        mode: 'emotional',
+        scene: 'comfort_request',
+        replyMoveCount: 2,
+        semanticPlan: true,
+        assistantContribution: 'self_expression',
+        continuationGoal: 'hold',
+        closureReadiness: 'possible',
+        turnClosure: 'continue',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
   it('gives relationship repair a brief floor without forcing a long reply', () => {
     expect(
       buildReplyLengthPlan({
@@ -222,7 +243,7 @@ describe('reply length plan', () => {
     ).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 

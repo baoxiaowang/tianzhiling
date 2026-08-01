@@ -29,6 +29,33 @@ describe('ReplyGuardrailService', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
+  it('locally repairs a promise to perform a real-world dependent task', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      createChatCompletion: jest.fn(),
+    } as never;
+    const userQuery = '爸，你能替我接孩子放学吗';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['孩子交给我，我去接她'],
+      replyRoute: route,
+      replyBrief,
+      evidence: [],
+      claims: [],
+      reviewMode: 'full',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.finalReviewResult).toBe('hard_recovery');
+    expect(result.segments.join('')).toContain('没法替你看孩子');
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('escalates missing grounded claims and undeclared shared-past narration', () => {
     const service = new ReplyGuardrailService();
     const groundedQuery =
@@ -80,18 +107,14 @@ describe('ReplyGuardrailService', () => {
     service.openAIService = {
       isEnabled: jest.fn(() => false),
     } as never;
-    const userQuery =
-      '你之前爱旅游爬山玩水，现在你不在了，在天上也能四处转转';
+    const userQuery = '你之前爱旅游爬山玩水，现在你不在了，在天上也能四处转转';
     const route = routeReplyScene({ currentQuery: userQuery });
     const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
 
     const result = await service.validateAssistantReply({
       messages: [],
       userQuery,
-      replySegments: [
-        '爸在天上也能四处转转',
-        '当年爸背你上过西山',
-      ],
+      replySegments: ['爸在天上也能四处转转', '当年爸背你上过西山'],
       replyRoute: route,
       replyBrief,
       evidence: [
@@ -172,12 +195,7 @@ describe('ReplyGuardrailService', () => {
     const detectRisk = (service as any).detectRisk.bind(service);
 
     expect(
-      detectRisk(
-        currentQuery,
-        '今天去河边走了走，晒了会儿太阳',
-        [],
-        replyBrief
-      )
+      detectRisk(currentQuery, '今天去河边走了走，晒了会儿太阳', [], replyBrief)
     ).toBeFalsy();
     expect(
       detectRisk(
@@ -1361,7 +1379,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.interventionLevel).not.toBe('technical_fallback');
   });
 
-  it('uses the existing review loop to merge semantically redundant bubbles', async () => {
+  it('observes semantically redundant bubbles without paying for a rewrite', async () => {
     const service = new ReplyGuardrailService();
     const createChatCompletion = jest
       .fn()
@@ -1439,10 +1457,12 @@ describe('ReplyGuardrailService', () => {
       'redundant_bubble'
     );
     expect(result).toMatchObject({
-      segments: ['哎，爸在呢'],
-      rewritten: true,
-      finalReviewResult: 'pass',
+      segments: ['哎，在呢', '哎，爸在呢'],
+      rewritten: false,
+      revisionAttempted: false,
+      finalReviewResult: 'advisory_unresolved',
     });
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it('keeps fear of forgetting the departed out of the guilt fallback', () => {

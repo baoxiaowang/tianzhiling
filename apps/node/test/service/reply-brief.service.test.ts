@@ -19,11 +19,18 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('5 字以内的表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
     expect(brief.prompt).toContain('不为回复完整性补泡');
-    expect(brief.version).toBe('reply_brief_v6');
+    expect(brief.version).toBe('reply_brief_v8');
+    expect(brief.experiencePlan).toMatchObject({
+      version: 'experience_plan_v1',
+      profileTier: 'P0',
+      relationshipStage: 'R0',
+      conversationDepth: 'D0',
+    });
+    expect(brief.prompt).toContain('体验：P0/R0/D0');
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
     expect(brief.prompt).toContain('## 总字数预算');
   });
@@ -39,7 +46,7 @@ describe('buildReplyBrief', () => {
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
     expect(brief.prompt).toContain('只输出 {"segments":["第一颗","第二颗"]}');
     expect(brief.prompt).toContain('有节奏的重复加强情感');
@@ -56,6 +63,88 @@ describe('buildReplyBrief', () => {
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan.lengthClass).toBe('micro');
     expect(brief.prompt).not.toContain('## 短轮参与');
+  });
+
+  it('turns a real-world dependency into a trust-focused boundary brief', () => {
+    const currentQuery = '爸，你能替我去学校接孩子吗';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.mode).toBe('boundary');
+    expect(brief.realityDependencies).toEqual([
+      expect.objectContaining({ kind: 'childcare' }),
+    ]);
+    expect(brief.guardrailFocuses).toContain('reality_dependency');
+    expect(brief.prompt).toContain('## 现实依赖');
+    expect(brief.prompt).toContain('不能在现实中执行或替代现实人员');
+  });
+
+  it('resets facts after a denial without inventing a replacement', () => {
+    const currentQuery = '没有这回事，你别再编了';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({
+      currentQuery,
+      route,
+      confirmedFacts: ['以前爸爸背用户上过西山'],
+    });
+
+    expect(brief.correctionPolicy).toEqual({
+      mode: 'reset',
+      suppressPriorFacts: true,
+    });
+    expect(brief.guardrailFocuses).toContain('correction_reset');
+    expect(brief.prompt).toContain('替代事实归零');
+  });
+
+  it('uses only the explicit minimum replacement on a correction turn', () => {
+    const currentQuery = '不是你背我，是妈妈背我';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.correctionPolicy?.mode).toBe('replace');
+    expect(brief.prompt).toContain('最小替代事实');
+    expect(brief.prompt).toContain('不增加时间、地点、动作或另一种解释');
+  });
+
+  it('grounds active contribution while preferring role-present content', () => {
+    const currentQuery = '妈，你多说几句，说说你自己';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.activeContribution).toEqual(
+      expect.objectContaining({
+        preferredSource: 'role_present',
+        sharedPastAllowed: false,
+      })
+    );
+    expect(brief.factClaimMode).toBe('grounded');
+    expect(brief.prompt).toContain('共同过去没有证据，本轮不得使用');
+  });
+
+  it('records a strategy alternative after repeated generic moves', () => {
+    const currentQuery = '今天又路过那家店了';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({
+      currentQuery,
+      route,
+      recentMessages: [
+        {
+          role: MessageRole.assistant,
+          content: '听着就心疼，我在呢',
+        } as MessageEntity,
+        {
+          role: MessageRole.assistant,
+          content: '妈真心疼，会一直陪着你',
+        } as MessageEntity,
+      ],
+    });
+
+    expect(brief.strategyQuality).toEqual(
+      expect.objectContaining({
+        preferredAlternative: 'topic_transition',
+      })
+    );
+    expect(brief.prompt).toContain('## 多轮策略去重');
   });
 
   it('cools down short-turn participation after the previous assistant reply used it', () => {
@@ -139,6 +228,190 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('开放点尚未解决');
   });
 
+  it('removes unsupported detail requests from a grounded semantic plan', () => {
+    const currentQuery = '爸，你还记得西山吗？';
+    const intent = {
+      intents: [
+        {
+          target: 'relationship' as const,
+          timeScope: 'shared_past' as const,
+          intent: 'recall_memory' as const,
+          subIntent: 'other' as const,
+          confidence: 0.96,
+        },
+      ],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: 'user',
+        moves: [
+          {
+            type: 'self_disclose' as const,
+            goal: '说出西山的山坡、树和小时候的具体动作',
+          },
+          {
+            type: 'answer' as const,
+            goal: '直接说记得，并补一个西山的具体细节',
+          },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '用具体细节唤起共同回忆',
+        questionNeed: 'none' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: [],
+        engagement: {
+          userConversationState: 'opening' as const,
+          openLoop: '用户想确认共同回忆',
+          continuationGoal: 'deepen' as const,
+          assistantContribution: 'specific_detail' as const,
+          mustContribute: '补一个西山的具体细节',
+          avoidRepeatingMove: '不要只说记得',
+          closureReadiness: 'possible' as const,
+        },
+      },
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.96,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.factClaimMode).toBe('grounded');
+    expect(brief.conversationPlan?.moves.map(move => move.goal)).toEqual([
+      '不冒充记得，不补共同过去',
+      '回答能确认的部分；没有证据就坦白记不真切',
+    ]);
+    expect(brief.conversationPlan?.engagement?.mustContribute).toBe(
+      '回答能确认的部分；没有证据就坦白记不真切'
+    );
+    expect(brief.prompt).not.toContain('补一个西山的具体细节');
+  });
+
+  it('keeps emotional holding as a valid correction strategy', () => {
+    const currentQuery = '不是半年，准确说是十一个月';
+    const intent = {
+      intents: [
+        {
+          target: 'user' as const,
+          timeScope: 'current' as const,
+          intent: 'correct_assistant' as const,
+          subIntent: 'other' as const,
+          confidence: 0.98,
+        },
+      ],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '这段日子的漫长',
+        moves: [
+          { type: 'acknowledge' as const, goal: '承认时间说错了' },
+          { type: 'affirm' as const, goal: '确认十一个月' },
+        ],
+        socialStrategy: 'save_face' as const,
+        strategyPurpose: '不纠缠数字，接住时间背后的感受',
+        questionNeed: 'none' as const,
+        turnClosure: 'neutral' as const,
+        personaActivation: [],
+        engagement: {
+          userConversationState: 'repairing' as const,
+          openLoop: '用户希望这段漫长被理解',
+          continuationGoal: 'repair' as const,
+          assistantContribution: 'answer' as const,
+          mustContribute: '确认十一个月',
+          avoidRepeatingMove: '不争论具体月份',
+          closureReadiness: 'possible' as const,
+        },
+      },
+      emotion: 'sadness' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.98,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.conversationPlan?.moves).toEqual([
+      { type: 'acknowledge', goal: '撤回错误，不辩解' },
+      {
+        type: 'comfort',
+        goal: '接住纠正背后的感受，不机械复述，不增加事实',
+      },
+    ]);
+    expect(brief.conversationPlan?.engagement).toMatchObject({
+      assistantContribution: 'affection',
+      mustContribute: '撤回错误并接住纠正背后的感受，不机械复述数字或事实',
+      closureReadiness: 'ready',
+    });
+    expect(brief.conversationPlan?.turnClosure).toBe('close');
+  });
+
+  it('stops a correction plan from reopening the mistaken topic', () => {
+    const currentQuery = '那不是我爸，是我叔';
+    const intent = {
+      intents: [
+        {
+          target: 'user' as const,
+          timeScope: 'current' as const,
+          intent: 'correct_assistant' as const,
+          subIntent: 'other' as const,
+          confidence: 0.98,
+        },
+      ],
+      conversationPlan: {
+        stance: 'concerned' as const,
+        stanceTarget: 'user',
+        moves: [
+          { type: 'acknowledge' as const, goal: '承认记错' },
+          { type: 'ask' as const, goal: '继续问叔叔身体' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '纠正后继续原话题',
+        questionNeed: 'helpful' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: [],
+        engagement: {
+          userConversationState: 'repairing' as const,
+          openLoop: '纠正关系',
+          continuationGoal: 'repair' as const,
+          assistantContribution: 'question' as const,
+          mustContribute: '改问叔叔身体',
+          avoidRepeatingMove: '不再叫爸爸',
+          closureReadiness: 'possible' as const,
+        },
+      },
+      emotion: 'neutral' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.98,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.conversationPlan?.moves).toEqual([
+      { type: 'acknowledge', goal: '撤回错误，不辩解' },
+      {
+        type: 'affirm',
+        goal: '正文写出用户纠正后的最小事实，随后收住',
+      },
+    ]);
+    expect(brief.conversationPlan?.questionNeed).toBe('none');
+    expect(brief.conversationPlan?.engagement?.mustContribute).toBe(
+      '撤回错误；正文写出用户给出的最小纠正事实，关系归属用“是”，称呼要求才用“叫”；转述用户的“我”时改成“你”，随后收住'
+    );
+    expect(brief.prompt).toContain('关系归属用“是”，称呼要求才用“叫”');
+    expect(brief.prompt).toContain('转述用户的“我”时改成“你”');
+    expect(brief.conversationPlan?.turnClosure).toBe('close');
+    expect(brief.prompt).not.toContain('继续问叔叔身体');
+  });
+
+  it('separates role-side imagination from user facts and real-world action', () => {
+    const currentQuery = '爸，你在那边今天吃什么了？';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.prompt).toContain('用户偏好、习惯、性格');
+    expect(brief.prompt).toContain('不能替用户在现实中做饭、到场或触碰');
+  });
+
   it('asks the agent to contribute before returning the turn to the user', () => {
     const currentQuery = '爷爷，您多跟我说几句吧。';
     const intent = {
@@ -183,9 +456,9 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery, intent });
     const brief = buildReplyBrief({ currentQuery, intent, route });
 
-    expect(brief.prompt).toContain('符合人物的当下小内容、偏好或态度');
+    expect(brief.prompt).toContain('只给一个短小的角色侧当下片段');
+    expect(brief.prompt).toContain('不编用户偏好或共同往事');
     expect(brief.prompt).toContain('不把话推回用户');
-    expect(brief.prompt).toContain('不能冒充和用户共同经历过的生前往事');
     expect(brief.prompt).toContain('不要只说你说我听着');
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan).toEqual({
@@ -255,7 +528,7 @@ describe('buildReplyBrief', () => {
       targetCharacters: 28,
       reviewCharacters: 38,
     });
-    expect(brief.prompt).toContain('只承认刚才说法不对，不补任何新旧事实细节');
+    expect(brief.prompt).toContain('替代事实归零');
   });
 
   it('uses the relationship continuity contract as the reply planning source', () => {
@@ -437,9 +710,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain(
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
-    expect(brief.prompt).toContain(
-      '现实事实、用户状态和共同记忆只使用以上证据'
-    );
+    expect(brief.prompt).toContain('共同往事仍须证据');
     expect(brief.prompt).toContain('不补当时的动作、话语、感受或表现');
     expect(brief.prompt).toContain('默认一颗');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
@@ -453,7 +724,7 @@ describe('buildReplyBrief', () => {
 
     expect(brief.factClaimMode).toBe('grounded');
     expect(brief.prompt).toContain('"claims"');
-    expect(brief.prompt).toContain('text 必须是气泡原文');
+    expect(brief.prompt).toContain('claims 只列气泡中的事实');
   });
 
   it('uses user-authored and confirmed evidence but excludes assistant history', () => {

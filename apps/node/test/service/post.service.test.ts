@@ -305,8 +305,10 @@ function createService(
     }),
   } as any;
   service.userModel = {
-    findOne: jest.fn(async ({ where }: any) =>
-      users.find(user => sameObjectId(user.id, where?.id ?? where?._id)) ?? null
+    findOne: jest.fn(
+      async ({ where }: any) =>
+        users.find(user => sameObjectId(user.id, where?.id ?? where?._id)) ??
+        null
     ),
     save: jest.fn(async (user: UserEntity) => user),
   } as any;
@@ -388,7 +390,11 @@ function createService(
         const id = where?.id ?? where?._id;
         const matchesId = id ? sameObjectId(comment.id, id) : true;
         const matchesPost = where?.postId
-          ? sameObjectId(comment.postId, where.postId)
+          ? Array.isArray(where.postId.$in)
+            ? where.postId.$in.some((id: MongoObjectId) =>
+                sameObjectId(comment.postId, id)
+              )
+            : sameObjectId(comment.postId, where.postId)
           : true;
         const matchesAgent = where?.agentId
           ? sameObjectId(comment.agentId, where.agentId)
@@ -914,13 +920,13 @@ describe('PostService comment content safety', () => {
         _id: new MongoObjectId(ACCOUNT_ID),
       },
     });
-    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
-      {
-        openid: 'openid-1',
-        content: '我也很想她',
-        scene: 2,
-      }
-    );
+    expect(
+      service.wechatPayService.checkMessageContentSafety
+    ).toHaveBeenCalledWith({
+      openid: 'openid-1',
+      content: '我也很想她',
+      scene: 2,
+    });
     expect(comments).toHaveLength(1);
   });
 
@@ -947,13 +953,13 @@ describe('PostService comment content safety', () => {
       }
     );
 
-    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
-      {
-        openid: 'openid-from-token',
-        content: '我也很想她',
-        scene: 2,
-      }
-    );
+    expect(
+      service.wechatPayService.checkMessageContentSafety
+    ).toHaveBeenCalledWith({
+      openid: 'openid-from-token',
+      content: '我也很想她',
+      scene: 2,
+    });
     expect(comments).toHaveLength(1);
   });
 
@@ -983,13 +989,13 @@ describe('PostService comment content safety', () => {
         userId: new MongoObjectId(USER_ID),
       },
     });
-    expect(service.wechatPayService.checkMessageContentSafety).toHaveBeenCalledWith(
-      {
-        openid: 'openid-linked-account',
-        content: '普通评论',
-        scene: 2,
-      }
-    );
+    expect(
+      service.wechatPayService.checkMessageContentSafety
+    ).toHaveBeenCalledWith({
+      openid: 'openid-linked-account',
+      content: '普通评论',
+      scene: 2,
+    });
     expect(comments).toHaveLength(1);
   });
 
@@ -1298,9 +1304,7 @@ describe('PostService agent comment follow-up replies', () => {
     expect(reply).toBe('儿子，没忙什么，正回你呢。');
     const request = (service.openAIService.generateText as jest.Mock).mock
       .calls[0][0];
-    expect(request.systemPrompt).toContain(
-      '正文有明确问题时必须直接回答'
-    );
+    expect(request.systemPrompt).toContain('正文有明确问题时必须直接回答');
     expect(request.prompt).toBe('请直接输出一条动态评论正文。');
   });
 
@@ -1370,17 +1374,13 @@ describe('PostService agent comment follow-up replies', () => {
       userReply.id
     );
 
-    expect(reply).toMatch(
-      /^知道，现在是\d{2}:\d{2}。刚才我没先回答你的话。$/
-    );
+    expect(reply).toMatch(/^知道，现在是\d{2}:\d{2}。刚才我没先回答你的话。$/);
     expect(reply).not.toContain('上班');
     const request = (service.openAIService.generateText as jest.Mock).mock
       .calls[0][0];
     expect(request.temperature).toBe(0.45);
     expect(request.topP).toBe(0.85);
-    expect(request.prompt).toBe(
-      '请直接输出对当前用户评论的楼中楼回复正文。'
-    );
+    expect(request.prompt).toBe('请直接输出对当前用户评论的楼中楼回复正文。');
     expect(request.systemPrompt).toContain(
       '先回答问题或承认纠正，不要转回动态正文'
     );
@@ -1424,9 +1424,7 @@ describe('PostService agent comment follow-up replies', () => {
       userReply.id
     );
 
-    expect(reply).toBe(
-      '哦，是我说错了。你现在不上班，刚才不该乱猜。'
-    );
+    expect(reply).toBe('哦，是我说错了。你现在不上班，刚才不该乱猜。');
     expect(reply).not.toContain('熬夜');
     expect(reply).not.toContain('身体不好');
   });
@@ -1462,6 +1460,75 @@ describe('PostService post pagination', () => {
     expect(result.page).toBe(1);
     expect(result.pageSize).toBe(2);
     expect(result.hasMore).toBe(true);
+  });
+
+  it('loads comments for a post page with one batched query', async () => {
+    const posts = [
+      createPost({ id: new MongoObjectId(POST_ID) }),
+      createPost({ id: new MongoObjectId(POST_2_ID) }),
+    ];
+    const comments = [
+      createPostCommentEntity({
+        id: new MongoObjectId(COMMENT_ID),
+        postId: new MongoObjectId(POST_ID),
+      }),
+      createPostCommentEntity({
+        id: new MongoObjectId(AGENT_COMMENT_ID),
+        postId: new MongoObjectId(POST_2_ID),
+      }),
+    ];
+    const { service } = createService([], { posts, comments });
+
+    const result = await service.listPosts(AUTH, { page: 1, pageSize: 2 });
+
+    expect(service.commentModel.find).toHaveBeenCalledTimes(1);
+    expect(service.commentModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          postId: {
+            $in: expect.arrayContaining([
+              new MongoObjectId(POST_ID),
+              new MongoObjectId(POST_2_ID),
+            ]),
+          },
+        },
+      })
+    );
+    expect(result.items.map(item => item.comments.length)).toEqual([1, 1]);
+  });
+
+  it('returns only two comment previews for lightweight post lists', async () => {
+    const post = createPost({ id: new MongoObjectId(POST_ID) });
+    const comments = [
+      createPostCommentEntity({
+        id: new MongoObjectId('665000000000000000000041'),
+        postId: post.id,
+        content: '第一条',
+      }),
+      createPostCommentEntity({
+        id: new MongoObjectId('665000000000000000000042'),
+        postId: post.id,
+        content: '第二条',
+      }),
+      createPostCommentEntity({
+        id: new MongoObjectId('665000000000000000000043'),
+        postId: post.id,
+        content: '第三条',
+      }),
+    ];
+    const { service } = createService([], { posts: [post], comments });
+
+    const result = await service.listPosts(AUTH, {
+      page: 1,
+      pageSize: 10,
+      lightweight: true,
+    });
+
+    expect(result.items[0].commentCount).toBe(3);
+    expect(result.items[0].comments.map(item => item.content)).toEqual([
+      '第一条',
+      '第二条',
+    ]);
   });
 
   it('returns later post pages and clamps page size', async () => {
@@ -1846,9 +1913,12 @@ describe('PostService post notifications', () => {
       remindAgentIds: [AGENT_A_ID],
       images: ['moments/flower.jpg'],
     });
-    const { service, notifications, postNotifications } = createService([agent], {
-      posts: [post],
-    });
+    const { service, notifications, postNotifications } = createService(
+      [agent],
+      {
+        posts: [post],
+      }
+    );
 
     await service.processRemindReplyJob({
       postId: POST_ID,
@@ -1977,8 +2047,9 @@ describe('PostService post notifications', () => {
     );
 
     const entrySummary = await service.getPostNotificationEntrySummary(AUTH);
-    const compatibleSummary =
-      await service.getUnreadPostNotificationSummary(AUTH);
+    const compatibleSummary = await service.getUnreadPostNotificationSummary(
+      AUTH
+    );
 
     expect(entrySummary.unseenCount).toBe(1);
     expect(entrySummary.latestUnseen?.contentPreview).toBe('新的互动');
@@ -2142,7 +2213,9 @@ describe('PostService post notifications', () => {
     const result = await service.listPostNotifications(AUTH);
     const summary = await service.getUnreadPostNotificationSummary(AUTH);
 
-    expect(result.items.map(item => item.contentPreview)).toEqual(['保留的通知']);
+    expect(result.items.map(item => item.contentPreview)).toEqual([
+      '保留的通知',
+    ]);
     expect(summary.unreadCount).toBe(1);
     expect(summary.latest?.contentPreview).toBe('保留的通知');
     expect(notifications).toHaveLength(0);

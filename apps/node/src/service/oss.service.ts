@@ -4,6 +4,8 @@ import { ILogger } from '@midwayjs/logger';
 import OSS = require('ali-oss');
 import { AppError } from '../common/errors';
 
+const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
 export interface OssConfig {
   enabled?: boolean;
   region?: string;
@@ -75,7 +77,9 @@ export class OssService {
       request.expiresInSeconds
     );
     const contentType = this.normalizeContentType(request.contentType);
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'Cache-Control': IMMUTABLE_ASSET_CACHE_CONTROL,
+    };
 
     if (contentType) {
       headers['Content-Type'] = contentType;
@@ -84,7 +88,7 @@ export class OssService {
     const uploadUrl = client.signatureUrl(objectKey, {
       method: 'PUT',
       expires: expiresInSeconds,
-      ...(contentType ? { 'Content-Type': contentType } : {}),
+      ...headers,
     });
 
     this.logger.info(
@@ -299,17 +303,14 @@ export class OssService {
     return `${baseName || 'asset'}-${hash}${ext}`;
   }
 
-  private buildUploadHeaders(
-    contentType?: string
-  ): Record<string, string> | undefined {
+  private buildUploadHeaders(contentType?: string): Record<string, string> {
     const normalizedContentType = this.normalizeContentType(contentType);
 
-    if (!normalizedContentType) {
-      return undefined;
-    }
-
     return {
-      'Content-Type': normalizedContentType,
+      'Cache-Control': IMMUTABLE_ASSET_CACHE_CONTROL,
+      ...(normalizedContentType
+        ? { 'Content-Type': normalizedContentType }
+        : {}),
     };
   }
 

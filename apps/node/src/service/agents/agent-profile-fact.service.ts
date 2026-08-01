@@ -64,10 +64,54 @@ interface ListProfileFactsOptions {
   limit?: number;
 }
 
+export type AgentVisualIdentityTarget = 'agent' | 'user' | 'family' | 'unknown';
+
+export type AgentVisualIdentityConfidence = 'low' | 'medium' | 'high';
+
+export type AgentVisualAppearanceTraitKind =
+  | 'hair_color'
+  | 'hair_length'
+  | 'face_shape'
+  | 'eyewear'
+  | 'facial_hair'
+  | 'build'
+  | 'distinctive';
+
+export interface AgentVisualAppearanceTrait {
+  kind: AgentVisualAppearanceTraitKind;
+  value: string;
+}
+
+export interface AgentVisualAppearanceObservation {
+  personId: string;
+  identityTarget: AgentVisualIdentityTarget;
+  identityName?: string;
+  identityConfidence: AgentVisualIdentityConfidence;
+  traits: AgentVisualAppearanceTrait[];
+}
+
+interface UpsertVisualAppearanceOptions {
+  message: MessageEntity;
+  observations: AgentVisualAppearanceObservation[];
+}
+
 interface ArchiveProfileFactsOptions {
   userId: MongoObjectId;
   agentId: MongoObjectId;
   requestText: string;
+}
+
+export type AgentProfileMemorySourceField =
+  | 'lifeExperience'
+  | 'personalityTraits'
+  | 'languageHabits'
+  | 'hobbies'
+  | 'sharedMemories';
+
+interface SyncAgentProfileMemorySourcesOptions {
+  userId: MongoObjectId;
+  agentId: MongoObjectId;
+  sources: Partial<Record<AgentProfileMemorySourceField, string>>;
 }
 
 interface UpsertProfileFactInput
@@ -86,6 +130,56 @@ interface ExtractedProfileFact {
 }
 
 const DEFAULT_FACT_LIMIT = 32;
+const VISUAL_APPEARANCE_KEY_PREFIX = 'visual.appearance.';
+const VISUAL_APPEARANCE_TRAIT_KINDS = new Set<AgentVisualAppearanceTraitKind>([
+  'hair_color',
+  'hair_length',
+  'face_shape',
+  'eyewear',
+  'facial_hair',
+  'build',
+  'distinctive',
+]);
+export const AGENT_PROFILE_MEMORY_SOURCE_CONFIG: Record<
+  AgentProfileMemorySourceField,
+  {
+    type: AgentProfileFactType;
+    key: string;
+    valuePrefix: string;
+    priority: number;
+  }
+> = {
+  lifeExperience: {
+    type: AgentProfileFactType.memory,
+    key: 'profile_source.life_experience',
+    valuePrefix: '当前角色生平经历：',
+    priority: 3,
+  },
+  personalityTraits: {
+    type: AgentProfileFactType.style,
+    key: 'profile_source.personality_traits',
+    valuePrefix: '当前角色性格特点：',
+    priority: 3,
+  },
+  languageHabits: {
+    type: AgentProfileFactType.style,
+    key: 'profile_source.language_habits',
+    valuePrefix: '当前角色语言习惯：',
+    priority: 3,
+  },
+  hobbies: {
+    type: AgentProfileFactType.preference,
+    key: 'profile_source.hobbies',
+    valuePrefix: '当前角色兴趣爱好：',
+    priority: 2,
+  },
+  sharedMemories: {
+    type: AgentProfileFactType.memory,
+    key: 'profile_source.shared_memories',
+    valuePrefix: '用户与当前角色的共同记忆：',
+    priority: 3,
+  },
+};
 
 @Provide()
 export class AgentProfileFactService {
@@ -178,6 +272,78 @@ export class AgentProfileFactService {
       .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
   }
 
+  async listVisualAppearanceMemories(
+    options: ListProfileFactsOptions
+  ): Promise<AgentProfileFactSummary[]> {
+    const facts = await this.factModel.find({
+      where: {
+        userId: options.userId,
+        agentId: options.agentId,
+        type: AgentProfileFactType.identity,
+        key: { $regex: '^visual\\.appearance\\.' },
+        status: {
+          $in: [
+            AgentProfileFactStatus.candidate,
+            AgentProfileFactStatus.active,
+          ],
+        },
+      } as never,
+      order: {
+        updatedAt: 'DESC',
+      },
+      take: this.normalizeLimit(options.limit ?? 16),
+    });
+
+    return facts
+      .sort(
+        (left, right) =>
+          Number(right.status === AgentProfileFactStatus.active) -
+          Number(left.status === AgentProfileFactStatus.active)
+      )
+      .map(fact => this.buildSummary(fact))
+      .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
+  }
+
+  async upsertVisualAppearanceObservations(
+    options: UpsertVisualAppearanceOptions
+  ): Promise<AgentProfileFactSummary[]> {
+    const facts: AgentProfileFactSummary[] = [];
+
+    for (const observation of options.observations.slice(0, 4)) {
+      const subject = this.resolveVisualAppearanceSubject(observation);
+
+      if (!subject) {
+        continue;
+      }
+
+      for (const trait of this.normalizeVisualAppearanceTraits(
+        observation.traits
+      )) {
+        const fact: AgentProfileFactSummary = {
+          type: AgentProfileFactType.identity,
+          key: `${VISUAL_APPEARANCE_KEY_PREFIX}${subject.key}.${trait.kind}`,
+          value: `${subject.label}的视觉形象：${trait.value}`,
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: AgentProfileFactConfidence.extracted,
+          priority: 1,
+          assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+        };
+
+        await this.upsertFact({
+          ...fact,
+          userId: options.message.userId,
+          agentId: options.message.agentId,
+          sourceMessageId: options.message.id,
+          sourceText: `图片人物${observation.personId}：${fact.value}`,
+          trustedSource: false,
+        });
+        facts.push(fact);
+      }
+    }
+
+    return facts;
+  }
+
   async listSharedFamilyMemberNames(
     options: ListProfileFactsOptions
   ): Promise<string[]> {
@@ -202,6 +368,55 @@ export class AgentProfileFactService {
           .filter((name): name is string => Boolean(name))
       )
     );
+  }
+
+  async syncAgentProfileMemorySources(
+    options: SyncAgentProfileMemorySourcesOptions
+  ): Promise<void> {
+    for (const field of Object.keys(
+      options.sources
+    ) as AgentProfileMemorySourceField[]) {
+      const config = AGENT_PROFILE_MEMORY_SOURCE_CONFIG[field];
+      const sourceText = this.normalizeSourceText(options.sources[field] || '');
+      const existing = await this.factModel.findOne({
+        where: {
+          userId: options.userId,
+          agentId: options.agentId,
+          key: config.key,
+        },
+      });
+
+      if (!sourceText) {
+        if (existing && existing.status !== AgentProfileFactStatus.archived) {
+          existing.status = AgentProfileFactStatus.archived;
+          existing.updatedAt = new Date();
+          await this.factModel.save(existing);
+        }
+        continue;
+      }
+
+      const value = `${config.valuePrefix}${sourceText}`;
+
+      if (
+        existing?.status === AgentProfileFactStatus.active &&
+        existing.value?.trim() === value
+      ) {
+        continue;
+      }
+
+      await this.upsertFact({
+        userId: options.userId,
+        agentId: options.agentId,
+        type: config.type,
+        key: config.key,
+        value,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: AgentProfileFactConfidence.confirmed,
+        priority: config.priority,
+        sourceText,
+        trustedSource: true,
+      });
+    }
   }
 
   async archiveMatchingFacts(
@@ -687,7 +902,9 @@ export class AgentProfileFactService {
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
     fact.supportCount = nextSupportCount;
-    fact.assertionPolicy = this.resolveAssertionPolicy(input.type);
+    fact.assertionPolicy =
+      input.assertionPolicy ??
+      this.resolveAssertionPolicy(input.type, input.key);
     fact.conflictingValues =
       existing && !sameValue
         ? this.appendConflictingValue(
@@ -733,13 +950,84 @@ export class AgentProfileFactService {
   }
 
   private resolveAssertionPolicy(
-    type: AgentProfileFactType
+    type: AgentProfileFactType,
+    key = ''
   ): AgentProfileFactAssertionPolicy {
-    return type === AgentProfileFactType.style ||
+    return key.startsWith(VISUAL_APPEARANCE_KEY_PREFIX) ||
+      type === AgentProfileFactType.style ||
       type === AgentProfileFactType.taboo ||
       type === AgentProfileFactType.safetySignal
       ? AgentProfileFactAssertionPolicy.contextOnly
       : AgentProfileFactAssertionPolicy.canAssert;
+  }
+
+  private resolveVisualAppearanceSubject(
+    observation: AgentVisualAppearanceObservation
+  ): { key: string; label: string } | null {
+    if (
+      observation.identityConfidence === 'low' ||
+      observation.identityTarget === 'unknown'
+    ) {
+      return null;
+    }
+
+    if (observation.identityTarget === 'agent') {
+      return { key: 'agent', label: '当前角色' };
+    }
+
+    if (observation.identityTarget === 'user') {
+      return { key: 'user', label: '用户' };
+    }
+
+    const name = this.normalizeVisualAppearanceValue(
+      observation.identityName || ''
+    );
+
+    if (!name) {
+      return null;
+    }
+
+    return {
+      key: `family_${this.hashKey(name)}`,
+      label: `家人${name}`,
+    };
+  }
+
+  private normalizeVisualAppearanceTraits(
+    traits: AgentVisualAppearanceTrait[]
+  ): AgentVisualAppearanceTrait[] {
+    const byKind = new Map<
+      AgentVisualAppearanceTraitKind,
+      AgentVisualAppearanceTrait
+    >();
+
+    for (const trait of traits || []) {
+      if (!VISUAL_APPEARANCE_TRAIT_KINDS.has(trait?.kind)) {
+        continue;
+      }
+
+      const value = this.normalizeVisualAppearanceValue(trait.value);
+
+      if (!value || /不清楚|未知|无法判断/.test(value)) {
+        continue;
+      }
+
+      byKind.set(trait.kind, {
+        kind: trait.kind,
+        value,
+      });
+    }
+
+    return [...byKind.values()].slice(0, 4);
+  }
+
+  private normalizeVisualAppearanceValue(value: string): string {
+    return (value || '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, '')
+      .replace(/[，。！？!?；;：:]+$/g, '')
+      .trim()
+      .slice(0, 24);
   }
 
   private parseLLMFacts(
