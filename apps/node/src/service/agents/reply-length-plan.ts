@@ -9,6 +9,8 @@ export interface ReplyLengthPlan {
   lengthClass: ReplyLengthClass;
   targetCharacters: number;
   reviewCharacters: number;
+  focusMode?: 'single_scene';
+  reviewPolicy?: 'remove_repeated_actions_only';
 }
 
 export interface BuildReplyLengthPlanOptions {
@@ -66,11 +68,19 @@ const BRIEF_MODES = new Set([
 ]);
 
 const STANDARD_MODES = new Set(['relationship', 'family', 'memory']);
+const COMPACT_SEMANTIC_SCENES = new Set([
+  'comfort_request',
+  'guilt_regret',
+  'memory_recall',
+]);
 
 export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
 ): ReplyLengthPlan {
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
+  const compactSingleFocus =
+    Boolean(options.semanticPlan) &&
+    Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene));
   let lengthClass: ReplyLengthClass;
 
   if (
@@ -84,6 +94,8 @@ export function buildReplyLengthPlan(
   } else if (options.shortTurnParticipation) {
     lengthClass = 'micro';
   } else if (options.scene === 'correction') {
+    lengthClass = 'brief';
+  } else if (compactSingleFocus) {
     lengthClass = 'brief';
   } else if (
     options.semanticPlan &&
@@ -112,7 +124,7 @@ export function buildReplyLengthPlan(
     lengthClass = 'brief';
   }
 
-  if (!options.shortTurnParticipation) {
+  if (!options.shortTurnParticipation && !compactSingleFocus) {
     if (
       options.semanticPlan &&
       options.assistantContribution === 'self_expression'
@@ -131,10 +143,20 @@ export function buildReplyLengthPlan(
     }
   }
 
-  return {
+  const plan: ReplyLengthPlan = {
     lengthClass,
     ...LENGTH_BUDGETS[lengthClass],
   };
+
+  return compactSingleFocus && !options.hasProtectiveStop
+    ? {
+        ...plan,
+        targetCharacters: 28,
+        reviewCharacters: 30,
+        focusMode: 'single_scene',
+        reviewPolicy: 'remove_repeated_actions_only',
+      }
+    : plan;
 }
 
 function promoteLengthClass(
@@ -153,6 +175,10 @@ function promoteLengthClass(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
+  if (plan.focusMode === 'single_scene') {
+    return `只回一个最重要的短场景，约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字时只删重复动作、解释、总结和通用叮嘱，不为完整覆盖补内容。`;
+  }
+
   return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。用户写得长不等于回复长；只留最重要一处，删重复、解释、总结和通用叮嘱。`;
 }
 

@@ -111,6 +111,35 @@ describe('reply length plan', () => {
     });
   });
 
+  it.each(['comfort_request', 'guilt_regret', 'memory_recall'])(
+    'keeps semantic %s replies on one short scene',
+    scene => {
+      const plan = buildReplyLengthPlan({
+        currentQuery: '这件事我一想起来就很难受，你还记得吗',
+        mode: scene === 'memory_recall' ? 'memory' : 'emotional',
+        scene,
+        replyMoveCount: 3,
+        semanticPlan: true,
+        assistantContribution: 'affection',
+        continuationGoal: 'hold',
+        closureReadiness: 'blocked',
+        turnClosure: 'continue',
+      });
+
+      expect(plan).toEqual({
+        lengthClass: 'brief',
+        targetCharacters: 28,
+        reviewCharacters: 30,
+        focusMode: 'single_scene',
+        reviewPolicy: 'remove_repeated_actions_only',
+      });
+      expect(buildReplyLengthPlanPrompt(plan)).toContain(
+        '只回一个最重要的短场景'
+      );
+      expect(buildReplyLengthPlanPrompt(plan)).toContain('不为完整覆盖补内容');
+    }
+  );
+
   it('does not turn a long user message into a long reply budget', () => {
     expect(
       buildReplyLengthPlan({
@@ -167,7 +196,7 @@ describe('reply length plan', () => {
     });
   });
 
-  it('caps a short explicit self-expression request at standard instead of extended', () => {
+  it('keeps a short self-expression request to one compact scene', () => {
     expect(
       buildReplyLengthPlan({
         currentQuery: '想听你说两句，别光说挺好的。',
@@ -181,13 +210,15 @@ describe('reply length plan', () => {
         turnClosure: 'continue',
       })
     ).toEqual({
-      lengthClass: 'standard',
-      targetCharacters: 40,
-      reviewCharacters: 55,
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 30,
+      focusMode: 'single_scene',
+      reviewPolicy: 'remove_repeated_actions_only',
     });
   });
 
-  it('keeps a light role-side update at standard even after a long emotional lead-in', () => {
+  it('keeps a light role-side update compact after a long emotional lead-in', () => {
     expect(
       buildReplyLengthPlan({
         currentQuery:
@@ -202,9 +233,11 @@ describe('reply length plan', () => {
         turnClosure: 'continue',
       })
     ).toEqual({
-      lengthClass: 'standard',
-      targetCharacters: 40,
-      reviewCharacters: 55,
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 30,
+      focusMode: 'single_scene',
+      reviewPolicy: 'remove_repeated_actions_only',
     });
   });
 

@@ -5928,6 +5928,14 @@ export class ConversationService {
       candidates.push(withoutFence.slice(objectStart, objectEnd + 1));
     }
 
+    const repairedKnownKeys = withoutFence.replace(
+      /([{,]\s*):?\s*(segments|claims|text)\s*:/g,
+      '$1"$2":'
+    );
+    if (repairedKnownKeys !== withoutFence) {
+      candidates.push(repairedKnownKeys);
+    }
+
     for (const candidate of Array.from(new Set(candidates))) {
       try {
         const parsed = JSON.parse(candidate);

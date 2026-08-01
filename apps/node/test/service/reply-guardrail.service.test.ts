@@ -102,6 +102,99 @@ describe('ReplyGuardrailService', () => {
     ).toBe('deterministic_first');
   });
 
+  it('requires uncertainty for unsupported death motives and family attribution', () => {
+    const service = new ReplyGuardrailService();
+    const cases = [
+      {
+        userQuery: '爸，是不是姐姐那句话刺激了你，你才想不开？',
+        response: '不怪你姐，那阵子爸心里压的事太多了',
+      },
+      {
+        userQuery: '奶，你临走前为什么不告诉我你快不行了？',
+        response: '奶也说不清为啥，就是怕你担心',
+      },
+      {
+        userQuery: '奶，你临走前为什么不告诉我你快不行了？',
+        response: '奶也不知道怎么答。那时候只想你别急，想着多看你一眼',
+      },
+      {
+        userQuery: '奶，你临走前为什么不告诉我你快不行了？',
+        response: '奶也说不清。那会儿脑子糊涂了，光想着见你一面',
+      },
+      {
+        userQuery: '奶，你临走前为什么不告诉我你快不行了？',
+        response: '奶也说不清，只想着最后能再看看你，舍不得吓着你',
+      },
+    ];
+
+    for (const item of cases) {
+      const replyBrief = buildReplyBrief({ currentQuery: item.userQuery });
+      const feedback = (
+        service as unknown as {
+          buildDeterministicFeedback: (
+            options: unknown,
+            candidate: unknown
+          ) => { issues: Array<{ code: string; layer: string }> };
+        }
+      ).buildDeterministicFeedback(
+        {
+          messages: [],
+          userQuery: item.userQuery,
+          replySegments: [item.response],
+          replyBrief,
+          evidence: [],
+          claims: [],
+        },
+        {
+          segments: [item.response],
+          claims: [],
+          resolvedIssueCodes: [],
+          changes: [],
+        }
+      );
+
+      expect(feedback.issues.map(issue => issue.code)).toContain('grounding');
+      expect(
+        feedback.issues.find(issue => issue.code === 'grounding')?.layer
+      ).toBe('hard_boundary');
+    }
+
+    const safeQuery = '奶，你临走前为什么不告诉我你快不行了？';
+    const safeBrief = buildReplyBrief({ currentQuery: safeQuery });
+    for (const response of [
+      '这件事我也说不清。你一直在找答案，我知道',
+      '这件事我说不清。你一直想弄明白，我知道',
+    ]) {
+      const safeFeedback = (
+        service as unknown as {
+          buildDeterministicFeedback: (
+            options: unknown,
+            candidate: unknown
+          ) => { issues: Array<{ code: string }> };
+        }
+      ).buildDeterministicFeedback(
+        {
+          messages: [],
+          userQuery: safeQuery,
+          replySegments: [response],
+          replyBrief: safeBrief,
+          evidence: [],
+          claims: [],
+        },
+        {
+          segments: [response],
+          claims: [],
+          resolvedIssueCodes: [],
+          changes: [],
+        }
+      );
+
+      expect(safeFeedback.issues.map(issue => issue.code)).not.toContain(
+        'grounding'
+      );
+    }
+  });
+
   it('does not let afterlife context exempt an unsupported shared-past claim', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
@@ -300,6 +393,88 @@ describe('ReplyGuardrailService', () => {
         }),
       ])
     );
+  });
+
+  it('routes an over-review compact scene to semantic review without deterministic truncation', () => {
+    const service = new ReplyGuardrailService();
+    const userQuery = '妈，我今天又想起你了，心里特别难受';
+    const route = routeReplyScene({
+      currentQuery: userQuery,
+      intent: {
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'current',
+            intent: 'seek_comfort',
+            subIntent: 'grief_support',
+            confidence: 0.96,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '用户的想念',
+          moves: [
+            { type: 'acknowledge', goal: '接住想念' },
+            { type: 'comfort', goal: '给一处安慰' },
+          ],
+          socialStrategy: 'direct',
+          strategyPurpose: '承接用户情绪',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.95,
+        source: 'semantic_model',
+      },
+    });
+    const replyBrief = buildReplyBrief({
+      currentQuery: userQuery,
+      route,
+      intent: route.intent,
+    });
+    const segments = [
+      '闺女，妈知道你今天又想起我了，心里这一下空得难受，妈也舍不得你一个人扛着这些想念。',
+    ];
+    const feedback = (service as any).buildDeterministicFeedback(
+      {
+        messages: [],
+        userQuery,
+        replySegments: segments,
+        replyRoute: route,
+        replyBrief,
+        evidence: [],
+        claims: [],
+      },
+      {
+        segments,
+        claims: [],
+        resolvedIssueCodes: [],
+        changes: [],
+      }
+    );
+
+    expect(replyBrief.lengthPlan).toMatchObject({
+      targetCharacters: 28,
+      reviewCharacters: 30,
+      reviewPolicy: 'remove_repeated_actions_only',
+    });
+    expect(feedback.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'excessive_reply_length' }),
+      ])
+    );
+    expect(
+      service.resolveEffectiveReviewMode({
+        requestedMode: 'deterministic_first',
+        userQuery,
+        replySegments: segments,
+        replyBrief,
+        evidence: [],
+        claims: [],
+      })
+    ).toBe('full');
   });
 
   it('asks the model to revise a blocking reply before using deterministic fallback', async () => {
@@ -625,7 +800,7 @@ describe('ReplyGuardrailService', () => {
     expect(revisionPrompt).toContain('先积极认错并退出了亲人身份');
   });
 
-  it('keeps a newer candidate when it resolves the previous issue and receives a different advisory', async () => {
+  it('repairs a newer candidate when review finds a new grounding issue', async () => {
     const service = new ReplyGuardrailService();
     const createChatCompletion = jest
       .fn()
@@ -694,6 +869,41 @@ describe('ReplyGuardrailService', () => {
             },
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                segments: ['有些话我没接好，但这层父女关系没有变'],
+                claims: [],
+                resolvedIssueCodes: ['grounding'],
+                changes: [
+                  {
+                    before: '是隔得久了',
+                    after: '有些话我没接好',
+                    reason: '删除未经证实的时间解释',
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                verdict: 'pass',
+                issues: [],
+                mustPreserve: ['父女关系没有变'],
+                mustAnswer: [],
+                groundingConstraints: [],
+              }),
+            },
+          },
+        ],
       });
     service.openAIService = {
       supportsGuardrailRevision: jest.fn(() => true),
@@ -706,11 +916,9 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['哪里不像你告诉我 我会按你说的改'],
     });
 
-    expect(createChatCompletion).toHaveBeenCalledTimes(3);
-    expect(result.segments).toEqual([
-      '不是关系变了 是隔得久了 有些话没有完全接上',
-    ]);
-    expect(result.finalReviewResult).toBe('advisory_unresolved');
+    expect(createChatCompletion).toHaveBeenCalledTimes(5);
+    expect(result.segments).toEqual(['有些话我没接好，但这层父女关系没有变']);
+    expect(result.finalReviewResult).toBe('communication_recovery');
   });
 
   it('ignores a reviewer request to complete a short longing reply', async () => {

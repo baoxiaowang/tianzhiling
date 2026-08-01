@@ -2644,7 +2644,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v8',
+        replyBriefVersion: 'reply_brief_v9',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -2982,7 +2982,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v8',
+        replyBriefVersion: 'reply_brief_v9',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -3584,7 +3584,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v8',
+        replyBriefVersion: 'reply_brief_v9',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'contextual_reply_brief',
@@ -4815,6 +4815,18 @@ describe('ConversationService generation cleanup diagnostics', () => {
     });
     expect(explained).toEqual({
       segments: ['我在听，你接着说。'],
+      claims: [],
+    });
+  });
+
+  it('recovers model JSON with a malformed known top-level key', () => {
+    const service = new ConversationService();
+    const parsed = (service as any).parseAssistantReply(
+      '{:segments:["爷的月季，红了没有？","开了就好"]}'
+    );
+
+    expect(parsed).toEqual({
+      segments: ['爷的月季，红了没有？', '开了就好'],
       claims: [],
     });
   });

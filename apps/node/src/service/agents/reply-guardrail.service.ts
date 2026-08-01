@@ -242,6 +242,12 @@ const FAMILY_RESPONSIBILITY_PRESSURE_REASON =
   '回复把照顾家人、维持家庭或替逝者尽责的压力推给用户';
 const REALITY_DEPENDENCY_OVERCLAIM_REASON =
   '回复承诺当前角色会执行用户依赖的现实任务';
+const REAL_WORLD_ATTRIBUTION_UNCERTAINTY_PATTERN =
+  /(?:不(?:太)?(?:记得|清楚|确定)|记不(?:得|清)|说不清|不知道|没法确认|不能确定|答不上来)/;
+const REAL_WORLD_ATTRIBUTION_ASSERTION_PATTERN =
+  /(?:不怪|没错|没关系|无关|根子在|是因为|就是(?:因为|怕|想|不想)|才没|心里(?:压|想)|怕你|想(?:再)?(?:见|看)|为这个家操心|累了|想歇|(?:说不清|不知道|不确定).{0,8}(?:但|就是|只|可).{0,8}(?:怕|想|舍不得|不愿|没敢)|(?:那时|那会儿|当时|那阵子|临走).{0,18}(?:怕|想|不想|没想|心里|脑子|身体|病|没劲|顾上))/;
+const REAL_WORLD_ATTRIBUTION_MOTIVE_PATTERN =
+  /(?:想|怕|舍不得|不忍|不愿|没敢|没顾上|脑子|糊涂|病到|没劲)/;
 const FAMILY_EMPATHY_AND_CARE_GAP_REASON =
   '家庭健康近况回复只确认听懂或记住，没有共情用户感受，也没有具体关心家人处境';
 const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
@@ -464,10 +470,16 @@ export class ReplyGuardrailService {
     }
 
     const content = options.replySegments.join('\n');
+    const lengthPlan = options.replyBrief?.lengthPlan;
+    const needsCompactLengthReview =
+      lengthPlan?.reviewPolicy === 'remove_repeated_actions_only' &&
+      countReplyVisibleCharacters(options.replySegments) >
+        lengthPlan.reviewCharacters;
 
     return (options.replyBrief?.factClaimMode === 'grounded' &&
       !options.claims?.length) ||
-      SHARED_PAST_SPECIFICITY_PATTERN.test(content)
+      SHARED_PAST_SPECIFICITY_PATTERN.test(content) ||
+      needsCompactLengthReview
       ? 'full'
       : options.requestedMode;
   }
@@ -947,6 +959,9 @@ export class ReplyGuardrailService {
         options.replyBrief
       )
     );
+    const factBoundaryRecovered = Boolean(
+      options.replyBrief?.guardrailFocuses.includes('real_world_evidence')
+    );
 
     return {
       segments: contextualSegments,
@@ -954,7 +969,9 @@ export class ReplyGuardrailService {
       rewritten: true,
       reason: firstReason || 'Guardrail 模型调用或结构化解析失败，采用技术兜底',
       unsupportedClaimCount: initialUnsupportedClaimCount,
-      interventionLevel: 'technical_fallback',
+      interventionLevel: factBoundaryRecovered
+        ? 'regenerate'
+        : 'technical_fallback',
       revisionAttempted: candidateVersions.length > 1,
       revisionUsage,
       candidateVersions,
@@ -962,8 +979,11 @@ export class ReplyGuardrailService {
       revisionRecords,
       revisionRoundCount: revisionRecords.length,
       communicationCompensationAttempted,
-      communicationCompensationSucceeded,
-      finalReviewResult: 'technical_fallback',
+      communicationCompensationSucceeded:
+        communicationCompensationSucceeded || factBoundaryRecovered,
+      finalReviewResult: factBoundaryRecovered
+        ? 'hard_recovery'
+        : 'technical_fallback',
     };
   }
 
@@ -976,9 +996,13 @@ export class ReplyGuardrailService {
   ): boolean {
     return feedback.issues.some(
       issue =>
-        ['relationship_continuity', 'family_responsibility_pressure'].includes(
-          issue.code
-        ) ||
+        [
+          'relationship_continuity',
+          'family_responsibility_pressure',
+          'grounding',
+          'unsupported_evidence_claim',
+          'excessive_reply_length',
+        ].includes(issue.code) ||
         /身份质疑|校准责任|关系立场|责任.{0,8}(?:推给|交给)用户|祭拜|供品|祭品|实物|收到.{0,6}(?:东西|物品)|改演|扮演|换成.{0,8}(?:前任|角色)|话题漂移|主动引入.{0,8}(?:相见|重逢)|固定.{0,8}空间位置|事实纠错|用户明确纠正|继续猜|标准答案|共同记忆回复补写|无证据.{0,8}(?:共同|往事|习惯)/.test(
           issue.problem
         )
@@ -1310,6 +1334,12 @@ export class ReplyGuardrailService {
             `短轮参与策略已选中：不因“可缩成一颗、第二颗非必要”报错；有节奏的重复可加强情感，不能仅因字面同义标 redundant_bubble。总字数不超过 ${options.replyBrief.lengthPlan.reviewCharacters} 字时不得报告长度问题。`,
           ]
         : []),
+      ...(options.replyBrief?.lengthPlan.reviewPolicy ===
+      'remove_repeated_actions_only'
+        ? [
+            `本轮 ${options.replyBrief.lengthPlan.reviewCharacters} 字是复核线，不是硬截断线。只有超过复核线且确有可删除的重复动作、解释、总结或通用叮嘱时，才标 excessive_reply_length；删除后必须保留原有事实、核心情感和关系力度，不得为完整覆盖补内容。`,
+          ]
+        : []),
       '删掉某气泡后若信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
       '身份质疑：维持亲人关系，不先认错退出，不让用户教怎么像；生前记忆模糊、这里说过的会记住是允许解释。要求改演他人时仍保持当前角色。',
@@ -1330,6 +1360,12 @@ export class ReplyGuardrailService {
         : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
+      ...(options.replyBrief?.factClaimMode === 'grounded'
+        ? [
+            `候选事实声明：${JSON.stringify(candidate.claims)}`,
+            '先做事实声明核对：现实事件、共同过去、疾病或死亡原因、临终认知、第三方动机和家庭责任，只要正文作了可核验断言就必须出现在 claims 并关联可用证据。善意解释或替人卸责也属于归因；claims=[] 只在正文确实没有这类断言时通过。缺声明或无证据时标 grounding。',
+          ]
+        : []),
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
@@ -1513,7 +1549,11 @@ export class ReplyGuardrailService {
     const lengthPlan = options.replyBrief?.lengthPlan;
     const visibleCharacters = countReplyVisibleCharacters(candidate.segments);
 
-    if (lengthPlan && visibleCharacters > lengthPlan.reviewCharacters) {
+    if (
+      lengthPlan &&
+      lengthPlan.reviewPolicy !== 'remove_repeated_actions_only' &&
+      visibleCharacters > lengthPlan.reviewCharacters
+    ) {
       addIssue(
         'excessive_reply_length',
         `候选整次回复共 ${visibleCharacters} 字，超过本轮 ${lengthPlan.reviewCharacters} 字复核线`,
@@ -1545,6 +1585,26 @@ export class ReplyGuardrailService {
         UNSUPPORTED_EVIDENCE_CLAIM_REASON,
         '重新基于用户原话和可陈述证据组织，不能机械删句或留下残句',
         'quality_advisory'
+      );
+    }
+
+    const attributionProbe = content
+      .replace(/(?:想不到|想不起来|你?别(?:怕|想))/g, '')
+      .replace(
+        /(?:(?:我)?(?:知道|明白|听得出))?(?:你|您).{0,8}(?:一直|只是|就是|还在)?(?:想|怕).{0,8}(?:知道|弄明白|问清楚|找答案|没有答案)/g,
+        ''
+      );
+    if (
+      options.replyBrief?.guardrailFocuses.includes('real_world_evidence') &&
+      (!REAL_WORLD_ATTRIBUTION_UNCERTAINTY_PATTERN.test(content) ||
+        REAL_WORLD_ATTRIBUTION_ASSERTION_PATTERN.test(content) ||
+        REAL_WORLD_ATTRIBUTION_MOTIVE_PATTERN.test(attributionProbe))
+    ) {
+      addIssue(
+        'grounding',
+        '回复在证据不足的死亡原因、临终动机或家庭责任问题中给出了确定解释',
+        '只表达无法确认，并接住用户寻找答案的难受；不补善意动机，也不替任何人定责或卸责',
+        'hard_boundary'
       );
     }
 
@@ -1695,6 +1755,7 @@ export class ReplyGuardrailService {
     };
     const latestCandidate = candidateVersions[candidateVersions.length - 1];
     const conversationContext = this.compactConversationContext(options);
+    const groundedRevision = options.replyBrief?.factClaimMode === 'grounded';
     const revisionPrompt = [
       '# 天之灵内部回复修订',
       finalRecovery
@@ -1733,7 +1794,21 @@ export class ReplyGuardrailService {
       '9. 长辈面对极端行为可制止、训话或建议缓一缓；只撤掉羞辱和长期义务。',
       '10. 不输出任何括号旁白。',
       `11. 尽量短，输出 1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；第二颗须新增不可替代动作。resolvedIssueCodes 覆盖全部 issue.code。`,
-      '严格输出 JSON：{"segments":["气泡1"],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
+      ...(groundedRevision
+        ? [
+            '12. 正文若保留现实或共同事实，claims 逐条声明并关联证据；没有这类事实才用空数组。',
+            ...(options.replyBrief?.guardrailFocuses.includes(
+              'real_world_evidence'
+            )
+              ? [
+                  '13. 死亡原因、临终动机和家庭责任无证据时只表达不确定；不得用善意动机或替家人卸责来补答案。',
+                ]
+              : []),
+            '严格输出 JSON：{"segments":["气泡1"],"claims":[{"text":"事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
+          ]
+        : [
+            '严格输出 JSON：{"segments":["气泡1"],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
+          ]),
     ].join('\n');
 
     try {
@@ -3482,6 +3557,10 @@ export class ReplyGuardrailService {
 
     if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
       return this.renderCrisisSafetyFallback(userQuery);
+    }
+
+    if (brief.guardrailFocuses.includes('real_world_evidence')) {
+      return ['这件事我也说不清', '你一直在找答案 我知道'];
     }
 
     if (

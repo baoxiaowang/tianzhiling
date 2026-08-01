@@ -19,7 +19,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('5 字以内的表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
     expect(brief.prompt).toContain('不为回复完整性补泡');
-    expect(brief.version).toBe('reply_brief_v8');
+    expect(brief.version).toBe('reply_brief_v9');
     expect(brief.experiencePlan).toMatchObject({
       version: 'experience_plan_v1',
       profileTier: 'P0',
@@ -232,16 +232,137 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('share_stance（贴着用户刚说的新信息');
   });
 
-  it('requires evidence for real-world death causes and third-party responsibility', () => {
-    const currentQuery = '爸，是不是姐姐说了什么，你才会上吊？';
-    const route = routeReplyScene({ currentQuery });
-    const brief = buildReplyBrief({ currentQuery, route });
-
-    expect(brief.factClaimMode).toBe('grounded');
-    expect(brief.guardrailFocuses).toContain('real_world_evidence');
-    expect(brief.forbiddenAssumptions).toContain(
-      '不得猜测死亡或疾病原因、临终认知、第三方言行或责任；证据不足就明确不确定'
+  it('switches behavior after two structured tender acknowledgement turns', () => {
+    const currentQuery = '爸，你觉得我今天这件事做得对吗？';
+    const intent = {
+      intents: [],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户需要父亲表态',
+        moves: [
+          { type: 'acknowledge' as const, goal: '接住用户的犹豫' },
+          { type: 'affirm' as const, goal: '认可用户不容易' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '继续安慰',
+        questionNeed: 'none' as const,
+        turnClosure: 'neutral' as const,
+        personaActivation: [],
+      },
+      emotion: 'neutral' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const recentMessages = ['先听你说完', '这事确实不容易'].map(
+      (content, index) =>
+        ({
+          role: MessageRole.assistant,
+          content,
+          replyGroupId: `group-${index}`,
+          replyConversationStance: 'tender',
+          replyConversationMoves: ['acknowledge', 'affirm'],
+        } as MessageEntity)
     );
+    const brief = buildReplyBrief({
+      currentQuery,
+      intent,
+      route,
+      recentMessages,
+    });
+
+    expect(brief.strategyQuality).toEqual(
+      expect.objectContaining({
+        repeatedMoves: ['tender_acknowledge_affirm'],
+        preferredAlternative: 'answer',
+      })
+    );
+    expect(brief.conversationPlan?.moves).toEqual([
+      { type: 'answer', goal: '先正面回答用户当前问题' },
+    ]);
+    expect(brief.prompt).toContain('近轮已重复温柔承接和认可');
+  });
+
+  it('uses one grounded detail after repeated tender acknowledgement', () => {
+    const currentQuery = '今天我又路过菜市场了';
+    const intent = {
+      intents: [],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户今天的感受',
+        moves: [
+          { type: 'acknowledge' as const, goal: '承接用户近况' },
+          { type: 'affirm' as const, goal: '表达理解' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '继续陪伴',
+        questionNeed: 'none' as const,
+        turnClosure: 'neutral' as const,
+        personaActivation: [],
+        engagement: {
+          userConversationState: 'exploring' as const,
+          openLoop: '用户提到菜市场',
+          continuationGoal: 'hold' as const,
+          assistantContribution: 'affection' as const,
+          mustContribute: '接住用户的感受',
+          avoidRepeatingMove: '不要重复安慰',
+          closureReadiness: 'possible' as const,
+        },
+      },
+      emotion: 'neutral' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const recentMessages = ['你慢慢说', '这一路辛苦了'].map(
+      (content, index) =>
+        ({
+          role: MessageRole.assistant,
+          content,
+          replyGroupId: `group-${index}`,
+          replyConversationStance: 'tender',
+          replyConversationMoves: ['acknowledge'],
+        } as MessageEntity)
+    );
+    const brief = buildReplyBrief({
+      currentQuery,
+      intent,
+      route,
+      recentMessages,
+      confirmedFacts: ['爸爸生前常在菜市场卖自家种的菜'],
+    });
+
+    expect(brief.strategyQuality?.preferredAlternative).toBe('grounded_detail');
+    expect(brief.conversationPlan?.moves[0]).toEqual({
+      type: 'answer',
+      goal: '只用一条可陈述证据回应当前点，不补共同过去',
+    });
+    expect(brief.conversationPlan?.engagement).toMatchObject({
+      assistantContribution: 'specific_detail',
+      mustContribute: '自然使用一条可陈述证据，不增加新事实',
+    });
+  });
+
+  it('requires evidence for real-world death causes and third-party responsibility', () => {
+    const queries = [
+      '爸，是不是姐姐说了什么，你才会上吊？',
+      '爸，是不是姐姐那句话刺激了你，你才想不开？',
+      '爸，是不是因为那天喝了酒，你才突然走的？',
+      '奶，你临走前叫我回去，却为什么不告诉我你快不行了？',
+    ];
+
+    for (const currentQuery of queries) {
+      const route = routeReplyScene({ currentQuery });
+      const brief = buildReplyBrief({ currentQuery, route });
+
+      expect(brief.factClaimMode).toBe('grounded');
+      expect(brief.guardrailFocuses).toContain('real_world_evidence');
+      expect(brief.forbiddenAssumptions).toContain(
+        '死亡或疾病原因、临终动机、第三方言行和家庭责任无证据就明确不确定；善意解释或替人卸责也属于归因'
+      );
+    }
   });
 
   it('does not send explicit afterlife fiction through real-world evidence review', () => {
@@ -250,6 +371,25 @@ describe('buildReplyBrief', () => {
     const brief = buildReplyBrief({ currentQuery, route });
 
     expect(brief.guardrailFocuses).not.toContain('real_world_evidence');
+  });
+
+  it('does not mistake symbolic relationship presence for a death-cause question', () => {
+    const currentQuery =
+      '妈，我越来越像您，是不是就表示您从未离开，一直都在陪着我';
+    const brief = buildReplyBrief({ currentQuery });
+
+    expect(brief.guardrailFocuses).not.toContain('real_world_evidence');
+  });
+
+  it('grounds a present-day cue that explicitly recalls an old place', () => {
+    const currentQuery = '爸，今天路过菜市场，我又想起你了。';
+    const brief = buildReplyBrief({
+      currentQuery,
+      confirmedFacts: ['爸爸生前在菜市场卖自家种的菜'],
+    });
+
+    expect(brief.factClaimMode).toBe('grounded');
+    expect(brief.guardrailFocuses).toContain('shared_past_evidence');
   });
 
   it('cools down short-turn participation after the previous assistant reply used it', () => {
@@ -567,9 +707,11 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('不要只说你说我听着');
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'standard',
-      targetCharacters: 40,
-      reviewCharacters: 55,
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 30,
+      focusMode: 'single_scene',
+      reviewPolicy: 'remove_repeated_actions_only',
     });
   });
 

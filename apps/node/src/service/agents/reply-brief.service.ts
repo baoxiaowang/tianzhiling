@@ -112,7 +112,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v8';
+  version: 'reply_brief_v9';
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -158,13 +158,15 @@ export interface BuildReplyBriefOptions {
 }
 
 const MEMORY_QUERY_PATTERN =
-  /记得|还记得|以前|从前|小时候|那时候|当年|曾经|带我|一起.{0,8}(?:去|做|吃|看|玩)/;
+  /记得|还记得|想起|想到了|以前|从前|小时候|那时候|当年|曾经|带我|一起.{0,8}(?:去|做|吃|看|玩)/;
 const ROLE_PAST_FACT_REFERENCE_PATTERN =
   /(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,12}(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前)|(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前).{0,12}(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)/;
 const REAL_WORLD_CAUSE_OR_RESPONSIBILITY_PATTERN =
-  /(?:为什么|怎么会|是不是|是否|难道|谁|什么原因|知道|知不知道|有没有人告诉).{0,24}(?:去世|走了|离开|上吊|跳楼|自杀|轻生|生病|住院|癌症|病情|瞒着|知道|说了什么|害了|怪|责任)|(?:去世|走了|离开|上吊|跳楼|自杀|轻生|癌症|病情|临终).{0,24}(?:为什么|原因|是不是|是否|谁|知道|瞒着|说了什么|害了|怪|责任|吗|么|呢)/;
+  /(?:为什么|怎么会|是不是|是否|难道|谁|什么原因|知道|知不知道|有没有人告诉).{0,24}(?:去世|走(?:了|的)?|离开|上吊|跳楼|自杀|轻生|想不开|生病|住院|癌症|病情|临终|临走|不行了|瞒着|知道|说了什么|刺激|害了|怪|责任)|(?:去世|走(?:了|的)?|离开|上吊|跳楼|自杀|轻生|想不开|癌症|病情|临终|临走|不行了).{0,24}(?:为什么|原因|是不是|是否|谁|知道|告诉|瞒着|说了什么|刺激|害了|怪|责任|吗|么|呢)/;
 const AFTERLIFE_SCENE_PATTERN =
   /天上|天堂|那边|另一个世界|离世世界|阴间|地府|奈何桥/;
+const SYMBOLIC_RELATIONAL_PRESENCE_PATTERN =
+  /(?:从未|没有|没).{0,4}离开|一直.{0,8}陪着|没走远|还在.{0,8}(?:身边|陪着)/;
 const DIRECT_IDENTITY_QUERY_PATTERN =
   /(?:你|您)(?:到底|究竟|其实).{0,4}(?:是|是不是).{0,4}(?:AI|人工智能|机器人)|(?:直接|正面|老实|明确)(?:回答|告诉我|说).{0,12}(?:AI|人工智能|机器人|是不是)|(?:别|不要)(?:回避|绕|装|骗我).{0,12}(?:AI|人工智能|机器人|是不是)/i;
 const CONCRETE_CARE_PLAN_PATTERN =
@@ -237,6 +239,11 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     currentQuery,
     recentMessages: options.recentMessages,
     activeContribution,
+    evidence,
+    protectedTurn:
+      primaryScene === 'correction' ||
+      riskLevel === 'high' ||
+      realityDependencies.length > 0,
   });
   const experiencePlan = buildReplyExperiencePlan({
     currentQuery,
@@ -273,6 +280,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       constrainGroundedConversationPlan(rawConversationPlan, factClaimMode, {
         mode,
         isCorrection: Boolean(correctionPolicy),
+        requiresRealWorldEvidence,
         preferEmotionalCorrection:
           DURATION_CORRECTION_PATTERN.test(currentQuery) &&
           !/[?？]/.test(currentQuery),
@@ -369,7 +377,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     turnClosure: bubblePlan.turnClosure,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v8',
+    version: 'reply_brief_v9',
     mode,
     primaryScene,
     riskLevel,
@@ -418,6 +426,7 @@ function resolveFactClaimMode(options: {
         item.intent === 'recall_memory' ||
         item.intent === 'correct_assistant'
     ) ||
+    MEMORY_QUERY_PATTERN.test(options.currentQuery) ||
     ROLE_PAST_FACT_REFERENCE_PATTERN.test(options.currentQuery)
     ? 'grounded'
     : 'none';
@@ -479,6 +488,15 @@ function constrainConversationPlanQuality(
   }
 
   let moves = [...plan.moves];
+  const repeatedTenderAcknowledgement = strategyQuality?.repeatedMoves.includes(
+    'tender_acknowledge_affirm'
+  );
+
+  if (repeatedTenderAcknowledgement) {
+    moves = moves.filter(
+      move => !['acknowledge', 'affirm', 'comfort'].includes(move.type)
+    );
+  }
 
   if (preferredAlternative === 'answer') {
     const answerMove = moves.find(move => move.type === 'answer') ?? {
@@ -486,6 +504,16 @@ function constrainConversationPlanQuality(
       goal: '先正面回答用户当前问题',
     };
     moves = [answerMove, ...moves.filter(move => move !== answerMove)];
+  }
+
+  if (preferredAlternative === 'grounded_detail') {
+    moves = [
+      {
+        type: 'answer',
+        goal: '只用一条可陈述证据回应当前点，不补共同过去',
+      },
+      ...moves.filter(move => move.type !== 'answer'),
+    ];
   }
 
   if (preferredAlternative === 'topic_transition') {
@@ -531,6 +559,12 @@ function constrainConversationPlanQuality(
               mustContribute: '先给角色侧当下内容；共同过去只使用可陈述证据',
             }
           : {}),
+        ...(preferredAlternative === 'grounded_detail'
+          ? {
+              assistantContribution: 'specific_detail' as const,
+              mustContribute: '自然使用一条可陈述证据，不增加新事实',
+            }
+          : {}),
         ...(strategyQuality
           ? {
               avoidRepeatingMove:
@@ -543,7 +577,7 @@ function constrainConversationPlanQuality(
   return {
     ...plan,
     moves: moves.slice(0, 3),
-    ...(preferredAlternative === 'answer'
+    ...(['answer', 'grounded_detail'].includes(preferredAlternative || '')
       ? { questionNeed: 'none' as const }
       : {}),
     ...(engagement ? { engagement } : {}),
@@ -618,6 +652,7 @@ function constrainGroundedConversationPlan(
   options: {
     mode: ReplyBriefMode;
     isCorrection: boolean;
+    requiresRealWorldEvidence: boolean;
     preferEmotionalCorrection: boolean;
     hasExplicitFactReplacement: boolean;
   }
@@ -690,6 +725,8 @@ function constrainGroundedConversationPlan(
       : emotionallyHoldsCorrection
       ? '撤回错误并接住纠正背后的感受，不机械复述数字或事实'
       : '撤回错误；用户给出正确信息就采用，否则只停止旧说法，随后收住'
+    : options.requiresRealWorldEvidence
+    ? '明确说明无法确认原因、动机或责任；只接住用户寻找答案的难受'
     : options.mode === 'memory'
     ? answersQuestion
       ? '回答能确认的部分；没有证据就坦白记不真切'
@@ -705,6 +742,8 @@ function constrainGroundedConversationPlan(
       ? options.preferEmotionalCorrection
         ? '接住时长背后的漫长和辛苦，不机械复述数字'
         : '按用户当前需要修复错误，采用最小纠正后收住'
+      : options.requiresRealWorldEvidence
+      ? '证据不足时不代答死亡原因、临终动机或家庭责任'
       : options.mode === 'memory'
       ? '不冒充记得，只回应能确认的部分并自然续聊'
       : '直接完成当前问题，只用可信证据',
@@ -731,6 +770,7 @@ function groundedMoveGoal(
   options: {
     mode: ReplyBriefMode;
     isCorrection: boolean;
+    requiresRealWorldEvidence: boolean;
     preferEmotionalCorrection: boolean;
     hasExplicitFactReplacement: boolean;
   }
@@ -760,6 +800,12 @@ function groundedMoveGoal(
       default:
         return '承接用户提到的记忆线索，不增加事实';
     }
+  }
+
+  if (options.requiresRealWorldEvidence) {
+    return ['acknowledge', 'comfort', 'leave_space'].includes(type)
+      ? '接住用户寻找原因或责任的难受，不确认其中的假设'
+      : '明确说无法确认；不解释原因、动机，不替任何人定责或卸责';
   }
 
   switch (type) {
@@ -1529,7 +1575,7 @@ function buildForbiddenAssumptions(
 
   if (requiresRealWorldEvidence) {
     items.push(
-      '不得猜测死亡或疾病原因、临终认知、第三方言行或责任；证据不足就明确不确定'
+      '死亡或疾病原因、临终动机、第三方言行和家庭责任无证据就明确不确定；善意解释或替人卸责也属于归因'
     );
   }
 
@@ -1622,6 +1668,7 @@ function buildForbiddenAssumptions(
 function isRealWorldEvidenceRequired(currentQuery: string): boolean {
   return (
     !AFTERLIFE_SCENE_PATTERN.test(currentQuery) &&
+    !SYMBOLIC_RELATIONAL_PRESENCE_PATTERN.test(currentQuery) &&
     REAL_WORLD_CAUSE_OR_RESPONSIBILITY_PATTERN.test(currentQuery)
   );
 }
@@ -1702,6 +1749,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           .join('；')}`,
         `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
         `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
+        ...(brief.strategyQuality
+          ? [
+              `策略换挡：${buildReplyStrategyQualityPrompt(
+                brief.strategyQuality
+              )}`,
+            ]
+          : []),
         ...(brief.conversationPlan.engagement
           ? [
               `续聊状态：${brief.conversationPlan.engagement.userConversationState}；目标：${brief.conversationPlan.engagement.continuationGoal}`,

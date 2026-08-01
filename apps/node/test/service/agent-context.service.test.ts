@@ -1224,7 +1224,7 @@ describe('AgentContextService', () => {
         replyPlanningMode: 'direct',
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
-        strategyVersion: 'conversation_strategy_v5',
+        strategyVersion: 'conversation_strategy_v6',
         strategySource: 'direct_brief',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),

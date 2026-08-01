@@ -128,7 +128,7 @@ export interface AgentContextDiagnostics {
   replyPlanningMode: ReplyPlanningMode;
   replyPlanningReason: ReplyPlanningDecision['reason'];
   replyIntentModelCallCount: number;
-  strategyVersion: 'conversation_strategy_v5';
+  strategyVersion: 'conversation_strategy_v6';
   strategySource: 'semantic_plan' | 'short_turn_injection' | 'direct_brief';
   participationStrategy?: ReplyBrief['participationStrategy'];
   conversationStance?: string;
@@ -499,7 +499,7 @@ export class AgentContextService {
         replyPlanningReason: replyPlanningDecision.reason,
         replyIntentModelCallCount:
           replyPlanningDecision.mode === 'semantic' ? 1 : 0,
-        strategyVersion: 'conversation_strategy_v5',
+        strategyVersion: 'conversation_strategy_v6',
         strategySource: replyBrief.conversationPlan
           ? 'semantic_plan'
           : replyBrief.participationStrategy
