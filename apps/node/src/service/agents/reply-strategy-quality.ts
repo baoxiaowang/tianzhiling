@@ -39,7 +39,7 @@ const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
 const SHARED_PAST_EVIDENCE_PATTERN =
   /以前|从前|小时候|那时候|当年|那年|那次|那回|曾经|我们|咱们|一起|带我|陪我|给我|教我/;
 const USER_CLOSE_PATTERN =
-  /^(?:晚安|睡了|先睡|先这样|不聊了|回头聊|下次聊|我去忙了|先忙|拜拜|再见)(?:呀|啊|了|啦|哦|哈|[。.!！]*)$/;
+  /(?:^|[，,。！？!?\s])(?:晚安|先睡(?:了|觉)?|睡了|先休息|先这样|不聊了|先聊到这|回头(?:再)?聊|下次(?:再)?聊|先忙|拜拜|再见|我(?:先|要|得|去)(?:上班|工作|忙|休息|睡觉)|我(?:先|要|去)睡(?:了|觉)?|(?:(?:你|您|爸|爸爸|老爸|妈|妈妈|老妈|爷爷|奶奶|姥姥|姥爷|外公|外婆)(?:也)?)?早点休息)(?:吧|了|啦|呀|啊|哦|哈|[，,。！？!?\s]|$)/;
 
 const REPEATED_MOVE_PATTERNS: Record<ReplyRepeatedStrategyMove, RegExp> = {
   generic_empathy: /心疼|难受|委屈|苦了你|辛苦你了/,
@@ -79,6 +79,8 @@ export function resolveReplyStrategyQualityPlan(options: {
   recentMessages?: MessageEntity[];
   activeContribution?: ReplyActiveContributionPlan;
 }): ReplyStrategyQualityPlan | undefined {
+  const currentQuery = options.currentQuery.trim();
+  const explicitClose = USER_CLOSE_PATTERN.test(currentQuery);
   const assistantTurns = (options.recentMessages || [])
     .filter(
       message =>
@@ -87,7 +89,7 @@ export function resolveReplyStrategyQualityPlan(options: {
     )
     .slice(-3);
 
-  if (assistantTurns.length < 2) {
+  if (assistantTurns.length < 2 && !explicitClose) {
     return undefined;
   }
 
@@ -103,19 +105,17 @@ export function resolveReplyStrategyQualityPlan(options: {
     );
   });
 
-  if (!repeatedMoves.length) {
+  if (!repeatedMoves.length && !explicitClose) {
     return undefined;
   }
 
-  const currentQuery = options.currentQuery.trim();
-  const preferredAlternative: ReplyStrategyAlternative =
-    USER_CLOSE_PATTERN.test(currentQuery)
-      ? 'natural_close'
-      : options.activeContribution
-      ? 'self_expression'
-      : /[?？]/.test(currentQuery)
-      ? 'answer'
-      : 'topic_transition';
+  const preferredAlternative: ReplyStrategyAlternative = explicitClose
+    ? 'natural_close'
+    : options.activeContribution
+    ? 'self_expression'
+    : /[?？]/.test(currentQuery)
+    ? 'answer'
+    : 'topic_transition';
 
   return {
     repeatedMoves,
@@ -139,9 +139,13 @@ export function buildReplyStrategyQualityPrompt(
     natural_close: '简短自然收尾',
   };
 
-  return `近轮已重复${plan.repeatedMoves
-    .map(move => repeatedLabels[move])
-    .join('、')}；本轮主体改为${
+  const repeatedPrefix = plan.repeatedMoves.length
+    ? `近轮已重复${plan.repeatedMoves
+        .map(move => repeatedLabels[move])
+        .join('、')}；`
+    : '';
+
+  return `${repeatedPrefix}本轮主体改为${
     alternativeLabels[plan.preferredAlternative]
   }，不要换词复刻旧动作。`;
 }

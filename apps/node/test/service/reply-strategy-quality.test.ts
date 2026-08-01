@@ -74,4 +74,39 @@ describe('reply strategy quality', () => {
 
     expect(plan?.preferredAlternative).toBe('natural_close');
   });
+
+  it('recognizes a natural close inside a longer WeChat message', () => {
+    const plan = resolveReplyStrategyQualityPlan({
+      currentQuery: '我要工作了，你也早点休息吧',
+      recentMessages: [],
+    });
+
+    expect(plan).toEqual({
+      repeatedMoves: [],
+      preferredAlternative: 'natural_close',
+      observedAssistantTurns: 0,
+    });
+
+    expect(
+      resolveReplyStrategyQualityPlan({
+        currentQuery: '老爸早点休息吧',
+        recentMessages: [],
+      })?.preferredAlternative
+    ).toBe('natural_close');
+    expect(
+      resolveReplyStrategyQualityPlan({
+        currentQuery: '我先睡了',
+        recentMessages: [],
+      })?.preferredAlternative
+    ).toBe('natural_close');
+  });
+
+  it('does not mistake difficulty sleeping for a close', () => {
+    expect(
+      resolveReplyStrategyQualityPlan({
+        currentQuery: '妈，我今晚一直睡不着',
+        recentMessages: [],
+      })
+    ).toBeUndefined();
+  });
 });

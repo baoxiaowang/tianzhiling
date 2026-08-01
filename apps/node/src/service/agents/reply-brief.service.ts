@@ -102,6 +102,7 @@ export type ReplyGuardrailFocus =
   | 'correction_reset'
   | 'correction_replacement'
   | 'shared_past_evidence'
+  | 'real_world_evidence'
   | 'capability_boundary';
 
 export interface ReplyBriefRelationshipContext {
@@ -160,6 +161,10 @@ const MEMORY_QUERY_PATTERN =
   /记得|还记得|以前|从前|小时候|那时候|当年|曾经|带我|一起.{0,8}(?:去|做|吃|看|玩)/;
 const ROLE_PAST_FACT_REFERENCE_PATTERN =
   /(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,12}(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前)|(?:以前|之前|过去|从前|当年|那年|曾经|小时候|生前).{0,12}(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)/;
+const REAL_WORLD_CAUSE_OR_RESPONSIBILITY_PATTERN =
+  /(?:为什么|怎么会|是不是|是否|难道|谁|什么原因|知道|知不知道|有没有人告诉).{0,24}(?:去世|走了|离开|上吊|跳楼|自杀|轻生|生病|住院|癌症|病情|瞒着|知道|说了什么|害了|怪|责任)|(?:去世|走了|离开|上吊|跳楼|自杀|轻生|癌症|病情|临终).{0,24}(?:为什么|原因|是不是|是否|谁|知道|瞒着|说了什么|害了|怪|责任|吗|么|呢)/;
+const AFTERLIFE_SCENE_PATTERN =
+  /天上|天堂|那边|另一个世界|离世世界|阴间|地府|奈何桥/;
 const DIRECT_IDENTITY_QUERY_PATTERN =
   /(?:你|您)(?:到底|究竟|其实).{0,4}(?:是|是不是).{0,4}(?:AI|人工智能|机器人)|(?:直接|正面|老实|明确)(?:回答|告诉我|说).{0,12}(?:AI|人工智能|机器人|是不是)|(?:别|不要)(?:回避|绕|装|骗我).{0,12}(?:AI|人工智能|机器人|是不是)/i;
 const CONCRETE_CARE_PLAN_PATTERN =
@@ -248,11 +253,13 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     options.relationshipSignals,
     intents
   );
+  const requiresRealWorldEvidence = isRealWorldEvidenceRequired(currentQuery);
   const strictGrounding =
     mode === 'memory' ||
     mode === 'boundary' ||
     Boolean(correctionPolicy) ||
     Boolean(activeContribution) ||
+    requiresRealWorldEvidence ||
     (!primaryScene && MEMORY_QUERY_PATTERN.test(currentQuery));
   const factClaimMode = resolveFactClaimMode({
     currentQuery,
@@ -317,6 +324,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     correctionPolicy,
     factClaimMode,
     realityDependencies,
+    requiresRealWorldEvidence,
   });
   const replyMoveCount = conversationPlan?.moves.length || replyMoves.length;
   const baseBubblePlan = buildReplyBubblePlan({
@@ -445,7 +453,64 @@ function constrainConversationPlanQuality(
     return plan;
   }
 
-  const moves = [...plan.moves];
+  const preferredAlternative = strategyQuality?.preferredAlternative;
+
+  if (preferredAlternative === 'natural_close') {
+    return {
+      ...plan,
+      moves: [{ type: 'close', goal: '顺着用户的收尾简短道别，不另开话题' }],
+      socialStrategy: 'strategic_silence',
+      strategyPurpose: '尊重用户已经给出的结束信号',
+      questionNeed: 'none',
+      turnClosure: 'close',
+      engagement: plan.engagement
+        ? {
+            ...plan.engagement,
+            userConversationState: 'closing',
+            continuationGoal: 'close',
+            assistantContribution: 'strategic_silence',
+            mustContribute: '简短回应并自然收尾',
+            avoidRepeatingMove:
+              buildReplyStrategyQualityPrompt(strategyQuality),
+            closureReadiness: 'ready',
+          }
+        : undefined,
+    };
+  }
+
+  let moves = [...plan.moves];
+
+  if (preferredAlternative === 'answer') {
+    const answerMove = moves.find(move => move.type === 'answer') ?? {
+      type: 'answer' as const,
+      goal: '先正面回答用户当前问题',
+    };
+    moves = [answerMove, ...moves.filter(move => move !== answerMove)];
+  }
+
+  if (preferredAlternative === 'topic_transition') {
+    const repeatedMoveTypes = new Set(
+      (strategyQuality?.repeatedMoves || []).reduce<string[]>((types, move) => {
+        if (move === 'generic_empathy') {
+          types.push('comfort');
+        } else if (move === 'generic_advice') {
+          types.push('suggest');
+        }
+
+        return types;
+      }, [])
+    );
+    moves = moves.filter(move => !repeatedMoveTypes.has(move.type));
+
+    if (
+      !moves.some(move => ['share_stance', 'self_disclose'].includes(move.type))
+    ) {
+      moves.push({
+        type: 'share_stance',
+        goal: '贴着用户刚说的新信息给一个具体看法，或轻转相邻话题',
+      });
+    }
+  }
 
   if (
     activeContribution &&
@@ -478,6 +543,9 @@ function constrainConversationPlanQuality(
   return {
     ...plan,
     moves: moves.slice(0, 3),
+    ...(preferredAlternative === 'answer'
+      ? { questionNeed: 'none' as const }
+      : {}),
     ...(engagement ? { engagement } : {}),
   };
 }
@@ -512,6 +580,7 @@ function resolveReplyGuardrailFocuses(options: {
   correctionPolicy?: ReplyCorrectionPolicy;
   factClaimMode: ReplyFactClaimMode;
   realityDependencies: ReplyRealityDependencySignal[];
+  requiresRealWorldEvidence: boolean;
 }): ReplyGuardrailFocus[] {
   const focuses: ReplyGuardrailFocus[] = [];
 
@@ -533,7 +602,11 @@ function resolveReplyGuardrailFocuses(options: {
     !options.correctionPolicy &&
     !options.realityDependencies.length
   ) {
-    focuses.push('shared_past_evidence');
+    focuses.push(
+      options.requiresRealWorldEvidence
+        ? 'real_world_evidence'
+        : 'shared_past_evidence'
+    );
   }
 
   return focuses;
@@ -1446,10 +1519,17 @@ function buildForbiddenAssumptions(
   currentQuery: string
 ): string[] {
   const items: string[] = [];
+  const requiresRealWorldEvidence = isRealWorldEvidenceRequired(currentQuery);
 
-  if (strictGrounding) {
+  if (strictGrounding && !requiresRealWorldEvidence) {
     items.push(
       '共同记忆只复述证据中的时间和事件骨架；不补当时的动作、话语、感受或表现'
+    );
+  }
+
+  if (requiresRealWorldEvidence) {
+    items.push(
+      '不得猜测死亡或疾病原因、临终认知、第三方言行或责任；证据不足就明确不确定'
     );
   }
 
@@ -1537,6 +1617,13 @@ function buildForbiddenAssumptions(
   }
 
   return Array.from(new Set(items));
+}
+
+function isRealWorldEvidenceRequired(currentQuery: string): boolean {
+  return (
+    !AFTERLIFE_SCENE_PATTERN.test(currentQuery) &&
+    REAL_WORLD_CAUSE_OR_RESPONSIBILITY_PATTERN.test(currentQuery)
+  );
 }
 
 function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
@@ -1691,13 +1778,14 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const strategyQualityLines = brief.strategyQuality
-    ? [
-        '## 多轮策略去重',
-        buildReplyStrategyQualityPrompt(brief.strategyQuality),
-        '',
-      ]
-    : [];
+  const strategyQualityLines =
+    brief.strategyQuality && !brief.conversationPlan
+      ? [
+          '## 多轮策略去重',
+          buildReplyStrategyQualityPrompt(brief.strategyQuality),
+          '',
+        ]
+      : [];
   const correctionLines = brief.correctionPolicy
     ? [
         '## 本轮纠正',

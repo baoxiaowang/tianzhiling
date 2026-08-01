@@ -147,6 +147,111 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('## 多轮策略去重');
   });
 
+  it('turns a longer user closing signal into a real close action', () => {
+    const currentQuery = '我要工作了，你也早点休息吧';
+    const intent = {
+      intents: [],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户要去工作',
+        moves: [
+          { type: 'comfort' as const, goal: '表达心疼' },
+          { type: 'ask' as const, goal: '追问几点下班' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '继续陪伴',
+        questionNeed: 'helpful' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: [],
+      },
+      emotion: 'neutral' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.strategyQuality?.preferredAlternative).toBe('natural_close');
+    expect(brief.conversationPlan?.moves).toEqual([
+      { type: 'close', goal: '顺着用户的收尾简短道别，不另开话题' },
+    ]);
+    expect(brief.conversationPlan?.questionNeed).toBe('none');
+    expect(brief.conversationPlan?.turnClosure).toBe('close');
+  });
+
+  it('replaces repeated comfort and advice with a concrete adjacent move', () => {
+    const currentQuery = '今天又路过那家店了';
+    const intent = {
+      intents: [],
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: '用户今天的感受',
+        moves: [
+          { type: 'comfort' as const, goal: '表达心疼' },
+          { type: 'suggest' as const, goal: '提醒早点休息' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '继续安慰',
+        questionNeed: 'none' as const,
+        turnClosure: 'neutral' as const,
+        personaActivation: [],
+      },
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.95,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({
+      currentQuery,
+      intent,
+      route,
+      recentMessages: [
+        {
+          role: MessageRole.assistant,
+          content: '听着心疼，早点休息',
+        } as MessageEntity,
+        {
+          role: MessageRole.assistant,
+          content: '妈心疼你，记得休息',
+        } as MessageEntity,
+      ],
+    });
+
+    expect(brief.strategyQuality?.preferredAlternative).toBe(
+      'topic_transition'
+    );
+    expect(brief.conversationPlan?.moves).toEqual([
+      {
+        type: 'share_stance',
+        goal: '贴着用户刚说的新信息给一个具体看法，或轻转相邻话题',
+      },
+    ]);
+    expect(brief.prompt).not.toContain('## 多轮策略去重');
+    expect(brief.prompt).toContain('share_stance（贴着用户刚说的新信息');
+  });
+
+  it('requires evidence for real-world death causes and third-party responsibility', () => {
+    const currentQuery = '爸，是不是姐姐说了什么，你才会上吊？';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.factClaimMode).toBe('grounded');
+    expect(brief.guardrailFocuses).toContain('real_world_evidence');
+    expect(brief.forbiddenAssumptions).toContain(
+      '不得猜测死亡或疾病原因、临终认知、第三方言行或责任；证据不足就明确不确定'
+    );
+  });
+
+  it('does not send explicit afterlife fiction through real-world evidence review', () => {
+    const currentQuery = '爸，你在天上为什么还会生病呀';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.guardrailFocuses).not.toContain('real_world_evidence');
+  });
+
   it('cools down short-turn participation after the previous assistant reply used it', () => {
     const currentQuery = '今天吃了吗';
     const route = routeReplyScene({ currentQuery });

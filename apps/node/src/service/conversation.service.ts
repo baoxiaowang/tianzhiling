@@ -134,6 +134,7 @@ const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
 const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT;
@@ -1331,6 +1332,68 @@ export class ConversationService {
     payload: GenerateMemorialPhotoDTO
   ): Promise<ConversationMessageItem> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
+    const clientRequestId = payload?.clientRequestId?.trim() || '';
+    const existingMessage = clientRequestId
+      ? await this.findMemorialPhotoByClientRequestId(
+          runtime.conversation.id,
+          runtime.conversation.userId,
+          clientRequestId
+        )
+      : null;
+
+    if (existingMessage) {
+      return this.messageService.buildConversationMessageItem(existingMessage);
+    }
+
+    if (!clientRequestId) {
+      return this.generateMemorialPhotoOnce(runtime, payload, '');
+    }
+
+    const lock = await this.acquireMemorialPhotoLock(
+      conversationId,
+      clientRequestId
+    );
+
+    if (!lock.acquired) {
+      throw new AppError(
+        'MEMORIAL_PHOTO_IN_PROGRESS',
+        '这张合照正在生成，请稍后重试',
+        409
+      );
+    }
+
+    try {
+      const duplicateAfterLock = await this.findMemorialPhotoByClientRequestId(
+        runtime.conversation.id,
+        runtime.conversation.userId,
+        clientRequestId
+      );
+
+      if (duplicateAfterLock) {
+        return this.messageService.buildConversationMessageItem(
+          duplicateAfterLock
+        );
+      }
+
+      return await this.generateMemorialPhotoOnce(
+        runtime,
+        payload,
+        clientRequestId
+      );
+    } finally {
+      await this.releaseMemorialPhotoLock(
+        conversationId,
+        clientRequestId,
+        lock.token
+      );
+    }
+  }
+
+  private async generateMemorialPhotoOnce(
+    runtime: ReplyRuntime,
+    payload: GenerateMemorialPhotoDTO,
+    clientRequestId: string
+  ): Promise<ConversationMessageItem> {
     const now = new Date();
     const agentPhotoObjectKeys = this.normalizeMemorialAgentPhotoObjectKeys(
       payload?.agentPhotoObjectKeys
@@ -1378,6 +1441,7 @@ export class ConversationService {
       mediaObjectKey: uploaded.objectKey,
       mediaMimeType: generatedPhoto.mimeType,
       mediaAnalysis: MEMORIAL_PHOTO_MESSAGE_CONTENT,
+      clientRequestId: clientRequestId || undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -7110,6 +7174,69 @@ export class ConversationService {
         isArchived: { $ne: true },
       } as never,
     });
+  }
+
+  private findMemorialPhotoByClientRequestId(
+    conversationId: MongoObjectId,
+    userId: MongoObjectId,
+    clientRequestId: string
+  ): Promise<MessageEntity | null> {
+    return this.messageModel.findOne({
+      where: {
+        conversationId,
+        userId,
+        role: MessageRole.assistant,
+        type: MessageType.image,
+        clientRequestId,
+        isArchived: { $ne: true },
+      } as never,
+    });
+  }
+
+  private async acquireMemorialPhotoLock(
+    conversationId: string,
+    clientRequestId: string
+  ): Promise<{ acquired: boolean; token: string }> {
+    const token = `${Date.now()}:${Math.random().toString(16).slice(2)}`;
+
+    if (!this.redisService) {
+      return { acquired: true, token };
+    }
+
+    const result = await this.redisService?.set(
+      this.getMemorialPhotoLockKey(conversationId, clientRequestId),
+      token,
+      'PX',
+      MEMORIAL_PHOTO_LOCK_TTL_MS,
+      'NX'
+    );
+
+    return { acquired: result === 'OK', token };
+  }
+
+  private async releaseMemorialPhotoLock(
+    conversationId: string,
+    clientRequestId: string,
+    token: string
+  ): Promise<void> {
+    if (!this.redisService) {
+      return;
+    }
+
+    const key = this.getMemorialPhotoLockKey(conversationId, clientRequestId);
+
+    if ((await this.redisService?.get(key)) === token) {
+      await this.redisService?.del(key);
+    }
+  }
+
+  private getMemorialPhotoLockKey(
+    conversationId: string,
+    clientRequestId: string
+  ): string {
+    const normalizedRequestId = encodeURIComponent(clientRequestId);
+
+    return `conversation:memorial-photo:lock:${conversationId}:${normalizedRequestId}`;
   }
 
   private stringifyOptionalObjectId(

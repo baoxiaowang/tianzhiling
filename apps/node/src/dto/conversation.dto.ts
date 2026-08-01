@@ -52,6 +52,9 @@ export class GenerateMemorialPhotoDTO {
 
   @Rule(RuleType.string().max(500))
   customPrompt?: string;
+
+  @Rule(RuleType.string().max(64))
+  clientRequestId?: string;
 }
 
 export class SubmitConversationMessageFeedbackDTO {

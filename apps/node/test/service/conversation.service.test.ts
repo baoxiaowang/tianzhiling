@@ -598,6 +598,7 @@ describe('ConversationService generateMemorialPhoto', () => {
     const result = await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
       agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
       userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      clientRequestId: 'memorial-request-1',
     });
 
     expect(
@@ -628,6 +629,7 @@ describe('ConversationService generateMemorialPhoto', () => {
         mediaObjectKey: 'memorial-photos/generated.png',
         mediaMimeType: 'image/png',
         mediaAnalysis: 'AI生成纪念合照',
+        clientRequestId: 'memorial-request-1',
         status: MessageStatus.sent,
       })
     );
@@ -688,6 +690,64 @@ describe('ConversationService generateMemorialPhoto', () => {
           analysis: 'AI生成纪念合照',
         }),
       })
+    );
+  });
+
+  it('returns the existing image for a repeated memorial photo request', async () => {
+    const existingMessage = createMemorialPhotoMessage({
+      clientRequestId: 'memorial-request-existing',
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      existingMessages: [existingMessage],
+    });
+
+    const result = await service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+      agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+      userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+      clientRequestId: 'memorial-request-existing',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: existingMessage.id.toHexString(),
+        type: MessageType.image,
+      })
+    );
+    expect(savedMessages).toHaveLength(1);
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).not.toHaveBeenCalled();
+    expect(
+      service.openAIService.createVisionChatCompletion
+    ).not.toHaveBeenCalled();
+  });
+
+  it('does not start a second memorial generation while the same request is running', async () => {
+    const { service } = createService({ agent: createAgent() });
+    (service.redisService.set as jest.Mock).mockResolvedValueOnce(null);
+
+    await expect(
+      service.generateMemorialPhoto(AUTH, CONVERSATION_ID, {
+        agentPhotoObjectKeys: ['memorial-source-photos/agent-1.jpg'],
+        userPhotoObjectKey: 'memorial-source-photos/user.jpg',
+        clientRequestId: 'memorial-request-in-progress',
+      })
+    ).rejects.toMatchObject({
+      code: 'MEMORIAL_PHOTO_IN_PROGRESS',
+      status: 409,
+    });
+    expect(
+      service.bailianImageService.generateMemorialPhoto
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps different memorial request ids distinct in the lock key', () => {
+    const { service } = createService({ agent: createAgent() });
+    const getLockKey = (service as any).getMemorialPhotoLockKey.bind(service);
+
+    expect(getLockKey(CONVERSATION_ID, 'request/a')).not.toBe(
+      getLockKey(CONVERSATION_ID, 'request?a')
     );
   });
 
