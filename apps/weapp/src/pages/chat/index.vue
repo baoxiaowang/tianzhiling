@@ -29,6 +29,10 @@
         </back-capsule>
         <text class="chat-page__nav-title">{{ pageTitle }}</text>
       </view>
+
+      <view class="chat-page__ai-notice">
+        <text>本页面中的回复由人工智能生成，请谨慎辨别</text>
+      </view>
     </template>
 
     <view class="chat-page__body" @tap="handleChatBodyTap">
@@ -148,6 +152,7 @@
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
                 @message-long-press="handleMessageLongPress(item.messageId, item.key, item.text)"
               />
+              <text v-if="!item.isUser" class="chat-message-unit__ai-label">AI生成</text>
             </view>
 
             <template v-if="item.isUser">
@@ -179,9 +184,6 @@
         <view id="chat-bottom-anchor" class="chat-message-list__bottom-anchor" />
       </view>
 
-      <view class="chat-page__ai-watermark">
-        <text>由AI生成</text>
-      </view>
     </view>
 
     <view
@@ -4271,6 +4273,18 @@ function destroyVoiceDurationProbeContexts() {
   white-space: nowrap;
 }
 
+.chat-page__ai-notice {
+  padding: 8px 16px;
+  border-bottom: 1px solid #f0d29b;
+  background: #fff4e8;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: #7a3e00;
+}
+
 .chat-page__body {
   position: relative;
   flex: 1;
@@ -4484,18 +4498,6 @@ function destroyVoiceDurationProbeContexts() {
   height: 1px;
 }
 
-.chat-page__ai-watermark {
-  position: absolute;
-  right: 22px;
-  bottom: 12px;
-  z-index: 2;
-  pointer-events: none;
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 500;
-  color: rgba(17, 17, 17, 0.36);
-}
-
 .chat-bottom {
   background: #f7f7f7;
 }
@@ -4534,6 +4536,14 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-message-unit--user {
   align-items: flex-end;
+}
+
+.chat-message-unit__ai-label {
+  margin: 4px 2px 0;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: rgba(17, 17, 17, 0.56);
 }
 
 .chat-message-actions {
