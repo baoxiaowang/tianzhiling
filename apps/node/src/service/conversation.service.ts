@@ -3088,15 +3088,17 @@ export class ConversationService {
       result: AgentChatToolResult;
     }>
   ): AgentEvidenceItem[] {
-    return results.flatMap(({ name, result }) => {
+    const evidence: AgentEvidenceItem[] = [];
+
+    for (const { name, result } of results) {
       if (name === 'record_user_correction') {
-        return [];
+        continue;
       }
 
-      return result.items.map(item => {
+      for (const item of result.items) {
         const conflicted = item.conflictStatus !== 'none';
         if (name === 'search_relationship_memory') {
-          return {
+          evidence.push({
             id: item.id,
             source: 'retrieved_user' as const,
             text: item.value,
@@ -3106,10 +3108,11 @@ export class ConversationService {
             useMode: 'recall' as const,
             status: 'active' as const,
             confidence: item.confidence,
-          };
+          });
+          continue;
         }
 
-        return {
+        evidence.push({
           id: item.id,
           source:
             name === 'get_family_facts'
@@ -3126,9 +3129,11 @@ export class ConversationService {
           useMode: conflicted ? ('hypothesis' as const) : ('assert' as const),
           status: 'active' as const,
           confidence: item.confidence,
-        };
-      });
-    });
+        });
+      }
+    }
+
+    return evidence;
   }
 
   private buildAgentChatToolExecutionContext(options: {
