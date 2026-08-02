@@ -1,18 +1,18 @@
 import {
   AgentEntity,
   AgentPersonaProfile,
-  AgentSex,
   MessageEntity,
   MessageRole,
 } from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
+import {
+  AgentIdentityContract,
+  AgentIdentityRelationshipGeneration,
+  buildAgentIdentityClassifierContext,
+  buildAgentIdentityContract,
+} from './agent-identity-contract';
 
-export type AgentRelationshipGeneration =
-  | 'elder'
-  | 'younger'
-  | 'peer'
-  | 'spouse'
-  | 'unknown';
+export type AgentRelationshipGeneration = AgentIdentityRelationshipGeneration;
 
 export interface AgentPersonaPromptResult {
   prompt: string;
@@ -37,12 +37,14 @@ const MAX_CHAT_EVIDENCE_LENGTH = 90;
 export function buildAgentPersonaPrompt(options: {
   agent: AgentEntity | null;
   recentMessages?: MessageEntity[];
+  identityContract?: AgentIdentityContract;
 }): AgentPersonaPromptResult {
   const agent = options.agent;
-  const relationshipType = resolveRelationshipType(agent);
-  const generation = resolveRelationshipGeneration(relationshipType);
+  const identity =
+    options.identityContract || buildAgentIdentityContract({ agent });
+  const relationshipType = identity.relationship.label;
+  const generation = identity.relationship.generation;
   const ageAtDeath = calculateAgeAtDeath(agent?.birthday, agent?.deathDate);
-  const sex = resolveSexText(agent?.sex);
   const profile = agent?.personaProfile;
   const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
   const hasUsableProfile = profileLines.length > 0;
@@ -58,18 +60,15 @@ export function buildAgentPersonaPrompt(options: {
     ? 'conversation_evidence'
     : 'relationship_defaults';
 
-  const demographicAnchor = [
-    `关系：用户称你为“${
-      clean(agent?.iCallAgent, 24) || relationshipType
-    }”，你称用户为“${clean(agent?.agentCallMe, 24) || '用户'}”`,
-    `性别：${sex}`,
-    ageAtDeath === undefined ? '' : `离世年龄约 ${ageAtDeath} 岁`,
+  const classifierIdentity = [
+    buildAgentIdentityClassifierContext(identity),
+    ageAtDeath === undefined ? '' : `离世年龄约${ageAtDeath}岁`,
   ]
     .filter(Boolean)
     .join('；');
   const generationGuidance = buildGenerationGuidance(generation);
   const classifierParts = [
-    demographicAnchor,
+    classifierIdentity,
     generationGuidance,
     ...profileLines.slice(0, 5),
     ...explicitProfile.slice(0, 2),
@@ -78,7 +77,6 @@ export function buildAgentPersonaPrompt(options: {
   return {
     prompt: [
       '# 人格与关系底色',
-      demographicAnchor,
       generationGuidance,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象；聊天证据优先。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
@@ -195,41 +193,6 @@ function buildGenerationGuidance(
   return '关系姿态：按用户称呼和最近互动把握亲疏；不足时亲近但不越位。';
 }
 
-function resolveRelationshipType(agent: AgentEntity | null): string {
-  const profileRelationship = clean(
-    agent?.personaProfile?.demographics?.relationshipType,
-    30
-  );
-  if (profileRelationship) {
-    return profileRelationship;
-  }
-
-  return clean(agent?.iCallAgent, 30) || '亲人';
-}
-
-function resolveRelationshipGeneration(
-  relationshipType: string
-): AgentRelationshipGeneration {
-  const value = relationshipType.toLowerCase();
-  if (
-    /爷爷|奶奶|姥姥|姥爷|外公|外婆|父亲|爸爸|爸|母亲|妈妈|妈|grand|father|mother|parent/.test(
-      value
-    )
-  ) {
-    return 'elder';
-  }
-  if (/儿子|女儿|孩子|child|son|daughter/.test(value)) {
-    return 'younger';
-  }
-  if (/老公|老婆|丈夫|妻子|爱人|husband|wife|spouse/.test(value)) {
-    return 'spouse';
-  }
-  if (/哥哥|姐姐|弟弟|妹妹|兄弟|姐妹|朋友|同学|sibling|friend/.test(value)) {
-    return 'peer';
-  }
-  return 'unknown';
-}
-
 function calculateAgeAtDeath(
   birthday?: Date,
   deathDate?: Date
@@ -257,16 +220,6 @@ function toValidDate(value?: Date): Date | undefined {
   }
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function resolveSexText(sex?: AgentSex): string {
-  if (sex === AgentSex.man) {
-    return '男性';
-  }
-  if (sex === AgentSex.woman) {
-    return '女性';
-  }
-  return '未确认';
 }
 
 function formatItems(label: string, items?: string[]): string | undefined {

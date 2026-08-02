@@ -2,6 +2,8 @@ export * from "./agent-entitlement.entity";
 export * from "./agent-memory-fact.entity";
 export * from "./agent-profile-fact.entity";
 export * from "./agent-relationship-signal.entity";
+export * from "./agent-share-invite.entity";
+export * from "./agent-share-member.entity";
 export * from "./agent.entity";
 export * from "./agent-sub.entity";
 export * from "./admin-account.entity";

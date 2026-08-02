@@ -72,7 +72,7 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   };
 
   const segmentInstruction = plan.preferTwoSegments
-    ? '本轮气泡输出例外：只输出 {"segments":["第一颗","第二颗"]}，恰好两项，不能合并。'
+    ? '本轮需要两颗气泡，分别完成已选的两个动作，不能合并。'
     : `默认一颗，最多 ${plan.maxSegments} 颗；第二颗须新增不可替代的动作。`;
 
   return [

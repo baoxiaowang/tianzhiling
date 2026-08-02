@@ -28,7 +28,11 @@ import {
   RELATIONAL_PRESENCE_CONFIRMATION_INTENT_PATTERN,
   RETURN_REUNION_WISH_INTENT_PATTERN,
 } from './reply-intent';
-import { AgentEvidenceItem, AssistantFactClaim } from './agent-evidence';
+import {
+  agentEvidenceSupportsClaim,
+  AgentEvidenceItem,
+  AssistantFactClaim,
+} from './agent-evidence';
 import {
   isExplicitRememberRequest,
   isForgetMemoryRequest,
@@ -46,6 +50,10 @@ import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
 } from './reply-length-plan';
+import {
+  buildReplyOutputContractPrompt,
+  buildReplyReviewOutputContractPrompt,
+} from './reply-output-contract';
 import {
   detectReplyRealityDependencyViolation,
   renderReplyRealityDependencyFallback,
@@ -1145,7 +1153,9 @@ export class ReplyGuardrailService {
     const roleSideSelfExpression =
       options.replyBrief?.conversationPlan?.engagement
         ?.assistantContribution === 'self_expression';
-    const dreamConnection = isDreamConnectionIntent(options.userQuery);
+    const dreamConnection =
+      Boolean(options.replyBrief?.dreamCompanionPlan) ||
+      isDreamConnectionIntent(options.userQuery);
     const physicalContactRepair = feedback.issues.some(
       issue =>
         /physical_contact|real_physical_arrival_or_touch/.test(issue.code) ||
@@ -1371,8 +1381,7 @@ export class ReplyGuardrailService {
       '候选回复正文结束',
       `程序已发现的确定问题：${JSON.stringify(deterministicFeedback.issues)}`,
       '',
-      '严格输出 JSON：',
-      '{"verdict":"pass|revise","issues":[{"code":"问题码","severity":"hard|major","layer":"hard_boundary|quality_advisory","problem":"具体问题","evidence":"候选中的问题文字","repairGoal":"只说明修复目标，不写答案"}],"mustPreserve":["候选中应保留的正确自然内容"],"mustAnswer":[],"groundingConstraints":["事实约束"]}',
+      buildReplyReviewOutputContractPrompt(),
     ].join('\n');
     const hardReviewPrompt = [
       '# 天之灵硬边界审阅',
@@ -1389,8 +1398,7 @@ export class ReplyGuardrailService {
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
       '没有上述五类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
-      '严格输出 JSON：',
-      '{"verdict":"pass|revise","issues":[{"code":"五类风险名","severity":"hard","layer":"hard_boundary","problem":"具体硬风险","evidence":"候选中的逐字片段","repairGoal":"只说明修复目标"}],"mustPreserve":[],"mustAnswer":[],"groundingConstraints":[]}',
+      buildReplyReviewOutputContractPrompt({ hardOnly: true }),
     ].join('\n');
     const usesDedicatedHardReview =
       this.openAIService?.supportsDedicatedHardBoundaryReview?.() === true;
@@ -1681,7 +1689,7 @@ export class ReplyGuardrailService {
       mustPreserve: [],
       mustAnswer: [],
       groundingConstraints: [
-        '用户原话可以用 attributed_to_user 归因复述；autonomous_fact 只能来自 assertionPolicy=can_assert 的证据',
+        '本轮用户明确陈述可用 conversational_uptake 自然承接；历史用户原话用 attributed_to_user；autonomous_fact 只能来自 useMode=assert 的证据，且证据必须支持同一对象和事实',
         '角色当前的离世世界可自然叙述；共同过去和现实事实仍须证据',
       ],
     };
@@ -1793,7 +1801,7 @@ export class ReplyGuardrailService {
       '8. 触碰类修订不复述“我没碰/碰不到”，从用户的感觉和想念自然回应。',
       '9. 长辈面对极端行为可制止、训话或建议缓一缓；只撤掉羞辱和长期义务。',
       '10. 不输出任何括号旁白。',
-      `11. 尽量短，输出 1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；第二颗须新增不可替代动作。resolvedIssueCodes 覆盖全部 issue.code。`,
+      '11. 尽量短；第二颗须新增不可替代动作。',
       ...(groundedRevision
         ? [
             '12. 正文若保留现实或共同事实，claims 逐条声明并关联证据；没有这类事实才用空数组。',
@@ -1804,11 +1812,14 @@ export class ReplyGuardrailService {
                   '13. 死亡原因、临终动机和家庭责任无证据时只表达不确定；不得用善意动机或替家人卸责来补答案。',
                 ]
               : []),
-            '严格输出 JSON：{"segments":["气泡1"],"claims":[{"text":"事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
           ]
-        : [
-            '严格输出 JSON：{"segments":["气泡1"],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
-          ]),
+        : []),
+      buildReplyOutputContractPrompt({
+        grounded: groundedRevision,
+        segmentMode: 'up_to_two',
+        maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
+        purpose: 'audited_revision',
+      }),
     ].join('\n');
 
     try {
@@ -2075,10 +2086,15 @@ export class ReplyGuardrailService {
             : undefined;
         const mode: AssistantFactClaim['mode'] =
           raw.mode === 'attributed_to_user' ||
+          raw.mode === 'conversational_uptake' ||
           raw.mode === 'autonomous_fact' ||
           raw.mode === 'soft_imagination'
             ? raw.mode
             : 'autonomous_fact';
+        const subjectRef =
+          typeof raw.subjectRef === 'string'
+            ? raw.subjectRef.trim().slice(0, 64)
+            : '';
         const evidenceIds = Array.isArray(raw.evidenceIds)
           ? Array.from(
               new Set(
@@ -2095,6 +2111,7 @@ export class ReplyGuardrailService {
               text,
               kind,
               mode,
+              ...(subjectRef ? { subjectRef } : {}),
               evidenceIds,
             }
           : undefined;
@@ -2324,27 +2341,7 @@ export class ReplyGuardrailService {
       );
     }
 
-    const evidenceById = new Map((evidence || []).map(item => [item.id, item]));
-    const linkedEvidence = claim.evidenceIds
-      .map(id => evidenceById.get(id))
-      .filter((item): item is AgentEvidenceItem => Boolean(item));
-
-    if (mode === 'attributed_to_user') {
-      return (
-        linkedEvidence.length > 0 &&
-        /(?:你(?:刚才|刚|也)?(?:说|讲|提|告诉|记得|觉得|担心|提到)|听你(?:说|讲|提)|按你说的|你这句话|你提起的)/.test(
-          claim.text
-        )
-      );
-    }
-
-    return linkedEvidence.some(
-      item =>
-        item.assertionPolicy === 'can_assert' &&
-        item.source !== 'current_user' &&
-        item.source !== 'recent_user' &&
-        item.source !== 'retrieved_user'
-    );
+    return agentEvidenceSupportsClaim(evidence, claim);
   }
 
   private async tryModelRevision(
@@ -2401,7 +2398,12 @@ export class ReplyGuardrailService {
       '3. 不输出系统说明、审查原因、道歉模板或证据字段。',
       `4. 保持亲人角色的自然口气，1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；允许只保留一句称呼、语气词或短回应。`,
       '5. 删除机械复读、重复解释、总结和通用叮嘱；有节奏的情感重复可以保留，不因修复问题而扩写。',
-      '6. 只输出严格 JSON：{"segments":["气泡1"],"claims":[]}。',
+      buildReplyOutputContractPrompt({
+        grounded: options.replyBrief?.factClaimMode === 'grounded',
+        segmentMode: 'up_to_two',
+        maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
+        purpose: 'revision',
+      }),
     ].join('\n');
 
     try {
@@ -3277,12 +3279,24 @@ export class ReplyGuardrailService {
     }
 
     if (
-      this.isDreamCompanionshipQuery(userQuery) &&
+      (Boolean(brief?.dreamCompanionPlan) ||
+        this.isDreamCompanionshipQuery(userQuery)) &&
       /(?:这个梦|梦见我|梦里见到我).{0,16}(?:证明|说明).{0,20}(?:我真的存在|灵魂(?:真的)?(?:存在|在你身边)|我就在你身边)|(?:梦|托梦).{0,12}(?:预示|预言|吉凶|告诉你未来|现实中一定会发生)|(?:醒来|醒着|现实里|现实中).{0,12}(?:我还在|我就在|我会在|陪着你|守着你)/.test(
         content
       )
     ) {
       return '梦境陪伴被扩写成超自然证明、预言或现实存在';
+    }
+
+    if (
+      (Boolean(brief?.dreamCompanionPlan) ||
+        this.isDreamCompanionshipQuery(userQuery)) &&
+      !/(?:也许|可能|说不定|没准|或许|兴许)/.test(content) &&
+      /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆).{0,12}(?:已经|昨晚|其实)?(?:来过|去过|到过).{0,16}(?:只是|就是|但).{0,8}你.{0,8}(?:醒来)?(?:忘了|忘记|不记得)|你.{0,8}(?:只是|就是).{0,8}(?:醒来)?(?:忘了|忘记|不记得).{0,12}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆).{0,8}(?:来过|去过|到过)/.test(
+        content
+      )
+    ) {
+      return '把醒后忘梦当作已经入梦的确定事实';
     }
 
     if (
@@ -3563,6 +3577,10 @@ export class ReplyGuardrailService {
       return ['这件事我也说不清', '你一直在找答案 我知道'];
     }
 
+    if (brief.dreamCompanionPlan) {
+      return this.renderDreamConnectionFallback(userQuery, brief);
+    }
+
     if (
       USER_FORGETTING_DEPARTED_FEAR_PATTERN.test(userQuery) ||
       /(?:好)?怕.{0,8}忘了/.test(userQuery)
@@ -3610,7 +3628,7 @@ export class ReplyGuardrailService {
         ];
       }
 
-      return this.renderDreamConnectionFallback(userQuery);
+      return this.renderDreamConnectionFallback(userQuery, brief);
     }
 
     if (
@@ -4077,7 +4095,7 @@ export class ReplyGuardrailService {
     }
 
     if (hasIntent('seek_dream_connection')) {
-      return this.renderDreamConnectionFallback(userQuery);
+      return this.renderDreamConnectionFallback(userQuery, brief);
     }
 
     if (hasIntent('seek_comfort') || brief.mode === 'emotional') {
@@ -4093,7 +4111,7 @@ export class ReplyGuardrailService {
 
     if (hasIntent('express_longing') || brief.mode === 'relationship') {
       if (isDreamConnectionIntent(userQuery)) {
-        return this.renderDreamConnectionFallback(userQuery);
+        return this.renderDreamConnectionFallback(userQuery, brief);
       }
 
       if (isReturnVisitRequestIntent(userQuery)) {
@@ -4895,7 +4913,39 @@ export class ReplyGuardrailService {
     return isDreamAbsenceIntent(value);
   }
 
-  private renderDreamConnectionFallback(userQuery: string): string[] {
+  private renderDreamConnectionFallback(
+    userQuery: string,
+    brief?: ReplyBrief
+  ): string[] {
+    if (
+      brief?.dreamCompanionPlan?.dreamAnchor === 'voice' &&
+      ['request', 'before_sleep'].includes(brief.dreamCompanionPlan.dreamStage)
+    ) {
+      return [
+        '快记不起我的声音了 你心里才这么慌',
+        '今晚我去你梦里看看你 让你听见我的声音',
+      ];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'verification') {
+      return ['梦里的感觉可以留在心里', '是不是我来过 不用急着把它说死'];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'repeated_miss') {
+      return [
+        '一次次等着却没在梦里见到我 这份失落我知道',
+        '今晚先把想说的话留给我 不用逼自己一定梦见',
+      ];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'fragmented') {
+      return ['醒来记不清也没关系', '你还留着梦里的那点感觉 就慢慢说给我听'];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'reported') {
+      return ['这个梦你还记得', '梦里哪一小段最让你舍不得'];
+    }
+
     const hasVisitRequest = isDreamVisitRequestIntent(userQuery);
     const hasAbsence = isDreamAbsenceIntent(userQuery);
     const hasDreamDisappointment =

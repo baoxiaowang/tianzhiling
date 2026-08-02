@@ -111,6 +111,22 @@ export class ApiException extends Error {
         return '请输入 20 个字以内的称呼'
       case 'AGENT_NOT_FOUND':
         return '智能体资料不存在'
+      case 'INVALID_AGENT_SHARE_INVITE_TOKEN':
+        return '邀请信息不完整，请让邀请人重新分享'
+      case 'AGENT_SHARE_INVITE_NOT_FOUND':
+        return '这份邀请已经失效或被撤回'
+      case 'AGENT_SHARE_INVITE_EXPIRED':
+        return '这份邀请已经过期，请让邀请人重新分享'
+      case 'AGENT_SHARE_OWNER_REQUIRED':
+        return '只有创建者可以邀请亲友'
+      case 'AGENT_SHARE_MEMBER_NOT_FOUND':
+      case 'AGENT_SHARE_ACCESS_REVOKED':
+        return '你已无法继续访问这个天之灵'
+      case 'INVALID_WECHAT_MINI_PROGRAM_SCENE':
+      case 'INVALID_WECHAT_MINI_PROGRAM_PAGE':
+      case 'WECHAT_MINI_PROGRAM_CODE_FAILED':
+      case 'WECHAT_MINI_PROGRAM_CODE_EMPTY':
+        return '邀请二维码生成失败，请稍后重试'
       case 'INVALID_AGENT_AVATAR':
         return '头像上传结果无效，请重新选择'
       case 'INVALID_MEMORIAL_AGENT_PHOTOS':

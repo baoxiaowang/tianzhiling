@@ -1,5 +1,6 @@
 import {
   AgentEntity,
+  AgentShareMemberStatus,
   AgentSex,
   ConversationEntity,
   MessageEntity,
@@ -581,6 +582,138 @@ function createService(options: {
   return { service, savedMessages, savedFeedbacks, addJobToQueue, getJob };
 }
 
+describe('ConversationService main-model tools', () => {
+  it('executes at most one active tool round before the final reply', async () => {
+    const agent = createAgent();
+    const { service } = createService({ agent });
+    const userMessage = createMessage({
+      content: '你还记得我们以前去过哪里吗',
+      role: MessageRole.user,
+    });
+    const createChatCompletion = service.openAIService
+      .createChatCompletion as jest.Mock;
+    createChatCompletion
+      .mockReset()
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-1',
+                  type: 'function',
+                  function: {
+                    name: 'search_relationship_memory',
+                    arguments: JSON.stringify({
+                      missingConcepts: ['共同去过的地方'],
+                      subjectRef: '奶奶',
+                      limit: 3,
+                    }),
+                  },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+        usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+      })
+      .mockResolvedValueOnce({
+        model: 'MiniMax-M2.5',
+        choices: [
+          {
+            message: {
+              content: '{"segments":["记得，是秋天去的香山。"],"claims":[]}',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 28, completion_tokens: 8, total_tokens: 36 },
+      });
+    service.agentChatToolService = {
+      execute: jest.fn().mockResolvedValue({
+        version: 'agent_chat_tools_v1',
+        tool: 'search_relationship_memory',
+        status: 'ok',
+        items: [
+          {
+            id: 'memory-1',
+            source: 'conversation_memory',
+            sourceAt: '2025-10-01T00:00:00.000Z',
+            confidence: 0.88,
+            conflictStatus: 'none',
+            value: '秋天去过香山',
+          },
+        ],
+        truncated: false,
+      }),
+    } as any;
+
+    const result = await (service as any).createPrimaryAssistantCompletion({
+      runtime: {
+        auth: AUTH,
+        conversation: createConversation(),
+        agent,
+      },
+      before: {
+        userMessage,
+        searchableText: userMessage.content,
+      },
+      context: {
+        messages: [{ role: 'user', content: userMessage.content }],
+        chatToolPlan: {
+          version: 'agent_chat_tools_v1',
+          configuredMode: 'active',
+          mode: 'active',
+          eligible: true,
+          sampled: true,
+          availableTools: [
+            'search_relationship_memory',
+            'get_family_facts',
+            'get_persona_evidence',
+            'record_user_correction',
+          ],
+          reason: 'memory_candidate',
+          plannerMemoryRequested: true,
+          maxCalls: 4,
+          timeoutMs: 1000,
+        },
+      },
+    });
+
+    expect(createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(createChatCompletion.mock.calls[0][0].tools).toHaveLength(4);
+    expect(createChatCompletion.mock.calls[1][0].tool_choice).toBe('none');
+    expect(createChatCompletion.mock.calls[1][0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          tool_call_id: 'call-1',
+        }),
+      ])
+    );
+    expect(result.toolAudit).toEqual(
+      expect.objectContaining({
+        decisionNames: ['search_relationship_memory'],
+        executionCount: 1,
+        resultItemCount: 1,
+        plannerMemoryAgreement: 'both_query',
+      })
+    );
+    expect(result.toolEvidence).toEqual([
+      expect.objectContaining({
+        id: 'memory-1',
+        source: 'retrieved_user',
+        assertionPolicy: 'context_only',
+        useMode: 'recall',
+      }),
+    ]);
+    expect(result.usage.totalTokens).toBe(61);
+  });
+});
+
 describe('ConversationService generateMemorialPhoto', () => {
   it('generates a memorial photo, stores it as an assistant image message, and touches the conversation', async () => {
     const { service, savedMessages } = createService({
@@ -1128,6 +1261,60 @@ describe('ConversationService generateMemorialPhoto', () => {
     ).rejects.toThrow('storage failed');
 
     expect(savedMessages).toHaveLength(0);
+  });
+});
+
+describe('ConversationService shared agent access', () => {
+  it('blocks chat after a shared membership is revoked', async () => {
+    const service = new ConversationService();
+    const conversation = createConversation({
+      userId: new MongoObjectId(USER_ID),
+      accessRole: 'shared',
+    });
+    const agent = createAgent({
+      createdUserId: new MongoObjectId(ACCOUNT_ID),
+    });
+
+    service.agentShareMemberModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+    } as any;
+
+    await expect(
+      (service as any).resolveConversationAgent(conversation, agent)
+    ).rejects.toMatchObject({
+      code: 'AGENT_SHARE_ACCESS_REVOKED',
+      status: 403,
+    });
+  });
+
+  it('uses the invited users own call names in chat context', async () => {
+    const service = new ConversationService();
+    const conversation = createConversation({
+      userId: new MongoObjectId(USER_ID),
+      accessRole: 'shared',
+    });
+    const agent = createAgent({
+      createdUserId: new MongoObjectId(ACCOUNT_ID),
+      agentCallMe: '创建者的称呼',
+      iCallAgent: '创建者的关系',
+    });
+
+    service.agentShareMemberModel = {
+      findOne: jest.fn().mockResolvedValue({
+        status: AgentShareMemberStatus.active,
+        agentCallsUser: '闺女',
+        userCallsAgent: '妈',
+      }),
+    } as any;
+
+    const resolved = await (service as any).resolveConversationAgent(
+      conversation,
+      agent
+    );
+
+    expect(resolved.agentCallMe).toBe('闺女');
+    expect(resolved.iCallAgent).toBe('妈');
+    expect(agent.agentCallMe).toBe('创建者的称呼');
   });
 });
 
@@ -2644,7 +2831,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v9',
+        replyBriefVersion: 'reply_brief_v13',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -2982,7 +3169,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v9',
+        replyBriefVersion: 'reply_brief_v13',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -3584,7 +3771,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v9',
+        replyBriefVersion: 'reply_brief_v13',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'contextual_reply_brief',
@@ -4817,6 +5004,34 @@ describe('ConversationService generation cleanup diagnostics', () => {
       segments: ['我在听，你接着说。'],
       claims: [],
     });
+  });
+
+  it('keeps evidence object and natural-uptake mode from model claims', () => {
+    const service = new ConversationService();
+    const parsed = (service as any).parseAssistantReply(
+      JSON.stringify({
+        segments: ['是啊，我以前就爱到处走走'],
+        claims: [
+          {
+            text: '我以前就爱到处走走',
+            kind: 'memory',
+            mode: 'conversational_uptake',
+            subjectRef: 'agent',
+            evidenceIds: ['U0'],
+          },
+        ],
+      })
+    );
+
+    expect(parsed.claims).toEqual([
+      {
+        text: '我以前就爱到处走走',
+        kind: 'memory',
+        mode: 'conversational_uptake',
+        subjectRef: 'agent',
+        evidenceIds: ['U0'],
+      },
+    ]);
   });
 
   it('recovers model JSON with a malformed known top-level key', () => {

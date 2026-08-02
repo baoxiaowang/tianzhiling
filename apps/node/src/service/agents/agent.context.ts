@@ -1,4 +1,4 @@
-import { Inject, Provide } from '@midwayjs/core';
+import { Config, Inject, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
@@ -20,7 +20,10 @@ import {
   containsUnsafeAssistantHistoryContent,
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
-import { buildDepartedSystemPrompt } from '../../prompt/departed';
+import {
+  buildDepartedCurrentTimePrompt,
+  buildDepartedSystemPrompt,
+} from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
 import { ChatTraceService } from '../chat-trace.service';
 import {
@@ -47,26 +50,53 @@ import {
   ReplyPlanningMode,
 } from './reply-intent-classifier.service';
 import type {
+  ConversationObjectPlan,
   ConversationMemoryPlan,
   ConversationReading,
   StructuredReplyIntent,
 } from './reply-intent';
 import {
+  buildAgentIdentityContract,
+  buildKnownConversationObjects,
+  AgentIdentityContract,
+} from './agent-identity-contract';
+import {
+  buildConversationObjectPlanPrompt,
   buildReplyParticipationStrategyPrompt,
   buildReplyBrief,
   ReplyBrief,
   ReplyBriefService,
 } from './reply-brief.service';
 import { buildReplyBubblePlanPrompt } from './reply-bubble-plan';
+import {
+  REPLY_OUTPUT_CONTRACT_VERSION,
+  buildReplyOutputContractPrompt,
+  resolveReplyOutputSegmentMode,
+} from './reply-output-contract';
+import {
+  REPLY_BOUNDARY_CONTRACT_VERSION,
+  buildReplyBoundaryContract,
+} from './reply-boundary-contract';
 import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import { buildReplyExperiencePlanPrompt } from './reply-experience-plan';
+import {
+  buildDreamCompanionPlanPrompt,
+  DreamCompanionPlan,
+} from './dream-companion-plan';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
 import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
+import {
+  buildConversationTurnPlanPrompt,
+  resolveConversationTurnPlan,
+} from './conversation-turn-plan';
 import { ReplySceneRoute, routeReplyScene } from './reply-scene-router';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
+  AGENT_EVIDENCE_VERSION,
   AgentEvidenceAssertionPolicy,
   AgentEvidenceItem,
+  resolveAgentEvidenceUseMode,
+  selectAgentEvidence,
 } from './agent-evidence';
 import {
   buildAgentChatModePrompt,
@@ -78,6 +108,14 @@ import {
   buildAgentPersonaPrompt,
   hasUsableAgentPersonaProfile,
 } from './agent-persona';
+import {
+  AGENT_CHAT_TOOL_VERSION,
+  AgentChatToolConfig,
+  AgentChatToolTurnPlan,
+  buildAgentChatToolDecisionSchema,
+  buildAgentChatToolPrompt,
+  resolveAgentChatToolTurnPlan,
+} from './agent-chat-tools';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -103,10 +141,36 @@ export interface AgentConversationContext {
   replyIntent?: StructuredReplyIntent;
   replyRoute: ReplySceneRoute;
   replyBrief: ReplyBrief;
+  chatToolPlan: AgentChatToolTurnPlan;
 }
 
 export interface AgentContextDiagnostics {
-  promptVersion: 'agent_chat_v5';
+  promptVersion: 'agent_chat_v11';
+  outputContractVersion: typeof REPLY_OUTPUT_CONTRACT_VERSION;
+  boundaryContractVersion: typeof REPLY_BOUNDARY_CONTRACT_VERSION;
+  dynamicBoundaryCount: number;
+  toolInstructionMode: 'orchestrated_none' | 'shadow_decision' | 'model_tools';
+  chatToolVersion: typeof AGENT_CHAT_TOOL_VERSION;
+  chatToolMode: AgentChatToolTurnPlan['mode'];
+  chatToolEligible: boolean;
+  chatToolSampled: boolean;
+  chatToolAvailableTools: string[];
+  chatToolPlannerMemoryRequested: boolean;
+  chatToolPlannerRetrievalBypassed: boolean;
+  identityVersion: AgentIdentityContract['version'];
+  identityRelationship: string;
+  identitySource: AgentIdentityContract['relationship']['source'];
+  knownObjectCount: number;
+  objectReferenceCount: number;
+  resolvedObjectReferenceCount: number;
+  ambiguousObjectMentionCount: number;
+  evidenceVersion: typeof AGENT_EVIDENCE_VERSION;
+  evidenceCount: number;
+  assertEvidenceCount: number;
+  uptakeEvidenceCount: number;
+  recallEvidenceCount: number;
+  hypothesisEvidenceCount: number;
+  objectScopedEvidenceCount: number;
   systemPromptCharacters: number;
   replyLengthClass: ReplyBrief['lengthPlan']['lengthClass'];
   replyTargetCharacters: number;
@@ -128,7 +192,11 @@ export interface AgentContextDiagnostics {
   replyPlanningMode: ReplyPlanningMode;
   replyPlanningReason: ReplyPlanningDecision['reason'];
   replyIntentModelCallCount: number;
-  strategyVersion: 'conversation_strategy_v6';
+  strategyVersion: 'conversation_strategy_v8';
+  turnPlanVersion: 'turn_plan_v1';
+  turnPlanOpenPointCount: number;
+  turnPlanOpenNeeds: string[];
+  turnPlanAvoid?: string;
   strategySource: 'semantic_plan' | 'short_turn_injection' | 'direct_brief';
   participationStrategy?: ReplyBrief['participationStrategy'];
   conversationStance?: string;
@@ -154,6 +222,7 @@ export interface AgentContextDiagnostics {
   activeContributionSource?: string;
   strategyRepeatedMoves: string[];
   strategyAlternative?: string;
+  dreamCompanionPlan?: DreamCompanionPlan;
   experiencePlanVersion: string;
   profileTier: ReplyBrief['experiencePlan']['profileTier'];
   relationshipStage: ReplyBrief['experiencePlan']['relationshipStage'];
@@ -178,7 +247,11 @@ const MEMORY_PLAN_FALLBACK_MIN_AVERAGE_RELEVANCE = 13;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_FACT_RELEVANCE = 18;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_AVERAGE_RELEVANCE = 24;
 
-type MemoryRetrievalMode = 'memory_plan' | 'legacy_query' | 'suppressed';
+type MemoryRetrievalMode =
+  | 'memory_plan'
+  | 'legacy_query'
+  | 'suppressed'
+  | 'tool_takeover';
 
 interface MemoryRetrievalDecision {
   mode: MemoryRetrievalMode;
@@ -215,6 +288,9 @@ export class AgentContextService {
   @Inject()
   chatTraceService: ChatTraceService;
 
+  @Config('chatTools')
+  chatToolConfig: AgentChatToolConfig;
+
   async buildConversationContext(
     options: BuildConversationContextOptions
   ): Promise<AgentConversationContext> {
@@ -235,15 +311,21 @@ export class AgentContextService {
     const routingHistoryMessages = this.buildRecentHistoryMessages(
       historicalConversationMessages
     );
-    const persona = buildAgentPersonaPrompt({
-      agent: options.agent,
-      recentMessages: routingHistoryMessages,
-    });
     const profileFacts = await this.withTraceSpan(
       ChatTraceStage.contextLoad,
       'context.profile_facts',
       () => this.listProfileFacts(options)
     );
+    const identity = buildAgentIdentityContract({ agent: options.agent });
+    const knownObjects = buildKnownConversationObjects({
+      identity,
+      profileFacts,
+    });
+    const persona = buildAgentPersonaPrompt({
+      agent: options.agent,
+      recentMessages: routingHistoryMessages,
+      identityContract: identity,
+    });
     const knownFamilyMembers = (profileFacts || [])
       .map(fact => getSharedFamilyMemberNameFromFactKey(fact.key))
       .filter((name): name is string => Boolean(name));
@@ -272,6 +354,7 @@ export class AgentContextService {
       currentQuery: options.currentQuery || '',
       recentMessages: routingHistoryMessages,
       knownFamilyMembers,
+      knownObjects,
       memoryCandidates,
       agentPersonaContext: persona.classifierContext,
       forceSemanticPlanning: options.forceSemanticPlanning,
@@ -320,34 +403,6 @@ export class AgentContextService {
           replyIntent?.memoryPlan,
           replyPlanningDecision.mode
         );
-    const retrievedMemories = memoryRetrieval.query
-      ? await this.withTraceSpan(
-          ChatTraceStage.memoryRetrieve,
-          'memory.retrieve_long_term',
-          () =>
-            this.retrieveLongTermHistory(
-              options,
-              this.resolveLongTermHistoryCutoff(routingHistoryMessages),
-              memoryRetrieval.query!
-            ),
-          {
-            retrievalMode: memoryRetrieval.mode,
-            conceptCount: memoryRetrieval.conceptCount,
-          }
-        )
-      : [];
-    if (!memoryRetrieval.query) {
-      this.chatTraceService?.recordCompletedSpan({
-        stage: ChatTraceStage.memoryRetrieve,
-        operation: 'memory.retrieve_long_term',
-        startedAt: new Date(),
-        status: ChatSpanStatus.skipped,
-        attributes: {
-          retrievalMode: memoryRetrieval.mode,
-          conceptCount: memoryRetrieval.conceptCount,
-        },
-      });
-    }
     const relationshipSignals =
       this.agentRelationshipSignalService?.selectRelevantSignals(
         storedRelationshipSignals,
@@ -360,7 +415,13 @@ export class AgentContextService {
       knownFamilyMembers,
       intent: replyIntent,
     });
-    const replyBriefOptions = {
+    const chatToolStableKey = [
+      options.auth.sub,
+      this.stringifyObjectId(options.conversation.id),
+      ...(options.currentTurnMessageIds || []),
+      options.currentQuery || '',
+    ].join(':');
+    const baseReplyBriefOptions = {
       currentQuery: options.currentQuery || '',
       agent: options.agent,
       profileFacts,
@@ -371,8 +432,54 @@ export class AgentContextService {
         .map(fact => fact.value?.trim())
         .filter((value): value is string => Boolean(value)),
       recentMessages: routingHistoryMessages,
-      retrievedMemories,
       relationshipSignals,
+    };
+    const preflightChatToolPlan = resolveAgentChatToolTurnPlan({
+      config: this.chatToolConfig,
+      stableKey: chatToolStableKey,
+      currentQuery: options.currentQuery || '',
+      replyBrief: buildReplyBrief(baseReplyBriefOptions),
+      planningMode: replyPlanningDecision.mode,
+      planningReason: replyPlanningDecision.reason,
+      plannerMemoryRequested: Boolean(memoryRetrieval.query),
+    });
+    const plannerRetrievalBypassed =
+      preflightChatToolPlan.mode === 'active' && Boolean(memoryRetrieval.query);
+    const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
+      plannerRetrievalBypassed ? 'tool_takeover' : memoryRetrieval.mode;
+    const retrievedMemories =
+      memoryRetrieval.query && !plannerRetrievalBypassed
+        ? await this.withTraceSpan(
+            ChatTraceStage.memoryRetrieve,
+            'memory.retrieve_long_term',
+            () =>
+              this.retrieveLongTermHistory(
+                options,
+                this.resolveLongTermHistoryCutoff(routingHistoryMessages),
+                memoryRetrieval.query!
+              ),
+            {
+              retrievalMode: effectiveMemoryRetrievalMode,
+              conceptCount: memoryRetrieval.conceptCount,
+            }
+          )
+        : [];
+    if (!memoryRetrieval.query || plannerRetrievalBypassed) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.memoryRetrieve,
+        operation: 'memory.retrieve_long_term',
+        startedAt: new Date(),
+        status: ChatSpanStatus.skipped,
+        attributes: {
+          retrievalMode: effectiveMemoryRetrievalMode,
+          conceptCount: memoryRetrieval.conceptCount,
+          plannerRetrievalBypassed,
+        },
+      });
+    }
+    const replyBriefOptions = {
+      ...baseReplyBriefOptions,
+      retrievedMemories,
     };
     const replyBrief = await this.withTraceSpan(
       ChatTraceStage.plan,
@@ -382,6 +489,19 @@ export class AgentContextService {
           ? this.replyBriefService.build(replyBriefOptions)
           : buildReplyBrief(replyBriefOptions)
     );
+    const chatToolPlan =
+      preflightChatToolPlan.mode === 'active'
+        ? preflightChatToolPlan
+        : resolveAgentChatToolTurnPlan({
+            config: this.chatToolConfig,
+            stableKey: chatToolStableKey,
+            currentQuery: options.currentQuery || '',
+            replyBrief,
+            planningMode: replyPlanningDecision.mode,
+            planningReason: replyPlanningDecision.reason,
+            plannerMemoryRequested: Boolean(memoryRetrieval.query),
+          });
+    const toolInstructionMode = this.resolveToolInstructionMode(chatToolPlan);
     const modePolicy = resolveAgentChatModePolicy(replyBrief);
     const recentHistoryMessages = this.buildRecentHistoryMessages(
       historicalConversationMessages,
@@ -434,7 +554,9 @@ export class AgentContextService {
         : relevantRetrievedMemories,
       suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
       currentUserCanAssert: Boolean(replyBrief.correctionPolicy),
+      objectPlan: replyBrief.objectPlan,
     });
+    const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
     const systemLayer = await this.withTraceSpan(
       ChatTraceStage.promptBuild,
       'prompt.build_layers',
@@ -445,10 +567,39 @@ export class AgentContextService {
           emotionState,
           replyRoute,
           replyBrief,
-          persona
+          persona,
+          identity,
+          chatToolPlan
         ),
       {
         evidenceCount: evidence.length,
+        evidenceVersion: AGENT_EVIDENCE_VERSION,
+        outputContractVersion: REPLY_OUTPUT_CONTRACT_VERSION,
+        boundaryContractVersion: boundaryContract.version,
+        dynamicBoundaryCount: boundaryContract.rules.length,
+        toolInstructionMode,
+        chatToolVersion: chatToolPlan.version,
+        chatToolMode: chatToolPlan.mode,
+        chatToolEligible: chatToolPlan.eligible,
+        chatToolSampled: chatToolPlan.sampled,
+        chatToolCount: chatToolPlan.availableTools.length,
+        chatToolPlannerMemoryRequested: chatToolPlan.plannerMemoryRequested,
+        chatToolPlannerRetrievalBypassed: plannerRetrievalBypassed,
+        assertEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'assert'
+        ).length,
+        uptakeEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'uptake'
+        ).length,
+        recallEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'recall'
+        ).length,
+        hypothesisEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'hypothesis'
+        ).length,
+        objectScopedEvidenceCount: evidence.filter(item =>
+          Boolean(item.subjectRef && item.subjectRef !== 'mixed')
+        ).length,
         historyCount: recentHistoryMessages.length,
       }
     );
@@ -456,7 +607,10 @@ export class AgentContextService {
     this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
     const systemPromptContent = systemLayer.messages[0]?.content;
-
+    const resolvedTurnPlan = resolveConversationTurnPlan({
+      engagement: replyBrief.conversationPlan?.engagement,
+      turnPlan: replyBrief.conversationPlan?.turnPlan,
+    });
     return {
       layers,
       messages: layers.reduce<ChatCompletionMessageParam[]>(
@@ -465,7 +619,46 @@ export class AgentContextService {
       ),
       evidence,
       diagnostics: {
-        promptVersion: 'agent_chat_v5',
+        promptVersion: 'agent_chat_v11',
+        outputContractVersion: REPLY_OUTPUT_CONTRACT_VERSION,
+        boundaryContractVersion: boundaryContract.version,
+        dynamicBoundaryCount: boundaryContract.rules.length,
+        toolInstructionMode,
+        chatToolVersion: chatToolPlan.version,
+        chatToolMode: chatToolPlan.mode,
+        chatToolEligible: chatToolPlan.eligible,
+        chatToolSampled: chatToolPlan.sampled,
+        chatToolAvailableTools: chatToolPlan.availableTools,
+        chatToolPlannerMemoryRequested: chatToolPlan.plannerMemoryRequested,
+        chatToolPlannerRetrievalBypassed: plannerRetrievalBypassed,
+        identityVersion: identity.version,
+        identityRelationship: identity.relationship.label,
+        identitySource: identity.relationship.source,
+        knownObjectCount: knownObjects.length,
+        objectReferenceCount: replyBrief.objectPlan?.objects.length || 0,
+        resolvedObjectReferenceCount:
+          replyBrief.objectPlan?.objects.filter(
+            object => object.binding !== 'unknown'
+          ).length || 0,
+        ambiguousObjectMentionCount:
+          replyBrief.objectPlan?.ambiguousMentions.length || 0,
+        evidenceVersion: AGENT_EVIDENCE_VERSION,
+        evidenceCount: evidence.length,
+        assertEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'assert'
+        ).length,
+        uptakeEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'uptake'
+        ).length,
+        recallEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'recall'
+        ).length,
+        hypothesisEvidenceCount: evidence.filter(
+          item => resolveAgentEvidenceUseMode(item) === 'hypothesis'
+        ).length,
+        objectScopedEvidenceCount: evidence.filter(item =>
+          Boolean(item.subjectRef && item.subjectRef !== 'mixed')
+        ).length,
         systemPromptCharacters:
           typeof systemPromptContent === 'string'
             ? systemPromptContent.length
@@ -489,8 +682,9 @@ export class AgentContextService {
         memoryModelSelectedCandidateKeys: modelSelectedCandidateKeys,
         memorySelectedCandidateKeys: selectedFactKeys,
         memoryCoverageFallbackApplied,
-        memoryRetrievalMode: memoryRetrieval.mode,
-        memoryRetrievalRequestCount: memoryRetrieval.query ? 1 : 0,
+        memoryRetrievalMode: effectiveMemoryRetrievalMode,
+        memoryRetrievalRequestCount:
+          memoryRetrieval.query && !plannerRetrievalBypassed ? 1 : 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
         memoryRetrievedEvidenceCount: evidence.filter(item =>
           ['confirmed_fact', 'retrieved_user'].includes(item.source)
@@ -499,7 +693,11 @@ export class AgentContextService {
         replyPlanningReason: replyPlanningDecision.reason,
         replyIntentModelCallCount:
           replyPlanningDecision.mode === 'semantic' ? 1 : 0,
-        strategyVersion: 'conversation_strategy_v6',
+        strategyVersion: 'conversation_strategy_v8',
+        turnPlanVersion: 'turn_plan_v1',
+        turnPlanOpenPointCount: resolvedTurnPlan?.open.length || 0,
+        turnPlanOpenNeeds: resolvedTurnPlan?.open.map(item => item.need) || [],
+        turnPlanAvoid: resolvedTurnPlan?.avoid,
         strategySource: replyBrief.conversationPlan
           ? 'semantic_plan'
           : replyBrief.participationStrategy
@@ -543,6 +741,7 @@ export class AgentContextService {
           replyBrief.activeContribution?.preferredSource,
         strategyRepeatedMoves: replyBrief.strategyQuality?.repeatedMoves || [],
         strategyAlternative: replyBrief.strategyQuality?.preferredAlternative,
+        dreamCompanionPlan: replyBrief.dreamCompanionPlan,
         experiencePlanVersion: replyBrief.experiencePlan.version,
         profileTier: replyBrief.experiencePlan.profileTier,
         relationshipStage: replyBrief.experiencePlan.relationshipStage,
@@ -552,6 +751,7 @@ export class AgentContextService {
       replyIntent: replyRoute.intent,
       replyRoute,
       replyBrief,
+      chatToolPlan,
     };
   }
 
@@ -576,7 +776,9 @@ export class AgentContextService {
     emotionState?: ConversationEmotionStateSummary | null,
     replyRoute?: ReplySceneRoute,
     replyBrief?: ReplyBrief,
-    persona?: AgentPersonaPromptResult
+    persona?: AgentPersonaPromptResult,
+    identity?: AgentIdentityContract,
+    chatToolPlan?: AgentChatToolTurnPlan
   ): AgentContextLayer {
     const basePrompt = buildDepartedSystemPrompt({
       userId: options.auth.sub,
@@ -584,6 +786,7 @@ export class AgentContextService {
         options.agent?.id ?? options.conversation.agentId
       ),
       agent: options.agent,
+      identityContract: identity,
     });
     const evidencePrompt = this.buildEvidencePrompt(evidence);
     const conversationReadingPrompt = this.buildConversationReadingPrompt(
@@ -591,17 +794,26 @@ export class AgentContextService {
       options.currentQuery
     );
     const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
+    const currentTimePrompt = replyBrief?.capabilityConstraints.some(
+      item => item.policyId === 'time.server_clock'
+    )
+      ? buildDepartedCurrentTimePrompt()
+      : '';
     const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
     );
     const emotionStatePrompt = this.buildEmotionStatePrompt(emotionState);
-    const replyBriefPrompt = this.buildModelReplyBriefPrompt(replyBrief);
+    const replyBriefPrompt = this.buildModelReplyBriefPrompt(
+      replyBrief,
+      chatToolPlan
+    );
 
     const systemPrompt = [
       basePrompt,
       persona?.prompt,
       conversationReadingPrompt,
       modePrompt,
+      currentTimePrompt,
       continuitySummaryPrompt,
       evidencePrompt,
       emotionStatePrompt,
@@ -784,26 +996,35 @@ export class AgentContextService {
     );
   }
 
-  private buildModelReplyBriefPrompt(replyBrief?: ReplyBrief): string {
+  private buildModelReplyBriefPrompt(
+    replyBrief?: ReplyBrief,
+    chatToolPlan?: AgentChatToolTurnPlan
+  ): string {
     if (!replyBrief) {
       return '';
     }
 
-    const constraints = replyBrief.capabilityConstraints
-      .map(item => item.constraint?.trim())
-      .filter((value): value is string => Boolean(value));
-    const platformRules =
-      replyBrief.mode === 'platform'
-        ? [
-            '用户明确要求确认 AI 身份时，简短如实回答，不回避，也不展开技术细节。',
-          ]
-        : [];
-    const rules = Array.from(new Set([...constraints, ...platformRules]));
+    const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
+    const outputContractPrompt = buildReplyOutputContractPrompt({
+      grounded: replyBrief.factClaimMode === 'grounded',
+      segmentMode: resolveReplyOutputSegmentMode(replyBrief.bubblePlan),
+      maxSegments: replyBrief.bubblePlan.maxSegments,
+      toolDecisionSchema: chatToolPlan
+        ? buildAgentChatToolDecisionSchema(chatToolPlan)
+        : undefined,
+    });
+    const chatToolPrompt = chatToolPlan
+      ? buildAgentChatToolPrompt(chatToolPlan)
+      : '';
     const preservesMemoryFlow =
       replyBrief.mode === 'memory' || replyBrief.mode === 'memory_control';
     const experienceLine = `体验：${buildReplyExperiencePlanPrompt(
       replyBrief.experiencePlan
     )}`;
+    const turnPlan = resolveConversationTurnPlan({
+      engagement: replyBrief.conversationPlan?.engagement,
+      turnPlan: replyBrief.conversationPlan?.turnPlan,
+    });
     const conversationPlanLines = replyBrief.conversationPlan
       ? [
           '# 本轮交谈规划',
@@ -812,12 +1033,8 @@ export class AgentContextService {
             .map(move => `${move.type}:${move.goal}`)
             .join('；')}`,
           `策略：${replyBrief.conversationPlan.socialStrategy}；提问：${replyBrief.conversationPlan.questionNeed}；收束：${replyBrief.conversationPlan.turnClosure}`,
-          ...(replyBrief.conversationPlan.engagement
-            ? [
-                `续聊：${replyBrief.conversationPlan.engagement.userConversationState}/${replyBrief.conversationPlan.engagement.continuationGoal}；未完：${replyBrief.conversationPlan.engagement.openLoop}`,
-                `须贡献：${replyBrief.conversationPlan.engagement.assistantContribution}:${replyBrief.conversationPlan.engagement.mustContribute}`,
-                `别重复：${replyBrief.conversationPlan.engagement.avoidRepeatingMove}；收口：${replyBrief.conversationPlan.engagement.closureReadiness}`,
-              ]
+          ...(turnPlan
+            ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
             : []),
           ...(replyBrief.conversationPlan.personaActivation.length
             ? [
@@ -851,12 +1068,24 @@ export class AgentContextService {
           '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
         ]
       : [];
+    const objectPlanLines = replyBrief.objectPlan
+      ? [
+          '# 本轮对象区分',
+          buildConversationObjectPlanPrompt(replyBrief.objectPlan),
+        ]
+      : [];
     const participationLines = replyBrief.participationStrategy
       ? [
           '# 短轮参与',
           buildReplyParticipationStrategyPrompt(
             replyBrief.participationStrategy
           ),
+        ]
+      : [];
+    const dreamCompanionLines = replyBrief.dreamCompanionPlan
+      ? [
+          '# 梦境陪伴',
+          buildDreamCompanionPlanPrompt(replyBrief.dreamCompanionPlan),
         ]
       : [];
     const realityDependencyLines = replyBrief.realityDependencies.length
@@ -885,13 +1114,6 @@ export class AgentContextService {
           buildReplyStrategyQualityPrompt(replyBrief.strategyQuality),
         ]
       : [];
-    const factClaimLines =
-      replyBrief.factClaimMode === 'grounded'
-        ? [
-            '# 事实申报',
-            '只输出 {"segments":["气泡"],"claims":[{"text":"事实原文","kind":"memory|identity|relationship|real_world|other","mode":"attributed_to_user|autonomous_fact|soft_imagination","evidenceIds":["证据ID"]}]}；claims 只列气泡中的事实，证据没有的细节不写，无事实用 []。角色侧离世日常可用 soft_imagination，但用户偏好仍须证据。',
-          ]
-        : [];
     const correctionLines = replyBrief.correctionPolicy
       ? [
           replyBrief.correctionPolicy.mode === 'replace'
@@ -903,14 +1125,10 @@ export class AgentContextService {
     if (preservesMemoryFlow) {
       return [
         experienceLine,
-        ...(rules.length
-          ? [
-              '# 本轮硬边界',
-              ...rules.map((rule, index) => `${index + 1}. ${rule}`),
-              '只约束事实与能力，不规定表达步骤。',
-            ]
-          : []),
+        ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
+        ...objectPlanLines,
+        ...dreamCompanionLines,
         ...participationLines,
         ...realityDependencyLines,
         ...activeContributionLines,
@@ -920,7 +1138,8 @@ export class AgentContextService {
         buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
         '# 总字数预算',
         buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
-        ...factClaimLines,
+        ...(chatToolPrompt ? [chatToolPrompt] : []),
+        outputContractPrompt,
       ].join('\n');
     }
 
@@ -931,6 +1150,8 @@ export class AgentContextService {
         ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
         : []),
       ...conversationPlanLines,
+      ...objectPlanLines,
+      ...dreamCompanionLines,
       ...participationLines,
       ...realityDependencyLines,
       ...activeContributionLines,
@@ -944,27 +1165,38 @@ export class AgentContextService {
               .map((move, index) => `${index + 1}. ${move}`),
           ]
         : []),
-      ...(replyBrief.forbiddenAssumptions.length
-        ? [
-            '不能擅自确定：',
-            ...replyBrief.forbiddenAssumptions
-              .slice(0, 4)
-              .map((item, index) => `${index + 1}. ${item}`),
-          ]
-        : []),
-      ...(rules.length
-        ? [
-            '能力与事实边界：',
-            ...rules.map((rule, index) => `${index + 1}. ${rule}`),
-          ]
-        : []),
+      ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
       '气泡语义规划：',
       buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
       '总字数预算：',
       buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
       '以上为内部约束；自然表达，不逐项复述。',
-      ...factClaimLines,
+      ...(chatToolPrompt ? [chatToolPrompt] : []),
+      outputContractPrompt,
     ].join('\n');
+  }
+
+  private resolveToolInstructionMode(
+    plan: AgentChatToolTurnPlan
+  ): AgentContextDiagnostics['toolInstructionMode'] {
+    if (plan.mode === 'shadow') {
+      return 'shadow_decision';
+    }
+    if (plan.mode === 'active') {
+      return 'model_tools';
+    }
+    return 'orchestrated_none';
+  }
+
+  private compileReplyBoundaryContract(replyBrief: ReplyBrief) {
+    return buildReplyBoundaryContract({
+      capabilityConstraints: replyBrief.capabilityConstraints,
+      forbiddenAssumptions: replyBrief.forbiddenAssumptions,
+      additionalRules:
+        replyBrief.mode === 'platform'
+          ? ['确认 AI 身份时简短如实，不回避，也不展开技术细节。']
+          : [],
+    });
   }
 
   private async listHardFacts(
@@ -2091,32 +2323,67 @@ export class AgentContextService {
     const name = agent.name?.trim() || 'TA';
     const userCallsAgent = agent.iCallAgent?.trim() || name;
     const agentCallsUser = agent.agentCallMe?.trim() || '我';
-    let index = 1;
+    let index = 0;
+    const addProfileAtom = (options: {
+      factKey: string;
+      text: string;
+      subjectRef: string;
+      assertionPolicy?: AgentEvidenceAssertionPolicy;
+      confidence?: number;
+    }): void => {
+      index += 1;
+      evidence.push({
+        id: `A${index}`,
+        source: 'agent_profile',
+        text: options.text,
+        assertionPolicy: options.assertionPolicy || 'can_assert',
+        subjectRef: options.subjectRef,
+        factKey: options.factKey,
+        useMode:
+          options.assertionPolicy === 'context_only' ? 'hypothesis' : 'assert',
+        status: 'active',
+        confidence: options.confidence ?? 1,
+      });
+    };
 
-    evidence.push({
-      id: `A${index}`,
-      source: 'agent_profile',
-      text: `当前角色姓名是${name}；用户称呼当前角色为${userCallsAgent}；当前角色称呼用户为${agentCallsUser}`,
-      assertionPolicy: 'can_assert',
-      confidence: 1,
+    addProfileAtom({
+      factKey: 'identity.name',
+      text: `当前角色姓名是${name}`,
+      subjectRef: 'agent',
     });
+    if (
+      /称呼|叫我|叫你|怎么叫|你是谁|我是你|你是我|什么关系/.test(currentQuery)
+    ) {
+      addProfileAtom({
+        factKey: 'relationship.user_calls_agent',
+        text: `用户称呼当前角色为${userCallsAgent}`,
+        subjectRef: 'agent',
+      });
+      addProfileAtom({
+        factKey: 'relationship.agent_calls_user',
+        text: `当前角色称呼用户为${agentCallsUser}`,
+        subjectRef: 'user',
+      });
+    }
 
     if (
       /生日|出生|几岁|多大|什么时候走|什么时候去世|离开日期/.test(currentQuery)
     ) {
-      const dates = [
-        this.formatAgentDate('生日', agent.birthday),
-        this.formatAgentDate('离开日期', agent.deathDate),
-      ].filter(Boolean);
+      const birthday = this.formatAgentDate('生日', agent.birthday);
+      const deathDate = this.formatAgentDate('离开日期', agent.deathDate);
 
-      if (dates.length) {
-        index += 1;
-        evidence.push({
-          id: `A${index}`,
-          source: 'agent_profile',
-          text: dates.join('；'),
-          assertionPolicy: 'can_assert',
-          confidence: 1,
+      if (birthday) {
+        addProfileAtom({
+          factKey: 'identity.birth_date',
+          text: birthday,
+          subjectRef: 'agent',
+        });
+      }
+      if (deathDate) {
+        addProfileAtom({
+          factKey: 'identity.death_date',
+          text: deathDate,
+          subjectRef: 'agent',
         });
       }
     }
@@ -2166,13 +2433,14 @@ export class AgentContextService {
       .slice(0, 3);
 
     for (const detail of detailCandidates) {
-      index += 1;
-      evidence.push({
-        id: `A${index}`,
-        source: 'agent_profile',
-        text: detail.value,
-        assertionPolicy: detail.assertionPolicy,
-        confidence: 0.95,
+      this.splitEvidenceAtoms(detail.value, 3).forEach((text, atomIndex) => {
+        addProfileAtom({
+          factKey: `${detail.key}.${atomIndex + 1}`,
+          text,
+          subjectRef: 'agent',
+          assertionPolicy: detail.assertionPolicy,
+          confidence: 0.95,
+        });
       });
     }
 
@@ -2199,6 +2467,7 @@ export class AgentContextService {
     retrievedMemories: RetrievedContextSnippet[];
     suppressPriorFacts?: boolean;
     currentUserCanAssert?: boolean;
+    objectPlan?: ConversationObjectPlan;
   }): AgentEvidenceItem[] {
     const evidence: AgentEvidenceItem[] = [];
     const seenTexts = new Set<string>();
@@ -2216,13 +2485,23 @@ export class AgentContextService {
     };
 
     if (currentQuery) {
+      const assertionPolicy = options.currentUserCanAssert
+        ? 'can_assert'
+        : this.resolveUserEvidencePolicy(currentQuery);
       addEvidence({
         id: 'U0',
         source: 'current_user',
         text: currentQuery,
-        assertionPolicy: options.currentUserCanAssert
-          ? 'can_assert'
-          : this.resolveUserEvidencePolicy(currentQuery),
+        assertionPolicy,
+        subjectRef: this.resolveUtteranceSubjectRef(
+          currentQuery,
+          options.objectPlan
+        ),
+        factKey: options.suppressPriorFacts
+          ? 'correction.current'
+          : 'utterance.current',
+        useMode: assertionPolicy === 'can_assert' ? 'uptake' : 'hypothesis',
+        status: 'active',
       });
     }
 
@@ -2259,6 +2538,17 @@ export class AgentContextService {
           fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
             ? 'context_only'
             : 'can_assert',
+        subjectRef: this.resolveFactSubjectRef(
+          fact.key,
+          value,
+          options.objectPlan
+        ),
+        factKey: fact.key,
+        useMode:
+          fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
+            ? 'recall'
+            : 'assert',
+        status: 'active',
         confidence: this.resolveProfileFactConfidence(fact),
         sourceMessageId: fact.sourceMessageId,
       });
@@ -2277,6 +2567,17 @@ export class AgentContextService {
         source: 'confirmed_fact',
         text: value,
         assertionPolicy: this.resolveLegacyFactAssertionPolicy(fact.key),
+        subjectRef: this.resolveFactSubjectRef(
+          fact.key,
+          value,
+          options.objectPlan
+        ),
+        factKey: fact.key,
+        useMode:
+          this.resolveLegacyFactAssertionPolicy(fact.key) === 'can_assert'
+            ? 'assert'
+            : 'recall',
+        status: 'active',
         confidence: 0.9,
         sourceMessageId: fact.sourceMessageId,
       });
@@ -2305,6 +2606,12 @@ export class AgentContextService {
         source: 'recent_user',
         text,
         assertionPolicy: this.resolveUserEvidencePolicy(text),
+        subjectRef: this.resolveUtteranceSubjectRef(text, options.objectPlan),
+        factKey: `utterance.${
+          this.stringifyObjectId(message.id) || recentIndex
+        }`,
+        useMode: 'recall',
+        status: 'active',
         sourceMessageId: this.stringifyObjectId(message.id),
       });
 
@@ -2328,6 +2635,10 @@ export class AgentContextService {
         source: 'retrieved_user',
         text,
         assertionPolicy: this.resolveUserEvidencePolicy(text),
+        subjectRef: this.resolveUtteranceSubjectRef(text, options.objectPlan),
+        factKey: `memory.${memory.id || retrievedIndex}`,
+        useMode: 'recall',
+        status: 'active',
         confidence: memory.score,
         sourceMessageId: memory.id,
       });
@@ -2337,7 +2648,107 @@ export class AgentContextService {
       }
     }
 
-    return evidence;
+    return selectAgentEvidence(evidence, {
+      currentQuery,
+      limit: 10,
+    });
+  }
+
+  private splitEvidenceAtoms(value: string, limit: number): string[] {
+    const parts = value
+      .split(/[；;。！？!?\n]+/)
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    return (parts.length ? parts : [value.trim()]).slice(0, limit);
+  }
+
+  private resolveUtteranceSubjectRef(
+    text: string,
+    objectPlan?: ConversationObjectPlan
+  ): string {
+    const objectRefs = this.resolveMentionedObjectRefs(text, objectPlan);
+    const mentionsUser = /我|咱们/.test(text);
+    const mentionsAgent = /你|您/.test(text);
+
+    if (objectRefs.length > 1 || (mentionsUser && mentionsAgent)) {
+      return 'mixed';
+    }
+    if (objectRefs.length === 1) {
+      return objectRefs[0];
+    }
+    if (mentionsUser) {
+      return 'user';
+    }
+    if (mentionsAgent) {
+      return 'agent';
+    }
+
+    const focusRefs = (objectPlan?.focusRefs || [])
+      .map(
+        ref => objectPlan?.objects.find(object => object.ref === ref)?.binding
+      )
+      .filter((ref): ref is string => Boolean(ref && ref !== 'unknown'));
+    return focusRefs.length === 1 ? focusRefs[0] : 'conversation';
+  }
+
+  private resolveFactSubjectRef(
+    factKey = '',
+    text: string,
+    objectPlan?: ConversationObjectPlan
+  ): string {
+    const visualSubject = factKey.match(/^visual\.appearance\.([^.]+)/)?.[1];
+    if (visualSubject) {
+      return visualSubject;
+    }
+
+    const objectRefs = this.resolveMentionedObjectRefs(text, objectPlan);
+    if (objectRefs.length === 1) {
+      return objectRefs[0];
+    }
+    if (objectRefs.length > 1) {
+      return 'mixed';
+    }
+
+    if (
+      /^(?:user\.|preference\.|health\.|grief_|style\.|taboo\.)/.test(
+        factKey
+      ) ||
+      factKey === 'relationship.agent_calls_user' ||
+      /^用户/.test(text)
+    ) {
+      return 'user';
+    }
+    if (/^family\./.test(factKey)) {
+      return 'family';
+    }
+    if (/^(?:memory|keepsake|ritual|promise|correction)\./.test(factKey)) {
+      return 'mixed';
+    }
+
+    return 'agent';
+  }
+
+  private resolveMentionedObjectRefs(
+    text: string,
+    objectPlan?: ConversationObjectPlan
+  ): string[] {
+    if (!objectPlan) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        objectPlan.objects
+          .filter(
+            object =>
+              object.binding !== 'unknown' &&
+              object.mention.length >= 2 &&
+              text.includes(object.mention)
+          )
+          .map(object => object.binding)
+      )
+    );
   }
 
   private buildContinuitySummaryPrompt(
@@ -2358,26 +2769,27 @@ export class AgentContextService {
 
   private buildEvidencePrompt(evidence: AgentEvidenceItem[]): string {
     const sourceLabels: Record<AgentEvidenceItem['source'], string> = {
-      agent_profile: '角色资料',
-      system_action: '系统操作',
-      current_user: '当前用户原话',
-      confirmed_fact: '已确认事实',
-      recent_user: '近期用户原话',
-      retrieved_user: '长期用户原话',
+      agent_profile: '资料',
+      system_action: '系统',
+      current_user: '本轮',
+      confirmed_fact: '确认',
+      recent_user: '近期',
+      retrieved_user: '长期',
+    };
+    const useLabels: Record<
+      ReturnType<typeof resolveAgentEvidenceUseMode>,
+      string
+    > = {
+      assert: '可确认',
+      uptake: '承接',
+      recall: '回忆',
+      hypothesis: '待确认',
     };
     const lines = evidence.map(item => {
-      const isUserEvidence =
-        item.source === 'current_user' ||
-        item.source === 'recent_user' ||
-        item.source === 'retrieved_user';
-      const policyLabel =
-        item.assertionPolicy === 'can_assert' && !isUserEvidence
-          ? '可自主陈述'
-          : '仅可归因用户';
-
-      return `[${item.id}][${sourceLabels[item.source]}][${policyLabel}] ${
-        item.text
-      }`;
+      const subject = item.subjectRef || 'unknown';
+      return `[${item.id}|${sourceLabels[item.source]}|${subject}|${
+        useLabels[resolveAgentEvidenceUseMode(item)]
+      }] ${item.text}`;
     });
 
     return [
@@ -2385,7 +2797,8 @@ export class AgentContextService {
       ...(lines.length ? lines : ['当前没有可用于扩写具体事实的证据。']),
       '',
       '# 证据规则',
-      '“可自主陈述”可直接确认；用户原话只能归因“你说/你记得”，问句不能证明其假设。',
+      '可确认：可以自然陈述；承接：可直接接住用户本轮明确陈述，不必机械加“你说”；回忆：只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
+      'claims 必须绑定支持该事实的证据；对象不同、事实无关、已撤回或被替代的证据均无效。',
       '无证据不新增用户偏好、习惯、性格、现实人物关系、事件、共同经历、动作或地点；角色侧日常不能变成替用户在现实中做饭、到场或触碰。',
       '证据只约束事实，不规定回复；不向用户暴露 ID、标签或结构。',
     ].join('\n');
@@ -2412,6 +2825,10 @@ export class AgentContextService {
       source: 'system_action',
       text,
       assertionPolicy: 'can_assert',
+      subjectRef: 'system',
+      factKey: 'system.memory_control',
+      useMode: 'assert',
+      status: 'active',
       confidence: 1,
     };
   }

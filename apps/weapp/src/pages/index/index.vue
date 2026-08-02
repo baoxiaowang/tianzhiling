@@ -201,6 +201,7 @@ import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } fr
 import {
   createComment,
   deletePost,
+  getCachedPostFeed,
   getPosts,
   likePost,
   unlikePost,
@@ -208,7 +209,6 @@ import {
   type PostItem,
 } from '../../apis/post'
 import { preloadConversations } from '../../apis/conversation'
-import { preloadVipPurchaseCenter } from '../../apis/membership'
 import { ApiException } from '../../api/api-exception'
 import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import AppBar from '../../components/app-bar/app-bar.vue'
@@ -225,10 +225,15 @@ import {
   unseenPostNotificationCount,
 } from '../../post/comment-notification-state'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
+import { reportPerformanceEvent } from '../../utils/product-analytics'
 
 interface PageScaffoldController {
   openLoginPrompt: () => void
 }
+
+const momentsPageStartedAt = Date.now()
+let hasReportedCachedContent = false
+let hasReportedFirstData = false
 
 const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
@@ -259,6 +264,7 @@ let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 let commentBlurCloseTimer: ReturnType<typeof setTimeout> | null = null
 let commentFocusTimer: ReturnType<typeof setTimeout> | null = null
+let conversationPreloadTimer: ReturnType<typeof setTimeout> | null = null
 let lastKnownMomentsScrollTop = 0
 let isPreviewingPostImage = false
 
@@ -470,6 +476,15 @@ async function refreshMomentsData(showLoading = true) {
       currentPostPage.value = postResult.page
       hasMorePosts.value = postResult.hasMore
       hasLoadedPosts.value = true
+      if (!hasReportedFirstData) {
+        hasReportedFirstData = true
+        reportPerformanceEvent(
+          'first_data',
+          'moments',
+          Date.now() - momentsPageStartedAt,
+          'network',
+        )
+      }
     })
     .catch((error) => {
       if (error instanceof ApiException) {
@@ -525,9 +540,31 @@ async function preparePage() {
   }
 
   await restoreAuthSession()
-  preloadVipCenterWhenAuthenticated()
+
+  if (!hasLoadedPosts.value) {
+    const cachedFeed = getCachedPostFeed(POST_PAGE_SIZE)
+
+    if (cachedFeed?.items.length) {
+      posts.value = cachedFeed.items
+      currentPostPage.value = cachedFeed.page
+      hasMorePosts.value = cachedFeed.hasMore
+      hasLoadedPosts.value = true
+      isCheckingAuth.value = false
+      if (!hasReportedCachedContent) {
+        hasReportedCachedContent = true
+        reportPerformanceEvent(
+          'first_cached_content',
+          'moments',
+          Date.now() - momentsPageStartedAt,
+          'storage',
+        )
+      }
+    }
+  }
+
   await refreshMomentsData(!hasLoadedPosts.value)
   isCheckingAuth.value = false
+  scheduleConversationPreload()
 }
 
 function handleRetry() {
@@ -1005,7 +1042,6 @@ useShareTimeline(() => ({
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
   showMomentsShareMenu()
-  preloadVipCenterWhenAuthenticated()
   initCommentNotificationPolling()
 
   if (isPreviewingPostImage) {
@@ -1016,14 +1052,23 @@ useDidShow(() => {
   void preparePage()
 })
 
-function preloadVipCenterWhenAuthenticated() {
-  if (authSession.value) {
-    preloadVipPurchaseCenter()
-    preloadConversations()
+function scheduleConversationPreload() {
+  if (!authSession.value || conversationPreloadTimer) {
+    return
   }
+
+  conversationPreloadTimer = setTimeout(() => {
+    conversationPreloadTimer = null
+    preloadConversations()
+  }, 1500)
 }
 
 useDidHide(() => {
+  if (conversationPreloadTimer) {
+    clearTimeout(conversationPreloadTimer)
+    conversationPreloadTimer = null
+  }
+
   closeCommentComposer()
 })
 </script>

@@ -49,9 +49,8 @@ describe('reply bubble plan', () => {
     });
 
     expect(plan.preferTwoSegments).toBe(true);
-    expect(buildReplyBubblePlanPrompt(plan)).toContain(
-      '只输出 {"segments":["第一颗","第二颗"]}'
-    );
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('本轮需要两颗气泡');
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('{"segments"');
     expect(buildReplyBubblePlanPrompt(plan)).not.toContain('默认一颗');
   });
 

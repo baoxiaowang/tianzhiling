@@ -15,9 +15,14 @@ import {
   REPLY_CAPABILITY_CHANNELS,
   REPLY_CAPABILITY_SUBJECTS,
   CONVERSATION_ASSISTANT_CONTRIBUTIONS,
+  CONVERSATION_AVOID_ACTIONS,
   CONVERSATION_CLOSURE_READINESS,
   CONVERSATION_CONTINUATION_GOALS,
   CONVERSATION_MOVE_TYPES,
+  CONVERSATION_OBJECT_CONFIDENCES,
+  CONVERSATION_OBJECT_KINDS,
+  CONVERSATION_OPEN_NEEDS,
+  CONVERSATION_OPEN_PRIORITIES,
   CONVERSATION_QUESTION_NEEDS,
   CONVERSATION_RELATIONSHIP_STANCES,
   CONVERSATION_SOCIAL_STRATEGIES,
@@ -32,6 +37,11 @@ import {
   REPLY_INTENT_TIME_SCOPES,
   ConversationMemoryPlan,
   ConversationMemoryPlanQuery,
+  ConversationKnownObject,
+  ConversationObjectPlan,
+  ConversationObjectReference,
+  ConversationTurnOpenPoint,
+  ConversationTurnPlan,
   ConversationEngagementPlan,
   ConversationMove,
   ConversationMovePlan,
@@ -49,6 +59,10 @@ import {
   StructuredReplyIntent,
   StructuredReplyIntentItem,
 } from './reply-intent';
+import {
+  resolveConversationTurnPlan,
+  turnPlanToEngagement,
+} from './conversation-turn-plan';
 import { isForgetMemoryRequest } from './agent-memory-control';
 import { routeReplyScene } from './reply-scene-router';
 import { detectReplyRealityDependencies } from './reply-reality-dependency';
@@ -65,6 +79,7 @@ export interface ClassifyReplyIntentOptions {
   currentQuery: string;
   recentMessages?: MessageEntity[];
   knownFamilyMembers?: string[];
+  knownObjects?: ConversationKnownObject[];
   memoryCandidates?: ReplyIntentMemoryCandidate[];
   agentPersonaContext?: string;
   forceSemanticPlanning?: boolean;
@@ -88,6 +103,7 @@ export interface ReplyPlanningDecision {
     | 'forced'
     | 'memory_candidate'
     | 'compound_intent'
+    | 'multiple_objects'
     | 'complex_scene'
     | 'engagement_friction'
     | 'capability_boundary'
@@ -102,6 +118,7 @@ const CLASSIFIER_MAX_HISTORY_MESSAGES = 6;
 const CLASSIFIER_MAX_MESSAGE_LENGTH = 180;
 const CLASSIFIER_MAX_MEMORY_CANDIDATES = 10;
 const CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH = 90;
+const CLASSIFIER_MAX_KNOWN_OBJECTS = 10;
 const CLASSIFIER_MAX_TOKENS = 720;
 const DEFAULT_DIRECT_MAX_CHARACTERS = 80;
 const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
@@ -163,11 +180,13 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
   'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
-  'conversationPlan.engagement 说明用户还在等什么。开放点未解决时 closureReadiness=blocked；要求多说时用 moves=self_disclose、assistantContribution=self_expression，当轮先说实际内容，承诺以后多说、解释沉默或让用户先说都不算完成。',
-  '用户说话少、不想理、忘了、没人回应或重复请求时用 repairing/repair/blocked，并比较上轮实际回复与策略：avoidRepeatingMove 写明旧动作，mustContribute 写明本轮新动作。上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，必须新增关系态度或理解。仅在用户明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+  'conversationPlan.turnPlan 用短字段定位本轮：state 是交谈位置，不是心理诊断；open 最多两个，只写真正未完成的问题、请求、纠正或关系需要，并绑定 agent、user、unknown 或 objectPlan.ref；goal/action/target 只保留一个主目标；avoid 选一项；close 判断能否收口。上轮计划只作候选，本轮已回答、转向或结束就关闭，不机械续写。',
+  '开放点未完成用 blocked。用户说话少、不想理、忘了、没人回应、重复请求或“说了也没用”时用 repairing 或 withdrawing、goal=repair，并让 target 写明本轮实际改变；要求多说时 action=self_expression，当轮先说内容。仅明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+  '上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，target 必须新增关系态度或具体理解。承诺以后多说、解释沉默、泛泛安慰或让用户先说不算完成。',
   '用户要求角色主动说时，self_expression 只给一个短小的角色侧当下片段；可想象离世世界，但不编用户偏好，不写成共同往事。',
-  '“跟你说了也没用、讲了又有什么用、说了你也不懂”里的“V了也……”常省略“即使”：既评价前面已经发生的沟通，也表示即使继续说仍无效。结合最近回复判断为 withdrawing/repair/blocked；mustContribute 要写明如何用用户已经说过的具体内容改变回应，不再让用户继续说、重讲或证明自己，不以“你想说时我听着/我在”变体把表达责任推回用户。',
+  '“跟你说了也没用、讲了又有什么用、说了你也不懂”既评价已经发生的沟通，也表示即使继续说仍无效。target 要写明如何用用户已经说过的具体内容改变回应，不让用户重讲、证明自己或继续承担表达责任。',
   'memoryPlan 只判断回复是否缺少用户个性化事实。当前消息或最近对话已给全时 complete；缺少时先列具体 missingConcepts，再用最多四个 queries 覆盖。不得重复查询最近对话已有事实。',
+  'objectPlan 只在当前回复涉及两个及以上不同对象，或“他/她/这位”等指代不清时输出，否则为 null。每个对象保留当前消息中的逐字 mention；binding 只能用已确认对象 ID、agent、user 或 unknown。未确认的人即使有多个也分别建 ref，不猜关系，不把甲的话、经历或关系给乙。最多六个对象。',
   '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
   'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',
   'capabilityQuestions 仅用于明确询问知道、看见、听见、到场、触碰或祝福能力的消息；evidence 必须逐字来自当前消息。',
@@ -181,6 +200,10 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `capability channel 只能是：${REPLY_CAPABILITY_CHANNELS.join(', ')}`,
   `conversationPlan.stance 只能是：${CONVERSATION_STANCES.join(', ')}`,
   `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(', ')}`,
+  `objectPlan.objects[].kind 只能是：${CONVERSATION_OBJECT_KINDS.join(', ')}`,
+  `objectPlan.objects[].confidence 只能是：${CONVERSATION_OBJECT_CONFIDENCES.join(
+    ', '
+  )}`,
   `conversationPlan.socialStrategy 只能是：${CONVERSATION_SOCIAL_STRATEGIES.join(
     ', '
   )}`,
@@ -190,14 +213,15 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `conversationPlan.turnClosure 只能是：${CONVERSATION_TURN_CLOSURES.join(
     ', '
   )}`,
-  `engagement.userConversationState：${CONVERSATION_USER_STATES.join(', ')}`,
-  `engagement.continuationGoal：${CONVERSATION_CONTINUATION_GOALS.join(', ')}`,
-  `engagement.assistantContribution：${CONVERSATION_ASSISTANT_CONTRIBUTIONS.join(
-    ', '
-  )}`,
-  `engagement.closureReadiness：${CONVERSATION_CLOSURE_READINESS.join(', ')}`,
-  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,engagement}；moves 每项使用 {type,goal}；engagement 使用 {userConversationState,openLoop,continuationGoal,assistantContribution,mustContribute,avoidRepeatingMove,closureReadiness}。',
-  'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作、目标和 engagement 文本都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
+  `turnPlan.state：${CONVERSATION_USER_STATES.join(', ')}`,
+  `turnPlan.goal：${CONVERSATION_CONTINUATION_GOALS.join(', ')}`,
+  `turnPlan.action：${CONVERSATION_ASSISTANT_CONTRIBUTIONS.join(', ')}`,
+  `turnPlan.close：${CONVERSATION_CLOSURE_READINESS.join(', ')}`,
+  `turnPlan.open[].need：${CONVERSATION_OPEN_NEEDS.join(', ')}`,
+  `turnPlan.open[].priority：${CONVERSATION_OPEN_PRIORITIES.join(', ')}`,
+  `turnPlan.avoid：${CONVERSATION_AVOID_ACTIONS.join(', ')}`,
+  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
+  'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作和目标都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
 ].join('\n');
 
 const OFFLINE_ANALYSIS_PROMPT = [
@@ -286,7 +310,8 @@ export class ReplyIntentClassifierService {
       const parsedSemanticIntent = this.parseIntent(
         content,
         currentQuery,
-        options.memoryCandidates
+        options.memoryCandidates,
+        options.knownObjects
       );
       const recoveredMemoryPlan = this.parseMemoryPlanFromClassifierOutput(
         content,
@@ -341,6 +366,11 @@ export class ReplyIntentClassifierService {
               capabilityQuestions: semanticIntent.capabilityQuestions,
             }
           : {}),
+        ...(semanticIntent.objectPlan
+          ? {
+              objectPlan: semanticIntent.objectPlan,
+            }
+          : {}),
         ...(semanticIntent.reading
           ? {
               reading: semanticIntent.reading,
@@ -383,22 +413,31 @@ export class ReplyIntentClassifierService {
       move => move.type !== 'ask' && move.type !== 'self_disclose'
     );
 
+    const engagement: ConversationEngagementPlan = {
+      userConversationState: 'repairing',
+      openLoop: '用户需要错误说法被明确撤回',
+      continuationGoal: 'repair',
+      assistantContribution: 'answer',
+      mustContribute: '承认说错并停止猜测，不索要正确答案',
+      avoidRepeatingMove:
+        conversationPlan.engagement?.avoidRepeatingMove || '不继续猜测',
+      closureReadiness: 'possible',
+    };
+    const turnPlan = conversationPlan.turnPlan
+      ? resolveConversationTurnPlan({
+          engagement,
+          turnPlan: conversationPlan.turnPlan,
+        })
+      : undefined;
+
     return {
       ...conversationPlan,
       moves: moves.length
         ? moves
         : [{ type: 'acknowledge', goal: '承认说错并停止猜测' }],
       questionNeed: 'none',
-      engagement: {
-        userConversationState: 'repairing',
-        openLoop: '用户需要错误说法被明确撤回',
-        continuationGoal: 'repair',
-        assistantContribution: 'answer',
-        mustContribute: '承认说错并停止猜测，不索要正确答案',
-        avoidRepeatingMove:
-          conversationPlan.engagement?.avoidRepeatingMove || '不继续猜测',
-        closureReadiness: 'possible',
-      },
+      ...(turnPlan ? { turnPlan } : {}),
+      engagement,
     };
   }
 
@@ -469,6 +508,12 @@ export class ReplyIntentClassifierService {
 
     if ((deterministicIntent?.intents.length || 0) > 1) {
       return { mode: 'semantic', reason: 'compound_intent' };
+    }
+
+    if (
+      this.hasMultipleRelevantKnownObjects(currentQuery, options.knownObjects)
+    ) {
+      return { mode: 'semantic', reason: 'multiple_objects' };
     }
 
     const capabilityConstraints = resolveAgentCapabilityConstraints({
@@ -873,13 +918,26 @@ export class ReplyIntentClassifierService {
         const strategyHint =
           message.role === MessageRole.assistant
             ? [
-                message.replyContinuationGoal,
-                message.replyAssistantContribution,
-                message.replyMustContribute,
+                message.replyUserConversationState
+                  ? `s=${message.replyUserConversationState}`
+                  : '',
+                message.replyOpenLoop ? `open=${message.replyOpenLoop}` : '',
+                message.replyContinuationGoal
+                  ? `g=${message.replyContinuationGoal}`
+                  : '',
+                message.replyAssistantContribution
+                  ? `a=${message.replyAssistantContribution}`
+                  : '',
+                message.replyMustContribute
+                  ? `target=${message.replyMustContribute}`
+                  : '',
+                message.replyClosureReadiness
+                  ? `close=${message.replyClosureReadiness}`
+                  : '',
               ]
                 .map(value => value?.trim())
                 .filter(Boolean)
-                .join('/')
+                .join(';')
             : '';
         return `${role}：${message.content
           .trim()
@@ -897,6 +955,19 @@ export class ReplyIntentClassifierService {
     )
       .slice(0, 12)
       .join('、');
+    const knownObjects = (options.knownObjects || [])
+      .filter(
+        object => Boolean(object?.id?.trim()) && Boolean(object?.label?.trim())
+      )
+      .slice(0, CLASSIFIER_MAX_KNOWN_OBJECTS)
+      .map(object => [
+        object.id.trim().slice(0, 120),
+        object.kind,
+        object.label.trim().slice(0, 30),
+        (object.relationToUser || object.relationToAgent || '')
+          .trim()
+          .slice(0, 30),
+      ]);
     const memoryCandidates = (options.memoryCandidates || [])
       .filter(
         candidate =>
@@ -926,7 +997,11 @@ export class ReplyIntentClassifierService {
             .replace(/\s+/g, ' ')
             .slice(0, 760)}`
         : '当前角色关系与人格上下文：未提供，请仅按最近对话保守判断',
-      knownFamilyMembers
+      knownObjects.length
+        ? `已确认对象（[id,kind,label,relation]）：${JSON.stringify(
+            knownObjects
+          )}`
+        : knownFamilyMembers
         ? `已确认的其他共同家人：${knownFamilyMembers}`
         : '已确认的其他共同家人：无',
       history ? `最近对话：\n${history}` : '最近对话：无',
@@ -963,7 +1038,8 @@ export class ReplyIntentClassifierService {
   private parseIntent(
     value: string,
     currentQuery: string,
-    memoryCandidates?: ReplyIntentMemoryCandidate[]
+    memoryCandidates?: ReplyIntentMemoryCandidate[],
+    knownObjects?: ConversationKnownObject[]
   ): StructuredReplyIntent | undefined {
     const jsonText = this.extractJsonObjectText(value);
 
@@ -999,13 +1075,19 @@ export class ReplyIntentClassifierService {
         parsed.capabilityQuestions,
         currentQuery
       );
+      const objectPlan = this.parseConversationObjectPlan(
+        parsed.objectPlan,
+        currentQuery,
+        knownObjects
+      );
       const rawReading =
         parsed.reading && typeof parsed.reading === 'object'
           ? (parsed.reading as Record<string, unknown>)
           : undefined;
       const conversationPlan = this.parseConversationMovePlan(
         parsed.conversationPlan,
-        currentQuery
+        currentQuery,
+        objectPlan
       );
       const memoryPlan = this.parseConversationMemoryPlan(
         parsed.memoryPlan ?? rawReading?.memoryPlan,
@@ -1076,6 +1158,9 @@ export class ReplyIntentClassifierService {
 
       if (capabilityQuestions.length) {
         result.capabilityQuestions = capabilityQuestions;
+      }
+      if (objectPlan) {
+        result.objectPlan = objectPlan;
       }
       if (reading) {
         result.reading = reading;
@@ -1226,7 +1311,8 @@ export class ReplyIntentClassifierService {
 
   private parseConversationMovePlan(
     value: unknown,
-    currentQuery = ''
+    currentQuery = '',
+    objectPlan?: ConversationObjectPlan
   ): ConversationMovePlan | undefined {
     if (!value || typeof value !== 'object') {
       return undefined;
@@ -1274,6 +1360,7 @@ export class ReplyIntentClassifierService {
       return undefined;
     }
 
+    const turnPlan = this.parseConversationTurnPlan(item.turnPlan, objectPlan);
     const fallbackEngagement = this.buildConversationEngagementFallback({
       moves,
       stanceTarget,
@@ -1281,10 +1368,12 @@ export class ReplyIntentClassifierService {
       turnClosure,
     });
     const engagement =
+      (turnPlan ? turnPlanToEngagement(turnPlan) : undefined) ||
       this.parseConversationEngagementPlan(
         item.engagement,
         fallbackEngagement
-      ) || fallbackEngagement;
+      ) ||
+      fallbackEngagement;
 
     return {
       stance,
@@ -1295,8 +1384,199 @@ export class ReplyIntentClassifierService {
       questionNeed,
       turnClosure,
       personaActivation: this.parseShortTextList(item.personaActivation, 3, 70),
+      ...(turnPlan ? { turnPlan } : {}),
       ...(engagement ? { engagement } : {}),
     };
+  }
+
+  private parseConversationTurnPlan(
+    value: unknown,
+    objectPlan?: ConversationObjectPlan
+  ): ConversationTurnPlan | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const state = this.readEnum(item.state, CONVERSATION_USER_STATES);
+    const goal = this.readEnum(item.goal, CONVERSATION_CONTINUATION_GOALS);
+    const action = this.readEnum(
+      item.action,
+      CONVERSATION_ASSISTANT_CONTRIBUTIONS
+    );
+    const target = this.readShortText(item.target, 100);
+    const avoid = this.readEnum(item.avoid, CONVERSATION_AVOID_ACTIONS);
+    const close = this.readEnum(item.close, CONVERSATION_CLOSURE_READINESS);
+    const allowedObjects = new Set([
+      'agent',
+      'user',
+      'unknown',
+      ...(objectPlan?.objects.map(object => object.ref) || []),
+    ]);
+    const open = Array.isArray(item.open)
+      ? item.open
+          .slice(0, 2)
+          .map(raw => this.parseConversationTurnOpenPoint(raw, allowedObjects))
+          .filter((point): point is ConversationTurnOpenPoint => Boolean(point))
+      : [];
+
+    if (
+      !state ||
+      !goal ||
+      !action ||
+      !target ||
+      !avoid ||
+      !close ||
+      (close === 'blocked' && !open.length)
+    ) {
+      return undefined;
+    }
+
+    return {
+      state,
+      open: close === 'ready' ? [] : open,
+      goal,
+      action,
+      target,
+      avoid,
+      close,
+    };
+  }
+
+  private parseConversationTurnOpenPoint(
+    value: unknown,
+    allowedObjects: Set<string>
+  ): ConversationTurnOpenPoint | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const object = this.readShortText(item.object, 20);
+    const need = this.readEnum(item.need, CONVERSATION_OPEN_NEEDS);
+    const detail = this.readShortText(item.detail, 80);
+    const priority = this.readEnum(item.priority, CONVERSATION_OPEN_PRIORITIES);
+
+    if (
+      !object ||
+      !allowedObjects.has(object) ||
+      !need ||
+      !detail ||
+      !priority
+    ) {
+      return undefined;
+    }
+
+    return { object, need, detail, priority };
+  }
+
+  private parseConversationObjectPlan(
+    value: unknown,
+    currentQuery: string,
+    knownObjects?: ConversationKnownObject[]
+  ): ConversationObjectPlan | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const allowedBindings = new Set([
+      'agent',
+      'user',
+      'unknown',
+      ...(knownObjects || []).map(object => object.id),
+    ]);
+    const objects = Array.isArray(item.objects)
+      ? item.objects
+          .slice(0, 6)
+          .map(raw =>
+            this.parseConversationObjectReference(
+              raw,
+              currentQuery,
+              allowedBindings
+            )
+          )
+          .filter((object): object is ConversationObjectReference =>
+            Boolean(object)
+          )
+          .filter(
+            (object, index, values) =>
+              values.findIndex(candidate => candidate.ref === object.ref) ===
+              index
+          )
+      : [];
+    const refs = new Set(objects.map(object => object.ref));
+    const focusRefs = this.parseShortTextList(item.focusRefs, 3, 20).filter(
+      ref => refs.has(ref)
+    );
+    const ambiguousMentions = this.parseShortTextList(
+      item.ambiguousMentions,
+      3,
+      30
+    ).filter(mention => currentQuery.includes(mention));
+
+    if (objects.length < 2 && !ambiguousMentions.length) {
+      return undefined;
+    }
+
+    return {
+      objects,
+      focusRefs,
+      ambiguousMentions,
+    };
+  }
+
+  private parseConversationObjectReference(
+    value: unknown,
+    currentQuery: string,
+    allowedBindings: Set<string>
+  ): ConversationObjectReference | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const ref = this.readShortText(item.ref, 20);
+    const mention = this.readShortText(item.mention, 30);
+    const kind = this.readEnum(item.kind, CONVERSATION_OBJECT_KINDS);
+    const binding = this.readShortText(item.binding, 120);
+    const confidence = this.readEnum(
+      item.confidence,
+      CONVERSATION_OBJECT_CONFIDENCES
+    );
+
+    if (
+      !ref ||
+      !mention ||
+      !currentQuery.includes(mention) ||
+      !kind ||
+      !binding ||
+      !allowedBindings.has(binding) ||
+      !confidence
+    ) {
+      return undefined;
+    }
+
+    return { ref, mention, kind, binding, confidence };
+  }
+
+  private hasMultipleRelevantKnownObjects(
+    currentQuery: string,
+    knownObjects?: ConversationKnownObject[]
+  ): boolean {
+    const mentioned = (knownObjects || []).filter(object =>
+      object.aliases.some(
+        alias => alias.length > 1 && currentQuery.includes(alias)
+      )
+    );
+    const otherObjects = mentioned.filter(
+      object => object.id !== 'agent' && object.id !== 'user'
+    );
+
+    return (
+      otherObjects.length >= 2 ||
+      (otherObjects.length === 1 && mentioned.length >= 2)
+    );
   }
 
   private buildConversationEngagementFallback(options: {

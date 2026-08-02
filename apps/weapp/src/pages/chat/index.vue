@@ -34,9 +34,7 @@
     <view class="chat-page__body" @tap="handleChatBodyTap">
       <view v-if="isCheckingAuth" class="chat-feedback">
         <view class="chat-feedback__spinner" />
-        <text class="chat-feedback__title">
-          正在恢复会话...
-        </text>
+        <text class="chat-feedback__title"> 正在恢复会话... </text>
       </view>
 
       <view v-else-if="loadError && !displayRows.length" class="chat-feedback">
@@ -51,7 +49,9 @@
 
       <view v-else-if="!displayRows.length" class="chat-feedback">
         <text class="chat-feedback__title">还没有消息</text>
-        <text class="chat-feedback__desc">和 TA 打个招呼，开始第一句对话吧</text>
+        <text class="chat-feedback__desc"
+          >和 TA 打个招呼，开始第一句对话吧</text
+        >
       </view>
 
       <view v-else class="chat-message-list">
@@ -63,7 +63,7 @@
           }"
           @tap.stop="handleHistoryStatusTap"
         >
-          {{ historyStatusText || '占位' }}
+          {{ historyStatusText || "占位" }}
         </view>
 
         <template v-for="item in visibleDisplayRows" :key="item.key">
@@ -71,7 +71,10 @@
             {{ item.label }}
           </view>
 
-          <view v-else-if="item.kind === 'system'" class="chat-message-list__system">
+          <view
+            v-else-if="item.kind === 'system'"
+            class="chat-message-list__system"
+          >
             {{ item.text }}
           </view>
 
@@ -85,20 +88,27 @@
             }"
           >
             <template v-if="!item.isUser">
-              <image
-                v-if="agentAvatar"
-                class="chat-avatar chat-avatar--agent"
-                :src="agentAvatar"
-                mode="aspectFill"
-                @tap.stop="handleAgentAvatarTap"
-              />
-              <view
-                v-else
-                class="chat-avatar chat-avatar--agent chat-avatar--fallback"
-                :class="agentAvatarFallbackClass"
-                @tap.stop="handleAgentAvatarTap"
-              >
-                {{ agentAvatarFallback }}
+              <view class="chat-avatar-wrap" @tap.stop="handleAgentAvatarTap">
+                <image
+                  v-if="agentAvatar"
+                  class="chat-avatar chat-avatar--agent"
+                  :src="agentAvatar"
+                  mode="aspectFill"
+                />
+                <view
+                  v-else
+                  class="chat-avatar chat-avatar--agent chat-avatar--fallback"
+                  :class="agentAvatarFallbackClass"
+                >
+                  {{ agentAvatarFallback }}
+                </view>
+                <view
+                  v-if="
+                    isAgentHomeGuideVisible &&
+                    item.key === profileGuideAvatarRowKey
+                  "
+                  class="chat-avatar-guide-dot"
+                />
               </view>
             </template>
 
@@ -123,7 +133,13 @@
                     v-for="action in item.actions"
                     :key="action.key"
                     class="chat-message-actions__button"
-                    @tap.stop="handleMessageActionTap(item.messageId, action.key, item.text)"
+                    @tap.stop="
+                      handleMessageActionTap(
+                        item.messageId,
+                        action.key,
+                        item.text
+                      )
+                    "
                   >
                     <text>{{ action.label }}</text>
                   </view>
@@ -138,15 +154,22 @@
                 :voice-duration-ms="item.voiceDurationMs"
                 :has-voice-playback="item.hasVoicePlayback"
                 :is-voice-active="activeVoiceMessageId === item.messageId"
-                :is-voice-playing="activeVoiceMessageId === item.messageId && isVoicePlaying"
-                :is-voice-loading="activeVoiceMessageId === item.messageId && isVoicePlaybackLoading"
+                :is-voice-playing="
+                  activeVoiceMessageId === item.messageId && isVoicePlaying
+                "
+                :is-voice-loading="
+                  activeVoiceMessageId === item.messageId &&
+                  isVoicePlaybackLoading
+                "
                 :is-user="item.isUser"
                 :is-sending="item.isSending"
                 :quoted-text="item.quotedText"
                 :quoted-label="item.quotedLabel"
                 @message-tap="handleMessageTap"
                 @voice-tap="handleVoiceMessageTap(item.messageId)"
-                @message-long-press="handleMessageLongPress(item.messageId, item.key, item.text)"
+                @message-long-press="
+                  handleMessageLongPress(item.messageId, item.key, item.text)
+                "
               />
             </view>
 
@@ -172,11 +195,14 @@
             v-if="item.kind === 'message' && item.isFailed"
             class="chat-message-list__failed"
           >
-            {{ item.isUser ? '发送失败' : '回复失败' }}
+            {{ item.isUser ? "发送失败" : "回复失败" }}
           </view>
         </template>
 
-        <view id="chat-bottom-anchor" class="chat-message-list__bottom-anchor" />
+        <view
+          id="chat-bottom-anchor"
+          class="chat-message-list__bottom-anchor"
+        />
       </view>
 
       <view class="chat-page__ai-watermark">
@@ -233,32 +259,62 @@
           :class="`voice-recording-overlay__status--${voiceDragTarget}`"
         >
           <view class="voice-recording-overlay__glyph">
-            <view v-if="voiceDragTarget === 'cancel'" class="voice-recording-overlay__cancel-icon" />
-            <view v-else-if="voiceDragTarget === 'transcribe'" class="voice-recording-overlay__text-icon">文</view>
+            <view
+              v-if="voiceDragTarget === 'cancel'"
+              class="voice-recording-overlay__cancel-icon"
+            />
+            <view
+              v-else-if="voiceDragTarget === 'transcribe'"
+              class="voice-recording-overlay__text-icon"
+              >文</view
+            >
             <view v-else class="voice-recording-overlay__waveform">
-              <view class="voice-recording-overlay__bar voice-recording-overlay__bar--1" />
-              <view class="voice-recording-overlay__bar voice-recording-overlay__bar--2" />
-              <view class="voice-recording-overlay__bar voice-recording-overlay__bar--3" />
-              <view class="voice-recording-overlay__bar voice-recording-overlay__bar--4" />
+              <view
+                class="voice-recording-overlay__bar voice-recording-overlay__bar--1"
+              />
+              <view
+                class="voice-recording-overlay__bar voice-recording-overlay__bar--2"
+              />
+              <view
+                class="voice-recording-overlay__bar voice-recording-overlay__bar--3"
+              />
+              <view
+                class="voice-recording-overlay__bar voice-recording-overlay__bar--4"
+              />
             </view>
           </view>
-          <text class="voice-recording-overlay__status-text">{{ voiceStatusText }}</text>
+          <text class="voice-recording-overlay__status-text">{{
+            voiceStatusText
+          }}</text>
         </view>
-        <view class="voice-recording-overlay__panel" :style="voiceOverlayPanelStyle">
+        <view
+          class="voice-recording-overlay__panel"
+          :style="voiceOverlayPanelStyle"
+        >
           <view
             class="voice-recording-overlay__chip voice-recording-overlay__chip--cancel"
-            :class="{ 'voice-recording-overlay__chip--active-cancel': voiceDragTarget === 'cancel' }"
+            :class="{
+              'voice-recording-overlay__chip--active-cancel':
+                voiceDragTarget === 'cancel',
+            }"
           >
             取消
           </view>
           <view
             class="voice-recording-overlay__chip voice-recording-overlay__chip--transcribe"
-            :class="{ 'voice-recording-overlay__chip--active-transcribe': voiceDragTarget === 'transcribe' }"
+            :class="{
+              'voice-recording-overlay__chip--active-transcribe':
+                voiceDragTarget === 'transcribe',
+            }"
           >
             滑到这里 转文字
           </view>
-          <text class="voice-recording-overlay__hint">上滑取消，右滑转文字</text>
-          <text class="voice-recording-overlay__footer">{{ voiceFooterText }}</text>
+          <text class="voice-recording-overlay__hint"
+            >上滑取消，右滑转文字</text
+          >
+          <text class="voice-recording-overlay__footer">{{
+            voiceFooterText
+          }}</text>
         </view>
       </view>
     </template>
@@ -273,6 +329,7 @@
         :lock-scroll="true"
         :overlay-style="chatQuotaDialogOverlayStyle"
         :z-index="CHAT_QUOTA_DIALOG_Z_INDEX"
+        @closed="handleChatQuotaDialogDismiss"
       >
         <view class="chat-quota-dialog__content">
           {{ chatQuotaDialogContent }}
@@ -281,7 +338,9 @@
         <template #footer>
           <view
             class="chat-quota-dialog__footer"
-            :class="{ 'chat-quota-dialog__footer--single': isChatQuotaExhaustedDialog }"
+            :class="{
+              'chat-quota-dialog__footer--single': isChatQuotaExhaustedDialog,
+            }"
           >
             <view
               v-if="!isChatQuotaExhaustedDialog"
@@ -292,7 +351,10 @@
             </view>
             <view
               class="chat-quota-dialog__primary"
-              :class="{ 'chat-quota-dialog__primary--single': isChatQuotaExhaustedDialog }"
+              :class="{
+                'chat-quota-dialog__primary--single':
+                  isChatQuotaExhaustedDialog,
+              }"
               @tap="handleChatQuotaDialogUpgrade"
             >
               开通会员
@@ -312,9 +374,14 @@
         :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 1"
       >
         <view class="chat-privacy-dialog__content">
-          发送语音需要你同意{{ voicePrivacyContractName }}，我们会使用麦克风录制语音消息和语音转文字。
+          发送语音需要你同意{{
+            voicePrivacyContractName
+          }}，我们会使用麦克风录制语音消息和语音转文字。
         </view>
-        <view class="chat-privacy-dialog__link" @tap="handleVoicePrivacyContractTap">
+        <view
+          class="chat-privacy-dialog__link"
+          @tap="handleVoicePrivacyContractTap"
+        >
           查看隐私保护指引
         </view>
 
@@ -338,11 +405,51 @@
         </template>
       </nut-dialog>
 
+      <nut-dialog
+        v-model:visible="isDeleteMessageDialogVisible"
+        title="删除消息"
+        custom-class="chat-privacy-dialog chat-delete-dialog"
+        text-align="left"
+        :close-on-click-overlay="false"
+        :lock-scroll="true"
+        :overlay-style="chatQuotaDialogOverlayStyle"
+        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 2"
+      >
+        <view class="chat-privacy-dialog__content">
+          删除后将无法恢复，确定删除这条消息吗？
+        </view>
+
+        <template #footer>
+          <view class="chat-privacy-dialog__footer">
+            <view
+              class="chat-privacy-dialog__secondary"
+              :class="{
+                'chat-delete-dialog__button--disabled':
+                  isConfirmingMessageDelete,
+              }"
+              @tap="handleDeleteMessageCancel"
+            >
+              取消
+            </view>
+            <view
+              class="chat-privacy-dialog__primary chat-delete-dialog__primary"
+              :class="{
+                'chat-delete-dialog__button--disabled':
+                  isConfirmingMessageDelete,
+              }"
+              @tap="handleDeleteMessageConfirm"
+            >
+              {{ isConfirmingMessageDelete ? "删除中..." : "删除" }}
+            </view>
+          </view>
+        </template>
+      </nut-dialog>
+
       <nut-popup
         v-model:visible="isFeedbackPopupVisible"
         position="bottom"
         round
-        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 2"
+        :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 3"
         closeable
         close-icon-position="top-right"
         :safe-area-inset-bottom="true"
@@ -384,10 +491,12 @@
             </view>
             <view
               class="chat-feedback-popup__submit"
-              :class="{ 'chat-feedback-popup__submit--disabled': isSubmittingFeedback }"
+              :class="{
+                'chat-feedback-popup__submit--disabled': isSubmittingFeedback,
+              }"
               @tap="handleFeedbackSubmit"
             >
-              {{ isSubmittingFeedback ? '提交中...' : '提交' }}
+              {{ isSubmittingFeedback ? "提交中..." : "提交" }}
             </view>
           </view>
         </view>
@@ -398,22 +507,24 @@
 
 <script lang="ts">
 export default {
-  name: 'ChatIndexPage',
-}
+  name: "ChatIndexPage",
+};
 </script>
 
 <script setup lang="ts">
-import { Category } from '@nutui/icons-vue-taro'
+import { Category } from "@nutui/icons-vue-taro";
 
-import Taro, { useDidHide, useDidShow, useLoad, useUnload } from '@tarojs/taro'
-import type { ITouchEvent } from '@tarojs/components/types/common'
-import { computed, nextTick, ref } from 'vue'
-import { ApiConfig } from '../../api/api-config'
-import { ApiException } from '../../api/api-exception'
-import { getAgentDetail } from '../../apis/agent'
+import Taro, { useDidHide, useDidShow, useLoad, useUnload } from "@tarojs/taro";
+import type { ITouchEvent } from "@tarojs/components/types/common";
+import { computed, nextTick, ref } from "vue";
+import { ApiConfig } from "../../api/api-config";
+import { ApiException } from "../../api/api-exception";
+import { getAgentDetail } from "../../apis/agent";
 import {
   deleteConversationMessage,
   generateConversationMessageVoice,
+  getCachedConversationMessages,
+  getConversationChatBootstrap,
   getConversationChatQuota,
   getConversationMessagesPage,
   markConversationMessageMemory,
@@ -421,865 +532,1037 @@ import {
   submitConversationMessageFeedback,
   transcribeConversationVoice,
   type ConversationMessage,
+  type ConversationMessageListResult,
   type ConversationMessageFeedbackType,
   type ConversationImagePayload,
   type ConversationChatQuotaSnapshot,
   type SendConversationMessageResult,
   type ConversationVoicePayload,
-} from '../../apis/conversation'
-import { preloadVipPurchaseCenter } from '../../apis/membership'
-import { uploadLocalFile, uploadLocalImage } from '../../apis/storage'
-import BackCapsule from '../../components/back-capsule/back-capsule.vue'
-import ChatComposer from '../../components/chat-composer/chat-composer.vue'
-import ChatMessageBubble from '../../components/chat-message-bubble/chat-message-bubble.vue'
+} from "../../apis/conversation";
+import { uploadLocalFile, uploadLocalImage } from "../../apis/storage";
+import BackCapsule from "../../components/back-capsule/back-capsule.vue";
+import ChatComposer from "../../components/chat-composer/chat-composer.vue";
+import ChatMessageBubble from "../../components/chat-message-bubble/chat-message-bubble.vue";
 import {
   isChatImageOperationCanceled,
   pickChatImageForSend,
   type ChatImageSourceType,
   type PickedChatImage,
-} from '../../components/chat-more-panel/image'
-import type { ChatMoreActionItem } from '../../components/chat-more-panel/types'
-import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import { authSession, restoreAuthSession } from '../../auth/session'
-import { ensureInnerAudioPlaybackOptions } from '../../utils/audio'
-import { normalizeEmojiText } from '../../utils/emoji-text'
-import { readMenuButtonMetrics } from '../../utils/menu-button'
-import { useSafeAreaInsets } from '../../utils/safe-area'
+} from "../../components/chat-more-panel/image";
+import type { ChatMoreActionItem } from "../../components/chat-more-panel/types";
+import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
+import {
+  authSession,
+  restoreAuthSession,
+  syncAuthSessionVipStatus,
+} from "../../auth/session";
+import { ensureInnerAudioPlaybackOptions } from "../../utils/audio";
+import { shouldShowAgentHomeGuide } from "../../utils/agent-profile-guide";
+import { normalizeEmojiText } from "../../utils/emoji-text";
+import {
+  reportChatQuotaDialogEvent,
+  reportPerformanceEvent,
+} from "../../utils/product-analytics";
+import { readMenuButtonMetrics } from "../../utils/menu-button";
+import { useSafeAreaInsets } from "../../utils/safe-area";
+import {
+  buildChatQuotaDialogContent,
+  copyChatQuotaSnapshot,
+  isChatQuotaExhausted,
+  shouldShowChatQuotaRemainingDialog,
+  type ChatQuotaDialogType,
+} from "./chat-quota";
 
-type VoiceTouchEvent = ITouchEvent | TouchEvent
+type VoiceTouchEvent = ITouchEvent | TouchEvent;
 
 type AssistantSegmentRevealTimer = {
-  timer: ReturnType<typeof setTimeout>
-  resolve: (active: boolean) => void
-}
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (active: boolean) => void;
+};
 
-type DraftInputEvent = InputEvent | {
-  detail?: {
-    value?: string
-    cursor?: number
-  }
-}
+type DraftInputEvent =
+  | InputEvent
+  | {
+      detail?: {
+        value?: string;
+        cursor?: number;
+      };
+    };
 
 type ChatScrollEvent = {
   detail?: {
-    scrollTop?: number
-  }
-}
+    scrollTop?: number;
+  };
+};
 
 type DisplayRow =
   | {
-      key: string
-      kind: 'time'
-      label: string
+      key: string;
+      kind: "time";
+      label: string;
     }
   | {
-      key: string
-      kind: 'system'
-      text: string
+      key: string;
+      kind: "system";
+      text: string;
     }
   | {
-      key: string
-      kind: 'message'
-      messageId: string
-      type: 'text' | 'image' | 'voice'
-      text: string
-      imageUrl: string
-      voiceDurationMs: number
-      hasVoicePlayback: boolean
-      actions: MessageActionItem[]
-      isUser: boolean
-      isSending: boolean
-      isFailed: boolean
-      anchorId: string
-      quotedText: string
-      quotedLabel: string
-    }
+      key: string;
+      kind: "message";
+      messageId: string;
+      type: "text" | "image" | "voice";
+      text: string;
+      imageUrl: string;
+      voiceDurationMs: number;
+      hasVoicePlayback: boolean;
+      actions: MessageActionItem[];
+      isUser: boolean;
+      isSending: boolean;
+      isFailed: boolean;
+      anchorId: string;
+      quotedText: string;
+      quotedLabel: string;
+    };
 
-type VoiceDragTarget = 'send' | 'cancel' | 'transcribe'
-
-type ChatQuotaDialogType = 'remaining' | 'exhausted'
+type VoiceDragTarget = "send" | "cancel" | "transcribe";
 
 type WechatAppMicrophoneAuthorizeStatus =
-  | 'authorized'
-  | 'denied'
-  | 'not determined'
-  | 'unknown'
+  | "authorized"
+  | "denied"
+  | "not determined"
+  | "unknown";
 
 type TaroSystemPermissionApi = typeof Taro & {
   getAppAuthorizeSetting?: () => {
-    microphoneAuthorized?: unknown
-  }
-  openAppAuthorizeSetting?: (option?: Record<string, unknown>) => Promise<unknown>
+    microphoneAuthorized?: unknown;
+  };
+  openAppAuthorizeSetting?: (
+    option?: Record<string, unknown>
+  ) => Promise<unknown>;
   getSystemInfoSync?: () => {
-    microphoneAuthorized?: boolean
-  }
-}
+    microphoneAuthorized?: boolean;
+  };
+};
 
 type VoicePrivacyResolveOption =
   | {
-      event: 'exposureAuthorization'
+      event: "exposureAuthorization";
     }
   | {
-      event: 'agree'
-      buttonId: string
+      event: "agree";
+      buttonId: string;
     }
   | {
-      event: 'disagree'
-    }
+      event: "disagree";
+    };
 
-type VoicePrivacyResolve = (option: VoicePrivacyResolveOption) => void
+type VoicePrivacyResolve = (option: VoicePrivacyResolveOption) => void;
 
 type VoicePrivacySettingResult = {
-  needAuthorization?: boolean
-  privacyContractName?: string
-}
+  needAuthorization?: boolean;
+  privacyContractName?: string;
+};
 
 type TaroPrivacyApi = typeof Taro & {
   getPrivacySetting?: (option: {
-    success?: (result: VoicePrivacySettingResult) => void
-    fail?: (error: unknown) => void
-  }) => void
+    success?: (result: VoicePrivacySettingResult) => void;
+    fail?: (error: unknown) => void;
+  }) => void;
   requirePrivacyAuthorize?: (option: {
-    success?: () => void
-    fail?: (error: unknown) => void
-  }) => void
-  openPrivacyContract?: (option?: {
-    fail?: (error: unknown) => void
-  }) => void
+    success?: () => void;
+    fail?: (error: unknown) => void;
+  }) => void;
+  openPrivacyContract?: (option?: { fail?: (error: unknown) => void }) => void;
   onNeedPrivacyAuthorization?: (
     listener: (resolve: VoicePrivacyResolve) => void
-  ) => void
-}
+  ) => void;
+};
 
 type TouchPoint = {
-  x: number
-  y: number
-}
+  x: number;
+  y: number;
+};
 
 type RecorderStopResult = {
-  tempFilePath: string
-  duration: number
-  fileSize: number
-}
+  tempFilePath: string;
+  duration: number;
+  fileSize: number;
+};
 
 type RecorderErrorLike = {
-  errMsg?: string
-}
+  errMsg?: string;
+};
 
-type MessageActionKey = 'quote' | 'generateVoice' | 'feedback' | 'remember' | 'delete'
+type MessageActionKey =
+  | "quote"
+  | "generateVoice"
+  | "feedback"
+  | "remember"
+  | "delete";
 
 type MessageActionItem = {
-  key: MessageActionKey
-  label: string
-}
+  key: MessageActionKey;
+  label: string;
+};
 
 const ASSISTANT_SEGMENT_REVEAL_CONFIG = {
   defaultDelayMs: 2200,
   longSegmentDelayMs: 2800,
   longSegmentLengthThreshold: 24,
-} as const
-const CHAT_TEXT_MAX_LENGTH = 500
-const CHAT_MESSAGE_PAGE_SIZE = 30
-const CHAT_MAX_LOADED_MESSAGES = 180
-const CHAT_RENDER_MESSAGE_WINDOW = 120
-const AGENT_REPLY_POLL_INTERVAL_MS = 2000
-const AGENT_REPLY_POLL_MAX_INTERVAL_MS = 15000
-const AGENT_REPLY_POLL_TIMEOUT_MS = 5 * 60 * 1000
-const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000
-const AGENT_REPLY_POLL_WARNING_FAILURE_COUNT = 3
-const CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD = 8
-const CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS = 360
-const VOICE_PRIVACY_AGREE_BUTTON_ID = 'chat-voice-privacy-agree-btn'
-const VOICE_PLAYBACK_ERROR_MUTE_MS = 3000
-const CHAT_QUOTA_DIALOG_CONTENT = {
-  remaining: '宝，今日仅剩最后 1 句对话机会了，好好珍惜彼此吧～想畅聊点击【开通会员】',
-  exhausted:
-    '宝，今日对话结束啦（非会员试用期每天 30句）～可以明天再来哦，先好好生活吧，记得在心里牵挂TA～想畅聊点击【开通会员】',
-} as const
-const CHAT_QUOTA_DIALOG_Z_INDEX = 10000
-const CHAT_MESSAGE_RENDER_FALLBACK_TEXT = '该消息暂无法显示'
-const QUOTE_MESSAGE_ACTION: MessageActionItem = { key: 'quote', label: '引用' }
+} as const;
+const CHAT_TEXT_MAX_LENGTH = 500;
+const CHAT_MESSAGE_PAGE_SIZE = 30;
+const chatPageStartedAt = Date.now();
+let hasReportedCachedChat = false;
+let hasReportedChatData = false;
+const CHAT_MAX_LOADED_MESSAGES = 180;
+const CHAT_RENDER_MESSAGE_WINDOW = 120;
+const AGENT_REPLY_POLL_INTERVAL_MS = 2000;
+const AGENT_REPLY_POLL_MAX_INTERVAL_MS = 15000;
+const AGENT_REPLY_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+const AGENT_REPLY_RESUME_WINDOW_MS = 5 * 60 * 1000;
+const AGENT_REPLY_POLL_WARNING_FAILURE_COUNT = 3;
+const CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD = 8;
+const CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS = 360;
+const VOICE_PRIVACY_AGREE_BUTTON_ID = "chat-voice-privacy-agree-btn";
+const VOICE_PLAYBACK_ERROR_MUTE_MS = 3000;
+const VOICE_DURATION_PROBE_IDLE_DELAY_MS = 900;
+const CHAT_QUOTA_DIALOG_Z_INDEX = 10000;
+const CHAT_MESSAGE_RENDER_FALLBACK_TEXT = "该消息暂无法显示";
+const QUOTE_MESSAGE_ACTION: MessageActionItem = { key: "quote", label: "引用" };
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
-  key: 'generateVoice',
-  label: '转语音',
-}
+  key: "generateVoice",
+  label: "转语音",
+};
 const FEEDBACK_MESSAGE_ACTION: MessageActionItem = {
-  key: 'feedback',
-  label: '反馈',
-}
+  key: "feedback",
+  label: "反馈",
+};
 const REMEMBER_MESSAGE_ACTION: MessageActionItem = {
-  key: 'remember',
-  label: '记忆！',
-}
-const DELETE_MESSAGE_ACTION: MessageActionItem = { key: 'delete', label: '删除' }
+  key: "remember",
+  label: "记忆！",
+};
+const DELETE_MESSAGE_ACTION: MessageActionItem = {
+  key: "delete",
+  label: "删除",
+};
 const FEEDBACK_OPTIONS: Array<{
-  type: ConversationMessageFeedbackType
-  label: string
+  type: ConversationMessageFeedbackType;
+  label: string;
 }> = [
-  { type: 'accurate', label: '很贴切' },
-  { type: 'unlike', label: '不像本人' },
-  { type: 'wrong_fact', label: '说错了' },
-  { type: 'fabricated', label: '瞎编了' },
-  { type: 'uncomfortable', label: '回复不舒服' },
-  { type: 'other', label: '其他' },
-]
+  { type: "accurate", label: "很贴切" },
+  { type: "unlike", label: "不像本人" },
+  { type: "wrong_fact", label: "说错了" },
+  { type: "fabricated", label: "瞎编了" },
+  { type: "uncomfortable", label: "回复不舒服" },
+  { type: "other", label: "其他" },
+];
 
-const conversationId = ref('')
-const agentId = ref('')
-const agentName = ref('')
-const agentAvatar = ref('')
-const agentSex = ref(0)
-const agentCallMe = ref('')
-const iCallAgent = ref('')
-const conversationPreview = ref('')
-const conversationCreatedAt = ref('')
+const conversationId = ref("");
+const agentId = ref("");
+const agentName = ref("");
+const agentAvatar = ref("");
+const agentSex = ref(0);
+const agentCallMe = ref("");
+const iCallAgent = ref("");
+const conversationPreview = ref("");
+const conversationCreatedAt = ref("");
+const isAgentHomeGuideVisible = ref(false);
 
-const isCheckingAuth = ref(true)
-const isLoading = ref(true)
-const isSending = ref(false)
-const isTextSendSubmitting = ref(false)
-const isCheckingChatQuota = ref(false)
-const isWaitingAgentReply = ref(false)
-const loadError = ref('')
-const isLoadingHistory = ref(false)
-const historyLoadError = ref('')
-const hasMoreHistory = ref(false)
-const isViewingHistoryWindow = ref(false)
-const didInitialShow = ref(false)
-const draftMessage = ref('')
-const draftCursor = ref(0)
-const isDraftCursorControlled = ref(false)
-const keyboardHeight = ref(0)
-const activeMessageActionRowKey = ref('')
-let messageActionTapMutedUntil = 0
-const isInputFocused = ref(false)
-const isEmojiPanelVisible = ref(false)
-const isMorePanelVisible = ref(false)
-const isVoiceMode = ref(false)
-const isVoicePressPreviewing = ref(false)
-const isVoiceRecording = ref(false)
-const isTranscribingVoice = ref(false)
-const isCheckingRecordPermission = ref(false)
-const isVoicePrivacyDialogVisible = ref(false)
-const voicePrivacyContractName = ref('《天之灵隐私保护指引》')
-const voiceDragTarget = ref<VoiceDragTarget>('send')
-const voiceGestureStartPoint = ref<TouchPoint | null>(null)
-const recordingStartedAt = ref<number | null>(null)
-const activeVoiceMessageId = ref('')
-const isVoicePlaying = ref(false)
-const isVoicePlaybackLoading = ref(false)
-const messages = ref<ConversationMessage[]>([])
-const scrollIntoViewTarget = ref('')
-const scrollWithAnimation = ref(true)
-const hasCompletedInitialMessagesScroll = ref(false)
-const isChatQuotaDialogVisible = ref(false)
-const chatQuotaDialogType = ref<ChatQuotaDialogType>('remaining')
-const chatQuotaIsVip = ref(false)
-const chatQuotaRemainingCount = ref<number | null>(null)
-const isFeedbackPopupVisible = ref(false)
-const selectedFeedbackMessageId = ref('')
-const selectedFeedbackType = ref<ConversationMessageFeedbackType>('unlike')
-const feedbackContent = ref('')
+const isCheckingAuth = ref(true);
+const isLoading = ref(true);
+const isSending = ref(false);
+const isTextSendSubmitting = ref(false);
+const isCheckingChatQuota = ref(false);
+const isWaitingAgentReply = ref(false);
+const loadError = ref("");
+const isLoadingHistory = ref(false);
+const historyLoadError = ref("");
+const hasMoreHistory = ref(false);
+const isViewingHistoryWindow = ref(false);
+const didInitialShow = ref(false);
+const draftMessage = ref("");
+const draftCursor = ref(0);
+const isDraftCursorControlled = ref(false);
+const keyboardHeight = ref(0);
+const activeMessageActionRowKey = ref("");
+let messageActionTapMutedUntil = 0;
+const isInputFocused = ref(false);
+const isEmojiPanelVisible = ref(false);
+const isMorePanelVisible = ref(false);
+const isVoiceMode = ref(false);
+const isVoicePressPreviewing = ref(false);
+const isVoiceRecording = ref(false);
+const isTranscribingVoice = ref(false);
+const isCheckingRecordPermission = ref(false);
+const isVoicePrivacyDialogVisible = ref(false);
+const voicePrivacyContractName = ref("《天之灵隐私保护指引》");
+const voiceDragTarget = ref<VoiceDragTarget>("send");
+const voiceGestureStartPoint = ref<TouchPoint | null>(null);
+const recordingStartedAt = ref<number | null>(null);
+const activeVoiceMessageId = ref("");
+const isVoicePlaying = ref(false);
+const isVoicePlaybackLoading = ref(false);
+const messages = ref<ConversationMessage[]>([]);
+const scrollIntoViewTarget = ref("");
+const scrollWithAnimation = ref(true);
+const hasCompletedInitialMessagesScroll = ref(false);
+const isChatQuotaDialogVisible = ref(false);
+const chatQuotaDialogType = ref<ChatQuotaDialogType>("remaining");
+const chatQuotaSnapshot = ref<ConversationChatQuotaSnapshot | null>(null);
+const isDeleteMessageDialogVisible = ref(false);
+const pendingDeleteMessageId = ref("");
+const isConfirmingMessageDelete = ref(false);
+const isFeedbackPopupVisible = ref(false);
+const selectedFeedbackMessageId = ref("");
+const selectedFeedbackType = ref<ConversationMessageFeedbackType>("unlike");
+const feedbackContent = ref("");
 const feedbackTextareaPlaceholder = computed(() => {
-  if (selectedFeedbackType.value === 'accurate') {
-    return '可以补充哪里好，Ta 会持续优化'
+  if (selectedFeedbackType.value === "accurate") {
+    return "可以补充哪里好，Ta 会持续优化";
   }
 
-  return '可以补充哪里不对，Ta 会记住并调整'
-})
-const isSubmittingFeedback = ref(false)
-const quotedMessageId = ref('')
-const quotedMessageText = ref('')
-const quotedMessageLabel = ref('引用')
+  return "可以补充哪里不对，Ta 会记住并调整";
+});
+const isSubmittingFeedback = ref(false);
+const quotedMessageId = ref("");
+const quotedMessageText = ref("");
+const quotedMessageLabel = ref("引用");
 const chatQuotaDialogOverlayStyle = {
-  background: 'rgba(0, 0, 0, 0.72)',
+  background: "rgba(0, 0, 0, 0.72)",
   zIndex: CHAT_QUOTA_DIALOG_Z_INDEX,
-}
+};
 
-let ensureSessionPromise: Promise<void> | null = null
-let refreshMessagesPromise: Promise<void> | null = null
-let refreshChatQuotaPromise: Promise<ConversationChatQuotaSnapshot | undefined> | null = null
-let voiceStartTimer: ReturnType<typeof setTimeout> | null = null
-let pendingRecorderStop:
-  | {
-      resolve: (result: RecorderStopResult) => void
-      reject: (error: unknown) => void
-    }
-  | null = null
-let lastRecorderStopResult: RecorderStopResult | null = null
-let lastRecorderErrorMessage = ''
-let pendingVoicePrivacyResolves: VoicePrivacyResolve[] = []
-let voicePrivacyAuthorizationPromise: Promise<boolean> | null = null
-let voiceAudioContext: Taro.InnerAudioContext | null = null
-let isPickingChatImage = false
-let isChatPageVisible = true
-let voicePlaybackErrorMutedUntil = 0
-let isSwitchingComposerPanel = false
-let replyPollingTimer: ReturnType<typeof setTimeout> | null = null
-let replyPollingStartedAt = 0
-let replyPollingAfterUserCreatedAt: Date | null = null
-let replyPollingFailureCount = 0
-let hasShownReplyPollingNetworkWarning = false
-let scrollToBottomPromise: Promise<void> | null = null
-let scrollToBottomGeneration = 0
-let scrollIntoViewResetTimer: ReturnType<typeof setTimeout> | null = null
-let shouldAutoFollowNewMessages = true
-let lastChatScrollTop = 0
-let hasTrackedChatScrollTop = false
-const deletingMessageIds = new Set<string>()
-const generatingVoiceMessageIds = new Set<string>()
-const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>()
-const assistantSegmentRevealTimers = new Set<AssistantSegmentRevealTimer>()
-let assistantSegmentRevealGeneration = 0
+let ensureSessionPromise: Promise<void> | null = null;
+let refreshChatBootstrapPromise: Promise<void> | null = null;
+let refreshMessagesPromise: Promise<void> | null = null;
+let refreshChatQuotaPromise: Promise<
+  ConversationChatQuotaSnapshot | undefined
+> | null = null;
+let voiceStartTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRecorderStop: {
+  resolve: (result: RecorderStopResult) => void;
+  reject: (error: unknown) => void;
+} | null = null;
+let lastRecorderStopResult: RecorderStopResult | null = null;
+let lastRecorderErrorMessage = "";
+let pendingVoicePrivacyResolves: VoicePrivacyResolve[] = [];
+let voicePrivacyAuthorizationPromise: Promise<boolean> | null = null;
+let voiceAudioContext: Taro.InnerAudioContext | null = null;
+let isPickingChatImage = false;
+let isChatPageVisible = true;
+let voicePlaybackErrorMutedUntil = 0;
+let voiceDurationProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let isSwitchingComposerPanel = false;
+let replyPollingTimer: ReturnType<typeof setTimeout> | null = null;
+let replyPollingStartedAt = 0;
+let replyPollingAfterUserCreatedAt: Date | null = null;
+let replyPollingFailureCount = 0;
+let hasShownReplyPollingNetworkWarning = false;
+let scrollToBottomPromise: Promise<void> | null = null;
+let scrollToBottomGeneration = 0;
+let scrollIntoViewResetTimer: ReturnType<typeof setTimeout> | null = null;
+let shouldAutoFollowNewMessages = true;
+let lastChatScrollTop = 0;
+let hasTrackedChatScrollTop = false;
+const deletingMessageIds = new Set<string>();
+const generatingVoiceMessageIds = new Set<string>();
+const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>();
+const pendingVoiceDurationProbeMessages = new Map<
+  string,
+  ConversationMessage
+>();
+const assistantSegmentRevealTimers = new Set<AssistantSegmentRevealTimer>();
+let assistantSegmentRevealGeneration = 0;
 
-const recorderManager = Taro.getRecorderManager()
+const recorderManager = Taro.getRecorderManager();
 
 recorderManager.onStop((result) => {
-  lastRecorderErrorMessage = ''
+  lastRecorderErrorMessage = "";
   const normalizedResult = {
     tempFilePath: result.tempFilePath,
     duration: result.duration,
     fileSize: result.fileSize,
-  }
+  };
 
   if (pendingRecorderStop) {
-    pendingRecorderStop.resolve(normalizedResult)
-    pendingRecorderStop = null
-    return
+    pendingRecorderStop.resolve(normalizedResult);
+    pendingRecorderStop = null;
+    return;
   }
 
-  lastRecorderStopResult = normalizedResult
-})
+  lastRecorderStopResult = normalizedResult;
+});
 
 recorderManager.onError((error) => {
-  lastRecorderErrorMessage = normalizeRecorderErrorMessage(error)
+  lastRecorderErrorMessage = normalizeRecorderErrorMessage(error);
 
   if (pendingRecorderStop) {
-    pendingRecorderStop.reject(error)
-    pendingRecorderStop = null
+    pendingRecorderStop.reject(error);
+    pendingRecorderStop = null;
   }
-})
+});
 
-registerVoicePrivacyAuthorizationListener()
+registerVoicePrivacyAuthorizationListener();
 
-const safeAreaInsets = useSafeAreaInsets()
-const menuButtonMetrics = readMenuButtonMetrics()
+const safeAreaInsets = useSafeAreaInsets();
+const menuButtonMetrics = readMenuButtonMetrics();
 const navStyle = {
   height: `${menuButtonMetrics.totalHeight}px`,
   paddingTop: `${menuButtonMetrics.statusBarHeight}px`,
-}
+};
 const pageTitle = computed(() => {
   if (isWaitingAgentReply.value) {
-    return '正在输入...'
+    return "正在输入...";
   }
 
-  const trimmedName = agentName.value.trim()
-  return trimmedName || '对话'
-})
-const currentUserAvatar = computed(() => authSession.value?.user.avatar.trim() ?? '')
-const isCurrentUserVip = computed(() => Boolean(authSession.value?.user.isVip) || chatQuotaIsVip.value)
+  const trimmedName = agentName.value.trim();
+  return trimmedName || "对话";
+});
+const currentUserAvatar = computed(
+  () => authSession.value?.user.avatar.trim() ?? ""
+);
 const currentUserAvatarFallback = computed(() => {
-  const name = authSession.value?.user.name.trim()
-  return name ? name.slice(0, 1) : '我'
-})
+  const name = authSession.value?.user.name.trim();
+  return name ? name.slice(0, 1) : "我";
+});
 const agentAvatarFallback = computed(() => {
-  const trimmedName = agentName.value.trim()
-  return trimmedName ? trimmedName.slice(0, 1) : 'A'
-})
+  const trimmedName = agentName.value.trim();
+  return trimmedName ? trimmedName.slice(0, 1) : "A";
+});
 const agentAvatarFallbackClass = computed(() => {
-  return agentSex.value === 1
-    ? 'chat-avatar--male'
-    : 'chat-avatar--female'
-})
+  return agentSex.value === 1 ? "chat-avatar--male" : "chat-avatar--female";
+});
 const composerStyle = computed(() => {
-  const basePaddingBottom = isInputFocused.value && keyboardHeight.value > 0
-    ? '0px'
-    : `${safeAreaInsets.value.bottom}px`
+  const basePaddingBottom =
+    isInputFocused.value && keyboardHeight.value > 0
+      ? "0px"
+      : `${safeAreaInsets.value.bottom}px`;
 
   return {
     paddingBottom: basePaddingBottom,
     transform:
       isInputFocused.value && keyboardHeight.value > 0
         ? `translateY(-${keyboardHeight.value}px)`
-        : 'translateY(0)',
-  }
-})
+        : "translateY(0)",
+  };
+});
 const bodyPadding = computed(() => {
   const bottomPadding =
     isInputFocused.value && keyboardHeight.value > 0
       ? `${keyboardHeight.value}px`
-      : '0px'
+      : "0px";
 
-  return `0 0 ${bottomPadding} 0`
-})
+  return `0 0 ${bottomPadding} 0`;
+});
 const canSend = computed(() => {
   return (
-    draftMessage.value.trim().length > 0
-    && !isSending.value
-    && !isTextSendSubmitting.value
-    && !isCheckingChatQuota.value
-    && !isTranscribingVoice.value
+    draftMessage.value.trim().length > 0 &&
+    !isSending.value &&
+    !isTextSendSubmitting.value &&
+    !isCheckingChatQuota.value &&
+    !isTranscribingVoice.value
+  );
+});
+const showSendButton = computed(() => canSend.value && !isVoiceMode.value);
+const isChatQuotaExhaustedDialog = computed(
+  () => chatQuotaDialogType.value === "exhausted"
+);
+const chatQuotaDialogContent = computed(() =>
+  buildChatQuotaDialogContent(
+    chatQuotaDialogType.value,
+    chatQuotaSnapshot.value
   )
-})
-const showSendButton = computed(() => canSend.value && !isVoiceMode.value)
-const isChatQuotaExhaustedDialog = computed(() => chatQuotaDialogType.value === 'exhausted')
-const chatQuotaDialogContent = computed(() => {
-  if (isChatQuotaExhaustedDialog.value) {
-    return CHAT_QUOTA_DIALOG_CONTENT.exhausted
-  }
-
-  return CHAT_QUOTA_DIALOG_CONTENT.remaining
-})
+);
 const isVoiceGestureActive = computed(() => {
-  return isVoicePressPreviewing.value || isVoiceRecording.value
-})
-const isVoiceOverlayVisible = computed(() => isVoiceMode.value && isVoiceGestureActive.value)
+  return isVoicePressPreviewing.value || isVoiceRecording.value;
+});
+const isVoiceOverlayVisible = computed(
+  () => isVoiceMode.value && isVoiceGestureActive.value
+);
 const isComposerPanelVisible = computed(() => {
-  return isEmojiPanelVisible.value || isMorePanelVisible.value
-})
+  return isEmojiPanelVisible.value || isMorePanelVisible.value;
+});
 const showNoMoreHistoryHint = computed(() => {
   return (
-    !hasMoreHistory.value
-    && !isLoadingHistory.value
-    && !historyLoadError.value
-    && messages.value.length >= CHAT_MESSAGE_PAGE_SIZE
-  )
-})
+    !hasMoreHistory.value &&
+    !isLoadingHistory.value &&
+    !historyLoadError.value &&
+    messages.value.length >= CHAT_MESSAGE_PAGE_SIZE
+  );
+});
 const historyStatusText = computed(() => {
   if (isLoadingHistory.value) {
-    return '正在加载更早消息...'
+    return "正在加载更早消息...";
   }
 
   if (historyLoadError.value) {
-    return '加载失败，点此重试'
+    return "加载失败，点此重试";
   }
 
   if (showNoMoreHistoryHint.value) {
-    return '没有更早消息了'
+    return "没有更早消息了";
   }
 
-  return ''
-})
+  return "";
+});
 const isHistoryStatusAction = computed(() => {
-  return Boolean(historyLoadError.value && !isLoadingHistory.value)
-})
+  return Boolean(historyLoadError.value && !isLoadingHistory.value);
+});
 const voiceComposerButtonLabel = computed(() => {
   if (isTranscribingVoice.value) {
-    return '转文字中...'
+    return "转文字中...";
   }
 
-  if (voiceDragTarget.value === 'cancel' && isVoiceGestureActive.value) {
-    return '松开 取消'
+  if (voiceDragTarget.value === "cancel" && isVoiceGestureActive.value) {
+    return "松开 取消";
   }
 
-  if (voiceDragTarget.value === 'transcribe' && isVoiceGestureActive.value) {
-    return '松开 转文字'
+  if (voiceDragTarget.value === "transcribe" && isVoiceGestureActive.value) {
+    return "松开 转文字";
   }
 
-  return isVoiceGestureActive.value ? '松开 发送' : '按住 说话'
-})
+  return isVoiceGestureActive.value ? "松开 发送" : "按住 说话";
+});
 const voiceStatusText = computed(() => {
-  if (voiceDragTarget.value === 'cancel') {
-    return '松开取消'
+  if (voiceDragTarget.value === "cancel") {
+    return "松开取消";
   }
 
-  if (voiceDragTarget.value === 'transcribe') {
-    return '松开转文字'
+  if (voiceDragTarget.value === "transcribe") {
+    return "松开转文字";
   }
 
-  return '松开发送'
-})
+  return "松开发送";
+});
 const voiceFooterText = computed(() => {
-  if (voiceDragTarget.value === 'cancel') {
-    return '松开 取消'
+  if (voiceDragTarget.value === "cancel") {
+    return "松开 取消";
   }
 
-  if (voiceDragTarget.value === 'transcribe') {
-    return '松开 转文字'
+  if (voiceDragTarget.value === "transcribe") {
+    return "松开 转文字";
   }
 
-  return '松开 发送'
-})
+  return "松开 发送";
+});
 const voiceOverlayPanelStyle = computed(() => {
   return {
     paddingBottom: `${safeAreaInsets.value.bottom}px`,
-  }
-})
+  };
+});
 const displayRows = computed<DisplayRow[]>(() => {
-  const rows: DisplayRow[] = []
+  const rows: DisplayRow[] = [];
 
   renderMessages.value.forEach((message, messageIndex) => {
     try {
-      appendMessageDisplayRows(rows, message, renderMessages.value[messageIndex - 1])
+      appendMessageDisplayRows(
+        rows,
+        message,
+        renderMessages.value[messageIndex - 1]
+      );
     } catch {
-      rows.push(buildMessageRenderFallbackRow(message, messageIndex))
+      rows.push(buildMessageRenderFallbackRow(message, messageIndex));
     }
-  })
+  });
 
-  return rows
-})
+  return rows;
+});
 const renderMessages = computed(() => {
   if (messages.value.length <= CHAT_RENDER_MESSAGE_WINDOW) {
-    return messages.value
+    return messages.value;
   }
 
   return isViewingHistoryWindow.value
     ? messages.value.slice(0, CHAT_RENDER_MESSAGE_WINDOW)
-    : messages.value.slice(-CHAT_RENDER_MESSAGE_WINDOW)
-})
-const visibleDisplayRows = computed(() => displayRows.value)
+    : messages.value.slice(-CHAT_RENDER_MESSAGE_WINDOW);
+});
+const visibleDisplayRows = computed(() => displayRows.value);
+const profileGuideAvatarRowKey = computed(() => {
+  for (
+    let index = visibleDisplayRows.value.length - 1;
+    index >= 0;
+    index -= 1
+  ) {
+    const row = visibleDisplayRows.value[index];
+
+    if (row.kind === "message" && !row.isUser) {
+      return row.key;
+    }
+  }
+
+  return "";
+});
 const messageDisplayRowCounts = computed(() => {
-  const counts = new Map<string, number>()
+  const counts = new Map<string, number>();
 
   displayRows.value.forEach((row) => {
-    if (row.kind !== 'message') {
-      return
+    if (row.kind !== "message") {
+      return;
     }
 
-    counts.set(row.messageId, (counts.get(row.messageId) ?? 0) + 1)
-  })
+    counts.set(row.messageId, (counts.get(row.messageId) ?? 0) + 1);
+  });
 
-  return counts
-})
+  return counts;
+});
 
 function appendMessageDisplayRows(
   rows: DisplayRow[],
   message: ConversationMessage,
-  previous?: ConversationMessage,
+  previous?: ConversationMessage
 ) {
   if (shouldShowTimeDivider(message, previous)) {
     rows.push({
       key: `time-${message.id}`,
-      kind: 'time',
+      kind: "time",
       label: formatMessageTime(message.createdAt ?? message.updatedAt),
-    })
+    });
   }
 
-  const normalizedText = normalizeEmojiText(buildMessageText(message))
+  const normalizedText = normalizeEmojiText(buildMessageText(message));
 
-  if (message.type === 'image' && message.role !== 'system') {
+  if (message.type === "image" && message.role !== "system") {
     rows.push({
       key: `message-${message.id}-image`,
-      kind: 'message',
+      kind: "message",
       messageId: message.id,
-      type: 'image',
+      type: "image",
       text: normalizedText,
       imageUrl: resolveImageMessageUrl(message.image),
       voiceDurationMs: 0,
       hasVoicePlayback: false,
       actions: getMessageActionItems(message),
-      isUser: message.role === 'user',
-      isSending: message.status === 'sending',
-      isFailed: message.status === 'failed',
+      isUser: message.role === "user",
+      isSending: message.status === "sending",
+      isFailed: message.status === "failed",
       anchorId: buildMessageAnchorId(message.id),
-      quotedText: '',
-      quotedLabel: '',
-    })
-    return
+      quotedText: "",
+      quotedLabel: "",
+    });
+    return;
   }
 
-  if (message.type === 'voice' && message.role !== 'system') {
+  if (message.type === "voice" && message.role !== "system") {
     rows.push({
       key: `message-${message.id}-voice`,
-      kind: 'message',
+      kind: "message",
       messageId: message.id,
-      type: 'voice',
+      type: "voice",
       text: normalizedText,
-      imageUrl: '',
+      imageUrl: "",
       voiceDurationMs: message.voice?.durationMs ?? 1000,
       hasVoicePlayback: hasResolvableVoicePayload(message.voice),
       actions: getMessageActionItems(message),
-      isUser: message.role === 'user',
-      isSending: message.status === 'sending',
-      isFailed: message.status === 'failed',
+      isUser: message.role === "user",
+      isSending: message.status === "sending",
+      isFailed: message.status === "failed",
       anchorId: buildMessageAnchorId(message.id),
-      quotedText: '',
-      quotedLabel: '',
-    })
-    return
+      quotedText: "",
+      quotedLabel: "",
+    });
+    return;
   }
 
   const textSegments =
-    message.type === 'text' && message.segments.length
+    message.type === "text" && message.segments.length
       ? message.segments.map((segment) => normalizeEmojiText(segment))
       : normalizedText
-        ? [normalizedText]
-        : []
+      ? [normalizedText]
+      : [];
 
-  if (message.role === 'system') {
+  if (message.role === "system") {
     if (normalizedText) {
       rows.push({
         key: `system-${message.id}`,
-        kind: 'system',
+        kind: "system",
         text: normalizedText,
-      })
+      });
     }
-    return
+    return;
   }
 
   textSegments.forEach((segment, segmentIndex) => {
     const shouldAttachVoicePlayback =
-      message.role === 'assistant'
-      && segmentIndex === textSegments.length - 1
-      && hasResolvableVoicePayload(message.voice)
+      message.role === "assistant" &&
+      segmentIndex === textSegments.length - 1 &&
+      hasResolvableVoicePayload(message.voice);
 
     rows.push({
       key: `message-${message.id}-${segmentIndex}`,
-      kind: 'message',
+      kind: "message",
       messageId: message.id,
-      type: 'text',
+      type: "text",
       text: segment,
-      imageUrl: '',
+      imageUrl: "",
       voiceDurationMs: shouldAttachVoicePlayback
         ? message.voice?.durationMs ?? 1000
         : 0,
       hasVoicePlayback: shouldAttachVoicePlayback,
       actions: getMessageActionItems(message, segment),
-      isUser: message.role === 'user',
-      isSending: message.status === 'sending',
-      isFailed: segmentIndex === textSegments.length - 1 && message.status === 'failed',
-      anchorId: segmentIndex === 0 ? buildMessageAnchorId(message.id) : '',
-      quotedText: shouldShowQuotedMessageInRow(message, segmentIndex, textSegments.length)
+      isUser: message.role === "user",
+      isSending: message.status === "sending",
+      isFailed:
+        segmentIndex === textSegments.length - 1 && message.status === "failed",
+      anchorId: segmentIndex === 0 ? buildMessageAnchorId(message.id) : "",
+      quotedText: shouldShowQuotedMessageInRow(
+        message,
+        segmentIndex,
+        textSegments.length
+      )
         ? getQuotedMessageText(message)
-        : '',
-      quotedLabel: shouldShowQuotedMessageInRow(message, segmentIndex, textSegments.length)
+        : "",
+      quotedLabel: shouldShowQuotedMessageInRow(
+        message,
+        segmentIndex,
+        textSegments.length
+      )
         ? getQuotedMessageLabel(message)
-        : '',
-    })
-  })
+        : "",
+    });
+  });
 }
 
 function buildMessageRenderFallbackRow(
   message: Partial<ConversationMessage> | null | undefined,
-  messageIndex: number,
+  messageIndex: number
 ): DisplayRow {
-  const messageId = typeof message?.id === 'string' && message.id
-    ? message.id
-    : `unknown-${messageIndex}`
+  const messageId =
+    typeof message?.id === "string" && message.id
+      ? message.id
+      : `unknown-${messageIndex}`;
 
   return {
     key: `message-render-fallback-${messageId}-${messageIndex}`,
-    kind: 'system',
+    kind: "system",
     text: CHAT_MESSAGE_RENDER_FALLBACK_TEXT,
-  }
+  };
 }
 
 function limitLoadedMessages(items: ConversationMessage[]) {
   if (items.length <= CHAT_MAX_LOADED_MESSAGES) {
-    return items
+    return items;
   }
 
-  return items.slice(-CHAT_MAX_LOADED_MESSAGES)
+  return items.slice(-CHAT_MAX_LOADED_MESSAGES);
 }
 
 useLoad((options) => {
-  conversationId.value = decodeRouteParam(options?.conversationId)
-  agentId.value = decodeRouteParam(options?.agentId)
-  agentName.value = decodeRouteParam(options?.agentName)
-  agentAvatar.value = decodeRouteParam(options?.agentAvatar)
-  agentSex.value = Number.parseInt(decodeRouteParam(options?.agentSex), 10) || 0
-  agentCallMe.value = decodeRouteParam(options?.agentCallMe)
-  iCallAgent.value = decodeRouteParam(options?.iCallAgent)
-  conversationPreview.value = decodeRouteParam(options?.preview)
-  conversationCreatedAt.value = decodeRouteParam(options?.createdAt)
+  conversationId.value = decodeRouteParam(options?.conversationId);
+  agentId.value = decodeRouteParam(options?.agentId);
+  agentName.value = decodeRouteParam(options?.agentName);
+  agentAvatar.value = decodeRouteParam(options?.agentAvatar);
+  agentSex.value =
+    Number.parseInt(decodeRouteParam(options?.agentSex), 10) || 0;
+  agentCallMe.value = decodeRouteParam(options?.agentCallMe);
+  iCallAgent.value = decodeRouteParam(options?.iCallAgent);
+  conversationPreview.value = decodeRouteParam(options?.preview);
+  conversationCreatedAt.value = decodeRouteParam(options?.createdAt);
 
-  preloadVipCenterWhenAuthenticated()
-  void preparePage()
-})
+  void preparePage();
+});
 
 function decodeRouteParam(value?: string) {
-  if (typeof value !== 'string') {
-    return ''
+  if (typeof value !== "string") {
+    return "";
   }
 
   try {
-    return decodeURIComponent(value)
+    return decodeURIComponent(value);
   } catch {
-    return value
+    return value;
   }
 }
 
 function scheduleAfterInitialRender(task: () => void) {
-  setTimeout(task, 300)
+  setTimeout(task, 300);
 }
 
 async function redirectToAuth() {
   await Taro.reLaunch({
-    url: '/pages/auth/index',
-  })
+    url: "/pages/auth/index",
+  });
 }
 
 async function ensureAuthenticated() {
   if (ensureSessionPromise) {
-    return ensureSessionPromise
+    return ensureSessionPromise;
   }
 
   ensureSessionPromise = Promise.resolve()
     .then(async () => {
-      isCheckingAuth.value = true
-      await restoreAuthSession()
+      isCheckingAuth.value = true;
+      await restoreAuthSession();
 
       if (!authSession.value) {
-        await redirectToAuth()
-        return
+        await redirectToAuth();
+        return;
       }
     })
     .finally(() => {
-      ensureSessionPromise = null
-      isCheckingAuth.value = false
-    })
+      ensureSessionPromise = null;
+      isCheckingAuth.value = false;
+    });
 
-  return ensureSessionPromise
+  return ensureSessionPromise;
 }
 
 async function preparePage() {
-  await ensureAuthenticated()
+  await ensureAuthenticated();
 
   if (!authSession.value) {
-    return
+    return;
   }
-
-  preloadVipCenterWhenAuthenticated()
 
   if (!conversationId.value) {
-    loadError.value = '缺少会话信息，请返回通讯录重新进入'
-    isLoading.value = false
-    return
+    loadError.value = "缺少会话信息，请返回通讯录重新进入";
+    isLoading.value = false;
+    return;
   }
 
-  isLoading.value = messages.value.length === 0
-  void refreshMessages({ showLoading: messages.value.length === 0 })
-  scheduleAfterInitialRender(() => {
-    void refreshAgentSnapshot()
-    void refreshChatQuotaSnapshot()
-  })
+  const cachedMessages = getCachedConversationMessages(conversationId.value);
+  if (messages.value.length === 0 && cachedMessages?.items.length) {
+    applyInitialMessagePage(cachedMessages);
+    isLoading.value = false;
+    void scrollToBottom({ animated: false });
+    if (!hasReportedCachedChat) {
+      hasReportedCachedChat = true;
+      reportPerformanceEvent(
+        "first_cached_content",
+        "chat",
+        Date.now() - chatPageStartedAt,
+        "storage"
+      );
+    }
+  }
+
+  isLoading.value = messages.value.length === 0;
+  void refreshInitialChat();
+}
+
+async function refreshInitialChat() {
+  if (refreshChatBootstrapPromise) {
+    return refreshChatBootstrapPromise;
+  }
+
+  const shouldShowLoading = messages.value.length === 0;
+  if (shouldShowLoading) {
+    isLoading.value = true;
+  }
+  loadError.value = "";
+
+  refreshChatBootstrapPromise = getConversationChatBootstrap(
+    conversationId.value,
+    {
+      pageSize: CHAT_MESSAGE_PAGE_SIZE,
+      lightweight: true,
+    }
+  )
+    .then(async (result) => {
+      applyInitialMessagePage(result);
+      if (!hasReportedChatData) {
+        hasReportedChatData = true;
+        reportPerformanceEvent(
+          "first_data",
+          "chat",
+          Date.now() - chatPageStartedAt,
+          "bootstrap"
+        );
+      }
+
+      if (result.agent) {
+        agentName.value = result.agent.name.trim() || agentName.value;
+        agentAvatar.value = result.agent.avatar.trim();
+        agentSex.value = result.agent.sex;
+        agentCallMe.value =
+          result.agent.agentCallMe.trim() || agentCallMe.value;
+        iCallAgent.value = result.agent.iCallAgent.trim() || iCallAgent.value;
+        isAgentHomeGuideVisible.value = Boolean(
+          result.agent.hasUnreadAgentHomeGuide
+        );
+      }
+
+      if (result.chatQuota) {
+        updateChatQuotaSnapshot(result.chatQuota);
+      }
+
+      if (result.items.length > 0) {
+        await scrollToBottom({ animated: !shouldShowLoading });
+        hasCompletedInitialMessagesScroll.value = true;
+      }
+    })
+    .catch(async (error: unknown) => {
+      if (error instanceof ApiException && error.requiresReLogin) {
+        await redirectToAuth();
+        return;
+      }
+
+      if (isLegacyChatBootstrapUnavailable(error)) {
+        await refreshMessages({ showLoading: shouldShowLoading });
+        scheduleAfterInitialRender(() => {
+          void refreshAgentSnapshot();
+          void refreshChatQuotaSnapshot();
+        });
+        return;
+      }
+
+      await handleApiError(error, "加载聊天记录失败，请稍后重试");
+    })
+    .finally(() => {
+      isLoading.value = false;
+      refreshChatBootstrapPromise = null;
+    });
+
+  return refreshChatBootstrapPromise;
+}
+
+function isLegacyChatBootstrapUnavailable(error: unknown) {
+  return (
+    error instanceof ApiException &&
+    (error.code === "RESOURCE_NOT_FOUND" ||
+      (!error.code && error.details?.includes("statusCode=404")))
+  );
+}
+
+function applyInitialMessagePage(result: ConversationMessageListResult) {
+  isViewingHistoryWindow.value = false;
+  messages.value = limitLoadedMessages(result.items);
+  hasMoreHistory.value = result.hasMore;
+  historyLoadError.value = "";
+  scheduleMissingAssistantVoiceDurationProbes(result.items);
+  resumePendingReplyPollingFromMessages(result.items);
 }
 
 function buildMessageAnchorId(messageId: string) {
-  return `chat-message-${messageId.replace(/[^A-Za-z0-9_-]/g, '-')}`
+  return `chat-message-${messageId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
 function getMessageTimeValue(message: ConversationMessage) {
-  return (message.createdAt ?? message.updatedAt)?.getTime() ?? 0
+  return (message.createdAt ?? message.updatedAt)?.getTime() ?? 0;
 }
 
 function compareConversationMessages(
   left: ConversationMessage,
-  right: ConversationMessage,
+  right: ConversationMessage
 ) {
-  const timeDiff = getMessageTimeValue(left) - getMessageTimeValue(right)
+  const timeDiff = getMessageTimeValue(left) - getMessageTimeValue(right);
 
   if (timeDiff !== 0) {
-    return timeDiff
+    return timeDiff;
   }
 
-  return left.id.localeCompare(right.id)
+  return left.id.localeCompare(right.id);
 }
 
 function mergeConversationMessages(
   currentMessages: ConversationMessage[],
-  nextMessages: ConversationMessage[],
+  nextMessages: ConversationMessage[]
 ) {
-  const messageById = new Map<string, ConversationMessage>()
+  const messageById = new Map<string, ConversationMessage>();
 
   currentMessages.forEach((message) => {
-    messageById.set(message.id, message)
-  })
+    messageById.set(message.id, message);
+  });
   nextMessages.forEach((message) => {
-    messageById.set(message.id, message)
-  })
+    messageById.set(message.id, message);
+  });
 
-  return Array.from(messageById.values()).sort(compareConversationMessages)
+  return Array.from(messageById.values()).sort(compareConversationMessages);
 }
 
 function findOldestLoadedMessage() {
   return messages.value.find((message) => {
-    return !message.id.startsWith('local-') && Boolean(message.createdAt ?? message.updatedAt)
-  })
+    return (
+      !message.id.startsWith("local-") &&
+      Boolean(message.createdAt ?? message.updatedAt)
+    );
+  });
 }
 
 async function refreshAgentSnapshot() {
   if (!agentId.value) {
-    return
+    return;
   }
 
   try {
-    const latestAgent = await getAgentDetail(agentId.value)
-    agentName.value = latestAgent.name.trim() || agentName.value
-    agentAvatar.value = latestAgent.avatar.trim()
-    agentSex.value = latestAgent.sex
-    agentCallMe.value = latestAgent.agentCallMe.trim() || agentCallMe.value
-    iCallAgent.value = latestAgent.iCallAgent.trim() || iCallAgent.value
+    const latestAgent = await getAgentDetail(agentId.value);
+    agentName.value = latestAgent.name.trim() || agentName.value;
+    agentAvatar.value = latestAgent.avatar.trim();
+    agentSex.value = latestAgent.sex;
+    agentCallMe.value = latestAgent.agentCallMe.trim() || agentCallMe.value;
+    iCallAgent.value = latestAgent.iCallAgent.trim() || iCallAgent.value;
+    isAgentHomeGuideVisible.value = shouldShowAgentHomeGuide(latestAgent);
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
+      await redirectToAuth();
     }
   }
 }
 
 async function runWithAgentReplyStatus(task: () => Promise<void>) {
-  isWaitingAgentReply.value = true
+  isWaitingAgentReply.value = true;
 
   try {
-    await task()
+    await task();
   } finally {
-    isWaitingAgentReply.value = false
+    isWaitingAgentReply.value = false;
   }
 }
 
 function getAssistantSegmentRevealDelay(segment: string) {
-  return segment.trim().length >= ASSISTANT_SEGMENT_REVEAL_CONFIG.longSegmentLengthThreshold
+  return segment.trim().length >=
+    ASSISTANT_SEGMENT_REVEAL_CONFIG.longSegmentLengthThreshold
     ? ASSISTANT_SEGMENT_REVEAL_CONFIG.longSegmentDelayMs
-    : ASSISTANT_SEGMENT_REVEAL_CONFIG.defaultDelayMs
+    : ASSISTANT_SEGMENT_REVEAL_CONFIG.defaultDelayMs;
 }
 
 function waitForAssistantSegmentDelay(delayMs: number) {
-  const generation = assistantSegmentRevealGeneration
+  const generation = assistantSegmentRevealGeneration;
 
   return new Promise<boolean>((resolve) => {
     const entry: AssistantSegmentRevealTimer = {
       timer: setTimeout(() => {
-        assistantSegmentRevealTimers.delete(entry)
-        resolve(generation === assistantSegmentRevealGeneration)
+        assistantSegmentRevealTimers.delete(entry);
+        resolve(generation === assistantSegmentRevealGeneration);
       }, delayMs),
       resolve,
-    }
+    };
 
-    assistantSegmentRevealTimers.add(entry)
-  })
+    assistantSegmentRevealTimers.add(entry);
+  });
 }
 
 function clearAssistantSegmentRevealTimers() {
-  assistantSegmentRevealGeneration += 1
+  assistantSegmentRevealGeneration += 1;
   assistantSegmentRevealTimers.forEach((entry) => {
-    clearTimeout(entry.timer)
-    entry.resolve(false)
-  })
-  assistantSegmentRevealTimers.clear()
+    clearTimeout(entry.timer);
+    entry.resolve(false);
+  });
+  assistantSegmentRevealTimers.clear();
 }
 
 async function revealAssistantMessage(message: ConversationMessage) {
-  if (message.type !== 'text' || message.segments.length <= 1) {
-    messages.value = limitLoadedMessages([...messages.value, message])
-    return
+  if (message.type !== "text" || message.segments.length <= 1) {
+    messages.value = limitLoadedMessages([...messages.value, message]);
+    return;
   }
 
-  const fullSegments = message.segments
+  const fullSegments = message.segments;
   messages.value = limitLoadedMessages([
     ...messages.value,
     {
       ...message,
       segments: fullSegments.slice(0, 1),
     },
-  ])
-  await scrollToBottom({ respectUserScroll: true })
+  ]);
+  await scrollToBottom({ respectUserScroll: true });
 
   for (let index = 1; index < fullSegments.length; index += 1) {
     const shouldContinue = await waitForAssistantSegmentDelay(
-      getAssistantSegmentRevealDelay(fullSegments[index]),
-    )
+      getAssistantSegmentRevealDelay(fullSegments[index])
+    );
     if (!shouldContinue) {
-      return
+      return;
     }
 
     messages.value = messages.value.map((item) =>
@@ -1289,1127 +1572,1187 @@ async function revealAssistantMessage(message: ConversationMessage) {
             segments: fullSegments.slice(0, index + 1),
           }
         : item
-    )
-    await scrollToBottom({ respectUserScroll: true })
+    );
+    await scrollToBottom({ respectUserScroll: true });
   }
 }
 
 async function revealAssistantMessages(items: ConversationMessage[]) {
   for (let index = 0; index < items.length; index += 1) {
-    const message = items[index]
+    const message = items[index];
 
     if (index > 0) {
       const shouldContinue = await waitForAssistantSegmentDelay(
-        getAssistantSegmentRevealDelay(buildMessageText(message)),
-      )
+        getAssistantSegmentRevealDelay(buildMessageText(message))
+      );
 
       if (!shouldContinue) {
-        return
+        return;
       }
     }
 
-    await revealAssistantMessage(message)
-    await scrollToBottom({ respectUserScroll: true })
+    await revealAssistantMessage(message);
+    await scrollToBottom({ respectUserScroll: true });
   }
 }
 
 function getAssistantMessagesFromResult(result: SendConversationMessageResult) {
   if (result.assistantMessages?.length) {
-    return result.assistantMessages
+    return result.assistantMessages;
   }
 
-  return result.assistantMessage ? [result.assistantMessage] : []
+  return result.assistantMessage ? [result.assistantMessage] : [];
 }
 
 async function appendConversationResult(
   tempMessageId: string,
-  result: SendConversationMessageResult,
+  result: SendConversationMessageResult
 ) {
-  showLatestMessageWindowIfFollowing()
-  messages.value = messages.value.filter((message) => message.id !== tempMessageId)
-  messages.value = limitLoadedMessages([...messages.value, result.userMessage])
-  handleChatQuotaAfterSend(result)
+  showLatestMessageWindowIfFollowing();
+  messages.value = messages.value.filter(
+    (message) => message.id !== tempMessageId
+  );
+  messages.value = limitLoadedMessages([...messages.value, result.userMessage]);
+  handleChatQuotaAfterSend(result);
 
-  const assistantMessages = getAssistantMessagesFromResult(result)
+  const assistantMessages = getAssistantMessagesFromResult(result);
   if (!assistantMessages.length) {
-    return
+    return;
   }
 
-  await revealAssistantMessages(assistantMessages)
-  probeMissingAssistantVoiceDurations(assistantMessages)
+  await revealAssistantMessages(assistantMessages);
+  probeMissingAssistantVoiceDurations(assistantMessages);
 }
 
 function handleChatQuotaAfterSend(result: SendConversationMessageResult) {
-  updateChatQuotaSnapshot(result.chatQuota)
+  updateChatQuotaSnapshot(result.chatQuota);
 
-  if (result.chatQuota?.isVip) {
-    return
-  }
-
-  if (result.chatQuota?.remainingCount === 1) {
-    showChatQuotaDialog('remaining')
+  if (shouldShowChatQuotaRemainingDialog(result.chatQuota)) {
+    showChatQuotaDialog("remaining");
   }
 }
 
 function updateChatQuotaSnapshot(chatQuota?: ConversationChatQuotaSnapshot) {
   if (!chatQuota) {
-    return
+    return;
   }
 
-  if (chatQuota.isVip) {
-    chatQuotaIsVip.value = true
-    chatQuotaRemainingCount.value = null
-    return
-  }
-
-  chatQuotaIsVip.value = false
-
-  if (typeof chatQuota.remainingCount === 'number') {
-    chatQuotaRemainingCount.value = chatQuota.remainingCount
-  }
+  chatQuotaSnapshot.value = copyChatQuotaSnapshot(chatQuota);
+  void syncAuthSessionVipStatus(chatQuota.isVip);
 }
 
 function isNonVipChatQuotaExhausted() {
-  return !isCurrentUserVip.value
-    && chatQuotaRemainingCount.value !== null
-    && chatQuotaRemainingCount.value <= 0
+  return isChatQuotaExhausted(chatQuotaSnapshot.value);
 }
 
 function isChatQuotaLimitError(error: unknown) {
-  return error instanceof ApiException && error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
+  return (
+    error instanceof ApiException &&
+    error.code === "NON_VIP_CHAT_LIMIT_EXCEEDED"
+  );
 }
 
 function showChatQuotaDialog(type: ChatQuotaDialogType) {
-  chatQuotaDialogType.value = type
-  isChatQuotaDialogVisible.value = true
-  hideComposerPanels()
-  hideMessageActions()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
+  const wasVisible = isChatQuotaDialogVisible.value;
+  chatQuotaDialogType.value = type;
+  isChatQuotaDialogVisible.value = true;
+  if (!wasVisible) {
+    reportChatQuotaDialogEvent("exposure", type, chatQuotaSnapshot.value);
+  }
+  hideComposerPanels();
+  hideMessageActions();
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  void Taro.hideKeyboard();
 }
 
 function showChatQuotaExhaustedDialog() {
-  chatQuotaIsVip.value = false
-  chatQuotaRemainingCount.value = 0
-  showChatQuotaDialog('exhausted')
+  const currentChatQuota = chatQuotaSnapshot.value;
+  const shouldRefreshCompleteSnapshot =
+    !currentChatQuota?.policy ||
+    typeof currentChatQuota.limit !== "number" ||
+    typeof currentChatQuota.trialDays !== "number";
+  chatQuotaSnapshot.value = {
+    ...(currentChatQuota ?? {}),
+    isVip: false,
+    remainingCount: 0,
+  };
+  void syncAuthSessionVipStatus(false);
+  showChatQuotaDialog("exhausted");
+  if (shouldRefreshCompleteSnapshot) {
+    void refreshChatQuotaSnapshot();
+  }
 }
 
 async function ensureChatQuotaAvailableBeforeSend() {
-  if (isCurrentUserVip.value) {
-    chatQuotaRemainingCount.value = null
-    return true
+  if (chatQuotaSnapshot.value?.isVip) {
+    return true;
   }
 
   if (isNonVipChatQuotaExhausted()) {
-    showChatQuotaExhaustedDialog()
-    return false
+    showChatQuotaExhaustedDialog();
+    return false;
   }
 
-  if (!conversationId.value || chatQuotaRemainingCount.value !== null) {
-    return true
+  if (
+    !conversationId.value ||
+    typeof chatQuotaSnapshot.value?.remainingCount === "number"
+  ) {
+    return true;
   }
 
-  isCheckingChatQuota.value = true
+  isCheckingChatQuota.value = true;
 
   try {
-    const chatQuota = await refreshChatQuotaSnapshot()
+    const chatQuota = await refreshChatQuotaSnapshot();
 
     if (!chatQuota) {
-      showToast('发送前校验失败，请稍后重试')
-      return false
+      showToast("发送前校验失败，请稍后重试");
+      return false;
     }
 
-    if (!chatQuota.isVip && typeof chatQuota.remainingCount === 'number') {
+    if (!chatQuota.isVip && typeof chatQuota.remainingCount === "number") {
       if (chatQuota.remainingCount <= 0) {
-        showChatQuotaExhaustedDialog()
-        return false
+        showChatQuotaExhaustedDialog();
+        return false;
       }
     }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return false
+      await redirectToAuth();
+      return false;
     }
 
-    showToast('发送前校验失败，请稍后重试')
-    return false
+    showToast("发送前校验失败，请稍后重试");
+    return false;
   } finally {
-    isCheckingChatQuota.value = false
+    isCheckingChatQuota.value = false;
   }
 
-  return true
+  return true;
 }
 
 function handleChatQuotaDialogContinue() {
-  isChatQuotaDialogVisible.value = false
+  reportChatQuotaDialogEvent(
+    "continue",
+    chatQuotaDialogType.value,
+    chatQuotaSnapshot.value
+  );
+  isChatQuotaDialogVisible.value = false;
 }
 
 function handleChatQuotaDialogUpgrade() {
-  isChatQuotaDialogVisible.value = false
+  reportChatQuotaDialogEvent(
+    "upgrade",
+    chatQuotaDialogType.value,
+    chatQuotaSnapshot.value
+  );
+  isChatQuotaDialogVisible.value = false;
 
   void Taro.navigateTo({
-    url: '/pages/vip-center/index',
-  })
+    url: "/pages/vip-center/index",
+  });
+}
+
+function handleChatQuotaDialogDismiss() {
+  reportChatQuotaDialogEvent(
+    "dismiss",
+    chatQuotaDialogType.value,
+    chatQuotaSnapshot.value
+  );
 }
 
 useDidShow(() => {
   if (!didInitialShow.value) {
-    didInitialShow.value = true
-    return
+    didInitialShow.value = true;
+    return;
   }
 
   if (!conversationId.value || !agentId.value || isCheckingAuth.value) {
-    return
+    return;
   }
 
-  void refreshMessages({ showLoading: false })
+  void refreshMessages({ showLoading: false });
   scheduleAfterInitialRender(() => {
-    void refreshAgentSnapshot()
-    void refreshChatQuotaSnapshot({ resetBeforeFetch: true })
-  })
-})
+    void refreshAgentSnapshot();
+    void refreshChatQuotaSnapshot({ resetBeforeFetch: true });
+  });
+});
 
 async function refreshChatQuotaSnapshot(
-  options: { resetBeforeFetch?: boolean } = {},
+  options: { resetBeforeFetch?: boolean } = {}
 ) {
   if (!conversationId.value) {
-    return undefined
-  }
-
-  if (isCurrentUserVip.value) {
-    chatQuotaIsVip.value = true
-    chatQuotaRemainingCount.value = null
-    return { isVip: true } satisfies ConversationChatQuotaSnapshot
+    return undefined;
   }
 
   if (options.resetBeforeFetch) {
-    chatQuotaRemainingCount.value = null
+    chatQuotaSnapshot.value = null;
   }
 
   if (refreshChatQuotaPromise) {
-    return refreshChatQuotaPromise
+    return refreshChatQuotaPromise;
   }
 
   refreshChatQuotaPromise = getConversationChatQuota(conversationId.value)
     .then((chatQuota) => {
       if (chatQuota) {
-        updateChatQuotaSnapshot(chatQuota)
+        updateChatQuotaSnapshot(chatQuota);
       }
 
-      return chatQuota
+      return chatQuota;
     })
     .catch(async (error: unknown) => {
       if (error instanceof ApiException && error.requiresReLogin) {
-        await redirectToAuth()
+        await redirectToAuth();
       }
 
-      return undefined
+      return undefined;
     })
     .finally(() => {
-      refreshChatQuotaPromise = null
-    })
+      refreshChatQuotaPromise = null;
+    });
 
-  return refreshChatQuotaPromise
+  return refreshChatQuotaPromise;
 }
 
 async function refreshMessages(options: { showLoading?: boolean } = {}) {
   if (refreshMessagesPromise) {
-    return refreshMessagesPromise
+    return refreshMessagesPromise;
   }
 
-  const shouldShowLoading = options.showLoading ?? messages.value.length === 0
-  const shouldScrollWithoutAnimation = !hasCompletedInitialMessagesScroll.value || shouldShowLoading
+  const shouldShowLoading = options.showLoading ?? messages.value.length === 0;
+  const shouldScrollWithoutAnimation =
+    !hasCompletedInitialMessagesScroll.value || shouldShowLoading;
 
   if (shouldShowLoading) {
-    isLoading.value = true
+    isLoading.value = true;
   }
 
-  loadError.value = ''
+  loadError.value = "";
 
   refreshMessagesPromise = getConversationMessagesPage(conversationId.value, {
     pageSize: CHAT_MESSAGE_PAGE_SIZE,
     lightweight: true,
   })
     .then(async (result) => {
-      isViewingHistoryWindow.value = false
-      messages.value = limitLoadedMessages(result.items)
-      hasMoreHistory.value = result.hasMore
-      historyLoadError.value = ''
-      probeMissingAssistantVoiceDurations(result.items)
-      resumePendingReplyPollingFromMessages(result.items)
-    })
-    .catch(async (error: unknown) => {
-      await handleApiError(error, '加载聊天记录失败，请稍后重试')
-    })
-    .finally(async () => {
-      isLoading.value = false
-      refreshMessagesPromise = null
-
-      if (!loadError.value && messages.value.length > 0) {
-        await scrollToBottom({ animated: !shouldScrollWithoutAnimation })
-        hasCompletedInitialMessagesScroll.value = true
+      applyInitialMessagePage(result);
+      if (!hasReportedChatData) {
+        hasReportedChatData = true;
+        reportPerformanceEvent(
+          "first_data",
+          "chat",
+          Date.now() - chatPageStartedAt,
+          "messages"
+        );
       }
     })
+    .catch(async (error: unknown) => {
+      await handleApiError(error, "加载聊天记录失败，请稍后重试");
+    })
+    .finally(async () => {
+      isLoading.value = false;
+      refreshMessagesPromise = null;
 
-  return refreshMessagesPromise
+      if (!loadError.value && messages.value.length > 0) {
+        await scrollToBottom({ animated: !shouldScrollWithoutAnimation });
+        hasCompletedInitialMessagesScroll.value = true;
+      }
+    });
+
+  return refreshMessagesPromise;
 }
 
 async function loadOlderMessages() {
   if (
-    isLoadingHistory.value
-    || isLoading.value
-    || !hasMoreHistory.value
-    || !conversationId.value
+    isLoadingHistory.value ||
+    isLoading.value ||
+    !hasMoreHistory.value ||
+    !conversationId.value
   ) {
-    return
+    return;
   }
 
-  const oldestMessage = findOldestLoadedMessage()
-  const beforeCreatedAt = oldestMessage?.createdAt ?? oldestMessage?.updatedAt
+  const oldestMessage = findOldestLoadedMessage();
+  const beforeCreatedAt = oldestMessage?.createdAt ?? oldestMessage?.updatedAt;
 
   if (!oldestMessage || !beforeCreatedAt) {
-    hasMoreHistory.value = false
-    return
+    hasMoreHistory.value = false;
+    return;
   }
 
-  const anchorId = buildMessageAnchorId(oldestMessage.id)
+  const anchorId = buildMessageAnchorId(oldestMessage.id);
 
-  isLoadingHistory.value = true
-  historyLoadError.value = ''
-  let shouldDelayHideLoading = false
+  isLoadingHistory.value = true;
+  historyLoadError.value = "";
+  let shouldDelayHideLoading = false;
 
   try {
     const result = await getConversationMessagesPage(conversationId.value, {
       pageSize: CHAT_MESSAGE_PAGE_SIZE,
       beforeCreatedAt,
       lightweight: true,
-    })
+    });
 
-    messages.value = mergeConversationMessages(messages.value, result.items)
-    isViewingHistoryWindow.value = true
-    hasMoreHistory.value = result.hasMore
-    probeMissingAssistantVoiceDurations(result.items)
-    await scrollToMessageAnchor(anchorId)
-    shouldDelayHideLoading = true
+    messages.value = mergeConversationMessages(messages.value, result.items);
+    isViewingHistoryWindow.value = true;
+    hasMoreHistory.value = result.hasMore;
+    probeMissingAssistantVoiceDurations(result.items);
+    await scrollToMessageAnchor(anchorId);
+    shouldDelayHideLoading = true;
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    historyLoadError.value = '加载失败'
+    historyLoadError.value = "加载失败";
   } finally {
     if (shouldDelayHideLoading) {
-      await waitForHistoryScrollSettle()
+      await waitForHistoryScrollSettle();
     }
 
-    isLoadingHistory.value = false
+    isLoadingHistory.value = false;
   }
 }
 
 function getChatScrollTop(event: unknown) {
   const detail =
-    event && typeof event === 'object' && 'detail' in event
+    event && typeof event === "object" && "detail" in event
       ? (event as ChatScrollEvent).detail
-      : undefined
-  const scrollTop = detail?.scrollTop
+      : undefined;
+  const scrollTop = detail?.scrollTop;
 
-  if (typeof scrollTop !== 'number' || !Number.isFinite(scrollTop)) {
-    return null
+  if (typeof scrollTop !== "number" || !Number.isFinite(scrollTop)) {
+    return null;
   }
 
-  return scrollTop
+  return scrollTop;
 }
 
 function handleChatScroll(event: unknown) {
-  const scrollTop = getChatScrollTop(event)
+  const scrollTop = getChatScrollTop(event);
   if (scrollTop === null) {
-    return
+    return;
   }
 
   if (
-    hasTrackedChatScrollTop
-    && scrollTop < lastChatScrollTop - CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD
+    hasTrackedChatScrollTop &&
+    scrollTop < lastChatScrollTop - CHAT_AUTO_FOLLOW_SCROLL_UP_THRESHOLD
   ) {
-    stopAutoFollowingNewMessages()
+    stopAutoFollowingNewMessages();
   }
 
-  lastChatScrollTop = Math.max(0, scrollTop)
-  hasTrackedChatScrollTop = true
+  lastChatScrollTop = Math.max(0, scrollTop);
+  hasTrackedChatScrollTop = true;
 }
 
 function handleChatScrollToUpper() {
-  stopAutoFollowingNewMessages()
-  void loadOlderMessages()
+  stopAutoFollowingNewMessages();
+  void loadOlderMessages();
 }
 
 function handleChatScrollToLower() {
-  shouldAutoFollowNewMessages = true
+  shouldAutoFollowNewMessages = true;
 }
 
 function stopAutoFollowingNewMessages() {
-  shouldAutoFollowNewMessages = false
-  scrollToBottomGeneration += 1
-  scrollToBottomPromise = null
-  clearScrollIntoViewResetTimer()
-  scrollIntoViewTarget.value = ''
+  shouldAutoFollowNewMessages = false;
+  scrollToBottomGeneration += 1;
+  scrollToBottomPromise = null;
+  clearScrollIntoViewResetTimer();
+  scrollIntoViewTarget.value = "";
 }
 
 function showLatestMessageWindowIfFollowing() {
   if (shouldAutoFollowNewMessages) {
-    isViewingHistoryWindow.value = false
+    isViewingHistoryWindow.value = false;
   }
 }
 
 function handleHistoryStatusTap() {
   if (!isHistoryStatusAction.value) {
-    return
+    return;
   }
 
-  void loadOlderMessages()
+  void loadOlderMessages();
 }
 
 function resumePendingReplyPollingFromMessages(items: ConversationMessage[]) {
-  const latestAssistantTime = findLatestMessageCreatedAt(items, 'assistant')
-  const latestUserTime = findLatestMessageCreatedAt(items, 'user')
+  const latestAssistantTime = findLatestMessageCreatedAt(items, "assistant");
+  const latestUserTime = findLatestMessageCreatedAt(items, "user");
 
   if (
-    latestUserTime
-    && Date.now() - latestUserTime.getTime() <= AGENT_REPLY_RESUME_WINDOW_MS
-    && (!latestAssistantTime || latestUserTime > latestAssistantTime)
+    latestUserTime &&
+    Date.now() - latestUserTime.getTime() <= AGENT_REPLY_RESUME_WINDOW_MS &&
+    (!latestAssistantTime || latestUserTime > latestAssistantTime)
   ) {
-    startReplyPolling(latestUserTime)
-    return
+    startReplyPolling(latestUserTime);
+    return;
   }
 
-  stopReplyPolling()
+  stopReplyPolling();
 }
 
 function findLatestMessageCreatedAt(
   items: ConversationMessage[],
-  role: 'user' | 'assistant',
+  role: "user" | "assistant"
 ) {
   return items.reduce<Date | null>((latest, message) => {
-    if (message.role !== role || message.status !== 'sent') {
-      return latest
+    if (message.role !== role || message.status !== "sent") {
+      return latest;
     }
 
-    const createdAt = message.createdAt ?? message.updatedAt
+    const createdAt = message.createdAt ?? message.updatedAt;
     if (!createdAt) {
-      return latest
+      return latest;
     }
 
-    return !latest || createdAt > latest ? createdAt : latest
-  }, null)
+    return !latest || createdAt > latest ? createdAt : latest;
+  }, null);
 }
 
 function startReplyPolling(afterUserCreatedAt: Date) {
-  replyPollingAfterUserCreatedAt = afterUserCreatedAt
-  replyPollingStartedAt = Date.now()
-  replyPollingFailureCount = 0
-  hasShownReplyPollingNetworkWarning = false
-  isWaitingAgentReply.value = true
-  scheduleReplyPolling(0)
+  replyPollingAfterUserCreatedAt = afterUserCreatedAt;
+  replyPollingStartedAt = Date.now();
+  replyPollingFailureCount = 0;
+  hasShownReplyPollingNetworkWarning = false;
+  isWaitingAgentReply.value = true;
+  scheduleReplyPolling(0);
 }
 
 function scheduleReplyPolling(delayMs = AGENT_REPLY_POLL_INTERVAL_MS) {
   if (!conversationId.value || !replyPollingAfterUserCreatedAt) {
-    stopReplyPolling()
-    return
+    stopReplyPolling();
+    return;
   }
 
   if (replyPollingTimer) {
-    clearTimeout(replyPollingTimer)
+    clearTimeout(replyPollingTimer);
   }
 
   replyPollingTimer = setTimeout(() => {
-    replyPollingTimer = null
-    void pollConversationReply()
-  }, delayMs)
+    replyPollingTimer = null;
+    void pollConversationReply();
+  }, delayMs);
 }
 
 async function pollConversationReply() {
-  const pendingAfter = replyPollingAfterUserCreatedAt
+  const pendingAfter = replyPollingAfterUserCreatedAt;
   if (!conversationId.value || !pendingAfter) {
-    stopReplyPolling()
-    return
+    stopReplyPolling();
+    return;
   }
 
   if (Date.now() - replyPollingStartedAt >= AGENT_REPLY_POLL_TIMEOUT_MS) {
-    stopReplyPolling()
-    showToast('TA 还在想，稍后重新进入会自动继续查询')
-    return
+    stopReplyPolling();
+    showToast("TA 还在想，稍后重新进入会自动继续查询");
+    return;
   }
 
   try {
     const result = await getConversationMessagesPage(conversationId.value, {
       pageSize: CHAT_MESSAGE_PAGE_SIZE,
       lightweight: true,
-    })
-    const items = result.items
-    replyPollingFailureCount = 0
-    hasShownReplyPollingNetworkWarning = false
+    });
+    const items = result.items;
+    replyPollingFailureCount = 0;
+    hasShownReplyPollingNetworkWarning = false;
 
-    await reconcilePolledMessages(items, pendingAfter)
-    probeMissingAssistantVoiceDurations(items)
+    await reconcilePolledMessages(items, pendingAfter);
+    probeMissingAssistantVoiceDurations(items);
 
     if (hasAssistantReplyResultAfter(messages.value, pendingAfter)) {
-      stopReplyPolling()
-      return
+      stopReplyPolling();
+      return;
     }
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      stopReplyPolling()
-      await redirectToAuth()
-      return
+      stopReplyPolling();
+      await redirectToAuth();
+      return;
     }
 
-    replyPollingFailureCount += 1
+    replyPollingFailureCount += 1;
     if (
-      replyPollingFailureCount >= AGENT_REPLY_POLL_WARNING_FAILURE_COUNT
-      && !hasShownReplyPollingNetworkWarning
+      replyPollingFailureCount >= AGENT_REPLY_POLL_WARNING_FAILURE_COUNT &&
+      !hasShownReplyPollingNetworkWarning
     ) {
-      hasShownReplyPollingNetworkWarning = true
-      showToast('网络连接异常，正在自动重试')
+      hasShownReplyPollingNetworkWarning = true;
+      showToast("网络连接异常，正在自动重试");
     }
 
-    scheduleReplyPolling(resolveReplyPollingRetryDelay())
-    return
+    scheduleReplyPolling(resolveReplyPollingRetryDelay());
+    return;
   }
 
-  scheduleReplyPolling()
+  scheduleReplyPolling();
 }
 
 function resolveReplyPollingRetryDelay() {
-  const failureExponent = Math.max(0, replyPollingFailureCount - 1)
+  const failureExponent = Math.max(0, replyPollingFailureCount - 1);
 
   return Math.min(
     AGENT_REPLY_POLL_MAX_INTERVAL_MS,
-    AGENT_REPLY_POLL_INTERVAL_MS * 2 ** failureExponent,
-  )
+    AGENT_REPLY_POLL_INTERVAL_MS * 2 ** failureExponent
+  );
 }
 
 async function reconcilePolledMessages(
   items: ConversationMessage[],
-  pendingAfter: Date,
+  pendingAfter: Date
 ) {
-  showLatestMessageWindowIfFollowing()
-  const currentMessageIds = new Set(messages.value.map((message) => message.id))
+  showLatestMessageWindowIfFollowing();
+  const currentMessageIds = new Set(
+    messages.value.map((message) => message.id)
+  );
   const newAssistantMessages = items.filter((message) => {
-    const createdAt = message.createdAt ?? message.updatedAt
+    const createdAt = message.createdAt ?? message.updatedAt;
     return (
-      message.role === 'assistant'
-      && isAssistantReplyResultStatus(message.status)
-      && Boolean(createdAt && createdAt > pendingAfter)
-      && !currentMessageIds.has(message.id)
-    )
-  })
-  const newAssistantIds = new Set(newAssistantMessages.map((message) => message.id))
+      message.role === "assistant" &&
+      isAssistantReplyResultStatus(message.status) &&
+      Boolean(createdAt && createdAt > pendingAfter) &&
+      !currentMessageIds.has(message.id)
+    );
+  });
+  const newAssistantIds = new Set(
+    newAssistantMessages.map((message) => message.id)
+  );
 
   messages.value = limitLoadedMessages(
     mergeConversationMessages(
       messages.value,
-      items.filter((message) => !newAssistantIds.has(message.id)),
+      items.filter((message) => !newAssistantIds.has(message.id))
     )
-  )
+  );
 
-  await revealAssistantMessages(newAssistantMessages)
-  await scrollToBottom({ respectUserScroll: true })
+  await revealAssistantMessages(newAssistantMessages);
+  await scrollToBottom({ respectUserScroll: true });
 }
 
-function hasAssistantReplyResultAfter(items: ConversationMessage[], after: Date) {
+function hasAssistantReplyResultAfter(
+  items: ConversationMessage[],
+  after: Date
+) {
   return items.some((message) => {
-    const createdAt = message.createdAt ?? message.updatedAt
+    const createdAt = message.createdAt ?? message.updatedAt;
     return (
-      message.role === 'assistant'
-      && isAssistantReplyResultStatus(message.status)
-      && Boolean(createdAt && createdAt > after)
-    )
-  })
+      message.role === "assistant" &&
+      isAssistantReplyResultStatus(message.status) &&
+      Boolean(createdAt && createdAt > after)
+    );
+  });
 }
 
 function isAssistantReplyResultStatus(status: string) {
-  return status === 'sent' || status === 'failed'
+  return status === "sent" || status === "failed";
 }
 
 function stopReplyPolling() {
   if (replyPollingTimer) {
-    clearTimeout(replyPollingTimer)
-    replyPollingTimer = null
+    clearTimeout(replyPollingTimer);
+    replyPollingTimer = null;
   }
 
-  replyPollingAfterUserCreatedAt = null
-  replyPollingFailureCount = 0
-  hasShownReplyPollingNetworkWarning = false
-  isWaitingAgentReply.value = false
+  replyPollingAfterUserCreatedAt = null;
+  replyPollingFailureCount = 0;
+  hasShownReplyPollingNetworkWarning = false;
+  isWaitingAgentReply.value = false;
 }
 
 async function handleApiError(error: unknown, fallbackMessage: string) {
   if (error instanceof ApiException) {
     if (error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    loadError.value = error.message
-    return
+    loadError.value = error.message;
+    return;
   }
 
-  loadError.value = fallbackMessage
+  loadError.value = fallbackMessage;
 }
 
 async function scrollToBottom(
-  options: { animated?: boolean; respectUserScroll?: boolean } = {},
+  options: { animated?: boolean; respectUserScroll?: boolean } = {}
 ) {
-  const animated = options.animated ?? true
-  const respectUserScroll = options.respectUserScroll ?? false
+  const animated = options.animated ?? true;
+  const respectUserScroll = options.respectUserScroll ?? false;
 
   if (respectUserScroll && !shouldAutoFollowNewMessages) {
-    return
+    return;
   }
 
   if (!respectUserScroll) {
-    shouldAutoFollowNewMessages = true
+    shouldAutoFollowNewMessages = true;
   }
 
   if (scrollToBottomPromise) {
-    return scrollToBottomPromise
+    return scrollToBottomPromise;
   }
 
-  const generation = scrollToBottomGeneration + 1
-  scrollToBottomGeneration = generation
-  clearScrollIntoViewResetTimer()
+  const generation = scrollToBottomGeneration + 1;
+  scrollToBottomGeneration = generation;
+  clearScrollIntoViewResetTimer();
 
   scrollToBottomPromise = Promise.resolve()
     .then(async () => {
-      scrollWithAnimation.value = animated
-      await nextTick()
-      scrollIntoViewTarget.value = ''
-      await nextTick()
+      scrollWithAnimation.value = animated;
+      await nextTick();
+      scrollIntoViewTarget.value = "";
+      await nextTick();
       await new Promise<void>((resolve) => {
         setTimeout(() => {
           if (generation !== scrollToBottomGeneration) {
-            resolve()
-            return
+            resolve();
+            return;
           }
 
-          scrollWithAnimation.value = animated
-          scrollIntoViewTarget.value = 'chat-bottom-anchor'
-          scheduleScrollIntoViewTargetReset(generation)
-          resolve()
-        }, 0)
-      })
+          scrollWithAnimation.value = animated;
+          scrollIntoViewTarget.value = "chat-bottom-anchor";
+          scheduleScrollIntoViewTargetReset(generation);
+          resolve();
+        }, 0);
+      });
     })
     .finally(() => {
-      scrollToBottomPromise = null
-    })
+      scrollToBottomPromise = null;
+    });
 
-  return scrollToBottomPromise
+  return scrollToBottomPromise;
 }
 
 function clearScrollIntoViewResetTimer() {
   if (scrollIntoViewResetTimer) {
-    clearTimeout(scrollIntoViewResetTimer)
-    scrollIntoViewResetTimer = null
+    clearTimeout(scrollIntoViewResetTimer);
+    scrollIntoViewResetTimer = null;
   }
 }
 
 function scheduleScrollIntoViewTargetReset(generation: number) {
-  clearScrollIntoViewResetTimer()
+  clearScrollIntoViewResetTimer();
   scrollIntoViewResetTimer = setTimeout(() => {
-    scrollIntoViewResetTimer = null
+    scrollIntoViewResetTimer = null;
     if (generation === scrollToBottomGeneration) {
-      scrollIntoViewTarget.value = ''
+      scrollIntoViewTarget.value = "";
     }
-  }, CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS)
+  }, CHAT_SCROLL_INTO_VIEW_RESET_DELAY_MS);
 }
 
 async function scrollToMessageAnchor(anchorId: string) {
   if (!anchorId) {
-    return
+    return;
   }
 
-  scrollWithAnimation.value = false
-  await nextTick()
-  scrollIntoViewTarget.value = ''
-  await nextTick()
+  scrollWithAnimation.value = false;
+  await nextTick();
+  scrollIntoViewTarget.value = "";
+  await nextTick();
   await new Promise<void>((resolve) => {
     setTimeout(() => {
-      scrollWithAnimation.value = false
-      scrollIntoViewTarget.value = anchorId
-      resolve()
-    }, 0)
-  })
+      scrollWithAnimation.value = false;
+      scrollIntoViewTarget.value = anchorId;
+      resolve();
+    }, 0);
+  });
 }
 
 async function waitForHistoryScrollSettle() {
-  await nextTick()
+  await nextTick();
   await new Promise<void>((resolve) => {
-    setTimeout(resolve, 80)
-  })
+    setTimeout(resolve, 80);
+  });
 }
 
 function buildMessageText(message: ConversationMessage) {
-  if (message.type === 'voice') {
-    const transcript = message.voice?.transcript?.trim() || message.content.trim()
+  if (message.type === "voice") {
+    const transcript =
+      message.voice?.transcript?.trim() || message.content.trim();
     if (transcript) {
-      return transcript
+      return transcript;
     }
 
     return message.voice?.durationMs
       ? `[语音消息 ${formatVoiceDuration(message.voice.durationMs)}]`
-      : '[语音消息]'
+      : "[语音消息]";
   }
 
-  if (message.type === 'image') {
-    return message.image?.analysis?.trim() || message.content.trim() || '[图片消息]'
+  if (message.type === "image") {
+    return (
+      message.image?.analysis?.trim() || message.content.trim() || "[图片消息]"
+    );
   }
 
-  return message.content.trim()
+  return message.content.trim();
 }
 
 function shouldShowQuotedMessageInRow(
   message: ConversationMessage,
   segmentIndex: number,
-  segmentCount: number,
+  segmentCount: number
 ) {
   return (
-    message.role === 'user' &&
-    message.type === 'text' &&
+    message.role === "user" &&
+    message.type === "text" &&
     segmentIndex === segmentCount - 1 &&
     Boolean(getQuotedMessageText(message))
-  )
+  );
 }
 
 function getQuotedMessageText(message: ConversationMessage) {
-  const content = message.quote?.content?.trim()
+  const content = message.quote?.content?.trim();
 
   if (!content) {
-    return ''
+    return "";
   }
 
-  return normalizeEmojiText(content.replace(/\s+/g, ' '))
+  return normalizeEmojiText(content.replace(/\s+/g, " "));
 }
 
 function getQuotedMessageLabel(message: ConversationMessage) {
-  const quote = message.quote
-  const role = quote?.role?.trim()
+  const quote = message.quote;
+  const role = quote?.role?.trim();
 
-  if (role === 'user') {
-    return '我'
+  if (role === "user") {
+    return "我";
   }
 
-  if (role === 'assistant') {
-    return pageTitle.value
+  if (role === "assistant") {
+    return pageTitle.value;
   }
 
-  return ''
+  return "";
 }
 
 function resolveImageMessageUrl(image?: ConversationImagePayload) {
-  const directUrl = image?.url?.trim()
+  const directUrl = image?.url?.trim();
   if (directUrl) {
-    return directUrl
+    return directUrl;
   }
 
-  const objectKey = image?.objectKey?.trim()
+  const objectKey = image?.objectKey?.trim();
   if (!objectKey || !ApiConfig.mediaBaseUrl) {
-    return ''
+    return "";
   }
 
   const encodedKey = objectKey
-    .split('/')
+    .split("/")
     .map((segment) => encodeURIComponent(segment))
-    .join('/')
+    .join("/");
 
-  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`
+  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`;
 }
 
 function resolveVoiceMessageUrl(voice?: ConversationVoicePayload) {
-  const directUrl = voice?.url?.trim()
+  const directUrl = voice?.url?.trim();
   if (directUrl) {
-    return directUrl
+    return directUrl;
   }
 
-  const objectKey = voice?.objectKey?.trim()
+  const objectKey = voice?.objectKey?.trim();
   if (!objectKey || !ApiConfig.mediaBaseUrl) {
-    return ''
+    return "";
   }
 
   const encodedKey = objectKey
-    .split('/')
+    .split("/")
     .map((segment) => encodeURIComponent(segment))
-    .join('/')
+    .join("/");
 
-  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`
+  return `${ApiConfig.mediaBaseUrl}/${encodedKey}`;
 }
 
 function hasResolvableVoicePayload(voice?: ConversationVoicePayload) {
-  return Boolean(resolveVoiceMessageUrl(voice))
+  return Boolean(resolveVoiceMessageUrl(voice));
 }
 
-function shouldShowTimeDivider(message: ConversationMessage, previous?: ConversationMessage) {
-  const currentTime = message.createdAt ?? message.updatedAt
+function shouldShowTimeDivider(
+  message: ConversationMessage,
+  previous?: ConversationMessage
+) {
+  const currentTime = message.createdAt ?? message.updatedAt;
   if (!currentTime) {
-    return false
+    return false;
   }
 
   if (!previous) {
-    return true
+    return true;
   }
 
-  const previousTime = previous.createdAt ?? previous.updatedAt
+  const previousTime = previous.createdAt ?? previous.updatedAt;
   if (!previousTime) {
-    return true
+    return true;
   }
 
-  return currentTime.getTime() - previousTime.getTime() >= 5 * 60 * 1000
+  return currentTime.getTime() - previousTime.getTime() >= 5 * 60 * 1000;
 }
 
 function formatMessageTime(value: Date | null) {
   if (!value) {
-    return ''
+    return "";
   }
 
-  const now = new Date()
-  const currentDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const now = new Date();
+  const currentDay = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  ).getTime();
   const targetDay = new Date(
     value.getFullYear(),
     value.getMonth(),
     value.getDate()
-  ).getTime()
-  const diffDays = Math.round((currentDay - targetDay) / (24 * 60 * 60 * 1000))
-  const hour = String(value.getHours()).padStart(2, '0')
-  const minute = String(value.getMinutes()).padStart(2, '0')
+  ).getTime();
+  const diffDays = Math.round((currentDay - targetDay) / (24 * 60 * 60 * 1000));
+  const hour = String(value.getHours()).padStart(2, "0");
+  const minute = String(value.getMinutes()).padStart(2, "0");
 
   if (diffDays === 0) {
-    return `${hour}:${minute}`
+    return `${hour}:${minute}`;
   }
 
   if (diffDays === 1) {
-    return `昨天 ${hour}:${minute}`
+    return `昨天 ${hour}:${minute}`;
   }
 
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
 
-  return `${month}-${day} ${hour}:${minute}`
+  return `${month}-${day} ${hour}:${minute}`;
 }
 
 function formatVoiceDuration(durationMs: number) {
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
 
   if (minutes === 0) {
-    return `${seconds}秒`
+    return `${seconds}秒`;
   }
 
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function showToast(title: string) {
   void Taro.showToast({
     title,
-    icon: 'none',
+    icon: "none",
     duration: 1800,
-  })
+  });
 }
 
 function muteVoicePlaybackErrors(durationMs = VOICE_PLAYBACK_ERROR_MUTE_MS) {
   voicePlaybackErrorMutedUntil = Math.max(
     voicePlaybackErrorMutedUntil,
     Date.now() + durationMs
-  )
+  );
 }
 
 function handlePendingAction(name: string) {
-  showToast(`${name}待接入`)
+  showToast(`${name}待接入`);
 }
 
 function handleMemorialPhotoAction() {
   if (!agentId.value) {
-    showToast('缺少联系人资料，请从通讯录重新进入')
-    return
+    showToast("缺少联系人资料，请从通讯录重新进入");
+    return;
   }
 
   if (!conversationId.value) {
-    showToast('缺少会话信息，请返回通讯录重新进入')
-    return
+    showToast("缺少会话信息，请返回通讯录重新进入");
+    return;
   }
 
-  hideComposerPanels()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
+  hideComposerPanels();
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  void Taro.hideKeyboard();
 
   const query = [
-    ['conversationId', conversationId.value],
-    ['agentId', agentId.value],
-    ['agentName', agentName.value.trim() || 'TA'],
+    ["conversationId", conversationId.value],
+    ["agentId", agentId.value],
+    ["agentName", agentName.value.trim() || "TA"],
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join('&')
+    .join("&");
 
   void Taro.navigateTo({
     url: `/pages/memorial-photo/index?${query}`,
-  })
+  });
 }
 
 function handleNavMenuSelect() {
-  handleAgentAvatarTap()
+  handleAgentAvatarTap();
 }
 
 function handleAgentAvatarTap() {
   if (!agentId.value) {
-    showToast('缺少联系人资料，请从通讯录重新进入')
-    return
+    showToast("缺少联系人资料，请从通讯录重新进入");
+    return;
   }
 
   if (!conversationId.value) {
-    showToast('缺少会话信息，请返回通讯录重新进入')
-    return
+    showToast("缺少会话信息，请返回通讯录重新进入");
+    return;
   }
 
   const query = [
-    ['conversationId', conversationId.value],
-    ['agentId', agentId.value],
-    ['agentName', agentName.value.trim() || '对话'],
-    ['agentAvatar', agentAvatar.value],
-    ['agentSex', String(agentSex.value)],
-    ['agentCallMe', agentCallMe.value],
-    ['iCallAgent', iCallAgent.value],
-    ['preview', conversationPreview.value],
-    ['createdAt', conversationCreatedAt.value],
+    ["conversationId", conversationId.value],
+    ["agentId", agentId.value],
+    ["agentName", agentName.value.trim() || "对话"],
+    ["agentAvatar", agentAvatar.value],
+    ["agentSex", String(agentSex.value)],
+    ["agentCallMe", agentCallMe.value],
+    ["iCallAgent", iCallAgent.value],
+    ["preview", conversationPreview.value],
+    ["createdAt", conversationCreatedAt.value],
   ]
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-    .join('&')
+    .join("&");
 
   void Taro.navigateTo({
     url: `/pages/agent-detail/index?${query}`,
-  })
+  });
 }
 
 function handleCurrentUserAvatarTap() {
   void Taro.switchTab({
-    url: '/pages/me/index',
-  })
+    url: "/pages/me/index",
+  });
 }
 
 function handleRetry() {
-  void refreshMessages({ showLoading: true })
+  void refreshMessages({ showLoading: true });
 }
 
 function handleDraftInput(event: DraftInputEvent) {
-  const detail = 'detail' in event && typeof event.detail === 'object' ? event.detail : undefined
-  const rawValue = detail?.value ?? ''
-  const nextValue = limitChatText(rawValue)
-  const nextCursor = detail?.cursor
+  const detail =
+    "detail" in event && typeof event.detail === "object"
+      ? event.detail
+      : undefined;
+  const rawValue = detail?.value ?? "";
+  const nextValue = limitChatText(rawValue);
+  const nextCursor = detail?.cursor;
 
   if (nextValue !== rawValue) {
-    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`);
   }
 
-  draftMessage.value = nextValue
-  isDraftCursorControlled.value = false
+  draftMessage.value = nextValue;
+  isDraftCursorControlled.value = false;
   draftCursor.value =
-    typeof nextCursor === 'number' && nextCursor >= 0
+    typeof nextCursor === "number" && nextCursor >= 0
       ? clampCursor(nextCursor, nextValue)
-      : nextValue.length
+      : nextValue.length;
 }
 
 function handleInputFocus() {
-  hideMessageActions()
-  isInputFocused.value = true
-  isEmojiPanelVisible.value = false
-  isMorePanelVisible.value = false
-  void scrollToBottom()
+  hideMessageActions();
+  isInputFocused.value = true;
+  isEmojiPanelVisible.value = false;
+  isMorePanelVisible.value = false;
+  void scrollToBottom();
 }
 
 function handleInputBlur() {
-  isInputFocused.value = false
-  keyboardHeight.value = 0
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
   if (isSwitchingComposerPanel) {
-    return
+    return;
   }
 
-  hideComposerPanels()
+  hideComposerPanels();
 }
 
 function handleChatBodyTap() {
   if (isMessageActionTapMuted()) {
-    return
+    return;
   }
 
-  hideMessageActions()
-  hideComposerPanels()
+  hideMessageActions();
+  hideComposerPanels();
 }
 
 function hideComposerPanels() {
-  isEmojiPanelVisible.value = false
-  isMorePanelVisible.value = false
+  isEmojiPanelVisible.value = false;
+  isMorePanelVisible.value = false;
 }
 
 function hideMessageActions() {
-  const wasVisible = Boolean(activeMessageActionRowKey.value)
-  activeMessageActionRowKey.value = ''
-  return wasVisible
+  const wasVisible = Boolean(activeMessageActionRowKey.value);
+  activeMessageActionRowKey.value = "";
+  return wasVisible;
 }
 
 function muteMessageActionTap(durationMs = 350) {
-  messageActionTapMutedUntil = Date.now() + durationMs
+  messageActionTapMutedUntil = Date.now() + durationMs;
 }
 
 function isMessageActionTapMuted() {
-  return Date.now() < messageActionTapMutedUntil
+  return Date.now() < messageActionTapMutedUntil;
 }
 
 function handleMessageTap() {
   if (isMessageActionTapMuted()) {
-    return
+    return;
   }
 
   if (hideMessageActions()) {
-    return
+    return;
   }
 }
 
 function shouldOfferVoiceGeneration(message?: ConversationMessage) {
   return Boolean(
-    message
-      && message.role === 'assistant'
-      && message.type === 'text'
-      && message.status === 'sent'
-      && !hasResolvableVoicePayload(message.voice),
-  )
+    message &&
+      message.role === "assistant" &&
+      message.type === "text" &&
+      message.status === "sent" &&
+      !hasResolvableVoicePayload(message.voice)
+  );
 }
 
 function shouldOfferFeedback(message?: ConversationMessage) {
   return Boolean(
-    message
-      && message.role === 'assistant'
-      && message.type === 'text'
-      && message.status === 'sent'
-      && !isLocalOnlyMessageId(message.id),
-  )
+    message &&
+      message.role === "assistant" &&
+      message.type === "text" &&
+      message.status === "sent" &&
+      !isLocalOnlyMessageId(message.id)
+  );
 }
 
 function getMessageActionItems(
   message?: ConversationMessage,
-  copyText = '',
+  copyText = ""
 ): MessageActionItem[] {
   if (!message) {
-    return []
+    return [];
   }
 
-  if (message.role === 'user') {
+  if (message.role === "user") {
     return [
       ...(copyText.trim() ? [QUOTE_MESSAGE_ACTION] : []),
-      ...(message.status === 'sent' && !isLocalOnlyMessageId(message.id)
+      ...(message.status === "sent" && !isLocalOnlyMessageId(message.id)
         ? [REMEMBER_MESSAGE_ACTION]
         : []),
       DELETE_MESSAGE_ACTION,
-    ]
+    ];
   }
 
   return [
     ...(copyText.trim() ? [QUOTE_MESSAGE_ACTION] : []),
-    ...(shouldOfferVoiceGeneration(message) ? [GENERATE_VOICE_MESSAGE_ACTION] : []),
+    ...(shouldOfferVoiceGeneration(message)
+      ? [GENERATE_VOICE_MESSAGE_ACTION]
+      : []),
     ...(shouldOfferFeedback(message) ? [FEEDBACK_MESSAGE_ACTION] : []),
     DELETE_MESSAGE_ACTION,
-  ]
+  ];
 }
 
 async function generateMessageVoice(message: ConversationMessage) {
   if (!conversationId.value || generatingVoiceMessageIds.has(message.id)) {
     if (generatingVoiceMessageIds.has(message.id)) {
-      showToast('语音生成中')
+      showToast("语音生成中");
     }
-    return
+    return;
   }
 
-  generatingVoiceMessageIds.add(message.id)
+  generatingVoiceMessageIds.add(message.id);
 
   try {
-    showToast('语音生成中')
+    showToast("语音生成中");
     const updatedMessage = await generateConversationMessageVoice(
       conversationId.value,
-      message.id,
-    )
+      message.id
+    );
     messages.value = messages.value.map((item) =>
       item.id === updatedMessage.id ? updatedMessage : item
-    )
-    probeMissingAssistantVoiceDurations([updatedMessage])
-    showToast('已生成语音')
+    );
+    probeMissingAssistantVoiceDurations([updatedMessage]);
+    showToast("已生成语音");
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    showToast(error instanceof ApiException ? error.message : '语音生成失败，请稍后重试')
+    showToast(
+      error instanceof ApiException ? error.message : "语音生成失败，请稍后重试"
+    );
   } finally {
-    generatingVoiceMessageIds.delete(message.id)
+    generatingVoiceMessageIds.delete(message.id);
   }
 }
 
-function handleMessageLongPress(messageId: string, rowKey: string, copyText = '') {
-  void showMessageActions(messageId, rowKey, copyText)
+function handleMessageLongPress(
+  messageId: string,
+  rowKey: string,
+  copyText = ""
+) {
+  void showMessageActions(messageId, rowKey, copyText);
 }
 
-async function showMessageActions(messageId: string, rowKey: string, copyText = '') {
-  const message = messages.value.find((item) => item.id === messageId)
+async function showMessageActions(
+  messageId: string,
+  rowKey: string,
+  copyText = ""
+) {
+  const message = messages.value.find((item) => item.id === messageId);
   if (!message) {
-    return
+    return;
   }
 
   if (hasMultipleDisplayRowsForMessage(messageId)) {
-    await showLegacyMessageActionSheet(message, copyText)
-    return
+    await showLegacyMessageActionSheet(message, copyText);
+    return;
   }
 
   if (activeMessageActionRowKey.value === rowKey) {
-    hideMessageActions()
-    muteMessageActionTap()
-    return
+    hideMessageActions();
+    muteMessageActionTap();
+    return;
   }
 
-  hideComposerPanels()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
-  activeMessageActionRowKey.value = rowKey
-  muteMessageActionTap()
+  hideComposerPanels();
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  void Taro.hideKeyboard();
+  activeMessageActionRowKey.value = rowKey;
+  muteMessageActionTap();
 }
 
 function hasMultipleDisplayRowsForMessage(messageId: string) {
-  return (messageDisplayRowCounts.value.get(messageId) ?? 0) > 1
+  return (messageDisplayRowCounts.value.get(messageId) ?? 0) > 1;
 }
 
-async function showLegacyMessageActionSheet(message: ConversationMessage, copyText = '') {
-  const actions = getMessageActionItems(message, copyText)
+async function showLegacyMessageActionSheet(
+  message: ConversationMessage,
+  copyText = ""
+) {
+  const actions = getMessageActionItems(message, copyText);
   if (!actions.length) {
-    return
+    return;
   }
 
-  hideMessageActions()
-  hideComposerPanels()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
+  hideMessageActions();
+  hideComposerPanels();
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  void Taro.hideKeyboard();
 
   try {
     const result = await Taro.showActionSheet({
       itemList: actions.map((action) => action.label),
-      ...(actions.length === 1 && actions[0].key === 'delete'
-        ? { itemColor: '#e54d42' }
+      ...(actions.length === 1 && actions[0].key === "delete"
+        ? { itemColor: "#e54d42" }
         : {}),
-    })
-    const action = actions[result.tapIndex]
+    });
+    const action = actions[result.tapIndex];
 
     if (action) {
-      await runMessageAction(message, action.key, copyText)
+      await runMessageAction(message, action.key, copyText);
     }
   } catch {}
 }
@@ -2417,87 +2760,89 @@ async function showLegacyMessageActionSheet(message: ConversationMessage, copyTe
 async function handleMessageActionTap(
   messageId: string,
   action: MessageActionKey,
-  copyText = '',
+  copyText = ""
 ) {
-  const message = messages.value.find((item) => item.id === messageId)
-  hideMessageActions()
+  const message = messages.value.find((item) => item.id === messageId);
+  hideMessageActions();
 
   if (!message) {
-    return
+    return;
   }
 
-  await runMessageAction(message, action, copyText)
+  await runMessageAction(message, action, copyText);
 }
 
 async function runMessageAction(
   message: ConversationMessage,
   action: MessageActionKey,
-  copyText = '',
+  copyText = ""
 ) {
-  if (action === 'quote') {
-    quoteMessageContent(message, copyText)
-    return
+  if (action === "quote") {
+    quoteMessageContent(message, copyText);
+    return;
   }
 
-  if (action === 'generateVoice') {
-    await generateMessageVoice(message)
-    return
+  if (action === "generateVoice") {
+    await generateMessageVoice(message);
+    return;
   }
 
-  if (action === 'feedback') {
-    openFeedbackPopup(message)
-    return
+  if (action === "feedback") {
+    openFeedbackPopup(message);
+    return;
   }
 
-  if (action === 'remember') {
-    await rememberMessageInConversation(message)
-    return
+  if (action === "remember") {
+    await rememberMessageInConversation(message);
+    return;
   }
 
-  if (action === 'delete') {
-    await deleteMessageFromConversation(message)
+  if (action === "delete") {
+    requestDeleteMessage(message);
   }
 }
 
 function openFeedbackPopup(message: ConversationMessage) {
   if (!shouldOfferFeedback(message)) {
-    showToast('回复生成中，稍后再反馈')
-    return
+    showToast("回复生成中，稍后再反馈");
+    return;
   }
 
-  selectedFeedbackMessageId.value = message.id
-  selectedFeedbackType.value = 'unlike'
-  feedbackContent.value = ''
-  isFeedbackPopupVisible.value = true
+  selectedFeedbackMessageId.value = message.id;
+  selectedFeedbackType.value = "unlike";
+  feedbackContent.value = "";
+  isFeedbackPopupVisible.value = true;
 }
 
 function closeFeedbackPopup() {
   if (isSubmittingFeedback.value) {
-    return
+    return;
   }
 
-  isFeedbackPopupVisible.value = false
+  isFeedbackPopupVisible.value = false;
 }
 
-function handleFeedbackContentInput(event: InputEvent | { detail?: { value?: string } }) {
-  const value = 'detail' in event ? event.detail?.value : undefined
-  feedbackContent.value = typeof value === 'string' ? value : ''
+function handleFeedbackContentInput(
+  event: InputEvent | { detail?: { value?: string } }
+) {
+  const value = "detail" in event ? event.detail?.value : undefined;
+  feedbackContent.value = typeof value === "string" ? value : "";
 }
 
 function buildFeedbackPayload() {
-  if (selectedFeedbackType.value !== 'accurate') {
+  if (selectedFeedbackType.value !== "accurate") {
     return {
       type: selectedFeedbackType.value,
       content: feedbackContent.value,
-    }
+    };
   }
 
-  const content = feedbackContent.value.trim()
+  const content = feedbackContent.value.trim();
 
   return {
-    type: 'other' as const,
-    content: content ? `很贴切。${content}` : '很贴切',
-  }
+    type: "other" as const,
+    content: content ? `很贴切。${content}` : "很贴切",
+  };
 }
 
 async function handleFeedbackSubmit() {
@@ -2506,214 +2851,279 @@ async function handleFeedbackSubmit() {
     !selectedFeedbackMessageId.value ||
     isSubmittingFeedback.value
   ) {
-    return
+    return;
   }
 
-  isSubmittingFeedback.value = true
-  const currentConversationId = conversationId.value
-  const currentFeedbackMessageId = selectedFeedbackMessageId.value
-  const payload = buildFeedbackPayload()
+  isSubmittingFeedback.value = true;
+  const currentConversationId = conversationId.value;
+  const currentFeedbackMessageId = selectedFeedbackMessageId.value;
+  const payload = buildFeedbackPayload();
 
-  isFeedbackPopupVisible.value = false
-  isSubmittingFeedback.value = false
-  showToast('已收到反馈')
+  isFeedbackPopupVisible.value = false;
+  isSubmittingFeedback.value = false;
+  showToast("已收到反馈");
 
   void submitConversationMessageFeedback(
     currentConversationId,
     currentFeedbackMessageId,
-    payload,
+    payload
   ).catch(async (error) => {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    console.warn('[chat] feedback submission failed', error)
-  })
+    console.warn("[chat] feedback submission failed", error);
+  });
 }
 
 function quoteMessageContent(message: ConversationMessage, content: string) {
-  const text = content.trim()
+  const text = content.trim();
   if (!text) {
-    return
+    return;
   }
 
-  if (message.status !== 'sent' || isLocalOnlyMessageId(message.id)) {
-    showToast('消息发送中，暂不能引用')
-    return
+  if (message.status !== "sent" || isLocalOnlyMessageId(message.id)) {
+    showToast("消息发送中，暂不能引用");
+    return;
   }
 
-  quotedMessageId.value = message.id
-  quotedMessageText.value = text
-  quotedMessageLabel.value = message.role === 'user' ? '引用自己' : `引用${pageTitle.value}`
-  isVoiceMode.value = false
-  hideComposerPanels()
+  quotedMessageId.value = message.id;
+  quotedMessageText.value = text;
+  quotedMessageLabel.value =
+    message.role === "user" ? "引用自己" : `引用${pageTitle.value}`;
+  isVoiceMode.value = false;
+  hideComposerPanels();
 }
 
 function clearQuotedMessage() {
-  quotedMessageId.value = ''
-  quotedMessageText.value = ''
-  quotedMessageLabel.value = '引用'
+  quotedMessageId.value = "";
+  quotedMessageText.value = "";
+  quotedMessageLabel.value = "引用";
 }
 
 function restoreQuotedMessageFromOptions(options: {
-  restoreQuoteMessageId?: string
-  restoreQuoteText?: string
-  restoreQuoteLabel?: string
+  restoreQuoteMessageId?: string;
+  restoreQuoteText?: string;
+  restoreQuoteLabel?: string;
 }) {
   if (!options.restoreQuoteMessageId || !options.restoreQuoteText) {
-    return
+    return;
   }
 
-  quotedMessageId.value = options.restoreQuoteMessageId
-  quotedMessageText.value = options.restoreQuoteText
-  quotedMessageLabel.value = options.restoreQuoteLabel || '引用'
+  quotedMessageId.value = options.restoreQuoteMessageId;
+  quotedMessageText.value = options.restoreQuoteText;
+  quotedMessageLabel.value = options.restoreQuoteLabel || "引用";
 }
 
 async function rememberMessageInConversation(message: ConversationMessage) {
-  if (message.role !== 'user') {
-    return
+  if (message.role !== "user") {
+    return;
   }
 
-  if (message.status !== 'sent' || isLocalOnlyMessageId(message.id)) {
-    showToast('消息发送中，暂不能记忆')
-    return
+  if (message.status !== "sent" || isLocalOnlyMessageId(message.id)) {
+    showToast("消息发送中，暂不能记忆");
+    return;
   }
 
   if (!conversationId.value) {
-    return
+    return;
   }
 
   try {
-    await markConversationMessageMemory(conversationId.value, message.id)
-    showToast('Ta 会永远记住这句话的')
+    await markConversationMessageMemory(conversationId.value, message.id);
+    showToast("Ta 会永远记住这句话的");
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    if (error instanceof ApiException && error.code === 'RESOURCE_NOT_FOUND') {
-      showToast('Ta 会永远记住这句话的')
-      return
+    if (error instanceof ApiException && error.code === "RESOURCE_NOT_FOUND") {
+      showToast("Ta 会永远记住这句话的");
+      return;
     }
 
-    showToast(error instanceof ApiException ? error.message : '记忆失败，请稍后重试')
+    showToast(
+      error instanceof ApiException ? error.message : "记忆失败，请稍后重试"
+    );
+  }
+}
+
+function requestDeleteMessage(message: ConversationMessage) {
+  if (message.status === "sending") {
+    showToast("消息发送中，暂不能删除");
+    return;
+  }
+
+  if (isLocalOnlyMessageId(message.id)) {
+    if (message.status !== "failed") {
+      showToast("消息发送中，暂不能删除");
+      return;
+    }
+  }
+
+  if (deletingMessageIds.has(message.id)) {
+    return;
+  }
+
+  pendingDeleteMessageId.value = message.id;
+  isDeleteMessageDialogVisible.value = true;
+}
+
+function closeDeleteMessageDialog() {
+  isDeleteMessageDialogVisible.value = false;
+  pendingDeleteMessageId.value = "";
+}
+
+function handleDeleteMessageCancel() {
+  if (isConfirmingMessageDelete.value) {
+    return;
+  }
+
+  closeDeleteMessageDialog();
+}
+
+async function handleDeleteMessageConfirm() {
+  if (isConfirmingMessageDelete.value) {
+    return;
+  }
+
+  const message = messages.value.find(
+    (item) => item.id === pendingDeleteMessageId.value
+  );
+  if (!message) {
+    closeDeleteMessageDialog();
+    return;
+  }
+
+  isConfirmingMessageDelete.value = true;
+  let deleted = false;
+  try {
+    deleted = await deleteMessageFromConversation(message);
+  } finally {
+    isConfirmingMessageDelete.value = false;
+  }
+
+  if (deleted) {
+    closeDeleteMessageDialog();
   }
 }
 
 async function deleteMessageFromConversation(message: ConversationMessage) {
-  if (message.status === 'sending') {
-    showToast('消息发送中，暂不能删除')
-    return
+  if (message.status === "sending") {
+    showToast("消息发送中，暂不能删除");
+    return false;
   }
 
   if (isLocalOnlyMessageId(message.id)) {
-    if (message.status === 'failed') {
-      removeMessageFromState(message.id)
-      return
+    if (message.status === "failed") {
+      removeMessageFromState(message.id);
+      showToast("已删除");
+      return true;
     }
 
-    showToast('消息发送中，暂不能删除')
-    return
+    showToast("消息发送中，暂不能删除");
+    return false;
   }
 
   if (!conversationId.value || deletingMessageIds.has(message.id)) {
-    return
+    return false;
   }
 
-  deletingMessageIds.add(message.id)
+  deletingMessageIds.add(message.id);
 
   try {
-    await deleteConversationMessage(conversationId.value, message.id)
-    removeMessageFromState(message.id)
-    showToast('已删除')
+    await deleteConversationMessage(conversationId.value, message.id);
+    removeMessageFromState(message.id);
+    showToast("已删除");
+    return true;
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return false;
     }
 
-    showToast(error instanceof ApiException ? error.message : '删除失败，请稍后重试')
+    showToast(
+      error instanceof ApiException ? error.message : "删除失败，请稍后重试"
+    );
+    return false;
   } finally {
-    deletingMessageIds.delete(message.id)
+    deletingMessageIds.delete(message.id);
   }
 }
 
 function removeMessageFromState(messageId: string) {
-  const removedMessage = messages.value.find((message) => message.id === messageId)
+  const removedMessage = messages.value.find(
+    (message) => message.id === messageId
+  );
 
-  hideMessageActions()
+  hideMessageActions();
 
   if (activeVoiceMessageId.value === messageId) {
-    stopVoicePlayback({ muteErrors: true })
+    stopVoicePlayback({ muteErrors: true });
   }
 
-  const nextMessages = messages.value.filter((message) => message.id !== messageId)
-  messages.value = nextMessages
+  const nextMessages = messages.value.filter(
+    (message) => message.id !== messageId
+  );
+  messages.value = nextMessages;
 
-  if (removedMessage?.role === 'user') {
-    resumePendingReplyPollingFromMessages(nextMessages)
+  if (removedMessage?.role === "user") {
+    resumePendingReplyPollingFromMessages(nextMessages);
   }
 }
 
 function isLocalOnlyMessageId(messageId: string) {
-  return messageId.startsWith('local-')
+  return messageId.startsWith("local-");
 }
 
 function handleKeyboardHeightChange(event: { detail?: { height?: number } }) {
-  keyboardHeight.value = event.detail?.height ?? 0
+  keyboardHeight.value = event.detail?.height ?? 0;
 
   if (keyboardHeight.value <= 0) {
-    isInputFocused.value = false
+    isInputFocused.value = false;
   }
 
-  void scrollToBottom()
+  void scrollToBottom();
 }
 
 useDidShow(() => {
-  isChatPageVisible = true
-  muteVoicePlaybackErrors(800)
-  preloadVipCenterWhenAuthenticated()
-})
-
-function preloadVipCenterWhenAuthenticated() {
-  if (authSession.value) {
-    preloadVipPurchaseCenter()
-  }
-}
+  isChatPageVisible = true;
+  muteVoicePlaybackErrors(800);
+});
 
 useDidHide(() => {
-  isChatPageVisible = false
-  stopReplyPolling()
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  isEmojiPanelVisible.value = false
-  isMorePanelVisible.value = false
-  activeMessageActionRowKey.value = ''
-  clearScrollIntoViewResetTimer()
-  clearVoiceStartTimer()
+  isChatPageVisible = false;
+  stopReplyPolling();
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  isEmojiPanelVisible.value = false;
+  isMorePanelVisible.value = false;
+  activeMessageActionRowKey.value = "";
+  clearScrollIntoViewResetTimer();
+  clearVoiceStartTimer();
   if (isVoiceRecording.value) {
-    void finishVoiceGesture({ cancelledBySystem: true })
+    void finishVoiceGesture({ cancelledBySystem: true });
   } else {
-    resetVoiceGestureState()
+    resetVoiceGestureState();
   }
-  destroyVoiceAudioContext({ muteErrors: true })
-})
+  destroyVoiceAudioContext({ muteErrors: true });
+});
 
 useUnload(() => {
-  isChatPageVisible = false
-  stopReplyPolling()
-  clearAssistantSegmentRevealTimers()
-  clearScrollIntoViewResetTimer()
-  clearVoiceStartTimer()
+  isChatPageVisible = false;
+  stopReplyPolling();
+  clearAssistantSegmentRevealTimers();
+  clearScrollIntoViewResetTimer();
+  clearVoiceStartTimer();
   if (isVoiceRecording.value) {
     try {
-      recorderManager.stop()
+      recorderManager.stop();
     } catch {}
   }
-  destroyVoiceAudioContext({ muteErrors: true })
-})
+  destroyVoiceAudioContext({ muteErrors: true });
+});
 
 async function handleVoiceModeToggle() {
   if (
@@ -2723,22 +3133,26 @@ async function handleVoiceModeToggle() {
     isVoiceGestureActive.value ||
     isCheckingRecordPermission.value
   ) {
-    return
+    return;
   }
 
-  const nextIsVoiceMode = !isVoiceMode.value
+  const nextIsVoiceMode = !isVoiceMode.value;
+  if (nextIsVoiceMode && !(await ensureChatQuotaAvailableBeforeSend())) {
+    return;
+  }
+
   if (nextIsVoiceMode && !(await ensureRecordPermission())) {
-    return
+    return;
   }
 
-  hideMessageActions()
-  isVoiceMode.value = nextIsVoiceMode
-  isEmojiPanelVisible.value = false
-  isMorePanelVisible.value = false
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  void Taro.hideKeyboard()
-  void scrollToBottom()
+  hideMessageActions();
+  isVoiceMode.value = nextIsVoiceMode;
+  isEmojiPanelVisible.value = false;
+  isMorePanelVisible.value = false;
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  void Taro.hideKeyboard();
+  void scrollToBottom();
 }
 
 function handleVoiceTouchStart(event: VoiceTouchEvent) {
@@ -2749,466 +3163,483 @@ function handleVoiceTouchStart(event: VoiceTouchEvent) {
     isTranscribingVoice.value ||
     isVoiceGestureActive.value
   ) {
-    return
+    return;
   }
 
-  const point = getTouchPoint(event)
+  const point = getTouchPoint(event);
   if (!point) {
-    return
+    return;
   }
 
-  event.preventDefault?.()
-  isEmojiPanelVisible.value = false
-  isMorePanelVisible.value = false
-  isInputFocused.value = false
-  keyboardHeight.value = 0
-  voiceGestureStartPoint.value = point
-  voiceDragTarget.value = 'send'
-  isVoicePressPreviewing.value = true
-  void Taro.hideKeyboard()
+  event.preventDefault?.();
+  isEmojiPanelVisible.value = false;
+  isMorePanelVisible.value = false;
+  isInputFocused.value = false;
+  keyboardHeight.value = 0;
+  voiceGestureStartPoint.value = point;
+  voiceDragTarget.value = "send";
+  isVoicePressPreviewing.value = true;
+  void Taro.hideKeyboard();
 
-  clearVoiceStartTimer()
+  clearVoiceStartTimer();
   voiceStartTimer = setTimeout(() => {
-    voiceStartTimer = null
-    void startVoiceRecording()
-  }, 350)
+    voiceStartTimer = null;
+    void startVoiceRecording();
+  }, 350);
 }
 
 function handleVoiceTouchMove(event: VoiceTouchEvent) {
   if (!isVoiceGestureActive.value) {
-    return
+    return;
   }
 
-  const point = getTouchPoint(event)
+  const point = getTouchPoint(event);
   if (!point) {
-    return
+    return;
   }
 
-  event.preventDefault?.()
-  voiceDragTarget.value = resolveVoiceDragTarget(point)
+  event.preventDefault?.();
+  voiceDragTarget.value = resolveVoiceDragTarget(point);
 }
 
 function handleVoiceTouchEnd(event: VoiceTouchEvent) {
   if (!isVoiceGestureActive.value) {
-    return
+    return;
   }
 
-  event.preventDefault?.()
-  const point = getTouchPoint(event)
+  event.preventDefault?.();
+  const point = getTouchPoint(event);
   if (point) {
-    voiceDragTarget.value = resolveVoiceDragTarget(point)
+    voiceDragTarget.value = resolveVoiceDragTarget(point);
   }
 
   if (!isVoiceRecording.value) {
-    clearVoiceStartTimer()
-    resetVoiceGestureState()
-    return
+    clearVoiceStartTimer();
+    resetVoiceGestureState();
+    return;
   }
 
-  void finishVoiceGesture()
+  void finishVoiceGesture();
 }
 
 function handleVoiceTouchCancel() {
   if (!isVoiceGestureActive.value) {
-    return
+    return;
   }
 
-  clearVoiceStartTimer()
+  clearVoiceStartTimer();
   if (isVoiceRecording.value) {
-    void finishVoiceGesture({ cancelledBySystem: true })
-    return
+    void finishVoiceGesture({ cancelledBySystem: true });
+    return;
   }
 
-  resetVoiceGestureState()
+  resetVoiceGestureState();
 }
 
 function getTouchPoint(event: VoiceTouchEvent): TouchPoint | null {
-  const touch = event.touches?.[0] ?? event.changedTouches?.[0]
+  const touch = event.touches?.[0] ?? event.changedTouches?.[0];
   if (!touch) {
-    return null
+    return null;
   }
 
   return {
     x: touch.clientX,
     y: touch.clientY,
-  }
+  };
 }
 
 function clearVoiceStartTimer() {
   if (!voiceStartTimer) {
-    return
+    return;
   }
 
-  clearTimeout(voiceStartTimer)
-  voiceStartTimer = null
+  clearTimeout(voiceStartTimer);
+  voiceStartTimer = null;
 }
 
 function resetVoiceGestureState() {
-  isVoicePressPreviewing.value = false
-  isVoiceRecording.value = false
-  voiceDragTarget.value = 'send'
-  voiceGestureStartPoint.value = null
-  recordingStartedAt.value = null
+  isVoicePressPreviewing.value = false;
+  isVoiceRecording.value = false;
+  voiceDragTarget.value = "send";
+  voiceGestureStartPoint.value = null;
+  recordingStartedAt.value = null;
 }
 
 async function ensureRecordPermission() {
   if (isCheckingRecordPermission.value) {
-    return false
+    return false;
   }
 
-  isCheckingRecordPermission.value = true
+  isCheckingRecordPermission.value = true;
 
   try {
-    const hasPrivacyAuthorization = await ensureVoicePrivacyAuthorization()
+    const hasPrivacyAuthorization = await ensureVoicePrivacyAuthorization();
 
     if (!hasPrivacyAuthorization) {
-      return false
+      return false;
     }
 
-    const wechatAppMicStatus = getWechatAppMicrophoneAuthorizeStatus()
+    const wechatAppMicStatus = getWechatAppMicrophoneAuthorizeStatus();
 
-    if (wechatAppMicStatus === 'denied') {
-      const hasWechatAppMicPermission = await showWechatAppMicrophoneSettingPrompt()
+    if (wechatAppMicStatus === "denied") {
+      const hasWechatAppMicPermission =
+        await showWechatAppMicrophoneSettingPrompt();
 
       if (!hasWechatAppMicPermission) {
-        return false
+        return false;
       }
     }
 
-    const setting = await Taro.getSetting()
-    const authSetting = setting.authSetting as Record<string, boolean | undefined>
+    const setting = await Taro.getSetting();
+    const authSetting = setting.authSetting as Record<
+      string,
+      boolean | undefined
+    >;
 
-    if (authSetting['scope.record']) {
-      return true
+    if (authSetting["scope.record"]) {
+      return true;
     }
 
-    if (authSetting['scope.record'] === false) {
-      return await showRecordPermissionSettingPrompt()
+    if (authSetting["scope.record"] === false) {
+      return await showRecordPermissionSettingPrompt();
     }
 
-    return await requestRecordPermission()
+    return await requestRecordPermission();
   } catch {
-    showRecordPermissionUnavailablePrompt()
-    return false
+    showRecordPermissionUnavailablePrompt();
+    return false;
   } finally {
-    isCheckingRecordPermission.value = false
+    isCheckingRecordPermission.value = false;
   }
 }
 
 async function ensureVoicePrivacyAuthorization() {
   if (voicePrivacyAuthorizationPromise) {
-    return await voicePrivacyAuthorizationPromise
+    return await voicePrivacyAuthorizationPromise;
   }
 
-  voicePrivacyAuthorizationPromise = doEnsureVoicePrivacyAuthorization()
+  voicePrivacyAuthorizationPromise = doEnsureVoicePrivacyAuthorization();
 
   try {
-    return await voicePrivacyAuthorizationPromise
+    return await voicePrivacyAuthorizationPromise;
   } finally {
-    voicePrivacyAuthorizationPromise = null
+    voicePrivacyAuthorizationPromise = null;
   }
 }
 
 async function doEnsureVoicePrivacyAuthorization() {
-  const privacyApi = Taro as TaroPrivacyApi
+  const privacyApi = Taro as TaroPrivacyApi;
 
   if (
-    typeof privacyApi.getPrivacySetting !== 'function' ||
-    typeof privacyApi.requirePrivacyAuthorize !== 'function'
+    typeof privacyApi.getPrivacySetting !== "function" ||
+    typeof privacyApi.requirePrivacyAuthorize !== "function"
   ) {
-    return true
+    return true;
   }
 
-  const privacySetting = await getVoicePrivacySetting()
-  const contractName = privacySetting.privacyContractName?.trim()
+  const privacySetting = await getVoicePrivacySetting();
+  const contractName = privacySetting.privacyContractName?.trim();
 
   if (contractName) {
-    voicePrivacyContractName.value = `《${contractName}》`
+    voicePrivacyContractName.value = `《${contractName}》`;
   }
 
   if (!privacySetting.needAuthorization) {
-    return true
+    return true;
   }
 
-  return await requestVoicePrivacyAuthorization()
+  return await requestVoicePrivacyAuthorization();
 }
 
 function getVoicePrivacySetting() {
-  const privacyApi = Taro as TaroPrivacyApi
+  const privacyApi = Taro as TaroPrivacyApi;
 
   return new Promise<VoicePrivacySettingResult>((resolve, reject) => {
     privacyApi.getPrivacySetting?.({
       success: resolve,
       fail: reject,
-    })
-  }).catch(() => ({}))
+    });
+  }).catch(() => ({}));
 }
 
 function requestVoicePrivacyAuthorization() {
-  const privacyApi = Taro as TaroPrivacyApi
+  const privacyApi = Taro as TaroPrivacyApi;
 
   return new Promise<boolean>((resolve) => {
     privacyApi.requirePrivacyAuthorize?.({
       success: () => {
-        isVoicePrivacyDialogVisible.value = false
-        resolve(true)
+        isVoicePrivacyDialogVisible.value = false;
+        resolve(true);
       },
       fail: (error) => {
-        const message = describeRecorderErrorForUser(error)
+        const message = describeRecorderErrorForUser(error);
 
         if (message) {
-          showToast(message)
+          showToast(message);
         }
 
-        resolve(false)
+        resolve(false);
       },
-    })
-  })
+    });
+  });
 }
 
 function registerVoicePrivacyAuthorizationListener() {
-  const privacyApi = Taro as TaroPrivacyApi
+  const privacyApi = Taro as TaroPrivacyApi;
 
-  if (typeof privacyApi.onNeedPrivacyAuthorization !== 'function') {
-    return
+  if (typeof privacyApi.onNeedPrivacyAuthorization !== "function") {
+    return;
   }
 
   privacyApi.onNeedPrivacyAuthorization((resolve) => {
-    pendingVoicePrivacyResolves.push(resolve)
-    isVoicePrivacyDialogVisible.value = true
+    pendingVoicePrivacyResolves.push(resolve);
+    isVoicePrivacyDialogVisible.value = true;
 
     try {
       resolve({
-        event: 'exposureAuthorization',
-      })
+        event: "exposureAuthorization",
+      });
     } catch {}
-  })
+  });
 }
 
 function handleVoicePrivacyAgree() {
-  resolveVoicePrivacyAuthorization('agree')
+  resolveVoicePrivacyAuthorization("agree");
 }
 
 function handleVoicePrivacyDisagree() {
-  resolveVoicePrivacyAuthorization('disagree')
+  resolveVoicePrivacyAuthorization("disagree");
 }
 
 function handleVoicePrivacyContractTap() {
-  const privacyApi = Taro as TaroPrivacyApi
+  const privacyApi = Taro as TaroPrivacyApi;
 
-  if (typeof privacyApi.openPrivacyContract !== 'function') {
-    return
+  if (typeof privacyApi.openPrivacyContract !== "function") {
+    return;
   }
 
   privacyApi.openPrivacyContract({
     fail: () => {
-      showToast('隐私保护指引打开失败，请稍后重试')
+      showToast("隐私保护指引打开失败，请稍后重试");
     },
-  })
+  });
 }
 
-function resolveVoicePrivacyAuthorization(event: 'agree' | 'disagree') {
-  const resolves = pendingVoicePrivacyResolves
-  pendingVoicePrivacyResolves = []
-  isVoicePrivacyDialogVisible.value = false
+function resolveVoicePrivacyAuthorization(event: "agree" | "disagree") {
+  const resolves = pendingVoicePrivacyResolves;
+  pendingVoicePrivacyResolves = [];
+  isVoicePrivacyDialogVisible.value = false;
 
   resolves.forEach((resolve) => {
     try {
-      if (event === 'agree') {
+      if (event === "agree") {
         resolve({
           event,
           buttonId: VOICE_PRIVACY_AGREE_BUTTON_ID,
-        })
-        return
+        });
+        return;
       }
 
       resolve({
         event,
-      })
+      });
     } catch {}
-  })
+  });
 }
 
 function getWechatAppMicrophoneAuthorizeStatus(): WechatAppMicrophoneAuthorizeStatus {
-  const taroSystemPermission = Taro as TaroSystemPermissionApi
+  const taroSystemPermission = Taro as TaroSystemPermissionApi;
 
-  if (typeof taroSystemPermission.getAppAuthorizeSetting === 'function') {
+  if (typeof taroSystemPermission.getAppAuthorizeSetting === "function") {
     try {
       const status = normalizeWechatAppMicrophoneAuthorizeStatus(
         taroSystemPermission.getAppAuthorizeSetting().microphoneAuthorized
-      )
+      );
 
-      if (status !== 'unknown') {
-        return status
+      if (status !== "unknown") {
+        return status;
       }
     } catch {
       // Fall through to the legacy system info field for older clients.
     }
   }
 
-  if (typeof taroSystemPermission.getSystemInfoSync === 'function') {
+  if (typeof taroSystemPermission.getSystemInfoSync === "function") {
     try {
       return normalizeWechatAppMicrophoneAuthorizeStatus(
         taroSystemPermission.getSystemInfoSync().microphoneAuthorized
-      )
+      );
     } catch {
-      return 'unknown'
+      return "unknown";
     }
   }
 
-  return 'unknown'
+  return "unknown";
 }
 
 function normalizeWechatAppMicrophoneAuthorizeStatus(
   value: unknown
 ): WechatAppMicrophoneAuthorizeStatus {
-  if (value === 'authorized' || value === true) {
-    return 'authorized'
+  if (value === "authorized" || value === true) {
+    return "authorized";
   }
 
-  if (value === 'denied' || value === false) {
-    return 'denied'
+  if (value === "denied" || value === false) {
+    return "denied";
   }
 
-  if (value === 'not determined' || value === 'non determined') {
-    return 'not determined'
+  if (value === "not determined" || value === "non determined") {
+    return "not determined";
   }
 
-  return 'unknown'
+  return "unknown";
 }
 
 async function requestRecordPermission() {
   const result = await Taro.showModal({
-    title: '开启语音授权',
-    content: '需要开启麦克风权限后才能发送语音消息和语音转文字',
-    confirmText: '开启',
-    cancelText: '取消',
-    confirmColor: '#22c55e',
-  })
+    title: "开启语音授权",
+    content: "需要开启麦克风权限后才能发送语音消息和语音转文字",
+    confirmText: "开启",
+    cancelText: "取消",
+    confirmColor: "#22c55e",
+  });
 
   if (!result.confirm) {
-    return false
+    return false;
   }
 
   try {
-    await Taro.authorize({ scope: 'scope.record' })
-    return true
+    await Taro.authorize({ scope: "scope.record" });
+    return true;
   } catch {
-    const setting = await Taro.getSetting()
-    const authSetting = setting.authSetting as Record<string, boolean | undefined>
+    const setting = await Taro.getSetting();
+    const authSetting = setting.authSetting as Record<
+      string,
+      boolean | undefined
+    >;
 
-    if (authSetting['scope.record'] === false) {
-      return await showRecordPermissionSettingPrompt()
+    if (authSetting["scope.record"] === false) {
+      return await showRecordPermissionSettingPrompt();
     }
 
-    showRecordPermissionUnavailablePrompt()
-    return false
+    showRecordPermissionUnavailablePrompt();
+    return false;
   }
 }
 
 async function showWechatAppMicrophoneSettingPrompt() {
   const result = await Taro.showModal({
-    title: '无法开启麦克风',
-    content: '请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音',
-    confirmText: '去设置',
-    cancelText: '取消',
-    confirmColor: '#22c55e',
-  })
+    title: "无法开启麦克风",
+    content: "请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音",
+    confirmText: "去设置",
+    cancelText: "取消",
+    confirmColor: "#22c55e",
+  });
 
   if (!result.confirm) {
-    return false
+    return false;
   }
 
-  const taroSystemPermission = Taro as TaroSystemPermissionApi
+  const taroSystemPermission = Taro as TaroSystemPermissionApi;
 
-  if (typeof taroSystemPermission.openAppAuthorizeSetting === 'function') {
+  if (typeof taroSystemPermission.openAppAuthorizeSetting === "function") {
     try {
-      await taroSystemPermission.openAppAuthorizeSetting({})
+      await taroSystemPermission.openAppAuthorizeSetting({});
     } catch {
-      showRecordPermissionUnavailablePrompt()
-      return false
+      showRecordPermissionUnavailablePrompt();
+      return false;
     }
   } else {
-    showRecordPermissionUnavailablePrompt()
-    return false
+    showRecordPermissionUnavailablePrompt();
+    return false;
   }
 
-  return getWechatAppMicrophoneAuthorizeStatus() !== 'denied'
+  return getWechatAppMicrophoneAuthorizeStatus() !== "denied";
 }
 
 async function showRecordPermissionSettingPrompt() {
   const result = await Taro.showModal({
-    title: '麦克风权限未开启',
-    content: '需要开启麦克风权限后才能发送语音消息和语音转文字',
-    confirmText: '去开启',
-    cancelText: '取消',
-    confirmColor: '#22c55e',
-  })
+    title: "麦克风权限未开启",
+    content: "需要开启麦克风权限后才能发送语音消息和语音转文字",
+    confirmText: "去开启",
+    cancelText: "取消",
+    confirmColor: "#22c55e",
+  });
 
   if (!result.confirm) {
-    return false
+    return false;
   }
 
   try {
-    const setting = await Taro.openSetting()
-    const authSetting = setting.authSetting as Record<string, boolean | undefined>
-    return Boolean(authSetting['scope.record'])
+    const setting = await Taro.openSetting();
+    const authSetting = setting.authSetting as Record<
+      string,
+      boolean | undefined
+    >;
+    return Boolean(authSetting["scope.record"]);
   } catch {
-    return false
+    return false;
   }
 }
 
 function showRecordPermissionUnavailablePrompt() {
   void Taro.showModal({
-    title: '无法开启麦克风',
-    content: '请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音',
-    confirmText: '知道了',
+    title: "无法开启麦克风",
+    content: "请在手机系统设置中允许微信使用麦克风后，再回到小程序发送语音",
+    confirmText: "知道了",
     showCancel: false,
-    confirmColor: '#22c55e',
-  })
+    confirmColor: "#22c55e",
+  });
 }
 
 function normalizeRecorderErrorMessage(error: unknown) {
   if (!error) {
-    return ''
+    return "";
   }
 
-  if (typeof error === 'string') {
-    return error.trim()
+  if (typeof error === "string") {
+    return error.trim();
   }
 
   if (error instanceof Error) {
-    return error.message.trim()
+    return error.message.trim();
   }
 
-  const errMsg = (error as RecorderErrorLike).errMsg
-  return typeof errMsg === 'string' ? errMsg.trim() : ''
+  const errMsg = (error as RecorderErrorLike).errMsg;
+  return typeof errMsg === "string" ? errMsg.trim() : "";
 }
 
 function describeRecorderErrorForUser(error: unknown) {
-  const message = normalizeRecorderErrorMessage(error) || lastRecorderErrorMessage
+  const message =
+    normalizeRecorderErrorMessage(error) || lastRecorderErrorMessage;
 
   if (!message) {
-    return ''
+    return "";
   }
 
   if (/privacy|隐私/i.test(message)) {
-    return '请先同意隐私保护指引后再发送语音'
+    return "请先同意隐私保护指引后再发送语音";
   }
 
-  if (/auth|authorize|permission|scope\.record|麦克风|录音权限/i.test(message)) {
-    return '请在权限设置中允许使用麦克风后再发送语音'
+  if (
+    /auth|authorize|permission|scope\.record|麦克风|录音权限/i.test(message)
+  ) {
+    return "请在权限设置中允许使用麦克风后再发送语音";
   }
 
-  if (/interruption|interrupt|occupied|takeover|system|background|中断|占用/i.test(message)) {
-    return '录音被系统中断，请稍后重试'
+  if (
+    /interruption|interrupt|occupied|takeover|system|background|中断|占用/i.test(
+      message
+    )
+  ) {
+    return "录音被系统中断，请稍后重试";
   }
 
-  return ''
+  return "";
 }
 
 function showRecorderFailureToast(error?: unknown) {
-  showToast(describeRecorderErrorForUser(error) || '录音失败，请稍后重试')
+  showToast(describeRecorderErrorForUser(error) || "录音失败，请稍后重试");
 }
 
 async function startVoiceRecording() {
@@ -3219,313 +3650,330 @@ async function startVoiceRecording() {
     isWaitingAgentReply.value ||
     isTranscribingVoice.value
   ) {
-    return
+    return;
   }
 
-  const hasPermission = await ensureRecordPermission()
+  const hasQuota = await ensureChatQuotaAvailableBeforeSend();
+  if (!hasQuota || !isVoicePressPreviewing.value) {
+    resetVoiceGestureState();
+    return;
+  }
+
+  const hasPermission = await ensureRecordPermission();
   if (!hasPermission || !isVoicePressPreviewing.value) {
-    resetVoiceGestureState()
-    return
+    resetVoiceGestureState();
+    return;
   }
 
   try {
-    lastRecorderStopResult = null
-    lastRecorderErrorMessage = ''
+    lastRecorderStopResult = null;
+    lastRecorderErrorMessage = "";
     recorderManager.start({
       duration: 600000,
       sampleRate: 44100,
       numberOfChannels: 1,
       encodeBitRate: 128000,
-      format: 'aac',
-      audioSource: 'auto',
-    })
-    recordingStartedAt.value = Date.now()
-    isVoicePressPreviewing.value = false
-    isVoiceRecording.value = true
+      format: "aac",
+      audioSource: "auto",
+    });
+    recordingStartedAt.value = Date.now();
+    isVoicePressPreviewing.value = false;
+    isVoiceRecording.value = true;
   } catch (error) {
-    resetVoiceGestureState()
-    showToast(describeRecorderErrorForUser(error) || '录音启动失败，请稍后重试')
+    resetVoiceGestureState();
+    showToast(
+      describeRecorderErrorForUser(error) || "录音启动失败，请稍后重试"
+    );
   }
 }
 
 function stopRecorder() {
   return new Promise<RecorderStopResult>((resolve, reject) => {
     if (lastRecorderStopResult) {
-      const result = lastRecorderStopResult
-      lastRecorderStopResult = null
-      resolve(result)
-      return
+      const result = lastRecorderStopResult;
+      lastRecorderStopResult = null;
+      resolve(result);
+      return;
     }
 
-    pendingRecorderStop = { resolve, reject }
+    pendingRecorderStop = { resolve, reject };
     try {
-      recorderManager.stop()
+      recorderManager.stop();
     } catch (error) {
-      pendingRecorderStop = null
-      reject(error)
+      pendingRecorderStop = null;
+      reject(error);
     }
-  })
+  });
 }
 
-async function finishVoiceGesture(options: { cancelledBySystem?: boolean } = {}) {
+async function finishVoiceGesture(
+  options: { cancelledBySystem?: boolean } = {}
+) {
   if (!isVoiceRecording.value) {
-    return
+    return;
   }
 
-  const target = voiceDragTarget.value
-  const startedAt = recordingStartedAt.value
-  const shouldTranscribe = !options.cancelledBySystem && target === 'transcribe'
-  resetVoiceGestureState()
+  const target = voiceDragTarget.value;
+  const startedAt = recordingStartedAt.value;
+  const shouldTranscribe =
+    !options.cancelledBySystem && target === "transcribe";
+  resetVoiceGestureState();
   if (shouldTranscribe) {
-    isTranscribingVoice.value = true
+    isTranscribingVoice.value = true;
   }
 
-  let recorded: RecorderStopResult | null = null
-  let recorderError: unknown
+  let recorded: RecorderStopResult | null = null;
+  let recorderError: unknown;
   try {
-    recorded = await stopRecorder()
+    recorded = await stopRecorder();
   } catch (error) {
-    recorderError = error
-    recorded = null
+    recorderError = error;
+    recorded = null;
   }
 
-  const filePath = recorded?.tempFilePath?.trim() ?? ''
-  if (options.cancelledBySystem || target === 'cancel') {
-    showToast('已取消录音')
-    return
+  const filePath = recorded?.tempFilePath?.trim() ?? "";
+  if (options.cancelledBySystem || target === "cancel") {
+    showToast("已取消录音");
+    return;
   }
 
   if (!filePath) {
     if (shouldTranscribe) {
-      isTranscribingVoice.value = false
+      isTranscribingVoice.value = false;
     }
-    showRecorderFailureToast(recorderError)
-    return
+    showRecorderFailureToast(recorderError);
+    return;
   }
 
   const durationMs =
     recorded?.duration && recorded.duration > 0
       ? recorded.duration
       : startedAt
-        ? Date.now() - startedAt
-        : 0
+      ? Date.now() - startedAt
+      : 0;
 
   if (durationMs < 500) {
     if (shouldTranscribe) {
-      isTranscribingVoice.value = false
+      isTranscribingVoice.value = false;
     }
-    showToast('说话时间太短')
-    return
+    showToast("说话时间太短");
+    return;
   }
 
-  if (target === 'transcribe') {
-    await sendVoiceTranscription(filePath)
-    return
+  if (target === "transcribe") {
+    await sendVoiceTranscription(filePath);
+    return;
   }
 
-  await sendVoiceMessage(filePath, durationMs)
+  await sendVoiceMessage(filePath, durationMs);
 }
 
 function resolveVoiceDragTarget(point: TouchPoint): VoiceDragTarget {
-  const windowInfo = Taro.getWindowInfo()
-  const safeBottom = safeAreaInsets.value.bottom
-  const chipTop = windowInfo.windowHeight - safeBottom - 220
-  const chipBottom = windowInfo.windowHeight - safeBottom - 72
-  const isInChipBand = point.y >= chipTop && point.y <= chipBottom
-  const horizontalDeadZone = 24
+  const windowInfo = Taro.getWindowInfo();
+  const safeBottom = safeAreaInsets.value.bottom;
+  const chipTop = windowInfo.windowHeight - safeBottom - 220;
+  const chipBottom = windowInfo.windowHeight - safeBottom - 72;
+  const isInChipBand = point.y >= chipTop && point.y <= chipBottom;
+  const horizontalDeadZone = 24;
 
-  if (isInChipBand && point.x >= windowInfo.windowWidth / 2 + horizontalDeadZone) {
-    return 'transcribe'
+  if (
+    isInChipBand &&
+    point.x >= windowInfo.windowWidth / 2 + horizontalDeadZone
+  ) {
+    return "transcribe";
   }
 
-  if (isInChipBand && point.x <= windowInfo.windowWidth / 2 - horizontalDeadZone) {
-    return 'cancel'
+  if (
+    isInChipBand &&
+    point.x <= windowInfo.windowWidth / 2 - horizontalDeadZone
+  ) {
+    return "cancel";
   }
 
-  const startPoint = voiceGestureStartPoint.value
+  const startPoint = voiceGestureStartPoint.value;
   if (!startPoint) {
-    return 'send'
+    return "send";
   }
 
-  const deltaX = point.x - startPoint.x
-  const deltaY = point.y - startPoint.y
+  const deltaX = point.x - startPoint.x;
+  const deltaY = point.y - startPoint.y;
 
   if (deltaY < -72) {
-    return 'cancel'
+    return "cancel";
   }
 
   if (Math.abs(deltaX) >= 72 && Math.abs(deltaY) <= 160) {
-    return deltaX > 0 ? 'transcribe' : 'cancel'
+    return deltaX > 0 ? "transcribe" : "cancel";
   }
 
-  return 'send'
+  return "send";
 }
 
 function handleEmojiToggle() {
-  hideMessageActions()
-  markComposerPanelSwitching()
-  isEmojiPanelVisible.value = !isEmojiPanelVisible.value
+  hideMessageActions();
+  markComposerPanelSwitching();
+  isEmojiPanelVisible.value = !isEmojiPanelVisible.value;
   if (isEmojiPanelVisible.value) {
-    isMorePanelVisible.value = false
-    isInputFocused.value = false
-    keyboardHeight.value = 0
-    void Taro.hideKeyboard()
-    void scrollToBottom()
+    isMorePanelVisible.value = false;
+    isInputFocused.value = false;
+    keyboardHeight.value = 0;
+    void Taro.hideKeyboard();
+    void scrollToBottom();
   }
 }
 
 function handleMoreToggle() {
-  hideMessageActions()
-  markComposerPanelSwitching()
-  isMorePanelVisible.value = !isMorePanelVisible.value
+  hideMessageActions();
+  markComposerPanelSwitching();
+  isMorePanelVisible.value = !isMorePanelVisible.value;
   if (isMorePanelVisible.value) {
-    isEmojiPanelVisible.value = false
-    isInputFocused.value = false
-    keyboardHeight.value = 0
-    void Taro.hideKeyboard()
-    void scrollToBottom()
+    isEmojiPanelVisible.value = false;
+    isInputFocused.value = false;
+    keyboardHeight.value = 0;
+    void Taro.hideKeyboard();
+    void scrollToBottom();
   }
 }
 
 function markComposerPanelSwitching() {
-  isSwitchingComposerPanel = true
+  isSwitchingComposerPanel = true;
   setTimeout(() => {
-    isSwitchingComposerPanel = false
-  }, 120)
+    isSwitchingComposerPanel = false;
+  }, 120);
 }
 
 function handleMoreAction(item: ChatMoreActionItem) {
-  const action = item.key
+  const action = item.key;
 
-  if (action === 'photo') {
-    void pickAndSendImage('album')
-    return
+  if (action === "photo") {
+    void pickAndSendImage("album");
+    return;
   }
 
-  if (action === 'camera') {
-    void pickAndSendImage('camera')
-    return
+  if (action === "camera") {
+    void pickAndSendImage("camera");
+    return;
   }
 
-  if (action === 'memorial-photo') {
-    handleMemorialPhotoAction()
-    return
+  if (action === "memorial-photo") {
+    handleMemorialPhotoAction();
+    return;
   }
 
-  handlePendingAction(item.label)
+  handlePendingAction(item.label);
 }
 
 function handleEmojiSelect(emoji: string) {
-  const cursor = clampCursor(draftCursor.value, draftMessage.value)
+  const cursor = clampCursor(draftCursor.value, draftMessage.value);
   const nextValue =
     draftMessage.value.slice(0, cursor) +
     emoji +
-    draftMessage.value.slice(cursor)
-  const limitedValue = limitChatText(nextValue)
+    draftMessage.value.slice(cursor);
+  const limitedValue = limitChatText(nextValue);
 
   if (limitedValue !== nextValue) {
-    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`);
   }
 
-  draftMessage.value = limitedValue
-  setDraftCursor(clampCursor(cursor + emoji.length, limitedValue))
-  void scrollToBottom()
+  draftMessage.value = limitedValue;
+  setDraftCursor(clampCursor(cursor + emoji.length, limitedValue));
+  void scrollToBottom();
 }
 
 function handleEmojiDelete() {
-  const value = draftMessage.value
+  const value = draftMessage.value;
   if (!value) {
-    return
+    return;
   }
 
-  const cursor = clampCursor(draftCursor.value, value)
+  const cursor = clampCursor(draftCursor.value, value);
   if (cursor <= 0) {
-    return
+    return;
   }
 
-  const left = value.slice(0, cursor)
-  const right = value.slice(cursor)
-  const nextLeft = removeLastGrapheme(left)
+  const left = value.slice(0, cursor);
+  const right = value.slice(cursor);
+  const nextLeft = removeLastGrapheme(left);
 
-  draftMessage.value = `${nextLeft}${right}`
-  setDraftCursor(nextLeft.length)
+  draftMessage.value = `${nextLeft}${right}`;
+  setDraftCursor(nextLeft.length);
 }
 
 function setDraftCursor(cursor: number) {
-  draftCursor.value = cursor
-  isDraftCursorControlled.value = true
+  draftCursor.value = cursor;
+  isDraftCursorControlled.value = true;
   setTimeout(() => {
-    isDraftCursorControlled.value = false
-  }, 80)
+    isDraftCursorControlled.value = false;
+  }, 80);
 }
 
 function clampCursor(cursor: number, value: string) {
   if (!Number.isFinite(cursor)) {
-    return value.length
+    return value.length;
   }
 
-  return Math.min(Math.max(Math.floor(cursor), 0), value.length)
+  return Math.min(Math.max(Math.floor(cursor), 0), value.length);
 }
 
 function limitChatText(value: string) {
-  const chars = Array.from(value)
+  const chars = Array.from(value);
 
   if (chars.length <= CHAT_TEXT_MAX_LENGTH) {
-    return value
+    return value;
   }
 
-  return chars.slice(0, CHAT_TEXT_MAX_LENGTH).join('')
+  return chars.slice(0, CHAT_TEXT_MAX_LENGTH).join("");
 }
 
 function removeLastGrapheme(value: string) {
   if (!value) {
-    return ''
+    return "";
   }
 
-  const chars = Array.from(value)
-  const last = chars[chars.length - 1]
-  if (last === '\ufe0f' && chars.length > 1) {
-    chars.pop()
-    chars.pop()
-    return chars.join('')
+  const chars = Array.from(value);
+  const last = chars[chars.length - 1];
+  if (last === "\ufe0f" && chars.length > 1) {
+    chars.pop();
+    chars.pop();
+    return chars.join("");
   }
 
-  chars.pop()
-  return chars.join('')
+  chars.pop();
+  return chars.join("");
 }
 
 async function handleSend() {
-  const content = limitChatText(draftMessage.value.trim())
+  const content = limitChatText(draftMessage.value.trim());
   if (
-    !content
-    || isTextSendSubmitting.value
-    || isSending.value
-    || isCheckingChatQuota.value
-    || isTranscribingVoice.value
-    || !conversationId.value
+    !content ||
+    isTextSendSubmitting.value ||
+    isSending.value ||
+    isCheckingChatQuota.value ||
+    isTranscribingVoice.value ||
+    !conversationId.value
   ) {
-    return
+    return;
   }
 
   if (!(await ensureChatQuotaAvailableBeforeSend())) {
-    return
+    return;
   }
 
-  hideMessageActions()
+  hideMessageActions();
 
   if (content !== draftMessage.value.trim()) {
-    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`)
+    showToast(`最多输入${CHAT_TEXT_MAX_LENGTH}字`);
   }
 
-  const originalDraft = limitChatText(draftMessage.value)
-  const originalDraftCursor = clampCursor(draftCursor.value, originalDraft)
-  const originalQuotedMessageId = quotedMessageId.value
-  const originalQuotedMessageText = quotedMessageText.value
-  const originalQuotedMessageLabel = quotedMessageLabel.value
+  const originalDraft = limitChatText(draftMessage.value);
+  const originalDraftCursor = clampCursor(draftCursor.value, originalDraft);
+  const originalQuotedMessageId = quotedMessageId.value;
+  const originalQuotedMessageText = quotedMessageText.value;
+  const originalQuotedMessageLabel = quotedMessageLabel.value;
 
-  draftMessage.value = ''
-  draftCursor.value = 0
-  clearQuotedMessage()
+  draftMessage.value = "";
+  draftCursor.value = 0;
+  clearQuotedMessage();
   await sendTextMessageContent(content, {
     restoreDraft: originalDraft,
     restoreCursor: originalDraftCursor,
@@ -3533,192 +3981,211 @@ async function handleSend() {
     restoreQuoteText: originalQuotedMessageText,
     restoreQuoteLabel: originalQuotedMessageLabel,
     skipQuotaCheck: true,
-  })
+  });
 }
 
 async function sendTextMessageContent(
   content: string,
   options: {
-    restoreDraft?: string
-    restoreCursor?: number
-    restoreQuoteMessageId?: string
-    restoreQuoteText?: string
-    restoreQuoteLabel?: string
-    skipQuotaCheck?: boolean
-  } = {},
+    restoreDraft?: string;
+    restoreCursor?: number;
+    restoreQuoteMessageId?: string;
+    restoreQuoteText?: string;
+    restoreQuoteLabel?: string;
+    skipQuotaCheck?: boolean;
+  } = {}
 ) {
-  if (!options.skipQuotaCheck && !(await ensureChatQuotaAvailableBeforeSend())) {
-    if (typeof options.restoreDraft === 'string') {
-      draftMessage.value = options.restoreDraft
-      draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
-      restoreQuotedMessageFromOptions(options)
+  if (
+    !options.skipQuotaCheck &&
+    !(await ensureChatQuotaAvailableBeforeSend())
+  ) {
+    if (typeof options.restoreDraft === "string") {
+      draftMessage.value = options.restoreDraft;
+      draftCursor.value = options.restoreCursor ?? options.restoreDraft.length;
+      restoreQuotedMessageFromOptions(options);
     }
-    return
+    return;
   }
 
-  const tempId = `local-${Date.now()}`
+  const tempId = `local-${Date.now()}`;
 
-  isTextSendSubmitting.value = true
-  isMorePanelVisible.value = false
-  isViewingHistoryWindow.value = false
+  isTextSendSubmitting.value = true;
+  isMorePanelVisible.value = false;
+  isViewingHistoryWindow.value = false;
   messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
       conversationId: conversationId.value,
-      role: 'user',
-      type: 'text',
+      role: "user",
+      type: "text",
       content,
       segments: [content],
-      status: 'sending',
+      status: "sending",
       quote: options.restoreQuoteMessageId
         ? {
             messageId: options.restoreQuoteMessageId,
-            role: options.restoreQuoteLabel === '引用自己' ? 'user' : 'assistant',
+            role:
+              options.restoreQuoteLabel === "引用自己" ? "user" : "assistant",
             content: options.restoreQuoteText,
           }
         : undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
-  ])
-  await scrollToBottom()
+  ]);
+  await scrollToBottom();
 
   try {
     const result = await sendTextMessage(content, {
       quotedMessageId: options.restoreQuoteMessageId,
       clientRequestId: tempId,
-    })
+    });
 
-    await appendConversationResult(tempId, result)
+    await appendConversationResult(tempId, result);
     if (result.replyPending) {
-      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
-      startReplyPolling(pendingAfter)
+      const pendingAfter =
+        result.userMessage.createdAt ??
+        result.userMessage.updatedAt ??
+        new Date();
+      startReplyPolling(pendingAfter);
     }
-    loadError.value = ''
-    await scrollToBottom({ respectUserScroll: true })
+    loadError.value = "";
+    await scrollToBottom({ respectUserScroll: true });
   } catch (error) {
-    isTextSendSubmitting.value = false
+    isTextSendSubmitting.value = false;
 
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
     if (isChatQuotaLimitError(error)) {
-      if (typeof options.restoreDraft === 'string') {
-        draftMessage.value = options.restoreDraft
-        draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
-        restoreQuotedMessageFromOptions(options)
+      if (typeof options.restoreDraft === "string") {
+        draftMessage.value = options.restoreDraft;
+        draftCursor.value =
+          options.restoreCursor ?? options.restoreDraft.length;
+        restoreQuotedMessageFromOptions(options);
       }
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      showChatQuotaExhaustedDialog()
-      await scrollToBottom({ respectUserScroll: true })
-      return
+      messages.value = messages.value.filter(
+        (message) => message.id !== tempId
+      );
+      showChatQuotaExhaustedDialog();
+      await scrollToBottom({ respectUserScroll: true });
+      return;
     }
 
-    if (typeof options.restoreDraft === 'string') {
-      draftMessage.value = options.restoreDraft
-      draftCursor.value = options.restoreCursor ?? options.restoreDraft.length
-      restoreQuotedMessageFromOptions(options)
+    if (typeof options.restoreDraft === "string") {
+      draftMessage.value = options.restoreDraft;
+      draftCursor.value = options.restoreCursor ?? options.restoreDraft.length;
+      restoreQuotedMessageFromOptions(options);
     }
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
             ...message,
-            status: 'failed',
+            status: "failed",
           }
         : message
-    )
-    showToast(error instanceof ApiException ? error.message : '发送失败，请稍后重试')
-    await scrollToBottom({ respectUserScroll: true })
-    return
+    );
+    showToast(
+      error instanceof ApiException ? error.message : "发送失败，请稍后重试"
+    );
+    await scrollToBottom({ respectUserScroll: true });
+    return;
   }
 
-  isTextSendSubmitting.value = false
+  isTextSendSubmitting.value = false;
 }
 
 async function sendTextMessage(
   content: string,
   options: {
-    quotedMessageId?: string
-    clientRequestId: string
-  },
+    quotedMessageId?: string;
+    clientRequestId: string;
+  }
 ) {
   return sendConversationMessageAsync(conversationId.value, {
     content,
-    type: 'text',
+    type: "text",
     quotedMessageId: options.quotedMessageId,
     clientRequestId: options.clientRequestId,
-  })
+  });
 }
 
 async function pickAndSendImage(sourceType: ChatImageSourceType) {
   if (
-    isSending.value
-    || isWaitingAgentReply.value
-    || isCheckingChatQuota.value
-    || isTranscribingVoice.value
-    || !conversationId.value
+    isSending.value ||
+    isWaitingAgentReply.value ||
+    isCheckingChatQuota.value ||
+    isTranscribingVoice.value ||
+    !conversationId.value
   ) {
-    return
+    return;
   }
 
   if (!(await ensureChatQuotaAvailableBeforeSend())) {
-    return
+    return;
   }
 
-  isPickingChatImage = true
-  muteVoicePlaybackErrors()
-  destroyVoiceAudioContext()
+  isPickingChatImage = true;
+  muteVoicePlaybackErrors();
+  destroyVoiceAudioContext();
 
   try {
-    const pickedImage = await pickChatImageForSend(sourceType)
+    const pickedImage = await pickChatImageForSend(sourceType);
     if (!pickedImage) {
-      return
+      return;
     }
 
-    await sendImageMessage(pickedImage)
+    await sendImageMessage(pickedImage);
   } catch (error) {
     if (isChatImageOperationCanceled(error)) {
-      return
+      return;
     }
 
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    showToast(error instanceof ApiException ? error.message : '选择图片失败，请稍后重试')
+    showToast(
+      error instanceof ApiException ? error.message : "选择图片失败，请稍后重试"
+    );
   } finally {
-    isPickingChatImage = false
+    isPickingChatImage = false;
   }
 }
 
 async function sendImageMessage(image: PickedChatImage) {
-  const sourcePath = image.filePath.trim()
-  if (!sourcePath || isSending.value || isWaitingAgentReply.value || !conversationId.value) {
-    return
+  const sourcePath = image.filePath.trim();
+  if (
+    !sourcePath ||
+    isSending.value ||
+    isWaitingAgentReply.value ||
+    !conversationId.value
+  ) {
+    return;
   }
 
-  const fileName = image.fileName
-  const mimeType = image.mimeType
-  const tempId = `local-image-${Date.now()}`
-  const now = new Date()
+  const fileName = image.fileName;
+  const mimeType = image.mimeType;
+  const tempId = `local-image-${Date.now()}`;
+  const now = new Date();
 
-  isSending.value = true
-  isMorePanelVisible.value = false
-  isViewingHistoryWindow.value = false
+  isSending.value = true;
+  isMorePanelVisible.value = false;
+  isViewingHistoryWindow.value = false;
   messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
       conversationId: conversationId.value,
-      role: 'user',
-      type: 'image',
-      content: '[图片]',
+      role: "user",
+      type: "image",
+      content: "[图片]",
       segments: [],
-      status: 'sending',
+      status: "sending",
       image: {
         url: sourcePath,
         mimeType,
@@ -3726,20 +4193,20 @@ async function sendImageMessage(image: PickedChatImage) {
       createdAt: now,
       updatedAt: now,
     },
-  ])
-  await scrollToBottom()
+  ]);
+  await scrollToBottom();
 
   try {
     const uploaded = await uploadLocalImage(sourcePath, {
-      folder: 'conversation-images',
+      folder: "conversation-images",
       fileName,
-    })
+    });
 
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
             ...message,
-            status: 'sent',
+            status: "sent",
             image: {
               objectKey: uploaded.objectKey,
               url: sourcePath,
@@ -3747,83 +4214,90 @@ async function sendImageMessage(image: PickedChatImage) {
             },
           }
         : message
-    )
+    );
 
     const result = await sendConversationMessageAsync(conversationId.value, {
-      type: 'image',
+      type: "image",
       objectKey: uploaded.objectKey,
       mimeType,
       clientRequestId: tempId,
-    })
+    });
 
-    await appendConversationResult(tempId, result)
+    await appendConversationResult(tempId, result);
     if (result.replyPending) {
-      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
-      startReplyPolling(pendingAfter)
+      const pendingAfter =
+        result.userMessage.createdAt ??
+        result.userMessage.updatedAt ??
+        new Date();
+      startReplyPolling(pendingAfter);
     }
-    loadError.value = ''
-    await scrollToBottom({ respectUserScroll: true })
+    loadError.value = "";
+    await scrollToBottom({ respectUserScroll: true });
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
     if (isChatQuotaLimitError(error)) {
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      showChatQuotaExhaustedDialog()
-      await scrollToBottom({ respectUserScroll: true })
-      return
+      messages.value = messages.value.filter(
+        (message) => message.id !== tempId
+      );
+      showChatQuotaExhaustedDialog();
+      await scrollToBottom({ respectUserScroll: true });
+      return;
     }
 
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
             ...message,
-            status: 'failed',
+            status: "failed",
           }
         : message
-    )
-    showToast(error instanceof ApiException ? error.message : '发送图片失败，请稍后重试')
-    await scrollToBottom({ respectUserScroll: true })
+    );
+    showToast(
+      error instanceof ApiException ? error.message : "发送图片失败，请稍后重试"
+    );
+    await scrollToBottom({ respectUserScroll: true });
   } finally {
-    isSending.value = false
+    isSending.value = false;
   }
 }
 
 async function sendVoiceMessage(filePath: string, durationMs: number) {
-  const sourcePath = filePath.trim()
+  const sourcePath = filePath.trim();
   if (
-    !sourcePath
-    || isSending.value
-    || isWaitingAgentReply.value
-    || isCheckingChatQuota.value
-    || !conversationId.value
+    !sourcePath ||
+    isSending.value ||
+    isWaitingAgentReply.value ||
+    isCheckingChatQuota.value ||
+    !conversationId.value
   ) {
-    return
+    return;
   }
 
   if (!(await ensureChatQuotaAvailableBeforeSend())) {
-    return
+    return;
   }
 
-  const mimeType = 'audio/aac'
-  const tempId = `local-voice-${Date.now()}`
-  const now = new Date()
+  const mimeType = "audio/aac";
+  const tempId = `local-voice-${Date.now()}`;
+  const now = new Date();
 
-  isSending.value = true
-  isMorePanelVisible.value = false
-  isViewingHistoryWindow.value = false
+  isSending.value = true;
+  isMorePanelVisible.value = false;
+  isViewingHistoryWindow.value = false;
   messages.value = limitLoadedMessages([
     ...messages.value,
     {
       id: tempId,
       conversationId: conversationId.value,
-      role: 'user',
-      type: 'voice',
-      content: '[语音]',
+      role: "user",
+      type: "voice",
+      content: "[语音]",
       segments: [],
-      status: 'sending',
+      status: "sending",
       voice: {
         url: sourcePath,
         mimeType,
@@ -3832,21 +4306,21 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
       createdAt: now,
       updatedAt: now,
     },
-  ])
-  await scrollToBottom()
+  ]);
+  await scrollToBottom();
 
   try {
     const uploaded = await uploadLocalFile(sourcePath, {
-      folder: 'conversation-voice',
+      folder: "conversation-voice",
       fileName: `voice_${Date.now()}.aac`,
       contentType: mimeType,
-    })
+    });
 
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
             ...message,
-            status: 'sent',
+            status: "sent",
             voice: {
               objectKey: uploaded.objectKey,
               url: sourcePath,
@@ -3855,157 +4329,168 @@ async function sendVoiceMessage(filePath: string, durationMs: number) {
             },
           }
         : message
-    )
+    );
 
     const result = await sendConversationMessageAsync(conversationId.value, {
-      type: 'voice',
+      type: "voice",
       objectKey: uploaded.objectKey,
       mimeType,
       durationMs,
       clientRequestId: tempId,
-    })
+    });
 
-    await appendConversationResult(tempId, result)
+    await appendConversationResult(tempId, result);
     if (result.replyPending) {
-      const pendingAfter = result.userMessage.createdAt ?? result.userMessage.updatedAt ?? new Date()
-      startReplyPolling(pendingAfter)
+      const pendingAfter =
+        result.userMessage.createdAt ??
+        result.userMessage.updatedAt ??
+        new Date();
+      startReplyPolling(pendingAfter);
     }
-    loadError.value = ''
-    await scrollToBottom({ respectUserScroll: true })
+    loadError.value = "";
+    await scrollToBottom({ respectUserScroll: true });
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
     if (isChatQuotaLimitError(error)) {
-      messages.value = messages.value.filter((message) => message.id !== tempId)
-      showChatQuotaExhaustedDialog()
-      await scrollToBottom({ respectUserScroll: true })
-      return
+      messages.value = messages.value.filter(
+        (message) => message.id !== tempId
+      );
+      showChatQuotaExhaustedDialog();
+      await scrollToBottom({ respectUserScroll: true });
+      return;
     }
 
     messages.value = messages.value.map((message) =>
       message.id === tempId
         ? {
             ...message,
-            status: 'failed',
+            status: "failed",
           }
         : message
-    )
-    showToast(error instanceof ApiException ? error.message : '发送语音失败，请稍后重试')
-    await scrollToBottom({ respectUserScroll: true })
+    );
+    showToast(
+      error instanceof ApiException ? error.message : "发送语音失败，请稍后重试"
+    );
+    await scrollToBottom({ respectUserScroll: true });
   } finally {
-    isSending.value = false
+    isSending.value = false;
   }
 }
 
 async function sendVoiceTranscription(filePath: string) {
-  const sourcePath = filePath.trim()
+  const sourcePath = filePath.trim();
   if (
-    !sourcePath
-    || isSending.value
-    || isWaitingAgentReply.value
-    || isCheckingChatQuota.value
-    || !conversationId.value
+    !sourcePath ||
+    isSending.value ||
+    isWaitingAgentReply.value ||
+    isCheckingChatQuota.value ||
+    !conversationId.value
   ) {
-    return
+    return;
   }
 
   if (!(await ensureChatQuotaAvailableBeforeSend())) {
-    return
+    return;
   }
 
-  const mimeType = 'audio/aac'
+  const mimeType = "audio/aac";
 
-  isSending.value = true
-  isTranscribingVoice.value = true
+  isSending.value = true;
+  isTranscribingVoice.value = true;
   try {
     const uploaded = await uploadLocalFile(sourcePath, {
-      folder: 'conversation-voice',
+      folder: "conversation-voice",
       fileName: `voice_${Date.now()}.aac`,
       contentType: mimeType,
-    })
+    });
     const transcript = await transcribeConversationVoice(conversationId.value, {
       objectKey: uploaded.objectKey,
       mimeType,
-    })
-    const content = transcript.trim()
+    });
+    const content = transcript.trim();
 
-    isSending.value = false
-    isTranscribingVoice.value = false
+    isSending.value = false;
+    isTranscribingVoice.value = false;
     if (!content) {
-      showToast('暂未识别到语音内容')
-      return
+      showToast("暂未识别到语音内容");
+      return;
     }
 
-    await sendTextMessageContent(content)
+    await sendTextMessageContent(content);
   } catch (error) {
-    isSending.value = false
-    isTranscribingVoice.value = false
+    isSending.value = false;
+    isTranscribingVoice.value = false;
     if (error instanceof ApiException && error.requiresReLogin) {
-      await redirectToAuth()
-      return
+      await redirectToAuth();
+      return;
     }
 
-    showToast(error instanceof ApiException ? error.message : '语音转文字失败，请稍后重试')
+    showToast(
+      error instanceof ApiException
+        ? error.message
+        : "语音转文字失败，请稍后重试"
+    );
   }
 }
 
 async function handleVoiceMessageTap(messageId: string) {
-  hideMessageActions()
+  hideMessageActions();
 
-  const message = messages.value.find((item) => item.id === messageId)
+  const message = messages.value.find((item) => item.id === messageId);
   if (!message) {
-    return
+    return;
   }
 
-  const sourceUrl = resolveVoiceMessageUrl(message.voice)
+  const sourceUrl = resolveVoiceMessageUrl(message.voice);
   if (!sourceUrl) {
-    showToast('语音文件不可用')
-    return
+    showToast("语音文件不可用");
+    return;
   }
 
-  voicePlaybackErrorMutedUntil = 0
-  await ensureInnerAudioPlaybackOptions()
-  const audio = ensureVoiceAudioContext()
+  voicePlaybackErrorMutedUntil = 0;
+  await ensureInnerAudioPlaybackOptions();
+  const audio = ensureVoiceAudioContext();
 
   if (activeVoiceMessageId.value === messageId) {
     if (isVoicePlaying.value) {
-      audio.pause()
-      return
+      audio.pause();
+      return;
     }
 
-    audio.play()
-    return
+    audio.play();
+    return;
   }
 
   try {
-    audio.stop()
+    audio.stop();
   } catch {}
 
-  activeVoiceMessageId.value = messageId
-  isVoicePlaybackLoading.value = true
-  isVoicePlaying.value = false
-  audio.src = sourceUrl
-  syncActiveVoiceDuration()
-  audio.play()
+  activeVoiceMessageId.value = messageId;
+  isVoicePlaybackLoading.value = true;
+  isVoicePlaying.value = false;
+  audio.src = sourceUrl;
+  syncActiveVoiceDuration();
+  audio.play();
 }
 
 function updateVoiceMessageDuration(messageId: string, durationMs: number) {
   if (!messageId || !Number.isFinite(durationMs) || durationMs <= 0) {
-    return
+    return;
   }
 
-  const normalizedDurationMs = Math.round(durationMs)
+  const normalizedDurationMs = Math.round(durationMs);
 
   messages.value = messages.value.map((message) => {
     if (message.id !== messageId || !message.voice) {
-      return message
+      return message;
     }
 
     if ((message.voice.durationMs ?? 0) > 0) {
-      return message
+      return message;
     }
 
     return {
@@ -4014,169 +4499,202 @@ function updateVoiceMessageDuration(messageId: string, durationMs: number) {
         ...message.voice,
         durationMs: normalizedDurationMs,
       },
-    }
-  })
+    };
+  });
 }
 
 function syncActiveVoiceDuration() {
   if (!voiceAudioContext || !activeVoiceMessageId.value) {
-    return
+    return;
   }
 
-  const durationSeconds = voiceAudioContext.duration
+  const durationSeconds = voiceAudioContext.duration;
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    return
+    return;
   }
 
-  updateVoiceMessageDuration(activeVoiceMessageId.value, durationSeconds * 1000)
+  updateVoiceMessageDuration(
+    activeVoiceMessageId.value,
+    durationSeconds * 1000
+  );
 }
 
 function probeMissingAssistantVoiceDurations(items: ConversationMessage[]) {
   items.forEach((message) => {
     if (
-      message.role !== 'assistant' ||
+      message.role !== "assistant" ||
       !message.voice ||
-      message.status === 'sending' ||
+      message.status === "sending" ||
       (message.voice?.durationMs ?? 0) > 0 ||
       voiceDurationProbeContexts.has(message.id)
     ) {
-      return
+      return;
     }
 
-    const sourceUrl = resolveVoiceMessageUrl(message.voice)
+    const sourceUrl = resolveVoiceMessageUrl(message.voice);
     if (!sourceUrl) {
-      return
+      return;
     }
 
-    const audio = Taro.createInnerAudioContext()
-    voiceDurationProbeContexts.set(message.id, audio)
+    const audio = Taro.createInnerAudioContext();
+    voiceDurationProbeContexts.set(message.id, audio);
 
     const cleanup = () => {
-      const cachedAudio = voiceDurationProbeContexts.get(message.id)
+      const cachedAudio = voiceDurationProbeContexts.get(message.id);
       if (cachedAudio !== audio) {
-        return
+        return;
       }
 
-      voiceDurationProbeContexts.delete(message.id)
+      voiceDurationProbeContexts.delete(message.id);
       try {
-        audio.destroy()
+        audio.destroy();
       } catch {}
-    }
+    };
     const syncDuration = () => {
-      const durationSeconds = audio.duration
+      const durationSeconds = audio.duration;
       if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-        return
+        return;
       }
 
-      updateVoiceMessageDuration(message.id, durationSeconds * 1000)
-      cleanup()
-    }
+      updateVoiceMessageDuration(message.id, durationSeconds * 1000);
+      cleanup();
+    };
 
     audio.onCanplay(() => {
-      setTimeout(syncDuration, 80)
-      setTimeout(syncDuration, 500)
-    })
-    audio.onError(cleanup)
-    audio.src = sourceUrl
-    setTimeout(cleanup, 5000)
-  })
+      setTimeout(syncDuration, 80);
+      setTimeout(syncDuration, 500);
+    });
+    audio.onError(cleanup);
+    audio.src = sourceUrl;
+    setTimeout(cleanup, 5000);
+  });
+}
+
+function scheduleMissingAssistantVoiceDurationProbes(
+  items: ConversationMessage[]
+) {
+  items.forEach((message) => {
+    pendingVoiceDurationProbeMessages.set(message.id, message);
+  });
+
+  if (voiceDurationProbeTimer) {
+    return;
+  }
+
+  voiceDurationProbeTimer = setTimeout(() => {
+    voiceDurationProbeTimer = null;
+    const pendingMessages = Array.from(
+      pendingVoiceDurationProbeMessages.values()
+    );
+    pendingVoiceDurationProbeMessages.clear();
+
+    if (!isChatPageVisible) {
+      return;
+    }
+
+    probeMissingAssistantVoiceDurations(pendingMessages);
+  }, VOICE_DURATION_PROBE_IDLE_DELAY_MS);
 }
 
 function ensureVoiceAudioContext() {
   if (voiceAudioContext) {
-    return voiceAudioContext
+    return voiceAudioContext;
   }
 
-  const audio = Taro.createInnerAudioContext()
-  audio.obeyMuteSwitch = false
+  const audio = Taro.createInnerAudioContext();
+  audio.obeyMuteSwitch = false;
   audio.onCanplay(() => {
-    setTimeout(syncActiveVoiceDuration, 80)
-    setTimeout(syncActiveVoiceDuration, 500)
-  })
+    setTimeout(syncActiveVoiceDuration, 80);
+    setTimeout(syncActiveVoiceDuration, 500);
+  });
   audio.onPlay(() => {
-    syncActiveVoiceDuration()
-    isVoicePlaybackLoading.value = false
-    isVoicePlaying.value = true
-  })
-  audio.onTimeUpdate(syncActiveVoiceDuration)
+    syncActiveVoiceDuration();
+    isVoicePlaybackLoading.value = false;
+    isVoicePlaying.value = true;
+  });
+  audio.onTimeUpdate(syncActiveVoiceDuration);
   audio.onPause(() => {
-    isVoicePlaying.value = false
-  })
+    isVoicePlaying.value = false;
+  });
   audio.onStop(() => {
-    isVoicePlaying.value = false
-    isVoicePlaybackLoading.value = false
-  })
+    isVoicePlaying.value = false;
+    isVoicePlaybackLoading.value = false;
+  });
   audio.onEnded(() => {
-    isVoicePlaying.value = false
-    isVoicePlaybackLoading.value = false
-    activeVoiceMessageId.value = ''
-  })
+    isVoicePlaying.value = false;
+    isVoicePlaybackLoading.value = false;
+    activeVoiceMessageId.value = "";
+  });
   audio.onError(() => {
-    const failedMessageId = activeVoiceMessageId.value
-    isVoicePlaying.value = false
-    isVoicePlaybackLoading.value = false
-    activeVoiceMessageId.value = ''
+    const failedMessageId = activeVoiceMessageId.value;
+    isVoicePlaying.value = false;
+    isVoicePlaybackLoading.value = false;
+    activeVoiceMessageId.value = "";
     if (
       !failedMessageId ||
       !isChatPageVisible ||
       isPickingChatImage ||
       Date.now() < voicePlaybackErrorMutedUntil
     ) {
-      return
+      return;
     }
-    showToast('语音播放失败，请稍后重试')
-  })
-  voiceAudioContext = audio
+    showToast("语音播放失败，请稍后重试");
+  });
+  voiceAudioContext = audio;
 
-  return audio
+  return audio;
 }
 
 function stopVoicePlayback(options: { muteErrors?: boolean } = {}) {
   if (!voiceAudioContext) {
-    return
+    return;
   }
 
   if (options.muteErrors) {
-    muteVoicePlaybackErrors()
+    muteVoicePlaybackErrors();
   }
 
   try {
-    voiceAudioContext.stop()
+    voiceAudioContext.stop();
   } catch {}
-  activeVoiceMessageId.value = ''
-  isVoicePlaying.value = false
-  isVoicePlaybackLoading.value = false
+  activeVoiceMessageId.value = "";
+  isVoicePlaying.value = false;
+  isVoicePlaybackLoading.value = false;
 }
 
 function destroyVoiceAudioContext(options: { muteErrors?: boolean } = {}) {
   if (options.muteErrors) {
-    muteVoicePlaybackErrors()
+    muteVoicePlaybackErrors();
   }
 
   if (!voiceAudioContext) {
-    destroyVoiceDurationProbeContexts()
-    return
+    destroyVoiceDurationProbeContexts();
+    return;
   }
 
   try {
-    voiceAudioContext.destroy()
+    voiceAudioContext.destroy();
   } catch {}
-  voiceAudioContext = null
-  activeVoiceMessageId.value = ''
-  isVoicePlaying.value = false
-  isVoicePlaybackLoading.value = false
-  destroyVoiceDurationProbeContexts()
+  voiceAudioContext = null;
+  activeVoiceMessageId.value = "";
+  isVoicePlaying.value = false;
+  isVoicePlaybackLoading.value = false;
+  destroyVoiceDurationProbeContexts();
 }
 
 function destroyVoiceDurationProbeContexts() {
+  if (voiceDurationProbeTimer) {
+    clearTimeout(voiceDurationProbeTimer);
+    voiceDurationProbeTimer = null;
+  }
+  pendingVoiceDurationProbeMessages.clear();
   voiceDurationProbeContexts.forEach((audio) => {
     try {
-      audio.destroy()
+      audio.destroy();
     } catch {}
-  })
-  voiceDurationProbeContexts.clear()
+  });
+  voiceDurationProbeContexts.clear();
 }
-
 </script>
 
 <style lang="scss">
@@ -4209,7 +4727,7 @@ function destroyVoiceDurationProbeContexts() {
 .chat-page__settings-ring,
 .chat-page__settings-ring::before,
 .chat-page__settings-ring::after {
-  content: '';
+  content: "";
   position: absolute;
   left: 1.5px;
   right: 1.5px;
@@ -4233,7 +4751,7 @@ function destroyVoiceDurationProbeContexts() {
 .chat-page__settings-dot,
 .chat-page__settings-dot::before,
 .chat-page__settings-dot::after {
-  content: '';
+  content: "";
   position: absolute;
   width: 4.5px;
   height: 4.5px;
@@ -4609,6 +5127,25 @@ function destroyVoiceDurationProbeContexts() {
   font-weight: 700;
 }
 
+.chat-avatar-wrap {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+}
+
+.chat-avatar-guide-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid #ededed;
+  border-radius: 50%;
+  background: #fa5151;
+}
+
 .chat-avatar--agent {
   width: 40px;
   height: 40px;
@@ -4912,6 +5449,14 @@ function destroyVoiceDurationProbeContexts() {
   border: 0;
 }
 
+.chat-delete-dialog__primary {
+  background: #e54d42;
+}
+
+.chat-delete-dialog__button--disabled {
+  opacity: 0.55;
+}
+
 .chat-composer__mic,
 .chat-composer__keyboard,
 .chat-composer__emoji,
@@ -4984,7 +5529,11 @@ function destroyVoiceDurationProbeContexts() {
   inset: 0;
   z-index: 200;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.07) 0%, rgba(0, 0, 0, 0.66) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.07) 0%,
+    rgba(0, 0, 0, 0.66) 100%
+  );
 }
 
 .voice-recording-overlay__status {
@@ -5072,7 +5621,7 @@ function destroyVoiceDurationProbeContexts() {
 
 .voice-recording-overlay__cancel-icon::before,
 .voice-recording-overlay__cancel-icon::after {
-  content: '';
+  content: "";
   position: absolute;
   left: 8px;
   top: 15px;
@@ -5115,7 +5664,7 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .voice-recording-overlay__panel::before {
-  content: '';
+  content: "";
   position: absolute;
   right: -16%;
   bottom: -108px;

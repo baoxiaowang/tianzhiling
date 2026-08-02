@@ -46,8 +46,9 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.source).toBe('chat_derived_profile');
     expect(result.ageAtDeath).toBe(76);
     expect(result.generation).toBe('elder');
-    expect(result.prompt).toContain('用户称你为“爸爸”');
-    expect(result.prompt).toContain('离世年龄约 76 岁');
+    expect(result.classifierContext).toContain('agent=父亲（用户称爸爸，elder）');
+    expect(result.classifierContext).toContain('离世年龄约76岁');
+    expect(result.prompt).not.toContain('用户称你为“爸爸”');
     expect(result.prompt).toContain('晚辈情绪或行为明显过激时');
     expect(result.prompt).toContain('只管表达，不作事实');
     expect(result.prompt).not.toContain('近期聊天风格弱证据');

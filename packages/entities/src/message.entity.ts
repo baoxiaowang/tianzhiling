@@ -41,6 +41,21 @@ export interface MessageReplyMemoryPlan {
   selectedFactKeys?: string[];
 }
 
+export interface MessageReplyDreamPlan {
+  dreamStage:
+    | "request"
+    | "before_sleep"
+    | "reported"
+    | "fragmented"
+    | "missed"
+    | "repeated_miss"
+    | "verification";
+  dreamAction: "promise" | "invite" | "reconstruct" | "repair" | "leave_space";
+  expectationLevel: "warm" | "restrained";
+  dreamAnchor: "name" | "voice" | "place" | "object" | "none";
+  realityBoundary: "dream_only";
+}
+
 @Index(["conversationId", "createdAt"], { background: true })
 @Index(["userId", "createdAt"], { background: true })
 @Index(["agentId", "userId", "createdAt"], { background: true })
@@ -362,6 +377,9 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   replyStrategyAlternative?: string;
+
+  @Column()
+  replyDreamPlan?: MessageReplyDreamPlan;
 
   @Column()
   replyExperiencePlanVersion?: string;

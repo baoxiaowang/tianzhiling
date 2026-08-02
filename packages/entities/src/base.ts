@@ -12,6 +12,8 @@ export enum TableName {
   agent_memory_fact = "agent_memory_fact",
   agent_profile_fact = "agent_profile_fact",
   agent_relationship_signal = "agent_relationship_signal",
+  agent_share_invite = "agent_share_invite",
+  agent_share_member = "agent_share_member",
   agent_sub = "agent_sub",
   conversation = "conversation",
   conversation_emotion_state = "conversation_emotion_state",

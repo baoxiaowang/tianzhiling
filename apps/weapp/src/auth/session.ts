@@ -15,6 +15,21 @@ export async function saveAuthSession(value: AuthSessionData) {
   Taro.setStorageSync(STORAGE_KEY, JSON.stringify(value))
 }
 
+export async function syncAuthSessionVipStatus(isVip: boolean) {
+  const session = authSession.value
+  if (!session || session.user.isVip === isVip) {
+    return
+  }
+
+  await saveAuthSession({
+    ...session,
+    user: {
+      ...session.user,
+      isVip,
+    },
+  })
+}
+
 export async function clearAuthSession() {
   authSession.value = null
   Taro.removeStorageSync(STORAGE_KEY)

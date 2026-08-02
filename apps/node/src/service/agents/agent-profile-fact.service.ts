@@ -39,6 +39,16 @@ export interface AgentProfileFactSummary {
   sourceMessageId?: string;
   sourceText?: string;
   supportCount?: number;
+  conflictingValues?: string[];
+  updatedAt?: Date;
+}
+
+export interface RecordAgentUserCorrectionOptions {
+  message: MessageEntity;
+  subjectRef: string;
+  correctionKind: 'fact' | 'relationship' | 'memory' | 'persona';
+  rejectedFact: string;
+  replacementFact?: string;
 }
 
 interface ExtractProfileFactsOptions {
@@ -368,6 +378,51 @@ export class AgentProfileFactService {
           .filter((name): name is string => Boolean(name))
       )
     );
+  }
+
+  async recordUserCorrection(
+    options: RecordAgentUserCorrectionOptions
+  ): Promise<AgentProfileFactSummary> {
+    const subjectRef = this.normalizeSourceText(options.subjectRef).slice(
+      0,
+      40
+    );
+    const rejectedFact = this.normalizeSourceText(options.rejectedFact).slice(
+      0,
+      160
+    );
+    const replacementFact = this.normalizeSourceText(
+      options.replacementFact || ''
+    ).slice(0, 160);
+    const now = new Date();
+    const fact: AgentProfileFactSummary = {
+      type: AgentProfileFactType.correction,
+      key: `correction.tool.${options.correctionKind}.${this.hashKey(
+        `${subjectRef}|${rejectedFact}`
+      )}`,
+      value: replacementFact
+        ? `用户纠正：${rejectedFact}不成立；替代事实：${replacementFact}`
+        : `用户纠正：${rejectedFact}不成立；替代事实未知`,
+      polarity: AgentProfileFactPolarity.negative,
+      confidence: AgentProfileFactConfidence.userCorrected,
+      priority: 3,
+      status: AgentProfileFactStatus.active,
+      assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+      sourceMessageId: this.stringifyObjectId(options.message.id),
+      sourceText: options.message.content?.trim().slice(0, 1000) || undefined,
+      supportCount: 1,
+      updatedAt: now,
+    };
+
+    await this.upsertFact({
+      ...fact,
+      userId: options.message.userId,
+      agentId: options.message.agentId,
+      sourceMessageId: options.message.id,
+      trustedSource: true,
+    });
+
+    return fact;
   }
 
   async syncAgentProfileMemorySources(
@@ -1121,6 +1176,10 @@ export class AgentProfileFactService {
         fact.assertionPolicy ?? AgentProfileFactAssertionPolicy.canAssert,
       sourceText: fact.sourceText?.trim() || undefined,
       supportCount: Math.max(fact.supportCount ?? 1, 1),
+      conflictingValues: (fact.conflictingValues || [])
+        .map(value => value?.trim())
+        .filter(Boolean),
+      updatedAt: fact.updatedAt,
     };
     const id = this.stringifyObjectId(fact.id);
     const sourceMessageId = this.stringifyObjectId(

@@ -6,6 +6,7 @@
         class="moment-card__avatar"
         :src="post.authorAvatar"
         mode="aspectFill"
+        lazy-load
       />
       <view v-else class="moment-card__avatar moment-card__avatar--fallback">
         <text>{{ authorName.slice(0, 1) }}</text>
@@ -35,17 +36,22 @@
       </view>
 
       <view
-        v-if="postImages.length"
+        v-if="postDisplayImages.length"
         class="moment-card__image-grid"
-        :class="`moment-card__image-grid--${postImages.length}`"
+        :class="`moment-card__image-grid--${postDisplayImages.length}`"
       >
         <view
-          v-for="(image, index) in postImages"
+          v-for="(image, index) in postDisplayImages"
           :key="`${post.id}-${image}-${index}`"
           class="moment-card__image-wrap"
           @tap.stop="emitPreview(index)"
         >
-          <image class="moment-card__image" :src="image" mode="aspectFill" />
+          <image
+            class="moment-card__image"
+            :src="image"
+            mode="aspectFill"
+            lazy-load
+          />
         </view>
       </view>
 
@@ -180,6 +186,15 @@ const postImages = computed(() => {
     .map(normalizeText)
     .filter(Boolean)
     .slice(0, 9)
+})
+const postDisplayImages = computed(() => {
+  const thumbnails = Array.isArray(props.post.imageThumbnails)
+    ? props.post.imageThumbnails
+    : []
+
+  return postImages.value.map((image, index) => {
+    return normalizeText(thumbnails[index]) || image
+  })
 })
 const relativeTime = computed(() => {
   return formatMomentRelativeTime(props.post.updatedAt ?? props.post.createdAt)

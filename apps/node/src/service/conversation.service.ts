@@ -7,6 +7,9 @@ import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
   AgentEntity,
+  AgentShareMemberEntity,
+  AgentShareMemberStatus,
+  ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
   ConversationMessageFeedbackEntity,
@@ -47,7 +50,10 @@ import {
   MEMORIAL_PHOTO_CUSTOM_PROMPT_MAX_LENGTH,
   normalizeMemorialPhotoCustomPrompt,
 } from '../prompt/memorial-photo';
-import { AgentContextService } from './agents/agent.context';
+import {
+  AgentContextService,
+  AgentConversationContext,
+} from './agents/agent.context';
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
@@ -102,7 +108,11 @@ import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
 } from './agents/reply-length-plan';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletion,
+  ChatCompletionMessageFunctionToolCall,
+  ChatCompletionMessageParam,
+} from 'openai/resources/chat/completions';
 import { ConversationMessageItem, MessageService } from './message.service';
 import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
@@ -113,6 +123,17 @@ import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { BailianImageService } from './bailian-image.service';
 import { ChatTraceService } from './chat-trace.service';
+import {
+  AgentChatToolDecision,
+  AgentChatToolName,
+  AgentChatToolResult,
+  getAgentChatToolDefinitions,
+  normalizeAgentChatToolDecisions,
+} from './agents/agent-chat-tools';
+import {
+  AgentChatToolExecutionContext,
+  AgentChatToolService,
+} from './agents/agent-chat-tool.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -175,6 +196,7 @@ export interface ConversationSummary {
   agentCallMe: string;
   iCallAgent: string;
   agentIsDefault: boolean;
+  agentAccessRole: 'owner' | 'shared';
   preview: string;
   updatedAt: string;
   createdAt: string;
@@ -292,6 +314,27 @@ interface ProcessReplyResult {
 interface ParsedAssistantReply {
   segments: string[];
   claims: AssistantFactClaim[];
+  toolDecisions?: AgentChatToolDecision[];
+  invalidToolDecisionCount?: number;
+}
+
+interface AgentChatToolAudit {
+  decisionNames: AgentChatToolName[];
+  invalidDecisionCount: number;
+  executionCount: number;
+  resultItemCount: number;
+  plannerMemoryAgreement?:
+    | 'both_query'
+    | 'both_skip'
+    | 'model_only'
+    | 'planner_only';
+}
+
+interface PrimaryAssistantCompletionResult {
+  response: ChatCompletion;
+  usage: ReplyUsage;
+  toolAudit: AgentChatToolAudit;
+  toolEvidence: AgentEvidenceItem[];
 }
 
 interface AssistantPresenceSafetyMatch {
@@ -359,6 +402,22 @@ interface ReplyRoutingAudit {
   factClaimCount?: number;
   unsupportedClaimCount?: number;
   promptVersion?: string;
+  outputContractVersion?: string;
+  boundaryContractVersion?: string;
+  dynamicBoundaryCount?: number;
+  toolInstructionMode?: string;
+  chatToolVersion?: string;
+  chatToolMode?: string;
+  chatToolEligible?: boolean;
+  chatToolSampled?: boolean;
+  chatToolAvailableTools?: string[];
+  chatToolPlannerMemoryRequested?: boolean;
+  chatToolPlannerRetrievalBypassed?: boolean;
+  chatToolDecisionNames?: string[];
+  chatToolInvalidDecisionCount?: number;
+  chatToolExecutionCount?: number;
+  chatToolResultItemCount?: number;
+  chatToolPlannerMemoryAgreement?: string;
   systemPromptCharacters?: number;
   historyMessageCount?: number;
   relevantMemoryCount?: number;
@@ -370,7 +429,11 @@ interface ReplyRoutingAudit {
   memoryModelSelectedCandidateKeys?: string[];
   memorySelectedCandidateKeys?: string[];
   memoryCoverageFallbackApplied?: boolean;
-  memoryRetrievalMode?: 'memory_plan' | 'legacy_query' | 'suppressed';
+  memoryRetrievalMode?:
+    | 'memory_plan'
+    | 'legacy_query'
+    | 'suppressed'
+    | 'tool_takeover';
   memoryRetrievalRequestCount?: number;
   memoryRetrievalConceptCount?: number;
   memoryRetrievedEvidenceCount?: number;
@@ -407,6 +470,7 @@ interface ReplyRoutingAudit {
   activeContributionSource?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
+  dreamCompanionPlan?: MessageEntity['replyDreamPlan'];
   experiencePlanVersion?: string;
   profileTier?: string;
   relationshipStage?: string;
@@ -482,6 +546,9 @@ export class ConversationService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
+  @InjectEntityModel(AgentShareMemberEntity)
+  agentShareMemberModel: MongoRepository<AgentShareMemberEntity>;
+
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
@@ -502,6 +569,9 @@ export class ConversationService {
 
   @Inject()
   agentContextService: AgentContextService;
+
+  @Inject()
+  agentChatToolService: AgentChatToolService;
 
   @Inject()
   agentConversationSummaryService: AgentConversationSummaryService;
@@ -1189,7 +1259,11 @@ export class ConversationService {
       return this.messageService.buildConversationMessageItem(message);
     }
 
-    const agent = await this.findAgentById(conversation.agentId);
+    const storedAgent = await this.findAgentById(conversation.agentId);
+    const agent = await this.resolveConversationAgent(
+      conversation,
+      storedAgent
+    );
     const voiceTimbre = await this.findActiveVoiceTimbreForAgent(agent);
 
     if (!voiceTimbre) {
@@ -1600,7 +1674,11 @@ export class ConversationService {
       auth,
       conversationId
     );
-    const agent = await this.findAgentById(conversation.agentId);
+    const storedAgent = await this.findAgentById(conversation.agentId);
+    const agent = await this.resolveConversationAgent(
+      conversation,
+      storedAgent
+    );
 
     return {
       auth,
@@ -2473,6 +2551,7 @@ export class ConversationService {
         route: context.replyRoute,
       });
     const contextEvidence = context.evidence || [];
+    let reviewEvidence = contextEvidence;
     this.scheduleRelationshipSignals(
       before.userMessage,
       context.replyIntent ?? context.replyRoute?.intent
@@ -2539,35 +2618,42 @@ export class ConversationService {
     let generationUsage: ReplyUsage = {};
     let generationRecoveryAttempted = false;
     let generationRecoverySucceeded = false;
+    let chatToolAudit: AgentChatToolAudit = {
+      decisionNames: [],
+      invalidDecisionCount: 0,
+      executionCount: 0,
+      resultItemCount: 0,
+    };
     const generationAttemptTraces: AssistantGenerationAttemptTrace[] = [];
 
     try {
-      response = await this.openAIService.createChatCompletion(
-        {
-          temperature: ASSISTANT_REPLY_TEMPERATURE,
-          topP: ASSISTANT_REPLY_TOP_P,
-          max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
-          messages: context.messages,
-          trace: {
-            stage: ChatTraceStage.generate,
-            operation: 'generate.primary',
-          },
-        },
-        {
-          timeout: ASSISTANT_REPLY_TIMEOUT_MS,
-          maxRetries: 0,
-        }
-      );
+      const primaryCompletion = await this.createPrimaryAssistantCompletion({
+        runtime,
+        before,
+        context,
+      });
+      response = primaryCompletion.response;
+      chatToolAudit = primaryCompletion.toolAudit;
+      reviewEvidence = contextEvidence.concat(primaryCompletion.toolEvidence);
       generationUsage = this.mergeReplyUsage(
         generationUsage,
-        this.extractUsageFromResponse(response)
+        primaryCompletion.usage
       );
       const responseContent =
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
       this.assertAssistantCompletionNotTruncated(response);
-      const parsedReply = this.parseAssistantReply(responseContent);
+      const parsedReply = this.parseAssistantReply(
+        responseContent,
+        context.chatToolPlan?.availableTools
+      );
+      chatToolAudit = this.mergeAgentChatToolDecisionAudit(
+        context,
+        chatToolAudit,
+        parsedReply
+      );
+      this.recordAgentChatToolAudit(context, chatToolAudit);
       const plannedSegments = this.materializeParticipationReplySegments(
         parsedReply.segments,
         replyBrief.participationStrategy
@@ -2710,7 +2796,7 @@ export class ConversationService {
         userQuery: before.searchableText,
         replySegments,
         replyBrief,
-        evidence: contextEvidence,
+        evidence: reviewEvidence,
         claims: replyClaims,
       }) ?? requestedGuardrailReviewMode;
     const guarded = await this.withTraceSpan(
@@ -2723,7 +2809,7 @@ export class ConversationService {
           replySegments,
           replyRoute: context.replyRoute,
           replyBrief,
-          evidence: contextEvidence,
+          evidence: reviewEvidence,
           claims: replyClaims,
           reviewMode: guardrailReviewMode,
         })
@@ -2745,6 +2831,12 @@ export class ConversationService {
       replyBrief.participationStrategy
     );
     const finalClaims = guarded.claims || replyClaims;
+    const toolEvidenceIds = new Set(
+      reviewEvidence
+        .slice(contextEvidence.length)
+        .map(item => item.id)
+        .filter(Boolean)
+    );
     const memoryUsedEvidenceIds = Array.from(
       new Set(
         finalClaims
@@ -2752,11 +2844,13 @@ export class ConversationService {
             (ids, claim) => ids.concat(claim.evidenceIds || []),
             []
           )
-          .filter(id => /^(?:F|L)\d+$/.test(id))
+          .filter(id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id))
       )
     );
     const memoryUsedClaimCount = finalClaims.filter(claim =>
-      (claim.evidenceIds || []).some(id => /^(?:F|L)\d+$/.test(id))
+      (claim.evidenceIds || []).some(
+        id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id)
+      )
     ).length;
     const bubbleStructureIssues = Array.from(
       new Set(generatedBubbleReflow.issues.concat(guardedBubbleReflow.issues))
@@ -2799,9 +2893,14 @@ export class ConversationService {
               (!guardedBubbleReflow.attempted || guardedBubbleReflow.succeeded)
             : undefined,
         bubbleStructureIssues,
+        chatToolDecisionNames: chatToolAudit.decisionNames,
+        chatToolInvalidDecisionCount: chatToolAudit.invalidDecisionCount,
+        chatToolExecutionCount: chatToolAudit.executionCount,
+        chatToolResultItemCount: chatToolAudit.resultItemCount,
+        chatToolPlannerMemoryAgreement: chatToolAudit.plannerMemoryAgreement,
         participationExecution: participationResult.execution,
         participationFallbackReason: participationResult.fallbackReason,
-        evidenceCount: contextEvidence.length,
+        evidenceCount: reviewEvidence.length,
         factClaimCount: finalClaims.length,
         unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
         memoryUsedEvidenceIds,
@@ -2809,6 +2908,394 @@ export class ConversationService {
         ...context.diagnostics,
       },
     };
+  }
+
+  private async createPrimaryAssistantCompletion(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    context: AgentConversationContext;
+  }): Promise<PrimaryAssistantCompletionResult> {
+    const plan = options.context.chatToolPlan;
+    const tools =
+      plan?.mode === 'active'
+        ? getAgentChatToolDefinitions(plan.availableTools)
+        : [];
+    let usage: ReplyUsage = {};
+    const firstResponse = await this.openAIService.createChatCompletion(
+      {
+        temperature: ASSISTANT_REPLY_TEMPERATURE,
+        topP: ASSISTANT_REPLY_TOP_P,
+        max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
+        messages: options.context.messages,
+        ...(tools.length
+          ? {
+              tools,
+              tool_choice: 'auto' as const,
+              parallel_tool_calls: false,
+            }
+          : {}),
+        trace: {
+          stage: ChatTraceStage.generate,
+          operation: 'generate.primary',
+          attributes: {
+            chatToolMode: plan?.mode || 'off',
+            registeredToolCount: tools.length,
+          },
+        },
+      },
+      {
+        timeout: ASSISTANT_REPLY_TIMEOUT_MS,
+        maxRetries: 0,
+      }
+    );
+    usage = this.mergeReplyUsage(
+      usage,
+      this.extractUsageFromResponse(firstResponse)
+    );
+
+    if (!tools.length || plan?.mode !== 'active') {
+      return {
+        response: firstResponse,
+        usage,
+        toolAudit: this.emptyAgentChatToolAudit(plan?.plannerMemoryRequested),
+        toolEvidence: [],
+      };
+    }
+
+    const firstMessage = firstResponse.choices?.[0]?.message;
+    const rawToolCalls = Array.isArray(firstMessage?.tool_calls)
+      ? firstMessage.tool_calls
+      : [];
+    const toolCalls = rawToolCalls
+      .filter(
+        (call): call is ChatCompletionMessageFunctionToolCall =>
+          call?.type === 'function' &&
+          plan.availableTools.includes(call.function?.name as AgentChatToolName)
+      )
+      .slice(0, plan.maxCalls);
+
+    if (!toolCalls.length) {
+      return {
+        response: firstResponse,
+        usage,
+        toolAudit: this.emptyAgentChatToolAudit(plan.plannerMemoryRequested),
+        toolEvidence: [],
+      };
+    }
+
+    const executionContext = this.buildAgentChatToolExecutionContext(options);
+    const results: Array<{
+      callId: string;
+      name: AgentChatToolName;
+      result: AgentChatToolResult;
+    }> = [];
+
+    for (const call of toolCalls) {
+      const name = call.function.name as AgentChatToolName;
+      const rawArguments = this.parseAgentChatToolArguments(
+        call.function.arguments
+      );
+      const result = await this.withTraceSpan(
+        this.resolveAgentChatToolTraceStage(name),
+        `tool.${name}`,
+        () =>
+          this.executeAgentChatToolWithTimeout(
+            name,
+            rawArguments,
+            executionContext,
+            plan.timeoutMs
+          ),
+        { chatToolName: name }
+      );
+      results.push({ callId: call.id, name, result });
+    }
+
+    const continuationMessages: ChatCompletionMessageParam[] = [
+      ...options.context.messages,
+      {
+        role: 'assistant',
+        content:
+          typeof firstMessage?.content === 'string'
+            ? firstMessage.content
+            : null,
+        tool_calls: toolCalls,
+      },
+      ...results.map(
+        item =>
+          ({
+            role: 'tool',
+            tool_call_id: item.callId,
+            content: JSON.stringify(item.result),
+          } as ChatCompletionMessageParam)
+      ),
+    ];
+    const finalResponse = await this.openAIService.createChatCompletion(
+      {
+        temperature: ASSISTANT_REPLY_TEMPERATURE,
+        topP: ASSISTANT_REPLY_TOP_P,
+        max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
+        messages: continuationMessages,
+        tools,
+        tool_choice: 'none',
+        trace: {
+          stage: ChatTraceStage.generate,
+          operation: 'generate.tool_continuation',
+          attributes: {
+            chatToolMode: plan.mode,
+            toolExecutionCount: results.length,
+            toolResultItemCount: results.reduce(
+              (total, item) => total + item.result.items.length,
+              0
+            ),
+          },
+        },
+      },
+      {
+        timeout: ASSISTANT_REPLY_TIMEOUT_MS,
+        maxRetries: 0,
+      }
+    );
+    usage = this.mergeReplyUsage(
+      usage,
+      this.extractUsageFromResponse(finalResponse)
+    );
+
+    return {
+      response: finalResponse,
+      usage,
+      toolEvidence: this.buildAgentChatToolEvidence(results),
+      toolAudit: {
+        decisionNames: results.map(item => item.name),
+        invalidDecisionCount: results.filter(
+          item => item.result.status === 'invalid_arguments'
+        ).length,
+        executionCount: results.length,
+        resultItemCount: results.reduce(
+          (total, item) => total + item.result.items.length,
+          0
+        ),
+        plannerMemoryAgreement: this.resolvePlannerMemoryAgreement(
+          plan.plannerMemoryRequested,
+          results.some(item => item.name === 'search_relationship_memory')
+        ),
+      },
+    };
+  }
+
+  private buildAgentChatToolEvidence(
+    results: Array<{
+      name: AgentChatToolName;
+      result: AgentChatToolResult;
+    }>
+  ): AgentEvidenceItem[] {
+    return results.flatMap(({ name, result }) => {
+      if (name === 'record_user_correction') {
+        return [];
+      }
+
+      return result.items.map(item => {
+        const conflicted = item.conflictStatus !== 'none';
+        if (name === 'search_relationship_memory') {
+          return {
+            id: item.id,
+            source: 'retrieved_user' as const,
+            text: item.value,
+            assertionPolicy: 'context_only' as const,
+            subjectRef: item.subjectRef,
+            factKey: item.factKey || 'memory.relationship',
+            useMode: 'recall' as const,
+            status: 'active' as const,
+            confidence: item.confidence,
+          };
+        }
+
+        return {
+          id: item.id,
+          source:
+            name === 'get_family_facts'
+              ? ('confirmed_fact' as const)
+              : ('agent_profile' as const),
+          text: item.value,
+          assertionPolicy: conflicted
+            ? ('context_only' as const)
+            : ('can_assert' as const),
+          subjectRef: item.subjectRef,
+          factKey:
+            item.factKey ||
+            (name === 'get_family_facts' ? 'family' : 'identity.persona'),
+          useMode: conflicted ? ('hypothesis' as const) : ('assert' as const),
+          status: 'active' as const,
+          confidence: item.confidence,
+        };
+      });
+    });
+  }
+
+  private buildAgentChatToolExecutionContext(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    context: AgentConversationContext;
+  }): AgentChatToolExecutionContext {
+    const previousAssistant = [...options.context.messages]
+      .reverse()
+      .find(
+        message =>
+          message.role === 'assistant' &&
+          typeof message.content === 'string' &&
+          message.content.trim()
+      );
+
+    return {
+      userId: options.runtime.conversation.userId,
+      agentId: options.runtime.conversation.agentId,
+      conversationId: options.runtime.conversation.id,
+      currentMessage: options.before.userMessage,
+      currentQuery: options.before.searchableText,
+      previousAssistantContent:
+        typeof previousAssistant?.content === 'string'
+          ? previousAssistant.content
+          : undefined,
+      agent: options.runtime.agent,
+    };
+  }
+
+  private async executeAgentChatToolWithTimeout(
+    name: AgentChatToolName,
+    args: unknown,
+    context: AgentChatToolExecutionContext,
+    timeoutMs: number
+  ): Promise<AgentChatToolResult> {
+    if (!this.agentChatToolService) {
+      return this.buildAgentChatToolFailure(name, 'tool_service_unavailable');
+    }
+
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        this.agentChatToolService.execute(name, args, context),
+        new Promise<AgentChatToolResult>(resolve => {
+          timer = setTimeout(
+            () => resolve(this.buildAgentChatToolFailure(name, 'tool_timeout')),
+            timeoutMs
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  private buildAgentChatToolFailure(
+    name: AgentChatToolName,
+    errorCode: string
+  ): AgentChatToolResult {
+    return {
+      version: 'agent_chat_tools_v1',
+      tool: name,
+      status: 'error',
+      items: [],
+      truncated: false,
+      errorCode,
+    };
+  }
+
+  private parseAgentChatToolArguments(value: string): unknown {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveAgentChatToolTraceStage(
+    name: AgentChatToolName
+  ): ChatTraceStage {
+    if (name === 'search_relationship_memory') {
+      return ChatTraceStage.memoryRetrieve;
+    }
+    if (name === 'record_user_correction') {
+      return ChatTraceStage.asyncWrite;
+    }
+    return ChatTraceStage.contextLoad;
+  }
+
+  private emptyAgentChatToolAudit(
+    plannerMemoryRequested = false
+  ): AgentChatToolAudit {
+    return {
+      decisionNames: [],
+      invalidDecisionCount: 0,
+      executionCount: 0,
+      resultItemCount: 0,
+      plannerMemoryAgreement: this.resolvePlannerMemoryAgreement(
+        plannerMemoryRequested,
+        false
+      ),
+    };
+  }
+
+  private mergeAgentChatToolDecisionAudit(
+    context: AgentConversationContext,
+    audit: AgentChatToolAudit,
+    parsed: ParsedAssistantReply
+  ): AgentChatToolAudit {
+    if (context.chatToolPlan?.mode !== 'shadow') {
+      return audit;
+    }
+
+    const decisionNames = (parsed.toolDecisions || []).map(item => item.name);
+    return {
+      ...audit,
+      decisionNames,
+      invalidDecisionCount: parsed.invalidToolDecisionCount || 0,
+      plannerMemoryAgreement: this.resolvePlannerMemoryAgreement(
+        context.chatToolPlan.plannerMemoryRequested,
+        decisionNames.includes('search_relationship_memory')
+      ),
+    };
+  }
+
+  private resolvePlannerMemoryAgreement(
+    plannerRequested: boolean,
+    modelRequested: boolean
+  ): AgentChatToolAudit['plannerMemoryAgreement'] {
+    if (plannerRequested && modelRequested) {
+      return 'both_query';
+    }
+    if (!plannerRequested && !modelRequested) {
+      return 'both_skip';
+    }
+    return modelRequested ? 'model_only' : 'planner_only';
+  }
+
+  private recordAgentChatToolAudit(
+    context: AgentConversationContext,
+    audit: AgentChatToolAudit
+  ): void {
+    const plan = context.chatToolPlan;
+    if (!plan || (plan.mode !== 'shadow' && plan.mode !== 'active')) {
+      return;
+    }
+
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.plan,
+      operation:
+        plan.mode === 'shadow' ? 'tools.shadow_decision' : 'tools.active_round',
+      startedAt: new Date(),
+      attributes: {
+        chatToolVersion: plan.version,
+        chatToolMode: plan.mode,
+        decisionCount: audit.decisionNames.length,
+        decisionNames: audit.decisionNames.join(','),
+        invalidDecisionCount: audit.invalidDecisionCount,
+        executionCount: audit.executionCount,
+        resultItemCount: audit.resultItemCount,
+        plannerMemoryRequested: plan.plannerMemoryRequested,
+        plannerMemoryAgreement: audit.plannerMemoryAgreement,
+      },
+    });
   }
 
   private isExplicitMemoryControlRequest(value: string): boolean {
@@ -3316,13 +3803,16 @@ export class ConversationService {
   private withTraceSpan<T>(
     stage: ChatTraceStage,
     operation: string,
-    task: () => Promise<T> | T
+    task: () => Promise<T> | T,
+    attributes?: Record<string, ChatSpanAttributeValue | undefined>
   ): Promise<T> {
     if (!this.chatTraceService) {
       return Promise.resolve(task());
     }
 
-    return this.chatTraceService.withSpan(stage, operation, () => task());
+    return this.chatTraceService.withSpan(stage, operation, () => task(), {
+      attributes,
+    });
   }
 
   private async enqueueConversationReplyJob(
@@ -3752,6 +4242,20 @@ export class ConversationService {
     agent?: AgentEntity | null,
     latestMessage?: MessageEntity | null
   ): ConversationSummary {
+    const isSharedConversation =
+      conversation.accessRole === 'shared' ||
+      Boolean(
+        agent?.createdUserId &&
+          this.stringifyObjectId(agent.createdUserId) !==
+            this.stringifyObjectId(conversation.userId)
+      );
+    const agentCallsUser = isSharedConversation
+      ? conversation.agentCallsUser?.trim() || ''
+      : agent?.agentCallMe?.trim() || '';
+    const userCallsAgent = isSharedConversation
+      ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
+      : agent?.iCallAgent?.trim() || '';
+
     return {
       id: this.stringifyObjectId(conversation.id),
       agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
@@ -3760,9 +4264,15 @@ export class ConversationService {
         agent?.avatar?.trim() || ''
       ),
       agentSex: agent?.sex ?? 0,
-      agentCallMe: agent?.agentCallMe?.trim() || '',
-      iCallAgent: agent?.iCallAgent?.trim() || '',
-      agentIsDefault: Boolean(agent?.isDefault),
+      agentCallMe: agentCallsUser,
+      iCallAgent: userCallsAgent,
+      agentIsDefault: Boolean(
+        agent?.isDefault &&
+          agent.createdUserId &&
+          this.stringifyObjectId(agent.createdUserId) ===
+            this.stringifyObjectId(conversation.userId)
+      ),
+      agentAccessRole: isSharedConversation ? 'shared' : 'owner',
       preview: this.buildPreview(agent, latestMessage),
       updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
       createdAt: conversation.createdAt?.toISOString?.() ?? '',
@@ -3799,14 +4309,14 @@ export class ConversationService {
     const agentCallMe = agent.agentCallMe?.trim();
 
     if (iCallAgent && agentCallMe) {
-      return `你称呼 TA 为${iCallAgent}，TA 会叫你${agentCallMe}`;
+      return `你称呼他为${iCallAgent}，他会叫你${agentCallMe}`;
     }
 
     if (agent.description?.trim()) {
       return agent.description.trim();
     }
 
-    return '点击开始和 TA 对话';
+    return '点击开始和他对话';
   }
 
   private normalizeOptionalConversationPageSize(
@@ -5788,21 +6298,37 @@ export class ConversationService {
     };
   }
 
-  private parseAssistantReply(value?: string): ParsedAssistantReply {
+  private parseAssistantReply(
+    value?: string,
+    allowedToolNames: AgentChatToolName[] = []
+  ): ParsedAssistantReply {
     const content = value?.trim();
 
     if (!content) {
       return {
         segments: [],
         claims: [],
+        ...(allowedToolNames.length
+          ? { toolDecisions: [], invalidToolDecisionCount: 0 }
+          : {}),
       };
     }
 
     const parsed = this.parseAssistantReplyEnvelope(content);
 
+    const toolDecisionResult = normalizeAgentChatToolDecisions(
+      parsed?.toolDecisions,
+      allowedToolNames
+    );
     return {
       segments: this.parseAssistantReplyCandidates(content),
       claims: this.normalizeAssistantFactClaims(parsed?.claims),
+      ...(allowedToolNames.length
+        ? {
+            toolDecisions: toolDecisionResult.decisions,
+            invalidToolDecisionCount: toolDecisionResult.invalidCount,
+          }
+        : {}),
     };
   }
 
@@ -5822,6 +6348,10 @@ export class ConversationService {
           typeof raw.text === 'string' ? raw.text.trim().slice(0, 160) : '';
         const kind = this.normalizeAssistantFactClaimKind(raw.kind);
         const mode = this.normalizeAssistantFactClaimMode(raw.mode);
+        const subjectRef =
+          typeof raw.subjectRef === 'string'
+            ? raw.subjectRef.trim().slice(0, 64)
+            : '';
         const evidenceIds = Array.isArray(raw.evidenceIds)
           ? Array.from(
               new Set(
@@ -5840,6 +6370,7 @@ export class ConversationService {
           text,
           kind,
           mode,
+          ...(subjectRef ? { subjectRef } : {}),
           evidenceIds,
         };
       })
@@ -5867,6 +6398,7 @@ export class ConversationService {
   ): AssistantFactClaimMode {
     switch (value) {
       case 'attributed_to_user':
+      case 'conversational_uptake':
       case 'autonomous_fact':
       case 'soft_imagination':
         return value;
@@ -5929,7 +6461,7 @@ export class ConversationService {
     }
 
     const repairedKnownKeys = withoutFence.replace(
-      /([{,]\s*):?\s*(segments|claims|text)\s*:/g,
+      /([{,]\s*):?\s*(segments|claims|toolDecisions|text)\s*:/g,
       '$1"$2":'
     );
     if (repairedKnownKeys !== withoutFence) {
@@ -6215,6 +6747,7 @@ export class ConversationService {
     replyActiveContributionSource?: string;
     replyStrategyRepeatedMoves?: string[];
     replyStrategyAlternative?: string;
+    replyDreamPlan?: MessageEntity['replyDreamPlan'];
     replyExperiencePlanVersion?: string;
     replyProfileTier?: string;
     replyProfileScore?: number;
@@ -6366,6 +6899,8 @@ export class ConversationService {
         routing?.strategyRepeatedMoves?.filter(Boolean),
       replyStrategyAlternative:
         routing?.strategyAlternative?.trim() || undefined,
+      replyDreamPlan:
+        routing?.brief?.dreamCompanionPlan || routing?.dreamCompanionPlan,
       replyExperiencePlanVersion:
         routing?.brief?.experiencePlan?.version ||
         routing?.experiencePlanVersion?.trim() ||
@@ -6531,6 +7066,7 @@ export class ConversationService {
     replyActiveContributionSource?: string;
     replyStrategyRepeatedMoves?: string[];
     replyStrategyAlternative?: string;
+    replyDreamPlan?: MessageEntity['replyDreamPlan'];
     replyExperiencePlanVersion?: string;
     replyProfileTier?: string;
     replyProfileScore?: number;
@@ -6749,6 +7285,7 @@ export class ConversationService {
       options.replyStrategyRepeatedMoves?.filter(Boolean);
     message.replyStrategyAlternative =
       options.replyStrategyAlternative?.trim() || undefined;
+    message.replyDreamPlan = options.replyDreamPlan;
     message.replyExperiencePlanVersion =
       options.replyExperiencePlanVersion?.trim() || undefined;
     message.replyProfileTier = options.replyProfileTier?.trim() || undefined;
@@ -6886,6 +7423,56 @@ export class ConversationService {
     }
 
     return conversation;
+  }
+
+  private async resolveConversationAgent(
+    conversation: ConversationEntity,
+    agent: AgentEntity | null
+  ): Promise<AgentEntity | null> {
+    if (!agent) {
+      return null;
+    }
+
+    const isOwner =
+      this.stringifyObjectId(agent.createdUserId) ===
+      this.stringifyObjectId(conversation.userId);
+
+    if (isOwner) {
+      return agent;
+    }
+
+    const member = await this.agentShareMemberModel.findOne({
+      where: {
+        agentId: agent.id,
+        userId: conversation.userId,
+        status: AgentShareMemberStatus.active,
+      },
+    });
+
+    if (!member) {
+      throw new AppError(
+        'AGENT_SHARE_ACCESS_REVOKED',
+        'shared agent access is no longer active',
+        403
+      );
+    }
+
+    const agentCallsUser =
+      member.agentCallsUser?.trim() ||
+      conversation.agentCallsUser?.trim() ||
+      '';
+    const userCallsAgent =
+      member.userCallsAgent?.trim() ||
+      conversation.userCallsAgent?.trim() ||
+      agent.name?.trim() ||
+      '';
+
+    return {
+      ...agent,
+      agentCallMe: agentCallsUser,
+      iCallAgent: userCallsAgent,
+      isDefault: false,
+    } as AgentEntity;
   }
 
   private async findConversationById(

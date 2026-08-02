@@ -1,67 +1,75 @@
-import Taro from '@tarojs/taro'
-import { readonly, shallowRef } from 'vue'
+import Taro from "@tarojs/taro";
+import { readonly, shallowRef } from "vue";
 
 export interface SafeAreaInsets {
-  top: number
-  bottom: number
+  top: number;
+  bottom: number;
 }
 
 const safeAreaInsetsState = shallowRef<SafeAreaInsets>({
   top: 0,
   bottom: 0,
-})
+});
 
-let safeAreaInitialized = false
+let safeAreaInitialized = false;
+
+interface WindowSafeAreaInfo {
+  safeArea?: {
+    top?: number;
+    bottom?: number;
+  };
+  screenHeight?: number;
+  statusBarHeight?: number;
+}
 
 function readSafeAreaInsets(): SafeAreaInsets {
   try {
-    const systemInfo = Taro.getSystemInfoSync() as {
-      safeArea?: {
-        top?: number
-        bottom?: number
-      }
-      screenHeight?: number
-      statusBarHeight?: number
-    }
+    const windowApi = Taro as unknown as {
+      getWindowInfo?: () => WindowSafeAreaInfo;
+    };
+    const systemInfo =
+      windowApi.getWindowInfo?.() ??
+      (Taro.getSystemInfoSync() as WindowSafeAreaInfo);
 
-    const top = systemInfo.safeArea?.top ?? systemInfo.statusBarHeight ?? 0
+    const top = systemInfo.safeArea?.top ?? systemInfo.statusBarHeight ?? 0;
     const bottom =
-      typeof systemInfo.safeArea?.bottom === 'number' && typeof systemInfo.screenHeight === 'number'
+      typeof systemInfo.safeArea?.bottom === "number" &&
+      typeof systemInfo.screenHeight === "number"
         ? Math.max(systemInfo.screenHeight - systemInfo.safeArea.bottom, 0)
-        : 0
+        : 0;
 
-    return { top, bottom }
+    return { top, bottom };
   } catch {
-    return { top: 0, bottom: 0 }
+    return { top: 0, bottom: 0 };
   }
 }
 
 export function initSafeAreaInsets() {
   if (safeAreaInitialized) {
-    return safeAreaInsetsState.value
+    return safeAreaInsetsState.value;
   }
 
-  safeAreaInsetsState.value = readSafeAreaInsets()
-  safeAreaInitialized = true
+  safeAreaInsetsState.value = readSafeAreaInsets();
+  safeAreaInitialized = true;
 
-  return safeAreaInsetsState.value
+  return safeAreaInsetsState.value;
 }
 
 export function useSafeAreaInsets() {
-  return readonly(safeAreaInsetsState)
+  return readonly(safeAreaInsetsState);
 }
 
 export function createSafeAreaCssVars(prefix: string) {
-  const safeAreaInsets = safeAreaInsetsState.value
-  const style: Record<string, string> = {}
+  const safeAreaInsets = safeAreaInsetsState.value;
+  const style: Record<string, string> = {};
 
   if (safeAreaInsets.top > 0) {
-    style[`--${prefix}-top`] = `${safeAreaInsets.top}px`
+    style[`--${prefix}-top`] = `${safeAreaInsets.top}px`;
   }
 
   if (safeAreaInsets.bottom > 0) {
-    style[`--${prefix}-bottom`] = `${safeAreaInsets.bottom}px`
+    style[`--${prefix}-bottom`] = `${safeAreaInsets.bottom}px`;
   }
 
-  return style
+  return style;
 }

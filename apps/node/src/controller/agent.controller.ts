@@ -11,6 +11,8 @@ import {
 import { Context } from '@midwayjs/koa';
 import { AppError } from '../common/errors';
 import {
+  AcceptAgentShareInviteDTO,
+  AgentShareQRCodeDTO,
   AgentCreateGuideDTO,
   AgentProfileMessengerSpeechDTO,
   AgentProfileInterviewDTO,
@@ -18,6 +20,7 @@ import {
   UpdateAgentAvatarDTO,
   UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
+  UpdateAgentShareContextDTO,
 } from '../dto/agent.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { AgentService } from '../service/agent.service';
@@ -37,6 +40,13 @@ export class AgentController {
     };
   }
 
+  @Get('/accessible')
+  async listAccessibleAgents() {
+    return {
+      items: await this.agentService.listAccessibleAgents(this.requireAuth()),
+    };
+  }
+
   @Post('/create-interview')
   async interviewAgentCreation(@Body() body: AgentCreateGuideDTO) {
     return this.agentService.interviewAgentCreation(this.requireAuth(), body);
@@ -52,9 +62,39 @@ export class AgentController {
     );
   }
 
+  @Post('/share-invites/accept')
+  async acceptAgentShareInvite(@Body() body: AcceptAgentShareInviteDTO) {
+    return this.agentService.acceptAgentShareInvite(this.requireAuth(), body);
+  }
+
+  @Post('/share-invites/qrcode')
+  async createAgentShareQRCode(@Body() body: AgentShareQRCodeDTO) {
+    return this.agentService.createAgentShareQRCode(this.requireAuth(), body);
+  }
+
   @Get('/:agentId')
   async getAgentDetail(@Param('agentId') agentId: string) {
     return this.agentService.getAgentDetail(this.requireAuth(), agentId);
+  }
+
+  @Post('/:agentId/share-invites')
+  async createAgentShareInvite(@Param('agentId') agentId: string) {
+    return this.agentService.createAgentShareInvite(
+      this.requireAuth(),
+      agentId
+    );
+  }
+
+  @Patch('/:agentId/share-context')
+  async updateAgentShareContext(
+    @Param('agentId') agentId: string,
+    @Body() body: UpdateAgentShareContextDTO
+  ) {
+    return this.agentService.updateAgentShareContext(
+      this.requireAuth(),
+      agentId,
+      body
+    );
   }
 
   @Post('/:agentId/memory-profile')

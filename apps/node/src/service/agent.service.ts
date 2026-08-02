@@ -1,14 +1,21 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Inject, Provide } from '@midwayjs/core';
+import { createHash, randomBytes } from 'crypto';
 import type {
+  AcceptAgentShareInviteResultDTO,
   AgentCreateGuideResultDTO,
   AgentProfileDTO,
   AgentProfileInterviewResultDTO,
   AgentProfileMessengerSpeechResultDTO,
+  AgentShareInviteDTO,
+  AgentShareInvitePreviewDTO,
+  AgentShareQRCodeDTO,
 } from '@tzl/shared';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import {
+  AcceptAgentShareInviteDTO,
+  AgentShareQRCodeDTO as AgentShareQRCodeRequestDTO,
   AgentCreateGuideDTO,
   AgentProfileInterviewDTO,
   AgentProfileMessengerSpeechDTO,
@@ -16,9 +23,14 @@ import {
   UpdateAgentAvatarDTO,
   UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
+  UpdateAgentShareContextDTO,
 } from '../dto/agent.dto';
 import {
   AgentEntity,
+  AgentShareInviteEntity,
+  AgentShareInviteStatus,
+  AgentShareMemberEntity,
+  AgentShareMemberStatus,
   AgentSex,
   ConversationEntity,
   MessageEntity,
@@ -26,15 +38,28 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserEntity,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { PostImageService } from './post-image.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
+import { WechatPayService } from './wechat-pay.service';
 
 export type AgentProfile = AgentProfileDTO;
 export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
+
+const AGENT_SHARE_INVITE_TOKEN_BYTES = 24;
+const AGENT_SHARE_INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
+const AGENT_SHARE_MINI_PROGRAM_PAGE = 'pages/agent-share/index';
+
+type AgentAccessRole = 'owner' | 'shared';
+
+interface AgentAccess {
+  agent: AgentEntity;
+  role: AgentAccessRole;
+}
 
 @Provide()
 export class AgentService {
@@ -47,6 +72,15 @@ export class AgentService {
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
+  @InjectEntityModel(AgentShareInviteEntity)
+  agentShareInviteModel: MongoRepository<AgentShareInviteEntity>;
+
+  @InjectEntityModel(AgentShareMemberEntity)
+  agentShareMemberModel: MongoRepository<AgentShareMemberEntity>;
+
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
+
   @Inject()
   postImageService: PostImageService;
 
@@ -55,6 +89,9 @@ export class AgentService {
 
   @Inject()
   agentCreateGuideService: AgentCreateGuideService;
+
+  @Inject()
+  wechatPayService: WechatPayService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -76,32 +113,301 @@ export class AgentService {
   }
 
   async listAgents(auth: AuthenticatedUserPayload): Promise<AgentProfile[]> {
-    const createdUserId = this.parseUserId(auth.sub);
+    const userId = this.parseUserId(auth.sub);
     const agents = await this.agentModel.find({
       where: {
-        createdUserId,
+        createdUserId: userId,
       },
       order: {
         updatedAt: 'DESC',
       },
     });
 
-    return this.buildAgentProfiles(agents);
+    return this.buildAgentProfiles(agents, userId);
+  }
+
+  async listAccessibleAgents(
+    auth: AuthenticatedUserPayload
+  ): Promise<AgentProfile[]> {
+    const userId = this.parseUserId(auth.sub);
+    const [ownedAgents, sharedMembers] = await Promise.all([
+      this.agentModel.find({
+        where: {
+          createdUserId: userId,
+        },
+        order: {
+          updatedAt: 'DESC',
+        },
+      }),
+      this.agentShareMemberModel.find({
+        where: {
+          userId,
+          status: AgentShareMemberStatus.active,
+        },
+        order: {
+          updatedAt: 'DESC',
+        },
+      }),
+    ]);
+    const sharedAgents = await Promise.all(
+      sharedMembers.map(member => this.findAgentById(member.agentId))
+    );
+    const agentsById = new Map<string, AgentEntity>();
+
+    for (const agent of [...ownedAgents, ...sharedAgents.filter(Boolean)]) {
+      if (agent) {
+        agentsById.set(this.stringifyObjectId(agent.id), agent);
+      }
+    }
+
+    const agents = Array.from(agentsById.values()).sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()
+    );
+
+    return this.buildAgentProfiles(agents, userId);
   }
 
   async getAgentDetail(
     auth: AuthenticatedUserPayload,
     agentId: string
   ): Promise<AgentProfile> {
-    const createdUserId = this.parseUserId(auth.sub);
+    const userId = this.parseUserId(auth.sub);
     const objectId = this.parseObjectId(agentId);
-    const agent = await this.findAgentByIdForUser(objectId, createdUserId);
+    const access = await this.findAgentAccessByIdForUser(objectId, userId);
+
+    if (!access) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return this.buildAgentProfile(access.agent, {
+      viewerUserId: userId,
+    });
+  }
+
+  async createAgentShareInvite(
+    auth: AuthenticatedUserPayload,
+    agentId: string
+  ): Promise<AgentShareInviteDTO> {
+    const userId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const access = await this.findAgentAccessByIdForUser(objectId, userId);
+
+    if (!access) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    if (access.role !== 'owner') {
+      throw new AppError(
+        'AGENT_SHARE_OWNER_REQUIRED',
+        'only the owner can create share invites',
+        403
+      );
+    }
+
+    const token = this.generateShareInviteToken();
+    const now = new Date();
+    const invite = new AgentShareInviteEntity();
+
+    invite.agentId = access.agent.id;
+    invite.ownerUserId = access.agent.createdUserId;
+    invite.createdByUserId = userId;
+    invite.tokenHash = this.hashShareInviteToken(token);
+    invite.status = AgentShareInviteStatus.active;
+    invite.expiresAt = new Date(now.getTime() + AGENT_SHARE_INVITE_EXPIRES_MS);
+    invite.acceptedCount = 0;
+    invite.createdAt = now;
+    invite.updatedAt = now;
+
+    const savedInvite = await this.agentShareInviteModel.save(invite);
+
+    return {
+      token,
+      agentId: this.stringifyObjectId(savedInvite.agentId),
+      ownerUserId: this.stringifyObjectId(savedInvite.ownerUserId),
+      createdByUserId: this.stringifyObjectId(savedInvite.createdByUserId),
+      expiresAt: savedInvite.expiresAt.toISOString(),
+    };
+  }
+
+  async getAgentShareInvitePreview(
+    rawToken: string
+  ): Promise<AgentShareInvitePreviewDTO> {
+    const token = this.normalizeShareInviteToken(rawToken);
+    const invite = await this.requireActiveShareInvite(token);
+    const [agent, inviter] = await Promise.all([
+      this.findAgentById(invite.agentId),
+      this.userModel.findOne({
+        where: {
+          id: invite.createdByUserId,
+        },
+      }),
+    ]);
+
+    if (
+      !agent ||
+      !this.sameObjectId(agent.createdUserId, invite.ownerUserId)
+    ) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    return {
+      inviter: {
+        name: inviter?.name?.trim() || '一位亲友',
+        avatar: this.postImageService.resolveForResponse(
+          inviter?.avatar?.trim() || ''
+        ),
+      },
+      agent: {
+        name: agent.name?.trim() || '未命名天之灵',
+        realName: agent.realName?.trim() || '',
+        avatar: this.postImageService.resolveForResponse(
+          agent.avatar?.trim() || ''
+        ),
+        sex: agent.sex,
+        description: '',
+      },
+      expiresAt: new Date(invite.expiresAt).toISOString(),
+    };
+  }
+
+  async createAgentShareQRCode(
+    auth: AuthenticatedUserPayload,
+    payload: AgentShareQRCodeRequestDTO
+  ): Promise<AgentShareQRCodeDTO> {
+    const userId = this.parseUserId(auth.sub);
+    const token = this.normalizeShareInviteToken(payload?.token);
+    const invite = await this.requireActiveShareInvite(token);
+
+    if (!this.sameObjectId(invite.ownerUserId, userId)) {
+      throw new AppError(
+        'AGENT_SHARE_OWNER_REQUIRED',
+        'only the owner can create a share qr code',
+        403
+      );
+    }
+
+    const result = await this.wechatPayService.createUnlimitedMiniProgramCode({
+      scene: token,
+      page: AGENT_SHARE_MINI_PROGRAM_PAGE,
+    });
+
+    return {
+      imageBase64: result.buffer.toString('base64'),
+      mimeType: result.mimeType,
+      expiresAt: new Date(invite.expiresAt).toISOString(),
+    };
+  }
+
+  async acceptAgentShareInvite(
+    auth: AuthenticatedUserPayload,
+    payload: AcceptAgentShareInviteDTO
+  ): Promise<AcceptAgentShareInviteResultDTO> {
+    const userId = this.parseUserId(auth.sub);
+    const token = this.normalizeShareInviteToken(payload?.token);
+    const now = new Date();
+    const invite = await this.requireActiveShareInvite(token, now);
+
+    const agent = await this.findAgentById(invite.agentId);
+
+    if (
+      !agent ||
+      !this.sameObjectId(agent.createdUserId, invite.ownerUserId)
+    ) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    const isOwner = this.sameObjectId(agent.createdUserId, userId);
+    const conversation = await this.ensureConversationForAgent(agent, userId, {
+      now,
+      usePersonalCallName: isOwner,
+    });
+    const existingMember = isOwner
+      ? null
+      : await this.findShareMemberByAgentAndUser(agent.id, userId);
+    const wasActive =
+      existingMember?.status === AgentShareMemberStatus.active;
+    const member = isOwner
+      ? null
+      : await this.ensureShareMember(agent, invite, userId, now);
+
+    if (!isOwner && !wasActive) {
+      invite.acceptedCount = (invite.acceptedCount ?? 0) + 1;
+      invite.lastAcceptedAt = now;
+      invite.updatedAt = now;
+      await this.agentShareInviteModel.save(invite);
+    }
+
+    return {
+      agent: await this.buildAgentProfile(agent, {
+        viewerUserId: userId,
+      }),
+      conversationId: this.stringifyObjectId(conversation.id),
+      share: {
+        agentId: this.stringifyObjectId(agent.id),
+        ownerUserId: this.stringifyObjectId(agent.createdUserId),
+        userId: this.stringifyObjectId(userId),
+        status: isOwner ? 'owner' : 'active',
+        acceptedAt: (member?.acceptedAt ?? now).toISOString(),
+      },
+    };
+  }
+
+  async updateAgentShareContext(
+    auth: AuthenticatedUserPayload,
+    agentId: string,
+    payload: UpdateAgentShareContextDTO
+  ): Promise<AgentProfile> {
+    const userId = this.parseUserId(auth.sub);
+    const objectId = this.parseObjectId(agentId);
+    const member = await this.findActiveShareMemberByAgentAndUser(
+      objectId,
+      userId
+    );
+
+    if (!member) {
+      throw new AppError(
+        'AGENT_SHARE_MEMBER_NOT_FOUND',
+        'active share member not found',
+        404
+      );
+    }
+
+    if (payload.agentCallsUser !== undefined) {
+      member.agentCallsUser = this.normalizeOptionalShareCallName(
+        payload.agentCallsUser
+      );
+    }
+
+    if (payload.userCallsAgent !== undefined) {
+      member.userCallsAgent = this.normalizeOptionalShareCallName(
+        payload.userCallsAgent
+      );
+    }
+
+    member.updatedAt = new Date();
+    await this.agentShareMemberModel.save(member);
+    const conversation = await this.findConversationByAgentAndUser(
+      objectId,
+      userId
+    );
+
+    if (conversation) {
+      conversation.accessRole = 'shared';
+      conversation.agentCallsUser = member.agentCallsUser?.trim() || '';
+      conversation.userCallsAgent = member.userCallsAgent?.trim() || '';
+      conversation.updatedAt = member.updatedAt;
+      await this.conversationModel.save(conversation);
+    }
+
+    const agent = await this.findAgentById(objectId);
 
     if (!agent) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
-    return this.buildAgentProfile(agent);
+    return this.buildAgentProfile(agent, {
+      viewerUserId: userId,
+    });
   }
 
   async getAgentMemoryProfile(
@@ -465,7 +771,6 @@ export class AgentService {
     const conversations = await this.conversationModel.find({
       where: {
         agentId: agent.id,
-        userId: createdUserId,
       },
     });
 
@@ -483,39 +788,69 @@ export class AgentService {
         await this.conversationModel.remove(conversation);
       })
     );
+    await this.removeAgentShareRecords(agent.id);
     await this.agentModel.remove(agent);
   }
 
   private async createConversation(
     agent: AgentEntity,
     userId: MongoObjectId,
-    now: Date
-  ): Promise<void> {
+    now: Date,
+    options: {
+      usePersonalCallName?: boolean;
+    } = {}
+  ): Promise<ConversationEntity> {
     const conversation = new ConversationEntity();
     conversation.agentId = agent.id;
     conversation.userId = userId;
+    conversation.accessRole =
+      options.usePersonalCallName === false ? 'shared' : 'owner';
+    conversation.agentCallsUser =
+      options.usePersonalCallName === false
+        ? ''
+        : agent.agentCallMe?.trim() || '';
+    conversation.userCallsAgent =
+      options.usePersonalCallName === false
+        ? agent.name?.trim() || ''
+        : agent.iCallAgent?.trim() || agent.name?.trim() || '';
     conversation.createdAt = now;
     conversation.updatedAt = now;
 
     const savedConversation = await this.conversationModel.save(conversation);
-    await this.createInitialAgentMessage(savedConversation, agent, userId, now);
+    await this.createInitialAgentMessage(
+      savedConversation,
+      agent,
+      userId,
+      now,
+      options
+    );
+
+    return savedConversation;
   }
 
   private async createInitialAgentMessage(
     conversation: ConversationEntity,
     agent: AgentEntity,
     userId: MongoObjectId,
-    now: Date
+    now: Date,
+    options: {
+      usePersonalCallName?: boolean;
+    } = {}
   ): Promise<void> {
     const message = new MessageEntity();
-    const callMe = agent.agentCallMe?.trim() || '我';
+    const callMe =
+      options.usePersonalCallName === false
+        ? ''
+        : agent.agentCallMe?.trim() || '我';
 
     message.conversationId = conversation.id;
     message.userId = userId;
     message.agentId = agent.id;
     message.role = MessageRole.assistant;
     message.type = MessageType.text;
-    message.content = `${callMe}，好想你啊，过得好吗？`;
+    message.content = callMe
+      ? `${callMe}，好想你啊，过得好吗？`
+      : '好想你啊，过得好吗？';
     message.status = MessageStatus.sent;
     message.createdAt = now;
     message.updatedAt = now;
@@ -523,7 +858,29 @@ export class AgentService {
     await this.messageModel.save(message);
   }
 
-  private async buildAgentProfile(agent: AgentEntity): Promise<AgentProfile> {
+  private async buildAgentProfile(
+    agent: AgentEntity,
+    options: {
+      viewerUserId?: MongoObjectId;
+    } = {}
+  ): Promise<AgentProfile> {
+    const isOwner =
+      !options.viewerUserId ||
+      this.sameObjectId(agent.createdUserId, options.viewerUserId);
+    const shareMember =
+      !isOwner && options.viewerUserId
+        ? await this.findActiveShareMemberByAgentAndUser(
+            agent.id,
+            options.viewerUserId
+          )
+        : null;
+    const agentCallsUser = isOwner
+      ? agent.agentCallMe ?? ''
+      : shareMember?.agentCallsUser?.trim() || '';
+    const userCallsAgent = isOwner
+      ? agent.iCallAgent ?? ''
+      : shareMember?.userCallsAgent?.trim() || agent.name?.trim() || '';
+
     return {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
@@ -532,8 +889,8 @@ export class AgentService {
         agent.avatar?.trim() || ''
       ),
       sex: agent.sex,
-      agentCallMe: agent.agentCallMe ?? '',
-      iCallAgent: agent.iCallAgent ?? '',
+      agentCallMe: agentCallsUser,
+      iCallAgent: userCallsAgent,
       birthday: agent.birthday?.toISOString?.() ?? '',
       deathDate: agent.deathDate?.toISOString?.() ?? '',
       description: agent.description,
@@ -543,23 +900,225 @@ export class AgentService {
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
       hasUnreadAgentHomeGuide: Boolean(
-        agent.profileCompletionGuideCreatedAt && !agent.agentHomeGuideSeenAt
+        isOwner &&
+          agent.profileCompletionGuideCreatedAt &&
+          !agent.agentHomeGuideSeenAt
       ),
       hasUnreadAgentProfileGuide: Boolean(
-        agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
+        isOwner &&
+          agent.profileCompletionGuideCreatedAt &&
+          !agent.agentProfileGuideSeenAt
       ),
       status: agent.status,
-      isDefault: Boolean(agent.isDefault),
+      isDefault: isOwner && Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       createdAt: agent.createdAt.toISOString(),
       updatedAt: agent.updatedAt.toISOString(),
+      accessRole: isOwner ? 'owner' : 'shared',
     };
   }
 
   private async buildAgentProfiles(
-    agents: AgentEntity[]
+    agents: AgentEntity[],
+    viewerUserId?: MongoObjectId
   ): Promise<AgentProfile[]> {
-    return Promise.all(agents.map(agent => this.buildAgentProfile(agent)));
+    return Promise.all(
+      agents.map(agent =>
+        this.buildAgentProfile(agent, {
+          viewerUserId,
+        })
+      )
+    );
+  }
+
+  private async ensureShareMember(
+    agent: AgentEntity,
+    invite: AgentShareInviteEntity,
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<AgentShareMemberEntity> {
+    const existingMember = await this.findShareMemberByAgentAndUser(
+      agent.id,
+      userId
+    );
+    const member = existingMember ?? new AgentShareMemberEntity();
+
+    member.agentId = agent.id;
+    member.ownerUserId = agent.createdUserId;
+    member.userId = userId;
+    member.status = AgentShareMemberStatus.active;
+    member.acceptedInviteId = invite.id;
+    member.acceptedAt =
+      existingMember?.status === AgentShareMemberStatus.active &&
+      existingMember.acceptedAt
+        ? existingMember.acceptedAt
+        : now;
+    member.revokedAt = undefined;
+    member.createdAt = existingMember?.createdAt ?? now;
+    member.updatedAt = now;
+
+    return this.agentShareMemberModel.save(member);
+  }
+
+  private async ensureConversationForAgent(
+    agent: AgentEntity,
+    userId: MongoObjectId,
+    options: {
+      now: Date;
+      usePersonalCallName?: boolean;
+    }
+  ): Promise<ConversationEntity> {
+    const existingConversation = await this.findConversationByAgentAndUser(
+      agent.id,
+      userId
+    );
+
+    if (existingConversation) {
+      if (options.usePersonalCallName === false) {
+        existingConversation.accessRole = 'shared';
+        existingConversation.agentCallsUser = '';
+        existingConversation.userCallsAgent =
+          existingConversation.userCallsAgent?.trim() || agent.name?.trim() || '';
+        existingConversation.updatedAt = options.now;
+        await this.conversationModel.save(existingConversation);
+      }
+
+      return existingConversation;
+    }
+
+    return this.createConversation(agent, userId, options.now, {
+      usePersonalCallName: options.usePersonalCallName,
+    });
+  }
+
+  private async findConversationByAgentAndUser(
+    agentId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<ConversationEntity | null> {
+    return this.conversationModel.findOne({
+      where: {
+        agentId,
+        userId,
+      },
+    });
+  }
+
+  private async removeAgentShareRecords(
+    agentId: MongoObjectId
+  ): Promise<void> {
+    const [invites, members] = await Promise.all([
+      this.agentShareInviteModel.find({
+        where: {
+          agentId,
+        },
+      }),
+      this.agentShareMemberModel.find({
+        where: {
+          agentId,
+        },
+      }),
+    ]);
+
+    await Promise.all([
+      ...invites.map(invite => this.agentShareInviteModel.remove(invite)),
+      ...members.map(member => this.agentShareMemberModel.remove(member)),
+    ]);
+  }
+
+  private async findAgentAccessByIdForUser(
+    agentId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<AgentAccess | null> {
+    const ownedAgent = await this.findAgentByIdForUser(agentId, userId);
+
+    if (ownedAgent) {
+      return {
+        agent: ownedAgent,
+        role: 'owner',
+      };
+    }
+
+    const member = await this.findActiveShareMemberByAgentAndUser(
+      agentId,
+      userId
+    );
+
+    if (!member) {
+      return null;
+    }
+
+    const sharedAgent = await this.findAgentById(agentId);
+
+    if (
+      !sharedAgent ||
+      !this.sameObjectId(sharedAgent.createdUserId, member.ownerUserId)
+    ) {
+      return null;
+    }
+
+    return {
+      agent: sharedAgent,
+      role: 'shared',
+    };
+  }
+
+  private async findShareMemberByAgentAndUser(
+    agentId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<AgentShareMemberEntity | null> {
+    return this.agentShareMemberModel.findOne({
+      where: {
+        agentId,
+        userId,
+      },
+    });
+  }
+
+  private async requireActiveShareInvite(
+    token: string,
+    now: Date = new Date()
+  ): Promise<AgentShareInviteEntity> {
+    const invite = await this.agentShareInviteModel.findOne({
+      where: {
+        tokenHash: this.hashShareInviteToken(token),
+      },
+    });
+
+    if (!invite || invite.status !== AgentShareInviteStatus.active) {
+      throw new AppError(
+        'AGENT_SHARE_INVITE_NOT_FOUND',
+        'share invite not found',
+        404
+      );
+    }
+
+    const expiresAt = new Date(invite.expiresAt);
+
+    if (
+      Number.isNaN(expiresAt.getTime()) ||
+      expiresAt.getTime() <= now.getTime()
+    ) {
+      throw new AppError(
+        'AGENT_SHARE_INVITE_EXPIRED',
+        'share invite has expired',
+        410
+      );
+    }
+
+    return invite;
+  }
+
+  private async findActiveShareMemberByAgentAndUser(
+    agentId: MongoObjectId,
+    userId: MongoObjectId
+  ): Promise<AgentShareMemberEntity | null> {
+    return this.agentShareMemberModel.findOne({
+      where: {
+        agentId,
+        userId,
+        status: AgentShareMemberStatus.active,
+      },
+    });
   }
 
   private async shouldSetCreatedAgentAsDefault(
@@ -731,6 +1290,52 @@ export class AgentService {
     return value;
   }
 
+  private normalizeShareInviteToken(rawValue?: string): string {
+    const value = rawValue?.trim() ?? '';
+
+    if (
+      value.length < 20 ||
+      value.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(value)
+    ) {
+      throw new AppError(
+        'INVALID_AGENT_SHARE_INVITE_TOKEN',
+        'share invite token is invalid',
+        400
+      );
+    }
+
+    return value;
+  }
+
+  private normalizeOptionalShareCallName(rawValue?: string): string {
+    const value = rawValue?.trim() || '';
+
+    if (value.length > 20) {
+      throw new AppError(
+        'INVALID_AGENT_CALL_NAME',
+        'value must be 20 characters or fewer',
+        400
+      );
+    }
+
+    return value;
+  }
+
+  private generateShareInviteToken(): string {
+    return randomBytes(AGENT_SHARE_INVITE_TOKEN_BYTES)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  private hashShareInviteToken(token: string): string {
+    return createHash('sha256')
+      .update(`agent-share:${token}`)
+      .digest('hex');
+  }
+
   private parseObjectId(value: string): MongoObjectId {
     try {
       return new MongoObjectId(value);
@@ -753,6 +1358,37 @@ export class AgentService {
 
   private stringifyOptionalObjectId(value?: MongoObjectId): string {
     return value ? this.stringifyObjectId(value) : '';
+  }
+
+  private sameObjectId(
+    left?: MongoObjectId,
+    right?: MongoObjectId
+  ): boolean {
+    return Boolean(
+      left &&
+        right &&
+        this.stringifyObjectId(left) === this.stringifyObjectId(right)
+    );
+  }
+
+  private async findAgentById(
+    agentId: MongoObjectId
+  ): Promise<AgentEntity | null> {
+    const agentById = await this.agentModel.findOne({
+      where: {
+        id: agentId,
+      },
+    });
+
+    if (agentById) {
+      return agentById;
+    }
+
+    return this.agentModel.findOne({
+      where: {
+        _id: agentId,
+      },
+    });
   }
 
   private async findAgentByIdForUser(

@@ -78,9 +78,8 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
                 {
                   terserOptions: {
                     compress: true, // 默认使用terser压缩
-                    // mangle: false,
-                    keep_classnames: true, // 不改变class名称
-                    keep_fnames: true, // 不改变函数名称
+                    keep_classnames: false,
+                    keep_fnames: false,
                   },
                 },
               ],

@@ -19,7 +19,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('5 字以内的表达');
     expect(brief.prompt).toContain('只有称呼或语气词都可以独立成泡');
     expect(brief.prompt).toContain('不为回复完整性补泡');
-    expect(brief.version).toBe('reply_brief_v9');
+    expect(brief.version).toBe('reply_brief_v13');
     expect(brief.experiencePlan).toMatchObject({
       version: 'experience_plan_v1',
       profileTier: 'P0',
@@ -35,6 +35,63 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('## 总字数预算');
   });
 
+  it('passes a multi-object binding plan into the generation brief', () => {
+    const currentQuery = '姐姐说孩子也想你';
+    const brief = buildReplyBrief({
+      currentQuery,
+      intent: {
+        intents: [
+          {
+            target: 'family',
+            timeScope: 'current',
+            intent: 'share_family_update',
+            subIntent: 'family_care',
+            confidence: 0.96,
+          },
+        ],
+        objectPlan: {
+          objects: [
+            {
+              ref: 'o1',
+              mention: '姐姐',
+              kind: 'family',
+              binding: 'family.shared_member.秀兰',
+              confidence: 'high',
+            },
+            {
+              ref: 'o2',
+              mention: '孩子',
+              kind: 'family',
+              binding: 'unknown',
+              confidence: 'low',
+            },
+            {
+              ref: 'o3',
+              mention: '你',
+              kind: 'agent',
+              binding: 'agent',
+              confidence: 'high',
+            },
+          ],
+          focusRefs: ['o1', 'o2'],
+          ambiguousMentions: ['孩子'],
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.96,
+        source: 'semantic_model',
+      },
+    });
+
+    expect(brief.objectPlan?.objects).toHaveLength(3);
+    expect(brief.prompt).toContain('## 本轮对象区分');
+    expect(brief.prompt).toContain(
+      'o1=“姐姐”→family.shared_member.秀兰(family/high)'
+    );
+    expect(brief.prompt).toContain('未消歧：孩子');
+    expect(brief.prompt).toContain('不把一人的话、经历或关系转给另一人');
+  });
+
   it('injects one non-repeating participation action into an eligible short turn', () => {
     const currentQuery = '妈，我想你了';
     const route = routeReplyScene({ currentQuery });
@@ -48,8 +105,8 @@ describe('buildReplyBrief', () => {
       targetCharacters: 18,
       reviewCharacters: 30,
     });
-    expect(brief.prompt).toContain('只输出 {"segments":["第一颗","第二颗"]}');
-    expect(brief.prompt).toContain('有节奏的重复加强情感');
+    expect(brief.prompt).toContain('{"segments":["第一颗","第二颗"]}');
+    expect(brief.prompt).toContain('有节奏的重复可以加强情感');
     expect(brief.prompt).not.toContain('由本轮表达需要决定 1-2 个气泡');
     expect(brief.prompt).toContain('不因字面同义直接删除');
     expect(brief.prompt).toContain('不机械复读');
@@ -464,7 +521,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('父亲式含蓄肯定');
     expect(brief.prompt).toContain('不要把计划中的回答或解释改成反问');
     expect(brief.prompt).toContain(
-      '用户仍在等：用户需要父亲用实际回应修复被敷衍的感觉'
+      '未完：用户必须“用户需要父亲用实际回应修复被敷衍的感觉”'
     );
     expect(brief.prompt).toContain('当轮实际改变说法或聊天行动');
     expect(brief.prompt).toContain(
@@ -704,7 +761,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('只给一个短小的角色侧当下片段');
     expect(brief.prompt).toContain('不编用户偏好或共同往事');
     expect(brief.prompt).toContain('不把话推回用户');
-    expect(brief.prompt).toContain('不要只说你说我听着');
+    expect(brief.prompt).toContain('避免重复上一轮无效动作');
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'brief',
@@ -799,7 +856,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('不得改回“哪里不像就让用户指出来”');
   });
 
-  it('plans dream invitation and long-absence acknowledgement as separate acts', () => {
+  it('reduces repeated promises after a long dream absence', () => {
     const currentQuery = '晚上来我梦里可以吗？好久没有梦到你了';
     const intent = {
       intents: [
@@ -822,9 +879,15 @@ describe('buildReplyBrief', () => {
     expect(route.primaryScene?.scene).toBe('dream_companionship');
     expect(brief.mode).toBe('relationship');
     expect(brief.emotionalNeed).toContain('等了很久仍没梦见的失落');
+    expect(brief.dreamCompanionPlan).toEqual({
+      dreamStage: 'repeated_miss',
+      dreamAction: 'leave_space',
+      expectationLevel: 'restrained',
+      dreamAnchor: 'none',
+      realityBoundary: 'dream_only',
+    });
     expect(brief.replyMoves).toEqual([
-      '先正面答复用户来到梦里的请求，梦境叙事必须明确限定在梦里',
-      '同时承认用户很久没有梦见当前角色、等了很久的失落，再给出贴着梦境的温柔承接',
+      '保留梦境的含混与余地，减少保证，给睡前陪伴或自然留白',
     ]);
     expect(brief.forbiddenAssumptions).toEqual(
       expect.arrayContaining([
@@ -834,7 +897,7 @@ describe('buildReplyBrief', () => {
       ])
     );
     expect(brief.prompt).toContain('动作是弱提示，不要求逐项完成');
-    expect(brief.bubblePlan.complexityHint).toBe('paired');
+    expect(brief.bubblePlan.complexityHint).toBe('concise');
   });
 
   it('keeps an explicit dream request in relationship mode despite memory words', () => {
@@ -958,7 +1021,10 @@ describe('buildReplyBrief', () => {
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
     expect(brief.prompt).toContain('共同往事仍须证据');
-    expect(brief.prompt).toContain('不补当时的动作、话语、感受或表现');
+    expect(brief.prompt).toContain(
+      '现实事实和共同过去只用同一对象的有效证据'
+    );
+    expect(brief.prompt).toContain('不补写当时的动作或细节');
     expect(brief.prompt).toContain('默认一颗');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
   });
@@ -971,7 +1037,7 @@ describe('buildReplyBrief', () => {
 
     expect(brief.factClaimMode).toBe('grounded');
     expect(brief.prompt).toContain('"claims"');
-    expect(brief.prompt).toContain('claims 只列气泡中的事实');
+    expect(brief.prompt).toContain('claims 只列正文中的可核验事实');
   });
 
   it('uses user-authored and confirmed evidence but excludes assistant history', () => {
@@ -1106,7 +1172,7 @@ describe('buildReplyBrief', () => {
       '再贴着用户明说的身体情况表达具体关心；只可建议遵医嘱或继续留意，不作诊断，也不把照护责任推给用户',
     ]);
     expect(brief.prompt).toContain(
-      '不得用“已经听懂、已经知道或已经记住”代替对家人健康处境'
+      '不能用确认收到、听懂或记住来代替回应'
     );
     expect(brief.bubblePlan).toEqual({
       maxSegments: 2,
@@ -1276,9 +1342,9 @@ describe('buildReplyBrief', () => {
       '正面回答能够间接参考这项信息，同时自然说明不是亲眼或亲耳感知',
       '只按能力约束允许的精度回答，不把近似信息说成确定观察',
     ]);
-    expect(brief.prompt).toContain('## 本轮角色能力边界');
-    expect(brief.prompt).toContain('[time/indirect]');
-    expect(brief.prompt).not.toContain('[vision/');
+    expect(brief.prompt).toContain('# 本轮必要边界');
+    expect(brief.prompt).toContain('时间仅作间接参考');
+    expect(brief.prompt).not.toContain('现实感知只能零散模糊');
   });
 
   it('combines a visual capability boundary with a longing response', () => {
@@ -1392,7 +1458,7 @@ describe('buildReplyBrief', () => {
     });
 
     expect(brief.capabilityConstraints).toEqual([]);
-    expect(brief.prompt).not.toContain('## 本轮角色能力边界');
+    expect(brief.prompt).not.toContain('# 本轮必要边界');
   });
 
   it('keeps direct identity disclosure concise without restoring scene templates', () => {
@@ -1409,5 +1475,35 @@ describe('buildReplyBrief', () => {
       '回应用户要求直说的需要，不展开模型、系统或产品解释；有明显失落时继续承接想念和难过',
     ]);
     expect(brief.prompt).not.toContain('本轮命中的回复策略');
+  });
+
+  it('injects and exposes a repeated-miss dream strategy', () => {
+    const currentQuery = '昨晚还是没梦到你';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({
+      currentQuery,
+      route,
+      recentMessages: [
+        {
+          role: MessageRole.user,
+          content: '前天也没梦到你 我怕忘了你的声音',
+        } as MessageEntity,
+      ],
+    });
+
+    expect(brief.dreamCompanionPlan).toEqual({
+      dreamStage: 'repeated_miss',
+      dreamAction: 'leave_space',
+      expectationLevel: 'restrained',
+      dreamAnchor: 'voice',
+      realityBoundary: 'dream_only',
+    });
+    expect(brief.replyMoves).toEqual([
+      '保留梦境的含混与余地，减少保证，给睡前陪伴或自然留白',
+    ]);
+    expect(brief.prompt).toContain('## 梦境陪伴');
+    expect(brief.prompt).toContain(
+      'repeated_miss/leave_space/restrained/voice/dream_only'
+    );
   });
 });

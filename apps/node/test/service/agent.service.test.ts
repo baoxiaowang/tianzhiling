@@ -1,14 +1,22 @@
 import {
   AgentEntity,
+  AgentShareInviteEntity,
+  AgentShareInviteStatus,
+  AgentShareMemberEntity,
+  AgentShareMemberStatus,
   AgentSex,
+  ConversationEntity,
+  MessageEntity,
   MessageRole,
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserEntity,
 } from '@tzl/entities';
 import { AgentService } from '../../src/service/agent.service';
 
 const USER_ID = '665000000000000000000001';
+const SHARED_USER_ID = '665000000000000000000002';
 const AGENT_A_ID = '665000000000000000000010';
 const AGENT_B_ID = '665000000000000000000011';
 const NOW = new Date('2026-05-06T08:00:00.000Z');
@@ -19,6 +27,14 @@ const AUTH = {
   iat: 1778054400,
   exp: 1778083200,
   nonce: 'nonce',
+};
+const SHARED_AUTH = {
+  sub: SHARED_USER_ID,
+  accountId: 'account-2',
+  account: 'shared-user',
+  iat: 1778054400,
+  exp: 1778083200,
+  nonce: 'nonce-shared',
 };
 
 function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
@@ -55,7 +71,19 @@ function createAgent(
   return agent;
 }
 
-function createService(agents: AgentEntity[] = []) {
+function createService(
+  agents: AgentEntity[] = [],
+  options: {
+    shareInvites?: AgentShareInviteEntity[];
+    shareMembers?: AgentShareMemberEntity[];
+    conversations?: ConversationEntity[];
+    messages?: MessageEntity[];
+  } = {}
+) {
+  const shareInvites = options.shareInvites ?? [];
+  const shareMembers = options.shareMembers ?? [];
+  const conversations = options.conversations ?? [];
+  const messages = options.messages ?? [];
   const service = new AgentService();
 
   service.agentModel = {
@@ -97,22 +125,223 @@ function createService(agents: AgentEntity[] = []) {
     }),
   } as any;
   service.conversationModel = {
+    find: jest.fn(async ({ where }: any) =>
+      conversations.filter(conversation => {
+        const matchesAgent = where?.agentId
+          ? sameObjectId(conversation.agentId, where.agentId)
+          : true;
+        const matchesUser = where?.userId
+          ? sameObjectId(conversation.userId, where.userId)
+          : true;
+
+        return matchesAgent && matchesUser;
+      })
+    ),
+    findOne: jest.fn(async ({ where }: any) => {
+      return (
+        conversations.find(conversation => {
+          const matchesAgent = where?.agentId
+            ? sameObjectId(conversation.agentId, where.agentId)
+            : true;
+          const matchesUser = where?.userId
+            ? sameObjectId(conversation.userId, where.userId)
+            : true;
+
+          return matchesAgent && matchesUser;
+        }) ?? null
+      );
+    }),
     save: jest.fn(async entity => {
       if (!entity.id) {
         entity.id = new MongoObjectId();
+      }
+
+      const index = conversations.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        conversations[index] = entity;
+      } else {
+        conversations.push(entity);
+      }
+
+      return entity;
+    }),
+    remove: jest.fn(async entity => {
+      const index = conversations.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        conversations.splice(index, 1);
       }
 
       return entity;
     }),
   } as any;
   service.messageModel = {
+    find: jest.fn(async ({ where }: any) =>
+      messages.filter(message => {
+        const matchesConversation = where?.conversationId
+          ? sameObjectId(message.conversationId, where.conversationId)
+          : true;
+
+        return matchesConversation;
+      })
+    ),
     save: jest.fn(async entity => {
       if (!entity.id) {
         entity.id = new MongoObjectId();
       }
 
+      const index = messages.findIndex(item => sameObjectId(item.id, entity.id));
+      if (index >= 0) {
+        messages[index] = entity;
+      } else {
+        messages.push(entity);
+      }
+
       return entity;
     }),
+    remove: jest.fn(async entity => {
+      const index = messages.findIndex(item => sameObjectId(item.id, entity.id));
+      if (index >= 0) {
+        messages.splice(index, 1);
+      }
+
+      return entity;
+    }),
+  } as any;
+  service.agentShareInviteModel = {
+    find: jest.fn(async ({ where }: any) =>
+      shareInvites.filter(invite => {
+        const matchesAgent = where?.agentId
+          ? sameObjectId(invite.agentId, where.agentId)
+          : true;
+        const matchesTokenHash =
+          where?.tokenHash === undefined || invite.tokenHash === where.tokenHash;
+        const matchesStatus =
+          where?.status === undefined || invite.status === where.status;
+
+        return matchesAgent && matchesTokenHash && matchesStatus;
+      })
+    ),
+    findOne: jest.fn(async ({ where }: any) => {
+      return (
+        shareInvites.find(invite => {
+          const matchesAgent = where?.agentId
+            ? sameObjectId(invite.agentId, where.agentId)
+            : true;
+          const matchesTokenHash =
+            where?.tokenHash === undefined ||
+            invite.tokenHash === where.tokenHash;
+          const matchesStatus =
+            where?.status === undefined || invite.status === where.status;
+
+          return matchesAgent && matchesTokenHash && matchesStatus;
+        }) ?? null
+      );
+    }),
+    save: jest.fn(async entity => {
+      if (!entity.id) {
+        entity.id = new MongoObjectId();
+      }
+
+      const index = shareInvites.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        shareInvites[index] = entity;
+      } else {
+        shareInvites.push(entity);
+      }
+
+      return entity;
+    }),
+    remove: jest.fn(async entity => {
+      const index = shareInvites.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        shareInvites.splice(index, 1);
+      }
+
+      return entity;
+    }),
+  } as any;
+  service.agentShareMemberModel = {
+    find: jest.fn(async ({ where }: any) =>
+      shareMembers.filter(member => {
+        const matchesAgent = where?.agentId
+          ? sameObjectId(member.agentId, where.agentId)
+          : true;
+        const matchesUser = where?.userId
+          ? sameObjectId(member.userId, where.userId)
+          : true;
+        const matchesStatus =
+          where?.status === undefined || member.status === where.status;
+
+        return matchesAgent && matchesUser && matchesStatus;
+      })
+    ),
+    findOne: jest.fn(async ({ where }: any) => {
+      return (
+        shareMembers.find(member => {
+          const matchesAgent = where?.agentId
+            ? sameObjectId(member.agentId, where.agentId)
+            : true;
+          const matchesUser = where?.userId
+            ? sameObjectId(member.userId, where.userId)
+            : true;
+          const matchesStatus =
+            where?.status === undefined || member.status === where.status;
+
+          return matchesAgent && matchesUser && matchesStatus;
+        }) ?? null
+      );
+    }),
+    save: jest.fn(async entity => {
+      if (!entity.id) {
+        entity.id = new MongoObjectId();
+      }
+
+      const index = shareMembers.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        shareMembers[index] = entity;
+      } else {
+        shareMembers.push(entity);
+      }
+
+      return entity;
+    }),
+    remove: jest.fn(async entity => {
+      const index = shareMembers.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
+      if (index >= 0) {
+        shareMembers.splice(index, 1);
+      }
+
+      return entity;
+    }),
+  } as any;
+  service.userModel = {
+    findOne: jest.fn(async ({ where }: any) => {
+      const user = new UserEntity();
+      user.id = where.id;
+      user.name = sameObjectId(where.id, new MongoObjectId(USER_ID))
+        ? '邀请人'
+        : '亲友';
+      user.avatar = '';
+      return user;
+    }),
+  } as any;
+  service.wechatPayService = {
+    createUnlimitedMiniProgramCode: jest.fn(async () => ({
+      buffer: Buffer.from('png'),
+      mimeType: 'image/png',
+    })),
   } as any;
   service.postImageService = {
     resolveForResponse: jest.fn((value: string) => value),
@@ -330,5 +559,242 @@ describe('AgentService default agent', () => {
     expect(
       service.agentMemoryProfileService.createMessengerSpeech
     ).toHaveBeenCalledWith('你好，终于找到你了。');
+  });
+
+  it('keeps the legacy list owner-only and exposes shared agents separately', async () => {
+    const sharedAgent = createAgent(AGENT_A_ID);
+    const member = new AgentShareMemberEntity();
+    member.agentId = sharedAgent.id;
+    member.ownerUserId = sharedAgent.createdUserId;
+    member.userId = new MongoObjectId(SHARED_USER_ID);
+    member.status = AgentShareMemberStatus.active;
+    member.acceptedAt = NOW;
+    member.createdAt = NOW;
+    member.updatedAt = NOW;
+    const service = createService([sharedAgent], {
+      shareMembers: [member],
+    });
+
+    await expect(service.listAgents(SHARED_AUTH)).resolves.toEqual([]);
+
+    const accessibleAgents = await service.listAccessibleAgents(SHARED_AUTH);
+    expect(accessibleAgents).toHaveLength(1);
+    expect(accessibleAgents[0]).toMatchObject({
+      id: AGENT_A_ID,
+      accessRole: 'shared',
+      isDefault: false,
+    });
+  });
+
+  it('creates a share invite without storing the raw token', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const service = createService([agent], { shareInvites });
+
+    const result = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+
+    expect(result.agentId).toBe(AGENT_A_ID);
+    expect(result.ownerUserId).toBe(USER_ID);
+    expect(result.createdByUserId).toBe(USER_ID);
+    expect(result.token).toMatch(/^[A-Za-z0-9_-]{30,}$/);
+    expect(result.token).toHaveLength(32);
+    expect(result.expiresAt).toBeTruthy();
+    expect(shareInvites).toHaveLength(1);
+    expect(shareInvites[0].tokenHash).toBeTruthy();
+    expect(shareInvites[0].tokenHash).not.toBe(result.token);
+    expect(shareInvites[0].status).toBe(AgentShareInviteStatus.active);
+  });
+
+  it('accepts a share invite with an independent conversation for the invited user', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      isDefault: true,
+      profileCompletionGuideCreatedAt: NOW,
+    });
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const shareMembers: AgentShareMemberEntity[] = [];
+    const conversations: ConversationEntity[] = [];
+    const messages: MessageEntity[] = [];
+    const service = createService([agent], {
+      shareInvites,
+      shareMembers,
+      conversations,
+      messages,
+    });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+
+    const accepted = await service.acceptAgentShareInvite(SHARED_AUTH, {
+      token: invite.token,
+    });
+
+    expect(accepted.agent.id).toBe(AGENT_A_ID);
+    expect(accepted.agent.isDefault).toBe(false);
+    expect(accepted.agent.hasUnreadAgentHomeGuide).toBe(false);
+    expect(accepted.agent.accessRole).toBe('shared');
+    expect(accepted.agent.agentCallMe).toBe('');
+    expect(accepted.agent.iCallAgent).toBe('奶奶');
+    expect(accepted.share).toMatchObject({
+      agentId: AGENT_A_ID,
+      ownerUserId: USER_ID,
+      userId: SHARED_USER_ID,
+      status: 'active',
+    });
+    expect(conversations).toHaveLength(1);
+    expect(conversations[0].accessRole).toBe('shared');
+    expect(accepted.conversationId).toBe(
+      conversations[0].id.toHexString()
+    );
+    expect(
+      sameObjectId(
+        conversations[0].userId,
+        new MongoObjectId(SHARED_USER_ID)
+      )
+    ).toBe(true);
+    expect(sameObjectId(conversations[0].agentId, agent.id)).toBe(true);
+    expect(shareMembers).toHaveLength(1);
+    expect(shareMembers[0].status).toBe(AgentShareMemberStatus.active);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe('好想你啊，过得好吗？');
+
+    const sharedDetail = await service.getAgentDetail(
+      SHARED_AUTH,
+      AGENT_A_ID
+    );
+    expect(sharedDetail.id).toBe(AGENT_A_ID);
+    expect(sharedDetail.isDefault).toBe(false);
+    expect(sharedDetail.accessRole).toBe('shared');
+  });
+
+  it('keeps accepting the same share invite idempotent for conversation and membership', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const shareMembers: AgentShareMemberEntity[] = [];
+    const conversations: ConversationEntity[] = [];
+    const messages: MessageEntity[] = [];
+    const service = createService([agent], {
+      shareInvites,
+      shareMembers,
+      conversations,
+      messages,
+    });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+
+    const first = await service.acceptAgentShareInvite(SHARED_AUTH, {
+      token: invite.token,
+    });
+    const second = await service.acceptAgentShareInvite(SHARED_AUTH, {
+      token: invite.token,
+    });
+
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(conversations).toHaveLength(1);
+    expect(shareMembers).toHaveLength(1);
+    expect(messages).toHaveLength(1);
+    expect(shareInvites[0].acceptedCount).toBe(1);
+  });
+
+  it('previews an invitation without exposing private relationship copy', async () => {
+    const agent = createAgent(AGENT_A_ID, {
+      realName: '王秀兰',
+      description: '你称呼她为奶奶，她会叫你小宝。',
+    });
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const service = createService([agent], { shareInvites });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+
+    const preview = await service.getAgentShareInvitePreview(invite.token);
+
+    expect(preview.inviter.name).toBe('邀请人');
+    expect(preview.agent).toMatchObject({
+      name: '奶奶',
+      realName: '王秀兰',
+      description: '',
+    });
+    expect(JSON.stringify(preview)).not.toContain('小宝');
+  });
+
+  it('generates a mini program code with the invitation token as scene', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const service = createService([agent], { shareInvites });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+
+    const result = await service.createAgentShareQRCode(AUTH, {
+      token: invite.token,
+    });
+
+    expect(
+      service.wechatPayService.createUnlimitedMiniProgramCode
+    ).toHaveBeenCalledWith({
+      scene: invite.token,
+      page: 'pages/agent-share/index',
+    });
+    expect(result.imageBase64).toBe(Buffer.from('png').toString('base64'));
+  });
+
+  it('stores the invited users call name without changing the owner profile', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const shareMembers: AgentShareMemberEntity[] = [];
+    const conversations: ConversationEntity[] = [];
+    const service = createService([agent], {
+      shareInvites,
+      shareMembers,
+      conversations,
+    });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+    await service.acceptAgentShareInvite(SHARED_AUTH, { token: invite.token });
+
+    const sharedProfile = await service.updateAgentShareContext(
+      SHARED_AUTH,
+      AGENT_A_ID,
+      { agentCallsUser: '闺女' }
+    );
+
+    expect(sharedProfile.agentCallMe).toBe('闺女');
+    expect(sharedProfile.iCallAgent).toBe('奶奶');
+    expect(shareMembers[0].agentCallsUser).toBe('闺女');
+    expect(conversations[0].agentCallsUser).toBe('闺女');
+    expect(agent.agentCallMe).toBe('小宝');
+  });
+
+  it('keeps creating share invites limited to the agent owner', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const shareMembers: AgentShareMemberEntity[] = [];
+    const conversations: ConversationEntity[] = [];
+    const messages: MessageEntity[] = [];
+    const service = createService([agent], {
+      shareInvites,
+      shareMembers,
+      conversations,
+      messages,
+    });
+    const ownerInvite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+    await service.acceptAgentShareInvite(SHARED_AUTH, {
+      token: ownerInvite.token,
+    });
+
+    await expect(
+      service.createAgentShareInvite(SHARED_AUTH, AGENT_A_ID)
+    ).rejects.toMatchObject({
+      code: 'AGENT_SHARE_OWNER_REQUIRED',
+      status: 403,
+    });
+    expect(shareInvites).toHaveLength(1);
+  });
+
+  it('rejects expired share invites', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const shareInvites: AgentShareInviteEntity[] = [];
+    const service = createService([agent], { shareInvites });
+    const invite = await service.createAgentShareInvite(AUTH, AGENT_A_ID);
+    shareInvites[0].expiresAt = new Date(Date.now() - 1000);
+
+    await expect(
+      service.acceptAgentShareInvite(SHARED_AUTH, { token: invite.token })
+    ).rejects.toMatchObject({
+      code: 'AGENT_SHARE_INVITE_EXPIRED',
+      status: 410,
+    });
   });
 });

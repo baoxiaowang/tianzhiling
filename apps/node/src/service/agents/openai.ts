@@ -286,6 +286,13 @@ export class OpenAIService {
       {
         attributes: {
           messageCount: request.messages.length,
+          toolCount: Array.isArray(request.tools) ? request.tools.length : 0,
+          toolChoice:
+            typeof request.tool_choice === 'string'
+              ? request.tool_choice
+              : request.tool_choice
+              ? 'named'
+              : undefined,
           maxTokens:
             typeof request.max_tokens === 'number'
               ? request.max_tokens

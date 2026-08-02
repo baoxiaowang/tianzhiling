@@ -1,9 +1,12 @@
 import { Rule, RuleType } from '@midwayjs/validate';
 import type {
+  AcceptAgentShareInviteRequestDTO,
+  AgentShareQRCodeRequestDTO,
   AgentCreateGuideDraftDTO,
   AgentCreateGuideField,
   AgentProfileInterviewDraftDTO,
   AgentProfileMemoryField,
+  UpdateAgentShareContextDTO as UpdateAgentShareContextRequestDTO,
 } from '@tzl/shared';
 
 const requiredStringRule = RuleType.string().required();
@@ -66,6 +69,28 @@ export class AgentProfileInterviewDTO {
 export class AgentProfileMessengerSpeechDTO {
   @Rule(requiredStringRule.max(160))
   text: string;
+}
+
+export class AcceptAgentShareInviteDTO
+  implements AcceptAgentShareInviteRequestDTO
+{
+  @Rule(requiredStringRule.max(128))
+  token: string;
+}
+
+export class AgentShareQRCodeDTO implements AgentShareQRCodeRequestDTO {
+  @Rule(requiredStringRule.max(128))
+  token: string;
+}
+
+export class UpdateAgentShareContextDTO
+  implements UpdateAgentShareContextRequestDTO
+{
+  @Rule(RuleType.string().allow('').max(20).optional())
+  agentCallsUser?: string;
+
+  @Rule(RuleType.string().allow('').max(20).optional())
+  userCallsAgent?: string;
 }
 
 export class UpdateAgentProfileDTO {

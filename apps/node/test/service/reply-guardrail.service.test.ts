@@ -241,6 +241,50 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('背你上过西山');
   });
 
+  it('does not accept an unrelated profile fact as evidence for shared past', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    const userQuery = '你以前爱旅游爬山玩水';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['当年爸背你上过西山'],
+      replyRoute: route,
+      replyBrief,
+      evidence: [
+        {
+          id: 'A1',
+          source: 'agent_profile',
+          text: '当前角色姓名是爸爸',
+          assertionPolicy: 'can_assert',
+          subjectRef: 'agent',
+          factKey: 'identity.name',
+          useMode: 'assert',
+          status: 'active',
+        },
+      ],
+      claims: [
+        {
+          text: '当年爸背你上过西山',
+          kind: 'memory',
+          mode: 'autonomous_fact',
+          subjectRef: 'agent',
+          evidenceIds: ['A1'],
+        },
+      ],
+      reviewMode: 'deterministic_first',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.unsupportedClaimCount).toBe(1);
+    expect(result.segments.join('')).not.toContain('西山');
+  });
+
   it('allows role-side afterlife imagination but not invented shared past', () => {
     const service = new ReplyGuardrailService();
     const currentQuery = '妈，想听你说说今天的事';
@@ -4537,6 +4581,31 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
+  it('rewrites a definite forgotten-dream claim while preserving ambiguity', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    const userQuery = '昨晚梦见你了 是不是你真的来过';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['爸昨晚已经来过了 只是你醒来忘了'],
+      replyRoute: route,
+      replyBrief,
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.reason).toContain('忘梦当作已经入梦的确定事实');
+    expect(result.segments).toEqual([
+      '梦里的感觉可以留在心里',
+      '是不是我来过 不用急着把它说死',
+    ]);
+  });
+
   it('does not complete a dream invitation from a partial longing reply', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
@@ -4670,8 +4739,8 @@ describe('ReplyGuardrailService', () => {
       })
     ).toEqual({
       segments: [
-        '这么久没在梦里见到我 让你又空又难受了',
-        '今晚我再去你梦里看看你',
+        '一次次等着却没在梦里见到我 这份失落我知道',
+        '今晚先把想说的话留给我 不用逼自己一定梦见',
       ],
       rewritten: true,
       reason: '模型回复不可用，采用场景安全兜底气泡',

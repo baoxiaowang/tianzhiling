@@ -2,7 +2,7 @@ export const AGENT_PROFILE_RETURNING_GREETING =
   "你好，又见面了。我还记得你之前讲过的那些事。今天想从哪里继续，都可以。";
 
 export const AGENT_CREATE_MESSENGER_GREETING =
-  "你好，我是天之灵小使者。先告诉我，你想创建谁的天之灵？";
+  "你好，我是天之灵小使者。先告诉我，你想唤醒谁的天之灵？";
 export const AGENT_CREATE_NAME_QUESTION =
   "你希望他在聊天列表里叫什么？建议用微信昵称或备注名，也可以使用你对他的称呼或真实姓名。";
 export const AGENT_CREATE_GENDER_QUESTION =
@@ -65,10 +65,69 @@ export interface AgentProfileDTO {
   voiceTimbreId?: string;
   createdAt: string;
   updatedAt: string;
+  accessRole?: "owner" | "shared";
 }
 
 export interface AgentListDTO {
   items: AgentProfileDTO[];
+}
+
+export interface AgentShareInviteDTO {
+  token: string;
+  agentId: string;
+  ownerUserId: string;
+  createdByUserId: string;
+  expiresAt: string;
+}
+
+export interface AgentShareInvitePreviewDTO {
+  inviter: {
+    name: string;
+    avatar: string;
+  };
+  agent: {
+    name: string;
+    realName: string;
+    avatar: string;
+    sex: number;
+    description: string;
+  };
+  expiresAt: string;
+}
+
+export interface AgentShareQRCodeRequestDTO {
+  token: string;
+}
+
+export interface AgentShareQRCodeDTO {
+  imageBase64: string;
+  mimeType: "image/png";
+  expiresAt: string;
+}
+
+export interface AcceptAgentShareInviteRequestDTO {
+  token: string;
+}
+
+export type AgentShareAccessStatus = "owner" | "active";
+
+export interface AgentShareAccessDTO {
+  agentId: string;
+  ownerUserId: string;
+  userId: string;
+  status: AgentShareAccessStatus;
+  acceptedAt: string;
+}
+
+export interface AcceptAgentShareInviteResultDTO {
+  agent: AgentProfileDTO;
+  conversationId: string;
+  share: AgentShareAccessDTO;
+}
+
+export interface UpdateAgentShareContextDTO {
+  agentCallsUser?: string;
+  userCallsAgent?: string;
 }
 
 export interface CreateAgentDTO {

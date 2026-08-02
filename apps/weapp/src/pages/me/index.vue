@@ -9,18 +9,12 @@
     require-auth
   >
     <template #header>
-      <app-bar
-        title="我的"
-        background="#ffffff"
-        :show-capsule="false"
-      />
+      <app-bar title="我的" background="#ffffff" :show-capsule="false" />
     </template>
 
     <view v-if="isCheckingAuth" class="loading-state">
       <view class="loading-state__dot" />
-      <text class="loading-state__text">
-        正在恢复个人中心...
-      </text>
+      <text class="loading-state__text"> 正在恢复个人中心... </text>
     </view>
 
     <view v-else-if="session" class="me-page">
@@ -133,192 +127,199 @@
 
 <script lang="ts">
 export default {
-  name: 'MeTabPage',
-}
+  name: "MeTabPage",
+};
 </script>
 
 <script setup lang="ts">
-import Taro, { useDidShow } from '@tarojs/taro'
-import { computed, ref } from 'vue'
-import { preloadConversations } from '../../apis/conversation'
-import { getCurrentUser } from '../../auth/api'
-import { authSession, restoreAuthSession } from '../../auth/session'
-import AppBar from '../../components/app-bar/app-bar.vue'
-import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import Taro, { useDidShow } from "@tarojs/taro";
+import { computed, ref } from "vue";
+import { preloadConversations } from "../../apis/conversation";
+import { getCurrentUser } from "../../auth/api";
+import { authSession, restoreAuthSession } from "../../auth/session";
+import AppBar from "../../components/app-bar/app-bar.vue";
+import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
 import {
   initCommentNotificationPolling,
   unseenPostNotificationCount,
-} from '../../post/comment-notification-state'
-import { openAgreementDocument } from '../../utils/agreement-nav'
-import { showPendingToast } from '../../utils/auth-guard'
-import { syncCustomTabBar } from '../../utils/custom-tab-bar'
+} from "../../post/comment-notification-state";
+import { openAgreementDocument } from "../../utils/agreement-nav";
+import { showPendingToast } from "../../utils/auth-guard";
+import { syncCustomTabBar } from "../../utils/custom-tab-bar";
 
 interface ProfileMenuAction {
-  title: string
+  title: string;
 }
 
 const primaryMenuActions = [
-  { title: '我的消息' },
-  { title: '我的动态' },
-  { title: '我的订单' },
-] as const satisfies ProfileMenuAction[]
+  { title: "我的天之灵" },
+  { title: "我的消息" },
+  { title: "我的动态" },
+  { title: "我的订单" },
+] as const satisfies ProfileMenuAction[];
 
 const serviceMenuActions = [
-  { title: '服务协议' },
-] as const satisfies ProfileMenuAction[]
+  { title: "服务协议" },
+] as const satisfies ProfileMenuAction[];
 
-const isCheckingAuth = ref(true)
-const hasLoadedProfile = ref(false)
+const isCheckingAuth = ref(true);
+const hasLoadedProfile = ref(false);
+let refreshProfilePromise: Promise<void> | null = null;
+let lastProfileRefreshAt = 0;
 
-let refreshProfilePromise: Promise<void> | null = null
-let lastProfileRefreshAt = 0
+const PROFILE_REFRESH_INTERVAL = 30 * 1000;
 
-const PROFILE_REFRESH_INTERVAL = 30 * 1000
-
-const session = computed(() => authSession.value)
+const session = computed(() => authSession.value);
 const displayName = computed(() => {
-  const name = session.value?.user.name.trim()
-  return name ? name : '妮妮'
-})
+  const name = session.value?.user.name.trim();
+  return name ? name : "妮妮";
+});
 const displayAccount = computed(() => {
-  const account = session.value?.user.account.trim()
-  return account ? account : '12345678'
-})
-const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? '')
-const avatarFallback = computed(() => displayName.value.slice(0, 1))
-const isVipUser = computed(() => Boolean(session.value?.user.isVip))
+  const account = session.value?.user.account.trim();
+  return account ? account : "12345678";
+});
+const avatarUrl = computed(() => session.value?.user.avatar.trim() ?? "");
+const avatarFallback = computed(() => displayName.value.slice(0, 1));
+const isVipUser = computed(() => Boolean(session.value?.user.isVip));
 const vipServiceText = computed(() => {
-  return isVipUser.value ? '已开启' : '未开通'
-})
+  return isVipUser.value ? "已开启" : "未开通";
+});
 const unreadMessageCountText = computed(() => {
-  const count = unseenPostNotificationCount.value
+  const count = unseenPostNotificationCount.value;
 
   if (count <= 0) {
-    return ''
+    return "";
   }
 
-  return count > 99 ? '99+' : String(count)
-})
+  return count > 99 ? "99+" : String(count);
+});
 
 async function handleMenuTap(title: string) {
-  if (title === '我的消息') {
+  if (title === "我的天之灵") {
     await Taro.navigateTo({
-      url: '/pages/my-messages/index',
-    })
-    return
+      url: "/pages/my-agents/index",
+    });
+    return;
   }
 
-  if (title === '我的动态') {
+  if (title === "我的消息") {
     await Taro.navigateTo({
-      url: '/pages/my-posts/index',
-    })
-    return
+      url: "/pages/my-messages/index",
+    });
+    return;
   }
 
-  if (title === '我的订单') {
+  if (title === "我的动态") {
     await Taro.navigateTo({
-      url: '/pages/my-orders/index',
-    })
-    return
+      url: "/pages/my-posts/index",
+    });
+    return;
   }
 
-  if (title === 'VIP 服务') {
+  if (title === "我的订单") {
     await Taro.navigateTo({
-      url: '/pages/vip-center/index',
-    })
-    return
+      url: "/pages/my-orders/index",
+    });
+    return;
   }
 
-  if (title === '联系客服') {
+  if (title === "VIP 服务") {
     await Taro.navigateTo({
-      url: '/pages/customer-service/index',
-    })
-    return
+      url: "/pages/vip-center/index",
+    });
+    return;
   }
 
-  if (title === '服务协议') {
-    await openAgreementDocument('service')
-    return
+  if (title === "联系客服") {
+    await Taro.navigateTo({
+      url: "/pages/customer-service/index",
+    });
+    return;
   }
 
-  showPendingToast(`${title} 页面待接入`)
+  if (title === "服务协议") {
+    await openAgreementDocument("service");
+    return;
+  }
+
+  showPendingToast(`${title} 页面待接入`);
 }
 
 async function handleProfileTap() {
   await Taro.navigateTo({
-    url: '/pages/user-settings/index',
-  })
+    url: "/pages/user-settings/index",
+  });
 }
 
 async function handleCopyAccount() {
-  const account = displayAccount.value.trim()
+  const account = displayAccount.value.trim();
 
   if (!account) {
-    return
+    return;
   }
 
   try {
     await Taro.setClipboardData({
       data: account,
-    })
+    });
     await Taro.showToast({
-      title: 'ID已复制',
-      icon: 'success',
+      title: "ID已复制",
+      icon: "success",
       duration: 1200,
-    })
+    });
   } catch {
     await Taro.showToast({
-      title: '复制失败，请稍后重试',
-      icon: 'none',
+      title: "复制失败，请稍后重试",
+      icon: "none",
       duration: 1600,
-    })
+    });
   }
 }
 
 async function refreshProfile() {
   if (refreshProfilePromise) {
-    return refreshProfilePromise
+    return refreshProfilePromise;
   }
 
   if (
     lastProfileRefreshAt &&
     Date.now() - lastProfileRefreshAt < PROFILE_REFRESH_INTERVAL
   ) {
-    return
+    return;
   }
 
   refreshProfilePromise = getCurrentUser()
     .then(() => {
-      lastProfileRefreshAt = Date.now()
+      lastProfileRefreshAt = Date.now();
     })
     .catch(() => undefined)
     .finally(() => {
-      refreshProfilePromise = null
-    })
+      refreshProfilePromise = null;
+    });
 
-  return refreshProfilePromise
+  return refreshProfilePromise;
 }
 
 async function preparePage() {
   if (!hasLoadedProfile.value) {
-    isCheckingAuth.value = true
+    isCheckingAuth.value = true;
   }
 
-  await restoreAuthSession()
-  hasLoadedProfile.value = true
-  isCheckingAuth.value = false
+  await restoreAuthSession();
+  hasLoadedProfile.value = true;
+  isCheckingAuth.value = false;
 
   if (authSession.value) {
-    preloadConversations()
-    initCommentNotificationPolling()
-    void refreshProfile()
+    preloadConversations();
+    initCommentNotificationPolling();
+    void refreshProfile();
   }
 }
 
 useDidShow(() => {
-  syncCustomTabBar('/pages/me/index')
-  void preparePage()
-})
+  syncCustomTabBar("/pages/me/index");
+  void preparePage();
+});
 </script>
 
 <style lang="scss">

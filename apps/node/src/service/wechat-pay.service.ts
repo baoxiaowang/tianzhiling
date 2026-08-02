@@ -75,6 +75,11 @@ export interface WechatMessageContentSafetyResult {
   response: WechatMsgSecCheckResponse;
 }
 
+export interface WechatMiniProgramCodeResult {
+  buffer: Buffer;
+  mimeType: 'image/png';
+}
+
 export interface WechatVirtualPaymentParams {
   mode: 'short_series_goods';
   signData: string;
@@ -209,6 +214,79 @@ export class WechatPayService {
   redisService: RedisService;
 
   private wxpayClient?: unknown;
+
+  async createUnlimitedMiniProgramCode(options: {
+    scene: string;
+    page: string;
+  }): Promise<WechatMiniProgramCodeResult> {
+    const scene = options.scene?.trim();
+    const page = options.page?.trim().replace(/^\/+/, '');
+
+    if (!scene || scene.length > 32) {
+      throw new AppError(
+        'INVALID_WECHAT_MINI_PROGRAM_SCENE',
+        'mini program code scene must be 1 to 32 characters',
+        400
+      );
+    }
+
+    if (!page) {
+      throw new AppError(
+        'INVALID_WECHAT_MINI_PROGRAM_PAGE',
+        'mini program code page is required',
+        400
+      );
+    }
+
+    const payload = {
+      scene,
+      page,
+      width: 430,
+      check_path: process.env.NODE_ENV === 'production',
+      env_version:
+        process.env.NODE_ENV === 'production' ? 'release' : 'develop',
+    };
+    const uri = '/wxa/getwxacodeunlimit';
+    let accessToken = await this.getMiniProgramAccessToken();
+    let response = await this.postBuffer(
+      this.buildMiniProgramApiUrl(uri, accessToken),
+      payload
+    );
+    let apiError = this.parseMiniProgramBufferError(response);
+
+    if (apiError && this.isAccessTokenInvalidResponse(apiError)) {
+      accessToken = await this.getMiniProgramAccessToken({
+        forceRefresh: true,
+      });
+      response = await this.postBuffer(
+        this.buildMiniProgramApiUrl(uri, accessToken),
+        payload
+      );
+      apiError = this.parseMiniProgramBufferError(response);
+    }
+
+    if (apiError) {
+      throw new AppError(
+        'WECHAT_MINI_PROGRAM_CODE_FAILED',
+        apiError.errmsg || 'failed to create mini program code',
+        502,
+        apiError
+      );
+    }
+
+    if (!response.buffer.length) {
+      throw new AppError(
+        'WECHAT_MINI_PROGRAM_CODE_EMPTY',
+        'wechat mini program code is empty',
+        502
+      );
+    }
+
+    return {
+      buffer: response.buffer,
+      mimeType: 'image/png',
+    };
+  }
 
   private async exchangeJsCode(jsCode: string): Promise<WechatSessionResponse> {
     const code = jsCode?.trim();
@@ -1073,5 +1151,69 @@ export class WechatPayService {
       request.write(requestBody);
       request.end();
     });
+  }
+
+  private postBuffer(
+    url: string,
+    body: Record<string, unknown>
+  ): Promise<{ buffer: Buffer; contentType: string }> {
+    const requestBody = JSON.stringify(body);
+
+    return new Promise((resolve, reject) => {
+      const request = https.request(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'image/png, application/json',
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestBody),
+          },
+        },
+        response => {
+          const chunks: Buffer[] = [];
+
+          response.on('data', chunk => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on('end', () => {
+            resolve({
+              buffer: Buffer.concat(chunks),
+              contentType: String(response.headers['content-type'] || ''),
+            });
+          });
+        }
+      );
+
+      request.on('error', reject);
+      request.write(requestBody);
+      request.end();
+    });
+  }
+
+  private parseMiniProgramBufferError(response: {
+    buffer: Buffer;
+    contentType: string;
+  }): { errcode?: number; errmsg?: string } | null {
+    const contentType = response.contentType.toLowerCase();
+    const body = response.buffer.toString('utf8').trim();
+
+    if (!contentType.includes('json') && !body.startsWith('{')) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(body) as {
+        errcode?: number;
+        errmsg?: string;
+      };
+
+      return parsed.errcode ? parsed : null;
+    } catch {
+      return {
+        errcode: -1,
+        errmsg: 'invalid response from mini program code api',
+      };
+    }
   }
 }

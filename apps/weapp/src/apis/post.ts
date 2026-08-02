@@ -1,9 +1,13 @@
+import Taro from '@tarojs/taro'
 import { del, get, getWithOptions, post } from '../api/api-client'
 import { ApiException } from '../api/api-exception'
+import { authSession } from '../auth/session'
 import { normalizeEmojiText } from '../utils/emoji-text'
 
 const POST_NOTIFICATION_V2_API_ENABLED =
   process.env.TARO_APP_POST_NOTIFICATION_V2_API_ENABLED === 'true'
+const POST_FEED_CACHE_KEY = 'tzl_post_feed_cache_v1'
+const POST_FEED_CACHE_TTL = 5 * 60 * 1000
 
 export type PostCommentType = 'user' | 'agent'
 export type PostNotificationType = 'comment' | 'like'
@@ -82,6 +86,7 @@ export interface PostItem {
   authorAvatar: string
   content: string
   images: string[]
+  imageThumbnails?: string[]
   remindAgentIds: string[]
   moderationStatus?: PostModerationStatus
   moderationReason?: string
@@ -99,6 +104,19 @@ interface PostListResponse {
   page?: number
   pageSize?: number
   hasMore?: boolean
+}
+
+export interface PostListResult {
+  items: PostItem[]
+  page: number
+  pageSize: number
+  hasMore: boolean
+}
+
+interface StoredPostFeedCache {
+  ownerId: string
+  expiresAt: number
+  result: PostListResult
 }
 
 interface ReadUnreadCommentNotificationsResponse {
@@ -156,6 +174,7 @@ export interface GetPostsOptions {
   pageSize?: number
   mine?: boolean
   read?: boolean
+  lightweight?: boolean
 }
 
 function normalizeObjectIdString(value: unknown): string {
@@ -192,15 +211,73 @@ export async function getPosts(options: GetPostsOptions = {}) {
     queryParts.push('mine=1')
   }
 
+  if (options.lightweight !== false) {
+    queryParts.push('lightweight=1')
+  }
+
   const url = queryParts.length ? `/api/post?${queryParts.join('&')}` : '/api/post'
   const data = await get<PostListResponse>(url)
 
-  return {
+  const result: PostListResult = {
     items: Array.isArray(data.items) ? data.items : [],
     page: data.page ?? options.page ?? 1,
     pageSize: data.pageSize ?? options.pageSize ?? 10,
     hasMore: data.hasMore === true,
   }
+
+  if (!options.mine && result.page === 1) {
+    savePostFeedCache(result)
+  }
+
+  return result
+}
+
+export function getCachedPostFeed(pageSize = 10): PostListResult | undefined {
+  try {
+    const raw = Taro.getStorageSync<string>(POST_FEED_CACHE_KEY)
+    const stored = raw ? (JSON.parse(raw) as Partial<StoredPostFeedCache>) : undefined
+
+    if (
+      !stored?.result ||
+      stored.ownerId !== getPostFeedCacheOwnerId() ||
+      !stored.expiresAt ||
+      stored.expiresAt <= Date.now() ||
+      !Array.isArray(stored.result.items)
+    ) {
+      return undefined
+    }
+
+    const normalizedPageSize = Math.max(1, Math.trunc(pageSize))
+    const items = stored.result.items.slice(0, normalizedPageSize)
+
+    return {
+      ...stored.result,
+      items,
+      page: 1,
+      pageSize: normalizedPageSize,
+      hasMore: stored.result.hasMore || stored.result.items.length > items.length,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function savePostFeedCache(result: PostListResult) {
+  const stored: StoredPostFeedCache = {
+    ownerId: getPostFeedCacheOwnerId(),
+    expiresAt: Date.now() + POST_FEED_CACHE_TTL,
+    result,
+  }
+
+  try {
+    Taro.setStorageSync(POST_FEED_CACHE_KEY, JSON.stringify(stored))
+  } catch {
+    // Feed caching is an optional startup optimization.
+  }
+}
+
+function getPostFeedCacheOwnerId() {
+  return authSession.value?.user.id.trim() || 'guest'
 }
 
 export async function getPostDetail(postId: string) {

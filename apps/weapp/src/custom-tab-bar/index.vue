@@ -5,7 +5,7 @@
       :key="item.key"
       class="custom-tab-bar__item"
       :class="{ 'is-active': selected === index }"
-      @tap="handleSwitch(item.pagePath)"
+      @tap="handleSwitch(item)"
     >
       <image
         class="custom-tab-bar__icon"
@@ -18,20 +18,27 @@
 </template>
 
 <script lang="ts">
-import Taro from '@tarojs/taro'
-import { createSafeAreaCssVars } from '../utils/safe-area'
-import { CUSTOM_TAB_BAR_ITEMS } from '../utils/custom-tab-bar'
+import Taro from "@tarojs/taro";
+import { createSafeAreaCssVars } from "../utils/safe-area";
+import { CUSTOM_TAB_BAR_ITEMS } from "../utils/custom-tab-bar";
+import { openSelectedAgentChat } from "../utils/selected-agent-chat";
+
+type CustomTabBarItem = (typeof CUSTOM_TAB_BAR_ITEMS)[number];
 
 function resolveCurrentSelectedIndex() {
-  const routePath = Taro.getCurrentInstance().router?.path ?? ''
-  const normalizedPath = routePath.startsWith('/') ? routePath : `/${routePath}`
-  const selectedIndex = CUSTOM_TAB_BAR_ITEMS.findIndex((item) => item.pagePath === normalizedPath)
+  const routePath = Taro.getCurrentInstance().router?.path ?? "";
+  const normalizedPath = routePath.startsWith("/")
+    ? routePath
+    : `/${routePath}`;
+  const selectedIndex = CUSTOM_TAB_BAR_ITEMS.findIndex(
+    (item) => item.pagePath === normalizedPath
+  );
 
-  return selectedIndex >= 0 ? selectedIndex : 0
+  return selectedIndex >= 0 ? selectedIndex : 0;
 }
 
 export default {
-  name: 'CustomTabBar',
+  name: "CustomTabBar",
   options: {
     addGlobalClass: true,
   },
@@ -40,33 +47,48 @@ export default {
       items: CUSTOM_TAB_BAR_ITEMS,
       selected: resolveCurrentSelectedIndex(),
       hidden: false,
-    }
+      isOpeningChat: false,
+    };
   },
   computed: {
     rootStyle(): Record<string, string> {
-      return createSafeAreaCssVars('custom-tab-bar-safe')
+      return createSafeAreaCssVars("custom-tab-bar-safe");
     },
   },
   methods: {
     setSelected(index: number) {
-      this.selected = index
+      this.selected = index;
     },
     setHidden(hidden: boolean) {
-      this.hidden = hidden
+      this.hidden = hidden;
     },
-    handleSwitch(pagePath: string) {
-      const currentItem = this.items[this.selected]
+    async handleSwitch(item: CustomTabBarItem) {
+      if (item.key === "contacts") {
+        if (this.isOpeningChat) {
+          return;
+        }
 
-      if (currentItem?.pagePath === pagePath) {
-        return
+        this.isOpeningChat = true;
+        try {
+          await openSelectedAgentChat();
+        } finally {
+          this.isOpeningChat = false;
+        }
+        return;
       }
 
-      void Taro.switchTab({
-        url: pagePath,
-      })
+      const currentItem = this.items[this.selected];
+
+      if (currentItem?.pagePath === item.pagePath) {
+        return;
+      }
+
+      await Taro.switchTab({
+        url: item.pagePath,
+      });
     },
   },
-}
+};
 </script>
 
 <style lang="scss">
@@ -77,7 +99,8 @@ export default {
   left: 0;
   z-index: 100;
   display: flex;
-  padding: 4px 10px calc(var(--custom-tab-bar-safe-bottom, env(safe-area-inset-bottom)) + 5px);
+  padding: 4px 10px
+    calc(var(--custom-tab-bar-safe-bottom, env(safe-area-inset-bottom)) + 5px);
   border-top: 1px solid rgba(17, 24, 39, 0.06);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(14px);

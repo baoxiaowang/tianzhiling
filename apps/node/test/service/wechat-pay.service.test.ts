@@ -32,6 +32,51 @@ describe('WechatPayService virtual payment signing', () => {
     );
   });
 
+  it('creates an unlimited mini program code for the share landing page', async () => {
+    const service = createVirtualPayService();
+
+    (service as any).getMiniProgramAccessToken = jest
+      .fn()
+      .mockResolvedValue('access-token');
+    (service as any).postBuffer = jest.fn().mockResolvedValue({
+      buffer: Buffer.from('png-image'),
+      contentType: 'image/png',
+    });
+
+    const result = await service.createUnlimitedMiniProgramCode({
+      scene: '12345678901234567890123456789012',
+      page: 'pages/agent-share/index',
+    });
+
+    expect(result).toEqual({
+      buffer: Buffer.from('png-image'),
+      mimeType: 'image/png',
+    });
+    expect((service as any).postBuffer).toHaveBeenCalledWith(
+      'https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=access-token',
+      expect.objectContaining({
+        scene: '12345678901234567890123456789012',
+        page: 'pages/agent-share/index',
+        check_path: false,
+        env_version: 'develop',
+      })
+    );
+  });
+
+  it('rejects a mini program code scene longer than the wechat limit', async () => {
+    const service = createVirtualPayService();
+
+    await expect(
+      service.createUnlimitedMiniProgramCode({
+        scene: '123456789012345678901234567890123',
+        page: 'pages/agent-share/index',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_WECHAT_MINI_PROGRAM_SCENE',
+      status: 400,
+    });
+  });
+
   it('requires session_key when exchanging jsCode for virtual payment', async () => {
     const service = createVirtualPayService();
 

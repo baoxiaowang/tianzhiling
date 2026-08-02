@@ -96,4 +96,19 @@ describe('AuthMiddleware route matching', () => {
       middleware.match(createContext('/api/membership/plans') as never)
     ).toBe(false);
   });
+
+  it('keeps invitation preview public while protecting acceptance', () => {
+    const middleware = createMiddleware();
+
+    expect(
+      middleware.match(
+        createContext('/api/agent-share/example-token/preview', 'GET') as never
+      )
+    ).toBe(false);
+    expect(
+      middleware.match(
+        createContext('/api/agent/share-invites/accept', 'POST') as never
+      )
+    ).toBe(true);
+  });
 });
