@@ -4696,10 +4696,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result).toEqual({
-      segments: [
-        '我也帮不上忙，只能靠你们了',
-        '你自己也注意身体，别太累',
-      ],
+      segments: ['我也帮不上忙，只能靠你们了', '你自己也注意身体，别太累'],
       rewritten: false,
       reason: undefined,
     });
