@@ -4273,6 +4273,22 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     const fields = (service as any).buildReplyRoutingMessageFields({
       brief: {
         factClaimMode: 'grounded',
+        careMotivation: {
+          version: 'care_motivation_v1',
+          motive: 'mutual_longing',
+          focus: 'reciprocal_bond',
+          initiative: 'proactive',
+          styleSource: 'persona',
+        },
+        stateProtocol: {
+          version: 'state_protocol_v1',
+          protocol: 'trust_repair',
+          stage: 'challenge',
+          action: 'retract',
+          anchor: 'fact',
+          exit: 'stay',
+          source: 'deterministic',
+        },
       },
       strategyVersion: 'conversation_strategy_v2',
       strategySource: 'semantic_plan',
@@ -4299,6 +4315,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyParticipationFallbackReason: 'model_single_segment',
         replyGuardrailReviewMode: 'deterministic_first',
         replyBriefFactClaimMode: 'grounded',
+        replyCareMotive: 'mutual_longing',
+        replyCareFocus: 'reciprocal_bond',
+        replyCareStyleSource: 'persona',
+        replyStateProtocol: expect.objectContaining({
+          protocol: 'trust_repair',
+          stage: 'challenge',
+          action: 'retract',
+        }),
         replyConversationStance: 'tender',
         replyConversationStanceTarget: '用户正在等待关系修复',
         replyConversationMoves: ['acknowledge', 'self_disclose'],

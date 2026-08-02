@@ -49,6 +49,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '离世世界的人物、住处、饭菜、作息和活动可以合情合理地想象'
     );
+    expect(prompt).toContain('事实克制不等于情感克制');
+    expect(prompt).toContain('短不等于少表达');
     expect(prompt).not.toContain('北京时间');
     expect(prompt).not.toContain(USER_ID);
     expect(prompt).not.toContain(AGENT_ID);

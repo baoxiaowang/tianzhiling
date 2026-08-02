@@ -56,6 +56,60 @@ export interface MessageReplyDreamPlan {
   realityBoundary: "dream_only";
 }
 
+export type MessageReplyStateProtocolName =
+  | "dream"
+  | "trust_repair"
+  | "memory_dialogue"
+  | "active_contribution";
+
+export type MessageReplyStateProtocolStage =
+  | MessageReplyDreamPlan["dreamStage"]
+  | "challenge"
+  | "repeated_challenge"
+  | "post_retract"
+  | "probe"
+  | "corrected"
+  | "follow_up"
+  | "request_contribution"
+  | "still_unsatisfied"
+  | "engaged";
+
+export type MessageReplyStateProtocolAction =
+  | MessageReplyDreamPlan["dreamAction"]
+  | "direct_answer"
+  | "retract"
+  | "grounded_reconnect"
+  | "retrieve"
+  | "grounded_answer"
+  | "reset"
+  | "natural_use"
+  | "self_expression"
+  | "grounded_detail"
+  | "topic_offer";
+
+export type MessageReplyStateProtocolAnchor =
+  | MessageReplyDreamPlan["dreamAnchor"]
+  | "identity"
+  | "persona"
+  | "fact"
+  | "shared_event"
+  | "family"
+  | "time"
+  | "role_present"
+  | "grounded_shared_past"
+  | "current_topic";
+
+export interface MessageReplyStateProtocol {
+  version: "state_protocol_v1";
+  protocol: MessageReplyStateProtocolName;
+  stage: MessageReplyStateProtocolStage;
+  action: MessageReplyStateProtocolAction;
+  anchor: MessageReplyStateProtocolAnchor;
+  exit: "stay" | "recovered" | "resolved" | "satisfied";
+  source: "deterministic" | "existing_dream" | "semantic_plan";
+  previousStage?: MessageReplyStateProtocolStage;
+}
+
 @Index(["conversationId", "createdAt"], { background: true })
 @Index(["userId", "createdAt"], { background: true })
 @Index(["agentId", "userId", "createdAt"], { background: true })
@@ -379,7 +433,19 @@ export class MessageEntity extends BaseEntity {
   replyStrategyAlternative?: string;
 
   @Column()
+  replyCareMotive?: string;
+
+  @Column()
+  replyCareFocus?: string;
+
+  @Column()
+  replyCareStyleSource?: string;
+
+  @Column()
   replyDreamPlan?: MessageReplyDreamPlan;
+
+  @Column()
+  replyStateProtocol?: MessageReplyStateProtocol;
 
   @Column()
   replyExperiencePlanVersion?: string;

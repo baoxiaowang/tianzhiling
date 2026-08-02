@@ -101,15 +101,22 @@ describe('buildReplyBrief', () => {
     expect(brief.bubblePlan.complexityHint).toBe('paired');
     expect(brief.bubblePlan.preferTwoSegments).toBe(true);
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'micro',
-      targetCharacters: 18,
-      reviewCharacters: 30,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
     expect(brief.prompt).toContain('{"segments":["第一颗","第二颗"]}');
     expect(brief.prompt).toContain('有节奏的重复可以加强情感');
     expect(brief.prompt).not.toContain('由本轮表达需要决定 1-2 个气泡');
     expect(brief.prompt).toContain('不因字面同义直接删除');
     expect(brief.prompt).toContain('不机械复读');
+    expect(brief.prompt).toContain('给明确的亲人侧心意');
+    expect(brief.careMotivation).toMatchObject({
+      motive: 'mutual_longing',
+      focus: 'reciprocal_bond',
+      initiative: 'proactive',
+    });
+    expect(brief.prompt).toContain('不让想念只落在用户一边');
   });
 
   it('does not inject short-turn participation into a closing turn', () => {
@@ -175,7 +182,10 @@ describe('buildReplyBrief', () => {
       })
     );
     expect(brief.factClaimMode).toBe('grounded');
-    expect(brief.prompt).toContain('共同过去没有证据，本轮不得使用');
+    expect(brief.prompt).toContain('协议：主动贡献/要求多说');
+    expect(brief.prompt).toContain('动作：给角色侧当下内容');
+    expect(brief.prompt).toContain('共同往事仍须证据');
+    expect(brief.prompt).not.toContain('## 主动贡献');
   });
 
   it('records a strategy alternative after repeated generic moves', () => {
@@ -764,9 +774,9 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('避免重复上一轮无效动作');
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'brief',
-      targetCharacters: 28,
-      reviewCharacters: 30,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 50,
       focusMode: 'single_scene',
       reviewPolicy: 'remove_repeated_actions_only',
     });
@@ -897,7 +907,10 @@ describe('buildReplyBrief', () => {
       ])
     );
     expect(brief.prompt).toContain('动作是弱提示，不要求逐项完成');
-    expect(brief.bubblePlan.complexityHint).toBe('concise');
+    expect(brief.bubblePlan).toMatchObject({
+      complexityHint: 'paired',
+      encourageTwoSegments: true,
+    });
   });
 
   it('keeps an explicit dream request in relationship mode despite memory words', () => {
@@ -1021,9 +1034,7 @@ describe('buildReplyBrief', () => {
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
     expect(brief.prompt).toContain('共同往事仍须证据');
-    expect(brief.prompt).toContain(
-      '现实事实和共同过去只用同一对象的有效证据'
-    );
+    expect(brief.prompt).toContain('现实事实和共同过去只用同一对象的有效证据');
     expect(brief.prompt).toContain('不补写当时的动作或细节');
     expect(brief.prompt).toContain('默认一颗');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
@@ -1171,13 +1182,12 @@ describe('buildReplyBrief', () => {
       '先共情用户对家人健康近况里的庆幸、担心或心疼，不能用确认收到、听懂或记住来代替回应',
       '再贴着用户明说的身体情况表达具体关心；只可建议遵医嘱或继续留意，不作诊断，也不把照护责任推给用户',
     ]);
-    expect(brief.prompt).toContain(
-      '不能用确认收到、听懂或记住来代替回应'
-    );
+    expect(brief.prompt).toContain('不能用确认收到、听懂或记住来代替回应');
     expect(brief.bubblePlan).toEqual({
       maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
+      encourageTwoSegments: true,
     });
   });
 
@@ -1502,8 +1512,9 @@ describe('buildReplyBrief', () => {
       '保留梦境的含混与余地，减少保证，给睡前陪伴或自然留白',
     ]);
     expect(brief.prompt).toContain('## 梦境陪伴');
-    expect(brief.prompt).toContain(
-      'repeated_miss/leave_space/restrained/voice/dream_only'
-    );
+    expect(brief.prompt).toContain('协议：梦境/反复未梦见');
+    expect(brief.prompt).toContain('动作：保留梦境含混与留白');
+    expect(brief.prompt).toContain('锚点：声音');
+    expect(brief.prompt).toContain('仅限梦境，不作现实证明');
   });
 });

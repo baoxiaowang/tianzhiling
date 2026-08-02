@@ -209,7 +209,7 @@ export function buildReplyExperiencePlanPrompt(
   plan: ReplyExperiencePlan
 ): string {
   const factGuidance: Record<ReplyProfileTier, string> = {
-    P0: '只用称呼、当前原话和证据',
+    P0: '事实只用称呼、当前原话和证据，不限制情感表达',
     P1: '可用明确填写资料，不补共同往事',
     P2: '可自然用已确认资料，往事仍需证据',
     P3: '相关时自然调用有证据的共同记忆',
@@ -223,7 +223,7 @@ export function buildReplyExperiencePlanPrompt(
   };
   const depthGuidance: Record<ReplyConversationDepth, string> = {
     D0: '只回当前点并收住',
-    D1: '短回应，可加一处互惠',
+    D1: '短而有温度，再给一处亲人侧心意',
     D2: '回应后给一处角色侧内容',
     D3: '只抓一个核心深入，必要时问一句',
     D4: '先处理风险或信任问题，再谈其他',

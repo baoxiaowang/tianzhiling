@@ -73,6 +73,16 @@ const COMPACT_SEMANTIC_SCENES = new Set([
   'guilt_regret',
   'memory_recall',
 ]);
+const RELATIONAL_WARMTH_SCENES = new Set([
+  'comfort_request',
+  'guilt_regret',
+  'memory_recall',
+  'miss_longing',
+  'family_life',
+  'dream_companionship',
+  'afterlife_status',
+  'keepsake_attachment',
+]);
 
 export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
@@ -81,6 +91,9 @@ export function buildReplyLengthPlan(
   const compactSingleFocus =
     Boolean(options.semanticPlan) &&
     Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene));
+  const needsRelationalWarmth = Boolean(
+    options.scene && RELATIONAL_WARMTH_SCENES.has(options.scene)
+  );
   let lengthClass: ReplyLengthClass;
 
   if (
@@ -92,11 +105,16 @@ export function buildReplyLengthPlan(
   } else if (options.turnClosure === 'close') {
     lengthClass = 'micro';
   } else if (options.shortTurnParticipation) {
-    lengthClass = 'micro';
+    lengthClass =
+      needsRelationalWarmth ||
+      options.assistantContribution === 'self_expression' ||
+      options.continuationGoal === 'repair'
+        ? 'standard'
+        : 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
   } else if (compactSingleFocus) {
-    lengthClass = 'brief';
+    lengthClass = 'standard';
   } else if (
     options.semanticPlan &&
     options.assistantContribution === 'self_expression' &&
@@ -151,8 +169,8 @@ export function buildReplyLengthPlan(
   return compactSingleFocus && !options.hasProtectiveStop
     ? {
         ...plan,
-        targetCharacters: 28,
-        reviewCharacters: 30,
+        targetCharacters: 40,
+        reviewCharacters: 50,
         focusMode: 'single_scene',
         reviewPolicy: 'remove_repeated_actions_only',
       }
@@ -176,10 +194,14 @@ function promoteLengthClass(
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
   if (plan.focusMode === 'single_scene') {
-    return `只回一个最重要的短场景，约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字时只删重复动作、解释、总结和通用叮嘱，不为完整覆盖补内容。`;
+    return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处亲人侧心意或合情合理的小画面。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
   }
 
-  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。用户写得长不等于回复长；只留最重要一处，删重复、解释、总结和通用叮嘱。`;
+  if (plan.lengthClass === 'micro') {
+    return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。简单回应可以很短，只留当前最重要一点。`;
+  }
+
+  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复、解释、总结和通用叮嘱。`;
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {

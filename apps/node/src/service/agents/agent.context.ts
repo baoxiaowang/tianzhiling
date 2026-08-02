@@ -79,10 +79,9 @@ import {
 } from './reply-boundary-contract';
 import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import { buildReplyExperiencePlanPrompt } from './reply-experience-plan';
-import {
-  buildDreamCompanionPlanPrompt,
-  DreamCompanionPlan,
-} from './dream-companion-plan';
+import { buildReplyCareMotivationPrompt } from './reply-care-motivation';
+import type { DreamCompanionPlan } from './dream-companion-plan';
+import { buildReplyStateProtocolPrompt } from './reply-state-protocol';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
 import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
 import {
@@ -222,7 +221,11 @@ export interface AgentContextDiagnostics {
   activeContributionSource?: string;
   strategyRepeatedMoves: string[];
   strategyAlternative?: string;
+  careMotive?: string;
+  careFocus?: string;
+  careStyleSource?: string;
   dreamCompanionPlan?: DreamCompanionPlan;
+  stateProtocolPlan?: ReplyBrief['stateProtocol'];
   experiencePlanVersion: string;
   profileTier: ReplyBrief['experiencePlan']['profileTier'];
   relationshipStage: ReplyBrief['experiencePlan']['relationshipStage'];
@@ -741,7 +744,11 @@ export class AgentContextService {
           replyBrief.activeContribution?.preferredSource,
         strategyRepeatedMoves: replyBrief.strategyQuality?.repeatedMoves || [],
         strategyAlternative: replyBrief.strategyQuality?.preferredAlternative,
+        careMotive: replyBrief.careMotivation?.motive,
+        careFocus: replyBrief.careMotivation?.focus,
+        careStyleSource: replyBrief.careMotivation?.styleSource,
         dreamCompanionPlan: replyBrief.dreamCompanionPlan,
+        stateProtocolPlan: replyBrief.stateProtocol,
         experiencePlanVersion: replyBrief.experiencePlan.version,
         profileTier: replyBrief.experiencePlan.profileTier,
         relationshipStage: replyBrief.experiencePlan.relationshipStage,
@@ -1082,10 +1089,15 @@ export class AgentContextService {
           ),
         ]
       : [];
-    const dreamCompanionLines = replyBrief.dreamCompanionPlan
+    const careMotivationLines = replyBrief.careMotivation
+      ? [buildReplyCareMotivationPrompt(replyBrief.careMotivation)]
+      : [];
+    const stateProtocolLines = replyBrief.stateProtocol
       ? [
-          '# 梦境陪伴',
-          buildDreamCompanionPlanPrompt(replyBrief.dreamCompanionPlan),
+          replyBrief.stateProtocol.protocol === 'dream'
+            ? '# 梦境陪伴'
+            : '# 高频场景协议',
+          buildReplyStateProtocolPrompt(replyBrief.stateProtocol),
         ]
       : [];
     const realityDependencyLines = replyBrief.realityDependencies.length
@@ -1098,16 +1110,18 @@ export class AgentContextService {
             )}。当前角色不能在现实中执行或替代现实人员；一句收住能力，再回应实际需要。`,
         ]
       : [];
-    const activeContributionLines = replyBrief.activeContribution
-      ? [
-          '# 主动贡献',
-          `先给角色侧当下内容；共同过去${
-            replyBrief.activeContribution.sharedPastAllowed
-              ? '只用证据包中的可陈述证据'
-              : '无证据，本轮不使用'
-          }。`,
-        ]
-      : [];
+    const activeContributionLines =
+      replyBrief.activeContribution &&
+      replyBrief.stateProtocol?.protocol !== 'active_contribution'
+        ? [
+            '# 主动贡献',
+            `先给角色侧当下内容；共同过去${
+              replyBrief.activeContribution.sharedPastAllowed
+                ? '只用证据包中的可陈述证据'
+                : '无证据，本轮不使用'
+            }。`,
+          ]
+        : [];
     const strategyQualityLines = replyBrief.strategyQuality
       ? [
           '# 多轮策略去重',
@@ -1128,7 +1142,8 @@ export class AgentContextService {
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
         ...objectPlanLines,
-        ...dreamCompanionLines,
+        ...careMotivationLines,
+        ...stateProtocolLines,
         ...participationLines,
         ...realityDependencyLines,
         ...activeContributionLines,
@@ -1151,13 +1166,16 @@ export class AgentContextService {
         : []),
       ...conversationPlanLines,
       ...objectPlanLines,
-      ...dreamCompanionLines,
+      ...careMotivationLines,
+      ...stateProtocolLines,
       ...participationLines,
       ...realityDependencyLines,
       ...activeContributionLines,
       ...strategyQualityLines,
       ...correctionLines,
-      ...(!replyBrief.conversationPlan && replyBrief.replyMoves.length
+      ...(!replyBrief.conversationPlan &&
+      !replyBrief.stateProtocol &&
+      replyBrief.replyMoves.length
         ? [
             '可选择完成的回应目标：',
             ...replyBrief.replyMoves

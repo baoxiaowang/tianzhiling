@@ -54,6 +54,21 @@ describe('reply bubble plan', () => {
     expect(buildReplyBubblePlanPrompt(plan)).not.toContain('默认一颗');
   });
 
+  it('softly encourages two bubbles for role-side care', () => {
+    const plan = buildReplyBubblePlan({
+      currentQuery: '妈，我今天心里很难受',
+      replyMoveCount: 2,
+      encourageTwoSegments: true,
+    });
+
+    expect(plan).toMatchObject({
+      complexityHint: 'paired',
+      encourageTwoSegments: true,
+    });
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('优先用两颗');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('一颗更自然时可不拆');
+  });
+
   it('marks closing turns so the model does not reopen the conversation', () => {
     const plan = buildReplyBubblePlan({
       currentQuery: '我先睡了，晚安',

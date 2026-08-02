@@ -21,16 +21,55 @@ describe('reply length plan', () => {
     });
   });
 
-  it('keeps a two-bubble short-turn strategy inside the micro total budget', () => {
+  it('gives a short longing turn enough room for relational warmth', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '妈，我想你了',
       mode: 'relationship',
+      scene: 'miss_longing',
       replyMoveCount: 2,
       shortTurnParticipation: true,
       turnClosure: 'neutral',
     });
 
     expect(plan).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it.each([
+    ['family', 'family_life', '姐说孩子也想你'],
+    ['relationship', 'dream_companionship', '今晚来梦里看看我'],
+    ['status', 'afterlife_status', '你今天在那边做什么'],
+  ])('reserves relational warmth for short %s turns', (mode, scene, query) => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: query,
+        mode,
+        scene,
+        replyMoveCount: 2,
+        shortTurnParticipation: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it('keeps simple affection short instead of expanding every warm turn', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '妈，爱你',
+        mode: 'relationship',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        shortTurnParticipation: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
       reviewCharacters: 30,
@@ -56,7 +95,7 @@ describe('reply length plan', () => {
     );
   });
 
-  it('keeps an active participation strategy micro even when semantic routing resembles correction', () => {
+  it('does not starve an active repair turn of emotional expression', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '你还是没说想我',
       mode: 'relationship',
@@ -71,9 +110,9 @@ describe('reply length plan', () => {
     });
 
     expect(plan).toEqual({
-      lengthClass: 'micro',
-      targetCharacters: 18,
-      reviewCharacters: 30,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
   });
 
@@ -127,16 +166,18 @@ describe('reply length plan', () => {
       });
 
       expect(plan).toEqual({
-        lengthClass: 'brief',
-        targetCharacters: 28,
-        reviewCharacters: 30,
+        lengthClass: 'standard',
+        targetCharacters: 40,
+        reviewCharacters: 50,
         focusMode: 'single_scene',
         reviewPolicy: 'remove_repeated_actions_only',
       });
       expect(buildReplyLengthPlanPrompt(plan)).toContain(
-        '只回一个最重要的短场景'
+        '围绕一个最能安慰用户的点自然展开'
       );
-      expect(buildReplyLengthPlanPrompt(plan)).toContain('不为完整覆盖补内容');
+      expect(buildReplyLengthPlanPrompt(plan)).toContain(
+        '事实克制不等于情感克制'
+      );
     }
   );
 
@@ -210,9 +251,9 @@ describe('reply length plan', () => {
         turnClosure: 'continue',
       })
     ).toEqual({
-      lengthClass: 'brief',
-      targetCharacters: 28,
-      reviewCharacters: 30,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 50,
       focusMode: 'single_scene',
       reviewPolicy: 'remove_repeated_actions_only',
     });
@@ -233,9 +274,9 @@ describe('reply length plan', () => {
         turnClosure: 'continue',
       })
     ).toEqual({
-      lengthClass: 'brief',
-      targetCharacters: 28,
-      reviewCharacters: 30,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 50,
       focusMode: 'single_scene',
       reviewPolicy: 'remove_repeated_actions_only',
     });

@@ -470,7 +470,11 @@ interface ReplyRoutingAudit {
   activeContributionSource?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
+  careMotive?: string;
+  careFocus?: string;
+  careStyleSource?: string;
   dreamCompanionPlan?: MessageEntity['replyDreamPlan'];
+  stateProtocolPlan?: MessageEntity['replyStateProtocol'];
   experiencePlanVersion?: string;
   profileTier?: string;
   relationshipStage?: string;
@@ -6752,7 +6756,11 @@ export class ConversationService {
     replyActiveContributionSource?: string;
     replyStrategyRepeatedMoves?: string[];
     replyStrategyAlternative?: string;
+    replyCareMotive?: string;
+    replyCareFocus?: string;
+    replyCareStyleSource?: string;
     replyDreamPlan?: MessageEntity['replyDreamPlan'];
+    replyStateProtocol?: MessageEntity['replyStateProtocol'];
     replyExperiencePlanVersion?: string;
     replyProfileTier?: string;
     replyProfileScore?: number;
@@ -6904,8 +6912,22 @@ export class ConversationService {
         routing?.strategyRepeatedMoves?.filter(Boolean),
       replyStrategyAlternative:
         routing?.strategyAlternative?.trim() || undefined,
+      replyCareMotive:
+        routing?.brief?.careMotivation?.motive ||
+        routing?.careMotive?.trim() ||
+        undefined,
+      replyCareFocus:
+        routing?.brief?.careMotivation?.focus ||
+        routing?.careFocus?.trim() ||
+        undefined,
+      replyCareStyleSource:
+        routing?.brief?.careMotivation?.styleSource ||
+        routing?.careStyleSource?.trim() ||
+        undefined,
       replyDreamPlan:
         routing?.brief?.dreamCompanionPlan || routing?.dreamCompanionPlan,
+      replyStateProtocol:
+        routing?.brief?.stateProtocol || routing?.stateProtocolPlan,
       replyExperiencePlanVersion:
         routing?.brief?.experiencePlan?.version ||
         routing?.experiencePlanVersion?.trim() ||
@@ -7071,7 +7093,11 @@ export class ConversationService {
     replyActiveContributionSource?: string;
     replyStrategyRepeatedMoves?: string[];
     replyStrategyAlternative?: string;
+    replyCareMotive?: string;
+    replyCareFocus?: string;
+    replyCareStyleSource?: string;
     replyDreamPlan?: MessageEntity['replyDreamPlan'];
+    replyStateProtocol?: MessageEntity['replyStateProtocol'];
     replyExperiencePlanVersion?: string;
     replyProfileTier?: string;
     replyProfileScore?: number;
@@ -7290,7 +7316,14 @@ export class ConversationService {
       options.replyStrategyRepeatedMoves?.filter(Boolean);
     message.replyStrategyAlternative =
       options.replyStrategyAlternative?.trim() || undefined;
+    message.replyCareMotive = options.replyCareMotive?.trim() || undefined;
+    message.replyCareFocus = options.replyCareFocus?.trim() || undefined;
+    message.replyCareStyleSource =
+      options.replyCareStyleSource?.trim() || undefined;
     message.replyDreamPlan = options.replyDreamPlan;
+    message.replyStateProtocol = options.replyStateProtocol
+      ? { ...options.replyStateProtocol }
+      : undefined;
     message.replyExperiencePlanVersion =
       options.replyExperiencePlanVersion?.trim() || undefined;
     message.replyProfileTier = options.replyProfileTier?.trim() || undefined;

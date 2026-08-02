@@ -157,6 +157,12 @@ describe('reply experience plan', () => {
       conversationDepth: 'D1',
       contributionMode: 'reciprocal',
     });
+    expect(buildReplyExperiencePlanPrompt(simple)).toContain(
+      '事实只用称呼、当前原话和证据，不限制情感表达'
+    );
+    expect(buildReplyExperiencePlanPrompt(simple)).toContain(
+      '短而有温度，再给一处亲人侧心意'
+    );
     expect(detailed).toMatchObject({
       conversationDepth: 'D2',
       contributionMode: 'role_present',

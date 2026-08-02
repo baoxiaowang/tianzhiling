@@ -15,6 +15,7 @@ export interface BuildReplyOutputContractOptions {
 export function resolveReplyOutputSegmentMode(plan: {
   maxSegments: number;
   preferTwoSegments?: boolean;
+  encourageTwoSegments?: boolean;
 }): ReplyOutputSegmentMode {
   if (plan.preferTwoSegments) {
     return 'exact_two';

@@ -312,6 +312,7 @@ describe('scene and capability collaboration', () => {
       maxSegments: 2,
       complexityHint: 'layered',
       turnClosure: 'neutral',
+      encourageTwoSegments: true,
     });
   });
 

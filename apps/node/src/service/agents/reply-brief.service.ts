@@ -65,10 +65,19 @@ import {
   ReplyExperiencePlan,
 } from './reply-experience-plan';
 import {
-  buildDreamCompanionPlanPrompt,
   DreamCompanionPlan,
   resolveDreamCompanionPlan,
 } from './dream-companion-plan';
+import {
+  buildReplyStateProtocolPrompt,
+  ReplyStateProtocolPlan,
+  resolveReplyStateProtocol,
+} from './reply-state-protocol';
+import {
+  buildReplyCareMotivationPrompt,
+  ReplyCareMotivationPlan,
+  resolveReplyCareMotivationPlan,
+} from './reply-care-motivation';
 import {
   buildConversationTurnPlanPrompt,
   resolveConversationTurnPlan,
@@ -155,7 +164,9 @@ export interface ReplyBrief {
   correctionPolicy?: ReplyCorrectionPolicy;
   activeContribution?: ReplyActiveContributionPlan;
   strategyQuality?: ReplyStrategyQualityPlan;
+  careMotivation?: ReplyCareMotivationPlan;
   dreamCompanionPlan?: DreamCompanionPlan;
+  stateProtocol?: ReplyStateProtocolPlan;
   experiencePlan: ReplyExperiencePlan;
   guardrailFocuses: ReplyGuardrailFocus[];
   participationStrategy?: ReplyParticipationStrategy;
@@ -245,6 +256,8 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   );
   const riskLevel = resolveRiskLevel(options.intent);
   const reading = options.route?.intent?.reading ?? options.intent?.reading;
+  const memoryPlan =
+    options.route?.intent?.memoryPlan ?? options.intent?.memoryPlan;
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
   const rawConversationPlan =
@@ -323,6 +336,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       experiencePlan
     )
   );
+  const careMotivation = resolveReplyCareMotivationPlan({
+    currentQuery,
+    mode,
+    primaryScene,
+    riskLevel,
+    agent: options.agent,
+    experiencePlan,
+    conversationPlan,
+  });
   const emotionalNeed =
     reading?.primaryNeed ??
     relationshipContinuity?.emotionalNeed ??
@@ -389,11 +411,13 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   });
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
-    replyMoveCount: participationStrategy
-      ? Math.max(2, replyMoveCount)
-      : replyMoveCount,
+    replyMoveCount:
+      participationStrategy || careMotivation
+        ? Math.max(2, replyMoveCount)
+        : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
     preferTwoSegments: Boolean(participationStrategy),
+    encourageTwoSegments: Boolean(careMotivation && !participationStrategy),
   });
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
@@ -409,6 +433,17 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     continuationGoal: conversationPlan?.engagement?.continuationGoal,
     closureReadiness: conversationPlan?.engagement?.closureReadiness,
     turnClosure: bubblePlan.turnClosure,
+  });
+  const stateProtocol = resolveReplyStateProtocol({
+    currentQuery,
+    recentMessages: options.recentMessages,
+    mode,
+    relationshipContinuity,
+    correctionMode: correctionPolicy?.mode,
+    dreamPlan: dreamCompanionPlan,
+    memoryPlan,
+    retrievedEvidenceCount: options.retrievedMemories?.length || 0,
+    activeContribution,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
     version: 'reply_brief_v13',
@@ -432,7 +467,9 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     correctionPolicy,
     activeContribution,
     strategyQuality,
+    careMotivation,
     dreamCompanionPlan,
+    stateProtocol,
     experiencePlan,
     guardrailFocuses,
     participationStrategy,
@@ -940,7 +977,7 @@ export function buildReplyParticipationStrategyPrompt(
       ? '完成规划中的另一个不同聊天动作'
       : strategy === 'light_self_disclosure'
       ? '只补一个角色侧小近况或具体态度，不转成对用户的通用叮嘱'
-      : '可开一个轻话头、给角色侧小内容，或用有节奏的重复加强当前情感';
+      : '给明确的亲人侧心意，或一处贴着当下的小画面；有节奏的重复也可以加强情感';
 
   return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。`;
 }
@@ -1873,10 +1910,15 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const dreamCompanionLines = brief.dreamCompanionPlan
+  const careMotivationLines = brief.careMotivation
+    ? [buildReplyCareMotivationPrompt(brief.careMotivation), '']
+    : [];
+  const stateProtocolLines = brief.stateProtocol
     ? [
-        '## 梦境陪伴',
-        buildDreamCompanionPlanPrompt(brief.dreamCompanionPlan),
+        brief.stateProtocol.protocol === 'dream'
+          ? '## 梦境陪伴'
+          : '## 高频场景协议',
+        buildReplyStateProtocolPrompt(brief.stateProtocol),
         '',
       ]
     : [];
@@ -1890,17 +1932,19 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const activeContributionLines = brief.activeContribution
-    ? [
-        '## 主动贡献',
-        `优先角色侧当下内容；共同过去${
-          brief.activeContribution.sharedPastAllowed
-            ? '只能使用下方已有证据'
-            : '没有证据，本轮不得使用'
-        }。`,
-        '',
-      ]
-    : [];
+  const activeContributionLines =
+    brief.activeContribution &&
+    brief.stateProtocol?.protocol !== 'active_contribution'
+      ? [
+          '## 主动贡献',
+          `优先角色侧当下内容；共同过去${
+            brief.activeContribution.sharedPastAllowed
+              ? '只能使用下方已有证据'
+              : '没有证据，本轮不得使用'
+          }。`,
+          '',
+        ]
+      : [];
   const strategyQualityLines =
     brief.strategyQuality && !brief.conversationPlan
       ? [
@@ -1942,7 +1986,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...readingLines,
     ...objectPlanLines,
     ...conversationPlanLines,
-    ...dreamCompanionLines,
+    ...careMotivationLines,
+    ...stateProtocolLines,
     ...participationLines,
     ...realityDependencyLines,
     ...activeContributionLines,

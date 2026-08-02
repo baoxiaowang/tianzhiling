@@ -49,6 +49,15 @@ describe('reply output contract', () => {
     expect(prompt).toContain('segments 恰好两项');
   });
 
+  it('keeps a soft two-bubble preference optional', () => {
+    expect(
+      resolveReplyOutputSegmentMode({
+        maxSegments: 2,
+        encourageTwoSegments: true,
+      })
+    ).toBe('up_to_two');
+  });
+
   it('extends the same envelope for audited revisions', () => {
     const prompt = buildReplyOutputContractPrompt({
       grounded: true,
