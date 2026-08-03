@@ -140,7 +140,10 @@ describe('buildReplyBrief', () => {
     ]);
     expect(brief.guardrailFocuses).toContain('reality_dependency');
     expect(brief.prompt).toContain('## 现实依赖');
-    expect(brief.prompt).toContain('不能在现实中执行或替代现实人员');
+    expect(brief.prompt).toContain('不用做不到的现实承诺哄用户');
+    expect(brief.prompt).toContain('保留想照顾用户的心意');
+    expect(brief.prompt).toContain('愿望、具体关心或聊天内能做的事');
+    expect(brief.replyMoves.join(' ')).toContain('真想替你……');
   });
 
   it('resets facts after a denial without inventing a replacement', () => {
@@ -184,7 +187,8 @@ describe('buildReplyBrief', () => {
     expect(brief.factClaimMode).toBe('grounded');
     expect(brief.prompt).toContain('协议：主动贡献/要求多说');
     expect(brief.prompt).toContain('动作：给角色侧当下内容');
-    expect(brief.prompt).toContain('共同往事仍须证据');
+    expect(brief.prompt).toContain('共同往事沿用户已说片段回应感受和意义');
+    expect(brief.prompt).toContain('离世日常可用一个自然小场景承载心意');
     expect(brief.prompt).not.toContain('## 主动贡献');
   });
 
@@ -590,11 +594,11 @@ describe('buildReplyBrief', () => {
 
     expect(brief.factClaimMode).toBe('grounded');
     expect(brief.conversationPlan?.moves.map(move => move.goal)).toEqual([
-      '不冒充记得，不补共同过去',
-      '回答能确认的部分；没有证据就坦白记不真切',
+      '用关系立场和当下心意回应，不以亲历口吻新增共同细节',
+      '先接住这段往事的感受和意义；事实只答能确认的部分',
     ]);
     expect(brief.conversationPlan?.engagement?.mustContribute).toBe(
-      '回答能确认的部分；没有证据就坦白记不真切'
+      '先回应用户说起这段往事时的感受和意义；事实只答能确认的部分'
     );
     expect(brief.prompt).not.toContain('补一个西山的具体细节');
   });
@@ -720,8 +724,10 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(brief.prompt).toContain('用户偏好、习惯、性格');
-    expect(brief.prompt).toContain('不能替用户在现实中做饭、到场或触碰');
+    expect(brief.prompt).toContain('离世日常可用一个自然小场景承载心意');
+    expect(brief.prompt).toContain('不延伸成现实到场、触碰或代办');
+    expect(brief.replyMoves.join(' ')).toContain('简短的角色侧小场景');
+    expect(brief.replyMoves.join(' ')).toContain('只服务本轮关心和安慰');
   });
 
   it('asks the agent to contribute before returning the turn to the user', () => {
@@ -1033,8 +1039,9 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain(
       '[当前用户原话] 你还记得小时候带我钓鱼不？我想去钓鱼了'
     );
-    expect(brief.prompt).toContain('共同往事仍须证据');
-    expect(brief.prompt).toContain('现实事实和共同过去只用同一对象的有效证据');
+    expect(brief.prompt).toContain('共同往事沿用户已说片段回应感受和意义');
+    expect(brief.prompt).toContain('共同过去先沿用户已说片段回应感受和意义');
+    expect(brief.prompt).toContain('具体事实只用同一对象证据');
     expect(brief.prompt).toContain('不补写当时的动作或细节');
     expect(brief.prompt).toContain('默认一颗');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');

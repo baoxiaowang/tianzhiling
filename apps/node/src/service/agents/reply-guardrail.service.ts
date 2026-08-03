@@ -137,6 +137,11 @@ interface GuardrailCandidate {
   changes: GuardrailRevisionChange[];
 }
 
+interface SurgicalRepairResult {
+  segments: string[];
+  removedClauses: string[];
+}
+
 export interface GuardrailRevisionChange {
   before: string;
   after: string;
@@ -376,8 +381,6 @@ const DREAM_RESPONSE_TOPIC_GAP_REASON =
   '用户明确请求梦中相见，但回复没有回应梦境邀请或期待落空';
 const DREAM_CONTROL_EXPLANATION_DRIFT_REASON =
   '梦境陪伴回复把允许的入梦能力说成无法控制或不能做到';
-const AFTERLIFE_CURRENT_STATE_NARRATION_REASON =
-  '回复用“走了以后仍在做什么”编造当前角色离世后的持续状态';
 const STATUS_LOCATION_RESPONSE_GAP_REASON =
   '用户询问当前角色是否仍在生前地点，但回复没有正面说明当前状态边界';
 const UNFINISHED_PROMISE_EMOTIONAL_GAP_REASON =
@@ -683,6 +686,24 @@ export class ReplyGuardrailService {
       evidenceGroundedReply.rewritten &&
       this.hasDanglingSegment(postprocessedSegments)
     ) {
+      const coherentSegments = postprocessedSegments.filter(
+        segment => !this.hasDanglingSegment([segment])
+      );
+
+      if (coherentSegments.length) {
+        return {
+          segments: compactReplyBubblesPreservingContent(coherentSegments),
+          rewritten: true,
+          reason: UNSUPPORTED_EVIDENCE_CLAIM_REASON,
+          ...(options.claims?.length
+            ? {
+                unsupportedClaimCount:
+                  evidenceGroundedReply.unsupportedClaimCount,
+              }
+            : {}),
+        };
+      }
+
       return {
         segments: compactReplyBubblesPreservingContent(
           this.fallbackSafeSegments(
@@ -740,10 +761,12 @@ export class ReplyGuardrailService {
       postprocessedSegments,
       reason
     );
+    const locallyRewritten =
+      this.candidateSimilarity(postprocessedSegments, repairedSegments) < 1;
 
     return {
       segments: repairedSegments,
-      rewritten: true,
+      rewritten: Boolean(postprocessReason) || locallyRewritten,
       reason,
       ...(options.claims?.length
         ? {
@@ -1011,6 +1034,14 @@ export class ReplyGuardrailService {
     communicationCompensationAttempted = false,
     communicationCompensationSucceeded = false
   ): ValidateAssistantReplyResult {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      initialCandidate.segments,
+      feedbackRounds,
+      firstReason
+    );
+    const recoveredSurgically =
+      surgical.removedClauses.length > 0 && surgical.segments.length > 0;
     const contextualSegments = compactReplyBubblesPreservingContent(
       this.fallbackSafeSegments(
         options.userQuery,
@@ -1018,31 +1049,77 @@ export class ReplyGuardrailService {
         options.replyBrief
       )
     );
+    const outputSegments = recoveredSurgically
+      ? surgical.segments
+      : contextualSegments;
     const factBoundaryRecovered = Boolean(
       options.replyBrief?.guardrailFocuses.includes('real_world_evidence')
     );
+    const issueCodes = Array.from(
+      new Set(
+        feedbackRounds.reduce<string[]>(
+          (codes, feedback) =>
+            codes.concat(feedback.issues.map(issue => issue.code)),
+          []
+        )
+      )
+    );
+    const outputCandidateVersions = recoveredSurgically
+      ? [...candidateVersions, outputSegments]
+      : candidateVersions;
+    const outputRevisionRecords = recoveredSurgically
+      ? [
+          ...revisionRecords,
+          {
+            round: revisionRecords.length + 1,
+            fromScratch: false,
+            finalRecovery: true,
+            communicationCompensation: true,
+            effectiveChange: true,
+            similarity: this.candidateSimilarity(
+              initialCandidate.segments,
+              outputSegments
+            ),
+            resolvedIssueCodes: issueCodes,
+            unresolvedIssueCodes: [],
+            changes: surgical.removedClauses.map(clause => ({
+              before: clause,
+              after: '',
+              reason: '只移除命中守卫的问题句',
+            })),
+          },
+        ]
+      : revisionRecords;
 
     return {
-      segments: contextualSegments,
+      segments: outputSegments,
       claims: [],
       rewritten: true,
-      reason: firstReason || 'Guardrail 模型调用或结构化解析失败，采用技术兜底',
+      reason:
+        firstReason ||
+        (recoveredSurgically
+          ? '只移除命中守卫的问题句'
+          : 'Guardrail 模型调用或结构化解析失败，采用技术兜底'),
       unsupportedClaimCount: initialUnsupportedClaimCount,
-      interventionLevel: factBoundaryRecovered
-        ? 'regenerate'
-        : 'technical_fallback',
-      revisionAttempted: candidateVersions.length > 1,
+      interventionLevel:
+        recoveredSurgically || factBoundaryRecovered
+          ? 'regenerate'
+          : 'technical_fallback',
+      revisionAttempted: outputCandidateVersions.length > 1,
       revisionUsage,
-      candidateVersions,
+      candidateVersions: outputCandidateVersions,
       feedbackRounds,
-      revisionRecords,
-      revisionRoundCount: revisionRecords.length,
+      revisionRecords: outputRevisionRecords,
+      revisionRoundCount: outputRevisionRecords.length,
       communicationCompensationAttempted,
       communicationCompensationSucceeded:
-        communicationCompensationSucceeded || factBoundaryRecovered,
-      finalReviewResult: factBoundaryRecovered
-        ? 'hard_recovery'
-        : 'technical_fallback',
+        communicationCompensationSucceeded ||
+        recoveredSurgically ||
+        factBoundaryRecovered,
+      finalReviewResult:
+        recoveredSurgically || factBoundaryRecovered
+          ? 'hard_recovery'
+          : 'technical_fallback',
     };
   }
 
@@ -1146,6 +1223,280 @@ export class ReplyGuardrailService {
     return Number(
       ((2 * overlap) / Math.max(1, leftCount + rightCount)).toFixed(3)
     );
+  }
+
+  private normalizeRepairText(value: string): string {
+    return value
+      .replace(/[\s，,。！？!?；;：:“”"'‘’（）()《》【】[\]]+/g, '')
+      .toLowerCase();
+  }
+
+  private splitRepairClauses(value: string): string[] {
+    return value
+      .split(/[，,。！？!?；;\n]+/u)
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  private issueEvidenceMatchesClause(
+    clause: string,
+    feedbackRounds: GuardrailFeedback[]
+  ): boolean {
+    const normalizedClause = this.normalizeRepairText(clause);
+
+    if (normalizedClause.length < 2) {
+      return false;
+    }
+
+    return feedbackRounds.some(feedback =>
+      feedback.issues.some(issue => {
+        const evidence = this.normalizeRepairText(issue.evidence || '');
+
+        return (
+          evidence.length >= 2 &&
+          (normalizedClause.includes(evidence) ||
+            (normalizedClause.length >= 4 &&
+              normalizedClause.length / evidence.length >= 0.55 &&
+              evidence.includes(normalizedClause)))
+        );
+      })
+    );
+  }
+
+  private clauseContainsUnsupportedClaim(
+    options: ValidateAssistantReplyOptions,
+    clause: string
+  ): boolean {
+    return (options.claims || []).some(claim => {
+      if (
+        !claim.text ||
+        this.isEvidenceClaimSupported(options.evidence, claim) ||
+        this.isAllowedAfterlifeWorldClaim(
+          claim,
+          options.userQuery,
+          options.replyBrief
+        ) ||
+        (this.isAfterlifeReunionQuery(options.userQuery) &&
+          this.isAllowedAfterlifeReunionReassurance(claim.text))
+      ) {
+        return false;
+      }
+
+      const normalizedClaim = this.normalizeRepairText(claim.text);
+      const normalizedClause = this.normalizeRepairText(clause);
+      return (
+        normalizedClaim.length >= 2 &&
+        (normalizedClause.includes(normalizedClaim) ||
+          normalizedClaim.includes(normalizedClause))
+      );
+    });
+  }
+
+  private clauseHasBlockingIssue(
+    options: ValidateAssistantReplyOptions,
+    clause: string,
+    feedbackRounds: GuardrailFeedback[],
+    reason = ''
+  ): boolean {
+    if (this.issueEvidenceMatchesClause(clause, feedbackRounds)) {
+      return true;
+    }
+
+    if (
+      reason === AGENT_PHYSICAL_CONTACT_OVERCLAIM_REASON &&
+      /(?:我|爸|爸爸|妈|妈妈).{0,10}(?:来(?:了|过)|到(?:了|过))(?:你|这儿|这里)?/.test(
+        clause
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      reason === RELATIONAL_PRESENCE_OVERCLAIM_REASON &&
+      /(?:血里|血缘|血脉|流着.{0,6}(?:我|爸|妈).{0,3}的血|就在你身上|一直陪着你)/.test(
+        clause
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      reason === UNSUPPORTED_BIOLOGICAL_RELATION_REASON &&
+      /(?:哪来|不是|怎么会).{0,6}捡(?:来)?的/.test(clause)
+    ) {
+      return true;
+    }
+
+    if (
+      this.clauseContainsUnsupportedClaim(options, clause) &&
+      (reason === UNSUPPORTED_EVIDENCE_CLAIM_REASON ||
+        feedbackRounds.some(feedback =>
+          feedback.issues.some(issue =>
+            ['grounding', 'unsupported_evidence_claim'].includes(issue.code)
+          )
+        ))
+    ) {
+      return true;
+    }
+
+    const localReason =
+      this.detectConversationReadingViolation(clause, options.replyBrief) ||
+      this.detectRisk(
+        options.userQuery,
+        clause,
+        options.messages,
+        options.replyBrief
+      );
+
+    if (!localReason || NON_BLOCKING_QUALITY_REASONS.has(localReason)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isIndependentAfterGroundingRemoval(clause: string): boolean {
+    return (
+      /^(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|孩子|儿子|女儿|闺女)$/.test(
+        clause
+      ) ||
+      /(?:现在|今天|明天|这次|接下来|打算|准备|想去|要去|回来|到家|路上|工作|你咋|怎么突然|为什么|愿意说|还想说|跟我说)/.test(
+        clause
+      ) ||
+      /(?:我听见了|我知道你|我明白你|我心疼|我惦记|我挂心|我也想你)/.test(
+        clause
+      )
+    );
+  }
+
+  private buildSurgicalRepair(
+    options: ValidateAssistantReplyOptions,
+    segments: string[],
+    feedbackRounds: GuardrailFeedback[] = [],
+    reason = ''
+  ): SurgicalRepairResult {
+    const removedClauses: string[] = [];
+    const repairedSegments = segments
+      .map(segment => {
+        const clauses = this.splitRepairClauses(segment);
+        const segmentReason =
+          this.detectConversationReadingViolation(
+            segment,
+            options.replyBrief
+          ) ||
+          this.detectRisk(
+            options.userQuery,
+            segment,
+            options.messages,
+            options.replyBrief
+          );
+        const removedBefore = removedClauses.length;
+        const keptClauses = clauses.filter(clause => {
+          if (
+            !this.clauseHasBlockingIssue(
+              options,
+              clause,
+              feedbackRounds,
+              reason
+            )
+          ) {
+            return true;
+          }
+
+          removedClauses.push(clause);
+          return false;
+        });
+        const removedFromSegment = removedClauses.length > removedBefore;
+        const groundingRepair = [reason, segmentReason].some(
+          repairReason =>
+            repairReason === UNCONFIRMED_DETAIL_REASON ||
+            repairReason === STRICT_GROUNDING_RISK_REASON ||
+            repairReason === UNSUPPORTED_EVIDENCE_CLAIM_REASON
+        );
+        const independentClauses =
+          removedFromSegment && groundingRepair
+            ? keptClauses.filter(clause => {
+                if (this.isIndependentAfterGroundingRemoval(clause)) {
+                  return true;
+                }
+
+                removedClauses.push(clause);
+                return false;
+              })
+            : keptClauses;
+        const coherentClauses = independentClauses.filter(clause => {
+          if (!this.hasDanglingSegment([clause])) {
+            return true;
+          }
+
+          removedClauses.push(clause);
+          return false;
+        });
+        const repairedSegment = coherentClauses.join('，').trim();
+
+        if (
+          repairedSegment &&
+          !removedFromSegment &&
+          this.clauseHasBlockingIssue(
+            options,
+            repairedSegment,
+            feedbackRounds,
+            reason
+          )
+        ) {
+          removedClauses.push(segment);
+          return '';
+        }
+
+        return repairedSegment;
+      })
+      .filter(Boolean)
+      .filter(segment => !this.hasDanglingSegment([segment]));
+
+    return {
+      segments: compactReplyBubblesPreservingContent(repairedSegments),
+      removedClauses,
+    };
+  }
+
+  private preserveSurgicalCore(
+    options: ValidateAssistantReplyOptions,
+    sourceSegments: string[],
+    revisedSegments: string[],
+    feedbackRounds: GuardrailFeedback[] = [],
+    reason = ''
+  ): string[] {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      sourceSegments,
+      feedbackRounds,
+      reason
+    );
+
+    if (!surgical.removedClauses.length || !surgical.segments.length) {
+      return revisedSegments;
+    }
+
+    const missingSafeSegments = surgical.segments.filter(segment => {
+      const normalizedSegment = this.normalizeRepairText(segment);
+      const normalizedRevision = this.normalizeRepairText(
+        revisedSegments.join('\n')
+      );
+
+      return (
+        !normalizedRevision.includes(normalizedSegment) &&
+        this.candidateSimilarity([segment], revisedSegments) < 0.62
+      );
+    });
+
+    if (!missingSafeSegments.length) {
+      return revisedSegments;
+    }
+
+    return compactReplyBubblesPreservingContent([
+      ...missingSafeSegments,
+      ...revisedSegments,
+    ]);
   }
 
   private compactConversationContext(options: ValidateAssistantReplyOptions): {
@@ -1442,6 +1793,7 @@ export class ReplyGuardrailService {
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
       `程序已发现的确定问题：${JSON.stringify(deterministicFeedback.issues)}`,
+      '报告问题时，evidence 只逐字引用候选中最小的问题句或短语，不得引用整段回复。',
       '',
       buildReplyReviewOutputContractPrompt(),
     ].join('\n');
@@ -1459,7 +1811,7 @@ export class ReplyGuardrailService {
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      '没有上述五类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
+      '没有上述五类风险就输出 pass；有风险时 evidence 必须逐字引用候选中最小的问题句或短语，不得引用整段回复。',
       buildReplyReviewOutputContractPrompt({ hardOnly: true }),
     ].join('\n');
     const usesDedicatedHardReview =
@@ -1811,7 +2163,10 @@ export class ReplyGuardrailService {
       verdict:
         issues.length > 0 || model?.verdict === 'revise' ? 'revise' : 'pass',
       issues,
-      mustPreserve: unique(model?.mustPreserve || []),
+      mustPreserve: unique([
+        ...deterministic.mustPreserve,
+        ...(model?.mustPreserve || []),
+      ]),
       mustAnswer: [],
       groundingConstraints: unique([
         ...deterministic.groundingConstraints,
@@ -1850,7 +2205,7 @@ export class ReplyGuardrailService {
       finalRecovery
         ? '这是只面向 hard_boundary 的恢复。保留原候选中无风险的关系和情绪，只替换触发边界的断言；不要重写成通用安慰。'
         : fromScratch
-        ? '请基于原始用户消息从零重组，并解决下面的反馈。'
+        ? '仅当原候选每一句都命中 hard_boundary 时才重新组织；只要还有可用句，就必须原样保留。'
         : '请把审阅反馈与上一版回复一起考虑，直接修订上一版。',
       '你仍是当前亲人角色。最终回复必须自然、具体、贴着用户原话；不要输出审查过程、系统说明或固定安全模板。',
       `当前角色身份：${conversationContext.roleIdentity || '未提供'}`,
@@ -1872,13 +2227,13 @@ export class ReplyGuardrailService {
       `本轮反馈：${JSON.stringify(latestFeedback)}`,
       '',
       '修订要求：',
-      '1. 解决 feedback.issues，保留 mustPreserve；忽略 mustAnswer，不补完整。',
+      '1. 逐句处理 feedback.issues；未被 issue.evidence 指向的句子原样保留，尤其保留称呼、情感立场和用户当前开放点。保留 mustPreserve；忽略 mustAnswer，不补完整。',
       '2. 用户原话只可归因；确定事实只用 can_assert。无证据就写成愿望、心意或猜测。',
       '3. 身份质疑时维持关系，不认错退出、不索要校准、不编共同往事；拒绝改演他人。',
       '4. 不声称持续感知、现实到场或触碰。离世世界和供品叙事可保留；入梦可以答应，但只发生在梦里。',
       '5. 团聚只在用户主动谈及且带自然寿命条件时保留；孩子长大或责任完成不算。日常话题不主动引入。',
       '6. 纠错时停止旧断言；现实中仍生活的家人不能写成离世。未知物件、人物、动机和经过不猜。',
-      '7. 只修风险，不补 Reading 或遗漏内容；不用通用安慰、能力说明或换话题扩写。',
+      '7. 只修风险，不补 Reading 或遗漏内容；禁止把仍有可用内容的回复换成通用安慰、能力说明或新话题。',
       '8. 触碰类修订不复述“我没碰/碰不到”，从用户的感觉和想念自然回应。',
       '9. 长辈面对极端行为可制止、训话或建议缓一缓；只撤掉羞辱和长期义务。',
       '10. 不输出任何括号旁白。',
@@ -1937,7 +2292,19 @@ export class ReplyGuardrailService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const candidate = this.parseRevisionCandidate(content);
+      const parsedCandidate = this.parseRevisionCandidate(content);
+      const sourceCandidate = finalRecovery
+        ? originalCandidate
+        : latestCandidate;
+      const candidate = {
+        ...parsedCandidate,
+        segments: this.preserveSurgicalCore(
+          options,
+          sourceCandidate,
+          parsedCandidate.segments,
+          [latestFeedback]
+        ),
+      };
 
       return candidate.segments.length
         ? {
@@ -2515,7 +2882,14 @@ export class ReplyGuardrailService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const revised = this.parseRevisionSegments(content);
+      const parsedRevision = this.parseRevisionSegments(content);
+      const revised = this.preserveSurgicalCore(
+        options,
+        segments,
+        parsedRevision,
+        [],
+        reason
+      );
 
       if (!revised.length) {
         return undefined;
@@ -2721,57 +3095,22 @@ export class ReplyGuardrailService {
     };
   }
 
-  private buildCompoundSafeFallback(
-    options: ValidateAssistantReplyOptions,
-    segments: string[]
-  ): string[] {
-    const safeFallback = this.fallbackSafeSegments(
-      options.userQuery,
-      options.messages,
-      options.replyBrief
-    );
-    const blockingReasons = segments.map(segment => {
-      const reason = this.detectRisk(
-        options.userQuery,
-        segment,
-        options.messages,
-        options.replyBrief
-      );
-
-      return reason && !NON_BLOCKING_QUALITY_REASONS.has(reason) ? reason : '';
-    });
-
-    if (blockingReasons.every(Boolean)) {
-      return compactReplyBubblesPreservingContent(safeFallback);
-    }
-
-    const repairedSegments = segments
-      .map((segment, index) => {
-        if (!blockingReasons[index]) {
-          return segment;
-        }
-
-        const replacement =
-          safeFallback[Math.min(index, safeFallback.length - 1)] ||
-          '这件事我不乱说';
-        return replacement;
-      })
-      .filter((segment, index, repairedSegments) => {
-        if (!segment) {
-          return false;
-        }
-
-        return index === 0 || segment !== repairedSegments[index - 1];
-      });
-
-    return repairedSegments;
-  }
-
   private buildValidatedLocalRepair(
     options: ValidateAssistantReplyOptions,
     segments: string[],
     reason?: string
   ): string[] {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      segments,
+      [],
+      reason || ''
+    );
+
+    if (surgical.removedClauses.length && surgical.segments.length) {
+      return surgical.segments;
+    }
+
     const fullFallback = compactReplyBubblesPreservingContent(
       this.fallbackSafeSegments(
         options.userQuery,
@@ -2780,7 +3119,10 @@ export class ReplyGuardrailService {
       )
     );
 
-    if (reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON) {
+    if (
+      surgical.removedClauses.length > 0 &&
+      reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON
+    ) {
       return compactReplyBubblesPreservingContent([
         '一家人长得不像很正常 长相不能说明你是不是我的孩子',
         '你这样问 是想听我认你也疼你 这层关系没有变',
@@ -2788,6 +3130,7 @@ export class ReplyGuardrailService {
     }
 
     if (
+      surgical.removedClauses.length > 0 &&
       reason === REALITY_DEPENDENCY_OVERCLAIM_REASON &&
       options.replyBrief?.realityDependencies.length
     ) {
@@ -2798,56 +3141,13 @@ export class ReplyGuardrailService {
       );
     }
 
-    if (
-      reason === AFTERLIFE_CURRENT_STATE_NARRATION_REASON ||
-      reason === DREAM_CONTROL_EXPLANATION_DRIFT_REASON ||
-      reason === STATUS_LOCATION_RESPONSE_GAP_REASON ||
-      reason === UNFINISHED_PROMISE_EMOTIONAL_GAP_REASON ||
-      reason === FORGETTING_FEAR_ACKNOWLEDGEMENT_GAP_REASON ||
-      reason === EXTERNAL_FORGETTING_PRESSURE_DRIFT_REASON ||
-      reason === TRAUMATIC_SLEEP_RESPONSE_GAP_REASON ||
-      reason === AUTHENTICITY_FIRST_RESPONSE_RISK_REASON ||
-      reason === AUTHENTICITY_DIRECT_ANSWER_GAP_REASON ||
-      reason === AUTHENTICITY_CALIBRATION_SCRIPT_REASON ||
-      reason === AUTHENTICITY_ACTIVE_APOLOGY_REASON ||
-      reason === UNCONFIRMED_DETAIL_REASON ||
-      reason === RELATIONSHIP_ADDRESS_REJECTION_REASON ||
-      reason === COUNTERFACTUAL_REGRET_INVALIDATION_REASON ||
-      reason === LONGING_AMBIVALENCE_RESPONSE_GAP_REASON ||
-      reason === RELATIONAL_PRESENCE_INVALIDATION_REASON ||
-      reason === RELATIONAL_PRESENCE_OVERCLAIM_REASON ||
-      reason === RELATIONAL_PRESENCE_RESPONSE_GAP_REASON ||
-      reason === UNSUPPORTED_BIOLOGICAL_RELATION_REASON ||
-      reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON ||
-      (/陪陪我/.test(options.userQuery) &&
-        /孤独|孤单|寂寞|一个人/.test(options.userQuery)) ||
-      /(?:怎么|咋).{0,6}(?:说走就走|就走了)|让.{0,8}怎么过日子/.test(
-        options.userQuery
-      ) ||
-      (reason === UNSUPPORTED_EVIDENCE_CLAIM_REASON &&
-        /(?:捡(?:来)?的|抱来的|亲生|不像.{0,8}(?:你|妈妈|妈|爸爸|爸))/.test(
-          options.userQuery
-        )) ||
-      (reason === STRICT_GROUNDING_RISK_REASON &&
-        /(?:捡(?:来)?的|抱来的|亲生|不像.{0,8}(?:你|妈妈|妈|爸爸|爸))/.test(
-          options.userQuery
-        ))
-    ) {
+    if (surgical.removedClauses.length > 0) {
       return fullFallback;
     }
 
-    const localRepair = this.buildCompoundSafeFallback(options, segments);
-    const remainingReason = this.detectRisk(
-      options.userQuery,
-      localRepair.join('\n'),
-      options.messages,
-      options.replyBrief
-    );
-    const hasRemainingBlockingRisk =
-      Boolean(remainingReason) &&
-      !NON_BLOCKING_QUALITY_REASONS.has(remainingReason);
-
-    return hasRemainingBlockingRisk ? fullFallback : localRepair;
+    return this.isCriticalRevisionReason(reason || '')
+      ? fullFallback
+      : segments;
   }
 
   private detectRisk(
@@ -3596,7 +3896,7 @@ export class ReplyGuardrailService {
 
   private hasDanglingSegment(segments: string[]): boolean {
     return segments.some(segment =>
-      /(?:比如|例如|但是|不过|可是|所以|因为|而且|还有|就是|包括|说真的)[，,：:；;\s]*$/.test(
+      /(?:比如|例如|但是|不过|可是|所以|因为|而且|还有|就是|包括|说真的|(?:现在)?想起这些)[，,：:；;\s]*$/.test(
         segment
       )
     );

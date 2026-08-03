@@ -154,6 +154,7 @@ const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
 ] as const;
 const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
+const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
@@ -903,6 +904,20 @@ export class ConversationService {
       async () => {
         const queueStartedAt =
           this.parseOptionalDate(data.enqueuedAt) || workerStartedAt;
+        const queueWaitMs = Math.max(
+          0,
+          workerStartedAt.getTime() - queueStartedAt.getTime()
+        );
+        if (queueWaitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
+          this.logger.warn(
+            '[conversation-reply] slow queue wait, conversationId=%s, userId=%s, waitMs=%s, jobId=%s, traceId=%s',
+            data.conversationId,
+            data.userId,
+            queueWaitMs,
+            options.queueJobId || '-',
+            traceId
+          );
+        }
         this.chatTraceService.recordCompletedSpan({
           stage: ChatTraceStage.queueWait,
           operation: 'queue.wait',
@@ -911,6 +926,7 @@ export class ConversationService {
           attempt: options.attempt,
           attributes: {
             queueJobId: options.queueJobId,
+            queueWaitMs,
           },
         });
         await this.chatTraceService.markRunning(traceId, {
@@ -949,6 +965,19 @@ export class ConversationService {
     const lock = await this.acquireConversationReplyLock(conversationId);
 
     if (!lock.acquired) {
+      const enqueuedAt = this.parseOptionalDate(data.enqueuedAt);
+      const waitMs = enqueuedAt
+        ? Math.max(0, Date.now() - enqueuedAt.getTime())
+        : 0;
+      if (waitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
+        this.logger.warn(
+          '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s',
+          conversationId,
+          userId,
+          waitMs,
+          data.traceId || '-'
+        );
+      }
       await this.enqueueConversationReplyJob(data);
       if (data.traceId) {
         await this.chatTraceService?.markQueued(data.traceId);
@@ -2470,6 +2499,7 @@ export class ConversationService {
       agentId: options.agentId,
       role: MessageRole.user,
       status: MessageStatus.sent,
+      quotaExempt: { $ne: true },
       createdAt: createdAtQuery,
     } as never);
   }
@@ -2688,6 +2718,25 @@ export class ConversationService {
             userQuery: before.searchableText,
             errorCode: this.resolveGenerationFailureCode(initialError),
           })
+        );
+      }
+
+      if (this.isGenerationTimeoutError(initialError)) {
+        return this.buildGenerationFailureReply(
+          before.searchableText,
+          context.replyRoute,
+          context.replyIntent ?? context.replyRoute?.intent,
+          replyBrief,
+          initialError,
+          'completion',
+          {
+            attempted: false,
+            succeeded: false,
+            initialFailureCode: this.resolveGenerationFailureCode(initialError),
+          },
+          generationUsage,
+          context.messages,
+          generationAttemptTraces
         );
       }
 
@@ -3553,6 +3602,20 @@ export class ConversationService {
     return (code || name || 'UNKNOWN').slice(0, 80);
   }
 
+  private isGenerationTimeoutError(error: unknown): boolean {
+    const code = this.resolveGenerationFailureCode(error);
+    const message =
+      error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message || '')
+        : typeof error === 'string'
+        ? error
+        : '';
+
+    return /(?:TIMEOUT|ABORT|AbortError|ETIMEDOUT|exceeded)/i.test(
+      `${code}\n${message}`
+    );
+  }
+
   private async validateAssistantReply(options: {
     contextMessages: ChatCompletionMessageParam[];
     userQuery: string;
@@ -4069,6 +4132,7 @@ export class ConversationService {
         message =>
           message.role === MessageRole.user &&
           message.status === MessageStatus.sent &&
+          message.replyTrigger !== false &&
           message.createdAt > options.afterUserCreatedAt!
       );
     }
@@ -4084,7 +4148,8 @@ export class ConversationService {
       .filter(
         message =>
           message.role === MessageRole.user &&
-          message.status === MessageStatus.sent
+          message.status === MessageStatus.sent &&
+          message.replyTrigger !== false
       );
   }
 
@@ -4096,6 +4161,7 @@ export class ConversationService {
       conversationId,
       role: MessageRole.user,
       status: MessageStatus.sent,
+      replyTrigger: { $ne: false },
       isArchived: { $ne: true },
       createdAt: {
         $gt: after,

@@ -26,6 +26,10 @@ export default {
       pages: ["index"],
     },
     {
+      root: "pages/chat-import",
+      pages: ["index"],
+    },
+    {
       root: "pages/memorial-photo",
       pages: ["index"],
     },

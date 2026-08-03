@@ -55,7 +55,7 @@ const REALITY_ACTION_PROMISE_PATTERNS: Record<
   childcare:
     /(?:孩子|女儿|儿子|宝宝|孙子|孙女).{0,8}(?:交给我|我来|我替你|我帮你)|我(?:来|会|能|可以|替你|帮你).{0,10}(?:看|照看|看护|照顾|带|接|送|哄|陪).{0,5}(?:孩子|女儿|儿子|宝宝|孙子|孙女)/,
   money_payment:
-    /我(?:来|会|能|可以|替你|帮你).{0,10}(?:付钱|付款|买单|交费|缴费|还钱|转账|打钱)|(?:钱|费用).{0,6}(?:我来付|我来交|交给我)/,
+    /我(?:来|会|能|可以|替你|帮你).{0,10}(?:付钱|付款|买单|交费|缴费|还钱|转账|打钱)|(?:钱|费用).{0,6}(?:我来付|我来交|交给我)|(?:我|这就|马上|现在就).{0,8}(?:给你|给孩子|给家里)?.{0,6}(?:转|打|汇|寄)(?:点|些|一笔)?钱/,
   medical_substitution:
     /我(?:来|会|能|可以|替你|帮你|给你).{0,10}(?:看病|诊断|治病|治疗|开药|做手术)|(?:不用|别).{0,5}(?:去医院|看医生).{0,10}(?:我来|我给你)/,
   physical_presence:
@@ -123,23 +123,50 @@ export function detectReplyRealityDependencyViolation(
   content: string,
   signals: ReplyRealityDependencySignal[] | undefined
 ): ReplyRealityDependencySignal | undefined {
-  if (!content?.trim() || !signals?.length) {
+  if (!content?.trim()) {
     return undefined;
+  }
+
+  const activeSignals = [...(signals || [])];
+  for (const kind of [
+    'childcare',
+    'money_payment',
+    'medical_substitution',
+  ] as const) {
+    if (!activeSignals.some(signal => signal.kind === kind)) {
+      activeSignals.push({
+        kind,
+        evidence: 'assistant_volunteered_reality_action',
+        confidence: 1,
+      });
+    }
   }
 
   const clauses = content
     .split(/[。！？!?；;\n]+/u)
     .map(clause => clause.trim())
     .filter(Boolean);
+  const explicitSignalKinds = new Set(
+    (signals || []).map(signal => signal.kind)
+  );
 
-  return signals.find(signal =>
+  return activeSignals.find(signal =>
     signal.kind === 'physical_presence'
       ? false
       : clauses.some(clause => {
           const pattern = REALITY_ACTION_PROMISE_PATTERNS[signal.kind];
+          const continuesExplicitChildcarePromise =
+            signal.kind === 'childcare' &&
+            explicitSignalKinds.has('childcare') &&
+            /我(?:去|来|会|能|可以|替你|帮你)?.{0,4}(?:接|送|照顾|看护|带|哄|陪)(?:她|他|孩子|女儿|儿子|宝宝|孙子|孙女)/.test(
+              clause
+            );
           pattern.lastIndex = 0;
 
-          return pattern.test(clause) && !NON_PROMISE_PATTERN.test(clause);
+          return (
+            (pattern.test(clause) || continuesExplicitChildcarePromise) &&
+            !NON_PROMISE_PATTERN.test(clause)
+          );
         })
   );
 }

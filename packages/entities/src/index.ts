@@ -12,6 +12,7 @@ export * from "./base";
 export * from "./chat-span.entity";
 export * from "./chat-trace.entity";
 export * from "./conversation-message-feedback.entity";
+export * from "./conversation-chat-import.entity";
 export * from "./conversation-emotion-state.entity";
 export * from "./conversation.entity";
 export * from "./coupon-ledger.entity";

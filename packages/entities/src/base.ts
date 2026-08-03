@@ -16,6 +16,8 @@ export enum TableName {
   agent_share_member = "agent_share_member",
   agent_sub = "agent_sub",
   conversation = "conversation",
+  conversation_chat_import_batch = "conversation_chat_import_batch",
+  conversation_chat_import_item = "conversation_chat_import_item",
   conversation_emotion_state = "conversation_emotion_state",
   conversation_message_feedback = "conversation_message_feedback",
   chat_trace = "chat_trace",

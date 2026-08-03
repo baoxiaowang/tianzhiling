@@ -20,6 +20,16 @@ export type AgentCreateStartAction =
 
 export type AgentCreateIntroMode = 'animated' | 'skipped'
 
+export type ChatImportAction =
+  | 'entry_click'
+  | 'images_selected'
+  | 'recognition_started'
+  | 'recognition_completed'
+  | 'review_modified'
+  | 'confirmed'
+  | 'failed'
+  | 'reopened'
+
 export type PerformanceEventId =
   | 'app_launch'
   | 'route_visible'
@@ -90,5 +100,23 @@ export function reportAgentCreateStartEvent(
     action,
     intro_mode: introMode,
     is_authenticated: isAuthenticated ? 1 : 0,
+  })
+}
+
+export function reportChatImportEvent(
+  action: ChatImportAction,
+  data: {
+    screenshotCount?: number
+    messageCount?: number
+    batchStatus?: string
+    reason?: string
+  } = {}
+) {
+  reportProductEvent('chat_import', {
+    action,
+    screenshot_count: data.screenshotCount ?? -1,
+    message_count: data.messageCount ?? -1,
+    batch_status: (data.batchStatus || '').slice(0, 32),
+    reason: (data.reason || '').slice(0, 80),
   })
 }

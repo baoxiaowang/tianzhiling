@@ -416,8 +416,20 @@
         :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 2"
       >
         <view class="chat-privacy-dialog__content">
-          删除后将无法恢复，确定删除这条消息吗？
+          {{
+            pendingDeleteIsImported
+              ? "这是导入的历史聊天记录，删除后将无法恢复。"
+              : "删除后将无法恢复，确定删除这条消息吗？"
+          }}
         </view>
+        <nut-checkbox
+          v-if="pendingDeleteIsImported"
+          v-model="deleteImportedMemoryTogether"
+          class="chat-delete-dialog__memory-option"
+          icon-size="18"
+        >
+          同时删除由这条记录形成的记忆
+        </nut-checkbox>
 
         <template #footer>
           <view class="chat-privacy-dialog__footer">
@@ -517,7 +529,7 @@ import { Category } from "@nutui/icons-vue-taro";
 import Taro, { useDidHide, useDidShow, useLoad, useUnload } from "@tarojs/taro";
 import type { ITouchEvent } from "@tarojs/components/types/common";
 import { computed, nextTick, ref } from "vue";
-import { ApiConfig } from "../../api/api-config";
+import { ApiConfig, isLocalApiEnvironment } from "../../api/api-config";
 import { ApiException } from "../../api/api-exception";
 import { getAgentDetail } from "../../apis/agent";
 import {
@@ -527,6 +539,7 @@ import {
   getConversationChatBootstrap,
   getConversationChatQuota,
   getConversationMessagesPage,
+  getEntryConversation,
   markConversationMessageMemory,
   sendConversationMessageAsync,
   submitConversationMessageFeedback,
@@ -560,6 +573,11 @@ import { ensureInnerAudioPlaybackOptions } from "../../utils/audio";
 import { shouldShowAgentHomeGuide } from "../../utils/agent-profile-guide";
 import { normalizeEmojiText } from "../../utils/emoji-text";
 import {
+  buildConversationChatUrl,
+  rememberSelectedConversation,
+} from "../../utils/selected-agent-chat";
+import {
+  reportChatImportEvent,
   reportChatQuotaDialogEvent,
   reportPerformanceEvent,
 } from "../../utils/product-analytics";
@@ -812,6 +830,14 @@ const chatQuotaDialogType = ref<ChatQuotaDialogType>("remaining");
 const chatQuotaSnapshot = ref<ConversationChatQuotaSnapshot | null>(null);
 const isDeleteMessageDialogVisible = ref(false);
 const pendingDeleteMessageId = ref("");
+const deleteImportedMemoryTogether = ref(false);
+const pendingDeleteIsImported = computed(() =>
+  messages.value.some(
+    (message) =>
+      message.id === pendingDeleteMessageId.value &&
+      message.source === "wechat_import"
+  )
+);
 const isConfirmingMessageDelete = ref(false);
 const isFeedbackPopupVisible = ref(false);
 const selectedFeedbackMessageId = ref("");
@@ -1112,6 +1138,14 @@ function appendMessageDisplayRows(
   message: ConversationMessage,
   previous?: ConversationMessage
 ) {
+  if (shouldShowImportedGroupLabel(message, previous)) {
+    rows.push({
+      key: `import-source-${message.id}`,
+      kind: "system",
+      text: buildImportedGroupLabel(message),
+    });
+  }
+
   if (shouldShowTimeDivider(message, previous)) {
     rows.push({
       key: `time-${message.id}`,
@@ -1221,6 +1255,39 @@ function appendMessageDisplayRows(
         : "",
     });
   });
+}
+
+function shouldShowImportedGroupLabel(
+  message: ConversationMessage,
+  previous?: ConversationMessage
+) {
+  if (message.source !== "wechat_import" || message.role === "system") {
+    return false;
+  }
+
+  if (previous?.source !== "wechat_import" || previous.role === "system") {
+    return true;
+  }
+
+  return getImportedMonthKey(message) !== getImportedMonthKey(previous);
+}
+
+function buildImportedGroupLabel(message: ConversationMessage) {
+  const occurredAt = message.import?.occurredAt || message.createdAt;
+  if (!occurredAt) {
+    return "来自微信聊天记录";
+  }
+
+  return `来自微信聊天记录 · ${occurredAt.getFullYear()}年${
+    occurredAt.getMonth() + 1
+  }月`;
+}
+
+function getImportedMonthKey(message: ConversationMessage) {
+  const occurredAt = message.import?.occurredAt || message.createdAt;
+  return occurredAt
+    ? `${occurredAt.getFullYear()}-${occurredAt.getMonth() + 1}`
+    : "unknown";
 }
 
 function buildMessageRenderFallbackRow(
@@ -1397,6 +1464,10 @@ async function refreshInitialChat() {
         return;
       }
 
+      if (await recoverLocalConversation(error)) {
+        return;
+      }
+
       if (isLegacyChatBootstrapUnavailable(error)) {
         await refreshMessages({ showLoading: shouldShowLoading });
         scheduleAfterInitialRender(() => {
@@ -1414,6 +1485,29 @@ async function refreshInitialChat() {
     });
 
   return refreshChatBootstrapPromise;
+}
+
+async function recoverLocalConversation(error: unknown) {
+  if (
+    !isLocalApiEnvironment() ||
+    !(error instanceof ApiException) ||
+    error.code !== "CONVERSATION_NOT_FOUND"
+  ) {
+    return false;
+  }
+
+  try {
+    const replacement = await getEntryConversation({ timeout: 5000 });
+    if (!replacement || replacement.id === conversationId.value) {
+      return false;
+    }
+
+    rememberSelectedConversation(replacement);
+    await Taro.redirectTo({ url: buildConversationChatUrl(replacement) });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isLegacyChatBootstrapUnavailable(error: unknown) {
@@ -2968,12 +3062,14 @@ function requestDeleteMessage(message: ConversationMessage) {
   }
 
   pendingDeleteMessageId.value = message.id;
+  deleteImportedMemoryTogether.value = message.source === "wechat_import";
   isDeleteMessageDialogVisible.value = true;
 }
 
 function closeDeleteMessageDialog() {
   isDeleteMessageDialogVisible.value = false;
   pendingDeleteMessageId.value = "";
+  deleteImportedMemoryTogether.value = false;
 }
 
 function handleDeleteMessageCancel() {
@@ -3034,7 +3130,11 @@ async function deleteMessageFromConversation(message: ConversationMessage) {
   deletingMessageIds.add(message.id);
 
   try {
-    await deleteConversationMessage(conversationId.value, message.id);
+    await deleteConversationMessage(conversationId.value, message.id, {
+      deleteImportedMemory:
+        message.source === "wechat_import" &&
+        deleteImportedMemoryTogether.value,
+    });
     removeMessageFromState(message.id);
     showToast("已删除");
     return true;
@@ -3860,7 +3960,35 @@ function handleMoreAction(item: ChatMoreActionItem) {
     return;
   }
 
+  if (action === "chat-import") {
+    handleChatImportAction();
+    return;
+  }
+
   handlePendingAction(item.label);
+}
+
+function handleChatImportAction() {
+  if (!conversationId.value || !agentId.value) {
+    showToast("会话还没有准备好，请稍后再试");
+    return;
+  }
+
+  isMorePanelVisible.value = false;
+  reportChatImportEvent("entry_click");
+  const query = [
+    ["conversationId", conversationId.value],
+    ["agentId", agentId.value],
+    ["agentName", agentName.value],
+    ["agentAvatar", agentAvatar.value],
+    ["iCallAgent", iCallAgent.value],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join("&");
+
+  void Taro.navigateTo({
+    url: `/pages/chat-import/index?${query}`,
+  });
 }
 
 function handleEmojiSelect(emoji: string) {
@@ -5451,6 +5579,13 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-delete-dialog__primary {
   background: #e54d42;
+}
+
+.chat-delete-dialog__memory-option {
+  margin-top: 18px;
+  color: #4f4d56;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .chat-delete-dialog__button--disabled {

@@ -71,8 +71,18 @@ describe('reply boundary contract', () => {
     });
 
     expect(contract.rules).toEqual([
-      '现实事实和共同过去只用同一对象的有效证据；未知就保持不确定。',
-      '梦境叙事只发生在梦里，不作为醒时现实的证明。',
+      '共同过去先沿用户已说片段回应感受和意义；具体事实只用同一对象证据，未知不补。',
+      '梦里可自然想象一个陪伴片段，不把它当成醒时现实的证明。',
     ]);
+  });
+
+  it('turns impossible real-world action into caring language', () => {
+    const contract = buildReplyBoundaryContract({
+      forbiddenAssumptions: ['角色不能在现实中回来、触碰或代办事务'],
+    });
+
+    expect(contract.rules).toContain(
+      '现实动作改用愿望、关心或聊天内能做的事表达，不声称已到场、触碰或代办。'
+    );
   });
 });

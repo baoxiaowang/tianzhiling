@@ -43,6 +43,7 @@ const items: ChatMoreActionItem[] = [
   { key: 'photo', label: '照片' },
   { key: 'camera', label: '拍摄' },
   { key: 'memorial-photo', label: '合照' },
+  { key: 'chat-import', label: '导入记录' },
 ]
 
 function handleActionTap(item: ChatMoreActionItem) {
@@ -194,6 +195,37 @@ function handleActionTap(item: ChatMoreActionItem) {
   border: 2px solid #5b5b5b;
   border-top: 0;
   border-radius: 0 0 8px 8px;
+}
+
+.chat-more-panel__icon--chat-import .chat-more-panel__icon-inner {
+  width: 27px;
+  height: 20px;
+  border: 2px solid #297b69;
+  border-radius: 6px;
+}
+
+.chat-more-panel__icon--chat-import .chat-more-panel__icon-inner::before {
+  left: -6px;
+  bottom: -6px;
+  width: 20px;
+  height: 15px;
+  border: 2px solid #297b69;
+  border-radius: 5px;
+  background: #fcfcfc;
+}
+
+.chat-more-panel__icon--chat-import .chat-more-panel__icon-inner::after {
+  right: 4px;
+  bottom: -9px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #297b69;
+  border-bottom: 2px solid #297b69;
+  transform: rotate(45deg);
+}
+
+.chat-more-panel__icon--chat-import + .chat-more-panel__label {
+  color: #297b69;
 }
 
 </style>

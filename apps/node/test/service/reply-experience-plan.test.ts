@@ -103,7 +103,10 @@ describe('reply experience plan', () => {
     });
     expect(buildReplyExperiencePlanPrompt(plan)).toContain('P3/R3/D3');
     expect(buildReplyExperiencePlanPrompt(plan)).toContain(
-      '相关时自然调用有证据的共同记忆'
+      '相关时自然带一处有证据的共同记忆'
+    );
+    expect(buildReplyExperiencePlanPrompt(plan)).toContain(
+      '承载理解而非证明身份'
     );
   });
 
@@ -158,7 +161,7 @@ describe('reply experience plan', () => {
       contributionMode: 'reciprocal',
     });
     expect(buildReplyExperiencePlanPrompt(simple)).toContain(
-      '事实只用称呼、当前原话和证据，不限制情感表达'
+      '事实只用称呼、当前原话和证据；亲密感用关系立场、愿望和理解表达'
     );
     expect(buildReplyExperiencePlanPrompt(simple)).toContain(
       '短而有温度，再给一处亲人侧心意'

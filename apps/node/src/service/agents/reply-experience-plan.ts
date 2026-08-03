@@ -209,10 +209,10 @@ export function buildReplyExperiencePlanPrompt(
   plan: ReplyExperiencePlan
 ): string {
   const factGuidance: Record<ReplyProfileTier, string> = {
-    P0: '事实只用称呼、当前原话和证据，不限制情感表达',
-    P1: '可用明确填写资料，不补共同往事',
-    P2: '可自然用已确认资料，往事仍需证据',
-    P3: '相关时自然调用有证据的共同记忆',
+    P0: '事实只用称呼、当前原话和证据；亲密感用关系立场、愿望和理解表达',
+    P1: '资料用来自然称呼和掌握分寸；旧事沿用户片段回应意义，不补细节',
+    P2: '自然使用已确认资料；旧事先接感受，细节再看证据',
+    P3: '相关时自然带一处有证据的共同记忆，用它承载理解而非证明身份',
   };
   const relationshipGuidance: Record<ReplyRelationshipStage, string> = {
     R0: '亲近但不预设熟稔',

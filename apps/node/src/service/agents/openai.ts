@@ -256,7 +256,11 @@ export class OpenAIService {
     );
 
     const createCompletion = async () =>
-      client.chat.completions.create(body, options as never);
+      this.withRequestDeadline(
+        requestOptions =>
+          client.chat.completions.create(body, requestOptions as never),
+        options
+      );
 
     if (!this.chatTraceService) {
       return createCompletion();
@@ -301,6 +305,58 @@ export class OpenAIService {
         },
       }
     );
+  }
+
+  private async withRequestDeadline<T>(
+    task: (options?: OpenAIRequestOptions) => Promise<T>,
+    options?: OpenAIRequestOptions
+  ): Promise<T> {
+    const timeoutMs = this.normalizeTimeout(options?.timeout);
+    const requestOptions: OpenAIRequestOptions = {
+      ...(options || {}),
+      ...(timeoutMs ? { timeout: timeoutMs } : {}),
+    };
+
+    if (!timeoutMs) {
+      return task(requestOptions);
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const abortController = new AbortController();
+    const abortFromCaller = () => abortController.abort();
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        abortController.abort();
+      } else {
+        options.signal.addEventListener('abort', abortFromCaller, {
+          once: true,
+        });
+      }
+    }
+    requestOptions.signal = abortController.signal;
+    const requestPromise = task(requestOptions);
+    requestPromise.catch(() => undefined);
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        abortController.abort();
+        reject(
+          new AppError(
+            'OPENAI_REQUEST_TIMEOUT',
+            `OpenAI request exceeded ${timeoutMs}ms`,
+            504
+          )
+        );
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([requestPromise, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      options?.signal?.removeEventListener('abort', abortFromCaller);
+    }
   }
 
   async createVisionChatCompletion(

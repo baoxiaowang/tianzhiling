@@ -9,6 +9,8 @@ export enum AgentSex {
 
 export interface AgentPersonaLanguageProfile {
   sentenceLength?: string;
+  modalParticles?: string;
+  replyBubblePattern?: string;
   directness?: string;
   emotionalExpression?: string;
   addressStyle?: string;

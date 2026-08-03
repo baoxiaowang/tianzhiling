@@ -678,7 +678,7 @@ function buildRealityDependencyReplyMoves(
 
   return [
     `正面回应用户提出的${descriptions.join('、')}需要`,
-    '用一句自然话说明当前角色不能在现实中执行，再提供聊天中真正能给的帮助；不得声称已经做、将会做或可以替代现实人员',
+    '保留用户想被照顾的心情：把无法兑现的现实动作改成“真想替你……”的愿望、具体关心或聊天内能做的事；不声称已经、将会或能替代现实人员执行',
   ];
 }
 
@@ -814,8 +814,8 @@ function constrainGroundedConversationPlan(
     ? '明确说明无法确认原因、动机或责任；只接住用户寻找答案的难受'
     : options.mode === 'memory'
     ? answersQuestion
-      ? '回答能确认的部分；没有证据就坦白记不真切'
-      : '坦白记不真切，把讲述空间留给用户，不预设共同经历'
+      ? '先回应用户说起这段往事时的感受和意义；事实只答能确认的部分'
+      : '沿用户已说的记忆片段自然承接，把讲述空间留给用户，不预设新的共同细节'
     : answersQuestion
     ? '直接回答，只用可信证据'
     : '完成当前动作，证据没有的细节不补写';
@@ -830,7 +830,7 @@ function constrainGroundedConversationPlan(
       : options.requiresRealWorldEvidence
       ? '证据不足时不代答死亡原因、临终动机或家庭责任'
       : options.mode === 'memory'
-      ? '不冒充记得，只回应能确认的部分并自然续聊'
+      ? '先接住往事里的感受和关系，再自然回应能确认的部分'
       : '直接完成当前问题，只用可信证据',
     questionNeed:
       options.isCorrection || !effectiveMoves.some(move => move.type === 'ask')
@@ -875,13 +875,13 @@ function groundedMoveGoal(
   if (options.mode === 'memory') {
     switch (type) {
       case 'answer':
-        return '回答能确认的部分；没有证据就坦白记不真切';
+        return '先接住这段往事的感受和意义；事实只答能确认的部分';
       case 'ask':
         return '可请用户说说，不预设彼此共同去过或做过';
       case 'leave_space':
-        return '坦白记不真切，把讲述空间留给用户，不预设共同经历';
+        return '沿用户已说的片段承接，把讲述空间留给用户，不预设新细节';
       case 'self_disclose':
-        return '不冒充记得，不补共同过去';
+        return '用关系立场和当下心意回应，不以亲历口吻新增共同细节';
       default:
         return '承接用户提到的记忆线索，不增加事实';
     }
@@ -1477,8 +1477,8 @@ function buildReplyMoves(
 
   const movesByScene: Partial<Record<ReplyScene, string[]>> = {
     afterlife_status: [
-      '简短回答当前状态；用户问其他已离世亲人时，可以确认见到了、在一起、有人作伴、大家都挺好',
-      '不扩写天气、房间、饭菜、工作、作息、活动或其他亲人的具体对话',
+      '用一处简短的角色侧小场景回答当前状态；问其他已离世亲人时，可自然说见到了、在一起或有人作伴',
+      '饭菜、住处、作息或活动的想象只服务本轮关心和安慰，不建立固定玄学体系，不延伸成醒时现实能力',
       '回应用户这份关心',
     ],
     correction: ['先收住不准或乱补的表达', '按用户纠正后的事实重新回应'],
@@ -1928,7 +1928,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         `用户请求：${brief.realityDependencies
           .map(item => describeReplyRealityDependency(item.kind))
           .join('、')}`,
-        '当前角色不能在现实中执行或替代现实人员；一句收住能力，再回应请求背后的实际需要。',
+        '不用做不到的现实承诺哄用户，也不把拒绝当成回复主体；保留想照顾用户的心意，改用愿望、具体关心或聊天内能做的事承接。',
         '',
       ]
     : [];
@@ -1939,8 +1939,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           '## 主动贡献',
           `优先角色侧当下内容；共同过去${
             brief.activeContribution.sharedPastAllowed
-              ? '只能使用下方已有证据'
-              : '没有证据，本轮不得使用'
+              ? '有证据时可自然带一处细节'
+              : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
           }。`,
           '',
         ]
@@ -1995,7 +1995,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
-    '角色侧离世日常可合理想象；用户偏好、习惯、性格、现实处境和共同往事仍须证据，也不能替用户在现实中做饭、到场或触碰。',
+    '离世日常可用一个自然小场景承载心意，不必反复声明真假；共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,
@@ -2005,7 +2005,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     brief.emotionalNeed,
     '',
     '## 沟通补偿',
-    '如果事实、能力或边界让表层请求不能直接满足：先回答能回答的部分；必要边界最多用一句自然语言；再用关系确认、情绪承接、愿望或假设性表达、远期条件、具体追问中的合适方式，补回上面的用户需要。',
+    '如果事实、能力或边界让表层请求不能直接满足，不要围着规则解释；先看见用户想被理解、记得、照顾或靠近的需要，再用关系立场、愿望、假设、用户已说片段的意义或聊天内能做的事承接。必要边界最多一句，不抢走情感主体。',
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
     '祭拜供品可自然承接，不声称改变现实；复合倾诉可只回一个自然点。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',

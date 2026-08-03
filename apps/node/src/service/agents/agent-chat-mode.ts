@@ -44,7 +44,8 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   },
   memory: {
     mode: 'memory',
-    instruction: '旧事只按可陈述证据回答；不足就说记不清，不诱导用户补故事。',
+    instruction:
+      '旧事的具体细节只按可陈述证据；不足时沿用户已说片段回应感受和意义，不反复声明“记不清”，不诱导用户补故事。',
     historyMessageLimit: 12,
     profileFactLimit: 6,
     legacyFactLimit: 5,

@@ -86,6 +86,21 @@ export interface ConversationQuotePayload {
   content?: string
 }
 
+export interface ConversationImportPayload {
+  batchId?: string
+  itemId?: string
+  importedAt?: Date | null
+  occurredAt?: Date | null
+  rawTimeText?: string
+  timePrecision?: string
+  timeConfidence?: string
+  screenshotId?: string
+  sequence?: number
+  recognitionConfidence?: number
+  quotaExempt?: boolean
+  replyTrigger?: boolean
+}
+
 export interface ConversationMessage {
   id: string
   conversationId: string
@@ -94,6 +109,8 @@ export interface ConversationMessage {
   content: string
   segments: string[]
   status: string
+  source?: string
+  import?: ConversationImportPayload
   voice?: ConversationVoicePayload
   image?: ConversationImagePayload
   quote?: ConversationQuotePayload
@@ -343,6 +360,28 @@ function parseQuotePayload(value: unknown) {
   } satisfies ConversationQuotePayload
 }
 
+function parseImportPayload(value: unknown) {
+  const raw = asRecord(value)
+  if (!Object.keys(raw).length) {
+    return undefined
+  }
+
+  return {
+    batchId: asString(raw.batchId) || undefined,
+    itemId: asString(raw.itemId) || undefined,
+    importedAt: asDate(raw.importedAt),
+    occurredAt: asDate(raw.occurredAt),
+    rawTimeText: asString(raw.rawTimeText) || undefined,
+    timePrecision: asString(raw.timePrecision) || undefined,
+    timeConfidence: asString(raw.timeConfidence) || undefined,
+    screenshotId: asString(raw.screenshotId) || undefined,
+    sequence: asNumber(raw.sequence),
+    recognitionConfidence: asNumber(raw.recognitionConfidence),
+    quotaExempt: raw.quotaExempt === true,
+    replyTrigger: raw.replyTrigger !== false,
+  } satisfies ConversationImportPayload
+}
+
 export function parseConversationMessage(value: unknown): ConversationMessage {
   const raw = asRecord(value)
   const type = asString(raw.type) || 'text'
@@ -357,6 +396,8 @@ export function parseConversationMessage(value: unknown): ConversationMessage {
     content,
     segments: parseSegments(raw.segments, rawContent, type),
     status: asString(raw.status) || 'sent',
+    source: asString(raw.source) || undefined,
+    import: parseImportPayload(raw.import),
     voice: parseVoicePayload(raw.voice),
     image: parseImagePayload(raw.image),
     quote: parseQuotePayload(raw.quote),
@@ -779,11 +820,16 @@ function parseConversationBootstrapAgent(value: unknown): ConversationBootstrapA
   }
 }
 
-export async function deleteConversationMessage(conversationId: string, messageId: string) {
+export async function deleteConversationMessage(
+  conversationId: string,
+  messageId: string,
+  options: { deleteImportedMemory?: boolean } = {}
+) {
+  const query = options.deleteImportedMemory ? '?deleteImportedMemory=1' : ''
   await del(
     `/api/conversation/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(
       messageId
-    )}`
+    )}${query}`
   )
   invalidateConversationListCache()
   invalidateCachedConversationMessages(conversationId)

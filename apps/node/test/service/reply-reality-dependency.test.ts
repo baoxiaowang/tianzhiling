@@ -33,4 +33,19 @@ describe('reply reality dependency', () => {
       )
     ).toBeUndefined();
   });
+
+  it('catches a volunteered payment promise without requiring a user trigger', () => {
+    expect(
+      detectReplyRealityDependencyViolation('这就给你转点钱', undefined)
+    ).toEqual(expect.objectContaining({ kind: 'money_payment' }));
+  });
+
+  it('does not expand volunteered-task checks into ordinary afterlife narration', () => {
+    expect(
+      detectReplyRealityDependencyViolation(
+        '我在这边给你做顿饭，等你梦里来',
+        undefined
+      )
+    ).toBeUndefined();
+  });
 });
