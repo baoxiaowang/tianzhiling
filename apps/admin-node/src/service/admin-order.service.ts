@@ -3,9 +3,14 @@ import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes } from 'crypto';
 import type {
+  AdminAuthenticatedPayload,
   AdminOrderListDTO,
   AdminOrderRecordDTO,
   AdminOrderUserDTO,
+  AdminVoiceMembershipDowngradePreviewDTO,
+  AdminVoiceMembershipDowngradeRecordDTO,
+  AdminVoiceMembershipDowngradeTargetDTO,
+  VoiceMembershipDowngradePlanDTO,
 } from '@tzl/shared';
 import { AppError } from '@tzl/shared';
 import {
@@ -24,21 +29,27 @@ import {
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
   VipPlanEntity,
+  VipPlanGroup,
   VipPlanStatus,
   VoicePackageEntity,
   VoicePackageStatus,
+  VoiceServiceEventType,
+  VoiceServiceSessionEntity,
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
   CreateAdminOrderDTO,
   ListAdminOrdersQueryDTO,
+  VoiceMembershipDowngradeDTO,
 } from '../dto/admin-order.dto';
 import {
   AdminWechatPayService,
   AdminWechatTransactionPayload,
   AdminWechatVirtualOrderPayload,
+  WechatRefundPayload,
 } from './admin-wechat-pay.service';
 
 type MongoWhere = Record<string, unknown>;
@@ -54,6 +65,26 @@ const ACTIVE_VOICE_TRAINING_TASK_STATUSES = [
 ];
 const VOICE_TRAINING_TASK_REPLACED_REMARK =
   '管理端创建新声音套餐订单时覆盖关闭。';
+const VOICE_MEMBERSHIP_DOWNGRADE_REASON = '声音版会员降级为基础版';
+const VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY = 'voiceMembershipDowngrade';
+
+interface VoiceMembershipDowngradeSnapshot {
+  status: 'processing' | 'benefits_failed' | 'completed' | 'failed';
+  sourcePlan: VoiceMembershipDowngradePlanDTO;
+  targetPlan: VoiceMembershipDowngradePlanDTO;
+  targetPlanSnapshot: Record<string, unknown>;
+  refundAmount: number;
+  refundNo: string;
+  wechatRefundId?: string;
+  wechatRefundStatus?: string;
+  refundRecordedAt?: string;
+  requestedAt: string;
+  completedAt?: string;
+  updatedAt: string;
+  operatorId?: string;
+  operatorAccount?: string;
+  failureReason?: string;
+}
 
 @Provide()
 export class AdminOrderService {
@@ -89,6 +120,9 @@ export class AdminOrderService {
 
   @InjectEntityModel(VoiceTrainingTaskEntity)
   voiceTrainingTaskModel: MongoRepository<VoiceTrainingTaskEntity>;
+
+  @InjectEntityModel(VoiceServiceSessionEntity)
+  voiceServiceSessionModel: MongoRepository<VoiceServiceSessionEntity>;
 
   async listOrders(query: ListAdminOrdersQueryDTO): Promise<AdminOrderListDTO> {
     const page = this.normalizePositiveInteger(query?.page, 1);
@@ -276,6 +310,434 @@ export class AdminOrderService {
     const userMap = await this.getOrderUserMap([order]);
 
     return this.buildOrderRecord(order, userMap);
+  }
+
+  async getVoiceMembershipDowngradePreview(
+    orderId: string
+  ): Promise<AdminVoiceMembershipDowngradePreviewDTO> {
+    const order = await this.getOrderById(orderId);
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
+    const existingDowngrade = this.getVoiceMembershipDowngrade(order);
+    const sourcePlan = await this.resolveVoiceMembershipSourcePlan(order);
+    const membership = await this.userMembershipModel.findOne({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+    const targetPlans = sourcePlan
+      ? await this.findVoiceMembershipDowngradeTargets(order, sourcePlan)
+      : [];
+    const unavailableReason = this.getVoiceMembershipDowngradeUnavailableReason(
+      order,
+      sourcePlan,
+      membership,
+      targetPlans,
+      existingDowngrade
+    );
+
+    return {
+      eligible: !unavailableReason,
+      unavailableReason,
+      orderId: this.stringifyObjectId(order.id),
+      paidAmount,
+      sourcePlan,
+      membershipStartedAt: this.formatDate(membership?.startedAt),
+      membershipExpiredAt: this.formatDate(membership?.expiredAt),
+      membershipLifetime: membership?.lifetime,
+      targetPlans,
+      existingDowngrade: existingDowngrade
+        ? this.buildVoiceMembershipDowngradeRecord(existingDowngrade)
+        : undefined,
+    };
+  }
+
+  async downgradeVoiceMembership(
+    orderId: string,
+    payload: VoiceMembershipDowngradeDTO,
+    operator: AdminAuthenticatedPayload
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+    const preview = await this.getVoiceMembershipDowngradePreview(orderId);
+
+    if (!preview.eligible) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_UNAVAILABLE',
+        preview.unavailableReason || 'voice membership cannot be downgraded',
+        400
+      );
+    }
+
+    const targetPlan = preview.targetPlans.find(
+      item => item.id === payload?.targetVipPlanId?.trim()
+    );
+
+    if (!targetPlan) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_TARGET_INVALID',
+        '请选择周期一致的基础版会员',
+        400
+      );
+    }
+
+    const targetEntity = await this.getActiveVipPlanById(targetPlan.id);
+    const now = new Date();
+    const downgrade: VoiceMembershipDowngradeSnapshot = {
+      status: 'processing',
+      sourcePlan: preview.sourcePlan as VoiceMembershipDowngradePlanDTO,
+      targetPlan: this.buildVoiceMembershipDowngradePlan(targetEntity),
+      targetPlanSnapshot: this.buildVipPlanSnapshot(targetEntity),
+      refundAmount: targetPlan.refundAmount,
+      refundNo: this.generateVoiceMembershipDowngradeRefundNo(order),
+      requestedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      operatorId: operator?.sub,
+      operatorAccount: operator?.account,
+    };
+
+    this.setVoiceMembershipDowngrade(order, downgrade);
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+
+    try {
+      const refund = await this.adminWechatPayService.refundOrder({
+        orderNo: order.orderNo,
+        refundNo: downgrade.refundNo,
+        reason: VOICE_MEMBERSHIP_DOWNGRADE_REASON,
+        amount: downgrade.refundAmount,
+        totalAmount: order.paidAmount ?? order.payableAmount,
+      });
+
+      await this.applyVoiceMembershipDowngradeRefundStatus(
+        order,
+        downgrade,
+        refund
+      );
+    } catch (error) {
+      downgrade.status = downgrade.refundRecordedAt
+        ? 'benefits_failed'
+        : 'failed';
+      downgrade.failureReason = this.getOperationFailureReason(error);
+      downgrade.updatedAt = new Date().toISOString();
+      this.setVoiceMembershipDowngrade(order, downgrade);
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+    }
+
+    const userMap = await this.getOrderUserMap([order]);
+
+    return this.buildOrderRecord(order, userMap);
+  }
+
+  async syncVoiceMembershipDowngrade(
+    orderId: string,
+    operator: AdminAuthenticatedPayload
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+    const downgrade = this.getVoiceMembershipDowngrade(order);
+
+    if (!downgrade) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_NOT_FOUND',
+        '该订单没有声音版降级记录',
+        404
+      );
+    }
+
+    if (downgrade.status !== 'completed') {
+      const refund = await this.adminWechatPayService.queryRefundByRefundNo(
+        downgrade.refundNo
+      );
+
+      downgrade.operatorId = operator?.sub || downgrade.operatorId;
+      downgrade.operatorAccount =
+        operator?.account || downgrade.operatorAccount;
+
+      if (refund) {
+        await this.applyVoiceMembershipDowngradeRefundStatus(
+          order,
+          downgrade,
+          refund
+        );
+      } else {
+        const retriedRefund = await this.adminWechatPayService.refundOrder({
+          orderNo: order.orderNo,
+          refundNo: downgrade.refundNo,
+          reason: VOICE_MEMBERSHIP_DOWNGRADE_REASON,
+          amount: downgrade.refundAmount,
+          totalAmount: order.paidAmount ?? order.payableAmount,
+        });
+
+        await this.applyVoiceMembershipDowngradeRefundStatus(
+          order,
+          downgrade,
+          retriedRefund
+        );
+      }
+    }
+
+    const userMap = await this.getOrderUserMap([order]);
+
+    return this.buildOrderRecord(order, userMap);
+  }
+
+  private async applyVoiceMembershipDowngradeRefundStatus(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot,
+    refund: WechatRefundPayload
+  ): Promise<void> {
+    const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
+    const now = new Date();
+
+    downgrade.wechatRefundId = refund.refund_id || downgrade.wechatRefundId;
+    downgrade.wechatRefundStatus = status;
+    downgrade.failureReason = undefined;
+    downgrade.updatedAt = now.toISOString();
+
+    if (status === 'SUCCESS') {
+      await this.completeVoiceMembershipDowngrade(order, downgrade);
+      return;
+    }
+
+    if (status === 'CLOSED' || status === 'ABNORMAL') {
+      downgrade.status = 'failed';
+      downgrade.failureReason =
+        status === 'CLOSED'
+          ? '微信退款已关闭，请核对后重新处理'
+          : '微信退款状态异常，请先在微信支付商户平台处理';
+    } else {
+      downgrade.status = 'processing';
+    }
+
+    this.setVoiceMembershipDowngrade(order, downgrade);
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async completeVoiceMembershipDowngrade(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot
+  ): Promise<void> {
+    const now = new Date();
+
+    if (!downgrade.refundRecordedAt) {
+      order.refundAmount =
+        (order.refundAmount ?? 0) + downgrade.refundAmount;
+      downgrade.refundRecordedAt = now.toISOString();
+      downgrade.updatedAt = now.toISOString();
+      this.setVoiceMembershipDowngrade(order, downgrade);
+      order.updatedAt = now;
+      await this.orderModel.save(order);
+    }
+
+    try {
+      await this.applyVoiceMembershipDowngradeBenefits(order, downgrade, now);
+    } catch (error) {
+      downgrade.status = 'benefits_failed';
+      downgrade.failureReason = this.getOperationFailureReason(error);
+      downgrade.updatedAt = new Date().toISOString();
+      this.setVoiceMembershipDowngrade(order, downgrade);
+      order.updatedAt = new Date();
+      await this.orderModel.save(order);
+      return;
+    }
+
+    downgrade.status = 'completed';
+    downgrade.completedAt = now.toISOString();
+    downgrade.failureReason = undefined;
+    downgrade.updatedAt = now.toISOString();
+    this.setVoiceMembershipDowngrade(order, downgrade);
+    order.updatedAt = now;
+    await this.orderModel.save(order);
+  }
+
+  private async applyVoiceMembershipDowngradeBenefits(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot,
+    now: Date
+  ): Promise<void> {
+    const membership = await this.userMembershipModel.findOne({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    if (!membership) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_MEMBERSHIP_NOT_FOUND',
+        '未找到这笔订单对应的会员记录',
+        409
+      );
+    }
+
+    const targetPlanId = this.parseObjectId(
+      downgrade.targetPlan.id,
+      'INVALID_VIP_PLAN_ID'
+    );
+    membership.vipPlanId = targetPlanId;
+    membership.vipPlanCode = downgrade.targetPlan.code;
+    membership.status = UserMembershipStatus.active;
+    membership.updatedAt = now;
+    await this.userMembershipModel.save(membership);
+
+    await this.reconcileDowngradedMembershipEntitlements(
+      order,
+      membership,
+      downgrade.targetPlanSnapshot,
+      now
+    );
+    await this.revokeDowngradedMembershipVoiceBindings(
+      order,
+      membership,
+      now
+    );
+  }
+
+  private async reconcileDowngradedMembershipEntitlements(
+    order: OrderEntity,
+    membership: UserMembershipEntity,
+    targetPlanSnapshot: Record<string, unknown>,
+    now: Date
+  ): Promise<void> {
+    const targetGrants = this.parseEntitlementGrants(
+      targetPlanSnapshot.entitlementGrants
+    );
+    const targetGrantMap = new Map(
+      targetGrants.map(grant => [grant.type, grant])
+    );
+    const entitlements = await this.agentEntitlementModel.find({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+
+    for (const entitlement of entitlements) {
+      const grant = targetGrantMap.get(entitlement.type);
+
+      if (!grant) {
+        if (entitlement.status !== AgentEntitlementStatus.refunded) {
+          entitlement.status = AgentEntitlementStatus.refunded;
+          entitlement.updatedAt = now;
+          await this.agentEntitlementModel.save(entitlement);
+        }
+        continue;
+      }
+
+      entitlement.sourceVipPlanId = membership.vipPlanId;
+      entitlement.totalQuota = Math.max(
+        entitlement.usedQuota ?? 0,
+        grant.totalQuota
+      );
+      entitlement.expiredAt = this.calculateEntitlementExpiredAt(
+        order.paidAt ?? membership.startedAt,
+        grant.durationDays,
+        membership
+      );
+      entitlement.status =
+        entitlement.expiredAt && entitlement.expiredAt <= now
+          ? AgentEntitlementStatus.expired
+          : (entitlement.usedQuota ?? 0) >= entitlement.totalQuota
+            ? AgentEntitlementStatus.used
+            : AgentEntitlementStatus.available;
+      entitlement.updatedAt = now;
+      await this.agentEntitlementModel.save(entitlement);
+      targetGrantMap.delete(entitlement.type);
+    }
+
+    for (const grant of targetGrantMap.values()) {
+      const entitlement = new AgentEntitlementEntity();
+      entitlement.userId = order.userId;
+      entitlement.type = grant.type;
+      entitlement.totalQuota = grant.totalQuota;
+      entitlement.usedQuota = 0;
+      entitlement.status = AgentEntitlementStatus.available;
+      entitlement.sourceOrderId = order.id;
+      entitlement.sourceVipPlanId = membership.vipPlanId;
+      entitlement.activatedAt = order.paidAt ?? membership.startedAt;
+      entitlement.expiredAt = this.calculateEntitlementExpiredAt(
+        entitlement.activatedAt,
+        grant.durationDays,
+        membership
+      );
+      entitlement.createdAt = now;
+      entitlement.updatedAt = now;
+      await this.agentEntitlementModel.save(entitlement);
+    }
+  }
+
+  private async revokeDowngradedMembershipVoiceBindings(
+    order: OrderEntity,
+    membership: UserMembershipEntity,
+    now: Date
+  ): Promise<void> {
+    const orderId = this.stringifyObjectId(order.id);
+    const membershipId = this.stringifyObjectId(membership.id);
+    const entitlements = await this.agentEntitlementModel.find({
+      where: {
+        sourceOrderId: order.id,
+      },
+    });
+    const accessReferenceIds = new Set([
+      orderId,
+      membershipId,
+      ...entitlements.map(item => this.stringifyObjectId(item.id)),
+    ]);
+    const sessions = (
+      await this.voiceServiceSessionModel.find({
+        where: {
+          userId: order.userId,
+        },
+      })
+    ).filter(session =>
+      accessReferenceIds.has(session.voiceAccessReferenceId ?? '')
+    );
+
+    for (const session of sessions) {
+      const agentIds = new Map<string, MongoObjectId>();
+
+      for (const agentId of [
+        ...(session.voiceBoundAgentIds ?? []),
+        ...(session.selectedAgentId ? [session.selectedAgentId] : []),
+      ]) {
+        agentIds.set(this.stringifyObjectId(agentId), agentId);
+      }
+
+      for (const agentId of agentIds.values()) {
+        const agent = await this.findAgentByObjectId(agentId);
+
+        if (
+          agent?.voiceTimbreId &&
+          session.voiceTimbreId &&
+          this.stringifyObjectId(agent.voiceTimbreId) ===
+            this.stringifyObjectId(session.voiceTimbreId)
+        ) {
+          agent.voiceTimbreId = null as never;
+          agent.updatedAt = now;
+          await this.agentModel.save(agent);
+        }
+      }
+
+      session.voiceBindingStatus = 'purchase_required';
+      session.voiceAccessSource = undefined;
+      session.voiceAccessReferenceId = undefined;
+      session.voiceAccessVerifiedAt = now;
+      session.voiceAccessRevokedAt = now;
+      session.voiceAccessRevokedReason = VOICE_MEMBERSHIP_DOWNGRADE_REASON;
+      session.voiceAccessRevokedReferenceId = orderId;
+      session.events = [
+        ...(session.events ?? []),
+        {
+          id: `event_${randomBytes(8).toString('hex')}`,
+          type: VoiceServiceEventType.voiceAccessRevoked,
+          summary: '声音版会员已降级，声音接入已停止',
+          metadata: {
+            orderId,
+          },
+          createdAt: now,
+        },
+      ].slice(-200);
+      session.updatedAt = now;
+      await this.voiceServiceSessionModel.save(session);
+    }
   }
 
   async revokeAdminManualOrder(orderId: string): Promise<AdminOrderRecordDTO> {
@@ -672,6 +1134,16 @@ export class AdminOrderService {
       );
     }
 
+    const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
+
+    if (voiceMembershipDowngrade) {
+      throw new AppError(
+        'ORDER_HAS_VOICE_MEMBERSHIP_DOWNGRADE',
+        '这笔订单已有声音版降级退款，不能再按整单金额退款',
+        400
+      );
+    }
+
     const refundAmount = order.paidAmount ?? order.payableAmount;
 
     if (!refundAmount || refundAmount <= 0) {
@@ -950,6 +1422,7 @@ export class AdminOrderService {
     task.status = VoiceTrainingTaskStatus.paid;
     task.assigneeName = '';
     task.materialObjectKeys = [];
+    task.trainingStrategy = VoiceTrainingTaskTrainingStrategy.shortSample;
     task.remark = '';
     task.paidAt = now;
     task.createdAt = now;
@@ -998,6 +1471,23 @@ export class AdminOrderService {
     }
 
     return plan;
+  }
+
+  private async findVipPlanByObjectId(
+    planId: MongoObjectId
+  ): Promise<VipPlanEntity | null> {
+    return (
+      (await this.vipPlanModel.findOne({
+        where: {
+          id: planId,
+        },
+      })) ??
+      (await this.vipPlanModel.findOne({
+        where: {
+          _id: planId,
+        } as never,
+      }))
+    );
   }
 
   private async getActiveVoicePackageById(
@@ -1052,6 +1542,23 @@ export class AdminOrderService {
     }
 
     return agent;
+  }
+
+  private async findAgentByObjectId(
+    agentId: MongoObjectId
+  ): Promise<AgentEntity | null> {
+    return (
+      (await this.agentModel.findOne({
+        where: {
+          id: agentId,
+        },
+      })) ??
+      (await this.agentModel.findOne({
+        where: {
+          _id: agentId,
+        } as never,
+      }))
+    );
   }
 
   private async findActiveVoiceTrainingTasks(
@@ -1273,11 +1780,316 @@ export class AdminOrderService {
     );
   }
 
+  private async resolveVoiceMembershipSourcePlan(
+    order: OrderEntity
+  ): Promise<VoiceMembershipDowngradePlanDTO | undefined> {
+    if (order.orderType !== OrderType.vipPlan) {
+      return undefined;
+    }
+
+    const rawSnapshot =
+      order.snapshot?.vipPlan && typeof order.snapshot.vipPlan === 'object'
+        ? (order.snapshot.vipPlan as Record<string, unknown>)
+        : {};
+    const storedPlan = order.targetId
+      ? await this.findVipPlanByObjectId(order.targetId)
+      : null;
+    const planGroup = this.resolveVipPlanGroup(
+      rawSnapshot,
+      storedPlan,
+      order.targetCode,
+      order.title
+    );
+
+    return {
+      id: String(
+        rawSnapshot.id ??
+          this.stringifyObjectId(storedPlan?.id ?? order.targetId) ??
+          ''
+      ),
+      code: String(rawSnapshot.code ?? storedPlan?.code ?? order.targetCode ?? ''),
+      name: String(rawSnapshot.name ?? storedPlan?.name ?? order.title ?? ''),
+      planGroup,
+      priceAmount: this.normalizeSnapshotAmount(
+        rawSnapshot.priceAmount,
+        storedPlan?.priceAmount ?? order.paidAmount ?? order.payableAmount
+      ),
+      currency: String(
+        rawSnapshot.currency ?? storedPlan?.currency ?? order.currency ?? 'CNY'
+      ),
+      durationDays: this.normalizeSnapshotOptionalNumber(
+        rawSnapshot.durationDays,
+        storedPlan?.durationDays
+      ),
+      lifetime:
+        typeof rawSnapshot.lifetime === 'boolean'
+          ? rawSnapshot.lifetime
+          : Boolean(storedPlan?.lifetime),
+    };
+  }
+
+  private async findVoiceMembershipDowngradeTargets(
+    order: OrderEntity,
+    sourcePlan: VoiceMembershipDowngradePlanDTO
+  ): Promise<AdminVoiceMembershipDowngradeTargetDTO[]> {
+    const plans = await this.vipPlanModel.find({
+      where: {
+        status: VipPlanStatus.active,
+      },
+      order: {
+        sort: 'ASC',
+        priceAmount: 'ASC',
+      },
+    });
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
+
+    return plans
+      .map(plan => {
+        const planPriceDifference = Math.max(
+          sourcePlan.priceAmount - plan.priceAmount,
+          0
+        );
+
+        return {
+          plan,
+          refundAmount: Math.min(paidAmount, planPriceDifference),
+        };
+      })
+      .filter(({ plan, refundAmount }) => {
+        return (
+          this.normalizePlanGroup(plan.planGroup) === VipPlanGroup.basic &&
+          Boolean(plan.lifetime) === sourcePlan.lifetime &&
+          (sourcePlan.lifetime ||
+            plan.durationDays === sourcePlan.durationDays) &&
+          (plan.currency || 'CNY') === sourcePlan.currency &&
+          refundAmount > 0
+        );
+      })
+      .map(({ plan, refundAmount }) => ({
+        ...this.buildVoiceMembershipDowngradePlan(plan),
+        refundAmount,
+      }));
+  }
+
+  private getVoiceMembershipDowngradeUnavailableReason(
+    order: OrderEntity,
+    sourcePlan: VoiceMembershipDowngradePlanDTO | undefined,
+    membership: UserMembershipEntity | null,
+    targetPlans: AdminVoiceMembershipDowngradeTargetDTO[],
+    existingDowngrade: VoiceMembershipDowngradeSnapshot | undefined
+  ): string | undefined {
+    if (order.orderType !== OrderType.vipPlan) {
+      return '仅会员订单支持声音版降级';
+    }
+
+    if (sourcePlan?.planGroup !== VipPlanGroup.voice) {
+      return '这不是声音版会员订单';
+    }
+
+    if (order.status !== OrderStatus.completed) {
+      return '只有已完成的会员订单可以降级';
+    }
+
+    if (
+      order.paymentProvider &&
+      order.paymentProvider !== WECHAT_PAY_PROVIDER
+    ) {
+      return order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER
+        ? '微信虚拟支付订单暂不支持部分退款降级'
+        : '这笔订单不是可部分退款的微信支付订单';
+    }
+
+    if ((order.paidAmount ?? order.payableAmount ?? 0) <= 0) {
+      return '这笔订单没有可退的实付金额';
+    }
+
+    if ((order.refundAmount ?? 0) > 0) {
+      return '这笔订单已有退款记录，不能再次自动降级';
+    }
+
+    if (existingDowngrade) {
+      if (existingDowngrade.status === 'completed') {
+        return '这笔订单已经降级为基础版会员';
+      }
+
+      if (existingDowngrade.status === 'benefits_failed') {
+        return '退款已成功但权益处理未完成，请刷新降级状态';
+      }
+
+      if (existingDowngrade.status === 'processing') {
+        return '降级退款正在处理中，请刷新降级状态';
+      }
+
+      return existingDowngrade.failureReason || '上次降级未完成，请先刷新状态';
+    }
+
+    if (!membership || membership.status !== UserMembershipStatus.active) {
+      return '未找到这笔订单对应的有效会员';
+    }
+
+    if (targetPlans.length === 0) {
+      return '没有找到周期一致且价格更低的基础版会员';
+    }
+
+    return undefined;
+  }
+
+  private buildVoiceMembershipDowngradePlan(
+    plan: VipPlanEntity
+  ): VoiceMembershipDowngradePlanDTO {
+    return {
+      id: this.stringifyObjectId(plan.id),
+      code: plan.code,
+      name: plan.name,
+      planGroup: this.normalizePlanGroup(plan.planGroup),
+      priceAmount: plan.priceAmount,
+      currency: plan.currency || 'CNY',
+      durationDays: plan.durationDays,
+      lifetime: Boolean(plan.lifetime),
+    };
+  }
+
+  private getVoiceMembershipDowngrade(
+    order: OrderEntity
+  ): VoiceMembershipDowngradeSnapshot | undefined {
+    const value = order.snapshot?.[VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY];
+
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    return value as VoiceMembershipDowngradeSnapshot;
+  }
+
+  private setVoiceMembershipDowngrade(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot
+  ): void {
+    order.snapshot = {
+      ...(order.snapshot ?? {}),
+      [VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY]: downgrade,
+    };
+  }
+
+  private buildVoiceMembershipDowngradeRecord(
+    downgrade: VoiceMembershipDowngradeSnapshot
+  ): AdminVoiceMembershipDowngradeRecordDTO {
+    return {
+      status: downgrade.status,
+      sourcePlan: downgrade.sourcePlan,
+      targetPlan: downgrade.targetPlan,
+      refundAmount: downgrade.refundAmount,
+      refundNo: downgrade.refundNo,
+      wechatRefundId: downgrade.wechatRefundId,
+      wechatRefundStatus: downgrade.wechatRefundStatus,
+      requestedAt: downgrade.requestedAt,
+      completedAt: downgrade.completedAt,
+      updatedAt: downgrade.updatedAt,
+      operatorId: downgrade.operatorId,
+      operatorAccount: downgrade.operatorAccount,
+      failureReason: downgrade.failureReason,
+    };
+  }
+
+  private resolveOrderVipPlanGroup(
+    order: OrderEntity
+  ): VipPlanGroup | undefined {
+    if (order.orderType !== OrderType.vipPlan) {
+      return undefined;
+    }
+
+    const rawSnapshot =
+      order.snapshot?.vipPlan && typeof order.snapshot.vipPlan === 'object'
+        ? (order.snapshot.vipPlan as Record<string, unknown>)
+        : {};
+
+    return this.resolveVipPlanGroup(
+      rawSnapshot,
+      undefined,
+      order.targetCode,
+      order.title
+    );
+  }
+
+  private resolveVipPlanGroup(
+    snapshot: Record<string, unknown>,
+    storedPlan?: VipPlanEntity | null,
+    code?: string,
+    title?: string
+  ): VipPlanGroup {
+    if (
+      snapshot.planGroup === VipPlanGroup.voice ||
+      storedPlan?.planGroup === VipPlanGroup.voice ||
+      Boolean(snapshot.voicePackageId) ||
+      Boolean(snapshot.voicePackageCode) ||
+      storedPlan?.voicePackageId ||
+      storedPlan?.voicePackageCode ||
+      this.parseEntitlementGrants(snapshot.entitlementGrants).some(
+        item => item.type === AgentEntitlementType.voiceModel
+      ) ||
+      storedPlan?.entitlementGrants?.some(
+        item => item.type === AgentEntitlementType.voiceModel
+      ) ||
+      this.hasLegacyVoicePlanMarker(
+        String(snapshot.code ?? storedPlan?.code ?? code ?? ''),
+        String(snapshot.name ?? storedPlan?.name ?? title ?? '')
+      )
+    ) {
+      return VipPlanGroup.voice;
+    }
+
+    return VipPlanGroup.basic;
+  }
+
+  private hasLegacyVoicePlanMarker(code?: string, title?: string): boolean {
+    const normalizedCode = String(code ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (/(^|[_-])voice([_-]|$)/.test(normalizedCode)) {
+      return true;
+    }
+
+    const normalizedTitle = String(title ?? '').replace(/\s+/g, '');
+
+    if (/不含声音|无声音/.test(normalizedTitle)) {
+      return false;
+    }
+
+    return /声音版|含声音|声音会员|语音版/.test(normalizedTitle);
+  }
+
+  private normalizePlanGroup(value?: string): VipPlanGroup {
+    return value === VipPlanGroup.voice
+      ? VipPlanGroup.voice
+      : VipPlanGroup.basic;
+  }
+
+  private normalizeSnapshotAmount(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fallback;
+  }
+
+  private normalizeSnapshotOptionalNumber(
+    value: unknown,
+    fallback?: number
+  ): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fallback;
+  }
+
+  private getOperationFailureReason(error: unknown): string {
+    return (error instanceof Error ? error.message : String(error)).slice(0, 300);
+  }
+
   private buildOrderRecord(
     order: OrderEntity,
     userMap: Map<string, AdminOrderUserDTO>
   ): AdminOrderRecordDTO {
     const userId = this.stringifyObjectId(order.userId);
+    const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
 
     return {
       id: this.stringifyObjectId(order.id),
@@ -1316,6 +2128,10 @@ export class AdminOrderService {
       paidAt: this.formatDate(order.paidAt),
       closedAt: this.formatDate(order.closedAt),
       refundedAt: this.formatDate(order.refundedAt),
+      vipPlanGroup: this.resolveOrderVipPlanGroup(order),
+      voiceMembershipDowngrade: voiceMembershipDowngrade
+        ? this.buildVoiceMembershipDowngradeRecord(voiceMembershipDowngrade)
+        : undefined,
       updatedAt: this.formatDate(order.updatedAt),
     };
   }
@@ -1393,6 +2209,12 @@ export class AdminOrderService {
 
   private generateRefundNo(order: OrderEntity): string {
     return `R${order.orderNo}`;
+  }
+
+  private generateVoiceMembershipDowngradeRefundNo(
+    order: OrderEntity
+  ): string {
+    return `VD${order.orderNo}`;
   }
 
   private isPaymentSyncSkippedStatus(status?: OrderStatus): boolean {
@@ -1554,6 +2376,7 @@ export class AdminOrderService {
       id: this.stringifyObjectId(plan.id),
       code: plan.code,
       name: plan.name,
+      planGroup: this.normalizePlanGroup(plan.planGroup),
       priceAmount: plan.priceAmount,
       originalPriceAmount: plan.originalPriceAmount,
       currency: plan.currency || 'CNY',

@@ -34,6 +34,7 @@ export enum TableName {
   agent_entitlement = "agent_entitlement",
   coupon_ledger = "coupon_ledger",
   voice_package = "voice_package",
+  voice_service_session = "voice_service_session",
   voice_training_task = "voice_training_task",
   voice_timbre = "voice_timbre",
 }

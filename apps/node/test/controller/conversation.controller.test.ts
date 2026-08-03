@@ -76,6 +76,28 @@ describe('ConversationController', () => {
     expect(sendMessageAsync.mock.calls[0][2].clientRequestId).toHaveLength(64);
   });
 
+  it('forwards assistant voice-to-text conversion', async () => {
+    const { controller } = createController();
+    const convertMessageVoiceToText = jest
+      .fn()
+      .mockResolvedValue({ id: 'message-1', type: 'text' });
+    controller.conversationService = {
+      ...controller.conversationService,
+      convertMessageVoiceToText,
+    } as any;
+
+    await controller.convertMessageVoiceToText(
+      'conversation-1',
+      'message-1'
+    );
+
+    expect(convertMessageVoiceToText).toHaveBeenCalledWith(
+      auth,
+      'conversation-1',
+      'message-1'
+    );
+  });
+
   it('combines messages, agent metadata, and quota in chat bootstrap', async () => {
     const { controller } = createController();
     const listMessages = jest.fn().mockResolvedValue({

@@ -490,6 +490,13 @@ function createService(options: {
       mimeType: 'audio/wav',
     }),
   } as any;
+  service.voiceFfmpegService = {
+    adjustSpeechOutput: jest.fn().mockResolvedValue({
+      buffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      contentType: 'audio/mpeg',
+      fileName: 'speech.mp3',
+    }),
+  } as any;
   service.bailianImageService = {
     generateMemorialPhoto: jest.fn().mockResolvedValue({
       imageUrl: 'https://dashscope-result.example.com/memorial.png',
@@ -4425,6 +4432,34 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('automatically uses the bound voice for a long assistant reply', async () => {
+    const voiceTimbre = createVoiceTimbre();
+    const longReply =
+      '闺女，爸爸知道你这段时间受了不少委屈，也一直在努力把日子过好，你不用在爸爸面前硬撑着，想说什么就慢慢说，爸爸愿意一直听你把心里的话说完。';
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+      chatContent: JSON.stringify({ segments: [longReply] }),
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '爸，我今天心里很难受，想听你多说几句',
+    });
+
+    expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalled();
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        type: MessageType.voice,
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaTranscript: longReply,
+      }),
+    ]);
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
   it('falls back to text assistant replies for user voice when the agent has no timbre', async () => {
     const { service } = createService({
       agent: createAgent(),
@@ -4476,6 +4511,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessage.mediaObjectKey).toBe(
       'conversation-voice-replies/reply.mp3'
     );
+    expect(assistantMessage.type).toBe(MessageType.voice);
+    expect(result.type).toBe(MessageType.voice);
     expect(result.voice).toEqual(
       expect.objectContaining({
         objectKey: 'conversation-voice-replies/reply.mp3',
@@ -4509,7 +4546,38 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(result.type).toBe(MessageType.voice);
     expect(result.voice?.objectKey).toBe(
+      'conversation-voice-replies/existing.mp3'
+    );
+  });
+
+  it('converts a saved assistant voice to text without deleting its audio', async () => {
+    const assistantMessage = createMessage({
+      role: MessageRole.assistant,
+      type: MessageType.voice,
+      content: '爸也想你。',
+      mediaObjectKey: 'conversation-voice-replies/existing.mp3',
+      mediaMimeType: 'audio/mpeg',
+      mediaTranscript: '爸也想你。',
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [assistantMessage],
+    });
+
+    const result = await service.convertMessageVoiceToText(
+      AUTH,
+      CONVERSATION_ID,
+      assistantMessage.id.toHexString()
+    );
+
+    expect(result.type).toBe(MessageType.text);
+    expect(result.content).toBe('爸也想你。');
+    expect(result.voice?.objectKey).toBe(
+      'conversation-voice-replies/existing.mp3'
+    );
+    expect(assistantMessage.mediaObjectKey).toBe(
       'conversation-voice-replies/existing.mp3'
     );
   });
@@ -4652,7 +4720,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
     });
-    expect(result.voice?.mimeType).toBe('audio/wav');
+    expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith({
+      buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      fileName: 'speech.wav',
+      speechSpeed: 1.12,
+      speechVolume: 1.1,
+    });
+    expect(result.voice?.mimeType).toBe('audio/mpeg');
   });
 
   it('strips malformed assistant markup tags before saving replies', async () => {

@@ -7,12 +7,21 @@ import { reportPerformanceEvent } from './utils/product-analytics'
 
 import './app.scss'
 
+declare const VOICE_TRAINING_TEST_MODE: boolean
+
 const App = createApp({
   onLaunch() {
     const launchStartedAt = Date.now()
     initSafeAreaInsets()
     void ensureInnerAudioPlaybackOptions()
     reportPerformanceEvent('app_launch', 'app', Date.now() - launchStartedAt)
+
+    // The isolated voice test page owns its login so stale production sessions
+    // cannot block or redirect the test bootstrap.
+    if (VOICE_TRAINING_TEST_MODE) {
+      return
+    }
+
     void restoreAuthSession().then(async () => {
       if (!authSession.value?.accessToken) {
         await silentWeappLogin()

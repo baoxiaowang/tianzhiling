@@ -280,6 +280,8 @@ export async function createVoicePackageOrder(payload: {
   voicePackageId: string
   agentId: string
   jsCode: string
+  materialObjectKeys?: string[]
+  materialDurationSeconds?: number
 }) {
   const data = await post<CreateVoicePackageOrderResultDTO>(
     '/api/orders/voice-package',
@@ -287,6 +289,8 @@ export async function createVoicePackageOrder(payload: {
       voicePackageId: payload.voicePackageId,
       agentId: payload.agentId,
       jsCode: payload.jsCode,
+      materialObjectKeys: payload.materialObjectKeys ?? [],
+      materialDurationSeconds: payload.materialDurationSeconds,
     }
   )
 
@@ -297,6 +301,8 @@ export async function createVoicePackageVirtualPaymentOrder(payload: {
   voicePackageId: string
   agentId: string
   jsCode: string
+  materialObjectKeys?: string[]
+  materialDurationSeconds?: number
 }) {
   const data = await post<CreateVoicePackageVirtualPaymentOrderResult>(
     '/api/orders/voice-package/virtual-payment',
@@ -304,6 +310,8 @@ export async function createVoicePackageVirtualPaymentOrder(payload: {
       voicePackageId: payload.voicePackageId,
       agentId: payload.agentId,
       jsCode: payload.jsCode,
+      materialObjectKeys: payload.materialObjectKeys ?? [],
+      materialDurationSeconds: payload.materialDurationSeconds,
     }
   )
 

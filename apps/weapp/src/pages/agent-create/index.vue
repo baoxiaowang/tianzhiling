@@ -123,7 +123,7 @@ export default {
 
 <script setup lang="ts">
 import { PlayStop, Right, Voice } from "@nutui/icons-vue-taro";
-import Taro from "@tarojs/taro";
+import Taro, { useLoad } from "@tarojs/taro";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import AppBar from "../../components/app-bar/app-bar.vue";
 import LoginPromptPopup from "../../components/login-prompt-popup/login-prompt-popup.vue";
@@ -156,6 +156,7 @@ const isOpeningCreateFlow = ref(false);
 const isPageTransitioning = ref(false);
 const isIntroSpeechPlaying = ref(false);
 const isAuthenticated = computed(() => Boolean(authSession.value?.accessToken));
+const createSource = ref("");
 let introTypeTimer: ReturnType<typeof setTimeout> | undefined;
 let introAudioContext: Taro.InnerAudioContext | null = null;
 let restoreSessionPromise: Promise<void> | null = null;
@@ -377,8 +378,12 @@ function handleIntroSpeechTap() {
 }
 
 async function enterCreateFlow() {
+  const query = createSource.value
+    ? `?source=${encodeURIComponent(createSource.value)}`
+    : "";
+
   await Taro.navigateTo({
-    url: "/pages/agent-create-flow/index",
+    url: `/pages/agent-create-flow/index${query}`,
   });
 }
 
@@ -503,12 +508,27 @@ onMounted(() => {
   void initializePage();
 });
 
+useLoad((options) => {
+  createSource.value = decodeRouteParam(options?.source);
+});
+
 onUnmounted(() => {
   transitionRunId += 1;
   clearIntroTypeTimer();
   destroyIntroAudio();
 });
 
+function decodeRouteParam(value?: string) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 </script>
 
 <style lang="scss">

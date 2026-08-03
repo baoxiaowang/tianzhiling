@@ -306,6 +306,18 @@ export class ConversationController {
     );
   }
 
+  @Post('/:conversationId/messages/:messageId/text')
+  async convertMessageVoiceToText(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.conversationService.convertMessageVoiceToText(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      messageId
+    );
+  }
+
   @Post('/:conversationId/messages/:messageId/feedback')
   async submitMessageFeedback(
     @Param('conversationId') conversationId: string,

@@ -118,7 +118,7 @@ interface BenefitItem {
 const fallbackBenefits: BenefitItem[] = [
   { title: '在聊天中听到 TA 的声音' },
   { title: '语音通话功能即将上线' },
-  { title: '声音自定义使用功能即将上线' },
+  { title: '训练完成后可管理和接入' },
 ]
 
 const props = withDefaults(
@@ -188,12 +188,13 @@ const paymentText = computed(() => {
 })
 const noteText = computed(() => {
   const requirement = selectedPackage.value?.materialRequirement.trim()
+  const baseNote = '【注】每次训练会生成一个独立声音，完成后可接入指定天之灵'
 
   if (requirement) {
-    return `【注】声音模型与智能体一对一关联，${requirement}`
+    return `${baseNote}，${requirement}`
   }
 
-  return '【注】声音模型与智能体一对一关联'
+  return baseNote
 })
 const benefitItems = computed(() => {
   const deliverables = selectedPackage.value?.deliverables
@@ -213,8 +214,8 @@ const panelHint = computed(() => {
   }
 
   return task.status === 'completed'
-    ? '声音模型已完成，可继续购买其他套餐'
-    : '已支付成功，工作人员会继续处理声音训练'
+    ? '声音已训练完成，可继续生成其他独立声音'
+    : '已提交成功，工作人员会继续处理声音训练'
 })
 
 function getPackageTask(voicePackage: VoicePackageRecord) {

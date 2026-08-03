@@ -394,7 +394,7 @@ import {
   Right,
   Voice,
 } from "@nutui/icons-vue-taro";
-import Taro from "@tarojs/taro";
+import Taro, { useLoad } from "@tarojs/taro";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ApiException } from "../../api/api-exception";
 import {
@@ -519,6 +519,7 @@ const isAssistantTextRevealing = ref(false);
 const isAssistantSpeechLoading = ref(false);
 const isAssistantSpeechPlaying = ref(false);
 const assistantWaitingText = ref("小使者正在组织语言");
+const createSource = ref("");
 let isPageUnloading = false;
 let pendingVoiceStartAfterPrivacy = false;
 let voiceBaseText = "";
@@ -942,10 +943,18 @@ async function submitCreation() {
 
     void prewarmAgentProfileInitialGreeting(agent);
     await Taro.showToast({
-      title: `已唤醒天之灵：${agent.name}`,
+      title:
+        createSource.value === "voiceTraining"
+          ? "已唤醒，继续训练声音"
+          : `已唤醒天之灵：${agent.name}`,
       icon: "none",
       duration: 1000,
     });
+
+    if (createSource.value === "voiceTraining") {
+      await openCreatedAgentVoiceTraining(agent.id);
+      return;
+    }
 
     try {
       await openCreatedAgentConversation(agent.id);
@@ -997,6 +1006,14 @@ async function openCreatedAgentConversation(agentId: string) {
   }
 
   await Taro.reLaunch({ url: buildChatPageUrl(conversation) });
+}
+
+async function openCreatedAgentVoiceTraining(agentId: string) {
+  await Taro.redirectTo({
+    url: `/pages/voice-package/index?agentId=${encodeURIComponent(
+      agentId
+    )}&fromCreate=1`,
+  });
 }
 
 async function handleAuthError(error: unknown) {
@@ -1410,6 +1427,10 @@ watch(isVoiceRecording, (recording) => {
   stopVoiceListeningCycle();
 });
 
+useLoad((options) => {
+  createSource.value = decodeRouteParam(options?.source);
+});
+
 onUnmounted(() => {
   isPageUnloading = true;
   stopAssistantPresentation({ completeText: false });
@@ -1444,6 +1465,17 @@ function stopVoiceListeningCycle() {
   voiceListeningMessageIndex.value = 0;
 }
 
+function decodeRouteParam(value?: string) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 </script>
 
 <style lang="scss">

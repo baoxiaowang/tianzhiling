@@ -7,15 +7,18 @@ import {
   OrderType,
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
+  VipPlanGroup,
   VipPlanStatus,
   VoicePackageStatus,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import { AdminOrderService } from './admin-order.service';
 
 const USER_ID = new MongoObjectId('665000000000000000000201');
 const ORDER_ID = new MongoObjectId('665000000000000000000301');
 const VIP_PLAN_ID = new MongoObjectId('665000000000000000000402');
+const BASIC_VIP_PLAN_ID = new MongoObjectId('665000000000000000000408');
 const AGENT_ID = new MongoObjectId('665000000000000000000405');
 const VOICE_PACKAGE_ID = new MongoObjectId('665000000000000000000406');
 const OLD_VOICE_TASK_ORDER_ID = new MongoObjectId('665000000000000000000407');
@@ -25,7 +28,7 @@ function sameObjectId(left?: MongoObjectId, right?: MongoObjectId) {
   return left?.toHexString?.() === right?.toHexString?.();
 }
 
-function createCompletedVipOrder(overrides: Record<string, unknown> = {}) {
+function createCompletedVipOrder(overrides: Record<string, unknown> = {}): any {
   return {
     id: ORDER_ID,
     orderNo: 'VIP202605020001',
@@ -126,7 +129,7 @@ function createVoiceTrainingTask(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createAgent(overrides: Record<string, unknown> = {}) {
+function createAgent(overrides: Record<string, unknown> = {}): any {
   return {
     id: AGENT_ID,
     createdUserId: USER_ID,
@@ -139,7 +142,7 @@ function createAgent(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createVipPlan(overrides: Record<string, unknown> = {}) {
+function createVipPlan(overrides: Record<string, unknown> = {}): any {
   return {
     id: VIP_PLAN_ID,
     code: 'vip_year',
@@ -186,12 +189,37 @@ function createVoicePackage(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createVoiceVipPlan(overrides: Record<string, unknown> = {}) {
+  return createVipPlan({
+    code: 'vip_year_voice',
+    name: '声音版年会员',
+    planGroup: VipPlanGroup.voice,
+    priceAmount: 19900,
+    originalPriceAmount: 19900,
+    ...overrides,
+  });
+}
+
+function createBasicVipPlan(overrides: Record<string, unknown> = {}) {
+  return createVipPlan({
+    id: BASIC_VIP_PLAN_ID,
+    code: 'vip_year_basic',
+    name: '基础版年会员',
+    planGroup: VipPlanGroup.basic,
+    priceAmount: 12900,
+    originalPriceAmount: 12900,
+    entitlementGrants: [],
+    ...overrides,
+  });
+}
+
 function createService() {
   const service = new AdminOrderService();
   const orders: any[] = [];
   const memberships: any[] = [];
   const entitlements: any[] = [];
   const voiceTrainingTasks: any[] = [];
+  const voiceServiceSessions: any[] = [];
 
   service.logger = {
     warn: jest.fn(),
@@ -229,6 +257,7 @@ function createService() {
     find: jest.fn(),
   } as any;
   service.vipPlanModel = {
+    find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
   } as any;
   service.voicePackageModel = {
@@ -236,6 +265,7 @@ function createService() {
   } as any;
   service.agentModel = {
     findOne: jest.fn(),
+    save: jest.fn(async agent => agent),
   } as any;
   service.userMembershipModel = {
     find: jest.fn(async ({ where }: any) => {
@@ -288,12 +318,24 @@ function createService() {
     }),
     save: jest.fn(async task => task),
   } as any;
+  service.voiceServiceSessionModel = {
+    find: jest.fn(async ({ where }: any) => {
+      return voiceServiceSessions.filter(
+        session =>
+          sameObjectId(session.userId, where?.userId) &&
+          (!where?.voiceAccessReferenceId ||
+            session.voiceAccessReferenceId === where.voiceAccessReferenceId)
+      );
+    }),
+    save: jest.fn(async session => session),
+  } as any;
   service.adminWechatPayService = {
     queryTransactionByOrderNo: jest.fn(),
     refundOrder: jest.fn().mockResolvedValue({
       out_refund_no: 'RVIP202605020001',
       status: 'SUCCESS',
     }),
+    queryRefundByRefundNo: jest.fn(),
     queryVirtualOrder: jest.fn(),
     notifyVirtualGoodsProvided: jest.fn().mockResolvedValue({}),
     refundVirtualOrder: jest.fn().mockResolvedValue({
@@ -308,6 +350,7 @@ function createService() {
     memberships,
     entitlements,
     voiceTrainingTasks,
+    voiceServiceSessions,
   };
 }
 
@@ -353,6 +396,66 @@ function mockVoicePackageOrderLookups(service: AdminOrderService) {
   ] as never);
 
   return { user, voicePackage, agent };
+}
+
+function mockVoiceMembershipDowngradeLookups(
+  service: AdminOrderService,
+  orders: any[],
+  memberships: any[]
+) {
+  const voicePlan = createVoiceVipPlan();
+  const basicPlan = createBasicVipPlan();
+  const order = createCompletedVipOrder({
+    targetId: VIP_PLAN_ID,
+    targetCode: voicePlan.code,
+    title: voicePlan.name,
+    amount: 19900,
+    payableAmount: 19900,
+    paidAmount: 19900,
+    snapshot: {
+      vipPlan: {
+        id: String(voicePlan.id),
+        code: voicePlan.code,
+        name: voicePlan.name,
+        planGroup: voicePlan.planGroup,
+        priceAmount: voicePlan.priceAmount,
+        currency: voicePlan.currency,
+        durationDays: voicePlan.durationDays,
+        lifetime: voicePlan.lifetime,
+        entitlementGrants: voicePlan.entitlementGrants,
+      },
+    },
+  });
+  const membership = createMembership({
+    vipPlanId: VIP_PLAN_ID,
+    vipPlanCode: voicePlan.code,
+  });
+
+  orders.push(order);
+  memberships.push(membership);
+  jest.mocked(service.vipPlanModel.find).mockResolvedValue([
+    voicePlan,
+    basicPlan,
+  ] as never);
+  jest.mocked(service.vipPlanModel.findOne).mockImplementation(async ({
+    where,
+  }: any) => {
+    const id = where?.id ?? where?._id;
+
+    if (id && sameObjectId(id, VIP_PLAN_ID)) {
+      return voicePlan as never;
+    }
+
+    if (id && sameObjectId(id, BASIC_VIP_PLAN_ID)) {
+      return basicPlan as never;
+    }
+
+    return null;
+  });
+  jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+  jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+  return { order, membership, voicePlan, basicPlan };
 }
 
 describe('AdminOrderService', () => {
@@ -761,6 +864,7 @@ describe('AdminOrderService', () => {
         voicePackageId: VOICE_PACKAGE_ID,
         voicePackageCode: 'voice_standard',
         status: VoiceTrainingTaskStatus.paid,
+        trainingStrategy: VoiceTrainingTaskTrainingStrategy.shortSample,
       })
     );
     expect(result).toEqual(
@@ -1333,5 +1437,192 @@ describe('AdminOrderService', () => {
       code: 'ORDER_NOT_REFUNDABLE',
     });
     expect(service.adminWechatPayService.refundOrder).not.toHaveBeenCalled();
+  });
+
+  it('previews the exact price difference for a same-period basic plan', async () => {
+    const { service, orders, memberships } = createService();
+
+    mockVoiceMembershipDowngradeLookups(service, orders, memberships);
+
+    const result = await service.getVoiceMembershipDowngradePreview(
+      ORDER_ID.toHexString()
+    );
+
+    expect(result).toMatchObject({
+      eligible: true,
+      paidAmount: 19900,
+      sourcePlan: {
+        planGroup: VipPlanGroup.voice,
+      },
+      targetPlans: [
+        {
+          id: BASIC_VIP_PLAN_ID.toHexString(),
+          planGroup: VipPlanGroup.basic,
+          refundAmount: 7000,
+        },
+      ],
+    });
+  });
+
+  it('refunds the paid difference when the voice plan was an upgrade', async () => {
+    const { service, orders, memberships } = createService();
+    const { order } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.payableAmount = 7000;
+    order.paidAmount = 7000;
+    order.snapshot.vipUpgrade = {
+      historicalPaidAmount: 12900,
+      deductedAmount: 12900,
+      payableAmount: 7000,
+    };
+
+    const result = await service.getVoiceMembershipDowngradePreview(
+      ORDER_ID.toHexString()
+    );
+
+    expect(result.eligible).toBe(true);
+    expect(result.targetPlans).toEqual([
+      expect.objectContaining({
+        id: BASIC_VIP_PLAN_ID.toHexString(),
+        refundAmount: 7000,
+      }),
+    ]);
+  });
+
+  it('partially refunds, keeps the membership period, and revokes linked voice access', async () => {
+    const {
+      service,
+      orders,
+      memberships,
+      entitlements,
+      voiceServiceSessions,
+    } = createService();
+    const { order, membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+    const originalStartedAt = membership.startedAt;
+    const originalExpiredAt = membership.expiredAt;
+    const entitlement = createEntitlement();
+    const timbreId = new MongoObjectId('665000000000000000000409');
+    const agent = createAgent({ voiceTimbreId: timbreId });
+    const session = {
+      id: new MongoObjectId('665000000000000000000410'),
+      userId: USER_ID,
+      voiceTimbreId: timbreId,
+      selectedAgentId: AGENT_ID,
+      voiceBoundAgentIds: [AGENT_ID],
+      voiceAccessSource: 'voice_membership_order',
+      voiceAccessReferenceId: ORDER_ID.toHexString(),
+      voiceBindingStatus: 'bound',
+      events: [],
+      createdAt: ORDER_CREATED_AT,
+      updatedAt: ORDER_CREATED_AT,
+    };
+
+    entitlements.push(entitlement);
+    voiceServiceSessions.push(session);
+    jest.mocked(service.agentModel.findOne).mockResolvedValue(agent as never);
+
+    const result = await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(service.adminWechatPayService.refundOrder).toHaveBeenCalledWith({
+      orderNo: order.orderNo,
+      refundNo: `VD${order.orderNo}`,
+      reason: '声音版会员降级为基础版',
+      amount: 7000,
+      totalAmount: 19900,
+    });
+    expect(result.status).toBe(OrderStatus.completed);
+    expect(result.refundAmount).toBe(7000);
+    expect(result.voiceMembershipDowngrade).toMatchObject({
+      status: 'completed',
+      refundAmount: 7000,
+      operatorAccount: 'operator',
+    });
+    expect(membership).toMatchObject({
+      vipPlanId: BASIC_VIP_PLAN_ID,
+      vipPlanCode: 'vip_year_basic',
+      startedAt: originalStartedAt,
+      expiredAt: originalExpiredAt,
+      status: UserMembershipStatus.active,
+    });
+    expect(entitlement.status).toBe(AgentEntitlementStatus.refunded);
+    expect(agent.voiceTimbreId).toBeNull();
+    expect(session).toMatchObject({
+      voiceBindingStatus: 'purchase_required',
+      voiceAccessRevokedReferenceId: ORDER_ID.toHexString(),
+    });
+  });
+
+  it('waits for a processing refund and applies the downgrade after sync', async () => {
+    const { service, orders, memberships } = createService();
+    const { membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    jest.mocked(service.adminWechatPayService.refundOrder).mockResolvedValue({
+      out_refund_no: 'VDVIP202605020001',
+      status: 'PROCESSING',
+    });
+
+    const submitted = await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(submitted.refundAmount).toBeUndefined();
+    expect(submitted.voiceMembershipDowngrade?.status).toBe('processing');
+    expect(membership.vipPlanId).toEqual(VIP_PLAN_ID);
+
+    jest
+      .mocked(service.adminWechatPayService.queryRefundByRefundNo)
+      .mockResolvedValue({
+        refund_id: '500000000000000001',
+        out_refund_no: 'VDVIP202605020001',
+        status: 'SUCCESS',
+      });
+
+    const synced = await service.syncVoiceMembershipDowngrade(
+      ORDER_ID.toHexString(),
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(synced.refundAmount).toBe(7000);
+    expect(synced.voiceMembershipDowngrade?.status).toBe('completed');
+    expect(membership.vipPlanId).toEqual(BASIC_VIP_PLAN_ID);
   });
 });

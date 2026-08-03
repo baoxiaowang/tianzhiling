@@ -57,6 +57,61 @@ export type VirtualGoodsProvideStatusDTO =
   | 'provided'
   | 'failed';
 
+export type VoiceMembershipDowngradeStatusDTO =
+  | 'processing'
+  | 'benefits_failed'
+  | 'completed'
+  | 'failed';
+
+export interface VoiceMembershipDowngradePlanDTO {
+  id: string;
+  code: string;
+  name: string;
+  planGroup: 'basic' | 'voice';
+  priceAmount: number;
+  currency: string;
+  durationDays?: number;
+  lifetime: boolean;
+}
+
+export interface AdminVoiceMembershipDowngradeRecordDTO {
+  status: VoiceMembershipDowngradeStatusDTO;
+  sourcePlan: VoiceMembershipDowngradePlanDTO;
+  targetPlan: VoiceMembershipDowngradePlanDTO;
+  refundAmount: number;
+  refundNo: string;
+  wechatRefundId?: string;
+  wechatRefundStatus?: string;
+  requestedAt: string;
+  completedAt?: string;
+  updatedAt: string;
+  operatorId?: string;
+  operatorAccount?: string;
+  failureReason?: string;
+}
+
+export interface AdminVoiceMembershipDowngradeTargetDTO
+  extends VoiceMembershipDowngradePlanDTO {
+  refundAmount: number;
+}
+
+export interface AdminVoiceMembershipDowngradePreviewDTO {
+  eligible: boolean;
+  unavailableReason?: string;
+  orderId: string;
+  paidAmount: number;
+  sourcePlan?: VoiceMembershipDowngradePlanDTO;
+  membershipStartedAt?: string;
+  membershipExpiredAt?: string;
+  membershipLifetime?: boolean;
+  targetPlans: AdminVoiceMembershipDowngradeTargetDTO[];
+  existingDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;
+}
+
+export interface VoiceMembershipDowngradeRequestDTO {
+  targetVipPlanId: string;
+}
+
 export interface AdminOrderUserDTO {
   id: string;
   account: string;
@@ -83,6 +138,8 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   paymentExpiredAt?: string;
   closedAt?: string;
   refundedAt?: string;
+  vipPlanGroup?: 'basic' | 'voice';
+  voiceMembershipDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;
   updatedAt: string;
 }
 
@@ -126,6 +183,8 @@ export interface CreateVoicePackageOrderDTO {
   voicePackageId: string;
   agentId: string;
   jsCode: string;
+  materialObjectKeys?: string[];
+  materialDurationSeconds?: number;
 }
 
 export interface CreateVipPlanOrderResultDTO {

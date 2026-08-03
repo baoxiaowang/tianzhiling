@@ -28,5 +28,6 @@ export * from "./user-account.entity";
 export * from "./user-membership.entity";
 export * from "./vip-plan.entity";
 export * from "./voice-package.entity";
+export * from "./voice-service-session.entity";
 export * from "./voice-timbre.entity";
 export * from "./voice-training-task.entity";

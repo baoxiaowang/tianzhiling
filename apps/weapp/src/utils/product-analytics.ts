@@ -22,6 +22,9 @@ export type AgentCreateIntroMode = 'animated' | 'skipped'
 
 export type ChatImportAction =
   | 'entry_click'
+  | 'poster_exposure'
+  | 'poster_click'
+  | 'poster_dismiss'
   | 'images_selected'
   | 'recognition_started'
   | 'recognition_completed'

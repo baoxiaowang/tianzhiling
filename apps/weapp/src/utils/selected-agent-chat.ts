@@ -1,4 +1,5 @@
 import Taro from "@tarojs/taro";
+import { isLocalApiEnvironment } from "../api/api-config";
 import { ApiException } from "../api/api-exception";
 import {
   getCachedConversations,
@@ -16,9 +17,22 @@ export interface OpenSelectedAgentChatOptions {
   showLoading?: boolean;
 }
 
-const SELECTED_CONVERSATION_STORAGE_KEY = "tzl_selected_conversation_v1";
+export interface ConversationChatImportTarget {
+  id: string;
+  agentId: string;
+  agentName: string;
+  agentAvatar?: string;
+  iCallAgent?: string;
+}
+
+const SELECTED_CONVERSATION_STORAGE_KEY = isLocalApiEnvironment()
+  ? "tzl_selected_conversation_local_v1"
+  : "tzl_selected_conversation_v1";
 
 let openingSelectedChatPromise: Promise<boolean> | null = null;
+let openingSelectedChatImportPromise: Promise<boolean> | null = null;
+
+type SelectedAgentDestination = "chat" | "chat-import";
 
 interface StoredSelectedConversation {
   ownerId: string;
@@ -61,6 +75,38 @@ export function buildConversationChatUrl(conversation: ConversationSummary) {
     .join("&");
 
   return `/pages/chat/index?${query}`;
+}
+
+export function buildConversationChatImportUrl(
+  conversation: ConversationChatImportTarget
+) {
+  const query = [
+    ["conversationId", conversation.id],
+    ["agentId", conversation.agentId],
+    ["agentName", resolveConversationName(conversation)],
+    ["agentAvatar", conversation.agentAvatar],
+    ["iCallAgent", conversation.iCallAgent],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join("&");
+
+  return `/pages/chat-import/index?${query}`;
+}
+
+export async function openConversationChatImport(
+  conversation: ConversationChatImportTarget
+) {
+  try {
+    await Taro.navigateTo({ url: buildConversationChatImportUrl(conversation) });
+    return true;
+  } catch {
+    await Taro.showToast({
+      title: "页面打开失败，请稍后重试",
+      icon: "none",
+      duration: 1800,
+    });
+    return false;
+  }
 }
 
 export function rememberSelectedConversation(
@@ -131,16 +177,35 @@ export function openSelectedAgentChat(
     return openingSelectedChatPromise;
   }
 
-  openingSelectedChatPromise = navigateToSelectedAgentChat(options).finally(
-    () => {
-      openingSelectedChatPromise = null;
-    }
-  );
+  openingSelectedChatPromise = navigateToSelectedAgentDestination(
+    "chat",
+    options
+  ).finally(() => {
+    openingSelectedChatPromise = null;
+  });
 
   return openingSelectedChatPromise;
 }
 
-async function navigateToSelectedAgentChat(
+export function openSelectedAgentChatImport(
+  options: OpenSelectedAgentChatOptions = {}
+) {
+  if (openingSelectedChatImportPromise) {
+    return openingSelectedChatImportPromise;
+  }
+
+  openingSelectedChatImportPromise = navigateToSelectedAgentDestination(
+    "chat-import",
+    options
+  ).finally(() => {
+    openingSelectedChatImportPromise = null;
+  });
+
+  return openingSelectedChatImportPromise;
+}
+
+async function navigateToSelectedAgentDestination(
+  destination: SelectedAgentDestination,
   options: OpenSelectedAgentChatOptions
 ) {
   await restoreAuthSession();
@@ -161,7 +226,7 @@ async function navigateToSelectedAgentChat(
     rememberedConversation;
 
   if (immediatelyAvailableConversation) {
-    return navigateToConversation(immediatelyAvailableConversation);
+    return navigateToConversation(immediatelyAvailableConversation, destination);
   }
 
   let loadingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -170,7 +235,11 @@ async function navigateToSelectedAgentChat(
     if (!conversations.length) {
       if (options.showLoading !== false) {
         loadingTimer = setTimeout(() => {
-          void Taro.showLoading({ title: "正在进入聊天", mask: true });
+          void Taro.showLoading({
+            title:
+              destination === "chat-import" ? "正在打开导入" : "正在进入聊天",
+            mask: true,
+          });
         }, 180);
       }
       try {
@@ -179,7 +248,7 @@ async function navigateToSelectedAgentChat(
         });
 
         if (entryConversation) {
-          return navigateToConversation(entryConversation);
+          return navigateToConversation(entryConversation, destination);
         }
       } catch (error) {
         if (
@@ -225,12 +294,20 @@ async function navigateToSelectedAgentChat(
     return true;
   }
 
-  return navigateToConversation(selectedConversation);
+  return navigateToConversation(selectedConversation, destination);
 }
 
-async function navigateToConversation(conversation: ConversationSummary) {
+async function navigateToConversation(
+  conversation: ConversationSummary,
+  destination: SelectedAgentDestination
+) {
+  rememberSelectedConversation(conversation);
+
+  if (destination === "chat-import") {
+    return openConversationChatImport(conversation);
+  }
+
   try {
-    rememberSelectedConversation(conversation);
     await Taro.navigateTo({ url: buildConversationChatUrl(conversation) });
     return true;
   } catch {

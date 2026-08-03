@@ -1,0 +1,102 @@
+[
+  {
+    "id": "material_collection",
+    "file": "material-collection.mp3",
+    "text": "各种留有他声音的素材，你发给我就行。音频、视频都可以，不用提前剪辑或整理，我会帮你处理好。"
+  },
+  {
+    "id": "materials_saved",
+    "file": "materials-saved.mp3",
+    "text": "收到了，声音素材已经保存好。全部传完后，可以让我智能识别剪辑；如果素材已经剪好，也可以直接使用。"
+  },
+  {
+    "id": "analyzing_ready_to_use",
+    "file": "analyzing-ready-to-use.mp3",
+    "text": "我正在把你剪好的声音整理成训练需要的格式。完成后，会请你试听确认。"
+  },
+  {
+    "id": "analyzing_assisted",
+    "file": "analyzing-assisted.mp3",
+    "text": "我正在认真听这些素材，区分不同说话人，并把完整的话整理出来。大约需要两到三分钟，你可以先去忙一会儿。"
+  },
+  {
+    "id": "reviewing_start",
+    "file": "reviewing-start.mp3",
+    "text": "剪辑已经完成。我整理出了一些候选声音，请逐段试听。只有你确认可以使用的片段，才会用于生成声音。"
+  },
+  {
+    "id": "reviewing_partial",
+    "file": "reviewing-partial.mp3",
+    "text": "已经确认了一部分，还有声音片段等你试听。需要调整的可以再剪一下，不合适的直接不使用。"
+  },
+  {
+    "id": "reviewing_complete",
+    "file": "reviewing-complete.mp3",
+    "text": "这些片段都听完了。我会只使用你确认的声音。确认无误后，就可以开始生成声音。"
+  },
+  {
+    "id": "reviewing_empty",
+    "file": "reviewing-empty.mp3",
+    "text": "这些片段暂时都不适合使用。没关系，可以继续添加其他声音素材，我再帮你整理。"
+  },
+  {
+    "id": "recut_processing",
+    "file": "recut-processing.mp3",
+    "text": "收到了。我会按你填写的要求单独重新剪这一段，其他片段不会受影响。"
+  },
+  {
+    "id": "recut_completed",
+    "file": "recut-completed.mp3",
+    "text": "这一段已经重新剪好了。请再听一遍，然后选择可以使用、再剪一下或不使用。"
+  },
+  {
+    "id": "recut_failed",
+    "file": "recut-failed.mp3",
+    "text": "这次没有剪好，原片段还在。请把时间写得更具体后再试，也可以直接选择不使用。"
+  },
+  {
+    "id": "training",
+    "file": "training.mp3",
+    "text": "我正在把你确认的声音片段整理到一起，并生成声音模型。完成后，会先请你试听效果。"
+  },
+  {
+    "id": "preview_ready",
+    "file": "preview-ready.mp3",
+    "text": "声音已经准备好了。先听听看，确认熟悉的感觉，再选择要使用这个声音的天之灵。"
+  },
+  {
+    "id": "completed_selected",
+    "file": "completed-selected.mp3",
+    "text": "已经选好使用这个声音的天之灵。开通声音权益后，训练好的声音会自动接入。"
+  },
+  {
+    "id": "completed_bound",
+    "file": "completed-bound.mp3",
+    "text": "声音权益已经确认，这个声音已经接入你选择的天之灵，可以在聊天中使用。"
+  },
+  {
+    "id": "completed_existing_preserved",
+    "file": "completed-existing-preserved.mp3",
+    "text": "你选择的天之灵已经接有后台配置的声音，我保留了原来的服务，没有进行覆盖。"
+  },
+  {
+    "id": "completed_unselected",
+    "file": "completed-unselected.mp3",
+    "text": "声音已经准备好了。先试听确认，再选择要使用这个声音的天之灵。"
+  },
+  {
+    "id": "failed_training",
+    "file": "failed-training.mp3",
+    "text": "这次声音没有生成成功，不过素材和确认结果都还在。你可以直接重新生成，不需要再次审核。"
+  },
+  {
+    "id": "failed_clipping",
+    "file": "failed-clipping.mp3",
+    "text": "这次整理没有完成，不过上传的素材还在。你可以重新整理，也可以再补充一份声音素材。"
+  },
+  {
+    "id": "selection_limit",
+    "file": "selection-limit.mp3",
+    "text": "声音不是越多越好。素材充足时，精选最清楚、最自然的 1 分钟就够了。你可以先把一段标为不使用，再选择这一段。"
+  }
+]

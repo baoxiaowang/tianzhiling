@@ -426,61 +426,70 @@
         :lock-scroll="true"
         :z-index="130"
       >
-        <view class="chat-import-editor">
-          <text class="chat-import-editor__label">聊天内容</text>
-          <textarea
-            class="chat-import-editor__textarea"
-            :value="editorContent"
-            maxlength="2000"
-            :show-confirm-bar="false"
-            @input="handleEditorContentInput"
-          />
-
-          <text class="chat-import-editor__label">这句话是谁说的</text>
-          <view class="chat-import-editor__speaker-row">
-            <view
-              class="chat-import-editor__speaker"
-              :class="{
-                'chat-import-editor__speaker--active':
-                  editorSpeaker === 'agent',
-              }"
-              @tap="editorSpeaker = 'agent'"
-            >
-              {{ agentDisplayName }}
+        <scroll-view
+          class="chat-import-editor__scroll"
+          scroll-y
+          :show-scrollbar="false"
+        >
+          <view class="chat-import-editor chat-import-editor__scroll-content">
+            <text class="chat-import-editor__label">聊天时间</text>
+            <view class="chat-import-editor__time-row">
+              <picker
+                mode="date"
+                :value="editorDate"
+                @change="handleEditorDateChange"
+              >
+                <view class="chat-import-editor__time-control">
+                  {{ editorDate || "选择日期" }}
+                </view>
+              </picker>
+              <picker
+                mode="time"
+                :value="editorTime"
+                @change="handleEditorTimeChange"
+              >
+                <view class="chat-import-editor__time-control">
+                  {{ editorTime || "选择时间" }}
+                </view>
+              </picker>
             </view>
-            <view
-              class="chat-import-editor__speaker"
-              :class="{
-                'chat-import-editor__speaker--active': editorSpeaker === 'user',
-              }"
-              @tap="editorSpeaker = 'user'"
-            >
-              我
-            </view>
-          </view>
 
-          <text class="chat-import-editor__label">聊天时间</text>
-          <view class="chat-import-editor__time-row">
-            <picker
-              mode="date"
-              :value="editorDate"
-              @change="handleEditorDateChange"
-            >
-              <view class="chat-import-editor__time-control">
-                {{ editorDate || "选择日期" }}
+            <text class="chat-import-editor__label">这句话是谁说的</text>
+            <view class="chat-import-editor__speaker-row">
+              <view
+                class="chat-import-editor__speaker"
+                :class="{
+                  'chat-import-editor__speaker--active':
+                    editorSpeaker === 'agent',
+                }"
+                @tap="editorSpeaker = 'agent'"
+              >
+                {{ agentDisplayName }}
               </view>
-            </picker>
-            <picker
-              mode="time"
-              :value="editorTime"
-              @change="handleEditorTimeChange"
-            >
-              <view class="chat-import-editor__time-control">
-                {{ editorTime || "选择时间" }}
+              <view
+                class="chat-import-editor__speaker"
+                :class="{
+                  'chat-import-editor__speaker--active':
+                    editorSpeaker === 'user',
+                }"
+                @tap="editorSpeaker = 'user'"
+              >
+                我
               </view>
-            </picker>
+            </view>
+
+            <text class="chat-import-editor__label">聊天内容</text>
+            <textarea
+              class="chat-import-editor__textarea"
+              :value="editorContent"
+              maxlength="2000"
+              :show-confirm-bar="false"
+              :adjust-position="true"
+              :cursor-spacing="96"
+              @input="handleEditorContentInput"
+            />
           </view>
-        </view>
+        </scroll-view>
 
         <template #footer>
           <view class="chat-import-editor__footer">
@@ -1978,12 +1987,23 @@ function getErrorMessage(error: unknown, fallback: string) {
   opacity: 0.42;
 }
 
+.chat-import-editor__scroll {
+  width: 100%;
+  height: 300px;
+}
+.chat-import-editor__scroll-content {
+  padding: 0 2px 14px;
+  box-sizing: border-box;
+}
 .chat-import-editor__label {
   display: block;
   margin: 14px 0 7px;
   color: #55525c;
   font-size: 13px;
   font-weight: 600;
+}
+.chat-import-editor__scroll-content .chat-import-editor__label:first-child {
+  margin-top: 2px;
 }
 .chat-import-editor__textarea {
   width: 100%;

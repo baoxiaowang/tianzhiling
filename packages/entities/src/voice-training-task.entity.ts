@@ -11,6 +11,11 @@ export enum VoiceTrainingTaskStatus {
   refunded = 'refunded',
 }
 
+export enum VoiceTrainingTaskTrainingStrategy {
+  shortSample = 'short_sample',
+  longSample = 'long_sample',
+}
+
 @Index(['orderId'], { unique: true, background: true })
 @Index(['agentId', 'status', 'updatedAt'], { background: true })
 @Index(['userId', 'updatedAt'], { background: true })
@@ -40,6 +45,12 @@ export class VoiceTrainingTaskEntity extends BaseEntity {
 
   @Column()
   materialObjectKeys?: string[];
+
+  @Column()
+  materialDurationSeconds?: number;
+
+  @Column()
+  trainingStrategy?: VoiceTrainingTaskTrainingStrategy;
 
   @Column()
   voiceTimbreId?: MongoObjectId;

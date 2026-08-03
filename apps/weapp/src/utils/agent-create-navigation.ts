@@ -5,26 +5,32 @@ const NAVIGATION_RETRY_DELAY_MS = 350
 
 let navigationPromise: Promise<void> | null = null
 
-export function openAgentCreatePage() {
+interface OpenAgentCreatePageOptions {
+  source?: 'voiceTraining'
+}
+
+export function openAgentCreatePage(options: OpenAgentCreatePageOptions = {}) {
   if (navigationPromise) {
     return navigationPromise
   }
 
-  navigationPromise = navigateToAgentCreatePage().finally(() => {
+  navigationPromise = navigateToAgentCreatePage(options).finally(() => {
     navigationPromise = null
   })
 
   return navigationPromise
 }
 
-async function navigateToAgentCreatePage() {
+async function navigateToAgentCreatePage(options: OpenAgentCreatePageOptions) {
   if (isAgentCreatePageActive()) {
     return
   }
 
+  const route = buildAgentCreateRoute(options)
+
   try {
     await Taro.navigateTo({
-      url: AGENT_CREATE_ROUTE,
+      url: route,
     })
     return
   } catch (error) {
@@ -40,8 +46,14 @@ async function navigateToAgentCreatePage() {
   }
 
   await Taro.navigateTo({
-    url: AGENT_CREATE_ROUTE,
+    url: route,
   })
+}
+
+function buildAgentCreateRoute(options: OpenAgentCreatePageOptions) {
+  return options.source
+    ? `${AGENT_CREATE_ROUTE}?source=${encodeURIComponent(options.source)}`
+    : AGENT_CREATE_ROUTE
 }
 
 function isNavigationTimeout(error: unknown) {

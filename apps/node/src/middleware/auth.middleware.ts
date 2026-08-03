@@ -2,8 +2,19 @@ import { AppError } from '../common/errors';
 import { Config, IMiddleware, Middleware, Inject } from '@midwayjs/core';
 import { JwtService } from '@midwayjs/jwt';
 import { RedisService } from '@midwayjs/redis';
+import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Context, NextFunction } from '@midwayjs/koa';
-import { getRevokedAccessTokenRedisKey } from '../common/auth-token';
+import {
+  MongoObjectId,
+  UserAccountStatus,
+  UserEntity,
+} from '@tzl/entities';
+import { MongoRepository } from 'typeorm';
+import {
+  getRevokedAccessTokenRedisKey,
+  getRevokedUserRedisKey,
+  getUserAccountStatusRedisKey,
+} from '../common/auth-token';
 import { AuthenticatedUserPayload } from '../interface';
 
 interface JwtConfig {
@@ -16,6 +27,8 @@ interface ProtectedRoute {
   path: RegExp;
 }
 
+const ACTIVE_USER_STATUS_CACHE_SECONDS = 300;
+
 const PROTECTED_ROUTES: ProtectedRoute[] = [
   { path: /^\/user\/me(?:\/.*)?$/ },
   { methods: ['POST'], path: /^\/user\/logout\/?$/ },
@@ -23,6 +36,7 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { path: /^\/conversation(?:\/.*)?$/ },
   { path: /^\/membership\/(?:center|purchase-center|status)(?:\/.*)?$/ },
   { path: /^\/voice-packages(?:\/.*)?$/ },
+  { path: /^\/voice-services(?:\/.*)?$/ },
   { path: /^\/orders(?:\/.*)?$/ },
   { methods: ['POST'], path: /^\/storage\/upload\/?$/ },
   { path: /^\/storage\/(?:oss|cos)\/sign-upload\/?$/ },
@@ -69,6 +83,9 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
 
   @Inject()
   redisService: RedisService;
+
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
 
   resolve() {
     return async (ctx: Context, next: NextFunction) => {
@@ -215,5 +232,49 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     if (revoked) {
       throw new AppError('TOKEN_REVOKED', 'token has been revoked', 401);
     }
+
+    const revokedUser = await this.redisService.get(
+      getRevokedUserRedisKey(auth.sub)
+    );
+
+    if (revokedUser) {
+      throw new AppError('ACCOUNT_CANCELED', 'account has been canceled', 401);
+    }
+
+    const statusKey = getUserAccountStatusRedisKey(auth.sub);
+    const cachedStatus = await this.redisService.get(statusKey);
+    if (cachedStatus === UserAccountStatus.active) {
+      return;
+    }
+
+    const userId = MongoObjectId.isValid(auth.sub)
+      ? new MongoObjectId(auth.sub)
+      : undefined;
+    if (!userId) {
+      throw new AppError('INVALID_TOKEN', 'token user id is invalid', 401);
+    }
+    const userById = await this.userModel.findOne({ where: { id: userId } });
+    const user =
+      userById ??
+      (await this.userModel.findOne({
+        where: { _id: userId } as never,
+      }));
+    if (!user) {
+      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 401);
+    }
+    if (user.accountStatus === UserAccountStatus.canceled) {
+      await this.redisService.set(
+        getRevokedUserRedisKey(auth.sub),
+        JSON.stringify({ canceledAt: user.canceledAt?.getTime() ?? Date.now() })
+      );
+      throw new AppError('ACCOUNT_CANCELED', 'account has been canceled', 401);
+    }
+
+    await this.redisService.set(
+      statusKey,
+      UserAccountStatus.active,
+      'EX',
+      ACTIVE_USER_STATUS_CACHE_SECONDS
+    );
   }
 }

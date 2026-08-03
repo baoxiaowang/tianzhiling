@@ -320,6 +320,14 @@
     </template>
 
     <template #overlay>
+      <chat-import-feature-poster
+        :conversation-id="conversationId"
+        :agent-id="agentId"
+        :agent-name="agentName"
+        :agent-avatar="agentAvatar"
+        :i-call-agent="iCallAgent"
+      />
+
       <nut-dialog
         close-on-click-overlay
         v-model:visible="isChatQuotaDialogVisible"
@@ -533,6 +541,7 @@ import { ApiConfig, isLocalApiEnvironment } from "../../api/api-config";
 import { ApiException } from "../../api/api-exception";
 import { getAgentDetail } from "../../apis/agent";
 import {
+  convertConversationMessageVoiceToText,
   deleteConversationMessage,
   generateConversationMessageVoice,
   getCachedConversationMessages,
@@ -564,6 +573,7 @@ import {
 } from "../../components/chat-more-panel/image";
 import type { ChatMoreActionItem } from "../../components/chat-more-panel/types";
 import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
+import ChatImportFeaturePoster from "../../components/chat-import-feature-poster/chat-import-feature-poster.vue";
 import {
   authSession,
   restoreAuthSession,
@@ -714,6 +724,7 @@ type RecorderErrorLike = {
 type MessageActionKey =
   | "quote"
   | "generateVoice"
+  | "showText"
   | "feedback"
   | "remember"
   | "delete";
@@ -751,6 +762,10 @@ const QUOTE_MESSAGE_ACTION: MessageActionItem = { key: "quote", label: "引用" 
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
   key: "generateVoice",
   label: "转语音",
+};
+const SHOW_TEXT_MESSAGE_ACTION: MessageActionItem = {
+  key: "showText",
+  label: "转文字",
 };
 const FEEDBACK_MESSAGE_ACTION: MessageActionItem = {
   key: "feedback",
@@ -893,6 +908,7 @@ let lastChatScrollTop = 0;
 let hasTrackedChatScrollTop = false;
 const deletingMessageIds = new Set<string>();
 const generatingVoiceMessageIds = new Set<string>();
+const convertingVoiceMessageIds = new Set<string>();
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>();
 const pendingVoiceDurationProbeMessages = new Map<
   string,
@@ -2702,8 +2718,17 @@ function shouldOfferVoiceGeneration(message?: ConversationMessage) {
     message &&
       message.role === "assistant" &&
       message.type === "text" &&
+      message.status === "sent"
+  );
+}
+
+function shouldOfferTextConversion(message?: ConversationMessage) {
+  return Boolean(
+    message &&
+      message.role === "assistant" &&
+      message.type === "voice" &&
       message.status === "sent" &&
-      !hasResolvableVoicePayload(message.voice)
+      (message.voice?.transcript?.trim() || message.content.trim())
   );
 }
 
@@ -2740,6 +2765,7 @@ function getMessageActionItems(
     ...(shouldOfferVoiceGeneration(message)
       ? [GENERATE_VOICE_MESSAGE_ACTION]
       : []),
+    ...(shouldOfferTextConversion(message) ? [SHOW_TEXT_MESSAGE_ACTION] : []),
     ...(shouldOfferFeedback(message) ? [FEEDBACK_MESSAGE_ACTION] : []),
     DELETE_MESSAGE_ACTION,
   ];
@@ -2765,7 +2791,7 @@ async function generateMessageVoice(message: ConversationMessage) {
       item.id === updatedMessage.id ? updatedMessage : item
     );
     probeMissingAssistantVoiceDurations([updatedMessage]);
-    showToast("已生成语音");
+    showToast("已转成语音");
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth();
@@ -2777,6 +2803,36 @@ async function generateMessageVoice(message: ConversationMessage) {
     );
   } finally {
     generatingVoiceMessageIds.delete(message.id);
+  }
+}
+
+async function convertMessageVoiceToText(message: ConversationMessage) {
+  if (!conversationId.value || convertingVoiceMessageIds.has(message.id)) {
+    return;
+  }
+
+  convertingVoiceMessageIds.add(message.id);
+
+  try {
+    const updatedMessage = await convertConversationMessageVoiceToText(
+      conversationId.value,
+      message.id
+    );
+    messages.value = messages.value.map((item) =>
+      item.id === updatedMessage.id ? updatedMessage : item
+    );
+    showToast("已转成文字");
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth();
+      return;
+    }
+
+    showToast(
+      error instanceof ApiException ? error.message : "转文字失败，请稍后重试"
+    );
+  } finally {
+    convertingVoiceMessageIds.delete(message.id);
   }
 }
 
@@ -2878,6 +2934,11 @@ async function runMessageAction(
 
   if (action === "generateVoice") {
     await generateMessageVoice(message);
+    return;
+  }
+
+  if (action === "showText") {
+    await convertMessageVoiceToText(message);
     return;
   }
 

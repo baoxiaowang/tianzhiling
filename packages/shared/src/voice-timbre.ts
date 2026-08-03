@@ -10,6 +10,120 @@ export type VoiceTimbreStatusDTO =
   | 'failed'
   | 'disabled';
 
+export type VoiceTimbreRetentionStatusDTO =
+  | 'protected'
+  | 'due_soon'
+  | 'attention_required';
+
+export interface UserVoiceTimbreBindingDTO {
+  agentId: string;
+  agentName: string;
+}
+
+export interface UserVoiceTimbreRecordDTO {
+  id: string;
+  name: string;
+  status: VoiceTimbreStatusDTO;
+  previewAudioUrl?: string;
+  targetModel?: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  estimatedProviderCleanupAt?: string;
+  retentionStatus: VoiceTimbreRetentionStatusDTO;
+  retentionMessage: string;
+  bindings: UserVoiceTimbreBindingDTO[];
+  pendingBindings?: UserVoiceTimbreBindingDTO[];
+  speechSpeed: number;
+  speechVolume: number;
+  deletionStatus?: 'pending' | 'completed' | 'partial_failed';
+}
+
+export interface UserVoiceTimbreTrainingClipDTO {
+  id: string;
+  name: string;
+  sourceName?: string;
+  audioUrl: string;
+  durationSeconds?: number;
+  transcript?: string;
+  qualityLabel?: string;
+}
+
+export interface UserVoiceTimbreGeneratedAudioDTO {
+  id: string;
+  text: string;
+  audioUrl: string;
+  speechSpeed: number;
+  speechVolume: number;
+  createdAt: string;
+  remainingToday?: number;
+}
+
+export interface UserVoiceTimbreDetailDTO extends UserVoiceTimbreRecordDTO {
+  providerName: string;
+  voiceAccessEligible: boolean;
+  trainingAudioUrl?: string;
+  trainingClips: UserVoiceTimbreTrainingClipDTO[];
+  generatedAudios: UserVoiceTimbreGeneratedAudioDTO[];
+  customSpeechTextMaxLength: number;
+  customSpeechDailyLimit: number;
+  customSpeechGeneratedToday: number;
+  customSpeechRemainingToday: number;
+}
+
+export interface VoiceTimbreRetentionPolicyDTO {
+  providerName: string;
+  inactiveCleanupDays: number;
+  providerVoiceLimit: number;
+  providerVoiceLimitScope: 'platform_account';
+  automaticRetentionEnabled: boolean;
+  automaticRetentionBeforeDays: number;
+  summary: string;
+  deletionNotice: string;
+  officialRuleUrl: string;
+  verifiedAt: string;
+}
+
+export interface UserVoiceTimbreLibraryDTO {
+  items: UserVoiceTimbreRecordDTO[];
+  retentionPolicy: VoiceTimbreRetentionPolicyDTO;
+}
+
+export type AgentVoiceModelSelectionStatusDTO =
+  | 'not_selected'
+  | 'pending_membership'
+  | 'active';
+
+export interface AgentVoiceModelCenterDTO {
+  agentId: string;
+  agentName: string;
+  items: UserVoiceTimbreRecordDTO[];
+  selectedTimbreId?: string;
+  activeTimbreId?: string;
+  voiceAccessEligible: boolean;
+  selectionStatus: AgentVoiceModelSelectionStatusDTO;
+}
+
+export interface SelectAgentVoiceTimbreDTO {
+  timbreId: string;
+  replaceExisting?: boolean;
+}
+
+export interface UpdateUserVoiceTimbreDTO {
+  name?: string;
+  speechSpeed?: number;
+  speechVolume?: number;
+}
+
+export interface GenerateUserVoiceTimbreSpeechDTO {
+  text: string;
+}
+
+export interface DeleteUserVoiceTimbreResultDTO {
+  id: string;
+  deletionStatus: 'completed' | 'partial_failed';
+  message: string;
+}
+
 export interface AdminVoiceTimbreRecordDTO {
   id: string;
   name: string;

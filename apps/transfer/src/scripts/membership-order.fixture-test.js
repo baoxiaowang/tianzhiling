@@ -162,6 +162,17 @@ async function main() {
   assert.ok(paidOrderResult);
   assert.strictEqual(paidOrderResult.document.status, 'completed');
   assert.strictEqual(paidOrderResult.document.orderType, 'vip_plan');
+  assert.strictEqual(paidOrderResult.document.amount, 19900);
+  assert.strictEqual(paidOrderResult.document.payableAmount, 19900);
+  assert.strictEqual(paidOrderResult.document.paidAmount, 19900);
+  assert.strictEqual(
+    paidOrderResult.document.snapshot.legacy.sourceMoneyUnit,
+    'yuan'
+  );
+  assert.strictEqual(
+    paidOrderResult.document.snapshot.legacy.moneyUnit,
+    'fen'
+  );
   assert.ok(paidOrderResult.document.userId instanceof MongoObjectId);
   assert.ok(paidOrderResult.document.agentId instanceof MongoObjectId);
   assert.strictEqual(report.ownerConflicts.length, 1);
@@ -276,7 +287,7 @@ async function main() {
   assert.strictEqual(docs.length, 1);
   assert.ok(docs[0]._id instanceof MongoObjectId);
   assert.ok(docs[0].userId instanceof MongoObjectId);
-  assert.strictEqual(docs[0].payableAmount, 199);
+  assert.strictEqual(docs[0].payableAmount, 19900);
 
   const taskDocs = [];
   for await (const doc of readBsonDocuments(

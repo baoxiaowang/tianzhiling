@@ -4,9 +4,24 @@ import { ApiException } from "../api/api-exception";
 import { ApiResponse } from "../api/api-response";
 import { authSession, clearAuthSession } from "../auth/session";
 
+const STORAGE_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface UploadedStorageAsset {
   objectKey: string;
   publicUrl: string;
+}
+
+export interface UploadLocalFileProgress {
+  progress: number;
+  totalBytesSent?: number;
+  totalBytesExpectedToSend?: number;
+}
+
+export interface UploadLocalFileOptions {
+  folder: string;
+  fileName?: string;
+  contentType?: string;
+  onProgress?: (progress: UploadLocalFileProgress) => void;
 }
 
 function asRecord(value: unknown) {
@@ -67,6 +82,19 @@ function detectContentType(fileName: string) {
   if (lower.endsWith(".webm")) {
     return "audio/webm";
   }
+  if (lower.endsWith(".amr")) {
+    return "audio/amr";
+  }
+  if (lower.endsWith(".silk")) {
+    return "audio/silk";
+  }
+  if (lower.endsWith(".mp4") || lower.endsWith(".m4v")) {
+    return "video/mp4";
+  }
+  if (lower.endsWith(".mov")) {
+    return "video/quicktime";
+  }
+
   return "image/jpeg";
 }
 
@@ -151,16 +179,53 @@ function formatUploadError(error: unknown) {
 
 async function uploadFileToNode(
   filePath: string,
-  payload: { folder: string; fileName: string; contentType: string }
+  payload: {
+    folder: string;
+    fileName: string;
+    contentType: string;
+    onProgress?: (progress: UploadLocalFileProgress) => void;
+  }
 ) {
-  const response = await Taro.uploadFile({
-    url: normalizePath("/api/storage/upload"),
-    filePath,
-    name: "file",
-    formData: payload,
-    header: buildUploadHeader(),
-    timeout: 120000,
-  });
+  const response = await new Promise<Taro.uploadFile.SuccessCallbackResult>(
+    (resolve, reject) => {
+      const uploadTask = Taro.uploadFile({
+        url: normalizePath("/api/storage/upload"),
+        filePath,
+        name: "file",
+        formData: {
+          folder: payload.folder,
+          fileName: payload.fileName,
+          contentType: payload.contentType,
+        },
+        header: buildUploadHeader(),
+        timeout: STORAGE_UPLOAD_TIMEOUT_MS,
+        success: resolve,
+        fail: reject,
+      }) as {
+        progress?: (
+          callback: (result: UploadLocalFileProgress) => void
+        ) => void;
+        onProgressUpdate?: (
+          callback: (result: UploadLocalFileProgress) => void
+        ) => void;
+      };
+
+      if (payload.onProgress) {
+        const handleProgress = (result: UploadLocalFileProgress) => {
+          payload.onProgress?.({
+            progress: Math.max(
+              0,
+              Math.min(100, Math.round(result.progress || 0))
+            ),
+            totalBytesSent: result.totalBytesSent,
+            totalBytesExpectedToSend: result.totalBytesExpectedToSend,
+          });
+        };
+        uploadTask.progress?.(handleProgress);
+        uploadTask.onProgressUpdate?.(handleProgress);
+      }
+    }
+  );
 
   const parsed = ApiResponse.fromRaw<Record<string, unknown>>(
     response.data,
@@ -174,7 +239,12 @@ async function uploadFileToNode(
 
 async function uploadFileWithAuthHandling(
   filePath: string,
-  payload: { folder: string; fileName: string; contentType: string }
+  payload: {
+    folder: string;
+    fileName: string;
+    contentType: string;
+    onProgress?: (progress: UploadLocalFileProgress) => void;
+  }
 ) {
   try {
     return await uploadFileToNode(filePath, payload);
@@ -205,7 +275,7 @@ export async function uploadLocalImage(
 
 export async function uploadLocalFile(
   filePath: string,
-  options: { folder: string; fileName?: string; contentType?: string }
+  options: UploadLocalFileOptions
 ): Promise<UploadedStorageAsset> {
   const fileName = options.fileName?.trim() || extractFileName(filePath);
   const contentType =
@@ -217,6 +287,7 @@ export async function uploadLocalFile(
       folder: options.folder.trim(),
       fileName,
       contentType,
+      onProgress: options.onProgress,
     });
 
     if (!uploaded.publicUrl || !uploaded.objectKey) {

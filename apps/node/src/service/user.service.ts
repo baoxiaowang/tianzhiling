@@ -12,8 +12,10 @@ import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
 import {
   MongoObjectId,
+  UserAccountStatus,
   UserAccountEntity,
   UserEntity,
+  UserLoginAccountStatus,
   UserMembershipEntity,
   UserMembershipStatus,
 } from '@tzl/entities';
@@ -371,6 +373,7 @@ export class UserService {
       user.phoneVerified = true;
       user.gender = 'unknown';
       user.region = null;
+      user.accountStatus = UserAccountStatus.active;
       user.createdAt = now;
       user.updatedAt = now;
       user = await this.userModel.save(user);
@@ -387,6 +390,7 @@ export class UserService {
       userAccount.userId = user.id;
       userAccount.account = phone;
       userAccount.password = '';
+      userAccount.status = UserLoginAccountStatus.active;
       userAccount.createdAt = now;
       userAccount.updatedAt = now;
       userAccount = await this.userAccountModel.save(userAccount);
@@ -507,6 +511,7 @@ export class UserService {
     user.phoneVerified = false;
     user.gender = 'unknown';
     user.region = null;
+    user.accountStatus = UserAccountStatus.active;
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -516,6 +521,7 @@ export class UserService {
     userAccount.account = this.buildWeappAccount(openid);
     userAccount.password = '';
     userAccount.openId = openid;
+    userAccount.status = UserLoginAccountStatus.active;
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
     userAccount = await this.userAccountModel.save(userAccount);
@@ -664,6 +670,7 @@ export class UserService {
     userAccount.account = account;
     userAccount.password = '';
     userAccount.openId = openid;
+    userAccount.status = UserLoginAccountStatus.active;
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
 
@@ -1008,6 +1015,7 @@ export class UserService {
     userAccount: UserAccountEntity,
     isNewUser: boolean
   ): Promise<PasswordLoginResult> {
+    this.ensureUserAccountActive(user, userAccount);
     const profile = await this.buildUserProfile(user, userAccount.account);
     const issuedAt = Date.now();
     const expiresAt = issuedAt + this.getTokenExpiresInSeconds() * 1000;
@@ -1031,6 +1039,18 @@ export class UserService {
       isNewUser,
       user: profile,
     };
+  }
+
+  private ensureUserAccountActive(
+    user: UserEntity,
+    userAccount: UserAccountEntity
+  ): void {
+    if (
+      user.accountStatus === UserAccountStatus.canceled ||
+      userAccount.status === UserLoginAccountStatus.canceled
+    ) {
+      throw new AppError('ACCOUNT_CANCELED', 'account has been canceled', 401);
+    }
   }
 
   private async buildUserProfile(
@@ -1272,6 +1292,7 @@ export class UserService {
     user.phoneVerified = false;
     user.gender = 'unknown';
     user.region = null;
+    user.accountStatus = UserAccountStatus.active;
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -1281,6 +1302,7 @@ export class UserService {
     userAccount.account = account;
     userAccount.password = '';
     userAccount.openId = openid;
+    userAccount.status = UserLoginAccountStatus.active;
     userAccount.createdAt = now;
     userAccount.updatedAt = now;
 

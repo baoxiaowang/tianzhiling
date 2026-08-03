@@ -26,6 +26,8 @@ const VOICE_TRAINING_TASK_COLLECTION = 'voice_training_task';
 const VOICE_TIMBRE_COLLECTION = 'voice_timbre';
 const LEGACY_PAYMENT_PROVIDER = 'legacy_wechat';
 const CURRENCY = 'CNY';
+const LEGACY_SOURCE_MONEY_UNIT = 'yuan';
+const STORED_MONEY_UNIT = 'fen';
 const VOICE_TASK_REMARK = '历史声音套餐迁移，需人工训练后完成';
 const DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT =
   '我好想你，最近过得好吗，有没有好好吃饭';
@@ -784,6 +786,9 @@ function buildSyntheticMembershipOrder(aggregate, now) {
 function buildOrderSnapshot(options) {
   const legacy = {
     namespace: MIGRATION_NAMESPACE,
+    moneyUnit: STORED_MONEY_UNIT,
+    sourceMoneyUnit: LEGACY_SOURCE_MONEY_UNIT,
+    moneyMigrationVersion: 2,
     orderId: options.legacyOrderId,
     userId: options.legacyUserId,
     agentId: options.legacyAgentId,
@@ -891,12 +896,14 @@ function normalizeMoney(value, fallback = 0) {
   const parsed = Number(value);
 
   if (Number.isFinite(parsed)) {
-    return parsed;
+    return Math.max(Math.round(parsed * 100), 0);
   }
 
   const fallbackParsed = Number(fallback);
 
-  return Number.isFinite(fallbackParsed) ? fallbackParsed : 0;
+  return Number.isFinite(fallbackParsed)
+    ? Math.max(Math.round(fallbackParsed * 100), 0)
+    : 0;
 }
 
 function normalizeFlag(value) {

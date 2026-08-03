@@ -122,6 +122,8 @@ import { MilvusService } from './rag/milvus.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
+import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
+import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
 import { ChatTraceService } from './chat-trace.service';
 import {
@@ -143,6 +145,7 @@ const ASSISTANT_REPLY_MAX_TOKENS = 420;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 360;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
+const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
 const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'rigid_only';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
@@ -623,6 +626,12 @@ export class ConversationService {
   qwenVoiceSpeechService: QwenVoiceSpeechService;
 
   @Inject()
+  voiceTimbreLibraryService: VoiceTimbreLibraryService;
+
+  @Inject()
+  voiceFfmpegService: VoiceFfmpegService;
+
+  @Inject()
   bailianImageService: BailianImageService;
 
   @Inject()
@@ -776,7 +785,11 @@ export class ConversationService {
           'persist.reply',
           () => this.afterReply(runtime, before, processed)
         );
-        await this.completeChatReplyTrace(trace, processed, after);
+        await this.completeChatReplyTrace(
+          trace,
+          processed,
+          after
+        );
 
         return this.buildSendMessageResult(before, after);
       } catch (error) {
@@ -1271,10 +1284,19 @@ export class ConversationService {
       throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
     }
 
-    if (
-      message.role !== MessageRole.assistant ||
-      message.type !== MessageType.text
-    ) {
+    if (message.role !== MessageRole.assistant) {
+      throw new AppError(
+        'MESSAGE_VOICE_UNSUPPORTED',
+        'only assistant text messages can be converted to voice',
+        400
+      );
+    }
+
+    if (message.type === MessageType.voice) {
+      return this.messageService.buildConversationMessageItem(message);
+    }
+
+    if (message.type !== MessageType.text) {
       throw new AppError(
         'MESSAGE_VOICE_UNSUPPORTED',
         'only assistant text messages can be converted to voice',
@@ -1291,7 +1313,16 @@ export class ConversationService {
     }
 
     if (message.mediaObjectKey?.trim() || message.mediaUrl?.trim()) {
-      return this.messageService.buildConversationMessageItem(message);
+      message.type = MessageType.voice;
+      message.mediaTranscript =
+        message.mediaTranscript?.trim() ||
+        this.buildAssistantReplySpeechText(message.content);
+      message.content = message.mediaTranscript || message.content;
+      message.updatedAt = new Date();
+
+      return this.messageService.buildConversationMessageItem(
+        await this.messageModel.save(message)
+      );
     }
 
     const storedAgent = await this.findAgentById(conversation.agentId);
@@ -1327,11 +1358,63 @@ export class ConversationService {
     message.mediaMimeType = synthesizedVoice.mediaMimeType || '';
     message.mediaDurationMs = synthesizedVoice.mediaDurationMs;
     message.mediaTranscript = synthesizedVoice.transcript;
+    message.type = MessageType.voice;
+    message.content = synthesizedVoice.transcript;
     message.updatedAt = new Date();
 
     const savedMessage = await this.messageModel.save(message);
 
     return this.messageService.buildConversationMessageItem(savedMessage);
+  }
+
+  async convertMessageVoiceToText(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    messageId: string
+  ): Promise<ConversationMessageItem> {
+    const conversation = await this.getConversationForUser(
+      auth,
+      conversationId
+    );
+    const message = await this.findMessageById(
+      this.parseObjectId(messageId),
+      conversation.id
+    );
+
+    if (!message || message.isArchived) {
+      throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
+    }
+
+    if (
+      message.role !== MessageRole.assistant ||
+      message.type !== MessageType.voice
+    ) {
+      throw new AppError(
+        'MESSAGE_TEXT_UNSUPPORTED',
+        'only assistant voice messages can be converted to text',
+        400
+      );
+    }
+
+    const transcript =
+      message.mediaTranscript?.trim() || message.content?.trim() || '';
+
+    if (!transcript) {
+      throw new AppError(
+        'MESSAGE_TRANSCRIPT_NOT_AVAILABLE',
+        '这段语音暂时没有可显示的文字',
+        422
+      );
+    }
+
+    message.type = MessageType.text;
+    message.content = transcript;
+    message.mediaTranscript = transcript;
+    message.updatedAt = new Date();
+
+    return this.messageService.buildConversationMessageItem(
+      await this.messageModel.save(message)
+    );
   }
 
   async submitMessageFeedback(
@@ -3043,6 +3126,7 @@ export class ConversationService {
     const results: Array<{
       callId: string;
       name: AgentChatToolName;
+      arguments: Record<string, unknown>;
       result: AgentChatToolResult;
     }> = [];
 
@@ -3063,7 +3147,15 @@ export class ConversationService {
           ),
         { chatToolName: name }
       );
-      results.push({ callId: call.id, name, result });
+      results.push({
+        callId: call.id,
+        name,
+        arguments:
+          rawArguments && typeof rawArguments === 'object'
+            ? (rawArguments as Record<string, unknown>)
+            : {},
+        result,
+      });
     }
 
     const continuationMessages: ChatCompletionMessageParam[] = [
@@ -3864,8 +3956,9 @@ export class ConversationService {
     }
 
     const firstMessage = after.assistantMessages[0];
+    const responseCompletedAt = new Date();
     await this.chatTraceService.markCompleted(trace.traceId, {
-      responseCompletedAt: new Date(),
+      responseCompletedAt,
       replyMessageIds: after.assistantMessages.map(message =>
         this.stringifyObjectId(message.id)
       ),
@@ -5341,7 +5434,16 @@ export class ConversationService {
     };
     routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[] | undefined> {
-    if (options.before.messagePayload.type !== MessageType.voice) {
+    const hasLongReplyBubble = options.replySegments.some(
+      segment =>
+        countReplyVisibleCharacters([segment]) >=
+        ASSISTANT_AUTO_VOICE_MIN_CHARACTERS
+    );
+
+    if (
+      options.before.messagePayload.type !== MessageType.voice &&
+      !hasLongReplyBubble
+    ) {
       return undefined;
     }
 
@@ -5408,6 +5510,15 @@ export class ConversationService {
         text: transcript,
         voiceTimbre,
       });
+      try {
+        await this.voiceTimbreLibraryService.markUsed(voiceTimbre);
+      } catch (error) {
+        this.logger.warn(
+          '[conversation] voice timbre usage timestamp update failed, timbreId=%s, reason=%s',
+          this.stringifyObjectId(voiceTimbre.id),
+          this.describeReplyError(error)
+        );
+      }
       const stored = await this.storeAssistantVoiceAsset({
         audioBuffer: synthesized.audioBuffer,
         mimeType: synthesized.mimeType,
@@ -5464,12 +5575,40 @@ export class ConversationService {
     }
 
     if (input.voiceTimbre.provider === VoiceTimbreProvider.qwen) {
-      return this.qwenVoiceSpeechService.synthesize({
+      const synthesized = await this.qwenVoiceSpeechService.synthesize({
         text: input.text,
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
       });
+      const speechSpeed = this.voiceSpeechSetting(
+        input.voiceTimbre.speechSpeed,
+        1,
+        0.5,
+        2
+      );
+      const speechVolume = this.voiceSpeechSetting(
+        input.voiceTimbre.speechVolume,
+        1,
+        0.25,
+        2
+      );
+      if (speechSpeed === 1 && speechVolume === 1) {
+        return synthesized;
+      }
+      const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
+        buffer: synthesized.audioBuffer,
+        fileName: synthesized.mimeType.includes('mpeg')
+          ? 'speech.mp3'
+          : 'speech.wav',
+        speechSpeed,
+        speechVolume,
+      });
+      return {
+        audioUrl: '',
+        audioBuffer: adjusted.buffer,
+        mimeType: adjusted.contentType,
+      };
     }
 
     throw new AppError(
@@ -5477,6 +5616,18 @@ export class ConversationService {
       'voice timbre provider is not supported for speech synthesis',
       400
     );
+  }
+
+  private voiceSpeechSetting(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number
+  ): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed)
+      ? Math.min(max, Math.max(min, parsed))
+      : fallback;
   }
 
   private async findActiveVoiceTimbreForAgent(
