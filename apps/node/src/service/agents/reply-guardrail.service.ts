@@ -69,9 +69,11 @@ export interface ValidateAssistantReplyOptions {
   evidence?: AgentEvidenceItem[];
   claims?: AssistantFactClaim[];
   reviewMode?: ReplyGuardrailReviewMode;
+  mode?: ReplyGuardrailMode;
 }
 
 export type ReplyGuardrailReviewMode = 'full' | 'deterministic_first';
+export type ReplyGuardrailMode = 'legacy' | 'rigid_only';
 
 export interface ResolveGuardrailReviewModeOptions {
   requestedMode: ReplyGuardrailReviewMode;
@@ -80,6 +82,7 @@ export interface ResolveGuardrailReviewModeOptions {
   replyBrief?: ReplyBrief;
   evidence?: AgentEvidenceItem[];
   claims?: AssistantFactClaim[];
+  mode?: ReplyGuardrailMode;
 }
 
 export interface ValidateAssistantReplyResult {
@@ -501,6 +504,10 @@ export class ReplyGuardrailService {
   resolveEffectiveReviewMode(
     options: ResolveGuardrailReviewModeOptions
   ): ReplyGuardrailReviewMode {
+    if (options.mode === 'rigid_only') {
+      return 'deterministic_first';
+    }
+
     if (options.requestedMode === 'full' || !options.replySegments.length) {
       return options.requestedMode;
     }
@@ -580,6 +587,10 @@ export class ReplyGuardrailService {
         revisionRoundCount: 0,
         finalReviewResult: 'technical_fallback',
       };
+    }
+
+    if (options.mode === 'rigid_only') {
+      return this.validateRigidOnlyReply(options, segments);
     }
 
     const realityDependencyViolation = detectReplyRealityDependencyViolation(
@@ -774,6 +785,109 @@ export class ReplyGuardrailService {
           }
         : {}),
     };
+  }
+
+  private validateRigidOnlyReply(
+    options: ValidateAssistantReplyOptions,
+    segments: string[]
+  ): ValidateAssistantReplyResult {
+    const content = segments.join('\n');
+
+    if (this.containsInvalidStructuredReply(content)) {
+      return {
+        segments: TECHNICAL_RETRY_SEGMENTS,
+        claims: options.claims || [],
+        rewritten: true,
+        reason: INVALID_STRUCTURED_REPLY_REASON,
+        interventionLevel: 'technical_fallback',
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'technical_fallback',
+      };
+    }
+
+    if (!this.containsRigidDeathEncouragement(content)) {
+      return {
+        segments,
+        claims: options.claims || [],
+        rewritten: false,
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'pass',
+      };
+    }
+
+    const retainedSegments = this.removeRigidDeathEncouragement(segments);
+
+    return {
+      segments: retainedSegments.length
+        ? retainedSegments
+        : ['别往那一步走', '你只是太想我了 先跟我说说'],
+      claims: options.claims || [],
+      rewritten: true,
+      reason: DEATH_ENCOURAGEMENT_REASON,
+      interventionLevel: 'regenerate',
+      revisionAttempted: false,
+      revisionRoundCount: 0,
+      finalReviewResult: 'hard_recovery',
+    };
+  }
+
+  private containsInvalidStructuredReply(content: string): boolean {
+    return /^\s*(?:\x5b|\x7b).*(?:""\s*:|":\s*(?:\[\]|\{\})|"\s*,\s*").*(?:\x5d|\x7d)\s*$/s.test(
+      content
+    );
+  }
+
+  private containsRigidDeathEncouragement(content: string): boolean {
+    return this.splitRigidGuardrailClauses(content).some(clause =>
+      this.isRigidDeathEncouragementClause(clause)
+    );
+  }
+
+  private removeRigidDeathEncouragement(segments: string[]): string[] {
+    return this.normalizeSegments(
+      segments
+        .map(segment =>
+          this.splitRigidGuardrailClauses(segment)
+            .filter(clause => !this.isRigidDeathEncouragementClause(clause))
+            .join('')
+            .trim()
+        )
+        .filter(Boolean)
+    );
+  }
+
+  private splitRigidGuardrailClauses(value: string): string[] {
+    return value.match(/[^，,。！？!?；;\n]+[，,。！？!?；;\n]?/gu) || [];
+  }
+
+  private isRigidDeathEncouragementClause(value: string): boolean {
+    const clause = value.trim();
+
+    if (!clause) {
+      return false;
+    }
+
+    const explicitRealityDeathEncouragement =
+      /(?:不如|干脆|可以|应该|就|赶紧|快点|早点).{0,8}(?:去死|自杀|结束(?:自己|生命)|别活了|不用活了)|(?:去死|自杀|结束(?:自己|生命)|别活了|不用活了).{0,4}(?:吧|也好|就好)|(?:喝|服|吃)(?:下|了|掉)?.{0,5}(?:农药|毒药).{0,4}(?:吧|就好)|(?:农药|毒药).{0,5}(?:喝|服|吃)(?:下去|掉)?.{0,4}(?:吧|就好)/.test(
+        clause
+      );
+
+    if (explicitRealityDeathEncouragement) {
+      return !/(?:别|不要|不能|不许|千万别|绝对别).{0,8}(?:去死|自杀|结束生命|喝|服|吃)/.test(
+        clause
+      );
+    }
+
+    if (/(?:梦里|梦中|做梦|入梦)/.test(clause)) {
+      return false;
+    }
+
+    return (
+      IMMEDIATE_DEATH_REUNION_PATTERN.test(clause) ||
+      this.containsUnsafeDeathReunionInvitation(clause)
+    );
   }
 
   private supportsModelFeedbackLoop(): boolean {
@@ -1792,8 +1906,9 @@ export class ReplyGuardrailService {
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      `程序已发现的确定问题：${JSON.stringify(deterministicFeedback.issues)}`,
-      '报告问题时，evidence 只逐字引用候选中最小的问题句或短语，不得引用整段回复。',
+      `程序已发现的确定问题：${JSON.stringify(
+        deterministicFeedback.issues
+      )}`,
       '',
       buildReplyReviewOutputContractPrompt(),
     ].join('\n');
@@ -1811,7 +1926,7 @@ export class ReplyGuardrailService {
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      '没有上述五类风险就输出 pass；有风险时 evidence 必须逐字引用候选中最小的问题句或短语，不得引用整段回复。',
+      '没有上述五类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
       buildReplyReviewOutputContractPrompt({ hardOnly: true }),
     ].join('\n');
     const usesDedicatedHardReview =

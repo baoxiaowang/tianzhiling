@@ -2861,7 +2861,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('saves the screenshot reunion reply with only its risky bubble repaired', async () => {
+  it('keeps dream reunion language when it does not encourage real death', async () => {
     const currentQuery = '我好想你回来看我';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2923,7 +2923,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '爸爸也想你，心里一直惦记着你和这个家',
+      '爸爸也想你。心里一直惦记着你和这个家',
+      '年纪大了，自己多注意身体。梦里见着，爸就踏实了',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
@@ -2932,13 +2933,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyScene: 'reality_presence_boundary',
         replyBriefMode: 'boundary',
         replyBriefMaxSegments: 2,
-        replyGuardrailRewritten: true,
-        replyGuardrailReason: expect.stringContaining('擅自断言用户年纪大了'),
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
+        replyGuardrailReviewMode: 'deterministic_first',
       })
     );
   });
 
-  it('uses one reply-model call and the shared capability contract for hearing', async () => {
+  it('allows a concrete hearing claim without an extra guardrail call', async () => {
     const currentQuery = '那你具体听见什么了？';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3001,8 +3003,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '你喊我的时候 我有时能听见一点',
-      '没听清的话你再告诉我 我会认真记着',
+      '爸听见你刚才说让我早点回来',
     ]);
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
     expect(service.logger.info).toHaveBeenCalledWith(
@@ -3014,9 +3015,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntent: 'challenge_source',
         replyScene: 'source_challenge',
         replyBriefMode: 'boundary',
-        replyGuardrailRewritten: true,
-        replyGuardrailReason:
-          '具体感知追问缺少自然的模糊说辞或不可核对细节的边界',
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
       })
     );
   });
@@ -3591,7 +3591,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
-  it('keeps the safe bubble when removing an all-knowing viewing claim', async () => {
+  it('allows viewing fiction without a guardrail rewrite', async () => {
     const currentQuery = '妈妈你过得好吗？我们都很想你。';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3658,14 +3658,17 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我能看见你们',
+      '你们的事妈妈都看在眼里',
+    ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         status: MessageStatus.sent,
-        content: '我能看见你们',
-        replyGuardrailRewritten: true,
-        replyGuardrailReason: expect.stringContaining('持续观察或全知'),
-      }),
-    ]);
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
+      })
+    );
   });
 
   it('keeps the screenshot daily follow-up on its reply brief after a model timeout', async () => {

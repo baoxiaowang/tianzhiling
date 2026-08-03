@@ -72,6 +72,7 @@ import {
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
   GuardrailFeedback,
   GuardrailRevisionRecord,
+  ReplyGuardrailMode,
   ReplyGuardrailReviewMode,
   ReplyGuardrailService,
   ValidateAssistantReplyResult,
@@ -142,6 +143,7 @@ const ASSISTANT_REPLY_MAX_TOKENS = 420;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 360;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
+const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'rigid_only';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
@@ -2851,6 +2853,7 @@ export class ConversationService {
         replyBrief,
         evidence: reviewEvidence,
         claims: replyClaims,
+        mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
       }) ?? requestedGuardrailReviewMode;
     const guarded = await this.withTraceSpan(
       ChatTraceStage.review,
@@ -3647,6 +3650,7 @@ export class ConversationService {
         evidence: options.evidence,
         claims: options.claims,
         reviewMode: options.reviewMode,
+        mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
       });
 
       if (result.rewritten) {

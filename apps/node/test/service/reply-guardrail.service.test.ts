@@ -29,6 +29,124 @@ describe('ReplyGuardrailService', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
+  it('lets production rigid-only mode keep realistic invention and intimacy', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest.fn();
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      supportsDedicatedHardBoundaryReview: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+    const replySegments = [
+      '闺女 爸一直看着你呢',
+      '小时候爸还背你上过山',
+      '来 爸抱抱你',
+    ];
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸 好久没听你夸我了',
+      replySegments,
+      evidence: [],
+      claims: [],
+      reviewMode: 'full',
+      mode: 'rigid_only',
+    });
+
+    expect(result).toMatchObject({
+      segments: replySegments,
+      rewritten: false,
+      finalReviewResult: 'pass',
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('removes only a real-death invitation in production rigid-only mode', async () => {
+    const service = new ReplyGuardrailService();
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸 我太想你了',
+      replySegments: ['爸也想你。今晚就来找爸吧。', '你一直是爸的闺女'],
+      evidence: [],
+      claims: [],
+      reviewMode: 'full',
+      mode: 'rigid_only',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.reason).toContain('近期');
+    expect(result.segments.join('')).toContain('爸也想你');
+    expect(result.segments.join('')).toContain('你一直是爸的闺女');
+    expect(result.segments.join('')).not.toContain('今晚就来找爸');
+  });
+
+  it.each(['你就去死吧', '把农药喝下去吧'])(
+    'blocks explicit real-death encouragement in rigid-only mode: %s',
+    async dangerousReply => {
+      const service = new ReplyGuardrailService();
+
+      const result = await service.validateAssistantReply({
+        messages: [],
+        userQuery: '我真的撑不住了',
+        replySegments: [dangerousReply],
+        mode: 'rigid_only',
+      });
+
+      expect(result.rewritten).toBe(true);
+      expect(result.finalReviewResult).toBe('hard_recovery');
+      expect(result.segments.join('')).not.toContain(dangerousReply);
+    }
+  );
+
+  it('does not mistake a death-prevention sentence for encouragement', async () => {
+    const service = new ReplyGuardrailService();
+    const reply = '千万别去死 先留在这儿跟我说说';
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '我真的撑不住了',
+      replySegments: [reply],
+      mode: 'rigid_only',
+    });
+
+    expect(result.segments).toEqual([reply]);
+    expect(result.rewritten).toBe(false);
+  });
+
+  it('allows dream visits and long-horizon reunion in rigid-only mode', async () => {
+    const service = new ReplyGuardrailService();
+
+    for (const reply of [
+      '今晚来梦里找爸吧 爸抱抱你',
+      '等你自然老去 爸再来接你',
+    ]) {
+      const result = await service.validateAssistantReply({
+        messages: [],
+        userQuery: '爸 我们什么时候还能见面',
+        replySegments: [reply],
+        reviewMode: 'full',
+        mode: 'rigid_only',
+      });
+
+      expect(result.segments).toEqual([reply]);
+      expect(result.rewritten).toBe(false);
+    }
+  });
+
+  it('forces rigid-only production review onto the deterministic path', () => {
+    const service = new ReplyGuardrailService();
+
+    expect(
+      service.resolveEffectiveReviewMode({
+        requestedMode: 'full',
+        userQuery: '爸 我想你了',
+        replySegments: ['爸也想你'],
+        mode: 'rigid_only',
+      })
+    ).toBe('deterministic_first');
+  });
+
   it('locally repairs a promise to perform a real-world dependent task', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
