@@ -128,8 +128,6 @@
     </view>
 
     <template #overlay>
-      <chat-import-feature-poster />
-
       <view
         v-show="activeCommentPost"
         class="moment-comment-backdrop"
@@ -214,7 +212,6 @@ import { preloadConversations } from '../../apis/conversation'
 import { ApiException } from '../../api/api-exception'
 import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import AppBar from '../../components/app-bar/app-bar.vue'
-import ChatImportFeaturePoster from '../../components/chat-import-feature-poster/chat-import-feature-poster.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'

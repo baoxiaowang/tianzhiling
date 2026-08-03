@@ -105,7 +105,7 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import Taro, { useLoad } from "@tarojs/taro";
 import { authSession, restoreAuthSession } from "../../auth/session";
 import { silentWeappLogin } from "../../auth/login-hooks";
@@ -119,6 +119,7 @@ import entryLoadingImage from "../../assets/images/agent-create/header-mark.png"
 const ONBOARDING_STORAGE_KEY = "tzl_onboarding_seen";
 const AUTH_SESSION_STORAGE_KEY = "auth_session";
 const ENTRY_CHECK_TIMEOUT_MS = 3500;
+const ENTRY_FALLBACK_TIMEOUT_MS = 5000;
 const CHAT_ENTRY_TIMEOUT_MS = 6000;
 
 type EntryTarget = "onboarding" | "index" | "chat";
@@ -128,6 +129,7 @@ const isNavigating = ref(false);
 const actionSafeStyle = computed(() =>
   createSafeAreaCssVars("onboarding-safe")
 );
+let entryFallbackTimer: ReturnType<typeof setTimeout> | undefined;
 
 function hasSeenOnboarding() {
   try {
@@ -157,6 +159,28 @@ function resolveLocalFallbackTarget(): EntryTarget {
   return hasSeenOnboarding() || hasPersistedSession()
     ? "index"
     : "onboarding";
+}
+
+function showOnboardingFallback() {
+  clearEntryFallback();
+  isNavigating.value = false;
+  isCheckingEntry.value = false;
+}
+
+function scheduleEntryFallback() {
+  clearEntryFallback();
+  entryFallbackTimer = setTimeout(() => {
+    showOnboardingFallback();
+  }, ENTRY_FALLBACK_TIMEOUT_MS);
+}
+
+function clearEntryFallback() {
+  if (!entryFallbackTimer) {
+    return;
+  }
+
+  clearTimeout(entryFallbackTimer);
+  entryFallbackTimer = undefined;
 }
 
 async function goToIndex(): Promise<boolean> {
@@ -254,45 +278,58 @@ async function handleStart() {
 }
 
 async function initializeEntry() {
-  initSafeAreaInsets();
-
   const target = await withTimeout(
     resolveEntryTarget(),
     ENTRY_CHECK_TIMEOUT_MS + 1000,
-    resolveLocalFallbackTarget()
+    "onboarding" as EntryTarget
   );
 
   if (target === "index") {
-    await goToIndex();
+    const opened = await goToIndex();
+    if (opened) {
+      clearEntryFallback();
+    } else {
+      showOnboardingFallback();
+    }
     return;
   }
 
   if (target === "chat") {
     const opened = await goToChatTab();
     if (opened) {
+      clearEntryFallback();
       return;
     }
 
     const openedIndex = await goToIndex();
     if (openedIndex) {
+      clearEntryFallback();
       return;
     }
 
+    showOnboardingFallback();
     return;
   }
 
-  isCheckingEntry.value = false;
+  showOnboardingFallback();
 }
 
 useLoad(() => {
-  void initializeEntry().catch(async () => {
-    if (resolveLocalFallbackTarget() === "onboarding") {
-      isCheckingEntry.value = false;
-      return;
-    }
+  initSafeAreaInsets();
 
-    await goToIndex();
+  if (resolveLocalFallbackTarget() === "onboarding") {
+    isCheckingEntry.value = false;
+    return;
+  }
+
+  scheduleEntryFallback();
+  void initializeEntry().catch(() => {
+    showOnboardingFallback();
   });
+});
+
+onUnmounted(() => {
+  clearEntryFallback();
 });
 </script>
 
