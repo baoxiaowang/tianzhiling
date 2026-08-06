@@ -28,6 +28,14 @@
           :show-back="false"
         />
 
+        <view class="moments-compact-banner" @tap="handleCompactBannerTap">
+          <image
+            class="moments-compact-banner__img"
+            :src="compactBannerUrl"
+            mode="aspectFill"
+          />
+        </view>
+
         <view class="moments-compact-row">
           <view
             class="moments-compact-row__avatar"
@@ -232,6 +240,7 @@ export default {
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
+import { buildOssMediaUrl } from '@tzl/shared'
 import {
   createComment,
   deletePost,
@@ -307,10 +316,13 @@ const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = 188
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = 172
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
+const COMPACT_BANNER_URL = buildOssMediaUrl('/weapp/post-banner-vip.png')
+const COMPACT_BANNER_LINK = '/pages/vip-center/index'
+
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
+const compactBannerUrl = computed(() => COMPACT_BANNER_URL)
 const currentUserAvatar = computed(() => normalizeText(session.value?.user?.avatar))
 const currentUserAvatarFallback = computed(() => {
   const name = normalizeText(session.value?.user?.name)
@@ -652,6 +664,10 @@ function handleScrollBottom() {
   }
 
   void loadMorePosts()
+}
+
+function handleCompactBannerTap() {
+  void Taro.navigateTo({ url: COMPACT_BANNER_LINK })
 }
 
 function handleProfileEntryTap() {
@@ -1162,6 +1178,18 @@ useDidHide(() => {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+.moments-compact-banner {
+  height: 60px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.moments-compact-banner__img {
+  width: 100%;
+  height: 60px;
+  display: block;
 }
 
 .moments-compact-row {
