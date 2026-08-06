@@ -27,7 +27,12 @@
           :show-capsule="false"
           :show-back="false"
         />
+      </view>
 
+      <view
+        class="moments-compact-header"
+        :class="{ 'moments-compact-header--visible': showCollapsedAppBar }"
+      >
         <view class="moments-compact-banner" @tap="handleCompactBannerTap">
           <image
             class="moments-compact-banner__img"
@@ -1193,6 +1198,26 @@ useDidHide(() => {
 }
 
 .moments-collapsed-app-bar--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.moments-compact-header {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 117;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-12px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+
+.moments-compact-header--visible {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
