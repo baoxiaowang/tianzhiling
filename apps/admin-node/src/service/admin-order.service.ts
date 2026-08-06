@@ -2056,7 +2056,7 @@ export class AdminOrderService {
       return false;
     }
 
-    return /声音版|含声音|声音会员|语音版/.test(normalizedTitle);
+    return /声音版|含声音|声音会员|语音版|声音模型/.test(normalizedTitle);
   }
 
   private normalizePlanGroup(value?: string): VipPlanGroup {

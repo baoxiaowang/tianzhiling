@@ -1464,6 +1464,38 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('treats legacy voice bundle titles like 三年会员+声音模型 as voice plans', async () => {
+    const { service, orders, memberships } = createService();
+    const { order, basicPlan } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.targetId = BASIC_VIP_PLAN_ID;
+    order.targetCode = 'vip_master';
+    order.title = '三年会员+声音模型';
+    order.snapshot.vipPlan = {
+      id: String(basicPlan.id),
+      code: 'vip_master',
+      name: '三年会员+声音模型',
+      priceAmount: 29900,
+      currency: 'CNY',
+      durationDays: order.snapshot.vipPlan.durationDays,
+      lifetime: false,
+      voicePackageId: null,
+      voicePackageCode: null,
+      entitlementGrants: [],
+    };
+
+    const result = await service.getVoiceMembershipDowngradePreview(
+      ORDER_ID.toHexString()
+    );
+
+    expect(result.eligible).toBe(true);
+    expect(result.sourcePlan?.planGroup).toBe(VipPlanGroup.voice);
+  });
+
   it('refunds the paid difference when the voice plan was an upgrade', async () => {
     const { service, orders, memberships } = createService();
     const { order } = mockVoiceMembershipDowngradeLookups(

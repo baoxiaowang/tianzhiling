@@ -309,7 +309,7 @@ export class VoiceUsageAccessService {
       return false;
     }
 
-    return /声音版|含声音|声音会员|语音版/.test(normalizedTitle);
+    return /声音版|含声音|声音会员|语音版|声音模型/.test(normalizedTitle);
   }
 
   private sortNewestFirst<T extends { createdAt?: Date; updatedAt?: Date }>(
