@@ -277,10 +277,10 @@ const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
-const currentUserAvatar = computed(() => session.value?.user.avatar.trim() ?? '')
+const currentUserAvatar = computed(() => normalizeText(session.value?.user?.avatar))
 const currentUserAvatarFallback = computed(() => {
-  const name = session.value?.user.name.trim()
-  const account = session.value?.user.account.trim()
+  const name = normalizeText(session.value?.user?.name)
+  const account = normalizeText(session.value?.user?.account)
   const fallback = name || account || '我'
 
   return fallback.slice(0, 1)
@@ -373,7 +373,9 @@ function isPostDeletePending(postId: string) {
 }
 
 function isMyPost(post: PostItem) {
-  return Boolean(session.value?.user.id && post.userId === session.value.user.id)
+  const userId = session.value?.user?.id
+
+  return Boolean(userId && post.userId === userId)
 }
 
 function setPostLikePending(postId: string, pending: boolean) {
@@ -1146,7 +1148,7 @@ useDidHide(() => {
 .moments-profile-entry {
   position: absolute;
   top: 188px;
-  right: 22px;
+  left: 22px;
   z-index: 3;
   width: 64px;
   height: 64px;
