@@ -78,6 +78,8 @@
             <text class="moments-notice__text">{{ notificationText }}</text>
           </view>
           <view v-else class="moments-notice-spacer" />
+
+          <moments-ticker />
         </view>
 
         <view v-if="shouldShowPostsFeedback" class="moments-feedback">
@@ -214,6 +216,7 @@ import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
+import MomentsTicker from '../../components/moments-ticker/moments-ticker.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
@@ -541,32 +544,47 @@ async function preparePage() {
     isCheckingAuth.value = true
   }
 
-  await restoreAuthSession()
+  try {
+    await Promise.race([
+      restoreAuthSession().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 3000)
+      }),
+    ])
 
-  if (!hasLoadedPosts.value) {
-    const cachedFeed = getCachedPostFeed(POST_PAGE_SIZE)
+    if (!hasLoadedPosts.value) {
+      let cachedFeed: ReturnType<typeof getCachedPostFeed>
+      try {
+        cachedFeed = getCachedPostFeed(POST_PAGE_SIZE)
+      } catch (error) {
+        console.error('[moments] cached feed read failed', error)
+      }
 
-    if (cachedFeed?.items.length) {
-      posts.value = cachedFeed.items
-      currentPostPage.value = cachedFeed.page
-      hasMorePosts.value = cachedFeed.hasMore
-      hasLoadedPosts.value = true
-      isCheckingAuth.value = false
-      if (!hasReportedCachedContent) {
-        hasReportedCachedContent = true
-        reportPerformanceEvent(
-          'first_cached_content',
-          'moments',
-          Date.now() - momentsPageStartedAt,
-          'storage',
-        )
+      if (cachedFeed?.items.length) {
+        posts.value = cachedFeed.items
+        currentPostPage.value = cachedFeed.page
+        hasMorePosts.value = cachedFeed.hasMore
+        hasLoadedPosts.value = true
+        isCheckingAuth.value = false
+        if (!hasReportedCachedContent) {
+          hasReportedCachedContent = true
+          reportPerformanceEvent(
+            'first_cached_content',
+            'moments',
+            Date.now() - momentsPageStartedAt,
+            'storage',
+          )
+        }
       }
     }
-  }
 
-  await refreshMomentsData(!hasLoadedPosts.value)
-  isCheckingAuth.value = false
-  scheduleConversationPreload()
+    await refreshMomentsData(!hasLoadedPosts.value)
+    scheduleConversationPreload()
+  } catch (error) {
+    console.error('[moments] preparePage failed', error)
+  } finally {
+    isCheckingAuth.value = false
+  }
 }
 
 function handleRetry() {

@@ -85,7 +85,7 @@ export default {
 <script setup lang="ts">
 import { Close } from "@nutui/icons-vue-taro";
 import Taro from "@tarojs/taro";
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { authSession, restoreAuthSession } from "../../auth/session";
 import { reportChatImportEvent } from "../../utils/product-analytics";
 import {
@@ -95,6 +95,7 @@ import {
 
 const FEATURE_ID = "chat-import-v1";
 const DISPLAY_DELAY_MS = 500;
+const CHAT_IMPORT_TRIGGER_USER_MESSAGES = 5;
 
 const props = withDefaults(
   defineProps<{
@@ -103,6 +104,7 @@ const props = withDefaults(
     agentName?: string;
     agentAvatar?: string;
     iCallAgent?: string;
+    userMessageCount?: number;
   }>(),
   {
     conversationId: "",
@@ -110,11 +112,13 @@ const props = withDefaults(
     agentName: "",
     agentAvatar: "",
     iCallAgent: "",
+    userMessageCount: 0,
   }
 );
 
 const visible = ref(false);
 const isNavigating = ref(false);
+let eligibleUserId = "";
 let displayTimer: ReturnType<typeof setTimeout> | undefined;
 
 onMounted(() => {
@@ -135,7 +139,35 @@ async function prepareAnnouncement() {
     return;
   }
 
+  eligibleUserId = userId;
+  tryScheduleShow();
+}
+
+watch(
+  () => props.userMessageCount,
+  () => {
+    tryScheduleShow();
+  }
+);
+
+function tryScheduleShow() {
+  if (
+    !eligibleUserId ||
+    visible.value ||
+    displayTimer ||
+    props.userMessageCount < CHAT_IMPORT_TRIGGER_USER_MESSAGES
+  ) {
+    return;
+  }
+
   displayTimer = setTimeout(() => {
+    displayTimer = undefined;
+
+    const userId = eligibleUserId;
+    if (!userId || visible.value || hasSeenAnnouncement(userId)) {
+      return;
+    }
+
     markAnnouncementSeen(userId);
     visible.value = true;
     reportChatImportEvent("poster_exposure");

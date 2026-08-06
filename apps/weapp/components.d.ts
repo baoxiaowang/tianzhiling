@@ -18,6 +18,7 @@ declare module 'vue' {
     EmojiPickerPanel: typeof import('./src/components/emoji-picker-panel/emoji-picker-panel.vue')['default']
     LoginPromptPopup: typeof import('./src/components/login-prompt-popup/login-prompt-popup.vue')['default']
     MomentCard: typeof import('./src/components/moment-card/moment-card.vue')['default']
+    MomentsTicker: typeof import('./src/components/moments-ticker/moments-ticker.vue')['default']
     NutButton: typeof import('@nutui/nutui-taro')['Button']
     NutCell: typeof import('@nutui/nutui-taro')['Cell']
     NutCheckbox: typeof import('@nutui/nutui-taro')['Checkbox']

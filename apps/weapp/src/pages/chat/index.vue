@@ -326,6 +326,7 @@
         :agent-name="agentName"
         :agent-avatar="agentAvatar"
         :i-call-agent="iCallAgent"
+        :user-message-count="chatUserMessageCount"
       />
 
       <nut-dialog
@@ -854,6 +855,9 @@ const pendingDeleteIsImported = computed(() =>
   )
 );
 const isConfirmingMessageDelete = ref(false);
+const chatUserMessageCount = computed(
+  () => messages.value.filter((message) => message.role === "user").length
+);
 const isFeedbackPopupVisible = ref(false);
 const selectedFeedbackMessageId = ref("");
 const selectedFeedbackType = ref<ConversationMessageFeedbackType>("unlike");
@@ -5562,9 +5566,9 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-privacy-dialog .nut-dialog__header {
-  height: 22px;
-  font-size: 16px;
-  line-height: 22px;
+  height: 24px;
+  font-size: 17px;
+  line-height: 24px;
   font-weight: 600;
   color: #000000;
 }
@@ -5575,24 +5579,24 @@ function destroyVoiceDurationProbeContexts() {
   max-height: none;
   overflow: visible;
   color: #000000;
-  font-size: 12px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 24px;
   text-align: left;
 }
 
 .chat-privacy-dialog__content {
   width: 100%;
   color: #000000;
-  font-size: 12px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 24px;
   word-break: break-word;
 }
 
 .chat-privacy-dialog__link {
   margin-top: 8px;
   color: #07c160;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .chat-privacy-dialog .nut-dialog__footer {
@@ -5610,11 +5614,11 @@ function destroyVoiceDurationProbeContexts() {
 .chat-privacy-dialog__secondary,
 .chat-privacy-dialog__primary {
   width: 116px;
-  height: 36px;
+  height: 40px;
   border-radius: 58px;
   text-align: center;
-  font-size: 14px;
-  line-height: 36px;
+  font-size: 16px;
+  line-height: 40px;
   font-weight: 500;
   letter-spacing: 0;
   box-sizing: border-box;
