@@ -32,6 +32,7 @@
       <view
         class="moments-compact-header"
         :class="{ 'moments-compact-header--visible': showCollapsedAppBar }"
+        :style="compactHeaderTopStyle"
       >
         <view class="moments-compact-banner" @tap="handleCompactBannerTap">
           <image
@@ -248,6 +249,7 @@ export default {
 import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
 import { buildOssMediaUrl } from '@tzl/shared'
+import { readMenuButtonMetrics } from '../../utils/menu-button'
 import {
   createComment,
   deletePost,
@@ -326,6 +328,10 @@ const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = 172
 const COMMENT_BLUR_CLOSE_DELAY = 120
 const COMPACT_BANNER_URL = buildOssMediaUrl('/weapp/post-banner-vip.png')
 const COMPACT_BANNER_LINK = '/pages/vip-center/index'
+const appBarMetrics = readMenuButtonMetrics()
+const compactHeaderTopStyle = computed(() => ({
+  paddingTop: `${appBarMetrics.totalHeight}px`,
+}))
 
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
