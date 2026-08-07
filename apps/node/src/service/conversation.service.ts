@@ -2951,6 +2951,7 @@ export class ConversationService {
           evidence: reviewEvidence,
           claims: replyClaims,
           reviewMode: guardrailReviewMode,
+          conversationId: this.stringifyObjectId(runtime.conversation.id),
         })
     );
     const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
@@ -3720,6 +3721,7 @@ export class ConversationService {
     evidence?: AgentEvidenceItem[];
     claims?: AssistantFactClaim[];
     reviewMode?: ReplyGuardrailReviewMode;
+    conversationId?: string;
   }): Promise<ValidateAssistantReplyResult> {
     if (!this.replyGuardrailService) {
       return {
@@ -3743,6 +3745,7 @@ export class ConversationService {
         claims: options.claims,
         reviewMode: options.reviewMode,
         mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
+        conversationId: options.conversationId,
       });
 
       if (result.rewritten) {

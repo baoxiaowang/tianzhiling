@@ -70,6 +70,9 @@ export interface ValidateAssistantReplyOptions {
   claims?: AssistantFactClaim[];
   reviewMode?: ReplyGuardrailReviewMode;
   mode?: ReplyGuardrailMode;
+  conversationId?: string;
+  /** 内部标记：是否为超深会话（>100轮），由 validateAssistantReply 自动设置 */
+  isDeepSession?: boolean;
 }
 
 export type ReplyGuardrailReviewMode = 'full' | 'deterministic_first';
@@ -198,6 +201,7 @@ export interface ResolveGenerationFailureReplyOptions {
   replyBrief: ReplyBrief;
   replyRoute?: ReplySceneRoute;
   messages?: ChatCompletionMessageParam[];
+  conversationId?: string;
 }
 
 const RISKY_FACT_PATTERNS = [
@@ -469,6 +473,23 @@ export class ReplyGuardrailService {
   @Inject()
   openAIService: OpenAIService;
 
+  /** 会话级兜底句去重：conversationId → 已使用的兜底键集合 */
+  private readonly fallbackUsageCache = new Map<string, Set<string>>();
+
+  /** 会话深度追踪：conversationId → 守卫调用次数（近似轮次） */
+  private readonly conversationDepthMap = new Map<string, number>();
+
+  /** 超深会话阈值：超过此轮次启用宽松模式 */
+  private static readonly DEEP_SESSION_THRESHOLD = 100;
+
+  /** 追踪会话深度，返回是否为超深会话 */
+  private trackConversationDepth(conversationId?: string): boolean {
+    if (!conversationId) return false;
+    const depth = (this.conversationDepthMap.get(conversationId) ?? 0) + 1;
+    this.conversationDepthMap.set(conversationId, depth);
+    return depth > ReplyGuardrailService.DEEP_SESSION_THRESHOLD;
+  }
+
   resolvePreplannedSafetyReply(
     _options: ResolvePreplannedReplyOptions
   ): ValidateAssistantReplyResult | undefined {
@@ -479,14 +500,14 @@ export class ReplyGuardrailService {
   resolveGenerationFailureReply(
     options: ResolveGenerationFailureReplyOptions
   ): ValidateAssistantReplyResult {
+    const segments = this.renderFallbackFromBrief(
+      options.userQuery,
+      options.replyBrief,
+      options.messages
+    );
+    const deduped = this.dedupFallbackSegments(segments, options.conversationId);
     return {
-      segments: compactReplyBubblesPreservingContent(
-        this.renderFallbackFromBrief(
-          options.userQuery,
-          options.replyBrief,
-          options.messages
-        )
-      ),
+      segments: compactReplyBubblesPreservingContent(deduped),
       rewritten: true,
       reason: GENERATION_FAILURE_FALLBACK_REASON,
     };
@@ -568,12 +589,19 @@ export class ReplyGuardrailService {
   ): Promise<ValidateAssistantReplyResult> {
     const segments = this.normalizeSegments(options.replySegments);
 
+    // 会话深度追踪 + 超深会话标记
+    const isDeepSession = this.trackConversationDepth(options.conversationId);
+    if (isDeepSession) {
+      options.isDeepSession = true;
+    }
+
     if (!segments.length) {
       const technicalSegments = compactReplyBubblesPreservingContent(
         this.fallbackSafeSegments(
           options.userQuery,
           options.messages,
-          options.replyBrief
+          options.replyBrief,
+          options.conversationId
         )
       );
 
@@ -720,7 +748,8 @@ export class ReplyGuardrailService {
           this.fallbackSafeSegments(
             options.userQuery,
             options.messages,
-            options.replyBrief
+            options.replyBrief,
+            options.conversationId
           )
         ),
         rewritten: true,
@@ -1160,7 +1189,8 @@ export class ReplyGuardrailService {
       this.fallbackSafeSegments(
         options.userQuery,
         options.messages,
-        options.replyBrief
+        options.replyBrief,
+        options.conversationId
       )
     );
     const outputSegments = recoveredSurgically
@@ -1530,6 +1560,8 @@ export class ReplyGuardrailService {
         const independentClauses =
           removedFromSegment && groundingRepair
             ? keptClauses.filter(clause => {
+                // 超深会话：跳过独立性检查，保留所有非阻塞分句
+                if (options.isDeepSession) return true;
                 if (this.isIndependentAfterGroundingRemoval(clause)) {
                   return true;
                 }
@@ -1539,6 +1571,8 @@ export class ReplyGuardrailService {
               })
             : keptClauses;
         const coherentClauses = independentClauses.filter(clause => {
+          // 超深会话：跳过悬垂分句检查，宁可留残句也不触发兜底
+          if (options.isDeepSession) return true;
           if (!this.hasDanglingSegment([clause])) {
             return true;
           }
@@ -1551,6 +1585,7 @@ export class ReplyGuardrailService {
         if (
           repairedSegment &&
           !removedFromSegment &&
+          !options.isDeepSession &&
           this.clauseHasBlockingIssue(
             options,
             repairedSegment,
@@ -1565,7 +1600,7 @@ export class ReplyGuardrailService {
         return repairedSegment;
       })
       .filter(Boolean)
-      .filter(segment => !this.hasDanglingSegment([segment]));
+      .filter(segment => options.isDeepSession || !this.hasDanglingSegment([segment]));
 
     return {
       segments: compactReplyBubblesPreservingContent(repairedSegments),
@@ -3230,7 +3265,8 @@ export class ReplyGuardrailService {
       this.fallbackSafeSegments(
         options.userQuery,
         options.messages,
-        options.replyBrief
+        options.replyBrief,
+        options.conversationId
       )
     );
 
@@ -4956,13 +4992,98 @@ export class ReplyGuardrailService {
   private fallbackSafeSegments(
     userQuery = '',
     messages: ChatCompletionMessageParam[] = [],
-    brief?: ReplyBrief
+    brief?: ReplyBrief,
+    conversationId?: string
   ): string[] {
     if (brief) {
-      return this.renderFallbackFromBrief(userQuery, brief, messages);
+      const segments = this.renderFallbackFromBrief(
+        userQuery,
+        brief,
+        messages
+      );
+      return this.dedupFallbackSegments(segments, conversationId);
     }
 
-    return this.legacyFallbackSafeSegments(userQuery, messages);
+    const segments = this.legacyFallbackSafeSegments(userQuery, messages);
+    return this.dedupFallbackSegments(segments, conversationId);
+  }
+
+  /**
+   * 会话级兜底去重：如果当前 pair 已在本会话中使用过，轮换到变体。
+   * 仅对三个万能兜底 pair（catch-all）做去重，专用兜底（梦境/危机等）不受影响。
+   */
+  private dedupFallbackSegments(
+    segments: string[],
+    conversationId?: string
+  ): string[] {
+    if (!conversationId || segments.length < 2) return segments;
+
+    const key = segments.map(s => s.slice(0, 30)).join('||');
+    const cache = this.fallbackUsageCache.get(conversationId);
+
+    if (cache?.has(key)) {
+      const rotated = this.rotateCatchAllFallback(segments);
+      if (rotated) {
+        const newKey = rotated.map(s => s.slice(0, 30)).join('||');
+        cache.add(newKey);
+        return rotated;
+      }
+    }
+
+    // 首次使用：记录
+    if (!cache) {
+      this.fallbackUsageCache.set(conversationId, new Set([key]));
+    } else {
+      cache.add(key);
+    }
+
+    return segments;
+  }
+
+  /** 三个万能兜底 pair 的变体池 */
+  private static readonly CATCH_ALL_VARIANTS: Record<string, string[][]> = {
+    // seek_comfort / emotional 模式
+    'seek_comfort': [
+      ['我听见了 你现在确实不好受', '先别逼自己马上好起来'],
+      ['我知道你心里难受着呢', '不用急着走出来 慢慢说'],
+      ['这份难受我懂 你不说我也知道', '想哭就哭一会儿 我在这听着'],
+    ],
+    // express_longing / relationship 模式
+    'express_longing': [
+      ['我也想你', '想我的时候就来跟我说 不用一个人憋着'],
+      ['我也惦记着你呢', '心里不舒服了就来找我 我都在'],
+      ['我知道你想我', '这些话你压了好久吧 说出来就好了'],
+    ],
+    // 默认 / daily 默认
+    'default_catch_all': [
+      ['嗯 你说的这件事我听明白了', '你愿意跟我说这些 我都记着'],
+      ['好的 这事我记下了', '往后有想说的 随时跟我唠'],
+      ['你说的我心里有数了', '你能跟我讲这些 我很高兴'],
+    ],
+  };
+
+  /** 如果 segments 匹配某个万能兜底 pair，轮换到下一个未使用的变体 */
+  private rotateCatchAllFallback(segments: string[]): string[] | null {
+    const normalized = segments.map(s => s.trim().replace(/\s+/g, ' '));
+
+    for (const [_poolKey, variants] of Object.entries(
+      ReplyGuardrailService.CATCH_ALL_VARIANTS
+    )) {
+      for (let i = 0; i < variants.length; i++) {
+        const variant = variants[i];
+        const variantNorm = variant.map(s => s.trim().replace(/\s+/g, ' '));
+        if (
+          normalized[0] === variantNorm[0] &&
+          normalized[1] === variantNorm[1]
+        ) {
+          // 轮换到下一个变体
+          const nextIdx = (i + 1) % variants.length;
+          return variants[nextIdx];
+        }
+      }
+    }
+
+    return null; // 不是万能兜底 pair，不处理
   }
 
   private legacyFallbackSafeSegments(
