@@ -34,14 +34,6 @@
         :class="{ 'moments-compact-header--visible': showCollapsedAppBar }"
         :style="compactHeaderTopStyle"
       >
-        <view class="moments-compact-banner" @tap="handleCompactBannerTap">
-          <image
-            class="moments-compact-banner__img"
-            :src="compactBannerUrl"
-            mode="aspectFill"
-          />
-        </view>
-
         <view class="moments-compact-row">
           <view
             class="moments-compact-row__avatar"
@@ -56,6 +48,17 @@
             <view v-else class="moments-compact-row__avatar-fallback">
               {{ currentUserAvatarFallback }}
             </view>
+          </view>
+
+          <view
+            class="moments-compact-row__banner"
+            @tap="handleCompactBannerTap"
+          >
+            <image
+              class="moments-compact-row__banner-icon"
+              :src="compactBannerUrl"
+              mode="aspectFill"
+            />
           </view>
 
           <view
@@ -1229,18 +1232,6 @@ useDidHide(() => {
   transform: translateY(0);
 }
 
-.moments-compact-banner {
-  height: 60px;
-  overflow: hidden;
-  background: #f8fafc;
-}
-
-.moments-compact-banner__img {
-  width: 100%;
-  height: 60px;
-  display: block;
-}
-
 .moments-compact-row {
   display: flex;
   align-items: center;
@@ -1249,6 +1240,20 @@ useDidHide(() => {
   padding: 0 16px;
   box-sizing: border-box;
   background: #ffffff;
+}
+
+.moments-compact-row__banner {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.moments-compact-row__banner-icon {
+  width: 32px;
+  height: 32px;
+  display: block;
 }
 
 .moments-compact-row__avatar {
