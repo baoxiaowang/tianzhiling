@@ -28,12 +28,29 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
-import { type PromoBannerItem, DEFAULT_BANNERS } from './banner-data'
+import { buildOssMediaUrl } from '@tzl/shared'
+
+interface PromoBannerItem {
+  id: string
+  imageUrl: string
+  link?: string
+}
 
 withDefaults(defineProps<{
   banners?: readonly PromoBannerItem[]
 }>(), {
-  banners: () => DEFAULT_BANNERS,
+  banners: () => [
+    // {
+    //   id: 'voice-clone',
+    //   imageUrl: buildOssMediaUrl('/weapp/post-banner-voice.png'),
+    //   link: '/pages/voice-package/index',
+    // },
+    {
+      id: 'vip',
+      imageUrl: buildOssMediaUrl('/weapp/post-banner-vip.png'),
+      link: '/pages/vip-center/index',
+    },
+  ],
 })
 
 function handleBannerTap(banner: PromoBannerItem) {

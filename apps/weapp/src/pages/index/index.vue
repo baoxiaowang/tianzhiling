@@ -29,51 +29,6 @@
         />
       </view>
 
-      <view
-        class="moments-compact-header"
-        :class="{ 'moments-compact-header--visible': showCollapsedAppBar }"
-        :style="compactHeaderTopStyle"
-      >
-        <view class="moments-compact-row">
-          <view
-            class="moments-compact-row__avatar"
-            @tap="handleProfileEntryTap"
-          >
-            <image
-              v-if="currentUserAvatar"
-              class="moments-compact-row__avatar-img"
-              :src="currentUserAvatar"
-              mode="aspectFill"
-            />
-            <view v-else class="moments-compact-row__avatar-fallback">
-              {{ currentUserAvatarFallback }}
-            </view>
-          </view>
-
-          <text
-            class="moments-compact-row__tip"
-            @tap="handleCompactBannerTap"
-          >{{ compactTipText }}</text>
-
-          <view
-            v-if="hasUnreadNotifications"
-            class="moments-compact-row__notice"
-            @tap="handleNotificationTap"
-          >
-            <image
-              v-if="notificationAvatarUrl"
-              class="moments-compact-row__notice-avatar"
-              :src="notificationAvatarUrl"
-              mode="aspectFill"
-            />
-            <view v-else class="moments-compact-row__notice-avatar moments-compact-row__notice-avatar--fallback">
-              <text>{{ notificationAvatarFallback }}</text>
-            </view>
-            <text class="moments-compact-row__notice-text">{{ notificationText }}</text>
-          </view>
-        </view>
-      </view>
-
       <scroll-view
         class="moments-scroll"
         :scroll-y="true"
@@ -245,7 +200,6 @@ export default {
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
-import { readMenuButtonMetrics } from '../../utils/menu-button'
 import {
   createComment,
   deletePost,
@@ -265,7 +219,6 @@ import MomentCard from '../../components/moment-card/moment-card.vue'
 import MomentsTicker from '../../components/moments-ticker/moments-ticker.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
-import { DEFAULT_BANNERS } from '../../components/top-promo-banner/banner-data'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import {
   hasUnseenPostNotifications,
@@ -320,16 +273,10 @@ let isPreviewingPostImage = false
 
 const POST_PAGE_SIZE = 10
 const TOP_PROMO_BANNER_HEIGHT = 220
-const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = 188
-const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = 172
+const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
+const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const COMPACT_BANNER_LINK = '/pages/vip-center/index'
-const compactTipText = DEFAULT_BANNERS[0]?.text ?? ''
-const appBarMetrics = readMenuButtonMetrics()
-const compactHeaderTopStyle = computed(() => ({
-  paddingTop: `${appBarMetrics.totalHeight}px`,
-}))
-
+const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
@@ -689,10 +636,6 @@ function handleScrollBottom() {
   }
 
   void loadMorePosts()
-}
-
-function handleCompactBannerTap() {
-  void Taro.navigateTo({ url: COMPACT_BANNER_LINK })
 }
 
 function handleProfileEntryTap() {
@@ -1203,113 +1146,6 @@ useDidHide(() => {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
-}
-
-.moments-compact-header {
-  position: fixed;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 117;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-12px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
-  background: #ffffff;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
-}
-
-.moments-compact-header--visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.moments-compact-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 16px;
-  box-sizing: border-box;
-  background: #ffffff;
-}
-
-.moments-compact-row__tip {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #f45b42;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.moments-compact-row__avatar {
-  flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.moments-compact-row__avatar-img,
-.moments-compact-row__avatar-fallback {
-  width: 30px;
-  height: 30px;
-  display: block;
-}
-
-.moments-compact-row__avatar-fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #ffd9e5 0%, #ff8daa 100%);
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.moments-compact-row__notice {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  background: #4c4c4c;
-}
-
-.moments-compact-row__notice-avatar {
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  flex-shrink: 0;
-}
-
-.moments-compact-row__notice-avatar--fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #ffffff;
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.moments-compact-row__notice-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #ffffff;
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .moments-scroll {
