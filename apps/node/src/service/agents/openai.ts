@@ -550,6 +550,7 @@ export class OpenAIService {
         model,
         messages,
         stream: false,
+        response_format: { type: 'text' },
         extra_body: {
           asr_options: {
             enable_itn: false,
@@ -567,9 +568,15 @@ export class OpenAIService {
           ? 'object'
           : typeof rawContent;
 
+      let rawPreview = '';
+      try {
+        rawPreview = JSON.stringify(rawContent).slice(0, 240);
+      } catch { /* ignore */ }
+
       this.logger.info(
-        '[openai] transcription raw content type=%s',
-        rawType
+        '[openai] transcription raw content type=%s, preview=%s',
+        rawType,
+        rawPreview
       );
 
       const transcript = extractTranscriptionContent(rawContent);
