@@ -1011,6 +1011,36 @@
         </template>
       </nut-dialog>
     </template>
+
+    <!-- 声纹授权自定义弹窗 -->
+    <view v-if="isVoiceprintConsentVisible" class="voiceprint-consent-overlay" @tap="handleVoiceprintConsentClose">
+      <view class="voiceprint-consent-dialog" @tap.stop="">
+        <view class="voiceprint-consent-dialog__header">
+          <text class="voiceprint-consent-dialog__title">声纹信息授权</text>
+          <view class="voiceprint-consent-dialog__close" @tap="handleVoiceprintConsentClose">
+            <text>✕</text>
+          </view>
+        </view>
+        <text class="voiceprint-consent-dialog__content">
+          为帮助你创建逝去亲人的声音模型，需要收集你的声纹信息（属于敏感个人信息）。请在《天之灵声纹信息授权协议》中了解我们如何收集、使用和保护你的声纹信息。
+        </text>
+        <view class="voiceprint-consent-dialog__actions">
+          <nut-button
+            class="voiceprint-consent-dialog__btn voiceprint-consent-dialog__btn--secondary"
+            @click="handleVoiceprintConsentView"
+          >
+            查看协议
+          </nut-button>
+          <nut-button
+            class="voiceprint-consent-dialog__btn"
+            type="primary"
+            @click="handleVoiceprintConsentAgree"
+          >
+            同意并授权
+          </nut-button>
+        </view>
+      </view>
+    </view>
   </page-scaffold>
 </template>
 
@@ -1071,7 +1101,11 @@ import {
   ensureAuthenticatedSession,
   redirectToAuthPage,
 } from "../../utils/auth-guard";
-import { requestVoiceprintConsent } from "../../legal/voiceprint-consent";
+import {
+  hasVoiceprintConsent,
+  setVoiceprintConsent,
+  openVoiceprintAgreement,
+} from "../../legal/voiceprint-consent";
 import { getVoiceServiceFixedPromptSpeech } from "./voice-service-prompt-speech";
 import {
   buildVoiceServiceMessengerState,
@@ -1183,6 +1217,7 @@ const audioPlaybackCurrentSeconds = ref(0);
 const audioPlaybackDurationSeconds = ref(0);
 const isVoiceRecording = ref(false);
 const isVoiceprintDenied = ref(false);
+const isVoiceprintConsentVisible = ref(false);
 const isAssistantSpeechLoading = ref(false);
 const isAssistantSpeechPlaying = ref(false);
 const shouldShowResumePrompt = ref(false);
@@ -1453,10 +1488,9 @@ async function preparePage() {
 
   isCheckingAuth.value = false;
 
-  const consented = await requestVoiceprintConsent();
-  if (!consented) {
-    isVoiceprintDenied.value = true;
-    loadError.value = "";
+  if (!hasVoiceprintConsent()) {
+    isVoiceprintConsentVisible.value = true;
+    isCheckingAuth.value = false;
     return;
   }
 
@@ -1618,11 +1652,23 @@ function handleRetry() {
   void refreshSession();
 }
 
+function handleVoiceprintConsentClose() {
+  isVoiceprintConsentVisible.value = false;
+  isVoiceprintDenied.value = true;
+}
+
+function handleVoiceprintConsentView() {
+  void openVoiceprintAgreement();
+}
+
+async function handleVoiceprintConsentAgree() {
+  setVoiceprintConsent();
+  isVoiceprintConsentVisible.value = false;
+  await preparePage();
+}
+
 async function handleVoiceprintAgree() {
-  const consented = await requestVoiceprintConsent();
-  if (consented) {
-    await preparePage();
-  }
+  isVoiceprintConsentVisible.value = true;
 }
 
 async function handleBack() {
@@ -4395,5 +4441,76 @@ function buildAgentFallback(name: string) {
   50% {
     box-shadow: 0 0 0 8px rgba(157, 76, 85, 0);
   }
+}
+
+.voiceprint-consent-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.voiceprint-consent-dialog {
+  width: 300px;
+  max-width: 84vw;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.voiceprint-consent-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 18px 0;
+}
+
+.voiceprint-consent-dialog__title {
+  color: #1f2937;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.voiceprint-consent-dialog__close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.voiceprint-consent-dialog__content {
+  display: block;
+  padding: 14px 18px 20px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.voiceprint-consent-dialog__actions {
+  display: flex;
+  gap: 10px;
+  padding: 0 18px 18px;
+}
+
+.voiceprint-consent-dialog__btn {
+  flex: 1;
+  border-radius: 20px;
+}
+
+.voiceprint-consent-dialog__btn--secondary {
+  background: #f3f4f6;
+  color: #374151;
 }
 </style>
