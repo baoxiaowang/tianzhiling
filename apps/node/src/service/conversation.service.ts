@@ -1256,15 +1256,7 @@ export class ConversationService {
       await this.transcribeVoiceForConversation(voicePayload)
     )?.trim();
 
-    if (!transcript) {
-      throw new AppError(
-        'VOICE_TRANSCRIPTION_EMPTY',
-        '暂未识别到语音内容',
-        422
-      );
-    }
-
-    return { transcript };
+    return { transcript: transcript || '' };
   }
 
   async generateMessageVoice(
@@ -4628,7 +4620,7 @@ export class ConversationService {
       case MessageType.voice:
         return {
           ...message,
-          mediaTranscript: await this.transcribeVoiceForConversation(message),
+          mediaTranscript: await this.transcribeVoiceForConversation(message) || '[用户发来一条语音]',
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
