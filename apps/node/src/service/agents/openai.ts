@@ -533,7 +533,8 @@ export class OpenAIService {
         role: 'user',
         content: [
           {
-            audio: audioUrl,
+            type: 'audio_url',
+            audio_url: { url: audioUrl },
           },
         ],
       },
@@ -550,15 +551,6 @@ export class OpenAIService {
         model,
         messages,
         stream: false,
-        response_format: { type: 'text' },
-        extra_body: {
-          asr_options: {
-            enable_itn: false,
-            ...(request.language?.trim()
-              ? { language: request.language.trim() }
-              : {}),
-          },
-        },
       } as unknown as ChatCompletionCreateParamsNonStreaming);
 
       const rawContent = response.choices?.[0]?.message?.content;
