@@ -1840,7 +1840,31 @@ export class ConversationService {
     );
     const searchableText = this.buildMessageSearchableText(messagePayload);
     const now = new Date();
-    const chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+    let chatQuota: ConversationChatQuotaSnapshot;
+    try {
+      chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+    } catch (error) {
+      // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
+      // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
+      if (
+        error instanceof AppError &&
+        error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
+      ) {
+        throw error; // 正常超限，透传
+      }
+      this.logger?.error?.(
+        '[chat-quota] unexpected error in resolveChatQuotaForSend, defaulting to conservative limit: %s',
+        (error as Error)?.message || 'unknown'
+      );
+      chatQuota = {
+        isVip: false,
+        policy: 'daily',
+        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        remainingCount: 0,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      };
+    }
 
     const userMessage = await this.saveMessage({
       conversationId: runtime.conversation.id,
@@ -2392,6 +2416,24 @@ export class ConversationService {
     runtime: ReplyRuntime,
     now: Date
   ): Promise<ConversationChatQuotaSnapshot> {
+    // 防御：DI 初始化失败时宁可误拦也不要放行
+    if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
+      this.logger?.error?.(
+        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s — defaulting to conservative limit',
+        !!this.userMembershipModel,
+        !!this.userModel,
+        !!this.messageModel
+      );
+      return {
+        isVip: false,
+        policy: 'daily',
+        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        remainingCount: 0,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      };
+    }
+
     if (await this.isUserVip(runtime.conversation.userId, now)) {
       return {
         isVip: true,
