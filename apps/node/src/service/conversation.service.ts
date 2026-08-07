@@ -4886,6 +4886,8 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
+    return undefined;
+
     // 从 COS 下载音频转 base64，确保数据直接传给 STT
     let audioUrl = '';
 
