@@ -560,9 +560,19 @@ export class OpenAIService {
         },
       } as unknown as ChatCompletionCreateParamsNonStreaming);
 
-      const transcript = extractTranscriptionContent(
-        response.choices?.[0]?.message?.content
+      const rawContent = response.choices?.[0]?.message?.content;
+      const rawType = Array.isArray(rawContent)
+        ? 'array'
+        : typeof rawContent === 'object' && rawContent !== null
+          ? 'object'
+          : typeof rawContent;
+
+      this.logger.info(
+        '[openai] transcription raw content type=%s',
+        rawType
       );
+
+      const transcript = extractTranscriptionContent(rawContent);
 
       this.logger.info(
         '[openai] transcription response received, model=%s, choices=%s, transcriptLength=%s, transcriptPreview=%s',
