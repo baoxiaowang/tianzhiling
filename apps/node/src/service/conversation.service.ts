@@ -4886,18 +4886,23 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
-    // 用 COS 签名 URL 传给 STT — 600 秒有效期够 DashScope 拉取
+    // 从 COS 下载音频转 base64，确保数据直接传给 STT
     let audioUrl = '';
 
     if (payload.mediaObjectKey?.trim()) {
       try {
-        audioUrl = this.tencentCosService.getSignedDownloadUrl(
-          payload.mediaObjectKey.trim(),
-          600
+        const result = await this.tencentCosService.getBuffer(
+          payload.mediaObjectKey.trim()
         );
+        const mime =
+          result.contentType?.trim() ||
+          payload.mediaMimeType?.trim() ||
+          'audio/aac';
+        const base64 = result.buffer.toString('base64');
+        audioUrl = `data:${mime};base64,${base64}`;
       } catch (cosError) {
         this.logger.error(
-          '[conversation] signed URL failed, objectKey=%s, reason=%s',
+          '[conversation] COS download failed, objectKey=%s, reason=%s',
           payload.mediaObjectKey,
           this.describeReplyError(cosError)
         );
@@ -4909,6 +4914,7 @@ export class ConversationService {
       }
     } else if (payload.mediaUrl?.trim()) {
       audioUrl = payload.mediaUrl.trim();
+    }
     }
 
     if (!audioUrl) {

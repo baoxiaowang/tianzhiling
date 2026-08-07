@@ -533,8 +533,7 @@ export class OpenAIService {
         role: 'user',
         content: [
           {
-            type: 'audio_url',
-            audio_url: { url: audioUrl },
+            audio: audioUrl,
           },
         ],
       },
