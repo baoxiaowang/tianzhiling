@@ -23,4 +23,9 @@ export class SystemController {
       sampleSize: Number(query.sampleSize) || undefined,
     });
   }
+
+  @Get('/chat-failures')
+  async chatFailures(@Query() query: { since?: string }) {
+    return this.adminChatStatsService.getFailureStats(query.since);
+  }
 }
