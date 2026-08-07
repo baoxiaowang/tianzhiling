@@ -140,9 +140,9 @@ import {
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
-const ASSISTANT_REPLY_TIMEOUT_MS = 20000;
-const ASSISTANT_REPLY_MAX_TOKENS = 420;
-const ASSISTANT_RECOVERY_MAX_TOKENS = 360;
+const ASSISTANT_REPLY_TIMEOUT_MS = 28000;
+const ASSISTANT_REPLY_MAX_TOKENS = 520;
+const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
@@ -382,6 +382,7 @@ interface ReplyRoutingAudit {
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
   brief?: ReplyBrief;
+  skipReply?: boolean;
   fallbackSource?: string;
   generationFailureStage?: 'context' | 'completion' | 'parse';
   generationFailureCode?: string;
@@ -1903,11 +1904,13 @@ export class ConversationService {
       searchableText,
     });
 
+    const deferReply = this.isAssistantReplyDeferred(messagePayload);
+
     return {
       messagePayload,
       searchableText,
       userMessage,
-      deferReply: this.isAssistantReplyDeferred(messagePayload),
+      deferReply,
       chatQuota,
     };
   }
@@ -2711,6 +2714,31 @@ export class ConversationService {
         intent: context.replyIntent ?? context.replyRoute?.intent,
         route: context.replyRoute,
       });
+
+    // Layer 2: 规划器判定本轮无需回复，跳过主模型
+    if (this.shouldSkipReplyFromBrief(replyBrief, before.searchableText)) {
+      this.logger.info(
+        '[conversation] reply skipped by plan, contribution=%s, closure=%s, alternative=%s',
+        replyBrief.conversationPlan?.engagement?.assistantContribution,
+        replyBrief.conversationPlan?.engagement?.closureReadiness,
+        replyBrief.strategyQuality?.preferredAlternative
+      );
+      return {
+        replySegments: [],
+        usage: {},
+        routing: {
+          intent: context.replyIntent ?? context.replyRoute?.intent,
+          route: context.replyRoute,
+          brief: replyBrief,
+          skipReply: true,
+          evidenceCount: 0,
+          factClaimCount: 0,
+          unsupportedClaimCount: 0,
+          ...context.diagnostics,
+        },
+      };
+    }
+
     const contextEvidence = context.evidence || [];
     let reviewEvidence = contextEvidence;
     this.scheduleRelationshipSignals(
@@ -2804,7 +2832,13 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      this.assertAssistantCompletionNotTruncated(response);
+      const replyTruncated =
+        this.checkAssistantCompletionTruncated(response);
+      if (replyTruncated) {
+        this.logger.warn(
+          '[conversation] primary assistant completion truncated by token limit'
+        );
+      }
       const parsedReply = this.parseAssistantReply(
         responseContent,
         context.chatToolPlan?.availableTools
@@ -2898,7 +2932,13 @@ export class ConversationService {
           typeof response.choices?.[0]?.message?.content === 'string'
             ? response.choices[0].message.content
             : '';
-        this.assertAssistantCompletionNotTruncated(response);
+        const replyTruncated =
+          this.checkAssistantCompletionTruncated(response);
+        if (replyTruncated) {
+          this.logger.warn(
+            '[conversation] recovery assistant completion truncated by token limit'
+          );
+        }
         const parsedReply = this.parseAssistantReply(responseContent);
         const plannedSegments = this.materializeParticipationReplySegments(
           parsedReply.segments,
@@ -3836,6 +3876,11 @@ export class ConversationService {
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
+    if (!processed.replySegments.length) {
+      await this.touchConversation(runtime.conversation, replyTime);
+      return { assistantMessages: [] };
+    }
+
     const assistantMessages =
       (await this.createAssistantVoiceReplyMessages({
         runtime,
@@ -4644,27 +4689,136 @@ export class ConversationService {
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
-      this.isAssistantSilenceRequest(payload) ||
+      this.isNaturalConversationEnd(payload) ||
       (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
     );
   }
 
-  private isAssistantSilenceRequest(payload: PreparedIncomingMessage): boolean {
+  private isNaturalConversationEnd(payload: PreparedIncomingMessage): boolean {
     if (payload.type !== MessageType.text) {
       return false;
     }
 
     const content = payload.content?.trim();
 
-    if (!content || content.length > 40) {
+    if (!content) {
       return false;
     }
 
+    // 安全保护：包含问号必须回复
+    if (/[？?]/.test(content)) {
+      return false;
+    }
+
+    // 显式不回复请求：不要/别/不用 回复我（任何长度都拦截）
     const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
 
-    return /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
-      normalized
-    );
+    if (
+      /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
+        normalized
+      )
+    ) {
+      return true;
+    }
+
+    // 超 12 字的非显式不回复消息，保留回复
+    if (content.length > 12) {
+      return false;
+    }
+
+    // 高风险信号必须回复
+    if (/去死|自杀|不想活|活不下去|死了一了百了|死掉|结束自己|了断/.test(content)) {
+      return false;
+    }
+
+    // 睡眠道别
+    if (
+      /^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 关系收口
+    if (
+      /^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 出门/忙碌
+    if (
+      /^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 纯语气词/确认（≤4 字，无问号）
+    if (
+      content.length <= 4 &&
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private shouldSkipReplyFromBrief(brief: ReplyBrief, userQuery: string): boolean {
+    // 安全网：如果用户实际消息不是自然收口，不因规划器信号跳过回复
+    const query = (userQuery || '').trim();
+    if (query.length > 0 && !this.isUserMessageNaturalEnd(query)) {
+      return false;
+    }
+
+    if (!brief?.conversationPlan) {
+      return false;
+    }
+
+    const engagement = brief.conversationPlan.engagement;
+    const plan = brief.conversationPlan;
+
+    const isPlannedClose =
+      plan.turnClosure === 'close' &&
+      (engagement?.closureReadiness === 'ready' ||
+        engagement?.closureReadiness === 'possible') &&
+      engagement?.continuationGoal === 'close';
+
+    const isStrategicSilence =
+      engagement?.assistantContribution === 'strategic_silence' &&
+      engagement?.closureReadiness === 'ready';
+
+    const isNaturalClose =
+      brief.strategyQuality?.preferredAlternative === 'natural_close';
+
+    return isPlannedClose || isStrategicSilence || isNaturalClose;
+  }
+
+  private isUserMessageNaturalEnd(content: string): boolean {
+    if (/[？?]/.test(content)) return false;
+    if (/去死|自杀|不想活|活不下去/.test(content)) return false;
+
+    const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
+    if (/(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回|理我|说话)/.test(normalized))
+      return true;
+
+    if (content.length > 12) return false;
+
+    const roleSuffix = '(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?';
+    if (new RegExp('^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+    if (new RegExp('^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+    if (new RegExp('^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+
+    if (content.length <= 4 && /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(content)) return true;
+
+    return false;
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {
@@ -6266,7 +6420,13 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      this.assertAssistantCompletionNotTruncated(response);
+      const replyTruncated =
+        this.checkAssistantCompletionTruncated(response);
+      if (replyTruncated) {
+        this.logger.warn(
+          '[conversation] bubble reflow completion truncated by token limit'
+        );
+      }
       const parsedReply = this.parseAssistantReply(responseContent);
       const reflowedSegments = this.normalizeModelFirstReplySegments(
         parsedReply.segments,
@@ -6342,20 +6502,16 @@ export class ConversationService {
     );
   }
 
-  private assertAssistantCompletionNotTruncated(response: {
+  private checkAssistantCompletionTruncated(response: {
     choices?: Array<{
       finish_reason?: unknown;
     }>;
-  }): void {
+  }): boolean {
     if (response.choices?.[0]?.finish_reason !== 'length') {
-      return;
+      return false;
     }
 
-    throw new AppError(
-      'ASSISTANT_REPLY_TRUNCATED',
-      'assistant reply reached the model token limit',
-      502
-    );
+    return true;
   }
 
   private buildAssistantGenerationAttemptTrace(options: {
