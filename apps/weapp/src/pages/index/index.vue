@@ -50,16 +50,10 @@
             </view>
           </view>
 
-          <view
-            class="moments-compact-row__banner"
+          <text
+            class="moments-compact-row__tip"
             @tap="handleCompactBannerTap"
-          >
-            <image
-              class="moments-compact-row__banner-icon"
-              :src="compactBannerUrl"
-              mode="aspectFill"
-            />
-          </view>
+          >开通VIP</text>
 
           <view
             v-if="hasUnreadNotifications"
@@ -1242,18 +1236,16 @@ useDidHide(() => {
   background: #ffffff;
 }
 
-.moments-compact-row__banner {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+.moments-compact-row__tip {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  flex-shrink: 0;
-}
-
-.moments-compact-row__banner-icon {
-  width: 32px;
-  height: 32px;
-  display: block;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f45b42;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
 }
 
 .moments-compact-row__avatar {
