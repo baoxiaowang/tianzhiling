@@ -349,9 +349,9 @@ export default {
     visionApiKey: readStringFrom(['NODE_VISION_API_KEY'], ''),
     visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
     // 语音转文字
-    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY', 'DASHSCOPE_API_KEY'], ''),
-    speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
-    speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], 'qwen-audio-turbo'),
+    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY'], ''),
+    speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], ''),
+    speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], ''),
     // 语音合成
     textToSpeechApiKey: readStringFrom(['NODE_TEXT_TO_SPEECH_API_KEY'], ''),
     textToSpeechBaseURL: readStringFrom(['NODE_TEXT_TO_SPEECH_BASE_URL'], ''),
