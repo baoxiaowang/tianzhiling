@@ -22,6 +22,39 @@ const INDEXES = {
     ],
   ],
   message: [[{ traceId: 1, createdAt: 1 }, { name: 'idx_message_trace_time' }]],
+  chat_evaluation_case: [
+    [{ caseId: 1 }, { name: 'uniq_chat_evaluation_case_id', unique: true }],
+    [{ traceId: 1 }, { name: 'uniq_chat_evaluation_trace_id', unique: true }],
+    [{ capturedAt: -1 }, { name: 'idx_chat_evaluation_captured_time' }],
+    [
+      { expiresAt: 1 },
+      { name: 'ttl_chat_evaluation_expires_at', expireAfterSeconds: 0 },
+    ],
+  ],
+  chat_evaluation_run: [
+    [{ runId: 1 }, { name: 'uniq_chat_evaluation_run_id', unique: true }],
+    [{ createdAt: -1 }, { name: 'idx_chat_evaluation_run_time' }],
+  ],
+  chat_evaluation_judgment: [
+    [
+      { runId: 1, caseId: 1, judgeType: 1 },
+      { name: 'idx_chat_evaluation_judgment_run_case' },
+    ],
+    [
+      { traceId: 1, createdAt: -1 },
+      { name: 'idx_chat_evaluation_judgment_trace_time' },
+    ],
+  ],
+  chat_evaluation_observation: [
+    [
+      { traceId: 1, observedAt: -1 },
+      { name: 'idx_chat_evaluation_observation_trace_time' },
+    ],
+    [
+      { caseId: 1, window: 1 },
+      { name: 'idx_chat_evaluation_observation_case_window' },
+    ],
+  ],
 };
 
 async function main() {

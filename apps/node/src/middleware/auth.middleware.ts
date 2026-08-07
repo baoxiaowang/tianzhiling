@@ -4,11 +4,7 @@ import { JwtService } from '@midwayjs/jwt';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { Context, NextFunction } from '@midwayjs/koa';
-import {
-  MongoObjectId,
-  UserAccountStatus,
-  UserEntity,
-} from '@tzl/entities';
+import { MongoObjectId, UserAccountStatus, UserEntity } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
   getRevokedAccessTokenRedisKey,

@@ -15,16 +15,14 @@ describe('AuthMiddleware route matching', () => {
     };
   }
 
-  it.each([
-    '/api/membership/center',
-    '/api/membership/status',
-  ])('protects membership route %s', path => {
-    const middleware = createMiddleware();
+  it.each(['/api/membership/center', '/api/membership/status'])(
+    'protects membership route %s',
+    path => {
+      const middleware = createMiddleware();
 
-    expect(
-      middleware.match(createContext(path) as never)
-    ).toBe(true);
-  });
+      expect(middleware.match(createContext(path) as never)).toBe(true);
+    }
+  );
 
   it.each([
     '/api/voice-packages/agent/69fa1150b21e11e4ddf9a0cf/center',
@@ -32,9 +30,7 @@ describe('AuthMiddleware route matching', () => {
   ])('protects voice service route %s', path => {
     const middleware = createMiddleware();
 
-    expect(
-      middleware.match(createContext(path) as never)
-    ).toBe(true);
+    expect(middleware.match(createContext(path) as never)).toBe(true);
   });
 
   it('protects deleting a post', () => {
@@ -51,10 +47,7 @@ describe('AuthMiddleware route matching', () => {
     ['/api/post/notifications/entry-summary', 'GET'],
     ['/api/post/notifications/seen', 'POST'],
     ['/api/post/notifications/entry-seen', 'POST'],
-    [
-      '/api/post/notifications/665000000000000000000400/read',
-      'POST',
-    ],
+    ['/api/post/notifications/665000000000000000000400/read', 'POST'],
   ])('protects post notification route %s', (path, method) => {
     const middleware = createMiddleware();
 
@@ -143,20 +136,14 @@ describe('AuthMiddleware account revocation', () => {
     const middleware = createActiveTokenMiddleware(redisGet);
 
     await expect(
-      (middleware as any).ensureTokenIsActive(auth),
+      (middleware as any).ensureTokenIsActive(auth)
     ).resolves.toBeUndefined();
-    expect(redisGet).toHaveBeenNthCalledWith(
-      1,
-      'auth:revoked-token:nonce-1',
-    );
+    expect(redisGet).toHaveBeenNthCalledWith(1, 'auth:revoked-token:nonce-1');
     expect(redisGet).toHaveBeenNthCalledWith(
       2,
-      `auth:revoked-user:${auth.sub}`,
+      `auth:revoked-user:${auth.sub}`
     );
-    expect(redisGet).toHaveBeenNthCalledWith(
-      3,
-      `auth:user-status:${auth.sub}`,
-    );
+    expect(redisGet).toHaveBeenNthCalledWith(3, `auth:user-status:${auth.sub}`);
   });
 
   it('rejects every token after the user account is canceled', async () => {
@@ -167,7 +154,7 @@ describe('AuthMiddleware account revocation', () => {
     const middleware = createActiveTokenMiddleware(redisGet);
 
     await expect(
-      (middleware as any).ensureTokenIsActive(auth),
+      (middleware as any).ensureTokenIsActive(auth)
     ).rejects.toMatchObject({
       code: 'ACCOUNT_CANCELED',
       status: 401,
@@ -185,14 +172,14 @@ describe('AuthMiddleware account revocation', () => {
     } as never;
 
     await expect(
-      (middleware as any).ensureTokenIsActive(auth),
+      (middleware as any).ensureTokenIsActive(auth)
     ).rejects.toMatchObject({
       code: 'ACCOUNT_CANCELED',
       status: 401,
     });
     expect(middleware.redisService.set).toHaveBeenCalledWith(
       `auth:revoked-user:${auth.sub}`,
-      expect.stringContaining('canceledAt'),
+      expect.stringContaining('canceledAt')
     );
   });
 });

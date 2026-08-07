@@ -10,7 +10,8 @@
     "compileHotReLoad": true,
     "bigPackageSizeSupport": true,
     "postcss": false,
-    "minified": false
+    "minified": false,
+    "minifyWXML": true
   },
   "compileType": "miniprogram"
 }

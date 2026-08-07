@@ -113,23 +113,23 @@ import {
   createSafeAreaCssVars,
   initSafeAreaInsets,
 } from "../../utils/safe-area";
-import { openSelectedAgentChat } from "../../utils/selected-agent-chat";
 import entryLoadingImage from "../../assets/images/agent-create/header-mark.png";
 
 const ONBOARDING_STORAGE_KEY = "tzl_onboarding_seen";
 const AUTH_SESSION_STORAGE_KEY = "auth_session";
 const ENTRY_CHECK_TIMEOUT_MS = 3500;
-const ENTRY_FALLBACK_TIMEOUT_MS = 5000;
-const CHAT_ENTRY_TIMEOUT_MS = 6000;
+const ENTRY_FALLBACK_TIMEOUT_MS = 8000;
+const INDEX_NAVIGATION_TIMEOUT_MS = 2800;
+const INDEX_TARGET_PAGE = "/pages/index/index";
 
-type EntryTarget = "onboarding" | "index" | "chat";
+type EntryTarget = "onboarding" | "index";
 
 const isCheckingEntry = ref(true);
 const isNavigating = ref(false);
+let entryFallbackTimer: ReturnType<typeof setTimeout> | undefined;
 const actionSafeStyle = computed(() =>
   createSafeAreaCssVars("onboarding-safe")
 );
-let entryFallbackTimer: ReturnType<typeof setTimeout> | undefined;
 
 function hasSeenOnboarding() {
   try {
@@ -161,28 +161,6 @@ function resolveLocalFallbackTarget(): EntryTarget {
     : "onboarding";
 }
 
-function showOnboardingFallback() {
-  clearEntryFallback();
-  isNavigating.value = false;
-  isCheckingEntry.value = false;
-}
-
-function scheduleEntryFallback() {
-  clearEntryFallback();
-  entryFallbackTimer = setTimeout(() => {
-    showOnboardingFallback();
-  }, ENTRY_FALLBACK_TIMEOUT_MS);
-}
-
-function clearEntryFallback() {
-  if (!entryFallbackTimer) {
-    return;
-  }
-
-  clearTimeout(entryFallbackTimer);
-  entryFallbackTimer = undefined;
-}
-
 async function goToIndex(): Promise<boolean> {
   if (isNavigating.value) {
     return false;
@@ -190,36 +168,32 @@ async function goToIndex(): Promise<boolean> {
 
   isNavigating.value = true;
   try {
-    await Taro.switchTab({
-      url: "/pages/index/index",
-    });
-    return true;
-  } catch {
-    try {
-      await Taro.reLaunch({
-        url: "/pages/index/index",
-      });
+    const switched = await withTimeout(
+      (async () => {
+        await Taro.switchTab({
+          url: INDEX_TARGET_PAGE,
+        });
+        return true;
+      })(),
+      INDEX_NAVIGATION_TIMEOUT_MS,
+      false
+    );
+    if (switched) {
       return true;
-    } catch {
-      return false;
     }
-  } finally {
-    isNavigating.value = false;
-  }
-}
 
-async function goToChatTab(): Promise<boolean> {
-  if (isNavigating.value) {
-    return false;
-  }
+    const relaunched = await withTimeout(
+      (async () => {
+        await Taro.reLaunch({
+          url: INDEX_TARGET_PAGE,
+        });
+        return true;
+      })(),
+      INDEX_NAVIGATION_TIMEOUT_MS,
+      false
+    );
 
-  isNavigating.value = true;
-  try {
-    return await openSelectedAgentChat({
-      forceRefresh: true,
-      requestTimeout: CHAT_ENTRY_TIMEOUT_MS,
-      showLoading: false,
-    });
+    return relaunched;
   } catch {
     return false;
   } finally {
@@ -228,30 +202,34 @@ async function goToChatTab(): Promise<boolean> {
 }
 
 async function resolveEntryTarget(): Promise<EntryTarget> {
-  const hadPersistedSession = hasPersistedSession();
+  try {
+    const hadPersistedSession = hasPersistedSession();
 
-  await restoreAuthSession();
+    await restoreAuthSession();
 
-  if (authSession.value?.accessToken) {
-    markOnboardingSeen();
-    return "chat";
+    if (authSession.value?.accessToken) {
+      markOnboardingSeen();
+      return "index";
+    }
+
+    const session = await withTimeout(
+      silentWeappLogin(),
+      ENTRY_CHECK_TIMEOUT_MS,
+      null
+    );
+    if (session?.accessToken) {
+      markOnboardingSeen();
+      return "index";
+    }
+
+    if (!hasSeenOnboarding() && !hadPersistedSession) {
+      return "onboarding";
+    }
+
+    return "index";
+  } catch {
+    return resolveLocalFallbackTarget();
   }
-
-  const session = await withTimeout(
-    silentWeappLogin(),
-    ENTRY_CHECK_TIMEOUT_MS,
-    null
-  );
-  if (session?.accessToken) {
-    markOnboardingSeen();
-    return "chat";
-  }
-
-  if (!hasSeenOnboarding() && !hadPersistedSession) {
-    return "onboarding";
-  }
-
-  return "index";
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T) {
@@ -278,53 +256,50 @@ async function handleStart() {
 }
 
 async function initializeEntry() {
+  initSafeAreaInsets();
+  scheduleEntryFallback();
+
   const target = await withTimeout(
     resolveEntryTarget(),
     ENTRY_CHECK_TIMEOUT_MS + 1000,
-    "onboarding" as EntryTarget
+    resolveLocalFallbackTarget()
   );
 
   if (target === "index") {
     const opened = await goToIndex();
-    if (opened) {
-      clearEntryFallback();
-    } else {
-      showOnboardingFallback();
+    if (!opened) {
+      isCheckingEntry.value = false;
     }
+    clearEntryFallback();
     return;
   }
 
-  if (target === "chat") {
-    const opened = await goToChatTab();
-    if (opened) {
-      clearEntryFallback();
-      return;
-    }
+  isCheckingEntry.value = false;
+  clearEntryFallback();
+}
 
-    const openedIndex = await goToIndex();
-    if (openedIndex) {
-      clearEntryFallback();
-      return;
-    }
-
-    showOnboardingFallback();
+function clearEntryFallback() {
+  if (!entryFallbackTimer) {
     return;
   }
 
-  showOnboardingFallback();
+  clearTimeout(entryFallbackTimer);
+  entryFallbackTimer = undefined;
+}
+
+function scheduleEntryFallback() {
+  clearEntryFallback();
+  entryFallbackTimer = setTimeout(() => {
+    isCheckingEntry.value = false;
+    isNavigating.value = false;
+  }, ENTRY_FALLBACK_TIMEOUT_MS);
 }
 
 useLoad(() => {
-  initSafeAreaInsets();
-
-  if (resolveLocalFallbackTarget() === "onboarding") {
+  void initializeEntry().catch(async () => {
+    clearEntryFallback();
     isCheckingEntry.value = false;
-    return;
-  }
-
-  scheduleEntryFallback();
-  void initializeEntry().catch(() => {
-    showOnboardingFallback();
+    await goToIndex();
   });
 });
 

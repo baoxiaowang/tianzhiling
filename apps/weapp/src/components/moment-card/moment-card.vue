@@ -243,7 +243,7 @@ const likeSummaryText = computed(() => {
     return `我等${likeCount.value}人`
   }
 
-  return `${likeCount.value}人共鸣了`
+  return `${likeCount.value}人觉得很赞`
 })
 
 function formatMomentRelativeTime(value: string | null) {
@@ -529,11 +529,11 @@ function emitOpen() {
 }
 
 .moment-card__action-icon--like {
-  background-image: url('../../assets/icon/resonance.svg');
+  background-image: url('../../assets/icon/like.svg');
 }
 
 .moment-card__action-icon--like-active {
-  background-image: url('../../assets/icon/resonance-active.svg');
+  background-image: url('../../assets/icon/moments-like-blue.svg');
 }
 
 .moment-card__action-icon--comment {
@@ -547,7 +547,7 @@ function emitOpen() {
 }
 
 .moment-card__action-text--active {
-  color: #f4513b;
+  color: #3c74ff;
 }
 
 .moment-card__delete {
@@ -575,7 +575,7 @@ function emitOpen() {
   margin-top: 8px;
   padding: 5px 7px;
   border-radius: 0;
-  background: #f6f2fc;
+  background: #fff6e6;
 }
 
 .moment-card__comments::before {
@@ -587,7 +587,7 @@ function emitOpen() {
   height: 0;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-bottom: 5px solid #f6f2fc;
+  border-bottom: 5px solid #fff6e6;
 }
 
 .moment-card__likes {
@@ -601,7 +601,7 @@ function emitOpen() {
   width: 16px;
   height: 16px;
   display: block;
-  background: url('../../assets/icon/resonance-active.svg') center / 16px 16px no-repeat;
+  background: url('../../assets/icon/moments-like-blue.svg') center / 16px 16px no-repeat;
 }
 
 .moment-card__likes-name {
@@ -613,7 +613,7 @@ function emitOpen() {
 .moment-card__interaction-divider {
   height: 1px;
   margin: 4px 0;
-  background: #e9e1f5;
+  background: #ffe6bf;
 }
 
 .moment-card__comment {
