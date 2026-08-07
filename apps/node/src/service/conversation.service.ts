@@ -4427,7 +4427,7 @@ export class ConversationService {
     }
 
     if (message.type === MessageType.voice) {
-      return message.mediaTranscript?.trim() || message.content?.trim() || '';
+      return message.mediaTranscript?.trim() || '[用户发来一条语音]';
     }
 
     return message.content?.trim() || '';
@@ -4690,7 +4690,7 @@ export class ConversationService {
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
       this.isNaturalConversationEnd(payload) ||
-      (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
+      false // 语音消息始终生成回复，避免旧客户端因缺轮询而丢消息
     );
   }
 
@@ -6378,7 +6378,7 @@ export class ConversationService {
           payload.content
         );
       case MessageType.voice:
-        return payload.mediaTranscript?.trim() || '';
+        return payload.mediaTranscript?.trim() || '[用户发来一条语音]';
       case MessageType.text:
       default:
         return payload.content?.trim() || '';
