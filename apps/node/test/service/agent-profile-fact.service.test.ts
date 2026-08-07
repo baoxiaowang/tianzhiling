@@ -681,4 +681,46 @@ describe('AgentProfileFactService', () => {
     expect(service.openAIService.generateText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
   });
+
+  it('archives an imported memory only after its last source message is removed', async () => {
+    const service = new AgentProfileFactService();
+    const firstSource = new MongoObjectId();
+    const secondSource = new MongoObjectId();
+    const fact = new AgentProfileFactEntity();
+    Object.assign(fact, {
+      id: new MongoObjectId(),
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      key: 'wechat_import.shared.walk',
+      value: '过去常一起散步',
+      status: AgentProfileFactStatus.active,
+      sourceMessageId: firstSource,
+      sourceMessageIds: [firstSource, secondSource],
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    service.factModel = {
+      find: jest.fn().mockResolvedValue([fact]),
+      save: jest.fn(async value => value),
+    } as never;
+
+    await expect(
+      service.removeHistoricalSourceMessage({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        sourceMessageId: firstSource,
+      })
+    ).resolves.toBe(0);
+    expect(fact.status).toBe(AgentProfileFactStatus.active);
+    expect(fact.sourceMessageIds).toEqual([secondSource]);
+
+    await expect(
+      service.removeHistoricalSourceMessage({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        sourceMessageId: secondSource,
+      })
+    ).resolves.toBe(1);
+    expect(fact.status).toBe(AgentProfileFactStatus.archived);
+  });
 });

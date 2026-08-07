@@ -105,6 +105,20 @@ interface UpsertVisualAppearanceOptions {
   observations: AgentVisualAppearanceObservation[];
 }
 
+export interface UpsertHistoricalImportFactOptions {
+  userId: MongoObjectId;
+  agentId: MongoObjectId;
+  sourceMessageId?: MongoObjectId;
+  sourceMessageIds?: MongoObjectId[];
+  sourceText?: string;
+  type: AgentProfileFactType;
+  key: string;
+  value: string;
+  polarity?: AgentProfileFactPolarity;
+  priority?: number;
+  activate?: boolean;
+}
+
 interface ArchiveProfileFactsOptions {
   userId: MongoObjectId;
   agentId: MongoObjectId;
@@ -129,6 +143,7 @@ interface UpsertProfileFactInput
   userId: MongoObjectId;
   agentId: MongoObjectId;
   sourceMessageId?: MongoObjectId;
+  sourceMessageIds?: MongoObjectId[];
   sourceFeedbackId?: MongoObjectId;
   sourceText?: string;
   trustedSource: boolean;
@@ -259,6 +274,78 @@ export class AgentProfileFactService {
     }
 
     return extractedFacts.map(item => item.fact);
+  }
+
+  async upsertFromHistoricalImport(
+    options: UpsertHistoricalImportFactOptions
+  ): Promise<AgentProfileFactEntity | null> {
+    const key = options.key?.trim().slice(0, 160);
+    const value = options.value?.trim().slice(0, 500);
+
+    if (!key || !value) {
+      return null;
+    }
+
+    return this.upsertFact({
+      userId: options.userId,
+      agentId: options.agentId,
+      sourceMessageId: options.sourceMessageId,
+      sourceMessageIds: options.sourceMessageIds,
+      sourceText: options.sourceText,
+      type: options.type,
+      key,
+      value,
+      polarity: options.polarity ?? AgentProfileFactPolarity.positive,
+      confidence: AgentProfileFactConfidence.extracted,
+      status: AgentProfileFactStatus.candidate,
+      priority: options.priority ?? 1,
+      trustedSource: options.activate === true,
+    });
+  }
+
+  async removeHistoricalSourceMessage(options: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    sourceMessageId: MongoObjectId;
+  }): Promise<number> {
+    const facts = await this.factModel.find({
+      where: {
+        userId: options.userId,
+        agentId: options.agentId,
+        key: { $regex: '^wechat_import\\.' },
+        $or: [
+          { sourceMessageId: options.sourceMessageId },
+          { sourceMessageIds: options.sourceMessageId },
+        ],
+      } as never,
+    });
+    const sourceId = this.stringifyObjectId(options.sourceMessageId);
+    const now = new Date();
+    let archivedCount = 0;
+
+    for (const fact of facts) {
+      const remaining = (fact.sourceMessageIds || [])
+        .filter(value => this.stringifyObjectId(value) !== sourceId)
+        .filter(
+          (value, index, values) =>
+            values.findIndex(
+              candidate =>
+                this.stringifyObjectId(candidate) ===
+                this.stringifyObjectId(value)
+            ) === index
+        );
+
+      fact.sourceMessageIds = remaining;
+      fact.sourceMessageId = remaining[0];
+      if (!remaining.length) {
+        fact.status = AgentProfileFactStatus.archived;
+        archivedCount += 1;
+      }
+      fact.updatedAt = now;
+      await this.factModel.save(fact);
+    }
+
+    return archivedCount;
   }
 
   async listFactsForPrompt(
@@ -904,7 +991,9 @@ export class AgentProfileFactService {
     });
   }
 
-  private async upsertFact(input: UpsertProfileFactInput): Promise<void> {
+  private async upsertFact(
+    input: UpsertProfileFactInput
+  ): Promise<AgentProfileFactEntity> {
     const now = new Date();
     const existing = await this.factModel.findOne({
       where: {
@@ -918,7 +1007,8 @@ export class AgentProfileFactService {
     const sourceMessageIds = this.appendSourceMessageId(
       existing?.sourceMessageIds,
       existing?.sourceMessageId,
-      input.sourceMessageId
+      input.sourceMessageId,
+      input.sourceMessageIds
     );
     const nextSupportCount = sameValue
       ? Math.max(existing?.supportCount ?? 1, 1) + (existing ? 1 : 0)
@@ -938,7 +1028,7 @@ export class AgentProfileFactService {
           : AgentProfileFactStatus.conflicted;
       fact.updatedAt = now;
       await this.factModel.save(fact);
-      return;
+      return fact;
     }
 
     fact.userId = input.userId;
@@ -970,17 +1060,23 @@ export class AgentProfileFactService {
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
-    await this.factModel.save(fact);
+    return this.factModel.save(fact);
   }
 
   private appendSourceMessageId(
     values: MongoObjectId[] | undefined,
     legacyValue?: MongoObjectId,
-    nextValue?: MongoObjectId
+    nextValue?: MongoObjectId,
+    nextValues: MongoObjectId[] = []
   ): MongoObjectId[] {
     const byId = new Map<string, MongoObjectId>();
 
-    for (const value of [...(values || []), legacyValue, nextValue]) {
+    for (const value of [
+      ...(values || []),
+      legacyValue,
+      nextValue,
+      ...nextValues,
+    ]) {
       const id = this.stringifyObjectId(value);
 
       if (id && value) {

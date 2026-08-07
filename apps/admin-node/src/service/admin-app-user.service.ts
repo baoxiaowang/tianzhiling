@@ -372,6 +372,12 @@ export class AdminAppUserService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
+      hasUnreadAgentHomeGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentHomeGuideSeenAt
+      ),
+      hasUnreadAgentProfileGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
+      ),
       customContext: agent.customContext ?? '',
       status: agent.status,
       isDefault: Boolean(agent.isDefault),

@@ -43,7 +43,10 @@ jest.mock('../src/utils/agent-create-navigation', () => ({
   openAgentCreatePage: jest.fn(),
 }))
 
-import { openSelectedAgentChat } from '../src/utils/selected-agent-chat'
+import {
+  openSelectedAgentChat,
+  openSelectedAgentChatImport,
+} from '../src/utils/selected-agent-chat'
 
 describe('openSelectedAgentChat', () => {
   beforeEach(() => {
@@ -147,6 +150,17 @@ describe('openSelectedAgentChat', () => {
 
     expect(mockNavigateTo).toHaveBeenCalledWith({
       url: expect.stringContaining('conversationId=conversation-shared'),
+    })
+  })
+
+  it('opens chat import for the remembered conversation', async () => {
+    await expect(openSelectedAgentChatImport()).resolves.toBe(true)
+
+    expect(mockGetConversations).not.toHaveBeenCalled()
+    expect(mockNavigateTo).toHaveBeenCalledWith({
+      url: expect.stringContaining(
+        '/pages/chat-import/index?conversationId=conversation-1',
+      ),
     })
   })
 })

@@ -133,6 +133,8 @@ function buildChatDerivedProfileLines(profile: AgentPersonaProfile): string[] {
       '语言节奏',
       [
         profile.languageProfile?.sentenceLength,
+        profile.languageProfile?.modalParticles,
+        profile.languageProfile?.replyBubblePattern,
         profile.languageProfile?.directness,
         profile.languageProfile?.emotionalExpression,
         profile.languageProfile?.addressStyle,

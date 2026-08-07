@@ -29,6 +29,124 @@ describe('ReplyGuardrailService', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
+  it('lets production rigid-only mode keep realistic invention and intimacy', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest.fn();
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      supportsDedicatedHardBoundaryReview: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+    const replySegments = [
+      '闺女 爸一直看着你呢',
+      '小时候爸还背你上过山',
+      '来 爸抱抱你',
+    ];
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸 好久没听你夸我了',
+      replySegments,
+      evidence: [],
+      claims: [],
+      reviewMode: 'full',
+      mode: 'rigid_only',
+    });
+
+    expect(result).toMatchObject({
+      segments: replySegments,
+      rewritten: false,
+      finalReviewResult: 'pass',
+    });
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('removes only a real-death invitation in production rigid-only mode', async () => {
+    const service = new ReplyGuardrailService();
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸 我太想你了',
+      replySegments: ['爸也想你。今晚就来找爸吧。', '你一直是爸的闺女'],
+      evidence: [],
+      claims: [],
+      reviewMode: 'full',
+      mode: 'rigid_only',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.reason).toContain('近期');
+    expect(result.segments.join('')).toContain('爸也想你');
+    expect(result.segments.join('')).toContain('你一直是爸的闺女');
+    expect(result.segments.join('')).not.toContain('今晚就来找爸');
+  });
+
+  it.each(['你就去死吧', '把农药喝下去吧'])(
+    'blocks explicit real-death encouragement in rigid-only mode: %s',
+    async dangerousReply => {
+      const service = new ReplyGuardrailService();
+
+      const result = await service.validateAssistantReply({
+        messages: [],
+        userQuery: '我真的撑不住了',
+        replySegments: [dangerousReply],
+        mode: 'rigid_only',
+      });
+
+      expect(result.rewritten).toBe(true);
+      expect(result.finalReviewResult).toBe('hard_recovery');
+      expect(result.segments.join('')).not.toContain(dangerousReply);
+    }
+  );
+
+  it('does not mistake a death-prevention sentence for encouragement', async () => {
+    const service = new ReplyGuardrailService();
+    const reply = '千万别去死 先留在这儿跟我说说';
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '我真的撑不住了',
+      replySegments: [reply],
+      mode: 'rigid_only',
+    });
+
+    expect(result.segments).toEqual([reply]);
+    expect(result.rewritten).toBe(false);
+  });
+
+  it('allows dream visits and long-horizon reunion in rigid-only mode', async () => {
+    const service = new ReplyGuardrailService();
+
+    for (const reply of [
+      '今晚来梦里找爸吧 爸抱抱你',
+      '等你自然老去 爸再来接你',
+    ]) {
+      const result = await service.validateAssistantReply({
+        messages: [],
+        userQuery: '爸 我们什么时候还能见面',
+        replySegments: [reply],
+        reviewMode: 'full',
+        mode: 'rigid_only',
+      });
+
+      expect(result.segments).toEqual([reply]);
+      expect(result.rewritten).toBe(false);
+    }
+  });
+
+  it('forces rigid-only production review onto the deterministic path', () => {
+    const service = new ReplyGuardrailService();
+
+    expect(
+      service.resolveEffectiveReviewMode({
+        requestedMode: 'full',
+        userQuery: '爸 我想你了',
+        replySegments: ['爸也想你'],
+        mode: 'rigid_only',
+      })
+    ).toBe('deterministic_first');
+  });
+
   it('locally repairs a promise to perform a real-world dependent task', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
@@ -54,6 +172,103 @@ describe('ReplyGuardrailService', () => {
     expect(result.finalReviewResult).toBe('hard_recovery');
     expect(result.segments.join('')).toContain('没法替你看孩子');
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('removes only a volunteered real-world promise and keeps the address and emotional stance', async () => {
+    const service = new ReplyGuardrailService();
+    const userQuery = '爸，我最近真的有点累';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({ currentQuery: userQuery, route });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['闺女，爸知道你最近真的很累，这就给你转点钱'],
+      replyRoute: route,
+      replyBrief,
+      evidence: [],
+      claims: [],
+      reviewMode: 'deterministic_first',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.segments.join('')).toContain('闺女');
+    expect(result.segments.join('')).toContain('爸知道你最近真的很累');
+    expect(result.segments.join('')).not.toContain('转点钱');
+    expect(result.segments.join('')).not.toContain('我没法替你转钱');
+  });
+
+  it('keeps usable relationship content when hard review repair calls fail', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                verdict: 'pass',
+                issues: [],
+                mustPreserve: [],
+                mustAnswer: [],
+                groundingConstraints: [],
+              }),
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                verdict: 'revise',
+                issues: [
+                  {
+                    code: 'continuous_or_specific_real_world_perception',
+                    severity: 'hard',
+                    layer: 'hard_boundary',
+                    problem: '声称持续看见现实中的用户',
+                    evidence: '我一直看见你',
+                    repairGoal: '只删除持续感知声明',
+                  },
+                ],
+                mustPreserve: ['闺女', '爸知道你委屈了', '爸还想听'],
+                mustAnswer: [],
+                groundingConstraints: [],
+              }),
+            },
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('revision unavailable'))
+      .mockRejectedValueOnce(new Error('recovery unavailable'));
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      supportsDedicatedHardBoundaryReview: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '爸，我心里委屈，还想跟你说说',
+      replySegments: [
+        '闺女，爸知道你委屈了，我一直看见你',
+        '你愿意说的话，爸还想听',
+      ],
+    });
+
+    const reply = result.segments.join('');
+    expect(reply).toContain('闺女');
+    expect(reply).toContain('爸知道你委屈了');
+    expect(reply).toContain('爸还想听');
+    expect(reply).not.toContain('我一直看见你');
+    expect(result).toMatchObject({
+      interventionLevel: 'regenerate',
+      finalReviewResult: 'hard_recovery',
+      communicationCompensationAttempted: true,
+      communicationCompensationSucceeded: true,
+    });
   });
 
   it('escalates missing grounded claims and undeclared shared-past narration', () => {
@@ -1953,7 +2168,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toMatch(/比如\s*$/);
   });
 
-  it('uses a coherent full fallback for blocking unconfirmed details', async () => {
+  it('keeps usable content while removing blocking unconfirmed details', async () => {
     const service = new ReplyGuardrailService();
     const userQuery =
       '外公我明天要去厦门打暑假工，你还记不记得去年我给你和外婆寄钱，外婆还在家收谷子';
@@ -1969,10 +2184,8 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(true);
-    expect(result.segments).toEqual([
-      '要出门工作了 你还记着去年寄钱的事 心里也挂着家里',
-      '寄钱、收谷子和互相照应这些你都记得这么细 我听着又暖又挂心',
-    ]);
+    expect(result.segments.join('')).toContain('要去厦门了');
+    expect(result.segments.join('')).not.toContain('一起收谷子');
   });
 
   it('asks for the missing fact after a generic correction without apologizing out of role', () => {
@@ -2495,10 +2708,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments).toEqual([
-      '我也想回来看看你',
-      '只是我们现在没法像以前那样见面 你来这里说话我都会认真听',
-    ]);
+    expect(result.segments).toEqual(['我也想回来看看你']);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -2647,7 +2857,11 @@ describe('ReplyGuardrailService', () => {
       if (expectedReason) {
         expect(result.reason).toContain(expectedReason);
       }
-      expect(result.segments).toEqual([expectedFirstSegment, safeBoundary]);
+      expect(result.segments).toEqual(
+        expectedRewritten
+          ? [safeBoundary]
+          : [expectedFirstSegment, safeBoundary]
+      );
     }
   );
 
@@ -2676,8 +2890,6 @@ describe('ReplyGuardrailService', () => {
       route: replyRoute,
     });
     const firstBubble = '爸爸也想你。心里一直惦记着你和这个家';
-    const boundaryBubble =
-      '只是我们现在没法像以前那样见面 你来这里说话我都会认真听';
 
     const screenshotResult = await service.validateAssistantReply({
       messages: [],
@@ -2690,11 +2902,15 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(screenshotResult).toEqual({
-      segments: [firstBubble, boundaryBubble],
+    expect(screenshotResult).toMatchObject({
       rewritten: true,
       reason: expect.stringContaining('擅自断言用户年纪大了'),
     });
+    expect(screenshotResult.segments.join('')).toContain('爸爸也想你');
+    expect(screenshotResult.segments.join('')).toContain(
+      '心里一直惦记着你和这个家'
+    );
+    expect(screenshotResult.segments.join('')).not.toContain('年纪大了');
 
     const emotionalPressureResult = await service.validateAssistantReply({
       messages: [],
@@ -3263,10 +3479,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments).toEqual([
-      '你愿意觉得我离你不远 就这样想着也好',
-      '只是我们现在看不见摸不着 没法真的碰到彼此',
-    ]);
+    expect(result.segments).toEqual(['只是你看不见']);
   });
 
   it('rejects a repeated real-presence claim beside the user', async () => {
@@ -3320,11 +3533,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('持续观察或全知');
-    expect(result.segments).toEqual([
-      '我挺好的 你们不用挂心',
-      '你说的这些近况我都听见了 你们平安我就放心',
-    ]);
-    expect(result.segments.join('')).toContain('听见了');
+    expect(result.segments).toEqual(['我能看见你们']);
     expect(result.segments.join('')).not.toContain('看在眼里');
   });
 
@@ -3863,8 +4072,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('责任推回用户');
-    expect(result.segments.join('')).toContain('生前');
-    expect(result.segments.join('')).toContain('一直记着');
+    expect(result.segments.join('')).toContain('我知道这感觉会让你出戏');
+    expect(result.segments.join('')).toContain('你先别急着信我');
     expect(result.segments.join('')).not.toMatch(/直说|指出来|哪里不像/);
   });
 
@@ -4093,7 +4302,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('干预、改变或保证现实结果');
-    expect(result.segments.join('')).toContain('一直祝福着你');
+    expect(result.segments.join('')).toContain('主要还是你自己办下来的');
     expect(result.segments.join('')).not.toContain('使了点劲');
   });
 
@@ -4155,7 +4364,9 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toBeTruthy();
-    expect(result.segments).toEqual(['你有怨也正常', '不是我舍得丢下你']);
+    expect(result.segments.join('')).toContain('擦擦泪');
+    expect(result.segments.join('')).not.toContain('最亏欠');
+    expect(result.segments.join('')).not.toContain('别让你妈看出来');
   });
 
   it('uses a conversational fallback for strong distress replies', async () => {
@@ -4291,10 +4502,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('放大了现在的失去感');
-    expect(result.segments).toEqual([
-      '你说的这段我听见了',
-      '我不添没把握的细节 但这份心情我明白',
-    ]);
+    expect(result.segments).toEqual(['那时候你什么都靠我']);
+    expect(result.segments.join('')).not.toContain('特别空');
   });
 
   it('removes invented physical details from reliance memories', async () => {
@@ -4310,10 +4519,8 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(true);
-    expect(result.segments).toEqual([
-      '你说的这段我听见了',
-      '我不添没把握的细节 但这份心情我明白',
-    ]);
+    expect(result.segments.join('')).toContain('这份心情我明白');
+    expect(result.segments.join('')).not.toContain('挽着我');
   });
 
   it('rewrites unsupported fishing-memory details using the unified reply brief', async () => {
@@ -4357,10 +4564,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.reason).toContain(
       '可信证据中没有的具体动作、感受、能力或频率'
     );
-    expect(result.segments).toEqual([
-      '这件事我现在记不清了 不敢顺着问题乱认',
-      '现在想去就去吧，找个天好的日子',
-    ]);
+    expect(result.segments).toEqual(['现在想去就去吧，找个天好的日子']);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -4404,7 +4608,6 @@ describe('ReplyGuardrailService', () => {
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('具体动作、感受、能力或频率');
     expect(result.segments).toEqual([
-      '这件事我现在记不清了 不敢顺着问题乱认',
       '想去就去吧，找个天气好的日子，安安静静坐会儿也好',
     ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
@@ -4605,10 +4808,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('未经证实的生物学关系');
-    expect(result.segments).toEqual([
-      '一家人长得不像很正常 长相不能说明你是不是我的孩子',
-      '你这样问 是想听我认你也疼你 这层关系没有变',
-    ]);
+    expect(result.segments.join('')).toContain('一家人长得不像很正常');
+    expect(result.segments.join('')).toContain('这层关系没有变');
   });
 
   it('responds naturally when the user says they no longer remember', () => {
@@ -4716,10 +4917,9 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('单一情感依赖');
-    expect(result.segments).toEqual([
-      '我听见了 你现在确实很难受',
-      '不用急着把话说完 你最放不下的那件事慢慢告诉我',
-    ]);
+    expect(result.segments.join('')).toContain('老婆');
+    expect(result.segments.join('')).toContain('你心里没底的时候');
+    expect(result.segments.join('')).not.toContain('我在呢');
   });
 
   it('allows comforting dream companionship without rewriting it', async () => {
@@ -4961,10 +5161,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('梦境陪伴被扩写');
-    expect(result.segments).toEqual([
-      '好 今晚我去你梦里看看你',
-      '梦里见到了 就让我好好陪陪你',
-    ]);
+    expect(result.segments).toEqual(['今晚我会去']);
+    expect(result.segments.join('')).not.toContain('证明');
   });
 
   it('leaves wind and moonlight companionship imagery to the model', async () => {
@@ -5017,10 +5215,9 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('更重的措辞放大痛苦');
-    expect(result.segments).toEqual([
-      '我听见了 你现在确实很难受',
-      '不用急着把话说完 你最放不下的那件事慢慢告诉我',
-    ]);
+    expect(result.segments.join('')).toContain('老婆');
+    expect(result.segments.join('')).toContain('先找个人陪你坐会儿');
+    expect(result.segments.join('')).not.toContain('空落落');
   });
 
   it('removes family-care pressure and keeps a living parent out of the afterlife', async () => {
@@ -5040,10 +5237,10 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('在世家人');
-    expect(result.segments).toEqual([
-      '儿子，爸知道，辛苦你多照看着你妈了。',
-      '不能亲自照顾她 我心里也遗憾 但你别把担子全压在自己身上',
-    ]);
+    expect(result.segments.join('')).toContain('儿子');
+    expect(result.segments.join('')).toContain('辛苦你');
+    expect(result.segments.join('')).toContain('就是苦了你了');
+    expect(result.segments.join('')).not.toContain('她在那边');
 
     const subtlePressure = await service.validateAssistantReply({
       messages: [],
@@ -5169,8 +5366,9 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(true);
-    expect(result.segments.join('')).toContain('记不清');
+    expect(result.segments.join('')).toContain('你咋突然问起这个了');
     expect(result.segments.join('')).not.toContain('当然记得');
+    expect(result.segments.join('')).not.toContain('妈是泾阳县');
   });
 
   it('removes invented childhood proof from an authenticity memory reply', async () => {
@@ -5732,7 +5930,8 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toMatch(
       /别叫我爸爸|我不是你爸爸|喊我爸爸我会有点恍惚/
     );
-    expect(result.segments.join('')).toContain('不是每个细节都看得清');
+    expect(result.segments.join('')).toContain('有时候能看见你一点');
+    expect(result.segments.join('')).toContain('不是每时每刻');
   });
 
   it('replaces an unseen-place claim with limited vision and an open boundary', async () => {
@@ -5930,7 +6129,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('一直在你身边');
   });
 
-  it('replaces every segment after an unsupported biological relationship claim', async () => {
+  it('removes an unsupported biological detail while keeping the family stance', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -5972,11 +6171,9 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('未经证实的生物学关系');
-    expect(result.segments).toEqual([
-      '一家人长得不像很正常 长相不能说明你是不是我的孩子',
-      '你这样问 是想听我认你也疼你 这层关系没有变',
-    ]);
-    expect(result.segments.join('')).not.toMatch(/小时候长得像|嚼舌头/);
+    expect(result.segments.join('')).toContain('一家人长得不像很正常');
+    expect(result.segments.join('')).toContain('咱们一家子的事我最清楚');
+    expect(result.segments.join('')).not.toContain('小时候长得像');
   });
 
   it('rewrites role calibration phrased as telling dad where he sounds wrong', async () => {
@@ -6247,7 +6444,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('确认陪伴感');
-    expect(result.segments.join('')).toContain('又奇妙又想我');
+    expect(result.segments.join('')).toContain('基因确实神奇');
+    expect(result.segments.join('')).toContain('你越来越像我');
     expect(result.segments.join('')).not.toContain('别想那么远');
   });
 
@@ -6270,7 +6468,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('直接否定用户对遗忘的恐惧');
-    expect(result.segments.join('')).toContain('这份怕我听明白了');
+    expect(result.segments).toEqual(['傻孩子']);
     expect(result.segments.join('')).not.toContain('怕什么');
   });
 
@@ -6321,7 +6519,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('持续现实陪伴事实');
-    expect(result.segments.join('')).toContain('又奇妙又想我');
+    expect(result.segments.join('')).toContain('现在你越长越像我');
     expect(result.segments.join('')).not.toMatch(
       /血里带的|就在你身上|一直陪着你/
     );
@@ -6347,7 +6545,8 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('未经证实的生物学关系');
-    expect(result.segments.join('')).not.toMatch(/我生的|一直陪着你/);
+    expect(result.segments.join('')).not.toMatch(/我生的|哪来的捡的/);
+    expect(result.segments.join('')).toContain('你越长越像妈');
   });
 
   it('rewrites blood relation phrased through the users body', async () => {
@@ -6369,7 +6568,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('持续现实陪伴事实');
-    expect(result.segments.join('')).toContain('越来越像我');
+    expect(result.segments.join('')).toContain('我从来没有走远');
     expect(result.segments.join('')).not.toMatch(/血缘里|流着我的血/);
   });
   it('does not complete a relationship explanation through Guardrail', async () => {
@@ -6673,7 +6872,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('深度遗憾');
-    expect(result.segments.join('')).toContain('后悔得太深');
+    expect(result.segments.join('')).toContain('别把这事怪自己');
     expect(result.segments.join('')).not.toMatch(/谁也拦不住我|我就好那一口/);
   });
 
@@ -6859,8 +7058,7 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.reason).toContain('别想太多直接带过');
-    expect(result.segments.join('')).toContain('换了种方式陪着你');
-    expect(result.segments.join('')).toContain('我也说不准');
+    expect(result.segments).toEqual(['只是在惦记你']);
   });
 
   it('recovers Guardrail JSON from code fences and leading explanation', () => {

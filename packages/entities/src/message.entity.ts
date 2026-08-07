@@ -18,6 +18,11 @@ export enum MessageType {
   image = "image",
 }
 
+export enum MessageSource {
+  live = "live",
+  wechatImport = "wechat_import",
+}
+
 export interface MessageReplyIntentItem {
   target: string;
   timeScope: string;
@@ -140,6 +145,45 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   status: MessageStatus;
+
+  @Column()
+  source?: MessageSource;
+
+  @Column()
+  importBatchId?: MongoObjectId;
+
+  @Column()
+  importItemId?: MongoObjectId;
+
+  @Column()
+  importedAt?: Date;
+
+  @Column()
+  sourceOccurredAt?: Date;
+
+  @Column()
+  sourceRawTimeText?: string;
+
+  @Column()
+  sourceTimePrecision?: string;
+
+  @Column()
+  sourceTimeConfidence?: string;
+
+  @Column()
+  sourceScreenshotId?: string;
+
+  @Column()
+  sourceSequence?: number;
+
+  @Column()
+  recognitionConfidence?: number;
+
+  @Column()
+  quotaExempt?: boolean;
+
+  @Column()
+  replyTrigger?: boolean;
 
   @Column()
   isArchived?: boolean;

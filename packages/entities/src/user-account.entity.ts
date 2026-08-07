@@ -1,6 +1,11 @@
 import { Entity, Column, Index } from 'typeorm';
 import { BaseEntity, MongoObjectId, TableName } from './base';
 
+export enum UserLoginAccountStatus {
+  active = 'active',
+  canceled = 'canceled',
+}
+
 @Index(['account'], { background: true })
 @Index(['openId'], { sparse: true, background: true })
 @Index(['userId'], { background: true })
@@ -17,6 +22,13 @@ export class UserAccountEntity extends BaseEntity {
 
   @Column()
   openId?: string;
+
+  /** Missing on historical rows means active for backward compatibility. */
+  @Column()
+  status?: UserLoginAccountStatus;
+
+  @Column()
+  canceledAt?: Date;
 
   @Column()
   createdAt: Date;

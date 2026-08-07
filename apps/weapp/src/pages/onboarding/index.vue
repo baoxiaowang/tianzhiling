@@ -117,8 +117,9 @@ import { openSelectedAgentChat } from "../../utils/selected-agent-chat";
 import entryLoadingImage from "../../assets/images/agent-create/header-mark.png";
 
 const ONBOARDING_STORAGE_KEY = "tzl_onboarding_seen";
+const AUTH_SESSION_STORAGE_KEY = "auth_session";
 const ENTRY_CHECK_TIMEOUT_MS = 3500;
-const ENTRY_FALLBACK_TIMEOUT_MS = 4500;
+const ENTRY_FALLBACK_TIMEOUT_MS = 5000;
 const CHAT_ENTRY_TIMEOUT_MS = 6000;
 
 type EntryTarget = "onboarding" | "index" | "chat";
@@ -129,6 +130,58 @@ const actionSafeStyle = computed(() =>
   createSafeAreaCssVars("onboarding-safe")
 );
 let entryFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+function hasSeenOnboarding() {
+  try {
+    return Boolean(Taro.getStorageSync(ONBOARDING_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function hasPersistedSession() {
+  try {
+    return Boolean(Taro.getStorageSync(AUTH_SESSION_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function markOnboardingSeen() {
+  try {
+    Taro.setStorageSync(ONBOARDING_STORAGE_KEY, "1");
+  } catch {
+    // Storage failure must not block entry into the product.
+  }
+}
+
+function resolveLocalFallbackTarget(): EntryTarget {
+  return hasSeenOnboarding() || hasPersistedSession()
+    ? "index"
+    : "onboarding";
+}
+
+function showOnboardingFallback() {
+  clearEntryFallback();
+  isNavigating.value = false;
+  isCheckingEntry.value = false;
+}
+
+function scheduleEntryFallback() {
+  clearEntryFallback();
+  entryFallbackTimer = setTimeout(() => {
+    showOnboardingFallback();
+  }, ENTRY_FALLBACK_TIMEOUT_MS);
+}
+
+function clearEntryFallback() {
+  if (!entryFallbackTimer) {
+    return;
+  }
+
+  clearTimeout(entryFallbackTimer);
+  entryFallbackTimer = undefined;
+}
 
 async function goToIndex(): Promise<boolean> {
   if (isNavigating.value) {
@@ -142,7 +195,14 @@ async function goToIndex(): Promise<boolean> {
     });
     return true;
   } catch {
-    return false;
+    try {
+      await Taro.reLaunch({
+        url: "/pages/index/index",
+      });
+      return true;
+    } catch {
+      return false;
+    }
   } finally {
     isNavigating.value = false;
   }
@@ -168,9 +228,12 @@ async function goToChatTab(): Promise<boolean> {
 }
 
 async function resolveEntryTarget(): Promise<EntryTarget> {
+  const hadPersistedSession = hasPersistedSession();
+
   await restoreAuthSession();
 
   if (authSession.value?.accessToken) {
+    markOnboardingSeen();
     return "chat";
   }
 
@@ -180,14 +243,11 @@ async function resolveEntryTarget(): Promise<EntryTarget> {
     null
   );
   if (session?.accessToken) {
+    markOnboardingSeen();
     return "chat";
   }
 
-  const hasSeenOnboarding = Boolean(
-    Taro.getStorageSync(ONBOARDING_STORAGE_KEY)
-  );
-
-  if (!hasSeenOnboarding) {
+  if (!hasSeenOnboarding() && !hadPersistedSession) {
     return "onboarding";
   }
 
@@ -213,15 +273,11 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T) {
 }
 
 async function handleStart() {
-  Taro.setStorageSync(ONBOARDING_STORAGE_KEY, "1");
+  markOnboardingSeen();
   await goToIndex();
 }
 
 async function initializeEntry() {
-  initSafeAreaInsets();
-
-  scheduleEntryFallback();
-
   const target = await withTimeout(
     resolveEntryTarget(),
     ENTRY_CHECK_TIMEOUT_MS + 1000,
@@ -230,8 +286,10 @@ async function initializeEntry() {
 
   if (target === "index") {
     const opened = await goToIndex();
-    if (!opened) {
-      isCheckingEntry.value = false;
+    if (opened) {
+      clearEntryFallback();
+    } else {
+      showOnboardingFallback();
     }
     return;
   }
@@ -239,46 +297,40 @@ async function initializeEntry() {
   if (target === "chat") {
     const opened = await goToChatTab();
     if (opened) {
+      clearEntryFallback();
       return;
     }
 
     const openedIndex = await goToIndex();
     if (openedIndex) {
+      clearEntryFallback();
       return;
     }
+
+    showOnboardingFallback();
+    return;
   }
 
-  isCheckingEntry.value = false;
-  clearEntryFallback();
+  showOnboardingFallback();
 }
 
 useLoad(() => {
-  void initializeEntry().catch(() => {
-    clearEntryFallback();
+  initSafeAreaInsets();
+
+  if (resolveLocalFallbackTarget() === "onboarding") {
     isCheckingEntry.value = false;
+    return;
+  }
+
+  scheduleEntryFallback();
+  void initializeEntry().catch(() => {
+    showOnboardingFallback();
   });
 });
 
 onUnmounted(() => {
   clearEntryFallback();
 });
-
-function scheduleEntryFallback() {
-  clearEntryFallback();
-  entryFallbackTimer = setTimeout(() => {
-    isCheckingEntry.value = false;
-    isNavigating.value = false;
-  }, ENTRY_FALLBACK_TIMEOUT_MS);
-}
-
-function clearEntryFallback() {
-  if (!entryFallbackTimer) {
-    return;
-  }
-
-  clearTimeout(entryFallbackTimer);
-  entryFallbackTimer = undefined;
-}
 </script>
 
 <style lang="scss">

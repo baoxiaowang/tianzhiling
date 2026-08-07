@@ -3,6 +3,7 @@ import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import {
   BindWeappPhoneDTO,
+  CancelCurrentUserDTO,
   DevLoginDTO,
   PasswordLoginDTO,
   PhoneLoginDTO,
@@ -16,11 +17,15 @@ import {
   WeappPhoneLoginDTO,
 } from '../dto/user.dto';
 import { UserService } from '../service/user.service';
+import { AccountCancellationService } from '../service/account-cancellation.service';
 
 @Controller('/user')
 export class UserController {
   @Inject()
   userService: UserService;
+
+  @Inject()
+  accountCancellationService: AccountCancellationService;
 
   @Inject()
   ctx: Context;
@@ -114,6 +119,21 @@ export class UserController {
   async logout() {
     return this.userService.logoutCurrentUser(
       this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Get('/me/cancellation-check')
+  async checkAccountCancellation() {
+    return this.accountCancellationService.checkCurrentUser(
+      this.ctx.state.auth as AuthenticatedUserPayload
+    );
+  }
+
+  @Post('/me/cancel')
+  async cancelCurrentUser(@Body() body: CancelCurrentUserDTO) {
+    return this.accountCancellationService.cancelCurrentUser(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      body
     );
   }
 }

@@ -1,13 +1,26 @@
+const isVoiceTrainingTestMode =
+  process.env.TARO_APP_VOICE_TRAINING_TEST_MODE === "true";
+
 export default {
   lazyCodeLoading: "requiredComponents",
-  pages: [
-    "pages/onboarding/index",
-    "pages/agent-share/index",
-    "pages/index/index",
-    "pages/contacts/index",
-    "pages/me/index",
-    "pages/chat/index",
-  ],
+  pages: isVoiceTrainingTestMode
+    ? [
+        "pages/voice-training-test/index",
+        "pages/onboarding/index",
+        "pages/agent-share/index",
+        "pages/index/index",
+        "pages/contacts/index",
+        "pages/me/index",
+        "pages/chat/index",
+      ]
+    : [
+        "pages/onboarding/index",
+        "pages/agent-share/index",
+        "pages/index/index",
+        "pages/contacts/index",
+        "pages/me/index",
+        "pages/chat/index",
+      ],
   subPackages: [
     {
       root: "pages/agent-detail",
@@ -23,6 +36,10 @@ export default {
     },
     {
       root: "pages/chat-album",
+      pages: ["index"],
+    },
+    {
+      root: "pages/chat-import",
       pages: ["index"],
     },
     {
@@ -47,6 +64,14 @@ export default {
     },
     {
       root: "pages/voice-package",
+      pages: ["index"],
+    },
+    {
+      root: "pages/voice-library",
+      pages: ["index"],
+    },
+    {
+      root: "pages/voice-timbre-detail",
       pages: ["index"],
     },
     {
@@ -98,6 +123,10 @@ export default {
       pages: ["index"],
     },
     {
+      root: "pages/account-cancellation",
+      pages: ["index"],
+    },
+    {
       root: "pages/user-name-edit",
       pages: ["index"],
     },
@@ -112,17 +141,24 @@ export default {
     navigationBarTitleText: "天之灵",
     navigationBarTextStyle: "black",
   },
+  networkTimeout: {
+    uploadFile: 5 * 60 * 1000,
+  },
   permission: {
     "scope.record": {
       desc: "用于发送语音消息和语音转文字",
     },
   },
-  plugins: {
-    WechatSI: {
-      version: "0.3.5",
-      provider: "wx069ba97219f66d99",
-    },
-  },
+  ...(isVoiceTrainingTestMode
+    ? {}
+    : {
+        plugins: {
+          WechatSI: {
+            version: "0.3.5",
+            provider: "wx069ba97219f66d99",
+          },
+        },
+      }),
   preloadRule: {
     "pages/agent-create/index": {
       network: "all",

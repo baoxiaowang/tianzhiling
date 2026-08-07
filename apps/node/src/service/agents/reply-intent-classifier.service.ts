@@ -134,6 +134,7 @@ const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
 ]);
 const DIRECT_LOW_COMPLEXITY_SCENES: ReadonlySet<string> = new Set([
   'afterlife_status',
+  'comfort_request',
   'miss_longing',
   'family_life',
   'daily_update',
@@ -141,6 +142,8 @@ const DIRECT_LOW_COMPLEXITY_SCENES: ReadonlySet<string> = new Set([
 ]);
 const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
   /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你)|(?:你|您)(?:也)?(?:想我|爱我)(?:吗|不))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
+const LIGHTWEIGHT_COMFORT_DIRECT_PATTERN =
+  /(?:有点|有些|一点|一点点)?(?:难过|难受|想哭|心里空|心里堵|睡不着|失眠)|陪(?:陪)?我(?:一会儿|一下|会儿)?|抱抱我|我想你(?:了)?|好想你/;
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
   /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
@@ -565,9 +568,17 @@ export class ReplyIntentClassifierService {
     }
 
     if (
+      route.primaryScene?.scene === 'comfort_request' &&
+      this.shouldKeepComfortOnSemanticPath(currentQuery)
+    ) {
+      return { mode: 'semantic', reason: 'complex_scene' };
+    }
+
+    if (
       (route.primaryScene?.scene &&
         DIRECT_LOW_COMPLEXITY_SCENES.has(route.primaryScene.scene)) ||
-      EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN.test(currentQuery)
+      EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN.test(currentQuery) ||
+      LIGHTWEIGHT_COMFORT_DIRECT_PATTERN.test(currentQuery)
     ) {
       return { mode: 'direct', reason: 'ordinary_message' };
     }
@@ -575,6 +586,18 @@ export class ReplyIntentClassifierService {
     // Length can prove that a turn needs planning, but brevity cannot prove
     // semantic simplicity. Unknown, elliptical turns stay on the planner.
     return { mode: 'semantic', reason: 'unresolved_semantics' };
+  }
+
+  private shouldKeepComfortOnSemanticPath(currentQuery: string): boolean {
+    return (
+      GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(currentQuery) ||
+      GRIEF_OVERWHELMED_INTENT_PATTERN.test(currentQuery) ||
+      COUNTERFACTUAL_REGRET_INTENT_PATTERN.test(currentQuery) ||
+      FAMILY_CARE_REGRET_INTENT_PATTERN.test(currentQuery) ||
+      RETURN_REUNION_WISH_INTENT_PATTERN.test(currentQuery) ||
+      isReturnVisitRequestIntent(currentQuery) ||
+      isDreamConnectionIntent(currentQuery)
+    );
   }
 
   private classifyDeterministicCorrectionIntent(

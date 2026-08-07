@@ -31,6 +31,7 @@ import {
   UserMembershipEntity,
   VipPlanEntity,
   VoicePackageEntity,
+  VoiceServiceSessionEntity,
   VoiceTimbreEntity,
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
@@ -540,6 +541,7 @@ export default {
           UserMembershipEntity,
           VipPlanEntity,
           VoicePackageEntity,
+          VoiceServiceSessionEntity,
           VoiceTimbreEntity,
           VoiceTrainingTaskEntity,
         ],

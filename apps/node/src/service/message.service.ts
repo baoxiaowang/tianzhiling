@@ -8,15 +8,18 @@ import {
   stripConversationMessageSegmentMarkup,
 } from '../common/conversation-message-segments';
 import {
+  ConversationChatImportItemEntity,
   ConversationEntity,
   MessageEntity,
   MessageRole,
+  MessageSource,
   MessageStatus,
   MessageType,
   MongoObjectId,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
+import { AgentProfileFactService } from './agents/agent-profile-fact.service';
 
 const MESSAGE_SEGMENT_LIMIT = 4;
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
@@ -36,6 +39,21 @@ export interface ConversationMessageItem {
   content: string;
   segments: string[];
   status: MessageStatus;
+  source?: MessageSource;
+  import?: {
+    batchId?: string;
+    itemId?: string;
+    importedAt?: string;
+    occurredAt?: string;
+    rawTimeText?: string;
+    timePrecision?: string;
+    timeConfidence?: string;
+    screenshotId?: string;
+    sequence?: number;
+    recognitionConfidence?: number;
+    quotaExempt?: boolean;
+    replyTrigger?: boolean;
+  };
   voice?: {
     objectKey?: string;
     url?: string;
@@ -77,6 +95,12 @@ export class MessageService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(ConversationChatImportItemEntity)
+  chatImportItemModel: MongoRepository<ConversationChatImportItemEntity>;
+
+  @Inject()
+  agentProfileFactService: AgentProfileFactService;
 
   @Inject()
   tencentCosService: TencentCosService;
@@ -145,8 +169,9 @@ export class MessageService {
   async deleteMessage(
     auth: AuthenticatedUserPayload,
     conversationId: string,
-    messageId: string
-  ): Promise<void> {
+    messageId: string,
+    options: { deleteImportedMemory?: boolean } = {}
+  ): Promise<{ archivedMemoryCount: number }> {
     const conversation = await this.getConversationForUser(
       auth,
       conversationId
@@ -159,7 +184,7 @@ export class MessageService {
     }
 
     if (message.isArchived) {
-      return;
+      return { archivedMemoryCount: 0 };
     }
 
     const now = new Date();
@@ -168,6 +193,36 @@ export class MessageService {
     message.updatedAt = now;
 
     await this.messageModel.save(message);
+
+    let archivedMemoryCount = 0;
+    if (
+      message.source === MessageSource.wechatImport &&
+      options.deleteImportedMemory === true
+    ) {
+      archivedMemoryCount =
+        await this.agentProfileFactService.removeHistoricalSourceMessage({
+          userId: message.userId,
+          agentId: message.agentId,
+          sourceMessageId: message.id,
+        });
+    }
+
+    if (message.importItemId) {
+      const item =
+        (await this.chatImportItemModel.findOne({
+          where: { id: message.importItemId },
+        })) ||
+        (await this.chatImportItemModel.findOne({
+          where: { _id: message.importItemId } as never,
+        }));
+      if (item) {
+        item.isDeleted = true;
+        item.updatedAt = now;
+        await this.chatImportItemModel.save(item);
+      }
+    }
+
+    return { archivedMemoryCount };
   }
 
   buildConversationMessageItem(
@@ -190,6 +245,8 @@ export class MessageService {
       content,
       segments,
       status: message.status,
+      source: message.source,
+      import: this.buildImportItem(message),
       voice: this.buildVoiceItem(message, type),
       image:
         type === MessageType.image
@@ -204,6 +261,36 @@ export class MessageService {
       usage: options.lightweight ? undefined : this.buildUsageItem(message),
       updatedAt: message.updatedAt?.toISOString?.() ?? '',
       createdAt: message.createdAt?.toISOString?.() ?? '',
+    };
+  }
+
+  private buildImportItem(
+    message: MessageEntity
+  ): ConversationMessageItem['import'] {
+    if (message.source !== MessageSource.wechatImport) {
+      return undefined;
+    }
+
+    return {
+      batchId: message.importBatchId
+        ? this.stringifyObjectId(message.importBatchId)
+        : undefined,
+      itemId: message.importItemId
+        ? this.stringifyObjectId(message.importItemId)
+        : undefined,
+      importedAt: message.importedAt?.toISOString?.(),
+      occurredAt: message.sourceOccurredAt?.toISOString?.(),
+      rawTimeText: message.sourceRawTimeText?.trim() || undefined,
+      timePrecision: message.sourceTimePrecision?.trim() || undefined,
+      timeConfidence: message.sourceTimeConfidence?.trim() || undefined,
+      screenshotId: message.sourceScreenshotId?.trim() || undefined,
+      sequence: this.normalizeTokenCount(message.sourceSequence),
+      recognitionConfidence:
+        typeof message.recognitionConfidence === 'number'
+          ? message.recognitionConfidence
+          : undefined,
+      quotaExempt: message.quotaExempt === true,
+      replyTrigger: message.replyTrigger !== false,
     };
   }
 

@@ -75,26 +75,22 @@
             风控中
           </text>
         </view>
-        <view class="moment-card__actions" @tap.stop="toggleActionMenu">
-          <view class="moment-card__more" />
-          <view v-if="isActionMenuVisible" class="moment-card__action-menu">
+        <view
+          v-if="showCommentAction"
+          class="moment-card__actions"
+        >
+          <view class="moment-card__action-item" @tap.stop="handleLikeAction">
             <view
-              class="moment-card__action-menu-item"
-              :class="{ 'moment-card__action-menu-item--active': post.likedByMe }"
-              @tap.stop="handleLikeAction"
-            >
-              <view class="moment-card__action-menu-icon moment-card__action-menu-icon--like" />
-              <text>{{ post.likedByMe ? '取消' : '赞' }}</text>
-            </view>
-            <view v-if="showCommentAction" class="moment-card__action-menu-divider" />
-            <view
-              v-if="showCommentAction"
-              class="moment-card__action-menu-item"
-              @tap.stop="handleCommentAction"
-            >
-              <view class="moment-card__action-menu-icon moment-card__action-menu-icon--comment" />
-              <text>评论</text>
-            </view>
+              class="moment-card__action-icon moment-card__action-icon--like"
+              :class="{ 'moment-card__action-icon--like-active': post.likedByMe }"
+            />
+            <text class="moment-card__action-text" :class="{ 'moment-card__action-text--active': post.likedByMe }">
+              共鸣
+            </text>
+          </view>
+          <view class="moment-card__action-item" @tap.stop="handleCommentAction">
+            <view class="moment-card__action-icon moment-card__action-icon--comment" />
+            <text class="moment-card__action-text">评论</text>
           </view>
         </view>
       </view>
@@ -212,7 +208,6 @@ const isRiskControlled = computed(() => {
     props.post.moderationStatus === 'risk_controlled'
   )
 })
-const isActionMenuVisible = ref(false)
 const isContentExpanded = ref(false)
 const areCommentsExpanded = ref(false)
 const postContent = computed(() => normalizeEmojiText(normalizeText(props.post.content)))
@@ -248,7 +243,7 @@ const likeSummaryText = computed(() => {
     return `我等${likeCount.value}人`
   }
 
-  return `${likeCount.value}人觉得很赞`
+  return `${likeCount.value}人共鸣了`
 })
 
 function formatMomentRelativeTime(value: string | null) {
@@ -303,14 +298,6 @@ function formatCommentContent(content: unknown) {
   return normalizeEmojiText(normalizeText(content))
 }
 
-function toggleActionMenu() {
-  isActionMenuVisible.value = !isActionMenuVisible.value
-}
-
-function closeActionMenu() {
-  isActionMenuVisible.value = false
-}
-
 function toggleContentExpanded() {
   isContentExpanded.value = !isContentExpanded.value
 }
@@ -320,12 +307,10 @@ function expandComments() {
 }
 
 function handleLikeAction() {
-  closeActionMenu()
   emitLike()
 }
 
 function handleCommentAction() {
-  closeActionMenu()
   emitComment()
 }
 
@@ -521,72 +506,20 @@ function emitOpen() {
 }
 
 .moment-card__actions {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 20px;
+  justify-content: flex-end;
   margin-left: 10px;
-  border-radius: 3px;
-  background: #f7f7f7;
+  gap: 14px;
 }
 
-.moment-card__more {
-  position: relative;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #6b7a99;
-  box-shadow: -6px 0 0 #6b7a99, 6px 0 0 #6b7a99;
-}
-
-.moment-card__action-menu {
-  position: absolute;
-  right: 40px;
-  top: -10px;
-  z-index: 5;
+.moment-card__action-item {
   display: flex;
   align-items: center;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 4px;
-  background: #4c5157;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  color: #ffffff;
-  white-space: nowrap;
+  gap: 5px;
 }
 
-.moment-card__action-menu::after {
-  content: '';
-  position: absolute;
-  right: -6px;
-  top: 15px;
-  width: 0;
-  height: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 6px solid #4c5157;
-}
-
-.moment-card__action-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 4px;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.moment-card__action-menu-divider {
-  width: 1px;
-  height: 18px;
-  margin: 0 10px;
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.moment-card__action-menu-icon {
+.moment-card__action-icon {
   width: 18px;
   height: 18px;
   display: block;
@@ -595,12 +528,26 @@ function emitOpen() {
   background-size: 18px 18px;
 }
 
-.moment-card__action-menu-icon--like {
-  background-image: url('../../assets/icon/moments-like-white.svg');
+.moment-card__action-icon--like {
+  background-image: url('../../assets/icon/resonance.svg');
 }
 
-.moment-card__action-menu-icon--comment {
-  background-image: url('../../assets/icon/moments-comment-white.svg');
+.moment-card__action-icon--like-active {
+  background-image: url('../../assets/icon/resonance-active.svg');
+}
+
+.moment-card__action-icon--comment {
+  background-image: url('../../assets/icon/comment.svg');
+}
+
+.moment-card__action-text {
+  font-size: 13px;
+  line-height: 20px;
+  color: #6a7282;
+}
+
+.moment-card__action-text--active {
+  color: #f4513b;
 }
 
 .moment-card__delete {
@@ -628,7 +575,7 @@ function emitOpen() {
   margin-top: 8px;
   padding: 5px 7px;
   border-radius: 0;
-  background: #f5f5f5;
+  background: #f6f2fc;
 }
 
 .moment-card__comments::before {
@@ -640,7 +587,7 @@ function emitOpen() {
   height: 0;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-bottom: 5px solid #f5f5f5;
+  border-bottom: 5px solid #f6f2fc;
 }
 
 .moment-card__likes {
@@ -654,7 +601,7 @@ function emitOpen() {
   width: 16px;
   height: 16px;
   display: block;
-  background: url('../../assets/icon/moments-like-blue.svg') center / 16px 16px no-repeat;
+  background: url('../../assets/icon/resonance-active.svg') center / 16px 16px no-repeat;
 }
 
 .moment-card__likes-name {
@@ -666,7 +613,7 @@ function emitOpen() {
 .moment-card__interaction-divider {
   height: 1px;
   margin: 4px 0;
-  background: #e4e4e6;
+  background: #e9e1f5;
 }
 
 .moment-card__comment {

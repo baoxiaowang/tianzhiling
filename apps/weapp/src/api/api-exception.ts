@@ -17,6 +17,7 @@ export class ApiException extends Error {
       'INVALID_TOKEN',
       'TOKEN_REVOKED',
       'TOKEN_EXPIRED',
+      'ACCOUNT_CANCELED',
     ].includes(this.code ?? '')
   }
 
@@ -41,6 +42,17 @@ export class ApiException extends Error {
       case 'TOKEN_REVOKED':
       case 'TOKEN_EXPIRED':
         return '登录状态已失效，请重新登录'
+      case 'ACCOUNT_CANCELED':
+      case 'ACCOUNT_ALREADY_CANCELED':
+        return '账号已注销'
+      case 'ACCOUNT_CANCELLATION_CONFIRMATION_REQUIRED':
+        return '请输入“确认注销”后继续'
+      case 'ACCOUNT_CANCELLATION_WECHAT_VERIFICATION_REQUIRED':
+        return '请完成微信身份验证后再注销'
+      case 'ACCOUNT_CANCELLATION_IDENTITY_MISMATCH':
+        return '当前微信身份与登录账号不一致'
+      case 'ACCOUNT_CANCELLATION_BLOCKED':
+        return '还有未完成的业务，请处理后再注销'
       case 'INVALID_USER_NAME':
         return '昵称格式不正确，请重新输入'
       case 'INVALID_USER_AVATAR':

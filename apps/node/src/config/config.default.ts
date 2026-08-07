@@ -14,6 +14,8 @@ import {
   ChatSpanEntity,
   ChatTraceEntity,
   ConversationEmotionStateEntity,
+  ConversationChatImportBatchEntity,
+  ConversationChatImportItemEntity,
   ConversationMessageFeedbackEntity,
   ConversationEntity,
   CouponLedgerEntity,
@@ -29,6 +31,7 @@ import {
   UserMembershipEntity,
   VipPlanEntity,
   VoicePackageEntity,
+  VoiceServiceSessionEntity,
   VoiceTimbreEntity,
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
@@ -203,10 +206,15 @@ export default {
       '.wav',
       '.ogg',
       '.webm',
+      '.amr',
+      '.silk',
+      '.mp4',
+      '.m4v',
+      '.mov',
     ],
     match: /\/api\/storage\/upload$/,
     limits: {
-      fileSize: 20 * 1024 * 1024,
+      fileSize: 50 * 1024 * 1024,
       files: 1,
     },
   },
@@ -572,6 +580,69 @@ export default {
       900
     ),
   },
+  voiceClipping: {
+    binaryPath: readStringFrom(['NODE_FFMPEG_BINARY_PATH'], 'ffmpeg'),
+    timeoutMs: readNumberFrom(['NODE_FFMPEG_TIMEOUT_MS'], 300000),
+    segmentSeconds: readNumberFrom(['NODE_VOICE_CLIP_SEGMENT_SECONDS'], 12),
+    maxClipsPerMaterial: readNumberFrom(
+      ['NODE_VOICE_CLIP_MAX_PER_MATERIAL'],
+      8
+    ),
+    maxTotalClips: readNumberFrom(['NODE_VOICE_CLIP_MAX_TOTAL'], 8),
+    maxSourceSeconds: readNumberFrom(
+      ['NODE_VOICE_CLIP_MAX_SOURCE_SECONDS'],
+      180
+    ),
+    minClipBytes: readNumberFrom(['NODE_VOICE_CLIP_MIN_BYTES'], 4096),
+    minUsableDurationSeconds: readNumberFrom(
+      ['NODE_VOICE_CLIP_MIN_USABLE_SECONDS'],
+      2
+    ),
+    maxSilenceRatio: readNumberFrom(
+      ['NODE_VOICE_CLIP_MAX_SILENCE_RATIO'],
+      0.75
+    ),
+    maxClippingRatio: readNumberFrom(
+      ['NODE_VOICE_CLIP_MAX_CLIPPING_RATIO'],
+      0.12
+    ),
+    minRecoverableRmsDb: readNumberFrom(
+      ['NODE_VOICE_CLIP_MIN_RECOVERABLE_RMS_DB'],
+      -58
+    ),
+    lowVolumeRmsDb: readNumberFrom(['NODE_VOICE_CLIP_LOW_VOLUME_RMS_DB'], -32),
+    targetRmsDb: readNumberFrom(['NODE_VOICE_CLIP_TARGET_RMS_DB'], -22),
+    maxVolumeGainDb: readNumberFrom(['NODE_VOICE_CLIP_MAX_VOLUME_GAIN_DB'], 20),
+    minSignalToNoiseDb: readNumberFrom(
+      ['NODE_VOICE_CLIP_MIN_SIGNAL_TO_NOISE_DB'],
+      4
+    ),
+    warningSignalToNoiseDb: readNumberFrom(
+      ['NODE_VOICE_CLIP_WARNING_SIGNAL_TO_NOISE_DB'],
+      12
+    ),
+  },
+  voiceAnalysis: {
+    enabled: readBooleanFrom(['NODE_VOICE_ANALYSIS_ENABLED'], true),
+    apiKey: readStringFrom(
+      [
+        'NODE_VOICE_ANALYSIS_API_KEY',
+        'DASHSCOPE_API_KEY',
+        'NODE_QWEN_VOICE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_VOICE_ANALYSIS_BASE_URL'],
+      'https://dashscope.aliyuncs.com'
+    ),
+    model: readStringFrom(['NODE_VOICE_ANALYSIS_MODEL'], 'paraformer-v2'),
+    timeoutMs: readNumberFrom(['NODE_VOICE_ANALYSIS_TIMEOUT_MS'], 240000),
+    pollIntervalMs: readNumberFrom(
+      ['NODE_VOICE_ANALYSIS_POLL_INTERVAL_MS'],
+      2000
+    ),
+  },
   redis: {
     client: {
       host: readStringFrom(['NODE_REDIS_HOST', 'REDIS_HOST'], '127.0.0.1'),
@@ -642,6 +713,8 @@ export default {
           AgentSubEntity,
           ChatSpanEntity,
           ChatTraceEntity,
+          ConversationChatImportBatchEntity,
+          ConversationChatImportItemEntity,
           ConversationEmotionStateEntity,
           ConversationMessageFeedbackEntity,
           ConversationEntity,
@@ -658,6 +731,7 @@ export default {
           UserMembershipEntity,
           VipPlanEntity,
           VoicePackageEntity,
+          VoiceServiceSessionEntity,
           VoiceTimbreEntity,
           VoiceTrainingTaskEntity,
         ],

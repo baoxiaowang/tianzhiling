@@ -75,100 +75,99 @@
 
 <script lang="ts">
 export default {
-  name: 'DevLoginPage',
-}
+  name: "DevLoginPage",
+};
 </script>
 
 <script setup lang="ts">
-import Taro from '@tarojs/taro'
-import { computed, onMounted, ref } from 'vue'
-import { ApiException, devLogin } from '../../auth/api'
-import AppBar from '../../components/app-bar/app-bar.vue'
-import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
+import Taro from "@tarojs/taro";
+import { computed, onMounted, ref } from "vue";
+import { ApiException, devLogin } from "../../auth/api";
+import AppBar from "../../components/app-bar/app-bar.vue";
+import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
+import { openSelectedAgentChat } from "../../utils/selected-agent-chat";
 
-const account = ref('')
-const openid = ref('')
-const isSubmitting = ref(false)
-const envVersion = ref(readEnvVersion())
+const account = ref("");
+const openid = ref("");
+const isSubmitting = ref(false);
+const envVersion = ref(readEnvVersion());
 
-const trimmedAccount = computed(() => account.value.trim())
-const trimmedOpenid = computed(() => openid.value.trim())
-const isRelease = computed(() => envVersion.value === 'release')
+const trimmedAccount = computed(() => account.value.trim());
+const trimmedOpenid = computed(() => openid.value.trim());
+const isRelease = computed(() => envVersion.value === "release");
 const canSubmit = computed(() => {
   return (
     !isSubmitting.value &&
     !isRelease.value &&
     trimmedAccount.value.length > 0 &&
     trimmedOpenid.value.length > 0
-  )
-})
+  );
+});
 const envVersionLabel = computed(() => {
   switch (envVersion.value) {
-    case 'develop':
-      return '开发版'
-    case 'trial':
-      return '体验版'
-    case 'release':
-      return '正式版'
+    case "develop":
+      return "开发版";
+    case "trial":
+      return "体验版";
+    case "release":
+      return "正式版";
     default:
-      return '未知'
+      return "未知";
   }
-})
+});
 
 onMounted(() => {
-  envVersion.value = readEnvVersion()
-})
+  envVersion.value = readEnvVersion();
+});
 
 function readEnvVersion() {
   try {
-    return Taro.getAccountInfoSync?.().miniProgram?.envVersion ?? 'unknown'
+    return Taro.getAccountInfoSync?.().miniProgram?.envVersion ?? "unknown";
   } catch {
-    return 'unknown'
+    return "unknown";
   }
 }
 
 function showToast(title: string) {
   void Taro.showToast({
     title,
-    icon: 'none',
+    icon: "none",
     duration: 1800,
-  })
+  });
 }
 
 function resolveErrorMessage(error: unknown) {
   if (error instanceof ApiException) {
-    return error.message
+    return error.message;
   }
 
   if (error instanceof Error && error.message) {
-    return error.message
+    return error.message;
   }
 
-  return '调试登录失败'
+  return "调试登录失败";
 }
 
 async function handleSubmit() {
   if (!canSubmit.value) {
-    return
+    return;
   }
 
-  isSubmitting.value = true
+  isSubmitting.value = true;
 
   try {
-    await devLogin(trimmedAccount.value, trimmedOpenid.value)
+    await devLogin(trimmedAccount.value, trimmedOpenid.value);
     await Taro.showToast({
-      title: '调试登录成功',
-      icon: 'success',
+      title: "调试登录成功",
+      icon: "success",
       duration: 800,
-    })
-    await new Promise(resolve => setTimeout(resolve, 500))
-    await Taro.switchTab({
-      url: '/pages/contacts/index',
-    })
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await openSelectedAgentChat();
   } catch (error) {
-    showToast(resolveErrorMessage(error))
+    showToast(resolveErrorMessage(error));
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
 }
 </script>

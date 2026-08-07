@@ -320,6 +320,15 @@
     </template>
 
     <template #overlay>
+      <chat-import-feature-poster
+        :conversation-id="conversationId"
+        :agent-id="agentId"
+        :agent-name="agentName"
+        :agent-avatar="agentAvatar"
+        :i-call-agent="iCallAgent"
+        :user-message-count="chatUserMessageCount"
+      />
+
       <nut-dialog
         close-on-click-overlay
         v-model:visible="isChatQuotaDialogVisible"
@@ -416,8 +425,20 @@
         :z-index="CHAT_QUOTA_DIALOG_Z_INDEX + 2"
       >
         <view class="chat-privacy-dialog__content">
-          删除后将无法恢复，确定删除这条消息吗？
+          {{
+            pendingDeleteIsImported
+              ? "这是导入的历史聊天记录，删除后将无法恢复。"
+              : "删除后将无法恢复，确定删除这条消息吗？"
+          }}
         </view>
+        <nut-checkbox
+          v-if="pendingDeleteIsImported"
+          v-model="deleteImportedMemoryTogether"
+          class="chat-delete-dialog__memory-option"
+          icon-size="18"
+        >
+          同时删除由这条记录形成的记忆
+        </nut-checkbox>
 
         <template #footer>
           <view class="chat-privacy-dialog__footer">
@@ -517,16 +538,18 @@ import { Category } from "@nutui/icons-vue-taro";
 import Taro, { useDidHide, useDidShow, useLoad, useUnload } from "@tarojs/taro";
 import type { ITouchEvent } from "@tarojs/components/types/common";
 import { computed, nextTick, ref } from "vue";
-import { ApiConfig } from "../../api/api-config";
+import { ApiConfig, isLocalApiEnvironment } from "../../api/api-config";
 import { ApiException } from "../../api/api-exception";
 import { getAgentDetail } from "../../apis/agent";
 import {
+  convertConversationMessageVoiceToText,
   deleteConversationMessage,
   generateConversationMessageVoice,
   getCachedConversationMessages,
   getConversationChatBootstrap,
   getConversationChatQuota,
   getConversationMessagesPage,
+  getEntryConversation,
   markConversationMessageMemory,
   sendConversationMessageAsync,
   submitConversationMessageFeedback,
@@ -551,6 +574,7 @@ import {
 } from "../../components/chat-more-panel/image";
 import type { ChatMoreActionItem } from "../../components/chat-more-panel/types";
 import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
+import ChatImportFeaturePoster from "../../components/chat-import-feature-poster/chat-import-feature-poster.vue";
 import {
   authSession,
   restoreAuthSession,
@@ -560,6 +584,11 @@ import { ensureInnerAudioPlaybackOptions } from "../../utils/audio";
 import { shouldShowAgentHomeGuide } from "../../utils/agent-profile-guide";
 import { normalizeEmojiText } from "../../utils/emoji-text";
 import {
+  buildConversationChatUrl,
+  rememberSelectedConversation,
+} from "../../utils/selected-agent-chat";
+import {
+  reportChatImportEvent,
   reportChatQuotaDialogEvent,
   reportPerformanceEvent,
 } from "../../utils/product-analytics";
@@ -696,6 +725,7 @@ type RecorderErrorLike = {
 type MessageActionKey =
   | "quote"
   | "generateVoice"
+  | "showText"
   | "feedback"
   | "remember"
   | "delete";
@@ -733,6 +763,10 @@ const QUOTE_MESSAGE_ACTION: MessageActionItem = { key: "quote", label: "引用" 
 const GENERATE_VOICE_MESSAGE_ACTION: MessageActionItem = {
   key: "generateVoice",
   label: "转语音",
+};
+const SHOW_TEXT_MESSAGE_ACTION: MessageActionItem = {
+  key: "showText",
+  label: "转文字",
 };
 const FEEDBACK_MESSAGE_ACTION: MessageActionItem = {
   key: "feedback",
@@ -812,7 +846,18 @@ const chatQuotaDialogType = ref<ChatQuotaDialogType>("remaining");
 const chatQuotaSnapshot = ref<ConversationChatQuotaSnapshot | null>(null);
 const isDeleteMessageDialogVisible = ref(false);
 const pendingDeleteMessageId = ref("");
+const deleteImportedMemoryTogether = ref(false);
+const pendingDeleteIsImported = computed(() =>
+  messages.value.some(
+    (message) =>
+      message.id === pendingDeleteMessageId.value &&
+      message.source === "wechat_import"
+  )
+);
 const isConfirmingMessageDelete = ref(false);
+const chatUserMessageCount = computed(
+  () => messages.value.filter((message) => message.role === "user").length
+);
 const isFeedbackPopupVisible = ref(false);
 const selectedFeedbackMessageId = ref("");
 const selectedFeedbackType = ref<ConversationMessageFeedbackType>("unlike");
@@ -867,6 +912,7 @@ let lastChatScrollTop = 0;
 let hasTrackedChatScrollTop = false;
 const deletingMessageIds = new Set<string>();
 const generatingVoiceMessageIds = new Set<string>();
+const convertingVoiceMessageIds = new Set<string>();
 const voiceDurationProbeContexts = new Map<string, Taro.InnerAudioContext>();
 const pendingVoiceDurationProbeMessages = new Map<
   string,
@@ -1112,6 +1158,14 @@ function appendMessageDisplayRows(
   message: ConversationMessage,
   previous?: ConversationMessage
 ) {
+  if (shouldShowImportedGroupLabel(message, previous)) {
+    rows.push({
+      key: `import-source-${message.id}`,
+      kind: "system",
+      text: buildImportedGroupLabel(message),
+    });
+  }
+
   if (shouldShowTimeDivider(message, previous)) {
     rows.push({
       key: `time-${message.id}`,
@@ -1221,6 +1275,39 @@ function appendMessageDisplayRows(
         : "",
     });
   });
+}
+
+function shouldShowImportedGroupLabel(
+  message: ConversationMessage,
+  previous?: ConversationMessage
+) {
+  if (message.source !== "wechat_import" || message.role === "system") {
+    return false;
+  }
+
+  if (previous?.source !== "wechat_import" || previous.role === "system") {
+    return true;
+  }
+
+  return getImportedMonthKey(message) !== getImportedMonthKey(previous);
+}
+
+function buildImportedGroupLabel(message: ConversationMessage) {
+  const occurredAt = message.import?.occurredAt || message.createdAt;
+  if (!occurredAt) {
+    return "来自微信聊天记录";
+  }
+
+  return `来自微信聊天记录 · ${occurredAt.getFullYear()}年${
+    occurredAt.getMonth() + 1
+  }月`;
+}
+
+function getImportedMonthKey(message: ConversationMessage) {
+  const occurredAt = message.import?.occurredAt || message.createdAt;
+  return occurredAt
+    ? `${occurredAt.getFullYear()}-${occurredAt.getMonth() + 1}`
+    : "unknown";
 }
 
 function buildMessageRenderFallbackRow(
@@ -1397,6 +1484,10 @@ async function refreshInitialChat() {
         return;
       }
 
+      if (await recoverLocalConversation(error)) {
+        return;
+      }
+
       if (isLegacyChatBootstrapUnavailable(error)) {
         await refreshMessages({ showLoading: shouldShowLoading });
         scheduleAfterInitialRender(() => {
@@ -1414,6 +1505,29 @@ async function refreshInitialChat() {
     });
 
   return refreshChatBootstrapPromise;
+}
+
+async function recoverLocalConversation(error: unknown) {
+  if (
+    !isLocalApiEnvironment() ||
+    !(error instanceof ApiException) ||
+    error.code !== "CONVERSATION_NOT_FOUND"
+  ) {
+    return false;
+  }
+
+  try {
+    const replacement = await getEntryConversation({ timeout: 5000 });
+    if (!replacement || replacement.id === conversationId.value) {
+      return false;
+    }
+
+    rememberSelectedConversation(replacement);
+    await Taro.redirectTo({ url: buildConversationChatUrl(replacement) });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isLegacyChatBootstrapUnavailable(error: unknown) {
@@ -2608,8 +2722,17 @@ function shouldOfferVoiceGeneration(message?: ConversationMessage) {
     message &&
       message.role === "assistant" &&
       message.type === "text" &&
+      message.status === "sent"
+  );
+}
+
+function shouldOfferTextConversion(message?: ConversationMessage) {
+  return Boolean(
+    message &&
+      message.role === "assistant" &&
+      message.type === "voice" &&
       message.status === "sent" &&
-      !hasResolvableVoicePayload(message.voice)
+      (message.voice?.transcript?.trim() || message.content.trim())
   );
 }
 
@@ -2646,6 +2769,7 @@ function getMessageActionItems(
     ...(shouldOfferVoiceGeneration(message)
       ? [GENERATE_VOICE_MESSAGE_ACTION]
       : []),
+    ...(shouldOfferTextConversion(message) ? [SHOW_TEXT_MESSAGE_ACTION] : []),
     ...(shouldOfferFeedback(message) ? [FEEDBACK_MESSAGE_ACTION] : []),
     DELETE_MESSAGE_ACTION,
   ];
@@ -2671,7 +2795,7 @@ async function generateMessageVoice(message: ConversationMessage) {
       item.id === updatedMessage.id ? updatedMessage : item
     );
     probeMissingAssistantVoiceDurations([updatedMessage]);
-    showToast("已生成语音");
+    showToast("已转成语音");
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await redirectToAuth();
@@ -2683,6 +2807,36 @@ async function generateMessageVoice(message: ConversationMessage) {
     );
   } finally {
     generatingVoiceMessageIds.delete(message.id);
+  }
+}
+
+async function convertMessageVoiceToText(message: ConversationMessage) {
+  if (!conversationId.value || convertingVoiceMessageIds.has(message.id)) {
+    return;
+  }
+
+  convertingVoiceMessageIds.add(message.id);
+
+  try {
+    const updatedMessage = await convertConversationMessageVoiceToText(
+      conversationId.value,
+      message.id
+    );
+    messages.value = messages.value.map((item) =>
+      item.id === updatedMessage.id ? updatedMessage : item
+    );
+    showToast("已转成文字");
+  } catch (error) {
+    if (error instanceof ApiException && error.requiresReLogin) {
+      await redirectToAuth();
+      return;
+    }
+
+    showToast(
+      error instanceof ApiException ? error.message : "转文字失败，请稍后重试"
+    );
+  } finally {
+    convertingVoiceMessageIds.delete(message.id);
   }
 }
 
@@ -2784,6 +2938,11 @@ async function runMessageAction(
 
   if (action === "generateVoice") {
     await generateMessageVoice(message);
+    return;
+  }
+
+  if (action === "showText") {
+    await convertMessageVoiceToText(message);
     return;
   }
 
@@ -2968,12 +3127,14 @@ function requestDeleteMessage(message: ConversationMessage) {
   }
 
   pendingDeleteMessageId.value = message.id;
+  deleteImportedMemoryTogether.value = message.source === "wechat_import";
   isDeleteMessageDialogVisible.value = true;
 }
 
 function closeDeleteMessageDialog() {
   isDeleteMessageDialogVisible.value = false;
   pendingDeleteMessageId.value = "";
+  deleteImportedMemoryTogether.value = false;
 }
 
 function handleDeleteMessageCancel() {
@@ -3034,7 +3195,11 @@ async function deleteMessageFromConversation(message: ConversationMessage) {
   deletingMessageIds.add(message.id);
 
   try {
-    await deleteConversationMessage(conversationId.value, message.id);
+    await deleteConversationMessage(conversationId.value, message.id, {
+      deleteImportedMemory:
+        message.source === "wechat_import" &&
+        deleteImportedMemoryTogether.value,
+    });
     removeMessageFromState(message.id);
     showToast("已删除");
     return true;
@@ -3860,7 +4025,35 @@ function handleMoreAction(item: ChatMoreActionItem) {
     return;
   }
 
+  if (action === "chat-import") {
+    handleChatImportAction();
+    return;
+  }
+
   handlePendingAction(item.label);
+}
+
+function handleChatImportAction() {
+  if (!conversationId.value || !agentId.value) {
+    showToast("会话还没有准备好，请稍后再试");
+    return;
+  }
+
+  isMorePanelVisible.value = false;
+  reportChatImportEvent("entry_click");
+  const query = [
+    ["conversationId", conversationId.value],
+    ["agentId", agentId.value],
+    ["agentName", agentName.value],
+    ["agentAvatar", agentAvatar.value],
+    ["iCallAgent", iCallAgent.value],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join("&");
+
+  void Taro.navigateTo({
+    url: `/pages/chat-import/index?${query}`,
+  });
 }
 
 function handleEmojiSelect(emoji: string) {
@@ -5373,9 +5566,9 @@ function destroyVoiceDurationProbeContexts() {
 }
 
 .chat-privacy-dialog .nut-dialog__header {
-  height: 22px;
-  font-size: 16px;
-  line-height: 22px;
+  height: 24px;
+  font-size: 17px;
+  line-height: 24px;
   font-weight: 600;
   color: #000000;
 }
@@ -5386,24 +5579,24 @@ function destroyVoiceDurationProbeContexts() {
   max-height: none;
   overflow: visible;
   color: #000000;
-  font-size: 12px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 24px;
   text-align: left;
 }
 
 .chat-privacy-dialog__content {
   width: 100%;
   color: #000000;
-  font-size: 12px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 24px;
   word-break: break-word;
 }
 
 .chat-privacy-dialog__link {
   margin-top: 8px;
   color: #07c160;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .chat-privacy-dialog .nut-dialog__footer {
@@ -5421,11 +5614,11 @@ function destroyVoiceDurationProbeContexts() {
 .chat-privacy-dialog__secondary,
 .chat-privacy-dialog__primary {
   width: 116px;
-  height: 36px;
+  height: 40px;
   border-radius: 58px;
   text-align: center;
-  font-size: 14px;
-  line-height: 36px;
+  font-size: 16px;
+  line-height: 40px;
   font-weight: 500;
   letter-spacing: 0;
   box-sizing: border-box;
@@ -5451,6 +5644,13 @@ function destroyVoiceDurationProbeContexts() {
 
 .chat-delete-dialog__primary {
   background: #e54d42;
+}
+
+.chat-delete-dialog__memory-option {
+  margin-top: 18px;
+  color: #4f4d56;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .chat-delete-dialog__button--disabled {

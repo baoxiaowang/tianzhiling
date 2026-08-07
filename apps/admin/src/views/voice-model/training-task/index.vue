@@ -51,7 +51,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1760 }"
+        :scroll="{ x: 1950 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -114,6 +114,26 @@
               <a-tag :color="getStatusColor(record.status)">
                 {{ getStatusText(record.status) }}
               </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="内部推荐"
+            data-index="trainingStrategy"
+            :width="190"
+          >
+            <template #cell="{ record }">
+              <a-tag :color="getTrainingStrategyColor(record.trainingStrategy)">
+                {{ getTrainingStrategyText(record.trainingStrategy) }}
+              </a-tag>
+              <div class="voice-task-page__muted">
+                {{ formatMaterialDuration(record.materialDurationSeconds) }}
+              </div>
+              <div
+                v-if="record.trainingStrategy === 'long_sample'"
+                class="voice-task-page__muted"
+              >
+                结果差时剪至1分钟优质片段
+              </div>
             </template>
           </a-table-column>
           <a-table-column title="处理人" data-index="assigneeName" :width="120">
@@ -305,6 +325,7 @@
   import type {
     VoiceTimbreStatusDTO,
     VoiceTrainingTaskStatusDTO,
+    VoiceTrainingTaskTrainingStrategyDTO,
   } from '@tzl/shared';
   import {
     completeVoiceTrainingTask,
@@ -367,6 +388,13 @@
     active: { text: '已启用', color: 'green' },
     failed: { text: '失败', color: 'red' },
     disabled: { text: '已禁用', color: 'gray' },
+  };
+  const trainingStrategyMap: Record<
+    VoiceTrainingTaskTrainingStrategyDTO,
+    { text: string; color: string }
+  > = {
+    short_sample: { text: '短素材优先', color: 'green' },
+    long_sample: { text: '长素材先复核', color: 'orange' },
   };
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
@@ -532,6 +560,36 @@
     voiceTimbreStatusMap[status]?.text ?? status;
   const getVoiceTimbreStatusColor = (status: VoiceTimbreStatusDTO) =>
     voiceTimbreStatusMap[status]?.color ?? 'gray';
+  const getTrainingStrategyText = (
+    strategy?: VoiceTrainingTaskTrainingStrategyDTO
+  ) =>
+    strategy
+      ? trainingStrategyMap[strategy]?.text ?? strategy
+      : trainingStrategyMap.short_sample.text;
+  const getTrainingStrategyColor = (
+    strategy?: VoiceTrainingTaskTrainingStrategyDTO
+  ) =>
+    strategy
+      ? trainingStrategyMap[strategy]?.color ?? 'gray'
+      : trainingStrategyMap.short_sample.color;
+  const formatMaterialDuration = (durationSeconds?: number) => {
+    if (
+      typeof durationSeconds !== 'number' ||
+      !Number.isFinite(durationSeconds) ||
+      durationSeconds <= 0
+    ) {
+      return '时长待确认';
+    }
+
+    if (durationSeconds < 60) {
+      return `约 ${Math.round(durationSeconds)} 秒`;
+    }
+
+    const minutes = Math.floor(durationSeconds / 60);
+    const seconds = Math.round(durationSeconds % 60);
+
+    return seconds ? `约 ${minutes}分${seconds}秒` : `约 ${minutes}分钟`;
+  };
   const formatDate = (value?: string) =>
     value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 

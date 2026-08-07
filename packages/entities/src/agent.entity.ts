@@ -9,6 +9,8 @@ export enum AgentSex {
 
 export interface AgentPersonaLanguageProfile {
   sentenceLength?: string;
+  modalParticles?: string;
+  replyBubblePattern?: string;
   directness?: string;
   emotionalExpression?: string;
   addressStyle?: string;
@@ -56,6 +58,7 @@ export interface AgentMemoryProfileFactSnapshot {
 @Index(["createdUserId", "updatedAt"], { background: true })
 @Index(["createdUserId", "isDefault"], { background: true })
 @Index(["voiceTimbreId"], { sparse: true, background: true })
+@Index(["pendingVoiceTimbreId"], { sparse: true, background: true })
 @Entity(TableName.agent)
 export class AgentEntity extends BaseEntity {
   @Column()
@@ -147,6 +150,12 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   voiceTimbreId?: MongoObjectId;
+
+  @Column()
+  pendingVoiceTimbreId?: MongoObjectId;
+
+  @Column()
+  voiceTimbreSelectedAt?: Date;
 
   @Column()
   createdAt: Date;

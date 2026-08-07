@@ -42,6 +42,9 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     outputRoot,
     plugins: ['@tarojs/plugin-html'],
     defineConstants: {
+      VOICE_TRAINING_TEST_MODE: JSON.stringify(
+        process.env.TARO_APP_VOICE_TRAINING_TEST_MODE === 'true'
+      ),
     },
     copy: {
       patterns: [

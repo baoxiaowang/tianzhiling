@@ -71,3 +71,8 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   pageSize?: number | string;
 }
+
+export class VoiceMembershipDowngradeDTO {
+  @Rule(RuleType.string().required())
+  targetVipPlanId: string;
+}

@@ -159,6 +159,13 @@
               >
                 退 {{ formatAmount(record.refundAmount) }}
               </div>
+              <div
+                v-else-if="record.voiceMembershipDowngrade"
+                class="order-page__refund-amount"
+              >
+                拟退
+                {{ formatAmount(record.voiceMembershipDowngrade.refundAmount) }}
+              </div>
             </template>
           </a-table-column>
           <a-table-column title="状态" data-index="status" :width="120">
@@ -234,7 +241,7 @@
               {{ formatDate(record.paidAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="220" fixed="right">
+          <a-table-column title="操作" :width="280" fixed="right">
             <template #cell="{ record }">
               <a-space>
                 <a-button type="text" size="small" @click="openDetail(record)">
@@ -251,6 +258,26 @@
                     <icon-refresh />
                   </template>
                   刷新状态
+                </a-button>
+                <a-button
+                  v-if="canStartVoiceMembershipDowngrade(record)"
+                  type="text"
+                  size="small"
+                  @click="openVoiceMembershipDowngrade(record)"
+                >
+                  声音降级
+                </a-button>
+                <a-button
+                  v-else-if="canSyncVoiceMembershipDowngrade(record)"
+                  type="text"
+                  size="small"
+                  :loading="downgradeSyncLoadingId === record.id"
+                  @click="handleSyncVoiceMembershipDowngrade(record)"
+                >
+                  <template #icon>
+                    <icon-refresh />
+                  </template>
+                  刷新降级
                 </a-button>
                 <a-popconfirm
                   v-if="canRefundOrder(record)"
@@ -426,8 +453,116 @@
         >
           {{ formatDate(currentOrder.refundedAt) }}
         </a-descriptions-item>
+        <template v-if="currentOrder.voiceMembershipDowngrade">
+          <a-descriptions-item label="会员降级">
+            {{ currentOrder.voiceMembershipDowngrade.sourcePlan.name }} →
+            {{ currentOrder.voiceMembershipDowngrade.targetPlan.name }}
+          </a-descriptions-item>
+          <a-descriptions-item label="降级退款">
+            {{
+              formatAmount(currentOrder.voiceMembershipDowngrade.refundAmount)
+            }}
+          </a-descriptions-item>
+          <a-descriptions-item label="降级退款单号">
+            <a-typography-text copyable>
+              {{ currentOrder.voiceMembershipDowngrade.refundNo }}
+            </a-typography-text>
+          </a-descriptions-item>
+          <a-descriptions-item label="降级处理状态">
+            {{ getVoiceMembershipDowngradeStatusText(currentOrder) }}
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-if="currentOrder.voiceMembershipDowngrade.failureReason"
+            label="降级异常"
+          >
+            {{ currentOrder.voiceMembershipDowngrade.failureReason }}
+          </a-descriptions-item>
+          <a-descriptions-item label="操作账号">
+            {{ currentOrder.voiceMembershipDowngrade.operatorAccount || '-' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="完成时间">
+            {{ formatDate(currentOrder.voiceMembershipDowngrade.completedAt) }}
+          </a-descriptions-item>
+        </template>
       </a-descriptions>
     </a-drawer>
+
+    <a-modal
+      v-model:visible="downgradeVisible"
+      title="声音版会员降级"
+      :width="560"
+      :footer="false"
+      unmount-on-close
+      @cancel="closeVoiceMembershipDowngrade"
+    >
+      <a-spin :loading="downgradePreviewLoading" class="order-page__spin">
+        <template v-if="downgradePreview">
+          <a-alert
+            v-if="!downgradePreview.eligible"
+            type="warning"
+            show-icon
+            :content="
+              downgradePreview.unavailableReason || '当前订单不能自动降级'
+            "
+          />
+          <template v-else>
+            <a-descriptions :column="1" bordered>
+              <a-descriptions-item label="当前会员">
+                {{ downgradePreview.sourcePlan?.name || '-' }}
+              </a-descriptions-item>
+              <a-descriptions-item label="实付金额">
+                {{ formatAmount(downgradePreview.paidAmount) }}
+              </a-descriptions-item>
+              <a-descriptions-item label="会员有效期">
+                {{ formatDowngradeMembershipPeriod }}
+              </a-descriptions-item>
+            </a-descriptions>
+
+            <a-form :model="downgradeForm" layout="vertical">
+              <a-form-item label="降为基础版会员">
+                <a-select
+                  v-model="downgradeForm.targetVipPlanId"
+                  placeholder="请选择同周期基础版会员"
+                  class="order-page__full"
+                >
+                  <a-option
+                    v-for="item in downgradePreview.targetPlans"
+                    :key="item.id"
+                    :value="item.id"
+                  >
+                    {{ item.name }} / 退 {{ formatAmount(item.refundAmount) }}
+                  </a-option>
+                </a-select>
+              </a-form-item>
+            </a-form>
+
+            <a-alert type="warning" show-icon :content="downgradeImpactText" />
+            <a-checkbox
+              v-model="downgradeForm.confirmed"
+              class="order-page__downgrade-confirm"
+            >
+              我已核对目标会员和退款金额
+            </a-checkbox>
+          </template>
+        </template>
+      </a-spin>
+
+      <div class="order-page__modal-footer">
+        <a-space>
+          <a-button @click="closeVoiceMembershipDowngrade">取消</a-button>
+          <a-button
+            v-if="downgradePreview?.eligible"
+            type="primary"
+            status="danger"
+            :disabled="!canSubmitVoiceMembershipDowngrade"
+            :loading="downgradeSubmitting"
+            @click="handleVoiceMembershipDowngrade"
+          >
+            确认退款并降级
+          </a-button>
+        </a-space>
+      </div>
+    </a-modal>
 
     <a-modal
       v-model:visible="createVisible"
@@ -606,11 +741,15 @@
   } from '@/api/voice-package';
   import {
     createAdminOrder as createAdminOrderApi,
+    downgradeVoiceMembership as downgradeVoiceMembershipApi,
+    getVoiceMembershipDowngradePreview as getVoiceMembershipDowngradePreviewApi,
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
     revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
+    syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
+    type VoiceMembershipDowngradePreview,
   } from '@/api/order';
 
   const props = withDefaults(
@@ -644,6 +783,12 @@
   const refundLoadingId = ref('');
   const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
+  const downgradeSyncLoadingId = ref('');
+  const downgradeVisible = ref(false);
+  const downgradePreviewLoading = ref(false);
+  const downgradeSubmitting = ref(false);
+  const downgradeOrder = ref<OrderRecord>();
+  const downgradePreview = ref<VoiceMembershipDowngradePreview>();
   const createVisible = ref(false);
   const createSubmitting = ref(false);
   const userOptionsLoading = ref(false);
@@ -683,6 +828,10 @@
     voicePackageId: '',
     agentId: '',
     replaceActiveVoiceTrainingTask: false,
+  });
+  const downgradeForm = reactive({
+    targetVipPlanId: '',
+    confirmed: false,
   });
   const pagination = reactive({
     current: 1,
@@ -774,6 +923,43 @@
   const createSubmitText = computed(() =>
     isCreateVoicePackageOrder.value ? '创建声音套餐订单' : '创建会员订单'
   );
+  const selectedDowngradeTarget = computed(() =>
+    downgradePreview.value?.targetPlans.find(
+      (item) => item.id === downgradeForm.targetVipPlanId
+    )
+  );
+  const canSubmitVoiceMembershipDowngrade = computed(
+    () =>
+      Boolean(downgradeOrder.value) &&
+      Boolean(selectedDowngradeTarget.value) &&
+      downgradeForm.confirmed &&
+      !downgradeSubmitting.value
+  );
+  const formatDowngradeMembershipPeriod = computed(() => {
+    if (!downgradePreview.value) {
+      return '-';
+    }
+
+    if (downgradePreview.value.membershipLifetime) {
+      return '永久有效，降级后不变';
+    }
+
+    const startedAt = formatDate(downgradePreview.value.membershipStartedAt);
+    const expiredAt = formatDate(downgradePreview.value.membershipExpiredAt);
+
+    return `${startedAt} 至 ${expiredAt}，降级后不变`;
+  });
+  const downgradeImpactText = computed(() => {
+    const target = selectedDowngradeTarget.value;
+
+    if (!target) {
+      return '选择基础版会员后，系统会计算并展示退款差价。';
+    }
+
+    return `将原路退回 ${formatAmount(
+      target.refundAmount
+    )}，会员有效期不变；这笔会员提供的声音资格和已接入声音会停止，训练素材与音色记录保留。`;
+  });
 
   const fetchData = async () => {
     try {
@@ -831,10 +1017,28 @@
       (record.orderType === 'vip_plan' ||
         record.orderType === 'voice_package') &&
       !isAdminManualOrder(record) &&
+      !record.voiceMembershipDowngrade &&
       (record.status === 'completed' ||
         record.status === 'paid' ||
         record.status === 'refund_requested' ||
         record.status === 'grant_failed')
+    );
+  };
+
+  const canStartVoiceMembershipDowngrade = (record: OrderRecord) => {
+    return (
+      record.orderType === 'vip_plan' &&
+      record.vipPlanGroup === 'voice' &&
+      record.status === 'completed' &&
+      (!record.paymentProvider || record.paymentProvider === 'wechat_pay') &&
+      !record.voiceMembershipDowngrade
+    );
+  };
+
+  const canSyncVoiceMembershipDowngrade = (record: OrderRecord) => {
+    return Boolean(
+      record.voiceMembershipDowngrade &&
+        record.voiceMembershipDowngrade.status !== 'completed'
     );
   };
 
@@ -922,6 +1126,115 @@
       );
     } finally {
       syncLoadingId.value = '';
+    }
+  };
+
+  const openVoiceMembershipDowngrade = async (record: OrderRecord) => {
+    downgradeOrder.value = record;
+    downgradePreview.value = undefined;
+    downgradeForm.targetVipPlanId = '';
+    downgradeForm.confirmed = false;
+    downgradeVisible.value = true;
+
+    try {
+      downgradePreviewLoading.value = true;
+      const { data } = await getVoiceMembershipDowngradePreviewApi(record.id);
+
+      downgradePreview.value = data;
+      if (data.targetPlans.length === 1) {
+        downgradeForm.targetVipPlanId = data.targetPlans[0].id;
+      }
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '降级信息加载失败，请稍后重试'
+      );
+      downgradeVisible.value = false;
+    } finally {
+      downgradePreviewLoading.value = false;
+    }
+  };
+
+  const closeVoiceMembershipDowngrade = () => {
+    if (downgradeSubmitting.value) {
+      return;
+    }
+
+    downgradeVisible.value = false;
+    downgradeOrder.value = undefined;
+    downgradePreview.value = undefined;
+    downgradeForm.targetVipPlanId = '';
+    downgradeForm.confirmed = false;
+  };
+
+  const handleVoiceMembershipDowngrade = async () => {
+    const order = downgradeOrder.value;
+
+    if (!order || !canSubmitVoiceMembershipDowngrade.value) {
+      return;
+    }
+
+    try {
+      downgradeSubmitting.value = true;
+      const { data } = await downgradeVoiceMembershipApi(order.id, {
+        targetVipPlanId: downgradeForm.targetVipPlanId,
+      });
+
+      replaceOrderRecord(data);
+      downgradeVisible.value = false;
+      if (data.voiceMembershipDowngrade?.status === 'completed') {
+        Message.success('退款成功，会员已降为基础版');
+      } else if (data.voiceMembershipDowngrade?.status === 'benefits_failed') {
+        Message.error('退款已成功，但会员权益处理失败，请点击刷新降级');
+      } else if (data.voiceMembershipDowngrade?.status === 'failed') {
+        Message.error(
+          data.voiceMembershipDowngrade.failureReason || '降级退款失败'
+        );
+      } else {
+        Message.success('降级退款已提交，请稍后刷新处理状态');
+      }
+    } catch (error) {
+      fetchData();
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '会员降级失败，请稍后重试'
+      );
+    } finally {
+      downgradeSubmitting.value = false;
+    }
+  };
+
+  const handleSyncVoiceMembershipDowngrade = async (record: OrderRecord) => {
+    if (downgradeSyncLoadingId.value) {
+      return;
+    }
+
+    try {
+      downgradeSyncLoadingId.value = record.id;
+      const { data } = await syncVoiceMembershipDowngradeApi(record.id);
+
+      replaceOrderRecord(data);
+      if (data.voiceMembershipDowngrade?.status === 'completed') {
+        Message.success('退款成功，会员已降为基础版');
+      } else if (data.voiceMembershipDowngrade?.status === 'benefits_failed') {
+        Message.error('退款已成功，但会员权益处理失败，请再次刷新');
+      } else if (data.voiceMembershipDowngrade?.status === 'failed') {
+        Message.error(
+          data.voiceMembershipDowngrade.failureReason || '降级退款失败'
+        );
+      } else {
+        Message.warning('微信仍在处理退款，请稍后再刷新');
+      }
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '降级状态刷新失败，请稍后重试'
+      );
+    } finally {
+      downgradeSyncLoadingId.value = '';
     }
   };
 
@@ -1217,15 +1530,51 @@
   };
 
   const getRecordStatusText = (record: OrderRecord) => {
+    if (record.voiceMembershipDowngrade) {
+      return getVoiceMembershipDowngradeStatusText(record);
+    }
+
     return isRevokedAdminManualOrder(record)
       ? '已回收'
       : getStatusText(record.status);
   };
 
   const getRecordStatusColor = (record: OrderRecord) => {
+    if (record.voiceMembershipDowngrade?.status === 'completed') {
+      return 'orange';
+    }
+
+    if (record.voiceMembershipDowngrade?.status === 'failed') {
+      return 'red';
+    }
+
+    if (record.voiceMembershipDowngrade) {
+      return 'arcoblue';
+    }
+
     return isRevokedAdminManualOrder(record)
       ? 'gray'
       : getStatusColor(record.status);
+  };
+
+  const getVoiceMembershipDowngradeStatusText = (record: OrderRecord) => {
+    const status = record.voiceMembershipDowngrade?.status;
+
+    if (status === 'completed') {
+      return '已降为基础版';
+    }
+
+    if (status === 'benefits_failed') {
+      return '降级权益待处理';
+    }
+
+    if (status === 'failed') {
+      return '降级失败';
+    }
+
+    return status === 'processing'
+      ? '降级退款中'
+      : getStatusText(record.status);
   };
 
   const getSourceText = (source: OrderSourceDTO) => {
@@ -1451,6 +1800,16 @@
 
     &__full {
       width: 100%;
+    }
+
+    &__spin {
+      display: block;
+      width: 100%;
+      min-height: 120px;
+    }
+
+    &__downgrade-confirm {
+      margin-top: 16px;
     }
 
     &__pagination {

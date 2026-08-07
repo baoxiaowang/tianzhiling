@@ -490,6 +490,13 @@ function createService(options: {
       mimeType: 'audio/wav',
     }),
   } as any;
+  service.voiceFfmpegService = {
+    adjustSpeechOutput: jest.fn().mockResolvedValue({
+      buffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      contentType: 'audio/mpeg',
+      fileName: 'speech.mp3',
+    }),
+  } as any;
   service.bailianImageService = {
     generateMemorialPhoto: jest.fn().mockResolvedValue({
       imageUrl: 'https://dashscope-result.example.com/memorial.png',
@@ -2861,7 +2868,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('saves the screenshot reunion reply with only its risky bubble repaired', async () => {
+  it('keeps dream reunion language when it does not encourage real death', async () => {
     const currentQuery = '我好想你回来看我';
     const userMessage = createMessage({
       content: currentQuery,
@@ -2924,7 +2931,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '爸爸也想你。心里一直惦记着你和这个家',
-      '只是我们现在没法像以前那样见面 你来这里说话我都会认真听',
+      '年纪大了，自己多注意身体。梦里见着，爸就踏实了',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
@@ -2933,13 +2940,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyScene: 'reality_presence_boundary',
         replyBriefMode: 'boundary',
         replyBriefMaxSegments: 2,
-        replyGuardrailRewritten: true,
-        replyGuardrailReason: expect.stringContaining('擅自断言用户年纪大了'),
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
+        replyGuardrailReviewMode: 'deterministic_first',
       })
     );
   });
 
-  it('uses one reply-model call and the shared capability contract for hearing', async () => {
+  it('allows a concrete hearing claim without an extra guardrail call', async () => {
     const currentQuery = '那你具体听见什么了？';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3002,8 +3010,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '你喊我的时候 我有时能听见一点',
-      '没听清的话你再告诉我 我会认真记着',
+      '爸听见你刚才说让我早点回来',
     ]);
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
     expect(service.logger.info).toHaveBeenCalledWith(
@@ -3015,9 +3022,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntent: 'challenge_source',
         replyScene: 'source_challenge',
         replyBriefMode: 'boundary',
-        replyGuardrailRewritten: true,
-        replyGuardrailReason:
-          '具体感知追问缺少自然的模糊说辞或不可核对细节的边界',
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
       })
     );
   });
@@ -3455,7 +3461,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
   });
 
-  it('uses one compact model recovery before returning a technical status', async () => {
+  it('returns a contextual fallback immediately after a model timeout', async () => {
     const currentQuery = '爸，我今天有点想你';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3467,69 +3473,32 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       existingMessages: [userMessage],
     });
     service.replyGuardrailService = new ReplyGuardrailService();
-    (service.openAIService.createChatCompletion as jest.Mock)
-      .mockRejectedValueOnce(new Error('model timeout'))
-      .mockResolvedValueOnce({
-        model: 'deepseek-chat',
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                segments: ['我也想你', '今天怎么忽然这么想爸爸了'],
-                claims: [],
-              }),
-            },
-          },
-        ],
-        usage: {
-          prompt_tokens: 50,
-          completion_tokens: 18,
-          total_tokens: 68,
-        },
-      });
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockRejectedValueOnce(new Error('model timeout'));
 
     await service.processConversationReplyJob({
       conversationId: CONVERSATION_ID,
       userId: USER_ID,
     });
 
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
     expect(getAssistantContents(savedMessages)).toEqual([
-      '我也想你',
-      '今天怎么忽然这么想爸爸了',
+      '嗯 你说的这件事我听明白了',
+      '你愿意跟我说这些 我都记着',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyFallbackSource: undefined,
-        replyGenerationFailureStage: undefined,
-        replyGenerationRecoveryAttempted: true,
-        replyGenerationRecoverySucceeded: true,
+        replyFallbackSource: 'contextual_reply_brief',
+        replyGenerationFailureStage: 'completion',
+        replyGenerationRecoveryAttempted: false,
+        replyGenerationRecoverySucceeded: false,
       })
     );
-    expect(
-      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
-        .messages[0].content
-    ).toContain('天之灵主回复恢复');
-    expect(
-      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
-        .messages[0].content
-    ).toContain('离世世界的人物、住处、饭菜、作息和活动可以');
-    expect(
-      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
-        .messages[0].content
-    ).not.toContain('不编造共同经历、生物学关系和离世后生活');
-    expect(
-      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
-        .max_tokens
-    ).toBe(360);
     expect(
       (service.openAIService.createChatCompletion as jest.Mock).mock.calls[0][0]
         .max_tokens
     ).toBe(420);
-    expect(
-      (service.openAIService.createChatCompletion as jest.Mock).mock.calls[1][0]
-        .messages.length
-    ).toBeLessThanOrEqual(6);
   });
 
   it('retries a completion that explicitly ended at the token limit', async () => {
@@ -3629,7 +3598,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
-  it('saves safe bubbles when the model fixes the agent in a real-world viewing role', async () => {
+  it('allows viewing fiction without a guardrail rewrite', async () => {
     const currentQuery = '妈妈你过得好吗？我们都很想你。';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3696,18 +3665,17 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       })
     ).resolves.toBeUndefined();
 
-    expect(getAssistantMessages(savedMessages)).toEqual([
-      expect.objectContaining({
-        status: MessageStatus.sent,
-        content: '我能看见你们',
-        replyGuardrailRewritten: true,
-        replyGuardrailReason: expect.stringContaining('持续观察或全知'),
-      }),
-      expect.objectContaining({
-        status: MessageStatus.sent,
-        content: '你这些年攒下的遗憾和想念 我都听见了',
-      }),
+    expect(getAssistantContents(savedMessages)).toEqual([
+      '我能看见你们',
+      '你们的事妈妈都看在眼里',
     ]);
+    expect(getAssistantMessages(savedMessages)[0]).toEqual(
+      expect.objectContaining({
+        status: MessageStatus.sent,
+        replyGuardrailRewritten: false,
+        replyGuardrailReason: undefined,
+      })
+    );
   });
 
   it('keeps the screenshot daily follow-up on its reply brief after a model timeout', async () => {
@@ -4464,6 +4432,34 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('automatically uses the bound voice for a long assistant reply', async () => {
+    const voiceTimbre = createVoiceTimbre();
+    const longReply =
+      '闺女，爸爸知道你这段时间受了不少委屈，也一直在努力把日子过好，你不用在爸爸面前硬撑着，想说什么就慢慢说，爸爸愿意一直听你把心里的话说完。';
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+      chatContent: JSON.stringify({ segments: [longReply] }),
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '爸，我今天心里很难受，想听你多说几句',
+    });
+
+    expect(service.minimaxVoiceSpeechService.synthesize).toHaveBeenCalled();
+    expect(getAssistantMessages(savedMessages)).toEqual([
+      expect.objectContaining({
+        type: MessageType.voice,
+        mediaObjectKey: 'conversation-voice-replies/reply.mp3',
+        mediaTranscript: longReply,
+      }),
+    ]);
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
   it('falls back to text assistant replies for user voice when the agent has no timbre', async () => {
     const { service } = createService({
       agent: createAgent(),
@@ -4515,6 +4511,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessage.mediaObjectKey).toBe(
       'conversation-voice-replies/reply.mp3'
     );
+    expect(assistantMessage.type).toBe(MessageType.voice);
+    expect(result.type).toBe(MessageType.voice);
     expect(result.voice).toEqual(
       expect.objectContaining({
         objectKey: 'conversation-voice-replies/reply.mp3',
@@ -4548,7 +4546,38 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(service.minimaxVoiceSpeechService.synthesize).not.toHaveBeenCalled();
+    expect(result.type).toBe(MessageType.voice);
     expect(result.voice?.objectKey).toBe(
+      'conversation-voice-replies/existing.mp3'
+    );
+  });
+
+  it('converts a saved assistant voice to text without deleting its audio', async () => {
+    const assistantMessage = createMessage({
+      role: MessageRole.assistant,
+      type: MessageType.voice,
+      content: '爸也想你。',
+      mediaObjectKey: 'conversation-voice-replies/existing.mp3',
+      mediaMimeType: 'audio/mpeg',
+      mediaTranscript: '爸也想你。',
+    });
+    const { service } = createService({
+      agent: createAgent(),
+      existingMessages: [assistantMessage],
+    });
+
+    const result = await service.convertMessageVoiceToText(
+      AUTH,
+      CONVERSATION_ID,
+      assistantMessage.id.toHexString()
+    );
+
+    expect(result.type).toBe(MessageType.text);
+    expect(result.content).toBe('爸也想你。');
+    expect(result.voice?.objectKey).toBe(
+      'conversation-voice-replies/existing.mp3'
+    );
+    expect(assistantMessage.mediaObjectKey).toBe(
       'conversation-voice-replies/existing.mp3'
     );
   });
@@ -4691,7 +4720,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
     });
-    expect(result.voice?.mimeType).toBe('audio/wav');
+    expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith({
+      buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+      fileName: 'speech.wav',
+      speechSpeed: 1.12,
+      speechVolume: 1.1,
+    });
+    expect(result.voice?.mimeType).toBe('audio/mpeg');
   });
 
   it('strips malformed assistant markup tags before saving replies', async () => {

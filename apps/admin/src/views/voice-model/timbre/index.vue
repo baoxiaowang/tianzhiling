@@ -526,7 +526,7 @@
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
-  const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'cosyvoice';
+  const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
   type VoiceTimbreEditForm = {
     name: string;
     provider: VoiceTimbreProviderDTO;

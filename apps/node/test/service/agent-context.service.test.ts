@@ -852,12 +852,16 @@ describe('AgentContextService', () => {
     expect(context.replyBrief.factClaimMode).toBe('grounded');
     expect(systemMessage.content).toContain('本轮证据包');
     expect(systemMessage.content).toContain('# 当前对话参考模式：memory');
-    expect(systemMessage.content).toContain('不足就说记不清');
+    expect(systemMessage.content).toContain('沿用户已说片段回应感受和意义');
+    expect(systemMessage.content).not.toContain('不足就说记不清');
     expect(systemMessage.content).toContain(
       '[U0|本轮|mixed|待确认] 你还记得我小时候你带我钓鱼吗'
     );
     expect(systemMessage.content).toContain('问句不能证明其假设');
-    expect(systemMessage.content).toContain('证据只约束事实，不规定回复');
+    expect(systemMessage.content).toContain(
+      '证据只约束具体事实，不限制称呼、关系立场、愿望和共情'
+    );
+    expect(systemMessage.content).toContain('不必反复说“记不清”');
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');

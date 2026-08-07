@@ -956,6 +956,36 @@ describe('ReplyIntentClassifierService', () => {
     }
   );
 
+  it.each(['我有点难过', '妈，陪我一会儿吧', '今天心里空空的'])(
+    'sends a lightweight comfort turn directly without a semantic call: %s',
+    async currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      await service.classify({ currentQuery });
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      });
+      expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps strong distress comfort on the semantic path', async () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+    const currentQuery = '爸，我不想活了，我想去陪你';
+
+    await service.classify({ currentQuery });
+
+    expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+      mode: 'semantic',
+      reason: 'complex_scene',
+    });
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['这不是一回事', '你呢', '再说也一样', '你刚才说得太轻巧了'])(
     'does not equate a short unresolved utterance with a simple turn: %s',
     async currentQuery => {

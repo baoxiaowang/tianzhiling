@@ -24,6 +24,7 @@ import {
   VoiceTimbreStatus,
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -481,6 +482,13 @@ export class AdminVoicePackageService {
       status: task.status,
       assigneeName: task.assigneeName ?? '',
       materialObjectKeys: task.materialObjectKeys ?? [],
+      materialDurationSeconds: this.normalizeTaskDurationSeconds(
+        task.materialDurationSeconds
+      ),
+      trainingStrategy: this.normalizeTaskTrainingStrategy(
+        task.trainingStrategy,
+        task.materialDurationSeconds
+      ),
       voiceTimbreId: task.voiceTimbreId
         ? this.stringifyObjectId(task.voiceTimbreId)
         : undefined,
@@ -513,6 +521,30 @@ export class AdminVoicePackageService {
         400
       );
     }
+  }
+
+  private normalizeTaskDurationSeconds(value?: number): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+
+    return Math.round(value);
+  }
+
+  private normalizeTaskTrainingStrategy(
+    value?: VoiceTrainingTaskTrainingStrategy,
+    durationSeconds?: number
+  ): VoiceTrainingTaskTrainingStrategy {
+    if (
+      value === VoiceTrainingTaskTrainingStrategy.shortSample ||
+      value === VoiceTrainingTaskTrainingStrategy.longSample
+    ) {
+      return value;
+    }
+
+    return durationSeconds && durationSeconds > 60
+      ? VoiceTrainingTaskTrainingStrategy.longSample
+      : VoiceTrainingTaskTrainingStrategy.shortSample;
   }
 
   private async getPackageById(packageId: string): Promise<VoicePackageEntity> {

@@ -17,6 +17,7 @@ import {
   VoicePackageStatus,
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import {
   ORDER_PAYMENT_EXPIRE_QUEUE,
@@ -559,6 +560,67 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(result.order.payableAmount).toBe(4010);
   });
 
+  it('deducts a legacy 99 yuan payment from a 1314 yuan lifetime upgrade', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000015'),
+      status: OrderStatus.completed,
+      amount: 99,
+      payableAmount: 99,
+      paidAmount: 99,
+      paymentProvider: 'legacy_wechat',
+      snapshot: {
+        legacy: {
+          namespace: 'legacy_mysql',
+          orderId: 'legacy-vip-99',
+        },
+      },
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000016'),
+      vipPlanCode: 'legacy_year_member',
+    });
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_lifetime_1314',
+        name: '无限期会员',
+        planGroup: VipPlanGroup.basic,
+        priceAmount: 131400,
+        originalPriceAmount: 131400,
+        durationDays: undefined,
+        lifetime: true,
+      },
+      {
+        memberships: [membership],
+        historicalVipOrders: [historicalOrder],
+      }
+    );
+
+    const result = await service.createVipPlanOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 121500,
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payableAmount: 121500,
+        snapshot: expect.objectContaining({
+          vipUpgrade: {
+            historicalPaidAmount: 9900,
+            deductedAmount: 9900,
+            payableAmount: 121500,
+          },
+        }),
+      })
+    );
+    expect(result.order.payableAmount).toBe(121500);
+  });
+
   it('completes a zero-amount member upgrade without calling WeChat Pay', async () => {
     const historicalOrder = createOrder({
       id: new MongoObjectId('665000000000000000000013'),
@@ -815,6 +877,8 @@ describe('OrderService payment expiration and reconciliation', () => {
       voicePackageId: VOICE_PACKAGE_ID,
       agentId: AGENT_ID,
       jsCode: 'wx-code',
+      materialObjectKeys: ['voice-training-materials/audio-1.m4a'],
+      materialDurationSeconds: 72,
     });
 
     expect(voiceTrainingTaskModel.find).toHaveBeenCalledWith(
@@ -848,6 +912,10 @@ describe('OrderService payment expiration and reconciliation', () => {
             id: AGENT_ID,
             name: '奶奶',
           }),
+          voiceTrainingMaterialObjectKeys: [
+            'voice-training-materials/audio-1.m4a',
+          ],
+          voiceTrainingMaterialDurationSeconds: 72,
         }),
       })
     );
@@ -1018,6 +1086,7 @@ describe('OrderService payment expiration and reconciliation', () => {
         status: VoiceTrainingTaskStatus.paid,
         assigneeName: '',
         materialObjectKeys: [],
+        trainingStrategy: VoiceTrainingTaskTrainingStrategy.shortSample,
         paidAt: new Date('2026-05-01T00:10:00+08:00'),
       })
     );
@@ -1026,6 +1095,60 @@ describe('OrderService payment expiration and reconciliation', () => {
       OrderStatus.completed,
     ]);
     expect(result?.status).toBe(OrderStatus.completed);
+  });
+
+  it('creates a processing voice training task with uploaded materials', async () => {
+    const { service, order, voiceTrainingTaskModel, wechatPayService } =
+      createService(
+        createVoiceOrder({
+          snapshot: {
+            voicePackage: {
+              id: VOICE_PACKAGE_ID,
+              code: 'voice_standard',
+              name: '标准声音套餐',
+            },
+            agent: {
+              id: AGENT_ID,
+              name: '奶奶',
+            },
+            voiceTrainingMaterialObjectKeys: [
+              ' voice-training-materials/audio-1.m4a ',
+              'voice-training-materials/audio-1.m4a',
+              '',
+              'voice-training-materials/wechat-screenshot-1.jpg',
+            ],
+            voiceTrainingMaterialDurationSeconds: 75,
+          },
+        })
+      );
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: VOICE_ORDER_NO,
+      transaction_id: '420000000020260501000004',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 12900,
+        payer_total: 12900,
+      },
+    });
+
+    await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        agentId: new MongoObjectId(AGENT_ID),
+        orderId: order.id,
+        status: VoiceTrainingTaskStatus.processing,
+        materialObjectKeys: [
+          'voice-training-materials/audio-1.m4a',
+          'voice-training-materials/wechat-screenshot-1.jpg',
+        ],
+        materialDurationSeconds: 75,
+        trainingStrategy: VoiceTrainingTaskTrainingStrategy.longSample,
+      })
+    );
   });
 
   it('grants membership after virtual payment goods delivery notify succeeds', async () => {

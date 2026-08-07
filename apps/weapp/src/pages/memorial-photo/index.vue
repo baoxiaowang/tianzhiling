@@ -321,6 +321,10 @@ const isConsentChecked = shallowRef(false)
 const currentPromptTemplateIndex = shallowRef(0)
 const isPromptTemplatePickerVisible = shallowRef(false)
 const loadError = shallowRef('')
+const pendingGenerationRequest = shallowRef<{
+  signature: string
+  clientRequestId: string
+} | null>(null)
 
 const isBusy = computed(() => {
   return (
@@ -603,6 +607,20 @@ async function handleGenerate() {
   }
 
   isGenerating.value = true
+  const requestSignature = JSON.stringify({
+    agentPhotoObjectKeys: agentPhotos.value.map((photo) => photo.objectKey),
+    userPhotoObjectKey: userPhoto.value.objectKey,
+    customPrompt: customPrompt.value.trim(),
+  })
+
+  const generationRequest =
+    pendingGenerationRequest.value?.signature === requestSignature
+      ? pendingGenerationRequest.value
+      : {
+          signature: requestSignature,
+          clientRequestId: createMemorialPhotoClientRequestId(),
+        }
+  pendingGenerationRequest.value = generationRequest
 
   try {
     const generatedMessage = await generateConversationMemorialPhoto(
@@ -611,6 +629,7 @@ async function handleGenerate() {
         agentPhotoObjectKeys: agentPhotos.value.map((photo) => photo.objectKey),
         userPhotoObjectKey: userPhoto.value.objectKey,
         customPrompt: customPrompt.value.trim() || undefined,
+        clientRequestId: generationRequest.clientRequestId,
       },
     )
     const nextImageUrl = resolveImageMessageUrl(generatedMessage.image)
@@ -620,6 +639,7 @@ async function handleGenerate() {
     }
 
     generatedImageUrl.value = nextImageUrl
+    pendingGenerationRequest.value = null
     showToast('已保存到聊天相册')
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
@@ -631,6 +651,10 @@ async function handleGenerate() {
   } finally {
     isGenerating.value = false
   }
+}
+
+function createMemorialPhotoClientRequestId() {
+  return `memorial-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function handlePreviewPhoto(url: string) {

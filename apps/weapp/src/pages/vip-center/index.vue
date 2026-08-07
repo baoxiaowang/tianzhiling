@@ -18,7 +18,7 @@
           :class="{ 'vip-center-page__upgrade-button--disabled': isPaying }"
           @tap="handlePurchaseTap"
         >
-          {{ isPaying ? '支付处理中...' : '立即升级' }}
+          {{ isPaying ? '支付处理中...' : upgradeActionText }}
         </view>
       </view>
     </template>
@@ -103,6 +103,7 @@ const isLoading = ref(false)
 const isPaying = ref(false)
 const isAwaitingPaymentResult = ref(false)
 const loadError = ref('')
+const preferredPlanGroup = ref<'basic' | 'voice'>('basic')
 const vipBenefitsImageUrl = 'https://oss.tianzhiling.chat/weapp/vip-diff.png'
 
 const selectedPlan = computed(() => {
@@ -151,8 +152,12 @@ const canShowUpgradeAction = computed(() => {
       !isAwaitingPaymentResult.value
   )
 })
+const upgradeActionText = computed(() =>
+  selectedPlan.value?.lifetime ? '升级为无限期陪伴' : '立即升级'
+)
 
-useLoad(() => {
+useLoad((options) => {
+  preferredPlanGroup.value = options?.planGroup === 'voice' ? 'voice' : 'basic'
   void preparePage()
 })
 
@@ -178,7 +183,7 @@ async function loadMembershipCenter() {
     center.value = data
     selectedPlanId.value = data.isVip
       ? getDefaultUpgradePlan(data)?.id ?? ''
-      : getDefaultSelectedPlan(data.plans)?.id ?? ''
+      : getDefaultSelectedPlan(data.plans, preferredPlanGroup.value)?.id ?? ''
   } catch (error) {
     if (error instanceof ApiException && error.requiresReLogin) {
       await clearAuthSession()
@@ -203,12 +208,17 @@ function handlePlanSelect(planId: string) {
   selectedPlanId.value = planId
 }
 
-function getDefaultSelectedPlan(plans: VipPlan[]) {
-  const basicPlans = plans.filter((plan) => plan.planGroup === 'basic')
+function getDefaultSelectedPlan(
+  plans: VipPlan[],
+  preferredGroup: 'basic' | 'voice' = 'basic'
+) {
+  const preferredPlans = plans.filter(
+    (plan) => plan.planGroup === preferredGroup
+  )
 
   return (
-    basicPlans.find(isOneYearVipPlan) ??
-    basicPlans[0] ??
+    preferredPlans.find(isOneYearVipPlan) ??
+    preferredPlans[0] ??
     plans.find(isOneYearVipPlan) ??
     plans[0]
   )

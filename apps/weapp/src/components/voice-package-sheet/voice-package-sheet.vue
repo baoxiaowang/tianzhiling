@@ -9,7 +9,7 @@
     </view>
 
     <text class="voice-package-sheet__note">
-      【注】声音模型与智能体一对一关联
+      【注】每次训练会生成一个独立声音，完成后可接入指定天之灵
     </text>
 
     <view v-if="packages.length" class="voice-package-sheet__plans">
@@ -158,13 +158,16 @@ function formatPrice(amount: number) {
 
 .voice-package-sheet__note {
   display: block;
+  box-sizing: border-box;
+  width: 327px;
+  max-width: calc(100% - 64px);
   margin-top: 16px;
+  margin-right: auto;
+  margin-left: auto;
   color: #999999;
   font-size: 14px;
   line-height: 24px;
-  letter-spacing: -0.31px;
   text-align: center;
-  white-space: nowrap;
 }
 
 .voice-package-sheet__plans {

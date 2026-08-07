@@ -102,6 +102,10 @@
         <view class="user-settings-logout" @tap="handleLogout">
           {{ isLoggingOut ? '退出中...' : '退出登录' }}
         </view>
+
+        <view class="user-settings-cancel" @tap="handleAccountCancellation">
+          注销账号
+        </view>
       </view>
     </scroll-view>
   </page-scaffold>
@@ -522,6 +526,12 @@ async function handleLogout() {
   }
 }
 
+async function handleAccountCancellation() {
+  await Taro.navigateTo({
+    url: '/pages/account-cancellation/index',
+  })
+}
+
 async function preparePage() {
   isCheckingAuth.value = true
 
@@ -717,6 +727,16 @@ useDidShow(() => {
   font-size: 16px;
   line-height: 24px;
   font-weight: 600;
+}
+
+.user-settings-cancel {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8c8c8c;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 @keyframes user-settings-spin {

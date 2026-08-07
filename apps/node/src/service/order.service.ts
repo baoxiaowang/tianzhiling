@@ -23,6 +23,7 @@ import {
   VoicePackageStatus,
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import type {
   CreateVipPlanOrderDTO,
@@ -204,6 +205,13 @@ export class OrderService {
       this.getUserAgentById(userId, payload.agentId),
     ]);
     await this.assertAgentCanBuyVoicePackage(agent.id);
+    const materialObjectKeys = this.normalizeVoiceTrainingMaterialObjectKeys(
+      payload.materialObjectKeys
+    );
+    const materialDurationSeconds =
+      this.normalizeVoiceTrainingMaterialDurationSeconds(
+        payload.materialDurationSeconds
+      );
 
     const openid = await this.wechatPayService.getOpenidByJsCode(
       payload.jsCode
@@ -237,6 +245,8 @@ export class OrderService {
       snapshot: {
         voicePackage: this.buildVoicePackageSnapshot(voicePackage),
         agent: this.buildAgentSnapshot(agent),
+        voiceTrainingMaterialObjectKeys: materialObjectKeys,
+        voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
       },
       createdAt: now,
       updatedAt: now,
@@ -349,6 +359,13 @@ export class OrderService {
       this.getUserAgentById(userId, payload.agentId),
     ]);
     await this.assertAgentCanBuyVoicePackage(agent.id);
+    const materialObjectKeys = this.normalizeVoiceTrainingMaterialObjectKeys(
+      payload.materialObjectKeys
+    );
+    const materialDurationSeconds =
+      this.normalizeVoiceTrainingMaterialDurationSeconds(
+        payload.materialDurationSeconds
+      );
     const productId = this.requireVirtualPaymentProductId(
       voicePackage.virtualPaymentProductId,
       'VOICE_PACKAGE_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
@@ -388,6 +405,8 @@ export class OrderService {
       snapshot: {
         voicePackage: this.buildVoicePackageSnapshot(voicePackage),
         agent: this.buildAgentSnapshot(agent),
+        voiceTrainingMaterialObjectKeys: materialObjectKeys,
+        voiceTrainingMaterialDurationSeconds: materialDurationSeconds,
       },
       createdAt: now,
       updatedAt: now,
@@ -1480,9 +1499,17 @@ export class OrderService {
     task.orderId = order.id;
     task.voicePackageId = voicePackageId;
     task.voicePackageCode = order.targetCode || snapshot.code;
-    task.status = VoiceTrainingTaskStatus.paid;
+    const materialObjectKeys = this.getVoiceTrainingMaterialObjectKeys(order);
+    const materialDurationSeconds =
+      this.getVoiceTrainingMaterialDurationSeconds(order);
+    task.status = materialObjectKeys.length
+      ? VoiceTrainingTaskStatus.processing
+      : VoiceTrainingTaskStatus.paid;
     task.assigneeName = '';
-    task.materialObjectKeys = [];
+    task.materialObjectKeys = materialObjectKeys;
+    task.materialDurationSeconds = materialDurationSeconds;
+    task.trainingStrategy =
+      this.resolveVoiceTrainingTaskTrainingStrategy(materialDurationSeconds);
     task.remark = '';
     task.paidAt = now;
     task.createdAt = now;
@@ -2011,6 +2038,75 @@ export class OrderService {
       code: String(raw.code ?? order.targetCode ?? ''),
       agentId: String(agentSnapshot?.id ?? order.agentId ?? ''),
     };
+  }
+
+  private getVoiceTrainingMaterialObjectKeys(order: OrderEntity): string[] {
+    return this.normalizeVoiceTrainingMaterialObjectKeys(
+      order.snapshot?.voiceTrainingMaterialObjectKeys
+    );
+  }
+
+  private getVoiceTrainingMaterialDurationSeconds(
+    order: OrderEntity
+  ): number | undefined {
+    return this.normalizeVoiceTrainingMaterialDurationSeconds(
+      order.snapshot?.voiceTrainingMaterialDurationSeconds
+    );
+  }
+
+  private normalizeVoiceTrainingMaterialDurationSeconds(
+    value: unknown
+  ): number | undefined {
+    const durationSeconds =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : NaN;
+
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return undefined;
+    }
+
+    return Math.min(Math.round(durationSeconds), 3600);
+  }
+
+  private resolveVoiceTrainingTaskTrainingStrategy(
+    durationSeconds?: number
+  ): VoiceTrainingTaskTrainingStrategy {
+    return durationSeconds && durationSeconds > 60
+      ? VoiceTrainingTaskTrainingStrategy.longSample
+      : VoiceTrainingTaskTrainingStrategy.shortSample;
+  }
+
+  private normalizeVoiceTrainingMaterialObjectKeys(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const keys: string[] = [];
+
+    for (const item of value) {
+      if (typeof item !== 'string') {
+        continue;
+      }
+
+      const key = item.trim();
+
+      if (!key || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      keys.push(key);
+
+      if (keys.length >= 12) {
+        break;
+      }
+    }
+
+    return keys;
   }
 
   private parseEntitlementGrants(value: unknown): Array<{

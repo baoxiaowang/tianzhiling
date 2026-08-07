@@ -72,6 +72,7 @@ import {
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
   GuardrailFeedback,
   GuardrailRevisionRecord,
+  ReplyGuardrailMode,
   ReplyGuardrailReviewMode,
   ReplyGuardrailService,
   ValidateAssistantReplyResult,
@@ -121,6 +122,8 @@ import { MilvusService } from './rag/milvus.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
+import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
+import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
 import { ChatTraceService } from './chat-trace.service';
 import {
@@ -142,6 +145,8 @@ const ASSISTANT_REPLY_MAX_TOKENS = 420;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 360;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
+const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
+const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'rigid_only';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
@@ -154,6 +159,7 @@ const UNSAFE_ASSISTANT_PRESENCE_PATTERNS = [
 ] as const;
 const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
+const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
@@ -620,6 +626,12 @@ export class ConversationService {
   qwenVoiceSpeechService: QwenVoiceSpeechService;
 
   @Inject()
+  voiceTimbreLibraryService: VoiceTimbreLibraryService;
+
+  @Inject()
+  voiceFfmpegService: VoiceFfmpegService;
+
+  @Inject()
   bailianImageService: BailianImageService;
 
   @Inject()
@@ -773,7 +785,11 @@ export class ConversationService {
           'persist.reply',
           () => this.afterReply(runtime, before, processed)
         );
-        await this.completeChatReplyTrace(trace, processed, after);
+        await this.completeChatReplyTrace(
+          trace,
+          processed,
+          after
+        );
 
         return this.buildSendMessageResult(before, after);
       } catch (error) {
@@ -903,6 +919,20 @@ export class ConversationService {
       async () => {
         const queueStartedAt =
           this.parseOptionalDate(data.enqueuedAt) || workerStartedAt;
+        const queueWaitMs = Math.max(
+          0,
+          workerStartedAt.getTime() - queueStartedAt.getTime()
+        );
+        if (queueWaitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
+          this.logger.warn(
+            '[conversation-reply] slow queue wait, conversationId=%s, userId=%s, waitMs=%s, jobId=%s, traceId=%s',
+            data.conversationId,
+            data.userId,
+            queueWaitMs,
+            options.queueJobId || '-',
+            traceId
+          );
+        }
         this.chatTraceService.recordCompletedSpan({
           stage: ChatTraceStage.queueWait,
           operation: 'queue.wait',
@@ -911,6 +941,7 @@ export class ConversationService {
           attempt: options.attempt,
           attributes: {
             queueJobId: options.queueJobId,
+            queueWaitMs,
           },
         });
         await this.chatTraceService.markRunning(traceId, {
@@ -949,6 +980,19 @@ export class ConversationService {
     const lock = await this.acquireConversationReplyLock(conversationId);
 
     if (!lock.acquired) {
+      const enqueuedAt = this.parseOptionalDate(data.enqueuedAt);
+      const waitMs = enqueuedAt
+        ? Math.max(0, Date.now() - enqueuedAt.getTime())
+        : 0;
+      if (waitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
+        this.logger.warn(
+          '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s',
+          conversationId,
+          userId,
+          waitMs,
+          data.traceId || '-'
+        );
+      }
       await this.enqueueConversationReplyJob(data);
       if (data.traceId) {
         await this.chatTraceService?.markQueued(data.traceId);
@@ -1240,10 +1284,19 @@ export class ConversationService {
       throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
     }
 
-    if (
-      message.role !== MessageRole.assistant ||
-      message.type !== MessageType.text
-    ) {
+    if (message.role !== MessageRole.assistant) {
+      throw new AppError(
+        'MESSAGE_VOICE_UNSUPPORTED',
+        'only assistant text messages can be converted to voice',
+        400
+      );
+    }
+
+    if (message.type === MessageType.voice) {
+      return this.messageService.buildConversationMessageItem(message);
+    }
+
+    if (message.type !== MessageType.text) {
       throw new AppError(
         'MESSAGE_VOICE_UNSUPPORTED',
         'only assistant text messages can be converted to voice',
@@ -1260,7 +1313,16 @@ export class ConversationService {
     }
 
     if (message.mediaObjectKey?.trim() || message.mediaUrl?.trim()) {
-      return this.messageService.buildConversationMessageItem(message);
+      message.type = MessageType.voice;
+      message.mediaTranscript =
+        message.mediaTranscript?.trim() ||
+        this.buildAssistantReplySpeechText(message.content);
+      message.content = message.mediaTranscript || message.content;
+      message.updatedAt = new Date();
+
+      return this.messageService.buildConversationMessageItem(
+        await this.messageModel.save(message)
+      );
     }
 
     const storedAgent = await this.findAgentById(conversation.agentId);
@@ -1296,11 +1358,63 @@ export class ConversationService {
     message.mediaMimeType = synthesizedVoice.mediaMimeType || '';
     message.mediaDurationMs = synthesizedVoice.mediaDurationMs;
     message.mediaTranscript = synthesizedVoice.transcript;
+    message.type = MessageType.voice;
+    message.content = synthesizedVoice.transcript;
     message.updatedAt = new Date();
 
     const savedMessage = await this.messageModel.save(message);
 
     return this.messageService.buildConversationMessageItem(savedMessage);
+  }
+
+  async convertMessageVoiceToText(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    messageId: string
+  ): Promise<ConversationMessageItem> {
+    const conversation = await this.getConversationForUser(
+      auth,
+      conversationId
+    );
+    const message = await this.findMessageById(
+      this.parseObjectId(messageId),
+      conversation.id
+    );
+
+    if (!message || message.isArchived) {
+      throw new AppError('MESSAGE_NOT_FOUND', 'message not found', 404);
+    }
+
+    if (
+      message.role !== MessageRole.assistant ||
+      message.type !== MessageType.voice
+    ) {
+      throw new AppError(
+        'MESSAGE_TEXT_UNSUPPORTED',
+        'only assistant voice messages can be converted to text',
+        400
+      );
+    }
+
+    const transcript =
+      message.mediaTranscript?.trim() || message.content?.trim() || '';
+
+    if (!transcript) {
+      throw new AppError(
+        'MESSAGE_TRANSCRIPT_NOT_AVAILABLE',
+        '这段语音暂时没有可显示的文字',
+        422
+      );
+    }
+
+    message.type = MessageType.text;
+    message.content = transcript;
+    message.mediaTranscript = transcript;
+    message.updatedAt = new Date();
+
+    return this.messageService.buildConversationMessageItem(
+      await this.messageModel.save(message)
+    );
   }
 
   async submitMessageFeedback(
@@ -1726,7 +1840,31 @@ export class ConversationService {
     );
     const searchableText = this.buildMessageSearchableText(messagePayload);
     const now = new Date();
-    const chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+    let chatQuota: ConversationChatQuotaSnapshot;
+    try {
+      chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+    } catch (error) {
+      // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
+      // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
+      if (
+        error instanceof AppError &&
+        error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
+      ) {
+        throw error; // 正常超限，透传
+      }
+      this.logger?.error?.(
+        '[chat-quota] unexpected error in resolveChatQuotaForSend, defaulting to conservative limit: %s',
+        (error as Error)?.message || 'unknown'
+      );
+      chatQuota = {
+        isVip: false,
+        policy: 'daily',
+        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        remainingCount: 0,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      };
+    }
 
     const userMessage = await this.saveMessage({
       conversationId: runtime.conversation.id,
@@ -2278,6 +2416,24 @@ export class ConversationService {
     runtime: ReplyRuntime,
     now: Date
   ): Promise<ConversationChatQuotaSnapshot> {
+    // 防御：DI 初始化失败时宁可误拦也不要放行
+    if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
+      this.logger?.error?.(
+        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s — defaulting to conservative limit',
+        !!this.userMembershipModel,
+        !!this.userModel,
+        !!this.messageModel
+      );
+      return {
+        isVip: false,
+        policy: 'daily',
+        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        remainingCount: 0,
+        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      };
+    }
+
     if (await this.isUserVip(runtime.conversation.userId, now)) {
       return {
         isVip: true,
@@ -2470,6 +2626,7 @@ export class ConversationService {
       agentId: options.agentId,
       role: MessageRole.user,
       status: MessageStatus.sent,
+      quotaExempt: { $ne: true },
       createdAt: createdAtQuery,
     } as never);
   }
@@ -2691,6 +2848,25 @@ export class ConversationService {
         );
       }
 
+      if (this.isGenerationTimeoutError(initialError)) {
+        return this.buildGenerationFailureReply(
+          before.searchableText,
+          context.replyRoute,
+          context.replyIntent ?? context.replyRoute?.intent,
+          replyBrief,
+          initialError,
+          'completion',
+          {
+            attempted: false,
+            succeeded: false,
+            initialFailureCode: this.resolveGenerationFailureCode(initialError),
+          },
+          generationUsage,
+          context.messages,
+          generationAttemptTraces
+        );
+      }
+
       try {
         response = await this.openAIService.createChatCompletion(
           {
@@ -2802,6 +2978,7 @@ export class ConversationService {
         replyBrief,
         evidence: reviewEvidence,
         claims: replyClaims,
+        mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
       }) ?? requestedGuardrailReviewMode;
     const guarded = await this.withTraceSpan(
       ChatTraceStage.review,
@@ -2816,6 +2993,7 @@ export class ConversationService {
           evidence: reviewEvidence,
           claims: replyClaims,
           reviewMode: guardrailReviewMode,
+          conversationId: this.stringifyObjectId(runtime.conversation.id),
         })
     );
     const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
@@ -2991,6 +3169,7 @@ export class ConversationService {
     const results: Array<{
       callId: string;
       name: AgentChatToolName;
+      arguments: Record<string, unknown>;
       result: AgentChatToolResult;
     }> = [];
 
@@ -3011,7 +3190,15 @@ export class ConversationService {
           ),
         { chatToolName: name }
       );
-      results.push({ callId: call.id, name, result });
+      results.push({
+        callId: call.id,
+        name,
+        arguments:
+          rawArguments && typeof rawArguments === 'object'
+            ? (rawArguments as Record<string, unknown>)
+            : {},
+        result,
+      });
     }
 
     const continuationMessages: ChatCompletionMessageParam[] = [
@@ -3553,6 +3740,20 @@ export class ConversationService {
     return (code || name || 'UNKNOWN').slice(0, 80);
   }
 
+  private isGenerationTimeoutError(error: unknown): boolean {
+    const code = this.resolveGenerationFailureCode(error);
+    const message =
+      error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message || '')
+        : typeof error === 'string'
+        ? error
+        : '';
+
+    return /(?:TIMEOUT|ABORT|AbortError|ETIMEDOUT|exceeded)/i.test(
+      `${code}\n${message}`
+    );
+  }
+
   private async validateAssistantReply(options: {
     contextMessages: ChatCompletionMessageParam[];
     userQuery: string;
@@ -3562,6 +3763,7 @@ export class ConversationService {
     evidence?: AgentEvidenceItem[];
     claims?: AssistantFactClaim[];
     reviewMode?: ReplyGuardrailReviewMode;
+    conversationId?: string;
   }): Promise<ValidateAssistantReplyResult> {
     if (!this.replyGuardrailService) {
       return {
@@ -3584,6 +3786,8 @@ export class ConversationService {
         evidence: options.evidence,
         claims: options.claims,
         reviewMode: options.reviewMode,
+        mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
+        conversationId: options.conversationId,
       });
 
       if (result.rewritten) {
@@ -3797,8 +4001,9 @@ export class ConversationService {
     }
 
     const firstMessage = after.assistantMessages[0];
+    const responseCompletedAt = new Date();
     await this.chatTraceService.markCompleted(trace.traceId, {
-      responseCompletedAt: new Date(),
+      responseCompletedAt,
       replyMessageIds: after.assistantMessages.map(message =>
         this.stringifyObjectId(message.id)
       ),
@@ -4069,6 +4274,7 @@ export class ConversationService {
         message =>
           message.role === MessageRole.user &&
           message.status === MessageStatus.sent &&
+          message.replyTrigger !== false &&
           message.createdAt > options.afterUserCreatedAt!
       );
     }
@@ -4084,7 +4290,8 @@ export class ConversationService {
       .filter(
         message =>
           message.role === MessageRole.user &&
-          message.status === MessageStatus.sent
+          message.status === MessageStatus.sent &&
+          message.replyTrigger !== false
       );
   }
 
@@ -4096,6 +4303,7 @@ export class ConversationService {
       conversationId,
       role: MessageRole.user,
       status: MessageStatus.sent,
+      replyTrigger: { $ne: false },
       isArchived: { $ne: true },
       createdAt: {
         $gt: after,
@@ -5271,7 +5479,16 @@ export class ConversationService {
     };
     routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[] | undefined> {
-    if (options.before.messagePayload.type !== MessageType.voice) {
+    const hasLongReplyBubble = options.replySegments.some(
+      segment =>
+        countReplyVisibleCharacters([segment]) >=
+        ASSISTANT_AUTO_VOICE_MIN_CHARACTERS
+    );
+
+    if (
+      options.before.messagePayload.type !== MessageType.voice &&
+      !hasLongReplyBubble
+    ) {
       return undefined;
     }
 
@@ -5338,6 +5555,15 @@ export class ConversationService {
         text: transcript,
         voiceTimbre,
       });
+      try {
+        await this.voiceTimbreLibraryService.markUsed(voiceTimbre);
+      } catch (error) {
+        this.logger.warn(
+          '[conversation] voice timbre usage timestamp update failed, timbreId=%s, reason=%s',
+          this.stringifyObjectId(voiceTimbre.id),
+          this.describeReplyError(error)
+        );
+      }
       const stored = await this.storeAssistantVoiceAsset({
         audioBuffer: synthesized.audioBuffer,
         mimeType: synthesized.mimeType,
@@ -5394,12 +5620,40 @@ export class ConversationService {
     }
 
     if (input.voiceTimbre.provider === VoiceTimbreProvider.qwen) {
-      return this.qwenVoiceSpeechService.synthesize({
+      const synthesized = await this.qwenVoiceSpeechService.synthesize({
         text: input.text,
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
       });
+      const speechSpeed = this.voiceSpeechSetting(
+        input.voiceTimbre.speechSpeed,
+        1,
+        0.5,
+        2
+      );
+      const speechVolume = this.voiceSpeechSetting(
+        input.voiceTimbre.speechVolume,
+        1,
+        0.25,
+        2
+      );
+      if (speechSpeed === 1 && speechVolume === 1) {
+        return synthesized;
+      }
+      const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
+        buffer: synthesized.audioBuffer,
+        fileName: synthesized.mimeType.includes('mpeg')
+          ? 'speech.mp3'
+          : 'speech.wav',
+        speechSpeed,
+        speechVolume,
+      });
+      return {
+        audioUrl: '',
+        audioBuffer: adjusted.buffer,
+        mimeType: adjusted.contentType,
+      };
     }
 
     throw new AppError(
@@ -5407,6 +5661,18 @@ export class ConversationService {
       'voice timbre provider is not supported for speech synthesis',
       400
     );
+  }
+
+  private voiceSpeechSetting(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number
+  ): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed)
+      ? Math.min(max, Math.max(min, parsed))
+      : fallback;
   }
 
   private async findActiveVoiceTimbreForAgent(

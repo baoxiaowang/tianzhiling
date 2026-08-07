@@ -1,24 +1,45 @@
-import { Column, Entity, Index } from 'typeorm';
-import { BaseEntity, TableName } from './base';
+import { Column, Entity, Index } from "typeorm";
+import { BaseEntity, MongoObjectId, TableName } from "./base";
 
 export enum VoiceTimbreProvider {
-  minimax = 'minimax',
-  cosyvoice = 'cosyvoice',
-  qwen = 'qwen',
-  doubao = 'doubao',
+  minimax = "minimax",
+  cosyvoice = "cosyvoice",
+  qwen = "qwen",
+  doubao = "doubao",
 }
 
 export enum VoiceTimbreStatus {
-  creating = 'creating',
-  active = 'active',
-  failed = 'failed',
-  disabled = 'disabled',
+  creating = "creating",
+  active = "active",
+  failed = "failed",
+  disabled = "disabled",
 }
 
-@Index(['provider', 'providerVoiceId'], { unique: true, background: true })
-@Index(['status', 'updatedAt'], { background: true })
+export interface VoiceTimbreGeneratedAudioItem {
+  id: string;
+  text: string;
+  objectKey: string;
+  publicUrl?: string;
+  speechSpeed: number;
+  speechVolume: number;
+  createdAt: Date;
+}
+
+@Index(["provider", "providerVoiceId"], { unique: true, background: true })
+@Index(["status", "updatedAt"], { background: true })
+@Index(["userId", "status", "createdAt"], {
+  sparse: true,
+  background: true,
+})
+@Index(["voiceServiceSessionId", "updatedAt"], {
+  sparse: true,
+  background: true,
+})
 @Entity(TableName.voice_timbre)
 export class VoiceTimbreEntity extends BaseEntity {
+  @Column()
+  userId?: MongoObjectId;
+
   @Column()
   name: string;
 
@@ -30,6 +51,12 @@ export class VoiceTimbreEntity extends BaseEntity {
 
   @Column()
   providerFileId?: string;
+
+  @Column()
+  voiceServiceSessionId?: MongoObjectId;
+
+  @Column()
+  trainingClipIds?: string[];
 
   @Column()
   audioObjectKey: string;
@@ -50,6 +77,9 @@ export class VoiceTimbreEntity extends BaseEntity {
   previewAudioUrl?: string;
 
   @Column()
+  previewAudioObjectKey?: string;
+
+  @Column()
   speechSpeed?: number;
 
   @Column()
@@ -57,6 +87,9 @@ export class VoiceTimbreEntity extends BaseEntity {
 
   @Column()
   speechPitch?: number;
+
+  @Column()
+  generatedAudios?: VoiceTimbreGeneratedAudioItem[];
 
   @Column()
   status: VoiceTimbreStatus;
@@ -69,6 +102,45 @@ export class VoiceTimbreEntity extends BaseEntity {
 
   @Column()
   remark?: string;
+
+  @Column()
+  providerCreatedAt?: Date;
+
+  @Column()
+  providerLastUsedAt?: Date;
+
+  @Column()
+  providerEstimatedCleanupAt?: Date;
+
+  @Column()
+  retentionStatus?: "protected" | "due_soon" | "attention_required";
+
+  @Column()
+  retentionLastAttemptAt?: Date;
+
+  @Column()
+  retentionLastSucceededAt?: Date;
+
+  @Column()
+  retentionFailureCode?: string;
+
+  @Column()
+  retentionFailureReason?: string;
+
+  @Column()
+  deletionStatus?: "pending" | "completed" | "partial_failed";
+
+  @Column()
+  deletionRequestedAt?: Date;
+
+  @Column()
+  providerDeletedAt?: Date;
+
+  @Column()
+  deletedAt?: Date;
+
+  @Column()
+  deletionFailureReason?: string;
 
   @Column()
   createdAt: Date;

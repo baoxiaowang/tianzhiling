@@ -195,6 +195,8 @@ describe('AdminAppUserService', () => {
           languageHabits: '',
           hobbies: '',
           sharedMemories: '',
+          hasUnreadAgentHomeGuide: false,
+          hasUnreadAgentProfileGuide: false,
           customContext: '',
           status: 1,
           isDefault: true,

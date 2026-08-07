@@ -36,6 +36,9 @@
 | 管理员 | `admin_user` | `AdminUserEntity` | 后台管理员资料和角色 |
 | 管理员 | `admin_account` | `AdminAccountEntity` | 后台登录账号和密码 |
 | AI 亲友 | `agent` | `AgentEntity` | 用户创建的亲友 Agent 档案 |
+| AI 亲友 | `agent_profile_fact` | `AgentProfileFactEntity` | Agent 的结构化长期事实和人工资料来源 |
+| AI 亲友 | `agent_memory_fact` | `AgentMemoryFactEntity` | 兼容性的规则化记忆事实 |
+| AI 亲友 | `agent_relationship_signal` | `AgentRelationshipSignalEntity` | 用户和 Agent 的关系连续性信号 |
 | AI 亲友 | `agent_sub` | `AgentSubEntity` | Agent 子身份配置，当前代码观察到使用较少 |
 | 聊天 | `conversation` | `ConversationEntity` | 用户和 Agent 的会话容器 |
 | 聊天 | `message` | `MessageEntity` | 会话消息，含文本、语音、图片、token 用量 |
@@ -61,6 +64,12 @@
 erDiagram
   user ||--o{ user_account : "id = userId"
   user ||--o{ agent : "id = createdUserId"
+  user ||--o{ agent_profile_fact : "id = userId"
+  agent ||--o{ agent_profile_fact : "id = agentId"
+  user ||--o{ agent_memory_fact : "id = userId"
+  agent ||--o{ agent_memory_fact : "id = agentId"
+  user ||--o{ agent_relationship_signal : "id = userId"
+  agent ||--o{ agent_relationship_signal : "id = agentId"
   user ||--o{ conversation : "id = userId"
   agent ||--o{ conversation : "id = agentId"
   conversation ||--o{ message : "id = conversationId"
@@ -221,6 +230,10 @@ AI 分析数据时应优先把真实主对象作为主数据，快照用于历�
 - `languageHabits`
 - `hobbies`
 - `sharedMemories`
+- `memoryProfileFactSnapshot`
+- `memoryProfileVersion`
+- `memoryProfileGeneratedAt`
+- `memoryProfileGenerationCount`
 - `customContext`
 - `status`
 - `isDefault`
@@ -232,6 +245,36 @@ AI 分析数据时应优先把真实主对象作为主数据，快照用于历�
 - 创建 Agent 后会自动创建一个 `conversation`，并写入一条初始 `message`。
 - 删除 Agent 时，服务层会删除该用户该 Agent 下的 `conversation` 和 `message`。
 - `isDefault` 是用户维度的默认 Agent，服务层会把同一用户其他默认 Agent 置为 false。
+- 五段亲友资料是长期记忆的低频展示结果，不是聊天查询的主数据源。
+- `memoryProfileFactSnapshot` 记录最近一次资料整理覆盖的事实版本；`memoryProfileGenerationCount` 用于把生成门槛从 20 分逐步提高到 30、40 分等。
+- 自动生成的资料只更新 `agent` 展示字段，不回写长期事实；用户手动编辑会对齐为 `agent_profile_fact` 中的 `profile_source.*` 事实。
+
+完整工作流见 [智能体记忆资料生成工作流](./agent-memory-profile-workflow.md)。
+
+### `agent_profile_fact`
+
+主字段：
+
+- `userId -> user.id`
+- `agentId -> agent.id`
+- `type`
+- `key`
+- `value`
+- `polarity`
+- `confidence`
+- `status`
+- `priority`
+- `assertionPolicy`
+- 来源字段：`sourceMessageId`、`sourceMessageIds`、`sourceFeedbackId`、`sourceText`
+- 变化字段：`supportCount`、`conflictingValues`、`lastUsedAt`
+
+关系与约束：
+
+- `userId + agentId + key` 是唯一索引，同一语义槽位只保留一个当前事实记录。
+- 聊天只使用 `status=active` 的事实；candidate、conflicted、archived 等状态不会直接作为可断言记忆。
+- 用户手动编辑的五段资料使用稳定的 `profile_source.*` key，修改会替换对应事实，清空会归档。
+- 图片人物外形使用 `visual.appearance.*` key：单次视觉观察为 `candidate`，同值重复观察后才激活，并固定为 `assertionPolicy=context_only`，只辅助身份推测，不作为用户确认事实。
+- 资料页自动生成读取该集合，但生成结果不会再次写入该集合。
 
 ### `agent_sub`
 
@@ -413,13 +456,15 @@ AI 分析数据时应优先把真实主对象作为主数据，快照用于历�
 - `targetCode`
 - `agentId -> agent.id`，仅声音包订单需要
 - `title`
-- 金额字段：`amount`、`discountAmount`、`couponAmount`、`payableAmount`、`paidAmount`、`refundAmount`
+- 金额字段：`amount`、`discountAmount`、`couponAmount`、`payableAmount`、`paidAmount`、`refundAmount`，统一以人民币分存储
 - `currency`
 - `status`: `pending | paid | granting | completed | closed | refund_requested | refunded | grant_failed`
 - `source`: `app | weapp | admin`
 - 支付字段：`paymentProvider`、`paymentPrepayId`、`paymentExpiredAt`、`payerOpenid`、`paymentTradeNo`、`paymentNotifyAt`
 - 微信虚拟支付字段：`virtualPaymentProductId`、`virtualPaymentEnv`、`virtualGoodsProvideStatus`、`virtualGoodsProvidedAt`、`virtualGoodsProvideFailedAt`、`virtualGoodsProvideError`
 - `snapshot`: 下单时的套餐和 Agent 快照
+
+历史订单兼容：旧 MySQL 的 `total_money`、`goods_money` 以人民币元存储，迁移到 MongoDB 时必须乘以 100 转成分。迁移快照使用 `snapshot.legacy.sourceMoneyUnit = yuan`、`snapshot.legacy.moneyUnit = fen` 和 `moneyMigrationVersion` 标记单位；早期迁移记录没有该标记，会员升级折抵读取时按旧元单位兼容。
 
 多态引用规则：
 

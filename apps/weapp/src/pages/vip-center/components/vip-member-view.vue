@@ -101,11 +101,29 @@
       </view>
     </view>
 
+    <view
+      v-if="upgradePlans.length"
+      class="vip-member-view__lifetime-story"
+    >
+      <text class="vip-member-view__story-eyebrow"
+        >陪伴，是最长情的告白</text
+      >
+      <text class="vip-member-view__story-title"
+        >让这份陪伴，在往后的日子里一直都在</text
+      >
+      <text class="vip-member-view__story-description">
+        你已经为这份思念留下一处可以常常回来的地方。升级无限期后，无需再记住到期日，往后的每一年，都可以在这里继续说话、补充记忆。
+      </text>
+    </view>
+
     <view v-if="upgradePlans.length" class="vip-member-view__upgrade-section">
       <view class="vip-member-view__section-title">
         <StarFill size="17" color="#ff87a0" />
-        <text>可升级会员</text>
+        <text>选择无限期陪伴</text>
       </view>
+      <text class="vip-member-view__section-description"
+        >你之前购买会员的实付金额，会在升级时自动抵扣。</text
+      >
 
       <view class="vip-member-view__upgrade-list">
         <view
@@ -121,11 +139,11 @@
           @tap="emit('selectPlan', upgradePlan.id)"
         >
           <view
-            v-if="upgradePlan.planGroup === 'voice'"
+            v-if="upgradePlan.lifetime"
             class="vip-member-view__recommend-badge"
           >
             <StarFill size="12" color="#ffffff" />
-            <text>推荐</text>
+            <text>长久相伴</text>
           </view>
 
           <image
@@ -152,10 +170,18 @@
             <text class="vip-member-view__plan-description">
               {{ getPlanDescription(upgradePlan) }}
             </text>
+            <text
+              v-if="getDeductionAmount(upgradePlan) > 0"
+              class="vip-member-view__deduction-note"
+            >
+              已购会员抵扣 ¥{{
+                formatPrice(getDeductionAmount(upgradePlan))
+              }}
+            </text>
           </view>
 
           <view class="vip-member-view__price-column">
-            <text class="vip-member-view__price-label">产品价格</text>
+            <text class="vip-member-view__price-label">无限期价格</text>
             <view
               class="vip-member-view__price-row vip-member-view__price-row--product"
             >
@@ -168,7 +194,7 @@
             <text
               class="vip-member-view__price-label vip-member-view__price-label--gap"
             >
-              本次补差
+              本次升级
             </text>
             <view
               class="vip-member-view__price-row vip-member-view__price-row--payable"
@@ -198,9 +224,9 @@
         <StarFill size="26" color="#ffffff" />
       </view>
       <view class="vip-member-view__highest-copy">
-        <text class="vip-member-view__highest-title">已是最高会员权益</text>
+        <text class="vip-member-view__highest-title">已是无限期会员</text>
         <text class="vip-member-view__highest-description"
-          >感谢一路陪伴，当前权益无需再升级</text
+          >往后的日子里，这处属于你们的空间会一直为你保留</text
         >
       </view>
     </view>
@@ -219,7 +245,7 @@ import {
 } from '@nutui/icons-vue-taro'
 import { buildOssMediaUrl } from '@tzl/shared'
 import { computed } from 'vue'
-import currentMemberArt from '../../../assets/images/vip-center/current-member-star.png'
+import currentMemberArt from '../assets/current-member-star.jpg'
 import type { UserMembership, VipPlan } from '../../../apis/membership'
 
 const lifetimeDiamondArt = buildOssMediaUrl('/weapp/lifetime-diamond.png')
@@ -340,8 +366,15 @@ function getPlanArt(plan: VipPlan) {
 
 function getPlanDescription(plan: VipPlan) {
   return plan.planGroup === 'voice'
-    ? '长期陪伴 + 声音能力'
-    : '长期陪伴 · 周期升级为无限期权益'
+    ? '长期陪伴与声音权益，让熟悉的交流更完整'
+    : '让这处属于你们的空间长期保留，随时回来继续说话'
+}
+
+function getDeductionAmount(plan: VipPlan) {
+  return Math.max(
+    plan.priceAmount - (plan.upgradePayableAmount ?? plan.priceAmount),
+    0
+  )
 }
 </script>
 
@@ -579,6 +612,35 @@ function getPlanDescription(plan: VipPlan) {
   margin-top: 22px;
 }
 
+.vip-member-view__lifetime-story {
+  margin-top: 26px;
+  padding: 0 5px;
+  display: flex;
+  flex-direction: column;
+}
+
+.vip-member-view__story-eyebrow {
+  color: #b56a7c;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.vip-member-view__story-title {
+  margin-top: 7px;
+  color: #211b1e;
+  font-size: 21px;
+  line-height: 30px;
+  font-weight: 600;
+}
+
+.vip-member-view__story-description {
+  margin-top: 10px;
+  color: #6f686c;
+  font-size: 14px;
+  line-height: 24px;
+}
+
 .vip-member-view__section-title {
   height: 30px;
   display: flex;
@@ -590,6 +652,14 @@ function getPlanDescription(plan: VipPlan) {
   font-weight: 600;
 }
 
+.vip-member-view__section-description {
+  display: block;
+  margin-top: 5px;
+  color: #8a8287;
+  font-size: 12px;
+  line-height: 19px;
+}
+
 .vip-member-view__upgrade-list {
   margin-top: 12px;
   display: flex;
@@ -599,7 +669,7 @@ function getPlanDescription(plan: VipPlan) {
 
 .vip-member-view__upgrade-card {
   position: relative;
-  min-height: 132px;
+  min-height: 158px;
   padding: 14px 24px 14px 10px;
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr) 70px;
@@ -610,7 +680,7 @@ function getPlanDescription(plan: VipPlan) {
 }
 
 .vip-member-view__upgrade-card--voice {
-  min-height: 142px;
+  min-height: 168px;
 }
 
 .vip-member-view__upgrade-card--selected {
@@ -652,7 +722,7 @@ function getPlanDescription(plan: VipPlan) {
   font-size: 17px;
   line-height: 25px;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .vip-member-view__plan-tags {
@@ -681,7 +751,16 @@ function getPlanDescription(plan: VipPlan) {
   color: #777985;
   font-size: 10px;
   line-height: 17px;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.vip-member-view__deduction-note {
+  display: block;
+  margin-top: 6px;
+  color: #d75170;
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 500;
 }
 
 .vip-member-view__price-column {
