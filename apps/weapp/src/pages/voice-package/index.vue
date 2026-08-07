@@ -1055,6 +1055,7 @@ import {
   ensureAuthenticatedSession,
   redirectToAuthPage,
 } from "../../utils/auth-guard";
+import { requestVoiceprintConsent } from "../../legal/voiceprint-consent";
 import { getVoiceServiceFixedPromptSpeech } from "./voice-service-prompt-speech";
 import {
   buildVoiceServiceMessengerState,
@@ -1434,6 +1435,14 @@ async function preparePage() {
   }
 
   isCheckingAuth.value = false;
+
+  const consented = await requestVoiceprintConsent();
+  if (!consented) {
+    loadError.value = "需要授权声纹信息才能使用声音服务";
+    isLoading.value = false;
+    return;
+  }
+
   restoreLocalUploads();
   await Promise.all([
     refreshSession({ showResumePrompt: true, start: true }),
