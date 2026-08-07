@@ -245,7 +245,6 @@ export default {
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } from '@tarojs/taro'
-import { buildOssMediaUrl } from '@tzl/shared'
 import { readMenuButtonMetrics } from '../../utils/menu-button'
 import {
   createComment,
@@ -265,7 +264,8 @@ import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-p
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import MomentsTicker from '../../components/moments-ticker/moments-ticker.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import TopPromoBanner, { DEFAULT_BANNERS } from '../../components/top-promo-banner/top-promo-banner.vue'
+import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
+import { DEFAULT_BANNERS } from '../../components/top-promo-banner/banner-data'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import {
   hasUnseenPostNotifications,
@@ -323,7 +323,6 @@ const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = 188
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = 172
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const COMPACT_BANNER_URL = buildOssMediaUrl('/weapp/post-banner-vip.png')
 const COMPACT_BANNER_LINK = '/pages/vip-center/index'
 const compactTipText = DEFAULT_BANNERS[0]?.text ?? ''
 const appBarMetrics = readMenuButtonMetrics()
@@ -334,7 +333,6 @@ const compactHeaderTopStyle = computed(() => ({
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
-const compactBannerUrl = computed(() => COMPACT_BANNER_URL)
 const currentUserAvatar = computed(() => normalizeText(session.value?.user?.avatar))
 const currentUserAvatarFallback = computed(() => {
   const name = normalizeText(session.value?.user?.name)

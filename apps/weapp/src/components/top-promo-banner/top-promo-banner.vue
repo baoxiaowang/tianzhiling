@@ -28,14 +28,7 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
-import { buildOssMediaUrl } from '@tzl/shared'
-
-interface PromoBannerItem {
-  id: string
-  imageUrl: string
-  link?: string
-  text?: string
-}
+import { type PromoBannerItem, DEFAULT_BANNERS } from './banner-data'
 
 withDefaults(defineProps<{
   banners?: readonly PromoBannerItem[]
