@@ -140,9 +140,9 @@ import {
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
-const ASSISTANT_REPLY_TIMEOUT_MS = 20000;
-const ASSISTANT_REPLY_MAX_TOKENS = 420;
-const ASSISTANT_RECOVERY_MAX_TOKENS = 360;
+const ASSISTANT_REPLY_TIMEOUT_MS = 28000;
+const ASSISTANT_REPLY_MAX_TOKENS = 520;
+const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
@@ -2804,7 +2804,13 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      this.assertAssistantCompletionNotTruncated(response);
+      const replyTruncated =
+        this.checkAssistantCompletionTruncated(response);
+      if (replyTruncated) {
+        this.logger.warn(
+          '[conversation] primary assistant completion truncated by token limit'
+        );
+      }
       const parsedReply = this.parseAssistantReply(
         responseContent,
         context.chatToolPlan?.availableTools
@@ -2898,7 +2904,13 @@ export class ConversationService {
           typeof response.choices?.[0]?.message?.content === 'string'
             ? response.choices[0].message.content
             : '';
-        this.assertAssistantCompletionNotTruncated(response);
+        const replyTruncated =
+          this.checkAssistantCompletionTruncated(response);
+        if (replyTruncated) {
+          this.logger.warn(
+            '[conversation] recovery assistant completion truncated by token limit'
+          );
+        }
         const parsedReply = this.parseAssistantReply(responseContent);
         const plannedSegments = this.materializeParticipationReplySegments(
           parsedReply.segments,
@@ -6266,7 +6278,13 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      this.assertAssistantCompletionNotTruncated(response);
+      const replyTruncated =
+        this.checkAssistantCompletionTruncated(response);
+      if (replyTruncated) {
+        this.logger.warn(
+          '[conversation] bubble reflow completion truncated by token limit'
+        );
+      }
       const parsedReply = this.parseAssistantReply(responseContent);
       const reflowedSegments = this.normalizeModelFirstReplySegments(
         parsedReply.segments,
@@ -6342,20 +6360,16 @@ export class ConversationService {
     );
   }
 
-  private assertAssistantCompletionNotTruncated(response: {
+  private checkAssistantCompletionTruncated(response: {
     choices?: Array<{
       finish_reason?: unknown;
     }>;
-  }): void {
+  }): boolean {
     if (response.choices?.[0]?.finish_reason !== 'length') {
-      return;
+      return false;
     }
 
-    throw new AppError(
-      'ASSISTANT_REPLY_TRUNCATED',
-      'assistant reply reached the model token limit',
-      502
-    );
+    return true;
   }
 
   private buildAssistantGenerationAttemptTrace(options: {

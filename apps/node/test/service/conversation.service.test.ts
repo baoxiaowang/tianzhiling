@@ -3454,7 +3454,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(service.openAIService.createChatCompletion).toHaveBeenCalledWith(
       expect.any(Object),
       {
-        timeout: 20000,
+        timeout: 28000,
         maxRetries: 0,
       }
     );
@@ -3498,10 +3498,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(
       (service.openAIService.createChatCompletion as jest.Mock).mock.calls[0][0]
         .max_tokens
-    ).toBe(420);
+    ).toBe(520);
   });
 
-  it('retries a completion that explicitly ended at the token limit', async () => {
+  it('uses truncated token-limit content without retrying', async () => {
     const currentQuery = '爸，我心里难受';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3523,16 +3523,6 @@ describe('ConversationService assistant voice reply timbre binding', () => {
           },
         ],
         usage: {},
-      })
-      .mockResolvedValueOnce({
-        model: 'MiniMax-M2.5',
-        choices: [
-          {
-            finish_reason: 'stop',
-            message: { content: '爸听着呢，你慢慢说' },
-          },
-        ],
-        usage: {},
       });
 
     await service.processConversationReplyJob({
@@ -3540,12 +3530,11 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
-    expect(getAssistantContents(savedMessages)).toEqual(['爸听着呢，你慢慢说']);
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(getAssistantContents(savedMessages)).toEqual(['你一哭，我心里也']);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyGenerationRecoveryAttempted: true,
-        replyGenerationRecoverySucceeded: true,
+        replyGenerationRecoveryAttempted: false,
       })
     );
   });
@@ -4075,7 +4064,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         topP: 0.8,
       }),
       {
-        timeout: 20000,
+        timeout: 28000,
         maxRetries: 0,
       }
     );
