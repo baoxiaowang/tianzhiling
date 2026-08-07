@@ -528,12 +528,25 @@ export class AgentContextService {
       hardFacts,
       selectedFactKeys
     );
+    // 即使用户消息在 direct 模式下跳过了记忆规划器，
+    // 只要消息中出现了已知家庭成员的名称，立刻把该成员的全部已确认事实注入上下文
+    const mentionedMemberFactKeys = this.pinMentionedFamilyMemberFacts(
+      profileFacts,
+      knownFamilyMembers,
+      options.currentQuery || ''
+    );
+    const effectiveSelectedFactKeys = Array.from(
+      new Set([...selectedFactKeys, ...mentionedMemberFactKeys])
+    );
     const relevantProfileFacts = this.selectRelevantFacts(
       profileFacts,
       relevanceText,
-      selectedProfileFactCount || modePolicy.profileFactLimit,
+      Math.max(
+        selectedProfileFactCount || modePolicy.profileFactLimit,
+        mentionedMemberFactKeys.length
+      ),
       factRetrievalPaths,
-      selectedFactKeys
+      effectiveSelectedFactKeys
     );
     const relevantHardFacts = this.selectRelevantFacts(
       hardFacts,
@@ -1637,6 +1650,34 @@ export class AgentContextService {
         selectedFactKeys: intent.memoryPlan?.selectedFactKeys,
       },
     };
+  }
+
+  private pinMentionedFamilyMemberFacts(
+    profileFacts: AgentProfileFactSummary[],
+    knownFamilyMembers: string[],
+    currentQuery: string
+  ): string[] {
+    if (!knownFamilyMembers.length || !currentQuery.trim()) {
+      return [];
+    }
+
+    const mentioned = knownFamilyMembers.filter(name =>
+      currentQuery.includes(name)
+    );
+
+    if (!mentioned.length) {
+      return [];
+    }
+
+    const keys = profileFacts
+      .filter(fact =>
+        mentioned.some(name =>
+          fact.key.includes(name)
+        )
+      )
+      .map(fact => fact.key);
+
+    return keys;
   }
 
   private countSelectedFacts(
