@@ -275,6 +275,7 @@ const POST_PAGE_SIZE = 10
 const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
+const REFRESH_DATA_TIMEOUT_MS = 15_000
 const COMMENT_BLUR_CLOSE_DELAY = 120
 const MOMENTS_SHARE_TITLE = '来天之灵看看新的动态'
 const MOMENTS_SHARE_PATH = '/pages/index/index'
@@ -462,14 +463,13 @@ async function refreshMomentsData(showLoading = true) {
     return refreshDataPromise
   }
 
-  refreshDataPromise = Promise.resolve()
-    .then(async () => {
+  refreshDataPromise = Promise.race([
+    (async () => {
       if (showLoading) {
         isPostsLoading.value = true
       }
 
       errorMessage.value = ''
-
       loadMoreError.value = ''
 
       const postResult = await getPosts({
@@ -490,7 +490,11 @@ async function refreshMomentsData(showLoading = true) {
           'network',
         )
       }
-    })
+    })(),
+    new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('REFRESH_DATA_TIMEOUT')), REFRESH_DATA_TIMEOUT_MS)
+    ),
+  ])
     .catch((error) => {
       if (error instanceof ApiException) {
         errorMessage.value = error.message || '加载动态失败'
@@ -578,12 +582,7 @@ async function preparePage() {
       }
     }
 
-    await Promise.race([
-      refreshMomentsData(!hasLoadedPosts.value),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, 15_000)
-      }),
-    ])
+    await refreshMomentsData(!hasLoadedPosts.value)
     scheduleConversationPreload()
   } catch (error) {
     console.error('[moments] preparePage failed', error)
