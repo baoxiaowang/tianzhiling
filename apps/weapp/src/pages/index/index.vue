@@ -53,7 +53,7 @@
           <text
             class="moments-compact-row__tip"
             @tap="handleCompactBannerTap"
-          >开通VIP</text>
+          >{{ compactTipText }}</text>
 
           <view
             v-if="hasUnreadNotifications"
@@ -265,7 +265,7 @@ import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-p
 import MomentCard from '../../components/moment-card/moment-card.vue'
 import MomentsTicker from '../../components/moments-ticker/moments-ticker.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
-import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
+import TopPromoBanner, { DEFAULT_BANNERS } from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
 import {
   hasUnseenPostNotifications,
@@ -325,6 +325,7 @@ const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = 172
 const COMMENT_BLUR_CLOSE_DELAY = 120
 const COMPACT_BANNER_URL = buildOssMediaUrl('/weapp/post-banner-vip.png')
 const COMPACT_BANNER_LINK = '/pages/vip-center/index'
+const compactTipText = DEFAULT_BANNERS[0]?.text ?? ''
 const appBarMetrics = readMenuButtonMetrics()
 const compactHeaderTopStyle = computed(() => ({
   paddingTop: `${appBarMetrics.totalHeight}px`,
