@@ -25,6 +25,22 @@
       <text class="voice-service-state__text">小使者正在赶来...</text>
     </view>
 
+    <view v-else-if="isVoiceprintDenied" class="voice-service-state">
+      <text class="voice-service-state__title">声纹信息授权</text>
+      <text class="voice-service-state__subtitle">
+        使用声音复刻服务需要你同意《天之灵声纹信息授权协议》
+      </text>
+      <nut-button
+        shape="round"
+        type="primary"
+        size="small"
+        style="margin-top: 16px"
+        @click="handleVoiceprintAgree"
+      >
+        阅读并同意授权
+      </nut-button>
+    </view>
+
     <view v-else-if="loadError && !session" class="voice-service-state">
       <text class="voice-service-state__title">声音服务暂时没有连接上</text>
       <text class="voice-service-state__text">{{ loadError }}</text>
@@ -1166,6 +1182,7 @@ const audioDownloadProgress = ref(0);
 const audioPlaybackCurrentSeconds = ref(0);
 const audioPlaybackDurationSeconds = ref(0);
 const isVoiceRecording = ref(false);
+const isVoiceprintDenied = ref(false);
 const isAssistantSpeechLoading = ref(false);
 const isAssistantSpeechPlaying = ref(false);
 const shouldShowResumePrompt = ref(false);
@@ -1438,10 +1455,12 @@ async function preparePage() {
 
   const consented = await requestVoiceprintConsent();
   if (!consented) {
-    loadError.value = "需要授权声纹信息才能使用声音服务";
-    isLoading.value = false;
+    isVoiceprintDenied.value = true;
+    loadError.value = "";
     return;
   }
+
+  isVoiceprintDenied.value = false;
 
   restoreLocalUploads();
   await Promise.all([
@@ -1597,6 +1616,18 @@ async function selectRouteAgentIfNeeded() {
 
 function handleRetry() {
   void refreshSession();
+}
+
+async function handleVoiceprintAgree() {
+  const consented = await requestVoiceprintConsent();
+  if (consented) {
+    isVoiceprintDenied.value = false;
+    restoreLocalUploads();
+    await Promise.all([
+      refreshSession({ showResumePrompt: true, start: true }),
+      loadCompletedTimbreCount(),
+    ]);
+  }
 }
 
 async function handleBack() {
@@ -3158,6 +3189,14 @@ function buildAgentFallback(name: string) {
   color: #85818d;
   font-size: 14px;
   line-height: 21px;
+}
+
+.voice-service-state__subtitle {
+  display: block;
+  margin-top: 6px;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .voice-service-content {
