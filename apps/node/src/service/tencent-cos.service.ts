@@ -445,6 +445,20 @@ export class TencentCosService {
     return [prefix, datePath, generatedFileName].filter(Boolean).join('/');
   }
 
+
+  getSignedDownloadUrl(objectKey: string, expireSeconds = 900): string {
+    const key = this.normalizeObjectKey(objectKey);
+    const c = this.getClient();
+    const b = this.getRequiredConfig("bucket", "NODE_TENCENT_COS_BUCKET");
+    const r = this.getRequiredConfig("region", "NODE_TENCENT_COS_REGION");
+    return c.getObjectUrl({
+      Bucket: b, Region: r, Key: key,
+      Sign: true, Method: "GET", Expires: expireSeconds,
+      Protocol: this.resolveProtocol(),
+      ...(this.resolveSigningDomain() ? { Domain: this.resolveSigningDomain() } : {}),
+    });
+  }
+
   private normalizeObjectKey(value: string): string {
     const normalized = value
       .replace(/\\/g, '/')

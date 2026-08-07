@@ -4886,24 +4886,18 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
-    // 先从 COS 下载音频 → base64 data URI，再传给 STT。
-    // 避免依赖外部服务能直接访问 COS 对象 URL。
+    // 用 COS 签名 URL 传给 STT — 600 秒有效期够 DashScope 拉取
     let audioUrl = '';
 
     if (payload.mediaObjectKey?.trim()) {
       try {
-        const result = await this.tencentCosService.getBuffer(
-          payload.mediaObjectKey.trim()
+        audioUrl = this.tencentCosService.getSignedDownloadUrl(
+          payload.mediaObjectKey.trim(),
+          600
         );
-        const mime =
-          result.contentType?.trim() ||
-          payload.mediaMimeType?.trim() ||
-          'audio/aac';
-        const base64 = result.buffer.toString('base64');
-        audioUrl = `data:${mime};base64,${base64}`;
       } catch (cosError) {
         this.logger.error(
-          '[conversation] COS download failed, objectKey=%s, reason=%s',
+          '[conversation] signed URL failed, objectKey=%s, reason=%s',
           payload.mediaObjectKey,
           this.describeReplyError(cosError)
         );
@@ -4942,7 +4936,7 @@ export class ConversationService {
       );
     } catch (error) {
       this.logger.error(
-        '[conversation] voice transcription failed, objectKey=%s, reason=%s',
+        '[conversation] voice transcription request failed, objectKey=%s, reason=%s',
         payload.mediaObjectKey || '',
         this.describeReplyError(error)
       );
