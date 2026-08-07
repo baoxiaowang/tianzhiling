@@ -1621,12 +1621,7 @@ function handleRetry() {
 async function handleVoiceprintAgree() {
   const consented = await requestVoiceprintConsent();
   if (consented) {
-    isVoiceprintDenied.value = false;
-    restoreLocalUploads();
-    await Promise.all([
-      refreshSession({ showResumePrompt: true, start: true }),
-      loadCompletedTimbreCount(),
-    ]);
+    await preparePage();
   }
 }
 
