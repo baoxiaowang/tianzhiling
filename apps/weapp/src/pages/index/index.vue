@@ -578,7 +578,12 @@ async function preparePage() {
       }
     }
 
-    await refreshMomentsData(!hasLoadedPosts.value)
+    await Promise.race([
+      refreshMomentsData(!hasLoadedPosts.value),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 15_000)
+      }),
+    ])
     scheduleConversationPreload()
   } catch (error) {
     console.error('[moments] preparePage failed', error)

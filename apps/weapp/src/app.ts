@@ -93,6 +93,25 @@ const App = createApp({
     void ensureInnerAudioPlaybackOptions()
     reportPerformanceEvent('app_launch', 'app', Date.now() - launchStartedAt)
 
+    // 自动检测新版本并提示用户重启
+    try {
+      const updateManager = Taro.getUpdateManager()
+      updateManager.onCheckForUpdate((res) => {
+        if (!res.hasUpdate) return
+        updateManager.onUpdateReady(() => {
+          Taro.showModal({
+            title: '有新版本',
+            content: '新版本已就绪，点击确定重启应用',
+            showCancel: false,
+            success: () => updateManager.applyUpdate(),
+          })
+        })
+        updateManager.onUpdateFailed(() => {
+          // 静默失败，下次启动重试
+        })
+      })
+    } catch { /* UpdateManager not available in some environments */ }
+
     // The isolated voice test page owns its login so stale production sessions
     // cannot block or redirect the test bootstrap.
     if (VOICE_TRAINING_TEST_MODE) {
