@@ -382,6 +382,7 @@ interface ReplyRoutingAudit {
   intent?: StructuredReplyIntent;
   route?: ReplySceneRoute;
   brief?: ReplyBrief;
+  skipReply?: boolean;
   fallbackSource?: string;
   generationFailureStage?: 'context' | 'completion' | 'parse';
   generationFailureCode?: string;
@@ -1903,11 +1904,23 @@ export class ConversationService {
       searchableText,
     });
 
+    const deferReply = this.isAssistantReplyDeferred(messagePayload);
+
+    // 自然收口时设置 replyTrigger: false，跳过队列消费
+    if (
+      deferReply &&
+      messagePayload.type === MessageType.text &&
+      (messagePayload.content?.trim()?.length || 0) > 0
+    ) {
+      userMessage.replyTrigger = false;
+      await this.messageModel.save(userMessage);
+    }
+
     return {
       messagePayload,
       searchableText,
       userMessage,
-      deferReply: this.isAssistantReplyDeferred(messagePayload),
+      deferReply,
       chatQuota,
     };
   }
@@ -2711,6 +2724,31 @@ export class ConversationService {
         intent: context.replyIntent ?? context.replyRoute?.intent,
         route: context.replyRoute,
       });
+
+    // Layer 2: 规划器判定本轮无需回复，跳过主模型
+    if (this.shouldSkipReplyFromBrief(replyBrief)) {
+      this.logger.info(
+        '[conversation] reply skipped by plan, contribution=%s, closure=%s, alternative=%s',
+        replyBrief.conversationPlan?.engagement?.assistantContribution,
+        replyBrief.conversationPlan?.engagement?.closureReadiness,
+        replyBrief.strategyQuality?.preferredAlternative
+      );
+      return {
+        replySegments: [],
+        usage: {},
+        routing: {
+          intent: context.replyIntent ?? context.replyRoute?.intent,
+          route: context.replyRoute,
+          brief: replyBrief,
+          skipReply: true,
+          evidenceCount: 0,
+          factClaimCount: 0,
+          unsupportedClaimCount: 0,
+          ...context.diagnostics,
+        },
+      };
+    }
+
     const contextEvidence = context.evidence || [];
     let reviewEvidence = contextEvidence;
     this.scheduleRelationshipSignals(
@@ -3848,6 +3886,11 @@ export class ConversationService {
     processed: ProcessReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
+    if (!processed.replySegments.length) {
+      await this.touchConversation(runtime.conversation, replyTime);
+      return { assistantMessages: [] };
+    }
+
     const assistantMessages =
       (await this.createAssistantVoiceReplyMessages({
         runtime,
@@ -4656,27 +4699,110 @@ export class ConversationService {
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
-      this.isAssistantSilenceRequest(payload) ||
+      this.isNaturalConversationEnd(payload) ||
       (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
     );
   }
 
-  private isAssistantSilenceRequest(payload: PreparedIncomingMessage): boolean {
+  private isNaturalConversationEnd(payload: PreparedIncomingMessage): boolean {
     if (payload.type !== MessageType.text) {
       return false;
     }
 
     const content = payload.content?.trim();
 
-    if (!content || content.length > 40) {
+    if (!content) {
       return false;
     }
 
+    // 安全保护：包含问号必须回复
+    if (/[？?]/.test(content)) {
+      return false;
+    }
+
+    // 显式不回复请求：不要/别/不用 回复我（任何长度都拦截）
     const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
 
-    return /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
-      normalized
-    );
+    if (
+      /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
+        normalized
+      )
+    ) {
+      return true;
+    }
+
+    // 超 12 字的非显式不回复消息，保留回复
+    if (content.length > 12) {
+      return false;
+    }
+
+    // 高风险信号必须回复
+    if (/去死|自杀|不想活|活不下去|死了一了百了|死掉|结束自己|了断/.test(content)) {
+      return false;
+    }
+
+    // 睡眠道别
+    if (
+      /^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 关系收口
+    if (
+      /^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 出门/忙碌
+    if (
+      /^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    // 纯语气词/确认（≤4 字，无问号）
+    if (
+      content.length <= 4 &&
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(
+        content
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private shouldSkipReplyFromBrief(brief: ReplyBrief): boolean {
+    if (!brief?.conversationPlan) {
+      return false;
+    }
+
+    const engagement = brief.conversationPlan.engagement;
+    const plan = brief.conversationPlan;
+
+    const isPlannedClose =
+      plan.turnClosure === 'close' &&
+      (engagement?.closureReadiness === 'ready' ||
+        engagement?.closureReadiness === 'possible') &&
+      engagement?.continuationGoal === 'close';
+
+    const isStrategicSilence =
+      engagement?.assistantContribution === 'strategic_silence' &&
+      engagement?.closureReadiness === 'ready';
+
+    const isNaturalClose =
+      brief.strategyQuality?.preferredAlternative === 'natural_close';
+
+    return isPlannedClose || isStrategicSilence || isNaturalClose;
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {
