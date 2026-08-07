@@ -925,7 +925,7 @@ export class ConversationService {
           workerStartedAt.getTime() - queueStartedAt.getTime()
         );
         if (queueWaitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
-          this.logger.warn(
+          this.logger.error(
             '[conversation-reply] slow queue wait, conversationId=%s, userId=%s, waitMs=%s, jobId=%s, traceId=%s',
             data.conversationId,
             data.userId,
@@ -986,7 +986,7 @@ export class ConversationService {
         ? Math.max(0, Date.now() - enqueuedAt.getTime())
         : 0;
       if (waitMs > CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation-reply] lock busy after slow wait, conversationId=%s, userId=%s, waitMs=%s, traceId=%s',
           conversationId,
           userId,
@@ -1017,7 +1017,7 @@ export class ConversationService {
       );
 
       if (!conversation) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation-reply] conversation not found, conversationId=%s, userId=%s',
           conversationId,
           userId
@@ -1668,7 +1668,7 @@ export class ConversationService {
     const imageUrl = options.imageUrl.trim();
 
     if (!imageUrl) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] memorial photo assistant reply skipped, image url unavailable, conversationId=%s, messageId=%s',
         this.stringifyObjectId(options.runtime.conversation.id),
         this.stringifyObjectId(options.imageMessage.id)
@@ -1731,7 +1731,7 @@ export class ConversationService {
         updatedAt: options.replyTime,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] memorial photo assistant reply failed, conversationId=%s, messageId=%s, reason=%s',
         this.stringifyObjectId(options.runtime.conversation.id),
         this.stringifyObjectId(options.imageMessage.id),
@@ -1987,7 +1987,7 @@ export class ConversationService {
 
     void enrich()
       .catch(error => {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] background user message enrichment failed, conversationId=%s, messageId=%s, reason=%s',
           this.stringifyObjectId(message.conversationId),
           this.stringifyObjectId(message.id),
@@ -2024,7 +2024,7 @@ export class ConversationService {
         observations,
       })
       .catch(error => {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] visual appearance memory failed, conversationId=%s, messageId=%s, reason=%s',
           this.stringifyObjectId(message.conversationId),
           this.stringifyObjectId(message.id),
@@ -2047,7 +2047,7 @@ export class ConversationService {
         searchableText,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] emotion state recognition failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
@@ -2073,7 +2073,7 @@ export class ConversationService {
         });
       return { succeeded: true, count: facts.length };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] memory fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
@@ -2104,7 +2104,7 @@ export class ConversationService {
         });
       return { succeeded: true, count: facts.length };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] profile fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
@@ -2129,7 +2129,7 @@ export class ConversationService {
         intent,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] relationship signal persistence failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
@@ -2159,7 +2159,7 @@ export class ConversationService {
 
     void scheduled
       .catch(error => {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] relationship signal scheduling failed, conversationId=%s, messageId=%s, reason=%s',
           this.stringifyObjectId(message.conversationId),
           this.stringifyObjectId(message.id),
@@ -2208,7 +2208,7 @@ export class ConversationService {
         searchableText,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] feedback memory fact extraction failed, conversationId=%s, feedbackId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(feedback.conversationId),
         this.stringifyObjectId(feedback.id),
@@ -2225,7 +2225,7 @@ export class ConversationService {
       this.extractMemoryFactsForFeedback(feedback),
       this.extractProfileFactsForFeedback(feedback),
     ]).catch(error => {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] feedback fact extraction scheduling failed, conversationId=%s, feedbackId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(feedback.conversationId),
         this.stringifyObjectId(feedback.id),
@@ -2253,7 +2253,7 @@ export class ConversationService {
         assistantContent: feedback.assistantContent,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] feedback profile fact extraction failed, conversationId=%s, feedbackId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(feedback.conversationId),
         this.stringifyObjectId(feedback.id),
@@ -2835,7 +2835,7 @@ export class ConversationService {
       const replyTruncated =
         this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] primary assistant completion truncated by token limit'
         );
       }
@@ -2935,7 +2935,7 @@ export class ConversationService {
         const replyTruncated =
           this.checkAssistantCompletionTruncated(response);
         if (replyTruncated) {
-          this.logger.warn(
+          this.logger.error(
             '[conversation] recovery assistant completion truncated by token limit'
           );
         }
@@ -3675,7 +3675,7 @@ export class ConversationService {
         succeeded: true,
       };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] explicit memory control failed, action=%s, messageId=%s, reason=%s',
         action,
         this.stringifyObjectId(message.id),
@@ -3831,7 +3831,7 @@ export class ConversationService {
       });
 
       if (result.rewritten) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] assistant reply rewritten by guardrail, reason=%s',
           result.reason || ''
         );
@@ -3844,7 +3844,7 @@ export class ConversationService {
           : options.replySegments,
       };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] assistant reply guardrail failed, reason=%s',
         this.describeReplyError(error)
       );
@@ -3935,7 +3935,7 @@ export class ConversationService {
 
     void scheduled
       .catch(error => {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] continuity summary refresh failed, conversationId=%s, reason=%s',
           this.stringifyObjectId(conversation.id),
           this.describeReplyError(error)
@@ -4079,7 +4079,7 @@ export class ConversationService {
   ): Promise<boolean> {
     const queue = this.bullmqFramework?.getQueue(CONVERSATION_REPLY_QUEUE);
     if (!queue) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation-reply] queue not found, skip enqueue, conversationId=%s',
         data.conversationId
       );
@@ -4197,7 +4197,7 @@ export class ConversationService {
 
       return now;
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation-reply] debounce state unavailable, key=%s, reason=%s',
         key,
         this.describeReplyError(error)
@@ -4236,7 +4236,7 @@ export class ConversationService {
 
       return state;
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation-reply] remove reusable job failed, jobId=%s, reason=%s',
         jobId,
         this.describeReplyError(error)
@@ -4291,7 +4291,7 @@ export class ConversationService {
         this.getConversationReplyDebounceKey(conversationId)
       );
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation-reply] clear debounce state failed, conversationId=%s, reason=%s',
         conversationId,
         this.describeReplyError(error)
@@ -4891,7 +4891,15 @@ export class ConversationService {
       this.resolveMediaUrlFromObjectKey(payload.mediaObjectKey);
 
     if (!audioUrl) {
-      return undefined;
+      this.logger.error(
+        '[conversation] voice transcription skipped: no accessible audio URL, objectKey=%s',
+        payload.mediaObjectKey || ''
+      );
+      throw new AppError(
+        'VOICE_AUDIO_URL_UNAVAILABLE',
+        '语音消息暂时无法识别，请稍后重试',
+        422
+      );
     }
 
     try {
@@ -4900,15 +4908,36 @@ export class ConversationService {
       });
       const content = transcript.trim();
 
-      return content || undefined;
+      if (content) {
+        return content;
+      }
+
+      this.logger.error(
+        '[conversation] voice transcription returned empty content, objectKey=%s',
+        payload.mediaObjectKey || ''
+      );
+      throw new AppError(
+        'VOICE_TRANSCRIPTION_EMPTY',
+        '暂未识别到语音内容',
+        422
+      );
     } catch (error) {
-      this.logger.warn(
-        '[conversation] voice transcription failed, objectKey=%s, url=%s, reason=%s',
+      this.logger.error(
+        '[conversation] voice transcription request failed, objectKey=%s, url=%s, reason=%s',
         payload.mediaObjectKey || '',
         audioUrl,
         this.describeReplyError(error)
       );
-      return undefined;
+
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError(
+        'VOICE_TRANSCRIPTION_FAILED',
+        '语音识别失败，请稍后重试',
+        502
+      );
     }
   }
 
@@ -5176,7 +5205,7 @@ export class ConversationService {
 
       return this.parseConversationImageAnalysis(content, runtime);
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] image analysis failed, objectKey=%s, url=%s, reason=%s',
         payload.mediaObjectKey || '',
         imageUrl,
@@ -5210,7 +5239,7 @@ export class ConversationService {
         limit: 8,
       });
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] visual appearance memory lookup failed, conversationId=%s, reason=%s',
         this.stringifyObjectId(runtime.conversation.id),
         this.describeReplyError(error)
@@ -5712,7 +5741,7 @@ export class ConversationService {
       try {
         await this.voiceTimbreLibraryService.markUsed(voiceTimbre);
       } catch (error) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] voice timbre usage timestamp update failed, timbreId=%s, reason=%s',
           this.stringifyObjectId(voiceTimbre.id),
           this.describeReplyError(error)
@@ -5733,7 +5762,7 @@ export class ConversationService {
         transcript,
       };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] assistant voice synthesis failed, reason=%s',
         this.describeReplyError(error)
       );
@@ -5853,7 +5882,7 @@ export class ConversationService {
       }));
 
     if (!timbre) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] active voice timbre not found, agentId=%s, voiceTimbreId=%s',
         this.stringifyObjectId(agent?.id),
         this.stringifyObjectId(voiceTimbreId)
@@ -5923,7 +5952,7 @@ export class ConversationService {
         };
       }
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         '[conversation] assistant voice asset upload failed, reason=%s',
         this.describeReplyError(error)
       );
@@ -6423,7 +6452,7 @@ export class ConversationService {
       const replyTruncated =
         this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] bubble reflow completion truncated by token limit'
         );
       }
@@ -7848,7 +7877,7 @@ export class ConversationService {
         createdAt: options.message.createdAt,
       })
       .catch(error => {
-        this.logger.warn(
+        this.logger.error(
           '[conversation] memory index failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
           this.stringifyObjectId(options.conversation.id),
           this.stringifyObjectId(options.message.id),

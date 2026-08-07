@@ -20,5 +20,12 @@ export function extractTranscriptionContent(content: unknown): string {
       .trim();
   }
 
+  if (content && typeof content === 'object') {
+    const text = (content as { text?: unknown }).text;
+    if (typeof text === 'string' && text.trim()) {
+      return text.trim();
+    }
+  }
+
   return '';
 }
