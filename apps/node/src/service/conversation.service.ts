@@ -1906,16 +1906,6 @@ export class ConversationService {
 
     const deferReply = this.isAssistantReplyDeferred(messagePayload);
 
-    // 自然收口时设置 replyTrigger: false，跳过队列消费
-    if (
-      deferReply &&
-      messagePayload.type === MessageType.text &&
-      (messagePayload.content?.trim()?.length || 0) > 0
-    ) {
-      userMessage.replyTrigger = false;
-      await this.messageModel.save(userMessage);
-    }
-
     return {
       messagePayload,
       searchableText,
@@ -2726,7 +2716,7 @@ export class ConversationService {
       });
 
     // Layer 2: 规划器判定本轮无需回复，跳过主模型
-    if (this.shouldSkipReplyFromBrief(replyBrief)) {
+    if (this.shouldSkipReplyFromBrief(replyBrief, before.searchableText)) {
       this.logger.info(
         '[conversation] reply skipped by plan, contribution=%s, closure=%s, alternative=%s',
         replyBrief.conversationPlan?.engagement?.assistantContribution,
@@ -4743,7 +4733,7 @@ export class ConversationService {
 
     // 睡眠道别
     if (
-      /^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)[。.!！~～]*$/.test(
+      /^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
         content
       )
     ) {
@@ -4752,7 +4742,7 @@ export class ConversationService {
 
     // 关系收口
     if (
-      /^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)[。.!！~～]*$/.test(
+      /^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
         content
       )
     ) {
@@ -4761,7 +4751,7 @@ export class ConversationService {
 
     // 出门/忙碌
     if (
-      /^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)[。.!！~～]*$/.test(
+      /^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
         content
       )
     ) {
@@ -4781,7 +4771,13 @@ export class ConversationService {
     return false;
   }
 
-  private shouldSkipReplyFromBrief(brief: ReplyBrief): boolean {
+  private shouldSkipReplyFromBrief(brief: ReplyBrief, userQuery: string): boolean {
+    // 安全网：如果用户实际消息不是自然收口，不因规划器信号跳过回复
+    const query = (userQuery || '').trim();
+    if (query.length > 0 && !this.isUserMessageNaturalEnd(query)) {
+      return false;
+    }
+
     if (!brief?.conversationPlan) {
       return false;
     }
@@ -4803,6 +4799,26 @@ export class ConversationService {
       brief.strategyQuality?.preferredAlternative === 'natural_close';
 
     return isPlannedClose || isStrategicSilence || isNaturalClose;
+  }
+
+  private isUserMessageNaturalEnd(content: string): boolean {
+    if (/[？?]/.test(content)) return false;
+    if (/去死|自杀|不想活|活不下去/.test(content)) return false;
+
+    const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
+    if (/(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回|理我|说话)/.test(normalized))
+      return true;
+
+    if (content.length > 12) return false;
+
+    const roleSuffix = '(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?';
+    if (new RegExp('^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+    if (new RegExp('^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+    if (new RegExp('^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+
+    if (content.length <= 4 && /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(content)) return true;
+
+    return false;
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {
