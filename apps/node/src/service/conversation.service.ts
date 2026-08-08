@@ -7075,6 +7075,8 @@ export class ConversationService {
     return stripConversationMessageSegmentMarkup(value)
       .replace(/<\/?fense\s*>/gi, ' ')
       .replace(/<\/?fense(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
+      .replace(/<\/?fenge\s*>/gi, ' ')
+      .replace(/<\/?fenge(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
       .replace(
         /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?:\s+[^<>]*)?>/g,
         ' '
@@ -7082,6 +7084,10 @@ export class ConversationService {
       .replace(
         /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g,
         ' '
+      )
+      .replace(
+        /^作为[\u4e00-\u9fff\w·\-]{1,12}[，,]?\s*你说[：:]\s*/g,
+        ''
       );
   }
 
