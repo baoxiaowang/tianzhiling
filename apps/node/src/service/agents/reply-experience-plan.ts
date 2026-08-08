@@ -190,8 +190,23 @@ export function constrainConversationPlanForExperience(
   }
 
   if (experience.conversationDepth === 'D0') {
-    const moves = plan.moves.filter(move => move.type !== 'ask');
+    // 首条用户消息（开场白回复）：用户刚收到"好想你啊，过得好吗"，鼓起勇气开口
+    // 此时不放权 self_disclose/questionNeed/turnClosure 会让 AI 无法表达重逢感
+    const isFirstUserTurn = experience.relationshipUserTurnCount === 0;
 
+    if (isFirstUserTurn) {
+      // 首轮只过滤 ask（避免追问轰炸），保留 self_disclose 让 AI 表达"我也在等你"
+      const moves = plan.moves.filter(move => move.type !== 'ask');
+      return {
+        ...plan,
+        moves: moves.length
+          ? moves
+          : [{ type: 'self_disclose', goal: '表达重逢的等待与喜悦' }],
+        // 不强制 questionNeed/turnClosure，让语义规划器根据用户消息内容决定
+      };
+    }
+
+    const moves = plan.moves.filter(move => move.type !== 'ask');
     return {
       ...plan,
       moves: moves.length
