@@ -8,18 +8,17 @@ export function buildDepartedPerceptionPrompt(options: {
   replyBrief?: ReplyBrief;
 }): string {
   const season = resolveSeason();
-  const timeOfDay = resolveTimeOfDay();
+  const timeLabel = resolveTimeLabel();
   const evidenceSummary = buildEvidenceSummary(options.evidence);
   const emotionLabel = buildEmotionLabel(options.emotionState);
   const readingLabel = buildReadingLabel(options.replyBrief);
 
   const lines = [
     '# 感知背景',
-    `${season}${timeOfDay}。你在此处（离世），用户在彼处（现实）。微信私聊，短而自然。`,
+    `${season}，${timeLabel}。你在此处（离世），用户在彼处（现实）。微信私聊，短而自然。`,
     `你只知道标注过的证据；${evidenceSummary.unknownCount ? `有${evidenceSummary.unknownCount}项未确认，` : ''}无标注不编造。`,
   ];
 
-  // Current perception line
   const perceptionParts: string[] = [];
   if (emotionLabel) perceptionParts.push(`用户：${emotionLabel}`);
   if (readingLabel.need) perceptionParts.push(`需要：${readingLabel.need}`);
@@ -42,27 +41,26 @@ export function buildDepartedPerceptionPrompt(options: {
   return lines.join('\n');
 }
 
+// ── 季节：单字标签，始终在场，只作过滤不作话题 ──
 function resolveSeason(): string {
   const month = new Date().getMonth() + 1;
-  if (month >= 3 && month <= 5) return '春日';
-  if (month >= 6 && month <= 8) return '夏夜' in resolveTimeOfDayObj() ? '夏日' : '夏季';
-  if (month >= 9 && month <= 11) return '秋日';
-  return '冬日';
+  if (month >= 3 && month <= 5) return '春';
+  if (month >= 6 && month <= 8) return '夏';
+  if (month >= 9 && month <= 11) return '秋';
+  return '冬';
 }
 
-function resolveTimeOfDayObj(): { label: string; isNight: boolean } {
+// ── 时段：精细到能传递情绪信号，模型据此调整回应姿态 ──
+function resolveTimeLabel(): string {
   const hour = new Date().getHours();
-  if (hour >= 5 && hour < 8) return { label: '清晨', isNight: false };
-  if (hour >= 8 && hour < 12) return { label: '上午', isNight: false };
-  if (hour >= 12 && hour < 14) return { label: '午后', isNight: false };
-  if (hour >= 14 && hour < 18) return { label: '下午', isNight: false };
-  if (hour >= 18 && hour < 23) return { label: '晚上', isNight: true };
-  return { label: '深夜', isNight: true };
-}
-
-function resolveTimeOfDay(): string {
-  const { label } = resolveTimeOfDayObj();
-  return label;
+  if (hour >= 5 && hour < 8) return '清晨';       // 早起，可能刚醒就想你了
+  if (hour >= 8 && hour < 12) return '上午';       // 日常
+  if (hour >= 12 && hour < 14) return '午后';       // 午休间隙
+  if (hour >= 14 && hour < 17) return '下午';       // 日常
+  if (hour >= 17 && hour < 20) return '傍晚';       // 下班/放学后
+  if (hour >= 20 && hour < 23) return '晚间';       // 放松时段
+  if (hour >= 23 || hour < 2) return '夜深了';     // 熬夜，可能有心事
+  return '凌晨';                                    // 2-5am，几乎一定有心事
 }
 
 function buildEmotionLabel(
