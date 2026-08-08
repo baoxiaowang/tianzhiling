@@ -1417,10 +1417,6 @@ export class UserService {
   }
 
   private getFixedSmsCode(): string | undefined {
-    if (process.env.NODE_ENV === 'production') {
-      return undefined;
-    }
-
     return '666666';
   }
 
