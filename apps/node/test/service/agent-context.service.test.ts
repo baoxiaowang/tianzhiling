@@ -479,8 +479,7 @@ describe('AgentContextService', () => {
 
     expect(systemMessage.role).toBe('system');
     expect(typeof systemMessage.content).toBe('string');
-    expect(systemMessage.content).toContain('# 当前时间参考');
-    expect(systemMessage.content).toContain('北京时间');
+    expect(systemMessage.content).toContain('# 感知背景');
     expect(systemMessage.content).toContain('每项只写可直接发送的中文正文');
     expect(String(systemMessage.content).match(/# 输出合同/g)).toHaveLength(1);
     expect(systemMessage.content).not.toContain('# 工具');
@@ -1501,12 +1500,12 @@ describe('AgentContextService', () => {
     });
     const systemMessage = context.messages[0];
 
-    expect(systemMessage.content).toContain('当前用户情绪状态');
-    expect(systemMessage.content).toContain('强烈痛苦表达');
-    expect(systemMessage.content).toContain('不做危机判断');
+    expect(systemMessage.content).toContain('感知背景');
+    expect(systemMessage.content).toContain('强烈痛苦');
+    expect(systemMessage.content).not.toContain('当前用户情绪状态');
     expect(context.replyBrief.mode).toBe('emotional');
     expect(systemMessage.content).toContain('# 当前对话参考模式：emotional');
-    expect(systemMessage.content).toContain('不输出报警急救话术');
+    expect(systemMessage.content).toContain('用户：强烈痛苦');
     expect(systemMessage.content).not.toContain('# 当前时间参考');
     expect(systemMessage.content).not.toContain('北京时间');
     expect(systemMessage.content).not.toContain('风险等级：高');

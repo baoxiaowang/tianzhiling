@@ -8,8 +8,6 @@ import {
   MessageEntity,
   MessageRole,
   MessageType,
-  ConversationEmotionPrimary,
-  ConversationEmotionRiskLevel,
   AgentProfileFactAssertionPolicy,
   ChatSpanAttributeValue,
   ChatSpanStatus,
@@ -20,10 +18,8 @@ import {
   containsUnsafeAssistantHistoryContent,
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
-import {
-  buildDepartedCurrentTimePrompt,
-  buildDepartedSystemPrompt,
-} from '../../prompt/departed';
+import { buildDepartedSystemPrompt } from '../../prompt/departed';
+import { buildDepartedPerceptionPrompt } from '../../prompt/departed-perception';
 import { RetrieveService } from '../rag/retrieve.service';
 import { ChatTraceService } from '../chat-trace.service';
 import {
@@ -814,29 +810,27 @@ export class AgentContextService {
       options.currentQuery
     );
     const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
-    const currentTimePrompt = replyBrief?.capabilityConstraints.some(
-      item => item.policyId === 'time.server_clock'
-    )
-      ? buildDepartedCurrentTimePrompt()
-      : '';
     const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
     );
-    const emotionStatePrompt = this.buildEmotionStatePrompt(emotionState);
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
       chatToolPlan
     );
 
+    const perceptionPrompt = this.buildPerceptionPrompt(
+      evidence,
+      emotionState,
+      replyBrief
+    );
     const systemPrompt = [
       basePrompt,
+      perceptionPrompt,
       persona?.prompt,
       conversationReadingPrompt,
       modePrompt,
-      currentTimePrompt,
       continuitySummaryPrompt,
       evidencePrompt,
-      emotionStatePrompt,
       replyBriefPrompt,
     ]
       .filter(Boolean)
@@ -3007,30 +3001,16 @@ export class AgentContextService {
     return /^用户连续输入（按发送顺序，共\d+条）：/.test(value.trim());
   }
 
-  private buildEmotionStatePrompt(
-    state?: ConversationEmotionStateSummary | null
+  private buildPerceptionPrompt(
+    evidence: AgentEvidenceItem[],
+    emotionState?: ConversationEmotionStateSummary | null,
+    replyBrief?: ReplyBrief
   ): string {
-    if (!state) {
-      return '';
-    }
-
-    const emotionLabel = this.formatEmotionLabel(state.primaryEmotion);
-    const lines = [
-      '# 当前用户情绪状态',
-      `用户最近表现为：${emotionLabel}。`,
-      '结合本轮具体人事自然回应；不做危机判断，也不把短期情绪当长期画像。',
-    ];
-
-    if (
-      state.primaryEmotion === ConversationEmotionPrimary.crisisRisk ||
-      state.riskLevel === ConversationEmotionRiskLevel.high
-    ) {
-      lines.push(
-        '旧高风险字段只表示强烈痛苦或思念；不输出报警急救话术，不邀请现在或近期赴死。自然寿命后的团聚可以承接。'
-      );
-    }
-
-    return lines.join('\n');
+    return buildDepartedPerceptionPrompt({
+      evidence,
+      emotionState,
+      replyBrief,
+    });
   }
 
   private classifyReplyIntent(
@@ -3068,21 +3048,6 @@ export class AgentContextService {
     return this.replyIntentClassifierService.getPlanningDecision(options);
   }
 
-  private formatEmotionLabel(emotion: ConversationEmotionPrimary): string {
-    const labels: Record<ConversationEmotionPrimary, string> = {
-      [ConversationEmotionPrimary.stable]: '稳定',
-      [ConversationEmotionPrimary.missing]: '强烈思念',
-      [ConversationEmotionPrimary.sadness]: '哀伤',
-      [ConversationEmotionPrimary.guilt]: '愧疚',
-      [ConversationEmotionPrimary.angerBlame]: '责问与不甘',
-      [ConversationEmotionPrimary.fear]: '害怕现实存在感',
-      [ConversationEmotionPrimary.expectingPresence]: '期待现实确认',
-      [ConversationEmotionPrimary.attachment]: '纪念物依恋',
-      [ConversationEmotionPrimary.crisisRisk]: '强烈痛苦表达',
-    };
-
-    return labels[emotion] ?? emotion;
-  }
 
   private async retrieveLongTermHistory(
     options: BuildConversationContextOptions,
