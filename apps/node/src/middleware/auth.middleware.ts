@@ -59,22 +59,21 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
   { methods: ['DELETE'], path: /^\/post\/[^/]+\/?$/ },
   {
     methods: ['POST'],
-    path: /^\/post\/[^/]+\/comment-notifications\/read\/?$/,
+    path: /^\/post\/[^/]+\/comments\/?$/,
   },
-  { methods: ['POST'], path: /^\/post\/[^/]+\/comments\/?$/ },
+  { path: /^\/admin(?:\/.*)?$/ },
 ];
 
 const OPTIONAL_AUTH_ROUTES: ProtectedRoute[] = [
-  { methods: ['GET'], path: /^\/post\/?$/ },
-  { methods: ['GET'], path: /^\/post\/[^/]+\/?$/ },
-  { methods: ['GET'], path: /^\/post\/[^/]+\/comments\/?$/ },
+  { path: /^\/post(?:\/.*)?$/ },
 ];
+
+/// Routes where an *expired* token is still accepted — the controller
+/// is responsible for token renewal (e.g. /user/me/refresh).
+const REFRESH_ROUTES = new Set(['/user/me/refresh']);
 
 @Middleware()
 export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
-  @Config('koa.globalPrefix')
-  globalPrefix: string;
-
   @Config('jwt')
   jwtConfig: JwtConfig;
 
@@ -90,7 +89,15 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
   resolve() {
     return async (ctx: Context, next: NextFunction) => {
       const token = this.extractBearerToken(ctx.get('authorization'));
-      const auth = this.verifyAccessToken(token);
+
+      const isRefreshPath = REFRESH_ROUTES.has(
+        this.normalizePath(ctx.path)
+      );
+
+      const auth = isRefreshPath
+        ? this.verifyAccessTokenAllowExpired(token)
+        : this.verifyAccessToken(token);
+
       await this.ensureTokenIsActive(auth);
 
       ctx.state.auth = auth;
@@ -169,7 +176,7 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
 
   private stripGlobalPrefix(path: string): string {
     const normalizedPath = this.normalizePath(path);
-    const prefix = this.normalizePath(this.globalPrefix || '');
+    const prefix = this.normalizePath('/');
 
     if (!prefix || normalizedPath === prefix) {
       return normalizedPath;
@@ -216,6 +223,35 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     }
   }
 
+  /// Like verifyAccessToken, but accepts expired (signature-valid) tokens
+  /// so /user/me/refresh can issue a new one.
+  private verifyAccessTokenAllowExpired(
+    token: string
+  ): AuthenticatedUserPayload {
+    try {
+      const payload = this.jwtService.verifySync(
+        token,
+        this.jwtConfig?.secret?.trim() || '1774073039411_5782',
+        {
+          ...(this.jwtConfig?.verify ?? {}),
+          ignoreExpiration: true,
+        }
+      ) as AuthenticatedUserPayload;
+
+      if (!payload?.sub || !payload?.account || !payload?.exp) {
+        throw new AppError('INVALID_TOKEN', 'token payload is incomplete', 401);
+      }
+
+      return payload;
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError('INVALID_TOKEN', 'token is invalid', 401);
+    }
+  }
+
   private async ensureTokenIsActive(
     auth: AuthenticatedUserPayload
   ): Promise<void> {
@@ -248,25 +284,20 @@ export class AuthMiddleware implements IMiddleware<Context, NextFunction> {
     }
 
     const userId = MongoObjectId.isValid(auth.sub)
-      ? new MongoObjectId(auth.sub)
-      : undefined;
+      ? auth.sub
+      : null;
+
     if (!userId) {
       throw new AppError('INVALID_TOKEN', 'token user id is invalid', 401);
     }
-    const userById = await this.userModel.findOne({ where: { id: userId } });
-    const user =
-      userById ??
-      (await this.userModel.findOne({
-        where: { _id: userId } as never,
-      }));
+
+    const user = await this.userModel.findOne({ where: { id: userId } });
+
     if (!user) {
       throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 401);
     }
+
     if (user.accountStatus === UserAccountStatus.canceled) {
-      await this.redisService.set(
-        getRevokedUserRedisKey(auth.sub),
-        JSON.stringify({ canceledAt: user.canceledAt?.getTime() ?? Date.now() })
-      );
       throw new AppError('ACCOUNT_CANCELED', 'account has been canceled', 401);
     }
 

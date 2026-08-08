@@ -3,6 +3,7 @@ import { Context } from '@midwayjs/koa';
 import { AuthenticatedUserPayload } from '../interface';
 import {
   BindWeappPhoneDTO,
+  WechatNativeLoginDTO,
   CancelCurrentUserDTO,
   DevLoginDTO,
   PasswordLoginDTO,
@@ -53,6 +54,11 @@ export class UserController {
   @Post('/weapp-phone-login')
   async weappPhoneLogin(@Body() body: WeappPhoneLoginDTO) {
     return this.userService.weappPhoneLogin(body);
+  }
+
+  @Post('/wechat-native-login')
+  async wechatNativeLogin(@Body() body: WechatNativeLoginDTO) {
+    return this.userService.wechatNativeLogin(body);
   }
 
   @Post('/dev-login')
@@ -112,6 +118,14 @@ export class UserController {
     return this.userService.updateCurrentUserPreferences(
       this.ctx.state.auth as AuthenticatedUserPayload,
       body
+    );
+  }
+
+
+  @Post('/me/refresh')
+  async refreshToken() {
+    return this.userService.refreshCurrentUserToken(
+      this.ctx.state.auth as AuthenticatedUserPayload
     );
   }
 

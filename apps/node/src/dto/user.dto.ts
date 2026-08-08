@@ -47,6 +47,13 @@ export class DevLoginDTO {
   openid: string;
 }
 
+
+
+export class WechatNativeLoginDTO {
+  @Rule(requiredStringRule)
+  code: string;
+}
+
 export class BindWeappPhoneDTO {
   @Rule(requiredStringRule.max(512))
   phoneCode: string;

@@ -204,6 +204,9 @@ export class WechatPayService {
   @Config('wechatPay')
   wechatPayConfig: WechatPayConfig;
 
+  @Config('wechatOpenPlatform')
+  wechatOpenPlatformConfig: WechatMiniProgramConfig;
+
   @Config('wechatMiniProgram')
   wechatMiniProgramConfig: WechatMiniProgramConfig;
 
@@ -345,6 +348,59 @@ export class WechatPayService {
       openid: response.openid,
       sessionKey: response.session_key,
     };
+  }
+
+  /// Exchange a native app OAuth authorization code for an openid.
+  /// This is used by the Flutter app (not mini program).
+  async getOpenidByOAuthCode(authCode: string): Promise<string> {
+    const code = authCode?.trim();
+    if (!code) {
+      throw new AppError('INVALID_WECHAT_AUTH_CODE', 'authCode is required');
+    }
+
+    const appId = this.wechatOpenPlatformConfig?.appId?.trim()
+      || this.wechatMiniProgramConfig?.appId?.trim();
+    const appSecret = this.wechatOpenPlatformConfig?.appSecret?.trim()
+      || this.wechatMiniProgramConfig?.appSecret?.trim();
+
+    if (!appId || !appSecret) {
+      throw new AppError(
+        'WECHAT_OPEN_CONFIG_MISSING',
+        'WeChat Open Platform appId/appSecret are not configured'
+      );
+    }
+
+    const params = new URLSearchParams({
+      appid: appId,
+      secret: appSecret,
+      code,
+      grant_type: 'authorization_code',
+    });
+
+    const response = await this.postJson<{
+      access_token?: string;
+      expires_in?: number;
+      refresh_token?: string;
+      openid?: string;
+      scope?: string;
+      errcode?: number;
+      errmsg?: string;
+    }>(
+      `https://api.weixin.qq.com/sns/oauth2/access_token?${params.toString()}`, {}
+    );
+
+    if (response.errcode) {
+      throw new AppError(
+        'WECHAT_OAUTH_FAILED',
+        response.errmsg || 'failed to exchange oauth code'
+      );
+    }
+
+    if (!response.openid) {
+      throw new AppError('WECHAT_OPENID_MISSING', 'wechat openid is missing');
+    }
+
+    return response.openid;
   }
 
   async getPhoneNumberByCode(phoneCode: string): Promise<string> {
