@@ -4909,6 +4909,7 @@ export class ConversationService {
     } else if (payload.mediaUrl?.trim()) {
       audioUrl = payload.mediaUrl.trim();
     }
+    }
 
     if (!audioUrl) {
       throw new AppError(

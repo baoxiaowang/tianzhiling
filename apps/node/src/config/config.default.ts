@@ -269,23 +269,6 @@ export default {
       ''
     ),
   },
-
-  wechatOpenPlatform: {
-    appId: readNonEmptyStringFrom(
-      [
-        'NODE_WECHAT_OPEN_APP_ID',
-        'WECHAT_OPEN_APP_ID',
-      ],
-      ''
-    ),
-    appSecret: readNonEmptyStringFrom(
-      [
-        'NODE_WECHAT_OPEN_APP_SECRET',
-        'WECHAT_OPEN_APP_SECRET',
-      ],
-      ''
-    ),
-  },
   wechatPay: {
     enabled: readBooleanFrom(['NODE_WECHAT_PAY_ENABLED'], false),
     appId: readStringFrom(['NODE_WECHAT_PAY_APP_ID', 'WECHAT_PAY_APP_ID'], ''),
