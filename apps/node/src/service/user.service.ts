@@ -42,7 +42,6 @@ import {
   UpdateUserRegionDTO,
   WeappLoginDTO,
   WeappPhoneLoginDTO,
-  WechatNativeLoginDTO,
 } from '../dto/user.dto';
 import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
@@ -555,55 +554,6 @@ export class UserService {
     });
   }
 
-  async wechatNativeLogin(
-    payload: WechatNativeLoginDTO
-  ): Promise<PasswordLoginResult> {
-    const code = payload?.code?.trim();
-    if (!code) {
-      throw new AppError('INVALID_WECHAT_AUTH_CODE', 'authCode is required');
-    }
-
-    const openid = await this.wechatPayService.getOpenidByOAuthCode(code);
-    const now = new Date();
-    let userAccount = await this.findWeappAccountByOpenid(openid);
-
-    if (userAccount) {
-      const user = await this.findUserById(userAccount.userId);
-      if (!user) {
-        throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
-      }
-      userAccount = this.normalizeWeappAccount(userAccount, openid, now);
-      userAccount.updatedAt = now;
-      userAccount = await this.userAccountModel.save(userAccount);
-      return this.buildLoginResult(user, userAccount, false);
-    }
-
-    // New user — create via weapp account (no phone yet)
-    const user = new UserEntity();
-    user.name = this.buildDefaultWeappUserName(openid);
-    user.avatar = '';
-    user.phone = '';
-    user.phoneVerified = false;
-    user.gender = 'unknown';
-    user.region = null;
-    user.accountStatus = UserAccountStatus.active;
-    user.createdAt = now;
-    user.updatedAt = now;
-    const savedUser = await this.userModel.save(user);
-
-    userAccount = new UserAccountEntity();
-    userAccount.userId = savedUser.id;
-    userAccount.account = this.buildWeappAccount(openid);
-    userAccount.password = '';
-    userAccount.openId = openid;
-    userAccount.status = UserLoginAccountStatus.active;
-    userAccount.createdAt = now;
-    userAccount.updatedAt = now;
-    userAccount = await this.userAccountModel.save(userAccount);
-
-    return this.buildLoginResult(savedUser, userAccount, true);
-  }
-
   async devLogin(payload: DevLoginDTO): Promise<PasswordLoginResult> {
     if (!this.isDevLoginEnabled()) {
       throw new AppError('DEV_LOGIN_DISABLED', 'dev login is disabled', 404);
@@ -871,35 +821,6 @@ export class UserService {
     const savedUser = await this.userModel.save(user);
 
     return this.buildUserProfile(savedUser, auth.account);
-  }
-
-  async refreshCurrentUserToken(
-    auth: AuthenticatedUserPayload
-  ): Promise<PasswordLoginResult> {
-    const userId = auth?.sub;
-    if (!userId) {
-      throw new AppError("INVALID_TOKEN", "token subject is missing", 401);
-    }
-
-    const user = await this.userModel.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new AppError("USER_NOT_FOUND", "user profile does not exist", 404);
-    }
-
-    const userAccount = await this.userAccountModel.findOne({
-      where: { userId },
-    });
-    if (!userAccount) {
-      throw new AppError("ACCOUNT_NOT_FOUND", "user account does not exist", 404);
-    }
-
-    this.logger.info(
-      "[auth] token refresh, userId=%s, oldNonce=%s",
-      userId,
-      auth.nonce || "-"
-    );
-
-    return this.buildLoginResult(user, userAccount, false);
   }
 
   async logoutCurrentUser(
@@ -1496,7 +1417,10 @@ export class UserService {
   }
 
   private getFixedSmsCode(): string | undefined {
-    // Always return 666666 for quick login convenience.
+    if (process.env.NODE_ENV === 'production') {
+      return undefined;
+    }
+
     return '666666';
   }
 
