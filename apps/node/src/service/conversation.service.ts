@@ -1256,7 +1256,15 @@ export class ConversationService {
       await this.transcribeVoiceForConversation(voicePayload)
     )?.trim();
 
-    return { transcript: transcript || '' };
+    if (!transcript) {
+      throw new AppError(
+        'VOICE_TRANSCRIPTION_EMPTY',
+        '暂未识别到语音内容',
+        422
+      );
+    }
+
+    return { transcript };
   }
 
   async generateMessageVoice(
@@ -4419,7 +4427,7 @@ export class ConversationService {
     }
 
     if (message.type === MessageType.voice) {
-      return message.mediaTranscript?.trim() || '[用户发来一条语音]';
+      return message.mediaTranscript?.trim() || message.content?.trim() || '';
     }
 
     return message.content?.trim() || '';
@@ -4620,7 +4628,7 @@ export class ConversationService {
       case MessageType.voice:
         return {
           ...message,
-          mediaTranscript: await this.transcribeVoiceForConversation(message) || '[用户发来一条语音]',
+          mediaTranscript: await this.transcribeVoiceForConversation(message),
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
@@ -4682,7 +4690,7 @@ export class ConversationService {
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
       this.isNaturalConversationEnd(payload) ||
-      false // 语音消息始终生成回复，避免旧客户端因缺轮询而丢消息
+      (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
     );
   }
 
@@ -4878,40 +4886,15 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
-    return undefined;
-
-    // 从 COS 下载音频转 base64，确保数据直接传给 STT
-    let audioUrl = '';
-
-    if (payload.mediaObjectKey?.trim()) {
-      try {
-        const result = await this.tencentCosService.getBuffer(
-          payload.mediaObjectKey.trim()
-        );
-        const mime =
-          result.contentType?.trim() ||
-          payload.mediaMimeType?.trim() ||
-          'audio/aac';
-        const base64 = result.buffer.toString('base64');
-        audioUrl = `data:${mime};base64,${base64}`;
-      } catch (cosError) {
-        this.logger.error(
-          '[conversation] COS download failed, objectKey=%s, reason=%s',
-          payload.mediaObjectKey,
-          this.describeReplyError(cosError)
-        );
-        throw new AppError(
-          'VOICE_COS_DOWNLOAD_FAILED',
-          '语音文件下载失败，请稍后重试',
-          502
-        );
-      }
-    } else if (payload.mediaUrl?.trim()) {
-      audioUrl = payload.mediaUrl.trim();
-    }
-    }
+    const audioUrl =
+      payload.mediaUrl?.trim() ||
+      this.resolveMediaUrlFromObjectKey(payload.mediaObjectKey);
 
     if (!audioUrl) {
+      this.logger.error(
+        '[conversation] voice transcription skipped: no accessible audio URL, objectKey=%s',
+        payload.mediaObjectKey || ''
+      );
       throw new AppError(
         'VOICE_AUDIO_URL_UNAVAILABLE',
         '语音消息暂时无法识别，请稍后重试',
@@ -4929,6 +4912,10 @@ export class ConversationService {
         return content;
       }
 
+      this.logger.error(
+        '[conversation] voice transcription returned empty content, objectKey=%s',
+        payload.mediaObjectKey || ''
+      );
       throw new AppError(
         'VOICE_TRANSCRIPTION_EMPTY',
         '暂未识别到语音内容',
@@ -4936,8 +4923,9 @@ export class ConversationService {
       );
     } catch (error) {
       this.logger.error(
-        '[conversation] voice transcription request failed, objectKey=%s, reason=%s',
+        '[conversation] voice transcription request failed, objectKey=%s, url=%s, reason=%s',
         payload.mediaObjectKey || '',
+        audioUrl,
         this.describeReplyError(error)
       );
 
@@ -6372,7 +6360,7 @@ export class ConversationService {
           payload.content
         );
       case MessageType.voice:
-        return payload.mediaTranscript?.trim() || '[用户发来一条语音]';
+        return payload.mediaTranscript?.trim() || '';
       case MessageType.text:
       default:
         return payload.content?.trim() || '';
