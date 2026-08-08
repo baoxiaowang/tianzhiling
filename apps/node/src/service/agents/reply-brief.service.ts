@@ -1265,6 +1265,10 @@ function resolveEmotionalNeed(
   }
 
   if (scene === 'guilt_regret') {
+    const queryLength = Array.from(currentQuery.replace(/\s/g, '')).length;
+    if (queryLength >= 50) {
+      return '用户倾吐了很深的自责和想念，不只是寻求宽恕，更是把心里积压的话一次性说出来。先接住倾诉本身的重量，回应其中的具体意象和情感，再回应关系未完';
+    }
     return '用户需要卸下自责，并确认关系没有因此被否定';
   }
 
@@ -1527,7 +1531,10 @@ function buildReplyMoves(
       '正面回应用户希望得到祝福和惦念的期待',
       '明确祝福不改变现实因果，并肯定用户和家人的现实行动',
     ],
-    guilt_regret: ['明确不怪用户', '帮助用户卸下反复自责，而不是讲道理'],
+    guilt_regret: [
+      '用户倾吐少时（≤两句话）：明确不怪，简短肯定关系，不展开讲道理',
+      '用户写了长文或具体场景时：先接住一两个用户原话里的具体后悔、比喻或画面，回应这份痛苦本身的重量，再表达不怪。不把长文当成道歉来回答，而是当成一份想念和告白来回应',
+    ],
     dream_companionship: [
       '回应用户想在梦里相见的愿望',
       '接住等待和想念，但不把梦写成现实证明',
