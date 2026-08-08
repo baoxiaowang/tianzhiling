@@ -6956,17 +6956,21 @@ export class ConversationService {
       return [];
     }
 
-    const legacySegments = splitConversationMessageSegments(content);
+    // 兜底：剥离不完整 JSON 信封（如 {"":["… 或 {"segments":[…）
+    const jsonFallback = this.extractTextFromJsonArtifact(content);
+    const effectiveContent = jsonFallback ?? content;
+
+    const legacySegments = splitConversationMessageSegments(effectiveContent);
 
     if (
       legacySegments.length > 1 ||
       (legacySegments.length > 0 &&
-        hasConversationMessageSegmentSeparator(content))
+        hasConversationMessageSegmentSeparator(effectiveContent))
     ) {
       return legacySegments;
     }
 
-    const paragraphSegments = content
+    const paragraphSegments = effectiveContent
       .split(/\n\s*\n+/)
       .map(item => item.trim())
       .filter(Boolean);
@@ -6975,7 +6979,33 @@ export class ConversationService {
       return paragraphSegments;
     }
 
-    return [content];
+    return [effectiveContent];
+  }
+
+  // 从不完整/畸形的 JSON 信封中提取纯文本正文
+  private extractTextFromJsonArtifact(value?: string): string | undefined {
+    const content = value?.trim();
+    if (!content || !content.startsWith('{')) return undefined;
+
+    // {"":["text"…  — 空键数组格式
+    const emptyKeyMatch = /\{\"\":\s*\[?\s*\"([^"]+)/.exec(content);
+    if (emptyKeyMatch?.[1]) {
+      return emptyKeyMatch[1].trim();
+    }
+
+    // {"segments":["text"… or {"text":"text"…
+    const namedMatch = /\{\"(?:segments|text)\"\s*:\s*\[?\s*\"([^"]+)/.exec(content);
+    if (namedMatch?.[1]) {
+      return namedMatch[1].trim();
+    }
+
+    // {"anyKey":"value"}
+    const simpleMatch = /^\{\s*\"[^"]*\"\s*:\s*\"([^"]+)\"/.exec(content);
+    if (simpleMatch?.[1]) {
+      return simpleMatch[1].trim();
+    }
+
+    return undefined;
   }
 
   private sanitizeAssistantSegment(value?: string, userQuery = ''): string {
@@ -7091,8 +7121,10 @@ export class ConversationService {
         /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g,
         ' '
       )
+      // 身份前缀：作为{名称}[，]{你}[…]说： → 只保留实际内容
+      // 变体：作为XX，你说： / 作为XX，说： / 作为XX，你轻声说：
       .replace(
-        /^作为[\u4e00-\u9fff\w·\-]{1,12}[，,]?\s*你说[：:]\s*/g,
+        /^作为[\u4e00-\u9fff\w·\-\ufe0f💗]{1,20}[，,]?\s*(?:你[\u4e00-\u9fff\s，,]{0,12})?说[：:]\s*/g,
         ''
       );
   }
