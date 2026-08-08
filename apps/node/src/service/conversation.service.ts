@@ -4628,7 +4628,7 @@ export class ConversationService {
       case MessageType.voice:
         return {
           ...message,
-          mediaTranscript: await this.transcribeVoiceForConversation(message),
+          mediaTranscript: await this.transcribeVoiceForConversation(message) || '[用户发来一条语音]',
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
@@ -4886,20 +4886,39 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
-    const audioUrl =
-      payload.mediaUrl?.trim() ||
-      this.resolveMediaUrlFromObjectKey(payload.mediaObjectKey);
+    // 从 COS 下载音频并转为 base64 data URL，
+    // 确保 STT 服务能直接消费音频数据（DashScope 等需要内联 base64）
+    let audioUrl = '';
+
+    if (payload.mediaObjectKey?.trim()) {
+      try {
+        const result = await this.tencentCosService.getBuffer(
+          payload.mediaObjectKey.trim()
+        );
+        const mime =
+          result.contentType?.trim() ||
+          payload.mediaMimeType?.trim() ||
+          'audio/aac';
+        const base64 = result.buffer.toString('base64');
+        audioUrl = `data:${mime};base64,${base64}`;
+      } catch (cosError) {
+        this.logger.error(
+          '[conversation] COS download failed, objectKey=%s, reason=%s',
+          payload.mediaObjectKey,
+          this.describeReplyError(cosError)
+        );
+        return undefined;
+      }
+    } else if (payload.mediaUrl?.trim()) {
+      audioUrl = payload.mediaUrl.trim();
+    }
 
     if (!audioUrl) {
       this.logger.error(
         '[conversation] voice transcription skipped: no accessible audio URL, objectKey=%s',
         payload.mediaObjectKey || ''
       );
-      throw new AppError(
-        'VOICE_AUDIO_URL_UNAVAILABLE',
-        '语音消息暂时无法识别，请稍后重试',
-        422
-      );
+      return undefined;
     }
 
     try {
@@ -4916,11 +4935,7 @@ export class ConversationService {
         '[conversation] voice transcription returned empty content, objectKey=%s',
         payload.mediaObjectKey || ''
       );
-      throw new AppError(
-        'VOICE_TRANSCRIPTION_EMPTY',
-        '暂未识别到语音内容',
-        422
-      );
+      return undefined;
     } catch (error) {
       this.logger.error(
         '[conversation] voice transcription request failed, objectKey=%s, url=%s, reason=%s',
@@ -4928,16 +4943,7 @@ export class ConversationService {
         audioUrl,
         this.describeReplyError(error)
       );
-
-      if (error instanceof AppError) {
-        throw error;
-      }
-
-      throw new AppError(
-        'VOICE_TRANSCRIPTION_FAILED',
-        '语音识别失败，请稍后重试',
-        502
-      );
+      return undefined;
     }
   }
 
