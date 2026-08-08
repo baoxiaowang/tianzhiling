@@ -415,6 +415,14 @@ const IMMEDIATE_DEATH_REUNION_PATTERN =
 const INVALID_STRUCTURED_REPLY_REASON = '模型回复包含未解析的结构化格式';
 const STRICT_MEMORY_DETAIL_PATTERN =
   /(?:那时候|那会儿|那次|那回|那天|那段|那辆|当时|小时候|从小|以前|每次|每回|一到|一来|回家时).{0,32}(?:跟在|跟着|围着|缠着|追着|拉着|牵着|抱着|搂着|背着|坐在|站在|跑来|跑去|蹲在|趴在|看着|看你|盯着|问着|说着|总说|喊着|闻着|闻到|尝到|塞|圆滚滚|笑|哭|闹|害怕|高兴|开心|兴奋|紧张|着急|不肯|舍不得|总爱|总是|老是|每次|每回|一到|一来|握不稳|拿不稳|不会|不敢|哭闹|摔倒|教你|给你|替你|帮你|夸你|逗你|告诉你|答应你|哄你|哄着|点给你|带你吃)/;
+
+/**
+ * rigid_only 窄检测：仅拦截把用户死亡明确作为团聚条件的表达。
+ * 放过"我在这边等你""有空就来""再也不分开"等正常情感表达。
+ */
+const RIGID_DEATH_CONDITION_REUNION_PATTERN =
+  /(?:死了|去世|过世|不在了).{0,30}(?:就能|就可以|就|能|可以).{0,20}(?:团聚|团圆|在一起|见面|相见|陪我|找我|一起|永远一起)/;
+
 const IDENTITY_PROOF_DETAIL_PATTERN =
   /你(?:小时候|从小|以前|每次|总是|总爱|最爱|爱喝|爱吃|怕|睡觉|心跳|手|身上|声音|眼睛|脸|眼泪|温度).{0,32}(?:我|咱|家|时候|怀里|身边|手上|衣服|故事|饭|菜|酒|急|凉|热|抖|红|哭)|咱们(?:以前|那时候|每次).{0,32}/;
 const UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN =
@@ -915,7 +923,10 @@ export class ReplyGuardrailService {
 
     return (
       IMMEDIATE_DEATH_REUNION_PATTERN.test(clause) ||
-      this.containsUnsafeDeathReunionInvitation(clause)
+      (
+        RIGID_DEATH_CONDITION_REUNION_PATTERN.test(clause) &&
+        !LONG_HORIZON_REUNION_CONDITION_PATTERN.test(clause)
+      )
     );
   }
 

@@ -91,7 +91,7 @@ describe('reply length plan', () => {
       reviewCharacters: 38,
     });
     expect(buildReplyLengthPlanPrompt(plan)).toContain(
-      '删重复、解释、总结和通用叮嘱'
+      '删重复的共情动作'
     );
   });
 

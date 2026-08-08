@@ -619,7 +619,7 @@ export class AgentContextService {
         historyCount: recentHistoryMessages.length,
       }
     );
-    const historyLayer = this.buildHistoryLayer(recentHistoryMessages);
+    const historyLayer = this.buildHistoryLayer(recentHistoryMessages, identity);
     this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
     const systemPromptContent = systemLayer.messages[0]?.content;
@@ -2936,11 +2936,11 @@ export class AgentContextService {
     return message.content?.trim() || '';
   }
 
-  private buildHistoryLayer(messages: MessageEntity[]): AgentContextLayer {
+  private buildHistoryLayer(messages: MessageEntity[], identity?: AgentIdentityContract): AgentContextLayer {
     return {
       key: 'history',
       messages: messages
-        .map(message => this.buildChatMessage(message))
+        .map(message => this.buildChatMessage(message, identity))
         .filter(Boolean) as ChatCompletionMessageParam[],
     };
   }
@@ -3152,7 +3152,8 @@ export class AgentContextService {
   }
 
   private buildChatMessage(
-    message: MessageEntity
+    message: MessageEntity,
+    identity?: AgentIdentityContract
   ): ChatCompletionMessageParam | null {
     switch (message.role) {
       case MessageRole.assistant: {
@@ -3161,9 +3162,12 @@ export class AgentContextService {
         if (!assistantContent) {
           return null;
         }
+        const prefix = identity?.agent?.displayName
+          ? `作为${identity.agent.displayName}，你说：`
+          : '';
         return {
           role: 'assistant',
-          content: assistantContent,
+          content: `${prefix}${assistantContent}`,
         };
       }
       case MessageRole.user:

@@ -674,7 +674,7 @@ describe('AgentContextService', () => {
       }),
       expect.objectContaining({
         role: 'assistant',
-        content: assistantReply.content,
+        content: expect.stringContaining(assistantReply.content),
       }),
       {
         role: 'user',
@@ -1657,7 +1657,7 @@ describe('AgentContextService', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
-          content: '早安媳妇儿',
+          content: expect.stringContaining('早安媳妇儿'),
         }),
       ])
     );

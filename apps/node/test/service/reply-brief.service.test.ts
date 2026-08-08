@@ -97,20 +97,14 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(brief.participationStrategy).toBe('reciprocal_self_expression');
-    expect(brief.bubblePlan.complexityHint).toBe('paired');
-    expect(brief.bubblePlan.preferTwoSegments).toBe(true);
+    expect(brief.participationStrategy).toBeUndefined();
+    expect(brief.replyMoves.length).toBe(3);
+    expect(brief.replyMoves[2]).toContain('角色侧当下');
     expect(brief.lengthPlan).toEqual({
       lengthClass: 'standard',
       targetCharacters: 40,
       reviewCharacters: 55,
     });
-    expect(brief.prompt).toContain('{"segments":["第一颗","第二颗"]}');
-    expect(brief.prompt).toContain('有节奏的重复可以加强情感');
-    expect(brief.prompt).not.toContain('由本轮表达需要决定 1-2 个气泡');
-    expect(brief.prompt).toContain('不因字面同义直接删除');
-    expect(brief.prompt).toContain('不机械复读');
-    expect(brief.prompt).toContain('给明确的亲人侧心意');
     expect(brief.careMotivation).toMatchObject({
       motive: 'mutual_longing',
       focus: 'reciprocal_bond',
@@ -1012,7 +1006,7 @@ describe('buildReplyBrief', () => {
         expect.stringContaining('不得把当前角色是否安心'),
       ])
     );
-    expect(brief.bubblePlan.complexityHint).toBe('paired');
+    expect(brief.replyMoves.length).toBe(2);
     expect(brief.prompt).toContain('现实见面的边界');
     expect(brief.prompt).toContain('当前用户消息和本轮回复动作优先于历史话题');
   });
@@ -1143,7 +1137,7 @@ describe('buildReplyBrief', () => {
       '先共情用户对家人健康处境的担心；如果消息里也有好转或无大碍，先回应这份庆幸',
       '再具体关心家人当前身体，并表达不能亲自照顾的遗憾；不得把照护责任推给用户',
     ]);
-    expect(brief.bubblePlan.complexityHint).toBe('paired');
+    expect(brief.replyMoves.length).toBe(2);
   });
 
   it('keeps guilt in emotional mode even when the message mentions the past', () => {

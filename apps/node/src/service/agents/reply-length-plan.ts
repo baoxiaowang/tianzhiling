@@ -123,7 +123,16 @@ export function buildReplyLengthPlan(
   ) {
     lengthClass = 'standard';
   } else if (options.mode === 'emotional') {
-    lengthClass = 'extended';
+    const userQueryLength = Array.from(
+      options.currentQuery.replace(/\s/gu, '')
+    ).length;
+    if (userQueryLength <= 20) {
+      lengthClass = 'standard';
+    } else if (userQueryLength > 40 && /后悔|愧疚|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(options.currentQuery)) {
+      lengthClass = 'deep';
+    } else {
+      lengthClass = 'extended';
+    }
   } else if (options.semanticPlan && replyMoveCount >= 3) {
     lengthClass = 'standard';
   } else if (
@@ -201,7 +210,7 @@ export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
     return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。简单回应可以很短，只留当前最重要一点。`;
   }
 
-  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复、解释、总结和通用叮嘱。`;
+  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复的共情动作（如连续两个"心疼""明白"）、解释、总结和通用叮嘱；保留称呼、情感立场和角色侧心意。`;
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {

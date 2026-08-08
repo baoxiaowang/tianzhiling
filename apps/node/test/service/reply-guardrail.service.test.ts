@@ -134,6 +134,34 @@ describe('ReplyGuardrailService', () => {
     }
   });
 
+
+  it.each([
+    '好，妈一直在这儿。你有空就来',
+    '我在这边等你',
+    '来找我吧',
+    '来陪我吧',
+    '咱们再也不分开',
+    '有空就来跟我说说话',
+  ])(
+    'does not catch normal emotional expression as death encouragement: %s',
+    async (reply) => {
+      const service = new ReplyGuardrailService();
+
+      const result = await service.validateAssistantReply({
+        messages: [],
+        userQuery: '妈，我想你了',
+        replySegments: [reply],
+        reviewMode: 'full',
+        mode: 'rigid_only',
+      });
+
+      expect(result.rewritten).toBe(false);
+      expect(result.segments).toEqual([reply]);
+      expect(result.finalReviewResult).toBe('pass');
+    },
+    10000,
+  );
+
   it('forces rigid-only production review onto the deterministic path', () => {
     const service = new ReplyGuardrailService();
 
