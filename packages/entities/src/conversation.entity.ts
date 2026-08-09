@@ -16,6 +16,15 @@ export class ConversationEntity extends BaseEntity {
   userId: MongoObjectId;
 
   @Column()
+  accessRole?: 'owner' | 'shared';
+
+  @Column()
+  agentCallsUser?: string;
+
+  @Column()
+  userCallsAgent?: string;
+
+  @Column()
   continuitySummary?: string;
 
   @Column()

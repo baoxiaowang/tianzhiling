@@ -18,6 +18,11 @@ export enum MessageType {
   image = "image",
 }
 
+export enum MessageSource {
+  live = "live",
+  wechatImport = "wechat_import",
+}
+
 export interface MessageReplyIntentItem {
   target: string;
   timeScope: string;
@@ -41,6 +46,75 @@ export interface MessageReplyMemoryPlan {
   selectedFactKeys?: string[];
 }
 
+export interface MessageReplyDreamPlan {
+  dreamStage:
+    | "request"
+    | "before_sleep"
+    | "reported"
+    | "fragmented"
+    | "missed"
+    | "repeated_miss"
+    | "verification";
+  dreamAction: "promise" | "invite" | "reconstruct" | "repair" | "leave_space";
+  expectationLevel: "warm" | "restrained";
+  dreamAnchor: "name" | "voice" | "place" | "object" | "none";
+  realityBoundary: "dream_only";
+}
+
+export type MessageReplyStateProtocolName =
+  | "dream"
+  | "trust_repair"
+  | "memory_dialogue"
+  | "active_contribution";
+
+export type MessageReplyStateProtocolStage =
+  | MessageReplyDreamPlan["dreamStage"]
+  | "challenge"
+  | "repeated_challenge"
+  | "post_retract"
+  | "probe"
+  | "corrected"
+  | "follow_up"
+  | "request_contribution"
+  | "still_unsatisfied"
+  | "engaged";
+
+export type MessageReplyStateProtocolAction =
+  | MessageReplyDreamPlan["dreamAction"]
+  | "direct_answer"
+  | "retract"
+  | "grounded_reconnect"
+  | "retrieve"
+  | "grounded_answer"
+  | "reset"
+  | "natural_use"
+  | "self_expression"
+  | "grounded_detail"
+  | "topic_offer";
+
+export type MessageReplyStateProtocolAnchor =
+  | MessageReplyDreamPlan["dreamAnchor"]
+  | "identity"
+  | "persona"
+  | "fact"
+  | "shared_event"
+  | "family"
+  | "time"
+  | "role_present"
+  | "grounded_shared_past"
+  | "current_topic";
+
+export interface MessageReplyStateProtocol {
+  version: "state_protocol_v1";
+  protocol: MessageReplyStateProtocolName;
+  stage: MessageReplyStateProtocolStage;
+  action: MessageReplyStateProtocolAction;
+  anchor: MessageReplyStateProtocolAnchor;
+  exit: "stay" | "recovered" | "resolved" | "satisfied";
+  source: "deterministic" | "existing_dream" | "semantic_plan";
+  previousStage?: MessageReplyStateProtocolStage;
+}
+
 @Index(["conversationId", "createdAt"], { background: true })
 @Index(["userId", "createdAt"], { background: true })
 @Index(["agentId", "userId", "createdAt"], { background: true })
@@ -48,6 +122,7 @@ export interface MessageReplyMemoryPlan {
 @Index(["conversationId", "replyGroupId", "replySegmentIndex"], {
   background: true,
 })
+@Index(["traceId", "createdAt"], { background: true })
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()
@@ -72,6 +147,45 @@ export class MessageEntity extends BaseEntity {
   status: MessageStatus;
 
   @Column()
+  source?: MessageSource;
+
+  @Column()
+  importBatchId?: MongoObjectId;
+
+  @Column()
+  importItemId?: MongoObjectId;
+
+  @Column()
+  importedAt?: Date;
+
+  @Column()
+  sourceOccurredAt?: Date;
+
+  @Column()
+  sourceRawTimeText?: string;
+
+  @Column()
+  sourceTimePrecision?: string;
+
+  @Column()
+  sourceTimeConfidence?: string;
+
+  @Column()
+  sourceScreenshotId?: string;
+
+  @Column()
+  sourceSequence?: number;
+
+  @Column()
+  recognitionConfidence?: number;
+
+  @Column()
+  quotaExempt?: boolean;
+
+  @Column()
+  replyTrigger?: boolean;
+
+  @Column()
   isArchived?: boolean;
 
   @Column()
@@ -85,6 +199,9 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   clientRequestId?: string;
+
+  @Column()
+  traceId?: string;
 
   @Column()
   quotedMessageId?: MongoObjectId;
@@ -252,6 +369,9 @@ export class MessageEntity extends BaseEntity {
   replyGuardrailReviewMode?: string;
 
   @Column()
+  replyGuardrailFocuses?: string[];
+
+  @Column()
   replyEvidenceCount?: number;
 
   @Column()
@@ -342,7 +462,124 @@ export class MessageEntity extends BaseEntity {
   replyPersonaSource?: string;
 
   @Column()
+  replyRealityDependencyKinds?: string[];
+
+  @Column()
+  replyCorrectionFactMode?: string;
+
+  @Column()
+  replyActiveContributionSource?: string;
+
+  @Column()
+  replyStrategyRepeatedMoves?: string[];
+
+  @Column()
+  replyStrategyAlternative?: string;
+
+  @Column()
+  replyCareMotive?: string;
+
+  @Column()
+  replyCareFocus?: string;
+
+  @Column()
+  replyCareStyleSource?: string;
+
+  @Column()
+  replyDreamPlan?: MessageReplyDreamPlan;
+
+  @Column()
+  replyStateProtocol?: MessageReplyStateProtocol;
+
+  @Column()
+  replyExperiencePlanVersion?: string;
+
+  @Column()
+  replyProfileTier?: string;
+
+  @Column()
+  replyProfileScore?: number;
+
+  @Column()
+  replyProfileDimensionCount?: number;
+
+  @Column()
+  replyProfileTrustedFactCount?: number;
+
+  @Column()
+  replyRelationshipStage?: string;
+
+  @Column()
+  replyRelationshipMaturity?: string;
+
+  @Column()
+  replyRelationshipState?: string;
+
+  @Column()
+  replyRelationshipUserTurnCount?: number;
+
+  @Column()
+  replyRelationshipActiveDayCount?: number;
+
+  @Column()
+  replyConversationDepth?: string;
+
+  @Column()
+  replyExperienceFactScope?: string;
+
+  @Column()
+  replyExperienceIntimacyLevel?: string;
+
+  @Column()
+  replyExperienceContributionMode?: string;
+
+  @Column()
+  replyExperienceMemoryPolicy?: string;
+
+  @Column()
+  replyExperienceQuestionPolicy?: string;
+
+  @Column()
+  replyExperienceClosurePolicy?: string;
+
+  @Column()
   replyMemoryPlan?: MessageReplyMemoryPlan;
+
+  @Column()
+  replyMemoryCandidateCount?: number;
+
+  @Column()
+  replyMemorySelectedCandidateKeys?: string[];
+
+  @Column()
+  replyMemoryRetrievalMode?: string;
+
+  @Column()
+  replyMemoryRetrievalRequestCount?: number;
+
+  @Column()
+  replyMemoryRetrievalConceptCount?: number;
+
+  @Column()
+  replyMemoryRetrievedEvidenceCount?: number;
+
+  @Column()
+  replyMemoryUsedEvidenceIds?: string[];
+
+  @Column()
+  replyMemoryUsedClaimCount?: number;
+
+  @Column()
+  memoryWriteStatus?: string;
+
+  @Column()
+  memoryWriteLegacyFactCount?: number;
+
+  @Column()
+  memoryWriteProfileFactCount?: number;
+
+  @Column()
+  memoryWriteCompletedAt?: Date;
 
   @Column()
   createdAt: Date;

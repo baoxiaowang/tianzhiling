@@ -1,13 +1,16 @@
-import { Entity, Column, Index } from 'typeorm';
-import { BaseEntity, MongoObjectId, TableName } from './base';
+import { Entity, Column, Index } from "typeorm";
+import { BaseEntity, MongoObjectId, TableName } from "./base";
 
 export enum AgentSex {
   woman = 0,
   man = 1,
+  unknown = 2,
 }
 
 export interface AgentPersonaLanguageProfile {
   sentenceLength?: string;
+  modalParticles?: string;
+  replyBubblePattern?: string;
   directness?: string;
   emotionalExpression?: string;
   addressStyle?: string;
@@ -46,9 +49,16 @@ export interface AgentPersonaProfile {
   confidence?: number;
 }
 
-@Index(['createdUserId', 'updatedAt'], { background: true })
-@Index(['createdUserId', 'isDefault'], { background: true })
-@Index(['voiceTimbreId'], { sparse: true, background: true })
+export interface AgentMemoryProfileFactSnapshot {
+  key: string;
+  signature: string;
+  priority: number;
+}
+
+@Index(["createdUserId", "updatedAt"], { background: true })
+@Index(["createdUserId", "isDefault"], { background: true })
+@Index(["voiceTimbreId"], { sparse: true, background: true })
+@Index(["pendingVoiceTimbreId"], { sparse: true, background: true })
 @Entity(TableName.agent)
 export class AgentEntity extends BaseEntity {
   @Column()
@@ -97,6 +107,32 @@ export class AgentEntity extends BaseEntity {
   sharedMemories?: string;
 
   @Column()
+  profileCompletionGuideCreatedAt?: Date;
+
+  @Column()
+  agentHomeGuideSeenAt?: Date;
+
+  @Column()
+  agentProfileGuideSeenAt?: Date;
+
+  /**
+   * The memory versions covered by the latest low-frequency profile synthesis.
+   * This is workflow metadata only; the long-term facts remain the source of
+   * truth and generated profile paragraphs are never queried as memory.
+   */
+  @Column()
+  memoryProfileFactSnapshot?: AgentMemoryProfileFactSnapshot[];
+
+  @Column()
+  memoryProfileVersion?: string;
+
+  @Column()
+  memoryProfileGeneratedAt?: Date;
+
+  @Column()
+  memoryProfileGenerationCount?: number;
+
+  @Column()
   customContext?: string;
 
   /**
@@ -114,6 +150,12 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   voiceTimbreId?: MongoObjectId;
+
+  @Column()
+  pendingVoiceTimbreId?: MongoObjectId;
+
+  @Column()
+  voiceTimbreSelectedAt?: Date;
 
   @Column()
   createdAt: Date;
