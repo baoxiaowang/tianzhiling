@@ -41,6 +41,8 @@ export const REPLY_INTENT_KINDS = [
   'express_guilt',
   'seek_comfort',
   'express_longing',
+  'question_reincarnation',
+  'express_hatred',
   'share_significant_matter',
   'share_family_update',
   'share_user_update',
@@ -65,6 +67,8 @@ export const REPLY_INTENT_SUB_INTENTS = [
   'family_care',
   'shared_memory',
   'grief_support',
+  'reincarnation',
+  'hatred_accusation',
   'significant_matter',
   'other',
 ] as const;
