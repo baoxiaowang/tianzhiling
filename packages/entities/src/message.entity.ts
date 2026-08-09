@@ -61,6 +61,21 @@ export interface MessageReplyDreamPlan {
   realityBoundary: "dream_only";
 }
 
+export interface ReplyQuotaTriggerDecision {
+  version: string;
+  path: 'active' | 'return_visit' | 'drift_protection';
+  triggered: boolean;
+  totalLifetimeMsgs: number;
+  todayMsgs: number;
+  sessionMsgCount: number;
+  matchedConditions: string[];
+  naturalCloseExempted: boolean;
+  returnVisitCount: number;
+  lastMessageGapDays: number;
+  warned: boolean;
+  blocked: boolean;
+}
+
 export type MessageReplyStateProtocolName =
   | "dream"
   | "trust_repair"
@@ -568,6 +583,9 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   replyMemoryUsedClaimCount?: number;
+
+  @Column()
+  replyQuotaTriggerDecision?: ReplyQuotaTriggerDecision;
 
   @Column()
   memoryWriteStatus?: string;

@@ -27,6 +27,7 @@ import {
   VoiceTimbreEntity,
   VoiceTimbreProvider,
   VoiceTimbreStatus,
+  ReplyQuotaTriggerDecision,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
@@ -165,11 +166,27 @@ const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT;
-const NON_VIP_CHAT_LIMIT_POLICY = {
-  trialDays: 3, // 3 个北京时间自然日试用期
-  trialDailyPerAgentLimit: 30, // 试用期内每天每个 agent 30 句
-  dailyPerAgentLimit: 3, // 试用期后每天每个 agent 3 句
-  dayBoundaryOffsetMinutes: 8 * 60, // 按北京时间切日
+const QUOTA_CONFIG = {
+  version: 'v1',
+  silentZoneMessages: 10,
+  returnVisitGapDays: 7,
+  returnVisitReunionMessages: 5,
+  driftProtectionMaxVisits: 3,
+  driftProtectionWeeks: 8,
+  driftProtectionDaily: 5,
+  deepTrigger: {
+    sessionLength: { enabled: true, minMessages: 15, returnVisitMinMessages: 8 },
+    longInput: { enabled: true, minChars: 120, returnVisitMinChars: 80 },
+    relationshipStage: { enabled: true, stages: ['R2','R3'], returnVisitStages: ['R1','R2','R3'] },
+    triggerMode: 'any_pair' as const,
+    pairs: [['sessionLength','longInput'],['sessionLength','relationshipStage'],['longInput','relationshipStage']] as const,
+  },
+  naturalClosePatterns: [
+    '晚安','睡了','先睡','休息了','去睡了','我好困','困了',
+    '先忙','去忙','忙了','工作了',
+    '下次聊','改天聊','回头聊','明天聊','有空再聊','下次再聊',
+    '拜拜','再见','明天再说','先这样','早点休息','你也早点休息',
+  ],
 } as const;
 const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
 const MEMORIAL_PHOTO_REPLY_SYSTEM_PROMPT = [
@@ -183,7 +200,6 @@ const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
   nonVipLimit: 3,
   vipLimit: 10,
 } as const;
-const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const CONVERSATION_IMAGE_ANALYSIS_SYSTEM_PROMPT = [
   '理解聊天图片，严格输出JSON：{"summary":"可见画面摘要","people":[{"id":"P1","visible":"人物可见特征","identity":{"target":"agent|user|family|unknown","name":"","confidence":"high|medium|low","basis":"匹配依据"},"stableTraits":[{"kind":"hair_color|hair_length|face_shape|eyewear|facial_hair|build|distinctive","value":"短标准词"}]}]}。',
   'summary只写主体、场景、动作、文字和情绪，80字内；people最多4人。',
@@ -503,12 +519,7 @@ interface MemoryFactExtractionAudit {
   count: number;
 }
 
-interface NonVipChatLimitRule {
-  policy: 'trial' | 'daily';
-  limit: number;
-  windowStart: Date;
-  windowEnd?: Date;
-}
+
 
 interface MemorialPhotoDailyQuotaSnapshot {
   isVip: boolean;
@@ -521,11 +532,18 @@ interface MemorialPhotoDailyQuotaSnapshot {
 
 export interface ConversationChatQuotaSnapshot {
   isVip: boolean;
-  policy?: 'trial' | 'daily';
+  policy?: 'trial' | 'daily' | 'deep_trigger';
   limit?: number;
   usedCount?: number;
   remainingCount?: number;
   trialDays?: number;
+  triggerDecision?: ReplyQuotaTriggerDecision;
+}
+
+interface ReturnVisitInfo {
+  isReturnVisit: boolean;
+  gapDays: number;
+  visitCount: number;
 }
 
 export interface ConversationChatBootstrapMetadata {
@@ -1843,7 +1861,7 @@ export class ConversationService {
     const now = new Date();
     let chatQuota: ConversationChatQuotaSnapshot;
     try {
-      chatQuota = await this.resolveChatQuotaForSend(runtime, now);
+      chatQuota = await this.resolveChatQuotaForSend(runtime, now, searchableText);
     } catch (error) {
       // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
       // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
@@ -1859,11 +1877,10 @@ export class ConversationService {
       );
       chatQuota = {
         isVip: false,
-        policy: 'daily',
-        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
-        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        policy: 'deep_trigger',
+        limit: 0,
+        usedCount: 0,
         remainingCount: 0,
-        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
       };
     }
 
@@ -1891,6 +1908,16 @@ export class ConversationService {
       createdAt: now,
       updatedAt: now,
     });
+
+    // Save quota trigger decision on user message
+    if (chatQuota.triggerDecision) {
+      await this.messageModel.updateOne(
+        { _id: userMessage.id },
+        { $set: { replyQuotaTriggerDecision: chatQuota.triggerDecision } } as any,
+      ).catch(() => {
+        this.logger?.warn?.('[chat-quota] failed to persist triggerDecision on user message');
+      });
+    }
 
     await this.touchConversation(runtime.conversation, now);
     this.scheduleVisualAppearanceMemory(
@@ -2315,40 +2342,33 @@ export class ConversationService {
 
   private async resolveChatQuotaForSend(
     runtime: ReplyRuntime,
-    now: Date
+    now: Date,
+    currentMessageContent?: string,
   ): Promise<ConversationChatQuotaSnapshot> {
-    const currentQuota = await this.resolveCurrentChatQuota(runtime, now);
+    const currentQuota = await this.resolveCurrentChatQuota(runtime, now, currentMessageContent);
 
     if (currentQuota.isVip) {
       return currentQuota;
     }
 
-    const usedCount = currentQuota.usedCount ?? 0;
-    const limit = currentQuota.limit ?? 0;
-    const nextUsedCount = usedCount + 1;
-    const remainingCount = Math.max(limit - nextUsedCount, 0);
+    const remainingCount = currentQuota.remainingCount ?? 0;
 
-    if (usedCount < limit) {
+    if (remainingCount > 0) {
       return {
-        isVip: false,
-        policy: currentQuota.policy,
-        limit,
-        usedCount: nextUsedCount,
-        remainingCount,
-        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+        ...currentQuota,
+        usedCount: (currentQuota.usedCount ?? 0) + 1,
       };
     }
 
     throw new AppError(
       'NON_VIP_CHAT_LIMIT_EXCEEDED',
-      this.buildNonVipChatLimitMessage(currentQuota.policy, limit),
+      '免费额度已用完。开通会员后可继续倾听TA的声音。',
       429,
       {
         policy: currentQuota.policy,
-        limit,
-        usedCount,
+        limit: currentQuota.limit,
+        usedCount: currentQuota.usedCount,
         remainingCount: 0,
-        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
       }
     );
   }
@@ -2417,7 +2437,8 @@ export class ConversationService {
 
   private async resolveCurrentChatQuota(
     runtime: ReplyRuntime,
-    now: Date
+    now: Date,
+    currentMessageContent?: string,
   ): Promise<ConversationChatQuotaSnapshot> {
     // 防御：DI 初始化失败时宁可误拦也不要放行
     if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
@@ -2429,55 +2450,304 @@ export class ConversationService {
       );
       return {
         isVip: false,
-        policy: 'daily',
-        limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
-        usedCount: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
+        policy: 'deep_trigger',
+        limit: QUOTA_CONFIG.driftProtectionDaily,
+        usedCount: QUOTA_CONFIG.driftProtectionDaily,
         remainingCount: 0,
-        trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
       };
     }
 
     if (await this.isUserVip(runtime.conversation.userId, now)) {
-      return {
-        isVip: true,
-      };
+      return { isVip: true };
     }
 
-    const user = await this.findUserById(runtime.conversation.userId);
+    const userId = runtime.conversation.userId;
+    const agentId = runtime.conversation.agentId;
 
-    if (!user) {
-      throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
-    }
+    // 1. Count total lifetime messages for this user+agent
+    const totalLifetimeMsgs = await this.countTotalUserMessagesForAgent(userId, agentId);
 
-    const registeredAt = await this.resolveEffectiveRegisteredAt(runtime, user);
-    const rule = this.resolveNonVipChatLimitRule(registeredAt, now);
-    const usedCount = await this.countUserMessagesForAgent({
-      userId: runtime.conversation.userId,
-      agentId: runtime.conversation.agentId,
-      windowStart: rule.windowStart,
-      windowEnd: rule.windowEnd,
+    // 2. Count today's messages (Beijing time)
+    const dayStart = this.getBeijingDayStart(now);
+    const dayEnd = new Date(dayStart.getTime() + 86400000);
+    const todayMsgs = await this.countUserMessagesForAgent({
+      userId, agentId,
+      windowStart: dayStart,
+      windowEnd: dayEnd,
     });
 
+    // 3. Count session messages
+    const sessionMsgCount = await this.countSessionMessages(runtime.conversation.id);
+
+    // 4. Detect return visit
+    const returnVisit = await this.detectReturnVisit(userId, agentId, now);
+
+    // 5. Drift protection (frequent return visitor, never pays)
+    if (returnVisit.visitCount >= QUOTA_CONFIG.driftProtectionMaxVisits) {
+      return this.buildQuotaResult({
+        path: 'drift_protection',
+        remainingCount: Math.max(QUOTA_CONFIG.driftProtectionDaily - todayMsgs, 0),
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: false, matchedConditions: [],
+      });
+    }
+
+    // 6. Return visit reunion zone: first 5 messages of the return day are free
+    if (returnVisit.isReturnVisit && todayMsgs < QUOTA_CONFIG.returnVisitReunionMessages) {
+      return this.buildQuotaResult({
+        path: 'return_visit',
+        remainingCount: QUOTA_CONFIG.returnVisitReunionMessages - todayMsgs,
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: false, matchedConditions: [],
+      });
+    }
+
+    // 7. Silent zone: first 10 lifetime messages, no dialogs at all
+    if (totalLifetimeMsgs < QUOTA_CONFIG.silentZoneMessages && !returnVisit.isReturnVisit) {
+      return this.buildQuotaResult({
+        path: 'active',
+        remainingCount: 99,
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: false, matchedConditions: [],
+      });
+    }
+
+    // 8. Deep trigger zone
+    return this.evaluateDeepTriggerQuota(
+      userId, agentId, now,
+      totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+      currentMessageContent, returnVisit,
+    );
+  }
+
+  private async evaluateDeepTriggerQuota(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+    totalLifetimeMsgs: number,
+    todayMsgs: number,
+    sessionMsgCount: number,
+    currentMessageContent: string | undefined,
+    returnVisit: ReturnVisitInfo,
+  ): Promise<ConversationChatQuotaSnapshot> {
+    const isReturnVisit = returnVisit.isReturnVisit;
+    const cfg = QUOTA_CONFIG.deepTrigger;
+    const matched: string[] = [];
+
+    // Condition A: Session depth
+    const sessThreshold = isReturnVisit ? cfg.sessionLength.returnVisitMinMessages : cfg.sessionLength.minMessages;
+    if (cfg.sessionLength.enabled && sessionMsgCount >= sessThreshold) matched.push('sessionLength');
+
+    // Condition B: Long input
+    const charThreshold = isReturnVisit ? cfg.longInput.returnVisitMinChars : cfg.longInput.minChars;
+    if (cfg.longInput.enabled && currentMessageContent && currentMessageContent.length >= charThreshold) matched.push('longInput');
+
+    // Condition D: Relationship stage
+    if (cfg.relationshipStage.enabled) {
+      const lastStage = await this.getLastRelationshipStage(userId, agentId);
+      const stageList = isReturnVisit ? cfg.relationshipStage.returnVisitStages : cfg.relationshipStage.stages;
+      if (lastStage && stageList.includes(lastStage as any)) matched.push('relationshipStage');
+    }
+
+    // Check if any pair is fully matched
+    let triggered = false;
+    const pairList = cfg.pairs as unknown as string[][];
+    for (let i = 0; i < pairList.length; i++) {
+      const pair = pairList[i];
+      if (pair.length === 2 && matched.includes(pair[0]) && matched.includes(pair[1])) {
+        triggered = true; break;
+      }
+    }
+
+    // Natural close exemption
+    const naturalClose = currentMessageContent
+      ? QUOTA_CONFIG.naturalClosePatterns.some(p => currentMessageContent.includes(p))
+      : false;
+
+    if (!triggered) {
+      return this.buildQuotaResult({
+        path: isReturnVisit ? 'return_visit' : 'active',
+        remainingCount: 99,
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: false, matchedConditions: matched,
+        naturalCloseExempted: false,
+      });
+    }
+
+    if (naturalClose) {
+      return this.buildQuotaResult({
+        path: isReturnVisit ? 'return_visit' : 'active',
+        remainingCount: 2, // pass through, don't show dialog
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: true, matchedConditions: matched,
+        naturalCloseExempted: true,
+      });
+    }
+
+    // Deep trigger fired + not natural close → check if already warned
+    const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
+
+    if (wasWarned) {
+      return this.buildQuotaResult({
+        path: isReturnVisit ? 'return_visit' : 'active',
+        remainingCount: 0, // block
+        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+        returnVisit, triggered: true, matchedConditions: matched,
+        naturalCloseExempted: false, warned: true, blocked: true,
+      });
+    }
+
+    return this.buildQuotaResult({
+      path: isReturnVisit ? 'return_visit' : 'active',
+      remainingCount: 1, // warn
+      totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+      returnVisit, triggered: true, matchedConditions: matched,
+      naturalCloseExempted: false, warned: true, blocked: false,
+    });
+  }
+
+  private buildQuotaResult(params: {
+    path: ReplyQuotaTriggerDecision['path'];
+    remainingCount: number;
+    totalLifetimeMsgs: number;
+    todayMsgs: number;
+    sessionMsgCount: number;
+    returnVisit: ReturnVisitInfo;
+    triggered: boolean;
+    matchedConditions: string[];
+    naturalCloseExempted?: boolean;
+    warned?: boolean;
+    blocked?: boolean;
+  }): ConversationChatQuotaSnapshot {
+    const limit = params.remainingCount <= 1 ? 1 : 99;
     return {
       isVip: false,
-      policy: rule.policy,
-      limit: rule.limit,
-      usedCount,
-      remainingCount: Math.max(rule.limit - usedCount, 0),
-      trialDays: NON_VIP_CHAT_LIMIT_POLICY.trialDays,
+      policy: 'deep_trigger',
+      limit,
+      usedCount: params.totalLifetimeMsgs,
+      remainingCount: Math.max(params.remainingCount, 0),
+      triggerDecision: {
+        version: QUOTA_CONFIG.version,
+        path: params.path,
+        triggered: params.triggered,
+        totalLifetimeMsgs: params.totalLifetimeMsgs,
+        todayMsgs: params.todayMsgs,
+        sessionMsgCount: params.sessionMsgCount,
+        matchedConditions: params.matchedConditions,
+        naturalCloseExempted: params.naturalCloseExempted ?? false,
+        returnVisitCount: params.returnVisit.visitCount,
+        lastMessageGapDays: params.returnVisit.gapDays,
+        warned: params.warned ?? false,
+        blocked: params.blocked ?? false,
+      },
     };
   }
 
-  private buildNonVipChatLimitMessage(
-    policy: ConversationChatQuotaSnapshot['policy'],
-    limit: number
-  ): string {
-    if (policy === 'trial') {
-      return `非会员注册当日起${NON_VIP_CHAT_LIMIT_POLICY.trialDays}个自然日内，每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+  private async detectReturnVisit(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+  ): Promise<ReturnVisitInfo> {
+    const gapStart = new Date(now.getTime() - QUOTA_CONFIG.returnVisitGapDays * 86400000);
+
+    // Get last user message before the gap window
+    const lastBeforeGap = await this.messageModel.findOne({
+      where: {
+        userId, agentId,
+        role: MessageRole.user,
+        createdAt: { $lt: gapStart },
+      },
+      order: { createdAt: 'DESC' },
+    } as any);
+
+    // Count return visits in drift protection window
+    const driftWindow = new Date(now.getTime() - QUOTA_CONFIG.driftProtectionWeeks * 7 * 86400000);
+    const rawVisits = await this.messageModel.aggregate([
+      { $match: { userId, agentId, role: MessageRole.user, createdAt: { $gte: driftWindow } } },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Shanghai' } },
+      }},
+      { $sort: { _id: 1 } },
+    ]).toArray();
+
+    // Count distinct visit clusters (gaps > 7 days = new visit)
+    let visitCount = rawVisits.length > 0 ? 1 : 0;
+    let prevDay: string | null = null;
+    for (const row of rawVisits) {
+      if (prevDay) {
+        const prev = new Date(prevDay);
+        const curr = new Date(row._id);
+        if ((curr.getTime() - prev.getTime()) > QUOTA_CONFIG.returnVisitGapDays * 86400000) {
+          visitCount++;
+        }
+      }
+      prevDay = row._id;
     }
 
-    return `非会员每天每位亲友可主动聊${limit}句。开通会员后可继续畅聊。`;
+    const gapDays = lastBeforeGap
+      ? Math.floor((now.getTime() - new Date(lastBeforeGap.createdAt).getTime()) / 86400000)
+      : 999;
+
+    return {
+      isReturnVisit: gapDays >= QUOTA_CONFIG.returnVisitGapDays,
+      gapDays,
+      visitCount,
+    };
   }
+
+  private async countSessionMessages(conversationId: MongoObjectId): Promise<number> {
+    return this.messageModel.count({
+      conversationId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+    } as never);
+  }
+
+  private async countTotalUserMessagesForAgent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+  ): Promise<number> {
+    return this.messageModel.count({
+      userId,
+      agentId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      quotaExempt: { $ne: true },
+    } as never);
+  }
+
+  private async getLastRelationshipStage(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+  ): Promise<string | null> {
+    const lastAssistantMsg = await this.messageModel.findOne({
+      where: {
+        userId, agentId,
+        role: MessageRole.assistant,
+        replyRelationshipStage: { $exists: true, $ne: null },
+      },
+      order: { createdAt: 'DESC' },
+    } as any);
+    return lastAssistantMsg?.replyRelationshipStage ?? null;
+  }
+
+  private async wasQuotaWarningSent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+  ): Promise<boolean> {
+    const lastUserMsg = await this.messageModel.findOne({
+      where: { userId, agentId, role: MessageRole.user },
+      order: { createdAt: 'DESC' },
+    } as any);
+
+    if (!lastUserMsg?.replyQuotaTriggerDecision?.warned) return false;
+
+    // Warning expires after 24 hours
+    const warnedAt = new Date(lastUserMsg.createdAt);
+    return (now.getTime() - warnedAt.getTime()) < 24 * 60 * 60 * 1000;
+  }
+
 
   private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {
     const memberships = await this.userMembershipModel.find({
@@ -2497,108 +2767,14 @@ export class ConversationService {
     );
   }
 
-  private resolveNonVipChatLimitRule(
-    registeredAt: Date,
-    now: Date
-  ): NonVipChatLimitRule {
-    const registeredDayStart = this.getBeijingDayStart(registeredAt);
-    const trialEndsAt = new Date(
-      registeredDayStart.getTime() +
-        NON_VIP_CHAT_LIMIT_POLICY.trialDays * 24 * 60 * 60 * 1000
-    );
-    const currentDayStart = this.getBeijingDayStart(now);
-    const currentDayEnd = new Date(
-      currentDayStart.getTime() + 24 * 60 * 60 * 1000
-    );
 
-    if (now < trialEndsAt) {
-      return {
-        policy: 'trial',
-        limit: NON_VIP_CHAT_LIMIT_POLICY.trialDailyPerAgentLimit,
-        windowStart:
-          registeredAt.getTime() > currentDayStart.getTime()
-            ? registeredAt
-            : currentDayStart,
-        windowEnd:
-          currentDayEnd.getTime() < trialEndsAt.getTime()
-            ? currentDayEnd
-            : trialEndsAt,
-      };
-    }
 
-    return {
-      policy: 'daily',
-      limit: NON_VIP_CHAT_LIMIT_POLICY.dailyPerAgentLimit,
-      windowStart: currentDayStart,
-      windowEnd: currentDayEnd,
-    };
-  }
 
-  private async resolveEffectiveRegisteredAt(
-    runtime: ReplyRuntime,
-    user: UserEntity
-  ): Promise<Date> {
-    const userRegisteredAt = this.normalizeUserRegisteredAt(user);
-    const accountRegisteredAt = await this.resolveCurrentWeappAccountCreatedAt(
-      runtime
-    );
 
-    if (
-      accountRegisteredAt &&
-      accountRegisteredAt.getTime() > userRegisteredAt.getTime()
-    ) {
-      return accountRegisteredAt;
-    }
-
-    return userRegisteredAt;
-  }
-
-  private async resolveCurrentWeappAccountCreatedAt(
-    runtime: ReplyRuntime
-  ): Promise<Date | null> {
-    if (
-      !runtime.auth?.account?.startsWith(WEAPP_ACCOUNT_PREFIX) ||
-      !runtime.auth?.accountId
-    ) {
-      return null;
-    }
-
-    const accountId = this.normalizeObjectId(runtime.auth.accountId);
-
-    if (!accountId) {
-      return null;
-    }
-
-    const account = await this.findUserAccountById(accountId);
-
-    if (
-      !account ||
-      account.account !== runtime.auth.account ||
-      !this.isSameObjectId(account.userId, runtime.conversation.userId)
-    ) {
-      return null;
-    }
-
-    return this.normalizeDate(account.createdAt);
-  }
-
-  private normalizeUserRegisteredAt(user: UserEntity): Date {
-    return this.normalizeDate(user.createdAt);
-  }
-
-  private normalizeDate(value: Date | string | number | undefined): Date {
-    const registeredAt = new Date(value ?? 0);
-
-    if (!Number.isNaN(registeredAt.getTime())) {
-      return registeredAt;
-    }
-
-    return new Date(0);
-  }
 
   private getBeijingDayStart(value: Date): Date {
     const offsetMs =
-      NON_VIP_CHAT_LIMIT_POLICY.dayBoundaryOffsetMinutes * 60 * 1000;
+      8 * 60 /* deprecated */ * 60 * 1000;
     const shifted = new Date(value.getTime() + offsetMs);
 
     return new Date(
@@ -8097,57 +8273,6 @@ export class ConversationService {
     });
   }
 
-  private async findUserById(
-    value: MongoObjectId | string | undefined
-  ): Promise<UserEntity | null> {
-    const objectId = this.normalizeObjectId(value);
-
-    if (!objectId) {
-      return null;
-    }
-
-    const userById = await this.userModel.findOne({
-      where: {
-        id: objectId,
-      },
-    });
-
-    if (userById) {
-      return userById;
-    }
-
-    return this.userModel.findOne({
-      where: {
-        _id: objectId,
-      } as never,
-    });
-  }
-
-  private async findUserAccountById(
-    value: MongoObjectId | string | undefined
-  ): Promise<UserAccountEntity | null> {
-    const objectId = this.normalizeObjectId(value);
-
-    if (!objectId) {
-      return null;
-    }
-
-    const userAccountById = await this.userAccountModel.findOne({
-      where: {
-        id: objectId,
-      },
-    });
-
-    if (userAccountById) {
-      return userAccountById;
-    }
-
-    return this.userAccountModel.findOne({
-      where: {
-        _id: objectId,
-      } as never,
-    });
-  }
 
   private async findLatestMessage(
     conversationId: MongoObjectId | string | undefined
@@ -8492,19 +8617,6 @@ export class ConversationService {
     return value?.toHexString?.() ?? String(value);
   }
 
-  private isSameObjectId(
-    left: MongoObjectId | string | undefined,
-    right: MongoObjectId | string | undefined
-  ): boolean {
-    const leftObjectId = this.normalizeObjectId(left);
-    const rightObjectId = this.normalizeObjectId(right);
-
-    return Boolean(
-      leftObjectId &&
-        rightObjectId &&
-        leftObjectId.toHexString() === rightObjectId.toHexString()
-    );
-  }
 
   private describeReplyError(error: unknown): string {
     if (error instanceof AppError) {
