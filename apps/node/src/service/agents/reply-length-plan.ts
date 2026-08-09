@@ -82,6 +82,9 @@ const RELATIONAL_WARMTH_SCENES = new Set([
   'dream_companionship',
   'afterlife_status',
   'keepsake_attachment',
+  'significant_life_matter',
+  'reincarnation_inquiry',
+  'departure_hatred',
 ]);
 
 export function buildReplyLengthPlan(

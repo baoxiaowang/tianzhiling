@@ -88,6 +88,13 @@ export class AgentEntity extends BaseEntity {
   @Column()
   deathDate?: Date;
 
+  @Column({ type: 'json', nullable: true })
+  timeMarkers?: Array<{
+    monthDay: string; // mm-dd format
+    label: string;
+    source: 'deathDate' | 'birthday' | 'user_mentioned';
+  }>;
+
   @Column()
   description: string;
 

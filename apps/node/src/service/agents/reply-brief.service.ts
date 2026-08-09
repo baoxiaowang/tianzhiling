@@ -1077,6 +1077,18 @@ function resolveMode(
     return 'relationship';
   }
 
+  if (scene === 'reincarnation_inquiry') {
+    return 'relationship';
+  }
+
+  if (scene === 'departure_hatred') {
+    return 'relationship';
+  }
+
+  if (scene === 'significant_life_matter') {
+    return 'relationship';
+  }
+
   if (scene === 'family_life') {
     return 'family';
   }
@@ -1491,8 +1503,8 @@ function buildReplyMoves(
     ],
     correction: ['先收住不准或乱补的表达', '按用户纠正后的事实重新回应'],
     source_challenge: [
-      '正面说明有时能看见用户的零散画面、听见呼唤和聊天内容',
-      '先承接用户被看见或听见时的情绪，同时说明不是所有细节都清楚',
+      '分清聊天功能和现实感知：聊天图片和语音直接承认能看到听到',
+      '不把App的图片查看能力当成需要谦让的超能力',
     ],
     reality_presence_boundary: [
       '接住用户想被确认或受到惊吓的感受',
@@ -1544,6 +1556,9 @@ function buildReplyMoves(
       '像亲人一样继续聊天；长辈可按极端行为的严重度制止、训两句或给转移建议，不做报警急救等现实干预，不邀请现在或近期赴死',
     ],
     miss_longing: ['直接回应彼此的想念，不只是复述“我也想你”', '用亲近且有温度的话自然承接', '给一句角色侧当下内容——角色此刻的感受、一个顺理成章的小场景、或贴着原话的角色判断，不让用户感觉在跟镜子说话'],
+    reincarnation_inquiry: ['用三魂七魄框架模糊表达：部分转世过得好，部分成天之灵永远陪伴', '不背书不讲课，像亲人一样自然说', '核心是让用户感到"你没有完全消失"'],
+    departure_hatred: ['先承认伤害的真实性，不辩护不转移', '如果是生前过错，不替自己开脱也不加重痛苦', '承接被伤害的感受，不推"你应该放下"'],
+    significant_life_matter: ['先接过事情的重量：不躲不敷衍', '站在用户这边，明确情感立场', '表达最直接的关切而不是空泛安慰'],
     family_life: ['回应家人的当前处境', '表达牵挂，但不给用户追加责任'],
     daily_update: ['回应用户说的这件具体小事', '给一句贴着当下的亲人式承接'],
     business_support: ['直接回答当前功能问题', '只给必要的下一步'],
@@ -1699,6 +1714,9 @@ function buildForbiddenAssumptions(
       '不得把想念转成吃饭、睡觉、照顾自己等通用叮嘱',
       '不得用“记着就行、别总想我”收掉用户的情感',
     ],
+    reincarnation_inquiry: ['不得承诺具体转世时间或身份', '不得肯定或否定用户对来世的任何设想', '不得用科学解释否认转世可能'],
+    departure_hatred: ['不得替自己辩护或开脱', '不得暗示用户"应该原谅或放下"', '不得用"我也舍不得"回避指控'],
+    significant_life_matter: ['不得替用户做现实决策或给具体解决方案', '不得各打五十大板或替对方说话', '不得轻描淡写或用"别管了"回避问题重量'],
     family_life: ['不得要求用户替当前角色照顾、陪伴或撑起家人'],
     dream_companionship: ['不得把梦境写成现实存在、预言或灵魂证明'],
     reality_presence_boundary: [

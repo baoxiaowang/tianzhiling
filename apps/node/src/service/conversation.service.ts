@@ -2866,7 +2866,7 @@ export class ConversationService {
       );
       replyClaims = parsedReply.claims;
       replySegments = this.normalizeAssistantReplySegments(
-        plannedSegments,
+        this.splitLongContentOnReplyBubble(plannedSegments),
         before.searchableText
       );
     } catch (initialError) {
@@ -2957,7 +2957,7 @@ export class ConversationService {
         );
         replyClaims = parsedReply.claims;
         replySegments = this.normalizeAssistantReplySegments(
-          plannedSegments,
+          this.splitLongContentOnReplyBubble(plannedSegments),
           before.searchableText
         );
         generationRecoverySucceeded = true;
@@ -3868,6 +3868,43 @@ export class ConversationService {
         !options.claims.length)
       ? 'full'
       : 'deterministic_first';
+  }
+
+  /**
+   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立句子时，
+   * 在句号/感叹号/问号处拆成两颗，保留后续参与泡。
+   * 不新增模型调用，纯工程判断。
+   */
+  private splitLongContentOnReplyBubble(segments: string[]): string[] {
+    if (segments.length !== 2) return segments;
+    const content = segments[0];
+    const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
+    if (visibleChars <= 35) return segments;
+
+    // 找独立句断点：按 。！？ 分割，每段至少 8 字
+    const sentences = content.split(/(?<=[。！？])/u);
+    if (sentences.length < 2) return segments;
+
+    // 从后往前找切点，确保前半段 ≥ 8 字且后半段 ≥ 8 字
+    let splitAt = -1;
+    let accumulated = 0;
+    for (let i = 0; i < sentences.length - 1; i++) {
+      accumulated += Array.from(sentences[i].replace(/\s/gu, '')).length;
+      const remaining = visibleChars - accumulated;
+      if (accumulated >= 8 && remaining >= 8) {
+        splitAt = i;
+        break;
+      }
+    }
+
+    if (splitAt === -1) return segments;
+
+    const first = sentences.slice(0, splitAt + 1).join('').trim();
+    const second = sentences.slice(splitAt + 1).join('').trim();
+
+    if (!first || !second) return segments;
+
+    return [first, second, segments[1]];
   }
 
   private async afterReply(

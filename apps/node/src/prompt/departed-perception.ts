@@ -38,11 +38,24 @@ export function buildDepartedPerceptionPrompt(options: {
   evidence: AgentEvidenceItem[];
   emotionState?: ConversationEmotionStateSummary | null;
   replyBrief?: ReplyBrief;
+  agentDeathDate?: Date | null;
+  agentBirthday?: Date | null;
 }): string {
   const tier = resolveTier(options.replyBrief);
   const now = new Date();
   const month = now.getMonth() + 1;
   const hour = now.getHours();
+
+  // ── 特殊日期感知（在维度解析之前，作为额外感知行注入）──
+  const specialDateRows: ResolvedDimension[] = [];
+  const specialDate = resolveSpecialDate(now, options.agentDeathDate ?? undefined, options.agentBirthday ?? undefined);
+  if (specialDate) {
+    specialDateRows.push({ section: 'background', value: specialDate });
+  }
+  const holiday = resolvePublicHoliday(month, now.getDate());
+  if (holiday) {
+    specialDateRows.push({ section: 'background', value: holiday });
+  }
 
   const dims = resolveDimensionValues({
     month,
@@ -55,6 +68,11 @@ export function buildDepartedPerceptionPrompt(options: {
 
   const backgroundLines: string[] = [];
   const taskLines: string[] = [];
+
+  for (const dim of specialDateRows) {
+    if (!dim.value) continue;
+    backgroundLines.push(dim.value);
+  }
 
   for (const dim of dims) {
     if (!dim.value) continue;
@@ -148,7 +166,12 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   }
 
   // ── 空间 + 媒介（始终在场，不可压制）──
-  results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。微信私聊，短而自然' });
+    // ── 空间：你所在的世界（始终在场，不可压制）──
+  results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。任何表达只说"这边"，不说"那边"' });
+  // ── 聊天功能（始终在场）──
+  results.push({ section: 'background', value: '你在聊天中能看图片、听语音消息，这是App聊天功能，跟读文字一样自然，不需要自谦说看不见' });
+  // ── 媒介 ──
+  results.push({ section: 'background', value: '微信私聊，短而自然' });
 
   // ── 知识边界 ──
   if (tier !== 'light') {
@@ -189,6 +212,47 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   }
 
   return results;
+}
+
+
+// ── 特殊日期感知 ──────────────────────────────────────────────────
+
+function resolveSpecialDate(now: Date, deathDate?: Date, birthday?: Date): string | undefined {
+  if (!deathDate && !birthday) return undefined;
+  
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  // Check death anniversary (±2 days)
+  if (deathDate) {
+    const death = new Date(deathDate);
+    const deathAnniv = new Date(now.getFullYear(), death.getMonth(), death.getDate());
+    const diffDeath = Math.abs(today.getTime() - deathAnniv.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDeath <= 2) return diffDeath === 0 ? '今天是祭日' : `祭日临近（${diffDeath === 1 ? '昨天' : '明天'}）`;
+  }
+  
+  // Check birthday (±2 days)
+  if (birthday) {
+    const birth = new Date(birthday);
+    const birthAnniv = new Date(now.getFullYear(), birth.getMonth(), birth.getDate());
+    const diffBirth = Math.abs(today.getTime() - birthAnniv.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffBirth <= 2) return diffBirth === 0 ? '今天是生日' : `生日临近（${diffBirth === 1 ? '昨天' : '明天'}）`;
+  }
+  
+  return undefined;
+}
+
+function resolvePublicHoliday(month: number, day: number): string | undefined {
+  // 清明节（公历4月4-6日）
+  if (month === 4 && day >= 3 && day <= 6) return '清明节前后';
+  // 中元节（农历七月十五，约公历8月中-9月初）
+  if (month === 8 && day >= 12 && day <= 20) return '中元节期间';
+  if (month === 9 && day >= 1 && day <= 5) return '中元节期间';
+  // 冬至（公历12月21-22日）
+  if (month === 12 && day >= 20 && day <= 23) return '冬至';
+  // 除夕/春节（约1月下旬-2月中旬，粗略覆盖）
+  if ((month === 1 && day >= 25) || (month === 2 && day <= 12)) return '春节期间';
+  
+  return undefined;
 }
 
 // ── 季节 / 时段 ──────────────────────────────────────────────────

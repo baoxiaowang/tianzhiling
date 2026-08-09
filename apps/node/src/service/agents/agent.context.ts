@@ -821,7 +821,8 @@ export class AgentContextService {
     const perceptionPrompt = this.buildPerceptionPrompt(
       evidence,
       emotionState,
-      replyBrief
+      replyBrief,
+      options.agent
     );
     const systemPrompt = [
       basePrompt,
@@ -3022,12 +3023,15 @@ export class AgentContextService {
   private buildPerceptionPrompt(
     evidence: AgentEvidenceItem[],
     emotionState?: ConversationEmotionStateSummary | null,
-    replyBrief?: ReplyBrief
+    replyBrief?: ReplyBrief,
+    agent?: AgentEntity | null
   ): string {
     return buildDepartedPerceptionPrompt({
       evidence,
       emotionState,
       replyBrief,
+      agentDeathDate: agent?.deathDate ?? null,
+      agentBirthday: agent?.birthday ?? null,
     });
   }
 
