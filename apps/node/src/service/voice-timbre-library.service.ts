@@ -30,6 +30,7 @@ import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import type { AuthenticatedUserPayload } from '../interface';
+import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
@@ -43,11 +44,15 @@ export const VOICE_TIMBRE_RETENTION_QUEUE = 'voice-timbre-retention';
 export const VOICE_TIMBRE_RETENTION_JOB_ID =
   'voice-timbre-retention-daily';
 export const VOICE_TIMBRE_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const VOICE_TIMBRE_CLEANUP_QUEUE = 'voice-timbre-cleanup';
+export const VOICE_TIMBRE_CLEANUP_JOB_ID = 'voice-timbre-cleanup-daily';
 
 const ONE_DAY_MS = VOICE_TIMBRE_RETENTION_INTERVAL_MS;
 const PROVIDER_INACTIVE_CLEANUP_DAYS = 365;
 const RETENTION_BEFORE_DAYS = 30;
 const RETENTION_BATCH_SIZE = 25;
+const UNUSED_CLEANUP_AFTER_DAYS = 7;
+const UNUSED_CLEANUP_BATCH_SIZE = 25;
 const RETENTION_PROBE_TEXT = '我在这里。';
 const OFFICIAL_RULE_URL =
   'https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide';
@@ -85,6 +90,9 @@ export class VoiceTimbreLibraryService {
 
   @Inject()
   voiceServiceDataDeletionService: VoiceServiceDataDeletionService;
+
+  @Inject()
+  qwenVoiceEnrollmentService: QwenVoiceEnrollmentService;
 
   @Inject()
   qwenVoiceSpeechService: QwenVoiceSpeechService;
@@ -424,6 +432,113 @@ export class VoiceTimbreLibraryService {
     timbre.retentionFailureReason = '';
     timbre.updatedAt = usedAt;
     await this.voiceTimbreModel.save(timbre);
+  }
+
+  async processUnusedCleanup(): Promise<VoiceTimbreRetentionJobResult> {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - UNUSED_CLEANUP_AFTER_DAYS * ONE_DAY_MS);
+
+    // 找到所有活跃的 Qwen 用户音色，创建时间超过 7 天
+    const candidates = (
+      await this.voiceTimbreModel.find({
+        where: {
+          provider: VoiceTimbreProvider.qwen,
+          status: VoiceTimbreStatus.active,
+        },
+      })
+    )
+      .filter(timbre => this.isUserTimbre(timbre))
+      .filter(timbre => timbre.deletionStatus !== 'completed')
+      .filter(timbre => {
+        const created = this.dateOf(timbre.createdAt);
+        return created.getTime() <= cutoff.getTime();
+      })
+      .slice(0, UNUSED_CLEANUP_BATCH_SIZE);
+
+    if (candidates.length === 0) {
+      this.logger.info('[voice-timbre-cleanup] no candidates to check');
+      return { checkedCount: 0, protectedCount: 0, failedCount: 0 };
+    }
+
+    // 预先查出所有引用了这些音色的智能体
+    const timbreIds = candidates.map(t => this.idOf(t));
+    const timbreObjectIds = timbreIds.map(id => this.parseObjectId(id, 'VOICE_TIMBRE_CLEANUP'));
+    const referencingAgents = await this.agentModel.find({
+      $or: [
+        { voiceTimbreId: { $in: timbreObjectIds } },
+        { pendingVoiceTimbreId: { $in: timbreObjectIds } },
+      ],
+    } as never);
+    const referencedTimbreIds = new Set<string>();
+    for (const agent of referencingAgents) {
+      if (agent.voiceTimbreId) referencedTimbreIds.add(this.idOf(agent.voiceTimbreId));
+      if (agent.pendingVoiceTimbreId) referencedTimbreIds.add(this.idOf(agent.pendingVoiceTimbreId));
+    }
+
+    let deletedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const timbre of candidates) {
+      const tid = this.idOf(timbre);
+
+      // 如果有智能体关联，跳过
+      if (referencedTimbreIds.has(tid)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      // 从 Qwen 提供商删除
+      try {
+        if (timbre.providerVoiceId && !timbre.providerVoiceId.startsWith('pending_')) {
+          await this.qwenVoiceEnrollmentService.deleteVoice(timbre.providerVoiceId);
+          this.logger.info(
+            '[voice-timbre-cleanup] deleted from provider, timbreId=%s, providerVoiceId=%s',
+            tid,
+            timbre.providerVoiceId
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          '[voice-timbre-cleanup] provider delete failed, timbreId=%s, reason=%s',
+          tid,
+          error instanceof Error ? error.message : String(error)
+        );
+        // 即使提供商删除失败，也继续标记为已清理（可能已被阿里那边回收了）
+      }
+
+      // 标记为 disabled
+      timbre.status = VoiceTimbreStatus.disabled;
+      timbre.errorCode = 'VOICE_TIMBRE_UNUSED_CLEANUP';
+      timbre.errorMessage = '音色超过 7 天未关联天之灵，已自动清理';
+      timbre.retentionStatus = 'attention_required';
+      timbre.updatedAt = now;
+      try {
+        await this.voiceTimbreModel.save(timbre);
+        deletedCount += 1;
+      } catch (error) {
+        this.logger.error(
+          '[voice-timbre-cleanup] save failed, timbreId=%s, reason=%s',
+          tid,
+          error instanceof Error ? error.message : String(error)
+        );
+        failedCount += 1;
+      }
+    }
+
+    this.logger.info(
+      '[voice-timbre-cleanup] completed, candidates=%s, deleted=%s, skipped=%s, failed=%s',
+      candidates.length,
+      deletedCount,
+      skippedCount,
+      failedCount
+    );
+
+    return {
+      checkedCount: candidates.length,
+      protectedCount: skippedCount,
+      failedCount,
+    };
   }
 
   async processRetentionMaintenance(): Promise<VoiceTimbreRetentionJobResult> {

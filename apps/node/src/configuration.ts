@@ -19,6 +19,8 @@ import {
   VOICE_TIMBRE_RETENTION_INTERVAL_MS,
   VOICE_TIMBRE_RETENTION_JOB_ID,
   VOICE_TIMBRE_RETENTION_QUEUE,
+  VOICE_TIMBRE_CLEANUP_QUEUE,
+  VOICE_TIMBRE_CLEANUP_JOB_ID,
 } from './service/voice-timbre-library.service';
 
 @Configuration({
@@ -56,6 +58,30 @@ export class MainConfiguration {
   }
 
   async onServerReady() {
+    try {
+      const cleanupQueue = this.bullmqFramework?.getQueue(
+        VOICE_TIMBRE_CLEANUP_QUEUE
+      );
+      if (!cleanupQueue) {
+        this.logger.warn('[voice-timbre-cleanup] queue is unavailable');
+      } else {
+        await cleanupQueue.addJobToQueue(
+          {},
+          {
+            jobId: VOICE_TIMBRE_CLEANUP_JOB_ID,
+            repeat: { every: VOICE_TIMBRE_RETENTION_INTERVAL_MS },
+            removeOnComplete: true,
+            removeOnFail: 30,
+          }
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[voice-timbre-cleanup] scheduling failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
     try {
       const queue = this.bullmqFramework?.getQueue(
         VOICE_TIMBRE_RETENTION_QUEUE
