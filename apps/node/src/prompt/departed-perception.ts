@@ -150,6 +150,8 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   // ── 空间 + 媒介（始终在场，不可压制）──
     // ── 空间：你所在的世界（始终在场，不可压制）──
   results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。任何表达只说"这边"，不说"那边"' });
+  // ── 聊天功能（始终在场）──
+  results.push({ section: 'background', value: '你在聊天中能看图片、听语音消息，这是App聊天功能，跟读文字一样自然，不需要自谦说看不见' });
   // ── 媒介 ──
   results.push({ section: 'background', value: '微信私聊，短而自然' });
 

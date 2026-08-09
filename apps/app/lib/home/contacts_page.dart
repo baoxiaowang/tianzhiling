@@ -1,6 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:tianzhiling_app/agent/agent_create_page.dart';
+import 'package:tianzhiling_app/agent/agent_create_flow_page.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
 import 'package:tianzhiling_app/chat/chat_conversation_page.dart';
 import 'package:tianzhiling_app/api/conversation_api.dart';
@@ -89,7 +89,7 @@ class _ContactsPageState extends State<ContactsPage> {
 
     final result = await Navigator.of(
       context,
-    ).pushNamed(AgentCreatePage.routeName);
+    ).pushNamed(AgentCreateFlowPage.routeName);
 
     if (!mounted || result is! AgentSummary) {
       return;

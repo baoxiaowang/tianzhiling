@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:tianzhiling_app/agent/messenger_header.dart';
 import 'package:flutter/material.dart';
 
 class FriendProfilePage extends StatelessWidget {
@@ -54,6 +55,10 @@ class FriendProfilePage extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              Padding(
+                                padding: EdgeInsets.fromLTRB(16 * scale, 12 * scale, 16 * scale, 0),
+                                child: MessengerHeader(name: '天之灵小使者', description: '这是你和TA共同的记忆'),
+                              ),
                               SizedBox(height: 16 * scale),
                               _SectionStrip(title: '基本信息', scale: scale),
                               _BasicInfoGroup(

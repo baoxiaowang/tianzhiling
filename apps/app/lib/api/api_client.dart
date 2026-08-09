@@ -49,6 +49,13 @@ class ApiClient {
     return request(path, method: 'PATCH', body: body);
   }
 
+  Future<Map<String, dynamic>> delete(
+    String path, {
+    Map<String, dynamic>? body,
+  }) {
+    return request(path, method: 'DELETE', body: body);
+  }
+
   Future<Map<String, dynamic>> request(
     String path, {
     String method = 'GET',
@@ -121,6 +128,8 @@ class ApiClient {
         if (error.error is TimeoutException) {
           return ApiException('请求超时，请稍后重试', details: errorDetails);
         }
+        return ApiException('请求失败，请稍后重试', details: errorDetails);
+      default:
         return ApiException('请求失败，请稍后重试', details: errorDetails);
     }
   }

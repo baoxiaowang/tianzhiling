@@ -1,6 +1,8 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:extended_image/extended_image.dart';
+import 'package:tianzhiling_app/api/api_config.dart';
 import 'package:tianzhiling_app/api/api_exception.dart';
 import 'package:tianzhiling_app/home/moment_post_components.dart';
 import 'package:tianzhiling_app/api/post_api.dart';
@@ -10,6 +12,7 @@ import 'package:tianzhiling_app/home/post_create_page.dart';
 import 'package:tianzhiling_app/home/post_detail_page.dart';
 import 'package:tianzhiling_app/models/post_models.dart';
 import 'package:tianzhiling_app/user/app_avatar.dart';
+import 'package:tianzhiling_app/vip/vip_center_page.dart';
 
 class MomentsPage extends StatefulWidget {
   const MomentsPage({super.key});
@@ -145,7 +148,7 @@ class _MomentsPageState extends State<MomentsPage> {
                   padding: const EdgeInsets.only(bottom: 128),
                   children: [
                     const _MomentsBanner(),
-                    const _BannerIndicator(),
+                    const SizedBox(height: 12),
                     ValueListenableBuilder<PostCommentNotificationSummary?>(
                       valueListenable: PostCommentNotificationCenter
                           .instance
@@ -197,143 +200,66 @@ class _MomentsPageState extends State<MomentsPage> {
 class _MomentsBanner extends StatelessWidget {
   const _MomentsBanner();
 
+  static const String _bannerPath = '/weapp/post-banner-vip.png';
+
+  String get _imageUrl => '${ApiConfig.mediaBaseUrl}$_bannerPath';
+
+  void _openVipCenter(BuildContext context) {
+    Navigator.of(context).pushNamed(VipCenterPage.routeName);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 216,
-      color: Colors.black,
-      child: Stack(
-        children: [
-          const Positioned(left: 42, top: 22, child: _GlowStar()),
-          const Positioned(left: 40, top: 48, child: _BannerDust()),
-          const Positioned(right: 86, top: 66, child: _BannerDust(size: 4)),
-          const Positioned(right: 132, bottom: 74, child: _BannerDust(size: 3)),
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 120, 24, 40),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Text(
-                        '快速了解天之灵AI',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          height: 28 / 20,
-                          fontWeight: FontWeight.w700,
+    return GestureDetector(
+      onTap: () => _openVipCenter(context),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 220,
+        width: double.infinity,
+        color: const Color(0xFFF8FAFC),
+        child: ExtendedImage.network(
+          _imageUrl,
+          fit: BoxFit.cover,
+          cache: true,
+          loadStateChanged: (state) {
+            if (state.extendedImageLoadState == LoadState.failed) {
+              return Container(
+                height: 220,
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Text(
+                          '开通VIP，解锁更多权益',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      SizedBox(width: 8),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        color: Colors.white,
-                        size: 22,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '和另一片星空的人，首视频互动',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      height: 20 / 14,
-                      fontWeight: FontWeight.w400,
+                        SizedBox(width: 6),
+                        Icon(Icons.chevron_right_rounded,
+                            color: Colors.white, size: 22),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GlowStar extends StatelessWidget {
-  const _GlowStar();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 72,
-      height: 72,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(
-            width: 70,
-            height: 70,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x99FFDF20),
-                  blurRadius: 28,
-                  spreadRadius: 4,
+                    const SizedBox(height: 8),
+                    const Text(
+                      '无限畅聊 · AI照片 · 聊天导入',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const Icon(Icons.star_rounded, size: 60, color: Color(0xFFFFDF20)),
-        ],
+              );
+            }
+            return null;
+          },
+        ),
       ),
-    );
-  }
-}
-
-class _BannerDust extends StatelessWidget {
-  const _BannerDust({this.size = 3});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: const BoxDecoration(
-        color: Colors.white24,
-        shape: BoxShape.circle,
-      ),
-    );
-  }
-}
-
-class _BannerIndicator extends StatelessWidget {
-  const _BannerIndicator();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(top: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _IndicatorDot(color: Color(0xFF155DFC)),
-          SizedBox(width: 8),
-          _IndicatorDot(color: Color(0xFFD1D5DC)),
-        ],
-      ),
-    );
-  }
-}
-
-class _IndicatorDot extends StatelessWidget {
-  const _IndicatorDot({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
