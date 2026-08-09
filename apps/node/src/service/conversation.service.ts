@@ -6402,8 +6402,11 @@ export class ConversationService {
           payload.mediaAnalysis,
           payload.content
         );
-      case MessageType.voice:
-        return payload.mediaTranscript?.trim() || '';
+      case MessageType.voice: {
+        const transcript = payload.mediaTranscript?.trim();
+        if (!transcript) return '';
+        return `语音：${transcript}`;
+      }
       case MessageType.text:
       default:
         return payload.content?.trim() || '';
