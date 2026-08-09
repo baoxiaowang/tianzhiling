@@ -170,10 +170,17 @@ export class QwenVoiceSpeechService {
     const raw = response.body.toString('utf8');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      const providerError = this.parseJsonRecord(raw);
       throw new AppError(
-        'QWEN_HTTP_ERROR',
-        raw || `Qwen http status ${response.statusCode}`,
-        502
+        this.readText(providerError?.code) || 'QWEN_HTTP_ERROR',
+        this.readText(providerError?.message) ||
+          raw ||
+          `Qwen http status ${response.statusCode}`,
+        502,
+        {
+          ...(providerError ?? {}),
+          httpStatus: response.statusCode,
+        }
       );
     }
 
@@ -237,6 +244,21 @@ export class QwenVoiceSpeechService {
         'audio/wav',
       requestId: requestId?.trim() || undefined,
     };
+  }
+
+  private parseJsonRecord(raw: string): Record<string, unknown> | undefined {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readText(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private async requestBinary(input: {
