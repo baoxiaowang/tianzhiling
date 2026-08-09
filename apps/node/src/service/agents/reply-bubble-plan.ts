@@ -1,4 +1,4 @@
-export const MAX_ASSISTANT_REPLY_SEGMENTS = 2;
+export const MAX_ASSISTANT_REPLY_SEGMENTS = 3;
 
 export type ReplyBubbleComplexityHint = 'concise' | 'paired' | 'layered';
 
@@ -57,7 +57,7 @@ export function buildReplyBubblePlan(options: {
     : 'concise';
 
   return {
-    maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
+    maxSegments: 2, // 模型输出合同保持 2 泡；程序层可追加到 MAX(3)
     complexityHint,
     turnClosure,
     ...(options.preferTwoSegments && allowsTwoSegmentPreference

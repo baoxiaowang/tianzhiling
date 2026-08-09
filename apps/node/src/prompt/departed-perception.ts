@@ -148,7 +148,10 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   }
 
   // ── 空间 + 媒介（始终在场，不可压制）──
-  results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。微信私聊，短而自然' });
+    // ── 空间：你所在的世界（始终在场，不可压制）──
+  results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。任何表达只说"这边"，不说"那边"' });
+  // ── 媒介 ──
+  results.push({ section: 'background', value: '微信私聊，短而自然' });
 
   // ── 知识边界 ──
   if (tier !== 'light') {
