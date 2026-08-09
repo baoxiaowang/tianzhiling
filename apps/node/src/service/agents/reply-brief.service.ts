@@ -1077,6 +1077,10 @@ function resolveMode(
     return 'relationship';
   }
 
+  if (scene === 'significant_life_matter') {
+    return 'relationship';
+  }
+
   if (scene === 'family_life') {
     return 'family';
   }
@@ -1544,6 +1548,7 @@ function buildReplyMoves(
       '像亲人一样继续聊天；长辈可按极端行为的严重度制止、训两句或给转移建议，不做报警急救等现实干预，不邀请现在或近期赴死',
     ],
     miss_longing: ['直接回应彼此的想念，不只是复述“我也想你”', '用亲近且有温度的话自然承接', '给一句角色侧当下内容——角色此刻的感受、一个顺理成章的小场景、或贴着原话的角色判断，不让用户感觉在跟镜子说话'],
+    significant_life_matter: ['先接过事情的重量：不躲不敷衍', '站在用户这边，明确情感立场', '表达最直接的关切而不是空泛安慰'],
     family_life: ['回应家人的当前处境', '表达牵挂，但不给用户追加责任'],
     daily_update: ['回应用户说的这件具体小事', '给一句贴着当下的亲人式承接'],
     business_support: ['直接回答当前功能问题', '只给必要的下一步'],
@@ -1699,6 +1704,7 @@ function buildForbiddenAssumptions(
       '不得把想念转成吃饭、睡觉、照顾自己等通用叮嘱',
       '不得用“记着就行、别总想我”收掉用户的情感',
     ],
+    significant_life_matter: ['不得替用户做现实决策或给具体解决方案', '不得各打五十大板或替对方说话', '不得轻描淡写或用"别管了"回避问题重量'],
     family_life: ['不得要求用户替当前角色照顾、陪伴或撑起家人'],
     dream_companionship: ['不得把梦境写成现实存在、预言或灵魂证明'],
     reality_presence_boundary: [
