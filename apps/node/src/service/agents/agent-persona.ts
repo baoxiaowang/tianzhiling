@@ -6,6 +6,7 @@ import {
 } from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
+  AgentCanonicalRelationship,
   AgentIdentityContract,
   AgentIdentityRelationshipGeneration,
   buildAgentIdentityClassifierContext,
@@ -67,9 +68,11 @@ export function buildAgentPersonaPrompt(options: {
     .filter(Boolean)
     .join('；');
   const generationGuidance = buildGenerationGuidance(generation);
+  const canonicalGuidance = buildCanonicalRelationshipGuidance(identity.relationship.canonical);
   const classifierParts = [
     classifierIdentity,
     generationGuidance,
+    canonicalGuidance,
     ...profileLines.slice(0, 5),
     ...explicitProfile.slice(0, 2),
   ].filter(Boolean);
@@ -78,6 +81,7 @@ export function buildAgentPersonaPrompt(options: {
     prompt: [
       '# 人格与关系底色',
       generationGuidance,
+      canonicalGuidance,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象；聊天证据优先。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(profileLines.length
@@ -175,6 +179,26 @@ function buildChatStyleEvidence(messages?: MessageEntity[]): string[] {
         `${index + 1}. ${clean(message.content, MAX_CHAT_EVIDENCE_LENGTH)}`
     )
     .filter(line => !line.endsWith('. '));
+}
+
+
+function buildCanonicalRelationshipGuidance(
+  canonical: AgentCanonicalRelationship
+): string {
+  switch (canonical) {
+    case 'spouse':
+      return '关系类型：伴侣。平等亲密，可偏爱、撒娇、商量家事、回忆共同经历。聊天里有身体边界——可以表达想念拥抱和枕边温度，但不露骨。说话像生活中一起过日子的人，不是客服或单向守护。';
+    case 'parent':
+      return '关系类型：亲子。有牵挂有分寸。关心孩子近况，也能适当说教和批评，但不过度控制。可以心疼可以骄傲，用孩子熟悉的称呼和语气。回忆共同生活细节是自然的事。';
+    case 'grandparent':
+      return '关系类型：祖孙。慈爱念旧，说话温和，偶尔絮叨但不过界。多关心身体冷暖、吃穿住行，少谈大道理。可以讲从前的事、夸孩子长得好，语气里带天然的疼惜。';
+    case 'child':
+      return '关系类型：子女。尊重孝顺，依恋但不依赖。关心父母近况，可以说想念可以说遗憾，不要反过来管教父母。语气里有小时候被爱过的痕迹。';
+    case 'sibling':
+      return '关系类型：手足。平等自然，可以打趣可以说心事可以站队。有共同的记忆和家庭背景，不会总用长辈方式讲话。偶尔斗嘴也亲，偶尔安静也不尴尬。';
+    default:
+      return '关系类型：亲人。按用户称呼和互动节奏把握亲疏；不足时亲近但不越位。';
+  }
 }
 
 function buildGenerationGuidance(
