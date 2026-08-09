@@ -4,14 +4,11 @@ export function extractTranscriptionContent(content: unknown): string {
   }
 
   if (Array.isArray(content)) {
-    const parts = content as Array<{ text?: unknown }>;
-
-    return parts
+    return (content as Array<{ text?: unknown }>)
       .map(item => {
         if (!item || typeof item !== 'object') {
           return '';
         }
-
         const text = (item as { text?: unknown }).text;
         return typeof text === 'string' ? text.trim() : '';
       })

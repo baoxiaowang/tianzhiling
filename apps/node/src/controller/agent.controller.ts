@@ -11,10 +11,16 @@ import {
 import { Context } from '@midwayjs/koa';
 import { AppError } from '../common/errors';
 import {
+  AcceptAgentShareInviteDTO,
+  AgentShareQRCodeDTO,
+  AgentCreateGuideDTO,
+  AgentProfileMessengerSpeechDTO,
+  AgentProfileInterviewDTO,
   CreateAgentDTO,
   UpdateAgentAvatarDTO,
   UpdateAgentDefaultDTO,
   UpdateAgentProfileDTO,
+  UpdateAgentShareContextDTO,
 } from '../dto/agent.dto';
 import { AuthenticatedUserPayload } from '../interface';
 import { AgentService } from '../service/agent.service';
@@ -34,9 +40,102 @@ export class AgentController {
     };
   }
 
+  @Get('/accessible')
+  async listAccessibleAgents() {
+    return {
+      items: await this.agentService.listAccessibleAgents(this.requireAuth()),
+    };
+  }
+
+  @Post('/create-interview')
+  async interviewAgentCreation(@Body() body: AgentCreateGuideDTO) {
+    return this.agentService.interviewAgentCreation(this.requireAuth(), body);
+  }
+
+  @Post('/create-messenger-speech')
+  async createAgentCreationMessengerSpeech(
+    @Body() body: AgentProfileMessengerSpeechDTO
+  ) {
+    return this.agentService.createAgentCreationMessengerSpeech(
+      this.requireAuth(),
+      body
+    );
+  }
+
+  @Post('/share-invites/accept')
+  async acceptAgentShareInvite(@Body() body: AcceptAgentShareInviteDTO) {
+    return this.agentService.acceptAgentShareInvite(this.requireAuth(), body);
+  }
+
+  @Post('/share-invites/qrcode')
+  async createAgentShareQRCode(@Body() body: AgentShareQRCodeDTO) {
+    return this.agentService.createAgentShareQRCode(this.requireAuth(), body);
+  }
+
   @Get('/:agentId')
   async getAgentDetail(@Param('agentId') agentId: string) {
     return this.agentService.getAgentDetail(this.requireAuth(), agentId);
+  }
+
+  @Post('/:agentId/share-invites')
+  async createAgentShareInvite(@Param('agentId') agentId: string) {
+    return this.agentService.createAgentShareInvite(
+      this.requireAuth(),
+      agentId
+    );
+  }
+
+  @Patch('/:agentId/share-context')
+  async updateAgentShareContext(
+    @Param('agentId') agentId: string,
+    @Body() body: UpdateAgentShareContextDTO
+  ) {
+    return this.agentService.updateAgentShareContext(
+      this.requireAuth(),
+      agentId,
+      body
+    );
+  }
+
+  @Post('/:agentId/memory-profile')
+  async getAgentMemoryProfile(@Param('agentId') agentId: string) {
+    return this.agentService.getAgentMemoryProfile(this.requireAuth(), agentId);
+  }
+
+  @Post('/:agentId/profile-interview')
+  async interviewAgentProfile(
+    @Param('agentId') agentId: string,
+    @Body() body: AgentProfileInterviewDTO
+  ) {
+    return this.agentService.interviewAgentProfile(
+      this.requireAuth(),
+      agentId,
+      body
+    );
+  }
+
+  @Post('/:agentId/profile-messenger-speech')
+  async createAgentProfileMessengerSpeech(
+    @Param('agentId') agentId: string,
+    @Body() body: AgentProfileMessengerSpeechDTO
+  ) {
+    return this.agentService.createAgentProfileMessengerSpeech(
+      this.requireAuth(),
+      agentId,
+      body
+    );
+  }
+
+  @Post('/:agentId/guide-seen/:target')
+  async markAgentGuideSeen(
+    @Param('agentId') agentId: string,
+    @Param('target') target: string
+  ) {
+    return this.agentService.markAgentGuideSeen(
+      this.requireAuth(),
+      agentId,
+      target
+    );
   }
 
   @Patch('/:agentId')

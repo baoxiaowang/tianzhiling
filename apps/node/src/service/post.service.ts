@@ -53,6 +53,7 @@ export interface PostItem {
   authorAvatar: string;
   content: string;
   images: string[];
+  imageThumbnails: string[];
   remindAgentIds: string[];
   moderationStatus: PostModerationStatus;
   moderationReason: string;
@@ -181,10 +182,16 @@ interface PostLikeSummary {
   likedPostIds: Set<string>;
 }
 
+interface PostCommentPreviewSummary {
+  count: number;
+  items: PostCommentItem[];
+}
+
 interface ListPostsOptions {
   page?: number | string;
   pageSize?: number | string;
   mine?: boolean | string;
+  lightweight?: boolean | string;
   read?: boolean | string;
 }
 
@@ -243,6 +250,7 @@ export class PostService {
     const skip = (page - 1) * pageSize;
     const currentUserId = auth?.sub ? this.parseObjectId(auth.sub) : null;
     const onlyMine = this.normalizeBoolean(options.mine);
+    const lightweight = this.normalizeBoolean(options.lightweight);
 
     if (onlyMine && !currentUserId) {
       throw new AppError('UNAUTHORIZED', 'login required', 401);
@@ -262,39 +270,40 @@ export class PostService {
 
     const authorCache = new Map<string, UserEntity | null>();
     const agentCache = new Map<string, AgentEntity | null>();
-    const commentCountCache = new Map<string, number>();
-    const commentsCache = new Map<string, PostCommentItem[]>();
 
-    const items = await Promise.all(
-      pagePosts.map(async post => {
-        const userId = this.stringifyObjectId(post.userId);
-        const postId = this.stringifyObjectId(post.id);
-
-        if (!authorCache.has(userId)) {
-          const user = await this.findUserById(post.userId);
-          authorCache.set(userId, user);
-        }
-
-        if (!commentCountCache.has(postId)) {
-          const comments = await this.listCommentItemsByPostId(
-            post.id,
-            authorCache,
-            agentCache
-          );
-          commentsCache.set(postId, comments);
-          commentCountCache.set(postId, comments.length);
-        }
-
-        return this.buildPostItem(
-          post,
-          authorCache.get(userId) ?? null,
-          likeSummary.likeCountByPostId.get(postId) ?? 0,
-          likeSummary.likedPostIds.has(postId),
-          commentCountCache.get(postId) ?? 0,
-          commentsCache.get(postId) ?? []
-        );
-      })
+    await this.primeUserCache(
+      pagePosts.map(post => post.userId),
+      authorCache
     );
+
+    const postIds = pagePosts.map(post => post.id);
+    const commentPreviewsByPostId = lightweight
+      ? await this.listCommentPreviewSummariesByPostIds(
+          postIds,
+          authorCache,
+          agentCache,
+          2
+        )
+      : null;
+    const commentsByPostId = lightweight
+      ? null
+      : await this.listCommentItemsByPostIds(postIds, authorCache, agentCache);
+    const items = pagePosts.map(post => {
+      const userId = this.stringifyObjectId(post.userId);
+      const postId = this.stringifyObjectId(post.id);
+      const commentPreview = commentPreviewsByPostId?.get(postId);
+      const comments =
+        commentPreview?.items ?? commentsByPostId?.get(postId) ?? [];
+
+      return this.buildPostItem(
+        post,
+        authorCache.get(userId) ?? null,
+        likeSummary.likeCountByPostId.get(postId) ?? 0,
+        likeSummary.likedPostIds.has(postId),
+        commentPreview?.count ?? comments.length,
+        comments
+      );
+    });
 
     return {
       items,
@@ -1639,21 +1648,28 @@ export class PostService {
     const moderationStatus = this.normalizePostModerationStatus(
       post.moderationStatus
     );
+    const images = Array.isArray(post.images)
+      ? post.images
+          .filter(image => typeof image === 'string')
+          .map(image => this.postImageService.resolveForResponse(image))
+          .filter(Boolean)
+      : [];
 
     return {
       id: this.stringifyObjectId(post.id),
       userId: this.stringifyObjectId(post.userId),
-      authorName: user?.name?.trim() || '未了言用户',
+      authorName: user?.name?.trim() || '天之灵用户',
       authorAvatar: this.postImageService.resolveForResponse(
         user?.avatar?.trim() || ''
       ),
       content: post.content?.trim() || '',
-      images: Array.isArray(post.images)
-        ? post.images
-            .filter(image => typeof image === 'string')
-            .map(image => this.postImageService.resolveForResponse(image))
-            .filter(Boolean)
-        : [],
+      images,
+      imageThumbnails: images.map(image => {
+        const resolver = this.postImageService.resolveFeedThumbnailForResponse;
+        return typeof resolver === 'function'
+          ? resolver.call(this.postImageService, image)
+          : image;
+      }),
       remindAgentIds: Array.isArray(post.remindAgentIds)
         ? post.remindAgentIds
             .filter(agentId => typeof agentId === 'string')
@@ -1689,6 +1705,49 @@ export class PostService {
     }
 
     const postIds = posts.map(post => post.id);
+    const currentUserIdText = currentUserId
+      ? this.stringifyObjectId(currentUserId)
+      : '';
+
+    if (typeof this.likeModel.aggregate === 'function') {
+      const rows = await this.likeModel
+        .aggregate<{
+          _id: MongoObjectId;
+          userIds: MongoObjectId[];
+        }>([
+          {
+            $match: {
+              postId: { $in: postIds },
+            },
+          },
+          {
+            $group: {
+              _id: '$postId',
+              userIds: { $addToSet: '$userId' },
+            },
+          },
+        ])
+        .toArray();
+
+      for (const row of rows) {
+        const postId = this.stringifyObjectId(row._id);
+        const userIds = Array.isArray(row.userIds) ? row.userIds : [];
+        likeCountByPostId.set(postId, userIds.length);
+
+        if (
+          currentUserIdText &&
+          userIds.some(id => this.stringifyObjectId(id) === currentUserIdText)
+        ) {
+          likedPostIds.add(postId);
+        }
+      }
+
+      return {
+        likeCountByPostId,
+        likedPostIds,
+      };
+    }
+
     const likes = await this.likeModel.find({
       where: {
         postId: {
@@ -1696,9 +1755,6 @@ export class PostService {
         },
       } as never,
     });
-    const currentUserIdText = currentUserId
-      ? this.stringifyObjectId(currentUserId)
-      : '';
 
     for (const like of likes) {
       const postId = this.stringifyObjectId(like.postId);
@@ -1748,53 +1804,303 @@ export class PostService {
       },
     });
 
+    return this.buildCommentItems(comments, authorCache, agentCache);
+  }
+
+  private async listCommentItemsByPostIds(
+    postIds: MongoObjectId[],
+    authorCache: Map<string, UserEntity | null>,
+    agentCache: Map<string, AgentEntity | null>
+  ): Promise<Map<string, PostCommentItem[]>> {
+    const result = new Map<string, PostCommentItem[]>();
+
+    if (postIds.length === 0) {
+      return result;
+    }
+
+    const comments = await this.commentModel.find({
+      where: {
+        postId: {
+          $in: postIds,
+        },
+      } as never,
+      order: {
+        createdAt: 'ASC',
+      },
+    });
+    const items = await this.buildCommentItems(
+      comments,
+      authorCache,
+      agentCache
+    );
+
+    for (const item of items) {
+      const postComments = result.get(item.postId) ?? [];
+      postComments.push(item);
+      result.set(item.postId, postComments);
+    }
+
+    return result;
+  }
+
+  private async listCommentPreviewSummariesByPostIds(
+    postIds: MongoObjectId[],
+    authorCache: Map<string, UserEntity | null>,
+    agentCache: Map<string, AgentEntity | null>,
+    previewLimit: number
+  ): Promise<Map<string, PostCommentPreviewSummary>> {
+    const result = new Map<string, PostCommentPreviewSummary>();
+
+    if (postIds.length === 0) {
+      return result;
+    }
+
+    if (typeof this.commentModel.aggregate !== 'function') {
+      const comments = await this.commentModel.find({
+        where: {
+          postId: {
+            $in: postIds,
+          },
+        } as never,
+        order: {
+          createdAt: 'ASC',
+        },
+      });
+      const commentsByPostId = new Map<string, PostCommentEntity[]>();
+
+      for (const comment of comments) {
+        const postId = this.stringifyObjectId(comment.postId);
+        const postComments = commentsByPostId.get(postId) ?? [];
+        postComments.push(comment);
+        commentsByPostId.set(postId, postComments);
+      }
+
+      for (const [postId, postComments] of commentsByPostId.entries()) {
+        result.set(postId, {
+          count: postComments.length,
+          items: await this.buildCommentItems(
+            postComments.slice(0, previewLimit),
+            authorCache,
+            agentCache
+          ),
+        });
+      }
+
+      return result;
+    }
+
+    const rows = await this.commentModel
+      .aggregate<{
+        _id: MongoObjectId;
+        count: number;
+        comments: Array<PostCommentEntity & { _id?: MongoObjectId }>;
+      }>([
+        {
+          $match: {
+            postId: { $in: postIds },
+          },
+        },
+        {
+          $sort: {
+            createdAt: 1,
+          },
+        },
+        {
+          $group: {
+            _id: '$postId',
+            count: { $sum: 1 },
+            comments: { $push: '$$ROOT' },
+          },
+        },
+        {
+          $project: {
+            count: 1,
+            comments: { $slice: ['$comments', previewLimit] },
+          },
+        },
+      ])
+      .toArray();
+
+    for (const row of rows) {
+      const comments = row.comments.map(raw => {
+        const comment = Object.assign(new PostCommentEntity(), raw);
+        comment.id = raw.id ?? raw._id ?? comment.id;
+        return comment;
+      });
+      result.set(this.stringifyObjectId(row._id), {
+        count: row.count,
+        items: await this.buildCommentItems(comments, authorCache, agentCache),
+      });
+    }
+
+    return result;
+  }
+
+  private async buildCommentItems(
+    comments: PostCommentEntity[],
+    authorCache: Map<string, UserEntity | null>,
+    agentCache: Map<string, AgentEntity | null>
+  ): Promise<PostCommentItem[]> {
+    await Promise.all([
+      this.primeUserCache(
+        comments.reduce<MongoObjectId[]>((ids, comment) => {
+          if (comment.userId) ids.push(comment.userId);
+          if (comment.replyToUserId) ids.push(comment.replyToUserId);
+          return ids;
+        }, []),
+        authorCache
+      ),
+      this.primeAgentCache(
+        comments.reduce<MongoObjectId[]>((ids, comment) => {
+          if (comment.agentId) ids.push(comment.agentId);
+          if (comment.replyToAgentId) ids.push(comment.replyToAgentId);
+          return ids;
+        }, []),
+        agentCache
+      ),
+    ]);
+    const authorPromises = new Map<string, Promise<UserEntity | null>>();
+    const agentPromises = new Map<string, Promise<AgentEntity | null>>();
+    const loadUser = (id: MongoObjectId) => {
+      const key = this.stringifyObjectId(id);
+
+      if (authorCache.has(key)) {
+        return Promise.resolve(authorCache.get(key) ?? null);
+      }
+
+      const existing = authorPromises.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const promise = this.findUserById(id).then(user => {
+        authorCache.set(key, user);
+        return user;
+      });
+      authorPromises.set(key, promise);
+      return promise;
+    };
+    const loadAgent = (id: MongoObjectId) => {
+      const key = this.stringifyObjectId(id);
+
+      if (agentCache.has(key)) {
+        return Promise.resolve(agentCache.get(key) ?? null);
+      }
+
+      const existing = agentPromises.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const promise = this.findAgentById(id).then(agent => {
+        agentCache.set(key, agent);
+        return agent;
+      });
+      agentPromises.set(key, promise);
+      return promise;
+    };
+
     return Promise.all(
       comments.map(async comment => {
-        const userId = comment.userId
-          ? this.stringifyObjectId(comment.userId)
-          : '';
+        const user = comment.userId ? await loadUser(comment.userId) : null;
 
-        if (userId && !authorCache.has(userId)) {
-          const user = await this.findUserById(comment.userId);
-          authorCache.set(userId, user);
-        }
+        const agent = comment.agentId ? await loadAgent(comment.agentId) : null;
 
-        const agentId = comment.agentId
-          ? this.stringifyObjectId(comment.agentId)
-          : '';
+        const replyToUser = comment.replyToUserId
+          ? await loadUser(comment.replyToUserId)
+          : null;
 
-        if (agentId && !agentCache.has(agentId)) {
-          const agent = await this.findAgentById(comment.agentId);
-          agentCache.set(agentId, agent);
-        }
-
-        const replyToUserId = comment.replyToUserId
-          ? this.stringifyObjectId(comment.replyToUserId)
-          : '';
-
-        if (replyToUserId && !authorCache.has(replyToUserId)) {
-          const replyToUser = await this.findUserById(comment.replyToUserId!);
-          authorCache.set(replyToUserId, replyToUser);
-        }
-
-        const replyToAgentId = comment.replyToAgentId
-          ? this.stringifyObjectId(comment.replyToAgentId)
-          : '';
-
-        if (replyToAgentId && !agentCache.has(replyToAgentId)) {
-          const replyToAgent = await this.findAgentById(comment.replyToAgentId);
-          agentCache.set(replyToAgentId, replyToAgent);
-        }
+        const replyToAgent = comment.replyToAgentId
+          ? await loadAgent(comment.replyToAgentId)
+          : null;
 
         return this.buildCommentItem(
           comment,
-          userId ? authorCache.get(userId) ?? null : null,
-          replyToUserId ? authorCache.get(replyToUserId) ?? null : null,
-          agentId ? agentCache.get(agentId) ?? null : null,
-          replyToAgentId ? agentCache.get(replyToAgentId) ?? null : null
+          user,
+          replyToUser,
+          agent,
+          replyToAgent
         );
       })
     );
+  }
+
+  private async primeUserCache(
+    values: MongoObjectId[],
+    cache: Map<string, UserEntity | null>
+  ): Promise<void> {
+    const ids = this.uniqueObjectIds(values).filter(
+      id => !cache.has(this.stringifyObjectId(id))
+    );
+
+    if (ids.length === 0) {
+      return;
+    }
+
+    if (typeof this.userModel.find === 'function') {
+      const users = await this.userModel.find({
+        where: {
+          _id: { $in: ids },
+        } as never,
+      });
+
+      for (const user of users) {
+        cache.set(this.stringifyObjectId(user.id), user);
+      }
+    }
+
+    await Promise.all(
+      ids.map(async id => {
+        const key = this.stringifyObjectId(id);
+        if (!cache.has(key)) {
+          cache.set(key, await this.findUserById(id));
+        }
+      })
+    );
+  }
+
+  private async primeAgentCache(
+    values: MongoObjectId[],
+    cache: Map<string, AgentEntity | null>
+  ): Promise<void> {
+    const ids = this.uniqueObjectIds(values).filter(
+      id => !cache.has(this.stringifyObjectId(id))
+    );
+
+    if (ids.length === 0) {
+      return;
+    }
+
+    if (typeof this.agentModel.find === 'function') {
+      const agents = await this.agentModel.find({
+        where: {
+          _id: { $in: ids },
+        } as never,
+      });
+
+      for (const agent of agents) {
+        cache.set(this.stringifyObjectId(agent.id), agent);
+      }
+    }
+
+    await Promise.all(
+      ids.map(async id => {
+        const key = this.stringifyObjectId(id);
+        if (!cache.has(key)) {
+          cache.set(key, await this.findAgentById(id));
+        }
+      })
+    );
+  }
+
+  private uniqueObjectIds(values: MongoObjectId[]): MongoObjectId[] {
+    const ids = new Map<string, MongoObjectId>();
+
+    for (const value of values) {
+      ids.set(this.stringifyObjectId(value), value);
+    }
+
+    return [...ids.values()];
   }
 
   private buildCommentItem(
@@ -1813,7 +2119,7 @@ export class PostService {
           : PostCommentType.user,
       userId: comment.userId ? this.stringifyObjectId(comment.userId) : '',
       agentId: comment.agentId ? this.stringifyObjectId(comment.agentId) : '',
-      authorName: agent?.name?.trim() || user?.name?.trim() || '未了言用户',
+      authorName: agent?.name?.trim() || user?.name?.trim() || '天之灵用户',
       authorAvatar: this.postImageService.resolveForResponse(
         agent?.avatar?.trim() || user?.avatar?.trim() || ''
       ),
@@ -2851,7 +3157,7 @@ export class PostService {
         moment: {
           id: this.stringifyObjectId(post.id),
           userId: this.stringifyObjectId(post.userId),
-          authorName: user.name?.trim() || '未了言用户',
+          authorName: user.name?.trim() || '天之灵用户',
           content: post.content?.trim() || '',
           images: momentImages,
           createdAt: post.createdAt?.toISOString?.() ?? '',

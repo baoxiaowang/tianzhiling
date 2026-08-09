@@ -23,7 +23,13 @@ export class PostController {
 
   @Get('/')
   async listPosts(
-    @Query() query: { page?: string; pageSize?: string; mine?: string }
+    @Query()
+    query: {
+      page?: string;
+      pageSize?: string;
+      mine?: string;
+      lightweight?: string;
+    }
   ) {
     return this.postService.listPosts(
       this.ctx.state.auth as AuthenticatedUserPayload | undefined,

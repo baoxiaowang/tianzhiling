@@ -26,4 +26,10 @@ export class CreateVoicePackageOrderBodyDTO
 
   @Rule(RuleType.string().required())
   jsCode: string;
+
+  @Rule(RuleType.array().items(RuleType.string().max(1024)).max(12).optional())
+  materialObjectKeys?: string[];
+
+  @Rule(RuleType.number().min(0).max(3600).optional())
+  materialDurationSeconds?: number;
 }

@@ -79,3 +79,11 @@ export class UpdateUserPreferencesDTO {
   @Rule(RuleType.string().allow('').max(1000).optional())
   contactsCoverImage?: string;
 }
+
+export class CancelCurrentUserDTO {
+  @Rule(requiredStringRule.max(256))
+  jsCode: string;
+
+  @Rule(requiredStringRule.valid('确认注销'))
+  confirmation: string;
+}
