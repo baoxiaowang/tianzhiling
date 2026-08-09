@@ -1017,7 +1017,8 @@ const isChatQuotaExhaustedDialog = computed(
 const chatQuotaDialogContent = computed(() =>
   buildChatQuotaDialogContent(
     chatQuotaDialogType.value,
-    chatQuotaSnapshot.value
+    chatQuotaSnapshot.value,
+    agentName.value,
   )
 );
 const isVoiceGestureActive = computed(() => {
@@ -1850,7 +1851,8 @@ function handleChatQuotaDialogContinue() {
   reportChatQuotaDialogEvent(
     "continue",
     chatQuotaDialogType.value,
-    chatQuotaSnapshot.value
+    chatQuotaSnapshot.value,
+    agentName.value,
   );
   isChatQuotaDialogVisible.value = false;
 }
@@ -1859,7 +1861,8 @@ function handleChatQuotaDialogUpgrade() {
   reportChatQuotaDialogEvent(
     "upgrade",
     chatQuotaDialogType.value,
-    chatQuotaSnapshot.value
+    chatQuotaSnapshot.value,
+    agentName.value,
   );
   isChatQuotaDialogVisible.value = false;
 
@@ -1872,7 +1875,8 @@ function handleChatQuotaDialogDismiss() {
   reportChatQuotaDialogEvent(
     "dismiss",
     chatQuotaDialogType.value,
-    chatQuotaSnapshot.value
+    chatQuotaSnapshot.value,
+    agentName.value,
   );
 }
 

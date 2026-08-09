@@ -167,6 +167,22 @@ export interface ConversationChatBootstrapResult
   chatQuota?: ConversationChatQuotaSnapshot;
 }
 
+
+export interface ReplyQuotaTriggerDecision {
+  version: string;
+  path: 'active' | 'return_visit' | 'drift_protection';
+  triggered: boolean;
+  totalLifetimeMsgs: number;
+  todayMsgs: number;
+  sessionMsgCount: number;
+  matchedConditions: string[];
+  naturalCloseExempted: boolean;
+  returnVisitCount: number;
+  lastMessageGapDays: number;
+  warned: boolean;
+  blocked: boolean;
+}
+
 export interface ConversationChatQuotaSnapshot {
   isVip: boolean;
   policy?: string;
@@ -174,6 +190,7 @@ export interface ConversationChatQuotaSnapshot {
   usedCount?: number;
   remainingCount?: number;
   trialDays?: number;
+  triggerDecision?: ReplyQuotaTriggerDecision;
 }
 
 export type ConversationMessageFeedbackType =
@@ -1153,3 +1170,4 @@ export async function transcribeConversationVoice(
 
   return asString(data.transcript).trim();
 }
+
