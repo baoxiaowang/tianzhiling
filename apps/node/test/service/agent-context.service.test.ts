@@ -864,9 +864,9 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');
-    expect(context.evidence[0]).toEqual(
+    const userEvidence = context.evidence.find(e => e.id === 'U0');
+    expect(userEvidence).toEqual(
       expect.objectContaining({
-        id: 'U0',
         assertionPolicy: 'context_only',
       })
     );

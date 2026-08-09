@@ -145,7 +145,7 @@ export function buildAgentIdentityPrompt(
   const agent = {
     id: identity.agent.objectId,
     name: identity.agent.displayName,
-    ...(identity.agent.realName ? { realName: identity.agent.realName } : {}),
+    realName: identity.agent.realName || '未知',
     sex: identity.agent.sex,
     relationToUser: identity.relationship.label,
     userCallsAgent: identity.addresses.userCallsAgent,

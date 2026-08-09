@@ -2701,6 +2701,24 @@ export class AgentContextService {
       }
     }
 
+    // 注入角色名字证据：identity contract 中的 displayName 始终可确认
+    if (options.agent) {
+      const displayName = (options.agent.name || '').trim();
+      if (displayName) {
+        addEvidence({
+          id: 'E_IDENTITY',
+          source: 'system_action',
+          text: `角色名称为${displayName}`,
+          assertionPolicy: 'can_assert',
+          subjectRef: 'agent',
+          factKey: 'agent.identity.name',
+          useMode: 'uptake',
+          status: 'active',
+          confidence: 1,
+        });
+      }
+    }
+
     return selectAgentEvidence(evidence, {
       currentQuery,
       limit: 10,
