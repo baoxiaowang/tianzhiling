@@ -102,12 +102,14 @@ export class AdminAgentService {
       }),
     ]);
     const ownerMap = await this.getOwnerMapByAgents(agents);
+    const messageCountMap = await this.getMessageCountMap(agents);
 
     return {
       items: agents.map(agent =>
         this.buildAgentItem(
           agent,
-          ownerMap.get(this.stringifyObjectId(agent.createdUserId))
+          ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
+          messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
         )
       ),
       total,
@@ -119,10 +121,12 @@ export class AdminAgentService {
   async getAgentDetail(agentId: string): Promise<AdminAgentItem> {
     const agent = await this.getAgentById(agentId);
     const ownerMap = await this.getOwnerMapByAgents([agent]);
+    const messageCountMap = await this.getMessageCountMap([agent]);
 
     return this.buildAgentItem(
       agent,
-      ownerMap.get(this.stringifyObjectId(agent.createdUserId))
+      ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
+      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
     );
   }
 
@@ -340,10 +344,12 @@ export class AdminAgentService {
     }
 
     const ownerMap = await this.getOwnerMapByAgents([agent]);
+    const messageCountMap = await this.getMessageCountMap([agent]);
 
     return this.buildAgentItem(
       agent,
-      ownerMap.get(this.stringifyObjectId(agent.createdUserId))
+      ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
+      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
     );
   }
 
@@ -570,9 +576,51 @@ export class AdminAgentService {
     return agent;
   }
 
+  private async getMessageCountMap(
+    agents: AgentEntity[]
+  ): Promise<Map<string, number>> {
+    if (agents.length === 0) {
+      return new Map();
+    }
+
+    const agentIds = agents.map(agent => agent.id);
+    const conversations = await this.conversationModel.find({
+      where: { agentId: { $in: agentIds } as never } as never,
+    });
+
+    if (conversations.length === 0) {
+      return new Map();
+    }
+
+    const conversationIds = conversations.map(c => c.id);
+    const messages = await this.messageModel.find({
+      where: {
+        conversationId: { $in: conversationIds } as never,
+        role: MessageRole.user,
+      } as never,
+    });
+
+    // Map conversationId -> agentId
+    const convAgentMap = new Map<string, string>();
+    for (const c of conversations) {
+      convAgentMap.set(this.stringifyObjectId(c.id), this.stringifyObjectId(c.agentId));
+    }
+
+    const countMap = new Map<string, number>();
+    for (const m of messages) {
+      const agentId = convAgentMap.get(this.stringifyObjectId(m.conversationId));
+      if (agentId) {
+        countMap.set(agentId, (countMap.get(agentId) ?? 0) + 1);
+      }
+    }
+
+    return countMap;
+  }
+
   private buildAgentItem(
     agent: AgentEntity,
-    owner?: AdminAgentOwner | null
+    owner?: AdminAgentOwner | null,
+    conversationCount = 0
   ): AdminAgentItem {
     return {
       id: this.stringifyObjectId(agent.id),
@@ -601,6 +649,7 @@ export class AdminAgentService {
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
+      conversationCount,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };

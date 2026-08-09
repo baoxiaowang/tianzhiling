@@ -175,14 +175,13 @@
               <span v-else>-</span>
             </template>
           </a-table-column>
-          <a-table-column title="生日" data-index="birthday" :width="150">
+          <a-table-column
+            title="对话次数"
+            data-index="conversationCount"
+            :width="120"
+          >
             <template #cell="{ record }">
-              {{ formatDate(record.birthday, 'YYYY-MM-DD') }}
-            </template>
-          </a-table-column>
-          <a-table-column title="忌日" data-index="deathDate" :width="150">
-            <template #cell="{ record }">
-              {{ formatDate(record.deathDate, 'YYYY-MM-DD') }}
+              {{ record.conversationCount ?? 0 }}
             </template>
           </a-table-column>
           <a-table-column title="更新时间" data-index="updatedAt" :width="180">

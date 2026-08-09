@@ -379,6 +379,7 @@ export class AdminAppUserService {
         agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
       ),
       customContext: agent.customContext ?? '',
+      conversationCount: 0,
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       createdAt: this.formatDate(agent.createdAt),

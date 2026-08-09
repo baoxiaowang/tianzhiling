@@ -210,6 +210,7 @@ export interface AdminAgentRecordDTO extends AgentProfileDTO {
   createdUserId: string;
   createdUser: AdminAgentOwnerDTO | null;
   customContext: string;
+  conversationCount: number;
 }
 
 export interface AdminAgentListParamsDTO {
