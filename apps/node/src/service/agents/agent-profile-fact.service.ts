@@ -39,6 +39,16 @@ export interface AgentProfileFactSummary {
   sourceMessageId?: string;
   sourceText?: string;
   supportCount?: number;
+  conflictingValues?: string[];
+  updatedAt?: Date;
+}
+
+export interface RecordAgentUserCorrectionOptions {
+  message: MessageEntity;
+  subjectRef: string;
+  correctionKind: 'fact' | 'relationship' | 'memory' | 'persona';
+  rejectedFact: string;
+  replacementFact?: string;
 }
 
 interface ExtractProfileFactsOptions {
@@ -64,10 +74,68 @@ interface ListProfileFactsOptions {
   limit?: number;
 }
 
+export type AgentVisualIdentityTarget = 'agent' | 'user' | 'family' | 'unknown';
+
+export type AgentVisualIdentityConfidence = 'low' | 'medium' | 'high';
+
+export type AgentVisualAppearanceTraitKind =
+  | 'hair_color'
+  | 'hair_length'
+  | 'face_shape'
+  | 'eyewear'
+  | 'facial_hair'
+  | 'build'
+  | 'distinctive';
+
+export interface AgentVisualAppearanceTrait {
+  kind: AgentVisualAppearanceTraitKind;
+  value: string;
+}
+
+export interface AgentVisualAppearanceObservation {
+  personId: string;
+  identityTarget: AgentVisualIdentityTarget;
+  identityName?: string;
+  identityConfidence: AgentVisualIdentityConfidence;
+  traits: AgentVisualAppearanceTrait[];
+}
+
+interface UpsertVisualAppearanceOptions {
+  message: MessageEntity;
+  observations: AgentVisualAppearanceObservation[];
+}
+
+export interface UpsertHistoricalImportFactOptions {
+  userId: MongoObjectId;
+  agentId: MongoObjectId;
+  sourceMessageId?: MongoObjectId;
+  sourceMessageIds?: MongoObjectId[];
+  sourceText?: string;
+  type: AgentProfileFactType;
+  key: string;
+  value: string;
+  polarity?: AgentProfileFactPolarity;
+  priority?: number;
+  activate?: boolean;
+}
+
 interface ArchiveProfileFactsOptions {
   userId: MongoObjectId;
   agentId: MongoObjectId;
   requestText: string;
+}
+
+export type AgentProfileMemorySourceField =
+  | 'lifeExperience'
+  | 'personalityTraits'
+  | 'languageHabits'
+  | 'hobbies'
+  | 'sharedMemories';
+
+interface SyncAgentProfileMemorySourcesOptions {
+  userId: MongoObjectId;
+  agentId: MongoObjectId;
+  sources: Partial<Record<AgentProfileMemorySourceField, string>>;
 }
 
 interface UpsertProfileFactInput
@@ -75,6 +143,7 @@ interface UpsertProfileFactInput
   userId: MongoObjectId;
   agentId: MongoObjectId;
   sourceMessageId?: MongoObjectId;
+  sourceMessageIds?: MongoObjectId[];
   sourceFeedbackId?: MongoObjectId;
   sourceText?: string;
   trustedSource: boolean;
@@ -86,6 +155,56 @@ interface ExtractedProfileFact {
 }
 
 const DEFAULT_FACT_LIMIT = 32;
+const VISUAL_APPEARANCE_KEY_PREFIX = 'visual.appearance.';
+const VISUAL_APPEARANCE_TRAIT_KINDS = new Set<AgentVisualAppearanceTraitKind>([
+  'hair_color',
+  'hair_length',
+  'face_shape',
+  'eyewear',
+  'facial_hair',
+  'build',
+  'distinctive',
+]);
+export const AGENT_PROFILE_MEMORY_SOURCE_CONFIG: Record<
+  AgentProfileMemorySourceField,
+  {
+    type: AgentProfileFactType;
+    key: string;
+    valuePrefix: string;
+    priority: number;
+  }
+> = {
+  lifeExperience: {
+    type: AgentProfileFactType.memory,
+    key: 'profile_source.life_experience',
+    valuePrefix: '当前角色生平经历：',
+    priority: 3,
+  },
+  personalityTraits: {
+    type: AgentProfileFactType.style,
+    key: 'profile_source.personality_traits',
+    valuePrefix: '当前角色性格特点：',
+    priority: 3,
+  },
+  languageHabits: {
+    type: AgentProfileFactType.style,
+    key: 'profile_source.language_habits',
+    valuePrefix: '当前角色语言习惯：',
+    priority: 3,
+  },
+  hobbies: {
+    type: AgentProfileFactType.preference,
+    key: 'profile_source.hobbies',
+    valuePrefix: '当前角色兴趣爱好：',
+    priority: 2,
+  },
+  sharedMemories: {
+    type: AgentProfileFactType.memory,
+    key: 'profile_source.shared_memories',
+    valuePrefix: '用户与当前角色的共同记忆：',
+    priority: 3,
+  },
+};
 
 @Provide()
 export class AgentProfileFactService {
@@ -157,6 +276,78 @@ export class AgentProfileFactService {
     return extractedFacts.map(item => item.fact);
   }
 
+  async upsertFromHistoricalImport(
+    options: UpsertHistoricalImportFactOptions
+  ): Promise<AgentProfileFactEntity | null> {
+    const key = options.key?.trim().slice(0, 160);
+    const value = options.value?.trim().slice(0, 500);
+
+    if (!key || !value) {
+      return null;
+    }
+
+    return this.upsertFact({
+      userId: options.userId,
+      agentId: options.agentId,
+      sourceMessageId: options.sourceMessageId,
+      sourceMessageIds: options.sourceMessageIds,
+      sourceText: options.sourceText,
+      type: options.type,
+      key,
+      value,
+      polarity: options.polarity ?? AgentProfileFactPolarity.positive,
+      confidence: AgentProfileFactConfidence.extracted,
+      status: AgentProfileFactStatus.candidate,
+      priority: options.priority ?? 1,
+      trustedSource: options.activate === true,
+    });
+  }
+
+  async removeHistoricalSourceMessage(options: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    sourceMessageId: MongoObjectId;
+  }): Promise<number> {
+    const facts = await this.factModel.find({
+      where: {
+        userId: options.userId,
+        agentId: options.agentId,
+        key: { $regex: '^wechat_import\\.' },
+        $or: [
+          { sourceMessageId: options.sourceMessageId },
+          { sourceMessageIds: options.sourceMessageId },
+        ],
+      } as never,
+    });
+    const sourceId = this.stringifyObjectId(options.sourceMessageId);
+    const now = new Date();
+    let archivedCount = 0;
+
+    for (const fact of facts) {
+      const remaining = (fact.sourceMessageIds || [])
+        .filter(value => this.stringifyObjectId(value) !== sourceId)
+        .filter(
+          (value, index, values) =>
+            values.findIndex(
+              candidate =>
+                this.stringifyObjectId(candidate) ===
+                this.stringifyObjectId(value)
+            ) === index
+        );
+
+      fact.sourceMessageIds = remaining;
+      fact.sourceMessageId = remaining[0];
+      if (!remaining.length) {
+        fact.status = AgentProfileFactStatus.archived;
+        archivedCount += 1;
+      }
+      fact.updatedAt = now;
+      await this.factModel.save(fact);
+    }
+
+    return archivedCount;
+  }
+
   async listFactsForPrompt(
     options: ListProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
@@ -176,6 +367,78 @@ export class AgentProfileFactService {
     return facts
       .map(fact => this.buildSummary(fact))
       .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
+  }
+
+  async listVisualAppearanceMemories(
+    options: ListProfileFactsOptions
+  ): Promise<AgentProfileFactSummary[]> {
+    const facts = await this.factModel.find({
+      where: {
+        userId: options.userId,
+        agentId: options.agentId,
+        type: AgentProfileFactType.identity,
+        key: { $regex: '^visual\\.appearance\\.' },
+        status: {
+          $in: [
+            AgentProfileFactStatus.candidate,
+            AgentProfileFactStatus.active,
+          ],
+        },
+      } as never,
+      order: {
+        updatedAt: 'DESC',
+      },
+      take: this.normalizeLimit(options.limit ?? 16),
+    });
+
+    return facts
+      .sort(
+        (left, right) =>
+          Number(right.status === AgentProfileFactStatus.active) -
+          Number(left.status === AgentProfileFactStatus.active)
+      )
+      .map(fact => this.buildSummary(fact))
+      .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
+  }
+
+  async upsertVisualAppearanceObservations(
+    options: UpsertVisualAppearanceOptions
+  ): Promise<AgentProfileFactSummary[]> {
+    const facts: AgentProfileFactSummary[] = [];
+
+    for (const observation of options.observations.slice(0, 4)) {
+      const subject = this.resolveVisualAppearanceSubject(observation);
+
+      if (!subject) {
+        continue;
+      }
+
+      for (const trait of this.normalizeVisualAppearanceTraits(
+        observation.traits
+      )) {
+        const fact: AgentProfileFactSummary = {
+          type: AgentProfileFactType.identity,
+          key: `${VISUAL_APPEARANCE_KEY_PREFIX}${subject.key}.${trait.kind}`,
+          value: `${subject.label}的视觉形象：${trait.value}`,
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: AgentProfileFactConfidence.extracted,
+          priority: 1,
+          assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+        };
+
+        await this.upsertFact({
+          ...fact,
+          userId: options.message.userId,
+          agentId: options.message.agentId,
+          sourceMessageId: options.message.id,
+          sourceText: `图片人物${observation.personId}：${fact.value}`,
+          trustedSource: false,
+        });
+        facts.push(fact);
+      }
+    }
+
+    return facts;
   }
 
   async listSharedFamilyMemberNames(
@@ -202,6 +465,100 @@ export class AgentProfileFactService {
           .filter((name): name is string => Boolean(name))
       )
     );
+  }
+
+  async recordUserCorrection(
+    options: RecordAgentUserCorrectionOptions
+  ): Promise<AgentProfileFactSummary> {
+    const subjectRef = this.normalizeSourceText(options.subjectRef).slice(
+      0,
+      40
+    );
+    const rejectedFact = this.normalizeSourceText(options.rejectedFact).slice(
+      0,
+      160
+    );
+    const replacementFact = this.normalizeSourceText(
+      options.replacementFact || ''
+    ).slice(0, 160);
+    const now = new Date();
+    const fact: AgentProfileFactSummary = {
+      type: AgentProfileFactType.correction,
+      key: `correction.tool.${options.correctionKind}.${this.hashKey(
+        `${subjectRef}|${rejectedFact}`
+      )}`,
+      value: replacementFact
+        ? `用户纠正：${rejectedFact}不成立；替代事实：${replacementFact}`
+        : `用户纠正：${rejectedFact}不成立；替代事实未知`,
+      polarity: AgentProfileFactPolarity.negative,
+      confidence: AgentProfileFactConfidence.userCorrected,
+      priority: 3,
+      status: AgentProfileFactStatus.active,
+      assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+      sourceMessageId: this.stringifyObjectId(options.message.id),
+      sourceText: options.message.content?.trim().slice(0, 1000) || undefined,
+      supportCount: 1,
+      updatedAt: now,
+    };
+
+    await this.upsertFact({
+      ...fact,
+      userId: options.message.userId,
+      agentId: options.message.agentId,
+      sourceMessageId: options.message.id,
+      trustedSource: true,
+    });
+
+    return fact;
+  }
+
+  async syncAgentProfileMemorySources(
+    options: SyncAgentProfileMemorySourcesOptions
+  ): Promise<void> {
+    for (const field of Object.keys(
+      options.sources
+    ) as AgentProfileMemorySourceField[]) {
+      const config = AGENT_PROFILE_MEMORY_SOURCE_CONFIG[field];
+      const sourceText = this.normalizeSourceText(options.sources[field] || '');
+      const existing = await this.factModel.findOne({
+        where: {
+          userId: options.userId,
+          agentId: options.agentId,
+          key: config.key,
+        },
+      });
+
+      if (!sourceText) {
+        if (existing && existing.status !== AgentProfileFactStatus.archived) {
+          existing.status = AgentProfileFactStatus.archived;
+          existing.updatedAt = new Date();
+          await this.factModel.save(existing);
+        }
+        continue;
+      }
+
+      const value = `${config.valuePrefix}${sourceText}`;
+
+      if (
+        existing?.status === AgentProfileFactStatus.active &&
+        existing.value?.trim() === value
+      ) {
+        continue;
+      }
+
+      await this.upsertFact({
+        userId: options.userId,
+        agentId: options.agentId,
+        type: config.type,
+        key: config.key,
+        value,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: AgentProfileFactConfidence.confirmed,
+        priority: config.priority,
+        sourceText,
+        trustedSource: true,
+      });
+    }
   }
 
   async archiveMatchingFacts(
@@ -634,7 +991,9 @@ export class AgentProfileFactService {
     });
   }
 
-  private async upsertFact(input: UpsertProfileFactInput): Promise<void> {
+  private async upsertFact(
+    input: UpsertProfileFactInput
+  ): Promise<AgentProfileFactEntity> {
     const now = new Date();
     const existing = await this.factModel.findOne({
       where: {
@@ -648,7 +1007,8 @@ export class AgentProfileFactService {
     const sourceMessageIds = this.appendSourceMessageId(
       existing?.sourceMessageIds,
       existing?.sourceMessageId,
-      input.sourceMessageId
+      input.sourceMessageId,
+      input.sourceMessageIds
     );
     const nextSupportCount = sameValue
       ? Math.max(existing?.supportCount ?? 1, 1) + (existing ? 1 : 0)
@@ -668,7 +1028,7 @@ export class AgentProfileFactService {
           : AgentProfileFactStatus.conflicted;
       fact.updatedAt = now;
       await this.factModel.save(fact);
-      return;
+      return fact;
     }
 
     fact.userId = input.userId;
@@ -687,7 +1047,9 @@ export class AgentProfileFactService {
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
     fact.supportCount = nextSupportCount;
-    fact.assertionPolicy = this.resolveAssertionPolicy(input.type);
+    fact.assertionPolicy =
+      input.assertionPolicy ??
+      this.resolveAssertionPolicy(input.type, input.key);
     fact.conflictingValues =
       existing && !sameValue
         ? this.appendConflictingValue(
@@ -698,17 +1060,23 @@ export class AgentProfileFactService {
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
-    await this.factModel.save(fact);
+    return this.factModel.save(fact);
   }
 
   private appendSourceMessageId(
     values: MongoObjectId[] | undefined,
     legacyValue?: MongoObjectId,
-    nextValue?: MongoObjectId
+    nextValue?: MongoObjectId,
+    nextValues: MongoObjectId[] = []
   ): MongoObjectId[] {
     const byId = new Map<string, MongoObjectId>();
 
-    for (const value of [...(values || []), legacyValue, nextValue]) {
+    for (const value of [
+      ...(values || []),
+      legacyValue,
+      nextValue,
+      ...nextValues,
+    ]) {
       const id = this.stringifyObjectId(value);
 
       if (id && value) {
@@ -733,13 +1101,84 @@ export class AgentProfileFactService {
   }
 
   private resolveAssertionPolicy(
-    type: AgentProfileFactType
+    type: AgentProfileFactType,
+    key = ''
   ): AgentProfileFactAssertionPolicy {
-    return type === AgentProfileFactType.style ||
+    return key.startsWith(VISUAL_APPEARANCE_KEY_PREFIX) ||
+      type === AgentProfileFactType.style ||
       type === AgentProfileFactType.taboo ||
       type === AgentProfileFactType.safetySignal
       ? AgentProfileFactAssertionPolicy.contextOnly
       : AgentProfileFactAssertionPolicy.canAssert;
+  }
+
+  private resolveVisualAppearanceSubject(
+    observation: AgentVisualAppearanceObservation
+  ): { key: string; label: string } | null {
+    if (
+      observation.identityConfidence === 'low' ||
+      observation.identityTarget === 'unknown'
+    ) {
+      return null;
+    }
+
+    if (observation.identityTarget === 'agent') {
+      return { key: 'agent', label: '当前角色' };
+    }
+
+    if (observation.identityTarget === 'user') {
+      return { key: 'user', label: '用户' };
+    }
+
+    const name = this.normalizeVisualAppearanceValue(
+      observation.identityName || ''
+    );
+
+    if (!name) {
+      return null;
+    }
+
+    return {
+      key: `family_${this.hashKey(name)}`,
+      label: `家人${name}`,
+    };
+  }
+
+  private normalizeVisualAppearanceTraits(
+    traits: AgentVisualAppearanceTrait[]
+  ): AgentVisualAppearanceTrait[] {
+    const byKind = new Map<
+      AgentVisualAppearanceTraitKind,
+      AgentVisualAppearanceTrait
+    >();
+
+    for (const trait of traits || []) {
+      if (!VISUAL_APPEARANCE_TRAIT_KINDS.has(trait?.kind)) {
+        continue;
+      }
+
+      const value = this.normalizeVisualAppearanceValue(trait.value);
+
+      if (!value || /不清楚|未知|无法判断/.test(value)) {
+        continue;
+      }
+
+      byKind.set(trait.kind, {
+        kind: trait.kind,
+        value,
+      });
+    }
+
+    return [...byKind.values()].slice(0, 4);
+  }
+
+  private normalizeVisualAppearanceValue(value: string): string {
+    return (value || '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, '')
+      .replace(/[，。！？!?；;：:]+$/g, '')
+      .trim()
+      .slice(0, 24);
   }
 
   private parseLLMFacts(
@@ -833,6 +1272,10 @@ export class AgentProfileFactService {
         fact.assertionPolicy ?? AgentProfileFactAssertionPolicy.canAssert,
       sourceText: fact.sourceText?.trim() || undefined,
       supportCount: Math.max(fact.supportCount ?? 1, 1),
+      conflictingValues: (fact.conflictingValues || [])
+        .map(value => value?.trim())
+        .filter(Boolean),
+      updatedAt: fact.updatedAt,
     };
     const id = this.stringifyObjectId(fact.id);
     const sourceMessageId = this.stringifyObjectId(

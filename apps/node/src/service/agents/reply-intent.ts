@@ -235,6 +235,52 @@ export interface ConversationMemoryPlan {
   selectedFactKeys?: string[];
 }
 
+export const CONVERSATION_OBJECT_KINDS = [
+  'agent',
+  'user',
+  'family',
+  'other_person',
+  'place',
+  'keepsake',
+  'other',
+  'unknown',
+] as const;
+
+export type ConversationObjectKind = (typeof CONVERSATION_OBJECT_KINDS)[number];
+
+export const CONVERSATION_OBJECT_CONFIDENCES = [
+  'high',
+  'medium',
+  'low',
+] as const;
+
+export type ConversationObjectConfidence =
+  (typeof CONVERSATION_OBJECT_CONFIDENCES)[number];
+
+export interface ConversationKnownObject {
+  id: string;
+  kind: ConversationObjectKind;
+  label: string;
+  aliases: string[];
+  relationToUser?: string;
+  relationToAgent?: string;
+  assertionPolicy: 'can_assert' | 'context_only';
+}
+
+export interface ConversationObjectReference {
+  ref: string;
+  mention: string;
+  kind: ConversationObjectKind;
+  binding: string;
+  confidence: ConversationObjectConfidence;
+}
+
+export interface ConversationObjectPlan {
+  objects: ConversationObjectReference[];
+  focusRefs: string[];
+  ambiguousMentions: string[];
+}
+
 export interface ConversationReading {
   primaryNeed: string;
   emotionalSource: string;
@@ -351,6 +397,55 @@ export const CONVERSATION_CLOSURE_READINESS = [
 export type ConversationClosureReadiness =
   (typeof CONVERSATION_CLOSURE_READINESS)[number];
 
+export const CONVERSATION_OPEN_NEEDS = [
+  'direct_answer',
+  'reciprocal_affection',
+  'fact_repair',
+  'relationship_repair',
+  'active_expression',
+  'memory_response',
+  'family_response',
+  'comfort',
+  'topic_followup',
+  'other',
+] as const;
+export type ConversationOpenNeed = (typeof CONVERSATION_OPEN_NEEDS)[number];
+
+export const CONVERSATION_OPEN_PRIORITIES = ['must', 'supporting'] as const;
+export type ConversationOpenPriority =
+  (typeof CONVERSATION_OPEN_PRIORITIES)[number];
+
+export const CONVERSATION_AVOID_ACTIONS = [
+  'none',
+  'generic_comfort',
+  'repeat_acknowledgement',
+  'explain',
+  'ask',
+  'promise_later',
+  'premature_close',
+  'unsupported_detail',
+  'other',
+] as const;
+export type ConversationAvoidAction =
+  (typeof CONVERSATION_AVOID_ACTIONS)[number];
+
+export interface ConversationTurnOpenPoint {
+  object: string;
+  need: ConversationOpenNeed;
+  detail: string;
+  priority: ConversationOpenPriority;
+}
+
+export interface ConversationTurnPlan {
+  state: ConversationUserState;
+  open: ConversationTurnOpenPoint[];
+  goal: ConversationContinuationGoal;
+  action: ConversationAssistantContribution;
+  target: string;
+  avoid: ConversationAvoidAction;
+  close: ConversationClosureReadiness;
+}
+
 export interface ConversationEngagementPlan {
   userConversationState: ConversationUserState;
   openLoop: string;
@@ -375,12 +470,14 @@ export interface ConversationMovePlan {
   questionNeed: ConversationQuestionNeed;
   turnClosure: ConversationTurnClosure;
   personaActivation: string[];
+  turnPlan?: ConversationTurnPlan;
   engagement?: ConversationEngagementPlan;
 }
 
 export interface StructuredReplyIntent {
   intents: StructuredReplyIntentItem[];
   capabilityQuestions?: StructuredReplyCapabilityQuestion[];
+  objectPlan?: ConversationObjectPlan;
   reading?: ConversationReading;
   conversationPlan?: ConversationMovePlan;
   memoryPlan?: ConversationMemoryPlan;

@@ -9,6 +9,8 @@ export interface ReplyLengthPlan {
   lengthClass: ReplyLengthClass;
   targetCharacters: number;
   reviewCharacters: number;
+  focusMode?: 'single_scene';
+  reviewPolicy?: 'remove_repeated_actions_only';
 }
 
 export interface BuildReplyLengthPlanOptions {
@@ -38,7 +40,7 @@ const LENGTH_BUDGETS: Record<
 > = {
   micro: {
     targetCharacters: 18,
-    reviewCharacters: 24,
+    reviewCharacters: 30,
   },
   brief: {
     targetCharacters: 28,
@@ -66,11 +68,32 @@ const BRIEF_MODES = new Set([
 ]);
 
 const STANDARD_MODES = new Set(['relationship', 'family', 'memory']);
+const COMPACT_SEMANTIC_SCENES = new Set([
+  'comfort_request',
+  'guilt_regret',
+  'memory_recall',
+]);
+const RELATIONAL_WARMTH_SCENES = new Set([
+  'comfort_request',
+  'guilt_regret',
+  'memory_recall',
+  'miss_longing',
+  'family_life',
+  'dream_companionship',
+  'afterlife_status',
+  'keepsake_attachment',
+]);
 
 export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
 ): ReplyLengthPlan {
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
+  const compactSingleFocus =
+    Boolean(options.semanticPlan) &&
+    Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene));
+  const needsRelationalWarmth = Boolean(
+    options.scene && RELATIONAL_WARMTH_SCENES.has(options.scene)
+  );
   let lengthClass: ReplyLengthClass;
 
   if (
@@ -82,11 +105,34 @@ export function buildReplyLengthPlan(
   } else if (options.turnClosure === 'close') {
     lengthClass = 'micro';
   } else if (options.shortTurnParticipation) {
-    lengthClass = 'micro';
+    lengthClass =
+      needsRelationalWarmth ||
+      options.assistantContribution === 'self_expression' ||
+      options.continuationGoal === 'repair'
+        ? 'standard'
+        : 'micro';
   } else if (options.scene === 'correction') {
     lengthClass = 'brief';
+  } else if (compactSingleFocus) {
+    lengthClass = 'standard';
+  } else if (
+    options.semanticPlan &&
+    options.assistantContribution === 'self_expression' &&
+    (options.continuationGoal === 'hold' ||
+      Array.from(options.currentQuery.replace(/\s/gu, '')).length <= 24)
+  ) {
+    lengthClass = 'standard';
   } else if (options.mode === 'emotional') {
-    lengthClass = 'extended';
+    const userQueryLength = Array.from(
+      options.currentQuery.replace(/\s/gu, '')
+    ).length;
+    if (userQueryLength <= 20) {
+      lengthClass = 'standard';
+    } else if (userQueryLength > 40 && /后悔|愧疚|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(options.currentQuery)) {
+      lengthClass = 'deep';
+    } else {
+      lengthClass = 'extended';
+    }
   } else if (options.semanticPlan && replyMoveCount >= 3) {
     lengthClass = 'standard';
   } else if (
@@ -105,7 +151,7 @@ export function buildReplyLengthPlan(
     lengthClass = 'brief';
   }
 
-  if (!options.shortTurnParticipation) {
+  if (!options.shortTurnParticipation && !compactSingleFocus) {
     if (
       options.semanticPlan &&
       options.assistantContribution === 'self_expression'
@@ -124,10 +170,20 @@ export function buildReplyLengthPlan(
     }
   }
 
-  return {
+  const plan: ReplyLengthPlan = {
     lengthClass,
     ...LENGTH_BUDGETS[lengthClass],
   };
+
+  return compactSingleFocus && !options.hasProtectiveStop
+    ? {
+        ...plan,
+        targetCharacters: 40,
+        reviewCharacters: 50,
+        focusMode: 'single_scene',
+        reviewPolicy: 'remove_repeated_actions_only',
+      }
+    : plan;
 }
 
 function promoteLengthClass(
@@ -146,7 +202,15 @@ function promoteLengthClass(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
-  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。用户写得长不等于回复长；只留最重要一处，删重复、解释、总结和通用叮嘱。`;
+  if (plan.focusMode === 'single_scene') {
+    return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处亲人侧心意或合情合理的小画面。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
+  }
+
+  if (plan.lengthClass === 'micro') {
+    return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。简单回应可以很短，只留当前最重要一点。`;
+  }
+
+  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复的共情动作（如连续两个"心疼""明白"）、解释、总结和通用叮嘱；保留称呼、情感立场和角色侧心意。`;
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {

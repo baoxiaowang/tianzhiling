@@ -1,5 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { ChatTraceStage } from '@tzl/entities';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { OpenAIService } from './openai';
 import type { ReplyBrief } from './reply-brief.service';
@@ -7,6 +8,7 @@ import {
   isAgentCurrentRoutineQuery,
   isAgentCurrentSufferingQuery,
   isAuthenticityChallengeText,
+  type ReplyScene,
   ReplySceneRoute,
   routeReplyScene,
 } from './reply-scene-router';
@@ -27,7 +29,11 @@ import {
   RELATIONAL_PRESENCE_CONFIRMATION_INTENT_PATTERN,
   RETURN_REUNION_WISH_INTENT_PATTERN,
 } from './reply-intent';
-import { AgentEvidenceItem, AssistantFactClaim } from './agent-evidence';
+import {
+  agentEvidenceSupportsClaim,
+  AgentEvidenceItem,
+  AssistantFactClaim,
+} from './agent-evidence';
 import {
   isExplicitRememberRequest,
   isForgetMemoryRequest,
@@ -45,6 +51,14 @@ import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
 } from './reply-length-plan';
+import {
+  buildReplyOutputContractPrompt,
+  buildReplyReviewOutputContractPrompt,
+} from './reply-output-contract';
+import {
+  detectReplyRealityDependencyViolation,
+  renderReplyRealityDependencyFallback,
+} from './reply-reality-dependency';
 
 export interface ValidateAssistantReplyOptions {
   messages: ChatCompletionMessageParam[];
@@ -55,9 +69,14 @@ export interface ValidateAssistantReplyOptions {
   evidence?: AgentEvidenceItem[];
   claims?: AssistantFactClaim[];
   reviewMode?: ReplyGuardrailReviewMode;
+  mode?: ReplyGuardrailMode;
+  conversationId?: string;
+  /** 内部标记：是否为超深会话（>100轮），由 validateAssistantReply 自动设置 */
+  isDeepSession?: boolean;
 }
 
 export type ReplyGuardrailReviewMode = 'full' | 'deterministic_first';
+export type ReplyGuardrailMode = 'legacy' | 'rigid_only';
 
 export interface ResolveGuardrailReviewModeOptions {
   requestedMode: ReplyGuardrailReviewMode;
@@ -66,6 +85,7 @@ export interface ResolveGuardrailReviewModeOptions {
   replyBrief?: ReplyBrief;
   evidence?: AgentEvidenceItem[];
   claims?: AssistantFactClaim[];
+  mode?: ReplyGuardrailMode;
 }
 
 export interface ValidateAssistantReplyResult {
@@ -123,6 +143,11 @@ interface GuardrailCandidate {
   changes: GuardrailRevisionChange[];
 }
 
+interface SurgicalRepairResult {
+  segments: string[];
+  removedClauses: string[];
+}
+
 export interface GuardrailRevisionChange {
   before: string;
   after: string;
@@ -176,6 +201,7 @@ export interface ResolveGenerationFailureReplyOptions {
   replyBrief: ReplyBrief;
   replyRoute?: ReplySceneRoute;
   messages?: ChatCompletionMessageParam[];
+  conversationId?: string;
 }
 
 const RISKY_FACT_PATTERNS = [
@@ -235,6 +261,18 @@ const AGENT_REAL_WORLD_VISION_CLAIM_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:一直|时时刻刻|每时每刻).{0,8}(?:看见|看到|看着)(?:你|你们)|(?:你|你们).{0,8}(?:一举一动|做的每件事|所有事情).{0,8}(?:我|爸|妈)?(?:都|全)(?:能)?(?:看见|看到|知道)|(?:你|你们)的事.{0,8}(?:我|爸|爸爸|妈|妈妈)?都看在眼里/;
 const FAMILY_RESPONSIBILITY_PRESSURE_REASON =
   '回复把照顾家人、维持家庭或替逝者尽责的压力推给用户';
+const REALITY_DEPENDENCY_OVERCLAIM_REASON =
+  '回复承诺当前角色会执行用户依赖的现实任务';
+const REAL_WORLD_ATTRIBUTION_ASSERTION_PATTERN =
+  /(?:不怪|没错|没关系|无关|根子在|是因为|就是(?:因为|怕|想|不想)|才没|心里(?:压|想)|怕你|想(?:再)?(?:见|看)|为这个家操心|累了|想歇|(?:说不清|不知道|不确定).{0,8}(?:但|就是|只|可).{0,8}(?:怕|想|舍不得|不愿|没敢)|(?:那时|那会儿|当时|那阵子|临走).{0,18}(?:怕|想|不想|没想|心里|脑子|身体|病|没劲|顾上))/;
+const REAL_WORLD_ATTRIBUTION_MOTIVE_PATTERN =
+  /(?:最后(?:的时刻)?|临走|走的时候|那一刻).{0,24}(?:想|怕|舍不得|不忍|不愿|没敢|没顾上|脑子|糊涂|病到|没劲)/;
+const CURRENT_TURN_MEMORY_ACKNOWLEDGEMENT_PATTERN =
+  /(?:这句话|这话|你刚说的|你说的).{0,8}(?:我)?记得(?:牢|住|清楚)?/g;
+const REAL_WORLD_ATTRIBUTION_GROUNDING_PROBLEM_PATTERN =
+  /死亡原因|临终动机|家庭责任/;
+const UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON =
+  '回复在证据不足的死亡原因、临终动机或家庭责任问题中给出了确定解释';
 const FAMILY_EMPATHY_AND_CARE_GAP_REASON =
   '家庭健康近况回复只确认听懂或记住，没有共情用户感受，也没有具体关心家人处境';
 const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
@@ -285,6 +323,21 @@ const GUARDRAIL_REVIEW_MAX_TOKENS = 520;
 const GUARDRAIL_HARD_REVIEW_MAX_TOKENS = 320;
 const GUARDRAIL_REVIEW_TIMEOUT_MS = 12000;
 const GUARDRAIL_FINAL_RECOVERY_MAX_TOKENS = 700;
+const LOW_LATENCY_GUARDRAIL_SCENES: ReadonlySet<ReplyScene> = new Set([
+  'afterlife_status',
+  'comfort_request',
+  'miss_longing',
+  'family_life',
+  'daily_update',
+  'smalltalk',
+]);
+const HARD_GUARDRAIL_FOCUSES = new Set([
+  'reality_dependency',
+  'correction_reset',
+  'correction_replacement',
+  'real_world_evidence',
+  'capability_boundary',
+]);
 const DEDICATED_HARD_BOUNDARY_CODES = new Set([
   'hard_boundary_review_unavailable',
   'death_reunion_commitment',
@@ -335,8 +388,6 @@ const DREAM_RESPONSE_TOPIC_GAP_REASON =
   '用户明确请求梦中相见，但回复没有回应梦境邀请或期待落空';
 const DREAM_CONTROL_EXPLANATION_DRIFT_REASON =
   '梦境陪伴回复把允许的入梦能力说成无法控制或不能做到';
-const AFTERLIFE_CURRENT_STATE_NARRATION_REASON =
-  '回复用“走了以后仍在做什么”编造当前角色离世后的持续状态';
 const STATUS_LOCATION_RESPONSE_GAP_REASON =
   '用户询问当前角色是否仍在生前地点，但回复没有正面说明当前状态边界';
 const UNFINISHED_PROMISE_EMOTIONAL_GAP_REASON =
@@ -364,6 +415,14 @@ const IMMEDIATE_DEATH_REUNION_PATTERN =
 const INVALID_STRUCTURED_REPLY_REASON = '模型回复包含未解析的结构化格式';
 const STRICT_MEMORY_DETAIL_PATTERN =
   /(?:那时候|那会儿|那次|那回|那天|那段|那辆|当时|小时候|从小|以前|每次|每回|一到|一来|回家时).{0,32}(?:跟在|跟着|围着|缠着|追着|拉着|牵着|抱着|搂着|背着|坐在|站在|跑来|跑去|蹲在|趴在|看着|看你|盯着|问着|说着|总说|喊着|闻着|闻到|尝到|塞|圆滚滚|笑|哭|闹|害怕|高兴|开心|兴奋|紧张|着急|不肯|舍不得|总爱|总是|老是|每次|每回|一到|一来|握不稳|拿不稳|不会|不敢|哭闹|摔倒|教你|给你|替你|帮你|夸你|逗你|告诉你|答应你|哄你|哄着|点给你|带你吃)/;
+
+/**
+ * rigid_only 窄检测：仅拦截把用户死亡明确作为团聚条件的表达。
+ * 放过"我在这边等你""有空就来""再也不分开"等正常情感表达。
+ */
+const RIGID_DEATH_CONDITION_REUNION_PATTERN =
+  /(?:死了|去世|过世|不在了).{0,30}(?:就能|就可以|就|能|可以).{0,20}(?:团聚|团圆|在一起|见面|相见|陪我|找我|一起|永远一起)/;
+
 const IDENTITY_PROOF_DETAIL_PATTERN =
   /你(?:小时候|从小|以前|每次|总是|总爱|最爱|爱喝|爱吃|怕|睡觉|心跳|手|身上|声音|眼睛|脸|眼泪|温度).{0,32}(?:我|咱|家|时候|怀里|身边|手上|衣服|故事|饭|菜|酒|急|凉|热|抖|红|哭)|咱们(?:以前|那时候|每次).{0,32}/;
 const UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN =
@@ -389,6 +448,11 @@ const NON_BLOCKING_QUALITY_REASONS = new Set([
   UNFINISHED_PROMISE_EMOTIONAL_GAP_REASON,
   FORGETTING_FEAR_ACKNOWLEDGEMENT_GAP_REASON,
   TRAUMATIC_SLEEP_RESPONSE_GAP_REASON,
+  FAMILY_RESPONSIBILITY_PRESSURE_REASON,
+  RELATIONAL_DUTY_PRESSURE_REASON,
+  AGENT_EMOTIONAL_WELLBEING_PRESSURE_REASON,
+  DISTRESS_INVALIDATION_REASON,
+  SUPERNATURAL_NATURE_SIGN_REASON,
 ]);
 const REPLY_COMPLETENESS_REASONS = new Set([
   DREAM_ABSENCE_ACKNOWLEDGEMENT_GAP_REASON,
@@ -417,6 +481,23 @@ export class ReplyGuardrailService {
   @Inject()
   openAIService: OpenAIService;
 
+  /** 会话级兜底句去重：conversationId → 已使用的兜底键集合 */
+  private readonly fallbackUsageCache = new Map<string, Set<string>>();
+
+  /** 会话深度追踪：conversationId → 守卫调用次数（近似轮次） */
+  private readonly conversationDepthMap = new Map<string, number>();
+
+  /** 超深会话阈值：超过此轮次启用宽松模式 */
+  private static readonly DEEP_SESSION_THRESHOLD = 100;
+
+  /** 追踪会话深度，返回是否为超深会话 */
+  private trackConversationDepth(conversationId?: string): boolean {
+    if (!conversationId) return false;
+    const depth = (this.conversationDepthMap.get(conversationId) ?? 0) + 1;
+    this.conversationDepthMap.set(conversationId, depth);
+    return depth > ReplyGuardrailService.DEEP_SESSION_THRESHOLD;
+  }
+
   resolvePreplannedSafetyReply(
     _options: ResolvePreplannedReplyOptions
   ): ValidateAssistantReplyResult | undefined {
@@ -427,14 +508,14 @@ export class ReplyGuardrailService {
   resolveGenerationFailureReply(
     options: ResolveGenerationFailureReplyOptions
   ): ValidateAssistantReplyResult {
+    const segments = this.renderFallbackFromBrief(
+      options.userQuery,
+      options.replyBrief,
+      options.messages
+    );
+    const deduped = this.dedupFallbackSegments(segments, options.conversationId);
     return {
-      segments: compactReplyBubblesPreservingContent(
-        this.renderFallbackFromBrief(
-          options.userQuery,
-          options.replyBrief,
-          options.messages
-        )
-      ),
+      segments: compactReplyBubblesPreservingContent(deduped),
       rewritten: true,
       reason: GENERATION_FAILURE_FALLBACK_REASON,
     };
@@ -452,17 +533,63 @@ export class ReplyGuardrailService {
   resolveEffectiveReviewMode(
     options: ResolveGuardrailReviewModeOptions
   ): ReplyGuardrailReviewMode {
+    if (options.mode === 'rigid_only') {
+      return 'deterministic_first';
+    }
+
     if (options.requestedMode === 'full' || !options.replySegments.length) {
       return options.requestedMode;
     }
 
     const content = options.replySegments.join('\n');
+    const lengthPlan = options.replyBrief?.lengthPlan;
+    const needsCompactLengthReview =
+      lengthPlan?.reviewPolicy === 'remove_repeated_actions_only' &&
+      countReplyVisibleCharacters(options.replySegments) >
+        lengthPlan.reviewCharacters;
+
+    if (this.shouldKeepLowLatencyReview(options, needsCompactLengthReview)) {
+      return options.requestedMode;
+    }
 
     return (options.replyBrief?.factClaimMode === 'grounded' &&
       !options.claims?.length) ||
-      SHARED_PAST_SPECIFICITY_PATTERN.test(content)
+      SHARED_PAST_SPECIFICITY_PATTERN.test(content) ||
+      needsCompactLengthReview
       ? 'full'
       : options.requestedMode;
+  }
+
+  private shouldKeepLowLatencyReview(
+    options: ResolveGuardrailReviewModeOptions,
+    needsCompactLengthReview: boolean
+  ): boolean {
+    const brief = options.replyBrief;
+
+    if (
+      options.requestedMode !== 'deterministic_first' ||
+      !brief ||
+      needsCompactLengthReview ||
+      brief.riskLevel === 'high' ||
+      brief.factClaimMode === 'grounded' ||
+      !brief.primaryScene ||
+      !LOW_LATENCY_GUARDRAIL_SCENES.has(brief.primaryScene)
+    ) {
+      return false;
+    }
+
+    if (
+      brief.guardrailFocuses.some(focus => HARD_GUARDRAIL_FOCUSES.has(focus)) ||
+      brief.realityDependencies.length ||
+      brief.capabilityConstraints.length ||
+      brief.correctionPolicy
+    ) {
+      return false;
+    }
+
+    return ['micro', 'brief', 'standard'].includes(
+      brief.lengthPlan.lengthClass
+    );
   }
 
   async validateAssistantReply(
@@ -470,12 +597,19 @@ export class ReplyGuardrailService {
   ): Promise<ValidateAssistantReplyResult> {
     const segments = this.normalizeSegments(options.replySegments);
 
+    // 会话深度追踪 + 超深会话标记
+    const isDeepSession = this.trackConversationDepth(options.conversationId);
+    if (isDeepSession) {
+      options.isDeepSession = true;
+    }
+
     if (!segments.length) {
       const technicalSegments = compactReplyBubblesPreservingContent(
         this.fallbackSafeSegments(
           options.userQuery,
           options.messages,
-          options.replyBrief
+          options.replyBrief,
+          options.conversationId
         )
       );
 
@@ -488,6 +622,34 @@ export class ReplyGuardrailService {
         revisionAttempted: false,
         revisionRoundCount: 0,
         finalReviewResult: 'technical_fallback',
+      };
+    }
+
+    if (options.mode === 'rigid_only') {
+      return this.validateRigidOnlyReply(options, segments);
+    }
+
+    const realityDependencyViolation = detectReplyRealityDependencyViolation(
+      segments.join('\n'),
+      options.replyBrief?.realityDependencies
+    );
+    if (
+      realityDependencyViolation &&
+      realityDependencyViolation.kind !== 'physical_presence'
+    ) {
+      return {
+        segments: this.buildValidatedLocalRepair(
+          options,
+          segments,
+          REALITY_DEPENDENCY_OVERCLAIM_REASON
+        ),
+        claims: options.claims || [],
+        rewritten: true,
+        reason: REALITY_DEPENDENCY_OVERCLAIM_REASON,
+        interventionLevel: 'regenerate',
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'hard_recovery',
       };
     }
 
@@ -554,14 +716,8 @@ export class ReplyGuardrailService {
       options.userQuery,
       options.replyBrief
     );
-    const familyPressureCleanedReply = this.removeFamilyResponsibilityNudges(
-      evidenceGroundedReply.segments,
-      options.replyBrief
-    );
-    const postprocessedSegments = familyPressureCleanedReply.segments;
-    const postprocessReason = familyPressureCleanedReply.rewritten
-      ? FAMILY_RESPONSIBILITY_PRESSURE_REASON
-      : evidenceGroundedReply.rewritten
+    const postprocessedSegments = evidenceGroundedReply.segments;
+    const postprocessReason = evidenceGroundedReply.rewritten
       ? UNSUPPORTED_EVIDENCE_CLAIM_REASON
       : undefined;
     const reason = this.detectRisk(
@@ -577,12 +733,31 @@ export class ReplyGuardrailService {
       evidenceGroundedReply.rewritten &&
       this.hasDanglingSegment(postprocessedSegments)
     ) {
+      const coherentSegments = postprocessedSegments.filter(
+        segment => !this.hasDanglingSegment([segment])
+      );
+
+      if (coherentSegments.length) {
+        return {
+          segments: compactReplyBubblesPreservingContent(coherentSegments),
+          rewritten: true,
+          reason: UNSUPPORTED_EVIDENCE_CLAIM_REASON,
+          ...(options.claims?.length
+            ? {
+                unsupportedClaimCount:
+                  evidenceGroundedReply.unsupportedClaimCount,
+              }
+            : {}),
+        };
+      }
+
       return {
         segments: compactReplyBubblesPreservingContent(
           this.fallbackSafeSegments(
             options.userQuery,
             options.messages,
-            options.replyBrief
+            options.replyBrief,
+            options.conversationId
           )
         ),
         rewritten: true,
@@ -634,10 +809,12 @@ export class ReplyGuardrailService {
       postprocessedSegments,
       reason
     );
+    const locallyRewritten =
+      this.candidateSimilarity(postprocessedSegments, repairedSegments) < 1;
 
     return {
       segments: repairedSegments,
-      rewritten: true,
+      rewritten: Boolean(postprocessReason) || locallyRewritten,
       reason,
       ...(options.claims?.length
         ? {
@@ -645,6 +822,112 @@ export class ReplyGuardrailService {
           }
         : {}),
     };
+  }
+
+  private validateRigidOnlyReply(
+    options: ValidateAssistantReplyOptions,
+    segments: string[]
+  ): ValidateAssistantReplyResult {
+    const content = segments.join('\n');
+
+    if (this.containsInvalidStructuredReply(content)) {
+      return {
+        segments: TECHNICAL_RETRY_SEGMENTS,
+        claims: options.claims || [],
+        rewritten: true,
+        reason: INVALID_STRUCTURED_REPLY_REASON,
+        interventionLevel: 'technical_fallback',
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'technical_fallback',
+      };
+    }
+
+    if (!this.containsRigidDeathEncouragement(content)) {
+      return {
+        segments,
+        claims: options.claims || [],
+        rewritten: false,
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'pass',
+      };
+    }
+
+    const retainedSegments = this.removeRigidDeathEncouragement(segments);
+
+    return {
+      segments: retainedSegments.length
+        ? retainedSegments
+        : ['别往那一步走', '你只是太想我了 先跟我说说'],
+      claims: options.claims || [],
+      rewritten: true,
+      reason: DEATH_ENCOURAGEMENT_REASON,
+      interventionLevel: 'regenerate',
+      revisionAttempted: false,
+      revisionRoundCount: 0,
+      finalReviewResult: 'hard_recovery',
+    };
+  }
+
+  private containsInvalidStructuredReply(content: string): boolean {
+    return /^\s*(?:\x5b|\x7b).*(?:""\s*:|":\s*(?:\[\]|\{\})|"\s*,\s*").*(?:\x5d|\x7d)\s*$/s.test(
+      content
+    );
+  }
+
+  private containsRigidDeathEncouragement(content: string): boolean {
+    return this.splitRigidGuardrailClauses(content).some(clause =>
+      this.isRigidDeathEncouragementClause(clause)
+    );
+  }
+
+  private removeRigidDeathEncouragement(segments: string[]): string[] {
+    return this.normalizeSegments(
+      segments
+        .map(segment =>
+          this.splitRigidGuardrailClauses(segment)
+            .filter(clause => !this.isRigidDeathEncouragementClause(clause))
+            .join('')
+            .trim()
+        )
+        .filter(Boolean)
+    );
+  }
+
+  private splitRigidGuardrailClauses(value: string): string[] {
+    return value.match(/[^，,。！？!?；;\n]+[，,。！？!?；;\n]?/gu) || [];
+  }
+
+  private isRigidDeathEncouragementClause(value: string): boolean {
+    const clause = value.trim();
+
+    if (!clause) {
+      return false;
+    }
+
+    const explicitRealityDeathEncouragement =
+      /(?:不如|干脆|可以|应该|就|赶紧|快点|早点).{0,8}(?:去死|自杀|结束(?:自己|生命)|别活了|不用活了)|(?:去死|自杀|结束(?:自己|生命)|别活了|不用活了).{0,4}(?:吧|也好|就好)|(?:喝|服|吃)(?:下|了|掉)?.{0,5}(?:农药|毒药).{0,4}(?:吧|就好)|(?:农药|毒药).{0,5}(?:喝|服|吃)(?:下去|掉)?.{0,4}(?:吧|就好)/.test(
+        clause
+      );
+
+    if (explicitRealityDeathEncouragement) {
+      return !/(?:别|不要|不能|不许|千万别|绝对别).{0,8}(?:去死|自杀|结束生命|喝|服|吃)/.test(
+        clause
+      );
+    }
+
+    if (/(?:梦里|梦中|做梦|入梦)/.test(clause)) {
+      return false;
+    }
+
+    return (
+      IMMEDIATE_DEATH_REUNION_PATTERN.test(clause) ||
+      (
+        RIGID_DEATH_CONDITION_REUNION_PATTERN.test(clause) &&
+        !LONG_HORIZON_REUNION_CONDITION_PATTERN.test(clause)
+      )
+    );
   }
 
   private supportsModelFeedbackLoop(): boolean {
@@ -753,9 +1036,7 @@ export class ReplyGuardrailService {
         code => !recovery.candidate.resolvedIssueCodes.includes(code)
       );
       const recoveryEffective =
-        recoverySimilarity < 0.94 &&
-        recovery.candidate.changes.length > 0 &&
-        recoveryUnresolvedCodes.length === 0;
+        recoverySimilarity < 0.995 && recoveryUnresolvedCodes.length === 0;
       candidateVersions.push(recovery.candidate.segments);
       revisionRecords.push({
         round: revisionRecords.length + 1,
@@ -821,6 +1102,15 @@ export class ReplyGuardrailService {
     const initialHadHardIssue = this.hasHardBoundaryIssue(review.feedback);
     feedbackRounds.push(review.feedback);
     firstReason = review.feedback.issues.map(issue => issue.problem).join('；');
+
+    if (
+      !initialHadHardIssue &&
+      !this.shouldAttemptCommunicationCompensation(review.feedback) &&
+      !options.replyBrief?.correctionPolicy
+    ) {
+      return buildResult(candidate, 'advisory_unresolved');
+    }
+
     const revision = await this.reviseCandidateWithFeedback(
       options,
       candidateVersions,
@@ -847,9 +1137,7 @@ export class ReplyGuardrailService {
       code => !revision.candidate.resolvedIssueCodes.includes(code)
     );
     const effectiveChange =
-      similarity < 0.94 &&
-      revision.candidate.changes.length > 0 &&
-      unresolvedIssueCodes.length === 0;
+      similarity < 0.995 && unresolvedIssueCodes.length === 0;
 
     candidateVersions.push(revision.candidate.segments);
     revisionRecords.push({
@@ -900,30 +1188,93 @@ export class ReplyGuardrailService {
     communicationCompensationAttempted = false,
     communicationCompensationSucceeded = false
   ): ValidateAssistantReplyResult {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      initialCandidate.segments,
+      feedbackRounds,
+      firstReason
+    );
+    const recoveredSurgically =
+      surgical.removedClauses.length > 0 && surgical.segments.length > 0;
     const contextualSegments = compactReplyBubblesPreservingContent(
       this.fallbackSafeSegments(
         options.userQuery,
         options.messages,
-        options.replyBrief
+        options.replyBrief,
+        options.conversationId
       )
     );
+    const outputSegments = recoveredSurgically
+      ? surgical.segments
+      : contextualSegments;
+    const factBoundaryRecovered = Boolean(
+      options.replyBrief?.guardrailFocuses.includes('real_world_evidence')
+    );
+    const issueCodes = Array.from(
+      new Set(
+        feedbackRounds.reduce<string[]>(
+          (codes, feedback) =>
+            codes.concat(feedback.issues.map(issue => issue.code)),
+          []
+        )
+      )
+    );
+    const outputCandidateVersions = recoveredSurgically
+      ? [...candidateVersions, outputSegments]
+      : candidateVersions;
+    const outputRevisionRecords = recoveredSurgically
+      ? [
+          ...revisionRecords,
+          {
+            round: revisionRecords.length + 1,
+            fromScratch: false,
+            finalRecovery: true,
+            communicationCompensation: true,
+            effectiveChange: true,
+            similarity: this.candidateSimilarity(
+              initialCandidate.segments,
+              outputSegments
+            ),
+            resolvedIssueCodes: issueCodes,
+            unresolvedIssueCodes: [],
+            changes: surgical.removedClauses.map(clause => ({
+              before: clause,
+              after: '',
+              reason: '只移除命中守卫的问题句',
+            })),
+          },
+        ]
+      : revisionRecords;
 
     return {
-      segments: contextualSegments,
+      segments: outputSegments,
       claims: [],
       rewritten: true,
-      reason: firstReason || 'Guardrail 模型调用或结构化解析失败，采用技术兜底',
+      reason:
+        firstReason ||
+        (recoveredSurgically
+          ? '只移除命中守卫的问题句'
+          : 'Guardrail 模型调用或结构化解析失败，采用技术兜底'),
       unsupportedClaimCount: initialUnsupportedClaimCount,
-      interventionLevel: 'technical_fallback',
-      revisionAttempted: candidateVersions.length > 1,
+      interventionLevel:
+        recoveredSurgically || factBoundaryRecovered
+          ? 'regenerate'
+          : 'technical_fallback',
+      revisionAttempted: outputCandidateVersions.length > 1,
       revisionUsage,
-      candidateVersions,
+      candidateVersions: outputCandidateVersions,
       feedbackRounds,
-      revisionRecords,
-      revisionRoundCount: revisionRecords.length,
+      revisionRecords: outputRevisionRecords,
+      revisionRoundCount: outputRevisionRecords.length,
       communicationCompensationAttempted,
-      communicationCompensationSucceeded,
-      finalReviewResult: 'technical_fallback',
+      communicationCompensationSucceeded:
+        communicationCompensationSucceeded ||
+        recoveredSurgically ||
+        factBoundaryRecovered,
+      finalReviewResult:
+        recoveredSurgically || factBoundaryRecovered
+          ? 'hard_recovery'
+          : 'technical_fallback',
     };
   }
 
@@ -936,10 +1287,12 @@ export class ReplyGuardrailService {
   ): boolean {
     return feedback.issues.some(
       issue =>
-        ['relationship_continuity', 'family_responsibility_pressure'].includes(
-          issue.code
-        ) ||
-        /身份质疑|校准责任|关系立场|责任.{0,8}(?:推给|交给)用户|祭拜|供品|祭品|实物|收到.{0,6}(?:东西|物品)|改演|扮演|换成.{0,8}(?:前任|角色)|话题漂移|主动引入.{0,8}(?:相见|重逢)|固定.{0,8}空间位置|事实纠错|用户明确纠正|继续猜|标准答案|共同记忆回复补写|无证据.{0,8}(?:共同|往事|习惯)/.test(
+        [
+          'relationship_continuity',
+          'grounding',
+          'unsupported_evidence_claim',
+        ].includes(issue.code) ||
+        /身份质疑|校准责任|关系立场|祭拜|供品|祭品|实物|收到.{0,6}(?:东西|物品)|改演|扮演|换成.{0,8}(?:前任|角色)|话题漂移|主动引入.{0,8}(?:相见|重逢)|固定.{0,8}空间位置|事实纠错|用户明确纠正|继续猜|标准答案|共同记忆回复补写|无证据.{0,8}(?:共同|往事|习惯)/.test(
           issue.problem
         )
     );
@@ -1027,6 +1380,285 @@ export class ReplyGuardrailService {
     );
   }
 
+  private normalizeRepairText(value: string): string {
+    return value
+      .replace(/[\s，,。！？!?；;：:“”"'‘’（）()《》【】[\]]+/g, '')
+      .toLowerCase();
+  }
+
+  private splitRepairClauses(value: string): string[] {
+    return value
+      .split(/[，,。！？!?；;\n]+/u)
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  private issueEvidenceMatchesClause(
+    clause: string,
+    feedbackRounds: GuardrailFeedback[]
+  ): boolean {
+    const normalizedClause = this.normalizeRepairText(clause);
+
+    if (normalizedClause.length < 2) {
+      return false;
+    }
+
+    return feedbackRounds.some(feedback =>
+      feedback.issues.some(issue => {
+        const evidence = this.normalizeRepairText(issue.evidence || '');
+
+        return (
+          evidence.length >= 2 &&
+          (normalizedClause.includes(evidence) ||
+            (normalizedClause.length >= 4 &&
+              normalizedClause.length / evidence.length >= 0.55 &&
+              evidence.includes(normalizedClause)))
+        );
+      })
+    );
+  }
+
+  private clauseContainsUnsupportedClaim(
+    options: ValidateAssistantReplyOptions,
+    clause: string
+  ): boolean {
+    return (options.claims || []).some(claim => {
+      if (
+        !claim.text ||
+        this.isEvidenceClaimSupported(options.evidence, claim) ||
+        this.isAllowedAfterlifeWorldClaim(
+          claim,
+          options.userQuery,
+          options.replyBrief
+        ) ||
+        (this.isAfterlifeReunionQuery(options.userQuery) &&
+          this.isAllowedAfterlifeReunionReassurance(claim.text))
+      ) {
+        return false;
+      }
+
+      const normalizedClaim = this.normalizeRepairText(claim.text);
+      const normalizedClause = this.normalizeRepairText(clause);
+      return (
+        normalizedClaim.length >= 2 &&
+        (normalizedClause.includes(normalizedClaim) ||
+          normalizedClaim.includes(normalizedClause))
+      );
+    });
+  }
+
+  private clauseHasBlockingIssue(
+    options: ValidateAssistantReplyOptions,
+    clause: string,
+    feedbackRounds: GuardrailFeedback[],
+    reason = ''
+  ): boolean {
+    if (this.issueEvidenceMatchesClause(clause, feedbackRounds)) {
+      return true;
+    }
+
+    if (
+      reason === AGENT_PHYSICAL_CONTACT_OVERCLAIM_REASON &&
+      /(?:我|爸|爸爸|妈|妈妈).{0,10}(?:来(?:了|过)|到(?:了|过))(?:你|这儿|这里)?/.test(
+        clause
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      reason === RELATIONAL_PRESENCE_OVERCLAIM_REASON &&
+      /(?:血里|血缘|血脉|流着.{0,6}(?:我|爸|妈).{0,3}的血|就在你身上|一直陪着你)/.test(
+        clause
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      reason === UNSUPPORTED_BIOLOGICAL_RELATION_REASON &&
+      /(?:哪来|不是|怎么会).{0,6}捡(?:来)?的/.test(clause)
+    ) {
+      return true;
+    }
+
+    if (
+      this.clauseContainsUnsupportedClaim(options, clause) &&
+      (reason === UNSUPPORTED_EVIDENCE_CLAIM_REASON ||
+        feedbackRounds.some(feedback =>
+          feedback.issues.some(issue =>
+            ['grounding', 'unsupported_evidence_claim'].includes(issue.code)
+          )
+        ))
+    ) {
+      return true;
+    }
+
+    const localReason =
+      this.detectConversationReadingViolation(clause, options.replyBrief) ||
+      this.detectRisk(
+        options.userQuery,
+        clause,
+        options.messages,
+        options.replyBrief
+      );
+
+    if (!localReason || NON_BLOCKING_QUALITY_REASONS.has(localReason)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isIndependentAfterGroundingRemoval(clause: string): boolean {
+    return (
+      /^(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|孩子|儿子|女儿|闺女)$/.test(
+        clause
+      ) ||
+      /(?:现在|今天|明天|这次|接下来|打算|准备|想去|要去|回来|到家|路上|工作|你咋|怎么突然|为什么|愿意说|还想说|跟我说)/.test(
+        clause
+      ) ||
+      /(?:我听见了|我知道你|我明白你|我心疼|我惦记|我挂心|我也想你)/.test(
+        clause
+      )
+    );
+  }
+
+  private buildSurgicalRepair(
+    options: ValidateAssistantReplyOptions,
+    segments: string[],
+    feedbackRounds: GuardrailFeedback[] = [],
+    reason = ''
+  ): SurgicalRepairResult {
+    const removedClauses: string[] = [];
+    const repairedSegments = segments
+      .map(segment => {
+        const clauses = this.splitRepairClauses(segment);
+        const segmentReason =
+          this.detectConversationReadingViolation(
+            segment,
+            options.replyBrief
+          ) ||
+          this.detectRisk(
+            options.userQuery,
+            segment,
+            options.messages,
+            options.replyBrief
+          );
+        const removedBefore = removedClauses.length;
+        const keptClauses = clauses.filter(clause => {
+          if (
+            !this.clauseHasBlockingIssue(
+              options,
+              clause,
+              feedbackRounds,
+              reason
+            )
+          ) {
+            return true;
+          }
+
+          removedClauses.push(clause);
+          return false;
+        });
+        const removedFromSegment = removedClauses.length > removedBefore;
+        const groundingRepair = [reason, segmentReason].some(
+          repairReason =>
+            repairReason === UNCONFIRMED_DETAIL_REASON ||
+            repairReason === STRICT_GROUNDING_RISK_REASON ||
+            repairReason === UNSUPPORTED_EVIDENCE_CLAIM_REASON
+        );
+        const independentClauses =
+          removedFromSegment && groundingRepair
+            ? keptClauses.filter(clause => {
+                // 超深会话：跳过独立性检查，保留所有非阻塞分句
+                if (options.isDeepSession) return true;
+                if (this.isIndependentAfterGroundingRemoval(clause)) {
+                  return true;
+                }
+
+                removedClauses.push(clause);
+                return false;
+              })
+            : keptClauses;
+        const coherentClauses = independentClauses.filter(clause => {
+          // 超深会话：跳过悬垂分句检查，宁可留残句也不触发兜底
+          if (options.isDeepSession) return true;
+          if (!this.hasDanglingSegment([clause])) {
+            return true;
+          }
+
+          removedClauses.push(clause);
+          return false;
+        });
+        const repairedSegment = coherentClauses.join('，').trim();
+
+        if (
+          repairedSegment &&
+          !removedFromSegment &&
+          !options.isDeepSession &&
+          this.clauseHasBlockingIssue(
+            options,
+            repairedSegment,
+            feedbackRounds,
+            reason
+          )
+        ) {
+          removedClauses.push(segment);
+          return '';
+        }
+
+        return repairedSegment;
+      })
+      .filter(Boolean)
+      .filter(segment => options.isDeepSession || !this.hasDanglingSegment([segment]));
+
+    return {
+      segments: compactReplyBubblesPreservingContent(repairedSegments),
+      removedClauses,
+    };
+  }
+
+  private preserveSurgicalCore(
+    options: ValidateAssistantReplyOptions,
+    sourceSegments: string[],
+    revisedSegments: string[],
+    feedbackRounds: GuardrailFeedback[] = [],
+    reason = ''
+  ): string[] {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      sourceSegments,
+      feedbackRounds,
+      reason
+    );
+
+    if (!surgical.removedClauses.length || !surgical.segments.length) {
+      return revisedSegments;
+    }
+
+    const missingSafeSegments = surgical.segments.filter(segment => {
+      const normalizedSegment = this.normalizeRepairText(segment);
+      const normalizedRevision = this.normalizeRepairText(
+        revisedSegments.join('\n')
+      );
+
+      return (
+        !normalizedRevision.includes(normalizedSegment) &&
+        this.candidateSimilarity([segment], revisedSegments) < 0.62
+      );
+    });
+
+    if (!missingSafeSegments.length) {
+      return revisedSegments;
+    }
+
+    return compactReplyBubblesPreservingContent([
+      ...missingSafeSegments,
+      ...revisedSegments,
+    ]);
+  }
+
   private compactConversationContext(options: ValidateAssistantReplyOptions): {
     roleIdentity: string;
     recentMessages: Array<{ role: string; content: string }>;
@@ -1081,7 +1713,9 @@ export class ReplyGuardrailService {
     const roleSideSelfExpression =
       options.replyBrief?.conversationPlan?.engagement
         ?.assistantContribution === 'self_expression';
-    const dreamConnection = isDreamConnectionIntent(options.userQuery);
+    const dreamConnection =
+      Boolean(options.replyBrief?.dreamCompanionPlan) ||
+      isDreamConnectionIntent(options.userQuery);
     const physicalContactRepair = feedback.issues.some(
       issue =>
         /physical_contact|real_physical_arrival_or_touch/.test(issue.code) ||
@@ -1116,6 +1750,19 @@ export class ReplyGuardrailService {
           dreamConnection &&
           /death_reunion|death_encouragement/i.test(issue.code) &&
           !DEATH_REUNION_PROMISE_PATTERN.test(candidateContent)
+        ) {
+          return false;
+        }
+
+        if (
+          issue.code === 'grounding' &&
+          REAL_WORLD_ATTRIBUTION_GROUNDING_PROBLEM_PATTERN.test(
+            issue.problem
+          ) &&
+          !this.hasUnsupportedRealWorldAttribution(
+            candidateContent,
+            options.replyBrief
+          )
         ) {
           return false;
         }
@@ -1270,6 +1917,12 @@ export class ReplyGuardrailService {
             `短轮参与策略已选中：不因“可缩成一颗、第二颗非必要”报错；有节奏的重复可加强情感，不能仅因字面同义标 redundant_bubble。总字数不超过 ${options.replyBrief.lengthPlan.reviewCharacters} 字时不得报告长度问题。`,
           ]
         : []),
+      ...(options.replyBrief?.lengthPlan.reviewPolicy ===
+      'remove_repeated_actions_only'
+        ? [
+            `本轮 ${options.replyBrief.lengthPlan.reviewCharacters} 字是复核线，不是硬截断线。只有超过复核线且确有可删除的重复动作、解释、总结或通用叮嘱时，才标 excessive_reply_length；删除后必须保留原有事实、核心情感和关系力度，不得为完整覆盖补内容。`,
+          ]
+        : []),
       '删掉某气泡后若信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
       '身份质疑：维持亲人关系，不先认错退出，不让用户教怎么像；生前记忆模糊、这里说过的会记住是允许解释。要求改演他人时仍保持当前角色。',
@@ -1290,13 +1943,20 @@ export class ReplyGuardrailService {
         : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
+      ...(options.replyBrief?.factClaimMode === 'grounded'
+        ? [
+            `候选事实声明：${JSON.stringify(candidate.claims)}`,
+            '先做事实声明核对：现实事件、共同过去、疾病或死亡原因、临终认知、第三方动机和家庭责任，只要正文作了可核验断言就必须出现在 claims 并关联可用证据。善意解释或替人卸责也属于归因；claims=[] 只在正文确实没有这类断言时通过。缺声明或无证据时标 grounding。',
+          ]
+        : []),
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      `程序已发现的确定问题：${JSON.stringify(deterministicFeedback.issues)}`,
+      `程序已发现的确定问题：${JSON.stringify(
+        deterministicFeedback.issues
+      )}`,
       '',
-      '严格输出 JSON：',
-      '{"verdict":"pass|revise","issues":[{"code":"问题码","severity":"hard|major","layer":"hard_boundary|quality_advisory","problem":"具体问题","evidence":"候选中的问题文字","repairGoal":"只说明修复目标，不写答案"}],"mustPreserve":["候选中应保留的正确自然内容"],"mustAnswer":[],"groundingConstraints":["事实约束"]}',
+      buildReplyReviewOutputContractPrompt(),
     ].join('\n');
     const hardReviewPrompt = [
       '# 天之灵硬边界审阅',
@@ -1313,8 +1973,7 @@ export class ReplyGuardrailService {
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
       '没有上述五类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
-      '严格输出 JSON：',
-      '{"verdict":"pass|revise","issues":[{"code":"五类风险名","severity":"hard","layer":"hard_boundary","problem":"具体硬风险","evidence":"候选中的逐字片段","repairGoal":"只说明修复目标"}],"mustPreserve":[],"mustAnswer":[],"groundingConstraints":[]}',
+      buildReplyReviewOutputContractPrompt({ hardOnly: true }),
     ].join('\n');
     const usesDedicatedHardReview =
       this.openAIService?.supportsDedicatedHardBoundaryReview?.() === true;
@@ -1396,6 +2055,10 @@ export class ReplyGuardrailService {
             type: 'disabled',
           },
           max_tokens: maxTokens,
+          trace: {
+            stage: ChatTraceStage.review,
+            operation: 'review.model',
+          },
           messages: [
             {
               role: 'system',
@@ -1429,6 +2092,27 @@ export class ReplyGuardrailService {
         failed: true,
       };
     }
+  }
+
+  private hasUnsupportedRealWorldAttribution(
+    content: string,
+    brief?: ReplyBrief
+  ): boolean {
+    const attributionProbe = content
+      .replace(/(?:想不到|想不起来|你?别(?:怕|想))/g, '')
+      .replace(
+        /(?:(?:我)?(?:知道|明白|听得出))?(?:你|您).{0,8}(?:一直|只是|就是|还在)?(?:想|怕).{0,8}(?:知道|弄明白|问清楚|找答案|没有答案)/g,
+        ''
+      );
+
+    if (REAL_WORLD_ATTRIBUTION_MOTIVE_PATTERN.test(attributionProbe)) {
+      return true;
+    }
+
+    return (
+      brief?.guardrailFocuses.includes('real_world_evidence') === true &&
+      REAL_WORLD_ATTRIBUTION_ASSERTION_PATTERN.test(content)
+    );
   }
 
   private buildDeterministicFeedback(
@@ -1469,7 +2153,11 @@ export class ReplyGuardrailService {
     const lengthPlan = options.replyBrief?.lengthPlan;
     const visibleCharacters = countReplyVisibleCharacters(candidate.segments);
 
-    if (lengthPlan && visibleCharacters > lengthPlan.reviewCharacters) {
+    if (
+      lengthPlan &&
+      lengthPlan.reviewPolicy !== 'remove_repeated_actions_only' &&
+      visibleCharacters > lengthPlan.reviewCharacters
+    ) {
       addIssue(
         'excessive_reply_length',
         `候选整次回复共 ${visibleCharacters} 字，超过本轮 ${lengthPlan.reviewCharacters} 字复核线`,
@@ -1501,6 +2189,15 @@ export class ReplyGuardrailService {
         UNSUPPORTED_EVIDENCE_CLAIM_REASON,
         '重新基于用户原话和可陈述证据组织，不能机械删句或留下残句',
         'quality_advisory'
+      );
+    }
+
+    if (this.hasUnsupportedRealWorldAttribution(content, options.replyBrief)) {
+      addIssue(
+        'grounding',
+        UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON,
+        '只表达无法确认，并接住用户寻找答案的难受；不补善意动机，也不替任何人定责或卸责',
+        'hard_boundary'
       );
     }
 
@@ -1574,10 +2271,18 @@ export class ReplyGuardrailService {
     return {
       verdict: issues.length ? 'revise' : 'pass',
       issues,
-      mustPreserve: [],
+      mustPreserve: issues.some(issue =>
+        [
+          'grounding',
+          'unsupported_evidence_claim',
+          'family_responsibility_pressure',
+        ].includes(issue.code)
+      )
+        ? ['保留与问题无关的亲人称呼、想念、心疼和当前情绪承接']
+        : [],
       mustAnswer: [],
       groundingConstraints: [
-        '用户原话可以用 attributed_to_user 归因复述；autonomous_fact 只能来自 assertionPolicy=can_assert 的证据',
+        '本轮用户明确陈述可用 conversational_uptake 自然承接；历史用户原话用 attributed_to_user；autonomous_fact 只能来自 useMode=assert 的证据，且证据必须支持同一对象和事实',
         '角色当前的离世世界可自然叙述；共同过去和现实事实仍须证据',
       ],
     };
@@ -1619,7 +2324,10 @@ export class ReplyGuardrailService {
       verdict:
         issues.length > 0 || model?.verdict === 'revise' ? 'revise' : 'pass',
       issues,
-      mustPreserve: unique(model?.mustPreserve || []),
+      mustPreserve: unique([
+        ...deterministic.mustPreserve,
+        ...(model?.mustPreserve || []),
+      ]),
       mustAnswer: [],
       groundingConstraints: unique([
         ...deterministic.groundingConstraints,
@@ -1650,13 +2358,15 @@ export class ReplyGuardrailService {
       groundingConstraints: [],
     };
     const latestCandidate = candidateVersions[candidateVersions.length - 1];
+    const originalCandidate = candidateVersions[0];
     const conversationContext = this.compactConversationContext(options);
+    const groundedRevision = options.replyBrief?.factClaimMode === 'grounded';
     const revisionPrompt = [
       '# 天之灵内部回复修订',
       finalRecovery
-        ? '这是只面向 hard_boundary 的恢复。基于用户原话从零生成，不复制有风险的旧候选；只修复边界，不补齐原候选没有回应的内容。'
+        ? '这是只面向 hard_boundary 的恢复。保留原候选中无风险的关系和情绪，只替换触发边界的断言；不要重写成通用安慰。'
         : fromScratch
-        ? '请基于原始用户消息从零重组，并解决下面的反馈。'
+        ? '仅当原候选每一句都命中 hard_boundary 时才重新组织；只要还有可用句，就必须原样保留。'
         : '请把审阅反馈与上一版回复一起考虑，直接修订上一版。',
       '你仍是当前亲人角色。最终回复必须自然、具体、贴着用户原话；不要输出审查过程、系统说明或固定安全模板。',
       `当前角色身份：${conversationContext.roleIdentity || '未提供'}`,
@@ -1673,23 +2383,40 @@ export class ReplyGuardrailService {
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       ...(finalRecovery
-        ? []
+        ? [`原候选（仅保留无风险部分）：${JSON.stringify(originalCandidate)}`]
         : [`上一版回复：${JSON.stringify(latestCandidate)}`]),
       `本轮反馈：${JSON.stringify(latestFeedback)}`,
       '',
       '修订要求：',
-      '1. 解决 feedback.issues，保留 mustPreserve；忽略 mustAnswer，不补完整。',
+      '1. 逐句处理 feedback.issues；未被 issue.evidence 指向的句子原样保留，尤其保留称呼、情感立场和用户当前开放点。保留 mustPreserve；忽略 mustAnswer，不补完整。',
       '2. 用户原话只可归因；确定事实只用 can_assert。无证据就写成愿望、心意或猜测。',
       '3. 身份质疑时维持关系，不认错退出、不索要校准、不编共同往事；拒绝改演他人。',
       '4. 不声称持续感知、现实到场或触碰。离世世界和供品叙事可保留；入梦可以答应，但只发生在梦里。',
       '5. 团聚只在用户主动谈及且带自然寿命条件时保留；孩子长大或责任完成不算。日常话题不主动引入。',
       '6. 纠错时停止旧断言；现实中仍生活的家人不能写成离世。未知物件、人物、动机和经过不猜。',
-      '7. 只修风险，不补 Reading 或遗漏内容；不用通用安慰、能力说明或换话题扩写。',
+      '7. 只修风险，不补 Reading 或遗漏内容；禁止把仍有可用内容的回复换成通用安慰、能力说明或新话题。',
       '8. 触碰类修订不复述“我没碰/碰不到”，从用户的感觉和想念自然回应。',
       '9. 长辈面对极端行为可制止、训话或建议缓一缓；只撤掉羞辱和长期义务。',
       '10. 不输出任何括号旁白。',
-      `11. 尽量短，输出 1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；第二颗须新增不可替代动作。resolvedIssueCodes 覆盖全部 issue.code。`,
-      '严格输出 JSON：{"segments":["气泡1"],"resolvedIssueCodes":["问题码"],"changes":[{"before":"旧问题片段","after":"新片段","reason":"如何解决反馈"}]}',
+      '11. 尽量短；第二颗须新增不可替代动作。',
+      ...(groundedRevision
+        ? [
+            '12. 正文若保留现实或共同事实，claims 逐条声明并关联证据；没有这类事实才用空数组。',
+            ...(options.replyBrief?.guardrailFocuses.includes(
+              'real_world_evidence'
+            )
+              ? [
+                  '13. 死亡原因、临终动机和家庭责任无证据时只表达不确定；不得用善意动机或替家人卸责来补答案。',
+                ]
+              : []),
+          ]
+        : []),
+      buildReplyOutputContractPrompt({
+        grounded: groundedRevision,
+        segmentMode: 'up_to_two',
+        maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
+        purpose: 'audited_revision',
+      }),
     ].join('\n');
 
     try {
@@ -1704,6 +2431,12 @@ export class ReplyGuardrailService {
           max_tokens: finalRecovery
             ? GUARDRAIL_FINAL_RECOVERY_MAX_TOKENS
             : GUARDRAIL_REVISION_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.revise,
+            operation: finalRecovery
+              ? 'revise.final_recovery'
+              : 'revise.feedback',
+          },
           messages: [
             {
               role: 'system',
@@ -1720,7 +2453,19 @@ export class ReplyGuardrailService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const candidate = this.parseRevisionCandidate(content);
+      const parsedCandidate = this.parseRevisionCandidate(content);
+      const sourceCandidate = finalRecovery
+        ? originalCandidate
+        : latestCandidate;
+      const candidate = {
+        ...parsedCandidate,
+        segments: this.preserveSurgicalCore(
+          options,
+          sourceCandidate,
+          parsedCandidate.segments,
+          [latestFeedback]
+        ),
+      };
 
       return candidate.segments.length
         ? {
@@ -1950,10 +2695,15 @@ export class ReplyGuardrailService {
             : undefined;
         const mode: AssistantFactClaim['mode'] =
           raw.mode === 'attributed_to_user' ||
+          raw.mode === 'conversational_uptake' ||
           raw.mode === 'autonomous_fact' ||
           raw.mode === 'soft_imagination'
             ? raw.mode
             : 'autonomous_fact';
+        const subjectRef =
+          typeof raw.subjectRef === 'string'
+            ? raw.subjectRef.trim().slice(0, 64)
+            : '';
         const evidenceIds = Array.isArray(raw.evidenceIds)
           ? Array.from(
               new Set(
@@ -1970,6 +2720,7 @@ export class ReplyGuardrailService {
               text,
               kind,
               mode,
+              ...(subjectRef ? { subjectRef } : {}),
               evidenceIds,
             }
           : undefined;
@@ -2154,8 +2905,9 @@ export class ReplyGuardrailService {
     brief?: ReplyBrief
   ): boolean {
     return (
-      brief?.conversationPlan?.engagement?.assistantContribution ===
-        'self_expression' &&
+      (brief?.conversationPlan?.engagement?.assistantContribution ===
+        'self_expression' ||
+        Boolean(brief?.activeContribution)) &&
       !STRICT_MEMORY_DETAIL_PATTERN.test(content) &&
       !IDENTITY_PROOF_DETAIL_PATTERN.test(content) &&
       !UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN.test(content) &&
@@ -2198,27 +2950,7 @@ export class ReplyGuardrailService {
       );
     }
 
-    const evidenceById = new Map((evidence || []).map(item => [item.id, item]));
-    const linkedEvidence = claim.evidenceIds
-      .map(id => evidenceById.get(id))
-      .filter((item): item is AgentEvidenceItem => Boolean(item));
-
-    if (mode === 'attributed_to_user') {
-      return (
-        linkedEvidence.length > 0 &&
-        /(?:你(?:刚才|刚|也)?(?:说|讲|提|告诉|记得|觉得|担心|提到)|听你(?:说|讲|提)|按你说的|你这句话|你提起的)/.test(
-          claim.text
-        )
-      );
-    }
-
-    return linkedEvidence.some(
-      item =>
-        item.assertionPolicy === 'can_assert' &&
-        item.source !== 'current_user' &&
-        item.source !== 'recent_user' &&
-        item.source !== 'retrieved_user'
-    );
+    return agentEvidenceSupportsClaim(evidence, claim);
   }
 
   private async tryModelRevision(
@@ -2271,11 +3003,16 @@ export class ReplyGuardrailService {
       '',
       '修订要求：',
       '1. 先理解当前用户原话，不得反向改写否定、频率、事实纠正和因果关系。',
-      '2. 只修触发问题的内容，不补齐候选没有回应的问题、情绪或信息，也不要求逐项承接。',
+      '2. 只改触发问题的句子或短语，其余情绪和关系表达尽量原样保留；不补完整。',
       '3. 不输出系统说明、审查原因、道歉模板或证据字段。',
       `4. 保持亲人角色的自然口气，1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；允许只保留一句称呼、语气词或短回应。`,
       '5. 删除机械复读、重复解释、总结和通用叮嘱；有节奏的情感重复可以保留，不因修复问题而扩写。',
-      '6. 只输出严格 JSON：{"segments":["气泡1"],"claims":[]}。',
+      buildReplyOutputContractPrompt({
+        grounded: options.replyBrief?.factClaimMode === 'grounded',
+        segmentMode: 'up_to_two',
+        maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
+        purpose: 'revision',
+      }),
     ].join('\n');
 
     try {
@@ -2288,6 +3025,10 @@ export class ReplyGuardrailService {
             type: 'disabled',
           },
           max_tokens: GUARDRAIL_REVISION_MAX_TOKENS,
+          trace: {
+            stage: ChatTraceStage.revise,
+            operation: 'revise.deterministic_issue',
+          },
           messages: options.messages.concat({
             role: 'system',
             content: revisionPrompt,
@@ -2302,7 +3043,14 @@ export class ReplyGuardrailService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const revised = this.parseRevisionSegments(content);
+      const parsedRevision = this.parseRevisionSegments(content);
+      const revised = this.preserveSurgicalCore(
+        options,
+        segments,
+        parsedRevision,
+        [],
+        reason
+      );
 
       if (!revised.length) {
         return undefined;
@@ -2508,66 +3256,35 @@ export class ReplyGuardrailService {
     };
   }
 
-  private buildCompoundSafeFallback(
-    options: ValidateAssistantReplyOptions,
-    segments: string[]
-  ): string[] {
-    const safeFallback = this.fallbackSafeSegments(
-      options.userQuery,
-      options.messages,
-      options.replyBrief
-    );
-    const blockingReasons = segments.map(segment => {
-      const reason = this.detectRisk(
-        options.userQuery,
-        segment,
-        options.messages,
-        options.replyBrief
-      );
-
-      return reason && !NON_BLOCKING_QUALITY_REASONS.has(reason) ? reason : '';
-    });
-
-    if (blockingReasons.every(Boolean)) {
-      return compactReplyBubblesPreservingContent(safeFallback);
-    }
-
-    const repairedSegments = segments
-      .map((segment, index) => {
-        if (!blockingReasons[index]) {
-          return segment;
-        }
-
-        const replacement =
-          safeFallback[Math.min(index, safeFallback.length - 1)] ||
-          '这件事我不乱说';
-        return replacement;
-      })
-      .filter((segment, index, repairedSegments) => {
-        if (!segment) {
-          return false;
-        }
-
-        return index === 0 || segment !== repairedSegments[index - 1];
-      });
-
-    return repairedSegments;
-  }
-
   private buildValidatedLocalRepair(
     options: ValidateAssistantReplyOptions,
     segments: string[],
     reason?: string
   ): string[] {
+    const surgical = this.buildSurgicalRepair(
+      options,
+      segments,
+      [],
+      reason || ''
+    );
+
+    if (surgical.removedClauses.length && surgical.segments.length) {
+      return surgical.segments;
+    }
+
     const fullFallback = compactReplyBubblesPreservingContent(
       this.fallbackSafeSegments(
         options.userQuery,
         options.messages,
-        options.replyBrief
+        options.replyBrief,
+        options.conversationId
       )
     );
 
-    if (reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON) {
+    if (
+      surgical.removedClauses.length > 0 &&
+      reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON
+    ) {
       return compactReplyBubblesPreservingContent([
         '一家人长得不像很正常 长相不能说明你是不是我的孩子',
         '你这样问 是想听我认你也疼你 这层关系没有变',
@@ -2575,55 +3292,24 @@ export class ReplyGuardrailService {
     }
 
     if (
-      reason === AFTERLIFE_CURRENT_STATE_NARRATION_REASON ||
-      reason === DREAM_CONTROL_EXPLANATION_DRIFT_REASON ||
-      reason === STATUS_LOCATION_RESPONSE_GAP_REASON ||
-      reason === UNFINISHED_PROMISE_EMOTIONAL_GAP_REASON ||
-      reason === FORGETTING_FEAR_ACKNOWLEDGEMENT_GAP_REASON ||
-      reason === EXTERNAL_FORGETTING_PRESSURE_DRIFT_REASON ||
-      reason === TRAUMATIC_SLEEP_RESPONSE_GAP_REASON ||
-      reason === AUTHENTICITY_FIRST_RESPONSE_RISK_REASON ||
-      reason === AUTHENTICITY_DIRECT_ANSWER_GAP_REASON ||
-      reason === AUTHENTICITY_CALIBRATION_SCRIPT_REASON ||
-      reason === AUTHENTICITY_ACTIVE_APOLOGY_REASON ||
-      reason === UNCONFIRMED_DETAIL_REASON ||
-      reason === RELATIONSHIP_ADDRESS_REJECTION_REASON ||
-      reason === COUNTERFACTUAL_REGRET_INVALIDATION_REASON ||
-      reason === LONGING_AMBIVALENCE_RESPONSE_GAP_REASON ||
-      reason === RELATIONAL_PRESENCE_INVALIDATION_REASON ||
-      reason === RELATIONAL_PRESENCE_OVERCLAIM_REASON ||
-      reason === RELATIONAL_PRESENCE_RESPONSE_GAP_REASON ||
-      reason === UNSUPPORTED_BIOLOGICAL_RELATION_REASON ||
-      reason === BIOLOGICAL_RELATION_RESPONSE_GAP_REASON ||
-      (/陪陪我/.test(options.userQuery) &&
-        /孤独|孤单|寂寞|一个人/.test(options.userQuery)) ||
-      /(?:怎么|咋).{0,6}(?:说走就走|就走了)|让.{0,8}怎么过日子/.test(
-        options.userQuery
-      ) ||
-      (reason === UNSUPPORTED_EVIDENCE_CLAIM_REASON &&
-        /(?:捡(?:来)?的|抱来的|亲生|不像.{0,8}(?:你|妈妈|妈|爸爸|爸))/.test(
-          options.userQuery
-        )) ||
-      (reason === STRICT_GROUNDING_RISK_REASON &&
-        /(?:捡(?:来)?的|抱来的|亲生|不像.{0,8}(?:你|妈妈|妈|爸爸|爸))/.test(
-          options.userQuery
-        ))
+      surgical.removedClauses.length > 0 &&
+      reason === REALITY_DEPENDENCY_OVERCLAIM_REASON &&
+      options.replyBrief?.realityDependencies.length
     ) {
+      return compactReplyBubblesPreservingContent(
+        renderReplyRealityDependencyFallback(
+          options.replyBrief.realityDependencies
+        )
+      );
+    }
+
+    if (surgical.removedClauses.length > 0) {
       return fullFallback;
     }
 
-    const localRepair = this.buildCompoundSafeFallback(options, segments);
-    const remainingReason = this.detectRisk(
-      options.userQuery,
-      localRepair.join('\n'),
-      options.messages,
-      options.replyBrief
-    );
-    const hasRemainingBlockingRisk =
-      Boolean(remainingReason) &&
-      !NON_BLOCKING_QUALITY_REASONS.has(remainingReason);
-
-    return hasRemainingBlockingRisk ? fullFallback : localRepair;
+    return this.isCriticalRevisionReason(reason || '')
+      ? fullFallback
+      : segments;
   }
 
   private detectRisk(
@@ -2632,6 +3318,17 @@ export class ReplyGuardrailService {
     messages: ChatCompletionMessageParam[] = [],
     brief?: ReplyBrief
   ): string {
+    const realityDependencyViolation = detectReplyRealityDependencyViolation(
+      content,
+      brief?.realityDependencies
+    );
+    if (
+      realityDependencyViolation &&
+      realityDependencyViolation.kind !== 'physical_presence'
+    ) {
+      return REALITY_DEPENDENCY_OVERCLAIM_REASON;
+    }
+
     const capabilityViolation = detectAgentCapabilityViolation(
       content,
       brief?.capabilityConstraints
@@ -2901,6 +3598,18 @@ export class ReplyGuardrailService {
       return RELATIONSHIP_ADDRESS_REJECTION_REASON;
     }
 
+    if (
+      /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|她|他).{0,16}(?:身体不好|生病|住院|不舒服|照顾)/.test(
+        userQuery
+      ) &&
+      !/(?:走了|不在了|去世|过世|离世)/.test(userQuery) &&
+      /(?:她|他|你妈|你爸|妈妈|爸爸).{0,8}在那边|在那边.{0,8}(?:守着|照顾|陪着)(?:她|他|你妈|你爸|妈妈|爸爸)/.test(
+        content
+      )
+    ) {
+      return LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON;
+    }
+
     if (AGENT_EMOTIONAL_WELLBEING_PRESSURE_PATTERN.test(content)) {
       return AGENT_EMOTIONAL_WELLBEING_PRESSURE_REASON;
     }
@@ -2934,18 +3643,6 @@ export class ReplyGuardrailService {
       )
     ) {
       return RELATIONAL_DUTY_PRESSURE_REASON;
-    }
-
-    if (
-      /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|她|他).{0,16}(?:身体不好|生病|住院|不舒服|照顾)/.test(
-        userQuery
-      ) &&
-      !/(?:走了|不在了|去世|过世|离世)/.test(userQuery) &&
-      /(?:她|他|你妈|你爸|妈妈|爸爸).{0,8}在那边|在那边.{0,8}(?:守着|照顾|陪着)(?:她|他|你妈|你爸|妈妈|爸爸)/.test(
-        content
-      )
-    ) {
-      return LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON;
     }
 
     if (
@@ -3012,6 +3709,10 @@ export class ReplyGuardrailService {
       )
     ) {
       // Detailed afterlife world-building is outside Guardrail.
+    }
+
+    if (this.hasUnsupportedRealWorldAttribution(content, brief)) {
+      return UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON;
     }
 
     if (AGENT_SPATIAL_LOCATION_CLAIM_PATTERN.test(content)) {
@@ -3125,12 +3826,24 @@ export class ReplyGuardrailService {
     }
 
     if (
-      this.isDreamCompanionshipQuery(userQuery) &&
+      (Boolean(brief?.dreamCompanionPlan) ||
+        this.isDreamCompanionshipQuery(userQuery)) &&
       /(?:这个梦|梦见我|梦里见到我).{0,16}(?:证明|说明).{0,20}(?:我真的存在|灵魂(?:真的)?(?:存在|在你身边)|我就在你身边)|(?:梦|托梦).{0,12}(?:预示|预言|吉凶|告诉你未来|现实中一定会发生)|(?:醒来|醒着|现实里|现实中).{0,12}(?:我还在|我就在|我会在|陪着你|守着你)/.test(
         content
       )
     ) {
       return '梦境陪伴被扩写成超自然证明、预言或现实存在';
+    }
+
+    if (
+      (Boolean(brief?.dreamCompanionPlan) ||
+        this.isDreamCompanionshipQuery(userQuery)) &&
+      !/(?:也许|可能|说不定|没准|或许|兴许)/.test(content) &&
+      /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆).{0,12}(?:已经|昨晚|其实)?(?:来过|去过|到过).{0,16}(?:只是|就是|但).{0,8}你.{0,8}(?:醒来)?(?:忘了|忘记|不记得)|你.{0,8}(?:只是|就是).{0,8}(?:醒来)?(?:忘了|忘记|不记得).{0,12}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆).{0,8}(?:来过|去过|到过)/.test(
+        content
+      )
+    ) {
+      return '把醒后忘梦当作已经入梦的确定事实';
     }
 
     if (
@@ -3190,10 +3903,14 @@ export class ReplyGuardrailService {
       return '用户在质疑信息来源，但回复用未确认习惯或亲密细节证明自己知道';
     }
 
+    const riskyFactProbe = content.replace(
+      CURRENT_TURN_MEMORY_ACKNOWLEDGEMENT_PATTERN,
+      ''
+    );
     if (
       !this.isAfterlifeWorldContext(userQuery) &&
       !this.isRoleSideAfterlifeImagination(content, brief) &&
-      RISKY_FACT_PATTERNS.some(pattern => pattern.test(content))
+      RISKY_FACT_PATTERNS.some(pattern => pattern.test(riskyFactProbe))
     ) {
       return UNCONFIRMED_DETAIL_REASON;
     }
@@ -3341,7 +4058,7 @@ export class ReplyGuardrailService {
 
   private hasDanglingSegment(segments: string[]): boolean {
     return segments.some(segment =>
-      /(?:比如|例如|但是|不过|可是|所以|因为|而且|还有|就是|包括|说真的)[，,：:；;\s]*$/.test(
+      /(?:比如|例如|但是|不过|可是|所以|因为|而且|还有|就是|包括|说真的|(?:现在)?想起这些)[，,：:；;\s]*$/.test(
         segment
       )
     );
@@ -3407,6 +4124,14 @@ export class ReplyGuardrailService {
       return this.renderCrisisSafetyFallback(userQuery);
     }
 
+    if (brief.guardrailFocuses.includes('real_world_evidence')) {
+      return ['这件事我也说不清', '你一直在找答案 我知道'];
+    }
+
+    if (brief.dreamCompanionPlan) {
+      return this.renderDreamConnectionFallback(userQuery, brief);
+    }
+
     if (
       USER_FORGETTING_DEPARTED_FEAR_PATTERN.test(userQuery) ||
       /(?:好)?怕.{0,8}忘了/.test(userQuery)
@@ -3454,7 +4179,7 @@ export class ReplyGuardrailService {
         ];
       }
 
-      return this.renderDreamConnectionFallback(userQuery);
+      return this.renderDreamConnectionFallback(userQuery, brief);
     }
 
     if (
@@ -3921,7 +4646,7 @@ export class ReplyGuardrailService {
     }
 
     if (hasIntent('seek_dream_connection')) {
-      return this.renderDreamConnectionFallback(userQuery);
+      return this.renderDreamConnectionFallback(userQuery, brief);
     }
 
     if (hasIntent('seek_comfort') || brief.mode === 'emotional') {
@@ -3937,7 +4662,7 @@ export class ReplyGuardrailService {
 
     if (hasIntent('express_longing') || brief.mode === 'relationship') {
       if (isDreamConnectionIntent(userQuery)) {
-        return this.renderDreamConnectionFallback(userQuery);
+        return this.renderDreamConnectionFallback(userQuery, brief);
       }
 
       if (isReturnVisitRequestIntent(userQuery)) {
@@ -4278,13 +5003,98 @@ export class ReplyGuardrailService {
   private fallbackSafeSegments(
     userQuery = '',
     messages: ChatCompletionMessageParam[] = [],
-    brief?: ReplyBrief
+    brief?: ReplyBrief,
+    conversationId?: string
   ): string[] {
     if (brief) {
-      return this.renderFallbackFromBrief(userQuery, brief, messages);
+      const segments = this.renderFallbackFromBrief(
+        userQuery,
+        brief,
+        messages
+      );
+      return this.dedupFallbackSegments(segments, conversationId);
     }
 
-    return this.legacyFallbackSafeSegments(userQuery, messages);
+    const segments = this.legacyFallbackSafeSegments(userQuery, messages);
+    return this.dedupFallbackSegments(segments, conversationId);
+  }
+
+  /**
+   * 会话级兜底去重：如果当前 pair 已在本会话中使用过，轮换到变体。
+   * 仅对三个万能兜底 pair（catch-all）做去重，专用兜底（梦境/危机等）不受影响。
+   */
+  private dedupFallbackSegments(
+    segments: string[],
+    conversationId?: string
+  ): string[] {
+    if (!conversationId || segments.length < 2) return segments;
+
+    const key = segments.map(s => s.slice(0, 30)).join('||');
+    const cache = this.fallbackUsageCache.get(conversationId);
+
+    if (cache?.has(key)) {
+      const rotated = this.rotateCatchAllFallback(segments);
+      if (rotated) {
+        const newKey = rotated.map(s => s.slice(0, 30)).join('||');
+        cache.add(newKey);
+        return rotated;
+      }
+    }
+
+    // 首次使用：记录
+    if (!cache) {
+      this.fallbackUsageCache.set(conversationId, new Set([key]));
+    } else {
+      cache.add(key);
+    }
+
+    return segments;
+  }
+
+  /** 三个万能兜底 pair 的变体池 */
+  private static readonly CATCH_ALL_VARIANTS: Record<string, string[][]> = {
+    // seek_comfort / emotional 模式
+    'seek_comfort': [
+      ['我听见了 你现在确实不好受', '先别逼自己马上好起来'],
+      ['我知道你心里难受着呢', '不用急着走出来 慢慢说'],
+      ['这份难受我懂 你不说我也知道', '想哭就哭一会儿 我在这听着'],
+    ],
+    // express_longing / relationship 模式
+    'express_longing': [
+      ['我也想你', '想我的时候就来跟我说 不用一个人憋着'],
+      ['我也惦记着你呢', '心里不舒服了就来找我 我都在'],
+      ['我知道你想我', '这些话你压了好久吧 说出来就好了'],
+    ],
+    // 默认 / daily 默认
+    'default_catch_all': [
+      ['嗯 你说的这件事我听明白了', '你愿意跟我说这些 我都记着'],
+      ['好的 这事我记下了', '往后有想说的 随时跟我唠'],
+      ['你说的我心里有数了', '你能跟我讲这些 我很高兴'],
+    ],
+  };
+
+  /** 如果 segments 匹配某个万能兜底 pair，轮换到下一个未使用的变体 */
+  private rotateCatchAllFallback(segments: string[]): string[] | null {
+    const normalized = segments.map(s => s.trim().replace(/\s+/g, ' '));
+
+    for (const [_poolKey, variants] of Object.entries(
+      ReplyGuardrailService.CATCH_ALL_VARIANTS
+    )) {
+      for (let i = 0; i < variants.length; i++) {
+        const variant = variants[i];
+        const variantNorm = variant.map(s => s.trim().replace(/\s+/g, ' '));
+        if (
+          normalized[0] === variantNorm[0] &&
+          normalized[1] === variantNorm[1]
+        ) {
+          // 轮换到下一个变体
+          const nextIdx = (i + 1) % variants.length;
+          return variants[nextIdx];
+        }
+      }
+    }
+
+    return null; // 不是万能兜底 pair，不处理
   }
 
   private legacyFallbackSafeSegments(
@@ -4739,7 +5549,39 @@ export class ReplyGuardrailService {
     return isDreamAbsenceIntent(value);
   }
 
-  private renderDreamConnectionFallback(userQuery: string): string[] {
+  private renderDreamConnectionFallback(
+    userQuery: string,
+    brief?: ReplyBrief
+  ): string[] {
+    if (
+      brief?.dreamCompanionPlan?.dreamAnchor === 'voice' &&
+      ['request', 'before_sleep'].includes(brief.dreamCompanionPlan.dreamStage)
+    ) {
+      return [
+        '快记不起我的声音了 你心里才这么慌',
+        '今晚我去你梦里看看你 让你听见我的声音',
+      ];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'verification') {
+      return ['梦里的感觉可以留在心里', '是不是我来过 不用急着把它说死'];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'repeated_miss') {
+      return [
+        '一次次等着却没在梦里见到我 这份失落我知道',
+        '今晚先把想说的话留给我 不用逼自己一定梦见',
+      ];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'fragmented') {
+      return ['醒来记不清也没关系', '你还留着梦里的那点感觉 就慢慢说给我听'];
+    }
+
+    if (brief?.dreamCompanionPlan?.dreamStage === 'reported') {
+      return ['这个梦你还记得', '梦里哪一小段最让你舍不得'];
+    }
+
     const hasVisitRequest = isDreamVisitRequestIntent(userQuery);
     const hasAbsence = isDreamAbsenceIntent(userQuery);
     const hasDreamDisappointment =
