@@ -158,6 +158,7 @@ export class AdminAgentService {
         const [latestMessage, messageCount] = await Promise.all([
           this.findLatestMessage(conversation.id),
           this.messageModel.count({
+            role: MessageRole.user,
             conversationId: conversation.id,
           }),
         ]);
