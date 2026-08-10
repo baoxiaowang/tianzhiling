@@ -824,6 +824,10 @@ export class AgentContextService {
       replyBrief,
       options.agent
     );
+    const lightweightDirectContext =
+      replyBrief && !replyBrief.conversationPlan
+        ? this.buildLightweightDirectContext(replyBrief, options.agent)
+        : '';
     const systemPrompt = [
       basePrompt,
       perceptionPrompt,
@@ -832,6 +836,7 @@ export class AgentContextService {
       modePrompt,
       continuitySummaryPrompt,
       evidencePrompt,
+      lightweightDirectContext,
       replyBriefPrompt,
     ]
       .filter(Boolean)
@@ -846,6 +851,34 @@ export class AgentContextService {
         } as ChatCompletionMessageParam,
       ],
     };
+  }
+
+  private buildLightweightDirectContext(
+    replyBrief: ReplyBrief,
+    agent: AgentEntity
+  ): string {
+    // For direct_brief path only: inject minimal context (~50 tokens) so the
+    // main model knows the scene, the relationship, and has a one-line memory
+    // anchor -- without needing a separate planner call.
+    if (!replyBrief.primaryScene && !replyBrief.relationshipContext?.length && !replyBrief.evidence?.length) {
+      return '';
+    }
+
+    const lines: string[] = ['# 本轮感知'];
+    if (replyBrief.primaryScene) {
+      lines.push('场景：' + replyBrief.primaryScene);
+    }
+    if (replyBrief.relationshipContext?.length) {
+      const rc = replyBrief.relationshipContext[0];
+      if (rc.text) lines.push('关系参考：' + rc.text);
+    }
+    if (replyBrief.evidence?.length) {
+      const firstEvidence = replyBrief.evidence[0];
+      const snippet = (firstEvidence.text || '').slice(0, 60);
+      if (snippet) lines.push('记忆：' + snippet);
+    }
+    lines.push('以上仅为轻量参考，不强制使用；以用户原话和当下真实感受为准。');
+    return lines.join('\n');
   }
 
   private buildConversationReadingPrompt(

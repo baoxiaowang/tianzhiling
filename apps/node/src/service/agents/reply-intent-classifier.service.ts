@@ -110,7 +110,7 @@ export interface ReplyPlanningDecision {
     | 'reality_dependency'
     | 'long_message'
     | 'multiple_questions'
-    | 'unresolved_semantics'
+    | 'unresolved_semantics'    | 'short_message'
     | 'ordinary_message';
 }
 
@@ -121,6 +121,10 @@ const CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH = 90;
 const CLASSIFIER_MAX_KNOWN_OBJECTS = 10;
 const CLASSIFIER_MAX_TOKENS = 720;
 const DEFAULT_DIRECT_MAX_CHARACTERS = 80;
+
+const SHORT_MESSAGE_DIRECT_MAX_CHARS = 20;
+const LIGHTWEIGHT_COMFORT_KEEP_SEMANTIC_PATTERN =
+  /(?:活不下去|想去死|不想活|自杀|了断|结束自己|撑不住了|撑不下去了|实在熬不住|没希望了|绝望|生不如死|活得太累|没意义|不想存在|消失|去陪你|来找你|接我|带我走|真的受不了|太痛苦了|受不了了|我该怎么办|我说不下去了|我说不出来|不知道该怎么办|后悔太迟|来不及了|再也来不及|永远补偿不了|走得太突然|就这么走了|为什么抛下|你怎么能走|你怎么舍得|我怎么活|一个人怎么过|没有你我怎么办|你回来好不好|你回来吧|求求你回来)/;
 const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
   'authenticity_challenge',
   'correction',
@@ -584,20 +588,24 @@ export class ReplyIntentClassifierService {
       return { mode: 'direct', reason: 'ordinary_message' };
     }
 
+    // Short messages (<=20 chars) that aren't in complex scenes or deep distress
+    // can go direct -- the planning call adds negligible value for these.
+    if (Array.from(currentQuery).length <= SHORT_MESSAGE_DIRECT_MAX_CHARS) {
+      return { mode: 'direct', reason: 'short_message' };
+    }
+
     // Length can prove that a turn needs planning, but brevity cannot prove
     // semantic simplicity. Unknown, elliptical turns stay on the planner.
     return { mode: 'semantic', reason: 'unresolved_semantics' };
   }
 
   private shouldKeepComfortOnSemanticPath(currentQuery: string): boolean {
+    // Only keep comfort on semantic path when the user is in genuine deep distress.
+    // Lightweight comfort expressions ("好想你", "睡不着", "心里难受") now go direct.
     return (
+      LIGHTWEIGHT_COMFORT_KEEP_SEMANTIC_PATTERN.test(currentQuery) ||
       GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(currentQuery) ||
-      GRIEF_OVERWHELMED_INTENT_PATTERN.test(currentQuery) ||
-      COUNTERFACTUAL_REGRET_INTENT_PATTERN.test(currentQuery) ||
-      FAMILY_CARE_REGRET_INTENT_PATTERN.test(currentQuery) ||
-      RETURN_REUNION_WISH_INTENT_PATTERN.test(currentQuery) ||
-      isReturnVisitRequestIntent(currentQuery) ||
-      isDreamConnectionIntent(currentQuery)
+      GRIEF_OVERWHELMED_INTENT_PATTERN.test(currentQuery)
     );
   }
 
