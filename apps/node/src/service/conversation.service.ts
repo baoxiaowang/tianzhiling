@@ -2594,10 +2594,10 @@ export class ConversationService {
     if (wasWarned) {
       return this.buildQuotaResult({
         path: isReturnVisit ? 'return_visit' : 'active',
-        remainingCount: 0, // block
+        remainingCount: 1, // warn again, never block
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
         returnVisit, triggered: true, matchedConditions: matched,
-        naturalCloseExempted: false, warned: true, blocked: true,
+        naturalCloseExempted: false, warned: true, blocked: false,
       });
     }
 
