@@ -170,12 +170,12 @@ const QUOTA_CONFIG = {
   version: 'v1',
   silentZoneMessages: 10,
   returnVisitGapDays: 7,
-  returnVisitReunionMessages: 5,
+  returnVisitReunionMessages: 3,
   driftProtectionMaxVisits: 3,
   driftProtectionWeeks: 8,
   driftProtectionDaily: 5,
   deepTrigger: {
-    sessionLength: { enabled: true, minMessages: 15, returnVisitMinMessages: 8 },
+    sessionLength: { enabled: true, minMessages: 15, returnVisitMinMessages: 3 },
     longInput: { enabled: true, minChars: 120, returnVisitMinChars: 80 },
     relationshipStage: { enabled: true, stages: ['R2','R3'], returnVisitStages: ['R1','R2','R3'] },
     triggerMode: 'any_pair' as const,
@@ -2492,7 +2492,7 @@ export class ConversationService {
       });
     }
 
-    // 6. Return visit reunion zone: first 5 messages of the return day are free
+    // 6. Return visit reunion zone: first 3 messages of the return day are free
     if (returnVisit.isReturnVisit && todayMsgs < QUOTA_CONFIG.returnVisitReunionMessages) {
       return this.buildQuotaResult({
         path: 'return_visit',
@@ -2536,7 +2536,8 @@ export class ConversationService {
 
     // Condition A: Session depth
     const sessThreshold = isReturnVisit ? cfg.sessionLength.returnVisitMinMessages : cfg.sessionLength.minMessages;
-    if (cfg.sessionLength.enabled && sessionMsgCount >= sessThreshold) matched.push('sessionLength');
+    const sessCount = isReturnVisit ? todayMsgs : sessionMsgCount;
+    if (cfg.sessionLength.enabled && sessCount >= sessThreshold) matched.push('sessionLength');
 
     // Condition B: Long input
     const charThreshold = isReturnVisit ? cfg.longInput.returnVisitMinChars : cfg.longInput.minChars;
@@ -2689,7 +2690,7 @@ export class ConversationService {
       : 999;
 
     return {
-      isReturnVisit: gapDays >= QUOTA_CONFIG.returnVisitGapDays,
+      isReturnVisit: lastBeforeGap !== null && gapDays >= QUOTA_CONFIG.returnVisitGapDays,
       gapDays,
       visitCount,
     };
