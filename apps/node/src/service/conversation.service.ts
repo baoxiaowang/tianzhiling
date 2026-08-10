@@ -2594,7 +2594,7 @@ export class ConversationService {
     if (wasWarned) {
       return this.buildQuotaResult({
         path: isReturnVisit ? 'return_visit' : 'active',
-        remainingCount: 1, // warn again, never block
+        remainingCount: 99, // already warned today, suppress dialog
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
         returnVisit, triggered: true, matchedConditions: matched,
         naturalCloseExempted: false, warned: true, blocked: false,
