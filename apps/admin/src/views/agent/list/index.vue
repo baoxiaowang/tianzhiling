@@ -90,7 +90,7 @@
           <a-table-column
             title="归属用户"
             data-index="createdUser"
-            :width="260"
+            :width="280"
           >
             <template #cell="{ record }">
               <a-space v-if="record.createdUser">
@@ -107,6 +107,14 @@
                 <div class="agent-page__identity">
                   <div class="agent-page__name">
                     {{ record.createdUser.name || '-' }}
+                    <a-tag
+                      v-if="record.createdUser.isVip"
+                      color="gold"
+                      size="small"
+                      class="agent-page__vip-tag"
+                    >
+                      VIP
+                    </a-tag>
                   </div>
                   <a-tooltip
                     :content="
@@ -707,6 +715,11 @@
 
     &__identity {
       min-width: 0;
+    }
+
+    &__vip-tag {
+      margin-left: 6px;
+      font-weight: 600;
     }
 
     &__name {

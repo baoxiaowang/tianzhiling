@@ -20,6 +20,7 @@ import {
   MongoObjectId,
   UserAccountEntity,
   UserEntity,
+  UserMembershipEntity,
   VoiceTimbreEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
@@ -67,6 +68,9 @@ export class AdminAgentService {
 
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
+
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -451,7 +455,7 @@ export class AdminAgentService {
       return new Map();
     }
 
-    const [users, accounts] = await Promise.all([
+    const [users, accounts, activeMemberships] = await Promise.all([
       this.userModel.find({
         where: {
           id: { $in: userIds },
@@ -462,9 +466,22 @@ export class AdminAgentService {
           userId: { $in: userIds },
         } as never,
       }),
+      this.userMembershipModel.find({
+        where: {
+          userId: { $in: userIds },
+          status: 'active',
+          $or: [
+            { lifetime: true },
+            { expiredAt: { $gt: new Date() } },
+          ],
+        } as never,
+      }),
     ]);
     const accountMap = new Map(
       accounts.map(account => [this.stringifyObjectId(account.userId), account])
+    );
+    const vipUserIds = new Set(
+      activeMemberships.map(m => this.stringifyObjectId(m.userId))
     );
 
     return new Map(
@@ -480,6 +497,7 @@ export class AdminAgentService {
             name: user.name ?? '',
             avatar: this.resolveAvatar(user.avatar),
             phone: user.phone ?? account?.account ?? '',
+            isVip: vipUserIds.has(id),
           },
         ];
       })
