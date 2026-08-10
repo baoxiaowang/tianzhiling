@@ -2536,7 +2536,7 @@ export class ConversationService {
 
     // Condition A: Session depth
     const sessThreshold = isReturnVisit ? cfg.sessionLength.returnVisitMinMessages : cfg.sessionLength.minMessages;
-    const sessCount = isReturnVisit ? todayMsgs : sessionMsgCount;
+    const sessCount = todayMsgs;
     if (cfg.sessionLength.enabled && sessCount >= sessThreshold) matched.push('sessionLength');
 
     // Condition B: Long input
@@ -2547,7 +2547,10 @@ export class ConversationService {
     if (cfg.relationshipStage.enabled) {
       const lastStage = await this.getLastRelationshipStage(userId, agentId);
       const stageList = isReturnVisit ? cfg.relationshipStage.returnVisitStages : cfg.relationshipStage.stages;
-      if (lastStage && stageList.includes(lastStage as any)) matched.push('relationshipStage');
+      if (lastStage && stageList.includes(lastStage as any)) {
+        const freshlyPromoted = await this.isStageJustPromoted(userId, agentId);
+        if (!freshlyPromoted) matched.push('relationshipStage');
+      }
     }
 
     // Check if any pair is fully matched
@@ -2730,6 +2733,29 @@ export class ConversationService {
       order: { createdAt: 'DESC' },
     } as any);
     return lastAssistantMsg?.replyRelationshipStage ?? null;
+  }
+
+  private async isStageJustPromoted(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+  ): Promise<boolean> {
+    const lastTwo = await this.messageModel.find({
+      where: {
+        userId, agentId,
+        role: MessageRole.assistant,
+        replyRelationshipStage: { $exists: true, $ne: null },
+      },
+      order: { createdAt: 'DESC' },
+      take: 2,
+    } as any);
+    if (lastTwo.length < 2) return false;
+    const cur = lastTwo[0]?.replyRelationshipStage;
+    const prev = lastTwo[1]?.replyRelationshipStage;
+    if (!cur || !prev) return false;
+    const stageRank: Record<string, number> = { R0: 0, R1: 1, R2: 2, R3: 3, R4: 4 };
+    const curRank = stageRank[cur] ?? 0;
+    const prevRank = stageRank[prev] ?? 0;
+    return curRank > prevRank && curRank >= 2;
   }
 
   private async wasQuotaWarningSent(
