@@ -173,7 +173,7 @@ const QUOTA_CONFIG = {
   messageThreshold: 5,
   longMessageMinChars: 60,
   relationshipStages: ['R2', 'R3'] as string[],
-  graceMessagesAfterWarn: 5,
+  graceMessagesAfterWarn: 3,
   naturalClosePatterns: [
     '晚安','睡了','先睡','休息了','去睡了','我好困','困了',
     '先忙','去忙','忙了','工作了',
