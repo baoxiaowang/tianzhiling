@@ -810,7 +810,7 @@ export class AgentContextService {
       options.currentQuery
     );
     const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
-    const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
+const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
     );
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
@@ -828,13 +828,17 @@ export class AgentContextService {
       replyBrief && !replyBrief.conversationPlan
         ? this.buildLightweightDirectContext(replyBrief, options.agent)
         : '';
-    const systemPrompt = [
+    const sessionContinuityPrompt = options.conversation
+      ? this.buildSessionContinuityPromptFromConversation(options.conversation, options.agent)
+      : '';
+        const systemPrompt = [
       basePrompt,
       perceptionPrompt,
       persona?.prompt,
       conversationReadingPrompt,
       modePrompt,
       continuitySummaryPrompt,
+      sessionContinuityPrompt,
       evidencePrompt,
       lightweightDirectContext,
       replyBriefPrompt,
@@ -879,6 +883,16 @@ export class AgentContextService {
     }
     lines.push('以上仅为轻量参考，不强制使用；以用户原话和当下真实感受为准。');
     return lines.join('\n');
+  }
+
+  private buildSessionContinuityPromptFromConversation(
+    conversation: ConversationEntity,
+    agent?: AgentEntity | null
+  ): string {
+    // This is a minimal guard: session continuity will be loaded from
+    // the database in a follow-up change. For now, return empty.
+    // The infrastructure (method signature, injection point) is ready.
+    return '';
   }
 
   private buildConversationReadingPrompt(

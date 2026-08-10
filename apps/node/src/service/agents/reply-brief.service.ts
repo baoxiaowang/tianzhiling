@@ -170,6 +170,7 @@ export interface ReplyBrief {
   experiencePlan: ReplyExperiencePlan;
   guardrailFocuses: ReplyGuardrailFocus[];
   participationStrategy?: ReplyParticipationStrategy;
+  isDeceased?: boolean;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
   prompt: string;
@@ -418,6 +419,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     hasRelationshipContinuity: Boolean(relationshipContinuity),
     turnClosure: baseBubblePlan.turnClosure,
     recentMessages: options.recentMessages,
+    isDeceased: Boolean(options.agent?.deathDate),
   });
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
@@ -483,6 +485,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     experiencePlan,
     guardrailFocuses,
     participationStrategy,
+    isDeceased: Boolean(options.agent?.deathDate),
     lengthPlan,
     bubblePlan,
   };
@@ -930,6 +933,7 @@ function resolveReplyParticipationStrategy(options: {
   hasRelationshipContinuity: boolean;
   turnClosure: ReplyBubblePlan['turnClosure'];
   recentMessages?: MessageEntity[];
+  isDeceased?: boolean;
 }): ReplyParticipationStrategy | undefined {
   const visibleCharacters = Array.from(
     options.currentQuery.replace(/\s/gu, '')
@@ -981,7 +985,8 @@ function resolveReplyParticipationStrategy(options: {
 }
 
 export function buildReplyParticipationStrategyPrompt(
-  strategy: ReplyParticipationStrategy
+  strategy: ReplyParticipationStrategy,
+  isDeceased?: boolean
 ): string {
   const contribution =
     strategy === 'planned_follow_through'
@@ -990,7 +995,10 @@ export function buildReplyParticipationStrategyPrompt(
       ? '只补一个角色侧小近况或具体态度，不转成对用户的通用叮嘱'
       : '给明确的亲人侧心意，或一处贴着当下的小画面；有节奏的重复也可以加强情感';
 
-  return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。。空间锚定：不生成"等你回来""我在家""过来看看"等暗示物理同处的表述；如想表达陪伴，改用"想你了""在心里陪你""看着你好好过"等保持空间距离的表达。`;
+  const spaceAnchor = isDeceased
+    ? '空间锚定：不生成"等你回来""我在家""过来看看"等暗示物理同处的表述；如想表达陪伴，改用"想你了""在心里陪你""看着你好好过"等保持空间距离的表达。'
+    : '';
+  return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
 }
 
 function buildRelationshipContext(
@@ -1946,7 +1954,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const participationLines = brief.participationStrategy
     ? [
         '## 短轮参与',
-        buildReplyParticipationStrategyPrompt(brief.participationStrategy),
+        buildReplyParticipationStrategyPrompt(brief.participationStrategy, brief.isDeceased),
         '',
       ]
     : [];
