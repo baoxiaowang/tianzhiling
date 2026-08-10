@@ -6,6 +6,7 @@ import { OpenAIService } from './openai';
 import { resolveAgentCapabilityConstraints } from './agent-capability-policy';
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
+  DISPLACEMENT_LOSS_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
   GRIEF_OVERWHELMED_INTENT_PATTERN,
   GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
@@ -813,6 +814,24 @@ export class ReplyIntentClassifierService {
         emotion: 'longing',
         riskLevel: 'none',
         confidence: 0.99,
+        source: 'hard_rule',
+      };
+    }
+
+    if (DISPLACEMENT_LOSS_INTENT_PATTERN.test(currentQuery)) {
+      return {
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'displacement_loss',
+            confidence: 0.97,
+          },
+        ],
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.97,
         source: 'hard_rule',
       };
     }
