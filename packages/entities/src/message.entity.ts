@@ -63,7 +63,7 @@ export interface MessageReplyDreamPlan {
 
 export interface ReplyQuotaTriggerDecision {
   version: string;
-  path: 'active' | 'return_visit' | 'drift_protection';
+  path: 'trial' | 'active';
   triggered: boolean;
   totalLifetimeMsgs: number;
   todayMsgs: number;

@@ -167,20 +167,13 @@ export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
   ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT;
 const QUOTA_CONFIG = {
-  version: 'v1',
-  silentZoneMessages: 10,
-  returnVisitGapDays: 7,
-  returnVisitReunionMessages: 3,
-  driftProtectionMaxVisits: 3,
-  driftProtectionWeeks: 8,
-  driftProtectionDaily: 5,
-  deepTrigger: {
-    sessionLength: { enabled: true, minMessages: 15, returnVisitMinMessages: 3 },
-    longInput: { enabled: true, minChars: 120, returnVisitMinChars: 80 },
-    relationshipStage: { enabled: true, stages: ['R2','R3'], returnVisitStages: ['R1','R2','R3'] },
-    triggerMode: 'any_pair' as const,
-    pairs: [['sessionLength','longInput'],['sessionLength','relationshipStage'],['longInput','relationshipStage']] as const,
-  },
+  version: 'v2',
+  newUserTrialDays: 3,
+  newUserSilentMessages: 20,
+  messageThreshold: 5,
+  longMessageMinChars: 60,
+  relationshipStages: ['R2', 'R3'] as string[],
+  graceMessagesAfterWarn: 5,
   naturalClosePatterns: [
     '晚安','睡了','先睡','休息了','去睡了','我好困','困了',
     '先忙','去忙','忙了','工作了',
@@ -538,12 +531,6 @@ export interface ConversationChatQuotaSnapshot {
   remainingCount?: number;
   trialDays?: number;
   triggerDecision?: ReplyQuotaTriggerDecision;
-}
-
-interface ReturnVisitInfo {
-  isReturnVisit: boolean;
-  gapDays: number;
-  visitCount: number;
 }
 
 export interface ConversationChatBootstrapMetadata {
@@ -2451,8 +2438,8 @@ export class ConversationService {
       return {
         isVip: false,
         policy: 'deep_trigger',
-        limit: QUOTA_CONFIG.driftProtectionDaily,
-        usedCount: QUOTA_CONFIG.driftProtectionDaily,
+        limit: 0,
+        usedCount: 0,
         remainingCount: 0,
       };
     }
@@ -2464,10 +2451,7 @@ export class ConversationService {
     const userId = runtime.conversation.userId;
     const agentId = runtime.conversation.agentId;
 
-    // 1. Count total lifetime messages for this user+agent
-    const totalLifetimeMsgs = await this.countTotalUserMessagesForAgent(userId, agentId);
-
-    // 2. Count today's messages (Beijing time)
+    // Count today's messages (Beijing time)
     const dayStart = this.getBeijingDayStart(now);
     const dayEnd = new Date(dayStart.getTime() + 86400000);
     const todayMsgs = await this.countUserMessagesForAgent({
@@ -2476,47 +2460,28 @@ export class ConversationService {
       windowEnd: dayEnd,
     });
 
-    // 3. Count session messages
+    // Count session and lifetime messages (for audit)
     const sessionMsgCount = await this.countSessionMessages(runtime.conversation.id);
+    const totalLifetimeMsgs = await this.countTotalUserMessagesForAgent(userId, agentId);
 
-    // 4. Detect return visit
-    const returnVisit = await this.detectReturnVisit(userId, agentId, now);
+    // Determine if this is a new user (within trial days)
+    const isNewUser = await this.isUserInTrialPeriod(userId, now);
 
-    // 5. Drift protection (frequent return visitor, never pays)
-    if (returnVisit.visitCount >= QUOTA_CONFIG.driftProtectionMaxVisits) {
+    // New user silent zone: first N lifetime messages, no evaluation
+    if (isNewUser && totalLifetimeMsgs < QUOTA_CONFIG.newUserSilentMessages) {
       return this.buildQuotaResult({
-        path: 'drift_protection',
-        remainingCount: Math.max(QUOTA_CONFIG.driftProtectionDaily - todayMsgs, 0),
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: false, matchedConditions: [],
-      });
-    }
-
-    // 6. Return visit reunion zone: first 3 messages of the return day are free
-    if (returnVisit.isReturnVisit && todayMsgs < QUOTA_CONFIG.returnVisitReunionMessages) {
-      return this.buildQuotaResult({
-        path: 'return_visit',
-        remainingCount: QUOTA_CONFIG.returnVisitReunionMessages - todayMsgs,
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: false, matchedConditions: [],
-      });
-    }
-
-    // 7. Silent zone: first 10 lifetime messages, no dialogs at all
-    if (totalLifetimeMsgs < QUOTA_CONFIG.silentZoneMessages && !returnVisit.isReturnVisit) {
-      return this.buildQuotaResult({
-        path: 'active',
+        path: 'trial',
         remainingCount: 99,
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: false, matchedConditions: [],
+        triggered: false, matchedConditions: [],
       });
     }
 
-    // 8. Deep trigger zone
+    // Trigger zone
     return this.evaluateDeepTriggerQuota(
       userId, agentId, now,
       totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-      currentMessageContent, returnVisit,
+      currentMessageContent, isNewUser,
     );
   }
 
@@ -2528,101 +2493,111 @@ export class ConversationService {
     todayMsgs: number,
     sessionMsgCount: number,
     currentMessageContent: string | undefined,
-    returnVisit: ReturnVisitInfo,
+    isNewUser: boolean,
   ): Promise<ConversationChatQuotaSnapshot> {
-    const isReturnVisit = returnVisit.isReturnVisit;
-    const cfg = QUOTA_CONFIG.deepTrigger;
+    const cfg = QUOTA_CONFIG;
     const matched: string[] = [];
 
-    // Condition A: Session depth
-    const sessThreshold = isReturnVisit ? cfg.sessionLength.returnVisitMinMessages : cfg.sessionLength.minMessages;
-    const sessCount = todayMsgs;
-    if (cfg.sessionLength.enabled && sessCount >= sessThreshold) matched.push('sessionLength');
+    // Condition A: Effective today messages exceed threshold
+    const effectiveMsgs = isNewUser
+      ? todayMsgs - cfg.newUserSilentMessages
+      : todayMsgs;
+    if (effectiveMsgs > cfg.messageThreshold) matched.push('messageCount');
 
-    // Condition B: Long input
-    const charThreshold = isReturnVisit ? cfg.longInput.returnVisitMinChars : cfg.longInput.minChars;
-    if (cfg.longInput.enabled && currentMessageContent && currentMessageContent.length >= charThreshold) matched.push('longInput');
-
-    // Condition D: Relationship stage
-    if (cfg.relationshipStage.enabled) {
-      const lastStage = await this.getLastRelationshipStage(userId, agentId);
-      const stageList = isReturnVisit ? cfg.relationshipStage.returnVisitStages : cfg.relationshipStage.stages;
-      if (lastStage && stageList.includes(lastStage as any)) {
-        const freshlyPromoted = await this.isStageJustPromoted(userId, agentId);
-        if (!freshlyPromoted) matched.push('relationshipStage');
-      }
+    // Condition B: Long message
+    if (currentMessageContent && currentMessageContent.length > cfg.longMessageMinChars) {
+      matched.push('longMessage');
     }
 
-    // Check if any pair is fully matched
-    let triggered = false;
-    const pairList = cfg.pairs as unknown as string[][];
-    for (let i = 0; i < pairList.length; i++) {
-      const pair = pairList[i];
-      if (pair.length === 2 && matched.includes(pair[0]) && matched.includes(pair[1])) {
-        triggered = true; break;
-      }
+    // Condition C: Relationship stage
+    const lastStage = await this.getLastRelationshipStage(userId, agentId);
+    if (lastStage && (cfg.relationshipStages as string[]).includes(lastStage)) {
+      const freshlyPromoted = await this.isStageJustPromoted(userId, agentId);
+      if (!freshlyPromoted) matched.push('relationshipStage');
     }
+
+    // Trigger if any 2 of 3 conditions are met
+    const triggered = matched.length >= 2;
 
     // Natural close exemption
     const naturalClose = currentMessageContent
-      ? QUOTA_CONFIG.naturalClosePatterns.some(p => currentMessageContent.includes(p))
+      ? cfg.naturalClosePatterns.some(p => currentMessageContent.includes(p))
       : false;
 
     if (!triggered) {
       return this.buildQuotaResult({
-        path: isReturnVisit ? 'return_visit' : 'active',
+        path: isNewUser ? 'trial' : 'active',
         remainingCount: 99,
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: false, matchedConditions: matched,
+        triggered: false, matchedConditions: matched,
         naturalCloseExempted: false,
       });
     }
 
     if (naturalClose) {
       return this.buildQuotaResult({
-        path: isReturnVisit ? 'return_visit' : 'active',
-        remainingCount: 2, // pass through, don't show dialog
+        path: isNewUser ? 'trial' : 'active',
+        remainingCount: 2,
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: true, matchedConditions: matched,
+        triggered: true, matchedConditions: matched,
         naturalCloseExempted: true,
       });
     }
 
-    // Deep trigger fired + not natural close → check if already warned
+    // Trigger fired + not natural close → check warning state
     const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
 
     if (wasWarned) {
-      const postWarnCount = await this.messageModel.count({
-        userId, agentId, role: MessageRole.user,
-        createdAt: { $gt: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
-        'replyQuotaTriggerDecision.warned': { $exists: true },
-      } as never);
-      const graceRemaining = Math.max(4 - postWarnCount, 0);
+      // Count user messages since the last warned message
+      const lastWarnedMsg = await this.messageModel.findOne({
+        where: { userId, agentId, role: MessageRole.user, 'replyQuotaTriggerDecision.warned': true },
+        order: { createdAt: 'DESC' },
+      } as any);
+
+      const postWarnCount = lastWarnedMsg
+        ? await this.messageModel.count({
+            userId, agentId, role: MessageRole.user,
+            createdAt: { $gt: new Date(lastWarnedMsg.createdAt.getTime()) },
+          } as never)
+        : 0;
+
+      if (postWarnCount >= cfg.graceMessagesAfterWarn) {
+        // Grace period exhausted → block
+        return this.buildQuotaResult({
+          path: isNewUser ? 'trial' : 'active',
+          remainingCount: 0,
+          totalLifetimeMsgs, todayMsgs, sessionMsgCount,
+          triggered: true, matchedConditions: matched,
+          naturalCloseExempted: false, warned: true, blocked: true,
+        });
+      }
+
+      // Within grace period → pass through silently
       return this.buildQuotaResult({
-        path: isReturnVisit ? 'return_visit' : 'active',
-        remainingCount: graceRemaining,
+        path: isNewUser ? 'trial' : 'active',
+        remainingCount: 99,
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        returnVisit, triggered: true, matchedConditions: matched,
-        naturalCloseExempted: false, warned: true, blocked: graceRemaining === 0,
+        triggered: true, matchedConditions: matched,
+        naturalCloseExempted: false, warned: true, blocked: false,
       });
     }
 
+    // First warning
     return this.buildQuotaResult({
-      path: isReturnVisit ? 'return_visit' : 'active',
-      remainingCount: 1, // warn
+      path: isNewUser ? 'trial' : 'active',
+      remainingCount: 1,
       totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-      returnVisit, triggered: true, matchedConditions: matched,
+      triggered: true, matchedConditions: matched,
       naturalCloseExempted: false, warned: true, blocked: false,
     });
   }
 
   private buildQuotaResult(params: {
-    path: ReplyQuotaTriggerDecision['path'];
+    path: 'trial' | 'active';
     remainingCount: number;
     totalLifetimeMsgs: number;
     todayMsgs: number;
     sessionMsgCount: number;
-    returnVisit: ReturnVisitInfo;
     triggered: boolean;
     matchedConditions: string[];
     naturalCloseExempted?: boolean;
@@ -2645,64 +2620,26 @@ export class ConversationService {
         sessionMsgCount: params.sessionMsgCount,
         matchedConditions: params.matchedConditions,
         naturalCloseExempted: params.naturalCloseExempted ?? false,
-        returnVisitCount: params.returnVisit.visitCount,
-        lastMessageGapDays: params.returnVisit.gapDays,
+        returnVisitCount: 0,
+        lastMessageGapDays: 0,
         warned: params.warned ?? false,
         blocked: params.blocked ?? false,
       },
     };
   }
 
-  private async detectReturnVisit(
+  private async isUserInTrialPeriod(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
     now: Date,
-  ): Promise<ReturnVisitInfo> {
-    const gapStart = new Date(now.getTime() - QUOTA_CONFIG.returnVisitGapDays * 86400000);
-
-    // Get last user message before the gap window
-    const lastBeforeGap = await this.messageModel.findOne({
-      where: {
-        userId, agentId,
-        role: MessageRole.user,
-        createdAt: { $lt: gapStart },
-      },
-      order: { createdAt: 'DESC' },
+  ): Promise<boolean> {
+    const user = await this.userModel.findOne({
+      where: { _id: userId },
     } as any);
-
-    // Count return visits in drift protection window
-    const driftWindow = new Date(now.getTime() - QUOTA_CONFIG.driftProtectionWeeks * 7 * 86400000);
-    const rawVisits = await this.messageModel.aggregate([
-      { $match: { userId, agentId, role: MessageRole.user, createdAt: { $gte: driftWindow } } },
-      { $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Shanghai' } },
-      }},
-      { $sort: { _id: 1 } },
-    ]).toArray();
-
-    // Count distinct visit clusters (gaps > 7 days = new visit)
-    let visitCount = rawVisits.length > 0 ? 1 : 0;
-    let prevDay: string | null = null;
-    for (const row of rawVisits) {
-      if (prevDay) {
-        const prev = new Date(prevDay);
-        const curr = new Date(row._id);
-        if ((curr.getTime() - prev.getTime()) > QUOTA_CONFIG.returnVisitGapDays * 86400000) {
-          visitCount++;
-        }
-      }
-      prevDay = row._id;
-    }
-
-    const gapDays = lastBeforeGap
-      ? Math.floor((now.getTime() - new Date(lastBeforeGap.createdAt).getTime()) / 86400000)
-      : 999;
-
-    return {
-      isReturnVisit: lastBeforeGap !== null && gapDays >= QUOTA_CONFIG.returnVisitGapDays,
-      gapDays,
-      visitCount,
-    };
+    if (!user?.createdAt) return false;
+    const daysSinceRegister = Math.floor(
+      (now.getTime() - new Date(user.createdAt).getTime()) / 86400000
+    );
+    return daysSinceRegister < QUOTA_CONFIG.newUserTrialDays;
   }
 
   private async countSessionMessages(conversationId: MongoObjectId): Promise<number> {
