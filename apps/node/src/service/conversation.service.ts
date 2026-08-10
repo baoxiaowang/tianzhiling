@@ -2592,12 +2592,18 @@ export class ConversationService {
     const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
 
     if (wasWarned) {
+      const postWarnCount = await this.messageModel.count({
+        userId, agentId, role: MessageRole.user,
+        createdAt: { $gt: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        'replyQuotaTriggerDecision.warned': { $exists: true },
+      } as never);
+      const graceRemaining = Math.max(4 - postWarnCount, 0);
       return this.buildQuotaResult({
         path: isReturnVisit ? 'return_visit' : 'active',
-        remainingCount: 99, // already warned today, suppress dialog
+        remainingCount: graceRemaining,
         totalLifetimeMsgs, todayMsgs, sessionMsgCount,
         returnVisit, triggered: true, matchedConditions: matched,
-        naturalCloseExempted: false, warned: true, blocked: false,
+        naturalCloseExempted: false, warned: true, blocked: graceRemaining === 0,
       });
     }
 
