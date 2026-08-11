@@ -4191,8 +4191,9 @@ export class ConversationService {
    * 不新增模型调用，纯工程判断。
    */
   private splitLongContentOnReplyBubble(segments: string[]): string[] {
-    if (segments.length !== 2) return segments;
-    const content = segments[0];
+    // 无泡或单泡不超过 35 字：不处理
+    const content = segments[0]?.trim?.();
+    if (!content) return segments;
     const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
     if (visibleChars <= 35) return segments;
 
@@ -4200,7 +4201,7 @@ export class ConversationService {
     const sentences = content.split(/(?<=[。！？])/u);
     if (sentences.length < 2) return segments;
 
-    // 从后往前找切点，确保前半段 ≥ 8 字且后半段 ≥ 8 字
+    // 确保前半段 ≥ 8 字且后半段 ≥ 8 字
     let splitAt = -1;
     let accumulated = 0;
     for (let i = 0; i < sentences.length - 1; i++) {
@@ -4225,7 +4226,14 @@ export class ConversationService {
 
     if (!first || !second) return segments;
 
-    return [first, second, segments[1]];
+    // 单泡拆为 2，双泡拆第一泡为 3，其余不变
+    if (segments.length === 1) {
+      return [first, second];
+    }
+    if (segments.length === 2) {
+      return [first, second, segments[1]];
+    }
+    return segments;
   }
 
   private async afterReply(
@@ -5123,7 +5131,7 @@ export class ConversationService {
     // 纯语气词/确认（≤4 字，无问号）
     if (
       content.length <= 4 &&
-      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
         content
       )
     ) {
@@ -5209,7 +5217,7 @@ export class ConversationService {
 
     if (
       content.length <= 4 &&
-      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
         content
       )
     )
