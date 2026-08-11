@@ -6051,6 +6051,7 @@ export class ConversationService {
           ...(isFirstSegment
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
+          traceId: this.chatTraceService?.getCurrentTraceId(),
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -6127,6 +6128,7 @@ export class ConversationService {
       totalTokens: options.usage.totalTokens,
       replyVisibleCharacters,
       ...this.buildReplyRoutingMessageFields(options.routing),
+      traceId: this.chatTraceService?.getCurrentTraceId(),
       createdAt: options.replyTime,
       updatedAt: options.replyTime,
     });

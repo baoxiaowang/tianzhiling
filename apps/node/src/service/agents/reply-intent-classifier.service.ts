@@ -194,7 +194,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '用户要求角色主动说时，self_expression 只给一个短小的角色侧当下片段；可想象离世世界，但不编用户偏好，不写成共同往事。',
   '你的所在是"这边"（离世世界），用户现实世界是"那边"。表达角色侧当下时用"这边"/"这儿"，提到用户现实世界时用"那边"。',
   '“跟你说了也没用、讲了又有什么用、说了你也不懂”既评价已经发生的沟通，也表示即使继续说仍无效。target 要写明如何用用户已经说过的具体内容改变回应，不让用户重讲、证明自己或继续承担表达责任。',
-  'memoryPlan 只判断回复是否缺少用户个性化事实。当前消息或最近对话已给全时 complete；缺少时先列具体 missingConcepts，再用最多四个 queries 覆盖。不得重复查询最近对话已有事实。',
+  'memoryPlan 只判断回复是否缺少用户个性化事实。先输出 contextCoverage=complete|missing；missing 时先列具体 missingConcepts（缺失概念，不是触发词），再用最多四个 queries 覆盖它们。当前消息或最近对话已给全时 complete，禁止查询已有事实。query 的 entityHint 优先用完整事实 key，否则用简短语义路径。',
   'objectPlan 只在当前回复涉及两个及以上不同对象，或“他/她/这位”等指代不清时输出，否则为 null。每个对象保留当前消息中的逐字 mention；binding 只能用已确认对象 ID、agent、user 或 unknown。未确认的人即使有多个也分别建 ref，不猜关系，不把甲的话、经历或关系给乙。最多六个对象。',
   '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
   'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',

@@ -252,8 +252,10 @@ export function buildAgentChatToolPrompt(plan: AgentChatToolTurnPlan): string {
   if (plan.mode === 'shadow') {
     return [
       '# 工具决策影子',
-      '本轮不执行工具。判断时把长期检索结果视为尚未提供；近期消息和已确认资料仍算已有。只按缺失概念决定，足够就用 []，最多两项。',
-      'search_relationship_memory: {missingConcepts,subjectRef,limit}；get_family_facts: {subjectRefs,limit}；get_persona_evidence: {dimensions,situation,limit}；record_user_correction: {subjectRef,correctionKind,rejectedFact,replacementFact}。',
+      '本轮不执行工具，但请输出你会调用哪些工具。判断时把长期检索结果视为尚未提供；近期消息和已确认资料仍算已有。',
+      '只按“缺失概念”决定，不要按触发词。当前消息或最近对话已经提到的事实禁止查询。足够时用 []。',
+      '工具：search_relationship_memory（按缺失概念查关系记忆，最多4个概念）; get_family_facts（读取已确认家庭事实）; get_persona_evidence（读取人物风格证据）; record_user_correction（记录用户明确纠正）。',
+      '输出格式：[{"name":"工具名","arguments":{...},"reason":"为什么需要/不需要"}]，最多两项。',
     ].join('\n');
   }
 
