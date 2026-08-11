@@ -175,7 +175,7 @@ const QUOTA_CONFIG = {
   messageThreshold: 5,
   longMessageMinChars: 60,
   relationshipStages: ['R2', 'R3'] as string[],
-  graceMessagesAfterWarn: 3,
+  graceMessagesAfterWarn: 2,
   naturalClosePatterns: [
     '晚安',
     '睡了',
@@ -2626,6 +2626,7 @@ export class ConversationService {
             agentId,
             role: MessageRole.user,
             createdAt: { $gt: new Date(firstWarnedMsg.createdAt.getTime()) },
+            status: MessageStatus.sent,
           } as never)
         : 0;
 
