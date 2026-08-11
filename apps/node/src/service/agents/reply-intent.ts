@@ -70,6 +70,7 @@ export const REPLY_INTENT_SUB_INTENTS = [
   'reincarnation',
   'hatred_accusation',
   'significant_matter',
+  'displacement_loss',
   'other',
 ] as const;
 
@@ -184,6 +185,10 @@ export const COUNTERFACTUAL_REGRET_INTENT_PATTERN =
 export const LONGING_AMBIVALENCE_INTENT_PATTERN =
   /(?:想|要)忘(?:了|掉)?你.{0,36}(?:但是|可是|可|又|舍不得|不能|不敢)|(?:但是|可是|可|又|舍不得|不能|不敢).{0,36}(?:想|要)忘(?:了|掉)?你/;
 
+// 用户报告地点变化或"回不了家"类消息 — 实质是失落和漂泊感，不是愧疚或日常事务
+export const DISPLACEMENT_LOSS_INTENT_PATTERN =
+  /(?:来|去|搬到|到|换到).{0,10}(?:北京|上海|广州|深圳|武汉|成都|杭州|南京|天津|重庆|苏州|西安|长沙|郑州|东莞|青岛|厦门|合肥|佛山|宁波|昆明|大连|福州|无锡).{0,8}(?:工作|上班|打工|生活|定居|住)|回(?:不|没)了家|不在.{0,8}(?:家|家乡|老家)|离开.{0,8}(?:家|家乡|老家)|(?:家|家乡|老家).{0,6}(?:回不去|没回去|不在了|不在)|我.{0,4}(?:现在|已经|已经不在|已经离开).{0,4}(?:家|家乡|老家)/;
+
 export const RELATIONAL_PRESENCE_CONFIRMATION_INTENT_PATTERN =
   /(?:是不是|是否).{0,12}(?:表示|说明|证明).{0,16}(?:从未离开|没有离开|一直都在|还在).{0,12}(?:陪|身边|旁边)|(?:从未离开|一直都在).{0,12}(?:陪|身边|旁边).{0,8}(?:对不对|是不是|吗)|(?:变成|化成).{0,12}(?:东西|什么|某种).{0,12}(?:陪|身边|旁边)/;
 
@@ -248,6 +253,7 @@ export const CONVERSATION_OBJECT_KINDS = [
   'other_person',
   'place',
   'keepsake',
+  'displacement_loss',
   'other',
   'unknown',
 ] as const;
@@ -413,6 +419,7 @@ export const CONVERSATION_OPEN_NEEDS = [
   'family_response',
   'comfort',
   'topic_followup',
+  'displacement_loss',
   'other',
 ] as const;
 export type ConversationOpenNeed = (typeof CONVERSATION_OPEN_NEEDS)[number];
@@ -430,6 +437,7 @@ export const CONVERSATION_AVOID_ACTIONS = [
   'promise_later',
   'premature_close',
   'unsupported_detail',
+  'displacement_loss',
   'other',
 ] as const;
 export type ConversationAvoidAction =

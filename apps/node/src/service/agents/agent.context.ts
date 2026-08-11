@@ -810,7 +810,7 @@ export class AgentContextService {
       options.currentQuery
     );
     const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
-    const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
+const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
     );
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
@@ -824,14 +824,23 @@ export class AgentContextService {
       replyBrief,
       options.agent
     );
-    const systemPrompt = [
+    const lightweightDirectContext =
+      replyBrief && !replyBrief.conversationPlan
+        ? this.buildLightweightDirectContext(replyBrief, options.agent)
+        : '';
+    const sessionContinuityPrompt = options.conversation
+      ? this.buildSessionContinuityPromptFromConversation(options.conversation, options.agent)
+      : '';
+        const systemPrompt = [
       basePrompt,
       perceptionPrompt,
       persona?.prompt,
       conversationReadingPrompt,
       modePrompt,
       continuitySummaryPrompt,
+      sessionContinuityPrompt,
       evidencePrompt,
+      lightweightDirectContext,
       replyBriefPrompt,
     ]
       .filter(Boolean)
@@ -846,6 +855,51 @@ export class AgentContextService {
         } as ChatCompletionMessageParam,
       ],
     };
+  }
+
+  private buildLightweightDirectContext(
+    replyBrief: ReplyBrief,
+    agent: AgentEntity
+  ): string {
+    // For direct_brief path only: inject minimal context (~50 tokens) so the
+    // main model knows the scene, the relationship, and has a one-line memory
+    // anchor -- without needing a separate planner call.
+    if (!replyBrief.primaryScene && !replyBrief.relationshipContext?.length && !replyBrief.evidence?.length) {
+      return '';
+    }
+
+    const lines: string[] = ['# 本轮感知'];
+    if (replyBrief.primaryScene) {
+      lines.push('场景：' + replyBrief.primaryScene);
+    }
+    if (replyBrief.relationshipContext?.length) {
+      const rc = replyBrief.relationshipContext[0];
+      if (rc.text) lines.push('关系参考：' + rc.text);
+    }
+    // Subtext hint: when user reports a location change or life transition,
+    // the surface fact may conceal deeper emotions of displacement and loss.
+    // Listen for what the user is really saying, not just the surface info.
+    if (replyBrief.primaryScene &&
+        ['daily_update', 'family_life'].includes(replyBrief.primaryScene)) {
+      lines.push('注意：用户可能在报告生活变化时隐藏着失落、漂泊或思念。不只回应表面信息，也听见没说出口的情绪。');
+    }
+    if (replyBrief.evidence?.length) {
+      const firstEvidence = replyBrief.evidence[0];
+      const snippet = (firstEvidence.text || '').slice(0, 60);
+      if (snippet) lines.push('记忆：' + snippet);
+    }
+    lines.push('以上仅为轻量参考，不强制使用；以用户原话和当下真实感受为准。');
+    return lines.join('\n');
+  }
+
+  private buildSessionContinuityPromptFromConversation(
+    conversation: ConversationEntity,
+    agent?: AgentEntity | null
+  ): string {
+    // This is a minimal guard: session continuity will be loaded from
+    // the database in a follow-up change. For now, return empty.
+    // The infrastructure (method signature, injection point) is ready.
+    return '';
   }
 
   private buildConversationReadingPrompt(

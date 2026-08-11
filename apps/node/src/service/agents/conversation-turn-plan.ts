@@ -50,6 +50,7 @@ const AVOID_TEXT: Record<ConversationAvoidAction, string> = {
   promise_later: '只承诺以后改变',
   premature_close: '过早收尾',
   unsupported_detail: '补写无证据细节',
+  displacement_loss: '忽视潜词-仅回应表面信息',
   other: '重复上一轮无效动作',
 };
 
