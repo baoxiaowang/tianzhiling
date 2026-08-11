@@ -1828,6 +1828,118 @@ export function buildConversationObjectPlanPrompt(
   return lines.join('\n');
 }
 
+interface PerceptionState {
+  timeContext?: string;
+  userState: string;
+  relationshipStage: string;
+  riskSignals: string[];
+  openTopics: string[];
+}
+
+function resolveTimeContext(): string | undefined {
+  const hour = new Date().getHours();
+  if (hour >= 0 && hour < 5) return '凌晨（对方可能睡不着）';
+  if (hour >= 5 && hour < 8) return '清晨';
+  if (hour >= 23) return '深夜';
+  return undefined;
+}
+
+function resolveUserState(brief: Omit<ReplyBrief, 'prompt'>): string {
+  if (brief.correctionPolicy) return '纠正中';
+  if (brief.mode === 'memory' || brief.mode === 'memory_control') return '记忆探询中';
+  if (brief.primaryScene === 'comfort_request') return '求安慰';
+  if (brief.primaryScene === 'guilt_regret') return '自责倾诉中';
+  if (brief.primaryScene === 'miss_longing') return '思念倾诉中';
+  if (
+    brief.conversationPlan?.turnClosure === 'close' ||
+    brief.bubblePlan.turnClosure === 'close'
+  ) {
+    return '自然结束';
+  }
+  if (
+    brief.mode === 'daily' ||
+    brief.mode === 'status' ||
+    brief.primaryScene === 'daily_update' ||
+    brief.primaryScene === 'smalltalk'
+  ) {
+    return '日常分享';
+  }
+  return '倾诉中';
+}
+
+function resolveRelationshipStage(
+  brief: Omit<ReplyBrief, 'prompt'>
+): string {
+  const depth = brief.experiencePlan?.conversationDepth;
+  if (depth === 'D3' || depth === 'D4') return '深层依恋';
+  if (depth === 'D2') return '稳定';
+  if (depth === 'D1') return '相认';
+  return '初识';
+}
+
+function resolveRiskSignals(brief: Omit<ReplyBrief, 'prompt'>): string[] {
+  const signals: string[] = [];
+  if (brief.riskLevel === 'high') signals.push('强烈情绪波动');
+  if (brief.relationshipContinuity) signals.push('信任/关系断点');
+  if (brief.correctionPolicy) signals.push('事实纠正');
+  if (brief.realityDependencies.some(d => d.kind === 'physical_presence')) {
+    signals.push('现实到场请求');
+  }
+  return signals;
+}
+
+function resolveOpenTopics(brief: Omit<ReplyBrief, 'prompt'>): string[] {
+  const topics: string[] = [];
+  const open = brief.conversationPlan?.engagement?.openLoop;
+  if (open && open !== '用户已准备结束本轮') {
+    topics.push(open);
+  }
+  if (brief.primaryScene) {
+    const sceneLabels: Record<string, string> = {
+      miss_longing: '思念',
+      comfort_request: '安慰',
+      guilt_regret: '后悔/自责',
+      family_life: '家庭近况',
+      dream_companionship: '梦境',
+      afterlife_status: '那边生活',
+      correction: '纠正',
+      authenticity_challenge: '真实性',
+    };
+    const label = sceneLabels[brief.primaryScene];
+    if (label && !topics.includes(label)) topics.push(label);
+  }
+  return topics.slice(0, 3);
+}
+
+function buildPerceptionState(
+  brief: Omit<ReplyBrief, 'prompt'>
+): PerceptionState {
+  return {
+    timeContext: resolveTimeContext(),
+    userState: resolveUserState(brief),
+    relationshipStage: resolveRelationshipStage(brief),
+    riskSignals: resolveRiskSignals(brief),
+    openTopics: resolveOpenTopics(brief),
+  };
+}
+
+function buildPerceptionStatePrompt(state: PerceptionState): string {
+  const parts: string[] = [
+    `用户状态：${state.userState}`,
+    `关系阶段：${state.relationshipStage}`,
+  ];
+  if (state.timeContext) {
+    parts.push(`时间上下文：${state.timeContext}`);
+  }
+  if (state.openTopics.length) {
+    parts.push(`开放话题：${state.openTopics.join('、')}`);
+  }
+  if (state.riskSignals.length) {
+    parts.push(`风险信号：${state.riskSignals.join('、')}`);
+  }
+  return parts.join('；');
+}
+
 function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const sourceLabels: Record<ReplyBriefEvidenceSource, string> = {
     current_user: '当前用户原话',
@@ -1970,6 +2082,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const perceptionState = buildPerceptionState(brief);
+  const perceptionStateLines = [
+    '## 当前感知状态',
+    buildPerceptionStatePrompt(perceptionState),
+    '感知状态只供参考，不要把它当成必须提及的内容；只有时间上下文在凌晨/深夜且用户状态适合时，才可自然带一句“这么晚还没睡”之类的话。',
+    '',
+  ];
   const realityDependencyLines = brief.realityDependencies.length
     ? [
         '## 现实依赖',
@@ -2036,6 +2155,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...conversationPlanLines,
     ...careMotivationLines,
     ...stateProtocolLines,
+    ...perceptionStateLines,
     ...participationLines,
     ...realityDependencyLines,
     ...activeContributionLines,
