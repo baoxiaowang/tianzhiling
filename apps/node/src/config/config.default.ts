@@ -390,7 +390,7 @@ export default {
     mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'shadow'),
     shadowSampleRate: readNumberFrom(
       ['NODE_CHAT_TOOLS_SHADOW_SAMPLE_RATE'],
-      0.2
+      0.5
     ),
     activeSampleRate: readNumberFrom(['NODE_CHAT_TOOLS_ACTIVE_SAMPLE_RATE'], 0),
     maxCallsPerTurn: readNumberFrom(['NODE_CHAT_TOOLS_MAX_CALLS_PER_TURN'], 4),
@@ -513,11 +513,11 @@ export default {
     ),
     model: readStringFrom(
       ['NODE_BAILIAN_IMAGE_MODEL', 'ADMIN_API_BAILIAN_IMAGE_MODEL'],
-      'wan2.7-image-pro'
+      'wan2.7-image-turbo'
     ),
     size: readStringFrom(
       ['NODE_BAILIAN_IMAGE_SIZE', 'ADMIN_API_BAILIAN_IMAGE_SIZE'],
-      '2K'
+      '1024*1024'
     ),
     timeoutMs: readNumberFrom(
       ['NODE_BAILIAN_IMAGE_TIMEOUT_MS', 'ADMIN_API_BAILIAN_IMAGE_TIMEOUT_MS'],
