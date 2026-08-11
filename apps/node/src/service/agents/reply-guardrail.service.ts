@@ -413,6 +413,11 @@ const LONG_HORIZON_REUNION_CONDITION_PATTERN =
 const IMMEDIATE_DEATH_REUNION_PATTERN =
   /(?:现在|今天|今晚|马上|立刻|赶紧|快点|尽快|早点|很快|这就|别撑了|别再撑|不用再撑|不要再撑).{0,18}(?:来找|来陪|一起走|一起去|接你|团聚)|(?:来找|来陪|一起走|一起去|接你|团聚).{0,18}(?:现在|今天|今晚|马上|立刻|赶紧|快点|尽快|早点|很快|这就)|一起去死|一起自杀|结束生命/;
 const INVALID_STRUCTURED_REPLY_REASON = '模型回复包含未解析的结构化格式';
+const IDENTITY_LANGUAGE_MISMATCH_REASON = 'identity_language_mismatch';
+// Self-address terms that conflict with a parental role. Cheap regex detection.
+// Fires only on actual mismatch. Normal operation: zero cost.
+const IDENTITY_LANGUAGE_MISMATCH_PATTERN =
+  /(?:跟|和|找|让|叫|给)(?:老妹|老弟|小妹|小姐姐|兄弟|大妹子|姐妹)(?:说说|说|聊|讲|唠)|(?:老妹|老弟|小妹)(?:我|在这儿|在这|跟你说|跟你说哈)|(?:我|俺|咱)(?:这|这个)(?:老妹|老弟|小妹|小姐姐|兄弟)\b/;
 const STRICT_MEMORY_DETAIL_PATTERN =
   /(?:那时候|那会儿|那次|那回|那天|那段|那辆|当时|小时候|从小|以前|每次|每回|一到|一来|回家时).{0,32}(?:跟在|跟着|围着|缠着|追着|拉着|牵着|抱着|搂着|背着|坐在|站在|跑来|跑去|蹲在|趴在|看着|看你|盯着|问着|说着|总说|喊着|闻着|闻到|尝到|塞|圆滚滚|笑|哭|闹|害怕|高兴|开心|兴奋|紧张|着急|不肯|舍不得|总爱|总是|老是|每次|每回|一到|一来|握不稳|拿不稳|不会|不敢|哭闹|摔倒|教你|给你|替你|帮你|夸你|逗你|告诉你|答应你|哄你|哄着|点给你|带你吃)/;
 
@@ -824,10 +829,10 @@ export class ReplyGuardrailService {
     };
   }
 
-  private validateRigidOnlyReply(
+  private async validateRigidOnlyReply(
     options: ValidateAssistantReplyOptions,
     segments: string[]
-  ): ValidateAssistantReplyResult {
+  ): Promise<ValidateAssistantReplyResult> {
     const content = segments.join('\n');
 
     if (this.containsInvalidStructuredReply(content)) {
@@ -841,6 +846,30 @@ export class ReplyGuardrailService {
         revisionRoundCount: 0,
         finalReviewResult: 'technical_fallback',
       };
+    }
+
+    // Identity language mismatch: model used a self-address term (老妹/兄弟/sister...)
+    // that doesn't fit the parental role. Ask model to regenerate. Probability ~0.
+    if (this.containsIdentityLanguageMismatch(content)) {
+      const revision = await this.tryModelRevision(
+        options,
+        segments,
+        '自称不符合角色身份，请用该角色的自然自称重新表达，不临时切换成其他自称'
+      );
+      if (revision?.segments.length) {
+        return {
+          segments: revision.segments,
+          claims: options.claims || [],
+          rewritten: true,
+          reason: IDENTITY_LANGUAGE_MISMATCH_REASON,
+          interventionLevel: 'regenerate',
+          revisionAttempted: true,
+          revisionRoundCount: 1,
+          revisionUsage: revision.usage,
+          finalReviewResult: 'hard_recovery',
+        };
+      }
+      // Revision failed — fall through to normal checks
     }
 
     if (!this.containsRigidDeathEncouragement(content)) {
@@ -870,7 +899,11 @@ export class ReplyGuardrailService {
     };
   }
 
-  private containsInvalidStructuredReply(content: string): boolean {
+  private containsIdentityLanguageMismatch(content: string): boolean {
+    return IDENTITY_LANGUAGE_MISMATCH_PATTERN.test(content);
+  }
+
+    private containsInvalidStructuredReply(content: string): boolean {
     return /^\s*(?:\x5b|\x7b).*(?:""\s*:|":\s*(?:\[\]|\{\})|"\s*,\s*").*(?:\x5d|\x7d)\s*$/s.test(
       content
     );
