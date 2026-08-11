@@ -3198,17 +3198,18 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
   ): ChatCompletionMessageParam | null {
     switch (message.role) {
       case MessageRole.assistant: {
-        const assistantContent = this.buildAssistantHistoryContent(message);
+        const assistantContent = this.buildAssistantHistoryContent(
+          message,
+          identity?.agent?.displayName
+        );
 
         if (!assistantContent) {
           return null;
         }
-        const prefix = identity?.agent?.displayName
-          ? `作为${identity.agent.displayName}，你说：`
-          : '';
+        // 身份锚定已移至 persona 层，历史消息不再注入角色前缀
         return {
           role: 'assistant',
-          content: `${prefix}${assistantContent}`,
+          content: assistantContent,
         };
       }
       case MessageRole.user:
@@ -3238,8 +3239,14 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     }
   }
 
-  private buildAssistantHistoryContent(message: MessageEntity): string {
-    const transcript = stripPromptLeakageContent(message.mediaTranscript);
+  private buildAssistantHistoryContent(
+    message: MessageEntity,
+    displayName?: string
+  ): string {
+    const transcript = this.stripAssistantIdentityPrefix(
+      stripPromptLeakageContent(message.mediaTranscript),
+      displayName
+    );
 
     if (
       message.type === MessageType.voice &&
@@ -3253,10 +3260,42 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       return '';
     }
 
-    const content = stripPromptLeakageContent(message.content);
+    const content = this.stripAssistantIdentityPrefix(
+      stripPromptLeakageContent(message.content),
+      displayName
+    );
 
     if (!content || containsUnsafeAssistantHistoryContent(content)) {
       return '';
+    }
+
+    return content;
+  }
+
+  // 清除存量泄漏的身份前缀（作为XX你说：/ 角色名：/ XX说：/ 第N颗：），只剥离开头
+  private stripAssistantIdentityPrefix(
+    value: string,
+    displayName?: string
+  ): string {
+    let content = value.trim();
+    if (!content) return '';
+
+    const staticPrefix =
+      /^(?:作为[一-鿿\w·\-️]{1,20}[，,]?\s*(?:你[一-鿿\s，,]{0,12})?说[：:]|第[一二三123]颗[：:]|[爸祖外姥奶姑叔姨哥姐弟妹儿女闺女儿子宝贝老公老婆爹娘]{1,2}说[：:])\s*/;
+
+    for (let i = 0; i < 2 && staticPrefix.test(content); i++) {
+      content = content.replace(staticPrefix, '').trim();
+    }
+
+    const name = displayName?.trim();
+    if (name && name.length <= 8) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const namePrefix = new RegExp(
+        `^(?:作为)?${escaped}[，,]?\\s*(?:你说|说)?[：:]\\s*`
+      );
+      for (let i = 0; i < 2 && namePrefix.test(content); i++) {
+        content = content.replace(namePrefix, '').trim();
+      }
     }
 
     return content;
