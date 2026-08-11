@@ -2548,21 +2548,21 @@ export class ConversationService {
     const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
 
     if (wasWarned) {
-      // Count user messages since the last warned message
-      const lastWarnedMsg = await this.messageModel.findOne({
-        where: { userId, agentId, role: MessageRole.user, 'replyQuotaTriggerDecision.warned': true },
-        order: { createdAt: 'DESC' },
+      // Anchor on the first warning of today so grace counter accumulates correctly
+      const dayStart = this.getBeijingDayStart(now);
+      const firstWarnedMsg = await this.messageModel.findOne({
+        where: { userId, agentId, role: MessageRole.user, 'replyQuotaTriggerDecision.warned': true, createdAt: { $gte: dayStart } },
+        order: { createdAt: 'ASC' },
       } as any);
 
-      const postWarnCount = lastWarnedMsg
+      const postWarnCount = firstWarnedMsg
         ? await this.messageModel.count({
             userId, agentId, role: MessageRole.user,
-            createdAt: { $gt: new Date(lastWarnedMsg.createdAt.getTime()) },
+            createdAt: { $gt: new Date(firstWarnedMsg.createdAt.getTime()) },
           } as never)
         : 0;
 
       if (postWarnCount >= cfg.graceMessagesAfterWarn) {
-        // Grace period exhausted → block
         return this.buildQuotaResult({
           path: isNewUser ? 'trial' : 'active',
           remainingCount: 0,
