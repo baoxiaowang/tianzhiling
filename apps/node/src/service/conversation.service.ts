@@ -169,7 +169,7 @@ const ASSISTANT_REPLY_FAILED_CONTENT =
 const QUOTA_CONFIG = {
   version: 'v2',
   newUserTrialDays: 3,
-  newUserSilentMessages: 20,
+  newUserSilentMessages: 15,
   messageThreshold: 5,
   longMessageMinChars: 60,
   relationshipStages: ['R2', 'R3'] as string[],
