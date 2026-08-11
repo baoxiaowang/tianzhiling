@@ -2706,15 +2706,17 @@ export class ConversationService {
     agentId: MongoObjectId,
     now: Date,
   ): Promise<boolean> {
-    const lastUserMsg = await this.messageModel.findOne({
-      where: { userId, agentId, role: MessageRole.user },
-      order: { createdAt: 'DESC' },
+    // Check for any warned message today (not just the last one),
+    // so non-triggered messages between triggered ones don't reset the counter.
+    const dayStart = this.getBeijingDayStart(now);
+    const warnedMsg = await this.messageModel.findOne({
+      where: { userId, agentId, role: MessageRole.user, 'replyQuotaTriggerDecision.warned': true, createdAt: { $gte: dayStart } },
+      order: { createdAt: 'ASC' },
     } as any);
 
-    if (!lastUserMsg?.replyQuotaTriggerDecision?.warned) return false;
+    if (!warnedMsg) return false;
 
-    // Warning expires after 24 hours
-    const warnedAt = new Date(lastUserMsg.createdAt);
+    const warnedAt = new Date(warnedMsg.createdAt);
     return (now.getTime() - warnedAt.getTime()) < 24 * 60 * 60 * 1000;
   }
 
