@@ -1917,9 +1917,16 @@ export class ConversationService {
 
     // Save quota trigger decision on user message
     if (chatQuota.triggerDecision) {
+      const setPayload: Record<string, any> = {
+        replyQuotaTriggerDecision: chatQuota.triggerDecision,
+      };
+      // Denormalize warned flag to top-level for reliable MongoDB queries
+      if (chatQuota.triggerDecision.warned) {
+        setPayload.quotaWarned = true;
+      }
       await this.messageModel
         .updateOne({ _id: userMessage.id }, {
-          $set: { replyQuotaTriggerDecision: chatQuota.triggerDecision },
+          $set: setPayload,
         } as any)
         .catch(() => {
           this.logger?.warn?.(
@@ -2599,16 +2606,19 @@ export class ConversationService {
     if (wasWarned) {
       // Anchor on the first warning of today so grace counter accumulates correctly
       const dayStart = this.getBeijingDayStart(now);
-      const firstWarnedMsg = await this.messageModel.findOne({
-        where: {
-          userId,
-          agentId,
-          role: MessageRole.user,
-          'replyQuotaTriggerDecision.warned': true,
-          createdAt: { $gte: dayStart },
-        },
-        order: { createdAt: 'ASC' },
-      } as any);
+      const firstWarnedMsg = (
+        await this.messageModel.find({
+          where: {
+            userId,
+            agentId,
+            role: MessageRole.user,
+            quotaWarned: true,
+            createdAt: { $gte: dayStart },
+          },
+          order: { createdAt: 'ASC' },
+          take: 1,
+        } as any)
+      )[0];
 
       const postWarnCount = firstWarnedMsg
         ? await this.messageModel.count({
@@ -2791,16 +2801,19 @@ export class ConversationService {
     // Check for any warned message today (not just the last one),
     // so non-triggered messages between triggered ones don't reset the counter.
     const dayStart = this.getBeijingDayStart(now);
-    const warnedMsg = await this.messageModel.findOne({
-      where: {
-        userId,
-        agentId,
-        role: MessageRole.user,
-        'replyQuotaTriggerDecision.warned': true,
-        createdAt: { $gte: dayStart },
-      },
-      order: { createdAt: 'ASC' },
-    } as any);
+    const warnedMsg = (
+      await this.messageModel.find({
+        where: {
+          userId,
+          agentId,
+          role: MessageRole.user,
+          quotaWarned: true,
+          createdAt: { $gte: dayStart },
+        },
+        order: { createdAt: 'ASC' },
+        take: 1,
+      } as any)
+    )[0];
 
     if (!warnedMsg) return false;
 
