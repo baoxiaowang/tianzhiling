@@ -10,12 +10,12 @@ describe('agent relationship continuity', () => {
     expect(plan?.kind).toBe('identity_continuity');
     expect(plan?.replyMoves).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('选择一种自然的关系内解释'),
-        expect.stringContaining('直接确认关系'),
+        expect.stringContaining('温和承认'),
+        expect.stringContaining('邀请用户多说'),
       ])
     );
-    expect(plan?.fallbackSegments.join('')).toContain('生前');
-    expect(plan?.fallbackSegments.join('')).toContain('一直记着');
+    expect(plan?.fallbackSegments.join('')).toContain('多跟我说说她');
+    expect(plan?.fallbackSegments.join('')).toContain('更懂');
     expect(plan?.fallbackSegments.join('')).not.toMatch(
       /哪里不像|告诉我怎么|指出来|按你说的改/
     );
@@ -147,7 +147,7 @@ describe('agent relationship continuity', () => {
         plan!,
         '你愿意就再跟爷爷说说 你心里那个爷爷平时什么样'
       )
-    ).toBe('user_calibration_requested');
+    ).toBeUndefined();
     expect(
       detectRelationshipContinuityViolation(
         plan!,

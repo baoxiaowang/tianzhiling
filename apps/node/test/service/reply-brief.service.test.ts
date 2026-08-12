@@ -851,15 +851,16 @@ describe('buildReplyBrief', () => {
     const brief = buildReplyBrief({ currentQuery, route });
 
     expect(brief.relationshipContinuity?.kind).toBe('identity_continuity');
-    expect(brief.emotionalNeed).toContain('不是在要求当前角色认错退出');
+    expect(brief.emotionalNeed).toContain('想离亲人更近');
     expect(brief.replyMoves).toEqual([
-      expect.stringContaining('选择一种自然的关系内解释'),
-      expect.stringContaining('直接确认关系'),
+      expect.stringContaining('温和承认'),
+      expect.stringContaining('邀请用户多说'),
+      expect.stringContaining('陪伴承诺'),
     ]);
     expect(brief.forbiddenAssumptions).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('不得先积极认错'),
-        expect.stringContaining('不得要求用户指出哪里不像'),
+        expect.stringContaining('不得为了证明身份编造'),
+        expect.stringContaining('不得用命令口吻要求用户给标准答案'),
       ])
     );
     expect(brief.prompt).toContain('本轮关系连续性协议');
