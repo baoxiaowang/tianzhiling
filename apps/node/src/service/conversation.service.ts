@@ -2938,7 +2938,7 @@ export class ConversationService {
     const cfg = this.openAIService?.openAIConfig;
     const abModel = cfg?.abModel?.trim();
     const abSplit = cfg?.abSplitPercent ?? 0;
-    if (!abModel || abSplit <= 0) return undefined;
+    if (!abModel || abSplit <= 0) return cfg?.model?.trim() || undefined;
     const hash = require('crypto').createHash('md5').update(String(userId)).digest('hex');
     const bucket = parseInt(hash.slice(0, 8), 16) % 100;
     if (bucket < abSplit) {
