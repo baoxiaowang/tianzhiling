@@ -5063,8 +5063,7 @@ export class ConversationService {
         return {
           ...message,
           mediaTranscript:
-            (await this.transcribeVoiceForConversation(message)) ||
-            '[用户发来一条语音]',
+            (await this.transcribeVoiceForConversation(message)) || '',
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
@@ -5125,8 +5124,7 @@ export class ConversationService {
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
-      this.isNaturalConversationEnd(payload) ||
-      (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
+      this.isNaturalConversationEnd(payload)
     );
   }
 
@@ -6842,7 +6840,7 @@ export class ConversationService {
         );
       case MessageType.voice: {
         const transcript = payload.mediaTranscript?.trim();
-        if (!transcript) return '';
+        if (!transcript || transcript.length <= 6) return '';
         return `语音：${transcript}`;
       }
       case MessageType.text:
