@@ -2613,18 +2613,14 @@ export class ConversationService {
         } as any)
       )[0];
 
-      // Use find+length instead of count() — TypeORM MongoRepository.count()
-      // with raw filter is unreliable: EntityManager.setFindOptions only reads \`where\`.
       const postWarnCount = firstWarnedMsg
-        ? (await this.messageModel.find({
-            where: {
-              userId,
-              agentId,
-              role: MessageRole.user,
-              createdAt: { $gt: firstWarnedMsg.createdAt },
-              status: MessageStatus.sent,
-            },
-          } as any)).length
+        ? await this.messageModel.count({
+            userId,
+            agentId,
+            role: MessageRole.user,
+            createdAt: { $gt: firstWarnedMsg.createdAt },
+            status: MessageStatus.sent,
+          } as never)
         : 0;
 
       if (postWarnCount > cfg.graceMessagesAfterWarn) {
@@ -2924,6 +2920,34 @@ export class ConversationService {
         { mediaAnalysis: MEMORIAL_PHOTO_MESSAGE_CONTENT },
       ],
     } as never);
+  }
+
+  /**
+   * A/B 通道路由：基于 userId 哈希决定是否使用 B 侧模型。
+   * 返回 undefined 表示使用默认主模型。
+   */
+  private resolveChatModelForAB(userId: string): string | undefined {
+    const abModel = this.openAIService?.openAIConfig?.abModel?.trim();
+    const abSplit = this.openAIService?.openAIConfig?.abSplitPercent ?? 0;
+    if (!abModel || abSplit <= 0) return undefined;
+
+    // userId 哈希到 0-99 的稳定桶
+    const hash = require('crypto')
+      .createHash('md5')
+      .update(String(userId))
+      .digest('hex');
+    const bucket = parseInt(hash.slice(0, 8), 16) % 100;
+
+    if (bucket < abSplit) {
+      this.logger?.info?.(
+        '[conversation] AB routing to model=%s, userId=%s, bucket=%s',
+        abModel,
+        String(userId).slice(0, 8),
+        bucket
+      );
+      return abModel;
+    }
+    return undefined;
   }
 
   private async processReply(
@@ -3400,6 +3424,10 @@ export class ConversationService {
         ? getAgentChatToolDefinitions(plan.availableTools)
         : [];
     let usage: ReplyUsage = {};
+    const abModel = this.resolveChatModelForAB(options.runtime.auth.sub);
+    const abProvider = abModel
+      ? this.openAIService.resolveABModelProvider()
+      : null;
     const firstResponse = await this.openAIService.createChatCompletion(
       {
         temperature: ASSISTANT_REPLY_TEMPERATURE,
@@ -3425,6 +3453,7 @@ export class ConversationService {
       {
         timeout: ASSISTANT_REPLY_TIMEOUT_MS,
         maxRetries: 0,
+        ...(abProvider ? { providerOverride: abProvider } : {}),
       }
     );
     usage = this.mergeReplyUsage(
@@ -3981,6 +4010,7 @@ export class ConversationService {
         {
           timeout: 10000,
           maxRetries: 0,
+          skipPrimary: true,
         }
       );
       const responseContent =
@@ -6899,7 +6929,8 @@ export class ConversationService {
         {
           timeout: ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS,
           maxRetries: 0,
-        }
+ 
+                  }
       );
       const usage = this.extractUsageFromResponse(response);
       reflowUsage = usage;
