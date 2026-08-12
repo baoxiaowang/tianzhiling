@@ -498,7 +498,12 @@ export function routeReplyScene(
       return false;
     }
 
-    if (familyEmotionOnly && strategy.scene === 'miss_longing') {
+    // miss_longing 和 comfort_request 是顶层情感表达，
+    // 即使用户提到了家人，核心意图仍然是思念和求安慰
+    if (familyEmotionOnly &&
+        strategy.scene !== 'miss_longing' &&
+        strategy.scene !== 'comfort_request' &&
+        strategy.scene !== 'guilt_regret') {
       return false;
     }
 
@@ -522,11 +527,7 @@ export function routeReplyScene(
   ).filter(
     strategy =>
       (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') &&
-      !(
-        familyEmotionOnly &&
-        (strategy.scene === 'miss_longing' ||
-          strategy.scene === 'comfort_request')
-      )
+      true
   );
   const semanticIntentItems = prioritizeExplicitPresenceConfirmation(
     currentQuery,
@@ -586,7 +587,11 @@ export function routeReplyScene(
     ? buildPromptIntent(options.intent, responseIntents)
     : options.intent;
 
-  const [primaryScene, ...secondaryScenes] = matched.map(strategy => ({
+  const effectiveMatched = matched.length
+    ? matched
+    : [findSceneStrategy('smalltalk')];
+
+  const [primaryScene, ...secondaryScenes] = effectiveMatched.map(strategy => ({
     scene: strategy.scene,
     label: strategy.label,
     priority: strategy.priority,
@@ -762,7 +767,7 @@ function resolveSemanticIntentSceneStrategies(
     .filter(
       scene =>
         !familyEmotionOnly ||
-        (scene !== 'miss_longing' && scene !== 'comfort_request')
+        (scene !== 'family_life')
     );
 
   return Array.from(new Set(scenes)).map(findSceneStrategy);
