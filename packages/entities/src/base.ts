@@ -37,6 +37,7 @@ export enum TableName {
   voice_service_session = "voice_service_session",
   voice_training_task = "voice_training_task",
   voice_timbre = "voice_timbre",
+  quota_trigger_event = "quota_trigger_event",
 }
 
 export class BaseEntity {
