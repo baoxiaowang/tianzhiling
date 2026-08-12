@@ -176,6 +176,7 @@ const QUOTA_CONFIG = {
   longMessageMinChars: 60,
   relationshipStages: ['R2', 'R3'] as string[],
   graceMessagesAfterWarn: 2,
+  newUserHardBlockMessages: 35,
   naturalClosePatterns: [
     '晚安',
     '睡了',
@@ -2516,6 +2517,22 @@ export class ConversationService {
         sessionMsgCount,
         triggered: false,
         matchedConditions: [],
+      });
+    }
+
+    // New user hard block: 35 lifetime messages → blocked
+    if (isNewUser && totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages) {
+      return this.buildQuotaResult({
+        path: 'trial',
+        remainingCount: 0,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['hardBlock'],
+        naturalCloseExempted: false,
+        warned: false,
+        blocked: true,
       });
     }
 
