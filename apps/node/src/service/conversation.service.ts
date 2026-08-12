@@ -1698,7 +1698,8 @@ export class ConversationService {
     }
 
     try {
-      const context = await this.agentContextService.buildConversationContext({
+      let context;
+      context = await this.agentContextService.buildConversationContext({
         auth: options.runtime.auth,
         conversation: options.runtime.conversation,
         agent: options.runtime.agent,
@@ -2105,6 +2106,9 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string
   ): Promise<MemoryFactExtractionAudit> {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return { succeeded: true, count: 0 };
+    }
     if (!this.agentMemoryFactService) {
       return { succeeded: true, count: 0 };
     }
@@ -2134,6 +2138,9 @@ export class ConversationService {
     explicitlyConfirmed = false,
     previousAssistantContent?: string
   ): Promise<MemoryFactExtractionAudit> {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return { succeeded: true, count: 0 };
+    }
     if (!this.agentProfileFactService) {
       return { succeeded: true, count: 0 };
     }
@@ -2922,6 +2929,25 @@ export class ConversationService {
     } as never);
   }
 
+
+  /**
+   * A/B 通道路由：基于 userId 哈希决定是否使用 B 侧模型。
+   * 返回 undefined 表示使用默认主模型。
+   */
+  private resolveChatModelForAB(userId: string): string | undefined {
+    const cfg = this.openAIService?.openAIConfig;
+    const abModel = cfg?.abModel?.trim();
+    const abSplit = cfg?.abSplitPercent ?? 0;
+    if (!abModel || abSplit <= 0) return undefined;
+    const hash = require('crypto').createHash('md5').update(String(userId)).digest('hex');
+    const bucket = parseInt(hash.slice(0, 8), 16) % 100;
+    if (bucket < abSplit) {
+      this.logger?.info?.('[conversation] AB routing to ' + abModel + ', bucket=' + bucket);
+      return abModel;
+    }
+    return undefined;
+  }
+
   private async processReply(
     runtime: ReplyRuntime,
     before: BeforeReplyResult
@@ -2935,6 +2961,8 @@ export class ConversationService {
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
     );
+
+    const effectiveChatModel = this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
     try {
       context = await this.withTraceSpan(
@@ -2952,6 +2980,7 @@ export class ConversationService {
             forceSemanticPlanning:
               currentTurnMessages.length > 1 || containsImage,
             memoryControlResult,
+            effectiveChatModel: effectiveChatModel || undefined,
           })
       );
     } catch (error) {
@@ -3977,6 +4006,7 @@ export class ConversationService {
         {
           timeout: 10000,
           maxRetries: 0,
+          skipPrimary: true,
         }
       );
       const responseContent =
@@ -8404,6 +8434,9 @@ export class ConversationService {
     userId: string;
     searchableText: string;
   }): void {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return;
+    }
     const searchableText = options.searchableText?.trim();
 
     if (!searchableText) {

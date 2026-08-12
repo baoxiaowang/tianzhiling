@@ -1,0 +1,116 @@
+import type { ReplyScene } from './reply-scene-router';
+import type {
+  ConversationMovePlan,
+  ConversationMove,
+  ConversationStance,
+  ConversationSocialStrategy,
+  ConversationQuestionNeed,
+  ConversationTurnClosure,
+  ReplyIntentEmotion,
+} from './reply-intent';
+
+/**
+ * 确定性轻量策略 — 零模型调用，为 direct 路径生成最小 conversationPlan。
+ *
+ * 语义规划器的 direct 分流已通过正则和场景路由确定了消息的简单性，
+ * 这一步只是把"简单"翻译成结构化策略字段，消除 direct 路径的裸奔状态。
+ */
+
+interface SceneStrategyTemplate {
+  stance: ConversationStance;
+  moves: ConversationMove[];
+  socialStrategy: ConversationSocialStrategy;
+  strategyPurpose: string;
+  questionNeed: ConversationQuestionNeed;
+  turnClosure: ConversationTurnClosure;
+}
+
+const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
+  daily_update: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '接住用户的日常分享，给一点角色侧的回应温度' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户分享日常时，只需接住和回应，不追问不扩展',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  smalltalk: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '自然闲聊回应' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '日常闲聊，保持轻松自然的回应',
+    questionNeed: 'none',
+    turnClosure: 'neutral',
+  },
+  miss_longing: {
+    stance: 'tender',
+    moves: [
+      { type: 'acknowledge', goal: '接住用户的思念' },
+      { type: 'affirm', goal: '回应用户的情感，给一点角色侧当下的温度' },
+    ],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户表达思念时，接住情绪并回应温度，不追问',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  comfort_request: {
+    stance: 'tender',
+    moves: [{ type: 'comfort', goal: '承接用户的情绪，给予情感安慰' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户寻求安慰时，先接住情绪，不急于转移或追问',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  family_life: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '接住用户关于家庭近况的分享' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户分享家庭近况，只需接住，不追问不扩展',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  afterlife_status: {
+    stance: 'tender',
+    moves: [{ type: 'answer', goal: '简短回应在离世世界的状态，不展开编造细节' }],
+    socialStrategy: 'protective_fiction',
+    strategyPurpose: '用户问"在那边过得怎样"，简短回应，保护离世世界设定不崩塌',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  blessing_attribution: {
+    stance: 'tender',
+    moves: [{ type: 'affirm', goal: '承认祝福和牵挂，同时明确现实结果来自用户自己' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户将现实顺利归因于逝者祝福时，接住感情但不确认超自然因果',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+};
+
+/**
+ * 为 direct 路径的消息生成确定性轻量 conversationPlan。
+ * 只在场景明确且模板已定义时返回；未覆盖的场景返回 undefined，由上游继续走裸奔路径。
+ */
+export function buildDeterministicLightStrategy(options: {
+  scene?: ReplyScene;
+  currentQuery?: string;
+  emotion?: ReplyIntentEmotion;
+}): ConversationMovePlan | undefined {
+  const { scene } = options;
+
+  if (!scene) return undefined;
+
+  const template = SCENE_STRATEGY[scene];
+  if (!template) return undefined;
+
+  return {
+    stance: template.stance,
+    stanceTarget: 'user',
+    moves: template.moves,
+    socialStrategy: template.socialStrategy,
+    strategyPurpose: template.strategyPurpose,
+    questionNeed: template.questionNeed,
+    turnClosure: template.turnClosure,
+    personaActivation: [],
+  };
+}

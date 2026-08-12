@@ -17,6 +17,9 @@ export interface RetrieveConversationMemoriesOptions {
   limit?: number;
 }
 
+// RRF 分数区分度阈值：top1 跟第 3 名的差距低于此值视为噪声
+const MIN_RRF_GAP = 0.0006;
+
 @Provide()
 export class RetrieveService {
   @Logger()
@@ -63,7 +66,10 @@ export class RetrieveService {
         memories.filter(memory => memory.role === MessageRole.user)
       );
 
-      return activeUserMemories.map(memory => ({
+      const relevantMemories = this.filterByScoreGap(activeUserMemories);
+      const freshMemories = this.applyMemoryTimeDecay(relevantMemories);
+
+      return freshMemories.map(memory => ({
         id: memory.id,
         content: memory.searchableText,
         role: memory.role,
@@ -80,6 +86,48 @@ export class RetrieveService {
       return [];
     }
   }
+
+  // 时间衰减：超过 90 天的记忆不注入，30-90 天降权
+  private applyMemoryTimeDecay(
+    memories: RetrievedConversationMemory[]
+  ): RetrievedConversationMemory[] {
+    if (!memories.length) return [];
+
+    const now = Date.now();
+    const DAY_MS = 86400000;
+
+    return memories.filter(m => {
+      const ageDays = (now - (m.createdAtTs || 0)) / DAY_MS;
+      return ageDays <= 90; // 超过 90 天直接丢弃
+    });
+  }
+
+  // RRF 分数区分度门控：top1 跟第 3 名的差距太小说明没有真正命中
+  private filterByScoreGap(
+    memories: RetrievedConversationMemory[]
+  ): RetrievedConversationMemory[] {
+    if (memories.length < 3) {
+      return memories.slice(0, 2);
+    }
+
+    const scores = memories.map(m => m.score || 0);
+    const top1 = scores[0];
+    const top3 = scores[2];
+
+    // 区分度不足 → 噪声，不注入
+    if (top1 - top3 < MIN_RRF_GAP) {
+      return [];
+    }
+
+    // 有区分度：取明显高于中位数的
+    const median = scores[Math.floor(scores.length / 2)];
+    const relevant = memories.filter(
+      m => (m.score || 0) - median >= MIN_RRF_GAP / 2
+    );
+
+    return relevant.slice(0, 2);
+  }
+
 
   private async filterArchivedMemories(
     memories: RetrievedConversationMemory[]

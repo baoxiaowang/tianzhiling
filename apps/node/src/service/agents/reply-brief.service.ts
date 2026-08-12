@@ -64,6 +64,7 @@ import {
   constrainConversationPlanForExperience,
   ReplyExperiencePlan,
 } from './reply-experience-plan';
+import { buildDeterministicLightStrategy } from './deterministic-light-strategy';
 import {
   DreamCompanionPlan,
   resolveDreamCompanionPlan,
@@ -272,7 +273,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
   const rawConversationPlan =
-    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan;
+    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({ scene: primaryScene, currentQuery });
   const evidence = buildEvidence(options, currentQuery);
   const correctionPolicy = resolveReplyCorrectionPolicy({
     primaryScene,

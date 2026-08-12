@@ -121,6 +121,7 @@ export interface BuildConversationContextOptions {
   forceSemanticPlanning?: boolean;
   classifyIntent?: boolean;
   memoryControlResult?: AgentMemoryControlResult;
+  effectiveChatModel?: string;
 }
 
 export interface AgentContextLayer {
@@ -175,6 +176,10 @@ export interface AgentContextDiagnostics {
   relevantHardFactKeys: string[];
   conversationReadingAnchorCount: number;
   memoryPlan?: ConversationMemoryPlan;
+  memoryPlanHadQueries?: boolean;
+  memoryPlanContextCoverage?: string;
+  memoryPlanQueriesCount?: number;
+  memorySearchResultCount?: number;
   memoryCandidateCount: number;
   memoryCandidateKeys: string[];
   memoryModelSelectedCandidateKeys: string[];
@@ -192,7 +197,7 @@ export interface AgentContextDiagnostics {
   turnPlanOpenPointCount: number;
   turnPlanOpenNeeds: string[];
   turnPlanAvoid?: string;
-  strategySource: 'semantic_plan' | 'short_turn_injection' | 'direct_brief';
+  strategySource: 'semantic_plan' | 'deterministic_light' | 'short_turn_injection' | 'direct_brief';
   participationStrategy?: ReplyBrief['participationStrategy'];
   conversationStance?: string;
   conversationStanceTarget?: string;
@@ -249,6 +254,7 @@ const MEMORY_PLAN_RECENT_CONTEXT_MIN_AVERAGE_RELEVANCE = 24;
 type MemoryRetrievalMode =
   | 'memory_plan'
   | 'legacy_query'
+  | 'direct_query'
   | 'suppressed'
   | 'tool_takeover';
 
@@ -427,7 +433,12 @@ export class AgentContextService {
       conversationMessages: historicalConversationMessages,
       intent: replyRoute.intent ?? replyIntent,
       route: replyRoute,
-      confirmedFacts: [...(profileFacts || []), ...(hardFacts || [])]
+      confirmedFacts: [
+        ...(profileFacts || []).filter(
+          fact => fact.confidence !== 'extracted'
+        ),
+        ...(hardFacts || [])
+      ]
         .map(fact => fact.value?.trim())
         .filter((value): value is string => Boolean(value)),
       recentMessages: routingHistoryMessages,
@@ -689,6 +700,11 @@ export class AgentContextService {
           : relevantHardFacts.map(fact => fact.key),
         conversationReadingAnchorCount: replyBrief.reading?.anchors.length ?? 0,
         memoryPlan: replyIntent?.memoryPlan,
+        // memoryPlan 依赖度埋点（用于判断是否可以移除 memoryPlan 字段）
+        memoryPlanHadQueries: replyIntent?.memoryPlan?.contextCoverage === 'missing' && (replyIntent?.memoryPlan?.queries?.length || 0) > 0,
+        memoryPlanContextCoverage: replyIntent?.memoryPlan?.contextCoverage,
+        memoryPlanQueriesCount: replyIntent?.memoryPlan?.queries?.length || 0,
+        memorySearchResultCount: retrievedMemories.length,
         memoryCandidateCount: memoryCandidates.length,
         memoryCandidateKeys: memoryCandidates.map(candidate => candidate.key),
         memoryModelSelectedCandidateKeys: modelSelectedCandidateKeys,
@@ -711,7 +727,7 @@ export class AgentContextService {
         turnPlanOpenNeeds: resolvedTurnPlan?.open.map(item => item.need) || [],
         turnPlanAvoid: resolvedTurnPlan?.avoid,
         strategySource: replyBrief.conversationPlan
-          ? 'semantic_plan'
+          ? replyPlanningDecision.mode === 'direct' ? 'deterministic_light' : 'semantic_plan'
           : replyBrief.participationStrategy
           ? 'short_turn_injection'
           : 'direct_brief',
@@ -831,8 +847,13 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     const sessionContinuityPrompt = options.conversation
       ? this.buildSessionContinuityPromptFromConversation(options.conversation, options.agent)
       : '';
-        const systemPrompt = [
-      basePrompt,
+    
+    // 豆包模型适配：追加一条风格约束
+    const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
+      ? '\n像微信聊天一样自然说话，短句口语。不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。情感表达要有温度，不因简短而空洞。'
+      : '';
+    const systemPrompt = [
+      basePrompt + doubaoAdaptation,
       perceptionPrompt,
       persona?.prompt,
       conversationReadingPrompt,
@@ -861,34 +882,39 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     replyBrief: ReplyBrief,
     agent: AgentEntity
   ): string {
-    // For direct_brief path only: inject minimal context (~50 tokens) so the
-    // main model knows the scene, the relationship, and has a one-line memory
-    // anchor -- without needing a separate planner call.
     if (!replyBrief.primaryScene && !replyBrief.relationshipContext?.length && !replyBrief.evidence?.length) {
       return '';
     }
 
-    const lines: string[] = ['# 本轮感知'];
+    const lines: string[] = [];
     if (replyBrief.primaryScene) {
-      lines.push('场景：' + replyBrief.primaryScene);
+      lines.push('# 场景：' + replyBrief.primaryScene);
     }
     if (replyBrief.relationshipContext?.length) {
       const rc = replyBrief.relationshipContext[0];
       if (rc.text) lines.push('关系参考：' + rc.text);
     }
-    // Subtext hint: when user reports a location change or life transition,
-    // the surface fact may conceal deeper emotions of displacement and loss.
-    // Listen for what the user is really saying, not just the surface info.
+    lines.push('如果上一轮AI留下了未答的问题（比如"你呢？""吃了没？"），用户本轮没接，就不再追问，让它自然过去。');
+
+    // 确定性注入已确认记忆（最多3条，仅 confirmed_fact 和 retrieved_user）
+    // 如果记忆与用户当前表达明显不匹配，宁可不用
+    const memoryEvidence = (replyBrief.evidence || []).filter(
+      (item) => item.source === 'confirmed_fact' || item.source === 'retrieved_user'
+    ).slice(0, 3);
+
+    if (memoryEvidence.length) {
+      lines.push('# 已知事实');
+      memoryEvidence.forEach((item, i) => {
+        lines.push((i + 1) + '. ' + item.text);
+      });
+    }
+
+    // Subtext hint for daily/family updates
     if (replyBrief.primaryScene &&
         ['daily_update', 'family_life'].includes(replyBrief.primaryScene)) {
       lines.push('注意：用户可能在报告生活变化时隐藏着失落、漂泊或思念。不只回应表面信息，也听见没说出口的情绪。');
     }
-    if (replyBrief.evidence?.length) {
-      const firstEvidence = replyBrief.evidence[0];
-      const snippet = (firstEvidence.text || '').slice(0, 60);
-      if (snippet) lines.push('记忆：' + snippet);
-    }
-    lines.push('以上仅为轻量参考，不强制使用；以用户原话和当下真实感受为准。');
+
     return lines.join('\n');
   }
 
@@ -1399,7 +1425,8 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     if (!memoryPlan) {
       if (planningMode === 'direct') {
         return {
-          mode: 'suppressed',
+          mode: 'direct_query',
+          query: currentQuery.trim() || undefined,
           conceptCount: 0,
         };
       }

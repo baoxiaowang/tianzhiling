@@ -98,32 +98,57 @@ export function resolveReplyStrategyQualityPlan(options: {
     return undefined;
   }
 
-  const repeatedMoves: ReplyRepeatedStrategyMove[] = (
-    Object.keys(REPEATED_MOVE_PATTERNS) as Array<
-      Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>
-    >
-  ).filter(move => {
-    const pattern = REPEATED_MOVE_PATTERNS[move];
-    return (
-      assistantTurns.filter(message => {
-        pattern.lastIndex = 0;
-        return pattern.test(message.content);
-      }).length >= 2
-    );
-  });
-  const structuredTenderRun = assistantTurns
-    .slice(-2)
-    .every(
-      message =>
-        message.replyConversationStance === 'tender' &&
-        (message.replyConversationMoves || []).some(move =>
-          ['acknowledge', 'affirm'].includes(move)
-        )
-    );
+  // 结构化检测优先：从 replyConversationMoves 判断行动重复
+  const structuredRepeatedMoves: ReplyRepeatedStrategyMove[] = [];
+  const lastTwoMoves = assistantTurns.slice(-2)
+    .filter(m => (m.replyConversationMoves || []).length > 0);
 
-  if (assistantTurns.length >= 2 && structuredTenderRun) {
-    repeatedMoves.push('tender_acknowledge_affirm');
+  if (lastTwoMoves.length >= 2) {
+    const lastMoves = lastTwoMoves.map(m => m.replyConversationMoves || []);
+    // tender + acknowledge/affirm 连续
+    if (lastMoves.every(moves =>
+      moves.some(m => ['acknowledge', 'affirm'].includes(m)) &&
+      assistantTurns.slice(-2).every(m => m.replyConversationStance === 'tender')
+    )) {
+      structuredRepeatedMoves.push('tender_acknowledge_affirm');
+    }
+    // comfort 连续 → generic_empathy
+    if (lastMoves.every(moves => moves.some(m => m === 'comfort'))) {
+      structuredRepeatedMoves.push('generic_empathy');
+    }
+    // affirm/comfort 连续 → generic_presence
+    if (lastMoves.every(moves =>
+      moves.every(m => ['affirm', 'comfort', 'acknowledge'].includes(m))
+    )) {
+      structuredRepeatedMoves.push('generic_presence');
+    }
+    // suggest 连续 → generic_advice
+    if (lastMoves.every(moves => moves.some(m => m === 'suggest'))) {
+      structuredRepeatedMoves.push('generic_advice');
+    }
   }
+
+  // 正则辅助：只在结构化字段缺失时补充检测
+  const hasSparseStructured = assistantTurns.some(
+    m => !m.replyConversationMoves || m.replyConversationMoves.length === 0
+  );
+  const regexRepeatedMoves: ReplyRepeatedStrategyMove[] = hasSparseStructured
+    ? (Object.keys(REPEATED_MOVE_PATTERNS) as Array<
+        Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>
+      >).filter(move => {
+        const pattern = REPEATED_MOVE_PATTERNS[move];
+        return (
+          assistantTurns.filter(message => {
+            pattern.lastIndex = 0;
+            return pattern.test(message.content);
+          }).length >= 2
+        );
+      })
+    : [];
+
+  const repeatedMoves: ReplyRepeatedStrategyMove[] = [
+    ...new Set([...structuredRepeatedMoves, ...regexRepeatedMoves])
+  ];
 
   if (!repeatedMoves.length && !explicitClose) {
     return undefined;
