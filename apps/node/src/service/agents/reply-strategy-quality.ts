@@ -232,6 +232,7 @@ export function buildReplyStrategyQualityPrompt(
     grounded_detail: '自然使用一条可陈述证据',
     topic_transition: '贴着用户新信息推进或轻转一个相邻话题',
     natural_close: '简短自然收尾',
+    leave_space: '给用户留出表达空间',
   };
 
   const repeatedPrefix = plan.repeatedMoves.length
