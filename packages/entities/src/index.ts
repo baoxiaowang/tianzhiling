@@ -31,3 +31,5 @@ export * from "./voice-package.entity";
 export * from "./voice-service-session.entity";
 export * from "./voice-timbre.entity";
 export * from "./voice-training-task.entity";
+
+export * from "./quota-trigger-event.entity";
