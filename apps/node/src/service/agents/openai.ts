@@ -18,6 +18,17 @@ import { ChatTraceService } from '../chat-trace.service';
 export interface OpenAIServiceConfig {
   enabled?: boolean;
   apiKey?: string;
+  fallback?: {
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+  };
+  /** 二次轻量兜底 Provider：主模型超时/失败时独立调用 */
+  secondaryFallback?: {
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+  };
   baseURL?: string;
   model?: string;
   visionModel?: string;
@@ -42,6 +53,12 @@ export interface OpenAIServiceConfig {
   embeddingBaseURL?: string;
   embeddingModel?: string;
   embeddingDimensions?: number;
+  /** A/B 通道：B 侧模型 */
+  abModel?: string;
+  abModelApiKey?: string;
+  abModelBaseURL?: string;
+  /** B 侧用户比例 (0-100) */
+  abSplitPercent?: number;
 }
 
 export interface OpenAIChatRequest
@@ -69,6 +86,10 @@ export interface OpenAIRequestOptions {
   signal?: AbortSignal;
   timeout?: number;
   maxRetries?: number;
+  /** 跳过 Primary，先试 secondaryFallback，没有再试 fallback */
+  skipPrimary?: boolean;
+  /** 覆盖主模型 Provider（A/B 测试用） */
+  providerOverride?: { client: OpenAI; model: string };
 }
 
 export interface OpenAITextRequest {
@@ -229,41 +250,41 @@ export class OpenAIService {
       );
     }
 
-    const client = this.getClient();
     const trace = request.trace;
     const providerRequest = { ...request };
     delete providerRequest.trace;
-    const body = {
-      ...providerRequest,
-      model: request.model?.trim() || this.getDefaultModel(),
-      temperature: this.normalizeTemperature(request.temperature),
-      top_p: this.normalizeTopP(request.topP),
-      presence_penalty: this.normalizePenalty(
-        request.presencePenalty,
-        this.openAIConfig?.presencePenalty
-      ),
-      frequency_penalty: this.normalizePenalty(
-        request.frequencyPenalty,
-        this.openAIConfig?.frequencyPenalty
-      ),
-      reasoning_split: this.resolveReasoningSplit(request.reasoningSplit),
-    } as unknown as ChatCompletionCreateParamsNonStreaming;
-
+    const primaryBody = this.buildChatCompletionBody(providerRequest);
+    const fallbackBody = this.buildFallbackChatCompletionBody(providerRequest);
     this.logger.info(
-      '[openai] create chat completion, model=%s, messages=%s',
-      body.model,
+      '[openai] create chat completion, primaryModel=%s, fallbackModel=%s, messages=%s',
+      primaryBody.model,
+      fallbackBody?.model || 'none',
       request.messages.length
     );
 
-    const createCompletion = async () =>
-      this.withRequestDeadline(
+    const createCompletion = async (
+      client: OpenAI,
+      body: ChatCompletionCreateParamsNonStreaming,
+      providerLabel: string
+    ) => {
+      this.logger.info(
+        '[openai] provider request, provider=%s, model=%s',
+        providerLabel,
+        body.model
+      );
+      return this.withRequestDeadline(
         requestOptions =>
           client.chat.completions.create(body, requestOptions as never),
         options
       );
+    };
 
     if (!this.chatTraceService) {
-      return createCompletion();
+      return this.tryPrimaryThenFallback(
+        createCompletion,
+        primaryBody,
+        fallbackBody
+      );
     }
 
     const stage =
@@ -274,10 +295,16 @@ export class OpenAIService {
       stage,
       trace?.operation || 'model.chat_completion',
       async recorder => {
-        recorder.setModelUsage({ model: body.model });
-        const response = await createCompletion();
+        const response = await this.tryPrimaryThenFallback(
+          async (client, body, label) => {
+            recorder.setModelUsage({ model: body.model });
+            return createCompletion(client, body, label);
+          },
+          primaryBody,
+          fallbackBody
+        );
         recorder.setModelUsage({
-          model: response.model || body.model,
+          model: response.model || primaryBody.model,
           promptTokens: response.usage?.prompt_tokens,
           completionTokens: response.usage?.completion_tokens,
           totalTokens: response.usage?.total_tokens,
@@ -305,6 +332,130 @@ export class OpenAIService {
         },
       }
     );
+  }
+
+  private buildChatCompletionBody(
+    request: Omit<OpenAIChatRequest, 'trace'>
+  ): ChatCompletionCreateParamsNonStreaming {
+    return {
+      ...request,
+      model: request.model?.trim() || this.getDefaultModel(),
+      temperature: this.normalizeTemperature(request.temperature),
+      top_p: this.normalizeTopP(request.topP),
+      presence_penalty: this.normalizePenalty(
+        request.presencePenalty,
+        this.openAIConfig?.presencePenalty
+      ),
+      frequency_penalty: this.normalizePenalty(
+        request.frequencyPenalty,
+        this.openAIConfig?.frequencyPenalty
+      ),
+      reasoning_split: this.resolveReasoningSplit(request.reasoningSplit),
+    } as unknown as ChatCompletionCreateParamsNonStreaming;
+  }
+
+  private buildFallbackChatCompletionBody(
+    request: Omit<OpenAIChatRequest, 'trace'>
+  ): ChatCompletionCreateParamsNonStreaming | undefined {
+    const fallbackModel = this.getFallbackModel();
+    if (!fallbackModel) {
+      return undefined;
+    }
+    return {
+      ...this.buildChatCompletionBody(request),
+      model: fallbackModel,
+    };
+  }
+
+  private getFallbackModel(): string {
+    return this.openAIConfig?.fallback?.model?.trim() || '';
+  }
+
+  private resolveFallbackProvider(): { client: OpenAI; model: string } | null {
+    const apiKey = this.openAIConfig?.fallback?.apiKey?.trim();
+    const baseURL = this.openAIConfig?.fallback?.baseURL?.trim();
+    const model = this.getFallbackModel();
+    if (!apiKey || !baseURL || !model) {
+      return null;
+    }
+    return {
+      client: this.createClient(apiKey, baseURL),
+      model,
+    };
+  }
+
+  private resolveSecondaryFallbackProvider(): { client: OpenAI; model: string } | null {
+    const apiKey = this.openAIConfig?.secondaryFallback?.apiKey?.trim();
+    const baseURL = this.openAIConfig?.secondaryFallback?.baseURL?.trim();
+    const model = this.openAIConfig?.secondaryFallback?.model?.trim();
+    if (!apiKey || !baseURL || !model) {
+      return null;
+    }
+    return {
+      client: this.createClient(apiKey, baseURL),
+      model,
+    };
+  }
+
+  private async tryPrimaryThenFallback<T>(
+    task: (
+      client: OpenAI,
+      body: ChatCompletionCreateParamsNonStreaming,
+      providerLabel: string
+    ) => Promise<T>,
+    primaryBody: ChatCompletionCreateParamsNonStreaming | undefined,
+    fallbackBody?: ChatCompletionCreateParamsNonStreaming,
+    providerOverride?: { client: OpenAI; model: string }
+  ): Promise<T> {
+    // skipPrimary：跳过后直接降级到 secondary → fallback
+    if (primaryBody === undefined) {
+      // A/B 通道：直接用指定的 provider
+      if (providerOverride && fallbackBody) {
+        try {
+          return await task(providerOverride.client, { ...fallbackBody, model: providerOverride.model }, 'primary_ab');
+        } catch (abError) {
+          this.logger.warn('[openai] AB provider failed, trying secondary');
+        }
+      }
+      const secondary = this.resolveSecondaryFallbackProvider();
+      if (secondary && fallbackBody) {
+        try {
+          return await task(secondary.client, { ...fallbackBody, model: secondary.model }, 'secondary');
+        } catch (secondaryError) {
+          this.logger.warn(
+            '[openai] secondary provider failed, error=%s, trying main fallback',
+            describeErrorForLog(secondaryError instanceof Error ? secondaryError : new Error(String(secondaryError)))
+          );
+        }
+      }
+      const fallback = this.resolveFallbackProvider();
+      if (!fallback || !fallbackBody) {
+        throw new Error('No fallback provider available');
+      }
+      return await task(fallback.client, { ...fallbackBody, model: fallback.model }, 'fallback');
+    }
+
+    const primaryClient = providerOverride?.client || this.getClient();
+    const activePrimaryBody = providerOverride
+      ? { ...primaryBody, model: providerOverride.model }
+      : primaryBody;
+    try {
+      return await task(primaryClient, activePrimaryBody, 'primary');
+    } catch (primaryError) {
+      const fallback = this.resolveFallbackProvider();
+      if (!fallback || !fallbackBody) {
+        throw primaryError;
+      }
+      this.logger.warn(
+        '[openai] primary provider failed, error=%s, trying fallback',
+        describeErrorForLog(
+          primaryError instanceof Error
+            ? primaryError
+            : new Error(String(primaryError))
+        )
+      );
+      return await task(fallback.client, fallbackBody, 'fallback');
+    }
   }
 
   private async withRequestDeadline<T>(
@@ -730,6 +881,15 @@ export class OpenAIService {
       .filter(Boolean);
   }
 
+  resolveABModelProvider(): { client: OpenAI; model: string } | null {
+    const cfg = this.openAIConfig;
+    const model = cfg?.abModel?.trim();
+    const apiKey = cfg?.abModelApiKey?.trim();
+    const baseURL = cfg?.abModelBaseURL?.trim();
+    if (!model || !apiKey || !baseURL) return null;
+    return { client: this.createClient(apiKey, baseURL), model };
+  }
+
   private getClient(): OpenAI {
     if (this.client) {
       return this.client;
@@ -753,15 +913,21 @@ export class OpenAIService {
       );
     }
 
-    this.client = new OpenAI({
+    this.client = this.createClient(
       apiKey,
-      baseURL:
-        this.openAIConfig?.baseURL?.trim() || 'https://api.minimax.io/v1',
+      this.openAIConfig?.baseURL?.trim() || 'https://api.minimax.io/v1'
+    );
+
+    return this.client;
+  }
+
+  private createClient(apiKey: string, baseURL: string): OpenAI {
+    return new OpenAI({
+      apiKey,
+      baseURL,
       maxRetries: this.normalizeMaxRetries(this.openAIConfig?.maxRetries),
       timeout: this.normalizeTimeout(this.openAIConfig?.timeoutMs),
     });
-
-    return this.client;
   }
 
   private getVisionClient(): OpenAI {
