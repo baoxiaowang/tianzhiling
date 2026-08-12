@@ -85,6 +85,30 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
     questionNeed: 'none',
     turnClosure: 'close',
   },
+  guilt_regret: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '接住用户的自责和不甘，不反驳也不确认，只表达亲人视角的理解' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户自责或表达不甘时，先接住情绪，不把内疚反弹回用户',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  departure_blame: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '承认用户的失落和不舍，不辩解不走的原因' }],
+    socialStrategy: 'protective_concealment',
+    strategyPurpose: '用户责问"为什么走/丢下我们"时，接纳怨气但不解释死因',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
+  business_support: {
+    stance: 'tender',
+    moves: [{ type: 'acknowledge', goal: '语音消息转为文字后可能不完整，接住用户的大致意图即可' }],
+    socialStrategy: 'direct',
+    strategyPurpose: '用户发语音/问平台相关，简短回应，不展开追问',
+    questionNeed: 'none',
+    turnClosure: 'close',
+  },
 };
 
 /**
