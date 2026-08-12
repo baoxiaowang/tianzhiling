@@ -2613,18 +2613,14 @@ export class ConversationService {
         } as any)
       )[0];
 
-      // Use find+length instead of count() — TypeORM MongoRepository.count()
-      // with raw filter is unreliable: EntityManager.setFindOptions only reads \`where\`.
       const postWarnCount = firstWarnedMsg
-        ? (await this.messageModel.find({
-            where: {
-              userId,
-              agentId,
-              role: MessageRole.user,
-              createdAt: { $gt: firstWarnedMsg.createdAt },
-              status: MessageStatus.sent,
-            },
-          } as any)).length
+        ? await this.messageModel.count({
+            userId,
+            agentId,
+            role: MessageRole.user,
+            createdAt: { $gt: firstWarnedMsg.createdAt },
+            status: MessageStatus.sent,
+          } as never)
         : 0;
 
       if (postWarnCount > cfg.graceMessagesAfterWarn) {
