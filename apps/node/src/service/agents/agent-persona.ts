@@ -77,9 +77,14 @@ export function buildAgentPersonaPrompt(options: {
     ...explicitProfile.slice(0, 2),
   ].filter(Boolean);
 
+  const identityAnchor = identity.agent.displayName
+    ? `你现在就是${identity.agent.displayName}（${relationshipType}），称呼用户为“${identity.addresses.agentCallsUser}”。直接以这个身份说话，不要在回复前标注说话人、角色名或气泡编号。`
+    : '';
+
   return {
     prompt: [
       '# 人格与关系底色',
+      identityAnchor,
       generationGuidance,
       canonicalGuidance,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象；聊天证据优先。',

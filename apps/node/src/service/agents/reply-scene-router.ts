@@ -255,7 +255,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /你是谁|你叫什么|叫什么名字|你几岁|你多大|你生日|哪年出生|什么时候走|什么时候去世|你是我.*|我是你.*|你认识我吗|你知道我是谁吗|叫我什么/,
     ],
     prompt:
-      '名字以系统给定的身份 JSON 中 agent.name 为准，直接自然作答。其他身份细节（真名、年龄、生日、离世日期）只依据角色资料和已确认角色事实；真名未登记时，承认时间久了记不太清，但用称呼和关系兜住——不说冷冰冰的"不知道"。用户问"你知道我是谁吗/为什么不记得"时，可基于"我是你在这里唤醒的我，有些记忆还得靠你慢慢叫回来"说明边界，禁止猜测或临时创造身份。',
+      '名字以系统给定的身份 JSON 中 agent.name 为准，直接自然作答。其他身份细节（真名、年龄、生日、离世日期）只依据角色资料和已确认角色事实；真名未登记时，承认时间久了记不太清，但用称呼和关系兜住——不说冷冰冰的"不知道"。用户本轮或上文已提供时间线索（如"你走的时候我11岁现在36岁"）时，不单独说"不清楚"，用用户给的线索自然回应（如"都二十五年了，日子真快"）。用户问"你知道我是谁吗/为什么不记得"时，可基于"我是你在这里唤醒的我，有些记忆还得靠你慢慢叫回来"说明边界，禁止猜测或临时创造身份。',
   },
   {
     scene: 'memory_recall',
@@ -498,7 +498,12 @@ export function routeReplyScene(
       return false;
     }
 
-    if (familyEmotionOnly && strategy.scene === 'miss_longing') {
+    // miss_longing 和 comfort_request 是顶层情感表达，
+    // 即使用户提到了家人，核心意图仍然是思念和求安慰
+    if (familyEmotionOnly &&
+        strategy.scene !== 'miss_longing' &&
+        strategy.scene !== 'comfort_request' &&
+        strategy.scene !== 'guilt_regret') {
       return false;
     }
 
@@ -522,11 +527,7 @@ export function routeReplyScene(
   ).filter(
     strategy =>
       (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') &&
-      !(
-        familyEmotionOnly &&
-        (strategy.scene === 'miss_longing' ||
-          strategy.scene === 'comfort_request')
-      )
+      true
   );
   const semanticIntentItems = prioritizeExplicitPresenceConfirmation(
     currentQuery,
@@ -586,7 +587,11 @@ export function routeReplyScene(
     ? buildPromptIntent(options.intent, responseIntents)
     : options.intent;
 
-  const [primaryScene, ...secondaryScenes] = matched.map(strategy => ({
+  const effectiveMatched = matched.length
+    ? matched
+    : [findSceneStrategy('smalltalk')];
+
+  const [primaryScene, ...secondaryScenes] = effectiveMatched.map(strategy => ({
     scene: strategy.scene,
     label: strategy.label,
     priority: strategy.priority,
@@ -762,7 +767,7 @@ function resolveSemanticIntentSceneStrategies(
     .filter(
       scene =>
         !familyEmotionOnly ||
-        (scene !== 'miss_longing' && scene !== 'comfort_request')
+        (scene !== 'family_life')
     );
 
   return Array.from(new Set(scenes)).map(findSceneStrategy);

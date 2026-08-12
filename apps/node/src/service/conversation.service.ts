@@ -28,6 +28,8 @@ import {
   VoiceTimbreProvider,
   VoiceTimbreStatus,
   ReplyQuotaTriggerDecision,
+  QuotaTriggerEventEntity,
+  QuotaTriggerType,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
@@ -142,6 +144,8 @@ import {
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
 const ASSISTANT_REPLY_TIMEOUT_MS = 28000;
+const ASSISTANT_RECOVERY_TIMEOUT_MS = 15000;
+const ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS = 300;
 const ASSISTANT_REPLY_MAX_TOKENS = 520;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
@@ -173,12 +177,32 @@ const QUOTA_CONFIG = {
   messageThreshold: 5,
   longMessageMinChars: 60,
   relationshipStages: ['R2', 'R3'] as string[],
-  graceMessagesAfterWarn: 3,
+  graceMessagesAfterWarn: 2,
+  newUserHardBlockMessages: 35,
   naturalClosePatterns: [
-    '晚安','睡了','先睡','休息了','去睡了','我好困','困了',
-    '先忙','去忙','忙了','工作了',
-    '下次聊','改天聊','回头聊','明天聊','有空再聊','下次再聊',
-    '拜拜','再见','明天再说','先这样','早点休息','你也早点休息',
+    '晚安',
+    '睡了',
+    '先睡',
+    '休息了',
+    '去睡了',
+    '我好困',
+    '困了',
+    '先忙',
+    '去忙',
+    '忙了',
+    '工作了',
+    '下次聊',
+    '改天聊',
+    '回头聊',
+    '明天聊',
+    '有空再聊',
+    '下次再聊',
+    '拜拜',
+    '再见',
+    '明天再说',
+    '先这样',
+    '早点休息',
+    '你也早点休息',
   ],
 } as const;
 const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
@@ -368,7 +392,7 @@ interface AssistantSegmentSanitizationTrace {
 }
 
 interface AssistantGenerationAttemptTrace {
-  attempt: 'initial' | 'recovery' | 'bubble_reflow';
+  attempt: 'initial' | 'recovery' | 'bubble_reflow' | 'secondaryFallback';
   model?: string;
   usage: ReplyUsage;
   rawContent: string;
@@ -512,8 +536,6 @@ interface MemoryFactExtractionAudit {
   count: number;
 }
 
-
-
 interface MemorialPhotoDailyQuotaSnapshot {
   isVip: boolean;
   limit: number;
@@ -567,6 +589,9 @@ export class ConversationService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(QuotaTriggerEventEntity)
+  quotaTriggerEventModel: MongoRepository<QuotaTriggerEventEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -791,11 +816,7 @@ export class ConversationService {
           'persist.reply',
           () => this.afterReply(runtime, before, processed)
         );
-        await this.completeChatReplyTrace(
-          trace,
-          processed,
-          after
-        );
+        await this.completeChatReplyTrace(trace, processed, after);
 
         return this.buildSendMessageResult(before, after);
       } catch (error) {
@@ -1682,7 +1703,8 @@ export class ConversationService {
     }
 
     try {
-      const context = await this.agentContextService.buildConversationContext({
+      let context;
+      context = await this.agentContextService.buildConversationContext({
         auth: options.runtime.auth,
         conversation: options.runtime.conversation,
         agent: options.runtime.agent,
@@ -1848,7 +1870,11 @@ export class ConversationService {
     const now = new Date();
     let chatQuota: ConversationChatQuotaSnapshot;
     try {
-      chatQuota = await this.resolveChatQuotaForSend(runtime, now, searchableText);
+      chatQuota = await this.resolveChatQuotaForSend(
+        runtime,
+        now,
+        searchableText
+      );
     } catch (error) {
       // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
       // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
@@ -1898,12 +1924,22 @@ export class ConversationService {
 
     // Save quota trigger decision on user message
     if (chatQuota.triggerDecision) {
-      await this.messageModel.updateOne(
-        { _id: userMessage.id },
-        { $set: { replyQuotaTriggerDecision: chatQuota.triggerDecision } } as any,
-      ).catch(() => {
-        this.logger?.warn?.('[chat-quota] failed to persist triggerDecision on user message');
-      });
+      const setPayload: Record<string, any> = {
+        replyQuotaTriggerDecision: chatQuota.triggerDecision,
+      };
+      // Denormalize warned flag to top-level for reliable MongoDB queries
+      if (chatQuota.triggerDecision.warned) {
+        setPayload.quotaWarned = true;
+      }
+      await this.messageModel
+        .updateOne({ _id: userMessage.id }, {
+          $set: setPayload,
+        } as any)
+        .catch(() => {
+          this.logger?.warn?.(
+            '[chat-quota] failed to persist triggerDecision on user message'
+          );
+        });
     }
 
     await this.touchConversation(runtime.conversation, now);
@@ -2075,6 +2111,9 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string
   ): Promise<MemoryFactExtractionAudit> {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return { succeeded: true, count: 0 };
+    }
     if (!this.agentMemoryFactService) {
       return { succeeded: true, count: 0 };
     }
@@ -2104,6 +2143,9 @@ export class ConversationService {
     explicitlyConfirmed = false,
     previousAssistantContent?: string
   ): Promise<MemoryFactExtractionAudit> {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return { succeeded: true, count: 0 };
+    }
     if (!this.agentProfileFactService) {
       return { succeeded: true, count: 0 };
     }
@@ -2330,9 +2372,13 @@ export class ConversationService {
   private async resolveChatQuotaForSend(
     runtime: ReplyRuntime,
     now: Date,
-    currentMessageContent?: string,
+    currentMessageContent?: string
   ): Promise<ConversationChatQuotaSnapshot> {
-    const currentQuota = await this.resolveCurrentChatQuota(runtime, now, currentMessageContent);
+    const currentQuota = await this.resolveCurrentChatQuota(
+      runtime,
+      now,
+      currentMessageContent
+    );
 
     if (currentQuota.isVip) {
       return currentQuota;
@@ -2425,7 +2471,7 @@ export class ConversationService {
   private async resolveCurrentChatQuota(
     runtime: ReplyRuntime,
     now: Date,
-    currentMessageContent?: string,
+    currentMessageContent?: string
   ): Promise<ConversationChatQuotaSnapshot> {
     // 防御：DI 初始化失败时宁可误拦也不要放行
     if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
@@ -2455,14 +2501,20 @@ export class ConversationService {
     const dayStart = this.getBeijingDayStart(now);
     const dayEnd = new Date(dayStart.getTime() + 86400000);
     const todayMsgs = await this.countUserMessagesForAgent({
-      userId, agentId,
+      userId,
+      agentId,
       windowStart: dayStart,
       windowEnd: dayEnd,
     });
 
     // Count session and lifetime messages (for audit)
-    const sessionMsgCount = await this.countSessionMessages(runtime.conversation.id);
-    const totalLifetimeMsgs = await this.countTotalUserMessagesForAgent(userId, agentId);
+    const sessionMsgCount = await this.countSessionMessages(
+      runtime.conversation.id
+    );
+    const totalLifetimeMsgs = await this.countTotalUserMessagesForAgent(
+      userId,
+      agentId
+    );
 
     // Determine if this is a new user (within trial days)
     const isNewUser = await this.isUserInTrialPeriod(userId, now);
@@ -2472,16 +2524,40 @@ export class ConversationService {
       return this.buildQuotaResult({
         path: 'trial',
         remainingCount: 99,
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        triggered: false, matchedConditions: [],
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: false,
+        matchedConditions: [],
+      });
+    }
+
+    // New user hard block: 35 lifetime messages → blocked
+    if (isNewUser && totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages) {
+      return this.buildQuotaResult({
+        path: 'trial',
+        remainingCount: 0,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['hardBlock'],
+        naturalCloseExempted: false,
+        warned: false,
+        blocked: true,
       });
     }
 
     // Trigger zone
     return this.evaluateDeepTriggerQuota(
-      userId, agentId, now,
-      totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-      currentMessageContent, isNewUser,
+      userId,
+      agentId,
+      now,
+      totalLifetimeMsgs,
+      todayMsgs,
+      sessionMsgCount,
+      currentMessageContent,
+      isNewUser
     );
   }
 
@@ -2493,7 +2569,7 @@ export class ConversationService {
     todayMsgs: number,
     sessionMsgCount: number,
     currentMessageContent: string | undefined,
-    isNewUser: boolean,
+    isNewUser: boolean
   ): Promise<ConversationChatQuotaSnapshot> {
     const cfg = QUOTA_CONFIG;
     const matched: string[] = [];
@@ -2505,7 +2581,10 @@ export class ConversationService {
     if (effectiveMsgs > cfg.messageThreshold) matched.push('messageCount');
 
     // Condition B: Long message
-    if (currentMessageContent && currentMessageContent.length > cfg.longMessageMinChars) {
+    if (
+      currentMessageContent &&
+      currentMessageContent.length > cfg.longMessageMinChars
+    ) {
       matched.push('longMessage');
     }
 
@@ -2524,72 +2603,165 @@ export class ConversationService {
       ? cfg.naturalClosePatterns.some(p => currentMessageContent.includes(p))
       : false;
 
-    if (!triggered) {
+    // ═══════════════════════════════════════════════════════════════
+    // GRACE/BLOCK CHECK — once warned, EVERY message counts toward
+    // the grace limit, regardless of trigger conditions.
+    // ═══════════════════════════════════════════════════════════════
+    const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
+
+    if (wasWarned) {
+      const dayStart = this.getBeijingDayStart(now);
+      const firstWarnedMsg = (
+        await this.messageModel.find({
+          where: {
+            userId,
+            agentId,
+            role: MessageRole.user,
+            quotaWarned: true,
+            createdAt: { $gte: dayStart },
+          },
+          order: { createdAt: 'ASC' },
+          take: 1,
+        } as any)
+      )[0];
+
+      const postWarnCount = firstWarnedMsg
+        ? await this.messageModel.count({
+            userId,
+            agentId,
+            role: MessageRole.user,
+            createdAt: { $gt: firstWarnedMsg.createdAt },
+            status: MessageStatus.sent,
+          } as never)
+        : 0;
+
+      if (postWarnCount > cfg.graceMessagesAfterWarn) {
+        return this.buildQuotaResult({
+          path: isNewUser ? 'trial' : 'active',
+          remainingCount: 0,
+          totalLifetimeMsgs,
+          todayMsgs,
+          sessionMsgCount,
+          triggered: true,
+          matchedConditions: matched,
+          naturalCloseExempted: false,
+          warned: true,
+          blocked: true,
+        });
+      }
+
+      // Within grace period → pass through (don't re-warn)
       return this.buildQuotaResult({
         path: isNewUser ? 'trial' : 'active',
         remainingCount: 99,
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        triggered: false, matchedConditions: matched,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: matched,
         naturalCloseExempted: false,
+        warned: true,
+        blocked: false,
       });
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NOT WARNED YET → trigger-based evaluation
+    // ═══════════════════════════════════════════════════════════════
 
     if (naturalClose) {
       return this.buildQuotaResult({
         path: isNewUser ? 'trial' : 'active',
         remainingCount: 2,
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        triggered: true, matchedConditions: matched,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: matched,
         naturalCloseExempted: true,
       });
     }
 
-    // Trigger fired + not natural close → check warning state
-    const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
-
-    if (wasWarned) {
-      // Count user messages since the last warned message
-      const lastWarnedMsg = await this.messageModel.findOne({
-        where: { userId, agentId, role: MessageRole.user, 'replyQuotaTriggerDecision.warned': true },
-        order: { createdAt: 'DESC' },
-      } as any);
-
-      const postWarnCount = lastWarnedMsg
-        ? await this.messageModel.count({
-            userId, agentId, role: MessageRole.user,
-            createdAt: { $gt: new Date(lastWarnedMsg.createdAt.getTime()) },
-          } as never)
-        : 0;
-
-      if (postWarnCount >= cfg.graceMessagesAfterWarn) {
-        // Grace period exhausted → block
-        return this.buildQuotaResult({
-          path: isNewUser ? 'trial' : 'active',
-          remainingCount: 0,
-          totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-          triggered: true, matchedConditions: matched,
-          naturalCloseExempted: false, warned: true, blocked: true,
-        });
-      }
-
-      // Within grace period → pass through silently
+    if (triggered) {
+      // First warning
+      // Record the trigger event for return-tracking
+      this.recordQuotaTriggerEvent(userId, agentId, {
+        triggerType: QuotaTriggerType.warned,
+        triggeredAt: now,
+        dayMsgs: todayMsgs,
+        lifetimeMsgs: totalLifetimeMsgs,
+        triggered: true,
+        matchedConditions: matched,
+        warnCount: 1,
+      });
       return this.buildQuotaResult({
         path: isNewUser ? 'trial' : 'active',
-        remainingCount: 99,
-        totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-        triggered: true, matchedConditions: matched,
-        naturalCloseExempted: false, warned: true, blocked: false,
+        remainingCount: 1,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: matched,
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: false,
       });
     }
 
-    // First warning
+    // Not triggered, not warned → completely free pass
     return this.buildQuotaResult({
       path: isNewUser ? 'trial' : 'active',
-      remainingCount: 1,
-      totalLifetimeMsgs, todayMsgs, sessionMsgCount,
-      triggered: true, matchedConditions: matched,
-      naturalCloseExempted: false, warned: true, blocked: false,
+      remainingCount: 99,
+      totalLifetimeMsgs,
+      todayMsgs,
+      sessionMsgCount,
+      triggered: false,
+      matchedConditions: matched,
+      naturalCloseExempted: false,
     });
+  }
+
+  private recordQuotaTriggerEvent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    params: {
+      triggerType: QuotaTriggerType;
+      triggeredAt: Date;
+      dayMsgs: number;
+      lifetimeMsgs: number;
+      triggered: boolean;
+      matchedConditions: string[];
+      warnCount?: number;
+    }
+  ): void {
+    // Deduplicate: only one event per user+agent+type per day
+    const dayStart = this.getBeijingDayStart(params.triggeredAt);
+    this.quotaTriggerEventModel
+      .findOne({
+        where: {
+          userId,
+          agentId,
+          triggerType: params.triggerType,
+          triggeredAt: { $gte: dayStart },
+        },
+      } as any)
+      .then((existing: any) => {
+        if (existing) return;
+        this.quotaTriggerEventModel
+          .save({
+            userId,
+            agentId,
+            triggerType: params.triggerType,
+            triggeredAt: params.triggeredAt,
+            dayMsgs: params.dayMsgs,
+            lifetimeMsgs: params.lifetimeMsgs,
+            triggered: params.triggered,
+            matchedConditions: params.matchedConditions,
+            warnCount: params.warnCount ?? 0,
+          } as any)
+          .catch(() => {});
+      })
+      .catch(() => {});
   }
 
   private buildQuotaResult(params: {
@@ -2630,7 +2802,7 @@ export class ConversationService {
 
   private async isUserInTrialPeriod(
     userId: MongoObjectId,
-    now: Date,
+    now: Date
   ): Promise<boolean> {
     const user = await this.userModel.findOne({
       where: { _id: userId },
@@ -2642,7 +2814,9 @@ export class ConversationService {
     return daysSinceRegister < QUOTA_CONFIG.newUserTrialDays;
   }
 
-  private async countSessionMessages(conversationId: MongoObjectId): Promise<number> {
+  private async countSessionMessages(
+    conversationId: MongoObjectId
+  ): Promise<number> {
     return this.messageModel.count({
       conversationId,
       role: MessageRole.user,
@@ -2652,7 +2826,7 @@ export class ConversationService {
 
   private async countTotalUserMessagesForAgent(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
+    agentId: MongoObjectId
   ): Promise<number> {
     return this.messageModel.count({
       userId,
@@ -2665,11 +2839,12 @@ export class ConversationService {
 
   private async getLastRelationshipStage(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
+    agentId: MongoObjectId
   ): Promise<string | null> {
     const lastAssistantMsg = await this.messageModel.findOne({
       where: {
-        userId, agentId,
+        userId,
+        agentId,
         role: MessageRole.assistant,
         replyRelationshipStage: { $exists: true, $ne: null },
       },
@@ -2680,11 +2855,12 @@ export class ConversationService {
 
   private async isStageJustPromoted(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
+    agentId: MongoObjectId
   ): Promise<boolean> {
     const lastTwo = await this.messageModel.find({
       where: {
-        userId, agentId,
+        userId,
+        agentId,
         role: MessageRole.assistant,
         replyRelationshipStage: { $exists: true, $ne: null },
       },
@@ -2695,7 +2871,13 @@ export class ConversationService {
     const cur = lastTwo[0]?.replyRelationshipStage;
     const prev = lastTwo[1]?.replyRelationshipStage;
     if (!cur || !prev) return false;
-    const stageRank: Record<string, number> = { R0: 0, R1: 1, R2: 2, R3: 3, R4: 4 };
+    const stageRank: Record<string, number> = {
+      R0: 0,
+      R1: 1,
+      R2: 2,
+      R3: 3,
+      R4: 4,
+    };
     const curRank = stageRank[cur] ?? 0;
     const prevRank = stageRank[prev] ?? 0;
     return curRank > prevRank && curRank >= 2;
@@ -2704,20 +2886,30 @@ export class ConversationService {
   private async wasQuotaWarningSent(
     userId: MongoObjectId,
     agentId: MongoObjectId,
-    now: Date,
+    now: Date
   ): Promise<boolean> {
-    const lastUserMsg = await this.messageModel.findOne({
-      where: { userId, agentId, role: MessageRole.user },
-      order: { createdAt: 'DESC' },
-    } as any);
+    // Check for any warned message today (not just the last one),
+    // so non-triggered messages between triggered ones don't reset the counter.
+    const dayStart = this.getBeijingDayStart(now);
+    const warnedMsg = (
+      await this.messageModel.find({
+        where: {
+          userId,
+          agentId,
+          role: MessageRole.user,
+          quotaWarned: true,
+          createdAt: { $gte: dayStart },
+        },
+        order: { createdAt: 'ASC' },
+        take: 1,
+      } as any)
+    )[0];
 
-    if (!lastUserMsg?.replyQuotaTriggerDecision?.warned) return false;
+    if (!warnedMsg) return false;
 
-    // Warning expires after 24 hours
-    const warnedAt = new Date(lastUserMsg.createdAt);
-    return (now.getTime() - warnedAt.getTime()) < 24 * 60 * 60 * 1000;
+    const warnedAt = new Date(warnedMsg.createdAt);
+    return now.getTime() - warnedAt.getTime() < 24 * 60 * 60 * 1000;
   }
-
 
   private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {
     const memberships = await this.userMembershipModel.find({
@@ -2737,14 +2929,8 @@ export class ConversationService {
     );
   }
 
-
-
-
-
-
   private getBeijingDayStart(value: Date): Date {
-    const offsetMs =
-      8 * 60 /* deprecated */ * 60 * 1000;
+    const offsetMs = 8 * 60 /* deprecated */ * 60 * 1000;
     const shifted = new Date(value.getTime() + offsetMs);
 
     return new Date(
@@ -2801,6 +2987,25 @@ export class ConversationService {
     } as never);
   }
 
+
+  /**
+   * A/B 通道路由：基于 userId 哈希决定是否使用 B 侧模型。
+   * 返回 undefined 表示使用默认主模型。
+   */
+  private resolveChatModelForAB(userId: string): string | undefined {
+    const cfg = this.openAIService?.openAIConfig;
+    const abModel = cfg?.abModel?.trim();
+    const abSplit = cfg?.abSplitPercent ?? 0;
+    if (!abModel || abSplit <= 0) return cfg?.model?.trim() || undefined;
+    const hash = require('crypto').createHash('md5').update(String(userId)).digest('hex');
+    const bucket = parseInt(hash.slice(0, 8), 16) % 100;
+    if (bucket < abSplit) {
+      this.logger?.info?.('[conversation] AB routing to ' + abModel + ', bucket=' + bucket);
+      return abModel;
+    }
+    return undefined;
+  }
+
   private async processReply(
     runtime: ReplyRuntime,
     before: BeforeReplyResult
@@ -2814,6 +3019,8 @@ export class ConversationService {
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
     );
+
+    const effectiveChatModel = this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
     try {
       context = await this.withTraceSpan(
@@ -2831,6 +3038,7 @@ export class ConversationService {
             forceSemanticPlanning:
               currentTurnMessages.length > 1 || containsImage,
             memoryControlResult,
+            effectiveChatModel: effectiveChatModel || undefined,
           })
       );
     } catch (error) {
@@ -2978,8 +3186,7 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const replyTruncated =
-        this.checkAssistantCompletionTruncated(response);
+      const replyTruncated = this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
         this.logger.error(
           '[conversation] primary assistant completion truncated by token limit'
@@ -3028,31 +3235,16 @@ export class ConversationService {
         );
       }
 
-      if (this.isGenerationTimeoutError(initialError)) {
-        return this.buildGenerationFailureReply(
-          before.searchableText,
-          context.replyRoute,
-          context.replyIntent ?? context.replyRoute?.intent,
-          replyBrief,
-          initialError,
-          'completion',
-          {
-            attempted: false,
-            succeeded: false,
-            initialFailureCode: this.resolveGenerationFailureCode(initialError),
-          },
-          generationUsage,
-          context.messages,
-          generationAttemptTraces
-        );
-      }
+      const isTimeoutRecovery = this.isGenerationTimeoutError(initialError);
 
       try {
         response = await this.openAIService.createChatCompletion(
           {
             temperature: ASSISTANT_REPLY_TEMPERATURE,
             topP: ASSISTANT_REPLY_TOP_P,
-            max_tokens: ASSISTANT_RECOVERY_MAX_TOKENS,
+            max_tokens: isTimeoutRecovery
+              ? ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS
+              : ASSISTANT_RECOVERY_MAX_TOKENS,
             messages: this.buildMinimalGenerationRecoveryMessages({
               runtime,
               userQuery: before.searchableText,
@@ -3066,7 +3258,9 @@ export class ConversationService {
             },
           },
           {
-            timeout: ASSISTANT_REPLY_TIMEOUT_MS,
+            timeout: isTimeoutRecovery
+              ? ASSISTANT_RECOVERY_TIMEOUT_MS
+              : ASSISTANT_REPLY_TIMEOUT_MS,
             maxRetries: 0,
           }
         );
@@ -3078,8 +3272,7 @@ export class ConversationService {
           typeof response.choices?.[0]?.message?.content === 'string'
             ? response.choices[0].message.content
             : '';
-        const replyTruncated =
-          this.checkAssistantCompletionTruncated(response);
+        const replyTruncated = this.checkAssistantCompletionTruncated(response);
         if (replyTruncated) {
           this.logger.error(
             '[conversation] recovery assistant completion truncated by token limit'
@@ -3134,7 +3327,8 @@ export class ConversationService {
           },
           generationUsage,
           context.messages,
-          generationAttemptTraces
+          generationAttemptTraces,
+          runtime
         );
       }
     }
@@ -3840,7 +4034,84 @@ export class ConversationService {
     }
   }
 
-  private buildGenerationFailureReply(
+  // 二次轻量生成兜底：在静态模板之前尝试一次极简生成
+  private async trySecondaryGenerationFallback(options: {
+    userQuery: string;
+    replyBrief: ReplyBrief;
+    messages: ChatCompletionMessageParam[];
+    runtime: ReplyRuntime;
+    error: unknown;
+    generationAttemptTraces: AssistantGenerationAttemptTrace[];
+  }): Promise<ProcessReplyResult | undefined> {
+    try {
+      const response = await this.openAIService.createChatCompletion(
+        {
+          temperature: 0.3,
+          topP: 0.9,
+          max_tokens: 200,
+          messages: this.buildMinimalGenerationRecoveryMessages({
+            runtime: options.runtime,
+            userQuery: options.userQuery,
+            contextMessages: options.messages,
+            replyBrief: options.replyBrief,
+            evidence: [],
+          }),
+          trace: {
+            stage: ChatTraceStage.generate,
+            operation: 'generate.secondaryFallback',
+          },
+        },
+        {
+          timeout: 10000,
+          maxRetries: 0,
+          skipPrimary: true,
+        }
+      );
+      const responseContent =
+        typeof response.choices?.[0]?.message?.content === 'string'
+          ? response.choices[0].message.content
+          : '';
+      const parsedReply = this.parseAssistantReply(responseContent);
+      const segments = this.normalizeAssistantReplySegments(
+        parsedReply.segments,
+        options.userQuery
+      );
+      if (segments.length > 0) {
+        options.generationAttemptTraces.push(
+          this.buildAssistantGenerationAttemptTrace({
+            attempt: 'secondaryFallback',
+            responseContent,
+            parsedSegments: segments,
+            userQuery: options.userQuery,
+            model:
+              typeof response.model === 'string' ? response.model : undefined,
+            usage: this.extractUsageFromResponse(response),
+          })
+        );
+        return {
+          replySegments: compactReplyBubblesPreservingContent(segments),
+          usage: this.extractUsageFromResponse(response),
+          routing: {
+            route: undefined,
+            brief: options.replyBrief,
+            fallbackSource: 'secondary_generation',
+            generationFailureStage: 'completion',
+            generationFailureCode: this.resolveGenerationFailureCode(
+              options.error
+            ),
+            generationRecoveryAttempted: true,
+            generationRecoverySucceeded: true,
+            generationAttemptTraces: options.generationAttemptTraces,
+          },
+        };
+      }
+    } catch {
+      // 二次生成也失败，继续走静态兜底
+    }
+    return undefined;
+  }
+
+  private async buildGenerationFailureReply(
     userQuery: string,
     replyRoute: ReplySceneRoute | undefined,
     replyIntent: StructuredReplyIntent | undefined,
@@ -3854,8 +4125,32 @@ export class ConversationService {
     },
     usage: ReplyUsage = {},
     messages?: ChatCompletionMessageParam[],
-    generationAttemptTraces: AssistantGenerationAttemptTrace[] = []
-  ): ProcessReplyResult {
+    generationAttemptTraces: AssistantGenerationAttemptTrace[] = [],
+    runtime?: ReplyRuntime
+  ): Promise<ProcessReplyResult> {
+    // 在线生成不可用时，先尝试二次轻量生成，失败再走静态兜底
+    if (stage !== 'context' && runtime && messages?.length) {
+      const secondaryRecoveryResult = await this.trySecondaryGenerationFallback(
+        {
+          userQuery,
+          replyBrief,
+          messages,
+          runtime,
+          error,
+          generationAttemptTraces,
+        }
+      );
+      if (secondaryRecoveryResult) {
+        return {
+          ...secondaryRecoveryResult,
+          usage: this.mergeReplyUsage(
+            usage,
+            secondaryRecoveryResult.usage || {}
+          ),
+        };
+      }
+    }
+
     const fallback = this.replyGuardrailService?.resolveGenerationFailureReply({
       userQuery,
       replyRoute,
@@ -4022,8 +4317,9 @@ export class ConversationService {
    * 不新增模型调用，纯工程判断。
    */
   private splitLongContentOnReplyBubble(segments: string[]): string[] {
-    if (segments.length !== 2) return segments;
-    const content = segments[0];
+    // 无泡或单泡不超过 35 字：不处理
+    const content = segments[0]?.trim?.();
+    if (!content) return segments;
     const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
     if (visibleChars <= 35) return segments;
 
@@ -4031,7 +4327,7 @@ export class ConversationService {
     const sentences = content.split(/(?<=[。！？])/u);
     if (sentences.length < 2) return segments;
 
-    // 从后往前找切点，确保前半段 ≥ 8 字且后半段 ≥ 8 字
+    // 确保前半段 ≥ 8 字且后半段 ≥ 8 字
     let splitAt = -1;
     let accumulated = 0;
     for (let i = 0; i < sentences.length - 1; i++) {
@@ -4045,12 +4341,25 @@ export class ConversationService {
 
     if (splitAt === -1) return segments;
 
-    const first = sentences.slice(0, splitAt + 1).join('').trim();
-    const second = sentences.slice(splitAt + 1).join('').trim();
+    const first = sentences
+      .slice(0, splitAt + 1)
+      .join('')
+      .trim();
+    const second = sentences
+      .slice(splitAt + 1)
+      .join('')
+      .trim();
 
     if (!first || !second) return segments;
 
-    return [first, second, segments[1]];
+    // 单泡拆为 2，双泡拆第一泡为 3，其余不变
+    if (segments.length === 1) {
+      return [first, second];
+    }
+    if (segments.length === 2) {
+      return [first, second, segments[1]];
+    }
+    return segments;
   }
 
   private async afterReply(
@@ -4811,7 +5120,8 @@ export class ConversationService {
       case MessageType.voice:
         return {
           ...message,
-          mediaTranscript: await this.transcribeVoiceForConversation(message) || '[用户发来一条语音]',
+          mediaTranscript:
+            (await this.transcribeVoiceForConversation(message)) || '',
         };
       case MessageType.image: {
         const imageAnalysis = await this.describeImageForConversation(
@@ -4872,8 +5182,7 @@ export class ConversationService {
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
     return (
-      this.isNaturalConversationEnd(payload) ||
-      (payload.type === MessageType.voice && !payload.mediaTranscript?.trim())
+      this.isNaturalConversationEnd(payload)
     );
   }
 
@@ -4910,7 +5219,9 @@ export class ConversationService {
     }
 
     // 高风险信号必须回复
-    if (/去死|自杀|不想活|活不下去|死了一了百了|死掉|结束自己|了断/.test(content)) {
+    if (
+      /去死|自杀|不想活|活不下去|死了一了百了|死掉|结束自己|了断/.test(content)
+    ) {
       return false;
     }
 
@@ -4944,7 +5255,7 @@ export class ConversationService {
     // 纯语气词/确认（≤4 字，无问号）
     if (
       content.length <= 4 &&
-      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
         content
       )
     ) {
@@ -4954,7 +5265,10 @@ export class ConversationService {
     return false;
   }
 
-  private shouldSkipReplyFromBrief(brief: ReplyBrief, userQuery: string): boolean {
+  private shouldSkipReplyFromBrief(
+    brief: ReplyBrief,
+    userQuery: string
+  ): boolean {
     // 安全网：如果用户实际消息不是自然收口，不因规划器信号跳过回复
     const query = (userQuery || '').trim();
     if (query.length > 0 && !this.isUserMessageNaturalEnd(query)) {
@@ -4989,17 +5303,49 @@ export class ConversationService {
     if (/去死|自杀|不想活|活不下去/.test(content)) return false;
 
     const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
-    if (/(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回|理我|说话)/.test(normalized))
+    if (
+      /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回|理我|说话)/.test(
+        normalized
+      )
+    )
       return true;
 
     if (content.length > 12) return false;
 
-    const roleSuffix = '(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?';
-    if (new RegExp('^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
-    if (new RegExp('^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
-    if (new RegExp('^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)' + roleSuffix + '[。.!！~～]*$').test(content)) return true;
+    const roleSuffix =
+      '(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?';
+    if (
+      new RegExp(
+        '^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)' +
+          roleSuffix +
+          '[。.!！~～]*$'
+      ).test(content)
+    )
+      return true;
+    if (
+      new RegExp(
+        '^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)' +
+          roleSuffix +
+          '[。.!！~～]*$'
+      ).test(content)
+    )
+      return true;
+    if (
+      new RegExp(
+        '^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)' +
+          roleSuffix +
+          '[。.!！~～]*$'
+      ).test(content)
+    )
+      return true;
 
-    if (content.length <= 4 && /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|懂|明白|了解了)[。.!！~～]*$/.test(content)) return true;
+    if (
+      content.length <= 4 &&
+      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
+        content
+      )
+    )
+      return true;
 
     return false;
   }
@@ -5104,30 +5450,41 @@ export class ConversationService {
       return undefined;
     }
 
-    try {
-      const transcript = await this.openAIService.createTranscription({
-        audioUrl,
-      });
-      const content = transcript.trim();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const transcript = await this.openAIService.createTranscription({
+          audioUrl,
+        });
+        const content = transcript.trim();
 
-      if (content) {
-        return content;
+        if (content) {
+          return content;
+        }
+
+        this.logger.error(
+          '[conversation] voice transcription returned empty content, objectKey=%s, attempt=%d',
+          payload.mediaObjectKey || '',
+          attempt + 1
+        );
+        // 重试前等待 500ms
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        this.logger.error(
+          '[conversation] voice transcription request failed, objectKey=%s, attempt=%d/2, reason=%s',
+          payload.mediaObjectKey || '',
+          attempt + 1,
+          this.describeReplyError(error)
+        );
+        // 重试前等待 800ms
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+        }
       }
-
-      this.logger.error(
-        '[conversation] voice transcription returned empty content, objectKey=%s',
-        payload.mediaObjectKey || ''
-      );
-      return undefined;
-    } catch (error) {
-      this.logger.error(
-        '[conversation] voice transcription request failed, objectKey=%s, url=%s, reason=%s',
-        payload.mediaObjectKey || '',
-        audioUrl,
-        this.describeReplyError(error)
-      );
-      return undefined;
     }
+
+    return undefined;
   }
 
   private normalizeImageIncomingMessage(payload?: SendConversationMessageDTO): {
@@ -5829,6 +6186,7 @@ export class ConversationService {
           ...(isFirstSegment
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
+          traceId: this.chatTraceService?.getCurrentTraceId(),
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -5905,6 +6263,7 @@ export class ConversationService {
       totalTokens: options.usage.totalTokens,
       replyVisibleCharacters,
       ...this.buildReplyRoutingMessageFields(options.routing),
+      traceId: this.chatTraceService?.getCurrentTraceId(),
       createdAt: options.replyTime,
       updatedAt: options.replyTime,
     });
@@ -6550,7 +6909,7 @@ export class ConversationService {
         );
       case MessageType.voice: {
         const transcript = payload.mediaTranscript?.trim();
-        if (!transcript) return '';
+        if (!transcript || transcript.length <= 6) return '';
         return `语音：${transcript}`;
       }
       case MessageType.text:
@@ -6641,8 +7000,7 @@ export class ConversationService {
         typeof response.choices?.[0]?.message?.content === 'string'
           ? response.choices[0].message.content
           : '';
-      const replyTruncated =
-        this.checkAssistantCompletionTruncated(response);
+      const replyTruncated = this.checkAssistantCompletionTruncated(response);
       if (replyTruncated) {
         this.logger.error(
           '[conversation] bubble reflow completion truncated by token limit'
@@ -6714,6 +7072,22 @@ export class ConversationService {
 
     if (naturalSegments.length > 0) {
       return naturalSegments;
+    }
+
+    // 从原始文本中尝试提取中文内容（处理畸形 JSON 输出的兜底）
+    const rawText = Array.isArray(value)
+      ? value.join(' ')
+      : typeof value === 'string'
+      ? value
+      : '';
+    if (rawText) {
+      const extractAttempt = this.extractTextFromJsonArtifact(rawText);
+      const chineseSegments = this.extractChineseTextSegments(
+        extractAttempt ?? rawText
+      );
+      if (chineseSegments.length > 0) {
+        return chineseSegments.map(s => this.stripAssistantMarkup(s).trim());
+      }
     }
 
     throw new AppError(
@@ -7180,7 +7554,9 @@ export class ConversationService {
     }
 
     // {"segments":["text"… or {"text":"text"…
-    const namedMatch = /\{\"(?:segments|text)\"\s*:\s*\[?\s*\"([^"]+)/.exec(content);
+    const namedMatch = /\{\"(?:segments|text)\"\s*:\s*\[?\s*\"([^"]+)/.exec(
+      content
+    );
     if (namedMatch?.[1]) {
       return namedMatch[1].trim();
     }
@@ -7192,6 +7568,40 @@ export class ConversationService {
     }
 
     return undefined;
+  }
+
+  // 从纯文本中提取中文句子（兜底提取，处理模型返回畸形JSON的场景）
+  private extractChineseTextSegments(value?: string): string[] {
+    const content = value?.trim();
+    if (!content) return [];
+
+    // 匹配连续中文（含常见标点）片段，排除纯JSON语法字符
+    const matches = content.match(
+      /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u300c\u300d\u300e\u300f\u3010\u3011\u300a\u300b\uff08\uff09\u201c\u201d\u2018\u2019\u3001\uff0c\u3002\uff1b\uff1a\uff1f\uff01\u2026\u2014\uff5e]+/g
+    );
+    if (!matches || matches.length === 0) return [];
+
+    // 过滤掉太短的片段和JSON残留
+    const MIN_CHINESE_CHARS = 2;
+    const jsonKeywords = [
+      'segments',
+      'claims',
+      'toolDecisions',
+      'text',
+      'type',
+      'kind',
+      'mode',
+      'source',
+      'id',
+    ];
+    return matches
+      .map(m => m.trim())
+      .filter(m => {
+        const chineseChars = m.replace(/[^一-鿿]/g, '').length;
+        if (chineseChars < MIN_CHINESE_CHARS) return false;
+        const lower = m.toLowerCase();
+        return jsonKeywords.every(kw => !lower.includes(kw));
+      });
   }
 
   private sanitizeAssistantSegment(value?: string, userQuery = ''): string {
@@ -7294,25 +7704,27 @@ export class ConversationService {
   }
 
   private stripAssistantMarkup(value: string): string {
-    return stripConversationMessageSegmentMarkup(value)
-      .replace(/<\/?fense\s*>/gi, ' ')
-      .replace(/<\/?fense(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
-      .replace(/<\/?fenge\s*>/gi, ' ')
-      .replace(/<\/?fenge(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
-      .replace(
-        /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?:\s+[^<>]*)?>/g,
-        ' '
-      )
-      .replace(
-        /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g,
-        ' '
-      )
-      // 身份前缀：作为{名称}[，]{你}[…]说： → 只保留实际内容
-      // 变体：作为XX，你说： / 作为XX，说： / 作为XX，你轻声说：
-      .replace(
-        /^作为[\u4e00-\u9fff\w·\-\ufe0f💗]{1,20}[，,]?\s*(?:你[\u4e00-\u9fff\s，,]{0,12})?说[：:]\s*/g,
-        ''
-      );
+    return (
+      stripConversationMessageSegmentMarkup(value)
+        .replace(/<\/?fense\s*>/gi, ' ')
+        .replace(/<\/?fense(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
+        .replace(/<\/?fenge\s*>/gi, ' ')
+        .replace(/<\/?fenge(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/gi, ' ')
+        .replace(
+          /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?:\s+[^<>]*)?>/g,
+          ' '
+        )
+        .replace(
+          /<\/?[A-Za-z\u00c0-\u017f][A-Za-z0-9\u00c0-\u017f_-]*(?=$|[\s\u3400-\u9FFF，。！？、；：,.!?;:])/g,
+          ' '
+        )
+        // 身份前缀：作为{名称}[，]{你}[…]说： → 只保留实际内容
+        // 变体：作为XX，你说： / 作为XX，说： / 作为XX，你轻声说：
+        .replace(
+          /^作为[\u4e00-\u9fff\w·\-\ufe0f💗]{1,20}[，,]?\s*(?:你[\u4e00-\u9fff\s，,]{0,12})?说[：:]\s*/g,
+          ''
+        )
+    );
   }
 
   private findUnsafeAssistantPresenceClaimMatches(
@@ -8089,6 +8501,9 @@ export class ConversationService {
     userId: string;
     searchableText: string;
   }): void {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return;
+    }
     const searchableText = options.searchableText?.trim();
 
     if (!searchableText) {
@@ -8242,7 +8657,6 @@ export class ConversationService {
       } as never,
     });
   }
-
 
   private async findLatestMessage(
     conversationId: MongoObjectId | string | undefined
@@ -8586,7 +9000,6 @@ export class ConversationService {
   private stringifyObjectId(value?: MongoObjectId | null): string {
     return value?.toHexString?.() ?? String(value);
   }
-
 
   private describeReplyError(error: unknown): string {
     if (error instanceof AppError) {

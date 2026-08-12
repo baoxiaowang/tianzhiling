@@ -630,7 +630,9 @@ export class AgentProfileFactService {
       return [];
     }
 
-    const llmFacts = await this.extractFactsWithLLM(sourceText, options);
+    // 事实性信号预筛：无信号的短消息跳过 LLM，只走规则抽取
+    const skipLLM = !options.fromFeedback && !this.hasFactualSignal(sourceText);
+    const llmFacts = skipLLM ? [] : await this.extractFactsWithLLM(sourceText, options);
     const fallbackFacts = this.extractFactsWithRules(sourceText, options);
     const ruleFactKeys = new Set(fallbackFacts.map(fact => fact.key));
 
@@ -655,6 +657,51 @@ export class AgentProfileFactService {
     );
   }
 
+  // 事实性信号预筛：只有消息包含至少一个事实性信号才进入 LLM 抽取。
+  // 过滤掉纯情绪、纯问候、纯闲聊的消息，省掉 ~80% 的无效 LLM 调用。
+  private hasFactualSignal(sourceText: string): boolean {
+    const text = sourceText.trim();
+    if (!text) return false;
+
+    // 很短的消息几乎不可能含事实
+    if (text.length <= 4) return false;
+
+    // 纯情绪/问候模式（完整匹配）
+    if (/^(?:晚安|早安|午安|睡了|去睡了|拜拜|再见|谢谢|多谢|好的|行|嗯+|哦+|哈哈+|嘿嘿+|爱你|想你了?|好想你|想你|吃了没|在吗|干嘛呢|忙什么呢|辛苦了|注意身体|早点休息)[，,。！？!?\s~～！]*$/.test(text)) {
+      return false;
+    }
+
+    // 事实性内容信号（满足任一即值得调 LLM）：
+    // 1. 数字（年龄、日期、数量）
+    if (/\d/.test(text)) return true;
+
+    // 2. 时间标记（年、月、日、岁、号）
+    if (/[年月日号岁]/.test(text)) return true;
+
+    // 3. 身份/状态声明
+    if (/(?:我是|我叫|我姓|我在.{0,6}(?:工作|上班|住|生活)|我有|我.{0,4}岁|我.{0,4}年|我的.{1,8}是|我家.{0,6}在)/.test(text)) return true;
+
+    // 4. 纠正信号
+    if (/(?:不对|不是这样|别(?:再)?编|你记错了|你忘了|.{0,4}不叫|我不是|我没有|我从来(?:也)?没)/.test(text)) return true;
+
+    // 5. 生命事件（出生、离世、去世、走了）
+    if (/(?:出生|离世|去世|走了.{0,4}年|不在了.{0,4}年|过世)/.test(text)) return true;
+
+    // 6. 地点变动
+    if (/(?:搬到|去.{0,6}(?:工作|上班|打工|生活|定居)|在.{0,6}(?:工作|上班)|离开.{0,6}了|不在.{0,6}了|换到.{0,6}(?:工作|上班)|回.{0,4}家|搬家)/.test(text)) return true;
+
+    // 7. 纪念物/遗物
+    if (/(?:戒指|项链|手链|手表|照片|相片|遗物|纪念|留着|保存|珍藏|送.{0,4}的|留给.{0,4}的|戴着)/.test(text)) return true;
+
+    // 8. 承诺/约定
+    if (/(?:答应|承诺|说好|约好|以后.{0,6}(?:给|买|带|陪|照顾|结婚)|下辈子|婚礼|娶我|嫁给我|补给我)/.test(text)) return true;
+
+    // 9. 记忆/共同过去
+    if (/(?:小时候|以前|那时候|当年|那次|那年|曾经|还记得|我们一起|你带我|你教我|你陪我|你以前|你曾经)/.test(text)) return true;
+
+    return false;
+  }
+
   private async extractFactsWithLLM(
     sourceText: string,
     options: {
@@ -674,7 +721,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。上一条助手回复只可帮助识别用户正在否认什么，绝不是事实来源；指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',

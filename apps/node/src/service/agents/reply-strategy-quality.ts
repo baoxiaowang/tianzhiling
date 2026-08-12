@@ -23,7 +23,8 @@ export type ReplyStrategyAlternative =
   | 'self_expression'
   | 'grounded_detail'
   | 'topic_transition'
-  | 'natural_close';
+  | 'natural_close'
+  | 'leave_space';
 
 export interface ReplyStrategyQualityPlan {
   repeatedMoves: ReplyRepeatedStrategyMove[];
@@ -98,31 +99,73 @@ export function resolveReplyStrategyQualityPlan(options: {
     return undefined;
   }
 
-  const repeatedMoves: ReplyRepeatedStrategyMove[] = (
-    Object.keys(REPEATED_MOVE_PATTERNS) as Array<
-      Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>
-    >
-  ).filter(move => {
-    const pattern = REPEATED_MOVE_PATTERNS[move];
-    return (
-      assistantTurns.filter(message => {
-        pattern.lastIndex = 0;
-        return pattern.test(message.content);
-      }).length >= 2
-    );
-  });
-  const structuredTenderRun = assistantTurns
-    .slice(-2)
-    .every(
-      message =>
-        message.replyConversationStance === 'tender' &&
-        (message.replyConversationMoves || []).some(move =>
-          ['acknowledge', 'affirm'].includes(move)
-        )
-    );
+  // 结构化检测优先：从 replyConversationMoves 判断行动重复
+  const structuredRepeatedMoves: ReplyRepeatedStrategyMove[] = [];
+  const lastTwoMoves = assistantTurns.slice(-2)
+    .filter(m => (m.replyConversationMoves || []).length > 0);
 
-  if (assistantTurns.length >= 2 && structuredTenderRun) {
-    repeatedMoves.push('tender_acknowledge_affirm');
+  if (lastTwoMoves.length >= 2) {
+    const lastMoves = lastTwoMoves.map(m => m.replyConversationMoves || []);
+    // tender + acknowledge/affirm 连续
+    if (lastMoves.every(moves =>
+      moves.some(m => ['acknowledge', 'affirm'].includes(m)) &&
+      assistantTurns.slice(-2).every(m => m.replyConversationStance === 'tender')
+    )) {
+      structuredRepeatedMoves.push('tender_acknowledge_affirm');
+    }
+    // comfort 连续 → generic_empathy
+    if (lastMoves.every(moves => moves.some(m => m === 'comfort'))) {
+      structuredRepeatedMoves.push('generic_empathy');
+    }
+    // affirm/comfort 连续 → generic_presence
+    if (lastMoves.every(moves =>
+      moves.every(m => ['affirm', 'comfort', 'acknowledge'].includes(m))
+    )) {
+      structuredRepeatedMoves.push('generic_presence');
+    }
+    // suggest 连续 → generic_advice
+    if (lastMoves.every(moves => moves.some(m => m === 'suggest'))) {
+      structuredRepeatedMoves.push('generic_advice');
+    }
+  }
+
+  // 正则辅助：只在结构化字段缺失时补充检测
+  const hasSparseStructured = assistantTurns.some(
+    m => !m.replyConversationMoves || m.replyConversationMoves.length === 0
+  );
+  const regexRepeatedMoves: ReplyRepeatedStrategyMove[] = hasSparseStructured
+    ? (Object.keys(REPEATED_MOVE_PATTERNS) as Array<
+        Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>
+      >).filter(move => {
+        const pattern = REPEATED_MOVE_PATTERNS[move];
+        return (
+          assistantTurns.filter(message => {
+            pattern.lastIndex = 0;
+            return pattern.test(message.content);
+          }).length >= 2
+        );
+      })
+    : [];
+
+  const repeatedMoves: ReplyRepeatedStrategyMove[] = [
+    ...new Set([...structuredRepeatedMoves, ...regexRepeatedMoves])
+  ];
+
+  // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
+  const userTurns = assistantTurns.map((m, i) => {
+    const idx = (options.recentMessages || []).findIndex(r => r.id === m.id);
+    if (idx <= 0) return null;
+    const prevUser = (options.recentMessages || []).slice(0, idx).reverse().find(r => r.role === 'user');
+    return prevUser?.content || '';
+  }).filter(Boolean);
+
+  const isEscalating = userTurns.length >= 3 &&
+    userTurns.slice(-3).every((t, i, arr) => i === 0 || t.length >= arr[i-1].length) &&
+    userTurns.some(t => /[？?]/.test(t) || /凭什么|为什么|所以.*就|一句.*就|怎么(?:办|样)|有什么用|那.*呢/.test(t));
+
+  if (isEscalating && !explicitClose) {
+    repeatedMoves.push('generic_empathy');
+    repeatedMoves.push('generic_presence');
   }
 
   if (!repeatedMoves.length && !explicitClose) {
@@ -135,6 +178,8 @@ export function resolveReplyStrategyQualityPlan(options: {
     ? 'answer'
     : options.activeContribution
     ? 'self_expression'
+    : isEscalating
+    ? 'leave_space'
     : (options.evidence || []).some(item => item.source !== 'current_user')
     ? 'grounded_detail'
     : 'topic_transition';
@@ -187,6 +232,7 @@ export function buildReplyStrategyQualityPrompt(
     grounded_detail: '自然使用一条可陈述证据',
     topic_transition: '贴着用户新信息推进或轻转一个相邻话题',
     natural_close: '简短自然收尾',
+    leave_space: '给用户留出表达空间',
   };
 
   const repeatedPrefix = plan.repeatedMoves.length
