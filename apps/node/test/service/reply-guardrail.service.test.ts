@@ -5506,6 +5506,28 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
+  it('flags dismissive comfort that erases strong emotion without first seeing it', () => {
+    const service = new ReplyGuardrailService();
+    const detectRisk = (service as any).detectRisk.bind(service);
+
+    expect(
+      detectRisk('你走了，我们的天塌了', '别硬扛，爸知道你们难')
+    ).toContain('情绪消失');
+
+    expect(detectRisk('爸爸，我很自责', '别揪着这事熬自己，真不怪你')).toContain(
+      '情绪消失'
+    );
+  });
+
+  it('keeps dismissive wording when it is paired with presence or attunement', () => {
+    const service = new ReplyGuardrailService();
+    const detectRisk = (service as any).detectRisk.bind(service);
+
+    expect(detectRisk('我好想你', '别难过了，爸在呢')).toBeFalsy();
+    expect(detectRisk('我好想你', '别伤心了，我懂你的疼')).toBeFalsy();
+    expect(detectRisk('我好想你', '我知道你难受，爸在这儿陪着你')).toBeFalsy();
+  });
+
   it('leaves duty pressure in a reunion wish to evaluation', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {

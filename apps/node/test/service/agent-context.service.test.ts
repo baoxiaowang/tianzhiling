@@ -860,7 +860,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain(
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情'
     );
-    expect(systemMessage.content).toContain('不必反复说“记不清”');
+    expect(systemMessage.content).toContain('邀请用户多说那位亲人或那件事');
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');

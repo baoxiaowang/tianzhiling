@@ -279,6 +279,8 @@ const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
   '回复把用户刚提到的在世家人说成了“在那边”';
 const DISTRESS_INVALIDATION_REASON =
   '用户表达撑不住或很难熬，但回复否定感受或拿家庭责任继续施压';
+const DISMISSIVE_COMFORT_REASON =
+  '用户表达强烈痛苦、自责或思念，但回复只用“别难过、别硬扛、会好的”这类话让情绪消失，没有先看见和承接这份情绪';
 const REUNION_WISH_CRISIS_MISREAD_REASON =
   '用户表达希望亲人回来团聚，但回复误写成赴死、去那边或危机训诫';
 const RELATIONAL_DUTY_PRESSURE_REASON =
@@ -298,6 +300,15 @@ const GENERIC_LIFESTYLE_ADVICE_SEGMENT_PATTERN =
 const GENERIC_ADVICE_SEGMENT_PATTERN =
   /(?:别着急|不要着急|别等.{0,8}太晚|不用.{0,8}一个人憋着|来跟我说|记着就行|别总想我|少想我)|(?:(?:好好|踏实|早点|按时|记得).{0,6}(?:睡|休息|吃饭))|(?:(?:自己|你).{0,8})?(?:(?:多|好好|记得|要|得|该).{0,3})?(?:注意|留意|当心|保重|照顾好|顾好).{0,4}(?:身体|身子|健康)|(?:别|不要|少).{0,4}(?:太累|熬夜|熬太晚)/;
 const DREAM_TOPIC_PATTERN = /梦里|梦中|梦见|梦到|托梦/;
+// 用户侧：强烈情绪披露（痛苦、自责、思念），需要先被看见而不是被消除
+const STRONG_EMOTIONAL_DISCLOSURE_PATTERN =
+  /都怪我|怪自己|我很自责|对不起|是我(?:不好|错了|没做好)|我(?:耽误|害)了|天塌了|撑不住|熬不住|扛不住|释怀不了|好想你|真的好想你|无时无刻|每天都在想|心痛|心都碎了|好痛|难受(?:死)?了|崩溃|把你弄丢了|对不起你|我多希望|我好希望/;
+// AI 侧：消除式安抚，让情绪消失而不是先看见
+const DISMISSIVE_COMFORT_PATTERN =
+  /别(?:硬扛|难过|伤心|揪着|想了|瞎想|自责|怪自己|难过了|哭了)|不要(?:难过|伤心|自责|怪自己|想了|瞎想)|会(?:好起来|好|过去的)|一切会好|不怪你|不是你的错|跟你没关系|你(?:要|得)?(?:好好的|振作|往前看|放下|别想)|放下吧|过去了就|想开点|看开点|别这么想/;
+// AI 侧：陪伴承接，先看见情绪（存在则放行）
+const EMOTIONAL_ATTUNEMENT_PATTERN =
+  /我知道你|我懂你|我明白你|我知道(?:你)?(?:难受|疼|难过|舍不得|辛苦|委屈|心里)|你(?:心里|一定|肯定)(?:难受|疼|苦|不好受|委屈|累)|(?:爸|妈|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|我)?(?:在呢|都在|在这儿|在这里|陪着|听着|陪着你|在听|在的)|我懂(?:这|那|你)|听见了|我心里也|我也(?:难受|心疼|舍不得)/;
 const UNSUPPORTED_USER_AGE_ASSUMPTION_PATTERN =
   /(?:你|自己).{0,6}(?:年纪|岁数).{0,4}(?:大|不小)了|(?:你|自己).{0,6}上年纪了|(?:年纪|岁数).{0,4}(?:大|不小)了.{0,8}自己.{0,8}(?:注意|保重|照顾).{0,4}(?:身体|身子|健康)/;
 const USER_AGE_SELF_DISCLOSURE_PATTERN =
@@ -2868,6 +2879,9 @@ export class ReplyGuardrailService {
   }
 
   private guardrailRepairGoal(reason: string, brief?: ReplyBrief): string {
+    if (reason === DISMISSIVE_COMFORT_REASON) {
+      return '先承认和看见用户此刻的痛苦、自责或思念，允许这份情绪存在，再给出陪伴；不要用“别难过、别硬扛、会好的”急着让情绪消失';
+    }
     if (/死亡|一起走|来找|接你/.test(reason)) {
       return '保留强烈思念和团聚心意，补上“来生、走完这一生、自然老去、年老以后或很久以后”等明确前置条件，并撤掉现在或近期来找、一起走的邀请';
     }
@@ -3685,6 +3699,14 @@ export class ReplyGuardrailService {
       )
     ) {
       return DISTRESS_INVALIDATION_REASON;
+    }
+
+    if (
+      STRONG_EMOTIONAL_DISCLOSURE_PATTERN.test(userQuery) &&
+      DISMISSIVE_COMFORT_PATTERN.test(content) &&
+      !EMOTIONAL_ATTUNEMENT_PATTERN.test(content)
+    ) {
+      return DISMISSIVE_COMFORT_REASON;
     }
 
     if (
