@@ -2574,37 +2574,13 @@ export class ConversationService {
       ? cfg.naturalClosePatterns.some(p => currentMessageContent.includes(p))
       : false;
 
-    if (!triggered) {
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 99,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: false,
-        matchedConditions: matched,
-        naturalCloseExempted: false,
-      });
-    }
-
-    if (naturalClose) {
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 2,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: true,
-      });
-    }
-
-    // Trigger fired + not natural close → check warning state
+    // ═══════════════════════════════════════════════════════════════
+    // GRACE/BLOCK CHECK — once warned, EVERY message counts toward
+    // the grace limit, regardless of trigger conditions.
+    // ═══════════════════════════════════════════════════════════════
     const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
 
     if (wasWarned) {
-      // Anchor on the first warning of today so grace counter accumulates correctly
       const dayStart = this.getBeijingDayStart(now);
       const firstWarnedMsg = (
         await this.messageModel.find({
@@ -2620,17 +2596,21 @@ export class ConversationService {
         } as any)
       )[0];
 
+      // Use find+length instead of count() — TypeORM MongoRepository.count()
+      // with raw filter is unreliable: EntityManager.setFindOptions only reads \`where\`.
       const postWarnCount = firstWarnedMsg
-        ? await this.messageModel.count({
-            userId,
-            agentId,
-            role: MessageRole.user,
-            createdAt: { $gt: new Date(firstWarnedMsg.createdAt.getTime()) },
-            status: MessageStatus.sent,
-          } as never)
+        ? (await this.messageModel.find({
+            where: {
+              userId,
+              agentId,
+              role: MessageRole.user,
+              createdAt: { $gt: firstWarnedMsg.createdAt },
+              status: MessageStatus.sent,
+            },
+          } as any)).length
         : 0;
 
-      if (postWarnCount >= cfg.graceMessagesAfterWarn) {
+      if (postWarnCount > cfg.graceMessagesAfterWarn) {
         return this.buildQuotaResult({
           path: isNewUser ? 'trial' : 'active',
           remainingCount: 0,
@@ -2645,7 +2625,7 @@ export class ConversationService {
         });
       }
 
-      // Within grace period → pass through silently
+      // Within grace period → pass through (don't re-warn)
       return this.buildQuotaResult({
         path: isNewUser ? 'trial' : 'active',
         remainingCount: 99,
@@ -2660,18 +2640,49 @@ export class ConversationService {
       });
     }
 
-    // First warning
+    // ═══════════════════════════════════════════════════════════════
+    // NOT WARNED YET → trigger-based evaluation
+    // ═══════════════════════════════════════════════════════════════
+
+    if (naturalClose) {
+      return this.buildQuotaResult({
+        path: isNewUser ? 'trial' : 'active',
+        remainingCount: 2,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: matched,
+        naturalCloseExempted: true,
+      });
+    }
+
+    if (triggered) {
+      // First warning
+      return this.buildQuotaResult({
+        path: isNewUser ? 'trial' : 'active',
+        remainingCount: 1,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: matched,
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: false,
+      });
+    }
+
+    // Not triggered, not warned → completely free pass
     return this.buildQuotaResult({
       path: isNewUser ? 'trial' : 'active',
-      remainingCount: 1,
+      remainingCount: 99,
       totalLifetimeMsgs,
       todayMsgs,
       sessionMsgCount,
-      triggered: true,
+      triggered: false,
       matchedConditions: matched,
       naturalCloseExempted: false,
-      warned: true,
-      blocked: false,
     });
   }
 
