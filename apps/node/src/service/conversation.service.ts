@@ -28,6 +28,8 @@ import {
   VoiceTimbreProvider,
   VoiceTimbreStatus,
   ReplyQuotaTriggerDecision,
+  QuotaTriggerEventEntity,
+  QuotaTriggerType,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
@@ -587,6 +589,9 @@ export class ConversationService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(QuotaTriggerEventEntity)
+  quotaTriggerEventModel: MongoRepository<QuotaTriggerEventEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -2679,6 +2684,16 @@ export class ConversationService {
 
     if (triggered) {
       // First warning
+      // Record the trigger event for return-tracking
+      this.recordQuotaTriggerEvent(userId, agentId, {
+        triggerType: QuotaTriggerType.warned,
+        triggeredAt: now,
+        dayMsgs: todayMsgs,
+        lifetimeMsgs: totalLifetimeMsgs,
+        triggered: true,
+        matchedConditions: matched,
+        warnCount: 1,
+      });
       return this.buildQuotaResult({
         path: isNewUser ? 'trial' : 'active',
         remainingCount: 1,
@@ -2704,6 +2719,49 @@ export class ConversationService {
       matchedConditions: matched,
       naturalCloseExempted: false,
     });
+  }
+
+  private recordQuotaTriggerEvent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    params: {
+      triggerType: QuotaTriggerType;
+      triggeredAt: Date;
+      dayMsgs: number;
+      lifetimeMsgs: number;
+      triggered: boolean;
+      matchedConditions: string[];
+      warnCount?: number;
+    }
+  ): void {
+    // Deduplicate: only one event per user+agent+type per day
+    const dayStart = this.getBeijingDayStart(params.triggeredAt);
+    this.quotaTriggerEventModel
+      .findOne({
+        where: {
+          userId,
+          agentId,
+          triggerType: params.triggerType,
+          triggeredAt: { $gte: dayStart },
+        },
+      } as any)
+      .then((existing: any) => {
+        if (existing) return;
+        this.quotaTriggerEventModel
+          .save({
+            userId,
+            agentId,
+            triggerType: params.triggerType,
+            triggeredAt: params.triggeredAt,
+            dayMsgs: params.dayMsgs,
+            lifetimeMsgs: params.lifetimeMsgs,
+            triggered: params.triggered,
+            matchedConditions: params.matchedConditions,
+            warnCount: params.warnCount ?? 0,
+          } as any)
+          .catch(() => {});
+      })
+      .catch(() => {});
   }
 
   private buildQuotaResult(params: {
@@ -5392,30 +5450,41 @@ export class ConversationService {
       return undefined;
     }
 
-    try {
-      const transcript = await this.openAIService.createTranscription({
-        audioUrl,
-      });
-      const content = transcript.trim();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const transcript = await this.openAIService.createTranscription({
+          audioUrl,
+        });
+        const content = transcript.trim();
 
-      if (content) {
-        return content;
+        if (content) {
+          return content;
+        }
+
+        this.logger.error(
+          '[conversation] voice transcription returned empty content, objectKey=%s, attempt=%d',
+          payload.mediaObjectKey || '',
+          attempt + 1
+        );
+        // 重试前等待 500ms
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        this.logger.error(
+          '[conversation] voice transcription request failed, objectKey=%s, attempt=%d/2, reason=%s',
+          payload.mediaObjectKey || '',
+          attempt + 1,
+          this.describeReplyError(error)
+        );
+        // 重试前等待 800ms
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+        }
       }
-
-      this.logger.error(
-        '[conversation] voice transcription returned empty content, objectKey=%s',
-        payload.mediaObjectKey || ''
-      );
-      return undefined;
-    } catch (error) {
-      this.logger.error(
-        '[conversation] voice transcription request failed, objectKey=%s, url=%s, reason=%s',
-        payload.mediaObjectKey || '',
-        audioUrl,
-        this.describeReplyError(error)
-      );
-      return undefined;
     }
+
+    return undefined;
   }
 
   private normalizeImageIncomingMessage(payload?: SendConversationMessageDTO): {
