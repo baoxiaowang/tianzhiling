@@ -150,6 +150,23 @@ export function resolveReplyStrategyQualityPlan(options: {
     ...new Set([...structuredRepeatedMoves, ...regexRepeatedMoves])
   ];
 
+  // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
+  const userTurns = assistantTurns.map((m, i) => {
+    const idx = (options.recentMessages || []).findIndex(r => r._id === m._id);
+    if (idx <= 0) return null;
+    const prevUser = (options.recentMessages || []).slice(0, idx).reverse().find(r => r.role === 'user');
+    return prevUser?.content || '';
+  }).filter(Boolean);
+
+  const isEscalating = userTurns.length >= 3 &&
+    userTurns.slice(-3).every((t, i, arr) => i === 0 || t.length >= arr[i-1].length) &&
+    userTurns.some(t => /[？?]/.test(t) || /凭什么|为什么|所以.*就|一句.*就|怎么(?:办|样)|有什么用|那.*呢/.test(t));
+
+  if (isEscalating && !explicitClose) {
+    repeatedMoves.push('generic_empathy');
+    repeatedMoves.push('generic_presence');
+  }
+
   if (!repeatedMoves.length && !explicitClose) {
     return undefined;
   }
@@ -160,6 +177,8 @@ export function resolveReplyStrategyQualityPlan(options: {
     ? 'answer'
     : options.activeContribution
     ? 'self_expression'
+    : isEscalating
+    ? 'leave_space'
     : (options.evidence || []).some(item => item.source !== 'current_user')
     ? 'grounded_detail'
     : 'topic_transition';

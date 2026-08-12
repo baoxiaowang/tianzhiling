@@ -136,6 +136,8 @@ const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
   'identity_fact',
   'memory_recall',
   'past_life_understanding',
+  'significant_life_matter',
+  'departure_blame',
 ]);
 const DIRECT_LOW_COMPLEXITY_SCENES: ReadonlySet<string> = new Set([
   'afterlife_status',
