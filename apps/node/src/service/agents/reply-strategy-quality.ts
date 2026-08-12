@@ -23,7 +23,8 @@ export type ReplyStrategyAlternative =
   | 'self_expression'
   | 'grounded_detail'
   | 'topic_transition'
-  | 'natural_close';
+  | 'natural_close'
+  | 'leave_space';
 
 export interface ReplyStrategyQualityPlan {
   repeatedMoves: ReplyRepeatedStrategyMove[];
@@ -152,7 +153,7 @@ export function resolveReplyStrategyQualityPlan(options: {
 
   // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
   const userTurns = assistantTurns.map((m, i) => {
-    const idx = (options.recentMessages || []).findIndex(r => r._id === m._id);
+    const idx = (options.recentMessages || []).findIndex(r => r.id === m.id);
     if (idx <= 0) return null;
     const prevUser = (options.recentMessages || []).slice(0, idx).reverse().find(r => r.role === 'user');
     return prevUser?.content || '';
