@@ -337,23 +337,48 @@ export default {
   },
   openai: {
     enabled: readBooleanFrom(['NODE_ENABLED'], true),
-    apiKey: readStringFrom(['NODE_MINIMAX_API_KEY'], ''),
+    apiKey: readStringFrom(['NODE_CHAT_API_KEY', 'NODE_MINIMAX_API_KEY'], ''),
     baseURL: readStringFrom(
-      ['NODE_MINIMAX_BASE_URL'],
+      ['NODE_CHAT_BASE_URL', 'NODE_MINIMAX_BASE_URL'],
       'https://api.minimax.io/v1'
     ),
-    model: readStringFrom(['NODE_MINIMAX_MODEL'], 'MiniMax-M2.5'),
+    model: readStringFrom(
+      ['NODE_CHAT_MODEL', 'NODE_MINIMAX_MODEL'],
+      'MiniMax-M2.5'
+    ),
+    fallback: {
+      apiKey: readStringFrom(['NODE_CHAT_FALLBACK_API_KEY'], ''),
+      baseURL: readStringFrom(
+        ['NODE_CHAT_FALLBACK_BASE_URL'],
+        'https://api.deepseek.com'
+      ),
+      model: readStringFrom(
+        ['NODE_CHAT_FALLBACK_MODEL'],
+        'deepseek-v4-flash'
+      ),
+    },
+    secondaryFallback: {
+      apiKey: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_API_KEY'], ''),
+      baseURL: readStringFrom(
+        ['NODE_CHAT_SECONDARY_FALLBACK_BASE_URL'],
+        ''
+      ),
+      model: readStringFrom(
+        ['NODE_CHAT_SECONDARY_FALLBACK_MODEL'],
+        ''
+      ),
+    },
 
     // 视觉理解模型
     visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),
-    visionApiKey: readStringFrom(['NODE_VISION_API_KEY'], ''),
+    visionApiKey: readStringFrom(['NODE_VISION_API_KEY', 'DASHSCOPE_API_KEY'], ''),
     visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
     // 语音转文字
-    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY'], ''),
+    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY', 'DASHSCOPE_API_KEY'], ''),
     speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], ''),
     speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], ''),
     // 语音合成
-    textToSpeechApiKey: readStringFrom(['NODE_TEXT_TO_SPEECH_API_KEY'], ''),
+    textToSpeechApiKey: readStringFrom(['NODE_TEXT_TO_SPEECH_API_KEY', 'DASHSCOPE_API_KEY'], ''),
     textToSpeechBaseURL: readStringFrom(['NODE_TEXT_TO_SPEECH_BASE_URL'], ''),
     textToSpeechModel: readStringFrom(['NODE_TEXT_TO_SPEECH_MODEL'], ''),
     textToSpeechVoice: readStringFrom(['NODE_TEXT_TO_SPEECH_VOICE'], ''),
@@ -361,6 +386,13 @@ export default {
       ['NODE_TEXT_TO_SPEECH_LANGUAGE_TYPE'],
       'Chinese'
     ),
+
+    // A/B 通道：按用户哈希路由到不同模型
+    abModel: readStringFrom(['NODE_CHAT_AB_MODEL'], ''),
+    abModelApiKey: readStringFrom(['NODE_CHAT_AB_MODEL_API_KEY'], ''),
+    abModelBaseURL: readStringFrom(['NODE_CHAT_AB_MODEL_BASE_URL'], ''),
+    // 分配到 B 通道的用户百分比 (0-100)，默认 0 即全部走主模型
+    abSplitPercent: readNumberFrom(['NODE_CHAT_AB_SPLIT_PERCENT'], 0),
 
     temperature: readNumberFrom(['NODE_TEMPERATURE'], 1),
     topP: readNumberFrom(['NODE_TOP_P'], 0.95),
@@ -371,7 +403,7 @@ export default {
     reasoningSplit: readBooleanFrom(['NODE_REASONING_SPLIT'], true),
 
     // 嵌入模型
-    embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY'], ''),
+    embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY', 'DASHSCOPE_API_KEY'], ''),
     embeddingBaseURL: readStringFrom(['NODE_EMBEDDING_BASE_URL'], ''),
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
     embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),

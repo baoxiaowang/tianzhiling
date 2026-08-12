@@ -701,6 +701,14 @@ export class OpenAIService {
         model,
         messages,
         stream: false,
+        extra_body: {
+          asr_options: {
+            enable_itn: false,
+            ...(request.language?.trim()
+              ? { language: request.language.trim() }
+              : {}),
+          },
+        },
       } as unknown as ChatCompletionCreateParamsNonStreaming);
 
       const rawContent = response.choices?.[0]?.message?.content;

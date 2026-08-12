@@ -5415,32 +5415,10 @@ export class ConversationService {
     mediaObjectKey?: string;
     mediaMimeType?: string;
   }): Promise<string | undefined> {
-    // 从 COS 下载音频并转为 base64 data URL，
-    // 确保 STT 服务能直接消费音频数据（DashScope 等需要内联 base64）
-    let audioUrl = '';
-
-    if (payload.mediaObjectKey?.trim()) {
-      try {
-        const result = await this.tencentCosService.getBuffer(
-          payload.mediaObjectKey.trim()
-        );
-        const mime =
-          result.contentType?.trim() ||
-          payload.mediaMimeType?.trim() ||
-          'audio/aac';
-        const base64 = result.buffer.toString('base64');
-        audioUrl = `data:${mime};base64,${base64}`;
-      } catch (cosError) {
-        this.logger.error(
-          '[conversation] COS download failed, objectKey=%s, reason=%s',
-          payload.mediaObjectKey,
-          this.describeReplyError(cosError)
-        );
-        return undefined;
-      }
-    } else if (payload.mediaUrl?.trim()) {
-      audioUrl = payload.mediaUrl.trim();
-    }
+    // DashScope qwen3-asr-flash 需要可公网访问的音频 URL，内联 base64 data URL 不被接受。
+    const audioUrl =
+      payload.mediaUrl?.trim() ||
+      this.resolveMediaUrlFromObjectKey(payload.mediaObjectKey);
 
     if (!audioUrl) {
       this.logger.error(
