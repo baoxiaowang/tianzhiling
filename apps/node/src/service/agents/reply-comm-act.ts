@@ -252,8 +252,7 @@ export function verifyReplyCommActEcho(
 ): { passed: boolean; echoedUnits: ContentUnit[] } {
   const targetUnits = [
     plan?.targetUnit,
-    ...(plan?.steps.flatMap(step => (step.targetUnit ? [step.targetUnit] : [])) ||
-      []),
+    ...(plan?.steps.reduce<ContentUnit[]>((units, step) => (step.targetUnit ? units.concat(step.targetUnit) : units), []) || []),
   ].filter((unit): unit is ContentUnit => Boolean(unit));
 
   const uniqueTargetUnits = targetUnits.reduce<ContentUnit[]>((units, unit) => {
