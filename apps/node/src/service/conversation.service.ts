@@ -4312,8 +4312,8 @@ export class ConversationService {
   }
 
   /**
-   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立句子时，
-   * 在句号/感叹号/问号处拆成两颗，保留后续参与泡。
+   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立片段时，
+   * 优先在句号/感叹号/问号处拆成两颗，没有句末标点时再按逗号/分号保守拆分。
    * 不新增模型调用，纯工程判断。
    */
   private splitLongContentOnReplyBubble(segments: string[]): string[] {
@@ -4323,32 +4323,17 @@ export class ConversationService {
     const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
     if (visibleChars <= 35) return segments;
 
-    // 找独立句断点：按 。！？ 分割，每段至少 8 字
-    const sentences = content.split(/(?<=[。！？])/u);
-    if (sentences.length < 2) return segments;
+    const splitAt =
+      this.findReplyBubbleSplitPoint(content, /(?<=[。！？])/u, visibleChars) ??
+      this.findReplyBubbleSplitPoint(content, /(?<=[，；])/u, visibleChars);
 
-    // 确保前半段 ≥ 8 字且后半段 ≥ 8 字
-    let splitAt = -1;
-    let accumulated = 0;
-    for (let i = 0; i < sentences.length - 1; i++) {
-      accumulated += Array.from(sentences[i].replace(/\s/gu, '')).length;
-      const remaining = visibleChars - accumulated;
-      if (accumulated >= 8 && remaining >= 8) {
-        splitAt = i;
-        break;
-      }
-    }
+    if (splitAt === null) return segments;
 
-    if (splitAt === -1) return segments;
-
-    const first = sentences
-      .slice(0, splitAt + 1)
-      .join('')
+    const first = content
+      .slice(0, splitAt)
+      .replace(/[，；]+$/u, '')
       .trim();
-    const second = sentences
-      .slice(splitAt + 1)
-      .join('')
-      .trim();
+    const second = content.slice(splitAt).trim();
 
     if (!first || !second) return segments;
 
@@ -4360,6 +4345,46 @@ export class ConversationService {
       return [first, second, segments[1]];
     }
     return segments;
+  }
+
+  private findReplyBubbleSplitPoint(
+    content: string,
+    separator: RegExp,
+    visibleChars: number
+  ): number | null {
+    const pieces = content.split(separator);
+    if (pieces.length < 2) {
+      return null;
+    }
+
+    let accumulated = 0;
+    let bestIndex: number | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < pieces.length - 1; index += 1) {
+      accumulated += Array.from(
+        pieces[index].replace(/\s/gu, '')
+      ).length;
+      const remaining = visibleChars - accumulated;
+      if (accumulated >= 8 && remaining >= 8) {
+        const score = Math.abs(accumulated - remaining);
+        if (
+          score < bestScore ||
+          (score === bestScore && bestIndex !== null && index > bestIndex)
+        ) {
+          bestScore = score;
+          bestIndex = index;
+        }
+      }
+    }
+
+    if (bestIndex === null) {
+      return null;
+    }
+
+    return pieces
+      .slice(0, bestIndex + 1)
+      .join('')
+      .length;
   }
 
   private async afterReply(

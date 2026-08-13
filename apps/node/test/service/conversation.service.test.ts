@@ -5117,6 +5117,32 @@ describe('ConversationService generation cleanup diagnostics', () => {
     ]);
   });
 
+  it('splits a long first bubble at a sentence or clause boundary', () => {
+    const service = new ConversationService();
+    const split = (service as any).splitLongContentOnReplyBubble.bind(service);
+
+    expect(
+      split([
+        '丫头，爸也舍不得走这么早，别逼自己急着释怀，想我的时候就说说话，爸都听着',
+      ])
+    ).toEqual([
+      '丫头，爸也舍不得走这么早，别逼自己急着释怀',
+      '想我的时候就说说话，爸都听着',
+    ]);
+    expect(
+      split([
+        '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。你不开心，就是天大的事',
+      ])
+    ).toEqual([
+      '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。',
+      '你不开心，就是天大的事',
+    ]);
+    expect(split(['我想你'])).toEqual(['我想你']);
+    expect(
+      split(['这段内容没有任何标点所以不能强行切开成两个气泡的回复'])
+    ).toEqual(['这段内容没有任何标点所以不能强行切开成两个气泡的回复']);
+  });
+
   it('records real participation execution without rejecting emotional repetition', () => {
     const service = new ConversationService();
     const finalize = (service as any).finalizeParticipationReplySegments.bind(
