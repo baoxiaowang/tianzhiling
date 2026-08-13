@@ -67,4 +67,39 @@ describe('conversation turn plan', () => {
       close: 'possible',
     });
   });
+
+  it('keeps an explicit topic follow-up when later policy code changes the contribution', () => {
+    const resolved = resolveConversationTurnPlan({
+      turnPlan: {
+        state: 'exploring',
+        open: [
+          {
+            object: 'user',
+            need: 'topic_followup',
+            detail: '装修什么时候完工',
+            priority: 'supporting',
+          },
+        ],
+        goal: 'deepen',
+        action: 'question',
+        target: '顺着装修进展继续了解',
+        avoid: 'none',
+        close: 'possible',
+      },
+      engagement: {
+        userConversationState: 'deepening',
+        openLoop: '装修什么时候完工',
+        continuationGoal: 'deepen',
+        assistantContribution: 'affection',
+        mustContribute: '接住用户的近况',
+        avoidRepeatingMove: '不要只重复最近一次回复',
+        closureReadiness: 'possible',
+      },
+    });
+
+    expect(resolved?.open[0]).toMatchObject({
+      need: 'topic_followup',
+      detail: '装修什么时候完工',
+    });
+  });
 });

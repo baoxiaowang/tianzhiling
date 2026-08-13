@@ -1086,9 +1086,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).toContain('气泡语义规划');
-    expect(systemMessage.content).toContain('优先用两颗');
-    expect(systemMessage.content).toContain('一颗更自然时可不拆');
-    expect(systemMessage.content).toContain('仅在两个动作确实切换时用第二颗');
+    expect(systemMessage.content).toContain('本轮需要两颗气泡');
     expect(systemMessage.content).toContain('以上为内部约束；自然表达');
     expect(systemMessage.content).not.toContain('本轮结构化意图');
     expect(systemMessage.content).toContain('# 本轮 Conversation Reading');
@@ -1408,7 +1406,7 @@ describe('AgentContextService', () => {
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
         strategyVersion: 'conversation_strategy_v8',
-        strategySource: 'direct_brief',
+        strategySource: 'deterministic_light',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),
         memoryRetrievalMode: 'suppressed',

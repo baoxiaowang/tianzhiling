@@ -59,6 +59,7 @@ import {
   detectReplyRealityDependencyViolation,
   renderReplyRealityDependencyFallback,
 } from './reply-reality-dependency';
+import { verifyReplyCommActEcho } from './reply-comm-act';
 
 export interface ValidateAssistantReplyOptions {
   messages: ChatCompletionMessageParam[];
@@ -115,6 +116,10 @@ export interface ValidateAssistantReplyResult {
     | 'hard_recovery'
     | 'hard_unresolved'
     | 'technical_fallback';
+  contentEcho?: {
+    passed: boolean;
+    unitCount: number;
+  };
 }
 
 export type GuardrailIssueLayer = 'hard_boundary' | 'quality_advisory';
@@ -609,6 +614,31 @@ export class ReplyGuardrailService {
   }
 
   async validateAssistantReply(
+    options: ValidateAssistantReplyOptions
+  ): Promise<ValidateAssistantReplyResult> {
+    const result = await this.validateAssistantReplyInternal(options);
+    const hasCommActTarget =
+      Boolean(options.replyBrief?.commAct?.targetUnit) &&
+      Boolean(options.replyBrief?.commAct?.steps.some(step => step.targetUnit));
+    if (!hasCommActTarget) {
+      return result;
+    }
+
+    const echo = verifyReplyCommActEcho(
+      result.segments.join('\n'),
+      options.replyBrief?.commAct
+    );
+
+    return {
+      ...result,
+      contentEcho: {
+        passed: echo.passed,
+        unitCount: echo.echoedUnits.length,
+      },
+    };
+  }
+
+  private async validateAssistantReplyInternal(
     options: ValidateAssistantReplyOptions
   ): Promise<ValidateAssistantReplyResult> {
     const segments = this.normalizeSegments(options.replySegments);
@@ -4177,6 +4207,10 @@ export class ReplyGuardrailService {
 
     if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
       return this.renderCrisisSafetyFallback(userQuery);
+    }
+
+    if (/^(?:我)?不记得了[。！!？?\s]*$/.test(userQuery)) {
+      return ['不记得也没事 别硬逼自己想', '想得起来就说 想不起来也不碍事'];
     }
 
     if (brief.guardrailFocuses.includes('real_world_evidence')) {

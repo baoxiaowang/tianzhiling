@@ -435,6 +435,8 @@ interface ReplyRoutingAudit {
   guardrailFinalReviewResult?: string;
   guardrailReviewMode?: ReplyGuardrailReviewMode;
   guardrailFocuses?: string[];
+  contentEchoPassed?: boolean;
+  contentEchoUnitCount?: number;
   guardrailFeedbackRounds?: GuardrailFeedback[];
   guardrailCandidateVersions?: string[][];
   guardrailRevisionRecords?: GuardrailRevisionRecord[];
@@ -3440,6 +3442,8 @@ export class ConversationService {
         guardrailFinalReviewResult: guarded.finalReviewResult,
         guardrailReviewMode,
         guardrailFocuses: replyBrief.guardrailFocuses,
+        contentEchoPassed: guarded.contentEcho?.passed,
+        contentEchoUnitCount: guarded.contentEcho?.unitCount,
         guardrailFeedbackRounds: guarded.feedbackRounds,
         guardrailCandidateVersions: guarded.candidateVersions,
         guardrailRevisionRecords: guarded.revisionRecords,
@@ -7817,6 +7821,8 @@ export class ConversationService {
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
     replyGuardrailFocuses?: string[];
+    replyContentEchoPassed?: boolean;
+    replyContentEchoUnitCount?: number;
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -7960,6 +7966,14 @@ export class ConversationService {
       replyGuardrailReviewMode:
         routing?.guardrailReviewMode?.trim() || undefined,
       replyGuardrailFocuses: routing?.guardrailFocuses?.filter(Boolean),
+      replyContentEchoPassed:
+        typeof routing?.contentEchoPassed === 'boolean'
+          ? routing.contentEchoPassed
+          : undefined,
+      replyContentEchoUnitCount:
+        typeof routing?.contentEchoUnitCount === 'number'
+          ? routing.contentEchoUnitCount
+          : undefined,
       replyEvidenceCount: routing?.evidenceCount,
       replyFactClaimCount: routing?.factClaimCount,
       replyUnsupportedClaimCount: routing?.unsupportedClaimCount,

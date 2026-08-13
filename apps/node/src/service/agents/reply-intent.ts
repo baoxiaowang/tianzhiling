@@ -223,6 +223,23 @@ export interface ConversationReadingAnchor {
   importance: ConversationReadingAnchorImportance;
 }
 
+export const CONVERSATION_CONTENT_UNIT_KINDS = [
+  'event',
+  'scene',
+  'object',
+  'person',
+  'state',
+  'memory',
+] as const;
+export type ConversationContentUnitKind =
+  (typeof CONVERSATION_CONTENT_UNIT_KINDS)[number];
+
+export interface ConversationContentUnit {
+  kind: ConversationContentUnitKind;
+  text: string;
+  importance: ConversationReadingAnchorImportance;
+}
+
 export type ConversationMemoryPlanNeed = 'none' | 'retrieve';
 export type ConversationMemoryPlanContextCoverage = 'complete' | 'missing';
 export type ConversationMemoryPlanExpectedUse =
@@ -492,6 +509,7 @@ export interface StructuredReplyIntent {
   intents: StructuredReplyIntentItem[];
   capabilityQuestions?: StructuredReplyCapabilityQuestion[];
   objectPlan?: ConversationObjectPlan;
+  contentUnits?: ConversationContentUnit[];
   reading?: ConversationReading;
   conversationPlan?: ConversationMovePlan;
   memoryPlan?: ConversationMemoryPlan;

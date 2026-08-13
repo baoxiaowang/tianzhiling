@@ -387,6 +387,12 @@ export class MessageEntity extends BaseEntity {
   replyGuardrailFocuses?: string[];
 
   @Column()
+  replyContentEchoPassed?: boolean;
+
+  @Column()
+  replyContentEchoUnitCount?: number;
+
+  @Column()
   replyEvidenceCount?: number;
 
   @Column()

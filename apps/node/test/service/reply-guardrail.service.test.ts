@@ -29,6 +29,70 @@ describe('ReplyGuardrailService', () => {
     expect(createChatCompletion).not.toHaveBeenCalled();
   });
 
+  it('reports whether the reply echoed the planned concrete content', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest.fn();
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+    const userQuery = '前两天下班回家莫名眼眶红了，你女婿问怎么了';
+    const route = routeReplyScene({ currentQuery: userQuery });
+    const replyBrief = buildReplyBrief({
+      currentQuery: userQuery,
+      route,
+      intent: {
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.9,
+          },
+        ],
+        reading: {
+          primaryNeed: '希望爸爸看见自己最近的难过',
+          emotionalSource: '想爸爸',
+          relationshipSignal: '亲近',
+          anchors: [
+            { text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+            { text: '你女婿问怎么了', importance: 'high' },
+          ],
+          corrections: [],
+          negations: [],
+          questionsToAnswer: [],
+          uncertainties: [],
+          suggestedTone: '安稳、亲近',
+        },
+        objectPlan: {
+          objects: [
+            { ref: 'o1', mention: '你女婿', kind: 'other_person', binding: 'unknown', confidence: 'high' },
+          ],
+          focusRefs: ['o1'],
+          ambiguousMentions: [],
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.9,
+        source: 'semantic_model',
+      },
+    });
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery,
+      replySegments: ['你女婿也跟着哭了，爸心里都懂'],
+      replyRoute: route,
+      replyBrief,
+      evidence: [],
+      claims: [],
+      reviewMode: 'deterministic_first',
+    });
+
+    expect(result.contentEcho).toEqual({ passed: true, unitCount: 1 });
+  });
+
   it('lets production rigid-only mode keep realistic invention and intimacy', async () => {
     const service = new ReplyGuardrailService();
     const createChatCompletion = jest.fn();

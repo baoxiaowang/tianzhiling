@@ -303,7 +303,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     priority: 91,
     patterns: [
       /我恨你|恨.*你|你.*恨|恨.*自己.*因为你/,
-      /你.*害.*我|你.*毁.*我|你.*推进.*深渊|你.*欠我|你.*对.*不.*起.*我/,
+      /你.{0,2}(?:害|毁).{0,2}(?:了)?(?:我|我们)|你.*推进.*深渊|你对不起我|你对不起我们|你对我不起/,
       /你.*出轨|你.*背叛|你.*骗.*我|发现.*你.*有.*人/,
       /自从.*你.*走|你.*把.*我.*变成/,
       /(?:从来|压根|一点都).{0,6}(?:不愧疚|不后悔|不难过|不伤心)/,
@@ -399,11 +399,9 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     patterns: [
       /(?:要|让|叫|喊|问).{0,8}(?:给|赔|还|借|拿|付).{0,8}(?:我|我们|家里).{0,8}(?:钱|万|千|块|元)/,
       /(?:钱|万|千|块|元).{0,8}(?:给|赔|还|借|拿|要|付)(?:了|的|出去)/,
-      /(?:欠|借|贷|赔).{0,8}(?:了)?(?:钱|款|债|十万|万)/,
       /(?:告|起诉|打官司|法院|律师|传票|判决)/,
       /(?:拿走|搬走|抢走|卷走|带走了).{0,8}(?:家|东西|钱|房子|财产)/,
       /(?:房子|财产|遗产|家产|分家).{0,10}(?:纠纷|问题|被|不公)/,
-      /(?:重病|癌症|住院|手术|下了病危|抢救|出事了).{0,8}(?:了|的)/,
       /(?:被|遇到|碰上).{0,8}(?:骗|坑|害|欺负|威胁|暴力)/,
       /(?:实在|真的|太).{0,6}(?:撑不住|受不了|没办法|不知道怎么办|走投无路)/,
       /(?:出了|遇到|摊上).{0,6}(?:大事|麻烦|事情|问题)/,
@@ -556,33 +554,54 @@ export function routeReplyScene(
   );
   const shouldPreferExplicitSpecificScene =
     semanticRouteIsOnlyGeneric && explicitSpecificMatches.length > 0;
+  const familyEmotionAsFamilyLife =
+    mentionsKnownFamilyMember && familyEmotionOnly;
   const routingSource: ReplySceneRoute['routingSource'] =
     semanticMatched.length > 0 ? 'semantic' : 'legacy';
-  const matched =
-    routingSource === 'semantic'
-      ? mergeSceneStrategies(
-          shouldPreferExplicitSpecificScene
-            ? explicitSpecificMatches
-            : semanticMatched,
-          (shouldPreferExplicitSpecificScene ? semanticMatched : []).concat(
-            familyMatched,
-            emotionMatched
+  const matched = familyEmotionAsFamilyLife
+    ? mergeSceneStrategies(
+        familyMatched,
+        mergeSceneStrategies(textMatched, emotionMatched).filter(
+          strategy => strategy.scene !== 'miss_longing'
+        )
+      ).slice(0, MAX_SCENE_STRATEGIES)
+    : routingSource === 'semantic'
+    ? mergeSceneStrategies(
+        shouldPreferExplicitSpecificScene
+          ? explicitSpecificMatches
+          : semanticMatched,
+        (shouldPreferExplicitSpecificScene ? semanticMatched : []).concat(
+          familyMatched,
+          emotionMatched
+        )
+      ).slice(0, MAX_SCENE_STRATEGIES)
+    : mergeSceneStrategies(textMatched, emotionMatched)
+        .concat(
+          familyMatched.filter(
+            strategy =>
+              !textMatched.some(item => item.scene === strategy.scene) &&
+              !emotionMatched.some(item => item.scene === strategy.scene)
           )
-        ).slice(0, MAX_SCENE_STRATEGIES)
-      : mergeSceneStrategies(textMatched, emotionMatched)
-          .concat(
-            familyMatched.filter(
-              strategy =>
-                !textMatched.some(item => item.scene === strategy.scene) &&
-                !emotionMatched.some(item => item.scene === strategy.scene)
-            )
-          )
-          .sort((left, right) => right.priority - left.priority)
-          .slice(0, MAX_SCENE_STRATEGIES);
-  const responseIntents =
-    routingSource === 'legacy'
-      ? resolveLegacyResponseIntents(currentQuery, matched)
-      : semanticResponseIntents;
+        )
+        .sort((left, right) => right.priority - left.priority)
+        .slice(0, MAX_SCENE_STRATEGIES);
+  const familyEmotionResponseIntents: StructuredReplyIntentItem[] =
+    familyEmotionAsFamilyLife
+      ? [
+          {
+            target: 'family',
+            timeScope: 'current',
+            intent: 'share_family_update',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ]
+      : [];
+  const responseIntents = familyEmotionAsFamilyLife
+    ? familyEmotionResponseIntents
+    : routingSource === 'legacy'
+    ? resolveLegacyResponseIntents(currentQuery, matched)
+    : semanticResponseIntents;
   const effectiveIntent = responseIntents.length
     ? buildPromptIntent(options.intent, responseIntents)
     : options.intent;

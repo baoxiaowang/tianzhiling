@@ -81,6 +81,10 @@ import { buildReplyStateProtocolPrompt } from './reply-state-protocol';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
 import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
 import {
+  buildReplyCommActPrompt,
+  COMM_ACT_VERSION,
+} from './reply-comm-act';
+import {
   buildConversationTurnPlanPrompt,
   resolveConversationTurnPlan,
 } from './conversation-turn-plan';
@@ -194,6 +198,9 @@ export interface AgentContextDiagnostics {
   replyIntentModelCallCount: number;
   strategyVersion: 'conversation_strategy_v8';
   turnPlanVersion: 'turn_plan_v1';
+  commActVersion: typeof COMM_ACT_VERSION;
+  commActState: string;
+  commActSteps: string[];
   turnPlanOpenPointCount: number;
   turnPlanOpenNeeds: string[];
   turnPlanAvoid?: string;
@@ -722,6 +729,12 @@ export class AgentContextService {
           replyPlanningDecision.mode === 'semantic' ? 1 : 0,
         strategyVersion: 'conversation_strategy_v8',
         turnPlanVersion: 'turn_plan_v1',
+        commActVersion: replyBrief.commAct?.version ?? COMM_ACT_VERSION,
+        commActState: replyBrief.commAct?.state ?? 'opening',
+        commActSteps:
+          replyBrief.commAct?.steps.map(
+            step => `${step.layer}.${step.act}`
+          ) ?? [],
         turnPlanOpenPointCount: resolvedTurnPlan?.open.length || 0,
         turnPlanOpenNeeds: resolvedTurnPlan?.open.map(item => item.need) || [],
         turnPlanAvoid: resolvedTurnPlan?.avoid,
@@ -1162,6 +1175,9 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
         ]
       : [];
+    const commActLines = replyBrief.commAct
+      ? [buildReplyCommActPrompt(replyBrief.commAct)]
+      : [];
     const objectPlanLines = replyBrief.objectPlan
       ? [
           '# 本轮对象区分',
@@ -1228,6 +1244,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         experienceLine,
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
+        ...commActLines,
         ...objectPlanLines,
         ...careMotivationLines,
         ...stateProtocolLines,
@@ -1252,6 +1269,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
         : []),
       ...conversationPlanLines,
+      ...commActLines,
       ...objectPlanLines,
       ...careMotivationLines,
       ...stateProtocolLines,
@@ -1424,8 +1442,8 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     if (!memoryPlan) {
       if (planningMode === 'direct') {
         return {
-          mode: 'direct_query',
-          query: currentQuery.trim() || undefined,
+          mode: 'suppressed',
+          query: undefined,
           conceptCount: 0,
         };
       }

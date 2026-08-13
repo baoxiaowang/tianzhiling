@@ -18,6 +18,17 @@ import {
 } from './reply-intent';
 import type { ReplyScene, ReplySceneRoute } from './reply-scene-router';
 import type { AgentRelationshipSignalSummary } from './agent-relationship-signal.service';
+import {
+  buildContentUnitPrompt,
+  collectContentUnits,
+  type ContentUnit,
+} from './reply-content-unit';
+import {
+  buildReplyCommActPrompt,
+  resolveConversationState,
+  resolveReplyCommAct,
+  type ReplyCommActPlan,
+} from './reply-comm-act';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import {
   AgentCapabilityConstraint,
@@ -34,6 +45,7 @@ import {
 import {
   buildReplyBubblePlan,
   buildReplyBubblePlanPrompt,
+  isReplyClosingTurn,
   ReplyBubblePlan,
 } from './reply-bubble-plan';
 import { buildReplyBoundaryContract } from './reply-boundary-contract';
@@ -155,6 +167,8 @@ export interface ReplyBrief {
   relationshipContinuity?: RelationshipContinuityPlan;
   reading?: ConversationReading;
   objectPlan?: ConversationObjectPlan;
+  contentUnits?: ContentUnit[];
+  commAct?: ReplyCommActPlan;
   conversationPlan?: ConversationMovePlan;
   emotionalNeed: string;
   replyMoves: string[];
@@ -272,8 +286,18 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     options.route?.intent?.memoryPlan ?? options.intent?.memoryPlan;
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
+  const contentUnits = collectContentUnits({
+    anchors: reading?.anchors ?? [],
+    objectPlan,
+    plannedUnits:
+      options.route?.intent?.contentUnits ?? options.intent?.contentUnits,
+  });
   const rawConversationPlan =
-    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({ scene: primaryScene, currentQuery });
+    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({
+      scene: primaryScene,
+      currentQuery,
+      intents,
+    });
   const evidence = buildEvidence(options, currentQuery);
   const correctionPolicy = resolveReplyCorrectionPolicy({
     primaryScene,
@@ -348,6 +372,21 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       experiencePlan
     )
   );
+  const commAct = resolveReplyCommAct({
+    currentQuery,
+    state:
+      conversationPlan?.engagement?.userConversationState ??
+      conversationPlan?.turnPlan?.state ??
+      resolveConversationState({ currentQuery, scene: primaryScene, mode, riskLevel }),
+    turnPlan: conversationPlan?.turnPlan,
+    contentUnits,
+    strategyQuality,
+    scene: primaryScene,
+    mode,
+    riskLevel,
+    questionNeed: conversationPlan?.questionNeed,
+    preferAsk: conversationPlan?.moves.some(move => move.type === 'ask'),
+  });
   const careMotivation = resolveReplyCareMotivationPlan({
     currentQuery,
     mode,
@@ -477,6 +516,8 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     relationshipContinuity,
     reading,
     objectPlan,
+    contentUnits,
+    commAct,
     conversationPlan,
     emotionalNeed,
     replyMoves,
@@ -972,7 +1013,7 @@ function resolveReplyParticipationStrategy(options: {
     options.hasCapabilityConstraints ||
     suppressPlannedParticipation ||
     options.hasRelationshipContinuity ||
-    options.turnClosure === 'close' ||
+    isReplyClosingTurn(options.currentQuery) ||
     options.primaryScene === 'correction' ||
     !SHORT_TURN_PARTICIPATION_MODES.has(options.mode) ||
     previousAssistant?.replyParticipationStrategy
@@ -1887,9 +1928,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           ? [`需要正面回答：${brief.reading.questionsToAnswer.join('；')}`]
           : []),
         `语气参考：${brief.reading.suggestedTone}`,
-        '这些内容是对用户原话的注意提示，不是固定回复步骤；如果与用户原话冲突，以用户原话为准。',
+        '上面锚点和具体内容，先照着其中一件回应，再带情绪；如果与用户原话冲突，以用户原话为准。',
         '',
       ]
+    : [];
+  const contentUnitPrompt = buildContentUnitPrompt(brief.contentUnits ?? []);
+  const contentUnitLines = contentUnitPrompt
+    ? ['## 本轮具体内容', contentUnitPrompt, '']
     : [];
   const objectPlanLines = brief.objectPlan
     ? [
@@ -1959,6 +2004,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
         '',
       ]
+    : [];
+  const commActLines = brief.commAct
+    ? [buildReplyCommActPrompt(brief.commAct)]
     : [];
   const participationLines = brief.participationStrategy
     ? [
@@ -2041,8 +2089,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
     '',
     ...readingLines,
+    ...contentUnitLines,
     ...objectPlanLines,
     ...conversationPlanLines,
+    ...commActLines,
     ...careMotivationLines,
     ...stateProtocolLines,
     ...participationLines,

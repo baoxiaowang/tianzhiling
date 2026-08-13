@@ -56,7 +56,7 @@ describe('routeReplyScene', () => {
       currentQuery: '窗外那棵树开花了',
     });
 
-    expect(route.primaryScene).toBeUndefined();
+    expect(route.primaryScene?.scene).toBe('smalltalk');
     expect(route.bubblePlan).toEqual({
       maxSegments: 2,
       complexityHint: 'concise',
@@ -538,7 +538,7 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('miss_longing');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('不要把“丫头/孩子/闺女”等称呼单独成泡');
-    expect(route.prompt).toContain('不要声称在现实房间、床边或身旁看着用户');
+    expect(route.prompt).toContain('不声称时刻在现实房间、床边盯着用户的一举一动');
     expect(route.prompt).toContain('不要马上转成吃饭、休息');
     expect(lossRoute.primaryScene?.scene).toBe('miss_longing');
     expect(lossRoute.maxSegments).toBe(2);
@@ -781,6 +781,24 @@ describe('routeReplyScene', () => {
       'miss_longing'
     );
     expect(route.prompt).toContain('家庭近况/亲属事务');
+  });
+
+  it('keeps the family intent when semantic planning still classifies it as longing', () => {
+    const route = routeReplyScene({
+      currentQuery: '大宝想你想得哭了',
+      knownFamilyMembers: ['大宝'],
+      intent: semanticIntent([
+        intentItem({ intent: 'express_longing' }),
+      ]),
+    });
+
+    expect(route.primaryScene?.scene).toBe('family_life');
+    expect(route.intent?.intents.map(item => item.intent)).toEqual([
+      'share_family_update',
+    ]);
+    expect(route.secondaryScenes.map(scene => scene.scene)).not.toContain(
+      'miss_longing'
+    );
   });
 
   it('handles challenges to assumed family care responsibility', () => {

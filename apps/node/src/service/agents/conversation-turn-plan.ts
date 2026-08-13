@@ -90,11 +90,20 @@ export function resolveConversationTurnPlan(options: {
     return turnPlan;
   }
 
+  // 后续事实/证据约束可能只修改了 engagement 的贡献动作。
+  // 原先明确保留的 topic_followup 仍应继续存在，否则会在同步时被抹成
+  // 泛化的 other，导致“顺着具体事追问”的开放点丢失。
+  const retainedTopicFollowUps = (turnPlan?.open || []).filter(
+    point => point.need === 'topic_followup'
+  );
+
   return {
     state: engagement.userConversationState,
     open:
       engagement.closureReadiness === 'ready'
         ? []
+        : retainedTopicFollowUps.length
+        ? retainedTopicFollowUps
         : [
             {
               object: 'user',

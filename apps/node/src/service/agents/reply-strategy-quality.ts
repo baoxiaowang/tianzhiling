@@ -106,19 +106,21 @@ export function resolveReplyStrategyQualityPlan(options: {
 
   if (lastTwoMoves.length >= 2) {
     const lastMoves = lastTwoMoves.map(m => m.replyConversationMoves || []);
+    let tenderAcknowledgementDetected = false;
     // tender + acknowledge/affirm 连续
     if (lastMoves.every(moves =>
       moves.some(m => ['acknowledge', 'affirm'].includes(m)) &&
       assistantTurns.slice(-2).every(m => m.replyConversationStance === 'tender')
     )) {
       structuredRepeatedMoves.push('tender_acknowledge_affirm');
+      tenderAcknowledgementDetected = true;
     }
     // comfort 连续 → generic_empathy
     if (lastMoves.every(moves => moves.some(m => m === 'comfort'))) {
       structuredRepeatedMoves.push('generic_empathy');
     }
     // affirm/comfort 连续 → generic_presence
-    if (lastMoves.every(moves =>
+    if (!tenderAcknowledgementDetected && lastMoves.every(moves =>
       moves.every(m => ['affirm', 'comfort', 'acknowledge'].includes(m))
     )) {
       structuredRepeatedMoves.push('generic_presence');

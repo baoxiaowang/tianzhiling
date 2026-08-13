@@ -92,6 +92,65 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('不把一人的话、经历或关系转给另一人');
   });
 
+  it('plans a concrete follow-up probe when the semantic plan has a useful question', () => {
+    const currentQuery = '前两天下班回家莫名眼眶红了，你女婿问怎么了';
+    const intent = {
+      intents: [
+        {
+          target: 'agent' as const,
+          timeScope: 'current' as const,
+          intent: 'express_longing' as const,
+          subIntent: 'grief_support' as const,
+          confidence: 0.9,
+        },
+      ],
+      reading: {
+        primaryNeed: '希望爸爸看见自己最近的难过',
+        emotionalSource: '想爸爸',
+        relationshipSignal: '亲近',
+        anchors: [
+          { text: '前两天下班回家莫名眼眶红了', importance: 'high' as const },
+          { text: '你女婿问怎么了', importance: 'medium' as const },
+        ],
+        corrections: [],
+        negations: [],
+        questionsToAnswer: [],
+        uncertainties: [],
+        suggestedTone: '安稳、亲近',
+      },
+      objectPlan: {
+        objects: [
+          { ref: 'o1', mention: '你女婿', kind: 'other_person' as const, binding: 'unknown', confidence: 'high' as const },
+        ],
+        focusRefs: ['o1'],
+        ambiguousMentions: [],
+      },
+      conversationPlan: {
+        stance: 'tender' as const,
+        stanceTarget: 'user',
+        moves: [
+          { type: 'acknowledge' as const, goal: '接住用户最近的情绪' },
+          { type: 'ask' as const, goal: '顺着那天的画面轻轻问一句' },
+        ],
+        socialStrategy: 'direct' as const,
+        strategyPurpose: '让用户顺着具体的事继续说',
+        questionNeed: 'helpful' as const,
+        turnClosure: 'continue' as const,
+        personaActivation: [],
+      },
+      emotion: 'longing' as const,
+      riskLevel: 'none' as const,
+      confidence: 0.9,
+      source: 'semantic_model' as const,
+    };
+    const route = routeReplyScene({ currentQuery, intent });
+    const brief = buildReplyBrief({ currentQuery, intent, route });
+
+    expect(brief.commAct?.steps[0].act).toBe('echo_content');
+    expect(brief.commAct?.steps[2].act).toBe('follow_up_probe');
+    expect(brief.prompt).toContain('追问最多一个');
+  });
+
   it('injects one non-repeating participation action into an eligible short turn', () => {
     const currentQuery = '妈，我想你了';
     const route = routeReplyScene({ currentQuery });
@@ -99,18 +158,13 @@ describe('buildReplyBrief', () => {
 
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.replyMoves.length).toBe(3);
-    expect(brief.replyMoves[2]).toContain('角色侧当下');
+    expect(brief.replyMoves[2]).toContain('给一句贴着原话的角色判断或亲人侧心意');
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'standard',
-      targetCharacters: 40,
-      reviewCharacters: 55,
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 30,
     });
-    expect(brief.careMotivation).toMatchObject({
-      motive: 'mutual_longing',
-      focus: 'reciprocal_bond',
-      initiative: 'proactive',
-    });
-    expect(brief.prompt).toContain('不让想念只落在用户一边');
+    expect(brief.prompt).toContain('短而有温度，再给一处亲人侧心意');
   });
 
   it('does not inject short-turn participation into a closing turn', () => {
@@ -209,7 +263,7 @@ describe('buildReplyBrief', () => {
         preferredAlternative: 'topic_transition',
       })
     );
-    expect(brief.prompt).toContain('## 多轮策略去重');
+    expect(brief.prompt).toContain('策略换挡');
   });
 
   it('turns a longer user closing signal into a real close action', () => {
@@ -1189,7 +1243,7 @@ describe('buildReplyBrief', () => {
       maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
-      encourageTwoSegments: true,
+      preferTwoSegments: true,
     });
   });
 
