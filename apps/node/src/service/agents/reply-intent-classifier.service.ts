@@ -111,7 +111,9 @@ export interface ReplyPlanningDecision {
     | 'reality_dependency'
     | 'long_message'
     | 'multiple_questions'
-    | 'unresolved_semantics'    | 'short_message'
+    | 'unresolved_semantics'
+    | 'unanswerable_question'
+    | 'short_message'
     | 'ordinary_message';
 }
 
@@ -159,6 +161,9 @@ const CONVERSATION_FUTILITY_PATTERN =
   /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
 const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
   /(?:你|您)(?:刚才|前面|上次)?(?:说|讲|回)(?:的|得)|(?:我|俺|咱)(?:都|已经)?(?:说|讲|解释)(?:了|过)|^(?:但|但是|可是|可你|不过|所以|反正|明明|还不是|那为什么|那怎么)|(?:说|讲)得?(?:真)?(?:轻巧|容易)|(?:还是|又)(?:这样|那样|这句|这话)|(?:没懂|没听懂|不明白我|敷衍|白说|算了|不说了|没意思)/;
+// 无解之问：问句形式，但内核是情绪而不是信息请求。
+// 这里只做很宽的"疑似情绪之问" gate，真正的语义判断交给 semantic 分类器。
+const UNANSWERABLE_QUESTION_PATTERN = /为什么|凭什么|怎么会|为何|为啥|凭啥|咋就|咋会/;
 const FIRST_PERSON_REFERENCE_PATTERN = /(?:^|[，,。！？!?\s])(?:我|俺|咱)/;
 const DEATH_MOMENT_REFERENCE_PATTERN =
   /走的时候|离开的时候|临走|临走前|去世|过世|死的时候|那一刻/;
@@ -190,6 +195,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
   'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
+  '“为什么/凭什么/怎么会/为啥”常是情绪表达而非信息请求。当它表达不甘、委屈、愤懑、被抛下的痛或对命运的不解时，questionNeed 用 none、continuationGoal 用 hold、avoid 选 explain 或 generic_comfort、moves 用 acknowledge/comfort 承接情绪；只有确实索取具体信息时才用 answer 或 ask。',
   'conversationPlan.turnPlan 用短字段定位本轮：state 是交谈位置，不是心理诊断；open 最多两个，只写真正未完成的问题、请求、纠正或关系需要，并绑定 agent、user、unknown 或 objectPlan.ref；goal/action/target 只保留一个主目标；avoid 选一项；close 判断能否收口。上轮计划只作候选，本轮已回答、转向或结束就关闭，不机械续写。',
   '开放点未完成用 blocked。用户说话少、不想理、忘了、没人回应、重复请求或“说了也没用”时用 repairing 或 withdrawing、goal=repair，并让 target 写明本轮实际改变；要求多说时 action=self_expression，当轮先说内容。仅明确晚安、去忙、安静或结束时使用 closing/close/ready。',
   '上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，target 必须新增关系态度或具体理解。承诺以后多说、解释沉默、泛泛安慰或让用户先说不算完成。',
@@ -561,6 +567,10 @@ export class ReplyIntentClassifierService {
 
     if ((currentQuery.match(/[？?]/g) || []).length > 1) {
       return { mode: 'semantic', reason: 'multiple_questions' };
+    }
+
+    if (UNANSWERABLE_QUESTION_PATTERN.test(currentQuery)) {
+      return { mode: 'semantic', reason: 'unanswerable_question' };
     }
 
     if (

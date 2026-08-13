@@ -117,6 +117,30 @@ describe('ReplyIntentClassifierService', () => {
     ).toEqual({ mode: 'direct', reason: 'ordinary_message' });
   });
 
+  it.each([
+    ['凭什么好人没好报', 'unanswerable_question'],
+    ['为什么抛下我们', 'unanswerable_question'],
+    ['你怎么会走', 'unanswerable_question'],
+  ])('routes an unanswerable emotional question through semantic planning: %s', (currentQuery, reason) => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+      mode: 'semantic',
+      reason,
+    });
+  });
+
+  it('keeps a dream-related “why” on the existing dream scene', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(service.getPlanningDecision({ currentQuery: '为啥不来我梦里' })).toMatchObject({
+      mode: 'semantic',
+      reason: 'complex_scene',
+    });
+  });
+
   it('parses multiple people as separate objects without guessing an unknown binding', async () => {
     const service = createService(
       JSON.stringify({
