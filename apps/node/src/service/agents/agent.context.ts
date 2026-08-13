@@ -328,7 +328,6 @@ export class AgentContextService {
     });
     const persona = buildAgentPersonaPrompt({
       agent: options.agent,
-      recentMessages: routingHistoryMessages,
       identityContract: identity,
     });
     const knownFamilyMembers = (profileFacts || [])

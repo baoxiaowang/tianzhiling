@@ -1,8 +1,6 @@
 import {
   AgentEntity,
   AgentSex,
-  MessageEntity,
-  MessageRole,
 } from '@tzl/entities';
 import { buildAgentPersonaPrompt } from '../../src/service/agents/agent-persona';
 
@@ -35,12 +33,6 @@ describe('buildAgentPersonaPrompt', () => {
     } as AgentEntity;
     const result = buildAgentPersonaPrompt({
       agent,
-      recentMessages: [
-        {
-          role: MessageRole.assistant,
-          content: '嗐，饭还是要好好吃，别总拿面包凑合。',
-        } as MessageEntity,
-      ],
     });
 
     expect(result.source).toBe('chat_derived_profile');
@@ -54,24 +46,18 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.prompt).not.toContain('近期聊天风格弱证据');
   });
 
-  it('falls back to recent conversation evidence when no personality field exists', () => {
+  it('falls back to relationship defaults when no personality field exists', () => {
     const result = buildAgentPersonaPrompt({
       agent: {
         sex: AgentSex.woman,
         iCallAgent: '女儿',
         agentCallMe: '妈',
       } as AgentEntity,
-      recentMessages: [
-        {
-          role: MessageRole.assistant,
-          content: '妈，先坐一会儿，别又硬撑。',
-        } as MessageEntity,
-      ],
     });
 
-    expect(result.source).toBe('conversation_evidence');
+    expect(result.source).toBe('relationship_defaults');
     expect(result.generation).toBe('younger');
-    expect(result.prompt).toContain('近期聊天风格弱证据');
+    expect(result.prompt).not.toContain('近期聊天风格弱证据');
     expect(result.prompt).toContain('不要临时编造稳定性格');
   });
 
