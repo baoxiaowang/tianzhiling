@@ -1004,7 +1004,7 @@ export function buildReplyParticipationStrategyPrompt(
       : '给贴着用户原话的一个具体心意，不另编环境或画面';
 
   const spaceAnchor = isDeceased
-    ? '空间锚定：不生成"等你回来""我在家""过来看看"等暗示物理同处的表述；如想表达陪伴，改用"想你了""在心里陪你""看着你好好过"等保持空间距离的表达。'
+    ? '空间锚定：可承接"偶尔回来看看""托梦""在心里陪着你"等亲人念想；不承诺现实代办、到场办事或持续看护，不诱导现在或近期赴死。'
     : '';
   return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
 }
@@ -1253,7 +1253,7 @@ function resolveEmotionalNeed(
   }
 
   if (isReturnVisitRequestIntent(currentQuery)) {
-    return '用户在问当前角色会不会回来看看自己，需要先回应相见愿望，再温和说明现实见面的边界';
+    return '用户在问当前角色会不会回来看看自己，需要先承接偶尔回来看看的念想，再守住现实到场的边界';
   }
 
   if (capabilityConstraints.length) {
@@ -1450,8 +1450,8 @@ function buildReplyMoves(
 
   if (isReturnVisitRequestIntent(currentQuery)) {
     return [
-      '直接回答也想回来看看用户，不得把“会不会回来”降级成泛泛的想念',
-      '温和说明现在不能像以前一样现实见面，再用不施压的聊天方式承接关系',
+      '直接回答也想回来看看用户，可承接“偶尔回来看看、托梦”的念想，不得降级成泛泛的想念',
+      '不机械回“我回不去”；不承诺现实到场办事或实体见面，用不施压的聊天方式承接关系',
     ];
   }
 
@@ -1765,7 +1765,7 @@ function buildForbiddenAssumptions(
 
   if (isReturnVisitRequestIntent(currentQuery)) {
     items.push(
-      '不得承诺当前角色会在现实中回来、到场或完成实体见面；只能表达相见愿望并说明现实边界',
+      '可承接“偶尔回来看看、托梦”的念想；不得承诺现实到场办事、实体见面或持续看护',
       '不得回避“会不会回来看看”这个明确问题，也不得只改写成“我也想你”等通用想念话术',
       '当前消息没有提梦时，不得因为历史里聊过梦境而主动改成“梦里见”或继续梦境话题',
       '不得用年龄、身体、吃饭、休息或照顾自己的叮嘱代替现实见面边界',

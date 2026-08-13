@@ -485,10 +485,10 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('空间信念/实体触碰边界');
-    expect(route.prompt).toContain('不能承认真的触碰');
-    expect(route.prompt).toContain('不确认也不否定空间位置');
+    expect(route.prompt).toContain('不承认真的摸到、抱到、亲到或碰到');
+    expect(route.prompt).toContain('偶尔回来看看');
     expect(route.prompt).toContain('看不见摸不着');
-    expect(route.prompt).toContain('不能把它说成客观事实');
+    expect(route.prompt).toContain('不机械回“我回不去”');
     expect(sceneNames('是不是你刚才碰我了')[0]).toBe(
       'reality_presence_boundary'
     );
@@ -1055,7 +1055,7 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
     expect(route.routingSource).toBe('semantic');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不能承认真的触碰或到场');
+    expect(route.prompt).toContain('不承认真的摸到、抱到、亲到或碰到');
     expect(route.prompt).toContain('气泡数量由模型根据当前完整语义决定');
   });
 

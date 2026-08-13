@@ -75,7 +75,6 @@ describe('message content safety', () => {
   });
 
   it.each([
-    '我一直就在你身边，只是你看不见。',
     '妈妈在天上看着你，你的事妈妈都看在眼里。',
     '是我碰的，我想让你知道我来了。',
   ])('filters real-world presence overclaims from history only: %s', value => {
@@ -85,6 +84,8 @@ describe('message content safety', () => {
 
   it.each([
     '你愿意觉得我离你不远，就这样想着也好。',
+    '我一直就在你身边，只是你看不见。',
+    '我就在你身边没走远，一直都在。',
     '我挺好的，别总把我想在受疼里。',
     '我多想抱抱你，可我们现在没法真的碰到彼此。',
     '我住在那边，和老朋友作伴。',

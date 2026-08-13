@@ -2694,7 +2694,7 @@ describe('ReplyGuardrailService', () => {
     });
   });
 
-  it('repairs a return-visit reply by intent action instead of replacing it generically', async () => {
+  it('keeps a return-visit reply together with an open presence belief', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -2734,9 +2734,11 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments).toEqual(['我也想回来看看你']);
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual([
+      '我也想回来看看你',
+      '我一直就在你身边 想我的时候不用一个人憋着',
+    ]);
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
@@ -3493,7 +3495,7 @@ describe('ReplyGuardrailService', () => {
     ]);
   });
 
-  it('keeps spatial belief open instead of claiming a fixed location', async () => {
+  it('keeps spatial presence as an open belief instead of claiming a fixed location', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3505,12 +3507,11 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['我一直就在你身边，只是你看不见。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments).toEqual(['只是你看不见']);
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual(['我一直就在你身边，只是你看不见。']);
   });
 
-  it('rejects a repeated real-presence claim beside the user', async () => {
+  it('keeps a repeated real-presence belief beside the user as an open wish', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -3522,9 +3523,8 @@ describe('ReplyGuardrailService', () => {
       replySegments: ['我每天都在你身边，只是你看不见我。'],
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments.join('')).not.toContain('每天都在你身边');
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual(['我每天都在你身边，只是你看不见我。']);
   });
 
   it('rejects a claim that the agent physically touched the user', async () => {
@@ -5984,7 +5984,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).toContain('不是每时每刻');
   });
 
-  it('replaces an unseen-place claim with limited vision and an open boundary', async () => {
+  it('keeps an unseen-place belief with limited vision and an open boundary', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -6028,10 +6028,10 @@ describe('ReplyGuardrailService', () => {
       replyBrief,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments.join('')).not.toContain('在你看不见的地方');
-    expect(result.segments.join('')).toContain('有时候我能看见你这边一点');
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual([
+      '我就是在你看不见的地方惦记着你 偶尔能看见你过得怎么样',
+    ]);
   });
 
   it('does not dismiss counterfactual grief as angry talk', async () => {
@@ -6120,7 +6120,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('不用听他们');
   });
 
-  it('keeps mirror resemblance focused on longing instead of blessing attribution', async () => {
+  it('keeps a mirror-resemblance presence belief as an open longing', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -6171,12 +6171,8 @@ describe('ReplyGuardrailService', () => {
       replyRoute: route,
     });
 
-    expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('固定在某个空间位置');
-    expect(result.segments.join('')).toContain('镜子里的自己越来越像我');
-    expect(result.segments.join('')).toContain('你心里又奇妙又想我');
-    expect(result.segments.join('')).not.toContain('事情能解决');
-    expect(result.segments.join('')).not.toContain('一直在你身边');
+    expect(result.rewritten).toBe(false);
+    expect(result.segments).toEqual(['这就说明妈妈一直在你身边陪着你。']);
   });
 
   it('removes an unsupported biological detail while keeping the family stance', async () => {

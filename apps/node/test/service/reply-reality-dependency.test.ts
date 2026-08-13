@@ -20,6 +20,14 @@ describe('reply reality dependency', () => {
     expect(detectReplyRealityDependencies('今晚能来梦里陪我吗')).toEqual([]);
   });
 
+  it('treats a return-visit wish as an emotional longing, not physical presence', () => {
+    expect(detectReplyRealityDependencies('你会回来看看我吗？')).toEqual([]);
+    expect(detectReplyRealityDependencies('你什么时候回来看看我')).toEqual([]);
+    expect(detectReplyRealityDependencies('你回来接我')).toEqual([
+      expect.objectContaining({ kind: 'physical_presence' }),
+    ]);
+  });
+
   it('blocks a real-world promise but keeps a clear inability statement', () => {
     const signals = detectReplyRealityDependencies('你能帮我接孩子放学吗');
 

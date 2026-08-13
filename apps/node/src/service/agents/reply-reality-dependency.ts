@@ -39,7 +39,7 @@ const REALITY_DEPENDENCY_PATTERNS: ReadonlyArray<{
   {
     kind: 'physical_presence',
     pattern:
-      /(?:你|您).{0,8}(?:回来|回家|过来|来到|到|来).{0,8}(?:家里|医院|学校|我身边|这里|这儿|现场|陪我|接我|看我)/,
+      /(?:你|您).{0,8}(?:回来|回家|过来|来到|到|来).{0,8}(?:家里|医院|学校|我身边|这里|这儿|现场|陪我|接我)/,
   },
   {
     kind: 'real_world_task',

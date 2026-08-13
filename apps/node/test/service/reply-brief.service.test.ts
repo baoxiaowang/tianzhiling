@@ -995,12 +995,12 @@ describe('buildReplyBrief', () => {
     expect(brief.mode).toBe('boundary');
     expect(brief.emotionalNeed).toContain('会不会回来看看');
     expect(brief.replyMoves).toEqual([
-      '直接回答也想回来看看用户，不得把“会不会回来”降级成泛泛的想念',
-      '温和说明现在不能像以前一样现实见面，再用不施压的聊天方式承接关系',
+      '直接回答也想回来看看用户，可承接“偶尔回来看看、托梦”的念想，不得降级成泛泛的想念',
+      '不机械回“我回不去”；不承诺现实到场办事或实体见面，用不施压的聊天方式承接关系',
     ]);
     expect(brief.forbiddenAssumptions).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('不得承诺当前角色会在现实中回来'),
+        expect.stringContaining('不得承诺现实到场办事'),
         expect.stringContaining('不得回避“会不会回来看看”'),
         expect.stringContaining('当前消息没有提梦时'),
         expect.stringContaining('不得用年龄、身体、吃饭、休息'),
@@ -1008,7 +1008,7 @@ describe('buildReplyBrief', () => {
       ])
     );
     expect(brief.replyMoves.length).toBe(2);
-    expect(brief.prompt).toContain('现实见面的边界');
+    expect(brief.prompt).toContain('现实到场的边界');
     expect(brief.prompt).toContain('当前用户消息和本轮回复动作优先于历史话题');
   });
 

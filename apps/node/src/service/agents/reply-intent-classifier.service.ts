@@ -210,6 +210,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `target 只能是：${REPLY_INTENT_TARGETS.join(', ')}`,
   `timeScope 只能是：${REPLY_INTENT_TIME_SCOPES.join(', ')}`,
   `intent 只能是：${REPLY_INTENT_KINDS.join(', ')}`,
+  'ask_platform_support 仅指用户问平台/会员/服务收费、额度、功能或操作问题；不指用户与家人的金钱纠纷、家庭矛盾或生活里的“要钱”。',
   `subIntent 只能是：${REPLY_INTENT_SUB_INTENTS.join(', ')}`,
   `emotion 只能是：${REPLY_INTENT_EMOTIONS.join(', ')}`,
   `riskLevel 只能是：${REPLY_INTENT_RISK_LEVELS.join(', ')}`,
