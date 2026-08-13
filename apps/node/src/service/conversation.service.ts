@@ -179,6 +179,7 @@ const QUOTA_CONFIG = {
   relationshipStages: ['R2', 'R3'] as string[],
   graceMessagesAfterWarn: 2,
   newUserHardBlockMessages: 35,
+  oldUserDailyLimit: 7,
   naturalClosePatterns: [
     '晚安',
     '睡了',
@@ -2389,9 +2390,15 @@ export class ConversationService {
     const remainingCount = currentQuota.remainingCount ?? 0;
 
     if (remainingCount > 0) {
+      // daily policy（老用户固定每日额度）：remainingCount 表示“发送前还能发几句”，
+      // 发送成功后应减 1，使前端收到“发完本条后还剩几句”，从而正确触发
+      // 「剩 1 句」提醒（remainingCount === 1）与「额度用完」拦截（remainingCount === 0）。
+      const nextRemaining =
+        currentQuota.policy === 'daily' ? remainingCount - 1 : remainingCount;
       return {
         ...currentQuota,
         usedCount: (currentQuota.usedCount ?? 0) + 1,
+        remainingCount: nextRemaining,
       };
     }
 
@@ -2550,16 +2557,28 @@ export class ConversationService {
       });
     }
 
-    // Trigger zone
-    return this.evaluateDeepTriggerQuota(
+    // New user → deep-trigger evaluation (unchanged)
+    if (isNewUser) {
+      return this.evaluateDeepTriggerQuota(
+        userId,
+        agentId,
+        now,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        currentMessageContent,
+        isNewUser
+      );
+    }
+
+    // Old user → fixed daily quota (no trigger-based evaluation)
+    return this.evaluateOldUserDailyQuota(
       userId,
       agentId,
       now,
       totalLifetimeMsgs,
       todayMsgs,
-      sessionMsgCount,
-      currentMessageContent,
-      isNewUser
+      sessionMsgCount
     );
   }
 
@@ -2723,6 +2742,83 @@ export class ConversationService {
     });
   }
 
+  private async evaluateOldUserDailyQuota(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+    totalLifetimeMsgs: number,
+    todayMsgs: number,
+    sessionMsgCount: number
+  ): Promise<ConversationChatQuotaSnapshot> {
+    const cfg = QUOTA_CONFIG;
+    const limit = cfg.oldUserDailyLimit;
+    // 发送前剩余额度（含当前这条）：今天还能发几句
+    const remainingBefore = limit - todayMsgs;
+
+    // 额度已用完 → 拦截（第 8 句起）
+    if (remainingBefore <= 0) {
+      return this.buildQuotaResult({
+        path: 'active',
+        policy: 'daily',
+        limit,
+        remainingCount: 0,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: true,
+      });
+    }
+
+    // 发完当前这条后正好剩 1 句（remainingBefore === 2）→ 弹“剩 1 句”提醒
+    // resolveChatQuotaForSend 会对 daily policy 做 remainingCount - 1，
+    // 因此本条返回 2，前端实际收到 1，触发「还可以聊最后 1 句」弹框。
+    if (remainingBefore === 2) {
+      this.recordQuotaTriggerEvent(userId, agentId, {
+        triggerType: QuotaTriggerType.warned,
+        triggeredAt: now,
+        dayMsgs: todayMsgs,
+        lifetimeMsgs: totalLifetimeMsgs,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        warnCount: 1,
+      });
+      return this.buildQuotaResult({
+        path: 'active',
+        policy: 'daily',
+        limit,
+        remainingCount: remainingBefore,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: false,
+      });
+    }
+
+    // 额度充足 → 正常放行（remainingBefore === 1 为最后一句，发完后剩余 0）
+    return this.buildQuotaResult({
+      path: 'active',
+      policy: 'daily',
+      limit,
+      remainingCount: remainingBefore,
+      totalLifetimeMsgs,
+      todayMsgs,
+      sessionMsgCount,
+      triggered: false,
+      matchedConditions: [],
+      naturalCloseExempted: false,
+      warned: false,
+      blocked: false,
+    });
+  }
+
   private recordQuotaTriggerEvent(
     userId: MongoObjectId,
     agentId: MongoObjectId,
@@ -2777,11 +2873,13 @@ export class ConversationService {
     naturalCloseExempted?: boolean;
     warned?: boolean;
     blocked?: boolean;
+    policy?: 'trial' | 'daily' | 'deep_trigger';
+    limit?: number;
   }): ConversationChatQuotaSnapshot {
-    const limit = params.remainingCount <= 1 ? 1 : 99;
+    const limit = params.limit ?? (params.remainingCount <= 1 ? 1 : 99);
     return {
       isVip: false,
-      policy: 'deep_trigger',
+      policy: params.policy ?? 'deep_trigger',
       limit,
       usedCount: params.totalLifetimeMsgs,
       remainingCount: Math.max(params.remainingCount, 0),
