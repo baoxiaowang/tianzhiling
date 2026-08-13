@@ -101,6 +101,24 @@ describe('reply bubble plan', () => {
     });
   });
 
+  it('never emits an empty second bubble when forcing two segments', () => {
+    // 第二泡为空、纯旁白、或与第一泡重复时，都必须被丢弃，不产生空泡
+    const cases: Array<{ input: string[]; expectedSegments: string[] }> = [
+      { input: ['妈在呢', ''], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '（轻轻叹气）'], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '（偷偷笑）'], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '妈在呢'], expectedSegments: ['妈在呢'] },
+      { input: ['   ', '   '], expectedSegments: [] },
+    ];
+
+    for (const { input, expectedSegments } of cases) {
+      const inspected = inspectReplyBubbleStructure(input);
+      expect(inspected.segments).toEqual(expectedSegments);
+      expect(inspected.segments).not.toContain('');
+      expect(inspected.segments).not.toContain(' ');
+    }
+  });
+
   it('removes parenthetical asides from both inline and leading positions', () => {
     const inspected = inspectReplyBubbleStructure([
       '（带点笑意）爸(轻声说)真拿你（偷偷笑了一下）没办法',
