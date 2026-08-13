@@ -910,7 +910,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('动作是弱提示，不要求逐项完成');
     expect(brief.bubblePlan).toMatchObject({
       complexityHint: 'paired',
-      encourageTwoSegments: true,
+      preferTwoSegments: true,
     });
   });
 

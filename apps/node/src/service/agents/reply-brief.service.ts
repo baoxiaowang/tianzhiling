@@ -219,7 +219,7 @@ const LONG_HORIZON_REUNION_PATTERN =
 const DURATION_CORRECTION_PATTERN =
   /(?:不是|算错|记错|准确说).{0,12}(?:天|周|个月|月|年)/;
 const EXPLICIT_FACT_REPLACEMENT_PATTERN = /(?:不是|不叫|并非).{0,24}(?:是|叫)/;
-const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 12;
+const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 20;
 const SHORT_TURN_PARTICIPATION_MODES = new Set<ReplyBriefMode>([
   'emotional',
   'relationship',
@@ -429,8 +429,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         ? Math.max(2, replyMoveCount)
         : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
-    preferTwoSegments: Boolean(participationStrategy),
-    encourageTwoSegments: Boolean(careMotivation && !participationStrategy),
+    preferTwoSegments: Boolean(
+      participationStrategy ||
+        (careMotivation && careMotivation.motive !== 'cherish_connection')
+    ),
+    encourageTwoSegments: Boolean(
+      careMotivation &&
+        !participationStrategy &&
+        careMotivation.motive === 'cherish_connection'
+    ),
   });
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
