@@ -34,7 +34,7 @@ describe('scene and capability collaboration', () => {
     expect(brief.replyMoves.length).toBe(3);
     expect(brief.replyMoves[0]).toContain('直接回应彼此的想念');
     expect(brief.replyMoves[1]).toContain('用亲近且有温度');
-    expect(brief.replyMoves[2]).toContain('角色侧当下');
+    expect(brief.replyMoves[2]).toContain('贴着原话的角色判断');
   });
 
   it('uses a local capability boundary even when no scene is available', () => {

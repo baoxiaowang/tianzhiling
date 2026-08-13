@@ -182,7 +182,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('协议：主动贡献/要求多说');
     expect(brief.prompt).toContain('动作：给角色侧当下内容');
     expect(brief.prompt).toContain('共同往事沿用户已说片段回应感受和意义');
-    expect(brief.prompt).toContain('离世日常可用一个自然小场景承载心意');
+    expect(brief.prompt).toContain('离世日常只在用户主动提起或贴题时带一处写意');
     expect(brief.prompt).not.toContain('## 主动贡献');
   });
 
@@ -718,7 +718,7 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(brief.prompt).toContain('离世日常可用一个自然小场景承载心意');
+    expect(brief.prompt).toContain('离世日常只在用户主动提起或贴题时带一处写意');
     expect(brief.prompt).toContain('不延伸成现实到场、触碰或代办');
     expect(brief.replyMoves.join(' ')).toContain('简短的角色侧小场景');
     expect(brief.replyMoves.join(' ')).toContain('只服务本轮关心和安慰');

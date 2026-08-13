@@ -123,12 +123,12 @@ export function buildReplyCareMotivationPrompt(
     cherish_connection: '珍惜这段联系，愿意主动多给一点',
   };
   const actionText: Record<ReplyCareFocus, string> = {
-    reciprocal_bond: '说出一处亲人侧心意',
+    reciprocal_bond: '从用户这句话里挑一个具体点，给亲人侧心意',
     user_burden: '承接后给有分寸的偏爱或宽慰',
     current_wellbeing: '贴着已说处境具体关心',
     family_present: '回应近况并给角色侧牵挂',
     user_joy: '一起高兴并给角色侧反应',
-    current_connection: '给角色侧当下内容或相邻话题',
+    current_connection: '贴着用户原话给相邻回应',
   };
 
   return `亲人侧动机：${motiveText[plan.motive]}；${

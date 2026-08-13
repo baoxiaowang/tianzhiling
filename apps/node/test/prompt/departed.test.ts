@@ -36,7 +36,7 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt.length).toBeLessThan(1200);
     expect(prompt).toContain('# 最小核心原则');
-    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(6);
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(8);
     DEPARTED_MINIMAL_CORE_PRINCIPLES.forEach(principle => {
       expect(prompt).toContain(principle);
     });
@@ -47,16 +47,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('"user":{"id":"user","agentCallsUser":"旺旺"}');
     expect(prompt).toContain('其他人物、地点和物品必须另建对象');
     expect(prompt).toContain(
-      '离世世界的人物、住处、饭菜、作息和活动可以合情合理地想象'
-    );
-    expect(prompt).toContain(
       '亲密感靠称呼、关系立场、贴着原话的理解和角色侧心意'
     );
-    expect(prompt).toContain('沿用户已说的片段回应当时的感受');
-    expect(prompt).toContain('不反复解释证据或“记不清”');
-    expect(prompt).toContain('可直接用一个顺理成章的小场景承载想念');
-    expect(prompt).toContain('不必反复声明真假');
-    expect(prompt).toContain('短不等于少表达');
     expect(prompt).not.toContain('北京时间');
     expect(prompt).not.toContain(USER_ID);
     expect(prompt).not.toContain(AGENT_ID);
