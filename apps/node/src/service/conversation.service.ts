@@ -7014,7 +7014,7 @@ export class ConversationService {
         );
       case MessageType.voice: {
         const transcript = payload.mediaTranscript?.trim();
-        if (!transcript || transcript.length <= 6) return '';
+        if (!transcript) return '';
         return `语音：${transcript}`;
       }
       case MessageType.text:

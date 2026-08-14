@@ -2354,6 +2354,24 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
+  it('keeps short voice transcripts searchable instead of dropping the turn', async () => {
+    const { service } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      existingUserMessageCount: 1,
+    });
+
+    expect(
+      (service as any).buildMessageSearchableText({
+        type: MessageType.voice,
+        content: '[语音]',
+        mediaTranscript: '想你了。',
+      })
+    ).toBe('语音：想你了。');
+  });
+
   it('debounces async replies by replacing the existing delayed conversation job', async () => {
     const remove = jest.fn().mockResolvedValue(undefined);
     const getState = jest.fn().mockResolvedValue('delayed');
