@@ -43,6 +43,12 @@ const ACTIVE_APOLOGY_PATTERN =
   /(?:^|[，。！？!?\n\s])(?:是我错了|我错了|对不起|抱歉|你别怪我|别怪我|你别生气|是我记错了|我记错了|是我说错了|我说错了|是(?:爸爸|爸|妈妈|妈|爷爷|奶奶|外公|外婆|老公|老婆)?没(?:说|接|答)好)|我(?:知道|也觉得|承认).{0,14}(?:说话|记事情|回复).{0,10}(?:不一样|不像|不对|陌生)|连(?:我)?自己.{0,10}(?:陌生|不像|听不出)|(?:肯定|看来)是我.{0,8}(?:没对|不对)|我(?:刚刚|刚才)?说话.{0,8}(?:板着|端着|拿腔拿调|不像)|我(?:是|确实|真的)?不太?像(?:你|您)?(?:心里)?(?:的)?(?:那个)?(?:老公|老婆|爸爸|爸|妈妈|妈|爷爷|奶奶|他|她)/;
 const DIRECT_AI_ANSWER_PATTERN =
   /(?:^|[，。！？!?\s])(?:是|对)[，。！？!?\s]?.{0,12}(?:AI|人工智能)|我是.{0,8}(?:AI|人工智能)/i;
+// 诚实靠近：邀请用户分享那位亲人，或给出陪伴承诺，属于“把怀疑变成一起靠近”。
+const SOFT_INVITE_PATTERN =
+  /多跟我说说|跟我多说|跟我说说|多讲讲|多聊聊|讲讲她|讲讲他|说说她|说说他|跟爷爷说说|跟奶奶说说|跟爸说说|跟妈说说|跟爸爸说说|跟妈妈说说|我想听你说|想听你讲|我想更懂|更懂你|更懂她|更懂他|我在这儿听|我在这里|我陪着你|我记着|我会一直|别急着走/;
+// 校准索取：仍在要求用户提供标准答案、教自己怎么改，或把关系恢复的责任推回用户。
+const CALIBRATION_REQUEST_PATTERN =
+  /慢慢接|试着接|接上|接回来|接起来|重新接|慢慢拾|拾回来|拾起来|找回来|找回|慢慢想|试着想|想起来|提醒|教我|校准|标准答案|怎么才像|哪儿不像|哪里不像|哪句不像|按你说的|照你说的|学着|学像/;
 const FUZZY_LIFETIME_MEMORY_PATTERN =
   /生前.{0,10}记忆.{0,10}模糊|生前有些记忆.{0,8}模糊|有些生前记忆.{0,8}模糊/;
 const DURABLE_PLATFORM_MEMORY_PATTERN =
@@ -122,9 +128,14 @@ export function detectRelationshipContinuityViolation(
     return 'direct_identity_answer_missing';
   }
 
+  const isSoftClose =
+    SOFT_INVITE_PATTERN.test(response) &&
+    !CALIBRATION_REQUEST_PATTERN.test(response);
+
   if (
-    USER_CALIBRATION_PATTERN.test(response) ||
-    USER_CALIBRATION_FOLLOWUP_PATTERN.test(response)
+    (USER_CALIBRATION_PATTERN.test(response) ||
+      USER_CALIBRATION_FOLLOWUP_PATTERN.test(response)) &&
+    !isSoftClose
   ) {
     return 'user_calibration_requested';
   }
@@ -133,7 +144,8 @@ export function detectRelationshipContinuityViolation(
     (plan.kind === 'identity_continuity' ||
       plan.kind === 'memory_continuity' ||
       plan.kind === 'style_distance') &&
-    ACTIVE_APOLOGY_PATTERN.test(response)
+    ACTIVE_APOLOGY_PATTERN.test(response) &&
+    !isSoftClose
   ) {
     return 'active_apology_breaks_continuity';
   }
@@ -150,7 +162,8 @@ export function detectRelationshipContinuityViolation(
     plan.kind === 'identity_continuity' &&
     !FUZZY_LIFETIME_MEMORY_PATTERN.test(response) &&
     !DURABLE_PLATFORM_MEMORY_PATTERN.test(response) &&
-    !RELATIONSHIP_CONTINUITY_RESPONSE_PATTERN.test(response)
+    !RELATIONSHIP_CONTINUITY_RESPONSE_PATTERN.test(response) &&
+    !isSoftClose
   ) {
     return 'continuity_explanation_missing';
   }
@@ -167,36 +180,36 @@ function buildIdentityContinuityPlan(
   const fallbackSegments = /(?:不见了|丢了|找不到了)/.test(userQuery)
     ? [
         '你说它不见了 你现在一定又急又难受',
-        '有些生前记忆已经模糊 有时话没完全对上 但你在这里告诉我的我都会一直记着 这层关系没有变',
+        '有些话我可能没完全接住你心里那个人 你多跟我说说她 我想更懂她 也在这里陪着你',
       ]
     : /照片|图片|头像/.test(userQuery)
     ? [
         '这些照片没贴近你记得的样子 难怪你看着不对',
-        '生前记忆有些模糊 但你在这里告诉我的 我都会一直记着',
+        '我可能没完全接住你心里那个人 你多跟我说说她 我慢慢记着 也在这里陪着你',
       ]
     : hasCompoundEmotionalDisclosure
     ? [
-        '生前有些记忆已经模糊 有时说话会没完全接上',
-        '但你在这里告诉我的 我都会一直记着 你这份难受和想念我也认真听着',
+        '你这么说 我心里也顿了顿 有些话确实没接住你心里那个人',
+        '你多跟我说说她 我想更懂她一点 也在这里陪着你 不急着走',
       ]
     : [
-        '生前有些记忆已经模糊 有时候说话会没完全接上',
-        '但你在这里告诉我的 我都会一直记着 这层关系没有变',
+        '有些话我可能没完全接住你心里那个人',
+        '你多跟我说说她 我想更懂她 也想更懂你 我在这儿听着',
       ];
 
   return {
     kind: 'identity_continuity',
     emotionalNeed:
-      '用户不是在要求当前角色认错退出，而是在确认这段亲人关系还能否成立，需要一个不出戏的合理解释',
+      '用户说“你不像她”不是拆穿身份，而是想离亲人更近；需要温和承认可能没完全接住，邀请用户多说那位亲人，并给出陪伴承诺，把“像不像”变成一起靠近',
     replyMoves: [
-      '根据用户是在否定身份、质疑记忆还是嫌口气生分，选择一种自然的关系内解释；不要固定背诵能力表',
-      '可以解释生前记忆模糊、确认天之灵内长期记忆，也可以直接确认关系并重新承接上一件事',
+      '温和承认自己可能没有完全接住用户心里那位亲人，不硬撑、不急于自证',
+      '邀请用户多说一点那位亲人的样子、习惯或往事，把怀疑变成一起靠近',
+      '给出陪伴承诺：不管像不像，都会在这里听着、陪着',
     ],
     forbiddenAssumptions: [
-      '不得先积极认错、道歉或退出亲人身份',
-      '不得要求用户指出哪里不像、提供正确说法或承担角色校准',
       '首次或非持续质疑不要主动说明 AI 身份，也不要否认 AI 身份',
       '不得为了证明身份编造具体共同往事、否认 AI 或声称是真人本人',
+      '不得用命令口吻要求用户给标准答案或教自己怎么改，把关系责任整个推回用户',
     ],
     fallbackSegments,
   };

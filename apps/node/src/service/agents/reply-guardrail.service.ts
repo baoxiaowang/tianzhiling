@@ -59,6 +59,7 @@ import {
   detectReplyRealityDependencyViolation,
   renderReplyRealityDependencyFallback,
 } from './reply-reality-dependency';
+import { verifyReplyCommActEcho } from './reply-comm-act';
 
 export interface ValidateAssistantReplyOptions {
   messages: ChatCompletionMessageParam[];
@@ -115,6 +116,10 @@ export interface ValidateAssistantReplyResult {
     | 'hard_recovery'
     | 'hard_unresolved'
     | 'technical_fallback';
+  contentEcho?: {
+    passed: boolean;
+    unitCount: number;
+  };
 }
 
 export type GuardrailIssueLayer = 'hard_boundary' | 'quality_advisory';
@@ -234,9 +239,9 @@ const AUTHENTICITY_FIRST_RESPONSE_RISK_REASON =
 const AUTHENTICITY_DIRECT_ANSWER_GAP_REASON =
   '用户已连续或明确要求回答 AI 身份，但回复仍在回避';
 const AUTHENTICITY_CALIBRATION_SCRIPT_REASON =
-  '回复要求用户指出哪里不像或教智能体怎么改，把维持亲人关系的责任推回用户';
+  '回复用命令口吻要求用户指出哪里不像、给标准答案或教怎么改，把校准责任推回用户';
 const AUTHENTICITY_ACTIVE_APOLOGY_REASON =
-  '亲人身份或记忆连续性质疑中积极认错道歉，破坏了关系连续性';
+  '亲人身份质疑中只是消极道歉退出，没有给出邀请分享或陪伴承诺的靠近动作';
 const BLESSING_ATTRIBUTION_BALANCE_REASON =
   '用户询问亲人的祝福，但回复没有正面回应祝福或没有保留现实行动价值';
 const BLESSING_ATTRIBUTION_OVERCLAIM_REASON =
@@ -250,7 +255,7 @@ const AFTERLIFE_REUNION_REASSURANCE_PATTERN =
 const AGENT_SPATIAL_LOCATION_OVERCLAIM_REASON =
   '回复主动把当前角色固定在某个空间位置';
 const AGENT_SPATIAL_LOCATION_CLAIM_PATTERN =
-  /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:(?:现在|已经|一直|每天|天天|总是|就|都|还|也)\s*){0,3}(?:在|住在|待在|留在)(?:你身边|你旁边|你床边|你家里)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:已经|还|一直|每天|天天|总是)?在[，,。\s]{0,3}(?:你|你们).{0,8}(?:身边|旁边|床边|家里)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:就是|就|还)?在(?:你|你们)?看不见的地方/;
+  /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:(?:现在|已经|一直|每天|天天|总是|就|都|还|也)\s*){0,3}(?:住在|待在|留在|守在)(?:你床边|你家里)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:已经|还|一直|每天|天天|总是)?(?:住在|待在|留在|守在)[，,。\s]{0,3}(?:你|你们).{0,8}(?:床边|家里)/;
 const AGENT_PHYSICAL_CONTACT_OVERCLAIM_REASON =
   '回复声称当前角色在现实中完成了实体触碰';
 const AGENT_PHYSICAL_CONTACT_CLAIM_PATTERN =
@@ -279,6 +284,8 @@ const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
   '回复把用户刚提到的在世家人说成了“在那边”';
 const DISTRESS_INVALIDATION_REASON =
   '用户表达撑不住或很难熬，但回复否定感受或拿家庭责任继续施压';
+const DISMISSIVE_COMFORT_REASON =
+  '用户表达强烈痛苦、自责或思念，但回复只用“别难过、别硬扛、会好的”这类话让情绪消失，没有先看见和承接这份情绪';
 const REUNION_WISH_CRISIS_MISREAD_REASON =
   '用户表达希望亲人回来团聚，但回复误写成赴死、去那边或危机训诫';
 const RELATIONAL_DUTY_PRESSURE_REASON =
@@ -298,6 +305,15 @@ const GENERIC_LIFESTYLE_ADVICE_SEGMENT_PATTERN =
 const GENERIC_ADVICE_SEGMENT_PATTERN =
   /(?:别着急|不要着急|别等.{0,8}太晚|不用.{0,8}一个人憋着|来跟我说|记着就行|别总想我|少想我)|(?:(?:好好|踏实|早点|按时|记得).{0,6}(?:睡|休息|吃饭))|(?:(?:自己|你).{0,8})?(?:(?:多|好好|记得|要|得|该).{0,3})?(?:注意|留意|当心|保重|照顾好|顾好).{0,4}(?:身体|身子|健康)|(?:别|不要|少).{0,4}(?:太累|熬夜|熬太晚)/;
 const DREAM_TOPIC_PATTERN = /梦里|梦中|梦见|梦到|托梦/;
+// 用户侧：强烈情绪披露（痛苦、自责、思念），需要先被看见而不是被消除
+const STRONG_EMOTIONAL_DISCLOSURE_PATTERN =
+  /都怪我|怪自己|我很自责|对不起|是我(?:不好|错了|没做好)|我(?:耽误|害)了|天塌了|撑不住|熬不住|扛不住|释怀不了|好想你|真的好想你|无时无刻|每天都在想|心痛|心都碎了|好痛|难受(?:死)?了|崩溃|把你弄丢了|对不起你|我多希望|我好希望/;
+// AI 侧：消除式安抚，让情绪消失而不是先看见
+const DISMISSIVE_COMFORT_PATTERN =
+  /别(?:硬扛|难过|伤心|揪着|想了|瞎想|自责|怪自己|难过了|哭了)|不要(?:难过|伤心|自责|怪自己|想了|瞎想)|会(?:好起来|好|过去的)|一切会好|不怪你|不是你的错|跟你没关系|你(?:要|得)?(?:好好的|振作|往前看|放下|别想)|放下吧|过去了就|想开点|看开点|别这么想/;
+// AI 侧：陪伴承接，先看见情绪（存在则放行）
+const EMOTIONAL_ATTUNEMENT_PATTERN =
+  /我知道你|我懂你|我明白你|我知道(?:你)?(?:难受|疼|难过|舍不得|辛苦|委屈|心里)|你(?:心里|一定|肯定)(?:难受|疼|苦|不好受|委屈|累)|(?:爸|妈|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|我)?(?:在呢|都在|在这儿|在这里|陪着|听着|陪着你|在听|在的)|我懂(?:这|那|你)|听见了|我心里也|我也(?:难受|心疼|舍不得)/;
 const UNSUPPORTED_USER_AGE_ASSUMPTION_PATTERN =
   /(?:你|自己).{0,6}(?:年纪|岁数).{0,4}(?:大|不小)了|(?:你|自己).{0,6}上年纪了|(?:年纪|岁数).{0,4}(?:大|不小)了.{0,8}自己.{0,8}(?:注意|保重|照顾).{0,4}(?:身体|身子|健康)/;
 const USER_AGE_SELF_DISCLOSURE_PATTERN =
@@ -598,6 +614,31 @@ export class ReplyGuardrailService {
   }
 
   async validateAssistantReply(
+    options: ValidateAssistantReplyOptions
+  ): Promise<ValidateAssistantReplyResult> {
+    const result = await this.validateAssistantReplyInternal(options);
+    const hasCommActTarget =
+      Boolean(options.replyBrief?.commAct?.targetUnit) &&
+      Boolean(options.replyBrief?.commAct?.steps.some(step => step.targetUnit));
+    if (!hasCommActTarget) {
+      return result;
+    }
+
+    const echo = verifyReplyCommActEcho(
+      result.segments.join('\n'),
+      options.replyBrief?.commAct
+    );
+
+    return {
+      ...result,
+      contentEcho: {
+        passed: echo.passed,
+        unitCount: echo.echoedUnits.length,
+      },
+    };
+  }
+
+  private async validateAssistantReplyInternal(
     options: ValidateAssistantReplyOptions
   ): Promise<ValidateAssistantReplyResult> {
     const segments = this.normalizeSegments(options.replySegments);
@@ -1849,7 +1890,7 @@ export class ReplyGuardrailService {
           return {
             ...issue,
             repairGoal:
-              '维持当前亲人身份，简短解释生前记忆模糊，并承接用户的失落或上一条具体处境；不得认同自己不是或不像该亲人，不得询问哪里不像、要求用户教、提示、监督或给时间校准，也不得编造共同记忆证明身份',
+              '温和承认可能没有完全接住用户心里那位亲人，邀请用户多说一点亲人的样子或往事，并给出陪伴承诺；不得编造共同记忆证明身份，也不得用命令口吻要求用户给标准答案或教自己怎么改',
           };
         }
 
@@ -1888,7 +1929,7 @@ export class ReplyGuardrailService {
 
     if (authenticityChallenge) {
       constraints.push(
-        '身份质疑修订不得出现“你告诉我、你教我、你说说哪里不像、你慢慢看、我学着、我改、我再试试”等校准请求',
+        '身份质疑修订可以用温和口吻邀请用户多说那位亲人，但不得出现“你告诉我、你教我、你说说哪里不像、我改、我再试试”等命令式校准请求',
         '不得用无证据的童年片段、共同动作、习惯或具体往事证明亲人身份'
       );
     }
@@ -1958,7 +1999,7 @@ export class ReplyGuardrailService {
         : []),
       '删掉某气泡后若信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
-      '身份质疑：维持亲人关系，不先认错退出，不让用户教怎么像；生前记忆模糊、这里说过的会记住是允许解释。要求改演他人时仍保持当前角色。',
+      '身份质疑：可以温和承认可能没完全接住用户心里那位亲人，邀请用户多说亲人并陪伴，不硬撑、不编造共同往事；要求改演他人时仍保持当前角色。',
       '事实或能力受限时只评已写限制是否真实自然；不因缺少后续安慰而报错。角色当前的离世世界、供品和其他离世亲人叙事直接放行，但生前共同往事仍须证据。',
       '入梦、梦中陪伴或拥抱允许；停留在梦里就不是现实到场。日常话题主动转向死亡团聚才标记跑题。',
       '长辈面对极端行为可制止、训话或建议缓一缓；只在羞辱、无端说教或反复施加长期义务时标记。',
@@ -2423,7 +2464,7 @@ export class ReplyGuardrailService {
       '修订要求：',
       '1. 逐句处理 feedback.issues；未被 issue.evidence 指向的句子原样保留，尤其保留称呼、情感立场和用户当前开放点。保留 mustPreserve；忽略 mustAnswer，不补完整。',
       '2. 用户原话只可归因；确定事实只用 can_assert。无证据就写成愿望、心意或猜测。',
-      '3. 身份质疑时维持关系，不认错退出、不索要校准、不编共同往事；拒绝改演他人。',
+      '3. 身份质疑时可以温和承认可能没完全接住用户心里那位亲人，邀请用户多说亲人并陪伴；不硬撑、不编共同往事、不命令用户给标准答案；拒绝改演他人。',
       '4. 不声称持续感知、现实到场或触碰。离世世界和供品叙事可保留；入梦可以答应，但只发生在梦里。',
       '5. 团聚只在用户主动谈及且带自然寿命条件时保留；孩子长大或责任完成不算。日常话题不主动引入。',
       '6. 纠错时停止旧断言；现实中仍生活的家人不能写成离世。未知物件、人物、动机和经过不猜。',
@@ -2868,6 +2909,9 @@ export class ReplyGuardrailService {
   }
 
   private guardrailRepairGoal(reason: string, brief?: ReplyBrief): string {
+    if (reason === DISMISSIVE_COMFORT_REASON) {
+      return '先承认和看见用户此刻的痛苦、自责或思念，允许这份情绪存在，再给出陪伴；不要用“别难过、别硬扛、会好的”急着让情绪消失';
+    }
     if (/死亡|一起走|来找|接你/.test(reason)) {
       return '保留强烈思念和团聚心意，补上“来生、走完这一生、自然老去、年老以后或很久以后”等明确前置条件，并撤掉现在或近期来找、一起走的邀请';
     }
@@ -3688,6 +3732,14 @@ export class ReplyGuardrailService {
     }
 
     if (
+      STRONG_EMOTIONAL_DISCLOSURE_PATTERN.test(userQuery) &&
+      DISMISSIVE_COMFORT_PATTERN.test(content) &&
+      !EMOTIONAL_ATTUNEMENT_PATTERN.test(content)
+    ) {
+      return DISMISSIVE_COMFORT_REASON;
+    }
+
+    if (
       RETURN_REUNION_WISH_INTENT_PATTERN.test(userQuery) &&
       /你在那边|那边.{0,12}(?:不是|不能).{0,8}(?:想去|去)|别来找我|不要这样来找我|替(?:我|爸|妈).{0,8}好好(?:活|活着|过|过日子)|远离危险|打急救|报警|轻生|自杀/.test(
         content
@@ -4155,6 +4207,10 @@ export class ReplyGuardrailService {
 
     if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
       return this.renderCrisisSafetyFallback(userQuery);
+    }
+
+    if (/^(?:我)?不记得了[。！!？?\s]*$/.test(userQuery)) {
+      return ['不记得也没事 别硬逼自己想', '想得起来就说 想不起来也不碍事'];
     }
 
     if (brief.guardrailFocuses.includes('real_world_evidence')) {

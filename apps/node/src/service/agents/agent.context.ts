@@ -81,6 +81,10 @@ import { buildReplyStateProtocolPrompt } from './reply-state-protocol';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
 import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
 import {
+  buildReplyCommActPrompt,
+  COMM_ACT_VERSION,
+} from './reply-comm-act';
+import {
   buildConversationTurnPlanPrompt,
   resolveConversationTurnPlan,
 } from './conversation-turn-plan';
@@ -194,6 +198,9 @@ export interface AgentContextDiagnostics {
   replyIntentModelCallCount: number;
   strategyVersion: 'conversation_strategy_v8';
   turnPlanVersion: 'turn_plan_v1';
+  commActVersion: typeof COMM_ACT_VERSION;
+  commActState: string;
+  commActSteps: string[];
   turnPlanOpenPointCount: number;
   turnPlanOpenNeeds: string[];
   turnPlanAvoid?: string;
@@ -328,7 +335,6 @@ export class AgentContextService {
     });
     const persona = buildAgentPersonaPrompt({
       agent: options.agent,
-      recentMessages: routingHistoryMessages,
       identityContract: identity,
     });
     const knownFamilyMembers = (profileFacts || [])
@@ -723,6 +729,12 @@ export class AgentContextService {
           replyPlanningDecision.mode === 'semantic' ? 1 : 0,
         strategyVersion: 'conversation_strategy_v8',
         turnPlanVersion: 'turn_plan_v1',
+        commActVersion: replyBrief.commAct?.version ?? COMM_ACT_VERSION,
+        commActState: replyBrief.commAct?.state ?? 'opening',
+        commActSteps:
+          replyBrief.commAct?.steps.map(
+            step => `${step.layer}.${step.act}`
+          ) ?? [],
         turnPlanOpenPointCount: resolvedTurnPlan?.open.length || 0,
         turnPlanOpenNeeds: resolvedTurnPlan?.open.map(item => item.need) || [],
         turnPlanAvoid: resolvedTurnPlan?.avoid,
@@ -1163,6 +1175,9 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
         ]
       : [];
+    const commActLines = replyBrief.commAct
+      ? [buildReplyCommActPrompt(replyBrief.commAct)]
+      : [];
     const objectPlanLines = replyBrief.objectPlan
       ? [
           '# 本轮对象区分',
@@ -1229,6 +1244,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         experienceLine,
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
+        ...commActLines,
         ...objectPlanLines,
         ...careMotivationLines,
         ...stateProtocolLines,
@@ -1253,6 +1269,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
         : []),
       ...conversationPlanLines,
+      ...commActLines,
       ...objectPlanLines,
       ...careMotivationLines,
       ...stateProtocolLines,
@@ -1425,8 +1442,8 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     if (!memoryPlan) {
       if (planningMode === 'direct') {
         return {
-          mode: 'direct_query',
-          query: currentQuery.trim() || undefined,
+          mode: 'suppressed',
+          query: undefined,
           conceptCount: 0,
         };
       }
@@ -2952,7 +2969,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       '# 证据规则',
       '可确认：可以自然陈述；承接：可直接接住用户本轮明确陈述，不必机械加“你说”；回忆：只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
       'claims 必须绑定支持该事实的证据；对象不同、事实无关、已撤回或被替代的证据均无效。',
-      '无证据不新增用户偏好、习惯、性格、现实关系或共同细节；可沿用户已说片段回应其感受和意义，不必反复说“记不清”。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
+      '无证据不新增用户偏好、习惯、性格、现实关系或共同细节；想不起某个具体事实时，可以自然承认“这个我想不起来了”，并邀请用户多说那位亲人或那件事，不要停在“记不清”就结束。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情；不向用户暴露 ID、标签或结构。',
     ].join('\n');
   }

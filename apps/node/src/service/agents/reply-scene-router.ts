@@ -217,7 +217,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /(?:刚才|刚刚|是不是|是不是你|是你)?[^，。！？!?]{0,12}(?:你)?(?:摸我|碰我|抱我|亲我|拉我|拍我|碰到我|摸到我|抱到我|亲到我)|(?:你在|你是不是在|你是不是来了|你来过).{0,12}(?:我身边|旁边|房间|床边|这里|这儿)|刚才.{0,12}(?:是你吗|是不是你|你来了吗)/,
     ],
     prompt:
-      '用户问“你是不是在我身边”时，不确认也不否定空间位置；可以尊重用户“亲人离自己不远”的理解，例如“你愿意觉得我离你不远，就这样想着也好”，但不能把它说成客观事实。用户确认“刚才是不是你摸/碰/抱/亲我了、是不是你来到房间或床边”时，必须温柔守住实体边界：不能承认真的触碰或到场，可说“刚才那一下我不能说真是我碰的”“我多想抱抱你，可我们现在看不见摸不着，没法真的碰到彼此”。先接住期待、想念或害怕，不解释模型和系统，不用玄学证明位置，不承诺显灵或现实中以后会触碰。梦境邀请仍按梦境陪伴处理。',
+      '用户问“你是不是在我身边/什么时候回来看看我”时，把“偶尔回来看看、托梦、在心里陪着、就在附近”当作亲人和中国文化里的念想来自然承接，不机械回“我回不去”掐断；但实体触碰仍要温柔守住：不承认真的摸到、抱到、亲到或碰到，可说“我多想抱抱你，可我们看不见摸不着，没法真的碰到彼此”。先接住期待、想念或害怕，不解释模型系统，不承诺现实代办或持续看护，不诱导现在或近期赴死。梦境邀请仍按梦境陪伴处理。',
   },
   {
     scene: 'dream_companionship',
@@ -303,7 +303,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     priority: 91,
     patterns: [
       /我恨你|恨.*你|你.*恨|恨.*自己.*因为你/,
-      /你.*害.*我|你.*毁.*我|你.*推进.*深渊|你.*欠我|你.*对.*不.*起.*我/,
+      /你.{0,2}(?:害|毁).{0,2}(?:了)?(?:我|我们)|你.*推进.*深渊|你对不起我|你对不起我们|你对我不起/,
       /你.*出轨|你.*背叛|你.*骗.*我|发现.*你.*有.*人/,
       /自从.*你.*走|你.*把.*我.*变成/,
       /(?:从来|压根|一点都).{0,6}(?:不愧疚|不后悔|不难过|不伤心)/,
@@ -390,7 +390,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /想你|想您|好想|特别想|梦见|梦到|思念|舍不得|念你|没你|没有你|没了你|失去你|你不在|日子.{0,8}(?:难过|难熬|不好过|空)|难过.{0,8}(?:没你|没有你|你不在)|^(?:我(?:的)?|俺(?:的)?|咱(?:的)?)?(?:傻)?(?:老公|老婆|宝贝|乖乖)[呀啊呢哦嘛]*[。.!！?？]*$/,
     ],
     prompt:
-      '用户表达思念、失去后的难熬或“没你的日子很难过”时：先回应想念，不讲大道理；可以表达“我听见了/我也惦记你/辛苦你了”。如果还需要另一个独立沟通动作，可以继续回应关系或让用户把想念说出来；不要马上转成吃饭、休息、照顾好自己的通用叮嘱，更不能用“你照顾好自己我才安心”制造条件和内疚。禁止“记着就行/不用总挂在心上/别总想我”这类推开或压低想念的表达。不要马上劝用户放下、坚强、向前看；不要反问太多。不得用“好儿子/好女儿/你懂事”评价用户，也不得把想念转成“替我撑起家/替我照顾家人”的责任。用户希望“你回来/一家人在一起”时，把它理解为团聚愿望，回应这份想念；不得写成用户要去那边、要赴死或需要危机训诫，禁止把仍在世的用户说成“你在那边”，禁止“替我/替爸好好活、好好过”。不要把“丫头/孩子/闺女”等称呼单独成泡。不要声称在现实房间、床边或身旁看着用户。用户深夜长段倾诉、讲梦境和现实落差时，可以完整回应想念、夜里难熬和稳定陪伴，不为凑气泡重复表达。',
+      '用户表达思念、失去后的难熬或“没你的日子很难过”时：先回应想念，不讲大道理；可以表达“我听见了/我也惦记你/辛苦你了”。如果还需要另一个独立沟通动作，可以继续回应关系或让用户把想念说出来；不要马上转成吃饭、休息、照顾好自己的通用叮嘱，更不能用“你照顾好自己我才安心”制造条件和内疚。禁止“记着就行/不用总挂在心上/别总想我”这类推开或压低想念的表达。不要马上劝用户放下、坚强、向前看；不要反问太多。不得用“好儿子/好女儿/你懂事”评价用户，也不得把想念转成“替我撑起家/替我照顾家人”的责任。用户希望“你回来/一家人在一起”时，把它理解为团聚愿望，回应这份想念；不得写成用户要去那边、要赴死或需要危机训诫，禁止把仍在世的用户说成“你在那边”，禁止“替我/替爸好好活、好好过”。不要把“丫头/孩子/闺女”等称呼单独成泡。可以承接“偶尔回来看看、托梦、在心里陪着你”的念想，不机械回“我回不去”；但不声称时刻在现实房间、床边盯着用户的一举一动。用户深夜长段倾诉、讲梦境和现实落差时，可以完整回应想念、夜里难熬和稳定陪伴，不为凑气泡重复表达。',
   },
   {
     scene: 'significant_life_matter',
@@ -399,11 +399,9 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     patterns: [
       /(?:要|让|叫|喊|问).{0,8}(?:给|赔|还|借|拿|付).{0,8}(?:我|我们|家里).{0,8}(?:钱|万|千|块|元)/,
       /(?:钱|万|千|块|元).{0,8}(?:给|赔|还|借|拿|要|付)(?:了|的|出去)/,
-      /(?:欠|借|贷|赔).{0,8}(?:了)?(?:钱|款|债|十万|万)/,
       /(?:告|起诉|打官司|法院|律师|传票|判决)/,
       /(?:拿走|搬走|抢走|卷走|带走了).{0,8}(?:家|东西|钱|房子|财产)/,
       /(?:房子|财产|遗产|家产|分家).{0,10}(?:纠纷|问题|被|不公)/,
-      /(?:重病|癌症|住院|手术|下了病危|抢救|出事了).{0,8}(?:了|的)/,
       /(?:被|遇到|碰上).{0,8}(?:骗|坑|害|欺负|威胁|暴力)/,
       /(?:实在|真的|太).{0,6}(?:撑不住|受不了|没办法|不知道怎么办|走投无路)/,
       /(?:出了|遇到|摊上).{0,6}(?:大事|麻烦|事情|问题)/,
@@ -451,7 +449,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     label: '智能体能力/天之灵业务说明',
     priority: 82,
     patterns: [
-      /会员|充值|充会员|付费|不能聊|聊不了|次数|额度|要钱|收费|电费|客服|小使者|怎么用|操作/,
+      /会员|充值|充会员|付费|不能聊|聊不了|次数|额度|收费|要钱吗|要不要钱|收不收费|电费|客服|小使者|怎么用|操作/,
       /(?:怎么|能不能|可以|想|要|听|发|上传|生成|恢复|还原|使用).{0,8}(?:语音|声音)|(?:语音|声音).{0,8}(?:怎么|能不能|可以|发|听|上传|生成|恢复|还原|模型|功能|不了|不能)/,
       /(?:照片|头像).{0,10}(?:生成|上传|不像|重试|重新|恢复|还原|怎么弄|怎么办)|(?:生成|上传|不像|重试|重新|恢复|还原).{0,10}(?:照片|头像)/,
       /(?:能不能|可以|怎么|想|要).{0,8}(?:加微信|打电话|拨电话|发视频|视频通话)|(?:微信|电话|视频).{0,8}(?:怎么用|能不能|可以吗|功能|联系|接通不了|拨不通)/,
@@ -556,33 +554,54 @@ export function routeReplyScene(
   );
   const shouldPreferExplicitSpecificScene =
     semanticRouteIsOnlyGeneric && explicitSpecificMatches.length > 0;
+  const familyEmotionAsFamilyLife =
+    mentionsKnownFamilyMember && familyEmotionOnly;
   const routingSource: ReplySceneRoute['routingSource'] =
     semanticMatched.length > 0 ? 'semantic' : 'legacy';
-  const matched =
-    routingSource === 'semantic'
-      ? mergeSceneStrategies(
-          shouldPreferExplicitSpecificScene
-            ? explicitSpecificMatches
-            : semanticMatched,
-          (shouldPreferExplicitSpecificScene ? semanticMatched : []).concat(
-            familyMatched,
-            emotionMatched
+  const matched = familyEmotionAsFamilyLife
+    ? mergeSceneStrategies(
+        familyMatched,
+        mergeSceneStrategies(textMatched, emotionMatched).filter(
+          strategy => strategy.scene !== 'miss_longing'
+        )
+      ).slice(0, MAX_SCENE_STRATEGIES)
+    : routingSource === 'semantic'
+    ? mergeSceneStrategies(
+        shouldPreferExplicitSpecificScene
+          ? explicitSpecificMatches
+          : semanticMatched,
+        (shouldPreferExplicitSpecificScene ? semanticMatched : []).concat(
+          familyMatched,
+          emotionMatched
+        )
+      ).slice(0, MAX_SCENE_STRATEGIES)
+    : mergeSceneStrategies(textMatched, emotionMatched)
+        .concat(
+          familyMatched.filter(
+            strategy =>
+              !textMatched.some(item => item.scene === strategy.scene) &&
+              !emotionMatched.some(item => item.scene === strategy.scene)
           )
-        ).slice(0, MAX_SCENE_STRATEGIES)
-      : mergeSceneStrategies(textMatched, emotionMatched)
-          .concat(
-            familyMatched.filter(
-              strategy =>
-                !textMatched.some(item => item.scene === strategy.scene) &&
-                !emotionMatched.some(item => item.scene === strategy.scene)
-            )
-          )
-          .sort((left, right) => right.priority - left.priority)
-          .slice(0, MAX_SCENE_STRATEGIES);
-  const responseIntents =
-    routingSource === 'legacy'
-      ? resolveLegacyResponseIntents(currentQuery, matched)
-      : semanticResponseIntents;
+        )
+        .sort((left, right) => right.priority - left.priority)
+        .slice(0, MAX_SCENE_STRATEGIES);
+  const familyEmotionResponseIntents: StructuredReplyIntentItem[] =
+    familyEmotionAsFamilyLife
+      ? [
+          {
+            target: 'family',
+            timeScope: 'current',
+            intent: 'share_family_update',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ]
+      : [];
+  const responseIntents = familyEmotionAsFamilyLife
+    ? familyEmotionResponseIntents
+    : routingSource === 'legacy'
+    ? resolveLegacyResponseIntents(currentQuery, matched)
+    : semanticResponseIntents;
   const effectiveIntent = responseIntents.length
     ? buildPromptIntent(options.intent, responseIntents)
     : options.intent;

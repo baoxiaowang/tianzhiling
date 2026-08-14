@@ -160,7 +160,6 @@ export class AgentChatToolService {
       .map(fact => this.profileFactToEvidence(fact));
     const compiledPersona = buildAgentPersonaPrompt({
       agent: context.agent,
-      recentMessages: [],
     });
 
     if (

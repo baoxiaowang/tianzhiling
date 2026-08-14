@@ -7,6 +7,7 @@ import type {
   ConversationQuestionNeed,
   ConversationTurnClosure,
   ReplyIntentEmotion,
+  StructuredReplyIntentItem,
 } from './reply-intent';
 
 /**
@@ -119,10 +120,55 @@ export function buildDeterministicLightStrategy(options: {
   scene?: ReplyScene;
   currentQuery?: string;
   emotion?: ReplyIntentEmotion;
+  intents?: StructuredReplyIntentItem[];
 }): ConversationMovePlan | undefined {
-  const { scene } = options;
+  const { scene, intents } = options;
 
   if (!scene) return undefined;
+
+  if (
+    scene === 'family_life' &&
+    intents?.some(
+      item =>
+        item.intent === 'share_family_update' &&
+        item.subIntent === 'family_care'
+    )
+  ) {
+    return {
+      stance: 'tender',
+      stanceTarget: 'user',
+      moves: [
+        { type: 'acknowledge', goal: '接住用户对家人健康的庆幸、担心或心疼' },
+        { type: 'comfort', goal: '表达具体关心，不把照护责任推给用户' },
+      ],
+      socialStrategy: 'direct',
+      strategyPurpose: '共情家人健康近况并表达具体关心',
+      questionNeed: 'none',
+      turnClosure: 'neutral',
+      personaActivation: [],
+    };
+  }
+
+  if (
+    scene === 'comfort_request' &&
+    /(?:不想活|想死|去死|撑不住|撑不下去|想去陪你|去找你|没有你|你不在)/.test(
+      options.currentQuery || ''
+    )
+  ) {
+    return {
+      stance: 'tender',
+      stanceTarget: 'user',
+      moves: [
+        { type: 'comfort', goal: '接住用户当前强烈的情绪' },
+        { type: 'affirm', goal: '表达牵挂，不把当前表达判断成现实危险' },
+      ],
+      socialStrategy: 'direct',
+      strategyPurpose: '承接强烈痛苦，不做危机判断',
+      questionNeed: 'none',
+      turnClosure: 'neutral',
+      personaActivation: [],
+    };
+  }
 
   const template = SCENE_STRATEGY[scene];
   if (!template) return undefined;

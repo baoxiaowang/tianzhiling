@@ -18,6 +18,7 @@ import {
   CONVERSATION_ASSISTANT_CONTRIBUTIONS,
   CONVERSATION_AVOID_ACTIONS,
   CONVERSATION_CLOSURE_READINESS,
+  CONVERSATION_CONTENT_UNIT_KINDS,
   CONVERSATION_CONTINUATION_GOALS,
   CONVERSATION_MOVE_TYPES,
   CONVERSATION_OBJECT_CONFIDENCES,
@@ -48,6 +49,7 @@ import {
   ConversationMovePlan,
   ConversationReading,
   ConversationReadingAnchor,
+  ConversationContentUnit,
   ConversationRelationshipStance,
   ReplyIntentEmotion,
   ReplyIntentKind,
@@ -111,7 +113,11 @@ export interface ReplyPlanningDecision {
     | 'reality_dependency'
     | 'long_message'
     | 'multiple_questions'
-    | 'unresolved_semantics'    | 'short_message'
+    | 'ongoing_topic'
+    | 'concrete_narrative'
+    | 'unresolved_semantics'
+    | 'unanswerable_question'
+    | 'short_message'
     | 'ordinary_message';
 }
 
@@ -151,6 +157,27 @@ const EXPLICIT_SELF_CONTAINED_DIRECT_PATTERN =
   /^(?:(?:你好|您好|在吗|谢谢|多谢|行|可以|知道了|好的|好|嗯+|哦+|哈哈+|嘿嘿+|拜拜|睡了)|(?:早安|晚安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆|孩子|儿子|女儿)?|(?:我)?(?:爱你|想你了|好想你)|(?:你|您)(?:也)?(?:想我|爱我)(?:吗|不))(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？]*$/;
 const LIGHTWEIGHT_COMFORT_DIRECT_PATTERN =
   /(?:有点|有些|一点|一点点)?(?:难过|难受|想哭|心里空|心里堵|睡不着|失眠)|陪(?:陪)?我(?:一会儿|一下|会儿)?|抱抱我|我想你(?:了)?|好想你/;
+const ONGOING_TOPIC_PATTERN =
+  /(?:还没|也快|正在|准备|快要|马上|就要|最近在|这两天|这阵子).{0,8}(?:装修|装完|盖好|建好|翻新|搬家|办好|办完|考完|出院|复查|开工|完工|退休|辞职|入职|开庭|结案)|(?:装修|翻新|盖房|盖楼|搬家|住院|手术|辞职|退休|开庭|打官司|办退休|办社保|办证).{0,12}(?:了|中|还没|快了|进行|准备|要)/;
+const CONCRETE_NARRATIVE_MIN_CHARS = 36;
+const CONCRETE_ACTION_PATTERN =
+  /去|来|回|到|开|买|卖|做|吃|看|见|听|说|讲|办|搬|装|修|盖|走|跑|带|陪|接|送|上班|下班|加班|工作|考试|高考|考研|毕业|开学|上学|面试|入职|辞职|退休|住院|出院|手术|复查|检查|结婚|离婚|怀孕|生了|考上|录取|出发|旅行|玩/;
+const CONCRETE_DEICTIC_PATTERN =
+  /今天|昨天|明天|前天|后天|刚才|刚刚|现在|最近|这两天|这阵子|周末|昨晚|今晚|上午|中午|下午|晚上|早上|我|我们|他|她|孩子|女儿|儿子|妈妈|爸爸|家|公司|学校|医院|车|房|房子|店|外面|那边|这边/;
+const CONCRETE_CLAUSE_PATTERN = /[，,。！？!?；;]/;
+
+function isConcreteNarrative(text: string): boolean {
+  if (Array.from(text).length < CONCRETE_NARRATIVE_MIN_CHARS) {
+    return false;
+  }
+
+  const clauseCount = (text.match(CONCRETE_CLAUSE_PATTERN) || []).length;
+  return (
+    clauseCount >= 1 &&
+    CONCRETE_ACTION_PATTERN.test(text) &&
+    CONCRETE_DEICTIC_PATTERN.test(text)
+  );
+}
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
   /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
@@ -159,6 +186,11 @@ const CONVERSATION_FUTILITY_PATTERN =
   /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
 const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
   /(?:你|您)(?:刚才|前面|上次)?(?:说|讲|回)(?:的|得)|(?:我|俺|咱)(?:都|已经)?(?:说|讲|解释)(?:了|过)|^(?:但|但是|可是|可你|不过|所以|反正|明明|还不是|那为什么|那怎么)|(?:说|讲)得?(?:真)?(?:轻巧|容易)|(?:还是|又)(?:这样|那样|这句|这话)|(?:没懂|没听懂|不明白我|敷衍|白说|算了|不说了|没意思)/;
+const SHORT_UNRESOLVED_UTTERANCE_PATTERN =
+  /^(?:这不是一回事|你呢|再说也一样|那也一样|那为什么|怎么不是|就是这意思|哪里一样|一样吗)$/;
+// 无解之问：问句形式，但内核是情绪而不是信息请求。
+// 这里只做很宽的"疑似情绪之问" gate，真正的语义判断交给 semantic 分类器。
+const UNANSWERABLE_QUESTION_PATTERN = /为什么|凭什么|怎么会|为何|为啥|凭啥|咋就|咋会/;
 const FIRST_PERSON_REFERENCE_PATTERN = /(?:^|[，,。！？!?\s])(?:我|俺|咱)/;
 const DEATH_MOMENT_REFERENCE_PATTERN =
   /走的时候|离开的时候|临走|临走前|去世|过世|死的时候|那一刻/;
@@ -190,6 +222,8 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
   'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
+  '如果用户提到一件正在进行、刚发生或尚未闭环的具体事项，例如装修、工作进展、家庭事务、出行、照顾家人等，先判断当前最自然的接续点；确实值得继续了解时，在 turnPlan.open 输出 need=topic_followup，detail 写清楚该接什么，并让 questionNeed=helpful、moves 最多一个 ask。用户已说清、情绪很深或正在收尾时保持 none，不为了问而问。',
+  '“为什么/凭什么/怎么会/为啥”常是情绪表达而非信息请求。当它表达不甘、委屈、愤懑、被抛下的痛或对命运的不解时，questionNeed 用 none、continuationGoal 用 hold、avoid 选 explain 或 generic_comfort、moves 用 acknowledge/comfort 承接情绪；只有确实索取具体信息时才用 answer 或 ask。',
   'conversationPlan.turnPlan 用短字段定位本轮：state 是交谈位置，不是心理诊断；open 最多两个，只写真正未完成的问题、请求、纠正或关系需要，并绑定 agent、user、unknown 或 objectPlan.ref；goal/action/target 只保留一个主目标；avoid 选一项；close 判断能否收口。上轮计划只作候选，本轮已回答、转向或结束就关闭，不机械续写。',
   '开放点未完成用 blocked。用户说话少、不想理、忘了、没人回应、重复请求或“说了也没用”时用 repairing 或 withdrawing、goal=repair，并让 target 写明本轮实际改变；要求多说时 action=self_expression，当轮先说内容。仅明确晚安、去忙、安静或结束时使用 closing/close/ready。',
   '上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，target 必须新增关系态度或具体理解。承诺以后多说、解释沉默、泛泛安慰或让用户先说不算完成。',
@@ -198,12 +232,14 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '“跟你说了也没用、讲了又有什么用、说了你也不懂”既评价已经发生的沟通，也表示即使继续说仍无效。target 要写明如何用用户已经说过的具体内容改变回应，不让用户重讲、证明自己或继续承担表达责任。',
   'memoryPlan 只判断回复是否缺少用户个性化事实。先输出 contextCoverage=complete|missing；missing 时先列具体 missingConcepts（缺失概念，不是触发词），再用最多四个 queries 覆盖它们。当前消息或最近对话已给全时 complete，禁止查询已有事实。query 的 entityHint 优先用完整事实 key，否则用简短语义路径。',
   'objectPlan 只在当前回复涉及两个及以上不同对象，或“他/她/这位”等指代不清时输出，否则为 null。每个对象保留当前消息中的逐字 mention；binding 只能用已确认对象 ID、agent、user 或 unknown。未确认的人即使有多个也分别建 ref，不猜关系，不把甲的话、经历或关系给乙。最多六个对象。',
+  'contentUnits 只抽取本轮原话中真正需要回应的具体事、画面、物件、人物或状态，最多三个；每项 text 必须逐字来自当前消息，不写情绪标签，不写“想你/难过/后悔”等纯情绪词。没有具体内容时输出空数组。',
   '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
   'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',
   'capabilityQuestions 仅用于明确询问知道、看见、听见、到场、触碰或祝福能力的消息；evidence 必须逐字来自当前消息。',
   `target 只能是：${REPLY_INTENT_TARGETS.join(', ')}`,
   `timeScope 只能是：${REPLY_INTENT_TIME_SCOPES.join(', ')}`,
   `intent 只能是：${REPLY_INTENT_KINDS.join(', ')}`,
+  'ask_platform_support 仅指用户问平台/会员/服务收费、额度、功能或操作问题；不指用户与家人的金钱纠纷、家庭矛盾或生活里的“要钱”。',
   `subIntent 只能是：${REPLY_INTENT_SUB_INTENTS.join(', ')}`,
   `emotion 只能是：${REPLY_INTENT_EMOTIONS.join(', ')}`,
   `riskLevel 只能是：${REPLY_INTENT_RISK_LEVELS.join(', ')}`,
@@ -232,6 +268,9 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `turnPlan.open[].priority：${CONVERSATION_OPEN_PRIORITIES.join(', ')}`,
   `turnPlan.avoid：${CONVERSATION_AVOID_ACTIONS.join(', ')}`,
   '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
+  `contentUnits 每项使用 {kind,text,importance}；kind 只能是：${CONVERSATION_CONTENT_UNIT_KINDS.join(
+    ', '
+  )}。`,
   'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作和目标都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
 ].join('\n');
 
@@ -380,6 +419,11 @@ export class ReplyIntentClassifierService {
         ...(semanticIntent.objectPlan
           ? {
               objectPlan: semanticIntent.objectPlan,
+            }
+          : {}),
+        ...(semanticIntent.contentUnits?.length
+          ? {
+              contentUnits: semanticIntent.contentUnits,
             }
           : {}),
         ...(semanticIntent.reading
@@ -563,6 +607,10 @@ export class ReplyIntentClassifierService {
       return { mode: 'semantic', reason: 'multiple_questions' };
     }
 
+    if (UNANSWERABLE_QUESTION_PATTERN.test(currentQuery)) {
+      return { mode: 'semantic', reason: 'unanswerable_question' };
+    }
+
     if (
       ENGAGEMENT_SEMANTIC_PLANNING_PATTERN.test(currentQuery) ||
       ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(currentQuery) ||
@@ -573,6 +621,18 @@ export class ReplyIntentClassifierService {
 
     if (CONTEXT_DEPENDENT_UTTERANCE_PATTERN.test(currentQuery)) {
       return { mode: 'semantic', reason: 'unresolved_semantics' };
+    }
+
+    if (SHORT_UNRESOLVED_UTTERANCE_PATTERN.test(currentQuery)) {
+      return { mode: 'semantic', reason: 'unresolved_semantics' };
+    }
+
+    if (ONGOING_TOPIC_PATTERN.test(currentQuery)) {
+      return { mode: 'semantic', reason: 'ongoing_topic' };
+    }
+
+    if (isConcreteNarrative(currentQuery)) {
+      return { mode: 'semantic', reason: 'concrete_narrative' };
     }
 
     if (
@@ -1102,7 +1162,9 @@ export class ReplyIntentClassifierService {
 
     try {
       const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-      const emotion = this.readEnum(parsed.emotion, REPLY_INTENT_EMOTIONS);
+      const emotion =
+        this.readEnum(parsed.emotion, REPLY_INTENT_EMOTIONS) ||
+        this.normalizeReplyIntentEmotion(parsed.emotion);
       const riskLevel = this.readEnum(
         parsed.riskLevel,
         REPLY_INTENT_RISK_LEVELS
@@ -1133,6 +1195,32 @@ export class ReplyIntentClassifierService {
         currentQuery,
         knownObjects
       );
+      // 大模型偶尔会把 contentUnits 放到 conversationPlan 或 reading 内层。
+      // 顶层优先，缺失时再从这两个位置做兼容解析；text 仍需逐字来自当前消息。
+      let contentUnits = this.parseConversationContentUnits(
+        parsed.contentUnits,
+        currentQuery
+      );
+      if (
+        !contentUnits.length &&
+        parsed.conversationPlan &&
+        typeof parsed.conversationPlan === 'object'
+      ) {
+        contentUnits = this.parseConversationContentUnits(
+          (parsed.conversationPlan as Record<string, unknown>).contentUnits,
+          currentQuery
+        );
+      }
+      if (
+        !contentUnits.length &&
+        parsed.reading &&
+        typeof parsed.reading === 'object'
+      ) {
+        contentUnits = this.parseConversationContentUnits(
+          (parsed.reading as Record<string, unknown>).contentUnits,
+          currentQuery
+        );
+      }
       const rawReading =
         parsed.reading && typeof parsed.reading === 'object'
           ? (parsed.reading as Record<string, unknown>)
@@ -1214,6 +1302,9 @@ export class ReplyIntentClassifierService {
       }
       if (objectPlan) {
         result.objectPlan = objectPlan;
+      }
+      if (contentUnits.length) {
+        result.contentUnits = contentUnits;
       }
       if (reading) {
         result.reading = reading;
@@ -1414,6 +1505,25 @@ export class ReplyIntentClassifierService {
     }
 
     const turnPlan = this.parseConversationTurnPlan(item.turnPlan, objectPlan);
+    // 不要因为模型顺手给了一个 topic_followup，就把它明确的“无需提问”
+    // 升级成提问。只有开放点真正是 must，或者 moves 已经包含 ask 时，
+    // 才认为这轮值得追问。否则尊重模型对情绪/收尾的判断。
+    const hasMustTopicFollowup = turnPlan?.open.some(
+      point => point.need === 'topic_followup' && point.priority === 'must'
+    );
+    const hasExplicitAskMove = moves.some(move => move.type === 'ask');
+    const effectiveQuestionNeed =
+      questionNeed === 'none' &&
+      (hasMustTopicFollowup || hasExplicitAskMove)
+        ? 'helpful'
+        : questionNeed;
+    const turnPlanWithQuestionAction =
+      turnPlan &&
+      turnPlan.open.some(point => point.need === 'topic_followup') &&
+      effectiveQuestionNeed !== 'none' &&
+      turnPlan.action !== 'question'
+        ? { ...turnPlan, action: 'question' as const }
+        : turnPlan;
     const fallbackEngagement = this.buildConversationEngagementFallback({
       moves,
       stanceTarget,
@@ -1421,7 +1531,9 @@ export class ReplyIntentClassifierService {
       turnClosure,
     });
     const engagement =
-      (turnPlan ? turnPlanToEngagement(turnPlan) : undefined) ||
+      (turnPlanWithQuestionAction
+        ? turnPlanToEngagement(turnPlanWithQuestionAction)
+        : undefined) ||
       this.parseConversationEngagementPlan(
         item.engagement,
         fallbackEngagement
@@ -1434,10 +1546,10 @@ export class ReplyIntentClassifierService {
       moves,
       socialStrategy,
       strategyPurpose,
-      questionNeed,
+      questionNeed: effectiveQuestionNeed,
       turnClosure,
       personaActivation: this.parseShortTextList(item.personaActivation, 3, 70),
-      ...(turnPlan ? { turnPlan } : {}),
+      ...(turnPlanWithQuestionAction ? { turnPlan: turnPlanWithQuestionAction } : {}),
       ...(engagement ? { engagement } : {}),
     };
   }
@@ -1453,10 +1565,11 @@ export class ReplyIntentClassifierService {
     const item = value as Record<string, unknown>;
     const state = this.readEnum(item.state, CONVERSATION_USER_STATES);
     const goal = this.readEnum(item.goal, CONVERSATION_CONTINUATION_GOALS);
-    const action = this.readEnum(
+    let action = this.readEnum(
       item.action,
       CONVERSATION_ASSISTANT_CONTRIBUTIONS
     );
+    const rawAction = this.readShortText(item.action, 40).toLowerCase();
     const target = this.readShortText(item.target, 100);
     const avoid = this.readEnum(item.avoid, CONVERSATION_AVOID_ACTIONS);
     const close = this.readEnum(item.close, CONVERSATION_CLOSURE_READINESS);
@@ -1472,6 +1585,39 @@ export class ReplyIntentClassifierService {
           .map(raw => this.parseConversationTurnOpenPoint(raw, allowedObjects))
           .filter((point): point is ConversationTurnOpenPoint => Boolean(point))
       : [];
+
+    // 规划模型偶尔会把 moves 里的 acknowledge/affirm 当成 turnPlan.action。
+    // 有 topic_followup 时按开放事项推导为 question，避免整个 turnPlan 被丢弃。
+    if (
+      open.some(point => point.need === 'topic_followup') &&
+      action !== 'question' &&
+      open.some(
+        point => point.need === 'topic_followup' && point.priority === 'must'
+      )
+    ) {
+      action = 'question';
+    }
+    if (open.some(point => point.need === 'direct_answer') && action !== 'answer') {
+      action = 'answer';
+    }
+    if (!action && /self_expr|self_disclose|主动说/.test(rawAction)) {
+      action = 'self_expression';
+    }
+    if (!action && /detail|specific|具体/.test(rawAction)) {
+      action = 'specific_detail';
+    }
+    if (!action && /question|ask|追问/.test(rawAction)) {
+      action = 'question';
+    }
+    if (!action && /answer|回答/.test(rawAction)) {
+      action = 'answer';
+    }
+    if (!action && /comfort|acknowledge|affirm|hold|安抚|陪伴/.test(rawAction)) {
+      action = 'affection';
+    }
+    if (!action && open.length) {
+      action = 'affection';
+    }
 
     if (
       !state ||
@@ -1510,9 +1656,18 @@ export class ReplyIntentClassifierService {
     const detail = this.readShortText(item.detail, 80);
     const priority = this.readEnum(item.priority, CONVERSATION_OPEN_PRIORITIES);
 
+    // 模型经常先生成 objectPlan 里的 obj1/obj2，再用这个 ref 绑定 open 点。
+    // 当只有一个对象、objectPlan 因单对象策略被丢弃时，open 点不应因此丢失。
+    const objectIsKnown =
+      object === 'user' ||
+      object === 'agent' ||
+      object === 'unknown' ||
+      object === undefined ||
+      /^obj\d+$/.test(object);
+
     if (
       !object ||
-      !allowedObjects.has(object) ||
+      (!allowedObjects.has(object) && !objectIsKnown) ||
       !need ||
       !detail ||
       !priority
@@ -2007,6 +2162,93 @@ export class ReplyIntentClassifierService {
       );
   }
 
+  private parseConversationContentUnits(
+    value: unknown,
+    currentQuery: string
+  ): ConversationContentUnit[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+
+    return value
+      .slice(0, 3)
+      .map(raw => {
+        if (!raw || typeof raw !== 'object') {
+          return undefined;
+        }
+
+        const item = raw as Record<string, unknown>;
+        const kind = this.readEnum(item.kind, CONVERSATION_CONTENT_UNIT_KINDS);
+        const text = this.readShortText(item.text, 120);
+        const importance =
+          item.importance === 'high' || item.importance === 'medium'
+            ? item.importance
+            : undefined;
+
+        if (
+          !kind ||
+          !text ||
+          !importance ||
+          !this.isContentUnitGrounded(text, currentQuery) ||
+          seen.has(text)
+        ) {
+          return undefined;
+        }
+
+        seen.add(text);
+        return {
+          kind,
+          text,
+          importance,
+        };
+      })
+      .filter(
+        (unit): unit is ConversationContentUnit => Boolean(unit)
+      );
+  }
+
+  // 内容单元必须是当前原话里真实存在的片段。模型偶尔会省略“我今天/明明”
+  // 这类连接词，导致不再逐字等于完整子串；这里用最长公共连续片段兜底，
+  // 同时仍拒绝整段编造出来的新事实。
+  private isContentUnitGrounded(text: string, currentQuery: string): boolean {
+    if (currentQuery.includes(text)) {
+      return true;
+    }
+
+    const textLength = Array.from(text).length;
+    if (textLength < 6) {
+      return false;
+    }
+
+    const overlap = this.longestCommonSubstringLength(text, currentQuery);
+    const shortLength = Math.min(textLength, Array.from(currentQuery).length);
+    const minOverlap = Math.max(8, Math.floor(shortLength * 0.6));
+    return overlap >= minOverlap;
+  }
+
+  private longestCommonSubstringLength(left: string, right: string): number {
+    const short = left.length <= right.length ? left : right;
+    const long = short === left ? right : left;
+    const previous = new Array<number>(short.length + 1).fill(0);
+    let maxLength = 0;
+
+    for (const longChar of long) {
+      for (let index = short.length; index >= 1; index -= 1) {
+        if (short[index - 1] === longChar) {
+          const next = previous[index - 1] + 1;
+          previous[index] = next;
+          maxLength = Math.max(maxLength, next);
+        } else {
+          previous[index] = 0;
+        }
+      }
+    }
+
+    return maxLength;
+  }
+
   private parseCurrentQueryExcerpts(
     value: unknown,
     currentQuery: string
@@ -2091,6 +2333,29 @@ export class ReplyIntentClassifierService {
     return allowed.includes(normalized as T[number])
       ? (normalized as T[number])
       : undefined;
+  }
+
+  private normalizeReplyIntentEmotion(
+    value: unknown
+  ): ReplyIntentEmotion | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const text = value.trim().toLowerCase();
+    if (!text) return undefined;
+    if (/confus|困惑|不安|担心|焦虑|害怕|怕|worried|anxious/.test(text)) {
+      return 'fear';
+    }
+    if (/long|想|思念|missing|longing/.test(text)) return 'longing';
+    if (/sad|难过|悲伤|伤心|sorrow|grief/.test(text)) return 'sadness';
+    if (/guilt|愧疚|后悔|自责/.test(text)) return 'guilt';
+    if (/anger|生气|愤怒|愤懑/.test(text)) return 'anger';
+    if (/hope|期待|开心|高兴/.test(text)) return 'hope';
+    if (/attach|依恋|亲近/.test(text)) return 'attachment';
+    if (/concern|关心|心疼|担心/.test(text)) return 'concern';
+
+    return 'unknown';
   }
 
   private readConfidence(value: unknown): number | undefined {

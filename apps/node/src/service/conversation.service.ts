@@ -179,6 +179,7 @@ const QUOTA_CONFIG = {
   relationshipStages: ['R2', 'R3'] as string[],
   graceMessagesAfterWarn: 2,
   newUserHardBlockMessages: 35,
+  oldUserDailyLimit: 3,
   naturalClosePatterns: [
     '晚安',
     '睡了',
@@ -435,6 +436,8 @@ interface ReplyRoutingAudit {
   guardrailFinalReviewResult?: string;
   guardrailReviewMode?: ReplyGuardrailReviewMode;
   guardrailFocuses?: string[];
+  contentEchoPassed?: boolean;
+  contentEchoUnitCount?: number;
   guardrailFeedbackRounds?: GuardrailFeedback[];
   guardrailCandidateVersions?: string[][];
   guardrailRevisionRecords?: GuardrailRevisionRecord[];
@@ -2387,9 +2390,15 @@ export class ConversationService {
     const remainingCount = currentQuota.remainingCount ?? 0;
 
     if (remainingCount > 0) {
+      // daily policy（老用户固定每日额度）：remainingCount 表示“发送前还能发几句”，
+      // 发送成功后应减 1，使前端收到“发完本条后还剩几句”，从而正确触发
+      // 「剩 1 句」提醒（remainingCount === 1）与「额度用完」拦截（remainingCount === 0）。
+      const nextRemaining =
+        currentQuota.policy === 'daily' ? remainingCount - 1 : remainingCount;
       return {
         ...currentQuota,
         usedCount: (currentQuota.usedCount ?? 0) + 1,
+        remainingCount: nextRemaining,
       };
     }
 
@@ -2548,16 +2557,28 @@ export class ConversationService {
       });
     }
 
-    // Trigger zone
-    return this.evaluateDeepTriggerQuota(
+    // New user → deep-trigger evaluation (unchanged)
+    if (isNewUser) {
+      return this.evaluateDeepTriggerQuota(
+        userId,
+        agentId,
+        now,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        currentMessageContent,
+        isNewUser
+      );
+    }
+
+    // Old user → fixed daily quota (no trigger-based evaluation)
+    return this.evaluateOldUserDailyQuota(
       userId,
       agentId,
       now,
       totalLifetimeMsgs,
       todayMsgs,
-      sessionMsgCount,
-      currentMessageContent,
-      isNewUser
+      sessionMsgCount
     );
   }
 
@@ -2721,6 +2742,83 @@ export class ConversationService {
     });
   }
 
+  private async evaluateOldUserDailyQuota(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+    totalLifetimeMsgs: number,
+    todayMsgs: number,
+    sessionMsgCount: number
+  ): Promise<ConversationChatQuotaSnapshot> {
+    const cfg = QUOTA_CONFIG;
+    const limit = cfg.oldUserDailyLimit;
+    // 发送前剩余额度（含当前这条）：今天还能发几句
+    const remainingBefore = limit - todayMsgs;
+
+    // 额度已用完 → 拦截（第 8 句起）
+    if (remainingBefore <= 0) {
+      return this.buildQuotaResult({
+        path: 'active',
+        policy: 'daily',
+        limit,
+        remainingCount: 0,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: true,
+      });
+    }
+
+    // 发完当前这条后正好剩 1 句（remainingBefore === 2）→ 弹“剩 1 句”提醒
+    // resolveChatQuotaForSend 会对 daily policy 做 remainingCount - 1，
+    // 因此本条返回 2，前端实际收到 1，触发「还可以聊最后 1 句」弹框。
+    if (remainingBefore === 2) {
+      this.recordQuotaTriggerEvent(userId, agentId, {
+        triggerType: QuotaTriggerType.warned,
+        triggeredAt: now,
+        dayMsgs: todayMsgs,
+        lifetimeMsgs: totalLifetimeMsgs,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        warnCount: 1,
+      });
+      return this.buildQuotaResult({
+        path: 'active',
+        policy: 'daily',
+        limit,
+        remainingCount: remainingBefore,
+        totalLifetimeMsgs,
+        todayMsgs,
+        sessionMsgCount,
+        triggered: true,
+        matchedConditions: ['dailyLimit'],
+        naturalCloseExempted: false,
+        warned: true,
+        blocked: false,
+      });
+    }
+
+    // 额度充足 → 正常放行（remainingBefore === 1 为最后一句，发完后剩余 0）
+    return this.buildQuotaResult({
+      path: 'active',
+      policy: 'daily',
+      limit,
+      remainingCount: remainingBefore,
+      totalLifetimeMsgs,
+      todayMsgs,
+      sessionMsgCount,
+      triggered: false,
+      matchedConditions: [],
+      naturalCloseExempted: false,
+      warned: false,
+      blocked: false,
+    });
+  }
+
   private recordQuotaTriggerEvent(
     userId: MongoObjectId,
     agentId: MongoObjectId,
@@ -2775,11 +2873,13 @@ export class ConversationService {
     naturalCloseExempted?: boolean;
     warned?: boolean;
     blocked?: boolean;
+    policy?: 'trial' | 'daily' | 'deep_trigger';
+    limit?: number;
   }): ConversationChatQuotaSnapshot {
-    const limit = params.remainingCount <= 1 ? 1 : 99;
+    const limit = params.limit ?? (params.remainingCount <= 1 ? 1 : 99);
     return {
       isVip: false,
-      policy: 'deep_trigger',
+      policy: params.policy ?? 'deep_trigger',
       limit,
       usedCount: params.totalLifetimeMsgs,
       remainingCount: Math.max(params.remainingCount, 0),
@@ -3440,6 +3540,8 @@ export class ConversationService {
         guardrailFinalReviewResult: guarded.finalReviewResult,
         guardrailReviewMode,
         guardrailFocuses: replyBrief.guardrailFocuses,
+        contentEchoPassed: guarded.contentEcho?.passed,
+        contentEchoUnitCount: guarded.contentEcho?.unitCount,
         guardrailFeedbackRounds: guarded.feedbackRounds,
         guardrailCandidateVersions: guarded.candidateVersions,
         guardrailRevisionRecords: guarded.revisionRecords,
@@ -4312,8 +4414,8 @@ export class ConversationService {
   }
 
   /**
-   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立句子时，
-   * 在句号/感叹号/问号处拆成两颗，保留后续参与泡。
+   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立片段时，
+   * 优先在句号/感叹号/问号处拆成两颗，没有句末标点时再按逗号/分号保守拆分。
    * 不新增模型调用，纯工程判断。
    */
   private splitLongContentOnReplyBubble(segments: string[]): string[] {
@@ -4323,32 +4425,17 @@ export class ConversationService {
     const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
     if (visibleChars <= 35) return segments;
 
-    // 找独立句断点：按 。！？ 分割，每段至少 8 字
-    const sentences = content.split(/(?<=[。！？])/u);
-    if (sentences.length < 2) return segments;
+    const splitAt =
+      this.findReplyBubbleSplitPoint(content, /(?<=[。！？])/u, visibleChars) ??
+      this.findReplyBubbleSplitPoint(content, /(?<=[，；])/u, visibleChars);
 
-    // 确保前半段 ≥ 8 字且后半段 ≥ 8 字
-    let splitAt = -1;
-    let accumulated = 0;
-    for (let i = 0; i < sentences.length - 1; i++) {
-      accumulated += Array.from(sentences[i].replace(/\s/gu, '')).length;
-      const remaining = visibleChars - accumulated;
-      if (accumulated >= 8 && remaining >= 8) {
-        splitAt = i;
-        break;
-      }
-    }
+    if (splitAt === null) return segments;
 
-    if (splitAt === -1) return segments;
-
-    const first = sentences
-      .slice(0, splitAt + 1)
-      .join('')
+    const first = content
+      .slice(0, splitAt)
+      .replace(/[，；]+$/u, '')
       .trim();
-    const second = sentences
-      .slice(splitAt + 1)
-      .join('')
-      .trim();
+    const second = content.slice(splitAt).trim();
 
     if (!first || !second) return segments;
 
@@ -4360,6 +4447,46 @@ export class ConversationService {
       return [first, second, segments[1]];
     }
     return segments;
+  }
+
+  private findReplyBubbleSplitPoint(
+    content: string,
+    separator: RegExp,
+    visibleChars: number
+  ): number | null {
+    const pieces = content.split(separator);
+    if (pieces.length < 2) {
+      return null;
+    }
+
+    let accumulated = 0;
+    let bestIndex: number | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < pieces.length - 1; index += 1) {
+      accumulated += Array.from(
+        pieces[index].replace(/\s/gu, '')
+      ).length;
+      const remaining = visibleChars - accumulated;
+      if (accumulated >= 8 && remaining >= 8) {
+        const score = Math.abs(accumulated - remaining);
+        if (
+          score < bestScore ||
+          (score === bestScore && bestIndex !== null && index > bestIndex)
+        ) {
+          bestScore = score;
+          bestIndex = index;
+        }
+      }
+    }
+
+    if (bestIndex === null) {
+      return null;
+    }
+
+    return pieces
+      .slice(0, bestIndex + 1)
+      .join('')
+      .length;
   }
 
   private async afterReply(
@@ -6887,7 +7014,7 @@ export class ConversationService {
         );
       case MessageType.voice: {
         const transcript = payload.mediaTranscript?.trim();
-        if (!transcript || transcript.length <= 6) return '';
+        if (!transcript) return '';
         return `语音：${transcript}`;
       }
       case MessageType.text:
@@ -7792,6 +7919,8 @@ export class ConversationService {
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
     replyGuardrailFocuses?: string[];
+    replyContentEchoPassed?: boolean;
+    replyContentEchoUnitCount?: number;
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -7935,6 +8064,14 @@ export class ConversationService {
       replyGuardrailReviewMode:
         routing?.guardrailReviewMode?.trim() || undefined,
       replyGuardrailFocuses: routing?.guardrailFocuses?.filter(Boolean),
+      replyContentEchoPassed:
+        typeof routing?.contentEchoPassed === 'boolean'
+          ? routing.contentEchoPassed
+          : undefined,
+      replyContentEchoUnitCount:
+        typeof routing?.contentEchoUnitCount === 'number'
+          ? routing.contentEchoUnitCount
+          : undefined,
       replyEvidenceCount: routing?.evidenceCount,
       replyFactClaimCount: routing?.factClaimCount,
       replyUnsupportedClaimCount: routing?.unsupportedClaimCount,

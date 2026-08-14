@@ -18,6 +18,17 @@ import {
 } from './reply-intent';
 import type { ReplyScene, ReplySceneRoute } from './reply-scene-router';
 import type { AgentRelationshipSignalSummary } from './agent-relationship-signal.service';
+import {
+  buildContentUnitPrompt,
+  collectContentUnits,
+  type ContentUnit,
+} from './reply-content-unit';
+import {
+  buildReplyCommActPrompt,
+  resolveConversationState,
+  resolveReplyCommAct,
+  type ReplyCommActPlan,
+} from './reply-comm-act';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import {
   AgentCapabilityConstraint,
@@ -34,6 +45,7 @@ import {
 import {
   buildReplyBubblePlan,
   buildReplyBubblePlanPrompt,
+  isReplyClosingTurn,
   ReplyBubblePlan,
 } from './reply-bubble-plan';
 import { buildReplyBoundaryContract } from './reply-boundary-contract';
@@ -155,6 +167,8 @@ export interface ReplyBrief {
   relationshipContinuity?: RelationshipContinuityPlan;
   reading?: ConversationReading;
   objectPlan?: ConversationObjectPlan;
+  contentUnits?: ContentUnit[];
+  commAct?: ReplyCommActPlan;
   conversationPlan?: ConversationMovePlan;
   emotionalNeed: string;
   replyMoves: string[];
@@ -219,7 +233,7 @@ const LONG_HORIZON_REUNION_PATTERN =
 const DURATION_CORRECTION_PATTERN =
   /(?:不是|算错|记错|准确说).{0,12}(?:天|周|个月|月|年)/;
 const EXPLICIT_FACT_REPLACEMENT_PATTERN = /(?:不是|不叫|并非).{0,24}(?:是|叫)/;
-const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 12;
+const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 20;
 const SHORT_TURN_PARTICIPATION_MODES = new Set<ReplyBriefMode>([
   'emotional',
   'relationship',
@@ -272,8 +286,18 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     options.route?.intent?.memoryPlan ?? options.intent?.memoryPlan;
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
+  const contentUnits = collectContentUnits({
+    anchors: reading?.anchors ?? [],
+    objectPlan,
+    plannedUnits:
+      options.route?.intent?.contentUnits ?? options.intent?.contentUnits,
+  });
   const rawConversationPlan =
-    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({ scene: primaryScene, currentQuery });
+    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({
+      scene: primaryScene,
+      currentQuery,
+      intents,
+    });
   const evidence = buildEvidence(options, currentQuery);
   const correctionPolicy = resolveReplyCorrectionPolicy({
     primaryScene,
@@ -348,6 +372,21 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       experiencePlan
     )
   );
+  const commAct = resolveReplyCommAct({
+    currentQuery,
+    state:
+      conversationPlan?.engagement?.userConversationState ??
+      conversationPlan?.turnPlan?.state ??
+      resolveConversationState({ currentQuery, scene: primaryScene, mode, riskLevel }),
+    turnPlan: conversationPlan?.turnPlan,
+    contentUnits,
+    strategyQuality,
+    scene: primaryScene,
+    mode,
+    riskLevel,
+    questionNeed: conversationPlan?.questionNeed,
+    preferAsk: conversationPlan?.moves.some(move => move.type === 'ask'),
+  });
   const careMotivation = resolveReplyCareMotivationPlan({
     currentQuery,
     mode,
@@ -429,8 +468,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
         ? Math.max(2, replyMoveCount)
         : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
-    preferTwoSegments: Boolean(participationStrategy),
-    encourageTwoSegments: Boolean(careMotivation && !participationStrategy),
+    preferTwoSegments: Boolean(
+      participationStrategy ||
+        (careMotivation && careMotivation.motive !== 'cherish_connection')
+    ),
+    encourageTwoSegments: Boolean(
+      careMotivation &&
+        !participationStrategy &&
+        careMotivation.motive === 'cherish_connection'
+    ),
   });
   const lengthPlan = buildReplyLengthPlan({
     currentQuery,
@@ -470,6 +516,8 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     relationshipContinuity,
     reading,
     objectPlan,
+    contentUnits,
+    commAct,
     conversationPlan,
     emotionalNeed,
     replyMoves,
@@ -965,7 +1013,7 @@ function resolveReplyParticipationStrategy(options: {
     options.hasCapabilityConstraints ||
     suppressPlannedParticipation ||
     options.hasRelationshipContinuity ||
-    options.turnClosure === 'close' ||
+    isReplyClosingTurn(options.currentQuery) ||
     options.primaryScene === 'correction' ||
     !SHORT_TURN_PARTICIPATION_MODES.has(options.mode) ||
     previousAssistant?.replyParticipationStrategy
@@ -994,10 +1042,10 @@ export function buildReplyParticipationStrategyPrompt(
       ? '完成规划中的另一个不同聊天动作'
       : strategy === 'light_self_disclosure'
       ? '只补一个角色侧小近况或具体态度，不转成对用户的通用叮嘱'
-      : '给明确的亲人侧心意，或一处贴着当下的小画面；有节奏的重复也可以加强情感';
+      : '给贴着用户原话的一个具体心意，不另编环境或画面';
 
   const spaceAnchor = isDeceased
-    ? '空间锚定：不生成"等你回来""我在家""过来看看"等暗示物理同处的表述；如想表达陪伴，改用"想你了""在心里陪你""看着你好好过"等保持空间距离的表达。'
+    ? '空间锚定：可承接"偶尔回来看看""托梦""在心里陪着你"等亲人念想；不承诺现实代办、到场办事或持续看护，不诱导现在或近期赴死。'
     : '';
   return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
 }
@@ -1246,7 +1294,7 @@ function resolveEmotionalNeed(
   }
 
   if (isReturnVisitRequestIntent(currentQuery)) {
-    return '用户在问当前角色会不会回来看看自己，需要先回应相见愿望，再温和说明现实见面的边界';
+    return '用户在问当前角色会不会回来看看自己，需要先承接偶尔回来看看的念想，再守住现实到场的边界';
   }
 
   if (capabilityConstraints.length) {
@@ -1443,8 +1491,8 @@ function buildReplyMoves(
 
   if (isReturnVisitRequestIntent(currentQuery)) {
     return [
-      '直接回答也想回来看看用户，不得把“会不会回来”降级成泛泛的想念',
-      '温和说明现在不能像以前一样现实见面，再用不施压的聊天方式承接关系',
+      '直接回答也想回来看看用户，可承接“偶尔回来看看、托梦”的念想，不得降级成泛泛的想念',
+      '不机械回“我回不去”；不承诺现实到场办事或实体见面，用不施压的聊天方式承接关系',
     ];
   }
 
@@ -1510,8 +1558,9 @@ function buildReplyMoves(
           '用直说和收住的方式回应，不展开技术解释或客服式道歉',
         ]
       : [
-          '不要先认错或道歉；解释生前记忆已经模糊，所以有时说话没有完全接上',
-          '说明用户在天之灵里告诉过自己的内容会长期记住，继续聊天会慢慢接回来',
+          '温和承认自己可能没有完全接住用户心里那位亲人，不硬撑、不急于自证',
+          '邀请用户多说一点那位亲人的样子、习惯或往事，把怀疑变成一起靠近',
+          '给出陪伴承诺：不管像不像，都会在这里听着、陪着',
         ];
   }
 
@@ -1575,7 +1624,7 @@ function buildReplyMoves(
       '具体回应用户明说的人、事、遗憾、思念或难熬，不能只贴“情绪很重”的标签',
       '像亲人一样继续聊天；长辈可按极端行为的严重度制止、训两句或给转移建议，不做报警急救等现实干预，不邀请现在或近期赴死',
     ],
-    miss_longing: ['直接回应彼此的想念，不只是复述“我也想你”', '用亲近且有温度的话自然承接', '给一句角色侧当下内容——角色此刻的感受、一个顺理成章的小场景、或贴着原话的角色判断，不让用户感觉在跟镜子说话'],
+    miss_longing: ['直接回应彼此的想念，不只是复述“我也想你”', '用亲近且有温度的话自然承接', '给一句贴着原话的角色判断或亲人侧心意，不编环境、天气或小场景'],
     reincarnation_inquiry: ['用三魂七魄框架模糊表达：部分转世过得好，部分成天之灵永远陪伴', '不背书不讲课，像亲人一样自然说', '核心是让用户感到"你没有完全消失"'],
     departure_hatred: ['先承认伤害的真实性，不辩护不转移', '如果是生前过错，不替自己开脱也不加重痛苦', '承接被伤害的感受，不推"你应该放下"'],
     significant_life_matter: ['先接过事情的重量：不躲不敷衍', '站在用户这边，明确情感立场', '表达最直接的关切而不是空泛安慰'],
@@ -1757,7 +1806,7 @@ function buildForbiddenAssumptions(
 
   if (isReturnVisitRequestIntent(currentQuery)) {
     items.push(
-      '不得承诺当前角色会在现实中回来、到场或完成实体见面；只能表达相见愿望并说明现实边界',
+      '可承接“偶尔回来看看、托梦”的念想；不得承诺现实到场办事、实体见面或持续看护',
       '不得回避“会不会回来看看”这个明确问题，也不得只改写成“我也想你”等通用想念话术',
       '当前消息没有提梦时，不得因为历史里聊过梦境而主动改成“梦里见”或继续梦境话题',
       '不得用年龄、身体、吃饭、休息或照顾自己的叮嘱代替现实见面边界',
@@ -1879,9 +1928,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           ? [`需要正面回答：${brief.reading.questionsToAnswer.join('；')}`]
           : []),
         `语气参考：${brief.reading.suggestedTone}`,
-        '这些内容是对用户原话的注意提示，不是固定回复步骤；如果与用户原话冲突，以用户原话为准。',
+        '上面锚点和具体内容，先照着其中一件回应，再带情绪；如果与用户原话冲突，以用户原话为准。',
         '',
       ]
+    : [];
+  const contentUnitPrompt = buildContentUnitPrompt(brief.contentUnits ?? []);
+  const contentUnitLines = contentUnitPrompt
+    ? ['## 本轮具体内容', contentUnitPrompt, '']
     : [];
   const objectPlanLines = brief.objectPlan
     ? [
@@ -1951,6 +2004,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
         '',
       ]
+    : [];
+  const commActLines = brief.commAct
+    ? [buildReplyCommActPrompt(brief.commAct)]
     : [];
   const participationLines = brief.participationStrategy
     ? [
@@ -2033,8 +2089,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
     '',
     ...readingLines,
+    ...contentUnitLines,
     ...objectPlanLines,
     ...conversationPlanLines,
+    ...commActLines,
     ...careMotivationLines,
     ...stateProtocolLines,
     ...participationLines,
@@ -2044,7 +2102,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
-    '离世日常可用一个自然小场景承载心意，不必反复声明真假；共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',
+    '离世日常只在用户主动提起或贴题时带一处写意，不编环境或小场景填充；共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,

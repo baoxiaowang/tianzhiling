@@ -69,6 +69,16 @@ export function buildReplyBubblePlan(options: {
   };
 }
 
+export function isReplyClosingTurn(currentQuery: string): boolean {
+  const query = currentQuery.trim();
+  return (
+    CLOSING_TURN_PATTERN.test(query) ||
+    /^(?:晚安|睡了|先睡吧|去睡了|休息了|再见|拜拜|回头聊|下次聊)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|老公|老婆)?[。！!…~～\s]*$/.test(
+      query
+    )
+  );
+}
+
 export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   const complexityInstruction: Record<ReplyBubbleComplexityHint, string> = {
     concise: '能用一颗就不拆。',

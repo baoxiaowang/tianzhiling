@@ -1,8 +1,6 @@
 import {
   AgentEntity,
   AgentPersonaProfile,
-  MessageEntity,
-  MessageRole,
 } from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
@@ -21,7 +19,6 @@ export interface AgentPersonaPromptResult {
   source:
     | 'chat_derived_profile'
     | 'explicit_profile'
-    | 'conversation_evidence'
     | 'relationship_defaults';
   ageAtDeath?: number;
   relationshipType: string;
@@ -32,12 +29,9 @@ export interface AgentPersonaPromptResult {
 const MAX_PROFILE_ITEMS = 3;
 const MAX_PROFILE_ITEM_LENGTH = 70;
 const MAX_STYLE_VALUE_LENGTH = 110;
-const MAX_CHAT_EVIDENCE_ITEMS = 3;
-const MAX_CHAT_EVIDENCE_LENGTH = 90;
 
 export function buildAgentPersonaPrompt(options: {
   agent: AgentEntity | null;
-  recentMessages?: MessageEntity[];
   identityContract?: AgentIdentityContract;
 }): AgentPersonaPromptResult {
   const agent = options.agent;
@@ -50,15 +44,10 @@ export function buildAgentPersonaPrompt(options: {
   const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
   const hasUsableProfile = profileLines.length > 0;
   const explicitProfile = hasUsableProfile ? [] : buildExplicitProfile(agent);
-  const chatEvidence = hasUsableProfile
-    ? []
-    : buildChatStyleEvidence(options.recentMessages);
   const source = hasUsableProfile
     ? 'chat_derived_profile'
     : explicitProfile.length
     ? 'explicit_profile'
-    : chatEvidence.length
-    ? 'conversation_evidence'
     : 'relationship_defaults';
 
   const classifierIdentity = [
@@ -87,7 +76,7 @@ export function buildAgentPersonaPrompt(options: {
       identityAnchor,
       generationGuidance,
       canonicalGuidance,
-      '关系、年龄和性别只影响称呼与分寸，不套刻板印象；聊天证据优先。',
+      '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(profileLines.length
         ? ['聊天画像（只管表达，不作事实）：', ...profileLines]
@@ -95,18 +84,9 @@ export function buildAgentPersonaPrompt(options: {
       ...(explicitProfile.length
         ? ['角色描述（只管表达，不作事实）：', ...explicitProfile]
         : []),
-      ...(chatEvidence.length
-        ? [
-            '近期聊天风格弱证据：',
-            ...chatEvidence,
-            '旧回复只参考称呼、语气和节奏，不继承事实、能力、承诺或套话；用户纠正优先。',
-            ...(hasUsableProfile || explicitProfile.length
-              ? []
-              : ['弱证据不足以证明稳定性格，不要临时编造稳定性格。']),
-          ]
-        : hasUsableProfile
-        ? []
-        : ['画像不足：保守延续已接受的称呼和语气，不要临时编造稳定性格。']),
+      ...(!hasUsableProfile && !explicitProfile.length
+        ? ['画像不足：保守延续已接受的称呼和语气，不要临时编造稳定性格。']
+        : []),
       '画像只管怎么说，不覆盖事实、能力和本轮原话。',
     ].join('\n'),
     classifierContext: classifierParts.join('；').slice(0, 760),
@@ -114,7 +94,7 @@ export function buildAgentPersonaPrompt(options: {
     ageAtDeath,
     relationshipType,
     generation,
-    evidenceSnippetCount: chatEvidence.length,
+    evidenceSnippetCount: 0,
   };
 }
 
@@ -170,22 +150,6 @@ function buildExplicitProfile(agent: AgentEntity | null): string[] {
     (line): line is string => Boolean(line)
   );
 }
-
-function buildChatStyleEvidence(messages?: MessageEntity[]): string[] {
-  return (messages || [])
-    .filter(
-      message =>
-        message.role === MessageRole.assistant &&
-        Boolean(message.content?.trim())
-    )
-    .slice(-MAX_CHAT_EVIDENCE_ITEMS)
-    .map(
-      (message, index) =>
-        `${index + 1}. ${clean(message.content, MAX_CHAT_EVIDENCE_LENGTH)}`
-    )
-    .filter(line => !line.endsWith('. '));
-}
-
 
 function buildCanonicalRelationshipGuidance(
   canonical: AgentCanonicalRelationship

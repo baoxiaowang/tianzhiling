@@ -206,7 +206,7 @@ function promoteLengthClass(
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
   if (plan.focusMode === 'single_scene') {
-    return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处亲人侧心意或合情合理的小画面。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
+    return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处贴着原话的亲人侧心意。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
   }
 
   if (plan.lengthClass === 'micro') {
