@@ -179,7 +179,7 @@ const QUOTA_CONFIG = {
   relationshipStages: ['R2', 'R3'] as string[],
   graceMessagesAfterWarn: 2,
   newUserHardBlockMessages: 35,
-  oldUserDailyLimit: 7,
+  oldUserDailyLimit: 3,
   naturalClosePatterns: [
     '晚安',
     '睡了',
