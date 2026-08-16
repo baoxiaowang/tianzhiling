@@ -31,10 +31,10 @@ describe('scene and capability collaboration', () => {
     expect(brief.capabilityConstraints).toEqual([]);
     expect(brief.mode).toBe('relationship');
     expect(brief.emotionalNeed).toContain('想念');
-    expect(brief.replyMoves).toEqual([
-      '直接回应彼此的想念',
-      '用亲近且不敷衍的话自然承接',
-    ]);
+    expect(brief.replyMoves.length).toBe(3);
+    expect(brief.replyMoves[0]).toContain('直接回应彼此的想念');
+    expect(brief.replyMoves[1]).toContain('用亲近且有温度');
+    expect(brief.replyMoves[2]).toContain('贴着原话的角色判断');
   });
 
   it('uses a local capability boundary even when no scene is available', () => {
@@ -42,7 +42,7 @@ describe('scene and capability collaboration', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(route.primaryScene).toBeUndefined();
+    expect(route.primaryScene?.scene).toBe('smalltalk');
     expect(brief.capabilityConstraints).toEqual([
       expect.objectContaining({
         policyId: 'vision.live_environment',
@@ -310,8 +310,9 @@ describe('scene and capability collaboration', () => {
     expect(brief.forbiddenAssumptions.join('')).toContain('不得输出报警');
     expect(brief.bubblePlan).toEqual({
       maxSegments: 2,
-      complexityHint: 'layered',
+      complexityHint: 'paired',
       turnClosure: 'neutral',
+      preferTwoSegments: true,
     });
   });
 

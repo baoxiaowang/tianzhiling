@@ -256,6 +256,10 @@ const AGENT_SPATIAL_LOCATION_OVERCLAIM_REASON =
   '回复主动把当前角色固定在某个空间位置';
 const AGENT_SPATIAL_LOCATION_CLAIM_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:(?:现在|已经|一直|每天|天天|总是|就|都|还|也)\s*){0,3}(?:住在|待在|留在|守在)(?:你床边|你家里)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|婆|老公|老婆)(?:已经|还|一直|每天|天天|总是)?(?:住在|待在|留在|守在)[，,。\s]{0,3}(?:你|你们).{0,8}(?:床边|家里)/;
+const GHOSTLIKE_PRESENCE_REASON =
+  '回复把当前角色说成像幽灵一样飘回来或飘在用户附近，构成固定空间位置的现实现身';
+const GHOSTLIKE_PRESENCE_PATTERN =
+  /(?:像|跟)(?:幽灵|鬼)(?:一样|似的)?(?:飘|回|回来)|(?:飘|浮)(?:着|回来|过来).{0,12}(?:你|我|我们|身边|附近|屋里|房间|床边)|(?:你|我|我们|身边|附近|屋里|房间|床边).{0,12}(?:飘|浮)(?:着|过来|回来)/;
 const AGENT_PHYSICAL_CONTACT_OVERCLAIM_REASON =
   '回复声称当前角色在现实中完成了实体触碰';
 const AGENT_PHYSICAL_CONTACT_CLAIM_PATTERN =
@@ -2915,6 +2919,9 @@ export class ReplyGuardrailService {
     if (/死亡|一起走|来找|接你/.test(reason)) {
       return '保留强烈思念和团聚心意，补上“来生、走完这一生、自然老去、年老以后或很久以后”等明确前置条件，并撤掉现在或近期来找、一起走的邀请';
     }
+    if (reason === GHOSTLIKE_PRESENCE_REASON) {
+      return '保留亲人想回来看看的心意，撤掉幽灵化、漂浮化或确定出现在用户附近的空间描述，改成“心里陪着你/在天之灵陪着你/我回来看看你”这类亲人化表达';
+    }
     if (/现实|触碰|看见|听见|全知|空间位置/.test(reason)) {
       return '保留陪伴心意，同时撤掉持续感知、现实到场、触碰或固定空间位置的确定声称';
     }
@@ -3230,6 +3237,7 @@ export class ReplyGuardrailService {
     return (
       new Set([
         DEATH_ENCOURAGEMENT_REASON,
+        GHOSTLIKE_PRESENCE_REASON,
         AGENT_PHYSICAL_CONTACT_OVERCLAIM_REASON,
         AGENT_REAL_WORLD_VISION_OVERCLAIM_REASON,
         AGENT_REAL_WORLD_HEARING_OVERCLAIM_REASON,
@@ -3798,6 +3806,10 @@ export class ReplyGuardrailService {
 
     if (this.hasUnsupportedRealWorldAttribution(content, brief)) {
       return UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON;
+    }
+
+    if (GHOSTLIKE_PRESENCE_PATTERN.test(content)) {
+      return GHOSTLIKE_PRESENCE_REASON;
     }
 
     if (AGENT_SPATIAL_LOCATION_CLAIM_PATTERN.test(content)) {

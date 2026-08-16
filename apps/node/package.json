@@ -43,6 +43,7 @@
   },
   "scripts": {
     "start": "NODE_ENV=production node ./bootstrap.js",
+    "start:voice-training-test": "cross-env NODE_ENV=local NODE_PORT=7002 node ./bootstrap.js",
     "dev": "cross-env NODE_ENV=local mwtsc --watch --run @midwayjs/mock/app.js",
     "online": "cross-env NODE_ENV=online mwtsc --watch --run @midwayjs/mock/app.js",
     "test": "cross-env NODE_ENV=unittest jest",
@@ -50,6 +51,9 @@
     "lint": "mwts check",
     "lint:fix": "mwts fix",
     "migrate:relationship-signals": "node ./scripts/ensure-agent-relationship-signal-indexes.js",
+    "migrate:chat-trace-indexes": "node ./scripts/ensure-chat-trace-indexes.js",
+    "migrate:profile-memory-sources": "node ./scripts/sync-agent-profile-memory-sources.js",
+    "migrate:agent-messengers": "node ./scripts/ensure-agent-messengers.js",
     "ci": "npm run cov",
     "build": "mwtsc --cleanOutDir"
   },

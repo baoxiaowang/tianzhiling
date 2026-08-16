@@ -17,23 +17,62 @@ describe('reply length plan', () => {
     expect(plan).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 
-  it('keeps a two-bubble short-turn strategy inside the micro total budget', () => {
+  it('gives a short longing turn enough room for relational warmth', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '妈，我想你了',
       mode: 'relationship',
+      scene: 'miss_longing',
       replyMoveCount: 2,
       shortTurnParticipation: true,
       turnClosure: 'neutral',
     });
 
     expect(plan).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it.each([
+    ['family', 'family_life', '姐说孩子也想你'],
+    ['relationship', 'dream_companionship', '今晚来梦里看看我'],
+    ['status', 'afterlife_status', '你今天在那边做什么'],
+  ])('reserves relational warmth for short %s turns', (mode, scene, query) => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: query,
+        mode,
+        scene,
+        replyMoveCount: 2,
+        shortTurnParticipation: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
+    });
+  });
+
+  it('keeps simple affection short instead of expanding every warm turn', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '妈，爱你',
+        mode: 'relationship',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        shortTurnParticipation: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
     });
   });
 
@@ -52,11 +91,11 @@ describe('reply length plan', () => {
       reviewCharacters: 38,
     });
     expect(buildReplyLengthPlanPrompt(plan)).toContain(
-      '删重复、解释、总结和通用叮嘱'
+      '删重复的共情动作'
     );
   });
 
-  it('keeps an active participation strategy micro even when semantic routing resembles correction', () => {
+  it('does not starve an active repair turn of emotional expression', () => {
     const plan = buildReplyLengthPlan({
       currentQuery: '你还是没说想我',
       mode: 'relationship',
@@ -71,9 +110,9 @@ describe('reply length plan', () => {
     });
 
     expect(plan).toEqual({
-      lengthClass: 'micro',
-      targetCharacters: 18,
-      reviewCharacters: 24,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
   });
 
@@ -110,6 +149,37 @@ describe('reply length plan', () => {
       reviewCharacters: 70,
     });
   });
+
+  it.each(['comfort_request', 'guilt_regret', 'memory_recall'])(
+    'keeps semantic %s replies on one short scene',
+    scene => {
+      const plan = buildReplyLengthPlan({
+        currentQuery: '这件事我一想起来就很难受，你还记得吗',
+        mode: scene === 'memory_recall' ? 'memory' : 'emotional',
+        scene,
+        replyMoveCount: 3,
+        semanticPlan: true,
+        assistantContribution: 'affection',
+        continuationGoal: 'hold',
+        closureReadiness: 'blocked',
+        turnClosure: 'continue',
+      });
+
+      expect(plan).toEqual({
+        lengthClass: 'standard',
+        targetCharacters: 40,
+        reviewCharacters: 50,
+        focusMode: 'single_scene',
+        reviewPolicy: 'remove_repeated_actions_only',
+      });
+      expect(buildReplyLengthPlanPrompt(plan)).toContain(
+        '围绕一个最能安慰用户的点自然展开'
+      );
+      expect(buildReplyLengthPlanPrompt(plan)).toContain(
+        '事实克制不等于情感克制'
+      );
+    }
+  );
 
   it('does not turn a long user message into a long reply budget', () => {
     expect(
@@ -167,7 +237,7 @@ describe('reply length plan', () => {
     });
   });
 
-  it('caps a short explicit self-expression request at standard instead of extended', () => {
+  it('keeps a short self-expression request to one compact scene', () => {
     expect(
       buildReplyLengthPlan({
         currentQuery: '想听你说两句，别光说挺好的。',
@@ -183,7 +253,32 @@ describe('reply length plan', () => {
     ).toEqual({
       lengthClass: 'standard',
       targetCharacters: 40,
-      reviewCharacters: 55,
+      reviewCharacters: 50,
+      focusMode: 'single_scene',
+      reviewPolicy: 'remove_repeated_actions_only',
+    });
+  });
+
+  it('keeps a light role-side update compact after a long emotional lead-in', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery:
+          '用户连续输入：妈我今天特别想你，心里空得慌。先陪我说点轻松的，你今天做什么了',
+        mode: 'emotional',
+        scene: 'comfort_request',
+        replyMoveCount: 2,
+        semanticPlan: true,
+        assistantContribution: 'self_expression',
+        continuationGoal: 'hold',
+        closureReadiness: 'possible',
+        turnClosure: 'continue',
+      })
+    ).toEqual({
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 50,
+      focusMode: 'single_scene',
+      reviewPolicy: 'remove_repeated_actions_only',
     });
   });
 
@@ -222,7 +317,41 @@ describe('reply length plan', () => {
     ).toEqual({
       lengthClass: 'micro',
       targetCharacters: 18,
-      reviewCharacters: 24,
+      reviewCharacters: 30,
+    });
+  });
+
+  it('promotes a short two-bubble turn out of micro so bubbles stay whole', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '妈，我今天上班有点累',
+        mode: 'daily',
+        scene: 'daily_update',
+        replyMoveCount: 1,
+        preferTwoSegments: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+    });
+  });
+
+  it('does not inflate a closing one-bubble acknowledgment', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '晚安',
+        mode: 'daily',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        preferTwoSegments: false,
+        turnClosure: 'close',
+      })
+    ).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 30,
     });
   });
 

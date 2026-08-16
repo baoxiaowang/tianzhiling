@@ -9,6 +9,7 @@ import {
   AgentEntity,
   AgentShareMemberEntity,
   AgentShareMemberStatus,
+  AgentSubEntity,
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
@@ -140,6 +141,7 @@ import {
   AgentChatToolExecutionContext,
   AgentChatToolService,
 } from './agents/agent-chat-tool.service';
+import { MessengerService } from './agents/messenger.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -237,6 +239,7 @@ export interface ConversationSummary {
   iCallAgent: string;
   agentIsDefault: boolean;
   agentAccessRole: 'owner' | 'shared';
+  isMessenger?: boolean;
   preview: string;
   updatedAt: string;
   createdAt: string;
@@ -569,6 +572,7 @@ export interface ConversationChatBootstrapMetadata {
     hasUnreadAgentHomeGuide: boolean;
     hasUnreadAgentProfileGuide: boolean;
     isDefault: boolean;
+    isMessenger?: boolean;
   } | null;
   chatQuota: ConversationChatQuotaSnapshot;
 }
@@ -677,6 +681,9 @@ export class ConversationService {
   @Inject()
   chatTraceService: ChatTraceService;
 
+  @Inject()
+  messengerService: MessengerService;
+
   async listConversations(
     auth: AuthenticatedUserPayload,
     options: ListConversationsOptions = {}
@@ -711,15 +718,23 @@ export class ConversationService {
         pageConversations.map(item => item.id)
       ),
     ]);
-    const summaries = pageConversations.map(conversation => {
-      const agent = agentsById.get(
-        this.stringifyObjectId(conversation.agentId)
-      );
-      const latestMessage = latestMessagesByConversationId.get(
-        this.stringifyObjectId(conversation.id)
-      );
-      return this.buildConversationSummary(conversation, agent, latestMessage);
-    });
+    const summaries = await Promise.all(
+      pageConversations.map(async conversation => {
+        const agent = agentsById.get(
+          this.stringifyObjectId(conversation.agentId)
+        );
+        const messenger = await this.resolveMessenger(conversation);
+        const latestMessage = latestMessagesByConversationId.get(
+          this.stringifyObjectId(conversation.id)
+        );
+        return this.buildConversationSummary(
+          conversation,
+          agent,
+          latestMessage,
+          messenger
+        );
+      })
+    );
 
     const items = summaries.sort((left, right) => {
       if (left.agentIsDefault !== right.agentIsDefault) {
@@ -756,6 +771,7 @@ export class ConversationService {
           where: {
             userId,
             agentId: defaultAgent.id,
+            subAgentId: { $exists: false },
           },
         })
       : null;
@@ -781,9 +797,15 @@ export class ConversationService {
         this.stringifyObjectId(conversation.agentId)
         ? defaultAgent
         : await this.findAgentById(conversation.agentId);
+    const messenger = await this.resolveMessenger(conversation);
     const latestMessage = await this.findLatestMessage(conversation.id);
 
-    return this.buildConversationSummary(conversation, agent, latestMessage);
+    return this.buildConversationSummary(
+      conversation,
+      agent,
+      latestMessage,
+      messenger
+    );
   }
 
   async sendMessage(
@@ -792,6 +814,12 @@ export class ConversationService {
     payload: SendConversationMessageDTO
   ): Promise<SendConversationMessageResult> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
+    if (
+      this.messengerService &&
+      (await this.messengerService.resolveMessengerForConversation(runtime.conversation))
+    ) {
+      return this.sendMessengerMessage(runtime, payload);
+    }
     const before = await this.beforeReply(runtime, payload);
     const trace =
       !before.deferReply && !before.isDuplicate
@@ -856,6 +884,12 @@ export class ConversationService {
     payload: SendConversationMessageDTO
   ): Promise<SendConversationMessageResult> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
+    if (
+      this.messengerService &&
+      (await this.messengerService.resolveMessengerForConversation(runtime.conversation))
+    ) {
+      return this.sendMessengerMessage(runtime, payload);
+    }
     const messageType = this.normalizeMessageType(payload?.type);
 
     const before = await this.beforeReply(runtime, {
@@ -921,6 +955,103 @@ export class ConversationService {
     return {
       ...this.buildSendMessageResult(before),
       replyPending: shouldReply,
+    };
+  }
+
+  private async sendMessengerMessage(
+    runtime: ReplyRuntime,
+    payload: SendConversationMessageDTO
+  ): Promise<SendConversationMessageResult> {
+    const conversation = runtime.conversation;
+    const messageType = this.normalizeMessageType(payload?.type);
+    const clientRequestId = payload?.clientRequestId?.trim() || '';
+    const now = new Date();
+
+    if (clientRequestId) {
+      const existing = await this.findUserMessageByClientRequestId(
+        conversation.id,
+        conversation.userId,
+        clientRequestId
+      );
+
+      if (existing) {
+        return {
+          userMessage: this.messageService.buildConversationMessageItem(existing),
+        };
+      }
+    }
+
+    const messagePayload = await this.prepareIncomingMessage(
+      { ...payload, type: messageType },
+      runtime
+    );
+    await this.attachQuotedMessageSnapshot(conversation, messagePayload);
+    const searchableText = this.buildMessageSearchableText(messagePayload);
+    const userMessage = await this.saveMessage({
+      conversationId: conversation.id,
+      userId: conversation.userId,
+      agentId: conversation.agentId,
+      role: MessageRole.user,
+      type: messagePayload.type,
+      content: messagePayload.content,
+      status: MessageStatus.sent,
+      clientRequestId: clientRequestId || undefined,
+      quotedMessageId:
+        this.normalizeObjectId(messagePayload.quotedMessageId) ?? undefined,
+      quotedMessageRole: messagePayload.quotedMessageRole,
+      quotedMessageContent: messagePayload.quotedMessageContent,
+      mediaObjectKey: messagePayload.mediaObjectKey,
+      mediaUrl: messagePayload.mediaObjectKey
+        ? undefined
+        : messagePayload.mediaUrl,
+      mediaMimeType: messagePayload.mediaMimeType,
+      mediaAnalysis: messagePayload.mediaAnalysis,
+      mediaTranscript: messagePayload.mediaTranscript,
+      mediaDurationMs: messagePayload.mediaDurationMs,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await this.touchConversation(conversation, now);
+
+    if (!runtime.agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    const replyText = await this.messengerService.runInterviewTurn({
+      agent: runtime.agent,
+      conversation,
+      input: searchableText,
+    });
+
+    const replyTime = new Date();
+    const assistantMessages = replyText
+      ? await this.createAssistantReplyMessages({
+          conversationId: conversation.id,
+          userId: conversation.userId,
+          agentId: conversation.agentId,
+          replySegments: [replyText],
+          userQuery: searchableText,
+          replyTime,
+          usage: {},
+        })
+      : [];
+
+    if (assistantMessages.length) {
+      await this.touchConversation(
+        conversation,
+        assistantMessages[assistantMessages.length - 1].updatedAt ?? replyTime
+      );
+    }
+
+    return {
+      userMessage: this.messageService.buildConversationMessageItem(userMessage),
+      assistantMessage: this.buildLegacyAssistantMessageItem(assistantMessages),
+      assistantMessages: assistantMessages.length
+        ? assistantMessages.map(message =>
+            this.messageService.buildConversationMessageItem(message)
+          )
+        : undefined,
     };
   }
 
@@ -1231,7 +1362,14 @@ export class ConversationService {
   ): Promise<ConversationChatQuotaSnapshot> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
 
+    if (await this.resolveMessenger(runtime.conversation)) {
+      return this.buildUnlimitedChatQuota();
+    }
     return this.resolveCurrentChatQuota(runtime, new Date());
+  }
+
+  private buildUnlimitedChatQuota(): ConversationChatQuotaSnapshot {
+    return { isVip: true };
   }
 
   async getChatBootstrapMetadata(
@@ -1239,8 +1377,14 @@ export class ConversationService {
     conversationId: string
   ): Promise<ConversationChatBootstrapMetadata> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
-    const chatQuota = await this.resolveCurrentChatQuota(runtime, new Date());
-    const agent = runtime.agent;
+    const messenger = await this.resolveMessenger(runtime.conversation);
+    const chatQuota = messenger
+      ? this.buildUnlimitedChatQuota()
+      : await this.resolveCurrentChatQuota(runtime, new Date());
+    const agent =
+      messenger && runtime.agent
+        ? this.messengerService.buildMessengerIdentity(runtime.agent, messenger)
+        : runtime.agent;
 
     return {
       agent: agent
@@ -1262,6 +1406,7 @@ export class ConversationService {
                 !agent.agentProfileGuideSeenAt
             ),
             isDefault: Boolean(agent.isDefault),
+            isMessenger: Boolean(messenger),
           }
         : null,
       chatQuota,
@@ -5121,7 +5266,8 @@ export class ConversationService {
   private buildConversationSummary(
     conversation: ConversationEntity,
     agent?: AgentEntity | null,
-    latestMessage?: MessageEntity | null
+    latestMessage?: MessageEntity | null,
+    messenger?: AgentSubEntity | null
   ): ConversationSummary {
     const isSharedConversation =
       conversation.accessRole === 'shared' ||
@@ -5130,24 +5276,30 @@ export class ConversationService {
           this.stringifyObjectId(agent.createdUserId) !==
             this.stringifyObjectId(conversation.userId)
       );
-    const agentCallsUser = isSharedConversation
+    const messengerName = messenger?.name?.trim() || '';
+    const agentCallsUser = messenger
+      ? ''
+      : isSharedConversation
       ? conversation.agentCallsUser?.trim() || ''
       : agent?.agentCallMe?.trim() || '';
-    const userCallsAgent = isSharedConversation
+    const userCallsAgent = messenger
+      ? messengerName
+      : isSharedConversation
       ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
       : agent?.iCallAgent?.trim() || '';
 
     return {
       id: this.stringifyObjectId(conversation.id),
       agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
-      agentName: agent?.name?.trim() || '联系人资料暂不可用',
+      agentName: messengerName || agent?.name?.trim() || '联系人资料暂不可用',
       agentAvatar: this.postImageService.resolveForResponse(
-        agent?.avatar?.trim() || ''
+        (messenger?.avatar?.trim() || agent?.avatar?.trim() || '')
       ),
       agentSex: agent?.sex ?? 0,
       agentCallMe: agentCallsUser,
       iCallAgent: userCallsAgent,
       agentIsDefault: Boolean(
+        !messenger &&
         agent?.isDefault &&
           agent.createdUserId &&
           this.stringifyObjectId(agent.createdUserId) ===
@@ -5155,6 +5307,7 @@ export class ConversationService {
       ),
       agentAccessRole: isSharedConversation ? 'shared' : 'owner',
       preview: this.buildPreview(agent, latestMessage),
+      isMessenger: Boolean(messenger),
       updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
       createdAt: conversation.createdAt?.toISOString?.() ?? '',
     };
@@ -8722,6 +8875,16 @@ export class ConversationService {
       iCallAgent: userCallsAgent,
       isDefault: false,
     } as AgentEntity;
+  }
+
+  private async resolveMessenger(
+    conversation: ConversationEntity
+  ): Promise<AgentSubEntity | null> {
+    if (!conversation.subAgentId || !this.messengerService) {
+      return null;
+    }
+
+    return this.messengerService.resolveMessengerForConversation(conversation);
   }
 
   private async findConversationById(

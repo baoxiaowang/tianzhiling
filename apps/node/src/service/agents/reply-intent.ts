@@ -137,6 +137,12 @@ export const GRIEF_OVERWHELMED_INTENT_PATTERN =
 export const GRIEF_LIGHT_SAFETY_SUPPORT_PATTERN =
   /(?:快疯了|想.*快疯|心都死了|人间太苦|崩溃|扛不住|撑不下去|受不了).{0,16}(?:一个人|没人|没有人|想你|想您|没你|没有你|你不在|离开|走了)?|(?:孤独|孤单|寂寞|无依无靠|没底气|没有依靠|心里发慌).{0,16}(?:扛不住|撑不下去|受不了|别让我一个人|没人陪|没有人陪)|(?:现在|今天|今晚|这会儿).{0,12}(?:一个人.{0,6})?(?:扛不住|撑不下去|熬不住|受不了)|别让我一个人(?:扛|撑|熬)/;
 
+export const PHYSICAL_TOUCH_BOUNDARY_PATTERN =
+  /(?:摸|抱|亲|碰)(?:摸|抱|亲|碰|了|过|我|你|他|她|TA|一下|着呢|下我|到你|到我|着你|上来|过去|行不行|可以吗|好不好)|(?:碰|摸|抱|亲)到(?:我|你|他|她|TA|一下|了)|拥抱(?:我|你|他|她|TA|一下|了|过)?/;
+
+export const LONG_TERM_REUNION_WISH_INTENT_PATTERN =
+  /(?:等(?:我|到|哪天|以后|将来|老了|死了)|老了|死了|老死|百年之后|走完这一生|自然老去|年老以后|很久以后).{0,24}(?:就|才|能|可以|会|就能|才能|能再)?(?:见到|看见|找到|遇见|相聚|团聚|在一起|去找你|去陪你|来陪你)(?:你|您|我们|你吗|您吗|吗)?/;
+
 export function needsLightSafetySupport(_input: string): boolean {
   void _input;
   return false;

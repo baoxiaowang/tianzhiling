@@ -56,7 +56,7 @@ describe('routeReplyScene', () => {
       currentQuery: '窗外那棵树开花了',
     });
 
-    expect(route.primaryScene).toBeUndefined();
+    expect(route.primaryScene?.scene).toBe('smalltalk');
     expect(route.bubblePlan).toEqual({
       maxSegments: 2,
       complexityHint: 'concise',
@@ -485,10 +485,10 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('空间信念/实体触碰边界');
-    expect(route.prompt).toContain('不能承认真的触碰');
-    expect(route.prompt).toContain('不确认也不否定空间位置');
+    expect(route.prompt).toContain('不承认真的摸到、抱到、亲到或碰到');
+    expect(route.prompt).toContain('偶尔回来看看');
     expect(route.prompt).toContain('看不见摸不着');
-    expect(route.prompt).toContain('不能把它说成客观事实');
+    expect(route.prompt).toContain('不机械回“我回不去”');
     expect(sceneNames('是不是你刚才碰我了')[0]).toBe(
       'reality_presence_boundary'
     );
@@ -538,7 +538,7 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('miss_longing');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('不要把“丫头/孩子/闺女”等称呼单独成泡');
-    expect(route.prompt).toContain('不要声称在现实房间、床边或身旁看着用户');
+    expect(route.prompt).toContain('不声称时刻在现实房间、床边盯着用户的一举一动');
     expect(route.prompt).toContain('不要马上转成吃饭、休息');
     expect(lossRoute.primaryScene?.scene).toBe('miss_longing');
     expect(lossRoute.maxSegments).toBe(2);
@@ -781,6 +781,24 @@ describe('routeReplyScene', () => {
       'miss_longing'
     );
     expect(route.prompt).toContain('家庭近况/亲属事务');
+  });
+
+  it('keeps the family intent when semantic planning still classifies it as longing', () => {
+    const route = routeReplyScene({
+      currentQuery: '大宝想你想得哭了',
+      knownFamilyMembers: ['大宝'],
+      intent: semanticIntent([
+        intentItem({ intent: 'express_longing' }),
+      ]),
+    });
+
+    expect(route.primaryScene?.scene).toBe('family_life');
+    expect(route.intent?.intents.map(item => item.intent)).toEqual([
+      'share_family_update',
+    ]);
+    expect(route.secondaryScenes.map(scene => scene.scene)).not.toContain(
+      'miss_longing'
+    );
   });
 
   it('handles challenges to assumed family care responsibility', () => {
@@ -1055,7 +1073,7 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
     expect(route.routingSource).toBe('semantic');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不能承认真的触碰或到场');
+    expect(route.prompt).toContain('不承认真的摸到、抱到、亲到或碰到');
     expect(route.prompt).toContain('气泡数量由模型根据当前完整语义决定');
   });
 
@@ -1134,5 +1152,18 @@ describe('routeReplyScene', () => {
     expect(
       [route.primaryScene, ...route.secondaryScenes].filter(Boolean)
     ).toHaveLength(3);
+  });
+
+  it('routes Zhongyuan return/presence questions to the reality boundary', () => {
+    for (const currentQuery of [
+      '中元节了你们能出来吗',
+      '你出来了没',
+      '像幽灵一样飘回来',
+    ]) {
+      const route = routeReplyScene({ currentQuery });
+
+      expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
+      expect(route.prompt).toContain('不要把亲人说成像幽灵一样飘回来');
+    }
   });
 });

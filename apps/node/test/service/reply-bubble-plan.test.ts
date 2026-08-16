@@ -49,10 +49,24 @@ describe('reply bubble plan', () => {
     });
 
     expect(plan.preferTwoSegments).toBe(true);
-    expect(buildReplyBubblePlanPrompt(plan)).toContain(
-      '只输出 {"segments":["第一颗","第二颗"]}'
-    );
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('本轮需要两颗气泡');
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('{"segments"');
     expect(buildReplyBubblePlanPrompt(plan)).not.toContain('默认一颗');
+  });
+
+  it('softly encourages two bubbles for role-side care', () => {
+    const plan = buildReplyBubblePlan({
+      currentQuery: '妈，我今天心里很难受',
+      replyMoveCount: 2,
+      encourageTwoSegments: true,
+    });
+
+    expect(plan).toMatchObject({
+      complexityHint: 'paired',
+      encourageTwoSegments: true,
+    });
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('优先用两颗');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('一颗更自然时可不拆');
   });
 
   it('marks closing turns so the model does not reopen the conversation', () => {
@@ -85,6 +99,24 @@ describe('reply bubble plan', () => {
       issues: ['stage_direction_segment', 'exact_duplicate_segment'],
       requiresReflow: false,
     });
+  });
+
+  it('never emits an empty second bubble when forcing two segments', () => {
+    // 第二泡为空、纯旁白、或与第一泡重复时，都必须被丢弃，不产生空泡
+    const cases: Array<{ input: string[]; expectedSegments: string[] }> = [
+      { input: ['妈在呢', ''], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '（轻轻叹气）'], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '（偷偷笑）'], expectedSegments: ['妈在呢'] },
+      { input: ['妈在呢', '妈在呢'], expectedSegments: ['妈在呢'] },
+      { input: ['   ', '   '], expectedSegments: [] },
+    ];
+
+    for (const { input, expectedSegments } of cases) {
+      const inspected = inspectReplyBubbleStructure(input);
+      expect(inspected.segments).toEqual(expectedSegments);
+      expect(inspected.segments).not.toContain('');
+      expect(inspected.segments).not.toContain(' ');
+    }
   });
 
   it('removes parenthetical asides from both inline and leading positions', () => {
@@ -128,6 +160,7 @@ describe('reply bubble plan', () => {
       '第一层回应',
       '第二层回应',
       '第三层回应',
+      '第四层回应',
     ]);
 
     expect(inspected.requiresReflow).toBe(true);
@@ -140,8 +173,9 @@ describe('reply bubble plan', () => {
         '第一层回应',
         '第二层回应',
         '第三层回应',
+        '第四层回应',
       ])
-    ).toEqual(['第一层回应', '第二层回应 第三层回应']);
+    ).toEqual(['第一层回应', '第二层回应', '第三层回应 第四层回应']);
   });
 
   it('does not turn user message length into a third bubble allowance', () => {

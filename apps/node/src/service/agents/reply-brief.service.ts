@@ -251,6 +251,8 @@ const STI_DISALLOWED_SCENES = new Set<ReplyScene>([
   'departure_hatred',
   'dream_companionship',
 ]);
+const SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN =
+  /^(?:嗯+|哦+|好+|行|可以|知道了|好的|谢谢|多谢)(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？\s]*$/;
 
 @Provide()
 export class ReplyBriefService {
@@ -461,21 +463,35 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     recentMessages: options.recentMessages,
     isDeceased: Boolean(options.agent?.deathDate),
   });
+  const defaultTwoSegments = shouldPreferTwoSegmentsByDefault({
+    currentQuery,
+  });
+  const singleBubbleAcknowledgment = SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
+    currentQuery.trim()
+  );
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
     replyMoveCount:
-      participationStrategy || careMotivation
+      !singleBubbleAcknowledgment &&
+      (participationStrategy || careMotivation)
         ? Math.max(2, replyMoveCount)
         : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
-    preferTwoSegments: Boolean(
-      participationStrategy ||
-        (careMotivation && careMotivation.motive !== 'cherish_connection')
-    ),
+    preferTwoSegments:
+      !isReplyClosingTurn(currentQuery) &&
+      !singleBubbleAcknowledgment &&
+      Boolean(
+        participationStrategy ||
+          (careMotivation && careMotivation.motive !== 'cherish_connection') ||
+          defaultTwoSegments
+      ),
     encourageTwoSegments: Boolean(
+      !isReplyClosingTurn(currentQuery) &&
+      !singleBubbleAcknowledgment &&
+      !defaultTwoSegments &&
       careMotivation &&
-        !participationStrategy &&
-        careMotivation.motive === 'cherish_connection'
+      !participationStrategy &&
+      careMotivation.motive === 'cherish_connection'
     ),
   });
   const lengthPlan = buildReplyLengthPlan({
@@ -485,6 +501,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     replyMoveCount,
     semanticPlan: Boolean(conversationPlan),
     shortTurnParticipation: Boolean(participationStrategy),
+    preferTwoSegments: bubblePlan.preferTwoSegments,
     hasProtectiveStop: Boolean(
       conversationPlan?.moves.some(move => move.type === 'stop')
     ),
@@ -968,6 +985,18 @@ function groundedMoveGoal(
     default:
       return '完成这一回应动作，不增加事实';
   }
+}
+
+function shouldPreferTwoSegmentsByDefault(options: {
+  currentQuery: string;
+}): boolean {
+  if (isReplyClosingTurn(options.currentQuery)) {
+    return false;
+  }
+
+  return !SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
+    options.currentQuery.trim()
+  );
 }
 
 function resolveReplyParticipationStrategy(options: {
@@ -1790,6 +1819,7 @@ function buildForbiddenAssumptions(
     dream_companionship: ['不得把梦境写成现实存在、预言或灵魂证明'],
     reality_presence_boundary: [
       '不得声称当前角色现实中来到房间、床边或触碰用户；也不要否定用户对亲人离自己不远的理解',
+      '不得把亲人说成像幽灵一样飘回来、正飘在用户附近或屋里；把“回来看看”停在心愿、思念和陪伴上',
     ],
     blessing_attribution: [
       '可以表达祝福、惦记和盼望，但不得声称当前角色通过保佑、使劲、搭把手或其他方式改变了现实结果',

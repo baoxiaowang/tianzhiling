@@ -20,6 +20,7 @@ export interface BuildReplyLengthPlanOptions {
   replyMoveCount?: number;
   semanticPlan?: boolean;
   shortTurnParticipation?: boolean;
+  preferTwoSegments?: boolean;
   hasProtectiveStop?: boolean;
   assistantContribution?:
     | 'answer'
@@ -171,6 +172,14 @@ export function buildReplyLengthPlan(
     ) {
       lengthClass = promoteLengthClass(lengthClass, 'brief');
     }
+  }
+
+  if (
+    options.preferTwoSegments &&
+    lengthClass === 'micro'
+  ) {
+    // 双泡比单泡需要稍多一点总字数，避免把一句话硬拆成两个碎片。
+    lengthClass = 'brief';
   }
 
   const plan: ReplyLengthPlan = {
