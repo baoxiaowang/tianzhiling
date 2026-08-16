@@ -45,7 +45,6 @@ import { PostImageService } from './post-image.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
-import { MessengerService } from './agents/messenger.service';
 import { WechatPayService } from './wechat-pay.service';
 
 export type AgentProfile = AgentProfileDTO;
@@ -92,9 +91,6 @@ export class AgentService {
   agentCreateGuideService: AgentCreateGuideService;
 
   @Inject()
-  messengerService: MessengerService;
-
-  @Inject()
   wechatPayService: WechatPayService;
 
   async interviewAgentCreation(
@@ -121,6 +117,7 @@ export class AgentService {
     const agents = await this.agentModel.find({
       where: {
         createdUserId: userId,
+        messengerOfAgentId: { $exists: false },
       },
       order: {
         updatedAt: 'DESC',
@@ -138,6 +135,7 @@ export class AgentService {
       this.agentModel.find({
         where: {
           createdUserId: userId,
+          messengerOfAgentId: { $exists: false },
         },
         order: {
           updatedAt: 'DESC',
@@ -556,15 +554,6 @@ export class AgentService {
 
     const savedAgent = await this.agentModel.save(agent);
     await this.createConversation(savedAgent, createdUserId, now);
-    if (this.messengerService) {
-      const messenger = await this.messengerService.ensureMessengerForAgent(
-        savedAgent
-      );
-      await this.messengerService.ensureMessengerConversation(
-        savedAgent,
-        messenger
-      );
-    }
 
     return this.buildAgentProfile(savedAgent);
   }
@@ -781,28 +770,37 @@ export class AgentService {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
-    const conversations = await this.conversationModel.find({
+    const messengerAgents = await this.agentModel.find({
       where: {
-        agentId: agent.id,
+        messengerOfAgentId: agent.id,
       },
     });
+    const agentsToRemove = [agent, ...messengerAgents];
 
-    await Promise.all(
-      conversations.map(async conversation => {
-        const messages = await this.messageModel.find({
-          where: {
-            conversationId: conversation.id,
-          },
-        });
+    for (const target of agentsToRemove) {
+      const conversations = await this.conversationModel.find({
+        where: {
+          agentId: target.id,
+        },
+      });
 
-        await Promise.all(
-          messages.map(message => this.messageModel.remove(message))
-        );
-        await this.conversationModel.remove(conversation);
-      })
-    );
-    await this.removeAgentShareRecords(agent.id);
-    await this.agentModel.remove(agent);
+      await Promise.all(
+        conversations.map(async conversation => {
+          const messages = await this.messageModel.find({
+            where: {
+              conversationId: conversation.id,
+            },
+          });
+
+          await Promise.all(
+            messages.map(message => this.messageModel.remove(message))
+          );
+          await this.conversationModel.remove(conversation);
+        })
+      );
+      await this.removeAgentShareRecords(target.id);
+      await this.agentModel.remove(target);
+    }
   }
 
   private async createConversation(
@@ -1012,7 +1010,6 @@ export class AgentService {
       where: {
         agentId,
         userId,
-        subAgentId: { $exists: false },
       },
     });
   }

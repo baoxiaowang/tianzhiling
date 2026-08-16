@@ -53,7 +53,8 @@
     "migrate:relationship-signals": "node ./scripts/ensure-agent-relationship-signal-indexes.js",
     "migrate:chat-trace-indexes": "node ./scripts/ensure-chat-trace-indexes.js",
     "migrate:profile-memory-sources": "node ./scripts/sync-agent-profile-memory-sources.js",
-    "migrate:agent-messengers": "node ./scripts/ensure-agent-messengers.js",
+    "provision:user-messengers": "node ./scripts/provision-user-messengers.js",
+    "upload:messenger-avatar": "node ./scripts/upload-messenger-avatar.js",
     "ci": "npm run cov",
     "build": "mwtsc --cleanOutDir"
   },

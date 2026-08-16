@@ -155,6 +155,14 @@ export class AgentEntity extends BaseEntity {
   @Column()
   isDefault?: boolean;
 
+  /**
+   * When present, this agent is the internal "小使者" for the referenced AI 亲人.
+   * Messenger agents are not user-managed relatives; they only collect and write
+   * the parent agent's profile memory.
+   */
+  @Column()
+  messengerOfAgentId?: MongoObjectId;
+
   @Column()
   voiceTimbreId?: MongoObjectId;
 
