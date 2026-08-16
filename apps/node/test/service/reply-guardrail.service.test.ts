@@ -864,7 +864,7 @@ describe('ReplyGuardrailService', () => {
       '吃了，闺女\n这里不分昼夜'
     );
 
-    expect(replyBrief.participationStrategy).toBe('light_self_disclosure');
+    expect(replyBrief.participationStrategy).toBe('planned_follow_through');
     expect(feedback).toEqual(
       expect.objectContaining({
         verdict: 'pass',
@@ -2454,7 +2454,7 @@ describe('ReplyGuardrailService', () => {
         replyBrief,
       })
     ).toEqual({
-      segments: ['我挺好的 你不用挂心', '你来问我这句 我心里明白'],
+      segments: ['我这边挺好的 你特意来问 我还挺高兴', '我也一直惦记着你'],
       rewritten: true,
       reason: '模型回复不可用，采用场景安全兜底气泡',
     });
