@@ -3,18 +3,18 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import {
   AgentEntity,
-  AgentSubEntity,
+  AgentSex,
   ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageStatus,
   MessageType,
+  MongoObjectId,
 } from '@tzl/entities';
 import type { AgentProfileInterviewDraftDTO } from '@tzl/shared';
 import { AgentMemoryProfileService } from './agent-memory-profile.service';
 
-export const AGENT_SUB_KIND_MESSENGER = 'messenger';
-export const AGENT_SUB_STATUS_ACTIVE = 1;
+export const MESSENGER_DEFAULT_AVATAR_KEY = 'weapp/messenger-avatar.png';
 
 const PROFILE_MEMORY_FIELDS = [
   'lifeExperience',
@@ -30,10 +30,16 @@ interface RunMessengerInterviewTurnOptions {
   input: string;
 }
 
+export interface ProvisionMessengersForUserResult {
+  processed: number;
+  messengersCreated: number;
+  conversationsCreated: number;
+}
+
 @Provide()
 export class MessengerService {
-  @InjectEntityModel(AgentSubEntity)
-  agentSubModel: MongoRepository<AgentSubEntity>;
+  @InjectEntityModel(AgentEntity)
+  agentModel: MongoRepository<AgentEntity>;
 
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
@@ -49,43 +55,119 @@ export class MessengerService {
     return `${name}的小使者`;
   }
 
-  async ensureMessengerForAgent(agent: AgentEntity): Promise<AgentSubEntity> {
+  async ensureMessengerForAgent(parentAgent: AgentEntity): Promise<AgentEntity> {
     const now = new Date();
-    const existing = await this.agentSubModel.findOne({
+    const messengerName = this.buildMessengerName(parentAgent.name);
+    const existing = await this.agentModel.findOne({
       where: {
-        agentId: agent.id,
-        kind: AGENT_SUB_KIND_MESSENGER,
+        createdUserId: parentAgent.createdUserId,
+        messengerOfAgentId: parentAgent.id,
       },
     });
 
     if (existing) {
+      let changed = false;
+
+      if ((existing.name?.trim() || '') !== messengerName) {
+        existing.name = messengerName;
+        changed = true;
+      }
+
+      if ((existing.avatar?.trim() || '') !== MESSENGER_DEFAULT_AVATAR_KEY) {
+        existing.avatar = MESSENGER_DEFAULT_AVATAR_KEY;
+        changed = true;
+      }
+
+      if (existing.iCallAgent?.trim() !== messengerName) {
+        existing.iCallAgent = messengerName;
+        changed = true;
+      }
+
+      if (changed) {
+        existing.updatedAt = now;
+        return this.agentModel.save(existing);
+      }
+
       return existing;
     }
 
-    const messenger = new AgentSubEntity();
-    messenger.agentId = agent.id;
-    messenger.kind = AGENT_SUB_KIND_MESSENGER;
-    messenger.name = this.buildMessengerName(agent.name);
-    messenger.avatar = '';
-    messenger.status = AGENT_SUB_STATUS_ACTIVE;
+    const messenger = new AgentEntity();
+    messenger.createdUserId = parentAgent.createdUserId;
+    messenger.name = messengerName;
+    messenger.realName = '';
+    messenger.avatar = MESSENGER_DEFAULT_AVATAR_KEY;
+    messenger.sex = parentAgent.sex ?? AgentSex.unknown;
+    messenger.iCallAgent = messengerName;
     messenger.agentCallMe = '';
-    messenger.iCallAgent = messenger.name;
+    messenger.description = '';
+    messenger.status = 1;
+    messenger.isDefault = false;
+    messenger.messengerOfAgentId = parentAgent.id;
     messenger.createdAt = now;
     messenger.updatedAt = now;
 
-    return this.agentSubModel.save(messenger);
+    return this.agentModel.save(messenger);
+  }
+
+  async ensureMessengersForUser(
+    userId: MongoObjectId
+  ): Promise<ProvisionMessengersForUserResult> {
+    const parentAgents = await this.agentModel.find({
+      where: {
+        createdUserId: userId,
+        messengerOfAgentId: { $exists: false },
+      },
+    });
+
+    let messengersCreated = 0;
+    let conversationsCreated = 0;
+
+    for (const parentAgent of parentAgents) {
+      const hadMessenger = Boolean(
+        await this.agentModel.findOne({
+          where: {
+            createdUserId: parentAgent.createdUserId,
+            messengerOfAgentId: parentAgent.id,
+          },
+        })
+      );
+      const messenger = await this.ensureMessengerForAgent(parentAgent);
+
+      if (!hadMessenger) {
+        messengersCreated += 1;
+      }
+
+      const hadConversation = Boolean(
+        await this.conversationModel.findOne({
+          where: {
+            agentId: messenger.id,
+            userId: parentAgent.createdUserId,
+          },
+        })
+      );
+      await this.ensureMessengerConversation(parentAgent, messenger);
+
+      if (!hadConversation) {
+        conversationsCreated += 1;
+      }
+    }
+
+    return {
+      processed: parentAgents.length,
+      messengersCreated,
+      conversationsCreated,
+    };
   }
 
   async ensureMessengerConversation(
-    agent: AgentEntity,
-    messenger: AgentSubEntity
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity
   ): Promise<ConversationEntity> {
     const now = new Date();
     const existing = await this.conversationModel.findOne({
       where: {
-        agentId: agent.id,
-        subAgentId: messenger.id,
-        userId: agent.createdUserId,
+        agentId: messengerAgent.id,
+        userId: parentAgent.createdUserId,
       },
     });
 
@@ -94,63 +176,22 @@ export class MessengerService {
     }
 
     const conversation = new ConversationEntity();
-    conversation.agentId = agent.id;
-    conversation.subAgentId = messenger.id;
-    conversation.userId = agent.createdUserId;
+    conversation.agentId = messengerAgent.id;
+    conversation.userId = parentAgent.createdUserId;
     conversation.accessRole = 'owner';
     conversation.agentCallsUser = '';
-    conversation.userCallsAgent = messenger.name?.trim() || '';
+    conversation.userCallsAgent = messengerAgent.name?.trim() || '';
     conversation.createdAt = now;
     conversation.updatedAt = now;
 
     const saved = await this.conversationModel.save(conversation);
-    await this.createInitialMessengerGreeting(saved, agent, messenger, now);
+    await this.createInitialMessengerGreeting(
+      saved,
+      parentAgent,
+      messengerAgent,
+      now
+    );
     return saved;
-  }
-
-  async resolveMessengerForConversation(
-    conversation: ConversationEntity
-  ): Promise<AgentSubEntity | null> {
-    if (!conversation.subAgentId) {
-      return null;
-    }
-
-    const messenger = await this.agentSubModel.findOne({
-      where: {
-        id: conversation.subAgentId,
-        kind: AGENT_SUB_KIND_MESSENGER,
-      },
-    });
-
-    if (messenger) {
-      return messenger;
-    }
-
-    return this.agentSubModel.findOne({
-      where: {
-        _id: conversation.subAgentId,
-        kind: AGENT_SUB_KIND_MESSENGER,
-      } as never,
-    });
-  }
-
-  buildMessengerIdentity(
-    agent: AgentEntity,
-    messenger: AgentSubEntity
-  ): AgentEntity {
-    return {
-      ...agent,
-      id: messenger.id,
-      name: messenger.name?.trim() || this.buildMessengerName(agent.name),
-      avatar: messenger.avatar?.trim() || '',
-      agentCallMe: '',
-      iCallAgent: messenger.name?.trim() || this.buildMessengerName(agent.name),
-      isDefault: false,
-      status: messenger.status ?? AGENT_SUB_STATUS_ACTIVE,
-      profileCompletionGuideCreatedAt: undefined,
-      agentHomeGuideSeenAt: undefined,
-      agentProfileGuideSeenAt: undefined,
-    } as AgentEntity;
   }
 
   async runInterviewTurn(
@@ -203,18 +244,20 @@ export class MessengerService {
 
   private async createInitialMessengerGreeting(
     conversation: ConversationEntity,
-    agent: AgentEntity,
-    messenger: AgentSubEntity,
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity,
     now: Date
   ): Promise<void> {
-    const name = messenger.name?.trim() || this.buildMessengerName(agent.name);
+    const parentName = parentAgent.name?.trim() || 'TA';
+    const messengerName =
+      messengerAgent.name?.trim() || this.buildMessengerName(parentAgent.name);
     const message = new MessageEntity();
     message.conversationId = conversation.id;
     message.userId = conversation.userId;
-    message.agentId = agent.id;
+    message.agentId = messengerAgent.id;
     message.role = MessageRole.assistant;
     message.type = MessageType.text;
-    message.content = `你好，我是${name}。关于他/她的故事，你都可以慢慢告诉我，我会帮你整理进资料里。`;
+    message.content = `你好，我是${messengerName}。关于${parentName}，你都可以慢慢告诉我，我会帮你整理进资料里。`;
     message.status = MessageStatus.sent;
     message.createdAt = now;
     message.updatedAt = now;

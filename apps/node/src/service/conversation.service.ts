@@ -9,7 +9,6 @@ import {
   AgentEntity,
   AgentShareMemberEntity,
   AgentShareMemberStatus,
-  AgentSubEntity,
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
@@ -718,23 +717,15 @@ export class ConversationService {
         pageConversations.map(item => item.id)
       ),
     ]);
-    const summaries = await Promise.all(
-      pageConversations.map(async conversation => {
-        const agent = agentsById.get(
-          this.stringifyObjectId(conversation.agentId)
-        );
-        const messenger = await this.resolveMessenger(conversation);
-        const latestMessage = latestMessagesByConversationId.get(
-          this.stringifyObjectId(conversation.id)
-        );
-        return this.buildConversationSummary(
-          conversation,
-          agent,
-          latestMessage,
-          messenger
-        );
-      })
-    );
+    const summaries = pageConversations.map(conversation => {
+      const agent = agentsById.get(
+        this.stringifyObjectId(conversation.agentId)
+      );
+      const latestMessage = latestMessagesByConversationId.get(
+        this.stringifyObjectId(conversation.id)
+      );
+      return this.buildConversationSummary(conversation, agent, latestMessage);
+    });
 
     const items = summaries.sort((left, right) => {
       if (left.agentIsDefault !== right.agentIsDefault) {
@@ -771,7 +762,6 @@ export class ConversationService {
           where: {
             userId,
             agentId: defaultAgent.id,
-            subAgentId: { $exists: false },
           },
         })
       : null;
@@ -797,15 +787,9 @@ export class ConversationService {
         this.stringifyObjectId(conversation.agentId)
         ? defaultAgent
         : await this.findAgentById(conversation.agentId);
-    const messenger = await this.resolveMessenger(conversation);
     const latestMessage = await this.findLatestMessage(conversation.id);
 
-    return this.buildConversationSummary(
-      conversation,
-      agent,
-      latestMessage,
-      messenger
-    );
+    return this.buildConversationSummary(conversation, agent, latestMessage);
   }
 
   async sendMessage(
@@ -814,10 +798,7 @@ export class ConversationService {
     payload: SendConversationMessageDTO
   ): Promise<SendConversationMessageResult> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
-    if (
-      this.messengerService &&
-      (await this.messengerService.resolveMessengerForConversation(runtime.conversation))
-    ) {
+    if (this.messengerService && this.isMessengerAgent(runtime.agent)) {
       return this.sendMessengerMessage(runtime, payload);
     }
     const before = await this.beforeReply(runtime, payload);
@@ -884,10 +865,7 @@ export class ConversationService {
     payload: SendConversationMessageDTO
   ): Promise<SendConversationMessageResult> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
-    if (
-      this.messengerService &&
-      (await this.messengerService.resolveMessengerForConversation(runtime.conversation))
-    ) {
+    if (this.messengerService && this.isMessengerAgent(runtime.agent)) {
       return this.sendMessengerMessage(runtime, payload);
     }
     const messageType = this.normalizeMessageType(payload?.type);
@@ -1014,12 +992,18 @@ export class ConversationService {
 
     await this.touchConversation(conversation, now);
 
-    if (!runtime.agent) {
+    if (!runtime.agent?.messengerOfAgentId) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
+    const parentAgent = await this.findAgentById(runtime.agent.messengerOfAgentId);
+
+    if (!parentAgent) {
+      throw new AppError('AGENT_NOT_FOUND', 'associated agent not found', 404);
+    }
+
     const replyText = await this.messengerService.runInterviewTurn({
-      agent: runtime.agent,
+      agent: parentAgent,
       conversation,
       input: searchableText,
     });
@@ -1362,7 +1346,7 @@ export class ConversationService {
   ): Promise<ConversationChatQuotaSnapshot> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
 
-    if (await this.resolveMessenger(runtime.conversation)) {
+    if (this.isMessengerAgent(runtime.agent)) {
       return this.buildUnlimitedChatQuota();
     }
     return this.resolveCurrentChatQuota(runtime, new Date());
@@ -1377,14 +1361,11 @@ export class ConversationService {
     conversationId: string
   ): Promise<ConversationChatBootstrapMetadata> {
     const runtime = await this.createReplyRuntime(auth, conversationId);
-    const messenger = await this.resolveMessenger(runtime.conversation);
-    const chatQuota = messenger
+    const isMessenger = this.isMessengerAgent(runtime.agent);
+    const chatQuota = isMessenger
       ? this.buildUnlimitedChatQuota()
       : await this.resolveCurrentChatQuota(runtime, new Date());
-    const agent =
-      messenger && runtime.agent
-        ? this.messengerService.buildMessengerIdentity(runtime.agent, messenger)
-        : runtime.agent;
+    const agent = runtime.agent;
 
     return {
       agent: agent
@@ -1406,7 +1387,7 @@ export class ConversationService {
                 !agent.agentProfileGuideSeenAt
             ),
             isDefault: Boolean(agent.isDefault),
-            isMessenger: Boolean(messenger),
+            isMessenger,
           }
         : null,
       chatQuota,
@@ -5266,8 +5247,7 @@ export class ConversationService {
   private buildConversationSummary(
     conversation: ConversationEntity,
     agent?: AgentEntity | null,
-    latestMessage?: MessageEntity | null,
-    messenger?: AgentSubEntity | null
+    latestMessage?: MessageEntity | null
   ): ConversationSummary {
     const isSharedConversation =
       conversation.accessRole === 'shared' ||
@@ -5276,30 +5256,22 @@ export class ConversationService {
           this.stringifyObjectId(agent.createdUserId) !==
             this.stringifyObjectId(conversation.userId)
       );
-    const messengerName = messenger?.name?.trim() || '';
-    const agentCallsUser = messenger
-      ? ''
-      : isSharedConversation
-      ? conversation.agentCallsUser?.trim() || ''
-      : agent?.agentCallMe?.trim() || '';
-    const userCallsAgent = messenger
-      ? messengerName
-      : isSharedConversation
-      ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
-      : agent?.iCallAgent?.trim() || '';
 
     return {
       id: this.stringifyObjectId(conversation.id),
       agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
-      agentName: messengerName || agent?.name?.trim() || '联系人资料暂不可用',
+      agentName: agent?.name?.trim() || '联系人资料暂不可用',
       agentAvatar: this.postImageService.resolveForResponse(
-        (messenger?.avatar?.trim() || agent?.avatar?.trim() || '')
+        agent?.avatar?.trim() || ''
       ),
       agentSex: agent?.sex ?? 0,
-      agentCallMe: agentCallsUser,
-      iCallAgent: userCallsAgent,
+      agentCallMe: isSharedConversation
+        ? conversation.agentCallsUser?.trim() || ''
+        : agent?.agentCallMe?.trim() || '',
+      iCallAgent: isSharedConversation
+        ? conversation.userCallsAgent?.trim() || agent?.name?.trim() || ''
+        : agent?.iCallAgent?.trim() || '',
       agentIsDefault: Boolean(
-        !messenger &&
         agent?.isDefault &&
           agent.createdUserId &&
           this.stringifyObjectId(agent.createdUserId) ===
@@ -5307,7 +5279,7 @@ export class ConversationService {
       ),
       agentAccessRole: isSharedConversation ? 'shared' : 'owner',
       preview: this.buildPreview(agent, latestMessage),
-      isMessenger: Boolean(messenger),
+      isMessenger: Boolean(agent?.messengerOfAgentId),
       updatedAt: conversation.updatedAt?.toISOString?.() ?? '',
       createdAt: conversation.createdAt?.toISOString?.() ?? '',
     };
@@ -8877,14 +8849,8 @@ export class ConversationService {
     } as AgentEntity;
   }
 
-  private async resolveMessenger(
-    conversation: ConversationEntity
-  ): Promise<AgentSubEntity | null> {
-    if (!conversation.subAgentId || !this.messengerService) {
-      return null;
-    }
-
-    return this.messengerService.resolveMessengerForConversation(conversation);
+  private isMessengerAgent(agent: AgentEntity | null): boolean {
+    return Boolean(agent?.messengerOfAgentId);
   }
 
   private async findConversationById(
