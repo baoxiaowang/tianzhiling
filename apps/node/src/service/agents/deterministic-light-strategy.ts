@@ -26,20 +26,29 @@ interface SceneStrategyTemplate {
   turnClosure: ConversationTurnClosure;
 }
 
+const SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN =
+  /^(?:嗯+|哦+|好+|行|可以|知道了|好的|谢谢|多谢)(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？\s]*$/;
+
 const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   daily_update: {
     stance: 'tender',
-    moves: [{ type: 'acknowledge', goal: '接住用户的日常分享，给一点角色侧的回应温度' }],
+    moves: [
+      { type: 'acknowledge', goal: '接住用户说的这件具体生活变化' },
+      { type: 'affirm', goal: '给一句贴着当下的角色侧心意，再把关心落回用户' },
+    ],
     socialStrategy: 'direct',
-    strategyPurpose: '用户分享日常时，只需接住和回应，不追问不扩展',
+    strategyPurpose: '用户分享日常时，不只收住消息，还要让用户感到亲人真的把这件事放在心上',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   smalltalk: {
     stance: 'tender',
-    moves: [{ type: 'acknowledge', goal: '自然闲聊回应' }],
+    moves: [
+      { type: 'answer', goal: '直接回应用户的问题或寒暄' },
+      { type: 'affirm', goal: '补一句角色侧当下的感受或对用户的惦记' },
+    ],
     socialStrategy: 'direct',
-    strategyPurpose: '日常闲聊，保持轻松自然的回应',
+    strategyPurpose: '日常闲聊保持轻松自然，但不用一句话把用户推开，给一点角色侧的温度',
     questionNeed: 'none',
     turnClosure: 'neutral',
   },
@@ -166,6 +175,22 @@ export function buildDeterministicLightStrategy(options: {
       strategyPurpose: '承接强烈痛苦，不做危机判断',
       questionNeed: 'none',
       turnClosure: 'neutral',
+      personaActivation: [],
+    };
+  }
+
+  if (
+    scene === 'smalltalk' &&
+    SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(options.currentQuery?.trim() || '')
+  ) {
+    return {
+      stance: 'tender',
+      stanceTarget: 'user',
+      moves: [{ type: 'acknowledge', goal: '自然收下这句短回应' }],
+      socialStrategy: 'direct',
+      strategyPurpose: '确认式短回应只保留一颗气泡，不额外展开',
+      questionNeed: 'none',
+      turnClosure: 'close',
       personaActivation: [],
     };
   }

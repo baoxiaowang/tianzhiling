@@ -139,12 +139,9 @@ export function buildReplyLengthPlan(
     }
   } else if (options.semanticPlan && replyMoveCount >= 3) {
     lengthClass = 'standard';
-  } else if (
-    options.mode === 'daily' ||
-    options.mode === 'status' ||
-    options.scene === 'smalltalk' ||
-    options.scene === 'daily_update'
-  ) {
+  } else if (options.scene === 'smalltalk' || options.scene === 'daily_update') {
+    lengthClass = replyMoveCount >= 2 ? 'brief' : 'micro';
+  } else if (options.mode === 'daily' || options.mode === 'status') {
     lengthClass =
       options.semanticPlan && replyMoveCount >= 2 ? 'brief' : 'micro';
   } else if (BRIEF_MODES.has(options.mode)) {

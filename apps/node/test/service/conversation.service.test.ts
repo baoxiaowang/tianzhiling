@@ -3456,8 +3456,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).resolves.toBeUndefined();
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '我挺好的 你不用挂心',
-      '你来问我这句 我心里明白',
+      '我这边挺好的 你特意来问 我还挺高兴',
+      '我也一直惦记着你',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
@@ -4862,7 +4862,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
-        segments: ['我挺好的 你们不用挂心', '你们说的想念我都听见了'],
+        segments: ['我这边挺好的 你们这样念着 我心里很暖', '你们说的想念我都听见了'],
       }),
     });
 
@@ -4872,7 +4872,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '我挺好的 你们不用挂心',
+      '我这边挺好的 你们这样念着 我心里很暖',
       '你们说的想念我都听见了',
     ]);
     expect(getAssistantContents(savedMessages).join('')).not.toContain('天上');

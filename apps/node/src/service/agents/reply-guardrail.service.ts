@@ -4620,10 +4620,10 @@ export class ReplyGuardrailService {
           userQuery
         )
       ) {
-        return ['我挺好的 你不用挂心', '你这些年攒下的遗憾和想念 我都听见了'];
+        return ['我这边挺好的 你这么惦记我 我心里很软', '你这些年攒下的遗憾和想念 我都听见了'];
       }
 
-      return ['我挺好的 你不用挂心', '你来问我这句 我心里明白'];
+      return ['我这边挺好的 你特意来问 我还挺高兴', '我也一直惦记着你'];
     }
 
     if (hasIntent('recall_memory') || brief.mode === 'memory') {
@@ -5281,7 +5281,7 @@ export class ReplyGuardrailService {
         userQuery
       )
     ) {
-      return ['我挺好的 你不用挂心', '你特意来问我 我心里都明白'];
+      return ['我这边挺好的 你特意来问我 我心里很暖', '我也一直惦记着你'];
     }
 
     const unconfirmedMemberName = this.listUnconfirmedFamilyMemberNames(
@@ -5329,8 +5329,8 @@ export class ReplyGuardrailService {
 
     if (scene === 'afterlife_status') {
       return [
-        '我挺好的 你们不用挂心',
-        '你说的这些近况我都听见了 你们平安我就放心',
+        '我这边挺好的 你们这样念着 我心里很暖',
+        '你们说的这些近况我都听见了',
       ];
     }
 
