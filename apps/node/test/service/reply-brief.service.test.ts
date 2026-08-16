@@ -160,9 +160,9 @@ describe('buildReplyBrief', () => {
     expect(brief.replyMoves.length).toBe(3);
     expect(brief.replyMoves[2]).toContain('给一句贴着原话的角色判断或亲人侧心意');
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'micro',
-      targetCharacters: 18,
-      reviewCharacters: 30,
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
     });
     expect(brief.prompt).toContain('短而有温度，再给一处亲人侧心意');
   });
@@ -1080,6 +1080,7 @@ describe('buildReplyBrief', () => {
       maxSegments: 2,
       complexityHint: 'paired',
       turnClosure: 'neutral',
+      preferTwoSegments: true,
     });
     expect(brief.replyMoves).toEqual([
       '只确认用户明确提到的共同经历，不补写当时的动作或细节',
@@ -1092,7 +1093,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('共同过去先沿用户已说片段回应感受和意义');
     expect(brief.prompt).toContain('具体事实只用同一对象证据');
     expect(brief.prompt).toContain('不补写当时的动作或细节');
-    expect(brief.prompt).toContain('默认一颗');
+    expect(brief.prompt).toContain('本轮需要两颗气泡');
     expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
   });
 
@@ -1572,5 +1573,28 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('动作：保留梦境含混与留白');
     expect(brief.prompt).toContain('锚点：声音');
     expect(brief.prompt).toContain('仅限梦境，不作现实证明');
+  });
+
+  it('prefers two bubbles for an ordinary short chat turn by default', () => {
+    const currentQuery = '妈，我今天上班有点累';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.bubblePlan).toMatchObject({
+      maxSegments: 2,
+      complexityHint: 'paired',
+      preferTwoSegments: true,
+    });
+    expect(brief.prompt).toContain('本轮需要两颗气泡');
+  });
+
+  it('keeps a bare acknowledgment on one bubble', () => {
+    const currentQuery = '嗯';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.bubblePlan.preferTwoSegments).toBeUndefined();
+    expect(brief.bubblePlan.complexityHint).toBe('concise');
+    expect(brief.prompt).toContain('默认一颗');
   });
 });

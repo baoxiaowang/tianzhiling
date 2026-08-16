@@ -3575,6 +3575,22 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments).toEqual(['我一直就在你身边，只是你看不见。']);
   });
 
+  it('rejects a reply that describes the agent as floating back like a ghost', async () => {
+    const service = new ReplyGuardrailService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '中元节了你们能出来吗',
+      replySegments: ['能出来，我现在就在你附近飘着。'],
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.reason).toContain('幽灵');
+  });
+
   it('keeps a repeated real-presence belief beside the user as an open wish', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {

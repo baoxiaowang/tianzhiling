@@ -46,7 +46,6 @@ export function buildReplyBubblePlan(options: {
   const turnClosure =
     ruleClosure === 'close' ? 'close' : options.turnClosureHint || ruleClosure;
   const allowsTwoSegmentPreference =
-    turnClosure !== 'close' &&
     !EXPLICIT_SINGLE_BUBBLE_PATTERN.test(currentQuery);
   const complexityHint = EXPLICIT_SINGLE_BUBBLE_PATTERN.test(currentQuery)
     ? 'concise'
@@ -92,7 +91,7 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   };
 
   const segmentInstruction = plan.preferTwoSegments
-    ? '本轮需要两颗气泡，分别完成已选的两个动作，不能合并。'
+    ? '本轮需要两颗气泡：第一颗直接回应，第二颗只补一个短小的亲人侧心意、具体关心或自然收尾；每颗都能独立成句，不把一句话截成两半；第二颗不能空泡、旁白或复读第一颗。'
     : plan.encourageTwoSegments
     ? '优先用两颗：第一颗接住用户，第二颗给亲人侧心意或具体关心；一颗更自然时可不拆。'
     : `默认一颗，最多 ${plan.maxSegments} 颗；第二颗须新增不可替代的动作。`;

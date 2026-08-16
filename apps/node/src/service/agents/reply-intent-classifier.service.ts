@@ -10,6 +10,8 @@ import {
   FAMILY_CARE_REGRET_INTENT_PATTERN,
   GRIEF_OVERWHELMED_INTENT_PATTERN,
   GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
+  LONG_TERM_REUNION_WISH_INTENT_PATTERN,
+  PHYSICAL_TOUCH_BOUNDARY_PATTERN,
   isDreamConnectionIntent,
   isDreamVisitRequestIntent,
   isReturnVisitRequestIntent,
@@ -576,7 +578,10 @@ export class ReplyIntentClassifierService {
       intent: deterministicIntent,
     });
 
-    if (capabilityConstraints.length) {
+    if (
+      capabilityConstraints.length ||
+      PHYSICAL_TOUCH_BOUNDARY_PATTERN.test(currentQuery)
+    ) {
       return { mode: 'semantic', reason: 'capability_boundary' };
     }
 
@@ -668,7 +673,8 @@ export class ReplyIntentClassifierService {
     return (
       LIGHTWEIGHT_COMFORT_KEEP_SEMANTIC_PATTERN.test(currentQuery) ||
       GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(currentQuery) ||
-      GRIEF_OVERWHELMED_INTENT_PATTERN.test(currentQuery)
+      GRIEF_OVERWHELMED_INTENT_PATTERN.test(currentQuery) ||
+      LONG_TERM_REUNION_WISH_INTENT_PATTERN.test(currentQuery)
     );
   }
 

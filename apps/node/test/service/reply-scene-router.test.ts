@@ -1153,4 +1153,17 @@ describe('routeReplyScene', () => {
       [route.primaryScene, ...route.secondaryScenes].filter(Boolean)
     ).toHaveLength(3);
   });
+
+  it('routes Zhongyuan return/presence questions to the reality boundary', () => {
+    for (const currentQuery of [
+      '中元节了你们能出来吗',
+      '你出来了没',
+      '像幽灵一样飘回来',
+    ]) {
+      const route = routeReplyScene({ currentQuery });
+
+      expect(route.primaryScene?.scene).toBe('reality_presence_boundary');
+      expect(route.prompt).toContain('不要把亲人说成像幽灵一样飘回来');
+    }
+  });
 });

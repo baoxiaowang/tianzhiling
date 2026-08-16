@@ -160,6 +160,7 @@ describe('reply bubble plan', () => {
       '第一层回应',
       '第二层回应',
       '第三层回应',
+      '第四层回应',
     ]);
 
     expect(inspected.requiresReflow).toBe(true);
@@ -172,8 +173,9 @@ describe('reply bubble plan', () => {
         '第一层回应',
         '第二层回应',
         '第三层回应',
+        '第四层回应',
       ])
-    ).toEqual(['第一层回应', '第二层回应 第三层回应']);
+    ).toEqual(['第一层回应', '第二层回应', '第三层回应 第四层回应']);
   });
 
   it('does not turn user message length into a third bubble allowance', () => {

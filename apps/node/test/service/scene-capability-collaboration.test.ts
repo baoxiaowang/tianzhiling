@@ -42,7 +42,7 @@ describe('scene and capability collaboration', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(route.primaryScene).toBeUndefined();
+    expect(route.primaryScene?.scene).toBe('smalltalk');
     expect(brief.capabilityConstraints).toEqual([
       expect.objectContaining({
         policyId: 'vision.live_environment',
@@ -310,9 +310,9 @@ describe('scene and capability collaboration', () => {
     expect(brief.forbiddenAssumptions.join('')).toContain('不得输出报警');
     expect(brief.bubblePlan).toEqual({
       maxSegments: 2,
-      complexityHint: 'layered',
+      complexityHint: 'paired',
       turnClosure: 'neutral',
-      encourageTwoSegments: true,
+      preferTwoSegments: true,
     });
   });
 

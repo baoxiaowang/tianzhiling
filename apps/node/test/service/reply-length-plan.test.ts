@@ -321,6 +321,40 @@ describe('reply length plan', () => {
     });
   });
 
+  it('promotes a short two-bubble turn out of micro so bubbles stay whole', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '妈，我今天上班有点累',
+        mode: 'daily',
+        scene: 'daily_update',
+        replyMoveCount: 1,
+        preferTwoSegments: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+    });
+  });
+
+  it('does not inflate a closing one-bubble acknowledgment', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '晚安',
+        mode: 'daily',
+        scene: 'smalltalk',
+        replyMoveCount: 1,
+        preferTwoSegments: false,
+        turnClosure: 'close',
+      })
+    ).toEqual({
+      lengthClass: 'micro',
+      targetCharacters: 18,
+      reviewCharacters: 30,
+    });
+  });
+
   it('counts all bubbles together and ignores whitespace', () => {
     expect(countReplyVisibleCharacters(['妈知道了', ' 别难过 '])).toBe(7);
   });
