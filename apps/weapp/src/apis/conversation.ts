@@ -31,6 +31,7 @@ export interface ConversationSummary {
   iCallAgent: string;
   agentIsDefault: boolean;
   agentAccessRole: "owner" | "shared";
+  isMessenger?: boolean;
   preview: string;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -159,6 +160,7 @@ export interface ConversationBootstrapAgent {
   hasUnreadAgentHomeGuide: boolean;
   hasUnreadAgentProfileGuide: boolean;
   isDefault: boolean;
+  isMessenger?: boolean;
 }
 
 export interface ConversationChatBootstrapResult
@@ -245,6 +247,7 @@ export function parseConversationSummary(value: unknown): ConversationSummary {
     agentIsDefault: Boolean(raw.agentIsDefault),
     agentAccessRole:
       asString(raw.agentAccessRole) === "shared" ? "shared" : "owner",
+    isMessenger: Boolean(raw.isMessenger),
     preview: asString(raw.preview),
     createdAt: asDate(raw.createdAt),
     updatedAt: asDate(raw.updatedAt),
@@ -861,6 +864,7 @@ function parseConversationBootstrapAgent(
     hasUnreadAgentHomeGuide: Boolean(raw.hasUnreadAgentHomeGuide),
     hasUnreadAgentProfileGuide: Boolean(raw.hasUnreadAgentProfileGuide),
     isDefault: Boolean(raw.isDefault),
+    isMessenger: Boolean(raw.isMessenger),
   };
 }
 

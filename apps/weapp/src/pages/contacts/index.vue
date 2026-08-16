@@ -361,6 +361,7 @@ function buildConversationRouteQuery(conversation: ConversationSummary) {
     ['agentSex', String(conversation.agentSex)],
     ['agentCallMe', conversation.agentCallMe],
     ['iCallAgent', conversation.iCallAgent],
+    ['isMessenger', conversation.isMessenger ? '1' : ''],
     ['preview', conversation.preview],
     ['createdAt', conversation.createdAt?.toISOString() ?? ''],
   ]
@@ -376,6 +377,9 @@ function handleConversationTap(conversation: ConversationSummary) {
 }
 
 function handleAgentDetailTap(conversation: ConversationSummary) {
+  if (conversation.isMessenger) {
+    return
+  }
   void Taro.navigateTo({
     url: `/pages/agent-detail/index?${buildConversationRouteQuery(conversation)}`,
   })

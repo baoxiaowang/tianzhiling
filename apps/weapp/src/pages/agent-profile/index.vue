@@ -94,7 +94,7 @@
           />
         </view>
         <view class="agent-profile-messenger__identity">
-          <text class="agent-profile-messenger__name">天之灵小使者</text>
+          <text class="agent-profile-messenger__name">{{ messengerName }}</text>
           <text
             class="agent-profile-messenger__desc"
             :class="{
@@ -733,6 +733,10 @@ const assistantSpeechControlLabel = computed(() => {
 const messengerArrivalText = computed(() => {
   const name = agent.value?.name?.trim() || routeAgentName.value.trim() || "TA";
   return `${name}的小使者正在赶来`;
+});
+const messengerName = computed(() => {
+  const name = agent.value?.name?.trim() || routeAgentName.value.trim() || "TA";
+  return `${name}的小使者`;
 });
 const messengerDescription = computed(() => {
   if (isVoicePreparing.value) {

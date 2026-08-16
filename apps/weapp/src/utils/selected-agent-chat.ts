@@ -68,6 +68,7 @@ export function buildConversationChatUrl(conversation: ConversationSummary) {
     ["agentSex", String(conversation.agentSex)],
     ["agentCallMe", conversation.agentCallMe],
     ["iCallAgent", conversation.iCallAgent],
+    ["isMessenger", conversation.isMessenger ? "1" : ""],
     ["preview", conversation.preview],
     ["createdAt", conversation.createdAt?.toISOString() ?? ""],
   ]
