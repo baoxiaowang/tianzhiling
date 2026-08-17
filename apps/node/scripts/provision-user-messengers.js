@@ -111,10 +111,11 @@ async function main() {
         });
 
         if (!hasGreeting) {
-          const love = resolveLoveAttribution(parent.sex);
+          const attribution = resolveGenderAttribution(parent.sex);
           const greetings = [
-            `你好，我是${messengerName}。往后想起${parentName}的事，都可以慢慢讲给我，我会帮你一点点唤醒${parentName}的记忆，带着${love}永远陪伴你。`,
-            `最近有没有想起${parentName}的哪件小事？慢慢讲，我在听呢。`,
+            `你好，我是${messengerName}。关于${parentName}的事，都可以跟我讲讲。`,
+            `我会帮你唤醒${parentName}的记忆，${attribution}带着这份爱永远陪伴你。`,
+            `你可以先跟我简单介绍一下你的${parentName}吗？我真的很好奇呢。`,
           ];
           const greetingMessages = greetings.map((content, index) => ({
             conversationId: conversation._id,
@@ -172,14 +173,14 @@ function parseUserIds(args) {
   return userIds;
 }
 
-function resolveLoveAttribution(sex) {
+function resolveGenderAttribution(sex) {
   if (sex === 0) {
-    return '她的爱';
+    return '让她';
   }
   if (sex === 1) {
-    return '他的爱';
+    return '让他';
   }
-  return '这份爱';
+  return '让 TA';
 }
 
 function buildMongoConnectionString() {

@@ -251,11 +251,11 @@ export class MessengerService {
     const parentName = parentAgent.name?.trim() || 'TA';
     const messengerName =
       messengerAgent.name?.trim() || this.buildMessengerName(parentAgent.name);
-    const love = this.resolveLoveAttribution(parentAgent.sex);
+    const attribution = this.resolveGenderAttribution(parentAgent.sex);
     const greetings = this.buildMessengerGreetings(
       parentName,
       messengerName,
-      love
+      attribution
     );
     const messages = greetings.map((content, index) => {
       const message = new MessageEntity();
@@ -277,21 +277,22 @@ export class MessengerService {
   private buildMessengerGreetings(
     parentName: string,
     messengerName: string,
-    love: string
+    attribution: string
   ): string[] {
     return [
-      `你好，我是${messengerName}。往后想起${parentName}的事，都可以慢慢讲给我，我会帮你一点点唤醒${parentName}的记忆，带着${love}永远陪伴你。`,
-      `最近有没有想起${parentName}的哪件小事？慢慢讲，我在听呢。`,
+      `你好，我是${messengerName}。关于${parentName}的事，都可以跟我讲讲。`,
+      `我会帮你唤醒${parentName}的记忆，${attribution}带着这份爱永远陪伴你。`,
+      `你可以先跟我简单介绍一下你的${parentName}吗？我真的很好奇呢。`,
     ];
   }
 
-  private resolveLoveAttribution(sex?: AgentSex): string {
+  private resolveGenderAttribution(sex?: AgentSex): string {
     if (sex === AgentSex.woman) {
-      return '她的爱';
+      return '让她';
     }
     if (sex === AgentSex.man) {
-      return '他的爱';
+      return '让他';
     }
-    return '这份爱';
+    return '让 TA';
   }
 }
