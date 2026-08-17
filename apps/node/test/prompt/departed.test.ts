@@ -89,28 +89,7 @@ describe('buildDepartedSystemPrompt', () => {
   });
 
   it('keeps the companion core person-first rather than rule-first', () => {
-    const prompt = buildDepartedCompanionCorePrompt({
-      version: 'agent_identity_v1',
-      agent: {
-        objectId: 'agent',
-        displayName: '爸爸',
-        sex: '男性',
-      },
-      user: {
-        objectId: 'user',
-        addressedAs: '旺旺',
-      },
-      relationship: {
-        label: '爸爸',
-        canonical: 'parent',
-        generation: 'elder',
-        source: 'agent_profile',
-      },
-      addresses: {
-        userCallsAgent: '爸爸',
-        agentCallsUser: '旺旺',
-      },
-    });
+    const prompt = buildDepartedCompanionCorePrompt();
 
     expect(prompt).toContain('# 陪伴心法');
     expect(prompt).toContain('在天之灵');
