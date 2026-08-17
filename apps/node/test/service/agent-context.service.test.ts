@@ -860,7 +860,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain(
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情'
     );
-    expect(systemMessage.content).toContain('不必反复说“记不清”');
+    expect(systemMessage.content).toContain('邀请用户多说那位亲人或那件事');
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');
@@ -1086,9 +1086,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).toContain('气泡语义规划');
-    expect(systemMessage.content).toContain('优先用两颗');
-    expect(systemMessage.content).toContain('一颗更自然时可不拆');
-    expect(systemMessage.content).toContain('仅在两个动作确实切换时用第二颗');
+    expect(systemMessage.content).toContain('本轮需要两颗气泡');
     expect(systemMessage.content).toContain('以上为内部约束；自然表达');
     expect(systemMessage.content).not.toContain('本轮结构化意图');
     expect(systemMessage.content).toContain('# 本轮 Conversation Reading');
@@ -1408,7 +1406,7 @@ describe('AgentContextService', () => {
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
         strategyVersion: 'conversation_strategy_v8',
-        strategySource: 'direct_brief',
+        strategySource: 'deterministic_light',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),
         memoryRetrievalMode: 'suppressed',
@@ -2423,6 +2421,44 @@ describe('AgentContextService', () => {
     expect(relevanceText).toContain('家事边界');
     expect(relevanceText).toContain('身体忌口');
     expect(relevanceText).toContain('最新认可的表达方式');
+  });
+
+  it('keeps the direct prompt from inventing travel care from a closing update', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '我知道了，那我先收拾东西准备回家了',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('# 本轮回复任务');
+    expect(prompt).toContain('准备回家');
+    expect(prompt).toContain('不得补出');
+    expect(prompt).toContain('路上注意安全');
+  });
+
+  it('puts the strong active-contribution guard into direct prompts', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '你多陪我说几句吧，别光让我说',
+    });
+
+    expect(replyBrief.activeContribution).toBeTruthy();
+
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('# 主动贡献');
+    expect(prompt).toContain('你想说什么');
+    expect(prompt).toContain('我这边刚静下来');
   });
 
   it('suppresses ritual and keepsake associations in household chores', () => {

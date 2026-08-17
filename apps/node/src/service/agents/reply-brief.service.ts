@@ -670,6 +670,23 @@ function constrainConversationPlanQuality(
     moves = [answerMove, ...moves.filter(move => move !== answerMove)];
   }
 
+  if (preferredAlternative === 'leave_space') {
+    moves = moves.filter(
+      move => !['acknowledge', 'affirm', 'comfort', 'suggest'].includes(move.type)
+    );
+    if (
+      !moves.length ||
+      moves.every(move => move.type === 'ask')
+    ) {
+      moves = [
+        {
+          type: 'share_stance',
+          goal: '承接当前情绪后留出表达空间，不重复劝解或叮嘱',
+        },
+      ];
+    }
+  }
+
   if (preferredAlternative === 'grounded_detail') {
     moves = [
       {
@@ -741,6 +758,9 @@ function constrainConversationPlanQuality(
   return {
     ...plan,
     moves: moves.slice(0, 3),
+    ...(preferredAlternative === 'leave_space'
+      ? { questionNeed: 'none' as const, turnClosure: 'neutral' as const }
+      : {}),
     ...(['answer', 'grounded_detail'].includes(preferredAlternative || '')
       ? { questionNeed: 'none' as const }
       : {}),

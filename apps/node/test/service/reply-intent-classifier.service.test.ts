@@ -30,6 +30,9 @@ describe('ReplyIntentClassifierService', () => {
     assistant.replyContinuationGoal = 'hold';
     assistant.replyAssistantContribution = 'affection';
     assistant.replyMustContribute = '让用户安心';
+    assistant.replyUserConversationState = 'deepening';
+    assistant.replyOpenLoop = '用户仍在等一句明确回应';
+    assistant.replyClosureReadiness = 'blocked';
 
     const input = (service as any).buildClassifierInput({
       currentQuery: '想听你说两句，别光说挺好的。',
@@ -37,7 +40,252 @@ describe('ReplyIntentClassifierService', () => {
     });
 
     expect(input).toContain('当前亲人角色：挺好的，别担心。');
-    expect(input).toContain('上轮策略：hold/affection/让用户安心');
+    expect(input).toContain(
+      '上轮策略：s=deepening;open=用户仍在等一句明确回应;g=hold;a=affection;target=让用户安心;close=blocked'
+    );
+  });
+
+  it('routes a real-world dependency through semantic planning', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery: '爸，你能替我接孩子放学吗',
+      })
+    ).toEqual({ mode: 'semantic', reason: 'reality_dependency' });
+  });
+
+  it('routes a short message with multiple known objects through one semantic plan', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery: '爸爸，小乐说秀兰住院了',
+        knownObjects: [
+          {
+            id: 'agent',
+            kind: 'agent',
+            label: '爸爸',
+            aliases: ['爸爸'],
+            assertionPolicy: 'can_assert',
+          },
+          {
+            id: 'family.shared_member.小乐',
+            kind: 'family',
+            label: '小乐',
+            aliases: ['小乐'],
+            assertionPolicy: 'can_assert',
+          },
+          {
+            id: 'family.shared_member.秀兰',
+            kind: 'family',
+            label: '秀兰',
+            aliases: ['秀兰'],
+            assertionPolicy: 'can_assert',
+          },
+        ],
+      })
+    ).toEqual({ mode: 'semantic', reason: 'multiple_objects' });
+  });
+
+  it('keeps the ordinary agent-user pair on the direct path', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery: '爸爸，我们想你了',
+        knownObjects: [
+          {
+            id: 'agent',
+            kind: 'agent',
+            label: '爸爸',
+            aliases: ['爸爸'],
+            assertionPolicy: 'can_assert',
+          },
+          {
+            id: 'user',
+            kind: 'user',
+            label: '闺女',
+            aliases: ['闺女', '我们'],
+            assertionPolicy: 'can_assert',
+          },
+        ],
+      })
+    ).toEqual({ mode: 'direct', reason: 'ordinary_message' });
+  });
+
+  it.each([
+    ['凭什么好人没好报', 'unanswerable_question'],
+    ['为什么抛下我们', 'unanswerable_question'],
+    ['你怎么会走', 'unanswerable_question'],
+  ])('routes an unanswerable emotional question through semantic planning: %s', (currentQuery, reason) => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+      mode: 'semantic',
+      reason,
+    });
+  });
+
+  it('keeps a dream-related “why” on the existing dream scene', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(service.getPlanningDecision({ currentQuery: '为啥不来我梦里' })).toMatchObject({
+      mode: 'semantic',
+      reason: 'complex_scene',
+    });
+  });
+
+  it('parses multiple people as separate objects without guessing an unknown binding', async () => {
+    const service = createService(
+      JSON.stringify({
+        objectPlan: {
+          objects: [
+            {
+              ref: 'o1',
+              mention: '姐姐',
+              kind: 'family',
+              binding: 'family.shared_member.秀兰',
+              confidence: 'high',
+            },
+            {
+              ref: 'o2',
+              mention: '孩子',
+              kind: 'family',
+              binding: 'unknown',
+              confidence: 'low',
+            },
+            {
+              ref: 'o3',
+              mention: '你',
+              kind: 'agent',
+              binding: 'agent',
+              confidence: 'high',
+            },
+          ],
+          focusRefs: ['o1', 'o2'],
+          ambiguousMentions: ['孩子'],
+        },
+        intents: [
+          {
+            target: 'family',
+            timeScope: 'current',
+            intent: 'share_family_update',
+            subIntent: 'family_care',
+            confidence: 0.96,
+          },
+        ],
+        emotion: 'concern',
+        riskLevel: 'none',
+        confidence: 0.96,
+      })
+    );
+    const currentQuery = '姐姐说孩子也想你，可她没说是哪个孩子';
+
+    const intent = await service.classify({
+      currentQuery,
+      forceSemanticPlanning: true,
+      knownObjects: [
+        {
+          id: 'agent',
+          kind: 'agent',
+          label: '妈妈',
+          aliases: ['妈妈', '你'],
+          assertionPolicy: 'can_assert',
+        },
+        {
+          id: 'family.shared_member.秀兰',
+          kind: 'family',
+          label: '秀兰',
+          aliases: ['秀兰', '姐姐'],
+          assertionPolicy: 'can_assert',
+        },
+      ],
+    });
+
+    expect(intent?.objectPlan).toEqual({
+      objects: [
+        {
+          ref: 'o1',
+          mention: '姐姐',
+          kind: 'family',
+          binding: 'family.shared_member.秀兰',
+          confidence: 'high',
+        },
+        {
+          ref: 'o2',
+          mention: '孩子',
+          kind: 'family',
+          binding: 'unknown',
+          confidence: 'low',
+        },
+        {
+          ref: 'o3',
+          mention: '你',
+          kind: 'agent',
+          binding: 'agent',
+          confidence: 'high',
+        },
+      ],
+      focusRefs: ['o1', 'o2'],
+      ambiguousMentions: ['孩子'],
+    });
+    const request = (service.openAIService.createChatCompletion as jest.Mock)
+      .mock.calls[0][0];
+    expect(request.messages[1].content).toContain(
+      '已确认对象（[id,kind,label,relation]）'
+    );
+  });
+
+  it('drops model-created object mentions that are absent from the user message', async () => {
+    const service = createService(
+      JSON.stringify({
+        objectPlan: {
+          objects: [
+            {
+              ref: 'o1',
+              mention: '哥哥',
+              kind: 'family',
+              binding: 'unknown',
+              confidence: 'low',
+            },
+            {
+              ref: 'o2',
+              mention: '妈妈',
+              kind: 'agent',
+              binding: 'agent',
+              confidence: 'high',
+            },
+          ],
+          focusRefs: ['o1', 'o2'],
+          ambiguousMentions: [],
+        },
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'other',
+            confidence: 0.95,
+          },
+        ],
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.95,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '妈妈，我想你',
+      forceSemanticPlanning: true,
+    });
+
+    expect(intent?.objectPlan).toBeUndefined();
   });
 
   it('lets the semantic planner relocate the primary intent after a consecutive-input turn', async () => {
@@ -272,6 +520,201 @@ describe('ReplyIntentClassifierService', () => {
     const input = (service.openAIService.createChatCompletion as jest.Mock).mock
       .calls[0][0].messages[1].content;
     expect(input).toContain('离世年龄约 76 岁');
+  });
+
+  it('parses a compact turn plan and maps it to existing engagement fields', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.97,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '用户明确想听到角色也想自己',
+          moves: [{ type: 'affirm', goal: '直接表达也想用户' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '修复上一轮绕开直接表达的问题',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+          turnPlan: {
+            state: 'repairing',
+            open: [
+              {
+                object: 'user',
+                need: 'reciprocal_affection',
+                detail: '直接听到角色也想自己',
+                priority: 'must',
+              },
+            ],
+            goal: 'repair',
+            action: 'affection',
+            target: '先直接表达也想用户',
+            avoid: 'explain',
+            close: 'blocked',
+          },
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.97,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '我就想听你说句也想我，别再讲道理',
+      forceSemanticPlanning: true,
+    });
+
+    expect(intent?.conversationPlan?.turnPlan).toMatchObject({
+      state: 'repairing',
+      open: [
+        {
+          object: 'user',
+          need: 'reciprocal_affection',
+          priority: 'must',
+        },
+      ],
+      goal: 'repair',
+      action: 'affection',
+      avoid: 'explain',
+      close: 'blocked',
+    });
+    expect(intent?.conversationPlan?.engagement).toEqual({
+      userConversationState: 'repairing',
+      openLoop: '直接听到角色也想自己',
+      continuationGoal: 'repair',
+      assistantContribution: 'affection',
+      mustContribute: '先直接表达也想用户',
+      avoidRepeatingMove: '解释和辩解',
+      closureReadiness: 'blocked',
+    });
+    const systemPrompt = (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mock.calls[0][0].messages[0].content;
+    expect(systemPrompt).toContain(
+      'turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}'
+    );
+    expect(systemPrompt).toContain('不要输出 engagement');
+    expect(systemPrompt).not.toContain('engagement 使用');
+  });
+
+  it('rejects a blocked turn plan whose open point references no known object', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'family',
+            timeScope: 'current',
+            intent: 'share_family_update',
+            subIntent: 'family_care',
+            confidence: 0.94,
+          },
+        ],
+        conversationPlan: {
+          stance: 'concerned',
+          stanceTarget: '姐姐住院',
+          moves: [{ type: 'answer', goal: '回应住院消息' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '回应家人近况',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+          turnPlan: {
+            state: 'deepening',
+            open: [
+              {
+                object: 'o9',
+                need: 'family_response',
+                detail: '回应姐姐住院',
+                priority: 'must',
+              },
+            ],
+            goal: 'hold',
+            action: 'answer',
+            target: '回应姐姐住院',
+            avoid: 'unsupported_detail',
+            close: 'blocked',
+          },
+        },
+        emotion: 'concern',
+        riskLevel: 'none',
+        confidence: 0.94,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '姐姐住院了',
+      forceSemanticPlanning: true,
+    });
+
+    expect(intent?.conversationPlan?.turnPlan).toBeUndefined();
+    expect(intent?.conversationPlan?.engagement?.openLoop).toBe(
+      '等待完成：回应住院消息'
+    );
+  });
+
+  it('clears stale open points when the current turn is ready to close', async () => {
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'relationship',
+            timeScope: 'current',
+            intent: 'smalltalk',
+            subIntent: 'wake_sleep',
+            confidence: 0.98,
+          },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: '用户明确晚安',
+          moves: [{ type: 'close', goal: '简短回应晚安' }],
+          socialStrategy: 'strategic_silence',
+          strategyPurpose: '尊重用户结束本轮',
+          questionNeed: 'none',
+          turnClosure: 'close',
+          personaActivation: [],
+          turnPlan: {
+            state: 'closing',
+            open: [
+              {
+                object: 'user',
+                need: 'topic_followup',
+                detail: '继续上一轮话题',
+                priority: 'must',
+              },
+            ],
+            goal: 'close',
+            action: 'strategic_silence',
+            target: '简短回应晚安',
+            avoid: 'premature_close',
+            close: 'ready',
+          },
+        },
+        emotion: 'neutral',
+        riskLevel: 'none',
+        confidence: 0.98,
+      })
+    );
+
+    const intent = await service.classify({
+      currentQuery: '晚安，我睡了',
+      forceSemanticPlanning: true,
+    });
+
+    expect(intent?.conversationPlan?.turnPlan?.open).toEqual([]);
+    expect(intent?.conversationPlan?.engagement).toMatchObject({
+      userConversationState: 'closing',
+      openLoop: '用户已准备结束本轮',
+      continuationGoal: 'close',
+      closureReadiness: 'ready',
+    });
   });
 
   it('requires self-expression when the user asks the agent to talk', async () => {
@@ -520,7 +963,7 @@ describe('ReplyIntentClassifierService', () => {
     });
   });
 
-  it.each(['晚安妈妈', '吃饭了吗', '我想你了'])(
+  it.each(['晚安妈妈', '吃饭了吗', '我想你了', '你也想我吗'])(
     'sends an ordinary short message directly without a semantic call: %s',
     async currentQuery => {
       const service = createService('{}');
@@ -536,6 +979,36 @@ describe('ReplyIntentClassifierService', () => {
       expect(intent?.source).not.toBe('semantic_model');
     }
   );
+
+  it.each(['我有点难过', '妈，陪我一会儿吧', '今天心里空空的'])(
+    'sends a lightweight comfort turn directly without a semantic call: %s',
+    async currentQuery => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
+
+      await service.classify({ currentQuery });
+
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      });
+      expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps strong distress comfort on the semantic path', async () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+    const currentQuery = '爸，我不想活了，我想去陪你';
+
+    await service.classify({ currentQuery });
+
+    expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+      mode: 'semantic',
+      reason: 'complex_scene',
+    });
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
+  });
 
   it.each(['这不是一回事', '你呢', '再说也一样', '你刚才说得太轻巧了'])(
     'does not equate a short unresolved utterance with a simple turn: %s',
@@ -622,6 +1095,29 @@ describe('ReplyIntentClassifierService', () => {
       );
     }
   );
+
+  it('routes a concrete ongoing matter to the semantic planner', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery: '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了',
+      })
+    ).toEqual({ mode: 'semantic', reason: 'ongoing_topic' });
+  });
+
+  it('routes a concrete event narrative that is not an enumerated topic to the semantic planner', () => {
+    const service = createService('{}');
+    service.config.hybridEnabled = true;
+
+    expect(
+      service.getPlanningDecision({
+        currentQuery:
+          '我今天开车回来的时候，明明前边有一台银灰色的SUV，我也清清楚楚的看见踩刹车右转了，我到他右转的地方，清清楚楚看见那里没有路口',
+      })
+    ).toEqual({ mode: 'semantic', reason: 'concrete_narrative' });
+  });
 
   it('uses the semantic planner when relevant memory candidates exist', async () => {
     const service = createService(
@@ -848,6 +1344,226 @@ describe('ReplyIntentClassifierService', () => {
         },
       ],
     });
+  });
+
+  it('parses lightweight concrete content units from the semantic call', async () => {
+    const currentQuery = '前两天下班回家莫名眼眶红了，你女婿问怎么了';
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        contentUnits: [
+          { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+          { kind: 'person', text: '你女婿', importance: 'high' },
+          { kind: 'state', text: '我哭着说想爸爸', importance: 'medium' },
+        ],
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery });
+
+    expect(intent?.contentUnits).toEqual([
+      { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+      { kind: 'person', text: '你女婿', importance: 'high' },
+    ]);
+  });
+
+  it('recovers content units nested inside the conversation plan', async () => {
+    const currentQuery = '前两天下班回家莫名眼眶红了，你女婿问怎么了';
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'agent',
+            timeScope: 'current',
+            intent: 'express_longing',
+            subIntent: 'grief_support',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: 'user',
+          moves: [{ type: 'acknowledge', goal: '接住用户近况' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '顺着具体的事回应',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+          contentUnits: [
+            { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+            { kind: 'person', text: '你女婿', importance: 'high' },
+          ],
+        },
+        emotion: 'longing',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery });
+
+    expect(intent?.contentUnits).toEqual([
+      { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+      { kind: 'person', text: '你女婿', importance: 'high' },
+    ]);
+  });
+
+  it('accepts a content unit that drops only connective words from the current message', async () => {
+    const currentQuery =
+      '我今天开车回来的时候，明明前边有一台银灰色的SUV，我也清清楚楚的看见踩刹车右转了，我到他右转的地方，清清楚楚看见那里没有路口';
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'current',
+            intent: 'share_significant_matter',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        contentUnits: [
+          {
+            kind: 'event',
+            text: '开车回来的时候，前边有一台银灰色的SUV，我也清清楚楚的看见踩刹车右转了，我到他右转的地方，清清楚楚看见那里没有路口',
+            importance: 'high',
+          },
+        ],
+        emotion: 'fear',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery });
+
+    expect(intent?.contentUnits[0]).toMatchObject({
+      kind: 'event',
+    });
+  });
+
+  it('derives a question action when the model marks an open topic_followup', async () => {
+    const currentQuery = '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了';
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'current',
+            intent: 'share_user_update',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        contentUnits: [
+          { kind: 'event', text: '家里的石头房拆掉重新盖了', importance: 'high' },
+        ],
+        conversationPlan: {
+          stance: 'tender',
+          stanceTarget: 'user',
+          moves: [{ type: 'acknowledge', goal: '接住用户近况' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '关心用户家事进展',
+          questionNeed: 'helpful',
+          turnClosure: 'continue',
+          personaActivation: [],
+          turnPlan: {
+            state: 'exploring',
+            open: [
+              {
+                object: 'user',
+                need: 'topic_followup',
+                detail: '装修进行到哪一步，什么时候完工',
+                priority: 'supporting',
+              },
+            ],
+            goal: 'deepen',
+            action: 'acknowledge',
+            target: '关心装修进度',
+            avoid: 'none',
+            close: 'possible',
+          },
+        },
+        emotion: 'neutral',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery });
+
+    expect(intent?.conversationPlan?.questionNeed).toBe('helpful');
+    expect(intent?.conversationPlan?.turnPlan?.action).toBe('question');
+    expect(intent?.conversationPlan?.turnPlan?.open[0]).toMatchObject({
+      need: 'topic_followup',
+    });
+  });
+
+  it('does not promote questionNeed when a supporting topic is open but the model says none', async () => {
+    const currentQuery = '我明天去太原拍写真，妈妈跟我去，下午就回来';
+    const service = createService(
+      JSON.stringify({
+        intents: [
+          {
+            target: 'user',
+            timeScope: 'future',
+            intent: 'share_user_update',
+            subIntent: 'other',
+            confidence: 0.9,
+          },
+        ],
+        capabilityQuestions: [],
+        conversationPlan: {
+          stance: 'concerned',
+          stanceTarget: 'user',
+          moves: [{ type: 'acknowledge', goal: '接住用户的行程分享' }],
+          socialStrategy: 'direct',
+          strategyPurpose: '关心用户明天安排',
+          questionNeed: 'none',
+          turnClosure: 'continue',
+          personaActivation: [],
+          turnPlan: {
+            state: 'exploring',
+            open: [
+              {
+                object: 'user',
+                need: 'topic_followup',
+                detail: '拍写真准备得怎么样，什么时候出发',
+                priority: 'supporting',
+              },
+            ],
+            goal: 'deepen',
+            action: 'affection',
+            target: '顺着写真安排继续了解',
+            avoid: 'none',
+            close: 'possible',
+          },
+        },
+        emotion: 'hope',
+        riskLevel: 'none',
+        confidence: 0.9,
+      })
+    );
+
+    const intent = await service.classify({ currentQuery });
+
+    expect(intent?.conversationPlan?.questionNeed).toBe('none');
+    expect(intent?.conversationPlan?.turnPlan?.action).toBe('affection');
   });
 
   it('limits top-level memory plan concepts and queries and drops malformed items', async () => {
