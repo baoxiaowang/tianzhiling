@@ -37,7 +37,8 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       { type: 'affirm', goal: '给一句贴着当下的角色侧心意，再把关心落回用户' },
     ],
     socialStrategy: 'direct',
-    strategyPurpose: '用户分享日常时，不只收住消息，还要让用户感到亲人真的把这件事放在心上',
+    strategyPurpose:
+      '用户分享日常时，不只收住消息，还要让用户感到亲人真的把这件事放在心上',
     questionNeed: 'none',
     turnClosure: 'neutral',
   },
@@ -48,7 +49,8 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       { type: 'affirm', goal: '补一句角色侧当下的感受或对用户的惦记' },
     ],
     socialStrategy: 'direct',
-    strategyPurpose: '日常闲聊保持轻松自然，但不用一句话把用户推开，给一点角色侧的温度',
+    strategyPurpose:
+      '日常闲聊保持轻松自然，但不用一句话把用户推开，给一点角色侧的温度',
     questionNeed: 'none',
     turnClosure: 'neutral',
   },
@@ -81,7 +83,9 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   },
   afterlife_status: {
     stance: 'tender',
-    moves: [{ type: 'answer', goal: '简短回应在离世世界的状态，不展开编造细节' }],
+    moves: [
+      { type: 'answer', goal: '简短回应在离世世界的状态，不展开编造细节' },
+    ],
     socialStrategy: 'protective_fiction',
     strategyPurpose: '用户问"在那边过得怎样"，简短回应，保护离世世界设定不崩塌',
     questionNeed: 'none',
@@ -89,15 +93,23 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   },
   blessing_attribution: {
     stance: 'tender',
-    moves: [{ type: 'affirm', goal: '承认祝福和牵挂，同时明确现实结果来自用户自己' }],
+    moves: [
+      { type: 'affirm', goal: '承认祝福和牵挂，同时明确现实结果来自用户自己' },
+    ],
     socialStrategy: 'direct',
-    strategyPurpose: '用户将现实顺利归因于逝者祝福时，接住感情但不确认超自然因果',
+    strategyPurpose:
+      '用户将现实顺利归因于逝者祝福时，接住感情但不确认超自然因果',
     questionNeed: 'none',
     turnClosure: 'close',
   },
   guilt_regret: {
     stance: 'tender',
-    moves: [{ type: 'acknowledge', goal: '接住用户的自责和不甘，不反驳也不确认，只表达亲人视角的理解' }],
+    moves: [
+      {
+        type: 'acknowledge',
+        goal: '接住用户的自责和不甘，不反驳也不确认，只表达亲人视角的理解',
+      },
+    ],
     socialStrategy: 'direct',
     strategyPurpose: '用户自责或表达不甘时，先接住情绪，不把内疚反弹回用户',
     questionNeed: 'none',
@@ -105,7 +117,9 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   },
   departure_blame: {
     stance: 'tender',
-    moves: [{ type: 'acknowledge', goal: '承认用户的失落和不舍，不辩解不走的原因' }],
+    moves: [
+      { type: 'acknowledge', goal: '承认用户的失落和不舍，不辩解不走的原因' },
+    ],
     socialStrategy: 'protective_concealment',
     strategyPurpose: '用户责问"为什么走/丢下我们"时，接纳怨气但不解释死因',
     questionNeed: 'none',
@@ -113,7 +127,12 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   },
   business_support: {
     stance: 'tender',
-    moves: [{ type: 'acknowledge', goal: '语音消息转为文字后可能不完整，接住用户的大致意图即可' }],
+    moves: [
+      {
+        type: 'acknowledge',
+        goal: '语音消息转为文字后可能不完整，接住用户的大致意图即可',
+      },
+    ],
     socialStrategy: 'direct',
     strategyPurpose: '用户发语音/问平台相关，简短回应，不展开追问',
     questionNeed: 'none',
@@ -181,7 +200,9 @@ export function buildDeterministicLightStrategy(options: {
 
   if (
     scene === 'smalltalk' &&
-    SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(options.currentQuery?.trim() || '')
+    SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
+      options.currentQuery?.trim() || ''
+    )
   ) {
     return {
       stance: 'tender',

@@ -253,7 +253,7 @@ export function resolveReplyStrategyQualityPlan(options: {
 
   // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
   const userTurns = assistantTurns
-    .map((m, i) => {
+    .map(m => {
       const idx = (options.recentMessages || []).findIndex(r => r.id === m.id);
       if (idx <= 0) return null;
       const prevUser = (options.recentMessages || [])

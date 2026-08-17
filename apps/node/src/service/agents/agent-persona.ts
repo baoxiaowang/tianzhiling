@@ -1,7 +1,4 @@
-import {
-  AgentEntity,
-  AgentPersonaProfile,
-} from '@tzl/entities';
+import { AgentEntity, AgentPersonaProfile } from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
   AgentCanonicalRelationship,
@@ -16,10 +13,7 @@ export type AgentRelationshipGeneration = AgentIdentityRelationshipGeneration;
 export interface AgentPersonaPromptResult {
   prompt: string;
   classifierContext: string;
-  source:
-    | 'chat_derived_profile'
-    | 'explicit_profile'
-    | 'relationship_defaults';
+  source: 'chat_derived_profile' | 'explicit_profile' | 'relationship_defaults';
   ageAtDeath?: number;
   relationshipType: string;
   generation: AgentRelationshipGeneration;
@@ -57,7 +51,9 @@ export function buildAgentPersonaPrompt(options: {
     .filter(Boolean)
     .join('；');
   const generationGuidance = buildGenerationGuidance(generation);
-  const canonicalGuidance = buildCanonicalRelationshipGuidance(identity.relationship.canonical);
+  const canonicalGuidance = buildCanonicalRelationshipGuidance(
+    identity.relationship.canonical
+  );
   const classifierParts = [
     classifierIdentity,
     generationGuidance,

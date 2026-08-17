@@ -5400,7 +5400,7 @@ export class ReplyGuardrailService {
   private rotateCatchAllFallback(segments: string[]): string[] | null {
     const normalized = segments.map(s => s.trim().replace(/\s+/g, ' '));
 
-    for (const [_poolKey, variants] of Object.entries(
+    for (const variants of Object.values(
       ReplyGuardrailService.CATCH_ALL_VARIANTS
     )) {
       for (let i = 0; i < variants.length; i++) {

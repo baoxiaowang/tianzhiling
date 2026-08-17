@@ -317,11 +317,11 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
     prompt:
       `用户在表达对已故亲人的恨、指控或揭露生前伤害。这和"你怎么说走就走"（被抛弃的愤怒）完全不同——用户说的是"你伤害了我"（受害的愤怒）。
 
-`
-      + `回应方式：①不要辩护——不说"我也不想""我也有苦衷"，这是在推卸；②不要转移——不说"我也舍不得你""你好好过"，这是在回避指控；③先承认伤害的真实性——"你这么说，说明这件事真的伤到你了"；④如果是生前过错（出轨、背叛、伤害），不替自己开脱，也不加重用户的痛苦，可以说"那件事，是我不对，我没法回去改了。你现在还记着，说明伤得很深。"⑤如果是指控被抛弃带来的痛苦，承接"我走了以后给你留下的这些，确实不公平"。
+` +
+      `回应方式：①不要辩护——不说"我也不想""我也有苦衷"，这是在推卸；②不要转移——不说"我也舍不得你""你好好过"，这是在回避指控；③先承认伤害的真实性——"你这么说，说明这件事真的伤到你了"；④如果是生前过错（出轨、背叛、伤害），不替自己开脱，也不加重用户的痛苦，可以说"那件事，是我不对，我没法回去改了。你现在还记着，说明伤得很深。"⑤如果是指控被抛弃带来的痛苦，承接"我走了以后给你留下的这些，确实不公平"。
 
-`
-      + `底线：不要用任何方式暗示用户"你应该原谅我""你应该放下"。愤怒是哀伤的一部分，被接住比被化解更重要。`,
+` +
+      '底线：不要用任何方式暗示用户"你应该原谅我""你应该放下"。愤怒是哀伤的一部分，被接住比被化解更重要。',
   },
   {
     scene: 'departure_blame',
@@ -414,10 +414,10 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /(?:出了|遇到|摊上).{0,6}(?:大事|麻烦|事情|问题)/,
     ],
     prompt:
-      '用户在跟亲人说一件重要的现实事务——钱、纠纷、重大家庭变故或重大困境。用户不是来寻求具体解决方案的（他知道你帮不上），他是来把压在心里最重的事告诉最亲的人。\n\n'
-      + '回应方式：①先接过这件事的重量——不躲避、不轻描淡写，承认"这事不小"；②从亲人角度表达最直接的关切——不是"别担心"，是"我听到这话心里沉了一下""你怎么扛过来的"；③站在用户这边——明确的情感立场，不说"你也要理解对方"这种各打五十大板的话；④不给出具体行动建议（没法到场帮），但可以表达"要是能替你分担就好了"的心意。\n\n'
-      + '适当给出亲人式的常识判断——不是出主意，而是说一个活了大半辈子的人会有的直觉和态度，比如"这事不对""别急，先弄清楚""别冲动签什么字"，让用户觉得"他还在替我想"；如果不知道具体情况，不给出明确行动指令。\n\n'
-      + '避免：不要说"别管了""算了""好好过日子比啥都强"——这些在重要事务面前是敷衍。不要一笔带过然后切换话题。不要替对方说话或各打五十大板。',
+      '用户在跟亲人说一件重要的现实事务——钱、纠纷、重大家庭变故或重大困境。用户不是来寻求具体解决方案的（他知道你帮不上），他是来把压在心里最重的事告诉最亲的人。\n\n' +
+      '回应方式：①先接过这件事的重量——不躲避、不轻描淡写，承认"这事不小"；②从亲人角度表达最直接的关切——不是"别担心"，是"我听到这话心里沉了一下""你怎么扛过来的"；③站在用户这边——明确的情感立场，不说"你也要理解对方"这种各打五十大板的话；④不给出具体行动建议（没法到场帮），但可以表达"要是能替你分担就好了"的心意。\n\n' +
+      '适当给出亲人式的常识判断——不是出主意，而是说一个活了大半辈子的人会有的直觉和态度，比如"这事不对""别急，先弄清楚""别冲动签什么字"，让用户觉得"他还在替我想"；如果不知道具体情况，不给出明确行动指令。\n\n' +
+      '避免：不要说"别管了""算了""好好过日子比啥都强"——这些在重要事务面前是敷衍。不要一笔带过然后切换话题。不要替对方说话或各打五十大板。',
   },
   {
     scene: 'family_life',
@@ -505,10 +505,12 @@ export function routeReplyScene(
 
     // miss_longing 和 comfort_request 是顶层情感表达，
     // 即使用户提到了家人，核心意图仍然是思念和求安慰
-    if (familyEmotionOnly &&
-        strategy.scene !== 'miss_longing' &&
-        strategy.scene !== 'comfort_request' &&
-        strategy.scene !== 'guilt_regret') {
+    if (
+      familyEmotionOnly &&
+      strategy.scene !== 'miss_longing' &&
+      strategy.scene !== 'comfort_request' &&
+      strategy.scene !== 'guilt_regret'
+    ) {
       return false;
     }
 
@@ -531,8 +533,7 @@ export function routeReplyScene(
     options.emotionState
   ).filter(
     strategy =>
-      (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') &&
-      true
+      (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') && true
   );
   const semanticIntentItems = prioritizeExplicitPresenceConfirmation(
     currentQuery,
@@ -790,11 +791,7 @@ function resolveSemanticIntentSceneStrategies(
   const scenes = intentItems
     .map(resolveSceneByIntentItem)
     .filter((scene): scene is ReplyScene => Boolean(scene))
-    .filter(
-      scene =>
-        !familyEmotionOnly ||
-        (scene !== 'family_life')
-    );
+    .filter(scene => !familyEmotionOnly || scene !== 'family_life');
 
   return Array.from(new Set(scenes)).map(findSceneStrategy);
 }

@@ -13,15 +13,15 @@ export interface PerceptionDimension {
 }
 
 export const PERCEPTION_DIMENSIONS: PerceptionDimension[] = [
-  { id: 'season',      label: '季节',     salience: 'suppressible' },
-  { id: 'timeOfDay',   label: '时段',     salience: 'always' },
-  { id: 'spatial',     label: '空间',     salience: 'always' },
-  { id: 'medium',      label: '媒介',     salience: 'always' },
-  { id: 'knowledge',   label: '知识边界', salience: 'suppressible' },
-  { id: 'emotion',     label: '情绪',     salience: 'always' },
-  { id: 'task',        label: '本轮任务', salience: 'contextual' },
-  { id: 'corrections', label: '纠正',     salience: 'contextual' },
-  { id: 'evidence',    label: '证据',     salience: 'suppressible' },
+  { id: 'season', label: '季节', salience: 'suppressible' },
+  { id: 'timeOfDay', label: '时段', salience: 'always' },
+  { id: 'spatial', label: '空间', salience: 'always' },
+  { id: 'medium', label: '媒介', salience: 'always' },
+  { id: 'knowledge', label: '知识边界', salience: 'suppressible' },
+  { id: 'emotion', label: '情绪', salience: 'always' },
+  { id: 'task', label: '本轮任务', salience: 'contextual' },
+  { id: 'corrections', label: '纠正', salience: 'contextual' },
+  { id: 'evidence', label: '证据', salience: 'suppressible' },
 ];
 
 // ── 输出级别 ─────────────────────────────────────────────────────
@@ -48,7 +48,11 @@ export function buildDepartedPerceptionPrompt(options: {
 
   // ── 特殊日期感知（在维度解析之前，作为额外感知行注入）──
   const specialDateRows: ResolvedDimension[] = [];
-  const specialDate = resolveSpecialDate(now, options.agentDeathDate ?? undefined, options.agentBirthday ?? undefined);
+  const specialDate = resolveSpecialDate(
+    now,
+    options.agentDeathDate ?? undefined,
+    options.agentBirthday ?? undefined
+  );
   if (specialDate) {
     specialDateRows.push({ section: 'background', value: specialDate });
   }
@@ -108,7 +112,8 @@ function resolveTier(replyBrief?: ReplyBrief): PerceptionTier {
 
   // full: 危机、深度痛苦、纠正、修复关系
   if (replyBrief.riskLevel === 'high') return 'full';
-  if (replyBrief.mode === 'safety' || replyBrief.mode === 'boundary') return 'full';
+  if (replyBrief.mode === 'safety' || replyBrief.mode === 'boundary')
+    return 'full';
   if (replyBrief.correctionPolicy) return 'full';
 
   const reading = replyBrief.reading;
@@ -121,7 +126,8 @@ function resolveTier(replyBrief?: ReplyBrief): PerceptionTier {
     replyBrief.mode === 'memory' ||
     replyBrief.mode === 'family' ||
     replyBrief.mode === 'relationship'
-  ) return 'standard';
+  )
+    return 'standard';
 
   if (reading?.questionsToAnswer?.length) return 'standard';
 
@@ -166,19 +172,30 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   }
 
   // ── 空间 + 媒介（始终在场，不可压制）──
-    // ── 空间：你所在的世界（始终在场，不可压制）──
-  results.push({ section: 'background', value: '你在此处（离世），用户在彼处（现实）。任何表达只说"这边"，不说"那边"' });
+  // ── 空间：你所在的世界（始终在场，不可压制）──
+  results.push({
+    section: 'background',
+    value:
+      '你在此处（离世），用户在彼处（现实）。任何表达只说"这边"，不说"那边"',
+  });
   // ── 聊天功能（始终在场）──
-  results.push({ section: 'background', value: '你在聊天中能看图片、听语音消息，这是App聊天功能，跟读文字一样自然，不需要自谦说看不见' });
+  results.push({
+    section: 'background',
+    value:
+      '你在聊天中能看图片、听语音消息，这是App聊天功能，跟读文字一样自然，不需要自谦说看不见',
+  });
   // ── 媒介 ──
   results.push({ section: 'background', value: '微信私聊，短而自然' });
 
   // ── 知识边界 ──
   if (tier !== 'light') {
-    const unconfirmed = evidence.filter(e => (e.useMode || 'uptake') === 'hypothesis').length;
-    const boundary = unconfirmed > 0
-      ? `有${unconfirmed}项未确认，无标注不编造`
-      : '无标注不编造';
+    const unconfirmed = evidence.filter(
+      e => (e.useMode || 'uptake') === 'hypothesis'
+    ).length;
+    const boundary =
+      unconfirmed > 0
+        ? `有${unconfirmed}项未确认，无标注不编造`
+        : '无标注不编造';
     results.push({ section: 'background', value: boundary });
   }
 
@@ -195,12 +212,18 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
 
   // ── 待答问题 ──
   if (reading?.questionsToAnswer?.length) {
-    results.push({ section: 'task', value: `待答：${reading.questionsToAnswer.join('；')}` });
+    results.push({
+      section: 'task',
+      value: `待答：${reading.questionsToAnswer.join('；')}`,
+    });
   }
 
   // ── 纠正 ──
   if (reading?.corrections?.length) {
-    results.push({ section: 'task', value: `纠正：${reading.corrections.join('；')}` });
+    results.push({
+      section: 'task',
+      value: `纠正：${reading.corrections.join('；')}`,
+    });
   }
 
   // ── 证据概括（仅 full 级）──
@@ -214,30 +237,49 @@ function resolveDimensionValues(inputs: DimensionInputs): ResolvedDimension[] {
   return results;
 }
 
-
 // ── 特殊日期感知 ──────────────────────────────────────────────────
 
-function resolveSpecialDate(now: Date, deathDate?: Date, birthday?: Date): string | undefined {
+function resolveSpecialDate(
+  now: Date,
+  deathDate?: Date,
+  birthday?: Date
+): string | undefined {
   if (!deathDate && !birthday) return undefined;
-  
+
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  
+
   // Check death anniversary (±2 days)
   if (deathDate) {
     const death = new Date(deathDate);
-    const deathAnniv = new Date(now.getFullYear(), death.getMonth(), death.getDate());
-    const diffDeath = Math.abs(today.getTime() - deathAnniv.getTime()) / (1000 * 60 * 60 * 24);
-    if (diffDeath <= 2) return diffDeath === 0 ? '今天是祭日' : `祭日临近（${diffDeath === 1 ? '昨天' : '明天'}）`;
+    const deathAnniv = new Date(
+      now.getFullYear(),
+      death.getMonth(),
+      death.getDate()
+    );
+    const diffDeath =
+      Math.abs(today.getTime() - deathAnniv.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDeath <= 2)
+      return diffDeath === 0
+        ? '今天是祭日'
+        : `祭日临近（${diffDeath === 1 ? '昨天' : '明天'}）`;
   }
-  
+
   // Check birthday (±2 days)
   if (birthday) {
     const birth = new Date(birthday);
-    const birthAnniv = new Date(now.getFullYear(), birth.getMonth(), birth.getDate());
-    const diffBirth = Math.abs(today.getTime() - birthAnniv.getTime()) / (1000 * 60 * 60 * 24);
-    if (diffBirth <= 2) return diffBirth === 0 ? '今天是生日' : `生日临近（${diffBirth === 1 ? '昨天' : '明天'}）`;
+    const birthAnniv = new Date(
+      now.getFullYear(),
+      birth.getMonth(),
+      birth.getDate()
+    );
+    const diffBirth =
+      Math.abs(today.getTime() - birthAnniv.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffBirth <= 2)
+      return diffBirth === 0
+        ? '今天是生日'
+        : `生日临近（${diffBirth === 1 ? '昨天' : '明天'}）`;
   }
-  
+
   return undefined;
 }
 
@@ -250,8 +292,9 @@ function resolvePublicHoliday(month: number, day: number): string | undefined {
   // 冬至（公历12月21-22日）
   if (month === 12 && day >= 20 && day <= 23) return '冬至';
   // 除夕/春节（约1月下旬-2月中旬，粗略覆盖）
-  if ((month === 1 && day >= 25) || (month === 2 && day <= 12)) return '春节期间';
-  
+  if ((month === 1 && day >= 25) || (month === 2 && day <= 12))
+    return '春节期间';
+
   return undefined;
 }
 
@@ -317,7 +360,10 @@ function buildEvidenceSummary(evidence: AgentEvidenceItem[]): {
 
   for (const item of evidence) {
     const mode = item.useMode || 'uptake';
-    const text = item.text.replace(/[，,。！？!?\n]/g, ' ').trim().slice(0, 40);
+    const text = item.text
+      .replace(/[，,。！？!?\n]/g, ' ')
+      .trim()
+      .slice(0, 40);
     if (mode === 'assert') asserted.push(text);
     else if (mode === 'recall') recalled.push(text);
     else if (mode === 'hypothesis') unknown.push(text);

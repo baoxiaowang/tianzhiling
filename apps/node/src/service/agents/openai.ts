@@ -384,7 +384,10 @@ export class OpenAIService {
     };
   }
 
-  private resolveSecondaryFallbackProvider(): { client: OpenAI; model: string } | null {
+  private resolveSecondaryFallbackProvider(): {
+    client: OpenAI;
+    model: string;
+  } | null {
     const apiKey = this.openAIConfig?.secondaryFallback?.apiKey?.trim();
     const baseURL = this.openAIConfig?.secondaryFallback?.baseURL?.trim();
     const model = this.openAIConfig?.secondaryFallback?.model?.trim();
@@ -412,7 +415,11 @@ export class OpenAIService {
       // A/B 通道：直接用指定的 provider
       if (providerOverride && fallbackBody) {
         try {
-          return await task(providerOverride.client, { ...fallbackBody, model: providerOverride.model }, 'primary_ab');
+          return await task(
+            providerOverride.client,
+            { ...fallbackBody, model: providerOverride.model },
+            'primary_ab'
+          );
         } catch (abError) {
           this.logger.warn('[openai] AB provider failed, trying secondary');
         }
@@ -420,11 +427,19 @@ export class OpenAIService {
       const secondary = this.resolveSecondaryFallbackProvider();
       if (secondary && fallbackBody) {
         try {
-          return await task(secondary.client, { ...fallbackBody, model: secondary.model }, 'secondary');
+          return await task(
+            secondary.client,
+            { ...fallbackBody, model: secondary.model },
+            'secondary'
+          );
         } catch (secondaryError) {
           this.logger.warn(
             '[openai] secondary provider failed, error=%s, trying main fallback',
-            describeErrorForLog(secondaryError instanceof Error ? secondaryError : new Error(String(secondaryError)))
+            describeErrorForLog(
+              secondaryError instanceof Error
+                ? secondaryError
+                : new Error(String(secondaryError))
+            )
           );
         }
       }
@@ -432,7 +447,11 @@ export class OpenAIService {
       if (!fallback || !fallbackBody) {
         throw new Error('No fallback provider available');
       }
-      return await task(fallback.client, { ...fallbackBody, model: fallback.model }, 'fallback');
+      return await task(
+        fallback.client,
+        { ...fallbackBody, model: fallback.model },
+        'fallback'
+      );
     }
 
     const primaryClient = providerOverride?.client || this.getClient();
@@ -715,13 +734,15 @@ export class OpenAIService {
       const rawType = Array.isArray(rawContent)
         ? 'array'
         : typeof rawContent === 'object' && rawContent !== null
-          ? 'object'
-          : typeof rawContent;
+        ? 'object'
+        : typeof rawContent;
 
       let rawPreview = '';
       try {
         rawPreview = JSON.stringify(rawContent).slice(0, 240);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       this.logger.info(
         '[openai] transcription raw content type=%s, preview=%s',

@@ -51,7 +51,6 @@ interface UpsertMemoryFactInput
 
 const DEFAULT_FACT_LIMIT = 24;
 
-
 // ── 时间标记 ───────────────────────────────────────────────────────
 
 export interface AgentTimeMarker {
@@ -65,21 +64,29 @@ export function buildAgentTimeMarkers(agent: {
   deathDate?: Date | null;
 }): AgentTimeMarker[] {
   const markers: AgentTimeMarker[] = [];
-  
+
   if (agent.deathDate) {
     const d = new Date(agent.deathDate);
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
-    markers.push({ monthDay: `${mm}-${dd}`, label: '祭日', source: 'deathDate' });
+    markers.push({
+      monthDay: `${mm}-${dd}`,
+      label: '祭日',
+      source: 'deathDate',
+    });
   }
-  
+
   if (agent.birthday) {
     const d = new Date(agent.birthday);
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
-    markers.push({ monthDay: `${mm}-${dd}`, label: '生日', source: 'birthday' });
+    markers.push({
+      monthDay: `${mm}-${dd}`,
+      label: '生日',
+      source: 'birthday',
+    });
   }
-  
+
   return markers;
 }
 
@@ -90,24 +97,24 @@ export function getTodayTimeMarkers(
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const today = `${mm}-${dd}`;
-  
+
   // Also check ±2 days for anniversary awareness
   const checkDate = new Date(now);
   const nearby = new Set<string>();
   nearby.add(today);
-  
+
   for (let i = 1; i <= 2; i++) {
     checkDate.setDate(now.getDate() - i);
     const mm2 = String(checkDate.getMonth() + 1).padStart(2, '0');
     const dd2 = String(checkDate.getDate()).padStart(2, '0');
     nearby.add(`${mm2}-${dd2}`);
-    
+
     checkDate.setDate(now.getDate() + i);
     const mm3 = String(checkDate.getMonth() + 1).padStart(2, '0');
     const dd3 = String(checkDate.getDate()).padStart(2, '0');
     nearby.add(`${mm3}-${dd3}`);
   }
-  
+
   return markers.filter(m => nearby.has(m.monthDay));
 }
 

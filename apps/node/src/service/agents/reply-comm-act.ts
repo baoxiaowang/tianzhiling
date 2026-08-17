@@ -105,7 +105,9 @@ export function resolveConversationState(options: {
   mode?: string;
   riskLevel?: string;
 }): ConversationUserState {
-  if (/晚安|先睡|不聊了|拜拜|再见|回头再聊|下次再聊/.test(options.currentQuery)) {
+  if (
+    /晚安|先睡|不聊了|拜拜|再见|回头再聊|下次再聊/.test(options.currentQuery)
+  ) {
     return 'closing';
   }
   if (/不对|不是这样|你理解错|不像你|别(?:再)?编/.test(options.currentQuery)) {
@@ -164,8 +166,7 @@ function resolveL3(
     options?.scene === 'comfort_request' ||
     options?.scene === 'miss_longing' ||
     options?.riskLevel === 'high';
-  const explicitAskFromPlanner =
-    preferAsk && options?.questionNeed !== 'none';
+  const explicitAskFromPlanner = preferAsk && options?.questionNeed !== 'none';
 
   // 明确保留的 topic_followup 优先于通用策略换挡；换挡仍负责没有
   // 开放话题时的去重和自然转场。
@@ -252,7 +253,11 @@ export function verifyReplyCommActEcho(
 ): { passed: boolean; echoedUnits: ContentUnit[] } {
   const targetUnits = [
     plan?.targetUnit,
-    ...(plan?.steps.reduce<ContentUnit[]>((units, step) => (step.targetUnit ? units.concat(step.targetUnit) : units), []) || []),
+    ...(plan?.steps.reduce<ContentUnit[]>(
+      (units, step) =>
+        step.targetUnit ? units.concat(step.targetUnit) : units,
+      []
+    ) || []),
   ].filter((unit): unit is ContentUnit => Boolean(unit));
 
   const uniqueTargetUnits = targetUnits.reduce<ContentUnit[]>((units, unit) => {
