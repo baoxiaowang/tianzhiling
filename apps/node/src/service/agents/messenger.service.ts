@@ -251,17 +251,47 @@ export class MessengerService {
     const parentName = parentAgent.name?.trim() || 'TA';
     const messengerName =
       messengerAgent.name?.trim() || this.buildMessengerName(parentAgent.name);
-    const message = new MessageEntity();
-    message.conversationId = conversation.id;
-    message.userId = conversation.userId;
-    message.agentId = messengerAgent.id;
-    message.role = MessageRole.assistant;
-    message.type = MessageType.text;
-    message.content = `你好，我是${messengerName}。关于${parentName}，你都可以慢慢告诉我，我会帮你整理进资料里。`;
-    message.status = MessageStatus.sent;
-    message.createdAt = now;
-    message.updatedAt = now;
+    const love = this.resolveLoveAttribution(parentAgent.sex);
+    const greetings = this.buildMessengerGreetings(
+      parentName,
+      messengerName,
+      love
+    );
+    const messages = greetings.map((content, index) => {
+      const message = new MessageEntity();
+      message.conversationId = conversation.id;
+      message.userId = conversation.userId;
+      message.agentId = messengerAgent.id;
+      message.role = MessageRole.assistant;
+      message.type = MessageType.text;
+      message.content = content;
+      message.status = MessageStatus.sent;
+      message.createdAt = new Date(now.getTime() + index);
+      message.updatedAt = message.createdAt;
+      return message;
+    });
 
-    await this.messageModel.save(message);
+    await this.messageModel.save(messages);
+  }
+
+  private buildMessengerGreetings(
+    parentName: string,
+    messengerName: string,
+    love: string
+  ): string[] {
+    return [
+      `你好，我是${messengerName}。往后想起${parentName}的事，都可以慢慢讲给我，我会帮你一点点唤醒${parentName}的记忆，带着${love}永远陪伴你。`,
+      `最近有没有想起${parentName}的哪件小事？慢慢讲，我在听呢。`,
+    ];
+  }
+
+  private resolveLoveAttribution(sex?: AgentSex): string {
+    if (sex === AgentSex.woman) {
+      return '她的爱';
+    }
+    if (sex === AgentSex.man) {
+      return '他的爱';
+    }
+    return '这份爱';
   }
 }
