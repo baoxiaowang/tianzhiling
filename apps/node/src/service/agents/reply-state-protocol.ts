@@ -189,7 +189,12 @@ export function resolveReplyStateProtocol(
 export function buildReplyStateProtocolPrompt(
   plan: ReplyStateProtocolPlan
 ): string {
-  const boundary = plan.protocol === 'dream' ? '；仅限梦境，不作现实证明' : '';
+  const boundary =
+    plan.protocol === 'dream'
+      ? '；仅限梦境，不作现实证明'
+      : plan.protocol === 'active_contribution'
+      ? '；必须自己说新内容，不反问或套话；问吃做须直答，往事须证据'
+      : '';
 
   return `协议：${PROTOCOL_LABELS[plan.protocol]}/${
     STAGE_LABELS[plan.stage]

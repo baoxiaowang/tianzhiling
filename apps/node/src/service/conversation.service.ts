@@ -108,7 +108,10 @@ import {
   MAX_ASSISTANT_REPLY_SEGMENTS,
   ReplyBubbleStructureIssue,
 } from './agents/reply-bubble-plan';
-import { ConversationReplyFinalizationService } from './agents/conversation-reply-finalization.service';
+import {
+  ConversationReplyFinalizationResult,
+  ConversationReplyFinalizationService,
+} from './agents/conversation-reply-finalization.service';
 import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
@@ -444,6 +447,13 @@ interface ReplyRoutingAudit {
   guardrailFeedbackRounds?: GuardrailFeedback[];
   guardrailCandidateVersions?: string[][];
   guardrailRevisionRecords?: GuardrailRevisionRecord[];
+  turnContractVersion?: string;
+  turnContractFocusDimensions?: string[];
+  qualityAuditVersion?: string;
+  qualityActivatedDimensions?: string[];
+  qualityInitialFailedDimensions?: string[];
+  qualityFinalFailedDimensions?: string[];
+  qualityRecoveredDimensions?: string[];
   evidenceCount?: number;
   factClaimCount?: number;
   unsupportedClaimCount?: number;
@@ -3326,7 +3336,15 @@ export class ConversationService {
       });
 
     // Layer 2: 规划器判定本轮无需回复，跳过主模型
-    if (this.shouldSkipReplyFromBrief(replyBrief, before.searchableText)) {
+    // A queued turn can contain messages that were intentionally left unanswered
+    // (for example, "不用回我") followed by a new request. The planner still needs
+    // the merged turn for context, but the silence safety gate must only inspect the
+    // latest user message. Otherwise an old close instruction permanently suppresses
+    // every later reply until an assistant message happens to be persisted.
+    const latestUserQuery = this.buildSearchableTextFromMessage(
+      before.userMessage
+    );
+    if (this.shouldSkipReplyFromBrief(replyBrief, latestUserQuery)) {
       this.logger.info(
         '[conversation] reply skipped by plan, contribution=%s, closure=%s, alternative=%s',
         replyBrief.conversationPlan?.engagement?.assistantContribution,
@@ -3595,6 +3613,7 @@ export class ConversationService {
     let bubbleReflowAttempted = false;
     let bubbleReflowSucceeded: boolean | undefined;
     let finalizationUsage: ReplyUsage = {};
+    let replyQualityAudit: ConversationReplyFinalizationResult['qualityAudit'];
 
     if (this.conversationReplyFinalizationService) {
       const finalized = await this.withTraceSpan(
@@ -3609,6 +3628,7 @@ export class ConversationService {
             evidence: reviewEvidence,
             brief: replyBrief,
             turnDecision: context.turnDecision,
+            turnContract: context.turnContract,
           })
       );
       const governance = finalized.governance;
@@ -3632,6 +3652,7 @@ export class ConversationService {
         segments: finalized.segments,
         execution: finalized.participationExecution,
       };
+      replyQualityAudit = finalized.qualityAudit;
     } else {
       // 仅供直接 new ConversationService() 的旧测试/脚本兼容；生产 DI
       // 必须走上面的 FinalValidator → 单次修订 → 再验证链路。
@@ -3772,6 +3793,12 @@ export class ConversationService {
         evidenceCount: reviewEvidence.length,
         factClaimCount: finalClaims.length,
         unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
+        qualityAuditVersion: replyQualityAudit?.version,
+        qualityActivatedDimensions: replyQualityAudit?.activatedDimensions,
+        qualityInitialFailedDimensions:
+          replyQualityAudit?.initialFailedDimensions,
+        qualityFinalFailedDimensions: replyQualityAudit?.finalFailedDimensions,
+        qualityRecoveredDimensions: replyQualityAudit?.recoveredDimensions,
         memoryUsedEvidenceIds,
         memoryUsedClaimCount,
         ...context.diagnostics,
@@ -8089,6 +8116,8 @@ export class ConversationService {
     replySecondaryScenes?: string[];
     replyRoutingSource?: string;
     replyBriefVersion?: string;
+    replyTurnContractVersion?: string;
+    replyTurnContractFocusDimensions?: string[];
     replyBriefMode?: string;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
@@ -8115,6 +8144,11 @@ export class ConversationService {
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
     replyGuardrailFocuses?: string[];
+    replyQualityAuditVersion?: string;
+    replyQualityActivatedDimensions?: string[];
+    replyQualityInitialFailedDimensions?: string[];
+    replyQualityFinalFailedDimensions?: string[];
+    replyQualityRecoveredDimensions?: string[];
     replyContentEchoPassed?: boolean;
     replyContentEchoUnitCount?: number;
     replyEvidenceCount?: number;
@@ -8207,6 +8241,10 @@ export class ConversationService {
       ),
       replyRoutingSource: routing?.route?.routingSource,
       replyBriefVersion: routing?.brief?.version,
+      replyTurnContractVersion:
+        routing?.turnContractVersion?.trim() || undefined,
+      replyTurnContractFocusDimensions:
+        routing?.turnContractFocusDimensions?.filter(Boolean),
       replyBriefMode: routing?.brief?.mode,
       replyBriefStrictGrounding: routing?.brief?.strictGrounding,
       replyBriefFactClaimMode: routing?.brief?.factClaimMode,
@@ -8260,6 +8298,16 @@ export class ConversationService {
       replyGuardrailReviewMode:
         routing?.guardrailReviewMode?.trim() || undefined,
       replyGuardrailFocuses: routing?.guardrailFocuses?.filter(Boolean),
+      replyQualityAuditVersion:
+        routing?.qualityAuditVersion?.trim() || undefined,
+      replyQualityActivatedDimensions:
+        routing?.qualityActivatedDimensions?.filter(Boolean),
+      replyQualityInitialFailedDimensions:
+        routing?.qualityInitialFailedDimensions?.filter(Boolean),
+      replyQualityFinalFailedDimensions:
+        routing?.qualityFinalFailedDimensions?.filter(Boolean),
+      replyQualityRecoveredDimensions:
+        routing?.qualityRecoveredDimensions?.filter(Boolean),
       replyContentEchoPassed:
         typeof routing?.contentEchoPassed === 'boolean'
           ? routing.contentEchoPassed
@@ -8436,6 +8484,8 @@ export class ConversationService {
     replySecondaryScenes?: string[];
     replyRoutingSource?: string;
     replyBriefVersion?: string;
+    replyTurnContractVersion?: string;
+    replyTurnContractFocusDimensions?: string[];
     replyBriefMode?: string;
     replyBriefStrictGrounding?: boolean;
     replyBriefFactClaimMode?: string;
@@ -8462,6 +8512,11 @@ export class ConversationService {
     replyGuardrailFinalReviewResult?: string;
     replyGuardrailReviewMode?: string;
     replyGuardrailFocuses?: string[];
+    replyQualityAuditVersion?: string;
+    replyQualityActivatedDimensions?: string[];
+    replyQualityInitialFailedDimensions?: string[];
+    replyQualityFinalFailedDimensions?: string[];
+    replyQualityRecoveredDimensions?: string[];
     replyEvidenceCount?: number;
     replyFactClaimCount?: number;
     replyUnsupportedClaimCount?: number;
@@ -8594,6 +8649,12 @@ export class ConversationService {
     message.replyRoutingSource =
       options.replyRoutingSource?.trim() || undefined;
     message.replyBriefVersion = options.replyBriefVersion?.trim() || undefined;
+    Object.assign(message, {
+      replyTurnContractVersion:
+        options.replyTurnContractVersion?.trim() || undefined,
+      replyTurnContractFocusDimensions:
+        options.replyTurnContractFocusDimensions?.filter(Boolean),
+    });
     message.replyBriefMode = options.replyBriefMode?.trim() || undefined;
     message.replyBriefStrictGrounding = options.replyBriefStrictGrounding;
     message.replyBriefFactClaimMode =
@@ -8645,6 +8706,18 @@ export class ConversationService {
       options.replyGuardrailReviewMode?.trim() || undefined;
     message.replyGuardrailFocuses =
       options.replyGuardrailFocuses?.filter(Boolean);
+    Object.assign(message, {
+      replyQualityAuditVersion:
+        options.replyQualityAuditVersion?.trim() || undefined,
+      replyQualityActivatedDimensions:
+        options.replyQualityActivatedDimensions?.filter(Boolean),
+      replyQualityInitialFailedDimensions:
+        options.replyQualityInitialFailedDimensions?.filter(Boolean),
+      replyQualityFinalFailedDimensions:
+        options.replyQualityFinalFailedDimensions?.filter(Boolean),
+      replyQualityRecoveredDimensions:
+        options.replyQualityRecoveredDimensions?.filter(Boolean),
+    });
     message.replyEvidenceCount = this.normalizeTokenCount(
       options.replyEvidenceCount
     );

@@ -425,7 +425,7 @@ describe('ReplyIntentClassifierService', () => {
       expect.objectContaining({
         model: 'intent-fast',
         temperature: 0,
-        max_tokens: 720,
+        max_tokens: 960,
         response_format: {
           type: 'json_object',
         },

@@ -183,6 +183,8 @@ export class AgentMemoryProfileService {
           '当本轮首次让五项都有基本内容时，可以选择一个不同于本轮焦点的方面，只追问一次有代表性的细节；不要追问时间线、人物关系或多个连续细节。',
           '如果本轮开始前五项就已经都有内容，nextFocusField 必须输出空字符串，reply 继续承接用户刚说的具体内容，不再为了采访而提问。',
           'reply 要像认真倾听后的自然回应，先对用户刚说的具体内容表达理解、共情或感受，再决定是否问一个具体问题；不超过 55 个汉字，不制造必须答完的压力。',
+          'reply 的承接句必须使用用户本轮原话里的一个具体内容锚点（人物、事件、物件、习惯或原话片段），不能只说“很重要、很鲜活、很珍贵、我在认真听”等通用判断。',
+          '需要提问时，承接句先回应本轮内容，问题再自然转向尚未覆盖的方面；不要把五项字段逐项问成问卷。',
           '不要使用“我记住了”“谢谢，我记住了”“这些我都记下了”等机械确认句，也不要重复此前说过的整句回复。',
           '输出严格 JSON 对象，必须包含 reply、nextFocusField、lifeExperience、personalityTraits、languageHabits、hobbies、sharedMemories，不要解释或使用 Markdown。',
         ].join('\n'),
@@ -199,6 +201,9 @@ export class AgentMemoryProfileService {
           `此前小使者回复：${JSON.stringify(previousReplies)}`,
           `这是第 ${Math.max(1, Math.floor(options.turnCount || 0) + 1)} 轮`,
           `用户刚刚讲述：${JSON.stringify(input)}`,
+          `本轮可用内容锚点：${JSON.stringify(
+            this.extractInterviewContentAnchor(input)
+          )}`,
         ].join('\n'),
       });
       const parsed = this.parseInterviewTurn(result.content, currentDraft);
@@ -944,7 +949,9 @@ export class AgentMemoryProfileService {
       this.isGeneratedInterviewReplyUsable(
         generatedReply,
         previousReplies,
-        nextFocusField
+        nextFocusField,
+        draft,
+        previousDraft
       );
 
     return {
@@ -1098,7 +1105,9 @@ export class AgentMemoryProfileService {
   private isGeneratedInterviewReplyUsable(
     reply: string,
     previousReplies: string[],
-    nextFocusField: AgentProfileMemoryField | ''
+    nextFocusField: AgentProfileMemoryField | '',
+    draft: AgentProfileInterviewDraftDTO,
+    previousDraft: AgentProfileInterviewDraftDTO
   ): boolean {
     const normalized = this.normalizeInterviewReply(reply);
     if (
@@ -1111,6 +1120,17 @@ export class AgentMemoryProfileService {
     if (
       nextFocusField &&
       !this.doesReplyAddressInterviewField(normalized, nextFocusField)
+    ) {
+      return false;
+    }
+
+    const changedContent = this.resolveChangedInterviewContent(
+      draft,
+      previousDraft
+    );
+    if (
+      changedContent &&
+      !this.replyContainsInterviewAnchor(normalized, changedContent)
     ) {
       return false;
     }
@@ -1148,15 +1168,85 @@ export class AgentMemoryProfileService {
     const changedField = INTERVIEW_FIELD_ORDER.find(
       field => draft[field].trim() !== previousDraft[field].trim()
     );
+    const changedContent = this.resolveChangedInterviewContent(
+      draft,
+      previousDraft
+    );
+    const anchor = this.extractInterviewContentAnchor(changedContent);
+    const anchoredSubject = anchor ? `你说的“${anchor}”` : '';
     const acknowledgements: Record<AgentProfileMemoryField, string> = {
-      personalityTraits: `听得出来，${name}的性格很鲜明。`,
-      lifeExperience: '听你说起这段经历，能感觉到它很重要。',
-      hobbies: `说到这些喜欢的事，${name}的样子一下鲜活了。`,
-      languageHabits: `这句话很有${name}自己的味道。`,
-      sharedMemories: '听得出来，这段回忆对你很珍贵。',
+      personalityTraits: anchor
+        ? `${anchoredSubject}，一下能看出${name}的性格。`
+        : `听得出来，${name}的性格很鲜明。`,
+      lifeExperience: anchor
+        ? `${anchoredSubject}，让这段经历一下具体了。`
+        : '听你说起这段经历，能感觉到它很重要。',
+      hobbies: anchor
+        ? `${anchoredSubject}，让${name}的样子鲜活起来了。`
+        : `说到这些喜欢的事，${name}的样子一下鲜活了。`,
+      languageHabits: anchor
+        ? `${anchoredSubject}，很有${name}自己的味道。`
+        : `这句话很有${name}自己的味道。`,
+      sharedMemories: anchor
+        ? `${anchoredSubject}，是你们之间很具体的记忆。`
+        : '听得出来，这段回忆对你很珍贵。',
     };
 
     return changedField ? acknowledgements[changedField] : '我在认真听。';
+  }
+
+  private resolveChangedInterviewContent(
+    draft: AgentProfileInterviewDraftDTO,
+    previousDraft: AgentProfileInterviewDraftDTO
+  ): string {
+    for (const field of INTERVIEW_FIELD_ORDER) {
+      const before = previousDraft[field].trim();
+      const after = draft[field].trim();
+      if (after === before) {
+        continue;
+      }
+      if (before && after.startsWith(before)) {
+        return after
+          .slice(before.length)
+          .replace(/^[；;，,。\s]+/, '')
+          .trim();
+      }
+      return after;
+    }
+    return '';
+  }
+
+  private extractInterviewContentAnchor(value: string): string {
+    const normalized = this.normalizeProfileText(value)
+      .replace(
+        /^(?:我想说|我记得|我觉得|他|她|TA|爸爸|爸|妈妈|妈|爷爷|奶奶|姥姥|姥爷|外公|外婆)[，,：:\s]*/i,
+        ''
+      )
+      .split(/[；;。！？!?，,]/)
+      .map(item => item.trim())
+      .filter(Boolean)[0];
+    if (!normalized) {
+      return '';
+    }
+    return Array.from(normalized).slice(0, 12).join('');
+  }
+
+  private replyContainsInterviewAnchor(reply: string, source: string): boolean {
+    const anchor = this.extractInterviewContentAnchor(source).replace(
+      /[的了是在很特别以前平时]/g,
+      ''
+    );
+    const replyText = reply.replace(/[\s，。！？、,.!?]/g, '');
+    if (anchor.length < 2) {
+      return true;
+    }
+    const characters = Array.from(anchor);
+    for (let index = 0; index < characters.length - 1; index += 1) {
+      if (replyText.includes(characters.slice(index, index + 2).join(''))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private normalizeInterviewReply(value: string): string {

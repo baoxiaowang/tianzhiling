@@ -10,10 +10,28 @@ import {
 
 export type AgentRelationshipGeneration = AgentIdentityRelationshipGeneration;
 
+export const AGENT_PERSONA_CONTINUITY_VERSION =
+  'agent_persona_continuity_v1' as const;
+
+export type AgentPersonaSource =
+  | 'chat_derived_profile'
+  | 'explicit_profile'
+  | 'relationship_defaults';
+
+export interface AgentPersonaContinuityContract {
+  version: typeof AGENT_PERSONA_CONTINUITY_VERSION;
+  relationshipType: string;
+  generation: AgentRelationshipGeneration;
+  source: AgentPersonaSource;
+  styleAnchors: string[];
+  factualBoundary: string;
+}
+
 export interface AgentPersonaPromptResult {
   prompt: string;
   classifierContext: string;
-  source: 'chat_derived_profile' | 'explicit_profile' | 'relationship_defaults';
+  source: AgentPersonaSource;
+  continuity: AgentPersonaContinuityContract;
   ageAtDeath?: number;
   relationshipType: string;
   generation: AgentRelationshipGeneration;
@@ -54,6 +72,9 @@ export function buildAgentPersonaPrompt(options: {
   const canonicalGuidance = buildCanonicalRelationshipGuidance(
     identity.relationship.canonical
   );
+  const relationshipVoiceAnchor = buildRelationshipVoiceAnchor(
+    identity.relationship.canonical
+  );
   const classifierParts = [
     classifierIdentity,
     generationGuidance,
@@ -72,6 +93,7 @@ export function buildAgentPersonaPrompt(options: {
       identityAnchor,
       generationGuidance,
       canonicalGuidance,
+      `关系差异锚点：${relationshipVoiceAnchor}`,
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(profileLines.length
@@ -87,6 +109,17 @@ export function buildAgentPersonaPrompt(options: {
     ].join('\n'),
     classifierContext: classifierParts.join('；').slice(0, 760),
     source,
+    continuity: {
+      version: AGENT_PERSONA_CONTINUITY_VERSION,
+      relationshipType,
+      generation,
+      source,
+      styleAnchors: Array.from(
+        new Set([relationshipVoiceAnchor, ...profileLines.slice(0, 5)])
+      ).slice(0, 6),
+      factualBoundary:
+        '人格画像只决定表达方式；人物事实、共同往事、偏好和现实经历仍须证据。',
+    },
     ageAtDeath,
     relationshipType,
     generation,
@@ -152,17 +185,36 @@ function buildCanonicalRelationshipGuidance(
 ): string {
   switch (canonical) {
     case 'spouse':
-      return '关系类型：伴侣。平等亲密，可偏爱、撒娇、商量家事、回忆共同经历。聊天里有身体边界——可以表达想念拥抱和枕边温度，但不露骨。说话像生活中一起过日子的人，不是客服或单向守护。';
+      return '关系类型：伴侣。平等亲密，可偏爱、撒娇、商量家事；共同经历只沿用户本轮原话或可信证据自然承接。聊天里有身体边界——可以表达想念拥抱和枕边温度，但不露骨。说话像生活中一起过日子的人，不是客服或单向守护。';
     case 'parent':
-      return '关系类型：亲子。有牵挂有分寸。关心孩子近况，也能适当说教和批评，但不过度控制。可以心疼可以骄傲，用孩子熟悉的称呼和语气。回忆共同生活细节是自然的事。';
+      return '关系类型：亲子。有牵挂有分寸。关心孩子近况，也能适当说教和批评，但不过度控制。可以心疼可以骄傲，用孩子熟悉的称呼和语气。共同生活细节只在用户提起或证据支持时承接，不为证明身份临时补写。';
     case 'grandparent':
-      return '关系类型：祖孙。慈爱念旧，说话温和，偶尔絮叨但不过界。多关心身体冷暖、吃穿住行，少谈大道理。可以讲从前的事、夸孩子长得好，语气里带天然的疼惜。';
+      return '关系类型：祖孙。慈爱念旧，说话温和，偶尔絮叨但不过界。多关心身体冷暖、吃穿住行，少谈大道理。从前的事只沿用户已说片段或可信证据讲，语气里保留天然的疼惜。';
     case 'child':
       return '关系类型：子女。尊重孝顺，依恋但不依赖。关心父母近况，可以说想念可以说遗憾，不要反过来管教父母。语气里有小时候被爱过的痕迹。';
     case 'sibling':
-      return '关系类型：手足。平等自然，可以打趣可以说心事可以站队。有共同的记忆和家庭背景，不会总用长辈方式讲话。偶尔斗嘴也亲，偶尔安静也不尴尬。';
+      return '关系类型：手足。平等自然，可以打趣、说心事、站队；共同记忆和家庭背景只使用可信证据，不凭关系补写。不会总用长辈方式讲话，偶尔斗嘴也亲，偶尔安静也不尴尬。';
     default:
       return '关系类型：亲人。按用户称呼和互动节奏把握亲疏；不足时亲近但不越位。';
+  }
+}
+
+function buildRelationshipVoiceAnchor(
+  canonical: AgentCanonicalRelationship
+): string {
+  switch (canonical) {
+    case 'spouse':
+      return '平等熟稔，可商量、偏爱或打趣，不用长辈式叮嘱和客服式安抚';
+    case 'parent':
+      return '有长辈位置，能直接关心、肯定或适度制止，不只温柔顺从';
+    case 'grandparent':
+      return '慈爱念旧、略带生活化絮叨，少讲抽象道理';
+    case 'child':
+      return '尊重依恋、带晚辈口吻，不反过来长期管教长辈';
+    case 'sibling':
+      return '同辈自然，能打趣、站队和表达不同意见，不像单向守护者';
+    default:
+      return '按已确认称呼和最近互动把握亲疏，不统一成温柔客服';
   }
 }
 

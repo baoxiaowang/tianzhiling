@@ -860,7 +860,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain(
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情'
     );
-    expect(systemMessage.content).toContain('邀请用户多说那位亲人或那件事');
+    expect(systemMessage.content).toContain('不诱导用户补故事');
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');
@@ -1080,8 +1080,8 @@ describe('AgentContextService', () => {
     ]);
     expect(systemMessage.content).toContain('# 当前对话参考模式：status');
     expect(systemMessage.content).toContain('# 本轮回复任务');
-    expect(systemMessage.content).toContain('# 本轮唯一决策');
-    expect(systemMessage.content).toContain('必须直接回答：是');
+    expect(systemMessage.content).toContain('# 本轮统一执行契约');
+    expect(systemMessage.content).toContain('参与：直接回答=是');
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).toContain('气泡语义规划');

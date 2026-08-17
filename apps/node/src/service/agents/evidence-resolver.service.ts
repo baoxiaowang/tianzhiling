@@ -1,6 +1,7 @@
 import { Provide } from '@midwayjs/core';
 import {
   AgentEvidenceItem,
+  AgentEvidenceSource,
   resolveAgentEvidenceUseMode,
   selectAgentEvidence,
 } from './agent-evidence';
@@ -15,6 +16,15 @@ export interface EvidencePack {
   contextualIds: string[];
   memoryIds: string[];
   strictGrounding: boolean;
+  governance: EvidenceGovernanceSummary;
+}
+
+export interface EvidenceGovernanceSummary {
+  currentTurnIds: string[];
+  sourceCounts: Partial<Record<AgentEvidenceSource, number>>;
+  correctionMode?: 'reset' | 'replace';
+  priorFactsSuppressed: boolean;
+  suppressedPriorSources: AgentEvidenceSource[];
 }
 
 @Provide()
@@ -24,6 +34,7 @@ export class EvidenceResolverService {
     currentQuery: string;
     turnDecision: TurnDecision;
     suppressPriorFacts?: boolean;
+    correctionMode?: 'reset' | 'replace';
     limit?: number;
   }): EvidencePack {
     const candidates = options.suppressPriorFacts
@@ -48,6 +59,12 @@ export class EvidenceResolverService {
         )
       )
       .map(item => item.id);
+    const sourceCounts = items.reduce<
+      Partial<Record<AgentEvidenceSource, number>>
+    >((counts, item) => {
+      counts[item.source] = (counts[item.source] || 0) + 1;
+      return counts;
+    }, {});
 
     return {
       version: EVIDENCE_PACK_VERSION,
@@ -56,6 +73,17 @@ export class EvidenceResolverService {
       contextualIds,
       memoryIds,
       strictGrounding: options.turnDecision.strictGrounding,
+      governance: {
+        currentTurnIds: items
+          .filter(item => item.source === 'current_user')
+          .map(item => item.id),
+        sourceCounts,
+        correctionMode: options.correctionMode,
+        priorFactsSuppressed: Boolean(options.suppressPriorFacts),
+        suppressedPriorSources: options.suppressPriorFacts
+          ? ['agent_profile', 'confirmed_fact', 'recent_user', 'retrieved_user']
+          : [],
+      },
     };
   }
 }
@@ -65,6 +93,7 @@ export function buildEvidencePackFallback(options: {
   currentQuery: string;
   turnDecision: TurnDecision;
   suppressPriorFacts?: boolean;
+  correctionMode?: 'reset' | 'replace';
 }): EvidencePack {
   return new EvidenceResolverService().resolve(options);
 }

@@ -138,6 +138,11 @@ import {
   TURN_DECISION_VERSION,
   TurnDecision,
 } from './turn-decision';
+import {
+  buildReplyTurnContract,
+  REPLY_TURN_CONTRACT_VERSION,
+  ReplyTurnContract,
+} from './reply-turn-contract';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -172,6 +177,7 @@ export interface AgentConversationContext {
   replyRoute: ReplySceneRoute;
   replyBrief: ReplyBrief;
   turnDecision: TurnDecision;
+  turnContract?: ReplyTurnContract;
   chatToolPlan: AgentChatToolTurnPlan;
 }
 
@@ -241,6 +247,8 @@ export interface AgentContextDiagnostics {
   replyPlanningFallbackUsed: boolean;
   replyIntentModelCallCount: number;
   turnDecisionVersion: typeof TURN_DECISION_VERSION;
+  turnContractVersion?: typeof REPLY_TURN_CONTRACT_VERSION;
+  turnContractFocusDimensions?: string[];
   strategyVersion: 'conversation_strategy_v8';
   turnPlanVersion: 'turn_plan_v1';
   commActVersion: typeof COMM_ACT_VERSION;
@@ -506,6 +514,7 @@ export class AgentContextService {
         .map(fact => fact.value?.trim())
         .filter((value): value is string => Boolean(value)),
       recentMessages: routingHistoryMessages,
+      knownObjects,
       relationshipSignals,
     };
     const preflightChatToolPlan = resolveAgentChatToolTurnPlan({
@@ -612,15 +621,23 @@ export class AgentContextService {
       knownFamilyMembers,
       options.currentQuery || ''
     );
+    const messengerProfileFactKeys = this.pinMessengerProfileFacts(
+      profileFacts,
+      options.currentQuery || ''
+    );
     const effectiveSelectedFactKeys = Array.from(
-      new Set([...selectedFactKeys, ...mentionedMemberFactKeys])
+      new Set([
+        ...selectedFactKeys,
+        ...mentionedMemberFactKeys,
+        ...messengerProfileFactKeys,
+      ])
     );
     const relevantProfileFacts = this.selectRelevantFacts(
       profileFacts,
       relevanceText,
       Math.max(
         selectedProfileFactCount || modePolicy.profileFactLimit,
-        mentionedMemberFactKeys.length
+        mentionedMemberFactKeys.length + messengerProfileFactKeys.length
       ),
       factRetrievalPaths,
       effectiveSelectedFactKeys
@@ -655,15 +672,24 @@ export class AgentContextService {
           currentQuery: options.currentQuery || '',
           turnDecision,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
+          correctionMode: replyBrief.correctionPolicy?.mode,
         })
       : buildEvidencePackFallback({
           candidates: evidenceCandidates,
           currentQuery: options.currentQuery || '',
           turnDecision,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
+          correctionMode: replyBrief.correctionPolicy?.mode,
         });
     const evidence = evidencePack.items;
     const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
+    const turnContract = buildReplyTurnContract({
+      brief: replyBrief,
+      turnDecision,
+      persona,
+      evidencePack,
+      boundaryContract,
+    });
     const systemLayer = await this.withTraceSpan(
       ChatTraceStage.promptBuild,
       'prompt.build_layers',
@@ -678,7 +704,8 @@ export class AgentContextService {
           identity,
           chatToolPlan,
           replyPlanningDecision.mode,
-          turnDecision
+          turnDecision,
+          turnContract
         ),
       {
         evidenceCount: evidence.length,
@@ -826,6 +853,8 @@ export class AgentContextService {
         replyPlanningFallbackUsed: replyIntentClassification.fallbackUsed,
         replyIntentModelCallCount: replyIntentClassification.modelCallCount,
         turnDecisionVersion: TURN_DECISION_VERSION,
+        turnContractVersion: turnContract.version,
+        turnContractFocusDimensions: turnContract.focusDimensions,
         strategyVersion: 'conversation_strategy_v8',
         turnPlanVersion: 'turn_plan_v1',
         commActVersion: replyBrief.commAct?.version ?? COMM_ACT_VERSION,
@@ -896,6 +925,7 @@ export class AgentContextService {
       replyRoute,
       replyBrief,
       turnDecision,
+      turnContract,
       chatToolPlan,
     };
   }
@@ -925,7 +955,8 @@ export class AgentContextService {
     identity?: AgentIdentityContract,
     chatToolPlan?: AgentChatToolTurnPlan,
     planningMode?: ReplyPlanningMode,
-    turnDecision?: TurnDecision
+    turnDecision?: TurnDecision,
+    turnContract?: ReplyTurnContract
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -987,7 +1018,7 @@ export class AgentContextService {
       plan.planningMode === 'direct' &&
       replyBrief &&
       !replyBrief.conversationPlan
-        ? this.buildLightweightDirectContext(replyBrief)
+        ? this.buildLightweightDirectContext(replyBrief, options.agent)
         : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
@@ -997,7 +1028,8 @@ export class AgentContextService {
     );
     const taskParts = [
       '# 本轮任务层',
-      turnDecision ? buildTurnDecisionPrompt(turnDecision) : '',
+      turnContract?.prompt ||
+        (turnDecision ? buildTurnDecisionPrompt(turnDecision) : ''),
       conversationReadingPrompt,
       evidencePrompt,
       lightweightDirectContext,
@@ -1032,7 +1064,10 @@ export class AgentContextService {
     };
   }
 
-  private buildLightweightDirectContext(replyBrief: ReplyBrief): string {
+  private buildLightweightDirectContext(
+    replyBrief: ReplyBrief,
+    agent: AgentEntity
+  ): string {
     if (
       !replyBrief.primaryScene &&
       !replyBrief.relationshipContext?.length &&
@@ -1971,6 +2006,23 @@ export class AgentContextService {
       .map(fact => fact.key);
 
     return keys;
+  }
+
+  private pinMessengerProfileFacts(
+    profileFacts: AgentProfileFactSummary[],
+    currentQuery: string
+  ): string[] {
+    if (
+      !/(?:小使者|告诉过(?:你|小使者)|跟小使者说过|补齐(?:过)?记忆|补充(?:过)?记忆|记忆补充)/.test(
+        currentQuery
+      )
+    ) {
+      return [];
+    }
+
+    return profileFacts
+      .filter(fact => fact.key.startsWith('profile_source.'))
+      .map(fact => fact.key);
   }
 
   private countSelectedFacts(
@@ -3169,7 +3221,7 @@ export class AgentContextService {
       '# 证据规则',
       '可确认：可以自然陈述；承接：可直接接住用户本轮明确陈述，不必机械加“你说”；回忆：只作用户此前表达，必要时自然标明；待确认和问句不能证明其假设。',
       'claims 必须绑定支持该事实的证据；对象不同、事实无关、已撤回或被替代的证据均无效。',
-      '无证据不新增用户偏好、习惯、性格、现实关系或共同细节；想不起某个具体事实时，可以自然承认“这个我想不起来了”，并邀请用户多说那位亲人或那件事，不要停在“记不清”就结束。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
+      '无证据不新增用户偏好、习惯、性格、现实关系或共同细节。若用户本轮已经明确提供某个事实，必须按“你刚告诉我的”自然承接，不能反过来说想不起来、不记得或不知道；只有用户询问而本轮又没有给出答案时，才可自然承认记不清。角色侧离世日常可自然想象，不延伸成现实做饭、到场或触碰。',
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情；不向用户暴露 ID、标签或结构。',
     ].join('\n');
   }
