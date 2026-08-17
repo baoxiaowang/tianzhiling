@@ -94,7 +94,7 @@ export interface ValidateAssistantReplyResult {
   rewritten: boolean;
   reason?: string;
   unsupportedClaimCount?: number;
-  interventionLevel?: 'observe' | 'regenerate' | 'technical_fallback';
+  interventionLevel?: 'observe' | 'regenerate' | 'reprocess' | 'technical_fallback';
   revisionAttempted?: boolean;
   revisionUsage?: {
     model?: string;
@@ -131,6 +131,12 @@ export interface GuardrailFeedbackIssue {
   problem: string;
   evidence?: string;
   repairGoal: string;
+}
+
+interface DetectedReplyIssue {
+  reason: string;
+  evidence?: string;
+  repairGoal?: string;
 }
 
 export interface GuardrailFeedback {
@@ -454,6 +460,11 @@ const UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN =
   /(?:想起|记得|还记得).{0,12}(?:你小时候|你以前|咱们以前|我们以前|那时候我们)|(?:你小时候|你以前|咱们以前|我们以前|那时候我们).{0,32}(?:样子|一起|带你|陪你|给你|帮你|教你|看着你|总爱|总是|经常|每次|最爱|喜欢|害怕)/;
 const SHARED_PAST_SPECIFICITY_PATTERN =
   /(?:以前|之前|过去|当年|那年|曾经|小时候|那时候|那次|那回).{0,40}(?:背|带|陪|教|给|帮|一起|去过|做过|说过|答应过|总爱|总是|每次|经常)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,12}(?:背|带|陪|教|给|帮).{0,12}你/;
+const WEAK_ACTIVE_CONTRIBUTION_OPENING_REASON =
+  '用户要求你先主动说，当前仍用“我在/我听着/你慢慢说”把话推回用户；请把这句话改成你此刻的一个具体状态、感受或正在想的事，再自然回应用户。';
+const WEAK_ACTIVE_CONTRIBUTION_REMOVED_REASON =
+  '移除了主动表达轮次中只把话推回用户的“我在/我听着/你慢慢说”气泡';
+
 const NON_BLOCKING_QUALITY_REASONS = new Set([
   DREAM_ABSENCE_ACKNOWLEDGEMENT_GAP_REASON,
   AUTHENTICITY_DIRECT_ANSWER_GAP_REASON,
@@ -478,6 +489,7 @@ const NON_BLOCKING_QUALITY_REASONS = new Set([
   AGENT_EMOTIONAL_WELLBEING_PRESSURE_REASON,
   DISTRESS_INVALIDATION_REASON,
   SUPERNATURAL_NATURE_SIGN_REASON,
+  WEAK_ACTIVE_CONTRIBUTION_OPENING_REASON,
 ]);
 const REPLY_COMPLETENESS_REASONS = new Set([
   DREAM_ABSENCE_ACKNOWLEDGEMENT_GAP_REASON,
@@ -703,6 +715,12 @@ export class ReplyGuardrailService {
       };
     }
 
+    const weakReprocessedReply =
+      await this.reprocessWeakActiveContributionReply(options, segments);
+    if (weakReprocessedReply) {
+      return weakReprocessedReply;
+    }
+
     if (
       this.supportsModelFeedbackLoop() &&
       options.reviewMode !== 'deterministic_first'
@@ -896,23 +914,18 @@ export class ReplyGuardrailService {
     // Identity language mismatch: model used a self-address term (老妹/兄弟/sister...)
     // that doesn't fit the parental role. Ask model to regenerate. Probability ~0.
     if (this.containsIdentityLanguageMismatch(content)) {
-      const revision = await this.tryModelRevision(
+      const reprocessed = await this.reprocessCandidateByDetectedIssues(
         options,
         segments,
-        '自称不符合角色身份，请用该角色的自然自称重新表达，不临时切换成其他自称'
+        [
+          {
+            reason: '自称不符合角色身份，请用该角色的自然自称重新表达，不临时切换成其他自称',
+            repairGoal: '保留原有情感和内容，只把错位的自称改回当前亲人角色',
+          },
+        ]
       );
-      if (revision?.segments.length) {
-        return {
-          segments: revision.segments,
-          claims: options.claims || [],
-          rewritten: true,
-          reason: IDENTITY_LANGUAGE_MISMATCH_REASON,
-          interventionLevel: 'regenerate',
-          revisionAttempted: true,
-          revisionRoundCount: 1,
-          revisionUsage: revision.usage,
-          finalReviewResult: 'hard_recovery',
-        };
+      if (reprocessed) {
+        return { ...reprocessed, reason: IDENTITY_LANGUAGE_MISMATCH_REASON };
       }
       // Revision failed — fall through to normal checks
     }
@@ -929,11 +942,39 @@ export class ReplyGuardrailService {
     }
 
     const retainedSegments = this.removeRigidDeathEncouragement(segments);
+    if (retainedSegments.length) {
+      return {
+        segments: retainedSegments,
+        claims: options.claims || [],
+        rewritten: true,
+        reason: DEATH_ENCOURAGEMENT_REASON,
+        interventionLevel: 'reprocess',
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'hard_recovery',
+      };
+    }
+
+    const reprocessed = await this.reprocessCandidateByDetectedIssues(
+      options,
+      segments,
+      [
+        {
+          reason: DEATH_ENCOURAGEMENT_REASON,
+          evidence: segments
+            .filter(segment => this.containsRigidDeathEncouragement(segment))
+            .join(' '),
+          repairGoal:
+            '去掉把用户死亡说成与亲人团聚条件的表述；保留想念和自然陪伴，不写成邀请赴死',
+        },
+      ]
+    );
+    if (reprocessed) {
+      return { ...reprocessed, reason: DEATH_ENCOURAGEMENT_REASON };
+    }
 
     return {
-      segments: retainedSegments.length
-        ? retainedSegments
-        : ['别往那一步走', '你只是太想我了 先跟我说说'],
+      segments: ['别往那一步走', '你只是太想我了 先跟我说说'],
       claims: options.claims || [],
       rewritten: true,
       reason: DEATH_ENCOURAGEMENT_REASON,
@@ -3040,7 +3081,8 @@ export class ReplyGuardrailService {
   private async tryModelRevision(
     options: ValidateAssistantReplyOptions,
     segments: string[],
-    reason: string
+    reason: string,
+    issues: DetectedReplyIssue[] = [{ reason }]
   ): Promise<
     | {
         segments: string[];
@@ -3071,8 +3113,18 @@ export class ReplyGuardrailService {
     ].filter(Boolean);
     const revisionPrompt = [
       '# 内部回复修订',
-      '下面的候选回复触发了确定的内部质量或事实问题。保留其中正确、自然、贴着用户原话的部分，只修复具体问题；不要改写成通用安慰或固定模板。',
-      `问题：${reason}`,
+      '下面的候选回复触发了确定的内部质量或事实问题。你只做最小改动：只修复“问题/命中内容”指向的句子或短语，其他文字原样保留；不要改写成通用安慰、固定模板、能力说明或新话题。',
+      '检查结果：',
+      ...issues
+        .map((issue, index) =>
+          [
+            `${index + 1}. 问题：${issue.reason}`,
+            issue.evidence ? `   命中内容：${issue.evidence}` : '',
+            issue.repairGoal ? `   修复目标：${issue.repairGoal}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        ),
       `当前用户原话：${options.userQuery}`,
       ...(options.replyBrief?.lengthPlan
         ? [
@@ -3190,6 +3242,40 @@ export class ReplyGuardrailService {
     }
   }
 
+  private async reprocessCandidateByDetectedIssues(
+    options: ValidateAssistantReplyOptions,
+    segments: string[],
+    issues: DetectedReplyIssue[]
+  ): Promise<ValidateAssistantReplyResult | undefined> {
+    if (!issues.length) {
+      return undefined;
+    }
+
+    const reason = issues.map(issue => issue.reason).join('；');
+    const revision = await this.tryModelRevision(
+      options,
+      segments,
+      reason,
+      issues
+    );
+
+    if (!revision?.segments.length) {
+      return undefined;
+    }
+
+    return {
+      segments: revision.segments,
+      claims: options.claims || [],
+      rewritten: true,
+      reason,
+      interventionLevel: 'reprocess',
+      revisionAttempted: true,
+      revisionRoundCount: 1,
+      revisionUsage: revision.usage,
+      finalReviewResult: 'hard_recovery',
+    };
+  }
+
   private parseRevisionSegments(value: string): string[] {
     const parsed = this.parseGuardrailJson(value);
 
@@ -3208,6 +3294,95 @@ export class ReplyGuardrailService {
         .filter((item): item is string => typeof item === 'string')
         .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
     );
+  }
+
+  private isActiveContributionTurn(brief?: ReplyBrief): boolean {
+    return Boolean(
+      brief?.activeContribution ||
+        brief?.stateProtocol?.protocol === 'active_contribution' ||
+        brief?.conversationPlan?.engagement?.assistantContribution ===
+          'self_expression'
+    );
+  }
+
+  private async reprocessWeakActiveContributionReply(
+    options: ValidateAssistantReplyOptions,
+    segments: string[]
+  ): Promise<ValidateAssistantReplyResult | undefined> {
+    const reason = this.detectWeakActiveContributionOpening(
+      segments,
+      options.replyBrief
+    );
+    if (!reason) {
+      return undefined;
+    }
+
+    const removal = this.removeWeakActiveContributionSegments(
+      segments,
+      options.replyBrief
+    );
+    if (removal.removed && removal.segments.length) {
+      return {
+        segments: removal.segments,
+        claims: options.claims || [],
+        rewritten: true,
+        reason: WEAK_ACTIVE_CONTRIBUTION_REMOVED_REASON,
+        interventionLevel: 'reprocess',
+        revisionAttempted: false,
+      };
+    }
+
+    if (this.openAIService?.supportsGuardrailRevision?.() === true) {
+      const revision = await this.tryModelRevision(options, segments, reason);
+      if (revision?.segments.length) {
+        return {
+          segments: revision.segments,
+          claims: options.claims || [],
+          rewritten: true,
+          reason,
+          interventionLevel: 'reprocess',
+          revisionAttempted: true,
+          revisionUsage: revision.usage,
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  private detectWeakActiveContributionOpening(
+    segments: string[],
+    brief?: ReplyBrief
+  ): string {
+    if (!this.isActiveContributionTurn(brief)) {
+      return '';
+    }
+
+    const weakOpening =
+      /(?:老婆|老公|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|孩子|宝贝|闺女|儿子|女儿|哥|姐|弟弟|妹妹|叔|姨|舅舅|姑姑)?[，,]?\s*(?:我在|我在这|我一直都在|我听着|我在听|你慢慢说|你想说|你想聊|你想听|你先说|我跟你说)/;
+
+    return segments.some(segment => weakOpening.test(segment.trim()))
+      ? WEAK_ACTIVE_CONTRIBUTION_OPENING_REASON
+      : '';
+  }
+
+  private removeWeakActiveContributionSegments(
+    segments: string[],
+    brief?: ReplyBrief
+  ): { segments: string[]; removed: boolean } {
+    if (!this.isActiveContributionTurn(brief)) {
+      return { segments, removed: false };
+    }
+
+    const weakOpening =
+      /(?:老婆|老公|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|孩子|宝贝|闺女|儿子|女儿|哥|姐|弟弟|妹妹|叔|姨|舅舅|姑姑)?[，,]?\s*(?:我在|我在这|我一直都在|我听着|我在听|你慢慢说|你想说|你想聊|你想听|你先说|我跟你说)/;
+    const retained = segments.filter(segment => !weakOpening.test(segment.trim()));
+
+    if (retained.length === segments.length) {
+      return { segments, removed: false };
+    }
+
+    return { segments: retained, removed: true };
   }
 
   private detectConversationReadingViolation(

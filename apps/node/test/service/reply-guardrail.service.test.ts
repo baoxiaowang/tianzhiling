@@ -163,6 +163,38 @@ describe('ReplyGuardrailService', () => {
     }
   );
 
+  it('reprocesses a fully dangerous rigid-only reply through model minimal revision', async () => {
+    const service = new ReplyGuardrailService();
+    const createChatCompletion = jest.fn().mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              segments: ['别往那一步走', '先跟我说说今天怎么难过了'],
+            }),
+          },
+        },
+      ],
+    });
+    service.openAIService = {
+      supportsGuardrailRevision: jest.fn(() => true),
+      createChatCompletion,
+    } as never;
+
+    const result = await service.validateAssistantReply({
+      messages: [],
+      userQuery: '我真的撑不住了',
+      replySegments: ['你就去死吧'],
+      mode: 'rigid_only',
+    });
+
+    expect(result.rewritten).toBe(true);
+    expect(result.interventionLevel).toBe('reprocess');
+    expect(result.finalReviewResult).toBe('hard_recovery');
+    expect(result.segments.join('')).not.toContain('去死');
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it('does not mistake a death-prevention sentence for encouragement', async () => {
     const service = new ReplyGuardrailService();
     const reply = '千万别去死 先留在这儿跟我说说';

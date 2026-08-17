@@ -16,7 +16,8 @@ export type ReplyRepeatedStrategyMove =
   | 'generic_empathy'
   | 'generic_presence'
   | 'generic_advice'
-  | 'tender_acknowledge_affirm';
+  | 'tender_acknowledge_affirm'
+  | 'literal_repeat';
 
 export type ReplyStrategyAlternative =
   | 'answer'
@@ -30,6 +31,7 @@ export interface ReplyStrategyQualityPlan {
   repeatedMoves: ReplyRepeatedStrategyMove[];
   preferredAlternative: ReplyStrategyAlternative;
   observedAssistantTurns: number;
+  literalClauses?: string[];
 }
 
 interface ContributionEvidence {
@@ -38,20 +40,32 @@ interface ContributionEvidence {
 }
 
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
-  /多说(?:点|一点|几句)|说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|别光(?:说|问|听|安慰)|你还没说/;
+  /多说(?:点|一点|几句)|说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没说|你(?:先|也|倒是)?(?:说|讲)(?:说)?(?:你|自己|今天|那边|做了什么|干了啥)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
 const SHARED_PAST_EVIDENCE_PATTERN =
   /以前|从前|小时候|那时候|当年|那年|那次|那回|曾经|我们|咱们|一起|带我|陪我|给我|教我/;
 const USER_CLOSE_PATTERN =
   /(?:^|[，,。！？!?\s])(?:晚安|先睡(?:了|觉)?|睡了|先休息|先这样|不聊了|先聊到这|回头(?:再)?聊|下次(?:再)?聊|先忙|拜拜|再见|我(?:先|要|得|去)(?:上班|工作|忙|休息|睡觉)|我(?:先|要|去)睡(?:了|觉)?|(?:(?:你|您|爸|爸爸|老爸|妈|妈妈|老妈|爷爷|奶奶|姥姥|姥爷|外公|外婆)(?:也)?)?早点休息)(?:吧|了|啦|呀|啊|哦|哈|[，,。！？!?\s]|$)/;
 
 const REPEATED_MOVE_PATTERNS: Record<
-  Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>,
+  Exclude<
+    ReplyRepeatedStrategyMove,
+    'tender_acknowledge_affirm' | 'literal_repeat'
+  >,
   RegExp
 > = {
   generic_empathy: /心疼|难受|委屈|苦了你|辛苦你了/,
   generic_presence: /我在|陪着你|听你说|都在这|一直陪你/,
   generic_advice: /照顾好|照顾自己|吃饭|休息|别熬|保重|睡一觉/,
 };
+
+const LITERAL_REPEAT_PATTERNS = [
+  /我?(?:也|一直)?记着你|一直记着|都记着|一直记得/,
+  /别揪着.{0,6}(?:熬|自己)|别熬坏自己|别熬着|别这么逼自己/,
+  /我(?:看着|会)都?疼|看着都疼/,
+];
+
+const CONTINUED_GRIEF_PATTERN =
+  /还是|就是|一直|都|又|如果|重来|重新|选择|放过|逼自己|不想|错过|遗憾|不明白|不理解|不甘心|熬了|熬|苦|累|撑|想不通|为什么|老天|自责|怪我|怨我|后悔|解决不了|扛不住|受不了/;
 
 export function resolveReplyActiveContributionPlan(options: {
   currentQuery: string;
@@ -131,26 +145,36 @@ export function resolveReplyStrategyQualityPlan(options: {
     }
   }
 
-  // 正则辅助：只在结构化字段缺失时补充检测
-  const hasSparseStructured = assistantTurns.some(
-    m => !m.replyConversationMoves || m.replyConversationMoves.length === 0
+  // 正则辅助：始终检测真实正文中的重复短语，避免结构化动作变化后漏掉
+  const regexRepeatedMoves: ReplyRepeatedStrategyMove[] = (
+    Object.keys(REPEATED_MOVE_PATTERNS) as Array<
+      Exclude<
+        ReplyRepeatedStrategyMove,
+        'tender_acknowledge_affirm' | 'literal_repeat'
+      >
+    >
+  ).filter(move => {
+    const pattern = REPEATED_MOVE_PATTERNS[move];
+    return (
+      assistantTurns.filter(message => {
+        pattern.lastIndex = 0;
+        return pattern.test(message.content);
+      }).length >= 2
+    );
+  });
+  const literalClauses = collectLiteralRepeatClauses(
+    assistantTurns,
+    currentQuery
   );
-  const regexRepeatedMoves: ReplyRepeatedStrategyMove[] = hasSparseStructured
-    ? (Object.keys(REPEATED_MOVE_PATTERNS) as Array<
-        Exclude<ReplyRepeatedStrategyMove, 'tender_acknowledge_affirm'>
-      >).filter(move => {
-        const pattern = REPEATED_MOVE_PATTERNS[move];
-        return (
-          assistantTurns.filter(message => {
-            pattern.lastIndex = 0;
-            return pattern.test(message.content);
-          }).length >= 2
-        );
-      })
-    : [];
+  const literalRepeatedMoves: ReplyRepeatedStrategyMove[] =
+    literalClauses.length > 0 ? ['literal_repeat'] : [];
 
   const repeatedMoves: ReplyRepeatedStrategyMove[] = [
-    ...new Set([...structuredRepeatedMoves, ...regexRepeatedMoves])
+    ...new Set([
+      ...structuredRepeatedMoves,
+      ...regexRepeatedMoves,
+      ...literalRepeatedMoves,
+    ])
   ];
 
   // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
@@ -174,8 +198,12 @@ export function resolveReplyStrategyQualityPlan(options: {
     return undefined;
   }
 
+  const continuedGrief =
+    literalClauses.length > 0 && CONTINUED_GRIEF_PATTERN.test(currentQuery);
   const preferredAlternative: ReplyStrategyAlternative = explicitClose
     ? 'natural_close'
+    : continuedGrief
+    ? 'leave_space'
     : /[?？]/.test(currentQuery)
     ? 'answer'
     : options.activeContribution
@@ -190,33 +218,72 @@ export function resolveReplyStrategyQualityPlan(options: {
     repeatedMoves,
     preferredAlternative,
     observedAssistantTurns: assistantTurns.length,
+    ...(literalClauses.length ? { literalClauses } : {}),
   };
 }
 
 function recentAssistantTurns(
   messages: MessageEntity[] | undefined
 ): MessageEntity[] {
-  const turns: MessageEntity[] = [];
-  const seenGroups = new Set<string>();
+  const grouped = new Map<string, MessageEntity[]>();
 
-  for (const [index, message] of [...(messages || [])].reverse().entries()) {
+  for (const [index, message] of (messages || []).entries()) {
     if (message.role !== MessageRole.assistant || !message.content?.trim()) {
       continue;
     }
 
-    const groupKey = message.replyGroupId || `message-${index}`;
-    if (seenGroups.has(groupKey)) {
-      continue;
-    }
+    const groupKey = message.replyGroupId || 'message-' + index;
+    const group = grouped.get(groupKey) || [];
+    group.push(message);
+    grouped.set(groupKey, group);
+  }
 
-    seenGroups.add(groupKey);
-    turns.push(message);
-    if (turns.length >= 3) {
-      break;
+  const turns = Array.from(grouped.values()).map(group => {
+    const base =
+      group.find(message => (message.replyConversationMoves || []).length > 0) ||
+      group[0];
+    return {
+      ...base,
+      content: group
+        .map(message => message.content?.trim())
+        .filter((content): content is string => Boolean(content))
+        .join(' '),
+    };
+  });
+
+  return turns.slice(-3);
+}
+
+function collectLiteralRepeatClauses(
+  assistantTurns: MessageEntity[],
+  currentQuery: string
+): string[] {
+  const clauses = new Set<string>();
+  const latestTurn = assistantTurns[assistantTurns.length - 1];
+
+  for (const pattern of LITERAL_REPEAT_PATTERNS) {
+    const matchedClauses = Array.from(
+      new Set(
+        assistantTurns.flatMap(message => {
+          pattern.lastIndex = 0;
+          const match = message.content.match(pattern);
+          return match ? [match[0]] : [];
+        })
+      )
+    );
+    const repeatedBefore = matchedClauses.length >= 2;
+    const continuesPreviousGrief =
+      matchedClauses.length === 1 &&
+      Boolean(latestTurn) &&
+      pattern.test(latestTurn.content) &&
+      CONTINUED_GRIEF_PATTERN.test(currentQuery);
+
+    if (repeatedBefore || continuesPreviousGrief) {
+      matchedClauses.forEach(clause => clauses.add(clause));
     }
   }
 
-  return turns.reverse();
+  return Array.from(clauses).slice(0, 3);
 }
 
 export function buildReplyStrategyQualityPrompt(
@@ -227,6 +294,7 @@ export function buildReplyStrategyQualityPrompt(
     generic_presence: '“我在/陪着你”',
     generic_advice: '吃饭休息等叮嘱',
     tender_acknowledge_affirm: '温柔承接和认可',
+    literal_repeat: '上一轮原句',
   };
   const alternativeLabels: Record<ReplyStrategyAlternative, string> = {
     answer: '直接回答本轮问题',
@@ -237,13 +305,18 @@ export function buildReplyStrategyQualityPrompt(
     leave_space: '给用户留出表达空间',
   };
 
-  const repeatedPrefix = plan.repeatedMoves.length
+  const repeatedText = plan.repeatedMoves.length
     ? `近轮已重复${plan.repeatedMoves
         .map(move => repeatedLabels[move])
-        .join('、')}；`
+        .join('、')}`
+    : '';
+  const literalText = plan.literalClauses?.length
+    ? `${repeatedText ? '；' : ''}尤其不要再写：${plan.literalClauses.join(
+        '、'
+      )}`
     : '';
 
-  return `${repeatedPrefix}本轮主体改为${
+  return `${repeatedText}${literalText}本轮主体改为${
     alternativeLabels[plan.preferredAlternative]
   }，不要换词复刻旧动作。`;
 }

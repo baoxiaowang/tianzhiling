@@ -18,7 +18,10 @@ import {
   containsUnsafeAssistantHistoryContent,
   stripPromptLeakageContent,
 } from '../../common/message-content-safety';
-import { buildDepartedSystemPrompt } from '../../prompt/departed';
+import {
+  buildDepartedCompanionCorePrompt,
+  buildDepartedSystemPrompt,
+} from '../../prompt/departed';
 import { buildDepartedPerceptionPrompt } from '../../prompt/departed-perception';
 import { RetrieveService } from '../rag/retrieve.service';
 import { ChatTraceService } from '../chat-trace.service';
@@ -115,6 +118,12 @@ import {
   buildAgentChatToolPrompt,
   resolveAgentChatToolTurnPlan,
 } from './agent-chat-tools';
+import {
+  REPLY_PROMPT_LAYER_VERSION,
+  ReplyPromptLayerConfig,
+  ReplyPromptLayerPlan,
+  resolveReplyPromptLayerPlan,
+} from './reply-prompt-layer';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -131,6 +140,11 @@ export interface BuildConversationContextOptions {
 export interface AgentContextLayer {
   key: 'persona' | 'history' | 'longTermHistory';
   messages: ChatCompletionMessageParam[];
+  promptLayer?: {
+    plan: ReplyPromptLayerPlan;
+    stablePromptCharacters: number;
+    taskPromptCharacters: number;
+  };
 }
 
 export interface AgentConversationContext {
@@ -146,6 +160,14 @@ export interface AgentConversationContext {
 
 export interface AgentContextDiagnostics {
   promptVersion: 'agent_chat_v11';
+  promptLayerVersion?: typeof REPLY_PROMPT_LAYER_VERSION;
+  promptLayerMode?: ReplyPromptLayerPlan['layerMode'];
+  promptReductionActive?: boolean;
+  promptComplexTurn?: boolean;
+  promptL5Injected?: boolean;
+  promptL5TraceOnly?: boolean;
+  stablePromptCharacters?: number;
+  mainTaskPromptCharacters?: number;
   outputContractVersion: typeof REPLY_OUTPUT_CONTRACT_VERSION;
   boundaryContractVersion: typeof REPLY_BOUNDARY_CONTRACT_VERSION;
   dynamicBoundaryCount: number;
@@ -302,6 +324,9 @@ export class AgentContextService {
 
   @Config('chatTools')
   chatToolConfig: AgentChatToolConfig;
+
+  @Config('chatProgramReduction')
+  chatProgramReductionConfig: ReplyPromptLayerConfig;
 
   async buildConversationContext(
     options: BuildConversationContextOptions
@@ -598,7 +623,8 @@ export class AgentContextService {
           replyBrief,
           persona,
           identity,
-          chatToolPlan
+          chatToolPlan,
+          replyPlanningDecision.mode
         ),
       {
         evidenceCount: evidence.length,
@@ -649,6 +675,14 @@ export class AgentContextService {
       evidence,
       diagnostics: {
         promptVersion: 'agent_chat_v11',
+        promptLayerVersion: REPLY_PROMPT_LAYER_VERSION,
+        promptLayerMode: systemLayer.promptLayer?.plan.layerMode,
+        promptReductionActive: systemLayer.promptLayer?.plan.reductionActive,
+        promptComplexTurn: systemLayer.promptLayer?.plan.complex,
+        promptL5Injected: systemLayer.promptLayer?.plan.includeL5,
+        promptL5TraceOnly: systemLayer.promptLayer?.plan.l5TraceOnly,
+        stablePromptCharacters: systemLayer.promptLayer?.stablePromptCharacters,
+        mainTaskPromptCharacters: systemLayer.promptLayer?.taskPromptCharacters,
         outputContractVersion: REPLY_OUTPUT_CONTRACT_VERSION,
         boundaryContractVersion: boundaryContract.version,
         dynamicBoundaryCount: boundaryContract.rules.length,
@@ -822,8 +856,20 @@ export class AgentContextService {
     replyBrief?: ReplyBrief,
     persona?: AgentPersonaPromptResult,
     identity?: AgentIdentityContract,
-    chatToolPlan?: AgentChatToolTurnPlan
+    chatToolPlan?: AgentChatToolTurnPlan,
+    planningMode?: ReplyPlanningMode
   ): AgentContextLayer {
+    const plan = resolveReplyPromptLayerPlan({
+      config: this.chatProgramReductionConfig,
+      planningMode: planningMode || 'direct',
+      replyBrief,
+      chatToolPlan,
+      hasContinuitySummary: Boolean(options.conversation.continuitySummary?.trim()),
+    });
+    const companionCorePrompt = buildDepartedCompanionCorePrompt(
+      identity ||
+        buildAgentIdentityContract({ agent: options.agent || null })
+    );
     const basePrompt = buildDepartedSystemPrompt({
       userId: options.auth.sub,
       agentId: this.stringifyObjectId(
@@ -832,52 +878,65 @@ export class AgentContextService {
       agent: options.agent,
       identityContract: identity,
     });
-    const evidencePrompt = this.buildEvidencePrompt(evidence);
-    const conversationReadingPrompt = this.buildConversationReadingPrompt(
-      replyBrief,
-      options.currentQuery
-    );
-    const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
-const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
-      options.conversation
-    );
-    const replyBriefPrompt = this.buildModelReplyBriefPrompt(
-      replyBrief,
-      chatToolPlan
-    );
-
     const perceptionPrompt = this.buildPerceptionPrompt(
       evidence,
       emotionState,
       replyBrief,
       options.agent
     );
-    const lightweightDirectContext =
-      replyBrief && !replyBrief.conversationPlan
-        ? this.buildLightweightDirectContext(replyBrief, options.agent)
-        : '';
-    const sessionContinuityPrompt = options.conversation
-      ? this.buildSessionContinuityPromptFromConversation(options.conversation, options.agent)
-      : '';
-    
-    // 豆包模型适配：追加一条风格约束
+    const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
+    const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
+      options.conversation
+    );
+    const sessionContinuityPrompt = this.buildSessionContinuityPromptFromConversation(
+      options.conversation,
+      options.agent
+    );
     const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
       ? '\n像微信聊天一样自然说话，短句口语。不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。情感表达要有温度，不因简短而空洞。'
       : '';
-    const systemPrompt = [
+
+    const stablePrompt = [
+      '# 稳定系统层',
+      companionCorePrompt,
       basePrompt + doubaoAdaptation,
       perceptionPrompt,
       persona?.prompt,
-      conversationReadingPrompt,
-      modePrompt,
-      continuitySummaryPrompt,
+      plan.includeMode ? modePrompt : '',
+      plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const conversationReadingPrompt = plan.includeReading
+      ? this.buildConversationReadingPrompt(replyBrief, options.currentQuery)
+      : '';
+    const evidencePrompt = plan.includeEvidence
+      ? this.buildEvidencePrompt(evidence)
+      : '';
+    const lightweightDirectContext =
+      plan.planningMode === 'direct' && replyBrief && !replyBrief.conversationPlan
+        ? this.buildLightweightDirectContext(replyBrief, options.agent)
+        : '';
+    const replyBriefPrompt = this.buildModelReplyBriefPrompt(
+      replyBrief,
+      chatToolPlan,
+      planningMode,
+      plan.includeL5
+    );
+
+    const taskPrompt = [
+      '# 本轮任务层',
+      conversationReadingPrompt,
       evidencePrompt,
       lightweightDirectContext,
       replyBriefPrompt,
     ]
       .filter(Boolean)
       .join('\n\n');
+
+    const systemPrompt = [stablePrompt, taskPrompt].filter(Boolean).join('\n\n');
 
     return {
       key: 'persona',
@@ -887,6 +946,11 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           content: systemPrompt,
         } as ChatCompletionMessageParam,
       ],
+      promptLayer: {
+        plan,
+        stablePromptCharacters: stablePrompt.length,
+        taskPromptCharacters: taskPrompt.length,
+      },
     };
   }
 
@@ -934,10 +998,12 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     conversation: ConversationEntity,
     agent?: AgentEntity | null
   ): string {
-    // This is a minimal guard: session continuity will be loaded from
-    // the database in a follow-up change. For now, return empty.
-    // The infrastructure (method signature, injection point) is ready.
-    return '';
+    void agent;
+    return [
+      '# 会话连续感',
+      '当前回复不是孤立的第一句。结合最近的用户消息、连续性摘要和本轮原话判断未说完的事、关系状态和开放点；不要重复追问用户已经说清的内容。',
+      '连续性摘要只用于理解此前聊到哪里，不是事实证据。涉及人物、关系、现实事件和共同记忆时，仍必须由本轮证据包中的可陈述证据支持。',
+    ].join('\n');
   }
 
   private buildConversationReadingPrompt(
@@ -1105,7 +1171,9 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
 
   private buildModelReplyBriefPrompt(
     replyBrief?: ReplyBrief,
-    chatToolPlan?: AgentChatToolTurnPlan
+    chatToolPlan?: AgentChatToolTurnPlan,
+    planningMode?: ReplyPlanningMode,
+    includeL5 = true
   ): string {
     if (!replyBrief) {
       return '';
@@ -1123,16 +1191,16 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     const chatToolPrompt = chatToolPlan
       ? buildAgentChatToolPrompt(chatToolPlan)
       : '';
-    const preservesMemoryFlow =
-      replyBrief.mode === 'memory' || replyBrief.mode === 'memory_control';
-    const experienceLine = `体验：${buildReplyExperiencePlanPrompt(
-      replyBrief.experiencePlan
-    )}`;
+    const bubblePlanPrompt = buildReplyBubblePlanPrompt(replyBrief.bubblePlan);
+    const lengthPlanPrompt = buildReplyLengthPlanPrompt(replyBrief.lengthPlan);
+    const experienceLine = includeL5
+      ? `体验：${buildReplyExperiencePlanPrompt(replyBrief.experiencePlan)}`
+      : this.buildDirectExperienceContext(replyBrief);
     const turnPlan = resolveConversationTurnPlan({
       engagement: replyBrief.conversationPlan?.engagement,
       turnPlan: replyBrief.conversationPlan?.turnPlan,
     });
-    const conversationPlanLines = replyBrief.conversationPlan
+    const conversationPlanLines = includeL5 && replyBrief.conversationPlan
       ? [
           '# 本轮交谈规划',
           `态度：${replyBrief.conversationPlan.stance}（针对：${replyBrief.conversationPlan.stanceTarget}）`,
@@ -1157,7 +1225,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           ...(replyBrief.conversationPlan.engagement?.assistantContribution ===
           'self_expression'
             ? [
-                '用户要你主动说；只给一个短小的角色侧当下片段，不把话推回用户。离世世界可合理想象，不编用户偏好或共同往事。',
+                '用户要你主动说；先给角色侧当下内容，不要把“我在、你慢慢说、我听着、你想说时我在”作为第一句或主体。离世世界可合理想象，不编用户偏好或共同往事。',
               ]
             : []),
           ...(replyBrief.conversationPlan.engagement?.continuationGoal ===
@@ -1175,7 +1243,7 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
         ]
       : [];
-    const commActLines = replyBrief.commAct
+    const commActLines = includeL5 && replyBrief.commAct
       ? [buildReplyCommActPrompt(replyBrief.commAct)]
       : [];
     const objectPlanLines = replyBrief.objectPlan
@@ -1192,17 +1260,20 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
           ),
         ]
       : [];
-    const careMotivationLines = replyBrief.careMotivation
+    const careMotivationLines = includeL5 && replyBrief.careMotivation
       ? [buildReplyCareMotivationPrompt(replyBrief.careMotivation)]
       : [];
-    const stateProtocolLines = replyBrief.stateProtocol
-      ? [
-          replyBrief.stateProtocol.protocol === 'dream'
-            ? '# 梦境陪伴'
-            : '# 高频场景协议',
-          buildReplyStateProtocolPrompt(replyBrief.stateProtocol),
-        ]
-      : [];
+    const stateProtocolLines =
+      includeL5 &&
+      replyBrief.stateProtocol &&
+      replyBrief.stateProtocol.protocol !== 'active_contribution'
+        ? [
+            replyBrief.stateProtocol.protocol === 'dream'
+              ? '# 梦境陪伴'
+              : '# 高频场景协议',
+            buildReplyStateProtocolPrompt(replyBrief.stateProtocol),
+          ]
+        : [];
     const realityDependencyLines = replyBrief.realityDependencies.length
       ? [
           '# 现实依赖',
@@ -1213,19 +1284,22 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
             )}。不用做不到的现实承诺哄用户，也不把拒绝当回复主体；保留想照顾用户的心意，改用愿望、具体关心或聊天内能做的事承接。`,
         ]
       : [];
-    const activeContributionLines =
-      replyBrief.activeContribution &&
-      replyBrief.stateProtocol?.protocol !== 'active_contribution'
-        ? [
-            '# 主动贡献',
-            `先给角色侧当下内容；共同过去${
-              replyBrief.activeContribution.sharedPastAllowed
-                ? '有证据时可自然带一处细节'
-                : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
-            }。`,
-          ]
-        : [];
-    const strategyQualityLines = replyBrief.strategyQuality
+    const hasActiveContributionTurn = Boolean(
+      replyBrief.activeContribution ||
+        replyBrief.stateProtocol?.protocol === 'active_contribution'
+    );
+    const activeContributionLines = hasActiveContributionTurn
+      ? [
+          '# 主动贡献',
+          '这一轮先给一句你自己的状态、感受或正在想的事，再回应对方；不要用“我在、我听着、你慢慢说、你想说什么”把话推回给用户。哪怕只是“我这边刚静下来，一想起你就想多说几句”也可以。',
+          `共同过去${
+            replyBrief.activeContribution?.sharedPastAllowed
+              ? '有证据时可自然带一处细节'
+              : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
+          }。`,
+        ]
+      : [];
+    const strategyQualityLines = includeL5 && replyBrief.strategyQuality
       ? [
           '# 多轮策略去重',
           buildReplyStrategyQualityPrompt(replyBrief.strategyQuality),
@@ -1238,13 +1312,44 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
             : '纠正：旧事实失效；替代事实归零，不猜原因、时间、地点、动作或另一版本，随后收住。',
         ]
       : [];
+    const communicationHint = [
+      '# 本轮沟通',
+      '先接住用户正在说的具体事、情绪或近况，再给角色侧心意；用户提到具体物件、食物、地点或事情时，先自然点到它，再回情绪。',
+      '用户分享喜悦、期待或准备了什么时，先给具体反应、共鸣或一起高兴，不要把“我知道了、别累着、记得早点歇”当成主回应。',
+      '不要把“路过/看到/准备做某事”补成用户正在站着、在户外、遇到天气或身体不适；不要一上来就叮嘱、提醒或教用户怎么做。',
+      '用户说“准备回家、收拾东西、要走了”只表示还在离开或收束，不表示已经上路；不得补出“路上注意安全、别着急、到家先歇会儿、慢点走”等现实行动提醒。',
+      '涉及共同过去时，只用本轮证据包中明确可陈述的内容；没有对应证据就不补写“以前、你那时、我做的某道菜、我们一起”等具体共同往事，改为接住当下感受和含义。',
+    ].join('\n');
 
-    if (preservesMemoryFlow) {
+    if (planningMode === 'direct') {
       return [
+        '# 本轮回复任务',
         experienceLine,
+        communicationHint,
+        ...activeContributionLines,
+        ...(hasActiveContributionTurn ? [] : commActLines),
+        ...objectPlanLines,
+        ...participationLines,
+        ...realityDependencyLines,
+        ...correctionLines,
+        ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
+        ...(chatToolPrompt ? [chatToolPrompt] : []),
+        '# 气泡语义规划',
+        bubblePlanPrompt,
+        '# 总字数预算',
+        lengthPlanPrompt,
+        outputContractPrompt,
+      ].join('\n');
+    }
+
+    if (replyBrief.mode === 'memory' || replyBrief.mode === 'memory_control') {
+      return [
+        '# 本轮回复任务',
+        experienceLine,
+        communicationHint,
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
-        ...commActLines,
+        ...(hasActiveContributionTurn ? [] : commActLines),
         ...objectPlanLines,
         ...careMotivationLines,
         ...stateProtocolLines,
@@ -1254,9 +1359,9 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         ...strategyQualityLines,
         ...correctionLines,
         '# 气泡语义规划',
-        buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
+        bubblePlanPrompt,
         '# 总字数预算',
-        buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
+        lengthPlanPrompt,
         ...(chatToolPrompt ? [chatToolPrompt] : []),
         outputContractPrompt,
       ].join('\n');
@@ -1265,11 +1370,12 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
     return [
       '# 本轮回复任务',
       experienceLine,
+      communicationHint,
       ...(!replyBrief.reading
         ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
         : []),
       ...conversationPlanLines,
-      ...commActLines,
+      ...(hasActiveContributionTurn ? [] : commActLines),
       ...objectPlanLines,
       ...careMotivationLines,
       ...stateProtocolLines,
@@ -1290,13 +1396,18 @@ const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
         : []),
       ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
       '气泡语义规划：',
-      buildReplyBubblePlanPrompt(replyBrief.bubblePlan),
+      bubblePlanPrompt,
       '总字数预算：',
-      buildReplyLengthPlanPrompt(replyBrief.lengthPlan),
+      lengthPlanPrompt,
       '以上为内部约束；自然表达，不逐项复述。',
       ...(chatToolPrompt ? [chatToolPrompt] : []),
       outputContractPrompt,
     ].join('\n');
+  }
+
+  private buildDirectExperienceContext(replyBrief: ReplyBrief): string {
+    const plan = replyBrief.experiencePlan;
+    return `体验：${plan.profileTier}/${plan.relationshipStage}/${plan.conversationDepth}`;
   }
 
   private resolveToolInstructionMode(

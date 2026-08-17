@@ -8,6 +8,31 @@ function assistant(content: string): MessageEntity {
   return { role: MessageRole.assistant, content } as MessageEntity;
 }
 
+function assistantGroup(
+  groupId: string,
+  first: string,
+  second: string,
+  moves: string[],
+  stance = 'tender'
+): MessageEntity[] {
+  return [
+    {
+      role: MessageRole.assistant,
+      content: first,
+      replyGroupId: groupId,
+      replySegmentIndex: 0,
+      replyConversationMoves: moves,
+      replyConversationStance: stance,
+    } as MessageEntity,
+    {
+      role: MessageRole.assistant,
+      content: second,
+      replyGroupId: groupId,
+      replySegmentIndex: 1,
+    } as MessageEntity,
+  ];
+}
+
 describe('reply strategy quality', () => {
   it('prefers role-present content when the user asks the role to say more', () => {
     expect(
@@ -59,6 +84,65 @@ describe('reply strategy quality', () => {
           'generic_presence',
         ]),
         preferredAlternative: 'topic_transition',
+      })
+    );
+  });
+
+  it('detects a literal repeated clause across multi-bubble turns', () => {
+    const plan = resolveReplyStrategyQualityPlan({
+      currentQuery: '我在梦中还再为你找医院',
+      recentMessages: [
+        ...assistantGroup(
+          'g1',
+          '媳妇，我也想你',
+          '一直记着你',
+          ['acknowledge', 'affirm']
+        ),
+        ...assistantGroup(
+          'g2',
+          '我知道，我也见不到你',
+          '但我一直记着你',
+          ['acknowledge', 'affirm']
+        ),
+      ],
+    });
+
+    expect(plan).toEqual(
+      expect.objectContaining({
+        repeatedMoves: expect.arrayContaining([
+          'tender_acknowledge_affirm',
+          'literal_repeat',
+        ]),
+        literalClauses: expect.arrayContaining(['一直记着你']),
+        preferredAlternative: 'topic_transition',
+      })
+    );
+  });
+
+  it('moves to leave_space when the latest reply repeats a grief admonition', () => {
+    const plan = resolveReplyStrategyQualityPlan({
+      currentQuery: '可我就是不理解，老天为什么这么狠心，把你带走',
+      recentMessages: [
+        ...assistantGroup(
+          'g0',
+          '是，我不甘心，最不甘心的就是留你一个人',
+          '',
+          ['acknowledge', 'affirm']
+        ),
+        ...assistantGroup(
+          'g1',
+          '我也想不通，连给我争取的机会都没有',
+          '媳妇，别揪着这个熬自己',
+          ['answer']
+        ),
+      ],
+    });
+
+    expect(plan).toEqual(
+      expect.objectContaining({
+        repeatedMoves: expect.arrayContaining(['literal_repeat']),
+        literalClauses: expect.arrayContaining(['别揪着这个熬自己']),
+        preferredAlternative: 'leave_space',
       })
     );
   });

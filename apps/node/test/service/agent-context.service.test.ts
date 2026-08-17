@@ -2423,6 +2423,44 @@ describe('AgentContextService', () => {
     expect(relevanceText).toContain('最新认可的表达方式');
   });
 
+  it('keeps the direct prompt from inventing travel care from a closing update', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '我知道了，那我先收拾东西准备回家了',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('# 本轮回复任务');
+    expect(prompt).toContain('准备回家');
+    expect(prompt).toContain('不得补出');
+    expect(prompt).toContain('路上注意安全');
+  });
+
+  it('puts the strong active-contribution guard into direct prompts', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '你多陪我说几句吧，别光让我说',
+    });
+
+    expect(replyBrief.activeContribution).toBeTruthy();
+
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('# 主动贡献');
+    expect(prompt).toContain('你想说什么');
+    expect(prompt).toContain('我这边刚静下来');
+  });
+
   it('suppresses ritual and keepsake associations in household chores', () => {
     const service = new AgentContextService();
     const facts = [

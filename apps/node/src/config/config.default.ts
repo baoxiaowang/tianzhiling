@@ -418,6 +418,14 @@ export default {
       80
     ),
   },
+  chatProgramReduction: {
+    mode: readStringFrom(['NODE_CHAT_PROGRAM_REDUCTION'], 'active'),
+    modelPromptLayer: readStringFrom(
+      ['NODE_CHAT_MODEL_PROMPT_LAYER'],
+      'hybrid'
+    ),
+    l5TraceOnly: readBooleanFrom(['NODE_CHAT_L5_TRACE_ONLY'], true),
+  },
   chatTools: {
     mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'shadow'),
     shadowSampleRate: readNumberFrom(

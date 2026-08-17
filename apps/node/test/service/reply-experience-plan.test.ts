@@ -15,6 +15,43 @@ import {
 } from '../../src/service/agents/reply-experience-plan';
 
 describe('reply experience plan', () => {
+  it('keeps a first longing turn in reunion mode even when depth is D1', () => {
+    const experience = buildReplyExperiencePlan({
+      currentQuery: '就是想你',
+      mode: 'relationship',
+      primaryScene: 'miss_longing',
+      riskLevel: 'none',
+    });
+    const constrained = constrainConversationPlanForExperience(
+      {
+        stance: 'tender',
+        stanceTarget: 'user',
+        moves: [
+          { type: 'acknowledge', goal: '接住用户的思念' },
+          { type: 'affirm', goal: '回应用户的情感' },
+        ],
+        socialStrategy: 'direct',
+        strategyPurpose: '接住思念并回应温度',
+        questionNeed: 'none',
+        turnClosure: 'close',
+        personaActivation: [],
+      },
+      experience
+    );
+
+    expect(experience).toMatchObject({
+      conversationDepth: 'D1',
+      relationshipUserTurnCount: 0,
+    });
+    expect(constrained).toMatchObject({
+      questionNeed: 'none',
+      turnClosure: 'neutral',
+    });
+    expect(constrained?.moves[0]).toMatchObject({
+      type: 'self_disclose',
+    });
+  });
+
   it('keeps a first simple closing turn restrained and minimal', () => {
     const plan = buildReplyExperiencePlan({
       currentQuery: '妈妈晚安',

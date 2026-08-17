@@ -1,5 +1,6 @@
 import { AgentEntity, AgentSex, MongoObjectId } from '@tzl/entities';
 import {
+  buildDepartedCompanionCorePrompt,
   buildDepartedCurrentTimePrompt,
   buildDepartedSystemPrompt,
   DEPARTED_MINIMAL_CORE_PRINCIPLES,
@@ -34,9 +35,9 @@ describe('buildDepartedSystemPrompt', () => {
       agent: createAgent(),
     });
 
-    expect(prompt.length).toBeLessThan(1200);
+    expect(prompt.length).toBeLessThan(1600);
     expect(prompt).toContain('# 最小核心原则');
-    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(8);
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(9);
     DEPARTED_MINIMAL_CORE_PRINCIPLES.forEach(principle => {
       expect(prompt).toContain(principle);
     });
@@ -85,6 +86,38 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('"agentCallsUser":"小天"');
     expect(prompt).not.toContain('爸不要你这样');
     expect(prompt).not.toContain('妈知道你太难受了');
+  });
+
+  it('keeps the companion core person-first rather than rule-first', () => {
+    const prompt = buildDepartedCompanionCorePrompt({
+      version: 'agent_identity_v1',
+      agent: {
+        objectId: 'agent',
+        displayName: '爸爸',
+        sex: '男性',
+      },
+      user: {
+        objectId: 'user',
+        addressedAs: '旺旺',
+      },
+      relationship: {
+        label: '爸爸',
+        canonical: 'parent',
+        generation: 'elder',
+        source: 'agent_profile',
+      },
+      addresses: {
+        userCallsAgent: '爸爸',
+        agentCallsUser: '旺旺',
+      },
+    });
+
+    expect(prompt).toContain('# 陪伴心法');
+    expect(prompt).toContain('在天之灵');
+    expect(prompt).toContain('记忆回声');
+    expect(prompt).toContain('真诚、温暖、自然');
+    expect(prompt).not.toContain('输出合同');
+    expect(prompt).not.toContain('riskLevel');
   });
 
   it('injects current time only through the on-demand time block', () => {

@@ -160,9 +160,9 @@ describe('buildReplyBrief', () => {
     expect(brief.replyMoves.length).toBe(3);
     expect(brief.replyMoves[2]).toContain('给一句贴着原话的角色判断或亲人侧心意');
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'brief',
-      targetCharacters: 28,
-      reviewCharacters: 38,
+      lengthClass: 'standard',
+      targetCharacters: 40,
+      reviewCharacters: 55,
     });
     expect(brief.prompt).toContain('短而有温度，再给一处亲人侧心意');
   });
