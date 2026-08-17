@@ -232,6 +232,47 @@ describe('AgentMemoryProfileService', () => {
     );
   });
 
+  it('exposes model and token telemetry to the messenger call site', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    const onTelemetry = jest.fn();
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '这份耐心很珍贵。',
+        nextFocusField: '',
+        lifeExperience: '',
+        personalityTraits: '很有耐心',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+      response: {
+        model: 'MiniMax-M2.1',
+        usage: {
+          prompt_tokens: 210,
+          completion_tokens: 45,
+          total_tokens: 255,
+        },
+      },
+    });
+
+    await service.buildInterviewTurn({
+      agent,
+      input: '爸爸对家里人一直很有耐心。',
+      onTelemetry,
+    });
+
+    expect(onTelemetry).toHaveBeenCalledWith({
+      modelCalled: true,
+      modelSucceeded: true,
+      fallbackUsed: false,
+      model: 'MiniMax-M2.1',
+      promptTokens: 210,
+      completionTokens: 45,
+      totalTokens: 255,
+    });
+  });
+
   it('moves to another uncovered area instead of repeating one question', async () => {
     const agent = createAgent();
     const { service, generateText } = createService([]);

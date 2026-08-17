@@ -1,4 +1,5 @@
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import {
@@ -9,13 +10,18 @@ import {
   MessageRole,
   MessageStatus,
   MessageType,
+  MessengerCallEventEntity,
+  MessengerCallStatus,
   MongoObjectId,
 } from '@tzl/entities';
 import type {
   AgentProfileInterviewDraftDTO,
   AgentProfileMemoryField,
 } from '@tzl/shared';
-import { AgentMemoryProfileService } from './agent-memory-profile.service';
+import {
+  AgentMemoryProfileService,
+  MessengerInterviewTelemetry,
+} from './agent-memory-profile.service';
 
 export const MESSENGER_DEFAULT_AVATAR_KEY =
   'weapp/messenger-avatar-20260817.png';
@@ -42,6 +48,9 @@ export interface ProvisionMessengersForUserResult {
 
 @Provide()
 export class MessengerService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
@@ -50,6 +59,9 @@ export class MessengerService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(MessengerCallEventEntity)
+  messengerCallEventModel: MongoRepository<MessengerCallEventEntity>;
 
   @Inject()
   agentMemoryProfileService: AgentMemoryProfileService;
@@ -209,56 +221,176 @@ export class MessengerService {
   async runInterviewTurn(
     options: RunMessengerInterviewTurnOptions
   ): Promise<string> {
-    const draft = this.buildDraft(options.agent);
-    const [userMessageCount, conversationMessages] = await Promise.all([
-      this.messageModel.count({
-        conversationId: options.conversation.id,
-        role: MessageRole.user,
-      }),
-      this.messageModel.find({
-        where: {
+    const startedAt = Date.now();
+    let sourceMessage: MessageEntity | undefined;
+    let telemetry: MessengerInterviewTelemetry = {
+      modelCalled: false,
+      modelSucceeded: false,
+      fallbackUsed: false,
+    };
+
+    try {
+      const draft = this.buildDraft(options.agent);
+      const [userMessageCount, conversationMessages] = await Promise.all([
+        this.messageModel.count({
           conversationId: options.conversation.id,
-        },
-        order: { createdAt: 'DESC' },
-        take: 100,
-      }),
-    ]);
-    const previousReplies = conversationMessages
-      .filter(message => message.role === MessageRole.assistant)
-      .map(message => message.content?.trim() || '')
-      .filter(Boolean);
-    const sourceMessage = conversationMessages.find(
-      message => message.role === MessageRole.user
-    );
-    const askedFields = this.collectAskedInterviewFields(previousReplies);
+          role: MessageRole.user,
+        }),
+        this.messageModel.find({
+          where: {
+            conversationId: options.conversation.id,
+          },
+          order: { createdAt: 'DESC' },
+          take: 100,
+        }),
+      ]);
+      const previousReplies = conversationMessages
+        .filter(message => message.role === MessageRole.assistant)
+        .map(message => message.content?.trim() || '')
+        .filter(Boolean);
+      sourceMessage = conversationMessages.find(
+        message => message.role === MessageRole.user
+      );
+      const askedFields = this.collectAskedInterviewFields(previousReplies);
 
-    if (!this.isMeaningfulInterviewInput(options.input)) {
-      return this.buildLowPressureReply(options.agent, options.input);
-    }
+      if (!this.isMeaningfulInterviewInput(options.input)) {
+        await this.recordCallEvent(options, {
+          status: MessengerCallStatus.skipped,
+          skipReason: 'low_information',
+          sourceMessageId: sourceMessage?.id,
+          durationMs: Date.now() - startedAt,
+          telemetry,
+          changedProfileFields: [],
+          profileSaved: false,
+        });
+        return this.buildLowPressureReply(options.agent, options.input);
+      }
 
-    const result = await this.agentMemoryProfileService.buildInterviewTurn({
-      agent: options.agent,
-      input: options.input,
-      draft,
-      focusField: askedFields[0] || '',
-      askedFields,
-      previousReplies,
-      turnCount: userMessageCount,
-    });
-    const changedSources = this.buildChangedDraft(draft, result.draft);
-
-    if (Object.keys(changedSources).length) {
-      this.applyDraft(options.agent, result.draft);
-      await this.agentMemoryProfileService.alignManualProfileEdits({
+      const result = await this.agentMemoryProfileService.buildInterviewTurn({
         agent: options.agent,
-        userId: options.agent.createdUserId,
-        sources: changedSources,
-        sourceMessageId: sourceMessage?.id,
-        sourceText: options.input,
+        input: options.input,
+        draft,
+        focusField: askedFields[0] || '',
+        askedFields,
+        previousReplies,
+        turnCount: userMessageCount,
+        onTelemetry: value => {
+          telemetry = value;
+        },
       });
+      const changedSources = this.buildChangedDraft(draft, result.draft);
+      const changedProfileFields = Object.keys(
+        changedSources
+      ) as AgentProfileMemoryField[];
+      let profileSaved = false;
+
+      if (changedProfileFields.length) {
+        this.applyDraft(options.agent, result.draft);
+        await this.agentMemoryProfileService.alignManualProfileEdits({
+          agent: options.agent,
+          userId: options.agent.createdUserId,
+          sources: changedSources,
+          sourceMessageId: sourceMessage?.id,
+          sourceText: options.input,
+        });
+        profileSaved = true;
+      }
+
+      await this.recordCallEvent(options, {
+        status: MessengerCallStatus.completed,
+        sourceMessageId: sourceMessage?.id,
+        durationMs: Date.now() - startedAt,
+        telemetry,
+        changedProfileFields,
+        profileSaved,
+      });
+      return result.reply || this.buildFallbackReply(options.agent);
+    } catch (error) {
+      await this.recordCallEvent(options, {
+        status: MessengerCallStatus.failed,
+        sourceMessageId: sourceMessage?.id,
+        durationMs: Date.now() - startedAt,
+        telemetry,
+        changedProfileFields: [],
+        profileSaved: false,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  private async recordCallEvent(
+    options: RunMessengerInterviewTurnOptions,
+    event: {
+      status: MessengerCallStatus;
+      skipReason?: string;
+      sourceMessageId?: MongoObjectId;
+      durationMs: number;
+      telemetry: MessengerInterviewTelemetry;
+      changedProfileFields: AgentProfileMemoryField[];
+      profileSaved: boolean;
+      error?: unknown;
+    }
+  ): Promise<void> {
+    if (!this.messengerCallEventModel?.save) {
+      return;
     }
 
-    return result.reply || this.buildFallbackReply(options.agent);
+    const errorCode = event.error
+      ? this.resolveCallErrorCode(event.error)
+      : event.telemetry.errorCode;
+    const errorMessage = event.error
+      ? this.describeCallError(event.error)
+      : event.telemetry.errorMessage;
+
+    try {
+      await this.messengerCallEventModel.save({
+        userId: options.conversation.userId || options.agent.createdUserId,
+        conversationId: options.conversation.id,
+        messengerAgentId: options.conversation.agentId,
+        parentAgentId: options.agent.id,
+        sourceMessageId: event.sourceMessageId,
+        status: event.status,
+        skipReason: event.skipReason,
+        modelCalled: event.telemetry.modelCalled,
+        modelSucceeded: event.telemetry.modelSucceeded,
+        fallbackUsed: event.telemetry.fallbackUsed,
+        model: event.telemetry.model,
+        promptTokens: event.telemetry.promptTokens,
+        completionTokens: event.telemetry.completionTokens,
+        totalTokens: event.telemetry.totalTokens,
+        durationMs: Math.max(0, Math.floor(event.durationMs)),
+        profileSaved: event.profileSaved,
+        changedProfileFields: event.changedProfileFields,
+        releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+        errorCode,
+        errorMessage,
+        createdAt: new Date(),
+      } as MessengerCallEventEntity);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[messenger] call telemetry save failed, conversationId=%s, reason=%s',
+        String(options.conversation.id || ''),
+        this.describeCallError(error)
+      );
+    }
+  }
+
+  private resolveCallErrorCode(error: unknown): string {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = String((error as { code?: unknown }).code || '').trim();
+      if (code) {
+        return code.slice(0, 80);
+      }
+    }
+    return error instanceof Error && error.name
+      ? error.name.slice(0, 80)
+      : 'MESSENGER_CALL_FAILED';
+  }
+
+  private describeCallError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.replace(/\s+/g, ' ').trim().slice(0, 240);
   }
 
   private buildDraft(agent: AgentEntity): AgentProfileInterviewDraftDTO {

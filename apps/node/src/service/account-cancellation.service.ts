@@ -22,6 +22,7 @@ import {
   ConversationEntity,
   ConversationMessageFeedbackEntity,
   MessageEntity,
+  MessengerCallEventEntity,
   MongoObjectId,
   OrderEntity,
   OrderStatus,
@@ -188,6 +189,9 @@ export class AccountCancellationService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(MessengerCallEventEntity)
+  messengerCallEventModel: MongoRepository<MessengerCallEventEntity>;
 
   @InjectEntityModel(ConversationChatImportBatchEntity)
   chatImportBatchModel: MongoRepository<ConversationChatImportBatchEntity>;
@@ -632,6 +636,10 @@ export class AccountCancellationService {
     });
 
     await this.runCleanupStage(summary, 'conversation_data', async () => {
+      summary.deletedRecordCount += await this.deleteMany(
+        this.messengerCallEventModel,
+        { userId }
+      );
       summary.deletedRecordCount += await this.deleteMany(
         this.messageModel,
         this.byIds(messages.map(item => item.id))

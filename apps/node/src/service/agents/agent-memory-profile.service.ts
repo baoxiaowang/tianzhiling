@@ -46,6 +46,19 @@ interface BuildInterviewTurnOptions {
   askedFields?: AgentProfileMemoryField[];
   previousReplies?: string[];
   turnCount?: number;
+  onTelemetry?: (telemetry: MessengerInterviewTelemetry) => void;
+}
+
+export interface MessengerInterviewTelemetry {
+  modelCalled: boolean;
+  modelSucceeded: boolean;
+  fallbackUsed: boolean;
+  model?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  errorCode?: string;
+  errorMessage?: string;
 }
 
 interface GeneratedMemoryProfile {
@@ -131,6 +144,12 @@ export class AgentMemoryProfileService {
       .slice(0, 12);
 
     if (!this.openAIService?.isEnabled?.()) {
+      this.notifyInterviewTelemetry(options, {
+        modelCalled: false,
+        modelSucceeded: false,
+        fallbackUsed: true,
+        errorCode: 'MODEL_DISABLED',
+      });
       return this.buildFallbackInterviewTurn(
         options.agent,
         input,
@@ -183,8 +202,15 @@ export class AgentMemoryProfileService {
         ].join('\n'),
       });
       const parsed = this.parseInterviewTurn(result.content, currentDraft);
+      const modelTelemetry = this.buildInterviewModelTelemetry(result.response);
 
       if (parsed) {
+        this.notifyInterviewTelemetry(options, {
+          ...modelTelemetry,
+          modelCalled: true,
+          modelSucceeded: true,
+          fallbackUsed: false,
+        });
         return this.buildInterviewResult(
           options.agent,
           parsed.draft,
@@ -196,7 +222,22 @@ export class AgentMemoryProfileService {
           previousReplies
         );
       }
+
+      this.notifyInterviewTelemetry(options, {
+        ...modelTelemetry,
+        modelCalled: true,
+        modelSucceeded: false,
+        fallbackUsed: true,
+        errorCode: 'INVALID_MODEL_RESPONSE',
+      });
     } catch (error) {
+      this.notifyInterviewTelemetry(options, {
+        modelCalled: true,
+        modelSucceeded: false,
+        fallbackUsed: true,
+        errorCode: this.resolveInterviewErrorCode(error),
+        errorMessage: this.describeInterviewError(error),
+      });
       this.logger?.warn?.(
         '[agent-memory-profile] interview failed, agentId=%s, reason=%s',
         this.stringifyObjectId(options.agent.id),
@@ -212,6 +253,64 @@ export class AgentMemoryProfileService {
       askedFields,
       previousReplies
     );
+  }
+
+  private notifyInterviewTelemetry(
+    options: BuildInterviewTurnOptions,
+    telemetry: MessengerInterviewTelemetry
+  ): void {
+    try {
+      options.onTelemetry?.(telemetry);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent-memory-profile] interview telemetry callback failed, agentId=%s, reason=%s',
+        this.stringifyObjectId(options.agent.id),
+        this.describeInterviewError(error)
+      );
+    }
+  }
+
+  private buildInterviewModelTelemetry(response?: {
+    model?: unknown;
+    usage?: {
+      prompt_tokens?: unknown;
+      completion_tokens?: unknown;
+      total_tokens?: unknown;
+    };
+  }): Partial<MessengerInterviewTelemetry> {
+    const normalizeTokenCount = (value: unknown): number | undefined => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= 0
+        ? Math.floor(parsed)
+        : undefined;
+    };
+
+    return {
+      model:
+        typeof response?.model === 'string' && response.model.trim()
+          ? response.model.trim()
+          : undefined,
+      promptTokens: normalizeTokenCount(response?.usage?.prompt_tokens),
+      completionTokens: normalizeTokenCount(response?.usage?.completion_tokens),
+      totalTokens: normalizeTokenCount(response?.usage?.total_tokens),
+    };
+  }
+
+  private resolveInterviewErrorCode(error: unknown): string {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = String((error as { code?: unknown }).code || '').trim();
+      if (code) {
+        return code.slice(0, 80);
+      }
+    }
+    return error instanceof Error && error.name
+      ? error.name.slice(0, 80)
+      : 'MODEL_CALL_FAILED';
+  }
+
+  private describeInterviewError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.replace(/\s+/g, ' ').trim().slice(0, 240);
   }
 
   async createMessengerSpeech(

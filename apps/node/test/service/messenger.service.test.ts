@@ -2,6 +2,7 @@ import {
   AgentEntity,
   ConversationEntity,
   MessageRole,
+  MessengerCallStatus,
   MongoObjectId,
 } from '@tzl/entities';
 import {
@@ -26,6 +27,9 @@ function createService() {
     count: jest.fn().mockResolvedValue(0),
     save: jest.fn(),
   };
+  const messengerCallEventModel = {
+    save: jest.fn().mockImplementation(async value => value),
+  };
   const buildInterviewTurn = jest.fn();
   const alignManualProfileEdits = jest.fn();
   const agentMemoryProfileService = {
@@ -36,13 +40,16 @@ function createService() {
   service.agentModel = agentModel as never;
   service.conversationModel = conversationModel as never;
   service.messageModel = messageModel as never;
+  service.messengerCallEventModel = messengerCallEventModel as never;
   service.agentMemoryProfileService = agentMemoryProfileService as never;
+  service.logger = { warn: jest.fn() } as never;
 
   return {
     service,
     agentModel,
     conversationModel,
     messageModel,
+    messengerCallEventModel,
     buildInterviewTurn,
     alignManualProfileEdits,
   };
@@ -310,12 +317,87 @@ describe('MessengerService', () => {
     });
   });
 
+  it('records dedicated model, token, latency, and profile-save telemetry', async () => {
+    const {
+      service,
+      messageModel,
+      messengerCallEventModel,
+      buildInterviewTurn,
+      alignManualProfileEdits,
+    } = createService();
+    const parent = buildAgent();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    const sourceMessageId = new MongoObjectId();
+    messageModel.find.mockResolvedValue([
+      {
+        id: sourceMessageId,
+        role: MessageRole.user,
+        content: '爸爸喜欢下棋',
+      },
+    ]);
+    buildInterviewTurn.mockImplementation(async options => {
+      options.onTelemetry({
+        modelCalled: true,
+        modelSucceeded: true,
+        fallbackUsed: false,
+        model: 'MiniMax-M2.1',
+        promptTokens: 120,
+        completionTokens: 30,
+        totalTokens: 150,
+      });
+      return {
+        reply: '下棋是爸爸很鲜活的一面。',
+        draft: {
+          lifeExperience: '',
+          personalityTraits: '',
+          languageHabits: '',
+          hobbies: '喜欢下棋',
+          sharedMemories: '',
+        },
+        coveredFields: ['hobbies'],
+        nextFocusField: '',
+        isComplete: false,
+      };
+    });
+    alignManualProfileEdits.mockImplementation(async ({ agent }) => agent);
+
+    await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '爸爸喜欢下棋',
+    });
+
+    expect(messengerCallEventModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: parent.createdUserId,
+        conversationId: conversation.id,
+        messengerAgentId: conversation.agentId,
+        parentAgentId: parent.id,
+        sourceMessageId,
+        status: MessengerCallStatus.completed,
+        modelCalled: true,
+        modelSucceeded: true,
+        fallbackUsed: false,
+        model: 'MiniMax-M2.1',
+        promptTokens: 120,
+        completionTokens: 30,
+        totalTokens: 150,
+        profileSaved: true,
+        changedProfileFields: ['hobbies'],
+      })
+    );
+  });
+
   it.each(['？', '我不知道说什么'])(
     'does not extract or save a low-information turn: %s',
     async input => {
       const {
         service,
         messageModel,
+        messengerCallEventModel,
         buildInterviewTurn,
         alignManualProfileEdits,
       } = createService();
@@ -335,8 +417,48 @@ describe('MessengerService', () => {
       expect(buildInterviewTurn).not.toHaveBeenCalled();
       expect(alignManualProfileEdits).not.toHaveBeenCalled();
       expect(parent.updatedAt).toBe(updatedAt);
+      expect(messengerCallEventModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: MessengerCallStatus.skipped,
+          skipReason: 'low_information',
+          modelCalled: false,
+          profileSaved: false,
+        })
+      );
     }
   );
+
+  it('does not break chat when telemetry persistence fails', async () => {
+    const { service, messengerCallEventModel, buildInterviewTurn } =
+      createService();
+    const parent = buildAgent();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    buildInterviewTurn.mockResolvedValue({
+      reply: '我在认真听。',
+      draft: {
+        lifeExperience: '',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      },
+      coveredFields: [],
+      nextFocusField: '',
+      isComplete: false,
+    });
+    messengerCallEventModel.save.mockRejectedValue(new Error('mongo down'));
+
+    await expect(
+      service.runInterviewTurn({
+        agent: parent,
+        conversation,
+        input: '我想慢慢说说爸爸',
+      })
+    ).resolves.toBe('我在认真听。');
+  });
 
   it('does not resave profile memory when the extracted draft is unchanged', async () => {
     const { service, buildInterviewTurn, alignManualProfileEdits } =

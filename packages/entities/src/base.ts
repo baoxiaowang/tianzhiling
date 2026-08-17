@@ -23,6 +23,7 @@ export enum TableName {
   chat_trace = "chat_trace",
   chat_span = "chat_span",
   message = "message",
+  messenger_call_event = "messenger_call_event",
   post = "post",
   post_comment = "post_comment",
   post_comment_notification = "post_comment_notification",
