@@ -39,6 +39,8 @@ import {
   REPLY_INTENT_SUB_INTENTS,
   REPLY_INTENT_TARGETS,
   REPLY_INTENT_TIME_SCOPES,
+  TURN_EXPECTED_RESPONSES,
+  TURN_USER_NEED_KINDS,
   ConversationMemoryPlan,
   ConversationMemoryPlanQuery,
   ConversationKnownObject,
@@ -64,6 +66,11 @@ import {
   StructuredReplyIntent,
   StructuredReplyIntentItem,
 } from './reply-intent';
+import {
+  buildTurnUnderstanding,
+  parseTurnUnderstandingCandidate,
+  shouldUseSemanticUnderstanding,
+} from './turn-understanding';
 import {
   resolveConversationTurnPlan,
   turnPlanToEngagement,
@@ -155,7 +162,7 @@ const CLASSIFIER_MAX_MESSAGE_LENGTH = 180;
 const CLASSIFIER_MAX_MEMORY_CANDIDATES = 10;
 const CLASSIFIER_MAX_MEMORY_SUMMARY_LENGTH = 90;
 const CLASSIFIER_MAX_KNOWN_OBJECTS = 10;
-const CLASSIFIER_MAX_TOKENS = 720;
+const CLASSIFIER_MAX_TOKENS = 960;
 const DEFAULT_DIRECT_MAX_CHARACTERS = 80;
 
 const SHORT_MESSAGE_DIRECT_MAX_CHARS = 20;
@@ -247,7 +254,8 @@ const FAMILY_HEALTH_CONTEXT_PATTERN =
 
 const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
-  '只输出当前回复需要的 intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。',
+  '只输出当前回复需要的 understanding、intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。understanding 只负责理解用户，conversationPlan 只是兼容策略建议，两者不要混写。',
+  'understanding 必须把每个诉求绑定到人物和原话：actors 使用 objectPlan ref 或 agent/user/unknown；needs 最多六个，evidence 必须逐字来自当前消息，priority=must|supporting；questions 区分 fact、memory、emotional_rhetorical、boundary。用户要求角色说话时 activeSpeechRequest=true；明确结束时 closureSignal=true。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
   'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
   '如果用户提到一件正在进行、刚发生或尚未闭环的具体事项，例如装修、工作进展、家庭事务、出行、照顾家人等，先判断当前最自然的接续点；确实值得继续了解时，在 turnPlan.open 输出 need=topic_followup，detail 写清楚该接什么，并让 questionNeed=helpful、moves 最多一个 ask。用户已说清、情绪很深或正在收尾时保持 none，不为了问而问。',
@@ -295,7 +303,12 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   `turnPlan.open[].need：${CONVERSATION_OPEN_NEEDS.join(', ')}`,
   `turnPlan.open[].priority：${CONVERSATION_OPEN_PRIORITIES.join(', ')}`,
   `turnPlan.avoid：${CONVERSATION_AVOID_ACTIONS.join(', ')}`,
-  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
+  `understanding.needs[].kind：${TURN_USER_NEED_KINDS.join(', ')}`,
+  `understanding.needs[].expectedResponse：${TURN_EXPECTED_RESPONSES.join(
+    ', '
+  )}`,
+  'understanding.questions[].type：fact, memory, emotional_rhetorical, boundary；evidenceRequirement：none, grounded, uncertain_answer。',
+  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；understanding 使用 {actors,needs:[{id,kind,targetRef,evidence,priority,expectedResponse}],emotions:[{label,targetRef,source,intensity,function}],questions:[{id,text,targetRef,type,mustAnswer,evidenceRequirement}],activeSpeechRequest,closureSignal}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
   `contentUnits 每项使用 {kind,text,importance}；kind 只能是：${CONVERSATION_CONTENT_UNIT_KINDS.join(
     ', '
   )}。`,
@@ -482,6 +495,18 @@ export class ReplyIntentClassifierService {
       finish('succeeded');
       return {
         ...deterministicIntent,
+        intents: mergeStructuredIntentItems(
+          deterministicIntent.intents,
+          semanticIntent.intents
+        ),
+        emotion: !['neutral', 'unknown'].includes(semanticIntent.emotion)
+          ? semanticIntent.emotion
+          : deterministicIntent.emotion,
+        confidence: Math.max(
+          deterministicIntent.confidence,
+          semanticIntent.confidence
+        ),
+        source: deterministicIntent.source,
         ...(semanticIntent.capabilityQuestions?.length
           ? {
               capabilityQuestions: semanticIntent.capabilityQuestions,
@@ -500,6 +525,11 @@ export class ReplyIntentClassifierService {
         ...(semanticIntent.reading
           ? {
               reading: semanticIntent.reading,
+            }
+          : {}),
+        ...(semanticIntent.understanding
+          ? {
+              understanding: semanticIntent.understanding,
             }
           : {}),
         ...(conversationPlan
@@ -644,6 +674,15 @@ export class ReplyIntentClassifierService {
       this.hasMultipleRelevantKnownObjects(currentQuery, options.knownObjects)
     ) {
       return { mode: 'semantic', reason: 'multiple_objects' };
+    }
+
+    if (
+      shouldUseSemanticUnderstanding({
+        currentQuery,
+        knownObjects: options.knownObjects,
+      })
+    ) {
+      return { mode: 'semantic', reason: 'compound_intent' };
     }
 
     const capabilityConstraints = resolveAgentCapabilityConstraints({
@@ -1388,6 +1427,18 @@ export class ReplyIntentClassifierService {
       }
       if (reading) {
         result.reading = reading;
+      }
+      const parsedUnderstanding = parseTurnUnderstandingCandidate({
+        value: parsed.understanding,
+        currentQuery,
+        fallback: buildTurnUnderstanding({
+          currentQuery,
+          intent: result,
+          objectPlan,
+        }),
+      });
+      if (parsedUnderstanding) {
+        result.understanding = parsedUnderstanding;
       }
       if (conversationPlan) {
         result.conversationPlan = conversationPlan;
@@ -2465,6 +2516,20 @@ export class ReplyIntentClassifierService {
       ? Math.min(Math.round(value), 12000)
       : 10000;
   }
+}
+
+function mergeStructuredIntentItems(
+  deterministic: StructuredReplyIntentItem[],
+  semantic: StructuredReplyIntentItem[]
+): StructuredReplyIntentItem[] {
+  return Array.from(
+    new Map(
+      [...deterministic, ...semantic].map(item => [
+        `${item.intent}:${item.target}:${item.timeScope}:${item.subIntent}`,
+        item,
+      ])
+    ).values()
+  ).slice(0, 3);
 }
 
 function isTimeoutLikeError(error: unknown): boolean {

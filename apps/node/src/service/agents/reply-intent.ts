@@ -316,6 +316,123 @@ export interface ConversationObjectPlan {
   ambiguousMentions: string[];
 }
 
+export const TURN_UNDERSTANDING_VERSION = 'turn_understanding_v1' as const;
+
+export const TURN_USER_NEED_KINDS = [
+  'longing',
+  'smalltalk',
+  'care_for_role',
+  'correction',
+  'fact_question',
+  'active_speech',
+  'relationship_repair',
+  'boundary',
+  'family_update',
+  'user_update',
+  'comfort',
+  'close',
+  'other',
+] as const;
+export type TurnUserNeedKind = (typeof TURN_USER_NEED_KINDS)[number];
+
+export const TURN_EXPECTED_RESPONSES = [
+  'relationship_response',
+  'ordinary_response',
+  'direct_answer',
+  'direct_answer_and_receive_care',
+  'repair',
+  'role_contribution',
+  'boundary_answer',
+  'family_response',
+  'comfort',
+  'natural_close',
+] as const;
+export type TurnExpectedResponse = (typeof TURN_EXPECTED_RESPONSES)[number];
+
+export type TurnNeedPriority = 'must' | 'supporting';
+export type TurnUnderstandingComplexity = 'simple' | 'compound' | 'ambiguous';
+export type TurnEmotionIntensity = 'low' | 'medium' | 'high';
+export type TurnEmotionFunction =
+  | 'sharing'
+  | 'seeking_reassurance'
+  | 'seeking_answer'
+  | 'seeking_closeness'
+  | 'repairing_relationship'
+  | 'other';
+export type TurnQuestionType =
+  | 'fact'
+  | 'memory'
+  | 'emotional_rhetorical'
+  | 'boundary';
+export type TurnQuestionEvidenceRequirement =
+  | 'none'
+  | 'grounded'
+  | 'uncertain_answer';
+
+export interface TurnUnderstandingActor {
+  ref: string;
+  mention: string;
+  kind: ConversationObjectKind;
+  binding: string;
+  confidence: ConversationObjectConfidence;
+}
+
+export interface TurnUserNeed {
+  id: string;
+  kind: TurnUserNeedKind;
+  targetRef: string;
+  evidence: string;
+  priority: TurnNeedPriority;
+  expectedResponse: TurnExpectedResponse;
+}
+
+export interface TurnTargetedEmotion {
+  label: ReplyIntentEmotion;
+  targetRef: string;
+  source: string;
+  intensity: TurnEmotionIntensity;
+  function: TurnEmotionFunction;
+}
+
+export interface TurnCorrection {
+  evidence: string;
+  targetRef: string;
+}
+
+export interface TurnQuestionObligation {
+  id: string;
+  text: string;
+  targetRef: string;
+  type: TurnQuestionType;
+  mustAnswer: boolean;
+  evidenceRequirement: TurnQuestionEvidenceRequirement;
+}
+
+export interface TurnBoundarySignal {
+  evidence: string;
+  kind: string;
+  targetRef: string;
+}
+
+export interface TurnUnderstandingAmbiguity {
+  mention: string;
+  reason: string;
+}
+
+export interface TurnUnderstanding {
+  version: typeof TURN_UNDERSTANDING_VERSION;
+  actors: TurnUnderstandingActor[];
+  needs: TurnUserNeed[];
+  emotions: TurnTargetedEmotion[];
+  corrections: TurnCorrection[];
+  questions: TurnQuestionObligation[];
+  boundarySignals: TurnBoundarySignal[];
+  activeSpeechRequest: boolean;
+  closureSignal: boolean;
+  ambiguities: TurnUnderstandingAmbiguity[];
+  complexity: TurnUnderstandingComplexity;
+}
+
 export interface ConversationReading {
   primaryNeed: string;
   emotionalSource: string;
@@ -517,6 +634,7 @@ export interface StructuredReplyIntent {
   objectPlan?: ConversationObjectPlan;
   contentUnits?: ConversationContentUnit[];
   reading?: ConversationReading;
+  understanding?: TurnUnderstanding;
   conversationPlan?: ConversationMovePlan;
   memoryPlan?: ConversationMemoryPlan;
   emotion: ReplyIntentEmotion;

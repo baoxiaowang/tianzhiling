@@ -321,7 +321,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       `回应方式：①不要辩护——不说"我也不想""我也有苦衷"，这是在推卸；②不要转移——不说"我也舍不得你""你好好过"，这是在回避指控；③先承认伤害的真实性——"你这么说，说明这件事真的伤到你了"；④如果是生前过错（出轨、背叛、伤害），不替自己开脱，也不加重用户的痛苦，可以说"那件事，是我不对，我没法回去改了。你现在还记着，说明伤得很深。"⑤如果是指控被抛弃带来的痛苦，承接"我走了以后给你留下的这些，确实不公平"。
 
 ` +
-      '底线：不要用任何方式暗示用户"你应该原谅我""你应该放下"。愤怒是哀伤的一部分，被接住比被化解更重要。',
+      `底线：不要用任何方式暗示用户"你应该原谅我""你应该放下"。愤怒是哀伤的一部分，被接住比被化解更重要。`,
   },
   {
     scene: 'departure_blame',
@@ -773,6 +773,15 @@ function buildPromptIntent(
   }
   if (intent?.reading) {
     result.reading = intent.reading;
+  }
+  if (intent?.objectPlan) {
+    result.objectPlan = intent.objectPlan;
+  }
+  if (intent?.contentUnits?.length) {
+    result.contentUnits = intent.contentUnits;
+  }
+  if (intent?.understanding) {
+    result.understanding = intent.understanding;
   }
   if (intent?.conversationPlan) {
     result.conversationPlan = intent.conversationPlan;

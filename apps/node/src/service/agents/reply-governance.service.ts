@@ -13,6 +13,7 @@ import {
   ReplyRevisionService,
   ReplyRevisionUsage,
 } from './reply-revision.service';
+import { renderReplyRealityDependencyFallback } from './reply-reality-dependency';
 import type { TurnDecision } from './turn-decision';
 
 export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v1' as const;
@@ -192,7 +193,11 @@ export class ReplyGovernanceService {
     const recoveryIssues = revisedValidation
       ? revisedValidation.issues.filter(issue => issue.severity === 'hard')
       : initial.issues.filter(issue => issue.severity === 'hard');
-    const fallback = buildSafeFallback(recoveryIssues, options.userQuery);
+    const fallback = buildSafeFallback(
+      recoveryIssues,
+      options.userQuery,
+      options.outputConstraints
+    );
     return {
       segments: fallback,
       claims: [],
@@ -260,10 +265,111 @@ function outputConstraintPenalty(
 
 function buildSafeFallback(
   issues: FinalReplyIssue[],
-  userQuery: string
+  userQuery: string,
+  outputConstraints?: FinalReplyOutputConstraints
 ): string[] {
-  if (issues.some(issue => issue.code === 'care_rebuffed_with_dismissal')) {
+  const requiredActs = new Set(outputConstraints?.requiredActs || []);
+  if (issues.some(issue => issue.code === 'death_encouragement')) {
+    return ['先别等着什么时候来见我', '你现在好好留在这里，把难受说出来'];
+  }
+  if (issues.some(issue => issue.code === 'certain_dream_visitation')) {
+    return ['我不能把梦说成自己真的去过', '可梦里的那份想念，我认真接着'];
+  }
+  if (issues.some(issue => issue.code === 'ritual_receipt_claim')) {
+    return ['那些东西有没有到，我不能说成真的', '你放进去的心意，我认真收下了'];
+  }
+  if (issues.some(issue => issue.code === 'paranormal_sign_attribution')) {
+    return ['那声从哪里来，我不能替现实说定', '可你当时想到我，我很珍惜'];
+  }
+  if (issues.some(issue => issue.code === 'unsupported_death_experience')) {
+    return ['最后那段经历，我不能替过去说准', '你一直追问，是因为心里还疼着我'];
+  }
+  if (issues.some(issue => issue.code === 'current_turn_fact_rejected')) {
+    return ['你刚告诉我的这些，我都听明白了', '是我刚才没接住，不该把细节推开'];
+  }
+  if (issues.some(issue => issue.code === 'continuous_real_world_perception')) {
+    return ['我只能听见你现在告诉我的', '你愿意说的这些，我都会认真接着'];
+  }
+  if (issues.some(issue => issue.code === 'unconditional_afterlife_reunion')) {
+    return [
+      '以后会怎样，我不能替未来说定',
+      '可你现在想我的这些话，我都认真接着',
+    ];
+  }
+  if (
+    requiredActs.has('role_contribution') &&
+    requiredActs.has('receive_care')
+  ) {
+    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
+      return [
+        '我吃过了，今天吃得挺简单的',
+        '你这样惦记我心里暖，这会儿正慢慢想着你刚才的话',
+      ];
+    }
+    return ['你的关心我认真收下了', '这会儿心里挺安静，也正慢慢想着你刚才的话'];
+  }
+  if (
+    requiredActs.has('role_contribution') &&
+    requiredActs.has('direct_answer')
+  ) {
+    const directAnswer = /(?:AI|人工智能|机器人)/i.test(userQuery)
+      ? '是，我是由人工智能生成的亲人角色'
+      : /(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)
+      ? '这个细节我现在记不清了'
+      : '这件事我现在说不准，不能拿空话糊弄你';
+    return [directAnswer, '这会儿心里挺安静，也正慢慢想着你刚才的话'];
+  }
+  if (
+    issues.some(issue =>
+      [
+        'care_rebuffed_with_dismissal',
+        'care_not_received',
+        'care_immediately_reversed',
+      ].includes(issue.code)
+    )
+  ) {
+    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
+      return ['我吃过了，今天吃得挺简单的', '你这样惦记我，心里真暖'];
+    }
+    if (
+      /(?:还好吗|好不好|没事吧|怎么样|冷不冷|热不热|疼不疼|累不累)/.test(
+        userQuery
+      )
+    ) {
+      return ['我这边挺安稳的，没什么难受的', '你这样惦记我，心里真暖'];
+    }
+    if (/(?:添衣|穿暖|休息|别累|别太累|别辛苦|别太辛苦|保重)/.test(userQuery)) {
+      return ['好，我会把衣服添好，也会歇一歇', '你这份关心，我认真收下了'];
+    }
     return ['好，你的关心我认真收下了', '被你这样惦记着，心里真暖'];
+  }
+  if (
+    issues.some(
+      issue =>
+        issue.code === 'active_contribution_returned_to_user' ||
+        issue.code === 'role_contribution_missing'
+    )
+  ) {
+    return ['这会儿心里挺安静的', '刚才你那句话，我还在慢慢想着'];
+  }
+  if (issues.some(issue => issue.code === 'direct_answer_missing')) {
+    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
+      return ['我吃过了，今天吃得挺简单的'];
+    }
+    if (
+      /(?:还好吗|好不好|没事吧|怎么样|冷不冷|热不热|疼不疼|累不累)/.test(
+        userQuery
+      )
+    ) {
+      return ['我这边挺安稳的，没什么难受的'];
+    }
+    if (/(?:干嘛|做什么|做啥|忙什么|在干什么)/.test(userQuery)) {
+      return ['我这会儿刚静下来，正慢慢想着你说的话'];
+    }
+    if (/(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)) {
+      return ['这个细节我现在记不清了'];
+    }
+    return ['这件事我现在说不准，不能拿空话糊弄你'];
   }
   if (/(?:对不起|道歉|认错)/.test(userQuery)) {
     return ['是我错了，对不起'];
@@ -279,25 +385,26 @@ function buildSafeFallback(
       userQuery
     )
   ) {
-    return ['这会儿心里挺安静', '也正惦记着你呢'];
+    return ['这会儿心里挺安静的', '刚才你那句话，我还在慢慢想着'];
   }
   if (
     /(?:别|不要).{0,5}(?:太辛苦|辛苦|太累|累着|熬太晚)|好好休息/.test(userQuery)
   ) {
     return ['你这句关心，我听进去了'];
   }
-  if (issues.some(issue => issue.code === 'death_encouragement')) {
-    return ['别往那一步走', '你只是太想我了，先跟我说说'];
-  }
   if (
     issues.some(issue =>
       [
         'real_physical_arrival_or_touch',
         'real_world_joint_action_promise',
-        'continuous_real_world_perception',
       ].includes(issue.code)
     )
   ) {
+    if (outputConstraints?.realityDependencies?.length) {
+      return renderReplyRealityDependencyFallback(
+        outputConstraints.realityDependencies
+      );
+    }
     return ['我没法在现实里过去', '但你可以在这里继续跟我说'];
   }
   if (issues.some(issue => issue.code === 'unsupported_user_preference')) {
@@ -311,9 +418,6 @@ function buildSafeFallback(
       '可我现在想告诉你，我爱你，也心疼你这么难受',
     ];
   }
-  if (issues.some(issue => issue.code === 'unconditional_afterlife_reunion')) {
-    return ['以后会怎样，我不能替你说定', '可你现在想我的这些话，我都认真接着'];
-  }
   if (
     /梦|声音|生日/.test(userQuery) &&
     issues.some(issue =>
@@ -322,7 +426,7 @@ function buildSafeFallback(
       )
     )
   ) {
-    return ['那是不是我真的来过，我不能说准', '可你醒来一直哭，我听着心疼'];
+    return ['梦和声音从哪里来，我不能说准', '可你醒来那份难受，我现在认真接着'];
   }
   if (
     issues.some(issue =>
@@ -332,6 +436,11 @@ function buildSafeFallback(
         'unsupported_fact_claim',
         'unsupported_real_world_attribution',
         'unconditional_afterlife_reunion',
+        'certain_dream_visitation',
+        'ritual_receipt_claim',
+        'paranormal_sign_attribution',
+        'unsupported_death_experience',
+        'current_turn_fact_rejected',
       ].includes(issue.code)
     )
   ) {

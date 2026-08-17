@@ -209,6 +209,14 @@ export class MessengerService {
   async runInterviewTurn(
     options: RunMessengerInterviewTurnOptions
   ): Promise<string> {
+    const directReply = this.buildDirectCapabilityReply(
+      options.agent,
+      options.input
+    );
+    if (directReply) {
+      return directReply;
+    }
+
     const draft = this.buildDraft(options.agent);
     const [userMessageCount, conversationMessages] = await Promise.all([
       this.messageModel.count({
@@ -259,6 +267,48 @@ export class MessengerService {
     }
 
     return result.reply || this.buildFallbackReply(options.agent);
+  }
+
+  private buildDirectCapabilityReply(
+    agent: AgentEntity,
+    input: string
+  ): string | undefined {
+    const query = input.trim();
+    const parentName = agent.name?.trim() || 'TA';
+
+    if (
+      /(?:小使者|你).{0,8}(?:是干嘛的|干什么的|做什么|能做什么|有什么用|作用是什么)/.test(
+        query
+      )
+    ) {
+      return `我是来帮你把${parentName}的经历、性格和你们的回忆补完整的。平时聊天还是去找${parentName}。`;
+    }
+
+    if (
+      /(?:说多少|要说多少|说多久|聊多久|什么时候同步|多久同步|为什么没反应|怎么没反应|补齐.{0,4}记忆.{0,6}(?:会怎样|有用吗|生效吗)|记忆.{0,4}(?:怎么|何时|什么时候)(?:同步|生效))/.test(
+        query
+      )
+    ) {
+      return `没有固定要说多少。保存成功的内容会用于你之后和${parentName}的聊天，不会改掉已经发出的回复。`;
+    }
+
+    if (
+      /(?:我是不是|我会不会|这是|算不算).{0,8}(?:抑郁|焦虑)|(?:抑郁|焦虑).{0,8}(?:怎么办|怎么判断)|你.{0,5}(?:专业吗|是医生吗|能诊断吗)/.test(
+        query
+      )
+    ) {
+      return '我不是医生，不能替你诊断。如果低落或焦虑持续影响睡眠、吃饭或生活，尽快找心理咨询师或精神科做专业评估。';
+    }
+
+    if (
+      /(?:他|她|爸爸|妈妈|爸|妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:在那边|去那边|离开后).{0,8}(?:好吗|好不好|怎么样|过得好吗|受苦吗)/.test(
+        query
+      )
+    ) {
+      return `我不能确认${parentName}在“那边”的真实情况。我能做的是帮你把关于${parentName}的记忆整理好。`;
+    }
+
+    return undefined;
   }
 
   private buildDraft(agent: AgentEntity): AgentProfileInterviewDraftDTO {

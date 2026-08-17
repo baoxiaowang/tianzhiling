@@ -189,7 +189,12 @@ export function resolveReplyStateProtocol(
 export function buildReplyStateProtocolPrompt(
   plan: ReplyStateProtocolPlan
 ): string {
-  const boundary = plan.protocol === 'dream' ? '；仅限梦境，不作现实证明' : '';
+  const boundary =
+    plan.protocol === 'dream'
+      ? '；仅限梦境，不作现实证明'
+      : plan.protocol === 'active_contribution'
+      ? '；先正面给一个具体但轻量的角色侧当下内容；用户要求“说两句/讲自己的”时，不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避；离世日常写意在 claims 中用 soft_imagination，共同过去仍须证据'
+      : '';
 
   return `协议：${PROTOCOL_LABELS[plan.protocol]}/${
     STAGE_LABELS[plan.stage]

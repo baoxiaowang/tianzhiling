@@ -1,6 +1,7 @@
 import { Provide } from '@midwayjs/core';
 import { AgentEntity, MessageEntity, MessageRole } from '@tzl/entities';
 import type {
+  ConversationKnownObject,
   ConversationMovePlan,
   ConversationObjectPlan,
   ConversationReading,
@@ -8,6 +9,7 @@ import type {
   ReplyIntentRiskLevel,
   StructuredReplyIntent,
   StructuredReplyIntentItem,
+  TurnUnderstanding,
 } from './reply-intent';
 import {
   isDreamAbsenceIntent,
@@ -97,6 +99,10 @@ import {
   synchronizeConversationTurnPlan,
 } from './conversation-turn-plan';
 import type { AgentEvidenceItem } from './agent-evidence';
+import {
+  buildTurnUnderstanding,
+  mergeTurnUnderstandings,
+} from './turn-understanding';
 
 export type ReplyBriefMode =
   | 'safety'
@@ -165,6 +171,7 @@ export interface ReplyBrief {
   evidence: ReplyBriefEvidence[];
   relationshipContext: ReplyBriefRelationshipContext[];
   relationshipContinuity?: RelationshipContinuityPlan;
+  understanding: TurnUnderstanding;
   reading?: ConversationReading;
   objectPlan?: ConversationObjectPlan;
   contentUnits?: ContentUnit[];
@@ -200,6 +207,7 @@ export interface BuildReplyBriefOptions {
   route?: ReplySceneRoute;
   confirmedFacts?: string[];
   recentMessages?: MessageEntity[];
+  knownObjects?: ConversationKnownObject[];
   retrievedMemories?: Array<{
     content: string;
     role?: MessageRole;
@@ -288,6 +296,17 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     options.route?.intent?.memoryPlan ?? options.intent?.memoryPlan;
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
+  const sourceIntent = options.route?.intent ?? options.intent;
+  const understanding = mergeTurnUnderstandings(
+    buildTurnUnderstanding({
+      currentQuery,
+      intent: sourceIntent,
+      objectPlan,
+      knownObjects: options.knownObjects,
+      recentMessages: options.recentMessages,
+    }),
+    sourceIntent?.understanding
+  );
   const contentUnits = collectContentUnits({
     anchors: reading?.anchors ?? [],
     objectPlan,
@@ -477,10 +496,15 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const previousAssistantUsedTwoSegments = Boolean(
     options.recentMessages
       ?.filter(message => message.role === MessageRole.assistant)
-      .slice(-1)[0]?.replyParticipationExecution === 'natural_segments'
+      .slice(-3)
+      .some(
+        message => message.replyParticipationExecution === 'natural_segments'
+      )
   );
   const preferTwentyToThirtyCharacters = Boolean(
     !isReplyClosingTurn(currentQuery) &&
+      understanding.needs.filter(need => need.priority === 'must').length <=
+        2 &&
       !singleBubbleAcknowledgment &&
       !correctionPolicy &&
       primaryScene !== 'correction' &&
@@ -547,6 +571,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     evidence,
     relationshipContext,
     relationshipContinuity,
+    understanding,
     reading,
     objectPlan,
     contentUnits,
