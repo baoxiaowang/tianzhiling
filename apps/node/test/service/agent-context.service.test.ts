@@ -1080,9 +1080,8 @@ describe('AgentContextService', () => {
     ]);
     expect(systemMessage.content).toContain('# 当前对话参考模式：status');
     expect(systemMessage.content).toContain('# 本轮回复任务');
-    expect(systemMessage.content).toContain(
-      '行动：answer:先直接回应现在是否还受疼；comfort:接住用户的想念'
-    );
+    expect(systemMessage.content).toContain('# 本轮唯一决策');
+    expect(systemMessage.content).toContain('必须直接回答：是');
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).toContain('气泡语义规划');
@@ -1093,15 +1092,11 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain('身子可还遭罪');
     expect(systemMessage.content).toContain('我真想你');
     expect(systemMessage.content).toContain('须答');
-    expect(systemMessage.content).toContain(
-      '本轮：在深入；未完：用户必须“用户仍在等待爸爸直接回答现在是否还受疼”'
-    );
-    expect(systemMessage.content).toContain(
-      '接住/直接回答“先直接回答当前状态，再回应用户的想念”'
-    );
+    expect(systemMessage.content).not.toContain('本轮：在深入');
+    expect(systemMessage.content).not.toContain('接住/直接回答');
     expect(systemMessage.content).not.toContain('续聊：deepening/hold');
     expect(systemMessage.content).not.toContain('须贡献：answer:');
-    expect(systemMessage.content).toContain('开放点未解决');
+    expect(systemMessage.content).not.toContain('开放点未解决');
     expect(context.diagnostics.conversationReadingAnchorCount).toBe(2);
     expect(context.diagnostics).toEqual(
       expect.objectContaining({

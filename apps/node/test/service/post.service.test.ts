@@ -303,6 +303,37 @@ function createService(
         null
       );
     }),
+    count: jest.fn(async ({ userId, isDeleted, createdAt }: any = {}) => {
+      let result = [...posts];
+
+      if (userId) {
+        result = result.filter(post => sameObjectId(post.userId, userId));
+      }
+
+      if (isDeleted?.$ne === true) {
+        result = result.filter(post => post.isDeleted !== true);
+      }
+
+      if (createdAt?.$gte) {
+        result = result.filter(
+          post => post.createdAt.getTime() >= createdAt.$gte.getTime()
+        );
+      }
+
+      if (createdAt?.$lt) {
+        result = result.filter(
+          post => post.createdAt.getTime() < createdAt.$lt.getTime()
+        );
+      }
+
+      if (createdAt?.$lte) {
+        result = result.filter(
+          post => post.createdAt.getTime() <= createdAt.$lte.getTime()
+        );
+      }
+
+      return result.length;
+    }),
   } as any;
   service.userModel = {
     findOne: jest.fn(
@@ -836,6 +867,94 @@ describe('PostService createPost remind agent fallback', () => {
         postId: POST_ID,
       })
     );
+  });
+});
+
+describe('PostService auto reply daily limit', () => {
+  function createTodayPost(id: string, createdAt: string): PostEntity {
+    return createPost({
+      id: new MongoObjectId(id),
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt),
+      remindAgentIds: [AGENT_A_ID],
+    });
+  }
+
+  it('skips the agent auto reply for the fourth non-vip post of the day', async () => {
+    jest.useFakeTimers().setSystemTime(NOW);
+    try {
+      const agent = createAgent(AGENT_A_ID);
+      const existing = [
+        createTodayPost(POST_2_ID, '2026-05-13T01:00:00.000Z'),
+        createTodayPost(POST_3_ID, '2026-05-13T02:00:00.000Z'),
+        createTodayPost('665000000000000000000103', '2026-05-13T03:00:00.000Z'),
+      ];
+      const post = createPost({ remindAgentIds: [AGENT_A_ID] });
+      const { service, comments } = createService([agent], {
+        posts: [post, ...existing],
+      });
+
+      await service.processRemindReplyJob({
+        postId: POST_ID,
+        agentId: AGENT_A_ID,
+      });
+
+      expect(comments).toHaveLength(0);
+      expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('still replies for the third non-vip post of the day', async () => {
+    jest.useFakeTimers().setSystemTime(NOW);
+    try {
+      const agent = createAgent(AGENT_A_ID);
+      const existing = [
+        createTodayPost(POST_2_ID, '2026-05-13T01:00:00.000Z'),
+        createTodayPost(POST_3_ID, '2026-05-13T02:00:00.000Z'),
+      ];
+      const post = createPost({ remindAgentIds: [AGENT_A_ID] });
+      const { service, comments } = createService([agent], {
+        posts: [post, ...existing],
+      });
+
+      await service.processRemindReplyJob({
+        postId: POST_ID,
+        agentId: AGENT_A_ID,
+      });
+
+      expect(comments.length).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps replying for vip users beyond the non-vip daily limit', async () => {
+    jest.useFakeTimers().setSystemTime(NOW);
+    try {
+      const agent = createAgent(AGENT_A_ID);
+      const membership = createMembership();
+      const existing = [
+        createTodayPost(POST_2_ID, '2026-05-13T01:00:00.000Z'),
+        createTodayPost(POST_3_ID, '2026-05-13T02:00:00.000Z'),
+        createTodayPost('665000000000000000000103', '2026-05-13T03:00:00.000Z'),
+      ];
+      const post = createPost({ remindAgentIds: [AGENT_A_ID] });
+      const { service, comments } = createService([agent], {
+        posts: [post, ...existing],
+        memberships: [membership],
+      });
+
+      await service.processRemindReplyJob({
+        postId: POST_ID,
+        agentId: AGENT_A_ID,
+      });
+
+      expect(comments.length).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

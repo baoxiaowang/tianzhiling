@@ -90,9 +90,7 @@ describe('reply length plan', () => {
       targetCharacters: 28,
       reviewCharacters: 38,
     });
-    expect(buildReplyLengthPlanPrompt(plan)).toContain(
-      '删重复的共情动作'
-    );
+    expect(buildReplyLengthPlanPrompt(plan)).toContain('删重复的共情动作');
   });
 
   it('does not starve an active repair turn of emotional expression', () => {
@@ -335,6 +333,10 @@ describe('reply length plan', () => {
       lengthClass: 'brief',
       targetCharacters: 28,
       reviewCharacters: 38,
+      preferredRange: {
+        minCharacters: 20,
+        maxCharacters: 30,
+      },
     });
   });
 
@@ -352,6 +354,28 @@ describe('reply length plan', () => {
       lengthClass: 'micro',
       targetCharacters: 18,
       reviewCharacters: 30,
+    });
+  });
+
+  it('keeps an ordinary cooldown turn at 20-30 characters without forcing two bubbles', () => {
+    expect(
+      buildReplyLengthPlan({
+        currentQuery: '刚喝了口热牛奶',
+        mode: 'daily',
+        scene: 'daily_update',
+        replyMoveCount: 1,
+        preferTwoSegments: false,
+        preferTwentyToThirtyCharacters: true,
+        turnClosure: 'neutral',
+      })
+    ).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+      preferredRange: {
+        minCharacters: 20,
+        maxCharacters: 30,
+      },
     });
   });
 

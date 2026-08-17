@@ -225,8 +225,11 @@ describe('AgentMemoryProfileService', () => {
       'lifeExperience',
     ]);
     expect(result.nextFocusField).toBe('hobbies');
-    expect(result.reply).toContain('喜欢做什么');
+    expect(result.reply).toBe('听起来他很温和。忙完工作后，他最喜欢做什么？');
     expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0][0].systemPrompt).toContain(
+      '不要把“生意做得很好”只压缩成“有生意头脑”'
+    );
   });
 
   it('moves to another uncovered area instead of repeating one question', async () => {
@@ -339,7 +342,7 @@ describe('AgentMemoryProfileService', () => {
 
     expect(completed.nextFocusField).toBe('');
     expect(completed.isComplete).toBe(true);
-    expect(completed.reply).toContain('可以现在生成记忆');
+    expect(completed.reply).toContain('继续想到哪儿说到哪儿');
     expect(completed.reply).not.toContain('下棋时');
   });
 
@@ -374,8 +377,98 @@ describe('AgentMemoryProfileService', () => {
 
     expect(result.nextFocusField).toBe('');
     expect(result.isComplete).toBe(true);
-    expect(result.reply).toContain('可以现在生成记忆');
+    expect(result.reply).toContain('继续想到哪儿说到哪儿');
     expect(result.reply).not.toContain('再想想');
+  });
+
+  it('never asks a previously asked profile area again', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '他平时有没有常说的一句话？',
+        nextFocusField: 'languageHabits',
+        lifeExperience: '年轻时在工厂工作。',
+        personalityTraits: '温和、有耐心。',
+        languageHabits: '',
+        hobbies: '喜欢下象棋。',
+        sharedMemories: '',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '这句我刚才已经回答过了。',
+      draft: {
+        lifeExperience: '年轻时在工厂工作。',
+        personalityTraits: '温和、有耐心。',
+        hobbies: '喜欢下象棋。',
+      },
+      focusField: 'languageHabits',
+      askedFields: ['languageHabits'],
+      previousReplies: ['爸爸平时怎么说话，有没有常说的一句话？'],
+      turnCount: 3,
+    });
+
+    expect(result.nextFocusField).toBe('sharedMemories');
+    expect(result.reply).toContain('最想留住');
+    expect(result.reply).not.toContain('常说的一句话');
+    expect(generateText.mock.calls[0][0].prompt).toContain(
+      '此前已经问过、不得再问：["languageHabits"]'
+    );
+  });
+
+  it('replaces mechanical memory confirmations with contextual understanding', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '谢谢，我记住了。爸爸平时喜欢做什么？',
+        nextFocusField: 'hobbies',
+        lifeExperience: '年轻时在工厂工作。',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '爸爸年轻时一直在工厂工作。',
+      turnCount: 0,
+    });
+
+    expect(result.reply).not.toContain('记住了');
+    expect(result.reply).toContain('这段经历');
+    expect(result.reply).toContain('喜欢做什么');
+  });
+
+  it('does not return the same sentence as an earlier messenger reply', async () => {
+    const agent = createAgent();
+    const repeatedReply = '听起来他很温和。忙完工作后，他最喜欢做什么？';
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: repeatedReply,
+        nextFocusField: 'hobbies',
+        lifeExperience: '在工厂做设备维修。',
+        personalityTraits: '待人温和，很有耐心。',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '他脾气一直很温和。',
+      previousReplies: [repeatedReply],
+      turnCount: 1,
+    });
+
+    expect(result.reply).not.toBe(repeatedReply);
+    expect(result.reply).toContain('喜欢做什么');
   });
 
   it('keeps the interview usable when AI is unavailable', async () => {
@@ -494,6 +587,7 @@ describe('AgentMemoryProfileService', () => {
     const agent = createAgent();
     agent.hobbies = '下象棋、听戏';
     const { service, generateText } = createService(facts);
+    const sourceMessageId = new MongoObjectId();
 
     const aligned = await service.alignManualProfileEdits({
       agent,
@@ -501,6 +595,8 @@ describe('AgentMemoryProfileService', () => {
       sources: {
         hobbies: '下象棋、听戏',
       },
+      sourceMessageId,
+      sourceText: '爸爸喜欢下象棋，也喜欢听戏。',
     });
 
     expect(
@@ -511,6 +607,8 @@ describe('AgentMemoryProfileService', () => {
       sources: {
         hobbies: '下象棋、听戏',
       },
+      sourceMessageId,
+      sourceText: '爸爸喜欢下象棋，也喜欢听戏。',
     });
     expect(aligned.memoryProfileFactSnapshot).toHaveLength(1);
     expect(aligned.memoryProfileVersion).toBe('memory_profile_v1');

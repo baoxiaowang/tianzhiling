@@ -120,7 +120,13 @@ describe('buildReplyBrief', () => {
       },
       objectPlan: {
         objects: [
-          { ref: 'o1', mention: '你女婿', kind: 'other_person' as const, binding: 'unknown', confidence: 'high' as const },
+          {
+            ref: 'o1',
+            mention: '你女婿',
+            kind: 'other_person' as const,
+            binding: 'unknown',
+            confidence: 'high' as const,
+          },
         ],
         focusRefs: ['o1'],
         ambiguousMentions: [],
@@ -158,11 +164,17 @@ describe('buildReplyBrief', () => {
 
     expect(brief.participationStrategy).toBeUndefined();
     expect(brief.replyMoves.length).toBe(3);
-    expect(brief.replyMoves[2]).toContain('给一句贴着原话的角色判断或亲人侧心意');
+    expect(brief.replyMoves[2]).toContain(
+      '给一句贴着原话的角色判断或亲人侧心意'
+    );
     expect(brief.lengthPlan).toEqual({
-      lengthClass: 'standard',
-      targetCharacters: 40,
-      reviewCharacters: 55,
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+      preferredRange: {
+        minCharacters: 20,
+        maxCharacters: 30,
+      },
     });
     expect(brief.prompt).toContain('短而有温度，再给一处亲人侧心意');
   });
@@ -236,8 +248,23 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('协议：主动贡献/要求多说');
     expect(brief.prompt).toContain('动作：给角色侧当下内容');
     expect(brief.prompt).toContain('共同往事沿用户已说片段回应感受和意义');
-    expect(brief.prompt).toContain('离世日常只在用户主动提起或贴题时带一处写意');
+    expect(brief.prompt).toContain(
+      '离世日常只在用户主动提起或贴题时带一处写意'
+    );
     expect(brief.prompt).not.toContain('## 主动贡献');
+  });
+
+  it('treats a direct role-side daily question as active contribution', () => {
+    const currentQuery = '姥姥你今天吃啥啦';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.activeContribution).toEqual(
+      expect.objectContaining({ preferredSource: 'role_present' })
+    );
+    expect(brief.prompt).toContain('不能用“都好/顺口/没什么”回避');
+    expect(brief.prompt).toContain('不能只写“我在/想你/记着你/别难过”');
+    expect(brief.prompt).toContain('soft_imagination');
   });
 
   it('records a strategy alternative after repeated generic moves', () => {
@@ -772,7 +799,9 @@ describe('buildReplyBrief', () => {
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
 
-    expect(brief.prompt).toContain('离世日常只在用户主动提起或贴题时带一处写意');
+    expect(brief.prompt).toContain(
+      '离世日常只在用户主动提起或贴题时带一处写意'
+    );
     expect(brief.prompt).toContain('不延伸成现实到场、触碰或代办');
     expect(brief.replyMoves.join(' ')).toContain('简短的角色侧小场景');
     expect(brief.replyMoves.join(' ')).toContain('只服务本轮关心和安慰');
@@ -964,8 +993,8 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('动作是弱提示，不要求逐项完成');
     expect(brief.bubblePlan).toMatchObject({
       complexityHint: 'paired',
-      preferTwoSegments: true,
     });
+    expect(brief.bubblePlan.preferTwoSegments).toBe(true);
   });
 
   it('keeps an explicit dream request in relationship mode despite memory words', () => {
@@ -1066,7 +1095,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('当前用户消息和本轮回复动作优先于历史话题');
   });
 
-  it('plans a grounded two-bubble reply for a shared fishing memory', () => {
+  it('keeps shared-memory grounding while using the paired reply contract', () => {
     const currentQuery = '你还记得小时候带我钓鱼不？我想去钓鱼了';
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({
@@ -1094,7 +1123,8 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('具体事实只用同一对象证据');
     expect(brief.prompt).toContain('不补写当时的动作或细节');
     expect(brief.prompt).toContain('本轮需要两颗气泡');
-    expect(brief.prompt).toContain('仅在两个动作确实切换时用第二颗');
+    expect(brief.prompt).toContain('segments 恰好两项');
+    expect(brief.prompt).toContain('用两颗完成两个不同动作');
   });
 
   it('requires grounded fact claims when afterlife talk also mentions the role past', () => {
@@ -1575,7 +1605,7 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('仅限梦境，不作现实证明');
   });
 
-  it('prefers two bubbles for an ordinary short chat turn by default', () => {
+  it('uses two 20-30 character bubbles in an ordinary short chat turn', () => {
     const currentQuery = '妈，我今天上班有点累';
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({ currentQuery, route });
@@ -1583,9 +1613,24 @@ describe('buildReplyBrief', () => {
     expect(brief.bubblePlan).toMatchObject({
       maxSegments: 2,
       complexityHint: 'paired',
-      preferTwoSegments: true,
+    });
+    expect(brief.bubblePlan.preferTwoSegments).toBe(true);
+    expect(brief.lengthPlan.preferredRange).toEqual({
+      minCharacters: 20,
+      maxCharacters: 30,
     });
     expect(brief.prompt).toContain('本轮需要两颗气泡');
+    expect(brief.prompt).toContain('整次回复合计优先 20-30 字');
+  });
+
+  it('asks the model to receive care instead of dismissing it', () => {
+    const currentQuery = '妈，吃饭了吗？';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({ currentQuery, route });
+
+    expect(brief.prompt).toContain('先正面回答并接纳关心');
+    expect(brief.prompt).toContain('不得说“你别挂心');
+    expect(brief.prompt).toContain('不要马上用叮嘱把关心推回用户');
   });
 
   it('keeps a bare acknowledgment on one bubble', () => {
@@ -1596,5 +1641,30 @@ describe('buildReplyBrief', () => {
     expect(brief.bubblePlan.preferTwoSegments).toBeUndefined();
     expect(brief.bubblePlan.complexityHint).toBe('concise');
     expect(brief.prompt).toContain('默认一颗');
+  });
+
+  it('uses a one-turn cooldown after an actual two-bubble assistant reply', () => {
+    const currentQuery = '刚喝了口热牛奶';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({
+      currentQuery,
+      route,
+      recentMessages: [
+        {
+          role: MessageRole.assistant,
+          content: '暖乎乎的就好\n我听着心里也暖了',
+          replyParticipationExecution: 'natural_segments',
+        } as MessageEntity,
+      ],
+    });
+
+    expect(brief.bubblePlan.preferTwoSegments).toBeUndefined();
+    expect(brief.lengthPlan.preferredRange).toEqual({
+      minCharacters: 20,
+      maxCharacters: 30,
+    });
+    expect(brief.prompt).not.toContain('本轮需要两颗气泡');
+    expect(brief.prompt).toContain('一颗更自然时可不拆');
+    expect(brief.prompt).toContain('整次回复合计优先 20-30 字');
   });
 });
