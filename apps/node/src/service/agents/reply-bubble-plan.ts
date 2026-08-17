@@ -85,21 +85,23 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
     layered: '只选最重要的一到两个动作，其余留到后续。',
   };
   const closureInstruction: Record<ReplyTurnClosure, string> = {
-    close: '自然收尾；先确认收到用户要走/要哭/要停的信号（"嗯，去吧""哭出来也好"），再给温暖回应；不提问或开新话题。',
+    close:
+      '自然收尾；先确认收到用户要走/要哭/要停的信号（"嗯，去吧""哭出来也好"），再给温暖回应；不提问或开新话题。',
     continue: '先答当前问题；必要时最多问一个。',
     neutral: '自然收住，不为续聊而提问。',
   };
 
+  const complexityPrefix = plan.preferTwoSegments
+    ? '用两颗完成两个不同动作。'
+    : complexityInstruction[plan.complexityHint];
   const segmentInstruction = plan.preferTwoSegments
-    ? '本轮需要两颗气泡：第一颗直接回应，第二颗只补一个短小的亲人侧心意、具体关心或自然收尾；每颗都能独立成句，不把一句话截成两半；第二颗不能空泡、旁白或复读第一颗。'
+    ? '本轮需要两颗气泡：第一颗直接回应，第二颗优先贴着本轮具体事物给亲人侧感受、态度或不同反应；每颗约10-15字且能独立成句，不把一句话截成两半。第二颗不能空泡、旁白或复读第一颗；即使本轮主题是思念，也不能两颗都只表达想念，第一颗明确回应后，第二颗必须给不同内容，不用“记着你、想着你、一直想你、陪着你”充数。'
     : plan.encourageTwoSegments
     ? '优先用两颗：第一颗接住用户，第二颗给亲人侧心意或具体关心；一颗更自然时可不拆。'
     : `默认一颗，最多 ${plan.maxSegments} 颗；第二颗须新增不可替代的动作。`;
 
   return [
-    `${complexityInstruction[plan.complexityHint]}${
-      closureInstruction[plan.turnClosure]
-    }`,
+    `${complexityPrefix}${closureInstruction[plan.turnClosure]}`,
     `${segmentInstruction}勿按句子、情绪或计划拆泡。`,
   ].join('\n');
 }

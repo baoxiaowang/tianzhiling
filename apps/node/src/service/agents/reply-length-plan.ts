@@ -9,6 +9,10 @@ export interface ReplyLengthPlan {
   lengthClass: ReplyLengthClass;
   targetCharacters: number;
   reviewCharacters: number;
+  preferredRange?: {
+    minCharacters: number;
+    maxCharacters: number;
+  };
   focusMode?: 'single_scene';
   reviewPolicy?: 'remove_repeated_actions_only';
 }
@@ -21,6 +25,7 @@ export interface BuildReplyLengthPlanOptions {
   semanticPlan?: boolean;
   shortTurnParticipation?: boolean;
   preferTwoSegments?: boolean;
+  preferTwentyToThirtyCharacters?: boolean;
   hasProtectiveStop?: boolean;
   assistantContribution?:
     | 'answer'
@@ -132,14 +137,22 @@ export function buildReplyLengthPlan(
     ).length;
     if (userQueryLength <= 20) {
       lengthClass = 'standard';
-    } else if (userQueryLength > 40 && /后悔|愧疚|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(options.currentQuery)) {
+    } else if (
+      userQueryLength > 40 &&
+      /后悔|愧疚|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(
+        options.currentQuery
+      )
+    ) {
       lengthClass = 'deep';
     } else {
       lengthClass = 'extended';
     }
   } else if (options.semanticPlan && replyMoveCount >= 3) {
     lengthClass = 'standard';
-  } else if (options.scene === 'smalltalk' || options.scene === 'daily_update') {
+  } else if (
+    options.scene === 'smalltalk' ||
+    options.scene === 'daily_update'
+  ) {
     lengthClass = replyMoveCount >= 2 ? 'brief' : 'micro';
   } else if (options.mode === 'daily' || options.mode === 'status') {
     lengthClass =
@@ -171,17 +184,30 @@ export function buildReplyLengthPlan(
     }
   }
 
-  if (
-    options.preferTwoSegments &&
-    lengthClass === 'micro'
-  ) {
-    // 双泡比单泡需要稍多一点总字数，避免把一句话硬拆成两个碎片。
+  const compactPreferredReply = Boolean(
+    (options.preferTwoSegments || options.preferTwentyToThirtyCharacters) &&
+      !options.hasProtectiveStop &&
+      options.continuationGoal !== 'repair' &&
+      options.closureReadiness !== 'blocked' &&
+      !['memory', 'boundary'].includes(options.mode)
+  );
+
+  if (compactPreferredReply) {
+    // 普通聊天统一落在 20-30 字；是否拆双泡由气泡计划独立决定。
     lengthClass = 'brief';
   }
 
   const plan: ReplyLengthPlan = {
     lengthClass,
     ...LENGTH_BUDGETS[lengthClass],
+    ...(compactPreferredReply
+      ? {
+          preferredRange: {
+            minCharacters: 20,
+            maxCharacters: 30,
+          },
+        }
+      : {}),
   };
 
   return compactSingleFocus && !options.hasProtectiveStop
@@ -211,6 +237,10 @@ function promoteLengthClass(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
+  if (plan.preferredRange) {
+    return `整次回复合计优先 ${plan.preferredRange.minCharacters}-${plan.preferredRange.maxCharacters} 字；本轮要求两颗时每颗约 10-15 字，第一颗直接回应，第二颗补一个不同的亲人侧动作。超过 ${plan.reviewCharacters} 字须压缩，不用空话凑字数。`;
+  }
+
   if (plan.focusMode === 'single_scene') {
     return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处贴着原话的亲人侧心意。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
   }

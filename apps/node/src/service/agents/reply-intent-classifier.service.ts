@@ -71,6 +71,10 @@ import {
 import { isForgetMemoryRequest } from './agent-memory-control';
 import { routeReplyScene } from './reply-scene-router';
 import { detectReplyRealityDependencies } from './reply-reality-dependency';
+import {
+  isReplyActiveContributionRequest,
+  isReplyRepeatedUserRequest,
+} from './reply-strategy-quality';
 
 interface ReplyIntentClassifierConfig {
   enabled?: boolean;
@@ -122,6 +126,29 @@ export interface ReplyPlanningDecision {
     | 'short_message'
     | 'ordinary_message';
 }
+
+export type ReplyIntentClassificationStatus =
+  | 'not_called'
+  | 'succeeded'
+  | 'timeout'
+  | 'parse_failed'
+  | 'failed';
+
+export interface ReplyIntentClassificationResult {
+  intent?: StructuredReplyIntent;
+  status: ReplyIntentClassificationStatus;
+  modelCallCount: number;
+  fallbackUsed: boolean;
+  latencyMs: number;
+}
+
+const REPLY_INTENT_CLASSIFICATION_DIAGNOSTICS = Symbol(
+  'replyIntentClassificationDiagnostics'
+);
+
+type InternalClassifyReplyIntentOptions = ClassifyReplyIntentOptions & {
+  [REPLY_INTENT_CLASSIFICATION_DIAGNOSTICS]?: ReplyIntentClassificationResult;
+};
 
 const CLASSIFIER_MAX_HISTORY_MESSAGES = 6;
 const CLASSIFIER_MAX_MESSAGE_LENGTH = 180;
@@ -181,9 +208,7 @@ function isConcreteNarrative(text: string): boolean {
   );
 }
 const ENGAGEMENT_SEMANTIC_PLANNING_PATTERN =
-  /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
-const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
-  /说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没(?:说|回答)|你(?:先|也|倒是)?(?:说|讲)(?:说)?(?:你|自己|今天|那边|做了什么|干了啥)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
+  /话(?:太|这么|很)?少|不想(?:和我|跟我)?说话|不想理我|不理我|忘了我|没人回我|无人回我|多(?:和我|跟我)?说几句|多说几句|陪我聊|你怎么看|别安慰我|别讲道理|不用劝|不敢(?:和你|跟你|和您|跟您)?聊|你没懂|(?:你)?(?:得|要|还没)?说清(?:楚)?(?:具体)?错在哪|算了|对不起|我错了|怪我|恨我自己|后悔|回来看看我/;
 const CONVERSATION_FUTILITY_PATTERN =
   /(?:(?:跟|和|对)(?:你|您).{0,4})?(?:说|讲|聊)(?:了|再多|什么|这些)?(?:也|都)?(?:是)?(?:没(?:有)?(?:用|作用|意义)|不起作用|白(?:说|讲|聊)|(?:又)?有(?:什么|啥)用)|(?:跟|和|对)(?:你|您).{0,6}(?:说|讲|聊).{0,6}(?:不懂|听不懂|理解不了|帮不了)/;
 const CONTEXT_DEPENDENT_UTTERANCE_PATTERN =
@@ -192,7 +217,8 @@ const SHORT_UNRESOLVED_UTTERANCE_PATTERN =
   /^(?:这不是一回事|你呢|再说也一样|那也一样|那为什么|怎么不是|就是这意思|哪里一样|一样吗)$/;
 // 无解之问：问句形式，但内核是情绪而不是信息请求。
 // 这里只做很宽的"疑似情绪之问" gate，真正的语义判断交给 semantic 分类器。
-const UNANSWERABLE_QUESTION_PATTERN = /为什么|凭什么|怎么会|为何|为啥|凭啥|咋就|咋会/;
+const UNANSWERABLE_QUESTION_PATTERN =
+  /为什么|凭什么|怎么会|为何|为啥|凭啥|咋就|咋会/;
 const FIRST_PERSON_REFERENCE_PATTERN = /(?:^|[，,。！？!?\s])(?:我|俺|咱)/;
 const DEATH_MOMENT_REFERENCE_PATTERN =
   /走的时候|离开的时候|临走|临走前|去世|过世|死的时候|那一刻/;
@@ -293,18 +319,53 @@ export class ReplyIntentClassifierService {
   @Config('replyIntent')
   config: ReplyIntentClassifierConfig;
 
+  async classifyWithDiagnostics(
+    options: ClassifyReplyIntentOptions
+  ): Promise<ReplyIntentClassificationResult> {
+    const diagnostics: ReplyIntentClassificationResult = {
+      intent: undefined,
+      status: 'not_called',
+      modelCallCount: 0,
+      fallbackUsed: false,
+      latencyMs: 0,
+    };
+    const intent = await this.classify(
+      Object.assign({}, options, {
+        [REPLY_INTENT_CLASSIFICATION_DIAGNOSTICS]: diagnostics,
+      })
+    );
+    diagnostics.intent = intent;
+    return diagnostics;
+  }
+
   async classify(
     options: ClassifyReplyIntentOptions
   ): Promise<StructuredReplyIntent | undefined> {
+    const startedAt = Date.now();
+    const diagnostics = (options as InternalClassifyReplyIntentOptions)[
+      REPLY_INTENT_CLASSIFICATION_DIAGNOSTICS
+    ];
+    const finish = (
+      status: ReplyIntentClassificationStatus,
+      fallbackUsed = false
+    ) => {
+      if (diagnostics) {
+        diagnostics.status = status;
+        diagnostics.fallbackUsed = fallbackUsed;
+        diagnostics.latencyMs = Date.now() - startedAt;
+      }
+    };
     const currentQuery = options.currentQuery?.trim() || '';
 
     if (!currentQuery) {
+      finish('not_called');
       return undefined;
     }
 
     const deterministicIntent = this.classifyDeterministic(options);
 
     if (this.config?.enabled === false || !this.openAIService?.isEnabled?.()) {
+      finish('not_called');
       return deterministicIntent;
     }
 
@@ -312,9 +373,13 @@ export class ReplyIntentClassifierService {
       this.resolvePlanningDecision(options, deterministicIntent).mode ===
       'direct'
     ) {
+      finish('not_called');
       return deterministicIntent;
     }
 
+    if (diagnostics) {
+      diagnostics.modelCallCount = 1;
+    }
     const timeoutMs = this.resolveTimeoutMs();
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), timeoutMs);
@@ -390,10 +455,12 @@ export class ReplyIntentClassifierService {
       }
 
       if (!deterministicIntent) {
+        finish(semanticIntent ? 'succeeded' : 'parse_failed');
         return semanticIntent;
       }
 
       if (!semanticIntent) {
+        finish('parse_failed', true);
         return deterministicIntent && recoveredMemoryPlan
           ? {
               ...deterministicIntent,
@@ -403,6 +470,7 @@ export class ReplyIntentClassifierService {
       }
 
       if (options.forceSemanticPlanning) {
+        finish('succeeded');
         return semanticIntent;
       }
 
@@ -411,6 +479,7 @@ export class ReplyIntentClassifierService {
         semanticIntent.conversationPlan
       );
 
+      finish('succeeded');
       return {
         ...deterministicIntent,
         ...(semanticIntent.capabilityQuestions?.length
@@ -449,9 +518,13 @@ export class ReplyIntentClassifierService {
         '[reply-intent] classifier failed, reason=%s',
         error instanceof Error ? error.message : String(error)
       );
+      finish(isTimeoutLikeError(error) ? 'timeout' : 'failed', true);
       return deterministicIntent;
     } finally {
       clearTimeout(timeout);
+      if (diagnostics && diagnostics.latencyMs === 0) {
+        diagnostics.latencyMs = Date.now() - startedAt;
+      }
     }
   }
 
@@ -618,7 +691,8 @@ export class ReplyIntentClassifierService {
 
     if (
       ENGAGEMENT_SEMANTIC_PLANNING_PATTERN.test(currentQuery) ||
-      ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(currentQuery) ||
+      isReplyActiveContributionRequest(currentQuery, options.recentMessages) ||
+      isReplyRepeatedUserRequest(currentQuery, options.recentMessages) ||
       CONVERSATION_FUTILITY_PATTERN.test(currentQuery)
     ) {
       return { mode: 'semantic', reason: 'engagement_friction' };
@@ -1519,8 +1593,7 @@ export class ReplyIntentClassifierService {
     );
     const hasExplicitAskMove = moves.some(move => move.type === 'ask');
     const effectiveQuestionNeed =
-      questionNeed === 'none' &&
-      (hasMustTopicFollowup || hasExplicitAskMove)
+      questionNeed === 'none' && (hasMustTopicFollowup || hasExplicitAskMove)
         ? 'helpful'
         : questionNeed;
     const turnPlanWithQuestionAction =
@@ -1555,7 +1628,9 @@ export class ReplyIntentClassifierService {
       questionNeed: effectiveQuestionNeed,
       turnClosure,
       personaActivation: this.parseShortTextList(item.personaActivation, 3, 70),
-      ...(turnPlanWithQuestionAction ? { turnPlan: turnPlanWithQuestionAction } : {}),
+      ...(turnPlanWithQuestionAction
+        ? { turnPlan: turnPlanWithQuestionAction }
+        : {}),
       ...(engagement ? { engagement } : {}),
     };
   }
@@ -1603,7 +1678,10 @@ export class ReplyIntentClassifierService {
     ) {
       action = 'question';
     }
-    if (open.some(point => point.need === 'direct_answer') && action !== 'answer') {
+    if (
+      open.some(point => point.need === 'direct_answer') &&
+      action !== 'answer'
+    ) {
       action = 'answer';
     }
     if (!action && /self_expr|self_disclose|主动说/.test(rawAction)) {
@@ -1618,7 +1696,10 @@ export class ReplyIntentClassifierService {
     if (!action && /answer|回答/.test(rawAction)) {
       action = 'answer';
     }
-    if (!action && /comfort|acknowledge|affirm|hold|安抚|陪伴/.test(rawAction)) {
+    if (
+      !action &&
+      /comfort|acknowledge|affirm|hold|安抚|陪伴/.test(rawAction)
+    ) {
       action = 'affection';
     }
     if (!action && open.length) {
@@ -2210,9 +2291,7 @@ export class ReplyIntentClassifierService {
           importance,
         };
       })
-      .filter(
-        (unit): unit is ConversationContentUnit => Boolean(unit)
-      );
+      .filter((unit): unit is ConversationContentUnit => Boolean(unit));
   }
 
   // 内容单元必须是当前原话里真实存在的片段。模型偶尔会省略“我今天/明明”
@@ -2386,4 +2465,12 @@ export class ReplyIntentClassifierService {
       ? Math.min(Math.round(value), 12000)
       : 10000;
   }
+}
+
+function isTimeoutLikeError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.name + ' ' + error.message
+      : String(error || '');
+  return /abort|timeout|timed out|etimedout/i.test(message);
 }

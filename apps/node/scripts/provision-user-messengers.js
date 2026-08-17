@@ -2,14 +2,16 @@ const { existsSync, readFileSync } = require('fs');
 const { resolve } = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
 
-const MESSENGER_AVATAR_KEY = 'weapp/messenger-avatar.png';
+const MESSENGER_AVATAR_KEY = 'weapp/messenger-avatar-20260817.png';
 
 loadLocalEnv();
 
 async function main() {
-  const userIds = parseUserIds(process.argv.slice(2));
-  if (userIds.length === 0) {
-    throw new Error('usage: node provision-user-messengers.js <userId> [userId...]');
+  const identifiers = parseUserIdentifiers(process.argv.slice(2));
+  if (identifiers.length === 0) {
+    throw new Error(
+      'usage: node provision-user-messengers.js <userId|weapp:account> [userId|weapp:account...]'
+    );
   }
 
   const client = new MongoClient(buildMongoConnectionString());
@@ -21,12 +23,13 @@ async function main() {
     const agents = db.collection('agent');
     const conversations = db.collection('conversation');
     const messages = db.collection('message');
+    const targets = await resolveUserTargets(db, identifiers);
 
     let totalProcessed = 0;
     let totalMessengersCreated = 0;
     let totalConversationsCreated = 0;
 
-    for (const userId of userIds) {
+    for (const { identifier, userId } of targets) {
       const parents = await agents
         .find({ createdUserId: userId, messengerOfAgentId: { $exists: false } })
         .toArray();
@@ -111,11 +114,9 @@ async function main() {
         });
 
         if (!hasGreeting) {
-          const attribution = resolveGenderAttribution(parent.sex);
           const greetings = [
-            `你好，我是${messengerName}。关于${parentName}的事，都可以跟我讲讲。`,
-            `我会帮你唤醒${parentName}的记忆，${attribution}带着这份爱永远陪伴你。`,
-            `你可以先跟我简单介绍一下你的${parentName}吗？我真的很好奇呢。`,
+            `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
+            `你最想先让我了解${parentName}的哪一面？`,
           ];
           const greetingMessages = greetings.map((content, index) => ({
             conversationId: conversation._id,
@@ -135,7 +136,7 @@ async function main() {
       }
 
       console.log(
-        `[provision-user-messengers] userId=${userId.toHexString()} agents=${processed} messengersCreated=${messengersCreated} conversationsCreated=${conversationsCreated}`
+        `[provision-user-messengers] identifier=${identifier} userId=${userId.toHexString()} agents=${processed} messengersCreated=${messengersCreated} conversationsCreated=${conversationsCreated}`
       );
       totalProcessed += processed;
       totalMessengersCreated += messengersCreated;
@@ -143,53 +144,81 @@ async function main() {
     }
 
     console.log(
-      `[provision-user-messengers] done users=${userIds.length} agents=${totalProcessed} messengersCreated=${totalMessengersCreated} conversationsCreated=${totalConversationsCreated}`
+      `[provision-user-messengers] done users=${targets.length} agents=${totalProcessed} messengersCreated=${totalMessengersCreated} conversationsCreated=${totalConversationsCreated}`
     );
   } finally {
     await client.close();
   }
 }
 
-function parseUserIds(args) {
+function parseUserIdentifiers(args) {
   const seen = new Set();
-  const userIds = [];
+  const identifiers = [];
 
   for (const raw of args) {
     const value = String(raw).trim();
     if (!value) {
       continue;
     }
-    if (!ObjectId.isValid(value)) {
-      throw new Error(`invalid userId: ${value}`);
+    if (!ObjectId.isValid(value) && !/^weapp:.+/.test(value)) {
+      throw new Error(`invalid user identifier: ${value}`);
     }
-    const objectId = new ObjectId(value);
-    const key = objectId.toHexString();
+    const key = ObjectId.isValid(value)
+      ? new ObjectId(value).toHexString()
+      : value;
     if (!seen.has(key)) {
       seen.add(key);
-      userIds.push(objectId);
+      identifiers.push(value);
     }
   }
 
-  return userIds;
+  return identifiers;
 }
 
-function resolveGenderAttribution(sex) {
-  if (sex === 0) {
-    return '让她';
+async function resolveUserTargets(db, identifiers) {
+  const userAccounts = db.collection('user_account');
+  const seenUserIds = new Set();
+  const targets = [];
+
+  for (const identifier of identifiers) {
+    let userId;
+    if (ObjectId.isValid(identifier)) {
+      userId = new ObjectId(identifier);
+    } else {
+      const userAccount = await userAccounts.findOne(
+        { account: identifier },
+        { projection: { userId: 1 } }
+      );
+      if (!userAccount?.userId || !ObjectId.isValid(userAccount.userId)) {
+        throw new Error(`user account not found or invalid: ${identifier}`);
+      }
+      userId = new ObjectId(userAccount.userId);
+    }
+
+    const key = userId.toHexString();
+    if (!seenUserIds.has(key)) {
+      seenUserIds.add(key);
+      targets.push({ identifier, userId });
+    }
   }
-  if (sex === 1) {
-    return '让他';
-  }
-  return '让 TA';
+
+  return targets;
 }
 
 function buildMongoConnectionString() {
   const host = readEnv(['NODE_MONGO_HOST', 'MONGO_HOST'], '127.0.0.1');
   const port = readEnv(['NODE_MONGO_PORT', 'MONGO_PORT'], '17271');
   const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
-  const authSource = readEnv(['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'], 'admin');
-  const username = encodeURIComponent(readEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'], 'admin'));
-  const password = encodeURIComponent(readEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], 'qwerasdf'));
+  const authSource = readEnv(
+    ['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'],
+    'admin'
+  );
+  const username = encodeURIComponent(
+    readEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'], 'admin')
+  );
+  const password = encodeURIComponent(
+    readEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], 'qwerasdf')
+  );
   return `mongodb://${username}:${password}@${host}:${port}/${database}?authSource=${authSource}`;
 }
 
@@ -234,7 +263,14 @@ function loadLocalEnv() {
   }
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  parseUserIdentifiers,
+  resolveUserTargets,
+};

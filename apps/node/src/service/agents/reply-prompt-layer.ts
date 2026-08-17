@@ -74,9 +74,9 @@ export function resolveReplyPromptLayerPlan(options: {
     options.config?.modelPromptLayer
   );
   const reductionActive = reductionMode === 'active';
-  const complex =
-    options.planningMode === 'semantic' ||
-    isComplexReplyBrief(options.replyBrief);
+  // 是否注入扩展策略层由本轮真实风险/边界决定，不再因为调用过
+  // 语义规划器就自动携带整套 L5。
+  const complex = isComplexReplyBrief(options.replyBrief);
   const hasTools =
     options.chatToolPlan?.mode === 'shadow' ||
     options.chatToolPlan?.mode === 'active';
@@ -103,7 +103,8 @@ export function resolveReplyPromptLayerPlan(options: {
     version: REPLY_PROMPT_LAYER_VERSION,
     reductionActive,
     layerMode,
-    l5TraceOnly: reductionActive && options.config?.l5TraceOnly !== false,
+    l5TraceOnly:
+      reductionActive && !includeL5 && options.config?.l5TraceOnly !== false,
     planningMode: options.planningMode,
     complex,
     includeReading: hasReading || !reductionActive || complex,

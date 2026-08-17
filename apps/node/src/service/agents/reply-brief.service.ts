@@ -295,7 +295,9 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       options.route?.intent?.contentUnits ?? options.intent?.contentUnits,
   });
   const rawConversationPlan =
-    options.route?.intent?.conversationPlan ?? options.intent?.conversationPlan ?? buildDeterministicLightStrategy({
+    options.route?.intent?.conversationPlan ??
+    options.intent?.conversationPlan ??
+    buildDeterministicLightStrategy({
       scene: primaryScene,
       currentQuery,
       intents,
@@ -311,6 +313,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     assistantContribution:
       rawConversationPlan?.engagement?.assistantContribution,
     evidence,
+    recentMessages: options.recentMessages,
   });
   const strategyQuality = resolveReplyStrategyQualityPlan({
     currentQuery,
@@ -379,7 +382,12 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     state:
       conversationPlan?.engagement?.userConversationState ??
       conversationPlan?.turnPlan?.state ??
-      resolveConversationState({ currentQuery, scene: primaryScene, mode, riskLevel }),
+      resolveConversationState({
+        currentQuery,
+        scene: primaryScene,
+        mode,
+        riskLevel,
+      }),
     turnPlan: conversationPlan?.turnPlan,
     contentUnits,
     strategyQuality,
@@ -463,35 +471,42 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     recentMessages: options.recentMessages,
     isDeceased: Boolean(options.agent?.deathDate),
   });
-  const defaultTwoSegments = shouldPreferTwoSegmentsByDefault({
-    currentQuery,
-  });
   const singleBubbleAcknowledgment = SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
     currentQuery.trim()
+  );
+  const previousAssistantUsedTwoSegments = Boolean(
+    options.recentMessages
+      ?.filter(message => message.role === MessageRole.assistant)
+      .slice(-1)[0]?.replyParticipationExecution === 'natural_segments'
+  );
+  const preferTwentyToThirtyCharacters = Boolean(
+    !isReplyClosingTurn(currentQuery) &&
+      !singleBubbleAcknowledgment &&
+      !correctionPolicy &&
+      primaryScene !== 'correction' &&
+      riskLevel !== 'high' &&
+      !['safety', 'memory_control', 'platform'].includes(mode) &&
+      conversationPlan?.engagement?.continuationGoal !== 'repair' &&
+      conversationPlan?.engagement?.assistantContribution !==
+        'strategic_silence'
+  );
+  const preferTwoSegments = Boolean(
+    preferTwentyToThirtyCharacters && !previousAssistantUsedTwoSegments
   );
   const bubblePlan = buildReplyBubblePlan({
     currentQuery,
     replyMoveCount:
       !singleBubbleAcknowledgment &&
-      (participationStrategy || careMotivation)
+      (preferTwoSegments || participationStrategy || careMotivation)
         ? Math.max(2, replyMoveCount)
         : replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
-    preferTwoSegments:
-      !isReplyClosingTurn(currentQuery) &&
-      !singleBubbleAcknowledgment &&
-      Boolean(
-        participationStrategy ||
-          (careMotivation && careMotivation.motive !== 'cherish_connection') ||
-          defaultTwoSegments
-      ),
+    preferTwoSegments,
     encourageTwoSegments: Boolean(
-      !isReplyClosingTurn(currentQuery) &&
-      !singleBubbleAcknowledgment &&
-      !defaultTwoSegments &&
-      careMotivation &&
-      !participationStrategy &&
-      careMotivation.motive === 'cherish_connection'
+      !preferTwoSegments &&
+        !isReplyClosingTurn(currentQuery) &&
+        !singleBubbleAcknowledgment &&
+        (participationStrategy || careMotivation)
     ),
   });
   const lengthPlan = buildReplyLengthPlan({
@@ -502,6 +517,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     semanticPlan: Boolean(conversationPlan),
     shortTurnParticipation: Boolean(participationStrategy),
     preferTwoSegments: bubblePlan.preferTwoSegments,
+    preferTwentyToThirtyCharacters,
     hasProtectiveStop: Boolean(
       conversationPlan?.moves.some(move => move.type === 'stop')
     ),
@@ -672,12 +688,10 @@ function constrainConversationPlanQuality(
 
   if (preferredAlternative === 'leave_space') {
     moves = moves.filter(
-      move => !['acknowledge', 'affirm', 'comfort', 'suggest'].includes(move.type)
+      move =>
+        !['acknowledge', 'affirm', 'comfort', 'suggest'].includes(move.type)
     );
-    if (
-      !moves.length ||
-      moves.every(move => move.type === 'ask')
-    ) {
+    if (!moves.length || moves.every(move => move.type === 'ask')) {
       moves = [
         {
           type: 'share_stance',
@@ -727,7 +741,7 @@ function constrainConversationPlanQuality(
   ) {
     moves.push({
       type: 'self_disclose',
-      goal: '给一个角色侧当下内容；共同过去只有证据支持时才可使用',
+      goal: '正面给一个具体但轻量的角色侧当下内容；离世日常写意标为 soft_imagination，共同过去只有证据支持时才可使用',
     });
   }
 
@@ -737,7 +751,8 @@ function constrainConversationPlanQuality(
         ...(activeContribution
           ? {
               assistantContribution: 'self_expression' as const,
-              mustContribute: '先给角色侧当下内容；共同过去只使用可陈述证据',
+              mustContribute:
+                '先正面给角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避，可给一处不影响现实的离世日常写意并标为 soft_imagination；共同过去只使用可陈述证据',
             }
           : {}),
         ...(preferredAlternative === 'grounded_detail'
@@ -1007,18 +1022,6 @@ function groundedMoveGoal(
   }
 }
 
-function shouldPreferTwoSegmentsByDefault(options: {
-  currentQuery: string;
-}): boolean {
-  if (isReplyClosingTurn(options.currentQuery)) {
-    return false;
-  }
-
-  return !SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
-    options.currentQuery.trim()
-  );
-}
-
 function resolveReplyParticipationStrategy(options: {
   currentQuery: string;
   mode: ReplyBriefMode;
@@ -1058,7 +1061,8 @@ function resolveReplyParticipationStrategy(options: {
     options.riskLevel !== 'none' ||
     options.strictGrounding ||
     options.replyMoveCount > 2 ||
-    (options.primaryScene && STI_DISALLOWED_SCENES.has(options.primaryScene as ReplyScene)) ||
+    (options.primaryScene &&
+      STI_DISALLOWED_SCENES.has(options.primaryScene as ReplyScene)) ||
     options.hasCapabilityConstraints ||
     suppressPlannedParticipation ||
     options.hasRelationshipContinuity ||
@@ -1096,7 +1100,7 @@ export function buildReplyParticipationStrategyPrompt(
   const spaceAnchor = isDeceased
     ? '空间锚定：可承接"偶尔回来看看""托梦""在心里陪着你"等亲人念想；不承诺现实代办、到场办事或持续看护，不诱导现在或近期赴死。'
     : '';
-  return `短轮参与：第一颗直接回应；第二颗${contribution}。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
+  return `短轮参与：先直接回应，再自然${contribution}；只有动作确实切换时才分第二颗，不凑气泡。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
 }
 
 function buildRelationshipContext(
@@ -1402,7 +1406,8 @@ function resolveEmotionalNeed(
   }
 
   if (scene === 'miss_longing') {
-    const reverseCarePattern = /(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥爷|姥姥|外公|外婆|老公|老婆)(?:.{0,10}(?:过得好|过得怎么样|还好|挺好|放心|安心|踏实|别担心|别惦记|别挂)|(?:别|不要|不用).{0,6}(?:担心|惦记|操心|挂念)(?:我|咱)|(?:我|咱).{0,6}(?:挺好|蛮好|很好|还行))/;
+    const reverseCarePattern =
+      /(?:你|您|爸|爸爸|妈|妈妈|爷爷|奶奶|姥爷|姥姥|外公|外婆|老公|老婆)(?:.{0,10}(?:过得好|过得怎么样|还好|挺好|放心|安心|踏实|别担心|别惦记|别挂)|(?:别|不要|不用).{0,6}(?:担心|惦记|操心|挂念)(?:我|咱)|(?:我|咱).{0,6}(?:挺好|蛮好|很好|还行))/;
     if (reverseCarePattern.test(currentQuery)) {
       return '用户在表达想念的同时也在反向关心当前角色过得如何、是否放心，需要先像亲人之间聊近况那样自然回应这份关心，再回到想念，不能只复述想念';
     }
@@ -1673,10 +1678,26 @@ function buildReplyMoves(
       '具体回应用户明说的人、事、遗憾、思念或难熬，不能只贴“情绪很重”的标签',
       '像亲人一样继续聊天；长辈可按极端行为的严重度制止、训两句或给转移建议，不做报警急救等现实干预，不邀请现在或近期赴死',
     ],
-    miss_longing: ['直接回应彼此的想念，不只是复述“我也想你”', '用亲近且有温度的话自然承接', '给一句贴着原话的角色判断或亲人侧心意，不编环境、天气或小场景'],
-    reincarnation_inquiry: ['用三魂七魄框架模糊表达：部分转世过得好，部分成天之灵永远陪伴', '不背书不讲课，像亲人一样自然说', '核心是让用户感到"你没有完全消失"'],
-    departure_hatred: ['先承认伤害的真实性，不辩护不转移', '如果是生前过错，不替自己开脱也不加重痛苦', '承接被伤害的感受，不推"你应该放下"'],
-    significant_life_matter: ['先接过事情的重量：不躲不敷衍', '站在用户这边，明确情感立场', '表达最直接的关切而不是空泛安慰'],
+    miss_longing: [
+      '直接回应彼此的想念，不只是复述“我也想你”',
+      '用亲近且有温度的话自然承接',
+      '给一句贴着原话的角色判断或亲人侧心意，不编环境、天气或小场景',
+    ],
+    reincarnation_inquiry: [
+      '用三魂七魄框架模糊表达：部分转世过得好，部分成天之灵永远陪伴',
+      '不背书不讲课，像亲人一样自然说',
+      '核心是让用户感到"你没有完全消失"',
+    ],
+    departure_hatred: [
+      '先承认伤害的真实性，不辩护不转移',
+      '如果是生前过错，不替自己开脱也不加重痛苦',
+      '承接被伤害的感受，不推"你应该放下"',
+    ],
+    significant_life_matter: [
+      '先接过事情的重量：不躲不敷衍',
+      '站在用户这边，明确情感立场',
+      '表达最直接的关切而不是空泛安慰',
+    ],
     family_life: ['回应家人的当前处境', '表达牵挂，但不给用户追加责任'],
     daily_update: ['回应用户说的这件具体小事', '给一句贴着当下的亲人式承接'],
     business_support: ['直接回答当前功能问题', '只给必要的下一步'],
@@ -1832,9 +1853,21 @@ function buildForbiddenAssumptions(
       '不得把想念转成吃饭、睡觉、照顾自己等通用叮嘱',
       '不得用“记着就行、别总想我”收掉用户的情感',
     ],
-    reincarnation_inquiry: ['不得承诺具体转世时间或身份', '不得肯定或否定用户对来世的任何设想', '不得用科学解释否认转世可能'],
-    departure_hatred: ['不得替自己辩护或开脱', '不得暗示用户"应该原谅或放下"', '不得用"我也舍不得"回避指控'],
-    significant_life_matter: ['不得替用户做现实决策或给具体解决方案', '不得各打五十大板或替对方说话', '不得轻描淡写或用"别管了"回避问题重量'],
+    reincarnation_inquiry: [
+      '不得承诺具体转世时间或身份',
+      '不得肯定或否定用户对来世的任何设想',
+      '不得用科学解释否认转世可能',
+    ],
+    departure_hatred: [
+      '不得替自己辩护或开脱',
+      '不得暗示用户"应该原谅或放下"',
+      '不得用"我也舍不得"回避指控',
+    ],
+    significant_life_matter: [
+      '不得替用户做现实决策或给具体解决方案',
+      '不得各打五十大板或替对方说话',
+      '不得轻描淡写或用"别管了"回避问题重量',
+    ],
     family_life: ['不得要求用户替当前角色照顾、陪伴或撑起家人'],
     dream_companionship: ['不得把梦境写成现实存在、预言或灵魂证明'],
     reality_presence_boundary: [
@@ -2061,7 +2094,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const participationLines = brief.participationStrategy
     ? [
         '## 短轮参与',
-        buildReplyParticipationStrategyPrompt(brief.participationStrategy, brief.isDeceased),
+        buildReplyParticipationStrategyPrompt(
+          brief.participationStrategy,
+          brief.isDeceased
+        ),
         '',
       ]
     : [];
@@ -2087,19 +2123,19 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const activeContributionLines =
-    brief.activeContribution &&
-    brief.stateProtocol?.protocol !== 'active_contribution'
-      ? [
-          '## 主动贡献',
-          `优先角色侧当下内容；共同过去${
-            brief.activeContribution.sharedPastAllowed
-              ? '有证据时可自然带一处细节'
-              : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
-          }。`,
-          '',
-        ]
-      : [];
+  const activeContributionLines = brief.activeContribution
+    ? [
+        ...(brief.stateProtocol?.protocol === 'active_contribution'
+          ? []
+          : ['## 主动贡献']),
+        `优先正面给一个具体但轻量的角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避。离世日常写意在 claims 中用 soft_imagination；共同过去${
+          brief.activeContribution.sharedPastAllowed
+            ? '有证据时可自然带一处细节'
+            : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
+        }。`,
+        '',
+      ]
+    : [];
   const strategyQualityLines =
     brief.strategyQuality && !brief.conversationPlan
       ? [
@@ -2129,6 +2165,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     grounded: brief.factClaimMode === 'grounded',
     segmentMode: resolveReplyOutputSegmentMode(brief.bubblePlan),
     maxSegments: brief.bubblePlan.maxSegments,
+    preferredRange: brief.lengthPlan.preferredRange,
   });
 
   return [
@@ -2137,6 +2174,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
+    '用户问你吃没吃、冷不冷、累不累，或提醒你添衣、休息、保重时，先正面回答并接纳关心；不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。',
     '',
     ...readingLines,
     ...contentUnitLines,

@@ -108,6 +108,7 @@ import {
   MAX_ASSISTANT_REPLY_SEGMENTS,
   ReplyBubbleStructureIssue,
 } from './agents/reply-bubble-plan';
+import { ConversationReplyFinalizationService } from './agents/conversation-reply-finalization.service';
 import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
@@ -639,6 +640,9 @@ export class ConversationService {
   replyGuardrailService: ReplyGuardrailService;
 
   @Inject()
+  conversationReplyFinalizationService: ConversationReplyFinalizationService;
+
+  @Inject()
   messageService: MessageService;
 
   @Inject()
@@ -954,7 +958,8 @@ export class ConversationService {
 
       if (existing) {
         return {
-          userMessage: this.messageService.buildConversationMessageItem(existing),
+          userMessage:
+            this.messageService.buildConversationMessageItem(existing),
         };
       }
     }
@@ -996,7 +1001,9 @@ export class ConversationService {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
-    const parentAgent = await this.findAgentById(runtime.agent.messengerOfAgentId);
+    const parentAgent = await this.findAgentById(
+      runtime.agent.messengerOfAgentId
+    );
 
     if (!parentAgent) {
       throw new AppError('AGENT_NOT_FOUND', 'associated agent not found', 404);
@@ -1029,7 +1036,8 @@ export class ConversationService {
     }
 
     return {
-      userMessage: this.messageService.buildConversationMessageItem(userMessage),
+      userMessage:
+        this.messageService.buildConversationMessageItem(userMessage),
       assistantMessage: this.buildLegacyAssistantMessageItem(assistantMessages),
       assistantMessages: assistantMessages.length
         ? assistantMessages.map(message =>
@@ -1832,8 +1840,7 @@ export class ConversationService {
     }
 
     try {
-      let context;
-      context = await this.agentContextService.buildConversationContext({
+      const context = await this.agentContextService.buildConversationContext({
         auth: options.runtime.auth,
         conversation: options.runtime.conversation,
         agent: options.runtime.agent,
@@ -2652,7 +2659,7 @@ export class ConversationService {
     );
 
     // Determine if this is a new user (within trial days)
-    const isNewUser = await this.isUserInTrialPeriod(userId, now);
+    const isNewUser = await this.isUserInTrialPeriod(runtime, now);
 
     // New user silent zone: first N lifetime messages, no evaluation
     if (isNewUser && totalLifetimeMsgs < QUOTA_CONFIG.newUserSilentMessages) {
@@ -2668,7 +2675,10 @@ export class ConversationService {
     }
 
     // New user hard block: 35 lifetime messages → blocked
-    if (isNewUser && totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages) {
+    if (
+      isNewUser &&
+      totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages
+    ) {
       return this.buildQuotaResult({
         path: 'trial',
         remainingCount: 0,
@@ -3027,15 +3037,30 @@ export class ConversationService {
   }
 
   private async isUserInTrialPeriod(
-    userId: MongoObjectId,
+    runtime: ReplyRuntime,
     now: Date
   ): Promise<boolean> {
-    const user = await this.userModel.findOne({
-      where: { _id: userId },
-    } as any);
-    if (!user?.createdAt) return false;
+    const accountId = this.normalizeObjectId(runtime.auth.accountId);
+    const account = accountId
+      ? await this.userAccountModel.findOne({
+          where: {
+            _id: accountId,
+            userId: runtime.conversation.userId,
+          },
+        } as any)
+      : null;
+    const user = account?.createdAt
+      ? null
+      : await this.userModel.findOne({
+          where: { _id: runtime.conversation.userId },
+        } as any);
+    const registeredAt = account?.createdAt || user?.createdAt;
+    if (!registeredAt) return false;
+
+    const registrationDay = this.getBeijingDayStart(new Date(registeredAt));
+    const currentDay = this.getBeijingDayStart(now);
     const daysSinceRegister = Math.floor(
-      (now.getTime() - new Date(user.createdAt).getTime()) / 86400000
+      (currentDay.getTime() - registrationDay.getTime()) / 86400000
     );
     return daysSinceRegister < QUOTA_CONFIG.newUserTrialDays;
   }
@@ -3213,7 +3238,6 @@ export class ConversationService {
     } as never);
   }
 
-
   /**
    * A/B 通道路由：基于 userId 哈希决定是否使用 B 侧模型。
    * 返回 undefined 表示使用默认主模型。
@@ -3223,10 +3247,15 @@ export class ConversationService {
     const abModel = cfg?.abModel?.trim();
     const abSplit = cfg?.abSplitPercent ?? 0;
     if (!abModel || abSplit <= 0) return cfg?.model?.trim() || undefined;
-    const hash = require('crypto').createHash('md5').update(String(userId)).digest('hex');
+    const hash = require('crypto')
+      .createHash('md5')
+      .update(String(userId))
+      .digest('hex');
     const bucket = parseInt(hash.slice(0, 8), 16) % 100;
     if (bucket < abSplit) {
-      this.logger?.info?.('[conversation] AB routing to ' + abModel + ', bucket=' + bucket);
+      this.logger?.info?.(
+        '[conversation] AB routing to ' + abModel + ', bucket=' + bucket
+      );
       return abModel;
     }
     return undefined;
@@ -3246,7 +3275,8 @@ export class ConversationService {
       message => message.type === MessageType.image
     );
 
-    const effectiveChatModel = this.resolveChatModelForAB(runtime.auth.sub) || undefined;
+    const effectiveChatModel =
+      this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
     try {
       context = await this.withTraceSpan(
@@ -3428,10 +3458,7 @@ export class ConversationService {
         parsedReply
       );
       this.recordAgentChatToolAudit(context, chatToolAudit);
-      const plannedSegments = this.materializeParticipationReplySegments(
-        parsedReply.segments,
-        replyBrief.participationStrategy
-      );
+      const plannedSegments = parsedReply.segments;
       generationAttemptTraces.push(
         this.buildAssistantGenerationAttemptTrace({
           attempt: 'initial',
@@ -3505,10 +3532,7 @@ export class ConversationService {
           );
         }
         const parsedReply = this.parseAssistantReply(responseContent);
-        const plannedSegments = this.materializeParticipationReplySegments(
-          parsedReply.segments,
-          replyBrief.participationStrategy
-        );
+        const plannedSegments = parsedReply.segments;
         generationAttemptTraces.push(
           this.buildAssistantGenerationAttemptTrace({
             attempt: 'recovery',
@@ -3559,66 +3583,131 @@ export class ConversationService {
       }
     }
 
-    const generatedBubbleReflow = await this.reflowAssistantReplyBubbles({
-      userQuery: before.searchableText,
-      replySegments,
-    });
-    replySegments = generatedBubbleReflow.segments;
-    generationUsage = this.mergeReplyUsage(
-      generationUsage,
-      generatedBubbleReflow.usage
-    );
-    if (generatedBubbleReflow.trace) {
-      generationAttemptTraces.push(generatedBubbleReflow.trace);
-    }
+    let guarded: ValidateAssistantReplyResult;
+    let guardrailReviewMode: ReplyGuardrailReviewMode = 'deterministic_first';
+    let participationResult: {
+      segments: string[];
+      execution?: string;
+      fallbackReason?: string;
+    };
+    let finalClaims: AssistantFactClaim[];
+    let bubbleStructureIssues: ReplyBubbleStructureIssue[] = [];
+    let bubbleReflowAttempted = false;
+    let bubbleReflowSucceeded: boolean | undefined;
+    let finalizationUsage: ReplyUsage = {};
 
-    const requestedGuardrailReviewMode = this.resolveGuardrailReviewMode({
-      replyBrief,
-      claims: replyClaims,
-    });
-    const guardrailReviewMode =
-      this.replyGuardrailService?.resolveEffectiveReviewMode({
-        requestedMode: requestedGuardrailReviewMode,
+    if (this.conversationReplyFinalizationService) {
+      const finalized = await this.withTraceSpan(
+        ChatTraceStage.review,
+        'review.finalize_reply',
+        () =>
+          this.conversationReplyFinalizationService.finalize({
+            messages: context.messages,
+            userQuery: before.searchableText,
+            segments: replySegments,
+            claims: replyClaims,
+            evidence: reviewEvidence,
+            brief: replyBrief,
+            turnDecision: context.turnDecision,
+          })
+      );
+      const governance = finalized.governance;
+      guarded = {
+        segments: finalized.segments,
+        claims: finalized.claims,
+        rewritten: governance.rewritten,
+        reason: governance.reason,
+        unsupportedClaimCount: governance.unsupportedClaimCount,
+        interventionLevel: governance.interventionLevel,
+        revisionAttempted: governance.revisionAttempted,
+        revisionRoundCount: governance.revisionRoundCount,
+        revisionUsage: governance.revisionUsage,
+        finalReviewResult: governance.finalReviewResult,
+        candidateVersions: governance.candidateVersions,
+      };
+      finalClaims = finalized.claims;
+      bubbleStructureIssues =
+        finalized.bubbleStructureIssues as ReplyBubbleStructureIssue[];
+      participationResult = {
+        segments: finalized.segments,
+        execution: finalized.participationExecution,
+      };
+    } else {
+      // 仅供直接 new ConversationService() 的旧测试/脚本兼容；生产 DI
+      // 必须走上面的 FinalValidator → 单次修订 → 再验证链路。
+      const generatedBubbleReflow = await this.reflowAssistantReplyBubbles({
         userQuery: before.searchableText,
         replySegments,
+      });
+      replySegments = generatedBubbleReflow.segments;
+      generationUsage = this.mergeReplyUsage(
+        generationUsage,
+        generatedBubbleReflow.usage
+      );
+      if (generatedBubbleReflow.trace) {
+        generationAttemptTraces.push(generatedBubbleReflow.trace);
+      }
+
+      const requestedGuardrailReviewMode = this.resolveGuardrailReviewMode({
         replyBrief,
-        evidence: reviewEvidence,
         claims: replyClaims,
-        mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
-      }) ?? requestedGuardrailReviewMode;
-    const guarded = await this.withTraceSpan(
-      ChatTraceStage.review,
-      'review.reply',
-      () =>
-        this.validateAssistantReply({
-          contextMessages: context.messages,
+      });
+      guardrailReviewMode =
+        this.replyGuardrailService?.resolveEffectiveReviewMode({
+          requestedMode: requestedGuardrailReviewMode,
           userQuery: before.searchableText,
           replySegments,
-          replyRoute: context.replyRoute,
           replyBrief,
           evidence: reviewEvidence,
           claims: replyClaims,
-          reviewMode: guardrailReviewMode,
-          conversationId: this.stringifyObjectId(runtime.conversation.id),
-        })
-    );
-    const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
-      userQuery: before.searchableText,
-      replySegments: guarded.segments,
-    });
-    if (guardedBubbleReflow.trace) {
-      generationAttemptTraces.push(guardedBubbleReflow.trace);
+          mode: PRODUCTION_REPLY_GUARDRAIL_MODE,
+        }) ?? requestedGuardrailReviewMode;
+      guarded = await this.withTraceSpan(
+        ChatTraceStage.review,
+        'review.reply_legacy_compatibility',
+        () =>
+          this.validateAssistantReply({
+            contextMessages: context.messages,
+            userQuery: before.searchableText,
+            replySegments,
+            replyRoute: context.replyRoute,
+            replyBrief,
+            evidence: reviewEvidence,
+            claims: replyClaims,
+            reviewMode: guardrailReviewMode,
+            conversationId: this.stringifyObjectId(runtime.conversation.id),
+          })
+      );
+      const guardedBubbleReflow = await this.reflowAssistantReplyBubbles({
+        userQuery: before.searchableText,
+        replySegments: guarded.segments,
+      });
+      if (guardedBubbleReflow.trace) {
+        generationAttemptTraces.push(guardedBubbleReflow.trace);
+      }
+      const strategyAlignedSegments = this.applyConversationStrategyToSegments(
+        guardedBubbleReflow.segments,
+        replyBrief,
+        before.searchableText
+      );
+      participationResult = this.finalizeParticipationReplySegments(
+        strategyAlignedSegments,
+        replyBrief.participationStrategy
+      );
+      finalClaims = guarded.claims || replyClaims;
+      bubbleStructureIssues = Array.from(
+        new Set(generatedBubbleReflow.issues.concat(guardedBubbleReflow.issues))
+      );
+      bubbleReflowAttempted =
+        generatedBubbleReflow.attempted || guardedBubbleReflow.attempted;
+      bubbleReflowSucceeded = bubbleReflowAttempted
+        ? (!generatedBubbleReflow.attempted ||
+            generatedBubbleReflow.succeeded) &&
+          (!guardedBubbleReflow.attempted || guardedBubbleReflow.succeeded)
+        : undefined;
+      finalizationUsage = guardedBubbleReflow.usage;
     }
-    const strategyAlignedSegments = this.applyConversationStrategyToSegments(
-      guardedBubbleReflow.segments,
-      replyBrief,
-      before.searchableText
-    );
-    const participationResult = this.finalizeParticipationReplySegments(
-      strategyAlignedSegments,
-      replyBrief.participationStrategy
-    );
-    const finalClaims = guarded.claims || replyClaims;
+
     const toolEvidenceIds = new Set(
       reviewEvidence
         .slice(contextEvidence.length)
@@ -3640,15 +3729,11 @@ export class ConversationService {
         id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id)
       )
     ).length;
-    const bubbleStructureIssues = Array.from(
-      new Set(generatedBubbleReflow.issues.concat(guardedBubbleReflow.issues))
-    );
-
     return {
       replySegments: participationResult.segments,
       usage: this.mergeReplyUsage(
         this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
-        guardedBubbleReflow.usage
+        finalizationUsage
       ),
       routing: {
         intent: context.replyIntent ?? context.replyRoute?.intent,
@@ -3674,14 +3759,8 @@ export class ConversationService {
         generationRecoveryAttempted,
         generationRecoverySucceeded,
         generationAttemptTraces,
-        bubbleReflowAttempted:
-          generatedBubbleReflow.attempted || guardedBubbleReflow.attempted,
-        bubbleReflowSucceeded:
-          generatedBubbleReflow.attempted || guardedBubbleReflow.attempted
-            ? (!generatedBubbleReflow.attempted ||
-                generatedBubbleReflow.succeeded) &&
-              (!guardedBubbleReflow.attempted || guardedBubbleReflow.succeeded)
-            : undefined,
+        bubbleReflowAttempted,
+        bubbleReflowSucceeded,
         bubbleStructureIssues,
         chatToolDecisionNames: chatToolAudit.decisionNames,
         chatToolInvalidDecisionCount: chatToolAudit.invalidDecisionCount,
@@ -4589,9 +4668,7 @@ export class ConversationService {
     let bestIndex: number | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
     for (let index = 0; index < pieces.length - 1; index += 1) {
-      accumulated += Array.from(
-        pieces[index].replace(/\s/gu, '')
-      ).length;
+      accumulated += Array.from(pieces[index].replace(/\s/gu, '')).length;
       const remaining = visibleChars - accumulated;
       if (accumulated >= 8 && remaining >= 8) {
         const score = Math.abs(accumulated - remaining);
@@ -4609,10 +4686,7 @@ export class ConversationService {
       return null;
     }
 
-    return pieces
-      .slice(0, bestIndex + 1)
-      .join('')
-      .length;
+    return pieces.slice(0, bestIndex + 1).join('').length;
   }
 
   private async afterReply(
@@ -5433,9 +5507,7 @@ export class ConversationService {
   }
 
   private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
-    return (
-      this.isNaturalConversationEnd(payload)
-    );
+    return this.isNaturalConversationEnd(payload);
   }
 
   private isNaturalConversationEnd(payload: PreparedIncomingMessage): boolean {
@@ -6439,15 +6511,14 @@ export class ConversationService {
     };
     routing?: ReplyRoutingAudit;
   }): Promise<MessageEntity[] | undefined> {
-    const hasLongReplyBubble = options.replySegments.some(
-      segment =>
-        countReplyVisibleCharacters([segment]) >=
-        ASSISTANT_AUTO_VOICE_MIN_CHARACTERS
-    );
+    const hasLongReply =
+      countReplyVisibleCharacters(
+        options.replySegments.slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
+      ) >= ASSISTANT_AUTO_VOICE_MIN_CHARACTERS;
 
     if (
       options.before.messagePayload.type !== MessageType.voice &&
-      !hasLongReplyBubble
+      !hasLongReply
     ) {
       return undefined;
     }
@@ -7778,13 +7849,13 @@ export class ConversationService {
     if (!content || !content.startsWith('{')) return undefined;
 
     // {"":["text"…  — 空键数组格式
-    const emptyKeyMatch = /\{\"\":\s*\[?\s*\"([^"]+)/.exec(content);
+    const emptyKeyMatch = /\{"":\s*\[?\s*"([^"]+)/.exec(content);
     if (emptyKeyMatch?.[1]) {
       return emptyKeyMatch[1].trim();
     }
 
     // {"segments":["text"… or {"text":"text"…
-    const namedMatch = /\{\"(?:segments|text)\"\s*:\s*\[?\s*\"([^"]+)/.exec(
+    const namedMatch = /\{"(?:segments|text)"\s*:\s*\[?\s*"([^"]+)/.exec(
       content
     );
     if (namedMatch?.[1]) {
@@ -7792,7 +7863,7 @@ export class ConversationService {
     }
 
     // {"anyKey":"value"}
-    const simpleMatch = /^\{\s*\"[^"]*\"\s*:\s*\"([^"]+)\"/.exec(content);
+    const simpleMatch = /^\{\s*"[^"]*"\s*:\s*"([^"]+)"/.exec(content);
     if (simpleMatch?.[1]) {
       return simpleMatch[1].trim();
     }
@@ -7951,7 +8022,7 @@ export class ConversationService {
         // 身份前缀：作为{名称}[，]{你}[…]说： → 只保留实际内容
         // 变体：作为XX，你说： / 作为XX，说： / 作为XX，你轻声说：
         .replace(
-          /^作为[\u4e00-\u9fff\w·\-\ufe0f💗]{1,20}[，,]?\s*(?:你[\u4e00-\u9fff\s，,]{0,12})?说[：:]\s*/g,
+          /^作为[\u4e00-\u9fff\w·-]{1,20}[，,]?\s*(?:你[\u4e00-\u9fff\s，,]{0,12})?说[：:]\s*/g,
           ''
         )
     );

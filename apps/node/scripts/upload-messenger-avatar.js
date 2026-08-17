@@ -1,14 +1,19 @@
-const { existsSync, readFileSync, statSync } = require('fs');
-const { resolve, join } = require('path');
+const { existsSync, readFileSync } = require('fs');
+const { resolve } = require('path');
 const COS = require('cos-nodejs-sdk-v5');
 
-const OBJECT_KEY = 'weapp/messenger-avatar.png';
-const DEFAULT_SOURCE = resolve(__dirname, '../../weapp/src/assets/images/messenger/messenger-avatar.png');
+const OBJECT_KEY = 'weapp/messenger-avatar-20260817.png';
+const DEFAULT_SOURCE = resolve(
+  __dirname,
+  '../../weapp/src/assets/images/messenger/messenger-avatar.png'
+);
 
 loadLocalEnv();
 
 async function main() {
-  const sourcePath = process.argv[2] ? resolve(process.argv[2]) : DEFAULT_SOURCE;
+  const sourcePath = process.argv[2]
+    ? resolve(process.argv[2])
+    : DEFAULT_SOURCE;
 
   if (!existsSync(sourcePath)) {
     throw new Error(`source image not found: ${sourcePath}`);

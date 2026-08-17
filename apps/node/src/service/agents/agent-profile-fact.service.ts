@@ -136,6 +136,8 @@ interface SyncAgentProfileMemorySourcesOptions {
   userId: MongoObjectId;
   agentId: MongoObjectId;
   sources: Partial<Record<AgentProfileMemorySourceField, string>>;
+  sourceMessageId?: MongoObjectId;
+  sourceText?: string;
 }
 
 interface UpsertProfileFactInput
@@ -555,7 +557,8 @@ export class AgentProfileFactService {
         polarity: AgentProfileFactPolarity.positive,
         confidence: AgentProfileFactConfidence.confirmed,
         priority: config.priority,
-        sourceText,
+        sourceMessageId: options.sourceMessageId,
+        sourceText: this.normalizeSourceText(options.sourceText || sourceText),
         trustedSource: true,
       });
     }
@@ -631,8 +634,13 @@ export class AgentProfileFactService {
     }
 
     // 事实性信号预筛：无信号的短消息跳过 LLM，只走规则抽取
-    const skipLLM = !options.fromFeedback && !this.hasFactualSignal(sourceText);
-    const llmFacts = skipLLM ? [] : await this.extractFactsWithLLM(sourceText, options);
+    const skipLLM =
+      !options.fromFeedback &&
+      !isExplicitRememberRequest(sourceText) &&
+      !this.hasFactualSignal(sourceText);
+    const llmFacts = skipLLM
+      ? []
+      : await this.extractFactsWithLLM(sourceText, options);
     const fallbackFacts = this.extractFactsWithRules(sourceText, options);
     const ruleFactKeys = new Set(fallbackFacts.map(fact => fact.key));
 
@@ -667,7 +675,11 @@ export class AgentProfileFactService {
     if (text.length <= 4) return false;
 
     // 纯情绪/问候模式（完整匹配）
-    if (/^(?:晚安|早安|午安|睡了|去睡了|拜拜|再见|谢谢|多谢|好的|行|嗯+|哦+|哈哈+|嘿嘿+|爱你|想你了?|好想你|想你|吃了没|在吗|干嘛呢|忙什么呢|辛苦了|注意身体|早点休息)[，,。！？!?\s~～！]*$/.test(text)) {
+    if (
+      /^(?:晚安|早安|午安|睡了|去睡了|拜拜|再见|谢谢|多谢|好的|行|嗯+|哦+|哈哈+|嘿嘿+|爱你|想你了?|好想你|想你|吃了没|在吗|干嘛呢|忙什么呢|辛苦了|注意身体|早点休息)[，,。！？!?\s~～！]*$/.test(
+        text
+      )
+    ) {
       return false;
     }
 
@@ -679,25 +691,56 @@ export class AgentProfileFactService {
     if (/[年月日号岁]/.test(text)) return true;
 
     // 3. 身份/状态声明
-    if (/(?:我是|我叫|我姓|我在.{0,6}(?:工作|上班|住|生活)|我有|我.{0,4}岁|我.{0,4}年|我的.{1,8}是|我家.{0,6}在)/.test(text)) return true;
+    if (
+      /(?:我是|我叫|我姓|我在.{0,6}(?:工作|上班|住|生活)|我有|我.{0,4}岁|我.{0,4}年|我的.{1,8}是|我家.{0,6}在)/.test(
+        text
+      )
+    )
+      return true;
 
     // 4. 纠正信号
-    if (/(?:不对|不是这样|别(?:再)?编|你记错了|你忘了|.{0,4}不叫|我不是|我没有|我从来(?:也)?没)/.test(text)) return true;
+    if (
+      /(?:不对|不是这样|别(?:再)?编|你记错了|你忘了|.{0,4}不叫|我不是|我没有|我从来(?:也)?没)/.test(
+        text
+      )
+    )
+      return true;
 
     // 5. 生命事件（出生、离世、去世、走了）
-    if (/(?:出生|离世|去世|走了.{0,4}年|不在了.{0,4}年|过世)/.test(text)) return true;
+    if (/(?:出生|离世|去世|走了.{0,4}年|不在了.{0,4}年|过世)/.test(text))
+      return true;
 
     // 6. 地点变动
-    if (/(?:搬到|去.{0,6}(?:工作|上班|打工|生活|定居)|在.{0,6}(?:工作|上班)|离开.{0,6}了|不在.{0,6}了|换到.{0,6}(?:工作|上班)|回.{0,4}家|搬家)/.test(text)) return true;
+    if (
+      /(?:搬到|去.{0,6}(?:工作|上班|打工|生活|定居)|在.{0,6}(?:工作|上班)|离开.{0,6}了|不在.{0,6}了|换到.{0,6}(?:工作|上班)|回.{0,4}家|搬家)/.test(
+        text
+      )
+    )
+      return true;
 
     // 7. 纪念物/遗物
-    if (/(?:戒指|项链|手链|手表|照片|相片|遗物|纪念|留着|保存|珍藏|送.{0,4}的|留给.{0,4}的|戴着)/.test(text)) return true;
+    if (
+      /(?:戒指|项链|手链|手表|照片|相片|遗物|纪念|留着|保存|珍藏|送.{0,4}的|留给.{0,4}的|戴着)/.test(
+        text
+      )
+    )
+      return true;
 
     // 8. 承诺/约定
-    if (/(?:答应|承诺|说好|约好|以后.{0,6}(?:给|买|带|陪|照顾|结婚)|下辈子|婚礼|娶我|嫁给我|补给我)/.test(text)) return true;
+    if (
+      /(?:答应|承诺|说好|约好|以后.{0,6}(?:给|买|带|陪|照顾|结婚)|下辈子|婚礼|娶我|嫁给我|补给我)/.test(
+        text
+      )
+    )
+      return true;
 
     // 9. 记忆/共同过去
-    if (/(?:小时候|以前|那时候|当年|那次|那年|曾经|还记得|我们一起|你带我|你教我|你陪我|你以前|你曾经)/.test(text)) return true;
+    if (
+      /(?:小时候|以前|那时候|当年|那次|那年|曾经|还记得|我们一起|你带我|你教我|你陪我|你以前|你曾经)/.test(
+        text
+      )
+    )
+      return true;
 
     return false;
   }

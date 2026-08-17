@@ -11,10 +11,14 @@ import {
   MessageType,
   MongoObjectId,
 } from '@tzl/entities';
-import type { AgentProfileInterviewDraftDTO } from '@tzl/shared';
+import type {
+  AgentProfileInterviewDraftDTO,
+  AgentProfileMemoryField,
+} from '@tzl/shared';
 import { AgentMemoryProfileService } from './agent-memory-profile.service';
 
-export const MESSENGER_DEFAULT_AVATAR_KEY = 'weapp/messenger-avatar.png';
+export const MESSENGER_DEFAULT_AVATAR_KEY =
+  'weapp/messenger-avatar-20260817.png';
 
 const PROFILE_MEMORY_FIELDS = [
   'lifeExperience',
@@ -55,7 +59,9 @@ export class MessengerService {
     return `${name}的小使者`;
   }
 
-  async ensureMessengerForAgent(parentAgent: AgentEntity): Promise<AgentEntity> {
+  async ensureMessengerForAgent(
+    parentAgent: AgentEntity
+  ): Promise<AgentEntity> {
     const now = new Date();
     const messengerName = this.buildMessengerName(parentAgent.name);
     const existing = await this.agentModel.findOne({
@@ -172,6 +178,12 @@ export class MessengerService {
     });
 
     if (existing) {
+      await this.ensureInitialMessengerGreeting(
+        existing,
+        parentAgent,
+        messengerAgent,
+        now
+      );
       return existing;
     }
 
@@ -198,24 +210,53 @@ export class MessengerService {
     options: RunMessengerInterviewTurnOptions
   ): Promise<string> {
     const draft = this.buildDraft(options.agent);
-    const userMessageCount = await this.messageModel.count({
-      conversationId: options.conversation.id,
-      role: MessageRole.user,
-    });
+    const [userMessageCount, conversationMessages] = await Promise.all([
+      this.messageModel.count({
+        conversationId: options.conversation.id,
+        role: MessageRole.user,
+      }),
+      this.messageModel.find({
+        where: {
+          conversationId: options.conversation.id,
+        },
+        order: { createdAt: 'DESC' },
+        take: 100,
+      }),
+    ]);
+    const previousReplies = conversationMessages
+      .filter(message => message.role === MessageRole.assistant)
+      .map(message => message.content?.trim() || '')
+      .filter(Boolean);
+    const sourceMessage = conversationMessages.find(
+      message => message.role === MessageRole.user
+    );
+    const askedFields = this.collectAskedInterviewFields(previousReplies);
+
+    if (!this.isMeaningfulInterviewInput(options.input)) {
+      return this.buildLowPressureReply(options.agent, options.input);
+    }
+
     const result = await this.agentMemoryProfileService.buildInterviewTurn({
       agent: options.agent,
       input: options.input,
       draft,
-      focusField: '',
+      focusField: askedFields[0] || '',
+      askedFields,
+      previousReplies,
       turnCount: userMessageCount,
     });
+    const changedSources = this.buildChangedDraft(draft, result.draft);
 
-    this.applyDraft(options.agent, result.draft);
-    await this.agentMemoryProfileService.alignManualProfileEdits({
-      agent: options.agent,
-      userId: options.agent.createdUserId,
-      sources: result.draft,
-    });
+    if (Object.keys(changedSources).length) {
+      this.applyDraft(options.agent, result.draft);
+      await this.agentMemoryProfileService.alignManualProfileEdits({
+        agent: options.agent,
+        userId: options.agent.createdUserId,
+        sources: changedSources,
+        sourceMessageId: sourceMessage?.id,
+        sourceText: options.input,
+      });
+    }
 
     return result.reply || this.buildFallbackReply(options.agent);
   }
@@ -237,6 +278,41 @@ export class MessengerService {
     agent.updatedAt = new Date();
   }
 
+  private buildChangedDraft(
+    previous: AgentProfileInterviewDraftDTO,
+    current: AgentProfileInterviewDraftDTO
+  ): Partial<AgentProfileInterviewDraftDTO> {
+    return PROFILE_MEMORY_FIELDS.reduce((result, field) => {
+      if ((previous[field]?.trim() || '') !== (current[field]?.trim() || '')) {
+        result[field] = current[field];
+      }
+      return result;
+    }, {} as Partial<AgentProfileInterviewDraftDTO>);
+  }
+
+  private isMeaningfulInterviewInput(input: string): boolean {
+    const compact = (input || '')
+      .replace(/[\s，。！？、,.!?~～…·]/g, '')
+      .trim();
+
+    if (!compact) {
+      return false;
+    }
+
+    return !/^(?:我)?(?:不知道(?:说什么)?|不清楚|没想好|想不到|没什么(?:可说)?)(?:了|呢|啊)?$/.test(
+      compact
+    );
+  }
+
+  private buildLowPressureReply(agent: AgentEntity, input: string): string {
+    const name = agent.name?.trim() || 'TA';
+    const compact = (input || '').replace(/[\s，。！？、,.!?~～…·]/g, '');
+
+    return compact
+      ? `没关系，不用勉强想。等一个关于${name}的画面浮上来，再慢慢告诉我。`
+      : `我在。你不用急着回答，想到${name}的一个小片段时再告诉我。`;
+  }
+
   private buildFallbackReply(agent: AgentEntity): string {
     const name = agent.name?.trim() || 'TA';
     return `我在听，你想到${name}的什么，都可以慢慢讲给我。`;
@@ -251,12 +327,7 @@ export class MessengerService {
     const parentName = parentAgent.name?.trim() || 'TA';
     const messengerName =
       messengerAgent.name?.trim() || this.buildMessengerName(parentAgent.name);
-    const attribution = this.resolveGenderAttribution(parentAgent.sex);
-    const greetings = this.buildMessengerGreetings(
-      parentName,
-      messengerName,
-      attribution
-    );
+    const greetings = this.buildMessengerGreetings(parentName, messengerName);
     const messages = greetings.map((content, index) => {
       const message = new MessageEntity();
       message.conversationId = conversation.id;
@@ -274,25 +345,73 @@ export class MessengerService {
     await this.messageModel.save(messages);
   }
 
+  private async ensureInitialMessengerGreeting(
+    conversation: ConversationEntity,
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity,
+    now: Date
+  ): Promise<void> {
+    const existingMessage = await this.messageModel.findOne({
+      where: {
+        conversationId: conversation.id,
+      },
+    });
+
+    if (existingMessage) {
+      return;
+    }
+
+    await this.createInitialMessengerGreeting(
+      conversation,
+      parentAgent,
+      messengerAgent,
+      now
+    );
+  }
+
   private buildMessengerGreetings(
     parentName: string,
-    messengerName: string,
-    attribution: string
+    messengerName: string
   ): string[] {
     return [
-      `你好，我是${messengerName}。关于${parentName}的事，都可以跟我讲讲。`,
-      `我会帮你唤醒${parentName}的记忆，${attribution}带着这份爱永远陪伴你。`,
-      `你可以先跟我简单介绍一下你的${parentName}吗？我真的很好奇呢。`,
+      `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
+      `你最想先让我了解${parentName}的哪一面？`,
     ];
   }
 
-  private resolveGenderAttribution(sex?: AgentSex): string {
-    if (sex === AgentSex.woman) {
-      return '让她';
+  private collectAskedInterviewFields(
+    replies: string[]
+  ): AgentProfileMemoryField[] {
+    const fields: AgentProfileMemoryField[] = [];
+
+    for (const reply of replies) {
+      const field = this.inferAskedInterviewField(reply);
+      if (field && !fields.includes(field)) {
+        fields.push(field);
+      }
     }
-    if (sex === AgentSex.man) {
-      return '让他';
+
+    return fields;
+  }
+
+  private inferAskedInterviewField(
+    reply: string
+  ): AgentProfileMemoryField | '' {
+    if (/怎么说话|常说的一句话|口头禅|什么样的语气/.test(reply)) {
+      return 'languageHabits';
     }
-    return '让 TA';
+    if (/怎样的性格|看出.*性格|什么性格/.test(reply)) {
+      return 'personalityTraits';
+    }
+    if (/重要的经历|哪段经历|人生.*经历/.test(reply)) {
+      return 'lifeExperience';
+    }
+    if (/喜欢做什么|小爱好|喜欢的事|让 TA 开心/.test(reply)) {
+      return 'hobbies';
+    }
+    if (/共同记忆|最想留住|哪段回忆|回忆里.*小细节/.test(reply)) {
+      return 'sharedMemories';
+    }
+    return '';
   }
 }

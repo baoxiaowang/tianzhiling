@@ -40,6 +40,10 @@ export const POST_COMMENT_AGENT_REPLY_QUEUE = 'post-comment-agent-reply';
 const WEAPP_ACCOUNT_PREFIX = 'weapp:';
 const WEAPP_ACCOUNT_HASH_PATTERN = /^[a-f0-9]{12}$/i;
 
+const POST_AUTO_REPLY_DAILY_LIMIT = {
+  nonVipLimit: 3,
+} as const;
+
 export interface PostRemindReplyJobData {
   postId: string;
   agentId: string;
@@ -1302,6 +1306,15 @@ export class PostService {
         user,
         agent,
         triggerCommentId
+      );
+      return;
+    }
+
+    if (!(await this.shouldAutoReplyToPost(post, new Date()))) {
+      this.logger.info(
+        '[post-remind-reply] skip non-vip daily post reply limit, postId=%s, agentId=%s',
+        postId,
+        agentId
       );
       return;
     }
@@ -2699,6 +2712,37 @@ export class PostService {
       membership =>
         membership.lifetime ||
         Boolean(membership.expiredAt && membership.expiredAt > now)
+    );
+  }
+
+  private async shouldAutoReplyToPost(
+    post: PostEntity,
+    now: Date
+  ): Promise<boolean> {
+    if (await this.isUserVip(post.userId, now)) {
+      return true;
+    }
+
+    const dayStart = this.getBeijingDayStart(now);
+    const todayPostCount = await this.postModel.count({
+      userId: post.userId,
+      isDeleted: { $ne: true },
+      createdAt: { $gte: dayStart, $lte: post.createdAt },
+    } as never);
+
+    return todayPostCount <= POST_AUTO_REPLY_DAILY_LIMIT.nonVipLimit;
+  }
+
+  private getBeijingDayStart(value: Date): Date {
+    const offsetMs = 8 * 60 * 60 * 1000;
+    const shifted = new Date(value.getTime() + offsetMs);
+
+    return new Date(
+      Date.UTC(
+        shifted.getUTCFullYear(),
+        shifted.getUTCMonth(),
+        shifted.getUTCDate()
+      ) - offsetMs
     );
   }
 
