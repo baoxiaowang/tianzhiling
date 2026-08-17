@@ -51,18 +51,14 @@ async function main() {
             },
             $setOnInsert: {
               createdUserId: userId,
-              name: messengerName,
               realName: '',
-              avatar: MESSENGER_AVATAR_KEY,
               sex: parent.sex ?? 2,
-              iCallAgent: messengerName,
               agentCallMe: '',
               description: '',
               status: 1,
               isDefault: false,
               messengerOfAgentId: parentId,
               createdAt: now,
-              updatedAt: now,
             },
           },
           { upsert: true }
