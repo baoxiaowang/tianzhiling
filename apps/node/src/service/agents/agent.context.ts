@@ -936,9 +936,7 @@ export class AgentContextService {
         options.conversation.continuitySummary?.trim()
       ),
     });
-    const companionCorePrompt = buildDepartedCompanionCorePrompt(
-      identity || buildAgentIdentityContract({ agent: options.agent || null })
-    );
+    const companionCorePrompt = buildDepartedCompanionCorePrompt();
     const basePrompt = buildDepartedSystemPrompt({
       userId: options.auth.sub,
       agentId: this.stringifyObjectId(
@@ -989,7 +987,7 @@ export class AgentContextService {
       plan.planningMode === 'direct' &&
       replyBrief &&
       !replyBrief.conversationPlan
-        ? this.buildLightweightDirectContext(replyBrief, options.agent)
+        ? this.buildLightweightDirectContext(replyBrief)
         : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
@@ -1034,10 +1032,7 @@ export class AgentContextService {
     };
   }
 
-  private buildLightweightDirectContext(
-    replyBrief: ReplyBrief,
-    agent: AgentEntity
-  ): string {
+  private buildLightweightDirectContext(replyBrief: ReplyBrief): string {
     if (
       !replyBrief.primaryScene &&
       !replyBrief.relationshipContext?.length &&

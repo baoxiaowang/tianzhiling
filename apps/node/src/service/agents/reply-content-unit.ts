@@ -84,13 +84,13 @@ export function buildContentUnitPrompt(units: ContentUnit[]): string {
 
 function normalizeForMatch(text: string): string {
   return text
-    .replace(/[\s，。！？、；：,.!?;:'"“”‘’()（）\[\]【】]/g, '')
+    .replace(/[\s，。！？、；：,.!?;:'"“”‘’()（）[\]【】]/g, '')
     .toLowerCase();
 }
 
 function splitMatchableFragments(text: string): string[] {
   const clauses = text
-    .split(/[\s，。！？、；：,.!?;:'"“”‘’()（）\[\]【】]+/)
+    .split(/[\s，。！？、；：,.!?;:'"“”‘’()（）[\]【】]+/)
     .map(item => normalizeForMatch(item))
     .filter(item => item.length >= 2);
 
@@ -135,7 +135,9 @@ export function findContentUnitEchoes(
 
   return units.filter(unit => {
     const fragments = splitMatchableFragments(unit.text);
-    return fragments.some(fragment => overlapsReplyMeaningfully(fragment, reply));
+    return fragments.some(fragment =>
+      overlapsReplyMeaningfully(fragment, reply)
+    );
   });
 }
 
