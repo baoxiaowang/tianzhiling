@@ -111,17 +111,23 @@ async function main() {
         });
 
         if (!hasGreeting) {
-          await messages.insertOne({
+          const love = resolveLoveAttribution(parent.sex);
+          const greetings = [
+            `你好，我是${messengerName}。往后想起${parentName}的事，都可以慢慢讲给我，我会帮你一点点唤醒${parentName}的记忆，带着${love}永远陪伴你。`,
+            `最近有没有想起${parentName}的哪件小事？慢慢讲，我在听呢。`,
+          ];
+          const greetingMessages = greetings.map((content, index) => ({
             conversationId: conversation._id,
             userId,
             agentId: messenger._id,
             role: 'assistant',
             type: 'text',
-            content: `你好，我是${messengerName}。关于${parentName}，你都可以慢慢告诉我，我会帮你整理进资料里。`,
+            content,
             status: 'sent',
-            createdAt: now,
-            updatedAt: now,
-          });
+            createdAt: new Date(now.getTime() + index),
+            updatedAt: new Date(now.getTime() + index),
+          }));
+          await messages.insertMany(greetingMessages);
         }
 
         processed += 1;
@@ -164,6 +170,16 @@ function parseUserIds(args) {
   }
 
   return userIds;
+}
+
+function resolveLoveAttribution(sex) {
+  if (sex === 0) {
+    return '她的爱';
+  }
+  if (sex === 1) {
+    return '他的爱';
+  }
+  return '这份爱';
 }
 
 function buildMongoConnectionString() {
