@@ -264,11 +264,11 @@ function collectLiteralRepeatClauses(
   for (const pattern of LITERAL_REPEAT_PATTERNS) {
     const matchedClauses = Array.from(
       new Set(
-        assistantTurns.flatMap(message => {
+        assistantTurns.reduce<string[]>((clauses, message) => {
           pattern.lastIndex = 0;
           const match = message.content.match(pattern);
-          return match ? [match[0]] : [];
-        })
+          return match ? clauses.concat([match[0]]) : clauses;
+        }, [])
       )
     );
     const repeatedBefore = matchedClauses.length >= 2;
