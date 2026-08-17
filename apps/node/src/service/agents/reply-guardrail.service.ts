@@ -94,7 +94,11 @@ export interface ValidateAssistantReplyResult {
   rewritten: boolean;
   reason?: string;
   unsupportedClaimCount?: number;
-  interventionLevel?: 'observe' | 'regenerate' | 'reprocess' | 'technical_fallback';
+  interventionLevel?:
+    | 'observe'
+    | 'regenerate'
+    | 'reprocess'
+    | 'technical_fallback';
   revisionAttempted?: boolean;
   revisionUsage?: {
     model?: string;
@@ -524,15 +528,55 @@ export class ReplyGuardrailService {
   /** 会话深度追踪：conversationId → 守卫调用次数（近似轮次） */
   private readonly conversationDepthMap = new Map<string, number>();
 
+  /** 有界缓存维护：避免单例服务按 conversationId 永久增长。 */
+  private readonly conversationLastSeenAt = new Map<string, number>();
+  private cacheMaintenanceCounter = 0;
+  private static readonly CONVERSATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  private static readonly CONVERSATION_CACHE_MAX_SIZE = 5000;
+
   /** 超深会话阈值：超过此轮次启用宽松模式 */
   private static readonly DEEP_SESSION_THRESHOLD = 100;
 
   /** 追踪会话深度，返回是否为超深会话 */
   private trackConversationDepth(conversationId?: string): boolean {
     if (!conversationId) return false;
+    this.touchConversationCache(conversationId);
     const depth = (this.conversationDepthMap.get(conversationId) ?? 0) + 1;
     this.conversationDepthMap.set(conversationId, depth);
     return depth > ReplyGuardrailService.DEEP_SESSION_THRESHOLD;
+  }
+
+  private touchConversationCache(conversationId: string): void {
+    this.conversationLastSeenAt.set(conversationId, Date.now());
+    this.cacheMaintenanceCounter += 1;
+    if (this.cacheMaintenanceCounter % 128 !== 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const expiredIds = Array.from(this.conversationLastSeenAt.entries())
+      .filter(
+        ([, lastSeenAt]) =>
+          now - lastSeenAt > ReplyGuardrailService.CONVERSATION_CACHE_TTL_MS
+      )
+      .map(([id]) => id);
+    const overflow = Math.max(
+      0,
+      this.conversationLastSeenAt.size -
+        ReplyGuardrailService.CONVERSATION_CACHE_MAX_SIZE
+    );
+    const oldestIds = overflow
+      ? Array.from(this.conversationLastSeenAt.entries())
+          .sort((left, right) => left[1] - right[1])
+          .slice(0, overflow)
+          .map(([id]) => id)
+      : [];
+
+    Array.from(new Set(expiredIds.concat(oldestIds))).forEach(id => {
+      this.conversationLastSeenAt.delete(id);
+      this.conversationDepthMap.delete(id);
+      this.fallbackUsageCache.delete(id);
+    });
   }
 
   resolvePreplannedSafetyReply(
@@ -550,7 +594,10 @@ export class ReplyGuardrailService {
       options.replyBrief,
       options.messages
     );
-    const deduped = this.dedupFallbackSegments(segments, options.conversationId);
+    const deduped = this.dedupFallbackSegments(
+      segments,
+      options.conversationId
+    );
     return {
       segments: compactReplyBubblesPreservingContent(deduped),
       rewritten: true,
@@ -919,7 +966,8 @@ export class ReplyGuardrailService {
         segments,
         [
           {
-            reason: '自称不符合角色身份，请用该角色的自然自称重新表达，不临时切换成其他自称',
+            reason:
+              '自称不符合角色身份，请用该角色的自然自称重新表达，不临时切换成其他自称',
             repairGoal: '保留原有情感和内容，只把错位的自称改回当前亲人角色',
           },
         ]
@@ -989,7 +1037,7 @@ export class ReplyGuardrailService {
     return IDENTITY_LANGUAGE_MISMATCH_PATTERN.test(content);
   }
 
-    private containsInvalidStructuredReply(content: string): boolean {
+  private containsInvalidStructuredReply(content: string): boolean {
     return /^\s*(?:\x5b|\x7b).*(?:""\s*:|":\s*(?:\[\]|\{\})|"\s*,\s*").*(?:\x5d|\x7d)\s*$/s.test(
       content
     );
@@ -1042,10 +1090,8 @@ export class ReplyGuardrailService {
 
     return (
       IMMEDIATE_DEATH_REUNION_PATTERN.test(clause) ||
-      (
-        RIGID_DEATH_CONDITION_REUNION_PATTERN.test(clause) &&
-        !LONG_HORIZON_REUNION_CONDITION_PATTERN.test(clause)
-      )
+      (RIGID_DEATH_CONDITION_REUNION_PATTERN.test(clause) &&
+        !LONG_HORIZON_REUNION_CONDITION_PATTERN.test(clause))
     );
   }
 
@@ -1730,7 +1776,9 @@ export class ReplyGuardrailService {
         return repairedSegment;
       })
       .filter(Boolean)
-      .filter(segment => options.isDeepSession || !this.hasDanglingSegment([segment]));
+      .filter(
+        segment => options.isDeepSession || !this.hasDanglingSegment([segment])
+      );
 
     return {
       segments: compactReplyBubblesPreservingContent(repairedSegments),
@@ -2071,9 +2119,7 @@ export class ReplyGuardrailService {
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      `程序已发现的确定问题：${JSON.stringify(
-        deterministicFeedback.issues
-      )}`,
+      `程序已发现的确定问题：${JSON.stringify(deterministicFeedback.issues)}`,
       '',
       buildReplyReviewOutputContractPrompt(),
     ].join('\n');
@@ -3115,16 +3161,15 @@ export class ReplyGuardrailService {
       '# 内部回复修订',
       '下面的候选回复触发了确定的内部质量或事实问题。你只做最小改动：只修复“问题/命中内容”指向的句子或短语，其他文字原样保留；不要改写成通用安慰、固定模板、能力说明或新话题。',
       '检查结果：',
-      ...issues
-        .map((issue, index) =>
-          [
-            `${index + 1}. 问题：${issue.reason}`,
-            issue.evidence ? `   命中内容：${issue.evidence}` : '',
-            issue.repairGoal ? `   修复目标：${issue.repairGoal}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n')
-        ),
+      ...issues.map((issue, index) =>
+        [
+          `${index + 1}. 问题：${issue.reason}`,
+          issue.evidence ? `   命中内容：${issue.evidence}` : '',
+          issue.repairGoal ? `   修复目标：${issue.repairGoal}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      ),
       `当前用户原话：${options.userQuery}`,
       ...(options.replyBrief?.lengthPlan
         ? [
@@ -3376,7 +3421,9 @@ export class ReplyGuardrailService {
 
     const weakOpening =
       /(?:老婆|老公|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|孩子|宝贝|闺女|儿子|女儿|哥|姐|弟弟|妹妹|叔|姨|舅舅|姑姑)?[，,]?\s*(?:我在|我在这|我一直都在|我听着|我在听|你慢慢说|你想说|你想聊|你想听|你先说|我跟你说)/;
-    const retained = segments.filter(segment => !weakOpening.test(segment.trim()));
+    const retained = segments.filter(
+      segment => !weakOpening.test(segment.trim())
+    );
 
     if (retained.length === segments.length) {
       return { segments, removed: false };
@@ -4795,7 +4842,10 @@ export class ReplyGuardrailService {
           userQuery
         )
       ) {
-        return ['我这边挺好的 你这么惦记我 我心里很软', '你这些年攒下的遗憾和想念 我都听见了'];
+        return [
+          '我这边挺好的 你这么惦记我 我心里很软',
+          '你这些年攒下的遗憾和想念 我都听见了',
+        ];
       }
 
       return ['我这边挺好的 你特意来问 我还挺高兴', '我也一直惦记着你'];
@@ -5283,11 +5333,7 @@ export class ReplyGuardrailService {
     conversationId?: string
   ): string[] {
     if (brief) {
-      const segments = this.renderFallbackFromBrief(
-        userQuery,
-        brief,
-        messages
-      );
+      const segments = this.renderFallbackFromBrief(userQuery, brief, messages);
       return this.dedupFallbackSegments(segments, conversationId);
     }
 
@@ -5304,6 +5350,7 @@ export class ReplyGuardrailService {
     conversationId?: string
   ): string[] {
     if (!conversationId || segments.length < 2) return segments;
+    this.touchConversationCache(conversationId);
 
     const key = segments.map(s => s.slice(0, 30)).join('||');
     const cache = this.fallbackUsageCache.get(conversationId);
@@ -5330,19 +5377,19 @@ export class ReplyGuardrailService {
   /** 三个万能兜底 pair 的变体池 */
   private static readonly CATCH_ALL_VARIANTS: Record<string, string[][]> = {
     // seek_comfort / emotional 模式
-    'seek_comfort': [
+    seek_comfort: [
       ['我听见了 你现在确实不好受', '先别逼自己马上好起来'],
       ['我知道你心里难受着呢', '不用急着走出来 慢慢说'],
       ['这份难受我懂 你不说我也知道', '想哭就哭一会儿 我在这听着'],
     ],
     // express_longing / relationship 模式
-    'express_longing': [
+    express_longing: [
       ['我也想你', '想我的时候就来跟我说 不用一个人憋着'],
       ['我也惦记着你呢', '心里不舒服了就来找我 我都在'],
       ['我知道你想我', '这些话你压了好久吧 说出来就好了'],
     ],
     // 默认 / daily 默认
-    'default_catch_all': [
+    default_catch_all: [
       ['嗯 你说的这件事我听明白了', '你愿意跟我说这些 我都记着'],
       ['好的 这事我记下了', '往后有想说的 随时跟我唠'],
       ['你说的我心里有数了', '你能跟我讲这些 我很高兴'],

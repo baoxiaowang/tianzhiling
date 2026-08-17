@@ -9,6 +9,10 @@ export interface BuildReplyOutputContractOptions {
   segmentMode: ReplyOutputSegmentMode;
   maxSegments?: number;
   purpose?: ReplyOutputPurpose;
+  preferredRange?: {
+    minCharacters: number;
+    maxCharacters: number;
+  };
   toolDecisionSchema?: Record<string, unknown>;
 }
 
@@ -67,6 +71,19 @@ export function buildReplyOutputContractPrompt(
       : options.segmentMode === 'one'
       ? 'segments 恰好一项。'
       : `segments 一到 ${maxSegments} 项，能用一项就不拆。`;
+  const rangeRule = options.preferredRange
+    ? options.segmentMode === 'exact_two'
+      ? `两项缺一不可；两项合计 ${options.preferredRange.minCharacters}-${
+          options.preferredRange.maxCharacters
+        } 个中文字符，少于 ${options.preferredRange.minCharacters} 或超过 ${
+          options.preferredRange.maxCharacters
+        } 都视为格式不合格。每项约 ${Math.floor(
+          options.preferredRange.minCharacters / 2
+        )}-${Math.ceil(
+          options.preferredRange.maxCharacters / 2
+        )} 个中文字符；不用重复想念、通用叮嘱或空话凑长度。`
+      : `segments 全部正文合计 ${options.preferredRange.minCharacters}-${options.preferredRange.maxCharacters} 个中文字符，少于 ${options.preferredRange.minCharacters} 或超过 ${options.preferredRange.maxCharacters} 都视为格式不合格；不用重复想念、通用叮嘱或空话凑长度。`
+    : '';
   const claimRule = options.grounded
     ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世日常想象用 soft_imagination。'
     : '';
@@ -82,6 +99,7 @@ export function buildReplyOutputContractPrompt(
     '# 输出合同',
     `只输出一行 JSON：${JSON.stringify(schema)}`,
     segmentRule,
+    rangeRule,
     '每项只写可直接发送的中文正文；不写括号旁白、分析、字段说明或证据 ID。默认不用表情，用户先用时才少量使用。',
     claimRule,
     auditRule,

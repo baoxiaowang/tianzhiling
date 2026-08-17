@@ -40,7 +40,13 @@ interface ContributionEvidence {
 }
 
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
-  /多说(?:点|一点|几句)|说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没说|你(?:先|也|倒是)?(?:说|讲)(?:说)?(?:你|自己|今天|那边|做了什么|干了啥)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
+  /多说(?:点|一点|几句)|说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没(?:说|回答)|你(?:先|也|倒是|就|再)?(?:说|讲)(?:说|下|点|一下)?(?:你|自己|今天|那边|做了什么|干了啥|小事|你的事)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
+const ACTIVE_ROLE_STATUS_REQUEST_PATTERN =
+  /(?:你|您)(?:今天|刚才|最近|这会儿|现在|那边)?(?:吃|喝|做|忙|干)(?:了|的|着|过)?(?:啥|什么|哪样|什么事)|(?:你|您)(?:今天|刚才|最近|这会儿|现在|那边)?(?:在)?(?:干嘛|做什么)/;
+const ACTIVE_CONTRIBUTION_FOLLOWUP_PATTERN =
+  /^(?:(?:爸|爸爸|妈|妈妈|姥姥|奶奶|爷爷|老公|老婆)[，,、\s]*)?(?:你)?(?:就|再|接着|继续|那|这个|刚才|今天|具体|然后|还有|多说|说下|讲下|你呢)/;
+const ACTIVE_CONTRIBUTION_STOP_PATTERN =
+  /(?:晚安|睡了|先睡|休息了|不聊了|先这样|回头聊|下次聊|拜拜|再见)/;
 const SHARED_PAST_EVIDENCE_PATTERN =
   /以前|从前|小时候|那时候|当年|那年|那次|那回|曾经|我们|咱们|一起|带我|陪我|给我|教我/;
 const USER_CLOSE_PATTERN =
@@ -71,10 +77,13 @@ export function resolveReplyActiveContributionPlan(options: {
   currentQuery: string;
   assistantContribution?: ConversationAssistantContribution;
   evidence?: ContributionEvidence[];
+  recentMessages?: MessageEntity[];
 }): ReplyActiveContributionPlan | undefined {
   const requested =
-    ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(options.currentQuery) ||
-    options.assistantContribution === 'self_expression';
+    isReplyActiveContributionRequest(
+      options.currentQuery,
+      options.recentMessages
+    ) || options.assistantContribution === 'self_expression';
 
   if (!requested) {
     return undefined;
@@ -94,6 +103,55 @@ export function resolveReplyActiveContributionPlan(options: {
   };
 }
 
+export function isReplyActiveContributionRequest(
+  currentQuery: string,
+  recentMessages: MessageEntity[] = []
+): boolean {
+  const query = currentQuery.trim();
+  if (!query || ACTIVE_CONTRIBUTION_STOP_PATTERN.test(query)) {
+    return false;
+  }
+  if (
+    ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(query) ||
+    ACTIVE_ROLE_STATUS_REQUEST_PATTERN.test(query)
+  ) {
+    return true;
+  }
+
+  const recentUserRequests = recentMessages
+    .filter(message => message.role === MessageRole.user)
+    .slice(-3)
+    .some(message =>
+      ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(message.content?.trim() || '')
+    );
+
+  return (
+    recentUserRequests &&
+    (ACTIVE_CONTRIBUTION_FOLLOWUP_PATTERN.test(query) ||
+      Array.from(query.replace(/\s/gu, '')).length <= 16)
+  );
+}
+
+export function isReplyRepeatedUserRequest(
+  currentQuery: string,
+  recentMessages: MessageEntity[] = []
+): boolean {
+  const normalized = normalizeUserRequest(currentQuery);
+  if (
+    normalized.length < 6 ||
+    ACTIVE_CONTRIBUTION_STOP_PATTERN.test(currentQuery)
+  ) {
+    return false;
+  }
+
+  return recentMessages
+    .filter(message => message.role === MessageRole.user)
+    .slice(-3)
+    .some(
+      message => normalizeUserRequest(message.content || '') === normalized
+    );
+}
+
 export function resolveReplyStrategyQualityPlan(options: {
   currentQuery: string;
   recentMessages?: MessageEntity[];
@@ -104,28 +162,38 @@ export function resolveReplyStrategyQualityPlan(options: {
   const currentQuery = options.currentQuery.trim();
   const explicitClose = USER_CLOSE_PATTERN.test(currentQuery);
   const assistantTurns = recentAssistantTurns(options.recentMessages);
+  const repeatedUserRequest = isReplyRepeatedUserRequest(
+    currentQuery,
+    options.recentMessages
+  );
 
   if (options.protectedTurn && !explicitClose) {
     return undefined;
   }
 
-  if (assistantTurns.length < 2 && !explicitClose) {
+  if (assistantTurns.length < 2 && !explicitClose && !repeatedUserRequest) {
     return undefined;
   }
 
   // 结构化检测优先：从 replyConversationMoves 判断行动重复
   const structuredRepeatedMoves: ReplyRepeatedStrategyMove[] = [];
-  const lastTwoMoves = assistantTurns.slice(-2)
+  const lastTwoMoves = assistantTurns
+    .slice(-2)
     .filter(m => (m.replyConversationMoves || []).length > 0);
 
   if (lastTwoMoves.length >= 2) {
     const lastMoves = lastTwoMoves.map(m => m.replyConversationMoves || []);
     let tenderAcknowledgementDetected = false;
     // tender + acknowledge/affirm 连续
-    if (lastMoves.every(moves =>
-      moves.some(m => ['acknowledge', 'affirm'].includes(m)) &&
-      assistantTurns.slice(-2).every(m => m.replyConversationStance === 'tender')
-    )) {
+    if (
+      lastMoves.every(
+        moves =>
+          moves.some(m => ['acknowledge', 'affirm'].includes(m)) &&
+          assistantTurns
+            .slice(-2)
+            .every(m => m.replyConversationStance === 'tender')
+      )
+    ) {
       structuredRepeatedMoves.push('tender_acknowledge_affirm');
       tenderAcknowledgementDetected = true;
     }
@@ -134,9 +202,12 @@ export function resolveReplyStrategyQualityPlan(options: {
       structuredRepeatedMoves.push('generic_empathy');
     }
     // affirm/comfort 连续 → generic_presence
-    if (!tenderAcknowledgementDetected && lastMoves.every(moves =>
-      moves.every(m => ['affirm', 'comfort', 'acknowledge'].includes(m))
-    )) {
+    if (
+      !tenderAcknowledgementDetected &&
+      lastMoves.every(moves =>
+        moves.every(m => ['affirm', 'comfort', 'acknowledge'].includes(m))
+      )
+    ) {
       structuredRepeatedMoves.push('generic_presence');
     }
     // suggest 连续 → generic_advice
@@ -174,20 +245,35 @@ export function resolveReplyStrategyQualityPlan(options: {
       ...structuredRepeatedMoves,
       ...regexRepeatedMoves,
       ...literalRepeatedMoves,
-    ])
+    ]),
   ];
+  if (repeatedUserRequest && !repeatedMoves.includes('literal_repeat')) {
+    repeatedMoves.push('literal_repeat');
+  }
 
   // 升级检测：最近4轮用户消息在逐轮升级（字数递增、指控加强），AI一直tender回→触发换挡
-  const userTurns = assistantTurns.map((m, i) => {
-    const idx = (options.recentMessages || []).findIndex(r => r.id === m.id);
-    if (idx <= 0) return null;
-    const prevUser = (options.recentMessages || []).slice(0, idx).reverse().find(r => r.role === 'user');
-    return prevUser?.content || '';
-  }).filter(Boolean);
+  const userTurns = assistantTurns
+    .map((m, i) => {
+      const idx = (options.recentMessages || []).findIndex(r => r.id === m.id);
+      if (idx <= 0) return null;
+      const prevUser = (options.recentMessages || [])
+        .slice(0, idx)
+        .reverse()
+        .find(r => r.role === 'user');
+      return prevUser?.content || '';
+    })
+    .filter(Boolean);
 
-  const isEscalating = userTurns.length >= 3 &&
-    userTurns.slice(-3).every((t, i, arr) => i === 0 || t.length >= arr[i-1].length) &&
-    userTurns.some(t => /[？?]/.test(t) || /凭什么|为什么|所以.*就|一句.*就|怎么(?:办|样)|有什么用|那.*呢/.test(t));
+  const isEscalating =
+    userTurns.length >= 3 &&
+    userTurns
+      .slice(-3)
+      .every((t, i, arr) => i === 0 || t.length >= arr[i - 1].length) &&
+    userTurns.some(
+      t =>
+        /[？?]/.test(t) ||
+        /凭什么|为什么|所以.*就|一句.*就|怎么(?:办|样)|有什么用|那.*呢/.test(t)
+    );
 
   if (isEscalating && !explicitClose) {
     repeatedMoves.push('generic_empathy');
@@ -222,6 +308,12 @@ export function resolveReplyStrategyQualityPlan(options: {
   };
 }
 
+function normalizeUserRequest(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\s，。！？、,.!?；;：:'"“”‘’（）()[\]【】~～]/gu, '');
+}
+
 function recentAssistantTurns(
   messages: MessageEntity[] | undefined
 ): MessageEntity[] {
@@ -240,8 +332,9 @@ function recentAssistantTurns(
 
   const turns = Array.from(grouped.values()).map(group => {
     const base =
-      group.find(message => (message.replyConversationMoves || []).length > 0) ||
-      group[0];
+      group.find(
+        message => (message.replyConversationMoves || []).length > 0
+      ) || group[0];
     return {
       ...base,
       content: group
