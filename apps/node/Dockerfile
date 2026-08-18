@@ -36,9 +36,15 @@ FROM node:20.19-alpine AS runtime
 
 RUN apk add --no-cache tzdata ffmpeg && npm install -g pm2@5.4.3
 
+ARG RELEASE_VERSION=unknown
+
+LABEL org.opencontainers.image.revision=$RELEASE_VERSION
+
 ENV TZ="Asia/Shanghai"
 
 ENV NODE_ENV=production
+
+ENV RELEASE_VERSION=$RELEASE_VERSION
 
 EXPOSE 7001
 

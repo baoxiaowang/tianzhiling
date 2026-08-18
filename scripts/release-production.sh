@@ -94,6 +94,10 @@ done
 git merge --ff-only "$TARGET"
 [[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
 
+# Keep runtime telemetry, the container environment, and the immutable image
+# label tied to the exact Git target selected for this release.
+export RELEASE_VERSION="$TARGET"
+
 PHASE='production-build'
 docker compose --profile prod build "${SERVICES[@]}"
 
@@ -126,6 +130,8 @@ for service in "${SERVICES[@]}"; do
 done
 [[ "$(docker exec tzl_node pm2 jlist | grep -o '"status":"online"' | wc -l | tr -d ' ')" == '4' ]]
 [[ "$(docker exec tzl_admin_node pm2 jlist | grep -o '"status":"online"' | wc -l | tr -d ' ')" == '2' ]]
+[[ "$(docker exec tzl_node printenv RELEASE_VERSION)" == "$TARGET" ]]
+[[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' tzl_node)" == "$TARGET" ]]
 
 PHASE='public-health'
 curl -fsS --max-time 20 "$PUBLIC_HEALTH" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
@@ -147,6 +153,7 @@ trap - ERR
 
 printf '[RELEASE_OK]\n'
 printf 'branch=%s\ncommit=%s\nprevious_commit=%s\n' "$BRANCH" "$TARGET" "$PREVIOUS_COMMIT"
+printf 'release_version=%s\n' "$TARGET"
 for service in "${SERVICES[@]}"; do
   docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
 done

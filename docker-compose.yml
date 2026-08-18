@@ -20,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: apps/node/Dockerfile
+      args:
+        RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     env_file:
       - .env
     environment:
@@ -35,6 +37,7 @@ services:
       NODE_MONGO_USERNAME: ${MONGO_USERNAME:-admin}
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
+      RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     expose:
       - "7001"
     volumes:
