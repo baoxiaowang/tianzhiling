@@ -1,5 +1,6 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import { ILogger } from '@midwayjs/logger';
 import { createHash, randomBytes } from 'crypto';
 import type {
   AcceptAgentShareInviteResultDTO,
@@ -38,6 +39,8 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
+  UserMembershipEntity,
+  UserMembershipStatus,
   UserEntity,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
@@ -46,6 +49,7 @@ import { AgentMemoryProfileService } from './agents/agent-memory-profile.service
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
 import { WechatPayService } from './wechat-pay.service';
+import { MessengerService } from './agents/messenger.service';
 
 export type AgentProfile = AgentProfileDTO;
 export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
@@ -63,6 +67,9 @@ interface AgentAccess {
 
 @Provide()
 export class AgentService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
@@ -81,6 +88,9 @@ export class AgentService {
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
+  @InjectEntityModel(UserMembershipEntity)
+  userMembershipModel: MongoRepository<UserMembershipEntity>;
+
   @Inject()
   postImageService: PostImageService;
 
@@ -92,6 +102,9 @@ export class AgentService {
 
   @Inject()
   wechatPayService: WechatPayService;
+
+  @Inject()
+  messengerService: MessengerService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -554,8 +567,45 @@ export class AgentService {
 
     const savedAgent = await this.agentModel.save(agent);
     await this.createConversation(savedAgent, createdUserId, now);
+    await this.ensureMessengerForNewMemberAgent(savedAgent, createdUserId, now);
 
     return this.buildAgentProfile(savedAgent);
+  }
+
+  private async ensureMessengerForNewMemberAgent(
+    agent: AgentEntity,
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<void> {
+    try {
+      const memberships = await this.userMembershipModel.find({
+        where: {
+          userId,
+          status: UserMembershipStatus.active,
+        },
+      });
+      const isMember = memberships.some(
+        membership =>
+          membership.lifetime ||
+          Boolean(membership.expiredAt && membership.expiredAt > now)
+      );
+
+      if (!isMember) {
+        return;
+      }
+
+      const messenger = await this.messengerService.ensureMessengerForAgent(
+        agent
+      );
+      await this.messengerService.ensureMessengerConversation(agent, messenger);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent] member messenger activation failed, userId=%s, agentId=%s, reason=%s',
+        String(userId),
+        String(agent.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   async updateAgentAvatar(

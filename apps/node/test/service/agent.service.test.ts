@@ -78,12 +78,17 @@ function createService(
     shareMembers?: AgentShareMemberEntity[];
     conversations?: ConversationEntity[];
     messages?: MessageEntity[];
+    memberships?: Array<{
+      lifetime?: boolean;
+      expiredAt?: Date;
+    }>;
   } = {}
 ) {
   const shareInvites = options.shareInvites ?? [];
   const shareMembers = options.shareMembers ?? [];
   const conversations = options.conversations ?? [];
   const messages = options.messages ?? [];
+  const memberships = options.memberships ?? [];
   const service = new AgentService();
 
   service.agentModel = {
@@ -337,6 +342,22 @@ function createService(
       return user;
     }),
   } as any;
+  service.userMembershipModel = {
+    find: jest.fn(async () => memberships),
+  } as any;
+  service.messengerService = {
+    ensureMessengerForAgent: jest.fn(async (agent: AgentEntity) =>
+      createAgent(AGENT_B_ID, {
+        createdUserId: agent.createdUserId,
+        name: `${agent.name}的小使者`,
+        messengerOfAgentId: agent.id,
+      })
+    ),
+    ensureMessengerConversation: jest.fn(async () => new ConversationEntity()),
+  } as any;
+  service.logger = {
+    warn: jest.fn(),
+  } as any;
   service.wechatPayService = {
     createUnlimitedMiniProgramCode: jest.fn(async () => ({
       buffer: Buffer.from('png'),
@@ -422,6 +443,45 @@ describe('AgentService default agent', () => {
 
     expect(result.sex).toBe(AgentSex.unknown);
     expect(agents[0].description).toContain('性别未确定');
+  });
+
+  it('creates a messenger immediately for an active member new agent', async () => {
+    const agents: AgentEntity[] = [];
+    const service = createService(agents, {
+      memberships: [{ lifetime: true }],
+    });
+
+    await service.createAgent(AUTH, {
+      name: '奶奶',
+      sex: AgentSex.woman,
+      iCallAgent: '奶奶',
+      agentCallMe: '小宝',
+    });
+
+    expect(
+      service.messengerService.ensureMessengerForAgent
+    ).toHaveBeenCalledWith(agents[0]);
+    expect(
+      service.messengerService.ensureMessengerConversation
+    ).toHaveBeenCalledWith(agents[0], expect.any(AgentEntity));
+  });
+
+  it('does not create a messenger for an expired non-member', async () => {
+    const agents: AgentEntity[] = [];
+    const service = createService(agents, {
+      memberships: [{ expiredAt: new Date('2026-05-01T00:00:00.000Z') }],
+    });
+
+    await service.createAgent(AUTH, {
+      name: '奶奶',
+      sex: AgentSex.woman,
+      iCallAgent: '奶奶',
+      agentCallMe: '小宝',
+    });
+
+    expect(
+      service.messengerService.ensureMessengerForAgent
+    ).not.toHaveBeenCalled();
   });
 
   it('clears the previous default when another agent is set as default', async () => {

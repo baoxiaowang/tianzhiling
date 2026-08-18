@@ -49,6 +49,7 @@ import {
   isVipPlanUpgrade,
 } from './vip-upgrade-pricing';
 import type { VipUpgradePricing } from './vip-upgrade-pricing';
+import { MessengerService } from './agents/messenger.service';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
@@ -100,6 +101,9 @@ export class OrderService {
 
   @Inject()
   bullmqFramework: bullmq.Framework;
+
+  @Inject()
+  messengerService: MessengerService;
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
@@ -1420,6 +1424,7 @@ export class OrderService {
 
     await this.userMembershipModel.save(membership);
     await this.grantVipEntitlements(order, membership, plan, snapshot, now);
+    await this.messengerService.ensureMessengersForUser(order.userId);
   }
 
   private async grantVipEntitlements(

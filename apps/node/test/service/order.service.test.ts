@@ -437,6 +437,13 @@ function createService(
   const queue = {
     addJobToQueue: jest.fn().mockResolvedValue(undefined),
   };
+  const messengerService = {
+    ensureMessengersForUser: jest.fn().mockResolvedValue({
+      processed: 1,
+      messengersCreated: 1,
+      conversationsCreated: 1,
+    }),
+  };
 
   service.logger = {
     warn: jest.fn(),
@@ -454,6 +461,7 @@ function createService(
       name === ORDER_PAYMENT_EXPIRE_QUEUE ? queue : undefined
     ),
   } as any;
+  service.messengerService = messengerService as any;
 
   return {
     service,
@@ -468,6 +476,7 @@ function createService(
     agentEntitlementModel,
     wechatPayService,
     queue,
+    messengerService,
     auth: {
       sub: USER_ID,
       accountId: 'account-1',
@@ -734,6 +743,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       order,
       orderModel,
       userMembershipModel,
+      messengerService,
       wechatPayService,
     } = createService();
     const paidAt = '2026-05-01T00:10:00+08:00';
@@ -764,6 +774,9 @@ describe('OrderService payment expiration and reconciliation', () => {
         status: UserMembershipStatus.active,
         lifetime: false,
       })
+    );
+    expect(messengerService.ensureMessengersForUser).toHaveBeenCalledWith(
+      order.userId
     );
     expect(order.status).toBe(OrderStatus.completed);
     expect(order.paidAmount).toBe(990);
