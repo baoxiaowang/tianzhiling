@@ -399,11 +399,6 @@ export class MessengerService {
       modelSucceeded: false,
       fallbackUsed: false,
     };
-    const directReply = this.buildDirectCapabilityReply(
-      options.agent,
-      options.input
-    );
-
     try {
       const draft = this.buildDraft(options.agent);
       const [userMessageCount, conversationMessages] = await Promise.all([
@@ -423,22 +418,38 @@ export class MessengerService {
         .filter(message => message.role === MessageRole.assistant)
         .map(message => message.content?.trim() || '')
         .filter(Boolean);
-      sourceMessage = conversationMessages.find(
+      const userMessages = conversationMessages.filter(
         message => message.role === MessageRole.user
       );
+      sourceMessage = userMessages[0];
+      const previousUserInputs = userMessages
+        .slice(1)
+        .map(message => message.content?.trim() || '')
+        .filter(Boolean);
       const askedFields = this.collectAskedInterviewFields(previousReplies);
+      const directReply = this.buildDirectCapabilityReply(
+        options.agent,
+        options.input
+      );
+      const shortContextReply = this.buildShortContextReply(
+        options.agent,
+        options.input,
+        previousReplies
+      );
 
-      if (directReply) {
+      if (directReply || shortContextReply) {
         await this.recordCallEvent(options, {
           status: MessengerCallStatus.skipped,
-          skipReason: 'direct_capability_reply',
+          skipReason: directReply
+            ? 'direct_capability_reply'
+            : 'short_context_reply',
           sourceMessageId: sourceMessage?.id,
           durationMs: Date.now() - startedAt,
           telemetry,
           changedProfileFields: [],
           profileSaved: false,
         });
-        return directReply;
+        return directReply || shortContextReply || '';
       }
 
       if (!this.isMeaningfulInterviewInput(options.input)) {
@@ -461,6 +472,7 @@ export class MessengerService {
         focusField: askedFields[0] || '',
         askedFields,
         previousReplies,
+        previousUserInputs,
         turnCount: userMessageCount,
         onTelemetry: value => {
           telemetry = value;
@@ -613,11 +625,50 @@ export class MessengerService {
     }
 
     if (
-      /(?:他|她|爸爸|妈妈|爸|妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:在那边|去那边|离开后).{0,8}(?:好吗|好不好|怎么样|过得好吗|受苦吗)/.test(
+      /(?:他|她|爸爸|妈妈|爸|妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:在(?:哪|那)边|去那边|离开后).{0,8}(?:好吗|好不好|怎么样|过得好吗|过的好不好|受苦吗)/.test(
         query
       )
     ) {
-      return `我不能确认${parentName}在“那边”的真实情况。我能做的是帮你把关于${parentName}的记忆整理好。`;
+      return `听得出来你很想${parentName}。我不能确认那边的真实情况，但可以陪你把关于${parentName}的记忆慢慢补完整。`;
+    }
+
+    if (
+      /(?:照片|头像|影像).{0,12}(?:复活|通话|视频|说话)|(?:复活|通话|视频).{0,12}(?:照片|头像|影像)/.test(
+        query
+      )
+    ) {
+      return `我懂你想再见${parentName}。目前小使者不能用照片复活或视频通话，但可以帮${parentName}补全记忆。`;
+    }
+
+    return undefined;
+  }
+
+  private buildShortContextReply(
+    agent: AgentEntity,
+    input: string,
+    previousReplies: string[]
+  ): string | undefined {
+    const answer = input.trim().replace(/[。！!~～]+$/g, '');
+    const latestReply = previousReplies[0]?.trim() || '';
+    if (!latestReply || !/[？?]/.test(latestReply)) {
+      return undefined;
+    }
+
+    const name = agent.name?.trim() || 'TA';
+    if (/^(?:有|有的|有啊|有呀)$/.test(answer)) {
+      const field = this.collectAskedInterviewFields([latestReply])[0];
+      const followUps: Partial<Record<AgentProfileMemoryField, string>> = {
+        personalityTraits: `具体是哪一种性格，让你最先想到${name}？`,
+        lifeExperience: '是哪一段经历呢？你可以从最清楚的地方说。',
+        hobbies: `${name}最喜欢的具体是什么呢？`,
+        languageHabits: `有的话，${name}最常说的是哪一句？`,
+        sharedMemories: '是哪一段回忆呢？你可以慢慢说。',
+      };
+      return field ? followUps[field] : '有的话，你可以把具体内容慢慢告诉我。';
+    }
+
+    if (/^(?:对|是|是的|对的|嗯|确认|没错)$/.test(answer)) {
+      return `明白，我接着听。关于${name}，你想从哪里继续都可以。`;
     }
 
     return undefined;

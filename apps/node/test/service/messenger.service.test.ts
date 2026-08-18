@@ -416,6 +416,103 @@ describe('MessengerService', () => {
     });
   });
 
+  it('asks for the concrete phrase after a bare yes instead of advancing fields', async () => {
+    const {
+      service,
+      messageModel,
+      buildInterviewTurn,
+      messengerCallEventModel,
+    } = createService();
+    const parent = buildAgent({ name: '爸爸' });
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    messageModel.find.mockResolvedValue([
+      {
+        id: new MongoObjectId(),
+        role: MessageRole.user,
+        content: '有',
+      },
+      {
+        role: MessageRole.assistant,
+        content: '爸爸平时怎么说话，有没有常说的一句话？',
+      },
+    ]);
+
+    const reply = await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '有',
+    });
+
+    expect(reply).toBe('有的话，爸爸最常说的是哪一句？');
+    expect(buildInterviewTurn).not.toHaveBeenCalled();
+    expect(messengerCallEventModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skipReason: 'short_context_reply',
+        profileSaved: false,
+      })
+    );
+  });
+
+  it('does not enter another confirmation loop for a bare confirmation', async () => {
+    const { service, messageModel, buildInterviewTurn } = createService();
+    const parent = buildAgent({ name: '爸爸' });
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    messageModel.find.mockResolvedValue([
+      {
+        id: new MongoObjectId(),
+        role: MessageRole.user,
+        content: '对',
+      },
+      {
+        role: MessageRole.assistant,
+        content: '你是想通过照片和爸爸通话吗？',
+      },
+    ]);
+
+    const reply = await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '对',
+    });
+
+    expect(reply).toContain('明白，我接着听');
+    expect(reply).not.toContain('确认');
+    expect(buildInterviewTurn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['我想他了他在哪边过的好不好呀', '不能确认那边的真实情况'],
+    ['抖音上用照片可以通话吗', '不能用照片复活或视频通话'],
+  ])(
+    'answers the current capability question directly: %s',
+    async (input, expected) => {
+      const { service, messageModel, buildInterviewTurn } = createService();
+      const parent = buildAgent({ name: '爸爸' });
+      const conversation = new ConversationEntity();
+      conversation.id = new MongoObjectId();
+      messageModel.find.mockResolvedValue([
+        {
+          id: new MongoObjectId(),
+          role: MessageRole.user,
+          content: input,
+        },
+      ]);
+
+      const reply = await service.runInterviewTurn({
+        agent: parent,
+        conversation,
+        input,
+      });
+
+      expect(reply).toContain(expected);
+      expect(buildInterviewTurn).not.toHaveBeenCalled();
+    }
+  );
+
   it('records dedicated model, token, latency, and profile-save telemetry', async () => {
     const {
       service,
@@ -462,12 +559,22 @@ describe('MessengerService', () => {
       };
     });
     alignManualProfileEdits.mockImplementation(async ({ agent }) => agent);
+    const previousReleaseVersion = process.env.RELEASE_VERSION;
+    process.env.RELEASE_VERSION = '0123456789abcdef0123456789abcdef01234567';
 
-    await service.runInterviewTurn({
-      agent: parent,
-      conversation,
-      input: '爸爸喜欢下棋',
-    });
+    try {
+      await service.runInterviewTurn({
+        agent: parent,
+        conversation,
+        input: '爸爸喜欢下棋',
+      });
+    } finally {
+      if (previousReleaseVersion === undefined) {
+        delete process.env.RELEASE_VERSION;
+      } else {
+        process.env.RELEASE_VERSION = previousReleaseVersion;
+      }
+    }
 
     expect(messengerCallEventModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -486,6 +593,7 @@ describe('MessengerService', () => {
         totalTokens: 150,
         profileSaved: true,
         changedProfileFields: ['hobbies'],
+        releaseVersion: '0123456789abcdef0123456789abcdef01234567',
       })
     );
   });

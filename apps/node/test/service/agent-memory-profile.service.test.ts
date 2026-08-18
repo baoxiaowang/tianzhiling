@@ -232,6 +232,94 @@ describe('AgentMemoryProfileService', () => {
     );
   });
 
+  it('applies a short correction to the previously stored wording', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '明白，是自己的小事业，后来开了诊所。',
+        nextFocusField: '',
+        changedFields: ['lifeExperience'],
+        changeEvidence: { lifeExperience: '事业' },
+        lifeExperience: '有自己的小事业，后来开了诊所。',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '是事业',
+      previousUserInputs: ['爸爸自己的小失业，开了个诊所'],
+      draft: {
+        lifeExperience: '经历过小失业，之后开了个诊所。',
+      },
+    });
+
+    expect(result.draft.lifeExperience).toContain('事业');
+    expect(result.draft.lifeExperience).not.toContain('失业');
+  });
+
+  it('rejects a stale profile rewrite without evidence in the current turn', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '听得出来，你很希望爸爸快乐。',
+        nextFocusField: '',
+        changedFields: ['lifeExperience'],
+        changeEvidence: { lifeExperience: '年轻时搞过养殖' },
+        lifeExperience: '年轻时搞过养殖，中年在盐场做技术员。',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+    });
+
+    const original = '年轻时搞过养殖。';
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '我想让我爸快乐',
+      draft: { lifeExperience: original },
+    });
+
+    expect(result.draft.lifeExperience).toBe(original);
+  });
+
+  it('removes internal user and TA placeholders from accepted memories', async () => {
+    const agent = createAgent();
+    agent.agentCallMe = '爱人';
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '初中就认识，这段感情走了很久。',
+        nextFocusField: '',
+        changedFields: ['lifeExperience', 'sharedMemories'],
+        changeEvidence: {
+          lifeExperience: '初中就认识',
+          sharedMemories: '我是他的初恋',
+        },
+        lifeExperience: '初中就认识用户，TA从那时开始喜欢用户。',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '用户是TA的初恋。',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '我们初中就认识，我是他的初恋。',
+    });
+
+    expect(result.draft.lifeExperience).toContain('爱人');
+    expect(result.draft.lifeExperience).toContain('爸爸');
+    expect(result.draft.sharedMemories).not.toMatch(/用户|TA/i);
+  });
+
   it('exposes model and token telemetry to the messenger call site', async () => {
     const agent = createAgent();
     const { service, generateText } = createService([]);
