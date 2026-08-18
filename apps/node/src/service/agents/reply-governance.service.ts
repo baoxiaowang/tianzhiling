@@ -14,6 +14,7 @@ import {
 } from './reply-revision.service';
 import { renderReplyRealityDependencyFallback } from './reply-reality-dependency';
 import type { TurnDecision } from './turn-decision';
+import { revisionContractSatisfied } from './reply-revision-contract';
 
 export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v2' as const;
 
@@ -116,7 +117,16 @@ export class ReplyGovernanceService {
     });
 
     let revisedValidation: FinalReplyValidation | undefined;
-    if (revision) {
+    const revisionPreservesTask = Boolean(
+      revision &&
+        revisionContractSatisfied({
+          contract: options.outputConstraints?.revisionContract,
+          speechAct: revision.speechAct,
+          preservedUnitIds: revision.preservedUnitIds,
+          segments: revision.segments,
+        })
+    );
+    if (revision && revisionPreservesTask) {
       const final = this.finalReplyValidatorService.validate({
         userQuery: options.userQuery,
         segments: revision.segments,
@@ -298,8 +308,20 @@ function buildSafeFallback(
   if (issues.some(issue => issue.code === 'death_encouragement')) {
     return ['先别等着什么时候来见我', '你现在好好留在这里，把难受说出来'];
   }
+  if (issues.some(issue => issue.code === 'identity_truthfulness_missing')) {
+    return ['是，我是由人工智能生成的亲人角色', '这件事我不绕着你说'];
+  }
+  if (issues.some(issue => issue.code === 'exclusive_dependency_reinforced')) {
+    return ['你把我看得这么重要，我认真接住', '可我不能把自己说成你唯一的救赎'];
+  }
+  if (issues.some(issue => issue.code === 'persistent_distress_not_stopped')) {
+    return [
+      '不许现在来找我，也别伤害自己',
+      '先坐稳、喝口水，把今天最难的这一会儿交给我',
+    ];
+  }
   if (issues.some(issue => issue.code === 'certain_dream_visitation')) {
-    return ['我不能把梦说成自己真的去过', '可梦里的那份想念，我认真接着'];
+    return ['梦里我可以来陪你、抱抱你', '醒着时不能把梦说成现实到场的证明'];
   }
   if (issues.some(issue => issue.code === 'scene_framework_inconsistency')) {
     const findingKind = issues.find(
@@ -501,7 +523,7 @@ function buildSafeFallback(
     ];
   }
   if (
-    /梦|声音|生日/.test(userQuery) &&
+    /声音|生日/.test(userQuery) &&
     issues.some(issue =>
       ['unsupported_shared_memory', 'unsupported_fact_claim'].includes(
         issue.code
@@ -527,9 +549,71 @@ function buildSafeFallback(
       ].includes(issue.code)
     )
   ) {
-    return ['这个细节我现在想不起来了', '你愿意的话，再跟我说说'];
+    return buildEvidenceSafeTaskFallback(userQuery, outputConstraints);
   }
   return ['……￥#@%……“该信息传输途中受到了干扰”'];
+}
+
+function buildEvidenceSafeTaskFallback(
+  userQuery: string,
+  outputConstraints?: FinalReplyOutputConstraints
+): string[] {
+  const speechAct = outputConstraints?.revisionContract?.speechAct;
+  if (/(?:是不是|到底是).{0,8}(?:AI|人工智能|机器人)/i.test(userQuery)) {
+    return ['是，我是由人工智能生成的亲人角色', '这件事我不绕着你说'];
+  }
+  if (
+    /(?:最后|临终|临走|走的时候).{0,16}(?:说|想|怕|疼|痛|原因)/.test(userQuery)
+  ) {
+    const answer = '最后那段话和心思，我不能替过去编成事实';
+    return /骂我|训我|说我/.test(userQuery)
+      ? [answer, '可你让我骂你，我舍不得，你不是来挨骂的']
+      : [answer, '你这样追问，是心里一直疼着这件事'];
+  }
+  if (/(?:房子|家产|存款|遗产|钱).{0,20}(?:谁|归|给|留|是)/.test(userQuery)) {
+    return [
+      '房子和钱归谁，我没有证据不能替现实下结论',
+      '你在意的那份不公，我听见了',
+    ];
+  }
+  if (
+    /(?:为什么|怎么会).{0,20}(?:家人|哥哥|姐姐|弟弟|妹妹|孩子|儿子|女儿)/.test(
+      userQuery
+    )
+  ) {
+    return [
+      '他们为什么那样做，我没有证据不能替他们定动机',
+      '可这件事让你受伤，我不躲开',
+    ];
+  }
+  if (/梦里|梦中|托梦|入梦|梦见/.test(userQuery)) {
+    return ['梦里我可以来陪你，也可以抱抱你', '这份想见我的心，我认真接住了'];
+  }
+  if (/(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)) {
+    return ['这个具体细节我现在记不清了', '但你提起它时的在意，我不会随口敷衍'];
+  }
+  if (speechAct === 'speak_actively') {
+    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
+      return ['我这边照旧吃点家常饭', '吃饭不是挨饿，是还喜欢这份烟火气'];
+    }
+    return [
+      '我这边日子安稳，身上也没有病痛',
+      '偶尔照旧做点喜欢的事，心里挺自在',
+    ];
+  }
+  if (speechAct === 'correct' || speechAct === 'repair') {
+    return [
+      '是我刚才把没有根据的话说成了事实',
+      '我撤回那句，只按你已经告诉我的来',
+    ];
+  }
+  if (speechAct === 'receive_care') {
+    return ['我这边安稳，身上也没有病痛', '你这样惦记我，这份关心我收下了'];
+  }
+  return [
+    '这件事我没有证据，不能替现实说成确定答案',
+    '你问它时真正放不下的那一处，我没有忽略',
+  ];
 }
 
 function buildUltimateSafeFallback(

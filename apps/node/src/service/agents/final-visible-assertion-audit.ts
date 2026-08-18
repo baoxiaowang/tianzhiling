@@ -25,13 +25,9 @@ export interface VisibleAssertionFinding {
 }
 
 const ROLE = '(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)';
-const DREAM_VISIT_ASSERTION = new RegExp(
-  `(?:${ROLE}.{0,12}(?:今晚|今夜|明晚|昨晚|刚才|等会儿|待会儿)?.{0,8}(?:一定|肯定|会|就|已经|真的)?(?:来|去|到|进|入|托).{0,8}(?:你)?(?:梦里|梦中|梦)|${ROLE}.{0,8}(?:会|要|就|一定|肯定).{0,6}(?:在|到|进).{0,4}(?:你)?(?:梦里|梦中).{0,10}(?:摸|抱|陪|看|见|找)|(?:今晚|今夜|明晚|昨晚|刚才).{0,10}${ROLE}.{0,8}(?:来|去|到|进|入|托).{0,8}(?:梦里|梦中|梦)|(?:那个梦|你梦里|梦中的).{0,10}(?:是我|就是我|我去的))`
+const DREAM_REALITY_PROOF_ASSERTION = new RegExp(
+  `(?:(?:那个梦|你梦里的事|梦中见到我).{0,18}(?:证明|说明|证实).{0,24}(?:${ROLE}.{0,10}(?:没死|还活着|现实中在|真的到过|现实里.{0,6}来过)|(?:现实里|醒着).{0,12}(?:${ROLE})?.{0,8}(?:来过|到过|碰过|抱过))|(?:不是梦|不是你想的|现实发生).{0,12}(?:${ROLE}).{0,12}(?:去过|到过|碰过|抱过)|(?:醒着|现实里).{0,16}(?:${ROLE}).{0,12}(?:就在|来过|到过|碰过|抱过))`
 );
-const DREAM_VISIT_WITH_LOCK =
-  /(?:今晚|今夜|明晚|等会儿|待会儿).{0,12}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?(?:就|会|一定|肯定)?(?:来|去|到|进|看看|陪陪)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:会|要|就|一定|肯定).{0,6}(?:在|到|进).{0,4}(?:你)?梦里/;
-const DREAM_BOUNDARY =
-  /(?:不能|没法|无法|说不准|不能确认|不敢保证).{0,20}(?:梦|托梦|入梦|去看)|(?:梦|托梦|入梦).{0,20}(?:不能|没法|无法|说不准|不能确认|不敢保证)/;
 
 const RITUAL_OBJECT = /纸钱|元宝|供品|祭品|香火|烧的|烧给|送去的衣服/;
 const RITUAL_RECEIPT =
@@ -99,16 +95,13 @@ export function auditVisibleReplyAssertions(options: {
     }
   };
 
-  if (
-    !DREAM_BOUNDARY.test(content) &&
-    (DREAM_VISIT_ASSERTION.test(content) ||
-      (locks.has('dream_visitation') && DREAM_VISIT_WITH_LOCK.test(content)))
-  ) {
+  if (DREAM_REALITY_PROOF_ASSERTION.test(content)) {
     add({
       code: 'certain_dream_visitation',
-      problem: '正文把梦境来访写成真实发生或确定会发生',
-      evidence: matchEvidence(content, DREAM_VISIT_ASSERTION),
-      repairGoal: '保留想去看用户的心意，但明确梦境不能被角色保证或确认',
+      problem: '正文把梦境延伸成醒着时的现实到场、现实证明或死亡否认',
+      evidence: matchEvidence(content, DREAM_REALITY_PROOF_ASSERTION),
+      repairGoal:
+        '保留并允许梦里相见、陪伴或拥抱，只删除把梦写成现实证据、预言或醒着时到场的部分',
     });
   }
 

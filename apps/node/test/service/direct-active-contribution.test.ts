@@ -23,9 +23,11 @@ function resolve(
 
 describe('direct active contribution', () => {
   it('opens a soft optional capability for an ordinary direct turn', () => {
-    expect(resolve()).toEqual({
+    expect(resolve()).toMatchObject({
       version: 'direct_active_contribution_v1',
       mode: 'soft_optional',
+      turnGoal: 'respond_first_then_optionally_contribute',
+      optionalContribution: 'concrete_judgment',
     });
   });
 
@@ -57,5 +59,12 @@ describe('direct active contribution', () => {
     expect(prompt).toContain('不为主动贡献增加字数或气泡');
     expect(prompt).toContain('不因缺少它改写已经完整的回答');
     expect(prompt).toContain('没有贴题新内容就自然停住');
+  });
+
+  it('offers a next-step contribution for a user plan without making it mandatory', () => {
+    expect(resolve({ currentQuery: '妈，我一会儿准备回家' })).toMatchObject({
+      mode: 'soft_optional',
+      optionalContribution: 'next_step',
+    });
   });
 });

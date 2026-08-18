@@ -140,6 +140,8 @@ import {
   TurnDecision,
 } from './turn-decision';
 import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
+import { buildWorldBoundaryPolicyPrompt } from './world-boundary-policy';
+import { buildConversationProtectionStatePrompt } from './conversation-protection-state';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 import {
   buildReplyTurnContract,
@@ -902,8 +904,13 @@ export class AgentContextService {
         continuationGoal:
           replyBrief.conversationPlan?.engagement?.continuationGoal,
         assistantContribution:
-          replyBrief.conversationPlan?.engagement?.assistantContribution,
-        mustContribute: replyBrief.conversationPlan?.engagement?.mustContribute,
+          replyBrief.conversationPlan?.engagement?.assistantContribution ||
+          (replyBrief.directActiveContribution
+            ? `direct_optional_planned:${replyBrief.directActiveContribution.optionalContribution}`
+            : undefined),
+        mustContribute:
+          replyBrief.conversationPlan?.engagement?.mustContribute ||
+          replyBrief.directActiveContribution?.turnGoal,
         avoidRepeatingMove:
           replyBrief.conversationPlan?.engagement?.avoidRepeatingMove,
         closureReadiness:
@@ -917,7 +924,8 @@ export class AgentContextService {
         ),
         correctionFactMode: replyBrief.correctionPolicy?.mode,
         activeContributionSource:
-          replyBrief.activeContribution?.preferredSource,
+          replyBrief.activeContribution?.preferredSource ||
+          replyBrief.directActiveContribution?.optionalContribution,
         strategyRepeatedMoves: replyBrief.strategyQuality?.repeatedMoves || [],
         strategyAlternative: replyBrief.strategyQuality?.preferredAlternative,
         careMotive: replyBrief.careMotivation?.motive,
@@ -1326,6 +1334,7 @@ export class AgentContextService {
       segmentMode: resolveReplyOutputSegmentMode(replyBrief.bubblePlan),
       maxSegments: replyBrief.bubblePlan.maxSegments,
       preferredRange: replyBrief.lengthPlan.preferredRange,
+      evidenceContract: replyBrief.evidenceContract,
       toolDecisionSchema: chatToolPlan
         ? buildAgentChatToolDecisionSchema(chatToolPlan)
         : undefined,
@@ -1438,6 +1447,16 @@ export class AgentContextService {
           buildRelationalSceneFrameworkPrompt(replyBrief.sceneFramework),
         ]
       : [];
+    const worldBoundaryLines = [
+      '# 世界与证据公共政策',
+      buildWorldBoundaryPolicyPrompt(replyBrief.worldBoundaryPolicy),
+    ];
+    const conversationProtectionPrompt = buildConversationProtectionStatePrompt(
+      replyBrief.conversationProtection
+    );
+    const conversationProtectionLines = conversationProtectionPrompt
+      ? ['# 会话级长期保护', conversationProtectionPrompt]
+      : [];
     const hasActiveContributionTurn = Boolean(
       replyBrief.activeContribution ||
         replyBrief.stateProtocol?.protocol === 'active_contribution'
@@ -1476,9 +1495,7 @@ export class AgentContextService {
       '用户说“准备回家、收拾东西、要走了”只表示还在离开或收束，不表示已经上路；不得补出“路上注意安全、别着急、到家先歇会儿、慢点走”等现实行动提醒。',
       '涉及共同过去时，只用本轮证据包中明确可陈述的内容；没有对应证据就不补写“以前、你那时、我做的某道菜、我们一起”等具体共同往事，改为接住当下感受和含义。',
     ].join('\n');
-    const careReceptionLines = replyBrief.understanding.needs.some(
-      need => need.expectedResponse === 'direct_answer_and_receive_care'
-    )
+    const careReceptionLines = replyBrief.careReception
       ? [
           '# 本轮接纳关心',
           '用户正在把关心递给当前角色：先正面回答，让这份关心自然落在角色身上，并按人物性格表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
@@ -1506,6 +1523,8 @@ export class AgentContextService {
         ...objectPlanLines,
         ...afterlifeWorldLines,
         ...sceneFrameworkLines,
+        ...worldBoundaryLines,
+        ...conversationProtectionLines,
         ...participationLines,
         ...realityDependencyLines,
         ...correctionLines,
@@ -1531,6 +1550,8 @@ export class AgentContextService {
         ...objectPlanLines,
         ...afterlifeWorldLines,
         ...sceneFrameworkLines,
+        ...worldBoundaryLines,
+        ...conversationProtectionLines,
         ...careMotivationLines,
         ...stateProtocolLines,
         ...participationLines,
@@ -1560,6 +1581,8 @@ export class AgentContextService {
       ...objectPlanLines,
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
+      ...worldBoundaryLines,
+      ...conversationProtectionLines,
       ...careMotivationLines,
       ...stateProtocolLines,
       ...participationLines,

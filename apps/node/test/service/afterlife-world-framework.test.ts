@@ -24,8 +24,10 @@ describe('afterlife world framework', () => {
     expect(context).toMatchObject({
       version: AFTERLIFE_WORLD_FRAMEWORK_VERSION,
       domains: ['residence'],
+      state: { residence: 'stable_familiar_home' },
     });
-    expect(prompt).toContain('有一处稳定可安顿的住处');
+    expect(prompt).toContain('stable_familiar_home');
+    expect(prompt).toContain('稳定状态值');
     expect(prompt).toContain('不随机补房型、地点和陈设');
   });
 
@@ -122,8 +124,9 @@ describe('afterlife world framework', () => {
     const prompt = buildAfterlifeWorldPrompt(context!);
 
     expect(context?.domains).toContain('health');
+    expect(context?.state.health).toBe('free_from_illness_and_pain');
     expect(prompt).toContain('现在已经没有病痛');
-    expect(prompt).toContain('不能反推临终过程是否痛苦');
+    expect(prompt).toContain('不能用“现在不痛”冒充对过去过程的确认');
   });
 
   it('carries forward established world details and drops them after correction', () => {

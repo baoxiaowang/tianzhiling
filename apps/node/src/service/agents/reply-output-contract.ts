@@ -1,3 +1,5 @@
+import type { ReplyEvidenceContract } from './world-boundary-policy';
+
 export const REPLY_OUTPUT_CONTRACT_VERSION = 'reply_envelope_v2' as const;
 export const REPLY_REVIEW_CONTRACT_VERSION = 'reply_review_v1' as const;
 
@@ -14,6 +16,7 @@ export interface BuildReplyOutputContractOptions {
     maxCharacters: number;
   };
   toolDecisionSchema?: Record<string, unknown>;
+  evidenceContract?: ReplyEvidenceContract;
 }
 
 export function resolveReplyOutputSegmentMode(plan: {
@@ -86,6 +89,19 @@ export function buildReplyOutputContractPrompt(
   const claimRule = options.grounded
     ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
+  const evidenceContractRule = options.evidenceContract
+    ? [
+        `证据契约：${options.evidenceContract.policy}；允许内容域=${
+          options.evidenceContract.allowedClaimKinds.join('、') || '无'
+        }。`,
+        options.evidenceContract.semanticAuditRequired
+          ? '本轮属于高风险事实问答：正文只要确定写出死因/临终心理、在世家人状态或动机、财产归属、共同往事、现实迹象或化身，就必须在 claims 逐条申报；不能靠省略 claims 绕过证据。'
+          : '',
+        '离世生活稳定设定、离世日常写意和梦内陪伴不是现实证据；需要写 claims 时用 soft_imagination，不绑定现实证据。',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
   const auditRule =
     purpose === 'audited_revision'
       ? 'resolvedIssueCodes 覆盖已解决的问题码；changes 只记录实际改动。'
@@ -101,6 +117,7 @@ export function buildReplyOutputContractPrompt(
     rangeRule,
     '每项只写可直接发送的中文正文；不写括号旁白、分析、字段说明或证据 ID。默认不用表情，用户先用时才少量使用。',
     claimRule,
+    evidenceContractRule,
     auditRule,
     toolRule,
   ]

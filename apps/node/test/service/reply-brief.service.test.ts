@@ -20,7 +20,7 @@ describe('buildReplyBrief', () => {
       '短句、称呼和语气词有真实表达作用时可以保留'
     );
     expect(brief.prompt).toContain('不能把截断残句当成留白');
-    expect(brief.version).toBe('reply_brief_v15');
+    expect(brief.version).toBe('reply_brief_v16');
     expect(brief.experiencePlan).toMatchObject({
       version: 'experience_plan_v1',
       profileTier: 'P0',
@@ -1701,9 +1701,11 @@ describe('buildReplyBrief', () => {
       planningMode: 'semantic',
     });
 
-    expect(directBrief.directActiveContribution).toEqual({
+    expect(directBrief.directActiveContribution).toMatchObject({
       version: 'direct_active_contribution_v1',
       mode: 'soft_optional',
+      turnGoal: 'respond_first_then_optionally_contribute',
+      optionalContribution: 'concrete_judgment',
     });
     expect(directBrief.activeContribution).toBeUndefined();
     expect(semanticBrief.directActiveContribution).toBeUndefined();

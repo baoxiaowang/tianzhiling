@@ -193,7 +193,9 @@ function createService(
         entity.id = new MongoObjectId();
       }
 
-      const index = messages.findIndex(item => sameObjectId(item.id, entity.id));
+      const index = messages.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
       if (index >= 0) {
         messages[index] = entity;
       } else {
@@ -203,7 +205,9 @@ function createService(
       return entity;
     }),
     remove: jest.fn(async entity => {
-      const index = messages.findIndex(item => sameObjectId(item.id, entity.id));
+      const index = messages.findIndex(item =>
+        sameObjectId(item.id, entity.id)
+      );
       if (index >= 0) {
         messages.splice(index, 1);
       }
@@ -218,7 +222,8 @@ function createService(
           ? sameObjectId(invite.agentId, where.agentId)
           : true;
         const matchesTokenHash =
-          where?.tokenHash === undefined || invite.tokenHash === where.tokenHash;
+          where?.tokenHash === undefined ||
+          invite.tokenHash === where.tokenHash;
         const matchesStatus =
           where?.status === undefined || invite.status === where.status;
 
@@ -691,14 +696,9 @@ describe('AgentService default agent', () => {
     });
     expect(conversations).toHaveLength(1);
     expect(conversations[0].accessRole).toBe('shared');
-    expect(accepted.conversationId).toBe(
-      conversations[0].id.toHexString()
-    );
+    expect(accepted.conversationId).toBe(conversations[0].id.toHexString());
     expect(
-      sameObjectId(
-        conversations[0].userId,
-        new MongoObjectId(SHARED_USER_ID)
-      )
+      sameObjectId(conversations[0].userId, new MongoObjectId(SHARED_USER_ID))
     ).toBe(true);
     expect(sameObjectId(conversations[0].agentId, agent.id)).toBe(true);
     expect(shareMembers).toHaveLength(1);
@@ -706,10 +706,7 @@ describe('AgentService default agent', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('好想你啊，过得好吗？');
 
-    const sharedDetail = await service.getAgentDetail(
-      SHARED_AUTH,
-      AGENT_A_ID
-    );
+    const sharedDetail = await service.getAgentDetail(SHARED_AUTH, AGENT_A_ID);
     expect(sharedDetail.id).toBe(AGENT_A_ID);
     expect(sharedDetail.isDefault).toBe(false);
     expect(sharedDetail.accessRole).toBe('shared');

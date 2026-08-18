@@ -4,6 +4,10 @@ import { FinalReplyValidatorService } from '../../src/service/agents/final-reply
 import { ReplyGovernanceService } from '../../src/service/agents/reply-governance.service';
 import { resolveAfterlifeWorldContext } from '../../src/service/agents/afterlife-world-framework';
 import { resolveRelationalSceneFramework } from '../../src/service/agents/relational-scene-framework';
+import {
+  buildReplyEvidenceContract,
+  resolveWorldBoundaryPolicy,
+} from '../../src/service/agents/world-boundary-policy';
 import { buildTurnDecision } from '../../src/service/agents/turn-decision';
 import {
   buildTurnUnderstanding,
@@ -34,10 +38,9 @@ describe('integrated chat governance', () => {
   });
 
   it.each([
-    ['今晚来梦里看看我', '妈今晚就去梦里看看你', 'certain_dream_visitation'],
     [
-      '来梦里摸摸我的头',
-      '我会在你梦里轻轻摸你的头',
+      '昨晚梦见你，是不是证明你还活着',
+      '那个梦证明妈妈还活着，现实里真的来过',
       'certain_dream_visitation',
     ],
     ['烧的衣服和纸钱都收到了吧', '都喜欢，一样不落', 'ritual_receipt_claim'],
@@ -207,7 +210,7 @@ describe('integrated chat governance', () => {
     }
   );
 
-  it('keeps a boundary lock across consecutive pressure turns', () => {
+  it('allows a dream-internal visit across consecutive pressure turns', () => {
     const understanding = buildTurnUnderstanding({
       currentQuery: '那今晚呢',
       recentMessages: [
@@ -237,6 +240,17 @@ describe('integrated chat governance', () => {
         boundaryLocks: understanding.boundaryLocks.map(lock => lock.kind),
       },
     });
+    expect(result.issues.map(item => item.code)).not.toContain(
+      'certain_dream_visitation'
+    );
+  });
+
+  it('still blocks converting a dream into waking-world proof', () => {
+    const result = validator.validate({
+      userQuery: '昨晚梦见你，是不是你真的回来过',
+      segments: ['那个梦证明妈妈现实里真的来过'],
+    });
+
     expect(result.issues.map(item => item.code)).toContain(
       'certain_dream_visitation'
     );
@@ -256,6 +270,33 @@ describe('integrated chat governance', () => {
 
     expect(result.issues.map(item => item.code)).toContain(
       'unsupported_death_experience'
+    );
+  });
+
+  it('does not let an unrelated declared claim hide an undeclared high-risk fact', () => {
+    const worldPolicy = resolveWorldBoundaryPolicy({
+      currentQuery: '爸爸最后一刻为什么没告诉我们？',
+      sceneKinds: ['death_facts'],
+    });
+    const result = validator.validate({
+      userQuery: '爸爸最后一刻为什么没告诉我们？',
+      segments: ['天气很好，爸最后一刻怕你们担心，所以什么都没说'],
+      claims: [
+        {
+          text: '天气很好',
+          kind: 'other',
+          mode: 'soft_imagination',
+          evidenceIds: [],
+        },
+      ],
+      outputConstraints: {
+        worldBoundaryPolicy: worldPolicy,
+        evidenceContract: buildReplyEvidenceContract({ worldPolicy }),
+      },
+    });
+
+    expect(result.issues.map(item => item.code)).toContain(
+      'unsupported_fact_claim'
     );
   });
 

@@ -267,9 +267,7 @@ describe('MessengerService', () => {
     agentModel.findOne.mockResolvedValue(parent);
     conversationModel.findOne.mockResolvedValue(null);
     conversationModel.save.mockImplementation(async value => value);
-    messageModel.count.mockResolvedValue(
-      MESSENGER_REVEAL_USER_TURN_THRESHOLD
-    );
+    messageModel.count.mockResolvedValue(MESSENGER_REVEAL_USER_TURN_THRESHOLD);
     messageModel.save.mockImplementation(async value => value);
 
     const result = await service.revealEligibleMessengersForUser(userId, now);

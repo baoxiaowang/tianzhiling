@@ -7,6 +7,14 @@ import type {
 import type { ReplyBoundaryContract } from './reply-boundary-contract';
 import type { ReplyBrief } from './reply-brief.service';
 import type { TurnDecision } from './turn-decision';
+import {
+  buildReplyEvidenceContract,
+  ReplyEvidenceContract,
+} from './world-boundary-policy';
+import {
+  buildReplyRevisionContract,
+  ReplyRevisionContract,
+} from './reply-revision-contract';
 
 export const REPLY_TURN_CONTRACT_VERSION = 'reply_turn_contract_v1' as const;
 export const REPLY_QUALITY_AUDIT_VERSION = 'reply_quality_audit_v1' as const;
@@ -58,7 +66,9 @@ export interface ReplyTurnContract {
     assertableIds: string[];
     contextualIds: string[];
     sourceCounts: Record<string, number>;
+    evidenceContract: ReplyEvidenceContract;
   };
+  revision: ReplyRevisionContract;
   participation: TurnDecision['participation'];
   delivery: {
     lengthClass: ReplyBrief['lengthPlan']['lengthClass'];
@@ -108,6 +118,14 @@ export function buildReplyTurnContract(options: {
         .map(act => act.kind)
     )
   );
+  const evidenceContract = buildReplyEvidenceContract({
+    worldPolicy: brief.worldBoundaryPolicy,
+    evidence: evidencePack?.items,
+  });
+  const revisionContract = buildReplyRevisionContract({
+    brief,
+    turnDecision: decision,
+  });
   const outputConstraints: FinalReplyOutputConstraints = {
     directAnswerRequired: decision.participation.directAnswerRequired,
     mustKeepTurnWithAssistant:
@@ -123,6 +141,10 @@ export function buildReplyTurnContract(options: {
     boundaryLocks: decision.understanding.boundaryLocks.map(lock => lock.kind),
     afterlifeWorld: brief.afterlifeWorld,
     sceneFramework: brief.sceneFramework,
+    worldBoundaryPolicy: brief.worldBoundaryPolicy,
+    evidenceContract,
+    revisionContract,
+    conversationProtection: brief.conversationProtection,
   };
   const focusDimensions = resolveFocusDimensions({
     brief,
@@ -168,7 +190,9 @@ export function buildReplyTurnContract(options: {
       assertableIds: evidencePack?.assertableIds || [],
       contextualIds: evidencePack?.contextualIds || [],
       sourceCounts: { ...(evidencePack?.governance.sourceCounts || {}) },
+      evidenceContract,
     },
+    revision: revisionContract,
     participation: decision.participation,
     delivery: {
       lengthClass: brief.lengthPlan.lengthClass,
@@ -310,6 +334,13 @@ function buildReplyTurnContractPrompt(
     }；仅上下文=${contract.facts.contextualIds.join('、') || '无'}${
       sourceCounts ? `；来源=${sourceCounts}` : ''
     }`,
+    `证据契约：${contract.facts.evidenceContract.policy}；允许内容域=${
+      contract.facts.evidenceContract.allowedClaimKinds.join('、') || '无'
+    }${
+      contract.facts.evidenceContract.semanticAuditRequired
+        ? '；高风险确定事实必须在 claims 申报，不能省略 claims'
+        : ''
+    }`,
     contract.facts.priorFactsSuppressed
       ? `纠正生效：${
           contract.facts.correctionMode || 'reset'
@@ -358,6 +389,9 @@ function mapIssuesToDimensions(
         'care_not_received',
         'care_immediately_reversed',
         'repeated_generic_move',
+        'identity_truthfulness_missing',
+        'exclusive_dependency_reinforced',
+        'persistent_distress_not_stopped',
       ].includes(code)
     ) {
       dimensions.add('participation');
