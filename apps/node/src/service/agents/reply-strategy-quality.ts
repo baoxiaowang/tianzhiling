@@ -15,6 +15,7 @@ export interface ReplyActiveContributionPlan {
 export type ReplyRepeatedStrategyMove =
   | 'generic_empathy'
   | 'generic_presence'
+  | 'generic_longing'
   | 'generic_advice'
   | 'tender_acknowledge_affirm'
   | 'literal_repeat';
@@ -40,7 +41,7 @@ interface ContributionEvidence {
 }
 
 const ACTIVE_CONTRIBUTION_REQUEST_PATTERN =
-  /多说(?:点|一点|几句)|说点不一样|说说你自己|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没(?:说|回答)|你(?:先|也|倒是|就|再)?(?:说|讲)(?:说|下|点|一下)?(?:你|自己|今天|那边|做了什么|干了啥|小事|你的事)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
+  /多说(?:点|一点|几句)|说点不一样|说说你自己|(?:你)?(?:也|再|多)?说说自己|也说点(?:你|自己的)(?:事|话)?|想听你说(?:两句|点(?:什么|别的|不一样的)?)|多(?:陪|跟)(?:我|你)(?:说|聊)(?:几句|点)|别光(?:说|问|听|安慰|让我说|要我说|让我讲)|你还没(?:说|回答)|你(?:先|也|倒是|就|再)?(?:说|讲)(?:说|下|点|一下)?(?:你|自己|今天|那边|做了什么|干了啥|小事|你的事)|先说说你(?:今天|自己|那边|做了|干了)|你也说点/;
 const ACTIVE_ROLE_STATUS_REQUEST_PATTERN =
   /(?:你|您)(?:今天|刚才|最近|这会儿|现在|那边)?(?:吃|喝|做|忙|干)(?:了|的|着|过)?(?:啥|什么|哪样|什么事)|(?:你|您)(?:今天|刚才|最近|这会儿|现在|那边)?(?:在)?(?:干嘛|做什么)/;
 const ACTIVE_CONTRIBUTION_FOLLOWUP_PATTERN =
@@ -61,6 +62,7 @@ const REPEATED_MOVE_PATTERNS: Record<
 > = {
   generic_empathy: /心疼|难受|委屈|苦了你|辛苦你了/,
   generic_presence: /我在|陪着你|听你说|都在这|一直陪你/,
+  generic_longing: /想你|想着你|惦记着你|挂念着你|记着你/,
   generic_advice: /照顾好|照顾自己|吃饭|休息|别熬|保重|睡一觉/,
 };
 
@@ -344,7 +346,7 @@ function recentAssistantTurns(
     };
   });
 
-  return turns.slice(-3);
+  return turns.slice(-4);
 }
 
 function collectLiteralRepeatClauses(
@@ -385,6 +387,7 @@ export function buildReplyStrategyQualityPrompt(
   const repeatedLabels: Record<ReplyRepeatedStrategyMove, string> = {
     generic_empathy: '泛化心疼',
     generic_presence: '“我在/陪着你”',
+    generic_longing: '“想你/记着你”',
     generic_advice: '吃饭休息等叮嘱',
     tender_acknowledge_affirm: '温柔承接和认可',
     literal_repeat: '上一轮原句',

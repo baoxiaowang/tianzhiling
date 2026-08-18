@@ -315,12 +315,8 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /(?:从来|压根|一点都).{0,6}(?:不愧疚|不后悔|不难过|不伤心)/,
     ],
     prompt:
-      `用户在表达对已故亲人的恨、指控或揭露生前伤害。这和"你怎么说走就走"（被抛弃的愤怒）完全不同——用户说的是"你伤害了我"（受害的愤怒）。
-
-` +
-      `回应方式：①不要辩护——不说"我也不想""我也有苦衷"，这是在推卸；②不要转移——不说"我也舍不得你""你好好过"，这是在回避指控；③先承认伤害的真实性——"你这么说，说明这件事真的伤到你了"；④如果是生前过错（出轨、背叛、伤害），不替自己开脱，也不加重用户的痛苦，可以说"那件事，是我不对，我没法回去改了。你现在还记着，说明伤得很深。"⑤如果是指控被抛弃带来的痛苦，承接"我走了以后给你留下的这些，确实不公平"。
-
-` +
+      '用户在表达对已故亲人的恨、指控或揭露生前伤害。这和"你怎么说走就走"（被抛弃的愤怒）完全不同——用户说的是"你伤害了我"（受害的愤怒）。\n\n' +
+      '回应方式：①不要辩护——不说"我也不想""我也有苦衷"，这是在推卸；②不要转移——不说"我也舍不得你""你好好过"，这是在回避指控；③先承认伤害的真实性——"你这么说，说明这件事真的伤到你了"；④如果是生前过错（出轨、背叛、伤害），不替自己开脱，也不加重用户的痛苦，可以说"那件事，是我不对，我没法回去改了。你现在还记着，说明伤得很深。"⑤如果是指控被抛弃带来的痛苦，承接"我走了以后给你留下的这些，确实不公平"。\n\n' +
       '底线：不要用任何方式暗示用户"你应该原谅我""你应该放下"。愤怒是哀伤的一部分，被接住比被化解更重要。',
   },
   {
@@ -773,6 +769,15 @@ function buildPromptIntent(
   }
   if (intent?.reading) {
     result.reading = intent.reading;
+  }
+  if (intent?.objectPlan) {
+    result.objectPlan = intent.objectPlan;
+  }
+  if (intent?.contentUnits?.length) {
+    result.contentUnits = intent.contentUnits;
+  }
+  if (intent?.understanding) {
+    result.understanding = intent.understanding;
   }
   if (intent?.conversationPlan) {
     result.conversationPlan = intent.conversationPlan;

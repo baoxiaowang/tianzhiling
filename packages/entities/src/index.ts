@@ -17,6 +17,7 @@ export * from "./conversation-emotion-state.entity";
 export * from "./conversation.entity";
 export * from "./coupon-ledger.entity";
 export * from "./message.entity";
+export * from "./messenger-call-event.entity";
 export * from "./order.entity";
 export * from "./post.entity";
 export * from "./post-comment.entity";

@@ -204,12 +204,14 @@ export interface AdminAgentOwnerDTO {
   name: string;
   avatar: string;
   phone: string;
+  isVip: boolean;
 }
 
 export interface AdminAgentRecordDTO extends AgentProfileDTO {
   createdUserId: string;
   createdUser: AdminAgentOwnerDTO | null;
   customContext: string;
+  conversationCount: number;
 }
 
 export interface AdminAgentListParamsDTO {
