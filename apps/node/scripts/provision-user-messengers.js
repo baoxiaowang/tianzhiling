@@ -8,9 +8,13 @@ loadLocalEnv();
 
 async function main() {
   const operation = parseOperationArgs(process.argv.slice(2));
-  if (!operation.activeMembers && operation.identifiers.length === 0) {
+  if (
+    !operation.activeMembers &&
+    !operation.allUsers &&
+    operation.identifiers.length === 0
+  ) {
     throw new Error(
-      'usage: node provision-user-messengers.js [--dry-run] (--active-members|<userId|weapp:account> [userId|weapp:account...])'
+      'usage: node provision-user-messengers.js [--dry-run] (--all-users|--active-members|<userId|weapp:account> [userId|weapp:account...])'
     );
   }
 
@@ -23,7 +27,9 @@ async function main() {
     const agents = db.collection('agent');
     const conversations = db.collection('conversation');
     const messages = db.collection('message');
-    const targets = operation.activeMembers
+    const targets = operation.allUsers
+      ? await resolveAllAgentOwnerTargets(db)
+      : operation.activeMembers
       ? await resolveActiveMemberTargets(db, new Date())
       : await resolveUserTargets(db, operation.identifiers);
 
@@ -35,7 +41,7 @@ async function main() {
       return;
     }
 
-    if (operation.activeMembers) {
+    if (operation.activeMembers || operation.allUsers) {
       const result = await provisionTargetsInBulk(db, targets);
       console.log(
         `[provision-user-messengers] done dryRun=false users=${targets.length} agents=${result.agents} messengersCreated=${result.messengersCreated} conversationsCreated=${result.conversationsCreated} greetingsCreated=${result.greetingsCreated}`
@@ -135,8 +141,8 @@ async function main() {
 
         if (!hasGreeting) {
           const greetings = [
-            `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
-            `你最想先让我了解${parentName}的哪一面？`,
+            `你好，我是${messengerName}，可以帮${parentName}找回记忆。`,
+            `你最想让${parentName}想起来的是？`,
           ];
           const greetingMessages = greetings.map((content, index) => ({
             conversationId: conversation._id,
@@ -177,18 +183,24 @@ async function main() {
 
 function parseOperationArgs(args) {
   const activeMembers = args.includes('--active-members');
+  const allUsers = args.includes('--all-users');
   const dryRun = args.includes('--dry-run');
   const identifiers = parseUserIdentifiers(
-    args.filter(value => !['--active-members', '--dry-run'].includes(value))
+    args.filter(
+      value => !['--active-members', '--all-users', '--dry-run'].includes(value)
+    )
   );
 
-  if (activeMembers && identifiers.length) {
+  if (
+    Number(activeMembers) + Number(allUsers) + Number(identifiers.length > 0) >
+    1
+  ) {
     throw new Error(
-      '--active-members cannot be combined with user identifiers'
+      '--all-users, --active-members, and user identifiers are mutually exclusive'
     );
   }
 
-  return { activeMembers, dryRun, identifiers };
+  return { activeMembers, allUsers, dryRun, identifiers };
 }
 
 function parseUserIdentifiers(args) {
@@ -265,6 +277,20 @@ async function resolveActiveMemberTargets(db, now = new Date()) {
     identifier: 'active-membership',
     userId: new ObjectId(item._id),
   }));
+}
+
+async function resolveAllAgentOwnerTargets(db) {
+  const userIds = await db.collection('agent').distinct('createdUserId', {
+    messengerOfAgentId: { $exists: false },
+    createdUserId: { $type: 'objectId' },
+  });
+
+  return userIds
+    .map(userId => new ObjectId(userId))
+    .sort((left, right) =>
+      left.toHexString().localeCompare(right.toHexString())
+    )
+    .map(userId => ({ identifier: 'all-users', userId }));
 }
 
 async function auditMessengerProvisioning(db, targets) {
@@ -500,8 +526,8 @@ async function provisionTargetsInBulk(db, targets, now = new Date()) {
         ? messengerName.slice(0, -4)
         : 'TA';
       return [
-        `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
-        `你最想先让我了解${parentName}的哪一面？`,
+        `你好，我是${messengerName}，可以帮${parentName}找回记忆。`,
+        `你最想让${parentName}想起来的是？`,
       ].map((content, index) => ({
         conversationId: conversation._id,
         userId: conversation.userId,
@@ -598,6 +624,7 @@ module.exports = {
   parseOperationArgs,
   parseUserIdentifiers,
   resolveActiveMemberTargets,
+  resolveAllAgentOwnerTargets,
   resolveUserTargets,
   provisionTargetsInBulk,
 };

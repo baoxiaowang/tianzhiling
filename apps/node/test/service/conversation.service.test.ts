@@ -5310,6 +5310,41 @@ describe('ConversationService generation cleanup diagnostics', () => {
 });
 
 describe('ConversationService listConversations', () => {
+  it('reveals eligible messengers before reading the visible list', async () => {
+    const conversation = createConversation();
+    const agent = createAgent();
+    const service = new ConversationService();
+    const callOrder: string[] = [];
+
+    service.messengerService = {
+      revealEligibleMessengersForUser: jest.fn(async () => {
+        callOrder.push('reveal');
+      }),
+    } as any;
+    service.conversationModel = {
+      find: jest.fn(async () => {
+        callOrder.push('list');
+        return [conversation];
+      }),
+    } as any;
+    service.agentModel = {
+      findOne: jest.fn().mockResolvedValue(agent),
+    } as any;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    await service.listConversations(AUTH);
+
+    expect(
+      service.messengerService.revealEligibleMessengersForUser
+    ).toHaveBeenCalledWith(new MongoObjectId(USER_ID));
+    expect(callOrder).toEqual(['reveal', 'list']);
+  });
+
   it('uses only non-archived messages for conversation preview', async () => {
     const conversation = createConversation();
     const agent = createAgent({

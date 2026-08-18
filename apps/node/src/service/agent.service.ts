@@ -39,8 +39,6 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
-  UserMembershipEntity,
-  UserMembershipStatus,
   UserEntity,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../interface';
@@ -87,9 +85,6 @@ export class AgentService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
-
-  @InjectEntityModel(UserMembershipEntity)
-  userMembershipModel: MongoRepository<UserMembershipEntity>;
 
   @Inject()
   postImageService: PostImageService;
@@ -567,40 +562,20 @@ export class AgentService {
 
     const savedAgent = await this.agentModel.save(agent);
     await this.createConversation(savedAgent, createdUserId, now);
-    await this.ensureMessengerForNewMemberAgent(savedAgent, createdUserId, now);
+    await this.ensureSilentMessengerForNewAgent(savedAgent, createdUserId);
 
     return this.buildAgentProfile(savedAgent);
   }
 
-  private async ensureMessengerForNewMemberAgent(
+  private async ensureSilentMessengerForNewAgent(
     agent: AgentEntity,
-    userId: MongoObjectId,
-    now: Date
+    userId: MongoObjectId
   ): Promise<void> {
     try {
-      const memberships = await this.userMembershipModel.find({
-        where: {
-          userId,
-          status: UserMembershipStatus.active,
-        },
-      });
-      const isMember = memberships.some(
-        membership =>
-          membership.lifetime ||
-          Boolean(membership.expiredAt && membership.expiredAt > now)
-      );
-
-      if (!isMember) {
-        return;
-      }
-
-      const messenger = await this.messengerService.ensureMessengerForAgent(
-        agent
-      );
-      await this.messengerService.ensureMessengerConversation(agent, messenger);
+      await this.messengerService.ensureMessengerForAgent(agent);
     } catch (error) {
       this.logger?.warn?.(
-        '[agent] member messenger activation failed, userId=%s, agentId=%s, reason=%s',
+        '[agent] silent messenger provisioning failed, userId=%s, agentId=%s, reason=%s',
         String(userId),
         String(agent.id),
         error instanceof Error ? error.message : String(error)

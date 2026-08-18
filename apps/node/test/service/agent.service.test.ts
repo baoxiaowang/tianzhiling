@@ -78,17 +78,12 @@ function createService(
     shareMembers?: AgentShareMemberEntity[];
     conversations?: ConversationEntity[];
     messages?: MessageEntity[];
-    memberships?: Array<{
-      lifetime?: boolean;
-      expiredAt?: Date;
-    }>;
   } = {}
 ) {
   const shareInvites = options.shareInvites ?? [];
   const shareMembers = options.shareMembers ?? [];
   const conversations = options.conversations ?? [];
   const messages = options.messages ?? [];
-  const memberships = options.memberships ?? [];
   const service = new AgentService();
 
   service.agentModel = {
@@ -342,9 +337,6 @@ function createService(
       return user;
     }),
   } as any;
-  service.userMembershipModel = {
-    find: jest.fn(async () => memberships),
-  } as any;
   service.messengerService = {
     ensureMessengerForAgent: jest.fn(async (agent: AgentEntity) =>
       createAgent(AGENT_B_ID, {
@@ -445,11 +437,9 @@ describe('AgentService default agent', () => {
     expect(agents[0].description).toContain('性别未确定');
   });
 
-  it('creates a messenger immediately for an active member new agent', async () => {
+  it('silently creates a messenger agent for every new relative', async () => {
     const agents: AgentEntity[] = [];
-    const service = createService(agents, {
-      memberships: [{ lifetime: true }],
-    });
+    const service = createService(agents);
 
     await service.createAgent(AUTH, {
       name: '奶奶',
@@ -463,14 +453,12 @@ describe('AgentService default agent', () => {
     ).toHaveBeenCalledWith(agents[0]);
     expect(
       service.messengerService.ensureMessengerConversation
-    ).toHaveBeenCalledWith(agents[0], expect.any(AgentEntity));
+    ).not.toHaveBeenCalled();
   });
 
-  it('does not create a messenger for an expired non-member', async () => {
+  it('silently creates a messenger agent for a non-member', async () => {
     const agents: AgentEntity[] = [];
-    const service = createService(agents, {
-      memberships: [{ expiredAt: new Date('2026-05-01T00:00:00.000Z') }],
-    });
+    const service = createService(agents);
 
     await service.createAgent(AUTH, {
       name: '奶奶',
@@ -481,6 +469,9 @@ describe('AgentService default agent', () => {
 
     expect(
       service.messengerService.ensureMessengerForAgent
+    ).toHaveBeenCalledWith(agents[0]);
+    expect(
+      service.messengerService.ensureMessengerConversation
     ).not.toHaveBeenCalled();
   });
 

@@ -7,6 +7,7 @@ import {
 } from '@tzl/entities';
 import {
   MESSENGER_DEFAULT_AVATAR_KEY,
+  MESSENGER_REVEAL_USER_TURN_THRESHOLD,
   MessengerService,
 } from '../../src/service/agents/messenger.service';
 
@@ -42,6 +43,11 @@ function createService() {
   service.messageModel = messageModel as never;
   service.messengerCallEventModel = messengerCallEventModel as never;
   service.agentMemoryProfileService = agentMemoryProfileService as never;
+  service.redisService = {
+    set: jest.fn().mockResolvedValue('OK'),
+    get: jest.fn().mockResolvedValue(null),
+    del: jest.fn().mockResolvedValue(1),
+  } as never;
   service.logger = { warn: jest.fn() } as never;
 
   return {
@@ -150,10 +156,10 @@ describe('MessengerService', () => {
     expect(conversation.accessRole).toBe('owner');
     expect(messageModel.save).toHaveBeenCalledWith([
       expect.objectContaining({
-        content: '你好，我是妈妈的小使者。关于妈妈的事，都可以慢慢跟我讲。',
+        content: '你好，我是妈妈的小使者，可以帮妈妈找回记忆。',
       }),
       expect.objectContaining({
-        content: '你最想先让我了解妈妈的哪一面？',
+        content: '你最想让妈妈想起来的是？',
       }),
     ]);
   });
@@ -183,7 +189,7 @@ describe('MessengerService', () => {
     expect(messageModel.save).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
-          content: expect.stringContaining('你最想先让我了解妈妈的哪一面'),
+          content: '你最想让妈妈想起来的是？',
         }),
       ])
     );
@@ -241,6 +247,101 @@ describe('MessengerService', () => {
         messengerOfAgentId: { $exists: false },
       },
     });
+  });
+
+  it('reveals a silent messenger after ten live user turns', async () => {
+    const { service, agentModel, conversationModel, messageModel } =
+      createService();
+    const now = new Date('2026-08-18T12:00:00.000Z');
+    const userId = new MongoObjectId();
+    const parent = buildAgent({
+      createdUserId: userId,
+      createdAt: new Date(now.getTime() - 60 * 60 * 1000),
+    });
+    const messenger = buildAgent({
+      createdUserId: userId,
+      name: '妈妈的小使者',
+      messengerOfAgentId: parent.id,
+    });
+    agentModel.find.mockResolvedValue([messenger]);
+    agentModel.findOne.mockResolvedValue(parent);
+    conversationModel.findOne.mockResolvedValue(null);
+    conversationModel.save.mockImplementation(async value => value);
+    messageModel.count.mockResolvedValue(
+      MESSENGER_REVEAL_USER_TURN_THRESHOLD
+    );
+    messageModel.save.mockImplementation(async value => value);
+
+    const result = await service.revealEligibleMessengersForUser(userId, now);
+
+    expect(messageModel.count).toHaveBeenCalledWith({
+      userId,
+      agentId: parent.id,
+      role: MessageRole.user,
+      status: 'sent',
+      source: { $ne: 'wechat_import' },
+      isArchived: { $ne: true },
+    });
+    expect(conversationModel.save).toHaveBeenCalled();
+    expect(result).toEqual({
+      processed: 1,
+      alreadyVisible: 0,
+      revealed: 1,
+      revealedByTurns: 1,
+      revealedByAge: 0,
+    });
+  });
+
+  it('reveals a silent messenger after 24 hours without counting turns', async () => {
+    const { service, agentModel, conversationModel, messageModel } =
+      createService();
+    const now = new Date('2026-08-18T12:00:00.000Z');
+    const userId = new MongoObjectId();
+    const parent = buildAgent({
+      createdUserId: userId,
+      createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000),
+    });
+    const messenger = buildAgent({
+      createdUserId: userId,
+      messengerOfAgentId: parent.id,
+    });
+    agentModel.find.mockResolvedValue([messenger]);
+    agentModel.findOne.mockResolvedValue(parent);
+    conversationModel.findOne.mockResolvedValue(null);
+    conversationModel.save.mockImplementation(async value => value);
+    messageModel.save.mockImplementation(async value => value);
+
+    const result = await service.revealEligibleMessengersForUser(userId, now);
+
+    expect(messageModel.count).not.toHaveBeenCalled();
+    expect(conversationModel.save).toHaveBeenCalled();
+    expect(result.revealedByAge).toBe(1);
+  });
+
+  it('keeps a silent messenger hidden before either reveal condition', async () => {
+    const { service, agentModel, conversationModel, messageModel } =
+      createService();
+    const now = new Date('2026-08-18T12:00:00.000Z');
+    const userId = new MongoObjectId();
+    const parent = buildAgent({
+      createdUserId: userId,
+      createdAt: new Date(now.getTime() - 23 * 60 * 60 * 1000),
+    });
+    const messenger = buildAgent({
+      createdUserId: userId,
+      messengerOfAgentId: parent.id,
+    });
+    agentModel.find.mockResolvedValue([messenger]);
+    agentModel.findOne.mockResolvedValue(parent);
+    conversationModel.findOne.mockResolvedValue(null);
+    messageModel.count.mockResolvedValue(
+      MESSENGER_REVEAL_USER_TURN_THRESHOLD - 1
+    );
+
+    const result = await service.revealEligibleMessengersForUser(userId, now);
+
+    expect(conversationModel.save).not.toHaveBeenCalled();
+    expect(result.revealed).toBe(0);
   });
 
   it('runs an interview turn and persists the draft to the parent agent', async () => {
