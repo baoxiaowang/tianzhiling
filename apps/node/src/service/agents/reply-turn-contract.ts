@@ -288,7 +288,9 @@ function buildReplyTurnContractPrompt(
                 act.priority === 'must' ? '核心' : '参考'
               }]`
           )
-          .join('、')}。可以合并、换序或选更自然的表达；明确问题、纠正和安全边界不能遗漏。`
+          .join(
+            '、'
+          )}。可以合并、换序或选更自然的表达；明确问题、纠正和安全边界不能遗漏。`
       : '',
     `人格：${contract.persona.relationshipType || '亲人'} / ${
       contract.persona.generation || 'unknown'

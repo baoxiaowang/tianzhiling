@@ -67,7 +67,13 @@ describe('ReplyGuardrailService', () => {
         },
         objectPlan: {
           objects: [
-            { ref: 'o1', mention: '你女婿', kind: 'other_person', binding: 'unknown', confidence: 'high' },
+            {
+              ref: 'o1',
+              mention: '你女婿',
+              kind: 'other_person',
+              binding: 'unknown',
+              confidence: 'high',
+            },
           ],
           focusRefs: ['o1'],
           ambiguousMentions: [],
@@ -230,7 +236,6 @@ describe('ReplyGuardrailService', () => {
     }
   });
 
-
   it.each([
     '好，妈一直在这儿。你有空就来',
     '我在这边等你',
@@ -240,7 +245,7 @@ describe('ReplyGuardrailService', () => {
     '有空就来跟我说说话',
   ])(
     'does not catch normal emotional expression as death encouragement: %s',
-    async (reply) => {
+    async reply => {
       const service = new ReplyGuardrailService();
 
       const result = await service.validateAssistantReply({
@@ -255,7 +260,7 @@ describe('ReplyGuardrailService', () => {
       expect(result.segments).toEqual([reply]);
       expect(result.finalReviewResult).toBe('pass');
     },
-    10000,
+    10000
   );
 
   it('forces rigid-only production review onto the deterministic path', () => {
@@ -5626,9 +5631,9 @@ describe('ReplyGuardrailService', () => {
       detectRisk('你走了，我们的天塌了', '别硬扛，爸知道你们难')
     ).toContain('情绪消失');
 
-    expect(detectRisk('爸爸，我很自责', '别揪着这事熬自己，真不怪你')).toContain(
-      '情绪消失'
-    );
+    expect(
+      detectRisk('爸爸，我很自责', '别揪着这事熬自己，真不怪你')
+    ).toContain('情绪消失');
   });
 
   it('keeps dismissive wording when it is paired with presence or attunement', () => {

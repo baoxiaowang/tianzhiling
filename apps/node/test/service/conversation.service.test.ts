@@ -3900,7 +3900,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyFallbackSource: 'contextual_reply_brief',
       })
     );
-    expect(getAssistantContents(savedMessages).join('')).toContain('现在安全吗');
+    expect(getAssistantContents(savedMessages).join('')).toContain(
+      '现在安全吗'
+    );
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 

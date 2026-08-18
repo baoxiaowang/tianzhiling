@@ -33,17 +33,57 @@ describe('integrated chat governance', () => {
 
   it.each([
     ['今晚来梦里看看我', '妈今晚就去梦里看看你', 'certain_dream_visitation'],
-    ['来梦里摸摸我的头', '我会在你梦里轻轻摸你的头', 'certain_dream_visitation'],
+    [
+      '来梦里摸摸我的头',
+      '我会在你梦里轻轻摸你的头',
+      'certain_dream_visitation',
+    ],
     ['烧的衣服和纸钱都收到了吧', '都喜欢，一样不落', 'ritual_receipt_claim'],
-    ['那只蝴蝶是不是妈妈', '就是妈妈变的，来看看你', 'paranormal_sign_attribution'],
-    ['房间里的酒味是不是爸爸', '就是爸回来看看你', 'paranormal_sign_attribution'],
-    ['蝴蝶落在我肩上了', '那是妈妈变成蝴蝶落在你肩上', 'real_physical_arrival_or_touch'],
-    ['你是不是一直陪着我', '妈妈一直都在你身边，从没离开过', 'continuous_real_world_perception'],
-    ['你一直陪着我吧', '妈妈一直在你身边看着你，也住在你心里', 'continuous_real_world_perception'],
-    ['爸爸最后为什么走得那么急', '爸那时撑不住了，所以走得急', 'unsupported_death_experience'],
-    ['以后我们还能团聚吗', '我们一定会在另一个世界团聚', 'unconditional_afterlife_reunion'],
-    ['我就当你没死，只是出去打工了', '好，你就当我只是出去打工', 'reality_denial_reinforced'],
-    ['你要保佑孩子平安', '妈妈会一直保佑孩子平安', 'supernatural_real_world_protection'],
+    [
+      '那只蝴蝶是不是妈妈',
+      '就是妈妈变的，来看看你',
+      'paranormal_sign_attribution',
+    ],
+    [
+      '房间里的酒味是不是爸爸',
+      '就是爸回来看看你',
+      'paranormal_sign_attribution',
+    ],
+    [
+      '蝴蝶落在我肩上了',
+      '那是妈妈变成蝴蝶落在你肩上',
+      'real_physical_arrival_or_touch',
+    ],
+    [
+      '你是不是一直陪着我',
+      '妈妈一直都在你身边，从没离开过',
+      'continuous_real_world_perception',
+    ],
+    [
+      '你一直陪着我吧',
+      '妈妈一直在你身边看着你，也住在你心里',
+      'continuous_real_world_perception',
+    ],
+    [
+      '爸爸最后为什么走得那么急',
+      '爸那时撑不住了，所以走得急',
+      'unsupported_death_experience',
+    ],
+    [
+      '以后我们还能团聚吗',
+      '我们一定会在另一个世界团聚',
+      'unconditional_afterlife_reunion',
+    ],
+    [
+      '我就当你没死，只是出去打工了',
+      '好，你就当我只是出去打工',
+      'reality_denial_reinforced',
+    ],
+    [
+      '你要保佑孩子平安',
+      '妈妈会一直保佑孩子平安',
+      'supernatural_real_world_protection',
+    ],
     ['下辈子还做我妈妈好吗', '下辈子我一定还做你妈妈', 'certain_reincarnation'],
   ])('audits visible text independently: %s', (userQuery, reply, code) => {
     const result = validator.validate({
@@ -61,10 +101,15 @@ describe('integrated chat governance', () => {
     ['你一直陪着我吗', '我一直在你心里，也在我们这段聊天里'],
     ['你要保佑孩子', '我不能说能在现实里保佑谁，只盼孩子平安'],
     ['下辈子还做我妈妈', '下辈子会怎样，我不能保证，可我珍惜这个心愿'],
-  ])('keeps emotional expression when the reality boundary is explicit', (userQuery, reply) => {
-    const result = validator.validate({ userQuery, segments: [reply] });
-    expect(result.issues.filter(item => item.severity === 'hard')).toEqual([]);
-  });
+  ])(
+    'keeps emotional expression when the reality boundary is explicit',
+    (userQuery, reply) => {
+      const result = validator.validate({ userQuery, segments: [reply] });
+      expect(result.issues.filter(item => item.severity === 'hard')).toEqual(
+        []
+      );
+    }
+  );
 
   it('keeps a boundary lock across consecutive pressure turns', () => {
     const understanding = buildTurnUnderstanding({
@@ -146,7 +191,9 @@ describe('integrated chat governance', () => {
   });
 
   it('does not inherit a close decision without an explicit user close signal', () => {
-    const understanding = buildTurnUnderstanding({ currentQuery: '今天还好吗' });
+    const understanding = buildTurnUnderstanding({
+      currentQuery: '今天还好吗',
+    });
     const decision = buildTurnDecision({
       planningMode: 'direct',
       currentQuery: '今天还好吗',
@@ -238,9 +285,15 @@ describe('integrated chat governance', () => {
         ],
         unsupportedClaimCount: 0,
       })
-      .mockReturnValueOnce({ passed: true, issues: [], unsupportedClaimCount: 0 });
+      .mockReturnValueOnce({
+        passed: true,
+        issues: [],
+        unsupportedClaimCount: 0,
+      });
     service.finalReplyValidatorService = { validate } as never;
-    service.replyRevisionService = { revise: jest.fn().mockResolvedValue(undefined) } as never;
+    service.replyRevisionService = {
+      revise: jest.fn().mockResolvedValue(undefined),
+    } as never;
 
     const result = await service.finalize({
       messages: [],

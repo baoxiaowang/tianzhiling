@@ -538,7 +538,9 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('miss_longing');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('不要把“丫头/孩子/闺女”等称呼单独成泡');
-    expect(route.prompt).toContain('不声称时刻在现实房间、床边盯着用户的一举一动');
+    expect(route.prompt).toContain(
+      '不声称时刻在现实房间、床边盯着用户的一举一动'
+    );
     expect(route.prompt).toContain('不要马上转成吃饭、休息');
     expect(lossRoute.primaryScene?.scene).toBe('miss_longing');
     expect(lossRoute.maxSegments).toBe(2);
@@ -787,9 +789,7 @@ describe('routeReplyScene', () => {
     const route = routeReplyScene({
       currentQuery: '大宝想你想得哭了',
       knownFamilyMembers: ['大宝'],
-      intent: semanticIntent([
-        intentItem({ intent: 'express_longing' }),
-      ]),
+      intent: semanticIntent([intentItem({ intent: 'express_longing' })]),
     });
 
     expect(route.primaryScene?.scene).toBe('family_life');
