@@ -2849,7 +2849,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v15',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -3186,9 +3186,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v15',
         replyBriefMode: 'family',
-        replyBriefStrictGrounding: false,
+        replyBriefStrictGrounding: true,
         replyBriefMaxSegments: 2,
         replyExperiencePlanVersion: 'experience_plan_v1',
         replyProfileTier: 'P0',
@@ -3283,8 +3283,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     const savedContents = getAssistantContents(savedMessages);
-    expect(savedContents.join('。')).toBe(naturalReply);
-    expect(savedContents).toHaveLength(2);
+    expect(savedContents.join('')).toBe(naturalReply);
+    expect(savedContents).toHaveLength(3);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         replyBriefMode: 'family',
@@ -3739,7 +3739,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v15',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'contextual_reply_brief',
@@ -4456,8 +4456,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         type: MessageType.voice,
         mediaObjectKey: 'conversation-voice-replies/reply.mp3',
-        mediaTranscript:
-          '闺女，爸爸知道你这段时间受了不少委屈，也一直在努力把日子过好。你不用在爸爸面前硬撑着，想说什么就慢慢说，爸爸愿意一直听你把心里的话说完。',
+        mediaTranscript: longReply,
       }),
     ]);
     expect(result.assistantMessage?.type).toBe(MessageType.voice);
@@ -5113,7 +5112,7 @@ describe('ConversationService generation cleanup diagnostics', () => {
     });
   });
 
-  it('materializes model-authored short-turn actions into two bubbles without rewriting text', () => {
+  it('does not force short model-authored content into two bubbles', () => {
     const service = new ConversationService();
     const materialize = (
       service as any
@@ -5124,42 +5123,16 @@ describe('ConversationService generation cleanup diagnostics', () => {
         ['妈也想你。这大半夜的，心里闷得慌了吧。'],
         'reciprocal_self_expression'
       )
-    ).toEqual(['妈也想你。', '这大半夜的，心里闷得慌了吧。']);
+    ).toEqual(['妈也想你。这大半夜的，心里闷得慌了吧。']);
     expect(
       materialize(['吃过了。  \n这里挺好的。'], 'light_self_disclosure')
-    ).toEqual(['吃过了。', '这里挺好的。']);
+    ).toEqual(['吃过了。  \n这里挺好的。']);
     expect(materialize(['一句完整回复'], 'reciprocal_self_expression')).toEqual(
       ['一句完整回复']
     );
     expect(materialize(['普通回复。还有一句。'], undefined)).toEqual([
       '普通回复。还有一句。',
     ]);
-  });
-
-  it('splits a long first bubble at a sentence or clause boundary', () => {
-    const service = new ConversationService();
-    const split = (service as any).splitLongContentOnReplyBubble.bind(service);
-
-    expect(
-      split([
-        '丫头，爸也舍不得走这么早，别逼自己急着释怀，想我的时候就说说话，爸都听着',
-      ])
-    ).toEqual([
-      '丫头，爸也舍不得走这么早，别逼自己急着释怀',
-      '想我的时候就说说话，爸都听着',
-    ]);
-    expect(
-      split([
-        '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。你不开心，就是天大的事',
-      ])
-    ).toEqual([
-      '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。',
-      '你不开心，就是天大的事',
-    ]);
-    expect(split(['我想你'])).toEqual(['我想你']);
-    expect(
-      split(['这段内容没有任何标点所以不能强行切开成两个气泡的回复'])
-    ).toEqual(['这段内容没有任何标点所以不能强行切开成两个气泡的回复']);
   });
 
   it('records real participation execution without rejecting emotional repetition', () => {

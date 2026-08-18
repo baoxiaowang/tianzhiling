@@ -87,11 +87,14 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
   afterlife_status: {
     stance: 'tender',
     moves: [
-      { type: 'answer', goal: '简短回应在离世世界的状态，不展开编造细节' },
+      {
+        type: 'answer',
+        goal: '按稳定离世生活框架正面回应当前状态，并沿用已建立的生活锚点',
+      },
     ],
     socialStrategy: 'protective_fiction',
     strategyPurpose:
-      '回应状态关心并收下其中的牵挂；离世日常只作写意表达，不用固定状态答案',
+      '回应状态关心并收下其中的牵挂；住处、家人寄来的物品、原有习惯爱好和无病痛保持稳定，具体说法按人物自然组织',
     questionNeed: 'none',
     turnClosure: 'neutral',
   },
@@ -215,7 +218,7 @@ export function buildDeterministicLightStrategy(options: {
       stanceTarget: 'user',
       moves: [{ type: 'acknowledge', goal: '自然收下这句短回应' }],
       socialStrategy: 'direct',
-      strategyPurpose: '确认式短回应只保留一颗气泡，不额外展开',
+      strategyPurpose: '确认式短回应自然收住，不为形式额外展开',
       questionNeed: 'none',
       turnClosure: 'close',
       personaActivation: [],

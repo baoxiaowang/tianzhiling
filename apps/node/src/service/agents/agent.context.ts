@@ -84,6 +84,7 @@ import type { DreamCompanionPlan } from './dream-companion-plan';
 import { buildReplyStateProtocolPrompt } from './reply-state-protocol';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
 import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
+import { buildDirectActiveContributionPrompt } from './direct-active-contribution';
 import { buildReplyCommActPrompt, COMM_ACT_VERSION } from './reply-comm-act';
 import {
   buildConversationTurnPlanPrompt,
@@ -138,6 +139,8 @@ import {
   TURN_DECISION_VERSION,
   TurnDecision,
 } from './turn-decision';
+import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
+import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 import {
   buildReplyTurnContract,
   REPLY_TURN_CONTRACT_VERSION,
@@ -296,6 +299,12 @@ export interface AgentContextDiagnostics {
   relationshipStage: ReplyBrief['experiencePlan']['relationshipStage'];
   conversationDepth: ReplyBrief['experiencePlan']['conversationDepth'];
   guardrailFocuses: string[];
+  afterlifeWorldVersion?: string;
+  afterlifeWorldDomains: string[];
+  afterlifeReceivableItems: string[];
+  relationalSceneFrameworkVersion?: string;
+  relationalSceneKinds: string[];
+  directActiveContributionMode?: string;
 }
 
 export interface RetrievedContextSnippet {
@@ -502,6 +511,7 @@ export class AgentContextService {
     ].join(':');
     const baseReplyBriefOptions = {
       currentQuery: options.currentQuery || '',
+      planningMode: replyPlanningDecision.mode,
       agent: options.agent,
       profileFacts,
       conversationMessages: historicalConversationMessages,
@@ -920,6 +930,14 @@ export class AgentContextService {
         relationshipStage: replyBrief.experiencePlan.relationshipStage,
         conversationDepth: replyBrief.experiencePlan.conversationDepth,
         guardrailFocuses: replyBrief.guardrailFocuses,
+        afterlifeWorldVersion: replyBrief.afterlifeWorld?.version,
+        afterlifeWorldDomains: replyBrief.afterlifeWorld?.domains || [],
+        afterlifeReceivableItems:
+          replyBrief.afterlifeWorld?.receivableItems || [],
+        relationalSceneFrameworkVersion: replyBrief.sceneFramework?.version,
+        relationalSceneKinds:
+          replyBrief.sceneFramework?.cards.map(card => card.kind) || [],
+        directActiveContributionMode: replyBrief.directActiveContribution?.mode,
       },
       replyIntent: replyRoute.intent,
       replyRoute,
@@ -1350,7 +1368,7 @@ export class AgentContextService {
             ...(replyBrief.conversationPlan.engagement
               ?.assistantContribution === 'self_expression'
               ? [
-                  '用户要你主动说；先给角色侧当下内容，不要把“我在、你慢慢说、我听着、你想说时我在”作为第一句或主体。离世世界可合理想象，不编用户偏好或共同往事。',
+                  '用户要你主动说；先给角色侧当下内容，不要把“我在、你慢慢说、我听着、你想说时我在”作为第一句或主体。涉及离世生活时按本轮框架选择内容，不临时另造设定，也不编用户偏好或共同往事。',
                 ]
               : []),
             ...(replyBrief.conversationPlan.engagement?.continuationGoal ===
@@ -1411,6 +1429,15 @@ export class AgentContextService {
             )}。不用做不到的现实承诺哄用户，也不把拒绝当回复主体；保留想照顾用户的心意，改用愿望、具体关心或聊天内能做的事承接。`,
         ]
       : [];
+    const afterlifeWorldLines = replyBrief.afterlifeWorld
+      ? ['# 离世生活框架', buildAfterlifeWorldPrompt(replyBrief.afterlifeWorld)]
+      : [];
+    const sceneFrameworkLines = replyBrief.sceneFramework
+      ? [
+          '# 关系场景体系',
+          buildRelationalSceneFrameworkPrompt(replyBrief.sceneFramework),
+        ]
+      : [];
     const hasActiveContributionTurn = Boolean(
       replyBrief.activeContribution ||
         replyBrief.stateProtocol?.protocol === 'active_contribution'
@@ -1449,21 +1476,42 @@ export class AgentContextService {
       '用户说“准备回家、收拾东西、要走了”只表示还在离开或收束，不表示已经上路；不得补出“路上注意安全、别着急、到家先歇会儿、慢点走”等现实行动提醒。',
       '涉及共同过去时，只用本轮证据包中明确可陈述的内容；没有对应证据就不补写“以前、你那时、我做的某道菜、我们一起”等具体共同往事，改为接住当下感受和含义。',
     ].join('\n');
+    const careReceptionLines = replyBrief.understanding.needs.some(
+      need => need.expectedResponse === 'direct_answer_and_receive_care'
+    )
+      ? [
+          '# 本轮接纳关心',
+          '用户正在把关心递给当前角色：先正面回答，让这份关心自然落在角色身上，并按人物性格表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
+        ]
+      : [];
+    const directActiveContributionLines =
+      planningMode === 'direct' && replyBrief.directActiveContribution
+        ? [
+            '# 直接路径的可选主动贡献',
+            buildDirectActiveContributionPrompt(
+              replyBrief.directActiveContribution
+            ),
+          ]
+        : [];
 
     if (planningMode === 'direct') {
       return [
         '# 本轮回复任务',
         experienceLine,
         communicationHint,
+        ...careReceptionLines,
+        ...directActiveContributionLines,
         ...activeContributionLines,
         ...(hasActiveContributionTurn ? [] : commActLines),
         ...objectPlanLines,
+        ...afterlifeWorldLines,
+        ...sceneFrameworkLines,
         ...participationLines,
         ...realityDependencyLines,
         ...correctionLines,
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...(chatToolPrompt ? [chatToolPrompt] : []),
-        '# 气泡语义规划',
+        '# 完整正文与展示适配',
         bubblePlanPrompt,
         '# 总字数预算',
         lengthPlanPrompt,
@@ -1476,10 +1524,13 @@ export class AgentContextService {
         '# 本轮回复任务',
         experienceLine,
         communicationHint,
+        ...careReceptionLines,
         ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
         ...conversationPlanLines,
         ...(hasActiveContributionTurn ? [] : commActLines),
         ...objectPlanLines,
+        ...afterlifeWorldLines,
+        ...sceneFrameworkLines,
         ...careMotivationLines,
         ...stateProtocolLines,
         ...participationLines,
@@ -1487,7 +1538,7 @@ export class AgentContextService {
         ...activeContributionLines,
         ...strategyQualityLines,
         ...correctionLines,
-        '# 气泡语义规划',
+        '# 完整正文与展示适配',
         bubblePlanPrompt,
         '# 总字数预算',
         lengthPlanPrompt,
@@ -1500,12 +1551,15 @@ export class AgentContextService {
       '# 本轮回复任务',
       experienceLine,
       communicationHint,
+      ...careReceptionLines,
       ...(!replyBrief.reading
         ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
         : []),
       ...conversationPlanLines,
       ...(hasActiveContributionTurn ? [] : commActLines),
       ...objectPlanLines,
+      ...afterlifeWorldLines,
+      ...sceneFrameworkLines,
       ...careMotivationLines,
       ...stateProtocolLines,
       ...participationLines,
@@ -1524,7 +1578,7 @@ export class AgentContextService {
           ]
         : []),
       ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
-      '气泡语义规划：',
+      '完整正文与展示适配：',
       bubblePlanPrompt,
       '总字数预算：',
       lengthPlanPrompt,

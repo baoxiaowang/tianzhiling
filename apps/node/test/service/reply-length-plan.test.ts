@@ -176,8 +176,55 @@ describe('reply length plan', () => {
       expect(buildReplyLengthPlanPrompt(plan)).toContain(
         '事实克制不等于情感克制'
       );
+      expect(buildReplyLengthPlanPrompt(plan)).toContain(
+        '字数服从情绪和语义完整'
+      );
+      expect(buildReplyLengthPlanPrompt(plan)).not.toContain('约 40 字');
     }
   );
+
+  it('does not compress a long concrete guilt disclosure into the ordinary 20-30 range', () => {
+    const plan = buildReplyLengthPlan({
+      currentQuery:
+        '我小时候你又经管我小哥我俩，又上地，还经管我姥爷，他还总跟你吵架，有时还打你，我觉得亏欠你好多',
+      mode: 'emotional',
+      scene: 'comfort_request',
+      replyMoveCount: 2,
+      semanticPlan: true,
+      preferTwoSegments: true,
+      preferTwentyToThirtyCharacters: true,
+      continuationGoal: 'hold',
+      turnClosure: 'continue',
+    });
+
+    expect(plan).toEqual({
+      lengthClass: 'deep',
+      targetCharacters: 60,
+      reviewCharacters: 85,
+    });
+  });
+
+  it('gives a warm relationship turn a wider soft range without making it mandatory', () => {
+    const plan = buildReplyLengthPlan({
+      currentQuery: '我最近天天想你，想得不得了',
+      mode: 'relationship',
+      scene: 'miss_longing',
+      replyMoveCount: 2,
+      preferTwoSegments: true,
+      preferTwentyToThirtyCharacters: true,
+      turnClosure: 'neutral',
+    });
+
+    expect(plan).toEqual({
+      lengthClass: 'brief',
+      targetCharacters: 28,
+      reviewCharacters: 38,
+      preferredRange: {
+        minCharacters: 20,
+        maxCharacters: 40,
+      },
+    });
+  });
 
   it('does not turn a long user message into a long reply budget', () => {
     expect(
@@ -358,17 +405,17 @@ describe('reply length plan', () => {
   });
 
   it('keeps an ordinary cooldown turn at 20-30 characters without forcing two bubbles', () => {
-    expect(
-      buildReplyLengthPlan({
-        currentQuery: '刚喝了口热牛奶',
-        mode: 'daily',
-        scene: 'daily_update',
-        replyMoveCount: 1,
-        preferTwoSegments: false,
-        preferTwentyToThirtyCharacters: true,
-        turnClosure: 'neutral',
-      })
-    ).toEqual({
+    const plan = buildReplyLengthPlan({
+      currentQuery: '刚喝了口热牛奶',
+      mode: 'daily',
+      scene: 'daily_update',
+      replyMoveCount: 1,
+      preferTwoSegments: false,
+      preferTwentyToThirtyCharacters: true,
+      turnClosure: 'neutral',
+    });
+
+    expect(plan).toEqual({
       lengthClass: 'brief',
       targetCharacters: 28,
       reviewCharacters: 38,
@@ -377,6 +424,8 @@ describe('reply length plan', () => {
         maxCharacters: 30,
       },
     });
+    expect(buildReplyLengthPlanPrompt(plan)).toContain('语义完整优先');
+    expect(buildReplyLengthPlanPrompt(plan)).not.toContain('须压缩');
   });
 
   it('counts all bubbles together and ignores whitespace', () => {

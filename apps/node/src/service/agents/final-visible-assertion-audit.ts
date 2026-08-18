@@ -1,4 +1,9 @@
 import type { ConversationBoundaryKind } from './reply-intent';
+import {
+  AfterlifeWorldContext,
+  hasAfterlifeItemReceiptClaim,
+  isAfterlifeItemReceiptAllowed,
+} from './afterlife-world-framework';
 
 export type VisibleAssertionIssueCode =
   | 'certain_dream_visitation'
@@ -82,6 +87,7 @@ export function auditVisibleReplyAssertions(options: {
   userQuery?: string;
   content: string;
   boundaryLocks?: ConversationBoundaryKind[];
+  afterlifeWorld?: AfterlifeWorldContext;
 }): VisibleAssertionFinding[] {
   const userQuery = options.userQuery?.trim() || '';
   const content = options.content.trim();
@@ -107,8 +113,16 @@ export function auditVisibleReplyAssertions(options: {
   }
 
   if (
+    !isAfterlifeItemReceiptAllowed({
+      context: options.afterlifeWorld,
+      content,
+    }) &&
     !RITUAL_BOUNDARY.test(content) &&
     (RITUAL_RECEIPT.test(content) ||
+      hasAfterlifeItemReceiptClaim({
+        context: options.afterlifeWorld,
+        content,
+      }) ||
       ((RITUAL_OBJECT.test(userQuery) || locks.has('ritual_receipt')) &&
         CONTEXTUAL_RITUAL_CONFIRMATION.test(content)))
   ) {

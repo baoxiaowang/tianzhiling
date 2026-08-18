@@ -37,7 +37,7 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt.length).toBeLessThan(1600);
     expect(prompt).toContain('# 最小核心原则');
-    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(9);
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(10);
     DEPARTED_MINIMAL_CORE_PRINCIPLES.forEach(principle => {
       expect(prompt).toContain(principle);
     });
@@ -50,6 +50,11 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '亲密感靠称呼、关系立场、贴着原话的理解和角色侧心意'
     );
+    expect(prompt).toContain('让关心落在角色身上');
+    expect(prompt).toContain('按人物性格自然表现出珍惜');
+    expect(prompt).toContain('这是软策略');
+    expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+    expect(prompt).not.toContain('我吃过了，你总惦记我，我心里暖');
     expect(prompt).not.toContain('北京时间');
     expect(prompt).not.toContain(USER_ID);
     expect(prompt).not.toContain(AGENT_ID);

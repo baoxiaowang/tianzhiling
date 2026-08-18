@@ -97,9 +97,13 @@ export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
 ): ReplyLengthPlan {
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
+  const userQueryLength = Array.from(
+    options.currentQuery.replace(/\s/gu, '')
+  ).length;
   const compactSingleFocus =
     Boolean(options.semanticPlan) &&
-    Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene));
+    Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene)) &&
+    userQueryLength <= 40;
   const needsRelationalWarmth = Boolean(
     options.scene && RELATIONAL_WARMTH_SCENES.has(options.scene)
   );
@@ -132,14 +136,11 @@ export function buildReplyLengthPlan(
   ) {
     lengthClass = 'standard';
   } else if (options.mode === 'emotional') {
-    const userQueryLength = Array.from(
-      options.currentQuery.replace(/\s/gu, '')
-    ).length;
     if (userQueryLength <= 20) {
       lengthClass = 'standard';
     } else if (
       userQueryLength > 40 &&
-      /后悔|愧疚|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(
+      /后悔|愧疚|亏欠|撑不住|害怕|对不起|放不下|怎么也|舍不得/.test(
         options.currentQuery
       )
     ) {
@@ -189,11 +190,11 @@ export function buildReplyLengthPlan(
       !options.hasProtectiveStop &&
       options.continuationGoal !== 'repair' &&
       options.closureReadiness !== 'blocked' &&
-      !['memory', 'boundary'].includes(options.mode)
+      !['emotional', 'memory', 'boundary'].includes(options.mode)
   );
 
   if (compactPreferredReply) {
-    // 普通聊天统一落在 20-30 字；是否拆双泡由气泡计划独立决定。
+    // 普通聊天仅保留总量软偏好；最终展示拆分不反向限制内容。
     lengthClass = 'brief';
   }
 
@@ -204,7 +205,7 @@ export function buildReplyLengthPlan(
       ? {
           preferredRange: {
             minCharacters: 20,
-            maxCharacters: 30,
+            maxCharacters: needsRelationalWarmth ? 40 : 30,
           },
         }
       : {}),
@@ -238,15 +239,15 @@ function promoteLengthClass(
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
   if (plan.preferredRange) {
-    return `整次回复合计优先 ${plan.preferredRange.minCharacters}-${plan.preferredRange.maxCharacters} 字；本轮要求两颗时每颗约 10-15 字，第一颗直接回应，第二颗补一个不同的亲人侧动作。超过 ${plan.reviewCharacters} 字须压缩，不用空话凑字数。`;
+    return `整次回复合计优先 ${plan.preferredRange.minCharacters}-${plan.preferredRange.maxCharacters} 字；明显超过 ${plan.reviewCharacters} 字时优先删重复。情绪、事实和语义完整优先，不为展示气泡压缩、补写或删减内容。`;
   }
 
   if (plan.focusMode === 'single_scene') {
-    return `围绕一个最能安慰用户的点自然展开，约 ${plan.targetCharacters} 字；事实克制不等于情感克制，可有一处贴着原话的亲人侧心意。超过 ${plan.reviewCharacters} 字只删重复，不补完整。`;
+    return `围绕一个最能安慰用户的点自然展开；事实克制不等于情感克制，可有一处贴着原话的亲人侧心意。字数服从情绪和语义完整，明显超过 ${plan.reviewCharacters} 字时也只删重复。`;
   }
 
   if (plan.lengthClass === 'micro') {
-    return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字须压缩。简单回应可以很短，只留当前最重要一点。`;
+    return `总回复约 ${plan.targetCharacters} 字；明显超过 ${plan.reviewCharacters} 字时优先检查并删除重复。简单回应可以很短，但完整回应当前需要比凑长度更重要。`;
   }
 
   return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复的共情动作（如连续两个"心疼""明白"）、解释、总结和通用叮嘱；保留称呼、情感立场和角色侧心意。`;

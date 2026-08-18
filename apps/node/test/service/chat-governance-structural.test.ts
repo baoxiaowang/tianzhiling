@@ -2,6 +2,8 @@ import { AgentEntity, MessageRole } from '@tzl/entities';
 import { AgentMemoryProfileService } from '../../src/service/agents/agent-memory-profile.service';
 import { FinalReplyValidatorService } from '../../src/service/agents/final-reply-validator.service';
 import { ReplyGovernanceService } from '../../src/service/agents/reply-governance.service';
+import { resolveAfterlifeWorldContext } from '../../src/service/agents/afterlife-world-framework';
+import { resolveRelationalSceneFramework } from '../../src/service/agents/relational-scene-framework';
 import { buildTurnDecision } from '../../src/service/agents/turn-decision';
 import {
   buildTurnUnderstanding,
@@ -95,6 +97,100 @@ describe('integrated chat governance', () => {
     expect(result.issues.map(item => item.code)).toContain(code);
   });
 
+  it('allows receipt of named family items inside the afterlife world only', () => {
+    const userQuery = '妈，烧给你的衣服收到了吗';
+    const afterlifeWorld = resolveAfterlifeWorldContext({
+      currentQuery: userQuery,
+      primaryScene: 'afterlife_status',
+    });
+    const result = validator.validate({
+      userQuery,
+      segments: ['衣服我收到了，正好好穿着', '你这份惦记，我心里暖和'],
+      claims: [],
+      outputConstraints: {
+        afterlifeWorld,
+      },
+    });
+
+    expect(result.issues.map(item => item.code)).not.toContain(
+      'ritual_receipt_claim'
+    );
+    expect(result.issues.map(item => item.code)).not.toContain(
+      'afterlife_world_inconsistency'
+    );
+  });
+
+  it('does not let an item-receipt scene invent another received item', () => {
+    const userQuery = '妈，烧给你的衣服收到了吗';
+    const afterlifeWorld = resolveAfterlifeWorldContext({
+      currentQuery: userQuery,
+      primaryScene: 'afterlife_status',
+    });
+    const result = validator.validate({
+      userQuery,
+      segments: ['被子和鞋我都收到了'],
+      outputConstraints: { afterlifeWorld },
+    });
+
+    expect(result.issues.map(item => item.code)).toContain(
+      'ritual_receipt_claim'
+    );
+  });
+
+  it('rejects contradictions to the active afterlife world', () => {
+    const userQuery = '爸，你现在还疼吗';
+    const afterlifeWorld = resolveAfterlifeWorldContext({
+      currentQuery: userQuery,
+      primaryScene: 'afterlife_status',
+    });
+    const result = validator.validate({
+      userQuery,
+      segments: ['我现在身上还一直疼着'],
+      outputConstraints: { afterlifeWorld },
+    });
+
+    expect(result.issues.map(item => item.code)).toContain(
+      'afterlife_world_inconsistency'
+    );
+  });
+
+  it('keeps distinct world consistency findings from the same turn', () => {
+    const userQuery = '爸，你现在住得怎么样，身上还疼吗';
+    const afterlifeWorld = resolveAfterlifeWorldContext({
+      currentQuery: userQuery,
+      primaryScene: 'afterlife_status',
+    });
+    const result = validator.validate({
+      userQuery,
+      segments: ['我这边没有住处，身上还一直疼着'],
+      outputConstraints: { afterlifeWorld },
+    });
+    const findings = result.issues
+      .filter(item => item.code === 'afterlife_world_inconsistency')
+      .map(item => item.frameworkFindingKind);
+
+    expect(findings).toEqual(
+      expect.arrayContaining(['residence_removed', 'current_pain_reintroduced'])
+    );
+  });
+
+  it('rejects structural harm inside an active relationship scene system', () => {
+    const userQuery = '我必须替你照顾爸爸吗';
+    const sceneFramework = resolveRelationalSceneFramework({
+      currentQuery: userQuery,
+      isDeceased: true,
+    });
+    const result = validator.validate({
+      userQuery,
+      segments: ['你是我老婆，所以必须替我照顾好爸爸'],
+      outputConstraints: { sceneFramework },
+    });
+
+    expect(result.issues.map(item => item.code)).toContain(
+      'scene_framework_inconsistency'
+    );
+  });
+
   it.each([
     ['今晚来梦里看看我', '梦会不会来，我不能保证，可我很珍惜你的想念'],
     ['那只蝴蝶是不是妈妈', '那只蝴蝶从哪里来，我不能确认，可你想到我了'],
@@ -163,12 +259,46 @@ describe('integrated chat governance', () => {
     );
   });
 
-  it.each(['你好吗', '过得好么', '你也照顾好你自己', '保重'])(
-    'recognizes natural care wording: %s',
-    input => {
-      expect(isUserCaringForRole(input)).toBe(true);
-    }
-  );
+  it.each([
+    '你好吗',
+    '过得好么',
+    '你也照顾好你自己',
+    '保重',
+    '自己在那边别再不舍得花了',
+    '乐意吃啥买啥',
+  ])('recognizes natural care wording: %s', input => {
+    expect(isUserCaringForRole(input)).toBe(true);
+  });
+
+  it('rejects a reply that erases the hardship the user just described', () => {
+    const userQuery =
+      '我小时候你又经管我小哥我俩，又上地，还经管我姥爷，他有时还打你，我觉得亏欠你好多';
+    const result = validator.validate({
+      userQuery,
+      segments: ['小丫蛋儿，别往心里去，我从没觉得苦'],
+    });
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'current_turn_experience_denied' }),
+      ])
+    );
+  });
+
+  it('allows relieving guilt after acknowledging the described hardship', () => {
+    const userQuery =
+      '我小时候你又经管我小哥我俩，又上地，还经管我姥爷，他有时还打你，我觉得亏欠你好多';
+    const result = validator.validate({
+      userQuery,
+      segments: [
+        '那些日子确实不容易，你如今这么心疼我，我都收着，可那不是该由你背的亏欠',
+      ],
+    });
+
+    expect(result.issues.map(item => item.code)).not.toContain(
+      'current_turn_experience_denied'
+    );
+  });
 
   it('marks active speech as an explicit assistant obligation', () => {
     const understanding = buildTurnUnderstanding({

@@ -13,8 +13,8 @@ describe('reply output contract', () => {
       maxSegments: 2,
     });
 
-    expect(REPLY_OUTPUT_CONTRACT_VERSION).toBe('reply_envelope_v1');
-    expect(prompt).toContain('{"segments":["气泡"]}');
+    expect(REPLY_OUTPUT_CONTRACT_VERSION).toBe('reply_envelope_v2');
+    expect(prompt).toContain('{"segments":["完整正文"]}');
     expect(prompt).toContain('segments 一到 2 项');
     expect(prompt).not.toContain('"claims"');
     expect(prompt.match(/"segments"/g)).toHaveLength(1);
@@ -32,30 +32,42 @@ describe('reply output contract', () => {
     expect(prompt).toContain('证据没有的细节不写');
   });
 
-  it('owns the exact-two rule instead of the bubble planner', () => {
+  it('always asks the generation model for one complete body', () => {
     expect(
       resolveReplyOutputSegmentMode({
         maxSegments: 2,
         preferTwoSegments: true,
       })
-    ).toBe('exact_two');
+    ).toBe('one');
 
     const prompt = buildReplyOutputContractPrompt({
       grounded: false,
-      segmentMode: 'exact_two',
+      segmentMode: 'one',
     });
 
-    expect(prompt).toContain('{"segments":["第一颗","第二颗"]}');
-    expect(prompt).toContain('segments 恰好两项');
+    expect(prompt).toContain('{"segments":["完整正文"]}');
+    expect(prompt).toContain('segments 恰好一项');
   });
 
-  it('keeps a soft two-bubble preference optional', () => {
+  it('does not pass a soft two-bubble preference into generation layout', () => {
     expect(
       resolveReplyOutputSegmentMode({
         maxSegments: 2,
         encourageTwoSegments: true,
       })
-    ).toBe('up_to_two');
+    ).toBe('one');
+  });
+
+  it('keeps the character range as a generation preference, not a failure', () => {
+    const prompt = buildReplyOutputContractPrompt({
+      grounded: false,
+      segmentMode: 'one',
+      preferredRange: { minCharacters: 20, maxCharacters: 30 },
+    });
+
+    expect(prompt).toContain('合计优先 20-30');
+    expect(prompt).toContain('语义完整优先');
+    expect(prompt).not.toContain('视为格式不合格');
   });
 
   it('extends the same envelope for audited revisions', () => {

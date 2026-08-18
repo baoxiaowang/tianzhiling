@@ -76,7 +76,10 @@ export class ConversationReplyFinalizationService {
             contract: turnContract,
             candidateSegmentCount: prepared.length,
           })
-        : options.brief.activeContribution || hasParticipationConstraints
+        : options.brief.afterlifeWorld ||
+          options.brief.sceneFramework ||
+          options.brief.activeContribution ||
+          hasParticipationConstraints
         ? {
             directAnswerRequired: participation?.directAnswerRequired,
             mustKeepTurnWithAssistant:
@@ -99,6 +102,8 @@ export class ConversationReplyFinalizationService {
               options.turnDecision?.understanding.boundaryLocks.map(
                 lock => lock.kind
               ),
+            afterlifeWorld: options.brief.afterlifeWorld,
+            sceneFramework: options.brief.sceneFramework,
           }
         : undefined;
     const governance = await this.replyGovernanceService.finalize({

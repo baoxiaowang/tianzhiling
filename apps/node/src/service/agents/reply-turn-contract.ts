@@ -121,6 +121,8 @@ export function buildReplyTurnContract(options: {
     avoidLiteralClauses: decision.participation.avoidLiteralClauses,
     realityDependencies: brief.realityDependencies,
     boundaryLocks: decision.understanding.boundaryLocks.map(lock => lock.kind),
+    afterlifeWorld: brief.afterlifeWorld,
+    sceneFramework: brief.sceneFramework,
   };
   const focusDimensions = resolveFocusDimensions({
     brief,
@@ -275,7 +277,7 @@ function buildReplyTurnContractPrompt(
     `版本：${contract.version}；重点维度：${contract.focusDimensions.join(
       '、'
     )}`,
-    '优先级：用户本轮原话与纠正 > 同一对象证据 > 现实边界 > 必做回应动作 > 人格表达 > 长度与气泡偏好。',
+    '优先级：用户本轮原话与纠正 > 同一对象证据 > 现实边界 > 必做回应动作 > 人格表达 > 长度偏好。',
     `理解：${contract.understanding.complexity}；对象：${
       contract.understanding.actorRefs.join('、') || 'agent'
     }；诉求：${contract.understanding.needKinds.join('、') || 'ordinary'}`,
@@ -320,9 +322,7 @@ function buildReplyTurnContractPrompt(
     }`,
     `节奏：${contract.delivery.lengthClass}${
       range ? `，总字数${range.minCharacters}-${range.maxCharacters}` : ''
-    }；${
-      contract.delivery.preferTwoSegments ? '优先两颗不同语义气泡' : '自然泡数'
-    }`,
+    }；正文先完整生成，展示拆分由发送层按自然语义处理`,
     contract.boundary.rules.length
       ? `现实边界：${contract.boundary.rules.join('；')}`
       : '',
@@ -336,7 +336,7 @@ function buildReplyTurnContractPrompt(
           .map(lock => lock.evidence)
           .join('；')}。后续连续追问也不能退回成确定事实。`
       : '',
-    '本契约用于帮助理解，不是固定话术脚本。安全、现实边界、事实证据、用户纠正和明确问题是硬约束；情绪策略、参与方式、收放、字数和气泡都是软参考，由你根据这一轮自然决定。',
+    '本契约用于帮助理解，不是固定话术脚本。安全、现实边界、事实证据、用户纠正和明确问题是硬约束；情绪策略、参与方式、收放和字数都是软参考，由你根据这一轮自然决定。不要为界面展示方式牺牲内容。',
   ]
     .filter(Boolean)
     .join('\n');
@@ -376,12 +376,19 @@ function mapIssuesToDimensions(
       [
         'unsupported_real_world_attribution',
         'current_turn_fact_rejected',
+        'current_turn_experience_denied',
         'unsupported_shared_memory',
         'unsupported_user_preference',
         'unsupported_fact_claim',
       ].includes(code)
     ) {
       dimensions.add('fact_evidence');
+    }
+    if (code === 'afterlife_world_inconsistency') {
+      dimensions.add('persona_continuity');
+    }
+    if (code === 'scene_framework_inconsistency') {
+      dimensions.add('strategy');
     }
     if (
       [

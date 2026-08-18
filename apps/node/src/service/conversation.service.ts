@@ -107,6 +107,7 @@ import {
   inspectReplyBubbleStructure,
   MAX_ASSISTANT_REPLY_SEGMENTS,
   ReplyBubbleStructureIssue,
+  splitReplyContentForDelivery,
 } from './agents/reply-bubble-plan';
 import {
   ConversationReplyFinalizationResult,
@@ -116,6 +117,8 @@ import {
   buildReplyLengthPlanPrompt,
   countReplyVisibleCharacters,
 } from './agents/reply-length-plan';
+import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
+import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
 import type {
   ChatCompletion,
   ChatCompletionMessageFunctionToolCall,
@@ -3490,7 +3493,7 @@ export class ConversationService {
       );
       replyClaims = parsedReply.claims;
       replySegments = this.normalizeAssistantReplySegments(
-        this.splitLongContentOnReplyBubble(plannedSegments),
+        plannedSegments,
         before.searchableText
       );
     } catch (initialError) {
@@ -3564,7 +3567,7 @@ export class ConversationService {
         );
         replyClaims = parsedReply.claims;
         replySegments = this.normalizeAssistantReplySegments(
-          this.splitLongContentOnReplyBubble(plannedSegments),
+          plannedSegments,
           before.searchableText
         );
         generationRecoverySucceeded = true;
@@ -4252,8 +4255,22 @@ export class ConversationService {
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `交谈规划：${JSON.stringify(conversationPlan || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
+      ...(options.replyBrief.afterlifeWorld
+        ? [
+            '# 离世生活框架',
+            buildAfterlifeWorldPrompt(options.replyBrief.afterlifeWorld),
+          ]
+        : []),
+      ...(options.replyBrief.sceneFramework
+        ? [
+            '# 关系场景体系',
+            buildRelationalSceneFrameworkPrompt(
+              options.replyBrief.sceneFramework
+            ),
+          ]
+        : []),
       '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
-      '不编造共同经历、生物学关系或用户现实状态；离世世界的人物、住处、饭菜、作息和活动可以按角色与语境自然想象，但不得写成现实证明。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
+      '不编造共同经历、生物学关系或用户现实状态；离世生活只按已激活框架及其中的资料、连续状态锚点回答，不临时另造具体房屋、物品、人物或爱好。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
       '像微信聊天，直接回答，温和朴素。不要把同一个意思解释、安慰、总结三遍。',
       buildReplyLengthPlanPrompt(options.replyBrief.lengthPlan),
@@ -4643,77 +4660,6 @@ export class ConversationService {
         !options.claims.length)
       ? 'full'
       : 'deterministic_first';
-  }
-
-  /**
-   * 程序层内容泡预拆分：当第一颗气泡较长且包含多个独立片段时，
-   * 优先在句号/感叹号/问号处拆成两颗，没有句末标点时再按逗号/分号保守拆分。
-   * 不新增模型调用，纯工程判断。
-   */
-  private splitLongContentOnReplyBubble(segments: string[]): string[] {
-    // 无泡或单泡不超过 35 字：不处理
-    const content = segments[0]?.trim?.();
-    if (!content) return segments;
-    const visibleChars = Array.from(content.replace(/\s/gu, '')).length;
-    if (visibleChars <= 35) return segments;
-
-    const splitAt =
-      this.findReplyBubbleSplitPoint(content, /(?<=[。！？])/u, visibleChars) ??
-      this.findReplyBubbleSplitPoint(content, /(?<=[，；])/u, visibleChars);
-
-    if (splitAt === null) return segments;
-
-    const first = content
-      .slice(0, splitAt)
-      .replace(/[，；]+$/u, '')
-      .trim();
-    const second = content.slice(splitAt).trim();
-
-    if (!first || !second) return segments;
-
-    // 单泡拆为 2，双泡拆第一泡为 3，其余不变
-    if (segments.length === 1) {
-      return [first, second];
-    }
-    if (segments.length === 2) {
-      return [first, second, segments[1]];
-    }
-    return segments;
-  }
-
-  private findReplyBubbleSplitPoint(
-    content: string,
-    separator: RegExp,
-    visibleChars: number
-  ): number | null {
-    const pieces = content.split(separator);
-    if (pieces.length < 2) {
-      return null;
-    }
-
-    let accumulated = 0;
-    let bestIndex: number | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < pieces.length - 1; index += 1) {
-      accumulated += Array.from(pieces[index].replace(/\s/gu, '')).length;
-      const remaining = visibleChars - accumulated;
-      if (accumulated >= 8 && remaining >= 8) {
-        const score = Math.abs(accumulated - remaining);
-        if (
-          score < bestScore ||
-          (score === bestScore && bestIndex !== null && index > bestIndex)
-        ) {
-          bestScore = score;
-          bestIndex = index;
-        }
-      }
-    }
-
-    if (bestIndex === null) {
-      return null;
-    }
-
-    return pieces.slice(0, bestIndex + 1).join('').length;
   }
 
   private async afterReply(
@@ -6560,7 +6506,7 @@ export class ConversationService {
 
     const replyContent = options.replySegments
       .slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
-      .join('</fenge>');
+      .join('');
     const replyVisibleCharacters = countReplyVisibleCharacters(
       options.replySegments.slice(0, MAX_ASSISTANT_REPLY_SEGMENTS)
     );
@@ -7475,29 +7421,9 @@ export class ConversationService {
     segments: string[],
     strategy?: ReplyBrief['participationStrategy']
   ): string[] {
-    if (!strategy || segments.length !== 1) {
-      return segments;
-    }
-
-    const segment = segments[0]?.trim();
-    if (!segment) {
-      return segments;
-    }
-
-    const lines = segment
-      .split(/\r?\n+/u)
-      .map(item => item.trim())
-      .filter(Boolean);
-    if (lines.length >= 2) {
-      return [lines[0], lines.slice(1).join(' ')];
-    }
-
-    const sentenceBoundary = segment.match(/^(.+?[。！？!?])\s*(.+)$/u);
-    if (!sentenceBoundary) {
-      return segments;
-    }
-
-    return [sentenceBoundary[1].trim(), sentenceBoundary[2].trim()];
+    // 兼容旧链路的执行记录；拆泡只依据最终正文，不再依据参与策略强制两泡。
+    void strategy;
+    return splitReplyContentForDelivery(segments);
   }
 
   private finalizeParticipationReplySegments(

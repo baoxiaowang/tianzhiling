@@ -507,7 +507,7 @@ describe('AgentContextService', () => {
     expect(context.diagnostics).toEqual(
       expect.objectContaining({
         promptVersion: 'agent_chat_v11',
-        outputContractVersion: 'reply_envelope_v1',
+        outputContractVersion: 'reply_envelope_v2',
         boundaryContractVersion: 'reply_boundary_v1',
         toolInstructionMode: 'orchestrated_none',
         chatToolVersion: 'agent_chat_tools_v1',
@@ -1080,12 +1080,15 @@ describe('AgentContextService', () => {
     ]);
     expect(systemMessage.content).toContain('# 当前对话参考模式：status');
     expect(systemMessage.content).toContain('# 本轮回复任务');
+    expect(systemMessage.content).toContain('# 离世生活框架');
+    expect(systemMessage.content).toContain('当前生活没有疾病、疼痛');
     expect(systemMessage.content).toContain('# 本轮统一执行契约');
     expect(systemMessage.content).toContain('参与：直接回答=是');
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
-    expect(systemMessage.content).toContain('气泡语义规划');
-    expect(systemMessage.content).toContain('本轮需要两颗气泡');
+    expect(systemMessage.content).toContain('完整正文与展示适配');
+    expect(systemMessage.content).toContain('segments 恰好一项');
+    expect(systemMessage.content).not.toContain('本轮需要两颗气泡');
     expect(systemMessage.content).toContain('以上为内部约束；自然表达');
     expect(systemMessage.content).not.toContain('本轮结构化意图');
     expect(systemMessage.content).toContain('# 本轮 Conversation Reading');
@@ -1100,6 +1103,10 @@ describe('AgentContextService', () => {
     expect(context.diagnostics.conversationReadingAnchorCount).toBe(2);
     expect(context.diagnostics).toEqual(
       expect.objectContaining({
+        afterlifeWorldVersion: 'afterlife_world_v1',
+        afterlifeWorldDomains: ['health'],
+        afterlifeReceivableItems: [],
+        relationalSceneKinds: [],
         userConversationState: 'deepening',
         openLoop: '用户仍在等待爸爸直接回答现在是否还受疼',
         continuationGoal: 'hold',
@@ -2434,6 +2441,70 @@ describe('AgentContextService', () => {
     expect(prompt).toContain('准备回家');
     expect(prompt).toContain('不得补出');
     expect(prompt).toContain('路上注意安全');
+  });
+
+  it('gives only direct turns an optional active-contribution prompt', () => {
+    const service = new AgentContextService();
+    const directBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'direct',
+    });
+    const semanticBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'semantic',
+    });
+    const directPrompt = (service as any).buildModelReplyBriefPrompt(
+      directBrief,
+      undefined,
+      'direct',
+      false
+    );
+    const semanticPrompt = (service as any).buildModelReplyBriefPrompt(
+      semanticBrief,
+      undefined,
+      'semantic',
+      false
+    );
+
+    expect(directPrompt).toContain('# 直接路径的可选主动贡献');
+    expect(directPrompt).toContain('不为主动贡献增加字数或气泡');
+    expect(directPrompt).toContain('不因缺少它改写已经完整的回答');
+    expect(semanticPrompt).not.toContain('# 直接路径的可选主动贡献');
+  });
+
+  it('keeps receiving user care as a soft strategy in the generation prompt', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '妈，你吃过饭了吗',
+      planningMode: 'direct',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('把关心递给当前角色');
+    expect(prompt).toContain('让这份关心自然落在角色身上');
+    expect(prompt).toContain('这是软策略');
+    expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+  });
+
+  it('does not repeat the per-turn care reminder on an ordinary direct turn', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'direct',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).not.toContain('# 本轮接纳关心');
   });
 
   it('puts the strong active-contribution guard into direct prompts', () => {

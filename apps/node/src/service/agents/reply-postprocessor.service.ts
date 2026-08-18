@@ -3,6 +3,7 @@ import {
   compactReplyBubblesPreservingContent,
   inspectReplyBubbleStructure,
   ReplyBubbleStructureIssue,
+  splitReplyContentForDelivery,
 } from './reply-bubble-plan';
 import type { ReplyBrief } from './reply-brief.service';
 
@@ -48,10 +49,11 @@ export class ReplyPostprocessorService {
     segments: string[];
     issues: ReplyBubbleStructureIssue[];
   } {
-    const inspection = inspectReplyBubbleStructure(segments);
+    const deliverySegments = splitReplyContentForDelivery(segments);
+    const inspection = inspectReplyBubbleStructure(deliverySegments);
     return {
-      // FinalValidator 通过后正文不可变；这里只记录结构观测。
-      segments,
+      // FinalValidator 通过后正文不可变；这里只移动自然语义边界以适配展示。
+      segments: deliverySegments,
       issues: inspection.issues,
     };
   }

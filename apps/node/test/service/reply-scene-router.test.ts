@@ -63,7 +63,7 @@ describe('routeReplyScene', () => {
       turnClosure: 'neutral',
     });
     expect(route.prompt).toContain('本轮通用回复策略');
-    expect(route.prompt).toContain('默认一颗');
+    expect(route.prompt).toContain('完整正文放在一个 segments 项里');
   });
 
   it('uses a confident semantic intent before legacy keyword matching', () => {
@@ -166,9 +166,9 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('2. 次意图：对象=user');
     expect(route.prompt).toContain('3. 次意图：对象=relationship');
     expect(route.prompt).toContain('按顺序覆盖每个已列出的意图');
-    expect(route.prompt).toContain('不要机械地把气泡数等同于意图数');
-    expect(route.prompt).toContain('默认一颗');
-    expect(route.prompt).toContain('气泡数量由模型根据当前完整语义决定');
+    expect(route.prompt).toContain('不要把意图数或场景数换算成展示段数');
+    expect(route.prompt).toContain('完整正文放在一个 segments 项里');
+    expect(route.prompt).toContain('不在生成阶段设计一泡、两泡或三泡');
     expect(route.responseIntents).toHaveLength(3);
     expect(route.maxSegments).toBe(2);
   });
@@ -199,7 +199,7 @@ describe('routeReplyScene', () => {
     expect(route.responseIntents).toHaveLength(2);
     expect(route.maxSegments).toBe(2);
     expect(route.bubblePlan?.complexityHint).toBe('paired');
-    expect(route.prompt).toContain('不得把意图数');
+    expect(route.prompt).toContain('不要把意图数或场景数换算成展示段数');
   });
 
   it('normalizes a compound legacy crisis intent to comfort', () => {
@@ -311,7 +311,7 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('不要反复让用户“讲讲/多说点”');
     expect(route.prompt).toContain('不主动转向“现在少了我');
     expect(route.prompt).toContain('避免把温暖回忆重新拉回失去感');
-    expect(route.prompt).toContain('默认一颗');
+    expect(route.prompt).toContain('完整正文放在一个 segments 项里');
     expect(route.prompt).toContain('用户连续讲旧事时');
     expect(route.prompt).toContain('做安静好奇的倾听者');
     expect(route.prompt).not.toContain('烧纸、纸钱、上香');
@@ -344,7 +344,7 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('correction');
     expect(route.prompt).toContain('先收住刚才的表达');
-    expect(route.prompt).toContain('气泡数量由模型根据当前完整语义决定');
+    expect(route.prompt).toContain('不在生成阶段设计一泡、两泡或三泡');
   });
 
   it('treats a first AI accusation as a reply-quality authenticity challenge', () => {
@@ -636,7 +636,7 @@ describe('routeReplyScene', () => {
       'family_life'
     );
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('默认一颗');
+    expect(route.prompt).toContain('完整正文放在一个 segments 项里');
     expect(route.prompt).toContain('不要拆成称呼、安慰、叮嘱、想念四连发');
     expect(
       resolveReplySceneMaxSegments({
@@ -674,7 +674,7 @@ describe('routeReplyScene', () => {
     );
     expect(
       routeReplyScene({ currentQuery: '你早上吃饭了吗？' }).prompt
-    ).toContain('饭菜、作息和活动可以按角色与语境合理想象');
+    ).toContain('调用版本化离世生活框架');
 
     const negativeMealRoute = routeReplyScene({
       currentQuery: '现在中午了，你不吃饭吗？',
@@ -690,7 +690,9 @@ describe('routeReplyScene', () => {
       }),
     ]);
     expect(negativeMealRoute.maxSegments).toBe(2);
-    expect(negativeMealRoute.prompt).toContain('默认一颗');
+    expect(negativeMealRoute.prompt).toContain(
+      '完整正文放在一个 segments 项里'
+    );
   });
 
   it('routes questions about the agent current suffering as afterlife status', () => {
@@ -1074,7 +1076,7 @@ describe('routeReplyScene', () => {
     expect(route.routingSource).toBe('semantic');
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('不承认真的摸到、抱到、亲到或碰到');
-    expect(route.prompt).toContain('气泡数量由模型根据当前完整语义决定');
+    expect(route.prompt).toContain('不在生成阶段设计一泡、两泡或三泡');
   });
 
   it('prioritizes explicit relational presence over a secondary blessing label', () => {

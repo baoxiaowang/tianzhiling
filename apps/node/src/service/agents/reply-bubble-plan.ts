@@ -56,7 +56,8 @@ export function buildReplyBubblePlan(options: {
     : 'concise';
 
   return {
-    maxSegments: 2, // 模型输出合同保持 2 泡；程序层可追加到 MAX(3)
+    // 保留既有规划字段供节奏诊断使用；模型生成合同统一只产出一条完整正文。
+    maxSegments: 2,
     complexityHint,
     turnClosure,
     ...(options.preferTwoSegments && allowsTwoSegmentPreference
@@ -80,9 +81,9 @@ export function isReplyClosingTurn(currentQuery: string): boolean {
 
 export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   const complexityInstruction: Record<ReplyBubbleComplexityHint, string> = {
-    concise: '能用一颗就不拆。',
-    paired: '仅在两个动作确实切换时用第二颗。',
-    layered: '只选最重要的一到两个动作，其余留到后续。',
+    concise: '聚焦当前最重要的回应。',
+    paired: '两个贴题动作可以自然连在同一条完整回复里。',
+    layered: '按当前需要保留必要层次，不因展示形式删掉重要内容。',
   };
   const closureInstruction: Record<ReplyTurnClosure, string> = {
     close:
@@ -91,19 +92,107 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
     neutral: '自然收住，不为续聊而提问。',
   };
 
-  const complexityPrefix = plan.preferTwoSegments
-    ? '用两颗完成两个不同动作。'
-    : complexityInstruction[plan.complexityHint];
-  const segmentInstruction = plan.preferTwoSegments
-    ? '本轮需要两颗气泡：第一颗直接回应，第二颗优先贴着本轮具体事物给亲人侧感受、态度或不同反应；每颗约10-15字且能独立成句，不把一句话截成两半。第二颗不能空泡、旁白或复读第一颗；即使本轮主题是思念，也不能两颗都只表达想念，第一颗明确回应后，第二颗必须给不同内容，不用“记着你、想着你、一直想你、陪着你”充数。'
-    : plan.encourageTwoSegments
-    ? '优先用两颗：第一颗接住用户，第二颗给亲人侧心意或具体关心；一颗更自然时可不拆。'
-    : `默认一颗，最多 ${plan.maxSegments} 颗；第二颗须新增不可替代的动作。`;
-
   return [
-    `${complexityPrefix}${closureInstruction[plan.turnClosure]}`,
-    `${segmentInstruction}勿按句子、情绪或计划拆泡。`,
+    `${complexityInstruction[plan.complexityHint]}${
+      closureInstruction[plan.turnClosure]
+    }`,
+    '先把这一轮该说的内容完整说好，不在生成阶段设计一泡、两泡或三泡，也不为拆泡压缩、补写或删减正文。请把完整正文放在一个 segments 项里；发送层会在最终治理完成后按自然语义边界适配展示。',
   ].join('\n');
+}
+
+const DELIVERY_SPLIT_THRESHOLD_CHARACTERS = 28;
+const DELIVERY_SPLIT_MIN_PART_CHARACTERS = 8;
+const STRONG_DELIVERY_BOUNDARY_PATTERN = /[。！？!?]+/gu;
+const SOFT_DELIVERY_BOUNDARY_PATTERN = /[，,；;]+/gu;
+
+/**
+ * 最终展示拆泡：只移动已有正文的边界，不增、删、改文字。
+ * 找不到自然语义边界时保持原泡；长内容最多适配为三泡。
+ */
+export function splitReplyContentForDelivery(
+  inputSegments: string[]
+): string[] {
+  // 上游最终治理已经完成清理与三泡上限校验；这里复制数组后只移动边界。
+  const segments = [...inputSegments];
+
+  while (segments.length < MAX_ASSISTANT_REPLY_SEGMENTS) {
+    const candidateIndexes = segments
+      .map((segment, index) => ({
+        index,
+        length: countVisibleCharacters(segment),
+      }))
+      .filter(item => item.length > DELIVERY_SPLIT_THRESHOLD_CHARACTERS)
+      .sort((left, right) => right.length - left.length);
+
+    let splitApplied = false;
+    for (const candidate of candidateIndexes) {
+      const content = segments[candidate.index];
+      const splitAt =
+        findNaturalDeliverySplitPoint(
+          content,
+          STRONG_DELIVERY_BOUNDARY_PATTERN
+        ) ??
+        findNaturalDeliverySplitPoint(content, SOFT_DELIVERY_BOUNDARY_PATTERN);
+      if (splitAt === null) {
+        continue;
+      }
+
+      const first = content.slice(0, splitAt);
+      const second = content.slice(splitAt);
+      if (!first.trim() || !second.trim()) {
+        continue;
+      }
+
+      segments.splice(candidate.index, 1, first, second);
+      splitApplied = true;
+      break;
+    }
+
+    if (!splitApplied) {
+      break;
+    }
+  }
+
+  return segments;
+}
+
+function findNaturalDeliverySplitPoint(
+  content: string,
+  boundaryPattern: RegExp
+): number | null {
+  const visibleCharacters = countVisibleCharacters(content);
+  let bestIndex: number | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  boundaryPattern.lastIndex = 0;
+  for (const match of content.matchAll(boundaryPattern)) {
+    let splitAt = (match.index || 0) + match[0].length;
+    // 原文中的空白也必须保留；把边界后的空白留在前一泡，避免下一泡缩进。
+    while (splitAt < content.length && /\s/u.test(content[splitAt])) {
+      splitAt += 1;
+    }
+    const before = countVisibleCharacters(content.slice(0, splitAt));
+    const after = visibleCharacters - before;
+    if (
+      before < DELIVERY_SPLIT_MIN_PART_CHARACTERS ||
+      after < DELIVERY_SPLIT_MIN_PART_CHARACTERS
+    ) {
+      continue;
+    }
+
+    const score = Math.abs(before - after);
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = splitAt;
+    }
+  }
+  boundaryPattern.lastIndex = 0;
+
+  return bestIndex;
+}
+
+function countVisibleCharacters(value: string): number {
+  return Array.from(value.replace(/\s/gu, '')).length;
 }
 
 export function inspectReplyBubbleStructure(

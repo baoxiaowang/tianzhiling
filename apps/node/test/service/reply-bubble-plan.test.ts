@@ -3,6 +3,7 @@ import {
   buildReplyBubblePlanPrompt,
   compactReplyBubblesPreservingContent,
   inspectReplyBubbleStructure,
+  splitReplyContentForDelivery,
 } from '../../src/service/agents/reply-bubble-plan';
 
 describe('reply bubble plan', () => {
@@ -17,8 +18,12 @@ describe('reply bubble plan', () => {
       complexityHint: 'concise',
       turnClosure: 'neutral',
     });
-    expect(buildReplyBubblePlanPrompt(plan)).toContain('默认一颗');
-    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('必须输出');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain(
+      '不在生成阶段设计一泡、两泡或三泡'
+    );
+    expect(buildReplyBubblePlanPrompt(plan)).toContain(
+      '完整正文放在一个 segments 项里'
+    );
   });
 
   it('uses semantic complexity as a weak hint instead of a minimum count', () => {
@@ -41,7 +46,7 @@ describe('reply bubble plan', () => {
     ).toBe('concise');
   });
 
-  it('requires two separated bubbles only when a participation strategy selected two actions', () => {
+  it('keeps the two-part rhythm signal without forcing model-authored bubbles', () => {
     const plan = buildReplyBubblePlan({
       currentQuery: '妈，我想你了',
       replyMoveCount: 2,
@@ -49,12 +54,12 @@ describe('reply bubble plan', () => {
     });
 
     expect(plan.preferTwoSegments).toBe(true);
-    expect(buildReplyBubblePlanPrompt(plan)).toContain('本轮需要两颗气泡');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain('内容完整说好');
     expect(buildReplyBubblePlanPrompt(plan)).not.toContain('{"segments"');
-    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('默认一颗');
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('需要两颗气泡');
   });
 
-  it('softly encourages two bubbles for role-side care', () => {
+  it('does not turn a role-side care rhythm hint into a layout request', () => {
     const plan = buildReplyBubblePlan({
       currentQuery: '妈，我今天心里很难受',
       replyMoveCount: 2,
@@ -65,8 +70,10 @@ describe('reply bubble plan', () => {
       complexityHint: 'paired',
       encourageTwoSegments: true,
     });
-    expect(buildReplyBubblePlanPrompt(plan)).toContain('优先用两颗');
-    expect(buildReplyBubblePlanPrompt(plan)).toContain('一颗更自然时可不拆');
+    expect(buildReplyBubblePlanPrompt(plan)).toContain(
+      '两个贴题动作可以自然连在同一条完整回复里'
+    );
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('优先用两颗');
   });
 
   it('marks closing turns so the model does not reopen the conversation', () => {
@@ -189,5 +196,45 @@ describe('reply bubble plan', () => {
       complexityHint: 'concise',
       turnClosure: 'neutral',
     });
+  });
+
+  it('splits completed long content only at existing semantic boundaries', () => {
+    const source =
+      '丫头，爸也舍不得走这么早，别逼自己急着释怀，想我的时候就说说话，爸都听着';
+    const result = splitReplyContentForDelivery([source]);
+
+    expect(result).toEqual([
+      '丫头，爸也舍不得走这么早，别逼自己急着释怀，',
+      '想我的时候就说说话，爸都听着',
+    ]);
+    expect(result.join('')).toBe(source);
+  });
+
+  it('can adapt a layered completed reply to three concise bubbles', () => {
+    const source =
+      '姥姥听见你这么说，心里又酸又暖。你小时候已经把能给的都给我了。那些难日子是真的，可那不是你的亏欠。';
+    const result = splitReplyContentForDelivery([source]);
+
+    expect(result).toEqual([
+      '姥姥听见你这么说，心里又酸又暖。',
+      '你小时候已经把能给的都给我了。',
+      '那些难日子是真的，可那不是你的亏欠。',
+    ]);
+    expect(result.join('')).toBe(source);
+  });
+
+  it('keeps one bubble when no natural boundary exists', () => {
+    const source =
+      '这段完整回复虽然比较长但是没有自然语义边界所以不能为了界面好看强行切断';
+
+    expect(splitReplyContentForDelivery([source])).toEqual([source]);
+  });
+
+  it('preserves whitespace and punctuation exactly while moving boundaries', () => {
+    const source =
+      '第一层意思已经完整说清楚了。  第二层心意也贴着当前事情说清楚了。';
+    const result = splitReplyContentForDelivery([source]);
+
+    expect(result.join('')).toBe(source);
   });
 });

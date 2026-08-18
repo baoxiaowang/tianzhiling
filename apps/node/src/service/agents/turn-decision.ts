@@ -306,12 +306,7 @@ export function buildTurnDecisionPrompt(decision: TurnDecision): string {
       decision.output.tone +
       '；' +
       decision.output.length +
-      '；' +
-      (decision.output.bubbles === 'single_preferred'
-        ? '优先一颗气泡'
-        : decision.output.bubbles === 'two_preferred'
-        ? '优先两颗气泡；两颗动作不同，合计控制在本轮长度预算内'
-        : '按语义自然分泡，不凑数量'),
+      '；先形成内容完整的单条正文，展示拆分由发送层处理',
     decision.boundaryFocuses.length
       ? '边界：' + decision.boundaryFocuses.join('；')
       : '',
