@@ -24,7 +24,7 @@ import {
 } from './agent-memory-profile.service';
 
 export const MESSENGER_DEFAULT_AVATAR_KEY =
-  'weapp/messenger-avatar-20260817.png';
+  'weapp/messenger-avatar-20260818-5c48467a.png';
 
 const PROFILE_MEMORY_FIELDS = [
   'lifeExperience',
