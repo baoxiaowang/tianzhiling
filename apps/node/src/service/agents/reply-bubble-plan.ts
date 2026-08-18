@@ -165,7 +165,8 @@ function findNaturalDeliverySplitPoint(
   let bestScore = Number.POSITIVE_INFINITY;
 
   boundaryPattern.lastIndex = 0;
-  for (const match of content.matchAll(boundaryPattern)) {
+  let match: RegExpExecArray | null;
+  while ((match = boundaryPattern.exec(content)) !== null) {
     let splitAt = (match.index || 0) + match[0].length;
     // 原文中的空白也必须保留；把边界后的空白留在前一泡，避免下一泡缩进。
     while (splitAt < content.length && /\s/u.test(content[splitAt])) {
