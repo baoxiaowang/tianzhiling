@@ -20,7 +20,7 @@ describe('buildReplyBrief', () => {
       '短句、称呼和语气词有真实表达作用时可以保留'
     );
     expect(brief.prompt).toContain('不能把截断残句当成留白');
-    expect(brief.version).toBe('reply_brief_v16');
+    expect(brief.version).toBe('reply_brief_v17');
     expect(brief.experiencePlan).toMatchObject({
       version: 'experience_plan_v1',
       profileTier: 'P0',
@@ -266,6 +266,24 @@ describe('buildReplyBrief', () => {
     expect(brief.prompt).toContain('不能用“都好/顺口/没什么”回避');
     expect(brief.prompt).toContain('不能只写“我在/想你/记着你/别难过”');
     expect(brief.prompt).toContain('soft_imagination');
+  });
+
+  it('lets the main model understand ordinary direct continuity without a deterministic scene plan', () => {
+    const currentQuery = '挺严重了';
+    const route = routeReplyScene({ currentQuery });
+    const brief = buildReplyBrief({
+      currentQuery,
+      planningMode: 'direct',
+      route,
+    });
+
+    expect(brief.conversationPlan).toBeUndefined();
+    expect(brief.commAct).toBeUndefined();
+    expect(brief.participationStrategy).toBeUndefined();
+    expect(brief.prompt).toContain('它可能省略上一轮的人物和事情');
+    expect(brief.prompt).toContain('若是在回答或承接上一轮');
+    expect(brief.prompt).toContain('若已经转向新话题');
+    expect(brief.prompt).not.toContain('当前消息没有提到某个话题');
   });
 
   it('attaches the stable afterlife world and releases the item receipt lock', () => {
@@ -1141,7 +1159,8 @@ describe('buildReplyBrief', () => {
     );
     expect(brief.replyMoves.length).toBe(2);
     expect(brief.prompt).toContain('现实到场的边界');
-    expect(brief.prompt).toContain('当前用户消息和本轮回复动作优先于历史话题');
+    expect(brief.prompt).toContain('若是在回答或承接上一轮');
+    expect(brief.prompt).toContain('若已经转向新话题');
   });
 
   it('keeps shared-memory grounding while generating one complete body', () => {

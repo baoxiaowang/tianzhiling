@@ -24,6 +24,10 @@ describe('reply bubble plan', () => {
     expect(buildReplyBubblePlanPrompt(plan)).toContain(
       '完整正文放在一个 segments 项里'
     );
+    expect(buildReplyBubblePlanPrompt(plan)).toContain(
+      '结合最近对话自然决定继续或停住'
+    );
+    expect(buildReplyBubblePlanPrompt(plan)).not.toContain('不为续聊而提问');
   });
 
   it('uses semantic complexity as a weak hint instead of a minimum count', () => {

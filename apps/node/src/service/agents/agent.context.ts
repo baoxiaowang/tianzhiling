@@ -254,7 +254,7 @@ export interface AgentContextDiagnostics {
   turnDecisionVersion: typeof TURN_DECISION_VERSION;
   turnContractVersion?: typeof REPLY_TURN_CONTRACT_VERSION;
   turnContractFocusDimensions?: string[];
-  strategyVersion: 'conversation_strategy_v8';
+  strategyVersion: 'conversation_strategy_v9';
   turnPlanVersion: 'turn_plan_v1';
   commActVersion: typeof COMM_ACT_VERSION;
   commActState: string;
@@ -867,7 +867,7 @@ export class AgentContextService {
         turnDecisionVersion: TURN_DECISION_VERSION,
         turnContractVersion: turnContract.version,
         turnContractFocusDimensions: turnContract.focusDimensions,
-        strategyVersion: 'conversation_strategy_v8',
+        strategyVersion: 'conversation_strategy_v9',
         turnPlanVersion: 'turn_plan_v1',
         commActVersion: replyBrief.commAct?.version ?? COMM_ACT_VERSION,
         commActState: replyBrief.commAct?.state ?? 'opening',
@@ -1044,7 +1044,7 @@ export class AgentContextService {
       plan.planningMode === 'direct' &&
       replyBrief &&
       !replyBrief.conversationPlan
-        ? this.buildLightweightDirectContext(replyBrief, options.agent)
+        ? this.buildLightweightDirectContext(replyBrief)
         : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
@@ -1090,10 +1090,7 @@ export class AgentContextService {
     };
   }
 
-  private buildLightweightDirectContext(
-    replyBrief: ReplyBrief,
-    agent: AgentEntity
-  ): string {
+  private buildLightweightDirectContext(replyBrief: ReplyBrief): string {
     if (
       !replyBrief.primaryScene &&
       !replyBrief.relationshipContext?.length &&
@@ -1110,10 +1107,6 @@ export class AgentContextService {
       const rc = replyBrief.relationshipContext[0];
       if (rc.text) lines.push('关系参考：' + rc.text);
     }
-    lines.push(
-      '如果上一轮AI留下了未答的问题（比如"你呢？""吃了没？"），用户本轮没接，就不再追问，让它自然过去。'
-    );
-
     // 确定性注入已确认记忆（最多3条，仅 confirmed_fact 和 retrieved_user）
     // 如果记忆与用户当前表达明显不匹配，宁可不用
     const memoryEvidence = (replyBrief.evidence || [])
@@ -1489,6 +1482,7 @@ export class AgentContextService {
     const communicationHint = [
       '# 本轮沟通',
       '先在心里判断这轮最需要完成什么，再组织语言；策略字段只帮助思考，不要求固定动作顺序。消息里有多个问题、人物或情绪时，不能只抓最后一个词，也不要让一句边界说明吞掉其余情绪和关系诉求。',
+      '把当前消息放回最近几轮自然理解：用户可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
       '先接住用户正在说的具体事、情绪或近况，再给角色侧心意；用户提到具体物件、食物、地点或事情时，先自然点到它，再回情绪。',
       '用户分享喜悦、期待或准备了什么时，先给具体反应、共鸣或一起高兴，不要把“我知道了、别累着、记得早点歇”当成主回应。',
       '不要把“路过/看到/准备做某事”补成用户正在站着、在户外、遇到天气或身体不适；不要一上来就叮嘱、提醒或教用户怎么做。',

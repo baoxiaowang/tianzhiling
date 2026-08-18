@@ -89,7 +89,8 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
     close:
       '自然收尾；先确认收到用户要走/要哭/要停的信号（"嗯，去吧""哭出来也好"），再给温暖回应；不提问或开新话题。',
     continue: '先答当前问题；必要时最多问一个。',
-    neutral: '自然收住，不为续聊而提问。',
+    neutral:
+      '结合最近对话自然决定继续或停住；确有价值时可以问一个贴题问题，不为续聊硬问。',
   };
 
   return [

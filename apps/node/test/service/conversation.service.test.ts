@@ -2849,7 +2849,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v16',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
@@ -3186,7 +3186,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v16',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'family',
         replyBriefStrictGrounding: true,
         replyBriefMaxSegments: 2,
@@ -3739,7 +3739,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v16',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'contextual_reply_brief',

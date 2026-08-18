@@ -1408,8 +1408,8 @@ describe('AgentContextService', () => {
         replyPlanningMode: 'direct',
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
-        strategyVersion: 'conversation_strategy_v8',
-        strategySource: 'deterministic_light',
+        strategyVersion: 'conversation_strategy_v9',
+        strategySource: 'direct_brief',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),
         memoryRetrievalMode: 'suppressed',
@@ -1418,6 +1418,92 @@ describe('AgentContextService', () => {
     );
     expect(context.diagnostics.conversationMoveGoals.length).toBeGreaterThan(0);
     expect(context.messages[0].content).toContain('体验：P0/R0/D0');
+    expect(context.messages[0].content).toContain(
+      '用户可能省略上一轮的人物和事情'
+    );
+    expect(context.messages[0].content).not.toContain(
+      '上一轮AI留下了未答的问题'
+    );
+  });
+
+  it('leaves an adjacent direct follow-up to the main model with the original context intact', async () => {
+    const previousUser = new MessageEntity();
+    previousUser.id = new MongoObjectId();
+    previousUser.role = MessageRole.user;
+    previousUser.type = MessageType.text;
+    previousUser.content = '姥姥，爸爸生病了';
+    previousUser.status = MessageStatus.sent;
+    previousUser.createdAt = new Date('2026-08-18T13:46:07.000Z');
+
+    const assistantQuestion = new MessageEntity();
+    assistantQuestion.id = new MongoObjectId();
+    assistantQuestion.role = MessageRole.assistant;
+    assistantQuestion.type = MessageType.text;
+    assistantQuestion.content = '你爸怎么了？严不严重？';
+    assistantQuestion.status = MessageStatus.sent;
+    assistantQuestion.createdAt = new Date('2026-08-18T13:46:17.000Z');
+
+    const currentUser = new MessageEntity();
+    currentUser.id = new MongoObjectId();
+    currentUser.role = MessageRole.user;
+    currentUser.type = MessageType.text;
+    currentUser.content = '挺严重了';
+    currentUser.status = MessageStatus.sent;
+    currentUser.createdAt = new Date('2026-08-18T13:46:24.000Z');
+
+    const service = new AgentContextService();
+    service.messageModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([previousUser, assistantQuestion, currentUser]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+    service.replyIntentClassifierService = {
+      getPlanningDecision: jest.fn().mockReturnValue({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      }),
+      classify: jest.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent: null,
+      currentQuery: currentUser.content,
+      currentTurnMessageIds: [currentUser.id.toHexString()],
+    });
+
+    expect(context.layers[1].messages).toEqual([
+      expect.objectContaining({ role: 'user', content: previousUser.content }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining(assistantQuestion.content),
+      }),
+      expect.objectContaining({ role: 'user', content: currentUser.content }),
+    ]);
+    expect(context.diagnostics.strategySource).toBe('direct_brief');
+    expect(context.messages[0].content).toContain(
+      '若是在回答或承接上一轮，就沿同一件事回应'
+    );
+    expect(context.messages[0].content).toContain(
+      '若已经转向新话题，就跟随当前话题'
+    );
+    expect(context.messages[0].content).not.toContain('不为续聊而提问');
   });
 
   it('does not let a stale high-risk state override a new neutral message', async () => {
