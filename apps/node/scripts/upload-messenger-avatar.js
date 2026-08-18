@@ -2,7 +2,7 @@ const { existsSync, readFileSync } = require('fs');
 const { resolve } = require('path');
 const COS = require('cos-nodejs-sdk-v5');
 
-const OBJECT_KEY = 'weapp/messenger-avatar-20260817.png';
+const OBJECT_KEY = 'weapp/messenger-avatar-20260818-5c48467a.png';
 const DEFAULT_SOURCE = resolve(
   __dirname,
   '../../weapp/src/assets/images/messenger/messenger-avatar.png'

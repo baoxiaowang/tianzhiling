@@ -2,7 +2,7 @@ const { existsSync, readFileSync } = require('fs');
 const { resolve } = require('path');
 const { MongoClient, ObjectId } = require('mongodb');
 
-const MESSENGER_AVATAR_KEY = 'weapp/messenger-avatar-20260817.png';
+const MESSENGER_AVATAR_KEY = 'weapp/messenger-avatar-20260818-5c48467a.png';
 
 loadLocalEnv();
 

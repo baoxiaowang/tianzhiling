@@ -26,7 +26,7 @@ import {
 } from './agent-memory-profile.service';
 
 export const MESSENGER_DEFAULT_AVATAR_KEY =
-  'weapp/messenger-avatar-20260817.png';
+  'weapp/messenger-avatar-20260818-5c48467a.png';
 export const MESSENGER_REVEAL_USER_TURN_THRESHOLD = 10;
 export const MESSENGER_REVEAL_WAIT_MS = 24 * 60 * 60 * 1000;
 const MESSENGER_REVEAL_LOCK_TTL_MS = 15 * 1000;
