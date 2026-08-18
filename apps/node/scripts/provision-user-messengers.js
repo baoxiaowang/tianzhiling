@@ -7,10 +7,10 @@ const MESSENGER_AVATAR_KEY = 'weapp/messenger-avatar-20260817.png';
 loadLocalEnv();
 
 async function main() {
-  const identifiers = parseUserIdentifiers(process.argv.slice(2));
-  if (identifiers.length === 0) {
+  const operation = parseOperationArgs(process.argv.slice(2));
+  if (!operation.activeMembers && operation.identifiers.length === 0) {
     throw new Error(
-      'usage: node provision-user-messengers.js <userId|weapp:account> [userId|weapp:account...]'
+      'usage: node provision-user-messengers.js [--dry-run] (--active-members|<userId|weapp:account> [userId|weapp:account...])'
     );
   }
 
@@ -23,11 +23,30 @@ async function main() {
     const agents = db.collection('agent');
     const conversations = db.collection('conversation');
     const messages = db.collection('message');
-    const targets = await resolveUserTargets(db, identifiers);
+    const targets = operation.activeMembers
+      ? await resolveActiveMemberTargets(db, new Date())
+      : await resolveUserTargets(db, operation.identifiers);
+
+    if (operation.dryRun) {
+      const audit = await auditMessengerProvisioning(db, targets);
+      console.log(
+        `[provision-user-messengers] done dryRun=true users=${targets.length} agents=${audit.agents} messengersCreated=${audit.messengersMissing} conversationsCreated=${audit.conversationsMissing} greetingsCreated=${audit.greetingsMissing}`
+      );
+      return;
+    }
+
+    if (operation.activeMembers) {
+      const result = await provisionTargetsInBulk(db, targets);
+      console.log(
+        `[provision-user-messengers] done dryRun=false users=${targets.length} agents=${result.agents} messengersCreated=${result.messengersCreated} conversationsCreated=${result.conversationsCreated} greetingsCreated=${result.greetingsCreated}`
+      );
+      return;
+    }
 
     let totalProcessed = 0;
     let totalMessengersCreated = 0;
     let totalConversationsCreated = 0;
+    let totalGreetingsCreated = 0;
 
     for (const { identifier, userId } of targets) {
       const parents = await agents
@@ -36,6 +55,7 @@ async function main() {
       let processed = 0;
       let messengersCreated = 0;
       let conversationsCreated = 0;
+      let greetingsCreated = 0;
 
       for (const parent of parents) {
         const parentId = parent._id;
@@ -130,25 +150,45 @@ async function main() {
             updatedAt: new Date(now.getTime() + index),
           }));
           await messages.insertMany(greetingMessages);
+          greetingsCreated += 1;
         }
 
         processed += 1;
       }
 
       console.log(
-        `[provision-user-messengers] identifier=${identifier} userId=${userId.toHexString()} agents=${processed} messengersCreated=${messengersCreated} conversationsCreated=${conversationsCreated}`
+        `[provision-user-messengers] dryRun=${
+          operation.dryRun
+        } identifier=${identifier} userId=${userId.toHexString()} agents=${processed} messengersCreated=${messengersCreated} conversationsCreated=${conversationsCreated} greetingsCreated=${greetingsCreated}`
       );
       totalProcessed += processed;
       totalMessengersCreated += messengersCreated;
       totalConversationsCreated += conversationsCreated;
+      totalGreetingsCreated += greetingsCreated;
     }
 
     console.log(
-      `[provision-user-messengers] done users=${targets.length} agents=${totalProcessed} messengersCreated=${totalMessengersCreated} conversationsCreated=${totalConversationsCreated}`
+      `[provision-user-messengers] done dryRun=${operation.dryRun} users=${targets.length} agents=${totalProcessed} messengersCreated=${totalMessengersCreated} conversationsCreated=${totalConversationsCreated} greetingsCreated=${totalGreetingsCreated}`
     );
   } finally {
     await client.close();
   }
+}
+
+function parseOperationArgs(args) {
+  const activeMembers = args.includes('--active-members');
+  const dryRun = args.includes('--dry-run');
+  const identifiers = parseUserIdentifiers(
+    args.filter(value => !['--active-members', '--dry-run'].includes(value))
+  );
+
+  if (activeMembers && identifiers.length) {
+    throw new Error(
+      '--active-members cannot be combined with user identifiers'
+    );
+  }
+
+  return { activeMembers, dryRun, identifiers };
 }
 
 function parseUserIdentifiers(args) {
@@ -203,6 +243,289 @@ async function resolveUserTargets(db, identifiers) {
   }
 
   return targets;
+}
+
+async function resolveActiveMemberTargets(db, now = new Date()) {
+  const memberships = await db
+    .collection('user_membership')
+    .aggregate([
+      {
+        $match: {
+          status: 'active',
+          $or: [{ lifetime: true }, { expiredAt: { $gt: now } }],
+        },
+      },
+      { $group: { _id: '$userId' } },
+      { $match: { _id: { $type: 'objectId' } } },
+      { $sort: { _id: 1 } },
+    ])
+    .toArray();
+
+  return memberships.map(item => ({
+    identifier: 'active-membership',
+    userId: new ObjectId(item._id),
+  }));
+}
+
+async function auditMessengerProvisioning(db, targets) {
+  const userIds = targets.map(item => item.userId);
+  if (!userIds.length) {
+    return {
+      agents: 0,
+      messengersMissing: 0,
+      conversationsMissing: 0,
+      greetingsMissing: 0,
+    };
+  }
+
+  const agents = db.collection('agent');
+  const conversations = db.collection('conversation');
+  const messages = db.collection('message');
+  const parents = await agents
+    .find({
+      createdUserId: { $in: userIds },
+      messengerOfAgentId: { $exists: false },
+    })
+    .toArray();
+  const parentIds = parents.map(parent => parent._id);
+  const messengers = parentIds.length
+    ? await agents
+        .find({
+          createdUserId: { $in: userIds },
+          messengerOfAgentId: { $in: parentIds },
+        })
+        .toArray()
+    : [];
+  const messengerByParent = new Map(
+    messengers.map(messenger => [
+      `${objectIdKey(messenger.createdUserId)}:${objectIdKey(
+        messenger.messengerOfAgentId
+      )}`,
+      messenger,
+    ])
+  );
+  const messengerIds = messengers.map(messenger => messenger._id);
+  const existingConversations = messengerIds.length
+    ? await conversations
+        .find({
+          agentId: { $in: messengerIds },
+          userId: { $in: userIds },
+        })
+        .toArray()
+    : [];
+  const conversationByMessenger = new Map(
+    existingConversations.map(conversation => [
+      `${objectIdKey(conversation.userId)}:${objectIdKey(
+        conversation.agentId
+      )}`,
+      conversation,
+    ])
+  );
+  const conversationIds = existingConversations.map(item => item._id);
+  const greetingConversationIds = new Set(
+    conversationIds.length
+      ? (
+          await messages
+            .find(
+              { conversationId: { $in: conversationIds } },
+              { projection: { conversationId: 1 } }
+            )
+            .toArray()
+        ).map(message => objectIdKey(message.conversationId))
+      : []
+  );
+
+  let messengersMissing = 0;
+  let conversationsMissing = 0;
+  let greetingsMissing = 0;
+
+  for (const parent of parents) {
+    const userId = objectIdKey(parent.createdUserId);
+    const messenger = messengerByParent.get(
+      `${userId}:${objectIdKey(parent._id)}`
+    );
+    const conversation = messenger
+      ? conversationByMessenger.get(`${userId}:${objectIdKey(messenger._id)}`)
+      : null;
+
+    if (!messenger) messengersMissing += 1;
+    if (!conversation) conversationsMissing += 1;
+    if (
+      !conversation ||
+      !greetingConversationIds.has(objectIdKey(conversation._id))
+    ) {
+      greetingsMissing += 1;
+    }
+  }
+
+  return {
+    agents: parents.length,
+    messengersMissing,
+    conversationsMissing,
+    greetingsMissing,
+  };
+}
+
+function objectIdKey(value) {
+  return value?.toHexString?.() || String(value || '');
+}
+
+async function provisionTargetsInBulk(db, targets, now = new Date()) {
+  const userIds = targets.map(item => item.userId);
+  if (!userIds.length) {
+    return {
+      agents: 0,
+      messengersCreated: 0,
+      conversationsCreated: 0,
+      greetingsCreated: 0,
+    };
+  }
+
+  const agents = db.collection('agent');
+  const conversations = db.collection('conversation');
+  const messages = db.collection('message');
+  const parents = await agents
+    .find({
+      createdUserId: { $in: userIds },
+      messengerOfAgentId: { $exists: false },
+    })
+    .toArray();
+  const messengerResult = parents.length
+    ? await agents.bulkWrite(
+        parents.map(parent => {
+          const parentName = String(parent.name || 'TA').trim();
+          const messengerName = `${parentName}的小使者`;
+          return {
+            updateOne: {
+              filter: {
+                createdUserId: parent.createdUserId,
+                messengerOfAgentId: parent._id,
+              },
+              update: {
+                $set: {
+                  name: messengerName,
+                  avatar: MESSENGER_AVATAR_KEY,
+                  iCallAgent: messengerName,
+                  updatedAt: now,
+                },
+                $setOnInsert: {
+                  createdUserId: parent.createdUserId,
+                  realName: '',
+                  sex: parent.sex ?? 2,
+                  agentCallMe: '',
+                  description: '',
+                  status: 1,
+                  isDefault: false,
+                  messengerOfAgentId: parent._id,
+                  createdAt: now,
+                },
+              },
+              upsert: true,
+            },
+          };
+        }),
+        { ordered: false }
+      )
+    : { upsertedCount: 0 };
+  const parentIds = parents.map(parent => parent._id);
+  const messengers = parentIds.length
+    ? await agents
+        .find({
+          createdUserId: { $in: userIds },
+          messengerOfAgentId: { $in: parentIds },
+        })
+        .toArray()
+    : [];
+  const conversationResult = messengers.length
+    ? await conversations.bulkWrite(
+        messengers.map(messenger => {
+          const messengerName = String(messenger.name || '天之灵小使者');
+          return {
+            updateOne: {
+              filter: {
+                agentId: messenger._id,
+                userId: messenger.createdUserId,
+              },
+              update: {
+                $setOnInsert: {
+                  agentId: messenger._id,
+                  userId: messenger.createdUserId,
+                  accessRole: 'owner',
+                  agentCallsUser: '',
+                  userCallsAgent: messengerName,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              upsert: true,
+            },
+          };
+        }),
+        { ordered: false }
+      )
+    : { upsertedCount: 0 };
+  const messengerIds = messengers.map(messenger => messenger._id);
+  const existingConversations = messengerIds.length
+    ? await conversations
+        .find({
+          agentId: { $in: messengerIds },
+          userId: { $in: userIds },
+        })
+        .toArray()
+    : [];
+  const conversationIds = existingConversations.map(item => item._id);
+  const greetingConversationIds = new Set(
+    conversationIds.length
+      ? (
+          await messages
+            .find(
+              { conversationId: { $in: conversationIds } },
+              { projection: { conversationId: 1 } }
+            )
+            .toArray()
+        ).map(message => objectIdKey(message.conversationId))
+      : []
+  );
+  const messengerById = new Map(
+    messengers.map(messenger => [objectIdKey(messenger._id), messenger])
+  );
+  const conversationsMissingGreetings = existingConversations.filter(
+    conversation => !greetingConversationIds.has(objectIdKey(conversation._id))
+  );
+  const greetingMessages = conversationsMissingGreetings.flatMap(
+    conversation => {
+      const messenger = messengerById.get(objectIdKey(conversation.agentId));
+      const messengerName = String(messenger?.name || '天之灵小使者');
+      const parentName = messengerName.endsWith('的小使者')
+        ? messengerName.slice(0, -4)
+        : 'TA';
+      return [
+        `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
+        `你最想先让我了解${parentName}的哪一面？`,
+      ].map((content, index) => ({
+        conversationId: conversation._id,
+        userId: conversation.userId,
+        agentId: conversation.agentId,
+        role: 'assistant',
+        type: 'text',
+        content,
+        status: 'sent',
+        createdAt: new Date(now.getTime() + index),
+        updatedAt: new Date(now.getTime() + index),
+      }));
+    }
+  );
+
+  if (greetingMessages.length) {
+    await messages.insertMany(greetingMessages, { ordered: false });
+  }
+
+  return {
+    agents: parents.length,
+    messengersCreated: messengerResult.upsertedCount || 0,
+    conversationsCreated: conversationResult.upsertedCount || 0,
+    greetingsCreated: conversationsMissingGreetings.length,
+  };
 }
 
 function buildMongoConnectionString() {
@@ -271,6 +594,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  auditMessengerProvisioning,
+  parseOperationArgs,
   parseUserIdentifiers,
+  resolveActiveMemberTargets,
   resolveUserTargets,
+  provisionTargetsInBulk,
 };

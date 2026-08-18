@@ -19,6 +19,7 @@ import { MongoRepository } from 'typeorm';
 import {
   ListAdminPostsQueryDTO,
   UpdateAdminPostModerationDTO,
+  UpdateAdminPostPinningDTO,
 } from '../dto/admin-post.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
@@ -60,6 +61,8 @@ export class AdminPostService {
       this.postModel.find({
         where: where as never,
         order: {
+          isPinned: 'DESC',
+          pinnedAt: 'DESC',
           createdAt: 'DESC',
         },
         skip: (page - 1) * pageSize,
@@ -130,6 +133,32 @@ export class AdminPostService {
     );
   }
 
+  async updatePostPinning(
+    postId: string,
+    payload: UpdateAdminPostPinningDTO
+  ): Promise<AdminPostRecordDTO> {
+    const post = await this.getPostById(postId);
+    const now = new Date();
+
+    post.isPinned = payload.isPinned === true;
+    post.pinnedAt = post.isPinned ? now : null;
+    post.updatedAt = now;
+
+    const savedPost = await this.postModel.save(post);
+    const [ownerMap, comments, likes] = await Promise.all([
+      this.getOwnerMapByPosts([savedPost]),
+      this.getCommentCountMap([savedPost]),
+      this.getLikeCountMap([savedPost]),
+    ]);
+
+    return this.buildPostItem(
+      savedPost,
+      ownerMap.get(this.stringifyObjectId(savedPost.userId)) ?? null,
+      comments.get(this.stringifyObjectId(savedPost.id)) ?? 0,
+      likes.get(this.stringifyObjectId(savedPost.id)) ?? 0
+    );
+  }
+
   private async buildPostListWhere(
     query: ListAdminPostsQueryDTO
   ): Promise<MongoWhere> {
@@ -180,7 +209,9 @@ export class AdminPostService {
         };
   }
 
-  private async buildKeywordClause(keyword: string): Promise<MongoWhere | null> {
+  private async buildKeywordClause(
+    keyword: string
+  ): Promise<MongoWhere | null> {
     if (!keyword) {
       return null;
     }
@@ -216,7 +247,9 @@ export class AdminPostService {
     };
   }
 
-  private async findUserIdsByKeyword(keyword: string): Promise<MongoObjectId[]> {
+  private async findUserIdsByKeyword(
+    keyword: string
+  ): Promise<MongoObjectId[]> {
     const escapedKeyword = this.escapeRegExp(keyword);
     const [users, accounts] = await Promise.all([
       this.userModel.find({
@@ -278,10 +311,7 @@ export class AdminPostService {
       }),
     ]);
     const accountMap = new Map(
-      accounts.map(account => [
-        this.stringifyObjectId(account.userId),
-        account,
-      ])
+      accounts.map(account => [this.stringifyObjectId(account.userId), account])
     );
 
     return new Map(
@@ -381,6 +411,8 @@ export class AdminPostService {
       moderatedAt: this.formatDate(post.moderatedAt),
       isRiskControlled:
         moderationStatus === PostModerationStatus.riskControlled,
+      isPinned: post.isPinned === true,
+      pinnedAt: this.formatDate(post.pinnedAt ?? undefined),
       likeCount,
       commentCount,
       createdAt: this.formatDate(post.createdAt),

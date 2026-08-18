@@ -1,19 +1,21 @@
-import { Entity, Column, Index } from 'typeorm';
-import { BaseEntity, MongoObjectId, TableName } from './base';
+import { Entity, Column, Index } from "typeorm";
+import { BaseEntity, MongoObjectId, TableName } from "./base";
 
 export enum PostModerationStatus {
-  normal = 'normal',
-  riskControlled = 'risk_controlled',
+  normal = "normal",
+  riskControlled = "risk_controlled",
 }
 
 /** 按发布时间排序的索引 */
-@Index(['createdAt'], { background: true })
+@Index(["createdAt"], { background: true })
 /** 按用户与时间查询动态列表的复合索引 */
-@Index(['userId', 'createdAt'], { background: true })
+@Index(["userId", "createdAt"], { background: true })
 /** 按风控状态与时间查询动态列表 */
-@Index(['moderationStatus', 'createdAt'], { background: true })
+@Index(["moderationStatus", "createdAt"], { background: true })
 /** 过滤用户已删除动态 */
-@Index(['isDeleted', 'createdAt'], { background: true })
+@Index(["isDeleted", "createdAt"], { background: true })
+/** 置顶动态优先，同级再按时间倒序 */
+@Index(["isPinned", "pinnedAt", "createdAt"], { background: true })
 /** 用户动态（帖子） */
 @Entity(TableName.post)
 export class PostEntity extends BaseEntity {
@@ -56,6 +58,14 @@ export class PostEntity extends BaseEntity {
   /** 删除用户 ID */
   @Column()
   deletedByUserId?: MongoObjectId;
+
+  /** 是否由管理端置顶 */
+  @Column()
+  isPinned?: boolean;
+
+  /** 最后置顶时间 */
+  @Column()
+  pinnedAt?: Date | null;
 
   /** 创建时间 */
   @Column()

@@ -264,6 +264,8 @@ export class PostService {
     const posts = await this.postModel.find({
       where: where as never,
       order: {
+        isPinned: 'DESC',
+        pinnedAt: 'DESC',
         createdAt: 'DESC',
       },
       skip,

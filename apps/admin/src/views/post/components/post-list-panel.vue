@@ -60,7 +60,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: effectiveUserId ? 1120 : 1380 }"
+        :scroll="{ x: effectiveUserId ? 1200 : 1460 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -143,13 +143,16 @@
             :width="130"
           >
             <template #cell="{ record }">
-              <a-tooltip
-                :content="record.moderationReason || formatStatus(record)"
-              >
-                <a-tag :color="getStatusColor(record)">
-                  {{ formatStatus(record) }}
-                </a-tag>
-              </a-tooltip>
+              <a-space direction="vertical" size="mini">
+                <a-tag v-if="record.isPinned" color="orange">已置顶</a-tag>
+                <a-tooltip
+                  :content="record.moderationReason || formatStatus(record)"
+                >
+                  <a-tag :color="getStatusColor(record)">
+                    {{ formatStatus(record) }}
+                  </a-tag>
+                </a-tooltip>
+              </a-space>
             </template>
           </a-table-column>
 
@@ -172,25 +175,36 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="140" fixed="right">
+          <a-table-column title="操作" :width="220" fixed="right">
             <template #cell="{ record }">
-              <a-button
-                v-if="record.isRiskControlled"
-                type="text"
-                size="small"
-                @click="openModeration(record, 'normal')"
-              >
-                解除风控
-              </a-button>
-              <a-button
-                v-else
-                type="text"
-                status="danger"
-                size="small"
-                @click="openModeration(record, 'risk_controlled')"
-              >
-                风控
-              </a-button>
+              <a-space>
+                <a-button
+                  type="text"
+                  size="small"
+                  :loading="pinningPostId === record.id"
+                  :disabled="saving"
+                  @click="togglePinning(record)"
+                >
+                  {{ record.isPinned ? '取消置顶' : '置顶' }}
+                </a-button>
+                <a-button
+                  v-if="record.isRiskControlled"
+                  type="text"
+                  size="small"
+                  @click="openModeration(record, 'normal')"
+                >
+                  解除风控
+                </a-button>
+                <a-button
+                  v-else
+                  type="text"
+                  status="danger"
+                  size="small"
+                  @click="openModeration(record, 'risk_controlled')"
+                >
+                  风控
+                </a-button>
+              </a-space>
             </template>
           </a-table-column>
         </template>
@@ -262,6 +276,7 @@
     PostRecord,
     queryPostList,
     updatePostModeration,
+    updatePostPinning,
   } from '@/api/post';
 
   const props = withDefaults(
@@ -281,6 +296,7 @@
   const renderList = ref<PostRecord[]>([]);
   const loading = ref(false);
   const saving = ref(false);
+  const pinningPostId = ref('');
   const moderationVisible = ref(false);
   const moderatingPost = ref<PostRecord | null>(null);
   const nextModerationStatus = ref<PostModerationStatusDTO>('risk_controlled');
@@ -418,6 +434,20 @@
       return false;
     } finally {
       saving.value = false;
+    }
+  };
+
+  const togglePinning = async (record: PostRecord) => {
+    try {
+      pinningPostId.value = record.id;
+      const isPinned = !record.isPinned;
+      await updatePostPinning(record.id, { isPinned });
+      Message.success(isPinned ? '动态已置顶' : '动态已取消置顶');
+      await fetchData();
+    } catch (error) {
+      Message.error('动态置顶状态更新失败');
+    } finally {
+      pinningPostId.value = '';
     }
   };
 
