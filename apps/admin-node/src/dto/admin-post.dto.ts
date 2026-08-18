@@ -7,7 +7,9 @@ export class ListAdminPostsQueryDTO {
   @Rule(RuleType.string().allow('').optional())
   userId?: string;
 
-  @Rule(RuleType.string().valid('normal', 'risk_controlled').allow('').optional())
+  @Rule(
+    RuleType.string().valid('normal', 'risk_controlled').allow('').optional()
+  )
   moderationStatus?: string;
 
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
@@ -23,4 +25,9 @@ export class UpdateAdminPostModerationDTO {
 
   @Rule(RuleType.string().allow('').max(200).optional())
   moderationReason?: string;
+}
+
+export class UpdateAdminPostPinningDTO {
+  @Rule(RuleType.boolean().required())
+  isPinned: boolean;
 }

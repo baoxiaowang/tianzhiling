@@ -1,4 +1,4 @@
-export type PostModerationStatusDTO = 'normal' | 'risk_controlled';
+export type PostModerationStatusDTO = "normal" | "risk_controlled";
 
 export interface AdminPostAuthorDTO {
   id: string;
@@ -19,6 +19,8 @@ export interface AdminPostRecordDTO {
   moderationReason: string;
   moderatedAt: string;
   isRiskControlled: boolean;
+  isPinned: boolean;
+  pinnedAt: string;
   likeCount: number;
   commentCount: number;
   createdAt: string;
@@ -43,4 +45,8 @@ export interface AdminPostListDTO {
 export interface UpdateAdminPostModerationDTO {
   moderationStatus: PostModerationStatusDTO;
   moderationReason?: string;
+}
+
+export interface UpdateAdminPostPinningDTO {
+  isPinned: boolean;
 }

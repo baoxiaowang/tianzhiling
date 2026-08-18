@@ -120,8 +120,11 @@ export class AdminAppUserService {
       100
     );
     const user = await this.getUserById(userId);
-    const account = await this.findAccountByUserId(user.id);
-    const owner = this.buildAgentOwner(user, account);
+    const [account, isVip] = await Promise.all([
+      this.findAccountByUserId(user.id),
+      this.isUserVip(user.id),
+    ]);
+    const owner = this.buildAgentOwner(user, account, isVip);
     const keyword = query?.keyword?.trim() ?? '';
     const where: MongoWhere = {
       createdUserId: user.id,
@@ -338,7 +341,8 @@ export class AdminAppUserService {
 
   private buildAgentOwner(
     user: UserEntity,
-    account?: UserAccountEntity | null
+    account?: UserAccountEntity | null,
+    isVip = false
   ): AdminAgentOwnerDTO {
     return {
       id: this.stringifyObjectId(user.id),
@@ -346,6 +350,7 @@ export class AdminAppUserService {
       name: user.name ?? '',
       avatar: this.resolveAvatar(user.avatar),
       phone: user.phone ?? account?.account ?? '',
+      isVip,
     };
   }
 
@@ -372,7 +377,14 @@ export class AdminAppUserService {
       languageHabits: agent.languageHabits ?? '',
       hobbies: agent.hobbies ?? '',
       sharedMemories: agent.sharedMemories ?? '',
+      hasUnreadAgentHomeGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentHomeGuideSeenAt
+      ),
+      hasUnreadAgentProfileGuide: Boolean(
+        agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
+      ),
       customContext: agent.customContext ?? '',
+      conversationCount: 0,
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       createdAt: this.formatDate(agent.createdAt),

@@ -1,7 +1,16 @@
-import { Body, Controller, Get, Inject, Param, Put, Query } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Put,
+  Query,
+} from '@midwayjs/core';
 import {
   ListAdminPostsQueryDTO,
   UpdateAdminPostModerationDTO,
+  UpdateAdminPostPinningDTO,
 } from '../dto/admin-post.dto';
 import { AdminPostService } from '../service/admin-post.service';
 
@@ -21,5 +30,13 @@ export class AdminPostController {
     @Body() body: UpdateAdminPostModerationDTO
   ) {
     return this.adminPostService.updatePostModeration(id, body);
+  }
+
+  @Put('/:id/pinning')
+  async updatePinning(
+    @Param('id') id: string,
+    @Body() body: UpdateAdminPostPinningDTO
+  ) {
+    return this.adminPostService.updatePostPinning(id, body);
   }
 }
