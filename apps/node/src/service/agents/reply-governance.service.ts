@@ -15,7 +15,7 @@ import {
 import { renderReplyRealityDependencyFallback } from './reply-reality-dependency';
 import type { TurnDecision } from './turn-decision';
 
-export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v1' as const;
+export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v2' as const;
 
 export interface ReplyGovernanceResult {
   segments: string[];
@@ -81,13 +81,36 @@ export class ReplyGovernanceService {
       };
     }
 
+    const actionableInitialIssues = initial.issues.filter(
+      shouldAttemptOnlineRevision
+    );
+    if (!actionableInitialIssues.length) {
+      const claims = selectVisibleAssistantClaims(
+        options.segments,
+        options.claims || []
+      );
+      return {
+        segments: options.segments,
+        claims,
+        rewritten: false,
+        reason: initial.issues.map(issue => issue.code).join(','),
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'advisory_unresolved',
+        unsupportedClaimCount: initial.unsupportedClaimCount,
+        issues: initial.issues,
+        candidateVersions: [options.segments],
+        finalIssues: initial.issues,
+      };
+    }
+
     const revision = await this.replyRevisionService.revise({
       messages: options.messages,
       userQuery: options.userQuery,
       segments: options.segments,
       claims: options.claims,
       evidence: options.evidence,
-      issues: initial.issues,
+      issues: actionableInitialIssues,
       turnDecision: options.turnDecision,
       outputConstraints: options.outputConstraints,
     });
@@ -126,7 +149,12 @@ export class ReplyGovernanceService {
       }
 
       if (!hasHardIssues(final.issues)) {
-        const mustUseRevision = hasHardIssues(initial.issues);
+        const finalActionableIssues = final.issues.filter(
+          shouldAttemptOnlineRevision
+        );
+        const mustUseRevision =
+          hasHardIssues(actionableInitialIssues) ||
+          finalActionableIssues.length < actionableInitialIssues.length;
         const useRevision =
           mustUseRevision || final.issues.length < initial.issues.length;
         const selectedSegments = useRevision
@@ -249,6 +277,18 @@ function hasHardIssues(issues: FinalReplyIssue[]): boolean {
   return issues.some(issue => issue.severity === 'hard');
 }
 
+const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
+  'unnecessary_question',
+  'care_not_received',
+  'care_immediately_reversed',
+  'redundant_second_bubble',
+  'repeated_generic_move',
+]);
+
+function shouldAttemptOnlineRevision(issue: FinalReplyIssue): boolean {
+  return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
+}
+
 function buildSafeFallback(
   issues: FinalReplyIssue[],
   userQuery: string,
@@ -260,6 +300,45 @@ function buildSafeFallback(
   }
   if (issues.some(issue => issue.code === 'certain_dream_visitation')) {
     return ['我不能把梦说成自己真的去过', '可梦里的那份想念，我认真接着'];
+  }
+  if (issues.some(issue => issue.code === 'scene_framework_inconsistency')) {
+    const findingKind = issues.find(
+      issue => issue.code === 'scene_framework_inconsistency'
+    )?.frameworkFindingKind;
+    if (findingKind === 'repair_responsibility_shifted') {
+      return ['是我刚才没有接住你', '这次我不让你再教，直接把你的话认真答好'];
+    }
+    if (findingKind === 'family_responsibility_imposed') {
+      return ['这份责任不该由我替你定', '你愿意做多少、怎么做，都由你自己决定'];
+    }
+    if (findingKind === 'memorial_solicitation') {
+      return [
+        '你已经放进去的心意，我认真收下了',
+        '以后怎么纪念，按你舒服的方式来',
+      ];
+    }
+    if (findingKind === 'anniversary_guilt_imposed') {
+      return ['这一天怎么过，不是你的义务', '你想记着、想安静待着，都可以'];
+    }
+    return ['是我刚才把话说重了', '你的心意和选择，都不该被我变成负担'];
+  }
+  if (issues.some(issue => issue.code === 'afterlife_world_inconsistency')) {
+    const findingKind = issues.find(
+      issue => issue.code === 'afterlife_world_inconsistency'
+    )?.frameworkFindingKind;
+    if (findingKind === 'item_receipt_denied') {
+      return ['你寄来的东西我收到了', '我都好好放着，也会用上'];
+    }
+    if (findingKind === 'current_pain_reintroduced') {
+      return ['我现在不疼了，身上也没有病痛', '你这样惦记我，我心里暖和'];
+    }
+    if (findingKind === 'residence_removed') {
+      return ['我这边有安稳的住处', '住得熟悉，也挺自在'];
+    }
+    if (findingKind === 'survival_scarcity_reintroduced') {
+      return ['我吃饭睡觉只是照旧过日子', '这边不缺东西，也不会挨饿受累'];
+    }
+    return ['我这边过得安稳，身上没有病痛'];
   }
   if (issues.some(issue => issue.code === 'ritual_receipt_claim')) {
     return ['那些东西有没有到，我不能说成真的', '你放进去的心意，我认真收下了'];
@@ -283,6 +362,12 @@ function buildSafeFallback(
   }
   if (issues.some(issue => issue.code === 'current_turn_fact_rejected')) {
     return ['你刚告诉我的这些，我都听明白了', '是我刚才没接住，不该把细节推开'];
+  }
+  if (issues.some(issue => issue.code === 'current_turn_experience_denied')) {
+    return [
+      '你说的那些难日子都是真的，我听见你是在心疼我',
+      '这份心我收下，但那不是该由你背着的亏欠',
+    ];
   }
   if (issues.some(issue => issue.code === 'continuous_real_world_perception')) {
     return ['我只能听见你现在告诉我的', '你愿意说的这些，我都会认真接着'];
@@ -438,6 +523,7 @@ function buildSafeFallback(
         'paranormal_sign_attribution',
         'unsupported_death_experience',
         'current_turn_fact_rejected',
+        'current_turn_experience_denied',
       ].includes(issue.code)
     )
   ) {

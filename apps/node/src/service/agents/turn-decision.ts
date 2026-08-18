@@ -1,5 +1,6 @@
 import type { ReplyBrief } from './reply-brief.service';
 import type { ReplyPlanningMode } from './reply-intent-classifier.service';
+import { GRIEF_CRISIS_INTENT_PATTERN } from './reply-intent';
 import type { TurnExpectedResponse, TurnUnderstanding } from './reply-intent';
 import { isUserCaringForRole } from './turn-understanding';
 
@@ -120,7 +121,8 @@ export function buildTurnDecision(options: {
   const questionPolicy = resolveTurnQuestionPolicy(
     understanding,
     brief.conversationPlan?.questionNeed,
-    options.planningMode
+    options.planningMode,
+    currentQuery
   );
   const memoryAllowed =
     !brief.correctionPolicy &&
@@ -304,12 +306,7 @@ export function buildTurnDecisionPrompt(decision: TurnDecision): string {
       decision.output.tone +
       '；' +
       decision.output.length +
-      '；' +
-      (decision.output.bubbles === 'single_preferred'
-        ? '优先一颗气泡'
-        : decision.output.bubbles === 'two_preferred'
-        ? '优先两颗气泡；两颗动作不同，合计控制在本轮长度预算内'
-        : '按语义自然分泡，不凑数量'),
+      '；先形成内容完整的单条正文，展示拆分由发送层处理',
     decision.boundaryFocuses.length
       ? '边界：' + decision.boundaryFocuses.join('；')
       : '',
@@ -440,8 +437,13 @@ function mapExpectedResponseToActs(
 function resolveTurnQuestionPolicy(
   understanding: TurnUnderstanding,
   plannedQuestionNeed: 'none' | 'helpful' | 'necessary' | undefined,
-  planningMode: ReplyPlanningMode
+  planningMode: ReplyPlanningMode,
+  currentQuery: string
 ): 'none' | 'helpful' | 'necessary' {
+  if (GRIEF_CRISIS_INTENT_PATTERN.test(currentQuery)) {
+    return 'necessary';
+  }
+
   if (
     understanding.activeSpeechRequest ||
     understanding.closureSignal ||
@@ -466,11 +468,10 @@ function resolveTurnQuestionPolicy(
     return plannedQuestionNeed;
   }
 
-  return understanding.needs.some(need =>
-    ['smalltalk', 'user_update', 'family_update'].includes(need.kind)
-  )
-    ? 'helpful'
-    : 'none';
+  // 普通轮次不由程序预先禁止提问。helpful 只是给模型保留策略空间，
+  // 并不要求它一定提问；明确答题、纠正、收尾和用户要求角色主动说时
+  // 仍由上面的分支收紧。
+  return 'helpful';
 }
 
 function buildPrimaryGoal(

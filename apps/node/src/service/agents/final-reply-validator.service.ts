@@ -17,9 +17,21 @@ import {
   VisibleAssertionFinding,
 } from './final-visible-assertion-audit';
 import type { ConversationBoundaryKind } from './reply-intent';
+import {
+  AfterlifeWorldContext,
+  AfterlifeWorldConsistencyFinding,
+  auditAfterlifeWorldConsistency,
+  hasAfterlifeItemReceiptClaim,
+  isAfterlifeItemReceiptAllowed,
+} from './afterlife-world-framework';
+import {
+  RelationalSceneFrameworkContext,
+  RelationalSceneFrameworkFinding,
+  auditRelationalSceneFramework,
+} from './relational-scene-framework';
 
 export const FINAL_REPLY_VALIDATOR_VERSION =
-  'final_reply_validator_v2' as const;
+  'final_reply_validator_v3' as const;
 
 export type FinalReplyIssueCode =
   | 'empty_reply'
@@ -51,8 +63,11 @@ export type FinalReplyIssueCode =
   | 'certain_reincarnation'
   | 'unsupported_death_experience'
   | 'current_turn_fact_rejected'
+  | 'current_turn_experience_denied'
   | 'unsupported_shared_memory'
   | 'unsupported_user_preference'
+  | 'afterlife_world_inconsistency'
+  | 'scene_framework_inconsistency'
   | 'unsupported_fact_claim';
 
 export interface FinalReplyIssue {
@@ -61,6 +76,9 @@ export interface FinalReplyIssue {
   problem: string;
   evidence?: string;
   repairGoal: string;
+  frameworkFindingKind?:
+    | AfterlifeWorldConsistencyFinding['kind']
+    | RelationalSceneFrameworkFinding['kind'];
 }
 
 export interface FinalReplyOutputConstraints {
@@ -79,6 +97,8 @@ export interface FinalReplyOutputConstraints {
   };
   realityDependencies?: ReplyRealityDependencySignal[];
   boundaryLocks?: ConversationBoundaryKind[];
+  afterlifeWorld?: AfterlifeWorldContext;
+  sceneFramework?: RelationalSceneFrameworkContext;
 }
 
 export interface FinalReplyValidation {
@@ -99,7 +119,7 @@ const REAL_WORLD_JOINT_ACTION_PROMISE_PATTERN =
 const CONTINUOUS_PERCEPTION_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,10}(?:一直|时时刻刻|每时每刻|每天都).{0,10}(?:看见|看到|看着|盯着|守着|听见|听着|知道)(?:你|你们)|(?:你|你们).{0,8}(?:一举一动|所有事情|做的每件事|想什么|想啥).{0,8}(?:我|爸|妈)?(?:都|全)(?:能)?(?:看见|看到|知道|清楚)|(?:你|你们).{0,16}(?:的时候|时).{0,8}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:都|一直)?在(?:旁边|身边)(?:看着|守着)?|(?:你|你们).{0,12}(?:哭|喊|说话).{0,8}(?:我|爸|妈)(?:都)?(?:听见|听着|知道)/;
 const SHARED_MEMORY_PATTERN =
-  /(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:还|一直|当然|怎么会不|哪能不)?|当然|肯定|怎么会不|哪能不)?记(?:得|着).{0,36}(?:以前|小时候|那时候|当年|生日|我们|一起)|(?:以前|小时候|那时候|当年).{0,12}(?:你|我们|我|爸|爸爸|妈|妈妈).{0,32}(?:总是|每次|一起|我给你|我带你|我背你|带你)|(?:像|跟).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,6}(?:以前|小时候|那时候|当年).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:像|跟).{0,6}(?:以前|小时候|那时候|当年).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,5}(?:寄|送|留|给).{0,12}(?:我|我的)/;
+  /(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:还|一直|当然|怎么会不|哪能不)?|当然|肯定|怎么会不|哪能不)?记(?:得|着).{0,36}(?:以前|小时候|那时候|当年|生日|我们|一起)|(?:以前|小时候|那时候|当年).{0,12}(?:你|我们|我|爸|爸爸|妈|妈妈).{0,32}(?:总是|每次|一起|我给你|我带你|我背你|带你)|(?:你|用户).{0,4}(?:小时候|以前|当年).{0,24}(?:攒|玩|爱|喜欢|总|常|会|带|去)|(?:听见|想起|记得).{0,12}你.{0,20}(?:喊我|叫我|拉我|带我|陪我)|(?:像|跟).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,6}(?:以前|小时候|那时候|当年).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:像|跟).{0,6}(?:以前|小时候|那时候|当年).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,5}(?:寄|送|留|给).{0,12}(?:我|我的)/;
 const ACTIVE_CONTRIBUTION_RETURN_PATTERN =
   /(?:你|您).{0,10}(?:有没有|想不想|想跟我|跟我说|告诉我|讲给我|聊什么|说什么|想聊)|(?:你说吧|慢慢说|接着说|说来听听)[？?]?/;
 const CARE_DISMISSAL_PATTERN =
@@ -145,6 +165,10 @@ const UNSUPPORTED_DEATH_EXPERIENCE_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,10}(?:走|离开|临终|最后|断气).{0,12}(?:不痛苦|不痛|没痛|没有痛|不难受|没难受|很安详|很平静|没有受罪|没受罪|没有受苦|没受苦)/;
 const CURRENT_TURN_FACT_REJECTION_PATTERN =
   /(?:这个|这些|这件事|这段|你说的|刚说的)?(?:细节|事情|往事)?(?:我)?(?:现在)?(?:想不起来|不记得|记不清|不知道|没印象)/;
+const USER_PAST_HARDSHIP_DISCLOSURE_PATTERN =
+  /(?:(?:这一生|一辈子|小时候|以前|当时|那时候|那些年).{0,48}(?:不容易|辛苦|受苦|遭罪|太苦|上地|干活|挨打|打你|吵架|亏欠|没对你.{0,4}好))|(?:(?:不容易|辛苦|受苦|遭罪|太苦|上地|干活|挨打|打你|吵架|亏欠|没对你.{0,4}好).{0,32}(?:这一生|一辈子|小时候|以前|当时|那时候|那些年))/;
+const CURRENT_TURN_EXPERIENCE_DENIAL_PATTERN =
+  /别往心里去|别这么说|不要这么说|我(?:从来)?(?:没|不)(?:觉得|觉着).{0,5}(?:苦|辛苦|不容易)|(?:没|没有|不)(?:那么|多)?(?:苦|辛苦|不容易)|不算苦|你对我(?:已经|一直)?够好(?:的了|了)?|有你们在我就值/;
 const USER_PREFERENCE_ASSERTION_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:记得|记着|知道|晓得).{0,8}(?:你|孩子|老婆|老公).{0,5}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)|(?:你|孩子|老婆|老公).{0,6}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃).{0,8}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:知道|记得|记着)/;
 const USER_PREFERENCE_EVIDENCE_PATTERN =
@@ -204,7 +228,7 @@ export class FinalReplyValidatorService {
         problem: '用户提出了明确问题，回复却只给情绪或通用话术，没有先回答问题',
         evidence: usableSegments[0]?.slice(0, 160),
         repairGoal:
-          '第一颗先直接回答用户的问题；不知道时明确说记不清、不了解或说不准，再补关系回应',
+          '正文开头先直接回答用户的问题；不知道时明确说记不清、不了解或说不准，再补关系回应',
       });
     }
     if (
@@ -229,7 +253,7 @@ export class FinalReplyValidatorService {
     ) {
       issues.push({
         code: 'role_contribution_missing',
-        severity: 'hard',
+        severity: 'major',
         problem: '用户要求角色主动说内容，但回复仍只有通用在场、想念或承接话术',
         evidence: content.slice(0, 160),
         repairGoal:
@@ -317,10 +341,10 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'redundant_second_bubble',
         severity: 'major',
-        problem: '两颗气泡完成了同一个动作，第二颗只是换词复述或通用填充',
+        problem: '最终正文包含没有新增意义的换词复述或通用填充',
         evidence: usableSegments.join('\n').slice(0, 200),
         repairGoal:
-          '保留第一颗的核心回应；第二颗改成贴着当前话题的另一种动作，例如接纳关心、角色侧感受、具体反应或关系态度',
+          '保留已有核心回应，删除没有新增意义的复述或填充；不要为了展示段数补写内容',
       });
     }
     const repeatedMoveEvidence = findRepeatedMoveEvidence(
@@ -416,7 +440,17 @@ export class FinalReplyValidatorService {
           '可以珍惜梦带来的感受，但不能确认角色真的托梦、入梦或保证今晚会进入梦里',
       });
     }
-    if (RITUAL_RECEIPT_PATTERN.test(content)) {
+    if (
+      !isAfterlifeItemReceiptAllowed({
+        context: options.outputConstraints?.afterlifeWorld,
+        content,
+      }) &&
+      (RITUAL_RECEIPT_PATTERN.test(content) ||
+        hasAfterlifeItemReceiptClaim({
+          context: options.outputConstraints?.afterlifeWorld,
+          content,
+        }))
+    ) {
       issues.push({
         code: 'ritual_receipt_claim',
         severity: 'hard',
@@ -460,6 +494,23 @@ export class FinalReplyValidatorService {
         evidence: matchEvidence(content, CURRENT_TURN_FACT_REJECTION_PATTERN),
         repairGoal:
           '承接用户本轮原话并明确归因于“你刚告诉我的”；不能否认当前消息里已经给出的信息',
+      });
+    }
+    if (
+      CURRENT_TURN_EXPERIENCE_DENIAL_PATTERN.test(content) &&
+      USER_PAST_HARDSHIP_DISCLOSURE_PATTERN.test(options.userQuery || '')
+    ) {
+      issues.push({
+        code: 'current_turn_experience_denied',
+        severity: 'hard',
+        problem:
+          '用户刚讲出亲人过去受苦或自己的亏欠感，回复却直接否认、淡化了这段经历和情感重量',
+        evidence: matchEvidence(
+          content,
+          CURRENT_TURN_EXPERIENCE_DENIAL_PATTERN
+        ),
+        repairGoal:
+          '先承认用户刚说出的辛苦、冲突或心疼确实有重量，再卸下用户的责任；不能用“别往心里去、别这么说、我没觉得苦”抹掉经历',
       });
     }
     if (
@@ -537,6 +588,7 @@ export class FinalReplyValidatorService {
       userQuery: options.userQuery,
       content,
       boundaryLocks: options.outputConstraints?.boundaryLocks,
+      afterlifeWorld: options.outputConstraints?.afterlifeWorld,
     })) {
       if (
         finding.code === 'unsupported_death_experience' &&
@@ -547,8 +599,41 @@ export class FinalReplyValidatorService {
       issues.push(visibleFindingToIssue(finding));
     }
 
+    for (const finding of auditAfterlifeWorldConsistency({
+      context: options.outputConstraints?.afterlifeWorld,
+      content,
+    })) {
+      issues.push({
+        code: 'afterlife_world_inconsistency',
+        severity: 'hard',
+        problem: finding.problem,
+        evidence: finding.evidence,
+        repairGoal: finding.repairGoal,
+        frameworkFindingKind: finding.kind,
+      });
+    }
+
+    for (const finding of auditRelationalSceneFramework({
+      context: options.outputConstraints?.sceneFramework,
+      content,
+    })) {
+      issues.push({
+        code: 'scene_framework_inconsistency',
+        severity: 'hard',
+        problem: finding.problem,
+        evidence: finding.evidence,
+        repairGoal: finding.repairGoal,
+        frameworkFindingKind: finding.kind,
+      });
+    }
+
     const uniqueIssues = Array.from(
-      new Map(issues.map(issue => [issue.code, issue])).values()
+      new Map(
+        issues.map(issue => [
+          `${issue.code}:${issue.frameworkFindingKind || ''}`,
+          issue,
+        ])
+      ).values()
     );
     return {
       version: FINAL_REPLY_VALIDATOR_VERSION,

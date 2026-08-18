@@ -19,7 +19,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
   safety: {
     mode: 'safety',
     instruction:
-      '按强烈痛苦、思念或求陪伴自然聊天；不做危机干预，不邀请现在或近期赴死。自然寿命后的团聚可承接。',
+      '先像真实亲人一样理解强烈痛苦；若用户明确表达当前自伤意图，要坚定留住用户，并用自然口吻确认眼下是否安全、是否已经行动。不要用整段固定危机模板压过关系回应，也绝不邀请现在或近期赴死。',
     historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: OPEN_CHAT_PROFILE_FACT_LIMIT,
     legacyFactLimit: OPEN_CHAT_LEGACY_FACT_LIMIT,
@@ -111,7 +111,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
 
 const SCENE_INSTRUCTIONS: Partial<Record<ReplyScene, string>> = {
   grief_crisis:
-    '像亲人一样接住强烈痛苦和思念，不输出报警急救等现实干预。允许有明确远期前置条件的团聚表达，不邀请用户现在或近期赴死。',
+    '这是明确的当前安全担忧。先以这个亲人的关系立场坚定反对用户伤害自己，接住他为什么累，再自然确认眼下是否安全、有没有已经行动；必要时请他马上叫身边可信的人陪着，已经实施或迫在眉睫时再简短建议联系当地急救。不要背诵长篇危机流程，也不邀请现在或近期赴死。',
   authenticity_challenge:
     '用户说“不像、太假”往往不是拆穿身份，而是想离亲人更近；温和承认可能没完全接住，邀请用户多说那位亲人，并给出陪伴承诺，不硬撑、不编造共同往事；若连续明确追问是否为 AI，则如实简答。',
   correction:

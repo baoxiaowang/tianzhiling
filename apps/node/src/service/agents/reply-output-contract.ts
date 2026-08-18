@@ -1,4 +1,4 @@
-export const REPLY_OUTPUT_CONTRACT_VERSION = 'reply_envelope_v1' as const;
+export const REPLY_OUTPUT_CONTRACT_VERSION = 'reply_envelope_v2' as const;
 export const REPLY_REVIEW_CONTRACT_VERSION = 'reply_review_v1' as const;
 
 export type ReplyOutputSegmentMode = 'one' | 'up_to_two' | 'exact_two';
@@ -21,11 +21,10 @@ export function resolveReplyOutputSegmentMode(plan: {
   preferTwoSegments?: boolean;
   encourageTwoSegments?: boolean;
 }): ReplyOutputSegmentMode {
-  if (plan.preferTwoSegments) {
-    return 'exact_two';
-  }
-
-  return plan.maxSegments <= 1 ? 'one' : 'up_to_two';
+  // 气泡是最终展示适配，不再由生成模型承担版式设计。
+  // 保留 plan 入参，避免节奏规划与输出合同产生两套调用方式。
+  void plan;
+  return 'one';
 }
 
 export function buildReplyOutputContractPrompt(
@@ -35,7 +34,9 @@ export function buildReplyOutputContractPrompt(
   const maxSegments = Math.max(1, Math.min(2, options.maxSegments || 2));
   const schema: Record<string, unknown> = {
     segments:
-      options.segmentMode === 'exact_two' ? ['第一颗', '第二颗'] : ['气泡'],
+      options.segmentMode === 'exact_two'
+        ? ['第一段正文', '第二段正文']
+        : ['完整正文'],
   };
 
   if (options.grounded) {
@@ -73,19 +74,17 @@ export function buildReplyOutputContractPrompt(
       : `segments 一到 ${maxSegments} 项，能用一项就不拆。`;
   const rangeRule = options.preferredRange
     ? options.segmentMode === 'exact_two'
-      ? `两项缺一不可；两项合计 ${options.preferredRange.minCharacters}-${
+      ? `两项缺一不可；两项合计优先 ${options.preferredRange.minCharacters}-${
           options.preferredRange.maxCharacters
-        } 个中文字符，少于 ${options.preferredRange.minCharacters} 或超过 ${
-          options.preferredRange.maxCharacters
-        } 都视为格式不合格。每项约 ${Math.floor(
+        } 个中文字符，每项通常约 ${Math.floor(
           options.preferredRange.minCharacters / 2
         )}-${Math.ceil(
           options.preferredRange.maxCharacters / 2
-        )} 个中文字符；不用重复想念、通用叮嘱或空话凑长度。`
-      : `segments 全部正文合计 ${options.preferredRange.minCharacters}-${options.preferredRange.maxCharacters} 个中文字符，少于 ${options.preferredRange.minCharacters} 或超过 ${options.preferredRange.maxCharacters} 都视为格式不合格；不用重复想念、通用叮嘱或空话凑长度。`
+        )} 个中文字符；情绪、事实和语义完整优先，不用重复想念、通用叮嘱或空话凑长度。`
+      : `segments 全部正文合计优先 ${options.preferredRange.minCharacters}-${options.preferredRange.maxCharacters} 个中文字符；情绪、事实和语义完整优先，不用重复想念、通用叮嘱或空话凑长度。`
     : '';
   const claimRule = options.grounded
-    ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世日常想象用 soft_imagination。'
+    ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
   const auditRule =
     purpose === 'audited_revision'

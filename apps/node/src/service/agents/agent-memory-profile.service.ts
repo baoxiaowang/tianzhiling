@@ -176,15 +176,16 @@ export class AgentMemoryProfileService {
           '忠实保留用户明确说出的不同事实，不要把“生意做得很好”只压缩成“有生意头脑”，也不要用推断替代原始事实；可以在合适字段分别保留事实与性格判断。',
           '把信息归入五项：lifeExperience 生平经历、personalityTraits 性格特点、languageHabits 语言习惯、hobbies 兴趣爱好、sharedMemories 共同记忆。',
           '保留已有草稿中的可靠内容，把新内容自然合并进去，避免重复。每项最多 1000 字。',
-          '采访分为“先形成整体轮廓、再适度深入”两个阶段。只要五项中还有空白，下一次就必须追问一个尚未覆盖的方面，不得继续深挖已有内容。',
-          '如果本轮没有回答原问题且仍有其他空白方面，先换一个方面，之后再回来；除非它已经是唯一空白，否则不要连续两轮追问同一项。',
+          '采访分为“先形成整体轮廓、再适度深入”两个阶段。五项空白只表示以后还可以了解，不要求每轮都追问。先判断用户本轮更适合被回应、被确认，还是自然补问一个方面。',
+          '如果本轮没有回答原问题，先接住他实际说的内容；可以换一个方面，也可以这一轮不提问。不要为了填满五项而连续推进。',
           '已经问过的方面不得再次提问，即使用户没有回答；换到尚未问过的方面，让信息在后续聊天里自然补上。',
           '如果用户表示不知道、想不起或本轮仍未补上唯一空白方面，不要重复追问，直接温和收住。',
-          '当本轮首次让五项都有基本内容时，可以选择一个不同于本轮焦点的方面，只追问一次有代表性的细节；不要追问时间线、人物关系或多个连续细节。',
+          '用户只回“有、是、是啊、嗯”这类短确认时，先结合上一条小使者问题理解它确认的内容并更新草稿；不要再问一遍“你是指……吗”。',
+          '当本轮首次让五项都有基本内容时，只有确实有自然价值时才追问一个代表性细节；不要追问时间线、人物关系或多个连续细节。',
           '如果本轮开始前五项就已经都有内容，nextFocusField 必须输出空字符串，reply 继续承接用户刚说的具体内容，不再为了采访而提问。',
           'reply 要像认真倾听后的自然回应，先对用户刚说的具体内容表达理解、共情或感受，再决定是否问一个具体问题；不超过 55 个汉字，不制造必须答完的压力。',
           'reply 的承接句必须使用用户本轮原话里的一个具体内容锚点（人物、事件、物件、习惯或原话片段），不能只说“很重要、很鲜活、很珍贵、我在认真听”等通用判断。',
-          '需要提问时，承接句先回应本轮内容，问题再自然转向尚未覆盖的方面；不要把五项字段逐项问成问卷。',
+          '需要提问时，承接句先回应本轮内容，问题再自然转向尚未覆盖的方面；也可以只回应不提问。不要把五项字段逐项问成问卷。',
           '不要使用“我记住了”“谢谢，我记住了”“这些我都记下了”等机械确认句，也不要重复此前说过的整句回复。',
           '输出严格 JSON 对象，必须包含 reply、nextFocusField、lifeExperience、personalityTraits、languageHabits、hobbies、sharedMemories，不要解释或使用 Markdown。',
         ].join('\n'),
@@ -891,10 +892,17 @@ export class AgentMemoryProfileService {
       );
     }
 
+    // 只有模型可用时才让它自主决定本轮不追问。技术兜底没有策略判断
+    // 能力，仍选择一个尚未覆盖且未重复问过的方面，保证流程可继续。
+    const fallbackNextField =
+      this.listMissingInterviewFields(draft).find(
+        field => field !== requestedField && !askedFields.includes(field)
+      ) || '';
+
     return this.buildInterviewResult(
       agent,
       draft,
-      '',
+      fallbackNextField,
       '',
       currentDraft,
       requestedField,
@@ -977,7 +985,7 @@ export class AgentMemoryProfileService {
       draft,
       coveredFields,
       nextFocusField,
-      isComplete: !nextFocusField,
+      isComplete: missingFields.length === 0 && !nextFocusField,
     };
   }
 
@@ -1037,6 +1045,12 @@ export class AgentMemoryProfileService {
     previousFocusField: AgentProfileMemoryField | '',
     askedFields: AgentProfileMemoryField[]
   ): AgentProfileMemoryField | '' {
+    // 空字符串表示模型判断这一轮更适合回应而不是追问。空白字段保留到
+    // 后续轮次继续了解，不再由程序强制每轮推进一个槽位。
+    if (!requestedField) {
+      return '';
+    }
+
     const candidates = missingFields.filter(
       field => field !== previousFocusField && !askedFields.includes(field)
     );
@@ -1228,7 +1242,7 @@ export class AgentMemoryProfileService {
     if (!normalized) {
       return '';
     }
-    return Array.from(normalized).slice(0, 12).join('');
+    return Array.from(normalized).slice(0, 24).join('');
   }
 
   private replyContainsInterviewAnchor(reply: string, source: string): boolean {

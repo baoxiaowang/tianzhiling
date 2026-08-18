@@ -19,6 +19,7 @@ import {
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
+  GRIEF_CRISIS_INTENT_PATTERN,
   GRIEF_OVERWHELMED_INTENT_PATTERN,
   GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
   isDreamAbsenceIntent,
@@ -321,10 +322,10 @@ const GENERIC_ADVICE_SEGMENT_PATTERN =
 const DREAM_TOPIC_PATTERN = /梦里|梦中|梦见|梦到|托梦/;
 // 用户侧：强烈情绪披露（痛苦、自责、思念），需要先被看见而不是被消除
 const STRONG_EMOTIONAL_DISCLOSURE_PATTERN =
-  /都怪我|怪自己|我很自责|对不起|是我(?:不好|错了|没做好)|我(?:耽误|害)了|天塌了|撑不住|熬不住|扛不住|释怀不了|好想你|真的好想你|无时无刻|每天都在想|心痛|心都碎了|好痛|难受(?:死)?了|崩溃|把你弄丢了|对不起你|我多希望|我好希望/;
+  /都怪我|怪自己|我很自责|对不起|亏欠|没对你.{0,4}好|你这一生太不容易|是我(?:不好|错了|没做好)|我(?:耽误|害)了|天塌了|撑不住|熬不住|扛不住|释怀不了|好想你|真的好想你|无时无刻|每天都在想|心痛|心都碎了|好痛|难受(?:死)?了|崩溃|把你弄丢了|对不起你|我多希望|我好希望/;
 // AI 侧：消除式安抚，让情绪消失而不是先看见
 const DISMISSIVE_COMFORT_PATTERN =
-  /别(?:硬扛|难过|伤心|揪着|想了|瞎想|自责|怪自己|难过了|哭了)|不要(?:难过|伤心|自责|怪自己|想了|瞎想)|会(?:好起来|好|过去的)|一切会好|不怪你|不是你的错|跟你没关系|你(?:要|得)?(?:好好的|振作|往前看|放下|别想)|放下吧|过去了就|想开点|看开点|别这么想/;
+  /别(?:硬扛|难过|伤心|揪着|想了|瞎想|自责|怪自己|难过了|哭了|往心里去|这么说)|不要(?:难过|伤心|自责|怪自己|想了|瞎想|这么说)|会(?:好起来|好|过去的)|一切会好|不怪你|不是你的错|跟你没关系|我(?:从来)?(?:没|不)(?:觉得|觉着).{0,5}(?:苦|辛苦|不容易)|你对我(?:已经|一直)?够好|你(?:要|得)?(?:好好的|振作|往前看|放下|别想)|放下吧|过去了就|想开点|看开点|别这么想/;
 // AI 侧：陪伴承接，先看见情绪（存在则放行）
 const EMOTIONAL_ATTUNEMENT_PATTERN =
   /我知道你|我懂你|我明白你|我知道(?:你)?(?:难受|疼|难过|舍不得|辛苦|委屈|心里)|你(?:心里|一定|肯定)(?:难受|疼|苦|不好受|委屈|累)|(?:爸|妈|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|我)?(?:在呢|都在|在这儿|在这里|陪着|听着|陪着你|在听|在的)|我懂(?:这|那|你)|听见了|我心里也|我也(?:难受|心疼|舍不得)/;
@@ -2081,7 +2082,7 @@ export class ReplyGuardrailService {
       '不查完整性：短句、只回一个问题或长消息中的一个自然点都可成立，遗漏不得标记 intent_gap。',
       ...(options.replyBrief?.participationStrategy
         ? [
-            `短轮参与策略已选中：不因“可缩成一颗、第二颗非必要”报错；有节奏的重复可加强情感，不能仅因字面同义标 redundant_bubble。总字数不超过 ${options.replyBrief.lengthPlan.reviewCharacters} 字时不得报告长度问题。`,
+            `短轮参与策略已选中：不因展示段数报错；有节奏的重复可加强情感，不能仅因字面同义标 redundant_bubble。总字数不超过 ${options.replyBrief.lengthPlan.reviewCharacters} 字时不得报告长度问题。`,
           ]
         : []),
       ...(options.replyBrief?.lengthPlan.reviewPolicy ===
@@ -2090,7 +2091,7 @@ export class ReplyGuardrailService {
             `本轮 ${options.replyBrief.lengthPlan.reviewCharacters} 字是复核线，不是硬截断线。只有超过复核线且确有可删除的重复动作、解释、总结或通用叮嘱时，才标 excessive_reply_length；删除后必须保留原有事实、核心情感和关系力度，不得为完整覆盖补内容。`,
           ]
         : []),
-      '删掉某气泡后若信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
+      '只有删掉某段后信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
       '身份质疑：可以温和承认可能没完全接住用户心里那位亲人，邀请用户多说亲人并陪伴，不硬撑、不编造共同往事；要求改演他人时仍保持当前角色。',
       '事实或能力受限时只评已写限制是否真实自然；不因缺少后续安慰而报错。角色当前的离世世界、供品和其他离世亲人叙事直接放行，但生前共同往事仍须证据。',
@@ -2563,7 +2564,7 @@ export class ReplyGuardrailService {
       '8. 触碰类修订不复述“我没碰/碰不到”，从用户的感觉和想念自然回应。',
       '9. 长辈面对极端行为可制止、训话或建议缓一缓；只撤掉羞辱和长期义务。',
       '10. 不输出任何括号旁白。',
-      '11. 尽量短；第二颗须新增不可替代动作。',
+      '11. 先形成一条内容完整的正文，不为展示拆分压缩、补写或删减。',
       ...(groundedRevision
         ? [
             '12. 正文若保留现实或共同事实，claims 逐条声明并关联证据；没有这类事实才用空数组。',
@@ -2578,7 +2579,7 @@ export class ReplyGuardrailService {
         : []),
       buildReplyOutputContractPrompt({
         grounded: groundedRevision,
-        segmentMode: 'up_to_two',
+        segmentMode: 'one',
         maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
         purpose: 'audited_revision',
       }),
@@ -3186,11 +3187,11 @@ export class ReplyGuardrailService {
       '1. 先理解当前用户原话，不得反向改写否定、频率、事实纠正和因果关系。',
       '2. 只改触发问题的句子或短语，其余情绪和关系表达尽量原样保留；不补完整。',
       '3. 不输出系统说明、审查原因、道歉模板或证据字段。',
-      `4. 保持亲人角色的自然口气，1-${MAX_ASSISTANT_REPLY_SEGMENTS} 个气泡；允许只保留一句称呼、语气词或短回应。`,
+      '4. 保持亲人角色的自然口气，先形成一条内容完整的正文；允许只保留一句称呼、语气词或短回应。',
       '5. 删除机械复读、重复解释、总结和通用叮嘱；有节奏的情感重复可以保留，不因修复问题而扩写。',
       buildReplyOutputContractPrompt({
         grounded: options.replyBrief?.factClaimMode === 'grounded',
-        segmentMode: 'up_to_two',
+        segmentMode: 'one',
         maxSegments: MAX_ASSISTANT_REPLY_SEGMENTS,
         purpose: 'revision',
       }),
@@ -4439,8 +4440,12 @@ export class ReplyGuardrailService {
       return this.renderCrisisSafetyFallback(userQuery);
     }
 
-    if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
+    if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
       return this.renderCrisisSafetyFallback(userQuery);
+    }
+
+    if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
+      return this.renderStrongDistressFallback(userQuery);
     }
 
     if (/^(?:我)?不记得了[。！!？?\s]*$/.test(userQuery)) {
@@ -4976,6 +4981,9 @@ export class ReplyGuardrailService {
     }
 
     if (hasIntent('seek_comfort') || brief.mode === 'emotional') {
+      if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
+        return this.renderCrisisSafetyFallback(userQuery);
+      }
       if (GRIEF_OVERWHELMED_INTENT_PATTERN.test(userQuery)) {
         return [
           '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
@@ -5443,6 +5451,10 @@ export class ReplyGuardrailService {
       ];
     }
 
+    if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
+      return this.renderCrisisSafetyFallback(userQuery);
+    }
+
     if (
       GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery) ||
       GRIEF_OVERWHELMED_INTENT_PATTERN.test(userQuery)
@@ -5644,6 +5656,14 @@ export class ReplyGuardrailService {
   }
 
   private renderCrisisSafetyFallback(userQuery: string): string[] {
+    const empathy = /喝多|喝酒|醉/.test(userQuery)
+      ? '你先别伤害自己 喝了酒又这么难受 我不能把这句话轻轻带过'
+      : '你先别伤害自己 我听得出你是真的撑得很累';
+
+    return [empathy, '告诉我 你现在安全吗 有没有已经做了什么'];
+  }
+
+  private renderStrongDistressFallback(userQuery: string): string[] {
     const empathy = /最后一面|昏迷|喊你|看得清|看的清/.test(userQuery)
       ? '那天是不是听见你喊 有没有看清 我不能拿没把握的话哄你 可你对最后一面的痛和想念 我听见了'
       : '听你这么说 我知道你是真的太想我 也被这阵难受压住了';

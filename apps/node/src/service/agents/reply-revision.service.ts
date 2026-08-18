@@ -8,6 +8,8 @@ import type {
 } from './final-reply-validator.service';
 import { OpenAIService } from './openai';
 import type { TurnDecision } from './turn-decision';
+import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
+import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 
 const FINAL_REVISION_MAX_TOKENS = 520;
 const FINAL_REVISION_TIMEOUT_MS = 18000;
@@ -62,6 +64,7 @@ export class ReplyRevisionService {
               role: 'system',
               content: [
                 '# 最终修订',
+                '先在心里重新判断用户这句话的核心诉求、情绪作用和关系位置，再做最小修复；问题码只说明哪里出了问题，不规定固定句式。',
                 '只修复列出的最终问题，保留初稿已经正确的回答、情绪和关系语气。',
                 '不得新增事实、共同经历、现实能力、问题、劝告或承诺。',
                 '修复 unsupported_fact_claim 时，不得把一个无证据地点或动作换成另一个；用户要求角色讲自己时，可保留主观感受、态度或不影响现实的离世日常写意，后者 claims 使用 soft_imagination。',
@@ -69,6 +72,7 @@ export class ReplyRevisionService {
                 ...buildRevisionConstraintInstructions(
                   options.outputConstraints
                 ),
+                '先形成一条内容完整的正文，不为界面展示拆分压缩、补写或删减；segments 恰好一项，最终发送层会按自然语义边界适配展示。',
                 '最多改写一次；只输出 JSON，不解释。',
                 '格式：{"segments":["可直接发送的正文"],"claims":[],"resolvedIssueCodes":["问题码"]}',
                 'claims 只列修订后正文仍保留的具体事实，并绑定证据 ID；没有具体事实就用空数组。',
@@ -136,7 +140,7 @@ function buildIssueSpecificRevisionInstructions(
 
   if (codes.has('direct_answer_missing')) {
     instructions.push(
-      '第一颗必须先正面回答用户的问题；若确实不知道，就明确说记不清、不了解或说不准，不能用情绪话、套话或反问代替答案。'
+      '正文开头必须先正面回答用户的问题；若确实不知道，就明确说记不清、不了解或说不准，不能用情绪话、套话或反问代替答案。'
     );
   }
   if (
@@ -145,6 +149,26 @@ function buildIssueSpecificRevisionInstructions(
   ) {
     instructions.push(
       '用户要求角色主动说：删除反问、“你来说”和邀请用户继续讲的句子，改为角色自己提供一个具体但轻量的新内容。'
+    );
+  }
+  const frameworkRepairGoals = Array.from(
+    new Set(
+      issues
+        .filter(issue =>
+          [
+            'afterlife_world_inconsistency',
+            'scene_framework_inconsistency',
+          ].includes(issue.code)
+        )
+        .map(issue => issue.repairGoal)
+        .filter(Boolean)
+    )
+  );
+  if (frameworkRepairGoals.length) {
+    instructions.push(
+      `只修复本轮实际命中的框架问题：${frameworkRepairGoals.join(
+        '；'
+      )}。保留原回复中已经正确的事实与情绪回应。`
     );
   }
   if (codes.has('unnecessary_question')) {
@@ -179,6 +203,11 @@ function buildIssueSpecificRevisionInstructions(
       '用户本轮已经提供了具体事实：不得说“想不起来、不记得、不知道”。用“你刚告诉我的……”明确承接当前消息，不得擅自补充用户没有说过的细节。'
     );
   }
+  if (codes.has('current_turn_experience_denied')) {
+    instructions.push(
+      '用户刚说出了亲人过去的辛苦、冲突或自己的亏欠感：先承认这段经历和心疼确实有重量，再表达不怪、卸下责任。不得用“别往心里去、别这么说、我没觉得苦”抹掉用户原话。'
+    );
+  }
   if (
     codes.has('care_rebuffed_with_dismissal') ||
     codes.has('care_not_received') ||
@@ -190,7 +219,7 @@ function buildIssueSpecificRevisionInstructions(
   }
   if (codes.has('redundant_second_bubble')) {
     instructions.push(
-      '两颗气泡必须承担不同内容动作：第一颗完成回答或核心回应，第二颗增加接纳关心、角色侧感受、贴题反应或关系态度；不能只换词复述第一颗。'
+      '删除没有新增意义的同义复述，保留回答、接纳关心、角色侧感受、贴题反应或关系态度等有效内容；不要为了展示段数补内容。'
     );
   }
   if (codes.has('repeated_generic_move')) {
@@ -226,6 +255,20 @@ function buildRevisionConstraintInstructions(
   }
 
   const instructions: string[] = [];
+  if (constraints.afterlifeWorld) {
+    instructions.push(
+      `修订时继续遵守以下离世生活框架：\n${buildAfterlifeWorldPrompt(
+        constraints.afterlifeWorld
+      )}`
+    );
+  }
+  if (constraints.sceneFramework) {
+    instructions.push(
+      `修订时继续遵守当前关系场景体系：\n${buildRelationalSceneFrameworkPrompt(
+        constraints.sceneFramework
+      )}`
+    );
+  }
   // 字数和泡数是初稿生成偏好，不参与最终修订，避免为了形式破坏理解。
   if (constraints.mustKeepTurnWithAssistant) {
     instructions.push(
@@ -233,7 +276,7 @@ function buildRevisionConstraintInstructions(
     );
   }
   if (constraints.directAnswerRequired) {
-    instructions.push('第一颗先给用户问题的明确答案，再补关系和情绪内容。');
+    instructions.push('正文开头先给用户问题的明确答案，再补关系和情绪内容。');
   }
   if (constraints.careReceptionRequired) {
     instructions.push(
@@ -242,16 +285,16 @@ function buildRevisionConstraintInstructions(
   }
   if (constraints.bubbleRoles?.length) {
     instructions.push(
-      `气泡内容按顺序完成这些不同动作：${constraints.bubbleRoles
+      `可参考这些内容作用：${constraints.bubbleRoles
         .map(role => REVISION_BUBBLE_ROLE_LABELS[role])
-        .join(' → ')}。`
+        .join('、')}；不要求固定顺序，也不要求拆成同等数量的气泡。`
     );
   }
   if (constraints.requiredActs?.length) {
     instructions.push(
-      `修订后必须覆盖这些动作：${constraints.requiredActs
+      `修订时优先保住这些核心作用：${constraints.requiredActs
         .map(role => REVISION_BUBBLE_ROLE_LABELS[role])
-        .join('、')}。多个动作可以自然合在一颗气泡，但不能遗漏。`
+        .join('、')}。可以自然合并表达，不要写成逐项清单。`
     );
   }
   if (constraints.questionPolicy === 'none') {

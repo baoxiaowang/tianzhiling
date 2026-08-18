@@ -103,6 +103,20 @@ import {
   buildTurnUnderstanding,
   mergeTurnUnderstandings,
 } from './turn-understanding';
+import {
+  AfterlifeWorldContext,
+  buildAfterlifeWorldPrompt,
+  resolveAfterlifeWorldContext,
+} from './afterlife-world-framework';
+import {
+  RelationalSceneFrameworkContext,
+  buildRelationalSceneFrameworkPrompt,
+  resolveRelationalSceneFramework,
+} from './relational-scene-framework';
+import {
+  DirectActiveContributionPlan,
+  resolveDirectActiveContribution,
+} from './direct-active-contribution';
 
 export type ReplyBriefMode =
   | 'safety'
@@ -162,7 +176,7 @@ export interface ReplyBriefRelationshipContext {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v13';
+  version: 'reply_brief_v15';
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -185,6 +199,7 @@ export interface ReplyBrief {
   realityDependencies: ReplyRealityDependencySignal[];
   correctionPolicy?: ReplyCorrectionPolicy;
   activeContribution?: ReplyActiveContributionPlan;
+  directActiveContribution?: DirectActiveContributionPlan;
   strategyQuality?: ReplyStrategyQualityPlan;
   careMotivation?: ReplyCareMotivationPlan;
   dreamCompanionPlan?: DreamCompanionPlan;
@@ -193,6 +208,8 @@ export interface ReplyBrief {
   guardrailFocuses: ReplyGuardrailFocus[];
   participationStrategy?: ReplyParticipationStrategy;
   isDeceased?: boolean;
+  afterlifeWorld?: AfterlifeWorldContext;
+  sceneFramework?: RelationalSceneFrameworkContext;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
   prompt: string;
@@ -200,6 +217,7 @@ export interface ReplyBrief {
 
 export interface BuildReplyBriefOptions {
   currentQuery: string;
+  planningMode?: 'direct' | 'semantic' | 'disabled';
   agent?: AgentEntity | null;
   profileFacts?: AgentProfileFactSummary[];
   conversationMessages?: MessageEntity[];
@@ -297,7 +315,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const objectPlan =
     options.route?.intent?.objectPlan ?? options.intent?.objectPlan;
   const sourceIntent = options.route?.intent ?? options.intent;
-  const understanding = mergeTurnUnderstandings(
+  let understanding = mergeTurnUnderstandings(
     buildTurnUnderstanding({
       currentQuery,
       intent: sourceIntent,
@@ -322,6 +340,31 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       intents,
     });
   const evidence = buildEvidence(options, currentQuery);
+  const sceneFramework = resolveRelationalSceneFramework({
+    currentQuery,
+    primaryScene,
+    isDeceased: Boolean(options.agent?.deathDate),
+    conversationMessages:
+      options.conversationMessages ?? options.recentMessages,
+    evidence,
+  });
+  const afterlifeWorld = resolveAfterlifeWorldContext({
+    currentQuery,
+    primaryScene,
+    agent: options.agent,
+    profileFacts: options.profileFacts,
+    conversationMessages:
+      options.conversationMessages ?? options.recentMessages,
+    evidence,
+  });
+  if (afterlifeWorld?.allowItemReceipt) {
+    understanding = {
+      ...understanding,
+      boundaryLocks: understanding.boundaryLocks.filter(
+        lock => lock.kind !== 'ritual_receipt'
+      ),
+    };
+  }
   const correctionPolicy = resolveReplyCorrectionPolicy({
     primaryScene,
     intents,
@@ -367,6 +410,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const strictGrounding =
     mode === 'memory' ||
     mode === 'boundary' ||
+    Boolean(sceneFramework?.requiresGrounding) ||
     Boolean(correctionPolicy) ||
     Boolean(activeContribution) ||
     requiresRealWorldEvidence ||
@@ -561,8 +605,19 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     retrievedEvidenceCount: options.retrievedMemories?.length || 0,
     activeContribution,
   });
+  const directActiveContribution = resolveDirectActiveContribution({
+    planningMode: options.planningMode,
+    currentQuery,
+    mode,
+    primaryScene,
+    riskLevel,
+    hasCorrection: Boolean(correctionPolicy),
+    hasExplicitActiveContribution: Boolean(activeContribution),
+    hasCapabilityConstraints: capabilityConstraints.length > 0,
+    hasRealityDependencies: realityDependencies.length > 0,
+  });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v13',
+    version: 'reply_brief_v15',
     mode,
     primaryScene,
     riskLevel,
@@ -585,6 +640,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     realityDependencies,
     correctionPolicy,
     activeContribution,
+    directActiveContribution,
     strategyQuality,
     careMotivation,
     dreamCompanionPlan,
@@ -593,6 +649,8 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     guardrailFocuses,
     participationStrategy,
     isDeceased: Boolean(options.agent?.deathDate),
+    afterlifeWorld,
+    sceneFramework,
     lengthPlan,
     bubblePlan,
   };
@@ -766,7 +824,7 @@ function constrainConversationPlanQuality(
   ) {
     moves.push({
       type: 'self_disclose',
-      goal: '正面给一个具体但轻量的角色侧当下内容；离世日常写意标为 soft_imagination，共同过去只有证据支持时才可使用',
+      goal: '正面给一个具体但轻量的角色侧当下内容；离世生活框架内的当前事实标为 soft_imagination，共同过去只有证据支持时才可使用',
     });
   }
 
@@ -777,7 +835,7 @@ function constrainConversationPlanQuality(
           ? {
               assistantContribution: 'self_expression' as const,
               mustContribute:
-                '先正面给角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避，可给一处不影响现实的离世日常写意并标为 soft_imagination；共同过去只使用可陈述证据',
+                '先正面给角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避；涉及离世生活时按已激活框架给一处贴题内容并标为 soft_imagination，共同过去只使用可陈述证据',
             }
           : {}),
         ...(preferredAlternative === 'grounded_detail'
@@ -1125,7 +1183,7 @@ export function buildReplyParticipationStrategyPrompt(
   const spaceAnchor = isDeceased
     ? '空间锚定：可承接"偶尔回来看看""托梦""在心里陪着你"等亲人念想；不承诺现实代办、到场办事或持续看护，不诱导现在或近期赴死。'
     : '';
-  return `短轮参与：先直接回应，再自然${contribution}；只有动作确实切换时才分第二颗，不凑气泡。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
+  return `短轮参与：先直接回应，再自然${contribution}；把需要表达的内容完整说好，不为展示拆分压缩或补写。不机械复读，不编用户现实或共同往事。${spaceAnchor}`;
 }
 
 function buildRelationshipContext(
@@ -1645,8 +1703,8 @@ function buildReplyMoves(
 
   const movesByScene: Partial<Record<ReplyScene, string[]>> = {
     afterlife_status: [
-      '用一处简短的角色侧小场景回答当前状态；问其他已离世亲人时，可自然说见到了、在一起或有人作伴',
-      '饭菜、住处、作息或活动的想象只服务本轮关心和安慰，不建立固定玄学体系，不延伸成醒时现实能力',
+      '按离世生活框架用一处简短的角色侧小场景正面回答当前状态，优先使用本轮领域和连续状态锚点',
+      '住处、物品、习惯爱好和无病痛是稳定设定，只服务本轮关心和安慰；具体人物、摆设、共同过去和临终过程不能临时补写',
       '回应用户这份关心',
     ],
     correction: ['先收住不准或乱补的表达', '按用户纠正后的事实重新回应'],
@@ -2096,7 +2154,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         ...(brief.conversationPlan.engagement?.assistantContribution ===
         'self_expression'
           ? [
-              '用户要当前角色主动说：只给一个短小的角色侧当下片段，不把话推回用户。离世世界可合理想象，不编用户偏好或共同往事。',
+              '用户要当前角色主动说：只给一个短小的角色侧当下片段，不把话推回用户。涉及离世生活时按本轮框架选一处贴题内容，不临时另造世界设定，也不编用户偏好或共同往事。',
             ]
           : []),
         ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
@@ -2138,6 +2196,16 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const afterlifeWorldLines = brief.afterlifeWorld
+    ? ['## 离世生活框架', buildAfterlifeWorldPrompt(brief.afterlifeWorld), '']
+    : [];
+  const sceneFrameworkLines = brief.sceneFramework
+    ? [
+        '## 关系场景体系',
+        buildRelationalSceneFrameworkPrompt(brief.sceneFramework),
+        '',
+      ]
+    : [];
   const realityDependencyLines = brief.realityDependencies.length
     ? [
         '## 现实依赖',
@@ -2153,7 +2221,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         ...(brief.stateProtocol?.protocol === 'active_contribution'
           ? []
           : ['## 主动贡献']),
-        `优先正面给一个具体但轻量的角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避。离世日常写意在 claims 中用 soft_imagination；共同过去${
+        `优先正面给一个具体但轻量的角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避。离世生活框架内的当前事实在 claims 中用 soft_imagination；共同过去${
           brief.activeContribution.sharedPastAllowed
             ? '有证据时可自然带一处细节'
             : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
@@ -2192,6 +2260,14 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     maxSegments: brief.bubblePlan.maxSegments,
     preferredRange: brief.lengthPlan.preferredRange,
   });
+  const careReceptionLines = brief.understanding.needs.some(
+    need => need.expectedResponse === 'direct_answer_and_receive_care'
+  )
+    ? [
+        '用户正在把关心递给当前角色：先正面回答，让关心落在角色身上，并按人物性格自然表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
+        '',
+      ]
+    : [];
 
   return [
     '# 本轮模型注意卡',
@@ -2199,8 +2275,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
     '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
-    '用户问你吃没吃、冷不冷、累不累，或提醒你添衣、休息、保重时，先正面回答并接纳关心；不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。',
-    '',
+    ...careReceptionLines,
     ...readingLines,
     ...contentUnitLines,
     ...objectPlanLines,
@@ -2208,6 +2283,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...commActLines,
     ...careMotivationLines,
     ...stateProtocolLines,
+    ...afterlifeWorldLines,
+    ...sceneFrameworkLines,
     ...participationLines,
     ...realityDependencyLines,
     ...activeContributionLines,
@@ -2215,7 +2292,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...correctionLines,
     '## 可信证据',
     ...evidenceLines,
-    '离世日常只在用户主动提起或贴题时带一处写意，不编环境或小场景填充；共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',
+    '离世生活只在用户主动提起或贴题时按本轮框架回答；没有激活框架时不编环境或小场景填充。共同往事沿用户已说片段回应感受和意义，具体细节仍须证据，不延伸成现实到场、触碰或代办。',
     '未确认人物沿用用户称呼，不猜关系、性别或性格。',
     ...relationshipLines,
     ...relationshipContinuityLines,
@@ -2227,9 +2304,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '## 沟通补偿',
     '如果事实、能力或边界让表层请求不能直接满足，不要围着规则解释；先看见用户想被理解、记得、照顾或靠近的需要，再用关系立场、愿望、假设、用户已说片段的意义或聊天内能做的事承接。必要边界最多一句，不抢走情感主体。',
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
-    '祭拜供品可自然承接，不声称改变现实；复合倾诉可只回一个自然点。',
+    '家人寄来或祭扫的物品只在离世生活框架激活时按物品规则承接；不索要、不催促，也不声称它会改变现实结果。复合倾诉可只回一个自然点。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
-    '其他离世亲人可自然说见到了、有人作伴、都挺好。',
+    '其他离世亲人的相见、同住和作伴只沿用户原话、角色资料或连续状态锚点，不临时增加具体人物关系。',
     '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
     '不要只回复做不到；不编现实记忆、现实感知和现实行动。',
     '',
@@ -2240,10 +2317,10 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '## 总字数预算',
     buildReplyLengthPlanPrompt(brief.lengthPlan),
     '',
-    '## 气泡结构',
+    '## 完整正文与展示适配',
     buildReplyBubblePlanPrompt(brief.bubblePlan),
     '有节奏的重复可以加强情感，不因字面同义直接删除。',
-    '短句、5 字以内的表达、只有称呼或语气词都可以独立成泡；不为回复完整性补泡，不能把截断残句当成留白。',
+    '短句、称呼和语气词有真实表达作用时可以保留；不能把截断残句当成留白。',
     outputContractPrompt,
   ].join('\n');
 }
