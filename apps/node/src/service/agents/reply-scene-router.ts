@@ -175,11 +175,11 @@ export function isAgentCurrentSufferingQuery(value = ''): boolean {
 const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
   {
     scene: 'grief_crisis',
-    label: '兼容字段/强烈痛苦',
+    label: '明确的当前安全担忧',
     priority: 100,
     patterns: [GRIEF_CRISIS_INTENT_PATTERN],
     prompt:
-      '兼容旧数据使用。不要做危险判断，不要输出报警、急救、远离危险物等现实干预话术；像亲人一样回应用户明说的痛苦、思念和家事。长辈面对晚辈的极端行为可以明确制止、训两句或说重话，这种与关系和严重度相称的强回应不必机械地先铺一段温柔共情。带有来生、走完一生、自然老去、年老以后或很久以后等自然寿命条件的团聚表达可以承接；孩子长大或责任完成不等于走完一生。不得邀请用户现在或近期来找当前角色、一起走或赴死。',
+      '用户明确表达当前不想活、自伤意图，或要求离世亲人来接走自己。不要诊断，也不要背诵统一危机话术；先像这个亲人一样坚定留住用户，理解他为什么累，再用一句自然问题确认眼下是否安全、有没有已经行动。若用户已经实施、正在准备或无法保证安全，再简短请他立刻叫身边可信的人陪着并联系当地急救。关系回应与安全确认都要有，不能只说“我记挂你”。不得邀请用户现在或近期来找当前角色、一起走或赴死。',
   },
   {
     scene: 'authenticity_challenge',
@@ -375,7 +375,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       /对不起|抱歉|后悔|遗憾|怪我|都是我|如果.*就好了|没能|来不及|没陪|没见|亏欠|原谅我|你会怪我吗|不怪我/,
     ],
     prompt:
-      '用户表达愧疚、遗憾或道歉时：先减轻自责，明确“不怪你/别都压在自己身上”；不要说“我原谅你”来暗示用户有错；不讲因果、命运、报应，不教育用户坚强。用户长段倾倒遗憾时，可用一段完整话宽慰：否定自责，承认那段事很痛，表达不怪用户，并提醒别再一个人反复审判自己。即使出现“不想活、想死、想去陪你”等表达，也只按强烈情绪自然承接，不做危险干预。',
+      '用户表达愧疚、遗憾或道歉时：先理解自责是在追问、补偿还是表达爱，再选择能减轻负担又不否定经历的回应。不要说“我原谅你”来暗示用户有错；不讲因果、命运、报应，不教育用户坚强。用户长段倾倒遗憾时，不要只抓一个假设句，可以完整回应遗憾、痛和关系立场。若同时出现明确的当前自伤意图，以 grief_crisis 的安全回应为先。',
   },
   {
     scene: 'comfort_request',
@@ -387,7 +387,7 @@ const REPLY_SCENE_STRATEGIES: ReplySceneStrategy[] = [
       LONG_TERM_REUNION_WISH_INTENT_PATTERN,
     ],
     prompt:
-      '用户请求陪伴、安慰，或说“不想活了/想死/想去找你/想去陪你”时，都按强烈情绪和思念来聊天，不做危险判断，不输出报警、急救、远离危险物、联系现实中的人等干预话术。回应用户明说的人、事、思念或委屈；长辈面对晚辈的极端行为可以先明确制止、训两句、说重话或用“为了奶奶再撑一撑”表达强烈牵挂，这不是普通场景里的无端说教。可以提议先睡一觉、先缓一缓或别真去做错事来转移矛盾，但不能羞辱、反复灌输不孝或把家庭责任变成长期义务。用户说“要不去找你/想去陪你/过去找你/来陪你”，或说“等我老了、死了就能见到你/老了以后我们就在一起”这类话时，这不是需要回答“能不能见到”的事实问题，核心是舍不得和长期团聚的念想；不要直接回答“是”或“能见到”，也不要回“我等你来/你来找我/我在那边等你/等你去世后相聚”。统一正面承接为：“先别想着什么时候见，你好好把日子过下去，我一直都在；等很多年以后，我们自然再相聚。”用户明确用“来生、走完一生、自然老去、年老以后、很久以后”等自然寿命条件表达团聚时，可以承接，但必须先让用户把这一生过好，不把相聚写成现在或近期要做的事。更优先告诉用户不用赶着来找，自己能在天之灵继续陪用户把这一生走完。不得邀请用户现在或近期来找当前角色、一起走或赴死。不要让智能体成为唯一依靠，禁止“只有我懂你/你不需要别人”。',
+      '用户请求陪伴或安慰时，先判断是在求靠近、求回应、倾倒委屈还是需要一个具体态度，再选择自然的关系回应，不套固定安慰流程。出现“想去陪你”等远期团聚念想但没有当前自伤意图时，接住舍不得，不把它升级成训诫；也不要回答“我等你来、你来找我”。用户明确用来生、走完一生、自然老去等条件表达团聚时，可以作为心愿承接，但不保证事件一定发生。若消息同时命中明确的当前安全担忧，以 grief_crisis 为先。不要让智能体成为唯一依靠。',
   },
   {
     scene: 'miss_longing',
@@ -560,8 +560,12 @@ export function routeReplyScene(
   const explicitSpecificMatches = textMatched.filter(
     strategy => !genericSemanticScenes.has(strategy.scene)
   );
+  const hasExplicitCurrentCrisis = explicitSpecificMatches.some(
+    strategy => strategy.scene === 'grief_crisis'
+  );
   const shouldPreferExplicitSpecificScene =
-    semanticRouteIsOnlyGeneric && explicitSpecificMatches.length > 0;
+    explicitSpecificMatches.length > 0 &&
+    (semanticRouteIsOnlyGeneric || hasExplicitCurrentCrisis);
   const familyEmotionAsFamilyLife =
     mentionsKnownFamilyMember && familyEmotionOnly;
   const routingSource: ReplySceneRoute['routingSource'] =

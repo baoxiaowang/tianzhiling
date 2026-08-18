@@ -169,6 +169,7 @@ const SHORT_MESSAGE_DIRECT_MAX_CHARS = 20;
 const LIGHTWEIGHT_COMFORT_KEEP_SEMANTIC_PATTERN =
   /(?:活不下去|想去死|不想活|自杀|了断|结束自己|撑不住了|撑不下去了|实在熬不住|没希望了|绝望|生不如死|活得太累|没意义|不想存在|消失|去陪你|来找你|接我|带我走|真的受不了|太痛苦了|受不了了|我该怎么办|我说不下去了|我说不出来|不知道该怎么办|后悔太迟|来不及了|再也来不及|永远补偿不了|走得太突然|就这么走了|为什么抛下|你怎么能走|你怎么舍得|我怎么活|一个人怎么过|没有你我怎么办|你回来好不好|你回来吧|求求你回来)/;
 const COMPLEX_PLANNING_SCENES: ReadonlySet<string> = new Set([
+  'grief_crisis',
   'authenticity_challenge',
   'correction',
   'source_challenge',
@@ -256,7 +257,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
   '只输出当前回复需要的 understanding、intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。understanding 只负责理解用户，conversationPlan 只是兼容策略建议，两者不要混写。',
   'understanding 必须把每个诉求绑定到人物和原话：actors 使用 objectPlan ref 或 agent/user/unknown；needs 最多六个，evidence 必须逐字来自当前消息，priority=must|supporting；questions 区分 fact、memory、emotional_rhetorical、boundary。用户要求角色说话时 activeSpeechRequest=true；明确结束时 closureSignal=true。',
-  '先看当前消息，再看最近对话。intents 最多三个，主意图在前；强烈痛苦和“想去找你”按思念求安慰处理，riskLevel=none，不使用 crisis_support。',
+  '先看当前消息，再看最近对话。intents 最多三个，主意图在前。一般的强烈痛苦、崩溃和远期“想去找你”按思念求安慰处理，不要自动升级；只有用户明确说当前不想活、自伤，或要求亲人现在来接走自己时，计划里才同时保留亲人式关系回应与一句自然的眼下安全确认。兼容字段仍用 seek_comfort/grief_support，riskLevel=none，不使用 crisis_support。',
   'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
   '如果用户提到一件正在进行、刚发生或尚未闭环的具体事项，例如装修、工作进展、家庭事务、出行、照顾家人等，先判断当前最自然的接续点；确实值得继续了解时，在 turnPlan.open 输出 need=topic_followup，detail 写清楚该接什么，并让 questionNeed=helpful、moves 最多一个 ask。用户已说清、情绪很深或正在收尾时保持 none，不为了问而问。',
   '“为什么/凭什么/怎么会/为啥”常是情绪表达而非信息请求。当它表达不甘、委屈、愤懑、被抛下的痛或对命运的不解时，questionNeed 用 none、continuationGoal 用 hold、avoid 选 explain 或 generic_comfort、moves 用 acknowledge/comfort 承接情绪；只有确实索取具体信息时才用 answer 或 ask。',

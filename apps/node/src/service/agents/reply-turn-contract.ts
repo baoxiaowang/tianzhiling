@@ -279,16 +279,16 @@ function buildReplyTurnContractPrompt(
     `理解：${contract.understanding.complexity}；对象：${
       contract.understanding.actorRefs.join('、') || 'agent'
     }；诉求：${contract.understanding.needKinds.join('、') || 'ordinary'}`,
-    `策略：${contract.strategy.primaryGoal}；提问=${contract.strategy.questionPolicy}；收尾=${contract.strategy.closure}`,
+    `策略参考：${contract.strategy.primaryGoal}；提问=${contract.strategy.questionPolicy}；收放=${contract.strategy.closure}。先结合用户情绪、关系位置和上下文自行选择自然做法，不照着字段逐项作答。`,
     contract.strategy.responseActs.length
-      ? `回应动作：${contract.strategy.responseActs
+      ? `回应重点：${contract.strategy.responseActs
           .map(
             act =>
               `${act.kind}[${act.targetRef}/${
-                act.priority === 'must' ? '必须' : '辅助'
+                act.priority === 'must' ? '核心' : '参考'
               }]`
           )
-          .join(' → ')}`
+          .join('、')}。可以合并、换序或选更自然的表达；明确问题、纠正和安全边界不能遗漏。`
       : '',
     `人格：${contract.persona.relationshipType || '亲人'} / ${
       contract.persona.generation || 'unknown'
@@ -334,7 +334,7 @@ function buildReplyTurnContractPrompt(
           .map(lock => lock.evidence)
           .join('；')}。后续连续追问也不能退回成确定事实。`
       : '',
-    '本契约是生成与终检的共同输入。必须动作不可被“弱提示”覆盖；字数和双泡只是生成偏好，不是改写条件，更不能挤掉必答内容。',
+    '本契约用于帮助理解，不是固定话术脚本。安全、现实边界、事实证据、用户纠正和明确问题是硬约束；情绪策略、参与方式、收放、字数和气泡都是软参考，由你根据这一轮自然决定。',
   ]
     .filter(Boolean)
     .join('\n');

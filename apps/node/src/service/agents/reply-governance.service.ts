@@ -81,13 +81,36 @@ export class ReplyGovernanceService {
       };
     }
 
+    const actionableInitialIssues = initial.issues.filter(
+      shouldAttemptOnlineRevision
+    );
+    if (!actionableInitialIssues.length) {
+      const claims = selectVisibleAssistantClaims(
+        options.segments,
+        options.claims || []
+      );
+      return {
+        segments: options.segments,
+        claims,
+        rewritten: false,
+        reason: initial.issues.map(issue => issue.code).join(','),
+        revisionAttempted: false,
+        revisionRoundCount: 0,
+        finalReviewResult: 'advisory_unresolved',
+        unsupportedClaimCount: initial.unsupportedClaimCount,
+        issues: initial.issues,
+        candidateVersions: [options.segments],
+        finalIssues: initial.issues,
+      };
+    }
+
     const revision = await this.replyRevisionService.revise({
       messages: options.messages,
       userQuery: options.userQuery,
       segments: options.segments,
       claims: options.claims,
       evidence: options.evidence,
-      issues: initial.issues,
+      issues: actionableInitialIssues,
       turnDecision: options.turnDecision,
       outputConstraints: options.outputConstraints,
     });
@@ -126,7 +149,12 @@ export class ReplyGovernanceService {
       }
 
       if (!hasHardIssues(final.issues)) {
-        const mustUseRevision = hasHardIssues(initial.issues);
+        const finalActionableIssues = final.issues.filter(
+          shouldAttemptOnlineRevision
+        );
+        const mustUseRevision =
+          hasHardIssues(actionableInitialIssues) ||
+          finalActionableIssues.length < actionableInitialIssues.length;
         const useRevision =
           mustUseRevision || final.issues.length < initial.issues.length;
         const selectedSegments = useRevision
@@ -247,6 +275,18 @@ export class ReplyGovernanceService {
 
 function hasHardIssues(issues: FinalReplyIssue[]): boolean {
   return issues.some(issue => issue.severity === 'hard');
+}
+
+const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
+  'unnecessary_question',
+  'care_not_received',
+  'care_immediately_reversed',
+  'redundant_second_bubble',
+  'repeated_generic_move',
+]);
+
+function shouldAttemptOnlineRevision(issue: FinalReplyIssue): boolean {
+  return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
 }
 
 function buildSafeFallback(

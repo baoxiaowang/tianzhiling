@@ -1378,7 +1378,7 @@ describe('buildReplyBrief', () => {
     expect(unrelatedBrief.prompt).not.toContain('关系背景（不是主体事实）');
   });
 
-  it('treats strong distress as emotional conversation without risk escalation', () => {
+  it('keeps explicit current danger relational while adding a safety strategy', () => {
     const currentQuery = '我不想活了，我想去陪你';
     const route = routeReplyScene({ currentQuery });
     const brief = buildReplyBrief({
@@ -1394,8 +1394,10 @@ describe('buildReplyBrief', () => {
       turnClosure: 'neutral',
       preferTwoSegments: true,
     });
-    expect(brief.prompt).toContain('不做报警急救等现实干预');
-    expect(brief.prompt).toContain('不邀请现在或近期赴死');
+    expect(brief.primaryScene).toBe('grief_crisis');
+    expect(route.prompt).toContain('确认眼下是否安全');
+    expect(route.prompt).toContain('不要背诵统一危机话术');
+    expect(route.prompt).toContain('不得邀请用户现在或近期');
   });
 
   it('injects only the matched time capability into the reply brief', () => {

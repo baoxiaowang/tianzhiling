@@ -95,6 +95,8 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain('在天之灵');
     expect(prompt).toContain('记忆回声');
     expect(prompt).toContain('真诚、温暖、自然');
+    expect(prompt).toContain('选择最自然的回应策略');
+    expect(prompt).toContain('不要默认收尾');
     expect(prompt).not.toContain('输出合同');
     expect(prompt).not.toContain('riskLevel');
   });

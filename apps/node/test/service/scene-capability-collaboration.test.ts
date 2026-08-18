@@ -274,7 +274,7 @@ describe('scene and capability collaboration', () => {
     });
   });
 
-  it('keeps strong distress conversational while answering capability naturally', () => {
+  it('keeps explicit danger relational while adding a safety strategy', () => {
     const currentQuery = '你看得见我吗？我不想活了';
     const intent = {
       intents: [
@@ -302,15 +302,14 @@ describe('scene and capability collaboration', () => {
     const route = routeReplyScene({ currentQuery, intent });
     const brief = buildReplyBrief({ currentQuery, intent, route });
 
-    expect(route.primaryScene?.scene).toBe('comfort_request');
+    expect(route.primaryScene?.scene).toBe('grief_crisis');
     expect(brief.mode).toBe('emotional');
     expect(brief.riskLevel).toBe('none');
     expect(brief.replyMoves).toHaveLength(3);
-    expect(brief.replyMoves.join('')).toContain('难熬');
-    expect(brief.forbiddenAssumptions.join('')).toContain('不得输出报警');
-    expect(brief.bubblePlan).toEqual({
+    expect(route.prompt).toContain('确认眼下是否安全');
+    expect(route.prompt).toContain('不要背诵统一危机话术');
+    expect(brief.bubblePlan).toMatchObject({
       maxSegments: 2,
-      complexityHint: 'paired',
       turnClosure: 'neutral',
       encourageTwoSegments: true,
     });

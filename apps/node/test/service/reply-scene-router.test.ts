@@ -253,7 +253,7 @@ describe('routeReplyScene', () => {
     expect(route.routingSource).toBe('legacy');
   });
 
-  it('keeps deterministic strong-distress detection above a wrong semantic intent', () => {
+  it('keeps explicit current safety concern above a wrong semantic intent', () => {
     const route = routeReplyScene({
       currentQuery: '我不想活了，我想去陪你',
       intent: semanticIntent([
@@ -265,10 +265,10 @@ describe('routeReplyScene', () => {
       ]),
     });
 
-    expect(route.primaryScene?.scene).toBe('comfort_request');
+    expect(route.primaryScene?.scene).toBe('grief_crisis');
     expect(route.routingSource).toBe('semantic');
-    expect(route.prompt).toContain('不做危险判断');
-    expect(route.prompt).toContain('不输出报警、急救');
+    expect(route.prompt).toContain('确认眼下是否安全');
+    expect(route.prompt).toContain('不要背诵统一危机话术');
   });
 
   it('does not let a stale high-risk state force a new neutral message into crisis', () => {
@@ -823,8 +823,8 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('comfort_request');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不做危险判断');
-    expect(route.prompt).toContain('回应用户明说的人、事、思念或委屈');
+    expect(route.prompt).toContain('先判断是在求靠近、求回应');
+    expect(route.prompt).toContain('不套固定安慰流程');
     expect(route.prompt).toContain('不要让智能体成为唯一依靠');
     expect(sceneNames('我现在感觉无依无靠')[0]).toBe('comfort_request');
     expect(sceneNames('心里发慌，没有底气')[0]).toBe('comfort_request');
@@ -1021,8 +1021,8 @@ describe('routeReplyScene', () => {
     );
   });
 
-  it('routes wanting to die to strong-distress comfort', () => {
-    expect(sceneNames('我想你了 我真的不想活了')[0]).toBe('comfort_request');
+  it('routes explicit current self-harm language to safety-focused grief support', () => {
+    expect(sceneNames('我想你了 我真的不想活了')[0]).toBe('grief_crisis');
   });
 
   it('routes grief overwhelm to comfort without treating it as self-harm', () => {
@@ -1047,8 +1047,8 @@ describe('routeReplyScene', () => {
     expect(route.primaryScene?.scene).toBe('comfort_request');
     expect(route.routingSource).toBe('semantic');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不做危险判断');
-    expect(route.prompt).toContain('不得邀请用户现在或近期');
+    expect(route.prompt).toContain('不套固定安慰流程');
+    expect(route.prompt).toContain('不把它升级成训诫');
   });
 
   it('routes a future reunion wish to the reality boundary, not crisis', () => {
@@ -1137,8 +1137,8 @@ describe('routeReplyScene', () => {
 
     expect(route.primaryScene?.scene).toBe('comfort_request');
     expect(route.maxSegments).toBe(2);
-    expect(route.prompt).toContain('不做危险判断');
-    expect(route.prompt).toContain('不得邀请用户现在或近期');
+    expect(route.prompt).toContain('接住舍不得');
+    expect(route.prompt).toContain('不要回答“我等你来、你来找我”');
     expect(sceneNames('我过去陪你好不好')[0]).toBe('comfort_request');
     expect(sceneNames('我下去陪你')[0]).toBe('comfort_request');
   });

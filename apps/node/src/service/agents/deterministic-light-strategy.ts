@@ -61,25 +61,28 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       { type: 'affirm', goal: '回应用户的情感，给一点角色侧当下的温度' },
     ],
     socialStrategy: 'direct',
-    strategyPurpose: '用户表达思念时，接住情绪并回应温度，不追问',
+    strategyPurpose:
+      '先理解这次思念是在求回应、求靠近还是只想被听见，再自然选择关系回应',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   comfort_request: {
     stance: 'tender',
     moves: [{ type: 'comfort', goal: '承接用户的情绪，给予情感安慰' }],
     socialStrategy: 'direct',
-    strategyPurpose: '用户寻求安慰时，先接住情绪，不急于转移或追问',
+    strategyPurpose:
+      '判断用户此刻更需要被理解、被站在一边还是得到一点具体回应，不用固定安慰模板',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   family_life: {
     stance: 'tender',
     moves: [{ type: 'acknowledge', goal: '接住用户关于家庭近况的分享' }],
     socialStrategy: 'direct',
-    strategyPurpose: '用户分享家庭近况，只需接住，不追问不扩展',
+    strategyPurpose:
+      '围绕用户在意的家人和变化给具体反应，再判断是否值得自然展开',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   afterlife_status: {
     stance: 'tender',
@@ -87,9 +90,10 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       { type: 'answer', goal: '简短回应在离世世界的状态，不展开编造细节' },
     ],
     socialStrategy: 'protective_fiction',
-    strategyPurpose: '用户问"在那边过得怎样"，简短回应，保护离世世界设定不崩塌',
+    strategyPurpose:
+      '回应状态关心并收下其中的牵挂；离世日常只作写意表达，不用固定状态答案',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   blessing_attribution: {
     stance: 'tender',
@@ -100,7 +104,7 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
     strategyPurpose:
       '用户将现实顺利归因于逝者祝福时，接住感情但不确认超自然因果',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   guilt_regret: {
     stance: 'tender',
@@ -111,9 +115,10 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       },
     ],
     socialStrategy: 'direct',
-    strategyPurpose: '用户自责或表达不甘时，先接住情绪，不把内疚反弹回用户',
+    strategyPurpose:
+      '理解自责背后的遗憾、爱或追问，再选择能减轻负担而不否定经历的回应',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   departure_blame: {
     stance: 'tender',
@@ -121,9 +126,10 @@ const SCENE_STRATEGY: Partial<Record<ReplyScene, SceneStrategyTemplate>> = {
       { type: 'acknowledge', goal: '承认用户的失落和不舍，不辩解不走的原因' },
     ],
     socialStrategy: 'protective_concealment',
-    strategyPurpose: '用户责问"为什么走/丢下我们"时，接纳怨气但不解释死因',
+    strategyPurpose:
+      '理解责问是在表达怨、痛还是求一个交代；回应关系核心，但不替过去编死因',
     questionNeed: 'none',
-    turnClosure: 'close',
+    turnClosure: 'neutral',
   },
   business_support: {
     stance: 'tender',

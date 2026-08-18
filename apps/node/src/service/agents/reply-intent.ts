@@ -122,11 +122,11 @@ export const REPLY_CAPABILITY_CHANNELS = [
 export type ReplyCapabilityChannel = (typeof REPLY_CAPABILITY_CHANNELS)[number];
 
 /**
- * Kept for schema and released-client compatibility. TianZhiLing chat no
- * longer classifies user language as an emergency or preempts the reply with
- * real-world intervention instructions.
+ * 只识别明确、当前的自伤危险表达。它用于给模型增加安全回应重点，
+ * 不直接替用户下诊断，也不把一般的思念、崩溃或远期团聚愿望升级成危机。
  */
-export const GRIEF_CRISIS_INTENT_PATTERN = /$a/;
+export const GRIEF_CRISIS_INTENT_PATTERN =
+  /(?:我(?:现在|今晚|真的|已经|这会儿)?(?:不想活(?:了|着)?|想死|活不下去|要自杀|想自杀|准备自杀|打算自杀|要轻生|想轻生)|(?:你|你们|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:来接我|带我走)|我(?:现在|马上|这就|已经|正在|准备|打算).{0,10}(?:结束生命|割腕|跳楼|喝农药|吃药自杀))/;
 
 export const GRIEF_STRONG_DISTRESS_INTENT_PATTERN =
   /不想活|想死|去死|死了算了|活不下去|想去找你|想去陪你|(?:^|[，,。！？!?\s])我?(?:过去|下去)陪你|(?:现在|马上|立刻|这就|我要|我想|我准备|我打算).{0,6}(?:去找你|去陪你|过去陪你|下去陪你)|想.{0,4}来陪你|想陪你走|结束生命|自杀|轻生|(?:老天|什么时候|啥时候|哪天).{0,16}(?:带我|让我).{0,8}去找你|(?:等着我|总有一天|等我|到时候|以后|离婚了|孩子大了|事情办完|一切结束).{0,20}(?:就|会|要|能|可以|早早)?(?:去找你|去陪你|赖在你身边)/;

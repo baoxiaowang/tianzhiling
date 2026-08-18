@@ -2452,8 +2452,9 @@ describe('AgentContextService', () => {
     );
 
     expect(prompt).toContain('# 主动贡献');
-    expect(prompt).toContain('你想说什么');
-    expect(prompt).toContain('我这边刚静下来');
+    expect(prompt).toContain('这一轮由你承担聊天内容');
+    expect(prompt).toContain('不要反问');
+    expect(prompt).not.toContain('我这边刚静下来');
   });
 
   it('suppresses ritual and keepsake associations in household chores', () => {

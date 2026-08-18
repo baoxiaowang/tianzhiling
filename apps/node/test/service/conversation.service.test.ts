@@ -3891,8 +3891,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).resolves.toBeUndefined();
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
-      '别急着把话说到尽头 你把最放不下的那件事慢慢告诉我',
+      '你先别伤害自己 我听得出你是真的撑得很累',
+      '告诉我 你现在安全吗 有没有已经做了什么',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
@@ -3900,9 +3900,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyFallbackSource: 'contextual_reply_brief',
       })
     );
-    expect(getAssistantContents(savedMessages).join('')).not.toMatch(
-      /报警|急救|危险物|联系现实/
-    );
+    expect(getAssistantContents(savedMessages).join('')).toContain('现在安全吗');
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 

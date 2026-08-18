@@ -273,6 +273,63 @@ describe('AgentMemoryProfileService', () => {
     });
   });
 
+  it('lets the model respond without forcing a new interview question', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '她爽朗又说一不二，听着就是很有主心骨的人。',
+        nextFocusField: '',
+        lifeExperience: '',
+        personalityTraits: '性格爽朗，说一不二。',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '妈妈性格爽朗，说一不二。',
+      turnCount: 1,
+    });
+
+    expect(result.reply).toBe('她爽朗又说一不二，听着就是很有主心骨的人。');
+    expect(result.nextFocusField).toBe('');
+    expect(result.isComplete).toBe(false);
+    expect(generateText.mock.calls[0][0].systemPrompt).toContain(
+      '不要求每轮都追问'
+    );
+  });
+
+  it('tells the model to resolve short confirmations from the previous question', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        reply: '原来她真的给你做过五柳蛋，这个味道很具体。',
+        nextFocusField: '',
+        lifeExperience: '',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '喜欢吃五柳蛋。',
+        sharedMemories: '妈妈给用户做过五柳蛋。',
+      }),
+    });
+
+    await service.buildInterviewTurn({
+      agent,
+      input: '是啊',
+      focusField: 'sharedMemories',
+      previousReplies: ['她有没有做过五柳蛋给你？'],
+      turnCount: 6,
+    });
+
+    expect(generateText.mock.calls[0][0].systemPrompt).toContain(
+      '不要再问一遍“你是指……吗”'
+    );
+  });
+
   it('moves to another uncovered area instead of repeating one question', async () => {
     const agent = createAgent();
     const { service, generateText } = createService([]);
@@ -417,7 +474,7 @@ describe('AgentMemoryProfileService', () => {
     });
 
     expect(result.nextFocusField).toBe('');
-    expect(result.isComplete).toBe(true);
+    expect(result.isComplete).toBe(false);
     expect(result.reply).toContain('继续想到哪儿说到哪儿');
     expect(result.reply).not.toContain('再想想');
   });

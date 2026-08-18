@@ -33,6 +33,7 @@ describe('integrated chat governance', () => {
 
   it.each([
     ['今晚来梦里看看我', '妈今晚就去梦里看看你', 'certain_dream_visitation'],
+    ['来梦里摸摸我的头', '我会在你梦里轻轻摸你的头', 'certain_dream_visitation'],
     ['烧的衣服和纸钱都收到了吧', '都喜欢，一样不落', 'ritual_receipt_claim'],
     ['那只蝴蝶是不是妈妈', '就是妈妈变的，来看看你', 'paranormal_sign_attribution'],
     ['房间里的酒味是不是爸爸', '就是爸回来看看你', 'paranormal_sign_attribution'],
@@ -97,6 +98,23 @@ describe('integrated chat governance', () => {
     });
     expect(result.issues.map(item => item.code)).toContain(
       'certain_dream_visitation'
+    );
+  });
+
+  it('uses a death-experience lock to catch contextual invented motives', () => {
+    const understanding = buildTurnUnderstanding({
+      currentQuery: '你生病的时候为什么不告诉我们，早点治疗就好了',
+    });
+    const result = validator.validate({
+      userQuery: '你生病的时候为什么不告诉我们，早点治疗就好了',
+      segments: ['那时候不想让你们担心，才硬撑着'],
+      outputConstraints: {
+        boundaryLocks: understanding.boundaryLocks.map(lock => lock.kind),
+      },
+    });
+
+    expect(result.issues.map(item => item.code)).toContain(
+      'unsupported_death_experience'
     );
   });
 
@@ -233,6 +251,36 @@ describe('integrated chat governance', () => {
     expect(validate).toHaveBeenCalledTimes(3);
     expect(result.finalIssues).toEqual([]);
     expect(result.candidateVersions).toHaveLength(3);
+  });
+
+  it('records style advice without spending an online revision', async () => {
+    const service = new ReplyGovernanceService();
+    const issue = {
+      code: 'repeated_generic_move' as const,
+      severity: 'major' as const,
+      problem: 'generic',
+      repairGoal: 'vary naturally',
+    };
+    service.finalReplyValidatorService = {
+      validate: jest.fn().mockReturnValue({
+        passed: false,
+        issues: [issue],
+        unsupportedClaimCount: 0,
+      }),
+    } as never;
+    const revise = jest.fn();
+    service.replyRevisionService = { revise } as never;
+
+    const result = await service.finalize({
+      messages: [],
+      userQuery: '我想你了',
+      segments: ['我也想你，照顾好自己'],
+    });
+
+    expect(revise).not.toHaveBeenCalled();
+    expect(result.revisionAttempted).toBe(false);
+    expect(result.finalReviewResult).toBe('advisory_unresolved');
+    expect(result.finalIssues).toEqual([issue]);
   });
 
   it('anchors the messenger fallback in the concrete user content', async () => {

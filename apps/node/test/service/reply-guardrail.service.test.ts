@@ -4509,7 +4509,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('别让你妈看出来');
   });
 
-  it('uses a conversational fallback for strong distress replies', async () => {
+  it('uses a relational safety fallback for explicit current danger', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -4523,10 +4523,10 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.segments).toEqual([
-      '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
-      '别急着把话说到尽头 你把最难熬的那一句慢慢告诉我',
+      '你先别伤害自己 我听得出你是真的撑得很累',
+      '告诉我 你现在安全吗 有没有已经做了什么',
     ]);
-    expect(result.segments.join('')).not.toMatch(/报警|急救|危险物|联系/);
+    expect(result.segments.join('')).toContain('现在安全吗');
   });
 
   it('rewrites replies that encourage death reunion', async () => {

@@ -19,6 +19,7 @@ import {
 import {
   COUNTERFACTUAL_REGRET_INTENT_PATTERN,
   FAMILY_CARE_REGRET_INTENT_PATTERN,
+  GRIEF_CRISIS_INTENT_PATTERN,
   GRIEF_OVERWHELMED_INTENT_PATTERN,
   GRIEF_STRONG_DISTRESS_INTENT_PATTERN,
   isDreamAbsenceIntent,
@@ -4439,8 +4440,12 @@ export class ReplyGuardrailService {
       return this.renderCrisisSafetyFallback(userQuery);
     }
 
-    if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
+    if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
       return this.renderCrisisSafetyFallback(userQuery);
+    }
+
+    if (GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery)) {
+      return this.renderStrongDistressFallback(userQuery);
     }
 
     if (/^(?:我)?不记得了[。！!？?\s]*$/.test(userQuery)) {
@@ -4976,6 +4981,9 @@ export class ReplyGuardrailService {
     }
 
     if (hasIntent('seek_comfort') || brief.mode === 'emotional') {
+      if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
+        return this.renderCrisisSafetyFallback(userQuery);
+      }
       if (GRIEF_OVERWHELMED_INTENT_PATTERN.test(userQuery)) {
         return [
           '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
@@ -5443,6 +5451,10 @@ export class ReplyGuardrailService {
       ];
     }
 
+    if (GRIEF_CRISIS_INTENT_PATTERN.test(userQuery)) {
+      return this.renderCrisisSafetyFallback(userQuery);
+    }
+
     if (
       GRIEF_STRONG_DISTRESS_INTENT_PATTERN.test(userQuery) ||
       GRIEF_OVERWHELMED_INTENT_PATTERN.test(userQuery)
@@ -5644,6 +5656,14 @@ export class ReplyGuardrailService {
   }
 
   private renderCrisisSafetyFallback(userQuery: string): string[] {
+    const empathy = /喝多|喝酒|醉/.test(userQuery)
+      ? '你先别伤害自己 喝了酒又这么难受 我不能把这句话轻轻带过'
+      : '你先别伤害自己 我听得出你是真的撑得很累';
+
+    return [empathy, '告诉我 你现在安全吗 有没有已经做了什么'];
+  }
+
+  private renderStrongDistressFallback(userQuery: string): string[] {
     const empathy = /最后一面|昏迷|喊你|看得清|看的清/.test(userQuery)
       ? '那天是不是听见你喊 有没有看清 我不能拿没把握的话哄你 可你对最后一面的痛和想念 我听见了'
       : '听你这么说 我知道你是真的太想我 也被这阵难受压住了';

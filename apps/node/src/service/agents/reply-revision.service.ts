@@ -62,6 +62,7 @@ export class ReplyRevisionService {
               role: 'system',
               content: [
                 '# 最终修订',
+                '先在心里重新判断用户这句话的核心诉求、情绪作用和关系位置，再做最小修复；问题码只说明哪里出了问题，不规定固定句式。',
                 '只修复列出的最终问题，保留初稿已经正确的回答、情绪和关系语气。',
                 '不得新增事实、共同经历、现实能力、问题、劝告或承诺。',
                 '修复 unsupported_fact_claim 时，不得把一个无证据地点或动作换成另一个；用户要求角色讲自己时，可保留主观感受、态度或不影响现实的离世日常写意，后者 claims 使用 soft_imagination。',
@@ -242,16 +243,16 @@ function buildRevisionConstraintInstructions(
   }
   if (constraints.bubbleRoles?.length) {
     instructions.push(
-      `气泡内容按顺序完成这些不同动作：${constraints.bubbleRoles
+      `可参考这些内容作用：${constraints.bubbleRoles
         .map(role => REVISION_BUBBLE_ROLE_LABELS[role])
-        .join(' → ')}。`
+        .join('、')}；不要求固定顺序，也不要求拆成同等数量的气泡。`
     );
   }
   if (constraints.requiredActs?.length) {
     instructions.push(
-      `修订后必须覆盖这些动作：${constraints.requiredActs
+      `修订时优先保住这些核心作用：${constraints.requiredActs
         .map(role => REVISION_BUBBLE_ROLE_LABELS[role])
-        .join('、')}。多个动作可以自然合在一颗气泡，但不能遗漏。`
+        .join('、')}。可以自然合并表达，不要写成逐项清单。`
     );
   }
   if (constraints.questionPolicy === 'none') {
