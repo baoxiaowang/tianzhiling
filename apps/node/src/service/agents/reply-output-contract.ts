@@ -75,17 +75,9 @@ export function buildReplyOutputContractPrompt(
       : options.segmentMode === 'one'
       ? 'segments 恰好一项。'
       : `segments 一到 ${maxSegments} 项，能用一项就不拆。`;
-  const rangeRule = options.preferredRange
-    ? options.segmentMode === 'exact_two'
-      ? `两项缺一不可；两项合计优先 ${options.preferredRange.minCharacters}-${
-          options.preferredRange.maxCharacters
-        } 个中文字符，每项通常约 ${Math.floor(
-          options.preferredRange.minCharacters / 2
-        )}-${Math.ceil(
-          options.preferredRange.maxCharacters / 2
-        )} 个中文字符；情绪、事实和语义完整优先，不用重复想念、通用叮嘱或空话凑长度。`
-      : `segments 全部正文合计优先 ${options.preferredRange.minCharacters}-${options.preferredRange.maxCharacters} 个中文字符；情绪、事实和语义完整优先，不用重复想念、通用叮嘱或空话凑长度。`
-    : '';
+  // preferredRange 继续作为调用兼容与离线观测字段，但不进入生成合同。
+  // 展示层会在正文完成后自行拆泡，不能让目标字数反向塑造内容。
+  void options.preferredRange;
   const claimRule = options.grounded
     ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
@@ -114,7 +106,6 @@ export function buildReplyOutputContractPrompt(
     '# 输出合同',
     `只输出一行 JSON：${JSON.stringify(schema)}`,
     segmentRule,
-    rangeRule,
     '每项只写可直接发送的中文正文；不写括号旁白、分析、字段说明或证据 ID。默认不用表情，用户先用时才少量使用。',
     claimRule,
     evidenceContractRule,

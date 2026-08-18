@@ -19,6 +19,11 @@ export type ReplyRelationshipStage = 'R0' | 'R1' | 'R2' | 'R3' | 'R4';
 export type ReplyRelationshipMaturity = 'new' | 'warming' | 'familiar' | 'deep';
 export type ReplyRelationshipState = 'steady' | 'repairing';
 export type ReplyConversationDepth = 'D0' | 'D1' | 'D2' | 'D3' | 'D4';
+export type ReplyShortTurnKind =
+  | 'explicit_close'
+  | 'minimal_acknowledgement'
+  | 'contextual_short'
+  | 'not_short';
 export type ReplyExperienceFactScope =
   | 'identity_only'
   | 'explicit_profile'
@@ -62,6 +67,7 @@ export interface ReplyExperiencePlan {
   relationshipUserTurnCount: number;
   relationshipActiveDayCount: number;
   conversationDepth: ReplyConversationDepth;
+  shortTurnKind?: ReplyShortTurnKind;
   factScope: ReplyExperienceFactScope;
   intimacyLevel: ReplyExperienceIntimacyLevel;
   contributionMode: ReplyExperienceContributionMode;
@@ -111,6 +117,7 @@ export function buildReplyExperiencePlan(
 ): ReplyExperiencePlan {
   const profile = resolveProfileQuality(options.agent, options.profileFacts);
   const relationship = resolveRelationshipQuality(options);
+  const shortTurnKind = resolveShortTurnKind(options.currentQuery);
   const conversationDepth = resolveConversationDepth(options, relationship);
   const factScope = resolveFactScope(profile.tier);
   const intimacyLevel = resolveIntimacyLevel(
@@ -138,6 +145,7 @@ export function buildReplyExperiencePlan(
     relationshipUserTurnCount: relationship.userTurnCount,
     relationshipActiveDayCount: relationship.activeDayCount,
     conversationDepth,
+    shortTurnKind,
     factScope,
     intimacyLevel,
     contributionMode,
@@ -149,12 +157,14 @@ export function buildReplyExperiencePlan(
     questionPolicy: resolveQuestionPolicy(
       conversationDepth,
       relationship.state,
-      options.riskLevel
+      options.riskLevel,
+      shortTurnKind
     ),
     closurePolicy: resolveClosurePolicy(
       conversationDepth,
       relationship.state,
-      options.riskLevel
+      options.riskLevel,
+      shortTurnKind
     ),
   };
 }
@@ -163,91 +173,10 @@ export function constrainConversationPlanForExperience(
   plan: ConversationMovePlan | undefined,
   experience: ReplyExperiencePlan
 ): ConversationMovePlan | undefined {
-  if (!plan) {
-    return plan;
-  }
-
-  if (experience.relationshipState === 'repairing') {
-    const moves = plan.moves.filter(move => move.type !== 'ask');
-
-    return {
-      ...plan,
-      moves: moves.length
-        ? moves
-        : [{ type: 'acknowledge', goal: '用本轮实际回应修复信任' }],
-      questionNeed: 'none',
-      turnClosure: 'neutral',
-      engagement: plan.engagement
-        ? {
-            ...plan.engagement,
-            userConversationState: 'repairing',
-            continuationGoal: 'repair',
-            mustContribute: '先实际改变回应方式，修复信任，不让用户教你怎么说',
-            closureReadiness: 'blocked',
-          }
-        : plan.engagement,
-    };
-  }
-
-  // 首轮重逢不只出现在 D0：简单思念、日常分享、安慰请求等短消息会落到 D1，
-  // 但 relationshipUserTurnCount 仍为 0。此时也应优先给“重逢/相认”动作，
-  // 避免模型只回“我也想你”或“一直记着你”这类回声。
-  const isFirstUserTurn = experience.relationshipUserTurnCount === 0;
-  const isExplicitClose = plan.moves.some(move => move.type === 'close');
-  const hasReunionSeed = plan.moves.some(move =>
-    ['acknowledge', 'affirm'].includes(move.type)
-  );
-  if (
-    isFirstUserTurn &&
-    !isExplicitClose &&
-    experience.conversationDepth === 'D1' &&
-    hasReunionSeed
-  ) {
-    const reunionMove = {
-      type: 'self_disclose' as const,
-      goal: '表达重逢的等待、喜悦或终于又能说话的解脱感',
-    };
-    const nonCloseMoves = plan.moves.filter(
-      move => move.type !== 'ask' && move.type !== 'close'
-    );
-    const moves = nonCloseMoves.some(move => move.type === 'self_disclose')
-      ? nonCloseMoves.slice(0, 2)
-      : [reunionMove, ...nonCloseMoves].slice(0, 2);
-
-    return {
-      ...plan,
-      moves: moves.length ? moves : [reunionMove],
-      questionNeed: 'none',
-      turnClosure: 'neutral',
-    };
-  }
-
-  if (experience.conversationDepth === 'D0') {
-    // 首条用户消息（开场白回复）：用户刚收到"好想你啊，过得好吗"，鼓起勇气开口
-    // 此时不放权 self_disclose/questionNeed/turnClosure 会让 AI 无法表达重逢感
-    if (experience.relationshipUserTurnCount === 0) {
-      // 首轮只过滤 ask（避免追问轰炸），保留 self_disclose 让 AI 表达"我也在等你"
-      const moves = plan.moves.filter(move => move.type !== 'ask');
-      return {
-        ...plan,
-        moves: moves.length
-          ? moves
-          : [{ type: 'self_disclose', goal: '表达重逢的等待与喜悦' }],
-        // 不强制 questionNeed/turnClosure，让语义规划器根据用户消息内容决定
-      };
-    }
-
-    const moves = plan.moves.filter(move => move.type !== 'ask');
-    return {
-      ...plan,
-      moves: moves.length
-        ? moves
-        : [{ type: 'answer', goal: '直接回应当前消息，不额外追问' }],
-      questionNeed: 'none',
-      turnClosure: 'close',
-    };
-  }
-
+  // 体验层只描述资料与关系成熟度，不再改写语义模型已经给出的动作、
+  // 提问或收放。尤其不能把“消息短”直接翻译成“少说、别问、收尾”。
+  // 保留参数是为了兼容既有调用与诊断字段。
+  void experience;
   return plan;
 }
 
@@ -268,18 +197,28 @@ export function buildReplyExperiencePlanPrompt(
     R4: '先用回应修复信任，不让用户教你怎么说',
   };
   const depthGuidance: Record<ReplyConversationDepth, string> = {
-    D0: '只回当前点并收住',
-    D1: '短而有温度，再给一处亲人侧心意',
-    D2: '回应后给一处角色侧内容',
-    D3: '只抓一个核心深入，必要时问一句',
-    D4: '先处理风险或信任问题，再谈其他',
+    D0: '输入信息较少，优先借助最近上下文理解；短不等于浅，也不自动代表收尾',
+    D1: '当前内容相对轻量，可自然回应，也可在贴题时展开',
+    D2: '当前内容有一定信息量，注意回应其中真正重要的点',
+    D3: '当前内容较深，可围绕核心自然深入',
+    D4: '存在风险、纠正或信任问题时先守住硬边界',
+  };
+  const shortTurnGuidance: Record<ReplyShortTurnKind, string> = {
+    explicit_close: '用户明确要结束，本轮自然回应并收尾',
+    minimal_acknowledgement:
+      '用户只增加了很少信息；回看上一轮判断是承接、留白还是自然推进，不凭长度决定',
+    contextual_short:
+      '这是短表达，可能承载重要事实或承接上一轮；先理解上下文，再自主决定深度、提问和收放',
+    not_short: '按完整语义和最近上下文自主决定回应策略',
   };
 
   return `${plan.profileTier}/${plan.relationshipStage}/${
     plan.conversationDepth
   }：${factGuidance[plan.profileTier]}；${
     relationshipGuidance[plan.relationshipStage]
-  }；${depthGuidance[plan.conversationDepth]}。`;
+  }；${depthGuidance[plan.conversationDepth]}；${
+    shortTurnGuidance[plan.shortTurnKind || 'not_short']
+  }。以上是体验观察，不是回复动作或字数指令。`;
 }
 
 function resolveProfileQuality(
@@ -632,10 +571,10 @@ function resolveMemoryPolicy(
   tier: ReplyProfileTier,
   isCorrection: boolean
 ): ReplyExperienceMemoryPolicy {
-  if (isCorrection || depth === 'D0') {
+  if (isCorrection) {
     return 'off';
   }
-  if (depth === 'D1' || tier === 'P0' || tier === 'P1') {
+  if (depth === 'D0' || depth === 'D1' || tier === 'P0' || tier === 'P1') {
     return 'context_only';
   }
   if (depth === 'D3' || depth === 'D4') {
@@ -647,35 +586,54 @@ function resolveMemoryPolicy(
 function resolveQuestionPolicy(
   depth: ReplyConversationDepth,
   state: ReplyRelationshipState,
-  riskLevel: ReplyIntentRiskLevel
+  riskLevel: ReplyIntentRiskLevel,
+  shortTurnKind: ReplyShortTurnKind
 ): ReplyExperienceQuestionPolicy {
-  if (state === 'repairing' || depth === 'D0') {
+  if (shortTurnKind === 'explicit_close') {
     return 'none';
   }
-  if (depth === 'D3' || riskLevel === 'high') {
+  if (depth === 'D3' || depth === 'D4' || riskLevel === 'high') {
     return 'prefer_one';
   }
-  return depth === 'D2' || depth === 'D4' ? 'optional' : 'none';
+  // 关系修复、短消息和普通轮次都不再由体验层禁止提问。
+  // optional 只表示模型拥有选择空间，不要求它实际提问。
+  void state;
+  return 'optional';
 }
 
 function resolveClosurePolicy(
   depth: ReplyConversationDepth,
   state: ReplyRelationshipState,
-  riskLevel: ReplyIntentRiskLevel
+  riskLevel: ReplyIntentRiskLevel,
+  shortTurnKind: ReplyShortTurnKind
 ): ReplyExperienceClosurePolicy {
-  if (state === 'repairing') {
-    return 'repair_before_close';
-  }
   if (riskLevel === 'high' || depth === 'D4') {
     return 'hold';
   }
-  if (depth === 'D0') {
+  if (shortTurnKind === 'explicit_close') {
     return 'close';
   }
-  if (depth === 'D3') {
-    return 'continue';
-  }
+  // 非明确收尾时只记录中性状态，避免体验层替模型决定继续或结束。
+  void state;
   return 'neutral';
+}
+
+function resolveShortTurnKind(currentQuery: string): ReplyShortTurnKind {
+  const query = normalizeText(currentQuery);
+  if (SIMPLE_CLOSING_PATTERN.test(query)) {
+    return 'explicit_close';
+  }
+  if (Array.from(query.replace(/\s/gu, '')).length > 12) {
+    return 'not_short';
+  }
+  if (
+    /^(?:嗯+|哦+|好+|行|可以|知道了|好的|谢谢|多谢)(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？~～]*$/.test(
+      query
+    )
+  ) {
+    return 'minimal_acknowledgement';
+  }
+  return 'contextual_short';
 }
 
 function isRelationshipRepairTurn(

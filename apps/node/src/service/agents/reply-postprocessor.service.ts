@@ -13,36 +13,10 @@ export class ReplyPostprocessorService {
     segments: string[];
     brief: ReplyBrief;
   }): string[] {
-    const segments = compactReplyBubblesPreservingContent(options.segments);
-    const closesCorrection =
-      options.brief.conversationPlan?.turnClosure === 'close' &&
-      (options.brief.primaryScene === 'correction' ||
-        options.brief.intents.some(
-          item => item.intent === 'correct_assistant'
-        ));
-
-    if (!closesCorrection || !segments.length) {
-      return segments;
-    }
-
-    const result = [...segments];
-    while (result.length && /[?？]\s*$/u.test(result[result.length - 1])) {
-      if (result.length > 1) {
-        result.pop();
-        continue;
-      }
-
-      const statementEnd = Math.max(
-        result[0].lastIndexOf('。'),
-        result[0].lastIndexOf('！'),
-        result[0].lastIndexOf('!')
-      );
-      if (statementEnd < 0) {
-        break;
-      }
-      result[0] = result[0].slice(0, statementEnd + 1).trim();
-    }
-    return result.filter(Boolean);
+    // 进入治理前只做结构清理，不根据程序推断的“纠正/收尾”删除模型正文。
+    // 是否提问属于内容策略；普通质量问题只记录，不在发送前静默改写语义。
+    void options.brief;
+    return compactReplyBubblesPreservingContent(options.segments);
   }
 
   renderForDelivery(segments: string[]): {

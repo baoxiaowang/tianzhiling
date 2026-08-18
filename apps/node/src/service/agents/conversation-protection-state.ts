@@ -124,6 +124,6 @@ export function buildConversationProtectionStatePrompt(
   return [
     `版本：${state.version}；身份=${state.identityMode}；痛苦=${state.distressMode}；依赖=${state.dependencyMode}。`,
     ...state.activeRules,
-    '这是从连续对话得到的状态，不因用户下一句换了说法就失效；表达方式仍由你按人物性格自然决定。',
+    '强烈痛苦与排他依赖属于持续安全状态，后续换一种说法也不能忽略；口气质疑和关系不安只帮助理解当前轮，不得据此延续已经转移的普通话题。表达方式仍由你按人物性格和当前上下文自然决定。',
   ].join('\n');
 }

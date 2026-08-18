@@ -114,7 +114,15 @@ export function buildReplyTurnContract(options: {
   const requiredActs = Array.from(
     new Set(
       decision.responseActs
-        .filter(act => act.priority === 'must')
+        .filter(act =>
+          isHardRequiredAct({
+            kind: act.kind,
+            directAnswerRequired: decision.participation.directAnswerRequired,
+            correction: decision.understanding.corrections.length > 0,
+            boundary: decision.understanding.boundarySignals.length > 0,
+            closing: decision.closure === 'close',
+          })
+        )
         .map(act => act.kind)
     )
   );
@@ -291,32 +299,28 @@ function resolveFocusDimensions(options: {
 function buildReplyTurnContractPrompt(
   contract: Omit<ReplyTurnContract, 'prompt'>
 ): string {
-  const range = contract.delivery.preferredRange;
   const sourceCounts = Object.entries(contract.facts.sourceCounts)
     .map(([source, count]) => `${source}:${count}`)
     .join('、');
 
   return [
-    '# 本轮统一执行契约',
+    '# 本轮硬约束与业务建议',
     `版本：${contract.version}；重点维度：${contract.focusDimensions.join(
       '、'
     )}`,
-    '优先级：用户本轮原话与纠正 > 同一对象证据 > 现实边界 > 必做回应动作 > 人格表达 > 长度偏好。',
-    `理解：${contract.understanding.complexity}；对象：${
+    '硬约束优先级：用户本轮明确纠正 > 同一对象证据 > 安全与现实边界 > 明确问题。其余内容都是帮助模型思考的业务建议。',
+    `程序观察：${contract.understanding.complexity}；可能对象：${
       contract.understanding.actorRefs.join('、') || 'agent'
-    }；诉求：${contract.understanding.needKinds.join('、') || 'ordinary'}`,
-    `策略参考：${contract.strategy.primaryGoal}；提问=${contract.strategy.questionPolicy}；收放=${contract.strategy.closure}。先结合用户情绪、关系位置和上下文自行选择自然做法，不照着字段逐项作答。`,
+    }；可能诉求：${
+      contract.understanding.needKinds.join('、') || 'ordinary'
+    }。这些标签可能不完整或误判，须结合最近对话复核。`,
+    `平台业务建议：理解用户情绪和这句话在连续对话中的作用，再自主选择回应策略。程序候选方向=${contract.strategy.primaryGoal}；不得因该方向忽略话题转移或重要新信息。`,
     contract.strategy.responseActs.length
-      ? `回应重点：${contract.strategy.responseActs
-          .map(
-            act =>
-              `${act.kind}[${act.targetRef}/${
-                act.priority === 'must' ? '核心' : '参考'
-              }]`
-          )
+      ? `候选回应角度：${contract.strategy.responseActs
+          .map(act => `${act.kind}[${act.targetRef}]`)
           .join(
             '、'
-          )}。可以合并、换序或选更自然的表达；明确问题、纠正和安全边界不能遗漏。`
+          )}。可合并、换序、忽略或替换；只有明确问题、纠正和安全边界不能遗漏。`
       : '',
     `人格：${contract.persona.relationshipType || '亲人'} / ${
       contract.persona.generation || 'unknown'
@@ -346,14 +350,14 @@ function buildReplyTurnContractPrompt(
           contract.facts.correctionMode || 'reset'
         }；旧事实本轮已压制，只采用当前用户明确提供的最小替代事实。`
       : '',
-    `参与：直接回答=${
+    `参与观察：明确问题=${
       contract.participation.directAnswerRequired ? '是' : '否'
-    }；责任=${contract.participation.turnOwner}；接纳关心=${
+    }；用户可能期待角色主动=${
+      contract.participation.turnOwner === 'assistant' ? '是' : '否'
+    }；可能需要接纳关心=${
       contract.participation.careReceptionRequired ? '是' : '否'
-    }`,
-    `节奏：${contract.delivery.lengthClass}${
-      range ? `，总字数${range.minCharacters}-${range.maxCharacters}` : ''
-    }；正文先完整生成，展示拆分由发送层按自然语义处理`,
+    }。除明确问题外，这些是软建议，由你决定最自然的实现。`,
+    '节奏：微信式自然简洁，但内容完整优先；正文先完整生成，展示拆分由发送层按自然语义处理，不按目标字数压缩内容。',
     contract.boundary.rules.length
       ? `现实边界：${contract.boundary.rules.join('；')}`
       : '',
@@ -365,12 +369,36 @@ function buildReplyTurnContractPrompt(
     contract.boundary.conversationLocks.length
       ? `会话级边界锁：${contract.boundary.conversationLocks
           .map(lock => lock.evidence)
-          .join('；')}。后续连续追问也不能退回成确定事实。`
+          .join(
+            '；'
+          )}。历史锁只用于防止同类事实或承诺再次越界，不要求延续旧话题，也不决定当前回复动作；当前消息转向时仍跟随当前话题。`
       : '',
-    '本契约用于帮助理解，不是固定话术脚本。安全、现实边界、事实证据、用户纠正和明确问题是硬约束；情绪策略、参与方式、收放和字数都是软参考，由你根据这一轮自然决定。不要为界面展示方式牺牲内容。',
+    '除安全、现实边界、事实证据、用户纠正和明确问题外，本卡片都只是建议。若程序标签与用户原话、最近上下文或你的整体判断冲突，以后三者为准；自主决定是否展开、提问、主动贡献或收尾。',
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function isHardRequiredAct(options: {
+  kind: TurnDecision['responseActs'][number]['kind'];
+  directAnswerRequired: boolean;
+  correction: boolean;
+  boundary: boolean;
+  closing: boolean;
+}): boolean {
+  if (options.kind === 'direct_answer') {
+    return options.directAnswerRequired;
+  }
+  if (options.kind === 'repair') {
+    return options.correction;
+  }
+  if (options.kind === 'boundary_answer') {
+    return options.boundary;
+  }
+  if (options.kind === 'natural_close') {
+    return options.closing;
+  }
+  return false;
 }
 
 function mapIssuesToDimensions(

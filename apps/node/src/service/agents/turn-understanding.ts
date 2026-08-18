@@ -236,8 +236,11 @@ export function mergeTurnUnderstandings(
     [...deterministic.actors, ...semantic.actors],
     actor => actor.ref
   );
+  const deterministicHardNeeds = deterministic.needs.filter(need =>
+    ['close', 'correction', 'boundary'].includes(need.kind)
+  );
   const needs = dedupeBy(
-    [...deterministic.needs, ...semantic.needs],
+    [...deterministicHardNeeds, ...semantic.needs],
     need => `${need.kind}:${need.targetRef}:${normalizeText(need.evidence)}`
   )
     .sort((left, right) =>
@@ -248,8 +251,10 @@ export function mergeTurnUnderstandings(
     [...deterministic.questions, ...semantic.questions],
     question => normalizeText(question.text)
   ).slice(0, 4);
+  // 普通情绪与隐含诉求由语义理解优先；关键词结果只在没有语义结果时兜底。
+  // 明确纠正、现实边界和明确收尾仍由程序合并保留。
   const emotions = dedupeBy(
-    [...semantic.emotions, ...deterministic.emotions],
+    semantic.emotions,
     emotion => `${emotion.label}:${emotion.targetRef}`
   ).slice(0, 4);
   const ambiguities = dedupeBy(
@@ -278,8 +283,7 @@ export function mergeTurnUnderstandings(
       [...deterministic.boundaryLocks, ...semantic.boundaryLocks],
       lock => lock.kind
     ),
-    activeSpeechRequest:
-      deterministic.activeSpeechRequest || semantic.activeSpeechRequest,
+    activeSpeechRequest: semantic.activeSpeechRequest,
     closureSignal: deterministic.closureSignal || semantic.closureSignal,
     ambiguities,
     complexity: ambiguities.length

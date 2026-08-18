@@ -13,6 +13,7 @@ export interface DirectActiveContributionPlan {
   mode: 'soft_optional';
   turnGoal: 'respond_first_then_optionally_contribute';
   optionalContribution:
+    | 'model_choice'
     | 'role_stance'
     | 'concrete_judgment'
     | 'light_self_disclosure'
@@ -52,11 +53,6 @@ const PROTECTED_SCENES = new Set<ReplyScene>([
 ]);
 const BARE_ACKNOWLEDGMENT_PATTERN =
   /^(?:嗯+|哦+|好+|行|可以|知道了|好的|谢谢|多谢)(?:呀|啊|呢|哦|嘛|哈|了|啦)*[。.!！?？\s]*$/;
-const USER_UPDATE_PATTERN =
-  /今天|刚才|现在|准备|打算|回家|上班|孩子|家里|发生|终于|做了|去了/;
-const USER_NEXT_STEP_PATTERN = /准备|打算|等会|待会|一会儿|马上|要去|要回|快要/;
-const ROLE_STATUS_PATTERN =
-  /你(?:呢|怎么样)|你在干嘛|你做什么|你过得|你那边|说说你|讲讲你/;
 const GENERIC_MOVE_PATTERN =
   /我在|我听着|慢慢说|想你|惦记你|心疼你|照顾好自己|好好休息/;
 
@@ -89,13 +85,8 @@ export function resolveDirectActiveContribution(
     version: DIRECT_ACTIVE_CONTRIBUTION_VERSION,
     mode: 'soft_optional',
     turnGoal: 'respond_first_then_optionally_contribute',
-    optionalContribution: ROLE_STATUS_PATTERN.test(currentQuery)
-      ? 'light_self_disclosure'
-      : USER_NEXT_STEP_PATTERN.test(currentQuery)
-      ? 'next_step'
-      : USER_UPDATE_PATTERN.test(currentQuery)
-      ? 'concrete_judgment'
-      : 'role_stance',
+    // 程序只开放能力，不再根据关键词替模型选择贡献类型。
+    optionalContribution: 'model_choice',
     avoidMove: resolveRecentDirectContributionMove(options.recentMessages),
   };
 }
@@ -109,12 +100,8 @@ export function buildDirectActiveContributionPrompt(
 
   return [
     '先完整回应用户当前内容，再按人物性格、关系和语境自主判断，要不要自然补一点角色侧内容，例如一个贴题反应、轻微态度、小近况或相邻话题。',
-    `本轮可优先考虑“${
-      DIRECT_CONTRIBUTION_LABELS[plan.optionalContribution]
-    }”，但只有贴题时才用。${
-      plan.avoidMove ? `上一轮已经用了“${plan.avoidMove}”，本轮避免重复。` : ''
-    }`,
-    '这是可选能力，不是每轮必须完成的动作；只在确实有贴题新内容时使用，不用反问把聊天责任推回用户，也不用“我在、想你、照顾好自己”等通用话术充数。',
+    '贡献什么、要不要贡献以及放在什么位置，都由你结合最近对话自行选择；程序不指定态度、判断、近况或下一步。',
+    '这是可选能力，不是每轮必须完成的动作；只在确实有贴题新内容时使用，不用反问把聊天责任推回用户，也不用“我在、想你、照顾好自己”等通用话术充数。最近用过的动作可自然换一种，但不要为了去重而生硬转话题。',
     '不为主动贡献增加字数或气泡，不因缺少它改写已经完整的回答；没有贴题新内容就自然停住。不得因此新编共同往事、用户现实或具体离世事件。',
   ].join('\n');
 }
@@ -143,6 +130,7 @@ const DIRECT_CONTRIBUTION_LABELS: Record<
   DirectActiveContributionPlan['optionalContribution'],
   string
 > = {
+  model_choice: '由模型结合上下文自主选择',
   role_stance: '给一个有角色立场的贴题反应',
   concrete_judgment: '对用户刚说的具体事给一个判断或看法',
   light_self_disclosure: '补一点角色侧当下近况或主观感受',
