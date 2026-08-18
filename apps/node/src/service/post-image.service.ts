@@ -2,6 +2,12 @@ import { Config, Inject, Provide } from '@midwayjs/core';
 import { OssConfig, OssService } from './oss.service';
 import { TencentCosConfig, TencentCosService } from './tencent-cos.service';
 
+const MESSENGER_AVATAR_LEGACY_OBJECT_KEY =
+  'weapp/messenger-avatar-20260817.png';
+const MESSENGER_AVATAR_VERSIONED_OBJECT_KEY =
+  'weapp/messenger-avatar-20260818-5c48467a.png';
+const MESSENGER_AVATAR_CACHE_VERSION = '5c48467a';
+
 @Provide()
 export class PostImageService {
   @Config('oss')
@@ -79,7 +85,20 @@ export class PostImageService {
     }
 
     try {
-      return this.tencentCosService.getPublicUrl(objectKey);
+      const isMessengerAvatar =
+        objectKey === MESSENGER_AVATAR_LEGACY_OBJECT_KEY ||
+        objectKey === MESSENGER_AVATAR_VERSIONED_OBJECT_KEY;
+      const publicObjectKey = isMessengerAvatar
+        ? MESSENGER_AVATAR_LEGACY_OBJECT_KEY
+        : objectKey;
+      const publicUrl = this.tencentCosService.getPublicUrl(publicObjectKey);
+
+      if (!isMessengerAvatar) {
+        return publicUrl;
+      }
+
+      const separator = publicUrl.includes('?') ? '&' : '?';
+      return `${publicUrl}${separator}v=${MESSENGER_AVATAR_CACHE_VERSION}`;
     } catch {
       return '';
     }
