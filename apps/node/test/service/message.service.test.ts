@@ -191,6 +191,7 @@ describe('MessageService listMessages', () => {
       where: {
         conversationId: conversation.id,
         isArchived: { $ne: true },
+        role: { $in: [MessageRole.user, MessageRole.assistant] },
       },
       order: {
         createdAt: 'ASC',
@@ -240,6 +241,7 @@ describe('MessageService listMessages', () => {
       where: {
         conversationId: conversation.id,
         isArchived: { $ne: true },
+        role: { $in: [MessageRole.user, MessageRole.assistant] },
       },
       order: {
         createdAt: 'DESC',
@@ -287,6 +289,7 @@ describe('MessageService listMessages', () => {
       where: {
         conversationId: conversation.id,
         isArchived: { $ne: true },
+        role: { $in: [MessageRole.user, MessageRole.assistant] },
         createdAt: {
           $lt: new Date(cursor),
         },

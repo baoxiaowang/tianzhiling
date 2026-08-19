@@ -284,6 +284,14 @@ function createService(options: {
     warn: jest.fn(),
     error: jest.fn(),
   } as any;
+  service.permanentAgentSilenceService = {
+    isPermanentlySilent: jest.fn().mockResolvedValue(false),
+    findDeclarationForDuplicate: jest.fn().mockResolvedValue(undefined),
+    assessAndActivate: jest.fn().mockResolvedValue(undefined),
+    markMessagesPermanentlySilent: jest.fn().mockResolvedValue(undefined),
+    suppressReplyIfPermanentlySilent: jest.fn().mockResolvedValue(false),
+    settleFromExchange: jest.fn().mockResolvedValue(undefined),
+  } as any;
   service.conversationModel = {
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
@@ -717,7 +725,7 @@ describe('ConversationService main-model tools', () => {
         decisionNames: ['search_relationship_memory'],
         executionCount: 1,
         resultItemCount: 1,
-        plannerMemoryAgreement: 'both_query',
+        plannerMemoryAgreement: 'planner_only',
       })
     );
     expect(result.toolEvidence).toEqual([
@@ -2525,14 +2533,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: '刚才那句话没说稳，你再跟我说一遍',
       })
     );
     expect(addJobToQueue).not.toHaveBeenCalled();
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: '刚才那句话没说稳，你再跟我说一遍',
       }),
     ]);
   });
@@ -3937,7 +3945,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: '刚才那句话没说稳，你再跟我说一遍',
       }),
     ]);
   });
@@ -3989,7 +3997,6 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       savedMessages.some(message => message.role === MessageRole.user)
     ).toBe(true);
     expect(result.chatQuota).toEqual({ isVip: true });
-    expect(service.messageModel.count).not.toHaveBeenCalled();
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
   });
 
@@ -5379,6 +5386,7 @@ describe('ConversationService listConversations', () => {
       where: {
         conversationId: conversation.id,
         isArchived: { $ne: true },
+        role: { $in: [MessageRole.user, MessageRole.assistant] },
       },
       order: {
         createdAt: 'DESC',

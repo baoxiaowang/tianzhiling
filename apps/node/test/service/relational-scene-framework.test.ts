@@ -57,7 +57,7 @@ describe('relational scene framework', () => {
       'reunion_future',
     ]);
     expect(context?.cards).toHaveLength(2);
-    expect(prompt).toContain('只加载当前卡片');
+    expect(prompt).toContain('这是非决策的场景资料');
     expect(prompt).not.toContain('家庭人物与关系图谱');
   });
 

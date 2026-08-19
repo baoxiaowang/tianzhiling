@@ -361,13 +361,15 @@ describe('AgentMemoryProfileService', () => {
     });
   });
 
-  it('lets the model respond without forcing a new interview question', async () => {
+  it('acknowledges a new fact and keeps the unfinished interview on task', async () => {
     const agent = createAgent();
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
-        reply: '她爽朗又说一不二，听着就是很有主心骨的人。',
-        nextFocusField: '',
+        reply: '他爽朗又说一不二，听着很有主心骨。爸爸平时喜欢做什么？',
+        nextFocusField: 'hobbies',
+        changedFields: ['personalityTraits'],
+        changeEvidence: { personalityTraits: '性格爽朗，说一不二' },
         lifeExperience: '',
         personalityTraits: '性格爽朗，说一不二。',
         languageHabits: '',
@@ -378,15 +380,17 @@ describe('AgentMemoryProfileService', () => {
 
     const result = await service.buildInterviewTurn({
       agent,
-      input: '妈妈性格爽朗，说一不二。',
+      input: '爸爸性格爽朗，说一不二。',
       turnCount: 1,
     });
 
-    expect(result.reply).toBe('她爽朗又说一不二，听着就是很有主心骨的人。');
-    expect(result.nextFocusField).toBe('');
+    expect(result.reply).toBe(
+      '他爽朗又说一不二，听着很有主心骨。爸爸平时喜欢做什么？'
+    );
+    expect(result.nextFocusField).toBe('hobbies');
     expect(result.isComplete).toBe(false);
     expect(generateText.mock.calls[0][0].systemPrompt).toContain(
-      '不要求每轮都追问'
+      '有未完成任务时 reply 必须包含且只包含一个具体问题'
     );
   });
 
@@ -485,6 +489,8 @@ describe('AgentMemoryProfileService', () => {
       content: JSON.stringify({
         reply: '我已经认识他了。哪件小事最能看出他的性格？',
         nextFocusField: 'personalityTraits',
+        changedFields: ['sharedMemories'],
+        changeEvidence: { sharedMemories: '每年春节我们都会一起包饺子' },
         lifeExperience: '年轻时在工厂工作。',
         personalityTraits: '温和、有耐心。',
         languageHabits: '常说慢慢来。',
@@ -513,6 +519,10 @@ describe('AgentMemoryProfileService', () => {
       content: JSON.stringify({
         reply: '他下棋时还会做些什么？',
         nextFocusField: 'hobbies',
+        changedFields: ['personalityTraits'],
+        changeEvidence: {
+          personalityTraits: '他总会默默把家里的事情安排好',
+        },
         ...firstDepth.draft,
         personalityTraits: '温和、有耐心；会默默照顾家人。',
       }),
@@ -526,9 +536,9 @@ describe('AgentMemoryProfileService', () => {
       turnCount: 5,
     });
 
-    expect(completed.nextFocusField).toBe('');
-    expect(completed.isComplete).toBe(true);
-    expect(completed.reply).toContain('继续想到哪儿说到哪儿');
+    expect(completed.nextFocusField).toBe('personalityTraits');
+    expect(completed.isComplete).toBe(false);
+    expect(completed.reply).toContain('最能看出 TA 的性格');
     expect(completed.reply).not.toContain('下棋时');
   });
 

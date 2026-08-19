@@ -410,10 +410,11 @@ describe('AgentService default agent', () => {
     expect(agents[0].realName).toBe('王秀兰');
     expect(agents[0].profileCompletionGuideCreatedAt).toBe(agents[0].createdAt);
     expect(service.conversationModel.save).toHaveBeenCalledTimes(1);
-    expect(service.messageModel.save).toHaveBeenCalledTimes(1);
+    expect(service.messageModel.save).toHaveBeenCalledTimes(2);
 
-    const savedMessage = (service.messageModel.save as jest.Mock).mock
-      .calls[0][0];
+    const savedMessage = (service.messageModel.save as jest.Mock).mock.calls
+      .map(call => call[0] as MessageEntity)
+      .find(message => message.role === MessageRole.assistant)!;
     expect(savedMessage.conversationId).toBeInstanceOf(MongoObjectId);
     expect(sameObjectId(savedMessage.userId, new MongoObjectId(USER_ID))).toBe(
       true
@@ -703,8 +704,13 @@ describe('AgentService default agent', () => {
     expect(sameObjectId(conversations[0].agentId, agent.id)).toBe(true);
     expect(shareMembers).toHaveLength(1);
     expect(shareMembers[0].status).toBe(AgentShareMemberStatus.active);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('好想你啊，过得好吗？');
+    expect(messages).toHaveLength(2);
+    expect(
+      messages.find(message => message.role === MessageRole.assistant)?.content
+    ).toBe('好想你啊，过得好吗？');
+    expect(
+      messages.find(message => message.role === MessageRole.system)?.isArchived
+    ).toBe(true);
 
     const sharedDetail = await service.getAgentDetail(SHARED_AUTH, AGENT_A_ID);
     expect(sharedDetail.id).toBe(AGENT_A_ID);
@@ -736,7 +742,7 @@ describe('AgentService default agent', () => {
     expect(second.conversationId).toBe(first.conversationId);
     expect(conversations).toHaveLength(1);
     expect(shareMembers).toHaveLength(1);
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(2);
     expect(shareInvites[0].acceptedCount).toBe(1);
   });
 

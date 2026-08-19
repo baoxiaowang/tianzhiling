@@ -58,15 +58,15 @@ describe('reply output contract', () => {
     ).toBe('one');
   });
 
-  it('keeps the character range as a generation preference, not a failure', () => {
+  it('keeps the character range out of the generation contract', () => {
     const prompt = buildReplyOutputContractPrompt({
       grounded: false,
       segmentMode: 'one',
       preferredRange: { minCharacters: 20, maxCharacters: 30 },
     });
 
-    expect(prompt).toContain('合计优先 20-30');
-    expect(prompt).toContain('语义完整优先');
+    expect(prompt).not.toContain('20-30');
+    expect(prompt).toContain('segments 恰好一项');
     expect(prompt).not.toContain('视为格式不合格');
   });
 

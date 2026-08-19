@@ -46,7 +46,7 @@ describe('reply-prompt-layer', () => {
     expect(plan.includeL5).toBe(false);
     expect(plan.includeReading).toBe(false);
     expect(plan.includeContinuity).toBe(true);
-    expect(plan.includeMode).toBe(true);
+    expect(plan.includeMode).toBe(false);
     expect(plan.includeEvidence).toBe(true);
   });
 

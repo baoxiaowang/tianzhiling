@@ -910,7 +910,7 @@ describe('ReplyGuardrailService', () => {
     );
   });
 
-  it('flags an overlong correction using the total reply budget', () => {
+  it('does not turn a soft correction length preference into a failure', () => {
     const service = new ReplyGuardrailService();
     const userQuery = '不对，你刚才说的故事不是和我的，你怎么胡说啊';
     const route = routeReplyScene({ currentQuery: userQuery });
@@ -936,12 +936,9 @@ describe('ReplyGuardrailService', () => {
       }
     );
 
-    expect(feedback.issues).toEqual(
+    expect(feedback.issues).not.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          code: 'excessive_reply_length',
-          repairGoal: expect.stringContaining('压缩到约 28 字'),
-        }),
+        expect.objectContaining({ code: 'excessive_reply_length' }),
       ])
     );
   });
@@ -5541,7 +5538,7 @@ describe('ReplyGuardrailService', () => {
     });
 
     expect(result.rewritten).toBe(true);
-    expect(result.reason).toContain('未确认记忆');
+    expect(result.reason).toContain('可信证据中没有');
     expect(result.segments.join('')).not.toContain('跑回来找我');
   });
 

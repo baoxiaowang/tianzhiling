@@ -50,8 +50,16 @@ describe('AgentChatToolService', () => {
     } as any;
 
     const result = await service.execute(
-      'search_relationship_memory',
-      { missingConcepts: ['地点', '秋天'], subjectRef: '爸爸', limit: 3 },
+      'lookup_chat_evidence',
+      {
+        requests: [
+          {
+            subjectRef: '爸爸',
+            need: '秋天去过的地方',
+            sources: ['relationship_memory'],
+          },
+        ],
+      },
       createContext()
     );
 
@@ -95,8 +103,16 @@ describe('AgentChatToolService', () => {
     } as any;
 
     const result = await service.execute(
-      'get_family_facts',
-      { subjectRefs: ['小雨'], limit: 4 },
+      'lookup_chat_evidence',
+      {
+        requests: [
+          {
+            subjectRef: '小雨',
+            need: '年龄',
+            sources: ['family_facts'],
+          },
+        ],
+      },
       createContext()
     );
 
@@ -111,22 +127,11 @@ describe('AgentChatToolService', () => {
     );
   });
 
-  it('records only an explicit correction grounded in the current exchange', async () => {
+  it('rejects the retired correction write interface', async () => {
     const service = new AgentChatToolService();
-    const recordUserCorrection = jest.fn().mockResolvedValue({
-      type: AgentProfileFactType.correction,
-      key: 'correction.tool.memory.1',
-      value: '用户纠正：西山不成立；替代事实：香山',
-      polarity: AgentProfileFactPolarity.negative,
-      confidence: AgentProfileFactConfidence.userCorrected,
-      priority: 3,
-      status: AgentProfileFactStatus.active,
-      updatedAt: new Date('2026-08-02T02:00:00.000Z'),
-    });
-    service.agentProfileFactService = { recordUserCorrection } as any;
 
     const result = await service.execute(
-      'record_user_correction',
+      'lookup_chat_evidence',
       {
         subjectRef: '爸爸',
         correctionKind: 'memory',
@@ -136,28 +141,20 @@ describe('AgentChatToolService', () => {
       createContext()
     );
 
-    expect(result.status).toBe('ok');
-    expect(recordUserCorrection).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('invalid_arguments');
   });
 
-  it('denies a correction write when the user did not explicitly correct it', async () => {
+  it('rejects an evidence request without an allowed source', async () => {
     const service = new AgentChatToolService();
-    service.agentProfileFactService = {
-      recordUserCorrection: jest.fn(),
-    } as any;
 
     const result = await service.execute(
-      'record_user_correction',
+      'lookup_chat_evidence',
       {
-        subjectRef: '爸爸',
-        correctionKind: 'memory',
-        rejectedFact: '西山',
-        replacementFact: '香山',
+        requests: [{ subjectRef: '爸爸', need: '地点', sources: ['write'] }],
       },
       createContext('我们还去过香山')
     );
 
-    expect(result.status).toBe('denied');
-    expect(result.errorCode).toBe('no_explicit_user_correction');
+    expect(result.status).toBe('invalid_arguments');
   });
 });

@@ -479,7 +479,7 @@ describe('MessengerService', () => {
       input: '对',
     });
 
-    expect(reply).toContain('明白，我接着听');
+    expect(reply).toContain('明白。你想让我帮爸爸记住的具体是什么？');
     expect(reply).not.toContain('确认');
     expect(buildInterviewTurn).not.toHaveBeenCalled();
   });

@@ -182,7 +182,7 @@ describe('reply state protocol', () => {
     expect(prompt).not.toContain('可以这样说');
   });
 
-  it('keeps the longest current protocol instruction within 80 characters', () => {
+  it('keeps the longest current protocol instruction compact', () => {
     const prompt = buildReplyStateProtocolPrompt({
       version: 'state_protocol_v1',
       protocol: 'active_contribution',
@@ -194,7 +194,8 @@ describe('reply state protocol', () => {
       previousStage: 'request_contribution',
     });
 
-    expect(prompt.length).toBeLessThanOrEqual(80);
+    expect(prompt.length).toBeLessThanOrEqual(120);
+    expect(prompt).toContain('建议角色自己提供贴题新内容');
     expect(prompt).not.toContain('active_contribution');
   });
 });

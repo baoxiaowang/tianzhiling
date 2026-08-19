@@ -1,6 +1,11 @@
 describe('online config dev login isolation', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalDevLoginEnabled = process.env.NODE_DEV_LOGIN_ENABLED;
+  const originalMongoPassword = process.env.NODE_MONGO_PASSWORD;
+
+  beforeEach(() => {
+    process.env.NODE_MONGO_PASSWORD = 'jest-only-password';
+  });
 
   afterEach(() => {
     jest.resetModules();
@@ -15,6 +20,12 @@ describe('online config dev login isolation', () => {
       delete process.env.NODE_DEV_LOGIN_ENABLED;
     } else {
       process.env.NODE_DEV_LOGIN_ENABLED = originalDevLoginEnabled;
+    }
+
+    if (originalMongoPassword == null) {
+      delete process.env.NODE_MONGO_PASSWORD;
+    } else {
+      process.env.NODE_MONGO_PASSWORD = originalMongoPassword;
     }
   });
 

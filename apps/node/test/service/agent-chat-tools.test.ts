@@ -1,4 +1,3 @@
-import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import {
   AGENT_CHAT_TOOL_DEFINITIONS,
   buildAgentChatToolDecisionSchema,
@@ -13,21 +12,13 @@ describe('agent chat tools', () => {
       config: { mode: 'shadow', shadowSampleRate: 1 },
       stableKey: 'user:conversation:message',
       currentQuery: '你还记得我们以前去过哪里吗',
-      replyBrief: buildReplyBrief({
-        currentQuery: '你还记得我们以前去过哪里吗',
-      }),
-      planningMode: 'semantic',
-      planningReason: 'memory_candidate',
       plannerMemoryRequested: true,
       ...overrides,
     });
 
-  it('uses strict schemas for the four narrowly scoped tools', () => {
+  it('uses a strict schema for the unified evidence lookup tool', () => {
     expect(Object.keys(AGENT_CHAT_TOOL_DEFINITIONS)).toEqual([
-      'search_relationship_memory',
-      'get_family_facts',
-      'get_persona_evidence',
-      'record_user_correction',
+      'lookup_chat_evidence',
     ]);
 
     for (const tool of Object.values(AGENT_CHAT_TOOL_DEFINITIONS)) {
@@ -42,46 +33,47 @@ describe('agent chat tools', () => {
     }
   });
 
-  it('samples eligible shadow turns without registering executable tools', () => {
+  it('promotes legacy shadow configuration to one executable lookup tool', () => {
     const plan = buildPlan();
 
     expect(plan).toEqual(
       expect.objectContaining({
-        mode: 'shadow',
+        mode: 'active',
         eligible: true,
         sampled: true,
-        plannerMemoryRequested: true,
+        plannerMemoryRequested: false,
       })
     );
-    expect(plan.availableTools).toHaveLength(4);
-    expect(buildAgentChatToolDecisionSchema(plan)).toBeDefined();
+    expect(plan.availableTools).toEqual(['lookup_chat_evidence']);
+    expect(buildAgentChatToolDecisionSchema(plan)).toBeUndefined();
   });
 
-  it('keeps difficult active scenes on the planner fallback', () => {
-    const riskyBrief = buildReplyBrief({ currentQuery: '我真的不想活了' });
-    riskyBrief.riskLevel = 'high';
+  it('keeps empty turns off even when active mode is configured', () => {
     const plan = buildPlan({
       config: { mode: 'active', activeSampleRate: 1 },
-      replyBrief: riskyBrief,
+      currentQuery: '   ',
     });
 
-    expect(plan.mode).toBe('planner_fallback');
+    expect(plan.mode).toBe('off');
     expect(plan.availableTools).toEqual([]);
   });
 
   it('rejects missing or extra tool arguments instead of repairing them', () => {
     expect(
-      normalizeAgentChatToolArguments('search_relationship_memory', {
-        missingConcepts: ['西山'],
-        subjectRef: '爸爸',
-        limit: 3,
-        triggerWord: '记得',
+      normalizeAgentChatToolArguments('lookup_chat_evidence', {
+        requests: [
+          {
+            subjectRef: '爸爸',
+            need: '以前去过的地方',
+            sources: ['relationship_memory'],
+            triggerWord: '记得',
+          },
+        ],
       })
     ).toBeNull();
     expect(
-      normalizeAgentChatToolArguments('search_relationship_memory', {
-        missingConcepts: ['西山'],
-        subjectRef: '爸爸',
+      normalizeAgentChatToolArguments('lookup_chat_evidence', {
+        requests: [{ subjectRef: '爸爸', need: '以前去过的地方' }],
       })
     ).toBeNull();
   });
@@ -89,11 +81,15 @@ describe('agent chat tools', () => {
   it('keeps at most two valid shadow decisions and counts invalid items', () => {
     const parsed = normalizeAgentChatToolDecisions([
       {
-        name: 'search_relationship_memory',
+        name: 'lookup_chat_evidence',
         arguments: {
-          missingConcepts: ['西山', '秋天'],
-          subjectRef: '爸爸',
-          limit: 4,
+          requests: [
+            {
+              subjectRef: '爸爸',
+              need: '以前去过的地方',
+              sources: ['relationship_memory'],
+            },
+          ],
         },
         reason: '上下文缺少共同地点',
       },
@@ -105,7 +101,7 @@ describe('agent chat tools', () => {
     ]);
 
     expect(parsed.decisions).toHaveLength(1);
-    expect(parsed.decisions[0].name).toBe('search_relationship_memory');
+    expect(parsed.decisions[0].name).toBe('lookup_chat_evidence');
     expect(parsed.invalidCount).toBe(1);
   });
 });
