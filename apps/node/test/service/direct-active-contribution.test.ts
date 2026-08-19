@@ -27,7 +27,7 @@ describe('direct active contribution', () => {
       version: 'direct_active_contribution_v1',
       mode: 'soft_optional',
       turnGoal: 'respond_first_then_optionally_contribute',
-      optionalContribution: 'concrete_judgment',
+      optionalContribution: 'model_choice',
     });
   });
 
@@ -61,10 +61,10 @@ describe('direct active contribution', () => {
     expect(prompt).toContain('没有贴题新内容就自然停住');
   });
 
-  it('offers a next-step contribution for a user plan without making it mandatory', () => {
+  it('leaves the optional contribution type to the model for a user plan', () => {
     expect(resolve({ currentQuery: '妈，我一会儿准备回家' })).toMatchObject({
       mode: 'soft_optional',
-      optionalContribution: 'next_step',
+      optionalContribution: 'model_choice',
     });
   });
 });

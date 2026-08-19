@@ -1083,8 +1083,8 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain('# 离世生活框架');
     expect(systemMessage.content).toContain('正面回答现在已经没有病痛');
     expect(systemMessage.content).toContain('free_from_illness_and_pain');
-    expect(systemMessage.content).toContain('# 本轮统一执行契约');
-    expect(systemMessage.content).toContain('参与：直接回答=是');
+    expect(systemMessage.content).toContain('# 本轮硬约束与业务建议');
+    expect(systemMessage.content).toContain('参与观察：明确问题=是');
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
     expect(systemMessage.content).toContain('完整正文与展示适配');

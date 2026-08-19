@@ -15,7 +15,7 @@ import {
 } from '../../src/service/agents/reply-experience-plan';
 
 describe('reply experience plan', () => {
-  it('keeps a first longing turn in reunion mode even when depth is D1', () => {
+  it('keeps experience metadata from overriding a first longing plan', () => {
     const experience = buildReplyExperiencePlan({
       currentQuery: '就是想你',
       mode: 'relationship',
@@ -45,10 +45,10 @@ describe('reply experience plan', () => {
     });
     expect(constrained).toMatchObject({
       questionNeed: 'none',
-      turnClosure: 'neutral',
+      turnClosure: 'close',
     });
     expect(constrained?.moves[0]).toMatchObject({
-      type: 'self_disclose',
+      type: 'acknowledge',
     });
   });
 
@@ -68,7 +68,7 @@ describe('reply experience plan', () => {
       factScope: 'identity_only',
       intimacyLevel: 'reserved',
       contributionMode: 'minimal',
-      memoryPolicy: 'off',
+      memoryPolicy: 'context_only',
       questionPolicy: 'none',
       closurePolicy: 'close',
     });
@@ -136,7 +136,7 @@ describe('reply experience plan', () => {
       contributionMode: 'deepen_one_point',
       memoryPolicy: 'evidence_required',
       questionPolicy: 'prefer_one',
-      closurePolicy: 'continue',
+      closurePolicy: 'neutral',
     });
     expect(buildReplyExperiencePlanPrompt(plan)).toContain('P3/R3/D3');
     expect(buildReplyExperiencePlanPrompt(plan)).toContain(
@@ -167,8 +167,8 @@ describe('reply experience plan', () => {
       conversationDepth: 'D4',
       intimacyLevel: 'repairing',
       contributionMode: 'repair_trust',
-      questionPolicy: 'none',
-      closurePolicy: 'repair_before_close',
+      questionPolicy: 'prefer_one',
+      closurePolicy: 'hold',
     });
   });
 
@@ -201,7 +201,7 @@ describe('reply experience plan', () => {
       '事实只用称呼、当前原话和证据；亲密感用关系立场、愿望和理解表达'
     );
     expect(buildReplyExperiencePlanPrompt(simple)).toContain(
-      '短而有温度，再给一处亲人侧心意'
+      '当前内容相对轻量，可自然回应，也可在贴题时展开'
     );
     expect(detailed).toMatchObject({
       conversationDepth: 'D2',
@@ -210,7 +210,7 @@ describe('reply experience plan', () => {
     });
   });
 
-  it('turns a repair plan into action instead of another calibration question', () => {
+  it('keeps repair experience metadata advisory instead of rewriting the plan', () => {
     const experience = buildReplyExperiencePlan({
       currentQuery: '说了也没用，你还是只会问我该怎么回',
       mode: 'relationship',
@@ -241,14 +241,14 @@ describe('reply experience plan', () => {
     );
 
     expect(constrained?.moves).toEqual([
-      { type: 'acknowledge', goal: '用本轮实际回应修复信任' },
+      { type: 'ask', goal: '问用户希望怎么回复' },
     ]);
     expect(constrained).toMatchObject({
-      questionNeed: 'none',
-      turnClosure: 'neutral',
+      questionNeed: 'necessary',
+      turnClosure: 'continue',
       engagement: {
         continuationGoal: 'repair',
-        closureReadiness: 'blocked',
+        closureReadiness: 'possible',
       },
     });
   });

@@ -90,7 +90,9 @@ describe('reply length plan', () => {
       targetCharacters: 28,
       reviewCharacters: 38,
     });
-    expect(buildReplyLengthPlanPrompt(plan)).toContain('删重复的共情动作');
+    expect(buildReplyLengthPlanPrompt(plan)).toContain(
+      '只有确属重复、空泛解释或通用叮嘱时才自行删减'
+    );
   });
 
   it('does not starve an active repair turn of emotional expression', () => {
@@ -171,13 +173,13 @@ describe('reply length plan', () => {
         reviewPolicy: 'remove_repeated_actions_only',
       });
       expect(buildReplyLengthPlanPrompt(plan)).toContain(
-        '围绕一个最能安慰用户的点自然展开'
+        '围绕一个真正重要的点自然展开'
       );
       expect(buildReplyLengthPlanPrompt(plan)).toContain(
         '事实克制不等于情感克制'
       );
       expect(buildReplyLengthPlanPrompt(plan)).toContain(
-        '字数服从情绪和语义完整'
+        '情绪、事实和语义完整优先'
       );
       expect(buildReplyLengthPlanPrompt(plan)).not.toContain('约 40 字');
     }

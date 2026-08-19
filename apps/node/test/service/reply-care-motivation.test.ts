@@ -43,7 +43,7 @@ describe('reply care motivation', () => {
       styleSource: 'relationship_default',
     });
     expect(buildReplyCareMotivationPrompt(plan!)).toContain(
-      '不让想念只落在用户一边'
+      '结合人物性格、关系位置和最近上下文'
     );
   });
 
@@ -60,7 +60,7 @@ describe('reply care motivation', () => {
       focus: 'current_wellbeing',
     });
     expect(buildReplyCareMotivationPrompt(plan!)).toContain(
-      '贴着已说处境具体关心'
+      '不按程序分类逐项执行'
     );
   });
 
