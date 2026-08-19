@@ -137,6 +137,7 @@ export interface BuildConversationContextOptions {
   memoryControlResult?: AgentMemoryControlResult;
   effectiveChatModel?: string;
   recognitionJourneyPrompt?: string;
+  continuityInformationCardPrompt?: string;
 }
 
 export interface AgentContextLayer {
@@ -957,6 +958,7 @@ export class AgentContextService {
       '# 本轮任务层',
       conversationReadingPrompt,
       options.recognitionJourneyPrompt,
+      options.continuityInformationCardPrompt,
       evidencePrompt,
       replyBriefPrompt,
     ];
