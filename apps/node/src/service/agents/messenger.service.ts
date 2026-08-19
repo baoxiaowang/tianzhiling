@@ -1,5 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import {
@@ -8,6 +9,7 @@ import {
   ConversationEntity,
   MessageEntity,
   MessageRole,
+  MessageSource,
   MessageStatus,
   MessageType,
   MessengerCallEventEntity,
@@ -25,6 +27,9 @@ import {
 
 export const MESSENGER_DEFAULT_AVATAR_KEY =
   'weapp/messenger-avatar-20260818-5c48467a.png';
+export const MESSENGER_REVEAL_USER_TURN_THRESHOLD = 10;
+export const MESSENGER_REVEAL_WAIT_MS = 24 * 60 * 60 * 1000;
+const MESSENGER_REVEAL_LOCK_TTL_MS = 15 * 1000;
 
 const PROFILE_MEMORY_FIELDS = [
   'lifeExperience',
@@ -96,6 +101,14 @@ export interface MessengerMemoryTaskPlan {
   tasks: MessengerMemoryTaskItem[];
 }
 
+export interface RevealEligibleMessengersResult {
+  processed: number;
+  alreadyVisible: number;
+  revealed: number;
+  revealedByTurns: number;
+  revealedByAge: number;
+}
+
 @Provide()
 export class MessengerService {
   @Logger()
@@ -115,6 +128,9 @@ export class MessengerService {
 
   @Inject()
   agentMemoryProfileService: AgentMemoryProfileService;
+
+  @Inject()
+  redisService: RedisService;
 
   buildMessengerName(agentName?: string): string {
     const name = agentName?.trim() || 'TA';
@@ -256,6 +272,161 @@ export class MessengerService {
       messengersCreated,
       conversationsCreated,
     };
+  }
+
+  async revealEligibleMessengersForUser(
+    userId: MongoObjectId,
+    now = new Date()
+  ): Promise<RevealEligibleMessengersResult> {
+    const messengers = await this.agentModel.find({
+      where: {
+        createdUserId: userId,
+        messengerOfAgentId: { $exists: true },
+      },
+    });
+    let alreadyVisible = 0;
+    let revealed = 0;
+    let revealedByTurns = 0;
+    let revealedByAge = 0;
+
+    for (const messenger of messengers) {
+      if (!messenger.messengerOfAgentId) {
+        continue;
+      }
+
+      const existingConversation = await this.conversationModel.findOne({
+        where: {
+          agentId: messenger.id,
+          userId,
+        },
+      });
+      if (existingConversation) {
+        alreadyVisible += 1;
+        continue;
+      }
+
+      const parentAgent = await this.agentModel.findOne({
+        where: {
+          id: messenger.messengerOfAgentId,
+          createdUserId: userId,
+        },
+      });
+      if (!parentAgent) {
+        continue;
+      }
+
+      const ageEligible =
+        parentAgent.createdAt instanceof Date &&
+        now.getTime() - parentAgent.createdAt.getTime() >=
+          MESSENGER_REVEAL_WAIT_MS;
+      let turnEligible = false;
+
+      if (!ageEligible) {
+        const userTurnCount = await this.messageModel.count({
+          userId,
+          agentId: parentAgent.id,
+          role: MessageRole.user,
+          status: MessageStatus.sent,
+          source: { $ne: MessageSource.wechatImport },
+          isArchived: { $ne: true },
+        });
+        turnEligible = userTurnCount >= MESSENGER_REVEAL_USER_TURN_THRESHOLD;
+      }
+
+      if (!ageEligible && !turnEligible) {
+        continue;
+      }
+
+      const lock = await this.acquireMessengerRevealLock(messenger.id);
+      if (!lock.acquired) {
+        continue;
+      }
+
+      try {
+        const conversationCreatedByAnotherRequest =
+          await this.conversationModel.findOne({
+            where: {
+              agentId: messenger.id,
+              userId,
+            },
+          });
+        if (conversationCreatedByAnotherRequest) {
+          alreadyVisible += 1;
+          continue;
+        }
+
+        await this.ensureMessengerConversation(parentAgent, messenger);
+        revealed += 1;
+        if (ageEligible) {
+          revealedByAge += 1;
+        } else {
+          revealedByTurns += 1;
+        }
+      } finally {
+        await this.releaseMessengerRevealLock(messenger.id, lock.token);
+      }
+    }
+
+    return {
+      processed: messengers.length,
+      alreadyVisible,
+      revealed,
+      revealedByTurns,
+      revealedByAge,
+    };
+  }
+
+  private async acquireMessengerRevealLock(
+    messengerAgentId: MongoObjectId
+  ): Promise<{ acquired: boolean; token: string }> {
+    const token = `${Date.now()}:${Math.random().toString(16).slice(2)}`;
+
+    try {
+      const result = await this.redisService?.set(
+        this.getMessengerRevealLockKey(messengerAgentId),
+        token,
+        'PX',
+        MESSENGER_REVEAL_LOCK_TTL_MS,
+        'NX'
+      );
+      return {
+        acquired: result === undefined || result === 'OK',
+        token,
+      };
+    } catch (error) {
+      this.logger?.warn?.(
+        '[messenger] reveal lock unavailable, messengerAgentId=%s, reason=%s',
+        String(messengerAgentId),
+        error instanceof Error ? error.message : String(error)
+      );
+      return { acquired: true, token: '' };
+    }
+  }
+
+  private async releaseMessengerRevealLock(
+    messengerAgentId: MongoObjectId,
+    token: string
+  ): Promise<void> {
+    if (!token || !this.redisService) {
+      return;
+    }
+
+    try {
+      const key = this.getMessengerRevealLockKey(messengerAgentId);
+      if ((await this.redisService.get(key)) === token) {
+        await this.redisService.del(key);
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        '[messenger] reveal lock release failed, messengerAgentId=%s, reason=%s',
+        String(messengerAgentId),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  private getMessengerRevealLockKey(messengerAgentId: MongoObjectId): string {
+    return `messenger:reveal:lock:${String(messengerAgentId)}`;
   }
 
   async ensureMessengerConversation(
@@ -741,8 +912,8 @@ export class MessengerService {
     messengerName: string
   ): string[] {
     return [
-      `你好，我是${messengerName}。关于${parentName}的事，都可以慢慢跟我讲。`,
-      `你最想先让我了解${parentName}的哪一面？`,
+      `你好，我是${messengerName}，可以帮${parentName}找回记忆。`,
+      `你最想让${parentName}想起来的是？`,
     ];
   }
 
