@@ -196,7 +196,7 @@ export interface ReplyCareReceptionPlan {
 }
 
 export interface ReplyBrief {
-  version: 'reply_brief_v16';
+  version: 'reply_brief_v17';
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -358,11 +358,13 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const rawConversationPlan =
     options.route?.intent?.conversationPlan ??
     options.intent?.conversationPlan ??
-    buildDeterministicLightStrategy({
-      scene: primaryScene,
-      currentQuery,
-      intents,
-    });
+    (options.planningMode === 'direct'
+      ? undefined
+      : buildDeterministicLightStrategy({
+          scene: primaryScene,
+          currentQuery,
+          intents,
+        }));
   const evidence = buildEvidence(options, currentQuery);
   const sceneFramework = resolveRelationalSceneFramework({
     currentQuery,
@@ -476,26 +478,29 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       experiencePlan
     )
   );
-  const commAct = resolveReplyCommAct({
-    currentQuery,
-    state:
-      conversationPlan?.engagement?.userConversationState ??
-      conversationPlan?.turnPlan?.state ??
-      resolveConversationState({
-        currentQuery,
-        scene: primaryScene,
-        mode,
-        riskLevel,
-      }),
-    turnPlan: conversationPlan?.turnPlan,
-    contentUnits,
-    strategyQuality,
-    scene: primaryScene,
-    mode,
-    riskLevel,
-    questionNeed: conversationPlan?.questionNeed,
-    preferAsk: conversationPlan?.moves.some(move => move.type === 'ask'),
-  });
+  const commAct =
+    options.planningMode === 'direct'
+      ? undefined
+      : resolveReplyCommAct({
+          currentQuery,
+          state:
+            conversationPlan?.engagement?.userConversationState ??
+            conversationPlan?.turnPlan?.state ??
+            resolveConversationState({
+              currentQuery,
+              scene: primaryScene,
+              mode,
+              riskLevel,
+            }),
+          turnPlan: conversationPlan?.turnPlan,
+          contentUnits,
+          strategyQuality,
+          scene: primaryScene,
+          mode,
+          riskLevel,
+          questionNeed: conversationPlan?.questionNeed,
+          preferAsk: conversationPlan?.moves.some(move => move.type === 'ask'),
+        });
   const careMotivation = resolveReplyCareMotivationPlan({
     currentQuery,
     mode,
@@ -568,20 +573,23 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     replyMoveCount,
     turnClosureHint: conversationPlan?.turnClosure,
   });
-  const participationStrategy = resolveReplyParticipationStrategy({
-    currentQuery,
-    mode,
-    riskLevel,
-    primaryScene,
-    strictGrounding,
-    replyMoveCount,
-    hasCapabilityConstraints: capabilityConstraints.length > 0,
-    conversationPlan,
-    hasRelationshipContinuity: Boolean(relationshipContinuity),
-    turnClosure: baseBubblePlan.turnClosure,
-    recentMessages: options.recentMessages,
-    isDeceased: Boolean(options.agent?.deathDate),
-  });
+  const participationStrategy =
+    options.planningMode === 'direct'
+      ? undefined
+      : resolveReplyParticipationStrategy({
+          currentQuery,
+          mode,
+          riskLevel,
+          primaryScene,
+          strictGrounding,
+          replyMoveCount,
+          hasCapabilityConstraints: capabilityConstraints.length > 0,
+          conversationPlan,
+          hasRelationshipContinuity: Boolean(relationshipContinuity),
+          turnClosure: baseBubblePlan.turnClosure,
+          recentMessages: options.recentMessages,
+          isDeceased: Boolean(options.agent?.deathDate),
+        });
   const singleBubbleAcknowledgment = SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
     currentQuery.trim()
   );
@@ -666,7 +674,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     recentMessages: options.conversationMessages ?? options.recentMessages,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v16',
+    version: 'reply_brief_v17',
     mode,
     primaryScene,
     riskLevel,
@@ -2337,7 +2345,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     `版本：${brief.version}；模式：${brief.mode}；风险：${brief.riskLevel}。`,
     `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
-    '当前用户消息和本轮回复动作优先于历史话题；历史只用于理解关系与事实，不得把上一轮主题续写到本轮。若当前消息没有提到某个话题，不得仅因历史出现过就主动切换过去。',
+    '把当前用户消息放回最近几轮自然理解：它可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
     ...careReceptionLines,
     ...readingLines,
     ...contentUnitLines,
