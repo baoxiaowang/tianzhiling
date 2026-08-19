@@ -288,7 +288,10 @@ function hasHardIssues(issues: FinalReplyIssue[]): boolean {
 }
 
 const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
+  'active_contribution_returned_to_user',
+  'role_contribution_missing',
   'unnecessary_question',
+  'care_rebuffed_with_dismissal',
   'care_not_received',
   'care_immediately_reversed',
   'redundant_second_bubble',
@@ -304,7 +307,6 @@ function buildSafeFallback(
   userQuery: string,
   outputConstraints?: FinalReplyOutputConstraints
 ): string[] {
-  const requiredActs = new Set(outputConstraints?.requiredActs || []);
   if (issues.some(issue => issue.code === 'death_encouragement')) {
     return ['先别等着什么时候来见我', '你现在好好留在这里，把难受说出来'];
   }
@@ -400,76 +402,7 @@ function buildSafeFallback(
       '可你现在想我的这些话，我都认真接着',
     ];
   }
-  if (
-    requiredActs.has('role_contribution') &&
-    requiredActs.has('receive_care')
-  ) {
-    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
-      return [
-        '我吃过了，今天吃得挺简单的',
-        '你这样惦记我心里暖，这会儿正慢慢想着你刚才的话',
-      ];
-    }
-    return ['你的关心我认真收下了', '这会儿心里挺安静，也正慢慢想着你刚才的话'];
-  }
-  if (
-    requiredActs.has('role_contribution') &&
-    requiredActs.has('direct_answer')
-  ) {
-    const directAnswer = /(?:AI|人工智能|机器人)/i.test(userQuery)
-      ? '是，我是由人工智能生成的亲人角色'
-      : /(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)
-      ? '这个细节我现在记不清了'
-      : '这件事我现在说不准，不能拿空话糊弄你';
-    return [directAnswer, '这会儿心里挺安静，也正慢慢想着你刚才的话'];
-  }
-  if (
-    issues.some(issue =>
-      [
-        'care_rebuffed_with_dismissal',
-        'care_not_received',
-        'care_immediately_reversed',
-      ].includes(issue.code)
-    )
-  ) {
-    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
-      return ['我吃过了，今天吃得挺简单的', '你这样惦记我，心里真暖'];
-    }
-    if (
-      /(?:还好吗|好不好|没事吧|怎么样|冷不冷|热不热|疼不疼|累不累)/.test(
-        userQuery
-      )
-    ) {
-      return ['我这边挺安稳的，没什么难受的', '你这样惦记我，心里真暖'];
-    }
-    if (/(?:添衣|穿暖|休息|别累|别太累|别辛苦|别太辛苦|保重)/.test(userQuery)) {
-      return ['好，我会把衣服添好，也会歇一歇', '你这份关心，我认真收下了'];
-    }
-    return ['好，你的关心我认真收下了', '被你这样惦记着，心里真暖'];
-  }
-  if (
-    issues.some(
-      issue =>
-        issue.code === 'active_contribution_returned_to_user' ||
-        issue.code === 'role_contribution_missing'
-    )
-  ) {
-    return ['这会儿心里挺安静的', '刚才你那句话，我还在慢慢想着'];
-  }
   if (issues.some(issue => issue.code === 'direct_answer_missing')) {
-    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
-      return ['我吃过了，今天吃得挺简单的'];
-    }
-    if (
-      /(?:还好吗|好不好|没事吧|怎么样|冷不冷|热不热|疼不疼|累不累)/.test(
-        userQuery
-      )
-    ) {
-      return ['我这边挺安稳的，没什么难受的'];
-    }
-    if (/(?:干嘛|做什么|做啥|忙什么|在干什么)/.test(userQuery)) {
-      return ['我这会儿刚静下来，正慢慢想着你说的话'];
-    }
     if (/(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)) {
       return ['这个细节我现在记不清了'];
     }
@@ -483,18 +416,6 @@ function buildSafeFallback(
   }
   if (/(?:说清.{0,6}错在哪|错在哪.{0,6}说清)/.test(userQuery)) {
     return ['错在我没根据就说得太肯定', '是我不对'];
-  }
-  if (
-    /(?:说|讲)(?:得)?具体|具体点|(?:说|讲)点(?:自己的|你的)(?:事)?/.test(
-      userQuery
-    )
-  ) {
-    return ['这会儿心里挺安静的', '刚才你那句话，我还在慢慢想着'];
-  }
-  if (
-    /(?:别|不要).{0,5}(?:太辛苦|辛苦|太累|累着|熬太晚)|好好休息/.test(userQuery)
-  ) {
-    return ['你这句关心，我听进去了'];
   }
   if (
     issues.some(issue =>
@@ -593,12 +514,9 @@ function buildEvidenceSafeTaskFallback(
     return ['这个具体细节我现在记不清了', '但你提起它时的在意，我不会随口敷衍'];
   }
   if (speechAct === 'speak_actively') {
-    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
-      return ['我这边照旧吃点家常饭', '吃饭不是挨饿，是还喜欢这份烟火气'];
-    }
     return [
-      '我这边日子安稳，身上也没有病痛',
-      '偶尔照旧做点喜欢的事，心里挺自在',
+      '刚才那段里有我不能确定的具体内容',
+      '我不拿编出来的日常或往事回答你',
     ];
   }
   if (speechAct === 'correct' || speechAct === 'repair') {
@@ -620,20 +538,8 @@ function buildUltimateSafeFallback(
   userQuery: string,
   outputConstraints?: FinalReplyOutputConstraints
 ): string[] {
-  if (outputConstraints?.mustKeepTurnWithAssistant) {
-    return ['我这会儿心里很安静', '也在认真想你刚才说的那件事'];
-  }
+  void userQuery;
   if (outputConstraints?.directAnswerRequired) {
-    if (/(?:吃|饭|喝).{0,8}(?:吗|没|什么|啥|哪样)/.test(userQuery)) {
-      return ['我吃过了，今天吃得挺简单的'];
-    }
-    if (
-      /(?:还好吗|好不好|没事吧|怎么样|冷不冷|热不热|疼不疼|累不累)/.test(
-        userQuery
-      )
-    ) {
-      return ['我这边挺安稳的，没什么难受的'];
-    }
     return ['这件事我现在说不准，不能拿空话回答你'];
   }
   return ['这件事我不能替现实说成真的', '但你放在里面的心意，我认真接着'];

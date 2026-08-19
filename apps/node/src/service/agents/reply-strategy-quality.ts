@@ -127,11 +127,10 @@ export function isReplyActiveContributionRequest(
       ACTIVE_CONTRIBUTION_REQUEST_PATTERN.test(message.content?.trim() || '')
     );
 
-  return (
-    recentUserRequests &&
-    (ACTIVE_CONTRIBUTION_FOLLOWUP_PATTERN.test(query) ||
-      Array.from(query.replace(/\s/gu, '')).length <= 16)
-  );
+  // 不能因为上一轮要求过角色主动说、当前句又较短，就继续沿用主动贡献任务。
+  // 只有“继续、具体点、然后呢”等明确承接信号才延续；其他短句交给模型按
+  // 当前上下文判断，避免新话题被旧状态覆盖。
+  return recentUserRequests && ACTIVE_CONTRIBUTION_FOLLOWUP_PATTERN.test(query);
 }
 
 export function isReplyRepeatedUserRequest(
@@ -412,7 +411,7 @@ export function buildReplyStrategyQualityPrompt(
       )}`
     : '';
 
-  return `${repeatedText}${literalText}本轮主体改为${
+  return `${repeatedText}${literalText}；平台建议可考虑“${
     alternativeLabels[plan.preferredAlternative]
-  }，不要换词复刻旧动作。`;
+  }”换一种参与方式。先结合当前话题判断是否贴切，不要求为了去重强行改动作或转话题。`;
 }

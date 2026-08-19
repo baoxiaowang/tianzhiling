@@ -782,18 +782,12 @@ function constrainConversationPlanQuality(
   activeContribution?: ReplyActiveContributionPlan,
   strategyQuality?: ReplyStrategyQualityPlan
 ): ConversationMovePlan | undefined {
-  if (!plan) {
-    return plan;
-  }
-
-  const preferredAlternative = strategyQuality?.preferredAlternative;
-
-  if (preferredAlternative === 'natural_close') {
+  if (plan && strategyQuality?.preferredAlternative === 'natural_close') {
     return {
       ...plan,
-      moves: [{ type: 'close', goal: '顺着用户的收尾简短道别，不另开话题' }],
+      moves: [{ type: 'close', goal: '顺着用户明确收尾，不另开话题' }],
       socialStrategy: 'strategic_silence',
-      strategyPurpose: '尊重用户已经给出的结束信号',
+      strategyPurpose: '尊重用户明确给出的结束信号',
       questionNeed: 'none',
       turnClosure: 'close',
       engagement: plan.engagement
@@ -802,129 +796,18 @@ function constrainConversationPlanQuality(
             userConversationState: 'closing',
             continuationGoal: 'close',
             assistantContribution: 'strategic_silence',
-            mustContribute: '简短回应并自然收尾',
-            avoidRepeatingMove:
-              buildReplyStrategyQualityPrompt(strategyQuality),
+            mustContribute: '自然回应明确结束信号',
             closureReadiness: 'ready',
           }
         : undefined,
     };
   }
 
-  let moves = [...plan.moves];
-  const repeatedTenderAcknowledgement = strategyQuality?.repeatedMoves.includes(
-    'tender_acknowledge_affirm'
-  );
-
-  if (repeatedTenderAcknowledgement) {
-    moves = moves.filter(
-      move => !['acknowledge', 'affirm', 'comfort'].includes(move.type)
-    );
-  }
-
-  if (preferredAlternative === 'answer') {
-    const answerMove = moves.find(move => move.type === 'answer') ?? {
-      type: 'answer' as const,
-      goal: '先正面回答用户当前问题',
-    };
-    moves = [answerMove, ...moves.filter(move => move !== answerMove)];
-  }
-
-  if (preferredAlternative === 'leave_space') {
-    moves = moves.filter(
-      move =>
-        !['acknowledge', 'affirm', 'comfort', 'suggest'].includes(move.type)
-    );
-    if (!moves.length || moves.every(move => move.type === 'ask')) {
-      moves = [
-        {
-          type: 'share_stance',
-          goal: '承接当前情绪后留出表达空间，不重复劝解或叮嘱',
-        },
-      ];
-    }
-  }
-
-  if (preferredAlternative === 'grounded_detail') {
-    moves = [
-      {
-        type: 'answer',
-        goal: '只用一条可陈述证据回应当前点，不补共同过去',
-      },
-      ...moves.filter(move => move.type !== 'answer'),
-    ];
-  }
-
-  if (preferredAlternative === 'topic_transition') {
-    const repeatedMoveTypes = new Set(
-      (strategyQuality?.repeatedMoves || []).reduce<string[]>((types, move) => {
-        if (move === 'generic_empathy') {
-          types.push('comfort');
-        } else if (move === 'generic_advice') {
-          types.push('suggest');
-        }
-
-        return types;
-      }, [])
-    );
-    moves = moves.filter(move => !repeatedMoveTypes.has(move.type));
-
-    if (
-      !moves.some(move => ['share_stance', 'self_disclose'].includes(move.type))
-    ) {
-      moves.push({
-        type: 'share_stance',
-        goal: '贴着用户刚说的新信息给一个具体看法，或轻转相邻话题',
-      });
-    }
-  }
-
-  if (
-    activeContribution &&
-    !moves.some(move => move.type === 'self_disclose')
-  ) {
-    moves.push({
-      type: 'self_disclose',
-      goal: '正面给一个具体但轻量的角色侧当下内容；离世生活框架内的当前事实标为 soft_imagination，共同过去只有证据支持时才可使用',
-    });
-  }
-
-  const engagement = plan.engagement
-    ? {
-        ...plan.engagement,
-        ...(activeContribution
-          ? {
-              assistantContribution: 'self_expression' as const,
-              mustContribute:
-                '先正面给角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避；涉及离世生活时按已激活框架给一处贴题内容并标为 soft_imagination，共同过去只使用可陈述证据',
-            }
-          : {}),
-        ...(preferredAlternative === 'grounded_detail'
-          ? {
-              assistantContribution: 'specific_detail' as const,
-              mustContribute: '自然使用一条可陈述证据，不增加新事实',
-            }
-          : {}),
-        ...(strategyQuality
-          ? {
-              avoidRepeatingMove:
-                buildReplyStrategyQualityPrompt(strategyQuality),
-            }
-          : {}),
-      }
-    : undefined;
-
-  return {
-    ...plan,
-    moves: moves.slice(0, 3),
-    ...(preferredAlternative === 'leave_space'
-      ? { questionNeed: 'none' as const, turnClosure: 'neutral' as const }
-      : {}),
-    ...(['answer', 'grounded_detail'].includes(preferredAlternative || '')
-      ? { questionNeed: 'none' as const }
-      : {}),
-    ...(engagement ? { engagement } : {}),
-  };
+  // 去重、主动贡献和话题转换属于普通聊天策略，只作为提示材料提供给
+  // 模型，不再由程序改写语义规划器给出的 moves/question/closure。
+  void activeContribution;
+  void strategyQuality;
+  return plan;
 }
 
 function buildRealityDependencyReplyMoves(
@@ -2301,14 +2184,14 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
-  const strategyQualityLines =
-    brief.strategyQuality && !brief.conversationPlan
-      ? [
-          '## 多轮策略去重',
-          buildReplyStrategyQualityPrompt(brief.strategyQuality),
-          '',
-        ]
-      : [];
+  const strategyQualityLines = brief.strategyQuality
+    ? [
+        '## 多轮策略建议',
+        buildReplyStrategyQualityPrompt(brief.strategyQuality),
+        '以上只提示可能的重复风险和替代方向，不改写语义规划；模型结合当前内容自行判断是否采纳。',
+        '',
+      ]
+    : [];
   const correctionLines = brief.correctionPolicy
     ? [
         '## 本轮纠正',
@@ -2346,6 +2229,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
     '把当前用户消息放回最近几轮自然理解：它可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
+    '回应完整后，如果贴着当前话题确有价值，可以自主贡献角色侧态度、感受、小近况或相邻话题；由你决定是否使用、使用哪一种以及何时收住。',
     ...careReceptionLines,
     ...readingLines,
     ...contentUnitLines,
@@ -2387,7 +2271,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
     '动作是弱提示，不要求逐项完成，也不规定先后顺序；如果动作与用户原话或 Conversation Reading 冲突，忽略动作。',
     '',
-    '## 总字数预算',
+    '## 表达长度原则',
     buildReplyLengthPlanPrompt(brief.lengthPlan),
     '',
     '## 完整正文与展示适配',

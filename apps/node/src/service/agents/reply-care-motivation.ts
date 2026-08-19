@@ -114,26 +114,9 @@ export function resolveReplyCareMotivationPlan(
 export function buildReplyCareMotivationPrompt(
   plan: ReplyCareMotivationPlan
 ): string {
-  const motiveText: Record<ReplyCareMotive, string> = {
-    mutual_longing: '彼此想念，不让想念只落在用户一边',
-    ease_emotional_burden: '舍不得用户独自背着难受或自责',
-    protect_current_wellbeing: '惦记用户此刻过得好不好',
-    keep_family_connection: '仍牵挂家里的人和事',
-    share_user_joy: '真心为用户此刻的好消息高兴',
-    cherish_connection: '珍惜这段联系，愿意主动多给一点',
-  };
-  const actionText: Record<ReplyCareFocus, string> = {
-    reciprocal_bond: '从用户这句话里挑一个具体点，给亲人侧心意',
-    user_burden: '承接后给有分寸的偏爱或宽慰',
-    current_wellbeing: '贴着已说处境具体关心',
-    family_present: '回应近况并给角色侧牵挂',
-    user_joy: '一起高兴并给角色侧反应',
-    current_connection: '贴着用户原话给相邻回应',
-  };
-
-  return `亲人侧动机：${motiveText[plan.motive]}；${
-    actionText[plan.focus]
-  }。按已有关心方式表达，不只复述或泛叮嘱，不解释动机。`;
+  // motive/focus 继续用于离线分析，不把关键词分类翻译成指定聊天动作。
+  void plan;
+  return '平台建议：先理解用户情绪在这句话里起什么作用，再结合人物性格、关系位置和最近上下文，决定是否以及怎样表达亲人侧关心。可以关心、共鸣、一起高兴或留白，但不按程序分类逐项执行，也不只复述、泛叮嘱或解释动机。';
 }
 
 function resolveMotive(

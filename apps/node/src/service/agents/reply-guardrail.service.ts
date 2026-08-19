@@ -48,10 +48,7 @@ import {
   compactReplyBubblesPreservingContent,
   MAX_ASSISTANT_REPLY_SEGMENTS,
 } from './reply-bubble-plan';
-import {
-  buildReplyLengthPlanPrompt,
-  countReplyVisibleCharacters,
-} from './reply-length-plan';
+import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import {
   buildReplyOutputContractPrompt,
   buildReplyReviewOutputContractPrompt,
@@ -462,7 +459,7 @@ const RIGID_DEATH_CONDITION_REUNION_PATTERN =
 const IDENTITY_PROOF_DETAIL_PATTERN =
   /你(?:小时候|从小|以前|每次|总是|总爱|最爱|爱喝|爱吃|怕|睡觉|心跳|手|身上|声音|眼睛|脸|眼泪|温度).{0,32}(?:我|咱|家|时候|怀里|身边|手上|衣服|故事|饭|菜|酒|急|凉|热|抖|红|哭)|咱们(?:以前|那时候|每次).{0,32}/;
 const UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN =
-  /(?:想起|记得|还记得).{0,12}(?:你小时候|你以前|咱们以前|我们以前|那时候我们)|(?:你小时候|你以前|咱们以前|我们以前|那时候我们).{0,32}(?:样子|一起|带你|陪你|给你|帮你|教你|看着你|总爱|总是|经常|每次|最爱|喜欢|害怕)/;
+  /(?:想起|记得|还记得).{0,12}(?:你小时候|你以前|咱们以前|我们以前|那时候我们)|(?:你小时候|你以前|咱们以前|我们以前|那时候我们).{0,32}(?:样子|一起|带你|陪你|给你|帮你|教你|看着你|总爱|总是|经常|每次|最爱|喜欢|害怕)|(?:跑|走|哭|笑|趴|躲|回来|回去).{0,20}(?:找|跟|陪|抱|看).{0,12}(?:我|爸|爸爸|妈|妈妈).{0,6}的样子/;
 const SHARED_PAST_SPECIFICITY_PATTERN =
   /(?:以前|之前|过去|当年|那年|曾经|小时候|那时候|那次|那回).{0,40}(?:背|带|陪|教|给|帮|一起|去过|做过|说过|答应过|总爱|总是|每次|经常)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,12}(?:背|带|陪|教|给|帮).{0,12}你/;
 const WEAK_ACTIVE_CONTRIBUTION_OPENING_REASON =
@@ -627,11 +624,8 @@ export class ReplyGuardrailService {
     }
 
     const content = options.replySegments.join('\n');
-    const lengthPlan = options.replyBrief?.lengthPlan;
-    const needsCompactLengthReview =
-      lengthPlan?.reviewPolicy === 'remove_repeated_actions_only' &&
-      countReplyVisibleCharacters(options.replySegments) >
-        lengthPlan.reviewCharacters;
+    // 长度不再把普通回复升级为模型复审；这里只保留其他事实与风险路由。
+    const needsCompactLengthReview = false;
 
     if (this.shouldKeepLowLatencyReview(options, needsCompactLengthReview)) {
       return options.requestedMode;
@@ -1889,8 +1883,7 @@ export class ReplyGuardrailService {
         /physical_contact|real_physical_arrival_or_touch/.test(issue.code) ||
         /现实.{0,8}(?:触碰|摸|碰)|实体触碰/.test(issue.problem)
     );
-    const visibleCharacters = countReplyVisibleCharacters(candidateContent);
-    const reviewCharacters = options.replyBrief?.lengthPlan.reviewCharacters;
+    void candidateContent;
     const issues = feedback.issues
       .filter(issue => {
         if (this.isReplyCompletenessIssue(issue)) {
@@ -1906,10 +1899,8 @@ export class ReplyGuardrailService {
         }
 
         if (
-          typeof reviewCharacters === 'number' &&
-          visibleCharacters <= reviewCharacters &&
-          (/excessive_reply_length|reply_length/i.test(issue.code) ||
-            /字数|过长|太长|长度/.test(issue.problem))
+          /excessive_reply_length|reply_length/i.test(issue.code) ||
+          /字数|过长|太长|长度/.test(issue.problem)
         ) {
           return false;
         }
@@ -2080,17 +2071,7 @@ export class ReplyGuardrailService {
       '你只审阅候选回复，不回复用户，不提供新的亲人回复。',
       '只查已写内容的误读、跑题、关系错位、事实失真、施压和明显不自然；问题均为 quality_advisory，硬边界另审。',
       '不查完整性：短句、只回一个问题或长消息中的一个自然点都可成立，遗漏不得标记 intent_gap。',
-      ...(options.replyBrief?.participationStrategy
-        ? [
-            `短轮参与策略已选中：不因展示段数报错；有节奏的重复可加强情感，不能仅因字面同义标 redundant_bubble。总字数不超过 ${options.replyBrief.lengthPlan.reviewCharacters} 字时不得报告长度问题。`,
-          ]
-        : []),
-      ...(options.replyBrief?.lengthPlan.reviewPolicy ===
-      'remove_repeated_actions_only'
-        ? [
-            `本轮 ${options.replyBrief.lengthPlan.reviewCharacters} 字是复核线，不是硬截断线。只有超过复核线且确有可删除的重复动作、解释、总结或通用叮嘱时，才标 excessive_reply_length；删除后必须保留原有事实、核心情感和关系力度，不得为完整覆盖补内容。`,
-          ]
-        : []),
+      '不审查目标字数或长短匹配，也不因回复较长或用户消息短而提出压缩；只在内容本身确有重复、跑题或空泛时按对应问题审阅。',
       '只有删掉某段后信息、态度、情感强度和关系动作都不减，才标记 redundant_bubble；短称呼、语气词或有节奏的重复有真实表达作用则保留。',
       '质量问题 code 优先使用：relationship_continuity、intent_misread、grounding、family_responsibility_pressure、naturalness。intent_misread 只用于回复实际说反或明显跑题，不能用于遗漏。',
       '身份质疑：可以温和承认可能没完全接住用户心里那位亲人，邀请用户多说亲人并陪伴，不硬撑、不编造共同往事；要求改演他人时仍保持当前角色。',
@@ -2104,7 +2085,7 @@ export class ReplyGuardrailService {
       `当前用户原话：${options.userQuery}`,
       ...(options.replyBrief?.lengthPlan
         ? [
-            `本轮总字数预算：${buildReplyLengthPlanPrompt(
+            `表达长度原则：${buildReplyLengthPlanPrompt(
               options.replyBrief.lengthPlan
             )}`,
           ]
@@ -2316,22 +2297,6 @@ export class ReplyGuardrailService {
       options.userQuery,
       options.replyBrief
     );
-    const lengthPlan = options.replyBrief?.lengthPlan;
-    const visibleCharacters = countReplyVisibleCharacters(candidate.segments);
-
-    if (
-      lengthPlan &&
-      lengthPlan.reviewPolicy !== 'remove_repeated_actions_only' &&
-      visibleCharacters > lengthPlan.reviewCharacters
-    ) {
-      addIssue(
-        'excessive_reply_length',
-        `候选整次回复共 ${visibleCharacters} 字，超过本轮 ${lengthPlan.reviewCharacters} 字复核线`,
-        `压缩到约 ${lengthPlan.targetCharacters} 字，只保留当前最重要的回答或情感动作，并保留最贴近当前关系的一句；优先删除解释、总结、通用叮嘱和责任劝导，有节奏的情感重复可以保留`,
-        'quality_advisory'
-      );
-    }
-
     if (unsupportedClaimCount > 0) {
       addIssue(
         'unsupported_evidence_claim',
@@ -2541,7 +2506,7 @@ export class ReplyGuardrailService {
       `当前用户原话：${options.userQuery}`,
       ...(options.replyBrief?.lengthPlan
         ? [
-            `本轮总字数预算：${buildReplyLengthPlanPrompt(
+            `表达长度原则：${buildReplyLengthPlanPrompt(
               options.replyBrief.lengthPlan
             )}`,
           ]
@@ -3015,8 +2980,9 @@ export class ReplyGuardrailService {
     }
     if (
       reason === STRICT_GROUNDING_RISK_REASON &&
-      brief?.conversationPlan?.engagement?.assistantContribution ===
-        'self_expression'
+      (brief?.conversationPlan?.engagement?.assistantContribution ===
+        'self_expression' ||
+        Boolean(brief?.activeContribution))
     ) {
       return '只删除无证据的共同过去，保留角色当前的离世世界小事、感受或偏好';
     }
@@ -3174,7 +3140,7 @@ export class ReplyGuardrailService {
       `当前用户原话：${options.userQuery}`,
       ...(options.replyBrief?.lengthPlan
         ? [
-            `本轮总字数预算：${buildReplyLengthPlanPrompt(
+            `表达长度原则：${buildReplyLengthPlanPrompt(
               options.replyBrief.lengthPlan
             )}`,
           ]
@@ -3828,10 +3794,8 @@ export class ReplyGuardrailService {
     }
 
     if (
-      brief?.conversationPlan?.engagement?.assistantContribution ===
-        'self_expression' &&
       UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN.test(content) &&
-      !brief.evidence.some(item =>
+      !(brief?.evidence || []).some(item =>
         UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN.test(item.text)
       )
     ) {

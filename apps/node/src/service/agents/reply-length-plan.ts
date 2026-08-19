@@ -238,19 +238,13 @@ function promoteLengthClass(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
-  if (plan.preferredRange) {
-    return `整次回复合计优先 ${plan.preferredRange.minCharacters}-${plan.preferredRange.maxCharacters} 字；明显超过 ${plan.reviewCharacters} 字时优先删重复。情绪、事实和语义完整优先，不为展示气泡压缩、补写或删减内容。`;
-  }
-
+  // 长度计划只保留给分布观测和异常诊断；生成模型不接收目标字数，
+  // 防止程序预算反向压缩情绪、事实和对话参与。
   if (plan.focusMode === 'single_scene') {
-    return `围绕一个最能安慰用户的点自然展开；事实克制不等于情感克制，可有一处贴着原话的亲人侧心意。字数服从情绪和语义完整，明显超过 ${plan.reviewCharacters} 字时也只删重复。`;
+    return '围绕一个真正重要的点自然展开；事实克制不等于情感克制。微信式简洁只是表达风格，情绪、事实和语义完整优先，不按字数压缩或扩写。';
   }
 
-  if (plan.lengthClass === 'micro') {
-    return `总回复约 ${plan.targetCharacters} 字；明显超过 ${plan.reviewCharacters} 字时优先检查并删除重复。简单回应可以很短，但完整回应当前需要比凑长度更重要。`;
-  }
-
-  return `总回复约 ${plan.targetCharacters} 字；超过 ${plan.reviewCharacters} 字复核。围绕最重要一点自然展开，达到情感作用后收住；只删重复的共情动作（如连续两个"心疼""明白"）、解释、总结和通用叮嘱；保留称呼、情感立场和角色侧心意。`;
+  return '像微信聊天一样自然简洁，但不设置生成目标字数。情绪、事实和语义完整优先；先把当前该回应的内容说好，再自然收住。只有确属重复、空泛解释或通用叮嘱时才自行删减，不因消息短而短答，也不为拆泡改变正文。';
 }
 
 export function countReplyVisibleCharacters(value: string | string[]): number {
