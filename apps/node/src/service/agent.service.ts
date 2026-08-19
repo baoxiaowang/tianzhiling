@@ -249,10 +249,7 @@ export class AgentService {
       }),
     ]);
 
-    if (
-      !agent ||
-      !this.sameObjectId(agent.createdUserId, invite.ownerUserId)
-    ) {
+    if (!agent || !this.sameObjectId(agent.createdUserId, invite.ownerUserId)) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -315,10 +312,7 @@ export class AgentService {
 
     const agent = await this.findAgentById(invite.agentId);
 
-    if (
-      !agent ||
-      !this.sameObjectId(agent.createdUserId, invite.ownerUserId)
-    ) {
+    if (!agent || !this.sameObjectId(agent.createdUserId, invite.ownerUserId)) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -330,8 +324,7 @@ export class AgentService {
     const existingMember = isOwner
       ? null
       : await this.findShareMemberByAgentAndUser(agent.id, userId);
-    const wasActive =
-      existingMember?.status === AgentShareMemberStatus.active;
+    const wasActive = existingMember?.status === AgentShareMemberStatus.active;
     const member = isOwner
       ? null
       : await this.ensureShareMember(agent, invite, userId, now);
@@ -1002,7 +995,9 @@ export class AgentService {
         existingConversation.accessRole = 'shared';
         existingConversation.agentCallsUser = '';
         existingConversation.userCallsAgent =
-          existingConversation.userCallsAgent?.trim() || agent.name?.trim() || '';
+          existingConversation.userCallsAgent?.trim() ||
+          agent.name?.trim() ||
+          '';
         existingConversation.updatedAt = options.now;
         await this.conversationModel.save(existingConversation);
       }
@@ -1027,9 +1022,7 @@ export class AgentService {
     });
   }
 
-  private async removeAgentShareRecords(
-    agentId: MongoObjectId
-  ): Promise<void> {
+  private async removeAgentShareRecords(agentId: MongoObjectId): Promise<void> {
     const [invites, members] = await Promise.all([
       this.agentShareInviteModel.find({
         where: {
@@ -1355,9 +1348,7 @@ export class AgentService {
   }
 
   private hashShareInviteToken(token: string): string {
-    return createHash('sha256')
-      .update(`agent-share:${token}`)
-      .digest('hex');
+    return createHash('sha256').update(`agent-share:${token}`).digest('hex');
   }
 
   private parseObjectId(value: string): MongoObjectId {
@@ -1384,10 +1375,7 @@ export class AgentService {
     return value ? this.stringifyObjectId(value) : '';
   }
 
-  private sameObjectId(
-    left?: MongoObjectId,
-    right?: MongoObjectId
-  ): boolean {
+  private sameObjectId(left?: MongoObjectId, right?: MongoObjectId): boolean {
     return Boolean(
       left &&
         right &&

@@ -24,6 +24,14 @@ export interface AfterlifeWorldContext {
   profileAnchors: string[];
   receivableItems: string[];
   allowItemReceipt: boolean;
+  state: {
+    residence?: 'stable_familiar_home';
+    health?: 'free_from_illness_and_pain';
+    familyItems?: 'user_named_items_receivable';
+    habits?: 'confirmed_habits_continue';
+    dailyLife?: 'familiar_routine_without_survival_scarcity';
+  };
+  avoidStockPhrases: string[];
 }
 
 export interface AfterlifeWorldConsistencyFinding {
@@ -226,6 +234,8 @@ export function resolveAfterlifeWorldContext(options: {
     profileAnchors,
     receivableItems,
     allowItemReceipt: receivableItems.length > 0,
+    state: resolveAfterlifeWorldState(selectedDomains),
+    avoidStockPhrases: ['我这边挺好的', '没病没痛', '你别挂心'],
   };
 }
 
@@ -240,7 +250,12 @@ export function buildAfterlifeWorldPrompt(
   return [
     `版本：${context.version}；本轮领域：${context.domains.join('、')}。`,
     '这是角色聊天内部的稳定生活设定，用来保持回答连续，不是对现实世界、宗教或超自然现象的证明。普通措辞、情绪和具体说法仍由你按人物性格自然决定。',
-    ...context.canon.map(item => `核心：${item}`),
+    `稳定状态值：${JSON.stringify(
+      context.state
+    )}。把状态转成贴合当前人物和问题的自然口语，不逐字复述状态名。`,
+    `避免把框架写成固定模板：${context.avoidStockPhrases.join(
+      '、'
+    )}；以上表达不要在多轮里机械重复。状态相同也要根据本轮问题换成具体、自然的说法。`,
     ...domainRules.map(item => `本轮：${item}`),
     ...(context.profileAnchors.length
       ? [
@@ -388,6 +403,38 @@ function resolveCoreCanon(domains: AfterlifeWorldDomain[]): string[] {
     }
   }
   return indexes.map(index => CORE_CANON[index]);
+}
+
+function resolveAfterlifeWorldState(
+  domains: AfterlifeWorldDomain[]
+): AfterlifeWorldContext['state'] {
+  const state: AfterlifeWorldContext['state'] = {};
+  if (
+    domains.some(domain =>
+      ['residence', 'relationships', 'general'].includes(domain)
+    )
+  ) {
+    state.residence = 'stable_familiar_home';
+  }
+  if (domains.some(domain => ['health', 'general'].includes(domain))) {
+    state.health = 'free_from_illness_and_pain';
+  }
+  if (domains.includes('family_items')) {
+    state.familyItems = 'user_named_items_receivable';
+  }
+  if (
+    domains.some(domain => ['habits_hobbies', 'food_rest'].includes(domain))
+  ) {
+    state.habits = 'confirmed_habits_continue';
+  }
+  if (
+    domains.some(domain =>
+      ['food_rest', 'environment', 'general'].includes(domain)
+    )
+  ) {
+    state.dailyLife = 'familiar_routine_without_survival_scarcity';
+  }
+  return state;
 }
 
 function extractAfterlifeItemNames(value: string): string[] {

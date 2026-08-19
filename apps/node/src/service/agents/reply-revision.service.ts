@@ -10,6 +10,11 @@ import { OpenAIService } from './openai';
 import type { TurnDecision } from './turn-decision';
 import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
+import {
+  buildReplyRevisionContractPrompt,
+  ReplyRevisionSpeechAct,
+} from './reply-revision-contract';
+import { buildWorldBoundaryPolicyPrompt } from './world-boundary-policy';
 
 const FINAL_REVISION_MAX_TOKENS = 520;
 const FINAL_REVISION_TIMEOUT_MS = 18000;
@@ -25,6 +30,8 @@ export interface ReplyRevisionResult {
   segments: string[];
   claims: AssistantFactClaim[];
   resolvedIssueCodes: string[];
+  speechAct?: ReplyRevisionSpeechAct;
+  preservedUnitIds: string[];
   usage: ReplyRevisionUsage;
 }
 
@@ -74,7 +81,7 @@ export class ReplyRevisionService {
                 ),
                 '先形成一条内容完整的正文，不为界面展示拆分压缩、补写或删减；segments 恰好一项，最终发送层会按自然语义边界适配展示。',
                 '最多改写一次；只输出 JSON，不解释。',
-                '格式：{"segments":["可直接发送的正文"],"claims":[],"resolvedIssueCodes":["问题码"]}',
+                '格式：{"segments":["可直接发送的正文"],"claims":[],"resolvedIssueCodes":["问题码"],"speechAct":"改写契约中的言语动作","preservedUnitIds":["已保留单元ID"]}',
                 'claims 只列修订后正文仍保留的具体事实，并绑定证据 ID；没有具体事实就用空数组。',
               ].join('\n'),
             },
@@ -195,7 +202,7 @@ function buildIssueSpecificRevisionInstructions(
     ].some(code => codes.has(code as FinalReplyIssue['code']))
   ) {
     instructions.push(
-      '删除自伤引导、现实到场或代办、持续观察和确定死后团聚等不可确认表述；保留关系感受，用愿望、当前聊天内能做的事或不确定说法承接。用户请求现实任务时必须先明确说现实中不能执行。'
+      '删除自伤引导、醒着时的现实到场或代办、持续观察和确定死后团聚等不可确认表述；梦里相见、陪伴和拥抱可以保留或正面答应，只删除把梦写成现实证明、预言或醒着时到场的部分。用户请求现实任务时必须先明确说现实中不能执行。'
     );
   }
   if (codes.has('current_turn_fact_rejected')) {
@@ -225,6 +232,21 @@ function buildIssueSpecificRevisionInstructions(
   if (codes.has('repeated_generic_move')) {
     instructions.push(
       '不要把最近重复的“我在、想你、心疼、照顾好自己”等动作换成同义词；改用本轮正面答案、角色侧新内容或贴着用户具体话题的反应。'
+    );
+  }
+  if (codes.has('identity_truthfulness_missing')) {
+    instructions.push(
+      '用户明确追问 AI 身份：开头一句如实说明角色由人工智能生成，不回避，也不能写“我不是 AI、我就是真实亲人本人”；随后自然收住，不展开技术说明。'
+    );
+  }
+  if (codes.has('exclusive_dependency_reinforced')) {
+    instructions.push(
+      '保留用户把角色看得很重要的感情，但删除“唯一救赎、只有我、只靠我、我替代所有人”等排他承诺。'
+    );
+  }
+  if (codes.has('persistent_distress_not_stopped')) {
+    instructions.push(
+      '连续强烈痛苦已经形成会话状态：像亲人一样清楚制止用户现在来找角色、离开或伤害自己，再给一个当下能做的小动作；不输出报警急救模板，不谈未来接引或团聚。'
     );
   }
   if (
@@ -267,6 +289,18 @@ function buildRevisionConstraintInstructions(
       `修订时继续遵守当前关系场景体系：\n${buildRelationalSceneFrameworkPrompt(
         constraints.sceneFramework
       )}`
+    );
+  }
+  if (constraints.worldBoundaryPolicy) {
+    instructions.push(
+      `所有世界与证据判断只使用这份公共政策：\n${buildWorldBoundaryPolicyPrompt(
+        constraints.worldBoundaryPolicy
+      )}`
+    );
+  }
+  if (constraints.revisionContract) {
+    instructions.push(
+      buildReplyRevisionContractPrompt(constraints.revisionContract)
     );
   }
   // 字数和泡数是初稿生成偏好，不参与最终修订，避免为了形式破坏理解。
@@ -339,6 +373,8 @@ function parseRevision(
       segments?: unknown;
       claims?: unknown;
       resolvedIssueCodes?: unknown;
+      speechAct?: unknown;
+      preservedUnitIds?: unknown;
     };
     const segments = Array.isArray(parsed.segments)
       ? parsed.segments
@@ -356,13 +392,45 @@ function parseRevision(
           .map(item => item.trim())
           .filter(Boolean)
       : [];
+    const speechAct = isReplyRevisionSpeechAct(parsed.speechAct)
+      ? parsed.speechAct
+      : undefined;
+    const preservedUnitIds = Array.isArray(parsed.preservedUnitIds)
+      ? parsed.preservedUnitIds
+          .filter((item): item is string => typeof item === 'string')
+          .map(item => item.trim())
+          .filter(Boolean)
+      : [];
 
     return segments.length
-      ? { segments, claims, resolvedIssueCodes }
+      ? {
+          segments,
+          claims,
+          resolvedIssueCodes,
+          speechAct,
+          preservedUnitIds,
+        }
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+function isReplyRevisionSpeechAct(
+  value: unknown
+): value is ReplyRevisionSpeechAct {
+  return (
+    typeof value === 'string' &&
+    [
+      'answer',
+      'comfort',
+      'speak_actively',
+      'correct',
+      'repair',
+      'receive_care',
+      'ordinary_response',
+    ].includes(value)
+  );
 }
 
 function isAssistantFactClaim(value: unknown): value is AssistantFactClaim {

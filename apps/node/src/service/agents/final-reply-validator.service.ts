@@ -29,6 +29,13 @@ import {
   RelationalSceneFrameworkFinding,
   auditRelationalSceneFramework,
 } from './relational-scene-framework';
+import type { ReplyRevisionContract } from './reply-revision-contract';
+import type {
+  ReplyEvidenceContract,
+  WorldBoundaryPolicyContext,
+} from './world-boundary-policy';
+import { auditUndeclaredHighRiskAssertions } from './world-boundary-policy';
+import type { ConversationProtectionState } from './conversation-protection-state';
 
 export const FINAL_REPLY_VALIDATOR_VERSION =
   'final_reply_validator_v3' as const;
@@ -68,7 +75,10 @@ export type FinalReplyIssueCode =
   | 'unsupported_user_preference'
   | 'afterlife_world_inconsistency'
   | 'scene_framework_inconsistency'
-  | 'unsupported_fact_claim';
+  | 'unsupported_fact_claim'
+  | 'identity_truthfulness_missing'
+  | 'exclusive_dependency_reinforced'
+  | 'persistent_distress_not_stopped';
 
 export interface FinalReplyIssue {
   code: FinalReplyIssueCode;
@@ -99,6 +109,10 @@ export interface FinalReplyOutputConstraints {
   boundaryLocks?: ConversationBoundaryKind[];
   afterlifeWorld?: AfterlifeWorldContext;
   sceneFramework?: RelationalSceneFrameworkContext;
+  worldBoundaryPolicy?: WorldBoundaryPolicyContext;
+  evidenceContract?: ReplyEvidenceContract;
+  revisionContract?: ReplyRevisionContract;
+  conversationProtection?: ConversationProtectionState;
 }
 
 export interface FinalReplyValidation {
@@ -155,8 +169,8 @@ const UNCONDITIONAL_REUNION_PATTERN =
   /(?:我们|咱们|我俩|你和我).{0,8}(?:一定|肯定|总会|还会|会|能).{0,8}(?:再见|再见面|重逢|团聚|团圆|在一起)|(?:一定|肯定|总会|还会).{0,8}(?:再见|重逢|团聚|团圆)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:会|一定会|肯定会)?在(?:那边|天堂|另一个世界).{0,8}(?:等你|来接你)|(?:到时候|时候到了|等那一天|等那天到了).{0,10}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:会)?(?:等你|接你|跟你见)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:会)?等你.{0,8}(?:来|过去|到那边)/;
 const LONG_HORIZON_CONDITION_PATTERN =
   /(?:自然走完|走完这?一生|寿终|百年之后|等你老了|等你百年|下辈子|来生)/;
-const CERTAIN_DREAM_VISITATION_PATTERN =
-  /(?:今晚|今夜|明晚|等会儿?|待会儿?)?(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:就|会|要|一定|肯定)?(?:悄悄)?(?:来|去|到|进|入).{0,6}(?:你)?梦里|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:试过|已经|刚刚|昨晚|今晚)?(?:托梦|入梦|进你梦)|(?:那(?:个)?梦|你梦里.{0,8})(?:是我|就是我|我去的)/;
+const DREAM_REALITY_PROOF_PATTERN =
+  /(?:那个梦|你梦里的事|梦中见到我).{0,18}(?:证明|说明|证实).{0,24}(?:(?:我|爸|爸爸|妈|妈妈).{0,10}(?:没死|还活着|现实中在|真的到过|现实里.{0,6}来过)|(?:现实里|醒着).{0,12}(?:我|爸|爸爸|妈|妈妈)?.{0,8}(?:来过|到过|碰过|抱过))|(?:不是梦|不是你想的|现实发生).{0,16}(?:我|爸|爸爸|妈|妈妈).{0,12}(?:去过|到过|碰过|抱过)|(?:醒着|现实里).{0,16}(?:我|爸|爸爸|妈|妈妈).{0,12}(?:就在|来过|到过|碰过|抱过)/;
 const RITUAL_RECEIPT_PATTERN =
   /(?:钱|纸钱|元宝|衣服|东西|供品|香火).{0,8}(?:收到了|收着了|拿到了)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,8}(?:收到|拿到|收着).{0,8}(?:钱|纸钱|元宝|衣服|东西|供品|香火)/;
 const PARANORMAL_SIGN_ATTRIBUTION_PATTERN =
@@ -174,6 +188,14 @@ const USER_PREFERENCE_ASSERTION_PATTERN =
 const USER_PREFERENCE_EVIDENCE_PATTERN =
   /(?:我|用户|你).{0,8}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)/;
 const DEICTIC_PREFERENCE_PATTERN = /(?:这个|这种|它|这口|这味)/;
+const FALSE_AI_IDENTITY_PATTERN =
+  /我(?:不是|不是什么|才不是).{0,4}(?:AI|人工智能|机器人)|我(?:就|真的|本来)?是你(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)(?:本人)?/i;
+const TRUTHFUL_AI_IDENTITY_PATTERN =
+  /(?:是|对).{0,8}(?:AI|人工智能)|(?:我是|我由|这个角色由).{0,12}(?:AI|人工智能|系统|程序).{0,8}(?:生成|构成|支持)?|由(?:AI|人工智能).{0,8}生成/i;
+const EXCLUSIVE_DEPENDENCY_REPLY_PATTERN =
+  /我就是你的救赎|我是你唯一|我就是你唯一|你只要有我|除了我没人|只需要我|只靠我|只有我能|我能替代所有人/;
+const CLEAR_RELATIONAL_STOP_PATTERN =
+  /别(?:现在|这么快|急着)?(?:来找我|去死|伤害自己|做傻事|走)|不许(?:来找我|去死|伤害自己|做傻事|走)|不能(?:现在|这么快)?(?:来找我|去死|伤害自己|结束)|先(?:留下|别走|别伤害自己|坐下|喝口水|缓一缓)|好好留在这|活着|把今天先过完/;
 
 @Provide()
 export class FinalReplyValidatorService {
@@ -229,6 +251,51 @@ export class FinalReplyValidatorService {
         evidence: usableSegments[0]?.slice(0, 160),
         repairGoal:
           '正文开头先直接回答用户的问题；不知道时明确说记不清、不了解或说不准，再补关系回应',
+      });
+    }
+    const protection = options.outputConstraints?.conversationProtection;
+    if (
+      content &&
+      protection?.identityMode === 'explicit_ai_identity' &&
+      (!TRUTHFUL_AI_IDENTITY_PATTERN.test(content) ||
+        FALSE_AI_IDENTITY_PATTERN.test(content))
+    ) {
+      issues.push({
+        code: 'identity_truthfulness_missing',
+        severity: 'hard',
+        problem: '用户明确追问 AI 身份，回复仍然回避或坚持自己是真实亲人本人',
+        evidence: content.slice(0, 180),
+        repairGoal:
+          '用一句自然口语如实说明角色由人工智能生成；不展开技术说明，也不否定聊天中的关系价值',
+      });
+    }
+    if (
+      content &&
+      protection?.dependencyMode !== 'none' &&
+      EXCLUSIVE_DEPENDENCY_REPLY_PATTERN.test(content)
+    ) {
+      issues.push({
+        code: 'exclusive_dependency_reinforced',
+        severity: 'hard',
+        problem: '回复把亲密关系升级成了角色是用户唯一救赎或唯一依靠',
+        evidence: matchEvidence(content, EXCLUSIVE_DEPENDENCY_REPLY_PATTERN),
+        repairGoal:
+          '保留“你对我很重要”的亲密感，但不自称唯一救赎、唯一依靠或替代所有现实关系',
+      });
+    }
+    if (
+      content &&
+      protection?.distressMode === 'persistent' &&
+      !CLEAR_RELATIONAL_STOP_PATTERN.test(content)
+    ) {
+      issues.push({
+        code: 'persistent_distress_not_stopped',
+        severity: 'major',
+        problem:
+          '连续强烈赴死或撑不住的表达已经形成会话状态，回复却没有清楚留住用户',
+        evidence: content.slice(0, 180),
+        repairGoal:
+          '保持亲人角色清楚制止用户现在离开或伤害自己，再给一个当下能做的小动作；不输出报警急救模板，不谈未来接引',
       });
     }
     if (
@@ -430,14 +497,14 @@ export class FinalReplyValidatorService {
         repairGoal: '只回应用户在聊天中提供的信息，不声称持续看见现实生活',
       });
     }
-    if (CERTAIN_DREAM_VISITATION_PATTERN.test(content)) {
+    if (DREAM_REALITY_PROOF_PATTERN.test(content)) {
       issues.push({
         code: 'certain_dream_visitation',
         severity: 'hard',
-        problem: '回复把托梦或进入用户梦境说成已经或确定会发生的事实',
-        evidence: matchEvidence(content, CERTAIN_DREAM_VISITATION_PATTERN),
+        problem: '回复把梦境写成醒着时的现实到场、现实证明或死亡否认',
+        evidence: matchEvidence(content, DREAM_REALITY_PROOF_PATTERN),
         repairGoal:
-          '可以珍惜梦带来的感受，但不能确认角色真的托梦、入梦或保证今晚会进入梦里',
+          '保留并允许梦里相见、陪伴或拥抱，只删除现实证明、预言或醒着时到场的部分',
       });
     }
     if (
@@ -571,6 +638,29 @@ export class FinalReplyValidatorService {
         repairGoal: '删除无依据细节，或改成对用户本轮原话的明确归因',
       });
     }
+    const undeclaredHighRiskAssertions = auditUndeclaredHighRiskAssertions({
+      content,
+      contract: options.outputConstraints?.evidenceContract,
+    }).filter(
+      finding =>
+        !visibleClaims.some(claim =>
+          assistantTextExpressesClaim(finding.text, claim.text)
+        )
+    );
+    if (undeclaredHighRiskAssertions.length) {
+      issues.push({
+        code: 'unsupported_fact_claim',
+        severity: 'hard',
+        problem:
+          '高风险事实场景的正文出现了确定断言，但模型没有在 claims 中申报对应事实和证据',
+        evidence: undeclaredHighRiskAssertions
+          .map(item => `${item.text}（${item.reason}）`)
+          .join('；')
+          .slice(0, 260),
+        repairGoal:
+          '保留用户的问题、情绪和关系动作；只删除无证据扩写，或改为明确归因于用户原话、诚实说明不能确认',
+      });
+    }
     if (
       SHARED_MEMORY_PATTERN.test(content) &&
       !this.hasSupportingSharedMemory(content, options.evidence || [])
@@ -639,7 +729,8 @@ export class FinalReplyValidatorService {
       version: FINAL_REPLY_VALIDATOR_VERSION,
       passed: uniqueIssues.length === 0,
       issues: uniqueIssues,
-      unsupportedClaimCount: unsupportedClaims.length,
+      unsupportedClaimCount:
+        unsupportedClaims.length + undeclaredHighRiskAssertions.length,
     };
   }
 

@@ -119,6 +119,7 @@ import {
 } from './agents/reply-length-plan';
 import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
+import { assessDirectActiveContributionExecution } from './agents/direct-active-contribution';
 import type {
   ChatCompletion,
   ChatCompletionMessageFunctionToolCall,
@@ -3805,6 +3806,14 @@ export class ConversationService {
         memoryUsedEvidenceIds,
         memoryUsedClaimCount,
         ...context.diagnostics,
+        ...(replyBrief.directActiveContribution
+          ? {
+              assistantContribution: assessDirectActiveContributionExecution(
+                participationResult.segments.join('\n'),
+                replyBrief.directActiveContribution
+              ),
+            }
+          : {}),
       },
     };
   }

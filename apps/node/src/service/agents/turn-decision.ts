@@ -130,9 +130,11 @@ export function buildTurnDecision(options: {
       brief.factClaimMode === 'grounded' ||
       brief.evidence.length > 0);
   const careReceptionRequired =
+    Boolean(brief.careReception) ||
     understanding.needs.some(
       need => need.expectedResponse === 'direct_answer_and_receive_care'
-    ) || isUserCaringForRole(currentQuery);
+    ) ||
+    isUserCaringForRole(currentQuery);
   const outputBubbles = brief.bubblePlan.preferTwoSegments
     ? 'two_preferred'
     : closure === 'close'
