@@ -101,6 +101,7 @@ import {
 import type { AgentEvidenceItem } from './agent-evidence';
 import {
   buildTurnUnderstanding,
+  isUserCaringForRole,
   mergeTurnUnderstandings,
 } from './turn-understanding';
 import {
@@ -117,6 +118,18 @@ import {
   DirectActiveContributionPlan,
   resolveDirectActiveContribution,
 } from './direct-active-contribution';
+import {
+  buildReplyEvidenceContract,
+  buildWorldBoundaryPolicyPrompt,
+  ReplyEvidenceContract,
+  resolveWorldBoundaryPolicy,
+  WorldBoundaryPolicyContext,
+} from './world-boundary-policy';
+import {
+  buildConversationProtectionStatePrompt,
+  ConversationProtectionState,
+  resolveConversationProtectionState,
+} from './conversation-protection-state';
 
 export type ReplyBriefMode =
   | 'safety'
@@ -175,8 +188,15 @@ export interface ReplyBriefRelationshipContext {
   assertionPolicy: 'user_state_only';
 }
 
+export interface ReplyCareReceptionPlan {
+  version: 'care_reception_v1';
+  active: true;
+  goal: 'direct_answer_and_receive_care';
+  avoidImmediateReverseCare: true;
+}
+
 export interface ReplyBrief {
-  version: 'reply_brief_v15';
+  version: 'reply_brief_v16';
   mode: ReplyBriefMode;
   primaryScene?: ReplyScene;
   riskLevel: ReplyIntentRiskLevel;
@@ -202,6 +222,7 @@ export interface ReplyBrief {
   directActiveContribution?: DirectActiveContributionPlan;
   strategyQuality?: ReplyStrategyQualityPlan;
   careMotivation?: ReplyCareMotivationPlan;
+  careReception?: ReplyCareReceptionPlan;
   dreamCompanionPlan?: DreamCompanionPlan;
   stateProtocol?: ReplyStateProtocolPlan;
   experiencePlan: ReplyExperiencePlan;
@@ -210,6 +231,9 @@ export interface ReplyBrief {
   isDeceased?: boolean;
   afterlifeWorld?: AfterlifeWorldContext;
   sceneFramework?: RelationalSceneFrameworkContext;
+  worldBoundaryPolicy: WorldBoundaryPolicyContext;
+  evidenceContract: ReplyEvidenceContract;
+  conversationProtection: ConversationProtectionState;
   lengthPlan: ReplyLengthPlan;
   bubblePlan: ReplyBriefBubblePlan;
   prompt: string;
@@ -357,6 +381,18 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       options.conversationMessages ?? options.recentMessages,
     evidence,
   });
+  const worldBoundaryPolicy = resolveWorldBoundaryPolicy({
+    currentQuery,
+    afterlifeActive: Boolean(afterlifeWorld),
+    sceneKinds: sceneFramework?.cards.map(card => card.kind),
+  });
+  const evidenceContract = buildReplyEvidenceContract({
+    worldPolicy: worldBoundaryPolicy,
+  });
+  const conversationProtection = resolveConversationProtectionState({
+    currentQuery,
+    recentMessages: options.conversationMessages ?? options.recentMessages,
+  });
   if (afterlifeWorld?.allowItemReceipt) {
     understanding = {
       ...understanding,
@@ -469,6 +505,18 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     experiencePlan,
     conversationPlan,
   });
+  const careReception: ReplyCareReceptionPlan | undefined =
+    isUserCaringForRole(currentQuery) ||
+    understanding.needs.some(
+      need => need.expectedResponse === 'direct_answer_and_receive_care'
+    )
+      ? {
+          version: 'care_reception_v1',
+          active: true,
+          goal: 'direct_answer_and_receive_care',
+          avoidImmediateReverseCare: true,
+        }
+      : undefined;
   const emotionalNeed =
     reading?.primaryNeed ??
     relationshipContinuity?.emotionalNeed ??
@@ -615,9 +663,10 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     hasExplicitActiveContribution: Boolean(activeContribution),
     hasCapabilityConstraints: capabilityConstraints.length > 0,
     hasRealityDependencies: realityDependencies.length > 0,
+    recentMessages: options.conversationMessages ?? options.recentMessages,
   });
   const brief: Omit<ReplyBrief, 'prompt'> = {
-    version: 'reply_brief_v15',
+    version: 'reply_brief_v16',
     mode,
     primaryScene,
     riskLevel,
@@ -643,6 +692,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     directActiveContribution,
     strategyQuality,
     careMotivation,
+    careReception,
     dreamCompanionPlan,
     stateProtocol,
     experiencePlan,
@@ -651,6 +701,9 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     isDeceased: Boolean(options.agent?.deathDate),
     afterlifeWorld,
     sceneFramework,
+    worldBoundaryPolicy,
+    evidenceContract,
+    conversationProtection,
     lengthPlan,
     bubblePlan,
   };
@@ -2206,6 +2259,17 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const worldBoundaryLines = [
+    '## 世界与证据公共政策',
+    buildWorldBoundaryPolicyPrompt(brief.worldBoundaryPolicy),
+    '',
+  ];
+  const conversationProtectionPrompt = buildConversationProtectionStatePrompt(
+    brief.conversationProtection
+  );
+  const conversationProtectionLines = conversationProtectionPrompt
+    ? ['## 会话级长期保护', conversationProtectionPrompt, '']
+    : [];
   const realityDependencyLines = brief.realityDependencies.length
     ? [
         '## 现实依赖',
@@ -2259,10 +2323,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     segmentMode: resolveReplyOutputSegmentMode(brief.bubblePlan),
     maxSegments: brief.bubblePlan.maxSegments,
     preferredRange: brief.lengthPlan.preferredRange,
+    evidenceContract: brief.evidenceContract,
   });
-  const careReceptionLines = brief.understanding.needs.some(
-    need => need.expectedResponse === 'direct_answer_and_receive_care'
-  )
+  const careReceptionLines = brief.careReception
     ? [
         '用户正在把关心递给当前角色：先正面回答，让关心落在角色身上，并按人物性格自然表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
         '',
@@ -2285,6 +2348,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...stateProtocolLines,
     ...afterlifeWorldLines,
     ...sceneFrameworkLines,
+    ...worldBoundaryLines,
+    ...conversationProtectionLines,
     ...participationLines,
     ...realityDependencyLines,
     ...activeContributionLines,

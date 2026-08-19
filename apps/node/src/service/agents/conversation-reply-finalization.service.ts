@@ -104,6 +104,9 @@ export class ConversationReplyFinalizationService {
               ),
             afterlifeWorld: options.brief.afterlifeWorld,
             sceneFramework: options.brief.sceneFramework,
+            worldBoundaryPolicy: options.brief.worldBoundaryPolicy,
+            evidenceContract: options.brief.evidenceContract,
+            conversationProtection: options.brief.conversationProtection,
           }
         : undefined;
     const governance = await this.replyGovernanceService.finalize({
