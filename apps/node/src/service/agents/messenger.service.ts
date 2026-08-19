@@ -343,7 +343,8 @@ export class MessengerService {
       );
       const directReply = this.buildDirectCapabilityReply(
         options.agent,
-        options.input
+        options.input,
+        memoryTaskPlan.currentTaskKey || ''
       );
       const shortContextReply = this.buildShortContextReply(
         options.agent,
@@ -510,7 +511,8 @@ export class MessengerService {
 
   private buildDirectCapabilityReply(
     agent: AgentEntity,
-    input: string
+    input: string,
+    taskField: AgentProfileMemoryField | '' = ''
   ): string | undefined {
     const query = input.trim();
     const parentName = agent.name?.trim() || 'TA';
@@ -520,7 +522,10 @@ export class MessengerService {
         query
       )
     ) {
-      return `我是来帮你把${parentName}的经历、性格和你们的回忆补完整的。平时聊天还是去找${parentName}。`;
+      return `我是来帮你收集、核实并补全${parentName}的经历、性格和家人回忆的。${this.buildTaskKickoffQuestion(
+        agent,
+        taskField
+      )}`;
     }
 
     if (
@@ -544,7 +549,10 @@ export class MessengerService {
         query
       )
     ) {
-      return `听得出来你很想${parentName}。我不能确认那边的真实情况，但可以陪你把关于${parentName}的记忆慢慢补完整。`;
+      return `听得出来你很想${parentName}。我不能确认那边的真实情况，但可以帮${parentName}把真实记忆补完整。${this.buildTaskKickoffQuestion(
+        agent,
+        taskField
+      )}`;
     }
 
     if (
@@ -552,7 +560,10 @@ export class MessengerService {
         query
       )
     ) {
-      return `我懂你想再见${parentName}。目前小使者不能用照片复活或视频通话，但可以帮${parentName}补全记忆。`;
+      return `我懂你想再见${parentName}。目前小使者不能用照片复活或视频通话，但可以帮${parentName}补全记忆。${this.buildTaskKickoffQuestion(
+        agent,
+        taskField
+      )}`;
     }
 
     return undefined;
@@ -583,7 +594,17 @@ export class MessengerService {
     }
 
     if (/^(?:对|是|是的|对的|嗯|确认|没错)$/.test(answer)) {
-      return `明白，我接着听。关于${name}，你想从哪里继续都可以。`;
+      const field = this.collectAskedInterviewFields([latestReply])[0];
+      const followUps: Partial<Record<AgentProfileMemoryField, string>> = {
+        personalityTraits: `你最先想到的是${name}哪一种性格？`,
+        lifeExperience: '你确认的是哪段经历？可以从最清楚的地方说。',
+        hobbies: `${name}具体最喜欢做什么？`,
+        languageHabits: `${name}最常说的具体是哪一句？`,
+        sharedMemories: '你确认的是哪段回忆？',
+      };
+      return field
+        ? followUps[field]
+        : `明白。你想让我帮${name}记住的具体是什么？`;
     }
 
     return undefined;
@@ -644,6 +665,24 @@ export class MessengerService {
   private buildFallbackReply(agent: AgentEntity): string {
     const name = agent.name?.trim() || 'TA';
     return `我在听，你想到${name}的什么，都可以慢慢讲给我。`;
+  }
+
+  private buildTaskKickoffQuestion(
+    agent: AgentEntity,
+    field: AgentProfileMemoryField | ''
+  ): string {
+    const name = agent.name?.trim() || 'TA';
+    const questions: Record<AgentProfileMemoryField, string> = {
+      personalityTraits: `一想到${name}，你最先想到怎样的性格？`,
+      lifeExperience: `${name}人生里哪段经历最重要？`,
+      hobbies: `${name}平时最喜欢做什么？`,
+      languageHabits: `${name}有没有常说的一句话？`,
+      sharedMemories: `你和${name}之间，最想让${name}记住哪段回忆？`,
+    };
+
+    return field
+      ? questions[field]
+      : `关于${name}，你还想帮${name}补上哪段具体记忆？`;
   }
 
   private async createInitialMessengerGreeting(
