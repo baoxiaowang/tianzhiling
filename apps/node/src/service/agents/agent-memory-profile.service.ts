@@ -46,6 +46,7 @@ interface BuildInterviewTurnOptions {
   askedFields?: AgentProfileMemoryField[];
   previousReplies?: string[];
   previousUserInputs?: string[];
+  taskField?: AgentProfileMemoryField | '';
   turnCount?: number;
   onTelemetry?: (telemetry: MessengerInterviewTelemetry) => void;
 }
@@ -139,6 +140,7 @@ export class AgentMemoryProfileService {
     const currentDraft = this.buildInterviewDraft(options.agent, options.draft);
     const focusField = this.normalizeInterviewField(options.focusField);
     const askedFields = this.normalizeInterviewFields(options.askedFields);
+    const taskField = this.normalizeInterviewField(options.taskField);
     const previousReplies = (options.previousReplies || [])
       .map(reply => this.normalizeInterviewReply(reply))
       .filter(Boolean)
@@ -185,6 +187,8 @@ export class AgentMemoryProfileService {
           '把信息归入五项：lifeExperience 生平经历、personalityTraits 性格特点、languageHabits 语言习惯、hobbies 兴趣爱好、sharedMemories 共同记忆。',
           '保留已有草稿中的可靠内容，把新内容自然合并进去，避免重复。每项最多 1000 字。',
           '采访分为“先形成整体轮廓、再适度深入”两个阶段。五项空白只表示以后还可以了解，不要求每轮都追问。先判断用户本轮更适合被回应、被确认，还是自然补问一个方面。',
+          '小使者还有一张记忆任务卡，用来提醒尚未补全的基本信息。任务卡只保持方向，不是问卷；用户主动讲到其他任务时，优先顺着用户当前的话题。',
+          '用户给出“记得家人”“在世时一起的开心日子”“以前的事”等明确但宽泛的记忆线索时，不得只复述情绪或询问“对吗”；先承接这条线索，再只问一个能让它变具体的问题。线索本身不够具体时不保存。',
           '如果本轮没有回答原问题，先接住他实际说的内容；可以换一个方面，也可以这一轮不提问。不要为了填满五项而连续推进。',
           '已经问过的方面不得再次提问，即使用户没有回答；换到尚未问过的方面，让信息在后续聊天里自然补上。',
           '如果用户表示不知道、想不起或本轮仍未补上唯一空白方面，不要重复追问，直接温和收住。',
@@ -210,6 +214,7 @@ export class AgentMemoryProfileService {
           )}`,
           `本轮原本在了解：${focusField || '自由讲述'}`,
           `此前已经问过、不得再问：${JSON.stringify(askedFields)}`,
+          `当前任务卡优先项：${taskField || '由用户当前话题决定'}`,
           `此前小使者回复：${JSON.stringify(previousReplies)}`,
           `此前用户讲述（从近到远，仅用于理解指代和纠错）：${JSON.stringify(
             previousUserInputs
@@ -237,7 +242,7 @@ export class AgentMemoryProfileService {
           modelSucceeded: true,
           fallbackUsed: false,
         });
-        return this.buildInterviewResult(
+        const interviewResult = this.buildInterviewResult(
           options.agent,
           parsed.draft,
           parsed.nextFocusField,
@@ -246,6 +251,13 @@ export class AgentMemoryProfileService {
           focusField,
           askedFields,
           previousReplies
+        );
+        return this.ensureMemoryLeadProgress(
+          options.agent,
+          input,
+          currentDraft,
+          interviewResult,
+          previousUserInputs
         );
       }
 
@@ -1171,6 +1183,76 @@ export class AgentMemoryProfileService {
           .filter((value): value is AgentProfileMemoryField => Boolean(value))
       )
     );
+  }
+
+  private ensureMemoryLeadProgress(
+    agent: AgentEntity,
+    input: string,
+    previousDraft: AgentProfileInterviewDraftDTO,
+    result: AgentProfileInterviewResultDTO,
+    previousUserInputs: string[] = []
+  ): AgentProfileInterviewResultDTO {
+    if (
+      PROFILE_FIELDS.some(
+        field => result.draft[field].trim() !== previousDraft[field].trim()
+      ) ||
+      /(?:不想说|不说了|想不起来|记不得|先这样|下次再说|以后再说)/.test(input)
+    ) {
+      return result;
+    }
+
+    const currentLead = this.resolveBroadMemoryLead(input);
+    const recentLead = previousUserInputs
+      .map(value => this.resolveBroadMemoryLead(value))
+      .find(Boolean);
+    const lead =
+      currentLead ||
+      (/^(?:很|真的|特别|好)?想(?:念|他|她|爸爸|妈妈|爸|妈)?[啊呀呢。！!]*$/.test(
+        input.trim()
+      )
+        ? recentLead
+        : '');
+
+    if (!lead) {
+      return result;
+    }
+
+    const reply = result.reply?.trim() || '';
+    const hasUsefulQuestion =
+      /[？?]/.test(reply) &&
+      !/(?:对吗|是吗|是不是|你是希望|你是想)/.test(reply);
+
+    if (hasUsefulQuestion) {
+      return result;
+    }
+
+    const name = agent.name?.trim() || 'TA';
+    const isCurrentEmotion = !currentLead && Boolean(recentLead);
+    let followUp = `这段记忆值得慢慢补全。你最先想到的是哪个画面？`;
+
+    if (/\u5bb6\u4eba/.test(lead) && !/\u5f00\u5fc3|\u65e5\u5b50/.test(lead)) {
+      followUp = `好，我们从家人开始。你最想让${name}先想起谁？`;
+    } else if (/\u5f00\u5fc3|\u65e5\u5b50|\u4e00\u8d77/.test(lead)) {
+      followUp = isCurrentEmotion
+        ? `我懂你很想念${name}。那些开心日子里，你最先想到哪一次？`
+        : `那些开心日子一定很珍贵。你最先想到的是哪一次？`;
+    }
+
+    return {
+      ...result,
+      reply: followUp,
+      nextFocusField: 'sharedMemories',
+      isComplete: false,
+    };
+  }
+
+  private resolveBroadMemoryLead(value: string): string {
+    const normalized = this.normalizeProfileText(value);
+    return /(?:记得.{0,12}家人|家人.{0,12}记得|在世时.{0,16}(?:一起|开心|日子)|一起.{0,12}(?:开心|的日子)|开心的?日子|以前的事|过去的事|小时候的事)/.test(
+      normalized
+    )
+      ? normalized
+      : '';
   }
 
   private isGeneratedInterviewReplyUsable(
