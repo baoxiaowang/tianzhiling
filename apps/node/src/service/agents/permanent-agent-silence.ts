@@ -2,7 +2,7 @@ export const PERMANENT_AGENT_SILENCE_VERSION = 'permanent_agent_silence_v1';
 export const PERMANENT_AGENT_SILENCE_MESSAGE_PREFIX =
   '__TZL_PERMANENT_AGENT_SILENCE_V1__:';
 export const PERMANENT_AGENT_SILENCE_DECLARATION =
-  '我不会继续承受带着恶意的咒骂，从现在起，这个智能体将永久停止回复。';
+  '天之灵是为了承接那些未尽的爱与思念，我不会继续承受带着恶意的咒骂，从现在起，将永久停止回复。';
 
 const MAX_ABUSE_EVIDENCE_TURNS = 6;
 
