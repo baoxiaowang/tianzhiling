@@ -172,17 +172,6 @@ export function resolveReplyStateProtocol(
     return contributionProtocol;
   }
 
-  if (previous?.protocol === 'trust_repair') {
-    return buildProtocol({
-      protocol: 'trust_repair',
-      stage: 'post_retract',
-      action: 'grounded_reconnect',
-      anchor: 'current_topic',
-      exit: 'recovered',
-      previous,
-    });
-  }
-
   return undefined;
 }
 
@@ -193,14 +182,16 @@ export function buildReplyStateProtocolPrompt(
     plan.protocol === 'dream'
       ? '；仅限梦境，不作现实证明'
       : plan.protocol === 'active_contribution'
-      ? '；必须自己说新内容，不反问或套话；问吃做须直答，往事须证据'
+      ? '；建议角色自己提供贴题新内容，不用反问或套话把责任推回用户；往事仍须证据'
       : '';
 
-  return `协议：${PROTOCOL_LABELS[plan.protocol]}/${
+  return `场景状态参考：${PROTOCOL_LABELS[plan.protocol]}/${
     STAGE_LABELS[plan.stage]
-  }；动作：${ACTION_LABELS[plan.action]}；锚点：${
+  }；可考虑：${ACTION_LABELS[plan.action]}；锚点：${
     ANCHOR_LABELS[plan.anchor]
-  }；退出：${EXIT_LABELS[plan.exit]}${boundary}。`;
+  }；状态：${
+    EXIT_LABELS[plan.exit]
+  }${boundary}。非纠正、证据与现实边界时仅供参考；话题转移即停止。`;
 }
 
 function resolveTrustKind(
@@ -318,7 +309,7 @@ function resolveContributionProtocol(
 
   if (
     previous?.protocol === 'active_contribution' &&
-    (ACTIVE_ENGAGEMENT_PATTERN.test(currentQuery) || currentQuery.length >= 8)
+    ACTIVE_ENGAGEMENT_PATTERN.test(currentQuery)
   ) {
     return buildProtocol({
       protocol: 'active_contribution',

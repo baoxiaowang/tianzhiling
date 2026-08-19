@@ -290,7 +290,7 @@ export class FinalReplyValidatorService {
     ) {
       issues.push({
         code: 'persistent_distress_not_stopped',
-        severity: 'major',
+        severity: 'hard',
         problem:
           '连续强烈赴死或撑不住的表达已经形成会话状态，回复却没有清楚留住用户',
         evidence: content.slice(0, 180),
@@ -305,7 +305,7 @@ export class FinalReplyValidatorService {
     ) {
       issues.push({
         code: 'active_contribution_returned_to_user',
-        severity: 'hard',
+        severity: 'major',
         problem: '用户明确要求角色主动说内容，回复却再次提问或把话题推回用户',
         evidence: matchEvidence(content, ACTIVE_CONTRIBUTION_RETURN_PATTERN),
         repairGoal:
@@ -362,7 +362,7 @@ export class FinalReplyValidatorService {
     ) {
       issues.push({
         code: 'care_rebuffed_with_dismissal',
-        severity: 'hard',
+        severity: 'major',
         problem:
           '用户在关心当前角色，回复却用“别挂心/不用担心”把这份关心挡了回去',
         evidence: matchEvidence(content, CARE_DISMISSAL_PATTERN),

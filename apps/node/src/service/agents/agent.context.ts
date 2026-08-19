@@ -1469,8 +1469,9 @@ export class AgentContextService {
     const strategyQualityLines =
       includeL5 && replyBrief.strategyQuality
         ? [
-            '# 多轮策略去重',
+            '# 多轮策略建议',
             buildReplyStrategyQualityPrompt(replyBrief.strategyQuality),
+            '只提示重复风险与替代方向，不改写语义规划；结合当前话题自行决定是否采纳。',
           ]
         : [];
     const correctionLines = replyBrief.correctionPolicy
@@ -1485,6 +1486,7 @@ export class AgentContextService {
       '先在心里判断这轮最需要完成什么，再组织语言；策略字段只帮助思考，不要求固定动作顺序。消息里有多个问题、人物或情绪时，不能只抓最后一个词，也不要让一句边界说明吞掉其余情绪和关系诉求。',
       '把当前消息放回最近几轮自然理解：用户可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
       '先接住用户正在说的具体事、情绪或近况，再给角色侧心意；用户提到具体物件、食物、地点或事情时，先自然点到它，再回情绪。',
+      '回应完整后，如果贴着当前话题确有价值，可以自主贡献角色侧态度、感受、小近况或相邻话题；贡献类型、位置和篇幅由你决定，没有贴题内容就自然停住。',
       '用户分享喜悦、期待或准备了什么时，先给具体反应、共鸣或一起高兴，不要把“我知道了、别累着、记得早点歇”当成主回应。',
       '不要把“路过/看到/准备做某事”补成用户正在站着、在户外、遇到天气或身体不适；不要一上来就叮嘱、提醒或教用户怎么做。',
       '用户说“准备回家、收拾东西、要走了”只表示还在离开或收束，不表示已经上路；不得补出“路上注意安全、别着急、到家先歇会儿、慢点走”等现实行动提醒。',
@@ -1527,7 +1529,7 @@ export class AgentContextService {
         ...(chatToolPrompt ? [chatToolPrompt] : []),
         '# 完整正文与展示适配',
         bubblePlanPrompt,
-        '# 总字数预算',
+        '# 表达长度原则',
         lengthPlanPrompt,
         outputContractPrompt,
       ].join('\n');
@@ -1556,7 +1558,7 @@ export class AgentContextService {
         ...correctionLines,
         '# 完整正文与展示适配',
         bubblePlanPrompt,
-        '# 总字数预算',
+        '# 表达长度原则',
         lengthPlanPrompt,
         ...(chatToolPrompt ? [chatToolPrompt] : []),
         outputContractPrompt,
@@ -1598,7 +1600,7 @@ export class AgentContextService {
       ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
       '完整正文与展示适配：',
       bubblePlanPrompt,
-      '总字数预算：',
+      '表达长度原则：',
       lengthPlanPrompt,
       '以上为内部约束；自然表达，不逐项复述。',
       ...(chatToolPrompt ? [chatToolPrompt] : []),
@@ -1607,8 +1609,7 @@ export class AgentContextService {
   }
 
   private buildDirectExperienceContext(replyBrief: ReplyBrief): string {
-    const plan = replyBrief.experiencePlan;
-    return `体验：${plan.profileTier}/${plan.relationshipStage}/${plan.conversationDepth}`;
+    return `体验：${buildReplyExperiencePlanPrompt(replyBrief.experiencePlan)}`;
   }
 
   private resolveToolInstructionMode(
