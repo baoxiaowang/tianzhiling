@@ -156,7 +156,10 @@ import {
   AgentChatToolExecutionContext,
   AgentChatToolService,
 } from './agents/agent-chat-tool.service';
-import { MessengerService } from './agents/messenger.service';
+import {
+  MessengerService,
+  type MessengerMemoryTaskPlan,
+} from './agents/messenger.service';
 import {
   applyRecognitionJourneyAssistantReply,
   buildInitialRecognitionJourney,
@@ -296,6 +299,7 @@ export interface SendConversationMessageResult {
   assistantMessage?: ConversationMessageItem;
   assistantMessages?: ConversationMessageItem[];
   chatQuota?: ConversationChatQuotaSnapshot;
+  messengerTaskPlan?: MessengerMemoryTaskPlan;
   replyPending?: boolean;
 }
 
@@ -628,6 +632,7 @@ export interface ConversationChatBootstrapMetadata {
     isMessenger?: boolean;
   } | null;
   chatQuota: ConversationChatQuotaSnapshot;
+  messengerTaskPlan?: MessengerMemoryTaskPlan;
 }
 
 @Provide()
@@ -1100,6 +1105,10 @@ export class ConversationService {
             this.messageService.buildConversationMessageItem(message)
           )
         : undefined,
+      messengerTaskPlan: this.messengerService.buildMemoryTaskPlan(
+        parentAgent,
+        replyText
+      ),
     };
   }
 
@@ -1430,6 +1439,9 @@ export class ConversationService {
       ? this.buildUnlimitedChatQuota()
       : await this.resolveCurrentChatQuota(runtime, new Date());
     const agent = runtime.agent;
+    const messengerTaskPlan = isMessenger
+      ? await this.buildMessengerMemoryTaskPlan(runtime)
+      : undefined;
 
     return {
       agent: agent
@@ -1455,7 +1467,35 @@ export class ConversationService {
           }
         : null,
       chatQuota,
+      messengerTaskPlan,
     };
+  }
+
+  private async buildMessengerMemoryTaskPlan(
+    runtime: ReplyRuntime
+  ): Promise<MessengerMemoryTaskPlan | undefined> {
+    if (!this.messengerService || !runtime.agent?.messengerOfAgentId) {
+      return undefined;
+    }
+
+    const [parentAgent, latestAssistantReply] = await Promise.all([
+      this.findAgentById(runtime.agent.messengerOfAgentId),
+      this.messageModel.findOne({
+        where: {
+          conversationId: runtime.conversation.id,
+          role: MessageRole.assistant,
+          isArchived: { $ne: true },
+        },
+        order: { createdAt: 'DESC' },
+      }),
+    ]);
+
+    return parentAgent
+      ? this.messengerService.buildMemoryTaskPlan(
+          parentAgent,
+          latestAssistantReply?.content?.trim() || ''
+        )
+      : undefined;
   }
 
   async transcribeVoice(

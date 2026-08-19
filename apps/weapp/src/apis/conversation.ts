@@ -58,6 +58,7 @@ interface ConversationChatBootstrapResponse
   extends ConversationMessageListResponse {
   agent?: unknown;
   chatQuota?: unknown;
+  messengerTaskPlan?: unknown;
 }
 
 interface SendConversationMessageResponse {
@@ -65,6 +66,7 @@ interface SendConversationMessageResponse {
   assistantMessage?: unknown;
   assistantMessages?: unknown;
   chatQuota?: unknown;
+  messengerTaskPlan?: unknown;
   replyPending?: unknown;
 }
 
@@ -126,6 +128,7 @@ export interface SendConversationMessageResult {
   assistantMessage?: ConversationMessage;
   assistantMessages?: ConversationMessage[];
   chatQuota?: ConversationChatQuotaSnapshot;
+  messengerTaskPlan?: MessengerMemoryTaskPlan;
   replyPending?: boolean;
 }
 
@@ -161,10 +164,36 @@ export interface ConversationBootstrapAgent {
   isDefault: boolean;
 }
 
+export type MessengerMemoryTaskKey =
+  | "personalityTraits"
+  | "lifeExperience"
+  | "hobbies"
+  | "languageHabits"
+  | "sharedMemories";
+
+export interface MessengerMemoryTaskItem {
+  key: MessengerMemoryTaskKey;
+  title: string;
+  description: string;
+  status: "pending" | "completed";
+}
+
+export interface MessengerMemoryTaskPlan {
+  parentAgentId: string;
+  parentName: string;
+  completedCount: number;
+  totalCount: number;
+  isComplete: boolean;
+  currentTaskKey?: MessengerMemoryTaskKey;
+  currentTaskTitle?: string;
+  tasks: MessengerMemoryTaskItem[];
+}
+
 export interface ConversationChatBootstrapResult
   extends ConversationMessageListResult {
   agent?: ConversationBootstrapAgent;
   chatQuota?: ConversationChatQuotaSnapshot;
+  messengerTaskPlan?: MessengerMemoryTaskPlan;
 }
 
 export interface ConversationChatQuotaSnapshot {
@@ -696,6 +725,7 @@ export async function getConversationChatBootstrap(
     hasMore: data.hasMore === true,
     agent: parseConversationBootstrapAgent(data.agent),
     chatQuota: parseChatQuota(data.chatQuota),
+    messengerTaskPlan: parseMessengerMemoryTaskPlan(data.messengerTaskPlan),
   };
 
   saveCachedConversationMessages(conversationId, result);
@@ -841,6 +871,68 @@ function invalidateCachedConversationMessages(conversationId: string) {
   }
 }
 
+const MESSENGER_MEMORY_TASK_KEYS: MessengerMemoryTaskKey[] = [
+  "personalityTraits",
+  "lifeExperience",
+  "hobbies",
+  "languageHabits",
+  "sharedMemories",
+];
+
+function parseMessengerMemoryTaskKey(
+  value: unknown
+): MessengerMemoryTaskKey | undefined {
+  const key = asString(value) as MessengerMemoryTaskKey;
+  return MESSENGER_MEMORY_TASK_KEYS.includes(key) ? key : undefined;
+}
+
+function parseMessengerMemoryTaskPlan(
+  value: unknown
+): MessengerMemoryTaskPlan | undefined {
+  const raw = asRecord(value);
+  const tasks = Array.isArray(raw.tasks)
+    ? raw.tasks
+        .map((item): MessengerMemoryTaskItem | undefined => {
+          const task = asRecord(item);
+          const key = parseMessengerMemoryTaskKey(task.key);
+          const title = asString(task.title).trim();
+
+          if (!key || !title) {
+            return undefined;
+          }
+
+          return {
+            key,
+            title,
+            description: asString(task.description).trim(),
+            status:
+              asString(task.status) === "completed" ? "completed" : "pending",
+          };
+        })
+        .filter((item): item is MessengerMemoryTaskItem => Boolean(item))
+    : [];
+
+  if (!tasks.length) {
+    return undefined;
+  }
+
+  const completedCount = tasks.filter(
+    (task) => task.status === "completed"
+  ).length;
+  const currentTaskKey = parseMessengerMemoryTaskKey(raw.currentTaskKey);
+
+  return {
+    parentAgentId: asString(raw.parentAgentId),
+    parentName: asString(raw.parentName).trim() || "TA",
+    completedCount,
+    totalCount: tasks.length,
+    isComplete: completedCount === tasks.length,
+    currentTaskKey,
+    currentTaskTitle: asString(raw.currentTaskTitle).trim() || undefined,
+    tasks,
+  };
+}
+
 function parseConversationBootstrapAgent(
   value: unknown
 ): ConversationBootstrapAgent | undefined {
@@ -966,6 +1058,7 @@ export async function sendConversationMessage(
       ? data.assistantMessages.map((item) => parseConversationMessage(item))
       : undefined,
     chatQuota: parseChatQuota(data.chatQuota),
+    messengerTaskPlan: parseMessengerMemoryTaskPlan(data.messengerTaskPlan),
     replyPending: Boolean(data.replyPending),
   };
 }
@@ -1037,6 +1130,7 @@ export async function sendConversationMessageAsync(
       ? data.assistantMessages.map((item) => parseConversationMessage(item))
       : undefined,
     chatQuota: parseChatQuota(data.chatQuota),
+    messengerTaskPlan: parseMessengerMemoryTaskPlan(data.messengerTaskPlan),
     replyPending: Boolean(data.replyPending),
   };
 }
