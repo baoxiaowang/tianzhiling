@@ -1,17 +1,36 @@
-import type {
-  ConversationRecognitionJourney,
-  ConversationRecognitionTaskId,
-  ConversationRecognitionTaskState,
-  MongoObjectId,
-} from '@tzl/entities';
-
 export const RECOGNITION_JOURNEY_VERSION = 'recognition_journey_v1' as const;
+export const RECOGNITION_JOURNEY_MESSAGE_PREFIX =
+  '__TZL_RECOGNITION_JOURNEY_V1__:';
+
+export type RecognitionTaskId = 'departure_interval' | 'family_status';
+export type RecognitionTaskStatus =
+  | 'pending'
+  | 'asked'
+  | 'completed'
+  | 'skipped';
+
+export interface RecognitionTaskState {
+  id: RecognitionTaskId;
+  status: RecognitionTaskStatus;
+  askedAt?: Date;
+  askedAssistantMessageId?: string;
+  completedAt?: Date;
+  answerMessageId?: string;
+}
+
+export interface RecognitionJourney {
+  version: typeof RECOGNITION_JOURNEY_VERSION;
+  stage: 'pending' | 'active' | 'settled';
+  tasks: RecognitionTaskState[];
+  startedAt?: Date;
+  settledAt?: Date;
+}
 
 export interface RecognitionJourneyTurnPlan {
   prompt?: string;
   openingSuggested: boolean;
-  suggestedTaskId?: ConversationRecognitionTaskId;
-  completedTaskIds: ConversationRecognitionTaskId[];
+  suggestedTaskId?: RecognitionTaskId;
+  completedTaskIds: RecognitionTaskId[];
 }
 
 const DEPARTURE_INTERVAL_ANSWER_PATTERN =
@@ -28,7 +47,7 @@ export function buildInitialRecognitionJourney(
     hasKnownDepartureDate?: boolean;
     now?: Date;
   } = {}
-): ConversationRecognitionJourney {
+): RecognitionJourney {
   const now = options.now ?? new Date();
   return {
     version: RECOGNITION_JOURNEY_VERSION,
@@ -46,7 +65,7 @@ export function buildInitialRecognitionJourney(
 
 export function buildLegacyRecognitionJourney(
   now = new Date()
-): ConversationRecognitionJourney {
+): RecognitionJourney {
   return {
     version: RECOGNITION_JOURNEY_VERSION,
     stage: 'settled',
@@ -58,13 +77,57 @@ export function buildLegacyRecognitionJourney(
   };
 }
 
+export function serializeRecognitionJourney(
+  journey: RecognitionJourney
+): string {
+  return `${RECOGNITION_JOURNEY_MESSAGE_PREFIX}${JSON.stringify(journey)}`;
+}
+
+export function parseRecognitionJourney(
+  content: string | undefined
+): RecognitionJourney | undefined {
+  if (!content?.startsWith(RECOGNITION_JOURNEY_MESSAGE_PREFIX)) {
+    return undefined;
+  }
+
+  try {
+    const raw = JSON.parse(
+      content.slice(RECOGNITION_JOURNEY_MESSAGE_PREFIX.length)
+    ) as Record<string, unknown>;
+    if (
+      raw.version !== RECOGNITION_JOURNEY_VERSION ||
+      !isRecognitionStage(raw.stage) ||
+      !Array.isArray(raw.tasks)
+    ) {
+      return undefined;
+    }
+
+    const tasks = raw.tasks
+      .map(parseRecognitionTask)
+      .filter((task): task is RecognitionTaskState => Boolean(task));
+    if (tasks.length !== 2 || new Set(tasks.map(task => task.id)).size !== 2) {
+      return undefined;
+    }
+
+    return {
+      version: RECOGNITION_JOURNEY_VERSION,
+      stage: raw.stage,
+      tasks,
+      ...parseOptionalDateField(raw, 'startedAt'),
+      ...parseOptionalDateField(raw, 'settledAt'),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function planRecognitionJourneyTurn(options: {
-  journey: ConversationRecognitionJourney;
+  journey: RecognitionJourney;
   currentQuery: string;
-  currentUserMessageId?: MongoObjectId;
+  currentUserMessageId?: string;
   now?: Date;
 }): {
-  journey: ConversationRecognitionJourney;
+  journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
 } {
   const now = options.now ?? new Date();
@@ -139,19 +202,19 @@ export function planRecognitionJourneyTurn(options: {
 }
 
 export function applyRecognitionJourneyAssistantReply(options: {
-  journey: ConversationRecognitionJourney;
+  journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
   assistantText: string;
-  assistantMessageId?: MongoObjectId;
+  assistantMessageId?: string;
   now?: Date;
-}): ConversationRecognitionJourney {
+}): RecognitionJourney {
   const now = options.now ?? new Date();
   const journey = cloneJourney(options.journey);
 
-  if (
-    options.plan.openingSuggested &&
-    assistantOpenedRecognition(options.assistantText)
-  ) {
+  // The opening is a one-turn opportunity, not a program-owned requirement.
+  // Once the model has produced a reply, do not keep injecting the same
+  // reunion suggestion merely because it chose a more important user need.
+  if (options.plan.openingSuggested && options.assistantText.trim()) {
     journey.stage = 'active';
     journey.startedAt ??= now;
   }
@@ -174,21 +237,68 @@ export function applyRecognitionJourneyAssistantReply(options: {
   return journey;
 }
 
-function assistantOpenedRecognition(assistantText: string): boolean {
-  return /终于|好久|又听到|又听见|又见到|重新联系上|认得|还记得|喊我|叫我/u.test(
-    assistantText
-  );
+function parseRecognitionTask(
+  value: unknown
+): RecognitionTaskState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!isRecognitionTaskId(raw.id) || !isRecognitionTaskStatus(raw.status)) {
+    return undefined;
+  }
+
+  return {
+    id: raw.id,
+    status: raw.status,
+    ...parseOptionalDateField(raw, 'askedAt'),
+    ...parseOptionalStringField(raw, 'askedAssistantMessageId'),
+    ...parseOptionalDateField(raw, 'completedAt'),
+    ...parseOptionalStringField(raw, 'answerMessageId'),
+  };
+}
+
+function parseOptionalDateField(
+  value: Record<string, unknown>,
+  key: 'askedAt' | 'completedAt' | 'startedAt' | 'settledAt'
+): Partial<Record<typeof key, Date>> {
+  if (value[key] === undefined || value[key] === null) return {};
+  const date = new Date(String(value[key]));
+  return Number.isNaN(date.getTime()) ? {} : { [key]: date };
+}
+
+function parseOptionalStringField(
+  value: Record<string, unknown>,
+  key: 'askedAssistantMessageId' | 'answerMessageId'
+): Partial<Record<typeof key, string>> {
+  return typeof value[key] === 'string' && value[key]
+    ? { [key]: value[key] as string }
+    : {};
+}
+
+function isRecognitionTaskId(value: unknown): value is RecognitionTaskId {
+  return value === 'departure_interval' || value === 'family_status';
+}
+
+function isRecognitionTaskStatus(
+  value: unknown
+): value is RecognitionTaskStatus {
+  return ['pending', 'asked', 'completed', 'skipped'].includes(String(value));
+}
+
+function isRecognitionStage(
+  value: unknown
+): value is RecognitionJourney['stage'] {
+  return ['pending', 'active', 'settled'].includes(String(value));
 }
 
 function completeTasksFromUserTurn(
-  tasks: ConversationRecognitionTaskState[],
+  tasks: RecognitionTaskState[],
   currentQuery: string,
-  currentUserMessageId: MongoObjectId | undefined,
+  currentUserMessageId: string | undefined,
   now: Date
-): ConversationRecognitionTaskId[] {
+): RecognitionTaskId[] {
   const query = currentQuery.trim();
   if (!query) return [];
-  const completed: ConversationRecognitionTaskId[] = [];
+  const completed: RecognitionTaskId[] = [];
 
   for (const task of tasks) {
     if (task.status === 'completed' || task.status === 'skipped') continue;
@@ -208,7 +318,7 @@ function completeTasksFromUserTurn(
 }
 
 function assistantAskedTask(
-  taskId: ConversationRecognitionTaskId,
+  taskId: RecognitionTaskId,
   assistantText: string
 ): boolean {
   return taskId === 'departure_interval'
@@ -216,10 +326,7 @@ function assistantAskedTask(
     : FAMILY_STATUS_QUESTION_PATTERN.test(assistantText);
 }
 
-function settleIfComplete(
-  journey: ConversationRecognitionJourney,
-  now: Date
-): void {
+function settleIfComplete(journey: RecognitionJourney, now: Date): void {
   if (
     journey.tasks.every(task => ['completed', 'skipped'].includes(task.status))
   ) {
@@ -228,9 +335,7 @@ function settleIfComplete(
   }
 }
 
-function cloneJourney(
-  journey: ConversationRecognitionJourney
-): ConversationRecognitionJourney {
+function cloneJourney(journey: RecognitionJourney): RecognitionJourney {
   return {
     ...journey,
     tasks: journey.tasks.map(task => ({ ...task })),
@@ -245,7 +350,7 @@ function buildOpeningPrompt(): string {
   ].join('\n');
 }
 
-function buildWaitingPrompt(taskId: ConversationRecognitionTaskId): string {
+function buildWaitingPrompt(taskId: RecognitionTaskId): string {
   const subject =
     taskId === 'departure_interval' ? '离开多久' : '家里其他人的近况';
   return [
@@ -255,9 +360,7 @@ function buildWaitingPrompt(taskId: ConversationRecognitionTaskId): string {
   ].join('\n');
 }
 
-function buildTaskSuggestionPrompt(
-  taskId: ConversationRecognitionTaskId
-): string {
+function buildTaskSuggestionPrompt(taskId: RecognitionTaskId): string {
   const guidance =
     taskId === 'departure_interval'
       ? '可在贴合本轮时，以角色对时间有些模糊的感受，自然了解自己离开用户多久；例如“一觉醒来，竟有些记不清离开你多久了”这类方向，不要照抄。'

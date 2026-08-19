@@ -15,7 +15,6 @@ import {
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationEntity,
-  ConversationRecognitionTaskId,
   MessageEntity,
   MessageRole,
   MessageStatus,
@@ -163,8 +162,12 @@ import {
   applyRecognitionJourneyAssistantReply,
   buildInitialRecognitionJourney,
   buildLegacyRecognitionJourney,
+  parseRecognitionJourney,
   planRecognitionJourneyTurn,
+  RecognitionJourney,
   RecognitionJourneyTurnPlan,
+  RecognitionTaskId,
+  serializeRecognitionJourney,
 } from './agents/recognition-journey';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
@@ -558,9 +561,10 @@ interface ReplyRoutingAudit {
   correctionFactMode?: string;
   activeContributionSource?: string;
   recognitionJourneyOpeningSuggested?: boolean;
-  recognitionJourneyTaskSuggested?: ConversationRecognitionTaskId;
-  recognitionJourneyCompletedTaskIds?: ConversationRecognitionTaskId[];
+  recognitionJourneyTaskSuggested?: RecognitionTaskId;
+  recognitionJourneyCompletedTaskIds?: RecognitionTaskId[];
   recognitionJourneyPlan?: RecognitionJourneyTurnPlan;
+  recognitionJourneyStateMessageId?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -576,6 +580,10 @@ interface ReplyRoutingAudit {
 
 interface AfterReplyResult {
   assistantMessages: MessageEntity[];
+}
+
+interface PreparedRecognitionJourneyTurn extends RecognitionJourneyTurnPlan {
+  stateMessageId: string;
 }
 
 interface PreparedChatReplyTrace {
@@ -4032,7 +4040,7 @@ export class ConversationService {
     runtime: ReplyRuntime;
     before: BeforeReplyResult;
     currentTurnMessages: MessageEntity[];
-  }): Promise<RecognitionJourneyTurnPlan | undefined> {
+  }): Promise<PreparedRecognitionJourneyTurn | undefined> {
     if (
       !options.runtime.agent ||
       this.isMessengerAgent(options.runtime.agent)
@@ -4042,10 +4050,12 @@ export class ConversationService {
 
     try {
       const conversation = options.runtime.conversation;
-      let journey = conversation.recognitionJourney;
-      let initialized = false;
-      if (!journey) {
-        initialized = true;
+      const stored = await this.findRecognitionJourneyStateMessage(
+        conversation.id
+      );
+      let stateMessage = stored?.message;
+      let journey = stored?.journey;
+      if (!stateMessage || !journey) {
         const earliestCurrentMessage = [...options.currentTurnMessages].sort(
           (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
         )[0];
@@ -4063,20 +4073,30 @@ export class ConversationService {
           : buildInitialRecognitionJourney({
               hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
             });
+        stateMessage = await this.createRecognitionJourneyStateMessage({
+          runtime: options.runtime,
+          journey,
+        });
       }
 
-      const beforeState = JSON.stringify(journey);
+      const beforeState = serializeRecognitionJourney(journey);
       const resolved = planRecognitionJourneyTurn({
         journey,
         currentQuery: options.before.searchableText,
-        currentUserMessageId: options.before.userMessage.id,
+        currentUserMessageId: this.stringifyObjectId(
+          options.before.userMessage.id
+        ),
       });
-      conversation.recognitionJourney = resolved.journey;
-      if (initialized || JSON.stringify(resolved.journey) !== beforeState) {
-        conversation.updatedAt = new Date();
-        await this.conversationModel.save(conversation);
+      const nextState = serializeRecognitionJourney(resolved.journey);
+      if (nextState !== beforeState) {
+        stateMessage.content = nextState;
+        stateMessage.updatedAt = new Date();
+        await this.messageModel.save(stateMessage);
       }
-      return resolved.plan;
+      return {
+        ...resolved.plan,
+        stateMessageId: this.stringifyObjectId(stateMessage.id),
+      };
     } catch (error) {
       this.logger?.warn?.(
         '[conversation] recognition journey preparation skipped, conversationId=%s, reason=%s',
@@ -4089,9 +4109,11 @@ export class ConversationService {
 
   private attachRecognitionJourneyPlan(
     result: ProcessReplyResult,
-    plan?: RecognitionJourneyTurnPlan
+    plan?: PreparedRecognitionJourneyTurn
   ): ProcessReplyResult {
     if (!plan) return result;
+
+    const { stateMessageId, ...turnPlan } = plan;
 
     return {
       ...result,
@@ -4100,7 +4122,8 @@ export class ConversationService {
         recognitionJourneyOpeningSuggested: plan.openingSuggested,
         recognitionJourneyTaskSuggested: plan.suggestedTaskId,
         recognitionJourneyCompletedTaskIds: plan.completedTaskIds,
-        recognitionJourneyPlan: plan,
+        recognitionJourneyPlan: turnPlan,
+        recognitionJourneyStateMessageId: stateMessageId,
       },
     };
   }
@@ -4111,25 +4134,33 @@ export class ConversationService {
     assistantMessages: MessageEntity[];
   }): Promise<void> {
     const plan = options.processed.routing?.recognitionJourneyPlan;
-    const journey = options.runtime.conversation.recognitionJourney;
-    if (!plan || !journey || !options.assistantMessages.length) return;
+    const stateMessageId =
+      options.processed.routing?.recognitionJourneyStateMessageId;
+    if (!plan || !stateMessageId || !options.assistantMessages.length) return;
 
     try {
+      const stateMessage = await this.findRecognitionJourneyStateMessageById(
+        options.runtime.conversation.id,
+        stateMessageId
+      );
+      const journey = parseRecognitionJourney(stateMessage?.content);
+      if (!stateMessage || !journey) return;
+
       const latestAssistantMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
       const updated = applyRecognitionJourneyAssistantReply({
         journey,
         plan,
         assistantText: options.processed.replySegments.join('\n'),
-        assistantMessageId: latestAssistantMessage.id,
+        assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
         now: latestAssistantMessage.createdAt,
       });
-      if (JSON.stringify(updated) === JSON.stringify(journey)) return;
+      const nextState = serializeRecognitionJourney(updated);
+      if (nextState === stateMessage.content) return;
 
-      options.runtime.conversation.recognitionJourney = updated;
-      options.runtime.conversation.updatedAt =
-        latestAssistantMessage.updatedAt || new Date();
-      await this.conversationModel.save(options.runtime.conversation);
+      stateMessage.content = nextState;
+      stateMessage.updatedAt = latestAssistantMessage.updatedAt || new Date();
+      await this.messageModel.save(stateMessage);
     } catch (error) {
       this.logger?.warn?.(
         '[conversation] recognition journey finalization skipped, conversationId=%s, reason=%s',
@@ -4137,6 +4168,80 @@ export class ConversationService {
         this.describeReplyError(error)
       );
     }
+  }
+
+  private async findRecognitionJourneyStateMessage(
+    conversationId: MongoObjectId
+  ): Promise<
+    { message: MessageEntity; journey: RecognitionJourney } | undefined
+  > {
+    const candidates = await this.messageModel.find({
+      where: {
+        conversationId,
+        role: MessageRole.system,
+        isArchived: true,
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+      take: 20,
+    });
+
+    for (const message of candidates) {
+      const journey = parseRecognitionJourney(message.content);
+      if (journey) return { message, journey };
+    }
+    return undefined;
+  }
+
+  private async findRecognitionJourneyStateMessageById(
+    conversationId: MongoObjectId,
+    stateMessageId: string
+  ): Promise<MessageEntity | undefined> {
+    const objectId = this.parseObjectId(stateMessageId);
+    const byId = await this.messageModel.findOne({
+      where: {
+        id: objectId,
+        conversationId,
+        role: MessageRole.system,
+        isArchived: true,
+      } as never,
+    });
+    if (byId && parseRecognitionJourney(byId.content)) return byId;
+
+    const byMongoId = await this.messageModel.findOne({
+      where: {
+        _id: objectId,
+        conversationId,
+        role: MessageRole.system,
+        isArchived: true,
+      } as never,
+    });
+    return byMongoId && parseRecognitionJourney(byMongoId.content)
+      ? byMongoId
+      : undefined;
+  }
+
+  private async createRecognitionJourneyStateMessage(options: {
+    runtime: ReplyRuntime;
+    journey: RecognitionJourney;
+  }): Promise<MessageEntity> {
+    const now = new Date();
+    const message = new MessageEntity();
+    message.conversationId = options.runtime.conversation.id;
+    message.userId = options.runtime.conversation.userId;
+    message.agentId = options.runtime.conversation.agentId;
+    message.role = MessageRole.system;
+    message.type = MessageType.text;
+    message.content = serializeRecognitionJourney(options.journey);
+    message.status = MessageStatus.sent;
+    message.quotaExempt = true;
+    message.replyTrigger = false;
+    message.isArchived = true;
+    message.archivedAt = now;
+    message.createdAt = now;
+    message.updatedAt = now;
+    return this.messageModel.save(message);
   }
 
   private async buildLightweightReplyMessages(options: {
