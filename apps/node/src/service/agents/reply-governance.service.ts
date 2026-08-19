@@ -472,7 +472,7 @@ function buildSafeFallback(
   ) {
     return buildEvidenceSafeTaskFallback(userQuery, outputConstraints);
   }
-  return ['……￥#@%……“该信息传输途中受到了干扰”'];
+  return ['刚才那句话没说稳，你再跟我说一遍'];
 }
 
 function buildEvidenceSafeTaskFallback(
