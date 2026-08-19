@@ -46,6 +46,7 @@ import { AgentMemoryProfileService } from './agents/agent-memory-profile.service
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
 import { MessengerService } from './agents/messenger.service';
+import { buildInitialRecognitionJourney } from './agents/recognition-journey';
 import { WechatPayService } from './wechat-pay.service';
 
 export type AgentProfile = AgentProfileDTO;
@@ -830,6 +831,10 @@ export class AgentService {
       options.usePersonalCallName === false
         ? agent.name?.trim() || ''
         : agent.iCallAgent?.trim() || agent.name?.trim() || '';
+    conversation.recognitionJourney = buildInitialRecognitionJourney({
+      hasKnownDepartureDate: Boolean(agent.deathDate),
+      now,
+    });
     conversation.createdAt = now;
     conversation.updatedAt = now;
 

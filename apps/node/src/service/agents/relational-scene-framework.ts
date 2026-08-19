@@ -357,11 +357,7 @@ export function buildRelationalSceneFrameworkPrompt(
   const cardLines = context.cards.reduce<string[]>(
     (lines, card) =>
       lines.concat([
-        `场景：${card.label}；阶段：${card.stage}${
-          card.repeated ? '（连续推进）' : ''
-        }；本轮动作：${card.action}。`,
-        `情感目标：${card.emotionalGoal}。`,
-        ...card.guidance.slice(0, 2).map(item => `方法：${item}`),
+        `场景参考：${card.label}；证据策略：${card.evidencePolicy}。`,
         ...(card.anchors.length
           ? [`可信锚点：${card.anchors.join('；')}。只沿这些内容。`]
           : []),
@@ -374,7 +370,7 @@ export function buildRelationalSceneFrameworkPrompt(
     `版本：${context.version}；激活：${context.cards
       .map(card => card.label)
       .join('、')}。`,
-    '这是高频关系场景的思考框架，不是固定话术或状态机。先理解用户本轮在求什么，再按人物性格自然回应；只加载当前卡片，不主动展开整套体系。',
+    '这是非决策的场景资料，只提供可信锚点、证据规则和产品硬边界。它不规定本轮动作、情感目标、提问、收尾、长度或措辞；请结合完整上下文自主理解和回应。',
     ...cardLines,
     context.suppressPriorFacts
       ? '本轮存在纠正：冲突旧事实立即失效，只保留用户给出的最小替代事实。'

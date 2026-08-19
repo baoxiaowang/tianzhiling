@@ -333,6 +333,17 @@ export class ReplyIntentClassifierService {
   @Config('replyIntent')
   config: ReplyIntentClassifierConfig;
 
+  /**
+   * 线上生成前只提供低成本、非决策的确定性信号。
+   * 该入口不会调用语义规划模型，也不会组织回复策略。
+   */
+  classifyDeterministicOnly(
+    options: ClassifyReplyIntentOptions
+  ): StructuredReplyIntent | undefined {
+    const currentQuery = options.currentQuery?.trim() || '';
+    return currentQuery ? this.classifyDeterministic(options) : undefined;
+  }
+
   async classifyWithDiagnostics(
     options: ClassifyReplyIntentOptions
   ): Promise<ReplyIntentClassificationResult> {

@@ -5,7 +5,6 @@ import {
   resolveAgentEvidenceUseMode,
   selectAgentEvidence,
 } from './agent-evidence';
-import type { TurnDecision } from './turn-decision';
 
 export const EVIDENCE_PACK_VERSION = 'evidence_pack_v1' as const;
 
@@ -32,7 +31,7 @@ export class EvidenceResolverService {
   resolve(options: {
     candidates: AgentEvidenceItem[];
     currentQuery: string;
-    turnDecision: TurnDecision;
+    strictGrounding: boolean;
     suppressPriorFacts?: boolean;
     correctionMode?: 'reset' | 'replace';
     limit?: number;
@@ -72,7 +71,7 @@ export class EvidenceResolverService {
       assertableIds,
       contextualIds,
       memoryIds,
-      strictGrounding: options.turnDecision.strictGrounding,
+      strictGrounding: options.strictGrounding,
       governance: {
         currentTurnIds: items
           .filter(item => item.source === 'current_user')
@@ -91,7 +90,7 @@ export class EvidenceResolverService {
 export function buildEvidencePackFallback(options: {
   candidates: AgentEvidenceItem[];
   currentQuery: string;
-  turnDecision: TurnDecision;
+  strictGrounding: boolean;
   suppressPriorFacts?: boolean;
   correctionMode?: 'reset' | 'replace';
 }): EvidencePack {
