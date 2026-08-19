@@ -1,4 +1,5 @@
 import { MidwayConfig } from '@midwayjs/core';
+import { readRequiredStringFrom } from '@tzl/shared';
 
 const ONLINE_HOST = '1.13.18.200';
 
@@ -10,7 +11,10 @@ const ONLINE_MONGO_PORT = 17271;
 const ONLINE_MONGO_DB = 'tzl';
 const ONLINE_MONGO_AUTH_SOURCE = 'admin';
 const ONLINE_MONGO_USERNAME = 'admin';
-const ONLINE_MONGO_PASSWORD = 'qwerasdf';
+const ONLINE_MONGO_PASSWORD = readRequiredStringFrom([
+  'NODE_MONGO_PASSWORD',
+  'MONGO_PASSWORD',
+]);
 
 export default {
   koa: {

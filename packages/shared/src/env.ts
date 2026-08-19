@@ -43,6 +43,20 @@ export function readStringFrom(names: string[], fallback: string): string {
   return fallback;
 }
 
+export function readRequiredStringFrom(names: string[]): string {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  throw new Error(
+    `missing required environment variable: ${names.join(' or ')}`
+  );
+}
+
 export function readNumberFrom(names: string[], fallback: number): number {
   for (const name of names) {
     const raw = process.env[name];

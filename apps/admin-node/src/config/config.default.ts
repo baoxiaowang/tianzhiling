@@ -511,7 +511,7 @@ export default {
         ),
         password: readStringFrom(
           ['ADMIN_API_MONGO_PASSWORD', 'NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'],
-          'qwerasdf'
+          ''
         ),
         synchronize: readBooleanFrom(
           ['ADMIN_API_DB_SYNCHRONIZE'],

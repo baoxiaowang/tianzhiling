@@ -12,7 +12,7 @@
  *
  * 环境变量：
  *   MONGO_URI — MongoDB 连接串（必填）
- *   例如：mongodb://admin:qwerasdf@127.0.0.1:17271/tzl?authSource=admin
+ *   不允许在源码或命令历史中写入账号密码。
  */
 
 const { MongoClient, ObjectId } = require('mongodb');
@@ -21,12 +21,28 @@ const path = require('path');
 
 // ── 配置 ──────────────────────────────────────────────
 
-const MONGO_URI =
-  process.env.MONGO_URI || 'mongodb://admin:qwerasdf@127.0.0.1:17271/tzl?authSource=admin';
-const STALE_DAYS = parseInt(process.argv.find(a => a.startsWith('--stale-days='))?.split('=')[1] || '180', 10);
-const OUTPUT_DIR = process.argv.find(a => a.startsWith('--output-dir='))?.split('=')[1] || './audit_output';
+const MONGO_URI = requireMongoUri();
+const STALE_DAYS = parseInt(
+  process.argv.find(a => a.startsWith('--stale-days='))?.split('=')[1] || '180',
+  10
+);
+const OUTPUT_DIR =
+  process.argv.find(a => a.startsWith('--output-dir='))?.split('=')[1] ||
+  './audit_output';
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose');
+
+function requireMongoUri() {
+  const value = String(
+    process.env.NODE_MONGO_URI || process.env.MONGO_URI || ''
+  ).trim();
+  if (!value) {
+    throw new Error(
+      'missing required environment variable: NODE_MONGO_URI or MONGO_URI'
+    );
+  }
+  return value;
+}
 
 // ── 工具 ──────────────────────────────────────────────
 
@@ -66,7 +82,8 @@ function valueOverlapRatio(value, sourceText) {
 async function auditExtractedFacts(db) {
   console.log('\n=== 审计 1: extracted 置信度事实 ===');
 
-  const facts = await db.collection('agent_profile_fact')
+  const facts = await db
+    .collection('agent_profile_fact')
     .find({ confidence: 'extracted', status: { $ne: 'archived' } })
     .toArray();
 
@@ -94,7 +111,11 @@ async function auditExtractedFacts(db) {
     }
   }
 
-  console.log(`  问题: ${issues.filter(i => i.risk !== 'low').length} 条 (高:${issues.filter(i => i.risk === 'high').length} 中:${issues.filter(i => i.risk === 'medium').length})`);
+  console.log(
+    `  问题: ${issues.filter(i => i.risk !== 'low').length} 条 (高:${
+      issues.filter(i => i.risk === 'high').length
+    } 中:${issues.filter(i => i.risk === 'medium').length})`
+  );
 
   return issues;
 }
@@ -106,7 +127,8 @@ async function auditStaleFacts(db) {
 
   const cutoff = new Date(Date.now() - STALE_DAYS * 86400000);
 
-  const facts = await db.collection('agent_profile_fact')
+  const facts = await db
+    .collection('agent_profile_fact')
     .find({
       updatedAt: { $lt: cutoff },
       status: { $ne: 'archived' },
@@ -125,7 +147,9 @@ async function auditStaleFacts(db) {
     value: (f.value || '').slice(0, 120),
     confidence: f.confidence,
     updatedAt: f.updatedAt?.toISOString() || '',
-    daysStale: Math.floor((Date.now() - new Date(f.updatedAt).getTime()) / 86400000),
+    daysStale: Math.floor(
+      (Date.now() - new Date(f.updatedAt).getTime()) / 86400000
+    ),
   }));
 
   return issues;
@@ -138,14 +162,16 @@ async function auditEmotionAsFact(db) {
 
   const SUSPICIOUS_KEYS = /^(grief_trigger\.|safety_signal\.)/;
 
-  const memFacts = await db.collection('agent_memory_fact')
+  const memFacts = await db
+    .collection('agent_memory_fact')
     .find({
       key: { $regex: '^(grief_trigger\\.|safety_signal\\.)' },
       isArchived: { $ne: true },
     })
     .toArray();
 
-  const profileFacts = await db.collection('agent_profile_fact')
+  const profileFacts = await db
+    .collection('agent_profile_fact')
     .find({
       key: { $regex: '^(grief_trigger\\.|safety_signal\\.)' },
       status: { $ne: 'archived' },
@@ -214,7 +240,9 @@ async function main() {
   console.log(`输出目录: ${OUTPUT_DIR}`);
   console.log(`模式: ${DRY_RUN ? 'DRY RUN (不写文件)' : '正式运行'}`);
 
-  const client = new MongoClient(MONGO_URI, { serverSelectionTimeoutMS: 10000 });
+  const client = new MongoClient(MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+  });
   try {
     await client.connect();
     const db = client.db();
@@ -225,7 +253,8 @@ async function main() {
       auditEmotionAsFact(db),
     ]);
 
-    const total = extractedIssues.length + staleIssues.length + emotionIssues.length;
+    const total =
+      extractedIssues.length + staleIssues.length + emotionIssues.length;
     console.log(`\n═══════════════════════`);
     console.log(`总计: ${total} 条需审查`);
     console.log(`  extracted 可疑: ${extractedIssues.length}`);
@@ -237,24 +266,67 @@ async function main() {
       // 打印少量样本
       if (extractedIssues.filter(i => i.risk === 'high').length > 0) {
         console.log('\n高危 extracted 样本 (前3条):');
-        extractedIssues.filter(i => i.risk === 'high').slice(0, 3).forEach(i => {
-          console.log(`  key=${i.key} value=${i.value.slice(0,60)} source=${i.sourceText.slice(0,60)} ratio=${i.overlapRatio}`);
-        });
+        extractedIssues
+          .filter(i => i.risk === 'high')
+          .slice(0, 3)
+          .forEach(i => {
+            console.log(
+              `  key=${i.key} value=${i.value.slice(
+                0,
+                60
+              )} source=${i.sourceText.slice(0, 60)} ratio=${i.overlapRatio}`
+            );
+          });
       }
       return;
     }
 
     await Promise.all([
-      writeCsv('audit_1_extracted_facts.csv',
-        ['_id', 'agentId', 'userId', 'key', 'type', 'value', 'sourceText', 'overlapRatio', 'confidence', 'updatedAt', 'risk'],
+      writeCsv(
+        'audit_1_extracted_facts.csv',
+        [
+          '_id',
+          'agentId',
+          'userId',
+          'key',
+          'type',
+          'value',
+          'sourceText',
+          'overlapRatio',
+          'confidence',
+          'updatedAt',
+          'risk',
+        ],
         extractedIssues
       ),
-      writeCsv('audit_2_stale_facts.csv',
-        ['_id', 'agentId', 'userId', 'key', 'type', 'value', 'confidence', 'updatedAt', 'daysStale'],
+      writeCsv(
+        'audit_2_stale_facts.csv',
+        [
+          '_id',
+          'agentId',
+          'userId',
+          'key',
+          'type',
+          'value',
+          'confidence',
+          'updatedAt',
+          'daysStale',
+        ],
         staleIssues
       ),
-      writeCsv('audit_3_emotion_as_fact.csv',
-        ['source', '_id', 'agentId', 'userId', 'key', 'value', 'type', 'confidence', 'updatedAt'],
+      writeCsv(
+        'audit_3_emotion_as_fact.csv',
+        [
+          'source',
+          '_id',
+          'agentId',
+          'userId',
+          'key',
+          'value',
+          'type',
+          'confidence',
+          'updatedAt',
+        ],
         emotionIssues
       ),
     ]);
@@ -265,8 +337,10 @@ async function main() {
       staleDays: STALE_DAYS,
       counts: {
         extractedTotal: extractedIssues.length,
-        extractedHighRisk: extractedIssues.filter(i => i.risk === 'high').length,
-        extractedMediumRisk: extractedIssues.filter(i => i.risk === 'medium').length,
+        extractedHighRisk: extractedIssues.filter(i => i.risk === 'high')
+          .length,
+        extractedMediumRisk: extractedIssues.filter(i => i.risk === 'medium')
+          .length,
         staleTotal: staleIssues.length,
         emotionAsFactTotal: emotionIssues.length,
       },
@@ -276,7 +350,6 @@ async function main() {
       JSON.stringify(summary, null, 2)
     );
     console.log(`\n汇总写入: ${path.join(OUTPUT_DIR, 'audit_summary.json')}`);
-
   } catch (error) {
     console.error('审计失败:', error.message);
     process.exit(1);

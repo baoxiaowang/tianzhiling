@@ -3,6 +3,7 @@ import { Framework } from '@midwayjs/koa';
 
 describe('test/controller/home.test.ts', () => {
   it('should GET /api/system/health', async () => {
+    process.env.NODE_MONGO_PASSWORD ||= 'test-only-mongo-password';
     const app = await createApp<Framework>();
 
     const result = await createHttpRequest(app).get('/api/system/health');

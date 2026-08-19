@@ -197,6 +197,10 @@ function objectIdKey(value) {
 }
 
 function buildMongoConnectionString() {
+  const uri = readEnv(['NODE_MONGO_URI', 'MONGO_URI'], '');
+  if (uri) {
+    return uri;
+  }
   const host = readEnv(['NODE_MONGO_HOST', 'MONGO_HOST'], '127.0.0.1');
   const port = readEnv(['NODE_MONGO_PORT', 'MONGO_PORT'], '17271');
   const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
@@ -205,10 +209,10 @@ function buildMongoConnectionString() {
     'admin'
   );
   const username = encodeURIComponent(
-    readEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'], 'admin')
+    requireEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'])
   );
   const password = encodeURIComponent(
-    readEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], 'qwerasdf')
+    requireEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'])
   );
   return `mongodb://${username}:${password}@${host}:${port}/${database}?authSource=${authSource}`;
 }
@@ -219,6 +223,16 @@ function readEnv(keys, fallback) {
     if (value) return value;
   }
   return fallback;
+}
+
+function requireEnv(keys) {
+  const value = readEnv(keys, '');
+  if (!value) {
+    throw new Error(
+      `missing required environment variable: ${keys.join(' or ')}`
+    );
+  }
+  return value;
 }
 
 function loadLocalEnv() {

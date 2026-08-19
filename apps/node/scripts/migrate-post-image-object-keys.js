@@ -136,14 +136,45 @@ function appendHost(target, value) {
 }
 
 function buildMongoConnectionString() {
-  const host = process.env.MONGO_HOST || '127.0.0.1';
-  const port = process.env.MONGO_PORT || '17271';
-  const database = process.env.MONGO_DB || 'tzl';
-  const authSource = process.env.MONGO_AUTH_SOURCE || 'admin';
-  const username = encodeURIComponent(process.env.MONGO_USERNAME || 'admin');
-  const password = encodeURIComponent(process.env.MONGO_PASSWORD || 'qwerasdf');
+  const uri = readEnv(['NODE_MONGO_URI', 'MONGO_URI'], '');
+  if (uri) {
+    return uri;
+  }
+  const host = readEnv(['NODE_MONGO_HOST', 'MONGO_HOST'], '127.0.0.1');
+  const port = readEnv(['NODE_MONGO_PORT', 'MONGO_PORT'], '17271');
+  const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
+  const authSource = readEnv(
+    ['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'],
+    'admin'
+  );
+  const username = encodeURIComponent(
+    requireEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'])
+  );
+  const password = encodeURIComponent(
+    requireEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'])
+  );
 
   return `mongodb://${username}:${password}@${host}:${port}/${database}?authSource=${authSource}`;
+}
+
+function readEnv(keys, fallback) {
+  for (const key of keys) {
+    const value = String(process.env[key] || '').trim();
+    if (value) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function requireEnv(keys) {
+  const value = readEnv(keys, '');
+  if (!value) {
+    throw new Error(
+      `missing required environment variable: ${keys.join(' or ')}`
+    );
+  }
+  return value;
 }
 
 function loadLocalEnv() {

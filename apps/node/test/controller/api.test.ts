@@ -5,6 +5,7 @@ describe('test/controller/home.test.ts', () => {
   let app: IMidwayKoaApplication;
 
   beforeAll(async () => {
+    process.env.NODE_MONGO_PASSWORD ||= 'test-only-mongo-password';
     app = await createApp<Framework>();
   });
 
