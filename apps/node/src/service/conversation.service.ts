@@ -173,6 +173,7 @@ import {
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
 import { ContinuityInformationCardService } from './agents/continuity-information-card.service';
+import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -382,6 +383,8 @@ interface BeforeReplyResult {
   currentTurnMessages?: MessageEntity[];
   deferReply: boolean;
   shortTurnReception?: ShortTurnReceptionDecision;
+  permanentSilence?: boolean;
+  immediateAssistantMessages?: MessageEntity[];
   isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
 }
@@ -757,6 +760,9 @@ export class ConversationService {
   @Inject()
   continuityInformationCardService: ContinuityInformationCardService;
 
+  @Inject()
+  permanentAgentSilenceService: PermanentAgentSilenceService;
+
   async listConversations(
     auth: AuthenticatedUserPayload,
     options: ListConversationsOptions = {}
@@ -881,7 +887,7 @@ export class ConversationService {
         ? await this.prepareChatReplyTrace(runtime, before, false)
         : undefined;
 
-    if (!before.isDuplicate) {
+    if (!before.isDuplicate && !before.permanentSilence) {
       if (!this.isExplicitMemoryControlRequest(before.searchableText)) {
         this.scheduleUserMessageEnrichment(
           before.userMessage,
@@ -896,7 +902,35 @@ export class ConversationService {
 
     const execute = async () => {
       try {
+        if (
+          await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+            runtime.agent,
+            [before.userMessage]
+          )
+        ) {
+          if (trace) {
+            await this.chatTraceService?.markSkipped(
+              trace.traceId,
+              'PERMANENT_AGENT_SILENCE'
+            );
+          }
+          return this.buildSendMessageResult(before);
+        }
         const processed = await this.processReply(runtime, before);
+        if (
+          await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+            runtime.agent,
+            [before.userMessage]
+          )
+        ) {
+          if (trace) {
+            await this.chatTraceService?.markSkipped(
+              trace.traceId,
+              'PERMANENT_AGENT_SILENCE'
+            );
+          }
+          return this.buildSendMessageResult(before);
+        }
         const after = await this.withTraceSpan(
           ChatTraceStage.persistReply,
           'persist.reply',
@@ -995,7 +1029,7 @@ export class ConversationService {
       }
     }
 
-    if (!before.isDuplicate) {
+    if (!before.isDuplicate && !before.permanentSilence) {
       if (!this.isExplicitMemoryControlRequest(before.searchableText)) {
         this.scheduleUserMessageEnrichment(
           before.userMessage,
@@ -1311,10 +1345,43 @@ export class ConversationService {
           () => this.findAgentById(conversation.agentId)
         ),
       };
+      if (
+        await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+          runtime.agent,
+          pendingUserMessages
+        )
+      ) {
+        if (data.traceId) {
+          await this.chatTraceService?.markSkipped(
+            data.traceId,
+            'PERMANENT_AGENT_SILENCE'
+          );
+        }
+        this.logger.info(
+          '[conversation-reply] permanently silent agent skipped queued reply, conversationId=%s, agentId=%s',
+          conversationId,
+          this.stringifyObjectId(conversation.agentId)
+        );
+        return;
+      }
       const before = this.buildQueuedBeforeReplyResult(pendingUserMessages);
 
       try {
         const processed = await this.processReply(runtime, before);
+        if (
+          await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+            runtime.agent,
+            pendingUserMessages
+          )
+        ) {
+          if (data.traceId) {
+            await this.chatTraceService?.markSkipped(
+              data.traceId,
+              'PERMANENT_AGENT_SILENCE'
+            );
+          }
+          return;
+        }
 
         if (
           await this.hasUserMessageAfter(
@@ -2090,6 +2157,17 @@ export class ConversationService {
     if (existingUserMessage) {
       const messagePayload =
         this.buildPreparedIncomingMessageFromStored(existingUserMessage);
+      const permanentSilence =
+        await this.permanentAgentSilenceService.isPermanentlySilent(
+          runtime.agent
+        );
+      const duplicateDeclaration = permanentSilence
+        ? await this.permanentAgentSilenceService.findDeclarationForDuplicate({
+            agent: runtime.agent,
+            conversationId: runtime.conversation.id,
+            userMessageId: existingUserMessage.id,
+          })
+        : undefined;
       const shortTurnReception = await this.resolveShortTurnReceptionForMessage(
         messagePayload,
         existingUserMessage
@@ -2101,12 +2179,20 @@ export class ConversationService {
           this.buildSearchableTextFromMessage(existingUserMessage),
         userMessage: existingUserMessage,
         deferReply:
+          permanentSilence ||
           existingUserMessage.replyTrigger === false ||
           this.isAssistantReplyDeferred(messagePayload) ||
           shortTurnReception.mode !== 'reply',
         shortTurnReception,
+        permanentSilence,
+        immediateAssistantMessages:
+          duplicateDeclaration?.role === MessageRole.assistant
+            ? [duplicateDeclaration]
+            : undefined,
         isDuplicate: true,
-        chatQuota: await this.resolveCurrentChatQuota(runtime, new Date()),
+        chatQuota: permanentSilence
+          ? undefined
+          : await this.resolveCurrentChatQuota(runtime, new Date()),
       };
     }
 
@@ -2120,10 +2206,14 @@ export class ConversationService {
     const isAutomaticChatImport =
       messagePayload.type === MessageType.image &&
       messagePayload.imageType === 'chat_screenshot';
+    const alreadyPermanentlySilent =
+      await this.permanentAgentSilenceService.isPermanentlySilent(
+        runtime.agent
+      );
     let chatQuota: ConversationChatQuotaSnapshot | undefined;
     if (isAutomaticChatImport) {
       chatQuota = await this.resolveCurrentChatQuota(runtime, now);
-    } else {
+    } else if (!alreadyPermanentlySilent) {
       try {
         chatQuota = await this.resolveChatQuotaForSend(
           runtime,
@@ -2181,7 +2271,7 @@ export class ConversationService {
     });
 
     // Save quota trigger decision on user message
-    if (chatQuota.triggerDecision) {
+    if (chatQuota?.triggerDecision) {
       const setPayload: Record<string, any> = {
         replyQuotaTriggerDecision: chatQuota.triggerDecision,
       };
@@ -2214,7 +2304,6 @@ export class ConversationService {
           this.describeReplyError(error)
         );
       }
-
       return {
         messagePayload,
         searchableText,
@@ -2223,6 +2312,38 @@ export class ConversationService {
         chatQuota,
       };
     }
+    if (alreadyPermanentlySilent) {
+      await this.permanentAgentSilenceService.markMessagesPermanentlySilent([
+        userMessage,
+      ]);
+      return {
+        messagePayload,
+        searchableText,
+        userMessage,
+        deferReply: true,
+        permanentSilence: true,
+      };
+    }
+
+    const permanentSilence =
+      await this.permanentAgentSilenceService.assessAndActivate({
+        conversation: runtime.conversation,
+        agent: runtime.agent,
+        currentUserMessage: userMessage,
+      });
+    if (permanentSilence) {
+      return {
+        messagePayload,
+        searchableText,
+        userMessage,
+        deferReply: true,
+        permanentSilence: true,
+        immediateAssistantMessages: permanentSilence.declaration
+          ? [permanentSilence.declaration]
+          : undefined,
+      };
+    }
+
     this.scheduleVisualAppearanceMemory(
       userMessage,
       messagePayload.visualAppearanceObservations
@@ -5904,10 +6025,11 @@ export class ConversationService {
     before: BeforeReplyResult,
     after?: AfterReplyResult
   ): SendConversationMessageResult {
-    const assistantMessages = (after?.assistantMessages ?? []).slice(
-      0,
-      MAX_ASSISTANT_REPLY_SEGMENTS
-    );
+    const assistantMessages = (
+      after?.assistantMessages ??
+      before.immediateAssistantMessages ??
+      []
+    ).slice(0, MAX_ASSISTANT_REPLY_SEGMENTS);
 
     return {
       userMessage: this.messageService.buildConversationMessageItem(
