@@ -306,6 +306,12 @@ export class MessageEntity extends BaseEntity {
   replyBriefVersion?: string;
 
   @Column()
+  replyTurnContractVersion?: string;
+
+  @Column()
+  replyTurnContractFocusDimensions?: string[];
+
+  @Column()
   replyBriefMode?: string;
 
   @Column()
@@ -385,6 +391,21 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   replyGuardrailFocuses?: string[];
+
+  @Column()
+  replyQualityAuditVersion?: string;
+
+  @Column()
+  replyQualityActivatedDimensions?: string[];
+
+  @Column()
+  replyQualityInitialFailedDimensions?: string[];
+
+  @Column()
+  replyQualityFinalFailedDimensions?: string[];
+
+  @Column()
+  replyQualityRecoveredDimensions?: string[];
 
   @Column()
   replyContentEchoPassed?: boolean;

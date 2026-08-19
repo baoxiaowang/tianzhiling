@@ -172,7 +172,7 @@ function buildMongoUri(): string {
   const host = readEnv('TRANSFER_MONGO_HOST', '127.0.0.1');
   const port = readEnv('TRANSFER_MONGO_PORT', '17271');
   const username = readEnv('TRANSFER_MONGO_USERNAME', 'admin');
-  const password = readEnv('TRANSFER_MONGO_PASSWORD', 'qwerasdf');
+  const password = requireEnv('TRANSFER_MONGO_PASSWORD');
   const database = readEnv('TRANSFER_MONGO_DATABASE', 'tzl');
   const authSource = readEnv('TRANSFER_MONGO_AUTH_SOURCE', 'admin');
 
@@ -200,6 +200,16 @@ function readEnv(name: string, fallback: string): string {
   const value = process.env[name];
 
   return value == null || value === '' ? fallback : value;
+}
+
+function requireEnv(name: string): string {
+  const value = readEnv(name, '').trim();
+
+  if (!value) {
+    throw new Error(`missing required environment variable: ${name}`);
+  }
+
+  return value;
 }
 
 function readNumberEnv(name: string, fallback: number): number {

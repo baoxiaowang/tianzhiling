@@ -12,6 +12,18 @@ function readStringFrom(names: string[], fallback: string): string {
   return fallback;
 }
 
+function readRequiredStringFrom(names: string[]): string {
+  const value = readStringFrom(names, '').trim();
+
+  if (!value) {
+    throw new Error(
+      `missing required environment variable: ${names.join(' or ')}`
+    );
+  }
+
+  return value;
+}
+
 function readNumberFrom(names: string[], fallback: number): number {
   for (const name of names) {
     const raw = process.env[name];
@@ -78,7 +90,7 @@ export default {
         port: readNumberFrom(['NODE_MONGO_PORT'], 27017),
         authSource: readStringFrom(['NODE_MONGO_AUTH_SOURCE'], 'admin'),
         username: readStringFrom(['NODE_MONGO_USERNAME'], 'admin'),
-        password: readStringFrom(['NODE_MONGO_PASSWORD'], 'qwerasdf'),
+        password: readRequiredStringFrom(['NODE_MONGO_PASSWORD']),
         synchronize: readBooleanFrom(['NODE_DB_SYNCHRONIZE'], false),
         logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
       },

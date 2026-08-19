@@ -17,13 +17,25 @@ const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
-const MONGO_URI =
-  process.env.MONGO_URI ||
-  'mongodb://admin:qwerasdf@127.0.0.1:17271/tzl?authSource=admin';
+const MONGO_URI = requireMongoUri();
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const RISK_LEVEL = process.argv.find(a => a.startsWith('--risk-level='))?.split('=')[1] || 'high';
+const RISK_LEVEL =
+  process.argv.find(a => a.startsWith('--risk-level='))?.split('=')[1] ||
+  'high';
 const BACKUP_DIR = './memory_archive_backup';
+
+function requireMongoUri() {
+  const value = String(
+    process.env.NODE_MONGO_URI || process.env.MONGO_URI || ''
+  ).trim();
+  if (!value) {
+    throw new Error(
+      'missing required environment variable: NODE_MONGO_URI or MONGO_URI'
+    );
+  }
+  return value;
+}
 
 function valueOverlapRatio(value, sourceText) {
   if (!value || !sourceText) return 0;
@@ -52,7 +64,9 @@ async function main() {
   console.log(`模式: ${DRY_RUN ? 'DRY RUN (不执行归档)' : '正式归档'}`);
   console.log(`备份目录: ${BACKUP_DIR}`);
 
-  const client = new MongoClient(MONGO_URI, { serverSelectionTimeoutMS: 10000 });
+  const client = new MongoClient(MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+  });
   try {
     await client.connect();
     const db = client.db();
@@ -62,8 +76,14 @@ async function main() {
     const candidates = await collection
       .find({ confidence: 'extracted', status: { $ne: 'archived' } })
       .project({
-        key: 1, value: 1, sourceText: 1, type: 1,
-        agentId: 1, userId: 1, confidence: 1, updatedAt: 1,
+        key: 1,
+        value: 1,
+        sourceText: 1,
+        type: 1,
+        agentId: 1,
+        userId: 1,
+        confidence: 1,
+        updatedAt: 1,
       })
       .toArray();
 
@@ -73,11 +93,20 @@ async function main() {
       const ratio = valueOverlapRatio(f.value, f.sourceText || '');
       const risk = classifyRisk(ratio);
       if (RISK_LEVEL === 'all' || risk === RISK_LEVEL) {
-        classified.push({ _id: f._id, risk, ratio: ratio.toFixed(2), key: f.key, value: (f.value||'').slice(0, 80), sourceText: (f.sourceText||'').slice(0, 80) });
+        classified.push({
+          _id: f._id,
+          risk,
+          ratio: ratio.toFixed(2),
+          key: f.key,
+          value: (f.value || '').slice(0, 80),
+          sourceText: (f.sourceText || '').slice(0, 80),
+        });
       }
     }
 
-    console.log(`\n候选: ${candidates.length} 条 (confidence=extracted, 未归档)`);
+    console.log(
+      `\n候选: ${candidates.length} 条 (confidence=extracted, 未归档)`
+    );
     console.log(`匹配风险=${RISK_LEVEL}: ${classified.length} 条`);
 
     if (classified.length === 0) {
@@ -103,7 +132,10 @@ async function main() {
     }
     const ids = classified.map(f => f._id);
     const backupDocs = await collection.find({ _id: { $in: ids } }).toArray();
-    const backupFile = path.join(BACKUP_DIR, `rollback_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    const backupFile = path.join(
+      BACKUP_DIR,
+      `rollback_${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    );
     fs.writeFileSync(backupFile, JSON.stringify(backupDocs, null, 2));
     console.log(`\n备份写入: ${backupFile} (${backupDocs.length} 条)`);
 
@@ -114,7 +146,9 @@ async function main() {
       { $set: { status: 'archived', updatedAt: now } }
     );
     console.log(`归档完成: ${result.modifiedCount} 条已归档`);
-    console.log(`回滚: db.agent_profile_fact.updateMany({status:'archived',updatedAt:ISODate("${now.toISOString()}")}, {$set:{status:'active'}})`);
+    console.log(
+      `回滚: db.agent_profile_fact.updateMany({status:'archived',updatedAt:ISODate("${now.toISOString()}")}, {$set:{status:'active'}})`
+    );
   } catch (error) {
     console.error('归档失败:', error.message);
     process.exit(1);

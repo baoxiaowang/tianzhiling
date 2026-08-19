@@ -353,33 +353,33 @@ export default {
         ['NODE_CHAT_FALLBACK_BASE_URL'],
         'https://api.deepseek.com'
       ),
-      model: readStringFrom(
-        ['NODE_CHAT_FALLBACK_MODEL'],
-        'deepseek-v4-flash'
-      ),
+      model: readStringFrom(['NODE_CHAT_FALLBACK_MODEL'], 'deepseek-v4-flash'),
     },
     secondaryFallback: {
       apiKey: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_API_KEY'], ''),
-      baseURL: readStringFrom(
-        ['NODE_CHAT_SECONDARY_FALLBACK_BASE_URL'],
-        ''
-      ),
-      model: readStringFrom(
-        ['NODE_CHAT_SECONDARY_FALLBACK_MODEL'],
-        ''
-      ),
+      baseURL: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_BASE_URL'], ''),
+      model: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_MODEL'], ''),
     },
 
     // 视觉理解模型
     visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),
-    visionApiKey: readStringFrom(['NODE_VISION_API_KEY', 'DASHSCOPE_API_KEY'], ''),
+    visionApiKey: readStringFrom(
+      ['NODE_VISION_API_KEY', 'DASHSCOPE_API_KEY'],
+      ''
+    ),
     visionBaseURL: readStringFrom(['NODE_VISION_BASE_URL'], ''),
     // 语音转文字
-    speechToTextApiKey: readStringFrom(['NODE_SPEECH_TO_TEXT_API_KEY', 'DASHSCOPE_API_KEY'], ''),
+    speechToTextApiKey: readStringFrom(
+      ['NODE_SPEECH_TO_TEXT_API_KEY', 'DASHSCOPE_API_KEY'],
+      ''
+    ),
     speechToTextBaseURL: readStringFrom(['NODE_SPEECH_TO_TEXT_BASE_URL'], ''),
     speechToTextModel: readStringFrom(['NODE_SPEECH_TO_TEXT_MODEL'], ''),
     // 语音合成
-    textToSpeechApiKey: readStringFrom(['NODE_TEXT_TO_SPEECH_API_KEY', 'DASHSCOPE_API_KEY'], ''),
+    textToSpeechApiKey: readStringFrom(
+      ['NODE_TEXT_TO_SPEECH_API_KEY', 'DASHSCOPE_API_KEY'],
+      ''
+    ),
     textToSpeechBaseURL: readStringFrom(['NODE_TEXT_TO_SPEECH_BASE_URL'], ''),
     textToSpeechModel: readStringFrom(['NODE_TEXT_TO_SPEECH_MODEL'], ''),
     textToSpeechVoice: readStringFrom(['NODE_TEXT_TO_SPEECH_VOICE'], ''),
@@ -404,7 +404,10 @@ export default {
     reasoningSplit: readBooleanFrom(['NODE_REASONING_SPLIT'], true),
 
     // 嵌入模型
-    embeddingApiKey: readStringFrom(['NODE_EMBEDDING_API_KEY', 'DASHSCOPE_API_KEY'], ''),
+    embeddingApiKey: readStringFrom(
+      ['NODE_EMBEDDING_API_KEY', 'DASHSCOPE_API_KEY'],
+      ''
+    ),
     embeddingBaseURL: readStringFrom(['NODE_EMBEDDING_BASE_URL'], ''),
     embeddingModel: readStringFrom(['NODE_EMBEDDING_MODEL'], ''),
     embeddingDimensions: readOptionalNumberFrom(['NODE_EMBEDDING_DIMENSIONS']),
@@ -734,10 +737,7 @@ export default {
           ['NODE_MONGO_USERNAME', 'MONGO_USERNAME'],
           'admin'
         ),
-        password: readStringFrom(
-          ['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'],
-          'qwerasdf'
-        ),
+        password: readStringFrom(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], ''),
         synchronize: readBooleanFrom(
           ['NODE_DB_SYNCHRONIZE'],
           process.env.NODE_ENV !== 'production'
