@@ -10,7 +10,6 @@ ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_a
 SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
 DEPLOY_STARTED=0
 PREVIOUS_COMMIT=""
-ENV_BACKUP=""
 
 declare -A OLD_IMAGES=()
 declare -A COMPOSE_IMAGES=()
@@ -18,13 +17,6 @@ declare -A COMPOSE_IMAGES=()
 fail() {
   printf '[RELEASE_FAILED] phase=%s message=%s\n' "${PHASE:-preflight}" "$*" >&2
   exit 1
-}
-
-restore_env_file() {
-  [[ -n "$ENV_BACKUP" && -f "$ENV_BACKUP" ]] || return 0
-  install -m 600 "$ENV_BACKUP" "$REPO/.env"
-  rm -f "$ENV_BACKUP"
-  ENV_BACKUP=""
 }
 
 rollback_runtime() {
@@ -45,7 +37,6 @@ rollback_runtime() {
 on_error() {
   local rc="$?"
   trap - ERR
-  restore_env_file
   rollback_runtime
   printf '[RELEASE_FAILED] phase=%s target=%s exit=%s\n' "${PHASE:-unknown}" "$TARGET" "$rc" >&2
   exit "$rc"
@@ -86,7 +77,6 @@ PHASE='preflight'
 cd "$REPO"
 [[ "$(git symbolic-ref --short HEAD)" == "$BRANCH" ]] || fail 'server branch mismatch'
 [[ -z "$(git status --porcelain)" ]] || fail 'server worktree is dirty'
-[[ -f "$REPO/.env" ]] || fail 'server .env is missing'
 
 PREVIOUS_COMMIT="$(git rev-parse HEAD)"
 git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
@@ -101,10 +91,7 @@ for service in "${SERVICES[@]}"; do
     "tzl-${service}-rollback:${PREVIOUS_COMMIT:0:12}"
 done
 
-ENV_BACKUP="$(mktemp /tmp/tianzhiling-env.XXXXXX)"
-install -m 600 "$REPO/.env" "$ENV_BACKUP"
 git merge --ff-only "$TARGET"
-restore_env_file
 [[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
 
 # Keep runtime telemetry, the container environment, and the immutable image
