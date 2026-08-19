@@ -108,7 +108,7 @@ export function resolveReplyPromptLayerPlan(options: {
     planningMode: options.planningMode,
     complex,
     includeReading: hasReading || !reductionActive || complex,
-    includeMode: true,
+    includeMode: false,
     includeEvidence: true,
     includeContinuity: options.hasContinuitySummary,
     includeTask: true,

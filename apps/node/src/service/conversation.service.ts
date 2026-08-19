@@ -15,6 +15,7 @@ import {
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationEntity,
+  ConversationRecognitionTaskId,
   MessageEntity,
   MessageRole,
   MessageStatus,
@@ -61,6 +62,7 @@ import { AgentConversationSummaryService } from './agents/agent-conversation-sum
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { buildAgentPersonaPrompt } from './agents/agent-persona';
+import { buildAgentIdentityContract } from './agents/agent-identity-contract';
 import {
   AgentProfileFactService,
   AgentVisualAppearanceObservation,
@@ -120,6 +122,13 @@ import {
 import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
 import { assessDirectActiveContributionExecution } from './agents/direct-active-contribution';
+import {
+  resolveShortTurnGeneration,
+  resolveShortTurnReception,
+  LightweightReplyCategory,
+  SHORT_TURN_RUNTIME_VERSION,
+  ShortTurnReceptionDecision,
+} from './agents/short-turn-runtime';
 import type {
   ChatCompletion,
   ChatCompletionMessageFunctionToolCall,
@@ -149,6 +158,13 @@ import {
   AgentChatToolService,
 } from './agents/agent-chat-tool.service';
 import { MessengerService } from './agents/messenger.service';
+import {
+  applyRecognitionJourneyAssistantReply,
+  buildInitialRecognitionJourney,
+  buildLegacyRecognitionJourney,
+  planRecognitionJourneyTurn,
+  RecognitionJourneyTurnPlan,
+} from './agents/recognition-journey';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -159,6 +175,12 @@ const ASSISTANT_REPLY_MAX_TOKENS = 520;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
+const LIGHTWEIGHT_REPLY_MAX_TOKENS = 120;
+const LIGHTWEIGHT_REPLY_TIMEOUT_MS = 12000;
+const LIGHTWEIGHT_REPLY_TEMPERATURE = 0.45;
+const LIGHTWEIGHT_REPLY_TOP_P = 0.9;
+const LIGHTWEIGHT_REPLY_HISTORY_LIMIT = 8;
+const LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT = 900;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
 const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'rigid_only';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
@@ -344,6 +366,7 @@ interface BeforeReplyResult {
   userMessage: MessageEntity;
   currentTurnMessages?: MessageEntity[];
   deferReply: boolean;
+  shortTurnReception?: ShortTurnReceptionDecision;
   isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
 }
@@ -528,6 +551,10 @@ interface ReplyRoutingAudit {
   realityDependencyKinds?: string[];
   correctionFactMode?: string;
   activeContributionSource?: string;
+  recognitionJourneyOpeningSuggested?: boolean;
+  recognitionJourneyTaskSuggested?: ConversationRecognitionTaskId;
+  recognitionJourneyCompletedTaskIds?: ConversationRecognitionTaskId[];
+  recognitionJourneyPlan?: RecognitionJourneyTurnPlan;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -2008,13 +2035,18 @@ export class ConversationService {
     if (existingUserMessage) {
       const messagePayload =
         this.buildPreparedIncomingMessageFromStored(existingUserMessage);
+      const shortTurnReception = await this.resolveShortTurnReceptionForMessage(
+        messagePayload,
+        existingUserMessage
+      );
 
       return {
         messagePayload,
         searchableText:
           this.buildSearchableTextFromMessage(existingUserMessage),
         userMessage: existingUserMessage,
-        deferReply: this.isAssistantReplyDeferred(messagePayload),
+        deferReply: shortTurnReception.mode !== 'reply',
+        shortTurnReception,
         isDuplicate: true,
         chatQuota: await this.resolveCurrentChatQuota(runtime, new Date()),
       };
@@ -2113,13 +2145,31 @@ export class ConversationService {
       searchableText,
     });
 
-    const deferReply = this.isAssistantReplyDeferred(messagePayload);
+    const shortTurnReception = await this.resolveShortTurnReceptionForMessage(
+      messagePayload,
+      userMessage
+    );
+    const deferReply = shortTurnReception.mode !== 'reply';
+
+    if (deferReply) {
+      userMessage.replyTrigger = shortTurnReception.mode !== 'silent';
+      userMessage.replyPlanningMode = `short_turn_${shortTurnReception.mode}`;
+      userMessage.replyPlanningReason = shortTurnReception.reason;
+      await this.messageModel.save(userMessage);
+      this.logger?.info?.(
+        '[conversation] short turn accepted without immediate generation, mode=%s, reason=%s, conversationId=%s',
+        shortTurnReception.mode,
+        shortTurnReception.reason,
+        this.stringifyObjectId(runtime.conversation.id)
+      );
+    }
 
     return {
       messagePayload,
       searchableText,
       userMessage,
       deferReply,
+      shortTurnReception,
       chatQuota,
     };
   }
@@ -3290,16 +3340,48 @@ export class ConversationService {
   ): Promise<ProcessReplyResult> {
     let context;
     const currentTurnMessages = this.resolveCurrentTurnMessages(before);
-    const memoryControlResult = await this.applyExplicitMemoryControl(
-      before.userMessage,
-      before.searchableText
-    );
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
     );
 
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
+
+    const shortTurnGeneration = resolveShortTurnGeneration({
+      messageTypes: currentTurnMessages.map(message => message.type),
+      texts: currentTurnMessages.map(message =>
+        this.buildSearchableTextFromMessage(message)
+      ),
+    });
+    if (shortTurnGeneration.mode === 'micro_model') {
+      try {
+        return await this.processLightweightReply({
+          runtime,
+          before,
+          currentTurnMessages,
+          category: shortTurnGeneration.category!,
+          effectiveChatModel,
+        });
+      } catch (error) {
+        this.logger?.warn?.(
+          '[conversation] lightweight reply escalated to full model, category=%s, conversationId=%s, reason=%s',
+          shortTurnGeneration.category || '-',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.describeReplyError(error)
+        );
+      }
+    }
+
+    const recognitionJourneyPlan = await this.prepareRecognitionJourneyTurn({
+      runtime,
+      before,
+      currentTurnMessages,
+    });
+
+    const memoryControlResult = await this.applyExplicitMemoryControl(
+      before.userMessage,
+      before.searchableText
+    );
 
     try {
       context = await this.withTraceSpan(
@@ -3318,6 +3400,7 @@ export class ConversationService {
               currentTurnMessages.length > 1 || containsImage,
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
+            recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
           })
       );
     } catch (error) {
@@ -3330,13 +3413,16 @@ export class ConversationService {
         route: fallbackRoute,
       });
 
-      return this.buildGenerationFailureReply(
-        before.searchableText,
-        fallbackRoute,
-        fallbackRoute.intent,
-        fallbackBrief,
-        error,
-        'context'
+      return this.attachRecognitionJourneyPlan(
+        await this.buildGenerationFailureReply(
+          before.searchableText,
+          fallbackRoute,
+          fallbackRoute.intent,
+          fallbackBrief,
+          error,
+          'context'
+        ),
+        recognitionJourneyPlan
       );
     }
 
@@ -3347,38 +3433,6 @@ export class ConversationService {
         intent: context.replyIntent ?? context.replyRoute?.intent,
         route: context.replyRoute,
       });
-
-    // Layer 2: 规划器判定本轮无需回复，跳过主模型
-    // A queued turn can contain messages that were intentionally left unanswered
-    // (for example, "不用回我") followed by a new request. The planner still needs
-    // the merged turn for context, but the silence safety gate must only inspect the
-    // latest user message. Otherwise an old close instruction permanently suppresses
-    // every later reply until an assistant message happens to be persisted.
-    const latestUserQuery = this.buildSearchableTextFromMessage(
-      before.userMessage
-    );
-    if (this.shouldSkipReplyFromBrief(replyBrief, latestUserQuery)) {
-      this.logger.info(
-        '[conversation] reply skipped by plan, contribution=%s, closure=%s, alternative=%s',
-        replyBrief.conversationPlan?.engagement?.assistantContribution,
-        replyBrief.conversationPlan?.engagement?.closureReadiness,
-        replyBrief.strategyQuality?.preferredAlternative
-      );
-      return {
-        replySegments: [],
-        usage: {},
-        routing: {
-          intent: context.replyIntent ?? context.replyRoute?.intent,
-          route: context.replyRoute,
-          brief: replyBrief,
-          skipReply: true,
-          evidenceCount: 0,
-          factClaimCount: 0,
-          unsupportedClaimCount: 0,
-          ...context.diagnostics,
-        },
-      };
-    }
 
     const contextEvidence = context.evidence || [];
     let reviewEvidence = contextEvidence;
@@ -3421,25 +3475,28 @@ export class ConversationService {
         preplanned.segments.length
       );
 
-      return {
-        replySegments: compactReplyBubblesPreservingContent(
-          preplanned.segments
-        ),
-        usage: {},
-        routing: {
-          intent: context.replyIntent ?? context.replyRoute?.intent,
-          route: context.replyRoute,
-          brief: replyBrief,
-          guardrailRewritten: preplanned.rewritten,
-          guardrailReason: preplanned.reason,
-          guardrailInterventionLevel: preplanned.interventionLevel,
-          guardrailRevisionAttempted: preplanned.revisionAttempted,
-          evidenceCount: contextEvidence.length,
-          factClaimCount: 0,
-          unsupportedClaimCount: 0,
-          ...context.diagnostics,
+      return this.attachRecognitionJourneyPlan(
+        {
+          replySegments: compactReplyBubblesPreservingContent(
+            preplanned.segments
+          ),
+          usage: {},
+          routing: {
+            intent: context.replyIntent ?? context.replyRoute?.intent,
+            route: context.replyRoute,
+            brief: replyBrief,
+            guardrailRewritten: preplanned.rewritten,
+            guardrailReason: preplanned.reason,
+            guardrailInterventionLevel: preplanned.interventionLevel,
+            guardrailRevisionAttempted: preplanned.revisionAttempted,
+            evidenceCount: contextEvidence.length,
+            factClaimCount: 0,
+            unsupportedClaimCount: 0,
+            ...context.diagnostics,
+          },
         },
-      };
+        recognitionJourneyPlan
+      );
     }
 
     let response;
@@ -3594,22 +3651,26 @@ export class ConversationService {
             })
           );
         }
-        return this.buildGenerationFailureReply(
-          before.searchableText,
-          context.replyRoute,
-          context.replyIntent ?? context.replyRoute?.intent,
-          replyBrief,
-          recoveryError,
-          this.resolveGenerationFailureStage(recoveryError),
-          {
-            attempted: true,
-            succeeded: false,
-            initialFailureCode: this.resolveGenerationFailureCode(initialError),
-          },
-          generationUsage,
-          context.messages,
-          generationAttemptTraces,
-          runtime
+        return this.attachRecognitionJourneyPlan(
+          await this.buildGenerationFailureReply(
+            before.searchableText,
+            context.replyRoute,
+            context.replyIntent ?? context.replyRoute?.intent,
+            replyBrief,
+            recoveryError,
+            this.resolveGenerationFailureStage(recoveryError),
+            {
+              attempted: true,
+              succeeded: false,
+              initialFailureCode:
+                this.resolveGenerationFailureCode(initialError),
+            },
+            generationUsage,
+            context.messages,
+            generationAttemptTraces,
+            runtime
+          ),
+          recognitionJourneyPlan
         );
       }
     }
@@ -3763,68 +3824,387 @@ export class ConversationService {
         id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id)
       )
     ).length;
-    return {
-      replySegments: participationResult.segments,
-      usage: this.mergeReplyUsage(
-        this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
-        finalizationUsage
-      ),
-      routing: {
-        intent: context.replyIntent ?? context.replyRoute?.intent,
-        route: context.replyRoute,
-        brief: replyBrief,
-        guardrailRewritten: guarded.rewritten,
-        guardrailReason: guarded.reason,
-        guardrailInterventionLevel: guarded.interventionLevel,
-        guardrailRevisionAttempted: guarded.revisionAttempted,
-        guardrailRevisionRoundCount: guarded.revisionRoundCount,
-        communicationCompensationAttempted:
-          guarded.communicationCompensationAttempted,
-        communicationCompensationSucceeded:
-          guarded.communicationCompensationSucceeded,
-        guardrailFinalReviewResult: guarded.finalReviewResult,
-        guardrailReviewMode,
-        guardrailFocuses: replyBrief.guardrailFocuses,
-        contentEchoPassed: guarded.contentEcho?.passed,
-        contentEchoUnitCount: guarded.contentEcho?.unitCount,
-        guardrailFeedbackRounds: guarded.feedbackRounds,
-        guardrailCandidateVersions: guarded.candidateVersions,
-        guardrailRevisionRecords: guarded.revisionRecords,
-        generationRecoveryAttempted,
-        generationRecoverySucceeded,
-        generationAttemptTraces,
-        bubbleReflowAttempted,
-        bubbleReflowSucceeded,
-        bubbleStructureIssues,
-        chatToolDecisionNames: chatToolAudit.decisionNames,
-        chatToolInvalidDecisionCount: chatToolAudit.invalidDecisionCount,
-        chatToolExecutionCount: chatToolAudit.executionCount,
-        chatToolResultItemCount: chatToolAudit.resultItemCount,
-        chatToolPlannerMemoryAgreement: chatToolAudit.plannerMemoryAgreement,
-        participationExecution: participationResult.execution,
-        participationFallbackReason: participationResult.fallbackReason,
-        evidenceCount: reviewEvidence.length,
-        factClaimCount: finalClaims.length,
-        unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
-        qualityAuditVersion: replyQualityAudit?.version,
-        qualityActivatedDimensions: replyQualityAudit?.activatedDimensions,
-        qualityInitialFailedDimensions:
-          replyQualityAudit?.initialFailedDimensions,
-        qualityFinalFailedDimensions: replyQualityAudit?.finalFailedDimensions,
-        qualityRecoveredDimensions: replyQualityAudit?.recoveredDimensions,
-        memoryUsedEvidenceIds,
-        memoryUsedClaimCount,
-        ...context.diagnostics,
-        ...(replyBrief.directActiveContribution
-          ? {
-              assistantContribution: assessDirectActiveContributionExecution(
-                participationResult.segments.join('\n'),
-                replyBrief.directActiveContribution
-              ),
-            }
+    return this.attachRecognitionJourneyPlan(
+      {
+        replySegments: participationResult.segments,
+        usage: this.mergeReplyUsage(
+          this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
+          finalizationUsage
+        ),
+        routing: {
+          intent: context.replyIntent ?? context.replyRoute?.intent,
+          route: context.replyRoute,
+          brief: replyBrief,
+          guardrailRewritten: guarded.rewritten,
+          guardrailReason: guarded.reason,
+          guardrailInterventionLevel: guarded.interventionLevel,
+          guardrailRevisionAttempted: guarded.revisionAttempted,
+          guardrailRevisionRoundCount: guarded.revisionRoundCount,
+          communicationCompensationAttempted:
+            guarded.communicationCompensationAttempted,
+          communicationCompensationSucceeded:
+            guarded.communicationCompensationSucceeded,
+          guardrailFinalReviewResult: guarded.finalReviewResult,
+          guardrailReviewMode,
+          guardrailFocuses: replyBrief.guardrailFocuses,
+          contentEchoPassed: guarded.contentEcho?.passed,
+          contentEchoUnitCount: guarded.contentEcho?.unitCount,
+          guardrailFeedbackRounds: guarded.feedbackRounds,
+          guardrailCandidateVersions: guarded.candidateVersions,
+          guardrailRevisionRecords: guarded.revisionRecords,
+          generationRecoveryAttempted,
+          generationRecoverySucceeded,
+          generationAttemptTraces,
+          bubbleReflowAttempted,
+          bubbleReflowSucceeded,
+          bubbleStructureIssues,
+          chatToolDecisionNames: chatToolAudit.decisionNames,
+          chatToolInvalidDecisionCount: chatToolAudit.invalidDecisionCount,
+          chatToolExecutionCount: chatToolAudit.executionCount,
+          chatToolResultItemCount: chatToolAudit.resultItemCount,
+          chatToolPlannerMemoryAgreement: chatToolAudit.plannerMemoryAgreement,
+          participationExecution: participationResult.execution,
+          participationFallbackReason: participationResult.fallbackReason,
+          evidenceCount: reviewEvidence.length,
+          factClaimCount: finalClaims.length,
+          unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
+          qualityAuditVersion: replyQualityAudit?.version,
+          qualityActivatedDimensions: replyQualityAudit?.activatedDimensions,
+          qualityInitialFailedDimensions:
+            replyQualityAudit?.initialFailedDimensions,
+          qualityFinalFailedDimensions:
+            replyQualityAudit?.finalFailedDimensions,
+          qualityRecoveredDimensions: replyQualityAudit?.recoveredDimensions,
+          memoryUsedEvidenceIds,
+          memoryUsedClaimCount,
+          ...context.diagnostics,
+          ...(replyBrief.directActiveContribution
+            ? {
+                assistantContribution: assessDirectActiveContributionExecution(
+                  participationResult.segments.join('\n'),
+                  replyBrief.directActiveContribution
+                ),
+              }
+            : {}),
+        },
+      },
+      recognitionJourneyPlan
+    );
+  }
+
+  private async processLightweightReply(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    currentTurnMessages: MessageEntity[];
+    category: LightweightReplyCategory;
+    effectiveChatModel?: string;
+  }): Promise<ProcessReplyResult> {
+    const lightweightContext = await this.buildLightweightReplyMessages({
+      runtime: options.runtime,
+      currentTurnMessages: options.currentTurnMessages,
+      category: options.category,
+    });
+    const response = await this.openAIService.createChatCompletion(
+      {
+        ...(options.effectiveChatModel
+          ? { model: options.effectiveChatModel }
           : {}),
+        temperature: LIGHTWEIGHT_REPLY_TEMPERATURE,
+        topP: LIGHTWEIGHT_REPLY_TOP_P,
+        max_tokens: LIGHTWEIGHT_REPLY_MAX_TOKENS,
+        reasoningSplit: false,
+        messages: lightweightContext.messages,
+        trace: {
+          stage: ChatTraceStage.generate,
+          operation: 'generate.lightweight_reply',
+          attributes: {
+            shortTurnCategory: options.category,
+            shortTurnRuntimeVersion: SHORT_TURN_RUNTIME_VERSION,
+            historyMessageCount: lightweightContext.historyMessageCount,
+          },
+        },
+      },
+      {
+        timeout: LIGHTWEIGHT_REPLY_TIMEOUT_MS,
+        maxRetries: 0,
+      }
+    );
+    const responseContent =
+      typeof response.choices?.[0]?.message?.content === 'string'
+        ? response.choices[0].message.content
+        : '';
+    const normalizedSegments = this.normalizeAssistantReplySegments(
+      responseContent,
+      options.before.searchableText
+    );
+    const inspectedSegments = normalizedSegments.map(segment =>
+      this.inspectAssistantSegmentSanitization(
+        segment,
+        options.before.searchableText,
+        { dropSemanticRisks: true }
+      )
+    );
+
+    if (
+      inspectedSegments.some(segment => segment.dropped) ||
+      !inspectedSegments.some(segment => segment.output)
+    ) {
+      throw new AppError(
+        'LIGHTWEIGHT_REPLY_BOUNDARY_REJECTED',
+        'lightweight reply requires full-model handling',
+        502
+      );
+    }
+
+    const replySegments = splitReplyContentForDelivery(
+      inspectedSegments.map(segment => segment.output).filter(Boolean)
+    );
+    if (!replySegments.length) {
+      throw new AppError(
+        'LIGHTWEIGHT_REPLY_EMPTY',
+        'lightweight reply did not contain usable text',
+        502
+      );
+    }
+
+    return {
+      replySegments,
+      usage: this.extractUsageFromResponse(response),
+      routing: {
+        replyPlanningMode: 'micro_model',
+        replyPlanningReason: `closed_social_turn:${options.category}`,
+        replyIntentModelCallCount: 0,
+        strategyVersion: SHORT_TURN_RUNTIME_VERSION,
+        strategySource: 'model_generated_lightweight',
+        promptVersion: 'lightweight_reply_prompt_v1',
+        systemPromptCharacters: lightweightContext.systemPromptCharacters,
+        historyMessageCount: lightweightContext.historyMessageCount,
+        relevantMemoryCount: 0,
+        evidenceCount: 0,
+        factClaimCount: 0,
+        unsupportedClaimCount: 0,
+        guardrailRewritten: false,
+        guardrailRevisionAttempted: false,
+        guardrailReviewMode: 'deterministic_first',
+        conversationDepth: 'micro',
       },
     };
+  }
+
+  private async prepareRecognitionJourneyTurn(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    currentTurnMessages: MessageEntity[];
+  }): Promise<RecognitionJourneyTurnPlan | undefined> {
+    if (
+      !options.runtime.agent ||
+      this.isMessengerAgent(options.runtime.agent)
+    ) {
+      return undefined;
+    }
+
+    try {
+      const conversation = options.runtime.conversation;
+      let journey = conversation.recognitionJourney;
+      let initialized = false;
+      if (!journey) {
+        initialized = true;
+        const earliestCurrentMessage = [...options.currentTurnMessages].sort(
+          (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+        )[0];
+        const priorUserMessageCount = await this.messageModel.count({
+          conversationId: conversation.id,
+          role: MessageRole.user,
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          ...(earliestCurrentMessage?.createdAt
+            ? { createdAt: { $lt: earliestCurrentMessage.createdAt } }
+            : {}),
+        } as never);
+        journey = priorUserMessageCount
+          ? buildLegacyRecognitionJourney()
+          : buildInitialRecognitionJourney({
+              hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
+            });
+      }
+
+      const beforeState = JSON.stringify(journey);
+      const resolved = planRecognitionJourneyTurn({
+        journey,
+        currentQuery: options.before.searchableText,
+        currentUserMessageId: options.before.userMessage.id,
+      });
+      conversation.recognitionJourney = resolved.journey;
+      if (initialized || JSON.stringify(resolved.journey) !== beforeState) {
+        conversation.updatedAt = new Date();
+        await this.conversationModel.save(conversation);
+      }
+      return resolved.plan;
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] recognition journey preparation skipped, conversationId=%s, reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private attachRecognitionJourneyPlan(
+    result: ProcessReplyResult,
+    plan?: RecognitionJourneyTurnPlan
+  ): ProcessReplyResult {
+    if (!plan) return result;
+
+    return {
+      ...result,
+      routing: {
+        ...(result.routing || {}),
+        recognitionJourneyOpeningSuggested: plan.openingSuggested,
+        recognitionJourneyTaskSuggested: plan.suggestedTaskId,
+        recognitionJourneyCompletedTaskIds: plan.completedTaskIds,
+        recognitionJourneyPlan: plan,
+      },
+    };
+  }
+
+  private async finalizeRecognitionJourneyTurn(options: {
+    runtime: ReplyRuntime;
+    processed: ProcessReplyResult;
+    assistantMessages: MessageEntity[];
+  }): Promise<void> {
+    const plan = options.processed.routing?.recognitionJourneyPlan;
+    const journey = options.runtime.conversation.recognitionJourney;
+    if (!plan || !journey || !options.assistantMessages.length) return;
+
+    try {
+      const latestAssistantMessage =
+        options.assistantMessages[options.assistantMessages.length - 1];
+      const updated = applyRecognitionJourneyAssistantReply({
+        journey,
+        plan,
+        assistantText: options.processed.replySegments.join('\n'),
+        assistantMessageId: latestAssistantMessage.id,
+        now: latestAssistantMessage.createdAt,
+      });
+      if (JSON.stringify(updated) === JSON.stringify(journey)) return;
+
+      options.runtime.conversation.recognitionJourney = updated;
+      options.runtime.conversation.updatedAt =
+        latestAssistantMessage.updatedAt || new Date();
+      await this.conversationModel.save(options.runtime.conversation);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] recognition journey finalization skipped, conversationId=%s, reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+    }
+  }
+
+  private async buildLightweightReplyMessages(options: {
+    runtime: ReplyRuntime;
+    currentTurnMessages: MessageEntity[];
+    category: LightweightReplyCategory;
+  }): Promise<{
+    messages: ChatCompletionMessageParam[];
+    systemPromptCharacters: number;
+    historyMessageCount: number;
+  }> {
+    const identity = buildAgentIdentityContract({
+      agent: options.runtime.agent,
+    });
+    const categoryLabel: Record<LightweightReplyCategory, string> = {
+      good_night: '晚安或休息收尾',
+      greeting: '日常问候',
+      thanks: '感谢',
+      farewell: '告别或暂时离开',
+    };
+    const systemPrompt = [
+      `你现在就是${identity.agent.displayName}（${identity.relationship.label}），用户称呼你为“${identity.addresses.userCallsAgent}”，你称呼用户为“${identity.addresses.agentCallsUser}”。`,
+      `当前是简单的${
+        categoryLabel[options.category]
+      }。结合最近聊天自然回应，延续其中的关系和情绪，不要照抄最近回复。`,
+      '如果最近上下文里有用户正在牵挂的事，可以自然接住；不需要猜测或补充未提供的资料。',
+      '不要编造共同往事、用户现实情况、现实到场、现实触碰或具体离世生活事实。',
+      '只输出给用户看的聊天正文，不解释规则，不写动作或说话人标签。',
+    ].join('\n');
+    const fetchedMessages = await this.messageModel.find({
+      where: {
+        conversationId: options.runtime.conversation.id,
+        isArchived: { $ne: true },
+      } as never,
+      order: {
+        createdAt: 'DESC',
+      },
+      take: LIGHTWEIGHT_REPLY_HISTORY_LIMIT * 2,
+    });
+    const mergedById = new Map<string, MessageEntity>();
+    [...fetchedMessages, ...options.currentTurnMessages].forEach(
+      (message, index) => {
+        const id = message.id
+          ? this.stringifyObjectId(message.id)
+          : `${message.role}:${message.createdAt?.getTime?.() || 0}:${index}`;
+        mergedById.set(id, message);
+      }
+    );
+    const candidates = Array.from(mergedById.values())
+      .filter(
+        message =>
+          !message.isArchived &&
+          message.status === MessageStatus.sent &&
+          (message.role === MessageRole.user ||
+            message.role === MessageRole.assistant)
+      )
+      .sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+      )
+      .slice(-LIGHTWEIGHT_REPLY_HISTORY_LIMIT)
+      .map(message => ({
+        role:
+          message.role === MessageRole.assistant
+            ? ('assistant' as const)
+            : ('user' as const),
+        content: this.buildLightweightHistoryContent(message),
+      }))
+      .filter(message => message.content);
+    const selected: typeof candidates = [];
+    let characterCount = 0;
+    for (const message of [...candidates].reverse()) {
+      const content = message.content.slice(0, 280);
+      if (
+        selected.length > 0 &&
+        characterCount + content.length >
+          LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT
+      ) {
+        continue;
+      }
+      selected.unshift({ ...message, content });
+      characterCount += content.length;
+    }
+
+    return {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...selected,
+      ] as ChatCompletionMessageParam[],
+      systemPromptCharacters: systemPrompt.length,
+      historyMessageCount: selected.length,
+    };
+  }
+
+  private buildLightweightHistoryContent(message: MessageEntity): string {
+    if (message.role === MessageRole.assistant) {
+      return stripPromptLeakageContent(
+        message.mediaTranscript?.trim() || message.content?.trim() || ''
+      )
+        .replace(/\s+/gu, ' ')
+        .trim();
+    }
+
+    return this.buildSearchableTextFromMessage(message)
+      .replace(/\s+/gu, ' ')
+      .trim();
   }
 
   private async createPrimaryAssistantCompletion(options: {
@@ -3914,7 +4294,7 @@ export class ConversationService {
         call.function.arguments
       );
       const result = await this.withTraceSpan(
-        this.resolveAgentChatToolTraceStage(name),
+        this.resolveAgentChatToolTraceStage(),
         `tool.${name}`,
         () =>
           this.executeAgentChatToolWithTimeout(
@@ -4002,7 +4382,7 @@ export class ConversationService {
         ),
         plannerMemoryAgreement: this.resolvePlannerMemoryAgreement(
           plan.plannerMemoryRequested,
-          results.some(item => item.name === 'search_relationship_memory')
+          results.some(item => item.name === 'lookup_chat_evidence')
         ),
       },
     };
@@ -4016,14 +4396,10 @@ export class ConversationService {
   ): AgentEvidenceItem[] {
     const evidence: AgentEvidenceItem[] = [];
 
-    for (const { name, result } of results) {
-      if (name === 'record_user_correction') {
-        continue;
-      }
-
+    for (const { result } of results) {
       for (const item of result.items) {
         const conflicted = item.conflictStatus !== 'none';
-        if (name === 'search_relationship_memory') {
+        if (item.source === 'conversation_memory') {
           evidence.push({
             id: item.id,
             source: 'retrieved_user' as const,
@@ -4040,18 +4416,13 @@ export class ConversationService {
 
         evidence.push({
           id: item.id,
-          source:
-            name === 'get_family_facts'
-              ? ('confirmed_fact' as const)
-              : ('agent_profile' as const),
+          source: 'confirmed_fact' as const,
           text: item.value,
           assertionPolicy: conflicted
             ? ('context_only' as const)
             : ('can_assert' as const),
           subjectRef: item.subjectRef,
-          factKey:
-            item.factKey ||
-            (name === 'get_family_facts' ? 'family' : 'identity.persona'),
+          factKey: item.factKey || 'external_evidence',
           useMode: conflicted ? ('hypothesis' as const) : ('assert' as const),
           status: 'active' as const,
           confidence: item.confidence,
@@ -4140,16 +4511,8 @@ export class ConversationService {
     }
   }
 
-  private resolveAgentChatToolTraceStage(
-    name: AgentChatToolName
-  ): ChatTraceStage {
-    if (name === 'search_relationship_memory') {
-      return ChatTraceStage.memoryRetrieve;
-    }
-    if (name === 'record_user_correction') {
-      return ChatTraceStage.asyncWrite;
-    }
-    return ChatTraceStage.contextLoad;
+  private resolveAgentChatToolTraceStage(): ChatTraceStage {
+    return ChatTraceStage.memoryRetrieve;
   }
 
   private emptyAgentChatToolAudit(
@@ -4183,7 +4546,7 @@ export class ConversationService {
       invalidDecisionCount: parsed.invalidToolDecisionCount || 0,
       plannerMemoryAgreement: this.resolvePlannerMemoryAgreement(
         context.chatToolPlan.plannerMemoryRequested,
-        decisionNames.includes('search_relationship_memory')
+        decisionNames.includes('lookup_chat_evidence')
       ),
     };
   }
@@ -4710,6 +5073,12 @@ export class ConversationService {
         usage: processed.usage,
         routing: processed.routing,
       }));
+
+    await this.finalizeRecognitionJourneyTurn({
+      runtime,
+      processed,
+      assistantMessages,
+    });
 
     await this.touchConversation(
       runtime.conversation,
@@ -5497,172 +5866,28 @@ export class ConversationService {
     return text.slice(0, 500);
   }
 
-  private isAssistantReplyDeferred(payload: PreparedIncomingMessage): boolean {
-    return this.isNaturalConversationEnd(payload);
-  }
+  private async resolveShortTurnReceptionForMessage(
+    payload: PreparedIncomingMessage,
+    message: MessageEntity
+  ): Promise<ShortTurnReceptionDecision> {
+    const initial = resolveShortTurnReception({
+      messageType: payload.type,
+      content: payload.content,
+    });
 
-  private isNaturalConversationEnd(payload: PreparedIncomingMessage): boolean {
-    if (payload.type !== MessageType.text) {
-      return false;
+    if (initial.reason !== 'ack_without_context') {
+      return initial;
     }
 
-    const content = payload.content?.trim();
-
-    if (!content) {
-      return false;
-    }
-
-    // 安全保护：包含问号必须回复
-    if (/[？?]/.test(content)) {
-      return false;
-    }
-
-    // 显式不回复请求：不要/别/不用 回复我（任何长度都拦截）
-    const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
-
-    if (
-      /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回了|回|理我|说话)(了|啦|吧)?/.test(
-        normalized
-      )
-    ) {
-      return true;
-    }
-
-    // 超 12 字的非显式不回复消息，保留回复
-    if (content.length > 12) {
-      return false;
-    }
-
-    // 高风险信号必须回复
-    if (
-      /去死|自杀|不想活|活不下去|死了一了百了|死掉|结束自己|了断/.test(content)
-    ) {
-      return false;
-    }
-
-    // 睡眠道别
-    if (
-      /^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
-        content
-      )
-    ) {
-      return true;
-    }
-
-    // 关系收口
-    if (
-      /^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
-        content
-      )
-    ) {
-      return true;
-    }
-
-    // 出门/忙碌
-    if (
-      /^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?[。.!！~～]*$/.test(
-        content
-      )
-    ) {
-      return true;
-    }
-
-    // 纯语气词/确认（≤4 字，无问号）
-    if (
-      content.length <= 4 &&
-      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
-        content
-      )
-    ) {
-      return true;
-    }
-
-    return false;
-  }
-
-  private shouldSkipReplyFromBrief(
-    brief: ReplyBrief,
-    userQuery: string
-  ): boolean {
-    // 安全网：如果用户实际消息不是自然收口，不因规划器信号跳过回复
-    const query = (userQuery || '').trim();
-    if (query.length > 0 && !this.isUserMessageNaturalEnd(query)) {
-      return false;
-    }
-
-    if (!brief?.conversationPlan) {
-      return false;
-    }
-
-    const engagement = brief.conversationPlan.engagement;
-    const plan = brief.conversationPlan;
-
-    const isPlannedClose =
-      plan.turnClosure === 'close' &&
-      (engagement?.closureReadiness === 'ready' ||
-        engagement?.closureReadiness === 'possible') &&
-      engagement?.continuationGoal === 'close';
-
-    const isStrategicSilence =
-      engagement?.assistantContribution === 'strategic_silence' &&
-      engagement?.closureReadiness === 'ready';
-
-    const isNaturalClose =
-      brief.strategyQuality?.preferredAlternative === 'natural_close';
-
-    return isPlannedClose || isStrategicSilence || isNaturalClose;
-  }
-
-  private isUserMessageNaturalEnd(content: string): boolean {
-    if (/[？?]/.test(content)) return false;
-    if (/去死|自杀|不想活|活不下去/.test(content)) return false;
-
-    const normalized = content.replace(/[\s，,、。.!！?？~～]+/g, '');
-    if (
-      /(不要|别|不用)(再|继续|一直)?(回复我|回复|回我|回|理我|说话)/.test(
-        normalized
-      )
-    )
-      return true;
-
-    if (content.length > 12) return false;
-
-    const roleSuffix =
-      '(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?';
-    if (
-      new RegExp(
-        '^(?:晚安|睡了|去睡了|先睡了|困了睡了|要睡了|睡啦|先睡|睡觉|我睡|补觉|眯一会|眯会儿|歇了|安|night|安安)' +
-          roleSuffix +
-          '[。.!！~～]*$'
-      ).test(content)
-    )
-      return true;
-    if (
-      new RegExp(
-        '^(?:拜拜|再见|bye|byebye|拜|再会|下次聊|回头说|空了找你|空了聊|明天见|改天聊|先下了|先走了|走了|出发了)' +
-          roleSuffix +
-          '[。.!！~～]*$'
-      ).test(content)
-    )
-      return true;
-    if (
-      new RegExp(
-        '^(?:出门了|上班了|先忙了|去忙了|有事了|干活了|开会了|开车了|上课了|上地铁|到公司了|先搬砖|去搬砖)' +
-          roleSuffix +
-          '[。.!！~～]*$'
-      ).test(content)
-    )
-      return true;
-
-    if (
-      content.length <= 4 &&
-      /^(?:嗯+|哦+|好|好的|行|可以|知道了|收到|ok|OK|嗯嗯|好嘞|好滴|好呢|好呀|好嘛|好呗|好哦|好哇|好哒|嗯呢|嗯呐|懂|明白|了解了)[。.!！~～]*$/.test(
-        content
-      )
-    )
-      return true;
-
-    return false;
+    const previousAssistant = await this.findPreviousAssistantMessage(message);
+    return resolveShortTurnReception({
+      messageType: payload.type,
+      content: payload.content,
+      previousAssistantContent:
+        previousAssistant?.mediaTranscript?.trim() ||
+        previousAssistant?.content?.trim() ||
+        '',
+    });
   }
 
   private normalizeIncomingMessage(payload?: SendConversationMessageDTO): {

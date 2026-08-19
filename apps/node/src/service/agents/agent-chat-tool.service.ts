@@ -12,7 +12,6 @@ import {
   AgentProfileFactService,
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
-import { buildAgentPersonaPrompt } from './agent-persona';
 import {
   AGENT_CHAT_TOOL_VERSION,
   AgentChatToolEvidenceItem,
@@ -51,209 +50,137 @@ export class AgentChatToolService {
     }
 
     try {
-      if (name === 'search_relationship_memory') {
-        return this.searchRelationshipMemory(args, context);
-      }
-      if (name === 'get_family_facts') {
-        return this.getFamilyFacts(args, context);
-      }
-      if (name === 'get_persona_evidence') {
-        return this.getPersonaEvidence(args, context);
-      }
-      return this.recordUserCorrection(args, context);
+      return await this.lookupChatEvidence(args, context);
     } catch {
       return this.result(name, 'error', [], 'tool_execution_failed');
     }
   }
 
-  private async searchRelationshipMemory(
+  private async lookupChatEvidence(
     args: Record<string, unknown>,
     context: AgentChatToolExecutionContext
   ): Promise<AgentChatToolResult> {
-    const concepts = args.missingConcepts as string[];
-    const subjectRef = String(args.subjectRef || '').trim();
-    const limit = Number(args.limit);
-    const memories = await this.retrieveService.retrieveConversationMemories({
-      query: [...concepts, subjectRef].filter(Boolean).join(' '),
-      userId: this.stringifyObjectId(context.userId),
-      agentId: this.stringifyObjectId(context.agentId),
-      conversationId: this.stringifyObjectId(context.conversationId),
-      excludeMessageIds: [this.stringifyObjectId(context.currentMessage.id)],
-      createdBeforeTs: context.currentMessage.createdAt?.getTime?.(),
-      limit,
-    });
-    const items = memories.slice(0, limit).map(
-      (memory, index): AgentChatToolEvidenceItem => ({
-        id: memory.id?.trim() || `relationship_memory_${index + 1}`,
-        source: 'conversation_memory',
-        sourceAt: memory.createdAt || '',
-        confidence: this.normalizeScore(memory.score, 0.65),
-        conflictStatus: 'unknown',
-        ...(subjectRef ? { subjectRef } : {}),
-        value: this.clean(memory.content, 260),
+    const requests = args.requests as Array<{
+      subjectRef: string;
+      need: string;
+      sources: string[];
+    }>;
+    const needsProfile = requests.some(request =>
+      request.sources.some(source =>
+        ['agent_profile', 'family_facts', 'confirmed_history'].includes(source)
+      )
+    );
+    const factsPromise = needsProfile
+      ? this.agentProfileFactService.listFactsForPrompt({
+          userId: context.userId,
+          agentId: context.agentId,
+          limit: 48,
+        })
+      : Promise.resolve([]);
+    const memoryResultsPromise = Promise.all(
+      requests.map(request => {
+        if (
+          !request.sources.includes('relationship_memory') &&
+          !request.sources.includes('confirmed_history')
+        ) {
+          return Promise.resolve([]);
+        }
+
+        return this.retrieveService.retrieveConversationMemories({
+          query: [request.subjectRef, request.need].filter(Boolean).join(' '),
+          userId: this.stringifyObjectId(context.userId),
+          agentId: this.stringifyObjectId(context.agentId),
+          conversationId: this.stringifyObjectId(context.conversationId),
+          excludeMessageIds: [
+            this.stringifyObjectId(context.currentMessage.id),
+          ],
+          createdBeforeTs: context.currentMessage.createdAt?.getTime?.(),
+          limit: 4,
+        });
       })
     );
-
-    return this.result(
-      'search_relationship_memory',
-      items.length ? 'ok' : 'empty',
-      items,
-      undefined,
-      memories.length > items.length
-    );
-  }
-
-  private async getFamilyFacts(
-    args: Record<string, unknown>,
-    context: AgentChatToolExecutionContext
-  ): Promise<AgentChatToolResult> {
-    const subjectRefs = args.subjectRefs as string[];
-    const limit = Number(args.limit);
-    const facts = await this.agentProfileFactService.listFactsForPrompt({
-      userId: context.userId,
-      agentId: context.agentId,
-      limit: Math.max(limit * 2, 8),
-    });
-    const matching = facts
-      .filter(
-        fact =>
-          fact.status === AgentProfileFactStatus.active &&
-          [
-            AgentProfileFactType.family,
-            AgentProfileFactType.relationship,
-          ].includes(fact.type)
-      )
-      .filter(fact => this.matchesAnySubject(fact, subjectRefs));
-    const selected = matching.slice(0, limit);
-    const items = selected.map(fact => this.profileFactToEvidence(fact));
-
-    return this.result(
-      'get_family_facts',
-      items.length ? 'ok' : 'empty',
-      items,
-      undefined,
-      matching.length > limit
-    );
-  }
-
-  private async getPersonaEvidence(
-    args: Record<string, unknown>,
-    context: AgentChatToolExecutionContext
-  ): Promise<AgentChatToolResult> {
-    const limit = Number(args.limit);
-    const dimensions = args.dimensions as string[];
-    const facts = await this.agentProfileFactService.listFactsForPrompt({
-      userId: context.userId,
-      agentId: context.agentId,
-      limit: Math.max(limit * 3, 12),
-    });
-    const personaFacts = facts
-      .filter(fact =>
-        [
-          AgentProfileFactType.style,
-          AgentProfileFactType.preference,
-          AgentProfileFactType.identity,
-        ].includes(fact.type)
-      )
-      .filter(fact => this.matchesPersonaDimensions(fact, dimensions))
-      .slice(0, limit)
-      .map(fact => this.profileFactToEvidence(fact));
-    const compiledPersona = buildAgentPersonaPrompt({
-      agent: context.agent,
-    });
-
-    if (
-      compiledPersona.source !== 'relationship_defaults' &&
-      personaFacts.length < limit
-    ) {
-      personaFacts.unshift({
-        id: 'agent_persona_profile',
-        source: `agent.${compiledPersona.source}`,
-        sourceAt: context.agent?.updatedAt?.toISOString?.() || '',
-        confidence:
-          compiledPersona.source === 'chat_derived_profile' ? 0.9 : 0.78,
-        conflictStatus: 'none',
-        subjectRef: 'agent',
-        factKey: 'persona.compiled',
-        value: this.clean(compiledPersona.classifierContext, 320),
-      });
-    }
-
-    const items = personaFacts.slice(0, limit);
-    return this.result(
-      'get_persona_evidence',
-      items.length ? 'ok' : 'empty',
-      items,
-      undefined,
-      personaFacts.length > limit
-    );
-  }
-
-  private async recordUserCorrection(
-    args: Record<string, unknown>,
-    context: AgentChatToolExecutionContext
-  ): Promise<AgentChatToolResult> {
-    const currentQuery = this.normalizeComparable(context.currentQuery);
-    const rejectedFact = String(args.rejectedFact || '').trim();
-    const replacementFact = String(args.replacementFact || '').trim();
-    const previousAssistant = this.normalizeComparable(
-      context.previousAssistantContent || ''
-    );
-
-    if (
-      !/(?:不对|不是|没有|没这回事|记错|说错|胡说|瞎编|乱编|别编)/.test(
-        currentQuery
-      )
-    ) {
-      return this.result(
-        'record_user_correction',
-        'denied',
-        [],
-        'no_explicit_user_correction'
-      );
-    }
-
-    const normalizedRejected = this.normalizeComparable(rejectedFact);
-    if (
-      !normalizedRejected ||
-      (!currentQuery.includes(normalizedRejected) &&
-        !previousAssistant.includes(normalizedRejected))
-    ) {
-      return this.result(
-        'record_user_correction',
-        'denied',
-        [],
-        'rejected_fact_not_grounded'
-      );
-    }
-
-    const normalizedReplacement = this.normalizeComparable(replacementFact);
-    if (
-      normalizedReplacement &&
-      !currentQuery.includes(normalizedReplacement)
-    ) {
-      return this.result(
-        'record_user_correction',
-        'denied',
-        [],
-        'replacement_not_in_user_message'
-      );
-    }
-
-    const fact = await this.agentProfileFactService.recordUserCorrection({
-      message: context.currentMessage,
-      subjectRef: String(args.subjectRef),
-      correctionKind: args.correctionKind as
-        | 'fact'
-        | 'relationship'
-        | 'memory'
-        | 'persona',
-      rejectedFact,
-      replacementFact,
-    });
-    return this.result('record_user_correction', 'ok', [
-      this.profileFactToEvidence(fact),
+    const [facts, memoryResults] = await Promise.all([
+      factsPromise,
+      memoryResultsPromise,
     ]);
+    const items: AgentChatToolEvidenceItem[] = [];
+
+    for (const [requestIndex, request] of requests.entries()) {
+      const subjectRefs = request.subjectRef ? [request.subjectRef] : [];
+      const wantsFamily = request.sources.includes('family_facts');
+      const wantsProfile = request.sources.includes('agent_profile');
+      const wantsConfirmed = request.sources.includes('confirmed_history');
+
+      if (wantsFamily || wantsProfile || wantsConfirmed) {
+        const selectedFacts = facts
+          .filter(fact => fact.status === AgentProfileFactStatus.active)
+          .filter(fact => this.matchesAnySubject(fact, subjectRefs))
+          .filter(fact => {
+            if (
+              wantsFamily &&
+              [
+                AgentProfileFactType.family,
+                AgentProfileFactType.relationship,
+              ].includes(fact.type)
+            ) {
+              return true;
+            }
+            if (
+              wantsProfile &&
+              [
+                AgentProfileFactType.identity,
+                AgentProfileFactType.preference,
+                AgentProfileFactType.style,
+              ].includes(fact.type)
+            ) {
+              return true;
+            }
+            return (
+              wantsConfirmed &&
+              fact.confidence !== AgentProfileFactConfidence.extracted
+            );
+          })
+          .slice(0, 4)
+          .map(fact => ({
+            ...this.profileFactToEvidence(fact),
+            ...(request.subjectRef ? { subjectRef: request.subjectRef } : {}),
+          }));
+        items.push(...selectedFacts);
+      }
+
+      if (
+        request.sources.includes('relationship_memory') ||
+        request.sources.includes('confirmed_history')
+      ) {
+        const memories = memoryResults[requestIndex] || [];
+        items.push(
+          ...memories.slice(0, 4).map(
+            (memory, index): AgentChatToolEvidenceItem => ({
+              id:
+                memory.id?.trim() ||
+                `relationship_memory_${requestIndex + 1}_${index + 1}`,
+              source: 'conversation_memory',
+              sourceAt: memory.createdAt || '',
+              confidence: this.normalizeScore(memory.score, 0.65),
+              conflictStatus: 'unknown',
+              ...(request.subjectRef ? { subjectRef: request.subjectRef } : {}),
+              value: this.clean(memory.content, 260),
+            })
+          )
+        );
+      }
+    }
+
+    const uniqueItems = Array.from(
+      new Map(items.map(item => [item.id, item])).values()
+    );
+    return this.result(
+      'lookup_chat_evidence',
+      uniqueItems.length ? 'ok' : 'empty',
+      uniqueItems,
+      undefined,
+      uniqueItems.length > 8
+    );
   }
 
   private matchesAnySubject(
@@ -268,25 +195,6 @@ export class AgentChatToolService {
     return subjectRefs.some(subject =>
       comparable.includes(this.normalizeComparable(subject))
     );
-  }
-
-  private matchesPersonaDimensions(
-    fact: AgentProfileFactSummary,
-    dimensions: string[]
-  ): boolean {
-    if (!dimensions.length) {
-      return true;
-    }
-
-    const value = `${fact.key} ${fact.value}`;
-    const patterns: Record<string, RegExp> = {
-      tone: /语气|情感|温和|直接|严厉|关心/,
-      wording: /语言|称呼|用词|口头禅|节奏/,
-      temperament: /性格|脾气|冲突|幽默|棱角/,
-      values: /价值|重视|原则|在意/,
-      habits: /习惯|爱好|经常|平时/,
-    };
-    return dimensions.some(dimension => patterns[dimension]?.test(value));
   }
 
   private profileFactToEvidence(
