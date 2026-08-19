@@ -50,16 +50,19 @@ class _HomeChatPageState extends State<HomeChatPage> {
         return;
       }
 
-      // No agents, try creating one from first available
+      // A legacy account may have an agent whose entry conversation was not
+      // included in the first list response. Ask for the existing entry;
+      // conversation creation belongs to the agent lifecycle API.
       final agents = await AgentApi.getAgents();
       if (!mounted) return;
       if (agents.isNotEmpty) {
         try {
-          final result = await ConversationApi.createConversation(agents.first.id);
+          final conversation = await ConversationApi.getEntryConversation();
           if (!mounted) return;
-          final conv = ConversationSummary.fromJson(Map<String, dynamic>.from(result));
-          ActiveConversationStore.select(conv);
-          setState(() { _conversation = conv; _loading = false; });
+          if (conversation != null) {
+            ActiveConversationStore.select(conversation);
+          }
+          setState(() { _conversation = conversation; _loading = false; });
         } catch (_) {
           setState(() { _loading = false; });
         }
