@@ -340,8 +340,7 @@ const RETURN_VISIT_PHYSICAL_PROMISE_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:(?:也|还|当然|以后|到时|真的)\s*){0,3}(?:一定|肯定|会|能|可以).{0,6}(?:回来|回家|回去|来).{0,6}(?:看看|看|见)(?:你|你们)/;
 const GENERATION_FAILURE_FALLBACK_REASON =
   '模型回复不可用，采用场景安全兜底气泡';
-const GENERATION_TECHNICAL_RETRY_REASON =
-  '模型回复不可用，返回自然重试提示';
+const GENERATION_TECHNICAL_RETRY_REASON = '模型回复不可用，返回自然重试提示';
 export const ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT =
   '刚才那句话没说稳，你再跟我说一遍';
 const TECHNICAL_RETRY_SEGMENTS = [ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT];
