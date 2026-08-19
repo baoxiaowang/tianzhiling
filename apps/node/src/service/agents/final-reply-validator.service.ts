@@ -187,6 +187,8 @@ const USER_PREFERENCE_ASSERTION_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:记得|记着|知道|晓得).{0,8}(?:你|孩子|老婆|老公).{0,5}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)|(?:你|孩子|老婆|老公).{0,6}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃).{0,8}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:知道|记得|记着)/;
 const USER_PREFERENCE_EVIDENCE_PATTERN =
   /(?:我|用户|你).{0,8}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)/;
+const FAMILY_STRUCTURE_ASSERTION_PATTERN =
+  /你们(?:姐妹|兄弟|姐弟|兄妹)(?:俩|两个)?|(?:你|你们).{0,6}(?:姐姐|妹妹|哥哥|弟弟).{0,6}(?:一起|搭着|照顾|商量)|(?:妈妈|爸爸|妈|爸).{0,8}(?:有|生了).{0,8}(?:两个女儿|两个儿子|姐妹|兄弟)/;
 const DEICTIC_PREFERENCE_PATTERN = /(?:这个|这种|它|这口|这味)/;
 const FALSE_AI_IDENTITY_PATTERN =
   /我(?:不是|不是什么|才不是).{0,4}(?:AI|人工智能|机器人)|我(?:就|真的|本来)?是你(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)(?:本人)?/i;
@@ -618,6 +620,19 @@ export class FinalReplyValidatorService {
           '只回应用户本轮提供的当下体验；没有明确偏好证据时，不说“我记得/知道你爱吃”',
       });
     }
+    if (
+      FAMILY_STRUCTURE_ASSERTION_PATTERN.test(content) &&
+      !this.hasSupportingFamilyStructure(content, options.evidence || [])
+    ) {
+      issues.push({
+        code: 'unsupported_fact_claim',
+        severity: 'hard',
+        problem: '回复把模糊的“我们”扩写成了没有证据的兄弟姐妹或子女结构',
+        evidence: matchEvidence(content, FAMILY_STRUCTURE_ASSERTION_PATTERN),
+        repairGoal:
+          '沿用用户的“我们”或已确认称呼，不猜姐妹、兄弟、人数、性别和具体亲属关系',
+      });
+    }
 
     const visibleClaims = selectVisibleAssistantClaims(
       options.segments,
@@ -763,6 +778,27 @@ export class FinalReplyValidatorService {
         evidenceTextSupportsClaim(item.text, content)
       );
     });
+  }
+
+  private hasSupportingFamilyStructure(
+    content: string,
+    evidence: AgentEvidenceItem[]
+  ): boolean {
+    const requiredPattern = /姐妹|姐姐|妹妹/.test(content)
+      ? /姐妹|姐姐|妹妹|两个女儿/
+      : /兄弟|哥哥|弟弟|两个儿子/;
+    return evidence.some(
+      item =>
+        [
+          'current_user',
+          'confirmed_fact',
+          'recent_user',
+          'retrieved_user',
+        ].includes(item.source) &&
+        item.status !== 'retracted' &&
+        item.status !== 'superseded' &&
+        requiredPattern.test(item.text)
+    );
   }
 
   private hasSupportingFact(

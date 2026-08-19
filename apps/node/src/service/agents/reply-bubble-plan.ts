@@ -101,8 +101,12 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
   ].join('\n');
 }
 
-const DELIVERY_SPLIT_THRESHOLD_CHARACTERS = 28;
-const DELIVERY_SPLIT_MIN_PART_CHARACTERS = 8;
+// 这些阈值只读取模型已经完成的正文，不进入生成提示，也不构成回复字数目标。
+// 当前生产正文平均约 22 字：覆盖常见的 17–40 字自然双句，能提高双泡占比；
+// 三泡只留给明显更长的完整正文，避免常见回复被连续切成三段。
+const DELIVERY_TWO_BUBBLE_MIN_CHARACTERS = 17;
+const DELIVERY_THREE_BUBBLE_MIN_CHARACTERS = 48;
+const DELIVERY_SPLIT_MIN_PART_CHARACTERS = 5;
 const STRONG_DELIVERY_BOUNDARY_PATTERN = /[。！？!?]+/gu;
 const SOFT_DELIVERY_BOUNDARY_PATTERN = /[，,；;]+/gu;
 
@@ -115,14 +119,23 @@ export function splitReplyContentForDelivery(
 ): string[] {
   // 上游最终治理已经完成清理与三泡上限校验；这里复制数组后只移动边界。
   const segments = [...inputSegments];
+  const completedContentCharacters = countVisibleCharacters(
+    inputSegments.join('')
+  );
+  const deliverySegmentLimit =
+    completedContentCharacters >= DELIVERY_THREE_BUBBLE_MIN_CHARACTERS
+      ? MAX_ASSISTANT_REPLY_SEGMENTS
+      : completedContentCharacters >= DELIVERY_TWO_BUBBLE_MIN_CHARACTERS
+      ? 2
+      : 1;
 
-  while (segments.length < MAX_ASSISTANT_REPLY_SEGMENTS) {
+  while (segments.length < deliverySegmentLimit) {
     const candidateIndexes = segments
       .map((segment, index) => ({
         index,
         length: countVisibleCharacters(segment),
       }))
-      .filter(item => item.length > DELIVERY_SPLIT_THRESHOLD_CHARACTERS)
+      .filter(item => item.length >= DELIVERY_TWO_BUBBLE_MIN_CHARACTERS)
       .sort((left, right) => right.length - left.length);
 
     let splitApplied = false;

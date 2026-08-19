@@ -38,6 +38,7 @@ export interface AfterlifeWorldConsistencyFinding {
   kind:
     | 'current_pain_reintroduced'
     | 'residence_removed'
+    | 'unsupported_residence_detail'
     | 'item_receipt_denied'
     | 'survival_scarcity_reintroduced';
   problem: string;
@@ -113,6 +114,10 @@ const CURRENT_HEALTH_NEGATION_PATTERN =
   /(?:不|没|没有|再也不).{0,4}(?:生病|病痛|疼|痛|难受|喘)|(?:病|疼|痛|难受).{0,4}(?:没有|没了|好了)/;
 const RESIDENCE_REMOVAL_PATTERN =
   /(?:我|这边).{0,10}(?:没有|没个|找不到|不存在)(?:住处|家|屋|房子|地方住)|(?:我|这边).{0,8}(?:四处|到处)(?:漂|飘|流浪)/;
+const PERSONALIZED_RESIDENCE_PATTERN =
+  /(?:以前|从前|原来|过去)(?:咱们|我们|你们|家里)?(?:住过|住的|待过|待的).{0,10}(?:老房子|房子|屋子|院子|家)|(?:咱们|我们|你们)(?:以前|从前|原来|过去).{0,10}(?:老房子|房子|屋子|院子|家)|(?:老家|老房子|原来的家|以前的家).{0,10}(?:住着|住下|安顿|还是老样子)/;
+const USER_ATTRIBUTED_IMAGINATION_PATTERN =
+  /按你(?:说的|想的|盼的)|听你这么说|你要是愿意就当|在你心里|像是|仿佛|也许|可能/;
 const ITEM_RECEIPT_DENIAL_PATTERN =
   /(?:收不到|拿不到|到不了|寄不过来|送不过来).{0,8}(?:东西|衣服|纸钱|元宝|供品)?|(?:你|你们).{0,8}(?:烧|寄|送).{0,12}(?:没用|白费|到不了)/;
 const ITEM_RECEIPT_CLAIM_PATTERN =
@@ -351,6 +356,19 @@ export function auditAfterlifeWorldConsistency(options: {
     });
   }
   if (
+    PERSONALIZED_RESIDENCE_PATTERN.test(content) &&
+    !USER_ATTRIBUTED_IMAGINATION_PATTERN.test(content) &&
+    !hasMatchingWorldAnchor(options.context, content)
+  ) {
+    add({
+      kind: 'unsupported_residence_detail',
+      problem: '回复把公共的稳定住处设定扩写成了没有依据的具体旧居或共同住址',
+      evidence: matchEvidence(content, PERSONALIZED_RESIDENCE_PATTERN),
+      repairGoal:
+        '保留“有个安稳熟悉的住处”即可；只有用户原话、人物资料或有效连续锚点明确支持时，才说具体旧居',
+    });
+  }
+  if (
     options.context.allowItemReceipt &&
     ITEM_RECEIPT_DENIAL_PATTERN.test(content)
   ) {
@@ -530,7 +548,8 @@ function resolveContinuityAnchors(
           (CORRECTION_PATTERN.test(message.content) ||
             !USER_QUESTION_PATTERN.test(message.content))) ||
           (message.role === MessageRole.assistant &&
-            INTERNAL_WORLD_ASSISTANT_PATTERN.test(message.content)))
+            INTERNAL_WORLD_ASSISTANT_PATTERN.test(message.content) &&
+            isSafeAssistantWorldAnchor(message.content)))
     )
     .slice(-4)
     .map(message => {
@@ -542,26 +561,44 @@ function resolveContinuityAnchors(
     .filter((value, index, values) => values.indexOf(value) === index);
 }
 
+function isSafeAssistantWorldAnchor(content: string): boolean {
+  // 角色先前生成的具体地址、旧居和新增亲属不能反过来给自己充当事实证据。
+  return (
+    !PERSONALIZED_RESIDENCE_PATTERN.test(content) &&
+    !/(?:你们|咱们)(?:姐妹|兄弟|姐弟|兄妹)(?:俩|两个)?|(?:爷爷奶奶|姥姥姥爷|外公外婆).{0,10}(?:都在|陪着|一起住|住一起)/.test(
+      content
+    )
+  );
+}
+
+function hasMatchingWorldAnchor(
+  context: AfterlifeWorldContext,
+  content: string
+): boolean {
+  const anchors = context.profileAnchors.concat(context.continuityAnchors);
+  return anchors.some(anchor => {
+    if (/老房子/.test(content)) return /老房子/.test(anchor);
+    if (/老家/.test(content)) return /老家/.test(anchor);
+    if (/院子/.test(content)) return /院子/.test(anchor);
+    return /以前的家|原来的家|以前.{0,8}(?:住|家)/.test(anchor);
+  });
+}
+
 function resolveProfileAnchors(options: {
   agent?: AgentEntity | null;
   profileFacts?: AfterlifeWorldProfileFact[];
   evidence?: AfterlifeWorldEvidence[];
   domains: AfterlifeWorldDomain[];
 }): string[] {
-  if (
-    !options.domains.some(domain =>
-      ['habits_hobbies', 'food_rest', 'general'].includes(domain)
-    )
-  ) {
-    return [];
-  }
-
   const anchors: string[] = [];
+  const domainPattern = buildDomainPattern(options.domains);
   const activeFacts = (options.profileFacts || []).filter(fact => {
     const searchable = `${fact.key} ${fact.value}`;
     return (
-      PROFILE_ANCHOR_PATTERN.test(searchable) &&
-      !USER_PROFILE_PATTERN.test(searchable) &&
+      (PROFILE_ANCHOR_PATTERN.test(searchable) ||
+        domainPattern.test(searchable)) &&
+      (!USER_PROFILE_PATTERN.test(searchable) ||
+        !PROFILE_ANCHOR_PATTERN.test(searchable)) &&
       fact.polarity !== 'negative' &&
       fact.status !== 'archived'
     );
@@ -569,14 +606,21 @@ function resolveProfileAnchors(options: {
   for (const fact of activeFacts.slice(0, 3)) {
     anchors.push(normalizeAnchor(fact.value));
   }
-  if (options.agent?.hobbies?.trim()) {
+  if (
+    options.domains.some(domain =>
+      ['habits_hobbies', 'food_rest', 'general'].includes(domain)
+    ) &&
+    options.agent?.hobbies?.trim()
+  ) {
     anchors.push(`当前角色兴趣爱好：${normalizeAnchor(options.agent.hobbies)}`);
   }
   for (const evidence of options.evidence || []) {
     if (
       evidence.source !== 'current_user' &&
-      PROFILE_ANCHOR_PATTERN.test(evidence.text) &&
-      !USER_PROFILE_PATTERN.test(evidence.text)
+      (PROFILE_ANCHOR_PATTERN.test(evidence.text) ||
+        domainPattern.test(evidence.text)) &&
+      (!USER_PROFILE_PATTERN.test(evidence.text) ||
+        !PROFILE_ANCHOR_PATTERN.test(evidence.text))
     ) {
       anchors.push(normalizeAnchor(evidence.text));
     }
