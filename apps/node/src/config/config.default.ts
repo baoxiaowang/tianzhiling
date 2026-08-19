@@ -428,13 +428,13 @@ export default {
     l5TraceOnly: readBooleanFrom(['NODE_CHAT_L5_TRACE_ONLY'], true),
   },
   chatTools: {
-    mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'active'),
+    mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'shadow'),
     shadowSampleRate: readNumberFrom(
       ['NODE_CHAT_TOOLS_SHADOW_SAMPLE_RATE'],
       0.2
     ),
-    activeSampleRate: readNumberFrom(['NODE_CHAT_TOOLS_ACTIVE_SAMPLE_RATE'], 1),
-    maxCallsPerTurn: readNumberFrom(['NODE_CHAT_TOOLS_MAX_CALLS_PER_TURN'], 1),
+    activeSampleRate: readNumberFrom(['NODE_CHAT_TOOLS_ACTIVE_SAMPLE_RATE'], 0),
+    maxCallsPerTurn: readNumberFrom(['NODE_CHAT_TOOLS_MAX_CALLS_PER_TURN'], 4),
     timeoutMs: readNumberFrom(['NODE_CHAT_TOOLS_TIMEOUT_MS'], 2500),
   },
   minimaxVoice: {

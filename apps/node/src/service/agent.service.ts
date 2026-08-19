@@ -48,7 +48,10 @@ import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
 import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
-import { buildInitialRecognitionJourney } from './agents/recognition-journey';
+import {
+  buildInitialRecognitionJourney,
+  serializeRecognitionJourney,
+} from './agents/recognition-journey';
 
 export type AgentProfile = AgentProfileDTO;
 export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
@@ -843,14 +846,16 @@ export class AgentService {
       options.usePersonalCallName === false
         ? agent.name?.trim() || ''
         : agent.iCallAgent?.trim() || agent.name?.trim() || '';
-    conversation.recognitionJourney = buildInitialRecognitionJourney({
-      hasKnownDepartureDate: Boolean(agent.deathDate),
-      now,
-    });
     conversation.createdAt = now;
     conversation.updatedAt = now;
 
     const savedConversation = await this.conversationModel.save(conversation);
+    await this.createInitialRecognitionJourneyState(
+      savedConversation,
+      agent,
+      userId,
+      now
+    );
     await this.createInitialAgentMessage(
       savedConversation,
       agent,
@@ -860,6 +865,35 @@ export class AgentService {
     );
 
     return savedConversation;
+  }
+
+  private async createInitialRecognitionJourneyState(
+    conversation: ConversationEntity,
+    agent: AgentEntity,
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<void> {
+    const message = new MessageEntity();
+    message.conversationId = conversation.id;
+    message.userId = userId;
+    message.agentId = agent.id;
+    message.role = MessageRole.system;
+    message.type = MessageType.text;
+    message.content = serializeRecognitionJourney(
+      buildInitialRecognitionJourney({
+        hasKnownDepartureDate: Boolean(agent.deathDate),
+        now,
+      })
+    );
+    message.status = MessageStatus.sent;
+    message.quotaExempt = true;
+    message.replyTrigger = false;
+    message.isArchived = true;
+    message.archivedAt = now;
+    message.createdAt = now;
+    message.updatedAt = now;
+
+    await this.messageModel.save(message);
   }
 
   private async createInitialAgentMessage(
