@@ -168,6 +168,7 @@ import {
   RecognitionTaskId,
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
+import { ContinuityInformationCardService } from './agents/continuity-information-card.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -200,6 +201,7 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const CONTINUITY_CARD_WRITE_LOCK_TTL_MS = 30 * 1000;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
@@ -559,6 +561,8 @@ interface ReplyRoutingAudit {
   recognitionJourneyCompletedTaskIds?: RecognitionTaskId[];
   recognitionJourneyPlan?: RecognitionJourneyTurnPlan;
   recognitionJourneyStateMessageId?: string;
+  continuityInformationCardId?: string;
+  continuityInformationCardSourceMessageId?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -735,6 +739,9 @@ export class ConversationService {
 
   @Inject()
   messengerService: MessengerService;
+
+  @Inject()
+  continuityInformationCardService: ContinuityInformationCardService;
 
   async listConversations(
     auth: AuthenticatedUserPayload,
@@ -2194,6 +2201,16 @@ export class ConversationService {
         false,
         previousAssistantContent
       ),
+      this.captureContinuityInformationCard(message, searchableText)
+        .catch(error => {
+          this.logger.warn(
+            '[conversation] continuity card capture skipped, conversationId=%s, messageId=%s, reason=%s',
+            this.stringifyObjectId(message.conversationId),
+            this.stringifyObjectId(message.id),
+            this.describeReplyError(error)
+          );
+          return [];
+        }),
     ]);
     const writtenCount = memoryFacts.count + profileFacts.count;
     message.memoryWriteStatus =
@@ -2208,6 +2225,56 @@ export class ConversationService {
     message.memoryWriteProfileFactCount = profileFacts.count;
     message.memoryWriteCompletedAt = new Date();
     await this.messageModel.save(message);
+  }
+
+  private async captureContinuityInformationCard(
+    message: MessageEntity,
+    searchableText: string
+  ): Promise<void> {
+    if (!this.continuityInformationCardService) return;
+    if (!this.redisService) {
+      await this.continuityInformationCardService.captureFromUserMessage({
+        message,
+        searchableText,
+      });
+      return;
+    }
+    const key = `conversation:continuity-card:write:${this.stringifyObjectId(
+      message.conversationId
+    )}`;
+    const token = `${process.pid}:${Date.now()}:${Math.random()}`;
+    let acquired = false;
+    for (let attempt = 0; attempt < 3 && !acquired; attempt += 1) {
+      acquired =
+        (await this.redisService.set(
+          key,
+          token,
+          'PX',
+          CONTINUITY_CARD_WRITE_LOCK_TTL_MS,
+          'NX'
+        )) === 'OK';
+      if (!acquired) {
+        await new Promise(resolve => setTimeout(resolve, 80 * (attempt + 1)));
+      }
+    }
+    if (!acquired) {
+      this.logger.warn(
+        '[conversation] continuity card write deferred by lock, conversationId=%s messageId=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id)
+      );
+      return;
+    }
+    try {
+      await this.continuityInformationCardService.captureFromUserMessage({
+        message,
+        searchableText,
+      });
+    } finally {
+      if ((await this.redisService.get(key)) === token) {
+        await this.redisService.del(key);
+      }
+    }
   }
 
   private scheduleUserMessageEnrichment(
@@ -3346,13 +3413,39 @@ export class ConversationService {
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
+    const [recognitionJourneyPlan, continuityInformationCardPlan] =
+      await Promise.all([
+        this.prepareRecognitionJourneyTurn({
+          runtime,
+          before,
+          currentTurnMessages,
+        }),
+        this.continuityInformationCardService?.prepareTurn({
+          conversation: runtime.conversation,
+          currentQuery: before.searchableText,
+          currentTurnMessages,
+        }),
+      ]);
+    if (continuityInformationCardPlan) {
+      this.logger?.info?.(
+        '[conversation] continuity background offered, conversationId=%s cardId=%s sourceMessageId=%s',
+        this.stringifyObjectId(runtime.conversation.id),
+        continuityInformationCardPlan.cardId,
+        continuityInformationCardPlan.sourceMessageId
+      );
+    }
+
     const shortTurnGeneration = resolveShortTurnGeneration({
       messageTypes: currentTurnMessages.map(message => message.type),
       texts: currentTurnMessages.map(message =>
         this.buildSearchableTextFromMessage(message)
       ),
     });
-    if (shortTurnGeneration.mode === 'micro_model') {
+    if (
+      shortTurnGeneration.mode === 'micro_model' &&
+      !recognitionJourneyPlan?.prompt &&
+      !continuityInformationCardPlan?.prompt
+    ) {
       try {
         return await this.processLightweightReply({
           runtime,
@@ -3370,12 +3463,6 @@ export class ConversationService {
         );
       }
     }
-
-    const recognitionJourneyPlan = await this.prepareRecognitionJourneyTurn({
-      runtime,
-      before,
-      currentTurnMessages,
-    });
 
     const memoryControlResult = await this.applyExplicitMemoryControl(
       before.userMessage,
@@ -3400,6 +3487,8 @@ export class ConversationService {
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
+            continuityInformationCardPrompt:
+              continuityInformationCardPlan?.prompt,
           })
       );
     } catch (error) {
@@ -4004,25 +4093,27 @@ export class ConversationService {
 
     try {
       const conversation = options.runtime.conversation;
+      const earliestCurrentMessage = [...options.currentTurnMessages].sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+      )[0];
+      const priorUserMessageCount = await this.messageModel.count({
+        conversationId: conversation.id,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        isArchived: { $ne: true },
+        ...(earliestCurrentMessage?.createdAt
+          ? { createdAt: { $lt: earliestCurrentMessage.createdAt } }
+          : {}),
+      } as never);
+      const userTurnNumber =
+        priorUserMessageCount + Math.max(1, options.currentTurnMessages.length);
       const stored = await this.findRecognitionJourneyStateMessage(
         conversation.id
       );
       let stateMessage = stored?.message;
       let journey = stored?.journey;
       if (!stateMessage || !journey) {
-        const earliestCurrentMessage = [...options.currentTurnMessages].sort(
-          (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
-        )[0];
-        const priorUserMessageCount = await this.messageModel.count({
-          conversationId: conversation.id,
-          role: MessageRole.user,
-          status: MessageStatus.sent,
-          isArchived: { $ne: true },
-          ...(earliestCurrentMessage?.createdAt
-            ? { createdAt: { $lt: earliestCurrentMessage.createdAt } }
-            : {}),
-        } as never);
-        journey = priorUserMessageCount
+        journey = priorUserMessageCount >= 20
           ? buildLegacyRecognitionJourney()
           : buildInitialRecognitionJourney({
               hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
@@ -4040,6 +4131,7 @@ export class ConversationService {
         currentUserMessageId: this.stringifyObjectId(
           options.before.userMessage.id
         ),
+        userTurnNumber,
       });
       const nextState = serializeRecognitionJourney(resolved.journey);
       if (nextState !== beforeState) {

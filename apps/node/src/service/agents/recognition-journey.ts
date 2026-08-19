@@ -16,6 +16,8 @@ export interface RecognitionTaskState {
   askedAssistantMessageId?: string;
   completedAt?: Date;
   answerMessageId?: string;
+  lastSuggestedUserTurn?: number;
+  suggestionCount?: number;
 }
 
 export interface RecognitionJourney {
@@ -41,6 +43,11 @@ const DEPARTURE_INTERVAL_QUESTION_PATTERN =
   /(?:离开|走|去世|没了|隔了|过了).{0,12}(?:多久|多少年|几年|哪年|什么时候)|(?:多久|多少年|几年|多少日子|多长时间).{0,8}(?:没见|不见|没联系|联系不上)/u;
 const FAMILY_STATUS_QUESTION_PATTERN =
   /(?:家里|家人|家里人|其他人|他们|妈妈|爸爸|孩子).{0,12}(?:怎么样|还好吗|还好吧|都好吗|都好吧|好不好|近况|过得|呢)/u;
+const RECOGNITION_ACTIVATION_PATTERN =
+  /^(?:爸|爸爸|爹|妈|妈妈|娘|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|丈夫|妻子|儿子|女儿)[啊呀吗呢]?$|(?:是你吗|真的是你|你是我|还认得我|听得到吗|能听见吗|终于联系上|终于找到你)/u;
+const RECOGNITION_ACTIVATION_MAX_USER_TURN = 20;
+const RECOGNITION_TASK_SUGGESTION_COOLDOWN_TURNS = 3;
+const RECOGNITION_TASK_MAX_SUGGESTIONS = 3;
 
 export function buildInitialRecognitionJourney(
   options: {
@@ -126,11 +133,13 @@ export function planRecognitionJourneyTurn(options: {
   currentQuery: string;
   currentUserMessageId?: string;
   now?: Date;
+  userTurnNumber?: number;
 }): {
   journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
 } {
   const now = options.now ?? new Date();
+  const userTurnNumber = Math.max(1, options.userTurnNumber ?? 1);
   const journey = cloneJourney(options.journey);
   const completedTaskIds = completeTasksFromUserTurn(
     journey.tasks,
@@ -139,6 +148,17 @@ export function planRecognitionJourneyTurn(options: {
     now
   );
   settleIfComplete(journey, now);
+
+  if (userTurnNumber > RECOGNITION_ACTIVATION_MAX_USER_TURN) {
+    for (const task of journey.tasks) {
+      if (task.status === 'pending') task.status = 'skipped';
+    }
+    if (journey.stage === 'pending') {
+      journey.stage = 'settled';
+      journey.settledAt ??= now;
+    }
+    settleIfComplete(journey, now);
+  }
 
   if (journey.stage === 'settled') {
     return {
@@ -151,6 +171,15 @@ export function planRecognitionJourneyTurn(options: {
   }
 
   if (journey.stage === 'pending') {
+    if (!RECOGNITION_ACTIVATION_PATTERN.test(options.currentQuery.trim())) {
+      return {
+        journey,
+        plan: {
+          openingSuggested: false,
+          completedTaskIds,
+        },
+      };
+    }
     return {
       journey,
       plan: {
@@ -168,7 +197,6 @@ export function planRecognitionJourneyTurn(options: {
       plan: {
         openingSuggested: false,
         completedTaskIds,
-        prompt: buildWaitingPrompt(waitingTask.id),
       },
     };
   }
@@ -186,12 +214,23 @@ export function planRecognitionJourneyTurn(options: {
   }
 
   const pendingTask = journey.tasks.find(task => task.status === 'pending');
+  const canSuggestPendingTask = Boolean(
+    pendingTask &&
+      (pendingTask.suggestionCount ?? 0) < RECOGNITION_TASK_MAX_SUGGESTIONS &&
+      (pendingTask.lastSuggestedUserTurn === undefined ||
+        userTurnNumber - pendingTask.lastSuggestedUserTurn >=
+          RECOGNITION_TASK_SUGGESTION_COOLDOWN_TURNS)
+  );
+  if (pendingTask && canSuggestPendingTask) {
+    pendingTask.lastSuggestedUserTurn = userTurnNumber;
+    pendingTask.suggestionCount = (pendingTask.suggestionCount ?? 0) + 1;
+  }
   return {
     journey,
     plan: {
       openingSuggested: false,
       completedTaskIds,
-      ...(pendingTask
+      ...(pendingTask && canSuggestPendingTask
         ? {
             suggestedTaskId: pendingTask.id,
             prompt: buildTaskSuggestionPrompt(pendingTask.id),
@@ -253,6 +292,12 @@ function parseRecognitionTask(
     ...parseOptionalStringField(raw, 'askedAssistantMessageId'),
     ...parseOptionalDateField(raw, 'completedAt'),
     ...parseOptionalStringField(raw, 'answerMessageId'),
+    ...(typeof raw.lastSuggestedUserTurn === 'number'
+      ? { lastSuggestedUserTurn: Math.max(1, raw.lastSuggestedUserTurn) }
+      : {}),
+    ...(typeof raw.suggestionCount === 'number'
+      ? { suggestionCount: Math.max(0, raw.suggestionCount) }
+      : {}),
   };
 }
 
@@ -347,16 +392,6 @@ function buildOpeningPrompt(): string {
     '# 首次相认（非决策建议）',
     '这是新建立的亲人会话。用户第一句话可能是在试探能否重新认出彼此；先正面回应本轮内容，再按人物性格自然带出久别重逢的场景感。可以表达“终于又听到你这样叫我”的心情，但不要照抄模板、不要编共同往事，也不要在这一轮启动资料问答。',
     '若用户本轮有明确问题、重要事实或强烈情绪，以它为主；相认感只作为自然关系底色。',
-  ].join('\n');
-}
-
-function buildWaitingPrompt(taskId: RecognitionTaskId): string {
-  const subject =
-    taskId === 'departure_interval' ? '离开多久' : '家里其他人的近况';
-  return [
-    '# 相认开放任务（非决策信息）',
-    `此前已经自然问过“${subject}”，用户尚未明确回答。不要重问、换句催问或因为没答而追着任务走。`,
-    '如果用户本轮或以后某一轮像是在迟到回答，就结合当时上下文自然接住；否则只回应当前话题。',
   ].join('\n');
 }
 
