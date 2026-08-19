@@ -1647,7 +1647,7 @@ function buildReplyMoves(
 
   const movesByScene: Partial<Record<ReplyScene, string[]>> = {
     afterlife_status: [
-      '按离世生活框架用一处简短的角色侧小场景正面回答当前状态，优先使用本轮领域和连续状态锚点',
+      '按离世生活框架用一个贴题的角色侧小场景正面回答当前状态，优先使用本轮领域和连续状态锚点',
       '住处、物品、习惯爱好和无病痛是稳定设定，只服务本轮关心和安慰；具体人物、摆设、共同过去和临终过程不能临时补写',
       '回应用户这份关心',
     ],
@@ -1694,7 +1694,7 @@ function buildReplyMoves(
       '明确祝福不改变现实因果，并肯定用户和家人的现实行动',
     ],
     guilt_regret: [
-      '用户倾吐少时（≤两句话）：明确不怪，简短肯定关系，不展开讲道理',
+      '用户倾吐少时（≤两句话）：明确不怪并自然回应关系；不展开讲道理，也不因为用户说得少就压成一句套话',
       '用户写了长文或具体场景时：先接住一两个用户原话里的具体后悔、比喻或画面，回应这份痛苦本身的重量，再表达不怪。不把长文当成道歉来回答，而是当成一份想念和告白来回应',
     ],
     dream_companionship: [
@@ -2057,67 +2057,84 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     engagement: brief.conversationPlan?.engagement,
     turnPlan: brief.conversationPlan?.turnPlan,
   });
-  const conversationPlanLines = brief.conversationPlan
-    ? [
-        '## 本轮交谈规划',
-        `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
-        `聊天行动：${brief.conversationPlan.moves
-          .map(move => `${move.type}（${move.goal}）`)
-          .join('；')}`,
-        `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
-        `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
-        ...(brief.strategyQuality
-          ? [
-              `策略换挡：${buildReplyStrategyQualityPrompt(
-                brief.strategyQuality
-              )}`,
-            ]
-          : []),
-        ...(turnPlan
-          ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
-          : []),
-        ...(brief.conversationPlan.personaActivation.length
-          ? [
-              `本轮人格激活：${brief.conversationPlan.personaActivation.join(
-                '；'
-              )}`,
-            ]
-          : []),
-        ...(brief.conversationPlan.questionNeed !== 'none' &&
-        brief.conversationPlan.moves.some(move => move.type === 'ask')
-          ? [
-              '规划已经判断本轮提问有价值：回复中实际提出一个清楚、贴着新信息的问题，不要把 ask 只写成安慰或陈述；仍然最多一个问题。',
-            ]
-          : []),
-        ...(brief.conversationPlan.questionNeed === 'none' &&
-        brief.conversationPlan.moves.some(move => move.type === 'answer')
-          ? [
-              '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
-            ]
-          : []),
-        ...(brief.conversationPlan.engagement?.assistantContribution ===
-        'self_expression'
-          ? [
-              '用户要当前角色主动说：只给一个短小的角色侧当下片段，不把话推回用户。涉及离世生活时按本轮框架选一处贴题内容，不临时另造世界设定，也不编用户偏好或共同往事。',
-            ]
-          : []),
-        ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
-          ? [
-              '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
-            ]
-          : []),
-        ...(brief.conversationPlan.engagement?.closureReadiness === 'blocked'
-          ? [
-              '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
-            ]
-          : []),
-        '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
-        '',
-      ]
-    : [];
-  const commActLines = brief.commAct
-    ? [buildReplyCommActPrompt(brief.commAct)]
-    : [];
+  const needsStructuredConversationGuidance = Boolean(
+    brief.riskLevel === 'high' ||
+      brief.correctionPolicy ||
+      brief.relationshipContinuity ||
+      brief.capabilityConstraints.length ||
+      brief.realityDependencies.length ||
+      brief.objectPlan ||
+      brief.intents.some(
+        item =>
+          item.intent === 'share_family_update' &&
+          item.subIntent === 'family_care'
+      ) ||
+      brief.conversationPlan?.questionNeed === 'necessary' ||
+      brief.conversationPlan?.engagement?.continuationGoal === 'repair'
+  );
+  const conversationPlanLines =
+    brief.conversationPlan && needsStructuredConversationGuidance
+      ? [
+          '## 本轮交谈规划',
+          `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
+          `聊天行动：${brief.conversationPlan.moves
+            .map(move => `${move.type}（${move.goal}）`)
+            .join('；')}`,
+          `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
+          `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
+          ...(brief.strategyQuality
+            ? [
+                `策略换挡：${buildReplyStrategyQualityPrompt(
+                  brief.strategyQuality
+                )}`,
+              ]
+            : []),
+          ...(turnPlan
+            ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
+            : []),
+          ...(brief.conversationPlan.personaActivation.length
+            ? [
+                `本轮人格激活：${brief.conversationPlan.personaActivation.join(
+                  '；'
+                )}`,
+              ]
+            : []),
+          ...(brief.conversationPlan.questionNeed !== 'none' &&
+          brief.conversationPlan.moves.some(move => move.type === 'ask')
+            ? [
+                '规划已经判断本轮提问有价值：回复中实际提出一个清楚、贴着新信息的问题，不要把 ask 只写成安慰或陈述；仍然最多一个问题。',
+              ]
+            : []),
+          ...(brief.conversationPlan.questionNeed === 'none' &&
+          brief.conversationPlan.moves.some(move => move.type === 'answer')
+            ? [
+                '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
+              ]
+            : []),
+          ...(brief.conversationPlan.engagement?.assistantContribution ===
+          'self_expression'
+            ? [
+                '用户要当前角色主动说：给一个贴题的角色侧当下内容，不把话推回用户，也不为追求简短而只给一句空泛表态。涉及离世生活时按本轮框架选择内容，不临时另造世界设定，也不编用户偏好或共同往事。',
+              ]
+            : []),
+          ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
+            ? [
+                '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
+              ]
+            : []),
+          ...(brief.conversationPlan.engagement?.closureReadiness === 'blocked'
+            ? [
+                '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
+              ]
+            : []),
+          '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+          '',
+        ]
+      : [];
+  const commActLines =
+    brief.commAct && needsStructuredConversationGuidance
+      ? [buildReplyCommActPrompt(brief.commAct)]
+      : [];
   const participationLines = brief.participationStrategy
     ? [
         '## 短轮参与',
@@ -2176,7 +2193,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         ...(brief.stateProtocol?.protocol === 'active_contribution'
           ? []
           : ['## 主动贡献']),
-        `优先正面给一个具体但轻量的角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避。离世生活框架内的当前事实在 claims 中用 soft_imagination；共同过去${
+        `优先正面给一个具体、贴题的角色侧当下内容；用户要求“说两句/讲自己的”时不能只写“我在/想你/记着你/别难过”、通用叮嘱或把话推回用户，也不为追求简短而只给一句空泛表态；用户问吃了什么、做了什么时不能用“都好/顺口/没什么”回避。离世生活框架内的当前事实在 claims 中用 soft_imagination；共同过去${
           brief.activeContribution.sharedPastAllowed
             ? '有证据时可自然带一处细节'
             : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
@@ -2222,12 +2239,26 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '',
       ]
     : [];
+  const replyActionLines = needsStructuredConversationGuidance
+    ? [
+        '## 回复动作',
+        ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
+        '动作是弱提示，不要求逐项完成，也不规定先后顺序；如果动作与用户原话或 Conversation Reading 冲突，忽略动作。',
+        '',
+      ]
+    : [
+        '## 普通聊天建议',
+        '先作为这个具体的人，对用户刚说的事情自然产生反应。无需依次完成复述、共情、安慰、贡献、提问或收尾；短寒暄可以一句，具体事情、重要近况和明显情绪可以自然多说几句，把此刻真正想说的内容说够。',
+        '',
+      ];
 
   return [
     '# 本轮模型注意卡',
     `版本：${brief.version}；模式：${brief.mode}；风险：${brief.riskLevel}。`,
     `体验：${buildReplyExperiencePlanPrompt(brief.experiencePlan)}`,
     '路由、模式和动作只用于提醒可能遗漏的内容，不决定最终回复。模型必须以用户原话和最近上下文为主，自主组织自然表达。',
+    '先进入当前亲人的性格、关系位置和说话习惯，再回应用户；不要先套“温柔安慰”的统一腔调。父亲、母亲、伴侣、长辈和孩子可以有不同的直接、絮叨、含蓄、着急、俏皮或克制。',
+    '允许真实口语里的停顿、省略、语气词、轻微重复和不完全工整；它们有助于表达时可以自然出现，但不要表演式堆砌。情绪跟着具体事情变化，不必每轮都温柔、正确、面面俱到。',
     '把当前用户消息放回最近几轮自然理解：它可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
     '回应完整后，如果贴着当前话题确有价值，可以自主贡献角色侧态度、感受、小近况或相邻话题；由你决定是否使用、使用哪一种以及何时收住。',
     ...careReceptionLines,
@@ -2261,16 +2292,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '## 沟通补偿',
     '如果事实、能力或边界让表层请求不能直接满足，不要围着规则解释；先看见用户想被理解、记得、照顾或靠近的需要，再用关系立场、愿望、假设、用户已说片段的意义或聊天内能做的事承接。必要边界最多一句，不抢走情感主体。',
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
-    '家人寄来或祭扫的物品只在离世生活框架激活时按物品规则承接；不索要、不催促，也不声称它会改变现实结果。复合倾诉可只回一个自然点。',
+    '家人寄来或祭扫的物品只在离世生活框架激活时按物品规则承接；不索要、不催促，也不声称它会改变现实结果。复合倾诉可以聚焦最重要的主线，但要把这条主线回应完整；明确问题、重大近况和关系诉求不能被一句泛泛安慰带过。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
     '其他离世亲人的相见、同住和作伴只沿用户原话、角色资料或连续状态锚点，不临时增加具体人物关系。',
     '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
     '不要只回复做不到；不编现实记忆、现实感知和现实行动。',
     '',
-    '## 回复动作',
-    ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
-    '动作是弱提示，不要求逐项完成，也不规定先后顺序；如果动作与用户原话或 Conversation Reading 冲突，忽略动作。',
-    '',
+    ...replyActionLines,
     '## 表达长度原则',
     buildReplyLengthPlanPrompt(brief.lengthPlan),
     '',

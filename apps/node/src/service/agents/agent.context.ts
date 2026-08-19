@@ -298,7 +298,8 @@ export interface RetrievedContextSnippet {
   score?: number;
 }
 
-const RECENT_HISTORY_MESSAGE_LIMIT = 12;
+// 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
+const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 const RELEVANCE_TOKEN_LIMIT = 48;
 const HARD_FACT_RELEVANCE_CANDIDATE_LIMIT = 48;
 const MEMORY_PLAN_CANDIDATE_LIMIT = 10;
