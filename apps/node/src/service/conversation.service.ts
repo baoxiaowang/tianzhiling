@@ -2210,8 +2210,8 @@ export class ConversationService {
         false,
         previousAssistantContent
       ),
-      this.captureContinuityInformationCard(message, searchableText)
-        .catch(error => {
+      this.captureContinuityInformationCard(message, searchableText).catch(
+        error => {
           this.logger.warn(
             '[conversation] continuity card capture skipped, conversationId=%s, messageId=%s, reason=%s',
             this.stringifyObjectId(message.conversationId),
@@ -2219,7 +2219,8 @@ export class ConversationService {
             this.describeReplyError(error)
           );
           return [];
-        }),
+        }
+      ),
     ]);
     const writtenCount = memoryFacts.count + profileFacts.count;
     message.memoryWriteStatus =
@@ -4122,11 +4123,12 @@ export class ConversationService {
       let stateMessage = stored?.message;
       let journey = stored?.journey;
       if (!stateMessage || !journey) {
-        journey = priorUserMessageCount >= 20
-          ? buildLegacyRecognitionJourney()
-          : buildInitialRecognitionJourney({
-              hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
-            });
+        journey =
+          priorUserMessageCount >= 20
+            ? buildLegacyRecognitionJourney()
+            : buildInitialRecognitionJourney({
+                hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
+              });
         stateMessage = await this.createRecognitionJourneyStateMessage({
           runtime: options.runtime,
           journey,
@@ -9424,6 +9426,7 @@ export class ConversationService {
     return this.messageModel.findOne({
       where: {
         conversationId: objectId,
+        role: { $in: [MessageRole.user, MessageRole.assistant] },
         isArchived: { $ne: true },
       } as never,
       order: {
@@ -9497,6 +9500,7 @@ export class ConversationService {
         {
           $match: {
             conversationId: { $in: ids },
+            role: { $in: [MessageRole.user, MessageRole.assistant] },
             isArchived: { $ne: true },
           },
         },

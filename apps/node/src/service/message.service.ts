@@ -119,6 +119,7 @@ export class MessageService {
     const lightweight = this.normalizeBoolean(options.lightweight);
     const where: Record<string, unknown> = {
       conversationId: conversation.id,
+      role: { $in: [MessageRole.user, MessageRole.assistant] },
       isArchived: { $ne: true },
     };
 
@@ -136,7 +137,11 @@ export class MessageService {
 
       return {
         items: messages
-          .filter(message => !message.isArchived)
+          .filter(
+            message =>
+              !message.isArchived &&
+              [MessageRole.user, MessageRole.assistant].includes(message.role)
+          )
           .map(message =>
             this.buildConversationMessageItem(message, { lightweight })
           ),
@@ -153,7 +158,11 @@ export class MessageService {
       take: pageSize + 1,
     });
     const pageMessages = messages
-      .filter(message => !message.isArchived)
+      .filter(
+        message =>
+          !message.isArchived &&
+          [MessageRole.user, MessageRole.assistant].includes(message.role)
+      )
       .slice(0, pageSize)
       .reverse();
 
