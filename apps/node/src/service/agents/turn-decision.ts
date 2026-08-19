@@ -299,7 +299,7 @@ export function buildTurnDecisionPrompt(decision: TurnDecision): string {
         ? '自然收尾，不另开话题'
         : decision.closure === 'continue'
         ? '可自然留下开放点'
-        : '完成本轮动作后自然停住'),
+        : '结合最近对话自然决定继续或停住'),
     '事实：' +
       (decision.evidenceRequired
         ? '具体事实必须来自证据包'
