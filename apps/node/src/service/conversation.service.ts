@@ -759,6 +759,15 @@ export class ConversationService {
     options: ListConversationsOptions = {}
   ): Promise<ConversationListResult> {
     const userId = this.parseObjectId(auth.sub);
+    try {
+      await this.messengerService?.revealEligibleMessengersForUser?.(userId);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] eligible messenger reveal failed, userId=%s, reason=%s',
+        String(userId),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     const pageSize = this.normalizeOptionalConversationPageSize(
       options.pageSize
     );

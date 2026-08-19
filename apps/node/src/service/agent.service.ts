@@ -1,5 +1,6 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { Inject, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
+import { ILogger } from '@midwayjs/logger';
 import { createHash, randomBytes } from 'crypto';
 import type {
   AcceptAgentShareInviteResultDTO,
@@ -68,6 +69,9 @@ interface AgentAccess {
 
 @Provide()
 export class AgentService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
@@ -555,17 +559,25 @@ export class AgentService {
 
     const savedAgent = await this.agentModel.save(agent);
     await this.createConversation(savedAgent, createdUserId, now);
-    if (this.messengerService) {
-      const messenger = await this.messengerService.ensureMessengerForAgent(
-        savedAgent
-      );
-      await this.messengerService.ensureMessengerConversation(
-        savedAgent,
-        messenger
-      );
-    }
+    await this.ensureSilentMessengerForNewAgent(savedAgent, createdUserId);
 
     return this.buildAgentProfile(savedAgent);
+  }
+
+  private async ensureSilentMessengerForNewAgent(
+    agent: AgentEntity,
+    userId: MongoObjectId
+  ): Promise<void> {
+    try {
+      await this.messengerService.ensureMessengerForAgent(agent);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent] silent messenger provisioning failed, userId=%s, agentId=%s, reason=%s',
+        String(userId),
+        String(agent.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   async updateAgentAvatar(
