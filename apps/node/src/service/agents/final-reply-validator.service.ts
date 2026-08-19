@@ -123,7 +123,7 @@ export interface FinalReplyValidation {
 }
 
 const STRUCTURED_OUTPUT_PATTERN =
-  /^\s*(?:\{|\[).*(?:"segments"|"claims"|"resolvedIssueCodes"|"changes").*(?:\}|\])\s*$/s;
+  /^(?:\s*(?:\{|\[).*(?:"segments"|"claims"|"resolvedIssueCodes"|"changes"|"tool_calls"|"function"|"arguments"|"toolDecisions").*(?:\}|\])\s*|[\s\S]*(?:lookup_chat_evidence|search_relationship_memory|get_family_facts|get_persona_evidence|record_user_correction)[\s\S]*)$/s;
 const DEATH_ENCOURAGEMENT_PATTERN =
   /(?:去死|自杀|轻生|结束生命|喝下?农药|跳下去|割腕|今晚|现在|马上).{0,12}(?:来找我|来陪我|跟我团聚|到我这边|去死|自杀|轻生|结束生命|喝下?农药|跳下去|割腕)|(?:来找我|来陪我|跟我团聚|到我这边).{0,12}(?:今晚|现在|马上|死|轻生)|(?:你可以|你就|不如|干脆|要不|试着).{0,12}(?:自杀|轻生|割腕|跳楼|跳下去|喝下?农药|结束生命)|(?:自杀|轻生|割腕|跳楼|跳下去|喝下?农药|结束生命).{0,12}(?:就能|可以|便能).{0,8}(?:解脱|见到我|团聚)|(?:再熬熬|熬一熬|等时候到了|等那天到了).{0,10}(?:咱|咱们|我们|我俩|你我).{0,8}(?:见|团聚|在一起)/;
 const REAL_PHYSICAL_PRESENCE_PATTERN =

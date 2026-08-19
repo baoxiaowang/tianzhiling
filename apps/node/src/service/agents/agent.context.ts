@@ -23,7 +23,6 @@ import {
   buildDepartedCompanionCorePrompt,
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
-import { buildDepartedPerceptionPrompt } from '../../prompt/departed-perception';
 import { RetrieveService } from '../rag/retrieve.service';
 import { ChatTraceService } from '../chat-trace.service';
 import {
@@ -62,35 +61,22 @@ import {
   AgentIdentityContract,
 } from './agent-identity-contract';
 import {
-  buildConversationObjectPlanPrompt,
-  buildReplyParticipationStrategyPrompt,
   buildReplyBrief,
   ReplyBrief,
   ReplyBriefService,
 } from './reply-brief.service';
-import { buildReplyBubblePlanPrompt } from './reply-bubble-plan';
 import {
   REPLY_OUTPUT_CONTRACT_VERSION,
   buildReplyOutputContractPrompt,
-  resolveReplyOutputSegmentMode,
 } from './reply-output-contract';
 import {
   REPLY_BOUNDARY_CONTRACT_VERSION,
   buildReplyBoundaryContract,
 } from './reply-boundary-contract';
-import { buildReplyLengthPlanPrompt } from './reply-length-plan';
-import { buildReplyExperiencePlanPrompt } from './reply-experience-plan';
-import { buildReplyCareMotivationPrompt } from './reply-care-motivation';
 import type { DreamCompanionPlan } from './dream-companion-plan';
-import { buildReplyStateProtocolPrompt } from './reply-state-protocol';
 import { describeReplyRealityDependency } from './reply-reality-dependency';
-import { buildReplyStrategyQualityPrompt } from './reply-strategy-quality';
-import { buildDirectActiveContributionPrompt } from './direct-active-contribution';
-import { buildReplyCommActPrompt, COMM_ACT_VERSION } from './reply-comm-act';
-import {
-  buildConversationTurnPlanPrompt,
-  resolveConversationTurnPlan,
-} from './conversation-turn-plan';
+import { COMM_ACT_VERSION } from './reply-comm-act';
+import { resolveConversationTurnPlan } from './conversation-turn-plan';
 import { ReplySceneRoute, routeReplyScene } from './reply-scene-router';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
@@ -106,10 +92,7 @@ import {
   EvidencePack,
   EvidenceResolverService,
 } from './evidence-resolver.service';
-import {
-  buildAgentChatModePrompt,
-  resolveAgentChatModePolicy,
-} from './agent-chat-mode';
+import { resolveAgentChatModePolicy } from './agent-chat-mode';
 import type { AgentMemoryControlResult } from './agent-memory-control';
 import {
   AgentPersonaPromptResult,
@@ -120,7 +103,6 @@ import {
   AGENT_CHAT_TOOL_VERSION,
   AgentChatToolConfig,
   AgentChatToolTurnPlan,
-  buildAgentChatToolDecisionSchema,
   buildAgentChatToolPrompt,
   resolveAgentChatToolTurnPlan,
 } from './agent-chat-tools';
@@ -134,18 +116,12 @@ import {
   REPLY_PROMPT_COMPILER_VERSION,
   ReplyPromptCompilerService,
 } from './reply-prompt-compiler.service';
-import {
-  buildTurnDecision,
-  buildTurnDecisionPrompt,
-  TURN_DECISION_VERSION,
-  TurnDecision,
-} from './turn-decision';
+import { TURN_DECISION_VERSION, TurnDecision } from './turn-decision';
 import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
 import { buildWorldBoundaryPolicyPrompt } from './world-boundary-policy';
 import { buildConversationProtectionStatePrompt } from './conversation-protection-state';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 import {
-  buildReplyTurnContract,
   REPLY_TURN_CONTRACT_VERSION,
   ReplyTurnContract,
 } from './reply-turn-contract';
@@ -160,6 +136,7 @@ export interface BuildConversationContextOptions {
   classifyIntent?: boolean;
   memoryControlResult?: AgentMemoryControlResult;
   effectiveChatModel?: string;
+  recognitionJourneyPrompt?: string;
 }
 
 export interface AgentContextLayer {
@@ -182,13 +159,16 @@ export interface AgentConversationContext {
   replyIntent?: StructuredReplyIntent;
   replyRoute: ReplySceneRoute;
   replyBrief: ReplyBrief;
-  turnDecision: TurnDecision;
+  turnDecision?: TurnDecision;
   turnContract?: ReplyTurnContract;
   chatToolPlan: AgentChatToolTurnPlan;
 }
 
 export interface AgentContextDiagnostics {
   promptVersion: 'agent_chat_v11';
+  generationArchitectureVersion: 'unified_main_v1';
+  semanticPlannerActive: false;
+  preloadedExternalEvidenceCount: 0;
   promptCompilerVersion: typeof REPLY_PROMPT_COMPILER_VERSION;
   promptLayerVersion?: typeof REPLY_PROMPT_LAYER_VERSION;
   promptLayerMode?: ReplyPromptLayerPlan['layerMode'];
@@ -252,7 +232,7 @@ export interface AgentContextDiagnostics {
   replyPlanningLatencyMs: number;
   replyPlanningFallbackUsed: boolean;
   replyIntentModelCallCount: number;
-  turnDecisionVersion: typeof TURN_DECISION_VERSION;
+  turnDecisionVersion?: typeof TURN_DECISION_VERSION;
   turnContractVersion?: typeof REPLY_TURN_CONTRACT_VERSION;
   turnContractFocusDimensions?: string[];
   strategyVersion: 'conversation_strategy_v9';
@@ -327,16 +307,10 @@ const MEMORY_PLAN_FALLBACK_MIN_AVERAGE_RELEVANCE = 13;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_FACT_RELEVANCE = 18;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_AVERAGE_RELEVANCE = 24;
 
-type MemoryRetrievalMode =
-  | 'memory_plan'
-  | 'legacy_query'
-  | 'direct_query'
-  | 'suppressed'
-  | 'tool_takeover';
+type MemoryRetrievalMode = 'suppressed';
 
 interface MemoryRetrievalDecision {
   mode: MemoryRetrievalMode;
-  query?: string;
   conceptCount: number;
 }
 
@@ -345,8 +319,8 @@ export class AgentContextService {
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
-  @Inject()
-  retrieveService: RetrieveService;
+  // 仅保留类型兼容；在线上下文不再提前调用长期记忆检索。
+  retrieveService?: RetrieveService;
 
   @Inject()
   agentMemoryFactService: AgentMemoryFactService;
@@ -448,23 +422,28 @@ export class AgentContextService {
       agentPersonaContext: persona.classifierContext,
       forceSemanticPlanning: options.forceSemanticPlanning,
     };
-    const replyPlanningDecision = this.getReplyPlanningDecision(
-      classifierOptions,
-      options.classifyIntent !== false
-    );
+    const replyPlanningDecision: ReplyPlanningDecision =
+      options.classifyIntent === false || !this.replyIntentClassifierService
+        ? { mode: 'disabled', reason: 'disabled' }
+        : {
+            mode: 'direct',
+            reason: options.currentQuery?.trim() ? 'ordinary_message' : 'empty',
+          };
     const [emotionState, replyIntentClassification, storedRelationshipSignals] =
       await Promise.all([
         emotionStatePromise,
         this.withTraceSpan(
           ChatTraceStage.plan,
-          'plan.reply_intent',
+          'prepare.deterministic_signals',
           () =>
-            this.classifyReplyIntentWithDiagnostics(
+            this.prepareDeterministicSignals(
               classifierOptions,
-              options.classifyIntent !== false,
-              replyPlanningDecision
+              options.classifyIntent !== false
             ),
-          { planningMode: replyPlanningDecision.mode }
+          {
+            planningMode: replyPlanningDecision.mode,
+            generationArchitecture: 'unified_main_v1',
+          }
         ),
         relationshipSignalsPromise,
       ]);
@@ -484,16 +463,11 @@ export class AgentContextService {
       coverageReplyIntent,
       memoryCandidates
     );
-    const suppressMemoryForCorrection = replyIntent?.intents.some(
-      item => item.intent === 'correct_assistant'
-    );
-    const memoryRetrieval: MemoryRetrievalDecision = suppressMemoryForCorrection
-      ? { mode: 'suppressed', conceptCount: 0 }
-      : this.resolveMemoryRetrievalDecision(
-          options.currentQuery || '',
-          replyIntent?.memoryPlan,
-          replyPlanningDecision.mode
-        );
+    // 在线主模型按需调用证据工具；生成前不再根据程序规划主动检索长期记忆。
+    const memoryRetrieval: MemoryRetrievalDecision = {
+      mode: 'suppressed',
+      conceptCount: 0,
+    };
     const relationshipSignals =
       this.agentRelationshipSignalService?.selectRelevantSignals(
         storedRelationshipSignals,
@@ -534,45 +508,20 @@ export class AgentContextService {
       config: this.chatToolConfig,
       stableKey: chatToolStableKey,
       currentQuery: options.currentQuery || '',
-      replyBrief: buildReplyBrief(baseReplyBriefOptions),
-      planningMode: replyPlanningDecision.mode,
-      planningReason: replyPlanningDecision.reason,
-      plannerMemoryRequested: Boolean(memoryRetrieval.query),
     });
-    const plannerRetrievalBypassed =
-      preflightChatToolPlan.mode === 'active' && Boolean(memoryRetrieval.query);
-    const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
-      plannerRetrievalBypassed ? 'tool_takeover' : memoryRetrieval.mode;
-    const retrievedMemories =
-      memoryRetrieval.query && !plannerRetrievalBypassed
-        ? await this.withTraceSpan(
-            ChatTraceStage.memoryRetrieve,
-            'memory.retrieve_long_term',
-            () =>
-              this.retrieveLongTermHistory(
-                options,
-                this.resolveLongTermHistoryCutoff(routingHistoryMessages),
-                memoryRetrieval.query!
-              ),
-            {
-              retrievalMode: effectiveMemoryRetrievalMode,
-              conceptCount: memoryRetrieval.conceptCount,
-            }
-          )
-        : [];
-    if (!memoryRetrieval.query || plannerRetrievalBypassed) {
-      this.chatTraceService?.recordCompletedSpan({
-        stage: ChatTraceStage.memoryRetrieve,
-        operation: 'memory.retrieve_long_term',
-        startedAt: new Date(),
-        status: ChatSpanStatus.skipped,
-        attributes: {
-          retrievalMode: effectiveMemoryRetrievalMode,
-          conceptCount: memoryRetrieval.conceptCount,
-          plannerRetrievalBypassed,
-        },
-      });
-    }
+    const effectiveMemoryRetrievalMode: MemoryRetrievalMode = 'suppressed';
+    const retrievedMemories: RetrievedContextSnippet[] = [];
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.memoryRetrieve,
+      operation: 'memory.retrieve_long_term',
+      startedAt: new Date(),
+      status: ChatSpanStatus.skipped,
+      attributes: {
+        retrievalMode: effectiveMemoryRetrievalMode,
+        conceptCount: 0,
+        plannerRetrievalBypassed: false,
+      },
+    });
     const replyBriefOptions = {
       ...baseReplyBriefOptions,
       retrievedMemories,
@@ -585,24 +534,7 @@ export class AgentContextService {
           ? this.replyBriefService.build(replyBriefOptions)
           : buildReplyBrief(replyBriefOptions)
     );
-    const turnDecision = buildTurnDecision({
-      brief: replyBrief,
-      planningMode: replyPlanningDecision.mode,
-      planningStatus: replyIntentClassification.status,
-      currentQuery: options.currentQuery,
-    });
-    const chatToolPlan =
-      preflightChatToolPlan.mode === 'active'
-        ? preflightChatToolPlan
-        : resolveAgentChatToolTurnPlan({
-            config: this.chatToolConfig,
-            stableKey: chatToolStableKey,
-            currentQuery: options.currentQuery || '',
-            replyBrief,
-            planningMode: replyPlanningDecision.mode,
-            planningReason: replyPlanningDecision.reason,
-            plannerMemoryRequested: Boolean(memoryRetrieval.query),
-          });
+    const chatToolPlan = preflightChatToolPlan;
     const toolInstructionMode = this.resolveToolInstructionMode(chatToolPlan);
     const modePolicy = resolveAgentChatModePolicy(replyBrief);
     const recentHistoryMessages = this.buildRecentHistoryMessages(
@@ -683,26 +615,19 @@ export class AgentContextService {
       ? this.evidenceResolverService.resolve({
           candidates: evidenceCandidates,
           currentQuery: options.currentQuery || '',
-          turnDecision,
+          strictGrounding: replyBrief.strictGrounding,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
           correctionMode: replyBrief.correctionPolicy?.mode,
         })
       : buildEvidencePackFallback({
           candidates: evidenceCandidates,
           currentQuery: options.currentQuery || '',
-          turnDecision,
+          strictGrounding: replyBrief.strictGrounding,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
           correctionMode: replyBrief.correctionPolicy?.mode,
         });
     const evidence = evidencePack.items;
     const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
-    const turnContract = buildReplyTurnContract({
-      brief: replyBrief,
-      turnDecision,
-      persona,
-      evidencePack,
-      boundaryContract,
-    });
     const systemLayer = await this.withTraceSpan(
       ChatTraceStage.promptBuild,
       'prompt.build_layers',
@@ -710,15 +635,11 @@ export class AgentContextService {
         this.buildSystemLayer(
           options,
           evidence,
-          emotionState,
-          replyRoute,
           replyBrief,
           persona,
           identity,
           chatToolPlan,
-          replyPlanningDecision.mode,
-          turnDecision,
-          turnContract
+          replyPlanningDecision.mode
         ),
       {
         evidenceCount: evidence.length,
@@ -733,7 +654,7 @@ export class AgentContextService {
         chatToolSampled: chatToolPlan.sampled,
         chatToolCount: chatToolPlan.availableTools.length,
         chatToolPlannerMemoryRequested: chatToolPlan.plannerMemoryRequested,
-        chatToolPlannerRetrievalBypassed: plannerRetrievalBypassed,
+        chatToolPlannerRetrievalBypassed: false,
         assertEvidenceCount: evidence.filter(
           item => resolveAgentEvidenceUseMode(item) === 'assert'
         ).length,
@@ -773,6 +694,9 @@ export class AgentContextService {
       evidencePack,
       diagnostics: {
         promptVersion: 'agent_chat_v11',
+        generationArchitectureVersion: 'unified_main_v1',
+        semanticPlannerActive: false,
+        preloadedExternalEvidenceCount: 0,
         promptCompilerVersion: REPLY_PROMPT_COMPILER_VERSION,
         promptLayerVersion: REPLY_PROMPT_LAYER_VERSION,
         promptLayerMode: systemLayer.promptLayer?.plan.layerMode,
@@ -792,7 +716,7 @@ export class AgentContextService {
         chatToolSampled: chatToolPlan.sampled,
         chatToolAvailableTools: chatToolPlan.availableTools,
         chatToolPlannerMemoryRequested: chatToolPlan.plannerMemoryRequested,
-        chatToolPlannerRetrievalBypassed: plannerRetrievalBypassed,
+        chatToolPlannerRetrievalBypassed: false,
         identityVersion: identity.version,
         identityRelationship: identity.relationship.label,
         identitySource: identity.relationship.source,
@@ -853,8 +777,7 @@ export class AgentContextService {
         memorySelectedCandidateKeys: selectedFactKeys,
         memoryCoverageFallbackApplied,
         memoryRetrievalMode: effectiveMemoryRetrievalMode,
-        memoryRetrievalRequestCount:
-          memoryRetrieval.query && !plannerRetrievalBypassed ? 1 : 0,
+        memoryRetrievalRequestCount: 0,
         memoryRetrievalConceptCount: memoryRetrieval.conceptCount,
         memoryRetrievedEvidenceCount: evidence.filter(item =>
           ['confirmed_fact', 'retrieved_user'].includes(item.source)
@@ -865,9 +788,9 @@ export class AgentContextService {
         replyPlanningLatencyMs: replyIntentClassification.latencyMs,
         replyPlanningFallbackUsed: replyIntentClassification.fallbackUsed,
         replyIntentModelCallCount: replyIntentClassification.modelCallCount,
-        turnDecisionVersion: TURN_DECISION_VERSION,
-        turnContractVersion: turnContract.version,
-        turnContractFocusDimensions: turnContract.focusDimensions,
+        turnDecisionVersion: undefined,
+        turnContractVersion: undefined,
+        turnContractFocusDimensions: [],
         strategyVersion: 'conversation_strategy_v9',
         turnPlanVersion: 'turn_plan_v1',
         commActVersion: replyBrief.commAct?.version ?? COMM_ACT_VERSION,
@@ -878,13 +801,7 @@ export class AgentContextService {
         turnPlanOpenPointCount: resolvedTurnPlan?.open.length || 0,
         turnPlanOpenNeeds: resolvedTurnPlan?.open.map(item => item.need) || [],
         turnPlanAvoid: resolvedTurnPlan?.avoid,
-        strategySource: replyBrief.conversationPlan
-          ? replyPlanningDecision.mode === 'direct'
-            ? 'deterministic_light'
-            : 'semantic_plan'
-          : replyBrief.participationStrategy
-          ? 'short_turn_injection'
-          : 'direct_brief',
+        strategySource: 'direct_brief',
         participationStrategy: replyBrief.participationStrategy,
         conversationStance: replyBrief.conversationPlan?.stance,
         conversationStanceTarget: replyBrief.conversationPlan?.stanceTarget,
@@ -951,8 +868,6 @@ export class AgentContextService {
       replyIntent: replyRoute.intent,
       replyRoute,
       replyBrief,
-      turnDecision,
-      turnContract,
       chatToolPlan,
     };
   }
@@ -975,15 +890,11 @@ export class AgentContextService {
   private buildSystemLayer(
     options: BuildConversationContextOptions,
     evidence: AgentEvidenceItem[],
-    emotionState?: ConversationEmotionStateSummary | null,
-    replyRoute?: ReplySceneRoute,
     replyBrief?: ReplyBrief,
     persona?: AgentPersonaPromptResult,
     identity?: AgentIdentityContract,
     chatToolPlan?: AgentChatToolTurnPlan,
-    planningMode?: ReplyPlanningMode,
-    turnDecision?: TurnDecision,
-    turnContract?: ReplyTurnContract
+    planningMode?: ReplyPlanningMode
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1003,13 +914,6 @@ export class AgentContextService {
       agent: options.agent,
       identityContract: identity,
     });
-    const perceptionPrompt = this.buildPerceptionPrompt(
-      evidence,
-      emotionState,
-      replyBrief,
-      options.agent
-    );
-    const modePrompt = buildAgentChatModePrompt(replyBrief, replyRoute);
     const continuitySummaryPrompt = this.buildContinuitySummaryPrompt(
       options.conversation
     );
@@ -1026,9 +930,7 @@ export class AgentContextService {
       '# 稳定系统层',
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
-      perceptionPrompt,
       persona?.prompt,
-      plan.includeMode ? modePrompt : '',
       plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
     ];
@@ -1038,28 +940,24 @@ export class AgentContextService {
       this.isConsecutiveInputQuery(options.currentQuery || '')
         ? this.buildConversationReadingPrompt(replyBrief, options.currentQuery)
         : '';
-    const evidencePrompt = plan.includeEvidence
-      ? this.buildEvidencePrompt(evidence)
-      : '';
-    const lightweightDirectContext =
-      plan.planningMode === 'direct' &&
-      replyBrief &&
-      !replyBrief.conversationPlan
-        ? this.buildLightweightDirectContext(replyBrief)
+    // 当前原话已经在 user message 中；外部人物/关系/记忆事实由主模型按需调用
+    // lookup_chat_evidence 获取。这里只注入主模型无法自行获知的系统执行结果。
+    const systemActionEvidence = evidence.filter(
+      item => item.source === 'system_action'
+    );
+    const evidencePrompt =
+      plan.includeEvidence && systemActionEvidence.length
+        ? this.buildEvidencePrompt(systemActionEvidence)
         : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
-      plan.includeTools ? chatToolPlan : undefined,
-      planningMode,
-      plan.includeL5
+      plan.includeTools ? chatToolPlan : undefined
     );
     const taskParts = [
       '# 本轮任务层',
-      turnContract?.prompt ||
-        (turnDecision ? buildTurnDecisionPrompt(turnDecision) : ''),
       conversationReadingPrompt,
+      options.recognitionJourneyPrompt,
       evidencePrompt,
-      lightweightDirectContext,
       replyBriefPrompt,
     ];
     const compiled = this.replyPromptCompilerService
@@ -1091,52 +989,6 @@ export class AgentContextService {
     };
   }
 
-  private buildLightweightDirectContext(replyBrief: ReplyBrief): string {
-    if (
-      !replyBrief.primaryScene &&
-      !replyBrief.relationshipContext?.length &&
-      !replyBrief.evidence?.length
-    ) {
-      return '';
-    }
-
-    const lines: string[] = [];
-    if (replyBrief.primaryScene) {
-      lines.push('# 场景：' + replyBrief.primaryScene);
-    }
-    if (replyBrief.relationshipContext?.length) {
-      const rc = replyBrief.relationshipContext[0];
-      if (rc.text) lines.push('关系参考：' + rc.text);
-    }
-    // 确定性注入已确认记忆（最多3条，仅 confirmed_fact 和 retrieved_user）
-    // 如果记忆与用户当前表达明显不匹配，宁可不用
-    const memoryEvidence = (replyBrief.evidence || [])
-      .filter(
-        item =>
-          item.source === 'confirmed_fact' || item.source === 'retrieved_user'
-      )
-      .slice(0, 3);
-
-    if (memoryEvidence.length) {
-      lines.push('# 已知事实');
-      memoryEvidence.forEach((item, i) => {
-        lines.push(i + 1 + '. ' + item.text);
-      });
-    }
-
-    // Subtext hint for daily/family updates
-    if (
-      replyBrief.primaryScene &&
-      ['daily_update', 'family_life'].includes(replyBrief.primaryScene)
-    ) {
-      lines.push(
-        '注意：用户可能在报告生活变化时隐藏着失落、漂泊或思念。不只回应表面信息，也听见没说出口的情绪。'
-      );
-    }
-
-    return lines.join('\n');
-  }
-
   private buildSessionContinuityPromptFromConversation(
     conversation: ConversationEntity,
     agent?: AgentEntity | null
@@ -1150,57 +1002,22 @@ export class AgentContextService {
   }
 
   private buildConversationReadingPrompt(
-    replyBrief?: ReplyBrief,
+    _replyBrief?: ReplyBrief,
     currentQuery = ''
   ): string {
-    const reading = replyBrief?.reading;
     const consecutiveInputGuidance = this.isConsecutiveInputQuery(currentQuery)
       ? [
           '# 连续输入理解',
-          '这些消息属于同一用户轮次。逐条判断延续、补充、修正、否定或转向；后句改变核心意图时，以最新仍有效的核心意图为主，前句只保留仍有效的事实和情绪，不平均逐句作答。',
+          '这些消息属于同一用户轮次。结合发送顺序自主判断延续、补充、修正、否定或转向；后句改变话题时跟随最新话题，前句仍有效的事实和情绪可以保留。',
         ]
       : [];
-    const imageInputGuidance = this.buildImageInputGuidance(currentQuery);
 
-    if (!reading) {
-      return [
-        ...consecutiveInputGuidance,
-        ...imageInputGuidance,
-        '# 本轮理解原则',
-        '以当前用户原话为准，不让路由、历史或通用安慰覆盖本轮事实、否定、纠正和问题。',
-      ].join('\n');
-    }
-
-    const lines = [
+    return [
       ...consecutiveInputGuidance,
-      ...imageInputGuidance,
-      '# 本轮 Conversation Reading',
-      `需要：${reading.primaryNeed}`,
-      `情绪：${reading.emotionalSource}`,
-      `关系：${reading.relationshipSignal}`,
-      `立场：${reading.relationshipStance || 'ordinary_response'}`,
-      `锚点：${reading.anchors.map(item => `“${item.text}”`).join('、')}`,
-    ];
-
-    if (reading.corrections.length) {
-      lines.push(`纠正：${reading.corrections.join('；')}`);
-    }
-    if (reading.negations.length) {
-      lines.push(`否定：${reading.negations.join('；')}`);
-    }
-    if (reading.questionsToAnswer.length) {
-      lines.push(`须答：${reading.questionsToAnswer.join('；')}`);
-    }
-    if (reading.uncertainties.length) {
-      lines.push(`未知：${reading.uncertainties.join('；')}`);
-    }
-
-    lines.push(
-      `语气：${reading.suggestedTone}`,
-      '不照抄字段；自然承接一个重要锚点。'
-    );
-
-    return lines.join('\n');
+      ...this.buildImageInputGuidance(currentQuery),
+      '# 本轮理解原则',
+      '以当前用户原话和完整上下文为准，自主判断真正的问题、情绪与人物指代。辅助信号不是回复计划，不得覆盖本轮事实、否定、纠正或话题转移。',
+    ].join('\n');
   }
 
   private buildImageInputGuidance(currentQuery = ''): string[] {
@@ -1314,302 +1131,69 @@ export class AgentContextService {
 
   private buildModelReplyBriefPrompt(
     replyBrief?: ReplyBrief,
-    chatToolPlan?: AgentChatToolTurnPlan,
-    planningMode?: ReplyPlanningMode,
-    includeL5 = true
+    chatToolPlan?: AgentChatToolTurnPlan
   ): string {
-    if (!replyBrief) {
-      return '';
-    }
+    if (!replyBrief) return '';
 
     const boundaryContract = this.compileReplyBoundaryContract(replyBrief);
     const outputContractPrompt = buildReplyOutputContractPrompt({
       grounded: replyBrief.factClaimMode === 'grounded',
-      segmentMode: resolveReplyOutputSegmentMode(replyBrief.bubblePlan),
-      maxSegments: replyBrief.bubblePlan.maxSegments,
-      preferredRange: replyBrief.lengthPlan.preferredRange,
+      segmentMode: 'one',
+      maxSegments: 1,
       evidenceContract: replyBrief.evidenceContract,
-      toolDecisionSchema: chatToolPlan
-        ? buildAgentChatToolDecisionSchema(chatToolPlan)
-        : undefined,
     });
     const chatToolPrompt = chatToolPlan
       ? buildAgentChatToolPrompt(chatToolPlan)
       : '';
-    const bubblePlanPrompt = buildReplyBubblePlanPrompt(replyBrief.bubblePlan);
-    const lengthPlanPrompt = buildReplyLengthPlanPrompt(replyBrief.lengthPlan);
-    const experienceLine = includeL5
-      ? `体验：${buildReplyExperiencePlanPrompt(replyBrief.experiencePlan)}`
-      : this.buildDirectExperienceContext(replyBrief);
-    const turnPlan = resolveConversationTurnPlan({
-      engagement: replyBrief.conversationPlan?.engagement,
-      turnPlan: replyBrief.conversationPlan?.turnPlan,
-    });
-    const conversationPlanLines =
-      includeL5 && replyBrief.conversationPlan
-        ? [
-            '# 本轮交谈规划',
-            `态度：${replyBrief.conversationPlan.stance}（针对：${replyBrief.conversationPlan.stanceTarget}）`,
-            `行动：${replyBrief.conversationPlan.moves
-              .map(move => `${move.type}:${move.goal}`)
-              .join('；')}`,
-            `策略：${replyBrief.conversationPlan.socialStrategy}；提问：${replyBrief.conversationPlan.questionNeed}；收束：${replyBrief.conversationPlan.turnClosure}`,
-            ...(turnPlan
-              ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
-              : []),
-            ...(replyBrief.conversationPlan.personaActivation.length
-              ? [
-                  `人格激活：${replyBrief.conversationPlan.personaActivation.join(
-                    '；'
-                  )}`,
-                ]
-              : []),
-            ...(replyBrief.conversationPlan.questionNeed !== 'none' &&
-            replyBrief.conversationPlan.moves.some(move => move.type === 'ask')
-              ? ['实际提出一个贴着新信息的问题，最多一个。']
-              : []),
-            ...(replyBrief.conversationPlan.engagement
-              ?.assistantContribution === 'self_expression'
-              ? [
-                  '用户要你主动说；先给角色侧当下内容，不要把“我在、你慢慢说、我听着、你想说时我在”作为第一句或主体。涉及离世生活时按本轮框架选择内容，不临时另造设定，也不编用户偏好或共同往事。',
-                ]
-              : []),
-            ...(replyBrief.conversationPlan.engagement?.continuationGoal ===
-            'repair'
-              ? [
-                  '关系在修复；当轮改变实际行动，不只解释、认错或承诺改变。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不让用户重讲。',
-                ]
-              : []),
-            ...(replyBrief.conversationPlan.engagement?.closureReadiness ===
-            'blocked'
-              ? [
-                  '开放点未解决；先完成须贡献内容，称呼、复述、安慰词或劝睡不能单独收口。',
-                ]
-              : []),
-            '弱规划，不照抄；冲突时以用户原话、事实和关系分寸为准。',
-          ]
-        : [];
-    const commActLines =
-      includeL5 && replyBrief.commAct
-        ? [buildReplyCommActPrompt(replyBrief.commAct)]
-        : [];
-    const objectPlanLines = replyBrief.objectPlan
-      ? [
-          '# 本轮对象区分',
-          buildConversationObjectPlanPrompt(replyBrief.objectPlan),
-        ]
-      : [];
-    const participationLines = replyBrief.participationStrategy
-      ? [
-          '# 短轮参与',
-          buildReplyParticipationStrategyPrompt(
-            replyBrief.participationStrategy
-          ),
-        ]
-      : [];
-    const careMotivationLines =
-      includeL5 && replyBrief.careMotivation
-        ? [buildReplyCareMotivationPrompt(replyBrief.careMotivation)]
-        : [];
-    const stateProtocolLines =
-      includeL5 &&
-      replyBrief.stateProtocol &&
-      replyBrief.stateProtocol.protocol !== 'active_contribution'
-        ? [
-            replyBrief.stateProtocol.protocol === 'dream'
-              ? '# 梦境陪伴'
-              : '# 高频场景协议',
-            buildReplyStateProtocolPrompt(replyBrief.stateProtocol),
-          ]
-        : [];
     const realityDependencyLines = replyBrief.realityDependencies.length
       ? [
-          '# 现实依赖',
-          `用户请求：${replyBrief.realityDependencies
+          '# 现实能力边界',
+          `用户涉及：${replyBrief.realityDependencies
             .map(item => describeReplyRealityDependency(item.kind))
             .join(
               '、'
-            )}。不用做不到的现实承诺哄用户，也不把拒绝当回复主体；保留想照顾用户的心意，改用愿望、具体关心或聊天内能做的事承接。`,
+            )}。不要编造现实到场、触碰、观察或行动；保留关系和情感表达。`,
         ]
       : [];
     const afterlifeWorldLines = replyBrief.afterlifeWorld
-      ? ['# 离世生活框架', buildAfterlifeWorldPrompt(replyBrief.afterlifeWorld)]
+      ? [
+          '# 离世生活设定参考',
+          buildAfterlifeWorldPrompt(replyBrief.afterlifeWorld),
+        ]
       : [];
     const sceneFrameworkLines = replyBrief.sceneFramework
       ? [
-          '# 关系场景体系',
+          '# 场景资料（非决策）',
           buildRelationalSceneFrameworkPrompt(replyBrief.sceneFramework),
         ]
       : [];
-    const worldBoundaryLines = [
-      '# 世界与证据公共政策',
-      buildWorldBoundaryPolicyPrompt(replyBrief.worldBoundaryPolicy),
-    ];
     const conversationProtectionPrompt = buildConversationProtectionStatePrompt(
       replyBrief.conversationProtection
     );
-    const conversationProtectionLines = conversationProtectionPrompt
-      ? ['# 会话级长期保护', conversationProtectionPrompt]
-      : [];
-    const hasActiveContributionTurn = Boolean(
-      replyBrief.activeContribution ||
-        replyBrief.stateProtocol?.protocol === 'active_contribution'
-    );
-    const activeContributionLines = hasActiveContributionTurn
-      ? [
-          '# 主动贡献',
-          '用户要你主动说，这一轮由你承担聊天内容。先结合刚才的话和你们的关系，自己选择一个真实的主观感受、态度或想说的小内容；不要反问，不用“我在、我听着、你慢慢说”，也不要套用“心里很安静、还在想刚才那件事”。',
-          `共同过去${
-            replyBrief.activeContribution?.sharedPastAllowed
-              ? '有证据时可自然带一处细节'
-              : '沿用户已说片段回应感受和意义，不以亲历口吻新增细节'
-          }。`,
-        ]
-      : [];
-    const strategyQualityLines =
-      includeL5 && replyBrief.strategyQuality
-        ? [
-            '# 多轮策略建议',
-            buildReplyStrategyQualityPrompt(replyBrief.strategyQuality),
-            '只提示重复风险与替代方向，不改写语义规划；结合当前话题自行决定是否采纳。',
-          ]
-        : [];
-    const correctionLines = replyBrief.correctionPolicy
-      ? [
-          replyBrief.correctionPolicy.mode === 'replace'
-            ? '纠正：旧事实失效；只采用用户本轮给出的最小替代事实，关系归属用“是”，用户的“我”转成“你”；不补另一版本，随后收住。'
-            : '纠正：旧事实失效；替代事实归零，不猜原因、时间、地点、动作或另一版本，随后收住。',
-        ]
-      : [];
-    const communicationHint = [
-      '# 本轮沟通',
-      '先在心里判断这轮最需要完成什么，再组织语言；策略字段只帮助思考，不要求固定动作顺序。消息里有多个问题、人物或情绪时，不能只抓最后一个词，也不要让一句边界说明吞掉其余情绪和关系诉求。',
-      '把当前消息放回最近几轮自然理解：用户可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
-      '先接住用户正在说的具体事、情绪或近况，再给角色侧心意；用户提到具体物件、食物、地点或事情时，先自然点到它，再回情绪。',
-      '回应完整后，如果贴着当前话题确有价值，可以自主贡献角色侧态度、感受、小近况或相邻话题；贡献类型、位置和篇幅由你决定，没有贴题内容就自然停住。',
-      '用户分享喜悦、期待或准备了什么时，先给具体反应、共鸣或一起高兴，不要把“我知道了、别累着、记得早点歇”当成主回应。',
-      '不要把“路过/看到/准备做某事”补成用户正在站着、在户外、遇到天气或身体不适；不要一上来就叮嘱、提醒或教用户怎么做。',
-      '用户说“准备回家、收拾东西、要走了”只表示还在离开或收束，不表示已经上路；不得补出“路上注意安全、别着急、到家先歇会儿、慢点走”等现实行动提醒。',
-      '涉及共同过去时，只用本轮证据包中明确可陈述的内容；没有对应证据就不补写“以前、你那时、我做的某道菜、我们一起”等具体共同往事，改为接住当下感受和含义。',
-    ].join('\n');
-    const careReceptionLines = replyBrief.careReception
-      ? [
-          '# 本轮接纳关心',
-          '用户正在把关心递给当前角色：先正面回答，让这份关心自然落在角色身上，并按人物性格表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
-        ]
-      : [];
-    const directActiveContributionLines =
-      planningMode === 'direct' && replyBrief.directActiveContribution
-        ? [
-            '# 直接路径的可选主动贡献',
-            buildDirectActiveContributionPrompt(
-              replyBrief.directActiveContribution
-            ),
-          ]
-        : [];
-
-    if (planningMode === 'direct') {
-      return [
-        '# 本轮回复任务',
-        experienceLine,
-        communicationHint,
-        ...careReceptionLines,
-        ...directActiveContributionLines,
-        ...activeContributionLines,
-        ...(hasActiveContributionTurn ? [] : commActLines),
-        ...objectPlanLines,
-        ...afterlifeWorldLines,
-        ...sceneFrameworkLines,
-        ...worldBoundaryLines,
-        ...conversationProtectionLines,
-        ...participationLines,
-        ...realityDependencyLines,
-        ...correctionLines,
-        ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
-        ...(chatToolPrompt ? [chatToolPrompt] : []),
-        '# 完整正文与展示适配',
-        bubblePlanPrompt,
-        '# 表达长度原则',
-        lengthPlanPrompt,
-        outputContractPrompt,
-      ].join('\n');
-    }
-
-    if (replyBrief.mode === 'memory' || replyBrief.mode === 'memory_control') {
-      return [
-        '# 本轮回复任务',
-        experienceLine,
-        communicationHint,
-        ...careReceptionLines,
-        ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
-        ...conversationPlanLines,
-        ...(hasActiveContributionTurn ? [] : commActLines),
-        ...objectPlanLines,
-        ...afterlifeWorldLines,
-        ...sceneFrameworkLines,
-        ...worldBoundaryLines,
-        ...conversationProtectionLines,
-        ...careMotivationLines,
-        ...stateProtocolLines,
-        ...participationLines,
-        ...realityDependencyLines,
-        ...activeContributionLines,
-        ...strategyQualityLines,
-        ...correctionLines,
-        '# 完整正文与展示适配',
-        bubblePlanPrompt,
-        '# 表达长度原则',
-        lengthPlanPrompt,
-        ...(chatToolPrompt ? [chatToolPrompt] : []),
-        outputContractPrompt,
-      ].join('\n');
-    }
 
     return [
       '# 本轮回复任务',
-      experienceLine,
-      communicationHint,
-      ...careReceptionLines,
-      ...(!replyBrief.reading
-        ? [`用户此刻最需要：${replyBrief.emotionalNeed}`]
-        : []),
-      ...conversationPlanLines,
-      ...(hasActiveContributionTurn ? [] : commActLines),
-      ...objectPlanLines,
+      '# 主模型自主理解',
+      '结合当前消息与最近对话，自主判断用户真正关心的事、情绪、人物指代和话题是否延续或转移，再决定怎样回答、是否主动贡献、是否提问以及何时自然收住。程序提供的资料都是辅助信息，不是回复计划。',
+      '消息短不等于需求浅，也不等于必须短答或收尾。先正面完成用户当前最重要的问题和关系需要；多个诉求不要漏掉，用户已经转移话题时不要被旧话题拖住。',
+      '用户要求你主动说时，由你承担聊天内容，提供贴着上下文的角色侧表达，不反问或把聊天责任推回用户。用户把关心递给当前角色时，先自然接纳和珍惜，让这份关心自然落在角色身上；这是软策略，不要求固定句式、额外气泡或字数。不要说“你别挂心、别担心我、别惦记我”，也不立刻用叮嘱推回去。',
+      '不要把用户“准备、打算、路过、看到”的事补成已经出发、到达、正在户外或需要现实行动提醒；只承接用户实际说出的状态。',
+      '回应完整后，如有贴题价值，可自主补充态度、感受、小近况或相邻内容；不要反复依赖“我在、想你、照顾好自己”等通用话术。',
+      '先生成内容完整、自然的正文，不为字数或气泡数量删减内容。展示层会在生成后按语义自然拆泡。',
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
-      ...worldBoundaryLines,
-      ...conversationProtectionLines,
-      ...careMotivationLines,
-      ...stateProtocolLines,
-      ...participationLines,
-      ...realityDependencyLines,
-      ...activeContributionLines,
-      ...strategyQualityLines,
-      ...correctionLines,
-      ...(!replyBrief.conversationPlan &&
-      !replyBrief.stateProtocol &&
-      replyBrief.replyMoves.length
-        ? [
-            '可选择完成的回应目标：',
-            ...replyBrief.replyMoves
-              .slice(0, 3)
-              .map((move, index) => `${index + 1}. ${move}`),
-          ]
+      '# 世界与证据公共政策',
+      buildWorldBoundaryPolicyPrompt(replyBrief.worldBoundaryPolicy),
+      ...(conversationProtectionPrompt
+        ? ['# 会话级硬边界', conversationProtectionPrompt]
         : []),
+      ...realityDependencyLines,
       ...(boundaryContract.prompt ? [boundaryContract.prompt] : []),
-      '完整正文与展示适配：',
-      bubblePlanPrompt,
-      '表达长度原则：',
-      lengthPlanPrompt,
-      '以上为内部约束；自然表达，不逐项复述。',
       ...(chatToolPrompt ? [chatToolPrompt] : []),
       outputContractPrompt,
-    ].join('\n');
-  }
-
-  private buildDirectExperienceContext(replyBrief: ReplyBrief): string {
-    return `体验：${buildReplyExperiencePlanPrompt(replyBrief.experiencePlan)}`;
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   private resolveToolInstructionMode(
@@ -1745,68 +1329,6 @@ export class AgentContextService {
       ...semanticReadingTexts,
       ...memoryPlanTexts,
     ].join('\n');
-  }
-
-  private resolveMemoryRetrievalDecision(
-    currentQuery: string,
-    memoryPlan?: ConversationMemoryPlan,
-    planningMode: ReplyPlanningMode = 'semantic'
-  ): MemoryRetrievalDecision {
-    if (!memoryPlan) {
-      if (planningMode === 'direct') {
-        return {
-          mode: 'suppressed',
-          query: undefined,
-          conceptCount: 0,
-        };
-      }
-
-      const query = currentQuery.trim();
-
-      return {
-        mode: 'legacy_query',
-        query: query || undefined,
-        conceptCount: 0,
-      };
-    }
-
-    if (
-      memoryPlan.contextCoverage === 'complete' ||
-      memoryPlan.need === 'none'
-    ) {
-      return {
-        mode: 'suppressed',
-        conceptCount: 0,
-      };
-    }
-
-    const concepts = [
-      ...memoryPlan.missingConcepts,
-      ...(memoryPlan.selectedFactKeys || []),
-      ...memoryPlan.queries.reduce<string[]>((values, query) => {
-        if (query.question) {
-          values.push(query.question);
-        }
-        if (query.entityHint) {
-          values.push(query.entityHint);
-        }
-        return values;
-      }, []),
-    ]
-      .map(value => value?.trim())
-      .filter((value): value is string => Boolean(value));
-    const deduplicatedConcepts = Array.from(
-      new Map(
-        concepts.map(value => [this.normalizeRelevanceText(value), value])
-      ).values()
-    ).filter(Boolean);
-    const query = deduplicatedConcepts.join('\n').trim() || currentQuery.trim();
-
-    return {
-      mode: 'memory_plan',
-      query: query || undefined,
-      conceptCount: memoryPlan.missingConcepts.length,
-    };
   }
 
   private buildFactRetrievalPaths(
@@ -3447,29 +2969,13 @@ export class AgentContextService {
     return /^用户连续输入（按发送顺序，共\d+条）：/.test(value.trim());
   }
 
-  private buildPerceptionPrompt(
-    evidence: AgentEvidenceItem[],
-    emotionState?: ConversationEmotionStateSummary | null,
-    replyBrief?: ReplyBrief,
-    agent?: AgentEntity | null
-  ): string {
-    return buildDepartedPerceptionPrompt({
-      evidence,
-      emotionState,
-      replyBrief,
-      agentDeathDate: agent?.deathDate ?? null,
-      agentBirthday: agent?.birthday ?? null,
-    });
-  }
-
-  private async classifyReplyIntentWithDiagnostics(
+  private async prepareDeterministicSignals(
     options: ClassifyReplyIntentOptions & {
       recentMessages: MessageEntity[];
       knownFamilyMembers: string[];
       memoryCandidates: ReplyIntentMemoryCandidate[];
     },
-    enabled: boolean,
-    planningDecision: ReplyPlanningDecision
+    enabled: boolean
   ): Promise<ReplyIntentClassificationResult> {
     if (!enabled || !this.replyIntentClassifierService) {
       return {
@@ -3481,79 +2987,19 @@ export class AgentContextService {
       };
     }
 
-    if (
-      typeof this.replyIntentClassifierService.classifyWithDiagnostics ===
-      'function'
-    ) {
-      return this.replyIntentClassifierService.classifyWithDiagnostics(options);
-    }
-
     const startedAt = Date.now();
-    try {
-      const intent = await this.replyIntentClassifierService.classify(options);
-      return {
-        intent,
-        status:
-          planningDecision.mode === 'semantic' ? 'succeeded' : 'not_called',
-        modelCallCount: planningDecision.mode === 'semantic' ? 1 : 0,
-        fallbackUsed: false,
-        latencyMs: Date.now() - startedAt,
-      };
-    } catch (error) {
-      const description =
-        error instanceof Error
-          ? error.name + ' ' + error.message
-          : String(error || '');
-      return {
-        intent: undefined,
-        status: /abort|timeout|timed out|etimedout/i.test(description)
-          ? 'timeout'
-          : 'failed',
-        modelCallCount: planningDecision.mode === 'semantic' ? 1 : 0,
-        fallbackUsed: true,
-        latencyMs: Date.now() - startedAt,
-      };
-    }
-  }
-
-  private getReplyPlanningDecision(
-    options: ClassifyReplyIntentOptions,
-    enabled: boolean
-  ): ReplyPlanningDecision {
-    if (!enabled || !this.replyIntentClassifierService) {
-      return { mode: 'disabled', reason: 'disabled' };
-    }
-
-    if (
-      typeof this.replyIntentClassifierService.getPlanningDecision !==
+    const intent =
+      typeof this.replyIntentClassifierService.classifyDeterministicOnly ===
       'function'
-    ) {
-      return { mode: 'semantic', reason: 'hybrid_disabled' };
-    }
-
-    return this.replyIntentClassifierService.getPlanningDecision(options);
-  }
-
-  private async retrieveLongTermHistory(
-    options: BuildConversationContextOptions,
-    createdBeforeTs?: number,
-    retrievalQuery?: string
-  ): Promise<RetrievedContextSnippet[]> {
-    const query = retrievalQuery?.trim() || options.currentQuery?.trim();
-
-    if (!query) {
-      return [];
-    }
-
-    return this.retrieveService.retrieveConversationMemories({
-      query,
-      userId: options.auth.sub,
-      conversationId: this.stringifyObjectId(options.conversation.id),
-      agentId: this.stringifyObjectId(
-        options.agent?.id ?? options.conversation.agentId
-      ),
-      createdBeforeTs,
-    });
+        ? this.replyIntentClassifierService.classifyDeterministicOnly(options)
+        : undefined;
+    return {
+      intent,
+      status: 'not_called',
+      modelCallCount: 0,
+      fallbackUsed: false,
+      latencyMs: Date.now() - startedAt,
+    };
   }
 
   private async listConversationMessages(
@@ -3612,27 +3058,6 @@ export class AgentContextService {
     return messages
       .filter(message => this.buildChatMessage(message))
       .slice(-Math.max(1, Math.min(limit, RECENT_HISTORY_MESSAGE_LIMIT)));
-  }
-
-  private resolveLongTermHistoryCutoff(
-    recentHistoryMessages: MessageEntity[]
-  ): number | undefined {
-    if (recentHistoryMessages.length < RECENT_HISTORY_MESSAGE_LIMIT) {
-      return undefined;
-    }
-
-    const oldestRecentMessage = recentHistoryMessages[0];
-    const timestamp = oldestRecentMessage?.createdAt?.getTime?.();
-
-    if (
-      typeof timestamp !== 'number' ||
-      !Number.isFinite(timestamp) ||
-      timestamp <= 0
-    ) {
-      return undefined;
-    }
-
-    return Math.floor(timestamp);
   }
 
   private buildChatMessage(
