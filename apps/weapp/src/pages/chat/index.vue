@@ -29,6 +29,74 @@
         </back-capsule>
         <text class="chat-page__nav-title">{{ pageTitle }}</text>
       </view>
+      <view
+        v-if="isMessengerConversation && messengerTaskPlan"
+        class="messenger-memory-card"
+        @tap.stop="toggleMessengerTaskCard"
+      >
+        <view class="messenger-memory-card__heading">
+          <view class="messenger-memory-card__title-group">
+            <text class="messenger-memory-card__eyebrow">记忆任务</text>
+            <text class="messenger-memory-card__title">
+              帮{{ messengerTaskPlan.parentName }}找回更多记忆
+            </text>
+          </view>
+          <view class="messenger-memory-card__heading-side">
+            <text class="messenger-memory-card__count">
+              {{ messengerTaskPlan.completedCount }}/{{
+                messengerTaskPlan.totalCount
+              }}
+            </text>
+            <text class="messenger-memory-card__toggle">
+              {{ isMessengerTaskCardExpanded ? "收起" : "展开" }}
+            </text>
+          </view>
+        </view>
+
+        <view class="messenger-memory-card__progress">
+          <view
+            class="messenger-memory-card__progress-value"
+            :style="messengerTaskProgressStyle"
+          />
+        </view>
+
+        <text class="messenger-memory-card__current">
+          {{ messengerTaskCurrentText }}
+        </text>
+
+        <view
+          v-if="isMessengerTaskCardExpanded"
+          class="messenger-memory-card__tasks"
+        >
+          <view
+            v-for="task in messengerTaskPlan.tasks"
+            :key="task.key"
+            class="messenger-memory-card__task"
+            :class="{
+              'messenger-memory-card__task--completed':
+                task.status === 'completed',
+              'messenger-memory-card__task--current':
+                task.key === messengerTaskPlan.currentTaskKey &&
+                task.status !== 'completed',
+            }"
+          >
+            <view class="messenger-memory-card__task-mark">
+              {{ task.status === "completed" ? "✓" : "" }}
+            </view>
+            <view class="messenger-memory-card__task-copy">
+              <text class="messenger-memory-card__task-title">
+                {{ task.title }}
+              </text>
+              <text class="messenger-memory-card__task-desc">
+                {{ task.description }}
+              </text>
+            </view>
+          </view>
+          <text class="messenger-memory-card__hint">
+            可以从任何一项说起，小使者每次只顺着你的话问一个问题。
+          </text>
+        </view>
+      </view>
     </template>
 
     <view class="chat-page__body" @tap="handleChatBodyTap">
@@ -561,6 +629,7 @@ import {
   type ConversationChatQuotaSnapshot,
   type SendConversationMessageResult,
   type ConversationVoicePayload,
+  type MessengerMemoryTaskPlan,
 } from "../../apis/conversation";
 import { uploadLocalFile, uploadLocalImage } from "../../apis/storage";
 import BackCapsule from "../../components/back-capsule/back-capsule.vue";
@@ -800,9 +869,33 @@ const agentSex = ref(0);
 const agentCallMe = ref("");
 const iCallAgent = ref("");
 const isMessengerConversation = ref(false);
+const messengerTaskPlan = ref<MessengerMemoryTaskPlan | null>(null);
+const isMessengerTaskCardExpanded = ref(false);
 const conversationPreview = ref("");
 const conversationCreatedAt = ref("");
 const isAgentHomeGuideVisible = ref(false);
+const messengerTaskProgressStyle = computed(() => {
+  const plan = messengerTaskPlan.value;
+  const ratio = plan?.totalCount
+    ? Math.min(1, Math.max(0, plan.completedCount / plan.totalCount))
+    : 0;
+
+  return { width: String(Math.round(ratio * 100)) + "%" };
+});
+const messengerTaskCurrentText = computed(() => {
+  const plan = messengerTaskPlan.value;
+
+  if (!plan) {
+    return "";
+  }
+  if (plan.isComplete) {
+    return "关键记忆已经补全，之后想到新细节也可以继续告诉我。";
+  }
+
+  return plan.currentTaskTitle
+    ? "接下来可以聊：" + plan.currentTaskTitle
+    : "想到哪一段，就从哪一段慢慢说。";
+});
 
 const isCheckingAuth = ref(true);
 const isLoading = ref(true);
@@ -1364,6 +1457,21 @@ function decodeRouteParam(value?: string) {
   }
 }
 
+function toggleMessengerTaskCard() {
+  isMessengerTaskCardExpanded.value = !isMessengerTaskCardExpanded.value;
+}
+
+function updateMessengerTaskPlan(plan?: MessengerMemoryTaskPlan) {
+  if (!plan) {
+    return;
+  }
+
+  messengerTaskPlan.value = plan;
+  if (plan.isComplete) {
+    isMessengerTaskCardExpanded.value = false;
+  }
+}
+
 function scheduleAfterInitialRender(task: () => void) {
   setTimeout(task, 300);
 }
@@ -1472,6 +1580,8 @@ async function refreshInitialChat() {
           result.agent.hasUnreadAgentHomeGuide
         );
       }
+
+      updateMessengerTaskPlan(result.messengerTaskPlan);
 
       if (result.chatQuota) {
         updateChatQuotaSnapshot(result.chatQuota);
@@ -1732,6 +1842,7 @@ async function appendConversationResult(
   );
   messages.value = limitLoadedMessages([...messages.value, result.userMessage]);
   handleChatQuotaAfterSend(result);
+  updateMessengerTaskPlan(result.messengerTaskPlan);
 
   const assistantMessages = getAssistantMessagesFromResult(result);
   if (!assistantMessages.length) {
@@ -4987,6 +5098,166 @@ function destroyVoiceDurationProbeContexts() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.messenger-memory-card {
+  margin: 8px 12px 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(103, 84, 150, 0.16);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ffffff 0%, #f4f0fb 100%);
+  box-shadow: 0 3px 12px rgba(69, 52, 105, 0.08);
+  box-sizing: border-box;
+}
+
+.messenger-memory-card__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.messenger-memory-card__title-group,
+.messenger-memory-card__task-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.messenger-memory-card__eyebrow {
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  color: #79679d;
+}
+
+.messenger-memory-card__title {
+  margin-top: 1px;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 650;
+  color: #2d253a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-memory-card__heading-side {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messenger-memory-card__count {
+  min-width: 34px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(103, 84, 150, 0.1);
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
+  color: #675496;
+}
+
+.messenger-memory-card__toggle {
+  font-size: 11px;
+  line-height: 16px;
+  color: #887d99;
+}
+
+.messenger-memory-card__progress {
+  margin-top: 8px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(103, 84, 150, 0.1);
+}
+
+.messenger-memory-card__progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8d79bb, #68549a);
+  transition: width 0.25s ease;
+}
+
+.messenger-memory-card__current {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #6f667d;
+}
+
+.messenger-memory-card__tasks {
+  margin-top: 10px;
+  padding-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid rgba(103, 84, 150, 0.1);
+}
+
+.messenger-memory-card__task {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  opacity: 0.7;
+}
+
+.messenger-memory-card__task--current,
+.messenger-memory-card__task--completed {
+  opacity: 1;
+}
+
+.messenger-memory-card__task-mark {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid #b7accb;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.messenger-memory-card__task--current .messenger-memory-card__task-mark {
+  border: 5px solid #8b78b5;
+}
+
+.messenger-memory-card__task--completed .messenger-memory-card__task-mark {
+  border-color: #4d917e;
+  background: #4d917e;
+}
+
+.messenger-memory-card__task-title {
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 600;
+  color: #3a3246;
+}
+
+.messenger-memory-card__task-desc {
+  font-size: 10px;
+  line-height: 15px;
+  color: #8a8293;
+}
+
+.messenger-memory-card__hint {
+  margin-top: 2px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  font-size: 10px;
+  line-height: 15px;
+  color: #7e748a;
 }
 
 .chat-page__body {

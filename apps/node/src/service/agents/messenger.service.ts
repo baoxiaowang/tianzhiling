@@ -39,6 +39,38 @@ const PROFILE_MEMORY_FIELDS = [
   'sharedMemories',
 ] as const;
 
+const MESSENGER_MEMORY_TASK_DEFINITIONS: ReadonlyArray<{
+  key: AgentProfileMemoryField;
+  title: string;
+  description: string;
+}> = [
+  {
+    key: 'personalityTraits',
+    title: 'TA 的样子',
+    description: '性格、脾气和待人方式',
+  },
+  {
+    key: 'lifeExperience',
+    title: '人生经历',
+    description: '重要的人、地方和经历',
+  },
+  {
+    key: 'hobbies',
+    title: '喜欢的事',
+    description: '爱好、手艺和日常习惯',
+  },
+  {
+    key: 'languageHabits',
+    title: '熟悉的话语',
+    description: '口头禅、语气和方言',
+  },
+  {
+    key: 'sharedMemories',
+    title: '你们的回忆',
+    description: '一起经历过的人和事',
+  },
+];
+
 interface RunMessengerInterviewTurnOptions {
   agent: AgentEntity;
   conversation: ConversationEntity;
@@ -57,6 +89,24 @@ export interface RevealEligibleMessengersResult {
   revealed: number;
   revealedByTurns: number;
   revealedByAge: number;
+}
+
+export interface MessengerMemoryTaskItem {
+  key: AgentProfileMemoryField;
+  title: string;
+  description: string;
+  status: 'pending' | 'completed';
+}
+
+export interface MessengerMemoryTaskPlan {
+  parentAgentId: string;
+  parentName: string;
+  completedCount: number;
+  totalCount: number;
+  isComplete: boolean;
+  currentTaskKey?: AgentProfileMemoryField;
+  currentTaskTitle?: string;
+  tasks: MessengerMemoryTaskItem[];
 }
 
 @Provide()
@@ -85,6 +135,37 @@ export class MessengerService {
   buildMessengerName(agentName?: string): string {
     const name = agentName?.trim() || 'TA';
     return `${name}的小使者`;
+  }
+
+  buildMemoryTaskPlan(
+    parentAgent: AgentEntity,
+    latestAssistantReply = ''
+  ): MessengerMemoryTaskPlan {
+    const tasks = MESSENGER_MEMORY_TASK_DEFINITIONS.map(definition => ({
+      ...definition,
+      status: parentAgent[definition.key]?.trim()
+        ? ('completed' as const)
+        : ('pending' as const),
+    }));
+    const activeField = this.inferAskedInterviewField(latestAssistantReply);
+    const currentTask =
+      tasks.find(
+        task => task.key === activeField && task.status === 'pending'
+      ) || tasks.find(task => task.status === 'pending');
+    const completedCount = tasks.filter(
+      task => task.status === 'completed'
+    ).length;
+
+    return {
+      parentAgentId: String(parentAgent.id || ''),
+      parentName: parentAgent.name?.trim() || 'TA',
+      completedCount,
+      totalCount: tasks.length,
+      isComplete: completedCount === tasks.length,
+      currentTaskKey: currentTask?.key,
+      currentTaskTitle: currentTask?.title,
+      tasks,
+    };
   }
 
   async ensureMessengerForAgent(
@@ -427,6 +508,10 @@ export class MessengerService {
         .map(message => message.content?.trim() || '')
         .filter(Boolean);
       const askedFields = this.collectAskedInterviewFields(previousReplies);
+      const memoryTaskPlan = this.buildMemoryTaskPlan(
+        options.agent,
+        previousReplies[0] || ''
+      );
       const directReply = this.buildDirectCapabilityReply(
         options.agent,
         options.input
@@ -473,6 +558,7 @@ export class MessengerService {
         askedFields,
         previousReplies,
         previousUserInputs,
+        taskField: memoryTaskPlan.currentTaskKey || '',
         turnCount: userMessageCount,
         onTelemetry: value => {
           telemetry = value;
@@ -823,6 +909,13 @@ export class MessengerService {
       return 'hobbies';
     }
     if (/共同记忆|最想留住|哪段回忆|回忆里.*小细节/.test(reply)) {
+      return 'sharedMemories';
+    }
+    if (
+      /先想起谁|最先想到的是哪一次|最先想到哪个画面|在一起的哪段往事|哪一次最开心/.test(
+        reply
+      )
+    ) {
       return 'sharedMemories';
     }
     return '';
