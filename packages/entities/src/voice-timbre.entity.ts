@@ -68,6 +68,9 @@ export class VoiceTimbreEntity extends BaseEntity {
   cloneLanguage: string;
 
   @Column()
+  speechDialect?: string;
+
+  @Column()
   previewText?: string;
 
   @Column()

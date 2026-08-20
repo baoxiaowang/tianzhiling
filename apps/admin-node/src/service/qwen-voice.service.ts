@@ -1,5 +1,5 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
-import { AppError } from '@tzl/shared';
+import { AppError, getVoiceTimbreDialectLabel } from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -19,6 +19,7 @@ interface QwenVoiceResp {
   request_id?: string;
   output?: {
     voice?: string;
+    voice_id?: string;
     target_model?: string;
     fallback_mode?: boolean;
     fallback_reason?: string;
@@ -54,6 +55,7 @@ export interface QwenPreviewSpeechInput {
   voiceId: string;
   model?: string;
   language?: string;
+  dialect?: string;
 }
 
 export interface QwenPreviewSpeechResult {
@@ -85,22 +87,42 @@ export class QwenVoiceService {
     this.ensureEnabled();
 
     const audioUrl = input.audioUrl?.trim();
-    const preferredName = this.normalizePreferredName(input.preferredName);
     const targetModel =
       input.targetModel?.trim() || this.getDefaultPreviewModel();
+    const qwenAudio = this.isQwenAudioModel(targetModel);
+    const preferredName = this.normalizePreferredName(
+      input.preferredName,
+      qwenAudio
+    );
     const language = this.normalizeCloneLanguage(input.language);
-    const payload: Record<string, unknown> = {
-      model: 'qwen-voice-enrollment',
-      input: {
-        action: 'create',
-        target_model: targetModel,
-        preferred_name: preferredName,
-        audio: {
-          data: audioUrl,
-        },
-        ...(language ? { language } : {}),
-      },
-    };
+    const payload: Record<string, unknown> = qwenAudio
+      ? {
+          model: 'voice-enrollment',
+          input: {
+            action: 'create_voice',
+            target_model: targetModel,
+            prefix: preferredName,
+            url: audioUrl,
+            ...(this.supportsEnrollmentHints(targetModel)
+              ? {
+                  language_hints: [language || 'zh'],
+                  max_prompt_audio_length: 20,
+                }
+              : {}),
+          },
+        }
+      : {
+          model: 'qwen-voice-enrollment',
+          input: {
+            action: 'create',
+            target_model: targetModel,
+            preferred_name: preferredName,
+            audio: {
+              data: audioUrl,
+            },
+            ...(language ? { language } : {}),
+          },
+        };
 
     if (!audioUrl) {
       throw new AppError(
@@ -122,7 +144,9 @@ export class QwenVoiceService {
       method: 'POST',
       body: Buffer.from(JSON.stringify(payload)),
     });
-    const voice = response?.output?.voice?.trim();
+    const voice = (
+      response?.output?.voice_id || response?.output?.voice
+    )?.trim();
 
     if (!voice) {
       throw new AppError(
@@ -167,19 +191,36 @@ export class QwenVoiceService {
     }
 
     const model = input.model?.trim() || this.getDefaultPreviewModel();
+    const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeSpeechLanguageType(input.language);
+    const languageHint = this.normalizeCloneLanguage(input.language) || 'zh';
+    const dialectLabel = getVoiceTimbreDialectLabel(input.dialect);
+    const instruction = dialectLabel
+      ? `使用自然、地道的${dialectLabel}表达，保持原有音色。`
+      : undefined;
     const body = Buffer.from(
       JSON.stringify({
         model,
-        input: {
-          text,
-          voice: voiceId,
-          ...(languageType ? { language_type: languageType } : {}),
-        },
+        input: qwenAudio
+          ? {
+              text,
+              voice: voiceId,
+              format: 'wav',
+              sample_rate: 24000,
+              language_hints: [languageHint],
+              ...(instruction ? { instruction } : {}),
+            }
+          : {
+              text,
+              voice: voiceId,
+              ...(languageType ? { language_type: languageType } : {}),
+            },
       })
     );
     const response = await this.requestJson<QwenVoiceResp>({
-      path: '/api/v1/services/aigc/multimodal-generation/generation',
+      path: qwenAudio
+        ? '/api/v1/services/audio/tts/SpeechSynthesizer'
+        : '/api/v1/services/aigc/multimodal-generation/generation',
       method: 'POST',
       body,
     });
@@ -237,18 +278,29 @@ export class QwenVoiceService {
     }
   }
 
-  private normalizePreferredName(value: string): string {
+  private normalizePreferredName(value: string, qwenAudio = false): string {
     const preferredName = value?.trim();
 
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(preferredName)) {
+    const pattern = qwenAudio ? /^[A-Za-z0-9]{1,10}$/ : /^[A-Za-z0-9_]{1,16}$/;
+    if (!pattern.test(preferredName)) {
       throw new AppError(
         'INVALID_QWEN_PREFERRED_NAME',
-        'Qwen preferred name must be 1-16 letters, digits or _',
+        qwenAudio
+          ? 'Qwen Audio prefix must be 1-10 letters or digits'
+          : 'Qwen preferred name must be 1-16 letters, digits or _',
         400
       );
     }
 
     return preferredName;
+  }
+
+  private isQwenAudioModel(model?: string): boolean {
+    return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private supportsEnrollmentHints(model?: string): boolean {
+    return /^qwen-audio-.*-flash$/i.test(model?.trim() || '');
   }
 
   private normalizeCloneLanguage(value?: string): string {
@@ -265,6 +317,12 @@ export class QwenVoiceService {
       korean: 'ko',
       french: 'fr',
       russian: 'ru',
+      thai: 'th',
+      indonesian: 'id',
+      vietnamese: 'vi',
+      malaysian: 'ms',
+      filipino: 'fil',
+      arabic: 'ar',
     };
     const normalized = map[raw.toLowerCase()] || raw.toLowerCase();
     const supported = [
@@ -278,6 +336,12 @@ export class QwenVoiceService {
       'ko',
       'fr',
       'ru',
+      'th',
+      'id',
+      'vi',
+      'ms',
+      'fil',
+      'ar',
     ];
 
     return supported.includes(normalized)

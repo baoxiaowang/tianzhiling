@@ -23,9 +23,13 @@ import type {
   UserVoiceTimbreGeneratedAudioDTO,
   UserVoiceTimbreRecordDTO,
   UpdateUserVoiceTimbreDTO,
+  VoiceTimbreDialectDTO,
   VoiceTimbreRetentionPolicyDTO,
 } from '@tzl/shared';
-import { VOICE_SERVICE_MAX_TRAINING_SECONDS } from '@tzl/shared';
+import {
+  VOICE_SERVICE_MAX_TRAINING_SECONDS,
+  VOICE_TIMBRE_DIALECT_OPTIONS,
+} from '@tzl/shared';
 import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
@@ -41,8 +45,7 @@ import {
 } from './voice-usage-access.service';
 
 export const VOICE_TIMBRE_RETENTION_QUEUE = 'voice-timbre-retention';
-export const VOICE_TIMBRE_RETENTION_JOB_ID =
-  'voice-timbre-retention-daily';
+export const VOICE_TIMBRE_RETENTION_JOB_ID = 'voice-timbre-retention-daily';
 export const VOICE_TIMBRE_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const VOICE_TIMBRE_CLEANUP_QUEUE = 'voice-timbre-cleanup';
 export const VOICE_TIMBRE_CLEANUP_JOB_ID = 'voice-timbre-cleanup-daily';
@@ -234,7 +237,9 @@ export class VoiceTimbreLibraryService {
     let changed = false;
 
     if (payload?.name !== undefined) {
-      const normalizedName = String(payload.name || '').trim().slice(0, 20);
+      const normalizedName = String(payload.name || '')
+        .trim()
+        .slice(0, 20);
       if (!normalizedName) {
         throw new AppError(
           'VOICE_TIMBRE_NAME_REQUIRED',
@@ -262,6 +267,13 @@ export class VoiceTimbreLibraryService {
         0.25,
         2,
         'INVALID_VOICE_TIMBRE_SPEECH_VOLUME'
+      );
+      changed = true;
+    }
+    if (payload?.speechDialect !== undefined) {
+      timbre.speechDialect = this.normalizeSpeechDialect(
+        payload.speechDialect,
+        true
       );
       changed = true;
     }
@@ -320,6 +332,7 @@ export class VoiceTimbreLibraryService {
         voiceId: timbre.providerVoiceId,
         model: timbre.previewModel,
         language: timbre.cloneLanguage,
+        dialect: timbre.speechDialect,
       });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
@@ -436,7 +449,9 @@ export class VoiceTimbreLibraryService {
 
   async processUnusedCleanup(): Promise<VoiceTimbreRetentionJobResult> {
     const now = new Date();
-    const cutoff = new Date(now.getTime() - UNUSED_CLEANUP_AFTER_DAYS * ONE_DAY_MS);
+    const cutoff = new Date(
+      now.getTime() - UNUSED_CLEANUP_AFTER_DAYS * ONE_DAY_MS
+    );
 
     // 找到所有活跃的 Qwen 用户音色，创建时间超过 7 天
     const candidates = (
@@ -462,7 +477,9 @@ export class VoiceTimbreLibraryService {
 
     // 预先查出所有引用了这些音色的智能体
     const timbreIds = candidates.map(t => this.idOf(t));
-    const timbreObjectIds = timbreIds.map(id => this.parseObjectId(id, 'VOICE_TIMBRE_CLEANUP'));
+    const timbreObjectIds = timbreIds.map(id =>
+      this.parseObjectId(id, 'VOICE_TIMBRE_CLEANUP')
+    );
     const referencingAgents = await this.agentModel.find({
       $or: [
         { voiceTimbreId: { $in: timbreObjectIds } },
@@ -471,8 +488,10 @@ export class VoiceTimbreLibraryService {
     } as never);
     const referencedTimbreIds = new Set<string>();
     for (const agent of referencingAgents) {
-      if (agent.voiceTimbreId) referencedTimbreIds.add(this.idOf(agent.voiceTimbreId));
-      if (agent.pendingVoiceTimbreId) referencedTimbreIds.add(this.idOf(agent.pendingVoiceTimbreId));
+      if (agent.voiceTimbreId)
+        referencedTimbreIds.add(this.idOf(agent.voiceTimbreId));
+      if (agent.pendingVoiceTimbreId)
+        referencedTimbreIds.add(this.idOf(agent.pendingVoiceTimbreId));
     }
 
     let deletedCount = 0;
@@ -490,8 +509,14 @@ export class VoiceTimbreLibraryService {
 
       // 从 Qwen 提供商删除
       try {
-        if (timbre.providerVoiceId && !timbre.providerVoiceId.startsWith('pending_')) {
-          await this.qwenVoiceEnrollmentService.deleteVoice(timbre.providerVoiceId);
+        if (
+          timbre.providerVoiceId &&
+          !timbre.providerVoiceId.startsWith('pending_')
+        ) {
+          await this.qwenVoiceEnrollmentService.deleteVoice(
+            timbre.providerVoiceId,
+            timbre.previewModel
+          );
           this.logger.info(
             '[voice-timbre-cleanup] deleted from provider, timbreId=%s, providerVoiceId=%s',
             tid,
@@ -543,7 +568,9 @@ export class VoiceTimbreLibraryService {
 
   async processRetentionMaintenance(): Promise<VoiceTimbreRetentionJobResult> {
     const now = new Date();
-    const dueBefore = new Date(now.getTime() + RETENTION_BEFORE_DAYS * ONE_DAY_MS);
+    const dueBefore = new Date(
+      now.getTime() + RETENTION_BEFORE_DAYS * ONE_DAY_MS
+    );
     const candidates = (
       await this.voiceTimbreModel.find({
         where: {
@@ -579,6 +606,7 @@ export class VoiceTimbreLibraryService {
           voiceId: timbre.providerVoiceId,
           model: timbre.previewModel,
           language: timbre.cloneLanguage,
+          dialect: timbre.speechDialect,
         });
         await this.markUsed(timbre);
         protectedCount += 1;
@@ -818,6 +846,7 @@ export class VoiceTimbreLibraryService {
       pendingBindings,
       speechSpeed: this.normalizeSpeechSpeed(timbre.speechSpeed),
       speechVolume: this.normalizeSpeechVolume(timbre.speechVolume),
+      speechDialect: this.normalizeSpeechDialect(timbre.speechDialect),
       deletionStatus: timbre.deletionStatus,
     };
   }
@@ -1255,6 +1284,28 @@ export class VoiceTimbreLibraryService {
     );
   }
 
+  private normalizeSpeechDialect(
+    value: unknown,
+    strict = false
+  ): VoiceTimbreDialectDTO {
+    const normalized = String(value || 'auto')
+      .trim()
+      .toLowerCase();
+    const matched = VOICE_TIMBRE_DIALECT_OPTIONS.find(
+      option => option.value === normalized
+    );
+
+    if (!matched && strict) {
+      throw new AppError(
+        'INVALID_VOICE_TIMBRE_SPEECH_DIALECT',
+        '请选择支持的方言类型',
+        400
+      );
+    }
+
+    return matched?.value || 'auto';
+  }
+
   private async getCustomSpeechGeneratedToday(
     userId: MongoObjectId,
     now = new Date()
@@ -1389,7 +1440,9 @@ export class VoiceTimbreLibraryService {
     reservation: CustomSpeechGenerationReservation
   ): Promise<void> {
     try {
-      const current = Number(await this.redisService?.get(reservation.usageKey));
+      const current = Number(
+        await this.redisService?.get(reservation.usageKey)
+      );
       if (Number.isFinite(current) && current > 0) {
         await this.redisService?.decr(reservation.usageKey);
       }
@@ -1439,12 +1492,8 @@ export class VoiceTimbreLibraryService {
     const year = shifted.getUTCFullYear();
     const month = shifted.getUTCMonth();
     const date = shifted.getUTCDate();
-    const start = new Date(
-      Date.UTC(year, month, date) - beijingOffsetMs
-    );
-    const end = new Date(
-      Date.UTC(year, month, date + 1) - beijingOffsetMs
-    );
+    const start = new Date(Date.UTC(year, month, date) - beijingOffsetMs);
+    const end = new Date(Date.UTC(year, month, date + 1) - beijingOffsetMs);
     return {
       day: `${year}-${String(month + 1).padStart(2, '0')}-${String(
         date

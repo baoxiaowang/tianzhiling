@@ -1,5 +1,6 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
+import { getVoiceTimbreDialectLabel } from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -36,6 +37,7 @@ export interface QwenVoiceSpeechInput {
   voiceId: string;
   model?: string;
   language?: string;
+  dialect?: string;
 }
 
 export interface QwenVoiceSpeechResult {
@@ -81,28 +83,43 @@ export class QwenVoiceSpeechService {
       input.model?.trim() ||
       this.config?.defaultSpeechModel?.trim() ||
       'qwen3-tts-vc-2026-01-22';
+    const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeLanguageType(input.language);
+    const languageHint = this.normalizeLanguageHint(input.language);
+    const instruction = this.buildDialectInstruction(input.dialect);
     const body = Buffer.from(
       JSON.stringify({
         model,
-        input: {
-          text,
-          voice: voiceId,
-          ...(languageType ? { language_type: languageType } : {}),
-        },
+        input: qwenAudio
+          ? {
+              text,
+              voice: voiceId,
+              format: 'wav',
+              sample_rate: 24000,
+              language_hints: [languageHint],
+              ...(instruction ? { instruction } : {}),
+            }
+          : {
+              text,
+              voice: voiceId,
+              ...(languageType ? { language_type: languageType } : {}),
+            },
       })
     );
 
     this.logger.info(
-      '[qwen-voice-speech] synthesize, model=%s, voiceId=%s, languageType=%s, textLength=%s',
+      '[qwen-voice-speech] synthesize, model=%s, voiceId=%s, language=%s, dialect=%s, textLength=%s',
       model,
       voiceId,
-      languageType || '',
+      qwenAudio ? languageHint : languageType || '',
+      input.dialect || 'auto',
       text.length
     );
 
     const response = await this.requestJson<QwenSpeechResp>({
-      path: '/api/v1/services/aigc/multimodal-generation/generation',
+      path: qwenAudio
+        ? '/api/v1/services/audio/tts/SpeechSynthesizer'
+        : '/api/v1/services/aigc/multimodal-generation/generation',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -384,6 +401,41 @@ export class QwenVoiceSpeechService {
     };
 
     return map[raw.toLowerCase()] || 'Auto';
+  }
+
+  private isQwenAudioModel(model?: string): boolean {
+    return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private normalizeLanguageHint(value?: string): string {
+    const raw = value?.trim().toLowerCase() || 'zh';
+    const map: Record<string, string> = {
+      auto: 'zh',
+      chinese: 'zh',
+      english: 'en',
+      french: 'fr',
+      german: 'de',
+      japanese: 'ja',
+      korean: 'ko',
+      russian: 'ru',
+      portuguese: 'pt',
+      thai: 'th',
+      indonesian: 'id',
+      vietnamese: 'vi',
+      spanish: 'es',
+      italian: 'it',
+      malaysian: 'ms',
+      filipino: 'fil',
+      arabic: 'ar',
+    };
+
+    return map[raw] || raw || 'zh';
+  }
+
+  private buildDialectInstruction(dialect?: string): string | undefined {
+    const label = getVoiceTimbreDialectLabel(dialect);
+
+    return label ? `使用自然、地道的${label}表达，保持原有音色。` : undefined;
   }
 
   private normalizeContentType(value?: string | string[]): string {

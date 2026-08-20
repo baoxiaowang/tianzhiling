@@ -364,9 +364,16 @@ export class VoiceServiceDataDeletionService {
         !timbre.providerVoiceId.startsWith('pending_')
       ) {
         try {
-          await this.qwenVoiceEnrollmentService.deleteVoice(
-            timbre.providerVoiceId
-          );
+          if (timbre.previewModel) {
+            await this.qwenVoiceEnrollmentService.deleteVoice(
+              timbre.providerVoiceId,
+              timbre.previewModel
+            );
+          } else {
+            await this.qwenVoiceEnrollmentService.deleteVoice(
+              timbre.providerVoiceId
+            );
+          }
           timbre.providerDeletedAt = new Date();
           providerModelDeleted = true;
         } catch (error) {

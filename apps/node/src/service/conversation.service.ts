@@ -7290,6 +7290,7 @@ export class ConversationService {
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
+        dialect: input.voiceTimbre.speechDialect,
       });
       const speechSpeed = this.voiceSpeechSetting(
         input.voiceTimbre.speechSpeed,
