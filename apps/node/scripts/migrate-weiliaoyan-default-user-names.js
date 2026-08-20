@@ -5,6 +5,8 @@ const { MongoClient } = require('mongodb');
 const WRONG_DEFAULT_NAME_PATTERN = /^天之灵用户([0-9a-f]{4})$/;
 const CORRECT_DEFAULT_NAME_PREFIX = '未了言用户';
 const UPDATE_BATCH_SIZE = 500;
+const BACKUP_COLLECTION_NAME =
+  'migration_backup_weiliaoyan_default_user_names_20260820';
 
 loadLocalEnv();
 
@@ -15,7 +17,9 @@ async function main() {
 
   try {
     const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
-    const users = client.db(database).collection('user');
+    const db = client.db(database);
+    const users = db.collection('user');
+    const backups = db.collection(BACKUP_COLLECTION_NAME);
     const filter = { name: WRONG_DEFAULT_NAME_PATTERN };
     const matched = await users.countDocuments(filter);
     const timeRange = await readCreatedAtRange(users, filter);
@@ -31,11 +35,23 @@ async function main() {
       return;
     }
 
+    const candidates = await users
+      .find(filter, {
+        projection: { name: 1, createdAt: 1, updatedAt: 1 },
+      })
+      .toArray();
+    const backupCount = await backupCandidates(backups, candidates);
+
+    if (backupCount !== candidates.length) {
+      throw new Error(
+        `backup incomplete: expected=${candidates.length} actual=${backupCount}`
+      );
+    }
+
     let modified = 0;
     let operations = [];
-    const cursor = users.find(filter, { projection: { name: 1 } });
 
-    for await (const user of cursor) {
+    for (const user of candidates) {
       const correctedName = correctDefaultUserName(user.name);
       if (!correctedName) {
         continue;
@@ -61,6 +77,8 @@ async function main() {
       matched,
       modified,
       remaining,
+      backupCollection: BACKUP_COLLECTION_NAME,
+      backupCount,
       ...timeRange,
     });
 
@@ -70,6 +88,39 @@ async function main() {
   } finally {
     await client.close();
   }
+}
+
+async function backupCandidates(backups, candidates) {
+  const backedUpAt = new Date();
+
+  for (let index = 0; index < candidates.length; index += UPDATE_BATCH_SIZE) {
+    const batch = candidates.slice(index, index + UPDATE_BATCH_SIZE);
+    await backups.bulkWrite(
+      batch.map(user => ({
+        updateOne: {
+          filter: { _id: user._id },
+          update: {
+            $setOnInsert: {
+              originalName: user.name,
+              originalCreatedAt: user.createdAt,
+              originalUpdatedAt: user.updatedAt,
+              backedUpAt,
+            },
+          },
+          upsert: true,
+        },
+      })),
+      { ordered: false }
+    );
+  }
+
+  if (!candidates.length) {
+    return 0;
+  }
+
+  return backups.countDocuments({
+    _id: { $in: candidates.map(user => user._id) },
+  });
 }
 
 async function flushUpdates(users, operations) {
@@ -121,8 +172,11 @@ function parseOperation(args) {
 }
 
 function printResult(result) {
+  const backupSummary = result.backupCollection
+    ? ` backupCollection=${result.backupCollection} backupCount=${result.backupCount}`
+    : '';
   console.log(
-    `[migrate-weiliaoyan-default-user-names] done dryRun=${result.dryRun} matched=${result.matched} modified=${result.modified} remaining=${result.remaining} earliestCreatedAt=${result.earliestCreatedAt} latestCreatedAt=${result.latestCreatedAt}`
+    `[migrate-weiliaoyan-default-user-names] done dryRun=${result.dryRun} matched=${result.matched} modified=${result.modified} remaining=${result.remaining}${backupSummary} earliestCreatedAt=${result.earliestCreatedAt} latestCreatedAt=${result.latestCreatedAt}`
   );
 }
 
