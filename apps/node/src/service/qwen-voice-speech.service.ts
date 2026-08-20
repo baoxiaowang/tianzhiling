@@ -1,6 +1,6 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
-import { getVoiceTimbreDialectLabel } from '@tzl/shared';
+import { buildQwenAudioSpeechInstruction } from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -38,6 +38,7 @@ export interface QwenVoiceSpeechInput {
   model?: string;
   language?: string;
   dialect?: string;
+  speed?: number;
 }
 
 export interface QwenVoiceSpeechResult {
@@ -45,6 +46,7 @@ export interface QwenVoiceSpeechResult {
   audioBuffer: Buffer;
   mimeType: string;
   requestId?: string;
+  nativeSpeechSpeedApplied?: boolean;
 }
 
 @Provide()
@@ -86,7 +88,10 @@ export class QwenVoiceSpeechService {
     const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeLanguageType(input.language);
     const languageHint = this.normalizeLanguageHint(input.language);
-    const instruction = this.buildDialectInstruction(input.dialect);
+    const instruction = buildQwenAudioSpeechInstruction({
+      dialect: input.dialect,
+      speechSpeed: input.speed,
+    });
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -132,7 +137,14 @@ export class QwenVoiceSpeechService {
     const data = audio?.data?.trim() || '';
 
     if (audioUrl) {
-      return this.downloadAudio(audioUrl, response.request_id);
+      const downloaded = await this.downloadAudio(
+        audioUrl,
+        response.request_id
+      );
+      return {
+        ...downloaded,
+        nativeSpeechSpeedApplied: qwenAudio,
+      };
     }
 
     if (data) {
@@ -141,6 +153,7 @@ export class QwenVoiceSpeechService {
         audioBuffer: Buffer.from(data, 'base64'),
         mimeType: 'audio/wav',
         requestId: response.request_id?.trim() || undefined,
+        nativeSpeechSpeedApplied: qwenAudio,
       };
     }
 
@@ -430,12 +443,6 @@ export class QwenVoiceSpeechService {
     };
 
     return map[raw] || raw || 'zh';
-  }
-
-  private buildDialectInstruction(dialect?: string): string | undefined {
-    const label = getVoiceTimbreDialectLabel(dialect);
-
-    return label ? `使用自然、地道的${label}表达，保持原有音色。` : undefined;
   }
 
   private normalizeContentType(value?: string | string[]): string {

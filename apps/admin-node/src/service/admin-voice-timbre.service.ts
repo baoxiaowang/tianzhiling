@@ -242,6 +242,7 @@ export class AdminVoiceTimbreService {
     const timbre = await this.getVoiceTimbreById(timbreId);
     let changed = false;
     let shouldRetrain = false;
+    let shouldRefreshQwenPreview = false;
 
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
@@ -260,12 +261,18 @@ export class AdminVoiceTimbreService {
     }
 
     if (payload.speechDialect !== undefined) {
-      timbre.speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
+      const speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
+      shouldRefreshQwenPreview ||=
+        speechDialect !== this.normalizeSpeechDialect(timbre.speechDialect);
+      timbre.speechDialect = speechDialect;
       changed = true;
     }
 
     if (payload.speechSpeed !== undefined) {
-      timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+      const speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+      shouldRefreshQwenPreview ||=
+        speechSpeed !== this.normalizeSpeechSpeed(timbre.speechSpeed);
+      timbre.speechSpeed = speechSpeed;
       changed = true;
     }
 
@@ -287,6 +294,21 @@ export class AdminVoiceTimbreService {
     if (changed) {
       if (shouldRetrain && timbre.status !== VoiceTimbreStatus.disabled) {
         this.prepareTimbreRetrain(timbre);
+      }
+
+      if (
+        shouldRefreshQwenPreview &&
+        !shouldRetrain &&
+        timbre.status === VoiceTimbreStatus.active &&
+        timbre.provider === VoiceTimbreProvider.qwen &&
+        this.isQwenAudioModel(timbre.previewModel) &&
+        timbre.providerVoiceId?.trim()
+      ) {
+        timbre.previewAudioUrl = await this.createQwenPreviewAudio(
+          timbre,
+          timbre.providerVoiceId,
+          this.normalizePreviewText(timbre.previewText)
+        );
       }
 
       timbre.updatedAt = new Date();
@@ -559,6 +581,7 @@ export class AdminVoiceTimbreService {
         timbre.previewModel || this.qwenVoiceService.getDefaultPreviewModel(),
       language: timbre.cloneLanguage,
       dialect: timbre.speechDialect,
+      speed: timbre.speechSpeed,
     });
 
     if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {

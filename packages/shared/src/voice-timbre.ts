@@ -49,6 +49,31 @@ export function getVoiceTimbreDialectLabel(
     ?.label;
 }
 
+export function buildQwenAudioSpeechInstruction(input: {
+  dialect?: string;
+  speechSpeed?: number;
+}): string | undefined {
+  const parts: string[] = [];
+  const dialectLabel = getVoiceTimbreDialectLabel(input.dialect);
+
+  if (dialectLabel) {
+    parts.push(`使用自然、地道的${dialectLabel}表达，保持原有音色`);
+  }
+
+  const parsedSpeed = Number(input.speechSpeed);
+  if (Number.isFinite(parsedSpeed)) {
+    const normalizedSpeed = Math.min(2, Math.max(0.5, parsedSpeed));
+
+    if (Math.abs(normalizedSpeed - 1) >= 0.01) {
+      parts.push(
+        `语速约为正常语速的${Math.round(normalizedSpeed * 100)}%，保持自然流畅`
+      );
+    }
+  }
+
+  return parts.length ? `${parts.join("；")}。` : undefined;
+}
+
 export type VoiceTimbreRetentionStatusDTO =
   | "protected"
   | "due_soon"

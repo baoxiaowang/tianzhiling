@@ -1,5 +1,5 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
-import { AppError, getVoiceTimbreDialectLabel } from '@tzl/shared';
+import { AppError, buildQwenAudioSpeechInstruction } from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -56,6 +56,7 @@ export interface QwenPreviewSpeechInput {
   model?: string;
   language?: string;
   dialect?: string;
+  speed?: number;
 }
 
 export interface QwenPreviewSpeechResult {
@@ -194,10 +195,10 @@ export class QwenVoiceService {
     const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeSpeechLanguageType(input.language);
     const languageHint = this.normalizeCloneLanguage(input.language) || 'zh';
-    const dialectLabel = getVoiceTimbreDialectLabel(input.dialect);
-    const instruction = dialectLabel
-      ? `使用自然、地道的${dialectLabel}表达，保持原有音色。`
-      : undefined;
+    const instruction = buildQwenAudioSpeechInstruction({
+      dialect: input.dialect,
+      speechSpeed: input.speed,
+    });
     const body = Buffer.from(
       JSON.stringify({
         model,

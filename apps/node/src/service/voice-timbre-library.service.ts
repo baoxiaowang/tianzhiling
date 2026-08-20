@@ -333,18 +333,20 @@ export class VoiceTimbreLibraryService {
         model: timbre.previewModel,
         language: timbre.cloneLanguage,
         dialect: timbre.speechDialect,
+        speed: timbre.speechSpeed,
       });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
       const volume = this.normalizeSpeechVolume(timbre.speechVolume);
+      const outputSpeed = synthesized.nativeSpeechSpeedApplied ? 1 : speed;
       const adjusted =
-        speed !== 1 || volume !== 1
+        outputSpeed !== 1 || volume !== 1
           ? await this.voiceFfmpegService.adjustSpeechOutput({
               buffer: synthesized.audioBuffer,
               fileName: `speech.${this.extensionForMimeType(
                 synthesized.mimeType
               )}`,
-              speechSpeed: speed,
+              speechSpeed: outputSpeed,
               speechVolume: volume,
             })
           : undefined;

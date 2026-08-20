@@ -7291,6 +7291,7 @@ export class ConversationService {
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
         dialect: input.voiceTimbre.speechDialect,
+        speed: input.voiceTimbre.speechSpeed,
       });
       const speechSpeed = this.voiceSpeechSetting(
         input.voiceTimbre.speechSpeed,
@@ -7304,7 +7305,10 @@ export class ConversationService {
         0.25,
         2
       );
-      if (speechSpeed === 1 && speechVolume === 1) {
+      const outputSpeechSpeed = synthesized.nativeSpeechSpeedApplied
+        ? 1
+        : speechSpeed;
+      if (outputSpeechSpeed === 1 && speechVolume === 1) {
         return synthesized;
       }
       const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
@@ -7312,7 +7316,7 @@ export class ConversationService {
         fileName: synthesized.mimeType.includes('mpeg')
           ? 'speech.mp3'
           : 'speech.wav',
-        speechSpeed,
+        speechSpeed: outputSpeechSpeed,
         speechVolume,
       });
       return {

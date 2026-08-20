@@ -260,7 +260,7 @@
               >
                 <a-option value="minimax">MiniMax</a-option>
                 <a-option value="cosyvoice">CosyVoice</a-option>
-                <a-option value="qwen">千问 Qwen3-TTS-VC</a-option>
+                <a-option value="qwen">千问（Qwen3 / Audio Plus）</a-option>
                 <a-option value="doubao" disabled>豆包（未接入）</a-option>
               </a-select>
             </a-form-item>
@@ -289,20 +289,24 @@
           label="千问音色模型"
           :rules="[{ required: true, message: '请选择千问音色模型' }]"
         >
-          <a-select
+          <a-radio-group
             v-model="editForm.previewModel"
+            type="button"
             :disabled="Boolean(editingRecord)"
-            placeholder="请选择千问音色模型"
             @change="onQwenModelChange"
           >
-            <a-option
+            <a-radio
               v-for="option in qwenModelOptions"
               :key="option.value"
               :value="option.value"
             >
               {{ option.label }}
-            </a-option>
-          </a-select>
+            </a-radio>
+          </a-radio-group>
+          <a-typography-text v-if="!editingRecord" type="secondary">
+            原有 Qwen3 与新接入的 Plus 同时保留；Plus
+            支持指定方言和原生语速调节。
+          </a-typography-text>
           <a-typography-text v-if="editingRecord" type="secondary">
             已创建音色的模型不可切换；需要其他模型时请新建音色。
           </a-typography-text>
@@ -387,7 +391,7 @@
                     :min="0.5"
                     :max="2"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechSpeed"
                   />
                   <a-input-number
                     v-model="editForm.speechSpeed"
@@ -396,10 +400,16 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechSpeed"
                     class="voice-timbre-page__number"
                   />
                 </div>
+                <a-typography-text
+                  v-if="supportsQwenAudioSpeechSpeed"
+                  type="secondary"
+                >
+                  Plus 使用模型原生指令控制语速；1.00 为正常语速。
+                </a-typography-text>
               </a-form-item>
             </a-grid-item>
             <a-grid-item>
@@ -410,7 +420,7 @@
                     :min="0"
                     :max="10"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                   />
                   <a-input-number
                     v-model="editForm.speechVolume"
@@ -419,7 +429,7 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                     class="voice-timbre-page__number"
                   />
                 </div>
@@ -433,7 +443,7 @@
                     :min="-12"
                     :max="12"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                   />
                   <a-input-number
                     v-model="editForm.speechPitch"
@@ -442,7 +452,7 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                     class="voice-timbre-page__number"
                   />
                 </div>
@@ -608,12 +618,13 @@
   const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
   const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
   const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
+  const DEFAULT_QWEN_TIMBRE_MODEL = QWEN_AUDIO_PLUS_MODEL;
   const qwenModelOptions = [
-    { label: 'Qwen3-TTS-VC（原有）', value: QWEN3_TTS_VC_MODEL },
     {
-      label: 'Qwen Audio 3.0 TTS Plus（支持指定方言）',
+      label: 'Qwen Audio 3.0 TTS Plus（默认，支持指定方言）',
       value: QWEN_AUDIO_PLUS_MODEL,
     },
+    { label: 'Qwen3-TTS-VC（原有）', value: QWEN3_TTS_VC_MODEL },
   ];
   type VoiceTimbreEditForm = {
     name: string;
@@ -646,7 +657,7 @@
     audioObjectKey: '',
     audioUrl: '',
     cloneLanguage: 'auto',
-    previewModel: QWEN3_TTS_VC_MODEL,
+    previewModel: DEFAULT_QWEN_TIMBRE_MODEL,
     speechDialect: 'auto',
     providerVoiceId: '',
     previewText: '',
@@ -688,7 +699,13 @@
   const supportsDialect = computed(
     () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
   );
-  const supportsSpeechParams = computed(() => !isQwenProvider.value);
+  const supportsQwenAudioSpeechSpeed = computed(
+    () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
+  );
+  const supportsSpeechSpeed = computed(
+    () => !isQwenProvider.value || supportsQwenAudioSpeechSpeed.value
+  );
+  const supportsSpeechVolumeAndPitch = computed(() => !isQwenProvider.value);
   const cloneLanguageOptions = computed(() => {
     if (isCosyVoiceProvider.value) {
       return [
@@ -852,7 +869,7 @@
     editForm.audioObjectKey = '';
     editForm.audioUrl = '';
     editForm.cloneLanguage = 'auto';
-    editForm.previewModel = QWEN3_TTS_VC_MODEL;
+    editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
     editForm.speechDialect = 'auto';
     editForm.providerVoiceId = '';
     editForm.previewText = '';
@@ -869,7 +886,7 @@
 
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
-    editForm.previewModel = QWEN3_TTS_VC_MODEL;
+    editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
     editForm.speechDialect = 'auto';
     const languageValues = cloneLanguageOptions.value.map(
       (option) => option.value
@@ -894,6 +911,10 @@
 
     if (!supportsDialect.value) {
       editForm.speechDialect = 'auto';
+    }
+
+    if (!supportsQwenAudioSpeechSpeed.value) {
+      editForm.speechSpeed = 1;
     }
   };
 
@@ -952,11 +973,7 @@
           speechPitch: editForm.speechPitch,
           remark: editForm.remark,
         });
-        Message.success(
-          editForm.status === 'disabled'
-            ? '音色已更新'
-            : '音色已更新，重新训练任务已提交'
-        );
+        Message.success('音色已更新');
       } else {
         const uploaded = await uploadAdminFile(
           selectedAudioFile.value as File,
