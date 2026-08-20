@@ -92,6 +92,7 @@ export class VoiceModelTrainingService {
       audioObjectKey: trainingAudio.objectKey,
       audioUrl: trainingAudio.url,
       cloneLanguage: 'zh',
+      speechDialect: 'auto',
       previewText,
       previewModel: this.qwenVoiceEnrollmentService.getDefaultModel(),
       speechSpeed: 1,
@@ -124,6 +125,7 @@ export class VoiceModelTrainingService {
         voiceId: enrollment.providerVoiceId,
         model: enrollment.targetModel,
         language: 'Chinese',
+        dialect: timbre.speechDialect,
       });
       provider = 'tencent_cos';
       providerOperation = 'preview_upload';

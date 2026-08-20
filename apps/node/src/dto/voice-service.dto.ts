@@ -59,12 +59,11 @@ export class SelectAgentVoiceTimbreBodyDTO
   replaceExisting?: boolean;
 }
 
-export class UpdateUserVoiceTimbreBodyDTO
-  implements UpdateUserVoiceTimbreDTO
-{
+export class UpdateUserVoiceTimbreBodyDTO implements UpdateUserVoiceTimbreDTO {
   name?: string;
   speechSpeed?: number;
   speechVolume?: number;
+  speechDialect?: UpdateUserVoiceTimbreDTO['speechDialect'];
 }
 
 export class GenerateUserVoiceTimbreSpeechBodyDTO

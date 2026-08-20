@@ -1,19 +1,58 @@
 export type VoiceTimbreProviderDTO =
-  | 'minimax'
-  | 'cosyvoice'
-  | 'qwen'
-  | 'doubao';
+  | "minimax"
+  | "cosyvoice"
+  | "qwen"
+  | "doubao";
 
 export type VoiceTimbreStatusDTO =
-  | 'creating'
-  | 'active'
-  | 'failed'
-  | 'disabled';
+  | "creating"
+  | "active"
+  | "failed"
+  | "disabled";
+
+export const VOICE_TIMBRE_DIALECT_OPTIONS = [
+  { value: "auto", label: "自动（跟随文本）" },
+  { value: "mandarin", label: "普通话" },
+  { value: "cantonese", label: "广东话" },
+  { value: "chongqing", label: "重庆话" },
+  { value: "northeastern", label: "东北话" },
+  { value: "gansu", label: "甘肃话" },
+  { value: "guizhou", label: "贵州话" },
+  { value: "zhejiang", label: "浙江话" },
+  { value: "hebei", label: "河北话" },
+  { value: "henan", label: "河南话" },
+  { value: "hubei", label: "湖北话" },
+  { value: "hunan", label: "湖南话" },
+  { value: "jiangxi", label: "江西话" },
+  { value: "ningbo", label: "宁波话" },
+  { value: "ningxia", label: "宁夏话" },
+  { value: "qingdao", label: "青岛话" },
+  { value: "shaanxi", label: "陕西话" },
+  { value: "shanxi", label: "山西话" },
+  { value: "shandong", label: "山东话" },
+  { value: "shanghai", label: "上海话" },
+  { value: "sichuan", label: "四川话" },
+  { value: "yunnan", label: "云南话" },
+] as const;
+
+export type VoiceTimbreDialectDTO =
+  (typeof VOICE_TIMBRE_DIALECT_OPTIONS)[number]["value"];
+
+export function getVoiceTimbreDialectLabel(
+  dialect?: string
+): string | undefined {
+  if (!dialect || dialect === "auto") {
+    return undefined;
+  }
+
+  return VOICE_TIMBRE_DIALECT_OPTIONS.find((item) => item.value === dialect)
+    ?.label;
+}
 
 export type VoiceTimbreRetentionStatusDTO =
-  | 'protected'
-  | 'due_soon'
-  | 'attention_required';
+  | "protected"
+  | "due_soon"
+  | "attention_required";
 
 export interface UserVoiceTimbreBindingDTO {
   agentId: string;
@@ -35,7 +74,8 @@ export interface UserVoiceTimbreRecordDTO {
   pendingBindings?: UserVoiceTimbreBindingDTO[];
   speechSpeed: number;
   speechVolume: number;
-  deletionStatus?: 'pending' | 'completed' | 'partial_failed';
+  speechDialect: VoiceTimbreDialectDTO;
+  deletionStatus?: "pending" | "completed" | "partial_failed";
 }
 
 export interface UserVoiceTimbreTrainingClipDTO {
@@ -74,7 +114,7 @@ export interface VoiceTimbreRetentionPolicyDTO {
   providerName: string;
   inactiveCleanupDays: number;
   providerVoiceLimit: number;
-  providerVoiceLimitScope: 'platform_account';
+  providerVoiceLimitScope: "platform_account";
   automaticRetentionEnabled: boolean;
   automaticRetentionBeforeDays: number;
   summary: string;
@@ -89,9 +129,9 @@ export interface UserVoiceTimbreLibraryDTO {
 }
 
 export type AgentVoiceModelSelectionStatusDTO =
-  | 'not_selected'
-  | 'pending_membership'
-  | 'active';
+  | "not_selected"
+  | "pending_membership"
+  | "active";
 
 export interface AgentVoiceModelCenterDTO {
   agentId: string;
@@ -112,6 +152,7 @@ export interface UpdateUserVoiceTimbreDTO {
   name?: string;
   speechSpeed?: number;
   speechVolume?: number;
+  speechDialect?: VoiceTimbreDialectDTO;
 }
 
 export interface GenerateUserVoiceTimbreSpeechDTO {
@@ -120,7 +161,7 @@ export interface GenerateUserVoiceTimbreSpeechDTO {
 
 export interface DeleteUserVoiceTimbreResultDTO {
   id: string;
-  deletionStatus: 'completed' | 'partial_failed';
+  deletionStatus: "completed" | "partial_failed";
   message: string;
 }
 
@@ -133,6 +174,7 @@ export interface AdminVoiceTimbreRecordDTO {
   audioObjectKey: string;
   audioUrl: string;
   cloneLanguage: string;
+  speechDialect: VoiceTimbreDialectDTO;
   previewText: string;
   previewModel: string;
   previewAudioUrl: string;
@@ -179,6 +221,7 @@ export interface CreateAdminVoiceTimbreDTO {
   audioObjectKey?: string;
   audioUrl?: string;
   cloneLanguage?: string;
+  speechDialect?: VoiceTimbreDialectDTO;
   providerVoiceId?: string;
   previewText?: string;
   previewModel?: string;
@@ -190,8 +233,9 @@ export interface CreateAdminVoiceTimbreDTO {
 
 export interface UpdateAdminVoiceTimbreDTO {
   name?: string;
-  status?: Extract<VoiceTimbreStatusDTO, 'active' | 'disabled'>;
+  status?: Extract<VoiceTimbreStatusDTO, "active" | "disabled">;
   previewText?: string;
+  speechDialect?: VoiceTimbreDialectDTO;
   speechSpeed?: number;
   speechVolume?: number;
   speechPitch?: number;

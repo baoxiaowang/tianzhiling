@@ -112,6 +112,15 @@
             data-index="cloneLanguage"
             :width="120"
           />
+          <a-table-column title="发音方言" :width="130">
+            <template #cell="{ record }">
+              {{
+                isQwenAudioPreviewModel(record.previewModel)
+                  ? formatDialect(record.speechDialect)
+                  : '-'
+              }}
+            </template>
+          </a-table-column>
           <a-table-column title="输出参数" :width="220">
             <template #cell="{ record }">
               <div class="voice-timbre-page__speech-params">
@@ -275,6 +284,31 @@
         </a-grid>
 
         <a-form-item
+          v-if="isQwenProvider"
+          field="previewModel"
+          label="千问音色模型"
+          :rules="[{ required: true, message: '请选择千问音色模型' }]"
+        >
+          <a-select
+            v-model="editForm.previewModel"
+            :disabled="Boolean(editingRecord)"
+            placeholder="请选择千问音色模型"
+            @change="onQwenModelChange"
+          >
+            <a-option
+              v-for="option in qwenModelOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </a-option>
+          </a-select>
+          <a-typography-text v-if="editingRecord" type="secondary">
+            已创建音色的模型不可切换；需要其他模型时请新建音色。
+          </a-typography-text>
+        </a-form-item>
+
+        <a-form-item
           v-if="!editingRecord"
           field="providerVoiceId"
           :label="providerVoiceIdLabel"
@@ -324,6 +358,22 @@
             :auto-size="{ minRows: 3, maxRows: 5 }"
             placeholder="请输入用于生成试听音频的预览文本"
           />
+        </a-form-item>
+
+        <a-form-item
+          v-if="supportsDialect"
+          field="speechDialect"
+          label="发音方言"
+        >
+          <a-select v-model="editForm.speechDialect" placeholder="请选择方言">
+            <a-option
+              v-for="option in VOICE_TIMBRE_DIALECT_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </a-option>
+          </a-select>
         </a-form-item>
 
         <div class="voice-timbre-page__speech-settings">
@@ -501,6 +551,7 @@
   import type {
     VoiceTimbreProviderDTO,
     VoiceTimbreStatusDTO,
+    VoiceTimbreDialectDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
   import uploadAdminFile from '@/api/storage';
@@ -513,6 +564,34 @@
     VoiceTimbreRecord,
   } from '@/api/voice-model';
   import type { ValidateVoiceTimbreRes } from '@/api/voice-model';
+
+  const VOICE_TIMBRE_DIALECT_OPTIONS: Array<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    { value: 'auto', label: '自动（跟随文本）' },
+    { value: 'mandarin', label: '普通话' },
+    { value: 'cantonese', label: '广东话' },
+    { value: 'chongqing', label: '重庆话' },
+    { value: 'northeastern', label: '东北话' },
+    { value: 'gansu', label: '甘肃话' },
+    { value: 'guizhou', label: '贵州话' },
+    { value: 'zhejiang', label: '浙江话' },
+    { value: 'hebei', label: '河北话' },
+    { value: 'henan', label: '河南话' },
+    { value: 'hubei', label: '湖北话' },
+    { value: 'hunan', label: '湖南话' },
+    { value: 'jiangxi', label: '江西话' },
+    { value: 'ningbo', label: '宁波话' },
+    { value: 'ningxia', label: '宁夏话' },
+    { value: 'qingdao', label: '青岛话' },
+    { value: 'shaanxi', label: '陕西话' },
+    { value: 'shanxi', label: '山西话' },
+    { value: 'shandong', label: '山东话' },
+    { value: 'shanghai', label: '上海话' },
+    { value: 'sichuan', label: '四川话' },
+    { value: 'yunnan', label: '云南话' },
+  ];
 
   const { loading, setLoading } = useLoading();
   const renderList = ref<VoiceTimbreRecord[]>([]);
@@ -527,12 +606,23 @@
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
   const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
+  const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
+  const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
+  const qwenModelOptions = [
+    { label: 'Qwen3-TTS-VC（原有）', value: QWEN3_TTS_VC_MODEL },
+    {
+      label: 'Qwen Audio 3.0 TTS Plus（支持指定方言）',
+      value: QWEN_AUDIO_PLUS_MODEL,
+    },
+  ];
   type VoiceTimbreEditForm = {
     name: string;
     provider: VoiceTimbreProviderDTO;
     audioObjectKey: string;
     audioUrl: string;
     cloneLanguage: string;
+    previewModel: string;
+    speechDialect: VoiceTimbreDialectDTO;
     providerVoiceId: string;
     previewText: string;
     speechSpeed: number;
@@ -556,6 +646,8 @@
     audioObjectKey: '',
     audioUrl: '',
     cloneLanguage: 'auto',
+    previewModel: QWEN3_TTS_VC_MODEL,
+    speechDialect: 'auto',
     providerVoiceId: '',
     previewText: '',
     speechSpeed: 1,
@@ -591,6 +683,11 @@
   );
   const isCosyVoiceProvider = computed(() => editForm.provider === 'cosyvoice');
   const isQwenProvider = computed(() => editForm.provider === 'qwen');
+  const isQwenAudioPreviewModel = (model?: string) =>
+    /^qwen-audio-/i.test(model?.trim() || '');
+  const supportsDialect = computed(
+    () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
+  );
   const supportsSpeechParams = computed(() => !isQwenProvider.value);
   const cloneLanguageOptions = computed(() => {
     if (isCosyVoiceProvider.value) {
@@ -643,7 +740,9 @@
     }
 
     if (isQwenProvider.value) {
-      return '不填则后端自动生成，仅支持 16 位内字母、数字或下划线';
+      return isQwenAudioPreviewModel(editForm.previewModel)
+        ? '不填则后端自动生成，仅支持 10 位内字母或数字'
+        : '不填则后端自动生成，仅支持 16 位内字母、数字或下划线';
     }
 
     return '不填则后端自动生成，需以英文字母开头';
@@ -654,7 +753,7 @@
     }
 
     if (isQwenProvider.value) {
-      return 16;
+      return isQwenAudioPreviewModel(editForm.previewModel) ? 10 : 16;
     }
 
     return 256;
@@ -727,6 +826,8 @@
     editForm.audioObjectKey = record.audioObjectKey;
     editForm.audioUrl = record.audioUrl;
     editForm.cloneLanguage = record.cloneLanguage || 'auto';
+    editForm.previewModel = record.previewModel || QWEN3_TTS_VC_MODEL;
+    editForm.speechDialect = record.speechDialect || 'auto';
     editForm.providerVoiceId = record.providerVoiceId;
     editForm.previewText = record.previewText;
     editForm.speechSpeed = normalizeSpeechFormValue(record.speechSpeed, 1);
@@ -751,6 +852,8 @@
     editForm.audioObjectKey = '';
     editForm.audioUrl = '';
     editForm.cloneLanguage = 'auto';
+    editForm.previewModel = QWEN3_TTS_VC_MODEL;
+    editForm.speechDialect = 'auto';
     editForm.providerVoiceId = '';
     editForm.previewText = '';
     editForm.speechSpeed = 1;
@@ -766,6 +869,8 @@
 
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
+    editForm.previewModel = QWEN3_TTS_VC_MODEL;
+    editForm.speechDialect = 'auto';
     const languageValues = cloneLanguageOptions.value.map(
       (option) => option.value
     );
@@ -781,6 +886,14 @@
       if (fileInputRef.value) {
         fileInputRef.value.value = '';
       }
+    }
+  };
+
+  const onQwenModelChange = () => {
+    editForm.providerVoiceId = '';
+
+    if (!supportsDialect.value) {
+      editForm.speechDialect = 'auto';
     }
   };
 
@@ -831,6 +944,9 @@
           name: editForm.name,
           status: editForm.status,
           previewText: editForm.previewText,
+          ...(supportsDialect.value
+            ? { speechDialect: editForm.speechDialect }
+            : {}),
           speechSpeed: editForm.speechSpeed,
           speechVolume: editForm.speechVolume,
           speechPitch: editForm.speechPitch,
@@ -854,6 +970,12 @@
           audioObjectKey: uploaded.objectKey,
           audioUrl: uploaded.publicUrl,
           cloneLanguage: editForm.cloneLanguage,
+          previewModel: isQwenProvider.value
+            ? editForm.previewModel
+            : undefined,
+          ...(supportsDialect.value
+            ? { speechDialect: editForm.speechDialect }
+            : {}),
           providerVoiceId: editForm.providerVoiceId || undefined,
           previewText: editForm.previewText,
           speechSpeed: editForm.speechSpeed,
@@ -973,6 +1095,13 @@
     };
 
     return map[provider] || provider;
+  };
+
+  const formatDialect = (dialect?: string) => {
+    return (
+      VOICE_TIMBRE_DIALECT_OPTIONS.find((option) => option.value === dialect)
+        ?.label || '自动（跟随文本）'
+    );
   };
 
   const formatStatus = (status: VoiceTimbreStatusDTO) => {

@@ -365,7 +365,8 @@ export class VoiceServiceDataDeletionService {
       ) {
         try {
           await this.qwenVoiceEnrollmentService.deleteVoice(
-            timbre.providerVoiceId
+            timbre.providerVoiceId,
+            timbre.previewModel
           );
           timbre.providerDeletedAt = new Date();
           providerModelDeleted = true;

@@ -1,6 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { AppError } from '@tzl/shared';
+import { AppError, VOICE_TIMBRE_DIALECT_OPTIONS } from '@tzl/shared';
 import * as bullmq from '@midwayjs/bullmq';
 import type { ILogger } from '@midwayjs/logger';
 import type {
@@ -8,6 +8,7 @@ import type {
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   VoiceTimbreProviderDTO,
+  VoiceTimbreDialectDTO,
   VoiceTimbreStatusDTO,
 } from '@tzl/shared';
 import {
@@ -127,9 +128,14 @@ export class AdminVoiceTimbreService {
     const audioObjectKey = this.normalizeAudioObjectKey(
       payload.audioObjectKey || payload.audioUrl
     );
+    const previewModel = this.normalizePreviewModel(
+      payload.previewModel,
+      provider
+    );
     const providerVoiceId = this.normalizeInitialProviderVoiceId(
       provider,
-      payload.providerVoiceId
+      payload.providerVoiceId,
+      previewModel
     );
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
@@ -141,11 +147,9 @@ export class AdminVoiceTimbreService {
     timbre.audioObjectKey = audioObjectKey;
     timbre.audioUrl = '';
     timbre.cloneLanguage = this.normalizeCloneLanguage(payload.cloneLanguage);
+    timbre.speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
     timbre.previewText = this.normalizePreviewText(payload.previewText);
-    timbre.previewModel = this.normalizePreviewModel(
-      payload.previewModel,
-      provider
-    );
+    timbre.previewModel = previewModel;
     timbre.previewAudioUrl = '';
     timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
     timbre.speechVolume = this.normalizeSpeechVolume(payload.speechVolume);
@@ -253,6 +257,11 @@ export class AdminVoiceTimbreService {
       timbre.previewText = this.normalizePreviewText(payload.previewText);
       changed = true;
       shouldRetrain = true;
+    }
+
+    if (payload.speechDialect !== undefined) {
+      timbre.speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
+      changed = true;
     }
 
     if (payload.speechSpeed !== undefined) {
@@ -483,8 +492,7 @@ export class AdminVoiceTimbreService {
       audioUrl: audio.url,
       preferredName: timbre.providerVoiceId,
       targetModel:
-        timbre.previewModel ||
-        this.qwenVoiceService.getDefaultPreviewModel(),
+        timbre.previewModel || this.qwenVoiceService.getDefaultPreviewModel(),
       language: timbre.cloneLanguage,
     });
     const previewAudioUrl = await this.createQwenPreviewAudio(
@@ -548,9 +556,9 @@ export class AdminVoiceTimbreService {
       text: previewText,
       voiceId,
       model:
-        timbre.previewModel ||
-        this.qwenVoiceService.getDefaultPreviewModel(),
+        timbre.previewModel || this.qwenVoiceService.getDefaultPreviewModel(),
       language: timbre.cloneLanguage,
+      dialect: timbre.speechDialect,
     });
 
     if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
@@ -611,7 +619,8 @@ export class AdminVoiceTimbreService {
     timbre.errorMessage = '';
     timbre.providerFileId = '';
     timbre.providerVoiceId = this.generateInitialProviderVoiceId(
-      timbre.provider
+      timbre.provider,
+      timbre.previewModel
     );
     timbre.previewText = this.normalizePreviewText(timbre.previewText);
     timbre.previewAudioUrl = '';
@@ -850,6 +859,7 @@ export class AdminVoiceTimbreService {
         timbre.audioObjectKey || timbre.audioUrl
       ),
       cloneLanguage: timbre.cloneLanguage || 'auto',
+      speechDialect: this.normalizeSpeechDialect(timbre.speechDialect),
       previewText: timbre.previewText ?? '',
       previewModel: timbre.previewModel ?? '',
       previewAudioUrl: timbre.previewAudioUrl ?? '',
@@ -1195,7 +1205,8 @@ export class AdminVoiceTimbreService {
 
   private normalizeInitialProviderVoiceId(
     provider: VoiceTimbreProvider,
-    value?: string
+    value?: string,
+    model?: string
   ): string {
     const rawValue = value?.trim();
 
@@ -1207,7 +1218,9 @@ export class AdminVoiceTimbreService {
 
     if (provider === VoiceTimbreProvider.qwen) {
       return this.normalizeQwenPreferredName(
-        rawValue || this.generateQwenPreferredName()
+        rawValue ||
+          this.generateQwenPreferredName(this.isQwenAudioModel(model)),
+        this.isQwenAudioModel(model)
       );
     }
 
@@ -1217,14 +1230,15 @@ export class AdminVoiceTimbreService {
   }
 
   private generateInitialProviderVoiceId(
-    provider: VoiceTimbreProvider
+    provider: VoiceTimbreProvider,
+    model?: string
   ): string {
     if (provider === VoiceTimbreProvider.cosyvoice) {
       return this.generateCosyVoicePrefix();
     }
 
     if (provider === VoiceTimbreProvider.qwen) {
-      return this.generateQwenPreferredName();
+      return this.generateQwenPreferredName(this.isQwenAudioModel(model));
     }
 
     return this.generateMinimaxProviderVoiceId();
@@ -1258,13 +1272,16 @@ export class AdminVoiceTimbreService {
     return prefix;
   }
 
-  private normalizeQwenPreferredName(value: string): string {
+  private normalizeQwenPreferredName(value: string, qwenAudio = false): string {
     const preferredName = value.trim();
 
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(preferredName)) {
+    const pattern = qwenAudio ? /^[A-Za-z0-9]{1,10}$/ : /^[A-Za-z0-9_]{1,16}$/;
+    if (!pattern.test(preferredName)) {
       throw new AppError(
         'INVALID_QWEN_PREFERRED_NAME',
-        'Qwen preferred name must be 1-16 letters, digits or _',
+        qwenAudio
+          ? 'Qwen Audio prefix must be 1-10 letters or digits'
+          : 'Qwen preferred name must be 1-16 letters, digits or _',
         400
       );
     }
@@ -1283,14 +1300,32 @@ export class AdminVoiceTimbreService {
     return `tzl${timestamp}${random}`;
   }
 
-  private generateQwenPreferredName(): string {
-    const timestamp = Date.now().toString(36).slice(-7);
-    const random = Math.random().toString(36).slice(2, 5);
-    return `tzl_${timestamp}${random}`;
+  private generateQwenPreferredName(qwenAudio = false): string {
+    if (!qwenAudio) {
+      const timestamp = Date.now().toString(36).slice(-7);
+      const random = Math.random().toString(36).slice(2, 5);
+      return `tzl_${timestamp}${random}`;
+    }
+
+    const timestamp = Date.now().toString(36).slice(-5);
+    const random = Math.random().toString(36).slice(2, 4);
+    return `tzl${timestamp}${random}`;
+  }
+
+  private isQwenAudioModel(model?: string): boolean {
+    return /^qwen-audio-/i.test(model?.trim() || '');
   }
 
   private normalizeCloneLanguage(value?: string): string {
     return value?.trim() || 'auto';
+  }
+
+  private normalizeSpeechDialect(value?: string): VoiceTimbreDialectDTO {
+    const normalized = value?.trim().toLowerCase() || 'auto';
+    return (
+      VOICE_TIMBRE_DIALECT_OPTIONS.find(option => option.value === normalized)
+        ?.value || 'auto'
+    );
   }
 
   private normalizePreviewModel(

@@ -1,4 +1,5 @@
 import { Rule, RuleType } from '@midwayjs/validate';
+import { VOICE_TIMBRE_DIALECT_OPTIONS } from '@tzl/shared';
 
 const providerRule = RuleType.string().valid(
   'minimax',
@@ -16,6 +17,9 @@ const editableStatusRule = RuleType.string().valid('active', 'disabled');
 const speechSpeedRule = RuleType.number().min(0.5).max(2);
 const speechVolumeRule = RuleType.number().min(0).max(10);
 const speechPitchRule = RuleType.number().min(-12).max(12);
+const speechDialectRule = RuleType.string().valid(
+  ...VOICE_TIMBRE_DIALECT_OPTIONS.map(option => option.value)
+);
 
 export class ListAdminVoiceTimbresQueryDTO {
   @Rule(RuleType.string().allow('').optional())
@@ -53,6 +57,9 @@ export class CreateAdminVoiceTimbreDTO {
   @Rule(RuleType.string().allow('').max(60).optional())
   cloneLanguage?: string;
 
+  @Rule(speechDialectRule.optional())
+  speechDialect?: string;
+
   @Rule(RuleType.string().allow('').max(256).optional())
   providerVoiceId?: string;
 
@@ -84,6 +91,9 @@ export class UpdateAdminVoiceTimbreDTO {
 
   @Rule(RuleType.string().allow('').max(1000).optional())
   previewText?: string;
+
+  @Rule(speechDialectRule.optional())
+  speechDialect?: string;
 
   @Rule(speechSpeedRule.optional())
   speechSpeed?: number;
