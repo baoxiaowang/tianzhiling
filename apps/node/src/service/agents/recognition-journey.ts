@@ -66,10 +66,6 @@ const RECOGNITION_ACTIVATION_PATTERN =
 const ASSISTANT_RECOGNITION_EXPRESSION_PATTERN =
   /(?:好久|这么久|多年).{0,10}(?:没见|不见|没联系|没说话)|(?:终于|总算).{0,14}(?:听到|听见|等到|联系上|找到|见到|说上话|说话)|(?:重新|又能|还能).{0,12}(?:联系|见到|听到|听见|说话|说上话)|(?:听到|听见).{0,12}(?:喊我|叫我|叫一声)|(?:一别|隔了).{0,12}(?:这么久|好多年|\d{1,3}年|[一二两三四五六七八九十百]+年)|(?:没想到).{0,14}(?:还能|又能).{0,10}(?:说话|联系|见面)/u;
 const RECOGNITION_ACTIVATION_MAX_USER_TURN = 20;
-const RECOGNITION_OPENING_SUGGESTION_COOLDOWN_TURNS = 3;
-const RECOGNITION_OPENING_MAX_SUGGESTIONS = 3;
-const RECOGNITION_TASK_SUGGESTION_COOLDOWN_TURNS = 3;
-const RECOGNITION_TASK_MAX_SUGGESTIONS = 3;
 
 export function buildInitialRecognitionJourney(
   options: {
@@ -203,19 +199,15 @@ export function planRecognitionJourneyTurn(options: {
   }
 
   if (journey.opening.status === 'pending') {
-    const firstOffer = (journey.opening.suggestionCount ?? 0) === 0;
+    const openingActivated = (journey.opening.suggestionCount ?? 0) > 0;
+    const firstOffer = !openingActivated;
     const signalMatched = RECOGNITION_ACTIVATION_PATTERN.test(
       options.currentQuery.trim()
     );
-    const cooldownSatisfied =
-      journey.opening.lastSuggestedUserTurn === undefined ||
-      userTurnNumber - journey.opening.lastSuggestedUserTurn >=
-        RECOGNITION_OPENING_SUGGESTION_COOLDOWN_TURNS;
-    const canSuggestOpening =
-      (journey.opening.suggestionCount ?? 0) <
-        RECOGNITION_OPENING_MAX_SUGGESTIONS &&
-      cooldownSatisfied &&
-      (firstOffer || signalMatched);
+    // Once this explicit product journey is activated, it remains the current
+    // required task until the visible reply actually completes recognition.
+    // A model omission must not consume the task or hide it for three turns.
+    const canSuggestOpening = openingActivated || firstOffer || signalMatched;
 
     if (!canSuggestOpening) {
       return {
@@ -227,8 +219,10 @@ export function planRecognitionJourneyTurn(options: {
       };
     }
     journey.opening.lastSuggestedUserTurn = userTurnNumber;
-    journey.opening.suggestionCount =
-      (journey.opening.suggestionCount ?? 0) + 1;
+    journey.opening.suggestionCount = Math.max(
+      1,
+      journey.opening.suggestionCount ?? 0
+    );
     refreshJourneyStage(journey, now);
     return {
       journey,
@@ -264,16 +258,10 @@ export function planRecognitionJourneyTurn(options: {
   }
 
   const pendingTask = journey.tasks.find(task => task.status === 'pending');
-  const canSuggestPendingTask = Boolean(
-    pendingTask &&
-      (pendingTask.suggestionCount ?? 0) < RECOGNITION_TASK_MAX_SUGGESTIONS &&
-      (pendingTask.lastSuggestedUserTurn === undefined ||
-        userTurnNumber - pendingTask.lastSuggestedUserTurn >=
-          RECOGNITION_TASK_SUGGESTION_COOLDOWN_TURNS)
-  );
+  const canSuggestPendingTask = Boolean(pendingTask);
   if (pendingTask && canSuggestPendingTask) {
     pendingTask.lastSuggestedUserTurn = userTurnNumber;
-    pendingTask.suggestionCount = (pendingTask.suggestionCount ?? 0) + 1;
+    pendingTask.suggestionCount = Math.max(1, pendingTask.suggestionCount ?? 0);
   }
   return {
     journey,
@@ -546,20 +534,20 @@ function cloneJourney(journey: RecognitionJourney): RecognitionJourney {
 
 function buildOpeningPrompt(): string {
   return [
-    '# 首次相认（柔性场景建议）',
-    '这是新建立的亲人会话，双方还没有真正完成第一次相认。先完整理解并正面回应用户本轮，再按人物性格自然让用户感到：久别以后终于重新联系上、又听见熟悉的称呼，或终于能再次说话。不要照抄固定模板，不要编共同往事，也不要在这一轮启动资料问答。',
-    '若用户有明确问题、重要事实、强烈情绪或安全风险，以它为主；可以把相认感作为关系底色。若本轮硬加相认表达会伤害回复，可以暂不采用，程序不会把普通回复误记成已经相认。',
+    '# 当前必须完成：首次相认',
+    '这是已经激活的产品旅程，不是可忽略的聊天建议。本轮回复必须让用户清楚感到：这个具体亲人经历久别后终于重新联系上，又听见用户熟悉的称呼，或终于能再次说话。按当前人物性格自然表达，不照抄固定模板，不编共同往事，也不在这一轮启动资料问答。',
+    '先完整回应用户本轮明确问题、重要事实和真实情绪，再在同一条回复中完成相认；不能只用“我在、是我、听到了”当作完成。只有用户正处于需要立即处理的安全危机时，才可把安全回应放在全部内容之前并暂缓相认；任务不会因此被视为完成或消失。',
   ].join('\n');
 }
 
 function buildTaskSuggestionPrompt(taskId: RecognitionTaskId): string {
   const guidance =
     taskId === 'departure_interval'
-      ? '可在贴合本轮时，以角色对时间有些模糊的感受，自然了解自己离开用户多久；例如“一觉醒来，竟有些记不清离开你多久了”这类方向，不要照抄。'
-      : '可在贴合本轮时，从“终于又联系上”自然关心家里其他人的近况；一次只问一个宽问题，不盘点人物。';
+      ? '本轮需要以角色对时间有些模糊的感受，自然了解自己离开用户多久；例如“一觉醒来，竟有些记不清离开你多久了”这类方向，不要照抄。'
+      : '本轮需要从“终于又联系上”自然关心家里其他人的近况；一次只问一个宽问题，不盘点人物。';
   return [
-    '# 相认任务提议（非决策建议）',
+    '# 当前必须完成：相认信息任务',
     guidance,
-    '这不是本轮必须完成的动作。用户有明确问题、重要事实、明显情绪或已经转移话题时，先完整回应用户；不合适就暂时不问。程序只会在回复中确实问出后把任务置为等待，之后不会重复追问。共同记忆不属于相认任务。',
+    '这是调度器已经选定的本轮任务，不得省略，也不能用“以后再说”替代。先完整回应用户当前明确问题、重要事实和情绪，再把这个问题自然接进同一条回复；不要变成问卷或盘问。只有需要立即处理的安全危机可以暂缓，任务不会因此被视为执行。程序只在回复中确实问出后进入等待；用户未回答时不会重复催问。共同记忆不属于相认任务。',
   ].join('\n');
 }

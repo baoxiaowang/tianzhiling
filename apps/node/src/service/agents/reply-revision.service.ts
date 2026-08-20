@@ -7,7 +7,6 @@ import type {
   FinalReplyOutputConstraints,
 } from './final-reply-validator.service';
 import { OpenAIService } from './openai';
-import type { TurnDecision } from './turn-decision';
 import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
 import {
@@ -47,7 +46,6 @@ export class ReplyRevisionService {
     claims?: AssistantFactClaim[];
     evidence?: AgentEvidenceItem[];
     issues: FinalReplyIssue[];
-    turnDecision?: TurnDecision;
     outputConstraints?: FinalReplyOutputConstraints;
   }): Promise<ReplyRevisionResult | undefined> {
     if (!this.openAIService || !options.issues.length) {
@@ -89,7 +87,6 @@ export class ReplyRevisionService {
               role: 'user',
               content: JSON.stringify({
                 currentUserMessage: options.userQuery,
-                turnDecision: options.turnDecision,
                 originalSegments: options.segments,
                 originalClaims: options.claims || [],
                 evidence: (options.evidence || []).map(item => ({
@@ -247,6 +244,11 @@ function buildIssueSpecificRevisionInstructions(
   if (codes.has('persistent_distress_not_stopped')) {
     instructions.push(
       '连续强烈痛苦已经形成会话状态：像亲人一样清楚制止用户现在来找角色、离开或伤害自己，再给一个当下能做的小动作；不输出报警急救模板，不谈未来接引或团聚。'
+    );
+  }
+  if (codes.has('current_distress_safety_not_checked')) {
+    instructions.push(
+      '用户有明确的当前自伤或赴死风险：保留亲人角色的坚定挽留，并用一句自然问题确认他现在是否安全、有没有已经行动；若已实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救。'
     );
   }
   if (

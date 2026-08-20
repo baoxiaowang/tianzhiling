@@ -21,6 +21,16 @@ export enum ChatSpanStatus {
   skipped = "skipped",
 }
 
+export enum ChatTraceArtifactKind {
+  actualContext = "actual_context",
+  externalEvidence = "external_evidence",
+  mainModelDraft = "main_model_draft",
+  reviewCandidate = "review_candidate",
+  revisionDraft = "revision_draft",
+  finalBubbles = "final_bubbles",
+  deliveryResult = "delivery_result",
+}
+
 export type ChatSpanAttributeValue = string | number | boolean;
 
 @Index(["traceId", "startedAt"], { background: true })
@@ -81,6 +91,25 @@ export class ChatSpanEntity extends BaseEntity {
 
   @Column()
   attributes?: Record<string, ChatSpanAttributeValue>;
+
+  /**
+   * Full-fidelity, short-lived causal snapshot. Unlike attributes this field is
+   * intentionally not used for routing, generation or review decisions.
+   */
+  @Column()
+  artifactKind?: ChatTraceArtifactKind;
+
+  @Column()
+  artifactPayload?: string;
+
+  @Column()
+  artifactHash?: string;
+
+  @Column()
+  artifactBytes?: number;
+
+  @Column()
+  artifactTruncated?: boolean;
 
   @Column()
   expiresAt: Date;

@@ -13,7 +13,6 @@ import type {
   ReplyQualityAudit,
   ReplyTurnContract,
 } from './reply-turn-contract';
-import type { TurnDecision } from './turn-decision';
 
 export interface ConversationReplyFinalizationResult {
   segments: string[];
@@ -40,35 +39,35 @@ export class ConversationReplyFinalizationService {
     claims?: AssistantFactClaim[];
     evidence?: AgentEvidenceItem[];
     brief: ReplyBrief;
-    turnDecision?: TurnDecision;
-    turnContract?: ReplyTurnContract;
   }): Promise<ConversationReplyFinalizationResult> {
     // 所有可能改变语义的规则必须发生在 FinalValidator 之前。
     const prepared = this.replyPostprocessorService.prepareForValidation({
       segments: options.segments,
       brief: options.brief,
     });
-    const outputConstraints: FinalReplyOutputConstraints | undefined =
-      options.brief.afterlifeWorld ||
-      options.brief.sceneFramework ||
-      options.brief.realityDependencies.length ||
-      options.brief.conversationProtection.activeRules.length
-        ? {
-            realityDependencies: options.brief.realityDependencies,
-            afterlifeWorld: options.brief.afterlifeWorld,
-            sceneFramework: options.brief.sceneFramework,
-            worldBoundaryPolicy: options.brief.worldBoundaryPolicy,
-            evidenceContract: options.brief.evidenceContract,
-            conversationProtection: options.brief.conversationProtection,
-          }
-        : undefined;
+    // Only non-negotiable world, evidence, capability and persistent-risk
+    // constraints can reach online governance. Conversation plans, turn
+    // contracts, participation, question, length and bubble preferences stay
+    // in diagnostics and cannot trigger a production rewrite.
+    const outputConstraints: FinalReplyOutputConstraints = {
+      realityDependencies: options.brief.realityDependencies,
+      boundaryLocks: options.brief.understanding.boundaryLocks.map(
+        lock => lock.kind
+      ),
+      correctionRequired: Boolean(options.brief.correctionPolicy),
+      afterlifeWorld: options.brief.afterlifeWorld,
+      sceneFramework: options.brief.sceneFramework,
+      worldBoundaryPolicy: options.brief.worldBoundaryPolicy,
+      evidenceContract: options.brief.evidenceContract,
+      conversationProtection: options.brief.conversationProtection,
+    };
     const governance = await this.replyGovernanceService.finalize({
       messages: options.messages,
       userQuery: options.userQuery,
       segments: prepared,
       claims: options.claims,
       evidence: options.evidence,
-      turnDecision: undefined,
+      diagnosticConstraints: buildSemanticDiagnosticConstraints(options.brief),
       outputConstraints,
     });
     // 最终验证之后只做不改变语义的确定性结构整理。
@@ -86,4 +85,30 @@ export class ConversationReplyFinalizationService {
       qualityAudit: undefined,
     };
   }
+}
+
+function buildSemanticDiagnosticConstraints(
+  brief: ReplyBrief
+): FinalReplyOutputConstraints | undefined {
+  const activeSpeechRequest = Boolean(
+    brief.understanding.activeSpeechRequest || brief.activeContribution
+  );
+  const careReceptionRequired = Boolean(brief.careReception?.active);
+  const directAnswerRequired = brief.understanding.questions.some(
+    question => question.mustAnswer
+  );
+  if (!activeSpeechRequest && !careReceptionRequired && !directAnswerRequired) {
+    return undefined;
+  }
+
+  return {
+    directAnswerRequired,
+    mustKeepTurnWithAssistant: activeSpeechRequest,
+    careReceptionRequired,
+    requiredActs: [
+      ...(activeSpeechRequest ? (['role_contribution'] as const) : []),
+      ...(careReceptionRequired ? (['receive_care'] as const) : []),
+    ],
+    questionPolicy: activeSpeechRequest ? 'none' : 'helpful',
+  };
 }

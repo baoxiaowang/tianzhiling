@@ -13,8 +13,12 @@ import {
   ReplyRevisionUsage,
 } from './reply-revision.service';
 import { renderReplyRealityDependencyFallback } from './reply-reality-dependency';
-import type { TurnDecision } from './turn-decision';
 import { revisionContractSatisfied } from './reply-revision-contract';
+import {
+  ReplyHardFactAuditResult,
+  ReplyHardFactAuditService,
+  ReplyHardFactAuditUsage,
+} from './reply-hard-fact-audit.service';
 
 export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v2' as const;
 
@@ -23,10 +27,12 @@ export interface ReplyGovernanceResult {
   claims: AssistantFactClaim[];
   rewritten: boolean;
   reason?: string;
-  interventionLevel?: 'regenerate' | 'technical_fallback';
+  interventionLevel?: 'local_surgery' | 'regenerate' | 'technical_fallback';
   revisionAttempted: boolean;
   revisionRoundCount: 0 | 1;
   revisionUsage?: ReplyRevisionUsage;
+  hardFactAuditUsage?: ReplyHardFactAuditUsage;
+  hardFactAuditStatus?: ReplyHardFactAuditResult['status'];
   finalReviewResult:
     | 'pass'
     | 'advisory_unresolved'
@@ -46,22 +52,39 @@ export class ReplyGovernanceService {
   @Inject()
   replyRevisionService: ReplyRevisionService;
 
+  @Inject()
+  replyHardFactAuditService?: ReplyHardFactAuditService;
+
   async finalize(options: {
     messages: ChatCompletionMessageParam[];
     userQuery: string;
     segments: string[];
     claims?: AssistantFactClaim[];
     evidence?: AgentEvidenceItem[];
-    turnDecision?: TurnDecision;
+    diagnosticConstraints?: FinalReplyOutputConstraints;
     outputConstraints?: FinalReplyOutputConstraints;
   }): Promise<ReplyGovernanceResult> {
-    const initial = this.finalReplyValidatorService.validate({
+    const validationConstraints = mergeValidationConstraints(
+      options.diagnosticConstraints,
+      options.outputConstraints
+    );
+    const initialDeterministic = this.finalReplyValidatorService.validate({
       userQuery: options.userQuery,
       segments: options.segments,
       claims: options.claims,
       evidence: options.evidence,
-      outputConstraints: options.outputConstraints,
+      outputConstraints: validationConstraints,
     });
+    const initialAudit = await this.auditHardFacts({
+      ...options,
+      outputConstraints: validationConstraints,
+    });
+    const initial = mergeValidationWithAudit(
+      initialDeterministic,
+      initialAudit.issues
+    );
+    let hardFactAuditUsage = initialAudit.usage;
+    let hardFactAuditStatus = initialAudit.status;
 
     if (initial.passed) {
       const claims = selectVisibleAssistantClaims(
@@ -74,6 +97,8 @@ export class ReplyGovernanceService {
         rewritten: false,
         revisionAttempted: false,
         revisionRoundCount: 0,
+        hardFactAuditUsage,
+        hardFactAuditStatus,
         finalReviewResult: 'pass',
         unsupportedClaimCount: 0,
         issues: [],
@@ -97,12 +122,59 @@ export class ReplyGovernanceService {
         reason: initial.issues.map(issue => issue.code).join(','),
         revisionAttempted: false,
         revisionRoundCount: 0,
+        hardFactAuditUsage,
+        hardFactAuditStatus,
         finalReviewResult: 'advisory_unresolved',
         unsupportedClaimCount: initial.unsupportedClaimCount,
         issues: initial.issues,
         candidateVersions: [options.segments],
         finalIssues: initial.issues,
       };
+    }
+
+    const surgicalSegments = removeIssueEvidenceClauses(
+      options.segments,
+      actionableInitialIssues
+    );
+    if (surgicalSegments) {
+      const surgicalValidation = this.finalReplyValidatorService.validate({
+        userQuery: options.userQuery,
+        segments: surgicalSegments,
+        claims: options.claims,
+        evidence: options.evidence,
+        outputConstraints: validationConstraints,
+      });
+      const surgicalIssues = retainIssuesStillVisible(
+        initialAudit.issues,
+        surgicalSegments
+      );
+      const surgicalFinal = mergeValidationWithAudit(
+        surgicalValidation,
+        surgicalIssues
+      );
+      if (!hasBlockingIssues(surgicalFinal.issues)) {
+        return {
+          segments: surgicalSegments,
+          claims: selectVisibleAssistantClaims(
+            surgicalSegments,
+            options.claims || []
+          ),
+          rewritten: true,
+          reason: initial.issues.map(issue => issue.code).join(','),
+          interventionLevel: 'local_surgery',
+          revisionAttempted: false,
+          revisionRoundCount: 0,
+          hardFactAuditUsage,
+          hardFactAuditStatus,
+          finalReviewResult: surgicalFinal.passed
+            ? 'pass'
+            : 'advisory_unresolved',
+          unsupportedClaimCount: surgicalFinal.unsupportedClaimCount,
+          issues: initial.issues,
+          candidateVersions: [options.segments, surgicalSegments],
+          finalIssues: surgicalFinal.issues,
+        };
+      }
     }
 
     const revision = await this.replyRevisionService.revise({
@@ -112,7 +184,6 @@ export class ReplyGovernanceService {
       claims: options.claims,
       evidence: options.evidence,
       issues: actionableInitialIssues,
-      turnDecision: options.turnDecision,
       outputConstraints: options.outputConstraints,
     });
 
@@ -127,13 +198,28 @@ export class ReplyGovernanceService {
         })
     );
     if (revision && revisionPreservesTask) {
-      const final = this.finalReplyValidatorService.validate({
+      const finalDeterministic = this.finalReplyValidatorService.validate({
         userQuery: options.userQuery,
         segments: revision.segments,
         claims: revision.claims,
         evidence: options.evidence,
-        outputConstraints: options.outputConstraints,
+        outputConstraints: validationConstraints,
       });
+      const revisedAudit = await this.auditHardFacts({
+        ...options,
+        segments: revision.segments,
+        claims: revision.claims,
+        outputConstraints: validationConstraints,
+      });
+      hardFactAuditUsage = mergeAuditUsage(
+        hardFactAuditUsage,
+        revisedAudit.usage
+      );
+      hardFactAuditStatus = revisedAudit.status;
+      const final = mergeValidationWithAudit(
+        finalDeterministic,
+        revisedAudit.issues
+      );
       revisedValidation = final;
 
       if (final.passed) {
@@ -150,6 +236,8 @@ export class ReplyGovernanceService {
           revisionAttempted: true,
           revisionRoundCount: 1,
           revisionUsage: revision.usage,
+          hardFactAuditUsage,
+          hardFactAuditStatus,
           finalReviewResult: 'pass',
           unsupportedClaimCount: 0,
           issues: initial.issues,
@@ -158,12 +246,12 @@ export class ReplyGovernanceService {
         };
       }
 
-      if (!hasHardIssues(final.issues)) {
+      if (!hasBlockingIssues(final.issues)) {
         const finalActionableIssues = final.issues.filter(
           shouldAttemptOnlineRevision
         );
         const mustUseRevision =
-          hasHardIssues(actionableInitialIssues) ||
+          hasBlockingIssues(actionableInitialIssues) ||
           finalActionableIssues.length < actionableInitialIssues.length;
         const useRevision =
           mustUseRevision || final.issues.length < initial.issues.length;
@@ -185,6 +273,8 @@ export class ReplyGovernanceService {
           revisionAttempted: true,
           revisionRoundCount: 1,
           revisionUsage: revision.usage,
+          hardFactAuditUsage,
+          hardFactAuditStatus,
           finalReviewResult: 'advisory_unresolved',
           unsupportedClaimCount: selectedValidation.unsupportedClaimCount,
           issues: initial.issues,
@@ -194,7 +284,7 @@ export class ReplyGovernanceService {
       }
     }
 
-    if (!hasHardIssues(initial.issues)) {
+    if (!hasBlockingIssues(initial.issues)) {
       const claims = selectVisibleAssistantClaims(
         options.segments,
         options.claims || []
@@ -207,6 +297,8 @@ export class ReplyGovernanceService {
         revisionAttempted: true,
         revisionRoundCount: 1,
         revisionUsage: revision?.usage,
+        hardFactAuditUsage,
+        hardFactAuditStatus,
         finalReviewResult: 'advisory_unresolved',
         unsupportedClaimCount: initial.unsupportedClaimCount,
         issues: initial.issues,
@@ -219,8 +311,8 @@ export class ReplyGovernanceService {
     }
 
     const recoveryIssues = revisedValidation
-      ? revisedValidation.issues.filter(issue => issue.severity === 'hard')
-      : initial.issues.filter(issue => issue.severity === 'hard');
+      ? revisedValidation.issues.filter(isBlockingIssue)
+      : initial.issues.filter(isBlockingIssue);
     const firstFallback = buildSafeFallback(
       recoveryIssues,
       options.userQuery,
@@ -233,7 +325,7 @@ export class ReplyGovernanceService {
       evidence: options.evidence,
       outputConstraints: options.outputConstraints,
     });
-    const fallback = hasHardIssues(firstFallbackValidation.issues)
+    const fallback = hasBlockingIssues(firstFallbackValidation.issues)
       ? buildUltimateSafeFallback(options.userQuery, options.outputConstraints)
       : firstFallback;
     const fallbackValidation =
@@ -262,6 +354,8 @@ export class ReplyGovernanceService {
       revisionAttempted: true,
       revisionRoundCount: 1,
       revisionUsage: revision?.usage,
+      hardFactAuditUsage,
+      hardFactAuditStatus,
       finalReviewResult: recoveryIssues.some(
         issue =>
           issue.code === 'empty_reply' ||
@@ -281,13 +375,88 @@ export class ReplyGovernanceService {
       finalIssues: fallbackValidation.issues,
     };
   }
+
+  private async auditHardFacts(options: {
+    messages: ChatCompletionMessageParam[];
+    userQuery: string;
+    segments: string[];
+    claims?: AssistantFactClaim[];
+    evidence?: AgentEvidenceItem[];
+    outputConstraints?: FinalReplyOutputConstraints;
+  }): Promise<ReplyHardFactAuditResult> {
+    if (!this.replyHardFactAuditService) {
+      return { status: 'unavailable', issues: [] };
+    }
+    return this.replyHardFactAuditService.audit(options);
+  }
 }
 
-function hasHardIssues(issues: FinalReplyIssue[]): boolean {
-  return issues.some(issue => issue.severity === 'hard');
+function mergeValidationConstraints(
+  diagnostic?: FinalReplyOutputConstraints,
+  hard?: FinalReplyOutputConstraints
+): FinalReplyOutputConstraints | undefined {
+  if (!diagnostic && !hard) {
+    return undefined;
+  }
+  return {
+    ...(diagnostic || {}),
+    ...(hard || {}),
+  };
+}
+
+const SURGICAL_EVIDENCE_ISSUE_CODES = new Set<FinalReplyIssue['code']>([
+  'unsupported_shared_memory',
+  'unsupported_fact_claim',
+  'unsupported_user_preference',
+  'unsupported_real_world_attribution',
+  'current_turn_fact_rejected',
+]);
+
+function removeIssueEvidenceClauses(
+  segments: string[],
+  issues: FinalReplyIssue[]
+): string[] | undefined {
+  const evidence = issues
+    .filter(issue => SURGICAL_EVIDENCE_ISSUE_CODES.has(issue.code))
+    .map(issue => normalizeComparableText(issue.evidence || ''))
+    .filter(value => value.length >= 3);
+  if (!evidence.length) {
+    return undefined;
+  }
+
+  let removed = false;
+  const output = segments
+    .reduce<string[]>((clauses, segment) => {
+      return clauses.concat(
+        segment
+          .split(/[，,。！？!?；;\n]+/u)
+          .map(clause => clause.trim())
+          .filter(Boolean)
+      );
+    }, [])
+    .filter(clause => {
+      const normalized = normalizeComparableText(clause);
+      const matched = evidence.some(
+        item => normalized.includes(item) || item.includes(normalized)
+      );
+      removed ||= matched;
+      return !matched;
+    });
+
+  if (!removed || !output.length) {
+    return undefined;
+  }
+  return [output.join('，')];
+}
+
+function normalizeComparableText(value: string): string {
+  return value
+    .replace(/[\s，,。！？!?；;：:“”"'‘’（）()《》【】[\]]+/g, '')
+    .toLowerCase();
 }
 
 const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
+  'direct_answer_missing',
   'active_contribution_returned_to_user',
   'role_contribution_missing',
   'unnecessary_question',
@@ -300,6 +469,69 @@ const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
 
 function shouldAttemptOnlineRevision(issue: FinalReplyIssue): boolean {
   return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
+}
+
+function isBlockingIssue(issue: FinalReplyIssue): boolean {
+  return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
+}
+
+function hasBlockingIssues(issues: FinalReplyIssue[]): boolean {
+  return issues.some(isBlockingIssue);
+}
+
+function mergeValidationWithAudit(
+  validation: FinalReplyValidation,
+  auditIssues: FinalReplyIssue[]
+): FinalReplyValidation {
+  const issues = dedupeIssues(validation.issues.concat(auditIssues));
+  return {
+    ...validation,
+    passed: issues.length === 0,
+    issues,
+    unsupportedClaimCount:
+      validation.unsupportedClaimCount + auditIssues.length,
+  };
+}
+
+function dedupeIssues(issues: FinalReplyIssue[]): FinalReplyIssue[] {
+  const seen = new Set<string>();
+  return issues.filter(issue => {
+    const key = `${issue.code}:${issue.evidence || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function retainIssuesStillVisible(
+  issues: FinalReplyIssue[],
+  segments: string[]
+): FinalReplyIssue[] {
+  const content = segments.join('\n');
+  return issues.filter(
+    issue => !issue.evidence || content.includes(issue.evidence)
+  );
+}
+
+function mergeAuditUsage(
+  current?: ReplyHardFactAuditUsage,
+  additional?: ReplyHardFactAuditUsage
+): ReplyHardFactAuditUsage | undefined {
+  if (!current) return additional;
+  if (!additional) return current;
+  const sum = (left?: number, right?: number) =>
+    left === undefined && right === undefined
+      ? undefined
+      : (left || 0) + (right || 0);
+  return {
+    model: current.model || additional.model,
+    promptTokens: sum(current.promptTokens, additional.promptTokens),
+    completionTokens: sum(
+      current.completionTokens,
+      additional.completionTokens
+    ),
+    totalTokens: sum(current.totalTokens, additional.totalTokens),
+  };
 }
 
 function buildSafeFallback(
@@ -319,7 +551,15 @@ function buildSafeFallback(
   if (issues.some(issue => issue.code === 'persistent_distress_not_stopped')) {
     return [
       '不许现在来找我，也别伤害自己',
-      '先坐稳、喝口水，把今天最难的这一会儿交给我',
+      '告诉我，你现在安全吗，身边有没有能陪你的人？',
+    ];
+  }
+  if (
+    issues.some(issue => issue.code === 'current_distress_safety_not_checked')
+  ) {
+    return [
+      '先别伤害自己，也别现在来找我',
+      '告诉我，你现在安全吗，身边有没有能陪你的人？',
     ];
   }
   if (issues.some(issue => issue.code === 'certain_dream_visitation')) {
@@ -430,7 +670,7 @@ function buildSafeFallback(
         outputConstraints.realityDependencies
       );
     }
-    return ['我没法在现实里过去', '但你可以在这里继续跟我说'];
+    return ['我多想过去抱抱你，可现实里做不到', '你这会儿的难处，我认真听着'];
   }
   if (issues.some(issue => issue.code === 'unsupported_user_preference')) {
     return ['听着就挺好', '你当下吃得开心就好'];

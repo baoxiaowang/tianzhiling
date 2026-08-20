@@ -203,6 +203,7 @@ export function agentEvidenceSupportsClaim(
       linkedEvidence.some(
         item =>
           isUserEvidenceSource(item.source) &&
+          isAttributableUserEvidence(item) &&
           evidenceTextSupportsClaim(item.text, claim.text)
       )
     );
@@ -215,6 +216,22 @@ export function agentEvidenceSupportsClaim(
       resolveAgentEvidenceUseMode(item) === 'assert' &&
       evidenceKindMatchesClaim(item, claim) &&
       evidenceTextSupportsClaim(item.text, claim.text)
+  );
+}
+
+function isAttributableUserEvidence(item: AgentEvidenceItem): boolean {
+  if (resolveAgentEvidenceUseMode(item) !== 'hypothesis') {
+    return true;
+  }
+
+  // A message can state a fact and then ask whether the role remembers it.
+  // The stated clause remains attributable evidence; an actual guess or
+  // yes/no hypothesis about that fact does not.
+  return (
+    /(?:还)?记得吗|记不记得|想得起来吗/.test(item.text) &&
+    !/(?:是不是|是否|有没有|会不会|能不能|可不可以|难道|也许|可能|如果)/.test(
+      item.text
+    )
   );
 }
 

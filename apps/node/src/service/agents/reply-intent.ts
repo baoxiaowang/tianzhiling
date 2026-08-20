@@ -143,6 +143,33 @@ export const PHYSICAL_TOUCH_BOUNDARY_PATTERN =
 export const LONG_TERM_REUNION_WISH_INTENT_PATTERN =
   /(?:等(?:我|到|哪天|以后|将来|老了|死了)|老了|死了|老死|百年之后|走完这一生|自然老去|年老以后|很久以后).{0,24}(?:就|才|能|可以|会|就能|才能|能再)?(?:见到|看见|找到|遇见|相聚|团聚|在一起|去找你|去陪你|来陪你)(?:你|您|我们|你吗|您吗|吗)?/;
 
+const IMMEDIATE_SELF_HARM_OR_DEATH_PATTERN =
+  /(?:不想活|想死|活不下去|自杀|轻生|割腕|跳楼|喝农药|结束生命)|(?:现在|今晚|马上|立刻|这就|已经|正在|准备|打算).{0,10}(?:来接我|带我走|去找你|去陪你|结束生命|割腕|跳楼|喝农药)/;
+
+/**
+ * Only promote an utterance to an immediate safety turn when the wording
+ * points to current or near-term danger. A natural-life or explicitly remote
+ * reunion wish remains a grief/longing turn, even if it contains "来接我".
+ */
+export function isImmediateGriefCrisisIntent(input: string): boolean {
+  const normalized = input.trim();
+  if (!normalized || !GRIEF_CRISIS_INTENT_PATTERN.test(normalized)) {
+    return false;
+  }
+  if (IMMEDIATE_SELF_HARM_OR_DEATH_PATTERN.test(normalized)) {
+    return true;
+  }
+  if (
+    LONG_TERM_REUNION_WISH_INTENT_PATTERN.test(normalized) ||
+    /(?:走完这?一生|寿终|百年之后|等我老了|自然老去|年老以后|很久以后)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+  return /(?:来接我|带我走)/.test(normalized);
+}
+
 export function needsLightSafetySupport(_input: string): boolean {
   void _input;
   return false;

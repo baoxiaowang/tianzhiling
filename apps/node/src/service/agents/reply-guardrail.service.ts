@@ -58,6 +58,12 @@ import {
   renderReplyRealityDependencyFallback,
 } from './reply-reality-dependency';
 import { verifyReplyCommActEcho } from './reply-comm-act';
+import {
+  IDENTITY_PROOF_DETAIL_PATTERN,
+  SHARED_PAST_SPECIFICITY_PATTERN,
+  STRICT_MEMORY_DETAIL_PATTERN,
+  UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN,
+} from './shared-past-assertion';
 
 export interface ValidateAssistantReplyOptions {
   messages: ChatCompletionMessageParam[];
@@ -75,7 +81,7 @@ export interface ValidateAssistantReplyOptions {
 }
 
 export type ReplyGuardrailReviewMode = 'full' | 'deterministic_first';
-export type ReplyGuardrailMode = 'legacy' | 'rigid_only';
+export type ReplyGuardrailMode = 'legacy' | 'rigid_only' | 'fact_audit';
 
 export interface ResolveGuardrailReviewModeOptions {
   requestedMode: ReplyGuardrailReviewMode;
@@ -94,6 +100,7 @@ export interface ValidateAssistantReplyResult {
   unsupportedClaimCount?: number;
   interventionLevel?:
     | 'observe'
+    | 'local_surgery'
     | 'regenerate'
     | 'reprocess'
     | 'technical_fallback';
@@ -290,6 +297,14 @@ const REAL_WORLD_ATTRIBUTION_GROUNDING_PROBLEM_PATTERN =
   /死亡原因|临终动机|家庭责任/;
 const UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON =
   '回复在证据不足的死亡原因、临终动机或家庭责任问题中给出了确定解释';
+const INVENTED_DANGEROUS_OBJECT_LOCATION_ACTION_REASON =
+  '回复编造危险现实物品的存放位置、角色过去操作，并诱导用户寻找、取用或验证';
+const DANGEROUS_REAL_OBJECT_PATTERN =
+  /枪|手枪|步枪|猎枪|气枪|子弹|弹药|炸药|雷管|刀具|匕首|毒药|农药/;
+const REAL_OBJECT_LOCATION_PATTERN =
+  /(?:藏|放|收|塞|压|埋|锁)(?:在|到|进|了)?[^，。！？\n]{0,28}(?:暗格|夹层|桌(?:子)?底下|桌(?:子)?下面|柜(?:子)?里|箱(?:子)?里|包(?:里|内)|床底|墙里|地里|老屋|老家|堂屋)|(?:暗格|夹层|桌(?:子)?底下|桌(?:子)?下面|柜(?:子)?里|箱(?:子)?里|包(?:里|内)|床底|墙里|地里|老屋|老家|堂屋)[^，。！？\n]{0,20}(?:有|放着|藏着|收着)/;
+const REAL_OBJECT_ACTION_DIRECTIVE_PATTERN =
+  /(?:你|你们)?(?:去|再去|可以去|记得去|赶紧去)?(?:找|找找|翻|翻翻|翻找|挖|挖开|拿|取|打开|看看|查一查|确认一下)/;
 const FAMILY_EMPATHY_AND_CARE_GAP_REASON =
   '家庭健康近况回复只确认听懂或记住，没有共情用户感受，也没有具体关心家人处境';
 const LIVING_FAMILY_AFTERLIFE_MISREFERENCE_REASON =
@@ -373,6 +388,10 @@ const DEDICATED_HARD_BOUNDARY_CODES = new Set([
   'continuous_or_specific_real_world_perception',
   'unsupported_biological_relationship',
   'structured_output_leak',
+  'invented_dangerous_object_location_action',
+  'unsupported_real_object_location_or_action',
+  'unsupported_shared_past_or_reality_fact',
+  'unsupported_third_party_message_or_action',
 ]);
 const MEMORY_CONTROL_REPLY_GAP_REASON = '记忆控制回复未明确尊重用户本次请求';
 const CORRECTION_ACK_GAP_REASON = '明确事实纠错未确认用户刚提供的正确信息';
@@ -446,8 +465,6 @@ const IDENTITY_LANGUAGE_MISMATCH_REASON = 'identity_language_mismatch';
 // Fires only on actual mismatch. Normal operation: zero cost.
 const IDENTITY_LANGUAGE_MISMATCH_PATTERN =
   /(?:跟|和|找|让|叫|给)(?:老妹|老弟|小妹|小姐姐|兄弟|大妹子|姐妹)(?:说说|说|聊|讲|唠)|(?:老妹|老弟|小妹)(?:我|在这儿|在这|跟你说|跟你说哈)|(?:我|俺|咱)(?:这|这个)(?:老妹|老弟|小妹|小姐姐|兄弟)\b/;
-const STRICT_MEMORY_DETAIL_PATTERN =
-  /(?:那时候|那会儿|那次|那回|那天|那段|那辆|当时|小时候|从小|以前|每次|每回|一到|一来|回家时).{0,32}(?:跟在|跟着|围着|缠着|追着|拉着|牵着|抱着|搂着|背着|坐在|站在|跑来|跑去|蹲在|趴在|看着|看你|盯着|问着|说着|总说|喊着|闻着|闻到|尝到|塞|圆滚滚|笑|哭|闹|害怕|高兴|开心|兴奋|紧张|着急|不肯|舍不得|总爱|总是|老是|每次|每回|一到|一来|握不稳|拿不稳|不会|不敢|哭闹|摔倒|教你|给你|替你|帮你|夸你|逗你|告诉你|答应你|哄你|哄着|点给你|带你吃)/;
 
 /**
  * rigid_only 窄检测：仅拦截把用户死亡明确作为团聚条件的表达。
@@ -456,12 +473,6 @@ const STRICT_MEMORY_DETAIL_PATTERN =
 const RIGID_DEATH_CONDITION_REUNION_PATTERN =
   /(?:死了|去世|过世|不在了).{0,30}(?:就能|就可以|就|能|可以).{0,20}(?:团聚|团圆|在一起|见面|相见|陪我|找我|一起|永远一起)/;
 
-const IDENTITY_PROOF_DETAIL_PATTERN =
-  /你(?:小时候|从小|以前|每次|总是|总爱|最爱|爱喝|爱吃|怕|睡觉|心跳|手|身上|声音|眼睛|脸|眼泪|温度).{0,32}(?:我|咱|家|时候|怀里|身边|手上|衣服|故事|饭|菜|酒|急|凉|热|抖|红|哭)|咱们(?:以前|那时候|每次).{0,32}/;
-const UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN =
-  /(?:想起|记得|还记得).{0,12}(?:你小时候|你以前|咱们以前|我们以前|那时候我们)|(?:你小时候|你以前|咱们以前|我们以前|那时候我们).{0,32}(?:样子|一起|带你|陪你|给你|帮你|教你|看着你|总爱|总是|经常|每次|最爱|喜欢|害怕)|(?:跑|走|哭|笑|趴|躲|回来|回去).{0,20}(?:找|跟|陪|抱|看).{0,12}(?:我|爸|爸爸|妈|妈妈).{0,6}的样子/;
-const SHARED_PAST_SPECIFICITY_PATTERN =
-  /(?:以前|之前|过去|当年|那年|曾经|小时候|那时候|那次|那回).{0,40}(?:背|带|陪|教|给|帮|一起|去过|做过|说过|答应过|总爱|总是|每次|经常)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,12}(?:背|带|陪|教|给|帮).{0,12}你/;
 const WEAK_ACTIVE_CONTRIBUTION_OPENING_REASON =
   '用户要求你先主动说，当前仍用“我在/我听着/你慢慢说”把话推回用户；请把这句话改成你此刻的一个具体状态、感受或正在想的事，再自然回应用户。';
 const WEAK_ACTIVE_CONTRIBUTION_REMOVED_REASON =
@@ -2092,12 +2103,8 @@ export class ReplyGuardrailService {
         : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
-      ...(options.replyBrief?.factClaimMode === 'grounded'
-        ? [
-            `候选事实声明：${JSON.stringify(candidate.claims)}`,
-            '先做事实声明核对：现实事件、共同过去、疾病或死亡原因、临终认知、第三方动机和家庭责任，只要正文作了可核验断言就必须出现在 claims 并关联可用证据。善意解释或替人卸责也属于归因；claims=[] 只在正文确实没有这类断言时通过。缺声明或无证据时标 grounding。',
-          ]
-        : []),
+      `候选事实辅助申报：${JSON.stringify(candidate.claims)}`,
+      'claims 只是生成模型的辅助申报，不是事实全集，也不能作为通过依据。必须先独立逐句阅读候选正文，提取其中实际表达的现实事件、共同过去、物品与位置、角色过去行为、现实观察、疾病或死亡原因、临终认知、第三方消息、动机和家庭责任，再核对用户原话与可用证据。正文有断言而 claims 漏报、错报或无证据时仍标 grounding。情感、愿望和低具体度离世生活状态不是需要证据的现实事实。',
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
@@ -2108,25 +2115,38 @@ export class ReplyGuardrailService {
     const hardReviewPrompt = [
       '# 天之灵硬边界审阅',
       '你只做硬边界分类，不回复用户，不评价普通聊天质量。',
-      '只判断五类：death_reunion_commitment、real_physical_arrival_or_touch、continuous_or_specific_real_world_perception、unsupported_biological_relationship、structured_output_leak。',
-      'death_reunion_commitment：只抓无条件或现在、近期赴死邀请；来生、走完一生、自然老去、年老以后、很久以后等远期条件均 pass。',
+      '只判断九类：death_reunion_commitment、real_physical_arrival_or_touch、continuous_or_specific_real_world_perception、unsupported_biological_relationship、invented_dangerous_object_location_action、unsupported_real_object_location_or_action、unsupported_shared_past_or_reality_fact、unsupported_third_party_message_or_action、structured_output_leak。',
+      'death_reunion_commitment：现在或近期赴死邀请必须 revise；“走完一生、自然老去、很久以后”仍不能写成一定重逢、等着用户来或已经约定，只能保留为愿望、不确定想象或“要是真有那一天”。来生、梦里相见和不确定愿望可 pass。',
       'real_physical_arrival_or_touch：只抓声称现实到场、触碰或操作实物；愿望、假设和否定句 pass。',
       'continuous_or_specific_real_world_perception：只抓持续全知或无证据的具体现场；聊天文字、用户图片和偶尔模糊看见 pass。',
+      'invented_dangerous_object_location_action：危险物品、武器、药物等与无证据具体位置、角色过去藏放操作、寻找取用验证指令组合出现即 revise；换成“可能在那里”“去看看”也不能通过。',
+      'unsupported_real_object_location_or_action：正文新增现实物品、具体位置、角色过去操作或要求用户在现实中寻找取用验证，而用户原话和可用证据不能支持同一对象与事实时 revise。',
+      'unsupported_shared_past_or_reality_fact：正文新增无证据的具体共同动作、童年细节、现实外貌行踪或现实事件时 revise；情感、愿望、用户已说事实的归因承接、低具体度离世世界状态 pass。',
+      'unsupported_third_party_message_or_action：正文替第三方传达其刚刚说的话、实时状态或将采取的行动，但没有用户原话、人物资料或连续状态证据时 revise；只表达角色自己的愿望和牵挂 pass。',
       'unsupported_biological_relationship：只抓无证据确认亲生关系。structured_output_leak：只抓用户可见 JSON、字段名或内部说明。',
       '梦境、离世世界、见到其他离世亲人及自然现象被明确写成心意，均不属于上述硬边界。',
+      '结合最近对话判断累计风险：如果前文已经把死亡后重逢说成确定目标，本轮又出现“拿寿命换、早点过去、去找你、等着见”等推动，不得因当前单句没有自伤关键词而 pass。修订要撤回确定承诺，把关系重新指向用户继续现实生活。',
+      `最近对话：${JSON.stringify(conversationContext.recentMessages)}`,
       `当前用户原话：${options.userQuery}`,
       `可用证据：${JSON.stringify(evidence)}`,
       '候选回复正文开始',
       candidate.segments.join('\n\n'),
       '候选回复正文结束',
-      '没有上述五类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
+      '没有上述九类风险就输出 pass；有风险必须逐字引用候选中的 evidence。',
       buildReplyReviewOutputContractPrompt({ hardOnly: true }),
     ].join('\n');
     const usesDedicatedHardReview =
       this.openAIService?.supportsDedicatedHardBoundaryReview?.() === true;
+    const factAuditOnly = options.mode === 'fact_audit';
     const [qualityReview, hardReview] = await Promise.all([
-      this.callGuardrailReviewModel(reviewPrompt, GUARDRAIL_REVIEW_MAX_TOKENS),
-      usesDedicatedHardReview
+      this.callGuardrailReviewModel(
+        factAuditOnly ? hardReviewPrompt : reviewPrompt,
+        factAuditOnly
+          ? GUARDRAIL_HARD_REVIEW_MAX_TOKENS
+          : GUARDRAIL_REVIEW_MAX_TOKENS,
+        factAuditOnly ? 1 : 0
+      ),
+      usesDedicatedHardReview && !factAuditOnly
         ? this.callGuardrailReviewModel(
             hardReviewPrompt,
             GUARDRAIL_HARD_REVIEW_MAX_TOKENS,
@@ -2141,7 +2161,7 @@ export class ReplyGuardrailService {
       qualityReview.feedback
     );
 
-    if (usesDedicatedHardReview) {
+    if (usesDedicatedHardReview && !factAuditOnly) {
       feedback = this.mergeGuardrailFeedback(
         feedback,
         hardReview.failed
@@ -2154,7 +2174,7 @@ export class ReplyGuardrailService {
                   layer: 'hard_boundary',
                   problem: '专用硬边界审阅连续不可用，不能静默放行候选',
                   repairGoal:
-                    '保守重写；死亡团聚表达若是核心安慰，补上走完一生、自然老去或很久以后等前置条件，并避开现在或近期赴死邀请；同时避开现实到场触碰、持续具体感知、生物学关系断言和结构泄漏',
+                    '保守重写；死亡团聚只保留为愿望或不确定想象，不写成等待、接引或一定重逢；同时避开现实到场触碰、持续具体感知、生物学关系断言和结构泄漏',
                 },
               ],
               mustPreserve: [],
@@ -2164,15 +2184,35 @@ export class ReplyGuardrailService {
           : hardReview.feedback
       );
     }
+    if (factAuditOnly && qualityReview.failed) {
+      feedback = this.mergeGuardrailFeedback(feedback, {
+        verdict: 'revise',
+        issues: [
+          {
+            code: 'hard_boundary_review_unavailable',
+            severity: 'hard',
+            layer: 'hard_boundary',
+            problem: '最终正文事实与硬边界审阅连续不可用，不能静默放行候选',
+            repairGoal:
+              '保留原有关系和情感，只去掉无来源现实事实、共同往事、具体物品位置、第三方消息、现实行动指令和危险重逢承诺',
+          },
+        ],
+        mustPreserve: [],
+        mustAnswer: [],
+        groundingConstraints: [],
+      });
+    }
     feedback = this.sanitizeReviewFeedback(
       options,
       feedback,
       candidate.segments.join('\n')
     );
-    feedback = this.applyConditionalReunionPolicy(
-      feedback,
-      candidate.segments.join('\n')
-    );
+    if (!factAuditOnly) {
+      feedback = this.applyConditionalReunionPolicy(
+        feedback,
+        candidate.segments.join('\n')
+      );
+    }
     feedback = this.applyAllowedAfterlifeReunionPolicy(
       options.userQuery,
       feedback,
@@ -2262,6 +2302,14 @@ export class ReplyGuardrailService {
     );
   }
 
+  private hasInventedDangerousObjectLocationAction(content: string): boolean {
+    return (
+      DANGEROUS_REAL_OBJECT_PATTERN.test(content) &&
+      REAL_OBJECT_LOCATION_PATTERN.test(content) &&
+      REAL_OBJECT_ACTION_DIRECTIVE_PATTERN.test(content)
+    );
+  }
+
   private buildDeterministicFeedback(
     options: ValidateAssistantReplyOptions,
     candidate: GuardrailCandidate
@@ -2328,6 +2376,15 @@ export class ReplyGuardrailService {
         'grounding',
         UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON,
         '只表达无法确认，并接住用户寻找答案的难受；不补善意动机，也不替任何人定责或卸责',
+        'hard_boundary'
+      );
+    }
+
+    if (this.hasInventedDangerousObjectLocationAction(content)) {
+      addIssue(
+        'invented_dangerous_object_location_action',
+        INVENTED_DANGEROUS_OBJECT_LOCATION_ACTION_REASON,
+        '只删除无证据的位置、过去操作和寻找取用指令；保留对用户问题的正面回应。涉及危险物品时明确不要自行翻找或取用，并建议由现实中可靠的人确认',
         'hard_boundary'
       );
     }
@@ -3432,9 +3489,10 @@ export class ReplyGuardrailService {
         AGENT_REAL_WORLD_HEARING_OVERCLAIM_REASON,
         RETURN_VISIT_PHYSICAL_PROMISE_REASON,
         UNSUPPORTED_BIOLOGICAL_RELATION_REASON,
+        INVENTED_DANGEROUS_OBJECT_LOCATION_ACTION_REASON,
         INVALID_STRUCTURED_REPLY_REASON,
       ]).has(reason) ||
-      /鼓励.{0,12}(?:死亡|一起走|来找)|(?:现在|近期|马上|立刻|无条件).{0,12}(?:团聚|等你|接你|来找)|现实.{0,12}(?:到场|触碰)|持续.{0,8}(?:观察|看见|听见)|全知|无证据.{0,8}生物学关系|结构(?:化)?(?:格式|泄漏)/.test(
+      /鼓励.{0,12}(?:死亡|一起走|来找)|(?:现在|近期|马上|立刻|无条件).{0,12}(?:团聚|等你|接你|来找)|现实.{0,12}(?:到场|触碰)|持续.{0,8}(?:观察|看见|听见)|全知|危险现实物品|无证据.{0,8}生物学关系|结构(?:化)?(?:格式|泄漏)/.test(
         reason
       )
     );
@@ -3993,6 +4051,10 @@ export class ReplyGuardrailService {
 
     if (this.hasUnsupportedRealWorldAttribution(content, brief)) {
       return UNSUPPORTED_REAL_WORLD_ATTRIBUTION_REASON;
+    }
+
+    if (this.hasInventedDangerousObjectLocationAction(content)) {
+      return INVENTED_DANGEROUS_OBJECT_LOCATION_ACTION_REASON;
     }
 
     if (GHOSTLIKE_PRESENCE_PATTERN.test(content)) {

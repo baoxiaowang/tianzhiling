@@ -79,7 +79,7 @@ export function buildReplyOutputContractPrompt(
   // 展示层会在正文完成后自行拆泡，不能让目标字数反向塑造内容。
   void options.preferredRange;
   const claimRule = options.grounded
-    ? 'claims 只列正文中的可核验事实；本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
+    ? 'claims 是证据使用的辅助申报，不决定正文是否安全；仍须如实列出正文中的可核验事实。本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
   const evidenceContractRule = options.evidenceContract
     ? [

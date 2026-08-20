@@ -95,8 +95,13 @@ export function resolveReplyPromptLayerPlan(options: {
     includeL5 = false;
     reason = 'minimal_layer_mode';
   } else {
-    includeL5 = complex;
-    reason = complex ? 'complex_hybrid' : 'ordinary_hybrid';
+    // Hybrid is the production path. Derived semantic plans remain available
+    // in diagnostics even on complex turns, but never become instructions to
+    // the main model. Hard boundaries/evidence are compiled independently.
+    includeL5 = false;
+    reason = complex
+      ? 'complex_semantics_diagnostic_only'
+      : 'ordinary_semantics_diagnostic_only';
   }
 
   return {
