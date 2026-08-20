@@ -688,6 +688,10 @@ export class MessengerService {
     const query = input.trim();
     const parentName = agent.name?.trim() || 'TA';
 
+    if (this.isMemoryReceiptQuestion(query)) {
+      return this.buildMemoryReceiptReply(agent, taskField);
+    }
+
     if (
       /(?:小使者|你).{0,8}(?:是干嘛的|干什么的|做什么|能做什么|有什么用|作用是什么)/.test(
         query
@@ -738,6 +742,79 @@ export class MessengerService {
     }
 
     return undefined;
+  }
+
+  private isMemoryReceiptQuestion(query: string): boolean {
+    return (
+      /(?:你|小使者).{0,8}(?:记住|记得|记下|记录|保存).{0,8}(?:什么|哪些|多少|了吗|没有)/.test(
+        query
+      ) ||
+      /(?:你|小使者).{0,8}记了.{0,4}(?:什么|哪些)/.test(query) ||
+      /(?:你|小使者).{0,8}(?:怎么|如何).{0,6}(?:记(?:的|住|下|录)|保存)/.test(
+        query
+      ) ||
+      /(?:你|小使者).{0,8}(?:记到|存到|保存到).{0,6}(?:哪里|哪儿|什么地方)/.test(
+        query
+      ) ||
+      /(?:刚才|现在|目前).{0,8}(?:记住|记得|记下|记录|保存|记了).{0,8}(?:什么|哪些)/.test(
+        query
+      )
+    );
+  }
+
+  private buildMemoryReceiptReply(
+    agent: AgentEntity,
+    taskField: AgentProfileMemoryField | ''
+  ): string {
+    const name = agent.name?.trim() || 'TA';
+    const receiptFields: ReadonlyArray<{
+      key: AgentProfileMemoryField;
+      label: string;
+    }> = [
+      { key: 'lifeExperience', label: '人生经历' },
+      { key: 'personalityTraits', label: '性格特点' },
+      { key: 'hobbies', label: '喜欢的事' },
+      { key: 'languageHabits', label: '说话习惯' },
+      { key: 'sharedMemories', label: '共同回忆' },
+    ];
+    const saved = receiptFields
+      .map(field => ({
+        ...field,
+        value: this.summarizeMemoryReceiptValue(agent[field.key] || '', name),
+      }))
+      .filter(field => Boolean(field.value));
+    const missing = receiptFields
+      .filter(field => !String(agent[field.key] || '').trim())
+      .map(field => field.label);
+
+    if (!saved.length) {
+      return `目前还没有保存到${name}的具体记忆。我会把你明确讲过或确认过的内容按人生经历、性格、爱好、说话习惯和共同回忆，分别保存到${name}的记忆资料里；不确定的不会当成事实。${this.buildTaskKickoffQuestion(
+        agent,
+        taskField
+      )}`;
+    }
+
+    const lines = saved.map(field => `${field.label}：${field.value}`);
+    const missingHint = missing.length
+      ? `\n还没补到：${missing.join('、')}。`
+      : '';
+
+    return `我目前这样帮${name}记着：\n${lines.join(
+      '\n'
+    )}\n这些是已经按五类保存到${name}的记忆资料里的内容；我不会在回执里补写没有保存的细节。${missingHint}`;
+  }
+
+  private summarizeMemoryReceiptValue(value: string, name: string): string {
+    const normalized = value
+      .replace(/用户/g, '你')
+      .replace(/TA/gi, name)
+      .replace(/当前角色/g, name)
+      .replace(/\s+/g, ' ')
+      .trim();
+    const characters = Array.from(normalized);
+    return characters.length > 48
+      ? `${characters.slice(0, 48).join('')}…`
+      : normalized;
   }
 
   private buildShortContextReply(
