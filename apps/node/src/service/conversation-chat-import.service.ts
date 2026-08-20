@@ -43,6 +43,7 @@ import {
   analyzeChatImportLanguage,
   buildChatImportFingerprint,
   markDuplicateChatImportItems,
+  markPreviouslyImportedChatItems,
   normalizeChatImportText,
   sortChatImportItems,
 } from './chat-import-domain';
@@ -759,6 +760,7 @@ export class ConversationChatImportService {
       }
 
       markDuplicateChatImportItems(recognizedItems);
+      await this.markPreviouslyImportedItems(batch, recognizedItems);
       for (const item of recognizedItems.slice(0, MAX_IMPORT_ITEMS)) {
         await this.itemModel.save(item);
       }
@@ -919,17 +921,16 @@ export class ConversationChatImportService {
   private async persistImportedMessages(
     batch: ConversationChatImportBatchEntity,
     items: ConversationChatImportItemEntity[],
-    options: { displayAt?: Date } = {}
+    options: { displayTimes?: Date[] } = {}
   ): Promise<void> {
-    const importedAt = options.displayAt || batch.confirmedAt || new Date();
+    const importedAt = batch.confirmedAt || new Date();
     const latestKnown = items.reduce(
       (latest, item) => Math.max(latest, item.occurredAt?.getTime() || 0),
       0
     );
     let unknownIndex = 0;
-    let sequence = 0;
 
-    for (const item of items) {
+    for (const [itemIndex, item] of items.entries()) {
       if (item.messageId) {
         continue;
       }
@@ -971,13 +972,13 @@ export class ConversationChatImportService {
       message.sourceTimePrecision = item.timePrecision;
       message.sourceTimeConfidence = item.timeConfidence;
       message.sourceScreenshotId = item.screenshotId;
-      message.sourceSequence = sequence;
+      message.sourceSequence = itemIndex;
       message.recognitionConfidence = item.recognitionConfidence;
       message.quotaExempt = true;
       message.replyTrigger = false;
-      message.createdAt = options.displayAt
-        ? new Date(options.displayAt.getTime() + sequence)
-        : new Date(occurredAt.getTime() + sequence);
+      message.createdAt =
+        options.displayTimes?.[itemIndex] ||
+        new Date(occurredAt.getTime() + itemIndex);
       message.updatedAt = message.createdAt;
       await this.messageModel.save(message);
 
@@ -985,7 +986,6 @@ export class ConversationChatImportService {
       item.isConfirmed = true;
       item.updatedAt = new Date();
       await this.itemModel.save(item);
-      sequence += 1;
     }
   }
 
@@ -1006,6 +1006,20 @@ export class ConversationChatImportService {
     ).slice(0, MAX_IMPORT_ITEMS);
 
     if (!items.length) {
+      if ((batch.duplicateCount || 0) > 0) {
+        const completedAt = new Date();
+        batch.confirmedCount = 0;
+        batch.confirmedAt = completedAt;
+        batch.memoryStatus = 'completed';
+        batch.styleStatus = 'completed';
+        batch.status = ConversationChatImportStatus.completed;
+        batch.completedAt = completedAt;
+        batch.updatedAt = completedAt;
+        await this.batchModel.save(batch);
+        await this.touchConversationForAutomaticImport(batch);
+        return;
+      }
+
       batch.status = ConversationChatImportStatus.failed;
       batch.errorCode = 'CHAT_IMPORT_EMPTY';
       batch.errorDetail = '没有识别到可导入的两人聊天文字';
@@ -1020,7 +1034,11 @@ export class ConversationChatImportService {
     await this.batchModel.save(batch);
 
     try {
-      await this.persistImportedMessages(batch, items, { displayAt });
+      const displayTimes = await this.resolveAutomaticImportDisplayTimes(
+        batch,
+        items
+      );
+      await this.persistImportedMessages(batch, items, { displayTimes });
     } catch (error) {
       batch.status = ConversationChatImportStatus.failed;
       batch.errorCode = 'CHAT_IMPORT_WRITE_FAILED';
@@ -1059,6 +1077,105 @@ export class ConversationChatImportService {
       batch.updatedAt = batch.completedAt;
       await this.batchModel.save(batch);
     }
+  }
+
+  private async resolveAutomaticImportDisplayTimes(
+    batch: ConversationChatImportBatchEntity,
+    items: ConversationChatImportItemEntity[]
+  ): Promise<Date[]> {
+    const firstAssistantMessage = await this.messageModel.findOne({
+      where: {
+        conversationId: batch.conversationId,
+        role: MessageRole.assistant,
+        type: MessageType.text,
+        source: { $ne: MessageSource.wechatImport },
+        isArchived: { $ne: true },
+      } as never,
+      order: { createdAt: 'ASC' },
+    });
+    const displayCeiling =
+      firstAssistantMessage?.createdAt?.getTime() || batch.createdAt.getTime();
+    const sourceTimes = items.map(item => item.occurredAt?.getTime());
+    const firstKnownIndex = sourceTimes.findIndex(
+      value => value != null && value < displayCeiling
+    );
+
+    if (firstKnownIndex >= 0) {
+      const firstKnownTime = sourceTimes[firstKnownIndex] as number;
+      const displayTimes: Date[] = [];
+      let cursor = firstKnownTime - firstKnownIndex;
+
+      for (let index = 0; index < items.length; index += 1) {
+        const candidate = sourceTimes[index];
+        if (
+          index >= firstKnownIndex &&
+          candidate != null &&
+          candidate > cursor &&
+          candidate < displayCeiling
+        ) {
+          cursor = candidate;
+        } else if (index > 0) {
+          cursor += 1;
+        }
+        displayTimes.push(new Date(cursor));
+      }
+
+      if (displayTimes[displayTimes.length - 1].getTime() < displayCeiling) {
+        return displayTimes;
+      }
+    }
+
+    return items.map(
+      (_, index) => new Date(displayCeiling - (items.length - index))
+    );
+  }
+
+  private async markPreviouslyImportedItems(
+    batch: ConversationChatImportBatchEntity,
+    items: ConversationChatImportItemEntity[]
+  ): Promise<void> {
+    const messages = await this.messageModel.find({
+      where: {
+        conversationId: batch.conversationId,
+        source: MessageSource.wechatImport,
+        isArchived: { $ne: true },
+      } as never,
+      order: { importedAt: 'ASC', sourceSequence: 'ASC' },
+    });
+    const groups = new Map<string, MessageEntity[]>();
+
+    for (const message of messages) {
+      if (
+        !message.importBatchId ||
+        message.importBatchId.equals(batch.id) ||
+        ![MessageRole.user, MessageRole.assistant].includes(message.role) ||
+        message.type !== MessageType.text ||
+        !message.content?.trim()
+      ) {
+        continue;
+      }
+
+      const key = this.stringifyObjectId(message.importBatchId);
+      const group = groups.get(key) || [];
+      group.push(message);
+      groups.set(key, group);
+    }
+
+    markPreviouslyImportedChatItems(
+      items,
+      [...groups.values()].map(group =>
+        group.map(message => ({
+          speaker:
+            message.role === MessageRole.user
+              ? ConversationChatImportSpeaker.user
+              : ConversationChatImportSpeaker.agent,
+          content: message.content,
+          occurredAt: message.sourceOccurredAt,
+          rawTimeText: message.sourceRawTimeText,
+          sourceSequence: message.sourceSequence,
+        }))
+      )
+    );
   }
 
   private async linkAutomaticSourceMessage(

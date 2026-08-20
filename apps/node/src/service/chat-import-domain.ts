@@ -20,6 +20,14 @@ export interface ChatImportSortableItem {
   isDuplicate?: boolean;
 }
 
+export interface ExistingChatImportComparableItem {
+  speaker: ConversationChatImportSpeaker;
+  content: string;
+  rawTimeText?: string;
+  occurredAt?: Date;
+  sourceSequence?: number;
+}
+
 export interface ChatImportLanguageStatistics {
   messageCount: number;
   dayCount: number;
@@ -122,6 +130,130 @@ export function markDuplicateChatImportItems<T extends ChatImportSortableItem>(
   return sortChatImportItems(items);
 }
 
+/**
+ * Marks a previously imported, contiguous conversation segment as duplicate.
+ *
+ * A single repeated short reply is deliberately not enough evidence: people
+ * really do say “嗯” or “好” more than once. Cross-batch matching therefore
+ * requires either an exact multi-message batch match, a sufficiently strong
+ * multi-message run, or one longer message with the same explicit time.
+ */
+export function markPreviouslyImportedChatItems<
+  T extends ChatImportSortableItem
+>(items: T[], existingGroups: ExistingChatImportComparableItem[][]): T[] {
+  const incoming = sortChatImportItems(items).filter(item => !item.isDuplicate);
+
+  for (const rawGroup of existingGroups) {
+    const existing = [...rawGroup].sort(
+      (left, right) => (left.sourceSequence ?? 0) - (right.sourceSequence ?? 0)
+    );
+
+    for (
+      let incomingStart = 0;
+      incomingStart < incoming.length;
+      incomingStart += 1
+    ) {
+      for (
+        let existingStart = 0;
+        existingStart < existing.length;
+        existingStart += 1
+      ) {
+        let length = 0;
+
+        while (
+          incomingStart + length < incoming.length &&
+          existingStart + length < existing.length &&
+          isContiguousExistingSequence(existing, existingStart, length) &&
+          isSameOverlapMessage(
+            incoming[incomingStart + length],
+            existing[existingStart + length]
+          )
+        ) {
+          length += 1;
+        }
+
+        if (
+          !isStrongPreviouslyImportedMatch(
+            incoming,
+            existing,
+            incomingStart,
+            existingStart,
+            length
+          )
+        ) {
+          continue;
+        }
+
+        for (let offset = 0; offset < length; offset += 1) {
+          incoming[incomingStart + offset].isDuplicate = true;
+        }
+      }
+    }
+  }
+
+  return sortChatImportItems(items);
+}
+
+function isContiguousExistingSequence(
+  items: ExistingChatImportComparableItem[],
+  start: number,
+  offset: number
+): boolean {
+  if (offset === 0) {
+    return true;
+  }
+
+  const previous = items[start + offset - 1].sourceSequence;
+  const current = items[start + offset].sourceSequence;
+  return (
+    previous === undefined || current === undefined || current === previous + 1
+  );
+}
+
+function isStrongPreviouslyImportedMatch(
+  incoming: ChatImportSortableItem[],
+  existing: ExistingChatImportComparableItem[],
+  incomingStart: number,
+  existingStart: number,
+  length: number
+): boolean {
+  if (length <= 0) {
+    return false;
+  }
+
+  const exactMultiMessageBatch =
+    length >= 2 &&
+    incomingStart === 0 &&
+    existingStart === 0 &&
+    length === incoming.length &&
+    length === existing.length;
+  if (exactMultiMessageBatch) {
+    return true;
+  }
+
+  const visibleLength = incoming
+    .slice(incomingStart, incomingStart + length)
+    .reduce(
+      (total, item) =>
+        total + countVisibleCharacters(normalizeChatImportText(item.content)),
+      0
+    );
+
+  if (length >= 3 && visibleLength >= 8) {
+    return true;
+  }
+
+  if (length >= 2 && visibleLength >= 16) {
+    return true;
+  }
+
+  return (
+    length === 1 &&
+    visibleLength >= 8 &&
+    hasMatchingExplicitTime(incoming[incomingStart], existing[existingStart])
+  );
+}
+
 function findAdjacentScreenshotOverlap<T extends ChatImportSortableItem>(
   previousItems: T[],
   currentItems: T[]
@@ -160,8 +292,14 @@ function findAdjacentScreenshotOverlap<T extends ChatImportSortableItem>(
 }
 
 function isSameOverlapMessage(
-  left: ChatImportSortableItem,
-  right: ChatImportSortableItem
+  left: Pick<
+    ChatImportSortableItem,
+    'speaker' | 'content' | 'occurredAt' | 'rawTimeText'
+  >,
+  right: Pick<
+    ChatImportSortableItem,
+    'speaker' | 'content' | 'occurredAt' | 'rawTimeText'
+  >
 ): boolean {
   return (
     left.speaker === right.speaker &&
@@ -178,8 +316,8 @@ function normalizeComparableText(value: string): string {
 }
 
 function areTimesCompatible(
-  left: ChatImportSortableItem,
-  right: ChatImportSortableItem
+  left: Pick<ChatImportSortableItem, 'occurredAt' | 'rawTimeText'>,
+  right: Pick<ChatImportSortableItem, 'occurredAt' | 'rawTimeText'>
 ): boolean {
   if (left.occurredAt && right.occurredAt) {
     return (
@@ -194,8 +332,8 @@ function areTimesCompatible(
 }
 
 function hasMatchingExplicitTime(
-  left: ChatImportSortableItem,
-  right: ChatImportSortableItem
+  left: Pick<ChatImportSortableItem, 'occurredAt' | 'rawTimeText'>,
+  right: Pick<ChatImportSortableItem, 'occurredAt' | 'rawTimeText'>
 ): boolean {
   if (left.occurredAt && right.occurredAt) {
     return (
@@ -211,27 +349,11 @@ function hasMatchingExplicitTime(
 export function sortChatImportItems<T extends ChatImportSortableItem>(
   items: T[]
 ): T[] {
-  return [...items].sort((left, right) => {
-    const leftTime = left.occurredAt?.getTime();
-    const rightTime = right.occurredAt?.getTime();
-
-    if (leftTime != null && rightTime != null && leftTime !== rightTime) {
-      return leftTime - rightTime;
-    }
-
-    if (leftTime != null && rightTime == null) {
-      return -1;
-    }
-
-    if (leftTime == null && rightTime != null) {
-      return 1;
-    }
-
-    return (
+  return [...items].sort(
+    (left, right) =>
       left.screenshotSequence - right.screenshotSequence ||
       left.bubbleSequence - right.bubbleSequence
-    );
-  });
+  );
 }
 
 export function analyzeChatImportLanguage(
