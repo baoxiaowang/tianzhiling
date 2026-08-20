@@ -430,14 +430,6 @@ export default {
     ),
     l5TraceOnly: readBooleanFrom(['NODE_CHAT_L5_TRACE_ONLY'], true),
   },
-  chatTrace: {
-    // Full prompt/revision snapshots are sampled as one trace-wide unit. The
-    // ordinary timing/token spans remain enabled for every reply.
-    artifactSampleRate: readNumberFrom(
-      ['NODE_CHAT_TRACE_ARTIFACT_SAMPLE_RATE'],
-      0
-    ),
-  },
   chatTools: {
     mode: readStringFrom(['NODE_CHAT_TOOLS_MODE'], 'shadow'),
     shadowSampleRate: readNumberFrom(

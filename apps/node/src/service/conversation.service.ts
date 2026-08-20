@@ -11,7 +11,6 @@ import {
   AgentShareMemberStatus,
   ChatSpanAttributeValue,
   ChatSpanStatus,
-  ChatTraceArtifactKind,
   ChatTraceStage,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
@@ -144,7 +143,10 @@ import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
-import { ChatTraceService } from './chat-trace.service';
+import {
+  ChatTraceArtifactKind,
+  ChatTraceService,
+} from './chat-trace.service';
 import {
   AgentChatToolDecision,
   AgentChatToolName,

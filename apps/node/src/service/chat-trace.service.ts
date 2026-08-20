@@ -5,7 +5,6 @@ import {
   ChatSpanAttributeValue,
   ChatSpanEntity,
   ChatSpanStatus,
-  ChatTraceArtifactKind,
   ChatTraceEntity,
   ChatTraceStage,
   ChatTraceStatus,
@@ -13,6 +12,16 @@ import {
 import { createHash, randomBytes } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { MongoRepository } from 'typeorm';
+
+export enum ChatTraceArtifactKind {
+  actualContext = 'actual_context',
+  externalEvidence = 'external_evidence',
+  mainModelDraft = 'main_model_draft',
+  reviewCandidate = 'review_candidate',
+  revisionDraft = 'revision_draft',
+  finalBubbles = 'final_bubbles',
+  deliveryResult = 'delivery_result',
+}
 
 const CHAT_SPAN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_SPAN_ATTRIBUTES = 24;
@@ -347,11 +356,18 @@ export class ChatTraceService {
     span.completedAt = now;
     span.durationMs = 0;
     span.attributes = this.normalizeAttributes(options.attributes);
-    span.artifactKind = options.kind;
-    span.artifactPayload = serialized.payload;
-    span.artifactHash = serialized.hash;
-    span.artifactBytes = serialized.bytes;
-    span.artifactTruncated = serialized.truncated;
+    const artifactSpan = span as ChatSpanEntity & {
+      artifactKind?: ChatTraceArtifactKind;
+      artifactPayload?: string;
+      artifactHash?: string;
+      artifactBytes?: number;
+      artifactTruncated?: boolean;
+    };
+    artifactSpan.artifactKind = options.kind;
+    artifactSpan.artifactPayload = serialized.payload;
+    artifactSpan.artifactHash = serialized.hash;
+    artifactSpan.artifactBytes = serialized.bytes;
+    artifactSpan.artifactTruncated = serialized.truncated;
     span.expiresAt = new Date(now.getTime() + CHAT_SPAN_RETENTION_MS);
     active.collection.spans.push(span);
     active.collection.artifactStoredBytes += Buffer.byteLength(
