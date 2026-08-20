@@ -54,10 +54,15 @@ const MAX_IMPORT_ASSETS = 30;
 const MAX_IMPORT_ITEMS = 300;
 const MEMORY_CHUNK_SIZE = 16;
 const MAX_MEMORY_CANDIDATES = 12;
+const AUTOMATIC_CHAT_IMPORT_REQUEST_PREFIX = 'automatic-image:';
 
 export interface ConversationChatImportJobData {
   batchId: string;
   operation: 'recognize' | 'memory';
+}
+
+export interface StartAutomaticConversationChatImportOptions {
+  message: MessageEntity;
 }
 
 interface RecognizedScreenshotMessage {
@@ -112,6 +117,95 @@ export class ConversationChatImportService {
 
   @Inject()
   bullmqFramework: bullmq.Framework;
+
+  async startAutomaticImportFromMessage(
+    options: StartAutomaticConversationChatImportOptions
+  ): Promise<ConversationChatImportBatchEntity> {
+    const message = options.message;
+    const objectKey = message.mediaObjectKey?.trim();
+
+    if (message.type !== MessageType.image || !objectKey) {
+      throw new AppError(
+        'CHAT_IMPORT_ASSET_REQUIRED',
+        'automatic chat import requires an image message asset',
+        400
+      );
+    }
+
+    const clientRequestId = `${AUTOMATIC_CHAT_IMPORT_REQUEST_PREFIX}${this.stringifyObjectId(
+      message.id
+    )}`;
+    const existing = await this.batchModel.findOne({
+      where: {
+        userId: message.userId,
+        clientRequestId,
+      },
+    });
+
+    if (existing) {
+      await this.linkAutomaticSourceMessage(message, existing);
+      return existing;
+    }
+
+    const now = new Date();
+    const batch = new ConversationChatImportBatchEntity();
+    batch.userId = message.userId;
+    batch.agentId = message.agentId;
+    batch.conversationId = message.conversationId;
+    batch.clientRequestId = clientRequestId;
+    batch.status = ConversationChatImportStatus.queued;
+    batch.assets = [
+      {
+        id: randomBytes(12).toString('hex'),
+        objectKey,
+        publicUrl: message.mediaUrl?.trim() || undefined,
+        mimeType: message.mediaMimeType?.trim() || undefined,
+        screenshotSequence: 0,
+        imageHash: createHash('sha1').update(objectKey).digest('hex'),
+        status: 'uploaded',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    batch.leftSpeaker = ConversationChatImportSpeaker.agent;
+    batch.rightSpeaker = ConversationChatImportSpeaker.user;
+    batch.screenshotCount = 1;
+    batch.recognizedCount = 0;
+    batch.confirmedCount = 0;
+    batch.failedCount = 0;
+    batch.duplicateCount = 0;
+    batch.deleteAssetsAfterImport = false;
+    batch.memoryStatus = 'pending';
+    batch.styleStatus = 'pending';
+    batch.memoryCandidates = [];
+    batch.retryCount = 0;
+    batch.submittedAt = now;
+    batch.createdAt = now;
+    batch.updatedAt = now;
+    await this.batchModel.save(batch);
+    await this.linkAutomaticSourceMessage(message, batch);
+
+    try {
+      await this.enqueue({
+        batchId: this.stringifyObjectId(batch.id),
+        operation: 'recognize',
+      });
+    } catch (error) {
+      batch.status = ConversationChatImportStatus.failed;
+      batch.errorCode = 'CHAT_IMPORT_QUEUE_UNAVAILABLE';
+      batch.errorDetail = this.describeError(error).slice(0, 1000);
+      batch.updatedAt = new Date();
+      await this.batchModel.save(batch);
+      this.logger.warn(
+        '[chat-import] automatic import queue unavailable, batchId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(batch.id),
+        this.stringifyObjectId(message.id),
+        batch.errorDetail
+      );
+    }
+
+    return batch;
+  }
 
   async createBatch(
     auth: AuthenticatedUserPayload,
@@ -696,6 +790,13 @@ export class ConversationChatImportService {
         ? undefined
         : '没有从截图中识别到可导入的两人聊天文字';
       await this.batchModel.save(batch);
+
+      if (
+        this.isAutomaticImportBatch(batch) &&
+        batch.status === ConversationChatImportStatus.needsReview
+      ) {
+        await this.completeAutomaticImport(batch);
+      }
     } catch (error) {
       batch.status = ConversationChatImportStatus.failed;
       batch.errorCode = 'CHAT_IMPORT_RECOGNITION_FAILED';
@@ -817,9 +918,10 @@ export class ConversationChatImportService {
 
   private async persistImportedMessages(
     batch: ConversationChatImportBatchEntity,
-    items: ConversationChatImportItemEntity[]
+    items: ConversationChatImportItemEntity[],
+    options: { displayAt?: Date } = {}
   ): Promise<void> {
-    const importedAt = batch.confirmedAt || new Date();
+    const importedAt = options.displayAt || batch.confirmedAt || new Date();
     const latestKnown = items.reduce(
       (latest, item) => Math.max(latest, item.occurredAt?.getTime() || 0),
       0
@@ -873,7 +975,9 @@ export class ConversationChatImportService {
       message.recognitionConfidence = item.recognitionConfidence;
       message.quotaExempt = true;
       message.replyTrigger = false;
-      message.createdAt = new Date(occurredAt.getTime() + sequence);
+      message.createdAt = options.displayAt
+        ? new Date(options.displayAt.getTime() + sequence)
+        : new Date(occurredAt.getTime() + sequence);
       message.updatedAt = message.createdAt;
       await this.messageModel.save(message);
 
@@ -883,6 +987,99 @@ export class ConversationChatImportService {
       await this.itemModel.save(item);
       sequence += 1;
     }
+  }
+
+  private async completeAutomaticImport(
+    batch: ConversationChatImportBatchEntity
+  ): Promise<void> {
+    const items = sortChatImportItems(
+      (await this.listBatchItems(batch)).filter(
+        item =>
+          !item.isDeleted &&
+          !item.isDuplicate &&
+          Boolean(item.content?.trim()) &&
+          [
+            ConversationChatImportSpeaker.user,
+            ConversationChatImportSpeaker.agent,
+          ].includes(item.speaker)
+      )
+    ).slice(0, MAX_IMPORT_ITEMS);
+
+    if (!items.length) {
+      batch.status = ConversationChatImportStatus.failed;
+      batch.errorCode = 'CHAT_IMPORT_EMPTY';
+      batch.errorDetail = '没有识别到可导入的两人聊天文字';
+      batch.updatedAt = new Date();
+      await this.batchModel.save(batch);
+      return;
+    }
+
+    const displayAt = new Date();
+    batch.status = ConversationChatImportStatus.importing;
+    batch.updatedAt = displayAt;
+    await this.batchModel.save(batch);
+
+    try {
+      await this.persistImportedMessages(batch, items, { displayAt });
+    } catch (error) {
+      batch.status = ConversationChatImportStatus.failed;
+      batch.errorCode = 'CHAT_IMPORT_WRITE_FAILED';
+      batch.errorDetail = this.describeError(error).slice(0, 1000);
+      batch.updatedAt = new Date();
+      await this.batchModel.save(batch);
+      this.logger.warn(
+        '[chat-import] automatic import write failed, batchId=%s, reason=%s',
+        this.stringifyObjectId(batch.id),
+        batch.errorDetail
+      );
+      return;
+    }
+
+    batch.confirmedCount = items.length;
+    batch.confirmedAt = new Date();
+    batch.status = ConversationChatImportStatus.extractingMemory;
+    batch.memoryStatus = 'queued';
+    batch.styleStatus = 'queued';
+    batch.updatedAt = batch.confirmedAt;
+    await this.batchModel.save(batch);
+    await this.touchConversationForAutomaticImport(batch);
+
+    try {
+      await this.enqueue({
+        batchId: this.stringifyObjectId(batch.id),
+        operation: 'memory',
+      });
+    } catch (error) {
+      batch.status = ConversationChatImportStatus.completed;
+      batch.memoryStatus = 'failed';
+      batch.styleStatus = 'failed';
+      batch.errorCode = 'CHAT_IMPORT_MEMORY_QUEUE_UNAVAILABLE';
+      batch.errorDetail = this.describeError(error).slice(0, 1000);
+      batch.completedAt = new Date();
+      batch.updatedAt = batch.completedAt;
+      await this.batchModel.save(batch);
+    }
+  }
+
+  private async linkAutomaticSourceMessage(
+    message: MessageEntity,
+    batch: ConversationChatImportBatchEntity
+  ): Promise<void> {
+    message.importBatchId = batch.id;
+    message.quotaExempt = true;
+    message.replyTrigger = false;
+    message.updatedAt = new Date();
+    await this.messageModel.save(message);
+  }
+
+  private async touchConversationForAutomaticImport(
+    batch: ConversationChatImportBatchEntity
+  ): Promise<void> {
+    const updatedAt = batch.confirmedAt || new Date();
+    await this.conversationModel.updateOne(
+      { _id: batch.conversationId } as never,
+      { $set: { updatedAt } } as never
+    );
   }
 
   private async persistImportSummaryMessage(
@@ -1683,6 +1880,14 @@ export class ConversationChatImportService {
 
   private stringifyObjectId(value?: MongoObjectId): string {
     return value?.toHexString?.() ?? (value ? String(value) : '');
+  }
+
+  private isAutomaticImportBatch(
+    batch: ConversationChatImportBatchEntity
+  ): boolean {
+    return Boolean(
+      batch.clientRequestId?.startsWith(AUTOMATIC_CHAT_IMPORT_REQUEST_PREFIX)
+    );
   }
 
   private describeError(error: unknown): string {
