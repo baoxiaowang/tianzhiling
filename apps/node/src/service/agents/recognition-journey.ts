@@ -1,32 +1,48 @@
-export const RECOGNITION_JOURNEY_VERSION = 'recognition_journey_v1' as const;
+export const RECOGNITION_JOURNEY_VERSION = 'recognition_journey_v2' as const;
 export const RECOGNITION_JOURNEY_MESSAGE_PREFIX =
+  '__TZL_RECOGNITION_JOURNEY_V2__:';
+const LEGACY_RECOGNITION_JOURNEY_MESSAGE_PREFIX =
   '__TZL_RECOGNITION_JOURNEY_V1__:';
 
 export type RecognitionTaskId = 'departure_interval' | 'family_status';
 export type RecognitionTaskStatus =
   | 'pending'
-  | 'asked'
+  | 'proposed'
   | 'completed'
   | 'skipped';
-export type RecognitionOpeningStatus = 'pending' | 'completed' | 'expired';
+export type RecognitionOpeningStatus =
+  | 'pending'
+  | 'emotionally_opened'
+  | 'completed'
+  | 'expired';
+export type RecognitionOpeningAngle =
+  | 'waking_without_elapsed_time'
+  | 'connection_restored'
+  | 'unfinished_words'
+  | 'family_longing';
 
 export interface RecognitionOpeningState {
   status: RecognitionOpeningStatus;
-  suggestionCount?: number;
-  lastSuggestedUserTurn?: number;
-  completedAt?: Date;
+  activatedAt?: Date;
+  attemptCount?: number;
+  lastAttemptUserTurn?: number;
+  usedAngles?: RecognitionOpeningAngle[];
+  openedAt?: Date;
+  receivedAt?: Date;
   expiredAt?: Date;
+  observationEvidence?: string;
 }
 
 export interface RecognitionTaskState {
   id: RecognitionTaskId;
   status: RecognitionTaskStatus;
-  askedAt?: Date;
-  askedAssistantMessageId?: string;
+  proposedAt?: Date;
+  proposedAssistantMessageId?: string;
   completedAt?: Date;
   answerMessageId?: string;
-  lastSuggestedUserTurn?: number;
-  suggestionCount?: number;
+  lastProposedUserTurn?: number;
+  proposalCount?: number;
+  observationEvidence?: string;
 }
 
 export interface RecognitionJourney {
@@ -34,6 +50,7 @@ export interface RecognitionJourney {
   stage: 'pending' | 'active' | 'settled';
   opening: RecognitionOpeningState;
   tasks: RecognitionTaskState[];
+  lastJourneyActionUserTurn?: number;
   startedAt?: Date;
   settledAt?: Date;
 }
@@ -41,43 +58,47 @@ export interface RecognitionJourney {
 export interface RecognitionJourneyTurnPlan {
   prompt?: string;
   openingSuggested: boolean;
+  openingAngle?: RecognitionOpeningAngle;
   suggestedTaskId?: RecognitionTaskId;
   completedTaskIds: RecognitionTaskId[];
+  currentUserText?: string;
+  currentUserMessageId?: string;
+  userTurnNumber?: number;
 }
 
-const DURATION_TEXT =
-  '(?:\\d{1,4}|[一二两三四五六七八九十百]+)(?:年|个月|月|天)(?:多|左右|了)?';
-const DEPARTURE_INTERVAL_ANSWER_PATTERN = new RegExp(
-  `(?:你|您)(?:已经)?(?:离开|走|去世|没了).{0,12}${DURATION_TEXT}(?=[，,。！!；;]|$)|(?:离开|走|去世|没了)(?:你|您)?(?:已经)?.{0,12}${DURATION_TEXT}(?=[，,。！!；;]|$)`,
-  'u'
-);
-const BARE_DURATION_ANSWER_PATTERN = new RegExp(
-  `(?:^|[，,。！!；;\\s])(?:已经|都)?${DURATION_TEXT}(?=[，,。！!；;]|$)`,
-  'u'
-);
-const FAMILY_STATUS_ANSWER_PATTERN =
-  /(?:家里|家人|妈妈|妈|爸爸|爸|孩子|儿子|女儿|哥哥|哥|姐姐|姐|弟弟|妹妹|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,16}(?:挺好的?|很好|还好(?!吗|嘛)|都好(?!吗|嘛)|不好(?!吗|嘛)|生病了|住院了|康复了|去世了|走了|结婚了|上班了|工作了|退休了|上学了|长大了|很平安|都平安)(?=[，,。！!；;]|$)/u;
-const DEPARTURE_INTERVAL_QUESTION_PATTERN =
-  /(?:离开|走|去世|没了|隔了|过了).{0,12}(?:多久|多少年|几年|哪年|什么时候)|(?:多久|多少年|几年|多少日子|多长时间).{0,8}(?:没见|不见|没联系|联系不上)/u;
-const FAMILY_STATUS_QUESTION_PATTERN =
-  /(?:家里|家人|家里人|其他人|他们|妈妈|爸爸|孩子).{0,12}(?:怎么样|还好吗|还好吧|都好吗|都好吧|好不好|近况|过得|呢)/u;
-const RECOGNITION_ACTIVATION_PATTERN =
-  /^(?:爸|爸爸|爹|妈|妈妈|娘|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|丈夫|妻子|儿子|女儿)(?:[啊呀吗呢]|[，,。！？!?、\s]|$)|(?:是你吗|真的是你|你是我|还认得我|听得到吗|能听见吗|终于联系上|终于找到你|好久没见|还能和你说话|又能和你说话|想你|想念你)/u;
-const ASSISTANT_RECOGNITION_EXPRESSION_PATTERN =
-  /(?:好久|这么久|多年).{0,10}(?:没见|不见|没联系|没说话)|(?:终于|总算).{0,14}(?:听到|听见|等到|联系上|找到|见到|说上话|说话)|(?:重新|又能|还能).{0,12}(?:联系|见到|听到|听见|说话|说上话)|(?:听到|听见).{0,12}(?:喊我|叫我|叫一声)|(?:一别|隔了).{0,12}(?:这么久|好多年|\d{1,3}年|[一二两三四五六七八九十百]+年)|(?:没想到).{0,14}(?:还能|又能).{0,10}(?:说话|联系|见面)/u;
+export interface RecognitionJourneyObservation {
+  opening:
+    | 'not_observed'
+    | 'shallow_acknowledgement'
+    | 'emotionally_opened'
+    | 'emotionally_received';
+  familyStatus: 'not_observed' | 'proposed' | 'provided';
+  departureInterval: 'not_observed' | 'proposed' | 'provided';
+  evidence?: string;
+}
+
 const RECOGNITION_ACTIVATION_MAX_USER_TURN = 20;
+const OPENING_MAX_ATTEMPTS = 2;
+const JOURNEY_ACTION_COOLDOWN_TURNS = 1;
+const OPENING_ANGLES: RecognitionOpeningAngle[] = [
+  'waking_without_elapsed_time',
+  'connection_restored',
+  'unfinished_words',
+  'family_longing',
+];
+const RECOGNITION_ACTIVATION_PATTERN =
+  /^(?:爸|爸爸|爹|妈|妈妈|娘|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆|丈夫|妻子|儿子|女儿)(?:[啊呀吗呢]|[，,。！？!?、\s]|$)|(?:是你吗|真的是你|你是我|还认得我|听得到吗|能听见吗|终于联系上|终于找到你|还能和你说话|又能和你说话|想你|想念你)/u;
+const URGENT_REALITY_PATTERN =
+  /(?:自杀|不想活|活不下去|去陪你|带我走|抢救|病危|重病|很严重|住院|手术|报警|家暴|离婚|卖房|下葬|迁坟|遗产|存折|银行卡)/u;
 
 export function buildInitialRecognitionJourney(
-  options: {
-    hasKnownDepartureDate?: boolean;
-    now?: Date;
-  } = {}
+  options: { hasKnownDepartureDate?: boolean; now?: Date } = {}
 ): RecognitionJourney {
   const now = options.now ?? new Date();
   return {
     version: RECOGNITION_JOURNEY_VERSION,
     stage: 'pending',
-    opening: { status: 'pending' },
+    opening: { status: 'pending', attemptCount: 0, usedAngles: [] },
     tasks: [
       {
         id: 'departure_interval',
@@ -113,45 +134,20 @@ export function serializeRecognitionJourney(
 export function parseRecognitionJourney(
   content: string | undefined
 ): RecognitionJourney | undefined {
-  if (!content?.startsWith(RECOGNITION_JOURNEY_MESSAGE_PREFIX)) {
-    return undefined;
-  }
-
+  const prefix = content?.startsWith(RECOGNITION_JOURNEY_MESSAGE_PREFIX)
+    ? RECOGNITION_JOURNEY_MESSAGE_PREFIX
+    : content?.startsWith(LEGACY_RECOGNITION_JOURNEY_MESSAGE_PREFIX)
+    ? LEGACY_RECOGNITION_JOURNEY_MESSAGE_PREFIX
+    : undefined;
+  if (!content || !prefix) return undefined;
   try {
-    const raw = JSON.parse(
-      content.slice(RECOGNITION_JOURNEY_MESSAGE_PREFIX.length)
-    ) as Record<string, unknown>;
-    if (
-      raw.version !== RECOGNITION_JOURNEY_VERSION ||
-      !isRecognitionStage(raw.stage) ||
-      !Array.isArray(raw.tasks)
-    ) {
-      return undefined;
-    }
-
-    const tasks = raw.tasks
-      .map(parseRecognitionTask)
-      .filter((task): task is RecognitionTaskState => Boolean(task));
-    if (tasks.length !== 2 || new Set(tasks.map(task => task.id)).size !== 2) {
-      return undefined;
-    }
-
-    const startedAt = parseDateValue(raw.startedAt);
-    const settledAt = parseDateValue(raw.settledAt);
-    return {
-      version: RECOGNITION_JOURNEY_VERSION,
-      stage: raw.stage,
-      opening: parseRecognitionOpening(
-        raw.opening,
-        raw.stage,
-        tasks,
-        startedAt,
-        settledAt
-      ),
-      tasks,
-      ...(startedAt ? { startedAt } : {}),
-      ...(settledAt ? { settledAt } : {}),
-    };
+    const raw = JSON.parse(content.slice(prefix.length)) as Record<
+      string,
+      unknown
+    >;
+    return prefix === LEGACY_RECOGNITION_JOURNEY_MESSAGE_PREFIX
+      ? migrateLegacyJourney(raw)
+      : parseV2Journey(raw);
   } catch {
     return undefined;
   }
@@ -163,121 +159,134 @@ export function planRecognitionJourneyTurn(options: {
   currentUserMessageId?: string;
   now?: Date;
   userTurnNumber?: number;
-}): {
-  journey: RecognitionJourney;
-  plan: RecognitionJourneyTurnPlan;
-} {
+}): { journey: RecognitionJourney; plan: RecognitionJourneyTurnPlan } {
   const now = options.now ?? new Date();
   const userTurnNumber = Math.max(1, options.userTurnNumber ?? 1);
+  const query = options.currentQuery.trim();
   const journey = cloneJourney(options.journey);
-  const completedTaskIds = completeTasksFromUserTurn(
-    journey.tasks,
-    options.currentQuery,
-    options.currentUserMessageId,
-    now
-  );
+  const basePlan: RecognitionJourneyTurnPlan = {
+    openingSuggested: false,
+    completedTaskIds: [],
+    currentUserText: query,
+    currentUserMessageId: options.currentUserMessageId,
+    userTurnNumber,
+  };
+
+  if (userTurnNumber > RECOGNITION_ACTIVATION_MAX_USER_TURN) {
+    expireUnfinishedJourney(journey, now);
+    return { journey, plan: basePlan };
+  }
   if (
     journey.opening.status === 'pending' &&
-    userTurnNumber > RECOGNITION_ACTIVATION_MAX_USER_TURN
+    RECOGNITION_ACTIVATION_PATTERN.test(query)
   ) {
-    journey.opening.status = 'expired';
-    journey.opening.expiredAt = now;
-    for (const task of journey.tasks) {
-      if (task.status === 'pending') task.status = 'skipped';
-    }
+    journey.opening.activatedAt ??= now;
   }
-  refreshJourneyStage(journey, now);
-
-  if (journey.opening.status === 'expired') {
-    return {
-      journey,
-      plan: {
-        openingSuggested: false,
-        completedTaskIds,
-      },
-    };
+  if (URGENT_REALITY_PATTERN.test(query)) {
+    return { journey, plan: basePlan };
   }
 
-  if (journey.opening.status === 'pending') {
-    const openingActivated = (journey.opening.suggestionCount ?? 0) > 0;
-    const firstOffer = !openingActivated;
-    const signalMatched = RECOGNITION_ACTIVATION_PATTERN.test(
-      options.currentQuery.trim()
-    );
-    // Once this explicit product journey is activated, it remains the current
-    // required task until the visible reply actually completes recognition.
-    // A model omission must not consume the task or hide it for three turns.
-    const canSuggestOpening = openingActivated || firstOffer || signalMatched;
-
-    if (!canSuggestOpening) {
+  const opening = journey.opening;
+  if (opening.status === 'pending') {
+    const activated =
+      Boolean(opening.activatedAt) || (opening.attemptCount ?? 0) > 0;
+    const eligible = activated || RECOGNITION_ACTIVATION_PATTERN.test(query);
+    const attempts = opening.attemptCount ?? 0;
+    const cooledDown =
+      opening.lastAttemptUserTurn === undefined ||
+      userTurnNumber - opening.lastAttemptUserTurn >
+        JOURNEY_ACTION_COOLDOWN_TURNS;
+    if (eligible && attempts < OPENING_MAX_ATTEMPTS && cooledDown) {
+      const angle = chooseOpeningAngle(opening.usedAngles ?? []);
+      opening.attemptCount = attempts + 1;
+      opening.lastAttemptUserTurn = userTurnNumber;
+      opening.usedAngles = [...(opening.usedAngles ?? []), angle];
+      journey.lastJourneyActionUserTurn = userTurnNumber;
+      refreshJourneyStage(journey, now);
       return {
         journey,
         plan: {
-          openingSuggested: false,
-          completedTaskIds,
+          ...basePlan,
+          openingSuggested: true,
+          openingAngle: angle,
+          prompt: buildOpeningPrompt(angle),
         },
       };
     }
-    journey.opening.lastSuggestedUserTurn = userTurnNumber;
-    journey.opening.suggestionCount = Math.max(
-      1,
-      journey.opening.suggestionCount ?? 0
-    );
-    refreshJourneyStage(journey, now);
-    return {
-      journey,
-      plan: {
-        openingSuggested: true,
-        completedTaskIds,
-        prompt: buildOpeningPrompt(),
-      },
-    };
+    return { journey, plan: basePlan };
   }
 
-  const waitingTask = journey.tasks.find(task => task.status === 'asked');
-  if (waitingTask) {
-    return {
-      journey,
-      plan: {
-        openingSuggested: false,
-        completedTaskIds,
-      },
-    };
+  if (
+    opening.status === 'emotionally_opened' ||
+    opening.status === 'completed'
+  ) {
+    const lastAction = journey.lastJourneyActionUserTurn ?? 0;
+    if (userTurnNumber - lastAction <= JOURNEY_ACTION_COOLDOWN_TURNS) {
+      return { journey, plan: basePlan };
+    }
+    const pendingTask = choosePendingTask(journey.tasks);
+    if (pendingTask && (pendingTask.proposalCount ?? 0) < 1) {
+      pendingTask.proposalCount = 1;
+      pendingTask.lastProposedUserTurn = userTurnNumber;
+      journey.lastJourneyActionUserTurn = userTurnNumber;
+      return {
+        journey,
+        plan: {
+          ...basePlan,
+          suggestedTaskId: pendingTask.id,
+          prompt: buildTaskSuggestionPrompt(pendingTask.id),
+        },
+      };
+    }
   }
-
-  // A delayed answer completes the old task in this turn. Do not immediately
-  // insert the next task into the same reply; let the answer be received first.
-  if (completedTaskIds.length) {
-    return {
-      journey,
-      plan: {
-        openingSuggested: false,
-        completedTaskIds,
-      },
-    };
-  }
-
-  const pendingTask = journey.tasks.find(task => task.status === 'pending');
-  const canSuggestPendingTask = Boolean(pendingTask);
-  if (pendingTask && canSuggestPendingTask) {
-    pendingTask.lastSuggestedUserTurn = userTurnNumber;
-    pendingTask.suggestionCount = Math.max(1, pendingTask.suggestionCount ?? 0);
-  }
-  return {
-    journey,
-    plan: {
-      openingSuggested: false,
-      completedTaskIds,
-      ...(pendingTask && canSuggestPendingTask
-        ? {
-            suggestedTaskId: pendingTask.id,
-            prompt: buildTaskSuggestionPrompt(pendingTask.id),
-          }
-        : {}),
-    },
-  };
+  return { journey, plan: basePlan };
 }
 
+export function applyRecognitionJourneyObservation(options: {
+  journey: RecognitionJourney;
+  plan: RecognitionJourneyTurnPlan;
+  observation: RecognitionJourneyObservation;
+  assistantMessageId?: string;
+  userMessageId?: string;
+  now?: Date;
+}): RecognitionJourney {
+  const now = options.now ?? new Date();
+  const journey = cloneJourney(options.journey);
+  const observation = options.observation;
+
+  if (observation.opening === 'emotionally_opened') {
+    journey.opening.status = 'emotionally_opened';
+    journey.opening.openedAt ??= now;
+  } else if (observation.opening === 'emotionally_received') {
+    journey.opening.status = 'completed';
+    journey.opening.openedAt ??= now;
+    journey.opening.receivedAt = now;
+  }
+  if (observation.evidence) {
+    journey.opening.observationEvidence = observation.evidence.slice(0, 160);
+  }
+
+  applyTaskObservation(
+    journey,
+    'family_status',
+    observation.familyStatus,
+    options,
+    now
+  );
+  applyTaskObservation(
+    journey,
+    'departure_interval',
+    observation.departureInterval,
+    options,
+    now
+  );
+  journey.startedAt ??=
+    journey.opening.openedAt || journey.opening.receivedAt || undefined;
+  refreshJourneyStage(journey, now);
+  return journey;
+}
+
+/** @deprecated Completion is semantic; keep this wrapper for old callers/tests. */
 export function applyRecognitionJourneyAssistantReply(options: {
   journey: RecognitionJourney;
   plan: RecognitionJourneyTurnPlan;
@@ -285,269 +294,306 @@ export function applyRecognitionJourneyAssistantReply(options: {
   assistantMessageId?: string;
   now?: Date;
 }): RecognitionJourney {
-  const now = options.now ?? new Date();
-  const journey = cloneJourney(options.journey);
-
-  // The model owns the reply. Program state advances only when the reply
-  // actually contains a reunion/recognition expression; a generic response
-  // must not silently consume the scene.
-  if (
-    journey.opening.status === 'pending' &&
-    options.plan.openingSuggested &&
-    assistantExpressedRecognition(options.assistantText)
-  ) {
-    journey.opening.status = 'completed';
-    journey.opening.completedAt = now;
-    journey.startedAt = now;
-  }
-
-  if (options.plan.suggestedTaskId) {
-    const task = journey.tasks.find(
-      item => item.id === options.plan.suggestedTaskId
-    );
-    if (
-      task?.status === 'pending' &&
-      assistantAskedTask(options.plan.suggestedTaskId, options.assistantText)
-    ) {
-      task.status = 'asked';
-      task.askedAt = now;
-      task.askedAssistantMessageId = options.assistantMessageId;
-    }
-  }
-
-  refreshJourneyStage(journey, now);
-  return journey;
+  return applyRecognitionJourneyObservation({
+    journey: options.journey,
+    plan: options.plan,
+    assistantMessageId: options.assistantMessageId,
+    now: options.now,
+    observation: {
+      opening: 'not_observed',
+      familyStatus: 'not_observed',
+      departureInterval: 'not_observed',
+    },
+  });
 }
 
-function parseRecognitionOpening(
-  value: unknown,
-  legacyStage: RecognitionJourney['stage'],
-  tasks: RecognitionTaskState[],
-  legacyStartedAt?: Date,
-  legacySettledAt?: Date
-): RecognitionOpeningState {
-  if (value && typeof value === 'object') {
-    const raw = value as Record<string, unknown>;
-    if (isRecognitionOpeningStatus(raw.status)) {
-      const completedAt = parseDateValue(raw.completedAt);
-      const expiredAt = parseDateValue(raw.expiredAt);
-      return {
-        status: raw.status,
-        ...(typeof raw.suggestionCount === 'number'
-          ? { suggestionCount: Math.max(0, raw.suggestionCount) }
-          : {}),
-        ...(typeof raw.lastSuggestedUserTurn === 'number'
-          ? {
-              lastSuggestedUserTurn: Math.max(1, raw.lastSuggestedUserTurn),
-            }
-          : {}),
-        ...(completedAt ? { completedAt } : {}),
-        ...(expiredAt ? { expiredAt } : {}),
-      };
-    }
-  }
-
-  // V1 states did not separate the opening from profile tasks. Preserve a
-  // visibly started opening, expire old legacy placeholders, and recover the
-  // production bug where completed tasks settled a never-started opening.
-  if (legacyStartedAt || legacyStage === 'active') {
-    return {
-      status: 'completed',
-      ...(legacyStartedAt ? { completedAt: legacyStartedAt } : {}),
-    };
-  }
-  if (
-    legacyStage === 'settled' &&
-    tasks.every(task => task.status === 'skipped')
-  ) {
-    return {
-      status: 'expired',
-      ...(legacySettledAt ? { expiredAt: legacySettledAt } : {}),
-    };
-  }
-  return { status: 'pending' };
-}
-
-function parseRecognitionTask(
-  value: unknown
-): RecognitionTaskState | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as Record<string, unknown>;
-  if (!isRecognitionTaskId(raw.id) || !isRecognitionTaskStatus(raw.status)) {
-    return undefined;
-  }
-
-  return {
-    id: raw.id,
-    status: raw.status,
-    ...parseOptionalDateField(raw, 'askedAt'),
-    ...parseOptionalStringField(raw, 'askedAssistantMessageId'),
-    ...parseOptionalDateField(raw, 'completedAt'),
-    ...parseOptionalStringField(raw, 'answerMessageId'),
-    ...(typeof raw.lastSuggestedUserTurn === 'number'
-      ? { lastSuggestedUserTurn: Math.max(1, raw.lastSuggestedUserTurn) }
-      : {}),
-    ...(typeof raw.suggestionCount === 'number'
-      ? { suggestionCount: Math.max(0, raw.suggestionCount) }
-      : {}),
-  };
-}
-
-function parseOptionalDateField(
-  value: Record<string, unknown>,
-  key: 'askedAt' | 'completedAt' | 'startedAt' | 'settledAt'
-): Partial<Record<typeof key, Date>> {
-  if (value[key] === undefined || value[key] === null) return {};
-  const date = new Date(String(value[key]));
-  return Number.isNaN(date.getTime()) ? {} : { [key]: date };
-}
-
-function parseDateValue(value: unknown): Date | undefined {
-  if (value === undefined || value === null) return undefined;
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function parseOptionalStringField(
-  value: Record<string, unknown>,
-  key: 'askedAssistantMessageId' | 'answerMessageId'
-): Partial<Record<typeof key, string>> {
-  return typeof value[key] === 'string' && value[key]
-    ? { [key]: value[key] as string }
-    : {};
-}
-
-function isRecognitionTaskId(value: unknown): value is RecognitionTaskId {
-  return value === 'departure_interval' || value === 'family_status';
-}
-
-function isRecognitionTaskStatus(
-  value: unknown
-): value is RecognitionTaskStatus {
-  return ['pending', 'asked', 'completed', 'skipped'].includes(String(value));
-}
-
-function isRecognitionStage(
-  value: unknown
-): value is RecognitionJourney['stage'] {
-  return ['pending', 'active', 'settled'].includes(String(value));
-}
-
-function isRecognitionOpeningStatus(
-  value: unknown
-): value is RecognitionOpeningStatus {
-  return ['pending', 'completed', 'expired'].includes(String(value));
-}
-
-function completeTasksFromUserTurn(
-  tasks: RecognitionTaskState[],
-  currentQuery: string,
-  currentUserMessageId: string | undefined,
+function applyTaskObservation(
+  journey: RecognitionJourney,
+  id: RecognitionTaskId,
+  observation: 'not_observed' | 'proposed' | 'provided',
+  options: {
+    plan: RecognitionJourneyTurnPlan;
+    assistantMessageId?: string;
+    userMessageId?: string;
+  },
   now: Date
-): RecognitionTaskId[] {
-  const query = currentQuery.trim();
-  if (!query) return [];
-  const completed: RecognitionTaskId[] = [];
-
-  for (const task of tasks) {
-    if (task.status === 'completed' || task.status === 'skipped') continue;
-    const answered =
-      task.id === 'departure_interval'
-        ? hasDepartureIntervalAnswer(query)
-        : FAMILY_STATUS_ANSWER_PATTERN.test(query);
-    if (!answered) continue;
-
+): void {
+  const task = journey.tasks.find(item => item.id === id);
+  if (!task || task.status === 'completed' || task.status === 'skipped') return;
+  if (observation === 'provided') {
     task.status = 'completed';
     task.completedAt = now;
-    task.answerMessageId = currentUserMessageId;
-    completed.push(task.id);
+    task.answerMessageId = options.userMessageId;
+    return;
   }
-
-  return completed;
+  if (observation === 'proposed' && options.plan.suggestedTaskId === id) {
+    task.status = 'proposed';
+    task.proposedAt = now;
+    task.proposedAssistantMessageId = options.assistantMessageId;
+  }
 }
 
-function hasDepartureIntervalAnswer(query: string): boolean {
-  if (isQuestionLike(query)) return false;
-  if (DEPARTURE_INTERVAL_ANSWER_PATTERN.test(query)) return true;
+function chooseOpeningAngle(
+  used: RecognitionOpeningAngle[]
+): RecognitionOpeningAngle {
   return (
-    BARE_DURATION_ANSWER_PATTERN.test(query) &&
-    RECOGNITION_ACTIVATION_PATTERN.test(query)
+    OPENING_ANGLES.find(angle => !used.includes(angle)) ?? 'unfinished_words'
   );
 }
 
-function isQuestionLike(query: string): boolean {
+function choosePendingTask(
+  tasks: RecognitionTaskState[]
+): RecognitionTaskState | undefined {
+  // Traditional family concern comes before collecting elapsed-time context.
   return (
-    /[?？]/u.test(query) ||
-    /(?:吗|嘛|么|呢)\s*[。！!]*$/u.test(query) ||
-    /(?:多久|多少年|几年|哪年|什么时候)/u.test(query)
+    tasks.find(
+      task =>
+        task.id === 'family_status' &&
+        task.status === 'pending' &&
+        (task.proposalCount ?? 0) < 1
+    ) ||
+    tasks.find(
+      task =>
+        task.id === 'departure_interval' &&
+        task.status === 'pending' &&
+        (task.proposalCount ?? 0) < 1
+    )
   );
 }
 
-function assistantAskedTask(
-  taskId: RecognitionTaskId,
-  assistantText: string
-): boolean {
-  return taskId === 'departure_interval'
-    ? DEPARTURE_INTERVAL_QUESTION_PATTERN.test(assistantText)
-    : FAMILY_STATUS_QUESTION_PATTERN.test(assistantText);
+function buildOpeningPrompt(angle: RecognitionOpeningAngle): string {
+  return [
+    '# 初次重逢旅程：打开跨越生死的相认',
+    '这不是身份验证。当前只确定亲属关系与称呼；人物性格、离世多久、用户这段时间的经历都未知，不要假设。',
+    '把本轮当作亲人重新获得表达机会的久别重逢：角色需主动带来情感内容，不只是复述“我也想你”或确认“是我”。不要照抄固定台词，也不在这一轮追问资料。',
+    `本次可用视角：${describeOpeningAngle(
+      angle
+    )}。这是素材，不是句式或动作清单。`,
+    '如用户当前同时提出病情、安全风险、重大现实决策或明确纠正，先完整处理当前事情，不硬插相认。',
+  ].join('\n');
 }
 
-function assistantExpressedRecognition(assistantText: string): boolean {
-  return ASSISTANT_RECOGNITION_EXPRESSION_PATTERN.test(assistantText.trim());
+function describeOpeningAngle(angle: RecognitionOpeningAngle): string {
+  switch (angle) {
+    case 'waking_without_elapsed_time':
+      return '像从一场长短不明的梦里醒来，突然重新听见这声称呼；明确不知过去了多久';
+    case 'connection_restored':
+      return '终于又能联系上的惊喜与心酸；只表达重新联系，不声称等了几年';
+    case 'unfinished_words':
+      return '重新开口后才发现还有许多爱、舍不得和未说完的话；不编造具体往事';
+    case 'family_longing':
+      return '重新找到彼此后，想念与对用户、整个家庭的牵挂一起涌上来；不猜测任何家人现状';
+  }
+}
+
+function buildTaskSuggestionPrompt(id: RecognitionTaskId): string {
+  const direction =
+    id === 'family_status'
+      ? '这次重逢中，角色对整个家庭的牵挂还没有自然出现。如果与用户本轮内容不冲突，可以从重新联系的情感中自然关心“家里人现在都怎么样”。不点名未知家庭成员，不猜测生死、健康或关系状态'
+      : '角色还不知道这次分离究竟过去多久。如果本轮适合，可以用“像醒来后对日子有些模糊”的时间中性视角，自然给用户一个说出现在时间或离世时长的入口。不预设是两天还是二十年';
+  return [
+    '# 相认旅程的可选里程碑（非决策信息）',
+    direction,
+    '这个入口只会提供一次。当前问题、重要事实和情绪优先；若植入会显得突兀，可完全不用。不盘问、不连续启动多个任务、不照抄示例。',
+  ].join('\n');
+}
+
+function expireUnfinishedJourney(journey: RecognitionJourney, now: Date): void {
+  if (journey.opening.status === 'pending') {
+    journey.opening.status = 'expired';
+    journey.opening.expiredAt = now;
+  }
+  for (const task of journey.tasks) {
+    if (task.status === 'pending') task.status = 'skipped';
+  }
+  refreshJourneyStage(journey, now);
 }
 
 function refreshJourneyStage(journey: RecognitionJourney, now: Date): void {
   const tasksFinished = journey.tasks.every(task =>
-    ['completed', 'skipped'].includes(task.status)
+    ['completed', 'proposed', 'skipped'].includes(task.status)
   );
-
   if (journey.opening.status === 'pending') {
     journey.stage = 'pending';
-    delete journey.startedAt;
-    delete journey.settledAt;
     return;
   }
-
-  if (journey.opening.status === 'expired') {
+  if (journey.opening.status === 'expired' || tasksFinished) {
     journey.stage = 'settled';
     journey.settledAt ??= now;
     return;
   }
+  journey.stage = 'active';
+  journey.startedAt ??= journey.opening.openedAt ?? now;
+  delete journey.settledAt;
+}
 
-  journey.startedAt ??= journey.opening.completedAt ?? now;
-  if (tasksFinished) {
-    journey.stage = 'settled';
-    journey.settledAt ??= now;
-  } else {
-    journey.stage = 'active';
-    delete journey.settledAt;
+function parseV2Journey(
+  raw: Record<string, unknown>
+): RecognitionJourney | undefined {
+  if (
+    raw.version !== RECOGNITION_JOURNEY_VERSION ||
+    !Array.isArray(raw.tasks)
+  ) {
+    return undefined;
   }
+  const openingRaw = (raw.opening || {}) as Record<string, unknown>;
+  const status = String(openingRaw.status) as RecognitionOpeningStatus;
+  if (
+    !['pending', 'emotionally_opened', 'completed', 'expired'].includes(status)
+  ) {
+    return undefined;
+  }
+  const tasks = raw.tasks
+    .map(parseTask)
+    .filter(Boolean) as RecognitionTaskState[];
+  if (tasks.length !== 2) return undefined;
+  return {
+    version: RECOGNITION_JOURNEY_VERSION,
+    stage: ['pending', 'active', 'settled'].includes(String(raw.stage))
+      ? (raw.stage as RecognitionJourney['stage'])
+      : 'pending',
+    opening: {
+      status,
+      ...dateField(openingRaw, 'activatedAt'),
+      attemptCount: numberValue(openingRaw.attemptCount),
+      lastAttemptUserTurn: numberValue(openingRaw.lastAttemptUserTurn),
+      usedAngles: Array.isArray(openingRaw.usedAngles)
+        ? openingRaw.usedAngles.filter(isOpeningAngle)
+        : [],
+      ...dateField(openingRaw, 'openedAt'),
+      ...dateField(openingRaw, 'receivedAt'),
+      ...dateField(openingRaw, 'expiredAt'),
+      ...stringField(openingRaw, 'observationEvidence'),
+    },
+    tasks,
+    lastJourneyActionUserTurn: numberValue(raw.lastJourneyActionUserTurn),
+    ...dateField(raw, 'startedAt'),
+    ...dateField(raw, 'settledAt'),
+  };
+}
+
+function migrateLegacyJourney(
+  raw: Record<string, unknown>
+): RecognitionJourney {
+  const legacyOpening = (raw.opening || {}) as Record<string, unknown>;
+  const oldStatus = String(legacyOpening.status || 'pending');
+  const openingStatus: RecognitionOpeningStatus =
+    oldStatus === 'expired'
+      ? 'expired'
+      : oldStatus === 'completed'
+      ? 'emotionally_opened'
+      : 'pending';
+  const rawTasks = Array.isArray(raw.tasks) ? raw.tasks : [];
+  const taskById = (id: RecognitionTaskId) =>
+    rawTasks.find(item => (item as Record<string, unknown>)?.id === id) as
+      | Record<string, unknown>
+      | undefined;
+  const migrateTask = (id: RecognitionTaskId): RecognitionTaskState => {
+    const task = taskById(id) || {};
+    const oldTaskStatus = String(task.status || 'pending');
+    return {
+      id,
+      status:
+        oldTaskStatus === 'completed' || oldTaskStatus === 'skipped'
+          ? oldTaskStatus
+          : oldTaskStatus === 'asked'
+          ? 'proposed'
+          : 'pending',
+      proposalCount: numberValue(task.suggestionCount),
+      lastProposedUserTurn: numberValue(task.lastSuggestedUserTurn),
+      ...dateField(task, 'completedAt'),
+      ...stringField(task, 'answerMessageId'),
+    };
+  };
+  return {
+    version: RECOGNITION_JOURNEY_VERSION,
+    stage: openingStatus === 'pending' ? 'pending' : 'active',
+    opening: {
+      status: openingStatus,
+      ...(numberValue(legacyOpening.suggestionCount)
+        ? { activatedAt: parseDateValue(raw.startedAt) ?? new Date(0) }
+        : {}),
+      attemptCount: Math.min(
+        OPENING_MAX_ATTEMPTS,
+        numberValue(legacyOpening.suggestionCount) ?? 0
+      ),
+      lastAttemptUserTurn: numberValue(legacyOpening.lastSuggestedUserTurn),
+      usedAngles: [],
+      ...dateField(legacyOpening, 'expiredAt'),
+    },
+    tasks: [migrateTask('departure_interval'), migrateTask('family_status')],
+    ...dateField(raw, 'startedAt'),
+    ...dateField(raw, 'settledAt'),
+  };
+}
+
+function parseTask(value: unknown): RecognitionTaskState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!['departure_interval', 'family_status'].includes(String(raw.id)))
+    return undefined;
+  if (
+    !['pending', 'proposed', 'completed', 'skipped'].includes(
+      String(raw.status)
+    )
+  )
+    return undefined;
+  return {
+    id: raw.id as RecognitionTaskId,
+    status: raw.status as RecognitionTaskStatus,
+    proposalCount: numberValue(raw.proposalCount),
+    lastProposedUserTurn: numberValue(raw.lastProposedUserTurn),
+    ...dateField(raw, 'proposedAt'),
+    ...stringField(raw, 'proposedAssistantMessageId'),
+    ...dateField(raw, 'completedAt'),
+    ...stringField(raw, 'answerMessageId'),
+    ...stringField(raw, 'observationEvidence'),
+  };
+}
+
+function isOpeningAngle(value: unknown): value is RecognitionOpeningAngle {
+  return OPENING_ANGLES.includes(value as RecognitionOpeningAngle);
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : undefined;
+}
+
+function parseDateValue(value: unknown): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function dateField<T extends string>(
+  raw: Record<string, unknown>,
+  key: T
+): Partial<Record<T, Date>> {
+  if (!raw[key]) return {};
+  const date = new Date(String(raw[key]));
+  return Number.isNaN(date.getTime())
+    ? {}
+    : ({ [key]: date } as Partial<Record<T, Date>>);
+}
+
+function stringField<T extends string>(
+  raw: Record<string, unknown>,
+  key: T
+): Partial<Record<T, string>> {
+  return typeof raw[key] === 'string' && raw[key]
+    ? ({ [key]: raw[key] } as Partial<Record<T, string>>)
+    : {};
 }
 
 function cloneJourney(journey: RecognitionJourney): RecognitionJourney {
   return {
     ...journey,
-    opening: { ...journey.opening },
+    opening: {
+      ...journey.opening,
+      usedAngles: [...(journey.opening.usedAngles ?? [])],
+    },
     tasks: journey.tasks.map(task => ({ ...task })),
   };
-}
-
-function buildOpeningPrompt(): string {
-  return [
-    '# 当前必须完成：首次相认',
-    '这是已经激活的产品旅程，不是可忽略的聊天建议。本轮回复必须让用户清楚感到：这个具体亲人经历久别后终于重新联系上，又听见用户熟悉的称呼，或终于能再次说话。按当前人物性格自然表达，不照抄固定模板，不编共同往事，也不在这一轮启动资料问答。',
-    '先完整回应用户本轮明确问题、重要事实和真实情绪，再在同一条回复中完成相认；不能只用“我在、是我、听到了”当作完成。只有用户正处于需要立即处理的安全危机时，才可把安全回应放在全部内容之前并暂缓相认；任务不会因此被视为完成或消失。',
-  ].join('\n');
-}
-
-function buildTaskSuggestionPrompt(taskId: RecognitionTaskId): string {
-  const guidance =
-    taskId === 'departure_interval'
-      ? '本轮需要以角色对时间有些模糊的感受，自然了解自己离开用户多久；例如“一觉醒来，竟有些记不清离开你多久了”这类方向，不要照抄。'
-      : '本轮需要从“终于又联系上”自然关心家里其他人的近况；一次只问一个宽问题，不盘点人物。';
-  return [
-    '# 当前必须完成：相认信息任务',
-    guidance,
-    '这是调度器已经选定的本轮任务，不得省略，也不能用“以后再说”替代。先完整回应用户当前明确问题、重要事实和情绪，再把这个问题自然接进同一条回复；不要变成问卷或盘问。只有需要立即处理的安全危机可以暂缓，任务不会因此被视为执行。程序只在回复中确实问出后进入等待；用户未回答时不会重复催问。共同记忆不属于相认任务。',
-  ].join('\n');
 }
