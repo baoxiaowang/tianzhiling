@@ -7,6 +7,7 @@ import {
   ContinuityInformationCardService,
 } from '../service/agents/continuity-information-card.service';
 import { Context } from '@midwayjs/koa';
+import { AgentMemoryInheritanceService } from '../service/agents/agent-memory-inheritance.service';
 
 @Controller('/system')
 export class SystemController {
@@ -36,10 +37,30 @@ export class SystemController {
         };
       }
     }
+    let memoryInheritanceBackfill: {
+      jobId: string;
+      status: 'pending' | 'running' | 'completed' | 'unknown';
+      [key: string]: unknown;
+    } = {
+      jobId: 'agent-memory-inheritance-backfill-20260820-v1',
+      status: 'pending' as 'pending' | 'running' | 'completed' | 'unknown',
+    };
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const service = await this.ctx.requestContext.getAsync(
+          AgentMemoryInheritanceService
+        );
+        void service.runProductionBackfillOnce().catch(() => undefined);
+        memoryInheritanceBackfill = { ...(await service.getStatus()) };
+      } catch {
+        memoryInheritanceBackfill.status = 'unknown';
+      }
+    }
     return {
       service: 'tianzhiling-node',
       status: 'ok',
       continuityCardBackfill,
+      memoryInheritanceBackfill,
     };
   }
 

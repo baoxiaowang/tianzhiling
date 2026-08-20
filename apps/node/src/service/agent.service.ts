@@ -46,6 +46,7 @@ import { PostImageService } from './post-image.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
+import { AgentMemoryInheritanceService } from './agents/agent-memory-inheritance.service';
 import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
 import {
@@ -104,6 +105,9 @@ export class AgentService {
 
   @Inject()
   messengerService: MessengerService;
+
+  @Inject()
+  agentMemoryInheritanceService: AgentMemoryInheritanceService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -558,6 +562,15 @@ export class AgentService {
     agent.updatedAt = now;
 
     const savedAgent = await this.agentModel.save(agent);
+    await this.agentMemoryInheritanceService
+      ?.inheritForNewAgent(savedAgent)
+      .catch(error =>
+        this.logger.warn(
+          '[agent] memory inheritance skipped, agentId=%s reason=%s',
+          this.stringifyObjectId(savedAgent.id),
+          error instanceof Error ? error.message : String(error)
+        )
+      );
     await this.createConversation(savedAgent, createdUserId, now);
     await this.ensureSilentMessengerForNewAgent(savedAgent, createdUserId);
 
