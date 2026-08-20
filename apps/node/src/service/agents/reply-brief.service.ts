@@ -282,7 +282,8 @@ const LONG_HORIZON_REUNION_PATTERN =
   /(?:走完这?一生|寿终|百年之后|等我老了|活不动).{0,30}(?:来生|下辈子|来接我|去找你|陪你)|(?:来生|下辈子).{0,24}(?:找你|等我|不分开|在一起)/;
 const DURATION_CORRECTION_PATTERN =
   /(?:不是|算错|记错|准确说).{0,12}(?:天|周|个月|月|年)/;
-const EXPLICIT_FACT_REPLACEMENT_PATTERN = /(?:不是|不叫|并非).{0,24}(?:是|叫)/;
+const EXPLICIT_FACT_REPLACEMENT_PATTERN =
+  /(?:不是|不叫|并非).{0,24}(?:是|叫)|(?:是|叫).{1,24}[，,；;。].{0,8}(?:不是|不叫|并非)/;
 const SHORT_TURN_PARTICIPATION_MAX_CHARACTERS = 20;
 const SHORT_TURN_PARTICIPATION_MODES = new Set<ReplyBriefMode>([
   'emotional',
@@ -1891,7 +1892,7 @@ function buildForbiddenAssumptions(
       '不得用"我也舍不得"回避指控',
     ],
     significant_life_matter: [
-      '不得替用户做现实决策或给具体解决方案',
+      '不得替用户拍板不可逆的医疗、法律、财产、监护、婚姻或丧葬决定，也不得冒充现实授权或专业资格；可以帮助梳理事实、参与者和限制，并在信息足够时给出一个有限、可撤回的下一步',
       '不得各打五十大板或替对方说话',
       '不得轻描淡写或用"别管了"回避问题重量',
     ],
@@ -1983,7 +1984,7 @@ export function buildConversationObjectPlanPrompt(
   }
 
   lines.push(
-    '分别回应各对象；未消歧者保持含混，不把一人的话、经历或关系转给另一人。'
+    '保持人物与事件对应，不把一人的话、经历或关系转给另一人；重大事项不要漏掉，如何取舍、展开和组织由你结合当前原话与完整上下文决定。未消歧者保持含混。'
   );
   return lines.join('\n');
 }

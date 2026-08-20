@@ -1,26 +1,44 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { Logger, Provide } from '@midwayjs/core';
+import { Config, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import {
   ChatSpanAttributeValue,
   ChatSpanEntity,
   ChatSpanStatus,
+  ChatTraceArtifactKind,
   ChatTraceEntity,
   ChatTraceStage,
   ChatTraceStatus,
 } from '@tzl/entities';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { MongoRepository } from 'typeorm';
 
 const CHAT_SPAN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_SPAN_ATTRIBUTES = 24;
 const MAX_ATTRIBUTE_STRING_LENGTH = 160;
+const MAX_ARTIFACT_BYTES = 256 * 1024;
+// Large enough for all seven required 256 KiB artifacts, but still bounded
+// when retries or extra diagnostics add more snapshots.
+const MAX_TRACE_ARTIFACT_STORED_BYTES = 2 * 1024 * 1024;
+
+function safeUtf16Prefix(value: string, length: number): string {
+  let end = Math.max(0, Math.min(value.length, length));
+  if (
+    end > 0 &&
+    end < value.length &&
+    /[\uD800-\uDBFF]/.test(value.charAt(end - 1))
+  ) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
 
 interface ChatTraceCollection {
   traceId: string;
   attempt?: number;
   spans: ChatSpanEntity[];
+  artifactStoredBytes: number;
 }
 
 interface ActiveChatTraceContext {
@@ -45,6 +63,15 @@ export interface ChatTraceRunOptions {
 }
 
 export interface ChatSpanOptions {
+  attempt?: number;
+  attributes?: Record<string, ChatSpanAttributeValue | undefined>;
+}
+
+export interface ChatTraceArtifactOptions {
+  stage: ChatTraceStage;
+  kind: ChatTraceArtifactKind;
+  operation?: string;
+  payload: unknown;
   attempt?: number;
   attributes?: Record<string, ChatSpanAttributeValue | undefined>;
 }
@@ -81,6 +108,9 @@ export class ChatTraceService {
 
   @InjectEntityModel(ChatSpanEntity)
   spanModel: MongoRepository<ChatSpanEntity>;
+
+  @Config('chatTrace')
+  chatTraceConfig?: { artifactSampleRate?: number };
 
   private readonly storage = new AsyncLocalStorage<ActiveChatTraceContext>();
 
@@ -189,6 +219,7 @@ export class ChatTraceService {
       traceId: normalizedTraceId,
       attempt: this.normalizeCount(options.attempt),
       spans: [],
+      artifactStoredBytes: 0,
     };
 
     try {
@@ -282,6 +313,51 @@ export class ChatTraceService {
     span.attributes = this.normalizeAttributes(options.attributes);
     span.expiresAt = new Date(completedAt.getTime() + CHAT_SPAN_RETENTION_MS);
     active.collection.spans.push(span);
+  }
+
+  recordArtifact(options: ChatTraceArtifactOptions): void {
+    const active = this.storage.getStore();
+    if (!active || !this.shouldCaptureArtifacts(active.collection.traceId)) {
+      return;
+    }
+
+    const remainingBytes =
+      MAX_TRACE_ARTIFACT_STORED_BYTES - active.collection.artifactStoredBytes;
+    if (remainingBytes < 256) {
+      return;
+    }
+
+    const now = new Date();
+    const serialized = this.serializeArtifact(
+      options.payload,
+      Math.min(MAX_ARTIFACT_BYTES, remainingBytes)
+    );
+    const span = new ChatSpanEntity();
+    span.traceId = active.collection.traceId;
+    span.spanId = this.createSpanId();
+    span.parentSpanId = active.parentSpanId;
+    span.stage = options.stage;
+    span.operation = this.normalizeOperation(
+      options.operation || `artifact.${options.kind}`
+    );
+    span.attempt =
+      this.normalizeCount(options.attempt) ?? active.collection.attempt;
+    span.status = ChatSpanStatus.completed;
+    span.startedAt = now;
+    span.completedAt = now;
+    span.durationMs = 0;
+    span.attributes = this.normalizeAttributes(options.attributes);
+    span.artifactKind = options.kind;
+    span.artifactPayload = serialized.payload;
+    span.artifactHash = serialized.hash;
+    span.artifactBytes = serialized.bytes;
+    span.artifactTruncated = serialized.truncated;
+    span.expiresAt = new Date(now.getTime() + CHAT_SPAN_RETENTION_MS);
+    active.collection.spans.push(span);
+    active.collection.artifactStoredBytes += Buffer.byteLength(
+      serialized.payload,
+      'utf8'
+    );
   }
 
   async markRunning(
@@ -601,6 +677,79 @@ export class ChatTraceService {
       },
       {}
     );
+  }
+
+  private serializeArtifact(
+    payload: unknown,
+    maxStoredBytes: number
+  ): {
+    payload: string;
+    hash: string;
+    bytes: number;
+    truncated: boolean;
+  } {
+    let value: string;
+    try {
+      value = JSON.stringify(payload, (_key, item) =>
+        typeof item === 'bigint' ? item.toString() : item
+      );
+    } catch {
+      value = JSON.stringify({ serializationError: true });
+    }
+    if (typeof value !== 'string') {
+      value = JSON.stringify({ value: String(payload) });
+    }
+
+    const bytes = Buffer.byteLength(value, 'utf8');
+    const hash = createHash('sha256').update(value).digest('hex');
+    if (bytes <= maxStoredBytes) {
+      return { payload: value, hash, bytes, truncated: false };
+    }
+
+    const buildEnvelope = (preview: string) =>
+      JSON.stringify({
+        truncated: true,
+        originalBytes: bytes,
+        sha256: hash,
+        preview,
+      });
+    let low = 0;
+    let high = value.length;
+    let preview = '';
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = safeUtf16Prefix(value, middle);
+      if (
+        Buffer.byteLength(buildEnvelope(candidate), 'utf8') <= maxStoredBytes
+      ) {
+        preview = candidate;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return {
+      payload: buildEnvelope(preview),
+      hash,
+      bytes,
+      truncated: true,
+    };
+  }
+
+  private shouldCaptureArtifacts(traceId: string): boolean {
+    const configured = this.chatTraceConfig?.artifactSampleRate;
+    const rate =
+      typeof configured === 'number' && Number.isFinite(configured)
+        ? Math.max(0, Math.min(1, configured))
+        : 0;
+    if (rate <= 0) return false;
+    if (rate >= 1) return true;
+
+    const bucket = Number.parseInt(
+      createHash('sha256').update(traceId).digest('hex').slice(0, 8),
+      16
+    );
+    return bucket / 0xffffffff < rate;
   }
 
   private resolveErrorCode(error: unknown): string {

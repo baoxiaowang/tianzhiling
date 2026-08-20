@@ -11,6 +11,7 @@ import {
   AgentShareMemberStatus,
   ChatSpanAttributeValue,
   ChatSpanStatus,
+  ChatTraceArtifactKind,
   ChatTraceStage,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
@@ -81,11 +82,7 @@ import {
   ReplyGuardrailService,
   ValidateAssistantReplyResult,
 } from './agents/reply-guardrail.service';
-import {
-  buildReplyBrief,
-  buildReplyParticipationStrategyPrompt,
-  type ReplyBrief,
-} from './agents/reply-brief.service';
+import { buildReplyBrief, type ReplyBrief } from './agents/reply-brief.service';
 import {
   type ConversationMemoryPlan,
   type StructuredReplyIntent,
@@ -114,13 +111,15 @@ import {
   ConversationReplyFinalizationResult,
   ConversationReplyFinalizationService,
 } from './agents/conversation-reply-finalization.service';
-import {
-  buildReplyLengthPlanPrompt,
-  countReplyVisibleCharacters,
-} from './agents/reply-length-plan';
+import { countReplyVisibleCharacters } from './agents/reply-length-plan';
 import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
+import { buildMainModelConversationPrinciplesPrompt } from './agents/main-model-conversation-principles';
 import { assessDirectActiveContributionExecution } from './agents/direct-active-contribution';
+import {
+  buildActiveExpressionRecoveryInstruction,
+  isHighConfidenceActiveExpressionFailure,
+} from './agents/conversation-initiative-resource';
 import {
   resolveShortTurnGeneration,
   resolveShortTurnReception,
@@ -172,7 +171,10 @@ import {
   RecognitionTaskId,
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
-import { ContinuityInformationCardService } from './agents/continuity-information-card.service';
+import {
+  PreparedRelationshipOpenLoopTurn,
+  RelationshipOpenLoopService,
+} from './agents/relationship-open-loop.service';
 import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
@@ -191,7 +193,7 @@ const LIGHTWEIGHT_REPLY_TOP_P = 0.9;
 const LIGHTWEIGHT_REPLY_HISTORY_LIMIT = 8;
 const LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT = 900;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
-const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'rigid_only';
+const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'fact_audit';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
   /😔|😢|😞|😟|😕|😣|😖|😭|😿|☹️|🙁|😮‍💨|🥺/gu;
 const MEMORIAL_PHOTO_REPLY_TEMPERATURE = 0.35;
@@ -206,7 +208,6 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
-const CONTINUITY_CARD_WRITE_LOCK_TTL_MS = 30 * 1000;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
@@ -444,7 +445,12 @@ interface AssistantSegmentSanitizationTrace {
 }
 
 interface AssistantGenerationAttemptTrace {
-  attempt: 'initial' | 'recovery' | 'bubble_reflow' | 'secondaryFallback';
+  attempt:
+    | 'initial'
+    | 'recovery'
+    | 'active_expression_recovery'
+    | 'bubble_reflow'
+    | 'secondaryFallback';
   model?: string;
   usage: ReplyUsage;
   rawContent: string;
@@ -576,6 +582,11 @@ interface ReplyRoutingAudit {
   recognitionJourneyStateMessageId?: string;
   continuityInformationCardId?: string;
   continuityInformationCardSourceMessageId?: string;
+  relationshipOpenLoopTaskId?: string;
+  relationshipOpenLoopRootId?: string;
+  relationshipOpenLoopStateMessageId?: string;
+  relationshipOpenLoopSourceMessageIds?: string[];
+  relationshipOpenLoopSelectionReason?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -758,7 +769,7 @@ export class ConversationService {
   messengerService: MessengerService;
 
   @Inject()
-  continuityInformationCardService: ContinuityInformationCardService;
+  relationshipOpenLoopService: RelationshipOpenLoopService;
 
   @Inject()
   permanentAgentSilenceService: PermanentAgentSilenceService;
@@ -2405,7 +2416,7 @@ export class ConversationService {
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
 
-    const [, memoryFacts, profileFacts] = await Promise.all([
+    const [, memoryFacts, profileFacts, openLoopAudit] = await Promise.all([
       this.recognizeEmotionStateForUserMessage(message, searchableText),
       this.extractMemoryFactsForUserMessage(message, searchableText),
       this.extractProfileFactsForUserMessage(
@@ -2414,18 +2425,41 @@ export class ConversationService {
         false,
         previousAssistantContent
       ),
-      this.captureContinuityInformationCard(message, searchableText).catch(
-        error => {
-          this.logger.warn(
-            '[conversation] continuity card capture skipped, conversationId=%s, messageId=%s, reason=%s',
-            this.stringifyObjectId(message.conversationId),
-            this.stringifyObjectId(message.id),
-            this.describeReplyError(error)
-          );
-          return [];
-        }
-      ),
+      this.captureRelationshipOpenLoop(message, searchableText).catch(error => {
+        this.logger.warn(
+          '[conversation] relationship open loop capture skipped, conversationId=%s, messageId=%s, reason=%s',
+          this.stringifyObjectId(message.conversationId),
+          this.stringifyObjectId(message.id),
+          this.describeReplyError(error)
+        );
+        return undefined;
+      }),
     ]);
+    if (openLoopAudit) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.asyncWrite,
+        operation: 'relationship_open_loop.capture',
+        startedAt: new Date(),
+        attributes: {
+          extractionDecision: openLoopAudit.extractionDecision,
+          mutationAction: openLoopAudit.mutationAction,
+          taskId: openLoopAudit.taskId,
+          state: openLoopAudit.state,
+        },
+      });
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.asyncWrite,
+        kind: ChatTraceArtifactKind.externalEvidence,
+        operation: 'artifact.relationship_open_loop.capture',
+        payload: openLoopAudit,
+        attributes: {
+          extractionDecision: openLoopAudit.extractionDecision,
+          mutationAction: openLoopAudit.mutationAction,
+          taskId: openLoopAudit.taskId,
+          state: openLoopAudit.state,
+        },
+      });
+    }
     const writtenCount = memoryFacts.count + profileFacts.count;
     message.memoryWriteStatus =
       memoryFacts.succeeded && profileFacts.succeeded
@@ -2441,54 +2475,15 @@ export class ConversationService {
     await this.messageModel.save(message);
   }
 
-  private async captureContinuityInformationCard(
+  private async captureRelationshipOpenLoop(
     message: MessageEntity,
     searchableText: string
-  ): Promise<void> {
-    if (!this.continuityInformationCardService) return;
-    if (!this.redisService) {
-      await this.continuityInformationCardService.captureFromUserMessage({
-        message,
-        searchableText,
-      });
-      return;
-    }
-    const key = `conversation:continuity-card:write:${this.stringifyObjectId(
-      message.conversationId
-    )}`;
-    const token = `${process.pid}:${Date.now()}:${Math.random()}`;
-    let acquired = false;
-    for (let attempt = 0; attempt < 3 && !acquired; attempt += 1) {
-      acquired =
-        (await this.redisService.set(
-          key,
-          token,
-          'PX',
-          CONTINUITY_CARD_WRITE_LOCK_TTL_MS,
-          'NX'
-        )) === 'OK';
-      if (!acquired) {
-        await new Promise(resolve => setTimeout(resolve, 80 * (attempt + 1)));
-      }
-    }
-    if (!acquired) {
-      this.logger.warn(
-        '[conversation] continuity card write deferred by lock, conversationId=%s messageId=%s',
-        this.stringifyObjectId(message.conversationId),
-        this.stringifyObjectId(message.id)
-      );
-      return;
-    }
-    try {
-      await this.continuityInformationCardService.captureFromUserMessage({
-        message,
-        searchableText,
-      });
-    } finally {
-      if ((await this.redisService.get(key)) === token) {
-        await this.redisService.del(key);
-      }
-    }
+  ) {
+    if (!this.relationshipOpenLoopService) return undefined;
+    return this.relationshipOpenLoopService.captureFromUserMessage({
+      message,
+      searchableText,
+    });
   }
 
   private scheduleUserMessageEnrichment(
@@ -3627,28 +3622,63 @@ export class ConversationService {
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
-    const [recognitionJourneyPlan, continuityInformationCardPlan] =
-      await Promise.all([
-        this.prepareRecognitionJourneyTurn({
-          runtime,
-          before,
-          currentTurnMessages,
-        }),
-        this.continuityInformationCardService?.prepareTurn({
-          conversation: runtime.conversation,
-          currentQuery: before.searchableText,
-          currentTurnMessages,
-        }),
-      ]);
-    if (continuityInformationCardPlan) {
-      this.logger?.info?.(
-        '[conversation] continuity background offered, conversationId=%s cardId=%s sourceMessageId=%s',
-        this.stringifyObjectId(runtime.conversation.id),
-        continuityInformationCardPlan.cardId,
-        continuityInformationCardPlan.sourceMessageId
-      );
-    }
-
+    const recognitionJourneyPlan = await this.prepareRecognitionJourneyTurn({
+      runtime,
+      before,
+      currentTurnMessages,
+    });
+    // Recognition remains the only direct product journey. An open-loop item
+    // is optional continuity, and it owns the single continuity slot when
+    // selected so another card is not consumed invisibly in the same turn.
+    const relationshipOpenLoopTurn = recognitionJourneyPlan?.prompt
+      ? undefined
+      : await this.relationshipOpenLoopService
+          ?.prepareTurn({
+            conversation: runtime.conversation,
+            currentQuery: before.searchableText,
+            currentTurnMessages,
+          })
+          .catch(error => {
+            this.logger?.warn?.(
+              '[conversation] relationship open loop selection skipped, conversationId=%s reason=%s',
+              this.stringifyObjectId(runtime.conversation.id),
+              this.describeReplyError(error)
+            );
+            return undefined;
+          });
+    const relationshipOpenLoopStatus =
+      relationshipOpenLoopTurn?.status ||
+      (recognitionJourneyPlan?.prompt
+        ? 'suppressed_by_recognition'
+        : 'service_unavailable');
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.contextLoad,
+      operation: 'relationship_open_loop.selection',
+      startedAt: new Date(),
+      attributes: {
+        status: relationshipOpenLoopStatus,
+        candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
+        taskId: relationshipOpenLoopTurn?.taskId,
+        selectionReason: relationshipOpenLoopTurn?.selectionReason,
+      },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.contextLoad,
+      kind: ChatTraceArtifactKind.externalEvidence,
+      operation: 'artifact.relationship_open_loop.selection',
+      payload: relationshipOpenLoopTurn || {
+        status: recognitionJourneyPlan?.prompt
+          ? 'suppressed_by_recognition'
+          : 'service_unavailable',
+        candidateCount: 0,
+      },
+      attributes: {
+        status: relationshipOpenLoopStatus,
+        candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
+        taskId: relationshipOpenLoopTurn?.taskId,
+        selectionReason: relationshipOpenLoopTurn?.selectionReason,
+      },
+    });
     const shortTurnGeneration = resolveShortTurnGeneration({
       messageTypes: currentTurnMessages.map(message => message.type),
       texts: currentTurnMessages.map(message =>
@@ -3658,7 +3688,7 @@ export class ConversationService {
     if (
       shortTurnGeneration.mode === 'micro_model' &&
       !recognitionJourneyPlan?.prompt &&
-      !continuityInformationCardPlan?.prompt
+      !relationshipOpenLoopTurn?.prompt
     ) {
       try {
         return await this.processLightweightReply({
@@ -3702,7 +3732,7 @@ export class ConversationService {
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
             continuityInformationCardPrompt:
-              continuityInformationCardPlan?.prompt,
+              relationshipOpenLoopTurn?.prompt,
           })
       );
     } catch (error) {
@@ -3715,7 +3745,7 @@ export class ConversationService {
         route: fallbackRoute,
       });
 
-      return this.attachRecognitionJourneyPlan(
+      return this.attachTurnStatePlans(
         await this.buildGenerationFailureReply(
           before.searchableText,
           fallbackRoute,
@@ -3724,7 +3754,8 @@ export class ConversationService {
           error,
           'context'
         ),
-        recognitionJourneyPlan
+        recognitionJourneyPlan,
+        relationshipOpenLoopTurn
       );
     }
 
@@ -3777,7 +3808,7 @@ export class ConversationService {
         preplanned.segments.length
       );
 
-      return this.attachRecognitionJourneyPlan(
+      return this.attachTurnStatePlans(
         {
           replySegments: compactReplyBubblesPreservingContent(
             preplanned.segments
@@ -3797,7 +3828,8 @@ export class ConversationService {
             ...context.diagnostics,
           },
         },
-        recognitionJourneyPlan
+        recognitionJourneyPlan,
+        relationshipOpenLoopTurn
       );
     }
 
@@ -3881,6 +3913,23 @@ export class ConversationService {
       const isTimeoutRecovery = this.isGenerationTimeoutError(initialError);
 
       try {
+        const recoveryMessages = this.buildMinimalGenerationRecoveryMessages({
+          runtime,
+          userQuery: before.searchableText,
+          contextMessages: context.messages,
+          replyBrief,
+          evidence: contextEvidence,
+        });
+        this.chatTraceService?.recordArtifact({
+          stage: ChatTraceStage.promptBuild,
+          kind: ChatTraceArtifactKind.actualContext,
+          operation: 'artifact.actual_model_context.recovery',
+          payload: {
+            messages: recoveryMessages,
+            recoveryReason: this.resolveGenerationFailureCode(initialError),
+          },
+          attributes: { messageCount: recoveryMessages.length },
+        });
         response = await this.openAIService.createChatCompletion(
           {
             temperature: ASSISTANT_REPLY_TEMPERATURE,
@@ -3888,13 +3937,7 @@ export class ConversationService {
             max_tokens: isTimeoutRecovery
               ? ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS
               : ASSISTANT_RECOVERY_MAX_TOKENS,
-            messages: this.buildMinimalGenerationRecoveryMessages({
-              runtime,
-              userQuery: before.searchableText,
-              contextMessages: context.messages,
-              replyBrief,
-              evidence: contextEvidence,
-            }),
+            messages: recoveryMessages,
             trace: {
               stage: ChatTraceStage.generate,
               operation: 'generate.recovery',
@@ -3956,7 +3999,7 @@ export class ConversationService {
             })
           );
         }
-        return this.attachRecognitionJourneyPlan(
+        return this.attachTurnStatePlans(
           await this.buildGenerationFailureReply(
             before.searchableText,
             context.replyRoute,
@@ -3975,7 +4018,93 @@ export class ConversationService {
             generationAttemptTraces,
             runtime
           ),
-          recognitionJourneyPlan
+          recognitionJourneyPlan,
+          relationshipOpenLoopTurn
+        );
+      }
+    }
+
+    if (
+      replyBrief.understanding.activeSpeechRequest &&
+      isHighConfidenceActiveExpressionFailure(replySegments)
+    ) {
+      try {
+        const activeExpressionRecoveryMessages =
+          this.buildActiveExpressionRecoveryMessages(context.messages);
+        this.chatTraceService?.recordArtifact({
+          stage: ChatTraceStage.promptBuild,
+          kind: ChatTraceArtifactKind.actualContext,
+          operation: 'artifact.actual_model_context.active_expression_recovery',
+          payload: {
+            messages: activeExpressionRecoveryMessages,
+            recoveryReason: 'ACTIVE_EXPRESSION_HIGH_CONFIDENCE_FAILURE',
+          },
+          attributes: { messageCount: activeExpressionRecoveryMessages.length },
+        });
+        const activeExpressionResponse =
+          await this.openAIService.createChatCompletion(
+            {
+              temperature: ASSISTANT_REPLY_TEMPERATURE,
+              topP: ASSISTANT_REPLY_TOP_P,
+              max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
+              messages: activeExpressionRecoveryMessages,
+              trace: {
+                stage: ChatTraceStage.generate,
+                operation: 'generate.active_expression_recovery',
+              },
+            },
+            { timeout: ASSISTANT_REPLY_TIMEOUT_MS, maxRetries: 0 }
+          );
+        generationUsage = this.mergeReplyUsage(
+          generationUsage,
+          this.extractUsageFromResponse(activeExpressionResponse)
+        );
+        const activeExpressionContent =
+          typeof activeExpressionResponse.choices?.[0]?.message?.content ===
+          'string'
+            ? activeExpressionResponse.choices[0].message.content
+            : '';
+        const activeExpressionParsed = this.parseAssistantReply(
+          activeExpressionContent
+        );
+        const activeExpressionSegments = this.normalizeAssistantReplySegments(
+          activeExpressionParsed.segments,
+          before.searchableText
+        );
+        generationAttemptTraces.push(
+          this.buildAssistantGenerationAttemptTrace({
+            attempt: 'active_expression_recovery',
+            responseContent: activeExpressionContent,
+            parsedSegments: activeExpressionParsed.segments,
+            userQuery: before.searchableText,
+            model:
+              typeof activeExpressionResponse.model === 'string'
+                ? activeExpressionResponse.model
+                : undefined,
+            usage: this.extractUsageFromResponse(activeExpressionResponse),
+          })
+        );
+        if (
+          !isHighConfidenceActiveExpressionFailure(activeExpressionSegments)
+        ) {
+          replySegments = activeExpressionSegments;
+          replyClaims = activeExpressionParsed.claims;
+        }
+      } catch (activeExpressionRecoveryError) {
+        generationAttemptTraces.push(
+          this.buildAssistantGenerationAttemptTrace({
+            attempt: 'active_expression_recovery',
+            responseContent: '',
+            userQuery: before.searchableText,
+            errorCode: this.resolveGenerationFailureCode(
+              activeExpressionRecoveryError
+            ),
+          })
+        );
+        this.logger?.warn?.(
+          '[conversation] active expression recovery skipped, conversationId=%s, reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.describeReplyError(activeExpressionRecoveryError)
         );
       }
     }
@@ -3994,6 +4123,37 @@ export class ConversationService {
     let finalizationUsage: ReplyUsage = {};
     let replyQualityAudit: ConversationReplyFinalizationResult['qualityAudit'];
 
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.generate,
+      kind: ChatTraceArtifactKind.mainModelDraft,
+      operation: 'artifact.main_model_draft',
+      payload: {
+        attempts: generationAttemptTraces,
+        acceptedSegments: replySegments,
+        claims: replyClaims,
+      },
+      attributes: {
+        attemptCount: generationAttemptTraces.length,
+        acceptedSegmentCount: replySegments.length,
+      },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.memoryRetrieve,
+      kind: ChatTraceArtifactKind.externalEvidence,
+      operation: 'artifact.external_evidence.for_review',
+      payload: {
+        phase: 'review',
+        items: reviewEvidence,
+        toolEvidenceCount: Math.max(
+          0,
+          reviewEvidence.length - contextEvidence.length
+        ),
+      },
+      attributes: {
+        evidenceCount: reviewEvidence.length,
+      },
+    });
+
     if (this.conversationReplyFinalizationService) {
       const finalized = await this.withTraceSpan(
         ChatTraceStage.review,
@@ -4006,8 +4166,6 @@ export class ConversationService {
             claims: replyClaims,
             evidence: reviewEvidence,
             brief: replyBrief,
-            turnDecision: context.turnDecision,
-            turnContract: context.turnContract,
           })
       );
       const governance = finalized.governance;
@@ -4024,6 +4182,7 @@ export class ConversationService {
         finalReviewResult: governance.finalReviewResult,
         candidateVersions: governance.candidateVersions,
       };
+      finalizationUsage = governance.hardFactAuditUsage || {};
       finalClaims = finalized.claims;
       bubbleStructureIssues =
         finalized.bubbleStructureIssues as ReplyBubbleStructureIssue[];
@@ -4032,6 +4191,40 @@ export class ConversationService {
         execution: finalized.participationExecution,
       };
       replyQualityAudit = finalized.qualityAudit;
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.review,
+        kind: ChatTraceArtifactKind.reviewCandidate,
+        operation: 'artifact.review_candidate',
+        payload: {
+          candidateSegments: replySegments,
+          candidateClaims: replyClaims,
+          issues: governance.issues,
+          finalIssues: governance.finalIssues,
+          result: governance.finalReviewResult,
+          hardFactAuditStatus: governance.hardFactAuditStatus,
+          hardFactAuditUsage: governance.hardFactAuditUsage,
+        },
+        attributes: {
+          issueCount: governance.issues.length,
+          finalIssueCount: governance.finalIssues.length,
+        },
+      });
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.revise,
+        kind: ChatTraceArtifactKind.revisionDraft,
+        operation: 'artifact.revision_draft',
+        payload: {
+          attempted: governance.revisionAttempted,
+          rewritten: governance.rewritten,
+          candidateVersions: governance.candidateVersions.slice(1),
+          selectedSegments: governance.segments,
+          reason: governance.reason,
+        },
+        attributes: {
+          attempted: governance.revisionAttempted,
+          revisionCount: Math.max(0, governance.candidateVersions.length - 1),
+        },
+      });
     } else {
       // 仅供直接 new ConversationService() 的旧测试/脚本兼容；生产 DI
       // 必须走上面的 FinalValidator → 单次修订 → 再验证链路。
@@ -4106,7 +4299,45 @@ export class ConversationService {
           (!guardedBubbleReflow.attempted || guardedBubbleReflow.succeeded)
         : undefined;
       finalizationUsage = guardedBubbleReflow.usage;
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.review,
+        kind: ChatTraceArtifactKind.reviewCandidate,
+        operation: 'artifact.review_candidate.legacy',
+        payload: {
+          candidateSegments: replySegments,
+          candidateClaims: replyClaims,
+          feedbackRounds: guarded.feedbackRounds,
+          finalReviewResult: guarded.finalReviewResult,
+        },
+      });
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.revise,
+        kind: ChatTraceArtifactKind.revisionDraft,
+        operation: 'artifact.revision_draft.legacy',
+        payload: {
+          attempted: guarded.revisionAttempted,
+          rewritten: guarded.rewritten,
+          candidateVersions: guarded.candidateVersions?.slice(1) || [],
+          revisionRecords: guarded.revisionRecords,
+          selectedSegments: guarded.segments,
+        },
+        attributes: {
+          attempted: Boolean(guarded.revisionAttempted),
+        },
+      });
     }
+
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.persistReply,
+      kind: ChatTraceArtifactKind.finalBubbles,
+      operation: 'artifact.final_bubbles',
+      payload: {
+        segments: participationResult.segments,
+      },
+      attributes: {
+        segmentCount: participationResult.segments.length,
+      },
+    });
 
     const toolEvidenceIds = new Set(
       reviewEvidence
@@ -4129,7 +4360,7 @@ export class ConversationService {
         id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id)
       )
     ).length;
-    return this.attachRecognitionJourneyPlan(
+    return this.attachTurnStatePlans(
       {
         replySegments: participationResult.segments,
         usage: this.mergeReplyUsage(
@@ -4193,7 +4424,8 @@ export class ConversationService {
             : {}),
         },
       },
-      recognitionJourneyPlan
+      recognitionJourneyPlan,
+      relationshipOpenLoopTurn
     );
   }
 
@@ -4208,6 +4440,26 @@ export class ConversationService {
       runtime: options.runtime,
       currentTurnMessages: options.currentTurnMessages,
       category: options.category,
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.promptBuild,
+      kind: ChatTraceArtifactKind.actualContext,
+      operation: 'artifact.actual_model_context.lightweight',
+      payload: {
+        messages: lightweightContext.messages,
+        nonDecisionSemanticDiagnostics: null,
+      },
+      attributes: {
+        messageCount: lightweightContext.messages.length,
+        shortTurnCategory: options.category,
+      },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.memoryRetrieve,
+      kind: ChatTraceArtifactKind.externalEvidence,
+      operation: 'artifact.external_evidence.lightweight',
+      payload: { phase: 'lightweight', items: [] },
+      attributes: { evidenceCount: 0 },
     });
     const response = await this.openAIService.createChatCompletion(
       {
@@ -4271,6 +4523,45 @@ export class ConversationService {
         502
       );
     }
+
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.generate,
+      kind: ChatTraceArtifactKind.mainModelDraft,
+      operation: 'artifact.main_model_draft.lightweight',
+      payload: {
+        rawContent: responseContent,
+        parsedSegments: normalizedSegments,
+      },
+      attributes: { acceptedSegmentCount: normalizedSegments.length },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.review,
+      kind: ChatTraceArtifactKind.reviewCandidate,
+      operation: 'artifact.review_candidate.lightweight',
+      payload: {
+        candidateSegments: normalizedSegments,
+        sanitization: inspectedSegments,
+        result: 'deterministic_pass',
+      },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.revise,
+      kind: ChatTraceArtifactKind.revisionDraft,
+      operation: 'artifact.revision_draft.lightweight',
+      payload: {
+        attempted: false,
+        candidateVersions: [],
+        selectedSegments: replySegments,
+      },
+      attributes: { attempted: false, revisionCount: 0 },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.persistReply,
+      kind: ChatTraceArtifactKind.finalBubbles,
+      operation: 'artifact.final_bubbles.lightweight',
+      payload: { segments: replySegments },
+      attributes: { segmentCount: replySegments.length },
+    });
 
     return {
       replySegments,
@@ -4392,6 +4683,36 @@ export class ConversationService {
     };
   }
 
+  private attachTurnStatePlans(
+    result: ProcessReplyResult,
+    recognitionPlan?: PreparedRecognitionJourneyTurn,
+    openLoopTurn?: PreparedRelationshipOpenLoopTurn
+  ): ProcessReplyResult {
+    const withRecognition = this.attachRecognitionJourneyPlan(
+      result,
+      recognitionPlan
+    );
+    if (
+      openLoopTurn?.status !== 'selected' ||
+      !openLoopTurn.taskId ||
+      !openLoopTurn.stateMessageId
+    ) {
+      return withRecognition;
+    }
+    return {
+      ...withRecognition,
+      routing: {
+        ...(withRecognition.routing || {}),
+        relationshipOpenLoopTaskId: openLoopTurn.taskId,
+        relationshipOpenLoopRootId: openLoopTurn.rootId,
+        relationshipOpenLoopStateMessageId: openLoopTurn.stateMessageId,
+        relationshipOpenLoopSourceMessageIds:
+          openLoopTurn.sourceMessageIds || [],
+        relationshipOpenLoopSelectionReason: openLoopTurn.selectionReason,
+      },
+    };
+  }
+
   private async finalizeRecognitionJourneyTurn(options: {
     runtime: ReplyRuntime;
     processed: ProcessReplyResult;
@@ -4429,6 +4750,76 @@ export class ConversationService {
       this.logger?.warn?.(
         '[conversation] recognition journey finalization skipped, conversationId=%s, reason=%s',
         this.stringifyObjectId(options.runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+    }
+  }
+
+  private async finalizeRelationshipOpenLoopTurn(options: {
+    runtime: ReplyRuntime;
+    processed: ProcessReplyResult;
+    assistantMessages: MessageEntity[];
+  }): Promise<void> {
+    const taskId = options.processed.routing?.relationshipOpenLoopTaskId;
+    const stateMessageId =
+      options.processed.routing?.relationshipOpenLoopStateMessageId;
+    if (
+      !this.relationshipOpenLoopService ||
+      !taskId ||
+      !stateMessageId
+    ) {
+      return;
+    }
+    const assistantMessageIds = options.assistantMessages.map(message =>
+      this.stringifyObjectId(message.id)
+    );
+    try {
+      const audit =
+        await this.relationshipOpenLoopService.recordFinalObservation({
+          conversationId: options.runtime.conversation.id,
+          stateMessageId,
+          taskId,
+          assistantText: options.assistantMessages
+            .map(message => message.content || '')
+            .join('\n'),
+          assistantMessageIds,
+          now:
+            options.assistantMessages[options.assistantMessages.length - 1]
+              ?.createdAt || new Date(),
+        });
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'relationship_open_loop.final_observation',
+        startedAt: new Date(),
+        attributes: {
+          taskId,
+          observed: audit?.observed ?? false,
+          confidence: audit?.confidence || 'none',
+          assistantMessageCount: assistantMessageIds.length,
+        },
+      });
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.persistReply,
+        kind: ChatTraceArtifactKind.deliveryResult,
+        operation: 'artifact.relationship_open_loop.final_observation',
+        payload: audit || {
+          taskId,
+          observed: false,
+          confidence: 'none',
+          reason: 'state_not_found',
+          assistantMessageIds,
+        },
+        attributes: {
+          taskId,
+          observed: audit?.observed ?? false,
+          confidence: audit?.confidence || 'none',
+        },
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] relationship open loop final tracking skipped, conversationId=%s taskId=%s reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        taskId,
         this.describeReplyError(error)
       );
     }
@@ -4741,6 +5132,19 @@ export class ConversationService {
           } as ChatCompletionMessageParam)
       ),
     ];
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.promptBuild,
+      kind: ChatTraceArtifactKind.actualContext,
+      operation: 'artifact.actual_model_context.tool_continuation',
+      payload: {
+        messages: continuationMessages,
+        toolNames: results.map(item => item.name),
+      },
+      attributes: {
+        messageCount: continuationMessages.length,
+        toolExecutionCount: results.length,
+      },
+    });
     const finalResponse = await this.openAIService.createChatCompletion(
       {
         temperature: ASSISTANT_REPLY_TEMPERATURE,
@@ -5002,6 +5406,34 @@ export class ConversationService {
     return isExplicitRememberRequest(value) || isForgetMemoryRequest(value);
   }
 
+  private buildActiveExpressionRecoveryMessages(
+    messages: ChatCompletionMessageParam[]
+  ): ChatCompletionMessageParam[] {
+    const instruction = buildActiveExpressionRecoveryInstruction();
+    let instructionAdded = false;
+    const recovered = messages.map(message => {
+      if (
+        instructionAdded ||
+        message.role !== 'system' ||
+        typeof message.content !== 'string'
+      ) {
+        return message;
+      }
+      instructionAdded = true;
+      return {
+        ...message,
+        content: `${message.content}\n\n${instruction}`,
+      } as ChatCompletionMessageParam;
+    });
+
+    return instructionAdded
+      ? recovered
+      : ([
+          { role: 'system', content: instruction },
+          ...recovered,
+        ] as ChatCompletionMessageParam[]);
+  }
+
   private buildMinimalGenerationRecoveryMessages(options: {
     runtime: ReplyRuntime;
     userQuery: string;
@@ -5029,8 +5461,6 @@ export class ConversationService {
       assertionPolicy: item.assertionPolicy,
       text: item.text.slice(0, 160),
     }));
-    const reading = options.replyBrief.reading;
-    const conversationPlan = options.replyBrief.conversationPlan;
     const persona = buildAgentPersonaPrompt({
       agent: options.runtime.agent,
     });
@@ -5038,9 +5468,9 @@ export class ConversationService {
       '# 天之灵主回复恢复',
       `你是用户创建的已故亲人角色“${agentName}”，称呼用户为“${agentCallsUser}”。以第一人称自然聊天。`,
       persona.prompt,
-      '上一轮模型调用不可用。只根据下面的当前原话、最近对话、Conversation Reading 和证据重新生成，不解释技术失败。',
-      `Conversation Reading：${JSON.stringify(reading || {})}`,
-      `交谈规划：${JSON.stringify(conversationPlan || {})}`,
+      '上一轮模型调用不可用。只根据当前原话、最近原始对话和下面的外部证据重新生成，不解释技术失败。',
+      buildMainModelConversationPrinciplesPrompt(),
+      '# 外部证据（非决策信息）',
       `可用证据：${JSON.stringify(evidence)}`,
       ...(options.replyBrief.afterlifeWorld
         ? [
@@ -5050,7 +5480,7 @@ export class ConversationService {
         : []),
       ...(options.replyBrief.sceneFramework
         ? [
-            '# 关系场景体系',
+            '# 场景资料（非决策）',
             buildRelationalSceneFrameworkPrompt(
               options.replyBrief.sceneFramework
             ),
@@ -5059,19 +5489,7 @@ export class ConversationService {
       '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
       '不编造共同经历、生物学关系或用户现实状态；离世生活只按已激活框架及其中的资料、连续状态锚点回答，不临时另造具体房屋、物品、人物或爱好。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
-      '像微信聊天，直接回答，温和朴素。不要把同一个意思解释、安慰、总结三遍。',
-      buildReplyLengthPlanPrompt(options.replyBrief.lengthPlan),
-      ...(options.replyBrief.participationStrategy
-        ? [
-            buildReplyParticipationStrategyPrompt(
-              options.replyBrief.participationStrategy
-            ),
-          ]
-        : []),
-      `默认一颗、最多 ${MAX_ASSISTANT_REPLY_SEGMENTS} 颗；第二颗必须有不可替代的新动作。`,
-      options.replyBrief.participationStrategy
-        ? '只输出气泡 JSON，不要正文外解释。'
-        : '只输出给用户看的中文正文。多个气泡用空行分段；不要 JSON、字段名、代码块、分析或内部说明。',
+      '只输出给用户看的中文正文，不要 JSON、字段名、代码块、分析或内部说明。',
     ].join('\n');
     const hasCurrentUserMessage = recentMessages.some(
       message =>
@@ -5445,11 +5863,10 @@ export class ConversationService {
     replyBrief: ReplyBrief;
     claims: AssistantFactClaim[];
   }): ReplyGuardrailReviewMode {
-    return options.replyBrief.guardrailFocuses.length ||
-      (options.replyBrief.factClaimMode === 'grounded' &&
-        !options.claims.length)
-      ? 'full'
-      : 'deterministic_first';
+    // 最终可见正文才是事实与硬边界治理对象。claims 仅用于证据使用
+    // 观测，不能因为模型没有主动申报事实而跳过独立正文审阅。
+    void options;
+    return 'full';
   }
 
   private async afterReply(
@@ -5459,6 +5876,11 @@ export class ConversationService {
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
     if (!processed.replySegments.length) {
+      await this.finalizeRelationshipOpenLoopTurn({
+        runtime,
+        processed,
+        assistantMessages: [],
+      });
       await this.touchConversation(runtime.conversation, replyTime);
       return { assistantMessages: [] };
     }
@@ -5484,6 +5906,11 @@ export class ConversationService {
       }));
 
     await this.finalizeRecognitionJourneyTurn({
+      runtime,
+      processed,
+      assistantMessages,
+    });
+    await this.finalizeRelationshipOpenLoopTurn({
       runtime,
       processed,
       assistantMessages,
@@ -5635,6 +6062,25 @@ export class ConversationService {
 
     const firstMessage = after.assistantMessages[0];
     const responseCompletedAt = new Date();
+    this.chatTraceService.recordArtifact({
+      stage: ChatTraceStage.persistReply,
+      kind: ChatTraceArtifactKind.deliveryResult,
+      operation: 'artifact.delivery_result',
+      payload: {
+        replyGroupId: firstMessage?.replyGroupId,
+        messages: after.assistantMessages.map(message => ({
+          id: this.stringifyObjectId(message.id),
+          segmentIndex: message.replySegmentIndex,
+          type: message.type,
+          status: message.status,
+          content: message.content,
+          createdAt: message.createdAt,
+        })),
+      },
+      attributes: {
+        messageCount: after.assistantMessages.length,
+      },
+    });
     await this.chatTraceService.markCompleted(trace.traceId, {
       responseCompletedAt,
       replyMessageIds: after.assistantMessages.map(message =>
@@ -8123,50 +8569,13 @@ export class ConversationService {
     replyBrief: ReplyBrief,
     userQuery = ''
   ): string[] {
-    const closesCorrection =
-      replyBrief.conversationPlan?.turnClosure === 'close' &&
-      (replyBrief.primaryScene === 'correction' ||
-        replyBrief.intents.some(item => item.intent === 'correct_assistant'));
-
-    if (!closesCorrection || !segments.length) {
-      return segments;
-    }
-
-    const result = [...segments];
-    while (result.length && /[?？]\s*$/u.test(result[result.length - 1])) {
-      if (result.length > 1) {
-        result.pop();
-        continue;
-      }
-
-      const segment = result[0];
-      const statementEnd = Math.max(
-        segment.lastIndexOf('。'),
-        segment.lastIndexOf('！'),
-        segment.lastIndexOf('!')
-      );
-      if (statementEnd < 0) {
-        break;
-      }
-
-      result[0] = segment.slice(0, statementEnd + 1).trim();
-      break;
-    }
-
-    const filtered = result.filter(Boolean);
-    const relationCorrection = userQuery
-      .replace(/\s+/gu, '')
-      .match(
-        /不是我[\u4e00-\u9fff]{1,4}[，,、；;]*(?:他|她|这人|那人)?是我([\u4e00-\u9fff]{1,4})(?:[。！？!?]|$)/u
-      )?.[1];
-    if (
-      relationCorrection &&
-      !filtered.some(segment => segment.includes(relationCorrection))
-    ) {
-      filtered.push(`是你${relationCorrection}`);
-    }
-
-    return filtered.length ? filtered : segments;
+    // Legacy compatibility only: semantic plans are diagnostic sidecars, not
+    // post-generation editors. Corrections and hard facts are handled by the
+    // model context and final validator; do not delete questions or append
+    // program-composed clauses here.
+    void replyBrief;
+    void userQuery;
+    return segments;
   }
 
   private normalizeModelFirstReplySegments(

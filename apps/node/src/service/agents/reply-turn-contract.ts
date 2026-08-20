@@ -420,6 +420,7 @@ function mapIssuesToDimensions(
         'identity_truthfulness_missing',
         'exclusive_dependency_reinforced',
         'persistent_distress_not_stopped',
+        'current_distress_safety_not_checked',
       ].includes(code)
     ) {
       dimensions.add('participation');

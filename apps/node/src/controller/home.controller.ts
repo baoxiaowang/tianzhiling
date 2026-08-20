@@ -3,9 +3,9 @@ import { Inject } from '@midwayjs/core';
 import { Query } from '@midwayjs/core';
 import { AdminChatStatsService } from '../service/admin-chat-stats.service';
 import {
-  ContinuityCardBackfillStatus,
-  ContinuityInformationCardService,
-} from '../service/agents/continuity-information-card.service';
+  RelationshipOpenLoopBackfillStatus,
+  RelationshipOpenLoopService,
+} from '../service/agents/relationship-open-loop.service';
 import { Context } from '@midwayjs/koa';
 import { AgentMemoryInheritanceService } from '../service/agents/agent-memory-inheritance.service';
 
@@ -19,20 +19,21 @@ export class SystemController {
 
   @Get('/health')
   async health() {
-    let continuityCardBackfill: ContinuityCardBackfillStatus = {
-      jobId: 'continuity-card-backfill-20260819-v1',
+    let relationshipOpenLoopBackfill: RelationshipOpenLoopBackfillStatus = {
+      jobId: 'relationship-open-loop-backfill-20260820-v1',
       status: 'pending' as const,
     };
     if (process.env.NODE_ENV === 'production') {
       try {
         const service = await this.ctx.requestContext.getAsync(
-          ContinuityInformationCardService
+          RelationshipOpenLoopService
         );
         void service.runProductionBackfillOnce().catch(() => undefined);
-        continuityCardBackfill = await service.getProductionBackfillStatus();
+        relationshipOpenLoopBackfill =
+          await service.getProductionBackfillStatus();
       } catch {
-        continuityCardBackfill = {
-          jobId: 'continuity-card-backfill-20260819-v1',
+        relationshipOpenLoopBackfill = {
+          jobId: 'relationship-open-loop-backfill-20260820-v1',
           status: 'unknown',
         };
       }
@@ -59,7 +60,8 @@ export class SystemController {
     return {
       service: 'tianzhiling-node',
       status: 'ok',
-      continuityCardBackfill,
+      relationshipOpenLoopBackfill,
+      continuityCardBackfill: relationshipOpenLoopBackfill,
       memoryInheritanceBackfill,
     };
   }

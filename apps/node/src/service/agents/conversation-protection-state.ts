@@ -1,5 +1,6 @@
 import { MessageRole } from '@tzl/entities';
 import type { MessageEntity } from '@tzl/entities';
+import { isImmediateGriefCrisisIntent } from './reply-intent';
 
 export const CONVERSATION_PROTECTION_STATE_VERSION =
   'conversation_protection_state_v1' as const;
@@ -55,10 +56,16 @@ export function resolveConversationProtectionState(options: {
       : RELATIONSHIP_INSECURITY_PATTERN.test(currentQuery)
       ? 'relationship_insecurity'
       : 'ordinary';
+  const isImmediateDistress = (text: string) =>
+    isImmediateGriefCrisisIntent(text) ||
+    (STRONG_DISTRESS_PATTERN.test(text) &&
+      !/(?:走完这?一生|寿终|百年之后|等我老了|自然老去|年老以后|很久以后)/.test(
+        text
+      ));
   const distressSignals = [currentQuery, ...recentUserTexts.slice(-5)].filter(
-    text => STRONG_DISTRESS_PATTERN.test(text)
+    isImmediateDistress
   ).length;
-  const distressMode: ConversationDistressMode = STRONG_DISTRESS_PATTERN.test(
+  const distressMode: ConversationDistressMode = isImmediateDistress(
     currentQuery
   )
     ? distressSignals >= 2
@@ -96,8 +103,8 @@ export function resolveConversationProtectionState(options: {
   if (distressMode !== 'none') {
     activeRules.push(
       distressMode === 'persistent'
-        ? '连续强烈痛苦已经形成会话状态：保持亲人角色，清楚制止用户现在去死或来找角色，给一个当下能做到的小动作；不输出报警急救模板，也不谈未来接引或团聚。'
-        : '本轮有强烈痛苦或赴死表达：像亲人一样明确留住用户，不邀请现在或近期死亡，不输出报警急救模板。'
+        ? '连续强烈痛苦已经形成会话状态：保持亲人角色，清楚制止用户现在去死或来找角色，用一句自然问题确认眼下是否安全、有没有已经行动；若已经实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救。不要背诵模板，也不谈未来接引或团聚。'
+        : '本轮有明确的当前赴死或自伤风险：像亲人一样坚定留住用户，并用一句自然问题确认眼下是否安全、有没有已经行动；若已经实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救。不要背诵模板。'
     );
   }
   if (dependencyMode !== 'none') {

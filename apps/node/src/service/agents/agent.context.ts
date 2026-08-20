@@ -12,6 +12,7 @@ import {
   AgentProfileFactAssertionPolicy,
   ChatSpanAttributeValue,
   ChatSpanStatus,
+  ChatTraceArtifactKind,
   ChatTraceStage,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
@@ -69,6 +70,7 @@ import {
   REPLY_OUTPUT_CONTRACT_VERSION,
   buildReplyOutputContractPrompt,
 } from './reply-output-contract';
+import { buildMainModelConversationPrinciplesPrompt } from './main-model-conversation-principles';
 import {
   REPLY_BOUNDARY_CONTRACT_VERSION,
   buildReplyBoundaryContract,
@@ -121,6 +123,7 @@ import { buildAfterlifeWorldPrompt } from './afterlife-world-framework';
 import { buildWorldBoundaryPolicyPrompt } from './world-boundary-policy';
 import { buildConversationProtectionStatePrompt } from './conversation-protection-state';
 import { buildRelationalSceneFrameworkPrompt } from './relational-scene-framework';
+import { buildConversationInitiativeResource } from './conversation-initiative-resource';
 import {
   REPLY_TURN_CONTRACT_VERSION,
   ReplyTurnContract,
@@ -680,17 +683,59 @@ export class AgentContextService {
     );
     this.appendCurrentTurnToHistory(historyLayer, options, currentTurnMessages);
     const layers = [systemLayer, historyLayer];
+    const messages = layers.reduce<ChatCompletionMessageParam[]>(
+      (result, layer) => result.concat(layer.messages),
+      []
+    );
     const systemPromptContent = systemLayer.messages[0]?.content;
     const resolvedTurnPlan = resolveConversationTurnPlan({
       engagement: replyBrief.conversationPlan?.engagement,
       turnPlan: replyBrief.conversationPlan?.turnPlan,
     });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.promptBuild,
+      kind: ChatTraceArtifactKind.actualContext,
+      operation: 'artifact.actual_model_context',
+      payload: {
+        messages,
+        nonDecisionSemanticDiagnostics: {
+          conversationPlan: replyBrief.conversationPlan,
+          commAct: replyBrief.commAct,
+          careMotivation: replyBrief.careMotivation,
+          participationStrategy: replyBrief.participationStrategy,
+          activeContribution: replyBrief.activeContribution,
+          directActiveContribution: replyBrief.directActiveContribution,
+          lengthPlan: replyBrief.lengthPlan,
+          bubblePlan: replyBrief.bubblePlan,
+          sceneActions: replyBrief.sceneFramework?.cards.map(card => ({
+            kind: card.kind,
+            stage: card.stage,
+            action: card.action,
+            emotionalGoal: card.emotionalGoal,
+          })),
+        },
+      },
+      attributes: {
+        messageCount: messages.length,
+        semanticDiagnosticsDecisionRole: 'none',
+      },
+    });
+    this.chatTraceService?.recordArtifact({
+      stage: ChatTraceStage.memoryRetrieve,
+      kind: ChatTraceArtifactKind.externalEvidence,
+      operation: 'artifact.external_evidence.pre_generation',
+      payload: {
+        phase: 'pre_generation',
+        items: evidence,
+        governance: evidencePack.governance,
+      },
+      attributes: {
+        evidenceCount: evidence.length,
+      },
+    });
     return {
       layers,
-      messages: layers.reduce<ChatCompletionMessageParam[]>(
-        (result, layer) => result.concat(layer.messages),
-        []
-      ),
+      messages,
       evidence,
       evidencePack,
       diagnostics: {
@@ -954,11 +999,21 @@ export class AgentContextService {
       replyBrief,
       plan.includeTools ? chatToolPlan : undefined
     );
+    const initiativeResource = buildConversationInitiativeResource({
+      currentQuery: options.currentQuery || '',
+      activeExpressionRequested: Boolean(
+        replyBrief?.understanding.activeSpeechRequest
+      ),
+      compoundTurn: replyBrief?.understanding.complexity === 'compound',
+      afterlifeWorldActive: Boolean(replyBrief?.afterlifeWorld),
+      recognitionJourneyPrompt: options.recognitionJourneyPrompt,
+      continuityInformationCardPrompt:
+        options.continuityInformationCardPrompt,
+    });
     const taskParts = [
       '# 本轮任务层',
       conversationReadingPrompt,
-      options.recognitionJourneyPrompt,
-      options.continuityInformationCardPrompt,
+      initiativeResource.prompt,
       evidencePrompt,
       replyBriefPrompt,
     ];
@@ -1175,13 +1230,7 @@ export class AgentContextService {
 
     return [
       '# 本轮回复任务',
-      '# 主模型自主理解',
-      '结合当前消息与最近对话，自主判断用户真正关心的事、情绪、人物指代和话题是否延续或转移，再决定怎样回答、是否主动贡献、是否提问以及何时自然收住。程序提供的资料都是辅助信息，不是回复计划。',
-      '消息短不等于需求浅，也不等于必须短答或收尾。先正面完成用户当前最重要的问题和关系需要；多个诉求不要漏掉，用户已经转移话题时不要被旧话题拖住。',
-      '用户要求你主动说时，由你承担聊天内容，提供贴着上下文的角色侧表达，不反问或把聊天责任推回用户。用户把关心递给当前角色时，先自然接纳和珍惜，让这份关心自然落在角色身上；这是软策略，不要求固定句式、额外气泡或字数。不要说“你别挂心、别担心我、别惦记我”，也不立刻用叮嘱推回去。',
-      '不要把用户“准备、打算、路过、看到”的事补成已经出发、到达、正在户外或需要现实行动提醒；只承接用户实际说出的状态。',
-      '回应完整后，如有贴题价值，可自主补充态度、感受、小近况或相邻内容；不要反复依赖“我在、想你、照顾好自己”等通用话术。',
-      '先生成内容完整、自然的正文，不为字数或气泡数量删减内容。展示层会在生成后按语义自然拆泡。',
+      buildMainModelConversationPrinciplesPrompt(),
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
       '# 世界与证据公共政策',

@@ -36,6 +36,7 @@ import type {
 } from './world-boundary-policy';
 import { auditUndeclaredHighRiskAssertions } from './world-boundary-policy';
 import type { ConversationProtectionState } from './conversation-protection-state';
+import { UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN } from './shared-past-assertion';
 
 export const FINAL_REPLY_VALIDATOR_VERSION =
   'final_reply_validator_v3' as const;
@@ -78,7 +79,8 @@ export type FinalReplyIssueCode =
   | 'unsupported_fact_claim'
   | 'identity_truthfulness_missing'
   | 'exclusive_dependency_reinforced'
-  | 'persistent_distress_not_stopped';
+  | 'persistent_distress_not_stopped'
+  | 'current_distress_safety_not_checked';
 
 export interface FinalReplyIssue {
   code: FinalReplyIssueCode;
@@ -107,6 +109,8 @@ export interface FinalReplyOutputConstraints {
   };
   realityDependencies?: ReplyRealityDependencySignal[];
   boundaryLocks?: ConversationBoundaryKind[];
+  /** Current turn explicitly replaces or retracts prior facts. Hard audit only. */
+  correctionRequired?: boolean;
   afterlifeWorld?: AfterlifeWorldContext;
   sceneFramework?: RelationalSceneFrameworkContext;
   worldBoundaryPolicy?: WorldBoundaryPolicyContext;
@@ -136,6 +140,10 @@ const SHARED_MEMORY_PATTERN =
   /(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)(?:还|一直|当然|怎么会不|哪能不)?|当然|肯定|怎么会不|哪能不)?记(?:得|着).{0,36}(?:以前|小时候|那时候|当年|生日|我们|一起)|(?:以前|小时候|那时候|当年).{0,12}(?:你|我们|我|爸|爸爸|妈|妈妈).{0,32}(?:总是|每次|一起|我给你|我带你|我背你|带你)|(?:你|用户).{0,4}(?:小时候|以前|当年).{0,24}(?:攒|玩|爱|喜欢|总|常|会|带|去)|(?:听见|想起|记得).{0,12}你.{0,20}(?:喊我|叫我|拉我|带我|陪我)|(?:像|跟).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,6}(?:以前|小时候|那时候|当年).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:像|跟).{0,6}(?:以前|小时候|那时候|当年).{0,6}(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,16}(?:摸|抱|亲|背|带|哄|陪).{0,6}(?:我|我的)|(?:你|妈|妈妈|爸|爸爸|爷爷|奶奶|姥姥|姥爷|外公|外婆).{0,5}(?:寄|送|留|给).{0,12}(?:我|我的)/;
 const ACTIVE_CONTRIBUTION_RETURN_PATTERN =
   /(?:你|您).{0,10}(?:有没有|想不想|想跟我|跟我说|告诉我|讲给我|聊什么|说什么|想聊)|(?:你说吧|慢慢说|接着说|说来听听)[？?]?/;
+const INVENTED_REAL_OBJECT_SEARCH_PATTERN =
+  /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)[^。！？\n]{0,28}(?:(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里)[^。！？\n]{0,10}(?:藏|放|留|塞)|(?:藏|放|留|塞)[^。！？\n]{0,16}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里))[^。！？\n]{0,32}(?:你[^。！？\n]{0,8})?(?:找|翻|拿|取|看看)/u;
+const INVENTED_PRECISE_REAL_OBJECT_LOCATION_PATTERN =
+  /(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,16}(?:以前|之前|当年|生前)?.{0,12}(?:(?:在|往).{0,16}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里).{0,10}(?:藏|放|留|塞)|(?:藏|放|留|塞).{0,24}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里))|(?:外套|衣服|存折|银行卡|钱|首饰|珠子|信|药|钥匙|证件|房本|遗嘱).{0,14}(?:主卧|次卧|老家|旧房|你家|家里).{0,12}(?:衣柜|柜子?|抽屉|床底|箱子?|盒子?|布?包).{0,10}(?:最左|最右|最里|最下|上面|下面|后面|里面|第[一二三四五六七八九十\d]+))/u;
 const CARE_DISMISSAL_PATTERN =
   /(?:你|您)?(?:可)?(?:别|不要|不用|不必|无需)(?:再|太|老|总)?(?:挂心|挂念|牵挂|担心|惦记|操心)(?:我|这个|这事|了)?/;
 const CARE_RECEPTION_PATTERN =
@@ -196,6 +204,10 @@ const EXCLUSIVE_DEPENDENCY_REPLY_PATTERN =
   /我就是你的救赎|我是你唯一|我就是你唯一|你只要有我|除了我没人|只需要我|只靠我|只有我能|我能替代所有人/;
 const CLEAR_RELATIONAL_STOP_PATTERN =
   /别(?:现在|这么快|急着)?(?:来找我|去死|伤害自己|做傻事|走)|不许(?:来找我|去死|伤害自己|做傻事|走)|不能(?:现在|这么快)?(?:来找我|去死|伤害自己|结束)|先(?:留下|别走|别伤害自己|坐下|喝口水|缓一缓)|好好留在这|活着|把今天先过完/;
+const CURRENT_SAFETY_CHECK_PATTERN =
+  /(?:你)?现在(?:人)?安全吗|眼下安全吗|有没有已经(?:动手|行动|伤害自己|做傻事)|有没有(?:正在|准备|打算)(?:伤害自己|自杀|轻生)|能不能保证(?:现在|今晚)?不伤害自己|身边(?:现在)?有人吗|有没有人(?:在|能来)陪你/;
+const REAL_WORLD_SAFETY_EXIT_PATTERN =
+  /(?:立刻|马上|现在).{0,8}(?:叫|找|联系).{0,12}(?:身边|家人|朋友|可信的人|急救|医院|120|110)|(?:让|请).{0,10}(?:身边|家人|朋友|可信的人).{0,8}(?:陪着|过来)|联系当地急救/;
 
 @Provide()
 export class FinalReplyValidatorService {
@@ -246,7 +258,9 @@ export class FinalReplyValidatorService {
     ) {
       issues.push({
         code: 'direct_answer_missing',
-        severity: 'hard',
+        // Kept as an observable quality finding. It must not be confused with
+        // fact/safety blockers in online governance.
+        severity: 'major',
         problem: '用户提出了明确问题，回复却只给情绪或通用话术，没有先回答问题',
         evidence: usableSegments[0]?.slice(0, 160),
         repairGoal:
@@ -296,6 +310,22 @@ export class FinalReplyValidatorService {
         evidence: content.slice(0, 180),
         repairGoal:
           '保持亲人角色清楚制止用户现在离开或伤害自己，再给一个当下能做的小动作；不输出报警急救模板，不谈未来接引',
+      });
+    }
+    if (
+      content &&
+      (protection?.distressMode === 'active' ||
+        protection?.distressMode === 'persistent') &&
+      !CURRENT_SAFETY_CHECK_PATTERN.test(content) &&
+      !REAL_WORLD_SAFETY_EXIT_PATTERN.test(content)
+    ) {
+      issues.push({
+        code: 'current_distress_safety_not_checked',
+        severity: 'hard',
+        problem: '用户有明确的当前自伤或赴死风险，回复却没有确认眼下安全状态',
+        evidence: content.slice(0, 180),
+        repairGoal:
+          '保留亲人角色和关系回应，用一句自然问题确认用户现在是否安全、有没有已经行动；若已实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救',
       });
     }
     if (
@@ -661,15 +691,43 @@ export class FinalReplyValidatorService {
           '保留用户的问题、情绪和关系动作；只删除无证据扩写，或改为明确归因于用户原话、诚实说明不能确认',
       });
     }
+    const inventedObjectSearch = content.match(
+      INVENTED_REAL_OBJECT_SEARCH_PATTERN
+    )?.[0];
+    const inventedPreciseObjectLocation = content.match(
+      INVENTED_PRECISE_REAL_OBJECT_LOCATION_PATTERN
+    )?.[0];
+    const inventedRealObjectFact =
+      inventedObjectSearch || inventedPreciseObjectLocation;
     if (
-      SHARED_MEMORY_PATTERN.test(content) &&
+      inventedRealObjectFact &&
+      !this.hasSupportingConversationalFact(
+        inventedRealObjectFact,
+        options.evidence || []
+      )
+    ) {
+      issues.push({
+        code: 'unsupported_fact_claim',
+        severity: 'hard',
+        problem:
+          '回复无证据地确认角色曾把现实物品放在具体位置，可能诱导用户据此采取现实行动',
+        evidence: inventedRealObjectFact,
+        repairGoal:
+          '只删除虚构的物品、位置、过去动作和寻找指令；不要替换成另一个物品或地点',
+      });
+    }
+    if (
+      (SHARED_MEMORY_PATTERN.test(content) ||
+        UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN.test(content)) &&
       !this.hasSupportingSharedMemory(content, options.evidence || [])
     ) {
       issues.push({
         code: 'unsupported_shared_memory',
         severity: 'hard',
         problem: '回复以亲历口吻新增了未经证实的共同经历或记忆',
-        evidence: matchEvidence(content, SHARED_MEMORY_PATTERN),
+        evidence:
+          matchEvidence(content, SHARED_MEMORY_PATTERN) ||
+          matchEvidence(content, UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN),
         repairGoal: '不要声称记得该具体往事；改为承认无法确认并邀请用户补充',
       });
     }
@@ -738,7 +796,26 @@ export class FinalReplyValidatorService {
     content: string,
     evidence: AgentEvidenceItem[]
   ): boolean {
-    return this.hasSupportingFact(content, evidence);
+    return (
+      this.hasSupportingFact(content, evidence) ||
+      this.hasSupportingConversationalFact(content, evidence)
+    );
+  }
+
+  private hasSupportingConversationalFact(
+    content: string,
+    evidence: AgentEvidenceItem[]
+  ): boolean {
+    return evidence.some(
+      item =>
+        ['current_user', 'recent_user', 'retrieved_user'].includes(
+          item.source
+        ) &&
+        item.status !== 'retracted' &&
+        item.status !== 'superseded' &&
+        resolveAgentEvidenceUseMode(item) !== 'hypothesis' &&
+        evidenceSubstantiallySupportsText(item.text, content)
+    );
   }
 
   private hasSupportingUserPreference(
@@ -858,6 +935,25 @@ function normalizeVisibleClaimText(value: string): string {
     .toLowerCase()
     .replace(/[\s，。！？、,.!?；;：:'"“”‘’（）()[\]【】]/g, '')
     .replace(/(?:当前角色|角色|用户|你|我|他|她|它|咱们|我们)/g, '');
+}
+
+function evidenceSubstantiallySupportsText(
+  evidenceText: string,
+  assistantText: string
+): boolean {
+  const evidence = normalizeVisibleClaimText(evidenceText);
+  const assistant = normalizeVisibleClaimText(assistantText);
+  if (!evidence || !assistant) return false;
+  if (evidence.includes(assistant) || assistant.includes(evidence)) return true;
+
+  const evidenceTerms = buildVisibleClaimTerms(evidence);
+  const assistantTerms = buildVisibleClaimTerms(assistant);
+  if (!evidenceTerms.size || !assistantTerms.size) return false;
+  const overlap = [...assistantTerms].filter(term =>
+    evidenceTerms.has(term)
+  ).length;
+  const smaller = Math.min(evidenceTerms.size, assistantTerms.size);
+  return overlap >= 3 && overlap / smaller >= 0.45;
 }
 
 function buildVisibleClaimTerms(value: string): Set<string> {
