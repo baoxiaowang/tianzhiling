@@ -12,7 +12,6 @@ import {
   AgentProfileFactAssertionPolicy,
   ChatSpanAttributeValue,
   ChatSpanStatus,
-  ChatTraceArtifactKind,
   ChatTraceStage,
 } from '@tzl/entities';
 import { AuthenticatedUserPayload } from '../../interface';
@@ -25,7 +24,10 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
-import { ChatTraceService } from '../chat-trace.service';
+import {
+  ChatTraceArtifactKind,
+  ChatTraceService,
+} from '../chat-trace.service';
 import {
   AgentMemoryFactService,
   AgentMemoryFactSummary,
