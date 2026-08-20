@@ -183,6 +183,7 @@ const ASSISTANT_REPLY_TIMEOUT_MS = 28000;
 const ASSISTANT_RECOVERY_TIMEOUT_MS = 15000;
 const ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS = 300;
 const ASSISTANT_REPLY_MAX_TOKENS = 520;
+const ASSISTANT_DENSE_TURN_MAX_TOKENS = 700;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
@@ -5055,6 +5056,11 @@ export class ConversationService {
     context: AgentConversationContext;
   }): Promise<PrimaryAssistantCompletionResult> {
     const plan = options.context.chatToolPlan;
+    const inputProfile = options.context.replyBrief?.lengthPlan;
+    const replyMaxTokens =
+      inputProfile?.inputDensity === 'dense'
+        ? ASSISTANT_DENSE_TURN_MAX_TOKENS
+        : ASSISTANT_REPLY_MAX_TOKENS;
     const tools =
       plan?.mode === 'active'
         ? getAgentChatToolDefinitions(plan.availableTools)
@@ -5064,7 +5070,7 @@ export class ConversationService {
       {
         temperature: ASSISTANT_REPLY_TEMPERATURE,
         topP: ASSISTANT_REPLY_TOP_P,
-        max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
+        max_tokens: replyMaxTokens,
         messages: options.context.messages,
         ...(tools.length
           ? {
@@ -5079,6 +5085,12 @@ export class ConversationService {
           attributes: {
             chatToolMode: plan?.mode || 'off',
             registeredToolCount: tools.length,
+            inputDensity: inputProfile?.inputDensity || 'ordinary',
+            inputVisibleCharacters:
+              inputProfile?.inputVisibleCharacters || undefined,
+            inputParagraphCount: inputProfile?.inputParagraphCount || undefined,
+            inputClauseCount: inputProfile?.inputClauseCount || undefined,
+            replyMaxTokens,
           },
         },
       },
@@ -5194,7 +5206,7 @@ export class ConversationService {
       {
         temperature: ASSISTANT_REPLY_TEMPERATURE,
         topP: ASSISTANT_REPLY_TOP_P,
-        max_tokens: ASSISTANT_REPLY_MAX_TOKENS,
+        max_tokens: replyMaxTokens,
         messages: continuationMessages,
         tools,
         tool_choice: 'none',
@@ -5208,6 +5220,10 @@ export class ConversationService {
               (total, item) => total + item.result.items.length,
               0
             ),
+            inputDensity: inputProfile?.inputDensity || 'ordinary',
+            inputVisibleCharacters:
+              inputProfile?.inputVisibleCharacters || undefined,
+            replyMaxTokens,
           },
         },
       },

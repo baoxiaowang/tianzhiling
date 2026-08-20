@@ -56,6 +56,7 @@ import {
   resolveReplyOutputSegmentMode,
 } from './reply-output-contract';
 import {
+  analyzeReplyInputProfile,
   buildReplyLengthPlan,
   buildReplyLengthPlanPrompt,
   ReplyLengthPlan,
@@ -594,6 +595,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
   const singleBubbleAcknowledgment = SINGLE_BUBBLE_ACKNOWLEDGMENT_PATTERN.test(
     currentQuery.trim()
   );
+  const inputProfile = analyzeReplyInputProfile(currentQuery);
   const previousAssistantUsedTwoSegments = Boolean(
     options.recentMessages
       ?.filter(message => message.role === MessageRole.assistant)
@@ -603,7 +605,8 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
       )
   );
   const preferTwentyToThirtyCharacters = Boolean(
-    !isReplyClosingTurn(currentQuery) &&
+    inputProfile.density === 'ordinary' &&
+      !isReplyClosingTurn(currentQuery) &&
       understanding.needs.filter(need => need.priority === 'must').length <=
         2 &&
       !singleBubbleAcknowledgment &&
@@ -650,6 +653,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     continuationGoal: conversationPlan?.engagement?.continuationGoal,
     closureReadiness: conversationPlan?.engagement?.closureReadiness,
     turnClosure: bubblePlan.turnClosure,
+    inputProfile,
   });
   const stateProtocol = resolveReplyStateProtocol({
     currentQuery,
@@ -2020,6 +2024,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
         '该协议已经转化为下方的用户需要、回复动作和禁止推断；不得改回“哪里不像就让用户指出来”的校准流程。',
       ]
     : [];
+  const hasSubstantialInput = Boolean(brief.lengthPlan.inputDensity);
   const readingLines = brief.reading
     ? [
         '## 模型对当前原话的阅读',
@@ -2039,11 +2044,15 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
           ? [`需要正面回答：${brief.reading.questionsToAnswer.join('；')}`]
           : []),
         `语气参考：${brief.reading.suggestedTone}`,
-        '上面锚点和具体内容，先照着其中一件回应，再带情绪；如果与用户原话冲突，以用户原话为准。',
+        hasSubstantialInput
+          ? '上面锚点只帮助你确认读到了什么；长文可以有主次，但不能因选中一个锚点而遗漏其他重大内容。如何组织和展开由你结合完整原话决定；若与原话冲突，以原话为准。'
+          : '上面锚点和具体内容，先照着其中一件回应，再带情绪；如果与用户原话冲突，以用户原话为准。',
         '',
       ]
     : [];
-  const contentUnitPrompt = buildContentUnitPrompt(brief.contentUnits ?? []);
+  const contentUnitPrompt = buildContentUnitPrompt(brief.contentUnits ?? [], {
+    preserveMajorCoverage: hasSubstantialInput,
+  });
   const contentUnitLines = contentUnitPrompt
     ? ['## 本轮具体内容', contentUnitPrompt, '']
     : [];
@@ -2058,8 +2067,25 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     engagement: brief.conversationPlan?.engagement,
     turnPlan: brief.conversationPlan?.turnPlan,
   });
-  const conversationPlanLines = brief.conversationPlan
-    ? [
+  const needsStructuredConversationGuidance = Boolean(
+    brief.riskLevel === 'high' ||
+      brief.correctionPolicy ||
+      brief.relationshipContinuity ||
+      brief.capabilityConstraints.length ||
+      brief.realityDependencies.length ||
+      brief.conversationPlan?.engagement?.continuationGoal === 'repair' ||
+      (!hasSubstantialInput &&
+        (Boolean(brief.objectPlan) ||
+          brief.intents.some(
+            item =>
+              item.intent === 'share_family_update' &&
+              item.subIntent === 'family_care'
+          ) ||
+          brief.conversationPlan?.questionNeed === 'necessary'))
+  );
+  const conversationPlanLines =
+    brief.conversationPlan && needsStructuredConversationGuidance
+      ? [
         '## 本轮交谈规划',
         `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
         `聊天行动：${brief.conversationPlan.moves
@@ -2096,12 +2122,12 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
               '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
             ]
           : []),
-        ...(brief.conversationPlan.engagement?.assistantContribution ===
-        'self_expression'
-          ? [
-              '用户要当前角色主动说：只给一个短小的角色侧当下片段，不把话推回用户。涉及离世生活时按本轮框架选一处贴题内容，不临时另造世界设定，也不编用户偏好或共同往事。',
-            ]
-          : []),
+          ...(brief.conversationPlan.engagement?.assistantContribution ===
+          'self_expression'
+            ? [
+                '用户要当前角色主动说：给一个贴题的角色侧当下内容，不把话推回用户，也不为追求简短而只给一句空泛表态。涉及离世生活时按本轮框架选择内容，不临时另造世界设定，也不编用户偏好或共同往事。',
+              ]
+            : []),
         ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
           ? [
               '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
@@ -2112,13 +2138,14 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
               '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
             ]
           : []),
-        '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
-        '',
-      ]
-    : [];
-  const commActLines = brief.commAct
-    ? [buildReplyCommActPrompt(brief.commAct)]
-    : [];
+          '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
+          '',
+        ]
+      : [];
+  const commActLines =
+    brief.commAct && needsStructuredConversationGuidance
+      ? [buildReplyCommActPrompt(brief.commAct)]
+      : [];
   const participationLines = brief.participationStrategy
     ? [
         '## 短轮参与',
@@ -2262,7 +2289,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '## 沟通补偿',
     '如果事实、能力或边界让表层请求不能直接满足，不要围着规则解释；先看见用户想被理解、记得、照顾或靠近的需要，再用关系立场、愿望、假设、用户已说片段的意义或聊天内能做的事承接。必要边界最多一句，不抢走情感主体。',
     '当前角色不能因用户要求而改演前任或其他人物；先理解这次角色要求背后的需要，再以当前亲人身份回应。',
-    '家人寄来或祭扫的物品只在离世生活框架激活时按物品规则承接；不索要、不催促，也不声称它会改变现实结果。复合倾诉可只回一个自然点。',
+    '家人寄来或祭扫的物品只在离世生活框架激活时按物品规则承接；不索要、不催促，也不声称它会改变现实结果。复合倾诉可以有主次，但不能因聚焦主线让明确问题、重大近况或关系诉求消失；由你结合完整原话自然组织，不机械逐项。',
     '只有用户本轮主动谈到以后相见、团聚或来接自己时，才承接带远期条件的团聚表达；普通日常话题不要主动转向死亡或重逢。',
     '其他离世亲人的相见、同住和作伴只沿用户原话、角色资料或连续状态锚点，不临时增加具体人物关系。',
     '用户只说“不对、你理解错了”时先回看最近对话，停止被否定的旧理解并回应已能确认的部分；正确信息仍不明确时不要要求用户重新提供标准答案。',
