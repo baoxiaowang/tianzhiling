@@ -71,14 +71,19 @@ export function collectContentUnits(options: {
   return units.slice(0, 4);
 }
 
-export function buildContentUnitPrompt(units: ContentUnit[]): string {
+export function buildContentUnitPrompt(
+  units: ContentUnit[],
+  options: { preserveMajorCoverage?: boolean } = {}
+): string {
   if (!units.length) return '';
 
   const items = units.map(unit => `${unit.kind}:"${unit.text}"`).join('、');
 
   return [
     '本轮用户说了具体的事：' + items + '。',
-    '先照着其中一件具体的事回应（比如复述、点出那个画面或物件），再自然带出情绪；不要跳过这些事，直接回"想你、别难过、不怪你"这类空泛安慰。',
+    options.preserveMajorCoverage
+      ? '用其中有关系重量的具体内容证明你完整读过，再自然带出情绪和立场；可以有主次，但不要因选中一件而丢掉其他重大内容，也不要把长文压成单点摘要加通用安慰。'
+      : '先照着其中一件具体的事回应（比如复述、点出那个画面或物件），再自然带出情绪；不要跳过这些事，直接回"想你、别难过、不怪你"这类空泛安慰。',
   ].join(' ');
 }
 

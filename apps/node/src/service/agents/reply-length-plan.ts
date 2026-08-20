@@ -5,6 +5,15 @@ export type ReplyLengthClass =
   | 'extended'
   | 'deep';
 
+export type ReplyInputDensity = 'ordinary' | 'substantial' | 'dense';
+
+export interface ReplyInputProfile {
+  density: ReplyInputDensity;
+  visibleCharacters: number;
+  paragraphCount: number;
+  clauseCount: number;
+}
+
 export interface ReplyLengthPlan {
   lengthClass: ReplyLengthClass;
   targetCharacters: number;
@@ -13,6 +22,10 @@ export interface ReplyLengthPlan {
     minCharacters: number;
     maxCharacters: number;
   };
+  inputDensity?: Exclude<ReplyInputDensity, 'ordinary'>;
+  inputVisibleCharacters?: number;
+  inputParagraphCount?: number;
+  inputClauseCount?: number;
   focusMode?: 'single_scene';
   reviewPolicy?: 'remove_repeated_actions_only';
 }
@@ -38,6 +51,7 @@ export interface BuildReplyLengthPlanOptions {
   continuationGoal?: 'deepen' | 'hold' | 'repair' | 'close';
   closureReadiness?: 'blocked' | 'possible' | 'ready';
   turnClosure?: 'close' | 'continue' | 'neutral';
+  inputProfile?: ReplyInputProfile;
 }
 
 const LENGTH_BUDGETS: Record<
@@ -93,13 +107,44 @@ const RELATIONAL_WARMTH_SCENES = new Set([
   'departure_hatred',
 ]);
 
+const SUBSTANTIAL_INPUT_MIN_CHARACTERS = 50;
+const DENSE_INPUT_MIN_CHARACTERS = 120;
+
+export function analyzeReplyInputProfile(value: string): ReplyInputProfile {
+  const text = String(value || '').trim();
+  const visibleCharacters = Array.from(text.replace(/\s/gu, '')).length;
+  const paragraphCount = text
+    .split(/\n+/u)
+    .map(item => item.trim())
+    .filter(Boolean).length;
+  const clauseCount = text
+    .split(/[。！？!?；;\n]+/u)
+    .map(item => item.trim())
+    .filter(Boolean).length;
+  const density: ReplyInputDensity =
+    visibleCharacters >= DENSE_INPUT_MIN_CHARACTERS ||
+    (visibleCharacters >= 80 && paragraphCount >= 3)
+      ? 'dense'
+      : visibleCharacters >= SUBSTANTIAL_INPUT_MIN_CHARACTERS ||
+        (visibleCharacters >= 40 && paragraphCount >= 2)
+      ? 'substantial'
+      : 'ordinary';
+
+  return {
+    density,
+    visibleCharacters,
+    paragraphCount,
+    clauseCount,
+  };
+}
+
 export function buildReplyLengthPlan(
   options: BuildReplyLengthPlanOptions
 ): ReplyLengthPlan {
+  const inputProfile =
+    options.inputProfile ?? analyzeReplyInputProfile(options.currentQuery);
   const replyMoveCount = Math.max(0, options.replyMoveCount || 0);
-  const userQueryLength = Array.from(
-    options.currentQuery.replace(/\s/gu, '')
-  ).length;
+  const userQueryLength = inputProfile.visibleCharacters;
   const compactSingleFocus =
     Boolean(options.semanticPlan) &&
     Boolean(options.scene && COMPACT_SEMANTIC_SCENES.has(options.scene)) &&
@@ -186,7 +231,8 @@ export function buildReplyLengthPlan(
   }
 
   const compactPreferredReply = Boolean(
-    (options.preferTwoSegments || options.preferTwentyToThirtyCharacters) &&
+    inputProfile.density === 'ordinary' &&
+      (options.preferTwoSegments || options.preferTwentyToThirtyCharacters) &&
       !options.hasProtectiveStop &&
       options.continuationGoal !== 'repair' &&
       options.closureReadiness !== 'blocked' &&
@@ -201,6 +247,14 @@ export function buildReplyLengthPlan(
   const plan: ReplyLengthPlan = {
     lengthClass,
     ...LENGTH_BUDGETS[lengthClass],
+    ...(inputProfile.density !== 'ordinary'
+      ? {
+          inputDensity: inputProfile.density,
+          inputVisibleCharacters: inputProfile.visibleCharacters,
+          inputParagraphCount: inputProfile.paragraphCount,
+          inputClauseCount: inputProfile.clauseCount,
+        }
+      : {}),
     ...(compactPreferredReply
       ? {
           preferredRange: {
@@ -238,6 +292,17 @@ function promoteLengthClass(
 }
 
 export function buildReplyLengthPlanPrompt(plan: ReplyLengthPlan): string {
+  if (plan.inputDensity) {
+    return [
+      '用户这一轮交付了较完整的一段内容。先完整读完，自主分清其中最重的情绪、明确问题、关键事实和关系诉求。回复可以有主次，但不能只摘一个点做摘要，再用“我知道、别难过、不怪你”等通用安慰收住；要让主要内容确实被看见，按内容自然展开，不设置目标字数。',
+      ...(plan.inputDensity === 'dense'
+        ? [
+            '信息较密时，先承接最重的主线，再自然回应不能遗漏的重要支线；不要机械逐项，也不要为了微信界面简洁而压掉关系内容。',
+          ]
+        : []),
+    ].join('\n');
+  }
+
   // 长度计划只保留给分布观测和异常诊断；生成模型不接收目标字数，
   // 防止程序预算反向压缩情绪、事实和对话参与。
   if (plan.focusMode === 'single_scene') {
