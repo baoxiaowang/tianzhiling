@@ -47,27 +47,27 @@ const MESSENGER_MEMORY_TASK_DEFINITIONS: ReadonlyArray<{
   {
     key: 'personalityTraits',
     title: 'TA 的样子',
-    description: '性格、脾气和待人方式',
+    description: '性格、脾气、语气和关心方式',
   },
   {
     key: 'lifeExperience',
     title: '人生经历',
-    description: '重要的人、地方和经历',
+    description: '人生节点、工作、家人和重要经历',
   },
   {
     key: 'hobbies',
     title: '喜欢的事',
-    description: '爱好、手艺和日常习惯',
+    description: '爱好、手艺、饮食、宠物和日常习惯',
   },
   {
     key: 'languageHabits',
     title: '熟悉的话语',
-    description: '口头禅、语气和方言',
+    description: '双方称呼、口头禅、语气和方言',
   },
   {
     key: 'sharedMemories',
     title: '你们的回忆',
-    description: '一起经历过的人和事',
+    description: '相处、情感、共同大事和特殊日子',
   },
 ];
 

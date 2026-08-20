@@ -188,6 +188,9 @@ export class AgentMemoryProfileService {
           '保留已有草稿中的可靠内容，把新内容自然合并进去，避免重复。每项最多 1000 字。',
           '采访分为“先形成整体轮廓、再沿当前话题核实细节”两个阶段。共情只是进入访谈的桥梁，不是本轮终点；通常用一个短句承接，再问一个能产生具体事实的问题。',
           '小使者还有一张记忆任务卡，用来推进尚未补全的基本信息。当前任务卡优先项是本轮默认目标；用户主动讲到其他方面时，优先顺着用户当前话题追问，不要生硬拉回任务卡。',
+          '当前小使者已经和基础身份中的唯一亲友绑定。绝不再问“是哪位亲人”“亲人叫什么”“你们是什么关系”或“什么亲属关系”，也不要让用户重新选择要为谁补全记忆。',
+          '基础身份和当前资料里已经明确的内容直接跳过，不要为了走流程重复询问。双方称呼、出生日期、离世日期只有对应字段确实缺失、且当前话题自然时才可补问；已知出生与离世日期时不要另问年龄。',
+          '访谈参考方向只是帮助你找到有价值的下一问，不是必须依次完成的问卷。离世原因、遗憾、秘密等敏感方向不作为默认开场问题，只有用户主动触及或上下文自然且愿意继续时才温和了解。',
           '除非用户拒绝、想不起来、明确结束，或当前问题需要立即完整回答，否则有未完成任务时 reply 必须包含且只包含一个具体问题。不得只说“我懂、我在听、慢慢说、这很珍贵”。',
           '用户给出“记得家人”“在世时一起的开心日子”“以前的事”等明确但宽泛的记忆线索时，不得只复述情绪或询问“对吗”；先承接这条线索，再只问一个能让它变具体的问题。线索本身不够具体时不保存。',
           '如果本轮没有回答原问题，先接住他实际说的内容；优先在他新提到的话题里追问一个具体事实，实在没有线索时再换到尚未完成的任务。不要一轮问多个问题。',
@@ -216,6 +219,12 @@ export class AgentMemoryProfileService {
           `本轮原本在了解：${focusField || '自由讲述'}`,
           `此前已经问过、不得再问：${JSON.stringify(askedFields)}`,
           `当前任务卡优先项：${taskField || '由用户当前话题决定'}`,
+          `当前任务可参考的访谈方向：${this.buildInterviewReferenceGuide(
+            options.agent,
+            taskField ||
+              focusField ||
+              this.resolveNextInterviewField(currentDraft)
+          )}`,
           `此前小使者回复：${JSON.stringify(previousReplies)}`,
           `此前用户讲述（从近到远，仅用于理解指代和纠错）：${JSON.stringify(
             previousUserInputs
@@ -815,6 +824,59 @@ export class AgentMemoryProfileService {
     };
   }
 
+  private buildInterviewReferenceGuide(
+    agent: AgentEntity,
+    field: AgentProfileMemoryField | ''
+  ): string {
+    const guides: Record<AgentProfileMemoryField, string[]> = {
+      personalityTraits: [
+        '性格与脾气',
+        '对讲述者的典型语气',
+        '表达关心或安慰的方式',
+        '让讲述者印象最深或受到影响的事',
+        '亲友的骄傲、遗憾或对讲述者的期望',
+      ],
+      lifeExperience: [
+        ...(!agent.birthday ? ['出生年月'] : []),
+        ...(!agent.deathDate ? ['离世年月'] : []),
+        ...(!agent.birthday || !agent.deathDate ? ['年龄'] : []),
+        '籍贯与生活过的地方',
+        '离世原因',
+        '求学、工作、调动、婚姻或孩子等人生节点',
+        '工作经历与个人故事',
+      ],
+      hobbies: [
+        '爱好与手艺',
+        '饮食习惯和喜欢的菜',
+        '宠物或动物伙伴',
+        '有代表性的日常习惯',
+      ],
+      languageHabits: [
+        ...(!agent.iCallAgent?.trim() ? ['讲述者平时如何称呼这位亲友'] : []),
+        ...(!agent.agentCallMe?.trim() ? ['这位亲友平时如何称呼讲述者'] : []),
+        '普通话或方言',
+        '口头禅与常用说法',
+        '典型语气和说话方式',
+      ],
+      sharedMemories: [
+        '提到亲友时脑海里的第一个画面',
+        '共同生活与平时相处的方式',
+        '彼此的情感及原因',
+        '亲友见证过的讲述者人生大事',
+        '共同回忆、重要细节和特殊日子',
+        '用户愿意讲述的秘密或额外补充',
+      ],
+    };
+
+    if (!field) {
+      return '顺着用户当前话题，从尚未明确的性格、经历、喜好、语言或共同回忆中任选一个具体方向；不要照表提问。';
+    }
+
+    return `${guides[field].join(
+      '；'
+    )}。只选一个与当前话题最自然且尚未明确的方向。`;
+  }
+
   private buildPromptFact(
     fact: AgentProfileFactSummary
   ): Record<string, unknown> {
@@ -1272,7 +1334,8 @@ export class AgentMemoryProfileService {
     const normalized = this.normalizeInterviewReply(reply);
     if (
       !normalized ||
-      /我(?:已经|都)?记住了|谢谢[^。！？]*记住了/.test(normalized)
+      /我(?:已经|都)?记住了|谢谢[^。！？]*记住了/.test(normalized) ||
+      this.asksForBoundRelativeIdentity(normalized)
     ) {
       return false;
     }
@@ -1301,16 +1364,24 @@ export class AgentMemoryProfileService {
     );
   }
 
+  private asksForBoundRelativeIdentity(reply: string): boolean {
+    return /(?:哪位|哪个|什么)(?:过世|离世)?亲人|(?:这位)?亲人是谁|亲人(?:叫)?什么名字|(?:你们|你(?:和|跟)(?:他|她|TA)|(?:他|她|TA)和你)(?:是)?什么关系|什么亲属关系|(?:他|她|TA)是你(?:的)?谁/i.test(
+      reply
+    );
+  }
+
   private doesReplyAddressInterviewField(
     reply: string,
     field: AgentProfileMemoryField
   ): boolean {
     const patterns: Record<AgentProfileMemoryField, RegExp> = {
-      personalityTraits: /性格|什么样的人|待人|脾气/,
-      lifeExperience: /经历|人生|年轻时|工作|小时候/,
-      hobbies: /喜欢|爱好|平时会做|开心|投入/,
-      languageHabits: /说话|常说|口头禅|语气|方言/,
-      sharedMemories: /共同记忆|回忆|最想留住|你(?:和|跟).*(?:之间|一起)/,
+      personalityTraits: /性格|什么样的人|待人|脾气|安慰|关心|骄傲|遗憾|期望/,
+      lifeExperience:
+        /经历|人生|年轻时|工作|小时候|出生|离世|哪里人|籍贯|婚姻|孩子|调动/,
+      hobbies: /喜欢|爱好|平时会做|开心|投入|手艺|吃|菜|宠物|习惯/,
+      languageHabits: /说话|常说|口头禅|语气|方言|普通话|称呼|叫你|你叫/,
+      sharedMemories:
+        /共同记忆|回忆|最想留住|第一个画面|相处|见证|特殊日子|你(?:和|跟).*(?:之间|一起)/,
     };
 
     return patterns[field].test(reply);
