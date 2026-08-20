@@ -143,10 +143,7 @@ import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
-import {
-  ChatTraceArtifactKind,
-  ChatTraceService,
-} from './chat-trace.service';
+import { ChatTraceArtifactKind, ChatTraceService } from './chat-trace.service';
 import {
   AgentChatToolDecision,
   AgentChatToolName,
@@ -163,7 +160,7 @@ import {
   type MessengerMemoryTaskPlan,
 } from './agents/messenger.service';
 import {
-  applyRecognitionJourneyAssistantReply,
+  applyRecognitionJourneyObservation,
   buildInitialRecognitionJourney,
   buildLegacyRecognitionJourney,
   parseRecognitionJourney,
@@ -173,6 +170,7 @@ import {
   RecognitionTaskId,
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
+import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
 import {
   PreparedRelationshipOpenLoopTurn,
   RelationshipOpenLoopService,
@@ -775,6 +773,9 @@ export class ConversationService {
 
   @Inject()
   permanentAgentSilenceService: PermanentAgentSilenceService;
+
+  @Inject()
+  recognitionJourneyObserverService: RecognitionJourneyObserverService;
 
   async listConversations(
     auth: AuthenticatedUserPayload,
@@ -3736,8 +3737,7 @@ export class ConversationService {
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
-            continuityInformationCardPrompt:
-              relationshipOpenLoopTurn?.prompt,
+            continuityInformationCardPrompt: relationshipOpenLoopTurn?.prompt,
           })
       );
     } catch (error) {
@@ -4735,14 +4735,61 @@ export class ConversationService {
 
       const latestAssistantMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
-      const updated = applyRecognitionJourneyAssistantReply({
+      const assistantText = options.processed.replySegments.join('\n');
+      const observed = await this.recognitionJourneyObserverService?.observe({
         journey,
         plan,
-        assistantText: options.processed.replySegments.join('\n'),
+        currentUserText: plan.currentUserText || '',
+        assistantText,
+      });
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.review,
+        kind: ChatTraceArtifactKind.reviewCandidate,
+        operation: 'artifact.recognition_journey.observation',
+        payload: {
+          status: observed?.status || 'unavailable',
+          plan: {
+            openingSuggested: plan.openingSuggested,
+            openingAngle: plan.openingAngle,
+            suggestedTaskId: plan.suggestedTaskId,
+            userTurnNumber: plan.userTurnNumber,
+          },
+          before: journey,
+          observation: observed?.observation,
+        },
+        attributes: {
+          status: observed?.status || 'unavailable',
+          opening: observed?.observation?.opening,
+          familyStatus: observed?.observation?.familyStatus,
+          departureInterval: observed?.observation?.departureInterval,
+          totalTokens: observed?.usage?.totalTokens,
+        },
+      });
+      if (observed?.status !== 'observed' || !observed.observation) return;
+
+      const updated = applyRecognitionJourneyObservation({
+        journey,
+        plan,
+        observation: observed.observation,
         assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
+        userMessageId: plan.currentUserMessageId,
         now: latestAssistantMessage.createdAt,
       });
       const nextState = serializeRecognitionJourney(updated);
+      this.chatTraceService?.recordArtifact({
+        stage: ChatTraceStage.review,
+        kind: ChatTraceArtifactKind.reviewCandidate,
+        operation: 'artifact.recognition_journey.transition',
+        payload: {
+          before: journey,
+          observation: observed.observation,
+          after: updated,
+        },
+        attributes: {
+          openingStatus: updated.opening.status,
+          journeyStage: updated.stage,
+        },
+      });
       if (nextState === stateMessage.content) return;
 
       stateMessage.content = nextState;
@@ -4765,11 +4812,7 @@ export class ConversationService {
     const taskId = options.processed.routing?.relationshipOpenLoopTaskId;
     const stateMessageId =
       options.processed.routing?.relationshipOpenLoopStateMessageId;
-    if (
-      !this.relationshipOpenLoopService ||
-      !taskId ||
-      !stateMessageId
-    ) {
+    if (!this.relationshipOpenLoopService || !taskId || !stateMessageId) {
       return;
     }
     const assistantMessageIds = options.assistantMessages.map(message =>
