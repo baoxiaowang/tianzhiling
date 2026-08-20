@@ -134,6 +134,7 @@ import type {
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
 import { ConversationMessageItem, MessageService } from './message.service';
+import { ConversationChatImportService } from './conversation-chat-import.service';
 import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
@@ -259,7 +260,8 @@ const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
   vipLimit: 10,
 } as const;
 const CONVERSATION_IMAGE_ANALYSIS_SYSTEM_PROMPT = [
-  '理解聊天图片，严格输出JSON：{"summary":"可见画面摘要","people":[{"id":"P1","visible":"人物可见特征","identity":{"target":"agent|user|family|unknown","name":"","confidence":"high|medium|low","basis":"匹配依据"},"stableTraits":[{"kind":"hair_color|hair_length|face_shape|eyewear|facial_hair|build|distinctive","value":"短标准词"}]}]}。',
+  '理解聊天图片，严格输出JSON：{"imageType":"chat_screenshot|normal_image","summary":"可见画面摘要","people":[{"id":"P1","visible":"人物可见特征","identity":{"target":"agent|user|family|unknown","name":"","confidence":"high|medium|low","basis":"匹配依据"},"stableTraits":[{"kind":"hair_color|hair_length|face_shape|eyewear|facial_hair|build|distinctive","value":"短标准词"}]}]}。',
+  'imageType只有两个值：只有明确可见左右双方聊天气泡、适合导入为两人历史聊天的截图才是chat_screenshot；普通照片、群聊、文章、网页、支付页、设置页、识别不确定的图片一律是normal_image。',
   'summary只写主体、场景、动作、文字和情绪，80字内；people最多4人。',
   '这是用户在亲人聊天框里发来的图片。可结合当前角色姓名、用户称呼、最近对话、参考头像和历史视觉记忆做关系候选；第一次没有历史视觉记忆时，根据聊天对象关系与人物年龄/性别/年代感只能给low置信候选。',
   '不要因为聊天对象是谁就默认图中是TA；只有参考头像、历史视觉记忆、用户文字说明或照片文字能支持时，才可给medium/high。仅凭“用户称呼/当前角色/年龄阶段/关系推测”不能给medium/high。',
@@ -336,7 +338,10 @@ interface PreparedIncomingMessage {
   mediaAnalysis?: string;
   mediaTranscript?: string;
   visualAppearanceObservations?: AgentVisualAppearanceObservation[];
+  imageType?: ConversationImageType;
 }
+
+type ConversationImageType = 'chat_screenshot' | 'normal_image';
 
 interface ConversationImageIdentityGuess {
   target: AgentVisualIdentityTarget;
@@ -355,6 +360,7 @@ interface ConversationImagePersonAnalysis {
 interface ConversationImageAnalysisResult {
   mediaAnalysis: string;
   observations: AgentVisualAppearanceObservation[];
+  imageType: ConversationImageType;
 }
 
 interface SynthesizedAssistantVoiceReply {
@@ -705,6 +711,9 @@ export class ConversationService {
 
   @Inject()
   messageService: MessageService;
+
+  @Inject()
+  conversationChatImportService: ConversationChatImportService;
 
   @Inject()
   postImageService: PostImageService;
@@ -2172,13 +2181,18 @@ export class ConversationService {
         messagePayload,
         existingUserMessage
       );
+      const isNonReplyingStoredMessage =
+        existingUserMessage.replyTrigger === false;
 
       return {
         messagePayload,
         searchableText:
           this.buildSearchableTextFromMessage(existingUserMessage),
         userMessage: existingUserMessage,
-        deferReply: permanentSilence || shortTurnReception.mode !== 'reply',
+        deferReply:
+          isNonReplyingStoredMessage ||
+          permanentSilence ||
+          shortTurnReception.mode !== 'reply',
         shortTurnReception,
         permanentSilence,
         immediateAssistantMessages:
@@ -2199,12 +2213,17 @@ export class ConversationService {
     );
     const searchableText = this.buildMessageSearchableText(messagePayload);
     const now = new Date();
+    const isAutomaticChatImport =
+      messagePayload.type === MessageType.image &&
+      messagePayload.imageType === 'chat_screenshot';
     const alreadyPermanentlySilent =
       await this.permanentAgentSilenceService.isPermanentlySilent(
         runtime.agent
       );
     let chatQuota: ConversationChatQuotaSnapshot | undefined;
-    if (!alreadyPermanentlySilent) {
+    if (isAutomaticChatImport) {
+      chatQuota = await this.resolveCurrentChatQuota(runtime, now);
+    } else if (!alreadyPermanentlySilent) {
       try {
         chatQuota = await this.resolveChatQuotaForSend(
           runtime,
@@ -2255,6 +2274,8 @@ export class ConversationService {
       mediaAnalysis: messagePayload.mediaAnalysis,
       mediaTranscript: messagePayload.mediaTranscript,
       mediaDurationMs: messagePayload.mediaDurationMs,
+      quotaExempt: isAutomaticChatImport,
+      replyTrigger: isAutomaticChatImport ? false : undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -2280,6 +2301,29 @@ export class ConversationService {
     }
 
     await this.touchConversation(runtime.conversation, now);
+    if (isAutomaticChatImport) {
+      try {
+        await this.conversationChatImportService.startAutomaticImportFromMessage(
+          { message: userMessage }
+        );
+      } catch (error) {
+        this.logger.error(
+          '[conversation] automatic chat import start failed, conversationId=%s, messageId=%s, reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.stringifyObjectId(userMessage.id),
+          this.describeReplyError(error)
+        );
+      }
+
+      return {
+        messagePayload,
+        searchableText,
+        userMessage,
+        deferReply: true,
+        chatQuota,
+      };
+    }
+
     if (alreadyPermanentlySilent) {
       await this.permanentAgentSilenceService.markMessagesPermanentlySilent([
         userMessage,
@@ -6182,6 +6226,7 @@ export class ConversationService {
           ...message,
           mediaAnalysis: imageAnalysis?.mediaAnalysis,
           visualAppearanceObservations: imageAnalysis?.observations,
+          imageType: imageAnalysis?.imageType || 'normal_image',
         };
       }
       case MessageType.text:
@@ -6773,9 +6818,11 @@ export class ConversationService {
       return {
         mediaAnalysis: normalizedContent.slice(0, 300),
         observations: [],
+        imageType: 'normal_image',
       };
     }
 
+    const imageType = this.normalizeConversationImageType(parsed.imageType);
     const summary = this.normalizeImageAnalysisText(parsed.summary, 120);
     const people = (Array.isArray(parsed.people) ? parsed.people : [])
       .slice(0, 4)
@@ -6789,12 +6836,12 @@ export class ConversationService {
       runtime.agent
     );
 
-    if (!mediaAnalysis) {
+    if (!mediaAnalysis && imageType === 'normal_image') {
       return undefined;
     }
 
     return {
-      mediaAnalysis,
+      mediaAnalysis: mediaAnalysis || '两人聊天截图',
       observations: people.map(person => ({
         personId: person.id,
         identityTarget: person.identity.target,
@@ -6802,7 +6849,14 @@ export class ConversationService {
         identityConfidence: person.identity.confidence,
         traits: person.stableTraits,
       })),
+      imageType,
     };
+  }
+
+  private normalizeConversationImageType(
+    value: unknown
+  ): ConversationImageType {
+    return value === 'chat_screenshot' ? 'chat_screenshot' : 'normal_image';
   }
 
   private normalizeImagePerson(
@@ -8996,6 +9050,8 @@ export class ConversationService {
     mediaAnalysis?: string;
     mediaTranscript?: string;
     mediaDurationMs?: number;
+    quotaExempt?: boolean;
+    replyTrigger?: boolean;
     model?: string;
     promptTokens?: number;
     completionTokens?: number;
@@ -9147,6 +9203,8 @@ export class ConversationService {
     message.mediaDurationMs = this.normalizeVoiceDuration(
       options.mediaDurationMs
     );
+    message.quotaExempt = options.quotaExempt === true;
+    message.replyTrigger = options.replyTrigger;
     message.model = options.model?.trim() || '';
     message.promptTokens = this.normalizeTokenCount(options.promptTokens);
     message.completionTokens = this.normalizeTokenCount(

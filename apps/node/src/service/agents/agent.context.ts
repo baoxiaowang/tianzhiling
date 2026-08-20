@@ -7,6 +7,7 @@ import {
   ConversationEntity,
   MessageEntity,
   MessageRole,
+  MessageSource,
   MessageType,
   AgentProfileFactAssertionPolicy,
   ChatSpanAttributeValue,
@@ -3016,7 +3017,41 @@ export class AgentContextService {
       },
     });
 
-    return messages.filter(message => !message.isArchived);
+    return messages
+      .filter(
+        message =>
+          !message.isArchived &&
+          !this.isAutomaticChatImportSourceMessage(message)
+      )
+      .sort((left, right) => {
+        const timeDifference =
+          this.resolveSemanticMessageTime(left) -
+          this.resolveSemanticMessageTime(right);
+
+        if (timeDifference !== 0) {
+          return timeDifference;
+        }
+
+        return (left.sourceSequence ?? 0) - (right.sourceSequence ?? 0);
+      });
+  }
+
+  private resolveSemanticMessageTime(message: MessageEntity): number {
+    const timestamp =
+      message.source === MessageSource.wechatImport
+        ? message.sourceOccurredAt || message.createdAt
+        : message.createdAt;
+
+    return timestamp?.getTime?.() || 0;
+  }
+
+  private isAutomaticChatImportSourceMessage(message: MessageEntity): boolean {
+    return (
+      message.type === MessageType.image &&
+      Boolean(message.importBatchId) &&
+      message.replyTrigger === false &&
+      message.source !== MessageSource.wechatImport
+    );
   }
 
   private buildRecentHistoryMessages(

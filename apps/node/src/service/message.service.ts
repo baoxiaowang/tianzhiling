@@ -8,6 +8,7 @@ import {
   stripConversationMessageSegmentMarkup,
 } from '../common/conversation-message-segments';
 import {
+  ConversationChatImportBatchEntity,
   ConversationChatImportItemEntity,
   ConversationEntity,
   MessageEntity,
@@ -99,6 +100,9 @@ export class MessageService {
   @InjectEntityModel(ConversationChatImportItemEntity)
   chatImportItemModel: MongoRepository<ConversationChatImportItemEntity>;
 
+  @InjectEntityModel(ConversationChatImportBatchEntity)
+  chatImportBatchModel: MongoRepository<ConversationChatImportBatchEntity>;
+
   @Inject()
   agentProfileFactService: AgentProfileFactService;
 
@@ -134,9 +138,13 @@ export class MessageService {
           createdAt: 'ASC',
         },
       });
+      const visibleMessages = await this.filterAutomaticImportVisibility(
+        conversation.id,
+        messages
+      );
 
       return {
-        items: messages
+        items: visibleMessages
           .filter(
             message =>
               !message.isArchived &&
@@ -157,7 +165,11 @@ export class MessageService {
       },
       take: pageSize + 1,
     });
-    const pageMessages = messages
+    const visibleMessages = await this.filterAutomaticImportVisibility(
+      conversation.id,
+      messages
+    );
+    const pageMessages = visibleMessages
       .filter(
         message =>
           !message.isArchived &&
@@ -173,6 +185,60 @@ export class MessageService {
       pageSize,
       hasMore: messages.length > pageSize,
     };
+  }
+
+  private async filterAutomaticImportVisibility(
+    conversationId: MongoObjectId,
+    messages: MessageEntity[]
+  ): Promise<MessageEntity[]> {
+    const automaticBatchIds = new Set(
+      messages
+        .filter(message => message.importBatchId)
+        .map(message => this.stringifyObjectId(message.importBatchId))
+        .filter(Boolean)
+    );
+
+    if (!automaticBatchIds.size) {
+      return messages;
+    }
+
+    const batches = await this.chatImportBatchModel.find({
+      where: {
+        conversationId,
+      } as never,
+    });
+    const batchById = new Map(
+      batches
+        .filter(
+          batch =>
+            batch.clientRequestId?.startsWith('automatic-image:') &&
+            automaticBatchIds.has(this.stringifyObjectId(batch.id))
+        )
+        .map(batch => [this.stringifyObjectId(batch.id), batch] as const)
+    );
+
+    return messages.filter(message => {
+      const batchId = message.importBatchId
+        ? this.stringifyObjectId(message.importBatchId)
+        : '';
+      const batch = batchById.get(batchId);
+
+      if (!batch) {
+        return true;
+      }
+
+      const isImportedMessage = message.source === MessageSource.wechatImport;
+      const isSourceMessage =
+        !isImportedMessage &&
+        message.type === MessageType.image &&
+        message.replyTrigger === false;
+
+      if (batch.confirmedAt) {
+        return !isSourceMessage;
+      }
+
+      return !isImportedMessage;
+    });
   }
 
   async deleteMessage(
