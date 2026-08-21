@@ -15,6 +15,7 @@ import {
 import { MongoRepository } from 'typeorm';
 
 const JOB_ID = 'agent-memory-inheritance-backfill-20260820-v1';
+const JOB_NOT_BEFORE = Date.parse('2026-08-20T19:00:00.000Z');
 const WINDOW_DAYS = 90;
 const PROFILE_FIELDS = [
   'lifeExperience',
@@ -26,7 +27,7 @@ const PROFILE_FIELDS = [
 
 export interface AgentMemoryInheritanceSummary {
   jobId: string;
-  status: 'pending' | 'running' | 'completed' | 'unknown';
+  status: 'pending' | 'running' | 'failed' | 'completed' | 'unknown';
   eligibleUserCount?: number;
   matchedGroupCount?: number;
   updatedAgentCount?: number;
@@ -34,6 +35,7 @@ export interface AgentMemoryInheritanceSummary {
   copiedFactCount?: number;
   skippedConflictCount?: number;
   completedAt?: string;
+  failedAt?: string;
 }
 
 @Provide()
@@ -66,16 +68,13 @@ export class AgentMemoryInheritanceService {
 
   async runProductionBackfillOnce(now = new Date()): Promise<void> {
     if (process.env.NODE_ENV !== 'production' || !this.redisService) return;
-    const hour = Number(
-      new Intl.DateTimeFormat('en-GB', {
-        hour: '2-digit',
-        hour12: false,
-        timeZone: 'Asia/Shanghai',
-      }).format(now)
-    );
-    if (hour < 3 || hour >= 7) return;
+    // The one-time job was scheduled for 03:00 Asia/Shanghai on 2026-08-21.
+    // Once that point has passed, keep it eligible until the completed marker
+    // exists so a restart or a missed health probe cannot lose the backfill.
+    if (now.getTime() < JOB_NOT_BEFORE) return;
     const completedKey = `chat:${JOB_ID}:completed`;
     const lockKey = `chat:${JOB_ID}:lock`;
+    const failedKey = `chat:${JOB_ID}:failed`;
     if (await this.redisService.get(completedKey)) return;
     const token = `${process.pid}:${now.getTime()}`;
     if (
@@ -150,8 +149,19 @@ export class AgentMemoryInheritanceService {
       summary.status = 'completed';
       summary.completedAt = new Date().toISOString();
       await this.redisService.set(completedKey, JSON.stringify(summary));
+      await this.redisService.del(failedKey);
       this.logger.info('[memory-inheritance] completed summary=%j', summary);
     } catch (error) {
+      try {
+        await this.redisService.set(failedKey, new Date().toISOString());
+      } catch (statusError) {
+        this.logger.warn(
+          '[memory-inheritance] failed to persist failure status, reason=%s',
+          statusError instanceof Error
+            ? statusError.message
+            : String(statusError)
+        );
+      }
       this.logger.error(
         '[memory-inheritance] failed reason=%s',
         error instanceof Error ? error.message : String(error)
@@ -169,7 +179,11 @@ export class AgentMemoryInheritanceService {
     const completed = await this.redisService.get(`chat:${JOB_ID}:completed`);
     if (completed) return JSON.parse(completed);
     const running = await this.redisService.get(`chat:${JOB_ID}:lock`);
-    return { jobId: JOB_ID, status: running ? 'running' : 'pending' };
+    if (running) return { jobId: JOB_ID, status: 'running' };
+    const failedAt = await this.redisService.get(`chat:${JOB_ID}:failed`);
+    return failedAt
+      ? { jobId: JOB_ID, status: 'failed', failedAt }
+      : { jobId: JOB_ID, status: 'pending' };
   }
 
   private async inheritInto(
