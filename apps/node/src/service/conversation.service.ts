@@ -2316,6 +2316,7 @@ export class ConversationService {
     }
 
     await this.touchConversation(runtime.conversation, now);
+    await this.revealMessengerAfterUserMessage(runtime, userMessage);
     if (isAutomaticChatImport) {
       try {
         await this.conversationChatImportService.startAutomaticImportFromMessage(
@@ -2409,6 +2410,34 @@ export class ConversationService {
       shortTurnReception,
       chatQuota,
     };
+  }
+
+  private async revealMessengerAfterUserMessage(
+    runtime: ReplyRuntime,
+    userMessage: MessageEntity
+  ): Promise<void> {
+    if (
+      !this.messengerService ||
+      !runtime.agent ||
+      this.isMessengerAgent(runtime.agent)
+    ) {
+      return;
+    }
+
+    try {
+      await this.messengerService.revealMessengerAfterUserMessage(
+        runtime.agent,
+        userMessage
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] messenger reveal after user message failed, userId=%s, agentId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(userMessage.userId),
+        this.stringifyObjectId(userMessage.agentId),
+        this.stringifyObjectId(userMessage.id),
+        this.describeReplyError(error)
+      );
+    }
   }
 
   private async enrichUserMessageForReply(
