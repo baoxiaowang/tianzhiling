@@ -24,10 +24,7 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
-import {
-  ChatTraceArtifactKind,
-  ChatTraceService,
-} from '../chat-trace.service';
+import { ChatTraceArtifactKind, ChatTraceService } from '../chat-trace.service';
 import {
   AgentMemoryFactService,
   AgentMemoryFactSummary,
@@ -1009,8 +1006,7 @@ export class AgentContextService {
       compoundTurn: replyBrief?.understanding.complexity === 'compound',
       afterlifeWorldActive: Boolean(replyBrief?.afterlifeWorld),
       recognitionJourneyPrompt: options.recognitionJourneyPrompt,
-      continuityInformationCardPrompt:
-        options.continuityInformationCardPrompt,
+      continuityInformationCardPrompt: options.continuityInformationCardPrompt,
     });
     const taskParts = [
       '# 本轮任务层',

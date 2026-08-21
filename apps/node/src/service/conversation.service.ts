@@ -2205,7 +2205,6 @@ export class ConversationService {
         deferReply:
           permanentSilence ||
           existingUserMessage.replyTrigger === false ||
-          this.isAssistantReplyDeferred(messagePayload) ||
           shortTurnReception.mode !== 'reply',
         shortTurnReception,
         permanentSilence,

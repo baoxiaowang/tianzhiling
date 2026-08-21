@@ -27,9 +27,10 @@ export function migrateLegacyContinuityStore(options: {
   let migratedCount = 0;
   let skippedCount = 0;
   for (const card of options.legacyStore?.cards || []) {
-    const sourceIds = [card.sourceMessageId, card.latestEvidenceMessageId].filter(
-      (value): value is string => Boolean(value)
-    );
+    const sourceIds = [
+      card.sourceMessageId,
+      card.latestEvidenceMessageId,
+    ].filter((value): value is string => Boolean(value));
     if (
       !sourceIds.length ||
       store.tasks.some(task =>
@@ -123,7 +124,10 @@ function classifyLegacyCard(card: ContinuityInformationCard): {
     };
   }
   return {
-    domain: card.eventKind === 'future_event' ? 'future_event' : inferDomain(card.summary),
+    domain:
+      card.eventKind === 'future_event'
+        ? 'future_event'
+        : inferDomain(card.summary),
     authorityType: inferAuthority(card.summary),
     state: card.eventAt ? 'scheduled_checkpoint' : 'reported',
   };
@@ -146,7 +150,9 @@ function inferDomain(summary: string): RelationshipOpenLoopContentDomain {
 }
 
 function inferAuthority(summary: string): RelationshipOpenLoopAuthorityType {
-  if (/房子|房产|财产|遗产|产权|过户|卖房|安葬|下葬|迁坟|墓地|监护/u.test(summary)) {
+  if (
+    /房子|房产|财产|遗产|产权|过户|卖房|安葬|下葬|迁坟|墓地|监护/u.test(summary)
+  ) {
     return 'family_joint';
   }
   if (/法院|律师|官司/u.test(summary)) return 'professional_high_stakes';
@@ -168,6 +174,8 @@ function legacyStatusToState(
     case 'superseded':
       return 'superseded';
     default:
-      return card.eventAt ? 'scheduled_checkpoint' : legacyCardToDraft(card).state;
+      return card.eventAt
+        ? 'scheduled_checkpoint'
+        : legacyCardToDraft(card).state;
   }
 }

@@ -2086,58 +2086,58 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const conversationPlanLines =
     brief.conversationPlan && needsStructuredConversationGuidance
       ? [
-        '## 本轮交谈规划',
-        `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
-        `聊天行动：${brief.conversationPlan.moves
-          .map(move => `${move.type}（${move.goal}）`)
-          .join('；')}`,
-        `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
-        `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
-        ...(brief.strategyQuality
-          ? [
-              `策略换挡：${buildReplyStrategyQualityPrompt(
-                brief.strategyQuality
-              )}`,
-            ]
-          : []),
-        ...(turnPlan
-          ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
-          : []),
-        ...(brief.conversationPlan.personaActivation.length
-          ? [
-              `本轮人格激活：${brief.conversationPlan.personaActivation.join(
-                '；'
-              )}`,
-            ]
-          : []),
-        ...(brief.conversationPlan.questionNeed !== 'none' &&
-        brief.conversationPlan.moves.some(move => move.type === 'ask')
-          ? [
-              '规划已经判断本轮提问有价值：回复中实际提出一个清楚、贴着新信息的问题，不要把 ask 只写成安慰或陈述；仍然最多一个问题。',
-            ]
-          : []),
-        ...(brief.conversationPlan.questionNeed === 'none' &&
-        brief.conversationPlan.moves.some(move => move.type === 'answer')
-          ? [
-              '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
-            ]
-          : []),
+          '## 本轮交谈规划',
+          `态度：${brief.conversationPlan.stance}；针对：${brief.conversationPlan.stanceTarget}`,
+          `聊天行动：${brief.conversationPlan.moves
+            .map(move => `${move.type}（${move.goal}）`)
+            .join('；')}`,
+          `关系策略：${brief.conversationPlan.socialStrategy}（${brief.conversationPlan.strategyPurpose}）`,
+          `提问需要：${brief.conversationPlan.questionNeed}；收束：${brief.conversationPlan.turnClosure}`,
+          ...(brief.strategyQuality
+            ? [
+                `策略换挡：${buildReplyStrategyQualityPrompt(
+                  brief.strategyQuality
+                )}`,
+              ]
+            : []),
+          ...(turnPlan
+            ? [`本轮：${buildConversationTurnPlanPrompt(turnPlan)}`]
+            : []),
+          ...(brief.conversationPlan.personaActivation.length
+            ? [
+                `本轮人格激活：${brief.conversationPlan.personaActivation.join(
+                  '；'
+                )}`,
+              ]
+            : []),
+          ...(brief.conversationPlan.questionNeed !== 'none' &&
+          brief.conversationPlan.moves.some(move => move.type === 'ask')
+            ? [
+                '规划已经判断本轮提问有价值：回复中实际提出一个清楚、贴着新信息的问题，不要把 ask 只写成安慰或陈述；仍然最多一个问题。',
+              ]
+            : []),
+          ...(brief.conversationPlan.questionNeed === 'none' &&
+          brief.conversationPlan.moves.some(move => move.type === 'answer')
+            ? [
+                '本轮无需提问：不要把计划中的回答或解释改成反问；面对“不像你”，先作关系内解释，不让用户教你如何扮演亲人。',
+              ]
+            : []),
           ...(brief.conversationPlan.engagement?.assistantContribution ===
           'self_expression'
             ? [
                 '用户要当前角色主动说：给一个贴题的角色侧当下内容，不把话推回用户，也不为追求简短而只给一句空泛表态。涉及离世生活时按本轮框架选择内容，不临时另造世界设定，也不编用户偏好或共同往事。',
               ]
             : []),
-        ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
-          ? [
-              '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
-            ]
-          : []),
-        ...(brief.conversationPlan.engagement?.closureReadiness === 'blocked'
-          ? [
-              '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
-            ]
-          : []),
+          ...(brief.conversationPlan.engagement?.continuationGoal === 'repair'
+            ? [
+                '用户正在修复关系：当轮实际改变说法或聊天行动，不只解释、认错、承诺改变或让用户继续校准。用户已表示“说了也没用”一类沟通无效感时，必须把规划中已有的一个具体上下文锚点自然写进正文；只说“我知道/我帮不上忙/我听你说”，或换成“你想说时我在”等变体，都不算完成修复，也不要求用户重讲。',
+              ]
+            : []),
+          ...(brief.conversationPlan.engagement?.closureReadiness === 'blocked'
+            ? [
+                '开放点尚未解决：称呼、复述、“我知道/不怪你/别哭”和劝睡可以出现，但不能单独成为完整回复；先完成本轮贡献。若与上面的收束字段冲突，以暂不收口为准。',
+              ]
+            : []),
           '这是语义模型结合最近对话提出的弱规划。用自然语言实现其目的，不输出字段名；若与用户原话、可信事实或关系分寸冲突，以后三者为准。',
           '',
         ]

@@ -21,11 +21,7 @@ export interface ConversationInitiativeResourceOptions {
 export interface ConversationInitiativeResourceResult {
   version: typeof CONVERSATION_INITIATIVE_RESOURCE_VERSION;
   prompt: string;
-  owner:
-    | 'recognition'
-    | 'active_expression'
-    | 'continuity'
-    | 'none';
+  owner: 'recognition' | 'active_expression' | 'continuity' | 'none';
   mergedActiveExpression: boolean;
   includedContinuity: boolean;
   resourceKinds: ActiveExpressionResourceKind[];

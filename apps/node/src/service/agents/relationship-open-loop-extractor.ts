@@ -37,8 +37,7 @@ const FACT_VERIFICATION_RISK_PATTERN =
   /(?:你|您).{0,12}(?:是不是|有没有|是否).{0,30}(?:藏|放|留|埋|存).{0,30}(?:东西|钱|存折|珠子|首饰|信|钥匙)|(?:我|我们).{0,20}(?:去哪里|在哪|哪里).{0,12}(?:找|拿|取|挖)/u;
 const PROPERTY_PATTERN =
   /(?:房子|房产|财产|遗产|家产|产权|过户|卖房|卖掉房|分家|存款|存折|遗嘱|律师|法院|官司)/u;
-const CARE_PATTERN =
-  /(?:照顾|照料|陪护|看护|养老|谁管|谁陪|没人管|没人照顾)/u;
+const CARE_PATTERN = /(?:照顾|照料|陪护|看护|养老|谁管|谁陪|没人管|没人照顾)/u;
 const CHILD_EDUCATION_PATTERN =
   /(?:孩子|儿子|女儿|侄子|侄女|外甥|外甥女).{0,24}(?:上学|转学|学校|幼儿园|接送|留在|回老家|监护|照顾)|(?:上学|转学|学校|幼儿园|接送).{0,24}(?:孩子|儿子|女儿|侄子|侄女|外甥|外甥女)/u;
 const FUNERAL_PATTERN =
@@ -160,7 +159,10 @@ export function extractRelationshipOpenLoop(options: {
   };
 }
 
-function classifyOpenLoop(text: string, dueAt?: Date):
+function classifyOpenLoop(
+  text: string,
+  dueAt?: Date
+):
   | {
       domain: RelationshipOpenLoopContentDomain;
       authorityType: RelationshipOpenLoopAuthorityType;
@@ -295,9 +297,7 @@ function resolveRelation(options: {
 function hasConcreteArrangement(text: string): boolean {
   return (
     Boolean(resolveDueAt(text, new Date())) ||
-    /(?:准备|打算|计划|已经定|正在商量|家里商量|要去|要办)/u.test(
-      text
-    )
+    /(?:准备|打算|计划|已经定|正在商量|家里商量|要去|要办)/u.test(text)
   );
 }
 
