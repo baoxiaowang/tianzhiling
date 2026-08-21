@@ -97,13 +97,30 @@ export type QwenAudioSpeechInstructionSource =
   | "structured"
   | "custom+structured";
 
+function normalizeQwenAudioCustomInstruction(
+  instruction?: string
+): string | undefined {
+  return instruction
+    ?.trim()
+    .replace(
+      /(?:^|[，,、；;。]\s*)(?:请)?(?:不要|别|禁止|避免)\s*(?:转成|转为|切换成|切换为|切回|使用|说)?\s*(?:标准)?普通话(?:表达)?/g,
+      ""
+    )
+    .replace(/^[，,、；;。\s]+|[，,、；;。\s]+$/g, "")
+    .replace(/[，,、；;。]{2,}/g, "，");
+}
+
 export function getQwenAudioSpeechInstructionSource(input: {
   instruction?: string;
   dialect?: string;
 }): QwenAudioSpeechInstructionSource {
-  const hasCustomInstruction = Boolean(input.instruction?.trim());
+  const normalizedCustomInstruction = normalizeQwenAudioCustomInstruction(
+    input.instruction
+  );
+  const hasCustomInstruction = Boolean(normalizedCustomInstruction);
   const hasStructuredDialect =
-    resolveVoiceTimbreDialect(input.dialect, input.instruction) !== "auto";
+    resolveVoiceTimbreDialect(input.dialect, normalizedCustomInstruction) !==
+    "auto";
 
   if (hasCustomInstruction && hasStructuredDialect) {
     return "custom+structured";
@@ -122,10 +139,8 @@ export function buildQwenAudioSpeechInstruction(input: {
   speechSpeed?: number;
 }): string | undefined {
   const parts: string[] = [];
-  const customInstruction = input.instruction?.trim();
-  const normalizedCustomInstruction = customInstruction?.replace(
-    /[。；;]+$/g,
-    ""
+  const normalizedCustomInstruction = normalizeQwenAudioCustomInstruction(
+    input.instruction
   );
   const resolvedDialect = resolveVoiceTimbreDialect(
     input.dialect,
@@ -137,7 +152,7 @@ export function buildQwenAudioSpeechInstruction(input: {
     parts.push(
       resolvedDialect === "mandarin"
         ? "请全程使用自然、标准、清晰的普通话表达，保持原有音色和说话习惯"
-        : `请全程使用自然、地道、明显的${dialectLabel}表达，保持${dialectLabel}的发音与语调，不要转成标准普通话，保留原有音色和说话习惯`
+        : `请全程使用自然、地道、明显的${dialectLabel}表达，保持${dialectLabel}的发音、语调和表达习惯，保留原有音色和说话习惯`
     );
   }
 
