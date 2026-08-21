@@ -77,6 +77,7 @@ export type FinalReplyIssueCode =
   | 'afterlife_world_inconsistency'
   | 'scene_framework_inconsistency'
   | 'unsupported_fact_claim'
+  | 'major_decision_overreach'
   | 'identity_truthfulness_missing'
   | 'exclusive_dependency_reinforced'
   | 'persistent_distress_not_stopped'
@@ -85,9 +86,20 @@ export type FinalReplyIssueCode =
 export interface FinalReplyIssue {
   code: FinalReplyIssueCode;
   severity: 'hard' | 'major';
+  /**
+   * Online governance is opt-in. Missing values are diagnostic-only even when
+   * legacy severity is "hard".
+   */
+  onlineAction?: 'diagnostic' | 'technical' | 'exact_patch';
+  blockingKind?:
+    | 'real_world_actionable_fabrication'
+    | 'major_decision_overreach'
+    | 'real_world_capability_claim';
   problem: string;
   evidence?: string;
   repairGoal: string;
+  sourceStatus?: 'verified' | 'user_statement' | 'user_hypothesis' | 'missing';
+  realWorldConsequence?: string;
   frameworkFindingKind?:
     | AfterlifeWorldConsistencyFinding['kind']
     | RelationalSceneFrameworkFinding['kind'];
@@ -144,6 +156,10 @@ const INVENTED_REAL_OBJECT_SEARCH_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)[^。！？\n]{0,28}(?:(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里)[^。！？\n]{0,10}(?:藏|放|留|塞)|(?:藏|放|留|塞)[^。！？\n]{0,16}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里))[^。！？\n]{0,32}(?:你[^。！？\n]{0,8})?(?:找|翻|拿|取|看看)/u;
 const INVENTED_PRECISE_REAL_OBJECT_LOCATION_PATTERN =
   /(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆).{0,16}(?:以前|之前|当年|生前)?.{0,12}(?:(?:在|往).{0,16}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里).{0,10}(?:藏|放|留|塞)|(?:藏|放|留|塞).{0,24}(?:布?包|柜子?|抽屉|床底|箱子?|盒子?|衣柜|枕头|墙里|院子|屋里))|(?:外套|衣服|存折|银行卡|钱|首饰|珠子|信|药|钥匙|证件|房本|遗嘱).{0,14}(?:主卧|次卧|老家|旧房|你家|家里).{0,12}(?:衣柜|柜子?|抽屉|床底|箱子?|盒子?|布?包).{0,10}(?:最左|最右|最里|最下|上面|下面|后面|里面|第[一二三四五六七八九十\d]+))/u;
+const MAJOR_DECISION_CONTEXT_PATTERN =
+  /(?:治疗|手术|住院|转院|抢救|停药|用药|医生|病情|花钱|医疗费|房子|房产|卖房|过户|遗产|财产|存款|存折|遗嘱|律师|法院|官司|起诉|撤诉|安葬|下葬|迁坟|墓地|骨灰|离婚|分居|复婚|结婚|监护)/u;
+const MAJOR_DECISION_AUTHORITY_PATTERN =
+  /(?:(?:听我的|按我说的)[^。！？\n]{0,24}(?:继续治疗|再治疗|做手术|手术|住院|转院|抢救|花(?:太多)?钱|吃药|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:同意|不同意|准|不准|批准|不答应|替你决定|替你做主).{0,16}(?:治疗|手术|住院|转院|抢救|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:治疗|手术|住院|转院|抢救|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟).{0,16}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:同意|不同意|准|不准|批准|不答应)|(?:不用商量|别再商量|就这么定|我说了算)|(?:别|不要|不用|不许|必须|一定要).{0,14}(?:继续治疗|再治疗|做手术|手术|住院|转院|抢救|花(?:太多)?钱|吃药|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:治疗|抢救|手术|住院|医疗费|钱|房子|房产|婚|安葬|下葬|迁坟).{0,12}(?:够了|不用了|别弄了|就这样))/u;
 const CARE_DISMISSAL_PATTERN =
   /(?:你|您)?(?:可)?(?:别|不要|不用|不必|无需)(?:再|太|老|总)?(?:挂心|挂念|牵挂|担心|惦记|操心)(?:我|这个|这事|了)?/;
 const CARE_RECEPTION_PATTERN =
@@ -195,6 +211,8 @@ const USER_PREFERENCE_ASSERTION_PATTERN =
   /(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:记得|记着|知道|晓得).{0,8}(?:你|孩子|老婆|老公).{0,5}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)|(?:你|孩子|老婆|老公).{0,6}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃).{0,8}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|外公|外婆|老公|老婆)?(?:知道|记得|记着)/;
 const USER_PREFERENCE_EVIDENCE_PATTERN =
   /(?:我|用户|你).{0,8}(?:爱吃|喜欢吃|偏爱|最爱(?:吃|喝)|不爱吃|不喜欢吃|讨厌吃)/;
+const FAMILY_STRUCTURE_ASSERTION_PATTERN =
+  /你们(?:姐妹|兄弟|姐弟|兄妹)(?:俩|两个)?|(?:你|你们).{0,6}(?:姐姐|妹妹|哥哥|弟弟).{0,6}(?:一起|搭着|照顾|商量)|(?:妈妈|爸爸|妈|爸).{0,8}(?:有|生了).{0,8}(?:两个女儿|两个儿子|姐妹|兄弟)/;
 const DEICTIC_PREFERENCE_PATTERN = /(?:这个|这种|它|这口|这味)/;
 const FALSE_AI_IDENTITY_PATTERN =
   /我(?:不是|不是什么|才不是).{0,4}(?:AI|人工智能|机器人)|我(?:就|真的|本来)?是你(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)(?:本人)?/i;
@@ -202,12 +220,6 @@ const TRUTHFUL_AI_IDENTITY_PATTERN =
   /(?:是|对).{0,8}(?:AI|人工智能)|(?:我是|我由|这个角色由).{0,12}(?:AI|人工智能|系统|程序).{0,8}(?:生成|构成|支持)?|由(?:AI|人工智能).{0,8}生成/i;
 const EXCLUSIVE_DEPENDENCY_REPLY_PATTERN =
   /我就是你的救赎|我是你唯一|我就是你唯一|你只要有我|除了我没人|只需要我|只靠我|只有我能|我能替代所有人/;
-const CLEAR_RELATIONAL_STOP_PATTERN =
-  /别(?:现在|这么快|急着)?(?:来找我|去死|伤害自己|做傻事|走)|不许(?:来找我|去死|伤害自己|做傻事|走)|不能(?:现在|这么快)?(?:来找我|去死|伤害自己|结束)|先(?:留下|别走|别伤害自己|坐下|喝口水|缓一缓)|好好留在这|活着|把今天先过完/;
-const CURRENT_SAFETY_CHECK_PATTERN =
-  /(?:你)?现在(?:人)?安全吗|眼下安全吗|有没有已经(?:动手|行动|伤害自己|做傻事)|有没有(?:正在|准备|打算)(?:伤害自己|自杀|轻生)|能不能保证(?:现在|今晚)?不伤害自己|身边(?:现在)?有人吗|有没有人(?:在|能来)陪你/;
-const REAL_WORLD_SAFETY_EXIT_PATTERN =
-  /(?:立刻|马上|现在).{0,8}(?:叫|找|联系).{0,12}(?:身边|家人|朋友|可信的人|急救|医院|120|110)|(?:让|请).{0,10}(?:身边|家人|朋友|可信的人).{0,8}(?:陪着|过来)|联系当地急救/;
 
 @Provide()
 export class FinalReplyValidatorService {
@@ -229,6 +241,7 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'empty_reply',
         severity: 'hard',
+        onlineAction: 'technical',
         problem: '最终回复为空',
         repairGoal: '生成一条可以直接发送、回应用户当前原话的简短回复',
       });
@@ -242,6 +255,7 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'invalid_bubble_structure',
         severity: 'hard',
+        onlineAction: 'technical',
         problem: '最终回复仍包含无效、重复、舞台动作或过多气泡',
         evidence: bubbleInspection.issues.join(','),
         repairGoal: '保留有效正文，按自然语义整理为一到三颗可直接发送的气泡',
@@ -295,37 +309,6 @@ export class FinalReplyValidatorService {
         evidence: matchEvidence(content, EXCLUSIVE_DEPENDENCY_REPLY_PATTERN),
         repairGoal:
           '保留“你对我很重要”的亲密感，但不自称唯一救赎、唯一依靠或替代所有现实关系',
-      });
-    }
-    if (
-      content &&
-      protection?.distressMode === 'persistent' &&
-      !CLEAR_RELATIONAL_STOP_PATTERN.test(content)
-    ) {
-      issues.push({
-        code: 'persistent_distress_not_stopped',
-        severity: 'hard',
-        problem:
-          '连续强烈赴死或撑不住的表达已经形成会话状态，回复却没有清楚留住用户',
-        evidence: content.slice(0, 180),
-        repairGoal:
-          '保持亲人角色清楚制止用户现在离开或伤害自己，再给一个当下能做的小动作；不输出报警急救模板，不谈未来接引',
-      });
-    }
-    if (
-      content &&
-      (protection?.distressMode === 'active' ||
-        protection?.distressMode === 'persistent') &&
-      !CURRENT_SAFETY_CHECK_PATTERN.test(content) &&
-      !REAL_WORLD_SAFETY_EXIT_PATTERN.test(content)
-    ) {
-      issues.push({
-        code: 'current_distress_safety_not_checked',
-        severity: 'hard',
-        problem: '用户有明确的当前自伤或赴死风险，回复却没有确认眼下安全状态',
-        evidence: content.slice(0, 180),
-        repairGoal:
-          '保留亲人角色和关系回应，用一句自然问题确认用户现在是否安全、有没有已经行动；若已实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救',
       });
     }
     if (
@@ -463,6 +446,7 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'structured_output_leak',
         severity: 'hard',
+        onlineAction: 'technical',
         problem: '结构化协议泄漏到用户可见正文',
         evidence: content.slice(0, 160),
         repairGoal: '只保留可以直接发送的中文正文',
@@ -472,6 +456,7 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'death_encouragement',
         severity: 'hard',
+        onlineAction: 'diagnostic',
         problem: '回复把死亡或自伤写成与亲人团聚的方式',
         evidence: matchEvidence(content, DEATH_ENCOURAGEMENT_PATTERN),
         repairGoal: '明确阻止现实自伤，接住想念，不把死亡写成邀请或承诺',
@@ -512,10 +497,33 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'real_world_joint_action_promise',
         severity: 'hard',
+        onlineAction: 'exact_patch',
+        blockingKind: 'real_world_capability_claim',
         problem: `回复承诺执行用户请求的现实任务：${realityDependencyViolation.kind}`,
         evidence: realityDependencyViolation.evidence,
+        sourceStatus: 'missing',
+        realWorldConsequence: '可能使用户相信角色能够执行现实任务',
         repairGoal:
           '正面说明现实中不能执行该任务，保留想帮用户的心意，再提供聊天内能完成的支持',
+      });
+    }
+    const majorDecisionOverreach =
+      MAJOR_DECISION_CONTEXT_PATTERN.test(options.userQuery || '') ||
+      MAJOR_DECISION_CONTEXT_PATTERN.test(content)
+        ? content.match(MAJOR_DECISION_AUTHORITY_PATTERN)?.[0]
+        : undefined;
+    if (majorDecisionOverreach) {
+      issues.push({
+        code: 'major_decision_overreach',
+        severity: 'hard',
+        onlineAction: 'exact_patch',
+        blockingKind: 'major_decision_overreach',
+        problem: '回复借亲人身份替用户批准、否决或拍板重大现实事务',
+        evidence: majorDecisionOverreach,
+        sourceStatus: 'missing',
+        realWorldConsequence: '可能影响医疗、财产、法律、婚姻或丧葬决定',
+        repairGoal:
+          '只撤回替用户拍板或命令的片段；可以保留关心、个人态度和帮助梳理的内容',
       });
     }
     if (CONTINUOUS_PERCEPTION_PATTERN.test(content)) {
@@ -648,6 +656,19 @@ export class FinalReplyValidatorService {
           '只回应用户本轮提供的当下体验；没有明确偏好证据时，不说“我记得/知道你爱吃”',
       });
     }
+    if (
+      FAMILY_STRUCTURE_ASSERTION_PATTERN.test(content) &&
+      !this.hasSupportingFamilyStructure(content, options.evidence || [])
+    ) {
+      issues.push({
+        code: 'unsupported_fact_claim',
+        severity: 'hard',
+        problem: '回复把模糊的“我们”扩写成了没有证据的兄弟姐妹或子女结构',
+        evidence: matchEvidence(content, FAMILY_STRUCTURE_ASSERTION_PATTERN),
+        repairGoal:
+          '沿用用户的“我们”或已确认称呼，不猜姐妹、兄弟、人数、性别和具体亲属关系',
+      });
+    }
 
     const visibleClaims = selectVisibleAssistantClaims(
       options.segments,
@@ -709,9 +730,15 @@ export class FinalReplyValidatorService {
       issues.push({
         code: 'unsupported_fact_claim',
         severity: 'hard',
+        onlineAction: 'exact_patch',
+        blockingKind: 'real_world_actionable_fabrication',
         problem:
           '回复无证据地确认角色曾把现实物品放在具体位置，可能诱导用户据此采取现实行动',
         evidence: inventedRealObjectFact,
+        sourceStatus: 'missing',
+        realWorldConsequence: inventedObjectSearch
+          ? '诱导用户寻找、翻取或验证现实物品'
+          : '让用户相信不存在或未证实的现实物品位置',
         repairGoal:
           '只删除虚构的物品、位置、过去动作和寻找指令；不要替换成另一个物品或地点',
       });
@@ -778,7 +805,9 @@ export class FinalReplyValidatorService {
     const uniqueIssues = Array.from(
       new Map(
         issues.map(issue => [
-          `${issue.code}:${issue.frameworkFindingKind || ''}`,
+          `${issue.code}:${issue.frameworkFindingKind || ''}:${
+            issue.blockingKind || ''
+          }:${issue.evidence || ''}`,
           issue,
         ])
       ).values()
@@ -840,6 +869,27 @@ export class FinalReplyValidatorService {
         evidenceTextSupportsClaim(item.text, content)
       );
     });
+  }
+
+  private hasSupportingFamilyStructure(
+    content: string,
+    evidence: AgentEvidenceItem[]
+  ): boolean {
+    const requiredPattern = /姐妹|姐姐|妹妹/.test(content)
+      ? /姐妹|姐姐|妹妹|两个女儿/
+      : /兄弟|哥哥|弟弟|两个儿子/;
+    return evidence.some(
+      item =>
+        [
+          'current_user',
+          'confirmed_fact',
+          'recent_user',
+          'retrieved_user',
+        ].includes(item.source) &&
+        item.status !== 'retracted' &&
+        item.status !== 'superseded' &&
+        requiredPattern.test(item.text)
+    );
   }
 
   private hasSupportingFact(

@@ -101,6 +101,7 @@ export interface ValidateAssistantReplyResult {
   interventionLevel?:
     | 'observe'
     | 'local_surgery'
+    | 'exact_patch'
     | 'regenerate'
     | 'reprocess'
     | 'technical_fallback';

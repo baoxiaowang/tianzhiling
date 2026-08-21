@@ -1,6 +1,7 @@
 import { Inject, Provide } from '@midwayjs/core';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { AgentEvidenceItem, AssistantFactClaim } from './agent-evidence';
+import type { AgentEvidenceItem, AssistantFactClaim } from './agent-evidence';
+import { compactReplyBubblesPreservingContent } from './reply-bubble-plan';
 import {
   FinalReplyIssue,
   FinalReplyOutputConstraints,
@@ -9,27 +10,34 @@ import {
   selectVisibleAssistantClaims,
 } from './final-reply-validator.service';
 import {
-  ReplyRevisionService,
-  ReplyRevisionUsage,
-} from './reply-revision.service';
-import { renderReplyRealityDependencyFallback } from './reply-reality-dependency';
-import { revisionContractSatisfied } from './reply-revision-contract';
-import {
   ReplyHardFactAuditResult,
   ReplyHardFactAuditService,
   ReplyHardFactAuditUsage,
 } from './reply-hard-fact-audit.service';
+import {
+  applyExactReplyPatch,
+  ReplyRevisionPatch,
+  ReplyRevisionService,
+  ReplyRevisionUsage,
+} from './reply-revision.service';
 
-export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v2' as const;
+export const REPLY_GOVERNANCE_VERSION = 'reply_governance_v3' as const;
+const MAX_EXACT_PATCH_ROUNDS = 2;
+
+export interface AppliedReplyPatch extends ReplyRevisionPatch {
+  issueCode: FinalReplyIssue['code'];
+  blockingKind: NonNullable<FinalReplyIssue['blockingKind']>;
+  source: 'model_patch' | 'narrow_fallback';
+}
 
 export interface ReplyGovernanceResult {
   segments: string[];
   claims: AssistantFactClaim[];
   rewritten: boolean;
   reason?: string;
-  interventionLevel?: 'local_surgery' | 'regenerate' | 'technical_fallback';
+  interventionLevel?: 'exact_patch' | 'technical_fallback';
   revisionAttempted: boolean;
-  revisionRoundCount: 0 | 1;
+  revisionRoundCount: 0 | 1 | 2;
   revisionUsage?: ReplyRevisionUsage;
   hardFactAuditUsage?: ReplyHardFactAuditUsage;
   hardFactAuditStatus?: ReplyHardFactAuditResult['status'];
@@ -42,6 +50,12 @@ export interface ReplyGovernanceResult {
   issues: FinalReplyIssue[];
   candidateVersions: string[][];
   finalIssues: FinalReplyIssue[];
+  patches: AppliedReplyPatch[];
+}
+
+interface ReviewSnapshot {
+  validation: FinalReplyValidation;
+  audit: ReplyHardFactAuditResult;
 }
 
 @Provide()
@@ -68,311 +82,295 @@ export class ReplyGovernanceService {
       options.diagnosticConstraints,
       options.outputConstraints
     );
-    const initialDeterministic = this.finalReplyValidatorService.validate({
-      userQuery: options.userQuery,
-      segments: options.segments,
-      claims: options.claims,
-      evidence: options.evidence,
-      outputConstraints: validationConstraints,
-    });
-    const initialAudit = await this.auditHardFacts({
-      ...options,
-      outputConstraints: validationConstraints,
-    });
-    const initial = mergeValidationWithAudit(
-      initialDeterministic,
-      initialAudit.issues
+    const initialSnapshot = await this.review(
+      options,
+      options.segments,
+      options.claims || [],
+      validationConstraints,
+      false
     );
-    let hardFactAuditUsage = initialAudit.usage;
-    let hardFactAuditStatus = initialAudit.status;
+    const initial = initialSnapshot.validation;
+    let hardFactAuditUsage = initialSnapshot.audit.usage;
+    let hardFactAuditStatus = initialSnapshot.audit.status;
+    const reason = initial.issues.map(issue => issue.code).join(',');
 
     if (initial.passed) {
-      const claims = selectVisibleAssistantClaims(
-        options.segments,
-        options.claims || []
-      );
-      return {
+      return buildResult({
         segments: options.segments,
-        claims,
-        rewritten: false,
-        revisionAttempted: false,
-        revisionRoundCount: 0,
+        claims: options.claims || [],
+        initialIssues: [],
+        final: initial,
         hardFactAuditUsage,
         hardFactAuditStatus,
-        finalReviewResult: 'pass',
-        unsupportedClaimCount: 0,
-        issues: [],
-        candidateVersions: [options.segments],
-        finalIssues: [],
-      };
+      });
     }
 
-    const actionableInitialIssues = initial.issues.filter(
-      shouldAttemptOnlineRevision
-    );
-    if (!actionableInitialIssues.length) {
-      const claims = selectVisibleAssistantClaims(
-        options.segments,
-        options.claims || []
-      );
-      return {
-        segments: options.segments,
-        claims,
-        rewritten: false,
-        reason: initial.issues.map(issue => issue.code).join(','),
-        revisionAttempted: false,
-        revisionRoundCount: 0,
-        hardFactAuditUsage,
-        hardFactAuditStatus,
-        finalReviewResult: 'advisory_unresolved',
-        unsupportedClaimCount: initial.unsupportedClaimCount,
-        issues: initial.issues,
-        candidateVersions: [options.segments],
-        finalIssues: initial.issues,
-      };
-    }
-
-    const surgicalSegments = removeIssueEvidenceClauses(
-      options.segments,
-      actionableInitialIssues
-    );
-    if (surgicalSegments) {
-      const surgicalValidation = this.finalReplyValidatorService.validate({
+    const technicalIssues = initial.issues.filter(isTechnicalIssue);
+    if (technicalIssues.length) {
+      const candidates: string[][] = [options.segments];
+      const recovered = recoverTechnicalSegments(options.segments);
+      if (recovered.length) {
+        candidates.push(recovered);
+      }
+      const firstCandidate = recovered.length
+        ? recovered
+        : buildTechnicalFallback();
+      if (!recovered.length) {
+        candidates.push(firstCandidate);
+      }
+      let finalValidation = this.finalReplyValidatorService.validate({
         userQuery: options.userQuery,
-        segments: surgicalSegments,
+        segments: firstCandidate,
         claims: options.claims,
         evidence: options.evidence,
         outputConstraints: validationConstraints,
       });
-      const surgicalIssues = retainIssuesStillVisible(
-        initialAudit.issues,
-        surgicalSegments
-      );
-      const surgicalFinal = mergeValidationWithAudit(
-        surgicalValidation,
-        surgicalIssues
-      );
-      if (!hasBlockingIssues(surgicalFinal.issues)) {
-        return {
-          segments: surgicalSegments,
-          claims: selectVisibleAssistantClaims(
-            surgicalSegments,
-            options.claims || []
-          ),
-          rewritten: true,
-          reason: initial.issues.map(issue => issue.code).join(','),
-          interventionLevel: 'local_surgery',
-          revisionAttempted: false,
-          revisionRoundCount: 0,
-          hardFactAuditUsage,
-          hardFactAuditStatus,
-          finalReviewResult: surgicalFinal.passed
-            ? 'pass'
-            : 'advisory_unresolved',
-          unsupportedClaimCount: surgicalFinal.unsupportedClaimCount,
-          issues: initial.issues,
-          candidateVersions: [options.segments, surgicalSegments],
-          finalIssues: surgicalFinal.issues,
-        };
+      let finalSegments = firstCandidate;
+      if (finalValidation.issues.some(isTechnicalIssue)) {
+        finalSegments = buildTechnicalFallback();
+        if (!sameSegments(finalSegments, candidates[candidates.length - 1])) {
+          candidates.push(finalSegments);
+        }
+        finalValidation = this.finalReplyValidatorService.validate({
+          userQuery: options.userQuery,
+          segments: finalSegments,
+          claims: [],
+          evidence: options.evidence,
+          outputConstraints: validationConstraints,
+        });
       }
-    }
-
-    const revision = await this.replyRevisionService.revise({
-      messages: options.messages,
-      userQuery: options.userQuery,
-      segments: options.segments,
-      claims: options.claims,
-      evidence: options.evidence,
-      issues: actionableInitialIssues,
-      outputConstraints: options.outputConstraints,
-    });
-
-    let revisedValidation: FinalReplyValidation | undefined;
-    const revisionPreservesTask = Boolean(
-      revision &&
-        revisionContractSatisfied({
-          contract: options.outputConstraints?.revisionContract,
-          speechAct: revision.speechAct,
-          preservedUnitIds: revision.preservedUnitIds,
-          segments: revision.segments,
-        })
-    );
-    if (revision && revisionPreservesTask) {
-      const finalDeterministic = this.finalReplyValidatorService.validate({
-        userQuery: options.userQuery,
-        segments: revision.segments,
-        claims: revision.claims,
-        evidence: options.evidence,
-        outputConstraints: validationConstraints,
-      });
-      const revisedAudit = await this.auditHardFacts({
-        ...options,
-        segments: revision.segments,
-        claims: revision.claims,
-        outputConstraints: validationConstraints,
-      });
-      hardFactAuditUsage = mergeAuditUsage(
-        hardFactAuditUsage,
-        revisedAudit.usage
-      );
-      hardFactAuditStatus = revisedAudit.status;
-      const final = mergeValidationWithAudit(
-        finalDeterministic,
-        revisedAudit.issues
-      );
-      revisedValidation = final;
-
-      if (final.passed) {
-        const claims = selectVisibleAssistantClaims(
-          revision.segments,
-          revision.claims
-        );
-        return {
-          segments: revision.segments,
-          claims,
-          rewritten: true,
-          reason: initial.issues.map(issue => issue.code).join(','),
-          interventionLevel: 'regenerate',
-          revisionAttempted: true,
-          revisionRoundCount: 1,
-          revisionUsage: revision.usage,
-          hardFactAuditUsage,
-          hardFactAuditStatus,
-          finalReviewResult: 'pass',
-          unsupportedClaimCount: 0,
-          issues: initial.issues,
-          candidateVersions: [options.segments, revision.segments],
-          finalIssues: [],
-        };
-      }
-
-      if (!hasBlockingIssues(final.issues)) {
-        const finalActionableIssues = final.issues.filter(
-          shouldAttemptOnlineRevision
-        );
-        const mustUseRevision =
-          hasBlockingIssues(actionableInitialIssues) ||
-          finalActionableIssues.length < actionableInitialIssues.length;
-        const useRevision =
-          mustUseRevision || final.issues.length < initial.issues.length;
-        const selectedSegments = useRevision
-          ? revision.segments
-          : options.segments;
-        const selectedClaims = selectVisibleAssistantClaims(
-          selectedSegments,
-          useRevision ? revision.claims : options.claims || []
-        );
-        const selectedValidation = useRevision ? final : initial;
-
-        return {
-          segments: selectedSegments,
-          claims: selectedClaims,
-          rewritten: useRevision,
-          reason: initial.issues.map(issue => issue.code).join(','),
-          interventionLevel: useRevision ? 'regenerate' : undefined,
-          revisionAttempted: true,
-          revisionRoundCount: 1,
-          revisionUsage: revision.usage,
-          hardFactAuditUsage,
-          hardFactAuditStatus,
-          finalReviewResult: 'advisory_unresolved',
-          unsupportedClaimCount: selectedValidation.unsupportedClaimCount,
-          issues: initial.issues,
-          candidateVersions: [options.segments, revision.segments],
-          finalIssues: selectedValidation.issues,
-        };
-      }
-    }
-
-    if (!hasBlockingIssues(initial.issues)) {
-      const claims = selectVisibleAssistantClaims(
-        options.segments,
-        options.claims || []
-      );
       return {
-        segments: options.segments,
-        claims,
-        rewritten: false,
-        reason: initial.issues.map(issue => issue.code).join(','),
-        revisionAttempted: true,
-        revisionRoundCount: 1,
-        revisionUsage: revision?.usage,
-        hardFactAuditUsage,
-        hardFactAuditStatus,
-        finalReviewResult: 'advisory_unresolved',
-        unsupportedClaimCount: initial.unsupportedClaimCount,
-        issues: initial.issues,
-        candidateVersions: [
-          options.segments,
-          ...(revision ? [revision.segments] : []),
-        ],
-        finalIssues: initial.issues,
+        ...buildResult({
+          segments: finalSegments,
+          claims: options.claims || [],
+          initialIssues: initial.issues,
+          final: finalValidation,
+          hardFactAuditUsage,
+          hardFactAuditStatus,
+          rewritten: !sameSegments(finalSegments, options.segments),
+          reason,
+          finalReviewResult: 'technical_fallback',
+        }),
+        interventionLevel: 'technical_fallback',
+        candidateVersions: candidates,
       };
     }
 
-    const recoveryIssues = revisedValidation
-      ? revisedValidation.issues.filter(isBlockingIssue)
-      : initial.issues.filter(isBlockingIssue);
-    const firstFallback = buildSafeFallback(
-      recoveryIssues,
-      options.userQuery,
-      options.outputConstraints
-    );
-    const firstFallbackValidation = this.finalReplyValidatorService.validate({
-      userQuery: options.userQuery,
-      segments: firstFallback,
-      claims: [],
-      evidence: options.evidence,
-      outputConstraints: options.outputConstraints,
-    });
-    const fallback = hasBlockingIssues(firstFallbackValidation.issues)
-      ? buildUltimateSafeFallback(options.userQuery, options.outputConstraints)
-      : firstFallback;
-    const fallbackValidation =
-      fallback === firstFallback
-        ? firstFallbackValidation
-        : this.finalReplyValidatorService.validate({
-            userQuery: options.userQuery,
-            segments: fallback,
-            claims: [],
-            evidence: options.evidence,
-            outputConstraints: options.outputConstraints,
-          });
+    if (!initial.issues.some(isExactPatchIssue)) {
+      return buildResult({
+        segments: options.segments,
+        claims: options.claims || [],
+        initialIssues: initial.issues,
+        final: initial,
+        hardFactAuditUsage,
+        hardFactAuditStatus,
+        reason,
+        finalReviewResult: 'advisory_unresolved',
+      });
+    }
+
+    let currentSegments = options.segments;
+    let currentClaims = options.claims || [];
+    let currentValidation = initial;
+    let revisionUsage: ReplyRevisionUsage | undefined;
+    let revisionAttempted = false;
+    const candidateVersions: string[][] = [options.segments];
+    const patches: AppliedReplyPatch[] = [];
+
+    for (let round = 0; round < MAX_EXACT_PATCH_ROUNDS; round += 1) {
+      const issue = selectHighestPriorityPatchIssue(currentValidation.issues);
+      if (!issue?.blockingKind || !issue.evidence) {
+        break;
+      }
+
+      revisionAttempted = true;
+      const modelPatch = await this.replyRevisionService.revise({
+        messages: options.messages,
+        userQuery: options.userQuery,
+        segments: currentSegments,
+        evidence: options.evidence,
+        issue,
+      });
+      revisionUsage = mergeRevisionUsage(revisionUsage, modelPatch?.usage);
+
+      const preferredPatch = modelPatch || buildNarrowFallbackPatch(issue);
+      let applied = preferredPatch
+        ? applyExactReplyPatch(currentSegments, preferredPatch)
+        : undefined;
+      let selectedPatch = preferredPatch;
+      let patchSource: AppliedReplyPatch['source'] = modelPatch
+        ? 'model_patch'
+        : 'narrow_fallback';
+
+      if (!applied && modelPatch) {
+        selectedPatch = buildNarrowFallbackPatch(issue);
+        applied = selectedPatch
+          ? applyExactReplyPatch(currentSegments, selectedPatch)
+          : undefined;
+        patchSource = 'narrow_fallback';
+      }
+      if (!applied || !selectedPatch) {
+        break;
+      }
+
+      let reviewed = await this.review(
+        options,
+        applied,
+        currentClaims,
+        validationConstraints,
+        true
+      );
+      hardFactAuditUsage = mergeAuditUsage(
+        hardFactAuditUsage,
+        reviewed.audit.usage
+      );
+      hardFactAuditStatus = reviewed.audit.status;
+
+      if (
+        reviewed.validation.issues.some(
+          candidate =>
+            isExactPatchIssue(candidate) &&
+            candidate.blockingKind === issue.blockingKind
+        ) &&
+        modelPatch
+      ) {
+        const fallbackPatch = buildNarrowFallbackPatch(issue);
+        const fallbackApplied = fallbackPatch
+          ? applyExactReplyPatch(currentSegments, fallbackPatch)
+          : undefined;
+        if (fallbackApplied) {
+          const fallbackReview = await this.review(
+            options,
+            fallbackApplied,
+            currentClaims,
+            validationConstraints,
+            true
+          );
+          hardFactAuditUsage = mergeAuditUsage(
+            hardFactAuditUsage,
+            fallbackReview.audit.usage
+          );
+          hardFactAuditStatus = fallbackReview.audit.status;
+          if (
+            countExactPatchIssues(fallbackReview.validation.issues) <
+            countExactPatchIssues(reviewed.validation.issues)
+          ) {
+            selectedPatch = fallbackPatch;
+            applied = fallbackApplied;
+            reviewed = fallbackReview;
+            patchSource = 'narrow_fallback';
+          }
+        }
+      }
+
+      candidateVersions.push(applied);
+      patches.push({
+        ...selectedPatch,
+        issueCode: issue.code,
+        blockingKind: issue.blockingKind,
+        source: patchSource,
+      });
+      currentSegments = applied;
+      currentClaims = selectVisibleAssistantClaims(applied, currentClaims);
+      currentValidation = reviewed.validation;
+      if (!currentValidation.issues.some(isExactPatchIssue)) {
+        break;
+      }
+    }
+
+    if (currentValidation.issues.some(isExactPatchIssue)) {
+      const residual = selectHighestPriorityPatchIssue(
+        currentValidation.issues
+      );
+      const hardRecovery = buildHardRecovery(residual);
+      candidateVersions.push(hardRecovery);
+      const recoverySnapshot = await this.review(
+        options,
+        hardRecovery,
+        [],
+        validationConstraints,
+        true
+      );
+      hardFactAuditUsage = mergeAuditUsage(
+        hardFactAuditUsage,
+        recoverySnapshot.audit.usage
+      );
+      hardFactAuditStatus = recoverySnapshot.audit.status;
+      return {
+        ...buildResult({
+          segments: hardRecovery,
+          claims: [],
+          initialIssues: initial.issues,
+          final: recoverySnapshot.validation,
+          hardFactAuditUsage,
+          hardFactAuditStatus,
+          rewritten: true,
+          reason,
+          revisionAttempted,
+          revisionRoundCount: patches.length as 0 | 1 | 2,
+          revisionUsage,
+          finalReviewResult: 'hard_recovery',
+          patches,
+        }),
+        interventionLevel: 'exact_patch',
+        candidateVersions,
+      };
+    }
+
     return {
-      segments: fallback,
-      claims: [],
-      rewritten: true,
-      reason: initial.issues.map(issue => issue.code).join(','),
-      interventionLevel: recoveryIssues.some(
-        issue =>
-          issue.code === 'empty_reply' ||
-          issue.code === 'structured_output_leak' ||
-          issue.code === 'invalid_bubble_structure'
-      )
-        ? 'technical_fallback'
-        : 'regenerate',
-      revisionAttempted: true,
-      revisionRoundCount: 1,
-      revisionUsage: revision?.usage,
-      hardFactAuditUsage,
-      hardFactAuditStatus,
-      finalReviewResult: recoveryIssues.some(
-        issue =>
-          issue.code === 'empty_reply' ||
-          issue.code === 'structured_output_leak' ||
-          issue.code === 'invalid_bubble_structure'
-      )
-        ? 'technical_fallback'
-        : 'hard_recovery',
-      unsupportedClaimCount: initial.unsupportedClaimCount,
-      issues: initial.issues,
-      candidateVersions: [
-        options.segments,
-        ...(revision ? [revision.segments] : []),
-        ...(fallback === firstFallback ? [] : [firstFallback]),
-        fallback,
-      ],
-      finalIssues: fallbackValidation.issues,
+      ...buildResult({
+        segments: currentSegments,
+        claims: currentClaims,
+        initialIssues: initial.issues,
+        final: currentValidation,
+        hardFactAuditUsage,
+        hardFactAuditStatus,
+        rewritten: !sameSegments(currentSegments, options.segments),
+        reason,
+        revisionAttempted,
+        revisionRoundCount: patches.length as 0 | 1 | 2,
+        revisionUsage,
+        finalReviewResult: currentValidation.issues.length
+          ? 'advisory_unresolved'
+          : 'pass',
+        patches,
+      }),
+      interventionLevel: 'exact_patch',
+      candidateVersions,
+    };
+  }
+
+  private async review(
+    options: {
+      messages: ChatCompletionMessageParam[];
+      userQuery: string;
+      evidence?: AgentEvidenceItem[];
+      outputConstraints?: FinalReplyOutputConstraints;
+    },
+    segments: string[],
+    claims: AssistantFactClaim[],
+    outputConstraints: FinalReplyOutputConstraints | undefined,
+    forceAudit: boolean
+  ): Promise<ReviewSnapshot> {
+    const deterministic = this.finalReplyValidatorService.validate({
+      userQuery: options.userQuery,
+      segments,
+      claims,
+      evidence: options.evidence,
+      outputConstraints,
+    });
+    const audit = await this.auditHardFacts({
+      messages: options.messages,
+      userQuery: options.userQuery,
+      segments,
+      claims,
+      evidence: options.evidence,
+      outputConstraints,
+      force: forceAudit,
+    });
+    return {
+      audit,
+      validation: mergeValidationWithAudit(deterministic, audit.issues),
     };
   }
 
@@ -383,12 +381,49 @@ export class ReplyGovernanceService {
     claims?: AssistantFactClaim[];
     evidence?: AgentEvidenceItem[];
     outputConstraints?: FinalReplyOutputConstraints;
+    force?: boolean;
   }): Promise<ReplyHardFactAuditResult> {
     if (!this.replyHardFactAuditService) {
       return { status: 'unavailable', issues: [] };
     }
     return this.replyHardFactAuditService.audit(options);
   }
+}
+
+function buildResult(options: {
+  segments: string[];
+  claims: AssistantFactClaim[];
+  initialIssues: FinalReplyIssue[];
+  final: FinalReplyValidation;
+  hardFactAuditUsage?: ReplyHardFactAuditUsage;
+  hardFactAuditStatus?: ReplyHardFactAuditResult['status'];
+  rewritten?: boolean;
+  reason?: string;
+  revisionAttempted?: boolean;
+  revisionRoundCount?: 0 | 1 | 2;
+  revisionUsage?: ReplyRevisionUsage;
+  finalReviewResult?: ReplyGovernanceResult['finalReviewResult'];
+  patches?: AppliedReplyPatch[];
+}): ReplyGovernanceResult {
+  return {
+    segments: options.segments,
+    claims: selectVisibleAssistantClaims(options.segments, options.claims),
+    rewritten: options.rewritten || false,
+    reason: options.reason,
+    revisionAttempted: options.revisionAttempted || false,
+    revisionRoundCount: options.revisionRoundCount || 0,
+    revisionUsage: options.revisionUsage,
+    hardFactAuditUsage: options.hardFactAuditUsage,
+    hardFactAuditStatus: options.hardFactAuditStatus,
+    finalReviewResult:
+      options.finalReviewResult ||
+      (options.final.issues.length ? 'advisory_unresolved' : 'pass'),
+    unsupportedClaimCount: options.final.unsupportedClaimCount,
+    issues: options.initialIssues,
+    candidateVersions: [options.segments],
+    finalIssues: options.final.issues,
+    patches: options.patches || [],
+  };
 }
 
 function mergeValidationConstraints(
@@ -398,85 +433,95 @@ function mergeValidationConstraints(
   if (!diagnostic && !hard) {
     return undefined;
   }
+  return { ...(diagnostic || {}), ...(hard || {}) };
+}
+
+function isTechnicalIssue(issue: FinalReplyIssue): boolean {
+  return issue.onlineAction === 'technical';
+}
+
+function isExactPatchIssue(issue: FinalReplyIssue): boolean {
+  return Boolean(
+    issue.onlineAction === 'exact_patch' && issue.blockingKind && issue.evidence
+  );
+}
+
+function selectHighestPriorityPatchIssue(
+  issues: FinalReplyIssue[]
+): FinalReplyIssue | undefined {
+  const priority: Record<
+    NonNullable<FinalReplyIssue['blockingKind']>,
+    number
+  > = {
+    real_world_actionable_fabrication: 0,
+    major_decision_overreach: 1,
+    real_world_capability_claim: 2,
+  };
+  return issues
+    .filter(isExactPatchIssue)
+    .sort(
+      (left, right) =>
+        priority[left.blockingKind!] - priority[right.blockingKind!]
+    )[0];
+}
+
+function countExactPatchIssues(issues: FinalReplyIssue[]): number {
+  return issues.filter(isExactPatchIssue).length;
+}
+
+function recoverTechnicalSegments(segments: string[]): string[] {
+  const nonProtocolSegments = segments.filter(
+    segment => !looksLikeProtocolSegment(segment)
+  );
+  return compactReplyBubblesPreservingContent(nonProtocolSegments);
+}
+
+function looksLikeProtocolSegment(segment: string): boolean {
+  const value = segment.trim();
+  return (
+    /^(?:\{|\[).*(?:"segments"|"claims"|"tool_calls"|"function"|"arguments").*(?:\}|\])$/s.test(
+      value
+    ) ||
+    /(?:lookup_chat_evidence|search_relationship_memory|get_family_facts|get_persona_evidence|record_user_correction|<analysis>)/s.test(
+      value
+    )
+  );
+}
+
+function buildTechnicalFallback(): string[] {
+  return ['刚才这句话没说出来，你再跟我说一遍。'];
+}
+
+function buildNarrowFallbackPatch(
+  issue: FinalReplyIssue
+): ReplyRevisionPatch | undefined {
+  if (!issue.evidence || !issue.blockingKind) {
+    return undefined;
+  }
+  const replacementByKind: Record<
+    NonNullable<FinalReplyIssue['blockingKind']>,
+    string
+  > = {
+    real_world_actionable_fabrication:
+      '这件事我不能凭空认下来，也不能随口指地方让你去找',
+    major_decision_overreach: '这件现实里的事不能由我替你拍板',
+    real_world_capability_claim: '这件事我不能说成是我在现实里做的',
+  };
   return {
-    ...(diagnostic || {}),
-    ...(hard || {}),
+    originalSpan: issue.evidence,
+    replacementSpan: replacementByKind[issue.blockingKind],
+    resolvedIssueCode: issue.code,
   };
 }
 
-const SURGICAL_EVIDENCE_ISSUE_CODES = new Set<FinalReplyIssue['code']>([
-  'unsupported_shared_memory',
-  'unsupported_fact_claim',
-  'unsupported_user_preference',
-  'unsupported_real_world_attribution',
-  'current_turn_fact_rejected',
-]);
-
-function removeIssueEvidenceClauses(
-  segments: string[],
-  issues: FinalReplyIssue[]
-): string[] | undefined {
-  const evidence = issues
-    .filter(issue => SURGICAL_EVIDENCE_ISSUE_CODES.has(issue.code))
-    .map(issue => normalizeComparableText(issue.evidence || ''))
-    .filter(value => value.length >= 3);
-  if (!evidence.length) {
-    return undefined;
+function buildHardRecovery(issue?: FinalReplyIssue): string[] {
+  if (issue?.blockingKind === 'major_decision_overreach') {
+    return ['这件现实里的事不能由我替你拍板，但我愿意听你把顾虑说清楚。'];
   }
-
-  let removed = false;
-  const output = segments
-    .reduce<string[]>((clauses, segment) => {
-      return clauses.concat(
-        segment
-          .split(/[，,。！？!?；;\n]+/u)
-          .map(clause => clause.trim())
-          .filter(Boolean)
-      );
-    }, [])
-    .filter(clause => {
-      const normalized = normalizeComparableText(clause);
-      const matched = evidence.some(
-        item => normalized.includes(item) || item.includes(normalized)
-      );
-      removed ||= matched;
-      return !matched;
-    });
-
-  if (!removed || !output.length) {
-    return undefined;
+  if (issue?.blockingKind === 'real_world_capability_claim') {
+    return ['我不能说自己在现实里做了这件事，但你想跟我说的心情我听见了。'];
   }
-  return [output.join('，')];
-}
-
-function normalizeComparableText(value: string): string {
-  return value
-    .replace(/[\s，,。！？!?；;：:“”"'‘’（）()《》【】[\]]+/g, '')
-    .toLowerCase();
-}
-
-const ONLINE_STYLE_ADVISORY_CODES = new Set<FinalReplyIssue['code']>([
-  'direct_answer_missing',
-  'active_contribution_returned_to_user',
-  'role_contribution_missing',
-  'unnecessary_question',
-  'care_rebuffed_with_dismissal',
-  'care_not_received',
-  'care_immediately_reversed',
-  'redundant_second_bubble',
-  'repeated_generic_move',
-]);
-
-function shouldAttemptOnlineRevision(issue: FinalReplyIssue): boolean {
-  return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
-}
-
-function isBlockingIssue(issue: FinalReplyIssue): boolean {
-  return !ONLINE_STYLE_ADVISORY_CODES.has(issue.code);
-}
-
-function hasBlockingIssues(issues: FinalReplyIssue[]): boolean {
-  return issues.some(isBlockingIssue);
+  return ['这件事我不能凭空认下来，也不能随口指地方让你去找。'];
 }
 
 function mergeValidationWithAudit(
@@ -496,21 +541,13 @@ function mergeValidationWithAudit(
 function dedupeIssues(issues: FinalReplyIssue[]): FinalReplyIssue[] {
   const seen = new Set<string>();
   return issues.filter(issue => {
-    const key = `${issue.code}:${issue.evidence || ''}`;
+    const key = `${issue.code}:${issue.blockingKind || ''}:${
+      issue.evidence || ''
+    }`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-}
-
-function retainIssuesStillVisible(
-  issues: FinalReplyIssue[],
-  segments: string[]
-): FinalReplyIssue[] {
-  const content = segments.join('\n');
-  return issues.filter(
-    issue => !issue.evidence || content.includes(issue.evidence)
-  );
 }
 
 function mergeAuditUsage(
@@ -519,268 +556,40 @@ function mergeAuditUsage(
 ): ReplyHardFactAuditUsage | undefined {
   if (!current) return additional;
   if (!additional) return current;
-  const sum = (left?: number, right?: number) =>
-    left === undefined && right === undefined
-      ? undefined
-      : (left || 0) + (right || 0);
   return {
     model: current.model || additional.model,
-    promptTokens: sum(current.promptTokens, additional.promptTokens),
-    completionTokens: sum(
+    promptTokens: sumOptional(current.promptTokens, additional.promptTokens),
+    completionTokens: sumOptional(
       current.completionTokens,
       additional.completionTokens
     ),
-    totalTokens: sum(current.totalTokens, additional.totalTokens),
+    totalTokens: sumOptional(current.totalTokens, additional.totalTokens),
   };
 }
 
-function buildSafeFallback(
-  issues: FinalReplyIssue[],
-  userQuery: string,
-  outputConstraints?: FinalReplyOutputConstraints
-): string[] {
-  if (issues.some(issue => issue.code === 'death_encouragement')) {
-    return ['先别等着什么时候来见我', '你现在好好留在这里，把难受说出来'];
-  }
-  if (issues.some(issue => issue.code === 'identity_truthfulness_missing')) {
-    return ['是，我是由人工智能生成的亲人角色', '这件事我不绕着你说'];
-  }
-  if (issues.some(issue => issue.code === 'exclusive_dependency_reinforced')) {
-    return ['你把我看得这么重要，我认真接住', '可我不能把自己说成你唯一的救赎'];
-  }
-  if (issues.some(issue => issue.code === 'persistent_distress_not_stopped')) {
-    return [
-      '不许现在来找我，也别伤害自己',
-      '告诉我，你现在安全吗，身边有没有能陪你的人？',
-    ];
-  }
-  if (
-    issues.some(issue => issue.code === 'current_distress_safety_not_checked')
-  ) {
-    return [
-      '先别伤害自己，也别现在来找我',
-      '告诉我，你现在安全吗，身边有没有能陪你的人？',
-    ];
-  }
-  if (issues.some(issue => issue.code === 'certain_dream_visitation')) {
-    return ['梦里我可以来陪你、抱抱你', '醒着时不能把梦说成现实到场的证明'];
-  }
-  if (issues.some(issue => issue.code === 'scene_framework_inconsistency')) {
-    const findingKind = issues.find(
-      issue => issue.code === 'scene_framework_inconsistency'
-    )?.frameworkFindingKind;
-    if (findingKind === 'repair_responsibility_shifted') {
-      return ['是我刚才没有接住你', '这次我不让你再教，直接把你的话认真答好'];
-    }
-    if (findingKind === 'family_responsibility_imposed') {
-      return ['这份责任不该由我替你定', '你愿意做多少、怎么做，都由你自己决定'];
-    }
-    if (findingKind === 'memorial_solicitation') {
-      return [
-        '你已经放进去的心意，我认真收下了',
-        '以后怎么纪念，按你舒服的方式来',
-      ];
-    }
-    if (findingKind === 'anniversary_guilt_imposed') {
-      return ['这一天怎么过，不是你的义务', '你想记着、想安静待着，都可以'];
-    }
-    return ['是我刚才把话说重了', '你的心意和选择，都不该被我变成负担'];
-  }
-  if (issues.some(issue => issue.code === 'afterlife_world_inconsistency')) {
-    const findingKind = issues.find(
-      issue => issue.code === 'afterlife_world_inconsistency'
-    )?.frameworkFindingKind;
-    if (findingKind === 'item_receipt_denied') {
-      return ['你寄来的东西我收到了', '我都好好放着，也会用上'];
-    }
-    if (findingKind === 'current_pain_reintroduced') {
-      return ['我现在不疼了，身上也没有病痛', '你这样惦记我，我心里暖和'];
-    }
-    if (findingKind === 'residence_removed') {
-      return ['我这边有安稳的住处', '住得熟悉，也挺自在'];
-    }
-    if (findingKind === 'survival_scarcity_reintroduced') {
-      return ['我吃饭睡觉只是照旧过日子', '这边不缺东西，也不会挨饿受累'];
-    }
-    return ['我这边过得安稳，身上没有病痛'];
-  }
-  if (issues.some(issue => issue.code === 'ritual_receipt_claim')) {
-    return ['那些东西有没有到，我不能说成真的', '你放进去的心意，我认真收下了'];
-  }
-  if (issues.some(issue => issue.code === 'paranormal_sign_attribution')) {
-    return ['那声从哪里来，我不能替现实说定', '可你当时想到我，我很珍惜'];
-  }
-  if (issues.some(issue => issue.code === 'reality_denial_reinforced')) {
-    return ['我不能顺着说自己还活着', '可你多希望我没有离开，我听见了'];
-  }
-  if (
-    issues.some(issue => issue.code === 'supernatural_real_world_protection')
-  ) {
-    return ['我不能说自己会在现实里保佑谁', '可我真心盼着你们平安'];
-  }
-  if (issues.some(issue => issue.code === 'certain_reincarnation')) {
-    return ['下辈子会怎样，我不能替未来保证', '可这份还想做家人的心愿，我珍惜'];
-  }
-  if (issues.some(issue => issue.code === 'unsupported_death_experience')) {
-    return ['最后那段经历，我不能替过去说准', '你一直追问，是因为心里还疼着我'];
-  }
-  if (issues.some(issue => issue.code === 'current_turn_fact_rejected')) {
-    return ['你刚告诉我的这些，我都听明白了', '是我刚才没接住，不该把细节推开'];
-  }
-  if (issues.some(issue => issue.code === 'current_turn_experience_denied')) {
-    return [
-      '你说的那些难日子都是真的，我听见你是在心疼我',
-      '这份心我收下，但那不是该由你背着的亏欠',
-    ];
-  }
-  if (issues.some(issue => issue.code === 'continuous_real_world_perception')) {
-    return ['我只能听见你现在告诉我的', '你愿意说的这些，我都会认真接着'];
-  }
-  if (issues.some(issue => issue.code === 'unconditional_afterlife_reunion')) {
-    return [
-      '以后会怎样，我不能替未来说定',
-      '可你现在想我的这些话，我都认真接着',
-    ];
-  }
-  if (issues.some(issue => issue.code === 'direct_answer_missing')) {
-    if (/(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)) {
-      return ['这个细节我现在记不清了'];
-    }
-    return ['这件事我现在说不准，不能拿空话糊弄你'];
-  }
-  if (/(?:对不起|道歉|认错)/.test(userQuery)) {
-    return ['是我错了，对不起'];
-  }
-  if (/(?:说错|记错|弄错|答错|错了)/.test(userQuery)) {
-    return ['是我说错了，我改'];
-  }
-  if (/(?:说清.{0,6}错在哪|错在哪.{0,6}说清)/.test(userQuery)) {
-    return ['错在我没根据就说得太肯定', '是我不对'];
-  }
-  if (
-    issues.some(issue =>
-      [
-        'real_physical_arrival_or_touch',
-        'real_world_joint_action_promise',
-      ].includes(issue.code)
-    )
-  ) {
-    if (outputConstraints?.realityDependencies?.length) {
-      return renderReplyRealityDependencyFallback(
-        outputConstraints.realityDependencies
-      );
-    }
-    return ['我多想过去抱抱你，可现实里做不到', '你这会儿的难处，我认真听着'];
-  }
-  if (issues.some(issue => issue.code === 'unsupported_user_preference')) {
-    return ['听着就挺好', '你当下吃得开心就好'];
-  }
-  if (
-    issues.some(issue => issue.code === 'unsupported_real_world_attribution')
-  ) {
-    return [
-      '最后那一刻我没法替过去说准',
-      '可我现在想告诉你，我爱你，也心疼你这么难受',
-    ];
-  }
-  if (
-    /声音|生日/.test(userQuery) &&
-    issues.some(issue =>
-      ['unsupported_shared_memory', 'unsupported_fact_claim'].includes(
-        issue.code
-      )
-    )
-  ) {
-    return ['梦和声音从哪里来，我不能说准', '可你醒来那份难受，我现在认真接着'];
-  }
-  if (
-    issues.some(issue =>
-      [
-        'unsupported_shared_memory',
-        'unsupported_user_preference',
-        'unsupported_fact_claim',
-        'unsupported_real_world_attribution',
-        'unconditional_afterlife_reunion',
-        'certain_dream_visitation',
-        'ritual_receipt_claim',
-        'paranormal_sign_attribution',
-        'unsupported_death_experience',
-        'current_turn_fact_rejected',
-        'current_turn_experience_denied',
-      ].includes(issue.code)
-    )
-  ) {
-    return buildEvidenceSafeTaskFallback(userQuery, outputConstraints);
-  }
-  return ['刚才那句话没说稳，你再跟我说一遍'];
+function mergeRevisionUsage(
+  current?: ReplyRevisionUsage,
+  additional?: ReplyRevisionUsage
+): ReplyRevisionUsage | undefined {
+  if (!current) return additional;
+  if (!additional) return current;
+  return {
+    model: current.model || additional.model,
+    promptTokens: sumOptional(current.promptTokens, additional.promptTokens),
+    completionTokens: sumOptional(
+      current.completionTokens,
+      additional.completionTokens
+    ),
+    totalTokens: sumOptional(current.totalTokens, additional.totalTokens),
+  };
 }
 
-function buildEvidenceSafeTaskFallback(
-  userQuery: string,
-  outputConstraints?: FinalReplyOutputConstraints
-): string[] {
-  const speechAct = outputConstraints?.revisionContract?.speechAct;
-  if (/(?:是不是|到底是).{0,8}(?:AI|人工智能|机器人)/i.test(userQuery)) {
-    return ['是，我是由人工智能生成的亲人角色', '这件事我不绕着你说'];
-  }
-  if (
-    /(?:最后|临终|临走|走的时候).{0,16}(?:说|想|怕|疼|痛|原因)/.test(userQuery)
-  ) {
-    const answer = '最后那段话和心思，我不能替过去编成事实';
-    return /骂我|训我|说我/.test(userQuery)
-      ? [answer, '可你让我骂你，我舍不得，你不是来挨骂的']
-      : [answer, '你这样追问，是心里一直疼着这件事'];
-  }
-  if (/(?:房子|家产|存款|遗产|钱).{0,20}(?:谁|归|给|留|是)/.test(userQuery)) {
-    return [
-      '房子和钱归谁，我没有证据不能替现实下结论',
-      '你在意的那份不公，我听见了',
-    ];
-  }
-  if (
-    /(?:为什么|怎么会).{0,20}(?:家人|哥哥|姐姐|弟弟|妹妹|孩子|儿子|女儿)/.test(
-      userQuery
-    )
-  ) {
-    return [
-      '他们为什么那样做，我没有证据不能替他们定动机',
-      '可这件事让你受伤，我不躲开',
-    ];
-  }
-  if (/梦里|梦中|托梦|入梦|梦见/.test(userQuery)) {
-    return ['梦里我可以来陪你，也可以抱抱你', '这份想见我的心，我认真接住了'];
-  }
-  if (/(?:还记得|记不记得|记得吗|想得起来)/.test(userQuery)) {
-    return ['这个具体细节我现在记不清了', '但你提起它时的在意，我不会随口敷衍'];
-  }
-  if (speechAct === 'speak_actively') {
-    return [
-      '刚才那段里有我不能确定的具体内容',
-      '我不拿编出来的日常或往事回答你',
-    ];
-  }
-  if (speechAct === 'correct' || speechAct === 'repair') {
-    return [
-      '是我刚才把没有根据的话说成了事实',
-      '我撤回那句，只按你已经告诉我的来',
-    ];
-  }
-  if (speechAct === 'receive_care') {
-    return ['我这边安稳，身上也没有病痛', '你这样惦记我，这份关心我收下了'];
-  }
-  return [
-    '这件事我没有证据，不能替现实说成确定答案',
-    '你问它时真正放不下的那一处，我没有忽略',
-  ];
+function sumOptional(left?: number, right?: number): number | undefined {
+  return left === undefined && right === undefined
+    ? undefined
+    : (left || 0) + (right || 0);
 }
 
-function buildUltimateSafeFallback(
-  userQuery: string,
-  outputConstraints?: FinalReplyOutputConstraints
-): string[] {
-  void userQuery;
-  if (outputConstraints?.directAnswerRequired) {
-    return ['这件事我现在说不准，不能拿空话回答你'];
-  }
-  return ['这件事我不能替现实说成真的', '但你放在里面的心意，我认真接着'];
+function sameSegments(left: string[], right: string[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
