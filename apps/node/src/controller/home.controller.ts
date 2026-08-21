@@ -28,7 +28,6 @@ export class SystemController {
         const service = await this.ctx.requestContext.getAsync(
           RelationshipOpenLoopService
         );
-        void service.runProductionBackfillOnce().catch(() => undefined);
         relationshipOpenLoopBackfill =
           await service.getProductionBackfillStatus();
       } catch {
@@ -51,7 +50,6 @@ export class SystemController {
         const service = await this.ctx.requestContext.getAsync(
           AgentMemoryInheritanceService
         );
-        void service.runProductionBackfillOnce().catch(() => undefined);
         memoryInheritanceBackfill = { ...(await service.getStatus()) };
       } catch {
         memoryInheritanceBackfill.status = 'unknown';
