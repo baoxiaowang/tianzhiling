@@ -356,9 +356,18 @@ export default {
       model: readStringFrom(['NODE_CHAT_FALLBACK_MODEL'], 'deepseek-v4-flash'),
     },
     secondaryFallback: {
-      apiKey: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_API_KEY'], ''),
-      baseURL: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_BASE_URL'], ''),
-      model: readStringFrom(['NODE_CHAT_SECONDARY_FALLBACK_MODEL'], ''),
+      apiKey: readStringFrom(
+        ['NODE_CHAT_SECONDARY_FALLBACK_API_KEY', 'DASHSCOPE_API_KEY'],
+        ''
+      ),
+      baseURL: readStringFrom(
+        ['NODE_CHAT_SECONDARY_FALLBACK_BASE_URL'],
+        'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      ),
+      model: readStringFrom(
+        ['NODE_CHAT_SECONDARY_FALLBACK_MODEL'],
+        'qwen-plus'
+      ),
     },
 
     // 视觉理解模型

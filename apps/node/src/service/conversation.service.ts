@@ -3954,6 +3954,9 @@ export class ConversationService {
               ? ASSISTANT_RECOVERY_TIMEOUT_MS
               : ASSISTANT_REPLY_TIMEOUT_MS,
             maxRetries: 0,
+            // 初次调用已尝试主 Provider 与主 fallback。恢复生成必须走
+            // 独立 Provider，避免配置/供应商故障时连续重试同一失效模型。
+            skipPrimary: true,
           }
         );
         generationUsage = this.mergeReplyUsage(
@@ -5773,6 +5776,9 @@ export class ConversationService {
       replyRoute,
       replyBrief,
       messages,
+      conversationId: runtime
+        ? this.stringifyObjectId(runtime.conversation.id)
+        : undefined,
     });
 
     if (!fallback?.segments.length) {
