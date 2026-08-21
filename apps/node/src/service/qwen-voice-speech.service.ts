@@ -1,6 +1,10 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
-import { buildQwenAudioSpeechInstruction } from '@tzl/shared';
+import {
+  buildQwenAudioSpeechInstruction,
+  getQwenAudioSpeechInstructionSource,
+  resolveVoiceTimbreDialect,
+} from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -94,6 +98,11 @@ export class QwenVoiceSpeechService {
       dialect: input.dialect,
       speechSpeed: input.speed,
     });
+    const instructionSource = getQwenAudioSpeechInstructionSource(input);
+    const resolvedDialect = resolveVoiceTimbreDialect(
+      input.dialect,
+      input.instruction
+    );
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -115,15 +124,13 @@ export class QwenVoiceSpeechService {
     );
 
     this.logger.info(
-      '[qwen-voice-speech] synthesize, model=%s, voiceId=%s, language=%s, instructionSource=%s, textLength=%s',
+      '[qwen-voice-speech] synthesize, model=%s, voiceRef=%s, language=%s, dialect=%s, instructionSource=%s, instructionLength=%s, textLength=%s',
       model,
-      voiceId,
+      this.describeVoiceId(voiceId),
       qwenAudio ? languageHint : languageType || '',
-      input.instruction?.trim()
-        ? 'custom'
-        : input.dialect && input.dialect !== 'auto'
-        ? 'legacy_dialect'
-        : 'none',
+      resolvedDialect,
+      instructionSource,
+      instruction?.length || 0,
       text.length
     );
 
@@ -141,6 +148,15 @@ export class QwenVoiceSpeechService {
     const audio = response?.output?.audio;
     const audioUrl = audio?.url?.trim() || '';
     const data = audio?.data?.trim() || '';
+
+    if (audioUrl || data) {
+      this.logger.info(
+        '[qwen-voice-speech] synthesize succeeded, model=%s, requestId=%s, audioSource=%s',
+        model,
+        response.request_id?.trim() || '',
+        audioUrl ? 'url' : 'base64'
+      );
+    }
 
     if (audioUrl) {
       const downloaded = await this.downloadAudio(
@@ -424,6 +440,16 @@ export class QwenVoiceSpeechService {
 
   private isQwenAudioModel(model?: string): boolean {
     return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private describeVoiceId(value: string): string {
+    const voiceId = value.trim();
+
+    if (voiceId.length <= 10) {
+      return voiceId;
+    }
+
+    return `${voiceId.slice(0, 4)}...${voiceId.slice(-4)}`;
   }
 
   private normalizeLanguageHint(value?: string): string {

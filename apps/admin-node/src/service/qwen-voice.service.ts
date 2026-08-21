@@ -1,5 +1,10 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
-import { AppError, buildQwenAudioSpeechInstruction } from '@tzl/shared';
+import {
+  AppError,
+  buildQwenAudioSpeechInstruction,
+  getQwenAudioSpeechInstructionSource,
+  resolveVoiceTimbreDialect,
+} from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -201,6 +206,11 @@ export class QwenVoiceService {
       dialect: input.dialect,
       speechSpeed: input.speed,
     });
+    const instructionSource = getQwenAudioSpeechInstructionSource(input);
+    const resolvedDialect = resolveVoiceTimbreDialect(
+      input.dialect,
+      input.instruction
+    );
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -220,6 +230,18 @@ export class QwenVoiceService {
             },
       })
     );
+
+    this.logger.info(
+      '[qwen-voice] synthesize preview, model=%s, voiceRef=%s, language=%s, dialect=%s, instructionSource=%s, instructionLength=%s, textLength=%s',
+      model,
+      this.describeVoiceId(voiceId),
+      qwenAudio ? languageHint : languageType || '',
+      resolvedDialect,
+      instructionSource,
+      instruction?.length || 0,
+      text.length
+    );
+
     const response = await this.requestJson<QwenVoiceResp>({
       path: qwenAudio
         ? '/api/v1/services/audio/tts/SpeechSynthesizer'
@@ -230,6 +252,15 @@ export class QwenVoiceService {
     const audio = response?.output?.audio;
     const audioUrl = audio?.url?.trim() || '';
     const data = audio?.data?.trim() || '';
+
+    if (audioUrl || data) {
+      this.logger.info(
+        '[qwen-voice] synthesize preview succeeded, model=%s, requestId=%s, audioSource=%s',
+        model,
+        response.request_id?.trim() || '',
+        audioUrl ? 'url' : 'base64'
+      );
+    }
 
     if (audioUrl) {
       try {
@@ -300,6 +331,16 @@ export class QwenVoiceService {
 
   private isQwenAudioModel(model?: string): boolean {
     return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private describeVoiceId(value: string): string {
+    const voiceId = value.trim();
+
+    if (voiceId.length <= 10) {
+      return voiceId;
+    }
+
+    return `${voiceId.slice(0, 4)}...${voiceId.slice(-4)}`;
   }
 
   private supportsEnrollmentHints(model?: string): boolean {

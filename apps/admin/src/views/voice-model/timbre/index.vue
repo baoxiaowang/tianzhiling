@@ -354,13 +354,30 @@
             发音方言与合成要求
           </div>
           <a-form-item
+            field="speechDialect"
+            label="方言类型"
+            :rules="[{ required: true, message: '请选择方言类型' }]"
+          >
+            <a-select v-model="editForm.speechDialect" placeholder="请选择方言">
+              <a-option
+                v-for="option in voiceTimbreDialectOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </a-option>
+            </a-select>
+            <template #extra>
+              要求东北话、山东话等明确方言时，请直接选择；只有不限定方言时才选“自动”。
+            </template>
+          </a-form-item>
+          <a-form-item
             field="speechInstruction"
-            label="发音方言"
+            label="补充要求"
             :rules="[
-              { required: true, message: '请填写发音方言或合成要求' },
               {
                 maxLength: 50,
-                message: '发音方言与合成要求不能超过 50 个字符',
+                message: '补充要求不能超过 50 个字符',
               },
             ]"
           >
@@ -370,15 +387,12 @@
               :max-length="50"
               show-word-limit
               :auto-size="{ minRows: 3, maxRows: 5 }"
-              placeholder="使用自然地道的山东青岛话表达，保留原音色和说话习惯，不要转成普通话"
+              placeholder="如：不要转成普通话，保留原音色和说话习惯"
             />
             <template #extra>
               <div class="voice-timbre-page__instruction-help">
                 <span>
-                  推荐写法：使用自然地道的【具体地区】方言表达，保留原音色和说话习惯，不要转成普通话。
-                </span>
-                <span>
-                  地区越具体越有效，例如“山东青岛话”“陕西关中话”；不要只写“说方言”或“自然一点”。
+                  系统会把上面选择的方言强指令与这里的补充要求合并，不会相互覆盖。
                 </span>
                 <span>
                   该内容会作为 Plus 的 instruction
@@ -580,6 +594,7 @@
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue/es/form';
   import type {
+    VoiceTimbreDialectDTO,
     VoiceTimbreProviderDTO,
     VoiceTimbreStatusDTO,
   } from '@tzl/shared';
@@ -611,29 +626,33 @@
   const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
   const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
   const DEFAULT_QWEN_TIMBRE_MODEL = QWEN_AUDIO_PLUS_MODEL;
-  const LEGACY_DIALECT_LABELS: Record<string, string> = {
-    mandarin: '普通话',
-    cantonese: '广东话',
-    chongqing: '重庆话',
-    northeastern: '东北话',
-    gansu: '甘肃话',
-    guizhou: '贵州话',
-    zhejiang: '浙江话',
-    hebei: '河北话',
-    henan: '河南话',
-    hubei: '湖北话',
-    hunan: '湖南话',
-    jiangxi: '江西话',
-    ningbo: '宁波话',
-    ningxia: '宁夏话',
-    qingdao: '青岛话',
-    shaanxi: '陕西话',
-    shanxi: '山西话',
-    shandong: '山东话',
-    shanghai: '上海话',
-    sichuan: '四川话',
-    yunnan: '云南话',
-  };
+  const voiceTimbreDialectOptions: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    { value: 'auto', label: '自动（跟随文本）' },
+    { value: 'mandarin', label: '普通话' },
+    { value: 'cantonese', label: '广东话' },
+    { value: 'chongqing', label: '重庆话' },
+    { value: 'northeastern', label: '东北话' },
+    { value: 'gansu', label: '甘肃话' },
+    { value: 'guizhou', label: '贵州话' },
+    { value: 'zhejiang', label: '浙江话' },
+    { value: 'hebei', label: '河北话' },
+    { value: 'henan', label: '河南话' },
+    { value: 'hubei', label: '湖北话' },
+    { value: 'hunan', label: '湖南话' },
+    { value: 'jiangxi', label: '江西话' },
+    { value: 'ningbo', label: '宁波话' },
+    { value: 'ningxia', label: '宁夏话' },
+    { value: 'qingdao', label: '青岛话' },
+    { value: 'shaanxi', label: '陕西话' },
+    { value: 'shanxi', label: '山西话' },
+    { value: 'shandong', label: '山东话' },
+    { value: 'shanghai', label: '上海话' },
+    { value: 'sichuan', label: '四川话' },
+    { value: 'yunnan', label: '云南话' },
+  ];
   const qwenModelOptions = [
     {
       label: 'Qwen Audio 3.0 TTS Plus（默认，支持自定义合成指令）',
@@ -648,6 +667,7 @@
     audioUrl: string;
     cloneLanguage: string;
     previewModel: string;
+    speechDialect: VoiceTimbreDialectDTO;
     speechInstruction: string;
     providerVoiceId: string;
     previewText: string;
@@ -673,6 +693,7 @@
     audioUrl: '',
     cloneLanguage: 'zh',
     previewModel: DEFAULT_QWEN_TIMBRE_MODEL,
+    speechDialect: 'auto',
     speechInstruction: '',
     providerVoiceId: '',
     previewText: '',
@@ -830,7 +851,8 @@
     editForm.audioUrl = record.audioUrl;
     editForm.cloneLanguage = record.cloneLanguage || 'auto';
     editForm.previewModel = record.previewModel || QWEN3_TTS_VC_MODEL;
-    editForm.speechInstruction = formatSpeechInstruction(record, '');
+    editForm.speechDialect = resolveSpeechDialect(record);
+    editForm.speechInstruction = record.speechInstruction?.trim() || '';
     editForm.providerVoiceId = record.providerVoiceId;
     editForm.previewText = record.previewText;
     editForm.speechSpeed = normalizeSpeechFormValue(record.speechSpeed, 1);
@@ -856,6 +878,7 @@
     editForm.audioUrl = '';
     editForm.cloneLanguage = 'zh';
     editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
+    editForm.speechDialect = 'auto';
     editForm.speechInstruction = '';
     editForm.providerVoiceId = '';
     editForm.previewText = '';
@@ -873,6 +896,7 @@
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
     editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
+    editForm.speechDialect = 'auto';
     editForm.speechInstruction = '';
     editForm.cloneLanguage =
       isCosyVoiceProvider.value || isQwenProvider.value ? 'zh' : 'Chinese';
@@ -890,6 +914,7 @@
     editForm.providerVoiceId = '';
 
     if (!supportsSpeechInstruction.value) {
+      editForm.speechDialect = 'auto';
       editForm.speechInstruction = '';
     }
 
@@ -951,7 +976,10 @@
           status: editForm.status,
           previewText: editForm.previewText,
           ...(supportsSpeechInstruction.value
-            ? { speechInstruction: editForm.speechInstruction }
+            ? {
+                speechDialect: editForm.speechDialect,
+                speechInstruction: editForm.speechInstruction,
+              }
             : {}),
           speechSpeed: editForm.speechSpeed,
           speechVolume: editForm.speechVolume,
@@ -976,7 +1004,10 @@
             ? editForm.previewModel
             : undefined,
           ...(supportsSpeechInstruction.value
-            ? { speechInstruction: editForm.speechInstruction }
+            ? {
+                speechDialect: editForm.speechDialect,
+                speechInstruction: editForm.speechInstruction,
+              }
             : {}),
           providerVoiceId: editForm.providerVoiceId || undefined,
           previewText: editForm.previewText,
@@ -1103,15 +1134,48 @@
     record: Pick<VoiceTimbreRecord, 'speechInstruction' | 'speechDialect'>,
     fallback = '未设置（跟随文本）'
   ) => {
-    const legacyDialectLabel = LEGACY_DIALECT_LABELS[record.speechDialect];
+    const dialect = resolveSpeechDialect(record);
+    const dialectLabel = voiceTimbreDialectOptions.find(
+      (option) => option.value === dialect && option.value !== 'auto'
+    )?.label;
+    const parts = [
+      dialectLabel ? `方言：${dialectLabel}` : '',
+      record.speechInstruction?.trim()
+        ? `补充：${record.speechInstruction.trim()}`
+        : '',
+    ].filter(Boolean);
 
-    return (
-      record.speechInstruction?.trim() ||
-      (legacyDialectLabel
-        ? `使用自然、地道的${legacyDialectLabel}表达，保持原有音色`
-        : '') ||
-      fallback
-    );
+    return parts.join('；') || fallback;
+  };
+
+  const resolveSpeechDialect = (
+    record: Pick<VoiceTimbreRecord, 'speechInstruction' | 'speechDialect'>
+  ): VoiceTimbreDialectDTO => {
+    if (record.speechDialect && record.speechDialect !== 'auto') {
+      return record.speechDialect;
+    }
+
+    const instruction = record.speechInstruction?.trim() || '';
+    const dialect = [...voiceTimbreDialectOptions]
+      .filter(
+        (option) => option.value !== 'auto' && option.value !== 'mandarin'
+      )
+      .sort(
+        (left, right) =>
+          right.label.replace(/话$/, '').length -
+          left.label.replace(/话$/, '').length
+      )
+      .find((option) => instruction.includes(option.label.replace(/话$/, '')));
+
+    if (dialect) {
+      return dialect.value;
+    }
+
+    const requestsMandarin =
+      instruction.includes('普通话') &&
+      !/(不要|别|禁止|避免).{0,6}普通话/.test(instruction);
+
+    return requestsMandarin ? 'mandarin' : 'auto';
   };
 
   const formatStatus = (status: VoiceTimbreStatusDTO) => {

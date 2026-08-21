@@ -279,9 +279,6 @@ export class AdminVoiceTimbreService {
       timbre.speechInstruction = this.normalizeSpeechInstruction(
         payload.speechInstruction
       );
-      if (payload.speechDialect === undefined) {
-        timbre.speechDialect = 'auto';
-      }
       changed = true;
     }
 
