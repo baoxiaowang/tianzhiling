@@ -22,6 +22,9 @@ import {
   VOICE_TIMBRE_CLEANUP_QUEUE,
   VOICE_TIMBRE_CLEANUP_JOB_ID,
 } from './service/voice-timbre-library.service';
+import { AgentMemoryInheritanceService } from './service/agents/agent-memory-inheritance.service';
+
+const MEMORY_INHERITANCE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
 @Configuration({
   imports: [
@@ -49,6 +52,11 @@ export class MainConfiguration {
   @Inject()
   bullmqFramework: bullmq.Framework;
 
+  @Inject()
+  agentMemoryInheritanceService: AgentMemoryInheritanceService;
+
+  private memoryInheritanceTimer?: ReturnType<typeof setInterval>;
+
   async onReady() {
     this.app.use(servePublicAsset);
     this.app.useMiddleware([ReportMiddleware]);
@@ -58,6 +66,8 @@ export class MainConfiguration {
   }
 
   async onServerReady() {
+    this.scheduleMemoryInheritanceBackfill();
+
     try {
       const cleanupQueue = this.bullmqFramework?.getQueue(
         VOICE_TIMBRE_CLEANUP_QUEUE
@@ -105,5 +115,33 @@ export class MainConfiguration {
         error instanceof Error ? error.message : String(error)
       );
     }
+  }
+
+  private scheduleMemoryInheritanceBackfill(): void {
+    if (!this.agentMemoryInheritanceService) {
+      this.logger.warn('[memory-inheritance] scheduler is unavailable');
+      return;
+    }
+    const trigger = async () => {
+      try {
+        await this.agentMemoryInheritanceService.runProductionBackfillOnce();
+        const status = await this.agentMemoryInheritanceService.getStatus();
+        if (status.status === 'completed' && this.memoryInheritanceTimer) {
+          clearInterval(this.memoryInheritanceTimer);
+          this.memoryInheritanceTimer = undefined;
+        }
+      } catch (error) {
+        this.logger.warn(
+          '[memory-inheritance] scheduled attempt failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    };
+    void trigger();
+    this.memoryInheritanceTimer = setInterval(
+      () => void trigger(),
+      MEMORY_INHERITANCE_RETRY_INTERVAL_MS
+    );
+    this.memoryInheritanceTimer.unref();
   }
 }
