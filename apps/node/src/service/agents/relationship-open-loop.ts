@@ -272,9 +272,7 @@ export function upsertRelationshipOpenLoopDraft(options: {
     semanticKey,
     rootId: root?.id || id,
     ...(root ? { parentId: root.id } : {}),
-    ...(options.draft.relation
-      ? { relation: options.draft.relation }
-      : {}),
+    ...(options.draft.relation ? { relation: options.draft.relation } : {}),
     summary,
     subject,
     contentDomain: options.draft.contentDomain,
@@ -393,8 +391,7 @@ export function resolveRelationshipOpenLoopFromUserText(options: {
       : {}),
     updatedAt: now,
   };
-  const cascadeToRoot =
-    command.cascadeRoot || selected.id === selected.rootId;
+  const cascadeToRoot = command.cascadeRoot || selected.id === selected.rootId;
   const tasks = options.store.tasks.map(task => {
     if (task.id === selected.id) return updated;
     if (!cascadeToRoot || task.rootId !== selected.rootId) return { ...task };
@@ -438,10 +435,10 @@ export function reconcileRelationshipOpenLoopContextualUpdate(options: {
   const recentHealthTasks = options.store.tasks
     .filter(task => ACTIVE_STATES.has(task.state))
     .filter(task => task.contentDomain === 'health')
-    .filter(
-      task => now.getTime() - task.updatedAt.getTime() <= DAY_MS
-    )
-    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+    .filter(task => now.getTime() - task.updatedAt.getTime() <= DAY_MS)
+    .sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()
+    );
   if (recentHealthTasks.length !== 1) {
     return { store: options.store, action: 'noop' };
   }
@@ -483,10 +480,7 @@ export function selectRelationshipOpenLoop(
   const candidates = options.store.tasks
     .filter(task => ACTIVE_STATES.has(task.state))
     .filter(task => !task.proactiveDisabled)
-    .filter(
-      task =>
-        !task.expiresAt || task.expiresAt.getTime() > now.getTime()
-    )
+    .filter(task => !task.expiresAt || task.expiresAt.getTime() > now.getTime())
     .filter(
       task =>
         !task.nextEligibleAt || task.nextEligibleAt.getTime() <= now.getTime()
@@ -523,7 +517,7 @@ export function selectRelationshipOpenLoop(
         !recentlyMentioned &&
         (!task.dueAt || task.dueAt.getTime() <= now.getTime() + DAY_MS);
       const reason: RelationshipOpenLoopSelection['reason'] | undefined =
-        eventDue && !recentlyPresented
+        eventDue && !recentlyPresented && !recentlyMentioned
           ? 'event_due'
           : association.strong &&
             !sourceVisibleInRawContext &&
@@ -570,9 +564,7 @@ export function markRelationshipOpenLoopPresented(
             ...task,
             lastPresentedAt: now,
             presentedCount: task.presentedCount + 1,
-            nextEligibleAt: new Date(
-              now.getTime() + PRESENTATION_COOLDOWN_MS
-            ),
+            nextEligibleAt: new Date(now.getTime() + PRESENTATION_COOLDOWN_MS),
             updatedAt: now,
           }
         : { ...task }
@@ -598,11 +590,7 @@ export function markRelationshipOpenLoopFinalObservation(options: {
   }
   const assistantText = normalizeText(options.assistantText, 1200);
   const observed = assistantTextReferencesTask(assistantText, task);
-  const confidence = observed
-    ? 'high'
-    : assistantText
-    ? 'unknown'
-    : 'none';
+  const confidence = observed ? 'high' : assistantText ? 'unknown' : 'none';
   return {
     store: {
       ...options.store,
@@ -612,6 +600,11 @@ export function markRelationshipOpenLoopFinalObservation(options: {
               ...item,
               ...(observed
                 ? {
+                    lastPresentedAt: now,
+                    presentedCount: item.presentedCount + 1,
+                    nextEligibleAt: new Date(
+                      now.getTime() + PRESENTATION_COOLDOWN_MS
+                    ),
                     lastMentionedAt: now,
                     mentionedCount: item.mentionedCount + 1,
                   }
@@ -636,10 +629,9 @@ export function buildRelationshipOpenLoopPrompt(
 ): string {
   const lines = [
     '# 关系连续性事项（非回复计划）',
-    `用户${describeRelativeTime(
-      task.latestSourceOccurredAt,
-      now
-    )}说过：${task.summary}`,
+    `用户${describeRelativeTime(task.latestSourceOccurredAt, now)}说过：${
+      task.summary
+    }`,
     `当前记录状态：${describeTaskState(task.state)}。`,
   ];
   if (task.dueAt) {
@@ -684,25 +676,54 @@ function findMatchingRoot(
     .filter(task => task.contentDomain === draft.contentDomain)
     .filter(task => subjectsMatch(task.subject, draft.subject))
     .filter(task => rootTopicsCompatible(task, draft))
-    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+    .sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime()
+    )[0];
 }
 
 function rootTopicsCompatible(
   task: RelationshipOpenLoopTask,
   draft: RelationshipOpenLoopDraft
 ): boolean {
-  if (draft.contentDomain === 'health' || draft.contentDomain === 'care_arrangement') {
-    return true;
-  }
-  if (draft.contentDomain === 'funeral_or_memorial') {
-    return true;
-  }
-  if (draft.contentDomain === 'future_event' || draft.contentDomain === 'other') {
+  if (
+    draft.contentDomain === 'future_event' ||
+    draft.contentDomain === 'other'
+  ) {
     return false;
   }
-  const taskAnchors = new Set(extractDomainAnchors(task.summary, task.contentDomain));
-  return extractDomainAnchors(draft.summary, draft.contentDomain).some(anchor =>
-    taskAnchors.has(anchor)
+  const taskAnchors = new Set(
+    extractDomainAnchors(task.summary, task.contentDomain)
+  );
+  const draftAnchors = extractDomainAnchors(draft.summary, draft.contentDomain);
+  if (draftAnchors.some(anchor => taskAnchors.has(anchor))) return true;
+
+  if (draft.contentDomain === 'health') {
+    const taskConditions = extractHealthConditionAnchors(task.summary);
+    const draftConditions = extractHealthConditionAnchors(draft.summary);
+    if (
+      taskConditions.length &&
+      draftConditions.length &&
+      !draftConditions.some(anchor => taskConditions.includes(anchor))
+    ) {
+      return false;
+    }
+    const trajectory = /住院|手术|复查|检查|治疗|病情/u;
+    return trajectory.test(task.summary) && trajectory.test(draft.summary);
+  }
+
+  // Funeral, care, property and relationship tasks can contain several
+  // independent events for one person. Without a shared event anchor, keeping
+  // separate roots is safer than silently merging histories.
+  return false;
+}
+
+function extractHealthConditionAnchors(text: string): string[] {
+  return Array.from(
+    new Set(
+      text.match(
+        /发烧|感冒|骨折|摔伤|车祸|癌症|肿瘤|中风|脑梗|心梗|肺炎|糖尿病|高血压|胃病|肝病|肾病|失眠|抑郁/gu
+      ) || []
+    )
   );
 }
 
@@ -786,6 +807,7 @@ function buildSemanticKey(options: {
     options.rootId || 'root',
     options.draft.contentDomain,
     normalizeComparableSubject(options.subject),
+    buildTaskEventFingerprint(options.draft),
     options.draft.relation || 'root',
     options.draft.state,
     dueDay,
@@ -794,9 +816,20 @@ function buildSemanticKey(options: {
   return createHash('sha1').update(seed).digest('hex').slice(0, 20);
 }
 
-function resolveLifecycleCommand(
-  text: string
-):
+function buildTaskEventFingerprint(draft: RelationshipOpenLoopDraft): string {
+  const anchors = Array.from(
+    new Set(
+      extractDomainAnchors(draft.summary, draft.contentDomain).concat(
+        draft.contentDomain === 'health'
+          ? extractHealthConditionAnchors(draft.summary)
+          : []
+      )
+    )
+  ).sort();
+  return anchors.length ? anchors.join(',') : normalizeText(draft.summary, 64);
+}
+
+function resolveLifecycleCommand(text: string):
   | {
       state: 'resolved' | 'dismissed' | 'dormant';
       allowMostRecent: boolean;
@@ -811,7 +844,9 @@ function resolveLifecycleCommand(
   ) {
     return {
       state: 'dismissed',
-      allowMostRecent: true,
+      // A bare stop command may only bind to an item the assistant actually
+      // mentioned recently; never guess from the latest stored task.
+      allowMostRecent: false,
       allowRecentlyPresented: true,
       cascadeRoot: true,
     };
@@ -819,7 +854,7 @@ function resolveLifecycleCommand(
   if (/(?:改天|以后|过段时间|回头)(?:再)?(?:说|聊)|现在不想说/u.test(text)) {
     return {
       state: 'dormant',
-      allowMostRecent: true,
+      allowMostRecent: false,
       allowRecentlyPresented: true,
       cascadeRoot: true,
     };
@@ -874,8 +909,10 @@ function assistantTextReferencesTask(
   if (!text) return false;
   const anchors = extractDomainAnchors(task.summary, task.contentDomain);
   if (anchors.some(anchor => text.includes(anchor))) return true;
-  return extractKeywords(task.summary).filter(keyword => text.includes(keyword))
-    .length >= 2;
+  return (
+    extractKeywords(task.summary).filter(keyword => text.includes(keyword))
+      .length >= 2
+  );
 }
 
 function domainPattern(domain: RelationshipOpenLoopContentDomain): RegExp {
@@ -955,11 +992,26 @@ function extractKeywords(value: string): string[] {
 function compactRelationshipOpenLoopStore(
   store: RelationshipOpenLoopStore
 ): RelationshipOpenLoopStore {
-  const active = store.tasks
+  const activeRanked = store.tasks
     .filter(task => ACTIVE_STATES.has(task.state))
-    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
-    .slice(0, MAX_ACTIVE_TASKS);
-  const inactive = store.tasks
+    .sort(
+      (left, right) =>
+        Number(right.importance === 3) - Number(left.importance === 3) ||
+        Number(Boolean(right.dueAt)) - Number(Boolean(left.dueAt)) ||
+        right.importance - left.importance ||
+        right.updatedAt.getTime() - left.updatedAt.getTime()
+    );
+  const active = activeRanked.slice(0, MAX_ACTIVE_TASKS);
+  const overflow: RelationshipOpenLoopTask[] = activeRanked
+    .slice(MAX_ACTIVE_TASKS)
+    .map(task => ({
+      ...task,
+      state: 'superseded',
+      proactiveDisabled: true,
+      updatedAt: store.updatedAt,
+    }));
+  const inactive = overflow
+    .concat(store.tasks.filter(task => !ACTIVE_STATES.has(task.state)))
     .filter(task => !ACTIVE_STATES.has(task.state))
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
     .slice(0, MAX_INACTIVE_TASKS);
@@ -1104,7 +1156,9 @@ function describeSelectionReason(
 }
 
 function describeRelativeTime(source: Date, now: Date): string {
-  const days = Math.floor(Math.max(0, now.getTime() - source.getTime()) / DAY_MS);
+  const days = Math.floor(
+    Math.max(0, now.getTime() - source.getTime()) / DAY_MS
+  );
   if (days <= 0) return '今天';
   if (days === 1) return '昨天';
   if (days <= 6) return `${days}天前`;
@@ -1142,11 +1196,7 @@ function normalizeText(value: unknown, maxLength: number): string {
 function normalizeTextList(value: unknown): string[] {
   return Array.isArray(value)
     ? Array.from(
-        new Set(
-          value
-            .map(item => normalizeText(item, 100))
-            .filter(Boolean)
-        )
+        new Set(value.map(item => normalizeText(item, 100)).filter(Boolean))
       ).slice(0, 6)
     : [];
 }

@@ -1,4 +1,4 @@
-import { Inject, Logger, Provide } from '@midwayjs/core';
+import { Init, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -18,7 +18,6 @@ import {
   buildRelationshipOpenLoopPrompt,
   expireRelationshipOpenLoops,
   markRelationshipOpenLoopFinalObservation,
-  markRelationshipOpenLoopPresented,
   parseRelationshipOpenLoopStore,
   reconcileRelationshipOpenLoopContextualUpdate,
   RELATIONSHIP_OPEN_LOOP_MESSAGE_PREFIX,
@@ -52,15 +51,19 @@ export interface CaptureRelationshipOpenLoopOptions {
 export interface RelationshipOpenLoopCaptureAudit {
   extractionDecision: RelationshipOpenLoopExtraction['decision'];
   extractionReason: string;
-  mutationAction:
-    | 'created_root'
-    | 'created_child'
-    | 'updated'
-    | 'noop';
+  mutationAction: 'created_root' | 'created_child' | 'updated' | 'noop';
   taskId?: string;
   rootId?: string;
   state?: string;
+  persistenceAction?: RelationshipOpenLoopPersistenceResult['action'];
+  readbackVerified?: boolean;
   sourceMessageId: string;
+}
+
+export interface RelationshipOpenLoopPersistenceResult {
+  action: 'created' | 'updated' | 'unchanged';
+  message: MessageEntity;
+  readbackVerified: true;
 }
 
 export interface PrepareRelationshipOpenLoopTurnOptions {
@@ -79,7 +82,7 @@ export interface PreparedRelationshipOpenLoopTurn {
   stateMessageId?: string;
   sourceMessageIds?: string[];
   selectionReason?: RelationshipOpenLoopSelection['reason'];
-  presentedAt?: Date;
+  selectedAt?: Date;
 }
 
 export interface RelationshipOpenLoopFinalAudit {
@@ -101,27 +104,32 @@ export interface RelationshipOpenLoopBackfillSummary {
   activeTaskCount: number;
   expiredTaskCount: number;
   updatedConversationCount: number;
+  verifiedConversationCount: number;
+  failedConversationCount: number;
 }
 
 export interface RelationshipOpenLoopBackfillStatus {
   jobId: string;
-  status: 'pending' | 'running' | 'completed' | 'unknown';
+  status: 'pending' | 'running' | 'completed' | 'partial_failed' | 'unknown';
   generatedTaskCount?: number;
   activeTaskCount?: number;
   expiredTaskCount?: number;
   migratedLegacyCardCount?: number;
   updatedConversationCount?: number;
+  verifiedConversationCount?: number;
+  failedConversationCount?: number;
   completedAt?: string;
 }
 
 const RETURN_GAP_MS = 12 * 60 * 60 * 1000;
 const RECENT_VISIBLE_MESSAGE_LIMIT = 16;
 const DISTRIBUTED_LOCK_TTL_MS = 15 * 1000;
-const BACKFILL_JOB_ID = 'relationship-open-loop-backfill-20260820-v1';
+const BACKFILL_JOB_ID = 'relationship-open-loop-backfill-20260821-v2';
 const BACKFILL_MARKER_MESSAGE_PREFIX =
-  '__TZL_RELATIONSHIP_OPEN_LOOP_BACKFILL_20260820_V1__:';
+  '__TZL_RELATIONSHIP_OPEN_LOOP_BACKFILL_20260821_V2__:';
 const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const BACKFILL_LOCK_MS = 6 * 60 * 60 * 1000;
+const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
@@ -141,6 +149,36 @@ export class RelationshipOpenLoopService {
 
   @Inject()
   redisService: RedisService;
+
+  private productionBackfillTimer?: ReturnType<typeof setInterval>;
+
+  @Init()
+  initializeProductionBackfill(): void {
+    if (process.env.NODE_ENV !== 'production') return;
+    const trigger = async () => {
+      try {
+        await this.runProductionBackfillOnce();
+        const status = await this.getProductionBackfillStatus();
+        if (status.status === 'completed' && this.productionBackfillTimer) {
+          clearInterval(this.productionBackfillTimer);
+          this.productionBackfillTimer = undefined;
+        }
+      } catch (error) {
+        this.logger?.error?.(
+          '[relationship-open-loop-backfill] scheduled run failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    };
+    // Do not start a full historical scan during application startup. The
+    // service wakes periodically, while runProductionBackfillOnce enforces the
+    // Shanghai low-traffic window and durable idempotency markers.
+    this.productionBackfillTimer = setInterval(
+      () => void trigger(),
+      BACKFILL_RETRY_INTERVAL_MS
+    );
+    this.productionBackfillTimer.unref();
+  }
 
   async captureFromUserMessage(
     options: CaptureRelationshipOpenLoopOptions
@@ -181,10 +219,7 @@ export class RelationshipOpenLoopService {
         options.message.conversationId,
         now
       );
-      const store = expireRelationshipOpenLoops(
-        stored.store,
-        now
-      );
+      const store = expireRelationshipOpenLoops(stored.store, now);
       const mutation =
         extraction.decision === 'lifecycle_only'
           ? resolveRelationshipOpenLoopFromUserText({
@@ -211,8 +246,9 @@ export class RelationshipOpenLoopService {
               now,
             })
           : { store, action: 'noop' as const };
+      let persistence: RelationshipOpenLoopPersistenceResult | undefined;
       if (mutation.action !== 'noop' || stored.migratedLegacyCount > 0) {
-        await this.persistStoreUnlocked(
+        persistence = await this.persistStoreUnlocked(
           options.message.conversationId,
           mutation.store,
           stored.message
@@ -228,6 +264,12 @@ export class RelationshipOpenLoopService {
               state: mutation.task.state,
             }
           : {}),
+        ...(persistence
+          ? {
+              persistenceAction: persistence.action,
+              readbackVerified: persistence.readbackVerified,
+            }
+          : {}),
       };
     });
     return audit;
@@ -240,11 +282,6 @@ export class RelationshipOpenLoopService {
       const now = options.now ?? new Date();
       const stored = await this.loadUnifiedStore(options.conversation.id, now);
       if (!stored.store.tasks.length) {
-        await this.persistStoreUnlocked(
-          options.conversation.id,
-          stored.store,
-          stored.message
-        );
         return { status: 'no_store', candidateCount: 0 };
       }
       const expired = expireRelationshipOpenLoops(stored.store, now);
@@ -273,19 +310,13 @@ export class RelationshipOpenLoopService {
         );
         return { status: 'no_candidate', candidateCount: 0 };
       }
-      const next = markRelationshipOpenLoopPresented(
-        expired,
-        selection.task.id,
-        now
-      );
+      // Selection is only a non-decision hint for the main model. Do not
+      // consume the task until the persisted assistant reply actually uses it.
       const stateMessage = await this.persistStoreUnlocked(
         options.conversation.id,
-        next,
+        expired,
         stored.message
       );
-      if (!stateMessage) {
-        return { status: 'no_candidate', candidateCount: 0 };
-      }
       return {
         status: 'selected',
         candidateCount: selection.candidateCount,
@@ -296,10 +327,10 @@ export class RelationshipOpenLoopService {
         ),
         taskId: selection.task.id,
         rootId: selection.task.rootId,
-        stateMessageId: this.stringifyObjectId(stateMessage.id),
+        stateMessageId: this.stringifyObjectId(stateMessage.message.id),
         sourceMessageIds: [...selection.task.sourceMessageIds],
         selectionReason: selection.reason,
-        presentedAt: now,
+        selectedAt: now,
       };
     });
   }
@@ -349,9 +380,12 @@ export class RelationshipOpenLoopService {
     if (process.env.NODE_ENV !== 'production' || !this.redisService) {
       return undefined;
     }
+    if (!this.isShanghaiMaintenanceWindow(now)) return undefined;
     const completedKey = `chat:${BACKFILL_JOB_ID}:completed`;
     const lockKey = `chat:${BACKFILL_JOB_ID}:lock`;
+    const failedKey = `chat:${BACKFILL_JOB_ID}:failed`;
     if (await this.redisService.get(completedKey)) return undefined;
+    if (await this.redisService.get(failedKey)) return undefined;
     const durableMarker = await this.findBackfillMarker();
     if (durableMarker) {
       await this.redisService.set(
@@ -387,6 +421,8 @@ export class RelationshipOpenLoopService {
         activeTaskCount: 0,
         expiredTaskCount: 0,
         updatedConversationCount: 0,
+        verifiedConversationCount: 0,
+        failedConversationCount: 0,
       };
 
       for (const userId of eligibleUserIds) {
@@ -405,122 +441,142 @@ export class RelationshipOpenLoopService {
               isArchived: { $ne: true },
               createdAt: { $gte: cutoffAt },
             } as never,
-            order: { createdAt: 'ASC' },
+            order: { createdAt: 'DESC' },
             take: 240,
           });
           summary.scannedMessageCount += messages.length;
           if (!messages.length) continue;
 
-          await this.withStorageQueue(conversation.id, async () => {
-            const loaded = await this.loadUnifiedStore(conversation.id, now);
-            let store = loaded.store;
-            summary.legacyCardCount += loaded.legacyCardCount;
-            summary.migratedLegacyCardCount += loaded.migratedLegacyCount;
+          try {
+            await this.withStorageQueue(conversation.id, async () => {
+              const loaded = await this.loadUnifiedStore(conversation.id, now);
+              let store = loaded.store;
+              summary.legacyCardCount += loaded.legacyCardCount;
+              summary.migratedLegacyCardCount += loaded.migratedLegacyCount;
 
-            const historicalInputs = messages.map(message => ({
-              message,
-              text: this.buildSearchableText(message),
-            }));
-            const legacyCards = extractContinuityInformationCards({
-              inputs: historicalInputs.filter(item =>
-                shouldInspectHistoricalContinuityMessage(item.text)
-              ),
-              now,
-            });
-            const legacyMigration = migrateLegacyContinuityStore({
-              store,
-              legacyStore: {
-                version: 'continuity_information_card_v1',
-                cards: legacyCards,
-                updatedAt: now,
-              },
-              now,
-            });
-            store = legacyMigration.store;
-            summary.legacyCardCount += legacyCards.length;
-            summary.migratedLegacyCardCount +=
-              legacyMigration.migratedCount;
-
-            for (const item of historicalInputs) {
-              const sourceMessageId = this.stringifyObjectId(item.message.id);
-              if (
-                store.tasks.some(task =>
-                  task.sourceMessageIds.includes(sourceMessageId)
-                )
-              ) {
-                continue;
-              }
-              const extraction = extractRelationshipOpenLoop({
-                message: item.message,
-                text: item.text,
+              const historicalInputs = [...messages].reverse().map(message => ({
+                message,
+                text: this.buildSearchableText(message),
+              }));
+              const legacyCards = extractContinuityInformationCards({
+                inputs: historicalInputs.filter(item =>
+                  shouldInspectHistoricalContinuityMessage(item.text)
+                ),
                 now,
               });
-              const mutation =
-                extraction.decision === 'lifecycle_only'
-                  ? resolveRelationshipOpenLoopFromUserText({
-                      store,
-                      text: item.text,
-                      sourceMessageId,
-                      occurredAt: extraction.sourceOccurredAt,
-                      now,
-                    })
-                  : extraction.decision === 'not_eligible' &&
-                    /(?:挺严重|很严重|比较严重|病危|进了?ICU|要手术|需要手术)/u.test(
-                      item.text
-                    )
-                  ? reconcileRelationshipOpenLoopContextualUpdate({
-                      store,
-                      text: item.text,
-                      sourceMessageId,
-                      occurredAt: extraction.sourceOccurredAt,
-                      now,
-                    })
-                  : extraction.draft
-                  ? upsertRelationshipOpenLoopDraft({
-                      store,
-                      draft: extraction.draft,
-                      sourceMessageId,
-                      sourceOccurredAt: extraction.sourceOccurredAt,
-                      now,
-                    })
-                  : undefined;
-              if (mutation && mutation.action !== 'noop') {
-                store = mutation.store;
+              const legacyMigration = migrateLegacyContinuityStore({
+                store,
+                legacyStore: {
+                  version: 'continuity_information_card_v1',
+                  cards: legacyCards,
+                  updatedAt: now,
+                },
+                now,
+              });
+              store = legacyMigration.store;
+              summary.legacyCardCount += legacyCards.length;
+              summary.migratedLegacyCardCount += legacyMigration.migratedCount;
+
+              for (const item of historicalInputs) {
+                const sourceMessageId = this.stringifyObjectId(item.message.id);
                 if (
-                  mutation.action === 'created_root' ||
-                  mutation.action === 'created_child'
+                  store.tasks.some(task =>
+                    task.sourceMessageIds.includes(sourceMessageId)
+                  )
                 ) {
-                  summary.generatedTaskCount += 1;
+                  continue;
+                }
+                const extraction = extractRelationshipOpenLoop({
+                  message: item.message,
+                  text: item.text,
+                  now,
+                });
+                const mutation =
+                  extraction.decision === 'lifecycle_only'
+                    ? resolveRelationshipOpenLoopFromUserText({
+                        store,
+                        text: item.text,
+                        sourceMessageId,
+                        occurredAt: extraction.sourceOccurredAt,
+                        now,
+                      })
+                    : extraction.decision === 'not_eligible' &&
+                      /(?:挺严重|很严重|比较严重|病危|进了?ICU|要手术|需要手术)/u.test(
+                        item.text
+                      )
+                    ? reconcileRelationshipOpenLoopContextualUpdate({
+                        store,
+                        text: item.text,
+                        sourceMessageId,
+                        occurredAt: extraction.sourceOccurredAt,
+                        now,
+                      })
+                    : extraction.draft
+                    ? upsertRelationshipOpenLoopDraft({
+                        store,
+                        draft: extraction.draft,
+                        sourceMessageId,
+                        sourceOccurredAt: extraction.sourceOccurredAt,
+                        now,
+                      })
+                    : undefined;
+                if (mutation && mutation.action !== 'noop') {
+                  store = mutation.store;
+                  if (
+                    mutation.action === 'created_root' ||
+                    mutation.action === 'created_child'
+                  ) {
+                    summary.generatedTaskCount += 1;
+                  }
                 }
               }
-            }
 
-            store = expireRelationshipOpenLoops(store, now);
-            summary.activeTaskCount += store.tasks.filter(task =>
-              [
-                'reported',
-                'decision_pending',
-                'action_committed',
-                'awaiting_result',
-                'scheduled_checkpoint',
-                'dormant',
-              ].includes(task.state)
-            ).length;
-            summary.expiredTaskCount += store.tasks.filter(
-              task => task.state === 'superseded'
-            ).length;
-            const changed =
-              !loaded.message ||
-              loaded.message.content !==
-                serializeRelationshipOpenLoopStore(store);
-            await this.persistStoreUnlocked(
-              conversation.id,
-              store,
-              loaded.message
+              store = expireRelationshipOpenLoops(store, now);
+              if (!store.tasks.length && !loaded.message) return;
+              const persistence = await this.persistStoreUnlocked(
+                conversation.id,
+                store,
+                loaded.message
+              );
+              const verifiedStore = parseRelationshipOpenLoopStore(
+                persistence.message.content
+              );
+              if (!verifiedStore) {
+                throw new Error('RELATIONSHIP_OPEN_LOOP_READBACK_PARSE_FAILED');
+              }
+              summary.verifiedConversationCount += 1;
+              if (persistence.action !== 'unchanged') {
+                summary.updatedConversationCount += 1;
+              }
+              summary.activeTaskCount += verifiedStore.tasks.filter(task =>
+                [
+                  'reported',
+                  'decision_pending',
+                  'action_committed',
+                  'awaiting_result',
+                  'scheduled_checkpoint',
+                  'dormant',
+                ].includes(task.state)
+              ).length;
+              summary.expiredTaskCount += verifiedStore.tasks.filter(
+                task => task.state === 'superseded'
+              ).length;
+            });
+          } catch (error) {
+            summary.failedConversationCount += 1;
+            this.logger.error(
+              '[relationship-open-loop-backfill] conversation failed, conversationId=%s reason=%s',
+              this.stringifyObjectId(conversation.id),
+              error instanceof Error ? error.message : String(error)
             );
-            if (changed) summary.updatedConversationCount += 1;
-          });
+          }
         }
+      }
+
+      if (summary.failedConversationCount > 0) {
+        throw new Error(
+          `RELATIONSHIP_OPEN_LOOP_BACKFILL_PARTIAL_FAILED:${summary.failedConversationCount}`
+        );
       }
 
       const completedSummary = {
@@ -545,7 +601,28 @@ export class RelationshipOpenLoopService {
         summary.activeTaskCount,
         summary.expiredTaskCount
       );
+      await this.redisService.del(failedKey);
       return summary;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const failedConversationCount = Number(
+        /RELATIONSHIP_OPEN_LOOP_BACKFILL_PARTIAL_FAILED:(\d+)/u.exec(
+          reason
+        )?.[1] || 0
+      );
+      await this.redisService.set(
+        failedKey,
+        JSON.stringify({
+          jobId: BACKFILL_JOB_ID,
+          status: 'partial_failed',
+          reason,
+          failedConversationCount,
+          failedAt: new Date().toISOString(),
+        }),
+        'EX',
+        15 * 60
+      );
+      throw error;
     } finally {
       backfillRunning = false;
       if ((await this.redisService.get(lockKey)) === lockToken) {
@@ -576,7 +653,20 @@ export class RelationshipOpenLoopService {
             : {}),
         };
       }
-      const running = await this.redisService.get(`chat:${BACKFILL_JOB_ID}:lock`);
+      const failed = await this.redisService.get(
+        `chat:${BACKFILL_JOB_ID}:failed`
+      );
+      if (failed) {
+        const parsed = JSON.parse(failed) as Record<string, unknown>;
+        return {
+          jobId: BACKFILL_JOB_ID,
+          status: 'partial_failed',
+          ...this.pickBackfillStatusCounts(parsed),
+        };
+      }
+      const running = await this.redisService.get(
+        `chat:${BACKFILL_JOB_ID}:lock`
+      );
       return {
         jobId: BACKFILL_JOB_ID,
         status: running || backfillRunning ? 'running' : 'pending',
@@ -629,9 +719,27 @@ export class RelationshipOpenLoopService {
     if (!acquired) {
       throw new Error('RELATIONSHIP_OPEN_LOOP_LOCK_BUSY');
     }
+    const renewal = setInterval(() => {
+      void (async () => {
+        try {
+          if ((await this.redisService.get(key)) === token) {
+            await (
+              this.redisService as RedisService & {
+                pexpire(lockKey: string, ttlMs: number): Promise<number>;
+              }
+            ).pexpire(key, DISTRIBUTED_LOCK_TTL_MS);
+          }
+        } catch {
+          // Durable readback remains authoritative. Failed renewal only
+          // shortens exclusivity and must not block the user's reply.
+        }
+      })();
+    }, Math.floor(DISTRIBUTED_LOCK_TTL_MS / 3));
+    renewal.unref();
     try {
       return await task();
     } finally {
+      clearInterval(renewal);
       if ((await this.redisService.get(key)) === token) {
         await this.redisService.del(key);
       }
@@ -718,30 +826,85 @@ export class RelationshipOpenLoopService {
     conversationId: MongoObjectId,
     store: RelationshipOpenLoopStore,
     existingMessage?: MessageEntity
-  ): Promise<MessageEntity | undefined> {
+  ): Promise<RelationshipOpenLoopPersistenceResult> {
     const now = new Date();
     const content = serializeRelationshipOpenLoopStore(store);
     if (existingMessage) {
-      if (existingMessage.content === content) return existingMessage;
-      existingMessage.content = content;
-      existingMessage.updatedAt = now;
-      await this.messageModel.save(existingMessage);
-      return existingMessage;
+      const action =
+        existingMessage.content === content ? 'unchanged' : 'updated';
+      if (action === 'updated') {
+        existingMessage.content = content;
+        existingMessage.updatedAt = now;
+        await this.messageModel.save(existingMessage);
+      }
+      const verified = await this.readBackStateMessage(
+        conversationId,
+        content,
+        existingMessage.id
+      );
+      return { action, message: verified, readbackVerified: true };
     }
-    const conversation = await this.conversationModel.findOne({
-      where: { id: conversationId } as never,
-    });
-    if (!conversation) return undefined;
-    return this.messageModel.save(
+    const conversation = await this.findConversationById(conversationId);
+    if (!conversation) {
+      throw new Error('RELATIONSHIP_OPEN_LOOP_CONVERSATION_NOT_FOUND');
+    }
+    const saved = await this.messageModel.save(
       this.buildArchivedSystemMessage(conversation, content, now)
     );
+    const verified = await this.readBackStateMessage(
+      conversationId,
+      content,
+      saved.id
+    );
+    return { action: 'created', message: verified, readbackVerified: true };
+  }
+
+  private async findConversationById(
+    conversationId: MongoObjectId
+  ): Promise<ConversationEntity | undefined> {
+    return (
+      (await this.conversationModel.findOne({
+        where: { id: conversationId } as never,
+      })) ||
+      (await this.conversationModel.findOne({
+        where: { _id: conversationId } as never,
+      })) ||
+      undefined
+    );
+  }
+
+  private async readBackStateMessage(
+    conversationId: MongoObjectId,
+    expectedContent: string,
+    messageId?: MongoObjectId
+  ): Promise<MessageEntity> {
+    let message: MessageEntity | null = null;
+    if (messageId) {
+      message =
+        (await this.messageModel.findOne({
+          where: { id: messageId, conversationId } as never,
+        })) ||
+        (await this.messageModel.findOne({
+          where: { _id: messageId, conversationId } as never,
+        }));
+    }
+    if (!message) {
+      message = (await this.findStateMessage(conversationId))?.message || null;
+    }
+    if (
+      !message ||
+      message.content !== expectedContent ||
+      !parseRelationshipOpenLoopStore(message.content)
+    ) {
+      throw new Error('RELATIONSHIP_OPEN_LOOP_READBACK_FAILED');
+    }
+    return message;
   }
 
   private async findStateMessage(
     conversationId: MongoObjectId
   ): Promise<
-    | { message: MessageEntity; store: RelationshipOpenLoopStore }
-    | undefined
+    { message: MessageEntity; store: RelationshipOpenLoopStore } | undefined
   > {
     const messages = await this.messageModel.find({
       where: {
@@ -823,8 +986,7 @@ export class RelationshipOpenLoopService {
   }
 
   private async findBackfillMarker(): Promise<
-    | { message: MessageEntity; summary: Record<string, unknown> }
-    | undefined
+    { message: MessageEntity; summary: Record<string, unknown> } | undefined
   > {
     const messages = await this.messageModel.find({
       where: {
@@ -873,6 +1035,8 @@ export class RelationshipOpenLoopService {
     | 'expiredTaskCount'
     | 'migratedLegacyCardCount'
     | 'updatedConversationCount'
+    | 'verifiedConversationCount'
+    | 'failedConversationCount'
   > {
     const result: Pick<
       RelationshipOpenLoopBackfillStatus,
@@ -881,6 +1045,8 @@ export class RelationshipOpenLoopService {
       | 'expiredTaskCount'
       | 'migratedLegacyCardCount'
       | 'updatedConversationCount'
+      | 'verifiedConversationCount'
+      | 'failedConversationCount'
     > = {};
     for (const key of [
       'generatedTaskCount',
@@ -888,10 +1054,17 @@ export class RelationshipOpenLoopService {
       'expiredTaskCount',
       'migratedLegacyCardCount',
       'updatedConversationCount',
+      'verifiedConversationCount',
+      'failedConversationCount',
     ] as const) {
       if (typeof value[key] === 'number') result[key] = value[key] as number;
     }
     return result;
+  }
+
+  private isShanghaiMaintenanceWindow(now: Date): boolean {
+    const shanghaiHour = (now.getUTCHours() + 8) % 24;
+    return shanghaiHour >= 3 && shanghaiHour < 7;
   }
 
   private buildSearchableText(message: MessageEntity): string {
