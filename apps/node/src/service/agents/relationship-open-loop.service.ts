@@ -1,4 +1,4 @@
-import { Init, Inject, Logger, Provide } from '@midwayjs/core';
+import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -129,7 +129,6 @@ const BACKFILL_MARKER_MESSAGE_PREFIX =
   '__TZL_RELATIONSHIP_OPEN_LOOP_BACKFILL_20260821_V2__:';
 const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const BACKFILL_LOCK_MS = 6 * 60 * 60 * 1000;
-const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
@@ -149,36 +148,6 @@ export class RelationshipOpenLoopService {
 
   @Inject()
   redisService: RedisService;
-
-  private productionBackfillTimer?: ReturnType<typeof setInterval>;
-
-  @Init()
-  initializeProductionBackfill(): void {
-    if (process.env.NODE_ENV !== 'production') return;
-    const trigger = async () => {
-      try {
-        await this.runProductionBackfillOnce();
-        const status = await this.getProductionBackfillStatus();
-        if (status.status === 'completed' && this.productionBackfillTimer) {
-          clearInterval(this.productionBackfillTimer);
-          this.productionBackfillTimer = undefined;
-        }
-      } catch (error) {
-        this.logger?.error?.(
-          '[relationship-open-loop-backfill] scheduled run failed, reason=%s',
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-    };
-    // Do not start a full historical scan during application startup. The
-    // service wakes periodically, while runProductionBackfillOnce enforces the
-    // Shanghai low-traffic window and durable idempotency markers.
-    this.productionBackfillTimer = setInterval(
-      () => void trigger(),
-      BACKFILL_RETRY_INTERVAL_MS
-    );
-    this.productionBackfillTimer.unref();
-  }
 
   async captureFromUserMessage(
     options: CaptureRelationshipOpenLoopOptions
