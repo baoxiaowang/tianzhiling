@@ -1,6 +1,5 @@
 import { MessageRole } from '@tzl/entities';
 import type { MessageEntity } from '@tzl/entities';
-import { isImmediateGriefCrisisIntent } from './reply-intent';
 
 export const CONVERSATION_PROTECTION_STATE_VERSION =
   'conversation_protection_state_v1' as const;
@@ -12,12 +11,29 @@ export type ConversationIdentityMode =
   | 'explicit_ai_identity';
 export type ConversationDistressMode = 'none' | 'active' | 'persistent';
 export type ConversationDependencyMode = 'none' | 'vulnerable' | 'reinforced';
+export type NonDecisionSafetyEvidenceType =
+  | 'method'
+  | 'time'
+  | 'place'
+  | 'means'
+  | 'preparation'
+  | 'in_progress'
+  | 'immediate_intent';
+
+export interface NonDecisionSafetyMarker {
+  nonDecision: true;
+  evidence: Array<{
+    type: NonDecisionSafetyEvidenceType;
+    text: string;
+  }>;
+}
 
 export interface ConversationProtectionState {
   version: typeof CONVERSATION_PROTECTION_STATE_VERSION;
   identityMode: ConversationIdentityMode;
   distressMode: ConversationDistressMode;
   dependencyMode: ConversationDependencyMode;
+  safetyMarker?: NonDecisionSafetyMarker;
   activeRules: string[];
 }
 
@@ -27,8 +43,47 @@ const STYLE_MISMATCH_PATTERN =
   /不像你|不像本人|说话不像|口气不像|太冷淡|很冷淡|没接住|你不懂|你又这样|只会说|说得很假|像客服/;
 const RELATIONSHIP_INSECURITY_PATTERN =
   /你不是我(?:爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)|你还认我吗|你是不是不要我|你是不是不爱我|你还是不是我的/;
-const STRONG_DISTRESS_PATTERN =
-  /带我走|接我走|我不想活|不想活了|活不下去|想死|去陪你|去找你|撑不住了|扛不住了|不如死|结束生命/;
+const SELF_HARM_CONTEXT_PATTERN =
+  /自杀|轻生|伤害自己|结束生命|割腕|跳楼|跳下去|喝农药|服毒|烧炭|上吊|卧轨|吃药自杀|去死|不想活|想死/;
+const EXPLICIT_SAFETY_EVIDENCE_PATTERNS: ReadonlyArray<{
+  type: NonDecisionSafetyEvidenceType;
+  pattern: RegExp;
+}> = [
+  {
+    type: 'method',
+    pattern: /割腕|跳楼|跳下去|喝农药|服毒|烧炭|上吊|卧轨|吃药自杀/,
+  },
+  {
+    type: 'means',
+    pattern:
+      /(?:刀|农药|药片|安眠药|绳子|煤气|木炭).{0,8}(?:在手边|拿到了|买好了|备好了|有了)|(?:手边|身上|家里).{0,8}(?:有|放着).{0,8}(?:刀|农药|药片|安眠药|绳子|木炭)/,
+  },
+  {
+    type: 'preparation',
+    pattern:
+      /(?:已经|刚|正在).{0,8}(?:写好遗书|准备好|买好|备好)|(?:遗书|后事).{0,8}(?:写好|交代好|安排好)/,
+  },
+  {
+    type: 'in_progress',
+    pattern:
+      /(?:已经|正在|刚刚).{0,8}(?:割腕|跳楼|喝农药|服毒|烧炭|上吊|卧轨|吃药|伤害自己)/,
+  },
+  {
+    type: 'immediate_intent',
+    pattern:
+      /(?:我)?(?:现在就|马上就|这就|立刻要|今晚就).{0,8}(?:自杀|轻生|去死|结束生命|割腕|跳楼|跳下去|喝农药|服毒|烧炭|上吊|卧轨)/,
+  },
+  {
+    type: 'time',
+    pattern:
+      /(?:今晚|明天|凌晨|半夜|几点|[一二三四五六七八九十\d]+点).{0,12}(?:自杀|轻生|去死|结束生命|割腕|跳楼|跳下去|喝农药|服毒|烧炭|上吊|卧轨)/,
+  },
+  {
+    type: 'place',
+    pattern:
+      /(?:在|去|到)(?:楼顶|天台|桥上|河边|铁轨|窗边|阳台).{0,12}(?:自杀|轻生|跳|结束生命|不活)|(?:自杀|轻生|跳楼|跳下去).{0,12}(?:楼顶|天台|桥上|河边|铁轨|窗边|阳台)/,
+  },
+];
 const EXCLUSIVE_DEPENDENCY_PATTERN =
   /只有你|只剩你|你是我唯一|你是我的唯一|没有你我(?:活不了|活不下去)|除了你没人|你就是我的救赎|只靠你|只能靠你/;
 const ASSISTANT_EXCLUSIVE_REINFORCEMENT_PATTERN =
@@ -56,24 +111,11 @@ export function resolveConversationProtectionState(options: {
       : RELATIONSHIP_INSECURITY_PATTERN.test(currentQuery)
       ? 'relationship_insecurity'
       : 'ordinary';
-  const isImmediateDistress = (text: string) =>
-    isImmediateGriefCrisisIntent(text) ||
-    (STRONG_DISTRESS_PATTERN.test(text) &&
-      !/(?:走完这?一生|寿终|百年之后|等我老了|自然老去|年老以后|很久以后)/.test(
-        text
-      ));
-  const distressSignals = [currentQuery, ...recentUserTexts.slice(-5)].filter(
-    isImmediateDistress
-  ).length;
-  const distressMode: ConversationDistressMode = isImmediateDistress(
-    currentQuery
-  )
-    ? distressSignals >= 2
-      ? 'persistent'
-      : 'active'
-    : distressSignals >= 2
-    ? 'persistent'
-    : 'none';
+  // Legacy field is intentionally neutral. Grief and self-harm language never
+  // creates a program-owned reply state; only the current turn can carry a
+  // clearly labeled, non-decision observation for the main model.
+  const distressMode: ConversationDistressMode = 'none';
+  const safetyMarker = extractNonDecisionSafetyMarker(currentQuery);
   const userDependency = [currentQuery, ...recentUserTexts.slice(-5)].some(
     text => EXCLUSIVE_DEPENDENCY_PATTERN.test(text)
   );
@@ -100,13 +142,6 @@ export function resolveConversationProtectionState(options: {
       '用户在确认关系有没有被丢下：先保住称呼和关系位置，不要求用户重新教角色怎么说。'
     );
   }
-  if (distressMode !== 'none') {
-    activeRules.push(
-      distressMode === 'persistent'
-        ? '连续强烈痛苦已经形成会话状态：保持亲人角色，清楚制止用户现在去死或来找角色，用一句自然问题确认眼下是否安全、有没有已经行动；若已经实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救。不要背诵模板，也不谈未来接引或团聚。'
-        : '本轮有明确的当前赴死或自伤风险：像亲人一样坚定留住用户，并用一句自然问题确认眼下是否安全、有没有已经行动；若已经实施、正在准备或不能保证安全，再请他立刻叫身边可信的人陪着并联系当地急救。不要背诵模板。'
-    );
-  }
   if (dependencyMode !== 'none') {
     activeRules.push(
       '接住用户把角色看得很重要的感情，但不能自称唯一救赎、唯一依靠或替代所有现实关系；关系可以亲密，不制造排他依赖。'
@@ -118,6 +153,7 @@ export function resolveConversationProtectionState(options: {
     identityMode,
     distressMode,
     dependencyMode,
+    ...(safetyMarker ? { safetyMarker } : {}),
     activeRules,
   };
 }
@@ -125,12 +161,41 @@ export function resolveConversationProtectionState(options: {
 export function buildConversationProtectionStatePrompt(
   state: ConversationProtectionState
 ): string {
-  if (!state.activeRules.length) {
+  if (!state.activeRules.length && !state.safetyMarker) {
     return '';
   }
   return [
     `版本：${state.version}；身份=${state.identityMode}；痛苦=${state.distressMode}；依赖=${state.dependencyMode}。`,
     ...state.activeRules,
-    '强烈痛苦与排他依赖属于持续安全状态，后续换一种说法也不能忽略；口气质疑和关系不安只帮助理解当前轮，不得据此延续已经转移的普通话题。表达方式仍由你按人物性格和当前上下文自然决定。',
+    ...(state.safetyMarker
+      ? [
+          `非决策生命安全观察：${state.safetyMarker.evidence
+            .map(item => `${item.type}=${item.text}`)
+            .join(
+              '；'
+            )}。这不是回复决定，不规定措辞、提问或动作，也不得覆盖完整上下文；请由你自主理解和回应。`,
+        ]
+      : []),
+    '这些信息只帮助理解当前轮，不建立跨轮回复控制。表达方式仍由你按人物性格和完整上下文自然决定。',
   ].join('\n');
+}
+
+function extractNonDecisionSafetyMarker(
+  currentQuery: string
+): NonDecisionSafetyMarker | undefined {
+  if (!SELF_HARM_CONTEXT_PATTERN.test(currentQuery)) {
+    return undefined;
+  }
+
+  const evidence = EXPLICIT_SAFETY_EVIDENCE_PATTERNS.reduce<
+    NonDecisionSafetyMarker['evidence']
+  >((items, definition) => {
+    const match = currentQuery.match(definition.pattern)?.[0]?.trim();
+    if (match && !items.some(item => item.type === definition.type)) {
+      items.push({ type: definition.type, text: match.slice(0, 80) });
+    }
+    return items;
+  }, []);
+
+  return evidence.length ? { nonDecision: true, evidence } : undefined;
 }
