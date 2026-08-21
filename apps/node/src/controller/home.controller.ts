@@ -7,10 +7,7 @@ import {
   RelationshipOpenLoopService,
 } from '../service/agents/relationship-open-loop.service';
 import { Context } from '@midwayjs/koa';
-import {
-  AgentMemoryInheritanceService,
-  AgentMemoryInheritanceSummary,
-} from '../service/agents/agent-memory-inheritance.service';
+import { AgentMemoryInheritanceService } from '../service/agents/agent-memory-inheritance.service';
 
 @Controller('/system')
 export class SystemController {
@@ -41,9 +38,13 @@ export class SystemController {
         };
       }
     }
-    let memoryInheritanceBackfill: AgentMemoryInheritanceSummary = {
+    let memoryInheritanceBackfill: {
+      jobId: string;
+      status: 'pending' | 'running' | 'completed' | 'unknown';
+      [key: string]: unknown;
+    } = {
       jobId: 'agent-memory-inheritance-backfill-20260820-v1',
-      status: 'pending',
+      status: 'pending' as 'pending' | 'running' | 'completed' | 'unknown',
     };
     if (process.env.NODE_ENV === 'production') {
       try {
@@ -51,7 +52,7 @@ export class SystemController {
           AgentMemoryInheritanceService
         );
         void service.runProductionBackfillOnce().catch(() => undefined);
-        memoryInheritanceBackfill = await service.getStatus();
+        memoryInheritanceBackfill = { ...(await service.getStatus()) };
       } catch {
         memoryInheritanceBackfill.status = 'unknown';
       }
