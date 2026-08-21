@@ -50,11 +50,23 @@ export function getVoiceTimbreDialectLabel(
 }
 
 export function buildQwenAudioSpeechInstruction(input: {
+  instruction?: string;
   dialect?: string;
   speechSpeed?: number;
 }): string | undefined {
   const parts: string[] = [];
-  const dialectLabel = getVoiceTimbreDialectLabel(input.dialect);
+  const customInstruction = input.instruction?.trim();
+  const normalizedCustomInstruction = customInstruction?.replace(
+    /[。；;]+$/g,
+    ""
+  );
+  const dialectLabel = normalizedCustomInstruction
+    ? undefined
+    : getVoiceTimbreDialectLabel(input.dialect);
+
+  if (normalizedCustomInstruction) {
+    parts.push(normalizedCustomInstruction);
+  }
 
   if (dialectLabel) {
     parts.push(`使用自然、地道的${dialectLabel}表达，保持原有音色`);
@@ -72,6 +84,33 @@ export function buildQwenAudioSpeechInstruction(input: {
   }
 
   return parts.length ? `${parts.join("；")}。` : undefined;
+}
+
+export function buildSpeechOutputFfmpegFilter(input: {
+  speechSpeed: number;
+  speechVolume: number;
+  speechPitch?: number;
+  sampleRate?: number;
+}): string {
+  const filters: string[] = [];
+  const pitch = Number(input.speechPitch) || 0;
+
+  if (Math.abs(pitch) >= 0.01) {
+    const sampleRate = Number(input.sampleRate) || 24000;
+    const pitchRatio = 2 ** (pitch / 12);
+    filters.push(
+      `asetrate=${sampleRate}*${pitchRatio.toFixed(6)}`,
+      `aresample=${sampleRate}`,
+      `atempo=${(1 / pitchRatio).toFixed(6)}`
+    );
+  }
+
+  filters.push(
+    `atempo=${input.speechSpeed.toFixed(2)}`,
+    `volume=${input.speechVolume.toFixed(2)}`
+  );
+
+  return filters.join(",");
 }
 
 export type VoiceTimbreRetentionStatusDTO =
@@ -200,6 +239,7 @@ export interface AdminVoiceTimbreRecordDTO {
   audioUrl: string;
   cloneLanguage: string;
   speechDialect: VoiceTimbreDialectDTO;
+  speechInstruction: string;
   previewText: string;
   previewModel: string;
   previewAudioUrl: string;
@@ -247,6 +287,7 @@ export interface CreateAdminVoiceTimbreDTO {
   audioUrl?: string;
   cloneLanguage?: string;
   speechDialect?: VoiceTimbreDialectDTO;
+  speechInstruction?: string;
   providerVoiceId?: string;
   previewText?: string;
   previewModel?: string;
@@ -261,6 +302,7 @@ export interface UpdateAdminVoiceTimbreDTO {
   status?: Extract<VoiceTimbreStatusDTO, "active" | "disabled">;
   previewText?: string;
   speechDialect?: VoiceTimbreDialectDTO;
+  speechInstruction?: string;
   speechSpeed?: number;
   speechVolume?: number;
   speechPitch?: number;

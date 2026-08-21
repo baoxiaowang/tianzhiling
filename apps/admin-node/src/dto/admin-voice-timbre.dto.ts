@@ -60,6 +60,9 @@ export class CreateAdminVoiceTimbreDTO {
   @Rule(speechDialectRule.optional())
   speechDialect?: string;
 
+  @Rule(RuleType.string().allow('').trim().max(50).optional())
+  speechInstruction?: string;
+
   @Rule(RuleType.string().allow('').max(256).optional())
   providerVoiceId?: string;
 
@@ -94,6 +97,9 @@ export class UpdateAdminVoiceTimbreDTO {
 
   @Rule(speechDialectRule.optional())
   speechDialect?: string;
+
+  @Rule(RuleType.string().allow('').trim().max(50).optional())
+  speechInstruction?: string;
 
   @Rule(speechSpeedRule.optional())
   speechSpeed?: number;

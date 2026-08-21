@@ -332,15 +332,25 @@ export class VoiceTimbreLibraryService {
         voiceId: timbre.providerVoiceId,
         model: timbre.previewModel,
         language: timbre.cloneLanguage,
+        ...(timbre.speechInstruction?.trim()
+          ? { instruction: timbre.speechInstruction.trim() }
+          : {}),
         dialect: timbre.speechDialect,
         speed: timbre.speechSpeed,
       });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
       const volume = this.normalizeSpeechVolume(timbre.speechVolume);
+      const pitch = this.numberInRange(
+        timbre.speechPitch,
+        0,
+        -12,
+        12,
+        'INVALID_VOICE_TIMBRE_SPEECH_PITCH'
+      );
       const outputSpeed = synthesized.nativeSpeechSpeedApplied ? 1 : speed;
       const adjusted =
-        outputSpeed !== 1 || volume !== 1
+        outputSpeed !== 1 || volume !== 1 || pitch !== 0
           ? await this.voiceFfmpegService.adjustSpeechOutput({
               buffer: synthesized.audioBuffer,
               fileName: `speech.${this.extensionForMimeType(
@@ -348,6 +358,7 @@ export class VoiceTimbreLibraryService {
               )}`,
               speechSpeed: outputSpeed,
               speechVolume: volume,
+              speechPitch: pitch,
             })
           : undefined;
       const audioBuffer = adjusted?.buffer || synthesized.audioBuffer;
@@ -608,6 +619,9 @@ export class VoiceTimbreLibraryService {
           voiceId: timbre.providerVoiceId,
           model: timbre.previewModel,
           language: timbre.cloneLanguage,
+          ...(timbre.speechInstruction?.trim()
+            ? { instruction: timbre.speechInstruction.trim() }
+            : {}),
           dialect: timbre.speechDialect,
         });
         await this.markUsed(timbre);

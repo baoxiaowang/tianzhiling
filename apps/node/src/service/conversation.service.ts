@@ -7803,6 +7803,9 @@ export class ConversationService {
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
         dialect: input.voiceTimbre.speechDialect,
         speed: input.voiceTimbre.speechSpeed,
       });
@@ -7818,10 +7821,16 @@ export class ConversationService {
         0.25,
         2
       );
+      const speechPitch = this.voiceSpeechSetting(
+        input.voiceTimbre.speechPitch,
+        0,
+        -12,
+        12
+      );
       const outputSpeechSpeed = synthesized.nativeSpeechSpeedApplied
         ? 1
         : speechSpeed;
-      if (outputSpeechSpeed === 1 && speechVolume === 1) {
+      if (outputSpeechSpeed === 1 && speechVolume === 1 && speechPitch === 0) {
         return synthesized;
       }
       const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
@@ -7831,6 +7840,7 @@ export class ConversationService {
           : 'speech.wav',
         speechSpeed: outputSpeechSpeed,
         speechVolume,
+        speechPitch,
       });
       return {
         audioUrl: '',

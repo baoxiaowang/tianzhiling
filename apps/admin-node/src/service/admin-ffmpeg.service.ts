@@ -1,5 +1,5 @@
 import { Config, Provide } from '@midwayjs/core';
-import { AppError } from '@tzl/shared';
+import { AppError, buildSpeechOutputFfmpegFilter } from '@tzl/shared';
 import { spawn } from 'child_process';
 
 interface FfmpegConfig {
@@ -94,6 +94,93 @@ export class AdminFfmpegService {
     });
   }
 
+  async adjustSpeechOutput(input: {
+    buffer: Buffer;
+    speechVolume?: number;
+    speechPitch?: number;
+  }): Promise<ExtractedAudioFile> {
+    if (!Buffer.isBuffer(input.buffer) || input.buffer.length === 0) {
+      throw new AppError('FFMPEG_INVALID_INPUT', 'audio is required', 400);
+    }
+
+    const speechVolume = this.numberInRange(input.speechVolume, 1, 0.25, 2);
+    const speechPitch = this.numberInRange(input.speechPitch, 0, -12, 12);
+    const chunks: Buffer[] = [];
+    const errorChunks: Buffer[] = [];
+    const ffmpeg = spawn(this.binaryPath, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      'pipe:0',
+      '-vn',
+      '-af',
+      buildSpeechOutputFfmpegFilter({
+        speechSpeed: 1,
+        speechVolume,
+        speechPitch,
+      }),
+      '-ac',
+      '1',
+      '-ar',
+      '24000',
+      '-codec:a',
+      'libmp3lame',
+      '-b:a',
+      '64k',
+      '-f',
+      'mp3',
+      'pipe:1',
+    ]);
+    const timeout = setTimeout(() => {
+      ffmpeg.kill('SIGKILL');
+    }, this.timeoutMs);
+
+    return new Promise<ExtractedAudioFile>((resolve, reject) => {
+      ffmpeg.stdout.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      ffmpeg.stderr.on('data', chunk => errorChunks.push(Buffer.from(chunk)));
+      ffmpeg.on('error', error => {
+        clearTimeout(timeout);
+        reject(new AppError('FFMPEG_EXEC_FAILED', error.message, 500));
+      });
+      ffmpeg.on('close', code => {
+        clearTimeout(timeout);
+
+        if (code !== 0) {
+          const message =
+            Buffer.concat(errorChunks).toString('utf8').trim() ||
+            'ffmpeg adjust speech output failed';
+          reject(new AppError('FFMPEG_ADJUST_SPEECH_FAILED', message, 500));
+          return;
+        }
+
+        const buffer = Buffer.concat(chunks);
+
+        if (buffer.length === 0) {
+          reject(
+            new AppError(
+              'FFMPEG_ADJUST_SPEECH_EMPTY',
+              'adjusted speech output is empty',
+              500
+            )
+          );
+          return;
+        }
+
+        resolve({
+          buffer,
+          fileName: 'speech.mp3',
+          contentType: 'audio/mpeg',
+        });
+      });
+
+      ffmpeg.stdin.on('error', error => {
+        reject(new AppError('FFMPEG_INPUT_FAILED', error.message, 500));
+      });
+      ffmpeg.stdin.end(input.buffer);
+    });
+  }
+
   private buildOutputFileName(fileName: string): string {
     const base =
       fileName
@@ -104,6 +191,18 @@ export class AdminFfmpegService {
         .replace(/[^a-zA-Z0-9._-]/g, '_') || 'voice';
 
     return `${base || 'voice'}.wav`;
+  }
+
+  private numberInRange(
+    value: unknown,
+    fallback: number,
+    min: number,
+    max: number
+  ): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed)
+      ? Math.min(max, Math.max(min, parsed))
+      : fallback;
   }
 
   private get binaryPath(): string {

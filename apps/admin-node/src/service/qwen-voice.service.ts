@@ -55,6 +55,7 @@ export interface QwenPreviewSpeechInput {
   voiceId: string;
   model?: string;
   language?: string;
+  instruction?: string;
   dialect?: string;
   speed?: number;
 }
@@ -196,6 +197,7 @@ export class QwenVoiceService {
     const languageType = this.normalizeSpeechLanguageType(input.language);
     const languageHint = this.normalizeCloneLanguage(input.language) || 'zh';
     const instruction = buildQwenAudioSpeechInstruction({
+      instruction: input.instruction,
       dialect: input.dialect,
       speechSpeed: input.speed,
     });

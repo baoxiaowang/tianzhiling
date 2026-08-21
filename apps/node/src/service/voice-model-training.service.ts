@@ -125,6 +125,9 @@ export class VoiceModelTrainingService {
         voiceId: enrollment.providerVoiceId,
         model: enrollment.targetModel,
         language: 'Chinese',
+        ...(timbre.speechInstruction?.trim()
+          ? { instruction: timbre.speechInstruction.trim() }
+          : {}),
         ...(timbre.speechDialect && timbre.speechDialect !== 'auto'
           ? { dialect: timbre.speechDialect }
           : {}),

@@ -37,6 +37,7 @@ export interface QwenVoiceSpeechInput {
   voiceId: string;
   model?: string;
   language?: string;
+  instruction?: string;
   dialect?: string;
   speed?: number;
 }
@@ -89,6 +90,7 @@ export class QwenVoiceSpeechService {
     const languageType = this.normalizeLanguageType(input.language);
     const languageHint = this.normalizeLanguageHint(input.language);
     const instruction = buildQwenAudioSpeechInstruction({
+      instruction: input.instruction,
       dialect: input.dialect,
       speechSpeed: input.speed,
     });
@@ -113,11 +115,15 @@ export class QwenVoiceSpeechService {
     );
 
     this.logger.info(
-      '[qwen-voice-speech] synthesize, model=%s, voiceId=%s, language=%s, dialect=%s, textLength=%s',
+      '[qwen-voice-speech] synthesize, model=%s, voiceId=%s, language=%s, instructionSource=%s, textLength=%s',
       model,
       voiceId,
       qwenAudio ? languageHint : languageType || '',
-      input.dialect || 'auto',
+      input.instruction?.trim()
+        ? 'custom'
+        : input.dialect && input.dialect !== 'auto'
+        ? 'legacy_dialect'
+        : 'none',
       text.length
     );
 
