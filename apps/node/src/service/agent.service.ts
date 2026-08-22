@@ -33,6 +33,7 @@ import {
   AgentShareMemberEntity,
   AgentShareMemberStatus,
   AgentSex,
+  ChatTraceStage,
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -49,6 +50,7 @@ import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.servi
 import { AgentMemoryInheritanceService } from './agents/agent-memory-inheritance.service';
 import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
+import { OpenAIService } from './agents/openai';
 import {
   buildInitialRecognitionJourney,
   serializeRecognitionJourney,
@@ -60,6 +62,12 @@ export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
 const AGENT_SHARE_INVITE_TOKEN_BYTES = 24;
 const AGENT_SHARE_INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_SHARE_MINI_PROGRAM_PAGE = 'pages/agent-share/index';
+const INITIAL_RECOGNITION_OPENING_TIMEOUT_MS = 12000;
+const INITIAL_RECOGNITION_OPENING_MAX_TOKENS = 160;
+const UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN =
+  /(?:小时候|那时候你|以前你|记得你.{0,12}(?:总|常|会)|踢被子|趴在.{0,8}腿|老槐树|给你讲|给你做|带你去|藏在|放在.{0,12}(?:柜|箱|包|床))/u;
+const UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN =
+  /(?:终于听见你喊|听见你叫我|看着你|看到你|就在你身边|一直守着你)/u;
 
 type AgentAccessRole = 'owner' | 'shared';
 
@@ -108,6 +116,9 @@ export class AgentService {
 
   @Inject()
   agentMemoryInheritanceService: AgentMemoryInheritanceService;
+
+  @Inject()
+  openAIService: OpenAIService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -862,19 +873,30 @@ export class AgentService {
     conversation.updatedAt = now;
 
     const savedConversation = await this.conversationModel.save(conversation);
-    await this.createInitialRecognitionJourneyState(
-      savedConversation,
-      agent,
-      userId,
-      now
-    );
-    await this.createInitialAgentMessage(
+    const openingMessage = await this.createInitialAgentMessage(
       savedConversation,
       agent,
       userId,
       now,
       options
     );
+    try {
+      await this.createInitialRecognitionJourneyState(
+        savedConversation,
+        agent,
+        userId,
+        now,
+        this.stringifyObjectId(openingMessage.id)
+      );
+    } catch (error) {
+      // The visible opening is already durable. The first user turn can
+      // reconstruct this state from that message without stranding creation.
+      this.logger?.error?.(
+        '[agent] initial recognition state deferred, conversationId=%s reason=%s',
+        this.stringifyObjectId(savedConversation.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
 
     return savedConversation;
   }
@@ -883,7 +905,8 @@ export class AgentService {
     conversation: ConversationEntity,
     agent: AgentEntity,
     userId: MongoObjectId,
-    now: Date
+    now: Date,
+    openingAssistantMessageId: string
   ): Promise<void> {
     const message = new MessageEntity();
     message.conversationId = conversation.id;
@@ -895,6 +918,7 @@ export class AgentService {
       buildInitialRecognitionJourney({
         hasKnownDepartureDate: Boolean(agent.deathDate),
         now,
+        openingAssistantMessageId,
       })
     );
     message.status = MessageStatus.sent;
@@ -905,7 +929,28 @@ export class AgentService {
     message.createdAt = now;
     message.updatedAt = now;
 
-    await this.messageModel.save(message);
+    const saved = await this.messageModel.save(message);
+    const byId = await this.messageModel.findOne({
+      where: {
+        id: saved.id,
+        conversationId: conversation.id,
+        role: MessageRole.system,
+        isArchived: true,
+      } as never,
+    });
+    const verified =
+      byId ||
+      (await this.messageModel.findOne({
+        where: {
+          _id: saved.id,
+          conversationId: conversation.id,
+          role: MessageRole.system,
+          isArchived: true,
+        } as never,
+      }));
+    if (!verified || verified.content !== message.content) {
+      throw new Error('RECOGNITION_JOURNEY_INITIAL_READBACK_FAILED');
+    }
   }
 
   private async createInitialAgentMessage(
@@ -916,7 +961,7 @@ export class AgentService {
     options: {
       usePersonalCallName?: boolean;
     } = {}
-  ): Promise<void> {
+  ): Promise<MessageEntity> {
     const message = new MessageEntity();
     const callMe =
       options.usePersonalCallName === false
@@ -928,14 +973,109 @@ export class AgentService {
     message.agentId = agent.id;
     message.role = MessageRole.assistant;
     message.type = MessageType.text;
-    message.content = callMe
-      ? `${callMe}，好想你啊，过得好吗？`
-      : '好想你啊，过得好吗？';
+    message.content = await this.createInitialRecognitionOpeningContent({
+      agent,
+      callMe,
+    });
     message.status = MessageStatus.sent;
     message.createdAt = now;
     message.updatedAt = now;
 
-    await this.messageModel.save(message);
+    return this.messageModel.save(message);
+  }
+
+  private async createInitialRecognitionOpeningContent(options: {
+    agent: AgentEntity;
+    callMe: string;
+  }): Promise<string> {
+    const fallback = this.buildInitialRecognitionOpeningFallback(
+      options.agent,
+      options.callMe
+    );
+    if (!this.openAIService) return fallback;
+
+    try {
+      const response = await this.openAIService.createChatCompletion(
+        {
+          temperature: 0.35,
+          topP: 0.85,
+          reasoningSplit: false,
+          thinking: { type: 'disabled' },
+          max_tokens: INITIAL_RECOGNITION_OPENING_MAX_TOKENS,
+          response_format: { type: 'json_object' },
+          trace: {
+            stage: ChatTraceStage.generate,
+            operation: 'generate.initial_recognition_opening',
+          },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                '你为一个已故亲人聊天产品写会话创建后的第一条微信消息。',
+                '这条消息要有跨越生死、阔别后终于重新联系上的场景感，同时自然、克制，像亲人本人说话。',
+                '用户还没有发言，所以不能说“终于听见你喊我”、不能假装看到用户，也不能引用用户尚未说过的话。',
+                '时间保持中性，不确定离开了多久。只使用给定关系、称呼、性格和语言习惯；不编造任何共同往事、现实物品、地点、家人现状或具体经历。',
+                '不要身份验证，不要提问，不要解释产品或AI。输出一段20—90字中文正文。',
+                '严格输出JSON：{"content":"正文"}',
+              ].join('\n'),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                roleName: options.agent.name?.trim() || '',
+                realName: options.agent.realName?.trim() || '',
+                userCallsRole:
+                  options.agent.iCallAgent?.trim() ||
+                  options.agent.name?.trim() ||
+                  '',
+                roleCallsUser: options.callMe,
+                personalityTraits:
+                  options.agent.personalityTraits?.trim().slice(0, 240) || '',
+                languageHabits:
+                  options.agent.languageHabits?.trim().slice(0, 240) || '',
+              }),
+            },
+          ],
+        },
+        { timeout: INITIAL_RECOGNITION_OPENING_TIMEOUT_MS }
+      );
+      const raw = response.choices?.[0]?.message?.content;
+      if (typeof raw !== 'string') return fallback;
+      const parsed = JSON.parse(raw.trim()) as { content?: unknown };
+      const content =
+        typeof parsed.content === 'string'
+          ? parsed.content
+              .replace(/^(?:助手|亲人|奶奶|爷爷|爸爸|妈妈)\s*[：:]/u, '')
+              .replace(/[\r\n]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          : '';
+      if (
+        content.length < 8 ||
+        content.length > 120 ||
+        UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN.test(content) ||
+        UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content)
+      ) {
+        return fallback;
+      }
+      return content;
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent] initial recognition opening fallback used: %s',
+        error instanceof Error ? error.message : String(error)
+      );
+      return fallback;
+    }
+  }
+
+  private buildInitialRecognitionOpeningFallback(
+    agent: AgentEntity,
+    callMe: string
+  ): string {
+    const role = agent.iCallAgent?.trim() || agent.name?.trim() || '我';
+    return callMe
+      ? `${callMe}，${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。`
+      : `${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。`;
   }
 
   private async buildAgentProfile(

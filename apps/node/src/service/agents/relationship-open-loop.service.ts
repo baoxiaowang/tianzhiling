@@ -1,4 +1,4 @@
-import { Inject, Logger, Provide } from '@midwayjs/core';
+import { Destroy, Init, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -119,6 +119,8 @@ export interface RelationshipOpenLoopBackfillStatus {
   verifiedConversationCount?: number;
   failedConversationCount?: number;
   completedAt?: string;
+  schedulerActive?: boolean;
+  nextEligibleAt?: string;
 }
 
 const RETURN_GAP_MS = 12 * 60 * 60 * 1000;
@@ -129,11 +131,14 @@ const BACKFILL_MARKER_MESSAGE_PREFIX =
   '__TZL_RELATIONSHIP_OPEN_LOOP_BACKFILL_20260821_V2__:';
 const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const BACKFILL_LOCK_MS = 6 * 60 * 60 * 1000;
+const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
 @Provide()
 export class RelationshipOpenLoopService {
+  private backfillTimer?: ReturnType<typeof setInterval>;
+
   @Logger()
   logger: ILogger;
 
@@ -148,6 +153,29 @@ export class RelationshipOpenLoopService {
 
   @Inject()
   redisService: RedisService;
+
+  @Init()
+  async initializeProductionBackfill(): Promise<void> {
+    if (process.env.NODE_ENV !== 'production') return;
+    const attempt = () => {
+      void this.runProductionBackfillOnce().catch(error => {
+        this.logger?.error?.(
+          '[relationship-open-loop-backfill] scheduled run failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
+      });
+    };
+    setImmediate(attempt);
+    this.backfillTimer = setInterval(attempt, BACKFILL_RETRY_INTERVAL_MS);
+    this.backfillTimer.unref?.();
+  }
+
+  @Destroy()
+  async stopProductionBackfillScheduler(): Promise<void> {
+    if (!this.backfillTimer) return;
+    clearInterval(this.backfillTimer);
+    this.backfillTimer = undefined;
+  }
 
   async captureFromUserMessage(
     options: CaptureRelationshipOpenLoopOptions
@@ -601,11 +629,12 @@ export class RelationshipOpenLoopService {
   }
 
   async getProductionBackfillStatus(): Promise<RelationshipOpenLoopBackfillStatus> {
+    const schedule = this.buildBackfillScheduleStatus();
     if (process.env.NODE_ENV !== 'production') {
-      return { jobId: BACKFILL_JOB_ID, status: 'pending' };
+      return { jobId: BACKFILL_JOB_ID, status: 'pending', ...schedule };
     }
     if (!this.redisService) {
-      return { jobId: BACKFILL_JOB_ID, status: 'unknown' };
+      return { jobId: BACKFILL_JOB_ID, status: 'unknown', ...schedule };
     }
     try {
       const completed = await this.redisService.get(
@@ -620,6 +649,7 @@ export class RelationshipOpenLoopService {
           ...(typeof parsed.completedAt === 'string'
             ? { completedAt: parsed.completedAt }
             : {}),
+          ...schedule,
         };
       }
       const failed = await this.redisService.get(
@@ -631,6 +661,7 @@ export class RelationshipOpenLoopService {
           jobId: BACKFILL_JOB_ID,
           status: 'partial_failed',
           ...this.pickBackfillStatusCounts(parsed),
+          ...schedule,
         };
       }
       const running = await this.redisService.get(
@@ -639,9 +670,10 @@ export class RelationshipOpenLoopService {
       return {
         jobId: BACKFILL_JOB_ID,
         status: running || backfillRunning ? 'running' : 'pending',
+        ...schedule,
       };
     } catch {
-      return { jobId: BACKFILL_JOB_ID, status: 'unknown' };
+      return { jobId: BACKFILL_JOB_ID, status: 'unknown', ...schedule };
     }
   }
 
@@ -1034,6 +1066,32 @@ export class RelationshipOpenLoopService {
   private isShanghaiMaintenanceWindow(now: Date): boolean {
     const shanghaiHour = (now.getUTCHours() + 8) % 24;
     return shanghaiHour >= 3 && shanghaiHour < 7;
+  }
+
+  private buildBackfillScheduleStatus(
+    now = new Date()
+  ): Pick<
+    RelationshipOpenLoopBackfillStatus,
+    'schedulerActive' | 'nextEligibleAt'
+  > {
+    return {
+      schedulerActive: Boolean(this.backfillTimer),
+      nextEligibleAt:
+        this.resolveNextShanghaiMaintenanceWindow(now).toISOString(),
+    };
+  }
+
+  private resolveNextShanghaiMaintenanceWindow(now: Date): Date {
+    if (this.isShanghaiMaintenanceWindow(now)) return now;
+    const shanghaiNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const nextDayOffset = shanghaiNow.getUTCHours() >= 7 ? 1 : 0;
+    const shanghaiWindowStartAsUtc = Date.UTC(
+      shanghaiNow.getUTCFullYear(),
+      shanghaiNow.getUTCMonth(),
+      shanghaiNow.getUTCDate() + nextDayOffset,
+      3
+    );
+    return new Date(shanghaiWindowStartAsUtc - 8 * 60 * 60 * 1000);
   }
 
   private buildSearchableText(message: MessageEntity): string {

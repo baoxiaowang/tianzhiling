@@ -37,6 +37,7 @@ export class RecognitionJourneyObserverService {
   async observe(options: {
     journey: RecognitionJourney;
     plan: RecognitionJourneyTurnPlan;
+    openingAssistantText?: string;
     currentUserText: string;
     assistantText: string;
   }): Promise<RecognitionJourneyObserverResult> {
@@ -63,10 +64,12 @@ export class RecognitionJourneyObserverService {
               content: [
                 '# 相认旅程状态观察',
                 '你只观察已经发生的对话，不评价好坏，不设计下轮策略，不改写回复。',
+                '只观察系统给出的当前检查点。没有检查点时不应调用你。',
                 '“哎，闺女”“我也想你”“我在听”“是爸爸”只是身份或浅层情绪回应，不算打开相认。',
                 '只有助手表达了跨越生死后重新联系、时间错位或未说完的爱与舍不得，并且主动带来了超过同义复述的角色情感，才是 emotionally_opened。',
-                '当早先已打开重逢，当前用户明确接住这份重逢情绪，或双方已自然进入持续亲人关系，才是 emotionally_received。',
-                '用户明确提供家人近况或离世时间/相隔时长是 provided；助手只给出自然说出这类信息的入口是 proposed。不要用关键词替代语义判断。',
+                'emotionally_received 必须同时看到：实际相认开场、开场后的用户回应、随后亲人继续承接；只凭普通安慰或“奶奶记着你”不能成立。',
+                '助手自行编造的小时候、老宅、饭菜、睡觉习惯等共同往事既不能作为相认证据，也不能证明用户接住了相认。',
+                '任务只在 task_proposal 检查点判断助手是否真正提出入口，只在 task_response 检查点判断用户是否回答了那一个已提出任务。老宅拆除、房产争议等无关信息不等于“家人近况”。',
                 '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","evidence":"最多80字的观察依据"}',
               ].join('\n'),
             },
@@ -83,9 +86,14 @@ export class RecognitionJourneyObserverService {
                   )?.status,
                 },
                 suggestedThisTurn: {
+                  checkpoint: options.plan.observerCheckpoint,
                   opening: options.plan.openingSuggested,
                   task: options.plan.suggestedTaskId,
+                  observedTask: options.plan.observedTaskId,
                 },
+                openingAssistantMessage: (
+                  options.openingAssistantText || ''
+                ).slice(0, 800),
                 currentUserMessage: options.currentUserText.slice(0, 500),
                 finalAssistantReply: options.assistantText.slice(0, 800),
               }),
@@ -122,15 +130,9 @@ export class RecognitionJourneyObserverService {
     journey: RecognitionJourney;
     plan: RecognitionJourneyTurnPlan;
   }): boolean {
-    if (options.plan.userTurnNumber && options.plan.userTurnNumber > 20) {
-      return false;
-    }
-    return (
-      options.journey.opening.status === 'pending' ||
-      options.journey.opening.status === 'emotionally_opened' ||
-      options.journey.tasks.some(task =>
-        ['pending', 'proposed'].includes(task.status)
-      )
+    return Boolean(
+      options.plan.observerCheckpoint &&
+        (!options.plan.userTurnNumber || options.plan.userTurnNumber <= 20)
     );
   }
 }
