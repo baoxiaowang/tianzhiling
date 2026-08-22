@@ -580,6 +580,7 @@ interface ReplyRoutingAudit {
   activeContributionSource?: string;
   recognitionJourneyOpeningSuggested?: boolean;
   recognitionJourneyTaskSuggested?: RecognitionTaskId;
+  recognitionJourneyTaskCandidates?: RecognitionTaskId[];
   recognitionJourneyCompletedTaskIds?: RecognitionTaskId[];
   recognitionJourneyPlan?: RecognitionJourneyTurnPlan;
   recognitionJourneyStateMessageId?: string;
@@ -4730,6 +4731,7 @@ export class ConversationService {
         ...(result.routing || {}),
         recognitionJourneyOpeningSuggested: plan.openingSuggested,
         recognitionJourneyTaskSuggested: plan.suggestedTaskId,
+        recognitionJourneyTaskCandidates: plan.eligibleTaskIds,
         recognitionJourneyCompletedTaskIds: plan.completedTaskIds,
         recognitionJourneyPlan: turnPlan,
         recognitionJourneyStateMessageId: stateMessageId,
@@ -4844,6 +4846,8 @@ export class ConversationService {
             openingSuggested: plan.openingSuggested,
             openingAngle: plan.openingAngle,
             suggestedTaskId: plan.suggestedTaskId,
+            eligibleTaskIds: plan.eligibleTaskIds,
+            observedTaskIds: plan.observedTaskIds,
             userTurnNumber: plan.userTurnNumber,
           },
           before: deliveredJourney,
