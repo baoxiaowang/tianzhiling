@@ -4,7 +4,7 @@
       <template #title>
         <a-breadcrumb class="app-user-detail-page__breadcrumb">
           <a-breadcrumb-item>
-            <a-link @click="goBack">App 用户</a-link>
+            <a-link @click="goBack">用户与关系</a-link>
           </a-breadcrumb-item>
           <a-breadcrumb-item>用户详情</a-breadcrumb-item>
         </a-breadcrumb>
@@ -79,7 +79,77 @@
 
     <a-card class="app-user-detail-page__tabs-card" :bordered="false">
       <a-tabs v-model:active-key="activeTab">
-        <a-tab-pane key="agents" title="用户 Agent">
+        <a-tab-pane key="overview" title="用户概览">
+          <div class="app-user-detail-page__overview">
+            <a-grid :cols="24" :col-gap="16" :row-gap="16">
+              <a-grid-item :span="{ xs: 24, md: 8 }">
+                <div class="app-user-detail-page__summary-card">
+                  <span>关系智能体</span>
+                  <strong>{{ agentPagination.total }}</strong>
+                  <a-link @click="activeTab = 'agents'">查看关系结构</a-link>
+                </div>
+              </a-grid-item>
+              <a-grid-item :span="{ xs: 24, md: 8 }">
+                <div class="app-user-detail-page__summary-card">
+                  <span>账号状态</span>
+                  <strong>{{
+                    user?.isRiskControlled ? '需关注' : '正常'
+                  }}</strong>
+                  <a-typography-text type="secondary">
+                    {{ user ? getRiskControlStatusText(user) : '-' }}
+                  </a-typography-text>
+                </div>
+              </a-grid-item>
+              <a-grid-item :span="{ xs: 24, md: 8 }">
+                <div class="app-user-detail-page__summary-card">
+                  <span>内容记录</span>
+                  <strong>动态</strong>
+                  <a-link @click="activeTab = 'posts'">查看用户动态</a-link>
+                </div>
+              </a-grid-item>
+              <a-grid-item :span="24">
+                <a-card title="关系速览" :bordered="false">
+                  <a-list
+                    v-if="agentList.length"
+                    :data="agentList.slice(0, 5)"
+                    :bordered="false"
+                  >
+                    <template #item="{ item }">
+                      <a-list-item>
+                        <a-list-item-meta
+                          :title="item.name || '未命名智能体'"
+                          :description="`用户称呼TA：${
+                            item.iCallAgent || '-'
+                          }；TA称呼用户：${item.agentCallMe || '-'}`"
+                        >
+                          <template #avatar>
+                            <a-avatar :size="40">
+                              <img
+                                v-if="isRenderableAvatar(item.avatar)"
+                                :src="item.avatar"
+                                alt="智能体头像"
+                              />
+                              <template v-else>
+                                {{ getAvatarFallback(item.name, 'A') }}
+                              </template>
+                            </a-avatar>
+                          </template>
+                        </a-list-item-meta>
+                        <template #actions>
+                          <a-link @click="goAgentDetail(item.id)">
+                            查看聊天与人设
+                          </a-link>
+                        </template>
+                      </a-list-item>
+                    </template>
+                  </a-list>
+                  <a-empty v-else description="该用户尚未创建智能体" />
+                </a-card>
+              </a-grid-item>
+            </a-grid>
+          </div>
+        </a-tab-pane>
+        <a-tab-pane key="agents" title="关系智能体">
           <a-card :bordered="false">
             <a-form
               :model="agentSearchForm"
@@ -90,7 +160,7 @@
                 <a-input
                   v-model="agentSearchForm.keyword"
                   allow-clear
-                  placeholder="搜索 Agent 名字"
+                  placeholder="搜索智能体名字"
                   @press-enter="handleAgentSearch"
                 />
               </a-form-item>
@@ -117,10 +187,10 @@
               :scroll="{ x: 1080 }"
             >
               <template #empty>
-                <a-empty description="暂无用户 Agent" />
+                <a-empty description="暂无关系智能体" />
               </template>
               <template #columns>
-                <a-table-column title="Agent" data-index="name" :width="260">
+                <a-table-column title="智能体" data-index="name" :width="260">
                   <template #cell="{ record }">
                     <a-space>
                       <a-avatar
@@ -208,7 +278,7 @@
 
             <div class="app-user-detail-page__agent-pagination">
               <span class="app-user-detail-page__agent-total">
-                共 {{ agentPagination.total }} 个 Agent
+                共 {{ agentPagination.total }} 个智能体
               </span>
               <a-pagination
                 :current="agentPagination.current"
@@ -253,7 +323,7 @@
   const user = ref<AppUserRecord | null>(null);
   const agentList = ref<AppUserAgentRecord[]>([]);
   const agentsLoading = ref(false);
-  const activeTab = ref('agents');
+  const activeTab = ref('overview');
   const agentSearchForm = reactive<{
     keyword: string;
   }>({
@@ -309,7 +379,7 @@
     } catch (error) {
       agentList.value = [];
       agentPagination.total = 0;
-      Message.error('用户 Agent 加载失败');
+      Message.error('用户智能体加载失败');
     } finally {
       agentsLoading.value = false;
     }
@@ -487,6 +557,28 @@
 
     &__agent-identity {
       min-width: 0;
+    }
+
+    &__overview {
+      padding: 8px;
+    }
+
+    &__summary-card {
+      display: flex;
+      min-height: 126px;
+      flex-direction: column;
+      gap: 10px;
+      padding: 18px;
+      background: var(--color-fill-1);
+      border-radius: 8px;
+
+      > span {
+        color: var(--color-text-3);
+      }
+
+      > strong {
+        font-size: 24px;
+      }
     }
 
     &__agent-search {

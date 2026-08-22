@@ -1,5 +1,5 @@
 export default {
-  'login.form.title': '登录 Arco Design Pro',
+  'login.form.title': '登录天之灵管理后台',
   'login.form.userName.errMsg': '用户名不能为空',
   'login.form.password.errMsg': '密码不能为空',
   'login.form.login.errMsg': '登录出错，轻刷新重试',
@@ -13,10 +13,10 @@ export default {
   'login.form.superAdmin.exists': '已检测到超级管理员账号',
   'login.form.superAdmin.missing':
     '尚未检测到超级管理员账号，请先初始化后台账号',
-  'login.banner.slogan1': '开箱即用的高质量模板',
-  'login.banner.subSlogan1': '丰富的的页面模板，覆盖大多数典型业务场景',
-  'login.banner.slogan2': '内置了常见问题的解决方案',
-  'login.banner.subSlogan2': '国际化，路由配置，状态管理应有尽有',
-  'login.banner.slogan3': '接入可视化增强工具AUX',
-  'login.banner.subSlogan3': '实现灵活的区块式开发',
+  'login.banner.slogan1': '从异常开始处理',
+  'login.banner.subSlogan1': '集中查看聊天反馈、失败链路和后台任务',
+  'login.banner.slogan2': '围绕用户理解关系',
+  'login.banner.subSlogan2': '在一个页面查看用户、关系、智能体和内容',
+  'login.banner.slogan3': '让运营结果可追踪',
+  'login.banner.subSlogan3': '清楚知道当前版本、任务进度和系统状态',
 };

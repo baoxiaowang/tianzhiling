@@ -60,6 +60,7 @@ services:
       - .env
     environment:
       ADMIN_API_PORT: 7101
+      RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
       ADMIN_API_REDIS_HOST: tzl_redis
       ADMIN_API_REDIS_PORT: 6379
       ADMIN_API_REDIS_PASSWORD: ${REDIS_PASSWORD:-}

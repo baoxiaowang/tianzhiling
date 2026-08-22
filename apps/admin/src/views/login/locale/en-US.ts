@@ -1,5 +1,5 @@
 export default {
-  'login.form.title': 'Login to Arco Design Pro',
+  'login.form.title': 'Sign in to TianZhiLing Admin',
   'login.form.userName.errMsg': 'Username cannot be empty',
   'login.form.password.errMsg': 'Password cannot be empty',
   'login.form.login.errMsg': 'Login error, refresh and try again',
@@ -13,12 +13,13 @@ export default {
   'login.form.superAdmin.exists': 'Super admin account detected',
   'login.form.superAdmin.missing':
     'No super admin account detected. Initialize an admin account first.',
-  'login.banner.slogan1': 'Out-of-the-box high-quality template',
+  'login.banner.slogan1': 'Start with what needs attention',
   'login.banner.subSlogan1':
-    'Rich page templates, covering most typical business scenarios',
-  'login.banner.slogan2': 'Built-in solutions to common problems',
+    'Review chat feedback, failures, and background tasks in one place',
+  'login.banner.slogan2': 'Understand relationships around each user',
   'login.banner.subSlogan2':
-    'Internationalization, routing configuration, state management everything',
-  'login.banner.slogan3': 'Access visualization enhancement tool AUX',
-  'login.banner.subSlogan3': 'Realize flexible block development',
+    'See users, relationships, agents, and content together',
+  'login.banner.slogan3': 'Keep operations traceable',
+  'login.banner.subSlogan3':
+    'Know the current version, task progress, and system status',
 };

@@ -1,7 +1,7 @@
 <template>
   <div class="agent-page">
     <a-card class="agent-page__card" :bordered="false">
-      <template #title>Agent 管理</template>
+      <template #title>智能体管理</template>
 
       <a-form :model="searchForm" layout="inline" class="agent-page__search">
         <a-form-item field="keyword" label="关键词">
@@ -63,7 +63,7 @@
           </a-empty>
         </template>
         <template #columns>
-          <a-table-column title="Agent" data-index="name" :width="260">
+          <a-table-column title="智能体" data-index="name" :width="260">
             <template #cell="{ record }">
               <a-space>
                 <a-avatar :size="40">
@@ -219,7 +219,7 @@
 
       <div class="agent-page__pagination">
         <span class="agent-page__total">
-          共 {{ pagination.total }} 个 Agent
+          共 {{ pagination.total }} 个智能体
         </span>
         <a-pagination
           :current="pagination.current"
@@ -249,7 +249,7 @@
         size="small"
         bordered
       >
-        <a-descriptions-item label="Agent ID">
+        <a-descriptions-item label="智能体 ID">
           <a-typography-text copyable>{{ editingAgent.id }}</a-typography-text>
         </a-descriptions-item>
         <a-descriptions-item label="归属用户">
@@ -500,12 +500,12 @@
       searchForm.status !== undefined
   );
   const emptyDescription = computed(() =>
-    hasSearch.value ? '未找到匹配 Agent' : '暂无 Agent'
+    hasSearch.value ? '未找到匹配智能体' : '暂无智能体'
   );
   const editModalTitle = computed(() =>
     editingAgent.value
-      ? `编辑 Agent：${editingAgent.value.name || editingAgent.value.id}`
-      : '编辑 Agent'
+      ? `编辑智能体：${editingAgent.value.name || editingAgent.value.id}`
+      : '编辑智能体'
   );
 
   const fetchData = async () => {
@@ -517,7 +517,7 @@
       pagination.current = data.page;
       pagination.pageSize = data.pageSize;
     } catch (error) {
-      Message.error('Agent 列表加载失败');
+      Message.error('智能体列表加载失败');
     } finally {
       setLoading(false);
     }
@@ -626,12 +626,12 @@
         status: editForm.status,
         voiceTimbreId: editForm.voiceTimbreId || '',
       });
-      Message.success('Agent 资料已更新');
+      Message.success('智能体资料已更新');
       closeEdit();
       await fetchData();
       return true;
     } catch (error) {
-      Message.error('Agent 资料保存失败');
+      Message.error('智能体资料保存失败');
       return false;
     } finally {
       saving.value = false;

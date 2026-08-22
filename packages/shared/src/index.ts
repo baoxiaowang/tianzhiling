@@ -1,4 +1,5 @@
 export * from './agent';
+export * from './admin-operations';
 export * from './auth';
 export * from './china-region';
 export * from './env';

@@ -9,7 +9,7 @@ const POST: AppRouteRecordRaw = {
     locale: 'menu.post',
     requiresAuth: true,
     icon: 'icon-message',
-    order: 5,
+    order: 4,
     hideChildrenInMenu: true,
   },
   redirect: '/posts/list',

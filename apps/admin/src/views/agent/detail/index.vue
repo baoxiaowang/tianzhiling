@@ -3,15 +3,15 @@
     <a-card class="agent-detail-page__header-card" :bordered="false">
       <a-breadcrumb class="agent-detail-page__breadcrumb">
         <a-breadcrumb-item>
-          <a-link @click="goBack">Agent 管理</a-link>
+          <a-link @click="goBack">智能体管理</a-link>
         </a-breadcrumb-item>
-        <a-breadcrumb-item>Agent 详情</a-breadcrumb-item>
+        <a-breadcrumb-item>智能体详情</a-breadcrumb-item>
       </a-breadcrumb>
     </a-card>
 
     <div class="agent-detail-page__content">
       <a-card class="agent-detail-page__info-card" :bordered="false">
-        <template #title>基本信息</template>
+        <template #title>人设与关系</template>
         <a-spin :loading="loading">
           <div v-if="agent" class="agent-detail-page__profile">
             <a-avatar :size="72">
@@ -100,7 +100,7 @@
             </a-descriptions-item>
           </a-descriptions>
 
-          <a-empty v-else description="暂无 Agent 信息" />
+          <a-empty v-else description="暂无智能体信息" />
         </a-spin>
       </a-card>
 
