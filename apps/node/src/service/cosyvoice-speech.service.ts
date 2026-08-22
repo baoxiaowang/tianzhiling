@@ -6,6 +6,7 @@ import { URL } from 'url';
 import {
   buildCosyVoiceSpeechInstruction,
   getCosyVoiceSpeechInstructionSource,
+  resolveVoiceTimbreDialect,
 } from '@tzl/shared';
 import { AppError } from '../common/errors';
 
@@ -113,14 +114,13 @@ export class CosyVoiceSpeechService {
     );
 
     this.logger.info(
-      '[cosyvoice-speech] synthesize, model=%s, voiceId=%s, format=%s, textLength=%s, instructionSource=%s, instructionLength=%s',
+      '[cosyvoice-speech] synthesize, model=%s, voiceId=%s, format=%s, textLength=%s, dialect=%s, instructionSource=%s, instructionLength=%s',
       model,
       voiceId,
       format,
       text.length,
-      instruction
-        ? getCosyVoiceSpeechInstructionSource(input)
-        : 'none',
+      resolveVoiceTimbreDialect(input.dialect, input.instruction),
+      instruction ? getCosyVoiceSpeechInstructionSource(input) : 'none',
       instruction?.length || 0
     );
 

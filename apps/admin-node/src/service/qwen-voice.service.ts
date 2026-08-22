@@ -72,6 +72,10 @@ export interface QwenPreviewSpeechResult {
   requestId?: string;
 }
 
+export interface QwenDeleteVoiceResult {
+  requestId?: string;
+}
+
 @Provide()
 export class QwenVoiceService {
   @Logger()
@@ -296,6 +300,47 @@ export class QwenVoiceService {
       502,
       response
     );
+  }
+
+  async deleteVoice(
+    voiceId: string,
+    model?: string
+  ): Promise<QwenDeleteVoiceResult> {
+    this.ensureEnabled();
+
+    const voice = voiceId?.trim();
+    if (!voice) {
+      throw new AppError(
+        'QWEN_VOICE_ID_MISSING',
+        'Qwen voice id is missing',
+        400
+      );
+    }
+
+    const qwenAudio =
+      this.isQwenAudioModel(model) || /^qwen-audio-/i.test(voice);
+    const payload = qwenAudio
+      ? {
+          model: 'voice-enrollment',
+          input: { action: 'delete_voice', voice_id: voice },
+        }
+      : {
+          model: 'qwen-voice-enrollment',
+          input: { action: 'delete', voice },
+        };
+    const response = await this.requestJson<QwenVoiceResp>({
+      path: '/api/v1/services/audio/tts/customization',
+      method: 'POST',
+      body: Buffer.from(JSON.stringify(payload)),
+    });
+
+    this.logger?.info?.(
+      '[qwen-voice] voice deleted, voiceRef=%s, requestId=%s',
+      this.describeVoiceId(voice),
+      response.request_id?.trim() || ''
+    );
+
+    return { requestId: response.request_id?.trim() || undefined };
   }
 
   private ensureEnabled(): void {

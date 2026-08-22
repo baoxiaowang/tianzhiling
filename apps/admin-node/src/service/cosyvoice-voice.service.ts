@@ -3,6 +3,7 @@ import {
   AppError,
   buildCosyVoiceSpeechInstruction,
   getCosyVoiceSpeechInstructionSource,
+  resolveVoiceTimbreDialect,
 } from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
@@ -92,6 +93,10 @@ export interface CosyVoiceQueryVoiceResult {
   status: string;
   targetModel?: string;
   resourceLink?: string;
+  requestId?: string;
+}
+
+export interface CosyVoiceDeleteVoiceResult {
   requestId?: string;
 }
 
@@ -218,12 +223,11 @@ export class CosyVoiceVoiceService {
       })
     );
     this.logger?.info?.(
-      '[cosyvoice] synthesize preview, model=%s, voiceId=%s, instructionSource=%s, instructionLength=%s',
+      '[cosyvoice] synthesize preview, model=%s, voiceId=%s, dialect=%s, instructionSource=%s, instructionLength=%s',
       model,
       voiceId,
-      instruction
-        ? getCosyVoiceSpeechInstructionSource(input)
-        : 'none',
+      resolveVoiceTimbreDialect(input.dialect, input.instruction),
+      instruction ? getCosyVoiceSpeechInstructionSource(input) : 'none',
       instruction?.length || 0
     );
     const response = await this.requestJson<CosyVoiceSpeechResp>({
@@ -315,6 +319,41 @@ export class CosyVoiceVoiceService {
       resourceLink: output?.resource_link?.trim() || undefined,
       requestId: response.request_id?.trim() || undefined,
     };
+  }
+
+  async deleteVoice(voiceId: string): Promise<CosyVoiceDeleteVoiceResult> {
+    this.ensureEnabled();
+
+    const normalizedVoiceId = voiceId?.trim();
+    if (!normalizedVoiceId) {
+      throw new AppError(
+        'COSYVOICE_VOICE_ID_MISSING',
+        'CosyVoice voice id is missing',
+        400
+      );
+    }
+
+    const response = await this.requestJson<CosyVoiceResp>({
+      path: '/api/v1/services/audio/tts/customization',
+      method: 'POST',
+      body: Buffer.from(
+        JSON.stringify({
+          model: 'voice-enrollment',
+          input: {
+            action: 'delete_voice',
+            voice_id: normalizedVoiceId,
+          },
+        })
+      ),
+    });
+
+    this.logger?.info?.(
+      '[cosyvoice] voice deleted, voiceId=%s, requestId=%s',
+      normalizedVoiceId,
+      response.request_id?.trim() || ''
+    );
+
+    return { requestId: response.request_id?.trim() || undefined };
   }
 
   private ensureEnabled(): void {

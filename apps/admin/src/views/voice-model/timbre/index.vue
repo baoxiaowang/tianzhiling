@@ -110,7 +110,7 @@
           <a-table-column title="发音方言 / 合成指令" :width="300">
             <template #cell="{ record }">
               <a-typography-text
-                v-if="isQwenAudioPreviewModel(record.previewModel)"
+                v-if="supportsRecordSpeechInstruction(record)"
                 ellipsis
                 :ellipsis-show-tooltip="true"
               >
@@ -143,6 +143,17 @@
               </a-tag>
             </template>
           </a-table-column>
+          <a-table-column title="智能体绑定" :width="130">
+            <template #cell="{ record }">
+              <a-tag :color="record.boundAgentCount > 0 ? 'red' : 'gray'">
+                {{
+                  record.boundAgentCount > 0
+                    ? `已绑定 ${record.boundAgentCount}`
+                    : '未绑定'
+                }}
+              </a-tag>
+            </template>
+          </a-table-column>
           <a-table-column title="原始文件" :width="260">
             <template #cell="{ record }">
               <audio
@@ -170,7 +181,7 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="140" fixed="right">
+          <a-table-column title="操作" :width="160" fixed="right">
             <template #cell="{ record }">
               <a-space direction="vertical" :size="4" align="start">
                 <a-button type="text" size="small" @click="openEdit(record)">
@@ -195,6 +206,30 @@
                 >
                   {{ getRetryButtonText(record) }}
                 </a-button>
+                <a-tooltip
+                  :content="
+                    record.canDelete
+                      ? '删除服务商音色及相关声音文件'
+                      : `已绑定 ${record.boundAgentCount} 个智能体，请先解除绑定`
+                  "
+                >
+                  <span>
+                    <a-button
+                      type="text"
+                      size="small"
+                      status="danger"
+                      :disabled="!record.canDelete"
+                      :loading="isDeleting(record.id)"
+                      @click="openDelete(record)"
+                    >
+                      {{
+                        record.deletionStatus === 'partial_failed'
+                          ? '重试删除'
+                          : '删除'
+                      }}
+                    </a-button>
+                  </span>
+                </a-tooltip>
               </a-space>
             </template>
           </a-table-column>
@@ -527,6 +562,27 @@
     </a-modal>
 
     <a-modal
+      v-model:visible="deleteVisible"
+      title="永久删除音色"
+      :confirm-loading="deleting"
+      :mask-closable="false"
+      :esc-to-close="false"
+      :ok-button-props="{ status: 'danger' }"
+      ok-text="确认删除"
+      @before-ok="submitDelete"
+      @cancel="closeDelete"
+    >
+      <a-alert type="warning">
+        删除后将同时清理服务商音色、复刻音频、试听音频和该音色生成的语音，无法恢复。
+      </a-alert>
+      <p v-if="deletingRecord">
+        确认删除“{{
+          deletingRecord.name
+        }}”？系统会在删除前再次检查智能体绑定；如已绑定，将拒绝删除。
+      </p>
+    </a-modal>
+
+    <a-modal
       v-model:visible="validationVisible"
       title="音色校验结果"
       :footer="false"
@@ -603,6 +659,7 @@
   import uploadAdminFile from '@/api/storage';
   import {
     createVoiceTimbre,
+    deleteVoiceTimbre,
     queryVoiceTimbreList,
     retryVoiceTimbre,
     updateVoiceTimbre,
@@ -616,10 +673,14 @@
   const editVisible = ref(false);
   const validationVisible = ref(false);
   const saving = ref(false);
+  const deleting = ref(false);
+  const deleteVisible = ref(false);
   const retryingIds = ref<Set<string>>(new Set());
   const validatingIds = ref<Set<string>>(new Set());
+  const deletingId = ref('');
   const validationResult = ref<ValidateVoiceTimbreRes>();
   const editingRecord = ref<VoiceTimbreRecord>();
+  const deletingRecord = ref<VoiceTimbreRecord>();
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
@@ -767,6 +828,11 @@
     /^qwen-audio-/i.test(model?.trim() || '');
   const isCosyVoiceV35PlusModel = (model?: string) =>
     /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
+  const supportsRecordSpeechInstruction = (record: VoiceTimbreRecord) =>
+    (record.provider === 'qwen' &&
+      isQwenAudioPreviewModel(record.previewModel)) ||
+    (record.provider === 'cosyvoice' &&
+      isCosyVoiceV35PlusModel(record.previewModel));
   const voiceTimbreDialectOptions = computed<
     ReadonlyArray<{ value: VoiceTimbreDialectDTO; label: string }>
   >(() =>
@@ -1100,6 +1166,8 @@
 
   const isValidating = (id: string) => validatingIds.value.has(id);
 
+  const isDeleting = (id: string) => deletingId.value === id;
+
   const canRetry = (record: VoiceTimbreRecord) =>
     record.status === 'failed' || record.status === 'active';
 
@@ -1144,6 +1212,55 @@
       const latestValidatingIds = new Set(validatingIds.value);
       latestValidatingIds.delete(record.id);
       validatingIds.value = latestValidatingIds;
+    }
+  };
+
+  const openDelete = (record: VoiceTimbreRecord) => {
+    if (!record.canDelete) {
+      Message.warning(
+        `该音色已绑定 ${record.boundAgentCount} 个智能体，请先解除绑定`
+      );
+      return;
+    }
+
+    deletingRecord.value = record;
+    deleteVisible.value = true;
+  };
+
+  const closeDelete = () => {
+    if (deleting.value) {
+      return;
+    }
+
+    deleteVisible.value = false;
+    deletingRecord.value = undefined;
+  };
+
+  const submitDelete = async () => {
+    const record = deletingRecord.value;
+    if (!record) {
+      return false;
+    }
+
+    try {
+      deleting.value = true;
+      deletingId.value = record.id;
+      const { data } = await deleteVoiceTimbre(record.id);
+
+      if (data.deletionStatus === 'completed') {
+        Message.success('音色已删除');
+      } else {
+        Message.warning('音色仍有部分数据删除失败，请稍后重试');
+      }
+      await fetchData();
+      deletingRecord.value = undefined;
+      return true;
+    } catch (error) {
+      Message.error('音色删除失败，请确认已解除全部智能体绑定');
+      return false;
+    } finally {
+      deleting.value = false;
+      deletingId.value = '';
     }
   };
 

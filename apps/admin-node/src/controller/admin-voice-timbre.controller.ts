@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Del,
   Get,
   Inject,
   Param,
@@ -46,5 +47,10 @@ export class AdminVoiceTimbreController {
     @Body() body: UpdateAdminVoiceTimbreDTO
   ) {
     return this.adminVoiceTimbreService.updateVoiceTimbre(id, body);
+  }
+
+  @Del('/:id')
+  async remove(@Param('id') id: string) {
+    return this.adminVoiceTimbreService.deleteVoiceTimbre(id);
   }
 }

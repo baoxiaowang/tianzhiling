@@ -79,8 +79,10 @@ export function getVoiceTimbreDialectLabel(
 export function resolveVoiceTimbreDialect(
   dialect?: string,
   instruction?: string,
-  options: ReadonlyArray<{ value: string; label: string }> =
-    VOICE_TIMBRE_DIALECT_OPTIONS
+  options: ReadonlyArray<{
+    value: string;
+    label: string;
+  }> = VOICE_TIMBRE_DIALECT_OPTIONS
 ): VoiceTimbreDialectDTO {
   const normalizedDialect = dialect?.trim().toLowerCase();
   const explicitDialect = options.find(
@@ -96,9 +98,8 @@ export function resolveVoiceTimbreDialect(
     return "auto";
   }
 
-  const dialectCandidates = options.filter(
-    (item) => item.value !== "auto"
-  )
+  const dialectCandidates = options
+    .filter((item) => item.value !== "auto")
     .map((item) => ({
       ...item,
       keyword: item.label.replace(/话$/, ""),
@@ -127,6 +128,68 @@ export type VoiceSpeechInstructionSource =
   | "custom+structured";
 
 export type QwenAudioSpeechInstructionSource = VoiceSpeechInstructionSource;
+
+const VOICE_SPEECH_INSTRUCTION_WEIGHTED_LIMIT = 100;
+
+export function getVoiceSpeechInstructionWeightedLength(value: string): number {
+  return Array.from(value).reduce(
+    (total, character) => total + (/\p{Script=Han}/u.test(character) ? 2 : 1),
+    0
+  );
+}
+
+function truncateVoiceSpeechInstruction(
+  value: string,
+  weightedLimit: number
+): string {
+  let result = "";
+  let weightedLength = 0;
+
+  for (const character of Array.from(value)) {
+    const characterWeight = /\p{Script=Han}/u.test(character) ? 2 : 1;
+    if (weightedLength + characterWeight > weightedLimit) {
+      break;
+    }
+    result += character;
+    weightedLength += characterWeight;
+  }
+
+  return result.replace(/[，,、；;。\s]+$/g, "");
+}
+
+function joinVoiceSpeechInstruction(parts: string[]): string | undefined {
+  const normalizedParts = parts.map((part) => part.trim()).filter(Boolean);
+  if (!normalizedParts.length) {
+    return undefined;
+  }
+
+  const suffix = "。";
+  const suffixWeight = getVoiceSpeechInstructionWeightedLength(suffix);
+  let result = "";
+
+  for (const part of normalizedParts) {
+    const separator = result ? "；" : "";
+    const available =
+      VOICE_SPEECH_INSTRUCTION_WEIGHTED_LIMIT -
+      suffixWeight -
+      getVoiceSpeechInstructionWeightedLength(result + separator);
+    if (available <= 0) {
+      break;
+    }
+
+    const truncatedPart = truncateVoiceSpeechInstruction(part, available);
+    if (!truncatedPart) {
+      break;
+    }
+    result += separator + truncatedPart;
+
+    if (truncatedPart !== part) {
+      break;
+    }
+  }
+
+  return result ? `${result}${suffix}` : undefined;
+}
 
 function normalizeVoiceSpeechCustomInstruction(
   instruction?: string
@@ -186,8 +249,8 @@ export function buildQwenAudioSpeechInstruction(input: {
   if (dialectLabel) {
     parts.push(
       resolvedDialect === "mandarin"
-        ? "请全程使用自然、标准、清晰的普通话表达，保持原有音色和说话习惯"
-        : `请全程使用自然、地道、明显的${dialectLabel}表达，保持${dialectLabel}的发音、语调和表达习惯，保留原有音色和说话习惯`
+        ? "请全程使用自然、标准、清晰的普通话发音和语调"
+        : `请全程使用自然、地道、明显的${dialectLabel}发音和语调`
     );
   }
 
@@ -206,7 +269,7 @@ export function buildQwenAudioSpeechInstruction(input: {
     }
   }
 
-  return parts.length ? `${parts.join("；")}。` : undefined;
+  return joinVoiceSpeechInstruction(parts);
 }
 
 export function getCosyVoiceSpeechInstructionSource(input: {
@@ -253,8 +316,8 @@ export function buildCosyVoiceSpeechInstruction(input: {
   if (dialectLabel) {
     parts.push(
       resolvedDialect === "mandarin"
-        ? "请全程使用自然、标准、清晰的普通话表达，保持原有音色和说话习惯"
-        : `请全程使用自然、地道、明显的${dialectLabel}表达，保持${dialectLabel}的发音、语调和表达习惯，保留原有音色和说话习惯`
+        ? "请全程使用自然、标准、清晰的普通话发音和语调"
+        : `请全程使用自然、地道、明显的${dialectLabel}发音和语调`
     );
   }
 
@@ -262,7 +325,7 @@ export function buildCosyVoiceSpeechInstruction(input: {
     parts.push(normalizedCustomInstruction);
   }
 
-  return parts.length ? `${parts.join("；")}。` : undefined;
+  return joinVoiceSpeechInstruction(parts);
 }
 
 export function buildSpeechOutputFfmpegFilter(input: {
@@ -429,8 +492,18 @@ export interface AdminVoiceTimbreRecordDTO {
   errorCode: string;
   errorMessage: string;
   remark: string;
+  boundAgentCount: number;
+  canDelete: boolean;
+  deletionStatus?: "pending" | "completed" | "partial_failed";
+  deletionFailureReason?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeleteAdminVoiceTimbreResultDTO {
+  id: string;
+  deletionStatus: "completed" | "partial_failed";
+  message: string;
 }
 
 export interface AdminVoiceTimbreListParamsDTO {

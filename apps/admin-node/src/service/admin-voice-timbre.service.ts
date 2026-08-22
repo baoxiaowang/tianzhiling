@@ -14,11 +14,13 @@ import type {
   AdminVoiceTimbreListDTO,
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
+  DeleteAdminVoiceTimbreResultDTO,
   VoiceTimbreProviderDTO,
   VoiceTimbreDialectDTO,
   VoiceTimbreStatusDTO,
 } from '@tzl/shared';
 import {
+  AgentEntity,
   MongoObjectId,
   VoiceTimbreEntity,
   VoiceTimbreProvider,
@@ -57,6 +59,9 @@ export class AdminVoiceTimbreService {
 
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
+
+  @InjectEntityModel(AgentEntity)
+  agentModel: MongoRepository<AgentEntity>;
 
   @Inject()
   bullmqFramework: bullmq.Framework;
@@ -99,7 +104,7 @@ export class AdminVoiceTimbreService {
       });
 
       return {
-        items: timbres.map(timbre => this.buildRecord(timbre)),
+        items: await this.buildRecords(timbres),
         total: timbres.length,
         page: 1,
         pageSize: timbres.length,
@@ -119,7 +124,7 @@ export class AdminVoiceTimbreService {
     ]);
 
     return {
-      items: timbres.map(timbre => this.buildRecord(timbre)),
+      items: await this.buildRecords(timbres),
       total,
       page,
       pageSize,
@@ -256,8 +261,7 @@ export class AdminVoiceTimbreService {
     const timbre = await this.getVoiceTimbreById(timbreId);
     let changed = false;
     let shouldRetrain = false;
-    const previousPreviewSignature =
-      this.buildProviderPreviewSignature(timbre);
+    const previousPreviewSignature = this.buildProviderPreviewSignature(timbre);
 
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
@@ -317,8 +321,7 @@ export class AdminVoiceTimbreService {
 
     if (changed) {
       const shouldRefreshProviderPreview =
-        previousPreviewSignature !==
-        this.buildProviderPreviewSignature(timbre);
+        previousPreviewSignature !== this.buildProviderPreviewSignature(timbre);
 
       if (shouldRetrain && timbre.status !== VoiceTimbreStatus.disabled) {
         this.prepareTimbreRetrain(timbre);
@@ -347,6 +350,108 @@ export class AdminVoiceTimbreService {
     }
 
     return this.buildRecord(timbre);
+  }
+
+  async deleteVoiceTimbre(
+    timbreId: string
+  ): Promise<DeleteAdminVoiceTimbreResultDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+
+    if (timbre.deletionStatus === 'completed') {
+      return {
+        id: timbreId,
+        deletionStatus: 'completed',
+        message: '音色已删除',
+      };
+    }
+
+    const boundAgentCount = await this.countAgentBindings(timbre.id);
+    if (boundAgentCount > 0) {
+      throw new AppError(
+        'VOICE_TIMBRE_DELETE_BOUND',
+        `该音色已绑定 ${boundAgentCount} 个智能体，请先解除绑定后再删除`,
+        409,
+        { boundAgentCount }
+      );
+    }
+
+    const previousStatus = timbre.status;
+    const now = new Date();
+    timbre.status = VoiceTimbreStatus.disabled;
+    timbre.deletionStatus = 'pending';
+    timbre.deletionRequestedAt ??= now;
+    timbre.deletionFailureReason = '';
+    timbre.updatedAt = now;
+    await this.voiceTimbreModel.save(timbre);
+
+    const lateBoundAgentCount = await this.countAgentBindings(timbre.id);
+    if (lateBoundAgentCount > 0) {
+      timbre.status = previousStatus;
+      timbre.deletionStatus = undefined;
+      timbre.deletionRequestedAt = undefined;
+      timbre.updatedAt = new Date();
+      await this.voiceTimbreModel.save(timbre);
+
+      throw new AppError(
+        'VOICE_TIMBRE_DELETE_BOUND',
+        `该音色已绑定 ${lateBoundAgentCount} 个智能体，请先解除绑定后再删除`,
+        409,
+        { boundAgentCount: lateBoundAgentCount }
+      );
+    }
+
+    const failures: string[] = [];
+    const deletedObjectKeys = new Set<string>();
+
+    await this.deleteProviderVoice(
+      timbre,
+      failures,
+      previousStatus === VoiceTimbreStatus.creating
+    );
+    await this.deleteTimbreObjects(timbre, failures, deletedObjectKeys);
+
+    if (failures.length === 0) {
+      timbre.audioObjectKey = '';
+      timbre.audioUrl = '';
+      timbre.previewAudioObjectKey = undefined;
+      timbre.previewAudioUrl = undefined;
+      timbre.generatedAudios = [];
+      timbre.providerFileId = undefined;
+      timbre.providerVoiceId = `deleted_${this.stringifyObjectId(timbre.id)}`;
+      timbre.deletionStatus = 'completed';
+      timbre.deletedAt = new Date();
+      timbre.deletionFailureReason = '';
+    } else {
+      if (deletedObjectKeys.has(timbre.audioObjectKey)) {
+        timbre.audioObjectKey = '';
+        timbre.audioUrl = '';
+      }
+      const previewObjectKey = this.resolveTimbreObjectKey(
+        timbre.previewAudioObjectKey || timbre.previewAudioUrl
+      );
+      if (previewObjectKey && deletedObjectKeys.has(previewObjectKey)) {
+        timbre.previewAudioObjectKey = undefined;
+        timbre.previewAudioUrl = undefined;
+      }
+      timbre.generatedAudios = (timbre.generatedAudios ?? []).filter(
+        item => !deletedObjectKeys.has(item.objectKey)
+      );
+      timbre.deletionStatus = 'partial_failed';
+      timbre.deletionFailureReason = failures.join('；').slice(0, 1000);
+    }
+
+    timbre.updatedAt = new Date();
+    await this.voiceTimbreModel.save(timbre);
+
+    return {
+      id: timbreId,
+      deletionStatus:
+        timbre.deletionStatus === 'completed' ? 'completed' : 'partial_failed',
+      message:
+        timbre.deletionStatus === 'completed'
+          ? '音色已删除'
+          : '音色仍有部分数据删除失败，请重试',
+    };
   }
 
   async ensureActiveTimbre(timbreId: string): Promise<VoiceTimbreEntity> {
@@ -677,6 +782,38 @@ export class AdminVoiceTimbreService {
       previewAudioUrl: string;
     }
   ): Promise<void> {
+    const current = await this.getVoiceTimbreById(
+      this.stringifyObjectId(timbre.id)
+    );
+
+    if (
+      current.deletionStatus === 'pending' ||
+      current.deletionStatus === 'completed' ||
+      current.status === VoiceTimbreStatus.disabled
+    ) {
+      const failures: string[] = [];
+      const deletedObjectKeys = new Set<string>();
+      current.providerFileId = input.providerFileId;
+      current.providerVoiceId = input.providerVoiceId;
+      current.previewAudioUrl = input.previewAudioUrl;
+      current.providerDeletedAt = undefined;
+      await this.deleteProviderVoice(current, failures, false);
+      await this.deleteTimbreObjects(current, failures, deletedObjectKeys);
+      current.status = VoiceTimbreStatus.disabled;
+      current.providerVoiceId = `deleted_${this.stringifyObjectId(current.id)}`;
+      current.providerFileId = undefined;
+      current.previewAudioObjectKey = undefined;
+      current.previewAudioUrl = undefined;
+      current.deletionStatus =
+        failures.length === 0 ? 'completed' : 'partial_failed';
+      current.deletedAt =
+        failures.length === 0 ? new Date() : current.deletedAt;
+      current.deletionFailureReason = failures.join('；').slice(0, 1000);
+      current.updatedAt = new Date();
+      await this.voiceTimbreModel.save(current);
+      return;
+    }
+
     timbre.providerFileId = input.providerFileId;
     timbre.providerVoiceId = input.providerVoiceId;
     timbre.previewAudioUrl = input.previewAudioUrl;
@@ -776,6 +913,17 @@ export class AdminVoiceTimbreService {
     timbre: VoiceTimbreEntity,
     error: unknown
   ): Promise<void> {
+    const current = await this.getVoiceTimbreById(
+      this.stringifyObjectId(timbre.id)
+    );
+    if (
+      current.deletionStatus === 'pending' ||
+      current.deletionStatus === 'completed' ||
+      current.status === VoiceTimbreStatus.disabled
+    ) {
+      return;
+    }
+
     timbre.status = VoiceTimbreStatus.failed;
     timbre.errorCode =
       (error as { code?: string })?.code || 'VOICE_TIMBRE_CREATE_FAILED';
@@ -884,7 +1032,9 @@ export class AdminVoiceTimbreService {
   }
 
   private buildSearchWhere(query: ListAdminVoiceTimbresQueryDTO): MongoWhere {
-    const where: MongoWhere = {};
+    const where: MongoWhere = {
+      deletionStatus: { $ne: 'completed' },
+    };
     const keyword = query?.keyword?.trim() ?? '';
     const provider = this.normalizeOptionalProvider(query?.provider);
     const status = this.normalizeOptionalStatus(query?.status);
@@ -921,7 +1071,47 @@ export class AdminVoiceTimbreService {
     };
   }
 
-  private buildRecord(timbre: VoiceTimbreEntity): AdminVoiceTimbreRecordDTO {
+  private async buildRecords(
+    timbres: VoiceTimbreEntity[]
+  ): Promise<AdminVoiceTimbreRecordDTO[]> {
+    if (!timbres.length) {
+      return [];
+    }
+
+    const timbreIds = timbres.map(timbre => timbre.id);
+    const agents = await this.agentModel.find({
+      where: {
+        $or: [
+          { voiceTimbreId: { $in: timbreIds } },
+          { pendingVoiceTimbreId: { $in: timbreIds } },
+        ],
+      } as never,
+    });
+    const bindingCounts = new Map<string, number>();
+
+    for (const agent of agents) {
+      const boundTimbreIds = new Set(
+        [agent.voiceTimbreId, agent.pendingVoiceTimbreId]
+          .filter(Boolean)
+          .map(value => this.stringifyObjectId(value as MongoObjectId))
+      );
+      for (const id of boundTimbreIds) {
+        bindingCounts.set(id, (bindingCounts.get(id) || 0) + 1);
+      }
+    }
+
+    return timbres.map(timbre =>
+      this.buildRecord(
+        timbre,
+        bindingCounts.get(this.stringifyObjectId(timbre.id)) || 0
+      )
+    );
+  }
+
+  private buildRecord(
+    timbre: VoiceTimbreEntity,
+    boundAgentCount = 0
+  ): AdminVoiceTimbreRecordDTO {
     return {
       id: this.stringifyObjectId(timbre.id),
       name: timbre.name,
@@ -945,9 +1135,134 @@ export class AdminVoiceTimbreService {
       errorCode: timbre.errorCode ?? '',
       errorMessage: timbre.errorMessage ?? '',
       remark: timbre.remark ?? '',
+      boundAgentCount,
+      canDelete: boundAgentCount === 0,
+      deletionStatus: timbre.deletionStatus,
+      deletionFailureReason: timbre.deletionFailureReason || undefined,
       createdAt: this.formatDate(timbre.createdAt),
       updatedAt: this.formatDate(timbre.updatedAt),
     };
+  }
+
+  private countAgentBindings(timbreId: MongoObjectId): Promise<number> {
+    return this.agentModel.count({
+      $or: [{ voiceTimbreId: timbreId }, { pendingVoiceTimbreId: timbreId }],
+    });
+  }
+
+  private async deleteProviderVoice(
+    timbre: VoiceTimbreEntity,
+    failures: string[],
+    wasCreating: boolean
+  ): Promise<void> {
+    if (timbre.providerDeletedAt) {
+      return;
+    }
+
+    const providerVoiceId = timbre.providerVoiceId?.trim();
+    if (
+      !providerVoiceId ||
+      providerVoiceId.startsWith('pending_') ||
+      providerVoiceId.startsWith('deleted_') ||
+      (wasCreating && !timbre.providerFileId)
+    ) {
+      timbre.providerDeletedAt = new Date();
+      return;
+    }
+
+    try {
+      if (timbre.provider === VoiceTimbreProvider.minimax) {
+        await this.minimaxVoiceService.deleteVoice(providerVoiceId);
+      } else if (timbre.provider === VoiceTimbreProvider.cosyvoice) {
+        await this.cosyVoiceVoiceService.deleteVoice(providerVoiceId);
+      } else if (timbre.provider === VoiceTimbreProvider.qwen) {
+        await this.qwenVoiceService.deleteVoice(
+          providerVoiceId,
+          timbre.previewModel
+        );
+      } else {
+        throw new AppError(
+          'VOICE_TIMBRE_PROVIDER_DELETE_UNSUPPORTED',
+          `voice provider ${timbre.provider} does not support deletion`,
+          400
+        );
+      }
+      timbre.providerDeletedAt = new Date();
+    } catch (error) {
+      if (this.isAlreadyDeletedProviderError(error)) {
+        timbre.providerDeletedAt = new Date();
+        return;
+      }
+
+      failures.push(
+        `服务商音色删除失败：${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  private async deleteTimbreObjects(
+    timbre: VoiceTimbreEntity,
+    failures: string[],
+    deletedObjectKeys: Set<string>
+  ): Promise<void> {
+    const objectKeys = new Set(
+      [
+        timbre.audioObjectKey,
+        timbre.audioUrl,
+        timbre.previewAudioObjectKey,
+        timbre.previewAudioUrl,
+        ...(timbre.generatedAudios ?? []).map(item => item.objectKey),
+      ]
+        .map(value => this.resolveTimbreObjectKey(value))
+        .filter((value): value is string => Boolean(value))
+    );
+
+    for (const objectKey of objectKeys) {
+      try {
+        await this.storageService.deleteCosObject(objectKey);
+        deletedObjectKeys.add(objectKey);
+      } catch (error) {
+        failures.push(
+          `声音文件删除失败：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+  }
+
+  private resolveTimbreObjectKey(value?: string): string | undefined {
+    const objectKey = this.storageFileService
+      .normalizeForStorage(value)
+      ?.trim()
+      .replace(/^\/+/, '');
+    const allowedPrefixes = [
+      'voice-timbres/',
+      'voice-training-ready/',
+      'voice-timbre-previews/',
+      'voice-timbre-generated/',
+    ];
+
+    return objectKey &&
+      !objectKey.includes('..') &&
+      allowedPrefixes.some(prefix => objectKey.startsWith(prefix))
+      ? objectKey
+      : undefined;
+  }
+
+  private isAlreadyDeletedProviderError(error: unknown): boolean {
+    const code = String((error as { code?: string })?.code || '').toLowerCase();
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error);
+
+    return (
+      /not[_ -]?found|not[_ -]?exist|already[_ -]?deleted/.test(code) ||
+      /not found|not exist|does not exist|already deleted|不存在|已删除/.test(
+        message
+      )
+    );
   }
 
   private async getVoiceTimbreById(
@@ -1408,9 +1723,7 @@ export class AdminVoiceTimbreService {
           this.isCosyVoiceV35PlusModel(model)
         ? COSYVOICE_V35_DIALECT_OPTIONS
         : VOICE_TIMBRE_DIALECT_OPTIONS;
-    return (
-      options.find(option => option.value === normalized)?.value || 'auto'
-    );
+    return options.find(option => option.value === normalized)?.value || 'auto';
   }
 
   private normalizeSpeechInstruction(value?: string): string {
@@ -1449,9 +1762,7 @@ export class AdminVoiceTimbreService {
     ].join('|');
   }
 
-  private supportsTimbreSpeechInstruction(
-    timbre: VoiceTimbreEntity
-  ): boolean {
+  private supportsTimbreSpeechInstruction(timbre: VoiceTimbreEntity): boolean {
     if (timbre.provider === VoiceTimbreProvider.qwen) {
       return this.isQwenAudioModel(timbre.previewModel);
     }

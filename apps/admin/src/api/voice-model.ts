@@ -5,6 +5,7 @@ import type {
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   CreateAdminVoiceTimbreDTO,
+  DeleteAdminVoiceTimbreResultDTO,
   UpdateAdminVoiceTimbreDTO,
 } from '@tzl/shared';
 
@@ -25,6 +26,12 @@ export function createVoiceTimbre(data: CreateVoiceTimbreData) {
 
 export function updateVoiceTimbre(id: string, data: UpdateVoiceTimbreData) {
   return axios.put<VoiceTimbreRecord>(`/admin_api/voice-timbres/${id}`, data);
+}
+
+export function deleteVoiceTimbre(id: string) {
+  return axios.delete<DeleteAdminVoiceTimbreResultDTO>(
+    `/admin_api/voice-timbres/${id}`
+  );
 }
 
 export function retryVoiceTimbre(id: string) {
