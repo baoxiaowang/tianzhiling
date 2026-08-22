@@ -1,4 +1,4 @@
-import { Init, Inject, Logger, Provide } from '@midwayjs/core';
+import { Destroy, Init, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -119,6 +119,8 @@ export interface RelationshipOpenLoopBackfillStatus {
   verifiedConversationCount?: number;
   failedConversationCount?: number;
   completedAt?: string;
+  schedulerActive?: boolean;
+  nextEligibleAt?: string;
 }
 
 const RETURN_GAP_MS = 12 * 60 * 60 * 1000;
@@ -178,6 +180,13 @@ export class RelationshipOpenLoopService {
       BACKFILL_RETRY_INTERVAL_MS
     );
     this.productionBackfillTimer.unref();
+  }
+
+  @Destroy()
+  async stopProductionBackfillScheduler(): Promise<void> {
+    if (!this.productionBackfillTimer) return;
+    clearInterval(this.productionBackfillTimer);
+    this.productionBackfillTimer = undefined;
   }
 
   async captureFromUserMessage(
@@ -632,11 +641,12 @@ export class RelationshipOpenLoopService {
   }
 
   async getProductionBackfillStatus(): Promise<RelationshipOpenLoopBackfillStatus> {
+    const schedule = this.buildBackfillScheduleStatus();
     if (process.env.NODE_ENV !== 'production') {
-      return { jobId: BACKFILL_JOB_ID, status: 'pending' };
+      return { jobId: BACKFILL_JOB_ID, status: 'pending', ...schedule };
     }
     if (!this.redisService) {
-      return { jobId: BACKFILL_JOB_ID, status: 'unknown' };
+      return { jobId: BACKFILL_JOB_ID, status: 'unknown', ...schedule };
     }
     try {
       const completed = await this.redisService.get(
@@ -651,6 +661,7 @@ export class RelationshipOpenLoopService {
           ...(typeof parsed.completedAt === 'string'
             ? { completedAt: parsed.completedAt }
             : {}),
+          ...schedule,
         };
       }
       const failed = await this.redisService.get(
@@ -662,6 +673,7 @@ export class RelationshipOpenLoopService {
           jobId: BACKFILL_JOB_ID,
           status: 'partial_failed',
           ...this.pickBackfillStatusCounts(parsed),
+          ...schedule,
         };
       }
       const running = await this.redisService.get(
@@ -670,9 +682,10 @@ export class RelationshipOpenLoopService {
       return {
         jobId: BACKFILL_JOB_ID,
         status: running || backfillRunning ? 'running' : 'pending',
+        ...schedule,
       };
     } catch {
-      return { jobId: BACKFILL_JOB_ID, status: 'unknown' };
+      return { jobId: BACKFILL_JOB_ID, status: 'unknown', ...schedule };
     }
   }
 
@@ -1065,6 +1078,32 @@ export class RelationshipOpenLoopService {
   private isShanghaiMaintenanceWindow(now: Date): boolean {
     const shanghaiHour = (now.getUTCHours() + 8) % 24;
     return shanghaiHour >= 3 && shanghaiHour < 7;
+  }
+
+  private buildBackfillScheduleStatus(
+    now = new Date()
+  ): Pick<
+    RelationshipOpenLoopBackfillStatus,
+    'schedulerActive' | 'nextEligibleAt'
+  > {
+    return {
+      schedulerActive: Boolean(this.productionBackfillTimer),
+      nextEligibleAt:
+        this.resolveNextShanghaiMaintenanceWindow(now).toISOString(),
+    };
+  }
+
+  private resolveNextShanghaiMaintenanceWindow(now: Date): Date {
+    if (this.isShanghaiMaintenanceWindow(now)) return now;
+    const shanghaiNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const nextDayOffset = shanghaiNow.getUTCHours() >= 7 ? 1 : 0;
+    const shanghaiWindowStartAsUtc = Date.UTC(
+      shanghaiNow.getUTCFullYear(),
+      shanghaiNow.getUTCMonth(),
+      shanghaiNow.getUTCDate() + nextDayOffset,
+      3
+    );
+    return new Date(shanghaiWindowStartAsUtc - 8 * 60 * 60 * 1000);
   }
 
   private buildSearchableText(message: MessageEntity): string {

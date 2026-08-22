@@ -160,7 +160,9 @@ import {
   type MessengerMemoryTaskPlan,
 } from './agents/messenger.service';
 import {
+  applyRecognitionJourneyDelivery,
   applyRecognitionJourneyObservation,
+  applyRecognitionJourneyObserverUnavailable,
   buildInitialRecognitionJourney,
   buildLegacyRecognitionJourney,
   parseRecognitionJourney,
@@ -4606,28 +4608,40 @@ export class ConversationService {
       const earliestCurrentMessage = [...options.currentTurnMessages].sort(
         (left, right) => left.createdAt.getTime() - right.createdAt.getTime()
       )[0];
-      const priorUserMessageCount = await this.messageModel.count({
+      // A debounced group of user bubbles is one conversational turn. Count
+      // prior persisted assistant reply groups, not raw user message rows.
+      const priorReplyTurnCount = await this.messageModel.count({
         conversationId: conversation.id,
-        role: MessageRole.user,
+        role: MessageRole.assistant,
         status: MessageStatus.sent,
         isArchived: { $ne: true },
+        $or: [{ replySegmentIndex: 0 }, { replyGroupId: { $in: [null, ''] } }],
         ...(earliestCurrentMessage?.createdAt
           ? { createdAt: { $lt: earliestCurrentMessage.createdAt } }
           : {}),
       } as never);
-      const userTurnNumber =
-        priorUserMessageCount + Math.max(1, options.currentTurnMessages.length);
+      // Every created conversation already contains one proactive assistant
+      // opening. It is not a completed user turn, so the first user message is
+      // turn 1; each later persisted assistant group advances the count once.
+      const userTurnNumber = Math.max(1, priorReplyTurnCount);
       const stored = await this.findRecognitionJourneyStateMessage(
         conversation.id
       );
       let stateMessage = stored?.message;
       let journey = stored?.journey;
       if (!stateMessage || !journey) {
+        const initialOpening =
+          priorReplyTurnCount > 0 && priorReplyTurnCount < 20
+            ? await this.findInitialRecognitionOpeningMessage(conversation.id)
+            : undefined;
         journey =
-          priorUserMessageCount >= 20
+          priorReplyTurnCount >= 20
             ? buildLegacyRecognitionJourney()
             : buildInitialRecognitionJourney({
                 hasKnownDepartureDate: Boolean(options.runtime.agent.deathDate),
+                openingAssistantMessageId: initialOpening
+                  ? this.stringifyObjectId(initialOpening.id)
+                  : undefined,
               });
         stateMessage = await this.createRecognitionJourneyStateMessage({
           runtime: options.runtime,
@@ -4635,7 +4649,9 @@ export class ConversationService {
         });
       }
 
-      const beforeState = serializeRecognitionJourney(journey);
+      // Compare with persisted content so V1/V2 states are upgraded to V3 even
+      // when the current turn causes no other semantic state change.
+      const beforeState = stateMessage.content || '';
       const resolved = planRecognitionJourneyTurn({
         journey,
         currentQuery: options.before.searchableText,
@@ -4646,9 +4662,12 @@ export class ConversationService {
       });
       const nextState = serializeRecognitionJourney(resolved.journey);
       if (nextState !== beforeState) {
-        stateMessage.content = nextState;
-        stateMessage.updatedAt = new Date();
-        await this.messageModel.save(stateMessage);
+        stateMessage = await this.saveRecognitionJourneyStateMessage({
+          conversationId: conversation.id,
+          stateMessage,
+          content: nextState,
+          updatedAt: new Date(),
+        });
       }
       return {
         ...resolved.plan,
@@ -4736,9 +4755,49 @@ export class ConversationService {
       const latestAssistantMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
       const assistantText = options.processed.replySegments.join('\n');
+      const openingDeliveryFailed = Boolean(
+        plan.openingSuggested &&
+          options.processed.routing?.generationFailureCode
+      );
+      const deliveredJourney = openingDeliveryFailed
+        ? journey
+        : applyRecognitionJourneyDelivery({
+            journey,
+            plan,
+            assistantMessageId: this.stringifyObjectId(
+              latestAssistantMessage.id
+            ),
+            now: latestAssistantMessage.createdAt,
+          });
+      let openingAssistantText = '';
+      if (deliveredJourney.opening.openingAssistantMessageId) {
+        const openingMessage = await this.findMessageById(
+          this.parseObjectId(
+            deliveredJourney.opening.openingAssistantMessageId
+          ),
+          options.runtime.conversation.id
+        );
+        openingAssistantText = openingMessage?.content || '';
+      }
+
+      // Delivery is deterministic durable state. Semantic observation is only
+      // needed at explicit journey checkpoints, never on ordinary turns.
+      if (!plan.observerCheckpoint || openingDeliveryFailed) {
+        const deliveredState = serializeRecognitionJourney(deliveredJourney);
+        if (deliveredState !== stateMessage.content) {
+          await this.saveRecognitionJourneyStateMessage({
+            conversationId: options.runtime.conversation.id,
+            stateMessage,
+            content: deliveredState,
+            updatedAt: latestAssistantMessage.updatedAt || new Date(),
+          });
+        }
+        return;
+      }
       const observed = await this.recognitionJourneyObserverService?.observe({
-        journey,
+        journey: deliveredJourney,
         plan,
+        openingAssistantText,
         currentUserText: plan.currentUserText || '',
         assistantText,
       });
@@ -4754,7 +4813,7 @@ export class ConversationService {
             suggestedTaskId: plan.suggestedTaskId,
             userTurnNumber: plan.userTurnNumber,
           },
-          before: journey,
+          before: deliveredJourney,
           observation: observed?.observation,
         },
         attributes: {
@@ -4765,10 +4824,26 @@ export class ConversationService {
           totalTokens: observed?.usage?.totalTokens,
         },
       });
-      if (observed?.status !== 'observed' || !observed.observation) return;
+      if (observed?.status !== 'observed' || !observed.observation) {
+        const unavailableJourney = applyRecognitionJourneyObserverUnavailable({
+          journey: deliveredJourney,
+          plan,
+          now: latestAssistantMessage.createdAt,
+        });
+        const deliveredState = serializeRecognitionJourney(unavailableJourney);
+        if (deliveredState !== stateMessage.content) {
+          await this.saveRecognitionJourneyStateMessage({
+            conversationId: options.runtime.conversation.id,
+            stateMessage,
+            content: deliveredState,
+            updatedAt: latestAssistantMessage.updatedAt || new Date(),
+          });
+        }
+        return;
+      }
 
       const updated = applyRecognitionJourneyObservation({
-        journey,
+        journey: deliveredJourney,
         plan,
         observation: observed.observation,
         assistantMessageId: this.stringifyObjectId(latestAssistantMessage.id),
@@ -4781,7 +4856,7 @@ export class ConversationService {
         kind: ChatTraceArtifactKind.reviewCandidate,
         operation: 'artifact.recognition_journey.transition',
         payload: {
-          before: journey,
+          before: deliveredJourney,
           observation: observed.observation,
           after: updated,
         },
@@ -4792,9 +4867,12 @@ export class ConversationService {
       });
       if (nextState === stateMessage.content) return;
 
-      stateMessage.content = nextState;
-      stateMessage.updatedAt = latestAssistantMessage.updatedAt || new Date();
-      await this.messageModel.save(stateMessage);
+      await this.saveRecognitionJourneyStateMessage({
+        conversationId: options.runtime.conversation.id,
+        stateMessage,
+        content: nextState,
+        updatedAt: latestAssistantMessage.updatedAt || new Date(),
+      });
     } catch (error) {
       this.logger?.warn?.(
         '[conversation] recognition journey finalization skipped, conversationId=%s, reason=%s',
@@ -4880,11 +4958,12 @@ export class ConversationService {
         conversationId,
         role: MessageRole.system,
         isArchived: true,
-      },
+        content: { $regex: '^__TZL_RECOGNITION_JOURNEY_V[123]__:' },
+      } as never,
       order: {
         updatedAt: 'DESC',
       },
-      take: 20,
+      take: 2,
     });
 
     for (const message of candidates) {
@@ -4892,6 +4971,22 @@ export class ConversationService {
       if (journey) return { message, journey };
     }
     return undefined;
+  }
+
+  private async findInitialRecognitionOpeningMessage(
+    conversationId: MongoObjectId
+  ): Promise<MessageEntity | undefined> {
+    const messages = await this.messageModel.find({
+      where: {
+        conversationId,
+        role: MessageRole.assistant,
+        status: MessageStatus.sent,
+        isArchived: { $ne: true },
+      } as never,
+      order: { createdAt: 'ASC' },
+      take: 1,
+    });
+    return messages[0];
   }
 
   private async findRecognitionJourneyStateMessageById(
@@ -4941,7 +5036,32 @@ export class ConversationService {
     message.archivedAt = now;
     message.createdAt = now;
     message.updatedAt = now;
-    return this.messageModel.save(message);
+    return this.saveRecognitionJourneyStateMessage({
+      conversationId: options.runtime.conversation.id,
+      stateMessage: message,
+      content: message.content,
+      updatedAt: now,
+    });
+  }
+
+  private async saveRecognitionJourneyStateMessage(options: {
+    conversationId: MongoObjectId;
+    stateMessage: MessageEntity;
+    content: string;
+    updatedAt: Date;
+  }): Promise<MessageEntity> {
+    options.stateMessage.content = options.content;
+    options.stateMessage.updatedAt = options.updatedAt;
+    const saved = await this.messageModel.save(options.stateMessage);
+    const stateMessageId = this.stringifyObjectId(saved.id);
+    const verified = await this.findRecognitionJourneyStateMessageById(
+      options.conversationId,
+      stateMessageId
+    );
+    if (!verified || verified.content !== options.content) {
+      throw new Error('RECOGNITION_JOURNEY_READBACK_FAILED');
+    }
+    return verified;
   }
 
   private async buildLightweightReplyMessages(options: {

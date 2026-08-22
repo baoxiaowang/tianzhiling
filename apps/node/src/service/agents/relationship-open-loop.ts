@@ -117,6 +117,7 @@ export interface RelationshipOpenLoopSelectionOptions {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRESENTATION_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const NON_ADOPTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const PROACTIVE_MENTION_COOLDOWN_MS = 3 * DAY_MS;
 const DORMANT_SUPPRESSION_MS = 3 * DAY_MS;
 const RECENT_PRESENTATION_REFERENCE_MS = DAY_MS;
@@ -490,6 +491,12 @@ export function selectRelationshipOpenLoop(
         !task.proactiveSuppressedUntil ||
         task.proactiveSuppressedUntil.getTime() <= now.getTime()
     )
+    .filter(
+      task =>
+        !task.lastObservationUnknownAt ||
+        now.getTime() - task.lastObservationUnknownAt.getTime() >=
+          NON_ADOPTION_COOLDOWN_MS
+    )
     .filter(task => !task.sourceMessageIds.every(id => currentIds.has(id)))
     .map(task => {
       const association = resolveAssociation(query, task);
@@ -642,7 +649,7 @@ export function buildRelationshipOpenLoopPrompt(
   lines.push(
     reason === 'current_association'
       ? '当前消息与这件事存在明确关联，请把它作为理解背景；如何回应、是否追问和怎样展开由你结合完整上下文决定。不要把旧状态说成现在仍然如此。'
-      : '这是本轮较高优先级的关系连续性信息。除非当前消息有更紧急的内容或明显不适合提起，否则应自然关心一次；不规定具体问法、建议、展开或收尾，也不要把旧状态说成现在仍然如此。'
+      : '这是本轮明确需要完成的一次关系连续性关心。先正面回应用户当前消息，再自然关心这件事现在的近况或结果；不规定具体问法、建议、展开或收尾，也不要把旧状态说成现在仍然如此。只有当前消息明显更紧急，或用户明确不愿提起时，才可以暂不使用。'
   );
   return lines.join('\n');
 }
@@ -909,6 +916,14 @@ function assistantTextReferencesTask(
   if (!text) return false;
   const anchors = extractDomainAnchors(task.summary, task.contentDomain);
   if (anchors.some(anchor => text.includes(anchor))) return true;
+  if (
+    subjectsMatch(text, task.subject) &&
+    /(?:怎么样|还好吗|好些|好点|没事|放心|担心|结果|恢复|顺利|照顾|处理|决定|安排|定下来)/u.test(
+      text
+    )
+  ) {
+    return true;
+  }
   return (
     extractKeywords(task.summary).filter(keyword => text.includes(keyword))
       .length >= 2
