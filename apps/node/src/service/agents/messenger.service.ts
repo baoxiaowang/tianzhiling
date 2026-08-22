@@ -46,7 +46,7 @@ const MESSENGER_MEMORY_TASK_DEFINITIONS: ReadonlyArray<{
 }> = [
   {
     key: 'personalityTraits',
-    title: 'TA 的样子',
+    title: '亲人的样子',
     description: '性格、脾气、语气和关心方式',
   },
   {
@@ -138,7 +138,7 @@ export class MessengerService {
   redisService: RedisService;
 
   buildMessengerName(agentName?: string): string {
-    const name = agentName?.trim() || 'TA';
+    const name = this.normalizeParentDisplayName(agentName);
     return `${name}的小使者`;
   }
 
@@ -146,8 +146,13 @@ export class MessengerService {
     parentAgent: AgentEntity,
     latestAssistantReply = ''
   ): MessengerMemoryTaskPlan {
+    const parentName = this.normalizeParentDisplayName(parentAgent.name);
     const tasks = MESSENGER_MEMORY_TASK_DEFINITIONS.map(definition => ({
       ...definition,
+      title:
+        definition.key === 'personalityTraits'
+          ? `${parentName}的样子`
+          : definition.title,
       status: parentAgent[definition.key]?.trim()
         ? ('completed' as const)
         : ('pending' as const),
@@ -163,7 +168,7 @@ export class MessengerService {
 
     return {
       parentAgentId: String(parentAgent.id || ''),
-      parentName: parentAgent.name?.trim() || 'TA',
+      parentName,
       completedCount,
       totalCount: tasks.length,
       isComplete: completedCount === tasks.length,
@@ -629,6 +634,23 @@ export class MessengerService {
         .slice(1)
         .map(message => message.content?.trim() || '')
         .filter(Boolean);
+      const previousTurns = conversationMessages
+        .filter(
+          message =>
+            String(message.id || '') !== String(sourceMessage?.id || '') &&
+            (message.role === MessageRole.user ||
+              message.role === MessageRole.assistant) &&
+            Boolean(message.content?.trim())
+        )
+        .slice(0, 12)
+        .reverse()
+        .map(message => ({
+          role:
+            message.role === MessageRole.user
+              ? ('user' as const)
+              : ('assistant' as const),
+          content: message.content?.trim() || '',
+        }));
       const askedFields = this.collectAskedInterviewFields(previousReplies);
       const memoryTaskPlan = this.buildMemoryTaskPlan(
         options.agent,
@@ -636,28 +658,32 @@ export class MessengerService {
       );
       const directReply = this.buildDirectCapabilityReply(
         options.agent,
-        options.input,
-        memoryTaskPlan.currentTaskKey || ''
+        options.input
       );
-      const shortContextReply = this.buildShortContextReply(
-        options.agent,
-        options.input,
-        previousReplies
-      );
-
-      if (directReply || shortContextReply) {
+      if (directReply) {
         await this.recordCallEvent(options, {
           status: MessengerCallStatus.skipped,
-          skipReason: directReply
-            ? 'direct_capability_reply'
-            : 'short_context_reply',
+          skipReason: 'direct_capability_reply',
           sourceMessageId: sourceMessage?.id,
           durationMs: Date.now() - startedAt,
           telemetry,
           changedProfileFields: [],
           profileSaved: false,
         });
-        return directReply || shortContextReply || '';
+        return directReply;
+      }
+
+      if (this.isInterviewPauseInput(options.input)) {
+        await this.recordCallEvent(options, {
+          status: MessengerCallStatus.skipped,
+          skipReason: 'user_paused_interview',
+          sourceMessageId: sourceMessage?.id,
+          durationMs: Date.now() - startedAt,
+          telemetry,
+          changedProfileFields: [],
+          profileSaved: false,
+        });
+        return this.buildInterviewPauseReply(options.agent);
       }
 
       if (!this.isMeaningfulInterviewInput(options.input)) {
@@ -681,6 +707,7 @@ export class MessengerService {
         askedFields,
         previousReplies,
         previousUserInputs,
+        previousTurns,
         taskField: memoryTaskPlan.currentTaskKey || '',
         turnCount: userMessageCount,
         onTelemetry: value => {
@@ -804,14 +831,13 @@ export class MessengerService {
 
   private buildDirectCapabilityReply(
     agent: AgentEntity,
-    input: string,
-    taskField: AgentProfileMemoryField | '' = ''
+    input: string
   ): string | undefined {
     const query = input.trim();
-    const parentName = agent.name?.trim() || 'TA';
+    const parentName = this.normalizeParentDisplayName(agent.name);
 
     if (this.isMemoryReceiptQuestion(query)) {
-      return this.buildMemoryReceiptReply(agent, taskField);
+      return this.buildMemoryReceiptReply(agent);
     }
 
     if (
@@ -819,10 +845,13 @@ export class MessengerService {
         query
       )
     ) {
-      return `我是来帮你收集、核实并补全${parentName}的经历、性格和家人回忆的。${this.buildTaskKickoffQuestion(
-        agent,
-        taskField
-      )}`;
+      return `我是${parentName}的小使者，专门帮你收集、核实并补全${parentName}的经历、性格和家人回忆。`;
+    }
+
+    if (
+      /^(?:你是谁|你是什么|这是(?:谁|什么)|你叫什么)[？?。！!\s]*$/.test(query)
+    ) {
+      return `我是${parentName}的小使者，负责帮${parentName}找回和补全真实记忆。`;
     }
 
     if (
@@ -846,21 +875,23 @@ export class MessengerService {
         query
       )
     ) {
-      return `听得出来你很想${parentName}。我不能确认那边的真实情况，但可以帮${parentName}把真实记忆补完整。${this.buildTaskKickoffQuestion(
-        agent,
-        taskField
-      )}`;
+      return `听得出来你很想${parentName}。我不能确认那边的真实情况，但可以帮${parentName}把真实记忆补完整。`;
     }
 
     if (
-      /(?:照片|头像|影像).{0,12}(?:复活|通话|视频|说话)|(?:复活|通话|视频).{0,12}(?:照片|头像|影像)/.test(
+      /(?:能不能|可以|能|想|希望|怎么|如何|用).{0,8}(?:照片|头像|影像).{0,12}(?:复活|通话|视频|说话)|(?:照片|头像|影像).{0,12}(?:能不能|可以|能|怎么|如何).{0,8}(?:复活|通话|视频|说话)|(?:复活|视频通话).{0,12}(?:照片|头像|影像)/.test(
         query
       )
     ) {
-      return `我懂你想再见${parentName}。目前小使者不能用照片复活或视频通话，但可以帮${parentName}补全记忆。${this.buildTaskKickoffQuestion(
-        agent,
-        taskField
-      )}`;
+      return `我懂你想再见${parentName}。目前小使者不能用照片复活或视频通话，但可以帮${parentName}补全记忆。`;
+    }
+
+    if (
+      /(?:声音|音色|语音).{0,10}(?:复刻|克隆|合成|怎么做|能不能|可以吗)|(?:复刻|克隆).{0,8}(?:声音|音色|语音)/.test(
+        query
+      )
+    ) {
+      return `声音复刻需要${parentName}生前的声音素材，具体能否制作和费用以声音服务页面为准；我这里不替平台报价。`;
     }
 
     return undefined;
@@ -884,11 +915,8 @@ export class MessengerService {
     );
   }
 
-  private buildMemoryReceiptReply(
-    agent: AgentEntity,
-    taskField: AgentProfileMemoryField | ''
-  ): string {
-    const name = agent.name?.trim() || 'TA';
+  private buildMemoryReceiptReply(agent: AgentEntity): string {
+    const name = this.normalizeParentDisplayName(agent.name);
     const receiptFields: ReadonlyArray<{
       key: AgentProfileMemoryField;
       label: string;
@@ -910,10 +938,7 @@ export class MessengerService {
       .map(field => field.label);
 
     if (!saved.length) {
-      return `目前还没有保存到${name}的具体记忆。我会把你明确讲过或确认过的内容按人生经历、性格、爱好、说话习惯和共同回忆，分别保存到${name}的记忆资料里；不确定的不会当成事实。${this.buildTaskKickoffQuestion(
-        agent,
-        taskField
-      )}`;
+      return `目前还没有保存到${name}的具体记忆。我会把你明确讲过或确认过的内容按人生经历、性格、爱好、说话习惯和共同回忆，分别保存到${name}的记忆资料里；不确定的不会当成事实。`;
     }
 
     const lines = saved.map(field => `${field.label}：${field.value}`);
@@ -937,47 +962,6 @@ export class MessengerService {
     return characters.length > 48
       ? `${characters.slice(0, 48).join('')}…`
       : normalized;
-  }
-
-  private buildShortContextReply(
-    agent: AgentEntity,
-    input: string,
-    previousReplies: string[]
-  ): string | undefined {
-    const answer = input.trim().replace(/[。！!~～]+$/g, '');
-    const latestReply = previousReplies[0]?.trim() || '';
-    if (!latestReply || !/[？?]/.test(latestReply)) {
-      return undefined;
-    }
-
-    const name = agent.name?.trim() || 'TA';
-    if (/^(?:有|有的|有啊|有呀)$/.test(answer)) {
-      const field = this.collectAskedInterviewFields([latestReply])[0];
-      const followUps: Partial<Record<AgentProfileMemoryField, string>> = {
-        personalityTraits: `具体是哪一种性格，让你最先想到${name}？`,
-        lifeExperience: '是哪一段经历呢？你可以从最清楚的地方说。',
-        hobbies: `${name}最喜欢的具体是什么呢？`,
-        languageHabits: `有的话，${name}最常说的是哪一句？`,
-        sharedMemories: '是哪一段回忆呢？你可以慢慢说。',
-      };
-      return field ? followUps[field] : '有的话，你可以把具体内容慢慢告诉我。';
-    }
-
-    if (/^(?:对|是|是的|对的|嗯|确认|没错)$/.test(answer)) {
-      const field = this.collectAskedInterviewFields([latestReply])[0];
-      const followUps: Partial<Record<AgentProfileMemoryField, string>> = {
-        personalityTraits: `你最先想到的是${name}哪一种性格？`,
-        lifeExperience: '你确认的是哪段经历？可以从最清楚的地方说。',
-        hobbies: `${name}具体最喜欢做什么？`,
-        languageHabits: `${name}最常说的具体是哪一句？`,
-        sharedMemories: '你确认的是哪段回忆？',
-      };
-      return field
-        ? followUps[field]
-        : `明白。你想让我帮${name}记住的具体是什么？`;
-    }
-
-    return undefined;
   }
 
   private buildDraft(agent: AgentEntity): AgentProfileInterviewDraftDTO {
@@ -1018,13 +1002,27 @@ export class MessengerService {
       return false;
     }
 
-    return !/^(?:我)?(?:不知道(?:说什么)?|不清楚|没想好|想不到|没什么(?:可说)?)(?:了|呢|啊)?$/.test(
+    return !/^(?:(?:这个|这件事|这方面))?(?:我)?(?:实在|真的|暂时|现在)?(?:不知道(?:说什么)?|不清楚|没想好|想不到|想不起来|记不得|不记得|没什么(?:可说)?)(?:了|呢|啊)?$/.test(
       compact
     );
   }
 
+  private isInterviewPauseInput(input: string): boolean {
+    const compact = (input || '')
+      .replace(/[\s，。！？、,.!?~～…·]/g, '')
+      .trim();
+    return /^(?:我)?(?:不想说了?|不说了|先这样|先不说了?|下次再说|以后再说|回头再说|再想起来再说吧?|今天不聊了?|不聊了|到这里吧|就这样吧|算了|(?:和你)?聊也没(?:有)?什么了)$/.test(
+      compact
+    );
+  }
+
+  private buildInterviewPauseReply(agent: AgentEntity): string {
+    const name = this.normalizeParentDisplayName(agent.name);
+    return `好，我们先说到这里。以后想起${name}的什么，再来告诉我就好。`;
+  }
+
   private buildLowPressureReply(agent: AgentEntity, input: string): string {
-    const name = agent.name?.trim() || 'TA';
+    const name = this.normalizeParentDisplayName(agent.name);
     const compact = (input || '').replace(/[\s，。！？、,.!?~～…·]/g, '');
 
     return compact
@@ -1033,26 +1031,8 @@ export class MessengerService {
   }
 
   private buildFallbackReply(agent: AgentEntity): string {
-    const name = agent.name?.trim() || 'TA';
+    const name = this.normalizeParentDisplayName(agent.name);
     return `我在听，你想到${name}的什么，都可以慢慢讲给我。`;
-  }
-
-  private buildTaskKickoffQuestion(
-    agent: AgentEntity,
-    field: AgentProfileMemoryField | ''
-  ): string {
-    const name = agent.name?.trim() || 'TA';
-    const questions: Record<AgentProfileMemoryField, string> = {
-      personalityTraits: `一想到${name}，你最先想到怎样的性格？`,
-      lifeExperience: `${name}人生里哪段经历最重要？`,
-      hobbies: `${name}平时最喜欢做什么？`,
-      languageHabits: `${name}有没有常说的一句话？`,
-      sharedMemories: `你和${name}之间，最想让${name}记住哪段回忆？`,
-    };
-
-    return field
-      ? questions[field]
-      : `关于${name}，你还想帮${name}补上哪段具体记忆？`;
   }
 
   private async createInitialMessengerGreeting(
@@ -1061,7 +1041,7 @@ export class MessengerService {
     messengerAgent: AgentEntity,
     now: Date
   ): Promise<void> {
-    const parentName = parentAgent.name?.trim() || 'TA';
+    const parentName = this.normalizeParentDisplayName(parentAgent.name);
     const messengerName =
       messengerAgent.name?.trim() || this.buildMessengerName(parentAgent.name);
     const greetings = this.buildMessengerGreetings(parentName, messengerName);
@@ -1143,7 +1123,7 @@ export class MessengerService {
     if (/重要的经历|哪段经历|人生.*经历/.test(reply)) {
       return 'lifeExperience';
     }
-    if (/喜欢做什么|小爱好|喜欢的事|让 TA 开心/.test(reply)) {
+    if (/喜欢做什么|小爱好|喜欢的事|开心/.test(reply)) {
       return 'hobbies';
     }
     if (/共同记忆|最想留住|哪段回忆|回忆里.*小细节/.test(reply)) {
@@ -1157,5 +1137,11 @@ export class MessengerService {
       return 'sharedMemories';
     }
     return '';
+  }
+
+  private normalizeParentDisplayName(value?: string): string {
+    const raw = value?.trim() || '';
+    const firstPart = raw.split(/[。！？!?\n]/, 1)[0]?.trim() || '';
+    return firstPart && firstPart.length <= 20 ? firstPart : '亲人';
   }
 }
