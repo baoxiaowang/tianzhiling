@@ -46,7 +46,6 @@ import {
 } from './agent-relationship-continuity';
 import {
   buildReplyBubblePlan,
-  buildReplyBubblePlanPrompt,
   isReplyClosingTurn,
   ReplyBubblePlan,
 } from './reply-bubble-plan';
@@ -58,7 +57,6 @@ import {
 import {
   analyzeReplyInputProfile,
   buildReplyLengthPlan,
-  buildReplyLengthPlanPrompt,
   ReplyLengthPlan,
 } from './reply-length-plan';
 import {
@@ -2312,11 +2310,6 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '不要只回复做不到；不编现实记忆、现实感知和现实行动。',
     '',
     ...replyActionLines,
-    '## 表达长度原则',
-    buildReplyLengthPlanPrompt(brief.lengthPlan),
-    '',
-    '## 完整正文与展示适配',
-    buildReplyBubblePlanPrompt(brief.bubblePlan),
     '有节奏的重复可以加强情感，不因字面同义直接删除。',
     '短句、称呼和语气词有真实表达作用时可以保留；不能把截断残句当成留白。',
     outputContractPrompt,

@@ -48,7 +48,6 @@ import {
   compactReplyBubblesPreservingContent,
   MAX_ASSISTANT_REPLY_SEGMENTS,
 } from './reply-bubble-plan';
-import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import {
   buildReplyOutputContractPrompt,
   buildReplyReviewOutputContractPrompt,
@@ -2094,13 +2093,6 @@ export class ReplyGuardrailService {
       '最近对话中 user 内容只能做用户归因，assistant 内容只用于理解对话走向和被纠正对象，绝不是可陈述事实；确定事实仍只来自下方可用证据。',
       `最近对话：${JSON.stringify(conversationContext.recentMessages)}`,
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       `候选事实辅助申报：${JSON.stringify(candidate.claims)}`,
@@ -2561,13 +2553,6 @@ export class ReplyGuardrailService {
       '最近对话中 user 内容只能做用户归因，assistant 内容只用于理解对话走向和被纠正对象，不能作为事实、共同记忆或感知证据。',
       `最近对话：${JSON.stringify(conversationContext.recentMessages)}`,
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       ...(finalRecovery
@@ -3195,13 +3180,6 @@ export class ReplyGuardrailService {
           .join('\n')
       ),
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       ...attentionLines,
       '候选回复：',
       ...segments.map((segment, index) => `${index + 1}. ${segment}`),
