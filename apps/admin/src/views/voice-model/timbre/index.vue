@@ -257,7 +257,7 @@
                 @change="onProviderChange"
               >
                 <a-option value="minimax">MiniMax</a-option>
-                <a-option value="cosyvoice"> CosyVoice v3.5 Plus </a-option>
+                <a-option value="cosyvoice">CosyVoice v3.5 Plus</a-option>
                 <a-option value="qwen">千问（Qwen3 / Audio Plus）</a-option>
                 <a-option value="doubao" disabled>豆包（未接入）</a-option>
               </a-select>
