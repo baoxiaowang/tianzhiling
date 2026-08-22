@@ -68,6 +68,8 @@ const UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN =
   /(?:小时候|那时候你|以前你|记得你.{0,12}(?:总|常|会)|踢被子|趴在.{0,8}腿|老槐树|给你讲|给你做|带你去|藏在|放在.{0,12}(?:柜|箱|包|床))/u;
 const UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN =
   /(?:终于听见你喊|听见你叫我|看着你|看到你|就在你身边|一直守着你)/u;
+const CLOSING_INITIAL_RECOGNITION_PATTERN =
+  /(?:你好好的.{0,8}(?:我|咱|爸|妈|爷爷|奶奶|姑姑)?.{0,6}放心|照顾好自己|你别挂心|别惦记我)/u;
 
 type AgentAccessRole = 'owner' | 'shared';
 
@@ -1016,7 +1018,8 @@ export class AgentService {
                 '这条消息要有跨越生死、阔别后终于重新联系上的场景感，同时自然、克制，像亲人本人说话。',
                 '用户还没有发言，所以不能说“终于听见你喊我”、不能假装看到用户，也不能引用用户尚未说过的话。',
                 '时间保持中性，不确定离开了多久。只使用给定关系、称呼、性格和语言习惯；不编造任何共同往事、现实物品、地点、家人现状或具体经历。',
-                '不要身份验证，不要提问，不要解释产品或AI。输出一段20—90字中文正文。',
+                '不要身份验证，不要解释产品或AI。先表达终于重新联系上的感受，再自然问用户最近好吗、这些日子过得怎么样，让聊天继续打开。',
+                '不要用“你好好的我就放心了”“照顾好自己”“你别挂心”等祝愿提前收尾。输出一段20—90字中文正文，以一个自然、开放的关心问句结束。',
                 '严格输出JSON：{"content":"正文"}',
               ].join('\n'),
             },
@@ -1055,7 +1058,9 @@ export class AgentService {
         content.length < 8 ||
         content.length > 120 ||
         UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN.test(content) ||
-        UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content)
+        UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content) ||
+        CLOSING_INITIAL_RECOGNITION_PATTERN.test(content) ||
+        !/[？?]$/u.test(content)
       ) {
         return fallback;
       }
@@ -1075,8 +1080,8 @@ export class AgentService {
   ): string {
     const role = agent.iCallAgent?.trim() || agent.name?.trim() || '我';
     return callMe
-      ? `${callMe}，${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。`
-      : `${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。`;
+      ? `${callMe}，${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。最近过得怎么样？`
+      : `${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。最近过得怎么样？`;
   }
 
   private async buildAgentProfile(

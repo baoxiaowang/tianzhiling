@@ -69,7 +69,8 @@ export class RecognitionJourneyObserverService {
                 '只有助手表达了跨越生死后重新联系、时间错位或未说完的爱与舍不得，并且主动带来了超过同义复述的角色情感，才是 emotionally_opened。',
                 'emotionally_received 必须同时看到：实际相认开场、开场后的用户回应、随后亲人继续承接；只凭普通安慰或“奶奶记着你”不能成立。',
                 '助手自行编造的小时候、老宅、饭菜、睡觉习惯等共同往事既不能作为相认证据，也不能证明用户接住了相认。',
-                '任务只在 task_proposal 检查点判断助手是否真正提出入口，只在 task_response 检查点判断用户是否回答了那一个已提出任务。老宅拆除、房产争议等无关信息不等于“家人近况”。',
+                '在 task_proposal 检查点，只判断最终回复实际带出了哪个候选信息入口；程序给了候选但助手没问，必须是 not_observed。',
+                '在 task_response 检查点，以及 task_proposal 中标记的 observedTasks，只判断用户是否确实提供了对应信息。老宅拆除、房产争议等无关信息不等于“家人近况”。',
                 '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","evidence":"最多80字的观察依据"}',
               ].join('\n'),
             },
@@ -89,7 +90,9 @@ export class RecognitionJourneyObserverService {
                   checkpoint: options.plan.observerCheckpoint,
                   opening: options.plan.openingSuggested,
                   task: options.plan.suggestedTaskId,
+                  eligibleTasks: options.plan.eligibleTaskIds,
                   observedTask: options.plan.observedTaskId,
+                  observedTasks: options.plan.observedTaskIds,
                 },
                 openingAssistantMessage: (
                   options.openingAssistantText || ''
@@ -130,10 +133,9 @@ export class RecognitionJourneyObserverService {
     journey: RecognitionJourney;
     plan: RecognitionJourneyTurnPlan;
   }): boolean {
-    return Boolean(
-      options.plan.observerCheckpoint &&
-        (!options.plan.userTurnNumber || options.plan.userTurnNumber <= 20)
-    );
+    if (!options.plan.observerCheckpoint) return false;
+    if (options.plan.observerCheckpoint === 'task_response') return true;
+    return !options.plan.userTurnNumber || options.plan.userTurnNumber <= 20;
   }
 }
 
