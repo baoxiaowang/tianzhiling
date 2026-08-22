@@ -3,6 +3,10 @@ import type { ILogger } from '@midwayjs/logger';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
+import {
+  buildCosyVoiceSpeechInstruction,
+  getCosyVoiceSpeechInstructionSource,
+} from '@tzl/shared';
 import { AppError } from '../common/errors';
 
 interface CosyVoiceConfig {
@@ -41,6 +45,8 @@ export interface CosyVoiceSpeechInput {
   speed?: number;
   volume?: number;
   pitch?: number;
+  instruction?: string;
+  dialect?: string;
 }
 
 export interface CosyVoiceSpeechResult {
@@ -86,6 +92,9 @@ export class CosyVoiceSpeechService {
     const sampleRate = this.normalizeSampleRate();
     const model = this.resolveSpeechModel(input.model, voiceId);
     const languageHint = this.normalizeLanguageHint(input.languageHint);
+    const instruction = this.isInstructionModel(model)
+      ? buildCosyVoiceSpeechInstruction(input)
+      : undefined;
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -98,16 +107,21 @@ export class CosyVoiceSpeechService {
           rate: this.normalizeRate(input.speed),
           pitch: this.normalizePitch(input.pitch),
           ...(languageHint ? { language_hints: [languageHint] } : {}),
+          ...(instruction ? { instruction } : {}),
         },
       })
     );
 
     this.logger.info(
-      '[cosyvoice-speech] synthesize, model=%s, voiceId=%s, format=%s, textLength=%s',
+      '[cosyvoice-speech] synthesize, model=%s, voiceId=%s, format=%s, textLength=%s, instructionSource=%s, instructionLength=%s',
       model,
       voiceId,
       format,
-      text.length
+      text.length,
+      instruction
+        ? getCosyVoiceSpeechInstructionSource(input)
+        : 'none',
+      instruction?.length || 0
     );
 
     const response = await this.requestJson<CosyVoiceSpeechResp>({
@@ -356,6 +370,10 @@ export class CosyVoiceSpeechService {
         /^(cosyvoice-v\d+(?:\.\d+)?(?:-[a-z0-9]+)*?)-[a-z0-9]{1,10}$/
       )?.[1] || ''
     );
+  }
+
+  private isInstructionModel(model?: string): boolean {
+    return /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
   }
 
   private normalizeOutputFormat(): string {

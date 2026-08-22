@@ -1,5 +1,9 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
-import { AppError } from '@tzl/shared';
+import {
+  AppError,
+  buildCosyVoiceSpeechInstruction,
+  getCosyVoiceSpeechInstructionSource,
+} from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -72,6 +76,8 @@ export interface CosyVoicePreviewSpeechInput {
   speed?: number;
   volume?: number;
   pitch?: number;
+  instruction?: string;
+  dialect?: string;
 }
 
 export interface CosyVoicePreviewSpeechResult {
@@ -192,6 +198,9 @@ export class CosyVoiceVoiceService {
     const format = 'mp3';
     const languageHint = this.normalizeLanguageHint(input.languageHint);
     const model = this.resolveSpeechModel(input.model, voiceId);
+    const instruction = this.isInstructionModel(model)
+      ? buildCosyVoiceSpeechInstruction(input)
+      : undefined;
     const body = Buffer.from(
       JSON.stringify({
         model,
@@ -204,8 +213,18 @@ export class CosyVoiceVoiceService {
           rate: this.normalizeRate(input.speed),
           pitch: this.normalizePitch(input.pitch),
           ...(languageHint ? { language_hints: [languageHint] } : {}),
+          ...(instruction ? { instruction } : {}),
         },
       })
+    );
+    this.logger?.info?.(
+      '[cosyvoice] synthesize preview, model=%s, voiceId=%s, instructionSource=%s, instructionLength=%s',
+      model,
+      voiceId,
+      instruction
+        ? getCosyVoiceSpeechInstructionSource(input)
+        : 'none',
+      instruction?.length || 0
     );
     const response = await this.requestJson<CosyVoiceSpeechResp>({
       path: '/api/v1/services/audio/tts/SpeechSynthesizer',
@@ -424,6 +443,10 @@ export class CosyVoiceVoiceService {
         /^(cosyvoice-v\d+(?:\.\d+)?(?:-[a-z0-9]+)*?)-[a-z0-9]{1,10}$/
       )?.[1] || ''
     );
+  }
+
+  private isInstructionModel(model?: string): boolean {
+    return /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
   }
 
   private normalizeRate(value: unknown): number {

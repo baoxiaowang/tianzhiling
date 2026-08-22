@@ -257,7 +257,7 @@
                 @change="onProviderChange"
               >
                 <a-option value="minimax">MiniMax</a-option>
-                <a-option value="cosyvoice">CosyVoice</a-option>
+                <a-option value="cosyvoice"> CosyVoice v3.5 Plus </a-option>
                 <a-option value="qwen">千问（Qwen3 / Audio Plus）</a-option>
                 <a-option value="doubao" disabled>豆包（未接入）</a-option>
               </a-select>
@@ -368,7 +368,7 @@
               </a-option>
             </a-select>
             <template #extra>
-              要求东北话、山东话等明确方言时，请直接选择；只有不限定方言时才选“自动”。
+              {{ speechDialectHelp }}
             </template>
           </a-form-item>
           <a-form-item
@@ -387,15 +387,16 @@
               :max-length="50"
               show-word-limit
               :auto-size="{ minRows: 3, maxRows: 5 }"
-              placeholder="如：不要转成普通话，保留原音色和说话习惯"
+              :placeholder="speechInstructionPlaceholder"
             />
             <template #extra>
               <div class="voice-timbre-page__instruction-help">
                 <span>
-                  系统会把上面选择的方言强指令与这里的补充要求合并，不会相互覆盖。
+                  建议填写正向、明确且不冲突的要求，例如“语气亲切自然，保留长辈说话的停顿习惯”。
                 </span>
                 <span>
-                  该内容会作为 Plus 的 instruction
+                  该内容会与所选方言合并，作为
+                  {{ speechInstructionModelName }} 的 instruction
                   用于试听和聊天合成，不参与音色复刻训练；修改后只刷新试听。
                 </span>
               </div>
@@ -625,8 +626,9 @@
   const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
   const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
   const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
+  const COSYVOICE_V35_PLUS_MODEL = 'cosyvoice-v3.5-plus';
   const DEFAULT_QWEN_TIMBRE_MODEL = QWEN_AUDIO_PLUS_MODEL;
-  const voiceTimbreDialectOptions: ReadonlyArray<{
+  const QWEN_AUDIO_DIALECT_OPTIONS: ReadonlyArray<{
     value: VoiceTimbreDialectDTO;
     label: string;
   }> = [
@@ -652,6 +654,37 @@
     { value: 'shanghai', label: '上海话' },
     { value: 'sichuan', label: '四川话' },
     { value: 'yunnan', label: '云南话' },
+  ];
+  const COSYVOICE_V35_DIALECT_OPTIONS: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    { value: 'auto', label: '自动（跟随文本）' },
+    { value: 'mandarin', label: '普通话' },
+    { value: 'cantonese', label: '广东话' },
+    { value: 'northeastern', label: '东北话' },
+    { value: 'gansu', label: '甘肃话' },
+    { value: 'guizhou', label: '贵州话' },
+    { value: 'henan', label: '河南话' },
+    { value: 'hubei', label: '湖北话' },
+    { value: 'jiangxi', label: '江西话' },
+    { value: 'minnan', label: '闽南话' },
+    { value: 'ningxia', label: '宁夏话' },
+    { value: 'shanxi', label: '山西话' },
+    { value: 'shaanxi', label: '陕西话' },
+    { value: 'shandong', label: '山东话' },
+    { value: 'shanghai', label: '上海话' },
+    { value: 'sichuan', label: '四川话' },
+    { value: 'tianjin', label: '天津话' },
+    { value: 'yunnan', label: '云南话' },
+  ];
+  const VOICE_TIMBRE_DIALECT_OPTIONS: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    ...QWEN_AUDIO_DIALECT_OPTIONS,
+    { value: 'minnan', label: '闽南话' },
+    { value: 'tianjin', label: '天津话' },
   ];
   const qwenModelOptions = [
     {
@@ -732,8 +765,34 @@
   const isQwenProvider = computed(() => editForm.provider === 'qwen');
   const isQwenAudioPreviewModel = (model?: string) =>
     /^qwen-audio-/i.test(model?.trim() || '');
+  const isCosyVoiceV35PlusModel = (model?: string) =>
+    /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
+  const voiceTimbreDialectOptions = computed<
+    ReadonlyArray<{ value: VoiceTimbreDialectDTO; label: string }>
+  >(() =>
+    isCosyVoiceProvider.value
+      ? COSYVOICE_V35_DIALECT_OPTIONS
+      : QWEN_AUDIO_DIALECT_OPTIONS
+  );
   const supportsSpeechInstruction = computed(
-    () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
+    () =>
+      (isQwenProvider.value &&
+        isQwenAudioPreviewModel(editForm.previewModel)) ||
+      (isCosyVoiceProvider.value &&
+        isCosyVoiceV35PlusModel(editForm.previewModel))
+  );
+  const speechDialectHelp = computed(() =>
+    isCosyVoiceProvider.value
+      ? '这里仅展示 CosyVoice v3.5 Plus 官方支持的中文方言；有明确方言时直接选择，只有不限定时才选“自动”。'
+      : '这里仅展示 Qwen Audio Plus 支持的方言；有明确方言时直接选择，只有不限定时才选“自动”。'
+  );
+  const speechInstructionPlaceholder = computed(() =>
+    isCosyVoiceProvider.value
+      ? '如：语气亲切自然，保留长辈说话的停顿习惯'
+      : '如：情绪温和，保留原音色和说话习惯'
+  );
+  const speechInstructionModelName = computed(() =>
+    isCosyVoiceProvider.value ? 'CosyVoice v3.5 Plus' : 'Qwen Audio Plus'
   );
   const supportsQwenAudioSpeechSpeed = computed(
     () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
@@ -850,7 +909,11 @@
     editForm.audioObjectKey = record.audioObjectKey;
     editForm.audioUrl = record.audioUrl;
     editForm.cloneLanguage = record.cloneLanguage || 'auto';
-    editForm.previewModel = record.previewModel || QWEN3_TTS_VC_MODEL;
+    editForm.previewModel =
+      record.previewModel ||
+      (record.provider === 'cosyvoice'
+        ? COSYVOICE_V35_PLUS_MODEL
+        : QWEN3_TTS_VC_MODEL);
     editForm.speechDialect = resolveSpeechDialect(record);
     editForm.speechInstruction = record.speechInstruction?.trim() || '';
     editForm.providerVoiceId = record.providerVoiceId;
@@ -895,7 +958,9 @@
 
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
-    editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
+    editForm.previewModel = isCosyVoiceProvider.value
+      ? COSYVOICE_V35_PLUS_MODEL
+      : DEFAULT_QWEN_TIMBRE_MODEL;
     editForm.speechDialect = 'auto';
     editForm.speechInstruction = '';
     editForm.cloneLanguage =
@@ -1000,9 +1065,10 @@
           audioObjectKey: uploaded.objectKey,
           audioUrl: uploaded.publicUrl,
           cloneLanguage: editForm.cloneLanguage,
-          previewModel: isQwenProvider.value
-            ? editForm.previewModel
-            : undefined,
+          previewModel:
+            isQwenProvider.value || isCosyVoiceProvider.value
+              ? editForm.previewModel
+              : undefined,
           ...(supportsSpeechInstruction.value
             ? {
                 speechDialect: editForm.speechDialect,
@@ -1135,7 +1201,7 @@
     fallback = '未设置（跟随文本）'
   ) => {
     const dialect = resolveSpeechDialect(record);
-    const dialectLabel = voiceTimbreDialectOptions.find(
+    const dialectLabel = VOICE_TIMBRE_DIALECT_OPTIONS.find(
       (option) => option.value === dialect && option.value !== 'auto'
     )?.label;
     const parts = [
@@ -1156,7 +1222,7 @@
     }
 
     const instruction = record.speechInstruction?.trim() || '';
-    const dialect = [...voiceTimbreDialectOptions]
+    const dialect = [...VOICE_TIMBRE_DIALECT_OPTIONS]
       .filter(
         (option) => option.value !== 'auto' && option.value !== 'mandarin'
       )

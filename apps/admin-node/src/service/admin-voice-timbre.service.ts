@@ -2,7 +2,10 @@ import { Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import {
   AppError,
+  buildCosyVoiceSpeechInstruction,
   buildQwenAudioSpeechInstruction,
+  COSYVOICE_V35_DIALECT_OPTIONS,
+  QWEN_AUDIO_DIALECT_OPTIONS,
   VOICE_TIMBRE_DIALECT_OPTIONS,
 } from '@tzl/shared';
 import * as bullmq from '@midwayjs/bullmq';
@@ -151,7 +154,11 @@ export class AdminVoiceTimbreService {
     timbre.audioObjectKey = audioObjectKey;
     timbre.audioUrl = '';
     timbre.cloneLanguage = this.defaultCloneLanguage(provider);
-    timbre.speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
+    timbre.speechDialect = this.normalizeSpeechDialect(
+      payload.speechDialect,
+      provider,
+      previewModel
+    );
     timbre.speechInstruction = this.normalizeSpeechInstruction(
       payload.speechInstruction
     );
@@ -249,7 +256,8 @@ export class AdminVoiceTimbreService {
     const timbre = await this.getVoiceTimbreById(timbreId);
     let changed = false;
     let shouldRetrain = false;
-    const previousQwenPreviewSignature = this.buildQwenPreviewSignature(timbre);
+    const previousPreviewSignature =
+      this.buildProviderPreviewSignature(timbre);
 
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
@@ -270,7 +278,11 @@ export class AdminVoiceTimbreService {
     }
 
     if (payload.speechDialect !== undefined) {
-      const speechDialect = this.normalizeSpeechDialect(payload.speechDialect);
+      const speechDialect = this.normalizeSpeechDialect(
+        payload.speechDialect,
+        timbre.provider,
+        timbre.previewModel
+      );
       timbre.speechDialect = speechDialect;
       changed = true;
     }
@@ -304,22 +316,22 @@ export class AdminVoiceTimbreService {
     }
 
     if (changed) {
-      const shouldRefreshQwenPreview =
-        previousQwenPreviewSignature !== this.buildQwenPreviewSignature(timbre);
+      const shouldRefreshProviderPreview =
+        previousPreviewSignature !==
+        this.buildProviderPreviewSignature(timbre);
 
       if (shouldRetrain && timbre.status !== VoiceTimbreStatus.disabled) {
         this.prepareTimbreRetrain(timbre);
       }
 
       if (
-        shouldRefreshQwenPreview &&
+        shouldRefreshProviderPreview &&
         !shouldRetrain &&
         timbre.status === VoiceTimbreStatus.active &&
-        timbre.provider === VoiceTimbreProvider.qwen &&
-        this.isQwenAudioModel(timbre.previewModel) &&
+        this.supportsTimbreSpeechInstruction(timbre) &&
         timbre.providerVoiceId?.trim()
       ) {
-        timbre.previewAudioUrl = await this.createQwenPreviewAudio(
+        timbre.previewAudioUrl = await this.createProviderPreviewAudio(
           timbre,
           timbre.providerVoiceId,
           this.normalizePreviewText(timbre.previewText)
@@ -568,6 +580,10 @@ export class AdminVoiceTimbreService {
       speed: timbre.speechSpeed,
       volume: timbre.speechVolume,
       pitch: timbre.speechPitch,
+      ...(timbre.speechInstruction?.trim()
+        ? { instruction: timbre.speechInstruction.trim() }
+        : {}),
+      dialect: timbre.speechDialect,
     });
 
     if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
@@ -1379,11 +1395,21 @@ export class AdminVoiceTimbreService {
     return provider === VoiceTimbreProvider.minimax ? 'Chinese' : 'zh';
   }
 
-  private normalizeSpeechDialect(value?: string): VoiceTimbreDialectDTO {
+  private normalizeSpeechDialect(
+    value?: string,
+    provider?: VoiceTimbreProvider,
+    model?: string
+  ): VoiceTimbreDialectDTO {
     const normalized = value?.trim().toLowerCase() || 'auto';
+    const options =
+      provider === VoiceTimbreProvider.qwen && this.isQwenAudioModel(model)
+        ? QWEN_AUDIO_DIALECT_OPTIONS
+        : provider === VoiceTimbreProvider.cosyvoice &&
+          this.isCosyVoiceV35PlusModel(model)
+        ? COSYVOICE_V35_DIALECT_OPTIONS
+        : VOICE_TIMBRE_DIALECT_OPTIONS;
     return (
-      VOICE_TIMBRE_DIALECT_OPTIONS.find(option => option.value === normalized)
-        ?.value || 'auto'
+      options.find(option => option.value === normalized)?.value || 'auto'
     );
   }
 
@@ -1391,19 +1417,59 @@ export class AdminVoiceTimbreService {
     return this.normalizeOptionalText(value, 50);
   }
 
-  private buildQwenPreviewSignature(timbre: VoiceTimbreEntity): string {
-    const instruction =
-      buildQwenAudioSpeechInstruction({
-        instruction: timbre.speechInstruction,
-        dialect: timbre.speechDialect,
-        speechSpeed: timbre.speechSpeed,
-      }) || '';
+  private buildProviderPreviewSignature(timbre: VoiceTimbreEntity): string {
+    let instruction = '';
+
+    if (
+      timbre.provider === VoiceTimbreProvider.qwen &&
+      this.isQwenAudioModel(timbre.previewModel)
+    ) {
+      instruction =
+        buildQwenAudioSpeechInstruction({
+          instruction: timbre.speechInstruction,
+          dialect: timbre.speechDialect,
+          speechSpeed: timbre.speechSpeed,
+        }) || '';
+    } else if (
+      timbre.provider === VoiceTimbreProvider.cosyvoice &&
+      this.supportsTimbreSpeechInstruction(timbre)
+    ) {
+      instruction =
+        buildCosyVoiceSpeechInstruction({
+          instruction: timbre.speechInstruction,
+          dialect: timbre.speechDialect,
+        }) || '';
+    }
 
     return [
       instruction,
+      this.normalizeSpeechSpeed(timbre.speechSpeed),
       this.normalizeSpeechVolume(timbre.speechVolume),
       this.normalizeSpeechPitch(timbre.speechPitch),
     ].join('|');
+  }
+
+  private supportsTimbreSpeechInstruction(
+    timbre: VoiceTimbreEntity
+  ): boolean {
+    if (timbre.provider === VoiceTimbreProvider.qwen) {
+      return this.isQwenAudioModel(timbre.previewModel);
+    }
+
+    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+      return false;
+    }
+
+    const voiceId = timbre.providerVoiceId?.trim().toLowerCase() || '';
+    if (voiceId.startsWith('cosyvoice-')) {
+      return voiceId.startsWith('cosyvoice-v3.5-plus-');
+    }
+
+    return this.isCosyVoiceV35PlusModel(timbre.previewModel);
+  }
+
+  private isCosyVoiceV35PlusModel(model?: string): boolean {
+    return /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
   }
 
   private normalizePreviewModel(

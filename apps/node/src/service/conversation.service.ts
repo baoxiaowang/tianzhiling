@@ -7943,6 +7943,10 @@ export class ConversationService {
         speed: input.voiceTimbre.speechSpeed,
         volume: input.voiceTimbre.speechVolume,
         pitch: input.voiceTimbre.speechPitch,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
+        dialect: input.voiceTimbre.speechDialect,
       });
     }
 

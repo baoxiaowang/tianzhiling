@@ -34,6 +34,7 @@ import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import type { AuthenticatedUserPayload } from '../interface';
+import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
@@ -99,6 +100,9 @@ export class VoiceTimbreLibraryService {
 
   @Inject()
   qwenVoiceSpeechService: QwenVoiceSpeechService;
+
+  @Inject()
+  cosyVoiceSpeechService: CosyVoiceSpeechService;
 
   @Inject()
   voiceFfmpegService: VoiceFfmpegService;
@@ -317,7 +321,11 @@ export class VoiceTimbreLibraryService {
         400
       );
     }
-    if (timbre.provider !== VoiceTimbreProvider.qwen) {
+    const isCosyVoiceV35Plus = this.isCosyVoiceV35PlusTimbre(timbre);
+    if (
+      timbre.provider !== VoiceTimbreProvider.qwen &&
+      !isCosyVoiceV35Plus
+    ) {
       throw new AppError(
         'VOICE_TIMBRE_CUSTOM_SPEECH_UNSUPPORTED',
         '这个音色暂不支持自定义文字生成',
@@ -327,17 +335,32 @@ export class VoiceTimbreLibraryService {
 
     const reservation = await this.reserveCustomSpeechGeneration(userId);
     try {
-      const synthesized = await this.qwenVoiceSpeechService.synthesize({
-        text,
-        voiceId: timbre.providerVoiceId,
-        model: timbre.previewModel,
-        language: timbre.cloneLanguage,
-        ...(timbre.speechInstruction?.trim()
-          ? { instruction: timbre.speechInstruction.trim() }
-          : {}),
-        dialect: timbre.speechDialect,
-        speed: timbre.speechSpeed,
-      });
+      const synthesized =
+        isCosyVoiceV35Plus
+          ? await this.cosyVoiceSpeechService.synthesize({
+              text,
+              voiceId: timbre.providerVoiceId,
+              model: timbre.previewModel,
+              languageHint: timbre.cloneLanguage,
+              speed: timbre.speechSpeed,
+              volume: timbre.speechVolume,
+              pitch: timbre.speechPitch,
+              ...(timbre.speechInstruction?.trim()
+                ? { instruction: timbre.speechInstruction.trim() }
+                : {}),
+              dialect: timbre.speechDialect,
+            })
+          : await this.qwenVoiceSpeechService.synthesize({
+              text,
+              voiceId: timbre.providerVoiceId,
+              model: timbre.previewModel,
+              language: timbre.cloneLanguage,
+              ...(timbre.speechInstruction?.trim()
+                ? { instruction: timbre.speechInstruction.trim() }
+                : {}),
+              dialect: timbre.speechDialect,
+              speed: timbre.speechSpeed,
+            });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
       const volume = this.normalizeSpeechVolume(timbre.speechVolume);
@@ -348,17 +371,28 @@ export class VoiceTimbreLibraryService {
         12,
         'INVALID_VOICE_TIMBRE_SPEECH_PITCH'
       );
-      const outputSpeed = synthesized.nativeSpeechSpeedApplied ? 1 : speed;
+      const outputSpeed =
+        isCosyVoiceV35Plus ||
+        Boolean(
+          (synthesized as { nativeSpeechSpeedApplied?: boolean })
+            .nativeSpeechSpeedApplied
+        )
+          ? 1
+          : speed;
+      const outputVolume =
+        isCosyVoiceV35Plus ? 1 : volume;
+      const outputPitch =
+        isCosyVoiceV35Plus ? 0 : pitch;
       const adjusted =
-        outputSpeed !== 1 || volume !== 1 || pitch !== 0
+        outputSpeed !== 1 || outputVolume !== 1 || outputPitch !== 0
           ? await this.voiceFfmpegService.adjustSpeechOutput({
               buffer: synthesized.audioBuffer,
               fileName: `speech.${this.extensionForMimeType(
                 synthesized.mimeType
               )}`,
               speechSpeed: outputSpeed,
-              speechVolume: volume,
-              speechPitch: pitch,
+              speechVolume: outputVolume,
+              speechPitch: outputPitch,
             })
           : undefined;
       const audioBuffer = adjusted?.buffer || synthesized.audioBuffer;
@@ -1288,6 +1322,19 @@ export class VoiceTimbreLibraryService {
       2,
       'INVALID_VOICE_TIMBRE_SPEECH_SPEED'
     );
+  }
+
+  private isCosyVoiceV35PlusTimbre(timbre: VoiceTimbreEntity): boolean {
+    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+      return false;
+    }
+
+    const voiceId = timbre.providerVoiceId?.trim().toLowerCase() || '';
+    if (voiceId.startsWith('cosyvoice-')) {
+      return voiceId.startsWith('cosyvoice-v3.5-plus-');
+    }
+
+    return /^cosyvoice-v3\.5-plus$/i.test(timbre.previewModel?.trim() || '');
   }
 
   private normalizeSpeechVolume(value: unknown): number {

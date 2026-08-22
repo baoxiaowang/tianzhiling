@@ -10,7 +10,7 @@ export type VoiceTimbreStatusDTO =
   | "failed"
   | "disabled";
 
-export const VOICE_TIMBRE_DIALECT_OPTIONS = [
+export const QWEN_AUDIO_DIALECT_OPTIONS = [
   { value: "auto", label: "自动（跟随文本）" },
   { value: "mandarin", label: "普通话" },
   { value: "cantonese", label: "广东话" },
@@ -35,6 +35,33 @@ export const VOICE_TIMBRE_DIALECT_OPTIONS = [
   { value: "yunnan", label: "云南话" },
 ] as const;
 
+export const COSYVOICE_V35_DIALECT_OPTIONS = [
+  { value: "auto", label: "自动（跟随文本）" },
+  { value: "mandarin", label: "普通话" },
+  { value: "cantonese", label: "广东话" },
+  { value: "northeastern", label: "东北话" },
+  { value: "gansu", label: "甘肃话" },
+  { value: "guizhou", label: "贵州话" },
+  { value: "henan", label: "河南话" },
+  { value: "hubei", label: "湖北话" },
+  { value: "jiangxi", label: "江西话" },
+  { value: "minnan", label: "闽南话" },
+  { value: "ningxia", label: "宁夏话" },
+  { value: "shanxi", label: "山西话" },
+  { value: "shaanxi", label: "陕西话" },
+  { value: "shandong", label: "山东话" },
+  { value: "shanghai", label: "上海话" },
+  { value: "sichuan", label: "四川话" },
+  { value: "tianjin", label: "天津话" },
+  { value: "yunnan", label: "云南话" },
+] as const;
+
+export const VOICE_TIMBRE_DIALECT_OPTIONS = [
+  ...QWEN_AUDIO_DIALECT_OPTIONS,
+  { value: "minnan", label: "闽南话" },
+  { value: "tianjin", label: "天津话" },
+] as const;
+
 export type VoiceTimbreDialectDTO =
   (typeof VOICE_TIMBRE_DIALECT_OPTIONS)[number]["value"];
 
@@ -51,12 +78,14 @@ export function getVoiceTimbreDialectLabel(
 
 export function resolveVoiceTimbreDialect(
   dialect?: string,
-  instruction?: string
+  instruction?: string,
+  options: ReadonlyArray<{ value: string; label: string }> =
+    VOICE_TIMBRE_DIALECT_OPTIONS
 ): VoiceTimbreDialectDTO {
   const normalizedDialect = dialect?.trim().toLowerCase();
-  const explicitDialect = VOICE_TIMBRE_DIALECT_OPTIONS.find(
+  const explicitDialect = options.find(
     (item) => item.value === normalizedDialect
-  )?.value;
+  )?.value as VoiceTimbreDialectDTO | undefined;
 
   if (explicitDialect && explicitDialect !== "auto") {
     return explicitDialect;
@@ -67,7 +96,7 @@ export function resolveVoiceTimbreDialect(
     return "auto";
   }
 
-  const dialectCandidates = VOICE_TIMBRE_DIALECT_OPTIONS.filter(
+  const dialectCandidates = options.filter(
     (item) => item.value !== "auto"
   )
     .map((item) => ({
@@ -88,16 +117,18 @@ export function resolveVoiceTimbreDialect(
         !/(不要|别|禁止|避免).{0,6}普通话/.test(normalizedInstruction)
     );
 
-  return inferredDialect?.value || "auto";
+  return (inferredDialect?.value as VoiceTimbreDialectDTO) || "auto";
 }
 
-export type QwenAudioSpeechInstructionSource =
+export type VoiceSpeechInstructionSource =
   | "none"
   | "custom"
   | "structured"
   | "custom+structured";
 
-function normalizeQwenAudioCustomInstruction(
+export type QwenAudioSpeechInstructionSource = VoiceSpeechInstructionSource;
+
+function normalizeVoiceSpeechCustomInstruction(
   instruction?: string
 ): string | undefined {
   return instruction
@@ -114,13 +145,16 @@ export function getQwenAudioSpeechInstructionSource(input: {
   instruction?: string;
   dialect?: string;
 }): QwenAudioSpeechInstructionSource {
-  const normalizedCustomInstruction = normalizeQwenAudioCustomInstruction(
+  const normalizedCustomInstruction = normalizeVoiceSpeechCustomInstruction(
     input.instruction
   );
   const hasCustomInstruction = Boolean(normalizedCustomInstruction);
   const hasStructuredDialect =
-    resolveVoiceTimbreDialect(input.dialect, normalizedCustomInstruction) !==
-    "auto";
+    resolveVoiceTimbreDialect(
+      input.dialect,
+      normalizedCustomInstruction,
+      QWEN_AUDIO_DIALECT_OPTIONS
+    ) !== "auto";
 
   if (hasCustomInstruction && hasStructuredDialect) {
     return "custom+structured";
@@ -139,12 +173,13 @@ export function buildQwenAudioSpeechInstruction(input: {
   speechSpeed?: number;
 }): string | undefined {
   const parts: string[] = [];
-  const normalizedCustomInstruction = normalizeQwenAudioCustomInstruction(
+  const normalizedCustomInstruction = normalizeVoiceSpeechCustomInstruction(
     input.instruction
   );
   const resolvedDialect = resolveVoiceTimbreDialect(
     input.dialect,
-    normalizedCustomInstruction
+    normalizedCustomInstruction,
+    QWEN_AUDIO_DIALECT_OPTIONS
   );
   const dialectLabel = getVoiceTimbreDialectLabel(resolvedDialect);
 
@@ -169,6 +204,62 @@ export function buildQwenAudioSpeechInstruction(input: {
         `语速约为正常语速的${Math.round(normalizedSpeed * 100)}%，保持自然流畅`
       );
     }
+  }
+
+  return parts.length ? `${parts.join("；")}。` : undefined;
+}
+
+export function getCosyVoiceSpeechInstructionSource(input: {
+  instruction?: string;
+  dialect?: string;
+}): VoiceSpeechInstructionSource {
+  const normalizedCustomInstruction = normalizeVoiceSpeechCustomInstruction(
+    input.instruction
+  );
+  const hasCustomInstruction = Boolean(normalizedCustomInstruction);
+  const hasStructuredDialect =
+    resolveVoiceTimbreDialect(
+      input.dialect,
+      normalizedCustomInstruction,
+      COSYVOICE_V35_DIALECT_OPTIONS
+    ) !== "auto";
+
+  if (hasCustomInstruction && hasStructuredDialect) {
+    return "custom+structured";
+  }
+
+  if (hasCustomInstruction) {
+    return "custom";
+  }
+
+  return hasStructuredDialect ? "structured" : "none";
+}
+
+export function buildCosyVoiceSpeechInstruction(input: {
+  instruction?: string;
+  dialect?: string;
+}): string | undefined {
+  const parts: string[] = [];
+  const normalizedCustomInstruction = normalizeVoiceSpeechCustomInstruction(
+    input.instruction
+  );
+  const resolvedDialect = resolveVoiceTimbreDialect(
+    input.dialect,
+    normalizedCustomInstruction,
+    COSYVOICE_V35_DIALECT_OPTIONS
+  );
+  const dialectLabel = getVoiceTimbreDialectLabel(resolvedDialect);
+
+  if (dialectLabel) {
+    parts.push(
+      resolvedDialect === "mandarin"
+        ? "请全程使用自然、标准、清晰的普通话表达，保持原有音色和说话习惯"
+        : `请全程使用自然、地道、明显的${dialectLabel}表达，保持${dialectLabel}的发音、语调和表达习惯，保留原有音色和说话习惯`
+    );
+  }
+
+  if (normalizedCustomInstruction) {
+    parts.push(normalizedCustomInstruction);
   }
 
   return parts.length ? `${parts.join("；")}。` : undefined;
