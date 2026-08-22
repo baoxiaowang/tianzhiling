@@ -70,6 +70,8 @@ const UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN =
   /(?:终于听见你喊|听见你叫我|看着你|看到你|就在你身边|一直守着你)/u;
 const CLOSING_INITIAL_RECOGNITION_PATTERN =
   /(?:你好好的.{0,8}(?:我|咱|爸|妈|爷爷|奶奶|姑姑)?.{0,6}放心|照顾好自己|你别挂心|别惦记我)/u;
+const OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN =
+  /[？?](?:\s*[\p{Extended_Pictographic}\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]){0,12}$/u;
 
 type AgentAccessRole = 'owner' | 'shared';
 
@@ -1059,7 +1061,7 @@ export class AgentService {
         UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN.test(content) ||
         UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content) ||
         CLOSING_INITIAL_RECOGNITION_PATTERN.test(content) ||
-        !/[？?]$/u.test(content)
+        !OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN.test(content)
       ) {
         return fallback;
       }

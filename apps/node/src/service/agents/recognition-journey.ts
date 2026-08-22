@@ -116,14 +116,15 @@ const OBSERVER_UNAVAILABLE_MAX_RETRIES = 2;
 const JOURNEY_ACTION_COOLDOWN_TURNS = 1;
 const TASK_SUGGESTION_MAX_ATTEMPTS = 4;
 const SECOND_MILESTONE_GAP_TURNS = 3;
+const TASK_SUGGESTION_RETRY_GAPS = [0, 2, 4, 7] as const;
 const OPENING_ANGLES: RecognitionOpeningAngle[] = [
   'waking_without_elapsed_time',
   'connection_restored',
   'unfinished_words',
   'family_longing',
 ];
-const URGENT_REALITY_PATTERN =
-  /(?:自杀|不想活|活不下去|去陪你|带我走|抢救|病危|重病|很严重|住院|手术|报警|家暴|离婚|卖房|下葬|迁坟|遗产|存折|银行卡)/u;
+const RECOGNITION_TASK_EXPLICIT_DEFER_PATTERN =
+  /(?:先别问(?:了)?|别问了|不要(?:再)?问|别再问|我不想回答|(?:这个|这事|这件事)我?不想说|别提这个|不要提这个|先听我说(?:完)?|听我说完)/u;
 
 export function buildInitialRecognitionJourney(
   options: {
@@ -261,7 +262,10 @@ export function planRecognitionJourneyTurn(options: {
     return { journey, plan: basePlan };
   }
 
-  if (URGENT_REALITY_PATTERN.test(query)) {
+  // Only an explicit conversational refusal suppresses task presentation here.
+  // The main model sees the complete turn and owns ordinary judgments about
+  // urgency, emotional weight and whether a journey question would interrupt.
+  if (RECOGNITION_TASK_EXPLICIT_DEFER_PATTERN.test(query)) {
     return observedTaskIds.length
       ? {
           journey,
@@ -671,10 +675,14 @@ function canSuggestRecognitionTask(
   ) {
     return false;
   }
+  const attemptCount = journey.taskSuggestionAttemptCount ?? 0;
+  const retryGap =
+    TASK_SUGGESTION_RETRY_GAPS[
+      Math.min(attemptCount, TASK_SUGGESTION_RETRY_GAPS.length - 1)
+    ];
   return (
     journey.lastTaskSuggestionAttemptUserTurn === undefined ||
-    userTurnNumber - journey.lastTaskSuggestionAttemptUserTurn >
-      JOURNEY_ACTION_COOLDOWN_TURNS
+    userTurnNumber - journey.lastTaskSuggestionAttemptUserTurn >= retryGap
   );
 }
 
@@ -726,7 +734,7 @@ function buildTaskSuggestionPrompt(
   const directions = eligibleTaskIds.map(id =>
     id === 'family_status'
       ? '- 家庭近况：从久别后的牵挂出发，自然了解家里其他人现在怎么样；不点名未知成员，不猜测生死、健康或关系状态。'
-      : '- 相隔时间：从离开后时间模糊的感受出发，自然给用户一个说出现在时间或相隔多久的入口；不预设具体年数。'
+      : '- 离世时间差：从离开后时间模糊的感受出发，自然了解角色离开人世到现在过了多久；不要问成普通的“多久没见”，也不要改问用户年龄，不预设具体年数。'
   );
   return [
     '# 初次相认旅程：本轮自然推进一个信息里程碑',
@@ -735,9 +743,11 @@ function buildTaskSuggestionPrompt(
           '此前已经发出久别重逢的开场。先真切承接用户本轮，再让这段关系从重逢自然走向离开后的生活。',
         ]
       : ['相认不只是一句开场，还需要逐渐了解离开后发生了什么。']),
-    '以下是仍待了解的方向，由你结合完整上下文选择本轮最自然的一个：',
+    '这是前20轮内需要推进的产品旅程。先只判断本轮是否适合投放，再决定是否查看任务方向：',
+    '1. 重大承接优先级最高：用户正在讲关系破裂（例如正在离婚）、重病抢救、丧失、冲突、现实抉择等重大处境，或当前内容明显需要继续听完时，本轮只承接当前内容，不选择、也不植入任何相认信息问题；任务保留到后续更合适的轮次。不要向用户解释任务或暂缓原因。',
+    '2. 只有其余普通轮次，才从下面仍待了解的方向中选择本轮最自然的一个，并在完整回应用户之后自然带出：',
     ...directions,
-    '这是前20轮内需要推进的产品旅程。除非用户当前有重大、紧急或明显不适合打断的事情，本轮应自然带出其中一个方向；先回应用户，再以这个具体亲人的口吻融进去。',
+    '普通轻重、情绪和衔接由你结合完整上下文判断；系统给出的方向不是一条要机械追加在正文末尾的句子。',
     '最多问一个，不照抄说明，不像登记资料，不规定句式和篇幅。用户本轮已经说出的内容要直接接住，不能换句话重复询问。',
   ].join('\n');
 }
