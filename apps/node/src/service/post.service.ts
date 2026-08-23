@@ -43,6 +43,7 @@ const WEAPP_ACCOUNT_HASH_PATTERN = /^[a-f0-9]{12}$/i;
 const POST_AUTO_REPLY_DAILY_LIMIT = {
   nonVipLimit: 3,
 } as const;
+const POST_CREATE_DUPLICATE_WINDOW_MS = 60 * 1000;
 
 export interface PostRemindReplyJobData {
   postId: string;
@@ -1063,6 +1064,22 @@ export class PostService {
         'post content or images are required',
         400
       );
+    }
+
+    const duplicatePost = await this.findRecentDuplicatePost({
+      userId,
+      content,
+      images,
+      remindAgentIds,
+      now,
+    });
+    if (duplicatePost) {
+      this.logger?.info?.(
+        '[post-create] duplicate request suppressed, userId=%s postId=%s',
+        this.stringifyObjectId(userId),
+        this.stringifyObjectId(duplicatePost.id)
+      );
+      return this.buildPostItem(duplicatePost, user, 0, false, 0, []);
     }
 
     const post = new PostEntity();
@@ -3045,6 +3062,10 @@ export class PostService {
         continue;
       }
 
+      if (agent.messengerOfAgentId) {
+        continue;
+      }
+
       validAgentIds.push(this.stringifyObjectId(agent.id));
     }
 
@@ -3058,25 +3079,83 @@ export class PostService {
       where: {
         createdUserId: ownerUserId,
         isDefault: true,
-      },
+        messengerOfAgentId: { $exists: false },
+      } as never,
     });
 
-    if (defaultAgent) {
+    if (defaultAgent && !defaultAgent.messengerOfAgentId) {
       return [this.stringifyObjectId(defaultAgent.id)];
     }
 
     const agents = await this.agentModel.find({
       where: {
         createdUserId: ownerUserId,
-      },
+        messengerOfAgentId: { $exists: false },
+      } as never,
       order: {
         updatedAt: 'DESC',
       },
       take: 1,
     });
-    const fallbackAgent = agents[0];
+    const fallbackAgent = agents.find(agent => !agent.messengerOfAgentId);
 
     return fallbackAgent ? [this.stringifyObjectId(fallbackAgent.id)] : [];
+  }
+
+  private async findRecentDuplicatePost(options: {
+    userId: MongoObjectId;
+    content: string;
+    images: string[];
+    remindAgentIds: string[];
+    now: Date;
+  }): Promise<PostEntity | null> {
+    const cutoff = new Date(
+      options.now.getTime() - POST_CREATE_DUPLICATE_WINDOW_MS
+    );
+    const recentPosts = await this.postModel.find({
+      where: {
+        userId: options.userId,
+        isDeleted: { $ne: true },
+        createdAt: { $gte: cutoff },
+      } as never,
+      order: {
+        createdAt: 'DESC',
+      },
+      take: 5,
+    });
+
+    return (
+      recentPosts.find(post => {
+        const createdAt = post.createdAt?.getTime?.() ?? 0;
+
+        return (
+          createdAt >= cutoff.getTime() &&
+          post.isDeleted !== true &&
+          (post.content?.trim() || '') === options.content &&
+          this.samePostStringList(post.images, options.images) &&
+          this.samePostStringList(post.remindAgentIds, options.remindAgentIds)
+        );
+      }) ?? null
+    );
+  }
+
+  private samePostStringList(
+    storedValues: string[] | undefined,
+    expectedValues: string[]
+  ): boolean {
+    const normalizedStoredValues = Array.isArray(storedValues)
+      ? storedValues
+          .filter(value => typeof value === 'string')
+          .map(value => value.trim())
+          .filter(Boolean)
+      : [];
+
+    return (
+      normalizedStoredValues.length === expectedValues.length &&
+      normalizedStoredValues.every(
+        (value, index) => value === expectedValues[index]
+      )
+    );
   }
 
   private async enqueueRemindReplyJobs(post: PostEntity): Promise<void> {
