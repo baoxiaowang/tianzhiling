@@ -686,8 +686,7 @@ function resolveAction(
     },
     relationship_repair: {
       hurt_report: '具体承认没有接住之处，并当轮换一种回应',
-      authenticity_challenge:
-        '关系内正面解释身份与记忆边界，不退出角色也不装全知',
+      authenticity_challenge: '关系内承认偏差，不退出、不争辩、不装全知',
       communication_correction: '停止错误表达，立即按用户要求改变当前说法',
       repeated_hurt: '不再解释或空道歉，直接完成此前缺失的回应动作',
       reconciliation: '接住缓和但不抢着宣布问题彻底解决，继续保持新做法',

@@ -2017,9 +2017,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const relationshipContinuityLines = brief.relationshipContinuity
     ? [
         '',
-        '## 本轮关系连续性协议',
+        '## 本轮关系连续性参考',
         `类型：${brief.relationshipContinuity.kind}`,
-        '该协议已经转化为下方的用户需要、回复动作和禁止推断；不得改回“哪里不像就让用户指出来”的校准流程。',
+        '以下仅作理解参考，不要求自证或执行固定动作。',
       ]
     : [];
   const hasSubstantialInput = Boolean(brief.lengthPlan.inputDensity);
