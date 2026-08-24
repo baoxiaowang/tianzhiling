@@ -124,12 +124,18 @@ describe('AdminAgentService', () => {
       pageSize: '10',
     });
 
-    expect(service.agentModel.count).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 1,
-        $or: expect.any(Array),
-      })
-    );
+    expect(service.agentModel.count).toHaveBeenCalledWith({
+      $and: [
+        {
+          $or: [
+            { messengerOfAgentId: { $exists: false } },
+            { messengerOfAgentId: null },
+          ],
+        },
+        { status: 1 },
+        { $or: expect.any(Array) },
+      ],
+    });
     expect(service.agentModel.find).toHaveBeenCalledWith(
       expect.objectContaining({
         order: {
@@ -149,6 +155,8 @@ describe('AdminAgentService', () => {
             avatar: 'https://example.com/user.png',
             phone: '13800000000',
             isVip: false,
+            membershipExpiredAt: '',
+            membershipLifetime: false,
           },
           name: '小灵',
           avatar: 'https://cdn.example.com/agent/avatar.png',
@@ -369,6 +377,8 @@ describe('AdminAgentService', () => {
             avatar: 'https://cdn.example.com/users/alice.png',
             phone: '138****0000',
             isVip: false,
+            membershipExpiredAt: '',
+            membershipLifetime: false,
           },
           latestMessage: {
             id: messageId.toHexString(),

@@ -79,7 +79,14 @@ export interface AdminOperationsDailyPointDTO {
   date: string;
   newUsers: number;
   newAgents: number;
+  newUserChatUsers: number;
+  newUserMessages: number;
+  newUserFiveMessageUsers: number;
+  allChatUsers: number;
   userMessages: number;
+  paidUsers: number;
+  paidOrders: number;
+  sameDayPayingUsers: number;
   paidRevenue: number;
   refundedRevenue: number;
   netRevenue: number;
@@ -99,18 +106,89 @@ export interface AdminOperationsReportDTO {
   totals: {
     newUsers: number;
     newAgents: number;
+    newUserChatUsers: number;
+    newUserMessages: number;
+    allChatUsers: number;
     userMessages: number;
+    paidUsers: number;
+    paidOrders: number;
     paidRevenue: number;
     refundedRevenue: number;
     netRevenue: number;
   };
   todayTotals: {
     newUsers: number;
+    newAgents: number;
+    newUserChatUsers: number;
+    newUserMessages: number;
+    newUserFiveMessageUsers: number;
+    allChatUsers: number;
     userMessages: number;
+    paidUsers: number;
+    paidOrders: number;
+    sameDayPayingUsers: number;
+    netRevenue: number;
+  };
+  allTime: {
+    users: number;
+    agents: number;
+    chatUsers: number;
+    userMessages: number;
+    payingUsers: number;
     netRevenue: number;
   };
   daily: AdminOperationsDailyPointDTO[];
   hourly: AdminOperationsHourlyPointDTO[];
+}
+
+export interface AdminUserValueCohortPointDTO {
+  month: string;
+  observedDays: number;
+  newUsers: number;
+  payingUsers: number;
+  payRate: number;
+  revenue: number;
+  userValue: number;
+  value7Day?: number;
+  value30Day?: number;
+  is7DayMature: boolean;
+  is30DayMature: boolean;
+}
+
+export interface AdminUserValueReportDTO {
+  generatedAt: string;
+  timezone: "Asia/Shanghai";
+  endMonth: string;
+  months: number;
+  items: AdminUserValueCohortPointDTO[];
+}
+
+export interface AdminOrderAnalyticsDailyPointDTO {
+  date: string;
+  paidUsers: number;
+  paidOrders: number;
+  paidRevenue: number;
+  refundedRevenue: number;
+  netRevenue: number;
+}
+
+export interface AdminOrderAnalyticsDTO {
+  generatedAt: string;
+  timezone: "Asia/Shanghai";
+  month: string;
+  totals: {
+    createdOrders: number;
+    paidOrders: number;
+    payingUsers: number;
+    firstTimePayingUsers: number;
+    paidRevenue: number;
+    refundedRevenue: number;
+    netRevenue: number;
+    averageOrderAmount: number;
+    paymentSuccessRate: number;
+    refundRate: number;
+  };
+  daily: AdminOrderAnalyticsDailyPointDTO[];
 }
 
 export interface AdminOperationsTaskDTO {

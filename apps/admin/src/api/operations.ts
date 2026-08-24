@@ -4,7 +4,9 @@ import type {
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
+  AdminOrderAnalyticsDTO,
   AdminSystemRuntimeDTO,
+  AdminUserValueReportDTO,
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
 
@@ -35,6 +37,20 @@ export function queryOperationsReport(month?: string) {
   return axios.get<AdminOperationsReportDTO>('/admin_api/operations/reports', {
     params: { month },
   });
+}
+
+export function queryUserValueReport(endMonth?: string, months = 6) {
+  return axios.get<AdminUserValueReportDTO>(
+    '/admin_api/operations/user-value',
+    { params: { endMonth, months } }
+  );
+}
+
+export function queryOrderAnalytics(month?: string) {
+  return axios.get<AdminOrderAnalyticsDTO>(
+    '/admin_api/operations/order-analytics',
+    { params: { month } }
+  );
 }
 
 export function queryOperationsTasks(params: OperationsTaskListParams) {

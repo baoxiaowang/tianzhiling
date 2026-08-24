@@ -12,26 +12,32 @@
             @press-enter="handleSearch"
           />
         </a-form-item>
-        <a-form-item field="sex" label="性别">
+        <a-form-item field="relation" label="关系">
           <a-select
-            v-model="searchForm.sex"
+            v-model="searchForm.relation"
             allow-clear
             placeholder="全部"
             class="agent-page__filter"
           >
-            <a-option :value="0">女性</a-option>
-            <a-option :value="1">男性</a-option>
+            <a-option value="妈妈">妈妈</a-option>
+            <a-option value="爸爸">爸爸</a-option>
+            <a-option value="爷爷">爷爷</a-option>
+            <a-option value="奶奶">奶奶</a-option>
+            <a-option value="姐姐">姐姐</a-option>
+            <a-option value="哥哥">哥哥</a-option>
+            <a-option value="妹妹">妹妹</a-option>
+            <a-option value="弟弟">弟弟</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="status" label="状态">
+        <a-form-item field="memberStatus" label="归属用户">
           <a-select
-            v-model="searchForm.status"
+            v-model="searchForm.memberStatus"
             allow-clear
             placeholder="全部"
             class="agent-page__filter"
           >
-            <a-option :value="1">启用</a-option>
-            <a-option :value="0">禁用</a-option>
+            <a-option value="vip">会员用户</a-option>
+            <a-option value="non_vip">普通用户</a-option>
           </a-select>
         </a-form-item>
         <a-form-item>
@@ -53,7 +59,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1840 }"
+        :scroll="{ x: 1120 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -87,20 +93,10 @@
               </a-space>
             </template>
           </a-table-column>
-          <a-table-column title="会员状态" :width="110">
-            <template #cell="{ record }">
-              <a-tag
-                :color="record.createdUser?.isVip ? 'gold' : 'gray'"
-                size="small"
-              >
-                {{ record.createdUser?.isVip ? '有效会员' : '非会员' }}
-              </a-tag>
-            </template>
-          </a-table-column>
           <a-table-column
             title="归属用户"
             data-index="createdUser"
-            :width="280"
+            :width="300"
           >
             <template #cell="{ record }">
               <a-space v-if="record.createdUser">
@@ -125,6 +121,7 @@
                     >
                       VIP
                     </a-tag>
+                    <a-tag v-else color="gray" size="small">普通用户</a-tag>
                   </div>
                   <a-tooltip
                     :content="
@@ -135,6 +132,12 @@
                       {{ record.createdUser.account || record.createdUserId }}
                     </a-typography-text>
                   </a-tooltip>
+                  <span
+                    v-if="record.createdUser.isVip"
+                    class="agent-page__membership-expiry"
+                  >
+                    {{ formatMembership(record.createdUser) }}
+                  </span>
                 </div>
               </a-space>
               <a-tooltip v-else :content="record.createdUserId">
@@ -144,14 +147,7 @@
               </a-tooltip>
             </template>
           </a-table-column>
-          <a-table-column title="性别" data-index="sex" :width="90">
-            <template #cell="{ record }">
-              <a-tag :color="record.sex === 1 ? 'blue' : 'magenta'">
-                {{ formatSex(record.sex) }}
-              </a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column title="称呼关系" :width="220">
+          <a-table-column title="称呼关系" :width="230">
             <template #cell="{ record }">
               <div class="agent-page__calls">
                 <a-tooltip :content="`用户称呼TA：${record.iCallAgent || '-'}`">
@@ -169,37 +165,18 @@
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="状态" data-index="status" :width="100">
-            <template #cell="{ record }">
-              <a-tag :color="record.status === 1 ? 'green' : 'gray'">
-                {{ formatStatus(record.status) }}
-              </a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column
-            title="绑定音色ID"
-            data-index="voiceTimbreId"
-            :width="220"
-          >
-            <template #cell="{ record }">
-              <a-tooltip
-                v-if="record.voiceTimbreId"
-                :content="record.voiceTimbreId"
-              >
-                <a-typography-text class="agent-page__id" copyable>
-                  {{ record.voiceTimbreId }}
-                </a-typography-text>
-              </a-tooltip>
-              <span v-else>-</span>
-            </template>
-          </a-table-column>
           <a-table-column
             title="对话次数"
             data-index="conversationCount"
             :width="120"
           >
             <template #cell="{ record }">
-              {{ record.conversationCount ?? 0 }}
+              <a-link
+                class="agent-page__conversation-count"
+                @click="openDetail(record)"
+              >
+                {{ record.conversationCount ?? 0 }}
+              </a-link>
             </template>
           </a-table-column>
           <a-table-column title="创建时间" data-index="createdAt" :width="180">
@@ -465,12 +442,12 @@
   const editFormRef = ref<FormInstance>();
   const searchForm = reactive<{
     keyword: string;
-    sex?: number;
-    status?: number;
+    relation?: string;
+    memberStatus?: 'vip' | 'non_vip';
   }>({
     keyword: '',
-    sex: undefined,
-    status: undefined,
+    relation: undefined,
+    memberStatus: undefined,
   });
   const editForm = reactive({
     name: '',
@@ -493,16 +470,16 @@
 
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
-    sex: searchForm.sex,
-    status: searchForm.status,
+    relation: searchForm.relation,
+    memberStatus: searchForm.memberStatus,
     page: pagination.current,
     pageSize: pagination.pageSize,
   }));
   const hasSearch = computed(
     () =>
       Boolean(searchForm.keyword.trim()) ||
-      searchForm.sex !== undefined ||
-      searchForm.status !== undefined
+      Boolean(searchForm.relation) ||
+      Boolean(searchForm.memberStatus)
   );
   const emptyDescription = computed(() =>
     hasSearch.value ? '未找到匹配智能体' : '暂无智能体'
@@ -548,8 +525,8 @@
 
   const resetSearch = () => {
     searchForm.keyword = '';
-    searchForm.sex = undefined;
-    searchForm.status = undefined;
+    searchForm.relation = undefined;
+    searchForm.memberStatus = undefined;
     pagination.current = 1;
     fetchData();
   };
@@ -651,20 +628,12 @@
     return value ? dayjs(value).format('YYYY-MM-DD') : '';
   };
 
-  const formatSex = (sex: number) => {
-    if (sex === 1) {
-      return '男性';
-    }
-
-    if (sex === 0) {
-      return '女性';
-    }
-
-    return '未知';
-  };
-
-  const formatStatus = (status: number) => {
-    return status === 1 ? '启用' : '禁用';
+  const formatMembership = (owner: AgentRecord['createdUser']) => {
+    if (!owner?.isVip) return '';
+    if (owner.membershipLifetime) return '永久会员';
+    return owner.membershipExpiredAt
+      ? `有效至 ${dayjs(owner.membershipExpiredAt).format('YYYY-MM-DD')}`
+      : '有效会员';
   };
 
   const getAvatarFallback = (name: string, fallback: string) => {
@@ -725,6 +694,17 @@
     &__vip-tag {
       margin-left: 6px;
       font-weight: 600;
+    }
+
+    &__membership-expiry {
+      margin-top: 3px;
+      color: var(--color-text-3);
+      font-size: 12px;
+    }
+
+    &__conversation-count {
+      font-weight: 600;
+      font-size: 16px;
     }
 
     &__name {

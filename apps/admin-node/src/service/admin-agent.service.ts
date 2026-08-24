@@ -93,6 +93,8 @@ export class AdminAgentService {
     const where = await this.buildAgentSearchWhere(keyword, {
       sex: this.normalizeOptionalNumber(query?.sex),
       status: this.normalizeOptionalNumber(query?.status),
+      relation: query?.relation?.trim(),
+      memberStatus: query?.memberStatus?.trim(),
     });
     const [total, agents] = await Promise.all([
       this.agentModel.count(where),
@@ -362,9 +364,19 @@ export class AdminAgentService {
     filters: {
       sex?: number;
       status?: number;
+      relation?: string;
+      memberStatus?: string;
     }
   ): Promise<MongoWhere> {
     const where: MongoWhere = {};
+    const clauses: MongoWhere[] = [
+      {
+        $or: [
+          { messengerOfAgentId: { $exists: false } },
+          { messengerOfAgentId: null },
+        ],
+      },
+    ];
 
     if (filters.sex !== undefined) {
       where.sex = this.normalizeSex(filters.sex);
@@ -374,8 +386,38 @@ export class AdminAgentService {
       where.status = this.normalizeStatus(filters.status);
     }
 
+    if (filters.relation) {
+      const relation = this.escapeRegExp(filters.relation);
+
+      clauses.push({
+        $or: [
+          { iCallAgent: { $regex: relation, $options: 'i' } },
+          { agentCallMe: { $regex: relation, $options: 'i' } },
+        ],
+      });
+    }
+
+    if (filters.memberStatus === 'vip' || filters.memberStatus === 'non_vip') {
+      const activeMemberships = await this.userMembershipModel.find({
+        where: {
+          status: 'active',
+          $or: [{ lifetime: true }, { expiredAt: { $gt: new Date() } }],
+        } as never,
+      });
+      const memberUserIds = activeMemberships.map(item => item.userId);
+
+      where.createdUserId =
+        filters.memberStatus === 'vip'
+          ? { $in: memberUserIds }
+          : { $nin: memberUserIds };
+    }
+
+    if (Object.keys(where).length > 0) {
+      clauses.push(where);
+    }
+
     if (!keyword) {
-      return where;
+      return clauses.length === 1 ? clauses[0] : { $and: clauses };
     }
 
     const escapedKeyword = this.escapeRegExp(keyword);
@@ -400,10 +442,9 @@ export class AdminAgentService {
       keywordFilters.push({ createdUserId: objectId });
     }
 
-    return {
-      ...where,
-      $or: keywordFilters,
-    };
+    clauses.push({ $or: keywordFilters });
+
+    return { $and: clauses };
   }
 
   private async findOwnerIdsByKeyword(
@@ -477,14 +518,28 @@ export class AdminAgentService {
     const accountMap = new Map(
       accounts.map(account => [this.stringifyObjectId(account.userId), account])
     );
-    const vipUserIds = new Set(
-      activeMemberships.map(m => this.stringifyObjectId(m.userId))
-    );
+    const membershipMap = new Map<string, (typeof activeMemberships)[number]>();
+
+    activeMemberships.forEach(membership => {
+      const userId = this.stringifyObjectId(membership.userId);
+      const existing = membershipMap.get(userId);
+
+      if (
+        !existing ||
+        membership.lifetime ||
+        (!existing.lifetime &&
+          (membership.expiredAt?.getTime() ?? 0) >
+            (existing.expiredAt?.getTime() ?? 0))
+      ) {
+        membershipMap.set(userId, membership);
+      }
+    });
 
     return new Map(
       users.map(user => {
         const id = this.stringifyObjectId(user.id);
         const account = accountMap.get(id);
+        const membership = membershipMap.get(id);
 
         return [
           id,
@@ -494,7 +549,9 @@ export class AdminAgentService {
             name: user.name ?? '',
             avatar: this.resolveAvatar(user.avatar),
             phone: user.phone ?? account?.account ?? '',
-            isVip: vipUserIds.has(id),
+            isVip: Boolean(membership),
+            membershipExpiredAt: this.formatDate(membership?.expiredAt),
+            membershipLifetime: Boolean(membership?.lifetime),
           },
         ];
       })

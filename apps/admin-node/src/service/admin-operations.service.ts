@@ -4,10 +4,12 @@ import type {
   AdminAuthenticatedPayload,
   AdminChatQualityDTO,
   AdminOperationsAlertDTO,
+  AdminOrderAnalyticsDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
+  AdminUserValueReportDTO,
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
 import { AppError } from '@tzl/shared';
@@ -26,6 +28,7 @@ import {
   MongoObjectId,
   OrderEntity,
   PostEntity,
+  TableName,
   UserEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
@@ -39,6 +42,36 @@ type TaskQuery = {
 type DailyCountRow = { _id: string; count: number };
 type DailyAmountRow = { _id: string; amount: number };
 type HourlyCountRow = { _id: string; count: number };
+type DailyMessageStatsRow = {
+  _id: string;
+  allChatUsers: number;
+  userMessages: number;
+  newUserChatUsers: number;
+  newUserMessages: number;
+  newUserFiveMessageUsers: number;
+};
+type DailyOrderStatsRow = {
+  _id: string;
+  paidUsers: number;
+  paidOrders: number;
+  paidAmount: number;
+  sameDayPayingUsers: number;
+};
+type PeriodOrderStatsRow = {
+  paidUsers: number;
+  paidOrders: number;
+  paidAmount: number;
+};
+type AllTimeChatStatsRow = { chatUsers: number; userMessages: number };
+type AllTimeOrderStatsRow = { payingUsers: number; netAmount: number };
+type CohortUserCountRow = { _id: string; count: number };
+type CohortOrderStatsRow = {
+  _id: string;
+  payingUsers: number;
+  revenue: number;
+  revenue7Day: number;
+  revenue30Day: number;
+};
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
@@ -62,6 +95,18 @@ export class AdminOperationsService {
     string,
     { expiresAt: number; value: AdminOperationsReportDTO }
   >();
+  private readonly userValueCache = new Map<
+    string,
+    { expiresAt: number; value: AdminUserValueReportDTO }
+  >();
+  private readonly orderAnalyticsCache = new Map<
+    string,
+    { expiresAt: number; value: AdminOrderAnalyticsDTO }
+  >();
+  private allTimeCache?: {
+    expiresAt: number;
+    value: AdminOperationsReportDTO['allTime'];
+  };
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -360,11 +405,14 @@ export class AdminOperationsService {
     const [
       users,
       agents,
-      messages,
-      paid,
+      messageStats,
+      orderStats,
+      periodOrderStats,
       refunded,
       hourlyUsers,
       hourlyMessages,
+      allTime,
+      todayNewAgentUsers,
     ] = await Promise.all([
       this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
       this.aggregateDailyCount(this.agentModel, monthStart, monthEnd, {
@@ -373,21 +421,13 @@ export class AdminOperationsService {
           { messengerOfAgentId: null },
         ],
       }),
-      this.aggregateDailyCount(
-        this.messageModel,
+      this.aggregateDailyMessageStats(
         monthStart,
         monthEnd,
         liveUserMessageMatch
       ),
-      this.aggregateDailyAmount(
-        this.orderModel,
-        {
-          ...realOrderMatch,
-          paidAt: { $gte: monthStart, $lt: monthEnd },
-        },
-        '$paidAt',
-        { $ifNull: ['$payableAmount', 0] }
-      ),
+      this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
+      this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregateDailyAmount(
         this.orderModel,
         {
@@ -417,13 +457,15 @@ export class AdminOperationsService {
         todayEnd,
         liveUserMessageMatch
       ),
+      this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
+      this.aggregateTodayNewAgentUsers(todayStart, todayEnd),
     ]);
 
     const dailyMaps = {
       users: this.countMap(users),
       agents: this.countMap(agents),
-      messages: this.countMap(messages),
-      paid: this.amountMap(paid),
+      messages: new Map(messageStats.map(row => [row._id, row])),
+      orders: new Map(orderStats.map(row => [row._id, row])),
       refunded: this.amountMap(refunded),
     };
     const daysInMonth = new Date(
@@ -435,7 +477,9 @@ export class AdminOperationsService {
         : daysInMonth;
     const daily = Array.from({ length: lastDay }, (_, index) => {
       const date = `${normalizedMonth}-${String(index + 1).padStart(2, '0')}`;
-      const paidRevenue = this.centsToYuan(dailyMaps.paid.get(date) ?? 0);
+      const messageRow = dailyMaps.messages.get(date);
+      const orderRow = dailyMaps.orders.get(date);
+      const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
       const refundedRevenue = this.centsToYuan(
         dailyMaps.refunded.get(date) ?? 0
       );
@@ -443,7 +487,14 @@ export class AdminOperationsService {
         date,
         newUsers: dailyMaps.users.get(date) ?? 0,
         newAgents: dailyMaps.agents.get(date) ?? 0,
-        userMessages: dailyMaps.messages.get(date) ?? 0,
+        newUserChatUsers: messageRow?.newUserChatUsers ?? 0,
+        newUserMessages: messageRow?.newUserMessages ?? 0,
+        newUserFiveMessageUsers: messageRow?.newUserFiveMessageUsers ?? 0,
+        allChatUsers: messageRow?.allChatUsers ?? 0,
+        userMessages: messageRow?.userMessages ?? 0,
+        paidUsers: orderRow?.paidUsers ?? 0,
+        paidOrders: orderRow?.paidOrders ?? 0,
+        sameDayPayingUsers: orderRow?.sameDayPayingUsers ?? 0,
         paidRevenue,
         refundedRevenue,
         netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
@@ -463,8 +514,13 @@ export class AdminOperationsService {
       (result, item) => ({
         newUsers: result.newUsers + item.newUsers,
         newAgents: result.newAgents + item.newAgents,
+        newUserChatUsers: result.newUserChatUsers + item.newUserChatUsers,
+        newUserMessages: result.newUserMessages + item.newUserMessages,
+        allChatUsers: result.allChatUsers + item.allChatUsers,
         userMessages: result.userMessages + item.userMessages,
-        paidRevenue: this.roundMoney(result.paidRevenue + item.paidRevenue),
+        paidUsers: result.paidUsers,
+        paidOrders: result.paidOrders,
+        paidRevenue: result.paidRevenue,
         refundedRevenue: this.roundMoney(
           result.refundedRevenue + item.refundedRevenue
         ),
@@ -473,8 +529,13 @@ export class AdminOperationsService {
       {
         newUsers: 0,
         newAgents: 0,
+        newUserChatUsers: 0,
+        newUserMessages: 0,
+        allChatUsers: 0,
         userMessages: 0,
-        paidRevenue: 0,
+        paidUsers: periodOrderStats.paidUsers,
+        paidOrders: periodOrderStats.paidOrders,
+        paidRevenue: this.centsToYuan(periodOrderStats.paidAmount),
         refundedRevenue: 0,
         netRevenue: 0,
       }
@@ -489,9 +550,18 @@ export class AdminOperationsService {
       totals,
       todayTotals: {
         newUsers: todayRow?.newUsers ?? 0,
+        newAgents: todayNewAgentUsers,
+        newUserChatUsers: todayRow?.newUserChatUsers ?? 0,
+        newUserMessages: todayRow?.newUserMessages ?? 0,
+        newUserFiveMessageUsers: todayRow?.newUserFiveMessageUsers ?? 0,
+        allChatUsers: todayRow?.allChatUsers ?? 0,
         userMessages: todayRow?.userMessages ?? 0,
+        paidUsers: todayRow?.paidUsers ?? 0,
+        paidOrders: todayRow?.paidOrders ?? 0,
+        sameDayPayingUsers: todayRow?.sameDayPayingUsers ?? 0,
         netRevenue: todayRow?.netRevenue ?? 0,
       },
+      allTime,
       daily,
       hourly,
     };
@@ -499,6 +569,246 @@ export class AdminOperationsService {
       expiresAt: now.getTime() + 5 * 60 * 1000,
       value: result,
     });
+    return result;
+  }
+
+  async getUserValueReport(
+    endMonth?: string,
+    rawMonths?: string | number
+  ): Promise<AdminUserValueReportDTO> {
+    const now = new Date();
+    const currentMonth = this.getBeijingMonth(now);
+    const requestedEndMonth = this.normalizeMonth(endMonth, currentMonth);
+    const normalizedEndMonth =
+      requestedEndMonth > currentMonth ? currentMonth : requestedEndMonth;
+    const months = Math.min(this.normalizePositiveInteger(rawMonths, 6), 24);
+    const cacheKey = `${normalizedEndMonth}:${months}`;
+    const cached = this.userValueCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now.getTime()) {
+      return cached.value;
+    }
+
+    const [endYearText, endMonthText] = normalizedEndMonth.split('-');
+    const endYear = Number(endYearText);
+    const endMonthIndex = Number(endMonthText) - 1;
+    const rangeStart = new Date(
+      Date.UTC(endYear, endMonthIndex - months + 1, 1) - BEIJING_OFFSET_MS
+    );
+    const rangeEnd = new Date(
+      Date.UTC(endYear, endMonthIndex + 1, 1) - BEIJING_OFFSET_MS
+    );
+    const realOrderMatch = this.buildRealOrderMatch();
+    const [userRows, orderRows] = await Promise.all([
+      this.userModel
+        .aggregate<CohortUserCountRow>([
+          { $match: { createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m',
+                  date: '$createdAt',
+                  timezone: '+08:00',
+                },
+              },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .toArray(),
+      this.aggregateCohortOrderStats(rangeStart, rangeEnd, realOrderMatch),
+    ]);
+    const userMap = new Map(
+      userRows.map(row => [row._id, Number(row.count) || 0])
+    );
+    const orderMap = new Map(orderRows.map(row => [row._id, row]));
+    const items = Array.from({ length: months }, (_, index) => {
+      const monthDate = new Date(
+        Date.UTC(endYear, endMonthIndex - months + 1 + index, 1)
+      );
+      const month = `${monthDate.getUTCFullYear()}-${String(
+        monthDate.getUTCMonth() + 1
+      ).padStart(2, '0')}`;
+      const monthStart = new Date(
+        Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1) -
+          BEIJING_OFFSET_MS
+      );
+      const monthEnd = new Date(
+        Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 1) -
+          BEIJING_OFFSET_MS
+      );
+      const observedDays = Math.max(
+        0,
+        Math.min(
+          Math.round((monthEnd.getTime() - monthStart.getTime()) / 86400000),
+          Math.floor((now.getTime() - monthStart.getTime()) / 86400000) + 1
+        )
+      );
+      const newUsers = userMap.get(month) ?? 0;
+      const orderRow = orderMap.get(month);
+      const payingUsers = Number(orderRow?.payingUsers) || 0;
+      const revenue = this.centsToYuan(Number(orderRow?.revenue) || 0);
+      const revenue7Day = this.centsToYuan(Number(orderRow?.revenue7Day) || 0);
+      const revenue30Day = this.centsToYuan(
+        Number(orderRow?.revenue30Day) || 0
+      );
+      const is7DayMature = now.getTime() >= monthEnd.getTime() + 7 * 86400000;
+      const is30DayMature = now.getTime() >= monthEnd.getTime() + 30 * 86400000;
+
+      return {
+        month,
+        observedDays,
+        newUsers,
+        payingUsers,
+        payRate: this.roundRate(payingUsers, newUsers),
+        revenue,
+        userValue: this.roundAverage(revenue, newUsers),
+        value7Day: is7DayMature
+          ? this.roundAverage(revenue7Day, newUsers)
+          : undefined,
+        value30Day: is30DayMature
+          ? this.roundAverage(revenue30Day, newUsers)
+          : undefined,
+        is7DayMature,
+        is30DayMature,
+      };
+    });
+    const result: AdminUserValueReportDTO = {
+      generatedAt: now.toISOString(),
+      timezone: BEIJING_TIMEZONE,
+      endMonth: normalizedEndMonth,
+      months,
+      items,
+    };
+
+    this.userValueCache.set(cacheKey, {
+      expiresAt: now.getTime() + 5 * 60 * 1000,
+      value: result,
+    });
+
+    return result;
+  }
+
+  async getOrderAnalytics(month?: string): Promise<AdminOrderAnalyticsDTO> {
+    const now = new Date();
+    const currentMonth = this.getBeijingMonth(now);
+    const normalizedMonth = this.normalizeMonth(month, currentMonth);
+    const cached = this.orderAnalyticsCache.get(normalizedMonth);
+
+    if (cached && cached.expiresAt > now.getTime()) {
+      return cached.value;
+    }
+
+    const [yearText, monthText] = normalizedMonth.split('-');
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const monthStart = new Date(
+      Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS
+    );
+    const monthEnd = new Date(
+      Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS
+    );
+    const realOrderMatch = this.buildRealOrderMatch();
+    const [
+      createdOrders,
+      paidCreatedOrders,
+      orderRows,
+      periodOrderStats,
+      refundedRows,
+      firstTimePayingUsers,
+    ] = await Promise.all([
+      this.orderModel.count({
+        ...realOrderMatch,
+        createdAt: { $gte: monthStart, $lt: monthEnd },
+      } as never),
+      this.orderModel.count({
+        ...realOrderMatch,
+        createdAt: { $gte: monthStart, $lt: monthEnd },
+        paidAt: { $type: 'date' },
+      } as never),
+      this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
+      this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
+      this.aggregateDailyAmount(
+        this.orderModel,
+        {
+          ...realOrderMatch,
+          status: 'refunded',
+          $or: [
+            { refundedAt: { $gte: monthStart, $lt: monthEnd } },
+            {
+              refundedAt: null,
+              updatedAt: { $gte: monthStart, $lt: monthEnd },
+            },
+          ],
+        },
+        { $ifNull: ['$refundedAt', '$updatedAt'] },
+        {
+          $cond: [
+            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+            '$refundAmount',
+            '$payableAmount',
+          ],
+        }
+      ),
+      this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
+    ]);
+    const orderMap = new Map(orderRows.map(row => [row._id, row]));
+    const refundMap = this.amountMap(refundedRows);
+    const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
+    const daysInMonth = new Date(
+      Date.UTC(year, monthIndex + 1, 0)
+    ).getUTCDate();
+    const lastDay =
+      normalizedMonth === currentMonth
+        ? Math.min(beijingNow.getUTCDate(), daysInMonth)
+        : daysInMonth;
+    const daily = Array.from({ length: lastDay }, (_, index) => {
+      const date = `${normalizedMonth}-${String(index + 1).padStart(2, '0')}`;
+      const orderRow = orderMap.get(date);
+      const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
+      const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
+
+      return {
+        date,
+        paidUsers: orderRow?.paidUsers ?? 0,
+        paidOrders: orderRow?.paidOrders ?? 0,
+        paidRevenue,
+        refundedRevenue,
+        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+      };
+    });
+    const refundedRevenue = this.roundMoney(
+      daily.reduce((sum, item) => sum + item.refundedRevenue, 0)
+    );
+    const paidRevenue = this.centsToYuan(periodOrderStats.paidAmount);
+    const result: AdminOrderAnalyticsDTO = {
+      generatedAt: now.toISOString(),
+      timezone: BEIJING_TIMEZONE,
+      month: normalizedMonth,
+      totals: {
+        createdOrders,
+        paidOrders: periodOrderStats.paidOrders,
+        payingUsers: periodOrderStats.paidUsers,
+        firstTimePayingUsers,
+        paidRevenue,
+        refundedRevenue,
+        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+        averageOrderAmount: this.roundAverage(
+          paidRevenue,
+          periodOrderStats.paidOrders
+        ),
+        paymentSuccessRate: this.roundRate(paidCreatedOrders, createdOrders),
+        refundRate: this.roundRate(refundedRevenue, paidRevenue),
+      },
+      daily,
+    };
+
+    this.orderAnalyticsCache.set(normalizedMonth, {
+      expiresAt: now.getTime() + 5 * 60 * 1000,
+      value: result,
+    });
+
     return result;
   }
 
@@ -686,6 +996,453 @@ export class AdminOperationsService {
     );
   }
 
+  private async aggregateDailyMessageStats(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<DailyMessageStatsRow[]> {
+    return this.messageModel
+      .aggregate<DailyMessageStatsRow>([
+        {
+          $match: {
+            ...extraMatch,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              date: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$createdAt',
+                  timezone: '+08:00',
+                },
+              },
+              userId: '$userId',
+            },
+            messageCount: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.user,
+            localField: '_id.userId',
+            foreignField: '_id',
+            as: 'user',
+          },
+        },
+        { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            date: '$_id.date',
+            messageCount: 1,
+            isNewUser: {
+              $eq: [
+                '$_id.date',
+                {
+                  $dateToString: {
+                    format: '%Y-%m-%d',
+                    date: '$user.createdAt',
+                    timezone: '+08:00',
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$date',
+            allChatUsers: { $sum: 1 },
+            userMessages: { $sum: '$messageCount' },
+            newUserChatUsers: { $sum: { $cond: ['$isNewUser', 1, 0] } },
+            newUserMessages: {
+              $sum: { $cond: ['$isNewUser', '$messageCount', 0] },
+            },
+            newUserFiveMessageUsers: {
+              $sum: {
+                $cond: [
+                  { $and: ['$isNewUser', { $gte: ['$messageCount', 5] }] },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private async aggregateDailyOrderStats(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<DailyOrderStatsRow[]> {
+    return this.orderModel
+      .aggregate<DailyOrderStatsRow>([
+        {
+          $match: {
+            ...extraMatch,
+            paidAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              date: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$paidAt',
+                  timezone: '+08:00',
+                },
+              },
+              userId: '$userId',
+            },
+            paidOrders: { $sum: 1 },
+            paidAmount: {
+              $sum: { $ifNull: ['$paidAmount', '$payableAmount'] },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.user,
+            localField: '_id.userId',
+            foreignField: '_id',
+            as: 'user',
+          },
+        },
+        { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            date: '$_id.date',
+            paidOrders: 1,
+            paidAmount: 1,
+            isSameDayUser: {
+              $eq: [
+                '$_id.date',
+                {
+                  $dateToString: {
+                    format: '%Y-%m-%d',
+                    date: '$user.createdAt',
+                    timezone: '+08:00',
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$date',
+            paidUsers: { $sum: 1 },
+            paidOrders: { $sum: '$paidOrders' },
+            paidAmount: { $sum: '$paidAmount' },
+            sameDayPayingUsers: {
+              $sum: { $cond: ['$isSameDayUser', 1, 0] },
+            },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private async aggregatePeriodOrderStats(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<PeriodOrderStatsRow> {
+    const rows = await this.orderModel
+      .aggregate<PeriodOrderStatsRow>([
+        {
+          $match: {
+            ...extraMatch,
+            paidAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: '$userId',
+            paidOrders: { $sum: 1 },
+            paidAmount: {
+              $sum: { $ifNull: ['$paidAmount', '$payableAmount'] },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            paidUsers: { $sum: 1 },
+            paidOrders: { $sum: '$paidOrders' },
+            paidAmount: { $sum: '$paidAmount' },
+          },
+        },
+      ])
+      .toArray();
+
+    return rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
+  }
+
+  private async aggregateTodayNewAgentUsers(
+    start: Date,
+    end: Date
+  ): Promise<number> {
+    const rows = await this.agentModel
+      .aggregate<{ count: number }>([
+        {
+          $match: {
+            createdAt: { $gte: start, $lt: end },
+            $or: [
+              { messengerOfAgentId: { $exists: false } },
+              { messengerOfAgentId: null },
+            ],
+          },
+        },
+        { $group: { _id: '$createdUserId' } },
+        {
+          $lookup: {
+            from: TableName.user,
+            localField: '_id',
+            foreignField: '_id',
+            as: 'user',
+          },
+        },
+        { $unwind: '$user' },
+        { $match: { 'user.createdAt': { $gte: start, $lt: end } } },
+        { $count: 'count' },
+      ])
+      .toArray();
+
+    return Number(rows[0]?.count) || 0;
+  }
+
+  private async getAllTimeStats(
+    liveUserMessageMatch: Record<string, unknown>,
+    realOrderMatch: Record<string, unknown>
+  ): Promise<AdminOperationsReportDTO['allTime']> {
+    const now = Date.now();
+
+    if (this.allTimeCache && this.allTimeCache.expiresAt > now) {
+      return this.allTimeCache.value;
+    }
+
+    const [users, agents, chatRows, orderRows] = await Promise.all([
+      this.userModel.count({}),
+      this.agentModel.count({
+        $or: [
+          { messengerOfAgentId: { $exists: false } },
+          { messengerOfAgentId: null },
+        ],
+      } as never),
+      this.messageModel
+        .aggregate<AllTimeChatStatsRow>([
+          { $match: liveUserMessageMatch },
+          { $group: { _id: '$userId', messages: { $sum: 1 } } },
+          {
+            $group: {
+              _id: null,
+              chatUsers: { $sum: 1 },
+              userMessages: { $sum: '$messages' },
+            },
+          },
+        ])
+        .toArray(),
+      this.orderModel
+        .aggregate<AllTimeOrderStatsRow>([
+          {
+            $match: {
+              ...realOrderMatch,
+              paidAt: { $type: 'date' },
+            },
+          },
+          {
+            $project: {
+              userId: 1,
+              netAmount: this.getNetPaidAmountExpression(),
+            },
+          },
+          { $group: { _id: '$userId', netAmount: { $sum: '$netAmount' } } },
+          { $match: { netAmount: { $gt: 0 } } },
+          {
+            $group: {
+              _id: null,
+              payingUsers: { $sum: 1 },
+              netAmount: { $sum: '$netAmount' },
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+    const chat = chatRows[0];
+    const order = orderRows[0];
+    const value = {
+      users,
+      agents,
+      chatUsers: Number(chat?.chatUsers) || 0,
+      userMessages: Number(chat?.userMessages) || 0,
+      payingUsers: Number(order?.payingUsers) || 0,
+      netRevenue: this.centsToYuan(Number(order?.netAmount) || 0),
+    };
+
+    this.allTimeCache = { expiresAt: now + 5 * 60 * 1000, value };
+
+    return value;
+  }
+
+  private async aggregateCohortOrderStats(
+    userStart: Date,
+    userEnd: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<CohortOrderStatsRow[]> {
+    const sevenDaysMs = 7 * 86400000;
+    const thirtyDaysMs = 30 * 86400000;
+
+    return this.orderModel
+      .aggregate<CohortOrderStatsRow>([
+        {
+          $match: {
+            ...extraMatch,
+            paidAt: { $type: 'date' },
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.user,
+            localField: 'userId',
+            foreignField: '_id',
+            as: 'user',
+          },
+        },
+        { $unwind: '$user' },
+        {
+          $match: {
+            'user.createdAt': { $gte: userStart, $lt: userEnd },
+          },
+        },
+        {
+          $project: {
+            userId: 1,
+            paidAt: 1,
+            userCreatedAt: '$user.createdAt',
+            month: {
+              $dateToString: {
+                format: '%Y-%m',
+                date: '$user.createdAt',
+                timezone: '+08:00',
+              },
+            },
+            netAmount: this.getNetPaidAmountExpression(),
+          },
+        },
+        {
+          $project: {
+            userId: 1,
+            month: 1,
+            netAmount: 1,
+            ageMs: { $subtract: ['$paidAt', '$userCreatedAt'] },
+          },
+        },
+        {
+          $group: {
+            _id: { month: '$month', userId: '$userId' },
+            revenue: { $sum: '$netAmount' },
+            revenue7Day: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $gte: ['$ageMs', 0] },
+                      { $lte: ['$ageMs', sevenDaysMs] },
+                    ],
+                  },
+                  '$netAmount',
+                  0,
+                ],
+              },
+            },
+            revenue30Day: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $gte: ['$ageMs', 0] },
+                      { $lte: ['$ageMs', thirtyDaysMs] },
+                    ],
+                  },
+                  '$netAmount',
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$_id.month',
+            payingUsers: {
+              $sum: { $cond: [{ $gt: ['$revenue', 0] }, 1, 0] },
+            },
+            revenue: { $sum: '$revenue' },
+            revenue7Day: { $sum: '$revenue7Day' },
+            revenue30Day: { $sum: '$revenue30Day' },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private async aggregateFirstTimePayingUsers(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<number> {
+    const rows = await this.orderModel
+      .aggregate<{ count: number }>([
+        { $match: { ...extraMatch, paidAt: { $type: 'date' } } },
+        { $group: { _id: '$userId', firstPaidAt: { $min: '$paidAt' } } },
+        { $match: { firstPaidAt: { $gte: start, $lt: end } } },
+        { $count: 'count' },
+      ])
+      .toArray();
+
+    return Number(rows[0]?.count) || 0;
+  }
+
+  private buildRealOrderMatch(): Record<string, unknown> {
+    return {
+      targetCode: { $ne: 'voice_one' },
+      source: { $ne: 'admin' },
+      paymentProvider: { $ne: 'admin_manual' },
+    };
+  }
+
+  private getNetPaidAmountExpression(): Record<string, unknown> {
+    const paidAmount = { $ifNull: ['$paidAmount', '$payableAmount'] };
+    const storedRefundAmount = { $ifNull: ['$refundAmount', 0] };
+    const refundAmount = {
+      $cond: [
+        {
+          $and: [
+            { $eq: ['$status', 'refunded'] },
+            { $lte: [storedRefundAmount, 0] },
+          ],
+        },
+        paidAmount,
+        storedRefundAmount,
+      ],
+    };
+
+    return {
+      $cond: [
+        { $gt: [{ $subtract: [paidAmount, refundAmount] }, 0] },
+        { $subtract: [paidAmount, refundAmount] },
+        0,
+      ],
+    };
+  }
+
   private async aggregateDailyCount<T extends object>(
     repository: MongoRepository<T>,
     start: Date,
@@ -785,6 +1542,28 @@ export class AdminOperationsService {
 
   private roundMoney(value: number): number {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private roundAverage(value: number, divisor: number): number {
+    return divisor > 0 ? this.roundMoney(value / divisor) : 0;
+  }
+
+  private roundRate(value: number, divisor: number): number {
+    return divisor > 0 ? Math.round((value / divisor) * 1000) / 10 : 0;
+  }
+
+  private getBeijingMonth(date: Date): string {
+    const beijingDate = new Date(date.getTime() + BEIJING_OFFSET_MS);
+
+    return `${beijingDate.getUTCFullYear()}-${String(
+      beijingDate.getUTCMonth() + 1
+    ).padStart(2, '0')}`;
+  }
+
+  private normalizeMonth(value: unknown, fallback: string): string {
+    return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value ?? ''))
+      ? String(value)
+      : fallback;
   }
 
   private uniqueObjectIds(ids: MongoObjectId[]): MongoObjectId[] {

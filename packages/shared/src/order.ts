@@ -117,6 +117,7 @@ export interface AdminOrderUserDTO {
   account: string;
   name: string;
   phone: string;
+  registeredAt?: string;
 }
 
 export interface AdminOrderRecordDTO extends OrderRecordDTO {
@@ -152,6 +153,7 @@ export interface AdminOrderListParamsDTO {
   excludeAdminManual?: boolean;
   createdAtStart?: string;
   createdAtEnd?: string;
+  registeredMonth?: string;
   userId?: string;
   page?: number;
   pageSize?: number;

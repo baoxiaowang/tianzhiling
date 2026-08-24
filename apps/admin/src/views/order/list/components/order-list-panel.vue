@@ -15,6 +15,36 @@
         </a-button>
       </template>
 
+      <section v-if="showAnalytics" class="order-page__analytics">
+        <header class="order-page__analytics-header">
+          <div>
+            <h2>订单统计</h2>
+            <span>上方看当月结果，下方核对每一笔订单</span>
+          </div>
+          <a-month-picker
+            v-model="analyticsMonth"
+            value-format="YYYY-MM"
+            :allow-clear="false"
+            @change="fetchAnalytics"
+          />
+        </header>
+        <div class="order-page__analytics-summary">
+          <article v-for="item in analyticsSummary" :key="item.label">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <small>{{ item.hint }}</small>
+          </article>
+        </div>
+        <a-card
+          class="order-page__analytics-chart"
+          title="本月每日实付趋势"
+          :bordered="false"
+          :loading="analyticsLoading"
+        >
+          <Chart height="240px" :option="analyticsChartOption" />
+        </a-card>
+      </section>
+
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
           <a-input
@@ -72,6 +102,14 @@
             value-format="YYYY-MM-DD HH:mm:ss"
             format="YYYY-MM-DD HH:mm"
             class="order-page__range-filter"
+          />
+        </a-form-item>
+        <a-form-item field="registeredMonth" label="用户注册月">
+          <a-month-picker
+            v-model="searchForm.registeredMonth"
+            allow-clear
+            value-format="YYYY-MM"
+            class="order-page__registered-month"
           />
         </a-form-item>
         <a-form-item>
@@ -136,6 +174,11 @@
                   {{ resolveOrderUserContact(record) }}
                 </div>
               </div>
+            </template>
+          </a-table-column>
+          <a-table-column title="注册月份" :width="120">
+            <template #cell="{ record }">
+              {{ formatRegisteredMonth(record.user?.registeredAt) }}
             </template>
           </a-table-column>
           <a-table-column title="智能体ID" data-index="agentId" :width="220">
@@ -721,6 +764,7 @@
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
+    AdminOrderAnalyticsDTO,
     AdminOrderPaymentTypeDTO,
     OrderSourceDTO,
     OrderStatusDTO,
@@ -728,6 +772,7 @@
     VirtualGoodsProvideStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
+  import { queryOrderAnalytics } from '@/api/operations';
   import {
     queryAppUserAgents,
     queryAppUserList,
@@ -778,6 +823,9 @@
   const { loading, setLoading } = useLoading();
   const router = useRouter();
   const renderList = ref<OrderRecord[]>([]);
+  const analytics = ref<AdminOrderAnalyticsDTO>();
+  const analyticsLoading = ref(false);
+  const analyticsMonth = ref(dayjs().format('YYYY-MM'));
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
@@ -807,12 +855,14 @@
     source?: OrderSourceDTO | '';
     paymentType?: AdminOrderPaymentTypeDTO | '';
     createdAtRange: string[];
+    registeredMonth?: string;
   }>({
     keyword: '',
     status: props.status,
     source: undefined,
     paymentType: undefined,
     createdAtRange: [],
+    registeredMonth: undefined,
   });
   const createForm = reactive<{
     orderType: OrderTypeDTO;
@@ -870,8 +920,71 @@
       return props.title;
     }
 
-    return props.orderType ? orderTypeTitleMap[props.orderType] : '我的订单';
+    return props.orderType ? orderTypeTitleMap[props.orderType] : '订单明细';
   });
+  const showAnalytics = computed(
+    () => !props.embedded && !props.orderType && !props.status && !props.userId
+  );
+  const analyticsSummary = computed(() => [
+    {
+      label: '本月实付金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.paidRevenue),
+      hint: `净收入 ${formatAnalyticsMoney(
+        analytics.value?.totals.netRevenue
+      )}`,
+    },
+    {
+      label: '支付订单',
+      value: formatCount(analytics.value?.totals.paidOrders),
+      hint: `支付成功率 ${formatPercent(
+        analytics.value?.totals.paymentSuccessRate
+      )}`,
+    },
+    {
+      label: '付费用户',
+      value: formatCount(analytics.value?.totals.payingUsers),
+      hint: `首次付费 ${formatCount(
+        analytics.value?.totals.firstTimePayingUsers
+      )} 人`,
+    },
+    {
+      label: '平均订单金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.averageOrderAmount),
+      hint: '实付金额 ÷ 支付订单',
+    },
+    {
+      label: '退款金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.refundedRevenue),
+      hint: `退款率 ${formatPercent(analytics.value?.totals.refundRate)}`,
+    },
+  ]);
+  const analyticsChartOption = computed(() => ({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 64, right: 30, top: 28, bottom: 38 },
+    xAxis: {
+      type: 'category',
+      data: (analytics.value?.daily || []).map((item) =>
+        dayjs(item.date).format('MM-DD')
+      ),
+      axisLabel: { interval: 4 },
+    },
+    yAxis: { type: 'value', name: '元' },
+    series: [
+      {
+        name: '实付金额',
+        type: 'bar',
+        data: (analytics.value?.daily || []).map((item) => item.paidRevenue),
+        itemStyle: { color: '#8b78d9', borderRadius: [5, 5, 0, 0] },
+      },
+      {
+        name: '净收入',
+        type: 'line',
+        smooth: true,
+        data: (analytics.value?.daily || []).map((item) => item.netRevenue),
+        itemStyle: { color: '#c27b9c' },
+      },
+    ],
+  }));
   const normalizedCreatedAtRange = computed(() => {
     const [start, end] = searchForm.createdAtRange;
 
@@ -889,6 +1002,7 @@
     excludeAdminManual: props.excludeAdminManual || undefined,
     createdAtStart: normalizedCreatedAtRange.value.createdAtStart,
     createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
+    registeredMonth: searchForm.registeredMonth || undefined,
     userId: props.userId || undefined,
     page: pagination.current,
     pageSize: pagination.pageSize,
@@ -899,7 +1013,8 @@
       Boolean(!props.status && searchForm.status) ||
       Boolean(searchForm.source) ||
       Boolean(searchForm.paymentType) ||
-      searchForm.createdAtRange.length > 0
+      searchForm.createdAtRange.length > 0 ||
+      Boolean(searchForm.registeredMonth)
   );
   const emptyDescription = computed(() => {
     if (hasSearchCondition.value) {
@@ -976,6 +1091,20 @@
     }
   };
 
+  const fetchAnalytics = async () => {
+    if (!showAnalytics.value) return;
+
+    try {
+      analyticsLoading.value = true;
+      const { data } = await queryOrderAnalytics(analyticsMonth.value);
+      analytics.value = data;
+    } catch (error) {
+      Message.error('订单统计加载失败');
+    } finally {
+      analyticsLoading.value = false;
+    }
+  };
+
   const handleSearch = () => {
     pagination.current = 1;
     fetchData();
@@ -987,6 +1116,7 @@
     searchForm.source = undefined;
     searchForm.paymentType = undefined;
     searchForm.createdAtRange = [];
+    searchForm.registeredMonth = undefined;
     pagination.current = 1;
     fetchData();
   };
@@ -1517,6 +1647,19 @@
     return `¥${((value || 0) / 100).toFixed(2)}`;
   };
 
+  const formatAnalyticsMoney = (value?: number) => {
+    return `¥${Number(value || 0).toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  };
+
+  const formatCount = (value?: number) =>
+    Number(value || 0).toLocaleString('zh-CN');
+  const formatPercent = (value?: number) => `${Number(value || 0).toFixed(1)}%`;
+  const formatRegisteredMonth = (value?: string) =>
+    value ? dayjs(value).format('YYYY-MM') : '-';
+
   const formatOptionalAmount = (value?: number) => {
     return value == null ? '-' : formatAmount(value);
   };
@@ -1758,6 +1901,7 @@
   );
 
   fetchData();
+  fetchAnalytics();
 </script>
 
 <script lang="ts">
@@ -1790,12 +1934,83 @@
       margin-bottom: 16px;
     }
 
+    &__analytics {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--color-border-2);
+    }
+
+    &__analytics-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+
+      h2 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+
+      span {
+        color: var(--color-text-3);
+      }
+    }
+
+    &__analytics-summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      overflow: hidden;
+      background: var(--color-fill-1);
+      border: 1px solid var(--color-border-2);
+      border-radius: 8px;
+
+      article {
+        min-width: 0;
+        padding: 14px;
+        border-right: 1px solid var(--color-border-2);
+
+        &:last-child {
+          border-right: 0;
+        }
+
+        span,
+        small {
+          display: block;
+          overflow: hidden;
+          color: var(--color-text-3);
+          font-size: 12px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+
+        strong {
+          display: block;
+          margin: 8px 0 4px;
+          overflow: hidden;
+          font-weight: 500;
+          font-size: 20px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+      }
+    }
+
+    &__analytics-chart {
+      margin-top: 14px;
+      background: var(--color-fill-1);
+    }
+
     &__filter {
       width: 140px;
     }
 
     &__range-filter {
       width: 340px;
+    }
+
+    &__registered-month {
+      width: 160px;
     }
 
     &__full {
@@ -1872,6 +2087,16 @@
       display: flex;
       justify-content: flex-end;
       margin-top: 24px;
+    }
+  }
+
+  @media (max-width: 1080px) {
+    .order-page__analytics-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+
+      article:last-child {
+        grid-column: 1 / -1;
+      }
     }
   }
 </style>

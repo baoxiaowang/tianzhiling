@@ -1,117 +1,143 @@
 <template>
-  <div class="operations-dashboard">
-    <header class="operations-dashboard__header">
+  <div class="data-dashboard">
+    <header class="data-dashboard__header">
       <div>
-        <h1>运营工作台</h1>
-        <p>先处理异常，再进入用户、智能体和内容完成具体工作。</p>
+        <h1>数据统计</h1>
+        <p>每日数据是主表，累计与本月数据用于快速判断经营变化。</p>
       </div>
       <a-space>
-        <a-typography-text type="secondary">
-          数据更新：{{ formatDate(overview?.generatedAt) }}
-        </a-typography-text>
-        <a-button :loading="loading" @click="fetchOverview">刷新</a-button>
+        <a-month-picker
+          v-model="month"
+          value-format="YYYY-MM"
+          :allow-clear="false"
+          @change="fetchData"
+        />
+        <a-button :loading="loading" @click="fetchData">刷新</a-button>
       </a-space>
     </header>
 
     <a-spin :loading="loading">
-      <a-grid :cols="24" :col-gap="16" :row-gap="16">
-        <a-grid-item
-          v-for="metric in overview?.metrics || []"
-          :key="metric.key"
-          :span="{ xs: 24, sm: 12, md: 8, xl: 4 }"
-        >
-          <a-card class="operations-dashboard__metric" :bordered="false">
-            <div class="operations-dashboard__metric-label">
-              {{ metric.label }}
-              <span
-                class="operations-dashboard__metric-dot"
-                :class="`operations-dashboard__metric-dot--${metric.tone}`"
-              />
-            </div>
-            <div class="operations-dashboard__metric-value">
-              {{ formatNumber(metric.value) }}
-            </div>
-            <a-typography-text type="secondary">
-              {{ metric.hint }}
-            </a-typography-text>
-          </a-card>
-        </a-grid-item>
+      <section class="data-dashboard__summary">
+        <article v-for="item in summary" :key="item.label">
+          <span>{{ item.label }}</span>
+          <strong>{{
+            item.money ? formatMoney(item.value) : formatNumber(item.value)
+          }}</strong>
+          <small>{{ item.hint }}</small>
+        </article>
+      </section>
 
-        <a-grid-item :span="{ xs: 24, xl: 12 }">
-          <a-card title="本月新增用户与净收入" :bordered="false">
+      <a-grid
+        :cols="24"
+        :col-gap="16"
+        :row-gap="16"
+        class="data-dashboard__analysis"
+      >
+        <a-grid-item :span="{ xs: 24, xl: 16 }">
+          <a-card :bordered="false" title="本月每日趋势">
             <template #extra>
-              <a-link @click="router.push({ name: 'OperationsReports' })">
-                查看每日统计
-              </a-link>
+              <a-radio-group v-model="trendMetric" type="button" size="small">
+                <a-radio value="newUsers">新增用户</a-radio>
+                <a-radio value="newUserMessages">新用户消息</a-radio>
+                <a-radio value="userMessages">全部消息</a-radio>
+              </a-radio-group>
             </template>
-            <Chart height="300px" :option="dailyChartOption" />
+            <Chart height="280px" :option="trendChartOption" />
           </a-card>
         </a-grid-item>
 
-        <a-grid-item :span="{ xs: 24, xl: 12 }">
-          <a-card title="今日每小时新增用户与聊天消息" :bordered="false">
+        <a-grid-item :span="{ xs: 24, xl: 8 }">
+          <a-card :bordered="false" title="今日新用户路径">
+            <div class="data-dashboard__funnel">
+              <div v-for="item in todayFunnel" :key="item.label">
+                <header>
+                  <span>{{ item.label }}</span>
+                  <strong>{{ formatNumber(item.value) }}</strong>
+                </header>
+                <a-progress
+                  :percent="item.rate / 100"
+                  :show-text="false"
+                  :stroke-width="7"
+                />
+                <small>{{ item.rate.toFixed(1) }}%</small>
+              </div>
+            </div>
+          </a-card>
+        </a-grid-item>
+
+        <a-grid-item :span="24">
+          <a-card :bordered="false">
+            <template #title>
+              {{ report?.month || month }} 每日数据明细
+            </template>
             <template #extra>
               <a-typography-text type="secondary">
-                仅统计用户发给 AI 的实时消息
+                聊天次数按用户发送消息统计，系统回复不重复计入
               </a-typography-text>
             </template>
-            <Chart height="300px" :option="hourlyChartOption" />
-          </a-card>
-        </a-grid-item>
-
-        <a-grid-item :span="{ xs: 24, lg: 16 }">
-          <a-card title="待关注" :bordered="false">
-            <template #extra>
-              <a-link @click="router.push({ name: 'ChatQuality' })">
-                查看聊天质量
-              </a-link>
-            </template>
-            <a-list
-              v-if="overview?.alerts.length"
-              :data="overview.alerts"
-              :bordered="false"
+            <a-table
+              row-key="date"
+              :data="dailyRows"
+              :pagination="false"
+              :scroll="{ x: 1260 }"
+              stripe
             >
-              <template #item="{ item }">
-                <a-list-item class="operations-dashboard__alert">
-                  <a-list-item-meta
-                    :title="item.title"
-                    :description="item.description || '暂无补充信息'"
-                  >
-                    <template #avatar>
-                      <a-tag :color="alertColor(item.category)">
-                        {{ alertLabel(item.category) }}
-                      </a-tag>
-                    </template>
-                  </a-list-item-meta>
-                  <template #actions>
-                    <span>{{ formatDate(item.occurredAt) }}</span>
-                    <a-link
-                      v-if="item.targetType && item.targetId"
-                      @click="openAlert(item.targetType, item.targetId)"
-                    >
-                      查看
-                    </a-link>
+              <template #columns>
+                <a-table-column title="日期" data-index="date" :width="118">
+                  <template #cell="{ record }">
+                    <strong v-if="record.date === report?.today">今天</strong>
+                    <span v-else>{{ formatDay(record.date) }}</span>
                   </template>
-                </a-list-item>
+                </a-table-column>
+                <a-table-column
+                  title="新增用户"
+                  data-index="newUsers"
+                  :width="108"
+                />
+                <a-table-column
+                  title="新用户聊天人数"
+                  data-index="newUserChatUsers"
+                  :width="138"
+                >
+                  <template #cell="{ record }">
+                    <strong>{{ formatNumber(record.newUserChatUsers) }}</strong>
+                    <small>
+                      {{ formatRate(record.newUserChatUsers, record.newUsers) }}
+                    </small>
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  title="新用户消息数"
+                  data-index="newUserMessages"
+                  :width="130"
+                />
+                <a-table-column
+                  title="全部聊天人数"
+                  data-index="allChatUsers"
+                  :width="130"
+                />
+                <a-table-column
+                  title="全部消息数"
+                  data-index="userMessages"
+                  :width="118"
+                />
+                <a-table-column
+                  title="付费人数"
+                  data-index="paidUsers"
+                  :width="100"
+                />
+                <a-table-column
+                  title="订单数"
+                  data-index="paidOrders"
+                  :width="90"
+                />
+                <a-table-column title="实付金额" :width="120">
+                  <template #cell="{ record }">
+                    <strong>{{ formatMoney(record.paidRevenue) }}</strong>
+                  </template>
+                </a-table-column>
               </template>
-            </a-list>
-            <a-empty v-else description="当前没有需要处理的异常" />
-          </a-card>
-        </a-grid-item>
-
-        <a-grid-item :span="{ xs: 24, lg: 8 }">
-          <a-card title="常用工作" :bordered="false">
-            <div class="operations-dashboard__shortcuts">
-              <button
-                v-for="shortcut in shortcuts"
-                :key="shortcut.routeName"
-                type="button"
-                @click="router.push({ name: shortcut.routeName })"
-              >
-                <strong>{{ shortcut.title }}</strong>
-                <span>{{ shortcut.description }}</span>
-              </button>
-            </div>
+            </a-table>
           </a-card>
         </a-grid-item>
       </a-grid>
@@ -121,161 +147,133 @@
 
 <script lang="ts" setup>
   import { computed, onMounted, ref } from 'vue';
-  import { useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type {
-    AdminOperationsAlertDTO,
-    AdminOperationsOverviewDTO,
-    AdminOperationsReportDTO,
-  } from '@tzl/shared';
-  import {
-    queryOperationsOverview,
-    queryOperationsReport,
-  } from '@/api/operations';
+  import type { AdminOperationsReportDTO } from '@tzl/shared';
+  import { queryOperationsReport } from '@/api/operations';
 
-  const router = useRouter();
   const loading = ref(false);
-  const overview = ref<AdminOperationsOverviewDTO>();
+  const month = ref(dayjs().format('YYYY-MM'));
+  const trendMetric = ref<'newUsers' | 'newUserMessages' | 'userMessages'>(
+    'newUsers'
+  );
   const report = ref<AdminOperationsReportDTO>();
-  const shortcuts = [
-    {
-      title: '查找用户',
-      description: '查看关系、智能体与动态',
-      routeName: 'AppUserList',
-    },
-    {
-      title: '智能体管理',
-      description: '检查人设与真实聊天',
-      routeName: 'AgentList',
-    },
-    {
-      title: '内容运营',
-      description: '置顶、风控与内容查看',
-      routeName: 'PostList',
-    },
-    {
-      title: '任务中心',
-      description: '跟踪聊天截图导入进度',
-      routeName: 'OperationsTaskCenter',
-    },
-    {
-      title: '系统运行',
-      description: '查看版本、内存与队列',
-      routeName: 'OperationsSystem',
-    },
-  ];
 
-  const fetchOverview = async () => {
+  const summary = computed(() => [
+    {
+      label: '总用户',
+      value: report.value?.allTime.users || 0,
+      hint: '当前累计',
+    },
+    {
+      label: '本月新增用户',
+      value: report.value?.totals.newUsers || 0,
+      hint: '截至所选月当前日期',
+    },
+    {
+      label: '总聊天用户',
+      value: report.value?.allTime.chatUsers || 0,
+      hint: '至少发过一条消息',
+    },
+    {
+      label: '累计聊天消息',
+      value: report.value?.allTime.userMessages || 0,
+      hint: '用户发送',
+    },
+    {
+      label: '累计付费用户',
+      value: report.value?.allTime.payingUsers || 0,
+      hint: '去重人数',
+    },
+    {
+      label: '累计收入',
+      value: report.value?.allTime.netRevenue || 0,
+      hint: '扣除已退款',
+      money: true,
+    },
+    {
+      label: '本月收入',
+      value: report.value?.totals.netRevenue || 0,
+      hint: '所选月份净收入',
+      money: true,
+    },
+  ]);
+
+  const dailyRows = computed(() => [...(report.value?.daily || [])].reverse());
+  const trendMeta = computed(() => {
+    const map = {
+      newUsers: { name: '新增用户', color: '#7662cf' },
+      newUserMessages: { name: '新用户消息', color: '#bf7795' },
+      userMessages: { name: '全部消息', color: '#5f91bd' },
+    };
+
+    return map[trendMetric.value];
+  });
+  const trendChartOption = computed(() => ({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 54, right: 24, top: 28, bottom: 38 },
+    xAxis: {
+      type: 'category',
+      data: (report.value?.daily || []).map((item) => formatDay(item.date)),
+      axisLabel: { interval: 4 },
+    },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [
+      {
+        name: trendMeta.value.name,
+        type: 'bar',
+        data: (report.value?.daily || []).map(
+          (item) => item[trendMetric.value]
+        ),
+        itemStyle: {
+          color: trendMeta.value.color,
+          borderRadius: [5, 5, 0, 0],
+        },
+      },
+    ],
+  }));
+
+  const todayFunnel = computed(() => {
+    const today = report.value?.todayTotals;
+    const base = today?.newUsers || 0;
+    const entries = [
+      { label: '新增用户', value: base },
+      { label: '创建智能体', value: today?.newAgents || 0 },
+      { label: '开始聊天', value: today?.newUserChatUsers || 0 },
+      { label: '发送 ≥ 5 条', value: today?.newUserFiveMessageUsers || 0 },
+      { label: '当天付费', value: today?.sameDayPayingUsers || 0 },
+    ];
+
+    return entries.map((item) => ({
+      ...item,
+      rate: base > 0 ? Math.min((item.value / base) * 100, 100) : 0,
+    }));
+  });
+
+  const fetchData = async () => {
     try {
       loading.value = true;
-      const [overviewResponse, reportResponse] = await Promise.all([
-        queryOperationsOverview(),
-        queryOperationsReport(),
-      ]);
-      overview.value = overviewResponse.data;
-      report.value = reportResponse.data;
+      const { data } = await queryOperationsReport(month.value);
+      report.value = data;
     } catch (error) {
-      Message.error('运营数据加载失败');
+      Message.error('数据统计加载失败');
     } finally {
       loading.value = false;
     }
   };
 
-  const baseChartOption = {
-    tooltip: { trigger: 'axis' },
-    grid: { left: 56, right: 56, top: 52, bottom: 36 },
-  };
+  const formatNumber = (value: number) =>
+    Number(value || 0).toLocaleString('zh-CN');
+  const formatMoney = (value: number) =>
+    `¥${Number(value || 0).toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  const formatDay = (value: string) => dayjs(value).format('MM-DD');
+  const formatRate = (value: number, total: number) =>
+    total > 0 ? `${((value / total) * 100).toFixed(1)}%` : '0.0%';
 
-  const dailyChartOption = computed(() => ({
-    ...baseChartOption,
-    legend: { data: ['新增用户', '净收入'] },
-    xAxis: {
-      type: 'category',
-      data: (report.value?.daily || []).map((item) => item.date.slice(5)),
-    },
-    yAxis: [
-      { type: 'value', name: '用户数', minInterval: 1 },
-      { type: 'value', name: '元' },
-    ],
-    series: [
-      {
-        name: '新增用户',
-        type: 'bar',
-        data: (report.value?.daily || []).map((item) => item.newUsers),
-        itemStyle: { color: '#5b8ff9', borderRadius: [4, 4, 0, 0] },
-      },
-      {
-        name: '净收入',
-        type: 'line',
-        yAxisIndex: 1,
-        smooth: true,
-        data: (report.value?.daily || []).map((item) => item.netRevenue),
-        itemStyle: { color: '#f6bd16' },
-      },
-    ],
-  }));
-
-  const hourlyChartOption = computed(() => ({
-    ...baseChartOption,
-    legend: { data: ['新增用户', '用户消息'] },
-    xAxis: {
-      type: 'category',
-      data: (report.value?.hourly || []).map((item) => item.hour),
-      axisLabel: { interval: 2 },
-    },
-    yAxis: [
-      { type: 'value', name: '用户数', minInterval: 1 },
-      { type: 'value', name: '消息数', minInterval: 1 },
-    ],
-    series: [
-      {
-        name: '新增用户',
-        type: 'bar',
-        data: (report.value?.hourly || []).map((item) => item.newUsers),
-        itemStyle: { color: '#61d9a3', borderRadius: [4, 4, 0, 0] },
-      },
-      {
-        name: '用户消息',
-        type: 'line',
-        yAxisIndex: 1,
-        smooth: true,
-        data: (report.value?.hourly || []).map((item) => item.userMessages),
-        itemStyle: { color: '#7262fd' },
-      },
-    ],
-  }));
-
-  const openAlert = (
-    targetType: NonNullable<AdminOperationsAlertDTO['targetType']>,
-    targetId: string
-  ) => {
-    if (targetType === 'agent') {
-      router.push({ name: 'AgentDetail', params: { id: targetId } });
-      return;
-    }
-    if (targetType === 'user') {
-      router.push({ name: 'AppUserDetail', params: { id: targetId } });
-      return;
-    }
-    router.push({ name: 'PostList', query: { keyword: targetId } });
-  };
-
-  const alertLabel = (category: AdminOperationsAlertDTO['category']) =>
-    ({ feedback: '反馈', chat: '聊天', import: '导入', content: '内容' }[
-      category
-    ]);
-
-  const alertColor = (category: AdminOperationsAlertDTO['category']) =>
-    ({ feedback: 'orangered', chat: 'red', import: 'orange', content: 'blue' }[
-      category
-    ]);
-
-  const formatDate = (value?: string) =>
-    value ? dayjs(value).format('MM-DD HH:mm') : '-';
-  const formatNumber = (value: number) => value.toLocaleString('zh-CN');
-
-  onMounted(fetchOverview);
+  onMounted(fetchData);
 </script>
 
 <script lang="ts">
@@ -283,7 +281,7 @@
 </script>
 
 <style lang="less" scoped>
-  .operations-dashboard {
+  .data-dashboard {
     min-height: 100%;
     padding: 24px;
     background: var(--color-fill-2);
@@ -292,10 +290,11 @@
       display: flex;
       align-items: flex-end;
       justify-content: space-between;
-      margin-bottom: 20px;
+      gap: 16px;
+      margin-bottom: 18px;
 
       h1 {
-        margin: 0 0 8px;
+        margin: 0 0 6px;
         font-size: 24px;
       }
 
@@ -305,84 +304,105 @@
       }
     }
 
-    &__metric {
-      min-height: 142px;
-    }
-
-    &__metric-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      color: var(--color-text-2);
-    }
-
-    &__metric-dot {
-      width: 8px;
-      height: 8px;
-      background: rgb(var(--gray-5));
-      border-radius: 50%;
-
-      &--success {
-        background: rgb(var(--green-6));
-      }
-
-      &--warning {
-        background: rgb(var(--orange-6));
-      }
-
-      &--danger {
-        background: rgb(var(--red-6));
-      }
-    }
-
-    &__metric-value {
-      margin: 16px 0 8px;
-      font-weight: 600;
-      font-size: 28px;
-    }
-
-    &__alert :deep(.arco-list-item-action) {
-      align-items: center;
-      color: var(--color-text-3);
-    }
-
-    &__shortcuts {
+    &__summary {
       display: grid;
-      gap: 10px;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      overflow: hidden;
+      background: var(--color-bg-2);
+      border: 1px solid var(--color-border-2);
+      border-radius: 8px;
 
-      button {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: 14px 16px;
-        color: var(--color-text-1);
-        text-align: left;
-        background: var(--color-fill-1);
-        border: 1px solid transparent;
-        border-radius: 8px;
-        cursor: pointer;
+      article {
+        min-width: 0;
+        padding: 14px;
+        border-right: 1px solid var(--color-border-2);
 
-        &:hover {
-          background: rgb(var(--arcoblue-1));
-          border-color: rgb(var(--arcoblue-3));
+        &:last-child {
+          background: rgb(var(--purple-1));
+          border-right: 0;
         }
 
-        span {
+        span,
+        small {
+          display: block;
+          overflow: hidden;
           color: var(--color-text-3);
           font-size: 12px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
         }
+
+        strong {
+          display: block;
+          margin: 8px 0 4px;
+          overflow: hidden;
+          font-weight: 500;
+          font-size: 20px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+      }
+    }
+
+    &__analysis {
+      margin-top: 16px;
+    }
+
+    &__funnel {
+      display: grid;
+      gap: 14px;
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+
+      strong {
+        font-weight: 500;
+      }
+
+      small {
+        display: block;
+        margin-top: 3px;
+        color: var(--color-text-3);
+        text-align: right;
+      }
+    }
+
+    :deep(.arco-table-td) small {
+      display: block;
+      margin-top: 3px;
+      color: var(--color-text-3);
+    }
+  }
+
+  @media (max-width: 1200px) {
+    .data-dashboard__summary {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+
+      article:nth-child(4) {
+        border-right: 0;
       }
     }
   }
 
   @media (max-width: 768px) {
-    .operations-dashboard {
+    .data-dashboard {
       padding: 16px;
 
       &__header {
         align-items: flex-start;
         flex-direction: column;
-        gap: 12px;
+      }
+
+      &__summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        article:nth-child(2n) {
+          border-right: 0;
+        }
       }
     }
   }

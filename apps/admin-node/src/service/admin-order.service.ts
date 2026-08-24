@@ -67,6 +67,7 @@ const VOICE_TRAINING_TASK_REPLACED_REMARK =
   '管理端创建新声音套餐订单时覆盖关闭。';
 const VOICE_MEMBERSHIP_DOWNGRADE_REASON = '声音版会员降级为基础版';
 const VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY = 'voiceMembershipDowngrade';
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 interface VoiceMembershipDowngradeSnapshot {
   status: 'processing' | 'benefits_failed' | 'completed' | 'failed';
@@ -1615,6 +1616,7 @@ export class AdminOrderService {
     const excludeAdminManual = this.normalizeBoolean(query?.excludeAdminManual);
     const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
     const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
+    const registeredMonth = query?.registeredMonth?.trim();
     const userId = this.normalizeOptionalObjectId(query?.userId);
     const keyword = query?.keyword?.trim() ?? '';
 
@@ -1658,6 +1660,21 @@ export class AdminOrderService {
 
     if (userId) {
       where.userId = userId;
+    }
+
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(registeredMonth ?? '')) {
+      const registeredUserIds = await this.findUserIdsByRegisteredMonth(
+        registeredMonth as string
+      );
+
+      where.userId = userId
+        ? {
+            $in: registeredUserIds.filter(
+              item =>
+                this.stringifyObjectId(item) === this.stringifyObjectId(userId)
+            ),
+          }
+        : { $in: registeredUserIds };
     }
 
     if (!keyword) {
@@ -1735,6 +1752,21 @@ export class AdminOrderService {
     });
   }
 
+  private async findUserIdsByRegisteredMonth(
+    month: string
+  ): Promise<MongoObjectId[]> {
+    const [yearText, monthText] = month.split('-');
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const start = new Date(Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS);
+    const end = new Date(Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS);
+    const users = await this.userModel.find({
+      where: { createdAt: { $gte: start, $lt: end } } as never,
+    });
+
+    return users.map(user => user.id).filter(Boolean);
+  }
+
   private async getOrderUserMap(
     orders: OrderEntity[]
   ): Promise<Map<string, AdminOrderUserDTO>> {
@@ -1774,6 +1806,7 @@ export class AdminOrderService {
             account: accountMap.get(id) ?? user.phone ?? '',
             name: user.name ?? '',
             phone: user.phone ?? accountMap.get(id) ?? '',
+            registeredAt: this.formatDate(user.createdAt),
           },
         ];
       })

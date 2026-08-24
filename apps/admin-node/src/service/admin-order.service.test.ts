@@ -641,6 +641,30 @@ describe('AdminOrderService', () => {
     });
   });
 
+  it('filters orders by the user registration month in Beijing time', async () => {
+    const { service } = createService();
+
+    jest
+      .mocked(service.userModel.find)
+      .mockResolvedValueOnce([{ id: USER_ID }] as never);
+    jest.mocked(service.orderModel.count).mockResolvedValue(0 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([] as never);
+
+    await service.listOrders({ registeredMonth: '2026-06' });
+
+    expect(service.userModel.find).toHaveBeenCalledWith({
+      where: {
+        createdAt: {
+          $gte: new Date('2026-05-31T16:00:00.000Z'),
+          $lt: new Date('2026-06-30T16:00:00.000Z'),
+        },
+      },
+    });
+    expect(service.orderModel.count).toHaveBeenCalledWith({
+      userId: { $in: [USER_ID] },
+    });
+  });
+
   it('filters orders by created time range and virtual payment type', async () => {
     const { service } = createService();
 

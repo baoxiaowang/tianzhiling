@@ -205,6 +205,8 @@ export interface AdminAgentOwnerDTO {
   avatar: string;
   phone: string;
   isVip: boolean;
+  membershipExpiredAt?: string;
+  membershipLifetime?: boolean;
 }
 
 export interface AdminAgentRecordDTO extends AgentProfileDTO {
@@ -218,6 +220,8 @@ export interface AdminAgentListParamsDTO {
   keyword?: string;
   sex?: number;
   status?: number;
+  relation?: string;
+  memberStatus?: "vip" | "non_vip";
   page?: number;
   pageSize?: number;
 }

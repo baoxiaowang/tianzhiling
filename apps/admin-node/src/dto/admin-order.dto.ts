@@ -62,6 +62,14 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.string().allow('').optional())
   createdAtEnd?: string;
 
+  @Rule(
+    RuleType.string()
+      .pattern(/^\d{4}-(0[1-9]|1[0-2])$/)
+      .allow('')
+      .optional()
+  )
+  registeredMonth?: string;
+
   @Rule(RuleType.string().allow('').optional())
   userId?: string;
 

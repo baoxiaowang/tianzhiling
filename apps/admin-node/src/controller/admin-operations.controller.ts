@@ -49,6 +49,19 @@ export class AdminOperationsController {
     return this.adminOperationsService.getReport(query?.month);
   }
 
+  @Get('/user-value')
+  async userValue(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getUserValueReport(
+      query?.endMonth,
+      query?.months
+    );
+  }
+
+  @Get('/order-analytics')
+  async orderAnalytics(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getOrderAnalytics(query?.month);
+  }
+
   @Get('/tasks')
   async tasks(@Query() query: Record<string, string>) {
     return this.adminOperationsService.listTasks(query);
