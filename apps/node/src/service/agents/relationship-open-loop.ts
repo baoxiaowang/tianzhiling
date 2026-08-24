@@ -103,6 +103,7 @@ export interface RelationshipOpenLoopUpsertResult {
 export interface RelationshipOpenLoopSelection {
   task: RelationshipOpenLoopTask;
   reason: 'current_association' | 'event_due' | 'return_priority';
+  kind: 'context_evidence' | 'follow_up_task';
   candidateCount: number;
 }
 
@@ -112,6 +113,7 @@ export interface RelationshipOpenLoopSelectionOptions {
   currentTurnMessageIds: string[];
   recentVisibleMessageIds?: string[];
   isReturnTurn: boolean;
+  allowFollowUpTask?: boolean;
   now?: Date;
 }
 
@@ -523,22 +525,32 @@ export function selectRelationshipOpenLoop(
         task.importance >= 2 &&
         !recentlyMentioned &&
         (!task.dueAt || task.dueAt.getTime() <= now.getTime() + DAY_MS);
-      const reason: RelationshipOpenLoopSelection['reason'] | undefined =
-        eventDue && !recentlyPresented && !recentlyMentioned
-          ? 'event_due'
-          : association.strong &&
-            !sourceVisibleInRawContext &&
-            !recentlyPresented
-          ? 'current_association'
-          : returnEligible && !recentlyPresented
-          ? 'return_priority'
+      const associationReason =
+        association.strong && !sourceVisibleInRawContext && !recentlyPresented
+          ? ('current_association' as const)
           : undefined;
+      const followUpReason =
+        eventDue && !recentlyPresented && !recentlyMentioned
+          ? ('event_due' as const)
+          : returnEligible && !recentlyPresented
+          ? ('return_priority' as const)
+          : undefined;
+      const reason: RelationshipOpenLoopSelection['reason'] | undefined =
+        options.allowFollowUpTask === false
+          ? associationReason
+          : followUpReason || associationReason;
+      const kind: RelationshipOpenLoopSelection['kind'] =
+        reason === 'current_association'
+          ? 'context_evidence'
+          : 'follow_up_task';
       return {
         task,
         association,
         eventDue,
         reason,
+        kind,
         score:
+          (kind === 'follow_up_task' ? 100 : 0) +
           task.importance * 10 +
           association.score * 5 +
           (eventDue ? 4 : 0) +
@@ -553,6 +565,7 @@ export function selectRelationshipOpenLoop(
     ? {
         task: selected.task,
         reason: selected.reason,
+        kind: selected.kind,
         candidateCount: candidates.length,
       }
     : undefined;
@@ -634,8 +647,11 @@ export function buildRelationshipOpenLoopPrompt(
   reason: RelationshipOpenLoopSelection['reason'],
   now = new Date()
 ): string {
+  const isContextEvidence = reason === 'current_association';
   const lines = [
-    '# 关系连续性事项（非回复计划）',
+    isContextEvidence
+      ? '# 当前关联信息（上下文证据，不是任务）'
+      : '# 到期或回归跟进（本轮待跟进事项）',
     `用户${describeRelativeTime(task.latestSourceOccurredAt, now)}说过：${
       task.summary
     }`,
@@ -647,8 +663,8 @@ export function buildRelationshipOpenLoopPrompt(
   lines.push(`权责边界：${describeAuthorityBoundary(task.authorityType)}`);
   lines.push(`本轮提供原因：${describeSelectionReason(reason)}。`);
   lines.push(
-    reason === 'current_association'
-      ? '当前消息与这件事存在明确关联，请把它作为理解背景；如何回应、是否追问和怎样展开由你结合完整上下文决定。不要把旧状态说成现在仍然如此。'
+    isContextEvidence
+      ? '当前消息与这件事存在明确关联。它只帮助你理解上下文，不要求主动提问，不计算任务落实，也不要把旧状态说成现在仍然如此；如何回应由你结合完整对话决定。'
       : '这是本轮明确需要完成的一次关系连续性关心。先正面回应用户当前消息，再自然关心这件事现在的近况或结果；不规定具体问法、建议、展开或收尾，也不要把旧状态说成现在仍然如此。只有当前消息明显更紧急，或用户明确不愿提起时，才可以暂不使用。'
   );
   return lines.join('\n');
@@ -945,7 +961,7 @@ function domainPattern(domain: RelationshipOpenLoopContentDomain): RegExp {
     case 'funeral_or_memorial':
       return /安葬|下葬|葬在|迁坟|墓地|五七|百日|周年|祭扫|上坟/u;
     case 'future_event':
-      return /明天|后天|下周|到时候|结果|通知/u;
+      return /明天|后天|下周|到时候|考试|面试|入职|开庭|签约|搬家|出差|旅行|婚礼|开学|比赛|结果|通知/u;
     default:
       return /事情|问题|安排|结果/u;
   }

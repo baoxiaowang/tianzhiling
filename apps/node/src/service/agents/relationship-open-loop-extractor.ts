@@ -20,7 +20,7 @@ export interface RelationshipOpenLoopExtraction {
 }
 
 const SERIOUS_HEALTH_PATTERN =
-  /(?:住院|手术|癌|肿瘤|化疗|放疗|病危|抢救|ICU|重症|复查.{0,10}(?:没控制住|没有控制住|不好)|长期卧床)|(?:病情|身体|伤势|情况).{0,8}(?:很严重|挺严重|比较严重)/u;
+  /(?:住院|手术|癌|肿瘤|恶性|确诊|化疗|放疗|病危|抢救|ICU|重症|呼吸困难|吐血|晕倒|高烧不退|疼得厉害|复查.{0,10}(?:没控制住|没有控制住|不好)|长期卧床)|(?:病情|身体|伤势|情况).{0,8}(?:很严重|挺严重|比较严重)/u;
 const HEALTH_PATTERN =
   /(?:生病|病了|住院|手术|复查|检查|化验|治疗|出院|康复|去医院|看医生)/u;
 const CURRENT_HEALTH_REPORT_PATTERN =
@@ -33,12 +33,15 @@ const WAITING_RESULT_PATTERN =
   /(?:等|等待).{0,12}(?:结果|通知|回复|消息|答复)|(?:结果|通知).{0,12}(?:没出|没出来|还没有|还没)|复查.{0,12}(?:还没|等待|等)/u;
 const EXPLICIT_COMMITMENT_PATTERN =
   /(?:我|我们)(?:准备|打算|决定|计划|明天|后天|下周|过几天|到时候|今晚|今天要|明天要).{1,60}/u;
+const CONCRETE_FUTURE_EVENT_PATTERN =
+  /(?:考试|面试|复试|入职|报到|开庭|签约|手术|复查|检查|住院|出院|搬家|迁居|回家|出差|旅行|结婚|婚礼|上学|开学|转学|比赛|演出|开会|办手续|提交申请|等候审批|等待审批|等通知|等结果)/u;
+const EXPLICIT_PROMISE_PATTERN =
+  /(?:我|我们).{0,8}(?:答应|保证|承诺|说好).{1,60}/u;
 const FACT_VERIFICATION_RISK_PATTERN =
   /(?:你|您).{0,12}(?:是不是|有没有|是否).{0,30}(?:藏|放|留|埋|存).{0,30}(?:东西|钱|存折|珠子|首饰|信|钥匙)|(?:我|我们).{0,20}(?:去哪里|在哪|哪里).{0,12}(?:找|拿|取|挖)/u;
 const PROPERTY_PATTERN =
   /(?:房子|房产|财产|遗产|家产|产权|过户|卖房|卖掉房|分家|存款|存折|遗嘱|律师|法院|官司)/u;
-const CARE_PATTERN =
-  /(?:照顾|照料|陪护|看护|养老|谁管|谁陪|没人管|没人照顾)/u;
+const CARE_PATTERN = /(?:照顾|照料|陪护|看护|养老|谁管|谁陪|没人管|没人照顾)/u;
 const CHILD_EDUCATION_PATTERN =
   /(?:孩子|儿子|女儿|侄子|侄女|外甥|外甥女).{0,24}(?:上学|转学|学校|幼儿园|接送|留在|回老家|监护|照顾)|(?:上学|转学|学校|幼儿园|接送).{0,24}(?:孩子|儿子|女儿|侄子|侄女|外甥|外甥女)/u;
 const FUNERAL_PATTERN =
@@ -54,9 +57,10 @@ export function shouldInspectRelationshipOpenLoopText(text: string): boolean {
   return (
     LIFECYCLE_PATTERN.test(normalized) ||
     SERIOUS_HEALTH_PATTERN.test(normalized) ||
-    CURRENT_HEALTH_REPORT_PATTERN.test(normalized) ||
     WAITING_RESULT_PATTERN.test(normalized) ||
-    Boolean(resolveDueAt(normalized, new Date())) ||
+    EXPLICIT_PROMISE_PATTERN.test(normalized) ||
+    (Boolean(resolveDueAt(normalized, new Date())) &&
+      CONCRETE_FUTURE_EVENT_PATTERN.test(normalized)) ||
     ((PROPERTY_PATTERN.test(normalized) ||
       CARE_PATTERN.test(normalized) ||
       CHILD_EDUCATION_PATTERN.test(normalized) ||
@@ -160,7 +164,10 @@ export function extractRelationshipOpenLoop(options: {
   };
 }
 
-function classifyOpenLoop(text: string, dueAt?: Date):
+function classifyOpenLoop(
+  text: string,
+  dueAt?: Date
+):
   | {
       domain: RelationshipOpenLoopContentDomain;
       authorityType: RelationshipOpenLoopAuthorityType;
@@ -188,14 +195,6 @@ function classifyOpenLoop(text: string, dueAt?: Date):
       authorityType: 'professional_high_stakes',
       importance: 2,
       reason: 'health_result_or_decision',
-    };
-  }
-  if (CURRENT_HEALTH_REPORT_PATTERN.test(text)) {
-    return {
-      domain: 'health',
-      authorityType: 'professional_high_stakes',
-      importance: 2,
-      reason: 'current_health_event',
     };
   }
   if (
@@ -264,6 +263,24 @@ function classifyOpenLoop(text: string, dueAt?: Date):
       reason: 'explicit_relationship_decision',
     };
   }
+  if (
+    (Boolean(dueAt) && CONCRETE_FUTURE_EVENT_PATTERN.test(text)) ||
+    (EXPLICIT_PROMISE_PATTERN.test(text) &&
+      CONCRETE_FUTURE_EVENT_PATTERN.test(text)) ||
+    (WAITING_RESULT_PATTERN.test(text) &&
+      CONCRETE_FUTURE_EVENT_PATTERN.test(text))
+  ) {
+    return {
+      domain: 'future_event',
+      authorityType: 'ordinary_practical',
+      importance: 2,
+      reason: WAITING_RESULT_PATTERN.test(text)
+        ? 'concrete_unresolved_result'
+        : EXPLICIT_PROMISE_PATTERN.test(text)
+        ? 'concrete_explicit_commitment'
+        : 'concrete_future_event',
+    };
+  }
   return undefined;
 }
 
@@ -295,9 +312,7 @@ function resolveRelation(options: {
 function hasConcreteArrangement(text: string): boolean {
   return (
     Boolean(resolveDueAt(text, new Date())) ||
-    /(?:准备|打算|计划|已经定|正在商量|家里商量|要去|要办)/u.test(
-      text
-    )
+    /(?:准备|打算|计划|已经定|正在商量|家里商量|要去|要办)/u.test(text)
   );
 }
 
@@ -319,6 +334,11 @@ function resolveExpiresAt(options: {
     return new Date(options.dueAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   }
   if (options.domain === 'funeral_or_memorial') {
+    return new Date(
+      options.sourceOccurredAt.getTime() + 30 * 24 * 60 * 60 * 1000
+    );
+  }
+  if (options.domain === 'future_event') {
     return new Date(
       options.sourceOccurredAt.getTime() + 30 * 24 * 60 * 60 * 1000
     );

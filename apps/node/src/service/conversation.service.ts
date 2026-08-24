@@ -178,6 +178,16 @@ import {
   RelationshipOpenLoopService,
 } from './agents/relationship-open-loop.service';
 import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.service';
+import {
+  assessDeliberateLongReplyCandidate,
+  buildDeliberateLongReplyExecutionPrompt,
+  DeliberateLongReplyCandidateAssessment,
+  DeliberateLongReplyModelDecision,
+} from './agents/deliberate-long-reply';
+import {
+  ConversationDeliberateReplyJobData,
+  DeliberateLongReplyService,
+} from './agents/deliberate-long-reply.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -186,6 +196,7 @@ const ASSISTANT_RECOVERY_TIMEOUT_MS = 15000;
 const ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS = 300;
 const ASSISTANT_REPLY_MAX_TOKENS = 520;
 const ASSISTANT_DENSE_TURN_MAX_TOKENS = 700;
+const DELIBERATE_LONG_REPLY_MAX_TOKENS = 1200;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
@@ -391,6 +402,10 @@ interface BeforeReplyResult {
   immediateAssistantMessages?: MessageEntity[];
   isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
+  deliberateLongReplyExecution?: {
+    taskId: string;
+    prompt: string;
+  };
 }
 
 interface ReplyUsage {
@@ -404,6 +419,8 @@ interface ProcessReplyResult {
   replySegments: string[];
   usage: ReplyUsage;
   routing?: ReplyRoutingAudit;
+  deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
+  deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
 }
 
 interface ParsedAssistantReply {
@@ -411,6 +428,7 @@ interface ParsedAssistantReply {
   claims: AssistantFactClaim[];
   toolDecisions?: AgentChatToolDecision[];
   invalidToolDecisionCount?: number;
+  deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
 }
 
 interface AgentChatToolAudit {
@@ -591,6 +609,14 @@ interface ReplyRoutingAudit {
   relationshipOpenLoopStateMessageId?: string;
   relationshipOpenLoopSourceMessageIds?: string[];
   relationshipOpenLoopSelectionReason?: string;
+  relationshipOpenLoopSelectionKind?: string;
+  deliberateLongReplyCandidate?: boolean;
+  deliberateLongReplyVisibleCharacters?: number;
+  deliberateLongReplyExclusion?: string;
+  deliberateFollowUpAction?: string;
+  deliberateFollowUpReason?: string;
+  deliberateFollowUpTaskId?: string;
+  deliberateFollowUpScheduledAt?: Date;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -780,6 +806,9 @@ export class ConversationService {
 
   @Inject()
   recognitionJourneyObserverService: RecognitionJourneyObserverService;
+
+  @Inject()
+  deliberateLongReplyService: DeliberateLongReplyService;
 
   async listConversations(
     auth: AuthenticatedUserPayload,
@@ -1255,6 +1284,223 @@ export class ConversationService {
       },
       { attempt: options.attempt }
     );
+  }
+
+  async processDeliberateLongReplyJob(
+    data: ConversationDeliberateReplyJobData,
+    options: ProcessConversationReplyJobOptions = {}
+  ): Promise<void> {
+    const taskId = this.parseObjectId(data.taskId);
+    const task = await this.deliberateLongReplyService.claim(
+      taskId,
+      new Date()
+    );
+    if (!task) return;
+
+    let traceId: string | undefined;
+    try {
+      traceId = await this.chatTraceService?.ensureTrace({
+        conversationId: this.stringifyObjectId(task.conversationId),
+        userId: this.stringifyObjectId(task.userId),
+        agentId: this.stringifyObjectId(task.agentId),
+        triggerMessageIds: task.sourceMessageIds,
+        queueJobId: options.queueJobId,
+        acceptedAt: task.scheduledAt,
+        releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+      });
+
+      // The visible messages are the delivery commit record. If a worker
+      // persisted them but stopped before updating the task, recover that
+      // transition instead of generating a duplicate morning reply.
+      const persistedDelivery = await this.messageModel.find({
+        where: {
+          conversationId: task.conversationId,
+          role: MessageRole.assistant,
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          deliberateReplyTaskId: this.stringifyObjectId(task.id),
+        } as never,
+        order: { createdAt: 'ASC' },
+      });
+      if (persistedDelivery.length) {
+        const messageIds = persistedDelivery.map(message =>
+          this.stringifyObjectId(message.id)
+        );
+        await this.deliberateLongReplyService.markDelivered({
+          taskId,
+          messageIds,
+        });
+        this.chatTraceService?.recordCompletedSpan({
+          stage: ChatTraceStage.persistReply,
+          operation: 'deliberate_long_reply.delivery_recovered',
+          startedAt: new Date(),
+          attributes: { messageCount: persistedDelivery.length },
+        });
+        if (traceId) {
+          await this.chatTraceService.markCompleted(traceId, {
+            responseCompletedAt:
+              persistedDelivery[persistedDelivery.length - 1].updatedAt ||
+              new Date(),
+            replyMessageIds: messageIds,
+            acceptedAt: task.scheduledAt,
+          });
+        }
+        return;
+      }
+
+      const cancel = async (reason: string) => {
+        await this.deliberateLongReplyService.cancel({ taskId, reason });
+        if (traceId) await this.chatTraceService?.markSkipped(traceId, reason);
+      };
+      const conversation = await this.findConversationById(
+        task.conversationId,
+        task.userId
+      );
+      if (!conversation) {
+        await cancel('conversation_not_found');
+        return;
+      }
+      const sourceObjectIds = task.sourceMessageIds.map(id =>
+        this.parseObjectId(id)
+      );
+      const sourceMessages = (
+        await this.messageModel.find({
+          where: {
+            conversationId: task.conversationId,
+            _id: { $in: sourceObjectIds },
+            role: MessageRole.user,
+            status: MessageStatus.sent,
+            isArchived: { $ne: true },
+          } as never,
+          order: { createdAt: 'ASC' },
+        })
+      ).filter(message => !message.isArchived);
+      if (!sourceMessages.length) {
+        await cancel('source_messages_unavailable');
+        return;
+      }
+
+      const laterMessagesDescending = await this.messageModel.find({
+        where: {
+          conversationId: task.conversationId,
+          role: { $in: [MessageRole.user, MessageRole.assistant] },
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          createdAt: { $gt: task.sourceOccurredAt },
+        } as never,
+        order: { createdAt: 'DESC' },
+        take: 24,
+      });
+      const laterMessages = laterMessagesDescending.reverse();
+      const laterUserMessages = laterMessages.filter(
+        message => message.role === MessageRole.user
+      );
+      if (
+        laterUserMessages.some(message =>
+          this.deliberateLongReplyService.isExplicitlyCancelledByUser(
+            this.buildSearchableTextFromMessage(message)
+          )
+        )
+      ) {
+        await cancel('user_cancelled_follow_up');
+        return;
+      }
+      await this.deliberateLongReplyService.recordRuntimeContext({
+        taskId,
+        messageIds: laterMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+      });
+
+      const runtime: ReplyRuntime = {
+        auth: {
+          sub: this.stringifyObjectId(task.userId),
+          accountId: '',
+          account: '',
+          iat: 0,
+          exp: 0,
+          nonce: '',
+        },
+        conversation,
+        agent: await this.findAgentById(task.agentId),
+      };
+      if (
+        await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+          runtime.agent,
+          sourceMessages.concat(laterUserMessages)
+        )
+      ) {
+        await cancel('permanent_agent_silence');
+        return;
+      }
+
+      const before: BeforeReplyResult = {
+        messagePayload: {
+          type: MessageType.text,
+          content: task.sourceText,
+        },
+        searchableText: task.sourceText,
+        userMessage: sourceMessages[sourceMessages.length - 1],
+        currentTurnMessages: sourceMessages,
+        deferReply: false,
+        deliberateLongReplyExecution: {
+          taskId: this.stringifyObjectId(task.id),
+          prompt: buildDeliberateLongReplyExecutionPrompt({
+            focus: task.focus,
+            sourceVisibleCharacters: task.sourceVisibleCharacters,
+          }),
+        },
+      };
+      const execute = async () => {
+        const processed = await this.processReply(runtime, before);
+        if (
+          task.deliveryWindowEndAt &&
+          task.deliveryWindowEndAt.getTime() <= Date.now()
+        ) {
+          await cancel('delivery_window_expired_during_generation');
+          return;
+        }
+        const after = await this.afterReply(runtime, before, processed);
+        if (!after.assistantMessages.length) {
+          throw new Error('DELIBERATE_REPLY_EMPTY_DELIVERY');
+        }
+        await this.deliberateLongReplyService.markDelivered({
+          taskId,
+          messageIds: after.assistantMessages.map(message =>
+            this.stringifyObjectId(message.id)
+          ),
+        });
+        if (traceId) {
+          await this.completeChatReplyTrace(
+            {
+              traceId,
+              acceptedAt: task.scheduledAt,
+              triggerMessageIds: task.sourceMessageIds,
+            },
+            processed,
+            after
+          );
+        }
+      };
+      if (traceId && this.chatTraceService) {
+        await this.chatTraceService.markRunning(traceId, {
+          attempt: options.attempt,
+          queueJobId: options.queueJobId,
+        });
+        await this.chatTraceService.runWithTrace(traceId, execute, {
+          attempt: options.attempt,
+        });
+      } else {
+        await execute();
+      }
+    } catch (error) {
+      await this.deliberateLongReplyService.releaseAfterFailure({
+        taskId,
+        error,
+        finalAttempt: options.isFinalAttempt === true,
+      });
+      throw error;
+    }
   }
 
   private async processConversationReplyJobCore(
@@ -3657,25 +3903,54 @@ export class ConversationService {
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
     );
+    const deliberateLongReplyCandidate = before.deliberateLongReplyExecution
+      ? undefined
+      : assessDeliberateLongReplyCandidate({
+          texts: currentTurnMessages.map(message =>
+            this.buildSearchableTextFromMessage(message)
+          ),
+          allMessagesAreText: currentTurnMessages.every(
+            message => message.type === MessageType.text
+          ),
+        });
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.plan,
+      operation: 'deliberate_long_reply.candidate',
+      startedAt: new Date(),
+      attributes: {
+        eligible: deliberateLongReplyCandidate?.eligible ?? false,
+        visibleCharacters: deliberateLongReplyCandidate?.visibleCharacters ?? 0,
+        exclusion: deliberateLongReplyCandidate?.exclusion,
+        typeHint: deliberateLongReplyCandidate?.typeHint,
+        executionTaskId: before.deliberateLongReplyExecution?.taskId,
+      },
+    });
 
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
-    const recognitionJourneyPlan = await this.prepareRecognitionJourneyTurn({
-      runtime,
-      before,
-      currentTurnMessages,
-    });
-    // Recognition remains the only direct product journey. An open-loop item
-    // is optional continuity, and it owns the single continuity slot when
-    // selected so another card is not consumed invisibly in the same turn.
-    const relationshipOpenLoopTurn = recognitionJourneyPlan?.prompt
+    const recognitionJourneyPlan =
+      before.deliberateLongReplyExecution ||
+      deliberateLongReplyCandidate?.eligible
+        ? undefined
+        : await this.prepareRecognitionJourneyTurn({
+            runtime,
+            before,
+            currentTurnMessages,
+          });
+    // Recognition owns the single actionable task slot. Current-association
+    // evidence may still be loaded because it is context, not another task.
+    const relationshipOpenLoopTurn = before.deliberateLongReplyExecution
       ? undefined
       : await this.relationshipOpenLoopService
           ?.prepareTurn({
             conversation: runtime.conversation,
             currentQuery: before.searchableText,
             currentTurnMessages,
+            allowFollowUpTask: Boolean(
+              !recognitionJourneyPlan?.prompt &&
+                !deliberateLongReplyCandidate?.eligible
+            ),
           })
           .catch(error => {
             this.logger?.warn?.(
@@ -3687,8 +3962,8 @@ export class ConversationService {
           });
     const relationshipOpenLoopStatus =
       relationshipOpenLoopTurn?.status ||
-      (recognitionJourneyPlan?.prompt
-        ? 'suppressed_by_recognition'
+      (before.deliberateLongReplyExecution
+        ? 'suppressed_by_deliberate_execution'
         : 'service_unavailable');
     this.chatTraceService?.recordCompletedSpan({
       stage: ChatTraceStage.contextLoad,
@@ -3699,6 +3974,7 @@ export class ConversationService {
         candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
         taskId: relationshipOpenLoopTurn?.taskId,
         selectionReason: relationshipOpenLoopTurn?.selectionReason,
+        selectionKind: relationshipOpenLoopTurn?.selectionKind,
       },
     });
     this.chatTraceService?.recordArtifact({
@@ -3706,9 +3982,7 @@ export class ConversationService {
       kind: ChatTraceArtifactKind.externalEvidence,
       operation: 'artifact.relationship_open_loop.selection',
       payload: relationshipOpenLoopTurn || {
-        status: recognitionJourneyPlan?.prompt
-          ? 'suppressed_by_recognition'
-          : 'service_unavailable',
+        status: 'service_unavailable',
         candidateCount: 0,
       },
       attributes: {
@@ -3716,6 +3990,7 @@ export class ConversationService {
         candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
         taskId: relationshipOpenLoopTurn?.taskId,
         selectionReason: relationshipOpenLoopTurn?.selectionReason,
+        selectionKind: relationshipOpenLoopTurn?.selectionKind,
       },
     });
     const shortTurnGeneration = resolveShortTurnGeneration({
@@ -3727,7 +4002,9 @@ export class ConversationService {
     if (
       shortTurnGeneration.mode === 'micro_model' &&
       !recognitionJourneyPlan?.prompt &&
-      !relationshipOpenLoopTurn?.prompt
+      !relationshipOpenLoopTurn?.prompt &&
+      !deliberateLongReplyCandidate?.eligible &&
+      !before.deliberateLongReplyExecution
     ) {
       try {
         return await this.processLightweightReply({
@@ -3747,10 +4024,12 @@ export class ConversationService {
       }
     }
 
-    const memoryControlResult = await this.applyExplicitMemoryControl(
-      before.userMessage,
-      before.searchableText
-    );
+    const memoryControlResult = before.deliberateLongReplyExecution
+      ? undefined
+      : await this.applyExplicitMemoryControl(
+          before.userMessage,
+          before.searchableText
+        );
 
     try {
       context = await this.withTraceSpan(
@@ -3762,15 +4041,25 @@ export class ConversationService {
             conversation: runtime.conversation,
             agent: runtime.agent,
             currentQuery: before.searchableText,
-            currentTurnMessageIds: currentTurnMessages.map(message =>
-              this.stringifyObjectId(message.id)
-            ),
+            currentTurnMessageIds: before.deliberateLongReplyExecution
+              ? []
+              : currentTurnMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                ),
             forceSemanticPlanning:
               currentTurnMessages.length > 1 || containsImage,
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
             continuityInformationCardPrompt: relationshipOpenLoopTurn?.prompt,
+            deliberateLongReplyCandidate,
+            deliberateLongReplyExecutionPrompt:
+              before.deliberateLongReplyExecution?.prompt,
+            pinnedHistoryMessageIds: before.deliberateLongReplyExecution
+              ? currentTurnMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                )
+              : undefined,
           })
       );
     } catch (error) {
@@ -3807,10 +4096,12 @@ export class ConversationService {
 
     const contextEvidence = context.evidence || [];
     let reviewEvidence = contextEvidence;
-    this.scheduleRelationshipSignals(
-      before.userMessage,
-      context.replyIntent ?? context.replyRoute?.intent
-    );
+    if (!before.deliberateLongReplyExecution) {
+      this.scheduleRelationshipSignals(
+        before.userMessage,
+        context.replyIntent ?? context.replyRoute?.intent
+      );
+    }
     const primaryIntent =
       context.replyRoute?.responseIntents?.[0] ??
       context.replyIntent?.intents?.[0];
@@ -3874,6 +4165,9 @@ export class ConversationService {
     let response;
     let replySegments: string[];
     let replyClaims: AssistantFactClaim[] = [];
+    let deliberateFollowUpDecision:
+      | DeliberateLongReplyModelDecision
+      | undefined;
     let generationUsage: ReplyUsage = {};
     let generationRecoveryAttempted = false;
     let generationRecoverySucceeded = false;
@@ -3931,6 +4225,7 @@ export class ConversationService {
         })
       );
       replyClaims = parsedReply.claims;
+      deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
       replySegments = this.normalizeAssistantReplySegments(
         plannedSegments,
         before.searchableText
@@ -4019,6 +4314,7 @@ export class ConversationService {
           })
         );
         replyClaims = parsedReply.claims;
+        deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
         replySegments = this.normalizeAssistantReplySegments(
           plannedSegments,
           before.searchableText
@@ -4127,6 +4423,9 @@ export class ConversationService {
         ) {
           replySegments = activeExpressionSegments;
           replyClaims = activeExpressionParsed.claims;
+          deliberateFollowUpDecision =
+            activeExpressionParsed.deliberateFollowUpDecision ||
+            deliberateFollowUpDecision;
         }
       } catch (activeExpressionRecoveryError) {
         generationAttemptTraces.push(
@@ -4401,6 +4700,8 @@ export class ConversationService {
     return this.attachTurnStatePlans(
       {
         replySegments: participationResult.segments,
+        deliberateLongReplyCandidate,
+        deliberateFollowUpDecision,
         usage: this.mergeReplyUsage(
           this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
           finalizationUsage
@@ -4442,6 +4743,13 @@ export class ConversationService {
           evidenceCount: reviewEvidence.length,
           factClaimCount: finalClaims.length,
           unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
+          deliberateLongReplyCandidate:
+            deliberateLongReplyCandidate?.eligible ?? false,
+          deliberateLongReplyVisibleCharacters:
+            deliberateLongReplyCandidate?.visibleCharacters,
+          deliberateLongReplyExclusion: deliberateLongReplyCandidate?.exclusion,
+          deliberateFollowUpAction: deliberateFollowUpDecision?.action,
+          deliberateFollowUpReason: deliberateFollowUpDecision?.reason,
           qualityAuditVersion: replyQualityAudit?.version,
           qualityActivatedDimensions: replyQualityAudit?.activatedDimensions,
           qualityInitialFailedDimensions:
@@ -4750,6 +5058,7 @@ export class ConversationService {
     );
     if (
       openLoopTurn?.status !== 'selected' ||
+      openLoopTurn.selectionKind !== 'follow_up_task' ||
       !openLoopTurn.taskId ||
       !openLoopTurn.stateMessageId
     ) {
@@ -4765,6 +5074,7 @@ export class ConversationService {
         relationshipOpenLoopSourceMessageIds:
           openLoopTurn.sourceMessageIds || [],
         relationshipOpenLoopSelectionReason: openLoopTurn.selectionReason,
+        relationshipOpenLoopSelectionKind: openLoopTurn.selectionKind,
       },
     };
   }
@@ -5213,10 +5523,11 @@ export class ConversationService {
   }): Promise<PrimaryAssistantCompletionResult> {
     const plan = options.context.chatToolPlan;
     const inputProfile = options.context.replyBrief?.lengthPlan;
-    const replyMaxTokens =
-      inputProfile?.inputDensity === 'dense'
-        ? ASSISTANT_DENSE_TURN_MAX_TOKENS
-        : ASSISTANT_REPLY_MAX_TOKENS;
+    const replyMaxTokens = options.before.deliberateLongReplyExecution
+      ? DELIBERATE_LONG_REPLY_MAX_TOKENS
+      : inputProfile?.inputDensity === 'dense'
+      ? ASSISTANT_DENSE_TURN_MAX_TOKENS
+      : ASSISTANT_REPLY_MAX_TOKENS;
     const tools =
       plan?.mode === 'active'
         ? getAgentChatToolDefinitions(plan.availableTools)
@@ -5247,6 +5558,9 @@ export class ConversationService {
             inputParagraphCount: inputProfile?.inputParagraphCount || undefined,
             inputClauseCount: inputProfile?.inputClauseCount || undefined,
             replyMaxTokens,
+            deliberateLongReplyExecution: Boolean(
+              options.before.deliberateLongReplyExecution
+            ),
           },
         },
       },
@@ -5380,6 +5694,9 @@ export class ConversationService {
             inputVisibleCharacters:
               inputProfile?.inputVisibleCharacters || undefined,
             replyMaxTokens,
+            deliberateLongReplyExecution: Boolean(
+              options.before.deliberateLongReplyExecution
+            ),
           },
         },
       },
@@ -6105,25 +6422,38 @@ export class ConversationService {
       return { assistantMessages: [] };
     }
 
-    const assistantMessages =
-      (await this.createAssistantVoiceReplyMessages({
-        runtime,
-        before,
-        replySegments: processed.replySegments,
-        replyTime,
-        usage: processed.usage,
-        routing: processed.routing,
-      })) ??
-      (await this.createAssistantReplyMessages({
-        conversationId: runtime.conversation.id,
-        userId: runtime.conversation.userId,
-        agentId: runtime.conversation.agentId,
-        replySegments: processed.replySegments,
-        userQuery: before.searchableText,
-        replyTime,
-        usage: processed.usage,
-        routing: processed.routing,
-      }));
+    // A scheduled morning reply is text-only so every bubble can carry the
+    // durable task marker used to make queue retries idempotent.
+    const assistantMessages = before.deliberateLongReplyExecution
+      ? await this.createAssistantReplyMessages({
+          conversationId: runtime.conversation.id,
+          userId: runtime.conversation.userId,
+          agentId: runtime.conversation.agentId,
+          replySegments: processed.replySegments,
+          userQuery: before.searchableText,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+          deliberateReplyTaskId: before.deliberateLongReplyExecution.taskId,
+        })
+      : (await this.createAssistantVoiceReplyMessages({
+          runtime,
+          before,
+          replySegments: processed.replySegments,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+        })) ??
+        (await this.createAssistantReplyMessages({
+          conversationId: runtime.conversation.id,
+          userId: runtime.conversation.userId,
+          agentId: runtime.conversation.agentId,
+          replySegments: processed.replySegments,
+          userQuery: before.searchableText,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+        }));
 
     await this.finalizeRecognitionJourneyTurn({
       runtime,
@@ -6132,6 +6462,12 @@ export class ConversationService {
     });
     await this.finalizeRelationshipOpenLoopTurn({
       runtime,
+      processed,
+      assistantMessages,
+    });
+    await this.scheduleDeliberateLongReplyIfSelected({
+      runtime,
+      before,
       processed,
       assistantMessages,
     });
@@ -6145,6 +6481,119 @@ export class ConversationService {
     return {
       assistantMessages,
     };
+  }
+
+  private async scheduleDeliberateLongReplyIfSelected(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    processed: ProcessReplyResult;
+    assistantMessages: MessageEntity[];
+  }): Promise<void> {
+    const candidate = options.processed.deliberateLongReplyCandidate;
+    const decision = options.processed.deliberateFollowUpDecision;
+    if (
+      options.before.deliberateLongReplyExecution ||
+      !candidate?.eligible ||
+      !this.deliberateLongReplyService
+    ) {
+      return;
+    }
+    const visibleReply = options.assistantMessages
+      .map(message => message.mediaTranscript || message.content || '')
+      .join('\n');
+    const hasThoughtfulPromise =
+      /(?:认真|好好|仔细|慢慢|静下心)(?:地)?(?:想|看|读|琢磨|理|捋|消化)|想清楚|放在心里想/u.test(
+        visibleReply
+      );
+    const hasMorningPromise =
+      /(?:明天|明早|明晨|明儿|明早上|明天早上|明儿早上)[^。！？!?]{0,32}(?:回你|跟你说|和你聊|告诉你|来找你|接着说|给你(?:个)?回答)/u.test(
+        visibleReply
+      );
+    const explicitModelSelection = decision?.action === 'schedule_next_morning';
+    if (!hasThoughtfulPromise || !hasMorningPromise) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.schedule_suppressed',
+        startedAt: new Date(),
+        attributes: {
+          reason: 'final_reply_did_not_expose_follow_up_promise',
+          action: decision?.action || 'missing',
+          hasThoughtfulPromise,
+          hasMorningPromise,
+        },
+      });
+      return;
+    }
+    const effectiveDecision: DeliberateLongReplyModelDecision =
+      explicitModelSelection
+        ? decision
+        : {
+            action: 'schedule_next_morning',
+            reason: 'other',
+            focus: [],
+          };
+    const sourceMessages = this.resolveCurrentTurnMessages(options.before);
+    if (!sourceMessages.length) return;
+    try {
+      const scheduled = await this.deliberateLongReplyService.schedule({
+        conversationId: options.runtime.conversation.id,
+        userId: options.runtime.conversation.userId,
+        agentId: options.runtime.conversation.agentId,
+        sourceMessageIds: sourceMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+        acknowledgementMessageIds: options.assistantMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+        sourceText: options.before.searchableText,
+        sourceOccurredAt: sourceMessages.reduce(
+          (latest, message) =>
+            message.createdAt > latest ? message.createdAt : latest,
+          sourceMessages[0].createdAt
+        ),
+        decision: effectiveDecision,
+      });
+      if (options.processed.routing) {
+        options.processed.routing.deliberateFollowUpTaskId =
+          this.stringifyObjectId(scheduled.task.id);
+        options.processed.routing.deliberateFollowUpScheduledAt =
+          scheduled.task.scheduledAt;
+      }
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.scheduled',
+        startedAt: new Date(),
+        attributes: {
+          taskId: this.stringifyObjectId(scheduled.task.id),
+          action: scheduled.action,
+          queued: scheduled.queued,
+          readbackVerified: scheduled.readbackVerified,
+          scheduledAt: scheduled.task.scheduledAt.toISOString(),
+          deliveryWindowEndAt:
+            scheduled.task.deliveryWindowEndAt?.toISOString(),
+          sourceMessageCount: scheduled.task.sourceMessageIds.length,
+          decisionSource: explicitModelSelection
+            ? 'model_envelope'
+            : 'visible_promise_recovery',
+        },
+      });
+    } catch (error) {
+      // The current reply remains valid even when the optional future task
+      // cannot be persisted. Record the failure without turning it into a
+      // technical fallback visible to the user.
+      this.logger?.error?.(
+        '[deliberate-reply] schedule failed, conversationId=%s reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.schedule_failed',
+        startedAt: new Date(),
+        status: ChatSpanStatus.failed,
+        attributes: { reason: this.describeReplyError(error) },
+      });
+    }
   }
 
   private scheduleConversationSummaryRefresh(
@@ -7754,6 +8203,7 @@ export class ConversationService {
       totalTokens?: number;
     };
     routing?: ReplyRoutingAudit;
+    deliberateReplyTaskId?: string;
   }): Promise<MessageEntity[]> {
     const replyGroupId = new MongoObjectId().toHexString();
     const messages: MessageEntity[] = [];
@@ -7791,6 +8241,7 @@ export class ConversationService {
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
           traceId: this.chatTraceService?.getCurrentTraceId(),
+          deliberateReplyTaskId: options.deliberateReplyTaskId,
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -8914,6 +9365,9 @@ export class ConversationService {
     return {
       segments: this.parseAssistantReplyCandidates(content),
       claims: this.normalizeAssistantFactClaims(parsed?.claims),
+      deliberateFollowUpDecision: this.normalizeDeliberateFollowUpDecision(
+        parsed?.deliberateFollowUp
+      ),
       ...(allowedToolNames.length
         ? {
             toolDecisions: toolDecisionResult.decisions,
@@ -8921,6 +9375,46 @@ export class ConversationService {
           }
         : {}),
     };
+  }
+
+  private normalizeDeliberateFollowUpDecision(
+    value: unknown
+  ): DeliberateLongReplyModelDecision | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = value as Record<string, unknown>;
+    const action = raw.action;
+    if (action !== 'schedule_next_morning' && action !== 'none') {
+      return undefined;
+    }
+    const allowedReasons = new Set<DeliberateLongReplyModelDecision['reason']>([
+      'personal_disclosure',
+      'relationship_letter',
+      'multi_event_life_update',
+      'mixed_personal_and_quote',
+      'poetry_or_quotation',
+      'forwarded_or_reference_material',
+      'transactional_or_factual',
+      'already_complete',
+      'other',
+    ]);
+    const reason =
+      typeof raw.reason === 'string' &&
+      allowedReasons.has(
+        raw.reason as DeliberateLongReplyModelDecision['reason']
+      )
+        ? (raw.reason as DeliberateLongReplyModelDecision['reason'])
+        : 'other';
+    const focus = Array.isArray(raw.focus)
+      ? Array.from(
+          new Set(
+            raw.focus
+              .map(item => (typeof item === 'string' ? item.trim() : ''))
+              .filter(Boolean)
+              .map(item => item.slice(0, 120))
+          )
+        ).slice(0, 3)
+      : [];
+    return { action, reason, focus };
   }
 
   private normalizeAssistantFactClaims(value: unknown): AssistantFactClaim[] {
@@ -9052,7 +9546,7 @@ export class ConversationService {
     }
 
     const repairedKnownKeys = withoutFence.replace(
-      /([{,]\s*):?\s*(segments|claims|toolDecisions|text)\s*:/g,
+      /([{,]\s*):?\s*(segments|claims|toolDecisions|deliberateFollowUp|text)\s*:/g,
       '$1"$2":'
     );
     if (repairedKnownKeys !== withoutFence) {
@@ -9692,6 +10186,7 @@ export class ConversationService {
     replySegmentIndex?: number;
     clientRequestId?: string;
     traceId?: string;
+    deliberateReplyTaskId?: string;
     quotedMessageId?: MongoObjectId;
     quotedMessageRole?: MessageRole;
     quotedMessageContent?: string;
@@ -9843,6 +10338,8 @@ export class ConversationService {
     message.clientRequestId = options.clientRequestId?.trim() || undefined;
     message.traceId =
       options.traceId?.trim() || this.chatTraceService?.getCurrentTraceId();
+    message.deliberateReplyTaskId =
+      options.deliberateReplyTaskId?.trim() || undefined;
     message.quotedMessageId = options.quotedMessageId;
     message.quotedMessageRole = options.quotedMessageRole;
     message.quotedMessageContent = options.quotedMessageContent?.trim() || '';

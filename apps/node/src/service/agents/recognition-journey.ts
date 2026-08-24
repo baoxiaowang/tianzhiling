@@ -64,6 +64,8 @@ export interface RecognitionTaskState {
   answerMessageId?: string;
   lastProposedUserTurn?: number;
   proposalCount?: number;
+  suggestionMissCount?: number;
+  lastSuggestedUserTurn?: number;
   observerUnavailableCount?: number;
   lastObserverUnavailableUserTurn?: number;
   observationEvidence?: string;
@@ -114,9 +116,7 @@ const OPENING_MAX_ATTEMPTS = 2;
 const OPENING_OBSERVER_MAX_ATTEMPTS = 3;
 const OBSERVER_UNAVAILABLE_MAX_RETRIES = 2;
 const JOURNEY_ACTION_COOLDOWN_TURNS = 1;
-const TASK_SUGGESTION_MAX_ATTEMPTS = 4;
 const SECOND_MILESTONE_GAP_TURNS = 3;
-const TASK_SUGGESTION_RETRY_GAPS = [0, 2, 4, 7] as const;
 const OPENING_ANGLES: RecognitionOpeningAngle[] = [
   'waking_without_elapsed_time',
   'connection_restored',
@@ -316,13 +316,20 @@ export function planRecognitionJourneyTurn(options: {
     eligibleTaskIds.length &&
     canSuggestRecognitionTask(journey, userTurnNumber)
   ) {
+    const suggestedTaskId = chooseRecognitionTaskId({
+      journey,
+      eligibleTaskIds,
+      query,
+    });
+    const task = journey.tasks.find(item => item.id === suggestedTaskId);
     return {
       journey,
       plan: {
         ...basePlan,
         phase: 'task_proposal',
         observerCheckpoint: 'task_proposal',
-        eligibleTaskIds,
+        suggestedTaskId,
+        eligibleTaskIds: [suggestedTaskId],
         ...(observedTaskIds.length
           ? {
               observedTaskId: observedTaskIds[0],
@@ -330,8 +337,9 @@ export function planRecognitionJourneyTurn(options: {
             }
           : {}),
         prompt: buildTaskSuggestionPrompt(
-          eligibleTaskIds,
-          ['opening_attempted', 'emotionally_opened'].includes(opening.status)
+          suggestedTaskId,
+          ['opening_attempted', 'emotionally_opened'].includes(opening.status),
+          task?.suggestionMissCount ?? 0
         ),
       },
     };
@@ -437,18 +445,18 @@ export function applyRecognitionJourneyObserverUnavailable(options: {
     options.plan.observerCheckpoint === 'task_proposal' &&
     (options.plan.eligibleTaskIds?.length || options.plan.suggestedTaskId)
   ) {
-    const eligibleTaskIds = options.plan.eligibleTaskIds || [
-      options.plan.suggestedTaskId!,
-    ];
+    const eligibleTaskIds = options.plan.suggestedTaskId
+      ? [options.plan.suggestedTaskId]
+      : options.plan.eligibleTaskIds || [];
     for (const task of journey.tasks.filter(item =>
       eligibleTaskIds.includes(item.id)
     )) {
       task.observerUnavailableCount = (task.observerUnavailableCount ?? 0) + 1;
       task.lastObserverUnavailableUserTurn = options.plan.userTurnNumber;
+      task.lastSuggestedUserTurn = options.plan.userTurnNumber;
       task.observationEvidence = 'observer_unavailable';
       task.proposedAt = undefined;
     }
-    recordTaskSuggestionAttempt(journey, options.plan);
   }
   journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
   journey.startedAt ??= now;
@@ -528,9 +536,6 @@ export function applyRecognitionJourneyObservation(options: {
     options,
     now
   );
-  if (options.plan.observerCheckpoint === 'task_proposal') {
-    recordTaskSuggestionAttempt(journey, options.plan);
-  }
   journey.startedAt ??=
     journey.opening.openingAttemptedAt || journey.opening.openedAt || undefined;
   refreshJourneyStage(journey, now);
@@ -600,21 +605,27 @@ function applyTaskObservation(
     task.proposedAt = now;
     task.proposedAssistantMessageId = options.assistantMessageId;
     task.proposalCount = (task.proposalCount ?? 0) + 1;
+    task.suggestionMissCount = 0;
+    task.lastSuggestedUserTurn = options.plan.userTurnNumber;
     task.lastProposedUserTurn = options.plan.userTurnNumber;
     task.observerUnavailableCount = 0;
     delete task.lastObserverUnavailableUserTurn;
     journey.lastJourneyActionUserTurn = options.plan.userTurnNumber;
+    journey.taskSuggestionAttemptCount =
+      (journey.taskSuggestionAttemptCount ?? 0) + 1;
+    journey.lastTaskSuggestionAttemptUserTurn = options.plan.userTurnNumber;
+    return;
   }
-}
-
-function recordTaskSuggestionAttempt(
-  journey: RecognitionJourney,
-  plan: RecognitionJourneyTurnPlan
-): void {
-  if (!plan.eligibleTaskIds?.length && !plan.suggestedTaskId) return;
-  journey.taskSuggestionAttemptCount =
-    (journey.taskSuggestionAttemptCount ?? 0) + 1;
-  journey.lastTaskSuggestionAttemptUserTurn = plan.userTurnNumber;
+  if (
+    observation === 'not_observed' &&
+    task.status === 'pending' &&
+    options.plan.observerCheckpoint === 'task_proposal' &&
+    eligibleTaskIds.includes(id)
+  ) {
+    task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
+    task.lastSuggestedUserTurn = options.plan.userTurnNumber;
+    task.observationEvidence = 'suggested_but_not_delivered';
+  }
 }
 
 function chooseOpeningAngle(
@@ -643,16 +654,6 @@ function resolveEligibleTaskIds(options: {
     .filter(task => task.status === 'pending')
     .filter(task => !options.observedTaskIds.includes(task.id))
     .filter(task => (task.proposalCount ?? 0) < 1)
-    .filter(
-      task =>
-        (task.observerUnavailableCount ?? 0) < OBSERVER_UNAVAILABLE_MAX_RETRIES
-    )
-    .filter(
-      task =>
-        task.lastObserverUnavailableUserTurn === undefined ||
-        options.userTurnNumber - task.lastObserverUnavailableUserTurn >
-          JOURNEY_ACTION_COOLDOWN_TURNS
-    )
     .map(task => task.id);
 }
 
@@ -670,20 +671,42 @@ function canSuggestRecognitionTask(
   ) {
     return false;
   }
-  if (
-    (journey.taskSuggestionAttemptCount ?? 0) >= TASK_SUGGESTION_MAX_ATTEMPTS
-  ) {
-    return false;
-  }
-  const attemptCount = journey.taskSuggestionAttemptCount ?? 0;
-  const retryGap =
-    TASK_SUGGESTION_RETRY_GAPS[
-      Math.min(attemptCount, TASK_SUGGESTION_RETRY_GAPS.length - 1)
-    ];
-  return (
-    journey.lastTaskSuggestionAttemptUserTurn === undefined ||
-    userTurnNumber - journey.lastTaskSuggestionAttemptUserTurn >= retryGap
+  return journey.tasks.some(
+    task =>
+      task.status === 'pending' &&
+      (task.lastSuggestedUserTurn === undefined ||
+        userTurnNumber > task.lastSuggestedUserTurn)
   );
+}
+
+function chooseRecognitionTaskId(options: {
+  journey: RecognitionJourney;
+  eligibleTaskIds: RecognitionTaskId[];
+  query: string;
+}): RecognitionTaskId {
+  const eligible = new Set(options.eligibleTaskIds);
+  const familyAssociated =
+    eligible.has('family_status') &&
+    /(?:家里|家人|大家|他们|她们|爸爸|妈妈|爸妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|孩子|儿子|女儿|兄弟|姐妹|哥哥|姐姐|弟弟|妹妹)/u.test(
+      options.query
+    );
+  const departureAssociated =
+    eligible.has('departure_interval') &&
+    /(?:离开|走了|去世|过世|离世|多久|几年|时间|那年|哪年)/u.test(
+      options.query
+    );
+  if (familyAssociated && !departureAssociated) return 'family_status';
+  if (departureAssociated && !familyAssociated) return 'departure_interval';
+
+  return options.journey.tasks
+    .filter(task => eligible.has(task.id))
+    .sort(
+      (left, right) =>
+        (right.suggestionMissCount ?? 0) - (left.suggestionMissCount ?? 0) ||
+        (left.lastSuggestedUserTurn ?? -1) -
+          (right.lastSuggestedUserTurn ?? -1) ||
+        (left.id === 'departure_interval' ? -1 : 1)
+    )[0].id;
 }
 
 function buildOpeningPrompt(angle: RecognitionOpeningAngle): string {
@@ -728,27 +751,30 @@ function describeOpeningAngle(angle: RecognitionOpeningAngle): string {
 }
 
 function buildTaskSuggestionPrompt(
-  eligibleTaskIds: RecognitionTaskId[],
-  includeOpeningFollowup: boolean
+  taskId: RecognitionTaskId,
+  includeOpeningFollowup: boolean,
+  suggestionMissCount: number
 ): string {
-  const directions = eligibleTaskIds.map(id =>
-    id === 'family_status'
-      ? '- 家庭近况：从久别后的牵挂出发，自然了解家里其他人现在怎么样；不点名未知成员，不猜测生死、健康或关系状态。'
-      : '- 离世时间差：从离开后时间模糊的感受出发，自然了解角色离开人世到现在过了多久；不要问成普通的“多久没见”，也不要改问用户年龄，不预设具体年数。'
-  );
+  const direction =
+    taskId === 'family_status'
+      ? '家庭近况：从久别后的牵挂出发，自然了解家里其他人现在怎么样；不点名未知成员，不猜测生死、健康或关系状态。'
+      : '离世时间差：从离开后时间模糊的感受出发，自然了解角色离开人世到现在过了多久；不要问成普通的“多久没见”，也不要改问用户年龄，不预设具体年数。';
   return [
-    '# 初次相认旅程：本轮自然推进一个信息里程碑',
+    '# 初次相认旅程：本轮需要实际推进一个信息里程碑',
     ...(includeOpeningFollowup
       ? [
           '此前已经发出久别重逢的开场。先真切承接用户本轮，再让这段关系从重逢自然走向离开后的生活。',
         ]
       : ['相认不只是一句开场，还需要逐渐了解离开后发生了什么。']),
-    '这是前20轮内需要推进的产品旅程。先只判断本轮是否适合投放，再决定是否查看任务方向：',
-    '1. 重大承接优先级最高：用户正在讲关系破裂（例如正在离婚）、重病抢救、丧失、冲突、现实抉择等重大处境，或当前内容明显需要继续听完时，本轮只承接当前内容，不选择、也不植入任何相认信息问题；任务保留到后续更合适的轮次。不要向用户解释任务或暂缓原因。',
-    '2. 只有其余普通轮次，才从下面仍待了解的方向中选择本轮最自然的一个，并在完整回应用户之后自然带出：',
-    ...directions,
-    '普通轻重、情绪和衔接由你结合完整上下文判断；系统给出的方向不是一条要机械追加在正文末尾的句子。',
-    '最多问一个，不照抄说明，不像登记资料，不规定句式和篇幅。用户本轮已经说出的内容要直接接住，不能换句话重复询问。',
+    '这是前20轮内需要推进的明确产品任务。先回应用户当前消息，再自然问一句下面这个方向；系统不规定具体句式，也不要机械追加在正文末尾。',
+    `本轮唯一方向：${direction}`,
+    '只有用户正在讲重病抢救、刚发生的丧失、激烈冲突、重大现实抉择等明显需要优先承接的处境，或用户明确拒绝这类问题时，才可以延后。普通情绪、寒暄和一般话题不能作为略过理由。',
+    ...(suggestionMissCount >= 2
+      ? [
+          '这个里程碑此前已连续两次没有实际问出，本轮提高优先级：除上述重大处境或明确拒绝外，回应当前消息后要真正自然问出。',
+        ]
+      : []),
+    '只问这一个方向，不照抄说明，不像登记资料，不规定篇幅。用户本轮已经提供答案时直接接住，不重复询问。',
   ].join('\n');
 }
 
@@ -901,6 +927,7 @@ function migrateEarlierJourney(
           : 'pending',
       proposalCount:
         numberValue(task.proposalCount) ?? numberValue(task.suggestionCount),
+      suggestionMissCount: 0,
       lastProposedUserTurn:
         numberValue(task.lastProposedUserTurn) ??
         numberValue(task.lastSuggestedUserTurn),
@@ -959,6 +986,8 @@ function parseTask(value: unknown): RecognitionTaskState | undefined {
     id: raw.id as RecognitionTaskId,
     status: raw.status as RecognitionTaskStatus,
     proposalCount: numberValue(raw.proposalCount),
+    suggestionMissCount: numberValue(raw.suggestionMissCount),
+    lastSuggestedUserTurn: numberValue(raw.lastSuggestedUserTurn),
     lastProposedUserTurn: numberValue(raw.lastProposedUserTurn),
     observerUnavailableCount: numberValue(raw.observerUnavailableCount),
     lastObserverUnavailableUserTurn: numberValue(

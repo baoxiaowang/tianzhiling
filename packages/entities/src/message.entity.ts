@@ -219,6 +219,9 @@ export class MessageEntity extends BaseEntity {
   traceId?: string;
 
   @Column()
+  deliberateReplyTaskId?: string;
+
+  @Column()
   quotedMessageId?: MongoObjectId;
 
   @Column()

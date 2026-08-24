@@ -127,6 +127,10 @@ import {
   REPLY_TURN_CONTRACT_VERSION,
   ReplyTurnContract,
 } from './reply-turn-contract';
+import {
+  buildDeliberateLongReplyCandidatePrompt,
+  DeliberateLongReplyCandidateAssessment,
+} from './deliberate-long-reply';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -140,6 +144,9 @@ export interface BuildConversationContextOptions {
   effectiveChatModel?: string;
   recognitionJourneyPrompt?: string;
   continuityInformationCardPrompt?: string;
+  deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
+  deliberateLongReplyExecutionPrompt?: string;
+  pinnedHistoryMessageIds?: string[];
 }
 
 export interface AgentContextLayer {
@@ -377,7 +384,9 @@ export class AgentContextService {
         options.currentTurnMessageIds
       );
     const routingHistoryMessages = this.buildRecentHistoryMessages(
-      historicalConversationMessages
+      historicalConversationMessages,
+      RECENT_HISTORY_MESSAGE_LIMIT,
+      options.pinnedHistoryMessageIds
     );
     const profileFacts = await this.withTraceSpan(
       ChatTraceStage.contextLoad,
@@ -543,7 +552,8 @@ export class AgentContextService {
     const modePolicy = resolveAgentChatModePolicy(replyBrief);
     const recentHistoryMessages = this.buildRecentHistoryMessages(
       historicalConversationMessages,
-      modePolicy.historyMessageLimit
+      modePolicy.historyMessageLimit,
+      options.pinnedHistoryMessageIds
     );
     const relevanceText = this.buildFactRelevanceText(
       options.currentQuery || '',
@@ -997,8 +1007,16 @@ export class AgentContextService {
         : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
-      plan.includeTools ? chatToolPlan : undefined
+      plan.includeTools ? chatToolPlan : undefined,
+      options.deliberateLongReplyCandidate
     );
+    const deliberateLongReplyPrompt = options.deliberateLongReplyExecutionPrompt
+      ? options.deliberateLongReplyExecutionPrompt
+      : options.deliberateLongReplyCandidate?.eligible
+      ? buildDeliberateLongReplyCandidatePrompt(
+          options.deliberateLongReplyCandidate
+        )
+      : '';
     const initiativeResource = buildConversationInitiativeResource({
       currentQuery: options.currentQuery || '',
       activeExpressionRequested: Boolean(
@@ -1013,6 +1031,7 @@ export class AgentContextService {
       '# 本轮任务层',
       conversationReadingPrompt,
       initiativeResource.prompt,
+      deliberateLongReplyPrompt,
       evidencePrompt,
       replyBriefPrompt,
     ];
@@ -1187,7 +1206,8 @@ export class AgentContextService {
 
   private buildModelReplyBriefPrompt(
     replyBrief?: ReplyBrief,
-    chatToolPlan?: AgentChatToolTurnPlan
+    chatToolPlan?: AgentChatToolTurnPlan,
+    deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment
   ): string {
     if (!replyBrief) return '';
 
@@ -1197,6 +1217,7 @@ export class AgentContextService {
       segmentMode: 'one',
       maxSegments: 1,
       evidenceContract: replyBrief.evidenceContract,
+      deliberateLongReplyCandidate,
     });
     const chatToolPrompt = chatToolPlan
       ? buildAgentChatToolPrompt(chatToolPlan)
@@ -3106,11 +3127,31 @@ export class AgentContextService {
 
   private buildRecentHistoryMessages(
     messages: MessageEntity[],
-    limit = RECENT_HISTORY_MESSAGE_LIMIT
+    limit = RECENT_HISTORY_MESSAGE_LIMIT,
+    pinnedMessageIds: string[] = []
   ): MessageEntity[] {
-    return messages
-      .filter(message => this.buildChatMessage(message))
-      .slice(-Math.max(1, Math.min(limit, RECENT_HISTORY_MESSAGE_LIMIT)));
+    const eligible = messages.filter(message => this.buildChatMessage(message));
+    const recent = eligible.slice(
+      -Math.max(1, Math.min(limit, RECENT_HISTORY_MESSAGE_LIMIT))
+    );
+    const pinnedIds = new Set(
+      pinnedMessageIds
+        .map(id => id.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    );
+    if (!pinnedIds.size) return recent;
+
+    const selectedIds = new Set(
+      recent.map(message => this.stringifyObjectId(message.id))
+    );
+    for (const message of eligible) {
+      const id = this.stringifyObjectId(message.id);
+      if (pinnedIds.has(id)) selectedIds.add(id);
+    }
+    return eligible.filter(message =>
+      selectedIds.has(this.stringifyObjectId(message.id))
+    );
   }
 
   private buildChatMessage(
