@@ -33,7 +33,22 @@ export interface AdminChatFeedbackItemDTO {
   agentName: string;
   conversationId: string;
   messageId: string;
+  handlingStatus: AdminChatFeedbackHandlingStatus;
+  handlingNote: string;
+  handledBy: string;
+  handledAt: string;
   createdAt: string;
+}
+
+export type AdminChatFeedbackHandlingStatus =
+  | "pending"
+  | "processing"
+  | "resolved"
+  | "ignored";
+
+export interface UpdateAdminChatFeedbackRequestDTO {
+  status: AdminChatFeedbackHandlingStatus;
+  note?: string;
 }
 
 export interface AdminFailedChatTraceItemDTO {
@@ -58,6 +73,44 @@ export interface AdminChatQualityDTO {
   failedChatsLast24Hours: number;
   feedback: AdminChatFeedbackItemDTO[];
   failedTraces: AdminFailedChatTraceItemDTO[];
+}
+
+export interface AdminOperationsDailyPointDTO {
+  date: string;
+  newUsers: number;
+  newAgents: number;
+  userMessages: number;
+  paidRevenue: number;
+  refundedRevenue: number;
+  netRevenue: number;
+}
+
+export interface AdminOperationsHourlyPointDTO {
+  hour: string;
+  newUsers: number;
+  userMessages: number;
+}
+
+export interface AdminOperationsReportDTO {
+  generatedAt: string;
+  timezone: "Asia/Shanghai";
+  month: string;
+  today: string;
+  totals: {
+    newUsers: number;
+    newAgents: number;
+    userMessages: number;
+    paidRevenue: number;
+    refundedRevenue: number;
+    netRevenue: number;
+  };
+  todayTotals: {
+    newUsers: number;
+    userMessages: number;
+    netRevenue: number;
+  };
+  daily: AdminOperationsDailyPointDTO[];
+  hourly: AdminOperationsHourlyPointDTO[];
 }
 
 export interface AdminOperationsTaskDTO {

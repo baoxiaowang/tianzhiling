@@ -53,7 +53,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1920 }"
+        :scroll="{ x: 1840 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -85,6 +85,16 @@
                   </a-tooltip>
                 </div>
               </a-space>
+            </template>
+          </a-table-column>
+          <a-table-column title="会员状态" :width="110">
+            <template #cell="{ record }">
+              <a-tag
+                :color="record.createdUser?.isVip ? 'gold' : 'gray'"
+                size="small"
+              >
+                {{ record.createdUser?.isVip ? '有效会员' : '非会员' }}
+              </a-tag>
             </template>
           </a-table-column>
           <a-table-column
@@ -190,11 +200,6 @@
           >
             <template #cell="{ record }">
               {{ record.conversationCount ?? 0 }}
-            </template>
-          </a-table-column>
-          <a-table-column title="更新时间" data-index="updatedAt" :width="180">
-            <template #cell="{ record }">
-              {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
           <a-table-column title="创建时间" data-index="createdAt" :width="180">

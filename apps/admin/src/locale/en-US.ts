@@ -29,6 +29,7 @@ export default {
   'menu.post': 'Content Operations',
   'menu.post.list': 'Posts',
   'menu.operations': 'Operations & System',
+  'menu.operations.reports': 'Daily Operations',
   'menu.operations.chatQuality': 'Chat Quality',
   'menu.operations.taskCenter': 'Task Center',
   'menu.operations.system': 'System Runtime',

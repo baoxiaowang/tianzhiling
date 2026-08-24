@@ -18,7 +18,7 @@ function createService() {
   } as any;
   service.conversationModel = {
     count: jest.fn(),
-    find: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
   } as any;
   service.messageModel = {
@@ -32,6 +32,9 @@ function createService() {
   } as any;
   service.userAccountModel = {
     find: jest.fn(),
+  } as any;
+  service.userMembershipModel = {
+    find: jest.fn().mockResolvedValue([]),
   } as any;
   service.voiceTimbreModel = {
     findOne: jest.fn(),
@@ -127,6 +130,13 @@ describe('AdminAgentService', () => {
         $or: expect.any(Array),
       })
     );
+    expect(service.agentModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order: {
+          createdAt: 'DESC',
+        },
+      })
+    );
     expect(result).toEqual({
       items: [
         {
@@ -138,6 +148,7 @@ describe('AdminAgentService', () => {
             name: 'Alice',
             avatar: 'https://example.com/user.png',
             phone: '13800000000',
+            isVip: false,
           },
           name: '小灵',
           avatar: 'https://cdn.example.com/agent/avatar.png',
@@ -156,6 +167,7 @@ describe('AdminAgentService', () => {
           hasUnreadAgentProfileGuide: false,
           customContext: '客户要求：回复要更短一点',
           voiceTimbreId: '',
+          conversationCount: 0,
           status: 1,
           isDefault: true,
           createdAt: '2026-01-01T00:00:00.000Z',
@@ -356,6 +368,7 @@ describe('AdminAgentService', () => {
             name: 'Alice',
             avatar: 'https://cdn.example.com/users/alice.png',
             phone: '138****0000',
+            isVip: false,
           },
           latestMessage: {
             id: messageId.toHexString(),
@@ -559,9 +572,9 @@ describe('AdminAgentService', () => {
     expect(message.isArchived).toBe(true);
     expect(message.archivedAt).toBeInstanceOf(Date);
     expect(service.messageModel.save).toHaveBeenCalledWith(message);
-    expect(service.milvusService.deleteConversationMessage).toHaveBeenCalledWith(
-      messageId.toHexString()
-    );
+    expect(
+      service.milvusService.deleteConversationMessage
+    ).toHaveBeenCalledWith(messageId.toHexString());
     expect(result).toEqual(
       expect.objectContaining({
         id: messageId.toHexString(),

@@ -1,8 +1,24 @@
-import { Controller, Get, Inject, Query } from '@midwayjs/core';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Put,
+  Query,
+} from '@midwayjs/core';
+import { Context } from '@midwayjs/koa';
+import type {
+  AdminAuthenticatedPayload,
+  UpdateAdminChatFeedbackRequestDTO,
+} from '@tzl/shared';
 import { AdminOperationsService } from '../service/admin-operations.service';
 
 @Controller('/operations')
 export class AdminOperationsController {
+  @Inject()
+  ctx: Context;
+
   @Inject()
   adminOperationsService: AdminOperationsService;
 
@@ -14,6 +30,23 @@ export class AdminOperationsController {
   @Get('/chat-quality')
   async chatQuality() {
     return this.adminOperationsService.getChatQuality();
+  }
+
+  @Put('/feedback/:id')
+  async updateFeedback(
+    @Param('id') id: string,
+    @Body() body: UpdateAdminChatFeedbackRequestDTO
+  ) {
+    return this.adminOperationsService.updateFeedback(
+      id,
+      body,
+      this.ctx.state.adminAuth as AdminAuthenticatedPayload
+    );
+  }
+
+  @Get('/reports')
+  async reports(@Query() query: Record<string, string>) {
+    return this.adminOperationsService.getReport(query?.month);
   }
 
   @Get('/tasks')

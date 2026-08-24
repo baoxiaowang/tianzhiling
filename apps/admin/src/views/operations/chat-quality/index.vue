@@ -34,13 +34,22 @@
                 :data="quality?.feedback || []"
                 :loading="loading"
                 :pagination="{ pageSize: 15 }"
-                :scroll="{ x: 1180 }"
+                :scroll="{ x: 1510 }"
               >
                 <template #columns>
                   <a-table-column title="反馈" :width="120">
                     <template #cell="{ record }">
                       <a-tag :color="feedbackColor(record.type)">
                         {{ feedbackLabel(record.type) }}
+                      </a-tag>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="处理状态" :width="120">
+                    <template #cell="{ record }">
+                      <a-tag
+                        :color="handlingStatusColor(record.handlingStatus)"
+                      >
+                        {{ handlingStatusLabel(record.handlingStatus) }}
                       </a-tag>
                     </template>
                   </a-table-column>
@@ -70,14 +79,33 @@
                       {{ record.content || '-' }}
                     </template>
                   </a-table-column>
+                  <a-table-column title="处理记录" :width="250">
+                    <template #cell="{ record }">
+                      <div>{{ record.handlingNote || '-' }}</div>
+                      <a-typography-text
+                        v-if="record.handledBy"
+                        type="secondary"
+                      >
+                        {{ record.handledBy }} ·
+                        {{ formatDate(record.handledAt) }}
+                      </a-typography-text>
+                    </template>
+                  </a-table-column>
                   <a-table-column title="时间" :width="170">
                     <template #cell="{ record }">
                       {{ formatDate(record.createdAt) }}
                     </template>
                   </a-table-column>
-                  <a-table-column title="操作" :width="100" fixed="right">
+                  <a-table-column title="操作" :width="160" fixed="right">
                     <template #cell="{ record }">
-                      <a-link @click="goAgent(record.agentId)">查看对话</a-link>
+                      <a-space>
+                        <a-link @click="goAgent(record.agentId)"
+                          >查看对话</a-link
+                        >
+                        <a-link @click="openFeedbackHandling(record)"
+                          >处理</a-link
+                        >
+                      </a-space>
                     </template>
                   </a-table-column>
                 </template>
@@ -153,20 +181,59 @@
         </a-card>
       </a-grid-item>
     </a-grid>
+
+    <a-modal
+      v-model:visible="handlingVisible"
+      title="处理用户反馈"
+      :confirm-loading="handlingSaving"
+      :mask-closable="false"
+      @before-ok="saveFeedbackHandling"
+    >
+      <a-form :model="handlingForm" layout="vertical">
+        <a-form-item label="处理状态" required>
+          <a-select v-model="handlingForm.status">
+            <a-option value="pending">待处理</a-option>
+            <a-option value="processing">处理中</a-option>
+            <a-option value="resolved">已解决</a-option>
+            <a-option value="ignored">无需处理</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="处理说明">
+          <a-textarea
+            v-model="handlingForm.note"
+            :max-length="1000"
+            show-word-limit
+            :auto-size="{ minRows: 4, maxRows: 8 }"
+            placeholder="记录问题判断、处理动作或无需处理的原因"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
 <script lang="ts" setup>
-  import { onMounted, ref } from 'vue';
+  import { onMounted, reactive, ref } from 'vue';
   import { useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type { AdminChatQualityDTO } from '@tzl/shared';
-  import { queryChatQuality } from '@/api/operations';
+  import type {
+    AdminChatFeedbackHandlingStatus,
+    AdminChatFeedbackItemDTO,
+    AdminChatQualityDTO,
+  } from '@tzl/shared';
+  import { queryChatQuality, updateChatFeedback } from '@/api/operations';
 
   const router = useRouter();
   const loading = ref(false);
   const quality = ref<AdminChatQualityDTO>();
+  const handlingVisible = ref(false);
+  const handlingSaving = ref(false);
+  const selectedFeedback = ref<AdminChatFeedbackItemDTO>();
+  const handlingForm = reactive<{
+    status: AdminChatFeedbackHandlingStatus;
+    note: string;
+  }>({ status: 'pending', note: '' });
 
   const fetchData = async () => {
     try {
@@ -198,6 +265,47 @@
     return 'orangered';
   };
 
+  const handlingStatusLabel = (value: AdminChatFeedbackHandlingStatus) =>
+    ({
+      pending: '待处理',
+      processing: '处理中',
+      resolved: '已解决',
+      ignored: '无需处理',
+    }[value] || '待处理');
+  const handlingStatusColor = (value: AdminChatFeedbackHandlingStatus) =>
+    ({
+      pending: 'orangered',
+      processing: 'blue',
+      resolved: 'green',
+      ignored: 'gray',
+    }[value] || 'orangered');
+
+  const openFeedbackHandling = (record: AdminChatFeedbackItemDTO) => {
+    selectedFeedback.value = record;
+    handlingForm.status = record.handlingStatus || 'pending';
+    handlingForm.note = record.handlingNote || '';
+    handlingVisible.value = true;
+  };
+
+  const saveFeedbackHandling = async () => {
+    if (!selectedFeedback.value) return false;
+    try {
+      handlingSaving.value = true;
+      await updateChatFeedback(selectedFeedback.value.id, {
+        status: handlingForm.status,
+        note: handlingForm.note,
+      });
+      Message.success('反馈处理状态已保存');
+      await fetchData();
+      return true;
+    } catch (error) {
+      Message.error('反馈处理状态保存失败');
+      return false;
+    } finally {
+      handlingSaving.value = false;
+    }
+  };
+
   const goAgent = (id: string) =>
     id && router.push({ name: 'AgentDetail', params: { id } });
   const goUser = (id: string) =>
@@ -211,5 +319,5 @@
 </script>
 
 <style lang="less" scoped>
-  @import '../operations-page.less';
+  @import url('../operations-page.less');
 </style>

@@ -1,12 +1,16 @@
 import { Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
+  AdminAuthenticatedPayload,
   AdminChatQualityDTO,
   AdminOperationsAlertDTO,
   AdminOperationsOverviewDTO,
+  AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
+  UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
+import { AppError } from '@tzl/shared';
 import {
   AgentEntity,
   ChatTraceEntity,
@@ -14,8 +18,13 @@ import {
   ConversationChatImportBatchEntity,
   ConversationChatImportStatus,
   ConversationEntity,
+  ConversationMessageFeedbackHandlingStatus,
   ConversationMessageFeedbackEntity,
+  MessageEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
+  OrderEntity,
   PostEntity,
   UserEntity,
 } from '@tzl/entities';
@@ -26,6 +35,13 @@ type TaskQuery = {
   pageSize?: string | number;
   status?: string;
 };
+
+type DailyCountRow = { _id: string; count: number };
+type DailyAmountRow = { _id: string; amount: number };
+type HourlyCountRow = { _id: string; count: number };
+
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
+const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
 
 const ACTIVE_IMPORT_STATUSES = [
   ConversationChatImportStatus.uploading,
@@ -42,6 +58,11 @@ const FAILED_IMPORT_STATUSES = [
 
 @Provide()
 export class AdminOperationsService {
+  private readonly reportCache = new Map<
+    string,
+    { expiresAt: number; value: AdminOperationsReportDTO }
+  >();
+
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
@@ -50,6 +71,12 @@ export class AdminOperationsService {
 
   @InjectEntityModel(ConversationEntity)
   conversationModel: MongoRepository<ConversationEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(OrderEntity)
+  orderModel: MongoRepository<OrderEntity>;
 
   @InjectEntityModel(PostEntity)
   postModel: MongoRepository<PostEntity>;
@@ -94,7 +121,21 @@ export class AdminOperationsService {
         status: { $in: FAILED_IMPORT_STATUSES },
         updatedAt: { $gte: last24Hours },
       } as never),
-      this.feedbackModel.count({ createdAt: { $gte: last7Days } } as never),
+      this.feedbackModel.count({
+        createdAt: { $gte: last7Days },
+        $or: [
+          { handlingStatus: { $exists: false } },
+          { handlingStatus: null },
+          {
+            handlingStatus: {
+              $in: [
+                ConversationMessageFeedbackHandlingStatus.pending,
+                ConversationMessageFeedbackHandlingStatus.processing,
+              ],
+            },
+          },
+        ],
+      } as never),
       this.chatTraceModel.count({
         status: ChatTraceStatus.failed,
         updatedAt: { $gte: last24Hours },
@@ -196,6 +237,12 @@ export class AdminOperationsService {
         agentName: agentMap.get(this.stringifyObjectId(item.agentId)) ?? '',
         conversationId: this.stringifyObjectId(item.conversationId),
         messageId: this.stringifyObjectId(item.messageId),
+        handlingStatus:
+          item.handlingStatus ??
+          ConversationMessageFeedbackHandlingStatus.pending,
+        handlingNote: item.handlingNote?.trim() ?? '',
+        handledBy: item.handledBy?.trim() ?? '',
+        handledAt: this.formatDate(item.handledAt),
         createdAt: this.formatDate(item.createdAt),
       })),
       failedTraces: failedTraces.map(item => ({
@@ -214,6 +261,245 @@ export class AdminOperationsService {
         updatedAt: this.formatDate(item.updatedAt),
       })),
     };
+  }
+
+  async updateFeedback(
+    feedbackId: string,
+    payload: UpdateAdminChatFeedbackRequestDTO,
+    operator: AdminAuthenticatedPayload
+  ) {
+    if (!MongoObjectId.isValid(feedbackId)) {
+      throw new AppError('INVALID_FEEDBACK_ID', 'invalid feedback id', 400);
+    }
+    const objectId = new MongoObjectId(feedbackId);
+    const feedback =
+      (await this.feedbackModel.findOne({ where: { id: objectId } })) ??
+      (await this.feedbackModel.findOne({
+        where: { _id: objectId } as never,
+      }));
+
+    if (!feedback) {
+      throw new AppError('FEEDBACK_NOT_FOUND', 'feedback not found', 404);
+    }
+
+    const status = payload?.status;
+    if (
+      !Object.values(ConversationMessageFeedbackHandlingStatus).includes(
+        status as ConversationMessageFeedbackHandlingStatus
+      )
+    ) {
+      throw new AppError(
+        'INVALID_FEEDBACK_STATUS',
+        'invalid feedback status',
+        400
+      );
+    }
+
+    const now = new Date();
+    feedback.handlingStatus =
+      status as ConversationMessageFeedbackHandlingStatus;
+    feedback.handlingNote = payload?.note?.trim().slice(0, 1000) ?? '';
+    feedback.handledBy = operator?.account?.trim() || operator?.sub || '';
+    feedback.handledAt = now;
+    feedback.updatedAt = now;
+    await this.feedbackModel.save(feedback);
+
+    return {
+      id: feedbackId,
+      handlingStatus: feedback.handlingStatus,
+      handlingNote: feedback.handlingNote,
+      handledBy: feedback.handledBy,
+      handledAt: now.toISOString(),
+    };
+  }
+
+  async getReport(month?: string): Promise<AdminOperationsReportDTO> {
+    const now = new Date();
+    const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
+    const currentMonth = `${beijingNow.getUTCFullYear()}-${String(
+      beijingNow.getUTCMonth() + 1
+    ).padStart(2, '0')}`;
+    const normalizedMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? '')
+      ? (month as string)
+      : currentMonth;
+    const cached = this.reportCache.get(normalizedMonth);
+    if (cached && cached.expiresAt > now.getTime()) {
+      return cached.value;
+    }
+    const [yearText, monthText] = normalizedMonth.split('-');
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const monthStart = new Date(
+      Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS
+    );
+    const monthEnd = new Date(
+      Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS
+    );
+    const today = `${beijingNow.getUTCFullYear()}-${String(
+      beijingNow.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(beijingNow.getUTCDate()).padStart(2, '0')}`;
+    const todayStart = new Date(
+      Date.UTC(
+        beijingNow.getUTCFullYear(),
+        beijingNow.getUTCMonth(),
+        beijingNow.getUTCDate()
+      ) - BEIJING_OFFSET_MS
+    );
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const liveUserMessageMatch = {
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      $or: [{ source: { $exists: false } }, { source: 'live' }],
+    };
+    const realOrderMatch = {
+      targetCode: { $ne: 'voice_one' },
+      source: { $ne: 'admin' },
+      paymentProvider: { $ne: 'admin_manual' },
+    };
+
+    const [
+      users,
+      agents,
+      messages,
+      paid,
+      refunded,
+      hourlyUsers,
+      hourlyMessages,
+    ] = await Promise.all([
+      this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
+      this.aggregateDailyCount(this.agentModel, monthStart, monthEnd, {
+        $or: [
+          { messengerOfAgentId: { $exists: false } },
+          { messengerOfAgentId: null },
+        ],
+      }),
+      this.aggregateDailyCount(
+        this.messageModel,
+        monthStart,
+        monthEnd,
+        liveUserMessageMatch
+      ),
+      this.aggregateDailyAmount(
+        this.orderModel,
+        {
+          ...realOrderMatch,
+          paidAt: { $gte: monthStart, $lt: monthEnd },
+        },
+        '$paidAt',
+        { $ifNull: ['$payableAmount', 0] }
+      ),
+      this.aggregateDailyAmount(
+        this.orderModel,
+        {
+          ...realOrderMatch,
+          status: 'refunded',
+          $or: [
+            { refundedAt: { $gte: monthStart, $lt: monthEnd } },
+            {
+              refundedAt: null,
+              updatedAt: { $gte: monthStart, $lt: monthEnd },
+            },
+          ],
+        },
+        { $ifNull: ['$refundedAt', '$updatedAt'] },
+        {
+          $cond: [
+            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+            '$refundAmount',
+            '$payableAmount',
+          ],
+        }
+      ),
+      this.aggregateHourlyCount(this.userModel, todayStart, todayEnd),
+      this.aggregateHourlyCount(
+        this.messageModel,
+        todayStart,
+        todayEnd,
+        liveUserMessageMatch
+      ),
+    ]);
+
+    const dailyMaps = {
+      users: this.countMap(users),
+      agents: this.countMap(agents),
+      messages: this.countMap(messages),
+      paid: this.amountMap(paid),
+      refunded: this.amountMap(refunded),
+    };
+    const daysInMonth = new Date(
+      Date.UTC(year, monthIndex + 1, 0)
+    ).getUTCDate();
+    const lastDay =
+      normalizedMonth === currentMonth
+        ? Math.min(beijingNow.getUTCDate(), daysInMonth)
+        : daysInMonth;
+    const daily = Array.from({ length: lastDay }, (_, index) => {
+      const date = `${normalizedMonth}-${String(index + 1).padStart(2, '0')}`;
+      const paidRevenue = this.centsToYuan(dailyMaps.paid.get(date) ?? 0);
+      const refundedRevenue = this.centsToYuan(
+        dailyMaps.refunded.get(date) ?? 0
+      );
+      return {
+        date,
+        newUsers: dailyMaps.users.get(date) ?? 0,
+        newAgents: dailyMaps.agents.get(date) ?? 0,
+        userMessages: dailyMaps.messages.get(date) ?? 0,
+        paidRevenue,
+        refundedRevenue,
+        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+      };
+    });
+    const hourlyUserMap = this.countMap(hourlyUsers);
+    const hourlyMessageMap = this.countMap(hourlyMessages);
+    const hourly = Array.from({ length: 24 }, (_, hour) => {
+      const key = String(hour).padStart(2, '0');
+      return {
+        hour: `${key}:00`,
+        newUsers: hourlyUserMap.get(key) ?? 0,
+        userMessages: hourlyMessageMap.get(key) ?? 0,
+      };
+    });
+    const totals = daily.reduce(
+      (result, item) => ({
+        newUsers: result.newUsers + item.newUsers,
+        newAgents: result.newAgents + item.newAgents,
+        userMessages: result.userMessages + item.userMessages,
+        paidRevenue: this.roundMoney(result.paidRevenue + item.paidRevenue),
+        refundedRevenue: this.roundMoney(
+          result.refundedRevenue + item.refundedRevenue
+        ),
+        netRevenue: this.roundMoney(result.netRevenue + item.netRevenue),
+      }),
+      {
+        newUsers: 0,
+        newAgents: 0,
+        userMessages: 0,
+        paidRevenue: 0,
+        refundedRevenue: 0,
+        netRevenue: 0,
+      }
+    );
+    const todayRow = daily.find(item => item.date === today);
+
+    const result: AdminOperationsReportDTO = {
+      generatedAt: now.toISOString(),
+      timezone: BEIJING_TIMEZONE,
+      month: normalizedMonth,
+      today,
+      totals,
+      todayTotals: {
+        newUsers: todayRow?.newUsers ?? 0,
+        userMessages: todayRow?.userMessages ?? 0,
+        netRevenue: todayRow?.netRevenue ?? 0,
+      },
+      daily,
+      hourly,
+    };
+    this.reportCache.set(normalizedMonth, {
+      expiresAt: now.getTime() + 5 * 60 * 1000,
+      value: result,
+    });
+    return result;
   }
 
   async listTasks(query: TaskQuery): Promise<AdminOperationsTaskListDTO> {
@@ -301,7 +587,24 @@ export class AdminOperationsService {
 
   private async getRecentAlerts(): Promise<AdminOperationsAlertDTO[]> {
     const [feedback, traces, imports] = await Promise.all([
-      this.feedbackModel.find({ order: { createdAt: 'DESC' }, take: 4 }),
+      this.feedbackModel.find({
+        where: {
+          $or: [
+            { handlingStatus: { $exists: false } },
+            { handlingStatus: null },
+            {
+              handlingStatus: {
+                $in: [
+                  ConversationMessageFeedbackHandlingStatus.pending,
+                  ConversationMessageFeedbackHandlingStatus.processing,
+                ],
+              },
+            },
+          ],
+        } as never,
+        order: { createdAt: 'DESC' },
+        take: 4,
+      }),
       this.chatTraceModel.find({
         where: { status: ChatTraceStatus.failed },
         order: { updatedAt: 'DESC' },
@@ -381,6 +684,107 @@ export class AdminOperationsService {
         agent.name?.trim() ?? '',
       ])
     );
+  }
+
+  private async aggregateDailyCount<T extends object>(
+    repository: MongoRepository<T>,
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown> = {}
+  ): Promise<DailyCountRow[]> {
+    return repository
+      .aggregate<DailyCountRow>([
+        {
+          $match: {
+            ...extraMatch,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: '+08:00',
+              },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private async aggregateHourlyCount<T extends object>(
+    repository: MongoRepository<T>,
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown> = {}
+  ): Promise<HourlyCountRow[]> {
+    return repository
+      .aggregate<HourlyCountRow>([
+        {
+          $match: {
+            ...extraMatch,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%H',
+                date: '$createdAt',
+                timezone: '+08:00',
+              },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private async aggregateDailyAmount<T extends object>(
+    repository: MongoRepository<T>,
+    match: Record<string, unknown>,
+    dateExpression: string | Record<string, unknown>,
+    amountExpression: Record<string, unknown>
+  ): Promise<DailyAmountRow[]> {
+    return repository
+      .aggregate<DailyAmountRow>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: dateExpression,
+                timezone: '+08:00',
+              },
+            },
+            amount: { $sum: amountExpression },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private countMap(rows: Array<DailyCountRow | HourlyCountRow>) {
+    return new Map(rows.map(row => [row._id, Number(row.count) || 0]));
+  }
+
+  private amountMap(rows: DailyAmountRow[]) {
+    return new Map(rows.map(row => [row._id, Number(row.amount) || 0]));
+  }
+
+  private centsToYuan(value: number): number {
+    return this.roundMoney(value / 100);
+  }
+
+  private roundMoney(value: number): number {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
   private uniqueObjectIds(ids: MongoObjectId[]): MongoObjectId[] {

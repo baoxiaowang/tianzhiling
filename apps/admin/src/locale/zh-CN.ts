@@ -29,6 +29,7 @@ export default {
   'menu.post': '内容运营',
   'menu.post.list': '动态管理',
   'menu.operations': '运营与系统',
+  'menu.operations.reports': '每日运营统计',
   'menu.operations.chatQuality': '聊天质量',
   'menu.operations.taskCenter': '任务中心',
   'menu.operations.system': '系统运行',

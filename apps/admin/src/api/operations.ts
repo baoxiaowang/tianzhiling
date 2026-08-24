@@ -2,8 +2,10 @@ import axios from 'axios';
 import type {
   AdminChatQualityDTO,
   AdminOperationsOverviewDTO,
+  AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
+  UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
 
 export interface OperationsTaskListParams {
@@ -20,6 +22,19 @@ export function queryOperationsOverview() {
 
 export function queryChatQuality() {
   return axios.get<AdminChatQualityDTO>('/admin_api/operations/chat-quality');
+}
+
+export function updateChatFeedback(
+  id: string,
+  data: UpdateAdminChatFeedbackRequestDTO
+) {
+  return axios.put(`/admin_api/operations/feedback/${id}`, data);
+}
+
+export function queryOperationsReport(month?: string) {
+  return axios.get<AdminOperationsReportDTO>('/admin_api/operations/reports', {
+    params: { month },
+  });
 }
 
 export function queryOperationsTasks(params: OperationsTaskListParams) {

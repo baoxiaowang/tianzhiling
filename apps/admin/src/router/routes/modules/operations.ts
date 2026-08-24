@@ -14,6 +14,16 @@ const OPERATIONS: AppRouteRecordRaw = {
   redirect: '/operations/chat-quality',
   children: [
     {
+      path: 'reports',
+      name: 'OperationsReports',
+      component: () => import('@/views/operations/reports/index.vue'),
+      meta: {
+        locale: 'menu.operations.reports',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
+    {
       path: 'chat-quality',
       name: 'ChatQuality',
       component: () => import('@/views/operations/chat-quality/index.vue'),

@@ -99,7 +99,7 @@ export class AdminAgentService {
       this.agentModel.find({
         where: where as never,
         order: {
-          updatedAt: 'DESC',
+          createdAt: 'DESC',
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -470,10 +470,7 @@ export class AdminAgentService {
         where: {
           userId: { $in: userIds },
           status: 'active',
-          $or: [
-            { lifetime: true },
-            { expiredAt: { $gt: new Date() } },
-          ],
+          $or: [{ lifetime: true }, { expiredAt: { $gt: new Date() } }],
         } as never,
       }),
     ]);
@@ -621,12 +618,17 @@ export class AdminAgentService {
     // Map conversationId -> agentId
     const convAgentMap = new Map<string, string>();
     for (const c of conversations) {
-      convAgentMap.set(this.stringifyObjectId(c.id), this.stringifyObjectId(c.agentId));
+      convAgentMap.set(
+        this.stringifyObjectId(c.id),
+        this.stringifyObjectId(c.agentId)
+      );
     }
 
     const countMap = new Map<string, number>();
     for (const m of messages) {
-      const agentId = convAgentMap.get(this.stringifyObjectId(m.conversationId));
+      const agentId = convAgentMap.get(
+        this.stringifyObjectId(m.conversationId)
+      );
       if (agentId) {
         countMap.set(agentId, (countMap.get(agentId) ?? 0) + 1);
       }

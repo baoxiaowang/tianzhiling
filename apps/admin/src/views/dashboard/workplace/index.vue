@@ -37,6 +37,28 @@
           </a-card>
         </a-grid-item>
 
+        <a-grid-item :span="{ xs: 24, xl: 12 }">
+          <a-card title="本月新增用户与净收入" :bordered="false">
+            <template #extra>
+              <a-link @click="router.push({ name: 'OperationsReports' })">
+                查看每日统计
+              </a-link>
+            </template>
+            <Chart height="300px" :option="dailyChartOption" />
+          </a-card>
+        </a-grid-item>
+
+        <a-grid-item :span="{ xs: 24, xl: 12 }">
+          <a-card title="今日每小时新增用户与聊天消息" :bordered="false">
+            <template #extra>
+              <a-typography-text type="secondary">
+                仅统计用户发给 AI 的实时消息
+              </a-typography-text>
+            </template>
+            <Chart height="300px" :option="hourlyChartOption" />
+          </a-card>
+        </a-grid-item>
+
         <a-grid-item :span="{ xs: 24, lg: 16 }">
           <a-card title="待关注" :bordered="false">
             <template #extra>
@@ -98,19 +120,24 @@
 </template>
 
 <script lang="ts" setup>
-  import { onMounted, ref } from 'vue';
+  import { computed, onMounted, ref } from 'vue';
   import { useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
     AdminOperationsAlertDTO,
     AdminOperationsOverviewDTO,
+    AdminOperationsReportDTO,
   } from '@tzl/shared';
-  import { queryOperationsOverview } from '@/api/operations';
+  import {
+    queryOperationsOverview,
+    queryOperationsReport,
+  } from '@/api/operations';
 
   const router = useRouter();
   const loading = ref(false);
   const overview = ref<AdminOperationsOverviewDTO>();
+  const report = ref<AdminOperationsReportDTO>();
   const shortcuts = [
     {
       title: '查找用户',
@@ -142,14 +169,82 @@
   const fetchOverview = async () => {
     try {
       loading.value = true;
-      const { data } = await queryOperationsOverview();
-      overview.value = data;
+      const [overviewResponse, reportResponse] = await Promise.all([
+        queryOperationsOverview(),
+        queryOperationsReport(),
+      ]);
+      overview.value = overviewResponse.data;
+      report.value = reportResponse.data;
     } catch (error) {
       Message.error('运营数据加载失败');
     } finally {
       loading.value = false;
     }
   };
+
+  const baseChartOption = {
+    tooltip: { trigger: 'axis' },
+    grid: { left: 56, right: 56, top: 52, bottom: 36 },
+  };
+
+  const dailyChartOption = computed(() => ({
+    ...baseChartOption,
+    legend: { data: ['新增用户', '净收入'] },
+    xAxis: {
+      type: 'category',
+      data: (report.value?.daily || []).map((item) => item.date.slice(5)),
+    },
+    yAxis: [
+      { type: 'value', name: '用户数', minInterval: 1 },
+      { type: 'value', name: '元' },
+    ],
+    series: [
+      {
+        name: '新增用户',
+        type: 'bar',
+        data: (report.value?.daily || []).map((item) => item.newUsers),
+        itemStyle: { color: '#5b8ff9', borderRadius: [4, 4, 0, 0] },
+      },
+      {
+        name: '净收入',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: (report.value?.daily || []).map((item) => item.netRevenue),
+        itemStyle: { color: '#f6bd16' },
+      },
+    ],
+  }));
+
+  const hourlyChartOption = computed(() => ({
+    ...baseChartOption,
+    legend: { data: ['新增用户', '用户消息'] },
+    xAxis: {
+      type: 'category',
+      data: (report.value?.hourly || []).map((item) => item.hour),
+      axisLabel: { interval: 2 },
+    },
+    yAxis: [
+      { type: 'value', name: '用户数', minInterval: 1 },
+      { type: 'value', name: '消息数', minInterval: 1 },
+    ],
+    series: [
+      {
+        name: '新增用户',
+        type: 'bar',
+        data: (report.value?.hourly || []).map((item) => item.newUsers),
+        itemStyle: { color: '#61d9a3', borderRadius: [4, 4, 0, 0] },
+      },
+      {
+        name: '用户消息',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: (report.value?.hourly || []).map((item) => item.userMessages),
+        itemStyle: { color: '#7262fd' },
+      },
+    ],
+  }));
 
   const openAlert = (
     targetType: NonNullable<AdminOperationsAlertDTO['targetType']>,
