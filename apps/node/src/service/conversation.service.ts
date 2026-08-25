@@ -1,4 +1,4 @@
-import { Inject, Logger } from '@midwayjs/core';
+import { Destroy, Init, Inject, Logger } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import * as bullmq from '@midwayjs/bullmq';
@@ -16,6 +16,8 @@ import {
   ChatTrialStatus,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
+  ConversationReplyTurnEntity,
+  ConversationReplyTurnMode,
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -115,6 +117,10 @@ import { countReplyVisibleCharacters } from './agents/reply-length-plan';
 import { buildAfterlifeWorldPrompt } from './agents/afterlife-world-framework';
 import { buildRelationalSceneFrameworkPrompt } from './agents/relational-scene-framework';
 import { buildMainModelConversationPrinciplesPrompt } from './agents/main-model-conversation-principles';
+import {
+  buildReplyOutputContractPrompt,
+  extractExplicitUserQuestions,
+} from './agents/reply-output-contract';
 import { assessDirectActiveContributionExecution } from './agents/direct-active-contribution';
 import {
   buildActiveExpressionRecoveryInstruction,
@@ -192,6 +198,13 @@ import {
   ConversationDeliberateReplyJobData,
   DeliberateLongReplyService,
 } from './agents/deliberate-long-reply.service';
+import {
+  ConversationReplyTurnClientState,
+  ConversationReplyTurnService,
+  LISTENING_BOUNDARY_CONTINUE_WAIT_MS,
+  LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS,
+  REPLY_TURN_RECOVERY_REQUEUE_MS,
+} from './agents/conversation-reply-turn.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -295,6 +308,7 @@ export interface SendConversationMessageResult {
   chatQuota?: ConversationChatQuotaSnapshot;
   messengerTaskPlan?: MessengerMemoryTaskPlan;
   replyPending?: boolean;
+  replyState?: ConversationReplyTurnClientState;
 }
 
 export interface ConversationReplyJobData {
@@ -304,6 +318,8 @@ export interface ConversationReplyJobData {
   traceId?: string;
   enqueuedAt?: string;
   triggerMessageIds?: string[];
+  replyTurnId?: string;
+  expectedInputEpoch?: number;
 }
 
 export interface ProcessConversationReplyJobOptions {
@@ -382,6 +398,12 @@ interface BeforeReplyResult {
     taskId: string;
     prompt: string;
   };
+  replyTurn?: {
+    turnId: string;
+    generationEpoch: number;
+  };
+  /** A follow-up bubble in an already charged durable logical turn. */
+  replyTurnContinuation?: boolean;
 }
 
 interface ReplyUsage {
@@ -397,6 +419,7 @@ interface ProcessReplyResult {
   routing?: ReplyRoutingAudit;
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
   deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
+  nextTurnMode?: ConversationReplyTurnMode;
 }
 
 interface ParsedAssistantReply {
@@ -405,6 +428,7 @@ interface ParsedAssistantReply {
   toolDecisions?: AgentChatToolDecision[];
   invalidToolDecisionCount?: number;
   deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
+  nextTurnMode?: ConversationReplyTurnMode;
 }
 
 interface AgentChatToolAudit {
@@ -676,6 +700,8 @@ export interface ConversationChatBootstrapMetadata {
 
 @Provide()
 export class ConversationService {
+  private replyTurnRecoveryTimer?: ReturnType<typeof setInterval>;
+
   @Logger()
   logger: ILogger;
 
@@ -795,6 +821,40 @@ export class ConversationService {
 
   @Inject()
   deliberateLongReplyService: DeliberateLongReplyService;
+
+  @Inject()
+  conversationReplyTurnService: ConversationReplyTurnService;
+
+  @Init()
+  async initializeReplyTurnRecovery(): Promise<void> {
+    if (
+      process.env.NODE_ENV !== 'production' ||
+      !this.isConversationReplyTurnEnabled()
+    ) {
+      return;
+    }
+    const attempt = () => {
+      void this.recoverConversationReplyTurns().catch(error => {
+        this.logger?.error?.(
+          '[conversation-reply-turn] recovery failed, reason=%s',
+          this.describeReplyError(error)
+        );
+      });
+    };
+    setImmediate(attempt);
+    this.replyTurnRecoveryTimer = setInterval(
+      attempt,
+      REPLY_TURN_RECOVERY_REQUEUE_MS
+    );
+    this.replyTurnRecoveryTimer.unref?.();
+  }
+
+  @Destroy()
+  async stopReplyTurnRecovery(): Promise<void> {
+    if (!this.replyTurnRecoveryTimer) return;
+    clearInterval(this.replyTurnRecoveryTimer);
+    this.replyTurnRecoveryTimer = undefined;
+  }
 
   async listConversations(
     auth: AuthenticatedUserPayload,
@@ -1024,7 +1084,31 @@ export class ConversationService {
       ...payload,
       type: messageType,
     });
-    const shouldReply = !before.deferReply;
+    let shouldReply = !before.deferReply;
+    const replyTurnRegistration =
+      !before.permanentSilence && before.userMessage.replyTrigger !== false
+        ? await this.registerConversationReplyTurnSafely({
+            runtime,
+            before,
+            createIfMissing: shouldReply,
+          })
+        : undefined;
+    if (replyTurnRegistration?.shouldSchedule) {
+      shouldReply = true;
+    }
+    if (
+      !replyTurnRegistration &&
+      before.replyTurnContinuation &&
+      before.userMessage.replyTrigger !== false
+    ) {
+      // If durable registration has a transient failure, prefer the legacy
+      // reply path over silently losing a deferred continuation.
+      shouldReply = true;
+    }
+    if (replyTurnRegistration?.turn) {
+      before.userMessage.replyTurnId = replyTurnRegistration.turn.turnId;
+      await this.messageModel.save(before.userMessage);
+    }
     const trace = shouldReply
       ? await this.prepareChatReplyTrace(runtime, before, true)
       : undefined;
@@ -1036,6 +1120,8 @@ export class ConversationService {
         traceId: trace?.traceId,
         enqueuedAt: trace?.acceptedAt.toISOString(),
         triggerMessageIds: trace?.triggerMessageIds,
+        replyTurnId: replyTurnRegistration?.turn?.turnId,
+        expectedInputEpoch: replyTurnRegistration?.turn?.inputEpoch,
       });
 
       if (!enqueued) {
@@ -1083,6 +1169,9 @@ export class ConversationService {
     return {
       ...this.buildSendMessageResult(before),
       replyPending: shouldReply,
+      replyState: await this.getConversationReplyStateSafely(
+        runtime.conversation.id
+      ),
     };
   }
 
@@ -1547,7 +1636,134 @@ export class ConversationService {
             'CONVERSATION_NOT_FOUND'
           );
         }
+        if (data.replyTurnId) {
+          await this.conversationReplyTurnService
+            ?.cancelTurn({
+              turnId: data.replyTurnId,
+              reason: 'conversation_not_found',
+            })
+            .catch(() => undefined);
+        }
         return;
+      }
+
+      let replyTurn: ConversationReplyTurnEntity | undefined;
+      if (
+        data.replyTurnId &&
+        this.conversationReplyTurnService &&
+        this.isConversationReplyTurnEnabled()
+      ) {
+        try {
+          replyTurn = await this.conversationReplyTurnService.findByTurnId(
+            data.replyTurnId
+          );
+          if (!replyTurn?.activeKey) {
+            if (data.traceId) {
+              await this.chatTraceService?.markSkipped(
+                data.traceId,
+                'REPLY_TURN_NOT_ACTIVE'
+              );
+            }
+            return;
+          }
+          if (replyTurn.status === 'delivering') {
+            try {
+              const reconciled =
+                await this.conversationReplyTurnService.reconcileVisibleDelivery(
+                  replyTurn
+                );
+              if (reconciled && data.traceId) {
+                await this.chatTraceService?.markCompleted(data.traceId, {
+                  responseCompletedAt: new Date(),
+                  replyMessageIds:
+                    reconciled.status === 'answered'
+                      ? reconciled.replyMessageIds
+                      : reconciled.acknowledgementMessageIds,
+                  acceptedAt: this.parseOptionalDate(data.enqueuedAt),
+                });
+              }
+            } catch (error) {
+              this.logger?.error?.(
+                '[conversation-reply-turn] delivery reconciliation deferred, turnId=%s, reason=%s',
+                replyTurn.turnId,
+                this.describeReplyError(error)
+              );
+            }
+            // A delivering turn is never regenerated speculatively. Either its
+            // visible message was reconciled above, or the recovery lease will
+            // retry reconciliation before reopening it.
+            return;
+          }
+          if (replyTurn.status === 'generating') {
+            // Another worker owns this generation. A crashed lease is recovered
+            // by the durable watchdog rather than by concurrent regeneration.
+            return;
+          }
+          if (replyTurn.inputEpoch <= replyTurn.acknowledgedEpoch) {
+            if (data.traceId) {
+              await this.chatTraceService?.markSkipped(
+                data.traceId,
+                'REPLY_TURN_WAITING_FOR_USER'
+              );
+            }
+            return;
+          }
+          if (
+            data.expectedInputEpoch !== undefined &&
+            data.expectedInputEpoch !== replyTurn.inputEpoch
+          ) {
+            await this.enqueueConversationReplyJob({
+              ...data,
+              expectedInputEpoch: replyTurn.inputEpoch,
+              triggerMessageIds: replyTurn.sourceMessageIds,
+            });
+            return;
+          }
+
+          const now = new Date();
+          if (replyTurn.collectNotBeforeAt > now) {
+            await this.enqueueConversationReplyJob({
+              ...data,
+              expectedInputEpoch: replyTurn.inputEpoch,
+              triggerMessageIds: replyTurn.sourceMessageIds,
+            });
+            return;
+          }
+          if (
+            (await this.isConversationComposerActive(conversationId, userId)) &&
+            now < replyTurn.absoluteReplyAt
+          ) {
+            const collectNotBeforeAt = new Date(
+              Math.min(
+                now.getTime() + 4000,
+                replyTurn.absoluteReplyAt.getTime()
+              )
+            );
+            replyTurn =
+              (await this.conversationReplyTurnService.deferCollecting({
+                turnId: replyTurn.turnId,
+                expectedInputEpoch: replyTurn.inputEpoch,
+                collectNotBeforeAt,
+                now,
+              })) || replyTurn;
+            await this.enqueueConversationReplyJob({
+              ...data,
+              expectedInputEpoch: replyTurn.inputEpoch,
+              triggerMessageIds: replyTurn.sourceMessageIds,
+            });
+            return;
+          }
+        } catch (error) {
+          // The turn layer is fail-open. Legacy pending-message resolution is
+          // still able to answer; recovery later reconciles durable state.
+          this.logger?.error?.(
+            '[conversation-reply-turn] load failed, conversationId=%s, turnId=%s, reason=%s',
+            conversationId,
+            data.replyTurnId,
+            this.describeReplyError(error)
+          );
+          replyTurn = undefined;
+        }
       }
 
       const pendingUserMessages = await this.withTraceSpan(
@@ -1557,6 +1773,7 @@ export class ConversationService {
           this.findPendingUserMessagesForReply({
             conversationId: conversation.id,
             afterUserCreatedAt: this.parseOptionalDate(data.afterUserCreatedAt),
+            sourceMessageIds: replyTurn?.sourceMessageIds,
           })
       );
 
@@ -1567,7 +1784,58 @@ export class ConversationService {
             'NO_PENDING_MESSAGES'
           );
         }
+        if (replyTurn) {
+          await this.conversationReplyTurnService
+            .cancelTurn({
+              turnId: replyTurn.turnId,
+              reason: 'no_pending_user_messages',
+            })
+            .catch(() => undefined);
+        }
         return;
+      }
+
+      if (replyTurn?.mode === 'listening') {
+        const readyTurn = await this.prepareListeningTurnBoundary({
+          turn: replyTurn,
+          pendingUserMessages,
+          data,
+        });
+        if (!readyTurn) return;
+        replyTurn = readyTurn;
+      }
+
+      if (replyTurn) {
+        const claimed = await this.conversationReplyTurnService
+          .claimForGeneration({
+            turnId: replyTurn.turnId,
+            expectedInputEpoch: replyTurn.inputEpoch,
+          })
+          .catch(error => {
+            this.logger?.error?.(
+              '[conversation-reply-turn] generation claim failed, turnId=%s, reason=%s',
+              replyTurn?.turnId,
+              this.describeReplyError(error)
+            );
+            return undefined;
+          });
+        if (!claimed) {
+          const current = await this.conversationReplyTurnService.findByTurnId(
+            replyTurn.turnId
+          );
+          if (
+            current?.activeKey &&
+            current.inputEpoch > current.acknowledgedEpoch
+          ) {
+            await this.enqueueConversationReplyJob({
+              ...data,
+              expectedInputEpoch: current.inputEpoch,
+              triggerMessageIds: current.sourceMessageIds,
+            });
+          }
+          return;
+        }
+        replyTurn = claimed;
       }
 
       await this.attachTraceToMessages(data.traceId, pendingUserMessages);
@@ -1610,6 +1878,12 @@ export class ConversationService {
           pendingUserMessages
         )
       ) {
+        if (replyTurn) {
+          await this.conversationReplyTurnService.cancelTurn({
+            turnId: replyTurn.turnId,
+            reason: 'permanent_agent_silence',
+          });
+        }
         if (data.traceId) {
           await this.chatTraceService?.markSkipped(
             data.traceId,
@@ -1624,6 +1898,12 @@ export class ConversationService {
         return;
       }
       const before = this.buildQueuedBeforeReplyResult(pendingUserMessages);
+      if (replyTurn?.generationEpoch !== undefined) {
+        before.replyTurn = {
+          turnId: replyTurn.turnId,
+          generationEpoch: replyTurn.generationEpoch,
+        };
+      }
 
       try {
         const processed = await this.processReply(runtime, before);
@@ -1633,6 +1913,12 @@ export class ConversationService {
             pendingUserMessages
           )
         ) {
+          if (replyTurn) {
+            await this.conversationReplyTurnService.cancelTurn({
+              turnId: replyTurn.turnId,
+              reason: 'permanent_agent_silence',
+            });
+          }
           if (data.traceId) {
             await this.chatTraceService?.markSkipped(
               data.traceId,
@@ -1642,12 +1928,22 @@ export class ConversationService {
           return;
         }
 
-        if (
-          await this.hasUserMessageAfter(
-            conversation.id,
-            latestPendingUserMessage.createdAt
-          )
-        ) {
+        const generationEpoch = before.replyTurn?.generationEpoch;
+        const currentReplyTurn = before.replyTurn
+          ? await this.conversationReplyTurnService.findByTurnId(
+              before.replyTurn.turnId
+            )
+          : undefined;
+        const staleDraft = before.replyTurn
+          ? !currentReplyTurn?.activeKey ||
+            currentReplyTurn.status !== 'generating' ||
+            currentReplyTurn.inputEpoch !== generationEpoch ||
+            currentReplyTurn.generationEpoch !== generationEpoch
+          : await this.hasUserMessageAfter(
+              conversation.id,
+              latestPendingUserMessage.createdAt
+            );
+        if (staleDraft) {
           this.logger.info(
             '[conversation-reply] discard stale draft and replan merged turn, conversationId=%s, userId=%s, pendingCount=%s',
             conversationId,
@@ -1664,22 +1960,63 @@ export class ConversationService {
               pendingMessageCount: pendingUserMessages.length,
             },
           });
-          await this.enqueueConversationReplyJob({
-            ...data,
-            conversationId,
-            userId,
-            ...(data.traceId
-              ? {
-                  triggerMessageIds: pendingUserMessages.map(message =>
-                    this.stringifyObjectId(message.id)
-                  ),
-                }
-              : {}),
-          });
+          if (currentReplyTurn?.activeKey) {
+            await this.enqueueConversationReplyJob({
+              ...data,
+              conversationId,
+              userId,
+              expectedInputEpoch: currentReplyTurn.inputEpoch,
+              triggerMessageIds: currentReplyTurn.sourceMessageIds,
+            });
+          } else if (!before.replyTurn) {
+            await this.enqueueConversationReplyJob({
+              ...data,
+              conversationId,
+              userId,
+              ...(data.traceId
+                ? {
+                    triggerMessageIds: pendingUserMessages.map(message =>
+                      this.stringifyObjectId(message.id)
+                    ),
+                  }
+                : {}),
+            });
+          }
           if (data.traceId) {
             await this.chatTraceService?.markQueued(data.traceId);
           }
           return;
+        }
+
+        if (replyTurn && generationEpoch !== undefined) {
+          processed.nextTurnMode = this.resolveEffectiveNextTurnMode({
+            requested: processed.nextTurnMode,
+            processed,
+            before,
+            turn: replyTurn,
+          });
+          const delivering =
+            await this.conversationReplyTurnService.markDelivering({
+              turnId: replyTurn.turnId,
+              generationEpoch,
+            });
+          if (!delivering) {
+            const current =
+              await this.conversationReplyTurnService.findByTurnId(
+                replyTurn.turnId
+              );
+            if (
+              current?.activeKey &&
+              current.inputEpoch > current.acknowledgedEpoch
+            ) {
+              await this.enqueueConversationReplyJob({
+                ...data,
+                expectedInputEpoch: current.inputEpoch,
+                triggerMessageIds: current.sourceMessageIds,
+              });
+            }
+            return;
+          }
         }
 
         const after = await this.withTraceSpan(
@@ -1687,6 +2024,17 @@ export class ConversationService {
           'persist.reply',
           () => this.afterReply(runtime, before, processed)
         );
+        if (replyTurn && generationEpoch !== undefined) {
+          await this.conversationReplyTurnService.recordVisibleReply({
+            turnId: replyTurn.turnId,
+            generationEpoch,
+            messageIds: after.assistantMessages.map(message =>
+              this.stringifyObjectId(message.id)
+            ),
+            nextMode:
+              processed.nextTurnMode === 'listening' ? 'listening' : 'normal',
+          });
+        }
         await this.completeChatReplyTrace(
           data.traceId
             ? {
@@ -1709,12 +2057,81 @@ export class ConversationService {
           userId,
           this.describeReplyError(error)
         );
+        const failedTurn = before.replyTurn
+          ? await this.conversationReplyTurnService
+              .findByTurnId(before.replyTurn.turnId)
+              .catch(() => undefined)
+          : undefined;
+        if (
+          failedTurn?.status === 'answered' ||
+          (failedTurn?.activeKey &&
+            failedTurn.acknowledgedEpoch >=
+              (before.replyTurn?.generationEpoch ?? Number.MAX_SAFE_INTEGER))
+        ) {
+          // The user-visible reply is already durably recorded. Trace or
+          // post-processing failure must not create a second reply.
+          return;
+        }
+        if (failedTurn?.status === 'delivering') {
+          const reconciled = await this.conversationReplyTurnService
+            .reconcileVisibleDelivery(failedTurn)
+            .catch(turnError => {
+              this.logger?.error?.(
+                '[conversation-reply-turn] failed delivery reconciliation deferred, turnId=%s, reason=%s',
+                failedTurn.turnId,
+                this.describeReplyError(turnError)
+              );
+              return undefined;
+            });
+          if (reconciled) {
+            if (data.traceId) {
+              await this.chatTraceService?.markCompleted(data.traceId, {
+                responseCompletedAt: new Date(),
+                replyMessageIds:
+                  reconciled.status === 'answered'
+                    ? reconciled.replyMessageIds
+                    : reconciled.acknowledgementMessageIds,
+                acceptedAt:
+                  this.parseOptionalDate(data.enqueuedAt) ||
+                  pendingUserMessages[0].createdAt,
+              });
+            }
+            return;
+          }
+        }
         if (options.isFinalAttempt) {
+          if (
+            failedTurn?.status === 'generating' &&
+            failedTurn.generationEpoch === before.replyTurn?.generationEpoch
+          ) {
+            await this.conversationReplyTurnService.markDelivering({
+              turnId: failedTurn.turnId,
+              generationEpoch: failedTurn.generationEpoch,
+            });
+          }
           const failedAfter = await this.withTraceSpan(
             ChatTraceStage.persistReply,
             'persist.failed_reply',
-            () => this.afterReplyFailed(runtime)
+            () => this.afterReplyFailed(runtime, before)
           );
+          if (before.replyTurn && failedAfter.assistantMessages.length) {
+            await this.conversationReplyTurnService
+              .recordVisibleReply({
+                turnId: before.replyTurn.turnId,
+                generationEpoch: before.replyTurn.generationEpoch,
+                messageIds: failedAfter.assistantMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                ),
+                nextMode: 'normal',
+              })
+              .catch(turnError => {
+                this.logger?.error?.(
+                  '[conversation-reply-turn] failure delivery readback failed, turnId=%s, reason=%s',
+                  before.replyTurn?.turnId,
+                  this.describeReplyError(turnError)
+                );
+              });
+          }
           if (data.traceId) {
             await this.chatTraceService?.markCompleted(data.traceId, {
               responseCompletedAt: new Date(),
@@ -1726,15 +2143,26 @@ export class ConversationService {
                 pendingUserMessages[0].createdAt,
             });
           }
+        } else if (
+          failedTurn?.status === 'generating' &&
+          failedTurn?.generationEpoch === before.replyTurn?.generationEpoch
+        ) {
+          await this.conversationReplyTurnService.releaseToCollecting({
+            turnId: failedTurn.turnId,
+            generationEpoch: failedTurn.generationEpoch!,
+            collectNotBeforeAt: new Date(Date.now() + 2000),
+            error,
+          });
         }
         throw this.wrapReplyError(error);
       }
 
       if (
-        await this.hasUserMessageAfter(
+        !replyTurn &&
+        (await this.hasUserMessageAfter(
           conversation.id,
           latestPendingUserMessage.createdAt
-        )
+        ))
       ) {
         await this.enqueueConversationReplyJob({
           conversationId,
@@ -2470,16 +2898,34 @@ export class ConversationService {
       await this.permanentAgentSilenceService.isPermanentlySilent(
         runtime.agent
       );
+    const activeReplyTurn = !alreadyPermanentlySilent
+      ? await this.findActiveConversationReplyTurnSafely(
+          runtime.conversation.id
+        )
+      : undefined;
+    const replyTurnContinuation = Boolean(activeReplyTurn?.activeKey);
     let chatQuota: ConversationChatQuotaSnapshot | undefined;
     if (isAutomaticChatImport) {
       chatQuota = await this.resolveCurrentChatQuota(runtime, now);
     } else if (!alreadyPermanentlySilent) {
       try {
-        chatQuota = await this.resolveChatQuotaForSend(
-          runtime,
-          now,
-          searchableText
-        );
+        if (replyTurnContinuation) {
+          const current = await this.resolveCurrentChatQuota(
+            runtime,
+            now,
+            searchableText
+          );
+          // The first bubble already charged this logical turn. Preserve the
+          // current quota snapshot for UI display without firing a second
+          // warning/block decision for continuation bubbles.
+          chatQuota = { ...current, triggerDecision: undefined };
+        } else {
+          chatQuota = await this.resolveChatQuotaForSend(
+            runtime,
+            now,
+            searchableText
+          );
+        }
       } catch (error) {
         // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
         // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
@@ -2524,7 +2970,7 @@ export class ConversationService {
       mediaAnalysis: messagePayload.mediaAnalysis,
       mediaTranscript: messagePayload.mediaTranscript,
       mediaDurationMs: messagePayload.mediaDurationMs,
-      quotaExempt: isAutomaticChatImport,
+      quotaExempt: isAutomaticChatImport || replyTurnContinuation,
       replyTrigger: isAutomaticChatImport ? false : undefined,
       createdAt: now,
       updatedAt: now,
@@ -2644,6 +3090,7 @@ export class ConversationService {
       deferReply,
       shortTurnReception,
       chatQuota,
+      replyTurnContinuation,
     };
   }
 
@@ -4102,8 +4549,10 @@ export class ConversationService {
               : currentTurnMessages.map(message =>
                   this.stringifyObjectId(message.id)
                 ),
-            forceSemanticPlanning:
-              currentTurnMessages.length > 1 || containsImage,
+            // Consecutive messages are ordinary context, not a reason to put
+            // a semantic planner in front of the main model. Images still
+            // require the existing evidence-oriented path.
+            forceSemanticPlanning: containsImage,
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
@@ -4224,6 +4673,7 @@ export class ConversationService {
     let deliberateFollowUpDecision:
       | DeliberateLongReplyModelDecision
       | undefined;
+    let nextTurnMode: ConversationReplyTurnMode = 'normal';
     let generationUsage: ReplyUsage = {};
     let generationRecoveryAttempted = false;
     let generationRecoverySucceeded = false;
@@ -4282,6 +4732,7 @@ export class ConversationService {
       );
       replyClaims = parsedReply.claims;
       deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
+      nextTurnMode = parsedReply.nextTurnMode ?? 'normal';
       replySegments = this.normalizeAssistantReplySegments(
         plannedSegments,
         before.searchableText
@@ -4371,6 +4822,7 @@ export class ConversationService {
         );
         replyClaims = parsedReply.claims;
         deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
+        nextTurnMode = parsedReply.nextTurnMode ?? 'normal';
         replySegments = this.normalizeAssistantReplySegments(
           plannedSegments,
           before.searchableText
@@ -4482,6 +4934,7 @@ export class ConversationService {
           deliberateFollowUpDecision =
             activeExpressionParsed.deliberateFollowUpDecision ||
             deliberateFollowUpDecision;
+          nextTurnMode = activeExpressionParsed.nextTurnMode ?? 'normal';
         }
       } catch (activeExpressionRecoveryError) {
         generationAttemptTraces.push(
@@ -4777,6 +5230,7 @@ export class ConversationService {
         replySegments: participationResult.segments,
         deliberateLongReplyCandidate,
         deliberateFollowUpDecision,
+        nextTurnMode,
         usage: this.mergeReplyUsage(
           this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
           finalizationUsage
@@ -6124,6 +6578,14 @@ export class ConversationService {
     const persona = buildAgentPersonaPrompt({
       agent: options.runtime.agent,
     });
+    const outputContractPrompt = buildReplyOutputContractPrompt({
+      grounded: options.replyBrief.factClaimMode === 'grounded',
+      segmentMode: 'one',
+      maxSegments: 1,
+      evidenceContract: options.replyBrief.evidenceContract,
+      turnModeDecision: this.isConversationReplyTurnEnabled(),
+      explicitUserQuestions: extractExplicitUserQuestions(options.userQuery),
+    });
     const systemPrompt = [
       '# 天之灵主回复恢复',
       `你是用户创建的已故亲人角色“${agentName}”，称呼用户为“${agentCallsUser}”。以第一人称自然聊天。`,
@@ -6141,7 +6603,8 @@ export class ConversationService {
             buildAfterlifeWorldPrompt(options.replyBrief.afterlifeWorld),
           ]
         : []),
-      ...(options.replyBrief.sceneFramework
+      ...(options.replyBrief.sceneFramework &&
+      !/^用户连续输入（按发送顺序，共\d+条）：/.test(options.userQuery.trim())
         ? [
             '# 场景资料（非决策）',
             buildRelationalSceneFrameworkPrompt(
@@ -6152,7 +6615,7 @@ export class ConversationService {
       '身份质疑：留在当前亲人关系内，可以承认没接住；不自证、不争辩、不让用户教你怎么像。',
       '不编造共同经历、生物学关系或用户现实状态；离世生活只按已激活框架及其中的资料、连续状态锚点回答，不临时另造具体房屋、物品、人物或爱好。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
-      '只输出给用户看的中文正文，不要 JSON、字段名、代码块、分析或内部说明。',
+      outputContractPrompt,
     ].join('\n');
     const hasCurrentUserMessage = recentMessages.some(
       message =>
@@ -6548,6 +7011,13 @@ export class ConversationService {
       return { assistantMessages: [] };
     }
 
+    const replyTurnEffect: MessageEntity['replyTurnEffect'] | undefined =
+      before.replyTurn
+        ? processed.nextTurnMode === 'listening'
+          ? 'listening_ack'
+          : 'final_reply'
+        : undefined;
+
     // A scheduled morning reply is text-only so every bubble can carry the
     // durable task marker used to make queue retries idempotent.
     const assistantMessages = before.deliberateLongReplyExecution
@@ -6561,6 +7031,8 @@ export class ConversationService {
           usage: processed.usage,
           routing: processed.routing,
           deliberateReplyTaskId: before.deliberateLongReplyExecution.taskId,
+          replyTurnId: before.replyTurn?.turnId,
+          replyTurnEffect,
         })
       : (await this.createAssistantVoiceReplyMessages({
           runtime,
@@ -6569,6 +7041,7 @@ export class ConversationService {
           replyTime,
           usage: processed.usage,
           routing: processed.routing,
+          replyTurnEffect,
         })) ??
         (await this.createAssistantReplyMessages({
           conversationId: runtime.conversation.id,
@@ -6579,24 +7052,31 @@ export class ConversationService {
           replyTime,
           usage: processed.usage,
           routing: processed.routing,
+          replyTurnId: before.replyTurn?.turnId,
+          replyTurnEffect,
         }));
 
-    await this.finalizeRecognitionJourneyTurn({
-      runtime,
-      processed,
-      assistantMessages,
-    });
-    await this.finalizeRelationshipOpenLoopTurn({
-      runtime,
-      processed,
-      assistantMessages,
-    });
-    await this.scheduleDeliberateLongReplyIfSelected({
-      runtime,
-      before,
-      processed,
-      assistantMessages,
-    });
+    // A listening acknowledgement keeps the same logical user turn open. It
+    // must not complete recognition/task observers or schedule a next-day
+    // reply as though the user's full expression had already ended.
+    if (processed.nextTurnMode !== 'listening') {
+      await this.finalizeRecognitionJourneyTurn({
+        runtime,
+        processed,
+        assistantMessages,
+      });
+      await this.finalizeRelationshipOpenLoopTurn({
+        runtime,
+        processed,
+        assistantMessages,
+      });
+      await this.scheduleDeliberateLongReplyIfSelected({
+        runtime,
+        before,
+        processed,
+        assistantMessages,
+      });
+    }
 
     await this.touchConversation(
       runtime.conversation,
@@ -6764,7 +7244,8 @@ export class ConversationService {
   }
 
   private async afterReplyFailed(
-    runtime: ReplyRuntime
+    runtime: ReplyRuntime,
+    before?: BeforeReplyResult
   ): Promise<AfterReplyResult> {
     const replyTime = new Date();
     const assistantMessage = await this.saveMessage({
@@ -6775,6 +7256,8 @@ export class ConversationService {
       type: MessageType.text,
       content: ASSISTANT_REPLY_FAILED_CONTENT,
       status: MessageStatus.failed,
+      replyTurnId: before?.replyTurn?.turnId,
+      replyTurnEffect: before?.replyTurn ? 'failure_reply' : undefined,
       createdAt: replyTime,
       updatedAt: replyTime,
     });
@@ -6908,6 +7391,381 @@ export class ConversationService {
     });
   }
 
+  async getConversationReplyState(
+    auth: AuthenticatedUserPayload,
+    conversationId: string
+  ): Promise<ConversationReplyTurnClientState | undefined> {
+    const conversation = await this.findConversationById(
+      this.parseObjectId(conversationId),
+      this.parseObjectId(auth.sub)
+    );
+    if (!conversation) {
+      throw new AppError(
+        'CONVERSATION_NOT_FOUND',
+        'conversation not found',
+        404
+      );
+    }
+    return this.getConversationReplyStateSafely(conversation.id);
+  }
+
+  async recordConversationComposerActivity(
+    auth: AuthenticatedUserPayload,
+    conversationId: string,
+    active: boolean
+  ): Promise<{ replyState?: ConversationReplyTurnClientState }> {
+    const conversation = await this.findConversationById(
+      this.parseObjectId(conversationId),
+      this.parseObjectId(auth.sub)
+    );
+    if (!conversation) {
+      throw new AppError(
+        'CONVERSATION_NOT_FOUND',
+        'conversation not found',
+        404
+      );
+    }
+    if (!this.isConversationReplyTurnEnabled()) return {};
+
+    const key = this.getConversationComposerActivityKey(
+      conversationId,
+      auth.sub
+    );
+    try {
+      if (active) {
+        await this.redisService?.set(key, String(Date.now()), 'PX', 6000);
+      } else {
+        await this.redisService?.del(key);
+      }
+    } catch (error) {
+      // Composer activity is disposable timing data. Its loss must never
+      // block or cancel the durable reply turn.
+      this.logger?.warn?.(
+        '[conversation-reply-turn] composer activity unavailable, conversationId=%s, reason=%s',
+        conversationId,
+        this.describeReplyError(error)
+      );
+    }
+
+    try {
+      const turn = await this.conversationReplyTurnService?.findActive(
+        conversation.id
+      );
+      if (
+        !active &&
+        turn?.status === 'collecting' &&
+        turn.inputEpoch > turn.acknowledgedEpoch
+      ) {
+        const now = new Date();
+        const collectNotBeforeAt = new Date(
+          Math.min(now.getTime() + 250, turn.absoluteReplyAt.getTime())
+        );
+        const updated =
+          (await this.conversationReplyTurnService.deferCollecting({
+            turnId: turn.turnId,
+            expectedInputEpoch: turn.inputEpoch,
+            collectNotBeforeAt,
+            now,
+          })) || turn;
+        await this.enqueueConversationReplyJob({
+          conversationId,
+          userId: auth.sub,
+          replyTurnId: updated.turnId,
+          expectedInputEpoch: updated.inputEpoch,
+          triggerMessageIds: updated.sourceMessageIds,
+        });
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation-reply-turn] composer reschedule skipped, conversationId=%s, reason=%s',
+        conversationId,
+        this.describeReplyError(error)
+      );
+    }
+
+    return {
+      replyState: await this.getConversationReplyStateSafely(conversation.id),
+    };
+  }
+
+  private async registerConversationReplyTurnSafely(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    createIfMissing: boolean;
+  }) {
+    if (
+      !this.conversationReplyTurnService ||
+      !this.isConversationReplyTurnEnabled()
+    ) {
+      return undefined;
+    }
+    try {
+      return await this.conversationReplyTurnService.registerInput({
+        conversationId: options.runtime.conversation.id,
+        userId: options.runtime.conversation.userId,
+        agentId: options.runtime.conversation.agentId,
+        messageId: this.stringifyObjectId(options.before.userMessage.id),
+        occurredAt: options.before.userMessage.createdAt,
+        searchableText: options.before.searchableText,
+        createIfMissing: options.createIfMissing,
+      });
+    } catch (error) {
+      this.logger?.error?.(
+        '[conversation-reply-turn] registration failed open, conversationId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.stringifyObjectId(options.before.userMessage.id),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private async findActiveConversationReplyTurnSafely(
+    conversationId: MongoObjectId
+  ): Promise<ConversationReplyTurnEntity | undefined> {
+    if (
+      !this.conversationReplyTurnService ||
+      !this.isConversationReplyTurnEnabled()
+    ) {
+      return undefined;
+    }
+    try {
+      return await this.conversationReplyTurnService.findActive(conversationId);
+    } catch (error) {
+      // Quota falls back to the existing per-message behavior when the
+      // additive turn store is unavailable; message acceptance still works.
+      this.logger?.warn?.(
+        '[conversation-reply-turn] active turn lookup unavailable, conversationId=%s, reason=%s',
+        this.stringifyObjectId(conversationId),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private async getConversationReplyStateSafely(
+    conversationId: MongoObjectId
+  ): Promise<ConversationReplyTurnClientState | undefined> {
+    if (
+      !this.conversationReplyTurnService ||
+      !this.isConversationReplyTurnEnabled()
+    ) {
+      return undefined;
+    }
+    try {
+      return await this.conversationReplyTurnService.getClientState(
+        conversationId
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation-reply-turn] client state unavailable, conversationId=%s, reason=%s',
+        this.stringifyObjectId(conversationId),
+        this.describeReplyError(error)
+      );
+      return undefined;
+    }
+  }
+
+  private async isConversationComposerActive(
+    conversationId: string,
+    userId: string
+  ): Promise<boolean> {
+    try {
+      return Boolean(
+        await this.redisService?.get(
+          this.getConversationComposerActivityKey(conversationId, userId)
+        )
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation-reply-turn] composer read unavailable, conversationId=%s, reason=%s',
+        conversationId,
+        this.describeReplyError(error)
+      );
+      return false;
+    }
+  }
+
+  private getConversationComposerActivityKey(
+    conversationId: string,
+    userId: string
+  ): string {
+    return `conversation:composer-active:${conversationId}:${userId}`;
+  }
+
+  private async prepareListeningTurnBoundary(options: {
+    turn: ConversationReplyTurnEntity;
+    pendingUserMessages: MessageEntity[];
+    data: ConversationReplyJobData;
+  }): Promise<ConversationReplyTurnEntity | undefined> {
+    const now = new Date();
+    const latestText = this.buildSearchableTextFromMessage(
+      options.pendingUserMessages[options.pendingUserMessages.length - 1]
+    );
+    if (
+      now >= options.turn.absoluteReplyAt ||
+      options.turn.boundaryCheckCount >= 2 ||
+      this.conversationReplyTurnService.isExplicitTurnHandoff(latestText)
+    ) {
+      return options.turn;
+    }
+
+    const unacknowledgedMessages = options.pendingUserMessages.slice(
+      Math.min(
+        options.turn.acknowledgedEpoch,
+        options.pendingUserMessages.length
+      )
+    );
+    const hint = await this.classifyListeningTurnBoundary(
+      unacknowledgedMessages
+    );
+    const checkedCount = options.turn.boundaryCheckCount + 1;
+    let collectNotBeforeAt: Date | undefined;
+    if (hint === 'continue_likely') {
+      collectNotBeforeAt = new Date(
+        Math.min(
+          checkedCount >= 2
+            ? options.turn.latestInputAt.getTime() + 45000
+            : now.getTime() + LISTENING_BOUNDARY_CONTINUE_WAIT_MS,
+          options.turn.absoluteReplyAt.getTime()
+        )
+      );
+    } else if (
+      hint === 'uncertain' &&
+      checkedCount < 2 &&
+      now.getTime() <
+        options.turn.latestInputAt.getTime() +
+          LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS
+    ) {
+      collectNotBeforeAt = new Date(
+        Math.min(
+          options.turn.latestInputAt.getTime() +
+            LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS,
+          options.turn.absoluteReplyAt.getTime()
+        )
+      );
+    }
+
+    const updated =
+      (await this.conversationReplyTurnService.deferCollecting({
+        turnId: options.turn.turnId,
+        expectedInputEpoch: options.turn.inputEpoch,
+        collectNotBeforeAt: collectNotBeforeAt || now,
+        hint,
+        incrementBoundaryCheck: true,
+        now,
+      })) || options.turn;
+    if (!collectNotBeforeAt || collectNotBeforeAt <= now) {
+      return updated;
+    }
+    await this.enqueueConversationReplyJob({
+      ...options.data,
+      expectedInputEpoch: updated.inputEpoch,
+      triggerMessageIds: updated.sourceMessageIds,
+    });
+    return undefined;
+  }
+
+  private async classifyListeningTurnBoundary(
+    messages: MessageEntity[]
+  ): Promise<'continue_likely' | 'complete_likely' | 'uncertain'> {
+    if (!messages.length) return 'uncertain';
+    const sequence = messages.slice(-8).map((message, index) => ({
+      index: index + 1,
+      text: this.buildSearchableTextFromMessage(message).slice(0, 500),
+    }));
+    try {
+      const response = await this.openAIService.createChatCompletion(
+        {
+          temperature: 0,
+          topP: 0.2,
+          reasoningSplit: false,
+          thinking: { type: 'disabled' },
+          max_tokens: 12,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '只判断用户这一串消息是否明显还没说完。只输出 continue_likely、complete_likely 或 uncertain。不要分析、不要设计回复。',
+            },
+            { role: 'user', content: JSON.stringify(sequence) },
+          ],
+          trace: {
+            stage: ChatTraceStage.plan,
+            operation: 'listening_turn.boundary',
+            attributes: { messageCount: sequence.length },
+          },
+        },
+        { timeout: 4000, maxRetries: 0 }
+      );
+      const content =
+        typeof response.choices?.[0]?.message?.content === 'string'
+          ? response.choices[0].message.content
+          : '';
+      const match = content.match(
+        /continue_likely|complete_likely|uncertain/
+      )?.[0];
+      return match === 'continue_likely' || match === 'complete_likely'
+        ? match
+        : 'uncertain';
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation-reply-turn] boundary helper unavailable, reason=%s',
+        this.describeReplyError(error)
+      );
+      return 'uncertain';
+    }
+  }
+
+  private resolveEffectiveNextTurnMode(options: {
+    requested?: ConversationReplyTurnMode;
+    processed: ProcessReplyResult;
+    before: BeforeReplyResult;
+    turn: ConversationReplyTurnEntity;
+  }): ConversationReplyTurnMode {
+    if (options.requested !== 'listening') return 'normal';
+    if (options.turn.acknowledgementCount >= 2) return 'normal';
+    if (options.processed.deliberateLongReplyCandidate?.eligible)
+      return 'normal';
+    if (
+      this.conversationReplyTurnService.isExplicitTurnHandoff(
+        options.before.searchableText
+      )
+    ) {
+      return 'normal';
+    }
+    // Do not infer conversational floor from character count. The main model
+    // has the dialogue context; the program only rejects an empty signal.
+    return options.processed.replySegments.some(segment => segment.trim())
+      ? 'listening'
+      : 'normal';
+  }
+
+  private async recoverConversationReplyTurns(): Promise<void> {
+    if (
+      !this.conversationReplyTurnService ||
+      !this.isConversationReplyTurnEnabled()
+    ) {
+      return;
+    }
+    const turns = await this.conversationReplyTurnService.recoverDueTurns();
+    for (const turn of turns) {
+      const queued = await this.enqueueConversationReplyJob({
+        conversationId: this.stringifyObjectId(turn.conversationId),
+        userId: this.stringifyObjectId(turn.userId),
+        replyTurnId: turn.turnId,
+        expectedInputEpoch: turn.inputEpoch,
+        triggerMessageIds: turn.sourceMessageIds,
+      });
+      if (!queued) {
+        this.logger?.error?.(
+          '[conversation-reply-turn] recovery queue unavailable, turnId=%s',
+          turn.turnId
+        );
+      }
+    }
+  }
+
   private async enqueueConversationReplyJob(
     data: ConversationReplyJobData
   ): Promise<boolean> {
@@ -6990,6 +7848,25 @@ export class ConversationService {
   private async resolveConversationReplyJobDelay(
     data: ConversationReplyJobData
   ): Promise<number> {
+    if (data.replyTurnId && this.isConversationReplyTurnEnabled()) {
+      try {
+        const turn = await this.conversationReplyTurnService?.findByTurnId(
+          data.replyTurnId
+        );
+        if (turn?.activeKey) {
+          return Math.max(0, turn.collectNotBeforeAt.getTime() - Date.now());
+        }
+      } catch (error) {
+        // Durable turn timing is an optimization. Falling back to the legacy
+        // debounce must still produce a reply.
+        this.logger?.error?.(
+          '[conversation-reply-turn] delay read failed, turnId=%s, reason=%s',
+          data.replyTurnId,
+          this.describeReplyError(error)
+        );
+      }
+    }
+
     if (data.afterUserCreatedAt) {
       return CONVERSATION_REPLY_JOB_DELAY_MS;
     }
@@ -7007,6 +7884,10 @@ export class ConversationService {
     );
 
     return Math.min(CONVERSATION_REPLY_JOB_DELAY_MS, remainingDebounceMs);
+  }
+
+  private isConversationReplyTurnEnabled(): boolean {
+    return process.env.CHAT_CONVERSATION_REPLY_TURN_ENABLED !== 'false';
   }
 
   private async getOrCreateConversationReplyDebounceStart(
@@ -7136,6 +8017,7 @@ export class ConversationService {
   private async findPendingUserMessagesForReply(options: {
     conversationId: MongoObjectId;
     afterUserCreatedAt?: Date;
+    sourceMessageIds?: string[];
   }): Promise<MessageEntity[]> {
     const messages = await this.messageModel.find({
       where: {
@@ -7147,6 +8029,17 @@ export class ConversationService {
       },
     });
     const activeMessages = messages.filter(message => !message.isArchived);
+
+    if (options.sourceMessageIds?.length) {
+      const sourceIds = new Set(options.sourceMessageIds);
+      return activeMessages.filter(
+        message =>
+          sourceIds.has(this.stringifyObjectId(message.id)) &&
+          message.role === MessageRole.user &&
+          message.status === MessageStatus.sent &&
+          message.replyTrigger !== false
+      );
+    }
 
     if (options.afterUserCreatedAt) {
       return activeMessages.filter(
@@ -8335,6 +9228,8 @@ export class ConversationService {
     };
     routing?: ReplyRoutingAudit;
     deliberateReplyTaskId?: string;
+    replyTurnId?: string;
+    replyTurnEffect?: MessageEntity['replyTurnEffect'];
   }): Promise<MessageEntity[]> {
     const replyGroupId = new MongoObjectId().toHexString();
     const messages: MessageEntity[] = [];
@@ -8373,6 +9268,8 @@ export class ConversationService {
             : {}),
           traceId: this.chatTraceService?.getCurrentTraceId(),
           deliberateReplyTaskId: options.deliberateReplyTaskId,
+          replyTurnId: options.replyTurnId,
+          replyTurnEffect: options.replyTurnEffect,
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -8394,6 +9291,7 @@ export class ConversationService {
       totalTokens?: number;
     };
     routing?: ReplyRoutingAudit;
+    replyTurnEffect?: MessageEntity['replyTurnEffect'];
   }): Promise<MessageEntity[] | undefined> {
     const hasLongReply =
       countReplyVisibleCharacters(
@@ -8449,6 +9347,8 @@ export class ConversationService {
       replyVisibleCharacters,
       ...this.buildReplyRoutingMessageFields(options.routing),
       traceId: this.chatTraceService?.getCurrentTraceId(),
+      replyTurnId: options.before.replyTurn?.turnId,
+      replyTurnEffect: options.replyTurnEffect,
       createdAt: options.replyTime,
       updatedAt: options.replyTime,
     });
@@ -9488,17 +10388,20 @@ export class ConversationService {
     }
 
     const parsed = this.parseAssistantReplyEnvelope(content);
+    const segments = this.parseAssistantReplyCandidates(content);
+    const nextTurnMode = this.resolveParsedReplyTurnMode(parsed, segments);
 
     const toolDecisionResult = normalizeAgentChatToolDecisions(
       parsed?.toolDecisions,
       allowedToolNames
     );
     return {
-      segments: this.parseAssistantReplyCandidates(content),
+      segments,
       claims: this.normalizeAssistantFactClaims(parsed?.claims),
       deliberateFollowUpDecision: this.normalizeDeliberateFollowUpDecision(
         parsed?.deliberateFollowUp
       ),
+      ...(nextTurnMode ? { nextTurnMode } : {}),
       ...(allowedToolNames.length
         ? {
             toolDecisions: toolDecisionResult.decisions,
@@ -9506,6 +10409,38 @@ export class ConversationService {
           }
         : {}),
     };
+  }
+
+  private resolveParsedReplyTurnMode(
+    envelope: Record<string, unknown> | null,
+    segments: string[]
+  ): ConversationReplyTurnMode | undefined {
+    if (
+      envelope?.nextTurnMode === 'normal' ||
+      envelope?.nextTurnMode === 'listening'
+    ) {
+      return envelope.nextTurnMode;
+    }
+
+    if (!this.isConversationReplyTurnEnabled()) {
+      return undefined;
+    }
+
+    // Some character models already yield the floor in their actual reply but
+    // occasionally omit the JSON envelope. Recover only that model-authored
+    // speech act; do not infer the user's intent or rewrite the reply.
+    const reply = segments.join(' ').replace(/\s+/g, ' ').trim();
+    if (!reply || countReplyVisibleCharacters(reply) > 32) {
+      return undefined;
+    }
+
+    const invitesContinuation =
+      /(?:慢慢|接着|继续)(?:说|讲)|(?:说|讲)(?:下去|吧)/.test(reply);
+    const receivesTheFloor = /(?:听着|在听|不着急|别着急|别急|别慌)/.test(
+      reply
+    );
+
+    return invitesContinuation && receivesTheFloor ? 'listening' : undefined;
   }
 
   private normalizeDeliberateFollowUpDecision(
@@ -9677,7 +10612,7 @@ export class ConversationService {
     }
 
     const repairedKnownKeys = withoutFence.replace(
-      /([{,]\s*):?\s*(segments|claims|toolDecisions|deliberateFollowUp|text)\s*:/g,
+      /([{,]\s*):?\s*(segments|claims|toolDecisions|deliberateFollowUp|nextTurnMode|text)\s*:/g,
       '$1"$2":'
     );
     if (repairedKnownKeys !== withoutFence) {
@@ -10318,6 +11253,8 @@ export class ConversationService {
     clientRequestId?: string;
     traceId?: string;
     deliberateReplyTaskId?: string;
+    replyTurnId?: string;
+    replyTurnEffect?: MessageEntity['replyTurnEffect'];
     quotedMessageId?: MongoObjectId;
     quotedMessageRole?: MessageRole;
     quotedMessageContent?: string;
@@ -10471,6 +11408,8 @@ export class ConversationService {
       options.traceId?.trim() || this.chatTraceService?.getCurrentTraceId();
     message.deliberateReplyTaskId =
       options.deliberateReplyTaskId?.trim() || undefined;
+    message.replyTurnId = options.replyTurnId?.trim() || undefined;
+    message.replyTurnEffect = options.replyTurnEffect;
     message.quotedMessageId = options.quotedMessageId;
     message.quotedMessageRole = options.quotedMessageRole;
     message.quotedMessageContent = options.quotedMessageContent?.trim() || '';

@@ -138,6 +138,7 @@ export interface MessageReplyStateProtocol {
   background: true,
 })
 @Index(["traceId", "createdAt"], { background: true })
+@Index(["replyTurnId", "createdAt"], { sparse: true, background: true })
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()
@@ -220,6 +221,12 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   deliberateReplyTaskId?: string;
+
+  @Column()
+  replyTurnId?: string;
+
+  @Column()
+  replyTurnEffect?: "listening_ack" | "final_reply" | "failure_reply";
 
   @Column()
   quotedMessageId?: MongoObjectId;

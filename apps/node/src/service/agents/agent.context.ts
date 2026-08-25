@@ -68,6 +68,7 @@ import {
 import {
   REPLY_OUTPUT_CONTRACT_VERSION,
   buildReplyOutputContractPrompt,
+  extractExplicitUserQuestions,
 } from './reply-output-contract';
 import { buildMainModelConversationPrinciplesPrompt } from './main-model-conversation-principles';
 import {
@@ -653,7 +654,8 @@ export class AgentContextService {
           persona,
           identity,
           chatToolPlan,
-          replyPlanningDecision.mode
+          replyPlanningDecision.mode,
+          currentTurnMessages
         ),
       {
         evidenceCount: evidence.length,
@@ -950,7 +952,8 @@ export class AgentContextService {
     persona?: AgentPersonaPromptResult,
     identity?: AgentIdentityContract,
     chatToolPlan?: AgentChatToolTurnPlan,
-    planningMode?: ReplyPlanningMode
+    planningMode?: ReplyPlanningMode,
+    currentTurnMessages: MessageEntity[] = []
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -994,7 +997,11 @@ export class AgentContextService {
     const conversationReadingPrompt =
       plan.includeReading ||
       this.isConsecutiveInputQuery(options.currentQuery || '')
-        ? this.buildConversationReadingPrompt(replyBrief, options.currentQuery)
+        ? this.buildConversationReadingPrompt(
+            replyBrief,
+            options.currentQuery,
+            currentTurnMessages
+          )
         : '';
     // 当前原话已经在 user message 中；外部人物/关系/记忆事实由主模型按需调用
     // lookup_chat_evidence 获取。这里只注入主模型无法自行获知的系统执行结果。
@@ -1008,7 +1015,8 @@ export class AgentContextService {
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
       plan.includeTools ? chatToolPlan : undefined,
-      options.deliberateLongReplyCandidate
+      options.deliberateLongReplyCandidate,
+      options.currentQuery
     );
     const deliberateLongReplyPrompt = options.deliberateLongReplyExecutionPrompt
       ? options.deliberateLongReplyExecutionPrompt
@@ -1078,12 +1086,14 @@ export class AgentContextService {
 
   private buildConversationReadingPrompt(
     _replyBrief?: ReplyBrief,
-    currentQuery = ''
+    currentQuery = '',
+    currentTurnMessages: MessageEntity[] = []
   ): string {
     const consecutiveInputGuidance = this.isConsecutiveInputQuery(currentQuery)
       ? [
           '# 连续输入理解',
-          '这些消息属于同一用户轮次。结合发送顺序自主判断延续、补充、修正、否定或转向；后句改变话题时跟随最新话题，前句仍有效的事实和情绪可以保留。',
+          this.buildConsecutiveInputRhythmFact(currentTurnMessages),
+          '这些消息是一段连续表达，不是待归纳的事项清单。合并只为完整呈现，不降低这段话原本应得到的回应分量。结合发送顺序和节奏自主理解延续、补充、修正、否定或真正转向；如果原话显出急切、犹豫、兴奋或内在拉扯，不只处理事情，也回应这种说话状态，普通快输入不必过度解读。发生转向时跟随最新意思。',
         ]
       : [];
 
@@ -1092,7 +1102,31 @@ export class AgentContextService {
       ...this.buildImageInputGuidance(currentQuery),
       '# 本轮理解原则',
       '以当前用户原话和完整上下文为准，自主判断真正的问题、情绪与人物指代。辅助信号不是回复计划，不得覆盖本轮事实、否定、纠正或话题转移。',
-    ].join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private buildConsecutiveInputRhythmFact(
+    currentTurnMessages: MessageEntity[]
+  ): string {
+    if (currentTurnMessages.length < 2) return '';
+
+    const timestamps = currentTurnMessages.map(message =>
+      new Date(message.createdAt).getTime()
+    );
+    if (timestamps.some(timestamp => !Number.isFinite(timestamp))) return '';
+
+    const spanMs = Math.max(...timestamps) - Math.min(...timestamps);
+    if (spanMs < 0 || spanMs > 5 * 60 * 1000) return '';
+
+    const spanSeconds = Math.max(1, Math.round(spanMs / 1000));
+    const duration =
+      spanSeconds < 60
+        ? `${spanSeconds}秒`
+        : `约${Math.max(1, Math.round(spanSeconds / 60))}分钟`;
+
+    return `发送节奏（事实）：本轮${currentTurnMessages.length}条消息在${duration}内连续发来。`;
   }
 
   private buildImageInputGuidance(currentQuery = ''): string[] {
@@ -1207,7 +1241,8 @@ export class AgentContextService {
   private buildModelReplyBriefPrompt(
     replyBrief?: ReplyBrief,
     chatToolPlan?: AgentChatToolTurnPlan,
-    deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment
+    deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment,
+    currentQuery = ''
   ): string {
     if (!replyBrief) return '';
 
@@ -1218,6 +1253,9 @@ export class AgentContextService {
       maxSegments: 1,
       evidenceContract: replyBrief.evidenceContract,
       deliberateLongReplyCandidate,
+      turnModeDecision:
+        process.env.CHAT_CONVERSATION_REPLY_TURN_ENABLED !== 'false',
+      explicitUserQuestions: extractExplicitUserQuestions(currentQuery),
     });
     const chatToolPrompt = chatToolPlan
       ? buildAgentChatToolPrompt(chatToolPlan)
@@ -1238,12 +1276,17 @@ export class AgentContextService {
           buildAfterlifeWorldPrompt(replyBrief.afterlifeWorld),
         ]
       : [];
-    const sceneFrameworkLines = replyBrief.sceneFramework
-      ? [
-          '# 场景资料（非决策）',
-          buildRelationalSceneFrameworkPrompt(replyBrief.sceneFramework),
-        ]
-      : [];
+    // Consecutive input already gives the main model the complete user turn.
+    // Keep scene cards available to evidence policy and final audit, but do not
+    // let a single weak scene hit (for example one photo mention) compete with
+    // the whole multi-event expression during generation.
+    const sceneFrameworkLines =
+      replyBrief.sceneFramework && !this.isConsecutiveInputQuery(currentQuery)
+        ? [
+            '# 场景资料（非决策）',
+            buildRelationalSceneFrameworkPrompt(replyBrief.sceneFramework),
+          ]
+        : [];
     const conversationProtectionPrompt = buildConversationProtectionStatePrompt(
       replyBrief.conversationProtection
     );

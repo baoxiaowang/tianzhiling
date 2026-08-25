@@ -30,6 +30,11 @@ export class SendConversationMessageDTO {
   clientRequestId?: string;
 }
 
+export class ConversationComposerActivityDTO {
+  @Rule(RuleType.boolean().required())
+  active: boolean;
+}
+
 export class TranscribeConversationVoiceDTO {
   @Rule(RuleType.string().max(2048))
   mediaUrl?: string;

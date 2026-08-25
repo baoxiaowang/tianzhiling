@@ -21,6 +21,7 @@ import {
   ConversationEmotionStateEntity,
   ConversationEntity,
   ConversationMessageFeedbackEntity,
+  ConversationReplyTurnEntity,
   MessageEntity,
   MessengerCallEventEntity,
   MongoObjectId,
@@ -204,6 +205,9 @@ export class AccountCancellationService {
 
   @InjectEntityModel(ConversationMessageFeedbackEntity)
   conversationFeedbackModel: MongoRepository<ConversationMessageFeedbackEntity>;
+
+  @InjectEntityModel(ConversationReplyTurnEntity)
+  conversationReplyTurnModel: MongoRepository<ConversationReplyTurnEntity>;
 
   @InjectEntityModel(ChatTraceEntity)
   chatTraceModel: MongoRepository<ChatTraceEntity>;
@@ -658,6 +662,10 @@ export class AccountCancellationService {
       );
       summary.deletedRecordCount += await this.deleteMany(
         this.conversationFeedbackModel,
+        this.byForeignIds('conversationId', conversationIds)
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.conversationReplyTurnModel,
         this.byForeignIds('conversationId', conversationIds)
       );
       summary.deletedRecordCount += await this.deleteMany(

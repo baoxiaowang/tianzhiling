@@ -13,6 +13,7 @@ export * from "./chat-span.entity";
 export * from "./chat-trace.entity";
 export * from "./conversation-message-feedback.entity";
 export * from "./conversation-deliberate-reply-task.entity";
+export * from "./conversation-reply-turn.entity";
 export * from "./conversation-chat-import.entity";
 export * from "./conversation-emotion-state.entity";
 export * from "./conversation.entity";

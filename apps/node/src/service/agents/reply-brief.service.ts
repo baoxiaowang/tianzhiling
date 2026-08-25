@@ -2241,6 +2241,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     maxSegments: brief.bubblePlan.maxSegments,
     preferredRange: brief.lengthPlan.preferredRange,
     evidenceContract: brief.evidenceContract,
+    explicitUserQuestions: brief.reading?.questionsToAnswer,
   });
   const careReceptionLines = brief.careReception
     ? [

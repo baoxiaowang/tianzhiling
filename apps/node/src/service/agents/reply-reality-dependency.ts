@@ -15,6 +15,14 @@ export interface ReplyRealityDependencySignal {
   confidence: number;
 }
 
+export interface ReplyRealityDependencyViolation
+  extends ReplyRealityDependencySignal {
+  /** User-side request evidence, when the capability request was explicit. */
+  requestEvidence?: string;
+  /** Exact assistant text that made the unsupported reality promise. */
+  replyEvidence: string;
+}
+
 const DREAM_CONTEXT_PATTERN = /梦里|梦中|做梦|梦见|梦到|托梦/;
 
 const REALITY_DEPENDENCY_PATTERNS: ReadonlyArray<{
@@ -53,7 +61,7 @@ const REALITY_ACTION_PROMISE_PATTERNS: Record<
   RegExp
 > = {
   childcare:
-    /(?:孩子|女儿|儿子|宝宝|孙子|孙女).{0,8}(?:交给我|我来|我替你|我帮你)|我(?:来|会|能|可以|替你|帮你).{0,10}(?:看|照看|看护|照顾|带|接|送|哄|陪).{0,5}(?:孩子|女儿|儿子|宝宝|孙子|孙女)/,
+    /(?:孩子|女儿|儿子|宝宝|孙子|孙女).{0,8}交给我|我(?:来|会|能|可以|替你|帮你).{0,10}(?:看|照看|看护|照顾|带|接|送|哄|陪).{0,5}(?:孩子|女儿|儿子|宝宝|孙子|孙女)/,
   money_payment:
     /我(?:来|会|能|可以|替你|帮你).{0,10}(?:付钱|付款|买单|交费|缴费|还钱|转账|打钱)|(?:钱|费用).{0,6}(?:我来付|我来交|交给我)|(?:我|这就|马上|现在就).{0,8}(?:给你|给孩子|给家里)?.{0,6}(?:转|打|汇|寄)(?:点|些|一笔)?钱/,
   medical_substitution:
@@ -61,7 +69,7 @@ const REALITY_ACTION_PROMISE_PATTERNS: Record<
   physical_presence:
     /我(?:马上|现在|这就|会|能|可以|一定|肯定)?.{0,5}(?:回来|回家|过来|来到|到你身边|去医院|去学校|去现场|接你|陪你)/,
   real_world_task:
-    /我(?:来|会|能|可以|替你|帮你).{0,10}(?:办手续|办事|签字|打电话|取快递|取东西|送东西|接人|跑一趟|开车|买东西|做饭|收拾屋子|处理这件事)/,
+    /我(?:来|会|能|可以|替你|帮你).{0,16}(?:(?:办手续|办事|签字|打电话|取快递|取东西|送东西|接人|跑一趟|开车|买东西|做饭|收拾屋子|处理这件事)|(?:联系|找|托).{0,12}(?:医院|人|熟人|朋友|医生)(?:.{0,12}(?:问|打听))?)/,
 };
 
 const NON_PROMISE_PATTERN =
@@ -122,13 +130,17 @@ export function describeReplyRealityDependency(
 export function detectReplyRealityDependencyViolation(
   content: string,
   signals: ReplyRealityDependencySignal[] | undefined
-): ReplyRealityDependencySignal | undefined {
+): ReplyRealityDependencyViolation | undefined {
   if (!content?.trim()) {
     return undefined;
   }
 
   const activeSignals = [...(signals || [])];
   for (const kind of [
+    // Prefer a specific volunteered outside task over a nearby mention of a
+    // child (for example "先顾孩子，我来联系医院"). Explicit user-side
+    // childcare signals remain first because they are already in the array.
+    'real_world_task',
     'childcare',
     'money_payment',
     'medical_substitution',
@@ -150,25 +162,36 @@ export function detectReplyRealityDependencyViolation(
     (signals || []).map(signal => signal.kind)
   );
 
-  return activeSignals.find(signal =>
-    signal.kind === 'physical_presence'
-      ? false
-      : clauses.some(clause => {
-          const pattern = REALITY_ACTION_PROMISE_PATTERNS[signal.kind];
-          const continuesExplicitChildcarePromise =
-            signal.kind === 'childcare' &&
-            explicitSignalKinds.has('childcare') &&
-            /我(?:去|来|会|能|可以|替你|帮你)?.{0,4}(?:接|送|照顾|看护|带|哄|陪)(?:她|他|孩子|女儿|儿子|宝宝|孙子|孙女)/.test(
-              clause
-            );
-          pattern.lastIndex = 0;
+  for (const signal of activeSignals) {
+    if (signal.kind === 'physical_presence') continue;
+    for (const clause of clauses) {
+      const pattern = REALITY_ACTION_PROMISE_PATTERNS[signal.kind];
+      pattern.lastIndex = 0;
+      const matched = clause.match(pattern)?.[0]?.trim();
+      const continuedChildcare =
+        signal.kind === 'childcare' && explicitSignalKinds.has('childcare')
+          ? clause
+              .match(
+                /我(?:去|来|会|能|可以|替你|帮你)?.{0,4}(?:接|送|照顾|看护|带|哄|陪)(?:她|他|孩子|女儿|儿子|宝宝|孙子|孙女)/
+              )?.[0]
+              ?.trim()
+          : undefined;
+      const replyEvidence = matched || continuedChildcare;
+      if (!replyEvidence || NON_PROMISE_PATTERN.test(clause)) continue;
 
-          return (
-            (pattern.test(clause) || continuesExplicitChildcarePromise) &&
-            !NON_PROMISE_PATTERN.test(clause)
-          );
-        })
-  );
+      return {
+        ...signal,
+        requestEvidence:
+          signal.evidence === 'assistant_volunteered_reality_action'
+            ? undefined
+            : signal.evidence,
+        evidence: replyEvidence,
+        replyEvidence,
+      };
+    }
+  }
+
+  return undefined;
 }
 
 export function renderReplyRealityDependencyFallback(

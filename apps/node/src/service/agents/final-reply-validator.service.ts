@@ -500,7 +500,7 @@ export class FinalReplyValidatorService {
         onlineAction: 'exact_patch',
         blockingKind: 'real_world_capability_claim',
         problem: `回复承诺执行用户请求的现实任务：${realityDependencyViolation.kind}`,
-        evidence: realityDependencyViolation.evidence,
+        evidence: realityDependencyViolation.replyEvidence,
         sourceStatus: 'missing',
         realWorldConsequence: '可能使用户相信角色能够执行现实任务',
         repairGoal:
@@ -675,7 +675,9 @@ export class FinalReplyValidatorService {
       options.claims || []
     );
     const unsupportedClaims = visibleClaims
-      .filter(claim => requiresEvidence(claim))
+      .filter(claim =>
+        requiresEvidence(claim, options.outputConstraints?.evidenceContract)
+      )
       .filter(claim => !agentEvidenceSupportsClaim(options.evidence, claim));
     if (unsupportedClaims.length) {
       issues.push({
@@ -920,6 +922,13 @@ function visibleFindingToIssue(
 function isDeclarativeCurrentTurnFact(userQuery: string): boolean {
   const normalized = userQuery.trim();
   if (!normalized || /[?？]/.test(normalized)) {
+    return false;
+  }
+  if (
+    /(?:为什么|怎么会|什么原因|是不是|是否|有没有|能不能|可不可以|记不记得|想不想得起来)/.test(
+      normalized
+    )
+  ) {
     return false;
   }
   if (
@@ -1200,6 +1209,23 @@ function matchEvidence(content: string, pattern: RegExp): string | undefined {
   return match?.[0]?.slice(0, 160);
 }
 
-function requiresEvidence(claim: AssistantFactClaim): boolean {
-  return !(claim.mode === 'soft_imagination' && claim.kind === 'other');
+function requiresEvidence(
+  claim: AssistantFactClaim,
+  contract?: ReplyEvidenceContract
+): boolean {
+  if (claim.mode !== 'soft_imagination' || claim.kind !== 'other') {
+    return true;
+  }
+  if (!contract?.semanticAuditRequired) {
+    return false;
+  }
+
+  // In a grounded fact turn, the model cannot make a biography/death answer
+  // evidence-free merely by labeling it as imagination. Dream-internal and
+  // current afterlife expressions keep their symbolic/world-canon allowance.
+  const symbolicOrCurrentWorld =
+    /梦里|梦中|梦见|梦到|托梦|入梦|这边|那边|天上|天堂|另一个世界/.test(
+      claim.text
+    );
+  return !symbolicOrCurrentWorld;
 }
