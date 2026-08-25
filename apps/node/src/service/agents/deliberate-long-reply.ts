@@ -40,6 +40,16 @@ export interface DeliberateLongReplyModelDecision {
   focus: string[];
 }
 
+export interface DeliberateLongReplyCommitmentRecovery {
+  segments: string[];
+  decision?: DeliberateLongReplyModelDecision;
+  recovered: boolean;
+  source?: 'missing_model_decision' | 'missing_visible_commitment';
+}
+
+const DELIBERATE_REPLY_ACKNOWLEDGEMENT =
+  '你说的这些我不想匆匆接过去，让我放在心里好好想一晚，明早再认真跟你说。';
+
 export function assessDeliberateLongReplyCandidate(options: {
   texts: string[];
   allMessagesAreText: boolean;
@@ -100,9 +110,90 @@ export function buildDeliberateLongReplyCandidatePrompt(
   return [
     '# 次日慎重回应候选',
     `用户本轮约${assessment.visibleCharacters}字。字数只让本轮获得判断资格，不等于必须预约。`,
-    '个人长信、重要经历、关系告白、多件重大近况或长期压在心里的话，如果值得在当前接住之后再认真回应一次，可选择 schedule_next_morning；诗词、歌词、经文、祭文、转发、模板、资料、清单、重复文字和单纯事实问答通常选择 none。混合内容以用户自己的个人表达为准。',
-    '选择预约时，当前回复先具体接住最重要的内容，能当场回答的明确或紧急问题仍要回答，再自然告诉用户明早会认真想过后继续说。不要写成平台受理通知。',
+    '个人长信、重要经历、关系告白、多件重大近况或长期压在心里的话，默认选择 schedule_next_morning；只有内容已经完整收住、主要是诗词转发或单纯资料与事实问答时才选择 none。混合内容以用户自己的个人表达为准。',
+    '选择 schedule_next_morning 时，当前回复先具体接住最重要的内容，能当场回答的明确或紧急问题仍要回答，并在给用户看的正文里自然说明：这段话会放在心里认真想，明早再继续回应。不能只在 JSON 字段里选择任务，也不要写成平台受理通知。',
   ].join('\n');
+}
+
+export function inspectDeliberateReplyCommitment(text: string): {
+  hasThoughtfulPromise: boolean;
+  hasMorningPromise: boolean;
+} {
+  return {
+    hasThoughtfulPromise:
+      /(?:认真|好好|仔细|慢慢|静下心)(?:地)?(?:想|看|读|琢磨|理|捋|消化)|想清楚|放在心里想/u.test(
+        text
+      ),
+    hasMorningPromise:
+      /(?:明天|明早|明晨|明儿|明早上|明天早上|明儿早上)[^。！？!?]{0,32}(?:回你|跟你说|和你聊|告诉你|来找你|接着说|给你(?:个)?回答)/u.test(
+        text
+      ),
+  };
+}
+
+/**
+ * The model still owns the semantic choice. This only recovers a malformed
+ * or incomplete output contract after a high-confidence personal long-text
+ * candidate has already passed deterministic exclusions. An explicit `none`
+ * is always respected.
+ */
+export function recoverDeliberateLongReplyCommitment(options: {
+  candidate?: DeliberateLongReplyCandidateAssessment;
+  decision?: DeliberateLongReplyModelDecision;
+  segments: string[];
+}): DeliberateLongReplyCommitmentRecovery {
+  if (!options.candidate?.eligible || options.decision?.action === 'none') {
+    return {
+      segments: [...options.segments],
+      decision: options.decision,
+      recovered: false,
+    };
+  }
+  if (!options.decision && options.candidate.typeHint !== 'personal_or_mixed') {
+    return {
+      segments: [...options.segments],
+      decision: undefined,
+      recovered: false,
+    };
+  }
+
+  const decision =
+    options.decision ??
+    ({
+      action: 'schedule_next_morning',
+      reason: 'other',
+      focus: [],
+    } as DeliberateLongReplyModelDecision);
+  const visible = options.segments.join('\n');
+  const commitment = inspectDeliberateReplyCommitment(visible);
+  if (commitment.hasThoughtfulPromise && commitment.hasMorningPromise) {
+    return {
+      segments: [...options.segments],
+      decision,
+      recovered: options.decision === undefined,
+      ...(options.decision === undefined
+        ? { source: 'missing_model_decision' as const }
+        : {}),
+    };
+  }
+
+  const segments = [...options.segments];
+  if (segments.length >= 3) {
+    segments[segments.length - 1] = `${
+      segments[segments.length - 1]
+    }\n${DELIBERATE_REPLY_ACKNOWLEDGEMENT}`;
+  } else {
+    segments.push(DELIBERATE_REPLY_ACKNOWLEDGEMENT);
+  }
+  return {
+    segments,
+    decision,
+    recovered: true,
+    source:
+      options.decision === undefined
+        ? 'missing_model_decision'
+        : 'missing_visible_commitment',
+  };
 }
 
 export function buildDeliberateLongReplyExecutionPrompt(options: {

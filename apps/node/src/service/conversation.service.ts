@@ -165,6 +165,7 @@ import {
   applyRecognitionJourneyObserverUnavailable,
   buildInitialRecognitionJourney,
   buildLegacyRecognitionJourney,
+  hasExplicitRecognitionTaskQuestion,
   parseRecognitionJourney,
   planRecognitionJourneyTurn,
   RecognitionJourney,
@@ -183,6 +184,8 @@ import {
   buildDeliberateLongReplyExecutionPrompt,
   DeliberateLongReplyCandidateAssessment,
   DeliberateLongReplyModelDecision,
+  inspectDeliberateReplyCommitment,
+  recoverDeliberateLongReplyCommitment,
 } from './agents/deliberate-long-reply';
 import {
   ConversationDeliberateReplyJobData,
@@ -4664,6 +4667,25 @@ export class ConversationService {
       });
     }
 
+    const deliberateCommitment = recoverDeliberateLongReplyCommitment({
+      candidate: deliberateLongReplyCandidate,
+      decision: deliberateFollowUpDecision,
+      segments: participationResult.segments,
+    });
+    participationResult.segments = deliberateCommitment.segments;
+    deliberateFollowUpDecision = deliberateCommitment.decision;
+    if (deliberateCommitment.recovered) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.commitment_recovered',
+        startedAt: new Date(),
+        attributes: {
+          source: deliberateCommitment.source,
+          action: deliberateFollowUpDecision?.action,
+        },
+      });
+    }
+
     this.chatTraceService?.recordArtifact({
       stage: ChatTraceStage.persistReply,
       kind: ChatTraceArtifactKind.finalBubbles,
@@ -5099,7 +5121,7 @@ export class ConversationService {
 
       const latestAssistantMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
-      const assistantText = options.processed.replySegments.join('\n');
+      let assistantText = options.processed.replySegments.join('\n');
       const openingDeliveryFailed = Boolean(
         plan.openingSuggested &&
           options.processed.routing?.generationFailureCode
@@ -5139,13 +5161,62 @@ export class ConversationService {
         }
         return;
       }
-      const observed = await this.recognitionJourneyObserverService?.observe({
-        journey: deliveredJourney,
-        plan,
-        openingAssistantText,
-        currentUserText: plan.currentUserText || '',
-        assistantText,
-      });
+
+      // Read back the exact final visible messages before a product milestone
+      // can advance. The generation result is not evidence of persistence.
+      const persistedAssistantMessages = (
+        await Promise.all(
+          options.assistantMessages.map(message =>
+            this.findMessageById(
+              this.parseObjectId(this.stringifyObjectId(message.id)),
+              options.runtime.conversation.id
+            )
+          )
+        )
+      )
+        .filter((message): message is MessageEntity =>
+          Boolean(
+            message &&
+              message.role === MessageRole.assistant &&
+              message.status === MessageStatus.sent &&
+              !message.isArchived
+          )
+        )
+        .sort(
+          (left, right) =>
+            (left.replySegmentIndex ?? 0) - (right.replySegmentIndex ?? 0) ||
+            left.createdAt.getTime() - right.createdAt.getTime()
+        );
+      assistantText = persistedAssistantMessages
+        .map(message =>
+          (message.mediaTranscript || message.content || '').trim()
+        )
+        .filter(Boolean)
+        .join('\n');
+      const deterministicNoQuestion = Boolean(
+        plan.observerCheckpoint === 'task_proposal' &&
+          !hasExplicitRecognitionTaskQuestion(
+            assistantText,
+            plan.suggestedTaskId
+          )
+      );
+      const observed = deterministicNoQuestion
+        ? {
+            status: 'observed' as const,
+            observation: {
+              opening: 'not_observed' as const,
+              familyStatus: 'not_observed' as const,
+              departureInterval: 'not_observed' as const,
+              evidence: 'final_visible_reply_contains_no_selected_question',
+            },
+          }
+        : await this.recognitionJourneyObserverService?.observe({
+            journey: deliveredJourney,
+            plan,
+            openingAssistantText,
+            currentUserText: plan.currentUserText || '',
+            assistantText,
+          });
       this.chatTraceService?.recordArtifact({
         stage: ChatTraceStage.review,
         kind: ChatTraceArtifactKind.reviewCandidate,
@@ -5169,6 +5240,8 @@ export class ConversationService {
           familyStatus: observed?.observation?.familyStatus,
           departureInterval: observed?.observation?.departureInterval,
           totalTokens: observed?.usage?.totalTokens,
+          persistedVisibleMessages: persistedAssistantMessages.length,
+          deterministicNoQuestion,
         },
       });
       if (observed?.status !== 'observed' || !observed.observation) {
@@ -6498,17 +6571,22 @@ export class ConversationService {
     ) {
       return;
     }
+    if (decision?.action === 'none') {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.declined',
+        startedAt: new Date(),
+        attributes: {
+          reason: decision.reason,
+        },
+      });
+      return;
+    }
     const visibleReply = options.assistantMessages
       .map(message => message.mediaTranscript || message.content || '')
       .join('\n');
-    const hasThoughtfulPromise =
-      /(?:认真|好好|仔细|慢慢|静下心)(?:地)?(?:想|看|读|琢磨|理|捋|消化)|想清楚|放在心里想/u.test(
-        visibleReply
-      );
-    const hasMorningPromise =
-      /(?:明天|明早|明晨|明儿|明早上|明天早上|明儿早上)[^。！？!?]{0,32}(?:回你|跟你说|和你聊|告诉你|来找你|接着说|给你(?:个)?回答)/u.test(
-        visibleReply
-      );
+    const { hasThoughtfulPromise, hasMorningPromise } =
+      inspectDeliberateReplyCommitment(visibleReply);
     const explicitModelSelection = decision?.action === 'schedule_next_morning';
     if (!hasThoughtfulPromise || !hasMorningPromise) {
       this.chatTraceService?.recordCompletedSpan({

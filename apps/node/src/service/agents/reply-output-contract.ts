@@ -113,7 +113,7 @@ export function buildReplyOutputContractPrompt(
     ? 'toolDecisions 只记录本轮确实缺少信息时的影子工具决策，无需调用就用 []；不影响 segments 正常回复。'
     : '';
   const deliberateFollowUpRule = options.deliberateLongReplyCandidate?.eligible
-    ? 'deliberateFollowUp 只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。focus 最多三项，只能来自用户原文。'
+    ? 'deliberateFollowUp 是必填决策，不能省略。它只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选择 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
     : '';
 
   return [

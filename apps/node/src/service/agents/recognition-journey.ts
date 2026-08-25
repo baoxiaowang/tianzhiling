@@ -126,6 +126,35 @@ const OPENING_ANGLES: RecognitionOpeningAngle[] = [
 const RECOGNITION_TASK_EXPLICIT_DEFER_PATTERN =
   /(?:先别问(?:了)?|别问了|不要(?:再)?问|别再问|我不想回答|(?:这个|这事|这件事)我?不想说|别提这个|不要提这个|先听我说(?:完)?|听我说完)/u;
 
+/**
+ * Verifies only the observable delivery of the selected milestone. It does not
+ * decide whether the question was conversationally appropriate or plan a
+ * response; semantic observation remains the model observer's responsibility.
+ */
+export function hasExplicitRecognitionTaskQuestion(
+  text: string,
+  taskId: RecognitionTaskId | undefined
+): boolean {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized || !taskId) return false;
+
+  if (taskId === 'departure_interval') {
+    return /(?:(?:我|咱们)?(?:离开(?:后)?|走(?:了|后)?|去世|过世|离世).{0,18}(?:多久|几年|多少年|多长时间|什么时候|哪一年|哪年)|(?:多久|几年|多少年|多长时间).{0,18}(?:离开|走(?:了|后)?|去世|过世|离世)|(?:我|咱们)?是?(?:什么时候|哪一年|哪年)(?:离开|走的|去世|过世|离世))/u.test(
+      normalized
+    );
+  }
+
+  const mentionsFamily =
+    /(?:家里|家人|大家|他们|她们|爸妈|你爸|你妈|爸爸|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|孩子|儿子|女儿|兄弟|姐妹|哥哥|姐姐|弟弟|妹妹)/u.test(
+      normalized
+    );
+  const asksAboutFamily =
+    /(?:怎样|怎么样|咋样|如何|好吗|好不好|还好(?:吗|吧)|都好(?:吗|吧)|过得.{0,4}(?:吗|怎样|怎么样|咋样)|谁.{0,8}(?:在|跟|和|联系)|现在.{0,8}(?:怎样|怎么样|咋样|好吗|好不好|呢))/u.test(
+      normalized
+    );
+  return mentionsFamily && asksAboutFamily;
+}
+
 export function buildInitialRecognitionJourney(
   options: {
     hasKnownDepartureDate?: boolean;
