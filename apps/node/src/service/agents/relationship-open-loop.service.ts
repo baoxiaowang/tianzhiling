@@ -433,22 +433,14 @@ export class RelationshipOpenLoopService {
     const progressKey = `chat:${BACKFILL_JOB_ID}:progress`;
     if (await this.redisService.get(completedKey)) return undefined;
     if (await this.redisService.get(failedKey)) return undefined;
-    const existingProgress = this.parseBackfillProgress(
+    const progressBeforeLock = this.parseBackfillProgress(
       await this.redisService.get(progressKey)
     );
     if (
       !this.isShanghaiMaintenanceWindow(now) &&
-      !existingProgress &&
+      !progressBeforeLock &&
       now < BACKFILL_CATCH_UP_AFTER
     ) {
-      return undefined;
-    }
-    const durableMarker = await this.findBackfillMarker();
-    if (durableMarker) {
-      await this.redisService.set(
-        completedKey,
-        JSON.stringify(durableMarker.summary)
-      );
       return undefined;
     }
     const lockToken = `${process.pid}:${now.getTime()}`;
@@ -463,6 +455,19 @@ export class RelationshipOpenLoopService {
     backfillRunning = true;
 
     try {
+      if (await this.redisService.get(completedKey)) return undefined;
+      if (await this.redisService.get(failedKey)) return undefined;
+      const durableMarker = await this.findBackfillMarker();
+      if (durableMarker) {
+        await this.redisService.set(
+          completedKey,
+          JSON.stringify(durableMarker.summary)
+        );
+        return undefined;
+      }
+      const existingProgress = this.parseBackfillProgress(
+        await this.redisService.get(progressKey)
+      );
       const startedAt = Date.now();
       let progress =
         existingProgress ?? (await this.createBackfillProgress(now));
