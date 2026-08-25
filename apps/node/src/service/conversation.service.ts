@@ -12,6 +12,8 @@ import {
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
+  ChatTrialActivationReason,
+  ChatTrialStatus,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationEntity,
@@ -20,7 +22,6 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
-  UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -232,38 +233,10 @@ const ASSISTANT_REPLY_FAILED_CONTENT =
 const QUOTA_CONFIG = {
   version: 'v2',
   newUserTrialDays: 3,
-  newUserSilentMessages: 15,
-  messageThreshold: 5,
-  longMessageMinChars: 60,
-  relationshipStages: ['R2', 'R3'] as string[],
-  graceMessagesAfterWarn: 2,
-  newUserHardBlockMessages: 35,
+  newUserTrialDailyLimit: 30,
+  newUserPreviewMessages: 5,
+  returnVisitGapMs: 30 * 60 * 1000,
   oldUserDailyLimit: 3,
-  naturalClosePatterns: [
-    '晚安',
-    '睡了',
-    '先睡',
-    '休息了',
-    '去睡了',
-    '我好困',
-    '困了',
-    '先忙',
-    '去忙',
-    '忙了',
-    '工作了',
-    '下次聊',
-    '改天聊',
-    '回头聊',
-    '明天聊',
-    '有空再聊',
-    '下次再聊',
-    '拜拜',
-    '再见',
-    '明天再说',
-    '先这样',
-    '早点休息',
-    '你也早点休息',
-  ],
 } as const;
 const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
 const MEMORIAL_PHOTO_REPLY_SYSTEM_PROMPT = [
@@ -663,12 +636,25 @@ interface MemorialPhotoDailyQuotaSnapshot {
 
 export interface ConversationChatQuotaSnapshot {
   isVip: boolean;
-  policy?: 'trial' | 'daily' | 'deep_trigger';
+  policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger';
   limit?: number;
   usedCount?: number;
   remainingCount?: number;
   trialDays?: number;
+  trialStatus?: ChatTrialStatus;
+  trialActivatedAt?: string;
+  trialExpiresAt?: string;
   triggerDecision?: ReplyQuotaTriggerDecision;
+}
+
+interface ChatTrialResolution {
+  status: ChatTrialStatus;
+  activatedAt?: Date;
+  expiresAt?: Date;
+  activationReason?: ChatTrialActivationReason;
+  totalUserMessageCount: number;
+  returnVisitActivated: boolean;
+  lastMessageGapDays: number;
 }
 
 export interface ConversationChatBootstrapMetadata {
@@ -713,9 +699,6 @@ export class ConversationService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
-
-  @InjectEntityModel(UserAccountEntity)
-  userAccountModel: MongoRepository<UserAccountEntity>;
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
@@ -3149,7 +3132,8 @@ export class ConversationService {
     const currentQuota = await this.resolveCurrentChatQuota(
       runtime,
       now,
-      currentMessageContent
+      currentMessageContent,
+      'send'
     );
 
     if (currentQuota.isVip) {
@@ -3162,8 +3146,11 @@ export class ConversationService {
       // daily policy（老用户固定每日额度）：remainingCount 表示“发送前还能发几句”，
       // 发送成功后应减 1，使前端收到“发完本条后还剩几句”，从而正确触发
       // 「剩 1 句」提醒（remainingCount === 1）与「额度用完」拦截（remainingCount === 0）。
-      const nextRemaining =
-        currentQuota.policy === 'daily' ? remainingCount - 1 : remainingCount;
+      const consumesDailyQuota =
+        currentQuota.policy === 'daily' || currentQuota.policy === 'trial';
+      const nextRemaining = consumesDailyQuota
+        ? remainingCount - 1
+        : remainingCount;
       return {
         ...currentQuota,
         usedCount: (currentQuota.usedCount ?? 0) + 1,
@@ -3249,7 +3236,8 @@ export class ConversationService {
   private async resolveCurrentChatQuota(
     runtime: ReplyRuntime,
     now: Date,
-    currentMessageContent?: string
+    _currentMessageContent?: string,
+    activationContext: 'read' | 'send' = 'read'
   ): Promise<ConversationChatQuotaSnapshot> {
     // 防御：DI 初始化失败时宁可误拦也不要放行
     if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
@@ -3269,23 +3257,22 @@ export class ConversationService {
     }
 
     if (await this.isUserVip(runtime.conversation.userId, now)) {
+      await this.markChatTrialIneligibleForMember(
+        runtime.conversation.userId,
+        now
+      );
       return { isVip: true };
     }
 
     const userId = runtime.conversation.userId;
     const agentId = runtime.conversation.agentId;
 
-    // Count today's messages (Beijing time)
-    const dayStart = this.getBeijingDayStart(now);
-    const dayEnd = new Date(dayStart.getTime() + 86400000);
-    const todayMsgs = await this.countUserMessagesForAgent({
+    const trial = await this.resolveChatTrialState(
       userId,
-      agentId,
-      windowStart: dayStart,
-      windowEnd: dayEnd,
-    });
+      now,
+      activationContext
+    );
 
-    // Count session and lifetime messages (for audit)
     const sessionMsgCount = await this.countSessionMessages(
       runtime.conversation.id
     );
@@ -3294,52 +3281,45 @@ export class ConversationService {
       agentId
     );
 
-    // Determine if this is a new user (within trial days)
-    const isNewUser = await this.isUserInTrialPeriod(runtime, now);
-
-    // New user silent zone: first N lifetime messages, no evaluation
-    if (isNewUser && totalLifetimeMsgs < QUOTA_CONFIG.newUserSilentMessages) {
+    if (trial.status === ChatTrialStatus.pending) {
       return this.buildQuotaResult({
         path: 'trial',
+        policy: 'trial_pending',
+        limit: QUOTA_CONFIG.newUserPreviewMessages,
         remainingCount: 99,
         totalLifetimeMsgs,
-        todayMsgs,
+        usedCount: trial.totalUserMessageCount,
+        todayMsgs: 0,
         sessionMsgCount,
         triggered: false,
         matchedConditions: [],
+        trial,
       });
     }
 
-    // New user hard block: 35 lifetime messages → blocked
-    if (
-      isNewUser &&
-      totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages
-    ) {
-      return this.buildQuotaResult({
-        path: 'trial',
-        remainingCount: 0,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: ['hardBlock'],
-        naturalCloseExempted: false,
-        warned: false,
-        blocked: true,
-      });
-    }
+    // Count today's messages (Beijing time)
+    const dayStart = this.getBeijingDayStart(now);
+    const dayEnd = new Date(dayStart.getTime() + 86400000);
+    const trialWindowStart =
+      trial.status === ChatTrialStatus.active && trial.activatedAt
+        ? new Date(Math.max(dayStart.getTime(), trial.activatedAt.getTime()))
+        : dayStart;
+    const todayMsgs = await this.countUserMessagesForAgent({
+      userId,
+      agentId,
+      windowStart: trialWindowStart,
+      windowEnd: dayEnd,
+    });
 
-    // New user → deep-trigger evaluation (unchanged)
-    if (isNewUser) {
-      return this.evaluateDeepTriggerQuota(
+    if (trial.status === ChatTrialStatus.active) {
+      return this.evaluateActiveTrialDailyQuota(
         userId,
         agentId,
         now,
+        trial,
         totalLifetimeMsgs,
         todayMsgs,
-        sessionMsgCount,
-        currentMessageContent,
-        isNewUser
+        sessionMsgCount
       );
     }
 
@@ -3354,163 +3334,333 @@ export class ConversationService {
     );
   }
 
-  private async evaluateDeepTriggerQuota(
+  private async resolveChatTrialState(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
     now: Date,
-    totalLifetimeMsgs: number,
-    todayMsgs: number,
-    sessionMsgCount: number,
-    currentMessageContent: string | undefined,
-    isNewUser: boolean
-  ): Promise<ConversationChatQuotaSnapshot> {
-    const cfg = QUOTA_CONFIG;
-    const matched: string[] = [];
+    activationContext: 'read' | 'send'
+  ): Promise<ChatTrialResolution> {
+    const user = await this.userModel.findOne({
+      where: { _id: userId },
+    } as any);
 
-    // Condition A: Effective today messages exceed threshold
-    const effectiveMsgs = isNewUser
-      ? todayMsgs - cfg.newUserSilentMessages
-      : todayMsgs;
-    if (effectiveMsgs > cfg.messageThreshold) matched.push('messageCount');
-
-    // Condition B: Long message
-    if (
-      currentMessageContent &&
-      currentMessageContent.length > cfg.longMessageMinChars
-    ) {
-      matched.push('longMessage');
+    if (!user) {
+      return {
+        status: ChatTrialStatus.ineligible,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
     }
 
-    // Condition C: Relationship stage
-    const lastStage = await this.getLastRelationshipStage(userId, agentId);
-    if (lastStage && (cfg.relationshipStages as string[]).includes(lastStage)) {
-      const freshlyPromoted = await this.isStageJustPromoted(userId, agentId);
-      if (!freshlyPromoted) matched.push('relationshipStage');
-    }
+    const membershipHistory = await this.userMembershipModel.find({
+      where: { userId },
+      order: { createdAt: 'ASC' },
+      take: 1,
+    });
 
-    // Trigger if any 2 of 3 conditions are met
-    const triggered = matched.length >= 2;
-
-    // Natural close exemption
-    const naturalClose = currentMessageContent
-      ? cfg.naturalClosePatterns.some(p => currentMessageContent.includes(p))
-      : false;
-
-    // ═══════════════════════════════════════════════════════════════
-    // GRACE/BLOCK CHECK — once warned, EVERY message counts toward
-    // the grace limit, regardless of trigger conditions.
-    // ═══════════════════════════════════════════════════════════════
-    const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
-
-    if (wasWarned) {
-      const dayStart = this.getBeijingDayStart(now);
-      const firstWarnedMsg = (
-        await this.messageModel.find({
-          where: {
-            userId,
-            agentId,
-            role: MessageRole.user,
-            quotaWarned: true,
-            createdAt: { $gte: dayStart },
-          },
-          order: { createdAt: 'ASC' },
-          take: 1,
-        } as any)
-      )[0];
-
-      const postWarnCount = firstWarnedMsg
-        ? await this.messageModel.count({
-            userId,
-            agentId,
-            role: MessageRole.user,
-            createdAt: { $gt: firstWarnedMsg.createdAt },
-            status: MessageStatus.sent,
-          } as never)
-        : 0;
-
-      if (postWarnCount > cfg.graceMessagesAfterWarn) {
-        return this.buildQuotaResult({
-          path: isNewUser ? 'trial' : 'active',
-          remainingCount: 0,
-          totalLifetimeMsgs,
-          todayMsgs,
-          sessionMsgCount,
-          triggered: true,
-          matchedConditions: matched,
-          naturalCloseExempted: false,
-          warned: true,
-          blocked: true,
+    if (membershipHistory.length > 0) {
+      if (user.chatTrialStatus !== ChatTrialStatus.ineligible) {
+        await this.persistChatTrialState(user, {
+          chatTrialStatus: ChatTrialStatus.ineligible,
+          chatTrialPolicyVersion: 'deferred_v1',
+          chatTrialEvaluatedAt: now,
         });
       }
 
-      // Within grace period → pass through (don't re-warn)
+      return {
+        status: ChatTrialStatus.ineligible,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    const persistedActivatedAt = this.normalizeChatTrialDate(
+      user.chatTrialActivatedAt
+    );
+    const persistedExpiresAt = this.normalizeChatTrialDate(
+      user.chatTrialExpiresAt
+    );
+
+    if (
+      user.chatTrialStatus === ChatTrialStatus.active &&
+      persistedActivatedAt &&
+      persistedExpiresAt
+    ) {
+      if (persistedExpiresAt > now) {
+        return {
+          status: ChatTrialStatus.active,
+          activatedAt: persistedActivatedAt,
+          expiresAt: persistedExpiresAt,
+          activationReason: user.chatTrialActivationReason,
+          totalUserMessageCount: 0,
+          returnVisitActivated:
+            user.chatTrialActivationReason === 'return_visit',
+          lastMessageGapDays: 0,
+        };
+      }
+
+      await this.persistChatTrialState(user, {
+        chatTrialStatus: ChatTrialStatus.expired,
+        chatTrialPolicyVersion: 'deferred_v1',
+        chatTrialEvaluatedAt: now,
+      });
+
+      return {
+        status: ChatTrialStatus.expired,
+        activatedAt: persistedActivatedAt,
+        expiresAt: persistedExpiresAt,
+        activationReason: user.chatTrialActivationReason,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    if (
+      user.chatTrialStatus === ChatTrialStatus.expired ||
+      user.chatTrialStatus === ChatTrialStatus.ineligible
+    ) {
+      return {
+        status: user.chatTrialStatus,
+        activatedAt: persistedActivatedAt,
+        expiresAt: persistedExpiresAt,
+        activationReason: user.chatTrialActivationReason,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    const totalUserMessageCount = await this.countTotalUserMessagesForUser(
+      userId
+    );
+    const firstMessages = totalUserMessageCount
+      ? await this.listFirstUserMessages(userId, 6)
+      : [];
+
+    if (totalUserMessageCount >= 6) {
+      const sixthMessageAt =
+        this.normalizeChatTrialDate(firstMessages[5]?.createdAt) ||
+        this.normalizeChatTrialDate(user.createdAt) ||
+        now;
+      return this.activateOrExpireChatTrial(user, {
+        now,
+        activatedAt: sixthMessageAt,
+        activationReason: 'historical_usage',
+        totalUserMessageCount,
+        lastMessageGapDays: 0,
+      });
+    }
+
+    const lastMessageAt = this.normalizeChatTrialDate(
+      firstMessages[firstMessages.length - 1]?.createdAt
+    );
+    const lastMessageGapMs = lastMessageAt
+      ? Math.max(now.getTime() - lastMessageAt.getTime(), 0)
+      : 0;
+    const lastMessageGapDays = lastMessageGapMs / 86400000;
+
+    if (activationContext === 'send' && totalUserMessageCount > 0) {
+      if (lastMessageGapMs >= QUOTA_CONFIG.returnVisitGapMs) {
+        return this.activateOrExpireChatTrial(user, {
+          now,
+          activatedAt: now,
+          activationReason: 'return_visit',
+          totalUserMessageCount,
+          lastMessageGapDays,
+        });
+      }
+
+      if (totalUserMessageCount >= QUOTA_CONFIG.newUserPreviewMessages) {
+        return this.activateOrExpireChatTrial(user, {
+          now,
+          activatedAt: now,
+          activationReason: 'sixth_message',
+          totalUserMessageCount,
+          lastMessageGapDays,
+        });
+      }
+    }
+
+    if (user.chatTrialStatus !== ChatTrialStatus.pending) {
+      await this.persistChatTrialState(user, {
+        chatTrialStatus: ChatTrialStatus.pending,
+        chatTrialPolicyVersion: 'deferred_v1',
+        chatTrialEvaluatedAt: now,
+      });
+    }
+
+    return {
+      status: ChatTrialStatus.pending,
+      totalUserMessageCount,
+      returnVisitActivated: false,
+      lastMessageGapDays,
+    };
+  }
+
+  private async markChatTrialIneligibleForMember(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<void> {
+    const user = await this.userModel.findOne({
+      where: { _id: userId },
+    } as any);
+
+    if (!user || user.chatTrialStatus === ChatTrialStatus.ineligible) {
+      return;
+    }
+
+    await this.persistChatTrialState(user, {
+      chatTrialStatus: ChatTrialStatus.ineligible,
+      chatTrialPolicyVersion: 'deferred_v1',
+      chatTrialEvaluatedAt: now,
+    });
+  }
+
+  private async activateOrExpireChatTrial(
+    user: UserEntity,
+    params: {
+      now: Date;
+      activatedAt: Date;
+      activationReason: ChatTrialActivationReason;
+      totalUserMessageCount: number;
+      lastMessageGapDays: number;
+    }
+  ): Promise<ChatTrialResolution> {
+    const expiresAt = new Date(
+      params.activatedAt.getTime() +
+        QUOTA_CONFIG.newUserTrialDays * 24 * 60 * 60 * 1000
+    );
+    const status =
+      expiresAt > params.now ? ChatTrialStatus.active : ChatTrialStatus.expired;
+
+    await this.persistChatTrialState(user, {
+      chatTrialStatus: status,
+      chatTrialPolicyVersion: 'deferred_v1',
+      chatTrialActivatedAt: params.activatedAt,
+      chatTrialExpiresAt: expiresAt,
+      chatTrialActivationReason: params.activationReason,
+      chatTrialEvaluatedAt: params.now,
+    });
+
+    return {
+      status,
+      activatedAt: params.activatedAt,
+      expiresAt,
+      activationReason: params.activationReason,
+      totalUserMessageCount: params.totalUserMessageCount,
+      returnVisitActivated: params.activationReason === 'return_visit',
+      lastMessageGapDays: params.lastMessageGapDays,
+    };
+  }
+
+  private async persistChatTrialState(
+    user: UserEntity,
+    updates: Partial<
+      Pick<
+        UserEntity,
+        | 'chatTrialStatus'
+        | 'chatTrialPolicyVersion'
+        | 'chatTrialActivatedAt'
+        | 'chatTrialExpiresAt'
+        | 'chatTrialActivationReason'
+        | 'chatTrialEvaluatedAt'
+      >
+    >
+  ): Promise<void> {
+    await this.userModel.updateOne({ _id: user.id }, { $set: updates } as any);
+    Object.assign(user, updates);
+  }
+
+  private normalizeChatTrialDate(value: unknown): Date | undefined {
+    const date = value instanceof Date ? value : new Date(String(value || ''));
+    return Number.isFinite(date.getTime()) ? date : undefined;
+  }
+
+  private countTotalUserMessagesForUser(
+    userId: MongoObjectId
+  ): Promise<number> {
+    return this.messageModel.count({
+      userId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      quotaExempt: { $ne: true },
+    } as never);
+  }
+
+  private listFirstUserMessages(
+    userId: MongoObjectId,
+    take: number
+  ): Promise<MessageEntity[]> {
+    return this.messageModel.find({
+      where: {
+        userId,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        quotaExempt: { $ne: true },
+      },
+      order: { createdAt: 'ASC' },
+      take,
+    } as any);
+  }
+
+  private evaluateActiveTrialDailyQuota(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+    trial: ChatTrialResolution,
+    totalLifetimeMsgs: number,
+    todayMsgs: number,
+    sessionMsgCount: number
+  ): ConversationChatQuotaSnapshot {
+    const limit = QUOTA_CONFIG.newUserTrialDailyLimit;
+    const remainingBefore = limit - todayMsgs;
+
+    if (remainingBefore <= 0) {
       return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 99,
+        path: 'trial',
+        policy: 'trial',
+        limit,
+        usedCount: todayMsgs,
+        remainingCount: 0,
         totalLifetimeMsgs,
         todayMsgs,
         sessionMsgCount,
         triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: false,
+        matchedConditions: ['dailyLimit'],
         warned: true,
-        blocked: false,
+        blocked: true,
+        trial,
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // NOT WARNED YET → trigger-based evaluation
-    // ═══════════════════════════════════════════════════════════════
-
-    if (naturalClose) {
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 2,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: true,
-      });
-    }
-
-    if (triggered) {
-      // First warning
-      // Record the trigger event for return-tracking
+    if (remainingBefore === 2) {
       this.recordQuotaTriggerEvent(userId, agentId, {
         triggerType: QuotaTriggerType.warned,
         triggeredAt: now,
         dayMsgs: todayMsgs,
         lifetimeMsgs: totalLifetimeMsgs,
         triggered: true,
-        matchedConditions: matched,
+        matchedConditions: ['dailyLimit'],
         warnCount: 1,
-      });
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 1,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: false,
-        warned: true,
-        blocked: false,
       });
     }
 
-    // Not triggered, not warned → completely free pass
     return this.buildQuotaResult({
-      path: isNewUser ? 'trial' : 'active',
-      remainingCount: 99,
+      path: 'trial',
+      policy: 'trial',
+      limit,
+      usedCount: todayMsgs,
+      remainingCount: remainingBefore,
       totalLifetimeMsgs,
       todayMsgs,
       sessionMsgCount,
-      triggered: false,
-      matchedConditions: matched,
-      naturalCloseExempted: false,
+      triggered: remainingBefore === 2,
+      matchedConditions: remainingBefore === 2 ? ['dailyLimit'] : [],
+      warned: remainingBefore === 2,
+      blocked: false,
+      trial,
     });
   }
 
@@ -3645,16 +3795,22 @@ export class ConversationService {
     naturalCloseExempted?: boolean;
     warned?: boolean;
     blocked?: boolean;
-    policy?: 'trial' | 'daily' | 'deep_trigger';
+    policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger';
     limit?: number;
+    usedCount?: number;
+    trial?: ChatTrialResolution;
   }): ConversationChatQuotaSnapshot {
     const limit = params.limit ?? (params.remainingCount <= 1 ? 1 : 99);
     return {
       isVip: false,
       policy: params.policy ?? 'deep_trigger',
       limit,
-      usedCount: params.totalLifetimeMsgs,
+      usedCount: params.usedCount ?? params.totalLifetimeMsgs,
       remainingCount: Math.max(params.remainingCount, 0),
+      trialDays: QUOTA_CONFIG.newUserTrialDays,
+      trialStatus: params.trial?.status,
+      trialActivatedAt: params.trial?.activatedAt?.toISOString(),
+      trialExpiresAt: params.trial?.expiresAt?.toISOString(),
       triggerDecision: {
         version: QUOTA_CONFIG.version,
         path: params.path,
@@ -3664,41 +3820,12 @@ export class ConversationService {
         sessionMsgCount: params.sessionMsgCount,
         matchedConditions: params.matchedConditions,
         naturalCloseExempted: params.naturalCloseExempted ?? false,
-        returnVisitCount: 0,
-        lastMessageGapDays: 0,
+        returnVisitCount: params.trial?.returnVisitActivated ? 1 : 0,
+        lastMessageGapDays: params.trial?.lastMessageGapDays ?? 0,
         warned: params.warned ?? false,
         blocked: params.blocked ?? false,
       },
     };
-  }
-
-  private async isUserInTrialPeriod(
-    runtime: ReplyRuntime,
-    now: Date
-  ): Promise<boolean> {
-    const accountId = this.normalizeObjectId(runtime.auth.accountId);
-    const account = accountId
-      ? await this.userAccountModel.findOne({
-          where: {
-            _id: accountId,
-            userId: runtime.conversation.userId,
-          },
-        } as any)
-      : null;
-    const user = account?.createdAt
-      ? null
-      : await this.userModel.findOne({
-          where: { _id: runtime.conversation.userId },
-        } as any);
-    const registeredAt = account?.createdAt || user?.createdAt;
-    if (!registeredAt) return false;
-
-    const registrationDay = this.getBeijingDayStart(new Date(registeredAt));
-    const currentDay = this.getBeijingDayStart(now);
-    const daysSinceRegister = Math.floor(
-      (currentDay.getTime() - registrationDay.getTime()) / 86400000
-    );
-    return daysSinceRegister < QUOTA_CONFIG.newUserTrialDays;
   }
 
   private async countSessionMessages(
@@ -3722,80 +3849,6 @@ export class ConversationService {
       status: MessageStatus.sent,
       quotaExempt: { $ne: true },
     } as never);
-  }
-
-  private async getLastRelationshipStage(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<string | null> {
-    const lastAssistantMsg = await this.messageModel.findOne({
-      where: {
-        userId,
-        agentId,
-        role: MessageRole.assistant,
-        replyRelationshipStage: { $exists: true, $ne: null },
-      },
-      order: { createdAt: 'DESC' },
-    } as any);
-    return lastAssistantMsg?.replyRelationshipStage ?? null;
-  }
-
-  private async isStageJustPromoted(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<boolean> {
-    const lastTwo = await this.messageModel.find({
-      where: {
-        userId,
-        agentId,
-        role: MessageRole.assistant,
-        replyRelationshipStage: { $exists: true, $ne: null },
-      },
-      order: { createdAt: 'DESC' },
-      take: 2,
-    } as any);
-    if (lastTwo.length < 2) return false;
-    const cur = lastTwo[0]?.replyRelationshipStage;
-    const prev = lastTwo[1]?.replyRelationshipStage;
-    if (!cur || !prev) return false;
-    const stageRank: Record<string, number> = {
-      R0: 0,
-      R1: 1,
-      R2: 2,
-      R3: 3,
-      R4: 4,
-    };
-    const curRank = stageRank[cur] ?? 0;
-    const prevRank = stageRank[prev] ?? 0;
-    return curRank > prevRank && curRank >= 2;
-  }
-
-  private async wasQuotaWarningSent(
-    userId: MongoObjectId,
-    agentId: MongoObjectId,
-    now: Date
-  ): Promise<boolean> {
-    // Check for any warned message today (not just the last one),
-    // so non-triggered messages between triggered ones don't reset the counter.
-    const dayStart = this.getBeijingDayStart(now);
-    const warnedMsg = (
-      await this.messageModel.find({
-        where: {
-          userId,
-          agentId,
-          role: MessageRole.user,
-          quotaWarned: true,
-          createdAt: { $gte: dayStart },
-        },
-        order: { createdAt: 'ASC' },
-        take: 1,
-      } as any)
-    )[0];
-
-    if (!warnedMsg) return false;
-
-    const warnedAt = new Date(warnedMsg.createdAt);
-    return now.getTime() - warnedAt.getTime() < 24 * 60 * 60 * 1000;
   }
 
   private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {

@@ -11,6 +11,7 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
 import {
+  ChatTrialStatus,
   MongoObjectId,
   UserAccountStatus,
   UserAccountEntity,
@@ -374,6 +375,7 @@ export class UserService {
       user.gender = 'unknown';
       user.region = null;
       user.accountStatus = UserAccountStatus.active;
+      this.initializeChatTrial(user, now);
       user.createdAt = now;
       user.updatedAt = now;
       user = await this.userModel.save(user);
@@ -512,6 +514,7 @@ export class UserService {
     user.gender = 'unknown';
     user.region = null;
     user.accountStatus = UserAccountStatus.active;
+    this.initializeChatTrial(user, now);
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -1293,6 +1296,7 @@ export class UserService {
     user.gender = 'unknown';
     user.region = null;
     user.accountStatus = UserAccountStatus.active;
+    this.initializeChatTrial(user, now);
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -1307,6 +1311,12 @@ export class UserService {
     userAccount.updatedAt = now;
 
     return this.userAccountModel.save(userAccount);
+  }
+
+  private initializeChatTrial(user: UserEntity, now: Date): void {
+    user.chatTrialStatus = ChatTrialStatus.pending;
+    user.chatTrialPolicyVersion = 'deferred_v1';
+    user.chatTrialEvaluatedAt = now;
   }
 
   private normalizePhone(rawPhone?: string): string {

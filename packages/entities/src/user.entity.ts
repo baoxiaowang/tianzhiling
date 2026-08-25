@@ -18,6 +18,18 @@ export enum UserAccountCancellationStatus {
   partialFailed = 'partial_failed',
 }
 
+export enum ChatTrialStatus {
+  pending = 'pending',
+  active = 'active',
+  expired = 'expired',
+  ineligible = 'ineligible',
+}
+
+export type ChatTrialActivationReason =
+  | 'return_visit'
+  | 'sixth_message'
+  | 'historical_usage';
+
 export interface UserAccountCancellationSummary {
   deletedRecordCount: number;
   deletedAssetCount: number;
@@ -69,6 +81,25 @@ export class UserEntity extends BaseEntity {
 
   @Column()
   postNotificationSeenAt?: Date;
+
+  /** Missing means this historical user still needs one-time usage validation. */
+  @Column()
+  chatTrialStatus?: ChatTrialStatus;
+
+  @Column()
+  chatTrialPolicyVersion?: string;
+
+  @Column()
+  chatTrialActivatedAt?: Date;
+
+  @Column()
+  chatTrialExpiresAt?: Date;
+
+  @Column()
+  chatTrialActivationReason?: ChatTrialActivationReason;
+
+  @Column()
+  chatTrialEvaluatedAt?: Date;
 
   /** Missing on historical rows means active for backward compatibility. */
   @Column()
