@@ -121,18 +121,24 @@ export interface RelationshipOpenLoopBackfillStatus {
   failedConversationCount?: number;
   revalidatedTaskCount?: number;
   removedTaskCount?: number;
+  eligibleUserCount?: number;
+  conversationCount?: number;
+  scannedMessageCount?: number;
+  progressPhase?: RelationshipOpenLoopBackfillProgress['phase'];
   completedAt?: string;
   schedulerActive?: boolean;
   nextEligibleAt?: string;
 }
 
 interface RelationshipOpenLoopBackfillProgress {
-  version: 'relationship_open_loop_revalidation_progress_v1';
+  version: 'relationship_open_loop_revalidation_progress_v2';
   cutoffAt: string;
   eligibleUserIds: string[];
+  accountDiscoveryOffset: number;
+  conversationDiscoveryOffset: number;
   userIndex: number;
   conversationIndex: number;
-  phase: 'scan' | 'retry';
+  phase: 'discover_accounts' | 'discover_conversations' | 'scan' | 'retry';
   retryRound: number;
   retryIndex: number;
   retryConversationIds: string[];
@@ -170,7 +176,7 @@ const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 const BACKFILL_RUN_BUDGET_MS = 3 * 60 * 1000;
 const BACKFILL_CATCH_UP_AFTER = new Date('2026-08-24T23:00:00.000Z');
 const BACKFILL_PROGRESS_VERSION =
-  'relationship_open_loop_revalidation_progress_v1' as const;
+  'relationship_open_loop_revalidation_progress_v2' as const;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
@@ -463,6 +469,54 @@ export class RelationshipOpenLoopService {
       await this.persistBackfillProgress(progressKey, progress);
       const cutoffAt = new Date(progress.cutoffAt);
       let markerConversation: ConversationEntity | undefined;
+      while (progress.phase === 'discover_accounts') {
+        const accounts = await this.userAccountModel.find({
+          where: {
+            updatedAt: { $gte: cutoffAt },
+            status: { $ne: UserLoginAccountStatus.canceled },
+          } as never,
+          order: { updatedAt: 'ASC' },
+          skip: progress.accountDiscoveryOffset,
+          take: 500,
+        });
+        this.appendBackfillEligibleUsers(
+          progress,
+          accounts.map(account => account.userId)
+        );
+        progress.accountDiscoveryOffset += accounts.length;
+        if (accounts.length < 500) {
+          progress.phase = 'discover_conversations';
+        }
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+        if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+          return undefined;
+        }
+      }
+
+      while (progress.phase === 'discover_conversations') {
+        const conversations = await this.conversationModel.find({
+          where: { updatedAt: { $gte: cutoffAt } } as never,
+          order: { updatedAt: 'ASC' },
+          skip: progress.conversationDiscoveryOffset,
+          take: 500,
+        });
+        this.appendBackfillEligibleUsers(
+          progress,
+          conversations.map(conversation => conversation.userId)
+        );
+        progress.conversationDiscoveryOffset += conversations.length;
+        if (conversations.length < 500) {
+          progress.eligibleUserIds.sort();
+          progress.phase = 'scan';
+        }
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+        if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+          return undefined;
+        }
+      }
+
       while (progress.phase === 'scan') {
         if (progress.userIndex >= progress.eligibleUserIds.length) {
           if (progress.failedConversationIds.length) {
@@ -708,9 +762,12 @@ export class RelationshipOpenLoopService {
         jobId: BACKFILL_JOB_ID,
         status: running || backfillRunning || progress ? 'running' : 'pending',
         ...(progress
-          ? this.pickBackfillStatusCounts(
-              progress.summary as unknown as Record<string, unknown>
-            )
+          ? {
+              ...this.pickBackfillStatusCounts(
+                progress.summary as unknown as Record<string, unknown>
+              ),
+              progressPhase: progress.phase,
+            }
           : {}),
         ...schedule,
         ...(progress ? { nextEligibleAt: new Date().toISOString() } : {}),
@@ -724,17 +781,15 @@ export class RelationshipOpenLoopService {
     now: Date
   ): Promise<RelationshipOpenLoopBackfillProgress> {
     const cutoffAt = new Date(now.getTime() - BACKFILL_WINDOW_MS);
-    const eligibleUserIds = (await this.listRecentlyActiveUserIds(cutoffAt))
-      .map(userId => this.stringifyObjectId(userId))
-      .filter(Boolean)
-      .sort();
     return {
       version: BACKFILL_PROGRESS_VERSION,
       cutoffAt: cutoffAt.toISOString(),
-      eligibleUserIds,
+      eligibleUserIds: [],
+      accountDiscoveryOffset: 0,
+      conversationDiscoveryOffset: 0,
       userIndex: 0,
       conversationIndex: 0,
-      phase: 'scan',
+      phase: 'discover_accounts',
       retryRound: 0,
       retryIndex: 0,
       retryConversationIds: [],
@@ -742,7 +797,7 @@ export class RelationshipOpenLoopService {
       summary: {
         jobId: BACKFILL_JOB_ID,
         cutoffAt: cutoffAt.toISOString(),
-        eligibleUserCount: eligibleUserIds.length,
+        eligibleUserCount: 0,
         conversationCount: 0,
         scannedMessageCount: 0,
         legacyCardCount: 0,
@@ -771,7 +826,14 @@ export class RelationshipOpenLoopService {
         parsed.version !== BACKFILL_PROGRESS_VERSION ||
         !Array.isArray(parsed.eligibleUserIds) ||
         !parsed.summary ||
-        !['scan', 'retry'].includes(parsed.phase) ||
+        ![
+          'discover_accounts',
+          'discover_conversations',
+          'scan',
+          'retry',
+        ].includes(parsed.phase) ||
+        !Number.isInteger(parsed.accountDiscoveryOffset) ||
+        !Number.isInteger(parsed.conversationDiscoveryOffset) ||
         !Number.isInteger(parsed.userIndex) ||
         !Number.isInteger(parsed.conversationIndex)
       ) {
@@ -795,6 +857,9 @@ export class RelationshipOpenLoopService {
     if (
       !verified ||
       verified.phase !== progress.phase ||
+      verified.accountDiscoveryOffset !== progress.accountDiscoveryOffset ||
+      verified.conversationDiscoveryOffset !==
+        progress.conversationDiscoveryOffset ||
       verified.userIndex !== progress.userIndex ||
       verified.conversationIndex !== progress.conversationIndex ||
       verified.retryIndex !== progress.retryIndex
@@ -803,6 +868,19 @@ export class RelationshipOpenLoopService {
         'RELATIONSHIP_OPEN_LOOP_BACKFILL_PROGRESS_READBACK_FAILED'
       );
     }
+  }
+
+  private appendBackfillEligibleUsers(
+    progress: RelationshipOpenLoopBackfillProgress,
+    userIds: MongoObjectId[]
+  ): void {
+    const uniqueIds = new Set(progress.eligibleUserIds);
+    for (const userId of userIds) {
+      const value = this.stringifyObjectId(userId);
+      if (value) uniqueIds.add(value);
+    }
+    progress.eligibleUserIds = Array.from(uniqueIds);
+    progress.summary.eligibleUserCount = progress.eligibleUserIds.length;
   }
 
   private parseBackfillObjectId(value: string): MongoObjectId {
@@ -1191,43 +1269,6 @@ export class RelationshipOpenLoopService {
     );
   }
 
-  private async listRecentlyActiveUserIds(
-    cutoffAt: Date
-  ): Promise<MongoObjectId[]> {
-    const ids = new Map<string, MongoObjectId>();
-    for (let skip = 0; ; skip += 500) {
-      const accounts = await this.userAccountModel.find({
-        where: {
-          updatedAt: { $gte: cutoffAt },
-          status: { $ne: UserLoginAccountStatus.canceled },
-        } as never,
-        order: { updatedAt: 'ASC' },
-        skip,
-        take: 500,
-      });
-      accounts.forEach(account =>
-        ids.set(this.stringifyObjectId(account.userId), account.userId)
-      );
-      if (accounts.length < 500) break;
-    }
-    for (let skip = 0; ; skip += 500) {
-      const conversations = await this.conversationModel.find({
-        where: { updatedAt: { $gte: cutoffAt } } as never,
-        order: { updatedAt: 'ASC' },
-        skip,
-        take: 500,
-      });
-      conversations.forEach(conversation =>
-        ids.set(
-          this.stringifyObjectId(conversation.userId),
-          conversation.userId
-        )
-      );
-      if (conversations.length < 500) break;
-    }
-    return Array.from(ids.values());
-  }
-
   private async findHistoricalUserMessages(
     conversationId: MongoObjectId,
     cutoffAt: Date
@@ -1297,6 +1338,9 @@ export class RelationshipOpenLoopService {
     value: Record<string, unknown>
   ): Pick<
     RelationshipOpenLoopBackfillStatus,
+    | 'eligibleUserCount'
+    | 'conversationCount'
+    | 'scannedMessageCount'
     | 'generatedTaskCount'
     | 'activeTaskCount'
     | 'expiredTaskCount'
@@ -1309,6 +1353,9 @@ export class RelationshipOpenLoopService {
   > {
     const result: Pick<
       RelationshipOpenLoopBackfillStatus,
+      | 'eligibleUserCount'
+      | 'conversationCount'
+      | 'scannedMessageCount'
       | 'generatedTaskCount'
       | 'activeTaskCount'
       | 'expiredTaskCount'
@@ -1320,6 +1367,9 @@ export class RelationshipOpenLoopService {
       | 'removedTaskCount'
     > = {};
     for (const key of [
+      'eligibleUserCount',
+      'conversationCount',
+      'scannedMessageCount',
       'generatedTaskCount',
       'activeTaskCount',
       'expiredTaskCount',
