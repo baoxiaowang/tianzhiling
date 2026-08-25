@@ -5,6 +5,7 @@ import 'nprogress/nprogress.css';
 import { appRoutes } from './routes';
 import { REDIRECT_MAIN, NOT_FOUND_ROUTE } from './routes/base';
 import createRouteGuard from './guard';
+import { installChunkLoadRecovery } from './chunk-load-recovery';
 
 NProgress.configure({ showSpinner: false }); // NProgress Configuration
 
@@ -41,5 +42,6 @@ const router = createRouter({
 });
 
 createRouteGuard(router);
+installChunkLoadRecovery(router);
 
 export default router;

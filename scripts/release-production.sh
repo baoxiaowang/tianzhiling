@@ -10,9 +10,20 @@ ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_a
 SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
 DEPLOY_STARTED=0
 PREVIOUS_COMMIT=""
+ADMIN_ASSET_SNAPSHOT=""
 
 declare -A OLD_IMAGES=()
 declare -A COMPOSE_IMAGES=()
+
+cleanup_admin_asset_snapshot() {
+  if [[ -n "$ADMIN_ASSET_SNAPSHOT" && \
+    "$ADMIN_ASSET_SNAPSHOT" == /var/tmp/tzl-admin-assets.* && \
+    -d "$ADMIN_ASSET_SNAPSHOT" ]]; then
+    rm -rf -- "$ADMIN_ASSET_SNAPSHOT"
+  fi
+}
+
+trap cleanup_admin_asset_snapshot EXIT
 
 fail() {
   printf '[RELEASE_FAILED] phase=%s message=%s\n' "${PHASE:-preflight}" "$*" >&2
@@ -105,6 +116,11 @@ for service in "${SERVICES[@]}"; do
     "tzl-${service}-rollback:${PREVIOUS_COMMIT:0:12}"
 done
 
+ADMIN_ASSET_SNAPSHOT="$(mktemp -d /var/tmp/tzl-admin-assets.XXXXXX)"
+docker cp \
+  tzl_admin_web:/usr/share/nginx/html/assets/. \
+  "$ADMIN_ASSET_SNAPSHOT/"
+
 git merge --ff-only "$TARGET"
 [[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
 
@@ -133,6 +149,12 @@ if(!provider||!analysis||!cos) process.exit(1);
 
 PHASE='replace-web-and-gateway'
 docker compose --profile prod up -d --no-deps tzl_admin_web
+docker cp \
+  "$ADMIN_ASSET_SNAPSHOT/." \
+  tzl_admin_web:/usr/share/nginx/html/assets/
+docker exec tzl_admin_web find \
+  /usr/share/nginx/html/assets \
+  -type f -mtime +30 -delete
 check_container tzl_admin_web
 docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health
 docker compose --profile prod up -d --no-deps tzl_nginx
@@ -173,3 +195,4 @@ for service in "${SERVICES[@]}"; do
   docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
 done
 printf 'voice_runtime=ready\npublic_health=ok\nadmin_health=ok\n'
+printf 'admin_legacy_assets=retained_30d\n'
