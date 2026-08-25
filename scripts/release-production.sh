@@ -59,6 +59,20 @@ wait_for_node_health() {
   return 1
 }
 
+wait_for_public_health() {
+  local url="$1"
+  local attempt
+
+  for attempt in $(seq 1 24); do
+    if curl -fsS --max-time 20 "$url" | \
+      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
 check_container() {
   local service="$1"
   local state restarts
@@ -123,6 +137,7 @@ check_container tzl_admin_web
 docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health
 docker compose --profile prod up -d --no-deps tzl_nginx
 docker exec tzl_nginx nginx -t
+docker exec tzl_nginx nginx -s reload
 
 PHASE='container-health'
 for service in "${SERVICES[@]}"; do
@@ -134,8 +149,8 @@ done
 [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' tzl_node)" == "$TARGET" ]]
 
 PHASE='public-health'
-curl -fsS --max-time 20 "$PUBLIC_HEALTH" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
-curl -fsS --max-time 20 "$ADMIN_HEALTH" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
+wait_for_public_health "$PUBLIC_HEALTH"
+wait_for_public_health "$ADMIN_HEALTH"
 
 PHASE='error-scan'
 for service in tzl_node tzl_admin_node tzl_nginx; do
