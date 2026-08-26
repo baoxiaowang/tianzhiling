@@ -3,7 +3,6 @@ import { Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import {
   ConversationReplyTurnEntity,
-  ConversationReplyTurnMode,
   ConversationTurnBoundaryHint,
   MessageEntity,
   MessageRole,
@@ -14,10 +13,6 @@ import { MongoRepository } from 'typeorm';
 
 export const NORMAL_REPLY_SETTLE_MS = 2500;
 export const NORMAL_REPLY_MAX_DEBOUNCE_MS = 8000;
-export const LISTENING_BOUNDARY_FIRST_CHECK_MS = 12000;
-export const LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS = 22000;
-export const LISTENING_BOUNDARY_CONTINUE_WAIT_MS = 12000;
-export const LISTENING_LATEST_INPUT_ABSOLUTE_MS = 75000;
 export const LISTENING_TURN_MAX_LIFETIME_MS = 5 * 60 * 1000;
 export const LISTENING_TURN_MAX_MESSAGES = 12;
 export const LISTENING_TURN_MAX_VISIBLE_CHARACTERS = 1200;
@@ -76,6 +71,16 @@ export class ConversationReplyTurnService {
       await this.closeSatisfiedTurn(active, options.occurredAt);
       active = await this.findActiveByKey(activeKey);
     }
+    // Older releases could leave a satisfied turn open in listening mode.
+    // Once the user speaks again, finish that legacy turn and start a fresh,
+    // bounded collection window instead of inheriting a long wait.
+    if (
+      active?.mode === 'listening' &&
+      active.inputEpoch <= active.acknowledgedEpoch
+    ) {
+      await this.closeSatisfiedTurn(active, options.occurredAt);
+      active = await this.findActiveByKey(activeKey);
+    }
 
     if (!active) {
       if (!options.createIfMissing) {
@@ -100,7 +105,6 @@ export class ConversationReplyTurnService {
     const invalidatedGeneration =
       active.status === 'generating' || active.status === 'delivering';
     const timing = this.resolveCollectionTiming({
-      mode: active.mode,
       firstInputAt: active.firstInputAt,
       latestInputAt: options.occurredAt,
       searchableText: options.searchableText,
@@ -125,6 +129,7 @@ export class ConversationReplyTurnService {
         },
         $set: {
           status: 'collecting',
+          mode: 'normal',
           latestInputAt: options.occurredAt,
           collectNotBeforeAt: timing.collectNotBeforeAt,
           absoluteReplyAt: timing.absoluteReplyAt,
@@ -203,8 +208,6 @@ export class ConversationReplyTurnService {
     const phase =
       turn.status === 'generating' || turn.status === 'delivering'
         ? 'generating'
-        : turn.mode === 'listening'
-        ? 'listening'
         : 'collecting';
     return {
       turnId: turn.turnId,
@@ -377,73 +380,39 @@ export class ConversationReplyTurnService {
     turnId: string;
     generationEpoch: number;
     messageIds: string[];
-    nextMode: ConversationReplyTurnMode;
     now?: Date;
   }): Promise<ConversationReplyTurnEntity> {
     const now = options.now ?? new Date();
     const messageIds = Array.from(new Set(options.messageIds.filter(Boolean)));
     await this.verifyVisibleReplyMessages(options.turnId, messageIds);
 
-    let modifiedCount = 0;
-    if (options.nextMode === 'listening') {
-      const result = await this.turnModel.updateOne(
-        {
-          turnId: options.turnId,
-          activeKey: { $exists: true },
-          status: 'delivering',
-          generationEpoch: options.generationEpoch,
-        } as never,
-        {
-          $set: {
-            status: 'collecting',
-            mode: 'listening',
-            acknowledgedEpoch: options.generationEpoch,
-            collectNotBeforeAt: now,
-            updatedAt: now,
-          },
-          $addToSet: {
-            acknowledgementMessageIds: { $each: messageIds },
-          },
-          $inc: { acknowledgementCount: 1 },
-          $unset: {
-            generationEpoch: '',
-            generationStartedAt: '',
-            deliveryStartedAt: '',
-            recoveryQueuedAt: '',
-            lastError: '',
-          },
-        } as never
-      );
-      modifiedCount = Number(result?.modifiedCount || 0);
-    } else {
-      const result = await this.turnModel.updateOne(
-        {
-          turnId: options.turnId,
-          activeKey: { $exists: true },
-          status: 'delivering',
-          generationEpoch: options.generationEpoch,
-        } as never,
-        {
-          $set: {
-            status: 'answered',
-            mode: 'normal',
-            acknowledgedEpoch: options.generationEpoch,
-            replyMessageIds: messageIds,
-            answeredAt: now,
-            updatedAt: now,
-          },
-          $unset: {
-            activeKey: '',
-            generationEpoch: '',
-            generationStartedAt: '',
-            deliveryStartedAt: '',
-            recoveryQueuedAt: '',
-            lastError: '',
-          },
-        } as never
-      );
-      modifiedCount = Number(result?.modifiedCount || 0);
-    }
+    const completed = await this.turnModel.updateOne(
+      {
+        turnId: options.turnId,
+        activeKey: { $exists: true },
+        status: 'delivering',
+        generationEpoch: options.generationEpoch,
+      } as never,
+      {
+        $set: {
+          status: 'answered',
+          mode: 'normal',
+          acknowledgedEpoch: options.generationEpoch,
+          replyMessageIds: messageIds,
+          answeredAt: now,
+          updatedAt: now,
+        },
+        $unset: {
+          activeKey: '',
+          generationEpoch: '',
+          generationStartedAt: '',
+          deliveryStartedAt: '',
+          recoveryQueuedAt: '',
+          lastError: '',
+        },
+      } as never
+    );
+    let modifiedCount = Number(completed?.modifiedCount || 0);
 
     // A new user message may arrive after the visible reply is persisted but
     // before this state transition. Keep the newer input active while recording
@@ -464,19 +433,9 @@ export class ConversationReplyTurnService {
           } as never,
           {
             $max: { acknowledgedEpoch: options.generationEpoch },
-            $addToSet:
-              options.nextMode === 'listening'
-                ? {
-                    acknowledgementMessageIds: { $each: messageIds },
-                  }
-                : { replyMessageIds: { $each: messageIds } },
-            ...(options.nextMode === 'listening'
-              ? { $inc: { acknowledgementCount: 1 } }
-              : {}),
+            $addToSet: { replyMessageIds: { $each: messageIds } },
             $set: {
-              ...(options.nextMode === 'listening'
-                ? { mode: 'listening' }
-                : {}),
+              mode: 'normal',
               updatedAt: now,
             },
           } as never
@@ -486,18 +445,12 @@ export class ConversationReplyTurnService {
     }
 
     const verified = await this.requireTurnIdReadback(options.turnId);
-    const recordedIds =
-      options.nextMode === 'listening'
-        ? verified.acknowledgementMessageIds
-        : verified.replyMessageIds;
+    const recordedIds = verified.replyMessageIds;
     const coveredByNewerActiveTurn =
       Boolean(verified.activeKey) &&
       verified.inputEpoch > options.generationEpoch &&
       verified.acknowledgedEpoch >= options.generationEpoch;
-    const completedNormally =
-      options.nextMode === 'listening'
-        ? verified.acknowledgedEpoch >= options.generationEpoch
-        : verified.status === 'answered';
+    const completedNormally = verified.status === 'answered';
     if (
       (!completedNormally && !coveredByNewerActiveTurn) ||
       !messageIds.every(id => recordedIds.includes(id))
@@ -529,19 +482,10 @@ export class ConversationReplyTurnService {
     });
     if (!messages.length) return undefined;
 
-    const hasFinalEffect = messages.some(
-      message =>
-        message.replyTurnEffect === 'final_reply' ||
-        message.replyTurnEffect === 'failure_reply'
-    );
-    const onlyListeningAcknowledgements =
-      !hasFinalEffect &&
-      messages.every(message => message.replyTurnEffect === 'listening_ack');
     return this.recordVisibleReply({
       turnId: turn.turnId,
       generationEpoch: turn.generationEpoch,
       messageIds: messages.map(message => String(message.id)),
-      nextMode: onlyListeningAcknowledgements ? 'listening' : 'normal',
     });
   }
 
@@ -598,7 +542,7 @@ export class ConversationReplyTurnService {
       );
     }
 
-    await this.closeIdleListeningTurns(now);
+    await this.closeSatisfiedLegacyListeningTurns(now);
     const requeueBefore = new Date(
       now.getTime() - REPLY_TURN_RECOVERY_REQUEUE_MS
     );
@@ -639,19 +583,11 @@ export class ConversationReplyTurnService {
     return claimed;
   }
 
-  isExplicitTurnHandoff(text = ''): boolean {
-    const normalized = text.replace(/\s/gu, '');
-    return /(?:我说完了|就这些|说完了|你说吧|你讲吧|该你了|你可以回了|现在回吧|听我说完了)/u.test(
-      normalized
-    );
-  }
-
   private async createTurn(
     options: RegisterConversationReplyInputOptions,
     activeKey: string
   ): Promise<RegisterConversationReplyInputResult> {
     const timing = this.resolveCollectionTiming({
-      mode: 'normal',
       firstInputAt: options.occurredAt,
       latestInputAt: options.occurredAt,
       searchableText: options.searchableText,
@@ -705,7 +641,6 @@ export class ConversationReplyTurnService {
   }
 
   private resolveCollectionTiming(options: {
-    mode: ConversationReplyTurnMode;
     firstInputAt: Date;
     latestInputAt: Date;
     searchableText?: string;
@@ -716,50 +651,42 @@ export class ConversationReplyTurnService {
       options.messageCount >= LISTENING_TURN_MAX_MESSAGES ||
       options.visibleCharacters >= LISTENING_TURN_MAX_VISIBLE_CHARACTERS
     ) {
-      const forcedAt = new Date(options.latestInputAt.getTime() + 250);
+      const forcedAt = new Date(
+        Math.min(
+          options.latestInputAt.getTime() + 250,
+          options.firstInputAt.getTime() + NORMAL_REPLY_MAX_DEBOUNCE_MS
+        )
+      );
       return { collectNotBeforeAt: forcedAt, absoluteReplyAt: forcedAt };
     }
-    if (options.mode !== 'listening') {
-      const absoluteReplyAt = new Date(
-        options.firstInputAt.getTime() + NORMAL_REPLY_MAX_DEBOUNCE_MS
-      );
-      return {
-        collectNotBeforeAt: new Date(
-          Math.min(
-            options.latestInputAt.getTime() + NORMAL_REPLY_SETTLE_MS,
-            absoluteReplyAt.getTime()
-          )
-        ),
-        absoluteReplyAt,
-      };
-    }
-
-    const expiresAt =
-      options.firstInputAt.getTime() + LISTENING_TURN_MAX_LIFETIME_MS;
-    const absoluteAt = Math.min(
-      options.latestInputAt.getTime() + LISTENING_LATEST_INPUT_ABSOLUTE_MS,
-      expiresAt
-    );
-    const collectAt = this.isExplicitTurnHandoff(options.searchableText)
-      ? options.latestInputAt.getTime() + 250
-      : options.latestInputAt.getTime() + LISTENING_BOUNDARY_FIRST_CHECK_MS;
+    const absoluteAt =
+      options.firstInputAt.getTime() + NORMAL_REPLY_MAX_DEBOUNCE_MS;
+    const collectAt = this.isExplicitWaitForMoreInput(options.searchableText)
+      ? absoluteAt
+      : options.latestInputAt.getTime() + NORMAL_REPLY_SETTLE_MS;
     return {
       collectNotBeforeAt: new Date(Math.min(collectAt, absoluteAt)),
       absoluteReplyAt: new Date(absoluteAt),
     };
   }
 
-  private async closeIdleListeningTurns(now: Date): Promise<void> {
-    const expired = await this.turnModel.find({
+  private isExplicitWaitForMoreInput(text = ''): boolean {
+    const normalized = text.replace(/\s/gu, '');
+    return /(?:我(?:还)?没说完|我(?:还要|继续|接着|再)说|先(?:听我|让我)(?:说|讲)(?:完)?|等(?:一下|会儿|一会儿)?[,，。]*(?:我还没说完|我继续说|先别回))/u.test(
+      normalized
+    );
+  }
+
+  private async closeSatisfiedLegacyListeningTurns(now: Date): Promise<void> {
+    const legacyTurns = await this.turnModel.find({
       where: {
         activeKey: { $exists: true },
         status: 'collecting',
         mode: 'listening',
-        expiresAt: { $lte: now },
       } as never,
       take: REPLY_TURN_RECOVERY_BATCH_SIZE,
     });
-    for (const turn of expired) {
+    for (const turn of legacyTurns) {
       if (turn.inputEpoch > turn.acknowledgedEpoch) continue;
       await this.closeSatisfiedTurn(turn, now);
     }

@@ -19,8 +19,6 @@ export interface BuildReplyOutputContractOptions {
   toolDecisionSchema?: Record<string, unknown>;
   evidenceContract?: ReplyEvidenceContract;
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
-  /** Machine-actionable timing signal; it never plans or edits reply content. */
-  turnModeDecision?: boolean;
   /** Verbatim user questions used only as a coverage reminder, never as a reply plan. */
   explicitUserQuestions?: string[];
 }
@@ -112,10 +110,6 @@ export function buildReplyOutputContractPrompt(
     };
   }
 
-  if (options.turnModeDecision && purpose === 'reply') {
-    schema.nextTurnMode = 'normal|listening';
-  }
-
   const segmentRule =
     options.segmentMode === 'exact_two'
       ? 'segments 恰好两项，不能合并。'
@@ -155,10 +149,6 @@ export function buildReplyOutputContractPrompt(
   const deliberateFollowUpRule = options.deliberateLongReplyCandidate?.eligible
     ? 'deliberateFollowUp 是必填决策，不能省略。它只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选择 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
     : '';
-  const turnModeRule =
-    options.turnModeDecision && purpose === 'reply'
-      ? 'nextTurnMode 只表示话语权：通常用 normal；仅当用户明显还在分多条展开，而本次正文只是自然接话并把话留给用户时用 listening。它不决定回复内容，也不能代替正文。'
-      : '';
   const explicitQuestionRule =
     (options.explicitUserQuestions?.length || 0) > 1
       ? [
@@ -180,7 +170,6 @@ export function buildReplyOutputContractPrompt(
     auditRule,
     toolRule,
     deliberateFollowUpRule,
-    turnModeRule,
     explicitQuestionRule,
   ]
     .filter(Boolean)

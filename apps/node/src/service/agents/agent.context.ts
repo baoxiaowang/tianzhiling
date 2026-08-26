@@ -1253,8 +1253,6 @@ export class AgentContextService {
       maxSegments: 1,
       evidenceContract: replyBrief.evidenceContract,
       deliberateLongReplyCandidate,
-      turnModeDecision:
-        process.env.CHAT_CONVERSATION_REPLY_TURN_ENABLED !== 'false',
       explicitUserQuestions: extractExplicitUserQuestions(currentQuery),
     });
     const chatToolPrompt = chatToolPlan

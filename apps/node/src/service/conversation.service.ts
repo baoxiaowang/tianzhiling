@@ -17,7 +17,6 @@ import {
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationReplyTurnEntity,
-  ConversationReplyTurnMode,
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -202,8 +201,6 @@ import {
 import {
   ConversationReplyTurnClientState,
   ConversationReplyTurnService,
-  LISTENING_BOUNDARY_CONTINUE_WAIT_MS,
-  LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS,
   REPLY_TURN_RECOVERY_REQUEUE_MS,
 } from './agents/conversation-reply-turn.service';
 
@@ -423,7 +420,6 @@ interface ProcessReplyResult {
   routing?: ReplyRoutingAudit;
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
   deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
-  nextTurnMode?: ConversationReplyTurnMode;
 }
 
 interface ParsedAssistantReply {
@@ -432,7 +428,6 @@ interface ParsedAssistantReply {
   toolDecisions?: AgentChatToolDecision[];
   invalidToolDecisionCount?: number;
   deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
-  nextTurnMode?: ConversationReplyTurnMode;
 }
 
 interface AgentChatToolAudit {
@@ -1794,16 +1789,6 @@ export class ConversationService {
         return;
       }
 
-      if (replyTurn?.mode === 'listening') {
-        const readyTurn = await this.prepareListeningTurnBoundary({
-          turn: replyTurn,
-          pendingUserMessages,
-          data,
-        });
-        if (!readyTurn) return;
-        replyTurn = readyTurn;
-      }
-
       if (replyTurn) {
         const claimed = await this.conversationReplyTurnService
           .claimForGeneration({
@@ -1988,12 +1973,6 @@ export class ConversationService {
         }
 
         if (replyTurn && generationEpoch !== undefined) {
-          processed.nextTurnMode = this.resolveEffectiveNextTurnMode({
-            requested: processed.nextTurnMode,
-            processed,
-            before,
-            turn: replyTurn,
-          });
           const delivering =
             await this.conversationReplyTurnService.markDelivering({
               turnId: replyTurn.turnId,
@@ -2030,8 +2009,6 @@ export class ConversationService {
             messageIds: after.assistantMessages.map(message =>
               this.stringifyObjectId(message.id)
             ),
-            nextMode:
-              processed.nextTurnMode === 'listening' ? 'listening' : 'normal',
           });
         }
         await this.completeChatReplyTrace(
@@ -2121,7 +2098,6 @@ export class ConversationService {
                 messageIds: failedAfter.assistantMessages.map(message =>
                   this.stringifyObjectId(message.id)
                 ),
-                nextMode: 'normal',
               })
               .catch(turnError => {
                 this.logger?.error?.(
@@ -4672,7 +4648,6 @@ export class ConversationService {
     let deliberateFollowUpDecision:
       | DeliberateLongReplyModelDecision
       | undefined;
-    let nextTurnMode: ConversationReplyTurnMode = 'normal';
     let generationUsage: ReplyUsage = {};
     let generationRecoveryAttempted = false;
     let generationRecoverySucceeded = false;
@@ -4731,7 +4706,6 @@ export class ConversationService {
       );
       replyClaims = parsedReply.claims;
       deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
-      nextTurnMode = parsedReply.nextTurnMode ?? 'normal';
       replySegments = this.normalizeAssistantReplySegments(
         plannedSegments,
         before.searchableText
@@ -4821,7 +4795,6 @@ export class ConversationService {
         );
         replyClaims = parsedReply.claims;
         deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
-        nextTurnMode = parsedReply.nextTurnMode ?? 'normal';
         replySegments = this.normalizeAssistantReplySegments(
           plannedSegments,
           before.searchableText
@@ -4933,7 +4906,6 @@ export class ConversationService {
           deliberateFollowUpDecision =
             activeExpressionParsed.deliberateFollowUpDecision ||
             deliberateFollowUpDecision;
-          nextTurnMode = activeExpressionParsed.nextTurnMode ?? 'normal';
         }
       } catch (activeExpressionRecoveryError) {
         generationAttemptTraces.push(
@@ -5229,7 +5201,6 @@ export class ConversationService {
         replySegments: participationResult.segments,
         deliberateLongReplyCandidate,
         deliberateFollowUpDecision,
-        nextTurnMode,
         usage: this.mergeReplyUsage(
           this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
           finalizationUsage
@@ -6597,7 +6568,6 @@ export class ConversationService {
       segmentMode: 'one',
       maxSegments: 1,
       evidenceContract: options.replyBrief.evidenceContract,
-      turnModeDecision: this.isConversationReplyTurnEnabled(),
       explicitUserQuestions: extractExplicitUserQuestions(options.userQuery),
     });
     const systemPrompt = [
@@ -7039,11 +7009,7 @@ export class ConversationService {
     }
 
     const replyTurnEffect: MessageEntity['replyTurnEffect'] | undefined =
-      before.replyTurn
-        ? processed.nextTurnMode === 'listening'
-          ? 'listening_ack'
-          : 'final_reply'
-        : undefined;
+      before.replyTurn ? 'final_reply' : undefined;
 
     // A scheduled morning reply is text-only so every bubble can carry the
     // durable task marker used to make queue retries idempotent.
@@ -7083,27 +7049,22 @@ export class ConversationService {
           replyTurnEffect,
         }));
 
-    // A listening acknowledgement keeps the same logical user turn open. It
-    // must not complete recognition/task observers or schedule a next-day
-    // reply as though the user's full expression had already ended.
-    if (processed.nextTurnMode !== 'listening') {
-      await this.finalizeRecognitionJourneyTurn({
-        runtime,
-        processed,
-        assistantMessages,
-      });
-      await this.finalizeRelationshipOpenLoopTurn({
-        runtime,
-        processed,
-        assistantMessages,
-      });
-      await this.scheduleDeliberateLongReplyIfSelected({
-        runtime,
-        before,
-        processed,
-        assistantMessages,
-      });
-    }
+    await this.finalizeRecognitionJourneyTurn({
+      runtime,
+      processed,
+      assistantMessages,
+    });
+    await this.finalizeRelationshipOpenLoopTurn({
+      runtime,
+      processed,
+      assistantMessages,
+    });
+    await this.scheduleDeliberateLongReplyIfSelected({
+      runtime,
+      before,
+      processed,
+      assistantMessages,
+    });
 
     await this.touchConversation(
       runtime.conversation,
@@ -7618,154 +7579,6 @@ export class ConversationService {
     userId: string
   ): string {
     return `conversation:composer-active:${conversationId}:${userId}`;
-  }
-
-  private async prepareListeningTurnBoundary(options: {
-    turn: ConversationReplyTurnEntity;
-    pendingUserMessages: MessageEntity[];
-    data: ConversationReplyJobData;
-  }): Promise<ConversationReplyTurnEntity | undefined> {
-    const now = new Date();
-    const latestText = this.buildSearchableTextFromMessage(
-      options.pendingUserMessages[options.pendingUserMessages.length - 1]
-    );
-    if (
-      now >= options.turn.absoluteReplyAt ||
-      options.turn.boundaryCheckCount >= 2 ||
-      this.conversationReplyTurnService.isExplicitTurnHandoff(latestText)
-    ) {
-      return options.turn;
-    }
-
-    const unacknowledgedMessages = options.pendingUserMessages.slice(
-      Math.min(
-        options.turn.acknowledgedEpoch,
-        options.pendingUserMessages.length
-      )
-    );
-    const hint = await this.classifyListeningTurnBoundary(
-      unacknowledgedMessages
-    );
-    const checkedCount = options.turn.boundaryCheckCount + 1;
-    let collectNotBeforeAt: Date | undefined;
-    if (hint === 'continue_likely') {
-      collectNotBeforeAt = new Date(
-        Math.min(
-          checkedCount >= 2
-            ? options.turn.latestInputAt.getTime() + 45000
-            : now.getTime() + LISTENING_BOUNDARY_CONTINUE_WAIT_MS,
-          options.turn.absoluteReplyAt.getTime()
-        )
-      );
-    } else if (
-      hint === 'uncertain' &&
-      checkedCount < 2 &&
-      now.getTime() <
-        options.turn.latestInputAt.getTime() +
-          LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS
-    ) {
-      collectNotBeforeAt = new Date(
-        Math.min(
-          options.turn.latestInputAt.getTime() +
-            LISTENING_BOUNDARY_UNCERTAIN_WAIT_MS,
-          options.turn.absoluteReplyAt.getTime()
-        )
-      );
-    }
-
-    const updated =
-      (await this.conversationReplyTurnService.deferCollecting({
-        turnId: options.turn.turnId,
-        expectedInputEpoch: options.turn.inputEpoch,
-        collectNotBeforeAt: collectNotBeforeAt || now,
-        hint,
-        incrementBoundaryCheck: true,
-        now,
-      })) || options.turn;
-    if (!collectNotBeforeAt || collectNotBeforeAt <= now) {
-      return updated;
-    }
-    await this.enqueueConversationReplyJob({
-      ...options.data,
-      expectedInputEpoch: updated.inputEpoch,
-      triggerMessageIds: updated.sourceMessageIds,
-    });
-    return undefined;
-  }
-
-  private async classifyListeningTurnBoundary(
-    messages: MessageEntity[]
-  ): Promise<'continue_likely' | 'complete_likely' | 'uncertain'> {
-    if (!messages.length) return 'uncertain';
-    const sequence = messages.slice(-8).map((message, index) => ({
-      index: index + 1,
-      text: this.buildSearchableTextFromMessage(message).slice(0, 500),
-    }));
-    try {
-      const response = await this.openAIService.createChatCompletion(
-        {
-          temperature: 0,
-          topP: 0.2,
-          reasoningSplit: false,
-          thinking: { type: 'disabled' },
-          max_tokens: 12,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '只判断用户这一串消息是否明显还没说完。只输出 continue_likely、complete_likely 或 uncertain。不要分析、不要设计回复。',
-            },
-            { role: 'user', content: JSON.stringify(sequence) },
-          ],
-          trace: {
-            stage: ChatTraceStage.plan,
-            operation: 'listening_turn.boundary',
-            attributes: { messageCount: sequence.length },
-          },
-        },
-        { timeout: 4000, maxRetries: 0 }
-      );
-      const content =
-        typeof response.choices?.[0]?.message?.content === 'string'
-          ? response.choices[0].message.content
-          : '';
-      const match = content.match(
-        /continue_likely|complete_likely|uncertain/
-      )?.[0];
-      return match === 'continue_likely' || match === 'complete_likely'
-        ? match
-        : 'uncertain';
-    } catch (error) {
-      this.logger?.warn?.(
-        '[conversation-reply-turn] boundary helper unavailable, reason=%s',
-        this.describeReplyError(error)
-      );
-      return 'uncertain';
-    }
-  }
-
-  private resolveEffectiveNextTurnMode(options: {
-    requested?: ConversationReplyTurnMode;
-    processed: ProcessReplyResult;
-    before: BeforeReplyResult;
-    turn: ConversationReplyTurnEntity;
-  }): ConversationReplyTurnMode {
-    if (options.requested !== 'listening') return 'normal';
-    if (options.turn.acknowledgementCount >= 2) return 'normal';
-    if (options.processed.deliberateLongReplyCandidate?.eligible)
-      return 'normal';
-    if (
-      this.conversationReplyTurnService.isExplicitTurnHandoff(
-        options.before.searchableText
-      )
-    ) {
-      return 'normal';
-    }
-    // Do not infer conversational floor from character count. The main model
-    // has the dialogue context; the program only rejects an empty signal.
-    return options.processed.replySegments.some(segment => segment.trim())
-      ? 'listening'
-      : 'normal';
   }
 
   private async recoverConversationReplyTurns(): Promise<void> {
@@ -10490,8 +10303,6 @@ export class ConversationService {
           : {}),
       };
     }
-    const nextTurnMode = this.resolveParsedReplyTurnMode(parsed, segments);
-
     const toolDecisionResult = normalizeAgentChatToolDecisions(
       parsed?.toolDecisions,
       allowedToolNames
@@ -10502,7 +10313,6 @@ export class ConversationService {
       deliberateFollowUpDecision: this.normalizeDeliberateFollowUpDecision(
         parsed?.deliberateFollowUp
       ),
-      ...(nextTurnMode ? { nextTurnMode } : {}),
       ...(allowedToolNames.length
         ? {
             toolDecisions: toolDecisionResult.decisions,
@@ -10510,38 +10320,6 @@ export class ConversationService {
           }
         : {}),
     };
-  }
-
-  private resolveParsedReplyTurnMode(
-    envelope: Record<string, unknown> | null,
-    segments: string[]
-  ): ConversationReplyTurnMode | undefined {
-    if (
-      envelope?.nextTurnMode === 'normal' ||
-      envelope?.nextTurnMode === 'listening'
-    ) {
-      return envelope.nextTurnMode;
-    }
-
-    if (!this.isConversationReplyTurnEnabled()) {
-      return undefined;
-    }
-
-    // Some character models already yield the floor in their actual reply but
-    // occasionally omit the JSON envelope. Recover only that model-authored
-    // speech act; do not infer the user's intent or rewrite the reply.
-    const reply = segments.join(' ').replace(/\s+/g, ' ').trim();
-    if (!reply || countReplyVisibleCharacters(reply) > 32) {
-      return undefined;
-    }
-
-    const invitesContinuation =
-      /(?:慢慢|接着|继续)(?:说|讲)|(?:说|讲)(?:下去|吧)/.test(reply);
-    const receivesTheFloor = /(?:听着|在听|不着急|别着急|别急|别慌)/.test(
-      reply
-    );
-
-    return invitesContinuation && receivesTheFloor ? 'listening' : undefined;
   }
 
   private normalizeDeliberateFollowUpDecision(
