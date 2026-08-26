@@ -2,8 +2,6 @@ const { existsSync, readFileSync } = require('fs');
 const { resolve } = require('path');
 const { MongoClient } = require('mongodb');
 
-loadLocalEnv();
-
 const INDEXES = {
   conversation_reply_turn: [
     [{ turnId: 1 }, { name: 'uniq_conversation_reply_turn_id', unique: true }],
@@ -33,29 +31,56 @@ const INDEXES = {
 };
 
 async function main() {
+  loadLocalEnv();
+  const mode = readMode(process.argv.slice(2));
   const client = new MongoClient(buildMongoConnectionString());
   await client.connect();
   try {
     const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
     const db = client.db(database);
-    const created = [];
+    const ready = [];
+    const missing = [];
     for (const [collectionName, definitions] of Object.entries(INDEXES)) {
       const collection = db.collection(collectionName);
       for (const [keys, options] of definitions) {
-        const name = await ensureIndex(collection, keys, {
-          ...options,
-          background: true,
-        });
-        created.push(`${collectionName}.${name}`);
+        const result = await ensureIndex(
+          collection,
+          keys,
+          { ...options, background: true },
+          { apply: mode === 'apply' }
+        );
+        const qualifiedName = `${collectionName}.${options.name}`;
+        if (result === 'missing') missing.push(qualifiedName);
+        else ready.push(`${qualifiedName}:${result}`);
       }
     }
-    console.log(`[conversation-reply-turn-indexes] ready=${created.join(',')}`);
+    if (missing.length > 0) {
+      throw new Error(
+        `[conversation-reply-turn-indexes] missing=${missing.join(',')} ` +
+          'no changes made; rerun with --apply after explicit authorization'
+      );
+    }
+    console.log(
+      `[conversation-reply-turn-indexes] mode=${mode} ready=${ready.join(',')}`
+    );
   } finally {
     await client.close();
   }
 }
 
-async function ensureIndex(collection, keys, options) {
+function readMode(args) {
+  const allowed = new Set(['--check', '--apply']);
+  const unknown = args.filter(arg => !allowed.has(arg));
+  if (unknown.length > 0) {
+    throw new Error(`unknown arguments: ${unknown.join(',')}`);
+  }
+  if (args.includes('--check') && args.includes('--apply')) {
+    throw new Error('choose either --check or --apply');
+  }
+  return args.includes('--apply') ? 'apply' : 'check';
+}
+
+async function ensureIndex(collection, keys, options, { apply = false } = {}) {
   let indexes = [];
   try {
     indexes = await collection.listIndexes().toArray();
@@ -63,21 +88,40 @@ async function ensureIndex(collection, keys, options) {
     if (error?.codeName !== 'NamespaceNotFound') throw error;
   }
   const expectedKeys = JSON.stringify(keys);
-  const conflicting = indexes.filter(index => {
-    if (index.name === '_id_') return false;
+  const exact = indexes.find(index => {
     const sameName = index.name === options.name;
     const sameKeys = JSON.stringify(index.key) === expectedKeys;
     const sameUnique = Boolean(index.unique) === Boolean(options.unique);
     const sameSparse = Boolean(index.sparse) === Boolean(options.sparse);
-    return (
-      (sameName || sameKeys) &&
-      !(sameName && sameKeys && sameUnique && sameSparse)
-    );
+    return sameName && sameKeys && sameUnique && sameSparse;
   });
-  for (const index of conflicting) {
-    await collection.dropIndex(index.name);
+  if (exact) return 'existing';
+
+  const conflicts = indexes.filter(index => {
+    if (index.name === '_id_') return false;
+    const sameName = index.name === options.name;
+    const sameKeys = JSON.stringify(index.key) === expectedKeys;
+    return sameName || sameKeys;
+  });
+  if (conflicts.length > 0) {
+    const found = conflicts.map(index => ({
+      name: index.name,
+      key: index.key,
+      unique: Boolean(index.unique),
+      sparse: Boolean(index.sparse),
+    }));
+    throw new Error(
+      `[conversation-reply-turn-indexes] conflict collection=${
+        collection.collectionName
+      } expected=${JSON.stringify({ keys, options })} found=${JSON.stringify(
+        found
+      )}; no changes made`
+    );
   }
-  return collection.createIndex(keys, options);
+
+  if (!apply) return 'missing';
+  await collection.createIndex(keys, options);
+  return 'created';
 }
 
 function buildMongoConnectionString() {
@@ -128,7 +172,11 @@ function loadLocalEnv() {
   }
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exit(1);
-});
+module.exports = { INDEXES, ensureIndex, readMode };
+
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+}

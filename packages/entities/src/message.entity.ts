@@ -138,7 +138,7 @@ export interface MessageReplyStateProtocol {
   background: true,
 })
 @Index(["traceId", "createdAt"], { background: true })
-@Index(["replyTurnId", "createdAt"], { sparse: true, background: true })
+// replyTurnId + createdAt is managed by the explicit reply-turn index script.
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()

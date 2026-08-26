@@ -61,5 +61,6 @@ COPY --from=build /workspace/apps/node/package.json ./package.json
 COPY --from=build /workspace/apps/node/bootstrap.js ./bootstrap.js
 COPY --from=build /workspace/apps/node/dist ./dist
 COPY --from=build /workspace/apps/node/public ./public
+COPY --from=build /workspace/apps/node/scripts/ensure-conversation-reply-turn-indexes.js ./scripts/ensure-conversation-reply-turn-indexes.js
 
 CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "apibest-node", "-i", "4"]

@@ -7,6 +7,7 @@ BRANCH="${1:-}"
 TARGET="${2:-}"
 PUBLIC_HEALTH="${TIANZHILING_PUBLIC_HEALTH:-https://tianzhiling.chat/api/system/health}"
 ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_api/system/health}"
+STABILITY_SECONDS="${TIANZHILING_STABILITY_SECONDS:-120}"
 SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
 DEPLOY_STARTED=0
 PREVIOUS_COMMIT=""
@@ -14,6 +15,7 @@ ADMIN_ASSET_SNAPSHOT=""
 
 declare -A OLD_IMAGES=()
 declare -A COMPOSE_IMAGES=()
+declare -A OLD_REVISIONS=()
 
 cleanup_admin_asset_snapshot() {
   if [[ -n "$ADMIN_ASSET_SNAPSHOT" && \
@@ -32,6 +34,7 @@ fail() {
 
 rollback_runtime() {
   local service
+  local rollback_ok=1
 
   [[ "$DEPLOY_STARTED" -eq 1 ]] || return 0
   set +e
@@ -42,7 +45,18 @@ rollback_runtime() {
     fi
   done
   docker compose --profile prod up -d --no-deps --force-recreate "${SERVICES[@]}"
-  printf '[ROLLBACK_DONE] runtime restored; git remains at %s\n' "$TARGET" >&2
+  for service in "${SERVICES[@]}"; do
+    check_container "$service" || rollback_ok=0
+  done
+  wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
+  wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health' || rollback_ok=0
+  check_pm2_processes tzl_node 4 0 || rollback_ok=0
+  check_pm2_processes tzl_admin_node 2 0 || rollback_ok=0
+  if [[ "$rollback_ok" -eq 1 ]]; then
+    printf '[ROLLBACK_DONE] runtime restored and verified; git remains at %s\n' "$TARGET" >&2
+  else
+    printf '[ROLLBACK_VERIFY_FAILED] manual recovery required; git remains at %s\n' "$TARGET" >&2
+  fi
 }
 
 on_error() {
@@ -94,9 +108,90 @@ check_container() {
   [[ "$state" == 'running' && "$restarts" == '0' ]]
 }
 
+check_pm2_processes() {
+  local service="$1"
+  local expected="$2"
+  local minimum_uptime_ms="${3:-0}"
+
+  docker exec "$service" node -e '
+const { execFileSync } = require("child_process");
+const expected = Number(process.argv[1]);
+const minimumUptimeMs = Number(process.argv[2]);
+const processes = JSON.parse(execFileSync("pm2", ["jlist"], {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "ignore"],
+}));
+const failures = [];
+if (processes.length !== expected) {
+  failures.push(`count=${processes.length}/${expected}`);
+}
+for (const processInfo of processes) {
+  const env = processInfo.pm2_env || {};
+  const uptimeMs = Date.now() - Number(env.pm_uptime || 0);
+  const restartTime = Number(env.restart_time || 0);
+  const unstableRestarts = Number(env.unstable_restarts || 0);
+  if (env.status !== "online" || restartTime !== 0 || unstableRestarts !== 0 || uptimeMs < minimumUptimeMs) {
+    failures.push(JSON.stringify({
+      pm_id: processInfo.pm_id,
+      status: env.status,
+      restart_time: restartTime,
+      unstable_restarts: unstableRestarts,
+      uptime_ms: uptimeMs,
+    }));
+  }
+}
+if (failures.length > 0) {
+  console.error(failures.join("\n"));
+  process.exit(1);
+}
+' "$expected" "$minimum_uptime_ms"
+}
+
+check_internal_health() {
+  local service="$1"
+  local url="$2"
+
+  docker exec "$service" node -e \
+    "fetch('$url').then(async r=>{const j=await r.json();const d=j.data||j;if(!r.ok||d.status!=='ok')process.exit(1)}).catch(()=>process.exit(1))" \
+    >/dev/null 2>&1
+}
+
+wait_for_release_stability() {
+  local required_seconds="$1"
+  local elapsed=0
+
+  while (( elapsed < required_seconds )); do
+    check_container tzl_node
+    check_container tzl_admin_node
+    check_pm2_processes tzl_node 4 0
+    check_pm2_processes tzl_admin_node 2 0
+    check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+    check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
+    sleep 10
+    elapsed=$((elapsed + 10))
+  done
+  check_pm2_processes tzl_node 4 "$((required_seconds * 1000))"
+  check_pm2_processes tzl_admin_node 2 "$((required_seconds * 1000))"
+  check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+  check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
+}
+
+check_public_health_repeated() {
+  local url="$1"
+  local attempt
+
+  for attempt in $(seq 1 3); do
+    curl -fsS --max-time 20 "$url" | \
+      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
+    if [[ "$attempt" -lt 3 ]]; then sleep 5; fi
+  done
+}
+
 [[ "$EUID" -eq 0 ]] || fail 'run as root'
 [[ "$BRANCH" =~ ^[0-9]{8}$ ]] || fail 'branch must be YYYYMMDD'
 [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || fail 'target must be a full commit hash'
+[[ "$STABILITY_SECONDS" =~ ^[0-9]+$ && "$STABILITY_SECONDS" -ge 60 ]] || \
+  fail 'stability window must be at least 60 seconds'
 
 PHASE='preflight'
 cd "$REPO"
@@ -111,9 +206,15 @@ git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET" || fail 'target is not
 for service in "${SERVICES[@]}"; do
   OLD_IMAGES[$service]="$(docker inspect -f '{{.Image}}' "$service")"
   COMPOSE_IMAGES[$service]="$(docker inspect -f '{{.Config.Image}}' "$service")"
+  OLD_REVISIONS[$service]="$(
+    docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service"
+  )"
+  if [[ ! "${OLD_REVISIONS[$service]}" =~ ^[0-9a-f]{40}$ ]]; then
+    OLD_REVISIONS[$service]="$PREVIOUS_COMMIT"
+  fi
   docker image tag \
     "${OLD_IMAGES[$service]}" \
-    "tzl-${service}-rollback:${PREVIOUS_COMMIT:0:12}"
+    "tzl-${service}-rollback:${OLD_REVISIONS[$service]:0:12}"
 done
 
 ADMIN_ASSET_SNAPSHOT="$(mktemp -d /var/tmp/tzl-admin-assets.XXXXXX)"
@@ -130,6 +231,14 @@ export RELEASE_VERSION="$TARGET"
 
 PHASE='production-build'
 docker compose --profile prod build "${SERVICES[@]}"
+
+PHASE='database-contract'
+[[ "$(
+  docker compose --profile prod run --rm --no-deps tzl_node \
+    sh -lc 'printf %s "${NODE_DB_SYNCHRONIZE:-}"'
+)" == 'false' ]]
+docker compose --profile prod run --rm --no-deps tzl_node \
+  node ./scripts/ensure-conversation-reply-turn-indexes.js --check
 
 PHASE='replace-backends'
 DEPLOY_STARTED=1
@@ -165,8 +274,8 @@ PHASE='container-health'
 for service in "${SERVICES[@]}"; do
   check_container "$service"
 done
-[[ "$(docker exec tzl_node pm2 jlist | grep -o '"status":"online"' | wc -l | tr -d ' ')" == '4' ]]
-[[ "$(docker exec tzl_admin_node pm2 jlist | grep -o '"status":"online"' | wc -l | tr -d ' ')" == '2' ]]
+check_pm2_processes tzl_node 4 0
+check_pm2_processes tzl_admin_node 2 0
 [[ "$(docker exec tzl_node printenv RELEASE_VERSION)" == "$TARGET" ]]
 [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' tzl_node)" == "$TARGET" ]]
 
@@ -174,10 +283,15 @@ PHASE='public-health'
 wait_for_public_health "$PUBLIC_HEALTH"
 wait_for_public_health "$ADMIN_HEALTH"
 
+PHASE='stability-window'
+wait_for_release_stability "$STABILITY_SECONDS"
+check_public_health_repeated "$PUBLIC_HEALTH"
+check_public_health_repeated "$ADMIN_HEALTH"
+
 PHASE='error-scan'
 for service in tzl_node tzl_admin_node tzl_nginx; do
   if docker logs --since 5m "$service" 2>&1 | \
-    grep -Eiq 'uncaught exception|unhandled rejection|fatal error|heap out of memory|EADDRINUSE'; then
+    grep -Eiq 'uncaught exception|unhandled rejection|fatal error|heap out of memory|EADDRINUSE|MongoServerError|IndexOptionsConflict|code[^0-9]*85|midway:bootstrap.*exit with code:[^0]'; then
     fail "fatal log detected in $service"
   fi
 done
@@ -193,6 +307,8 @@ printf 'branch=%s\ncommit=%s\nprevious_commit=%s\n' "$BRANCH" "$TARGET" "$PREVIO
 printf 'release_version=%s\n' "$TARGET"
 for service in "${SERVICES[@]}"; do
   docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
+  printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]}"
 done
 printf 'voice_runtime=ready\npublic_health=ok\nadmin_health=ok\n'
+printf 'pm2_stability_seconds=%s\n' "$STABILITY_SECONDS"
 printf 'admin_legacy_assets=retained_30d\n'

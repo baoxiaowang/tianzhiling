@@ -1,4 +1,4 @@
-import { Column, Entity, Index } from "typeorm";
+import { Column, Entity } from "typeorm";
 import { BaseEntity, MongoObjectId, TableName } from "./base";
 
 export type ConversationReplyTurnStatus =
@@ -15,10 +15,10 @@ export type ConversationTurnBoundaryHint =
   | "complete_likely"
   | "uncertain";
 
-@Index(["turnId"], { unique: true, background: true })
-@Index(["activeKey"], { unique: true, sparse: true, background: true })
-@Index(["status", "collectNotBeforeAt"], { background: true })
-@Index(["conversationId", "createdAt"], { background: true })
+// Production indexes for this collection are owned by
+// apps/node/scripts/ensure-conversation-reply-turn-indexes.js. Keeping the
+// same indexes in TypeORM metadata would give synchronize a second owner and
+// can make worker restarts fail when names or key directions differ.
 @Entity(TableName.conversation_reply_turn)
 export class ConversationReplyTurnEntity extends BaseEntity {
   @Column()

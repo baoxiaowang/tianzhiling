@@ -79,7 +79,10 @@ export default {
         authSource: readStringFrom(['NODE_MONGO_AUTH_SOURCE'], 'admin'),
         username: readStringFrom(['NODE_MONGO_USERNAME'], 'admin'),
         password: readStringFrom(['NODE_MONGO_PASSWORD'], 'qwerasdf'),
-        synchronize: readBooleanFrom(['NODE_DB_SYNCHRONIZE'], false),
+        // Production schema changes are applied by reviewed, explicit
+        // migrations. Never let a stale environment value turn synchronize
+        // back on during a worker restart.
+        synchronize: false,
         logging: readBooleanFrom(['NODE_DB_LOGGING'], false),
       },
     },
