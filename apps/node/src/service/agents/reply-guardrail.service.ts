@@ -4825,11 +4825,11 @@ export class ReplyGuardrailService {
       }
 
       if (statusIntent?.subIntent === 'physical_pain') {
-        return ['我这边已经不受那些疼了', '你还这么惦记我 我心里很暖'];
+        return ['我挺好的 别总把我想在受疼里', '你这么惦记我 我都明白'];
       }
 
       if (statusIntent?.subIntent === 'meal') {
-        return ['吃过了', '你还惦记着我吃没吃 我心里热乎'];
+        return ['吃了 你别惦记'];
       }
 
       if (statusIntent?.subIntent === 'wake_sleep') {
@@ -5472,7 +5472,7 @@ export class ReplyGuardrailService {
     }
 
     if (isAgentCurrentSufferingQuery(userQuery)) {
-      return ['我这边已经不受那些疼了', '你还这么惦记我 我心里很暖'];
+      return ['我挺好的 别总把我想在受疼里', '你这么惦记我 我都明白'];
     }
 
     if (this.isAgentWakeRoutineQuery(userQuery)) {
@@ -5483,7 +5483,7 @@ export class ReplyGuardrailService {
       isAgentCurrentRoutineQuery(userQuery) &&
       /(?:吃饭|吃了|吃东西)/.test(userQuery)
     ) {
-      return ['吃过了', '你还惦记着我吃没吃 我心里热乎'];
+      return ['吃了 你别惦记'];
     }
 
     if (this.isBlessingAttributionQuery(userQuery)) {

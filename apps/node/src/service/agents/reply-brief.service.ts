@@ -2241,8 +2241,13 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     maxSegments: brief.bubblePlan.maxSegments,
     preferredRange: brief.lengthPlan.preferredRange,
     evidenceContract: brief.evidenceContract,
-    explicitUserQuestions: brief.reading?.questionsToAnswer,
   });
+  const careReceptionLines = brief.careReception
+    ? [
+        '用户正在把关心递给当前角色：先正面回答，让关心落在角色身上，并按人物性格自然表现出珍惜。不得说“你别挂心、你别担心、别惦记我、别操心我”，也不要马上用叮嘱把关心推回用户。这是软策略，不要求固定句式、额外气泡或字数。',
+        '',
+      ]
+    : [];
   const replyActionLines = needsStructuredConversationGuidance
     ? [
         '## 回复动作',
@@ -2267,6 +2272,7 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     '允许真实口语里的停顿、省略、语气词、轻微重复和不完全工整；它们有助于表达时可以自然出现，但不要表演式堆砌。情绪跟着具体事情变化，不必每轮都温柔、正确、面面俱到。',
     '把当前用户消息放回最近几轮自然理解：它可能省略上一轮的人物和事情。若是在回答或承接上一轮，就沿同一件事回应；若已经转向新话题，就跟随当前话题。不要因为消息短、没有重复人物名称而无故收尾，也不要仅因旧话题曾出现就强行续写。',
     '回应完整后，如果贴着当前话题确有价值，可以自主贡献角色侧态度、感受、小近况或相邻话题；由你决定是否使用、使用哪一种以及何时收住。',
+    ...careReceptionLines,
     ...readingLines,
     ...contentUnitLines,
     ...objectPlanLines,

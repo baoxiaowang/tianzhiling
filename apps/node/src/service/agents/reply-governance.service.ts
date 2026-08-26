@@ -184,23 +184,16 @@ export class ReplyGovernanceService {
       }
 
       revisionAttempted = true;
-      // Unsupported reality capability promises are enumerable and already
-      // carry an exact visible span. Removing that span is safer and cheaper
-      // than asking a second model to restate the boundary or rewrite tone.
-      const modelPatch =
-        issue.blockingKind === 'real_world_capability_claim'
-          ? undefined
-          : await this.replyRevisionService.revise({
-              messages: options.messages,
-              userQuery: options.userQuery,
-              segments: currentSegments,
-              evidence: options.evidence,
-              issue,
-            });
+      const modelPatch = await this.replyRevisionService.revise({
+        messages: options.messages,
+        userQuery: options.userQuery,
+        segments: currentSegments,
+        evidence: options.evidence,
+        issue,
+      });
       revisionUsage = mergeRevisionUsage(revisionUsage, modelPatch?.usage);
 
-      const preferredPatch =
-        modelPatch || buildNarrowFallbackPatch(issue, currentSegments);
+      const preferredPatch = modelPatch || buildNarrowFallbackPatch(issue);
       let applied = preferredPatch
         ? applyExactReplyPatch(currentSegments, preferredPatch)
         : undefined;
@@ -210,7 +203,7 @@ export class ReplyGovernanceService {
         : 'narrow_fallback';
 
       if (!applied && modelPatch) {
-        selectedPatch = buildNarrowFallbackPatch(issue, currentSegments);
+        selectedPatch = buildNarrowFallbackPatch(issue);
         applied = selectedPatch
           ? applyExactReplyPatch(currentSegments, selectedPatch)
           : undefined;
@@ -241,7 +234,7 @@ export class ReplyGovernanceService {
         ) &&
         modelPatch
       ) {
-        const fallbackPatch = buildNarrowFallbackPatch(issue, currentSegments);
+        const fallbackPatch = buildNarrowFallbackPatch(issue);
         const fallbackApplied = fallbackPatch
           ? applyExactReplyPatch(currentSegments, fallbackPatch)
           : undefined;
@@ -500,8 +493,7 @@ function buildTechnicalFallback(): string[] {
 }
 
 function buildNarrowFallbackPatch(
-  issue: FinalReplyIssue,
-  segments: string[]
+  issue: FinalReplyIssue
 ): ReplyRevisionPatch | undefined {
   if (!issue.evidence || !issue.blockingKind) {
     return undefined;
@@ -513,53 +505,13 @@ function buildNarrowFallbackPatch(
     real_world_actionable_fabrication:
       '这件事我不能凭空认下来，也不能随口指地方让你去找',
     major_decision_overreach: '这件现实里的事不能由我替你拍板',
-    // A missing capability clause is removed, not replaced with a platform
-    // disclaimer. The surrounding answer already carries the relationship
-    // response and must remain the visible subject of the turn.
-    real_world_capability_claim: '',
+    real_world_capability_claim: '这件事我不能说成是我在现实里做的',
   };
-  const originalSpan =
-    issue.blockingKind === 'real_world_capability_claim'
-      ? expandStandaloneClauseForDeletion(segments, issue.evidence)
-      : issue.evidence;
   return {
-    originalSpan,
+    originalSpan: issue.evidence,
     replacementSpan: replacementByKind[issue.blockingKind],
     resolvedIssueCode: issue.code,
   };
-}
-
-function expandStandaloneClauseForDeletion(
-  segments: string[],
-  evidence: string
-): string {
-  const containing = segments.filter(segment => segment.includes(evidence));
-  if (containing.length !== 1) return evidence;
-  const segment = containing[0];
-  if (segment.indexOf(evidence) !== segment.lastIndexOf(evidence)) {
-    return evidence;
-  }
-  const start = segment.indexOf(evidence);
-  const end = start + evidence.length;
-  const separators = /[，,。！？!?；;\n]/u;
-  let clauseStart = start;
-  while (clauseStart > 0 && !separators.test(segment[clauseStart - 1])) {
-    clauseStart -= 1;
-  }
-  let clauseEnd = end;
-  while (clauseEnd < segment.length && !separators.test(segment[clauseEnd])) {
-    clauseEnd += 1;
-  }
-  const clause = segment.slice(clauseStart, clauseEnd).trim();
-  if (clause !== evidence.trim()) return evidence;
-
-  if (clauseEnd < segment.length) {
-    return segment.slice(clauseStart, clauseEnd + 1);
-  }
-  if (clauseStart > 0) {
-    return segment.slice(clauseStart - 1, clauseEnd);
-  }
-  return evidence;
 }
 
 function buildHardRecovery(issue?: FinalReplyIssue): string[] {

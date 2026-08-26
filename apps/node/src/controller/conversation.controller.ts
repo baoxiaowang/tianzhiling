@@ -12,7 +12,6 @@ import {
 import { Context } from '@midwayjs/koa';
 import {
   GenerateMemorialPhotoDTO,
-  ConversationComposerActivityDTO,
   AddConversationChatImportAssetDTO,
   CreateConversationChatImportDTO,
   RecognizeConversationChatImportDTO,
@@ -77,15 +76,11 @@ export class ConversationController {
     @Param('conversationId') conversationId: string,
     @Query() query: ListConversationMessagesOptions
   ) {
-    const auth = this.ctx.state.auth as AuthenticatedUserPayload;
-    const [messages, replyState] = await Promise.all([
-      this.messageService.listMessages(auth, conversationId, query),
-      this.conversationService.getConversationReplyState?.(
-        auth,
-        conversationId
-      ) ?? Promise.resolve(undefined),
-    ]);
-    return { ...messages, replyState };
+    return this.messageService.listMessages(
+      this.ctx.state.auth as AuthenticatedUserPayload,
+      conversationId,
+      query
+    );
   }
 
   @Get('/:conversationId/bootstrap')
@@ -94,19 +89,14 @@ export class ConversationController {
     @Query() query: ListConversationMessagesOptions
   ) {
     const auth = this.ctx.state.auth as AuthenticatedUserPayload;
-    const [messages, metadata, replyState] = await Promise.all([
+    const [messages, metadata] = await Promise.all([
       this.messageService.listMessages(auth, conversationId, query),
       this.conversationService.getChatBootstrapMetadata(auth, conversationId),
-      this.conversationService.getConversationReplyState?.(
-        auth,
-        conversationId
-      ) ?? Promise.resolve(undefined),
     ]);
 
     return {
       ...messages,
       ...metadata,
-      replyState,
     };
   }
 
@@ -135,28 +125,6 @@ export class ConversationController {
     return this.conversationService.getChatQuota(
       this.ctx.state.auth as AuthenticatedUserPayload,
       conversationId
-    );
-  }
-
-  @Get('/:conversationId/reply-state')
-  async getReplyState(@Param('conversationId') conversationId: string) {
-    return {
-      replyState: await this.conversationService.getConversationReplyState(
-        this.ctx.state.auth as AuthenticatedUserPayload,
-        conversationId
-      ),
-    };
-  }
-
-  @Post('/:conversationId/composer-activity')
-  async recordComposerActivity(
-    @Param('conversationId') conversationId: string,
-    @Body() body: ConversationComposerActivityDTO
-  ) {
-    return this.conversationService.recordConversationComposerActivity(
-      this.ctx.state.auth as AuthenticatedUserPayload,
-      conversationId,
-      body.active === true
     );
   }
 

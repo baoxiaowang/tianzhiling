@@ -19,36 +19,6 @@ export interface BuildReplyOutputContractOptions {
   toolDecisionSchema?: Record<string, unknown>;
   evidenceContract?: ReplyEvidenceContract;
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
-  /** Verbatim user questions used only as a coverage reminder, never as a reply plan. */
-  explicitUserQuestions?: string[];
-}
-
-const EXPLICIT_USER_QUESTION_PATTERN =
-  /(?:为什么|为何|怎么回事|怎么会|是不是|是否|有没有|能不能|可不可以|行不行|要不要|哪(?:里|儿|个|些)?|谁|什么|多久|多少|几时|何时|吗(?:[？?]|$))/;
-const META_ANSWER_REQUEST_PATTERN =
-  /(?:能不能|可不可以).{0,12}(?:都|一起)?.{0,8}(?:说说|告诉我|回答我|跟我说)/;
-
-export function extractExplicitUserQuestions(value = ''): string[] {
-  const candidates = value
-    .split(/\r?\n|[。！？!?；;]/)
-    .map(item => item.replace(/^\s*\d+[.、]\s*/, '').trim())
-    .filter(Boolean);
-  const results: string[] = [];
-
-  for (const candidate of candidates) {
-    if (
-      candidate.startsWith('用户连续输入（') ||
-      META_ANSWER_REQUEST_PATTERN.test(candidate) ||
-      !EXPLICIT_USER_QUESTION_PATTERN.test(candidate)
-    ) {
-      continue;
-    }
-    const excerpt = Array.from(candidate).slice(0, 80).join('');
-    if (!results.includes(excerpt)) results.push(excerpt);
-    if (results.length >= 6) break;
-  }
-
-  return results;
 }
 
 export function resolveReplyOutputSegmentMode(plan: {
@@ -120,21 +90,17 @@ export function buildReplyOutputContractPrompt(
   // 展示层会在正文完成后自行拆泡，不能让目标字数反向塑造内容。
   void options.preferredRange;
   const claimRule = options.grounded
-    ? 'claims 是证据使用的辅助申报，不决定正文是否安全；仍须如实列出正文中的可核验事实。本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。soft_imagination 只用于当前离世生活或梦内表达，不能把生前、离世过程的事实、原因和动机变成想象。'
+    ? 'claims 是证据使用的辅助申报，不决定正文是否安全；仍须如实列出正文中的可核验事实。本轮原话可承接，历史须归因，证据须支持同一对象和事实，证据没有的细节不写，无事实用 []。离世生活框架内的当前事实用 soft_imagination。'
     : '';
   const evidenceContractRule = options.evidenceContract
     ? [
-        `证据契约：${options.evidenceContract.policy}；本轮涉及内容域=${
+        `证据契约：${options.evidenceContract.policy}；允许内容域=${
           options.evidenceContract.allowedClaimKinds.join('、') || '无'
         }。`,
-        options.evidenceContract.policy === 'grounded' &&
-        options.evidenceContract.requiredSourceIds.length === 0
-          ? '本轮没有可陈述证据支持生前、死因、临终或在世家人的原因和动机。关系心意可以按此刻立场正面回答；缺证据的过去问题可以合在一句说明不能确认，但要点名涉及的每件事，不能用“你问的那些/有些事”整体带过。不用 soft_imagination 代答，也不承诺以后再说或用“怕你难受”回避。'
-          : '',
         options.evidenceContract.semanticAuditRequired
           ? '本轮属于高风险事实问答：正文只要确定写出死因/临终心理、在世家人状态或动机、财产归属、共同往事、现实迹象或化身，就必须在 claims 逐条申报；不能靠省略 claims 绕过证据。'
           : '',
-        '离世生活稳定设定、离世日常写意和梦内陪伴不是现实证据，也不能反推生前或离世事实。',
+        '离世生活稳定设定、离世日常写意和梦内陪伴不是现实证据；需要写 claims 时用 soft_imagination，不绑定现实证据。',
       ]
         .filter(Boolean)
         .join('\n')
@@ -149,16 +115,6 @@ export function buildReplyOutputContractPrompt(
   const deliberateFollowUpRule = options.deliberateLongReplyCandidate?.eligible
     ? 'deliberateFollowUp 是必填决策，不能省略。它只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选择 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
     : '';
-  const explicitQuestionRule =
-    (options.explicitUserQuestions?.length || 0) > 1
-      ? [
-          '用户原话中的多个明确问题（只用于防止遗漏，不是回复步骤）：',
-          ...(options.explicitUserQuestions || []).map(
-            (question, index) => `${index + 1}. ${question}`
-          ),
-          '每个问题都要让用户听到可辨认的回答：能确认就回答，缺证据就点明所问的事并如实说不清；相近问题可以合句，不按问卷逐条复述，也不用“这些/那些/有些事”代替问题本身。',
-        ].join('\n')
-      : '';
 
   return [
     '# 输出合同',
@@ -170,7 +126,6 @@ export function buildReplyOutputContractPrompt(
     auditRule,
     toolRule,
     deliberateFollowUpRule,
-    explicitQuestionRule,
   ]
     .filter(Boolean)
     .join('\n');
