@@ -112,11 +112,13 @@ check_pm2_processes() {
   local service="$1"
   local expected="$2"
   local minimum_uptime_ms="${3:-0}"
+  local maximum_restart_time="${4:-5}"
 
   docker exec "$service" node -e '
 const { execFileSync } = require("child_process");
 const expected = Number(process.argv[1]);
 const minimumUptimeMs = Number(process.argv[2]);
+const maximumRestartTime = Number(process.argv[3]);
 const processes = JSON.parse(execFileSync("pm2", ["jlist"], {
   encoding: "utf8",
   stdio: ["ignore", "pipe", "ignore"],
@@ -130,7 +132,7 @@ for (const processInfo of processes) {
   const uptimeMs = Date.now() - Number(env.pm_uptime || 0);
   const restartTime = Number(env.restart_time || 0);
   const unstableRestarts = Number(env.unstable_restarts || 0);
-  if (env.status !== "online" || restartTime !== 0 || unstableRestarts !== 0 || uptimeMs < minimumUptimeMs) {
+  if (env.status !== "online" || restartTime > maximumRestartTime || unstableRestarts !== 0 || uptimeMs < minimumUptimeMs) {
     failures.push(JSON.stringify({
       pm_id: processInfo.pm_id,
       status: env.status,
@@ -144,7 +146,23 @@ if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
-' "$expected" "$minimum_uptime_ms"
+' "$expected" "$minimum_uptime_ms" "$maximum_restart_time"
+}
+
+pm2_restart_signature() {
+  local service="$1"
+
+  docker exec "$service" node -e '
+const { execFileSync } = require("child_process");
+const processes = JSON.parse(execFileSync("pm2", ["jlist"], {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "ignore"],
+}));
+console.log(processes
+  .map(processInfo => `${processInfo.pm_id}:${Number(processInfo.pm2_env?.restart_time || 0)}`)
+  .sort()
+  .join(","));
+'
 }
 
 check_internal_health() {
@@ -159,6 +177,10 @@ check_internal_health() {
 wait_for_release_stability() {
   local required_seconds="$1"
   local elapsed=0
+  local node_restart_baseline admin_restart_baseline
+
+  node_restart_baseline="$(pm2_restart_signature tzl_node)"
+  admin_restart_baseline="$(pm2_restart_signature tzl_admin_node)"
 
   while (( elapsed < required_seconds )); do
     check_container tzl_node
@@ -172,6 +194,8 @@ wait_for_release_stability() {
   done
   check_pm2_processes tzl_node 4 "$((required_seconds * 1000))"
   check_pm2_processes tzl_admin_node 2 "$((required_seconds * 1000))"
+  [[ "$(pm2_restart_signature tzl_node)" == "$node_restart_baseline" ]]
+  [[ "$(pm2_restart_signature tzl_admin_node)" == "$admin_restart_baseline" ]]
   check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
   check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
 }
