@@ -22,6 +22,8 @@ interface DoubaoVoiceConfig {
   timeoutMs?: number;
   trainingTimeoutMs?: number;
   pollIntervalMs?: number;
+  slotCapacity?: number;
+  knownSpeakerIds?: string;
   openApiAccessKeyId?: string;
   openApiSecretAccessKey?: string;
   openApiBaseURL?: string;
@@ -105,6 +107,8 @@ export interface DoubaoVoiceSlot {
 export interface DoubaoVoiceSlotListResult {
   items: DoubaoVoiceSlot[];
   requestIds: string[];
+  openApiSyncAttempted: boolean;
+  openApiSyncSucceeded: boolean;
 }
 
 const DOUBAO_VOICE_SLOT_STATES: DoubaoVoiceSlotState[] = [
@@ -155,6 +159,7 @@ export interface DoubaoVoiceStatusResult {
   statusCode: number;
   version?: number;
   demoAudio?: string;
+  createTime?: number;
   requestId?: string;
 }
 
@@ -172,14 +177,32 @@ export class DoubaoVoiceService {
     );
   }
 
+  getSlotCapacity(): number {
+    const configured = Number(this.config?.slotCapacity ?? 10);
+    if (!Number.isFinite(configured)) return 10;
+    return Math.min(1000, Math.max(0, Math.floor(configured)));
+  }
+
+  getKnownSpeakerIds(): string[] {
+    return this.normalizeKnownSpeakerIds(
+      this.config?.knownSpeakerIds?.split(/[\s,;]+/) || []
+    );
+  }
+
   isSlotListingConfigured(): boolean {
+    return this.getSlotCapacity() > 0;
+  }
+
+  hasOpenApiSlotListingConfigured(): boolean {
     return Boolean(
       this.config?.openApiAccessKeyId?.trim() &&
         this.config?.openApiSecretAccessKey?.trim()
     );
   }
 
-  async listSlots(): Promise<DoubaoVoiceSlotListResult> {
+  async listSlots(
+    additionalKnownSpeakerIds: string[] = []
+  ): Promise<DoubaoVoiceSlotListResult> {
     if (this.config?.enabled === false) {
       throw new AppError(
         'DOUBAO_VOICE_DISABLED',
@@ -187,20 +210,87 @@ export class DoubaoVoiceService {
         400
       );
     }
-    this.ensureSlotListingConfigured();
-
-    const results = await Promise.all(
-      DOUBAO_VOICE_SLOT_STATES.map(state => this.listSlotsByState(state))
-    );
     const bySpeakerId = new Map<string, DoubaoVoiceSlot>();
     const requestIds: string[] = [];
+    const openApiSyncAttempted = this.hasOpenApiSlotListingConfigured();
+    let openApiSyncSucceeded = false;
 
-    for (const result of results) {
-      requestIds.push(...result.requestIds);
-      for (const slot of result.items) {
-        bySpeakerId.set(slot.speakerId, slot);
+    if (openApiSyncAttempted) {
+      try {
+        const results = await Promise.all(
+          DOUBAO_VOICE_SLOT_STATES.map(state => this.listSlotsByState(state))
+        );
+
+        for (const result of results) {
+          requestIds.push(...result.requestIds);
+          for (const slot of result.items) {
+            bySpeakerId.set(slot.speakerId, slot);
+          }
+        }
+        openApiSyncSucceeded = true;
+      } catch (error) {
+        this.logger.warn(
+          '[doubao-voice] OpenAPI slot metadata sync failed; using fixed slot pool, error=%s',
+          error instanceof Error ? error.message : String(error || 'unknown')
+        );
       }
     }
+
+    const knownSpeakerIds = this.normalizeKnownSpeakerIds([
+      ...this.getKnownSpeakerIds(),
+      ...additionalKnownSpeakerIds,
+    ]).filter(speakerId => !bySpeakerId.has(speakerId));
+    const queried = await Promise.all(
+      knownSpeakerIds.map(async speakerId => {
+        try {
+          return { result: await this.queryVoice(speakerId) };
+        } catch (error) {
+          return { error };
+        }
+      })
+    );
+
+    queried.forEach((lookup, index) => {
+      const speakerId = knownSpeakerIds[index];
+      if (lookup.result) {
+        const status = lookup.result;
+        if (status.statusCode === 0) {
+          this.logger.info(
+            '[doubao-voice] known voice no longer exists at provider, voiceRef=%s',
+            this.describeVoiceId(speakerId)
+          );
+          return;
+        }
+        bySpeakerId.set(speakerId, {
+          speakerId,
+          instanceNo: '',
+          alias: '',
+          state: this.statusToSlotState(status.statusCode),
+          isActivable: status.statusCode === 2,
+          demoAudio: status.demoAudio,
+          version:
+            status.version === undefined ? undefined : String(status.version),
+          createTime: status.createTime,
+        });
+        if (status.requestId) requestIds.push(status.requestId);
+        return;
+      }
+
+      this.logger.warn(
+        '[doubao-voice] known voice status lookup failed, voiceRef=%s, error=%s',
+        this.describeVoiceId(speakerId),
+        lookup.error instanceof Error
+          ? lookup.error.message
+          : String(lookup.error || 'unknown')
+      );
+      bySpeakerId.set(speakerId, {
+        speakerId,
+        instanceNo: '',
+        alias: '',
+        state: 'Unknown',
+        isActivable: false,
+      });
+    });
 
     return {
       items: [...bySpeakerId.values()].sort((left, right) => {
@@ -208,6 +298,8 @@ export class DoubaoVoiceService {
         return expiryDelta || left.speakerId.localeCompare(right.speakerId);
       }),
       requestIds,
+      openApiSyncAttempted,
+      openApiSyncSucceeded,
     };
   }
 
@@ -291,6 +383,7 @@ export class DoubaoVoiceService {
       statusCode,
       version: response.version,
       demoAudio: response.demo_audio?.trim() || undefined,
+      createTime: this.optionalPositiveNumber(response.create_time),
       requestId: response.request_id?.trim() || requestId,
     };
   }
@@ -828,23 +921,6 @@ export class DoubaoVoiceService {
     }
   }
 
-  private ensureSlotListingConfigured(): void {
-    if (!this.config?.openApiAccessKeyId?.trim()) {
-      throw new AppError(
-        'DOUBAO_OPENAPI_ACCESS_KEY_ID_MISSING',
-        'Doubao OpenAPI access key id is missing',
-        500
-      );
-    }
-    if (!this.config?.openApiSecretAccessKey?.trim()) {
-      throw new AppError(
-        'DOUBAO_OPENAPI_SECRET_ACCESS_KEY_MISSING',
-        'Doubao OpenAPI secret access key is missing',
-        500
-      );
-    }
-  }
-
   private ensureEnabled(): void {
     if (this.config?.enabled === false) {
       throw new AppError(
@@ -889,6 +965,20 @@ export class DoubaoVoiceService {
         4: 'active',
       }[status] || `unknown_${status}`
     );
+  }
+
+  private statusToSlotState(status: number): DoubaoVoiceSlotState {
+    return ({
+      1: 'Training',
+      2: 'Success',
+      4: 'Active',
+    }[status] || 'Unknown') as DoubaoVoiceSlotState;
+  }
+
+  private normalizeKnownSpeakerIds(values: string[]): string[] {
+    return [
+      ...new Set(values.map(value => value?.trim()).filter(Boolean)),
+    ].filter(value => /^S_[A-Za-z0-9_-]{4,128}$/.test(value));
   }
 
   private toProviderRate(value: unknown, fallback: number): number {

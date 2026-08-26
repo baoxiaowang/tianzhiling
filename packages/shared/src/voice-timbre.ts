@@ -579,7 +579,10 @@ export type DoubaoVoiceSlotStateDTO =
   | "Reclaimed";
 
 export interface AdminDoubaoVoiceSlotDTO {
-  speakerId: string;
+  slotKey: string;
+  slotNumber: number;
+  empty: boolean;
+  speakerId?: string;
   instanceNo: string;
   alias: string;
   state: DoubaoVoiceSlotStateDTO;
@@ -596,6 +599,11 @@ export interface AdminDoubaoVoiceSlotDTO {
     AdminVoiceTimbreRecordDTO,
     "id" | "name" | "status" | "providerVoiceId"
   >;
+  boundAgents?: Array<{
+    id: string;
+    name: string;
+    status: "active" | "pending";
+  }>;
 }
 
 export interface AdminDoubaoVoiceSlotListDTO {
@@ -608,6 +616,17 @@ export interface AdminDoubaoVoiceSlotListDTO {
   expiringSoonCount: number;
   syncedAt: string;
   requestIds: string[];
+}
+
+export interface BindAdminDoubaoVoiceSlotDTO {
+  agentId: string;
+}
+
+export interface BindAdminDoubaoVoiceSlotResultDTO {
+  agentId: string;
+  agentName: string;
+  timbreId: string;
+  speakerId: string;
 }
 
 export interface CreateAdminVoiceTimbreDTO {

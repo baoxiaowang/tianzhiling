@@ -5,6 +5,7 @@ import type {
   AdminDoubaoVoiceSlotListDTO,
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
+  BindAdminDoubaoVoiceSlotResultDTO,
   CreateAdminVoiceTimbreDTO,
   DeleteAdminVoiceTimbreResultDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -24,6 +25,13 @@ export function queryVoiceTimbreList(params: VoiceTimbreListParams) {
 export function queryDoubaoVoiceSlots() {
   return axios.get<AdminDoubaoVoiceSlotListDTO>(
     '/admin_api/voice-timbres/doubao-slots'
+  );
+}
+
+export function bindDoubaoVoiceSlotAgent(timbreId: string, agentId: string) {
+  return axios.post<BindAdminDoubaoVoiceSlotResultDTO>(
+    `/admin_api/voice-timbres/doubao-slots/${timbreId}/bind-agent`,
+    { agentId }
   );
 }
 

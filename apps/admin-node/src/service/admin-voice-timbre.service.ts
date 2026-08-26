@@ -15,6 +15,7 @@ import type {
   AdminVoiceTimbreListDTO,
   AdminDoubaoVoiceSlotDTO,
   AdminDoubaoVoiceSlotListDTO,
+  BindAdminDoubaoVoiceSlotResultDTO,
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   DeleteAdminVoiceTimbreResultDTO,
@@ -143,48 +144,72 @@ export class AdminVoiceTimbreService {
 
   async listDoubaoVoiceSlots(): Promise<AdminDoubaoVoiceSlotListDTO> {
     const syncedAt = new Date();
-
-    if (!this.doubaoVoiceService.isSlotListingConfigured()) {
-      return {
-        configured: false,
-        message:
-          '尚未配置火山引擎 OpenAPI AK/SK，暂时无法读取账户内全部固定槽位。',
-        items: [],
-        total: 0,
-        availableCount: 0,
-        boundCount: 0,
-        expiringSoonCount: 0,
-        syncedAt: syncedAt.toISOString(),
-        requestIds: [],
-      };
-    }
-
-    const [providerResult, timbres] = await Promise.all([
-      this.doubaoVoiceService.listSlots(),
-      this.voiceTimbreModel.find({
-        where: {
-          provider: VoiceTimbreProvider.doubao,
-          deletionStatus: { $ne: 'completed' },
-        } as never,
-        order: { updatedAt: 'DESC' },
-      }),
-    ]);
+    const timbres = await this.voiceTimbreModel.find({
+      where: {
+        provider: VoiceTimbreProvider.doubao,
+      } as never,
+      order: { updatedAt: 'DESC' },
+    });
+    const knownSpeakerIds = this.collectDoubaoSpeakerIds(timbres);
+    const providerResult = await this.doubaoVoiceService.listSlots(
+      knownSpeakerIds
+    );
     const boundBySpeakerId = new Map<string, VoiceTimbreEntity>();
     for (const timbre of timbres) {
       const speakerId = timbre.providerVoiceId?.trim();
-      if (speakerId && !boundBySpeakerId.has(speakerId)) {
+      if (
+        timbre.deletionStatus !== 'completed' &&
+        this.isDoubaoSpeakerId(speakerId) &&
+        !boundBySpeakerId.has(speakerId)
+      ) {
         boundBySpeakerId.set(speakerId, timbre);
       }
     }
+    const boundTimbres = [...boundBySpeakerId.values()];
+    const boundTimbreIds = boundTimbres.map(timbre => timbre.id);
+    const agents = boundTimbreIds.length
+      ? await this.agentModel.find({
+          where: {
+            $or: [
+              { voiceTimbreId: { $in: boundTimbreIds } },
+              { pendingVoiceTimbreId: { $in: boundTimbreIds } },
+            ],
+          } as never,
+        })
+      : [];
+    const agentsByTimbreId = this.buildAgentsByTimbreId(agents);
 
-    const items = providerResult.items.map(slot =>
-      this.buildDoubaoSlotRecord(slot, boundBySpeakerId.get(slot.speakerId))
+    const providerSlots = [...providerResult.items].sort((left, right) => {
+      const createDelta = (left.createTime || 0) - (right.createTime || 0);
+      return createDelta || left.speakerId.localeCompare(right.speakerId);
+    });
+    const capacity = Math.max(
+      this.doubaoVoiceService.getSlotCapacity(),
+      providerSlots.length
     );
+    const items = Array.from({ length: capacity }, (_, index) => {
+      const slot = providerSlots[index];
+      return this.buildDoubaoSlotRecord(
+        index + 1,
+        slot,
+        slot ? boundBySpeakerId.get(slot.speakerId) : undefined,
+        slot
+          ? agentsByTimbreId.get(
+              this.stringifyObjectId(boundBySpeakerId.get(slot.speakerId)?.id)
+            )
+          : undefined
+      );
+    });
     const soonDeadline = syncedAt.getTime() + 7 * 24 * 60 * 60 * 1000;
+    const metadataMessage = providerResult.openApiSyncSucceeded
+      ? '到期时间和剩余训练次数已从火山引擎同步。'
+      : providerResult.openApiSyncAttempted
+      ? '火山引擎元数据本次同步失败，不影响上传素材和训练。'
+      : '未配置 OpenAPI AK/SK，暂不显示到期时间和剩余训练次数。';
 
     return {
       configured: true,
-      message: '槽位状态来自火山引擎，绑定关系来自天之灵本地音色。',
+      message: `固定显示 ${capacity} 个已购音色槽位；空槽训练时由系统自动生成 Speaker ID。${metadataMessage}`,
       items,
       total: items.length,
       availableCount: items.filter(item => item.availableForTraining).length,
@@ -216,7 +241,11 @@ export class AdminVoiceTimbreService {
       payload.providerVoiceId,
       previewModel
     );
-    await this.assertDoubaoSlotTrainable(provider, providerVoiceId);
+    await this.assertDoubaoSlotTrainable(
+      provider,
+      providerVoiceId,
+      Boolean(payload.providerVoiceId?.trim())
+    );
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
     const now = new Date();
@@ -290,6 +319,47 @@ export class AdminVoiceTimbreService {
     await this.enqueueCreateVoiceTimbreJob(saved);
 
     return this.buildRecord(saved);
+  }
+
+  async bindDoubaoVoiceSlotAgent(
+    timbreId: string,
+    agentId: string
+  ): Promise<BindAdminDoubaoVoiceSlotResultDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+    if (
+      timbre.provider !== VoiceTimbreProvider.doubao ||
+      timbre.status !== VoiceTimbreStatus.active ||
+      !this.isDoubaoSpeakerId(timbre.providerVoiceId)
+    ) {
+      throw new AppError(
+        'DOUBAO_SLOT_NOT_READY_FOR_BINDING',
+        'Doubao voice slot must finish training before binding an agent',
+        409
+      );
+    }
+
+    const agentObjectId = this.parseAgentObjectId(agentId);
+    const agent =
+      (await this.agentModel.findOne({ where: { id: agentObjectId } })) ??
+      (await this.agentModel.findOne({
+        where: { _id: agentObjectId } as never,
+      }));
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    agent.voiceTimbreId = timbre.id;
+    agent.pendingVoiceTimbreId = undefined;
+    agent.voiceTimbreSelectedAt = new Date();
+    agent.updatedAt = new Date();
+    const savedAgent = await this.agentModel.save(agent);
+
+    return {
+      agentId: this.stringifyObjectId(savedAgent.id),
+      agentName: savedAgent.name?.trim() || '未命名智能体',
+      timbreId: this.stringifyObjectId(timbre.id),
+      speakerId: timbre.providerVoiceId,
+    };
   }
 
   async processCreateVoiceTimbreJob(
@@ -485,6 +555,12 @@ export class AdminVoiceTimbreService {
       timbre.previewAudioUrl = undefined;
       timbre.generatedAudios = [];
       timbre.providerFileId = undefined;
+      if (
+        timbre.provider === VoiceTimbreProvider.doubao &&
+        this.isDoubaoSpeakerId(timbre.providerVoiceId)
+      ) {
+        timbre.retainedProviderVoiceId = timbre.providerVoiceId;
+      }
       timbre.providerVoiceId = `deleted_${this.stringifyObjectId(timbre.id)}`;
       timbre.deletionStatus = 'completed';
       timbre.deletedAt = new Date();
@@ -975,6 +1051,12 @@ export class AdminVoiceTimbreService {
       await this.deleteProviderVoice(current, failures, false);
       await this.deleteTimbreObjects(current, failures, deletedObjectKeys);
       current.status = VoiceTimbreStatus.disabled;
+      if (
+        current.provider === VoiceTimbreProvider.doubao &&
+        this.isDoubaoSpeakerId(current.providerVoiceId)
+      ) {
+        current.retainedProviderVoiceId = current.providerVoiceId;
+      }
       current.providerVoiceId = `deleted_${this.stringifyObjectId(current.id)}`;
       current.providerFileId = undefined;
       current.previewAudioObjectKey = undefined;
@@ -1239,9 +1321,29 @@ export class AdminVoiceTimbreService {
   }
 
   private buildDoubaoSlotRecord(
-    slot: DoubaoVoiceSlot,
-    boundTimbre?: VoiceTimbreEntity
+    slotNumber: number,
+    slot?: DoubaoVoiceSlot,
+    boundTimbre?: VoiceTimbreEntity,
+    boundAgents: Array<{
+      id: string;
+      name: string;
+      status: 'active' | 'pending';
+    }> = []
   ): AdminDoubaoVoiceSlotDTO {
+    if (!slot) {
+      return {
+        slotKey: `doubao-slot-${slotNumber}`,
+        slotNumber,
+        empty: true,
+        instanceNo: '',
+        alias: '',
+        state: 'Unknown',
+        isActivable: true,
+        availableForTraining: true,
+        availabilityReason: '未训练；添加音色片段后由系统自动生成音色 ID',
+      };
+    }
+
     const now = Date.now();
     const expiredByTime = Boolean(slot.expireTime && slot.expireTime <= now);
     let availabilityReason = '';
@@ -1254,13 +1356,14 @@ export class AdminVoiceTimbreService {
       availabilityReason = '槽位已回收';
     } else if (slot.state === 'Training') {
       availabilityReason = '音色正在训练';
-    } else if (slot.state === 'Active') {
-      availabilityReason = '音色已固定，只能绑定使用，不能重新训练';
     } else if (slot.availableTrainingTimes === 0) {
       availabilityReason = '可训练次数已用完';
     }
 
     return {
+      slotKey: `doubao-slot-${slotNumber}`,
+      slotNumber,
+      empty: false,
       speakerId: slot.speakerId,
       instanceNo: slot.instanceNo,
       alias: slot.alias,
@@ -1273,7 +1376,11 @@ export class AdminVoiceTimbreService {
       expireTime: this.toOptionalIsoDate(slot.expireTime),
       availableTrainingTimes: slot.availableTrainingTimes,
       availableForTraining: !availabilityReason,
-      availabilityReason: availabilityReason || '空闲，可用于训练新音色',
+      availabilityReason:
+        availabilityReason ||
+        (slot.state === 'Active'
+          ? '已有服务商音色，可重新训练后接入天之灵'
+          : '空闲，可用于训练新音色'),
       ...(boundTimbre
         ? {
             boundTimbre: {
@@ -1284,7 +1391,36 @@ export class AdminVoiceTimbreService {
             },
           }
         : {}),
+      ...(boundAgents.length ? { boundAgents } : {}),
     };
+  }
+
+  private buildAgentsByTimbreId(
+    agents: AgentEntity[]
+  ): Map<
+    string,
+    Array<{ id: string; name: string; status: 'active' | 'pending' }>
+  > {
+    const result = new Map<
+      string,
+      Array<{ id: string; name: string; status: 'active' | 'pending' }>
+    >();
+
+    for (const agent of agents) {
+      const activeId = this.stringifyObjectId(agent.voiceTimbreId);
+      const pendingId = this.stringifyObjectId(agent.pendingVoiceTimbreId);
+      const timbreId = pendingId || activeId;
+      if (!timbreId) continue;
+      const current = result.get(timbreId) || [];
+      current.push({
+        id: this.stringifyObjectId(agent.id),
+        name: agent.name?.trim() || '未命名智能体',
+        status: pendingId ? 'pending' : 'active',
+      });
+      result.set(timbreId, current);
+    }
+
+    return result;
   }
 
   private toOptionalIsoDate(value?: number): string | undefined {
@@ -1577,16 +1713,40 @@ export class AdminVoiceTimbreService {
 
   private async assertDoubaoSlotTrainable(
     provider: VoiceTimbreProvider,
-    providerVoiceId: string
+    providerVoiceId: string,
+    usesExistingSpeakerId: boolean
   ): Promise<void> {
-    if (
-      provider !== VoiceTimbreProvider.doubao ||
-      !this.doubaoVoiceService.isSlotListingConfigured()
-    ) {
+    if (provider !== VoiceTimbreProvider.doubao) {
       return;
     }
 
-    const { items } = await this.doubaoVoiceService.listSlots();
+    const timbres = await this.voiceTimbreModel.find({
+      where: { provider: VoiceTimbreProvider.doubao } as never,
+      order: { updatedAt: 'DESC' },
+    });
+    const { items } = await this.doubaoVoiceService.listSlots(
+      this.collectDoubaoSpeakerIds(timbres)
+    );
+
+    if (!usesExistingSpeakerId) {
+      const usedSpeakerIds = new Set([
+        ...items.map(item => item.speakerId),
+        ...this.collectDoubaoSpeakerIds(timbres),
+      ]);
+      if (usedSpeakerIds.size >= this.doubaoVoiceService.getSlotCapacity()) {
+        throw new AppError(
+          'DOUBAO_SLOT_CAPACITY_EXHAUSTED',
+          'Doubao purchased voice slot capacity is exhausted',
+          409,
+          {
+            capacity: this.doubaoVoiceService.getSlotCapacity(),
+            used: usedSpeakerIds.size,
+          }
+        );
+      }
+      return;
+    }
+
     const slot = items.find(item => item.speakerId === providerVoiceId);
 
     if (!slot) {
@@ -1598,12 +1758,9 @@ export class AdminVoiceTimbreService {
     }
 
     const isExpired = Boolean(slot.expireTime && slot.expireTime <= Date.now());
-    const isUnavailableState = [
-      'Training',
-      'Active',
-      'Expired',
-      'Reclaimed',
-    ].includes(slot.state);
+    const isUnavailableState = ['Training', 'Expired', 'Reclaimed'].includes(
+      slot.state
+    );
 
     if (isExpired || isUnavailableState || slot.availableTrainingTimes === 0) {
       throw new AppError(
@@ -1923,7 +2080,9 @@ export class AdminVoiceTimbreService {
     }
 
     if (provider === VoiceTimbreProvider.doubao) {
-      return this.normalizeDoubaoSpeakerId(rawValue || '');
+      return this.normalizeDoubaoSpeakerId(
+        rawValue || this.generateDoubaoSpeakerId()
+      );
     }
 
     return this.normalizeMinimaxProviderVoiceId(
@@ -1944,11 +2103,7 @@ export class AdminVoiceTimbreService {
     }
 
     if (provider === VoiceTimbreProvider.doubao) {
-      throw new AppError(
-        'DOUBAO_SPEAKER_ID_REQUIRED',
-        'Doubao speaker id is required and must come from a purchased slot',
-        400
-      );
+      return this.generateDoubaoSpeakerId();
     }
 
     return this.generateMinimaxProviderVoiceId();
@@ -2009,6 +2164,29 @@ export class AdminVoiceTimbreService {
       );
     }
     return speakerId;
+  }
+
+  private generateDoubaoSpeakerId(): string {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).slice(2, 10);
+    return `S_tzl_${timestamp}_${random}`;
+  }
+
+  private isDoubaoSpeakerId(value?: string): value is string {
+    return /^S_[A-Za-z0-9_-]{4,128}$/.test(value?.trim() || '');
+  }
+
+  private collectDoubaoSpeakerIds(timbres: VoiceTimbreEntity[]): string[] {
+    const values: string[] = [];
+    for (const timbre of timbres) {
+      if (this.isDoubaoSpeakerId(timbre.providerVoiceId)) {
+        values.push(timbre.providerVoiceId);
+      }
+      if (this.isDoubaoSpeakerId(timbre.retainedProviderVoiceId)) {
+        values.push(timbre.retainedProviderVoiceId);
+      }
+    }
+    return [...new Set(values)];
   }
 
   private generateMinimaxProviderVoiceId(): string {
@@ -2216,6 +2394,14 @@ export class AdminVoiceTimbreService {
     }
 
     return new MongoObjectId(value);
+  }
+
+  private parseAgentObjectId(value: string): MongoObjectId {
+    if (!MongoObjectId.isValid(value?.trim())) {
+      throw new AppError('INVALID_AGENT_ID', 'invalid agent id', 400);
+    }
+
+    return new MongoObjectId(value.trim());
   }
 
   private stringifyObjectId(value: MongoObjectId): string {

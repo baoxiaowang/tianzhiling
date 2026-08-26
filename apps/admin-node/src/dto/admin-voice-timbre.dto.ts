@@ -85,6 +85,11 @@ export class CreateAdminVoiceTimbreDTO {
   remark?: string;
 }
 
+export class BindAdminDoubaoVoiceSlotDTO {
+  @Rule(RuleType.string().trim().min(1).max(64).required())
+  agentId: string;
+}
+
 export class UpdateAdminVoiceTimbreDTO {
   @Rule(RuleType.string().trim().min(1).max(60).optional())
   name?: string;

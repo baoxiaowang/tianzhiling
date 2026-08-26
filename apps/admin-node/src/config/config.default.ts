@@ -307,6 +307,11 @@ export default {
       ['ADMIN_API_DOUBAO_VOICE_POLL_INTERVAL_MS'],
       2000
     ),
+    slotCapacity: readNumberFrom(['ADMIN_API_DOUBAO_VOICE_SLOT_CAPACITY'], 10),
+    knownSpeakerIds: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS'],
+      ''
+    ),
     openApiAccessKeyId: readStringFrom(
       ['ADMIN_API_DOUBAO_VOICE_OPENAPI_ACCESS_KEY_ID'],
       ''

@@ -50,6 +50,9 @@ export class VoiceTimbreEntity extends BaseEntity {
   providerVoiceId: string;
 
   @Column()
+  retainedProviderVoiceId?: string;
+
+  @Column()
   providerFileId?: string;
 
   @Column()

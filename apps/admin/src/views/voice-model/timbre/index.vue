@@ -300,7 +300,7 @@
         </a-alert>
 
         <a-table
-          row-key="speakerId"
+          row-key="slotKey"
           :data="doubaoSlots"
           :loading="doubaoSlotsLoading"
           :pagination="false"
@@ -317,11 +317,17 @@
             />
           </template>
           <template #columns>
+            <a-table-column title="槽位" :width="90">
+              <template #cell="{ record }">
+                槽位 {{ record.slotNumber }}
+              </template>
+            </a-table-column>
             <a-table-column title="Speaker ID" :width="245">
               <template #cell="{ record }">
-                <a-typography-text copyable>
+                <a-typography-text v-if="record.speakerId" copyable>
                   {{ record.speakerId }}
                 </a-typography-text>
+                <a-tag v-else color="gray">训练后自动生成</a-tag>
                 <div v-if="record.alias" class="voice-timbre-page__slot-alias">
                   {{ record.alias }}
                 </div>
@@ -336,18 +342,34 @@
             </a-table-column>
             <a-table-column title="平台状态" :width="120">
               <template #cell="{ record }">
-                <a-tag :color="getDoubaoSlotStateColor(record.state)">
+                <a-tag v-if="record.empty" color="gray"> 未训练 </a-tag>
+                <a-tag v-else :color="getDoubaoSlotStateColor(record.state)">
                   {{ formatDoubaoSlotState(record.state) }}
                 </a-tag>
               </template>
             </a-table-column>
-            <a-table-column title="本地绑定" :width="190">
+            <a-table-column title="本地音色 / 智能体" :width="280">
               <template #cell="{ record }">
                 <div v-if="record.boundTimbre">
                   <div>{{ record.boundTimbre.name }}</div>
                   <a-tag :color="getStatusColor(record.boundTimbre.status)">
                     {{ formatStatus(record.boundTimbre.status) }}
                   </a-tag>
+                  <div
+                    v-for="agent in record.boundAgents || []"
+                    :key="agent.id"
+                    class="voice-timbre-page__slot-agent"
+                  >
+                    {{ agent.name }}
+                    <a-tag
+                      :color="agent.status === 'active' ? 'green' : 'orange'"
+                    >
+                      {{ agent.status === 'active' ? '已绑定' : '待绑定' }}
+                    </a-tag>
+                    <a-typography-text copyable>
+                      {{ agent.id }}
+                    </a-typography-text>
+                  </div>
                 </div>
                 <a-tag v-else color="gray">未绑定</a-tag>
               </template>
@@ -382,16 +404,26 @@
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="操作" :width="145" fixed="right">
+            <a-table-column title="操作" :width="235" fixed="right">
               <template #cell="{ record }">
-                <a-button
-                  type="text"
-                  size="small"
-                  :disabled="!record.availableForTraining"
-                  @click="openCreateFromDoubaoSlot(record)"
-                >
-                  创建音色
-                </a-button>
+                <a-space>
+                  <a-button
+                    v-if="record.availableForTraining"
+                    type="text"
+                    size="small"
+                    @click="openCreateFromDoubaoSlot(record)"
+                  >
+                    添加素材并训练
+                  </a-button>
+                  <a-button
+                    v-if="record.boundTimbre?.status === 'active'"
+                    type="text"
+                    size="small"
+                    @click="openBindAgent(record)"
+                  >
+                    绑定智能体
+                  </a-button>
+                </a-space>
               </template>
             </a-table-column>
           </template>
@@ -482,53 +514,47 @@
         </a-form-item>
 
         <a-form-item
-          v-if="!editingRecord"
-          field="providerVoiceId"
-          :label="providerVoiceIdLabel"
-          :rules="
-            isDoubaoProvider
-              ? [
-                  {
-                    required: true,
-                    message: '请输入已购买或续费音色槽的 S_ 音色ID',
-                  },
-                ]
-              : []
-          "
+          v-if="!editingRecord && isDoubaoProvider"
+          label="豆包音色槽位"
+          required
         >
           <a-select
-            v-if="isDoubaoProvider && doubaoSlotsConfigured"
-            v-model="editForm.providerVoiceId"
+            v-model="selectedDoubaoSlotKey"
             allow-search
-            placeholder="请选择一个空闲豆包槽位"
+            placeholder="请选择一个可训练槽位"
+            @change="onDoubaoSlotChange"
           >
             <a-option
               v-for="slot in availableDoubaoSlots"
-              :key="slot.speakerId"
-              :value="slot.speakerId"
+              :key="slot.slotKey"
+              :value="slot.slotKey"
             >
-              {{ slot.alias || slot.speakerId }} · 剩余训练
-              {{ slot.availableTrainingTimes ?? '-' }} 次 · 到期
-              {{ formatDate(slot.expireTime) }}
+              槽位 {{ slot.slotNumber }} ·
+              {{
+                slot.empty
+                  ? '未训练，ID 自动生成'
+                  : slot.alias || slot.speakerId
+              }}
             </a-option>
           </a-select>
+          <template #extra>
+            空槽无需人工填写 Speaker
+            ID；上传素材后由系统自动生成。训练满意后，再在槽位页单独绑定智能体
+            ID。
+          </template>
+        </a-form-item>
+
+        <a-form-item
+          v-if="!editingRecord && !isDoubaoProvider"
+          field="providerVoiceId"
+          :label="providerVoiceIdLabel"
+        >
           <a-input
-            v-else
             v-model="editForm.providerVoiceId"
             allow-clear
             :max-length="providerVoiceIdMaxLength"
             :placeholder="providerVoiceIdPlaceholder"
           />
-          <template #extra>
-            <template v-if="isDoubaoProvider">
-              <span v-if="doubaoSlotsConfigured">
-                槽位来自“豆包槽位”列表；已绑定、训练中、已固定或已到期的槽位不会出现在这里。
-              </span>
-              <span v-else>
-                槽位列表尚未配置，当前保留手动输入作为兼容入口。
-              </span>
-            </template>
-          </template>
         </a-form-item>
 
         <a-form-item v-if="!editingRecord" label="复刻音频" required>
@@ -751,6 +777,30 @@
     </a-modal>
 
     <a-modal
+      v-model:visible="bindAgentVisible"
+      title="绑定智能体"
+      :confirm-loading="bindingAgent"
+      :mask-closable="false"
+      :esc-to-close="false"
+      @before-ok="submitBindAgent"
+      @cancel="closeBindAgent"
+    >
+      <a-alert type="info" class="voice-timbre-page__slot-alert">
+        训练和绑定互相独立。重新训练不会要求重复输入智能体
+        ID；绑定会替换该智能体当前使用的音色。
+      </a-alert>
+      <a-form :model="{ agentId: bindingAgentId }" layout="vertical">
+        <a-form-item label="智能体 ID" required>
+          <a-input
+            v-model="bindingAgentId"
+            allow-clear
+            placeholder="请输入 24 位智能体 ID"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal
       v-model:visible="deleteVisible"
       title="永久删除音色"
       :confirm-loading="deleting"
@@ -850,6 +900,7 @@
   import useLoading from '@/hooks/loading';
   import uploadAdminFile from '@/api/storage';
   import {
+    bindDoubaoVoiceSlotAgent,
     createVoiceTimbre,
     deleteVoiceTimbre,
     queryDoubaoVoiceSlots,
@@ -868,6 +919,11 @@
   const doubaoSlotsLoading = ref(false);
   const doubaoSlotsConfigured = ref(false);
   const doubaoSlotMessage = ref('');
+  const selectedDoubaoSlotKey = ref('');
+  const bindAgentVisible = ref(false);
+  const bindingAgent = ref(false);
+  const bindingAgentId = ref('');
+  const bindingSlot = ref<AdminDoubaoVoiceSlotDTO>();
   const doubaoSlotSummary = reactive<
     Pick<
       AdminDoubaoVoiceSlotListDTO,
@@ -1247,11 +1303,58 @@
   const openCreateFromDoubaoSlot = (slot: AdminDoubaoVoiceSlotDTO) => {
     resetEditForm();
     editForm.provider = 'doubao';
-    editForm.providerVoiceId = slot.speakerId;
+    selectedDoubaoSlotKey.value = slot.slotKey;
+    editForm.providerVoiceId = slot.speakerId || '';
     editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
     editForm.cloneLanguage = 'zh';
     editForm.name = slot.alias?.trim() || '豆包复刻音色';
     editVisible.value = true;
+  };
+
+  const onDoubaoSlotChange = (slotKey: unknown) => {
+    const selected = availableDoubaoSlots.value.find(
+      (slot) => slot.slotKey === String(slotKey)
+    );
+    editForm.providerVoiceId = selected?.speakerId || '';
+  };
+
+  const openBindAgent = (slot: AdminDoubaoVoiceSlotDTO) => {
+    bindingSlot.value = slot;
+    bindingAgentId.value = '';
+    bindAgentVisible.value = true;
+  };
+
+  const closeBindAgent = () => {
+    bindAgentVisible.value = false;
+    bindingSlot.value = undefined;
+    bindingAgentId.value = '';
+  };
+
+  const submitBindAgent = async () => {
+    const agentId = bindingAgentId.value.trim();
+    const timbreId = bindingSlot.value?.boundTimbre?.id;
+    if (!/^[a-f\d]{24}$/i.test(agentId)) {
+      Message.error('请输入正确的 24 位智能体 ID');
+      return false;
+    }
+    if (!timbreId) {
+      Message.error('该槽位还没有可绑定的本地音色');
+      return false;
+    }
+
+    try {
+      bindingAgent.value = true;
+      const { data } = await bindDoubaoVoiceSlotAgent(timbreId, agentId);
+      Message.success(`已将音色绑定到智能体“${data.agentName}”`);
+      closeBindAgent();
+      await fetchDoubaoSlots();
+      return true;
+    } catch (error) {
+      Message.error('绑定失败，请确认智能体 ID 正确且音色已训练完成');
+      return false;
+    } finally {
+      bindingAgent.value = false;
+    }
   };
 
   const openEdit = (record: VoiceTimbreRecord) => {
@@ -1300,6 +1403,7 @@
     editForm.speechDialect = 'auto';
     editForm.speechInstruction = '';
     editForm.providerVoiceId = '';
+    selectedDoubaoSlotKey.value = '';
     editForm.previewText = '';
     editForm.speechSpeed = 1;
     editForm.speechVolume = 1;
@@ -1314,6 +1418,7 @@
 
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
+    selectedDoubaoSlotKey.value = '';
     if (isCosyVoiceProvider.value) {
       editForm.previewModel = COSYVOICE_V35_PLUS_MODEL;
     } else if (isDoubaoProvider.value) {
@@ -1406,6 +1511,15 @@
       return false;
     }
 
+    if (
+      !editingRecord.value &&
+      isDoubaoProvider.value &&
+      !selectedDoubaoSlotKey.value
+    ) {
+      Message.error('请选择一个豆包音色槽位');
+      return false;
+    }
+
     try {
       saving.value = true;
 
@@ -1458,7 +1572,7 @@
           speechPitch: editForm.speechPitch,
           remark: editForm.remark,
         });
-        if (isDoubaoProvider.value && doubaoSlotsConfigured.value) {
+        if (isDoubaoProvider.value) {
           await fetchDoubaoSlots();
         }
         Message.success('音色创建任务已提交');
@@ -1812,6 +1926,16 @@
 
     &__slot-sync {
       text-align: right;
+    }
+
+    &__slot-agent {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      margin-top: 6px;
+      color: var(--color-text-2);
+      font-size: 12px;
     }
 
     &__danger {

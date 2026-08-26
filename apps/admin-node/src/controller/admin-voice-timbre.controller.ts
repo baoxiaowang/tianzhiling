@@ -10,6 +10,7 @@ import {
   Query,
 } from '@midwayjs/core';
 import {
+  BindAdminDoubaoVoiceSlotDTO,
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -29,6 +30,17 @@ export class AdminVoiceTimbreController {
   @Get('/doubao-slots')
   async listDoubaoSlots() {
     return this.adminVoiceTimbreService.listDoubaoVoiceSlots();
+  }
+
+  @Post('/doubao-slots/:timbreId/bind-agent')
+  async bindDoubaoSlotAgent(
+    @Param('timbreId') timbreId: string,
+    @Body() body: BindAdminDoubaoVoiceSlotDTO
+  ) {
+    return this.adminVoiceTimbreService.bindDoubaoVoiceSlotAgent(
+      timbreId,
+      body.agentId
+    );
   }
 
   @Post('/')
