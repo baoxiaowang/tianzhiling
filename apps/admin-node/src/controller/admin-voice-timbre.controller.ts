@@ -26,6 +26,11 @@ export class AdminVoiceTimbreController {
     return this.adminVoiceTimbreService.listVoiceTimbres(query);
   }
 
+  @Get('/doubao-slots')
+  async listDoubaoSlots() {
+    return this.adminVoiceTimbreService.listDoubaoVoiceSlots();
+  }
+
   @Post('/')
   async create(@Body() body: CreateAdminVoiceTimbreDTO) {
     return this.adminVoiceTimbreService.createVoiceTimbre(body);

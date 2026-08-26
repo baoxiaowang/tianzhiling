@@ -175,12 +175,12 @@
                   :width="110"
                 />
                 <a-table-column
-                  title="新用户聊天人数"
+                  title="3 日内新用户聊天人数"
                   data-index="newUserChatUsers"
                   :width="140"
                 />
                 <a-table-column
-                  title="新用户消息数"
+                  title="3 日内新用户消息数"
                   data-index="newUserMessages"
                   :width="130"
                 />

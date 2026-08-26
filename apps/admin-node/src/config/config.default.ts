@@ -263,6 +263,75 @@ export default {
       120000
     ),
   },
+  doubaoVoice: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_DOUBAO_VOICE_ENABLED', 'NODE_DOUBAO_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_API_KEY', 'NODE_DOUBAO_VOICE_API_KEY'],
+      ''
+    ),
+    appId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_APP_ID', 'NODE_DOUBAO_VOICE_APP_ID'],
+      ''
+    ),
+    accessToken: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_ACCESS_TOKEN', 'NODE_DOUBAO_VOICE_ACCESS_TOKEN'],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_BASE_URL', 'NODE_DOUBAO_VOICE_BASE_URL'],
+      'https://openspeech.bytedance.com'
+    ),
+    resourceId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_RESOURCE_ID', 'NODE_DOUBAO_VOICE_RESOURCE_ID'],
+      'seed-icl-2.0'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'ADMIN_API_DOUBAO_VOICE_PREVIEW_MODEL',
+        'NODE_DOUBAO_VOICE_SPEECH_MODEL',
+      ],
+      'seed-tts-2.0-expressive'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_TIMEOUT_MS', 'NODE_DOUBAO_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+    trainingTimeoutMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_TRAINING_TIMEOUT_MS'],
+      300000
+    ),
+    pollIntervalMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_POLL_INTERVAL_MS'],
+      2000
+    ),
+    openApiAccessKeyId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_ACCESS_KEY_ID'],
+      ''
+    ),
+    openApiSecretAccessKey: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_SECRET_ACCESS_KEY'],
+      ''
+    ),
+    openApiBaseURL: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_BASE_URL'],
+      'https://open.volcengineapi.com'
+    ),
+    openApiRegion: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_REGION'],
+      'cn-beijing'
+    ),
+    openApiService: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_SERVICE'],
+      'speech_saas_prod'
+    ),
+    openApiProjectName: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_PROJECT_NAME'],
+      'default'
+    ),
+  },
   wechatPay: {
     enabled: readBooleanFrom(
       ['ADMIN_API_WECHAT_PAY_ENABLED', 'NODE_WECHAT_PAY_ENABLED'],

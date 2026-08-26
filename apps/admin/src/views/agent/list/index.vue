@@ -121,7 +121,6 @@
                     >
                       VIP
                     </a-tag>
-                    <a-tag v-else color="gray" size="small">普通用户</a-tag>
                   </div>
                   <a-tooltip
                     :content="
@@ -132,12 +131,6 @@
                       {{ record.createdUser.account || record.createdUserId }}
                     </a-typography-text>
                   </a-tooltip>
-                  <span
-                    v-if="record.createdUser.isVip"
-                    class="agent-page__membership-expiry"
-                  >
-                    {{ formatMembership(record.createdUser) }}
-                  </span>
                 </div>
               </a-space>
               <a-tooltip v-else :content="record.createdUserId">
@@ -628,14 +621,6 @@
     return value ? dayjs(value).format('YYYY-MM-DD') : '';
   };
 
-  const formatMembership = (owner: AgentRecord['createdUser']) => {
-    if (!owner?.isVip) return '';
-    if (owner.membershipLifetime) return '永久会员';
-    return owner.membershipExpiredAt
-      ? `有效至 ${dayjs(owner.membershipExpiredAt).format('YYYY-MM-DD')}`
-      : '有效会员';
-  };
-
   const getAvatarFallback = (name: string, fallback: string) => {
     return name?.trim()?.slice(0, 1)?.toUpperCase() || fallback;
   };
@@ -694,12 +679,6 @@
     &__vip-tag {
       margin-left: 6px;
       font-weight: 600;
-    }
-
-    &__membership-expiry {
-      margin-top: 3px;
-      color: var(--color-text-3);
-      font-size: 12px;
     }
 
     &__conversation-count {

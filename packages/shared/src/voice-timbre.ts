@@ -62,6 +62,11 @@ export const VOICE_TIMBRE_DIALECT_OPTIONS = [
   { value: "tianjin", label: "天津话" },
 ] as const;
 
+// Doubao Seed ICL 2.0 primarily preserves the accent carried by the prompt
+// audio. These options are synthesis hints, rather than a claim that the
+// provider exposes a closed dialect enum.
+export const DOUBAO_ICL2_DIALECT_OPTIONS = VOICE_TIMBRE_DIALECT_OPTIONS;
+
 export type VoiceTimbreDialectDTO =
   (typeof VOICE_TIMBRE_DIALECT_OPTIONS)[number]["value"];
 
@@ -328,6 +333,39 @@ export function buildCosyVoiceSpeechInstruction(input: {
   return joinVoiceSpeechInstruction(parts);
 }
 
+export const getDoubaoIcl2SpeechInstructionSource =
+  getCosyVoiceSpeechInstructionSource;
+
+export function buildDoubaoIcl2SpeechInstruction(input: {
+  instruction?: string;
+  dialect?: string;
+}): string | undefined {
+  const parts: string[] = [];
+  const normalizedCustomInstruction = normalizeVoiceSpeechCustomInstruction(
+    input.instruction
+  );
+  const resolvedDialect = resolveVoiceTimbreDialect(
+    input.dialect,
+    normalizedCustomInstruction,
+    DOUBAO_ICL2_DIALECT_OPTIONS
+  );
+  const dialectLabel = getVoiceTimbreDialectLabel(resolvedDialect);
+
+  if (dialectLabel) {
+    parts.push(
+      resolvedDialect === "mandarin"
+        ? "请使用自然、清晰的普通话表达"
+        : `请保留训练音频中的口音，并使用自然、地道的${dialectLabel}表达`
+    );
+  }
+
+  if (normalizedCustomInstruction) {
+    parts.push(normalizedCustomInstruction);
+  }
+
+  return joinVoiceSpeechInstruction(parts);
+}
+
 export function buildSpeechOutputFfmpegFilter(input: {
   speechSpeed: number;
   speechVolume: number;
@@ -530,6 +568,46 @@ export interface AdminVoiceTimbreProviderValidationDTO {
   resourceLink?: string;
   requestId?: string;
   record: AdminVoiceTimbreRecordDTO;
+}
+
+export type DoubaoVoiceSlotStateDTO =
+  | "Unknown"
+  | "Training"
+  | "Success"
+  | "Active"
+  | "Expired"
+  | "Reclaimed";
+
+export interface AdminDoubaoVoiceSlotDTO {
+  speakerId: string;
+  instanceNo: string;
+  alias: string;
+  state: DoubaoVoiceSlotStateDTO;
+  isActivable: boolean;
+  demoAudio?: string;
+  version?: string;
+  createTime?: string;
+  orderTime?: string;
+  expireTime?: string;
+  availableTrainingTimes?: number;
+  availableForTraining: boolean;
+  availabilityReason: string;
+  boundTimbre?: Pick<
+    AdminVoiceTimbreRecordDTO,
+    "id" | "name" | "status" | "providerVoiceId"
+  >;
+}
+
+export interface AdminDoubaoVoiceSlotListDTO {
+  configured: boolean;
+  message: string;
+  items: AdminDoubaoVoiceSlotDTO[];
+  total: number;
+  availableCount: number;
+  boundCount: number;
+  expiringSoonCount: number;
+  syncedAt: string;
+  requestIds: string[];
 }
 
 export interface CreateAdminVoiceTimbreDTO {

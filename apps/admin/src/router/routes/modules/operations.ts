@@ -11,7 +11,7 @@ const OPERATIONS: AppRouteRecordRaw = {
     icon: 'icon-apps',
     order: 3,
   },
-  redirect: '/operations/chat-quality',
+  redirect: '/operations/reports',
   children: [
     {
       path: 'reports',
@@ -24,31 +24,11 @@ const OPERATIONS: AppRouteRecordRaw = {
       },
     },
     {
-      path: 'chat-quality',
-      name: 'ChatQuality',
-      component: () => import('@/views/operations/chat-quality/index.vue'),
-      meta: {
-        locale: 'menu.operations.chatQuality',
-        requiresAuth: true,
-        roles: ['*'],
-      },
-    },
-    {
       path: 'tasks',
       name: 'OperationsTaskCenter',
       component: () => import('@/views/operations/task-center/index.vue'),
       meta: {
         locale: 'menu.operations.taskCenter',
-        requiresAuth: true,
-        roles: ['*'],
-      },
-    },
-    {
-      path: 'system',
-      name: 'OperationsSystem',
-      component: () => import('@/views/operations/system/index.vue'),
-      meta: {
-        locale: 'menu.operations.system',
         requiresAuth: true,
         roles: ['*'],
       },

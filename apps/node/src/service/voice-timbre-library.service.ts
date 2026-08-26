@@ -35,6 +35,7 @@ import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import type { AuthenticatedUserPayload } from '../interface';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
+import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
 import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
@@ -103,6 +104,9 @@ export class VoiceTimbreLibraryService {
 
   @Inject()
   cosyVoiceSpeechService: CosyVoiceSpeechService;
+
+  @Inject()
+  doubaoVoiceSpeechService: DoubaoVoiceSpeechService;
 
   @Inject()
   voiceFfmpegService: VoiceFfmpegService;
@@ -322,9 +326,11 @@ export class VoiceTimbreLibraryService {
       );
     }
     const isCosyVoiceV35Plus = this.isCosyVoiceV35PlusTimbre(timbre);
+    const isDoubaoIcl2 = timbre.provider === VoiceTimbreProvider.doubao;
     if (
       timbre.provider !== VoiceTimbreProvider.qwen &&
-      !isCosyVoiceV35Plus
+      !isCosyVoiceV35Plus &&
+      !isDoubaoIcl2
     ) {
       throw new AppError(
         'VOICE_TIMBRE_CUSTOM_SPEECH_UNSUPPORTED',
@@ -335,32 +341,43 @@ export class VoiceTimbreLibraryService {
 
     const reservation = await this.reserveCustomSpeechGeneration(userId);
     try {
-      const synthesized =
-        isCosyVoiceV35Plus
-          ? await this.cosyVoiceSpeechService.synthesize({
-              text,
-              voiceId: timbre.providerVoiceId,
-              model: timbre.previewModel,
-              languageHint: timbre.cloneLanguage,
-              speed: timbre.speechSpeed,
-              volume: timbre.speechVolume,
-              pitch: timbre.speechPitch,
-              ...(timbre.speechInstruction?.trim()
-                ? { instruction: timbre.speechInstruction.trim() }
-                : {}),
-              dialect: timbre.speechDialect,
-            })
-          : await this.qwenVoiceSpeechService.synthesize({
-              text,
-              voiceId: timbre.providerVoiceId,
-              model: timbre.previewModel,
-              language: timbre.cloneLanguage,
-              ...(timbre.speechInstruction?.trim()
-                ? { instruction: timbre.speechInstruction.trim() }
-                : {}),
-              dialect: timbre.speechDialect,
-              speed: timbre.speechSpeed,
-            });
+      const synthesized = isCosyVoiceV35Plus
+        ? await this.cosyVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            languageHint: timbre.cloneLanguage,
+            speed: timbre.speechSpeed,
+            volume: timbre.speechVolume,
+            pitch: timbre.speechPitch,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+          })
+        : isDoubaoIcl2
+        ? await this.doubaoVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+            speed: timbre.speechSpeed,
+            volume: timbre.speechVolume,
+          })
+        : await this.qwenVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            language: timbre.cloneLanguage,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+            speed: timbre.speechSpeed,
+          });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
       const volume = this.normalizeSpeechVolume(timbre.speechVolume);
@@ -380,9 +397,14 @@ export class VoiceTimbreLibraryService {
           ? 1
           : speed;
       const outputVolume =
-        isCosyVoiceV35Plus ? 1 : volume;
-      const outputPitch =
-        isCosyVoiceV35Plus ? 0 : pitch;
+        isCosyVoiceV35Plus ||
+        Boolean(
+          (synthesized as { nativeSpeechVolumeApplied?: boolean })
+            .nativeSpeechVolumeApplied
+        )
+          ? 1
+          : volume;
+      const outputPitch = isCosyVoiceV35Plus ? 0 : pitch;
       const adjusted =
         outputSpeed !== 1 || outputVolume !== 1 || outputPitch !== 0
           ? await this.voiceFfmpegService.adjustSpeechOutput({

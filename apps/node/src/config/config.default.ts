@@ -556,6 +556,43 @@ export default {
       120000
     ),
   },
+  doubaoVoice: {
+    enabled: readBooleanFrom(
+      ['NODE_DOUBAO_VOICE_ENABLED', 'ADMIN_API_DOUBAO_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      ['NODE_DOUBAO_VOICE_API_KEY', 'ADMIN_API_DOUBAO_VOICE_API_KEY'],
+      ''
+    ),
+    appId: readStringFrom(
+      ['NODE_DOUBAO_VOICE_APP_ID', 'ADMIN_API_DOUBAO_VOICE_APP_ID'],
+      ''
+    ),
+    accessToken: readStringFrom(
+      ['NODE_DOUBAO_VOICE_ACCESS_TOKEN', 'ADMIN_API_DOUBAO_VOICE_ACCESS_TOKEN'],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_DOUBAO_VOICE_BASE_URL', 'ADMIN_API_DOUBAO_VOICE_BASE_URL'],
+      'https://openspeech.bytedance.com'
+    ),
+    resourceId: readStringFrom(
+      ['NODE_DOUBAO_VOICE_RESOURCE_ID', 'ADMIN_API_DOUBAO_VOICE_RESOURCE_ID'],
+      'seed-icl-2.0'
+    ),
+    defaultSpeechModel: readStringFrom(
+      [
+        'NODE_DOUBAO_VOICE_SPEECH_MODEL',
+        'ADMIN_API_DOUBAO_VOICE_PREVIEW_MODEL',
+      ],
+      'seed-tts-2.0-expressive'
+    ),
+    timeoutMs: readNumberFrom(
+      ['NODE_DOUBAO_VOICE_TIMEOUT_MS', 'ADMIN_API_DOUBAO_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
   bailianImage: {
     enabled: readBooleanFrom(
       ['NODE_BAILIAN_IMAGE_ENABLED', 'ADMIN_API_BAILIAN_IMAGE_ENABLED'],

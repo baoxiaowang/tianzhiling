@@ -145,6 +145,7 @@ import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
+import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
@@ -788,6 +789,9 @@ export class ConversationService {
 
   @Inject()
   qwenVoiceSpeechService: QwenVoiceSpeechService;
+
+  @Inject()
+  doubaoVoiceSpeechService: DoubaoVoiceSpeechService;
 
   @Inject()
   voiceTimbreLibraryService: VoiceTimbreLibraryService;
@@ -9373,6 +9377,41 @@ export class ConversationService {
           : 'speech.wav',
         speechSpeed: outputSpeechSpeed,
         speechVolume,
+        speechPitch,
+      });
+      return {
+        audioUrl: '',
+        audioBuffer: adjusted.buffer,
+        mimeType: adjusted.contentType,
+      };
+    }
+
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.doubao) {
+      const synthesized = await this.doubaoVoiceSpeechService.synthesize({
+        text: input.text,
+        voiceId: input.voiceTimbre.providerVoiceId,
+        model: input.voiceTimbre.previewModel,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
+        dialect: input.voiceTimbre.speechDialect,
+        speed: input.voiceTimbre.speechSpeed,
+        volume: input.voiceTimbre.speechVolume,
+      });
+      const speechPitch = this.voiceSpeechSetting(
+        input.voiceTimbre.speechPitch,
+        0,
+        -12,
+        12
+      );
+      if (speechPitch === 0) {
+        return synthesized;
+      }
+      const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
+        buffer: synthesized.audioBuffer,
+        fileName: 'speech.mp3',
+        speechSpeed: 1,
+        speechVolume: 1,
         speechPitch,
       });
       return {

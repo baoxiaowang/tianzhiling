@@ -54,6 +54,9 @@
                 <a-link @click="goUserDetail(agent.createdUser.id)">
                   {{ agent.createdUser.name || '-' }}
                 </a-link>
+                <a-tag v-if="agent.createdUser.isVip" color="gold" size="small">
+                  VIP
+                </a-tag>
                 <span v-if="agent.createdUser.account">
                   / {{ agent.createdUser.account }}
                 </span>

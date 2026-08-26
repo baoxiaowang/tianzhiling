@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AdminVoiceTimbreListDTO,
   AdminVoiceTimbreListParamsDTO,
+  AdminDoubaoVoiceSlotListDTO,
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
   CreateAdminVoiceTimbreDTO,
@@ -18,6 +19,12 @@ export type ValidateVoiceTimbreRes = AdminVoiceTimbreProviderValidationDTO;
 
 export function queryVoiceTimbreList(params: VoiceTimbreListParams) {
   return axios.get<VoiceTimbreListRes>('/admin_api/voice-timbres', { params });
+}
+
+export function queryDoubaoVoiceSlots() {
+  return axios.get<AdminDoubaoVoiceSlotListDTO>(
+    '/admin_api/voice-timbres/doubao-slots'
+  );
 }
 
 export function createVoiceTimbre(data: CreateVoiceTimbreData) {

@@ -22,6 +22,18 @@ const DASHBOARD: AppRouteRecordRaw = {
         roles: ['*'],
       },
     },
+    {
+      path: 'daily',
+      name: 'DashboardDaily',
+      component: () => import('@/views/dashboard/daily/index.vue'),
+      meta: {
+        locale: 'menu.dashboard.daily',
+        requiresAuth: true,
+        roles: ['*'],
+        hideInMenu: true,
+        activeMenu: 'Workplace',
+      },
+    },
   ],
 };
 

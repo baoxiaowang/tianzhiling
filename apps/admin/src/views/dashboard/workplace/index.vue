@@ -2,10 +2,11 @@
   <div class="data-dashboard">
     <header class="data-dashboard__header">
       <div>
-        <h1>数据统计</h1>
-        <p>每日数据是主表，累计与本月数据用于快速判断经营变化。</p>
+        <h1>数据仪表盘</h1>
+        <p>查看当前总量、本月增长、聊天活跃和实际收入。</p>
       </div>
       <a-space>
+        <a-button type="text" @click="goDaily">查看每日数据明细</a-button>
         <a-month-picker
           v-model="month"
           value-format="YYYY-MM"
@@ -34,110 +35,34 @@
         class="data-dashboard__analysis"
       >
         <a-grid-item :span="{ xs: 24, xl: 16 }">
-          <a-card :bordered="false" title="本月每日趋势">
+          <a-card
+            class="data-dashboard__chart-card"
+            :bordered="false"
+            title="本月每日趋势"
+          >
             <template #extra>
               <a-radio-group v-model="trendMetric" type="button" size="small">
                 <a-radio value="newUsers">新增用户</a-radio>
-                <a-radio value="newUserMessages">新用户消息</a-radio>
-                <a-radio value="userMessages">全部消息</a-radio>
+                <a-radio value="netRevenue">当天收入</a-radio>
+                <a-radio value="userMessages">总消息数</a-radio>
               </a-radio-group>
             </template>
-            <Chart height="280px" :option="trendChartOption" />
+            <Chart height="320px" :option="trendChartOption" />
           </a-card>
         </a-grid-item>
 
         <a-grid-item :span="{ xs: 24, xl: 8 }">
-          <a-card :bordered="false" title="今日新用户路径">
-            <div class="data-dashboard__funnel">
-              <div v-for="item in todayFunnel" :key="item.label">
-                <header>
-                  <span>{{ item.label }}</span>
-                  <strong>{{ formatNumber(item.value) }}</strong>
-                </header>
-                <a-progress
-                  :percent="item.rate / 100"
-                  :show-text="false"
-                  :stroke-width="7"
-                />
-                <small>{{ item.rate.toFixed(1) }}%</small>
-              </div>
-            </div>
-          </a-card>
-        </a-grid-item>
-
-        <a-grid-item :span="24">
-          <a-card :bordered="false">
-            <template #title>
-              {{ report?.month || month }} 每日数据明细
-            </template>
+          <a-card
+            class="data-dashboard__chart-card"
+            :bordered="false"
+            title="本月新老用户聊天消息"
+          >
             <template #extra>
               <a-typography-text type="secondary">
-                聊天次数按用户发送消息统计，系统回复不重复计入
+                新用户指注册未满 3 天
               </a-typography-text>
             </template>
-            <a-table
-              row-key="date"
-              :data="dailyRows"
-              :pagination="false"
-              :scroll="{ x: 1260 }"
-              stripe
-            >
-              <template #columns>
-                <a-table-column title="日期" data-index="date" :width="118">
-                  <template #cell="{ record }">
-                    <strong v-if="record.date === report?.today">今天</strong>
-                    <span v-else>{{ formatDay(record.date) }}</span>
-                  </template>
-                </a-table-column>
-                <a-table-column
-                  title="新增用户"
-                  data-index="newUsers"
-                  :width="108"
-                />
-                <a-table-column
-                  title="新用户聊天人数"
-                  data-index="newUserChatUsers"
-                  :width="138"
-                >
-                  <template #cell="{ record }">
-                    <strong>{{ formatNumber(record.newUserChatUsers) }}</strong>
-                    <small>
-                      {{ formatRate(record.newUserChatUsers, record.newUsers) }}
-                    </small>
-                  </template>
-                </a-table-column>
-                <a-table-column
-                  title="新用户消息数"
-                  data-index="newUserMessages"
-                  :width="130"
-                />
-                <a-table-column
-                  title="全部聊天人数"
-                  data-index="allChatUsers"
-                  :width="130"
-                />
-                <a-table-column
-                  title="全部消息数"
-                  data-index="userMessages"
-                  :width="118"
-                />
-                <a-table-column
-                  title="付费人数"
-                  data-index="paidUsers"
-                  :width="100"
-                />
-                <a-table-column
-                  title="订单数"
-                  data-index="paidOrders"
-                  :width="90"
-                />
-                <a-table-column title="实付金额" :width="120">
-                  <template #cell="{ record }">
-                    <strong>{{ formatMoney(record.paidRevenue) }}</strong>
-                  </template>
-                </a-table-column>
-              </template>
-            </a-table>
+            <Chart height="320px" :option="userTypeChartOption" />
           </a-card>
         </a-grid-item>
       </a-grid>
@@ -147,14 +72,22 @@
 
 <script lang="ts" setup>
   import { computed, onMounted, ref } from 'vue';
+  import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { AdminOperationsReportDTO } from '@tzl/shared';
   import { queryOperationsReport } from '@/api/operations';
 
   const loading = ref(false);
-  const month = ref(dayjs().format('YYYY-MM'));
-  const trendMetric = ref<'newUsers' | 'newUserMessages' | 'userMessages'>(
+  const route = useRoute();
+  const router = useRouter();
+  const initialMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(
+    String(route.query.month || '')
+  )
+    ? String(route.query.month)
+    : dayjs().format('YYYY-MM');
+  const month = ref(initialMonth);
+  const trendMetric = ref<'newUsers' | 'netRevenue' | 'userMessages'>(
     'newUsers'
   );
   const report = ref<AdminOperationsReportDTO>();
@@ -199,56 +132,96 @@
     },
   ]);
 
-  const dailyRows = computed(() => [...(report.value?.daily || [])].reverse());
   const trendMeta = computed(() => {
     const map = {
-      newUsers: { name: '新增用户', color: '#7662cf' },
-      newUserMessages: { name: '新用户消息', color: '#bf7795' },
-      userMessages: { name: '全部消息', color: '#5f91bd' },
+      newUsers: { name: '新增用户', color: '#7662cf', money: false },
+      netRevenue: { name: '当天收入', color: '#36a375', money: true },
+      userMessages: { name: '总消息数', color: '#5f91bd', money: false },
     };
 
     return map[trendMetric.value];
   });
   const trendChartOption = computed(() => ({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 54, right: 24, top: 28, bottom: 38 },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (value: number) =>
+        trendMeta.value.money ? formatMoney(value) : formatNumber(value),
+    },
+    grid: { left: 66, right: 28, top: 34, bottom: 38 },
     xAxis: {
       type: 'category',
       data: (report.value?.daily || []).map((item) => formatDay(item.date)),
       axisLabel: { interval: 4 },
     },
-    yAxis: { type: 'value', minInterval: 1 },
+    yAxis: {
+      type: 'value',
+      minInterval: trendMeta.value.money ? undefined : 1,
+      name: trendMeta.value.money ? '元' : '',
+    },
     series: [
       {
         name: trendMeta.value.name,
-        type: 'bar',
+        type: 'line',
+        smooth: true,
+        symbolSize: 8,
         data: (report.value?.daily || []).map(
           (item) => item[trendMetric.value]
         ),
         itemStyle: {
           color: trendMeta.value.color,
-          borderRadius: [5, 5, 0, 0],
         },
+        lineStyle: { width: 3 },
+        areaStyle: { opacity: 0.1 },
       },
     ],
   }));
 
-  const todayFunnel = computed(() => {
-    const today = report.value?.todayTotals;
-    const base = today?.newUsers || 0;
-    const entries = [
-      { label: '新增用户', value: base },
-      { label: '创建智能体', value: today?.newAgents || 0 },
-      { label: '开始聊天', value: today?.newUserChatUsers || 0 },
-      { label: '发送 ≥ 5 条', value: today?.newUserFiveMessageUsers || 0 },
-      { label: '当天付费', value: today?.sameDayPayingUsers || 0 },
-    ];
+  const userTypeChartOption = computed(() => {
+    const newUserMessages = report.value?.totals.newUserMessages || 0;
+    const oldUserMessages = Math.max(
+      (report.value?.totals.userMessages || 0) - newUserMessages,
+      0
+    );
 
-    return entries.map((item) => ({
-      ...item,
-      rate: base > 0 ? Math.min((item.value / base) * 100, 100) : 0,
-    }));
+    return {
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}<br/>{c} 条（{d}%）',
+      },
+      legend: {
+        bottom: 8,
+        left: 'center',
+      },
+      series: [
+        {
+          name: '聊天消息',
+          type: 'pie',
+          radius: ['46%', '70%'],
+          center: ['50%', '45%'],
+          avoidLabelOverlap: true,
+          label: {
+            show: true,
+            formatter: '{b}\n{c} 条',
+          },
+          data: [
+            {
+              name: '注册 3 天内新用户',
+              value: newUserMessages,
+              itemStyle: { color: '#7662cf' },
+            },
+            {
+              name: '老用户',
+              value: oldUserMessages,
+              itemStyle: { color: '#5f91bd' },
+            },
+          ],
+        },
+      ],
+    };
   });
+
+  const goDaily = () =>
+    router.push({ name: 'DashboardDaily', query: { month: month.value } });
 
   const fetchData = async () => {
     try {
@@ -270,8 +243,6 @@
       maximumFractionDigits: 2,
     })}`;
   const formatDay = (value: string) => dayjs(value).format('MM-DD');
-  const formatRate = (value: number, total: number) =>
-    total > 0 ? `${((value / total) * 100).toFixed(1)}%` : '0.0%';
 
   onMounted(fetchData);
 </script>
@@ -285,6 +256,12 @@
     min-height: 100%;
     padding: 24px;
     background: var(--color-fill-2);
+
+    :deep(.arco-spin),
+    :deep(.arco-spin-children) {
+      display: block;
+      width: 100%;
+    }
 
     &__header {
       display: flex;
@@ -346,35 +323,14 @@
 
     &__analysis {
       margin-top: 16px;
-    }
 
-    &__funnel {
-      display: grid;
-      gap: 14px;
-
-      header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 6px;
-      }
-
-      strong {
-        font-weight: 500;
-      }
-
-      small {
-        display: block;
-        margin-top: 3px;
-        color: var(--color-text-3);
-        text-align: right;
+      :deep(.arco-card) {
+        height: 100%;
       }
     }
 
-    :deep(.arco-table-td) small {
-      display: block;
-      margin-top: 3px;
-      color: var(--color-text-3);
+    &__chart-card {
+      width: 100%;
     }
   }
 

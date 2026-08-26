@@ -75,6 +75,7 @@ type CohortOrderStatsRow = {
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
+const NEW_USER_CHAT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 const ACTIVE_IMPORT_STATUSES = [
   ConversationChatImportStatus.uploading,
@@ -430,17 +431,7 @@ export class AdminOperationsService {
       this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregateDailyAmount(
         this.orderModel,
-        {
-          ...realOrderMatch,
-          status: 'refunded',
-          $or: [
-            { refundedAt: { $gte: monthStart, $lt: monthEnd } },
-            {
-              refundedAt: null,
-              updatedAt: { $gte: monthStart, $lt: monthEnd },
-            },
-          ],
-        },
+        this.buildRefundFlowMatch(monthStart, monthEnd, realOrderMatch),
         { $ifNull: ['$refundedAt', '$updatedAt'] },
         {
           $cond: [
@@ -731,17 +722,7 @@ export class AdminOperationsService {
       this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregateDailyAmount(
         this.orderModel,
-        {
-          ...realOrderMatch,
-          status: 'refunded',
-          $or: [
-            { refundedAt: { $gte: monthStart, $lt: monthEnd } },
-            {
-              refundedAt: null,
-              updatedAt: { $gte: monthStart, $lt: monthEnd },
-            },
-          ],
-        },
+        this.buildRefundFlowMatch(monthStart, monthEnd, realOrderMatch),
         { $ifNull: ['$refundedAt', '$updatedAt'] },
         {
           $cond: [
@@ -1010,24 +991,9 @@ export class AdminOperationsService {
           },
         },
         {
-          $group: {
-            _id: {
-              date: {
-                $dateToString: {
-                  format: '%Y-%m-%d',
-                  date: '$createdAt',
-                  timezone: '+08:00',
-                },
-              },
-              userId: '$userId',
-            },
-            messageCount: { $sum: 1 },
-          },
-        },
-        {
           $lookup: {
             from: TableName.user,
-            localField: '_id.userId',
+            localField: 'userId',
             foreignField: '_id',
             as: 'user',
           },
@@ -1035,17 +1001,22 @@ export class AdminOperationsService {
         { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
         {
           $project: {
-            date: '$_id.date',
-            messageCount: 1,
+            date: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: '+08:00',
+              },
+            },
+            userId: 1,
             isNewUser: {
-              $eq: [
-                '$_id.date',
+              $and: [
+                { $gte: ['$createdAt', '$user.createdAt'] },
                 {
-                  $dateToString: {
-                    format: '%Y-%m-%d',
-                    date: '$user.createdAt',
-                    timezone: '+08:00',
-                  },
+                  $lt: [
+                    '$createdAt',
+                    { $add: ['$user.createdAt', NEW_USER_CHAT_WINDOW_MS] },
+                  ],
                 },
               ],
             },
@@ -1053,20 +1024,30 @@ export class AdminOperationsService {
         },
         {
           $group: {
-            _id: '$date',
+            _id: {
+              date: '$date',
+              userId: '$userId',
+            },
+            messageCount: { $sum: 1 },
+            newUserMessageCount: {
+              $sum: { $cond: ['$isNewUser', 1, 0] },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$_id.date',
             allChatUsers: { $sum: 1 },
             userMessages: { $sum: '$messageCount' },
-            newUserChatUsers: { $sum: { $cond: ['$isNewUser', 1, 0] } },
-            newUserMessages: {
-              $sum: { $cond: ['$isNewUser', '$messageCount', 0] },
+            newUserChatUsers: {
+              $sum: {
+                $cond: [{ $gt: ['$newUserMessageCount', 0] }, 1, 0],
+              },
             },
+            newUserMessages: { $sum: '$newUserMessageCount' },
             newUserFiveMessageUsers: {
               $sum: {
-                $cond: [
-                  { $and: ['$isNewUser', { $gte: ['$messageCount', 5] }] },
-                  1,
-                  0,
-                ],
+                $cond: [{ $gte: ['$newUserMessageCount', 5] }, 1, 0],
               },
             },
           },
@@ -1415,6 +1396,24 @@ export class AdminOperationsService {
       targetCode: { $ne: 'voice_one' },
       source: { $ne: 'admin' },
       paymentProvider: { $ne: 'admin_manual' },
+    };
+  }
+
+  private buildRefundFlowMatch(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Record<string, unknown> {
+    return {
+      ...extraMatch,
+      $or: [
+        { refundedAt: { $gte: start, $lt: end } },
+        {
+          status: 'refunded',
+          refundedAt: null,
+          updatedAt: { $gte: start, $lt: end },
+        },
+      ],
     };
   }
 
