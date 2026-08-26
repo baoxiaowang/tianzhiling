@@ -37,6 +37,7 @@ import {
 import { AuthenticatedUserPayload } from '../interface';
 import { Provide } from '@midwayjs/core';
 import {
+  containsAssistantInternalReasoningLeak,
   findUnsafeAssistantMessageContentMatches,
   stripPromptLeakageContent,
   UnsafeAssistantMessageContentMatch,
@@ -239,6 +240,9 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const CONVERSATION_REPLY_TURN_RECOVERY_LOCK_KEY =
+  'conversation:reply-turn:recovery:lock:v1';
+const CONVERSATION_REPLY_TURN_RECOVERY_LOCK_TTL_MS = 3 * 60 * 1000;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
@@ -701,6 +705,7 @@ export interface ConversationChatBootstrapMetadata {
 @Provide()
 export class ConversationService {
   private replyTurnRecoveryTimer?: ReturnType<typeof setInterval>;
+  private replyTurnRecoveryPromise?: Promise<void>;
 
   @Logger()
   logger: ILogger;
@@ -833,14 +838,7 @@ export class ConversationService {
     ) {
       return;
     }
-    const attempt = () => {
-      void this.recoverConversationReplyTurns().catch(error => {
-        this.logger?.error?.(
-          '[conversation-reply-turn] recovery failed, reason=%s',
-          this.describeReplyError(error)
-        );
-      });
-    };
+    const attempt = () => this.scheduleConversationReplyTurnRecovery();
     setImmediate(attempt);
     this.replyTurnRecoveryTimer = setInterval(
       attempt,
@@ -851,9 +849,10 @@ export class ConversationService {
 
   @Destroy()
   async stopReplyTurnRecovery(): Promise<void> {
-    if (!this.replyTurnRecoveryTimer) return;
-    clearInterval(this.replyTurnRecoveryTimer);
-    this.replyTurnRecoveryTimer = undefined;
+    if (this.replyTurnRecoveryTimer) {
+      clearInterval(this.replyTurnRecoveryTimer);
+      this.replyTurnRecoveryTimer = undefined;
+    }
   }
 
   async listConversations(
@@ -6557,6 +6556,21 @@ export class ConversationService {
   }): ChatCompletionMessageParam[] {
     const agentName = options.runtime.agent?.name?.trim() || 'TA';
     const agentCallsUser = options.runtime.agent?.agentCallMe?.trim() || '我';
+    const consecutiveHeader = options.userQuery
+      .trim()
+      .match(/^用户连续输入（按发送顺序，共(\d+)条）：/);
+    const consecutiveInput = Boolean(consecutiveHeader);
+    const consecutiveMessageCount = Number(consecutiveHeader?.[1] || 0);
+    const consecutiveMessageStarts: string[] = [];
+    const consecutiveMessagePattern = /(?:^|\n)\d+\.\s*([^\n]+)/g;
+    let consecutiveMessageMatch: RegExpExecArray | null;
+    while (
+      (consecutiveMessageMatch = consecutiveMessagePattern.exec(
+        options.userQuery
+      ))
+    ) {
+      consecutiveMessageStarts.push(consecutiveMessageMatch[1].trim());
+    }
     const recentMessages = options.contextMessages
       .filter(
         message =>
@@ -6564,7 +6578,7 @@ export class ConversationService {
           typeof message.content === 'string' &&
           message.content.trim()
       )
-      .slice(-5)
+      .slice(consecutiveInput ? -12 : -5)
       .map(message => ({
         ...message,
         content: (message.content as string).trim().slice(0, 500),
@@ -6617,12 +6631,25 @@ export class ConversationService {
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
       outputContractPrompt,
     ].join('\n');
-    const hasCurrentUserMessage = recentMessages.some(
-      message =>
-        message.role === 'user' &&
-        typeof message.content === 'string' &&
-        message.content.trim() === options.userQuery.trim()
-    );
+    const recentCurrentUserMessages = recentMessages
+      .filter(message => message.role === 'user')
+      .slice(-consecutiveMessageCount);
+    const hasCurrentUserMessage = consecutiveInput
+      ? consecutiveMessageCount >= 2 &&
+        recentCurrentUserMessages.length === consecutiveMessageCount &&
+        (consecutiveMessageStarts.length !== consecutiveMessageCount ||
+          consecutiveMessageStarts.every((start, index) => {
+            const content = recentCurrentUserMessages[index]?.content;
+            return (
+              typeof content === 'string' && content.trim().startsWith(start)
+            );
+          }))
+      : recentMessages.some(
+          message =>
+            message.role === 'user' &&
+            typeof message.content === 'string' &&
+            message.content.trim() === options.userQuery.trim()
+        );
 
     return [
       {
@@ -7762,6 +7789,57 @@ export class ConversationService {
           '[conversation-reply-turn] recovery queue unavailable, turnId=%s',
           turn.turnId
         );
+      }
+    }
+  }
+
+  /**
+   * Recovery is an auxiliary safety net, not request-path work. Keep one
+   * in-process sweep in flight and one sweep across the PM2 cluster so a slow
+   * MongoDB scan cannot multiply every 20 seconds until workers exhaust their
+   * heaps.
+   */
+  private scheduleConversationReplyTurnRecovery(): void {
+    if (this.replyTurnRecoveryPromise) return;
+
+    const recovery = this.recoverConversationReplyTurnsWithLease()
+      .catch(error => {
+        this.logger?.error?.(
+          '[conversation-reply-turn] recovery failed, reason=%s',
+          this.describeReplyError(error)
+        );
+      })
+      .finally(() => {
+        if (this.replyTurnRecoveryPromise === recovery) {
+          this.replyTurnRecoveryPromise = undefined;
+        }
+      });
+    this.replyTurnRecoveryPromise = recovery;
+  }
+
+  private async recoverConversationReplyTurnsWithLease(): Promise<void> {
+    if (!this.redisService) return;
+
+    const token = `${process.pid}:${Date.now()}:${Math.random()
+      .toString(16)
+      .slice(2)}`;
+    const acquired = await this.redisService.set(
+      CONVERSATION_REPLY_TURN_RECOVERY_LOCK_KEY,
+      token,
+      'PX',
+      CONVERSATION_REPLY_TURN_RECOVERY_LOCK_TTL_MS,
+      'NX'
+    );
+    if (acquired !== 'OK') return;
+
+    try {
+      await this.recoverConversationReplyTurns();
+    } finally {
+      const currentToken = await this.redisService.get(
+        CONVERSATION_REPLY_TURN_RECOVERY_LOCK_KEY
+      );
+      if (currentToken === token) {
+        await this.redisService.del(CONVERSATION_REPLY_TURN_RECOVERY_LOCK_KEY);
       }
     }
   }
@@ -10166,6 +10244,14 @@ export class ConversationService {
     value?: string | string[],
     userQuery = ''
   ): string[] {
+    const rawCandidate = Array.isArray(value) ? value.join('\n') : value || '';
+    if (containsAssistantInternalReasoningLeak(rawCandidate)) {
+      throw new AppError(
+        'ASSISTANT_INTERNAL_REASONING_LEAK',
+        'assistant reply exposed internal generation reasoning',
+        502
+      );
+    }
     const parsedSegments = Array.isArray(value)
       ? value
       : this.parseAssistantReplyCandidates(value);
@@ -10224,6 +10310,9 @@ export class ConversationService {
   }): AssistantGenerationAttemptTrace {
     const parsedReply = this.parseAssistantReply(options.responseContent);
     const parsedSegments = options.parsedSegments || parsedReply.segments;
+    const internalReasoningLeak = containsAssistantInternalReasoningLeak(
+      parsedSegments.join('\n') || options.responseContent
+    );
     const segmentTraces = parsedSegments.map(segment =>
       this.inspectAssistantSegmentSanitization(segment, options.userQuery)
     );
@@ -10241,6 +10330,9 @@ export class ConversationService {
       segmentTraces,
       errorCode:
         options.errorCode ||
+        (internalReasoningLeak
+          ? 'ASSISTANT_INTERNAL_REASONING_LEAK'
+          : undefined) ||
         (acceptedSegments.length
           ? undefined
           : 'ASSISTANT_REPLY_NO_USABLE_TEXT'),
@@ -10389,6 +10481,15 @@ export class ConversationService {
 
     const parsed = this.parseAssistantReplyEnvelope(content);
     const segments = this.parseAssistantReplyCandidates(content);
+    if (containsAssistantInternalReasoningLeak(segments.join('\n'))) {
+      return {
+        segments: [],
+        claims: [],
+        ...(allowedToolNames.length
+          ? { toolDecisions: [], invalidToolDecisionCount: 0 }
+          : {}),
+      };
+    }
     const nextTurnMode = this.resolveParsedReplyTurnMode(parsed, segments);
 
     const toolDecisionResult = normalizeAgentChatToolDecisions(
@@ -10808,6 +10909,7 @@ export class ConversationService {
         'legacy_media_path',
         'prompt_leakage',
         'technical_fragment',
+        'internal_reasoning',
       ].includes(match.rule)
     );
     const semanticSafetyMatches = messageSafetyMatches.filter(

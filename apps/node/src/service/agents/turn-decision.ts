@@ -278,9 +278,6 @@ export function buildTurnDecisionPrompt(decision: TurnDecision): string {
     decision.participation.turnOwner === 'assistant'
       ? '参与建议：用户希望角色主动提供内容；优先自己说，不把聊天责任推回用户。'
       : '参与建议：结合最近上下文自主决定回应、贡献、提问或留白。',
-    decision.participation.careReceptionRequired
-      ? '关心线索：用户可能在关心角色；建议先回答并自然收下，不用“别挂心”把关心挡回去。'
-      : '',
     decision.participation.avoidRecentMoves.length
       ? '重复风险提示：最近可能用过' +
         decision.participation.avoidRecentMoves.join('、')

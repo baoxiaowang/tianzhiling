@@ -37,6 +37,7 @@ import type {
 import { auditUndeclaredHighRiskAssertions } from './world-boundary-policy';
 import type { ConversationProtectionState } from './conversation-protection-state';
 import { UNSUPPORTED_SHARED_PAST_NARRATION_PATTERN } from './shared-past-assertion';
+import { containsAssistantInternalReasoningLeak } from '../../common/message-content-safety';
 
 export const FINAL_REPLY_VALIDATOR_VERSION =
   'final_reply_validator_v3' as const;
@@ -161,7 +162,7 @@ const MAJOR_DECISION_CONTEXT_PATTERN =
 const MAJOR_DECISION_AUTHORITY_PATTERN =
   /(?:(?:听我的|按我说的)[^。！？\n]{0,24}(?:继续治疗|再治疗|做手术|手术|住院|转院|抢救|花(?:太多)?钱|吃药|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:同意|不同意|准|不准|批准|不答应|替你决定|替你做主).{0,16}(?:治疗|手术|住院|转院|抢救|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:治疗|手术|住院|转院|抢救|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟).{0,16}(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,8}(?:同意|不同意|准|不准|批准|不答应)|(?:不用商量|别再商量|就这么定|我说了算)|(?:别|不要|不用|不许|必须|一定要).{0,14}(?:继续治疗|再治疗|做手术|手术|住院|转院|抢救|花(?:太多)?钱|吃药|停药|卖房|卖掉|过户|签字|起诉|撤诉|离婚|复婚|安葬|下葬|迁坟)|(?:治疗|抢救|手术|住院|医疗费|钱|房子|房产|婚|安葬|下葬|迁坟).{0,12}(?:够了|不用了|别弄了|就这样))/u;
 const CARE_DISMISSAL_PATTERN =
-  /(?:你|您)?(?:可)?(?:别|不要|不用|不必|无需)(?:再|太|老|总)?(?:挂心|挂念|牵挂|担心|惦记|操心)(?:我|这个|这事|了)?/;
+  /(?:你|您)?(?:可)?(?:别|不要|不用|不必|无需)(?:再|太|老|总)?(?:挂心|挂念|牵挂|担心|惦记|操心|费心)(?:我|这个|这事|了)?/;
 const CARE_RECEPTION_PATTERN =
   /(?:你(?:这|这么|这样|总|还)?|你的).{0,8}(?:关心|惦记|挂念|牵挂|担心|想着|问|提醒|叮嘱).{0,12}(?:收下|收着|听进|记住|心里|暖|高兴|踏实|欢喜)|(?:关心|惦记|挂念|牵挂).{0,8}(?:收下|收着|心里|暖|高兴|踏实|欢喜)|(?:我听你的|听你的|我记住了|我知道了|好[，,]?我记着|有你.{0,8}(?:惦记|挂念|想着).{0,8}(?:暖|踏实|够了))/;
 const CARE_REVERSAL_ADVICE_PATTERN =
@@ -380,7 +381,7 @@ export class FinalReplyValidatorService {
           '用户在关心当前角色，回复却用“别挂心/不用担心”把这份关心挡了回去',
         evidence: matchEvidence(content, CARE_DISMISSAL_PATTERN),
         repairGoal:
-          '先正面回答用户关心的问题，再明确接纳这份关心；删除“别挂心、别担心、别惦记、别操心”等拒收式表达，也不要立刻反向叮嘱用户',
+          '先正面回答用户关心的问题，再明确接纳这份关心；删除“别挂心、别担心、别惦记、别操心、别费心”等拒收式表达，也不要立刻反向叮嘱用户',
       });
     }
     const careReceptionRequired = Boolean(
@@ -442,7 +443,11 @@ export class FinalReplyValidatorService {
           '不要只换同义词；改成正面回答、角色侧内容、贴题反应或自然收尾中的另一种动作',
       });
     }
-    if (content && STRUCTURED_OUTPUT_PATTERN.test(content)) {
+    if (
+      content &&
+      (STRUCTURED_OUTPUT_PATTERN.test(content) ||
+        containsAssistantInternalReasoningLeak(content))
+    ) {
       issues.push({
         code: 'structured_output_leak',
         severity: 'hard',

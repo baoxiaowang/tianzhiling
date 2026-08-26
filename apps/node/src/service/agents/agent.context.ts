@@ -3067,13 +3067,21 @@ export class AgentContextService {
       return;
     }
 
-    if (currentTurnMessages.length === 1) {
-      const currentMessage = this.buildChatMessage(currentTurnMessages[0]);
+    const currentMessages = [...currentTurnMessages]
+      .sort(
+        (left, right) =>
+          new Date(left.createdAt || 0).getTime() -
+          new Date(right.createdAt || 0).getTime()
+      )
+      .map(message => this.buildChatMessage(message))
+      .filter(
+        (message): message is ChatCompletionMessageParam =>
+          message?.role === 'user'
+      );
 
-      if (currentMessage?.role === 'user') {
-        historyLayer.messages.push(currentMessage);
-        return;
-      }
+    if (currentMessages.length) {
+      historyLayer.messages.push(...currentMessages);
+      return;
     }
 
     historyLayer.messages.push({

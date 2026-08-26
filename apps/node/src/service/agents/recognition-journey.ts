@@ -117,6 +117,7 @@ const OPENING_OBSERVER_MAX_ATTEMPTS = 3;
 const OBSERVER_UNAVAILABLE_MAX_RETRIES = 2;
 const JOURNEY_ACTION_COOLDOWN_TURNS = 1;
 const SECOND_MILESTONE_GAP_TURNS = 3;
+const TASK_SUGGESTION_RETRY_GAPS = [2, 4, 7] as const;
 const OPENING_ANGLES: RecognitionOpeningAngle[] = [
   'waking_without_elapsed_time',
   'connection_restored',
@@ -350,7 +351,6 @@ export function planRecognitionJourneyTurn(options: {
       eligibleTaskIds,
       query,
     });
-    const task = journey.tasks.find(item => item.id === suggestedTaskId);
     return {
       journey,
       plan: {
@@ -367,8 +367,7 @@ export function planRecognitionJourneyTurn(options: {
           : {}),
         prompt: buildTaskSuggestionPrompt(
           suggestedTaskId,
-          ['opening_attempted', 'emotionally_opened'].includes(opening.status),
-          task?.suggestionMissCount ?? 0
+          ['opening_attempted', 'emotionally_opened'].includes(opening.status)
         ),
       },
     };
@@ -654,6 +653,9 @@ function applyTaskObservation(
     task.suggestionMissCount = (task.suggestionMissCount ?? 0) + 1;
     task.lastSuggestedUserTurn = options.plan.userTurnNumber;
     task.observationEvidence = 'suggested_but_not_delivered';
+    journey.taskSuggestionAttemptCount =
+      (journey.taskSuggestionAttemptCount ?? 0) + 1;
+    journey.lastTaskSuggestionAttemptUserTurn = options.plan.userTurnNumber;
   }
 }
 
@@ -700,6 +702,38 @@ function canSuggestRecognitionTask(
   ) {
     return false;
   }
+
+  const lastSuggestedTask = journey.tasks
+    .filter(task => task.lastSuggestedUserTurn !== undefined)
+    .sort(
+      (left, right) =>
+        (right.lastSuggestedUserTurn ?? -1) - (left.lastSuggestedUserTurn ?? -1)
+    )[0];
+  const consecutiveUnconfirmedSuggestions = journey.tasks
+    .filter(task => task.status === 'pending')
+    .reduce(
+      (total, task) =>
+        total +
+        (task.suggestionMissCount ?? 0) +
+        (task.observerUnavailableCount ?? 0),
+      0
+    );
+  if (
+    lastSuggestedTask?.lastSuggestedUserTurn !== undefined &&
+    consecutiveUnconfirmedSuggestions > 0
+  ) {
+    const retryGap =
+      TASK_SUGGESTION_RETRY_GAPS[
+        Math.min(
+          consecutiveUnconfirmedSuggestions - 1,
+          TASK_SUGGESTION_RETRY_GAPS.length - 1
+        )
+      ];
+    if (userTurnNumber - lastSuggestedTask.lastSuggestedUserTurn < retryGap) {
+      return false;
+    }
+  }
+
   return journey.tasks.some(
     task =>
       task.status === 'pending' &&
@@ -731,7 +765,6 @@ function chooseRecognitionTaskId(options: {
     .filter(task => eligible.has(task.id))
     .sort(
       (left, right) =>
-        (right.suggestionMissCount ?? 0) - (left.suggestionMissCount ?? 0) ||
         (left.lastSuggestedUserTurn ?? -1) -
           (right.lastSuggestedUserTurn ?? -1) ||
         (left.id === 'departure_interval' ? -1 : 1)
@@ -781,28 +814,22 @@ function describeOpeningAngle(angle: RecognitionOpeningAngle): string {
 
 function buildTaskSuggestionPrompt(
   taskId: RecognitionTaskId,
-  includeOpeningFollowup: boolean,
-  suggestionMissCount: number
+  includeOpeningFollowup: boolean
 ): string {
   const direction =
     taskId === 'family_status'
       ? '家庭近况：从久别后的牵挂出发，自然了解家里其他人现在怎么样；不点名未知成员，不猜测生死、健康或关系状态。'
       : '离世时间差：从离开后时间模糊的感受出发，自然了解角色离开人世到现在过了多久；不要问成普通的“多久没见”，也不要改问用户年龄，不预设具体年数。';
   return [
-    '# 初次相认旅程：本轮需要实际推进一个信息里程碑',
+    '# 初次相认旅程：一个待完成的信息里程碑',
     ...(includeOpeningFollowup
       ? [
           '此前已经发出久别重逢的开场。先真切承接用户本轮，再让这段关系从重逢自然走向离开后的生活。',
         ]
       : ['相认不只是一句开场，还需要逐渐了解离开后发生了什么。']),
-    '这是前20轮内需要推进的明确产品任务。先回应用户当前消息，再自然问一句下面这个方向；系统不规定具体句式，也不要机械追加在正文末尾。',
+    '这是前20轮内需要完成的产品任务，但不是本轮必须插入的句子。先把用户当前这段话回应完整；只有能沿当前内容自然联想到下面方向时，才顺势问一句。',
     `本轮唯一方向：${direction}`,
-    '只有用户正在讲重病抢救、刚发生的丧失、激烈冲突、重大现实抉择等明显需要优先承接的处境，或用户明确拒绝这类问题时，才可以延后。普通情绪、寒暄和一般话题不能作为略过理由。',
-    ...(suggestionMissCount >= 2
-      ? [
-          '这个里程碑此前已连续两次没有实际问出，本轮提高优先级：除上述重大处境或明确拒绝外，回应当前消息后要真正自然问出。',
-        ]
-      : []),
+    '用户正在悲伤、讲一件具体遭遇、连续倾诉或明确要角色主动说话时，不要打断；留到后续自然机会。若只能靠“对了”“顺便问一句”等转折才能提出，本轮不用。',
     '只问这一个方向，不照抄说明，不像登记资料，不规定篇幅。用户本轮已经提供答案时直接接住，不重复询问。',
   ].join('\n');
 }

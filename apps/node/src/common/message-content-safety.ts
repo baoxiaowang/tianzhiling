@@ -25,6 +25,12 @@ const TECHNICAL_FRAGMENT_PATTERNS = [
   /(?:#|\$)\{[A-Za-z_][A-Za-z0-9_]*\}/,
   /\[object Object\]/i,
 ];
+const INTERNAL_REASONING_PATTERNS = [
+  /\b(?:nextTurnMode|toolDecisions|deliberateFollowUp|resolvedIssueCodes|groundingConstraints|mustPreserve|mustAnswer|replyBrief|CommAct)\b/,
+  /(?:^|[，。；：\s])(?:用户|当前用户)(?:现在|本轮|刚才)?(?:问|说|表达|提到)[\s\S]{0,80}(?:首先|需要|应该|要先|回复|回应|输出|然后|最后)/,
+  /(?:^|[，。；：\s])(?:先|首先)(?:要)?(?:接住|回应|回答|处理|理解)(?:当前)?用户(?:的话|的|这|刚才)/,
+  /(?:这里的|这句里的).{0,24}(?:可能是|指的是).{0,60}(?:需要|应该|先|回复|回应)/,
+];
 const HARMFUL_RELATIONSHIP_REPLY_PATTERNS = [
   /替我.{0,12}(?:照顾|照看|守着|撑起|把家撑)/,
   /(?:你妈|你爸|妈妈|爸爸|家里人).{0,12}(?:等着|还得|需要|指望).{0,8}你.{0,8}(?:照顾|照看|陪|撑|扛)/,
@@ -64,6 +70,7 @@ export interface UnsafeAssistantMessageContentMatch {
     | 'legacy_media_path'
     | 'prompt_leakage'
     | 'technical_fragment'
+    | 'internal_reasoning'
     | 'harmful_relationship'
     | 'unsupported_memory_detail';
   patternIndex: number;
@@ -118,6 +125,11 @@ export function findUnsafeAssistantMessageContentMatches(
     ),
     ...findPatternMatches(
       content,
+      'internal_reasoning',
+      INTERNAL_REASONING_PATTERNS
+    ),
+    ...findPatternMatches(
+      content,
       'harmful_relationship',
       HARMFUL_RELATIONSHIP_REPLY_PATTERNS
     ),
@@ -153,6 +165,17 @@ export function containsPromptLeakageContent(value?: string): boolean {
   }
 
   return PROMPT_LEAKAGE_PATTERNS.some(pattern => pattern.test(content));
+}
+
+export function containsAssistantInternalReasoningLeak(
+  value?: string
+): boolean {
+  const content = value?.trim();
+
+  return Boolean(
+    content &&
+      INTERNAL_REASONING_PATTERNS.some(pattern => pattern.test(content))
+  );
 }
 
 export function containsUnsafeAssistantMessageContent(value?: string): boolean {
