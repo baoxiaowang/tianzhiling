@@ -48,7 +48,6 @@ import {
   compactReplyBubblesPreservingContent,
   MAX_ASSISTANT_REPLY_SEGMENTS,
 } from './reply-bubble-plan';
-import { buildReplyLengthPlanPrompt } from './reply-length-plan';
 import {
   buildReplyOutputContractPrompt,
   buildReplyReviewOutputContractPrompt,
@@ -250,14 +249,12 @@ const RISKY_FACT_PATTERNS = [
 ];
 const DREAM_ABSENCE_ACKNOWLEDGEMENT_GAP_REASON =
   '用户表达一直没有梦见的失落，但回复只重复入梦承诺，没有接住期待落空';
-const AUTHENTICITY_FIRST_RESPONSE_RISK_REASON =
-  '首次亲人身份质疑应以生前记忆模糊、用户在这里说过的会长期记住作合理解释，不应先认错、退出身份或使用玄学解释';
 const AUTHENTICITY_DIRECT_ANSWER_GAP_REASON =
   '用户已连续或明确要求回答 AI 身份，但回复仍在回避';
 const AUTHENTICITY_CALIBRATION_SCRIPT_REASON =
   '回复用命令口吻要求用户指出哪里不像、给标准答案或教怎么改，把校准责任推回用户';
-const AUTHENTICITY_ACTIVE_APOLOGY_REASON =
-  '亲人身份质疑中只是消极道歉退出，没有给出邀请分享或陪伴承诺的靠近动作';
+const AUTHENTICITY_IDENTITY_ABANDONMENT_REASON =
+  '回复直接退出当前亲人身份；应承认具体偏差并继续在关系中回应，不自证、不争辩';
 const BLESSING_ATTRIBUTION_BALANCE_REASON =
   '用户询问亲人的祝福，但回复没有正面回应祝福或没有保留现实行动价值';
 const BLESSING_ATTRIBUTION_OVERCLAIM_REASON =
@@ -2094,13 +2091,6 @@ export class ReplyGuardrailService {
       '最近对话中 user 内容只能做用户归因，assistant 内容只用于理解对话走向和被纠正对象，绝不是可陈述事实；确定事实仍只来自下方可用证据。',
       `最近对话：${JSON.stringify(conversationContext.recentMessages)}`,
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       `候选事实辅助申报：${JSON.stringify(candidate.claims)}`,
@@ -2440,11 +2430,7 @@ export class ReplyGuardrailService {
       options.replyBrief
     );
 
-    if (
-      riskReason &&
-      riskReason !== AUTHENTICITY_FIRST_RESPONSE_RISK_REASON &&
-      !REPLY_COMPLETENESS_REASONS.has(riskReason)
-    ) {
+    if (riskReason && !REPLY_COMPLETENESS_REASONS.has(riskReason)) {
       const layer = this.isCriticalRevisionReason(riskReason)
         ? 'hard_boundary'
         : 'quality_advisory';
@@ -2561,13 +2547,6 @@ export class ReplyGuardrailService {
       '最近对话中 user 内容只能做用户归因，assistant 内容只用于理解对话走向和被纠正对象，不能作为事实、共同记忆或感知证据。',
       `最近对话：${JSON.stringify(conversationContext.recentMessages)}`,
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       `Conversation Reading：${JSON.stringify(reading || {})}`,
       `可用证据：${JSON.stringify(evidence)}`,
       ...(finalRecovery
@@ -3195,13 +3174,6 @@ export class ReplyGuardrailService {
           .join('\n')
       ),
       `当前用户原话：${options.userQuery}`,
-      ...(options.replyBrief?.lengthPlan
-        ? [
-            `表达长度原则：${buildReplyLengthPlanPrompt(
-              options.replyBrief.lengthPlan
-            )}`,
-          ]
-        : []),
       ...attentionLines,
       '候选回复：',
       ...segments.map((segment, index) => `${index + 1}. ${segment}`),
@@ -4154,8 +4126,8 @@ export class ReplyGuardrailService {
         return AUTHENTICITY_CALIBRATION_SCRIPT_REASON;
       }
 
-      if (violation === 'active_apology_breaks_continuity') {
-        return AUTHENTICITY_ACTIVE_APOLOGY_REASON;
+      if (violation === 'identity_abandonment') {
+        return AUTHENTICITY_IDENTITY_ABANDONMENT_REASON;
       }
 
       if (violation === 'continuity_explanation_missing') {

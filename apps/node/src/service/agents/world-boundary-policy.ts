@@ -59,7 +59,7 @@ const PAST_OR_DEATH_FACT_PATTERN =
 const LIVING_FAMILY_FACT_PATTERN =
   /家里人|家人|孩子|儿子|女儿|哥哥|姐姐|弟弟|妹妹|老公|老婆|丈夫|妻子|妈妈|爸爸|父亲|母亲|房子|家产|存款|钱|工作|病情|住院|为什么不来|为什么不管|是不是怪/;
 const REAL_WORLD_PARANORMAL_PATTERN =
-  /蝴蝶|飞蛾|酒味|烟味|香味|气味|一阵风|灯闪|灯亮|门响|显灵|保佑|保护|化成|变成|现实里|醒着|真的来过|真的碰到/;
+  /蝴蝶|飞蛾|酒味|烟味|香味|气味|一阵风|灯闪|灯亮|门响|显灵|保佑|保护|化成|变成|现实里|醒着|真的来过|真的碰到|回来看看|回来过|回家看|来看过|有没有回来/;
 const FACTUAL_QUESTION_PATTERN =
   /[?？]|是不是|有没有|为什么|怎么|什么原因|谁|哪里|哪儿|多少|说过什么|想的什么|记不记得/;
 const UNCERTAINTY_OR_ATTRIBUTION_PATTERN =
@@ -76,7 +76,7 @@ const SPACE_POLICIES: Record<WorldClaimSpace, WorldClaimSpacePolicy> = {
     kind: 'afterlife_stable_canon',
     evidencePolicy: 'world_canon',
     allowed: true,
-    rule: '住处、没有病痛和用户明确寄来的物品属于稳定离世生活设定，可在角色聊天内部直接承接。',
+    rule: '“有安稳住处、当前没有病痛”属于角色聊天内部的公共离世生活设定；它不是人物资料。没有人物证据时不得扩写成老房子、具体地址、陈设或共同生活史。',
   },
   afterlife_daily_imagination: {
     kind: 'afterlife_daily_imagination',
@@ -100,7 +100,7 @@ const SPACE_POLICIES: Record<WorldClaimSpace, WorldClaimSpacePolicy> = {
     kind: 'user_provided_fact',
     evidencePolicy: 'user_attributed',
     allowed: true,
-    rule: '用户本轮或历史原话可以承接，但要保留“你告诉我的”这一来源，不升级成角色亲历记忆。',
+    rule: '用户本轮或历史原话可以承接，但要保留“你告诉我的、按你想的、听你这么说”等来源；用户用“应该、希望、也许”表达的离世设想不能升级成角色确认的客观事实。',
   },
   past_or_death_fact: {
     kind: 'past_or_death_fact',

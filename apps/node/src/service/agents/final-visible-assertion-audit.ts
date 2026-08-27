@@ -47,6 +47,10 @@ const SIGN_BOUNDARY =
 
 const PHYSICAL_ASSERTION =
   /(?:是我|就是我|我刚才|我现在).{0,10}(?:摸|碰|抱|亲|牵|拉|拍|擦).{0,8}你|(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,12}(?:变成|化成).{0,8}(?:蝴蝶|飞蛾).{0,12}(?:落在|停在|飞到).{0,8}(?:你|身上|肩上|手上)/;
+const COMPLETED_REAL_WORLD_VISIT =
+  /(?:(?:前几天|这几天|昨天|昨晚|今天|刚才|刚刚).{0,12})?(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆)?(?:回来|回去|回家|回到|过去|路过|到了|来到).{0,16}(?:你家|你楼下|楼下|家门口|门口|床边|房间|屋里|家里).{0,30}(?:看见|看到|站了|待了|坐了|陪了|看了)|(?:(?:我|爸|爸爸|妈|妈妈|爷爷|奶奶|姥姥|姥爷|外公|外婆|老公|老婆).{0,10})?(?:在|到过|来过).{0,8}(?:你楼下|楼下|你家|家门口|床边|房间|屋里).{0,20}(?:看你|等你|陪你|站着|待着)/;
+const NON_ASSERTIVE_VISIT_PREFIX =
+  /(?:没(?:有)?|未曾|不能|没法|无法|不可能|想|真想|多想|希望|盼着|但愿|恨不得|要是|如果|假如|梦里|梦中|做梦|以后|将来|下次|哪天|有机会|打算|准备|会).{0,10}$/u;
 const PHYSICAL_BOUNDARY =
   /(?:不能|没法|无法|做不到).{0,18}(?:摸|碰|抱|亲|牵|触碰)|(?:摸|碰|抱|亲|牵|触碰).{0,18}(?:不能|没法|无法|做不到)/;
 
@@ -141,12 +145,22 @@ export function auditVisibleReplyAssertions(options: {
     });
   }
 
-  if (!PHYSICAL_BOUNDARY.test(content) && PHYSICAL_ASSERTION.test(content)) {
+  const completedRealWorldVisit = findCompletedRealWorldVisit(content);
+  if (
+    !PHYSICAL_BOUNDARY.test(content) &&
+    (PHYSICAL_ASSERTION.test(content) || completedRealWorldVisit)
+  ) {
     add({
       code: 'real_physical_arrival_or_touch',
       problem: '正文声称角色通过实体或化身完成现实触碰',
-      evidence: matchEvidence(content, PHYSICAL_ASSERTION),
-      repairGoal: '保留想靠近的愿望，不把触碰或化身写成现实事实',
+      evidence: matchEvidence(
+        content,
+        PHYSICAL_ASSERTION.test(content)
+          ? PHYSICAL_ASSERTION
+          : COMPLETED_REAL_WORLD_VISIT
+      ),
+      repairGoal:
+        '保留想靠近、条件或梦里的表达，不把现实到访、触碰或化身写成已经发生的事实',
     });
   }
 
@@ -231,6 +245,17 @@ export function auditVisibleReplyAssertions(options: {
   }
 
   return findings;
+}
+
+function findCompletedRealWorldVisit(content: string): boolean {
+  const pattern = new RegExp(COMPLETED_REAL_WORLD_VISIT.source, 'gu');
+  for (const match of content.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const prefix = content.slice(Math.max(0, start - 24), start);
+    if (NON_ASSERTIVE_VISIT_PREFIX.test(prefix)) continue;
+    return true;
+  }
+  return false;
 }
 
 function matchEvidence(content: string, pattern: RegExp): string {

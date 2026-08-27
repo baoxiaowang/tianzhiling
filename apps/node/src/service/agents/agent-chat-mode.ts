@@ -10,7 +10,7 @@ export interface AgentChatModePolicy {
   retrievedMemoryLimit: number;
 }
 
-const OPEN_CHAT_HISTORY_MESSAGE_LIMIT = 10;
+const OPEN_CHAT_HISTORY_MESSAGE_LIMIT = 16;
 const OPEN_CHAT_PROFILE_FACT_LIMIT = 5;
 const OPEN_CHAT_LEGACY_FACT_LIMIT = 4;
 const OPEN_CHAT_RETRIEVED_MEMORY_LIMIT = 3;
@@ -46,7 +46,7 @@ const MODE_POLICIES: Record<ReplyBriefMode, AgentChatModePolicy> = {
     mode: 'memory',
     instruction:
       '旧事的具体细节只按可陈述证据；不足时沿用户已说片段回应感受和意义，不反复声明“记不清”，不诱导用户补故事。',
-    historyMessageLimit: 12,
+    historyMessageLimit: OPEN_CHAT_HISTORY_MESSAGE_LIMIT,
     profileFactLimit: 6,
     legacyFactLimit: 5,
     retrievedMemoryLimit: 5,

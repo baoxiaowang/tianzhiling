@@ -32,15 +32,12 @@ import {
   CONTINUITY_INFORMATION_CARD_MESSAGE_PREFIX,
   parseContinuityInformationCardStore,
 } from './continuity-information-card';
-import {
-  extractContinuityInformationCards,
-  shouldInspectHistoricalContinuityMessage,
-} from './continuity-information-card-extractor';
 import { migrateLegacyContinuityStore } from './relationship-open-loop-legacy';
 import {
   extractRelationshipOpenLoop,
   RelationshipOpenLoopExtraction,
 } from './relationship-open-loop-extractor';
+import { revalidateRelationshipOpenLoopStore } from './relationship-open-loop-revalidation';
 
 export interface CaptureRelationshipOpenLoopOptions {
   message: MessageEntity;
@@ -70,11 +67,12 @@ export interface PrepareRelationshipOpenLoopTurnOptions {
   conversation: ConversationEntity;
   currentQuery: string;
   currentTurnMessages: MessageEntity[];
+  allowFollowUpTask?: boolean;
   now?: Date;
 }
 
 export interface PreparedRelationshipOpenLoopTurn {
-  status: 'selected' | 'no_store' | 'no_candidate';
+  status: 'selected' | 'context_evidence' | 'no_store' | 'no_candidate';
   candidateCount: number;
   prompt?: string;
   taskId?: string;
@@ -82,6 +80,7 @@ export interface PreparedRelationshipOpenLoopTurn {
   stateMessageId?: string;
   sourceMessageIds?: string[];
   selectionReason?: RelationshipOpenLoopSelection['reason'];
+  selectionKind?: RelationshipOpenLoopSelection['kind'];
   selectedAt?: Date;
 }
 
@@ -106,6 +105,8 @@ export interface RelationshipOpenLoopBackfillSummary {
   updatedConversationCount: number;
   verifiedConversationCount: number;
   failedConversationCount: number;
+  revalidatedTaskCount: number;
+  removedTaskCount: number;
 }
 
 export interface RelationshipOpenLoopBackfillStatus {
@@ -118,25 +119,70 @@ export interface RelationshipOpenLoopBackfillStatus {
   updatedConversationCount?: number;
   verifiedConversationCount?: number;
   failedConversationCount?: number;
+  revalidatedTaskCount?: number;
+  removedTaskCount?: number;
+  eligibleUserCount?: number;
+  conversationCount?: number;
+  scannedMessageCount?: number;
+  progressPhase?: RelationshipOpenLoopBackfillProgress['phase'];
   completedAt?: string;
   schedulerActive?: boolean;
   nextEligibleAt?: string;
 }
 
+interface RelationshipOpenLoopBackfillProgress {
+  version: 'relationship_open_loop_revalidation_progress_v2';
+  cutoffAt: string;
+  eligibleUserIds: string[];
+  accountDiscoveryOffset: number;
+  conversationDiscoveryOffset: number;
+  userIndex: number;
+  conversationIndex: number;
+  phase: 'discover_accounts' | 'discover_conversations' | 'scan' | 'retry';
+  retryRound: number;
+  retryIndex: number;
+  retryConversationIds: string[];
+  failedConversationIds: string[];
+  markerConversationId?: string;
+  summary: Omit<RelationshipOpenLoopBackfillSummary, 'cutoffAt'> & {
+    cutoffAt: string;
+  };
+  startedAt: string;
+  updatedAt: string;
+}
+
+type RelationshipOpenLoopBackfillDelta = Pick<
+  RelationshipOpenLoopBackfillSummary,
+  | 'legacyCardCount'
+  | 'migratedLegacyCardCount'
+  | 'generatedTaskCount'
+  | 'activeTaskCount'
+  | 'expiredTaskCount'
+  | 'updatedConversationCount'
+  | 'verifiedConversationCount'
+  | 'revalidatedTaskCount'
+  | 'removedTaskCount'
+>;
+
 const RETURN_GAP_MS = 12 * 60 * 60 * 1000;
 const RECENT_VISIBLE_MESSAGE_LIMIT = 16;
 const DISTRIBUTED_LOCK_TTL_MS = 15 * 1000;
-const BACKFILL_JOB_ID = 'relationship-open-loop-backfill-20260821-v2';
+const BACKFILL_JOB_ID = 'relationship-open-loop-revalidation-20260824-v3';
 const BACKFILL_MARKER_MESSAGE_PREFIX =
-  '__TZL_RELATIONSHIP_OPEN_LOOP_BACKFILL_20260821_V2__:';
+  '__RELATIONSHIP_OPEN_LOOP_REVALIDATION_20260824_V3__:';
 const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const BACKFILL_LOCK_MS = 6 * 60 * 60 * 1000;
+const BACKFILL_LOCK_MS = 10 * 60 * 1000;
 const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
+const BACKFILL_RUN_BUDGET_MS = 3 * 60 * 1000;
+const BACKFILL_PROGRESS_VERSION =
+  'relationship_open_loop_revalidation_progress_v2' as const;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
 @Provide()
 export class RelationshipOpenLoopService {
+  private backfillTimer?: ReturnType<typeof setInterval>;
+
   @Logger()
   logger: ILogger;
 
@@ -152,41 +198,32 @@ export class RelationshipOpenLoopService {
   @Inject()
   redisService: RedisService;
 
-  private productionBackfillTimer?: ReturnType<typeof setInterval>;
-
   @Init()
-  initializeProductionBackfill(): void {
-    if (process.env.NODE_ENV !== 'production') return;
-    const trigger = async () => {
-      try {
-        await this.runProductionBackfillOnce();
-        const status = await this.getProductionBackfillStatus();
-        if (status.status === 'completed' && this.productionBackfillTimer) {
-          clearInterval(this.productionBackfillTimer);
-          this.productionBackfillTimer = undefined;
-        }
-      } catch (error) {
+  async initializeProductionBackfill(): Promise<void> {
+    if (
+      process.env.NODE_ENV !== 'production' ||
+      process.env.RELATIONSHIP_OPEN_LOOP_REVALIDATION_AUTORUN !== 'true'
+    ) {
+      return;
+    }
+    const attempt = () => {
+      void this.runProductionBackfillOnce().catch(error => {
         this.logger?.error?.(
           '[relationship-open-loop-backfill] scheduled run failed, reason=%s',
           error instanceof Error ? error.message : String(error)
         );
-      }
+      });
     };
-    // Do not start a full historical scan during application startup. The
-    // service wakes periodically, while runProductionBackfillOnce enforces the
-    // Shanghai low-traffic window and durable idempotency markers.
-    this.productionBackfillTimer = setInterval(
-      () => void trigger(),
-      BACKFILL_RETRY_INTERVAL_MS
-    );
-    this.productionBackfillTimer.unref();
+    setImmediate(attempt);
+    this.backfillTimer = setInterval(attempt, BACKFILL_RETRY_INTERVAL_MS);
+    this.backfillTimer.unref?.();
   }
 
   @Destroy()
   async stopProductionBackfillScheduler(): Promise<void> {
-    if (!this.productionBackfillTimer) return;
-    clearInterval(this.productionBackfillTimer);
-    this.productionBackfillTimer = undefined;
+    if (!this.backfillTimer) return;
+    clearInterval(this.backfillTimer);
+    this.backfillTimer = undefined;
   }
 
   async captureFromUserMessage(
@@ -309,6 +346,7 @@ export class RelationshipOpenLoopService {
           options.conversation.id,
           options.currentTurnMessages
         ),
+        allowFollowUpTask: options.allowFollowUpTask,
         now,
       });
       if (!selection) {
@@ -327,7 +365,10 @@ export class RelationshipOpenLoopService {
         stored.message
       );
       return {
-        status: 'selected',
+        status:
+          selection.kind === 'context_evidence'
+            ? 'context_evidence'
+            : 'selected',
         candidateCount: selection.candidateCount,
         prompt: buildRelationshipOpenLoopPrompt(
           selection.task,
@@ -339,6 +380,7 @@ export class RelationshipOpenLoopService {
         stateMessageId: this.stringifyObjectId(stateMessage.message.id),
         sourceMessageIds: [...selection.task.sourceMessageIds],
         selectionReason: selection.reason,
+        selectionKind: selection.kind,
         selectedAt: now,
       };
     });
@@ -389,18 +431,16 @@ export class RelationshipOpenLoopService {
     if (process.env.NODE_ENV !== 'production' || !this.redisService) {
       return undefined;
     }
-    if (!this.isShanghaiMaintenanceWindow(now)) return undefined;
     const completedKey = `chat:${BACKFILL_JOB_ID}:completed`;
     const lockKey = `chat:${BACKFILL_JOB_ID}:lock`;
     const failedKey = `chat:${BACKFILL_JOB_ID}:failed`;
+    const progressKey = `chat:${BACKFILL_JOB_ID}:progress`;
     if (await this.redisService.get(completedKey)) return undefined;
     if (await this.redisService.get(failedKey)) return undefined;
-    const durableMarker = await this.findBackfillMarker();
-    if (durableMarker) {
-      await this.redisService.set(
-        completedKey,
-        JSON.stringify(durableMarker.summary)
-      );
+    const progressBeforeLock = this.parseBackfillProgress(
+      await this.redisService.get(progressKey)
+    );
+    if (!this.isShanghaiMaintenanceWindow(now) && !progressBeforeLock) {
       return undefined;
     }
     const lockToken = `${process.pid}:${now.getTime()}`;
@@ -415,176 +455,194 @@ export class RelationshipOpenLoopService {
     backfillRunning = true;
 
     try {
-      const cutoffAt = new Date(now.getTime() - BACKFILL_WINDOW_MS);
-      const eligibleUserIds = await this.listRecentlyActiveUserIds(cutoffAt);
+      if (await this.redisService.get(completedKey)) return undefined;
+      if (await this.redisService.get(failedKey)) return undefined;
+      const durableMarker = await this.findBackfillMarker();
+      if (durableMarker) {
+        await this.redisService.set(
+          completedKey,
+          JSON.stringify(durableMarker.summary)
+        );
+        return undefined;
+      }
+      const existingProgress = this.parseBackfillProgress(
+        await this.redisService.get(progressKey)
+      );
+      const startedAt = Date.now();
+      let progress =
+        existingProgress ?? (await this.createBackfillProgress(now));
+      await this.persistBackfillProgress(progressKey, progress);
+      const cutoffAt = new Date(progress.cutoffAt);
       let markerConversation: ConversationEntity | undefined;
-      const summary: RelationshipOpenLoopBackfillSummary = {
-        jobId: BACKFILL_JOB_ID,
-        cutoffAt,
-        eligibleUserCount: eligibleUserIds.length,
-        conversationCount: 0,
-        scannedMessageCount: 0,
-        legacyCardCount: 0,
-        migratedLegacyCardCount: 0,
-        generatedTaskCount: 0,
-        activeTaskCount: 0,
-        expiredTaskCount: 0,
-        updatedConversationCount: 0,
-        verifiedConversationCount: 0,
-        failedConversationCount: 0,
-      };
+      while (progress.phase === 'discover_accounts') {
+        const accounts = await this.userAccountModel.find({
+          where: {
+            updatedAt: { $gte: cutoffAt },
+            status: { $ne: UserLoginAccountStatus.canceled },
+          } as never,
+          order: { updatedAt: 'ASC' },
+          skip: progress.accountDiscoveryOffset,
+          take: 500,
+        });
+        this.appendBackfillEligibleUsers(
+          progress,
+          accounts.map(account => account.userId)
+        );
+        progress.accountDiscoveryOffset += accounts.length;
+        if (accounts.length < 500) {
+          progress.phase = 'discover_conversations';
+        }
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+        if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+          return undefined;
+        }
+      }
 
-      for (const userId of eligibleUserIds) {
+      while (progress.phase === 'discover_conversations') {
+        const conversations = await this.conversationModel.find({
+          where: { updatedAt: { $gte: cutoffAt } } as never,
+          order: { updatedAt: 'ASC' },
+          skip: progress.conversationDiscoveryOffset,
+          take: 500,
+        });
+        this.appendBackfillEligibleUsers(
+          progress,
+          conversations.map(conversation => conversation.userId)
+        );
+        progress.conversationDiscoveryOffset += conversations.length;
+        if (conversations.length < 500) {
+          progress.eligibleUserIds.sort();
+          progress.phase = 'scan';
+        }
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+        if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+          return undefined;
+        }
+      }
+
+      while (progress.phase === 'scan') {
+        if (progress.userIndex >= progress.eligibleUserIds.length) {
+          if (progress.failedConversationIds.length) {
+            progress.phase = 'retry';
+            progress.retryRound = 1;
+            progress.retryIndex = 0;
+            progress.retryConversationIds = [...progress.failedConversationIds];
+            progress.failedConversationIds = [];
+            progress.summary.failedConversationCount = 0;
+            progress.updatedAt = new Date().toISOString();
+            await this.persistBackfillProgress(progressKey, progress);
+          }
+          break;
+        }
+
+        const userId = this.parseBackfillObjectId(
+          progress.eligibleUserIds[progress.userIndex]
+        );
         const conversations = await this.conversationModel.find({
           where: { userId } as never,
-          order: { updatedAt: 'DESC' },
+          order: { createdAt: 'ASC' },
         });
-        for (const conversation of conversations) {
+        while (progress.conversationIndex < conversations.length) {
+          const conversation = conversations[progress.conversationIndex];
           markerConversation ??= conversation;
-          summary.conversationCount += 1;
-          const messages = await this.messageModel.find({
-            where: {
-              conversationId: conversation.id,
-              role: MessageRole.user,
-              status: MessageStatus.sent,
-              isArchived: { $ne: true },
-              createdAt: { $gte: cutoffAt },
-            } as never,
-            order: { createdAt: 'DESC' },
-            take: 240,
-          });
-          summary.scannedMessageCount += messages.length;
-          if (!messages.length) continue;
-
+          progress.markerConversationId ??= this.stringifyObjectId(
+            conversation.id
+          );
+          progress.summary.conversationCount += 1;
           try {
-            await this.withStorageQueue(conversation.id, async () => {
-              const loaded = await this.loadUnifiedStore(conversation.id, now);
-              let store = loaded.store;
-              summary.legacyCardCount += loaded.legacyCardCount;
-              summary.migratedLegacyCardCount += loaded.migratedLegacyCount;
-
-              const historicalInputs = [...messages].reverse().map(message => ({
-                message,
-                text: this.buildSearchableText(message),
-              }));
-              const legacyCards = extractContinuityInformationCards({
-                inputs: historicalInputs.filter(item =>
-                  shouldInspectHistoricalContinuityMessage(item.text)
-                ),
-                now,
-              });
-              const legacyMigration = migrateLegacyContinuityStore({
-                store,
-                legacyStore: {
-                  version: 'continuity_information_card_v1',
-                  cards: legacyCards,
-                  updatedAt: now,
-                },
-                now,
-              });
-              store = legacyMigration.store;
-              summary.legacyCardCount += legacyCards.length;
-              summary.migratedLegacyCardCount += legacyMigration.migratedCount;
-
-              for (const item of historicalInputs) {
-                const sourceMessageId = this.stringifyObjectId(item.message.id);
-                if (
-                  store.tasks.some(task =>
-                    task.sourceMessageIds.includes(sourceMessageId)
-                  )
-                ) {
-                  continue;
-                }
-                const extraction = extractRelationshipOpenLoop({
-                  message: item.message,
-                  text: item.text,
-                  now,
-                });
-                const mutation =
-                  extraction.decision === 'lifecycle_only'
-                    ? resolveRelationshipOpenLoopFromUserText({
-                        store,
-                        text: item.text,
-                        sourceMessageId,
-                        occurredAt: extraction.sourceOccurredAt,
-                        now,
-                      })
-                    : extraction.decision === 'not_eligible' &&
-                      /(?:挺严重|很严重|比较严重|病危|进了?ICU|要手术|需要手术)/u.test(
-                        item.text
-                      )
-                    ? reconcileRelationshipOpenLoopContextualUpdate({
-                        store,
-                        text: item.text,
-                        sourceMessageId,
-                        occurredAt: extraction.sourceOccurredAt,
-                        now,
-                      })
-                    : extraction.draft
-                    ? upsertRelationshipOpenLoopDraft({
-                        store,
-                        draft: extraction.draft,
-                        sourceMessageId,
-                        sourceOccurredAt: extraction.sourceOccurredAt,
-                        now,
-                      })
-                    : undefined;
-                if (mutation && mutation.action !== 'noop') {
-                  store = mutation.store;
-                  if (
-                    mutation.action === 'created_root' ||
-                    mutation.action === 'created_child'
-                  ) {
-                    summary.generatedTaskCount += 1;
-                  }
-                }
-              }
-
-              store = expireRelationshipOpenLoops(store, now);
-              if (!store.tasks.length && !loaded.message) return;
-              const persistence = await this.persistStoreUnlocked(
-                conversation.id,
-                store,
-                loaded.message
-              );
-              const verifiedStore = parseRelationshipOpenLoopStore(
-                persistence.message.content
-              );
-              if (!verifiedStore) {
-                throw new Error('RELATIONSHIP_OPEN_LOOP_READBACK_PARSE_FAILED');
-              }
-              summary.verifiedConversationCount += 1;
-              if (persistence.action !== 'unchanged') {
-                summary.updatedConversationCount += 1;
-              }
-              summary.activeTaskCount += verifiedStore.tasks.filter(task =>
-                [
-                  'reported',
-                  'decision_pending',
-                  'action_committed',
-                  'awaiting_result',
-                  'scheduled_checkpoint',
-                  'dormant',
-                ].includes(task.state)
-              ).length;
-              summary.expiredTaskCount += verifiedStore.tasks.filter(
-                task => task.state === 'superseded'
-              ).length;
-            });
+            const result = await this.revalidateBackfillConversation(
+              conversation,
+              cutoffAt,
+              now
+            );
+            progress.summary.scannedMessageCount += result.scannedMessageCount;
+            this.mergeBackfillDelta(progress.summary, result.delta);
           } catch (error) {
-            summary.failedConversationCount += 1;
+            progress.summary.failedConversationCount += 1;
+            progress.failedConversationIds.push(
+              this.stringifyObjectId(conversation.id)
+            );
             this.logger.error(
               '[relationship-open-loop-backfill] conversation failed, conversationId=%s reason=%s',
               this.stringifyObjectId(conversation.id),
               error instanceof Error ? error.message : String(error)
             );
           }
+          progress.conversationIndex += 1;
+          progress.updatedAt = new Date().toISOString();
+          await this.persistBackfillProgress(progressKey, progress);
+          if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+            return undefined;
+          }
+        }
+        progress.userIndex += 1;
+        progress.conversationIndex = 0;
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+      }
+
+      while (progress.phase === 'retry') {
+        if (progress.retryIndex >= progress.retryConversationIds.length) {
+          if (
+            progress.failedConversationIds.length &&
+            progress.retryRound < 2
+          ) {
+            progress.retryRound += 1;
+            progress.retryIndex = 0;
+            progress.retryConversationIds = [...progress.failedConversationIds];
+            progress.failedConversationIds = [];
+            progress.summary.failedConversationCount = 0;
+            progress.updatedAt = new Date().toISOString();
+            await this.persistBackfillProgress(progressKey, progress);
+            continue;
+          }
+          break;
+        }
+        const conversationId = this.parseBackfillObjectId(
+          progress.retryConversationIds[progress.retryIndex]
+        );
+        const conversation = await this.conversationModel.findOne({
+          where: { id: conversationId },
+        });
+        if (conversation) {
+          markerConversation ??= conversation;
+          progress.markerConversationId ??= this.stringifyObjectId(
+            conversation.id
+          );
+          try {
+            const result = await this.revalidateBackfillConversation(
+              conversation,
+              cutoffAt,
+              now
+            );
+            progress.summary.scannedMessageCount += result.scannedMessageCount;
+            this.mergeBackfillDelta(progress.summary, result.delta);
+          } catch (error) {
+            progress.summary.failedConversationCount += 1;
+            progress.failedConversationIds.push(
+              this.stringifyObjectId(conversation.id)
+            );
+            this.logger.error(
+              '[relationship-open-loop-backfill] retry failed, conversationId=%s reason=%s',
+              this.stringifyObjectId(conversation.id),
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        }
+        progress.retryIndex += 1;
+        progress.updatedAt = new Date().toISOString();
+        await this.persistBackfillProgress(progressKey, progress);
+        if (Date.now() - startedAt >= BACKFILL_RUN_BUDGET_MS) {
+          return undefined;
         }
       }
 
-      if (summary.failedConversationCount > 0) {
+      const summary = this.deserializeBackfillSummary(progress.summary);
+      if (progress.failedConversationIds.length > 0) {
         throw new Error(
-          `RELATIONSHIP_OPEN_LOOP_BACKFILL_PARTIAL_FAILED:${summary.failedConversationCount}`
+          `RELATIONSHIP_OPEN_LOOP_BACKFILL_PARTIAL_FAILED:${progress.failedConversationIds.length}`
         );
       }
 
@@ -592,20 +650,44 @@ export class RelationshipOpenLoopService {
         ...summary,
         completedAt: new Date().toISOString(),
       };
-      if (markerConversation) {
-        await this.createBackfillMarker(markerConversation, completedSummary);
+      if (!markerConversation && progress.markerConversationId) {
+        markerConversation =
+          (await this.conversationModel.findOne({
+            where: {
+              id: this.parseBackfillObjectId(progress.markerConversationId),
+            },
+          })) || undefined;
+      }
+      if (!markerConversation) {
+        markerConversation =
+          (await this.conversationModel.findOne({
+            order: { createdAt: 'ASC' },
+          })) || undefined;
+      }
+      if (!markerConversation) {
+        throw new Error(
+          'RELATIONSHIP_OPEN_LOOP_BACKFILL_MARKER_CONVERSATION_REQUIRED'
+        );
+      }
+      await this.createBackfillMarker(markerConversation, completedSummary);
+      const verifiedMarker = await this.findBackfillMarker();
+      if (verifiedMarker?.summary?.jobId !== BACKFILL_JOB_ID) {
+        throw new Error(
+          'RELATIONSHIP_OPEN_LOOP_BACKFILL_MARKER_READBACK_FAILED'
+        );
       }
       await this.redisService.set(
         completedKey,
         JSON.stringify(completedSummary)
       );
+      await this.redisService.del(progressKey);
       this.logger.info(
-        '[relationship-open-loop-backfill] complete, jobId=%s conversations=%s scanned=%s legacy=%s migrated=%s generated=%s active=%s expired=%s',
+        '[relationship-open-loop-backfill] complete, jobId=%s conversations=%s scanned=%s revalidated=%s removed=%s generated=%s active=%s expired=%s',
         summary.jobId,
         summary.conversationCount,
         summary.scannedMessageCount,
-        summary.legacyCardCount,
-        summary.migratedLegacyCardCount,
+        summary.revalidatedTaskCount,
+        summary.removedTaskCount,
         summary.generatedTaskCount,
         summary.activeTaskCount,
         summary.expiredTaskCount
@@ -676,17 +758,249 @@ export class RelationshipOpenLoopService {
           ...schedule,
         };
       }
+      const progress = this.parseBackfillProgress(
+        await this.redisService.get(`chat:${BACKFILL_JOB_ID}:progress`)
+      );
       const running = await this.redisService.get(
         `chat:${BACKFILL_JOB_ID}:lock`
       );
       return {
         jobId: BACKFILL_JOB_ID,
-        status: running || backfillRunning ? 'running' : 'pending',
+        status: running || backfillRunning || progress ? 'running' : 'pending',
+        ...(progress
+          ? {
+              ...this.pickBackfillStatusCounts(
+                progress.summary as unknown as Record<string, unknown>
+              ),
+              progressPhase: progress.phase,
+            }
+          : {}),
         ...schedule,
+        ...(progress ? { nextEligibleAt: new Date().toISOString() } : {}),
       };
     } catch {
       return { jobId: BACKFILL_JOB_ID, status: 'unknown', ...schedule };
     }
+  }
+
+  private async createBackfillProgress(
+    now: Date
+  ): Promise<RelationshipOpenLoopBackfillProgress> {
+    const cutoffAt = new Date(now.getTime() - BACKFILL_WINDOW_MS);
+    return {
+      version: BACKFILL_PROGRESS_VERSION,
+      cutoffAt: cutoffAt.toISOString(),
+      eligibleUserIds: [],
+      accountDiscoveryOffset: 0,
+      conversationDiscoveryOffset: 0,
+      userIndex: 0,
+      conversationIndex: 0,
+      phase: 'discover_accounts',
+      retryRound: 0,
+      retryIndex: 0,
+      retryConversationIds: [],
+      failedConversationIds: [],
+      summary: {
+        jobId: BACKFILL_JOB_ID,
+        cutoffAt: cutoffAt.toISOString(),
+        eligibleUserCount: 0,
+        conversationCount: 0,
+        scannedMessageCount: 0,
+        legacyCardCount: 0,
+        migratedLegacyCardCount: 0,
+        generatedTaskCount: 0,
+        activeTaskCount: 0,
+        expiredTaskCount: 0,
+        updatedConversationCount: 0,
+        verifiedConversationCount: 0,
+        failedConversationCount: 0,
+        revalidatedTaskCount: 0,
+        removedTaskCount: 0,
+      },
+      startedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  }
+
+  private parseBackfillProgress(
+    value?: string | null
+  ): RelationshipOpenLoopBackfillProgress | undefined {
+    if (!value) return undefined;
+    try {
+      const parsed = JSON.parse(value) as RelationshipOpenLoopBackfillProgress;
+      if (
+        parsed.version !== BACKFILL_PROGRESS_VERSION ||
+        !Array.isArray(parsed.eligibleUserIds) ||
+        !parsed.summary ||
+        ![
+          'discover_accounts',
+          'discover_conversations',
+          'scan',
+          'retry',
+        ].includes(parsed.phase) ||
+        !Number.isInteger(parsed.accountDiscoveryOffset) ||
+        !Number.isInteger(parsed.conversationDiscoveryOffset) ||
+        !Number.isInteger(parsed.userIndex) ||
+        !Number.isInteger(parsed.conversationIndex)
+      ) {
+        return undefined;
+      }
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async persistBackfillProgress(
+    key: string,
+    progress: RelationshipOpenLoopBackfillProgress
+  ): Promise<void> {
+    const content = JSON.stringify(progress);
+    await this.redisService.set(key, content);
+    const verified = this.parseBackfillProgress(
+      await this.redisService.get(key)
+    );
+    if (
+      !verified ||
+      verified.phase !== progress.phase ||
+      verified.accountDiscoveryOffset !== progress.accountDiscoveryOffset ||
+      verified.conversationDiscoveryOffset !==
+        progress.conversationDiscoveryOffset ||
+      verified.userIndex !== progress.userIndex ||
+      verified.conversationIndex !== progress.conversationIndex ||
+      verified.retryIndex !== progress.retryIndex
+    ) {
+      throw new Error(
+        'RELATIONSHIP_OPEN_LOOP_BACKFILL_PROGRESS_READBACK_FAILED'
+      );
+    }
+  }
+
+  private appendBackfillEligibleUsers(
+    progress: RelationshipOpenLoopBackfillProgress,
+    userIds: MongoObjectId[]
+  ): void {
+    const uniqueIds = new Set(progress.eligibleUserIds);
+    for (const userId of userIds) {
+      const value = this.stringifyObjectId(userId);
+      if (value) uniqueIds.add(value);
+    }
+    progress.eligibleUserIds = Array.from(uniqueIds);
+    progress.summary.eligibleUserCount = progress.eligibleUserIds.length;
+  }
+
+  private parseBackfillObjectId(value: string): MongoObjectId {
+    if (!MongoObjectId.isValid(value)) {
+      throw new Error('RELATIONSHIP_OPEN_LOOP_BACKFILL_OBJECT_ID_INVALID');
+    }
+    return new MongoObjectId(value);
+  }
+
+  private deserializeBackfillSummary(
+    summary: RelationshipOpenLoopBackfillProgress['summary']
+  ): RelationshipOpenLoopBackfillSummary {
+    return {
+      ...summary,
+      cutoffAt: new Date(summary.cutoffAt),
+    };
+  }
+
+  private mergeBackfillDelta(
+    summary: RelationshipOpenLoopBackfillProgress['summary'],
+    delta: RelationshipOpenLoopBackfillDelta
+  ): void {
+    for (const key of [
+      'legacyCardCount',
+      'migratedLegacyCardCount',
+      'generatedTaskCount',
+      'activeTaskCount',
+      'expiredTaskCount',
+      'updatedConversationCount',
+      'verifiedConversationCount',
+      'revalidatedTaskCount',
+      'removedTaskCount',
+    ] as const) {
+      summary[key] += delta[key];
+    }
+  }
+
+  private async revalidateBackfillConversation(
+    conversation: ConversationEntity,
+    cutoffAt: Date,
+    now: Date
+  ): Promise<{
+    scannedMessageCount: number;
+    delta: RelationshipOpenLoopBackfillDelta;
+  }> {
+    const messages = await this.findHistoricalUserMessages(
+      conversation.id,
+      cutoffAt
+    );
+    const delta: RelationshipOpenLoopBackfillDelta = {
+      legacyCardCount: 0,
+      migratedLegacyCardCount: 0,
+      generatedTaskCount: 0,
+      activeTaskCount: 0,
+      expiredTaskCount: 0,
+      updatedConversationCount: 0,
+      verifiedConversationCount: 0,
+      revalidatedTaskCount: 0,
+      removedTaskCount: 0,
+    };
+    await this.withStorageQueue(conversation.id, async () => {
+      const loaded = await this.loadUnifiedStore(conversation.id, now);
+      delta.legacyCardCount = loaded.legacyCardCount;
+      delta.migratedLegacyCardCount = loaded.migratedLegacyCount;
+      const historicalInputs = [...messages].reverse().map(message => ({
+        message,
+        text: this.buildSearchableText(message),
+      }));
+      const revalidated = revalidateRelationshipOpenLoopStore({
+        previousStore: loaded.store,
+        inputs: historicalInputs,
+        now,
+      });
+      const store = revalidated.store;
+      delta.generatedTaskCount = revalidated.generatedTaskCount;
+      delta.revalidatedTaskCount = revalidated.revalidatedTaskCount;
+      delta.removedTaskCount = revalidated.removedTaskCount;
+      if (
+        !store.tasks.length &&
+        !loaded.message &&
+        loaded.legacyCardCount === 0
+      ) {
+        return;
+      }
+      const persistence = await this.persistStoreUnlocked(
+        conversation.id,
+        store,
+        loaded.message
+      );
+      const verifiedStore = parseRelationshipOpenLoopStore(
+        persistence.message.content
+      );
+      if (!verifiedStore) {
+        throw new Error('RELATIONSHIP_OPEN_LOOP_READBACK_PARSE_FAILED');
+      }
+      delta.verifiedConversationCount = 1;
+      if (persistence.action !== 'unchanged') {
+        delta.updatedConversationCount = 1;
+      }
+      delta.activeTaskCount = verifiedStore.tasks.filter(task =>
+        [
+          'reported',
+          'decision_pending',
+          'action_committed',
+          'awaiting_result',
+          'scheduled_checkpoint',
+          'dormant',
+        ].includes(task.state)
+      ).length;
+      delta.expiredTaskCount = verifiedStore.tasks.filter(
+        task => task.state === 'superseded'
+      ).length;
+    });
+    return { scannedMessageCount: messages.length, delta };
   }
 
   private async withStorageQueue<T>(
@@ -961,41 +1275,28 @@ export class RelationshipOpenLoopService {
     );
   }
 
-  private async listRecentlyActiveUserIds(
+  private async findHistoricalUserMessages(
+    conversationId: MongoObjectId,
     cutoffAt: Date
-  ): Promise<MongoObjectId[]> {
-    const ids = new Map<string, MongoObjectId>();
+  ): Promise<MessageEntity[]> {
+    const messages: MessageEntity[] = [];
     for (let skip = 0; ; skip += 500) {
-      const accounts = await this.userAccountModel.find({
+      const page = await this.messageModel.find({
         where: {
-          updatedAt: { $gte: cutoffAt },
-          status: { $ne: UserLoginAccountStatus.canceled },
+          conversationId,
+          role: MessageRole.user,
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          createdAt: { $gte: cutoffAt },
         } as never,
-        order: { updatedAt: 'ASC' },
+        order: { createdAt: 'DESC' },
         skip,
         take: 500,
       });
-      accounts.forEach(account =>
-        ids.set(this.stringifyObjectId(account.userId), account.userId)
-      );
-      if (accounts.length < 500) break;
+      messages.push(...page);
+      if (page.length < 500) break;
     }
-    for (let skip = 0; ; skip += 500) {
-      const conversations = await this.conversationModel.find({
-        where: { updatedAt: { $gte: cutoffAt } } as never,
-        order: { updatedAt: 'ASC' },
-        skip,
-        take: 500,
-      });
-      conversations.forEach(conversation =>
-        ids.set(
-          this.stringifyObjectId(conversation.userId),
-          conversation.userId
-        )
-      );
-      if (conversations.length < 500) break;
-    }
-    return Array.from(ids.values());
+    return messages;
   }
 
   private async findBackfillMarker(): Promise<
@@ -1043,6 +1344,9 @@ export class RelationshipOpenLoopService {
     value: Record<string, unknown>
   ): Pick<
     RelationshipOpenLoopBackfillStatus,
+    | 'eligibleUserCount'
+    | 'conversationCount'
+    | 'scannedMessageCount'
     | 'generatedTaskCount'
     | 'activeTaskCount'
     | 'expiredTaskCount'
@@ -1050,9 +1354,14 @@ export class RelationshipOpenLoopService {
     | 'updatedConversationCount'
     | 'verifiedConversationCount'
     | 'failedConversationCount'
+    | 'revalidatedTaskCount'
+    | 'removedTaskCount'
   > {
     const result: Pick<
       RelationshipOpenLoopBackfillStatus,
+      | 'eligibleUserCount'
+      | 'conversationCount'
+      | 'scannedMessageCount'
       | 'generatedTaskCount'
       | 'activeTaskCount'
       | 'expiredTaskCount'
@@ -1060,8 +1369,13 @@ export class RelationshipOpenLoopService {
       | 'updatedConversationCount'
       | 'verifiedConversationCount'
       | 'failedConversationCount'
+      | 'revalidatedTaskCount'
+      | 'removedTaskCount'
     > = {};
     for (const key of [
+      'eligibleUserCount',
+      'conversationCount',
+      'scannedMessageCount',
       'generatedTaskCount',
       'activeTaskCount',
       'expiredTaskCount',
@@ -1069,6 +1383,8 @@ export class RelationshipOpenLoopService {
       'updatedConversationCount',
       'verifiedConversationCount',
       'failedConversationCount',
+      'revalidatedTaskCount',
+      'removedTaskCount',
     ] as const) {
       if (typeof value[key] === 'number') result[key] = value[key] as number;
     }
@@ -1087,7 +1403,7 @@ export class RelationshipOpenLoopService {
     'schedulerActive' | 'nextEligibleAt'
   > {
     return {
-      schedulerActive: Boolean(this.productionBackfillTimer),
+      schedulerActive: Boolean(this.backfillTimer),
       nextEligibleAt:
         this.resolveNextShanghaiMaintenanceWindow(now).toISOString(),
     };

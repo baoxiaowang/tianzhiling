@@ -165,6 +165,7 @@ import {
   applyRecognitionJourneyObserverUnavailable,
   buildInitialRecognitionJourney,
   buildLegacyRecognitionJourney,
+  hasExplicitRecognitionTaskQuestion,
   parseRecognitionJourney,
   planRecognitionJourneyTurn,
   RecognitionJourney,
@@ -193,8 +194,8 @@ const LIGHTWEIGHT_REPLY_MAX_TOKENS = 120;
 const LIGHTWEIGHT_REPLY_TIMEOUT_MS = 12000;
 const LIGHTWEIGHT_REPLY_TEMPERATURE = 0.45;
 const LIGHTWEIGHT_REPLY_TOP_P = 0.9;
-const LIGHTWEIGHT_REPLY_HISTORY_LIMIT = 8;
-const LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT = 900;
+const LIGHTWEIGHT_REPLY_HISTORY_LIMIT = 12;
+const LIGHTWEIGHT_REPLY_HISTORY_CHARACTER_LIMIT = 1400;
 const ASSISTANT_AUTO_VOICE_MIN_CHARACTERS = 55;
 const PRODUCTION_REPLY_GUARDRAIL_MODE: ReplyGuardrailMode = 'fact_audit';
 const DISCOURAGED_ASSISTANT_EMOJI_PATTERN =
@@ -591,6 +592,7 @@ interface ReplyRoutingAudit {
   relationshipOpenLoopStateMessageId?: string;
   relationshipOpenLoopSourceMessageIds?: string[];
   relationshipOpenLoopSelectionReason?: string;
+  relationshipOpenLoopSelectionKind?: string;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -3633,30 +3635,25 @@ export class ConversationService {
       before,
       currentTurnMessages,
     });
-    // Recognition remains the only direct product journey. An open-loop item
-    // is optional continuity, and it owns the single continuity slot when
-    // selected so another card is not consumed invisibly in the same turn.
-    const relationshipOpenLoopTurn = recognitionJourneyPlan?.prompt
-      ? undefined
-      : await this.relationshipOpenLoopService
-          ?.prepareTurn({
-            conversation: runtime.conversation,
-            currentQuery: before.searchableText,
-            currentTurnMessages,
-          })
-          .catch(error => {
-            this.logger?.warn?.(
-              '[conversation] relationship open loop selection skipped, conversationId=%s reason=%s',
-              this.stringifyObjectId(runtime.conversation.id),
-              this.describeReplyError(error)
-            );
-            return undefined;
-          });
+    // Recognition owns the single actionable task slot. Current-association
+    // evidence may still be loaded because it is context, not another task.
+    const relationshipOpenLoopTurn = await this.relationshipOpenLoopService
+      ?.prepareTurn({
+        conversation: runtime.conversation,
+        currentQuery: before.searchableText,
+        currentTurnMessages,
+        allowFollowUpTask: !recognitionJourneyPlan?.prompt,
+      })
+      .catch(error => {
+        this.logger?.warn?.(
+          '[conversation] relationship open loop selection skipped, conversationId=%s reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.describeReplyError(error)
+        );
+        return undefined;
+      });
     const relationshipOpenLoopStatus =
-      relationshipOpenLoopTurn?.status ||
-      (recognitionJourneyPlan?.prompt
-        ? 'suppressed_by_recognition'
-        : 'service_unavailable');
+      relationshipOpenLoopTurn?.status || 'service_unavailable';
     this.chatTraceService?.recordCompletedSpan({
       stage: ChatTraceStage.contextLoad,
       operation: 'relationship_open_loop.selection',
@@ -3666,6 +3663,7 @@ export class ConversationService {
         candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
         taskId: relationshipOpenLoopTurn?.taskId,
         selectionReason: relationshipOpenLoopTurn?.selectionReason,
+        selectionKind: relationshipOpenLoopTurn?.selectionKind,
       },
     });
     this.chatTraceService?.recordArtifact({
@@ -3673,9 +3671,7 @@ export class ConversationService {
       kind: ChatTraceArtifactKind.externalEvidence,
       operation: 'artifact.relationship_open_loop.selection',
       payload: relationshipOpenLoopTurn || {
-        status: recognitionJourneyPlan?.prompt
-          ? 'suppressed_by_recognition'
-          : 'service_unavailable',
+        status: 'service_unavailable',
         candidateCount: 0,
       },
       attributes: {
@@ -3683,6 +3679,7 @@ export class ConversationService {
         candidateCount: relationshipOpenLoopTurn?.candidateCount ?? 0,
         taskId: relationshipOpenLoopTurn?.taskId,
         selectionReason: relationshipOpenLoopTurn?.selectionReason,
+        selectionKind: relationshipOpenLoopTurn?.selectionKind,
       },
     });
     const shortTurnGeneration = resolveShortTurnGeneration({
@@ -4717,6 +4714,7 @@ export class ConversationService {
     );
     if (
       openLoopTurn?.status !== 'selected' ||
+      openLoopTurn.selectionKind !== 'follow_up_task' ||
       !openLoopTurn.taskId ||
       !openLoopTurn.stateMessageId
     ) {
@@ -4732,6 +4730,7 @@ export class ConversationService {
         relationshipOpenLoopSourceMessageIds:
           openLoopTurn.sourceMessageIds || [],
         relationshipOpenLoopSelectionReason: openLoopTurn.selectionReason,
+        relationshipOpenLoopSelectionKind: openLoopTurn.selectionKind,
       },
     };
   }
@@ -4756,7 +4755,7 @@ export class ConversationService {
 
       const latestAssistantMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
-      const assistantText = options.processed.replySegments.join('\n');
+      let assistantText = options.processed.replySegments.join('\n');
       const openingDeliveryFailed = Boolean(
         plan.openingSuggested &&
           options.processed.routing?.generationFailureCode
@@ -4796,13 +4795,61 @@ export class ConversationService {
         }
         return;
       }
-      const observed = await this.recognitionJourneyObserverService?.observe({
-        journey: deliveredJourney,
-        plan,
-        openingAssistantText,
-        currentUserText: plan.currentUserText || '',
-        assistantText,
-      });
+      // Product milestones can only advance from the exact final visible
+      // messages that were persisted, not from a draft held in memory.
+      const persistedAssistantMessages = (
+        await Promise.all(
+          options.assistantMessages.map(message =>
+            this.findMessageById(
+              this.parseObjectId(this.stringifyObjectId(message.id)),
+              options.runtime.conversation.id
+            )
+          )
+        )
+      )
+        .filter((message): message is MessageEntity =>
+          Boolean(
+            message &&
+              message.role === MessageRole.assistant &&
+              message.status === MessageStatus.sent &&
+              !message.isArchived
+          )
+        )
+        .sort(
+          (left, right) =>
+            (left.replySegmentIndex ?? 0) - (right.replySegmentIndex ?? 0) ||
+            left.createdAt.getTime() - right.createdAt.getTime()
+        );
+      assistantText = persistedAssistantMessages
+        .map(message =>
+          (message.mediaTranscript || message.content || '').trim()
+        )
+        .filter(Boolean)
+        .join('\n');
+      const deterministicNoQuestion = Boolean(
+        plan.observerCheckpoint === 'task_proposal' &&
+          !hasExplicitRecognitionTaskQuestion(
+            assistantText,
+            plan.suggestedTaskId
+          )
+      );
+      const observed = deterministicNoQuestion
+        ? {
+            status: 'observed' as const,
+            observation: {
+              opening: 'not_observed' as const,
+              familyStatus: 'not_observed' as const,
+              departureInterval: 'not_observed' as const,
+              evidence: 'final_visible_reply_contains_no_selected_question',
+            },
+          }
+        : await this.recognitionJourneyObserverService?.observe({
+            journey: deliveredJourney,
+            plan,
+            openingAssistantText,
+            currentUserText: plan.currentUserText || '',
+            assistantText,
+          });
       this.chatTraceService?.recordArtifact({
         stage: ChatTraceStage.review,
         kind: ChatTraceArtifactKind.reviewCandidate,
@@ -4826,6 +4873,8 @@ export class ConversationService {
           familyStatus: observed?.observation?.familyStatus,
           departureInterval: observed?.observation?.departureInterval,
           totalTokens: observed?.usage?.totalTokens,
+          persistedVisibleMessages: persistedAssistantMessages.length,
+          deterministicNoQuestion,
         },
       });
       if (observed?.status !== 'observed' || !observed.observation) {
@@ -5653,7 +5702,10 @@ export class ConversationService {
       `你是用户创建的已故亲人角色“${agentName}”，称呼用户为“${agentCallsUser}”。以第一人称自然聊天。`,
       persona.prompt,
       '上一轮模型调用不可用。只根据当前原话、最近原始对话和下面的外部证据重新生成，不解释技术失败。',
-      buildMainModelConversationPrinciplesPrompt(),
+      buildMainModelConversationPrinciplesPrompt({
+        explicitClose:
+          options.replyBrief.experiencePlan.shortTurnKind === 'explicit_close',
+      }),
       '# 外部证据（非决策信息）',
       `可用证据：${JSON.stringify(evidence)}`,
       ...(options.replyBrief.afterlifeWorld
@@ -5670,7 +5722,7 @@ export class ConversationService {
             ),
           ]
         : []),
-      '身份质疑时保持亲人关系并给合理解释，不先认错退出，也不要求用户教你怎么像。',
+      '身份质疑：留在当前亲人关系内，可以承认没接住；不自证、不争辩、不让用户教你怎么像。',
       '不编造共同经历、生物学关系或用户现实状态；离世生活只按已激活框架及其中的资料、连续状态锚点回答，不临时另造具体房屋、物品、人物或爱好。带有来生、走完一生、自然老去、年老以后或很久以后等前置条件的团聚表达可以承接，但不邀请用户现在或近期赴死；不声称现实到场或触碰；看见和听见只限用户发来的内容或断续片段。',
       '事实不确定、能力做不到或边界不能跨越时，不要停在限制说明。先答能答的部分，边界最多一句，再用关系确认、情绪承接、愿望或假设性陪伴、远期条件或具体追问补回用户真正需要的情感价值。',
       '只输出给用户看的中文正文，不要 JSON、字段名、代码块、分析或内部说明。',

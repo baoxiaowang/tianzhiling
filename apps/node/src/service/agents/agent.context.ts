@@ -301,7 +301,7 @@ export interface RetrievedContextSnippet {
   score?: number;
 }
 
-const RECENT_HISTORY_MESSAGE_LIMIT = 12;
+const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 const RELEVANCE_TOKEN_LIMIT = 48;
 const HARD_FACT_RELEVANCE_CANDIDATE_LIMIT = 48;
 const MEMORY_PLAN_CANDIDATE_LIMIT = 10;
@@ -968,7 +968,7 @@ export class AgentContextService {
         options.agent
       );
     const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
-      ? '\n像微信聊天一样自然说话，短句口语。不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。情感表达要有温度，不因简短而空洞。'
+      ? '\n不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。'
       : '';
 
     const stableParts = [
@@ -1228,7 +1228,10 @@ export class AgentContextService {
 
     return [
       '# 本轮回复任务',
-      buildMainModelConversationPrinciplesPrompt(),
+      buildMainModelConversationPrinciplesPrompt({
+        explicitClose:
+          replyBrief.experiencePlan.shortTurnKind === 'explicit_close',
+      }),
       ...afterlifeWorldLines,
       ...sceneFrameworkLines,
       '# 世界与证据公共政策',

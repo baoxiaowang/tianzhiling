@@ -20,7 +20,7 @@ export class SystemController {
   @Get('/health')
   async health() {
     let relationshipOpenLoopBackfill: RelationshipOpenLoopBackfillStatus = {
-      jobId: 'relationship-open-loop-backfill-20260820-v1',
+      jobId: 'relationship-open-loop-revalidation-20260824-v3',
       status: 'pending' as const,
     };
     if (process.env.NODE_ENV === 'production') {
@@ -28,12 +28,11 @@ export class SystemController {
         const service = await this.ctx.requestContext.getAsync(
           RelationshipOpenLoopService
         );
-        void service.runProductionBackfillOnce().catch(() => undefined);
         relationshipOpenLoopBackfill =
           await service.getProductionBackfillStatus();
       } catch {
         relationshipOpenLoopBackfill = {
-          jobId: 'relationship-open-loop-backfill-20260820-v1',
+          jobId: 'relationship-open-loop-revalidation-20260824-v3',
           status: 'unknown',
         };
       }
@@ -51,7 +50,6 @@ export class SystemController {
         const service = await this.ctx.requestContext.getAsync(
           AgentMemoryInheritanceService
         );
-        void service.runProductionBackfillOnce().catch(() => undefined);
         memoryInheritanceBackfill = { ...(await service.getStatus()) };
       } catch {
         memoryInheritanceBackfill.status = 'unknown';

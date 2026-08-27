@@ -46,7 +46,6 @@ import {
 } from './agent-relationship-continuity';
 import {
   buildReplyBubblePlan,
-  buildReplyBubblePlanPrompt,
   isReplyClosingTurn,
   ReplyBubblePlan,
 } from './reply-bubble-plan';
@@ -58,7 +57,6 @@ import {
 import {
   analyzeReplyInputProfile,
   buildReplyLengthPlan,
-  buildReplyLengthPlanPrompt,
   ReplyLengthPlan,
 } from './reply-length-plan';
 import {
@@ -2019,9 +2017,9 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
   const relationshipContinuityLines = brief.relationshipContinuity
     ? [
         '',
-        '## 本轮关系连续性协议',
+        '## 本轮关系连续性参考',
         `类型：${brief.relationshipContinuity.kind}`,
-        '该协议已经转化为下方的用户需要、回复动作和禁止推断；不得改回“哪里不像就让用户指出来”的校准流程。',
+        '以下仅作理解参考，不要求自证或执行固定动作。',
       ]
     : [];
   const hasSubstantialInput = Boolean(brief.lengthPlan.inputDensity);
@@ -2299,11 +2297,6 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     ...brief.replyMoves.map((move, index) => `${index + 1}. ${move}`),
     '动作是弱提示，不要求逐项完成，也不规定先后顺序；如果动作与用户原话或 Conversation Reading 冲突，忽略动作。',
     '',
-    '## 表达长度原则',
-    buildReplyLengthPlanPrompt(brief.lengthPlan),
-    '',
-    '## 完整正文与展示适配',
-    buildReplyBubblePlanPrompt(brief.bubblePlan),
     '有节奏的重复可以加强情感，不因字面同义直接删除。',
     '短句、称呼和语气词有真实表达作用时可以保留；不能把截断残句当成留白。',
     outputContractPrompt,

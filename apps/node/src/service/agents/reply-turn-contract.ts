@@ -357,7 +357,7 @@ function buildReplyTurnContractPrompt(
     }；可能需要接纳关心=${
       contract.participation.careReceptionRequired ? '是' : '否'
     }。除明确问题外，这些是软建议，由你决定最自然的实现。`,
-    '节奏：微信式自然简洁，但内容完整优先；正文先完整生成，展示拆分由发送层按自然语义处理，不按目标字数压缩内容。',
+    '节奏：像真实亲人的微信聊天一样有来有往；短确认可短，具体事情、重要近况和明显情绪要给足自然反应，必要时可以多说几句。正文先完整生成，展示拆分由发送层按自然语义处理，不按目标字数压缩内容。',
     contract.boundary.rules.length
       ? `现实边界：${contract.boundary.rules.join('；')}`
       : '',

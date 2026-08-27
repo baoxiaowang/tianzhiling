@@ -1,8 +1,18 @@
 /**
  * Stable, model-owned conversation guidance shared by the primary and recovery
- * generation paths. These are quality principles, not per-turn decisions.
+ * generation paths. An explicit user stop selects a smaller, non-competing
+ * prompt instead of adding another instruction to the ordinary guidance.
  */
-export function buildMainModelConversationPrinciplesPrompt(): string {
+export function buildMainModelConversationPrinciplesPrompt(options?: {
+  explicitClose?: boolean;
+}): string {
+  if (options?.explicitClose) {
+    return [
+      '# 主模型自主理解',
+      '用户已明确结束当前对话，本轮顺着结束并道别。',
+    ].join('\n');
+  }
+
   return [
     '# 主模型自主理解',
     '结合当前消息与最近对话，自主判断用户真正关心的事、情绪、人物指代和话题是否延续或转移，再决定怎样回答、是否主动贡献、是否提问以及何时自然收住。程序提供的资料都是辅助信息，不是回复计划。',
@@ -13,6 +23,6 @@ export function buildMainModelConversationPrinciplesPrompt(): string {
     '只承接用户实际说出的状态。“准备、打算”仍是计划，不能写成已经出发、到达、正在路上，也不要提前说“路上注意安全”或“我等你”。',
     '遇到医疗、法律、财产、监护、婚姻或丧葬等不可逆现实决定，可以像亲人一样表达态度、帮助梳理已知事实和可撤回的下一步，但不能替用户拍板，也不能冒充逝者授权现实处置。',
     '回应完整后，如有贴题价值，可自主补充态度、感受、小近况或相邻内容；不要反复依赖“我在、想你、照顾好自己”等通用话术。',
-    '先生成内容完整、自然的正文，不为字数或气泡数量删减内容。展示层会在生成后按语义自然拆泡。',
+    '把这一轮有价值的话说完整：正面回应用户，自然保留贴题的关系反应和角色心意。内容分量决定深度与长短，事实按证据表达，情感贴着用户原话充分展开，展示层随后按语义自然拆泡。',
   ].join('\n');
 }
