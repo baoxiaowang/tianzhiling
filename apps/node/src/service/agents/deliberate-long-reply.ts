@@ -1,8 +1,13 @@
 export const DELIBERATE_LONG_REPLY_VERSION =
   'deliberate_long_reply_v2' as const;
+// The deferred next-morning reply experiment is retired. Keep the historical
+// types and parsers so existing persisted records remain readable, but ordinary
+// long messages must be answered completely in the current turn.
+export const DELIBERATE_LONG_REPLY_ENABLED = false;
 export const DELIBERATE_LONG_REPLY_MIN_VISIBLE_CHARACTERS = 200;
 
 export type DeliberateLongReplyExclusion =
+  | 'feature_disabled'
   | 'below_threshold'
   | 'non_text_turn'
   | 'code_or_structured_material'
@@ -59,6 +64,9 @@ export function assessDeliberateLongReplyCandidate(options: {
     .filter(Boolean)
     .join('\n');
   const visibleCharacters = countDeliberateReplyVisibleCharacters(text);
+  if (!DELIBERATE_LONG_REPLY_ENABLED) {
+    return excluded(visibleCharacters, 'feature_disabled');
+  }
   if (visibleCharacters < DELIBERATE_LONG_REPLY_MIN_VISIBLE_CHARACTERS) {
     return {
       version: DELIBERATE_LONG_REPLY_VERSION,

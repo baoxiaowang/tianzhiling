@@ -183,6 +183,7 @@ import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.s
 import {
   assessDeliberateLongReplyCandidate,
   buildDeliberateLongReplyExecutionPrompt,
+  DELIBERATE_LONG_REPLY_ENABLED,
   DeliberateLongReplyCandidateAssessment,
   DeliberateLongReplyModelDecision,
   inspectDeliberateReplyCommitment,
@@ -1277,6 +1278,13 @@ export class ConversationService {
     options: ProcessConversationReplyJobOptions = {}
   ): Promise<void> {
     const taskId = this.parseObjectId(data.taskId);
+    if (!DELIBERATE_LONG_REPLY_ENABLED) {
+      await this.deliberateLongReplyService.cancel({
+        taskId,
+        reason: 'feature_disabled_direct_reply_restored',
+      });
+      return;
+    }
     const task = await this.deliberateLongReplyService.claim(
       taskId,
       new Date()

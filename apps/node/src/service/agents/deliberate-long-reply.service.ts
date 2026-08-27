@@ -9,6 +9,7 @@ import {
   MongoObjectId,
 } from '@tzl/entities';
 import {
+  DELIBERATE_LONG_REPLY_ENABLED,
   DeliberateLongReplyModelDecision,
   countDeliberateReplyVisibleCharacters,
 } from './deliberate-long-reply';
@@ -60,6 +61,7 @@ export class DeliberateLongReplyService {
 
   @Init()
   async initializeRecoveryScheduler(): Promise<void> {
+    if (!DELIBERATE_LONG_REPLY_ENABLED) return;
     if (process.env.NODE_ENV !== 'production') return;
     const attempt = () => {
       void this.recoverPendingTasks().catch(error => {
@@ -84,6 +86,9 @@ export class DeliberateLongReplyService {
   async schedule(
     options: ScheduleDeliberateReplyOptions
   ): Promise<ScheduleDeliberateReplyResult> {
+    if (!DELIBERATE_LONG_REPLY_ENABLED) {
+      throw new Error('DELIBERATE_REPLY_FEATURE_DISABLED');
+    }
     if (options.decision.action !== 'schedule_next_morning') {
       throw new Error('DELIBERATE_REPLY_NOT_SCHEDULED');
     }
@@ -337,6 +342,7 @@ export class DeliberateLongReplyService {
   }
 
   async recoverPendingTasks(now = new Date()): Promise<void> {
+    if (!DELIBERATE_LONG_REPLY_ENABLED) return;
     const staleAt = new Date(now.getTime() - GENERATION_LEASE_MS);
     await this.taskModel.updateMany(
       {
