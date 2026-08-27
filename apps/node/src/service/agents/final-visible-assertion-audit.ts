@@ -249,7 +249,8 @@ export function auditVisibleReplyAssertions(options: {
 
 function findCompletedRealWorldVisit(content: string): boolean {
   const pattern = new RegExp(COMPLETED_REAL_WORLD_VISIT.source, 'gu');
-  for (const match of content.matchAll(pattern)) {
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content)) !== null) {
     const start = match.index ?? 0;
     const prefix = content.slice(Math.max(0, start - 24), start);
     if (NON_ASSERTIVE_VISIT_PREFIX.test(prefix)) continue;
