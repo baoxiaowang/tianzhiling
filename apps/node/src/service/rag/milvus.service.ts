@@ -85,6 +85,22 @@ export class MilvusService {
   private collectionLoaded = false;
   private collectionVectorDim?: number;
 
+  // ---- OOM / 连接可靠性保护（2026-08-30） ----
+  // 背景：@zilliz/milvus2-sdk-node@2.6.13 在 gRPC 连接失败/超时且回调不触发时，
+  // executeCall 创建的 Promise 永不结算，请求对象（含 protobuf 编解码对象）被永久持有；
+  // 且 SDK retry 拦截器（默认 maxRetries=3）失败时创建重试定时器，进一步累积对象，
+  // 最终击穿 Node V8 2GB 内存上限导致 OOM。
+  // 本保护策略：连接失败熔断降级 + 应用层请求超时 + 并发上限 + 关闭 SDK 重试。
+  private static readonly CIRCUIT_FAILURE_THRESHOLD = 5;
+  private static readonly CIRCUIT_COOLDOWN_MS = 60_000;
+  private static readonly REQUEST_TIMEOUT_MS = 15_000;
+  private static readonly MAX_CONCURRENT_CALLS = 8;
+
+  private circuitOpen = false;
+  private circuitOpenSince = 0;
+  private consecutiveFailures = 0;
+  private inflightCalls = 0;
+
   isEnabled(): boolean {
     return (
       this.milvusConfig?.enabled !== false &&
@@ -105,28 +121,57 @@ export class MilvusService {
       return;
     }
 
+    if (this.isCircuitOpen()) {
+      this.logger.warn('[milvus] index skipped, circuit is open');
+      return;
+    }
+
+    if (this.inflightCalls >= MilvusService.MAX_CONCURRENT_CALLS) {
+      this.logger.warn(
+        '[milvus] index skipped, too many inflight calls (%s)',
+        this.inflightCalls
+      );
+      return;
+    }
+
     const vector = await this.openAIService.createEmbedding({
       input: searchableText,
       dimensions: this.openAIConfig?.embeddingDimensions,
     });
 
-    await this.ensureCollection(vector.length);
-    await this.getClient().upsert({
-      collection_name: this.getCollectionName(),
-      data: [
-        {
-          id: options.messageId,
-          userId: options.userId,
-          conversationId: options.conversationId,
-          agentId: options.agentId?.trim() || '',
-          role: options.role,
-          type: options.type,
-          [TEXT_FIELD_NAME]: this.truncateText(searchableText),
-          createdAtTs: this.normalizeCreatedAtTs(options.createdAt),
-          [DENSE_VECTOR_FIELD_NAME]: vector,
-        },
-      ],
-    });
+    this.inflightCalls += 1;
+
+    try {
+      await this.withMilvusTimeout(
+        this.ensureCollection(vector.length),
+        'ensureCollection'
+      );
+      await this.withMilvusTimeout(
+        this.getClient().upsert({
+          collection_name: this.getCollectionName(),
+          data: [
+            {
+              id: options.messageId,
+              userId: options.userId,
+              conversationId: options.conversationId,
+              agentId: options.agentId?.trim() || '',
+              role: options.role,
+              type: options.type,
+              [TEXT_FIELD_NAME]: this.truncateText(searchableText),
+              createdAtTs: this.normalizeCreatedAtTs(options.createdAt),
+              [DENSE_VECTOR_FIELD_NAME]: vector,
+            },
+          ],
+        }),
+        'upsert'
+      );
+      this.recordMilvusSuccess();
+    } catch (error) {
+      this.recordMilvusFailure('index');
+      throw error;
+    } finally {
+      this.inflightCalls -= 1;
+    }
   }
 
   async searchConversationMemories(
@@ -142,66 +187,92 @@ export class MilvusService {
       return [];
     }
 
-    const client = this.getClient();
-    const hasCollection = await client.hasCollection({
-      collection_name: this.getCollectionName(),
-    });
-
-    if (!hasCollection?.value) {
+    if (this.isCircuitOpen()) {
+      this.logger.warn('[milvus] search skipped, circuit is open');
       return [];
     }
 
-    await this.ensureCollection(this.collectionVectorDim);
-
-    const vector = this.resolveQueryEmbedding(options.queryEmbedding);
-
-    if (!vector?.length) {
-      return [];
-    }
-
-    const results = await client.hybridSearch({
-      collection_name: this.getCollectionName(),
-      data: [
-        {
-          anns_field: DENSE_VECTOR_FIELD_NAME,
-          data: [vector],
-          params: {
-            ef: this.resolveSearchEf(),
-          },
-        },
-        {
-          anns_field: SPARSE_VECTOR_FIELD_NAME,
-          data: query,
-          params: {
-            drop_ratio_search: 0.2,
-          },
-        },
-      ],
-      limit: this.resolveLimit(options.limit),
-      filter: this.buildSearchFilter(options),
-      output_fields: [
-        'id',
-        'userId',
-        'conversationId',
-        'agentId',
-        'role',
-        'type',
-        TEXT_FIELD_NAME,
-        'createdAtTs',
-      ],
-      rerank: RRFRanker(60),
-    });
-
-    const minScore = this.resolveMinScore();
-
-    return (results.results || [])
-      .map(item => this.buildRetrievedConversationMemory(item))
-      .filter(
-        item =>
-          Boolean(item.id) &&
-          item.searchableText &&
-          (typeof minScore !== 'number' || item.score >= minScore)
+    try {
+      const client = this.getClient();
+      const hasCollection = await this.withMilvusTimeout(
+        client.hasCollection({
+          collection_name: this.getCollectionName(),
+        }),
+        'hasCollection'
       );
+
+      if (!hasCollection?.value) {
+        return [];
+      }
+
+      await this.withMilvusTimeout(
+        this.ensureCollection(this.collectionVectorDim),
+        'ensureCollection'
+      );
+
+      const vector = this.resolveQueryEmbedding(options.queryEmbedding);
+
+      if (!vector?.length) {
+        return [];
+      }
+
+      const results = await this.withMilvusTimeout(
+        client.hybridSearch({
+          collection_name: this.getCollectionName(),
+          data: [
+            {
+              anns_field: DENSE_VECTOR_FIELD_NAME,
+              data: [vector],
+              params: {
+                ef: this.resolveSearchEf(),
+              },
+            },
+            {
+              anns_field: SPARSE_VECTOR_FIELD_NAME,
+              data: query,
+              params: {
+                drop_ratio_search: 0.2,
+              },
+            },
+          ],
+          limit: this.resolveLimit(options.limit),
+          filter: this.buildSearchFilter(options),
+          output_fields: [
+            'id',
+            'userId',
+            'conversationId',
+            'agentId',
+            'role',
+            'type',
+            TEXT_FIELD_NAME,
+            'createdAtTs',
+          ],
+          rerank: RRFRanker(60),
+        }),
+        'hybridSearch'
+      );
+
+      this.recordMilvusSuccess();
+
+      const minScore = this.resolveMinScore();
+
+      return (results.results || [])
+        .map(item => this.buildRetrievedConversationMemory(item))
+        .filter(
+          item =>
+            Boolean(item.id) &&
+            item.searchableText &&
+            (typeof minScore !== 'number' || item.score >= minScore)
+        );
+    } catch (error) {
+      this.recordMilvusFailure('search');
+      this.logger.error(
+        '[milvus] search degraded, userId=%s, reason=%s',
+        options.userId,
+        error instanceof Error ? error.message : String(error)
+      );
+      return [];
+    }
   }
 
   private resolveQueryEmbedding(value?: number[]): number[] | null {
@@ -216,6 +287,77 @@ export class MilvusService {
     return vector.length ? vector : null;
   }
 
+  private isCircuitOpen(): boolean {
+    if (!this.circuitOpen) {
+      return false;
+    }
+
+    if (
+      Date.now() - this.circuitOpenSince >=
+      MilvusService.CIRCUIT_COOLDOWN_MS
+    ) {
+      this.circuitOpen = false;
+      this.consecutiveFailures = 0;
+      this.logger.info('[milvus] circuit half-open, allowing probe request');
+      return false;
+    }
+
+    return true;
+  }
+
+  private recordMilvusFailure(context: string): void {
+    this.consecutiveFailures += 1;
+
+    if (
+      this.consecutiveFailures >= MilvusService.CIRCUIT_FAILURE_THRESHOLD
+    ) {
+      if (!this.circuitOpen) {
+        this.circuitOpen = true;
+        this.circuitOpenSince = Date.now();
+        this.logger.error(
+          '[milvus] circuit opened after %s consecutive failures (context=%s), pausing milvus calls for %sms',
+          this.consecutiveFailures,
+          context,
+          MilvusService.CIRCUIT_COOLDOWN_MS
+        );
+      }
+    }
+  }
+
+  private recordMilvusSuccess(): void {
+    if (this.consecutiveFailures > 0) {
+      this.logger.info('[milvus] call succeeded, resetting failure counter');
+    }
+
+    this.consecutiveFailures = 0;
+  }
+
+  private withMilvusTimeout<T>(
+    promise: Promise<T>,
+    context: string
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            `milvus ${context} timed out after ${MilvusService.REQUEST_TIMEOUT_MS}ms`
+          )
+        );
+      }, MilvusService.REQUEST_TIMEOUT_MS);
+
+      promise.then(
+        value => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        error => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
+  }
+
   private getClient(): MilvusClient {
     if (this.client) {
       return this.client;
@@ -228,6 +370,8 @@ export class MilvusService {
       password: this.milvusConfig?.password?.trim() || undefined,
       database: this.milvusConfig?.database?.trim() || undefined,
       timeout: this.resolveTimeoutMs(),
+      // 关闭 SDK 层重试（默认 maxRetries=3），避免失败时创建重试定时器与对象堆积
+      maxRetries: 0,
     });
 
     return this.client;
