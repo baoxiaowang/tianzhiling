@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Inject,
-  Param,
-  Post,
-  Query,
-} from '@midwayjs/core';
+import { Body, Controller, Get, Inject, Param, Post, Query } from '@midwayjs/core';
 import { Context } from '@midwayjs/koa';
 import { AdminAuthenticatedPayload } from '@tzl/shared';
 import {
@@ -37,11 +29,6 @@ export class AdminOrderController {
   @Post('/:id/refund')
   async refund(@Param('id') id: string) {
     return this.adminOrderService.refundOrder(id);
-  }
-
-  @Post('/:id/mark-wechat-refunded')
-  async markWechatRefunded(@Param('id') id: string) {
-    return this.adminOrderService.markWechatRefunded(id);
   }
 
   @Post('/:id/revoke')

@@ -153,9 +153,7 @@ export class AdminOrderService {
     };
   }
 
-  async createOrder(
-    payload: CreateAdminOrderDTO
-  ): Promise<AdminOrderRecordDTO> {
+  async createOrder(payload: CreateAdminOrderDTO): Promise<AdminOrderRecordDTO> {
     const orderType = this.normalizeOrderType(payload?.orderType);
     const user = await this.getUserById(payload.userId);
     const userObjectId = this.getEntityObjectId(user);
@@ -312,43 +310,6 @@ export class AdminOrderService {
     await this.refundPaidOrder(order, '管理端退订退款');
     const userMap = await this.getOrderUserMap([order]);
 
-    return this.buildOrderRecord(order, userMap);
-  }
-
-  /**
-   * 标记微信投诉直退订单。
-   * 微信直接退款到用户时不触发系统回调，这里手动标记退款状态并撤回权益。
-   * 仅适用于已完成（completed）且非管理员手动录入的订单。
-   */
-  async markWechatRefunded(orderId: string): Promise<AdminOrderRecordDTO> {
-    const order = await this.getOrderById(orderId);
-
-    if (order.status !== OrderStatus.completed) {
-      throw new AppError(
-        'ORDER_STATUS_NOT_COMPLETED',
-        'only completed order can be marked as wechat refunded',
-        400
-      );
-    }
-
-    if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
-      throw new AppError(
-        'ORDER_REFUND_PROVIDER_UNSUPPORTED',
-        'admin manual order cannot be marked as wechat refunded',
-        400
-      );
-    }
-
-    const now = new Date();
-    await this.revokeOrderBenefits(order, now);
-
-    order.status = OrderStatus.refunded;
-    order.refundAmount = order.paidAmount;
-    order.refundedAt = now;
-    order.updatedAt = now;
-    await this.orderModel.save(order);
-
-    const userMap = await this.getOrderUserMap([order]);
     return this.buildOrderRecord(order, userMap);
   }
 
@@ -560,7 +521,8 @@ export class AdminOrderService {
     const now = new Date();
 
     if (!downgrade.refundRecordedAt) {
-      order.refundAmount = (order.refundAmount ?? 0) + downgrade.refundAmount;
+      order.refundAmount =
+        (order.refundAmount ?? 0) + downgrade.refundAmount;
       downgrade.refundRecordedAt = now.toISOString();
       downgrade.updatedAt = now.toISOString();
       // 记录部分退款时间，用于收入统计按退款时间归集
@@ -628,7 +590,11 @@ export class AdminOrderService {
       downgrade.targetPlanSnapshot,
       now
     );
-    await this.revokeDowngradedMembershipVoiceBindings(order, membership, now);
+    await this.revokeDowngradedMembershipVoiceBindings(
+      order,
+      membership,
+      now
+    );
   }
 
   private async reconcileDowngradedMembershipEntitlements(
@@ -675,8 +641,8 @@ export class AdminOrderService {
         entitlement.expiredAt && entitlement.expiredAt <= now
           ? AgentEntitlementStatus.expired
           : (entitlement.usedQuota ?? 0) >= entitlement.totalQuota
-          ? AgentEntitlementStatus.used
-          : AgentEntitlementStatus.available;
+            ? AgentEntitlementStatus.used
+            : AgentEntitlementStatus.available;
       entitlement.updatedAt = now;
       await this.agentEntitlementModel.save(entitlement);
       targetGrantMap.delete(entitlement.type);
@@ -822,8 +788,9 @@ export class AdminOrderService {
   }
 
   private async syncWechatPaymentOrder(order: OrderEntity): Promise<void> {
-    const transaction =
-      await this.adminWechatPayService.queryTransactionByOrderNo(order.orderNo);
+    const transaction = await this.adminWechatPayService.queryTransactionByOrderNo(
+      order.orderNo
+    );
 
     if (!transaction) {
       if (this.isPaymentExpired(order)) {
@@ -1380,11 +1347,7 @@ export class AdminOrderService {
     membership.lifetime = Boolean(snapshot.lifetime);
     membership.expiredAt = membership.lifetime
       ? undefined
-      : this.calculateExpiredAt(
-          existing?.expiredAt,
-          now,
-          snapshot.durationDays
-        );
+      : this.calculateExpiredAt(existing?.expiredAt, now, snapshot.durationDays);
     membership.createdAt = existing?.createdAt ?? now;
     membership.updatedAt = new Date();
 
@@ -1579,10 +1542,7 @@ export class AdminOrderService {
         } as never,
       }));
 
-    if (
-      !agent ||
-      this.stringifyObjectId(agent.createdUserId) !== String(userId)
-    ) {
+    if (!agent || this.stringifyObjectId(agent.createdUserId) !== String(userId)) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -1643,10 +1603,7 @@ export class AdminOrderService {
     );
   }
 
-  private appendTaskRemark(
-    remark: string | undefined,
-    nextRemark: string
-  ): string {
+  private appendTaskRemark(remark: string | undefined, nextRemark: string): string {
     const current = remark?.trim();
 
     return current ? `${current}\n${nextRemark}` : nextRemark;
@@ -1887,9 +1844,7 @@ export class AdminOrderService {
           this.stringifyObjectId(storedPlan?.id ?? order.targetId) ??
           ''
       ),
-      code: String(
-        rawSnapshot.code ?? storedPlan?.code ?? order.targetCode ?? ''
-      ),
+      code: String(rawSnapshot.code ?? storedPlan?.code ?? order.targetCode ?? ''),
       name: String(rawSnapshot.name ?? storedPlan?.name ?? order.title ?? ''),
       planGroup,
       priceAmount: this.normalizeSnapshotAmount(
@@ -2163,10 +2118,7 @@ export class AdminOrderService {
   }
 
   private getOperationFailureReason(error: unknown): string {
-    return (error instanceof Error ? error.message : String(error)).slice(
-      0,
-      300
-    );
+    return (error instanceof Error ? error.message : String(error)).slice(0, 300);
   }
 
   private buildOrderRecord(
@@ -2296,7 +2248,9 @@ export class AdminOrderService {
     return `R${order.orderNo}`;
   }
 
-  private generateVoiceMembershipDowngradeRefundNo(order: OrderEntity): string {
+  private generateVoiceMembershipDowngradeRefundNo(
+    order: OrderEntity
+  ): string {
     return `VD${order.orderNo}`;
   }
 
@@ -2321,8 +2275,7 @@ export class AdminOrderService {
   private isVirtualGoodsProvided(order: OrderEntity): boolean {
     return (
       order.virtualGoodsProvideStatus === VirtualGoodsProvideStatus.provided ||
-      (!order.virtualGoodsProvideStatus &&
-        Boolean(order.virtualGoodsProvidedAt))
+      (!order.virtualGoodsProvideStatus && Boolean(order.virtualGoodsProvidedAt))
     );
   }
 
@@ -2533,10 +2486,7 @@ export class AdminOrderService {
     return membership.lifetime ? undefined : membership.expiredAt;
   }
 
-  private parseObjectId(
-    value: string,
-    code = 'INVALID_OBJECT_ID'
-  ): MongoObjectId {
+  private parseObjectId(value: string, code = 'INVALID_OBJECT_ID'): MongoObjectId {
     if (!MongoObjectId.isValid(value)) {
       throw new AppError(code, 'object id is invalid', 400);
     }
