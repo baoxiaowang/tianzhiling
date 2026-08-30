@@ -36,6 +36,17 @@ export function refundOrder(id: string) {
   } as TzlAxiosRequestConfig);
 }
 
+/** 标记微信投诉直退（微信已直接退款，手动标记系统状态并撤回权益） */
+export function markWechatRefunded(id: string) {
+  return axios.post<OrderRecord>(
+    `/admin_api/orders/${id}/mark-wechat-refunded`,
+    undefined,
+    {
+      hideErrorMessage: true,
+    } as TzlAxiosRequestConfig
+  );
+}
+
 export function revokeAdminManualOrder(id: string) {
   return axios.post<OrderRecord>(`/admin_api/orders/${id}/revoke`, undefined, {
     hideErrorMessage: true,

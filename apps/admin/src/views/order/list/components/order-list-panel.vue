@@ -340,6 +340,23 @@
                   </a-button>
                 </a-popconfirm>
                 <a-popconfirm
+                  v-if="canMarkWechatRefunded(record)"
+                  content="微信已直接退款？标记后将撤回权益并更新订单状态"
+                  ok-text="确认"
+                  cancel-text="取消"
+                  position="left"
+                  @ok="handleMarkWechatRefunded(record)"
+                >
+                  <a-button
+                    type="text"
+                    status="warning"
+                    size="small"
+                    :loading="markWechatRefundedLoadingId === record.id"
+                  >
+                    标记微信已退款
+                  </a-button>
+                </a-popconfirm>
+                <a-popconfirm
                   v-if="canRevokeAdminManualOrder(record)"
                   :content="getRevokeConfirmContent(record)"
                   ok-text="回收"
@@ -788,6 +805,7 @@
     createAdminOrder as createAdminOrderApi,
     downgradeVoiceMembership as downgradeVoiceMembershipApi,
     getVoiceMembershipDowngradePreview as getVoiceMembershipDowngradePreviewApi,
+    markWechatRefunded as markWechatRefundedApi,
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
@@ -829,6 +847,7 @@
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
+  const markWechatRefundedLoadingId = ref('');
   const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
   const downgradeSyncLoadingId = ref('');
@@ -1153,6 +1172,14 @@
         record.status === 'refund_requested' ||
         record.status === 'grant_failed')
     );
+  };
+
+  /**
+   * 微信投诉直退：微信已直接退款到用户，系统未收到回调，需手动标记。
+   * 仅对「已完成」状态的非管理员手动订单显示。
+   */
+  const canMarkWechatRefunded = (record: OrderRecord) => {
+    return record.status === 'completed' && !isAdminManualOrder(record);
   };
 
   const canStartVoiceMembershipDowngrade = (record: OrderRecord) => {
@@ -1595,6 +1622,31 @@
       );
     } finally {
       refundLoadingId.value = '';
+    }
+  };
+
+  /** 标记微信已直接退款的订单（撤回权益并更新状态） */
+  const handleMarkWechatRefunded = async (record: OrderRecord) => {
+    if (markWechatRefundedLoadingId.value) {
+      return;
+    }
+
+    markWechatRefundedLoadingId.value = record.id;
+
+    try {
+      const { data } = await markWechatRefundedApi(record.id);
+
+      replaceOrderRecord(data);
+
+      Message.success('已标记微信已退款，权益已撤回');
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '标记失败，请稍后重试'
+      );
+    } finally {
+      markWechatRefundedLoadingId.value = '';
     }
   };
 
