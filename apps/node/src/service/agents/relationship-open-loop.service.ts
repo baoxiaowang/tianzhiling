@@ -169,11 +169,12 @@ const RECENT_VISIBLE_MESSAGE_LIMIT = 16;
 const DISTRIBUTED_LOCK_TTL_MS = 15 * 1000;
 const BACKFILL_JOB_ID = 'relationship-open-loop-revalidation-20260824-v3';
 const BACKFILL_MARKER_MESSAGE_PREFIX =
-  '__RELATIONSHIP_OPEN_LOOP_REVALIDATION_20260824_V3__:';
+  '__TZL_RELATIONSHIP_OPEN_LOOP_REVALIDATION_20260824_V3__:';
 const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const BACKFILL_LOCK_MS = 10 * 60 * 1000;
 const BACKFILL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 const BACKFILL_RUN_BUDGET_MS = 3 * 60 * 1000;
+const BACKFILL_CATCH_UP_AFTER = new Date('2026-08-24T23:00:00.000Z');
 const BACKFILL_PROGRESS_VERSION =
   'relationship_open_loop_revalidation_progress_v2' as const;
 const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
@@ -200,12 +201,7 @@ export class RelationshipOpenLoopService {
 
   @Init()
   async initializeProductionBackfill(): Promise<void> {
-    if (
-      process.env.NODE_ENV !== 'production' ||
-      process.env.RELATIONSHIP_OPEN_LOOP_REVALIDATION_AUTORUN !== 'true'
-    ) {
-      return;
-    }
+    if (process.env.NODE_ENV !== 'production') return;
     const attempt = () => {
       void this.runProductionBackfillOnce().catch(error => {
         this.logger?.error?.(
@@ -440,7 +436,11 @@ export class RelationshipOpenLoopService {
     const progressBeforeLock = this.parseBackfillProgress(
       await this.redisService.get(progressKey)
     );
-    if (!this.isShanghaiMaintenanceWindow(now) && !progressBeforeLock) {
+    if (
+      !this.isShanghaiMaintenanceWindow(now) &&
+      !progressBeforeLock &&
+      now < BACKFILL_CATCH_UP_AFTER
+    ) {
       return undefined;
     }
     const lockToken = `${process.pid}:${now.getTime()}`;
@@ -617,7 +617,6 @@ export class RelationshipOpenLoopService {
               cutoffAt,
               now
             );
-            progress.summary.scannedMessageCount += result.scannedMessageCount;
             this.mergeBackfillDelta(progress.summary, result.delta);
           } catch (error) {
             progress.summary.failedConversationCount += 1;

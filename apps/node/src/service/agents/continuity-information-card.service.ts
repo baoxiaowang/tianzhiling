@@ -335,9 +335,7 @@ export class ContinuityInformationCardService {
             : {}),
         };
       }
-      const running = await this.redisService.get(
-        `chat:${BACKFILL_JOB_ID}:lock`
-      );
+      const running = await this.redisService.get(`chat:${BACKFILL_JOB_ID}:lock`);
       return {
         jobId: BACKFILL_JOB_ID,
         status: running || backfillRunning ? 'running' : 'pending',
@@ -393,8 +391,7 @@ export class ContinuityInformationCardService {
           }
         : { status: 'resolved' as const }),
       latestEvidenceMessageId: this.stringifyObjectId(options.message.id),
-      latestEvidenceAt:
-        options.message.sourceOccurredAt ?? options.message.createdAt,
+      latestEvidenceAt: options.message.sourceOccurredAt ?? options.message.createdAt,
       updatedAt: now,
     };
     await this.persistCards(options.message.conversationId, [updated]);
@@ -537,7 +534,8 @@ export class ContinuityInformationCardService {
   }
 
   private async findBackfillMarker(): Promise<
-    { message: MessageEntity; summary: Record<string, unknown> } | undefined
+    | { message: MessageEntity; summary: Record<string, unknown> }
+    | undefined
   > {
     const messages = await this.messageModel.find({
       where: {
@@ -638,4 +636,5 @@ export class ContinuityInformationCardService {
       ? (value as { toHexString: () => string }).toHexString()
       : String(value);
   }
+
 }

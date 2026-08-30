@@ -87,18 +87,18 @@ export class RetrieveService {
     }
   }
 
-  // 时间衰减：超过 90 天的记忆不注入
+  // 时间衰减：超过 90 天的记忆不注入，30-90 天降权
   private applyMemoryTimeDecay(
     memories: RetrievedConversationMemory[]
   ): RetrievedConversationMemory[] {
     if (!memories.length) return [];
 
     const now = Date.now();
-    const dayMs = 86_400_000;
+    const DAY_MS = 86400000;
 
-    return memories.filter(memory => {
-      const ageDays = (now - (memory.createdAtTs || 0)) / dayMs;
-      return ageDays <= 90;
+    return memories.filter(m => {
+      const ageDays = (now - (m.createdAtTs || 0)) / DAY_MS;
+      return ageDays <= 90; // 超过 90 天直接丢弃
     });
   }
 
@@ -110,21 +110,24 @@ export class RetrieveService {
       return memories.slice(0, 2);
     }
 
-    const scores = memories.map(memory => memory.score || 0);
+    const scores = memories.map(m => m.score || 0);
     const top1 = scores[0];
     const top3 = scores[2];
 
+    // 区分度不足 → 噪声，不注入
     if (top1 - top3 < MIN_RRF_GAP) {
       return [];
     }
 
+    // 有区分度：取明显高于中位数的
     const median = scores[Math.floor(scores.length / 2)];
     const relevant = memories.filter(
-      memory => (memory.score || 0) - median >= MIN_RRF_GAP / 2
+      m => (m.score || 0) - median >= MIN_RRF_GAP / 2
     );
 
     return relevant.slice(0, 2);
   }
+
 
   private async filterArchivedMemories(
     memories: RetrievedConversationMemory[]

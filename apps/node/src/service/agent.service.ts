@@ -48,13 +48,13 @@ import { AgentMemoryProfileService } from './agents/agent-memory-profile.service
 import { AgentCreateGuideService } from './agents/agent-create-guide.service';
 import { AgentProfileMemorySourceField } from './agents/agent-profile-fact.service';
 import { AgentMemoryInheritanceService } from './agents/agent-memory-inheritance.service';
+import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
 import { OpenAIService } from './agents/openai';
 import {
   buildInitialRecognitionJourney,
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
-import { WechatPayService } from './wechat-pay.service';
 
 export type AgentProfile = AgentProfileDTO;
 export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
@@ -113,10 +113,10 @@ export class AgentService {
   agentCreateGuideService: AgentCreateGuideService;
 
   @Inject()
-  messengerService: MessengerService;
+  wechatPayService: WechatPayService;
 
   @Inject()
-  wechatPayService: WechatPayService;
+  messengerService: MessengerService;
 
   @Inject()
   agentMemoryInheritanceService: AgentMemoryInheritanceService;
@@ -145,15 +145,15 @@ export class AgentService {
 
   async listAgents(auth: AuthenticatedUserPayload): Promise<AgentProfile[]> {
     const userId = this.parseUserId(auth.sub);
-    const agents = await this.agentModel.find({
+    const ownedAgents = await this.agentModel.find({
       where: {
         createdUserId: userId,
-        messengerOfAgentId: { $exists: false },
       },
       order: {
         updatedAt: 'DESC',
       },
     });
+    const agents = ownedAgents.filter(agent => !agent.messengerOfAgentId);
 
     return this.buildAgentProfiles(agents, userId);
   }
@@ -166,7 +166,6 @@ export class AgentService {
       this.agentModel.find({
         where: {
           createdUserId: userId,
-          messengerOfAgentId: { $exists: false },
         },
         order: {
           updatedAt: 'DESC',
@@ -188,7 +187,7 @@ export class AgentService {
     const agentsById = new Map<string, AgentEntity>();
 
     for (const agent of [...ownedAgents, ...sharedAgents.filter(Boolean)]) {
-      if (agent) {
+      if (agent && !agent.messengerOfAgentId) {
         agentsById.set(this.stringifyObjectId(agent.id), agent);
       }
     }

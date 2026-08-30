@@ -33,11 +33,6 @@ export function revalidateRelationshipOpenLoopStore(options: {
   now?: Date;
 }): RelationshipOpenLoopRevalidationResult {
   const now = options.now ?? new Date();
-  const scannedSourceMessageIds = new Set(
-    options.inputs
-      .map(item => stringifyObjectId(item.message.id))
-      .filter(Boolean)
-  );
   let store = buildEmptyRelationshipOpenLoopStore(now);
   store.legacyContinuityMigratedAt = now;
   let generatedTaskCount = 0;
@@ -89,61 +84,18 @@ export function revalidateRelationshipOpenLoopStore(options: {
   }
 
   store = expireRelationshipOpenLoops(
-    preserveUnscannedPreviousTasks(
-      options.previousStore,
-      restoreValidatedTaskTracking(options.previousStore, store, now),
-      scannedSourceMessageIds
-    ),
+    restoreValidatedTaskTracking(options.previousStore, store, now),
     now
   );
-  const retainedPreviousTaskCount = options.previousStore.tasks.filter(task =>
-    store.tasks.some(candidate => tasksRepresentSameSource(task, candidate))
-  ).length;
   return {
     store,
     generatedTaskCount,
     revalidatedTaskCount: store.tasks.length,
     removedTaskCount: Math.max(
       0,
-      options.previousStore.tasks.length - retainedPreviousTaskCount
+      options.previousStore.tasks.length - store.tasks.length
     ),
   };
-}
-
-/**
- * A rolling revalidation window may judge only sources it actually loaded.
- * Long-lived commitments and unresolved matters whose evidence is outside the
- * window remain intact until their source is deliberately re-read.
- */
-function preserveUnscannedPreviousTasks(
-  previous: RelationshipOpenLoopStore,
-  rebuilt: RelationshipOpenLoopStore,
-  scannedSourceMessageIds: Set<string>
-): RelationshipOpenLoopStore {
-  const preserved = previous.tasks.filter(task => {
-    if (!task.sourceMessageIds.some(id => !scannedSourceMessageIds.has(id))) {
-      return false;
-    }
-    return !rebuilt.tasks.some(candidate =>
-      tasksRepresentSameSource(task, candidate)
-    );
-  });
-  if (!preserved.length) return rebuilt;
-  return {
-    ...rebuilt,
-    tasks: [...rebuilt.tasks, ...preserved],
-  };
-}
-
-function tasksRepresentSameSource(
-  left: RelationshipOpenLoopStore['tasks'][number],
-  right: RelationshipOpenLoopStore['tasks'][number]
-): boolean {
-  return (
-    left.id === right.id ||
-    left.semanticKey === right.semanticKey ||
-    left.sourceMessageIds.some(id => right.sourceMessageIds.includes(id))
-  );
 }
 
 function restoreValidatedTaskTracking(
@@ -154,8 +106,11 @@ function restoreValidatedTaskTracking(
   return {
     ...rebuilt,
     tasks: rebuilt.tasks.map(task => {
-      const previousTask = previous.tasks.find(item =>
-        tasksRepresentSameSource(item, task)
+      const previousTask = previous.tasks.find(
+        item =>
+          item.id === task.id ||
+          item.semanticKey === task.semanticKey ||
+          item.sourceMessageIds.some(id => task.sourceMessageIds.includes(id))
       );
       if (!previousTask) return task;
       return {

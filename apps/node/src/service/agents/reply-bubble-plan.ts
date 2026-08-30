@@ -102,7 +102,8 @@ export function buildReplyBubblePlanPrompt(plan: ReplyBubblePlan): string {
 }
 
 // 这些阈值只读取模型已经完成的正文，不进入生成提示，也不构成回复字数目标。
-// 常见自然双句从 17 字开始可拆；三泡只留给明显更长的完整正文。
+// 当前生产正文平均约 22 字：覆盖常见的 17–40 字自然双句，能提高双泡占比；
+// 三泡只留给明显更长的完整正文，避免常见回复被连续切成三段。
 const DELIVERY_TWO_BUBBLE_MIN_CHARACTERS = 17;
 const DELIVERY_THREE_BUBBLE_MIN_CHARACTERS = 48;
 const DELIVERY_SPLIT_MIN_PART_CHARACTERS = 5;

@@ -32,10 +32,7 @@ export function extractContinuityInformationCards(options: {
   const now = options.now ?? new Date();
   const extracted = extractEvents(options.inputs);
   const messagesById = new Map(
-    options.inputs.map(input => [
-      stringifyObjectId(input.message.id),
-      input.message,
-    ])
+    options.inputs.map(input => [stringifyObjectId(input.message.id), input.message])
   );
   const ordinalByMessage = new Map<string, number>();
   return extracted
@@ -66,9 +63,7 @@ export function extractContinuityInformationCards(options: {
     .filter((card): card is ContinuityInformationCard => Boolean(card));
 }
 
-export function shouldInspectHistoricalContinuityMessage(
-  text: string
-): boolean {
+export function shouldInspectHistoricalContinuityMessage(text: string): boolean {
   return (
     shouldAttemptContinuityEventCapture(text) ||
     /(?:挺严重|很严重|比较严重|病危|进了ICU|进ICU|要手术|需要手术|好多了|好起来了|康复了|出院了|没事了|恢复了|结果出来了|通知来了|通过了|没通过|录取了)/u.test(
@@ -108,8 +103,10 @@ function extractEvents(
         prior.latestEvidenceAt =
           input.message.sourceOccurredAt ?? input.message.createdAt;
         if (severityUpdate) {
-          prior.draft.summary =
-            `${prior.draft.summary}；用户后续说明情况严重`.slice(0, 120);
+          prior.draft.summary = `${prior.draft.summary}；用户后续说明情况严重`.slice(
+            0,
+            120
+          );
           prior.draft.retentionPolicy = 'until_resolved';
           prior.draft.importance = 3;
         } else {
@@ -238,10 +235,7 @@ function buildDeterministicEvents(
     : [];
 }
 
-function resolveRelativeEventAt(
-  text: string,
-  sourceAt: Date
-): Date | undefined {
+function resolveRelativeEventAt(text: string, sourceAt: Date): Date | undefined {
   const start = new Date(sourceAt);
   start.setHours(12, 0, 0, 0);
   if (/大后天/u.test(text)) return new Date(start.getTime() + 3 * 86400000);

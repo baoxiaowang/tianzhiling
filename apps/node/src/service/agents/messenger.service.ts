@@ -83,6 +83,19 @@ export interface ProvisionMessengersForUserResult {
   conversationsCreated: number;
 }
 
+export interface RevealEligibleMessengersResult {
+  processed: number;
+  alreadyVisible: number;
+  revealed: number;
+  revealedByTurns: number;
+  revealedByAge: number;
+}
+
+interface EnsureVisibleMessengerConversationResult {
+  visible: boolean;
+  created: boolean;
+}
+
 export interface MessengerMemoryTaskItem {
   key: AgentProfileMemoryField;
   title: string;
@@ -99,14 +112,6 @@ export interface MessengerMemoryTaskPlan {
   currentTaskKey?: AgentProfileMemoryField;
   currentTaskTitle?: string;
   tasks: MessengerMemoryTaskItem[];
-}
-
-export interface RevealEligibleMessengersResult {
-  processed: number;
-  alreadyVisible: number;
-  revealed: number;
-  revealedByTurns: number;
-  revealedByAge: number;
 }
 
 @Provide()
@@ -327,14 +332,10 @@ export class MessengerService {
       let turnEligible = false;
 
       if (!ageEligible) {
-        const userTurnCount = await this.messageModel.count({
+        const userTurnCount = await this.countEffectiveUserTurns(
           userId,
-          agentId: parentAgent.id,
-          role: MessageRole.user,
-          status: MessageStatus.sent,
-          source: { $ne: MessageSource.wechatImport },
-          isArchived: { $ne: true },
-        });
+          parentAgent.id
+        );
         turnEligible = userTurnCount >= MESSENGER_REVEAL_USER_TURN_THRESHOLD;
       }
 
@@ -342,33 +343,19 @@ export class MessengerService {
         continue;
       }
 
-      const lock = await this.acquireMessengerRevealLock(messenger.id);
-      if (!lock.acquired) {
-        continue;
-      }
-
-      try {
-        const conversationCreatedByAnotherRequest =
-          await this.conversationModel.findOne({
-            where: {
-              agentId: messenger.id,
-              userId,
-            },
-          });
-        if (conversationCreatedByAnotherRequest) {
-          alreadyVisible += 1;
-          continue;
-        }
-
-        await this.ensureMessengerConversation(parentAgent, messenger);
+      const result = await this.ensureVisibleMessengerConversation(
+        parentAgent,
+        messenger
+      );
+      if (result.created) {
         revealed += 1;
         if (ageEligible) {
           revealedByAge += 1;
         } else {
           revealedByTurns += 1;
         }
-      } finally {
-        await this.releaseMessengerRevealLock(messenger.id, lock.token);
+      } else if (result.visible) {
+        alreadyVisible += 1;
       }
     }
 
@@ -379,6 +366,141 @@ export class MessengerService {
       revealedByTurns,
       revealedByAge,
     };
+  }
+
+  async revealMessengerAfterUserMessage(
+    parentAgent: AgentEntity,
+    userMessage: MessageEntity
+  ): Promise<boolean> {
+    if (!this.isEffectiveParentUserMessage(parentAgent, userMessage)) {
+      return false;
+    }
+
+    const userTurnCount = await this.countEffectiveUserTurns(
+      userMessage.userId,
+      parentAgent.id
+    );
+    if (userTurnCount < MESSENGER_REVEAL_USER_TURN_THRESHOLD) {
+      return false;
+    }
+
+    const messenger = await this.ensureMessengerForAgent(parentAgent);
+    const result = await this.ensureVisibleMessengerConversation(
+      parentAgent,
+      messenger
+    );
+    return result.visible;
+  }
+
+  private async ensureVisibleMessengerConversation(
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity
+  ): Promise<EnsureVisibleMessengerConversationResult> {
+    const existingConversation = await this.conversationModel.findOne({
+      where: {
+        agentId: messengerAgent.id,
+        userId: parentAgent.createdUserId,
+      },
+    });
+    if (existingConversation) {
+      await this.repairInitialMessengerGreetingIfEmpty(
+        existingConversation,
+        parentAgent,
+        messengerAgent
+      );
+      return {
+        visible: true,
+        created: false,
+      };
+    }
+
+    const lock = await this.acquireMessengerRevealLock(messengerAgent.id);
+    if (!lock.acquired) {
+      return {
+        visible: false,
+        created: false,
+      };
+    }
+
+    try {
+      const conversationBeforeEnsure = await this.conversationModel.findOne({
+        where: {
+          agentId: messengerAgent.id,
+          userId: parentAgent.createdUserId,
+        },
+      });
+
+      await this.ensureMessengerConversation(parentAgent, messengerAgent);
+      return {
+        visible: true,
+        created: !conversationBeforeEnsure,
+      };
+    } finally {
+      await this.releaseMessengerRevealLock(messengerAgent.id, lock.token);
+    }
+  }
+
+  private async repairInitialMessengerGreetingIfEmpty(
+    conversation: ConversationEntity,
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity
+  ): Promise<void> {
+    const existingMessage = await this.messageModel.findOne({
+      where: {
+        conversationId: conversation.id,
+      },
+    });
+    if (existingMessage) {
+      return;
+    }
+
+    const lock = await this.acquireMessengerRevealLock(messengerAgent.id);
+    if (!lock.acquired) {
+      return;
+    }
+
+    try {
+      await this.ensureInitialMessengerGreeting(
+        conversation,
+        parentAgent,
+        messengerAgent,
+        new Date()
+      );
+    } finally {
+      await this.releaseMessengerRevealLock(messengerAgent.id, lock.token);
+    }
+  }
+
+  private countEffectiveUserTurns(
+    userId: MongoObjectId,
+    parentAgentId: MongoObjectId
+  ): Promise<number> {
+    return this.messageModel.count({
+      userId,
+      agentId: parentAgentId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      source: { $ne: MessageSource.wechatImport },
+      isArchived: { $ne: true },
+    });
+  }
+
+  private isEffectiveParentUserMessage(
+    parentAgent: AgentEntity,
+    message: MessageEntity
+  ): boolean {
+    return Boolean(
+      parentAgent?.id &&
+        parentAgent.createdUserId &&
+        message?.userId &&
+        message.agentId &&
+        String(parentAgent.createdUserId) === String(message.userId) &&
+        String(parentAgent.id) === String(message.agentId) &&
+        message.role === MessageRole.user &&
+        message.status === MessageStatus.sent &&
+        message.source !== MessageSource.wechatImport &&
+        message.isArchived !== true
+    );
   }
 
   private async acquireMessengerRevealLock(

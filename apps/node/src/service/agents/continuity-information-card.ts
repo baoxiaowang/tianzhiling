@@ -497,9 +497,7 @@ function extractKeywords(value: string): string[] {
 }
 
 function describeRelativeTime(source: Date, now: Date): string {
-  const days = Math.floor(
-    Math.max(0, now.getTime() - source.getTime()) / DAY_MS
-  );
+  const days = Math.floor(Math.max(0, now.getTime() - source.getTime()) / DAY_MS);
   if (days <= 0) return '今天';
   if (days === 1) return '昨天';
   if (days <= 6) return `${days}天前`;
@@ -544,7 +542,9 @@ function isTimeScope(value: unknown): value is ContinuityTimeScope {
   );
 }
 
-function isRetentionPolicy(value: unknown): value is ContinuityRetentionPolicy {
+function isRetentionPolicy(
+  value: unknown
+): value is ContinuityRetentionPolicy {
   return [
     'transient_3d',
     'short_7d',
