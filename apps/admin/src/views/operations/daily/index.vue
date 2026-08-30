@@ -21,7 +21,7 @@
         row-key="date"
         :data="daily"
         :pagination="false"
-        :scroll="{ x: 1350 }"
+        :scroll="{ x: 1480 }"
       >
         <template #columns>
           <a-table-column title="日期" data-index="date" :width="130" />
@@ -49,6 +49,15 @@
           <a-table-column title="累计收入" :width="130">
             <template #cell="{ record }">
               {{ formatMoney(record.cohortRevenue) }}
+            </template>
+          </a-table-column>
+          <a-table-column title="单客收益" :width="110">
+            <template #cell="{ record }">
+              {{
+                record.newUsers > 0
+                  ? formatMoney(record.cohortRevenue / record.newUsers)
+                  : '—'
+              }}
             </template>
           </a-table-column>
         </template>
