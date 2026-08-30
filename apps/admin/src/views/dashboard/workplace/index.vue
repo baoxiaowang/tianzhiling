@@ -264,7 +264,7 @@
           item.date,
           item.newUsers,
           item.userMessages,
-          (item.netRevenue / 100).toFixed(2),
+          Number(item.netRevenue || 0).toFixed(2),
         ].join(',')
       )
       .join('\n');
