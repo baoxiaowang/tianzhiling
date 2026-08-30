@@ -41,13 +41,18 @@
             title="本月每日趋势"
           >
             <template #extra>
-              <a-radio-group v-model="trendMetric" type="button" size="small">
-                <a-radio value="newUsers">新增用户</a-radio>
-                <a-radio value="netRevenue">当天收入</a-radio>
-                <a-radio value="userMessages">总消息数</a-radio>
-              </a-radio-group>
+              <a-space>
+                <a-radio-group v-model="trendMetric" type="button" size="small">
+                  <a-radio value="newUsers">新增用户</a-radio>
+                  <a-radio value="netRevenue">当天收入</a-radio>
+                  <a-radio value="userMessages">总消息数</a-radio>
+                </a-radio-group>
+                <a-button size="small" @click="downloadTrend"
+                  >下载数据</a-button
+                >
+              </a-space>
             </template>
-            <Chart height="320px" :option="trendChartOption" />
+            <Chart height="420px" :option="trendChartOption" />
           </a-card>
         </a-grid-item>
 
@@ -62,7 +67,7 @@
                 新用户指注册未满 3 天
               </a-typography-text>
             </template>
-            <Chart height="320px" :option="userTypeChartOption" />
+            <Chart height="420px" :option="userTypeChartOption" />
           </a-card>
         </a-grid-item>
       </a-grid>
@@ -71,12 +76,17 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, onMounted, ref } from 'vue';
+  import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type { AdminOperationsReportDTO } from '@tzl/shared';
   import { queryOperationsReport } from '@/api/operations';
+
+  // 异步加载 Chart 组件，减小首屏 bundle
+  const Chart = defineAsyncComponent(
+    () => import('@/components/chart/index.vue')
+  );
 
   const loading = ref(false);
   const route = useRoute();
@@ -244,6 +254,29 @@
     })}`;
   const formatDay = (value: string) => dayjs(value).format('MM-DD');
 
+  const downloadTrend = () => {
+    const daily = report.value?.daily || [];
+    if (!daily.length) return;
+    const header = '日期,新增用户,总消息数,当天收入（元）\n';
+    const rows = daily
+      .map((item) =>
+        [
+          item.date,
+          item.newUsers,
+          item.userMessages,
+          (item.netRevenue / 100).toFixed(2),
+        ].join(',')
+      )
+      .join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `每日趋势_${month.value}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   onMounted(fetchData);
 </script>
 
@@ -253,7 +286,9 @@
 
 <style lang="less" scoped>
   .data-dashboard {
-    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
     padding: 24px;
     background: var(--color-fill-2);
 
@@ -261,6 +296,7 @@
     :deep(.arco-spin-children) {
       display: block;
       width: 100%;
+      flex: 1;
     }
 
     &__header {
