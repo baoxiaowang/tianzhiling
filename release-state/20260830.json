@@ -19,6 +19,8 @@
     "6笔历史降级退款已从微信支付获取实际 success_time 并补写 order.refundedAt",
     "admin_account 重复记录已清理"
   ],
-  "status": "ready_to_deploy",
+  "status": "deployed",
+  "deployedAt": "2026-08-30T11:04:00+08:00",
+  "deployedCommit": "470876ad9ad7efbf232b826e3d4ea134c1e71edc",
   "upstream": "20260827"
 }
