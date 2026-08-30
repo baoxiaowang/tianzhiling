@@ -32,6 +32,7 @@ export default {
   'menu.operations': 'Operations & System',
   'menu.operations.daily': 'Daily Detail',
   'menu.operations.userValue': 'User Value',
+
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',
   'menu.voiceModel.package': 'Voice Packages',

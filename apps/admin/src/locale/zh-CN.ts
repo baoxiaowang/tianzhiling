@@ -31,6 +31,7 @@ export default {
   'menu.operations': '运营与系统',
   'menu.operations.daily': '每日明细',
   'menu.operations.userValue': '用户价值',
+
   'menu.voiceModel': '声音模型',
   'menu.voiceModel.timbre': '音色管理',
   'menu.voiceModel.package': '声音套餐',
