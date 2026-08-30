@@ -21,7 +21,7 @@
         row-key="date"
         :data="daily"
         :pagination="false"
-        :scroll="{ x: 1220 }"
+        :scroll="{ x: 1350 }"
       >
         <template #columns>
           <a-table-column title="日期" data-index="date" :width="130" />
@@ -44,6 +44,11 @@
           <a-table-column title="净收入" :width="130">
             <template #cell="{ record }">
               <strong>{{ formatMoney(record.netRevenue) }}</strong>
+            </template>
+          </a-table-column>
+          <a-table-column title="累计收入" :width="130">
+            <template #cell="{ record }">
+              {{ formatMoney(record.cohortRevenue) }}
             </template>
           </a-table-column>
         </template>
