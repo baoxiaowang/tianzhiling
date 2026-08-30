@@ -11,24 +11,23 @@ const OPERATIONS: AppRouteRecordRaw = {
     icon: 'icon-apps',
     order: 3,
   },
-  redirect: '/operations/reports',
   children: [
     {
-      path: 'reports',
-      name: 'OperationsReports',
-      component: () => import('@/views/operations/reports/index.vue'),
+      path: 'daily',
+      name: 'OperationsDaily',
+      component: () => import('@/views/operations/daily/index.vue'),
       meta: {
-        locale: 'menu.operations.reports',
+        locale: 'menu.operations.daily',
         requiresAuth: true,
         roles: ['*'],
       },
     },
     {
-      path: 'tasks',
-      name: 'OperationsTaskCenter',
-      component: () => import('@/views/operations/task-center/index.vue'),
+      path: 'user-value',
+      name: 'OperationsUserValue',
+      component: () => import('@/views/operations/user-value/index.vue'),
       meta: {
-        locale: 'menu.operations.taskCenter',
+        locale: 'menu.operations.userValue',
         requiresAuth: true,
         roles: ['*'],
       },
