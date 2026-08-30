@@ -1,3 +1,4 @@
+# Production node app base
 FROM node:20.19-alpine AS base
 
 WORKDIR /workspace/apps/node
