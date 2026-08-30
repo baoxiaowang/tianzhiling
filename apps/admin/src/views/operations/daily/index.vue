@@ -27,31 +27,20 @@
           <a-table-column title="日期" data-index="date" :width="130" />
           <a-table-column title="新增用户" data-index="newUsers" :width="110" />
           <a-table-column
-            title="3 日内新用户聊天人数"
-            data-index="newUserChatUsers"
-            :width="140"
-          />
-          <a-table-column
-            title="3 日内新用户消息数"
-            data-index="newUserMessages"
-            :width="130"
-          />
-          <a-table-column
             title="全部聊天人数"
             data-index="allChatUsers"
             :width="130"
+          />
+          <a-table-column
+            title="3 日内新用户聊天人数"
+            data-index="newUserChatUsers"
+            :width="140"
           />
           <a-table-column
             title="全部消息数"
             data-index="userMessages"
             :width="120"
           />
-          <a-table-column
-            title="付费人数"
-            data-index="paidUsers"
-            :width="110"
-          />
-          <a-table-column title="订单数" data-index="paidOrders" :width="100" />
           <a-table-column title="净收入" :width="130">
             <template #cell="{ record }">
               <strong>{{ formatMoney(record.netRevenue) }}</strong>
