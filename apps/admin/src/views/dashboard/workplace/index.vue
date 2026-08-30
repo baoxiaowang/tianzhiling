@@ -34,7 +34,7 @@
         :row-gap="16"
         class="data-dashboard__analysis"
       >
-        <a-grid-item :span="{ xs: 24, xl: 16 }">
+        <a-grid-item :span="16">
           <a-card
             class="data-dashboard__chart-card"
             :bordered="false"
@@ -51,7 +51,7 @@
           </a-card>
         </a-grid-item>
 
-        <a-grid-item :span="{ xs: 24, xl: 8 }">
+        <a-grid-item :span="8">
           <a-card
             class="data-dashboard__chart-card"
             :bordered="false"

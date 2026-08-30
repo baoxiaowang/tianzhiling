@@ -261,4 +261,125 @@ describe('AdminOperationsService', () => {
     );
     expect(result.handlingStatus).toBe('resolved');
   });
+
+  describe('净收入口径（getNetPaidAmountExpression）', () => {
+    // 极简 Mongo 聚合表达式求值器（仅覆盖净收入表达式用到的算子，用于断言计算口径）
+    const evaluate = (
+      expr: unknown,
+      doc: Record<string, unknown>
+    ): unknown => {
+      if (Array.isArray(expr)) {
+        return expr.map((item) => evaluate(item, doc));
+      }
+      if (expr && typeof expr === 'object') {
+        const obj = expr as Record<string, unknown>;
+        if ('$ifNull' in obj) {
+          const [value, fallback] = obj.$ifNull as unknown[];
+          return evaluate(value, doc) ?? evaluate(fallback, doc);
+        }
+        if ('$cond' in obj) {
+          const [condition, whenTrue, whenFalse] = obj.$cond as unknown[];
+          return evaluate(condition, doc)
+            ? evaluate(whenTrue, doc)
+            : evaluate(whenFalse, doc);
+        }
+        if ('$subtract' in obj) {
+          const [left, right] = obj.$subtract as unknown[];
+          return (evaluate(left, doc) as number) - (evaluate(right, doc) as number);
+        }
+        if ('$add' in obj) {
+          return (obj.$add as unknown[]).reduce<number>(
+            (sum, item) => sum + (evaluate(item, doc) as number),
+            0
+          );
+        }
+        if ('$eq' in obj) {
+          const [left, right] = obj.$eq as unknown[];
+          return evaluate(left, doc) === evaluate(right, doc) ? 1 : 0;
+        }
+        if ('$lte' in obj) {
+          const [left, right] = obj.$lte as unknown[];
+          return (evaluate(left, doc) as number) <= (evaluate(right, doc) as number)
+            ? 1
+            : 0;
+        }
+        if ('$gt' in obj) {
+          const [left, right] = obj.$gt as unknown[];
+          return (evaluate(left, doc) as number) > (evaluate(right, doc) as number)
+            ? 1
+            : 0;
+        }
+        if ('$and' in obj) {
+          const conditions = obj.$and as unknown[];
+          return conditions.every((item) => evaluate(item, doc)) ? 1 : 0;
+        }
+      }
+      if (typeof expr === 'string' && expr.startsWith('$')) {
+        const path = expr.slice(1).split('.');
+        let value: unknown = doc;
+        for (const key of path) {
+          value = (value as Record<string, unknown>)?.[key];
+        }
+        return value;
+      }
+      return expr;
+    };
+
+    const exprOf = (service: AdminOperationsService) =>
+      (
+        service as unknown as {
+          getNetPaidAmountExpression: () => unknown;
+        }
+      ).getNetPaidAmountExpression();
+
+    it('普通已完成订单：净收入=实付金额（无退款）', () => {
+      const service = new AdminOperationsService();
+      expect(
+        evaluate(exprOf(service), {
+          paidAmount: 9900,
+          payableAmount: 9900,
+          refundAmount: 0,
+          status: 'completed',
+        })
+      ).toBe(9900);
+    });
+
+    it('降级已完成订单：降级差价只扣一次，净收入=实付-差价', () => {
+      // 降级差价在降级时已写入 order.refundAmount，不应再从 snapshot 重复扣除
+      const service = new AdminOperationsService();
+      expect(
+        evaluate(exprOf(service), {
+          paidAmount: 16900,
+          payableAmount: 16900,
+          refundAmount: 7000,
+          status: 'completed',
+          snapshot: { voiceMembershipDowngrade: { refundAmount: 7000 } },
+        })
+      ).toBe(9900);
+    });
+
+    it('已退款订单：净收入=实付-退款（全额退款为0）', () => {
+      const service = new AdminOperationsService();
+      expect(
+        evaluate(exprOf(service), {
+          paidAmount: 16900,
+          payableAmount: 16900,
+          refundAmount: 16900,
+          status: 'refunded',
+        })
+      ).toBe(0);
+    });
+
+    it('已退款但退款金额缺失的订单：按全额退款兜底为0', () => {
+      const service = new AdminOperationsService();
+      expect(
+        evaluate(exprOf(service), {
+          paidAmount: 9900,
+          payableAmount: 9900,
+          refundAmount: 0,
+          status: 'refunded',
+        })
+      ).toBe(0);
+    });
+  });
 });

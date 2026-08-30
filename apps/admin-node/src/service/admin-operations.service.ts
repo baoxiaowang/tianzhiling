@@ -1413,6 +1413,13 @@ export class AdminOperationsService {
           refundedAt: null,
           updatedAt: { $gte: start, $lt: end },
         },
+        // 部分退款（如会员降级差价退款）：status=completed 但有 refundAmount
+        {
+          status: 'completed',
+          refundAmount: { $gt: 0 },
+          refundedAt: null,
+          updatedAt: { $gte: start, $lt: end },
+        },
       ],
     };
   }

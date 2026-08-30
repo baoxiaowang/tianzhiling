@@ -525,6 +525,10 @@ export class AdminOrderService {
         (order.refundAmount ?? 0) + downgrade.refundAmount;
       downgrade.refundRecordedAt = now.toISOString();
       downgrade.updatedAt = now.toISOString();
+      // 记录部分退款时间，用于收入统计按退款时间归集
+      if (!order.refundedAt) {
+        order.refundedAt = now;
+      }
       this.setVoiceMembershipDowngrade(order, downgrade);
       order.updatedAt = now;
       await this.orderModel.save(order);
