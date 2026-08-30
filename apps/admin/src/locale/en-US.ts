@@ -6,6 +6,7 @@ import localeWorkplace from '@/views/dashboard/workplace/locale/en-US';
 import localeSettings from './en-US/settings';
 
 export default {
+  // Admin sidebar menu labels
   'menu.dashboard': 'Workplace',
   'menu.server.dashboard': 'Dashboard-Server',
   'menu.server.workplace': 'Workplace-Server',
