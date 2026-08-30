@@ -1,0 +1,24 @@
+{
+  "release": "20260830",
+  "repo": "tianzhiling",
+  "createdAt": "2026-08-30T10:30:00+08:00",
+  "baselineCommit": "59e813c",
+  "baselineLabel": "admin income stats + dashboard fix 20260830",
+  "commits": [
+    "59e813c fix(admin): 当天收入统计包含会员降级差价退款 + 仪表盘图表修复",
+    "8dda0d6 fix(node): harden milvus calls to prevent OOM (prod baseline 20260827)"
+  ],
+  "highlights": [
+    "当天收入统计包含会员降级差价退款（部分退款 status=completed + refundAmount>0）",
+    "降级退款成功时记录 order.refundedAt，确保按退款时间归集",
+    "净收入口径单元测试：降级差价只扣一次，不重复扣减",
+    "数据仪表盘图表修复：Chart 组件 props 名 options->option",
+    "数据仪表盘布局修复：grid span 响应式对象改为固定值 16/8"
+  ],
+  "dataFixes": [
+    "6笔历史降级退款已从微信支付获取实际 success_time 并补写 order.refundedAt",
+    "admin_account 重复记录已清理"
+  ],
+  "status": "ready_to_deploy",
+  "upstream": "20260827"
+}
