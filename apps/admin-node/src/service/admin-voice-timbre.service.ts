@@ -1387,8 +1387,21 @@ export class AdminVoiceTimbreService {
             boundTimbre: {
               id: this.stringifyObjectId(boundTimbre.id),
               name: boundTimbre.name,
+              provider: boundTimbre.provider as VoiceTimbreProviderDTO,
               status: boundTimbre.status as VoiceTimbreStatusDTO,
               providerVoiceId: boundTimbre.providerVoiceId,
+              previewAudioUrl: boundTimbre.previewAudioUrl ?? '',
+              audioUrl: this.storageFileService.resolve(
+                boundTimbre.audioObjectKey || boundTimbre.audioUrl
+              ),
+              previewText: boundTimbre.previewText ?? '',
+              errorCode: boundTimbre.errorCode ?? '',
+              errorMessage: boundTimbre.errorMessage ?? '',
+              deletionStatus: boundTimbre.deletionStatus,
+              deletionFailureReason:
+                boundTimbre.deletionFailureReason || undefined,
+              boundAgentCount: boundAgents.length,
+              canDelete: boundAgents.length === 0,
             },
           }
         : {}),

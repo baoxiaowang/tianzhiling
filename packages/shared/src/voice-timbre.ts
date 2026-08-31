@@ -597,7 +597,20 @@ export interface AdminDoubaoVoiceSlotDTO {
   availabilityReason: string;
   boundTimbre?: Pick<
     AdminVoiceTimbreRecordDTO,
-    "id" | "name" | "status" | "providerVoiceId"
+    | "id"
+    | "name"
+    | "provider"
+    | "status"
+    | "providerVoiceId"
+    | "previewAudioUrl"
+    | "audioUrl"
+    | "previewText"
+    | "errorCode"
+    | "errorMessage"
+    | "deletionStatus"
+    | "deletionFailureReason"
+    | "boundAgentCount"
+    | "canDelete"
   >;
   boundAgents?: Array<{
     id: string;

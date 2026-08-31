@@ -305,7 +305,7 @@
           :loading="doubaoSlotsLoading"
           :pagination="false"
           :bordered="false"
-          :scroll="{ x: 1440 }"
+          :scroll="{ x: 1500 }"
         >
           <template #empty>
             <a-empty
@@ -320,24 +320,6 @@
             <a-table-column title="槽位" :width="90">
               <template #cell="{ record }">
                 槽位 {{ record.slotNumber }}
-              </template>
-            </a-table-column>
-            <a-table-column title="Speaker ID" :width="245">
-              <template #cell="{ record }">
-                <a-typography-text v-if="record.speakerId" copyable>
-                  {{ record.speakerId }}
-                </a-typography-text>
-                <a-tag v-else color="gray">训练后自动生成</a-tag>
-                <div v-if="record.alias" class="voice-timbre-page__slot-alias">
-                  {{ record.alias }}
-                </div>
-              </template>
-            </a-table-column>
-            <a-table-column title="实例号" data-index="instanceNo" :width="245">
-              <template #cell="{ record }">
-                <a-typography-text copyable>
-                  {{ record.instanceNo || '-' }}
-                </a-typography-text>
               </template>
             </a-table-column>
             <a-table-column title="平台状态" :width="120">
@@ -366,12 +348,30 @@
                     >
                       {{ agent.status === 'active' ? '已绑定' : '待绑定' }}
                     </a-tag>
-                    <a-typography-text copyable>
-                      {{ agent.id }}
-                    </a-typography-text>
                   </div>
                 </div>
                 <a-tag v-else color="gray">未绑定</a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="试听" :width="230">
+              <template #cell="{ record }">
+                <audio
+                  v-if="record.boundTimbre?.previewAudioUrl"
+                  controls
+                  :src="record.boundTimbre.previewAudioUrl"
+                  class="voice-timbre-page__audio"
+                />
+                <a-tooltip
+                  v-else-if="
+                    record.boundTimbre && record.boundTimbre.status === 'failed'
+                  "
+                  :content="
+                    record.boundTimbre.errorMessage || '训练失败，可重新训练'
+                  "
+                >
+                  <a-tag color="red">训练失败</a-tag>
+                </a-tooltip>
+                <span v-else>-</span>
               </template>
             </a-table-column>
             <a-table-column title="剩余训练次数" :width="130">
@@ -404,9 +404,9 @@
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="操作" :width="235" fixed="right">
+            <a-table-column title="操作" :width="210" fixed="right">
               <template #cell="{ record }">
-                <a-space>
+                <a-space direction="vertical" :size="4" align="start">
                   <a-button
                     v-if="record.availableForTraining"
                     type="text"
@@ -423,6 +423,58 @@
                   >
                     绑定智能体
                   </a-button>
+                  <a-button
+                    v-if="canRetrySlot(record)"
+                    type="text"
+                    size="small"
+                    :status="
+                      record.boundTimbre?.status === 'failed'
+                        ? 'warning'
+                        : 'normal'
+                    "
+                    :loading="isRetrying(record.boundTimbre.id)"
+                    @click="handleRetrySlot(record)"
+                  >
+                    {{
+                      record.boundTimbre?.status === 'active'
+                        ? '重新训练'
+                        : '重试训练'
+                    }}
+                  </a-button>
+                  <a-button
+                    v-if="canValidateSlot(record)"
+                    type="text"
+                    size="small"
+                    :loading="isValidating(record.boundTimbre.id)"
+                    @click="handleValidateSlot(record)"
+                  >
+                    校验
+                  </a-button>
+                  <a-tooltip
+                    v-if="record.boundTimbre"
+                    :content="
+                      record.boundTimbre.canDelete
+                        ? '删除本地音色与绑定，付费槽位保留可复用'
+                        : `已绑定 ${record.boundTimbre.boundAgentCount} 个智能体，请先解除绑定`
+                    "
+                  >
+                    <span>
+                      <a-button
+                        type="text"
+                        size="small"
+                        status="danger"
+                        :disabled="!record.boundTimbre.canDelete"
+                        :loading="isDeleting(record.boundTimbre.id)"
+                        @click="openDeleteSlot(record)"
+                      >
+                        {{
+                          record.boundTimbre.deletionStatus === 'partial_failed'
+                            ? '重试删除'
+                            : '删除'
+                        }}
+                      </a-button>
+                    </span>
+                  </a-tooltip>
                 </a-space>
               </template>
             </a-table-column>
@@ -538,9 +590,7 @@
             </a-option>
           </a-select>
           <template #extra>
-            空槽无需人工填写 Speaker
-            ID；上传素材后由系统自动生成。训练满意后，再在槽位页单独绑定智能体
-            ID。
+            空槽无需人工填写；上传素材后由系统自动生成。训练满意后，再在槽位页单独绑定智能体。
           </template>
         </a-form-item>
 
@@ -1168,7 +1218,7 @@
     supportsQwenAudioOutputControls.value || isDoubaoProvider.value ? 2 : 10
   );
   const providerVoiceIdLabel = computed(() => {
-    if (isDoubaoProvider.value) return '豆包音色ID（Speaker ID）';
+    if (isDoubaoProvider.value) return '豆包音色ID';
     if (isCosyVoiceProvider.value || isQwenProvider.value) return '音色前缀';
     return '服务商音色ID';
   });
@@ -1355,6 +1405,105 @@
     } finally {
       bindingAgent.value = false;
     }
+  };
+
+  const buildSlotTimbreRecord = (
+    timbre: NonNullable<AdminDoubaoVoiceSlotDTO['boundTimbre']>
+  ): VoiceTimbreRecord =>
+    ({
+      id: timbre.id,
+      name: timbre.name,
+      provider: timbre.provider,
+      providerVoiceId: timbre.providerVoiceId ?? '',
+      audioObjectKey: '',
+      audioUrl: timbre.audioUrl ?? '',
+      cloneLanguage: 'zh',
+      speechDialect: 'auto',
+      speechInstruction: '',
+      previewText: timbre.previewText ?? '',
+      previewModel: '',
+      previewAudioUrl: timbre.previewAudioUrl ?? '',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: 0,
+      status: timbre.status,
+      errorCode: timbre.errorCode ?? '',
+      errorMessage: timbre.errorMessage ?? '',
+      remark: '',
+      boundAgentCount: timbre.boundAgentCount ?? 0,
+      canDelete: Boolean(timbre.canDelete),
+      deletionStatus: timbre.deletionStatus,
+      deletionFailureReason: timbre.deletionFailureReason,
+      createdAt: '',
+      updatedAt: '',
+    } as VoiceTimbreRecord);
+
+  const canRetrySlot = (slot: AdminDoubaoVoiceSlotDTO) =>
+    Boolean(
+      slot.boundTimbre &&
+        (slot.boundTimbre.status === 'failed' ||
+          slot.boundTimbre.status === 'active')
+    );
+
+  const canValidateSlot = (slot: AdminDoubaoVoiceSlotDTO) =>
+    Boolean(slot.boundTimbre?.providerVoiceId);
+
+  const handleRetrySlot = async (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    const nextRetryingIds = new Set(retryingIds.value);
+    nextRetryingIds.add(timbre.id);
+    retryingIds.value = nextRetryingIds;
+
+    try {
+      await retryVoiceTimbre(timbre.id);
+      Message.success('豆包音色训练任务已重新提交');
+      await fetchDoubaoSlots();
+      await fetchData();
+    } catch (error) {
+      Message.error('豆包音色重试失败');
+    } finally {
+      const latestRetryingIds = new Set(retryingIds.value);
+      latestRetryingIds.delete(timbre.id);
+      retryingIds.value = latestRetryingIds;
+    }
+  };
+
+  const handleValidateSlot = async (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    const nextValidatingIds = new Set(validatingIds.value);
+    nextValidatingIds.add(timbre.id);
+    validatingIds.value = nextValidatingIds;
+
+    try {
+      const { data } = await validateVoiceTimbre(timbre.id);
+      validationResult.value = data;
+      validationVisible.value = true;
+      Message.success('音色校验完成，已同步本地状态');
+      await fetchDoubaoSlots();
+      await fetchData();
+    } catch (error) {
+      Message.error('音色校验失败');
+    } finally {
+      const latestValidatingIds = new Set(validatingIds.value);
+      latestValidatingIds.delete(timbre.id);
+      validatingIds.value = latestValidatingIds;
+    }
+  };
+
+  const openDeleteSlot = (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    if (!timbre.canDelete) {
+      Message.warning(
+        `该音色已绑定 ${timbre.boundAgentCount} 个智能体，请先解除绑定`
+      );
+      return;
+    }
+
+    deletingRecord.value = buildSlotTimbreRecord(timbre);
+    deleteVisible.value = true;
   };
 
   const openEdit = (record: VoiceTimbreRecord) => {
