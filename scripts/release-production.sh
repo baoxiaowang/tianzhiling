@@ -254,7 +254,8 @@ git merge --ff-only "$TARGET"
 export RELEASE_VERSION="$TARGET"
 
 PHASE='production-build'
-docker compose --profile prod build "${SERVICES[@]}"
+# --no-cache 强制全量重建，避免 Docker 层缓存未感知到源码变更（曾导致 admin_web 停留在旧版本）
+docker compose --profile prod build --no-cache "${SERVICES[@]}"
 
 PHASE='database-contract'
 [[ "$(
