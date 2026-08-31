@@ -100,11 +100,6 @@
             <template #cell="{ record }">
               <div class="voice-timbre-page__identity">
                 <div class="voice-timbre-page__name">{{ record.name }}</div>
-                <a-tooltip :content="record.id">
-                  <a-typography-text class="voice-timbre-page__id" copyable>
-                    {{ record.id }}
-                  </a-typography-text>
-                </a-tooltip>
               </div>
             </template>
           </a-table-column>
@@ -585,7 +580,7 @@
               {{
                 slot.empty
                   ? '未训练，ID 自动生成'
-                  : slot.alias || slot.speakerId
+                  : slot.alias || slot.boundTimbre?.name || '已训练'
               }}
             </a-option>
           </a-select>
