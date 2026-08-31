@@ -15,36 +15,6 @@
         </a-button>
       </template>
 
-      <section v-if="showAnalytics" class="order-page__analytics">
-        <header class="order-page__analytics-header">
-          <div>
-            <h2>订单统计</h2>
-            <span>上方看当月结果，下方核对每一笔订单</span>
-          </div>
-          <a-month-picker
-            v-model="analyticsMonth"
-            value-format="YYYY-MM"
-            :allow-clear="false"
-            @change="fetchAnalytics"
-          />
-        </header>
-        <div class="order-page__analytics-summary">
-          <article v-for="item in analyticsSummary" :key="item.label">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-            <small>{{ item.hint }}</small>
-          </article>
-        </div>
-        <a-card
-          class="order-page__analytics-chart"
-          title="本月每日实付趋势"
-          :bordered="false"
-          :loading="analyticsLoading"
-        >
-          <Chart height="240px" :option="analyticsChartOption" />
-        </a-card>
-      </section>
-
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
           <a-input
@@ -764,7 +734,6 @@
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
-    AdminOrderAnalyticsDTO,
     AdminOrderPaymentTypeDTO,
     OrderSourceDTO,
     OrderStatusDTO,
@@ -772,7 +741,6 @@
     VirtualGoodsProvideStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
-  import { queryOrderAnalytics } from '@/api/operations';
   import {
     queryAppUserAgents,
     queryAppUserList,
@@ -823,9 +791,6 @@
   const { loading, setLoading } = useLoading();
   const router = useRouter();
   const renderList = ref<OrderRecord[]>([]);
-  const analytics = ref<AdminOrderAnalyticsDTO>();
-  const analyticsLoading = ref(false);
-  const analyticsMonth = ref(dayjs().format('YYYY-MM'));
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
@@ -922,69 +887,6 @@
 
     return props.orderType ? orderTypeTitleMap[props.orderType] : '订单明细';
   });
-  const showAnalytics = computed(
-    () => !props.embedded && !props.orderType && !props.status && !props.userId
-  );
-  const analyticsSummary = computed(() => [
-    {
-      label: '本月实付金额',
-      value: formatAnalyticsMoney(analytics.value?.totals.paidRevenue),
-      hint: `净收入 ${formatAnalyticsMoney(
-        analytics.value?.totals.netRevenue
-      )}`,
-    },
-    {
-      label: '支付订单',
-      value: formatCount(analytics.value?.totals.paidOrders),
-      hint: `支付成功率 ${formatPercent(
-        analytics.value?.totals.paymentSuccessRate
-      )}`,
-    },
-    {
-      label: '付费用户',
-      value: formatCount(analytics.value?.totals.payingUsers),
-      hint: `首次付费 ${formatCount(
-        analytics.value?.totals.firstTimePayingUsers
-      )} 人`,
-    },
-    {
-      label: '平均订单金额',
-      value: formatAnalyticsMoney(analytics.value?.totals.averageOrderAmount),
-      hint: '实付金额 ÷ 支付订单',
-    },
-    {
-      label: '退款金额',
-      value: formatAnalyticsMoney(analytics.value?.totals.refundedRevenue),
-      hint: `退款率 ${formatPercent(analytics.value?.totals.refundRate)}`,
-    },
-  ]);
-  const analyticsChartOption = computed(() => ({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 64, right: 30, top: 28, bottom: 38 },
-    xAxis: {
-      type: 'category',
-      data: (analytics.value?.daily || []).map((item) =>
-        dayjs(item.date).format('MM-DD')
-      ),
-      axisLabel: { interval: 4 },
-    },
-    yAxis: { type: 'value', name: '元' },
-    series: [
-      {
-        name: '实付金额',
-        type: 'bar',
-        data: (analytics.value?.daily || []).map((item) => item.paidRevenue),
-        itemStyle: { color: '#8b78d9', borderRadius: [5, 5, 0, 0] },
-      },
-      {
-        name: '净收入',
-        type: 'line',
-        smooth: true,
-        data: (analytics.value?.daily || []).map((item) => item.netRevenue),
-        itemStyle: { color: '#c27b9c' },
-      },
-    ],
-  }));
   const normalizedCreatedAtRange = computed(() => {
     const [start, end] = searchForm.createdAtRange;
 
@@ -1088,20 +990,6 @@
       Message.error('订单列表加载失败');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchAnalytics = async () => {
-    if (!showAnalytics.value) return;
-
-    try {
-      analyticsLoading.value = true;
-      const { data } = await queryOrderAnalytics(analyticsMonth.value);
-      analytics.value = data;
-    } catch (error) {
-      Message.error('订单统计加载失败');
-    } finally {
-      analyticsLoading.value = false;
     }
   };
 
@@ -1901,7 +1789,6 @@
   );
 
   fetchData();
-  fetchAnalytics();
 </script>
 
 <script lang="ts">
@@ -1932,73 +1819,6 @@
 
     &__search {
       margin-bottom: 16px;
-    }
-
-    &__analytics {
-      margin-bottom: 20px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid var(--color-border-2);
-    }
-
-    &__analytics-header {
-      display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 14px;
-
-      h2 {
-        margin: 0 0 4px;
-        font-size: 18px;
-      }
-
-      span {
-        color: var(--color-text-3);
-      }
-    }
-
-    &__analytics-summary {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      overflow: hidden;
-      background: var(--color-fill-1);
-      border: 1px solid var(--color-border-2);
-      border-radius: 8px;
-
-      article {
-        min-width: 0;
-        padding: 14px;
-        border-right: 1px solid var(--color-border-2);
-
-        &:last-child {
-          border-right: 0;
-        }
-
-        span,
-        small {
-          display: block;
-          overflow: hidden;
-          color: var(--color-text-3);
-          font-size: 12px;
-          white-space: nowrap;
-          text-overflow: ellipsis;
-        }
-
-        strong {
-          display: block;
-          margin: 8px 0 4px;
-          overflow: hidden;
-          font-weight: 500;
-          font-size: 20px;
-          white-space: nowrap;
-          text-overflow: ellipsis;
-        }
-      }
-    }
-
-    &__analytics-chart {
-      margin-top: 14px;
-      background: var(--color-fill-1);
     }
 
     &__filter {
