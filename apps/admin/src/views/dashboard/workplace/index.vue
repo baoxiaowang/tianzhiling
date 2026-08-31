@@ -116,7 +116,7 @@
     {
       label: '本月新建智能体',
       value: report.value?.totals.newAgents || 0,
-      hint: '用户创建的 AI 亲人',
+      hint: '用户创建的 AI 亲人，不含小使者',
     },
     {
       label: '总聊天用户',
