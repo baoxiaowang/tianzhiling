@@ -48,7 +48,7 @@
             mode="aspectFit"
           />
         </view>
-        <text class="voice-service-messenger__name">天之灵小使者</text>
+        <text class="voice-service-messenger__name">{{ brand.name }}小使者</text>
         <text class="voice-service-messenger__status">{{
           serviceStatusText
         }}</text>
@@ -613,7 +613,7 @@
           <text class="voice-service-preview__eyebrow">声音已经生成</text>
           <text class="voice-service-preview__title">现在方便听一听吗？</text>
           <text class="voice-service-preview__text">
-            先试听确认熟悉的感觉，再选择要使用这个声音的天之灵。
+            先试听确认熟悉的感觉，再选择要使用这个声音的{{ brand.name }}。
           </text>
           <view class="voice-service-preview__retention-notice">
             <text>
@@ -699,7 +699,7 @@
           <view class="voice-service-section-heading">
             <view>
               <text class="voice-service-section-heading__title"
-                >选择天之灵</text
+                >选择{{ brand.name }}</text
               >
               <text class="voice-service-section-heading__desc">
                 {{
@@ -715,7 +715,7 @@
             class="voice-service-agent-select__loading"
           >
             <Loading color="#77728f" size="18" />
-            <text>正在加载天之灵...</text>
+            <text>正在加载{{ brand.name }}...</text>
           </view>
           <view v-else-if="agents.length" class="voice-service-agents">
             <view
@@ -765,14 +765,14 @@
             </view>
           </view>
           <view v-else class="voice-service-agent-select__empty">
-            <text>还没有天之灵，可以先创建一个再回来选择。</text>
+            <text>还没有{{ brand.name }}，可以先创建一个再回来选择。</text>
             <nut-button
               shape="round"
               type="primary"
               size="small"
               @click="handleCreateAgent"
             >
-              创建天之灵
+              创建{{ brand.name }}
             </nut-button>
           </view>
         </view>
@@ -914,7 +914,7 @@
         <view class="voice-service-privacy__copy">
           <text class="voice-service-privacy__title">删除声音数据</text>
           <text class="voice-service-privacy__text">
-            将删除原始素材、切片、训练音频和声音模型，并解除已选天之灵的声音绑定。
+            将删除原始素材、切片、训练音频和声音模型，并解除已选{{ brand.name }}的声音绑定。
           </text>
           <text
             v-if="session?.dataDeletionStatus === 'partial_failed'"
@@ -1021,6 +1021,7 @@ import {
 import Taro, { useDidHide, useDidShow, useLoad, useUnload } from "@tarojs/taro";
 import { computed, nextTick, ref } from "vue";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import { getAgents, type AgentSummary } from "../../apis/agent";
 import { uploadLocalFile } from "../../apis/storage";
 import {
@@ -1564,7 +1565,7 @@ async function loadAgents() {
     await selectRouteAgentIfNeeded();
   } catch (error) {
     if (!(await handleAuthError(error))) {
-      showToast(formatError(error, "天之灵加载失败，请稍后重试"));
+      showToast(formatError(error, `${brand.name}加载失败，请稍后重试`));
     }
   } finally {
     isLoadingAgents.value = false;
@@ -2013,7 +2014,7 @@ async function handleDeleteVoiceData() {
   const result = await Taro.showModal({
     title: "删除全部声音数据？",
     content:
-      "原始素材、切片、训练音频和声音模型都会被永久删除，已选天之灵的声音绑定也会解除。此操作无法恢复。",
+      `原始素材、切片、训练音频和声音模型都会被永久删除，已选${brand.name}的声音绑定也会解除。此操作无法恢复。`,
     confirmText: "永久删除",
     cancelText: "取消",
     confirmColor: "#c83f49",
@@ -2333,7 +2334,7 @@ async function handleSelectAgent(agentId: string) {
     shouldShowResumePrompt.value = true;
     showToast(
       session.value.voiceBindingStatus === "bound"
-        ? "声音已接入这个天之灵"
+        ? `声音已接入这个${brand.name}`
         : session.value.voiceBindingStatus === "existing_voice_preserved"
         ? "已保留原来的声音服务"
         : "已选择，开通声音权益后自动接入"

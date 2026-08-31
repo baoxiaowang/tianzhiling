@@ -1,11 +1,12 @@
 import 'package:flutter/cupertino.dart';
+import '../config/brand_config.dart';
 import 'package:flutter/material.dart';
 
 class VipSuccessNoticePage extends StatelessWidget {
   const VipSuccessNoticePage({super.key});
 
   static const String routeName = '/vip-success-notice';
-  static const String _hotline = '18062525425';
+  static const String _hotline = BrandConfig.customerServicePhone;
 
   @override
   Widget build(BuildContext context) {
@@ -205,7 +206,7 @@ class _OuterCard extends StatelessWidget {
                     ScaffoldMessenger.of(context).hideCurrentSnackBar();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('客服热线：18062525425'),
+                        content: Text('客服热线：${BrandConfig.customerServicePhone}'),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -273,7 +274,7 @@ class _IntroMessage extends StatelessWidget {
         SizedBox(width: 13 * scale),
         Expanded(
           child: Text(
-            '尊敬的会员，感谢支持天之灵，请添加我们的专业客服，获取会员服务。',
+            '尊敬的会员，感谢支持${BrandConfig.name}，请添加我们的专业客服，获取会员服务。',
             style: TextStyle(
               color: const Color(0xFF000000),
               fontSize: 16 * scale,

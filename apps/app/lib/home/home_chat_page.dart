@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import '../config/brand_config.dart';
 import 'package:tianzhiling_app/agent/agent_create_flow_page.dart';
-import 'package:tianzhiling_app/api/agent_api.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
 import 'package:tianzhiling_app/api/conversation_api.dart';
 import 'package:tianzhiling_app/auth/auth_page.dart';
@@ -50,19 +50,12 @@ class _HomeChatPageState extends State<HomeChatPage> {
         return;
       }
 
-      // No agents, try creating one from first available
-      final agents = await AgentApi.getAgents();
+      // No conversations in list, try entry endpoint (returns default agent's conversation)
+      final entry = await ConversationApi.getEntryConversation();
       if (!mounted) return;
-      if (agents.isNotEmpty) {
-        try {
-          final result = await ConversationApi.createConversation(agents.first.id);
-          if (!mounted) return;
-          final conv = ConversationSummary.fromJson(Map<String, dynamic>.from(result));
-          ActiveConversationStore.select(conv);
-          setState(() { _conversation = conv; _loading = false; });
-        } catch (_) {
-          setState(() { _loading = false; });
-        }
+      if (entry != null) {
+        ActiveConversationStore.select(entry);
+        setState(() { _conversation = entry; _loading = false; });
       } else {
         setState(() { _loading = false; });
       }
@@ -121,7 +114,7 @@ class _HomeChatPageState extends State<HomeChatPage> {
           children: [
             const Icon(Icons.psychology_outlined, size: 80, color: Colors.grey),
             const SizedBox(height: 20),
-            const Text('还没有天之灵', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const Text('还没有${BrandConfig.name}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             const Text('创建一位你思念的人，和他说说话吧', style: TextStyle(color: Colors.grey, fontSize: 14), textAlign: TextAlign.center),
             const SizedBox(height: 28),
@@ -130,7 +123,7 @@ class _HomeChatPageState extends State<HomeChatPage> {
                 Navigator.of(context).pushNamed(AgentCreateFlowPage.routeName).then((_) => _load());
               },
               icon: const Icon(Icons.add),
-              label: const Text('创建天之灵'),
+              label: const Text('创建${BrandConfig.name}'),
               style: ElevatedButton.styleFrom(minimumSize: const Size(200, 48)),
             ),
           ],

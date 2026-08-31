@@ -465,7 +465,7 @@ async function provisionTargetsInBulk(db, targets, now = new Date()) {
   const conversationResult = messengers.length
     ? await conversations.bulkWrite(
         messengers.map(messenger => {
-          const messengerName = String(messenger.name || '天之灵小使者');
+          const messengerName = String(messenger.name || (process.env.BRAND_NAME || '天之灵') + '小使者');
           return {
             updateOne: {
               filter: {
@@ -521,7 +521,7 @@ async function provisionTargetsInBulk(db, targets, now = new Date()) {
   const greetingMessages = conversationsMissingGreetings.flatMap(
     conversation => {
       const messenger = messengerById.get(objectIdKey(conversation.agentId));
-      const messengerName = String(messenger?.name || '天之灵小使者');
+      const messengerName = String(messenger?.name || (process.env.BRAND_NAME || '天之灵') + '小使者');
       const parentName = messengerName.endsWith('的小使者')
         ? messengerName.slice(0, -4)
         : 'TA';

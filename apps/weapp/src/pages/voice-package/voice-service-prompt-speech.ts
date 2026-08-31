@@ -18,7 +18,7 @@ import reviewingPartialSpeech from "./assets/prompts/reviewing-partial.mp3";
 import reviewingStartSpeech from "./assets/prompts/reviewing-start.mp3";
 import selectionLimitSpeech from "./assets/prompts/selection-limit.mp3";
 import trainingSpeech from "./assets/prompts/training.mp3";
-import promptManifest from "./voice-service-prompts.json";
+import promptManifest from "./voice-service-prompts";
 
 const speechByPromptId: Record<string, string> = {
   material_collection: materialCollectionSpeech,

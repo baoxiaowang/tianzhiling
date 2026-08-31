@@ -11,7 +11,7 @@
   >
     <template #header>
       <app-bar
-        title="唤醒天之灵"
+        title="唤醒{{ brand.name }}"
         background="#ffffff"
         border-color="#eeeef2"
         @back="handleBack"
@@ -29,7 +29,7 @@
             :fade-in="false"
           />
         </view>
-        <text class="agent-create-start__messenger-name">天之灵小使者</text>
+        <text class="agent-create-start__messenger-name">{{ brand.name }}小使者</text>
         <text class="agent-create-start__messenger-desc">
           我来陪你轻轻唤醒他
         </text>
@@ -126,6 +126,7 @@ import { PlayStop, Right, Voice } from "@nutui/icons-vue-taro";
 import Taro, { useLoad } from "@tarojs/taro";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import AppBar from "../../components/app-bar/app-bar.vue";
+import { brand } from "../../config/brand";
 import LoginPromptPopup from "../../components/login-prompt-popup/login-prompt-popup.vue";
 import PageScaffold from "../../components/page-scaffold/page-scaffold.vue";
 import { authSession, restoreAuthSession } from "../../auth/session";

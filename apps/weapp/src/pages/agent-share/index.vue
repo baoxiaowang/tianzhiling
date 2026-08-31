@@ -41,7 +41,7 @@
           {{ avatarFallback }}
         </view>
         <text class="share-person__name">{{ displayName }}</text>
-        <text class="share-person__status">已经来到你的天之灵</text>
+        <text class="share-person__status">已经来到你的{{ brand.name }}</text>
       </view>
 
       <view class="share-context">
@@ -101,7 +101,7 @@
           {{ avatarFallback }}
         </view>
         <text class="share-person__name">{{ displayName }}</text>
-        <text class="share-person__status">邀请你来到他的天之灵</text>
+        <text class="share-person__status">邀请你来到他的{{ brand.name }}</text>
       </view>
 
       <view class="share-boundary">
@@ -143,7 +143,7 @@
           :loading="isJoining"
           @click="handleJoin"
         >
-          加入我的天之灵
+          加入我的{{ brand.name }}
         </nut-button>
         <text class="share-preview__notice">
           登录后才会正式加入；查看邀请不会建立关系。
@@ -172,6 +172,7 @@ import Taro, { useLoad } from "@tarojs/taro";
 import type { AgentShareInvitePreviewDTO } from "@tzl/shared";
 import { computed, ref } from "vue";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import {
   acceptAgentShareInvite,
   getAgentShareInvitePreview,

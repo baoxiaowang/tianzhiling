@@ -186,6 +186,11 @@ function readPemFrom(
 
 export default {
   keys: readStringFrom(['NODE_APP_KEYS'], '1774073039411_5782'),
+  brand: {
+    key: readStringFrom(['BRAND'], 'tianzhiling'),
+    name: readStringFrom(['BRAND_NAME'], '天之灵'),
+    companyName: readStringFrom(['BRAND_COMPANY'], '武汉市天之灵智能技术有限公司'),
+  },
   koa: {
     port: readNumberFrom(['NODE_PORT'], 7001),
     globalPrefix: readStringFrom(['NODE_GLOBAL_PREFIX'], '/api'),

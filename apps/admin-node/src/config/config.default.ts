@@ -71,6 +71,11 @@ export default {
     ['ADMIN_API_APP_KEYS', 'NODE_APP_KEYS'],
     '1774073039411_5782'
   ),
+  brand: {
+    key: readStringFrom(['BRAND'], 'tianzhiling'),
+    name: readStringFrom(['BRAND_NAME'], '天之灵'),
+    companyName: readStringFrom(['BRAND_COMPANY'], '武汉市天之灵智能技术有限公司'),
+  },
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
     globalPrefix: '/admin_api',

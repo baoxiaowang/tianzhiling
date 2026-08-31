@@ -50,11 +50,12 @@ export default {
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
 import { buildOssMediaUrl } from '@tzl/shared'
+import { brand } from '../../config/brand'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 
-const customerServicePhone = '19986943631'
-const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
+const customerServicePhone = brand.customerService.phone
+const customerServiceQr = buildOssMediaUrl(brand.customerService.wechatQr)
 
 async function handleCallCustomerService() {
   try {

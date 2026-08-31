@@ -142,6 +142,7 @@ export default {
 import { computed, ref } from 'vue'
 import type { PostCommentItem, PostItem } from '../../apis/post'
 import { normalizeEmojiText } from '../../utils/emoji-text'
+import { brand } from '../../config/brand'
 
 const props = withDefaults(
   defineProps<{
@@ -175,7 +176,7 @@ function normalizeText(value: unknown) {
 
 const authorName = computed(() => {
   const name = normalizeText(props.post.authorName)
-  return name ? name : '天之灵用户'
+  return name ? name : `${brand.name}用户`
 })
 const postImages = computed(() => {
   return props.post.images
@@ -289,7 +290,7 @@ function formatMomentRelativeTime(value: string | null) {
 }
 
 function formatCommentAuthor(authorName: unknown) {
-  const author = normalizeText(authorName) || '天之灵用户'
+  const author = normalizeText(authorName) || `${brand.name}用户`
 
   return author
 }

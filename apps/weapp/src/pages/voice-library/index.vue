@@ -100,7 +100,7 @@
             <text v-if="item.bindings.length">
               正在用于：{{ bindingNames(item) }}
             </text>
-            <text v-else>尚未接入天之灵</text>
+            <text v-else>尚未接入{{ brand.name }}</text>
             <view class="voice-library-item__retention-line">
               <view
                 class="voice-library-item__retention-dot"
@@ -186,7 +186,7 @@
       >
         <view class="voice-library-dialog-copy">
           <text>
-            将删除“{{ activeTimbre?.name }}”的声音模型、训练音频、试听音频和生成语音，并解除已绑定的天之灵。
+            将删除“{{ activeTimbre?.name }}”的声音模型、训练音频、试听音频和生成语音，并解除已绑定的{{ brand.name }}。
           </text>
           <text>原始素材和切片仍会保留。删除后无法恢复。</text>
         </view>
@@ -228,6 +228,7 @@ import {
 import Taro, { useDidShow, useUnload } from "@tarojs/taro";
 import { ref } from "vue";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import {
   deleteUserVoiceTimbre,
   getUserVoiceTimbreLibrary,

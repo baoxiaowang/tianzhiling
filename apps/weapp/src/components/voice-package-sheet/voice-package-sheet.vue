@@ -9,7 +9,7 @@
     </view>
 
     <text class="voice-package-sheet__note">
-      【注】每次训练会生成一个独立声音，完成后可接入指定天之灵
+      【注】每次训练会生成一个独立声音，完成后可接入指定{{ brand.name }}
     </text>
 
     <view v-if="packages.length" class="voice-package-sheet__plans">
@@ -52,6 +52,7 @@ export default {
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { brand } from '../../config/brand'
 import { buildOssMediaUrl } from '@tzl/shared'
 import type {
   VoicePackageRecord,

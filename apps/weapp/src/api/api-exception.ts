@@ -1,3 +1,5 @@
+import { brand } from '../config/brand'
+
 export class ApiException extends Error {
   code?: string
   details?: string
@@ -133,7 +135,7 @@ export class ApiException extends Error {
         return '只有创建者可以邀请亲友'
       case 'AGENT_SHARE_MEMBER_NOT_FOUND':
       case 'AGENT_SHARE_ACCESS_REVOKED':
-        return '你已无法继续访问这个天之灵'
+        return `你已无法继续访问这个${brand.name}`
       case 'INVALID_WECHAT_MINI_PROGRAM_SCENE':
       case 'INVALID_WECHAT_MINI_PROGRAM_PAGE':
       case 'WECHAT_MINI_PROGRAM_CODE_FAILED':

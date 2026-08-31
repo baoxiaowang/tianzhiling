@@ -1,4 +1,5 @@
 import { AppError } from '../common/errors';
+import { brandName } from '../config/brand';
 import {
   getRemainingTokenTtlSeconds,
   getRevokedAccessTokenRedisKey,
@@ -141,7 +142,7 @@ export class UserService {
     return {
       uid: options.uid,
       username: 'mockedName',
-      nickname: '天之灵用户',
+      nickname: `${brandName()}用户`,
       phone: '12345678901',
       email: 'xxx.xxx@xxx.com',
       avatar: '',
@@ -1465,11 +1466,11 @@ export class UserService {
   }
 
   private buildDefaultUserName(phone: string): string {
-    return `天之灵用户${phone.slice(-4)}`;
+    return `${brandName()}用户${phone.slice(-4)}`;
   }
 
   private buildDefaultWeappUserName(openid: string): string {
-    return `天之灵用户${this.hashWeappOpenid(openid).slice(-4)}`;
+    return `${brandName()}用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
   private buildWeappAccount(openid: string): string {

@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { Framework as BullMQFramework } from '@midwayjs/bullmq';
 import type { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
@@ -246,7 +247,7 @@ export class AccountCancellationService {
       blockers,
       confirmationText: ACCOUNT_CANCELLATION_CONFIRMATION,
       consequences: [
-        '你创建的天之灵、聊天记录、记忆和导入记录将无法恢复',
+        `你创建的${brandName()}、聊天记录、记忆和导入记录将无法恢复`,
         '声音素材、剪辑结果和已训练音色将被删除并解除接入',
         '会员及未使用权益将终止，注销后不会转移到新账号',
         '订单、支付和退款凭证会依法留存，并限制为履约、审计与争议处理使用',

@@ -1,10 +1,11 @@
 import { VOICE_SERVICE_MAX_TRAINING_SECONDS } from "@tzl/shared";
+import { brand } from "../../config/brand";
 import type {
   VoiceServiceClipQualityIssueDTO,
   VoiceServiceReviewClipDTO,
   VoiceServiceSessionDTO,
 } from "../../apis/voice-service";
-import promptManifest from "./voice-service-prompts.json";
+import promptManifest from "./voice-service-prompts";
 
 export interface VoiceServiceMessengerState {
   statusText: string;
@@ -218,7 +219,7 @@ export function buildVoiceServiceMessengerState(
   if (session.status === "completed") {
     if (session.voiceBindingStatus === "bound") {
       return {
-        statusText: "声音已接入天之灵",
+        statusText: `声音已接入${brand.name}`,
         prompt: VOICE_SERVICE_PROMPTS.completedBound,
       };
     }

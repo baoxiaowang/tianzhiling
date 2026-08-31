@@ -1,7 +1,9 @@
 export const AGENT_CREATE_INTRO_DATE_STORAGE_KEY = "agent_create_intro_date";
 
+import { brand } from "../../config/brand";
+
 export const AGENT_CREATE_INTRO_LINES = [
-  "你好，我是天之灵小使者",
+  `你好，我是${brand.name}小使者`,
   "你的每句话，都在唤醒他",
   "准备好后，我们就开始",
 ] as const;

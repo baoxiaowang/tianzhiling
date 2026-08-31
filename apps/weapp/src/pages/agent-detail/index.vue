@@ -249,6 +249,7 @@ import {
 } from "@nutui/icons-vue-taro";
 import { computed, ref } from "vue";
 import { ApiConfig } from "../../api/api-config";
+import { brand } from "../../config/brand";
 import { ApiException } from "../../api/api-exception";
 import {
   getAgentDetail,
@@ -777,7 +778,7 @@ async function handleVoiceModelTap() {
   if (!center.items.length) {
     const result = await Taro.showModal({
       title: "还没有训练好的音色",
-      content: "先完成一次声音训练，再回来为这个天之灵选择音色。",
+      content: `先完成一次声音训练，再回来为这个${brand.name}选择音色。`,
       confirmText: "去训练",
       cancelText: "取消",
       confirmColor: "#28755b",

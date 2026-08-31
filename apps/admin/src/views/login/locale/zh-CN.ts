@@ -1,5 +1,7 @@
+import { brand } from '@/config/brand';
+
 export default {
-  'login.form.title': '登录天之灵管理后台',
+  'login.form.title': `登录${brand.adminTitle}`,
   'login.form.userName.errMsg': '用户名不能为空',
   'login.form.password.errMsg': '密码不能为空',
   'login.form.login.errMsg': '登录出错，轻刷新重试',

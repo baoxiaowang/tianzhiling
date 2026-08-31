@@ -1,4 +1,5 @@
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../../config/brand';
 import { ILogger } from '@midwayjs/logger';
 import { ChatTraceStage, MessageEntity, MessageRole } from '@tzl/entities';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -253,8 +254,9 @@ const FAMILY_HEALTH_CONTINUATION_PATTERN =
 const FAMILY_HEALTH_CONTEXT_PATTERN =
   /(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|儿子|女儿|孩子|亲戚|哥哥|姐姐|弟弟|妹妹|老公|老婆|孙子|孙女).{0,20}(?:身体|生病|住院|医院|检查|复查|指标|血压|血糖|不舒服|不好)/;
 
-const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
-  '你是“天之灵”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。',
+function buildReplyIntentClassifierSystemPrompt(): string {
+  return [
+  `你是“${brandName()}”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。`,
   '只输出当前回复需要的 understanding、intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。understanding 只负责理解用户，conversationPlan 只是兼容策略建议，两者不要混写。',
   'understanding 必须把每个诉求绑定到人物和原话：actors 使用 objectPlan ref 或 agent/user/unknown；needs 最多六个，evidence 必须逐字来自当前消息，priority=must|supporting；questions 区分 fact、memory、emotional_rhetorical、boundary。用户要求角色说话时 activeSpeechRequest=true；明确结束时 closureSignal=true。',
   '先看当前消息，再看最近对话。intents 最多三个，主意图在前。一般的强烈痛苦、崩溃和远期“想去找你”按思念求安慰处理，不要自动升级；只有用户明确说当前不想活、自伤，或要求亲人现在来接走自己时，计划里才同时保留亲人式关系回应与一句自然的眼下安全确认。兼容字段仍用 seek_comfort/grief_support，riskLevel=none，不使用 crisis_support。',
@@ -315,6 +317,7 @@ const REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT = [
   )}。`,
   'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作和目标都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
 ].join('\n');
+}
 
 const OFFLINE_ANALYSIS_PROMPT = [
   '本次是离线评测，可额外输出 reading。',
@@ -431,8 +434,8 @@ export class ReplyIntentClassifierService {
             {
               role: 'system',
               content: options.includeAnalysisFields
-                ? `${REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT}\n${OFFLINE_ANALYSIS_PROMPT}`
-                : REPLY_INTENT_CLASSIFIER_SYSTEM_PROMPT,
+                ? `${buildReplyIntentClassifierSystemPrompt()}\n${OFFLINE_ANALYSIS_PROMPT}`
+                : buildReplyIntentClassifierSystemPrompt(),
             },
             {
               role: 'user',

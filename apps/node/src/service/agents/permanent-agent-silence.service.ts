@@ -15,7 +15,7 @@ import { MongoRepository } from 'typeorm';
 import {
   assessPermanentAgentSilence,
   parsePermanentAgentSilenceState,
-  PERMANENT_AGENT_SILENCE_DECLARATION,
+  getPermanentAgentSilenceDeclaration,
   PermanentAgentSilenceState,
   serializePermanentAgentSilenceState,
 } from './permanent-agent-silence';
@@ -202,7 +202,7 @@ export class PermanentAgentSilenceService {
       declaration.agentId = conversation.agentId;
       declaration.role = MessageRole.assistant;
       declaration.type = MessageType.text;
-      declaration.content = PERMANENT_AGENT_SILENCE_DECLARATION;
+      declaration.content = getPermanentAgentSilenceDeclaration();
       declaration.status = MessageStatus.sent;
       declaration.quotaExempt = true;
       declaration.replyTrigger = false;

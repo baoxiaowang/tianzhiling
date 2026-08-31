@@ -1,4 +1,5 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
+import { brandName } from '../config/brand';
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { createHash, randomBytes } from 'crypto';
@@ -287,7 +288,7 @@ export class AgentService {
         ),
       },
       agent: {
-        name: agent.name?.trim() || '未命名天之灵',
+        name: agent.name?.trim() || `未命名${brandName()}`,
         realName: agent.realName?.trim() || '',
         avatar: this.postImageService.resolveForResponse(
           agent.avatar?.trim() || ''

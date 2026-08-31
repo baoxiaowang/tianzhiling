@@ -66,8 +66,8 @@
               />
             </view>
             <view class="contacts-create-entry__content">
-              <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+              <text class="contacts-create-entry__title">新建{{ brand.name }}</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的{{ brand.name }}</text>
             </view>
             <view class="contacts-create-entry__action">
               <view class="contacts-create-entry__action-plus" />
@@ -148,8 +148,8 @@
               />
             </view>
             <view class="contacts-create-entry__content">
-              <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的天之灵</text>
+              <text class="contacts-create-entry__title">新建{{ brand.name }}</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的{{ brand.name }}</text>
             </view>
             <view class="contacts-create-entry__action">
               <view class="contacts-create-entry__action-plus" />
@@ -173,6 +173,7 @@ import { buildOssMediaUrl } from '@tzl/shared'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
+import { brand } from '../../config/brand'
 import {
   getCachedConversations,
   getConversationPage,

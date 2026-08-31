@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/brand_config.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
 import 'package:tianzhiling_app/api/post_api.dart';
 import 'package:tianzhiling_app/auth/auth_page.dart';
@@ -218,6 +219,6 @@ class _PostCommentsSheetState extends State<PostCommentsSheet> {
 
   String _replyTargetName(PostCommentItem comment) {
     final name = comment.authorName.trim();
-    return name.isEmpty ? '天之灵用户' : name;
+    return name.isEmpty ? '${BrandConfig.name}用户' : name;
   }
 }

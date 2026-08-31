@@ -1,5 +1,7 @@
 export type AgreementDocumentType = 'service' | 'privacy'
 
+import { brand } from '../config/brand'
+
 export interface AgreementDocument {
   type: AgreementDocumentType
   title: string
@@ -8,7 +10,18 @@ export interface AgreementDocument {
   paragraphs: string[]
 }
 
-export const agreementDocuments: Record<AgreementDocumentType, AgreementDocument> = {
+/**
+ * 品牌词适配：母版以"天之灵"为模板，按当前品牌替换产品名与公司主体。
+ * 顺序必须"先公司、后品牌"，因公司名内嵌品牌名。
+ */
+function localize(text: string): string {
+  // 顺序必须"先公司、后品牌"，因公司名内嵌品牌名
+  return text
+    .replace(/武汉市天之灵智能技术有限公司/g, brand.companyName)
+    .replace(/天之灵/g, brand.name)
+}
+
+const masterAgreementDocuments: Record<AgreementDocumentType, AgreementDocument> = {
   service: {
     type: 'service',
     title: '天之灵用户服务协议',
@@ -171,8 +184,16 @@ export const agreementDocuments: Record<AgreementDocumentType, AgreementDocument
 
 export function getAgreementDocument(type: string | undefined) {
   if (type === 'privacy') {
-    return agreementDocuments.privacy
+    return buildLocalized(masterAgreementDocuments.privacy)
   }
 
-  return agreementDocuments.service
+  return buildLocalized(masterAgreementDocuments.service)
+}
+
+function buildLocalized(doc: AgreementDocument): AgreementDocument {
+  return {
+    ...doc,
+    title: localize(doc.title),
+    paragraphs: doc.paragraphs.map(localize),
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import '../config/brand_config.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/api/voice_api.dart';
 import 'package:tianzhiling_app/agent/voice_service_page.dart';
@@ -71,7 +72,7 @@ class _VoiceLibraryPageState extends State<VoiceLibraryPage> {
   void _showDeleteDialog(VoiceTimbreRecord item) {
     showDialog(context: context, builder: (_) => AlertDialog(
       title: const Text('永久删除这个音色吗？'),
-      content: Text('将删除"${item.name}"的声音模型、训练音频、试听音频和生成语音，并解除已绑定的天之灵。\n\n原始素材和切片仍会保留。删除后无法恢复。'),
+      content: Text('将删除"${item.name}"的声音模型、训练音频、试听音频和生成语音，并解除已绑定的${BrandConfig.name}。\n\n原始素材和切片仍会保留。删除后无法恢复。'),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
         TextButton(onPressed: () async {
@@ -198,7 +199,7 @@ class _VoiceLibraryPageState extends State<VoiceLibraryPage> {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         decoration: BoxDecoration(color: const Color(0xFFF8F8FA), borderRadius: BorderRadius.circular(8)),
         child: Row(children: [
-          Text(item.bindings.isNotEmpty ? '正在用于：${item.bindingNames}' : '尚未接入天之灵', style: const TextStyle(fontSize: 12, color: Color(0xFF888888))),
+          Text(item.bindings.isNotEmpty ? '正在用于：${item.bindingNames}' : '尚未接入${BrandConfig.name}', style: const TextStyle(fontSize: 12, color: Color(0xFF888888))),
           const Spacer(),
           Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: item.retentionStatus == 'expiring' ? const Color(0xFFFF8C42) : const Color(0xFF2EAA68))),
           const SizedBox(width: 6),

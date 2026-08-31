@@ -56,7 +56,7 @@
       <view class="feature-poster__content">
         <view class="feature-poster__title">
           <text class="feature-poster__title-line">导入微信聊天，</text>
-          <text class="feature-poster__title-line">和他在【天之灵】继续聊</text>
+          <text class="feature-poster__title-line">和他在【{{ brand.name }}】继续聊</text>
         </view>
         <text class="feature-poster__description">
           学习过去的说话方式和语气
@@ -85,6 +85,7 @@ export default {
 <script setup lang="ts">
 import { Close } from "@nutui/icons-vue-taro";
 import Taro from "@tarojs/taro";
+import { brand } from "../../config/brand";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { authSession, restoreAuthSession } from "../../auth/session";
 import { reportChatImportEvent } from "../../utils/product-analytics";

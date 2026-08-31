@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import {
   AppError,
@@ -1379,7 +1380,7 @@ export class AdminVoiceTimbreService {
       availabilityReason:
         availabilityReason ||
         (slot.state === 'Active'
-          ? '已有服务商音色，可重新训练后接入天之灵'
+          ? `已有服务商音色，可重新训练后接入${brandName()}`
           : '空闲，可用于训练新音色'),
       ...(boundTimbre
         ? {

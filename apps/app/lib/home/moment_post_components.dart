@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/brand_config.dart';
 import 'package:tianzhiling_app/models/post_models.dart';
 import 'package:tianzhiling_app/user/app_avatar.dart';
 
@@ -95,7 +96,7 @@ class MomentPostCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  post.authorName.trim().isEmpty ? '天之灵用户' : post.authorName,
+                  post.authorName.trim().isEmpty ? '${BrandConfig.name}用户' : post.authorName,
                   style: const TextStyle(
                     color: Color(0xFF0A0A0A),
                     fontSize: 18,
@@ -205,7 +206,7 @@ class _PostCommentLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authorName = comment.authorName.trim().isEmpty
-        ? '天之灵用户'
+        ? '${BrandConfig.name}用户'
         : comment.authorName;
     final replyToUserName = comment.replyToUserName.trim();
 

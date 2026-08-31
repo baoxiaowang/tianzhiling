@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import type { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -204,7 +205,7 @@ export class VoiceTimbreLibraryService {
     ) {
       throw new AppError(
         'VOICE_TIMBRE_REPLACE_CONFIRM_REQUIRED',
-        '这个天之灵已经在使用其他音色，请确认后再更换',
+        `这个${brandName()}已经在使用其他音色，请确认后再更换`,
         409
       );
     }
@@ -604,7 +605,7 @@ export class VoiceTimbreLibraryService {
       // 标记为 disabled
       timbre.status = VoiceTimbreStatus.disabled;
       timbre.errorCode = 'VOICE_TIMBRE_UNUSED_CLEANUP';
-      timbre.errorMessage = '音色超过 7 天未关联天之灵，已自动清理';
+      timbre.errorMessage = `音色超过 7 天未关联${brandName()}，已自动清理`;
       timbre.retentionStatus = 'attention_required';
       timbre.updatedAt = now;
       try {
@@ -784,7 +785,7 @@ export class VoiceTimbreLibraryService {
       (await this.agentModel.findOne({ where: { _id: id } as never }));
 
     if (!agent || this.idOf(agent.createdUserId) !== this.idOf(userId)) {
-      throw new AppError('AGENT_NOT_FOUND', '没有找到这个天之灵', 404);
+      throw new AppError('AGENT_NOT_FOUND', `没有找到这个${brandName()}`, 404);
     }
     return agent;
   }
@@ -888,7 +889,7 @@ export class VoiceTimbreLibraryService {
       .filter(agent => this.idOf(agent.voiceTimbreId) === this.idOf(timbre))
       .map(agent => ({
         agentId: this.idOf(agent),
-        agentName: agent.name?.trim() || '未命名天之灵',
+        agentName: agent.name?.trim() || `未命名${brandName()}`,
       }));
     const pendingBindings = agents
       .filter(
@@ -896,7 +897,7 @@ export class VoiceTimbreLibraryService {
       )
       .map(agent => ({
         agentId: this.idOf(agent),
-        agentName: agent.name?.trim() || '未命名天之灵',
+        agentName: agent.name?.trim() || `未命名${brandName()}`,
       }));
 
     return {
@@ -989,7 +990,7 @@ export class VoiceTimbreLibraryService {
 
     return {
       agentId: this.idOf(agent),
-      agentName: agent.name?.trim() || '未命名天之灵',
+      agentName: agent.name?.trim() || `未命名${brandName()}`,
       items: timbres.map(timbre => this.buildRecord(timbre, agents)),
       selectedTimbreId: selectedTimbreId || undefined,
       activeTimbreId: activeTimbreId || undefined,

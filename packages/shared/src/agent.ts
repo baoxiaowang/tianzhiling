@@ -1,8 +1,9 @@
 export const AGENT_PROFILE_RETURNING_GREETING =
   "你好，又见面了。我还记得你之前讲过的那些事。今天想从哪里继续，都可以。";
 
-export const AGENT_CREATE_MESSENGER_GREETING =
-  "你好，我是天之灵小使者。先告诉我，你想唤醒谁的天之灵？";
+export function getAgentCreateMessengerGreeting(brandName: string): string {
+  return `你好，我是${brandName}小使者。先告诉我，你想唤醒谁的${brandName}？`;
+}
 export const AGENT_CREATE_NAME_QUESTION =
   "你希望他在聊天列表里叫什么？建议用微信昵称或备注名，也可以使用你对他的称呼或真实姓名。";
 export const AGENT_CREATE_GENDER_QUESTION =

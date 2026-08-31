@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../config/brand_config.dart';
 
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
@@ -312,7 +313,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
     if (_session == null || _isDeletingData || !mounted) return;
     final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('删除全部声音数据'),
-      content: const Text('将删除原始素材、切片、训练音频和声音模型，并解除已选天之灵的声音绑定。'),
+      content: const Text('将删除原始素材、切片、训练音频和声音模型，并解除已选${BrandConfig.name}的声音绑定。'),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
         TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text('确认删除')),
@@ -424,7 +425,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
       Container(width: 40, height: 40, decoration: const BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [Color(0xFFE8D5FF), Color(0xFFA78BFA), Color(0xFF6C5CE7)], stops: [0, 0.45, 1]), boxShadow: [BoxShadow(color: Color(0x33647FDC), blurRadius: 12)]), child: const Icon(Icons.auto_awesome, color: Colors.white, size: 20)),
       const SizedBox(width: 12),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('天之灵小使者', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF24222B))), const SizedBox(height: 4),
+        const Text('${BrandConfig.name}小使者', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF24222B))), const SizedBox(height: 4),
         Text(_prompt, style: const TextStyle(fontSize: 14, color: Color(0xFF5F5B68), height: 1.6)), const SizedBox(height: 4),
         Text(_statusText, style: const TextStyle(fontSize: 12, color: Color(0xFFBBBBBB))),
       ])),
@@ -599,7 +600,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
       Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)), child: Column(children: [
         const Text('声音已经生成', style: TextStyle(fontSize: 13, color: _primary, fontWeight: FontWeight.w600)), const SizedBox(height: 8),
         const Text('现在方便听一听吗？', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
-        const Text('先试听确认熟悉的感觉，再选择要使用这个声音的天之灵。', style: TextStyle(fontSize: 14, color: Color(0xFF8A8791), height: 1.6)), const SizedBox(height: 8),
+        const Text('先试听确认熟悉的感觉，再选择要使用这个声音的${BrandConfig.name}。', style: TextStyle(fontSize: 14, color: Color(0xFF8A8791), height: 1.6)), const SizedBox(height: 8),
         Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(8)), child: const Text('受大模型厂家限制，生成的音色暂存 7 天；7 天内未使用，厂家会自动清理。', style: TextStyle(fontSize: 12, color: Color(0xFFF57F17)))),
         const SizedBox(height: 16),
         if (s.previewAudioUrl?.isNotEmpty == true) SizedBox(width: double.infinity, height: 48, child: ElevatedButton.icon(onPressed: () => _playAudio(s.previewAudioUrl), icon: Icon(_playingUrl == s.previewAudioUrl ? Icons.stop : Icons.play_arrow, size: 18), label: Text(_playingUrl == s.previewAudioUrl ? '停止试听' : '播放试听'), style: ElevatedButton.styleFrom(backgroundColor: _primary, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))))),
@@ -607,10 +608,10 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
       ])),
       const SizedBox(height: 16),
       Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [Expanded(child: Text('选择天之灵', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)))]), const SizedBox(height: 4),
+        const Row(children: [Expanded(child: Text('选择${BrandConfig.name}', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)))]), const SizedBox(height: 4),
         Text(s.voiceAccessEligible ? '已有声音权益，选择后直接接入' : '选择使用对象，开通声音权益后自动接入', style: const TextStyle(fontSize: 12, color: Color(0xFF999999))), const SizedBox(height: 12),
         if (_isLoadingAgents) const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-        else if (_agents.isEmpty) const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('还没有天之灵，可以先创建一个再回来选择。', style: TextStyle(fontSize: 13, color: Color(0xFF999999)))))
+        else if (_agents.isEmpty) const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('还没有${BrandConfig.name}，可以先创建一个再回来选择。', style: TextStyle(fontSize: 13, color: Color(0xFF999999)))))
         else ..._agents.map((a) => _agentTile(a)),
       ])),
     ]);
@@ -664,7 +665,7 @@ class _VoiceServicePageState extends State<VoiceServicePage> {
     final ds = _session!.dataDeletionStatus;
     return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('删除声音数据', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
-      const Text('将删除原始素材、切片、训练音频和声音模型，并解除已选天之灵的声音绑定。', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
+      const Text('将删除原始素材、切片、训练音频和声音模型，并解除已选${BrandConfig.name}的声音绑定。', style: TextStyle(fontSize: 12, color: Color(0xFF999999))),
       if (ds == 'partial_failed') Padding(padding: const EdgeInsets.only(top: 4), child: Text(_session!.dataDeletionFailureReason ?? '仍有部分数据未删除', style: const TextStyle(fontSize: 12, color: Color(0xFFE57373)))),
       const SizedBox(height: 10),
       SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: (_isDeletingData || _isUploading || _isSubmitting || _isTraining) ? null : _deleteAll, icon: const Icon(Icons.delete_outline, size: 16, color: Color(0xFFE57373)), label: Text(ds == 'partial_failed' ? '重试删除' : '删除全部声音数据', style: const TextStyle(color: Color(0xFFE57373))), style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFFFCDD2)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))))),

@@ -44,7 +44,7 @@
         >
           我已阅读并同意
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('service')">
-            《天之灵用户服务协议》
+            《{{ brand.name }}用户服务协议》
           </text>
           及
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('privacy')">
@@ -65,6 +65,7 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
+import { brand } from '../../config/brand'
 import { computed, ref } from 'vue'
 import { useLoginHooks } from '../../auth/login-hooks'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'

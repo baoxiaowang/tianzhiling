@@ -101,7 +101,7 @@
       <view class="cancellation-retention">
         <text class="cancellation-retention__title">关于必要记录</text>
         <text class="cancellation-retention__text">
-          为履行支付、退款、审计及争议处理义务，必要的订单凭证会在法定期限内限制保存，不再用于推荐、营销或天之灵服务。
+          为履行支付、退款、审计及争议处理义务，必要的订单凭证会在法定期限内限制保存，不再用于推荐、营销或{{ brand.name }}服务。
         </text>
       </view>
 
@@ -134,6 +134,7 @@ export default {
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
+import { brand } from '../../config/brand'
 import {
   cancelCurrentUser,
   checkAccountCancellation,
@@ -215,7 +216,7 @@ async function handleSubmit() {
   const result = await Taro.showModal({
     title: '确认注销账号？',
     content:
-      '注销会永久删除天之灵、聊天、记忆和声音数据，并终止会员权益。这个操作无法撤销。',
+      `注销会永久删除${brand.name}、聊天、记忆和声音数据，并终止会员权益。这个操作无法撤销。`,
     confirmText: '确认注销',
     cancelText: '再想想',
     confirmColor: '#c84b4b',

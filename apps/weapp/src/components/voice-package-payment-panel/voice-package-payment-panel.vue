@@ -82,7 +82,7 @@
           class="voice-package-payment-panel__agreement-link"
           @tap.stop="handleAgreementTap('service')"
         >
-          《天之灵会员协议》
+          《{{ brand.name }}会员协议》
         </text>
         及
         <text
@@ -104,6 +104,7 @@ export default {
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { brand } from '../../config/brand'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
 import type {
   VoicePackageRecord,
@@ -188,7 +189,7 @@ const paymentText = computed(() => {
 })
 const noteText = computed(() => {
   const requirement = selectedPackage.value?.materialRequirement.trim()
-  const baseNote = '【注】每次训练会生成一个独立声音，完成后可接入指定天之灵'
+  const baseNote = `【注】每次训练会生成一个独立声音，完成后可接入指定${brand.name}`
 
   if (requirement) {
     return `${baseNote}，${requirement}`

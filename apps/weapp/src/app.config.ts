@@ -1,6 +1,9 @@
 const isVoiceTrainingTestMode =
   process.env.TARO_APP_VOICE_TRAINING_TEST_MODE === "true";
 
+// 品牌导航标题：构建时通过 BRAND_WEAPP_NAV_TITLE 注入，默认天之灵
+const brandNavTitle = process.env.BRAND_WEAPP_NAV_TITLE || "天之灵";
+
 export default {
   lazyCodeLoading: "requiredComponents",
   pages: isVoiceTrainingTestMode
@@ -138,7 +141,7 @@ export default {
   window: {
     backgroundTextStyle: "light",
     navigationBarBackgroundColor: "#fffaf3",
-    navigationBarTitleText: "天之灵",
+    navigationBarTitleText: brandNavTitle,
     navigationBarTextStyle: "black",
   },
   networkTimeout: {

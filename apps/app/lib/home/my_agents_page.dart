@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import '../config/brand_config.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/agent/agent_create_flow_page.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
@@ -86,7 +87,7 @@ class _MyAgentsPageState extends State<MyAgentsPage> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
-        title: const Text('我的天之灵', style: TextStyle(color: Color(0xFF1A1A1A), fontSize: 17, fontWeight: FontWeight.w600)),
+        title: const Text('我的${BrandConfig.name}', style: TextStyle(color: Color(0xFF1A1A1A), fontSize: 17, fontWeight: FontWeight.w600)),
       ),
       body: _buildBody(),
     );
@@ -120,7 +121,7 @@ class _MyAgentsPageState extends State<MyAgentsPage> {
             children: [
               Expanded(
                 child: Text(
-                  '共 ${_conversations.length} 位天之灵',
+                  '共 ${_conversations.length} 位${BrandConfig.name}',
                   style: const TextStyle(color: Color(0xFF999999), fontSize: 13),
                 ),
               ),
@@ -137,7 +138,7 @@ class _MyAgentsPageState extends State<MyAgentsPage> {
                     children: [
                       Icon(Icons.add, size: 16, color: Colors.white),
                       SizedBox(width: 4),
-                      Text('创建天之灵', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text('创建${BrandConfig.name}', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
@@ -153,7 +154,7 @@ class _MyAgentsPageState extends State<MyAgentsPage> {
                     children: [
                       Icon(CupertinoIcons.person_2, size: 56, color: Color(0xFFCCCCCC)),
                       SizedBox(height: 12),
-                      Text('还没有天之灵', style: TextStyle(color: Color(0xFF999999), fontSize: 16)),
+                      Text('还没有${BrandConfig.name}', style: TextStyle(color: Color(0xFF999999), fontSize: 16)),
                       SizedBox(height: 4),
                       Text('创建一位你思念的人吧', style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 13)),
                     ],

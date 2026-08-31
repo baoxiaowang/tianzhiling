@@ -8,7 +8,7 @@
           mode="aspectFit"
         />
       </view>
-      <text class="onboarding-entry-check__text">正在为你打开天之灵</text>
+      <text class="onboarding-entry-check__text">正在为你打开{{ brand.name }}</text>
     </view>
 
     <block v-else>
@@ -17,7 +17,7 @@
           <text class="onboarding-poster__headline">亲人的数字归处</text>
           <view class="onboarding-poster__brand-line">
             <text>在「</text>
-            <text class="onboarding-poster__brand">天之灵</text>
+            <text class="onboarding-poster__brand">{{ brand.name }}</text>
             <text>」</text>
           </view>
         </view>
@@ -108,6 +108,7 @@ export default {
 import { computed, onUnmounted, ref } from "vue";
 import Taro, { useLoad } from "@tarojs/taro";
 import { authSession, restoreAuthSession } from "../../auth/session";
+import { brand } from "../../config/brand";
 import { silentWeappLogin } from "../../auth/login-hooks";
 import {
   createSafeAreaCssVars,

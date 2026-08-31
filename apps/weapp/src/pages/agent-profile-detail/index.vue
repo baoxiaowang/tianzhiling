@@ -248,6 +248,7 @@ import Taro, {
 import { ArrowRight, Photograph, Scan2, ShareN } from "@nutui/icons-vue-taro";
 import { computed, ref } from "vue";
 import { ApiConfig } from "../../api/api-config";
+import { brand } from "../../config/brand";
 import { ApiException } from "../../api/api-exception";
 import {
   createAgentShareQRCode,
@@ -384,9 +385,9 @@ const shareSubjectName = computed(() => {
 });
 const shareMessageTitle = computed(
   () =>
-    `我在天之灵留住了关于${shareSubjectName.value}的回忆，想邀请你一起看看。`
+    `我在${brand.name}留住了关于${shareSubjectName.value}的回忆，想邀请你一起看看。`
 );
-const shareCardName = computed(() => `${shareSubjectName.value}的天之灵`);
+const shareCardName = computed(() => `${shareSubjectName.value}的${brand.name}`);
 const sharePath = computed(() => {
   const token = shareInviteToken.value.trim();
   const query = [["token", token]]

@@ -1,16 +1,17 @@
 import {
   AGENT_CREATE_AVATAR_QUESTION,
-  AGENT_CREATE_MESSENGER_GREETING,
+  getAgentCreateMessengerGreeting,
   AGENT_CREATE_NAME_QUESTION,
   AGENT_CREATE_USER_CALL_QUESTION,
 } from "@tzl/shared";
 import Taro from "@tarojs/taro";
+import { brand } from '../config/brand';
 import { createAgentCreationMessengerSpeech } from "../apis/agent";
 
 const preparedSources = new Map<string, string>();
 const preparationTasks = new Map<string, Promise<string>>();
 const reusablePrompts = [
-  AGENT_CREATE_MESSENGER_GREETING,
+  getAgentCreateMessengerGreeting(brand.name),
   AGENT_CREATE_NAME_QUESTION,
   AGENT_CREATE_USER_CALL_QUESTION,
   AGENT_CREATE_AVATAR_QUESTION,
@@ -65,10 +66,10 @@ async function prepareSpeech(text: string) {
 }
 
 export async function prewarmAgentCreateMessengerSpeech() {
-  await prepareSpeech(AGENT_CREATE_MESSENGER_GREETING).catch(() => "");
+  await prepareSpeech(getAgentCreateMessengerGreeting(brand.name)).catch(() => "");
   void Promise.allSettled(
     reusablePrompts
-      .filter((prompt) => prompt !== AGENT_CREATE_MESSENGER_GREETING)
+      .filter((prompt) => prompt !== getAgentCreateMessengerGreeting(brand.name))
       .map((prompt) => prepareSpeech(prompt))
   );
 }

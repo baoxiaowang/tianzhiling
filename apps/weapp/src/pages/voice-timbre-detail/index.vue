@@ -57,9 +57,9 @@
       <view class="timbre-section timbre-section--agents">
         <view class="timbre-section__heading">
           <view>
-            <text class="timbre-section__title">关联天之灵</text>
+            <text class="timbre-section__title">关联{{ brand.name }}</text>
             <text class="timbre-section__caption">
-              选择使用这个音色的天之灵
+              选择使用这个音色的{{ brand.name }}
             </text>
           </view>
         </view>
@@ -107,7 +107,7 @@
           </view>
         </view>
         <view v-else class="timbre-empty-row">
-          <text>创建天之灵后，可以在这里为他选择音色</text>
+          <text>创建{{ brand.name }}后，可以在这里为他选择音色</text>
         </view>
       </view>
 
@@ -428,6 +428,7 @@ import {
 import Taro, { useLoad, useUnload } from "@tarojs/taro";
 import { computed, ref } from "vue";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import { getAgents, type AgentSummary } from "../../apis/agent";
 import {
   generateUserVoiceTimbreSpeech,
@@ -523,7 +524,7 @@ function agentAssociationLabel(agentId: string) {
   if (pendingBindingAgentIds().has(agentId)) {
     return "待声音版会员生效";
   }
-  return "选择这个天之灵";
+  return `选择这个${brand.name}`;
 }
 
 async function handleAgentAssociation(agent: AgentSummary) {

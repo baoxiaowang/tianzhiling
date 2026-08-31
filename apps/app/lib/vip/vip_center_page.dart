@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import '../config/brand_config.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/api/membership_api.dart';
 import 'package:tianzhiling_app/models/membership_models.dart';
@@ -109,7 +110,7 @@ class _VipCenterPageState extends State<VipCenterPage> {
 
   // ============ Purchase View ============
   Widget _buildPurchaseView() => SingleChildScrollView(padding: const EdgeInsets.fromLTRB(12, 4, 12, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    const Padding(padding: EdgeInsets.only(bottom: 18), child: Row(children: [Text('✦', style: TextStyle(color: Color(0xFFA78BFA), fontSize: 24)), SizedBox(width: 8), Text('天之灵会一直在', style: TextStyle(color: Color(0xFF8C8C8C), fontSize: 15, fontWeight: FontWeight.w600))])),
+    const Padding(padding: EdgeInsets.only(bottom: 18), child: Row(children: [Text('✦', style: TextStyle(color: Color(0xFFA78BFA), fontSize: 24)), SizedBox(width: 8), Text('${BrandConfig.name}会一直在', style: TextStyle(color: Color(0xFF8C8C8C), fontSize: 15, fontWeight: FontWeight.w600))])),
     if (_hb || _hv) ...[
       if (_hb) _buildPGCard('basic', '基础版', ['无限聊天', '记忆唤醒', '云端共享'], const Color(0xFFFFF3E0), const Color(0xFFFFE0C2), const Color(0xFFFF8C42)),
       if (_hb && _hv) const SizedBox(height: 12),
@@ -119,7 +120,7 @@ class _VipCenterPageState extends State<VipCenterPage> {
     const SizedBox(height: 16),
     Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: const [BoxShadow(color: Color(0x0B000000), blurRadius: 14, offset: Offset(0, 2))]), child: const Row(children: [Text('◆', style: TextStyle(color: Color(0xFF9B7ED8), fontSize: 16)), SizedBox(width: 12), Text('安全支付', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF666666))), SizedBox(width: 12), Text('|', style: TextStyle(color: Color(0xFFE0E0E0))), SizedBox(width: 12), Text('7天无理由退款', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF666666)))])),
     const SizedBox(height: 14),
-    const Center(child: Text('开通即表示同意《天之灵用户服务协议》及《隐私政策》', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF999999)))),
+    const Center(child: Text('开通即表示同意《${BrandConfig.name}用户服务协议》及《隐私政策》', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF999999)))),
     const SizedBox(height: 120),
   ]));
 

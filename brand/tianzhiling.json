@@ -1,0 +1,28 @@
+{
+  "key": "tianzhiling",
+  "name": "天之灵",
+  "companyName": "武汉市天之灵智能技术有限公司",
+  "domain": "tianzhiling.chat",
+  "adminDomain": "admin.tianzhiling.chat",
+  "weapp": {
+    "appid": "wxb6bcebdb61af0461",
+    "navigationBarTitle": "天之灵"
+  },
+  "app": {
+    "androidApplicationId": "com.tianzhiling.app",
+    "androidLabel": "天之灵",
+    "iosBundleId": "com.tianzhiling.app"
+  },
+  "adminTitle": "天之灵管理后台",
+  "customerService": {
+    "phone": "19986943631",
+    "wechatQr": "/weapp/service.png",
+    "email": "support@tianzhiling.chat",
+    "wechatId": ""
+  },
+  "agreementTitles": {
+    "userAgreement": "天之灵用户服务协议",
+    "privacyPolicy": "天之灵隐私政策",
+    "memberAgreement": "天之灵会员协议"
+  }
+}

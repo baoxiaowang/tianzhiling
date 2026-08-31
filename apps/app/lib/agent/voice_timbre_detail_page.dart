@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../config/brand_config.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -153,7 +154,7 @@ class _VoiceTimbreDetailPageState extends State<VoiceTimbreDetailPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('永久删除这个音色吗？'),
-        content: Text('将删除"${_detail?['name'] ?? ''}"的声音模型、训练音频、试听音频和生成语音，并解除已绑定的天之灵。\n\n删除后无法恢复。'),
+        content: Text('将删除"${_detail?['name'] ?? ''}"的声音模型、训练音频、试听音频和生成语音，并解除已绑定的${BrandConfig.name}。\n\n删除后无法恢复。'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
           TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text('永久删除')),
@@ -220,10 +221,10 @@ class _VoiceTimbreDetailPageState extends State<VoiceTimbreDetailPage> {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('关联天之灵', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            const Text('关联${BrandConfig.name}', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             if (bindings.isEmpty)
-              const Text('尚未接入天之灵', style: TextStyle(fontSize: 13, color: Color(0xFF999999)))
+              const Text('尚未接入${BrandConfig.name}', style: TextStyle(fontSize: 13, color: Color(0xFF999999)))
             else
               ...bindings.map((b) => ListTile(
                 contentPadding: EdgeInsets.zero, dense: true,

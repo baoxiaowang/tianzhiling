@@ -7,15 +7,15 @@
     :safe-area-bottom="false"
     :scroll="false"
     require-auth
-    auth-loading-text="正在恢复我的天之灵..."
+    auth-loading-text="正在恢复我的{{ brand.name }}..."
   >
     <template #header>
-      <app-bar title="我的天之灵" background="#ffffff" />
+      <app-bar :title="`我的${brand.name}`" background="#ffffff" />
     </template>
 
     <view v-if="isCheckingAuth" class="my-agents-feedback">
       <view class="my-agents-feedback__spinner" />
-      <text class="my-agents-feedback__title">正在恢复我的天之灵...</text>
+      <text class="my-agents-feedback__title">正在恢复我的{{ brand.name }}...</text>
     </view>
 
     <scroll-view
@@ -37,7 +37,7 @@
         <view class="my-agents-heading">
           <text class="my-agents-heading__title">选择聊天对象</text>
           <text class="my-agents-heading__desc">
-            底部“聊天”将直接进入当前选择的天之灵
+            底部“聊天”将直接进入当前选择的{{ brand.name }}
           </text>
         </view>
 
@@ -148,7 +148,7 @@
               />
             </view>
             <view class="my-agents-create__content">
-              <text class="my-agents-create__title">新建天之灵</text>
+              <text class="my-agents-create__title">新建{{ brand.name }}</text>
               <text class="my-agents-create__desc"
                 >创建新的联系人并保存到这里</text
               >
@@ -160,7 +160,7 @@
           </view>
 
           <view v-if="!conversations.length" class="my-agents-empty">
-            <text class="my-agents-empty__title">还没有天之灵</text>
+            <text class="my-agents-empty__title">还没有{{ brand.name }}</text>
             <text class="my-agents-empty__desc"
               >完成创建后，联系人会保存在这里。</text
             >
@@ -182,6 +182,7 @@ import { Check } from "@nutui/icons-vue-taro";
 import { buildOssMediaUrl } from "@tzl/shared";
 import Taro, { useDidShow } from "@tarojs/taro";
 import { computed, ref } from "vue";
+import { brand } from "../../config/brand";
 import { ApiException } from "../../api/api-exception";
 import { updateAgentDefault } from "../../apis/agent";
 import {

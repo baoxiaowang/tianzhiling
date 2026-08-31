@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/brand_config.dart';
 
 class InviteRewardPage extends StatelessWidget {
   const InviteRewardPage({super.key});
@@ -302,7 +303,7 @@ class _TipsCard extends StatelessWidget {
           ),
           SizedBox(height: 8 * scale),
           Text(
-            '方式1：搜索“天之灵”在相关帖子评论',
+            '方式1：搜索“${BrandConfig.name}”在相关帖子评论',
             style: TextStyle(
               fontSize: 13 * scale,
               color: const Color(0xFF7B5E41),
@@ -395,7 +396,7 @@ class _TipsCard extends StatelessWidget {
                     SizedBox(width: 8 * scale),
                     Expanded(
                       child: Text(
-                        '标题/话题：学普通话 天之灵\n#北京客服 #AI唤醒器 等话题',
+                        '标题/话题：学普通话 ${BrandConfig.name}\n#北京客服 #AI唤醒器 等话题',
                         style: TextStyle(
                           color: const Color(0xFF7B5E41),
                           fontSize: 11 * scale,

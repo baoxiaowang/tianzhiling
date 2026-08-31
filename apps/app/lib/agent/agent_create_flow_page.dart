@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../config/brand_config.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/api/agent_api.dart';
@@ -194,7 +195,7 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
       if (e.requiresReLogin) { await AuthSessionStore.clear(); if (mounted) Navigator.of(context).pushNamedAndRemoveUntil(AuthPage.routeName, (_) => false); return; }
       _toast(e.message);
     } catch (_) {
-      _toast('唤醒天之灵失败');
+      _toast('唤醒${BrandConfig.name}失败');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -239,7 +240,7 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
 
   String get _messengerDesc {
     if (_isThinking) return '小使者正在记下基本信息';
-    if (_isSubmitting) return '小使者正在唤醒天之灵';
+    if (_isSubmitting) return '小使者正在唤醒${BrandConfig.name}';
     return '我来帮你一步步唤醒他';
   }
 
@@ -260,7 +261,7 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
     decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Color(0xFFEEEEF2)))),
     child: Row(children: [
       SizedBox(width: 44, child: IconButton(onPressed: _goBack, icon: const Icon(Icons.chevron_left_rounded, size: 24, color: Color(0xFF24222B)), splashRadius: 18)),
-      const Expanded(child: Text('唤醒天之灵', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B)))),
+      const Expanded(child: Text('唤醒${BrandConfig.name}', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B)))),
       const SizedBox(width: 44),
     ]),
   );
@@ -282,7 +283,7 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
   Widget _buildMessenger() => Column(children: [
     const _MessengerCircle(),
     const SizedBox(height: 8),
-    const Text('天之灵小使者', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
+    const Text('${BrandConfig.name}小使者', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
     const SizedBox(height: 2),
     Text(_messengerDesc, style: const TextStyle(fontSize: 13, color: Color(0xFF8A8791))),
   ]);
@@ -408,7 +409,7 @@ class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
   Widget _buildCreating() => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
     const _MessengerCircle(),
     const SizedBox(height: 20),
-    Text('正在唤醒${_draft['agentName'] ?? _draft['relationToThem'] ?? 'TA'}的天之灵', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
+    Text('正在唤醒${_draft['agentName'] ?? _draft['relationToThem'] ?? 'TA'}的${BrandConfig.name}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
     const SizedBox(height: 8),
     const Text('小使者正在把基本信息轻轻放好', style: TextStyle(fontSize: 14, color: Color(0xFF8A8791))),
   ]));

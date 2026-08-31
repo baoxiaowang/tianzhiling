@@ -12,7 +12,7 @@
   >
     <template #header>
       <app-bar
-        title="唤醒天之灵"
+        title="唤醒{{ brand.name }}"
         background="#ffffff"
         border-color="#eeeef2"
         @back="handleBack"
@@ -53,7 +53,7 @@
             mode="aspectFit"
           />
         </view>
-        <text class="agent-create-guide__messenger-name">天之灵小使者</text>
+        <text class="agent-create-guide__messenger-name">{{ brand.name }}小使者</text>
         <text
           class="agent-create-guide__messenger-desc"
           :class="{
@@ -358,7 +358,7 @@
         </view>
         <text class="agent-create-guide__creating-title">
           正在唤醒
-          {{ draft.agentName || draft.relationToThem || "他" }} 的天之灵
+          {{ draft.agentName || draft.relationToThem || "他" }} 的{{ brand.name }}
         </text>
         <text class="agent-create-guide__creating-desc">
           小使者正在把基本信息轻轻放好
@@ -377,7 +377,7 @@ export default {
 <script setup lang="ts">
 import {
   AGENT_CREATE_AVATAR_QUESTION,
-  AGENT_CREATE_MESSENGER_GREETING,
+  getAgentCreateMessengerGreeting,
   AGENT_CREATE_NAME_QUESTION,
   AGENT_CREATE_USER_CALL_QUESTION,
   type AgentCreateGuideDraftDTO,
@@ -396,6 +396,7 @@ import {
 } from "@nutui/icons-vue-taro";
 import Taro, { useLoad } from "@tarojs/taro";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { brand } from "../../config/brand";
 import { ApiException } from "../../api/api-exception";
 import {
   createAgent,
@@ -512,7 +513,7 @@ const isUploadingAvatar = ref(false);
 const isVoicePreparing = ref(false);
 const isVoiceRecording = ref(false);
 const voiceListeningMessageIndex = ref(0);
-const assistantPrompt = ref(AGENT_CREATE_MESSENGER_GREETING);
+const assistantPrompt = ref(getAgentCreateMessengerGreeting(brand.name));
 const displayedAssistantPrompt = ref("");
 const isAssistantPromptPreparing = ref(false);
 const isAssistantTextRevealing = ref(false);
@@ -743,7 +744,7 @@ function editStep(step: AgentCreateGuideField) {
 
 function questionForStep(step: CreateStep) {
   const questions: Record<CreateStep, string> = {
-    relationToThem: AGENT_CREATE_MESSENGER_GREETING,
+    relationToThem: getAgentCreateMessengerGreeting(brand.name),
     agentName: AGENT_CREATE_NAME_QUESTION,
     relationToMe: AGENT_CREATE_USER_CALL_QUESTION,
     avatar: AGENT_CREATE_AVATAR_QUESTION,
@@ -946,7 +947,7 @@ async function submitCreation() {
       title:
         createSource.value === "voiceTraining"
           ? "已唤醒，继续训练声音"
-          : `已唤醒天之灵：${agent.name}`,
+          : `已唤醒${brand.name}：${agent.name}`,
       icon: "none",
       duration: 1000,
     });
@@ -972,7 +973,7 @@ async function submitCreation() {
     showToast(
       error instanceof ApiException
         ? error.message
-        : "唤醒天之灵失败，请稍后重试"
+        : `唤醒${brand.name}失败，请稍后重试`
     );
   } finally {
     isSubmitting.value = false;
@@ -1050,7 +1051,7 @@ async function initializePage() {
   isCheckingAuth.value = false;
   void prewarmAgentCreateMessengerSpeech();
   await nextTick();
-  await presentAssistantPrompt(AGENT_CREATE_MESSENGER_GREETING);
+  await presentAssistantPrompt(getAgentCreateMessengerGreeting(brand.name));
 }
 
 function clearAssistantTimers() {

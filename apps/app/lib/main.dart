@@ -1,4 +1,5 @@
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'config/brand_config.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/agent/agent_create_flow_page.dart';
 import 'package:tianzhiling_app/agent/voice_library_page.dart';
@@ -34,7 +35,7 @@ class TianZhiLingApp extends StatelessWidget {
         return MaterialApp(
           key: ValueKey<String>(session == null ? 'auth-root' : 'app-root'),
           debugShowCheckedModeBanner: false,
-          title: '天之灵',
+          title: BrandConfig.name,
           locale: const Locale('zh', 'CN'),
           supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
           localizationsDelegates: const [

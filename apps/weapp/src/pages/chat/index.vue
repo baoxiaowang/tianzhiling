@@ -608,6 +608,7 @@ import type { ITouchEvent } from "@tarojs/components/types/common";
 import { computed, nextTick, ref } from "vue";
 import { ApiConfig, isLocalApiEnvironment } from "../../api/api-config";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import { getAgentDetail } from "../../apis/agent";
 import {
   convertConversationMessageVoiceToText,
@@ -924,7 +925,7 @@ const isVoiceRecording = ref(false);
 const isTranscribingVoice = ref(false);
 const isCheckingRecordPermission = ref(false);
 const isVoicePrivacyDialogVisible = ref(false);
-const voicePrivacyContractName = ref("《天之灵隐私保护指引》");
+const voicePrivacyContractName = ref(`《${brand.name}隐私保护指引》`);
 const voiceDragTarget = ref<VoiceDragTarget>("send");
 const voiceGestureStartPoint = ref<TouchPoint | null>(null);
 const recordingStartedAt = ref<number | null>(null);

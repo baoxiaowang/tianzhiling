@@ -45,6 +45,16 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       VOICE_TRAINING_TEST_MODE: JSON.stringify(
         process.env.TARO_APP_VOICE_TRAINING_TEST_MODE === 'true'
       ),
+      // 品牌注入：不注入时默认天之灵（见 src/config/brand.ts）
+      BRAND: JSON.stringify(process.env.BRAND || 'tianzhiling'),
+      BRAND_NAME: JSON.stringify(process.env.BRAND_NAME || '天之灵'),
+      BRAND_COMPANY: JSON.stringify(process.env.BRAND_COMPANY || '武汉市天之灵智能技术有限公司'),
+      BRAND_WEAPP_NAV_TITLE: JSON.stringify(process.env.BRAND_WEAPP_NAV_TITLE || '天之灵'),
+      BRAND_WEAPP_APPID: JSON.stringify(process.env.BRAND_WEAPP_APPID || 'wxb6bcebdb61af0461'),
+      BRAND_CUSTOMER_SERVICE_PHONE: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_PHONE || '19986943631'),
+      BRAND_CUSTOMER_SERVICE_WECHAT_QR: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_WECHAT_QR || '/weapp/service.png'),
+      BRAND_CUSTOMER_SERVICE_EMAIL: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_EMAIL || 'support@tianzhiling.chat'),
+      BRAND_CUSTOMER_SERVICE_WECHAT_ID: JSON.stringify(process.env.BRAND_CUSTOMER_SERVICE_WECHAT_ID || ''),
     },
     copy: {
       patterns: [

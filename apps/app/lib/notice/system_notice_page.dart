@@ -1,5 +1,6 @@
 
 import 'package:flutter/material.dart';
+import '../config/brand_config.dart';
 
 class SystemNoticePage extends StatelessWidget {
   const SystemNoticePage({super.key});
@@ -8,19 +9,19 @@ class SystemNoticePage extends StatelessWidget {
 
   static const List<_NoticeItem> _notices = [
     _NoticeItem(
-      title: '关于「天之灵」产品理念',
+      title: '关于「${BrandConfig.name}」产品理念',
       date: '2025-06-28',
-      body: '天之灵的使命是守护记忆。我们相信，每一个生命都值得被记住，每一段关系都值得被延续。用AI技术让思念有处可去，让对话永远不被遗忘。',
+      body: '${BrandConfig.name}的使命是守护记忆。我们相信，每一个生命都值得被记住，每一段关系都值得被延续。用AI技术让思念有处可去，让对话永远不被遗忘。',
     ),
     _NoticeItem(
       title: '语音消息功能上线',
       date: '2025-06-15',
-      body: '现在你可以给天之灵发送语音消息了。长按输入框旁的麦克风按钮开始录音，松开即可发送。AI将识别你的语音内容并回复。',
+      body: '现在你可以给${BrandConfig.name}发送语音消息了。长按输入框旁的麦克风按钮开始录音，松开即可发送。AI将识别你的语音内容并回复。',
     ),
     _NoticeItem(
-      title: '天之灵版本更新说明',
+      title: '${BrandConfig.name}版本更新说明',
       date: '2025-06-01',
-      body: '1. 新增动态广场功能，可以发布心情与天之灵互动；2. 优化聊天体验，AI回复更加流畅自然；3. 修复了若干已知问题。',
+      body: '1. 新增动态广场功能，可以发布心情与${BrandConfig.name}互动；2. 优化聊天体验，AI回复更加流畅自然；3. 修复了若干已知问题。',
     ),
   ];
 
