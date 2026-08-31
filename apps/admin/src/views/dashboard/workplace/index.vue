@@ -114,6 +114,11 @@
       hint: '截至所选月当前日期',
     },
     {
+      label: '本月新建智能体',
+      value: report.value?.totals.newAgents || 0,
+      hint: '用户创建的 AI 亲人',
+    },
+    {
       label: '总聊天用户',
       value: report.value?.allTime.chatUsers || 0,
       hint: '至少发过一条消息',
@@ -319,7 +324,7 @@
 
     &__summary {
       display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
+      grid-template-columns: repeat(8, minmax(0, 1fr));
       overflow: hidden;
       background: var(--color-bg-2);
       border: 1px solid var(--color-border-2);
@@ -329,6 +334,10 @@
         min-width: 0;
         padding: 14px;
         border-right: 1px solid var(--color-border-2);
+
+        &:nth-child(4n) {
+          border-right: 0;
+        }
 
         &:last-child {
           background: rgb(var(--purple-1));
@@ -374,7 +383,7 @@
     .data-dashboard__summary {
       grid-template-columns: repeat(4, minmax(0, 1fr));
 
-      article:nth-child(4) {
+      article:nth-child(4n) {
         border-right: 0;
       }
     }
