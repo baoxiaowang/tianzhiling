@@ -29,14 +29,9 @@ describe('AdminOperationsService', () => {
     } as never;
     service.agentModel = {
       count: jest.fn().mockResolvedValue(10),
-      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
-        const serialized = JSON.stringify(pipeline);
-        return aggregateResult(
-          serialized.includes('"$count":"count"')
-            ? [{ count: 1 }]
-            : [{ _id: '2026-08-23', count: 4 }]
-        );
-      }),
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', count: 4 }])
+      ),
     } as never;
     service.messageModel = {
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
@@ -106,6 +101,24 @@ describe('AdminOperationsService', () => {
       hour: '12:00',
       newUsers: 2,
       userMessages: 9,
+    });
+    // 今日口径与当日行对齐：新建智能体按当天新建智能体数统计（而非“当日新注册用户数”）
+    expect(result.todayTotals).toMatchObject({
+      newUsers: 3,
+      newAgents: 4,
+    });
+    // 新建智能体口径必须排除内部小使者：查询需携带 messengerOfAgentId 过滤
+    const agentAggregateCalls = jest.mocked(service.agentModel.aggregate).mock
+      .calls;
+    expect(agentAggregateCalls).toHaveLength(1);
+    const agentMatch = agentAggregateCalls[0][0][0] as {
+      $match: Record<string, unknown>;
+    };
+    expect(agentMatch.$match).toMatchObject({
+      $or: [
+        { messengerOfAgentId: { $exists: false } },
+        { messengerOfAgentId: null },
+      ],
     });
   });
 

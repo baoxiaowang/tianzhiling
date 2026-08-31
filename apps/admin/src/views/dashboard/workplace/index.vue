@@ -335,10 +335,6 @@
         padding: 14px;
         border-right: 1px solid var(--color-border-2);
 
-        &:nth-child(4n) {
-          border-right: 0;
-        }
-
         &:last-child {
           background: rgb(var(--purple-1));
           border-right: 0;

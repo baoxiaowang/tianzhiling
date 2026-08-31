@@ -413,7 +413,6 @@ export class AdminOperationsService {
       hourlyUsers,
       hourlyMessages,
       allTime,
-      todayNewAgentUsers,
       cohortDaily,
     ] = await Promise.all([
       this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
@@ -450,7 +449,6 @@ export class AdminOperationsService {
         liveUserMessageMatch
       ),
       this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
-      this.aggregateTodayNewAgentUsers(todayStart, todayEnd),
       this.aggregateCohortDailyRevenue(monthStart, monthEnd, realOrderMatch),
     ]);
 
@@ -545,7 +543,7 @@ export class AdminOperationsService {
       totals,
       todayTotals: {
         newUsers: todayRow?.newUsers ?? 0,
-        newAgents: todayNewAgentUsers,
+        newAgents: todayRow?.newAgents ?? 0,
         newUserChatUsers: todayRow?.newUserChatUsers ?? 0,
         newUserMessages: todayRow?.newUserMessages ?? 0,
         newUserFiveMessageUsers: todayRow?.newUserFiveMessageUsers ?? 0,
@@ -1168,39 +1166,6 @@ export class AdminOperationsService {
       .toArray();
 
     return rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
-  }
-
-  private async aggregateTodayNewAgentUsers(
-    start: Date,
-    end: Date
-  ): Promise<number> {
-    const rows = await this.agentModel
-      .aggregate<{ count: number }>([
-        {
-          $match: {
-            createdAt: { $gte: start, $lt: end },
-            $or: [
-              { messengerOfAgentId: { $exists: false } },
-              { messengerOfAgentId: null },
-            ],
-          },
-        },
-        { $group: { _id: '$createdUserId' } },
-        {
-          $lookup: {
-            from: TableName.user,
-            localField: '_id',
-            foreignField: '_id',
-            as: 'user',
-          },
-        },
-        { $unwind: '$user' },
-        { $match: { 'user.createdAt': { $gte: start, $lt: end } } },
-        { $count: 'count' },
-      ])
-      .toArray();
-
-    return Number(rows[0]?.count) || 0;
   }
 
   private async getAllTimeStats(
