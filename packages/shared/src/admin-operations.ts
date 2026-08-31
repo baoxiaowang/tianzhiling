@@ -90,6 +90,7 @@ export interface AdminOperationsDailyPointDTO {
   paidRevenue: number;
   refundedRevenue: number;
   netRevenue: number;
+  cohortRevenue: number;
 }
 
 export interface AdminOperationsHourlyPointDTO {

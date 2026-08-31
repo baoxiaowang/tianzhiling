@@ -414,6 +414,7 @@ export class AdminOperationsService {
       hourlyMessages,
       allTime,
       todayNewAgentUsers,
+      cohortDaily,
     ] = await Promise.all([
       this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
       this.aggregateDailyCount(this.agentModel, monthStart, monthEnd, {
@@ -450,6 +451,7 @@ export class AdminOperationsService {
       ),
       this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
       this.aggregateTodayNewAgentUsers(todayStart, todayEnd),
+      this.aggregateCohortDailyRevenue(monthStart, monthEnd, realOrderMatch),
     ]);
 
     const dailyMaps = {
@@ -458,6 +460,7 @@ export class AdminOperationsService {
       messages: new Map(messageStats.map(row => [row._id, row])),
       orders: new Map(orderStats.map(row => [row._id, row])),
       refunded: this.amountMap(refunded),
+      cohortDaily: new Map(cohortDaily.map(row => [row._id, Number(row.revenue) || 0])),
     };
     const daysInMonth = new Date(
       Date.UTC(year, monthIndex + 1, 0)
@@ -489,6 +492,7 @@ export class AdminOperationsService {
         paidRevenue,
         refundedRevenue,
         netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+        cohortRevenue: this.centsToYuan(dailyMaps.cohortDaily.get(date) ?? 0),
       };
     });
     const hourlyUserMap = this.countMap(hourlyUsers);
@@ -1368,6 +1372,50 @@ export class AdminOperationsService {
             revenue: { $sum: '$revenue' },
             revenue7Day: { $sum: '$revenue7Day' },
             revenue30Day: { $sum: '$revenue30Day' },
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  /** 按用户注册日聚合该日注册用户的累计净收入（所有历史订单，含退款冲抵） */
+  private async aggregateCohortDailyRevenue(
+    userStart: Date,
+    userEnd: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<Array<{ _id: string; revenue: number }>> {
+    return this.orderModel
+      .aggregate<{ _id: string; revenue: number }>([
+        {
+          $match: {
+            ...extraMatch,
+            paidAt: { $type: 'date' },
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.user,
+            localField: 'userId',
+            foreignField: '_id',
+            as: 'user',
+          },
+        },
+        { $unwind: '$user' },
+        {
+          $match: {
+            'user.createdAt': { $gte: userStart, $lt: userEnd },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$user.createdAt',
+                timezone: '+08:00',
+              },
+            },
+            revenue: { $sum: this.getNetPaidAmountExpression() },
           },
         },
       ])
