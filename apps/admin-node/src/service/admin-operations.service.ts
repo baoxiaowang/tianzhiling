@@ -441,9 +441,9 @@ export class AdminOperationsService {
         {
           ...realOrderMatch,
           status: OrderRefundStatus.completed,
-          completedAt: { $gte: monthStart, $lt: monthEnd },
+          requestedAt: { $gte: monthStart, $lt: monthEnd },
         },
-        '$completedAt',
+        '$requestedAt',
         '$amount'
       ),
       this.aggregateLegacyDailyRefundAmounts(
@@ -740,9 +740,9 @@ export class AdminOperationsService {
         {
           ...realOrderMatch,
           status: OrderRefundStatus.completed,
-          completedAt: { $gte: monthStart, $lt: monthEnd },
+          requestedAt: { $gte: monthStart, $lt: monthEnd },
         },
-        '$completedAt',
+        '$requestedAt',
         '$amount'
       ),
       this.aggregateLegacyDailyRefundAmounts(
@@ -1312,13 +1312,13 @@ export class AdminOperationsService {
                 $match: {
                   ...extraMatch,
                   status: OrderRefundStatus.completed,
-                  completedAt: { $type: 'date' },
+                  requestedAt: { $type: 'date' },
                 },
               },
               {
                 $project: {
                   userId: 1,
-                  occurredAt: '$completedAt',
+                  occurredAt: '$requestedAt',
                   signedAmount: { $multiply: ['$amount', -1] },
                 },
               },

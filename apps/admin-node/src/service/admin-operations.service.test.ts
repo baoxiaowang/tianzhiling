@@ -190,9 +190,12 @@ describe('AdminOperationsService', () => {
     expect(
       JSON.stringify(jest.mocked(service.orderModel.aggregate).mock.calls)
     ).toContain('"date":"$user.createdAt"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderModel.aggregate).mock.calls)
+    ).toContain('"occurredAt":"$requestedAt"');
   });
 
-  it('将购买和退款按各自发生日期分别统计', async () => {
+  it('按购买支付日期和已完成退款的申请日期分别统计', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-25T04:30:00.000Z'));
     const service = new AdminOperationsService();
     service.orderModel = {
@@ -261,7 +264,13 @@ describe('AdminOperationsService', () => {
     );
     expect(
       JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
-    ).toContain('"date":"$completedAt"');
+    ).toContain('"date":"$requestedAt"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
+    ).toContain('"requestedAt":{"$gte":"2026-07-31T16:00:00.000Z"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
+    ).not.toContain('"date":"$completedAt"');
   });
 
   it('兼容旧反馈并保存处理状态和管理员记录', async () => {
