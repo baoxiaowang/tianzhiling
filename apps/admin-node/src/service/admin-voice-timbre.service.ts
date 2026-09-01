@@ -180,25 +180,35 @@ export class AdminVoiceTimbreService {
       : [];
     const agentsByTimbreId = this.buildAgentsByTimbreId(agents);
 
-    const providerSlots = [...providerResult.items].sort((left, right) => {
-      const createDelta = (left.createTime || 0) - (right.createTime || 0);
-      return createDelta || left.speakerId.localeCompare(right.speakerId);
-    });
-    const capacity = Math.max(
-      this.doubaoVoiceService.getSlotCapacity(),
-      providerSlots.length
+    const fixedSpeakerIds = this.doubaoVoiceService.getKnownSpeakerIds();
+    const fixedOrder = new Map(
+      fixedSpeakerIds.map((speakerId, index) => [speakerId, index])
     );
-    const items = Array.from({ length: capacity }, (_, index) => {
-      const slot = providerSlots[index];
+    const providerSlots = [...providerResult.items].sort((left, right) => {
+      const leftFixedIndex = fixedOrder.get(left.speakerId);
+      const rightFixedIndex = fixedOrder.get(right.speakerId);
+      if (leftFixedIndex !== undefined || rightFixedIndex !== undefined) {
+        if (leftFixedIndex === undefined) return 1;
+        if (rightFixedIndex === undefined) return -1;
+        return leftFixedIndex - rightFixedIndex;
+      }
+
+      const orderDelta = (left.orderTime || 0) - (right.orderTime || 0);
+      const createDelta = (left.createTime || 0) - (right.createTime || 0);
+      return (
+        orderDelta ||
+        createDelta ||
+        left.instanceNo.localeCompare(right.instanceNo) ||
+        left.speakerId.localeCompare(right.speakerId)
+      );
+    });
+    const items = providerSlots.map((slot, index) => {
+      const boundTimbre = boundBySpeakerId.get(slot.speakerId);
       return this.buildDoubaoSlotRecord(
         index + 1,
         slot,
-        slot ? boundBySpeakerId.get(slot.speakerId) : undefined,
-        slot
-          ? agentsByTimbreId.get(
-              this.stringifyObjectId(boundBySpeakerId.get(slot.speakerId)?.id)
-            )
-          : undefined
+        boundTimbre,
+        agentsByTimbreId.get(this.stringifyObjectId(boundTimbre?.id))
       );
     });
     const soonDeadline = syncedAt.getTime() + 7 * 24 * 60 * 60 * 1000;
@@ -209,8 +219,13 @@ export class AdminVoiceTimbreService {
       : '未配置 OpenAPI AK/SK，暂不显示到期时间和剩余训练次数。';
 
     return {
-      configured: true,
-      message: `固定显示 ${capacity} 个已购音色槽位；空槽训练时由系统自动生成 Speaker ID。${metadataMessage}`,
+      configured:
+        providerResult.openApiSyncAttempted ||
+        fixedSpeakerIds.length > 0 ||
+        items.length > 0,
+      message: items.length
+        ? `已按 ${items.length} 个真实 Speaker ID 固定槽位关系；“本地音色”表示天之灵当前占用记录，智能体绑定请统一在音色列表管理。${metadataMessage}`
+        : `没有发现可固定的 Speaker ID；请配置已购 Speaker ID 或火山引擎 OpenAPI。${metadataMessage}`,
       items,
       total: items.length,
       availableCount: items.filter(item => item.availableForTraining).length,
@@ -242,11 +257,7 @@ export class AdminVoiceTimbreService {
       payload.providerVoiceId,
       previewModel
     );
-    await this.assertDoubaoSlotTrainable(
-      provider,
-      providerVoiceId,
-      Boolean(payload.providerVoiceId?.trim())
-    );
+    await this.assertDoubaoSlotTrainable(provider, providerVoiceId);
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
     const now = new Date();
@@ -1323,7 +1334,7 @@ export class AdminVoiceTimbreService {
 
   private buildDoubaoSlotRecord(
     slotNumber: number,
-    slot?: DoubaoVoiceSlot,
+    slot: DoubaoVoiceSlot,
     boundTimbre?: VoiceTimbreEntity,
     boundAgents: Array<{
       id: string;
@@ -1331,20 +1342,6 @@ export class AdminVoiceTimbreService {
       status: 'active' | 'pending';
     }> = []
   ): AdminDoubaoVoiceSlotDTO {
-    if (!slot) {
-      return {
-        slotKey: `doubao-slot-${slotNumber}`,
-        slotNumber,
-        empty: true,
-        instanceNo: '',
-        alias: '',
-        state: 'Unknown',
-        isActivable: true,
-        availableForTraining: true,
-        availabilityReason: '未训练；添加音色片段后由系统自动生成音色 ID',
-      };
-    }
-
     const now = Date.now();
     const expiredByTime = Boolean(slot.expireTime && slot.expireTime <= now);
     let availabilityReason = '';
@@ -1362,9 +1359,9 @@ export class AdminVoiceTimbreService {
     }
 
     return {
-      slotKey: `doubao-slot-${slotNumber}`,
+      slotKey: `doubao-slot-${slot.speakerId}`,
       slotNumber,
-      empty: false,
+      empty: slot.state === 'Unknown' && !boundTimbre,
       speakerId: slot.speakerId,
       instanceNo: slot.instanceNo,
       alias: slot.alias,
@@ -1727,8 +1724,7 @@ export class AdminVoiceTimbreService {
 
   private async assertDoubaoSlotTrainable(
     provider: VoiceTimbreProvider,
-    providerVoiceId: string,
-    usesExistingSpeakerId: boolean
+    providerVoiceId: string
   ): Promise<void> {
     if (provider !== VoiceTimbreProvider.doubao) {
       return;
@@ -1741,25 +1737,6 @@ export class AdminVoiceTimbreService {
     const { items } = await this.doubaoVoiceService.listSlots(
       this.collectDoubaoSpeakerIds(timbres)
     );
-
-    if (!usesExistingSpeakerId) {
-      const usedSpeakerIds = new Set([
-        ...items.map(item => item.speakerId),
-        ...this.collectDoubaoSpeakerIds(timbres),
-      ]);
-      if (usedSpeakerIds.size >= this.doubaoVoiceService.getSlotCapacity()) {
-        throw new AppError(
-          'DOUBAO_SLOT_CAPACITY_EXHAUSTED',
-          'Doubao purchased voice slot capacity is exhausted',
-          409,
-          {
-            capacity: this.doubaoVoiceService.getSlotCapacity(),
-            used: usedSpeakerIds.size,
-          }
-        );
-      }
-      return;
-    }
 
     const slot = items.find(item => item.speakerId === providerVoiceId);
 
@@ -2094,9 +2071,14 @@ export class AdminVoiceTimbreService {
     }
 
     if (provider === VoiceTimbreProvider.doubao) {
-      return this.normalizeDoubaoSpeakerId(
-        rawValue || this.generateDoubaoSpeakerId()
-      );
+      if (!rawValue) {
+        throw new AppError(
+          'DOUBAO_SLOT_SPEAKER_ID_REQUIRED',
+          'Doubao voice creation requires a fixed purchased Speaker ID',
+          400
+        );
+      }
+      return this.normalizeDoubaoSpeakerId(rawValue);
     }
 
     return this.normalizeMinimaxProviderVoiceId(
@@ -2114,10 +2096,6 @@ export class AdminVoiceTimbreService {
 
     if (provider === VoiceTimbreProvider.qwen) {
       return this.generateQwenPreferredName(this.isQwenAudioModel(model));
-    }
-
-    if (provider === VoiceTimbreProvider.doubao) {
-      return this.generateDoubaoSpeakerId();
     }
 
     return this.generateMinimaxProviderVoiceId();
@@ -2178,12 +2156,6 @@ export class AdminVoiceTimbreService {
       );
     }
     return speakerId;
-  }
-
-  private generateDoubaoSpeakerId(): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).slice(2, 10);
-    return `S_tzl_${timestamp}_${random}`;
   }
 
   private isDoubaoSpeakerId(value?: string): value is string {

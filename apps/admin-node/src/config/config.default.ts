@@ -74,7 +74,10 @@ export default {
   brand: {
     key: readStringFrom(['BRAND'], 'tianzhiling'),
     name: readStringFrom(['BRAND_NAME'], '天之灵'),
-    companyName: readStringFrom(['BRAND_COMPANY'], '武汉市天之灵智能技术有限公司'),
+    companyName: readStringFrom(
+      ['BRAND_COMPANY'],
+      '武汉市天之灵智能技术有限公司'
+    ),
   },
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
@@ -312,7 +315,6 @@ export default {
       ['ADMIN_API_DOUBAO_VOICE_POLL_INTERVAL_MS'],
       2000
     ),
-    slotCapacity: readNumberFrom(['ADMIN_API_DOUBAO_VOICE_SLOT_CAPACITY'], 10),
     knownSpeakerIds: readStringFrom(
       ['ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS'],
       ''

@@ -22,7 +22,6 @@ interface DoubaoVoiceConfig {
   timeoutMs?: number;
   trainingTimeoutMs?: number;
   pollIntervalMs?: number;
-  slotCapacity?: number;
   knownSpeakerIds?: string;
   openApiAccessKeyId?: string;
   openApiSecretAccessKey?: string;
@@ -177,20 +176,10 @@ export class DoubaoVoiceService {
     );
   }
 
-  getSlotCapacity(): number {
-    const configured = Number(this.config?.slotCapacity ?? 10);
-    if (!Number.isFinite(configured)) return 10;
-    return Math.min(1000, Math.max(0, Math.floor(configured)));
-  }
-
   getKnownSpeakerIds(): string[] {
     return this.normalizeKnownSpeakerIds(
       this.config?.knownSpeakerIds?.split(/[\s,;]+/) || []
     );
-  }
-
-  isSlotListingConfigured(): boolean {
-    return this.getSlotCapacity() > 0;
   }
 
   hasOpenApiSlotListingConfigured(): boolean {
@@ -256,9 +245,16 @@ export class DoubaoVoiceService {
         const status = lookup.result;
         if (status.statusCode === 0) {
           this.logger.info(
-            '[doubao-voice] known voice no longer exists at provider, voiceRef=%s',
+            '[doubao-voice] fixed voice has not been trained yet, voiceRef=%s',
             this.describeVoiceId(speakerId)
           );
+          bySpeakerId.set(speakerId, {
+            speakerId,
+            instanceNo: '',
+            alias: '',
+            state: 'Unknown',
+            isActivable: true,
+          });
           return;
         }
         bySpeakerId.set(speakerId, {
@@ -293,10 +289,7 @@ export class DoubaoVoiceService {
     });
 
     return {
-      items: [...bySpeakerId.values()].sort((left, right) => {
-        const expiryDelta = (left.expireTime || 0) - (right.expireTime || 0);
-        return expiryDelta || left.speakerId.localeCompare(right.speakerId);
-      }),
+      items: [...bySpeakerId.values()],
       requestIds,
       openApiSyncAttempted,
       openApiSyncSucceeded,

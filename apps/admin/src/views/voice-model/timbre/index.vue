@@ -273,7 +273,7 @@
               可训练 {{ doubaoSlotSummary.availableCount }}
             </a-tag>
             <a-tag color="purple">
-              已绑定 {{ doubaoSlotSummary.boundCount }}
+              本地已占用 {{ doubaoSlotSummary.boundCount }}
             </a-tag>
             <a-tag
               :color="doubaoSlotSummary.expiringSoonCount ? 'red' : 'gray'"
@@ -300,7 +300,7 @@
           :loading="doubaoSlotsLoading"
           :pagination="false"
           :bordered="false"
-          :scroll="{ x: 1500 }"
+          :scroll="{ x: 1770 }"
         >
           <template #empty>
             <a-empty
@@ -317,35 +317,37 @@
                 槽位 {{ record.slotNumber }}
               </template>
             </a-table-column>
+            <a-table-column title="Speaker ID" :width="270">
+              <template #cell="{ record }">
+                <a-typography-text copyable>
+                  {{ record.speakerId }}
+                </a-typography-text>
+              </template>
+            </a-table-column>
+            <a-table-column title="实例号" :width="180">
+              <template #cell="{ record }">
+                <a-typography-text v-if="record.instanceNo" copyable>
+                  {{ record.instanceNo }}
+                </a-typography-text>
+                <span v-else>-</span>
+              </template>
+            </a-table-column>
             <a-table-column title="平台状态" :width="120">
               <template #cell="{ record }">
-                <a-tag v-if="record.empty" color="gray"> 未训练 </a-tag>
-                <a-tag v-else :color="getDoubaoSlotStateColor(record.state)">
+                <a-tag :color="getDoubaoSlotStateColor(record.state)">
                   {{ formatDoubaoSlotState(record.state) }}
                 </a-tag>
               </template>
             </a-table-column>
-            <a-table-column title="绑定智能体" :width="280">
+            <a-table-column title="本地音色" :width="220">
               <template #cell="{ record }">
                 <div v-if="record.boundTimbre">
                   <div>{{ record.boundTimbre.name }}</div>
                   <a-tag :color="getStatusColor(record.boundTimbre.status)">
                     {{ formatStatus(record.boundTimbre.status) }}
                   </a-tag>
-                  <div
-                    v-for="agent in record.boundAgents || []"
-                    :key="agent.id"
-                    class="voice-timbre-page__slot-agent"
-                  >
-                    {{ agent.name }}
-                    <a-tag
-                      :color="agent.status === 'active' ? 'green' : 'orange'"
-                    >
-                      {{ agent.status === 'active' ? '已绑定' : '待绑定' }}
-                    </a-tag>
-                  </div>
                 </div>
-                <a-tag v-else color="gray">未绑定</a-tag>
+                <a-tag v-else color="gray">未占用</a-tag>
               </template>
             </a-table-column>
             <a-table-column title="试听" :width="230">
@@ -409,14 +411,6 @@
                     @click="openCreateFromDoubaoSlot(record)"
                   >
                     添加素材并训练
-                  </a-button>
-                  <a-button
-                    v-if="record.boundTimbre?.status === 'active'"
-                    type="text"
-                    size="small"
-                    @click="openBindAgent(record)"
-                  >
-                    绑定智能体
                   </a-button>
                   <a-button
                     v-if="canRetrySlot(record)"
@@ -577,15 +571,11 @@
               :value="slot.slotKey"
             >
               槽位 {{ slot.slotNumber }} ·
-              {{
-                slot.empty
-                  ? '未训练，ID 自动生成'
-                  : slot.alias || slot.boundTimbre?.name || '已训练'
-              }}
+              {{ slot.alias || slot.speakerId }}
             </a-option>
           </a-select>
           <template #extra>
-            空槽无需人工填写；上传素材后由系统自动生成。训练满意后，再在槽位页单独绑定智能体。
+            每个槽位固定对应一个已购 Speaker ID；智能体绑定统一在音色列表管理。
           </template>
         </a-form-item>
 
@@ -822,30 +812,6 @@
     </a-modal>
 
     <a-modal
-      v-model:visible="bindAgentVisible"
-      title="绑定智能体"
-      :confirm-loading="bindingAgent"
-      :mask-closable="false"
-      :esc-to-close="false"
-      @before-ok="submitBindAgent"
-      @cancel="closeBindAgent"
-    >
-      <a-alert type="info" class="voice-timbre-page__slot-alert">
-        训练和绑定互相独立。重新训练不会要求重复输入智能体
-        ID；绑定会替换该智能体当前使用的音色。
-      </a-alert>
-      <a-form :model="{ agentId: bindingAgentId }" layout="vertical">
-        <a-form-item label="智能体 ID" required>
-          <a-input
-            v-model="bindingAgentId"
-            allow-clear
-            placeholder="请输入 24 位智能体 ID"
-          />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
-    <a-modal
       v-model:visible="deleteVisible"
       title="永久删除音色"
       :confirm-loading="deleting"
@@ -945,7 +911,6 @@
   import useLoading from '@/hooks/loading';
   import uploadAdminFile from '@/api/storage';
   import {
-    bindDoubaoVoiceSlotAgent,
     createVoiceTimbre,
     deleteVoiceTimbre,
     queryDoubaoVoiceSlots,
@@ -965,10 +930,6 @@
   const doubaoSlotsConfigured = ref(false);
   const doubaoSlotMessage = ref('');
   const selectedDoubaoSlotKey = ref('');
-  const bindAgentVisible = ref(false);
-  const bindingAgent = ref(false);
-  const bindingAgentId = ref('');
-  const bindingSlot = ref<AdminDoubaoVoiceSlotDTO>();
   const doubaoSlotSummary = reactive<
     Pick<
       AdminDoubaoVoiceSlotListDTO,
@@ -1365,45 +1326,6 @@
       (slot) => slot.slotKey === String(slotKey)
     );
     editForm.providerVoiceId = selected?.speakerId || '';
-  };
-
-  const openBindAgent = (slot: AdminDoubaoVoiceSlotDTO) => {
-    bindingSlot.value = slot;
-    bindingAgentId.value = '';
-    bindAgentVisible.value = true;
-  };
-
-  const closeBindAgent = () => {
-    bindAgentVisible.value = false;
-    bindingSlot.value = undefined;
-    bindingAgentId.value = '';
-  };
-
-  const submitBindAgent = async () => {
-    const agentId = bindingAgentId.value.trim();
-    const timbreId = bindingSlot.value?.boundTimbre?.id;
-    if (!/^[a-f\d]{24}$/i.test(agentId)) {
-      Message.error('请输入正确的 24 位智能体 ID');
-      return false;
-    }
-    if (!timbreId) {
-      Message.error('该槽位还没有可绑定的本地音色');
-      return false;
-    }
-
-    try {
-      bindingAgent.value = true;
-      const { data } = await bindDoubaoVoiceSlotAgent(timbreId, agentId);
-      Message.success(`已将音色绑定到智能体“${data.agentName}”`);
-      closeBindAgent();
-      await fetchDoubaoSlots();
-      return true;
-    } catch (error) {
-      Message.error('绑定失败，请确认智能体 ID 正确且音色已训练完成');
-      return false;
-    } finally {
-      bindingAgent.value = false;
-    }
   };
 
   const buildSlotTimbreRecord = (

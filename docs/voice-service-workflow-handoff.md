@@ -1,6 +1,6 @@
 # 天之灵声音训练工作流交接记录
 
-更新时间：2026-08-26
+更新时间：2026-09-01
 
 这是声音训练业务的唯一长期交接文档。以后修改声音素材、AI 剪辑、片段审核、模型训练、试听、声音套餐或小使者交互前，先读本文；修改完成后同步更新本文。
 
@@ -39,7 +39,9 @@
 - 管理端可验证音色状态、重新训练同一 Speaker ID、生成试听并将豆包音色用于聊天和音色详情页自定义语音。重新训练必须沿用原槽位，不能静默切换到其他 Speaker ID。
 - 删除管理端豆包音色只删除天之灵本地记录和绑定，不调用服务商的破坏性删除；付费槽位继续保留，可再次训练和复用。日志只记录脱敏 Speaker ID，不记录 API Key、Access Token 或完整音色标识。
 - 生产环境优先使用新版 API Key。使用新版 API Key 时，训练请求中的 AppID 必须填写该 Key 所属项目自动生成的新版 APP ID，不能沿用旧版 `tianzhiling` 应用 APP ID；两者混用会返回 HTTP 403 `parameter license not found`。如账号训练权限仍要求旧版鉴权，才同时使用旧版应用的 AppID 与 Access Token。环境变量分别使用 `ADMIN_API_DOUBAO_VOICE_*` 和 `NODE_DOUBAO_VOICE_*`，Node 未单独配置时复用 Admin 配置。
-- 管理端“音色管理”分为“音色”和“豆包槽位”两个视图。槽位视图通过火山引擎 `BatchListMegaTTSTrainStatus` OpenAPI 实时读取账户内固定资产，展示 Speaker ID、实例号、状态、到期时间、剩余训练次数，并按 Speaker ID 关联天之灵本地音色；不另建一份可能失真的槽位数据库。创建豆包音色时优先从空闲槽位下拉选择，已绑定、训练中、已固定、已到期、已回收或训练次数用完的槽位不能进入训练；OpenAPI 未配置时保留手动输入 Speaker ID 的兼容入口。
+- 管理端“音色管理”分为“音色”和“豆包槽位”两个视图。槽位视图通过火山引擎 `BatchListMegaTTSTrainStatus` OpenAPI 实时读取账户内固定资产，展示 Speaker ID、实例号、状态、到期时间、剩余训练次数，并按 Speaker ID 关联天之灵本地音色；不另建一份可能失真的槽位数据库。创建豆包音色时从空闲槽位下拉选择，已绑定、训练中、已固定、已到期、已回收或训练次数用完的槽位不能进入训练；OpenAPI 未配置时使用服务端明确配置的固定 Speaker ID 列表兼容。
+- 豆包槽位以 Speaker ID 作为不可变身份，一个槽位只对应一个 Speaker ID。`ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS` 按配置顺序固定已有槽位编号，OpenAPI 新发现但未配置的 Speaker ID 按购买时间追加展示；槽位列表只显示真实查询到或明确配置的 Speaker ID，不再根据容量补出没有 Speaker ID 的虚拟空槽，也不得在训练时自动生成 Speaker ID。
+- 豆包槽位页只负责展示“槽位 / Speaker ID / 平台状态 / 本地音色”的资产占用关系和发起训练，不展示或修改智能体绑定。智能体与本地音色的绑定、解绑统一在音色或智能体管理入口完成，避免两个入口产生不一致状态。
 - 槽位列表只在 Admin Node 配置火山引擎 OpenAPI AK/SK，使用 `ADMIN_API_DOUBAO_VOICE_OPENAPI_ACCESS_KEY_ID`、`ADMIN_API_DOUBAO_VOICE_OPENAPI_SECRET_ACCESS_KEY`、`ADMIN_API_DOUBAO_VOICE_OPENAPI_PROJECT_NAME` 等变量；AK/SK 不下发给 Admin Web 或 Node 聊天服务。
 - 2026-08-26 真实联调：新版控制台 API Key 归属 APP ID `3486354884`；旧版 `tianzhiling` APP ID `9818056889` 不能与该 Key 混用。控制台开通“豆包声音复刻模型 2.0”API 服务后，候选代码对联调音色完成上传重训、状态查询、管理端预览和 Node 聊天合成闭环，供应商状态 `ready`、版本由 `V1` 更新为 `V2`。API Key 只注入运行环境，不写入仓库或联调记录。
 
