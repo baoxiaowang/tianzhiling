@@ -13,6 +13,7 @@ import {
   OrderSource,
   OrderStatus,
   OrderType,
+  UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
@@ -54,7 +55,15 @@ import { MessengerService } from './agents/messenger.service';
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
 const VIP_UPGRADE_CREDIT_PROVIDER = 'vip_upgrade_credit';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD =
+  'membershipFinancialOperationLock';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
+
+interface MembershipFinancialOperationLease {
+  token: string;
+  userId: MongoObjectId;
+}
 
 export interface WechatVirtualPaymentNotifyPayload {
   Event?: string;
@@ -120,6 +129,9 @@ export class OrderService {
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
 
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
+
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
 
@@ -132,60 +144,84 @@ export class OrderService {
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
-    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+    const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
+    let openid =
+      preliminaryPricing.payableAmount > 0
+        ? await this.wechatPayService.getOpenidByJsCode(payload.jsCode)
+        : undefined;
+    let savedOrder: OrderEntity;
 
-    if (pricing.payableAmount === 0) {
-      return this.createZeroAmountVipPlanOrder(
-        userId,
-        plan,
-        pricing,
-        payload.supportsZeroAmountOrder
-      );
+    while (true) {
+      const lease = await this.acquireMembershipFinancialOperationLock(userId);
+      let needsOpenid = false;
+
+      try {
+        const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+        if (pricing.payableAmount === 0) {
+          return await this.createZeroAmountVipPlanOrder(
+            userId,
+            plan,
+            pricing,
+            payload.supportsZeroAmountOrder
+          );
+        }
+
+        if (!openid) {
+          needsOpenid = true;
+        } else {
+          const now = new Date();
+          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+          const order = new OrderEntity();
+
+          Object.assign(order, {
+            orderNo: this.generateOrderNo(),
+            userId,
+            orderType: OrderType.vipPlan,
+            targetId: plan.id,
+            targetCode: plan.code,
+            title: plan.name,
+            amount: plan.priceAmount,
+            discountAmount: Math.max(
+              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+              0
+            ),
+            couponAmount: 0,
+            payableAmount: pricing.payableAmount,
+            currency: plan.currency || 'CNY',
+            status: OrderStatus.pending,
+            source: OrderSource.weapp,
+            paymentProvider: WECHAT_PAY_PROVIDER,
+            paymentExpiredAt: expireAt,
+            payerOpenid: openid,
+            snapshot: {
+              vipPlan: this.buildVipPlanSnapshot(plan),
+              vipUpgrade: pricing,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          savedOrder = await this.orderModel.save(order);
+        }
+      } finally {
+        await this.releaseMembershipFinancialOperationLock(lease);
+      }
+
+      if (!needsOpenid) {
+        break;
+      }
+
+      openid = await this.wechatPayService.getOpenidByJsCode(payload.jsCode);
     }
 
-    const openid = await this.wechatPayService.getOpenidByJsCode(
-      payload.jsCode
-    );
-    const now = new Date();
-    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-    const order = new OrderEntity();
-
-    Object.assign(order, {
-      orderNo: this.generateOrderNo(),
-      userId,
-      orderType: OrderType.vipPlan,
-      targetId: plan.id,
-      targetCode: plan.code,
-      title: plan.name,
-      amount: plan.priceAmount,
-      discountAmount: Math.max(
-        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: pricing.payableAmount,
-      currency: plan.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
-      paymentProvider: WECHAT_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: openid,
-      snapshot: {
-        vipPlan: this.buildVipPlanSnapshot(plan),
-        vipUpgrade: pricing,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const savedOrder = await this.orderModel.save(order);
     const { prepayId, payment } =
       await this.wechatPayService.createVipPlanPrepay({
         orderNo: savedOrder.orderNo,
         title: savedOrder.title,
         amount: savedOrder.payableAmount,
-        openid,
-        expireAt,
+        openid: savedOrder.payerOpenid!,
+        expireAt: savedOrder.paymentExpiredAt!,
       });
 
     savedOrder.paymentPrepayId = prepayId;
@@ -283,63 +319,96 @@ export class OrderService {
   ): Promise<CreateVipPlanVirtualPaymentOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
-    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+    const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
+    let productId: string | undefined;
+    let session:
+      | Awaited<ReturnType<WechatPayService['getSessionByJsCode']>>
+      | undefined;
 
-    if (pricing.payableAmount === 0) {
-      return this.createZeroAmountVipPlanOrder(
-        userId,
-        plan,
-        pricing,
-        payload.supportsZeroAmountOrder
+    if (preliminaryPricing.payableAmount > 0) {
+      productId = this.requireVirtualPaymentProductId(
+        plan.virtualPaymentProductId,
+        'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
       );
+      session = await this.wechatPayService.getSessionByJsCode(payload.jsCode);
     }
 
-    const productId = this.requireVirtualPaymentProductId(
-      plan.virtualPaymentProductId,
-      'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
-    );
-    const session = await this.wechatPayService.getSessionByJsCode(
-      payload.jsCode
-    );
-    const now = new Date();
-    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-    const env = this.wechatPayService.getVirtualPayEnv();
-    const order = new OrderEntity();
+    let savedOrder: OrderEntity;
 
-    Object.assign(order, {
-      orderNo: this.generateOrderNo(),
-      userId,
-      orderType: OrderType.vipPlan,
-      targetId: plan.id,
-      targetCode: plan.code,
-      title: plan.name,
-      amount: plan.priceAmount,
-      discountAmount: Math.max(
-        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: pricing.payableAmount,
-      currency: plan.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
-      paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: session.openid,
-      virtualPaymentProductId: productId,
-      virtualPaymentEnv: env,
-      snapshot: {
-        vipPlan: this.buildVipPlanSnapshot(plan),
-        vipUpgrade: pricing,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
+    while (true) {
+      const lease = await this.acquireMembershipFinancialOperationLock(userId);
+      let needsPaymentSession = false;
 
-    const savedOrder = await this.orderModel.save(order);
+      try {
+        const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+        if (pricing.payableAmount === 0) {
+          return await this.createZeroAmountVipPlanOrder(
+            userId,
+            plan,
+            pricing,
+            payload.supportsZeroAmountOrder
+          );
+        }
+
+        if (!productId || !session) {
+          needsPaymentSession = true;
+        } else {
+          const now = new Date();
+          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+          const env = this.wechatPayService.getVirtualPayEnv();
+          const order = new OrderEntity();
+
+          Object.assign(order, {
+            orderNo: this.generateOrderNo(),
+            userId,
+            orderType: OrderType.vipPlan,
+            targetId: plan.id,
+            targetCode: plan.code,
+            title: plan.name,
+            amount: plan.priceAmount,
+            discountAmount: Math.max(
+              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+              0
+            ),
+            couponAmount: 0,
+            payableAmount: pricing.payableAmount,
+            currency: plan.currency || 'CNY',
+            status: OrderStatus.pending,
+            source: OrderSource.weapp,
+            paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+            paymentExpiredAt: expireAt,
+            payerOpenid: session.openid,
+            virtualPaymentProductId: productId,
+            virtualPaymentEnv: env,
+            snapshot: {
+              vipPlan: this.buildVipPlanSnapshot(plan),
+              vipUpgrade: pricing,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          savedOrder = await this.orderModel.save(order);
+        }
+      } finally {
+        await this.releaseMembershipFinancialOperationLock(lease);
+      }
+
+      if (!needsPaymentSession) {
+        break;
+      }
+
+      productId = this.requireVirtualPaymentProductId(
+        plan.virtualPaymentProductId,
+        'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
+      );
+      session = await this.wechatPayService.getSessionByJsCode(payload.jsCode);
+    }
+
     const virtualPayment = this.wechatPayService.buildVirtualPaymentParams({
-      sessionKey: session.sessionKey,
-      productId,
+      sessionKey: session!.sessionKey,
+      productId: productId!,
       orderNo: savedOrder.orderNo,
       amount: savedOrder.payableAmount,
       attach: this.buildVirtualPaymentAttach(savedOrder),
@@ -651,7 +720,9 @@ export class OrderService {
 
     if (
       order.status === OrderStatus.completed ||
-      order.status === OrderStatus.granting
+      order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
+      order.status === OrderStatus.refunded
     ) {
       return;
     }
@@ -925,7 +996,9 @@ export class OrderService {
   ): Promise<void> {
     if (
       order.status === OrderStatus.completed ||
-      order.status === OrderStatus.granting
+      order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
+      order.status === OrderStatus.refunded
     ) {
       return;
     }
@@ -1513,8 +1586,9 @@ export class OrderService {
     task.assigneeName = '';
     task.materialObjectKeys = materialObjectKeys;
     task.materialDurationSeconds = materialDurationSeconds;
-    task.trainingStrategy =
-      this.resolveVoiceTrainingTaskTrainingStrategy(materialDurationSeconds);
+    task.trainingStrategy = this.resolveVoiceTrainingTaskTrainingStrategy(
+      materialDurationSeconds
+    );
     task.remark = '';
     task.paidAt = now;
     task.createdAt = now;
@@ -1698,6 +1772,98 @@ export class OrderService {
     return calculateVipUpgradePricing(
       targetPlan.priceAmount,
       historicalPaidAmount
+    );
+  }
+
+  private async acquireMembershipFinancialOperationLock(
+    userId: MongoObjectId
+  ): Promise<MembershipFinancialOperationLease> {
+    const now = new Date();
+    const token = `${process.pid}:${Date.now()}:${randomBytes(8).toString(
+      'hex'
+    )}`;
+    const lock = {
+      token,
+      operation: 'vip_upgrade_order_create',
+      acquiredAt: now,
+      expiresAt: new Date(
+        now.getTime() + MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS
+      ),
+    };
+    const result = await this.userModel.updateOne(
+      {
+        _id: userId,
+        $or: [
+          {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: {
+              $exists: false,
+            },
+          },
+          {
+            [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD}.expiresAt`]: {
+              $lte: now,
+            },
+          },
+        ],
+      } as never,
+      {
+        $set: {
+          [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: lock,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(result)) {
+      throw new AppError(
+        'MEMBERSHIP_FINANCIAL_OPERATION_BUSY',
+        '会员状态正在处理中，请稍后重试',
+        409
+      );
+    }
+
+    return { token, userId };
+  }
+
+  private async releaseMembershipFinancialOperationLock(
+    lease: MembershipFinancialOperationLease
+  ): Promise<void> {
+    try {
+      await this.userModel.updateOne(
+        {
+          _id: lease.userId,
+          [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD}.token`]: lease.token,
+        } as never,
+        {
+          $unset: {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: '',
+          },
+        } as never
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[membership-financial-lock] release failed, userId=%s, error=%s',
+        this.stringifyObjectId(lease.userId),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  private didMongoUpdate(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+
+    const value = result as {
+      matchedCount?: number;
+      modifiedCount?: number;
+      result?: { n?: number; nModified?: number };
+    };
+
+    return Boolean(
+      (value.modifiedCount ?? 0) > 0 ||
+        (value.matchedCount ?? 0) > 0 ||
+        (value.result?.nModified ?? 0) > 0 ||
+        (value.result?.n ?? 0) > 0
     );
   }
 
@@ -2066,8 +2232,8 @@ export class OrderService {
       typeof value === 'number'
         ? value
         : typeof value === 'string'
-          ? Number(value.trim())
-          : NaN;
+        ? Number(value.trim())
+        : NaN;
 
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       return undefined;

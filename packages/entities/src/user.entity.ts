@@ -49,6 +49,17 @@ export interface UserRegion {
   cityName: string;
 }
 
+export type MembershipFinancialOperation =
+  | 'vip_upgrade_order_create'
+  | 'voice_membership_final_refund';
+
+export interface MembershipFinancialOperationLock {
+  token: string;
+  operation: MembershipFinancialOperation;
+  acquiredAt: Date;
+  expiresAt: Date;
+}
+
 @Index(['phone'], { sparse: true, background: true })
 @Index(['accountStatus', 'updatedAt'], { sparse: true, background: true })
 @Index(['riskControlUntilAt'], { sparse: true, background: true })
@@ -78,6 +89,10 @@ export class UserEntity extends BaseEntity {
 
   @Column()
   riskControlUntilAt?: Date;
+
+  /** Cross-service CAS lease for membership upgrades and final refunds. */
+  @Column()
+  membershipFinancialOperationLock?: MembershipFinancialOperationLock;
 
   @Column()
   postNotificationSeenAt?: Date;

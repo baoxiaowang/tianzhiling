@@ -7,6 +7,7 @@ import type {
   AdminOrderListDTO,
   AdminOrderRecordDTO,
   AdminOrderUserDTO,
+  AdminVoiceMembershipFinalRefundRecordDTO,
   AdminVoiceMembershipDowngradePreviewDTO,
   AdminVoiceMembershipDowngradeRecordDTO,
   AdminVoiceMembershipDowngradeTargetDTO,
@@ -67,6 +68,10 @@ const VOICE_TRAINING_TASK_REPLACED_REMARK =
   '管理端创建新声音套餐订单时覆盖关闭。';
 const VOICE_MEMBERSHIP_DOWNGRADE_REASON = '声音版会员降级为基础版';
 const VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY = 'voiceMembershipDowngrade';
+const VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY = 'voiceMembershipFinalRefund';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY =
+  'membershipFinancialOperationLock';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 interface VoiceMembershipDowngradeSnapshot {
@@ -84,6 +89,27 @@ interface VoiceMembershipDowngradeSnapshot {
   updatedAt: string;
   operatorId?: string;
   operatorAccount?: string;
+  failureReason?: string;
+  benefitsApplyToken?: string;
+  benefitsApplyStartedAt?: string;
+}
+
+interface VoiceMembershipFinalRefundSnapshot {
+  status:
+    | 'processing'
+    | 'benefits_processing'
+    | 'benefits_failed'
+    | 'completed'
+    | 'failed';
+  refundAmount: number;
+  refundNo: string;
+  attempt?: number;
+  attemptRequestedAt?: string;
+  wechatRefundId?: string;
+  wechatRefundStatus?: string;
+  requestedAt: string;
+  completedAt?: string;
+  updatedAt: string;
   failureReason?: string;
 }
 
@@ -153,7 +179,9 @@ export class AdminOrderService {
     };
   }
 
-  async createOrder(payload: CreateAdminOrderDTO): Promise<AdminOrderRecordDTO> {
+  async createOrder(
+    payload: CreateAdminOrderDTO
+  ): Promise<AdminOrderRecordDTO> {
     const orderType = this.normalizeOrderType(payload?.orderType);
     const user = await this.getUserById(payload.userId);
     const userObjectId = this.getEntityObjectId(user);
@@ -358,75 +386,122 @@ export class AdminOrderService {
     operator: AdminAuthenticatedPayload
   ): Promise<AdminOrderRecordDTO> {
     const order = await this.getOrderById(orderId);
-    const preview = await this.getVoiceMembershipDowngradePreview(orderId);
-
-    if (!preview.eligible) {
-      throw new AppError(
-        'VOICE_MEMBERSHIP_DOWNGRADE_UNAVAILABLE',
-        preview.unavailableReason || 'voice membership cannot be downgraded',
-        400
-      );
-    }
-
-    const targetPlan = preview.targetPlans.find(
-      item => item.id === payload?.targetVipPlanId?.trim()
+    const lockToken = await this.acquireMembershipFinancialOperationLock(
+      order.userId,
+      'voice_membership_final_refund'
     );
-
-    if (!targetPlan) {
-      throw new AppError(
-        'VOICE_MEMBERSHIP_DOWNGRADE_TARGET_INVALID',
-        '请选择周期一致的基础版会员',
-        400
-      );
-    }
-
-    const targetEntity = await this.getActiveVipPlanById(targetPlan.id);
-    const now = new Date();
-    const downgrade: VoiceMembershipDowngradeSnapshot = {
-      status: 'processing',
-      sourcePlan: preview.sourcePlan as VoiceMembershipDowngradePlanDTO,
-      targetPlan: this.buildVoiceMembershipDowngradePlan(targetEntity),
-      targetPlanSnapshot: this.buildVipPlanSnapshot(targetEntity),
-      refundAmount: targetPlan.refundAmount,
-      refundNo: this.generateVoiceMembershipDowngradeRefundNo(order),
-      requestedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      operatorId: operator?.sub,
-      operatorAccount: operator?.account,
-    };
-
-    this.setVoiceMembershipDowngrade(order, downgrade);
-    order.updatedAt = now;
-    await this.orderModel.save(order);
+    let downgrade: VoiceMembershipDowngradeSnapshot;
 
     try {
-      const refund = await this.adminWechatPayService.refundOrder({
+      await this.refreshOrderEntity(order);
+      const preview = await this.getVoiceMembershipDowngradePreview(orderId);
+
+      if (!preview.eligible) {
+        throw new AppError(
+          'VOICE_MEMBERSHIP_DOWNGRADE_UNAVAILABLE',
+          preview.unavailableReason || 'voice membership cannot be downgraded',
+          400
+        );
+      }
+
+      const targetPlan = preview.targetPlans.find(
+        item => item.id === payload?.targetVipPlanId?.trim()
+      );
+
+      if (!targetPlan) {
+        throw new AppError(
+          'VOICE_MEMBERSHIP_DOWNGRADE_TARGET_INVALID',
+          '请选择周期一致的基础版会员',
+          400
+        );
+      }
+
+      await this.assertDowngradedMembershipStillOwnedByOrder(order);
+      const targetEntity = await this.getActiveVipPlanById(targetPlan.id);
+      const now = new Date();
+      downgrade = {
+        status: 'processing',
+        sourcePlan: preview.sourcePlan as VoiceMembershipDowngradePlanDTO,
+        targetPlan: this.buildVoiceMembershipDowngradePlan(targetEntity),
+        targetPlanSnapshot: this.buildVipPlanSnapshot(targetEntity),
+        refundAmount: targetPlan.refundAmount,
+        refundNo: this.generateVoiceMembershipDowngradeRefundNo(order),
+        requestedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        operatorId: operator?.sub,
+        operatorAccount: operator?.account,
+      };
+
+      const createResult = await this.orderModel.updateOne(
+        {
+          _id: order.id,
+          status: OrderStatus.completed,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}`]: {
+            $exists: false,
+          },
+        } as never,
+        {
+          $set: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}`]: downgrade,
+            updatedAt: now,
+          },
+        } as never
+      );
+
+      if (!this.didMongoUpdate(createResult)) {
+        throw new AppError(
+          'VOICE_MEMBERSHIP_DOWNGRADE_STATE_CONFLICT',
+          '订单状态已变化，请刷新后重试会员降级',
+          409
+        );
+      }
+
+      this.setVoiceMembershipDowngrade(order, downgrade);
+      order.updatedAt = now;
+      await this.refreshOrderEntity(order);
+    } finally {
+      await this.releaseMembershipFinancialOperationLock(
+        order.userId,
+        lockToken
+      );
+    }
+
+    let refund: WechatRefundPayload;
+
+    try {
+      refund = await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
         refundNo: downgrade.refundNo,
         reason: VOICE_MEMBERSHIP_DOWNGRADE_REASON,
         amount: downgrade.refundAmount,
         totalAmount: order.paidAmount ?? order.payableAmount,
       });
-
-      await this.applyVoiceMembershipDowngradeRefundStatus(
-        order,
-        downgrade,
-        refund
-      );
     } catch (error) {
-      downgrade.status = downgrade.refundRecordedAt
-        ? 'benefits_failed'
-        : 'failed';
+      downgrade.status = 'failed';
       downgrade.failureReason = this.getOperationFailureReason(error);
       downgrade.updatedAt = new Date().toISOString();
-      this.setVoiceMembershipDowngrade(order, downgrade);
-      order.updatedAt = new Date();
-      await this.orderModel.save(order);
+      await this.persistVoiceMembershipDowngradeState(
+        order,
+        downgrade,
+        new Date(),
+        'processing'
+      );
+
+      const refreshedOrder = await this.refreshOrderEntity(order);
+      const userMap = await this.getOrderUserMap([refreshedOrder]);
+
+      return this.buildOrderRecord(refreshedOrder, userMap);
     }
 
-    const userMap = await this.getOrderUserMap([order]);
+    await this.applyVoiceMembershipDowngradeRefundStatus(
+      order,
+      downgrade,
+      refund
+    );
+    const refreshedOrder = await this.refreshOrderEntity(order);
+    const userMap = await this.getOrderUserMap([refreshedOrder]);
 
-    return this.buildOrderRecord(order, userMap);
+    return this.buildOrderRecord(refreshedOrder, userMap);
   }
 
   async syncVoiceMembershipDowngrade(
@@ -476,9 +551,10 @@ export class AdminOrderService {
       }
     }
 
-    const userMap = await this.getOrderUserMap([order]);
+    const refreshedOrder = await this.refreshOrderEntity(order);
+    const userMap = await this.getOrderUserMap([refreshedOrder]);
 
-    return this.buildOrderRecord(order, userMap);
+    return this.buildOrderRecord(refreshedOrder, userMap);
   }
 
   private async applyVoiceMembershipDowngradeRefundStatus(
@@ -486,6 +562,7 @@ export class AdminOrderService {
     downgrade: VoiceMembershipDowngradeSnapshot,
     refund: WechatRefundPayload
   ): Promise<void> {
+    const expectedStatus = downgrade.status;
     const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
     const now = new Date();
 
@@ -509,9 +586,45 @@ export class AdminOrderService {
       downgrade.status = 'processing';
     }
 
-    this.setVoiceMembershipDowngrade(order, downgrade);
-    order.updatedAt = now;
-    await this.orderModel.save(order);
+    await this.persistVoiceMembershipDowngradeState(
+      order,
+      downgrade,
+      now,
+      expectedStatus
+    );
+    await this.refreshOrderEntity(order);
+  }
+
+  private async persistVoiceMembershipDowngradeState(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot,
+    now = new Date(),
+    expectedStatus: VoiceMembershipDowngradeSnapshot['status'] = downgrade.status
+  ): Promise<boolean> {
+    const result = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: {
+          $in: [OrderStatus.completed, OrderStatus.refundRequested],
+        },
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+          downgrade.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+          expectedStatus,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+          {
+            $exists: false,
+          },
+      } as never,
+      {
+        $set: {
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}`]: downgrade,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    return this.didMongoUpdate(result);
   }
 
   private async completeVoiceMembershipDowngrade(
@@ -519,40 +632,189 @@ export class AdminOrderService {
     downgrade: VoiceMembershipDowngradeSnapshot
   ): Promise<void> {
     const now = new Date();
+    const benefitsApplyToken = randomBytes(16).toString('hex');
+    const claimResult = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: {
+          $in: [OrderStatus.completed, OrderStatus.refundRequested],
+        },
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+          downgrade.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]: {
+          $in: ['processing', 'benefits_failed', 'failed'],
+        },
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+          {
+            $exists: false,
+          },
+      } as never,
+      {
+        $set: {
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+            benefitsApplyToken,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyStartedAt`]:
+            now.toISOString(),
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.wechatRefundId`]:
+            downgrade.wechatRefundId,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.wechatRefundStatus`]:
+            'SUCCESS',
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.updatedAt`]:
+            now.toISOString(),
+          updatedAt: now,
+        },
+        $unset: {
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.failureReason`]:
+            '',
+        },
+      } as never
+    );
 
-    if (!downgrade.refundRecordedAt) {
-      order.refundAmount =
-        (order.refundAmount ?? 0) + downgrade.refundAmount;
-      downgrade.refundRecordedAt = now.toISOString();
-      downgrade.updatedAt = now.toISOString();
-      // 记录部分退款时间，用于收入统计按退款时间归集
-      if (!order.refundedAt) {
-        order.refundedAt = now;
-      }
-      this.setVoiceMembershipDowngrade(order, downgrade);
-      order.updatedAt = now;
-      await this.orderModel.save(order);
-    }
-
-    try {
-      await this.applyVoiceMembershipDowngradeBenefits(order, downgrade, now);
-    } catch (error) {
-      downgrade.status = 'benefits_failed';
-      downgrade.failureReason = this.getOperationFailureReason(error);
-      downgrade.updatedAt = new Date().toISOString();
-      this.setVoiceMembershipDowngrade(order, downgrade);
-      order.updatedAt = new Date();
-      await this.orderModel.save(order);
+    if (!this.didMongoUpdate(claimResult)) {
+      await this.refreshOrderEntity(order);
       return;
     }
 
-    downgrade.status = 'completed';
-    downgrade.completedAt = now.toISOString();
-    downgrade.failureReason = undefined;
-    downgrade.updatedAt = now.toISOString();
-    this.setVoiceMembershipDowngrade(order, downgrade);
-    order.updatedAt = now;
-    await this.orderModel.save(order);
+    try {
+      const claimedOrder = await this.refreshOrderEntity(order);
+      const claimedDowngrade =
+        this.getVoiceMembershipDowngrade(claimedOrder) ?? downgrade;
+
+      if (!claimedDowngrade.refundRecordedAt) {
+        // 记录部分退款时间，用于收入统计按退款时间归集
+        const refundRecordResult = await this.orderModel.updateOne(
+          {
+            _id: claimedOrder.id,
+            status: {
+              $in: [OrderStatus.completed, OrderStatus.refundRequested],
+            },
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+              claimedDowngrade.refundNo,
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+              benefitsApplyToken,
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundRecordedAt`]:
+              {
+                $exists: false,
+              },
+          } as never,
+          {
+            $inc: {
+              refundAmount: claimedDowngrade.refundAmount,
+            },
+            $set: {
+              refundedAt: claimedOrder.refundedAt ?? now,
+              [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundRecordedAt`]:
+                now.toISOString(),
+              [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.updatedAt`]:
+                now.toISOString(),
+              updatedAt: now,
+            },
+          } as never
+        );
+
+        if (!this.didMongoUpdate(refundRecordResult)) {
+          throw new AppError(
+            'VOICE_MEMBERSHIP_DOWNGRADE_STATE_CONFLICT',
+            '降级退款已成功，但退款金额记录冲突，请刷新后重试权益处理',
+            409
+          );
+        }
+
+        await this.refreshOrderEntity(claimedOrder);
+      }
+
+      const latestDowngrade =
+        this.getVoiceMembershipDowngrade(claimedOrder) ?? claimedDowngrade;
+      await this.applyVoiceMembershipDowngradeBenefits(
+        claimedOrder,
+        latestDowngrade,
+        now
+      );
+
+      const completeResult = await this.orderModel.updateOne(
+        {
+          _id: claimedOrder.id,
+          status: {
+            $in: [OrderStatus.completed, OrderStatus.refundRequested],
+          },
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+            claimedDowngrade.refundNo,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+            benefitsApplyToken,
+        } as never,
+        {
+          $set: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+              'completed',
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.completedAt`]:
+              now.toISOString(),
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.updatedAt`]:
+              now.toISOString(),
+            updatedAt: now,
+          },
+          $unset: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+              '',
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyStartedAt`]:
+              '',
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.failureReason`]:
+              '',
+          },
+        } as never
+      );
+
+      if (!this.didMongoUpdate(completeResult)) {
+        throw new AppError(
+          'VOICE_MEMBERSHIP_DOWNGRADE_STATE_CONFLICT',
+          '降级权益已处理，但完成状态写入失败，请刷新后重试',
+          409
+        );
+      }
+
+      await this.refreshOrderEntity(order);
+      return;
+    } catch (error) {
+      const failedAt = new Date();
+      const releaseResult = await this.orderModel.updateOne(
+        {
+          _id: order.id,
+          status: {
+            $in: [OrderStatus.completed, OrderStatus.refundRequested],
+          },
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+            downgrade.refundNo,
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+            benefitsApplyToken,
+        } as never,
+        {
+          $set: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+              'benefits_failed',
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.failureReason`]:
+              this.getOperationFailureReason(error),
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.updatedAt`]:
+              failedAt.toISOString(),
+            updatedAt: failedAt,
+          },
+          $unset: {
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+              '',
+            [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyStartedAt`]:
+              '',
+          },
+        } as never
+      );
+
+      await this.refreshOrderEntity(order);
+
+      if (!this.didMongoUpdate(releaseResult)) {
+        const currentDowngrade = this.getVoiceMembershipDowngrade(order);
+
+        if (currentDowngrade?.status !== 'completed') {
+          throw error;
+        }
+      }
+    }
   }
 
   private async applyVoiceMembershipDowngradeBenefits(
@@ -560,39 +822,78 @@ export class AdminOrderService {
     downgrade: VoiceMembershipDowngradeSnapshot,
     now: Date
   ): Promise<void> {
-    const membership = await this.userMembershipModel.findOne({
+    const sourceMembership = await this.userMembershipModel.findOne({
       where: {
         sourceOrderId: order.id,
       },
     });
-
-    if (!membership) {
-      throw new AppError(
-        'VOICE_MEMBERSHIP_DOWNGRADE_MEMBERSHIP_NOT_FOUND',
-        '未找到这笔订单对应的会员记录',
-        409
-      );
-    }
-
     const targetPlanId = this.parseObjectId(
       downgrade.targetPlan.id,
       'INVALID_VIP_PLAN_ID'
     );
-    membership.vipPlanId = targetPlanId;
-    membership.vipPlanCode = downgrade.targetPlan.code;
-    membership.status = UserMembershipStatus.active;
-    membership.updatedAt = now;
-    await this.userMembershipModel.save(membership);
+    let membershipOwnershipRetained = false;
+    let membershipForOldBenefits = sourceMembership;
+
+    if (sourceMembership) {
+      const membershipResult = await this.userMembershipModel.updateOne(
+        {
+          _id: sourceMembership.id,
+          sourceOrderId: order.id,
+          status: UserMembershipStatus.active,
+        } as never,
+        {
+          $set: {
+            vipPlanId: targetPlanId,
+            vipPlanCode: downgrade.targetPlan.code,
+            updatedAt: now,
+          },
+        } as never
+      );
+
+      membershipOwnershipRetained = this.didMongoUpdate(membershipResult);
+
+      if (membershipOwnershipRetained) {
+        sourceMembership.vipPlanId = targetPlanId;
+        sourceMembership.vipPlanCode = downgrade.targetPlan.code;
+        sourceMembership.status = UserMembershipStatus.active;
+        sourceMembership.updatedAt = now;
+      }
+    }
+
+    if (!membershipOwnershipRetained) {
+      const activeMembership = await this.findActiveMembership(order.userId);
+
+      if (
+        !activeMembership ||
+        this.stringifyObjectId(activeMembership.sourceOrderId) ===
+          this.stringifyObjectId(order.id)
+      ) {
+        throw new AppError(
+          'VOICE_MEMBERSHIP_DOWNGRADE_MEMBERSHIP_NOT_FOUND',
+          '未找到可安全降级的会员记录',
+          409
+        );
+      }
+
+      membershipForOldBenefits = sourceMembership ?? activeMembership;
+    }
+
+    const benefitMembership = {
+      ...membershipForOldBenefits,
+      vipPlanId: targetPlanId,
+      vipPlanCode: downgrade.targetPlan.code,
+    } as UserMembershipEntity;
 
     await this.reconcileDowngradedMembershipEntitlements(
       order,
-      membership,
+      benefitMembership,
       downgrade.targetPlanSnapshot,
-      now
+      now,
+      membershipOwnershipRetained
     );
     await this.revokeDowngradedMembershipVoiceBindings(
       order,
-      membership,
+      membershipOwnershipRetained ? sourceMembership?.id : undefined,
       now
     );
   }
@@ -601,7 +902,8 @@ export class AdminOrderService {
     order: OrderEntity,
     membership: UserMembershipEntity,
     targetPlanSnapshot: Record<string, unknown>,
-    now: Date
+    now: Date,
+    allowCreateMissingGrants = true
   ): Promise<void> {
     const targetGrants = this.parseEntitlementGrants(
       targetPlanSnapshot.entitlementGrants
@@ -632,20 +934,30 @@ export class AdminOrderService {
         entitlement.usedQuota ?? 0,
         grant.totalQuota
       );
-      entitlement.expiredAt = this.calculateEntitlementExpiredAt(
-        order.paidAt ?? membership.startedAt,
-        grant.durationDays,
-        membership
-      );
+      entitlement.expiredAt = grant.durationDays
+        ? this.calculateEntitlementExpiredAt(
+            order.paidAt ?? membership.startedAt,
+            grant.durationDays,
+            membership
+          )
+        : allowCreateMissingGrants
+        ? membership.lifetime
+          ? undefined
+          : membership.expiredAt
+        : entitlement.expiredAt;
       entitlement.status =
         entitlement.expiredAt && entitlement.expiredAt <= now
           ? AgentEntitlementStatus.expired
           : (entitlement.usedQuota ?? 0) >= entitlement.totalQuota
-            ? AgentEntitlementStatus.used
-            : AgentEntitlementStatus.available;
+          ? AgentEntitlementStatus.used
+          : AgentEntitlementStatus.available;
       entitlement.updatedAt = now;
       await this.agentEntitlementModel.save(entitlement);
       targetGrantMap.delete(entitlement.type);
+    }
+
+    if (!allowCreateMissingGrants) {
+      return;
     }
 
     for (const grant of targetGrantMap.values()) {
@@ -671,11 +983,10 @@ export class AdminOrderService {
 
   private async revokeDowngradedMembershipVoiceBindings(
     order: OrderEntity,
-    membership: UserMembershipEntity,
+    membershipIdValue: MongoObjectId | undefined,
     now: Date
   ): Promise<void> {
     const orderId = this.stringifyObjectId(order.id);
-    const membershipId = this.stringifyObjectId(membership.id);
     const entitlements = await this.agentEntitlementModel.find({
       where: {
         sourceOrderId: order.id,
@@ -683,7 +994,7 @@ export class AdminOrderService {
     });
     const accessReferenceIds = new Set([
       orderId,
-      membershipId,
+      ...(membershipIdValue ? [this.stringifyObjectId(membershipIdValue)] : []),
       ...entitlements.map(item => this.stringifyObjectId(item.id)),
     ]);
     const sessions = (
@@ -788,9 +1099,8 @@ export class AdminOrderService {
   }
 
   private async syncWechatPaymentOrder(order: OrderEntity): Promise<void> {
-    const transaction = await this.adminWechatPayService.queryTransactionByOrderNo(
-      order.orderNo
-    );
+    const transaction =
+      await this.adminWechatPayService.queryTransactionByOrderNo(order.orderNo);
 
     if (!transaction) {
       if (this.isPaymentExpired(order)) {
@@ -835,6 +1145,7 @@ export class AdminOrderService {
     if (
       order.status === OrderStatus.completed ||
       order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
       order.status === OrderStatus.refunded
     ) {
       return;
@@ -952,6 +1263,7 @@ export class AdminOrderService {
     if (
       order.status === OrderStatus.completed ||
       order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
       order.status === OrderStatus.refunded
     ) {
       return;
@@ -1119,6 +1431,21 @@ export class AdminOrderService {
     order: OrderEntity,
     reason: string
   ): Promise<void> {
+    const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
+    const voiceMembershipFinalRefund =
+      this.getVoiceMembershipFinalRefund(order);
+    const finalRefundSucceeded =
+      voiceMembershipFinalRefund?.wechatRefundStatus?.trim().toUpperCase() ===
+      'SUCCESS';
+
+    if (
+      voiceMembershipDowngrade?.status === 'completed' &&
+      (order.status === OrderStatus.refunded || finalRefundSucceeded)
+    ) {
+      await this.repairDowngradedMembershipFinalRefundBenefits(order);
+      return;
+    }
+
     if (order.status === OrderStatus.refunded) {
       return;
     }
@@ -1139,27 +1466,106 @@ export class AdminOrderService {
       );
     }
 
-    const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
-
-    if (voiceMembershipDowngrade) {
+    if (
+      voiceMembershipDowngrade &&
+      voiceMembershipDowngrade.status !== 'completed'
+    ) {
       throw new AppError(
-        'ORDER_HAS_VOICE_MEMBERSHIP_DOWNGRADE',
-        '这笔订单已有声音版降级退款，不能再按整单金额退款',
+        'ORDER_VOICE_MEMBERSHIP_DOWNGRADE_INCOMPLETE',
+        '会员降级尚未完成，请先刷新降级状态',
         400
       );
     }
 
-    const refundAmount = order.paidAmount ?? order.payableAmount;
+    if (
+      voiceMembershipDowngrade?.status === 'completed' &&
+      this.isVipUpgradeOrder(order)
+    ) {
+      throw new AppError(
+        'ORDER_UPGRADE_REFUND_REQUIRES_HISTORY',
+        '升级会员的费用来自多笔历史订单，请核对原基础会员订单后处理，系统不会自动少退或错退',
+        409
+      );
+    }
 
-    if (!refundAmount || refundAmount <= 0) {
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
+    const recordedRefundAmount = Math.max(
+      order.refundAmount ?? 0,
+      voiceMembershipDowngrade?.status === 'completed'
+        ? voiceMembershipDowngrade.refundAmount
+        : 0
+    );
+    const refundAmount = Math.max(paidAmount - recordedRefundAmount, 0);
+
+    if (refundAmount <= 0) {
       throw new AppError(
         'ORDER_REFUND_AMOUNT_INVALID',
-        'order refund amount is invalid',
+        voiceMembershipDowngrade
+          ? '这笔降级订单已无剩余可退金额，请核对历史基础会员订单'
+          : 'order refund amount is invalid',
         400
       );
     }
 
     await this.assertRefundableOrderBenefits(order);
+
+    const startsNewFinalRefundAttempt =
+      !voiceMembershipFinalRefund ||
+      (voiceMembershipFinalRefund.status === 'failed' &&
+        voiceMembershipFinalRefund.wechatRefundStatus?.trim().toUpperCase() ===
+          'CLOSED');
+
+    if (
+      voiceMembershipDowngrade?.status === 'completed' &&
+      startsNewFinalRefundAttempt
+    ) {
+      if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
+        throw new AppError(
+          'ORDER_REFUND_PROVIDER_UNSUPPORTED',
+          'admin manual order cannot be refunded',
+          400
+        );
+      }
+
+      if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+        throw new AppError(
+          'ORDER_REFUND_PROVIDER_UNSUPPORTED',
+          '会员降级订单不支持微信虚拟支付退款',
+          400
+        );
+      }
+
+      const lockToken = await this.acquireMembershipFinancialOperationLock(
+        order.userId,
+        'voice_membership_final_refund'
+      );
+      let lockReleased = false;
+      const releaseLock = async () => {
+        if (lockReleased) {
+          return;
+        }
+
+        lockReleased = true;
+        await this.releaseMembershipFinancialOperationLock(
+          order.userId,
+          lockToken
+        );
+      };
+
+      try {
+        await this.assertDowngradedMembershipStillOwnedByOrder(order);
+        await this.syncDowngradedMembershipFinalRefund(
+          order,
+          refundAmount,
+          paidAmount,
+          reason,
+          releaseLock
+        );
+      } finally {
+        await releaseLock();
+      }
+      return;
+    }
 
     if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
       throw new AppError(
@@ -1169,13 +1575,21 @@ export class AdminOrderService {
       );
     } else if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
       await this.refundVirtualPaymentOrder(order, refundAmount, reason);
+    } else if (voiceMembershipDowngrade?.status === 'completed') {
+      await this.syncDowngradedMembershipFinalRefund(
+        order,
+        refundAmount,
+        paidAmount,
+        reason
+      );
+      return;
     } else {
       await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
         refundNo: this.generateRefundNo(order),
         reason,
         amount: refundAmount,
-        totalAmount: order.paidAmount ?? order.payableAmount,
+        totalAmount: paidAmount,
       });
     }
 
@@ -1183,10 +1597,546 @@ export class AdminOrderService {
     await this.revokeOrderBenefits(order, now);
 
     order.status = OrderStatus.refunded;
-    order.refundAmount = refundAmount;
+    order.refundAmount = Math.min(
+      recordedRefundAmount + refundAmount,
+      paidAmount
+    );
     order.refundedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
+  }
+
+  private async syncDowngradedMembershipFinalRefund(
+    order: OrderEntity,
+    refundAmount: number,
+    paidAmount: number,
+    reason: string,
+    onClaimed?: () => Promise<void>
+  ): Promise<void> {
+    const now = new Date();
+    const existingSnapshot = this.getVoiceMembershipFinalRefund(order);
+    const storedAttempt = Number(existingSnapshot?.attempt ?? 1);
+    const previousAttempt =
+      Number.isSafeInteger(storedAttempt) && storedAttempt >= 1
+        ? storedAttempt
+        : 1;
+    const retryClosedRefund = Boolean(
+      existingSnapshot?.status === 'failed' &&
+        existingSnapshot.wechatRefundStatus?.trim().toUpperCase() === 'CLOSED'
+    );
+    const attempt = retryClosedRefund ? previousAttempt + 1 : previousAttempt;
+    const refundNo = retryClosedRefund
+      ? this.generateVoiceMembershipFinalRefundNo(order, attempt)
+      : existingSnapshot?.refundNo ??
+        this.generateVoiceMembershipFinalRefundNo(order, attempt);
+    const claimedUpdatedAt = now.toISOString();
+    const finalRefund: VoiceMembershipFinalRefundSnapshot = {
+      status: 'processing',
+      refundAmount,
+      refundNo,
+      attempt,
+      attemptRequestedAt:
+        retryClosedRefund || !existingSnapshot
+          ? claimedUpdatedAt
+          : existingSnapshot.attemptRequestedAt ?? existingSnapshot.requestedAt,
+      wechatRefundId: retryClosedRefund
+        ? undefined
+        : existingSnapshot?.wechatRefundId,
+      wechatRefundStatus: retryClosedRefund
+        ? undefined
+        : existingSnapshot?.wechatRefundStatus,
+      requestedAt: existingSnapshot?.requestedAt ?? claimedUpdatedAt,
+      updatedAt: claimedUpdatedAt,
+    };
+    const claimFilter: MongoWhere = {
+      _id: order.id,
+      status: {
+        $in: [OrderStatus.completed, OrderStatus.refundRequested],
+      },
+      [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+        'completed',
+      [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+        {
+          $exists: false,
+        },
+    };
+
+    if (existingSnapshot) {
+      claimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`
+      ] = existingSnapshot.refundNo;
+      claimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`
+      ] = existingSnapshot.status;
+      claimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`
+      ] = existingSnapshot.updatedAt;
+      claimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.attempt`
+      ] =
+        existingSnapshot.attempt === undefined
+          ? { $exists: false }
+          : existingSnapshot.attempt;
+    } else {
+      claimFilter[`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`] = {
+        $exists: false,
+      };
+    }
+
+    const claimResult = await this.orderModel.updateOne(
+      claimFilter as never,
+      {
+        $set: {
+          status: OrderStatus.refundRequested,
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+            finalRefund,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(claimResult)) {
+      const refreshed = await this.refreshOrderEntity(order);
+      const refreshedFinalRefund =
+        this.getVoiceMembershipFinalRefund(refreshed);
+
+      if (
+        refreshed.status === OrderStatus.refunded ||
+        refreshedFinalRefund?.wechatRefundStatus?.trim().toUpperCase() ===
+          'SUCCESS'
+      ) {
+        await this.repairDowngradedMembershipFinalRefundBenefits(refreshed);
+        return;
+      }
+
+      throw new AppError(
+        'ORDER_REFUND_STATE_CONFLICT',
+        '会员降级权益仍在处理中，请先刷新降级状态',
+        409
+      );
+    }
+
+    order.status = OrderStatus.refundRequested;
+    order.updatedAt = now;
+    this.setVoiceMembershipFinalRefund(order, finalRefund);
+    await onClaimed?.();
+
+    const existingRefund =
+      await this.adminWechatPayService.queryRefundByRefundNo(refundNo);
+    const refund =
+      existingRefund ??
+      (await this.adminWechatPayService.refundOrder({
+        orderNo: order.orderNo,
+        refundNo,
+        reason,
+        amount: refundAmount,
+        totalAmount: paidAmount,
+      }));
+    const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
+    const statusUpdatedAt = new Date();
+    const resolvedFinalRefund: VoiceMembershipFinalRefundSnapshot = {
+      ...finalRefund,
+      wechatRefundId: refund.refund_id ?? finalRefund.wechatRefundId,
+      wechatRefundStatus: status,
+      updatedAt: statusUpdatedAt.toISOString(),
+    };
+
+    if (status === 'SUCCESS') {
+      resolvedFinalRefund.status = 'benefits_processing';
+      resolvedFinalRefund.failureReason = undefined;
+      const recorded = await this.recordVoiceMembershipFinalRefundSuccess(
+        order,
+        resolvedFinalRefund,
+        paidAmount,
+        claimedUpdatedAt,
+        statusUpdatedAt
+      );
+
+      if (!recorded) {
+        throw new AppError(
+          'ORDER_REFUND_STATE_CONFLICT',
+          '微信退款已成功，但退款记录被其他操作更新，请刷新后重试权益回收',
+          409
+        );
+      }
+
+      await this.repairDowngradedMembershipFinalRefundBenefits(order);
+      return;
+    }
+
+    if (status === 'CLOSED' || status === 'ABNORMAL') {
+      resolvedFinalRefund.status = 'failed';
+      resolvedFinalRefund.failureReason =
+        status === 'CLOSED'
+          ? '微信退款已关闭，请核对后处理'
+          : '微信退款状态异常，请先在微信支付商户平台处理';
+      await this.persistVoiceMembershipFinalRefundState(
+        order,
+        resolvedFinalRefund,
+        'processing',
+        claimedUpdatedAt,
+        statusUpdatedAt
+      );
+      throw new AppError(
+        'ORDER_REFUND_NOT_SUCCESSFUL',
+        status === 'CLOSED'
+          ? '微信退款已关闭，会员权益未收回，请核对后处理'
+          : '微信退款状态异常，会员权益未收回，请先在微信支付商户平台处理',
+        409
+      );
+    }
+
+    resolvedFinalRefund.status = 'processing';
+    resolvedFinalRefund.failureReason = undefined;
+    await this.persistVoiceMembershipFinalRefundState(
+      order,
+      resolvedFinalRefund,
+      'processing',
+      claimedUpdatedAt,
+      statusUpdatedAt
+    );
+  }
+
+  private async persistVoiceMembershipFinalRefundState(
+    order: OrderEntity,
+    finalRefund: VoiceMembershipFinalRefundSnapshot,
+    expectedStatus: VoiceMembershipFinalRefundSnapshot['status'],
+    expectedUpdatedAt: string,
+    now = new Date()
+  ): Promise<boolean> {
+    const result = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: OrderStatus.refundRequested,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+          'completed',
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+          {
+            $exists: false,
+          },
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`]:
+          finalRefund.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`]:
+          expectedStatus,
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`]:
+          expectedUpdatedAt,
+      } as never,
+      {
+        $set: {
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+            finalRefund,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    if (this.didMongoUpdate(result)) {
+      order.status = OrderStatus.refundRequested;
+      order.updatedAt = now;
+      this.setVoiceMembershipFinalRefund(order, finalRefund);
+      return true;
+    }
+
+    await this.refreshOrderEntity(order);
+    return false;
+  }
+
+  private async recordVoiceMembershipFinalRefundSuccess(
+    order: OrderEntity,
+    finalRefund: VoiceMembershipFinalRefundSnapshot,
+    paidAmount: number,
+    expectedUpdatedAt: string,
+    now: Date
+  ): Promise<boolean> {
+    const result = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: OrderStatus.refundRequested,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+          'completed',
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.benefitsApplyToken`]:
+          {
+            $exists: false,
+          },
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`]:
+          finalRefund.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`]:
+          'processing',
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`]:
+          expectedUpdatedAt,
+      } as never,
+      {
+        $set: {
+          status: OrderStatus.refunded,
+          refundAmount: paidAmount,
+          refundedAt: now,
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+            finalRefund,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    if (this.didMongoUpdate(result)) {
+      order.status = OrderStatus.refunded;
+      order.refundAmount = paidAmount;
+      order.refundedAt = now;
+      order.updatedAt = now;
+      this.setVoiceMembershipFinalRefund(order, finalRefund);
+      return true;
+    }
+
+    const refreshed = await this.refreshOrderEntity(order);
+    const refreshedFinalRefund = this.getVoiceMembershipFinalRefund(refreshed);
+
+    return Boolean(
+      refreshedFinalRefund?.refundNo === finalRefund.refundNo &&
+        refreshedFinalRefund.wechatRefundStatus?.trim().toUpperCase() ===
+          'SUCCESS' &&
+        (refreshed.refundAmount ?? 0) >= paidAmount
+    );
+  }
+
+  private async repairDowngradedMembershipFinalRefundBenefits(
+    order: OrderEntity
+  ): Promise<void> {
+    const now = new Date();
+    const existing = this.getVoiceMembershipFinalRefund(order);
+    const downgrade = this.getVoiceMembershipDowngrade(order);
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
+
+    if (
+      existing?.status === 'completed' &&
+      order.status === OrderStatus.refunded &&
+      (order.refundAmount ?? 0) >= paidAmount
+    ) {
+      await this.revokeOrderBenefits(order, now);
+      return;
+    }
+
+    const finalRefund: VoiceMembershipFinalRefundSnapshot = existing
+      ? { ...existing }
+      : {
+          status: 'benefits_processing',
+          refundAmount: Math.max(
+            paidAmount - (downgrade?.refundAmount ?? 0),
+            0
+          ),
+          refundNo: this.generateVoiceMembershipFinalRefundNo(order, 1),
+          attempt: 1,
+          attemptRequestedAt: (order.refundedAt ?? now).toISOString(),
+          wechatRefundStatus: 'SUCCESS',
+          requestedAt: (order.refundedAt ?? now).toISOString(),
+          updatedAt: now.toISOString(),
+        };
+    const refundWasConfirmed =
+      order.status === OrderStatus.refunded ||
+      finalRefund.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS';
+
+    if (!refundWasConfirmed) {
+      throw new AppError(
+        'ORDER_REFUND_NOT_SUCCESSFUL',
+        '微信尚未确认退款成功，会员权益未收回',
+        409
+      );
+    }
+
+    const snapshotUpdatedAt = new Date(finalRefund.updatedAt);
+    const financialRefundedAt =
+      (order.refundAmount ?? 0) >= paidAmount && order.refundedAt
+        ? order.refundedAt
+        : Number.isNaN(snapshotUpdatedAt.getTime())
+        ? now
+        : snapshotUpdatedAt;
+
+    const expectedFinalRefund = existing ? { ...existing } : undefined;
+    const expectedUpdatedAtMs = expectedFinalRefund
+      ? new Date(expectedFinalRefund.updatedAt).getTime()
+      : Number.NaN;
+    const benefitClaimUpdatedAt = new Date(
+      Number.isNaN(expectedUpdatedAtMs)
+        ? now.getTime()
+        : Math.max(now.getTime(), expectedUpdatedAtMs + 1)
+    ).toISOString();
+    finalRefund.status = 'benefits_processing';
+    finalRefund.failureReason = undefined;
+    finalRefund.updatedAt = benefitClaimUpdatedAt;
+    const benefitClaimFilter: MongoWhere = {
+      _id: order.id,
+      status: {
+        $in: [OrderStatus.refundRequested, OrderStatus.refunded],
+      },
+      [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+        'completed',
+    };
+
+    if (expectedFinalRefund) {
+      benefitClaimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`
+      ] = expectedFinalRefund.refundNo;
+      benefitClaimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`
+      ] = expectedFinalRefund.status;
+      benefitClaimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`
+      ] = expectedFinalRefund.updatedAt;
+      benefitClaimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.attempt`
+      ] =
+        expectedFinalRefund.attempt === undefined
+          ? { $exists: false }
+          : expectedFinalRefund.attempt;
+    } else {
+      benefitClaimFilter[
+        `snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`
+      ] = { $exists: false };
+    }
+
+    const benefitClaimResult = await this.orderModel.updateOne(
+      benefitClaimFilter as never,
+      {
+        $set: {
+          status: OrderStatus.refunded,
+          refundAmount: paidAmount,
+          refundedAt: financialRefundedAt,
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+            finalRefund,
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(benefitClaimResult)) {
+      const refreshed = await this.refreshOrderEntity(order);
+      const refreshedFinalRefund =
+        this.getVoiceMembershipFinalRefund(refreshed);
+
+      if (
+        refreshedFinalRefund?.refundNo === finalRefund.refundNo &&
+        refreshedFinalRefund.status === 'completed'
+      ) {
+        return;
+      }
+
+      throw new AppError(
+        'ORDER_REFUND_STATE_CONFLICT',
+        '退款已成功，但会员权益正在由其他操作处理，请刷新后重试',
+        409
+      );
+    }
+
+    order.status = OrderStatus.refunded;
+    order.refundAmount = paidAmount;
+    order.refundedAt = financialRefundedAt;
+    order.updatedAt = now;
+    this.setVoiceMembershipFinalRefund(order, finalRefund);
+
+    try {
+      await this.revokeOrderBenefits(order, now);
+    } catch (error) {
+      finalRefund.status = 'benefits_failed';
+      finalRefund.failureReason = this.getOperationFailureReason(error);
+      const failedAt = new Date(
+        Math.max(Date.now(), new Date(benefitClaimUpdatedAt).getTime() + 1)
+      );
+      finalRefund.updatedAt = failedAt.toISOString();
+      const failedResult = await this.orderModel.updateOne(
+        {
+          _id: order.id,
+          status: {
+            $in: [OrderStatus.refundRequested, OrderStatus.refunded],
+          },
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`]:
+            finalRefund.refundNo,
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`]:
+            'benefits_processing',
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`]:
+            benefitClaimUpdatedAt,
+        } as never,
+        {
+          $set: {
+            [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+              finalRefund,
+            updatedAt: failedAt,
+          },
+        } as never
+      );
+
+      if (!this.didMongoUpdate(failedResult)) {
+        const refreshed = await this.refreshOrderEntity(order);
+
+        if (
+          refreshed.status === OrderStatus.refunded &&
+          this.getVoiceMembershipFinalRefund(refreshed)?.refundNo ===
+            finalRefund.refundNo &&
+          this.getVoiceMembershipFinalRefund(refreshed)?.status === 'completed'
+        ) {
+          return;
+        }
+      }
+      throw error;
+    }
+
+    const completedAt = new Date(
+      Math.max(Date.now(), new Date(benefitClaimUpdatedAt).getTime() + 1)
+    );
+    finalRefund.status = 'completed';
+    finalRefund.completedAt =
+      finalRefund.completedAt ?? completedAt.toISOString();
+    finalRefund.failureReason = undefined;
+    finalRefund.updatedAt = completedAt.toISOString();
+    const completeResult = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: {
+          $in: [OrderStatus.refundRequested, OrderStatus.refunded],
+        },
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.refundNo`]:
+          finalRefund.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.status`]: {
+          $in: ['benefits_processing'],
+        },
+        [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}.updatedAt`]:
+          benefitClaimUpdatedAt,
+      } as never,
+      {
+        $set: {
+          status: OrderStatus.refunded,
+          refundAmount: paidAmount,
+          refundedAt: financialRefundedAt,
+          [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
+            finalRefund,
+          updatedAt: completedAt,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(completeResult)) {
+      const refreshed = await this.refreshOrderEntity(order);
+
+      const refreshedFinalRefund =
+        this.getVoiceMembershipFinalRefund(refreshed);
+
+      if (
+        refreshed.status === OrderStatus.refunded &&
+        refreshedFinalRefund?.refundNo === finalRefund.refundNo &&
+        refreshedFinalRefund.status === 'completed'
+      ) {
+        return;
+      }
+
+      throw new AppError(
+        'ORDER_REFUND_STATE_CONFLICT',
+        '退款已成功且会员权益已收回，但完成状态写入冲突，请刷新后重试',
+        409
+      );
+    }
+
+    order.status = OrderStatus.refunded;
+    order.refundAmount = paidAmount;
+    order.refundedAt = financialRefundedAt;
+    order.updatedAt = completedAt;
+    this.setVoiceMembershipFinalRefund(order, finalRefund);
   }
 
   private async revokeAdminManualPaidOrder(order: OrderEntity): Promise<void> {
@@ -1243,6 +2193,145 @@ export class AdminOrderService {
     }
   }
 
+  private async assertDowngradedMembershipStillOwnedByOrder(
+    order: OrderEntity
+  ): Promise<void> {
+    const membership = await this.findActiveMembership(order.userId);
+
+    if (
+      membership &&
+      this.stringifyObjectId(membership.sourceOrderId) !==
+        this.stringifyObjectId(order.id)
+    ) {
+      throw new AppError(
+        'ORDER_MEMBERSHIP_REPLACED_BY_NEWER_ORDER',
+        '该用户已通过后续订单获得会员，当前订单可能已参与升级抵扣；请核对后续订单后处理，系统不会自动退款或收回新订单权益',
+        409
+      );
+    }
+
+    const laterVipOrders = await this.orderModel.find({
+      where: {
+        userId: order.userId,
+        orderType: OrderType.vipPlan,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+    const hasLaterOrderUsingHistoricalPayment = laterVipOrders.some(item => {
+      if (
+        this.stringifyObjectId(item.id) === this.stringifyObjectId(order.id)
+      ) {
+        return false;
+      }
+
+      if (
+        item.status === OrderStatus.closed ||
+        item.status === OrderStatus.refunded
+      ) {
+        return false;
+      }
+
+      const itemCreatedAt = item.createdAt?.getTime?.() ?? 0;
+      const refundedOrderCreatedAt = order.createdAt?.getTime?.() ?? 0;
+      const upgradePricing = item.snapshot?.vipUpgrade;
+      const deductedAmount =
+        upgradePricing && typeof upgradePricing === 'object'
+          ? Number(
+              (upgradePricing as Record<string, unknown>).deductedAmount ?? 0
+            )
+          : 0;
+
+      return (
+        itemCreatedAt >= refundedOrderCreatedAt &&
+        Number.isFinite(deductedAmount) &&
+        deductedAmount > 0
+      );
+    });
+
+    if (hasLaterOrderUsingHistoricalPayment) {
+      throw new AppError(
+        'ORDER_REFUND_USED_BY_NEWER_UPGRADE',
+        '该订单金额已被后续会员订单用于升级抵扣；请先核对后续订单，系统不会重复退款',
+        409
+      );
+    }
+  }
+
+  private async acquireMembershipFinancialOperationLock(
+    userId: MongoObjectId,
+    operation: 'voice_membership_final_refund'
+  ): Promise<string> {
+    const now = new Date();
+    const token = randomBytes(16).toString('hex');
+    const expiresAt = new Date(
+      now.getTime() + MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS
+    );
+    const result = await this.userModel.updateOne(
+      {
+        _id: userId,
+        $or: [
+          {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY]: {
+              $exists: false,
+            },
+          },
+          {
+            [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY}.expiresAt`]: {
+              $lte: now,
+            },
+          },
+        ],
+      } as never,
+      {
+        $set: {
+          [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY]: {
+            token,
+            operation,
+            acquiredAt: now,
+            expiresAt,
+          },
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(result)) {
+      throw new AppError(
+        'MEMBERSHIP_FINANCIAL_OPERATION_BUSY',
+        '该用户正在创建会员订单或处理会员退款，请稍后重试',
+        409
+      );
+    }
+
+    return token;
+  }
+
+  private async releaseMembershipFinancialOperationLock(
+    userId: MongoObjectId,
+    token: string
+  ): Promise<void> {
+    try {
+      await this.userModel.updateOne(
+        {
+          _id: userId,
+          [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY}.token`]: token,
+        } as never,
+        {
+          $unset: {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_KEY]: '',
+          },
+        } as never
+      );
+    } catch (error) {
+      this.logger.warn(
+        `failed to release membership financial operation lock for user ${this.stringifyObjectId(
+          userId
+        )}: ${this.getOperationFailureReason(error)}`
+      );
+    }
+  }
+
   private async refundVirtualPaymentOrder(
     order: OrderEntity,
     refundAmount: number,
@@ -1287,17 +2376,20 @@ export class AdminOrderService {
     order: OrderEntity,
     now: Date
   ): Promise<void> {
-    const membership = await this.userMembershipModel.findOne({
-      where: {
+    await this.userMembershipModel.updateOne(
+      {
         sourceOrderId: order.id,
+        status: {
+          $ne: UserMembershipStatus.refunded,
+        },
       },
-    });
-
-    if (membership && membership.status !== UserMembershipStatus.refunded) {
-      membership.status = UserMembershipStatus.refunded;
-      membership.updatedAt = now;
-      await this.userMembershipModel.save(membership);
-    }
+      {
+        $set: {
+          status: UserMembershipStatus.refunded,
+          updatedAt: now,
+        },
+      } as never
+    );
 
     const entitlements = await this.agentEntitlementModel.find({
       where: {
@@ -1310,9 +2402,21 @@ export class AdminOrderService {
         continue;
       }
 
-      entitlement.status = AgentEntitlementStatus.refunded;
-      entitlement.updatedAt = now;
-      await this.agentEntitlementModel.save(entitlement);
+      await this.agentEntitlementModel.updateOne(
+        {
+          _id: entitlement.id,
+          sourceOrderId: order.id,
+          status: {
+            $ne: AgentEntitlementStatus.refunded,
+          },
+        } as never,
+        {
+          $set: {
+            status: AgentEntitlementStatus.refunded,
+            updatedAt: now,
+          },
+        } as never
+      );
     }
   }
 
@@ -1347,7 +2451,11 @@ export class AdminOrderService {
     membership.lifetime = Boolean(snapshot.lifetime);
     membership.expiredAt = membership.lifetime
       ? undefined
-      : this.calculateExpiredAt(existing?.expiredAt, now, snapshot.durationDays);
+      : this.calculateExpiredAt(
+          existing?.expiredAt,
+          now,
+          snapshot.durationDays
+        );
     membership.createdAt = existing?.createdAt ?? now;
     membership.updatedAt = new Date();
 
@@ -1542,7 +2650,10 @@ export class AdminOrderService {
         } as never,
       }));
 
-    if (!agent || this.stringifyObjectId(agent.createdUserId) !== String(userId)) {
+    if (
+      !agent ||
+      this.stringifyObjectId(agent.createdUserId) !== String(userId)
+    ) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
 
@@ -1603,7 +2714,10 @@ export class AdminOrderService {
     );
   }
 
-  private appendTaskRemark(remark: string | undefined, nextRemark: string): string {
+  private appendTaskRemark(
+    remark: string | undefined,
+    nextRemark: string
+  ): string {
     const current = remark?.trim();
 
     return current ? `${current}\n${nextRemark}` : nextRemark;
@@ -1844,7 +2958,9 @@ export class AdminOrderService {
           this.stringifyObjectId(storedPlan?.id ?? order.targetId) ??
           ''
       ),
-      code: String(rawSnapshot.code ?? storedPlan?.code ?? order.targetCode ?? ''),
+      code: String(
+        rawSnapshot.code ?? storedPlan?.code ?? order.targetCode ?? ''
+      ),
       name: String(rawSnapshot.name ?? storedPlan?.name ?? order.title ?? ''),
       planGroup,
       priceAmount: this.normalizeSnapshotAmount(
@@ -2028,6 +3144,46 @@ export class AdminOrderService {
     };
   }
 
+  private getVoiceMembershipFinalRefund(
+    order: OrderEntity
+  ): VoiceMembershipFinalRefundSnapshot | undefined {
+    const value = order.snapshot?.[VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY];
+
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    return value as VoiceMembershipFinalRefundSnapshot;
+  }
+
+  private setVoiceMembershipFinalRefund(
+    order: OrderEntity,
+    refund: VoiceMembershipFinalRefundSnapshot
+  ): void {
+    order.snapshot = {
+      ...(order.snapshot ?? {}),
+      [VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY]: refund,
+    };
+  }
+
+  private buildVoiceMembershipFinalRefundRecord(
+    refund: VoiceMembershipFinalRefundSnapshot
+  ): AdminVoiceMembershipFinalRefundRecordDTO {
+    return {
+      status: refund.status,
+      refundAmount: refund.refundAmount,
+      refundNo: refund.refundNo,
+      attempt: refund.attempt ?? 1,
+      attemptRequestedAt: refund.attemptRequestedAt ?? refund.requestedAt,
+      wechatRefundId: refund.wechatRefundId,
+      wechatRefundStatus: refund.wechatRefundStatus,
+      requestedAt: refund.requestedAt,
+      completedAt: refund.completedAt,
+      updatedAt: refund.updatedAt,
+      failureReason: refund.failureReason,
+    };
+  }
+
   private resolveOrderVipPlanGroup(
     order: OrderEntity
   ): VipPlanGroup | undefined {
@@ -2118,7 +3274,10 @@ export class AdminOrderService {
   }
 
   private getOperationFailureReason(error: unknown): string {
-    return (error instanceof Error ? error.message : String(error)).slice(0, 300);
+    return (error instanceof Error ? error.message : String(error)).slice(
+      0,
+      300
+    );
   }
 
   private buildOrderRecord(
@@ -2127,6 +3286,8 @@ export class AdminOrderService {
   ): AdminOrderRecordDTO {
     const userId = this.stringifyObjectId(order.userId);
     const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
+    const voiceMembershipFinalRefund =
+      this.getVoiceMembershipFinalRefund(order);
 
     return {
       id: this.stringifyObjectId(order.id),
@@ -2166,8 +3327,12 @@ export class AdminOrderService {
       closedAt: this.formatDate(order.closedAt),
       refundedAt: this.formatDate(order.refundedAt),
       vipPlanGroup: this.resolveOrderVipPlanGroup(order),
+      vipUpgrade: this.isVipUpgradeOrder(order),
       voiceMembershipDowngrade: voiceMembershipDowngrade
         ? this.buildVoiceMembershipDowngradeRecord(voiceMembershipDowngrade)
+        : undefined,
+      voiceMembershipFinalRefund: voiceMembershipFinalRefund
+        ? this.buildVoiceMembershipFinalRefundRecord(voiceMembershipFinalRefund)
         : undefined,
       updatedAt: this.formatDate(order.updatedAt),
     };
@@ -2196,6 +3361,23 @@ export class AdminOrderService {
     }
 
     return order;
+  }
+
+  private async refreshOrderEntity(order: OrderEntity): Promise<OrderEntity> {
+    const refreshed = await this.getOrderById(this.stringifyObjectId(order.id));
+
+    if (refreshed !== order) {
+      Object.assign(order, refreshed);
+    }
+
+    return order;
+  }
+
+  private didMongoUpdate(result?: {
+    matchedCount?: number;
+    modifiedCount?: number;
+  }): boolean {
+    return Number(result?.matchedCount ?? result?.modifiedCount ?? 0) > 0;
   }
 
   private async getUserById(userId: string): Promise<UserEntity> {
@@ -2228,6 +3410,20 @@ export class AdminOrderService {
     );
   }
 
+  private isVipUpgradeOrder(order: OrderEntity): boolean {
+    const pricing = order.snapshot?.vipUpgrade;
+
+    if (!pricing || typeof pricing !== 'object') {
+      return false;
+    }
+
+    const deductedAmount = Number(
+      (pricing as Record<string, unknown>).deductedAmount ?? 0
+    );
+
+    return Number.isFinite(deductedAmount) && deductedAmount > 0;
+  }
+
   private isRefundableOrderType(orderType?: OrderType): boolean {
     return (
       orderType === OrderType.vipPlan || orderType === OrderType.voicePackage
@@ -2248,9 +3444,22 @@ export class AdminOrderService {
     return `R${order.orderNo}`;
   }
 
-  private generateVoiceMembershipDowngradeRefundNo(
-    order: OrderEntity
+  private generateVoiceMembershipFinalRefundNo(
+    order: OrderEntity,
+    attempt: number
   ): string {
+    const base = this.generateRefundNo(order);
+
+    if (attempt <= 1) {
+      return base.slice(0, 64);
+    }
+
+    const orderId = this.stringifyObjectId(order.id);
+
+    return `RF${orderId}-${attempt.toString(36)}`;
+  }
+
+  private generateVoiceMembershipDowngradeRefundNo(order: OrderEntity): string {
     return `VD${order.orderNo}`;
   }
 
@@ -2260,6 +3469,7 @@ export class AdminOrderService {
       status === OrderStatus.paid ||
       status === OrderStatus.granting ||
       status === OrderStatus.grantFailed ||
+      status === OrderStatus.refundRequested ||
       status === OrderStatus.refunded
     );
   }
@@ -2275,7 +3485,8 @@ export class AdminOrderService {
   private isVirtualGoodsProvided(order: OrderEntity): boolean {
     return (
       order.virtualGoodsProvideStatus === VirtualGoodsProvideStatus.provided ||
-      (!order.virtualGoodsProvideStatus && Boolean(order.virtualGoodsProvidedAt))
+      (!order.virtualGoodsProvideStatus &&
+        Boolean(order.virtualGoodsProvidedAt))
     );
   }
 
@@ -2486,7 +3697,10 @@ export class AdminOrderService {
     return membership.lifetime ? undefined : membership.expiredAt;
   }
 
-  private parseObjectId(value: string, code = 'INVALID_OBJECT_ID'): MongoObjectId {
+  private parseObjectId(
+    value: string,
+    code = 'INVALID_OBJECT_ID'
+  ): MongoObjectId {
     if (!MongoObjectId.isValid(value)) {
       throw new AppError(code, 'object id is invalid', 400);
     }

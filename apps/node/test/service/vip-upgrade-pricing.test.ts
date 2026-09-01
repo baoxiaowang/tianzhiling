@@ -129,7 +129,7 @@ describe('vip upgrade historical pricing compatibility', () => {
     expect(amount).toBe(9950);
   });
 
-  it('converts legacy refunds with the same unit before deducting them', async () => {
+  it('does not reuse credit from an order whose refund is already requested', async () => {
     const partiallyRefundedLegacyOrder = createOrder({
       amount: 99,
       payableAmount: 99,
@@ -149,6 +149,99 @@ describe('vip upgrade historical pricing compatibility', () => {
       USER_ID
     );
 
-    expect(amount).toBe(7900);
+    expect(amount).toBe(0);
+  });
+
+  it('reserves a requested voice membership downgrade refund before the top-level refund amount is recorded', async () => {
+    const downgradeOrder = createOrder({
+      paidAmount: 19900,
+      refundAmount: undefined,
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'processing',
+          refundAmount: 7000,
+          refundNo: 'DVIP202608020001',
+          requestedAt: '2026-08-02T00:00:00.000Z',
+          updatedAt: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    });
+
+    const amount = await getHistoricalVipPaidAmount(
+      createOrderModel([downgradeOrder]),
+      USER_ID
+    );
+
+    expect(amount).toBe(12900);
+  });
+
+  it('keeps an abnormal downgrade refund reserved for manual reconciliation', async () => {
+    const downgradeOrder = createOrder({
+      paidAmount: 19900,
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'failed',
+          refundAmount: 7000,
+          refundNo: 'DVIP202608020002',
+          wechatRefundStatus: 'ABNORMAL',
+          requestedAt: '2026-08-02T00:00:00.000Z',
+          updatedAt: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    });
+
+    const amount = await getHistoricalVipPaidAmount(
+      createOrderModel([downgradeOrder]),
+      USER_ID
+    );
+
+    expect(amount).toBe(12900);
+  });
+
+  it('releases an unrecorded downgrade refund reservation only after WeChat closes it', async () => {
+    const downgradeOrder = createOrder({
+      paidAmount: 19900,
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'failed',
+          refundAmount: 7000,
+          refundNo: 'DVIP202608020003',
+          wechatRefundStatus: 'CLOSED',
+          requestedAt: '2026-08-02T00:00:00.000Z',
+          updatedAt: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    });
+
+    const amount = await getHistoricalVipPaidAmount(
+      createOrderModel([downgradeOrder]),
+      USER_ID
+    );
+
+    expect(amount).toBe(19900);
+  });
+
+  it('uses the larger recorded refund when it exceeds the downgrade reservation', async () => {
+    const downgradeOrder = createOrder({
+      paidAmount: 19900,
+      refundAmount: 9000,
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'completed',
+          refundAmount: 7000,
+          refundNo: 'DVIP202608020004',
+          wechatRefundStatus: 'SUCCESS',
+          requestedAt: '2026-08-02T00:00:00.000Z',
+          updatedAt: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    });
+
+    const amount = await getHistoricalVipPaidAmount(
+      createOrderModel([downgradeOrder]),
+      USER_ID
+    );
+
+    expect(amount).toBe(10900);
   });
 });

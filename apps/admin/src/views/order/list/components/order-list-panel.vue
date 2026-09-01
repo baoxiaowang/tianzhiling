@@ -325,7 +325,7 @@
                 <a-popconfirm
                   v-if="canRefundOrder(record)"
                   :content="getRefundConfirmContent(record)"
-                  ok-text="退订"
+                  :ok-text="getRefundActionText(record)"
                   cancel-text="取消"
                   position="left"
                   @ok="handleRefund(record)"
@@ -336,9 +336,17 @@
                     size="small"
                     :loading="refundLoadingId === record.id"
                   >
-                    退订
+                    {{ getRefundActionText(record) }}
                   </a-button>
                 </a-popconfirm>
+                <a-tooltip
+                  v-else-if="isUnsupportedDowngradedUpgrade(record)"
+                  content="升级会员涉及历史基础会员订单，需核对原订单后处理，暂不支持自动退订"
+                >
+                  <a-button type="text" size="small" disabled>
+                    核对历史退款
+                  </a-button>
+                </a-tooltip>
                 <a-popconfirm
                   v-if="canRevokeAdminManualOrder(record)"
                   :content="getRevokeConfirmContent(record)"
@@ -428,7 +436,7 @@
         </a-descriptions-item>
         <a-descriptions-item
           v-if="!isAdminManualOrder(currentOrder)"
-          label="退款金额"
+          label="累计退款金额"
         >
           {{ formatOptionalAmount(currentOrder.refundAmount) }}
         </a-descriptions-item>
@@ -501,7 +509,7 @@
             {{ currentOrder.voiceMembershipDowngrade.sourcePlan.name }} →
             {{ currentOrder.voiceMembershipDowngrade.targetPlan.name }}
           </a-descriptions-item>
-          <a-descriptions-item label="降级退款">
+          <a-descriptions-item label="其中降级退款">
             {{
               formatAmount(currentOrder.voiceMembershipDowngrade.refundAmount)
             }}
@@ -527,6 +535,39 @@
             {{ formatDate(currentOrder.voiceMembershipDowngrade.completedAt) }}
           </a-descriptions-item>
         </template>
+        <template v-if="currentOrder.voiceMembershipFinalRefund">
+          <a-descriptions-item label="最终退款状态">
+            {{ getVoiceMembershipFinalRefundStatusText(currentOrder) }}
+          </a-descriptions-item>
+          <a-descriptions-item label="最终退款金额">
+            {{
+              formatAmount(currentOrder.voiceMembershipFinalRefund.refundAmount)
+            }}
+          </a-descriptions-item>
+          <a-descriptions-item label="最终退款单号">
+            <a-typography-text copyable>
+              {{ currentOrder.voiceMembershipFinalRefund.refundNo }}
+            </a-typography-text>
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-if="currentOrder.voiceMembershipFinalRefund.attempt > 1"
+            label="退款尝试"
+          >
+            第 {{ currentOrder.voiceMembershipFinalRefund.attempt }} 次
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-if="currentOrder.voiceMembershipFinalRefund.failureReason"
+            label="最终退款异常"
+          >
+            {{ currentOrder.voiceMembershipFinalRefund.failureReason }}
+          </a-descriptions-item>
+        </template>
+        <a-descriptions-item
+          v-if="isUnsupportedDowngradedUpgrade(currentOrder)"
+          label="退款说明"
+        >
+          该会员由历史基础会员升级而来，退款涉及多笔原订单；为避免少退或错退，请先核对历史基础会员订单。
+        </a-descriptions-item>
       </a-descriptions>
     </a-drawer>
 
@@ -1142,16 +1183,51 @@
     currentOrder.value = undefined;
   };
 
+  const getRemainingRefundAmount = (record: OrderRecord) => {
+    const paidAmount = record.paidAmount ?? record.payableAmount ?? 0;
+    const recordedRefundAmount = Math.max(
+      record.refundAmount ?? 0,
+      record.voiceMembershipDowngrade?.status === 'completed'
+        ? record.voiceMembershipDowngrade.refundAmount
+        : 0
+    );
+
+    return Math.max(paidAmount - recordedRefundAmount, 0);
+  };
+
   const canRefundOrder = (record: OrderRecord) => {
+    const downgradeCompleted =
+      !record.voiceMembershipDowngrade ||
+      record.voiceMembershipDowngrade.status === 'completed';
+    const needsBenefitRetry =
+      record.status === 'refunded' &&
+      (record.voiceMembershipFinalRefund?.status === 'benefits_failed' ||
+        record.voiceMembershipFinalRefund?.status === 'benefits_processing');
+    const unsupportedDowngradedUpgrade = Boolean(
+      record.vipUpgrade &&
+        record.voiceMembershipDowngrade?.status === 'completed'
+    );
+
     return (
       (record.orderType === 'vip_plan' ||
         record.orderType === 'voice_package') &&
       !isAdminManualOrder(record) &&
-      !record.voiceMembershipDowngrade &&
-      (record.status === 'completed' ||
+      !unsupportedDowngradedUpgrade &&
+      downgradeCompleted &&
+      (getRemainingRefundAmount(record) > 0 || needsBenefitRetry) &&
+      (needsBenefitRetry ||
+        record.status === 'completed' ||
         record.status === 'paid' ||
         record.status === 'refund_requested' ||
         record.status === 'grant_failed')
+    );
+  };
+
+  const isUnsupportedDowngradedUpgrade = (record: OrderRecord) => {
+    return Boolean(
+      record.vipUpgrade &&
+        record.voiceMembershipDowngrade?.status === 'completed' &&
+        record.status !== 'refunded'
     );
   };
 
@@ -1585,9 +1661,23 @@
       const { data } = await refundOrderApi(record.id);
 
       replaceOrderRecord(data);
-
-      Message.success(getRefundSuccessText(record));
+      if (
+        data.status === 'refunded' &&
+        (data.voiceMembershipDowngrade?.status !== 'completed' ||
+          data.voiceMembershipFinalRefund?.status === 'completed')
+      ) {
+        Message.success(getRefundSuccessText(data));
+      } else if (data.status === 'refunded') {
+        Message.warning(
+          data.voiceMembershipFinalRefund?.status === 'benefits_failed'
+            ? '退款已成功，但原订单会员权益回收失败，请重试撤权'
+            : '退款已成功，原订单会员权益正在回收，请稍后刷新'
+        );
+      } else {
+        Message.warning('微信仍在处理退款，会员权益尚未收回，请稍后刷新退款');
+      }
     } catch (error) {
+      fetchData();
       Message.error(
         error instanceof Error && error.message
           ? error.message
@@ -1673,6 +1763,35 @@
   };
 
   const getRecordStatusText = (record: OrderRecord) => {
+    const finalRefund = record.voiceMembershipFinalRefund;
+
+    if (finalRefund?.status === 'benefits_failed') {
+      return '退款成功，权益待回收';
+    }
+
+    if (finalRefund?.status === 'benefits_processing') {
+      return '退款成功，权益回收中';
+    }
+
+    if (finalRefund?.status === 'processing') {
+      return '微信退款处理中';
+    }
+
+    if (
+      finalRefund?.status === 'failed' &&
+      finalRefund.wechatRefundStatus === 'CLOSED'
+    ) {
+      return '微信退款已关闭';
+    }
+
+    if (finalRefund?.status === 'failed') {
+      return '微信退款异常';
+    }
+
+    if (record.status === 'refunded' || record.status === 'refund_requested') {
+      return getStatusText(record.status);
+    }
+
     if (record.voiceMembershipDowngrade) {
       return getVoiceMembershipDowngradeStatusText(record);
     }
@@ -1683,6 +1802,26 @@
   };
 
   const getRecordStatusColor = (record: OrderRecord) => {
+    const finalRefund = record.voiceMembershipFinalRefund;
+
+    if (
+      finalRefund?.status === 'benefits_failed' ||
+      finalRefund?.status === 'failed'
+    ) {
+      return 'red';
+    }
+
+    if (
+      finalRefund?.status === 'processing' ||
+      finalRefund?.status === 'benefits_processing'
+    ) {
+      return 'orange';
+    }
+
+    if (record.status === 'refunded' || record.status === 'refund_requested') {
+      return getStatusColor(record.status);
+    }
+
     if (record.voiceMembershipDowngrade?.status === 'completed') {
       return 'orange';
     }
@@ -1718,6 +1857,16 @@
     return status === 'processing'
       ? '降级退款中'
       : getStatusText(record.status);
+  };
+
+  const getVoiceMembershipFinalRefundStatusText = (record: OrderRecord) => {
+    const status = record.voiceMembershipFinalRefund?.status;
+
+    if (status === 'completed') return '已退款并收回权益';
+    if (status === 'benefits_processing') return '退款成功，正在收回权益';
+    if (status === 'benefits_failed') return '退款成功，权益回收失败';
+    if (status === 'failed') return '退款失败';
+    return status === 'processing' ? '微信退款处理中' : '-';
   };
 
   const getSourceText = (source: OrderSourceDTO) => {
@@ -1828,12 +1977,79 @@
   };
 
   const getRefundConfirmContent = (record: OrderRecord) => {
+    if (
+      record.orderType === 'vip_plan' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+    ) {
+      if (record.voiceMembershipFinalRefund?.status === 'benefits_failed') {
+        return '退款已经成功。确认重新收回该退款订单对应的会员身份和权益？后续新订单权益不受影响，也不会再次发起微信退款。';
+      }
+
+      if (record.voiceMembershipFinalRefund?.status === 'benefits_processing') {
+        return '退款已经成功。确认重试收回该退款订单对应的会员身份和权益？后续新订单权益不受影响，也不会再次发起微信退款。';
+      }
+
+      if (
+        record.voiceMembershipFinalRefund?.status === 'failed' &&
+        record.voiceMembershipFinalRefund.wechatRefundStatus === 'CLOSED'
+      ) {
+        return `上一笔微信退款已关闭。确认使用新的退款单号重新发起剩余 ${formatAmount(
+          getRemainingRefundAmount(record)
+        )} 退款？只有微信确认成功后才会收回会员权益。`;
+      }
+
+      if (record.voiceMembershipFinalRefund?.status === 'failed') {
+        return '微信退款状态异常。请先在微信支付商户平台完成处理，再刷新同一退款单；系统不会改用新退款单号。';
+      }
+
+      if (record.status === 'refund_requested') {
+        return '确认刷新退款状态？仅当微信确认退款成功后，系统才会收回该退款订单对应的会员身份和权益；后续新订单权益不受影响。';
+      }
+
+      return `确认退订该已降级会员？系统会继续原路退回剩余 ${formatAmount(
+        getRemainingRefundAmount(record)
+      )}，退款成功后将收回该订单对应的会员身份和权益；后续新订单权益不受影响。`;
+    }
+
     return record.orderType === 'voice_package'
       ? '确认退订该声音套餐订单？系统会发起微信退款并撤回声音训练任务。'
       : '确认退订该会员订单？系统会发起微信退款并收回会员权益。';
   };
 
+  const getRefundActionText = (record: OrderRecord) => {
+    if (record.voiceMembershipFinalRefund?.status === 'benefits_failed') {
+      return '重试撤权';
+    }
+
+    if (record.voiceMembershipFinalRefund?.status === 'benefits_processing') {
+      return '重试权益回收';
+    }
+
+    if (
+      record.voiceMembershipFinalRefund?.status === 'failed' &&
+      record.voiceMembershipFinalRefund.wechatRefundStatus === 'CLOSED'
+    ) {
+      return '重新发起退款';
+    }
+
+    if (record.voiceMembershipFinalRefund?.status === 'failed') {
+      return '商户处理后刷新';
+    }
+
+    return record.status === 'refund_requested' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+      ? '刷新退款'
+      : '退订';
+  };
+
   const getRefundSuccessText = (record: OrderRecord) => {
+    if (
+      record.orderType === 'vip_plan' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+    ) {
+      return '剩余会员费已退款，原订单会员身份和权益已收回';
+    }
+
     return record.orderType === 'voice_package'
       ? '退订退款已提交，声音训练任务已撤回'
       : '退订退款已提交，会员权益已收回';

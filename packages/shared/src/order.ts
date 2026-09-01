@@ -90,6 +90,27 @@ export interface AdminVoiceMembershipDowngradeRecordDTO {
   failureReason?: string;
 }
 
+export type VoiceMembershipFinalRefundStatusDTO =
+  | 'processing'
+  | 'benefits_processing'
+  | 'benefits_failed'
+  | 'completed'
+  | 'failed';
+
+export interface AdminVoiceMembershipFinalRefundRecordDTO {
+  status: VoiceMembershipFinalRefundStatusDTO;
+  refundAmount: number;
+  refundNo: string;
+  attempt: number;
+  attemptRequestedAt?: string;
+  wechatRefundId?: string;
+  wechatRefundStatus?: string;
+  requestedAt: string;
+  completedAt?: string;
+  updatedAt: string;
+  failureReason?: string;
+}
+
 export interface AdminVoiceMembershipDowngradeTargetDTO
   extends VoiceMembershipDowngradePlanDTO {
   refundAmount: number;
@@ -140,7 +161,9 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   closedAt?: string;
   refundedAt?: string;
   vipPlanGroup?: 'basic' | 'voice';
+  vipUpgrade?: boolean;
   voiceMembershipDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;
+  voiceMembershipFinalRefund?: AdminVoiceMembershipFinalRefundRecordDTO;
   updatedAt: string;
 }
 

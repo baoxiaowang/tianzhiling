@@ -277,12 +277,9 @@ describe('AdminOperationsService', () => {
 
   describe('净收入口径（getNetPaidAmountExpression）', () => {
     // 极简 Mongo 聚合表达式求值器（仅覆盖净收入表达式用到的算子，用于断言计算口径）
-    const evaluate = (
-      expr: unknown,
-      doc: Record<string, unknown>
-    ): unknown => {
+    const evaluate = (expr: unknown, doc: Record<string, unknown>): unknown => {
       if (Array.isArray(expr)) {
-        return expr.map((item) => evaluate(item, doc));
+        return expr.map(item => evaluate(item, doc));
       }
       if (expr && typeof expr === 'object') {
         const obj = expr as Record<string, unknown>;
@@ -298,7 +295,9 @@ describe('AdminOperationsService', () => {
         }
         if ('$subtract' in obj) {
           const [left, right] = obj.$subtract as unknown[];
-          return (evaluate(left, doc) as number) - (evaluate(right, doc) as number);
+          return (
+            (evaluate(left, doc) as number) - (evaluate(right, doc) as number)
+          );
         }
         if ('$add' in obj) {
           return (obj.$add as unknown[]).reduce<number>(
@@ -312,19 +311,21 @@ describe('AdminOperationsService', () => {
         }
         if ('$lte' in obj) {
           const [left, right] = obj.$lte as unknown[];
-          return (evaluate(left, doc) as number) <= (evaluate(right, doc) as number)
+          return (evaluate(left, doc) as number) <=
+            (evaluate(right, doc) as number)
             ? 1
             : 0;
         }
         if ('$gt' in obj) {
           const [left, right] = obj.$gt as unknown[];
-          return (evaluate(left, doc) as number) > (evaluate(right, doc) as number)
+          return (evaluate(left, doc) as number) >
+            (evaluate(right, doc) as number)
             ? 1
             : 0;
         }
         if ('$and' in obj) {
           const conditions = obj.$and as unknown[];
-          return conditions.every((item) => evaluate(item, doc)) ? 1 : 0;
+          return conditions.every(item => evaluate(item, doc)) ? 1 : 0;
         }
       }
       if (typeof expr === 'string' && expr.startsWith('$')) {
@@ -379,6 +380,7 @@ describe('AdminOperationsService', () => {
           payableAmount: 16900,
           refundAmount: 16900,
           status: 'refunded',
+          snapshot: { voiceMembershipDowngrade: { refundAmount: 7000 } },
         })
       ).toBe(0);
     });

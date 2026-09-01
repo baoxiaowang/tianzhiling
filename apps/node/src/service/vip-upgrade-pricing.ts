@@ -10,7 +10,6 @@ const paidOrderStatuses = new Set<OrderStatus>([
   OrderStatus.paid,
   OrderStatus.granting,
   OrderStatus.completed,
-  OrderStatus.refundRequested,
   OrderStatus.grantFailed,
 ]);
 
@@ -57,10 +56,36 @@ export async function getHistoricalVipPaidAmount(
     }
 
     const paidAmount = readHistoricalOrderAmount(order, 'paid');
-    const refundAmount = readHistoricalOrderAmount(order, 'refund');
+    const refundAmount = Math.max(
+      readHistoricalOrderAmount(order, 'refund'),
+      readReservedVoiceMembershipDowngradeRefundAmount(order)
+    );
 
     return total + Math.max(paidAmount - refundAmount, 0);
   }, 0);
+}
+
+function readReservedVoiceMembershipDowngradeRefundAmount(
+  order: OrderEntity
+): number {
+  const downgrade = getRecord(
+    getRecord(order.snapshot)?.voiceMembershipDowngrade
+  );
+
+  if (!downgrade) {
+    return 0;
+  }
+
+  const wechatRefundStatus =
+    typeof downgrade.wechatRefundStatus === 'string'
+      ? downgrade.wechatRefundStatus.trim().toUpperCase()
+      : '';
+
+  if (wechatRefundStatus === 'CLOSED') {
+    return 0;
+  }
+
+  return normalizeAmount(downgrade.refundAmount);
 }
 
 export function calculateVipUpgradePricing(
