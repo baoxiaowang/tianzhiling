@@ -35,6 +35,7 @@ export enum TableName {
   order = "order",
   user_membership = "user_membership",
   agent_entitlement = "agent_entitlement",
+  free_chat_agent_ledger = "free_chat_agent_ledger",
   coupon_ledger = "coupon_ledger",
   voice_package = "voice_package",
   voice_service_session = "voice_service_session",

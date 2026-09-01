@@ -180,6 +180,7 @@ import {
   RelationshipOpenLoopService,
 } from './agents/relationship-open-loop.service';
 import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.service';
+import { FreeChatAgentEligibilityService } from './agents/free-chat-agent-eligibility.service';
 import {
   assessDeliberateLongReplyCandidate,
   buildDeliberateLongReplyExecutionPrompt,
@@ -637,7 +638,7 @@ interface MemorialPhotoDailyQuotaSnapshot {
 
 export interface ConversationChatQuotaSnapshot {
   isVip: boolean;
-  policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger';
+  policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger' | 'agent_limit';
   limit?: number;
   usedCount?: number;
   remainingCount?: number;
@@ -790,6 +791,9 @@ export class ConversationService {
 
   @Inject()
   permanentAgentSilenceService: PermanentAgentSilenceService;
+
+  @Inject()
+  freeChatAgentEligibilityService: FreeChatAgentEligibilityService;
 
   @Inject()
   recognitionJourneyObserverService: RecognitionJourneyObserverService;
@@ -2489,25 +2493,18 @@ export class ConversationService {
           searchableText
         );
       } catch (error) {
-        // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
-        // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
-        if (
-          error instanceof AppError &&
-          error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
-        ) {
-          throw error; // 正常超限，透传
+        if (error instanceof AppError) {
+          throw error;
         }
         this.logger?.error?.(
-          '[chat-quota] unexpected error in resolveChatQuotaForSend, defaulting to conservative limit: %s',
+          '[chat-quota] unexpected error in resolveChatQuotaForSend: %s',
           (error as Error)?.message || 'unknown'
         );
-        chatQuota = {
-          isVip: false,
-          policy: 'deep_trigger',
-          limit: 0,
-          usedCount: 0,
-          remainingCount: 0,
-        };
+        throw new AppError(
+          'CHAT_QUOTA_UNAVAILABLE',
+          '额度校验暂时不可用，请稍后重试。',
+          503
+        );
       }
     }
 
@@ -3250,18 +3247,16 @@ export class ConversationService {
     // 防御：DI 初始化失败时宁可误拦也不要放行
     if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
       this.logger?.error?.(
-        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s — defaulting to conservative limit',
+        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s',
         !!this.userMembershipModel,
         !!this.userModel,
         !!this.messageModel
       );
-      return {
-        isVip: false,
-        policy: 'deep_trigger',
-        limit: 0,
-        usedCount: 0,
-        remainingCount: 0,
-      };
+      throw new AppError(
+        'CHAT_QUOTA_UNAVAILABLE',
+        '额度校验暂时不可用，请稍后重试。',
+        503
+      );
     }
 
     if (await this.isUserVip(runtime.conversation.userId, now)) {
@@ -3274,6 +3269,39 @@ export class ConversationService {
 
     const userId = runtime.conversation.userId;
     const agentId = runtime.conversation.agentId;
+
+    // 免费资格绑定在智能体创建者的前三个真实亲友名额上。分享会话沿用
+    // 原智能体资格；小使者在更上层走无限额度通道。
+    let freeChatAgentEligible: boolean;
+    try {
+      if (!this.freeChatAgentEligibilityService) {
+        throw new Error('freeChatAgentEligibilityService is unavailable');
+      }
+      freeChatAgentEligible =
+        await this.freeChatAgentEligibilityService.isEligible(runtime.agent);
+    } catch (error) {
+      this.logger?.error?.(
+        '[chat-quota] free-chat agent eligibility unavailable, userId=%s agentId=%s reason=%s',
+        this.stringifyObjectId(userId),
+        this.stringifyObjectId(agentId),
+        error instanceof Error ? error.message : String(error)
+      );
+      throw new AppError(
+        'CHAT_QUOTA_UNAVAILABLE',
+        '额度校验暂时不可用，请稍后重试。',
+        503
+      );
+    }
+
+    if (!freeChatAgentEligible) {
+      return {
+        isVip: false,
+        policy: 'agent_limit',
+        limit: 0,
+        usedCount: 0,
+        remainingCount: 0,
+      };
+    }
 
     const trial = await this.resolveChatTrialState(
       userId,

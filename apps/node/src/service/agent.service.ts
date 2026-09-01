@@ -52,6 +52,7 @@ import { AgentMemoryInheritanceService } from './agents/agent-memory-inheritance
 import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
 import { OpenAIService } from './agents/openai';
+import { FreeChatAgentEligibilityService } from './agents/free-chat-agent-eligibility.service';
 import {
   buildInitialRecognitionJourney,
   serializeRecognitionJourney,
@@ -121,6 +122,9 @@ export class AgentService {
 
   @Inject()
   agentMemoryInheritanceService: AgentMemoryInheritanceService;
+
+  @Inject()
+  freeChatAgentEligibilityService: FreeChatAgentEligibilityService;
 
   @Inject()
   openAIService: OpenAIService;
@@ -577,6 +581,17 @@ export class AgentService {
     agent.updatedAt = now;
 
     const savedAgent = await this.agentModel.save(agent);
+    try {
+      await this.freeChatAgentEligibilityService.recordCreatedAgent(savedAgent);
+    } catch (error) {
+      // The saved agent remains the source of truth. Quota reads retry the
+      // registration, and deletion is blocked until the ledger is durable.
+      this.logger.warn(
+        '[agent] free-chat slot registration will retry on access, agentId=%s reason=%s',
+        this.stringifyObjectId(savedAgent.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     await this.agentMemoryInheritanceService
       ?.inheritForNewAgent(savedAgent)
       .catch(error =>
@@ -819,6 +834,12 @@ export class AgentService {
     if (!agent) {
       throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
     }
+
+    // Lazy historical slot assignment must happen before physical deletion;
+    // otherwise deleting an early agent could incorrectly promote a later one.
+    await this.freeChatAgentEligibilityService.preserveSlotsBeforeDeletion(
+      agent
+    );
 
     const messengerAgents = await this.agentModel.find({
       where: {

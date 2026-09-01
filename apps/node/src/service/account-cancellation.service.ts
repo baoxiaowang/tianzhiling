@@ -22,6 +22,7 @@ import {
   ConversationEmotionStateEntity,
   ConversationEntity,
   ConversationMessageFeedbackEntity,
+  FreeChatAgentLedgerEntity,
   MessageEntity,
   MessengerCallEventEntity,
   MongoObjectId,
@@ -166,6 +167,9 @@ export class AccountCancellationService {
 
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
+
+  @InjectEntityModel(FreeChatAgentLedgerEntity)
+  freeChatAgentLedgerModel: MongoRepository<FreeChatAgentLedgerEntity>;
 
   @InjectEntityModel(AgentSubEntity)
   agentSubModel: MongoRepository<AgentSubEntity>;
@@ -676,6 +680,10 @@ export class AccountCancellationService {
     });
 
     await this.runCleanupStage(summary, 'agent_data', async () => {
+      summary.deletedRecordCount += await this.deleteMany(
+        this.freeChatAgentLedgerModel,
+        { userId }
+      );
       summary.deletedRecordCount += await this.deleteMany(
         this.agentMemoryFactModel,
         { $or: [{ userId }, this.inForeignIds('agentId', ownedAgentIds)] }

@@ -18,6 +18,7 @@ export * from "./conversation-chat-import.entity";
 export * from "./conversation-emotion-state.entity";
 export * from "./conversation.entity";
 export * from "./coupon-ledger.entity";
+export * from "./free-chat-agent-ledger.entity";
 export * from "./message.entity";
 export * from "./messenger-call-event.entity";
 export * from "./order.entity";
