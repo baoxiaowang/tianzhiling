@@ -1592,24 +1592,32 @@
       return false;
     }
 
+    // Keep the user's final selection stable while the audio upload runs.
+    // Also persist a structured dialect when the free-form requirement names
+    // one, so an async form reset or an older client cannot silently save it
+    // as `auto`.
+    const formSnapshot = { ...editForm };
+    const supportsSpeechInstructionSnapshot = supportsSpeechInstruction.value;
+    const speechDialectSnapshot = resolveSpeechDialect(formSnapshot);
+
     try {
       saving.value = true;
 
       if (editingRecord.value) {
         await updateVoiceTimbre(editingRecord.value.id, {
-          name: editForm.name,
-          status: editForm.status,
-          previewText: editForm.previewText,
-          ...(supportsSpeechInstruction.value
+          name: formSnapshot.name,
+          status: formSnapshot.status,
+          previewText: formSnapshot.previewText,
+          ...(supportsSpeechInstructionSnapshot
             ? {
-                speechDialect: editForm.speechDialect,
-                speechInstruction: editForm.speechInstruction,
+                speechDialect: speechDialectSnapshot,
+                speechInstruction: formSnapshot.speechInstruction,
               }
             : {}),
-          speechSpeed: editForm.speechSpeed,
-          speechVolume: editForm.speechVolume,
-          speechPitch: editForm.speechPitch,
-          remark: editForm.remark,
+          speechSpeed: formSnapshot.speechSpeed,
+          speechVolume: formSnapshot.speechVolume,
+          speechPitch: formSnapshot.speechPitch,
+          remark: formSnapshot.remark,
         });
         Message.success('音色已更新');
       } else {
@@ -1620,31 +1628,31 @@
           }
         );
         await createVoiceTimbre({
-          name: editForm.name,
-          provider: editForm.provider,
+          name: formSnapshot.name,
+          provider: formSnapshot.provider,
           audioObjectKey: uploaded.objectKey,
           audioUrl: uploaded.publicUrl,
-          cloneLanguage: editForm.cloneLanguage,
+          cloneLanguage: formSnapshot.cloneLanguage,
           previewModel:
-            isQwenProvider.value ||
-            isCosyVoiceProvider.value ||
-            isDoubaoProvider.value
-              ? editForm.previewModel
+            formSnapshot.provider === 'qwen' ||
+            formSnapshot.provider === 'cosyvoice' ||
+            formSnapshot.provider === 'doubao'
+              ? formSnapshot.previewModel
               : undefined,
-          ...(supportsSpeechInstruction.value
+          ...(supportsSpeechInstructionSnapshot
             ? {
-                speechDialect: editForm.speechDialect,
-                speechInstruction: editForm.speechInstruction,
+                speechDialect: speechDialectSnapshot,
+                speechInstruction: formSnapshot.speechInstruction,
               }
             : {}),
-          providerVoiceId: editForm.providerVoiceId || undefined,
-          previewText: editForm.previewText,
-          speechSpeed: editForm.speechSpeed,
-          speechVolume: editForm.speechVolume,
-          speechPitch: editForm.speechPitch,
-          remark: editForm.remark,
+          providerVoiceId: formSnapshot.providerVoiceId || undefined,
+          previewText: formSnapshot.previewText,
+          speechSpeed: formSnapshot.speechSpeed,
+          speechVolume: formSnapshot.speechVolume,
+          speechPitch: formSnapshot.speechPitch,
+          remark: formSnapshot.remark,
         });
-        if (isDoubaoProvider.value) {
+        if (formSnapshot.provider === 'doubao') {
           await fetchDoubaoSlots();
         }
         Message.success('音色创建任务已提交');

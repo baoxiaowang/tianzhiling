@@ -308,6 +308,10 @@ export class DoubaoVoiceService {
       );
     }
 
+    // A prepaid Speaker ID can already be active from an earlier training.
+    // Capture that revision before uploading so the following status poll
+    // cannot mistake the old active result for completion of this upload.
+    const baselineStatus = await this.queryVoice(speakerId);
     const requestId = randomUUID();
     const payload = {
       appid: this.config.appId?.trim(),
@@ -335,7 +339,7 @@ export class DoubaoVoiceService {
       requestId
     );
     this.assertProviderSuccess(uploaded, 'DOUBAO_VOICE_UPLOAD_FAILED');
-    const status = await this.waitUntilReady(speakerId);
+    const status = await this.waitUntilReady(speakerId, baselineStatus);
 
     return {
       providerVoiceId: speakerId,
@@ -475,13 +479,25 @@ export class DoubaoVoiceService {
   }
 
   private async waitUntilReady(
-    voiceId: string
+    voiceId: string,
+    baselineStatus: DoubaoVoiceStatusResult
   ): Promise<DoubaoVoiceStatusResult> {
     const deadline = Date.now() + this.trainingTimeoutMs;
+    const baselineWasReady =
+      baselineStatus.statusCode === 2 || baselineStatus.statusCode === 4;
+    let observedTraining = false;
 
     while (Date.now() <= deadline) {
       const result = await this.queryVoice(voiceId);
-      if (result.statusCode === 2 || result.statusCode === 4) {
+      if (result.statusCode === 1) {
+        observedTraining = true;
+      }
+      if (
+        (result.statusCode === 2 || result.statusCode === 4) &&
+        (!baselineWasReady ||
+          observedTraining ||
+          this.hasTrainingRevisionAdvanced(baselineStatus, result))
+      ) {
         return result;
       }
       if (result.statusCode === 3) {
@@ -499,6 +515,25 @@ export class DoubaoVoiceService {
       'DOUBAO_VOICE_TRAINING_TIMEOUT',
       'Doubao ICL 2.0 voice training timed out',
       504
+    );
+  }
+
+  private hasTrainingRevisionAdvanced(
+    baseline: DoubaoVoiceStatusResult,
+    current: DoubaoVoiceStatusResult
+  ): boolean {
+    if (
+      baseline.version !== undefined &&
+      current.version !== undefined &&
+      current.version !== baseline.version
+    ) {
+      return true;
+    }
+
+    return Boolean(
+      baseline.createTime &&
+        current.createTime &&
+        current.createTime > baseline.createTime
     );
   }
 

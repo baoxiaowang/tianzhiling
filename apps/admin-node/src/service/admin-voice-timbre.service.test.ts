@@ -302,6 +302,34 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
   });
 
+  it('persists an explicitly named dialect instead of leaving it as auto', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '陕西方言音色',
+      provider: 'qwen',
+      providerVoiceId: 'tzlvoice',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      speechDialect: 'auto',
+      speechInstruction: '陕西关中长安地区方言',
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        speechDialect: 'shaanxi',
+        speechInstruction: '陕西关中长安地区方言',
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        speechDialect: 'shaanxi',
+        speechInstruction: '陕西关中长安地区方言',
+      })
+    );
+  });
+
   it('rejects reserved providers that are still not connected', async () => {
     const { service } = createService();
 

@@ -8,6 +8,7 @@ import {
   buildQwenAudioSpeechInstruction,
   COSYVOICE_V35_DIALECT_OPTIONS,
   QWEN_AUDIO_DIALECT_OPTIONS,
+  resolveVoiceTimbreDialect,
   VOICE_TIMBRE_DIALECT_OPTIONS,
 } from '@tzl/shared';
 import * as bullmq from '@midwayjs/bullmq';
@@ -268,13 +269,14 @@ export class AdminVoiceTimbreService {
     timbre.audioObjectKey = audioObjectKey;
     timbre.audioUrl = '';
     timbre.cloneLanguage = this.defaultCloneLanguage(provider);
+    timbre.speechInstruction = this.normalizeSpeechInstruction(
+      payload.speechInstruction
+    );
     timbre.speechDialect = this.normalizeSpeechDialect(
       payload.speechDialect,
       provider,
-      previewModel
-    );
-    timbre.speechInstruction = this.normalizeSpeechInstruction(
-      payload.speechInstruction
+      previewModel,
+      timbre.speechInstruction
     );
     timbre.previewText = this.normalizePreviewText(payload.previewText);
     timbre.previewModel = previewModel;
@@ -431,20 +433,21 @@ export class AdminVoiceTimbreService {
       changed = true;
     }
 
-    if (payload.speechDialect !== undefined) {
-      const speechDialect = this.normalizeSpeechDialect(
-        payload.speechDialect,
-        timbre.provider,
-        timbre.previewModel
-      );
-      timbre.speechDialect = speechDialect;
-      changed = true;
-    }
-
     if (payload.speechInstruction !== undefined) {
       timbre.speechInstruction = this.normalizeSpeechInstruction(
         payload.speechInstruction
       );
+      changed = true;
+    }
+
+    if (payload.speechDialect !== undefined) {
+      const speechDialect = this.normalizeSpeechDialect(
+        payload.speechDialect,
+        timbre.provider,
+        timbre.previewModel,
+        timbre.speechInstruction
+      );
+      timbre.speechDialect = speechDialect;
       changed = true;
     }
 
@@ -2209,7 +2212,8 @@ export class AdminVoiceTimbreService {
   private normalizeSpeechDialect(
     value?: string,
     provider?: VoiceTimbreProvider,
-    model?: string
+    model?: string,
+    instruction?: string
   ): VoiceTimbreDialectDTO {
     const normalized = value?.trim().toLowerCase() || 'auto';
     const options =
@@ -2219,7 +2223,7 @@ export class AdminVoiceTimbreService {
           this.isCosyVoiceV35PlusModel(model)
         ? COSYVOICE_V35_DIALECT_OPTIONS
         : VOICE_TIMBRE_DIALECT_OPTIONS;
-    return options.find(option => option.value === normalized)?.value || 'auto';
+    return resolveVoiceTimbreDialect(normalized, instruction, options);
   }
 
   private normalizeSpeechInstruction(value?: string): string {
