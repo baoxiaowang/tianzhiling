@@ -49,14 +49,6 @@ import { MongoRepository } from 'typeorm';
 import { PostImageService } from './post-image.service';
 import { WechatPayService } from './wechat-pay.service';
 
-/**
- * 用户默认头像：用户未设置头像时使用。
- * 指向 COS 压缩版(256x256 webp，约 2.4KB)，CDN 缓存 1 年(immutable)，
- * 减少加载消耗并提升缓存命中率。
- */
-const USER_DEFAULT_AVATAR_URL =
-  'https://oss.tianzhiling.chat/static/aiDeceased/default-avatar-256.webp';
-
 interface JwtConfig {
   secret?: string;
   sign?: {
@@ -1074,7 +1066,7 @@ export class UserService {
     return {
       id: this.stringifyObjectId(user.id),
       name: user.name,
-      avatar: this.resolveUserAvatarForResponse(user.avatar),
+      avatar: this.postImageService.resolveUserAvatarForResponse(user.avatar),
       account,
       phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
@@ -1087,14 +1079,6 @@ export class UserService {
         ),
       },
     };
-  }
-
-  private resolveUserAvatarForResponse(rawAvatar?: string | null): string {
-    const avatar = rawAvatar?.trim() || '';
-    if (!avatar) {
-      return USER_DEFAULT_AVATAR_URL;
-    }
-    return this.postImageService.resolveForResponse(avatar);
   }
 
   private normalizeUserPreferences(value: unknown): NormalizedUserPreferences {
