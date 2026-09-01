@@ -58,7 +58,7 @@ classify_path() {
     docker-compose.yml)
       select_all
       ;;
-    docs/*|.github/*|AGENTS.md|README.md|scripts/*)
+    docs/*|.github/*|AGENTS.md|README.md|scripts/*|task-adapters/*|tools/task-protocol/*)
       ;;
     apps/app/*|apps/weapp/*|apps/transfer/*|apps/ai-deceased-server/*)
       ;;
