@@ -469,13 +469,10 @@ export class AdminOrderService {
     let refund: WechatRefundPayload;
 
     try {
-      refund = await this.adminWechatPayService.refundOrder({
-        orderNo: order.orderNo,
-        refundNo: downgrade.refundNo,
-        reason: VOICE_MEMBERSHIP_DOWNGRADE_REASON,
-        amount: downgrade.refundAmount,
-        totalAmount: order.paidAmount ?? order.payableAmount,
-      });
+      refund = await this.submitVoiceMembershipDowngradeRefund(
+        order,
+        downgrade
+      );
     } catch (error) {
       downgrade.status = 'failed';
       downgrade.failureReason = this.getOperationFailureReason(error);
@@ -520,9 +517,18 @@ export class AdminOrderService {
     }
 
     if (downgrade.status !== 'completed') {
-      const refund = await this.adminWechatPayService.queryRefundByRefundNo(
-        downgrade.refundNo
-      );
+      const refund =
+        order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER
+          ? await this.refundVirtualMembershipPayment(
+              order,
+              downgrade.refundNo,
+              downgrade.refundAmount,
+              downgrade.refundAmount,
+              VOICE_MEMBERSHIP_DOWNGRADE_REASON
+            )
+          : await this.adminWechatPayService.queryRefundByRefundNo(
+              downgrade.refundNo
+            );
 
       downgrade.operatorId = operator?.sub || downgrade.operatorId;
       downgrade.operatorAccount =
@@ -1527,14 +1533,6 @@ export class AdminOrderService {
         );
       }
 
-      if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
-        throw new AppError(
-          'ORDER_REFUND_PROVIDER_UNSUPPORTED',
-          '会员降级订单不支持微信虚拟支付退款',
-          400
-        );
-      }
-
       const lockToken = await this.acquireMembershipFinancialOperationLock(
         order.userId,
         'voice_membership_final_refund'
@@ -1573,8 +1571,6 @@ export class AdminOrderService {
         'admin manual order cannot be refunded',
         400
       );
-    } else if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
-      await this.refundVirtualPaymentOrder(order, refundAmount, reason);
     } else if (voiceMembershipDowngrade?.status === 'completed') {
       await this.syncDowngradedMembershipFinalRefund(
         order,
@@ -1583,6 +1579,8 @@ export class AdminOrderService {
         reason
       );
       return;
+    } else if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      await this.refundVirtualPaymentOrder(order, refundAmount, reason);
     } else {
       await this.adminWechatPayService.refundOrder({
         orderNo: order.orderNo,
@@ -1721,17 +1719,23 @@ export class AdminOrderService {
     this.setVoiceMembershipFinalRefund(order, finalRefund);
     await onClaimed?.();
 
-    const existingRefund =
-      await this.adminWechatPayService.queryRefundByRefundNo(refundNo);
     const refund =
-      existingRefund ??
-      (await this.adminWechatPayService.refundOrder({
-        orderNo: order.orderNo,
-        refundNo,
-        reason,
-        amount: refundAmount,
-        totalAmount: paidAmount,
-      }));
+      order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER
+        ? await this.refundVirtualMembershipPayment(
+            order,
+            refundNo,
+            refundAmount,
+            paidAmount,
+            reason
+          )
+        : (await this.adminWechatPayService.queryRefundByRefundNo(refundNo)) ??
+          (await this.adminWechatPayService.refundOrder({
+            orderNo: order.orderNo,
+            refundNo,
+            reason,
+            amount: refundAmount,
+            totalAmount: paidAmount,
+          }));
     const status = refund.status?.trim().toUpperCase() || 'PROCESSING';
     const statusUpdatedAt = new Date();
     const resolvedFinalRefund: VoiceMembershipFinalRefundSnapshot = {
@@ -2356,6 +2360,184 @@ export class AdminOrderService {
         order.virtualPaymentEnv ??
         this.adminWechatPayService.getVirtualPayEnv(),
     });
+  }
+
+  private async submitVoiceMembershipDowngradeRefund(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot
+  ): Promise<WechatRefundPayload> {
+    if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
+      return this.refundVirtualMembershipPayment(
+        order,
+        downgrade.refundNo,
+        downgrade.refundAmount,
+        downgrade.refundAmount,
+        VOICE_MEMBERSHIP_DOWNGRADE_REASON
+      );
+    }
+
+    return this.adminWechatPayService.refundOrder({
+      orderNo: order.orderNo,
+      refundNo: downgrade.refundNo,
+      reason: VOICE_MEMBERSHIP_DOWNGRADE_REASON,
+      amount: downgrade.refundAmount,
+      totalAmount: order.paidAmount ?? order.payableAmount,
+    });
+  }
+
+  private async refundVirtualMembershipPayment(
+    order: OrderEntity,
+    refundNo: string,
+    refundAmount: number,
+    expectedCumulativeRefund: number,
+    reason: string
+  ): Promise<WechatRefundPayload> {
+    if (!order.payerOpenid) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_OPENID_MISSING',
+        'wechat virtual pay openid missing',
+        500
+      );
+    }
+
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
+    const expectedLeftFee = Math.max(paidAmount - expectedCumulativeRefund, 0);
+    const env =
+      order.virtualPaymentEnv ?? this.adminWechatPayService.getVirtualPayEnv();
+    const queryOrder = () =>
+      this.adminWechatPayService.queryVirtualOrder({
+        openid: order.payerOpenid as string,
+        orderNo: order.orderNo,
+        env,
+      });
+    const buildConfirmedRefund = (
+      virtualOrder: AdminWechatVirtualOrderPayload
+    ): WechatRefundPayload | undefined => {
+      const leftFee = Number(virtualOrder.left_fee);
+      const fullyRefunded =
+        expectedLeftFee === 0 &&
+        (virtualOrder.status === 5 || virtualOrder.status === 8);
+
+      if (
+        (!Number.isFinite(leftFee) || leftFee > expectedLeftFee) &&
+        !fullyRefunded
+      ) {
+        return undefined;
+      }
+
+      return {
+        out_refund_no: refundNo,
+        out_trade_no: order.orderNo,
+        status: 'SUCCESS',
+        amount: {
+          total: paidAmount,
+          refund: refundAmount,
+          currency: order.currency || 'CNY',
+        },
+      };
+    };
+
+    const virtualOrder = await queryOrder();
+
+    if (!virtualOrder) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_ORDER_NOT_FOUND',
+        '未查询到微信虚拟支付订单，无法安全退款',
+        404
+      );
+    }
+
+    const alreadyConfirmed = buildConfirmedRefund(virtualOrder);
+
+    if (alreadyConfirmed) {
+      return alreadyConfirmed;
+    }
+
+    const leftFee = Number(virtualOrder.left_fee);
+
+    if (!Number.isFinite(leftFee) || leftFee <= 0) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_LEFT_FEE_INVALID',
+        '微信虚拟支付订单剩余可退金额异常，请刷新后重试',
+        409
+      );
+    }
+
+    if (refundAmount > leftFee) {
+      throw new AppError(
+        'WECHAT_VIRTUAL_PAY_REFUND_AMOUNT_EXCEEDED',
+        '微信虚拟支付订单剩余可退金额不足，请核对退款记录',
+        409
+      );
+    }
+
+    try {
+      const response = await this.adminWechatPayService.refundVirtualOrder({
+        openid: order.payerOpenid,
+        orderNo: order.orderNo,
+        refundNo,
+        leftFee,
+        refundFee: refundAmount,
+        reason,
+        env,
+      });
+      let confirmedAfterSubmit: WechatRefundPayload | undefined;
+
+      try {
+        const refreshed = await queryOrder();
+
+        confirmedAfterSubmit = refreshed
+          ? buildConfirmedRefund(refreshed)
+          : undefined;
+      } catch {
+        // 微信已受理退款但查询可能短暂不可用；保持处理中，禁止提前撤权。
+      }
+
+      return {
+        refund_id:
+          response.refund_wx_order_id || response.refund_order_id || refundNo,
+        out_refund_no: refundNo,
+        out_trade_no: order.orderNo,
+        status: confirmedAfterSubmit ? 'SUCCESS' : 'PROCESSING',
+        amount: {
+          total: paidAmount,
+          refund: refundAmount,
+          currency: order.currency || 'CNY',
+        },
+      };
+    } catch (error) {
+      const refreshed = await queryOrder();
+      const confirmed = refreshed ? buildConfirmedRefund(refreshed) : undefined;
+
+      if (confirmed) {
+        return confirmed;
+      }
+
+      const response =
+        error instanceof AppError
+          ? (error.data as { errcode?: number } | undefined)
+          : undefined;
+
+      if (
+        response?.errcode === 268490004 ||
+        response?.errcode === 268490005 ||
+        response?.errcode === 268490014 ||
+        response?.errcode === 268490016
+      ) {
+        return {
+          out_refund_no: refundNo,
+          out_trade_no: order.orderNo,
+          status: 'PROCESSING',
+          amount: {
+            total: paidAmount,
+            refund: refundAmount,
+            currency: order.currency || 'CNY',
+          },
+        };
+      }
+
+      throw error;
+    }
   }
 
   private async revokeOrderBenefits(
@@ -3045,11 +3227,10 @@ export class AdminOrderService {
 
     if (
       order.paymentProvider &&
-      order.paymentProvider !== WECHAT_PAY_PROVIDER
+      order.paymentProvider !== WECHAT_PAY_PROVIDER &&
+      order.paymentProvider !== WECHAT_VIRTUAL_PAY_PROVIDER
     ) {
-      return order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER
-        ? '微信虚拟支付订单暂不支持部分退款降级'
-        : '这笔订单不是可部分退款的微信支付订单';
+      return '这笔订单不是可部分退款的微信支付订单';
     }
 
     if ((order.paidAmount ?? order.payableAmount ?? 0) <= 0) {

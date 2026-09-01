@@ -13,6 +13,7 @@ import {
   VoiceTrainingTaskStatus,
   VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
+import { AppError } from '@tzl/shared';
 import { AdminOrderService } from './admin-order.service';
 
 const USER_ID = new MongoObjectId('665000000000000000000201');
@@ -1944,6 +1945,252 @@ describe('AdminOrderService', () => {
       voiceBindingStatus: 'purchase_required',
       voiceAccessRevokedReferenceId: ORDER_ID.toHexString(),
     });
+  });
+
+  it('downgrades and then fully refunds a WeChat virtual payment membership', async () => {
+    const { service, orders, memberships } = createService();
+    const { order, membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-1';
+    order.virtualPaymentEnv = 0;
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+
+    const downgraded = await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenNthCalledWith(1, {
+      openid: 'virtual-openid-1',
+      orderNo: order.orderNo,
+      refundNo: `VD${order.orderNo}`,
+      leftFee: 19900,
+      refundFee: 7000,
+      reason: '声音版会员降级为基础版',
+      env: 0,
+    });
+    expect(downgraded.voiceMembershipDowngrade?.status).toBe('completed');
+    expect(downgraded.refundAmount).toBe(7000);
+    expect(membership.vipPlanId).toEqual(BASIC_VIP_PLAN_ID);
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+        left_fee: 0,
+      } as never);
+
+    const refunded = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenNthCalledWith(2, {
+      openid: 'virtual-openid-1',
+      orderNo: order.orderNo,
+      refundNo: `R${order.orderNo}`,
+      leftFee: 12900,
+      refundFee: 12900,
+      reason: '管理端退订退款',
+      env: 0,
+    });
+    expect(refunded.status).toBe(OrderStatus.refunded);
+    expect(refunded.refundAmount).toBe(19900);
+    expect(refunded.voiceMembershipFinalRefund?.status).toBe('completed');
+    expect(membership.status).toBe(UserMembershipStatus.refunded);
+  });
+
+  it('reconciles an in-progress WeChat virtual downgrade before changing benefits', async () => {
+    const { service, orders, memberships } = createService();
+    const { order, membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-2';
+    order.virtualPaymentEnv = 0;
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never);
+    jest
+      .mocked(service.adminWechatPayService.refundVirtualOrder)
+      .mockRejectedValueOnce(
+        new AppError('WECHAT_VIRTUAL_PAY_API_FAILED', '退款操作进行中', 502, {
+          errcode: 268490014,
+        }) as never
+      );
+
+    const processing = await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(processing.voiceMembershipDowngrade?.status).toBe('processing');
+    expect(processing.refundAmount).toBeUndefined();
+    expect(membership.vipPlanId).toEqual(VIP_PLAN_ID);
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+
+    const completed = await service.syncVoiceMembershipDowngrade(
+      ORDER_ID.toHexString(),
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(completed.voiceMembershipDowngrade?.status).toBe('completed');
+    expect(completed.refundAmount).toBe(7000);
+    expect(membership.vipPlanId).toEqual(BASIC_VIP_PLAN_ID);
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a downgraded virtual membership active until the final refund is confirmed', async () => {
+    const { service, orders, memberships } = createService();
+    const { order, membership } = mockVoiceMembershipDowngradeLookups(
+      service,
+      orders,
+      memberships
+    );
+
+    order.paymentProvider = 'wechat_virtual_pay';
+    order.payerOpenid = 'virtual-openid-3';
+    order.virtualPaymentEnv = 0;
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 19900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+    await service.downgradeVoiceMembership(
+      ORDER_ID.toHexString(),
+      { targetVipPlanId: BASIC_VIP_PLAN_ID.toHexString() },
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 4,
+        paid_fee: 19900,
+        left_fee: 12900,
+      } as never);
+
+    const processing = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(processing.status).toBe(OrderStatus.refundRequested);
+    expect(processing.voiceMembershipFinalRefund?.status).toBe('processing');
+    expect(membership.status).toBe(UserMembershipStatus.active);
+
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValueOnce({
+        order_id: order.orderNo,
+        status: 5,
+        paid_fee: 19900,
+        left_fee: 0,
+      } as never);
+
+    const completed = await service.refundOrder(ORDER_ID.toHexString());
+
+    expect(completed.status).toBe(OrderStatus.refunded);
+    expect(completed.refundAmount).toBe(19900);
+    expect(completed.voiceMembershipFinalRefund?.status).toBe('completed');
+    expect(membership.status).toBe(UserMembershipStatus.refunded);
+    expect(
+      service.adminWechatPayService.refundVirtualOrder
+    ).toHaveBeenCalledTimes(2);
   });
 
   it('releases the exact downgrade benefits token when post-claim bookkeeping fails', async () => {

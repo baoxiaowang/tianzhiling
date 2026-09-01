@@ -1236,7 +1236,9 @@
       record.orderType === 'vip_plan' &&
       record.vipPlanGroup === 'voice' &&
       record.status === 'completed' &&
-      (!record.paymentProvider || record.paymentProvider === 'wechat_pay') &&
+      (!record.paymentProvider ||
+        record.paymentProvider === 'wechat_pay' ||
+        record.paymentProvider === 'wechat_virtual_pay') &&
       !record.voiceMembershipDowngrade
     );
   };

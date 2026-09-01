@@ -342,7 +342,7 @@ export class AdminWechatPayService {
       refund_fee: payload.refundFee,
       biz_meta: payload.reason || '',
       refund_reason: '3',
-      req_from: '2',
+      req_from: '1',
       env: payload.env,
     });
 
