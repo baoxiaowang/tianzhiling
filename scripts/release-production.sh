@@ -93,7 +93,8 @@ service_selected() {
   local expected="$1"
   local service
 
-  for service in "${BUILD_SERVICES[@]}"; do
+  for service in "${BUILD_SERVICES[@]-}"; do
+    [[ -n "$service" ]] || continue
     [[ "$service" == "$expected" ]] && return 0
   done
   return 1
@@ -108,22 +109,26 @@ select_build_service() {
 }
 
 normalize_build_services() {
-  local selected=()
+  local ordered_services=()
   local service
 
   for service in "${SERVICES[@]}"; do
     if service_selected "$service"; then
-      selected+=("$service")
+      ordered_services+=("$service")
     fi
   done
-  BUILD_SERVICES=("${selected[@]}")
+  BUILD_SERVICES=()
+  for service in "${ordered_services[@]-}"; do
+    [[ -n "$service" ]] && BUILD_SERVICES+=("$service")
+  done
 }
 
 record_deployed_service() {
   local expected="$1"
   local service
 
-  for service in "${DEPLOYED_SERVICES[@]}"; do
+  for service in "${DEPLOYED_SERVICES[@]-}"; do
+    [[ -n "$service" ]] || continue
     [[ "$service" == "$expected" ]] && return 0
   done
   DEPLOYED_SERVICES+=("$expected")
@@ -339,12 +344,15 @@ for service in "${SERVICES[@]}"; do
   fi
 done
 normalize_build_services
+BUILD_SERVICES_SUMMARY="${BUILD_SERVICES[*]-}"
+[[ -n "$BUILD_SERVICES_SUMMARY" ]] || BUILD_SERVICES_SUMMARY='none'
 
 printf '[RELEASE_PLAN] changed_paths=%s build_services=%s\n' \
   "$(git diff --name-only "$PREVIOUS_COMMIT" "$TARGET" | wc -l | tr -d ' ')" \
-  "${BUILD_SERVICES[*]:-none}"
+  "$BUILD_SERVICES_SUMMARY"
 
-for service in "${BUILD_SERVICES[@]}"; do
+for service in "${BUILD_SERVICES[@]-}"; do
+  [[ -n "$service" ]] || continue
   OLD_IMAGES[$service]="$(docker inspect -f '{{.Image}}' "$service")"
   COMPOSE_IMAGES[$service]="$(docker inspect -f '{{.Config.Image}}' "$service")"
   OLD_REVISIONS[$service]="$(
@@ -373,7 +381,7 @@ PHASE='production-build'
 # Source and lockfiles are copied into deterministic Docker layers. Reuse stable
 # dependency/runtime layers, while RELEASE_VERSION makes every changed service's
 # final image traceable to this exact target commit.
-if [[ "${#BUILD_SERVICES[@]}" -gt 0 ]]; then
+if [[ -n "${BUILD_SERVICES[*]-}" ]]; then
   docker compose --profile prod build "${BUILD_SERVICES[@]}"
 else
   printf '[RELEASE_PLAN] runtime_build=skipped reason=no_runtime_changes\n'
@@ -393,7 +401,7 @@ PHASE='replace-backends'
 BACKEND_SERVICES=()
 service_selected tzl_node && BACKEND_SERVICES+=(tzl_node)
 service_selected tzl_admin_node && BACKEND_SERVICES+=(tzl_admin_node)
-if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
+if [[ -n "${BACKEND_SERVICES[*]-}" ]]; then
   for service in "${BACKEND_SERVICES[@]}"; do record_deployed_service "$service"; done
   DEPLOY_STARTED=1
   docker compose --profile prod up -d --no-deps "${BACKEND_SERVICES[@]}"
@@ -449,7 +457,8 @@ fi
 if service_selected tzl_admin_node; then
   [[ "$(docker exec tzl_admin_node printenv RELEASE_VERSION)" == "$TARGET" ]]
 fi
-for service in "${BUILD_SERVICES[@]}"; do
+for service in "${BUILD_SERVICES[@]-}"; do
+  [[ -n "$service" ]] || continue
   [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
 done
 
@@ -458,7 +467,7 @@ wait_for_public_health "$PUBLIC_HEALTH"
 wait_for_public_health "$ADMIN_HEALTH"
 
 PHASE='stability-window'
-if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
+if [[ -n "${BACKEND_SERVICES[*]-}" ]]; then
   wait_for_release_stability "$STABILITY_SECONDS"
 fi
 check_public_health_repeated "$PUBLIC_HEALTH"
@@ -488,8 +497,8 @@ for service in "${SERVICES[@]}"; do
   fi
 done
 printf 'voice_runtime=ready\npublic_health=ok\nadmin_health=ok\n'
-printf 'built_services=%s\n' "${BUILD_SERVICES[*]:-none}"
-printf 'pm2_stability_seconds=%s\n' "$([[ "${#BACKEND_SERVICES[@]}" -gt 0 ]] && printf %s "$STABILITY_SECONDS" || printf 0)"
+printf 'built_services=%s\n' "$BUILD_SERVICES_SUMMARY"
+printf 'pm2_stability_seconds=%s\n' "$([[ -n "${BACKEND_SERVICES[*]-}" ]] && printf %s "$STABILITY_SECONDS" || printf 0)"
 if service_selected tzl_admin_web; then
   printf 'admin_legacy_assets=retained_30d\n'
 fi
