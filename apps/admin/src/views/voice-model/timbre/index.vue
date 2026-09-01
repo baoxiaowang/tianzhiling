@@ -325,7 +325,7 @@
                 </a-tag>
               </template>
             </a-table-column>
-            <a-table-column title="本地音色 / 智能体" :width="280">
+            <a-table-column title="绑定智能体" :width="280">
               <template #cell="{ record }">
                 <div v-if="record.boundTimbre">
                   <div>{{ record.boundTimbre.name }}</div>
@@ -510,7 +510,7 @@
           />
         </a-form-item>
 
-        <a-grid v-if="!editingRecord" :cols="1">
+        <a-grid v-if="!editingRecord && !creatingFromDoubaoSlot" :cols="1">
           <a-grid-item>
             <a-form-item
               field="provider"
@@ -561,7 +561,7 @@
         </a-form-item>
 
         <a-form-item
-          v-if="!editingRecord && isDoubaoProvider"
+          v-if="!editingRecord && isDoubaoProvider && !creatingFromDoubaoSlot"
           label="豆包音色槽位"
           required
         >
@@ -995,6 +995,7 @@
   const deletingId = ref('');
   const validationResult = ref<ValidateVoiceTimbreRes>();
   const editingRecord = ref<VoiceTimbreRecord>();
+  const creatingFromDoubaoSlot = ref(false);
   const deletingRecord = ref<VoiceTimbreRecord>();
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
@@ -1347,12 +1348,15 @@
 
   const openCreateFromDoubaoSlot = (slot: AdminDoubaoVoiceSlotDTO) => {
     resetEditForm();
+    creatingFromDoubaoSlot.value = true;
     editForm.provider = 'doubao';
     selectedDoubaoSlotKey.value = slot.slotKey;
     editForm.providerVoiceId = slot.speakerId || '';
     editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
     editForm.cloneLanguage = 'zh';
-    editForm.name = slot.alias?.trim() || '豆包复刻音色';
+    editForm.name = '';
+    editForm.previewText =
+      '宝贝，我好想你，你最近过的好吗？有没有好好吃饭，好好睡觉？';
     editVisible.value = true;
   };
 
@@ -1503,6 +1507,7 @@
 
   const openEdit = (record: VoiceTimbreRecord) => {
     editingRecord.value = record;
+    creatingFromDoubaoSlot.value = false;
     editForm.name = record.name;
     editForm.provider = record.provider;
     editForm.audioObjectKey = record.audioObjectKey;
@@ -1537,6 +1542,7 @@
 
   const resetEditForm = () => {
     editingRecord.value = undefined;
+    creatingFromDoubaoSlot.value = false;
     selectedAudioFile.value = undefined;
     editForm.name = '';
     editForm.provider = DEFAULT_VOICE_TIMBRE_PROVIDER;
