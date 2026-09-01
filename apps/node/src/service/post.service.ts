@@ -1692,8 +1692,8 @@ export class PostService {
       id: this.stringifyObjectId(post.id),
       userId: this.stringifyObjectId(post.userId),
       authorName: user?.name?.trim() || `${brandName()}用户`,
-      authorAvatar: this.postImageService.resolveForResponse(
-        user?.avatar?.trim() || ''
+      authorAvatar: this.postImageService.resolveUserAvatarForResponse(
+        user?.avatar
       ),
       content: post.content?.trim() || '',
       images,
@@ -2153,8 +2153,8 @@ export class PostService {
       userId: comment.userId ? this.stringifyObjectId(comment.userId) : '',
       agentId: comment.agentId ? this.stringifyObjectId(comment.agentId) : '',
       authorName: agent?.name?.trim() || user?.name?.trim() || `${brandName()}用户`,
-      authorAvatar: this.postImageService.resolveForResponse(
-        agent?.avatar?.trim() || user?.avatar?.trim() || ''
+      authorAvatar: this.postImageService.resolveUserAvatarForResponse(
+        agent?.avatar?.trim() || user?.avatar?.trim()
       ),
       content: comment.content?.trim() || '',
       parentCommentId: comment.parentCommentId
@@ -2457,8 +2457,9 @@ export class PostService {
     notification.actorAgentId = comment.agentId;
     notification.actorName =
       agent?.name?.trim() || user?.name?.trim() || '新评论';
-    notification.actorAvatar =
-      agent?.avatar?.trim() || user?.avatar?.trim() || '';
+    notification.actorAvatar = this.postImageService.resolveUserAvatarForResponse(
+      agent?.avatar?.trim() || user?.avatar?.trim()
+    );
     notification.commentPreview = (comment.content?.trim() || '').slice(0, 120);
     notification.replyToUserName = await this.resolveCommentReplyName(comment);
     notification.postThumbnail =
@@ -2532,7 +2533,8 @@ export class PostService {
     notification.type = PostNotificationType.like;
     notification.actorUserId = userId;
     notification.actorName = user?.name?.trim() || '新共鸣';
-    notification.actorAvatar = user?.avatar?.trim() || '';
+    notification.actorAvatar =
+      this.postImageService.resolveUserAvatarForResponse(user?.avatar);
     notification.contentPreview = '与你的动态产生了共鸣';
     notification.postThumbnail =
       Array.isArray(post.images) && post.images.length > 0
