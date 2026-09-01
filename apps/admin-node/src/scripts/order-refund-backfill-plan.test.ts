@@ -169,7 +169,30 @@ describe('historical order refund backfill plan', () => {
     );
   });
 
-  it('blocks ambiguous membership refunds without a successful snapshot', () => {
+  it('classifies a historical full membership cancellation as a normal refund', () => {
+    const plan = buildHistoricalRefundPlan(
+      order({
+        status: OrderStatus.completed,
+        refundAmount: 10000,
+        refundedAt: new Date('2026-02-01T03:00:00.000Z'),
+      })
+    );
+
+    expect(plan.eligible).toBe(true);
+    expect(plan.candidates).toEqual([
+      expect.objectContaining({
+        refundNo: 'RO100',
+        refundType: OrderRefundType.orderRefund,
+        amount: 10000,
+        completedAt: new Date('2026-02-01T03:00:00.000Z'),
+      }),
+    ]);
+    expect(plan.warnings).toContain(
+      '无分段快照的历史全额会员退订，按普通退款订单回填'
+    );
+  });
+
+  it('still blocks an ambiguous partial membership refund without a snapshot', () => {
     const plan = buildHistoricalRefundPlan(
       order({
         status: OrderStatus.completed,
@@ -179,7 +202,6 @@ describe('historical order refund backfill plan', () => {
     );
 
     expect(plan.eligible).toBe(false);
-    expect(plan.candidates).toHaveLength(0);
     expect(plan.errors).toContain(
       '会员订单存在退款金额，但缺少可判定退款性质的成功快照'
     );

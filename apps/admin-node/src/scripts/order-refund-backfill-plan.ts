@@ -4,6 +4,7 @@ import {
   OrderEntity,
   OrderRefundType,
   OrderStatus,
+  OrderType,
 } from '@tzl/entities';
 
 type SnapshotValue = Record<string, unknown>;
@@ -168,23 +169,49 @@ export function buildHistoricalRefundPlan(
     warnings.push('原订单缺少累计退款额，按已成功的分段退款金额合计核对');
   }
 
-  if (claimedKnownAmount > effectiveRefundAmount) {
+  let accountedKnownAmount = claimedKnownAmount;
+  const orderNo = asTrimmedString(order.orderNo);
+  const paidAmount =
+    asValidAmount(order.paidAmount) ?? asValidAmount(order.payableAmount);
+  const legacyFullMembershipCancellation =
+    order.orderType === OrderType.vipPlan &&
+    order.status !== OrderStatus.refunded &&
+    accountedKnownAmount === 0 &&
+    effectiveRefundAmount > 0 &&
+    effectiveRefundAmount === paidAmount &&
+    Boolean(refundedAt) &&
+    Boolean(orderNo);
+
+  if (legacyFullMembershipCancellation && refundedAt && orderNo) {
+    const refundNo = `R${orderNo}`;
+    candidates.push({
+      id: buildRefundRecordId(refundNo),
+      refundNo,
+      refundType: OrderRefundType.orderRefund,
+      amount: effectiveRefundAmount,
+      requestedAt: refundedAt,
+      completedAt: refundedAt,
+    });
+    accountedKnownAmount = effectiveRefundAmount;
+    warnings.push('无分段快照的历史全额会员退订，按普通退款订单回填');
+  }
+
+  if (accountedKnownAmount > effectiveRefundAmount) {
     errors.push(
-      `分段退款合计 ${claimedKnownAmount} 大于原订单累计退款额 ${effectiveRefundAmount}`
+      `分段退款合计 ${accountedKnownAmount} 大于原订单累计退款额 ${effectiveRefundAmount}`
     );
   }
 
-  const remainder = effectiveRefundAmount - claimedKnownAmount;
+  const remainder = effectiveRefundAmount - accountedKnownAmount;
   const ambiguousMembershipRefund =
-    order.orderType === 'vip_plan' &&
+    order.orderType === OrderType.vipPlan &&
     order.status !== OrderStatus.refunded &&
     effectiveRefundAmount > 0 &&
-    claimedKnownAmount === 0;
+    accountedKnownAmount === 0;
   if (ambiguousMembershipRefund) {
     errors.push('会员订单存在退款金额，但缺少可判定退款性质的成功快照');
   }
   if (remainder > 0) {
-    const orderNo = asTrimmedString(order.orderNo);
     if (!orderNo) {
       errors.push('普通退款无法生成退款单号');
     } else if (!refundedAt) {
