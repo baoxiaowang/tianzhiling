@@ -1791,8 +1791,8 @@ export class ConversationService {
         ? {
             id: this.stringifyObjectId(agent.id),
             name: agent.name?.trim() || '',
-            avatar: this.postImageService.resolveForResponse(
-              agent.avatar?.trim() || ''
+            avatar: this.postImageService.resolveAgentAvatarForResponse(
+              agent.avatar
             ),
             sex: agent.sex ?? 0,
             agentCallMe: agent.agentCallMe?.trim() || '',
@@ -7359,8 +7359,8 @@ export class ConversationService {
       id: this.stringifyObjectId(conversation.id),
       agentId: this.stringifyObjectId(agent?.id ?? conversation.agentId),
       agentName: agent?.name?.trim() || '联系人资料暂不可用',
-      agentAvatar: this.postImageService.resolveForResponse(
-        agent?.avatar?.trim() || ''
+      agentAvatar: this.postImageService.resolveAgentAvatarForResponse(
+        agent?.avatar
       ),
       agentSex: agent?.sex ?? 0,
       agentCallMe: isSharedConversation

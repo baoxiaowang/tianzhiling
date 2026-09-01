@@ -283,15 +283,15 @@ export class AgentService {
     return {
       inviter: {
         name: inviter?.name?.trim() || '一位亲友',
-        avatar: this.postImageService.resolveForResponse(
-          inviter?.avatar?.trim() || ''
+        avatar: this.postImageService.resolveUserAvatarForResponse(
+          inviter?.avatar
         ),
       },
       agent: {
         name: agent.name?.trim() || `未命名${brandName()}`,
         realName: agent.realName?.trim() || '',
-        avatar: this.postImageService.resolveForResponse(
-          agent.avatar?.trim() || ''
+        avatar: this.postImageService.resolveAgentAvatarForResponse(
+          agent.avatar
         ),
         sex: agent.sex,
         description: '',
@@ -1113,8 +1113,8 @@ export class AgentService {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
       realName: agent.realName?.trim() || '',
-      avatar: this.postImageService.resolveForResponse(
-        agent.avatar?.trim() || ''
+      avatar: this.postImageService.resolveAgentAvatarForResponse(
+        agent.avatar
       ),
       sex: agent.sex,
       agentCallMe: agentCallsUser,
