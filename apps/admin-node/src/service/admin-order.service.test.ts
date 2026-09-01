@@ -349,6 +349,7 @@ function createBasicVipPlan(overrides: Record<string, unknown> = {}) {
 function createService() {
   const service = new AdminOrderService();
   const orders: any[] = [];
+  const refundOrders: any[] = [];
   const users: any[] = [{ id: USER_ID }];
   const memberships: any[] = [];
   const entitlements: any[] = [];
@@ -401,6 +402,28 @@ function createService() {
       }
 
       applyMongoUpdate(order, update);
+      return { matchedCount: 1, modifiedCount: 1 };
+    }),
+  } as any;
+  service.orderRefundModel = {
+    updateOne: jest.fn(async (filter: any, update: any, options: any) => {
+      let refundOrder = refundOrders.find(item =>
+        matchesMongoFilter(item, filter)
+      );
+
+      if (!refundOrder && options?.upsert) {
+        refundOrder = cloneMongoValue({
+          id: filter?._id,
+          ...(update.$setOnInsert ?? {}),
+        });
+        refundOrders.push(refundOrder);
+      }
+
+      if (!refundOrder) {
+        return { matchedCount: 0, modifiedCount: 0 };
+      }
+
+      applyMongoUpdate(refundOrder, update);
       return { matchedCount: 1, modifiedCount: 1 };
     }),
   } as any;
@@ -540,6 +563,7 @@ function createService() {
   return {
     service,
     orders,
+    refundOrders,
     users,
     memberships,
     entitlements,
@@ -1405,7 +1429,8 @@ describe('AdminOrderService', () => {
 
   it('refunds a completed vip order and revokes membership benefits', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
-    const { service, orders, memberships, entitlements } = createService();
+    const { service, orders, refundOrders, memberships, entitlements } =
+      createService();
     const order = createCompletedVipOrder();
     const membership = createMembership();
     const entitlement = createEntitlement();
@@ -1452,6 +1477,16 @@ describe('AdminOrderService', () => {
     );
     expect(result.status).toBe(OrderStatus.refunded);
     expect(result.refundAmount).toBe(9900);
+    expect(refundOrders).toEqual([
+      expect.objectContaining({
+        refundNo: 'RVIP202605020001',
+        originalOrderNo: 'VIP202605020001',
+        refundType: 'order_refund',
+        amount: 9900,
+        status: 'completed',
+        completedAt: ORDER_CREATED_AT,
+      }),
+    ]);
 
     jest.useRealTimers();
   });
@@ -1948,7 +1983,7 @@ describe('AdminOrderService', () => {
   });
 
   it('downgrades and then fully refunds a WeChat virtual payment membership', async () => {
-    const { service, orders, memberships } = createService();
+    const { service, orders, refundOrders, memberships } = createService();
     const { order, membership } = mockVoiceMembershipDowngradeLookups(
       service,
       orders,
@@ -2033,6 +2068,22 @@ describe('AdminOrderService', () => {
     expect(refunded.refundAmount).toBe(19900);
     expect(refunded.voiceMembershipFinalRefund?.status).toBe('completed');
     expect(membership.status).toBe(UserMembershipStatus.refunded);
+    expect(refundOrders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          refundNo: `VD${order.orderNo}`,
+          refundType: 'voice_membership_downgrade',
+          amount: 7000,
+          status: 'completed',
+        }),
+        expect.objectContaining({
+          refundNo: `R${order.orderNo}`,
+          refundType: 'voice_membership_final_refund',
+          amount: 12900,
+          status: 'completed',
+        }),
+      ])
+    );
   });
 
   it('reconciles an in-progress WeChat virtual downgrade before changing benefits', async () => {

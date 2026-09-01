@@ -25,6 +25,7 @@ import {
   MessageEntity,
   MessengerCallEventEntity,
   OrderEntity,
+  OrderRefundEntity,
   PostCommentEntity,
   PostCommentNotificationEntity,
   PostLikeEntity,
@@ -190,7 +191,10 @@ export default {
   brand: {
     key: readStringFrom(['BRAND'], 'tianzhiling'),
     name: readStringFrom(['BRAND_NAME'], '天之灵'),
-    companyName: readStringFrom(['BRAND_COMPANY'], '武汉市天之灵智能技术有限公司'),
+    companyName: readStringFrom(
+      ['BRAND_COMPANY'],
+      '武汉市天之灵智能技术有限公司'
+    ),
   },
   koa: {
     port: readNumberFrom(['NODE_PORT'], 7001),
@@ -830,6 +834,7 @@ export default {
           MessageEntity,
           MessengerCallEventEntity,
           OrderEntity,
+          OrderRefundEntity,
           PostCommentEntity,
           PostCommentNotificationEntity,
           PostLikeEntity,

@@ -499,11 +499,19 @@ function createService(
       conversationsCreated: 1,
     }),
   };
+  const orderRefundModel = {
+    updateOne: jest.fn().mockResolvedValue({
+      matchedCount: 1,
+      modifiedCount: 1,
+      upsertedCount: 1,
+    }),
+  };
 
   service.logger = {
     warn: jest.fn(),
   } as any;
   service.orderModel = orderModel as any;
+  service.orderRefundModel = orderRefundModel as any;
   service.vipPlanModel = vipPlanModel as any;
   service.voicePackageModel = voicePackageModel as any;
   service.agentModel = agentModel as any;
@@ -523,6 +531,7 @@ function createService(
     service,
     order,
     orderModel,
+    orderRefundModel,
     voicePackage,
     voicePackageModel,
     agent,
@@ -1569,6 +1578,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       service,
       order,
       orderModel,
+      orderRefundModel,
       userMembershipModel,
       agentEntitlementModel,
       wechatPayService,
@@ -1621,6 +1631,21 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(order.status).toBe(OrderStatus.refunded);
     expect(order.refundAmount).toBe(990);
     expect(order.refundedAt).toEqual(new Date(1777601000 * 1000));
+    expect(orderRefundModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ refundNo: `R${ORDER_NO}` }),
+      expect.objectContaining({
+        $setOnInsert: expect.objectContaining({
+          originalOrderNo: ORDER_NO,
+          refundType: 'order_refund',
+          amount: 990,
+        }),
+        $set: expect.objectContaining({
+          status: 'completed',
+          completedAt: new Date(1777601000 * 1000),
+        }),
+      }),
+      { upsert: true }
+    );
     expect(
       orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
     ).toEqual(
@@ -2037,6 +2062,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       service,
       order,
       orderModel,
+      orderRefundModel,
       userMembershipModel,
       agentEntitlementModel,
       wechatPayService,
@@ -2077,6 +2103,20 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(order.status).toBe(OrderStatus.refunded);
     expect(order.refundAmount).toBe(990);
     expect(order.refundedAt).toEqual(NOW);
+    expect(orderRefundModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ refundNo: `R${ORDER_NO}` }),
+      expect.objectContaining({
+        $setOnInsert: expect.objectContaining({
+          originalOrderNo: ORDER_NO,
+          amount: 990,
+        }),
+        $set: expect.objectContaining({
+          status: 'completed',
+          completedAt: NOW,
+        }),
+      }),
+      { upsert: true }
+    );
     expect(
       orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
     ).toEqual(

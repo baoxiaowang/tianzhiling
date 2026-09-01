@@ -1,7 +1,7 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type {
   AdminAuthenticatedPayload,
   AdminOrderListDTO,
@@ -21,6 +21,9 @@ import {
   AgentEntitlementType,
   MongoObjectId,
   OrderEntity,
+  OrderRefundEntity,
+  OrderRefundStatus,
+  OrderRefundType,
   OrderSource,
   OrderStatus,
   OrderType,
@@ -123,6 +126,9 @@ export class AdminOrderService {
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(OrderRefundEntity)
+  orderRefundModel: MongoRepository<OrderRefundEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -685,6 +691,16 @@ export class AdminOrderService {
       const claimedOrder = await this.refreshOrderEntity(order);
       const claimedDowngrade =
         this.getVoiceMembershipDowngrade(claimedOrder) ?? downgrade;
+
+      await this.recordCompletedRefundOrder(
+        claimedOrder,
+        claimedDowngrade.refundNo,
+        OrderRefundType.voiceMembershipDowngrade,
+        claimedDowngrade.refundAmount,
+        claimedDowngrade.wechatRefundId,
+        new Date(claimedDowngrade.requestedAt),
+        now
+      );
 
       if (!claimedDowngrade.refundRecordedAt) {
         // 记录部分退款时间，用于收入统计按退款时间归集
@@ -1453,6 +1469,23 @@ export class AdminOrderService {
     }
 
     if (order.status === OrderStatus.refunded) {
+      const completedAt = order.refundedAt ?? order.updatedAt;
+      const amount =
+        order.refundAmount && order.refundAmount > 0
+          ? order.refundAmount
+          : order.paidAmount ?? order.payableAmount;
+
+      if (amount > 0) {
+        await this.recordCompletedRefundOrder(
+          order,
+          this.generateRefundNo(order),
+          OrderRefundType.orderRefund,
+          amount,
+          undefined,
+          completedAt,
+          completedAt
+        );
+      }
       return;
     }
 
@@ -1592,6 +1625,15 @@ export class AdminOrderService {
     }
 
     const now = new Date();
+    await this.recordCompletedRefundOrder(
+      order,
+      this.generateRefundNo(order),
+      OrderRefundType.orderRefund,
+      refundAmount,
+      undefined,
+      now,
+      now
+    );
     await this.revokeOrderBenefits(order, now);
 
     order.status = OrderStatus.refunded;
@@ -1852,6 +1894,16 @@ export class AdminOrderService {
     expectedUpdatedAt: string,
     now: Date
   ): Promise<boolean> {
+    await this.recordCompletedRefundOrder(
+      order,
+      finalRefund.refundNo,
+      OrderRefundType.voiceMembershipFinalRefund,
+      finalRefund.refundAmount,
+      finalRefund.wechatRefundId,
+      new Date(finalRefund.attemptRequestedAt ?? finalRefund.requestedAt),
+      now
+    );
+
     const result = await this.orderModel.updateOne(
       {
         _id: order.id,
@@ -1909,11 +1961,40 @@ export class AdminOrderService {
     const downgrade = this.getVoiceMembershipDowngrade(order);
     const paidAmount = order.paidAmount ?? order.payableAmount ?? 0;
 
+    if (downgrade?.status === 'completed') {
+      const downgradeCompletedAt = new Date(
+        downgrade.completedAt ??
+          downgrade.refundRecordedAt ??
+          downgrade.updatedAt
+      );
+
+      await this.recordCompletedRefundOrder(
+        order,
+        downgrade.refundNo,
+        OrderRefundType.voiceMembershipDowngrade,
+        downgrade.refundAmount,
+        downgrade.wechatRefundId,
+        new Date(downgrade.requestedAt),
+        Number.isNaN(downgradeCompletedAt.getTime())
+          ? now
+          : downgradeCompletedAt
+      );
+    }
+
     if (
       existing?.status === 'completed' &&
       order.status === OrderStatus.refunded &&
       (order.refundAmount ?? 0) >= paidAmount
     ) {
+      await this.recordCompletedRefundOrder(
+        order,
+        existing.refundNo,
+        OrderRefundType.voiceMembershipFinalRefund,
+        existing.refundAmount,
+        existing.wechatRefundId,
+        new Date(existing.attemptRequestedAt ?? existing.requestedAt),
+        new Date(existing.completedAt ?? existing.updatedAt)
+      );
       await this.revokeOrderBenefits(order, now);
       return;
     }
@@ -2383,6 +2464,48 @@ export class AdminOrderService {
       amount: downgrade.refundAmount,
       totalAmount: order.paidAmount ?? order.payableAmount,
     });
+  }
+
+  private async recordCompletedRefundOrder(
+    order: OrderEntity,
+    refundNo: string,
+    refundType: OrderRefundType,
+    amount: number,
+    paymentRefundId: string | undefined,
+    requestedAt: Date,
+    completedAt: Date
+  ): Promise<void> {
+    const normalizedRequestedAt = Number.isNaN(requestedAt.getTime())
+      ? completedAt
+      : requestedAt;
+
+    await this.orderRefundModel.updateOne(
+      { _id: this.buildRefundOrderId(refundNo), refundNo } as never,
+      {
+        $setOnInsert: {
+          refundNo,
+          originalOrderId: order.id,
+          originalOrderNo: order.orderNo,
+          userId: order.userId,
+          orderType: order.orderType,
+          targetCode: order.targetCode,
+          refundType,
+          amount,
+          currency: order.currency || 'CNY',
+          source: order.source,
+          paymentProvider: order.paymentProvider,
+          requestedAt: normalizedRequestedAt,
+          createdAt: normalizedRequestedAt,
+        },
+        $set: {
+          status: OrderRefundStatus.completed,
+          paymentRefundId,
+          completedAt,
+          updatedAt: completedAt,
+        },
+      } as never,
+      { upsert: true }
+    );
   }
 
   private async refundVirtualMembershipPayment(
@@ -3623,6 +3746,12 @@ export class AdminOrderService {
 
   private generateRefundNo(order: OrderEntity): string {
     return `R${order.orderNo}`;
+  }
+
+  private buildRefundOrderId(refundNo: string): MongoObjectId {
+    return new MongoObjectId(
+      createHash('sha256').update(refundNo).digest('hex').slice(0, 24)
+    );
   }
 
   private generateVoiceMembershipFinalRefundNo(

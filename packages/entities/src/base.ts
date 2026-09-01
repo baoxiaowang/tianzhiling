@@ -33,6 +33,7 @@ export enum TableName {
   post_notification = "post_notification",
   vip_plan = "vip_plan",
   order = "order",
+  order_refund = "order_refund",
   user_membership = "user_membership",
   agent_entitlement = "agent_entitlement",
   free_chat_agent_ledger = "free_chat_agent_ledger",

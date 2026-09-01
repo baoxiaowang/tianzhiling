@@ -10,6 +10,9 @@ import {
   AgentEntitlementType,
   MongoObjectId,
   OrderEntity,
+  OrderRefundEntity,
+  OrderRefundStatus,
+  OrderRefundType,
   OrderSource,
   OrderStatus,
   OrderType,
@@ -36,7 +39,7 @@ import type {
   OrderRecordDTO,
   UserOrderListDTO,
 } from '@tzl/shared';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AuthenticatedUserPayload } from '../interface';
 import {
@@ -116,6 +119,9 @@ export class OrderService {
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(OrderRefundEntity)
+  orderRefundModel: MongoRepository<OrderRefundEntity>;
 
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
@@ -873,6 +879,15 @@ export class OrderService {
     this.assertVirtualRefundNotifyMatchesOrder(order, payload);
 
     if (order.status === OrderStatus.refunded) {
+      const completedAt = order.refundedAt ?? order.updatedAt;
+      const amount =
+        order.refundAmount && order.refundAmount > 0
+          ? order.refundAmount
+          : order.paidAmount ?? order.payableAmount;
+
+      if (amount > 0) {
+        await this.recordCompletedRefundOrder(order, amount, completedAt);
+      }
       return;
     }
 
@@ -1355,6 +1370,8 @@ export class OrderService {
     refundAmount: number,
     now: Date
   ): Promise<void> {
+    await this.recordCompletedRefundOrder(order, refundAmount, now);
+
     await this.revokeOrderBenefits(order, now);
 
     order.status = OrderStatus.refunded;
@@ -1362,6 +1379,41 @@ export class OrderService {
     order.refundedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
+  }
+
+  private async recordCompletedRefundOrder(
+    order: OrderEntity,
+    refundAmount: number,
+    now: Date
+  ): Promise<void> {
+    const refundNo = this.generateRefundNo(order);
+
+    await this.orderRefundModel.updateOne(
+      { _id: this.buildRefundOrderId(refundNo), refundNo } as never,
+      {
+        $setOnInsert: {
+          refundNo,
+          originalOrderId: order.id,
+          originalOrderNo: order.orderNo,
+          userId: order.userId,
+          orderType: order.orderType,
+          targetCode: order.targetCode,
+          refundType: OrderRefundType.orderRefund,
+          amount: refundAmount,
+          currency: order.currency || 'CNY',
+          source: order.source,
+          paymentProvider: order.paymentProvider,
+          requestedAt: order.updatedAt ?? now,
+          createdAt: order.updatedAt ?? now,
+        },
+        $set: {
+          status: OrderRefundStatus.completed,
+          completedAt: now,
+          updatedAt: now,
+        },
+      } as never,
+      { upsert: true }
+    );
   }
 
   private async assertRefundableOrderBenefits(
@@ -2346,6 +2398,12 @@ export class OrderService {
 
   private generateRefundNo(order: OrderEntity): string {
     return `R${order.orderNo}`;
+  }
+
+  private buildRefundOrderId(refundNo: string): MongoObjectId {
+    return new MongoObjectId(
+      createHash('sha256').update(refundNo).digest('hex').slice(0, 24)
+    );
   }
 
   private parseObjectId(value: string, code = 'INVALID_TOKEN'): MongoObjectId {
