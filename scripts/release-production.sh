@@ -2,13 +2,38 @@
 
 set -Eeuo pipefail
 
+if [[ "${TIANZHILING_RELEASE_SNAPSHOT_ACTIVE:-0}" != '1' ]]; then
+  RELEASE_TMP_ROOT="${TIANZHILING_RELEASE_TMP_ROOT:-/var/tmp}"
+  RELEASE_SCRIPT_SNAPSHOT="$(mktemp "$RELEASE_TMP_ROOT/tzl-release-production.XXXXXX")"
+  cp -- "$0" "$RELEASE_SCRIPT_SNAPSHOT"
+  chmod 700 "$RELEASE_SCRIPT_SNAPSHOT"
+  export TIANZHILING_RELEASE_SNAPSHOT_ACTIVE=1
+  export TIANZHILING_RELEASE_SNAPSHOT_PATH="$RELEASE_SCRIPT_SNAPSHOT"
+  exec bash "$RELEASE_SCRIPT_SNAPSHOT" "$@"
+fi
+
+cleanup_release_script_snapshot() {
+  case "${TIANZHILING_RELEASE_SNAPSHOT_PATH:-}" in
+    /var/tmp/tzl-release-production.*|/private/tmp/tzl-release-production.*)
+      rm -f -- "$TIANZHILING_RELEASE_SNAPSHOT_PATH"
+      ;;
+  esac
+}
+
+trap cleanup_release_script_snapshot EXIT
+
 REPO="${TIANZHILING_REPO_ROOT:-/opt/tianzhiling}"
 BRANCH="${1:-}"
 TARGET="${2:-}"
 PUBLIC_HEALTH="${TIANZHILING_PUBLIC_HEALTH:-https://tianzhiling.chat/api/system/health}"
 ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_api/system/health}"
 STABILITY_SECONDS="${TIANZHILING_STABILITY_SECONDS:-120}"
+# Production has limited memory. Build one service at a time so compiler
+# processes cannot evict or crash the live Node workers under parallel load.
+export COMPOSE_PARALLEL_LIMIT="${TIANZHILING_BUILD_PARALLEL_LIMIT:-1}"
 SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
+BUILD_SERVICES=()
+DEPLOYED_SERVICES=()
 DEPLOY_STARTED=0
 PREVIOUS_COMMIT=""
 ADMIN_ASSET_SNAPSHOT=""
@@ -25,7 +50,12 @@ cleanup_admin_asset_snapshot() {
   fi
 }
 
-trap cleanup_admin_asset_snapshot EXIT
+cleanup_release_artifacts() {
+  cleanup_admin_asset_snapshot
+  cleanup_release_script_snapshot
+}
+
+trap cleanup_release_artifacts EXIT
 
 fail() {
   printf '[RELEASE_FAILED] phase=%s message=%s\n' "${PHASE:-preflight}" "$*" >&2
@@ -39,13 +69,13 @@ rollback_runtime() {
   [[ "$DEPLOY_STARTED" -eq 1 ]] || return 0
   set +e
   printf '[ROLLBACK_BEGIN] previous=%s\n' "${PREVIOUS_COMMIT:-unknown}" >&2
-  for service in "${SERVICES[@]}"; do
+  for service in "${DEPLOYED_SERVICES[@]}"; do
     if [[ -n "${OLD_IMAGES[$service]:-}" && -n "${COMPOSE_IMAGES[$service]:-}" ]]; then
       docker image tag "${OLD_IMAGES[$service]}" "${COMPOSE_IMAGES[$service]}"
     fi
   done
-  docker compose --profile prod up -d --no-deps --force-recreate "${SERVICES[@]}"
-  for service in "${SERVICES[@]}"; do
+  docker compose --profile prod up -d --no-deps --force-recreate "${DEPLOYED_SERVICES[@]}"
+  for service in "${DEPLOYED_SERVICES[@]}"; do
     check_container "$service" || rollback_ok=0
   done
   wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
@@ -57,6 +87,46 @@ rollback_runtime() {
   else
     printf '[ROLLBACK_VERIFY_FAILED] manual recovery required; git remains at %s\n' "$TARGET" >&2
   fi
+}
+
+service_selected() {
+  local expected="$1"
+  local service
+
+  for service in "${BUILD_SERVICES[@]}"; do
+    [[ "$service" == "$expected" ]] && return 0
+  done
+  return 1
+}
+
+select_build_service() {
+  local expected="$1"
+
+  if ! service_selected "$expected"; then
+    BUILD_SERVICES+=("$expected")
+  fi
+}
+
+normalize_build_services() {
+  local selected=()
+  local service
+
+  for service in "${SERVICES[@]}"; do
+    if service_selected "$service"; then
+      selected+=("$service")
+    fi
+  done
+  BUILD_SERVICES=("${selected[@]}")
+}
+
+record_deployed_service() {
+  local expected="$1"
+  local service
+
+  for service in "${DEPLOYED_SERVICES[@]}"; do
+    [[ "$service" == "$expected" ]] && return 0
+  done
+  DEPLOYED_SERVICES+=("$expected")
 }
 
 on_error() {
@@ -227,7 +297,54 @@ git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 [[ "$(git rev-parse "origin/$BRANCH")" == "$TARGET" ]] || fail 'remote tip mismatch'
 git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET" || fail 'target is not a fast-forward'
 
+git merge --ff-only "$TARGET"
+[[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
+
+RESOLVED_SERVICES="$(bash scripts/resolve-release-services.sh "$PREVIOUS_COMMIT" "$TARGET")" || \
+  fail 'could not resolve affected production services'
+if [[ -n "$RESOLVED_SERVICES" ]]; then
+  mapfile -t BUILD_SERVICES <<< "$RESOLVED_SERVICES"
+fi
+
+# Git can already point at TARGET after an interrupted release while one or
+# more containers still run older images. Reconcile each service from its
+# immutable image revision so a retry never mistakes source state for runtime
+# state. Legacy images predate per-service labels, so use the last labelled
+# tzl_node revision as their shared baseline until each service is rebuilt.
+legacy_runtime_revision="$(
+  docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' tzl_node
+)"
 for service in "${SERVICES[@]}"; do
+  runtime_revision="$(
+    docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service"
+  )"
+  if [[ ! "$runtime_revision" =~ ^[0-9a-f]{40}$ ]]; then
+    runtime_revision="$legacy_runtime_revision"
+  fi
+  if [[ ! "$runtime_revision" =~ ^[0-9a-f]{40}$ ]]; then
+    select_build_service "$service"
+    continue
+  fi
+  if [[ "$runtime_revision" != "$TARGET" ]]; then
+    if ! git merge-base --is-ancestor "$runtime_revision" "$TARGET"; then
+      select_build_service "$service"
+      continue
+    fi
+    runtime_drift_services="$(
+      bash scripts/resolve-release-services.sh "$runtime_revision" "$TARGET"
+    )" || fail "could not resolve runtime drift for $service"
+    if grep -Fxq "$service" <<< "$runtime_drift_services"; then
+      select_build_service "$service"
+    fi
+  fi
+done
+normalize_build_services
+
+printf '[RELEASE_PLAN] changed_paths=%s build_services=%s\n' \
+  "$(git diff --name-only "$PREVIOUS_COMMIT" "$TARGET" | wc -l | tr -d ' ')" \
+  "${BUILD_SERVICES[*]:-none}"
+
+for service in "${BUILD_SERVICES[@]}"; do
   OLD_IMAGES[$service]="$(docker inspect -f '{{.Image}}' "$service")"
   COMPOSE_IMAGES[$service]="$(docker inspect -f '{{.Config.Image}}' "$service")"
   OLD_REVISIONS[$service]="$(
@@ -241,59 +358,84 @@ for service in "${SERVICES[@]}"; do
     "tzl-${service}-rollback:${OLD_REVISIONS[$service]:0:12}"
 done
 
-ADMIN_ASSET_SNAPSHOT="$(mktemp -d /var/tmp/tzl-admin-assets.XXXXXX)"
-docker cp \
-  tzl_admin_web:/usr/share/nginx/html/assets/. \
-  "$ADMIN_ASSET_SNAPSHOT/"
-
-git merge --ff-only "$TARGET"
-[[ "$(git rev-parse HEAD)" == "$TARGET" ]] || fail 'checkout did not reach target'
+if service_selected tzl_admin_web; then
+  ADMIN_ASSET_SNAPSHOT="$(mktemp -d /var/tmp/tzl-admin-assets.XXXXXX)"
+  docker cp \
+    tzl_admin_web:/usr/share/nginx/html/assets/. \
+    "$ADMIN_ASSET_SNAPSHOT/"
+fi
 
 # Keep runtime telemetry, the container environment, and the immutable image
 # label tied to the exact Git target selected for this release.
 export RELEASE_VERSION="$TARGET"
 
 PHASE='production-build'
-# --no-cache 强制全量重建，避免 Docker 层缓存未感知到源码变更（曾导致 admin_web 停留在旧版本）
-docker compose --profile prod build --no-cache "${SERVICES[@]}"
+# Source and lockfiles are copied into deterministic Docker layers. Reuse stable
+# dependency/runtime layers, while RELEASE_VERSION makes every changed service's
+# final image traceable to this exact target commit.
+if [[ "${#BUILD_SERVICES[@]}" -gt 0 ]]; then
+  docker compose --profile prod build "${BUILD_SERVICES[@]}"
+else
+  printf '[RELEASE_PLAN] runtime_build=skipped reason=no_runtime_changes\n'
+fi
 
 PHASE='database-contract'
-[[ "$(
+if service_selected tzl_node; then
+  [[ "$(
+    docker compose --profile prod run --rm --no-deps tzl_node \
+      sh -lc 'printf %s "${NODE_DB_SYNCHRONIZE:-}"'
+  )" == 'false' ]]
   docker compose --profile prod run --rm --no-deps tzl_node \
-    sh -lc 'printf %s "${NODE_DB_SYNCHRONIZE:-}"'
-)" == 'false' ]]
-docker compose --profile prod run --rm --no-deps tzl_node \
-  node ./scripts/ensure-conversation-reply-turn-indexes.js --check
+    node ./scripts/ensure-conversation-reply-turn-indexes.js --check
+fi
 
 PHASE='replace-backends'
-DEPLOY_STARTED=1
-docker compose --profile prod up -d --no-deps tzl_node tzl_admin_node
-wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health'
-wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
+BACKEND_SERVICES=()
+service_selected tzl_node && BACKEND_SERVICES+=(tzl_node)
+service_selected tzl_admin_node && BACKEND_SERVICES+=(tzl_admin_node)
+if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
+  for service in "${BACKEND_SERVICES[@]}"; do record_deployed_service "$service"; done
+  DEPLOY_STARTED=1
+  docker compose --profile prod up -d --no-deps "${BACKEND_SERVICES[@]}"
+  service_selected tzl_node && \
+    wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+  service_selected tzl_admin_node && \
+    wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
+fi
 
 PHASE='voice-runtime'
-docker exec tzl_node sh -lc 'command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null'
-docker exec tzl_node node -e '
+if service_selected tzl_node; then
+  docker exec tzl_node sh -lc 'command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null'
+  docker exec tzl_node node -e '
 const e=process.env;
 const provider=e.NODE_QWEN_VOICE_API_KEY||e.ADMIN_API_QWEN_VOICE_API_KEY||e.DASHSCOPE_API_KEY;
 const analysis=e.NODE_VOICE_ANALYSIS_API_KEY||e.DASHSCOPE_API_KEY||e.NODE_QWEN_VOICE_API_KEY;
 const cos=e.NODE_TENCENT_COS_SECRET_ID&&e.NODE_TENCENT_COS_SECRET_KEY&&e.NODE_TENCENT_COS_REGION&&e.NODE_TENCENT_COS_BUCKET;
 if(!provider||!analysis||!cos) process.exit(1);
 '
+fi
 
 PHASE='replace-web-and-gateway'
-docker compose --profile prod up -d --no-deps tzl_admin_web
-docker cp \
-  "$ADMIN_ASSET_SNAPSHOT/." \
-  tzl_admin_web:/usr/share/nginx/html/assets/
-docker exec tzl_admin_web find \
-  /usr/share/nginx/html/assets \
-  -type f -mtime +30 -delete
-check_container tzl_admin_web
-docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health
-docker compose --profile prod up -d --no-deps tzl_nginx
-docker exec tzl_nginx nginx -t
-docker exec tzl_nginx nginx -s reload
+if service_selected tzl_admin_web; then
+  record_deployed_service tzl_admin_web
+  DEPLOY_STARTED=1
+  docker compose --profile prod up -d --no-deps tzl_admin_web
+  docker cp \
+    "$ADMIN_ASSET_SNAPSHOT/." \
+    tzl_admin_web:/usr/share/nginx/html/assets/
+  docker exec tzl_admin_web find \
+    /usr/share/nginx/html/assets \
+    -type f -mtime +30 -delete
+  check_container tzl_admin_web
+  docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health
+fi
+if service_selected tzl_nginx; then
+  record_deployed_service tzl_nginx
+  DEPLOY_STARTED=1
+  docker compose --profile prod up -d --no-deps tzl_nginx
+  docker exec tzl_nginx nginx -t
+  docker exec tzl_nginx nginx -s reload
+fi
 
 PHASE='container-health'
 for service in "${SERVICES[@]}"; do
@@ -301,15 +443,24 @@ for service in "${SERVICES[@]}"; do
 done
 check_pm2_processes tzl_node 4 0
 check_pm2_processes tzl_admin_node 2 0
-[[ "$(docker exec tzl_node printenv RELEASE_VERSION)" == "$TARGET" ]]
-[[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' tzl_node)" == "$TARGET" ]]
+if service_selected tzl_node; then
+  [[ "$(docker exec tzl_node printenv RELEASE_VERSION)" == "$TARGET" ]]
+fi
+if service_selected tzl_admin_node; then
+  [[ "$(docker exec tzl_admin_node printenv RELEASE_VERSION)" == "$TARGET" ]]
+fi
+for service in "${BUILD_SERVICES[@]}"; do
+  [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
+done
 
 PHASE='public-health'
 wait_for_public_health "$PUBLIC_HEALTH"
 wait_for_public_health "$ADMIN_HEALTH"
 
 PHASE='stability-window'
-wait_for_release_stability "$STABILITY_SECONDS"
+if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
+  wait_for_release_stability "$STABILITY_SECONDS"
+fi
 check_public_health_repeated "$PUBLIC_HEALTH"
 check_public_health_repeated "$ADMIN_HEALTH"
 
@@ -332,8 +483,13 @@ printf 'branch=%s\ncommit=%s\nprevious_commit=%s\n' "$BRANCH" "$TARGET" "$PREVIO
 printf 'release_version=%s\n' "$TARGET"
 for service in "${SERVICES[@]}"; do
   docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
-  printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]}"
+  if [[ -n "${OLD_REVISIONS[$service]:-}" ]]; then
+    printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]}"
+  fi
 done
 printf 'voice_runtime=ready\npublic_health=ok\nadmin_health=ok\n'
-printf 'pm2_stability_seconds=%s\n' "$STABILITY_SECONDS"
-printf 'admin_legacy_assets=retained_30d\n'
+printf 'built_services=%s\n' "${BUILD_SERVICES[*]:-none}"
+printf 'pm2_stability_seconds=%s\n' "$([[ "${#BACKEND_SERVICES[@]}" -gt 0 ]] && printf %s "$STABILITY_SECONDS" || printf 0)"
+if service_selected tzl_admin_web; then
+  printf 'admin_legacy_assets=retained_30d\n'
+fi

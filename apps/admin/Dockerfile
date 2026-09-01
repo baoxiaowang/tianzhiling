@@ -27,5 +27,9 @@ RUN npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/shared build \
 
 FROM nginx:1.27-alpine
 
+ARG RELEASE_VERSION=unknown
+
+LABEL org.opencontainers.image.revision=$RELEASE_VERSION
+
 COPY apps/admin/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=admin-build /workspace/apps/admin/dist /usr/share/nginx/html
