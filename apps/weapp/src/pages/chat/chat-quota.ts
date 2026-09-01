@@ -46,6 +46,10 @@ export function buildChatQuotaDialogContent(
   const policy = chatQuota?.policy?.trim().toLowerCase()
   const trialDays = positiveInteger(chatQuota?.trialDays, DEFAULT_TRIAL_DAYS)
 
+  if (policy === 'agent_limit') {
+    return '免费聊天额度仅适用于最早创建的3位亲友。当前亲友需开通会员后继续畅聊。'
+  }
+
   if (type === 'remaining') {
     if (policy === 'trial') {
       return `你正在${trialDays}天免费试用期内，今天还可以和TA聊最后1句。开通会员可继续畅聊。`
