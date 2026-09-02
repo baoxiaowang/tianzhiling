@@ -263,17 +263,6 @@ export function buildQwenAudioSpeechInstruction(input: {
     parts.push(normalizedCustomInstruction);
   }
 
-  const parsedSpeed = Number(input.speechSpeed);
-  if (Number.isFinite(parsedSpeed)) {
-    const normalizedSpeed = Math.min(2, Math.max(0.5, parsedSpeed));
-
-    if (Math.abs(normalizedSpeed - 1) >= 0.01) {
-      parts.push(
-        `语速约为正常语速的${Math.round(normalizedSpeed * 100)}%，保持自然流畅`
-      );
-    }
-  }
-
   return joinVoiceSpeechInstruction(parts);
 }
 

@@ -113,6 +113,7 @@ export class QwenVoiceSpeechService {
               format: 'wav',
               sample_rate: 24000,
               language_hints: [languageHint],
+              rate: this.normalizeRate(input.speed),
               ...(instruction ? { instruction } : {}),
             }
           : {
@@ -403,6 +404,16 @@ export class QwenVoiceSpeechService {
     const raw =
       this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
     return raw.replace(/\/+$/, '');
+  }
+
+  private normalizeRate(value?: number): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      return 1;
+    }
+
+    return Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100;
   }
 
   private normalizeLanguageType(value?: string): string {
