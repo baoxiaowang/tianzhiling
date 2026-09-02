@@ -71,7 +71,7 @@
             <a-option value="grant_failed">发放失败</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="source" label="来源">
+        <a-form-item v-if="!refundMode" field="source" label="来源">
           <a-select
             v-model="searchForm.source"
             allow-clear
@@ -131,7 +131,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1780 }"
+        :scroll="{ x: tableScrollX }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -218,7 +218,12 @@
               </a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="来源" data-index="source" :width="100">
+          <a-table-column
+            v-if="!refundMode"
+            title="来源"
+            data-index="source"
+            :width="100"
+          >
             <template #cell="{ record }">
               {{ getSourceText(record.source) }}
             </template>
@@ -233,6 +238,7 @@
             </template>
           </a-table-column>
           <a-table-column
+            v-if="!refundMode"
             title="微信发货"
             data-index="virtualGoodsProvideStatus"
             :width="130"
@@ -284,12 +290,84 @@
               {{ formatDate(record.paidAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="280" fixed="right">
+          <a-table-column
+            v-if="refundMode"
+            title="退款申请时间"
+            data-index="refundRequestedAt"
+            :width="170"
+          >
+            <template #cell="{ record }">
+              {{ formatRefundRequestedAt(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            v-if="refundMode"
+            title="已使用时长"
+            data-index="usageDuration"
+            :width="120"
+          >
+            <template #cell="{ record }">
+              {{ formatUsageDuration(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            v-if="refundMode"
+            title="累计发消息"
+            data-index="agentUserMessageCount"
+            :width="120"
+          >
+            <template #cell="{ record }">
+              {{ formatMessageCount(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="操作"
+            :width="refundMode ? 360 : 280"
+            fixed="right"
+          >
             <template #cell="{ record }">
               <a-space>
-                <a-button type="text" size="small" @click="openDetail(record)">
+                <a-button
+                  v-if="!refundMode"
+                  type="text"
+                  size="small"
+                  @click="openDetail(record)"
+                >
                   详情
                 </a-button>
+                <template v-if="refundMode && canRejectRefund(record)">
+                  <a-popconfirm
+                    content="确认不退这笔退款？订单将恢复为已完成，不发起退款。"
+                    ok-text="不退"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRejectRefund(record, 'not_refund')"
+                  >
+                    <a-button
+                      type="text"
+                      size="small"
+                      :loading="rejectLoadingId === record.id"
+                    >
+                      不退
+                    </a-button>
+                  </a-popconfirm>
+                  <a-popconfirm
+                    content="确认驳回这笔退款申请？订单将恢复为已完成，并记录驳回。"
+                    ok-text="退款驳回"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRejectRefund(record, 'rejected')"
+                  >
+                    <a-button
+                      type="text"
+                      status="danger"
+                      size="small"
+                      :loading="rejectLoadingId === record.id"
+                    >
+                      退款驳回
+                    </a-button>
+                  </a-popconfirm>
+                </template>
                 <a-button
                   v-if="canSyncPaymentStatus(record)"
                   type="text"
@@ -832,6 +910,7 @@
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
+    rejectRefundOrder as rejectRefundOrderApi,
     revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
     syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
@@ -848,6 +927,7 @@
       excludeAdminManual?: boolean;
       userId?: string;
       embedded?: boolean;
+      refundMode?: boolean;
     }>(),
     {
       title: '',
@@ -858,6 +938,7 @@
       excludeAdminManual: false,
       userId: '',
       embedded: false,
+      refundMode: false,
     }
   );
 
@@ -870,6 +951,7 @@
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
+  const rejectLoadingId = ref('');
   const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
   const downgradeSyncLoadingId = ref('');
@@ -1063,6 +1145,13 @@
     }
 
     return props.emptyDescription || '暂无订单数据';
+  });
+  const tableScrollX = computed(() => {
+    if (!props.refundMode) {
+      return 1780;
+    }
+
+    return 2550;
   });
   const canCreateAdminOrder = computed(
     () => !props.status && !props.orderType && !props.embedded && !props.userId
@@ -1690,6 +1779,37 @@
     }
   };
 
+  const handleRejectRefund = async (
+    record: OrderRecord,
+    action: 'not_refund' | 'rejected'
+  ) => {
+    if (rejectLoadingId.value) {
+      return;
+    }
+
+    rejectLoadingId.value = record.id;
+
+    try {
+      const { data } = await rejectRefundOrderApi(record.id, action);
+
+      replaceOrderRecord(data);
+      Message.success(
+        action === 'not_refund'
+          ? '已标记不退，订单恢复为已完成'
+          : '已驳回退款申请'
+      );
+    } catch (error) {
+      fetchData();
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '驳回退款失败，请稍后重试'
+      );
+    } finally {
+      rejectLoadingId.value = '';
+    }
+  };
+
   const handleRevokeAdminManualOrder = async (record: OrderRecord) => {
     if (revokeLoadingId.value) {
       return;
@@ -1733,6 +1853,83 @@
 
   const formatDate = (value?: string) => {
     return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
+  };
+
+  const formatRefundRequestedAt = (record: OrderRecord) => {
+    return formatDate(
+      record.refundRequestedAt ?? record.refundedAt ?? record.updatedAt
+    );
+  };
+
+  const formatUsageDuration = (record: OrderRecord) => {
+    const start = record.paidAt ?? record.createdAt;
+
+    if (!start) {
+      return '-';
+    }
+
+    const end =
+      record.refundRequestedAt ?? record.refundedAt ?? record.updatedAt;
+    const endTime = end ? dayjs(end) : dayjs();
+    const durationMs = Math.max(endTime.valueOf() - dayjs(start).valueOf(), 0);
+    const days = Math.floor(durationMs / (24 * 60 * 60 * 1000));
+
+    if (days > 0) {
+      return `${days}天`;
+    }
+
+    const hours = Math.floor(durationMs / (60 * 60 * 1000));
+
+    if (hours > 0) {
+      return `${hours}小时`;
+    }
+
+    const minutes = Math.floor(durationMs / (60 * 1000));
+
+    if (minutes > 0) {
+      return `${minutes}分钟`;
+    }
+
+    return durationMs > 0 ? '不足1分钟' : '-';
+  };
+
+  const formatMessageCount = (record: OrderRecord) => {
+    const count = record.agentUserMessageCount;
+
+    return count == null ? '-' : String(Number(count).toLocaleString('zh-CN'));
+  };
+
+  const canRejectRefund = (record: OrderRecord) => {
+    if (record.status !== 'refund_requested') {
+      return false;
+    }
+
+    if (isAdminManualOrder(record)) {
+      return false;
+    }
+
+    const finalRefund = record.voiceMembershipFinalRefund;
+    const downgrade = record.voiceMembershipDowngrade;
+
+    if (
+      finalRefund?.wechatRefundStatus?.toUpperCase() === 'SUCCESS' ||
+      downgrade?.wechatRefundStatus?.toUpperCase() === 'SUCCESS'
+    ) {
+      return false;
+    }
+
+    if (
+      finalRefund?.status === 'processing' ||
+      finalRefund?.status === 'benefits_processing'
+    ) {
+      return false;
+    }
+
+    if (downgrade?.status === 'processing') {
+      return false;
+    }
+
+    return true;
   };
 
   const formatAmount = (value: number) => {

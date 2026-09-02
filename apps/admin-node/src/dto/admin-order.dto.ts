@@ -84,3 +84,8 @@ export class VoiceMembershipDowngradeDTO {
   @Rule(RuleType.string().required())
   targetVipPlanId: string;
 }
+
+export class RejectRefundDTO {
+  @Rule(RuleType.string().valid('not_refund', 'rejected').required())
+  action: 'not_refund' | 'rejected';
+}

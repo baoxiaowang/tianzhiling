@@ -1361,6 +1361,7 @@ export class OrderService {
 
     const now = new Date();
     order.status = OrderStatus.refundRequested;
+    order.refundRequestedAt = order.refundRequestedAt ?? now;
     order.updatedAt = now;
     await this.orderModel.save(order);
   }

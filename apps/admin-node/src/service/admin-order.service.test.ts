@@ -545,6 +545,42 @@ function createService() {
     }),
     save: jest.fn(async session => session),
   } as any;
+  const messages: any[] = [];
+  service.messageModel = {
+    aggregate: jest.fn((pipeline: any[]) => ({
+      toArray: async () => {
+        const match = pipeline[0]?.$match ?? {};
+        const role = match.role;
+        const status = match.status;
+        const userIds = Array.isArray(match.userId?.$in)
+          ? match.userId.$in.map((id: any) =>
+              id?.toHexString ? id.toHexString() : String(id)
+            )
+          : [];
+        const grouped = new Map<string, number>();
+
+        for (const message of messages) {
+          if (role && message.role !== role) continue;
+          if (status && message.status !== status) continue;
+          if (message.quotaExempt) continue;
+          const userId = message.userId?.toHexString
+            ? message.userId.toHexString()
+            : String(message.userId);
+          if (!userIds.includes(userId)) continue;
+          const agentId = message.agentId?.toHexString
+            ? message.agentId.toHexString()
+            : String(message.agentId ?? '');
+          const key = `${userId}:${agentId}`;
+          grouped.set(key, (grouped.get(key) ?? 0) + 1);
+        }
+
+        return Array.from(grouped.entries()).map(([key, count]) => {
+          const [userId, agentId] = key.split(':');
+          return { _id: { userId, agentId: agentId || null }, count };
+        });
+      },
+    })),
+  } as any;
   service.adminWechatPayService = {
     queryTransactionByOrderNo: jest.fn(),
     refundOrder: jest.fn().mockResolvedValue({
@@ -569,6 +605,7 @@ function createService() {
     entitlements,
     voiceTrainingTasks,
     voiceServiceSessions,
+    messages,
   };
 }
 
@@ -3417,5 +3454,278 @@ describe('AdminOrderService', () => {
       status: UserMembershipStatus.active,
     });
     expect(oldVoiceEntitlement.status).toBe(AgentEntitlementStatus.refunded);
+  });
+
+  it('rejects a refund request with not_refund and restores the order to completed', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders, messages } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.refundRequested,
+      refundRequestedAt: new Date('2026-05-03T08:00:00.000Z'),
+    });
+
+    orders.push(order);
+    messages.push(
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'user',
+        status: 'sent',
+      },
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'user',
+        status: 'sent',
+      },
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'assistant',
+        status: 'sent',
+      },
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'user',
+        status: 'failed',
+      },
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'user',
+        status: 'sent',
+        quotaExempt: true,
+      }
+    );
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.rejectRefundOrder(ORDER_ID.toHexString(), 'not_refund', {
+      sub: 'admin-1',
+      account: 'operator',
+      roles: ['admin'],
+      iat: 0,
+      exp: 1,
+      nonce: 'nonce',
+    });
+
+    expect(order.status).toBe(OrderStatus.completed);
+    expect(order.refundRejectedAt).toEqual(ORDER_CREATED_AT);
+    expect(order.snapshot.refundRejection).toMatchObject({
+      action: 'not_refund',
+      operatorId: 'admin-1',
+      operatorAccount: 'operator',
+      createdAt: '2026-05-02T08:00:00.000Z',
+    });
+    expect(result.status).toBe(OrderStatus.completed);
+    expect(result.agentUserMessageCount).toBe(2);
+    expect(service.orderModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: ORDER_ID,
+        status: OrderStatus.refundRequested,
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: OrderStatus.completed,
+          refundRejectedAt: ORDER_CREATED_AT,
+          'snapshot.refundRejection': expect.objectContaining({
+            action: 'not_refund',
+          }),
+        }),
+      })
+    );
+
+    jest.useRealTimers();
+  });
+
+  it('rejects a refund request with rejected action and records the action', async () => {
+    jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.refundRequested,
+    });
+
+    orders.push(order);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.rejectRefundOrder(
+      ORDER_ID.toHexString(),
+      'rejected',
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(order.snapshot.refundRejection.action).toBe('rejected');
+    expect(result.status).toBe(OrderStatus.completed);
+
+    jest.useRealTimers();
+  });
+
+  it('rejects refund rejection when the order is not refund requested', async () => {
+    const { service, orders } = createService();
+
+    orders.push(createCompletedVipOrder());
+
+    await expect(
+      service.rejectRefundOrder(
+        ORDER_ID.toHexString(),
+        'not_refund',
+        {
+          sub: 'admin-1',
+          account: 'operator',
+          roles: ['admin'],
+          iat: 0,
+          exp: 1,
+          nonce: 'nonce',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'ORDER_NOT_REFUND_REQUESTED',
+      status: 400,
+    });
+    expect(service.orderModel.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects refund rejection for admin manual orders', async () => {
+    const { service, orders } = createService();
+
+    orders.push(
+      createCompletedVipOrder({
+        status: OrderStatus.refundRequested,
+        source: OrderSource.admin,
+        paymentProvider: 'admin_manual',
+      })
+    );
+
+    await expect(
+      service.rejectRefundOrder(
+        ORDER_ID.toHexString(),
+        'not_refund',
+        {
+          sub: 'admin-1',
+          account: 'operator',
+          roles: ['admin'],
+          iat: 0,
+          exp: 1,
+          nonce: 'nonce',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'ORDER_REFUND_REJECT_UNSUPPORTED',
+      status: 400,
+    });
+  });
+
+  it('blocks refund rejection while a final refund is processing', async () => {
+    const { service, orders } = createService();
+
+    orders.push(
+      createCompletedVipOrder({
+        status: OrderStatus.refundRequested,
+        snapshot: {
+          voiceMembershipFinalRefund: {
+            status: 'processing',
+          },
+        },
+      })
+    );
+
+    await expect(
+      service.rejectRefundOrder(
+        ORDER_ID.toHexString(),
+        'not_refund',
+        {
+          sub: 'admin-1',
+          account: 'operator',
+          roles: ['admin'],
+          iat: 0,
+          exp: 1,
+          nonce: 'nonce',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'ORDER_REFUND_IN_PROGRESS',
+      status: 409,
+    });
+  });
+
+  it('blocks refund rejection when wechat refund already succeeded', async () => {
+    const { service, orders } = createService();
+
+    orders.push(
+      createCompletedVipOrder({
+        status: OrderStatus.refundRequested,
+        snapshot: {
+          voiceMembershipFinalRefund: {
+            status: 'benefits_failed',
+            wechatRefundStatus: 'SUCCESS',
+          },
+        },
+      })
+    );
+
+    await expect(
+      service.rejectRefundOrder(
+        ORDER_ID.toHexString(),
+        'not_refund',
+        {
+          sub: 'admin-1',
+          account: 'operator',
+          roles: ['admin'],
+          iat: 0,
+          exp: 1,
+          nonce: 'nonce',
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'ORDER_REFUND_ALREADY_SUCCESS',
+      status: 409,
+    });
+  });
+
+  it('lists orders with the account to agent message count', async () => {
+    const { service, messages } = createService();
+
+    jest.mocked(service.orderModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([
+      createCompletedVipOrder(),
+    ] as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+    messages.push(
+      {
+        userId: USER_ID,
+        role: 'user',
+        status: 'sent',
+      },
+      {
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        role: 'user',
+        status: 'sent',
+      },
+      {
+        userId: USER_ID,
+        role: 'user',
+        status: 'sent',
+        quotaExempt: true,
+      }
+    );
+
+    const result = await service.listOrders({
+      keyword: '',
+      page: '1',
+      pageSize: '20',
+    });
+
+    expect(result.items[0].agentUserMessageCount).toBe(2);
   });
 });

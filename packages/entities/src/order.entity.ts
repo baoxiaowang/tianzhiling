@@ -132,6 +132,12 @@ export class OrderEntity extends BaseEntity {
   refundedAt?: Date;
 
   @Column()
+  refundRequestedAt?: Date;
+
+  @Column()
+  refundRejectedAt?: Date;
+
+  @Column()
   createdAt: Date;
 
   @Column()

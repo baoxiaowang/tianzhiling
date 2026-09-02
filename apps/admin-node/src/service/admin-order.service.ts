@@ -19,6 +19,9 @@ import {
   AgentEntitlementEntity,
   AgentEntitlementStatus,
   AgentEntitlementType,
+  MessageEntity,
+  MessageRole,
+  MessageStatus,
   MongoObjectId,
   OrderEntity,
   OrderRefundEntity,
@@ -130,6 +133,9 @@ export class AdminOrderService {
   @InjectEntityModel(OrderRefundEntity)
   orderRefundModel: MongoRepository<OrderRefundEntity>;
 
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
+
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
@@ -176,9 +182,16 @@ export class AdminOrderService {
       }),
     ]);
     const userMap = await this.getOrderUserMap(orders);
+    const messageCountMap = await this.resolveAgentUserMessageCounts(orders);
 
     return {
-      items: orders.map(order => this.buildOrderRecord(order, userMap)),
+      items: orders.map(order =>
+        this.buildOrderRecord(
+          order,
+          userMap,
+          this.getAgentUserMessageCount(messageCountMap, order)
+        )
+      ),
       total,
       page,
       pageSize,
@@ -344,7 +357,20 @@ export class AdminOrderService {
     await this.refundPaidOrder(order, '管理端退订退款');
     const userMap = await this.getOrderUserMap([order]);
 
-    return this.buildOrderRecord(order, userMap);
+    return this.buildOrderRecordWithUsage(order, userMap);
+  }
+
+  async rejectRefundOrder(
+    orderId: string,
+    action: 'not_refund' | 'rejected',
+    operator: AdminAuthenticatedPayload
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+
+    await this.rejectRefundRequest(order, action, operator);
+    const userMap = await this.getOrderUserMap([order]);
+
+    return this.buildOrderRecordWithUsage(order, userMap);
   }
 
   async getVoiceMembershipDowngradePreview(
@@ -493,7 +519,7 @@ export class AdminOrderService {
       const refreshedOrder = await this.refreshOrderEntity(order);
       const userMap = await this.getOrderUserMap([refreshedOrder]);
 
-      return this.buildOrderRecord(refreshedOrder, userMap);
+      return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
     }
 
     await this.applyVoiceMembershipDowngradeRefundStatus(
@@ -504,7 +530,7 @@ export class AdminOrderService {
     const refreshedOrder = await this.refreshOrderEntity(order);
     const userMap = await this.getOrderUserMap([refreshedOrder]);
 
-    return this.buildOrderRecord(refreshedOrder, userMap);
+    return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
   }
 
   async syncVoiceMembershipDowngrade(
@@ -566,7 +592,7 @@ export class AdminOrderService {
     const refreshedOrder = await this.refreshOrderEntity(order);
     const userMap = await this.getOrderUserMap([refreshedOrder]);
 
-    return this.buildOrderRecord(refreshedOrder, userMap);
+    return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
   }
 
   private async applyVoiceMembershipDowngradeRefundStatus(
@@ -1135,7 +1161,7 @@ export class AdminOrderService {
     await this.revokeAdminManualPaidOrder(order);
     const userMap = await this.getOrderUserMap([order]);
 
-    return this.buildOrderRecord(order, userMap);
+    return this.buildOrderRecordWithUsage(order, userMap);
   }
 
   async syncPaymentStatus(orderId: string): Promise<AdminOrderRecordDTO> {
@@ -1147,7 +1173,7 @@ export class AdminOrderService {
     ) {
       const userMap = await this.getOrderUserMap([order]);
 
-      return this.buildOrderRecord(order, userMap);
+      return this.buildOrderRecordWithUsage(order, userMap);
     }
 
     if (order.paymentProvider === WECHAT_VIRTUAL_PAY_PROVIDER) {
@@ -1168,7 +1194,7 @@ export class AdminOrderService {
     const syncedOrder = await this.getOrderById(orderId);
     const userMap = await this.getOrderUserMap([syncedOrder]);
 
-    return this.buildOrderRecord(syncedOrder, userMap);
+    return this.buildOrderRecordWithUsage(syncedOrder, userMap);
   }
 
   private async syncWechatPaymentOrder(order: OrderEntity): Promise<void> {
@@ -1779,6 +1805,7 @@ export class AdminOrderService {
       {
         $set: {
           status: OrderStatus.refundRequested,
+          refundRequestedAt: order.refundRequestedAt ?? now,
           [`snapshot.${VOICE_MEMBERSHIP_FINAL_REFUND_SNAPSHOT_KEY}`]:
             finalRefund,
           updatedAt: now,
@@ -1808,6 +1835,7 @@ export class AdminOrderService {
     }
 
     order.status = OrderStatus.refundRequested;
+    order.refundRequestedAt = order.refundRequestedAt ?? now;
     order.updatedAt = now;
     this.setVoiceMembershipFinalRefund(order, finalRefund);
     await onClaimed?.();
@@ -1929,6 +1957,7 @@ export class AdminOrderService {
 
     if (this.didMongoUpdate(result)) {
       order.status = OrderStatus.refundRequested;
+      order.refundRequestedAt = order.refundRequestedAt ?? now;
       order.updatedAt = now;
       this.setVoiceMembershipFinalRefund(order, finalRefund);
       return true;
@@ -3637,7 +3666,8 @@ export class AdminOrderService {
 
   private buildOrderRecord(
     order: OrderEntity,
-    userMap: Map<string, AdminOrderUserDTO>
+    userMap: Map<string, AdminOrderUserDTO>,
+    agentUserMessageCount?: number
   ): AdminOrderRecordDTO {
     const userId = this.stringifyObjectId(order.userId);
     const voiceMembershipDowngrade = this.getVoiceMembershipDowngrade(order);
@@ -3681,6 +3711,10 @@ export class AdminOrderService {
       paidAt: this.formatDate(order.paidAt),
       closedAt: this.formatDate(order.closedAt),
       refundedAt: this.formatDate(order.refundedAt),
+      refundRequestedAt: this.formatDate(order.refundRequestedAt),
+      refundRejectedAt: this.formatDate(order.refundRejectedAt),
+      refundRejection: this.getRefundRejection(order),
+      agentUserMessageCount,
       vipPlanGroup: this.resolveOrderVipPlanGroup(order),
       vipUpgrade: this.isVipUpgradeOrder(order),
       voiceMembershipDowngrade: voiceMembershipDowngrade
@@ -3691,6 +3725,220 @@ export class AdminOrderService {
         : undefined,
       updatedAt: this.formatDate(order.updatedAt),
     };
+  }
+
+  private getRefundRejection(
+    order: OrderEntity
+  ): AdminOrderRecordDTO['refundRejection'] {
+    const rejection = order.snapshot?.refundRejection;
+
+    if (!rejection || typeof rejection !== 'object') {
+      return undefined;
+    }
+
+    const record = rejection as Record<string, unknown>;
+    const action = record.action;
+
+    if (action !== 'not_refund' && action !== 'rejected') {
+      return undefined;
+    }
+
+    return {
+      action,
+      operatorId:
+        typeof record.operatorId === 'string' ? record.operatorId : undefined,
+      operatorAccount:
+        typeof record.operatorAccount === 'string'
+          ? record.operatorAccount
+          : undefined,
+      createdAt:
+        typeof record.createdAt === 'string'
+          ? record.createdAt
+          : new Date().toISOString(),
+    };
+  }
+
+  private async buildOrderRecordWithUsage(
+    order: OrderEntity,
+    userMap: Map<string, AdminOrderUserDTO>
+  ): Promise<AdminOrderRecordDTO> {
+    const agentUserMessageCount = await this.resolveOrderAgentUserMessageCount(
+      order
+    );
+
+    return this.buildOrderRecord(order, userMap, agentUserMessageCount);
+  }
+
+  private async resolveAgentUserMessageCounts(
+    orders: OrderEntity[]
+  ): Promise<Map<string, number>> {
+    const pairs = orders
+      .map(order => ({
+        userId: order.userId,
+        agentId: order.agentId,
+      }))
+      .filter(item => Boolean(item.userId));
+
+    if (pairs.length === 0) {
+      return new Map();
+    }
+
+    const userIds = pairs.map(pair => pair.userId).filter(Boolean);
+    const rows = (await this.messageModel
+      .aggregate([
+        {
+          $match: {
+            userId: { $in: userIds },
+            role: MessageRole.user,
+            status: MessageStatus.sent,
+            quotaExempt: { $ne: true },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              userId: '$userId',
+              agentId: { $ifNull: ['$agentId', null] },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray()) as Array<{
+      _id: { userId: MongoObjectId | null; agentId: MongoObjectId | null };
+      count: number;
+    }>;
+
+    const countMap = new Map<string, number>();
+
+    for (const row of rows) {
+      const userId = this.stringifyObjectId(row._id.userId);
+      const agentId = this.stringifyObjectId(row._id.agentId);
+      countMap.set(`${userId}:${agentId}`, Number(row.count) || 0);
+    }
+
+    return countMap;
+  }
+
+  private getAgentUserMessageCount(
+    messageCountMap: Map<string, number>,
+    order: OrderEntity
+  ): number {
+    const userId = this.stringifyObjectId(order.userId);
+    const agentId = order.agentId
+      ? this.stringifyObjectId(order.agentId)
+      : '';
+
+    if (order.agentId) {
+      return messageCountMap.get(`${userId}:${agentId}`) ?? 0;
+    }
+
+    let total = 0;
+
+    for (const [key, value] of messageCountMap) {
+      if (key.startsWith(`${userId}:`)) {
+        total += value;
+      }
+    }
+
+    return total;
+  }
+
+  private async resolveOrderAgentUserMessageCount(
+    order: OrderEntity
+  ): Promise<number> {
+    const countMap = await this.resolveAgentUserMessageCounts([order]);
+
+    return this.getAgentUserMessageCount(countMap, order);
+  }
+
+  private async rejectRefundRequest(
+    order: OrderEntity,
+    action: 'not_refund' | 'rejected',
+    operator: AdminAuthenticatedPayload
+  ): Promise<void> {
+    if (order.status !== OrderStatus.refundRequested) {
+      throw new AppError(
+        'ORDER_NOT_REFUND_REQUESTED',
+        '订单当前不是退款申请状态，无法驳回',
+        400
+      );
+    }
+
+    if (order.paymentProvider === ADMIN_MANUAL_PAYMENT_PROVIDER) {
+      throw new AppError(
+        'ORDER_REFUND_REJECT_UNSUPPORTED',
+        '管理端创建订单不支持驳回退款',
+        400
+      );
+    }
+
+    const finalRefund = this.getVoiceMembershipFinalRefund(order);
+    const downgrade = this.getVoiceMembershipDowngrade(order);
+
+    if (
+      finalRefund?.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS' ||
+      downgrade?.wechatRefundStatus?.trim().toUpperCase() === 'SUCCESS'
+    ) {
+      throw new AppError(
+        'ORDER_REFUND_ALREADY_SUCCESS',
+        '该订单微信退款已成功，不能驳回',
+        409
+      );
+    }
+
+    if (
+      finalRefund?.status === 'processing' ||
+      finalRefund?.status === 'benefits_processing'
+    ) {
+      throw new AppError(
+        'ORDER_REFUND_IN_PROGRESS',
+        '该订单微信退款正在处理中，无法驳回',
+        409
+      );
+    }
+
+    if (downgrade?.status === 'processing') {
+      throw new AppError(
+        'ORDER_REFUND_IN_PROGRESS',
+        '该订单会员降级退款处理中，无法驳回',
+        409
+      );
+    }
+
+    const now = new Date();
+    const result = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        status: OrderStatus.refundRequested,
+      } as never,
+      {
+        $set: {
+          status: OrderStatus.completed,
+          refundRejectedAt: now,
+          'snapshot.refundRejection': {
+            action,
+            operatorId: operator?.sub,
+            operatorAccount: operator?.account,
+            createdAt: now.toISOString(),
+          },
+          updatedAt: now,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(result)) {
+      throw new AppError(
+        'ORDER_REFUND_STATE_CONFLICT',
+        '订单状态已变化，请刷新后重试',
+        409
+      );
+    }
+
+    order.status = OrderStatus.completed;
+    order.refundRejectedAt = now;
+    order.updatedAt = now;
+    await this.refreshOrderEntity(order);
   }
 
   private async getOrderById(orderId: string): Promise<OrderEntity> {

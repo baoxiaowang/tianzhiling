@@ -4,6 +4,7 @@ import { AdminAuthenticatedPayload } from '@tzl/shared';
 import {
   CreateAdminOrderDTO,
   ListAdminOrdersQueryDTO,
+  RejectRefundDTO,
   VoiceMembershipDowngradeDTO,
 } from '../dto/admin-order.dto';
 import { AdminOrderService } from '../service/admin-order.service';
@@ -29,6 +30,16 @@ export class AdminOrderController {
   @Post('/:id/refund')
   async refund(@Param('id') id: string) {
     return this.adminOrderService.refundOrder(id);
+  }
+
+  @Post('/:id/reject-refund')
+  async rejectRefund(
+    @Param('id') id: string,
+    @Body() body: RejectRefundDTO
+  ) {
+    const auth = this.ctx.state.adminAuth as AdminAuthenticatedPayload;
+
+    return this.adminOrderService.rejectRefundOrder(id, body.action, auth);
   }
 
   @Post('/:id/revoke')

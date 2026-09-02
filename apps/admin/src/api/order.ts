@@ -36,6 +36,19 @@ export function refundOrder(id: string) {
   } as TzlAxiosRequestConfig);
 }
 
+export function rejectRefundOrder(
+  id: string,
+  action: 'not_refund' | 'rejected'
+) {
+  return axios.post<OrderRecord>(
+    `/admin_api/orders/${id}/reject-refund`,
+    { action },
+    {
+      hideErrorMessage: true,
+    } as TzlAxiosRequestConfig
+  );
+}
+
 export function revokeAdminManualOrder(id: string) {
   return axios.post<OrderRecord>(`/admin_api/orders/${id}/revoke`, undefined, {
     hideErrorMessage: true,

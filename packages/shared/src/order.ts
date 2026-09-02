@@ -160,6 +160,15 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   paymentExpiredAt?: string;
   closedAt?: string;
   refundedAt?: string;
+  refundRequestedAt?: string;
+  refundRejectedAt?: string;
+  refundRejection?: {
+    action: 'not_refund' | 'rejected';
+    operatorId?: string;
+    operatorAccount?: string;
+    createdAt: string;
+  };
+  agentUserMessageCount?: number;
   vipPlanGroup?: 'basic' | 'voice';
   vipUpgrade?: boolean;
   voiceMembershipDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;

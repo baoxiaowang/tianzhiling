@@ -4,6 +4,7 @@
     status="refund_requested"
     hide-status-filter
     exclude-admin-manual
+    refund-mode
     empty-description="暂无退款申请"
   />
 </template>
