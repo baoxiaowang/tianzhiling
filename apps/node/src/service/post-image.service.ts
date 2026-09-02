@@ -16,13 +16,6 @@ const MESSENGER_AVATAR_CACHE_VERSION = '5c48467a';
 export const USER_DEFAULT_AVATAR_URL =
   'https://oss.tianzhiling.chat/static/aiDeceased/user-default-avatar-256.webp';
 
-/**
- * 智能体默认头像：智能体未设置头像时使用（原绿底机器人）。
- * 指向 COS 压缩版(256x256 webp)，CDN 缓存 1 年(immutable)。
- */
-export const AGENT_DEFAULT_AVATAR_URL =
-  'https://oss.tianzhiling.chat/static/aiDeceased/default-avatar-256.webp';
-
 @Provide()
 export class PostImageService {
   @Config('oss')
@@ -92,20 +85,6 @@ export class PostImageService {
 
     if (!avatar) {
       return USER_DEFAULT_AVATAR_URL;
-    }
-
-    return this.resolveForResponse(avatar);
-  }
-
-  /**
-   * 解析智能体头像：智能体未设置头像（空/空白）时返回智能体默认头像 URL，
-   * 其余走正常的对象存储 URL 解析。
-   */
-  resolveAgentAvatarForResponse(rawAvatar?: string | null): string {
-    const avatar = rawAvatar?.trim() || '';
-
-    if (!avatar) {
-      return AGENT_DEFAULT_AVATAR_URL;
     }
 
     return this.resolveForResponse(avatar);

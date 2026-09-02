@@ -294,8 +294,8 @@ export class AgentService {
       agent: {
         name: agent.name?.trim() || `未命名${brandName()}`,
         realName: agent.realName?.trim() || '',
-        avatar: this.postImageService.resolveAgentAvatarForResponse(
-          agent.avatar
+        avatar: this.postImageService.resolveForResponse(
+          agent.avatar?.trim() || ''
         ),
         sex: agent.sex,
         description: '',
@@ -1134,8 +1134,8 @@ export class AgentService {
       id: this.stringifyObjectId(agent.id),
       name: agent.name,
       realName: agent.realName?.trim() || '',
-      avatar: this.postImageService.resolveAgentAvatarForResponse(
-        agent.avatar
+      avatar: this.postImageService.resolveForResponse(
+        agent.avatar?.trim() || ''
       ),
       sex: agent.sex,
       agentCallMe: agentCallsUser,

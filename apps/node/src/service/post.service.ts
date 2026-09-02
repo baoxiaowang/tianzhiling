@@ -2153,10 +2153,9 @@ export class PostService {
       userId: comment.userId ? this.stringifyObjectId(comment.userId) : '',
       agentId: comment.agentId ? this.stringifyObjectId(comment.agentId) : '',
       authorName: agent?.name?.trim() || user?.name?.trim() || `${brandName()}用户`,
-      authorAvatar:
-        comment.type === PostCommentType.agent
-          ? this.postImageService.resolveAgentAvatarForResponse(agent?.avatar)
-          : this.postImageService.resolveUserAvatarForResponse(user?.avatar),
+      authorAvatar: this.postImageService.resolveUserAvatarForResponse(
+        agent?.avatar?.trim() || user?.avatar?.trim()
+      ),
       content: comment.content?.trim() || '',
       parentCommentId: comment.parentCommentId
         ? this.stringifyObjectId(comment.parentCommentId)
@@ -2458,10 +2457,9 @@ export class PostService {
     notification.actorAgentId = comment.agentId;
     notification.actorName =
       agent?.name?.trim() || user?.name?.trim() || '新评论';
-    notification.actorAvatar =
-      comment.type === PostCommentType.agent
-        ? this.postImageService.resolveAgentAvatarForResponse(agent?.avatar)
-        : this.postImageService.resolveUserAvatarForResponse(user?.avatar);
+    notification.actorAvatar = this.postImageService.resolveUserAvatarForResponse(
+      agent?.avatar?.trim() || user?.avatar?.trim()
+    );
     notification.commentPreview = (comment.content?.trim() || '').slice(0, 120);
     notification.replyToUserName = await this.resolveCommentReplyName(comment);
     notification.postThumbnail =
