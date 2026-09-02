@@ -43,6 +43,22 @@ loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
 
+function readJsonFrom(
+  names: string[],
+  fallback: Record<string, unknown> | undefined = undefined
+): Record<string, unknown> | undefined {
+  const raw = readStringFrom(names, '').trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function readPemFrom(
   names: string[],
   fallback = '',
@@ -319,6 +335,10 @@ export default {
     knownSpeakerIds: readStringFrom(
       ['ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS'],
       ''
+    ),
+    cloneExtraParams: readJsonFrom(
+      ['ADMIN_API_DOUBAO_VOICE_CLONE_EXTRA_PARAMS'],
+      undefined
     ),
     openApiAccessKeyId: readStringFrom(
       ['ADMIN_API_DOUBAO_VOICE_OPENAPI_ACCESS_KEY_ID'],

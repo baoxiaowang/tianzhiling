@@ -29,6 +29,7 @@ interface DoubaoVoiceConfig {
   openApiRegion?: string;
   openApiService?: string;
   openApiProjectName?: string;
+  cloneExtraParams?: Record<string, unknown>;
 }
 
 interface DoubaoBaseResponse {
@@ -38,12 +39,20 @@ interface DoubaoBaseResponse {
 
 interface DoubaoTrainingResponse {
   BaseResp?: DoubaoBaseResponse;
+  code?: number;
+  message?: string;
   status?: number;
   version?: number;
   speaker_id?: string;
   demo_audio?: string;
   create_time?: number;
   request_id?: string;
+  speaker_status?: Array<{
+    demo_audio?: string;
+    model_type?: number;
+    status?: number;
+  }>;
+  available_training_times?: number;
 }
 
 interface DoubaoSpeechEvent {
@@ -123,6 +132,7 @@ export interface DoubaoCloneInput {
   buffer: Buffer;
   fileName: string;
   speakerId: string;
+  extraParams?: Record<string, unknown>;
 }
 
 export interface DoubaoCloneResult {
@@ -313,28 +323,31 @@ export class DoubaoVoiceService {
     // cannot mistake the old active result for completion of this upload.
     const baselineStatus = await this.queryVoice(speakerId);
     const requestId = randomUUID();
+    // V3 extra_params 为对象；合并优先级：安全默认 < 配置(.env) < 调用层传入
+    const extraParams: Record<string, unknown> = {
+      enable_crop_by_asr: true,
+      ...(this.config.cloneExtraParams || {}),
+      ...(input.extraParams || {}),
+    };
     const payload = {
-      appid: this.config.appId?.trim(),
       speaker_id: speakerId,
-      audios: [
-        {
-          audio_bytes: input.buffer.toString('base64'),
-          audio_format: this.audioFormat(input.fileName),
-        },
-      ],
-      source: 2,
+      audio: {
+        data: input.buffer.toString('base64'),
+        format: this.audioFormat(input.fileName),
+      },
       language: 0,
-      model_type: 4,
+      extra_params: extraParams,
     };
 
     this.logger.info(
-      '[doubao-voice] upload ICL 2.0 prompt, voiceRef=%s, bytes=%s',
+      '[doubao-voice] upload ICL voice (V3), voiceRef=%s, bytes=%s, extraParams=%j',
       this.describeVoiceId(speakerId),
-      input.buffer.length
+      input.buffer.length,
+      extraParams
     );
 
     const uploaded = await this.requestTrainingJson(
-      '/api/v1/mega_tts/audio/upload',
+      '/api/v3/tts/voice_clone',
       payload,
       requestId
     );
@@ -355,9 +368,8 @@ export class DoubaoVoiceService {
     const speakerId = this.normalizeSpeakerId(voiceId);
     const requestId = randomUUID();
     const response = await this.requestTrainingJson(
-      '/api/v1/mega_tts/status',
+      '/api/v3/tts/get_voice',
       {
-        appid: this.config.appId?.trim(),
         speaker_id: speakerId,
       },
       requestId
@@ -374,12 +386,17 @@ export class DoubaoVoiceService {
       );
     }
 
+    const demoAudio =
+      response.speaker_status?.find(item => item.demo_audio)?.demo_audio?.trim() ||
+      response.demo_audio?.trim() ||
+      undefined;
+
     return {
       voiceId: response.speaker_id?.trim() || speakerId,
       status: this.statusName(statusCode),
       statusCode,
       version: response.version,
-      demoAudio: response.demo_audio?.trim() || undefined,
+      demoAudio,
       createTime: this.optionalPositiveNumber(response.create_time),
       requestId: response.request_id?.trim() || requestId,
     };
@@ -840,14 +857,13 @@ export class DoubaoVoiceService {
     if (apiKey) {
       return {
         'X-Api-Key': apiKey,
-        'X-Api-Resource-Id': this.resourceId,
         'X-Api-Request-Id': requestId,
       };
     }
 
     return {
-      Authorization: `Bearer;${this.config.accessToken?.trim()}`,
-      'Resource-Id': this.resourceId,
+      'X-Api-App-Key': this.config.appId?.trim() || '',
+      'X-Api-Access-Key': this.config.accessToken?.trim() || '',
       'X-Api-Request-Id': requestId,
     };
   }
@@ -916,23 +932,32 @@ export class DoubaoVoiceService {
     response: DoubaoTrainingResponse,
     fallbackCode: string
   ): void {
-    const statusCode = Number(response?.BaseResp?.StatusCode ?? 0);
-    if (statusCode !== 0) {
-      throw new AppError(
-        String(statusCode || fallbackCode),
-        response?.BaseResp?.StatusMessage || fallbackCode,
-        502,
-        response
-      );
+    // V3 返回 code；V1 返回 BaseResp.StatusCode；成功时可能无 code（HTTP 2xx 即成功）
+    const v3Code = response?.code;
+    const v1Code = Number(response?.BaseResp?.StatusCode ?? 0);
+    const failed =
+      (v3Code !== undefined && v3Code !== 0) ||
+      (v3Code === undefined && v1Code !== 0);
+    if (failed) {
+      const code = String(v3Code ?? v1Code ?? fallbackCode);
+      const message =
+        response?.message ||
+        response?.BaseResp?.StatusMessage ||
+        fallbackCode;
+      throw new AppError(code, message, 502, response);
     }
   }
 
   private ensureTrainingConfigured(): void {
     this.ensureEnabled();
-    if (!this.config?.appId?.trim()) {
+    const hasApiKey = Boolean(this.config?.apiKey?.trim());
+    const hasLegacyCredentials = Boolean(
+      this.config?.appId?.trim() && this.config?.accessToken?.trim()
+    );
+    if (!hasApiKey && !hasLegacyCredentials) {
       throw new AppError(
-        'DOUBAO_VOICE_APP_ID_MISSING',
-        'Doubao voice app id is missing',
+        'DOUBAO_VOICE_CREDENTIALS_MISSING',
+        'Doubao voice api key (or legacy app id + access token) is missing',
         500
       );
     }

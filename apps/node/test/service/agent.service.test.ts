@@ -123,6 +123,13 @@ function createService(
 
       return agent;
     }),
+    remove: jest.fn(async (agent: AgentEntity) => {
+      const index = agents.findIndex(item => sameObjectId(item.id, agent.id));
+      if (index >= 0) {
+        agents.splice(index, 1);
+      }
+      return agent;
+    }),
   } as any;
   service.conversationModel = {
     find: jest.fn(async ({ where }: any) =>
@@ -352,6 +359,10 @@ function createService(
     ),
     ensureMessengerConversation: jest.fn(async () => new ConversationEntity()),
   } as any;
+  service.freeChatAgentEligibilityService = {
+    recordCreatedAgent: jest.fn().mockResolvedValue(undefined),
+    preserveSlotsBeforeDeletion: jest.fn().mockResolvedValue(undefined),
+  } as any;
   service.logger = {
     warn: jest.fn(),
   } as any;
@@ -363,6 +374,8 @@ function createService(
   } as any;
   service.postImageService = {
     resolveForResponse: jest.fn((value: string) => value),
+    resolveAgentAvatarForResponse: jest.fn((value: string) => value),
+    resolveUserAvatarForResponse: jest.fn((value: string) => value),
   } as any;
   service.agentMemoryProfileService = {
     buildInterviewTurn: jest.fn(async ({ draft, input }) => ({
@@ -409,11 +422,15 @@ describe('AgentService default agent', () => {
     expect(agents[0].isDefault).toBe(true);
     expect(agents[0].realName).toBe('王秀兰');
     expect(agents[0].profileCompletionGuideCreatedAt).toBe(agents[0].createdAt);
+    expect(
+      service.freeChatAgentEligibilityService.recordCreatedAgent
+    ).toHaveBeenCalledWith(agents[0]);
     expect(service.conversationModel.save).toHaveBeenCalledTimes(1);
-    expect(service.messageModel.save).toHaveBeenCalledTimes(1);
 
-    const savedMessage = (service.messageModel.save as jest.Mock).mock
-      .calls[0][0];
+    const savedMessage = (service.messageModel.save as jest.Mock).mock.calls
+      .map(call => call[0] as MessageEntity)
+      .find(message => message.role === MessageRole.assistant)!;
+    expect(savedMessage).toBeDefined();
     expect(savedMessage.conversationId).toBeInstanceOf(MongoObjectId);
     expect(sameObjectId(savedMessage.userId, new MongoObjectId(USER_ID))).toBe(
       true
@@ -421,7 +438,8 @@ describe('AgentService default agent', () => {
     expect(sameObjectId(savedMessage.agentId, agents[0].id)).toBe(true);
     expect(savedMessage.role).toBe(MessageRole.assistant);
     expect(savedMessage.type).toBe(MessageType.text);
-    expect(savedMessage.content).toBe('小宝，好想你啊，过得好吗？');
+    expect(savedMessage.content).toContain('小宝');
+    expect(savedMessage.content).toContain('过得怎么样');
     expect(savedMessage.status).toBe(MessageStatus.sent);
     expect(savedMessage.createdAt).toBeInstanceOf(Date);
     expect(savedMessage.updatedAt).toBeInstanceOf(Date);
@@ -478,6 +496,63 @@ describe('AgentService default agent', () => {
     expect(
       service.messengerService.ensureMessengerConversation
     ).not.toHaveBeenCalled();
+  });
+
+  it('keeps a saved agent when slot registration will retry on access', async () => {
+    const agents: AgentEntity[] = [];
+    const service = createService(agents);
+    (
+      service.freeChatAgentEligibilityService.recordCreatedAgent as jest.Mock
+    ).mockRejectedValue(new Error('ledger unavailable'));
+
+    await expect(
+      service.createAgent(AUTH, {
+        name: '奶奶',
+        sex: AgentSex.woman,
+        iCallAgent: '奶奶',
+        agentCallMe: '小宝',
+      })
+    ).resolves.toEqual(expect.objectContaining({ name: '奶奶' }));
+
+    expect(agents).toHaveLength(1);
+    expect(service.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('will retry on access'),
+      agents[0].id.toHexString(),
+      'ledger unavailable'
+    );
+  });
+
+  it('preserves historical free-chat slots before deleting an agent', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const service = createService([agent]);
+
+    await service.deleteAgent(AUTH, AGENT_A_ID);
+
+    expect(
+      service.freeChatAgentEligibilityService.preserveSlotsBeforeDeletion
+    ).toHaveBeenCalledWith(agent);
+    expect(
+      (
+        service.freeChatAgentEligibilityService
+          .preserveSlotsBeforeDeletion as jest.Mock
+      ).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      (service.agentModel.remove as jest.Mock).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not delete an agent when its historical slots cannot be preserved', async () => {
+    const agent = createAgent(AGENT_A_ID);
+    const service = createService([agent]);
+    (
+      service.freeChatAgentEligibilityService
+        .preserveSlotsBeforeDeletion as jest.Mock
+    ).mockRejectedValue(new Error('ledger unavailable'));
+
+    await expect(service.deleteAgent(AUTH, AGENT_A_ID)).rejects.toThrow(
+      'ledger unavailable'
+    );
+    expect(service.agentModel.remove).not.toHaveBeenCalled();
   });
 
   it('clears the previous default when another agent is set as default', async () => {
@@ -703,8 +778,14 @@ describe('AgentService default agent', () => {
     expect(sameObjectId(conversations[0].agentId, agent.id)).toBe(true);
     expect(shareMembers).toHaveLength(1);
     expect(shareMembers[0].status).toBe(AgentShareMemberStatus.active);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('好想你啊，过得好吗？');
+    const visibleMessages = messages.filter(message => !message.isArchived);
+    expect(visibleMessages).toHaveLength(1);
+    expect(visibleMessages[0]).toEqual(
+      expect.objectContaining({
+        role: MessageRole.assistant,
+        content: expect.stringContaining('过得怎么样'),
+      })
+    );
 
     const sharedDetail = await service.getAgentDetail(SHARED_AUTH, AGENT_A_ID);
     expect(sharedDetail.id).toBe(AGENT_A_ID);
@@ -736,7 +817,7 @@ describe('AgentService default agent', () => {
     expect(second.conversationId).toBe(first.conversationId);
     expect(conversations).toHaveLength(1);
     expect(shareMembers).toHaveLength(1);
-    expect(messages).toHaveLength(1);
+    expect(messages.filter(message => !message.isArchived)).toHaveLength(1);
     expect(shareInvites[0].acceptedCount).toBe(1);
   });
 

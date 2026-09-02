@@ -108,17 +108,6 @@
               <a-tag>{{ formatProvider(record.provider) }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column
-            title="服务商音色ID"
-            data-index="providerVoiceId"
-            :width="240"
-          >
-            <template #cell="{ record }">
-              <a-typography-text copyable>
-                {{ record.providerVoiceId || '-' }}
-              </a-typography-text>
-            </template>
-          </a-table-column>
           <a-table-column title="发音方言 / 合成指令" :width="300">
             <template #cell="{ record }">
               <a-typography-text
@@ -221,7 +210,9 @@
                 <a-tooltip
                   :content="
                     record.canDelete
-                      ? '删除服务商音色及相关声音文件'
+                      ? record.provider === 'doubao'
+                        ? '删除本地音色与绑定，付费槽位保留可复用（火山侧音色无法删除）'
+                        : '删除服务商音色及相关声音文件'
                       : `已绑定 ${record.boundAgentCount} 个智能体，请先解除绑定`
                   "
                 >
@@ -443,7 +434,7 @@
                     v-if="record.boundTimbre"
                     :content="
                       record.boundTimbre.canDelete
-                        ? '删除本地音色与绑定，付费槽位保留可复用'
+                        ? '删除本地音色与绑定，付费槽位保留可复用（火山侧音色无法删除，可重新训练覆盖）'
                         : `已绑定 ${record.boundTimbre.boundAgentCount} 个智能体，请先解除绑定`
                     "
                   >
@@ -519,7 +510,6 @@
                 <a-option value="minimax">MiniMax</a-option>
                 <a-option value="cosyvoice">CosyVoice v3.5 Plus</a-option>
                 <a-option value="qwen">千问（Qwen3 / Audio Plus）</a-option>
-                <a-option value="doubao">豆包 Seed ICL 2.0</a-option>
               </a-select>
             </a-form-item>
           </a-grid-item>

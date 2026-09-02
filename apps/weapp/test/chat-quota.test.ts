@@ -81,6 +81,21 @@ describe('chat quota presentation', () => {
     expect(content).toContain('每天可与每位亲友聊5句')
   })
 
+  it('does not promise a midnight reset for agents outside the free slots', () => {
+    const content = buildChatQuotaDialogContent('exhausted', {
+      isVip: false,
+      policy: 'agent_limit',
+      limit: 0,
+      usedCount: 0,
+      remainingCount: 0,
+      trialDays: 3,
+    })
+
+    expect(content).toContain('最早创建的3位亲友')
+    expect(content).toContain('需开通会员')
+    expect(content).not.toContain('00:00')
+  })
+
   it('does not show quota warnings for members', () => {
     const memberQuota: ConversationChatQuotaSnapshot = { isVip: true }
 

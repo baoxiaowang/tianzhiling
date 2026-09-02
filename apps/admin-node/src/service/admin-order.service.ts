@@ -795,8 +795,10 @@ export class AdminOrderService {
 
       await this.refreshOrderEntity(order);
 
-      // 降级退款完成，通知主服务触发小使者提示（异步，失败不影响降级主流程）
-      this.notifyMessengerEvent(order, claimedDowngrade).catch(() => undefined);
+      // 通知主服务触发小使者降级提示（异步，失败不影响降级主流程）
+      this.notifyMessengerEvent(order, claimedDowngrade).catch(
+        () => undefined
+      );
       return;
     } catch (error) {
       const failedAt = new Date();
