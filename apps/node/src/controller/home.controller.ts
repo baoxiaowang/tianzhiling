@@ -100,6 +100,7 @@ export class SystemController {
     if (
       eventType !== 'membership_purchase' &&
       eventType !== 'voice_purchase' &&
+      eventType !== 'voice_package_purchase' &&
       eventType !== 'membership_downgrade'
     ) {
       return { ok: false, error: 'INVALID_EVENT_TYPE' };

@@ -121,6 +121,7 @@ export interface MessengerMemoryTaskPlan {
 export type MessengerEventNoticeType =
   | 'membership_purchase'
   | 'voice_purchase'
+  | 'voice_package_purchase'
   | 'membership_downgrade';
 
 export interface SendEventNoticeOptions {
@@ -353,7 +354,9 @@ export class MessengerService {
           : undefined,
       wechatId: brand.customerService.wechatId,
       wechatQrUrl: buildOssMediaUrl(brand.customerService.wechatQr),
-      needQr: options.eventType === 'voice_purchase',
+      needQr:
+        options.eventType === 'voice_purchase' ||
+        options.eventType === 'voice_package_purchase',
     };
   }
 
@@ -395,6 +398,8 @@ export class MessengerService {
         ? '刚刚购买了基础版会员'
         : context.eventType === 'voice_purchase'
         ? '刚刚购买了包含声音模型的会员'
+        : context.eventType === 'voice_package_purchase'
+        ? `刚刚购买了声音模型服务（${context.planName || '普通话/方言模型'}）`
         : '声音版会员被调整为普通基础版，并已原路退款';
     const selfIntro = context.isFirstContact
       ? '这是小使者第一次联系用户，第一条消息必须先自我介绍："我是{{relation}}的小使者"。'
@@ -418,6 +423,8 @@ export class MessengerService {
         ? '告诉用户会员已开通、和亲人聊天不再限额度、想聊多久都行，并欢迎随时找小使者。'
         : context.eventType === 'voice_purchase'
         ? '必须说明：声音模型服务是人工做的；后台无法直接联系用户；需要用户主动添加客服微信并把亲人的声音素材发过来，人工客服会一步步帮忙弄好。语气要感谢用户的信任。'
+        : context.eventType === 'voice_package_purchase'
+        ? '必须说明：声音模型服务是人工做的；后台无法直接联系用户；需要用户主动添加客服微信并把亲人的声音素材发过来，人工客服会一步步帮忙弄好；可以提一下订单已经安排、会尽快跟进。语气要感谢用户的信任。'
         : '语气温和：告知已调整为基础版、退款会原路退回；如果声音服务未达预期要表达歉意；结尾给一个温暖的期待——AI 技术发展很快，不久的将来还有机会再听到亲人的声音。';
 
     return [
@@ -538,6 +545,14 @@ export class MessengerService {
     if (context.eventType === 'voice_purchase') {
       return [
         `${selfIntro}看到你开通了声音版，先跟你说声谢谢。`,
+        '跟你说明一下：声音模型这块是人工做的，我们后台没法直接联系你。',
+        `所以需要你主动加一下客服微信，把${context.relation}的声音素材发过来，人工客服会一步步帮你弄好。`,
+      ];
+    }
+
+    if (context.eventType === 'voice_package_purchase') {
+      return [
+        `${selfIntro}看到你购买了声音模型服务，先跟你说声谢谢。`,
         '跟你说明一下：声音模型这块是人工做的，我们后台没法直接联系你。',
         `所以需要你主动加一下客服微信，把${context.relation}的声音素材发过来，人工客服会一步步帮你弄好。`,
       ];

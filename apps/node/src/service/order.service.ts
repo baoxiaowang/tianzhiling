@@ -1277,10 +1277,32 @@ export class OrderService {
 
     if (order.orderType === OrderType.voicePackage) {
       await this.createVoiceTrainingTask(order);
+      await this.notifyVoicePackagePurchaseEvent(order);
       return;
     }
 
     throw new AppError('ORDER_TYPE_UNSUPPORTED', 'order type is unsupported');
+  }
+
+  /** 声音服务（普通话/方言模型）购买后的小使者提示，失败不阻塞订单发放 */
+  private async notifyVoicePackagePurchaseEvent(
+    order: OrderEntity
+  ): Promise<void> {
+    try {
+      await this.messengerService.sendEventNotice({
+        eventType: 'voice_package_purchase',
+        userId: order.userId,
+        orderId: String(order.id),
+        planName: order.title || '',
+        planGroup: VipPlanGroup.voice,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] voice package messenger event notice failed, orderId=%s reason=%s',
+        String(order.id || ''),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private async refundPaidOrder(

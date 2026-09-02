@@ -809,6 +809,28 @@ describe('MessengerService', () => {
       expect(imageMessage?.mediaUrl).toContain('https://oss.tianzhiling.chat');
     });
 
+    it('声音服务购买（普通话/方言模型）：fallback 说明人工声音服务并引导添加客服微信，非首次不自我介绍', async () => {
+      const { service, messageModel, parent } = buildNoticeService();
+
+      await service.sendEventNotice({
+        eventType: 'voice_package_purchase',
+        userId: parent.createdUserId,
+        orderId: 'order-6',
+        planName: '普通话模型',
+      });
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity[];
+      const imageMessage = saved.find(m => m.type === 'image');
+      const joined = saved.map(m => m.content || '').join('\n');
+      expect(imageMessage).toBeDefined();
+      expect(imageMessage?.mediaUrl).toContain('https://oss.tianzhiling.chat');
+      expect(joined).toContain('爸爸');
+      expect(joined).toContain('人工');
+      expect(joined).toContain('客服微信');
+      expect(joined).toContain('素材');
+      expect(joined).not.toContain('我是');
+    });
+
     it('降级退款：fallback 含温和话术与退款说明，且不带推销/承诺', async () => {
       const { service, messageModel, parent } = buildNoticeService();
 
