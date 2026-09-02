@@ -83,7 +83,7 @@ select_release_services() {
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     case "$path" in
-      apps/node/test/*|apps/admin-node/test/*|apps/admin/test/*|apps/weapp/*|*/test/*|*/tests/*|*.md|AGENTS.md|docs/*|reports/*|.github/*)
+      apps/node/test/*|apps/admin-node/test/*|apps/admin/test/*|apps/weapp/*|*/test/*|*/tests/*|*.md|AGENTS.md|docs/*|reports/*|.github/*|release-state/*)
         ;;
       scripts/init-admin-node.sh|scripts/prd-init-admin-node.sh)
         select_service tzl_admin_node
@@ -122,7 +122,7 @@ select_release_services() {
         for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
         ;;
     esac
-  done < <(git diff --name-only "$PREVIOUS_COMMIT" "$TARGET")
+  done < <(git -c core.quotepath=false diff --name-only "$PREVIOUS_COMMIT" "$TARGET")
 
   for service in "${ALL_SERVICES[@]}"; do
     if service_selected "$service"; then SERVICES+=("$service"); fi
