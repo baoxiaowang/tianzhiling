@@ -511,6 +511,8 @@ export interface DeleteUserVoiceTimbreResultDTO {
 
 export interface AdminVoiceTimbreRecordDTO {
   id: string;
+  /** 可选：音色归属用户（管理后台按用户查看音色列表时使用） */
+  userId?: string;
   name: string;
   provider: VoiceTimbreProviderDTO;
   providerVoiceId: string;
@@ -546,6 +548,8 @@ export interface DeleteAdminVoiceTimbreResultDTO {
 
 export interface AdminVoiceTimbreListParamsDTO {
   keyword?: string;
+  /** 可选：按音色归属用户筛选（管理后台用户详情-声音模型使用） */
+  userId?: string;
   provider?: VoiceTimbreProviderDTO;
   status?: VoiceTimbreStatusDTO;
   all?: boolean;
@@ -645,6 +649,8 @@ export interface BindAdminDoubaoVoiceSlotResultDTO {
 export interface CreateAdminVoiceTimbreDTO {
   name: string;
   provider: VoiceTimbreProviderDTO;
+  /** 可选：音色归属用户（管理后台按用户创建音色时使用） */
+  userId?: string;
   audioObjectKey?: string;
   audioUrl?: string;
   cloneLanguage?: string;

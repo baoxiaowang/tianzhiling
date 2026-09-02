@@ -33,3 +33,6 @@ apps/gateway/ssl/**/*.key
 # Product docs and design assets (maintained separately on Desktop)
 天之灵产品优化/
 _patch_cos.mjs
+
+# 任务协议自动生成的证据文件（不入库）
+.task-evidence/

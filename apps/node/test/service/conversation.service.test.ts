@@ -123,7 +123,9 @@ function createMembership(
   return membership;
 }
 
-function createVoiceTimbre(): VoiceTimbreEntity {
+function createVoiceTimbre(
+  overrides: Partial<VoiceTimbreEntity> = {}
+): VoiceTimbreEntity {
   const timbre = new VoiceTimbreEntity();
 
   Object.assign(timbre, {
@@ -140,6 +142,7 @@ function createVoiceTimbre(): VoiceTimbreEntity {
     status: VoiceTimbreStatus.active,
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   });
 
   return timbre;
@@ -489,6 +492,15 @@ function createService(options: {
       audioUrl: 'https://cdn.example.com/qwen-reply.wav',
       audioBuffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
       mimeType: 'audio/wav',
+    }),
+  } as any;
+  service.doubaoVoiceSpeechService = {
+    synthesize: jest.fn().mockResolvedValue({
+      audioUrl: 'https://cdn.example.com/doubao-reply.mp3',
+      audioBuffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      mimeType: 'audio/mpeg',
+      nativeSpeechSpeedApplied: true,
+      nativeSpeechVolumeApplied: true,
     }),
   } as any;
   service.voiceFfmpegService = {
@@ -4555,6 +4567,78 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         transcript: '我也想你，今天过得怎么样？',
       })
     );
+  });
+
+  it('synthesizes chat voice via the doubao service for a doubao timbre', async () => {
+    const voiceTimbre = createVoiceTimbre({
+      provider: VoiceTimbreProvider.doubao,
+      providerVoiceId: 'S_test_doubao_voice_001',
+      previewModel: 'seed-tts-2.0-expressive',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: 0,
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.doubaoVoiceSpeechService.synthesize).toHaveBeenCalledWith({
+      text: '我也想你，今天过得怎么样？',
+      voiceId: 'S_test_doubao_voice_001',
+      model: 'seed-tts-2.0-expressive',
+      speed: 1,
+      volume: 1,
+    });
+    expect(
+      service.voiceFfmpegService.adjustSpeechOutput
+    ).not.toHaveBeenCalled();
+    expect(getAssistantMessages(savedMessages)).toHaveLength(1);
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
+  it('applies pitch via ffmpeg when a doubao timbre has a non-zero pitch', async () => {
+    const voiceTimbre = createVoiceTimbre({
+      provider: VoiceTimbreProvider.doubao,
+      providerVoiceId: 'S_test_doubao_voice_001',
+      previewModel: 'seed-tts-2.0-expressive',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: -2,
+    });
+    const { service } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.doubaoVoiceSpeechService.synthesize).toHaveBeenCalled();
+    expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'speech.mp3',
+        speechSpeed: 1,
+        speechVolume: 1,
+        speechPitch: -2,
+      })
+    );
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
   });
 
   it('automatically uses the bound voice for a long assistant reply', async () => {

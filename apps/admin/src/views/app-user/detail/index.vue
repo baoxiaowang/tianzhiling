@@ -297,6 +297,9 @@
         <a-tab-pane key="orders" title="用户订单">
           <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
         </a-tab-pane>
+        <a-tab-pane key="voice" title="声音模型">
+          <voice-model-panel :user-id="userId || ''" embedded />
+        </a-tab-pane>
       </a-tabs>
     </a-card>
   </div>
@@ -316,6 +319,7 @@
   } from '@/api/app-user';
   import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
+  import VoiceModelPanel from './voice-model-panel.vue';
 
   const route = useRoute();
   const router = useRouter();

@@ -11,6 +11,7 @@ import {
 } from '@midwayjs/core';
 import {
   BindAdminDoubaoVoiceSlotDTO,
+  CreateAdminMergedVoiceTimbreDTO,
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -46,6 +47,11 @@ export class AdminVoiceTimbreController {
   @Post('/')
   async create(@Body() body: CreateAdminVoiceTimbreDTO) {
     return this.adminVoiceTimbreService.createVoiceTimbre(body);
+  }
+
+  @Post('/merge-create')
+  async mergeCreate(@Body() body: CreateAdminMergedVoiceTimbreDTO) {
+    return this.adminVoiceTimbreService.mergeCreateVoiceTimbre(body);
   }
 
   @Post('/:id/retry')

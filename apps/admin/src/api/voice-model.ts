@@ -39,6 +39,32 @@ export function createVoiceTimbre(data: CreateVoiceTimbreData) {
   return axios.post<VoiceTimbreRecord>('/admin_api/voice-timbres', data);
 }
 
+export interface MergeCreateVoiceTimbreData {
+  /** 必填：音色归属用户 */
+  userId: string;
+  /** 必填：1~20 段已上传的音频 objectKey，服务端会合并为单个训练音频 */
+  audioObjectKeys: string[];
+  name: string;
+  provider: VoiceTimbreRecord['provider'];
+  cloneLanguage?: string;
+  speechDialect?: string;
+  speechInstruction?: string;
+  providerVoiceId?: string;
+  previewText?: string;
+  previewModel?: string;
+  speechSpeed?: number;
+  speechVolume?: number;
+  speechPitch?: number;
+  remark?: string;
+}
+
+export function mergeCreateVoiceTimbre(data: MergeCreateVoiceTimbreData) {
+  return axios.post<VoiceTimbreRecord>(
+    '/admin_api/voice-timbres/merge-create',
+    data
+  );
+}
+
 export function updateVoiceTimbre(id: string, data: UpdateVoiceTimbreData) {
   return axios.put<VoiceTimbreRecord>(`/admin_api/voice-timbres/${id}`, data);
 }

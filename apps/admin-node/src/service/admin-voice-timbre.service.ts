@@ -34,6 +34,7 @@ import {
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
+  CreateAdminMergedVoiceTimbreDTO,
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -246,6 +247,7 @@ export class AdminVoiceTimbreService {
     const provider = this.normalizeProvider(payload.provider);
     this.assertCreatableProvider(provider);
 
+    const userId = this.parseOptionalUserObjectId(payload.userId);
     const audioObjectKey = this.normalizeAudioObjectKey(
       payload.audioObjectKey || payload.audioUrl
     );
@@ -288,6 +290,7 @@ export class AdminVoiceTimbreService {
     timbre.errorCode = '';
     timbre.errorMessage = '';
     timbre.remark = this.normalizeOptionalText(payload.remark, 1000);
+    timbre.userId = userId;
     timbre.createdAt = now;
     timbre.updatedAt = now;
 
@@ -295,6 +298,66 @@ export class AdminVoiceTimbreService {
     await this.enqueueCreateVoiceTimbreJob(saved);
 
     return this.buildRecord(saved);
+  }
+
+  /**
+   * 多段音频合并后创建音色（归属指定 userId）。
+   * 流程：逐段下载 → FFmpeg 合并为单段训练音频 → 上传 COS → 复用 createVoiceTimbre 创建并入队训练。
+   */
+  async mergeCreateVoiceTimbre(
+    payload: CreateAdminMergedVoiceTimbreDTO
+  ): Promise<AdminVoiceTimbreRecordDTO> {
+    const userId = this.parseRequiredUserObjectId(payload.userId);
+    const objectKeys = (payload.audioObjectKeys || []).map(objectKey =>
+      this.normalizeAudioObjectKey(objectKey)
+    );
+
+    if (!objectKeys.length) {
+      throw new AppError(
+        'VOICE_TIMBRE_MERGED_AUDIO_REQUIRED',
+        'at least one audio object key is required for a merged voice timbre',
+        400
+      );
+    }
+
+    const downloaded = await Promise.all(
+      objectKeys.map(objectKey => this.storageFileService.download(objectKey))
+    );
+    const merged = await this.ffmpegService.mergeAudios(
+      downloaded.map(item => ({
+        buffer: item.buffer,
+        fileName: item.fileName,
+      }))
+    );
+    this.validateCloneAudioFile(
+      merged.buffer,
+      merged.fileName,
+      merged.contentType
+    );
+
+    const uploaded = await this.storageService.uploadCosBuffer({
+      buffer: merged.buffer,
+      fileName: merged.fileName,
+      contentType: merged.contentType,
+      folder: 'voice-timbre-merged',
+    });
+
+    return this.createVoiceTimbre({
+      name: payload.name,
+      provider: payload.provider,
+      userId: userId.toHexString(),
+      audioObjectKey: uploaded.objectKey,
+      cloneLanguage: payload.cloneLanguage,
+      speechDialect: payload.speechDialect,
+      speechInstruction: payload.speechInstruction,
+      providerVoiceId: payload.providerVoiceId,
+      previewText: payload.previewText,
+      previewModel: payload.previewModel,
+      speechSpeed: payload.speechSpeed,
+      speechVolume: payload.speechVolume,
+      speechPitch: payload.speechPitch,
+      remark: payload.remark,
+    });
   }
 
   async retryVoiceTimbreCreate(
@@ -1458,6 +1521,11 @@ export class AdminVoiceTimbreService {
       where.status = status;
     }
 
+    const userId = query?.userId?.trim();
+    if (userId) {
+      where.userId = this.parseRequiredUserObjectId(userId);
+    }
+
     if (!keyword) {
       return where;
     }
@@ -1525,6 +1593,8 @@ export class AdminVoiceTimbreService {
   ): AdminVoiceTimbreRecordDTO {
     return {
       id: this.stringifyObjectId(timbre.id),
+      userId:
+        this.stringifyObjectId(timbre.userId as MongoObjectId) || undefined,
       name: timbre.name,
       provider: timbre.provider as VoiceTimbreProviderDTO,
       providerVoiceId: timbre.providerVoiceId ?? '',
@@ -2384,6 +2454,30 @@ export class AdminVoiceTimbreService {
     }
 
     return new MongoObjectId(value);
+  }
+
+  private parseRequiredUserObjectId(value?: string): MongoObjectId {
+    const trimmed = value?.trim();
+
+    if (!trimmed) {
+      throw new AppError('INVALID_USER_ID', 'user id is required', 400);
+    }
+
+    if (!MongoObjectId.isValid(trimmed)) {
+      throw new AppError('INVALID_USER_ID', 'invalid user id', 400);
+    }
+
+    return new MongoObjectId(trimmed);
+  }
+
+  private parseOptionalUserObjectId(value?: string): MongoObjectId | undefined {
+    const trimmed = value?.trim();
+
+    if (!trimmed) {
+      return undefined;
+    }
+
+    return this.parseRequiredUserObjectId(trimmed);
   }
 
   private parseAgentObjectId(value: string): MongoObjectId {

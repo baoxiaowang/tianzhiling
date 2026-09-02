@@ -59,6 +59,9 @@ function createService() {
       return timbre;
     }),
   } as any;
+  service.agentModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
   service.storageFileService = {
     normalizeForStorage: jest.fn(value => value),
     resolve: jest.fn(value => `https://cdn.example.com/${value}`),
@@ -148,7 +151,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     expect(service.voiceTimbreModel.count).not.toHaveBeenCalled();
     expect(service.voiceTimbreModel.find).toHaveBeenCalledWith({
-      where: {},
+      where: { deletionStatus: { $ne: 'completed' } },
       order: {
         updatedAt: 'DESC',
       },
@@ -234,7 +237,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
-        cloneLanguage: 'auto',
+        cloneLanguage: 'Chinese',
         previewText: DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
       })
     );
@@ -330,17 +333,17 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
   });
 
-  it('rejects reserved providers that are still not connected', async () => {
+  it('rejects unknown providers that are not connected', async () => {
     const { service } = createService();
 
     await expect(
       service.createVoiceTimbre({
-        name: '豆包音色',
-        provider: 'doubao',
+        name: '未知音色',
+        provider: 'unknown',
         audioObjectKey: 'voice-timbres/demo.wav',
       })
     ).rejects.toMatchObject({
-      code: 'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      code: 'INVALID_VOICE_TIMBRE_PROVIDER',
     });
   });
 
@@ -548,6 +551,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.08,
     });
     expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith({
       buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
@@ -781,6 +786,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.08,
     });
     expect(timbre).toEqual(
       expect.objectContaining({
@@ -947,6 +954,172 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       service.retryVoiceTimbreCreate(TIMBRE_ID.toHexString())
     ).rejects.toMatchObject({
       code: 'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
+    });
+  });
+
+  it('lists timbres filtered by userId', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      userId: new MongoObjectId(userId),
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.find).mockResolvedValue([timbre]);
+    jest.mocked(service.voiceTimbreModel.count).mockResolvedValue(1);
+
+    const result = await service.listVoiceTimbres({ userId });
+
+    expect(service.voiceTimbreModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deletionStatus: { $ne: 'completed' },
+          userId: new MongoObjectId(userId),
+        },
+      })
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].userId).toBe(userId);
+  });
+
+  it('rejects list with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.listVoiceTimbres({ userId: 'not-an-object-id' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
+    });
+  });
+
+  it('creates a timbre with the given userId', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '用户音色',
+      provider: 'minimax',
+      providerVoiceId: 'TestVoice_002',
+      audioObjectKey: 'voice-timbres/user.wav',
+      userId,
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: new MongoObjectId(userId),
+      })
+    );
+    expect(result.userId).toBe(userId);
+  });
+
+  it('rejects create with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.createVoiceTimbre({
+        name: '用户音色',
+        provider: 'minimax',
+        providerVoiceId: 'TestVoice_003',
+        audioObjectKey: 'voice-timbres/user.wav',
+        userId: 'not-an-object-id',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
+    });
+  });
+
+  it('merge-creates a timbre from multiple audio object keys', async () => {
+    const { service, queue } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+    jest.mocked(service.storageFileService.download).mockResolvedValue({
+      buffer: Buffer.from('clip-audio-bytes'),
+      fileName: 'clip-1.mp3',
+      contentType: 'audio/mpeg',
+      url: 'https://cdn.example.com/clips/clip-1.mp3',
+    });
+    service.ffmpegService = {
+      ...service.ffmpegService,
+      mergeAudios: jest.fn().mockResolvedValue({
+        buffer: Buffer.from('merged-wav-bytes'),
+        fileName: 'voice-training.wav',
+        contentType: 'audio/wav',
+      }),
+    } as any;
+    jest.mocked(service.storageService.uploadCosBuffer).mockResolvedValue({
+      provider: 'tencent-cos',
+      bucket: 'tzl-test',
+      region: 'ap-guangzhou',
+      endpoint: 'https://tzl-test.cos.ap-guangzhou.myqcloud.com',
+      objectKey: 'voice-timbre-merged/merged.wav',
+      publicUrl: 'https://cdn.example.com/voice-timbre-merged/merged.wav',
+      contentType: 'audio/wav',
+    });
+
+    const result = await service.mergeCreateVoiceTimbre({
+      userId,
+      audioObjectKeys: ['clips/clip-1.mp3', 'clips/clip-2.mp3'],
+      name: '合并音色',
+      provider: 'minimax',
+      providerVoiceId: 'TestVoice_Merged',
+    });
+
+    expect(service.storageFileService.download).toHaveBeenCalledTimes(2);
+    expect(service.ffmpegService.mergeAudios).toHaveBeenCalledWith([
+      expect.objectContaining({ buffer: Buffer.from('clip-audio-bytes') }),
+      expect.objectContaining({ buffer: Buffer.from('clip-audio-bytes') }),
+    ]);
+    expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buffer: Buffer.from('merged-wav-bytes'),
+        fileName: 'voice-training.wav',
+        contentType: 'audio/wav',
+        folder: 'voice-timbre-merged',
+      })
+    );
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: new MongoObjectId(userId),
+        audioObjectKey: 'voice-timbre-merged/merged.wav',
+        name: '合并音色',
+        provider: VoiceTimbreProvider.minimax,
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalled();
+    expect(result.userId).toBe(userId);
+  });
+
+  it('rejects merge-create when audio object keys are empty', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    await expect(
+      service.mergeCreateVoiceTimbre({
+        userId,
+        audioObjectKeys: [],
+        name: '合并音色',
+        provider: 'minimax',
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_TIMBRE_MERGED_AUDIO_REQUIRED',
+    });
+  });
+
+  it('rejects merge-create with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.mergeCreateVoiceTimbre({
+        userId: 'not-an-object-id',
+        audioObjectKeys: ['clips/clip-1.mp3'],
+        name: '合并音色',
+        provider: 'minimax',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
     });
   });
 });
