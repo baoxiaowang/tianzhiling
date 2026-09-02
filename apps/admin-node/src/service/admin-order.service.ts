@@ -794,6 +794,9 @@ export class AdminOrderService {
       }
 
       await this.refreshOrderEntity(order);
+
+      // 降级退款完成，通知主服务触发小使者提示（异步，失败不影响降级主流程）
+      this.notifyMessengerEvent(order, claimedDowngrade).catch(() => undefined);
       return;
     } catch (error) {
       const failedAt = new Date();
@@ -836,6 +839,52 @@ export class AdminOrderService {
           throw error;
         }
       }
+    }
+  }
+
+  private async notifyMessengerEvent(
+    order: OrderEntity,
+    downgrade: VoiceMembershipDowngradeSnapshot
+  ): Promise<void> {
+    const baseUrl =
+      process.env.TZL_NODE_API_URL?.trim() || 'http://tzl_node:7001';
+    const secret = process.env.INTERNAL_API_SECRET?.trim();
+    if (!secret) {
+      this.logger?.warn?.(
+        '[admin-order] messenger event skipped, INTERNAL_API_SECRET not configured'
+      );
+      return;
+    }
+    try {
+      const response = await fetch(`${baseUrl}/api/system/messenger-event`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-internal-secret': secret,
+        },
+        body: JSON.stringify({
+          eventType: 'membership_downgrade',
+          userId: String(order.userId || ''),
+          orderId: String(order.id || ''),
+          refundAmount:
+            typeof downgrade.refundAmount === 'number'
+              ? downgrade.refundAmount
+              : 0,
+        }),
+      });
+      const text = await response.text();
+      this.logger?.info?.(
+        '[admin-order] messenger event notified, orderId=%s status=%d body=%s',
+        String(order.id || ''),
+        response.status,
+        text.slice(0, 200)
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[admin-order] messenger event notify failed, orderId=%s reason=%s',
+        String(order.id || ''),
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
 

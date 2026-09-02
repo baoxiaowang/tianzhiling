@@ -1,6 +1,7 @@
 import {
   AgentEntity,
   ConversationEntity,
+  MessageEntity,
   MessageRole,
   MessengerCallStatus,
   MongoObjectId,
@@ -704,5 +705,171 @@ describe('MessengerService', () => {
 
     expect(alignManualProfileEdits).not.toHaveBeenCalled();
     expect(parent.updatedAt).toBe(updatedAt);
+  });
+
+  describe('sendEventNotice', () => {
+    function buildNoticeService() {
+      const service = new MessengerService();
+      const parent = buildAgent({
+        iCallAgent: '爸爸',
+      });
+      const messenger = buildAgent({
+        name: '妈妈的小使者',
+        messengerOfAgentId: parent.id,
+      });
+      const conversation = new ConversationEntity();
+      conversation.id = new MongoObjectId();
+      conversation.agentId = messenger.id;
+      conversation.userId = parent.createdUserId;
+
+      const agentModel = {
+        findOne: jest.fn().mockResolvedValue(messenger),
+        find: jest.fn().mockResolvedValue([parent]),
+        save: jest.fn().mockImplementation(async entity => entity),
+      };
+      const conversationModel = {
+        findOne: jest.fn().mockResolvedValue(conversation),
+        save: jest.fn(),
+      };
+      const messageModel = {
+        findOne: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(1),
+        save: jest.fn().mockImplementation(async msgs => msgs),
+      };
+      const openAIService = {
+        generateText: jest.fn().mockRejectedValue(new Error('model down')),
+      };
+      const redisService = {
+        set: jest.fn().mockResolvedValue('OK'),
+        del: jest.fn().mockResolvedValue(1),
+      };
+
+      service.agentModel = agentModel as never;
+      service.conversationModel = conversationModel as never;
+      service.messageModel = messageModel as never;
+      service.messengerCallEventModel = {
+        save: jest.fn(),
+      } as never;
+      service.agentMemoryProfileService = {
+        buildInterviewTurn: jest.fn(),
+        alignManualProfileEdits: jest.fn(),
+      } as never;
+      service.openAIService = openAIService as never;
+      service.redisService = redisService as never;
+      service.logger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+      } as never;
+
+      return {
+        service,
+        agentModel,
+        conversationModel,
+        messageModel,
+        openAIService,
+        redisService,
+        parent,
+        messenger,
+        conversation,
+      };
+    }
+
+    it('基础版购买：模型失败时回退固定模板，非首次不自我介绍，称呼替换为 relationToThem', async () => {
+      const { service, messageModel, parent } = buildNoticeService();
+
+      const result = await service.sendEventNotice({
+        eventType: 'membership_purchase',
+        userId: parent.createdUserId,
+        orderId: 'order-1',
+      });
+
+      expect(result.skippedDuplicate).toBe(false);
+      expect(result.sentConversations).toBe(1);
+      expect(messageModel.save).toHaveBeenCalledTimes(1);
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity[];
+      expect(saved.length).toBe(1);
+      expect(saved[0].content).toContain('爸爸');
+      expect(saved[0].content).not.toContain('我是');
+      expect(saved[0].traceId).toContain('event_notice:membership_purchase:order-1');
+    });
+
+    it('声音版购买：追加客服二维码图片消息', async () => {
+      const { service, messageModel, parent } = buildNoticeService();
+
+      await service.sendEventNotice({
+        eventType: 'voice_purchase',
+        userId: parent.createdUserId,
+        orderId: 'order-2',
+      });
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity[];
+      const imageMessage = saved.find(m => m.type === 'image');
+      expect(saved.length).toBeGreaterThan(1);
+      expect(imageMessage).toBeDefined();
+      expect(imageMessage?.mediaUrl).toContain('https://oss.tianzhiling.chat');
+    });
+
+    it('降级退款：fallback 含温和话术与退款说明，且不带推销/承诺', async () => {
+      const { service, messageModel, parent } = buildNoticeService();
+
+      await service.sendEventNotice({
+        eventType: 'membership_downgrade',
+        userId: parent.createdUserId,
+        orderId: 'order-3',
+        refundAmount: 3000,
+      });
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity[];
+      const joined = saved.map(m => m.content || '').join('\n');
+      expect(joined).toContain('爸爸');
+      expect(joined).toContain('调整为基础版');
+      expect(joined).toContain('AI 技术发展很快');
+      expect(joined).not.toMatch(/100%|完全一致|立即购买/);
+    });
+
+    it('模型生成成功时使用模型输出并做护栏替换', async () => {
+      const {
+        service,
+        messageModel,
+        openAIService,
+        parent,
+      } = buildNoticeService();
+      openAIService.generateText.mockResolvedValue({
+        content:
+          '["你的会员已经开通好了，以后和{{relation}}聊天不再限额度。","有需要随时找我。"]',
+        reasoning: [],
+        response: {},
+      });
+
+      await service.sendEventNotice({
+        eventType: 'membership_purchase',
+        userId: parent.createdUserId,
+        orderId: 'order-4',
+      });
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity[];
+      expect(saved.length).toBe(2);
+      expect(saved[0].content).toContain('爸爸');
+      expect(saved[0].content).not.toContain('{{');
+    });
+
+    it('幂等：redis 已占用时跳过且不写消息', async () => {
+      const {
+        service,
+        redisService,
+        messageModel,
+        parent,
+      } = buildNoticeService();
+      redisService.set.mockResolvedValue(null);
+
+      const result = await service.sendEventNotice({
+        eventType: 'membership_purchase',
+        userId: parent.createdUserId,
+        orderId: 'order-5',
+      });
+
+      expect(result.skippedDuplicate).toBe(true);
+      expect(messageModel.save).not.toHaveBeenCalled();
+    });
   });
 });

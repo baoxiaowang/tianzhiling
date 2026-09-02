@@ -1550,6 +1550,30 @@ export class OrderService {
     await this.userMembershipModel.save(membership);
     await this.grantVipEntitlements(order, membership, plan, snapshot, now);
     await this.messengerService.ensureMessengersForUser(order.userId);
+
+    const eventPlanGroup =
+      plan?.planGroup ??
+      (String(order.targetCode || snapshot.code || '').startsWith('voice_')
+        ? VipPlanGroup.voice
+        : VipPlanGroup.basic);
+    try {
+      await this.messengerService.sendEventNotice({
+        eventType:
+          eventPlanGroup === VipPlanGroup.voice
+            ? 'voice_purchase'
+            : 'membership_purchase',
+        userId: order.userId,
+        orderId: String(order.id),
+        planName: plan?.name || '',
+        planGroup: eventPlanGroup,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] messenger event notice failed but membership granted, orderId=%s reason=%s',
+        String(order.id || ''),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private async grantVipEntitlements(

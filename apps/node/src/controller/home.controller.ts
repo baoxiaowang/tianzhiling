@@ -1,6 +1,4 @@
-import { Controller, Get } from '@midwayjs/core';
-import { Inject } from '@midwayjs/core';
-import { Query } from '@midwayjs/core';
+import { Body, Controller, Get, Inject, Post, Query } from '@midwayjs/core';
 import { AdminChatStatsService } from '../service/admin-chat-stats.service';
 import {
   RelationshipOpenLoopBackfillStatus,
@@ -8,6 +6,8 @@ import {
 } from '../service/agents/relationship-open-loop.service';
 import { Context } from '@midwayjs/koa';
 import { AgentMemoryInheritanceService } from '../service/agents/agent-memory-inheritance.service';
+import { MessengerService } from '../service/agents/messenger.service';
+import { MongoObjectId } from '@tzl/entities';
 
 @Controller('/system')
 export class SystemController {
@@ -75,5 +75,51 @@ export class SystemController {
   @Get('/chat-failures')
   async chatFailures(@Query() query: { since?: string }) {
     return this.adminChatStatsService.getFailureStats(query.since);
+  }
+
+  /**
+   * 内部接口：管理端降级退款等业务事件触发小使者提示。
+   * 需携带与 .env INTERNAL_API_SECRET 一致的 x-internal-secret 请求头。
+   */
+  @Post('/messenger-event')
+  async messengerEvent(
+    @Body()
+    body: {
+      eventType?: string;
+      userId?: string;
+      orderId?: string;
+      refundAmount?: number;
+    }
+  ) {
+    const secret = this.ctx.get('x-internal-secret');
+    const expected = process.env.INTERNAL_API_SECRET;
+    if (!expected || secret !== expected) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+    const eventType = body?.eventType;
+    if (
+      eventType !== 'membership_purchase' &&
+      eventType !== 'voice_purchase' &&
+      eventType !== 'membership_downgrade'
+    ) {
+      return { ok: false, error: 'INVALID_EVENT_TYPE' };
+    }
+    if (!body?.userId || !body?.orderId) {
+      return { ok: false, error: 'MISSING_PARAMS' };
+    }
+    let userId: MongoObjectId;
+    try {
+      userId = new MongoObjectId(body.userId);
+    } catch {
+      return { ok: false, error: 'INVALID_USER_ID' };
+    }
+    const service = await this.ctx.requestContext.getAsync(MessengerService);
+    const result = await service.sendEventNotice({
+      eventType,
+      userId,
+      orderId: body.orderId,
+      refundAmount: body.refundAmount,
+    });
+    return { ok: true, result };
   }
 }

@@ -15,7 +15,11 @@ import {
   MessengerCallEventEntity,
   MessengerCallStatus,
   MongoObjectId,
+  VipPlanGroup,
 } from '@tzl/entities';
+import { buildOssMediaUrl } from '@tzl/shared';
+import { OpenAIService } from './openai';
+import { brandConfig } from '../../config/brand';
 import type {
   AgentProfileInterviewDraftDTO,
   AgentProfileMemoryField,
@@ -114,6 +118,50 @@ export interface MessengerMemoryTaskPlan {
   tasks: MessengerMemoryTaskItem[];
 }
 
+export type MessengerEventNoticeType =
+  | 'membership_purchase'
+  | 'voice_purchase'
+  | 'membership_downgrade';
+
+export interface SendEventNoticeOptions {
+  /** 事件类型 */
+  eventType: MessengerEventNoticeType;
+  /** 触发事件的用户 */
+  userId: MongoObjectId;
+  /** 关联订单（用于幂等与追溯） */
+  orderId: string;
+  /** 套餐名称（购买场景） */
+  planName?: string;
+  /** 套餐分组（购买场景，basic / voice） */
+  planGroup?: VipPlanGroup;
+  /** 退款金额，单位分（降级场景） */
+  refundAmount?: number;
+}
+
+export interface SendEventNoticeResult {
+  processed: number;
+  sentConversations: number;
+  skippedDuplicate: boolean;
+}
+
+interface EventNoticeContext {
+  eventType: MessengerEventNoticeType;
+  /** 用户对亲人的日常称呼，如"爸爸" */
+  relation: string;
+  parentName: string;
+  messengerName: string;
+  isFirstContact: boolean;
+  planName: string;
+  refundAmountYuan?: number;
+  wechatId: string;
+  wechatQrUrl: string;
+  needQr: boolean;
+}
+
+const EVENT_NOTICE_MAX_MESSAGES = 4;
+const EVENT_NOTICE_MAX_MESSAGE_LENGTH = 140;
+const EVENT_NOTICE_DEDUPE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 @Provide()
 export class MessengerService {
   @Logger()
@@ -135,7 +183,456 @@ export class MessengerService {
   agentMemoryProfileService: AgentMemoryProfileService;
 
   @Inject()
+  openAIService: OpenAIService;
+
+  @Inject()
   redisService: RedisService;
+
+  /**
+   * 业务事件触发的小使者提示（购买会员 / 购买声音版 / 降级退款）。
+   * 由大模型按场景生成真人语气消息，关键事实通过占位符由程序注入，
+   * 命中护栏或模型失败时回退固定模板。
+   */
+  async sendEventNotice(
+    options: SendEventNoticeOptions
+  ): Promise<SendEventNoticeResult> {
+    const startedAt = Date.now();
+    const dedupeKey = this.getEventNoticeDedupeKey(options);
+    const acquired = await this.acquireEventNoticeDedupe(dedupeKey);
+
+    if (!acquired) {
+      this.logger?.info?.(
+        '[messenger] event notice skipped (duplicate), eventType=%s orderId=%s',
+        options.eventType,
+        options.orderId
+      );
+      return {
+        processed: 0,
+        sentConversations: 0,
+        skippedDuplicate: true,
+      };
+    }
+
+    try {
+      const parentAgents = await this.agentModel.find({
+        where: {
+          createdUserId: options.userId,
+          messengerOfAgentId: { $exists: false },
+        },
+      });
+
+      let sentConversations = 0;
+      for (const parentAgent of parentAgents) {
+        const sent = await this.sendEventNoticeForParent(options, parentAgent);
+        if (sent) {
+          sentConversations += 1;
+        }
+      }
+
+      this.logger?.info?.(
+        '[messenger] event notice sent, eventType=%s orderId=%s processed=%d sent=%d durationMs=%d',
+        options.eventType,
+        options.orderId,
+        parentAgents.length,
+        sentConversations,
+        Date.now() - startedAt
+      );
+
+      return {
+        processed: parentAgents.length,
+        sentConversations,
+        skippedDuplicate: false,
+      };
+    } catch (error) {
+      await this.releaseEventNoticeDedupe(dedupeKey);
+      this.logger?.warn?.(
+        '[messenger] event notice failed, eventType=%s orderId=%s reason=%s',
+        options.eventType,
+        options.orderId,
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
+    }
+  }
+
+  private async sendEventNoticeForParent(
+    options: SendEventNoticeOptions,
+    parentAgent: AgentEntity
+  ): Promise<boolean> {
+    const messenger = await this.ensureMessengerForAgent(parentAgent);
+    let conversation = await this.conversationModel.findOne({
+      where: {
+        agentId: messenger.id,
+        userId: parentAgent.createdUserId,
+      },
+    });
+
+    if (!conversation) {
+      await this.ensureMessengerConversation(parentAgent, messenger);
+      conversation = await this.conversationModel.findOne({
+        where: {
+          agentId: messenger.id,
+          userId: parentAgent.createdUserId,
+        },
+      });
+    }
+
+    if (!conversation) {
+      return false;
+    }
+
+    const tracePrefix = `event_notice:${options.eventType}:${options.orderId}`;
+    const existingNotice = await this.messageModel.findOne({
+      where: {
+        conversationId: conversation.id,
+        traceId: { $regex: `^${this.escapeRegex(tracePrefix)}` },
+      },
+    });
+    if (existingNotice) {
+      return false;
+    }
+
+    const messageCount = await this.messageModel.count({
+      conversationId: conversation.id,
+    });
+    const context = this.buildEventNoticeContext(
+      options,
+      parentAgent,
+      messenger,
+      messageCount === 0
+    );
+
+    let notices: string[] | null = null;
+    try {
+      notices = await this.generateEventNotices(context);
+    } catch (error) {
+      this.logger?.warn?.(
+        '[messenger] event notice generation failed, fallback to template, eventType=%s reason=%s',
+        options.eventType,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
+    if (!notices || notices.length === 0) {
+      notices = this.buildFallbackEventNotices(context);
+    }
+
+    await this.writeEventNotices(
+      conversation,
+      messenger,
+      options,
+      context,
+      notices
+    );
+    return true;
+  }
+
+  private buildEventNoticeContext(
+    options: SendEventNoticeOptions,
+    parentAgent: AgentEntity,
+    messengerAgent: AgentEntity,
+    isFirstContact: boolean
+  ): EventNoticeContext {
+    const parentName = this.normalizeParentDisplayName(parentAgent.name);
+    const brand = brandConfig();
+    const relation =
+      this.resolveUserCallsAgent(parentAgent) || parentName || '亲人';
+
+    return {
+      eventType: options.eventType,
+      relation,
+      parentName,
+      messengerName:
+        messengerAgent.name?.trim() ||
+        this.buildMessengerName(parentAgent.name),
+      isFirstContact,
+      planName: options.planName || '',
+      refundAmountYuan:
+        options.refundAmount != null
+          ? Number((options.refundAmount / 100).toFixed(2))
+          : undefined,
+      wechatId: brand.customerService.wechatId,
+      wechatQrUrl: buildOssMediaUrl(brand.customerService.wechatQr),
+      needQr: options.eventType === 'voice_purchase',
+    };
+  }
+
+  /** 用户对亲人的日常称呼（relationToThem），如"爸爸" */
+  private resolveUserCallsAgent(agent: AgentEntity): string {
+    const explicit = agent?.iCallAgent?.trim();
+    if (explicit) {
+      return explicit;
+    }
+    const profile =
+      agent?.personaProfile?.demographics?.relationshipType?.trim?.();
+    if (profile) {
+      return profile;
+    }
+    return '';
+  }
+
+  private async generateEventNotices(
+    context: EventNoticeContext
+  ): Promise<string[] | null> {
+    const systemPrompt = this.buildEventNoticeSystemPrompt(context);
+    const result = await this.openAIService.generateText({
+      systemPrompt,
+      prompt:
+        '请按上面的要求输出一组短消息（JSON 字符串数组）。只输出 JSON 数组本身。',
+      temperature: 0.7,
+      maxTokens: 600,
+    });
+    const parsed = this.parseNoticeArray(result.content);
+    if (!parsed) {
+      return null;
+    }
+    return this.sanitizeEventNotices(parsed, context);
+  }
+
+  private buildEventNoticeSystemPrompt(context: EventNoticeContext): string {
+    const eventText =
+      context.eventType === 'membership_purchase'
+        ? '刚刚购买了基础版会员'
+        : context.eventType === 'voice_purchase'
+        ? '刚刚购买了包含声音模型的会员'
+        : '声音版会员被调整为普通基础版，并已原路退款';
+    const selfIntro = context.isFirstContact
+      ? '这是小使者第一次联系用户，第一条消息必须先自我介绍："我是{{relation}}的小使者"。'
+      : '小使者之前已经联系过用户，不要再自我介绍，直接说正事。';
+
+    const facts: string[] = ['用户对亲人的日常称呼：{{relation}}'];
+    if (context.eventType !== 'membership_downgrade') {
+      facts.push('会员套餐名称：{{planName}}');
+    }
+    if (context.eventType === 'membership_downgrade') {
+      facts.push('退款金额：{{refundAmount}}元（原路退回）');
+    }
+    if (context.needQr) {
+      facts.push(
+        '客服微信号：{{wechatId}}；客服微信二维码会随消息单独发送一张图片，文字里只需引导用户添加客服微信。'
+      );
+    }
+
+    const sceneRequirement =
+      context.eventType === 'membership_purchase'
+        ? '告诉用户会员已开通、和亲人聊天不再限额度、想聊多久都行，并欢迎随时找小使者。'
+        : context.eventType === 'voice_purchase'
+        ? '必须说明：声音模型服务是人工做的；后台无法直接联系用户；需要用户主动添加客服微信并把亲人的声音素材发过来，人工客服会一步步帮忙弄好。语气要感谢用户的信任。'
+        : '语气温和：告知已调整为基础版、退款会原路退回；如果声音服务未达预期要表达歉意；结尾给一个温暖的期待——AI 技术发展很快，不久的将来还有机会再听到亲人的声音。';
+
+    return [
+      `你是${context.relation}的小使者，是${
+        brandConfig().name
+      }里的一个温暖、可信、说话自然的真人客服。用户刚刚触发了一个业务事件：${eventText}。`,
+      '',
+      `现在你需要给用户发一组短消息（1-${EVENT_NOTICE_MAX_MESSAGES}条），一次性全部发出，不要等用户回复。`,
+      '',
+      '【必须传达的事实】涉及这些信息时，只能使用给定占位符，禁止自行改写、补充或编造：',
+      ...facts.map(fact => `- ${fact}`),
+      '',
+      `【场景要求】${sceneRequirement}`,
+      '',
+      `【自我介绍】${selfIntro}`,
+      '',
+      '【风格】真人客服语气，口语自然，有温度；短句，每条消息独立成句；不要"会员已生效"这类官方通知腔。',
+      '【禁止】不得模拟或模仿亲人说话；不得自称"平台""官方"；不得承诺声音能100%还原或完全一致；不得编造价格、时效、套餐；不得推销其他套餐或引导续费。',
+      '',
+      '【输出】只输出一个 JSON 字符串数组，例如：["第一条","第二条"]。不要输出任何其他文字。',
+    ].join('\n');
+  }
+
+  private parseNoticeArray(content: string): string[] | null {
+    if (!content?.trim()) {
+      return null;
+    }
+    const text = content.trim();
+    const stripped = text
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/```\s*$/, '')
+      .trim();
+    try {
+      const parsed = JSON.parse(stripped);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      return null;
+    } catch {
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(match[0]);
+        return Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  private sanitizeEventNotices(
+    notices: string[],
+    context: EventNoticeContext
+  ): string[] | null {
+    const cleaned: string[] = [];
+    for (const raw of notices) {
+      if (typeof raw !== 'string') {
+        continue;
+      }
+      let text = raw.trim();
+      if (!text) {
+        continue;
+      }
+      if (text.length > EVENT_NOTICE_MAX_MESSAGE_LENGTH) {
+        text = text.slice(0, EVENT_NOTICE_MAX_MESSAGE_LENGTH);
+      }
+      if (this.matchesNoticeBlacklist(text)) {
+        return null;
+      }
+      text = text.replace(/\{\{relation\}\}/g, context.relation);
+      text = text.replace(/\{\{planName\}\}/g, context.planName || '会员');
+      if (context.refundAmountYuan != null) {
+        text = text.replace(
+          /\{\{refundAmount\}\}/g,
+          String(context.refundAmountYuan)
+        );
+      }
+      text = text.replace(/\{\{wechatId\}\}/g, context.wechatId || '客服微信');
+      if (/\{\{/.test(text)) {
+        return null;
+      }
+      cleaned.push(text);
+      if (cleaned.length >= EVENT_NOTICE_MAX_MESSAGES) {
+        break;
+      }
+    }
+    return cleaned.length ? cleaned : null;
+  }
+
+  private matchesNoticeBlacklist(text: string): boolean {
+    if (/100%|百分之百|完全一致|一模一样|完全还原|绝对像|保真/.test(text)) {
+      return true;
+    }
+    if (/(我是平台|官方平台|代表平台|本平台)/.test(text)) {
+      return true;
+    }
+    if (
+      /立即购买|马上购买|现在购买|限时优惠|优惠价|续费请|快去购买/.test(text)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private buildFallbackEventNotices(context: EventNoticeContext): string[] {
+    const selfIntro = context.isFirstContact
+      ? `你好，我是${context.relation}的小使者～`
+      : '';
+
+    if (context.eventType === 'membership_purchase') {
+      return [
+        `${selfIntro}你的会员已经开通好了，以后和${context.relation}聊天不再限额度，想聊多久都行。有什么需要随时找我。`,
+      ];
+    }
+
+    if (context.eventType === 'voice_purchase') {
+      return [
+        `${selfIntro}看到你开通了声音版，先跟你说声谢谢。`,
+        '跟你说明一下：声音模型这块是人工做的，我们后台没法直接联系你。',
+        `所以需要你主动加一下客服微信，把${context.relation}的声音素材发过来，人工客服会一步步帮你弄好。`,
+      ];
+    }
+
+    return [
+      `${selfIntro}你的声音版会员已经调整为基础版，差价会原路退回，留意查收。`,
+      `如果这次声音服务没能达到你的预期，我们很抱歉。不过现在 AI 技术发展很快，相信不久的将来，还有机会再听到${context.relation}的声音。`,
+    ];
+  }
+
+  private async writeEventNotices(
+    conversation: ConversationEntity,
+    messengerAgent: AgentEntity,
+    options: SendEventNoticeOptions,
+    context: EventNoticeContext,
+    notices: string[]
+  ): Promise<void> {
+    const now = new Date();
+    const messages: MessageEntity[] = notices.map((content, index) => {
+      const message = new MessageEntity();
+      message.conversationId = conversation.id;
+      message.userId = conversation.userId;
+      message.agentId = messengerAgent.id;
+      message.role = MessageRole.assistant;
+      message.type = MessageType.text;
+      message.content = content;
+      message.status = MessageStatus.sent;
+      message.traceId = `event_notice:${options.eventType}:${options.orderId}:${index}`;
+      message.createdAt = new Date(now.getTime() + index);
+      message.updatedAt = message.createdAt;
+      return message;
+    });
+
+    if (context.needQr && context.wechatQrUrl) {
+      const qrMessage = new MessageEntity();
+      qrMessage.conversationId = conversation.id;
+      qrMessage.userId = conversation.userId;
+      qrMessage.agentId = messengerAgent.id;
+      qrMessage.role = MessageRole.assistant;
+      qrMessage.type = MessageType.image;
+      qrMessage.content = context.wechatId
+        ? `客服微信：${context.wechatId}`
+        : '客服微信二维码';
+      qrMessage.mediaUrl = context.wechatQrUrl;
+      qrMessage.mediaMimeType = 'image/png';
+      qrMessage.status = MessageStatus.sent;
+      qrMessage.traceId = `event_notice:${options.eventType}:${options.orderId}:qr`;
+      qrMessage.createdAt = new Date(now.getTime() + notices.length);
+      qrMessage.updatedAt = qrMessage.createdAt;
+      messages.push(qrMessage);
+    }
+
+    if (messages.length) {
+      await this.messageModel.save(messages);
+    }
+  }
+
+  private getEventNoticeDedupeKey(options: SendEventNoticeOptions): string {
+    return `messenger:event:sent:${options.eventType}:${options.orderId}`;
+  }
+
+  private async acquireEventNoticeDedupe(key: string): Promise<boolean> {
+    try {
+      const result = await this.redisService?.set(
+        key,
+        String(Date.now()),
+        'PX',
+        EVENT_NOTICE_DEDUPE_TTL_MS,
+        'NX'
+      );
+      return result === undefined || result === 'OK';
+    } catch (error) {
+      this.logger?.warn?.(
+        '[messenger] event notice dedupe unavailable, key=%s reason=%s',
+        key,
+        error instanceof Error ? error.message : String(error)
+      );
+      return true;
+    }
+  }
+
+  private async releaseEventNoticeDedupe(key: string): Promise<void> {
+    try {
+      if (this.redisService) {
+        await this.redisService.del(key);
+      }
+    } catch {
+      // 幂等键释放失败不影响主流程
+    }
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 
   buildMessengerName(agentName?: string): string {
     const name = this.normalizeParentDisplayName(agentName);
