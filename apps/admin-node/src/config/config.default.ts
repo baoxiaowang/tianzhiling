@@ -36,6 +36,7 @@ import {
   VoicePackageEntity,
   VoiceServiceSessionEntity,
   VoiceTimbreEntity,
+  VoiceTimbreMaterialEntity,
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
 
@@ -650,6 +651,7 @@ export default {
           VoicePackageEntity,
           VoiceServiceSessionEntity,
           VoiceTimbreEntity,
+          VoiceTimbreMaterialEntity,
           VoiceTrainingTaskEntity,
         ],
       },

@@ -171,7 +171,7 @@
               type="text"
               size="small"
               status="danger"
-              @click="removeClip(clip.objectKey)"
+              @click="removeClip(clip)"
             >
               移除
             </a-button>
@@ -194,45 +194,93 @@
       <div v-show="step === 1" class="voice-model-panel__step">
         <div class="voice-model-panel__step-head">
           <a-typography-text>
-            从已上传的 {{ uploadedClips.length }} 段素材中勾选要用于训练的片段
+            已剪出 {{ voiceClips.length }} 段片段，勾选用于训练的片段
           </a-typography-text>
           <a-checkbox
-            :model-value="allSelected"
-            :indeterminate="someSelected"
-            @change="onToggleAll"
+            :model-value="allVoiceClipsSelected"
+            :indeterminate="someVoiceClipsSelected"
+            @change="onToggleAllVoiceClips"
           >
             全选
           </a-checkbox>
         </div>
 
-        <div class="voice-model-panel__clips">
+        <div v-if="clipping" class="voice-model-panel__clipping">
+          <a-spin />
+          <a-typography-text type="secondary">
+            正在分析并剪辑音频片段…
+          </a-typography-text>
+        </div>
+        <a-alert
+          v-else-if="clipError"
+          type="error"
+          :title="clipError"
+          class="voice-model-panel__clip-alert"
+        />
+
+        <div v-if="voiceClips.length" class="voice-model-panel__clips">
           <div
-            v-for="clip in uploadedClips"
+            v-for="clip in voiceClips"
             :key="clip.objectKey"
             class="voice-model-panel__clip"
             :class="{ 'voice-model-panel__clip--checked': clip.selected }"
           >
-            <a-checkbox v-model="clip.selected">{{ clip.name }}</a-checkbox>
+            <a-checkbox
+              :model-value="clip.selected"
+              @change="onToggleClip(clip, $event)"
+            >
+              {{ clip.sourceName || '片段' }} ·
+              {{ formatClipDuration(clip.durationSeconds) }}
+            </a-checkbox>
             <audio
               :src="clip.publicUrl"
               controls
               preload="none"
               class="voice-model-panel__clip-audio"
             />
-            <a-button
-              type="text"
-              size="small"
-              status="danger"
-              @click="removeClip(clip.objectKey)"
+            <a-tag v-if="clip.qualityLabel" size="small" color="arcoblue">
+              {{ clip.qualityLabel }}
+            </a-tag>
+            <div
+              v-if="clip.qualityIssues?.length"
+              class="voice-model-panel__clip-issues"
             >
-              移除
-            </a-button>
+              <a-typography-text
+                v-for="issue in clip.qualityIssues"
+                :key="issue.code"
+                type="warning"
+                class="voice-model-panel__clip-issue"
+              >
+                {{ getVoiceClipIssueDisplayText(issue) }}
+              </a-typography-text>
+            </div>
+          </div>
+          <a-button size="small" :loading="clipping" @click="startClipping">
+            重新剪辑
+          </a-button>
+        </div>
+        <a-empty
+          v-else-if="!clipping && !clipError"
+          description="暂无剪辑片段，请先在上一步上传素材"
+        />
+
+        <div
+          v-if="voiceClips.length"
+          class="voice-model-panel__selection-guide"
+        >
+          <div class="voice-model-panel__selection-guide-row">
+            <a-typography-text>
+              已选 {{ selectedVoiceClips.length }} 段 ·
+              {{ acceptedClipDurationText }}，建议不超过 1 分钟
+            </a-typography-text>
+            <a-progress
+              :percent="acceptedClipProgressPercent"
+              :show-text="false"
+              size="small"
+              class="voice-model-panel__selection-guide-bar"
+            />
           </div>
         </div>
-
-        <a-typography-text type="secondary">
-          已选 {{ selectedClips.length }} 段，提交后服务端会合并为一个训练音频
-        </a-typography-text>
       </div>
 
       <!-- Step 3 填写训练信息 -->
@@ -424,7 +472,7 @@
             {{ providerLabel(form.provider) }}
           </a-descriptions-item>
           <a-descriptions-item label="训练片段">
-            {{ selectedClips.length }} 段
+            {{ selectedVoiceClips.length }} 段
           </a-descriptions-item>
           <a-descriptions-item label="方言">
             {{ dialectLabel }}
@@ -498,6 +546,10 @@
     queryVoiceTimbreList,
     retryVoiceTimbre,
     deleteVoiceTimbre,
+    createVoiceMaterial,
+    queryVoiceMaterials,
+    deleteVoiceMaterial,
+    clipVoiceMaterials,
     VoiceTimbreRecord,
   } from '@/api/voice-model';
   import { VoiceTimbreProviderDTO, VoiceTimbreStatusDTO } from '@tzl/shared';
@@ -556,9 +608,28 @@
   ] as const;
 
   interface UploadedClip {
+    /** 已保存到后端的素材记录 id，未持久化时为空 */
+    id?: string;
     name: string;
     objectKey: string;
     publicUrl: string;
+    selected: boolean;
+  }
+
+  interface VoiceClip {
+    sourceMaterialId: string;
+    sourceName: string;
+    objectKey: string;
+    publicUrl: string;
+    durationSeconds: number;
+    transcript?: string;
+    qualityScore?: number;
+    qualityLabel?: string;
+    qualityIssues?: {
+      code: string;
+      severity: 'warning' | 'rejected';
+      message?: string;
+    }[];
     selected: boolean;
   }
 
@@ -592,7 +663,88 @@
   const trainFormRef = ref();
   const fileInputRef = ref<HTMLInputElement>();
   const uploadedClips = ref<UploadedClip[]>([]);
+  /** 剪辑出的训练片段（底层声音剪辑工作流产出） */
+  const voiceClips = ref<VoiceClip[]>([]);
+  const clipping = ref(false);
+  const clipError = ref('');
+  /** 已剪辑的素材指纹（objectKey 组合），素材变化后需重新剪辑 */
+  const clippedMaterialFingerprint = ref('');
+
+  const materialFingerprint = () =>
+    uploadedClips.value.map((clip) => clip.objectKey).join('|');
+
+  const selectedVoiceClips = computed(() =>
+    voiceClips.value.filter((clip) => clip.selected)
+  );
   const retryingId = ref('');
+
+  /** 复用 C 端小程序「选择训练片段」的时长汇总与上限校验逻辑 */
+  const VOICE_SERVICE_MAX_TRAINING_SECONDS = 60;
+  const CLIP_SEPARATOR_SECONDS = 0.2;
+
+  const getClipDurationSeconds = (clip: VoiceClip) => {
+    const seconds = Number(clip.durationSeconds);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 12;
+  };
+
+  const acceptedClipDurationSeconds = computed(() => {
+    const contentSeconds = selectedVoiceClips.value.reduce(
+      (total, clip) => total + getClipDurationSeconds(clip),
+      0
+    );
+    return (
+      contentSeconds +
+      Math.max(0, selectedVoiceClips.value.length - 1) * CLIP_SEPARATOR_SECONDS
+    );
+  });
+
+  const acceptedClipDurationText = computed(() => {
+    const seconds = acceptedClipDurationSeconds.value;
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  });
+
+  const acceptedClipProgressPercent = computed(() =>
+    Math.min(
+      100,
+      Math.round(
+        (acceptedClipDurationSeconds.value /
+          VOICE_SERVICE_MAX_TRAINING_SECONDS) *
+          100
+      )
+    )
+  );
+
+  const wouldExceedSelectionLimit = (target: VoiceClip) => {
+    if (target.selected) {
+      return false;
+    }
+    const projectedSeconds =
+      acceptedClipDurationSeconds.value +
+      (selectedVoiceClips.value.length ? CLIP_SEPARATOR_SECONDS : 0) +
+      getClipDurationSeconds(target);
+    return projectedSeconds > VOICE_SERVICE_MAX_TRAINING_SECONDS;
+  };
+
+  /** 片段质量提示文案（与 C 端小程序保持一致） */
+  const getVoiceClipIssueDisplayText = (issue: {
+    code: string;
+    message?: string;
+  }) => {
+    const messages: Record<string, string> = {
+      too_short: '片段太短，有效声音不足',
+      mostly_silent: '停顿太多，有效声音不足',
+      severe_clipping: '爆音失真较严重',
+      volume_unrecoverable: '音量过低，调高后仍可能听不清',
+      background_noise_severe: '背景噪声盖过人声',
+      silence_high: '停顿较多，请重点试听',
+      clipping_detected: '有少量爆音，请重点试听',
+      volume_adjusted: '原音量偏低，已自动调高',
+      background_noise_high: '背景噪声偏多，请重点试听',
+    };
+    return messages[issue.code] ?? issue.message;
+  };
 
   const form = reactive<{
     name: string;
@@ -640,27 +792,13 @@
     return found?.label || form.speechDialect || '自动';
   });
 
-  const selectedClips = computed(() =>
-    uploadedClips.value.filter((clip) => clip.selected)
-  );
-
-  const allSelected = computed(
-    () =>
-      uploadedClips.value.length > 0 &&
-      uploadedClips.value.every((clip) => clip.selected)
-  );
-
-  const someSelected = computed(
-    () => selectedClips.value.length > 0 && !allSelected.value
-  );
-
   // 各步骤「下一步」是否可用
   const canGoNext = computed(() => {
     if (step.value === 0) {
       return uploadedClips.value.length > 0;
     }
     if (step.value === 1) {
-      return selectedClips.value.length > 0;
+      return selectedVoiceClips.value.length > 0;
     }
     if (step.value === 2) {
       return (
@@ -672,11 +810,58 @@
     return true;
   });
 
-  const onToggleAll = (checked: boolean | (string | number | boolean)[]) => {
+  const allVoiceClipsSelected = computed(
+    () =>
+      voiceClips.value.length > 0 &&
+      voiceClips.value.every((clip) => clip.selected)
+  );
+
+  const someVoiceClipsSelected = computed(
+    () => selectedVoiceClips.value.length > 0 && !allVoiceClipsSelected.value
+  );
+
+  const onToggleAllVoiceClips = (
+    checked: boolean | (string | number | boolean)[]
+  ) => {
     const next = Boolean(checked);
-    uploadedClips.value.forEach((clip) => {
+    // 全选时若超过训练片段上限，提示但不强阻（运营可自行决定）
+    if (
+      next &&
+      selectedVoiceClips.value.length < voiceClips.value.length &&
+      voiceClips.value.reduce((t, c) => t + getClipDurationSeconds(c), 0) +
+        Math.max(0, voiceClips.value.length - 1) * CLIP_SEPARATOR_SECONDS >
+        VOICE_SERVICE_MAX_TRAINING_SECONDS
+    ) {
+      Message.warning(
+        `全部片段合计超过 ${VOICE_SERVICE_MAX_TRAINING_SECONDS}s 建议上限，请留意`
+      );
+    }
+    voiceClips.value.forEach((clip) => {
       clip.selected = next;
     });
+  };
+
+  const onToggleClip = (
+    clip: VoiceClip,
+    checked: boolean | (string | number | boolean)[]
+  ) => {
+    const next = Boolean(checked);
+    if (next && wouldExceedSelectionLimit(clip)) {
+      Message.warning(
+        `该片段会让训练总时长超过 ${VOICE_SERVICE_MAX_TRAINING_SECONDS}s 建议上限，请先取消部分片段`
+      );
+      return;
+    }
+    clip.selected = next;
+  };
+
+  const formatClipDuration = (seconds?: number) => {
+    if (!seconds || seconds < 0) {
+      return '0:00';
+    }
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
   };
 
   const fetchList = async () => {
@@ -709,6 +894,12 @@
   };
 
   const goNext = async () => {
+    // Step 0 → 1 时若素材有增删，触发重新剪辑
+    if (step.value === 0 && uploadedClips.value.length) {
+      if (clippedMaterialFingerprint.value !== materialFingerprint()) {
+        startClipping();
+      }
+    }
     // Step 2 → 3 时先校验表单字段
     if (step.value === 2) {
       const errors = await trainFormRef.value?.validate();
@@ -722,6 +913,45 @@
   const onProviderChange = () => {
     form.speechDialect = 'auto';
     form.providerVoiceId = '';
+  };
+
+  /** 触发底层声音剪辑工作流，把已上传素材剪成训练片段 */
+  const startClipping = async () => {
+    if (!props.userId || !uploadedClips.value.length) {
+      return;
+    }
+    const fingerprint = materialFingerprint();
+    if (clippedMaterialFingerprint.value === fingerprint) {
+      return;
+    }
+    try {
+      clipping.value = true;
+      clipError.value = '';
+      const { data } = await clipVoiceMaterials({
+        userId: props.userId,
+        materials: uploadedClips.value.map((clip) => ({
+          id: clip.id,
+          name: clip.name,
+          objectKey: clip.objectKey,
+          publicUrl: clip.publicUrl,
+        })),
+      });
+      const clips = (data?.clips ?? []).map((clip) => ({
+        ...clip,
+        selected: true,
+      }));
+      voiceClips.value = clips;
+      clippedMaterialFingerprint.value = fingerprint;
+      if (!clips.length) {
+        clipError.value = '未剪出可用片段，请检查素材后重试';
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.message;
+      clipError.value = message || '片段剪辑失败，请稍后重试';
+      voiceClips.value = [];
+    } finally {
+      clipping.value = false;
+    }
   };
 
   const onFilesChange = async (event: Event) => {
@@ -738,7 +968,23 @@
           const uploaded = await uploadAdminFile(file, {
             folder: 'voice-timbres',
           });
+          // 上传成功后持久化到服务端，刷新/离开后仍可恢复
+          let savedId = '';
+          if (props.userId) {
+            try {
+              const record = await createVoiceMaterial({
+                userId: props.userId,
+                name: file.name,
+                objectKey: uploaded.objectKey,
+                publicUrl: uploaded.publicUrl,
+              });
+              savedId = record.data.id;
+            } catch (error) {
+              // 记录保存失败不阻断上传，本次会话内仍可用
+            }
+          }
           return {
+            id: savedId,
             name: file.name,
             objectKey: uploaded.objectKey,
             publicUrl: uploaded.publicUrl,
@@ -747,6 +993,8 @@
         })
       );
       uploadedClips.value.push(...results);
+      // 上传素材与选择训练片段是两个独立环节：上传完成后停留在第一步，
+      // 手动进入「选择训练片段」步骤时才触发底层 AI 剪辑
       Message.success(`已上传 ${results.length} 段音频`);
     } catch (error) {
       Message.error('音频上传失败');
@@ -758,10 +1006,51 @@
     }
   };
 
-  const removeClip = (objectKey: string) => {
+  /** 加载该用户已保存的声音素材，恢复到勾选列表 */
+  const fetchSavedMaterials = async () => {
+    if (!props.userId) {
+      return;
+    }
+    try {
+      const { data } = await queryVoiceMaterials(props.userId);
+      const existingKeys = new Set(
+        uploadedClips.value.map((clip) => clip.objectKey)
+      );
+      const saved = data
+        .filter((material) => !existingKeys.has(material.objectKey))
+        .map((material) => ({
+          id: material.id,
+          name: material.name,
+          objectKey: material.objectKey,
+          publicUrl: material.publicUrl,
+          selected: true,
+        }));
+      if (saved.length) {
+        uploadedClips.value.push(...saved);
+      }
+    } catch (error) {
+      // 素材加载失败不阻塞面板
+    }
+  };
+
+  const removeClip = async (clip: UploadedClip) => {
+    if (clip.id) {
+      try {
+        await deleteVoiceMaterial(clip.id);
+      } catch (error: any) {
+        const message = error?.response?.data?.message;
+        Message.error(message || '删除素材记录失败');
+        return;
+      }
+    }
     uploadedClips.value = uploadedClips.value.filter(
-      (clip) => clip.objectKey !== objectKey
+      (item) => item.objectKey !== clip.objectKey
     );
+    // 素材变化后，已剪辑片段失效，等待重新剪辑
+    if (clippedMaterialFingerprint.value !== materialFingerprint()) {
+      voiceClips.value = [];
+      clippedMaterialFingerprint.value = '';
+    }
   };
 
   const submitTrain = async () => {
@@ -770,8 +1059,8 @@
       return;
     }
 
-    if (!selectedClips.value.length) {
-      Message.error('请至少选择一段用于训练的音频');
+    if (!selectedVoiceClips.value.length) {
+      Message.error('请至少选择一段用于训练的片段');
       step.value = 1;
       return;
     }
@@ -780,7 +1069,7 @@
       saving.value = true;
       const { data } = await mergeCreateVoiceTimbre({
         userId: props.userId,
-        audioObjectKeys: selectedClips.value.map((clip) => clip.objectKey),
+        audioObjectKeys: selectedVoiceClips.value.map((clip) => clip.objectKey),
         name: form.name,
         provider: form.provider,
         cloneLanguage: 'zh',
@@ -812,6 +1101,10 @@
   const resetWizard = () => {
     step.value = 0;
     submittedId.value = '';
+    voiceClips.value = [];
+    clipping.value = false;
+    clipError.value = '';
+    clippedMaterialFingerprint.value = '';
     form.name = '';
     form.provider = 'qwen';
     form.providerVoiceId = '';
@@ -900,6 +1193,7 @@
 
   if (props.userId) {
     fetchList();
+    fetchSavedMaterials();
   }
 </script>
 

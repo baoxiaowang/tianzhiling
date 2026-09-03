@@ -42,6 +42,7 @@ export enum TableName {
   voice_service_session = "voice_service_session",
   voice_training_task = "voice_training_task",
   voice_timbre = "voice_timbre",
+  voice_timbre_material = "voice_timbre_material",
   quota_trigger_event = "quota_trigger_event",
 }
 
