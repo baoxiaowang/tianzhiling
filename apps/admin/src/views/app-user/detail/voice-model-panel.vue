@@ -993,8 +993,10 @@
         })
       );
       uploadedClips.value.push(...results);
-      // 上传素材与选择训练片段是两个独立环节：上传完成后停留在第一步，
-      // 手动进入「选择训练片段」步骤时才触发底层 AI 剪辑
+      // 上传素材（第一步）与选择训练片段（第二步）是两个独立步骤页；
+      // 上传完成后自动进入第二步并触发底层 AI 剪辑，剪出的片段在此展示勾选
+      step.value = 1;
+      await startClipping();
       Message.success(`已上传 ${results.length} 段音频`);
     } catch (error) {
       Message.error('音频上传失败');
