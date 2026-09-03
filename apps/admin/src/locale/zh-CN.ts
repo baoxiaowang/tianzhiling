@@ -19,6 +19,8 @@ export default {
   'menu.user': '个人中心',
   'menu.appUser': '用户与关系',
   'menu.appUser.list': '用户列表',
+  'menu.appUser.members': '会员',
+  'menu.appUser.voiceServices': '声音服务',
   'menu.appUser.detail': '用户详情',
   'menu.agent': '智能体管理',
   'menu.agent.list': '智能体列表',

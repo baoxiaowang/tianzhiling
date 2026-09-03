@@ -289,6 +289,43 @@ describe('AdminAgentService', () => {
     expect(result.voiceTimbreId).toBe(voiceTimbreId.toHexString());
   });
 
+  it('clears the current and pending voice timbre when unbinding agent', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const agent: any = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      avatar: '',
+      sex: AgentSex.woman,
+      agentCallMe: '主人',
+      iCallAgent: '小灵',
+      description: '',
+      status: 1,
+      voiceTimbreId: new MongoObjectId(),
+      pendingVoiceTimbreId: new MongoObjectId(),
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest.mocked(service.agentModel.save).mockResolvedValue(agent as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.updateAgent(agentId.toHexString(), {
+      voiceTimbreId: '',
+    });
+
+    expect(agent.voiceTimbreId).toBeNull();
+    expect(agent.pendingVoiceTimbreId).toBeNull();
+    expect(service.agentModel.save).toHaveBeenCalledWith(agent);
+    expect(result.voiceTimbreId).toBe('');
+  });
+
   it('lists agent conversations with latest message and user summary', async () => {
     const service = createService();
     const agentId = new MongoObjectId();

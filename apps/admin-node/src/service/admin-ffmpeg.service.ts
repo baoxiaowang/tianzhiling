@@ -103,6 +103,7 @@ export class AdminFfmpegService {
 
   async adjustSpeechOutput(input: {
     buffer: Buffer;
+    speechSpeed?: number;
     speechVolume?: number;
     speechPitch?: number;
   }): Promise<ExtractedAudioFile> {
@@ -110,6 +111,7 @@ export class AdminFfmpegService {
       throw new AppError('FFMPEG_INVALID_INPUT', 'audio is required', 400);
     }
 
+    const speechSpeed = this.numberInRange(input.speechSpeed, 1, 0.5, 2);
     const speechVolume = this.numberInRange(input.speechVolume, 1, 0.25, 2);
     const speechPitch = this.numberInRange(input.speechPitch, 0, -12, 12);
     const chunks: Buffer[] = [];
@@ -123,7 +125,7 @@ export class AdminFfmpegService {
       '-vn',
       '-af',
       buildSpeechOutputFfmpegFilter({
-        speechSpeed: 1,
+        speechSpeed,
         speechVolume,
         speechPitch,
       }),
@@ -196,7 +198,11 @@ export class AdminFfmpegService {
     clips: Array<{ buffer: Buffer; fileName: string }>
   ): Promise<ExtractedAudioFile> {
     if (!clips.length) {
-      throw new AppError('FFMPEG_INVALID_INPUT', 'audio clips are required', 400);
+      throw new AppError(
+        'FFMPEG_INVALID_INPUT',
+        'audio clips are required',
+        400
+      );
     }
 
     for (const clip of clips) {

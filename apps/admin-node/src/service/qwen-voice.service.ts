@@ -14,6 +14,7 @@ interface QwenVoiceConfig {
   enabled?: boolean;
   apiKey?: string;
   baseURL?: string;
+  audioBaseURL?: string;
   defaultPreviewModel?: string;
   defaultLanguage?: string;
   timeoutMs?: number;
@@ -154,6 +155,7 @@ export class QwenVoiceService {
       path: '/api/v1/services/audio/tts/customization',
       method: 'POST',
       body: Buffer.from(JSON.stringify(payload)),
+      model: targetModel,
     });
     const voice = (
       response?.output?.voice_id || response?.output?.voice
@@ -253,6 +255,7 @@ export class QwenVoiceService {
         : '/api/v1/services/aigc/multimodal-generation/generation',
       method: 'POST',
       body,
+      model,
     });
     const audio = response?.output?.audio;
     const audioUrl = audio?.url?.trim() || '';
@@ -333,6 +336,7 @@ export class QwenVoiceService {
       path: '/api/v1/services/audio/tts/customization',
       method: 'POST',
       body: Buffer.from(JSON.stringify(payload)),
+      model,
     });
 
     this.logger?.info?.(
@@ -356,6 +360,11 @@ export class QwenVoiceService {
         500
       );
     }
+  }
+
+  assertModelConfigured(model: string): void {
+    this.ensureEnabled();
+    this.resolveBaseURL(model);
   }
 
   private normalizePreferredName(value: string, qwenAudio = false): string {
@@ -517,8 +526,9 @@ export class QwenVoiceService {
     path: string;
     method: 'POST';
     body: Buffer;
+    model?: string;
   }): Promise<T> {
-    const baseURL = this.normalizeBaseURL();
+    const baseURL = this.resolveBaseURL(input.model);
     const url = new URL(input.path, baseURL);
     const requester = url.protocol === 'http:' ? httpRequest : httpsRequest;
 
@@ -686,10 +696,21 @@ export class QwenVoiceService {
     });
   }
 
-  private normalizeBaseURL(): string {
-    const raw =
+  private resolveBaseURL(model?: string): string {
+    const standardBaseURL =
       this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
-    return raw.replace(/\/+$/, '');
+    if (!this.isQwenAudioModel(model)) {
+      return standardBaseURL.replace(/\/+$/, '');
+    }
+
+    const audioBaseURL = this.config?.audioBaseURL?.trim();
+    const compatibleLegacyBaseURL = /\.maas\.aliyuncs\.com/i.test(
+      standardBaseURL
+    )
+      ? standardBaseURL
+      : '';
+    const resolved = audioBaseURL || compatibleLegacyBaseURL || standardBaseURL;
+    return resolved.replace(/\/+$/, '');
   }
 
   private describeUrl(value: string): string {

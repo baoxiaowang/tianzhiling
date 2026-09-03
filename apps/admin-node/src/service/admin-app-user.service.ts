@@ -9,6 +9,8 @@ import type {
 import {
   AgentEntity,
   MongoObjectId,
+  OrderEntity,
+  OrderStatus,
   UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
@@ -17,7 +19,9 @@ import {
 import { MongoRepository } from 'typeorm';
 import {
   ListAdminAppUserAgentsQueryDTO,
+  ListAdminAppUserMembersQueryDTO,
   ListAdminAppUsersQueryDTO,
+  ListAdminAppUserVoiceServicesQueryDTO,
   UpdateAdminAppUserDTO,
 } from '../dto/admin-app-user.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
@@ -43,6 +47,20 @@ export interface AdminAppUserListResult {
   pageSize: number;
 }
 
+export type AdminAppUserMembershipType = 'one_year' | 'three_year' | 'lifetime';
+
+export interface AdminAppUserMemberItem extends AdminAppUserItem {
+  membershipType: AdminAppUserMembershipType;
+  membershipStartedAt: string;
+  membershipExpiredAt: string;
+}
+
+export interface AdminAppUserVoiceServiceItem extends AdminAppUserItem {
+  serviceStatus: 'pending' | 'servicing' | 'refunded';
+  purchasedAmounts: number[];
+  latestPurchasedAt: string;
+}
+
 export type AdminAppUserAgentItem = AdminAgentRecordDTO;
 export type AdminAppUserAgentListResult = AdminAgentListDTO;
 
@@ -61,6 +79,9 @@ export class AdminAppUserService {
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(OrderEntity)
+  orderModel: MongoRepository<OrderEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -108,6 +129,168 @@ export class AdminAppUserService {
     const account = await this.findAccountByUserId(user.id);
 
     return this.buildUserItem(user, account, await this.isUserVip(user.id));
+  }
+
+  async listMembers(query: ListAdminAppUserMembersQueryDTO) {
+    const now = new Date();
+    const memberships = await this.userMembershipModel.find({
+      where: { status: UserMembershipStatus.active },
+      order: { updatedAt: 'DESC' },
+    });
+    const membershipByUserId = new Map<
+      string,
+      { membership: UserMembershipEntity; type: AdminAppUserMembershipType }
+    >();
+
+    for (const membership of memberships) {
+      if (
+        !membership.lifetime &&
+        (!membership.expiredAt || membership.expiredAt <= now)
+      ) {
+        continue;
+      }
+      const userId = this.stringifyObjectId(membership.userId);
+      if (membershipByUserId.has(userId)) continue;
+      const type = this.classifyMembership(membership);
+      if (query.membershipType && query.membershipType !== type) continue;
+      membershipByUserId.set(userId, { membership, type });
+    }
+
+    const result = await this.listUsersByIds(
+      [...membershipByUserId.keys()],
+      query
+    );
+    return {
+      ...result,
+      items: result.items.map(user => {
+        const detail = membershipByUserId.get(user.id)!;
+        return {
+          ...user,
+          membershipType: detail.type,
+          membershipStartedAt: this.formatDate(detail.membership.startedAt),
+          membershipExpiredAt: detail.membership.lifetime
+            ? ''
+            : this.formatDate(detail.membership.expiredAt),
+        } as AdminAppUserMemberItem;
+      }),
+    };
+  }
+
+  async listVoiceServiceUsers(query: ListAdminAppUserVoiceServicesQueryDTO) {
+    const orders = (
+      await this.orderModel.find({
+        order: { updatedAt: 'DESC' },
+      })
+    ).filter(order => this.isQualifyingVoiceServiceOrder(order));
+    const ordersByUserId = new Map<string, OrderEntity[]>();
+    for (const order of orders) {
+      const userId = this.stringifyObjectId(order.userId);
+      const records = ordersByUserId.get(userId) ?? [];
+      records.push(order);
+      ordersByUserId.set(userId, records);
+    }
+    const candidateUserIds = [...ordersByUserId.keys()]
+      .filter(userId => MongoObjectId.isValid(userId))
+      .map(userId => new MongoObjectId(userId));
+    const existingVoiceAgents = candidateUserIds.length
+      ? await this.agentModel.find({
+          where: {
+            createdUserId: { $in: candidateUserIds },
+          } as never,
+        })
+      : [];
+    const existingVoiceUserIds = new Set(
+      existingVoiceAgents
+        .filter(agent => Boolean(agent.voiceTimbreId))
+        .map(agent => this.stringifyObjectId(agent.createdUserId))
+    );
+    const serviceDetails = new Map<
+      string,
+      Pick<
+        AdminAppUserVoiceServiceItem,
+        'serviceStatus' | 'purchasedAmounts' | 'latestPurchasedAt'
+      >
+    >();
+
+    for (const [userId, userOrders] of ordersByUserId) {
+      const hasNonRefundedOrder = userOrders.some(
+        order => order.status !== OrderStatus.refunded
+      );
+      const serviceStatus = hasNonRefundedOrder
+        ? existingVoiceUserIds.has(userId) ||
+          userOrders.some(
+            order =>
+              order.status !== OrderStatus.refunded &&
+              Boolean(order.voiceServiceStartedAt)
+          )
+          ? 'servicing'
+          : 'pending'
+        : 'refunded';
+      if (
+        query.serviceStatus
+          ? query.serviceStatus !== serviceStatus
+          : serviceStatus === 'refunded'
+      ) {
+        continue;
+      }
+      serviceDetails.set(userId, {
+        serviceStatus,
+        purchasedAmounts: [
+          ...new Set(
+            userOrders.map(
+              order =>
+                (order.paidAmount ?? order.payableAmount ?? order.amount) / 100
+            )
+          ),
+        ].sort((left, right) => left - right),
+        latestPurchasedAt: this.formatDate(
+          userOrders[0].paidAt || userOrders[0].createdAt
+        ),
+      });
+    }
+
+    const result = await this.listUsersByIds([...serviceDetails.keys()], query);
+    return {
+      ...result,
+      items: result.items.map(user => ({
+        ...user,
+        ...serviceDetails.get(user.id)!,
+      })),
+    };
+  }
+
+  async startVoiceService(userId: string) {
+    const user = await this.getUserById(userId);
+    const orders = (
+      await this.orderModel.find({
+        where: { userId: user.id },
+        order: { updatedAt: 'DESC' },
+      })
+    ).filter(
+      order =>
+        this.isQualifyingVoiceServiceOrder(order) &&
+        order.status !== OrderStatus.refunded
+    );
+    if (!orders.length) {
+      throw new AppError(
+        'VOICE_SERVICE_ORDER_NOT_FOUND',
+        '未找到可开始服务的声音产品订单',
+        404
+      );
+    }
+
+    const order = orders[0];
+    if (!order.voiceServiceStartedAt) {
+      const now = new Date();
+      order.voiceServiceStartedAt = now;
+      order.updatedAt = now;
+      await this.orderModel.save(order);
+    }
+    return {
+      userId: this.stringifyObjectId(user.id),
+      serviceStatus: 'servicing' as const,
+      startedAt: this.formatDate(order.voiceServiceStartedAt),
+    };
   }
 
   async listUserAgents(
@@ -186,6 +369,78 @@ export class AdminAppUserService {
     const account = await this.findAccountByUserId(user.id);
 
     return this.buildUserItem(user, account, await this.isUserVip(user.id));
+  }
+
+  private async listUsersByIds(
+    userIds: string[],
+    query: ListAdminAppUsersQueryDTO
+  ): Promise<AdminAppUserListResult> {
+    const page = this.normalizePositiveInteger(query?.page, 1);
+    const pageSize = Math.min(
+      this.normalizePositiveInteger(query?.pageSize, 20),
+      100
+    );
+    if (!userIds.length) {
+      return { items: [], total: 0, page, pageSize };
+    }
+
+    const objectIds = userIds
+      .filter(id => MongoObjectId.isValid(id))
+      .map(id => new MongoObjectId(id));
+    const idWhere = { _id: { $in: objectIds } };
+    const keyword = query?.keyword?.trim() ?? '';
+    const keywordWhere = await this.buildUserSearchWhere(keyword);
+    const where = keyword ? { $and: [idWhere, keywordWhere] } : idWhere;
+    const [total, users] = await Promise.all([
+      this.userModel.count(where),
+      this.userModel.find({
+        where: where as never,
+        order: { createdAt: 'DESC' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    const accountMap = await this.getAccountMapByUsers(users);
+    const vipUserIdSet = await this.getVipUserIdSet(users);
+
+    return {
+      items: users.map(user =>
+        this.buildUserItem(
+          user,
+          accountMap.get(this.stringifyObjectId(user.id)),
+          vipUserIdSet.has(this.stringifyObjectId(user.id))
+        )
+      ),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  private classifyMembership(
+    membership: UserMembershipEntity
+  ): AdminAppUserMembershipType {
+    if (membership.lifetime) return 'lifetime';
+    const durationMs =
+      new Date(membership.expiredAt || membership.startedAt).getTime() -
+      new Date(membership.startedAt).getTime();
+    return durationMs >= 900 * 24 * 60 * 60 * 1000 ? 'three_year' : 'one_year';
+  }
+
+  private isQualifyingVoiceServiceOrder(order: OrderEntity): boolean {
+    const purchasedStatuses = new Set<OrderStatus>([
+      OrderStatus.paid,
+      OrderStatus.granting,
+      OrderStatus.completed,
+      OrderStatus.grantFailed,
+      OrderStatus.refundRequested,
+      OrderStatus.refunded,
+    ]);
+    const paidAmount = order.paidAmount ?? order.payableAmount ?? order.amount;
+    return (
+      purchasedStatuses.has(order.status) &&
+      [12000, 16900, 18000].includes(paidAmount)
+    );
   }
 
   private async buildUserSearchWhere(keyword: string): Promise<MongoWhere> {
@@ -387,6 +642,14 @@ export class AdminAppUserService {
       conversationCount: 0,
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
+      voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
+      ...(agent.messengerOfAgentId
+        ? {
+            messengerOfAgentId: this.stringifyObjectId(
+              agent.messengerOfAgentId
+            ),
+          }
+        : {}),
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };
@@ -477,6 +740,10 @@ export class AdminAppUserService {
 
   private stringifyObjectId(value: MongoObjectId): string {
     return value?.toHexString?.() ?? String(value);
+  }
+
+  private stringifyOptionalObjectId(value?: MongoObjectId): string | undefined {
+    return value ? this.stringifyObjectId(value) : undefined;
   }
 
   private formatDate(value?: Date): string {

@@ -4928,12 +4928,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.12,
     });
     expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith({
       buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
       fileName: 'speech.wav',
       speechSpeed: 1.12,
       speechVolume: 1.1,
+      speechPitch: -1,
     });
     expect(result.voice?.mimeType).toBe('audio/mpeg');
   });

@@ -58,7 +58,7 @@ describe('DoubaoVoiceService cloneVoice', () => {
     const requestTrainingJson = jest
       .spyOn(service as any, 'requestTrainingJson')
       .mockImplementation(async (path: string) => {
-        if (path.endsWith('/status')) {
+        if (path.endsWith('/get_voice')) {
           return statusResponses.shift();
         }
         return {
@@ -82,11 +82,11 @@ describe('DoubaoVoiceService cloneVoice', () => {
       })
     );
     expect(requestTrainingJson.mock.calls.map(call => call[0])).toEqual([
-      '/api/v1/mega_tts/status',
-      '/api/v1/mega_tts/audio/upload',
-      '/api/v1/mega_tts/status',
-      '/api/v1/mega_tts/status',
-      '/api/v1/mega_tts/status',
+      '/api/v3/tts/get_voice',
+      '/api/v3/tts/voice_clone',
+      '/api/v3/tts/get_voice',
+      '/api/v3/tts/get_voice',
+      '/api/v3/tts/get_voice',
     ]);
   });
 
@@ -111,7 +111,7 @@ describe('DoubaoVoiceService cloneVoice', () => {
     jest
       .spyOn(service as any, 'requestTrainingJson')
       .mockImplementation(async (path: string) => {
-        if (path.endsWith('/status')) {
+        if (path.endsWith('/get_voice')) {
           return statusResponses.shift();
         }
         return {
@@ -132,5 +132,44 @@ describe('DoubaoVoiceService cloneVoice', () => {
         version: 1,
       })
     );
+  });
+});
+
+describe('DoubaoVoiceService fixed slot remaining times', () => {
+  it('derives remaining training times from the provider version without OpenAPI', async () => {
+    const service = createService();
+    service.config.knownSpeakerIds = 'S_TEST003';
+    service.config.maxTrainingTimes = 15;
+    jest.spyOn(service, 'queryVoice').mockResolvedValue({
+      voiceId: 'S_TEST003',
+      status: 'ready',
+      statusCode: 2,
+      version: 4,
+    });
+
+    const result = await service.listSlots();
+
+    expect(result.openApiSyncAttempted).toBe(false);
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        speakerId: 'S_TEST003',
+        availableTrainingTimes: 11,
+      }),
+    ]);
+  });
+
+  it('treats an untrained fixed slot as having the full configured allowance', async () => {
+    const service = createService();
+    service.config.knownSpeakerIds = 'S_TEST004';
+    service.config.maxTrainingTimes = 15;
+    jest.spyOn(service, 'queryVoice').mockResolvedValue({
+      voiceId: 'S_TEST004',
+      status: 'not_found',
+      statusCode: 0,
+    });
+
+    const result = await service.listSlots();
+
+    expect(result.items[0].availableTrainingTimes).toBe(15);
   });
 });

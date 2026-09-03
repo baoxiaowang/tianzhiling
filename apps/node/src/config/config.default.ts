@@ -546,6 +546,10 @@ export default {
       ['NODE_QWEN_VOICE_BASE_URL', 'ADMIN_API_QWEN_VOICE_BASE_URL'],
       'https://dashscope.aliyuncs.com'
     ),
+    audioBaseURL: readStringFrom(
+      ['NODE_QWEN_AUDIO_BASE_URL', 'ADMIN_API_QWEN_AUDIO_BASE_URL'],
+      ''
+    ),
     enrollmentModel: readStringFrom(
       [
         'NODE_QWEN_VOICE_ENROLLMENT_MODEL',
