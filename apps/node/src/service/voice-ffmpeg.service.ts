@@ -7,7 +7,10 @@ import type {
   VoiceServiceClipQualityIssue,
   VoiceServiceClipQualityMetrics,
 } from '@tzl/entities';
-import { VOICE_SERVICE_MAX_TRAINING_SECONDS } from '@tzl/shared';
+import {
+  buildSpeechOutputFfmpegFilter,
+  VOICE_SERVICE_MAX_TRAINING_SECONDS,
+} from '@tzl/shared';
 import { AppError } from '../common/errors';
 
 interface VoiceClippingConfig {
@@ -671,10 +674,12 @@ export class VoiceFfmpegService {
     fileName: string;
     speechSpeed?: number;
     speechVolume?: number;
+    speechPitch?: number;
   }): Promise<VoiceFfmpegSpeechOutput> {
     this.assertInput(input.buffer);
     const speechSpeed = this.numberInRange(input.speechSpeed, 1, 0.5, 2);
     const speechVolume = this.numberInRange(input.speechVolume, 1, 0.25, 2);
+    const speechPitch = this.numberInRange(input.speechPitch, 0, -12, 12);
     const workdir = await mkdtemp(join(tmpdir(), 'tzl-voice-output-'));
     const inputPath = join(
       workdir,
@@ -695,7 +700,11 @@ export class VoiceFfmpegService {
         '0:a:0',
         '-vn',
         '-af',
-        `atempo=${speechSpeed.toFixed(2)},volume=${speechVolume.toFixed(2)}`,
+        buildSpeechOutputFfmpegFilter({
+          speechSpeed,
+          speechVolume,
+          speechPitch,
+        }),
         '-ac',
         '1',
         '-ar',

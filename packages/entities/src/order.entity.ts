@@ -132,6 +132,16 @@ export class OrderEntity extends BaseEntity {
   refundedAt?: Date;
 
   @Column()
+  refundRequestedAt?: Date;
+
+  @Column()
+  refundRejectedAt?: Date;
+
+  /** 管理端确认开始提供声音服务的时间；未确认时保持待服务。 */
+  @Column()
+  voiceServiceStartedAt?: Date;
+
+  @Column()
   createdAt: Date;
 
   @Column()

@@ -210,5 +210,5 @@
 </script>
 
 <style lang="less" scoped>
-  @import url('../operations-page.less');
+  @import '../operations-page.less';
 </style>

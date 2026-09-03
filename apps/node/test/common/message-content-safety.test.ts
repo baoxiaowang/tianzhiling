@@ -53,8 +53,28 @@ describe('message content safety', () => {
     );
   });
 
+  it.each(['……￥#{SOCIAL_HANDLE}：', '回复结果：[object Object]'])(
+    'marks unresolved technical output as unusable: %s',
+    value => {
+      expect(findUnsafeAssistantMessageContentMatches(value)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            rule: 'technical_fragment',
+          }),
+        ])
+      );
+    }
+  );
+
+  it('keeps the intentional transmission status text', () => {
+    expect(
+      containsUnsafeAssistantMessageContent(
+        '……￥#@%……“该信息传输途中受到了干扰”'
+      )
+    ).toBe(false);
+  });
+
   it.each([
-    '我一直就在你身边，只是你看不见。',
     '妈妈在天上看着你，你的事妈妈都看在眼里。',
     '是我碰的，我想让你知道我来了。',
   ])('filters real-world presence overclaims from history only: %s', value => {
@@ -64,13 +84,18 @@ describe('message content safety', () => {
 
   it.each([
     '你愿意觉得我离你不远，就这样想着也好。',
+    '我一直就在你身边，只是你看不见。',
+    '我就在你身边没走远，一直都在。',
     '我挺好的，别总把我想在受疼里。',
     '我多想抱抱你，可我们现在没法真的碰到彼此。',
     '我住在那边，和老朋友作伴。',
     '那边没什么疼不疼的，都过去了，早就不得事了。',
     '今天吃了碗面，还和老李下了盘棋。',
     '新衣服收到了，穿着暖和呢。',
-  ])('keeps afterlife worldbuilding and non-physical reassurance: %s', value => {
-    expect(containsUnsafeAssistantHistoryContent(value)).toBe(false);
-  });
+  ])(
+    'keeps afterlife worldbuilding and non-physical reassurance: %s',
+    value => {
+      expect(containsUnsafeAssistantHistoryContent(value)).toBe(false);
+    }
+  );
 });

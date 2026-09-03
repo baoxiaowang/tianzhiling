@@ -15,7 +15,7 @@
         {{ session ? '已登录' : '登录后继续体验' }}
       </text>
       <text class="auth-fallback-page__subtitle">
-        {{ session ? '正在进入未了言' : '使用微信授权登录' }}
+        {{ session ? `正在进入${brand.name}` : '使用微信授权登录' }}
       </text>
       <nut-button
         class="auth-fallback-page__action"
@@ -44,6 +44,7 @@ export default {
 <script setup lang="ts">
 import { computed, onMounted, shallowRef } from 'vue'
 import LoginPromptPopup from '../../components/login-prompt-popup/login-prompt-popup.vue'
+import { brand } from '../../config/brand'
 import {
   authSession,
   authSessionReady,

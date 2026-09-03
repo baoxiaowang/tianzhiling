@@ -18,7 +18,7 @@ function createService() {
   } as any;
   service.conversationModel = {
     count: jest.fn(),
-    find: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
   } as any;
   service.messageModel = {
@@ -32,6 +32,9 @@ function createService() {
   } as any;
   service.userAccountModel = {
     find: jest.fn(),
+  } as any;
+  service.userMembershipModel = {
+    find: jest.fn().mockResolvedValue([]),
   } as any;
   service.voiceTimbreModel = {
     findOne: jest.fn(),
@@ -82,6 +85,9 @@ describe('AdminAgentService', () => {
       deathDate: undefined,
       description: '测试 agent',
       customContext: '客户要求：回复要更短一点',
+      profileCompletionGuideCreatedAt: new Date('2026-01-01T12:00:00.000Z'),
+      agentHomeGuideSeenAt: undefined,
+      agentProfileGuideSeenAt: new Date('2026-01-01T13:00:00.000Z'),
       status: 1,
       isDefault: true,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -118,10 +124,23 @@ describe('AdminAgentService', () => {
       pageSize: '10',
     });
 
-    expect(service.agentModel.count).toHaveBeenCalledWith(
+    expect(service.agentModel.count).toHaveBeenCalledWith({
+      $and: [
+        {
+          $or: [
+            { messengerOfAgentId: { $exists: false } },
+            { messengerOfAgentId: null },
+          ],
+        },
+        { status: 1 },
+        { $or: expect.any(Array) },
+      ],
+    });
+    expect(service.agentModel.find).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: 1,
-        $or: expect.any(Array),
+        order: {
+          createdAt: 'DESC',
+        },
       })
     );
     expect(result).toEqual({
@@ -135,6 +154,9 @@ describe('AdminAgentService', () => {
             name: 'Alice',
             avatar: 'https://example.com/user.png',
             phone: '13800000000',
+            isVip: false,
+            membershipExpiredAt: '',
+            membershipLifetime: false,
           },
           name: '小灵',
           avatar: 'https://cdn.example.com/agent/avatar.png',
@@ -149,8 +171,11 @@ describe('AdminAgentService', () => {
           languageHabits: '',
           hobbies: '',
           sharedMemories: '',
+          hasUnreadAgentHomeGuide: true,
+          hasUnreadAgentProfileGuide: false,
           customContext: '客户要求：回复要更短一点',
           voiceTimbreId: '',
+          conversationCount: 0,
           status: 1,
           isDefault: true,
           createdAt: '2026-01-01T00:00:00.000Z',
@@ -264,6 +289,43 @@ describe('AdminAgentService', () => {
     expect(result.voiceTimbreId).toBe(voiceTimbreId.toHexString());
   });
 
+  it('clears the current and pending voice timbre when unbinding agent', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const agent: any = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      avatar: '',
+      sex: AgentSex.woman,
+      agentCallMe: '主人',
+      iCallAgent: '小灵',
+      description: '',
+      status: 1,
+      voiceTimbreId: new MongoObjectId(),
+      pendingVoiceTimbreId: new MongoObjectId(),
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest.mocked(service.agentModel.save).mockResolvedValue(agent as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.updateAgent(agentId.toHexString(), {
+      voiceTimbreId: '',
+    });
+
+    expect(agent.voiceTimbreId).toBeNull();
+    expect(agent.pendingVoiceTimbreId).toBeNull();
+    expect(service.agentModel.save).toHaveBeenCalledWith(agent);
+    expect(result.voiceTimbreId).toBe('');
+  });
+
   it('lists agent conversations with latest message and user summary', async () => {
     const service = createService();
     const agentId = new MongoObjectId();
@@ -351,6 +413,9 @@ describe('AdminAgentService', () => {
             name: 'Alice',
             avatar: 'https://cdn.example.com/users/alice.png',
             phone: '138****0000',
+            isVip: false,
+            membershipExpiredAt: '',
+            membershipLifetime: false,
           },
           latestMessage: {
             id: messageId.toHexString(),
@@ -554,9 +619,9 @@ describe('AdminAgentService', () => {
     expect(message.isArchived).toBe(true);
     expect(message.archivedAt).toBeInstanceOf(Date);
     expect(service.messageModel.save).toHaveBeenCalledWith(message);
-    expect(service.milvusService.deleteConversationMessage).toHaveBeenCalledWith(
-      messageId.toHexString()
-    );
+    expect(
+      service.milvusService.deleteConversationMessage
+    ).toHaveBeenCalledWith(messageId.toHexString());
     expect(result).toEqual(
       expect.objectContaining({
         id: messageId.toHexString(),

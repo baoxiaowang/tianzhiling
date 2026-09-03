@@ -44,6 +44,9 @@
     "lint:fix": "mwts fix",
     "ci": "npm run cov",
     "build": "mwtsc --cleanOutDir",
-    "init:admin": "node ./dist/scripts/init-admin.js"
+    "init:admin": "node ./dist/scripts/init-admin.js",
+    "recover:voice-membership-downgrade": "node ./dist/scripts/recover-voice-membership-downgrade-claim.js",
+    "audit:order-refunds": "node ./dist/scripts/backfill-order-refunds.js",
+    "backfill:voice-timbre-relations": "node ./dist/scripts/backfill-voice-timbre-user-materials.js"
   }
 }

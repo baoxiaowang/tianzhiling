@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import * as bullmq from '@midwayjs/bullmq';
@@ -1690,9 +1691,9 @@ export class PostService {
     return {
       id: this.stringifyObjectId(post.id),
       userId: this.stringifyObjectId(post.userId),
-      authorName: user?.name?.trim() || '未了言用户',
-      authorAvatar: this.postImageService.resolveForResponse(
-        user?.avatar?.trim() || ''
+      authorName: user?.name?.trim() || `${brandName()}用户`,
+      authorAvatar: this.postImageService.resolveUserAvatarForResponse(
+        user?.avatar
       ),
       content: post.content?.trim() || '',
       images,
@@ -2151,9 +2152,9 @@ export class PostService {
           : PostCommentType.user,
       userId: comment.userId ? this.stringifyObjectId(comment.userId) : '',
       agentId: comment.agentId ? this.stringifyObjectId(comment.agentId) : '',
-      authorName: agent?.name?.trim() || user?.name?.trim() || '未了言用户',
-      authorAvatar: this.postImageService.resolveForResponse(
-        agent?.avatar?.trim() || user?.avatar?.trim() || ''
+      authorName: agent?.name?.trim() || user?.name?.trim() || `${brandName()}用户`,
+      authorAvatar: this.postImageService.resolveUserAvatarForResponse(
+        agent?.avatar?.trim() || user?.avatar?.trim()
       ),
       content: comment.content?.trim() || '',
       parentCommentId: comment.parentCommentId
@@ -2456,8 +2457,9 @@ export class PostService {
     notification.actorAgentId = comment.agentId;
     notification.actorName =
       agent?.name?.trim() || user?.name?.trim() || '新评论';
-    notification.actorAvatar =
-      agent?.avatar?.trim() || user?.avatar?.trim() || '';
+    notification.actorAvatar = this.postImageService.resolveUserAvatarForResponse(
+      agent?.avatar?.trim() || user?.avatar?.trim()
+    );
     notification.commentPreview = (comment.content?.trim() || '').slice(0, 120);
     notification.replyToUserName = await this.resolveCommentReplyName(comment);
     notification.postThumbnail =
@@ -2531,7 +2533,8 @@ export class PostService {
     notification.type = PostNotificationType.like;
     notification.actorUserId = userId;
     notification.actorName = user?.name?.trim() || '新共鸣';
-    notification.actorAvatar = user?.avatar?.trim() || '';
+    notification.actorAvatar =
+      this.postImageService.resolveUserAvatarForResponse(user?.avatar);
     notification.contentPreview = '与你的动态产生了共鸣';
     notification.postThumbnail =
       Array.isArray(post.images) && post.images.length > 0
@@ -3282,7 +3285,7 @@ export class PostService {
         moment: {
           id: this.stringifyObjectId(post.id),
           userId: this.stringifyObjectId(post.userId),
-          authorName: user.name?.trim() || '未了言用户',
+          authorName: user.name?.trim() || `${brandName()}用户`,
           content: post.content?.trim() || '',
           images: momentImages,
           createdAt: post.createdAt?.toISOString?.() ?? '',

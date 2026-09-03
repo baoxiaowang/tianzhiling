@@ -20,6 +20,13 @@ class ConversationApi {
         .toList();
   }
 
+  static Future<ConversationSummary?> getEntryConversation() async {
+    final data = await _client.get('/api/conversation/entry');
+    final item = data['item'];
+    if (item is! Map) return null;
+    return ConversationSummary.fromJson(item.cast<String, dynamic>());
+  }
+
   static Future<List<ConversationMessage>> getMessages(
     String conversationId,
   ) async {

@@ -10,6 +10,12 @@ export class ListAdminAgentsQueryDTO {
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   status?: number | string;
 
+  @Rule(RuleType.string().allow('').max(40).optional())
+  relation?: string;
+
+  @Rule(RuleType.string().valid('vip', 'non_vip').allow('').optional())
+  memberStatus?: string;
+
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   page?: number | string;
 

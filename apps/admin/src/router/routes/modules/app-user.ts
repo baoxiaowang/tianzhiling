@@ -10,7 +10,6 @@ const APP_USER: AppRouteRecordRaw = {
     requiresAuth: true,
     icon: 'icon-user-group',
     order: 1,
-    hideChildrenInMenu: true,
   },
   redirect: '/app-users/list',
   children: [
@@ -21,6 +20,26 @@ const APP_USER: AppRouteRecordRaw = {
       meta: {
         activeMenu: 'appUsers',
         locale: 'menu.appUser.list',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
+    {
+      path: 'members',
+      name: 'AppUserMembers',
+      component: () => import('@/views/app-user/classified-list/index.vue'),
+      meta: {
+        locale: 'menu.appUser.members',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
+    {
+      path: 'voice-services',
+      name: 'AppUserVoiceServices',
+      component: () => import('@/views/app-user/classified-list/index.vue'),
+      meta: {
+        locale: 'menu.appUser.voiceServices',
         requiresAuth: true,
         roles: ['*'],
       },

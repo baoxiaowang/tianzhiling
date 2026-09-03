@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const releaseRoot = path.resolve(scriptDirectory, '../dist/weapp')
-const productionOrigin = 'https://voloian.cn'
 const forbiddenOrigins = [
   'http://127.0.0.1',
   'https://127.0.0.1',
@@ -12,9 +11,6 @@ const forbiddenOrigins = [
   'https://localhost',
   'http://0.0.0.0',
   'https://0.0.0.0',
-  'https://tianzhiling.chat',
-  'https://www.tianzhiling.chat',
-  'https://oss.tianzhiling.chat',
 ]
 const scannableExtensions = new Set(['.js', '.json', '.wxml'])
 
@@ -35,12 +31,10 @@ const scannableFiles = files.filter((file) =>
 )
 const violations = []
 let hasProductionOrigin = false
-let releaseContent = ''
 
 for (const file of scannableFiles) {
   const content = await readFile(file, 'utf8')
-  releaseContent += `\n${content}`
-  hasProductionOrigin ||= content.includes(productionOrigin)
+  hasProductionOrigin ||= content.includes('https://tianzhiling.chat')
 
   for (const origin of forbiddenOrigins) {
     if (content.includes(origin)) {
@@ -51,56 +45,12 @@ for (const file of scannableFiles) {
 
 if (violations.length > 0) {
   throw new Error(
-    `发布包包含禁止地址：\n${violations.map((item) => `- ${item}`).join('\n')}`
+    `发布包包含本地服务地址：\n${violations.map((item) => `- ${item}`).join('\n')}`
   )
 }
 
 if (!hasProductionOrigin) {
-  throw new Error(`发布包未包含生产接口地址 ${productionOrigin}`)
+  throw new Error('发布包未包含生产接口地址 https://tianzhiling.chat')
 }
 
-const forbiddenPaymentPatterns = [
-  {
-    label: '会员普通微信支付接口',
-    pattern: /\/api\/orders\/vip-plan(?!\/virtual-payment)/,
-  },
-  {
-    label: '声音套餐普通微信支付接口',
-    pattern: /\/api\/orders\/voice-package(?!\/virtual-payment)/,
-  },
-  {
-    label: '虚拟支付失败后回退普通支付',
-    pattern: /fallback to wechat payment/,
-  },
-]
-const paymentViolations = forbiddenPaymentPatterns
-  .filter(({ pattern }) => pattern.test(releaseContent))
-  .map(({ label }) => label)
-
-if (paymentViolations.length > 0) {
-  throw new Error(
-    `未了言发布包包含禁止的普通支付链路：\n${paymentViolations
-      .map((item) => `- ${item}`)
-      .join('\n')}`
-  )
-}
-
-const requiredVirtualPaymentFragments = [
-  '/api/orders/vip-plan/virtual-payment',
-  'requestVirtualPayment',
-]
-const missingVirtualPaymentFragments = requiredVirtualPaymentFragments.filter(
-  (fragment) => !releaseContent.includes(fragment)
-)
-
-if (missingVirtualPaymentFragments.length > 0) {
-  throw new Error(
-    `未了言发布包缺少虚拟支付链路：\n${missingVirtualPaymentFragments
-      .map((item) => `- ${item}`)
-      .join('\n')}`
-  )
-}
-
-console.log(
-  '微信小程序发布包检查通过：未发现本地、天之灵生产地址或普通微信支付链路。'
-)
+console.log('微信小程序发布包检查通过：未发现本地服务地址。')

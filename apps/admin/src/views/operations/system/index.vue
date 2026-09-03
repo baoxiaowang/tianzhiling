@@ -94,20 +94,6 @@
   const runtime = ref<AdminSystemRuntimeDTO>();
   const queueCards = computed(() => [
     {
-      key: 'active-imports',
-      label: '进行中的截图导入',
-      value: runtime.value?.queues.activeChatImports || 0,
-      danger: false,
-      routeName: 'OperationsTaskCenter',
-    },
-    {
-      key: 'failed-imports',
-      label: '失败的截图导入',
-      value: runtime.value?.queues.failedChatImports || 0,
-      danger: Boolean(runtime.value?.queues.failedChatImports),
-      routeName: 'OperationsTaskCenter',
-    },
-    {
       key: 'running-traces',
       label: '运行中的聊天链路',
       value: runtime.value?.queues.runningChatTraces || 0,

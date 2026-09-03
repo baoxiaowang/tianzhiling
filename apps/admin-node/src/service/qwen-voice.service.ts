@@ -1,5 +1,10 @@
 import { Config, Logger, Provide } from '@midwayjs/core';
-import { AppError } from '@tzl/shared';
+import {
+  AppError,
+  buildQwenAudioSpeechInstruction,
+  getQwenAudioSpeechInstructionSource,
+  resolveVoiceTimbreDialect,
+} from '@tzl/shared';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
@@ -9,6 +14,7 @@ interface QwenVoiceConfig {
   enabled?: boolean;
   apiKey?: string;
   baseURL?: string;
+  audioBaseURL?: string;
   defaultPreviewModel?: string;
   defaultLanguage?: string;
   timeoutMs?: number;
@@ -19,6 +25,7 @@ interface QwenVoiceResp {
   request_id?: string;
   output?: {
     voice?: string;
+    voice_id?: string;
     target_model?: string;
     fallback_mode?: boolean;
     fallback_reason?: string;
@@ -54,12 +61,19 @@ export interface QwenPreviewSpeechInput {
   voiceId: string;
   model?: string;
   language?: string;
+  instruction?: string;
+  dialect?: string;
+  speed?: number;
 }
 
 export interface QwenPreviewSpeechResult {
   audioUrl: string;
   audioBuffer: Buffer;
   mimeType: string;
+  requestId?: string;
+}
+
+export interface QwenDeleteVoiceResult {
   requestId?: string;
 }
 
@@ -85,22 +99,42 @@ export class QwenVoiceService {
     this.ensureEnabled();
 
     const audioUrl = input.audioUrl?.trim();
-    const preferredName = this.normalizePreferredName(input.preferredName);
     const targetModel =
       input.targetModel?.trim() || this.getDefaultPreviewModel();
+    const qwenAudio = this.isQwenAudioModel(targetModel);
+    const preferredName = this.normalizePreferredName(
+      input.preferredName,
+      qwenAudio
+    );
     const language = this.normalizeCloneLanguage(input.language);
-    const payload: Record<string, unknown> = {
-      model: 'qwen-voice-enrollment',
-      input: {
-        action: 'create',
-        target_model: targetModel,
-        preferred_name: preferredName,
-        audio: {
-          data: audioUrl,
-        },
-        ...(language ? { language } : {}),
-      },
-    };
+    const payload: Record<string, unknown> = qwenAudio
+      ? {
+          model: 'voice-enrollment',
+          input: {
+            action: 'create_voice',
+            target_model: targetModel,
+            prefix: preferredName,
+            url: audioUrl,
+            ...(this.supportsEnrollmentHints(targetModel)
+              ? {
+                  language_hints: [language || 'zh'],
+                  max_prompt_audio_length: 20,
+                }
+              : {}),
+          },
+        }
+      : {
+          model: 'qwen-voice-enrollment',
+          input: {
+            action: 'create',
+            target_model: targetModel,
+            preferred_name: preferredName,
+            audio: {
+              data: audioUrl,
+            },
+            ...(language ? { language } : {}),
+          },
+        };
 
     if (!audioUrl) {
       throw new AppError(
@@ -121,8 +155,11 @@ export class QwenVoiceService {
       path: '/api/v1/services/audio/tts/customization',
       method: 'POST',
       body: Buffer.from(JSON.stringify(payload)),
+      model: targetModel,
     });
-    const voice = response?.output?.voice?.trim();
+    const voice = (
+      response?.output?.voice_id || response?.output?.voice
+    )?.trim();
 
     if (!voice) {
       throw new AppError(
@@ -167,25 +204,71 @@ export class QwenVoiceService {
     }
 
     const model = input.model?.trim() || this.getDefaultPreviewModel();
+    const qwenAudio = this.isQwenAudioModel(model);
     const languageType = this.normalizeSpeechLanguageType(input.language);
+    const languageHint = this.normalizeCloneLanguage(input.language) || 'zh';
+    const instruction = buildQwenAudioSpeechInstruction({
+      instruction: input.instruction,
+      dialect: input.dialect,
+      speechSpeed: input.speed,
+    });
+    const instructionSource = getQwenAudioSpeechInstructionSource(input);
+    const resolvedDialect = resolveVoiceTimbreDialect(
+      input.dialect,
+      input.instruction
+    );
     const body = Buffer.from(
       JSON.stringify({
         model,
-        input: {
-          text,
-          voice: voiceId,
-          ...(languageType ? { language_type: languageType } : {}),
-        },
+        input: qwenAudio
+          ? {
+              text,
+              voice: voiceId,
+              format: 'wav',
+              sample_rate: 24000,
+              language_hints: [languageHint],
+              rate: this.normalizeRate(input.speed),
+              ...(instruction ? { instruction } : {}),
+            }
+          : {
+              text,
+              voice: voiceId,
+              ...(languageType ? { language_type: languageType } : {}),
+            },
       })
     );
+
+    this.logger.info(
+      '[qwen-voice] synthesize preview, model=%s, voiceRef=%s, language=%s, dialect=%s, instructionSource=%s, instructionLength=%s, textLength=%s',
+      model,
+      this.describeVoiceId(voiceId),
+      qwenAudio ? languageHint : languageType || '',
+      resolvedDialect,
+      instructionSource,
+      instruction?.length || 0,
+      text.length
+    );
+
     const response = await this.requestJson<QwenVoiceResp>({
-      path: '/api/v1/services/aigc/multimodal-generation/generation',
+      path: qwenAudio
+        ? '/api/v1/services/audio/tts/SpeechSynthesizer'
+        : '/api/v1/services/aigc/multimodal-generation/generation',
       method: 'POST',
       body,
+      model,
     });
     const audio = response?.output?.audio;
     const audioUrl = audio?.url?.trim() || '';
     const data = audio?.data?.trim() || '';
+
+    if (audioUrl || data) {
+      this.logger.info(
+        '[qwen-voice] synthesize preview succeeded, model=%s, requestId=%s, audioSource=%s',
+        model,
+        response.request_id?.trim() || '',
+        audioUrl ? 'url' : 'base64'
+      );
+    }
 
     if (audioUrl) {
       try {
@@ -223,6 +306,48 @@ export class QwenVoiceService {
     );
   }
 
+  async deleteVoice(
+    voiceId: string,
+    model?: string
+  ): Promise<QwenDeleteVoiceResult> {
+    this.ensureEnabled();
+
+    const voice = voiceId?.trim();
+    if (!voice) {
+      throw new AppError(
+        'QWEN_VOICE_ID_MISSING',
+        'Qwen voice id is missing',
+        400
+      );
+    }
+
+    const qwenAudio =
+      this.isQwenAudioModel(model) || /^qwen-audio-/i.test(voice);
+    const payload = qwenAudio
+      ? {
+          model: 'voice-enrollment',
+          input: { action: 'delete_voice', voice_id: voice },
+        }
+      : {
+          model: 'qwen-voice-enrollment',
+          input: { action: 'delete', voice },
+        };
+    const response = await this.requestJson<QwenVoiceResp>({
+      path: '/api/v1/services/audio/tts/customization',
+      method: 'POST',
+      body: Buffer.from(JSON.stringify(payload)),
+      model,
+    });
+
+    this.logger?.info?.(
+      '[qwen-voice] voice deleted, voiceRef=%s, requestId=%s',
+      this.describeVoiceId(voice),
+      response.request_id?.trim() || ''
+    );
+
+    return { requestId: response.request_id?.trim() || undefined };
+  }
+
   private ensureEnabled(): void {
     if (this.config?.enabled === false) {
       throw new AppError('QWEN_VOICE_DISABLED', 'Qwen voice is disabled', 400);
@@ -237,18 +362,54 @@ export class QwenVoiceService {
     }
   }
 
-  private normalizePreferredName(value: string): string {
+  assertModelConfigured(model: string): void {
+    this.ensureEnabled();
+    this.resolveBaseURL(model);
+  }
+
+  private normalizePreferredName(value: string, qwenAudio = false): string {
     const preferredName = value?.trim();
 
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(preferredName)) {
+    const pattern = qwenAudio ? /^[A-Za-z0-9]{1,10}$/ : /^[A-Za-z0-9_]{1,16}$/;
+    if (!pattern.test(preferredName)) {
       throw new AppError(
         'INVALID_QWEN_PREFERRED_NAME',
-        'Qwen preferred name must be 1-16 letters, digits or _',
+        qwenAudio
+          ? 'Qwen Audio prefix must be 1-10 letters or digits'
+          : 'Qwen preferred name must be 1-16 letters, digits or _',
         400
       );
     }
 
     return preferredName;
+  }
+
+  private normalizeRate(value?: number): number {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      return 1;
+    }
+
+    return Math.round(Math.min(2, Math.max(0.5, parsed)) * 100) / 100;
+  }
+
+  private isQwenAudioModel(model?: string): boolean {
+    return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private describeVoiceId(value: string): string {
+    const voiceId = value.trim();
+
+    if (voiceId.length <= 10) {
+      return voiceId;
+    }
+
+    return `${voiceId.slice(0, 4)}...${voiceId.slice(-4)}`;
+  }
+
+  private supportsEnrollmentHints(model?: string): boolean {
+    return /^qwen-audio-.*-flash$/i.test(model?.trim() || '');
   }
 
   private normalizeCloneLanguage(value?: string): string {
@@ -265,6 +426,12 @@ export class QwenVoiceService {
       korean: 'ko',
       french: 'fr',
       russian: 'ru',
+      thai: 'th',
+      indonesian: 'id',
+      vietnamese: 'vi',
+      malaysian: 'ms',
+      filipino: 'fil',
+      arabic: 'ar',
     };
     const normalized = map[raw.toLowerCase()] || raw.toLowerCase();
     const supported = [
@@ -278,6 +445,12 @@ export class QwenVoiceService {
       'ko',
       'fr',
       'ru',
+      'th',
+      'id',
+      'vi',
+      'ms',
+      'fil',
+      'ar',
     ];
 
     return supported.includes(normalized)
@@ -353,8 +526,9 @@ export class QwenVoiceService {
     path: string;
     method: 'POST';
     body: Buffer;
+    model?: string;
   }): Promise<T> {
-    const baseURL = this.normalizeBaseURL();
+    const baseURL = this.resolveBaseURL(input.model);
     const url = new URL(input.path, baseURL);
     const requester = url.protocol === 'http:' ? httpRequest : httpsRequest;
 
@@ -522,10 +696,21 @@ export class QwenVoiceService {
     });
   }
 
-  private normalizeBaseURL(): string {
-    const raw =
+  private resolveBaseURL(model?: string): string {
+    const standardBaseURL =
       this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
-    return raw.replace(/\/+$/, '');
+    if (!this.isQwenAudioModel(model)) {
+      return standardBaseURL.replace(/\/+$/, '');
+    }
+
+    const audioBaseURL = this.config?.audioBaseURL?.trim();
+    const compatibleLegacyBaseURL = /\.maas\.aliyuncs\.com/i.test(
+      standardBaseURL
+    )
+      ? standardBaseURL
+      : '';
+    const resolved = audioBaseURL || compatibleLegacyBaseURL || standardBaseURL;
+    return resolved.replace(/\/+$/, '');
   }
 
   private describeUrl(value: string): string {

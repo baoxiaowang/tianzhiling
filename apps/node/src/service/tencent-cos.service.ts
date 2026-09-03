@@ -394,6 +394,9 @@ export class TencentCosService {
       ...(this.cosConfig?.securityToken?.trim()
         ? { SecurityToken: this.cosConfig.securityToken.trim() }
         : {}),
+      ...(this.resolveSigningDomain()
+        ? { Domain: this.resolveSigningDomain() }
+        : {}),
       Protocol: this.resolveProtocol(),
     });
 

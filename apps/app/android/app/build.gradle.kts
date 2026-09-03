@@ -34,6 +34,9 @@ android {
 
     defaultConfig {
         applicationId = "com.tianzhiling.app"
+        // 品牌显示名：构建时通过 BRAND_APP_LABEL 注入，默认天之灵（见仓库根 build-brand.sh）
+        manifestPlaceholders["appLabel"] =
+            System.getenv("BRAND_APP_ANDROID_LABEL") ?: "天之灵"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

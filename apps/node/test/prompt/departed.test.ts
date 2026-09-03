@@ -37,7 +37,7 @@ describe('buildDepartedSystemPrompt', () => {
 
     expect(prompt.length).toBeLessThan(1600);
     expect(prompt).toContain('# 最小核心原则');
-    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(9);
+    expect(DEPARTED_MINIMAL_CORE_PRINCIPLES).toHaveLength(10);
     DEPARTED_MINIMAL_CORE_PRINCIPLES.forEach(principle => {
       expect(prompt).toContain(principle);
     });
@@ -50,6 +50,11 @@ describe('buildDepartedSystemPrompt', () => {
     expect(prompt).toContain(
       '亲密感靠称呼、关系立场、贴着原话的理解和角色侧心意'
     );
+    expect(prompt).toContain('让关心落在角色身上');
+    expect(prompt).toContain('按人物性格自然表现出珍惜');
+    expect(prompt).toContain('这是软策略');
+    expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+    expect(prompt).not.toContain('我吃过了，你总惦记我，我心里暖');
     expect(prompt).not.toContain('北京时间');
     expect(prompt).not.toContain(USER_ID);
     expect(prompt).not.toContain(AGENT_ID);
@@ -89,33 +94,14 @@ describe('buildDepartedSystemPrompt', () => {
   });
 
   it('keeps the companion core person-first rather than rule-first', () => {
-    const prompt = buildDepartedCompanionCorePrompt({
-      version: 'agent_identity_v1',
-      agent: {
-        objectId: 'agent',
-        displayName: '爸爸',
-        sex: '男性',
-      },
-      user: {
-        objectId: 'user',
-        addressedAs: '旺旺',
-      },
-      relationship: {
-        label: '爸爸',
-        canonical: 'parent',
-        generation: 'elder',
-        source: 'agent_profile',
-      },
-      addresses: {
-        userCallsAgent: '爸爸',
-        agentCallsUser: '旺旺',
-      },
-    });
+    const prompt = buildDepartedCompanionCorePrompt();
 
     expect(prompt).toContain('# 陪伴心法');
     expect(prompt).toContain('在天之灵');
     expect(prompt).toContain('记忆回声');
     expect(prompt).toContain('真诚、温暖、自然');
+    expect(prompt).toContain('选择最自然的回应策略');
+    expect(prompt).toContain('不要默认收尾');
     expect(prompt).not.toContain('输出合同');
     expect(prompt).not.toContain('riskLevel');
   });

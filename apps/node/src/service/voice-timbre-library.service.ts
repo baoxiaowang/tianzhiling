@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import type { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -23,13 +24,20 @@ import type {
   UserVoiceTimbreGeneratedAudioDTO,
   UserVoiceTimbreRecordDTO,
   UpdateUserVoiceTimbreDTO,
+  VoiceTimbreDialectDTO,
   VoiceTimbreRetentionPolicyDTO,
 } from '@tzl/shared';
-import { VOICE_SERVICE_MAX_TRAINING_SECONDS } from '@tzl/shared';
+import {
+  VOICE_SERVICE_MAX_TRAINING_SECONDS,
+  VOICE_TIMBRE_DIALECT_OPTIONS,
+} from '@tzl/shared';
 import { randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AppError } from '../common/errors';
 import type { AuthenticatedUserPayload } from '../interface';
+import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
+import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
+import { QwenVoiceEnrollmentService } from './qwen-voice-enrollment.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
 import { TencentCosService } from './tencent-cos.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
@@ -40,14 +48,17 @@ import {
 } from './voice-usage-access.service';
 
 export const VOICE_TIMBRE_RETENTION_QUEUE = 'voice-timbre-retention';
-export const VOICE_TIMBRE_RETENTION_JOB_ID =
-  'voice-timbre-retention-daily';
+export const VOICE_TIMBRE_RETENTION_JOB_ID = 'voice-timbre-retention-daily';
 export const VOICE_TIMBRE_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const VOICE_TIMBRE_CLEANUP_QUEUE = 'voice-timbre-cleanup';
+export const VOICE_TIMBRE_CLEANUP_JOB_ID = 'voice-timbre-cleanup-daily';
 
 const ONE_DAY_MS = VOICE_TIMBRE_RETENTION_INTERVAL_MS;
 const PROVIDER_INACTIVE_CLEANUP_DAYS = 365;
 const RETENTION_BEFORE_DAYS = 30;
 const RETENTION_BATCH_SIZE = 25;
+const UNUSED_CLEANUP_AFTER_DAYS = 7;
+const UNUSED_CLEANUP_BATCH_SIZE = 25;
 const RETENTION_PROBE_TEXT = '我在这里。';
 const OFFICIAL_RULE_URL =
   'https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide';
@@ -87,7 +98,16 @@ export class VoiceTimbreLibraryService {
   voiceServiceDataDeletionService: VoiceServiceDataDeletionService;
 
   @Inject()
+  qwenVoiceEnrollmentService: QwenVoiceEnrollmentService;
+
+  @Inject()
   qwenVoiceSpeechService: QwenVoiceSpeechService;
+
+  @Inject()
+  cosyVoiceSpeechService: CosyVoiceSpeechService;
+
+  @Inject()
+  doubaoVoiceSpeechService: DoubaoVoiceSpeechService;
 
   @Inject()
   voiceFfmpegService: VoiceFfmpegService;
@@ -185,7 +205,7 @@ export class VoiceTimbreLibraryService {
     ) {
       throw new AppError(
         'VOICE_TIMBRE_REPLACE_CONFIRM_REQUIRED',
-        '这个天之灵已经在使用其他音色，请确认后再更换',
+        `这个${brandName()}已经在使用其他音色，请确认后再更换`,
         409
       );
     }
@@ -226,7 +246,9 @@ export class VoiceTimbreLibraryService {
     let changed = false;
 
     if (payload?.name !== undefined) {
-      const normalizedName = String(payload.name || '').trim().slice(0, 20);
+      const normalizedName = String(payload.name || '')
+        .trim()
+        .slice(0, 20);
       if (!normalizedName) {
         throw new AppError(
           'VOICE_TIMBRE_NAME_REQUIRED',
@@ -254,6 +276,13 @@ export class VoiceTimbreLibraryService {
         0.25,
         2,
         'INVALID_VOICE_TIMBRE_SPEECH_VOLUME'
+      );
+      changed = true;
+    }
+    if (payload?.speechDialect !== undefined) {
+      timbre.speechDialect = this.normalizeSpeechDialect(
+        payload.speechDialect,
+        true
       );
       changed = true;
     }
@@ -297,7 +326,13 @@ export class VoiceTimbreLibraryService {
         400
       );
     }
-    if (timbre.provider !== VoiceTimbreProvider.qwen) {
+    const isCosyVoiceV35Plus = this.isCosyVoiceV35PlusTimbre(timbre);
+    const isDoubaoIcl2 = timbre.provider === VoiceTimbreProvider.doubao;
+    if (
+      timbre.provider !== VoiceTimbreProvider.qwen &&
+      !isCosyVoiceV35Plus &&
+      !isDoubaoIcl2
+    ) {
       throw new AppError(
         'VOICE_TIMBRE_CUSTOM_SPEECH_UNSUPPORTED',
         '这个音色暂不支持自定义文字生成',
@@ -307,24 +342,80 @@ export class VoiceTimbreLibraryService {
 
     const reservation = await this.reserveCustomSpeechGeneration(userId);
     try {
-      const synthesized = await this.qwenVoiceSpeechService.synthesize({
-        text,
-        voiceId: timbre.providerVoiceId,
-        model: timbre.previewModel,
-        language: timbre.cloneLanguage,
-      });
+      const synthesized = isCosyVoiceV35Plus
+        ? await this.cosyVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            languageHint: timbre.cloneLanguage,
+            speed: timbre.speechSpeed,
+            volume: timbre.speechVolume,
+            pitch: timbre.speechPitch,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+          })
+        : isDoubaoIcl2
+        ? await this.doubaoVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+            speed: timbre.speechSpeed,
+            volume: timbre.speechVolume,
+          })
+        : await this.qwenVoiceSpeechService.synthesize({
+            text,
+            voiceId: timbre.providerVoiceId,
+            model: timbre.previewModel,
+            language: timbre.cloneLanguage,
+            ...(timbre.speechInstruction?.trim()
+              ? { instruction: timbre.speechInstruction.trim() }
+              : {}),
+            dialect: timbre.speechDialect,
+            speed: timbre.speechSpeed,
+          });
       await this.markUsed(timbre);
       const speed = this.normalizeSpeechSpeed(timbre.speechSpeed);
       const volume = this.normalizeSpeechVolume(timbre.speechVolume);
+      const pitch = this.numberInRange(
+        timbre.speechPitch,
+        0,
+        -12,
+        12,
+        'INVALID_VOICE_TIMBRE_SPEECH_PITCH'
+      );
+      const outputSpeed =
+        isCosyVoiceV35Plus ||
+        Boolean(
+          (synthesized as { nativeSpeechSpeedApplied?: boolean })
+            .nativeSpeechSpeedApplied
+        )
+          ? 1
+          : speed;
+      const outputVolume =
+        isCosyVoiceV35Plus ||
+        Boolean(
+          (synthesized as { nativeSpeechVolumeApplied?: boolean })
+            .nativeSpeechVolumeApplied
+        )
+          ? 1
+          : volume;
+      const outputPitch = isCosyVoiceV35Plus ? 0 : pitch;
       const adjusted =
-        speed !== 1 || volume !== 1
+        outputSpeed !== 1 || outputVolume !== 1 || outputPitch !== 0
           ? await this.voiceFfmpegService.adjustSpeechOutput({
               buffer: synthesized.audioBuffer,
               fileName: `speech.${this.extensionForMimeType(
                 synthesized.mimeType
               )}`,
-              speechSpeed: speed,
-              speechVolume: volume,
+              speechSpeed: outputSpeed,
+              speechVolume: outputVolume,
+              speechPitch: outputPitch,
             })
           : undefined;
       const audioBuffer = adjusted?.buffer || synthesized.audioBuffer;
@@ -426,9 +517,130 @@ export class VoiceTimbreLibraryService {
     await this.voiceTimbreModel.save(timbre);
   }
 
+  async processUnusedCleanup(): Promise<VoiceTimbreRetentionJobResult> {
+    const now = new Date();
+    const cutoff = new Date(
+      now.getTime() - UNUSED_CLEANUP_AFTER_DAYS * ONE_DAY_MS
+    );
+
+    // 找到所有活跃的 Qwen 用户音色，创建时间超过 7 天
+    const candidates = (
+      await this.voiceTimbreModel.find({
+        where: {
+          provider: VoiceTimbreProvider.qwen,
+          status: VoiceTimbreStatus.active,
+        },
+      })
+    )
+      .filter(timbre => this.isUserTimbre(timbre))
+      .filter(timbre => timbre.deletionStatus !== 'completed')
+      .filter(timbre => {
+        const created = this.dateOf(timbre.createdAt);
+        return created.getTime() <= cutoff.getTime();
+      })
+      .slice(0, UNUSED_CLEANUP_BATCH_SIZE);
+
+    if (candidates.length === 0) {
+      this.logger.info('[voice-timbre-cleanup] no candidates to check');
+      return { checkedCount: 0, protectedCount: 0, failedCount: 0 };
+    }
+
+    // 预先查出所有引用了这些音色的智能体
+    const timbreIds = candidates.map(t => this.idOf(t));
+    const timbreObjectIds = timbreIds.map(id =>
+      this.parseObjectId(id, 'VOICE_TIMBRE_CLEANUP')
+    );
+    const referencingAgents = await this.agentModel.find({
+      $or: [
+        { voiceTimbreId: { $in: timbreObjectIds } },
+        { pendingVoiceTimbreId: { $in: timbreObjectIds } },
+      ],
+    } as never);
+    const referencedTimbreIds = new Set<string>();
+    for (const agent of referencingAgents) {
+      if (agent.voiceTimbreId)
+        referencedTimbreIds.add(this.idOf(agent.voiceTimbreId));
+      if (agent.pendingVoiceTimbreId)
+        referencedTimbreIds.add(this.idOf(agent.pendingVoiceTimbreId));
+    }
+
+    let deletedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const timbre of candidates) {
+      const tid = this.idOf(timbre);
+
+      // 如果有智能体关联，跳过
+      if (referencedTimbreIds.has(tid)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      // 从 Qwen 提供商删除
+      try {
+        if (
+          timbre.providerVoiceId &&
+          !timbre.providerVoiceId.startsWith('pending_')
+        ) {
+          await this.qwenVoiceEnrollmentService.deleteVoice(
+            timbre.providerVoiceId,
+            timbre.previewModel
+          );
+          this.logger.info(
+            '[voice-timbre-cleanup] deleted from provider, timbreId=%s, providerVoiceId=%s',
+            tid,
+            timbre.providerVoiceId
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          '[voice-timbre-cleanup] provider delete failed, timbreId=%s, reason=%s',
+          tid,
+          error instanceof Error ? error.message : String(error)
+        );
+        // 即使提供商删除失败，也继续标记为已清理（可能已被阿里那边回收了）
+      }
+
+      // 标记为 disabled
+      timbre.status = VoiceTimbreStatus.disabled;
+      timbre.errorCode = 'VOICE_TIMBRE_UNUSED_CLEANUP';
+      timbre.errorMessage = `音色超过 7 天未关联${brandName()}，已自动清理`;
+      timbre.retentionStatus = 'attention_required';
+      timbre.updatedAt = now;
+      try {
+        await this.voiceTimbreModel.save(timbre);
+        deletedCount += 1;
+      } catch (error) {
+        this.logger.error(
+          '[voice-timbre-cleanup] save failed, timbreId=%s, reason=%s',
+          tid,
+          error instanceof Error ? error.message : String(error)
+        );
+        failedCount += 1;
+      }
+    }
+
+    this.logger.info(
+      '[voice-timbre-cleanup] completed, candidates=%s, deleted=%s, skipped=%s, failed=%s',
+      candidates.length,
+      deletedCount,
+      skippedCount,
+      failedCount
+    );
+
+    return {
+      checkedCount: candidates.length,
+      protectedCount: skippedCount,
+      failedCount,
+    };
+  }
+
   async processRetentionMaintenance(): Promise<VoiceTimbreRetentionJobResult> {
     const now = new Date();
-    const dueBefore = new Date(now.getTime() + RETENTION_BEFORE_DAYS * ONE_DAY_MS);
+    const dueBefore = new Date(
+      now.getTime() + RETENTION_BEFORE_DAYS * ONE_DAY_MS
+    );
     const candidates = (
       await this.voiceTimbreModel.find({
         where: {
@@ -464,6 +676,10 @@ export class VoiceTimbreLibraryService {
           voiceId: timbre.providerVoiceId,
           model: timbre.previewModel,
           language: timbre.cloneLanguage,
+          ...(timbre.speechInstruction?.trim()
+            ? { instruction: timbre.speechInstruction.trim() }
+            : {}),
+          dialect: timbre.speechDialect,
         });
         await this.markUsed(timbre);
         protectedCount += 1;
@@ -569,7 +785,7 @@ export class VoiceTimbreLibraryService {
       (await this.agentModel.findOne({ where: { _id: id } as never }));
 
     if (!agent || this.idOf(agent.createdUserId) !== this.idOf(userId)) {
-      throw new AppError('AGENT_NOT_FOUND', '没有找到这个天之灵', 404);
+      throw new AppError('AGENT_NOT_FOUND', `没有找到这个${brandName()}`, 404);
     }
     return agent;
   }
@@ -673,7 +889,7 @@ export class VoiceTimbreLibraryService {
       .filter(agent => this.idOf(agent.voiceTimbreId) === this.idOf(timbre))
       .map(agent => ({
         agentId: this.idOf(agent),
-        agentName: agent.name?.trim() || '未命名天之灵',
+        agentName: agent.name?.trim() || `未命名${brandName()}`,
       }));
     const pendingBindings = agents
       .filter(
@@ -681,7 +897,7 @@ export class VoiceTimbreLibraryService {
       )
       .map(agent => ({
         agentId: this.idOf(agent),
-        agentName: agent.name?.trim() || '未命名天之灵',
+        agentName: agent.name?.trim() || `未命名${brandName()}`,
       }));
 
     return {
@@ -703,6 +919,7 @@ export class VoiceTimbreLibraryService {
       pendingBindings,
       speechSpeed: this.normalizeSpeechSpeed(timbre.speechSpeed),
       speechVolume: this.normalizeSpeechVolume(timbre.speechVolume),
+      speechDialect: this.normalizeSpeechDialect(timbre.speechDialect),
       deletionStatus: timbre.deletionStatus,
     };
   }
@@ -773,7 +990,7 @@ export class VoiceTimbreLibraryService {
 
     return {
       agentId: this.idOf(agent),
-      agentName: agent.name?.trim() || '未命名天之灵',
+      agentName: agent.name?.trim() || `未命名${brandName()}`,
       items: timbres.map(timbre => this.buildRecord(timbre, agents)),
       selectedTimbreId: selectedTimbreId || undefined,
       activeTimbreId: activeTimbreId || undefined,
@@ -1130,6 +1347,19 @@ export class VoiceTimbreLibraryService {
     );
   }
 
+  private isCosyVoiceV35PlusTimbre(timbre: VoiceTimbreEntity): boolean {
+    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+      return false;
+    }
+
+    const voiceId = timbre.providerVoiceId?.trim().toLowerCase() || '';
+    if (voiceId.startsWith('cosyvoice-')) {
+      return voiceId.startsWith('cosyvoice-v3.5-plus-');
+    }
+
+    return /^cosyvoice-v3\.5-plus$/i.test(timbre.previewModel?.trim() || '');
+  }
+
   private normalizeSpeechVolume(value: unknown): number {
     return this.numberInRange(
       value,
@@ -1138,6 +1368,28 @@ export class VoiceTimbreLibraryService {
       2,
       'INVALID_VOICE_TIMBRE_SPEECH_VOLUME'
     );
+  }
+
+  private normalizeSpeechDialect(
+    value: unknown,
+    strict = false
+  ): VoiceTimbreDialectDTO {
+    const normalized = String(value || 'auto')
+      .trim()
+      .toLowerCase();
+    const matched = VOICE_TIMBRE_DIALECT_OPTIONS.find(
+      option => option.value === normalized
+    );
+
+    if (!matched && strict) {
+      throw new AppError(
+        'INVALID_VOICE_TIMBRE_SPEECH_DIALECT',
+        '请选择支持的方言类型',
+        400
+      );
+    }
+
+    return matched?.value || 'auto';
   }
 
   private async getCustomSpeechGeneratedToday(
@@ -1274,7 +1526,9 @@ export class VoiceTimbreLibraryService {
     reservation: CustomSpeechGenerationReservation
   ): Promise<void> {
     try {
-      const current = Number(await this.redisService?.get(reservation.usageKey));
+      const current = Number(
+        await this.redisService?.get(reservation.usageKey)
+      );
       if (Number.isFinite(current) && current > 0) {
         await this.redisService?.decr(reservation.usageKey);
       }
@@ -1324,12 +1578,8 @@ export class VoiceTimbreLibraryService {
     const year = shifted.getUTCFullYear();
     const month = shifted.getUTCMonth();
     const date = shifted.getUTCDate();
-    const start = new Date(
-      Date.UTC(year, month, date) - beijingOffsetMs
-    );
-    const end = new Date(
-      Date.UTC(year, month, date + 1) - beijingOffsetMs
-    );
+    const start = new Date(Date.UTC(year, month, date) - beijingOffsetMs);
+    const end = new Date(Date.UTC(year, month, date + 1) - beijingOffsetMs);
     return {
       day: `${year}-${String(month + 1).padStart(2, '0')}-${String(
         date

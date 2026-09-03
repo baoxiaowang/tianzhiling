@@ -88,7 +88,7 @@ interface WechatVirtualRefundResponse extends WechatXPayResponse {
 
 interface WechatVirtualProvideGoodsResponse extends WechatXPayResponse {}
 
-interface WechatRefundPayload {
+export interface WechatRefundPayload {
   refund_id?: string;
   out_refund_no?: string;
   transaction_id?: string;
@@ -243,6 +243,61 @@ export class AdminWechatPayService {
     }
   }
 
+  async queryRefundByRefundNo(
+    refundNo: string
+  ): Promise<WechatRefundPayload | null> {
+    const normalizedRefundNo = refundNo?.trim();
+
+    if (!normalizedRefundNo) {
+      throw new AppError(
+        'WECHAT_REFUND_NO_MISSING',
+        'wechat refund no missing'
+      );
+    }
+
+    this.ensureEnabled();
+    const wxpay = this.getWxpayClient() as {
+      v3: {
+        refund: {
+          domestic: {
+            refunds: {
+              $out_refund_no$: {
+                get: (config: {
+                  out_refund_no: string;
+                }) => Promise<{ data: WechatRefundPayload }>;
+              };
+            };
+          };
+        };
+      };
+    };
+
+    try {
+      const { data } =
+        await wxpay.v3.refund.domestic.refunds.$out_refund_no$.get({
+          out_refund_no: normalizedRefundNo,
+        });
+
+      return data ?? null;
+    } catch (error) {
+      const response = (error as WechatPayErrorResponse)?.response;
+      const code = response?.data?.code;
+
+      if (response?.status === 404 || code === 'RESOURCE_NOT_EXISTS') {
+        return null;
+      }
+
+      throw new AppError(
+        'WECHAT_REFUND_QUERY_FAILED',
+        response?.data?.message ||
+          response?.statusText ||
+          'failed to query wechat refund',
+        response?.status && response.status >= 400 ? response.status : 502,
+        response?.data ?? null
+      );
+    }
+  }
+
   getVirtualPayEnv(): number {
     return this.wechatVirtualPayConfig?.env === 0 ? 0 : 1;
   }
@@ -287,7 +342,7 @@ export class AdminWechatPayService {
       refund_fee: payload.refundFee,
       biz_meta: payload.reason || '',
       refund_reason: '3',
-      req_from: '2',
+      req_from: '1',
       env: payload.env,
     });
 

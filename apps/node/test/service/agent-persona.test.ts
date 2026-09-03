@@ -1,8 +1,6 @@
 import {
   AgentEntity,
   AgentSex,
-  MessageEntity,
-  MessageRole,
 } from '@tzl/entities';
 import { buildAgentPersonaPrompt } from '../../src/service/agents/agent-persona';
 
@@ -35,56 +33,49 @@ describe('buildAgentPersonaPrompt', () => {
     } as AgentEntity;
     const result = buildAgentPersonaPrompt({
       agent,
-      recentMessages: [
-        {
-          role: MessageRole.assistant,
-          content: '嗐，饭还是要好好吃，别总拿面包凑合。',
-        } as MessageEntity,
-      ],
     });
 
     expect(result.source).toBe('chat_derived_profile');
     expect(result.ageAtDeath).toBe(76);
     expect(result.generation).toBe('elder');
-    expect(result.prompt).toContain('用户称你为“爸爸”');
-    expect(result.prompt).toContain('离世年龄约 76 岁');
+    expect(result.classifierContext).toContain('agent=父亲（用户称爸爸，elder）');
+    expect(result.classifierContext).toContain('离世年龄约76岁');
+    expect(result.prompt).not.toContain('用户称你为“爸爸”');
     expect(result.prompt).toContain('晚辈情绪或行为明显过激时');
     expect(result.prompt).toContain('只管表达，不作事实');
     expect(result.prompt).not.toContain('近期聊天风格弱证据');
   });
 
-  it('falls back to recent conversation evidence when no personality field exists', () => {
+  it('falls back to relationship defaults when no personality field exists', () => {
     const result = buildAgentPersonaPrompt({
       agent: {
         sex: AgentSex.woman,
         iCallAgent: '女儿',
         agentCallMe: '妈',
       } as AgentEntity,
-      recentMessages: [
-        {
-          role: MessageRole.assistant,
-          content: '妈，先坐一会儿，别又硬撑。',
-        } as MessageEntity,
-      ],
     });
 
-    expect(result.source).toBe('conversation_evidence');
+    expect(result.source).toBe('relationship_defaults');
     expect(result.generation).toBe('younger');
-    expect(result.prompt).toContain('近期聊天风格弱证据');
+    expect(result.prompt).not.toContain('近期聊天风格弱证据');
     expect(result.prompt).toContain('不要临时编造稳定性格');
   });
 
-  it('keeps explicit profile fields when a stored persona profile is empty', () => {
+  it('does not inject profile-page source paragraphs directly into persona', () => {
     const result = buildAgentPersonaPrompt({
       agent: {
         iCallAgent: '爸爸',
         personalityTraits: '嘴硬心软，说话直接',
+        languageHabits: '常说慢慢来',
+        lifeExperience: '年轻时做木匠',
         personaProfile: {},
       } as AgentEntity,
     });
 
-    expect(result.source).toBe('explicit_profile');
-    expect(result.prompt).toContain('嘴硬心软，说话直接');
+    expect(result.source).toBe('relationship_defaults');
+    expect(result.prompt).not.toContain('嘴硬心软，说话直接');
+    expect(result.prompt).not.toContain('常说慢慢来');
+    expect(result.prompt).not.toContain('年轻时做木匠');
   });
 
   it('marks a relationship-only fallback without claiming chat evidence', () => {

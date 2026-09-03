@@ -1,18 +1,22 @@
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'config/brand_config.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/agent/agent_create_flow_page.dart';
-import 'package:tianzhiling_app/agent/agent_create_page.dart';
+import 'package:tianzhiling_app/agent/voice_library_page.dart';
+import 'package:tianzhiling_app/agent/voice_service_page.dart';
+import 'package:tianzhiling_app/agent/voice_timbre_detail_page.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
 import 'package:tianzhiling_app/auth/auth_page.dart';
-import 'package:tianzhiling_app/coupon/cash_coupon_page.dart';
 import 'package:tianzhiling_app/friend/friend_profile_page.dart';
-import 'package:tianzhiling_app/invite/invite_reward_page.dart';
 import 'package:tianzhiling_app/main_tab_page.dart';
 import 'package:tianzhiling_app/home/my_posts_page.dart';
-import 'package:tianzhiling_app/notice/vip_success_notice_page.dart';
 import 'package:tianzhiling_app/user/user_name_edit_page.dart';
 import 'package:tianzhiling_app/user/user_settings_page.dart';
 import 'package:tianzhiling_app/vip/vip_center_page.dart';
+import 'package:tianzhiling_app/vip/orders_page.dart';
+import 'package:tianzhiling_app/user/service_agreement_page.dart';
+import 'package:tianzhiling_app/notice/system_notice_page.dart';
+import 'package:tianzhiling_app/home/my_agents_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,7 +35,7 @@ class TianZhiLingApp extends StatelessWidget {
         return MaterialApp(
           key: ValueKey<String>(session == null ? 'auth-root' : 'app-root'),
           debugShowCheckedModeBanner: false,
-          title: '未了言',
+          title: BrandConfig.name,
           locale: const Locale('zh', 'CN'),
           supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
           localizationsDelegates: const [
@@ -49,17 +53,26 @@ class TianZhiLingApp extends StatelessWidget {
           ),
           routes: {
             AgentCreateFlowPage.routeName: (_) => const AgentCreateFlowPage(),
-            AgentCreatePage.routeName: (_) => const AgentCreatePage(),
             AuthPage.routeName: (_) => const AuthPage(),
-            CashCouponPage.routeName: (_) => const CashCouponPage(),
+            VoiceLibraryPage.routeName: (_) => const VoiceLibraryPage(),
+            VoiceServicePage.routeName: (_) => const VoiceServicePage(),
             FriendProfilePage.routeName: (_) => const FriendProfilePage(),
-            InviteRewardPage.routeName: (_) => const InviteRewardPage(),
             MainTabPage.routeName: (_) => const MainTabPage(),
+            MyAgentsPage.routeName: (_) => const MyAgentsPage(),
             MyPostsPage.routeName: (_) => const MyPostsPage(),
+            OrdersPage.routeName: (_) => const OrdersPage(),
+            ServiceAgreementPage.routeName: (_) => const ServiceAgreementPage(),
+            SystemNoticePage.routeName: (_) => const SystemNoticePage(),
             UserNameEditPage.routeName: (_) => const UserNameEditPage(),
             UserSettingsPage.routeName: (_) => const UserSettingsPage(),
-            VipSuccessNoticePage.routeName: (_) => const VipSuccessNoticePage(),
             VipCenterPage.routeName: (_) => const VipCenterPage(),
+          },
+          onGenerateRoute: (settings) {
+            if (settings.name == VoiceTimbreDetailPage.routeName) {
+              final timbreId = settings.arguments as String? ?? '';
+              return MaterialPageRoute(builder: (_) => VoiceTimbreDetailPage(timbreId: timbreId));
+            }
+            return null;
           },
           home: session == null ? const AuthPage() : const MainTabPage(),
         );

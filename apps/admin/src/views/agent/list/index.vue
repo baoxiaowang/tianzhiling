@@ -1,7 +1,7 @@
 <template>
   <div class="agent-page">
     <a-card class="agent-page__card" :bordered="false">
-      <template #title>Agent 管理</template>
+      <template #title>智能体管理</template>
 
       <a-form :model="searchForm" layout="inline" class="agent-page__search">
         <a-form-item field="keyword" label="关键词">
@@ -12,26 +12,32 @@
             @press-enter="handleSearch"
           />
         </a-form-item>
-        <a-form-item field="sex" label="性别">
+        <a-form-item field="relation" label="关系">
           <a-select
-            v-model="searchForm.sex"
+            v-model="searchForm.relation"
             allow-clear
             placeholder="全部"
             class="agent-page__filter"
           >
-            <a-option :value="0">女性</a-option>
-            <a-option :value="1">男性</a-option>
+            <a-option value="妈妈">妈妈</a-option>
+            <a-option value="爸爸">爸爸</a-option>
+            <a-option value="爷爷">爷爷</a-option>
+            <a-option value="奶奶">奶奶</a-option>
+            <a-option value="姐姐">姐姐</a-option>
+            <a-option value="哥哥">哥哥</a-option>
+            <a-option value="妹妹">妹妹</a-option>
+            <a-option value="弟弟">弟弟</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="status" label="状态">
+        <a-form-item field="memberStatus" label="归属用户">
           <a-select
-            v-model="searchForm.status"
+            v-model="searchForm.memberStatus"
             allow-clear
             placeholder="全部"
             class="agent-page__filter"
           >
-            <a-option :value="1">启用</a-option>
-            <a-option :value="0">禁用</a-option>
+            <a-option value="vip">会员用户</a-option>
+            <a-option value="non_vip">普通用户</a-option>
           </a-select>
         </a-form-item>
         <a-form-item>
@@ -53,7 +59,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1920 }"
+        :scroll="{ x: 1120 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -63,7 +69,7 @@
           </a-empty>
         </template>
         <template #columns>
-          <a-table-column title="Agent" data-index="name" :width="260">
+          <a-table-column title="智能体" data-index="name" :width="260">
             <template #cell="{ record }">
               <a-space>
                 <a-avatar :size="40">
@@ -90,7 +96,7 @@
           <a-table-column
             title="归属用户"
             data-index="createdUser"
-            :width="260"
+            :width="300"
           >
             <template #cell="{ record }">
               <a-space v-if="record.createdUser">
@@ -107,6 +113,14 @@
                 <div class="agent-page__identity">
                   <div class="agent-page__name">
                     {{ record.createdUser.name || '-' }}
+                    <a-tag
+                      v-if="record.createdUser.isVip"
+                      color="gold"
+                      size="small"
+                      class="agent-page__vip-tag"
+                    >
+                      VIP
+                    </a-tag>
                   </div>
                   <a-tooltip
                     :content="
@@ -126,14 +140,7 @@
               </a-tooltip>
             </template>
           </a-table-column>
-          <a-table-column title="性别" data-index="sex" :width="90">
-            <template #cell="{ record }">
-              <a-tag :color="record.sex === 1 ? 'blue' : 'magenta'">
-                {{ formatSex(record.sex) }}
-              </a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column title="称呼关系" :width="220">
+          <a-table-column title="称呼关系" :width="230">
             <template #cell="{ record }">
               <div class="agent-page__calls">
                 <a-tooltip :content="`用户称呼TA：${record.iCallAgent || '-'}`">
@@ -151,43 +158,18 @@
               </div>
             </template>
           </a-table-column>
-          <a-table-column title="状态" data-index="status" :width="100">
-            <template #cell="{ record }">
-              <a-tag :color="record.status === 1 ? 'green' : 'gray'">
-                {{ formatStatus(record.status) }}
-              </a-tag>
-            </template>
-          </a-table-column>
           <a-table-column
-            title="绑定音色ID"
-            data-index="voiceTimbreId"
-            :width="220"
+            title="对话次数"
+            data-index="conversationCount"
+            :width="120"
           >
             <template #cell="{ record }">
-              <a-tooltip
-                v-if="record.voiceTimbreId"
-                :content="record.voiceTimbreId"
+              <a-link
+                class="agent-page__conversation-count"
+                @click="openDetail(record)"
               >
-                <a-typography-text class="agent-page__id" copyable>
-                  {{ record.voiceTimbreId }}
-                </a-typography-text>
-              </a-tooltip>
-              <span v-else>-</span>
-            </template>
-          </a-table-column>
-          <a-table-column title="生日" data-index="birthday" :width="150">
-            <template #cell="{ record }">
-              {{ formatDate(record.birthday, 'YYYY-MM-DD') }}
-            </template>
-          </a-table-column>
-          <a-table-column title="忌日" data-index="deathDate" :width="150">
-            <template #cell="{ record }">
-              {{ formatDate(record.deathDate, 'YYYY-MM-DD') }}
-            </template>
-          </a-table-column>
-          <a-table-column title="更新时间" data-index="updatedAt" :width="180">
-            <template #cell="{ record }">
-              {{ formatDate(record.updatedAt) }}
+                {{ record.conversationCount ?? 0 }}
+              </a-link>
             </template>
           </a-table-column>
           <a-table-column title="创建时间" data-index="createdAt" :width="180">
@@ -212,7 +194,7 @@
 
       <div class="agent-page__pagination">
         <span class="agent-page__total">
-          共 {{ pagination.total }} 个 Agent
+          共 {{ pagination.total }} 个智能体
         </span>
         <a-pagination
           :current="pagination.current"
@@ -242,7 +224,7 @@
         size="small"
         bordered
       >
-        <a-descriptions-item label="Agent ID">
+        <a-descriptions-item label="智能体 ID">
           <a-typography-text copyable>{{ editingAgent.id }}</a-typography-text>
         </a-descriptions-item>
         <a-descriptions-item label="归属用户">
@@ -453,12 +435,12 @@
   const editFormRef = ref<FormInstance>();
   const searchForm = reactive<{
     keyword: string;
-    sex?: number;
-    status?: number;
+    relation?: string;
+    memberStatus?: 'vip' | 'non_vip';
   }>({
     keyword: '',
-    sex: undefined,
-    status: undefined,
+    relation: undefined,
+    memberStatus: undefined,
   });
   const editForm = reactive({
     name: '',
@@ -481,24 +463,24 @@
 
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
-    sex: searchForm.sex,
-    status: searchForm.status,
+    relation: searchForm.relation,
+    memberStatus: searchForm.memberStatus,
     page: pagination.current,
     pageSize: pagination.pageSize,
   }));
   const hasSearch = computed(
     () =>
       Boolean(searchForm.keyword.trim()) ||
-      searchForm.sex !== undefined ||
-      searchForm.status !== undefined
+      Boolean(searchForm.relation) ||
+      Boolean(searchForm.memberStatus)
   );
   const emptyDescription = computed(() =>
-    hasSearch.value ? '未找到匹配 Agent' : '暂无 Agent'
+    hasSearch.value ? '未找到匹配智能体' : '暂无智能体'
   );
   const editModalTitle = computed(() =>
     editingAgent.value
-      ? `编辑 Agent：${editingAgent.value.name || editingAgent.value.id}`
-      : '编辑 Agent'
+      ? `编辑智能体：${editingAgent.value.name || editingAgent.value.id}`
+      : '编辑智能体'
   );
 
   const fetchData = async () => {
@@ -510,7 +492,7 @@
       pagination.current = data.page;
       pagination.pageSize = data.pageSize;
     } catch (error) {
-      Message.error('Agent 列表加载失败');
+      Message.error('智能体列表加载失败');
     } finally {
       setLoading(false);
     }
@@ -536,8 +518,8 @@
 
   const resetSearch = () => {
     searchForm.keyword = '';
-    searchForm.sex = undefined;
-    searchForm.status = undefined;
+    searchForm.relation = undefined;
+    searchForm.memberStatus = undefined;
     pagination.current = 1;
     fetchData();
   };
@@ -619,12 +601,12 @@
         status: editForm.status,
         voiceTimbreId: editForm.voiceTimbreId || '',
       });
-      Message.success('Agent 资料已更新');
+      Message.success('智能体资料已更新');
       closeEdit();
       await fetchData();
       return true;
     } catch (error) {
-      Message.error('Agent 资料保存失败');
+      Message.error('智能体资料保存失败');
       return false;
     } finally {
       saving.value = false;
@@ -637,22 +619,6 @@
 
   const formatDateValue = (value: string) => {
     return value ? dayjs(value).format('YYYY-MM-DD') : '';
-  };
-
-  const formatSex = (sex: number) => {
-    if (sex === 1) {
-      return '男性';
-    }
-
-    if (sex === 0) {
-      return '女性';
-    }
-
-    return '未知';
-  };
-
-  const formatStatus = (status: number) => {
-    return status === 1 ? '启用' : '禁用';
   };
 
   const getAvatarFallback = (name: string, fallback: string) => {
@@ -708,6 +674,16 @@
 
     &__identity {
       min-width: 0;
+    }
+
+    &__vip-tag {
+      margin-left: 6px;
+      font-weight: 600;
+    }
+
+    &__conversation-count {
+      font-weight: 600;
+      font-size: 16px;
     }
 
     &__name {

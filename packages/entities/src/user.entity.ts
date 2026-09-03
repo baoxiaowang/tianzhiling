@@ -18,6 +18,18 @@ export enum UserAccountCancellationStatus {
   partialFailed = 'partial_failed',
 }
 
+export enum ChatTrialStatus {
+  pending = 'pending',
+  active = 'active',
+  expired = 'expired',
+  ineligible = 'ineligible',
+}
+
+export type ChatTrialActivationReason =
+  | 'return_visit'
+  | 'sixth_message'
+  | 'historical_usage';
+
 export interface UserAccountCancellationSummary {
   deletedRecordCount: number;
   deletedAssetCount: number;
@@ -35,6 +47,17 @@ export interface UserRegion {
   provinceName: string;
   cityCode: string;
   cityName: string;
+}
+
+export type MembershipFinancialOperation =
+  | 'vip_upgrade_order_create'
+  | 'voice_membership_final_refund';
+
+export interface MembershipFinancialOperationLock {
+  token: string;
+  operation: MembershipFinancialOperation;
+  acquiredAt: Date;
+  expiresAt: Date;
 }
 
 @Index(['phone'], { sparse: true, background: true })
@@ -67,8 +90,31 @@ export class UserEntity extends BaseEntity {
   @Column()
   riskControlUntilAt?: Date;
 
+  /** Cross-service CAS lease for membership upgrades and final refunds. */
+  @Column()
+  membershipFinancialOperationLock?: MembershipFinancialOperationLock;
+
   @Column()
   postNotificationSeenAt?: Date;
+
+  /** Missing means this historical user still needs one-time usage validation. */
+  @Column()
+  chatTrialStatus?: ChatTrialStatus;
+
+  @Column()
+  chatTrialPolicyVersion?: string;
+
+  @Column()
+  chatTrialActivatedAt?: Date;
+
+  @Column()
+  chatTrialExpiresAt?: Date;
+
+  @Column()
+  chatTrialActivationReason?: ChatTrialActivationReason;
+
+  @Column()
+  chatTrialEvaluatedAt?: Date;
 
   /** Missing on historical rows means active for backward compatibility. */
   @Column()

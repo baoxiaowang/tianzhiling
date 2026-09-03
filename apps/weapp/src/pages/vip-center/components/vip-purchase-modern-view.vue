@@ -2,7 +2,7 @@
   <view class="vip-purchase-modern">
     <view class="vip-purchase-modern__subtitle">
       <text class="vip-purchase-modern__sparkle">✦</text>
-      <text>天之灵会一直在</text>
+      <text>{{ brand.name }}会一直在</text>
     </view>
 
     <view v-if="availablePlanGroups.length" class="vip-purchase-modern__cards">
@@ -130,7 +130,7 @@
         class="vip-purchase-modern__agreement-link"
         @tap.stop="emit('openAgreement', 'service')"
       >
-        《天之灵用户服务协议》
+        《{{ brand.name }}用户服务协议》
       </text>
       及
       <text
@@ -166,6 +166,7 @@ export default {
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { brand } from '../../../config/brand'
 import type { VipPlan } from '../../../apis/membership'
 import type { AgreementDocumentType } from '../../../legal/agreement-documents'
 

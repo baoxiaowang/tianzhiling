@@ -1,7 +1,7 @@
 <template>
   <VCharts
     v-if="renderChart"
-    :option="options"
+    :option="option"
     :autoresize="autoResize"
     :style="{ width, height }"
   />
@@ -10,10 +10,9 @@
 <script lang="ts" setup>
   import { ref, nextTick } from 'vue';
   import VCharts from 'vue-echarts';
-  // import { useAppStore } from '@/store';
 
   defineProps({
-    options: {
+    option: {
       type: Object,
       default() {
         return {};

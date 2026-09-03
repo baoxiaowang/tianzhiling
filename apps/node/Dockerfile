@@ -1,10 +1,7 @@
+# Production node app base
 FROM node:20.19-alpine AS base
 
 WORKDIR /workspace/apps/node
-
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
-  PNPM_VERSION=9.15.9 \
-  PNPM_INSTALL_FLAGS="--config.registry=https://registry.npmmirror.com --config.fetch-retries=5 --config.network-timeout=300000"
 
 RUN corepack enable
 
@@ -19,7 +16,7 @@ RUN npm pkg delete scripts.prepare --prefix /workspace
 
 FROM base AS deps
 
-RUN npx -y pnpm@${PNPM_VERSION} install --frozen-lockfile --lockfile-dir=/workspace --config.recursive-install=false --config.node-linker=isolated ${PNPM_INSTALL_FLAGS}
+RUN npx -y pnpm@9.15.9 install --frozen-lockfile --lockfile-dir=/workspace --config.recursive-install=false --config.node-linker=isolated
 
 FROM deps AS build
 
@@ -27,24 +24,28 @@ COPY packages/entities /workspace/packages/entities
 COPY packages/shared /workspace/packages/shared
 COPY apps/node ./
 
-RUN npx -y pnpm@${PNPM_VERSION} --dir /workspace --filter @tzl/entities build \
-  && npx -y pnpm@${PNPM_VERSION} --dir /workspace --filter @tzl/shared build \
-  && npx -y pnpm@${PNPM_VERSION} build \
+RUN npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/entities build \
+  && npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/shared build \
+  && npx -y pnpm@9.15.9 build \
   && test -f dist/configuration.js
 
 FROM base AS prod-deps
 
-RUN npx -y pnpm@${PNPM_VERSION} install --prod --frozen-lockfile --lockfile-dir=/workspace --config.recursive-install=false --config.node-linker=isolated ${PNPM_INSTALL_FLAGS}
+RUN npx -y pnpm@9.15.9 install --prod --frozen-lockfile --lockfile-dir=/workspace --config.recursive-install=false --config.node-linker=isolated
 
 FROM node:20.19-alpine AS runtime
 
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+RUN apk add --no-cache tzdata ffmpeg && npm install -g pm2@5.4.3
 
-RUN apk add --no-cache tzdata && npm install -g pm2@5.4.3
+ARG RELEASE_VERSION=unknown
+
+LABEL org.opencontainers.image.revision=$RELEASE_VERSION
 
 ENV TZ="Asia/Shanghai"
 
 ENV NODE_ENV=production
+
+ENV RELEASE_VERSION=$RELEASE_VERSION
 
 EXPOSE 7001
 
@@ -61,5 +62,6 @@ COPY --from=build /workspace/apps/node/package.json ./package.json
 COPY --from=build /workspace/apps/node/bootstrap.js ./bootstrap.js
 COPY --from=build /workspace/apps/node/dist ./dist
 COPY --from=build /workspace/apps/node/public ./public
+COPY --from=build /workspace/apps/node/scripts/ensure-conversation-reply-turn-indexes.js ./scripts/ensure-conversation-reply-turn-indexes.js
 
 CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "apibest-node", "-i", "4"]

@@ -66,8 +66,8 @@
               />
             </view>
             <view class="contacts-create-entry__content">
-              <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的@天之灵</text>
+              <text class="contacts-create-entry__title">新建{{ brand.name }}</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的{{ brand.name }}</text>
             </view>
             <view class="contacts-create-entry__action">
               <view class="contacts-create-entry__action-plus" />
@@ -112,7 +112,15 @@
 
             <view class="contacts-item__content">
               <view class="contacts-item__headline">
-                <text class="contacts-item__name">{{ resolveConversationName(conversation) }}</text>
+                <view class="contacts-item__name-group">
+                  <text class="contacts-item__name">{{ resolveConversationName(conversation) }}</text>
+                  <text
+                    v-if="conversation.agentAccessRole === 'shared'"
+                    class="contacts-item__shared-badge"
+                  >
+                    亲友共享
+                  </text>
+                </view>
                 <text class="contacts-item__time">
                   {{ formatConversationUpdatedAt(conversation.updatedAt) }}
                 </text>
@@ -128,7 +136,7 @@
             class="contacts-load-more"
             @tap="showMoreConversations"
           >
-            查看更多
+            {{ isLoadingMoreConversations ? '正在加载...' : '查看更多' }}
           </view>
 
           <view class="contacts-create-entry" @tap="handleCreateAgentTap">
@@ -140,8 +148,8 @@
               />
             </view>
             <view class="contacts-create-entry__content">
-              <text class="contacts-create-entry__title">新建天之灵</text>
-              <text class="contacts-create-entry__desc">通过对话创建TA的@天之灵</text>
+              <text class="contacts-create-entry__title">新建{{ brand.name }}</text>
+              <text class="contacts-create-entry__desc">通过对话创建TA的{{ brand.name }}</text>
             </view>
             <view class="contacts-create-entry__action">
               <view class="contacts-create-entry__action-plus" />
@@ -165,9 +173,10 @@ import { buildOssMediaUrl } from '@tzl/shared'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { computed, ref } from 'vue'
 import { ApiException } from '../../api/api-exception'
+import { brand } from '../../config/brand'
 import {
   getCachedConversations,
-  getConversations,
+  getConversationPage,
   type ConversationSummary,
 } from '../../apis/conversation'
 import { updateUserPreferences } from '../../auth/api'
@@ -178,18 +187,23 @@ import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import { openAgentCreatePage } from '../../utils/agent-create-navigation'
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
+import { rememberSelectedConversation } from '../../utils/selected-agent-chat'
 
 const isCheckingAuth = ref(true)
 const isContactsLoading = ref(true)
 const contactsLoadError = ref('')
 const conversations = ref<ConversationSummary[]>([])
 const visibleConversationLimit = ref(40)
+const conversationPage = ref(1)
+const hasMoreConversationPages = ref(false)
+const isLoadingMoreConversations = ref(false)
 const hasLoadedContacts = ref(false)
 const isSavingCoverImage = ref(false)
 const showCollapsedAppBar = ref(false)
 const createAgentAvatarUrl = buildOssMediaUrl('/weapp/tianzhiling.png')
 
 let refreshContactsPromise: Promise<void> | null = null
+let loadMoreContactsPromise: Promise<void> | null = null
 
 const CONTACT_COVER_BANNER_HEIGHT = 230
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = CONTACT_COVER_BANNER_HEIGHT + 12
@@ -205,7 +219,10 @@ const visibleConversations = computed(() => {
   return conversations.value.slice(0, visibleConversationLimit.value)
 })
 const hasMoreVisibleConversations = computed(() => {
-  return visibleConversationLimit.value < conversations.value.length
+  return (
+    visibleConversationLimit.value < conversations.value.length ||
+    hasMoreConversationPages.value
+  )
 })
 
 function showToast(title: string) {
@@ -279,11 +296,53 @@ function handleContactsScrollToLower() {
 }
 
 function showMoreConversations() {
-  if (!hasMoreVisibleConversations.value) {
+  if (visibleConversationLimit.value < conversations.value.length) {
+    visibleConversationLimit.value += CONTACTS_RENDER_LIMIT_STEP
     return
   }
 
-  visibleConversationLimit.value += CONTACTS_RENDER_LIMIT_STEP
+  if (hasMoreConversationPages.value) {
+    void loadMoreConversations()
+  }
+}
+
+async function loadMoreConversations() {
+  if (
+    loadMoreContactsPromise ||
+    !hasMoreConversationPages.value ||
+    isLoadingMoreConversations.value
+  ) {
+    return loadMoreContactsPromise
+  }
+
+  isLoadingMoreConversations.value = true
+  const nextPage = conversationPage.value + 1
+  loadMoreContactsPromise = getConversationPage({
+    page: nextPage,
+    pageSize: CONTACTS_RENDER_LIMIT_STEP,
+  })
+    .then((result) => {
+      conversations.value = sortConversationsForContacts(
+        mergeConversations(conversations.value, result.items),
+      )
+      conversationPage.value = result.page
+      hasMoreConversationPages.value = result.hasMore
+      visibleConversationLimit.value += CONTACTS_RENDER_LIMIT_STEP
+    })
+    .catch((error: unknown) => {
+      if (error instanceof ApiException && error.requiresReLogin) {
+        contactsLoadError.value = error.message
+        return
+      }
+
+      showToast('更多联系人加载失败，请稍后重试')
+    })
+    .finally(() => {
+      isLoadingMoreConversations.value = false
+      loadMoreContactsPromise = null
+    })
+
+  return loadMoreContactsPromise
 }
 
 async function handleCreateAgentTap() {
@@ -303,6 +362,7 @@ function buildConversationRouteQuery(conversation: ConversationSummary) {
     ['agentSex', String(conversation.agentSex)],
     ['agentCallMe', conversation.agentCallMe],
     ['iCallAgent', conversation.iCallAgent],
+    ['isMessenger', conversation.isMessenger ? '1' : ''],
     ['preview', conversation.preview],
     ['createdAt', conversation.createdAt?.toISOString() ?? ''],
   ]
@@ -311,12 +371,16 @@ function buildConversationRouteQuery(conversation: ConversationSummary) {
 }
 
 function handleConversationTap(conversation: ConversationSummary) {
+  rememberSelectedConversation(conversation)
   void Taro.navigateTo({
     url: `/pages/chat/index?${buildConversationRouteQuery(conversation)}`,
   })
 }
 
 function handleAgentDetailTap(conversation: ConversationSummary) {
+  if (conversation.isMessenger) {
+    return
+  }
   void Taro.navigateTo({
     url: `/pages/agent-detail/index?${buildConversationRouteQuery(conversation)}`,
   })
@@ -376,9 +440,19 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
 
   contactsLoadError.value = ''
 
-  refreshContactsPromise = getConversations()
-    .then((items) => {
-      conversations.value = sortConversationsForContacts(items)
+  refreshContactsPromise = getConversationPage({
+      page: 1,
+      pageSize: CONTACTS_INITIAL_RENDER_LIMIT,
+    })
+    .then((result) => {
+      conversations.value = sortConversationsForContacts(
+        mergeConversations(
+          result.entryItem ? [result.entryItem] : [],
+          result.items,
+        ),
+      )
+      conversationPage.value = result.page
+      hasMoreConversationPages.value = result.hasMore
       visibleConversationLimit.value = Math.max(
         CONTACTS_INITIAL_RENDER_LIMIT,
         Math.min(visibleConversationLimit.value, conversations.value.length),
@@ -401,6 +475,18 @@ async function refreshContactsData(options: { showLoading?: boolean } = {}) {
     })
 
   return refreshContactsPromise
+}
+
+function mergeConversations(
+  currentItems: ConversationSummary[],
+  nextItems: ConversationSummary[],
+) {
+  const itemsById = new Map<string, ConversationSummary>()
+
+  currentItems.forEach((item) => itemsById.set(item.id, item))
+  nextItems.forEach((item) => itemsById.set(item.id, item))
+
+  return [...itemsById.values()]
 }
 
 function sortConversationsForContacts(items: ConversationSummary[]) {
@@ -699,6 +785,13 @@ useDidShow(() => {
   gap: 12px;
 }
 
+.contacts-item__name-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .contacts-item__name {
   flex: 1;
   min-width: 0;
@@ -709,6 +802,16 @@ useDidShow(() => {
   line-height: 24px;
   font-weight: 600;
   color: #101828;
+}
+
+.contacts-item__shared-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #26745f;
+  background: #e8f4f0;
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .contacts-item__time {

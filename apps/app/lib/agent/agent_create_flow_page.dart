@@ -1,1148 +1,436 @@
+import 'dart:async';
+import '../config/brand_config.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:tianzhiling_app/api/agent_api.dart';
 import 'package:tianzhiling_app/api/auth_api.dart';
 import 'package:tianzhiling_app/api/storage_api.dart';
 import 'package:tianzhiling_app/auth/auth_page.dart';
-import 'package:tianzhiling_app/user/app_avatar.dart';
 import 'package:tianzhiling_app/user/avatar_editor_page.dart';
 import 'package:image_picker/image_picker.dart';
 
-enum _AgentFormStep {
-  memorialName,
-  gender,
-  relationToThem,
-  relationToMe,
-  avatar,
-}
-
-enum _AgentGender { male, female }
-
 class AgentCreateFlowPage extends StatefulWidget {
   const AgentCreateFlowPage({super.key});
-
   static const String routeName = '/agents/create/flow';
-  static const String _backgroundAsset = 'assets/images/agent.png';
-
   @override
   State<AgentCreateFlowPage> createState() => _AgentCreateFlowPageState();
 }
 
 class _AgentCreateFlowPageState extends State<AgentCreateFlowPage> {
-  final ImagePicker _imagePicker = ImagePicker();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _relationToThemController =
-      TextEditingController();
-  final TextEditingController _relationToMeController = TextEditingController();
-  final FocusNode _textFocusNode = FocusNode();
+  String _step = 'relationToThem';
+  final Map<String, dynamic> _draft = {};
+  final _inputCtl = TextEditingController();
+  final _picker = ImagePicker();
 
-  _AgentFormStep _currentStep = _AgentFormStep.memorialName;
-  _AgentGender? _gender;
+  String _promptText = '';
+  String _displayedPrompt = '';
+  Timer? _revealTimer;
+  bool _isThinking = false;
   bool _isSubmitting = false;
   bool _isUploadingAvatar = false;
   String _avatarPreviewUrl = '';
   String _avatarObjectKey = '';
 
+  static const _steps = ['relationToThem', 'agentName', 'relationToMe', 'avatar'];
+  int get _stepNum => _steps.indexOf(_step) + 1;
+  bool get _busy => _isThinking || _isSubmitting || _isUploadingAvatar;
+
+  static const _relations = ['妈妈', '爸爸', '奶奶', '爷爷', '外婆', '外公', '爱人', '朋友'];
+  static const _calls = ['孩子', '闺女', '儿子', '宝贝', '丫头', '输入小名'];
+
+  String _questionFor(String s) {
+    switch (s) {
+      case 'relationToThem': return '你好，我可以慢慢记下你想唤醒的那位亲人的信息。首先，你想唤醒谁呢？';
+      case 'agentName': return '好的，那在聊天中，你想让TA的名字显示成什么呢？';
+      case 'relationToMe': return 'TA以前是怎么叫你的呢？';
+      case 'avatar': return '太好了，最后为TA选一张熟悉的照片作为头像吧。';
+      default: return '';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _syncFocus();
+    _say(_questionFor('relationToThem'));
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _relationToThemController.dispose();
-    _relationToMeController.dispose();
-    _textFocusNode.dispose();
+    _revealTimer?.cancel();
+    _inputCtl.dispose();
     super.dispose();
   }
 
-  String get _currentQuestion {
-    switch (_currentStep) {
-      case _AgentFormStep.memorialName:
-        return '你纪念的人是？';
-      case _AgentFormStep.gender:
-        return '他的性别是？';
-      case _AgentFormStep.relationToThem:
-        return '你怎么称呼 TA？';
-      case _AgentFormStep.relationToMe:
-        return 'TA 怎么称呼你？';
-      case _AgentFormStep.avatar:
-        return '为 TA 选一张头像吧';
-    }
-  }
-
-  String get _currentPlaceholder {
-    switch (_currentStep) {
-      case _AgentFormStep.memorialName:
-        return '请输入 TA 的昵称或备注名';
-      case _AgentFormStep.relationToThem:
-        return '如：爷爷，奶奶';
-      case _AgentFormStep.relationToMe:
-        return '如：丫头，小宝';
-      case _AgentFormStep.gender:
-      case _AgentFormStep.avatar:
-        return '';
-    }
-  }
-
-  TextEditingController get _activeController {
-    switch (_currentStep) {
-      case _AgentFormStep.memorialName:
-        return _nameController;
-      case _AgentFormStep.relationToThem:
-        return _relationToThemController;
-      case _AgentFormStep.relationToMe:
-        return _relationToMeController;
-      case _AgentFormStep.gender:
-      case _AgentFormStep.avatar:
-        return _nameController;
-    }
-  }
-
-  bool get _canContinue {
-    if (_isSubmitting) {
-      return false;
-    }
-
-    switch (_currentStep) {
-      case _AgentFormStep.memorialName:
-        return _nameController.text.trim().isNotEmpty;
-      case _AgentFormStep.gender:
-        return _gender != null;
-      case _AgentFormStep.relationToThem:
-        return _relationToThemController.text.trim().isNotEmpty;
-      case _AgentFormStep.relationToMe:
-        return _relationToMeController.text.trim().isNotEmpty;
-      case _AgentFormStep.avatar:
-        return !_isUploadingAvatar;
-    }
-  }
-
-  List<_ChatEntry> get _history {
-    final entries = <_ChatEntry>[];
-
-    if (_nameController.text.trim().isNotEmpty) {
-      entries.add(
-        _ChatEntry(
-          step: _AgentFormStep.memorialName,
-          question: '你纪念的人是？',
-          answer: _nameController.text.trim(),
-        ),
-      );
-    }
-    if (_gender != null) {
-      entries.add(
-        _ChatEntry(
-          step: _AgentFormStep.gender,
-          question: '他的性别是？',
-          answer: _gender == _AgentGender.male ? '男' : '女',
-        ),
-      );
-    }
-    if (_relationToThemController.text.trim().isNotEmpty) {
-      entries.add(
-        _ChatEntry(
-          step: _AgentFormStep.relationToThem,
-          question: '你怎么称呼 TA？',
-          answer: _relationToThemController.text.trim(),
-        ),
-      );
-    }
-    if (_relationToMeController.text.trim().isNotEmpty) {
-      entries.add(
-        _ChatEntry(
-          step: _AgentFormStep.relationToMe,
-          question: 'TA 怎么称呼你？',
-          answer: _relationToMeController.text.trim(),
-        ),
-      );
-    }
-
-    final currentIndex = _AgentFormStep.values.indexOf(_currentStep);
-    return entries.take(currentIndex).toList();
-  }
-
-  Future<void> _goToNextStep() async {
-    if (!_canContinue) {
-      return;
-    }
-
-    if (_currentStep == _AgentFormStep.avatar) {
-      await _submitCreation();
-      return;
-    }
-
-    setState(() {
-      _currentStep = _AgentFormStep.values[_currentStep.index + 1];
+  void _say(String text) {
+    _revealTimer?.cancel();
+    _promptText = text;
+    _displayedPrompt = '';
+    final chars = text.characters.toList();
+    int i = 0;
+    _revealTimer = Timer.periodic(const Duration(milliseconds: 38), (t) {
+      if (!mounted) { t.cancel(); return; }
+      i++;
+      setState(() => _displayedPrompt = chars.take(i).join());
+      if (i >= chars.length) t.cancel();
     });
+  }
 
-    _syncFocus();
+  void _showThinking() => setState(() => _isThinking = true);
+
+  // ============ Step Logic (local, no interview API) ============
+  void _selectRelation(String label) {
+    if (_busy) return;
+    setState(() { _draft['relationToThem'] = label; _draft['gender'] = label == '爸爸' || label == '爷爷' || label == '外公' ? 'male' : 'female'; });
+    _showThinking();
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      setState(() { _step = 'agentName'; _isThinking = false; });
+      _say(_questionFor('agentName'));
+    });
+  }
+
+  void _selectNameMode(String mode) {
+    if (_busy) return;
+    if (mode == 'relation') {
+      final rel = _draft['relationToThem']?.toString() ?? '';
+      if (rel.isNotEmpty) { _inputCtl.text = rel; }
+    } else if (mode == 'realName') {
+      _inputCtl.text = '';
+    } else {
+      _inputCtl.text = '';
+    }
+  }
+
+  void _selectCall(String label) {
+    if (_busy) return;
+    if (label == '输入小名') { _inputCtl.text = ''; return; }
+    setState(() { _draft['relationToMe'] = label; });
+    _showThinking();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      setState(() { _step = 'avatar'; _isThinking = false; });
+      _say(_questionFor('avatar'));
+    });
+  }
+
+  void _submitText() {
+    if (_busy) return;
+    final input = _inputCtl.text.trim();
+    if (input.isEmpty && (_draft[_step] ?? '').toString().isNotEmpty) {
+      _advanceStep();
+      return;
+    }
+    if (input.isEmpty) return;
+    _draft[_step] = input;
+    _inputCtl.clear();
+    _advanceStep();
+  }
+
+  void _advanceStep() {
+    final idx = _steps.indexOf(_step);
+    if (idx >= _steps.length - 1) return;
+    _showThinking();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      setState(() { _step = _steps[idx + 1]; _isThinking = false; });
+      _say(_questionFor(_step));
+    });
   }
 
   void _goBack() {
-    if (_isSubmitting) {
-      return;
-    }
-
-    if (_currentStep == _AgentFormStep.memorialName) {
-      Navigator.of(context).maybePop();
-      return;
-    }
-
-    setState(() {
-      _currentStep = _AgentFormStep.values[_currentStep.index - 1];
-    });
-
-    _syncFocus();
+    if (_busy) return;
+    final idx = _steps.indexOf(_step);
+    if (idx <= 0) { Navigator.of(context).maybePop(); return; }
+    setState(() => _step = _steps[idx - 1]);
+    _say(_questionFor(_step));
   }
 
-  void _selectStep(_AgentFormStep step) {
-    if (_isSubmitting || step == _currentStep) {
-      return;
-    }
-
-    setState(() {
-      _currentStep = step;
-    });
-
-    _syncFocus();
+  void _editStep(String step) {
+    if (_busy) return;
+    setState(() => _step = step);
+    _inputCtl.text = (_draft[step] ?? '').toString();
+    _say(_questionFor(step));
   }
 
-  Future<void> _selectGender(_AgentGender value) async {
-    if (_isSubmitting) {
-      return;
-    }
-
-    setState(() {
-      _gender = value;
-    });
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    if (!mounted) {
-      return;
-    }
-    await _goToNextStep();
-  }
-
-  Future<void> _submitCreation() async {
-    if (_isSubmitting || _isUploadingAvatar) {
-      return;
-    }
-
-    setState(() {
-      _isSubmitting = true;
-    });
-
+  Future<void> _handleAvatar() async {
+    if (_busy) return;
     try {
-      var agent = await AgentApi.createAgent(
-        name: _nameController.text.trim(),
-        sex: _gender == _AgentGender.male ? 1 : 0,
-        iCallAgent: _relationToThemController.text.trim(),
-        agentCallMe: _relationToMeController.text.trim(),
-      );
-
-      if (_avatarObjectKey.trim().isNotEmpty) {
-        agent = await AgentApi.updateAgentAvatar(agent.id, _avatarObjectKey);
-      }
-
-      if (!mounted) {
-        return;
-      }
-
-      Navigator.of(context).pop(agent);
-    } on ApiException catch (error) {
-      if (error.requiresReLogin) {
-        await AuthSessionStore.clear();
-        if (!mounted) {
-          return;
-        }
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil(AuthPage.routeName, (_) => false);
-        return;
-      }
-
-      _showSnackBar(error.message);
+      final sel = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 2048, requestFullMetadata: false);
+      if (sel == null || !mounted) return;
+      final upload = await AvatarEditorPage.edit(context, sel);
+      if (upload == null || !mounted) return;
+      setState(() => _isUploadingAvatar = true);
+      final result = await StorageApi.uploadImage(XFile(upload.path, mimeType: 'image/jpeg', name: sel.name), folder: 'avatars');
+      if (!mounted) return;
+      setState(() { _avatarPreviewUrl = result.publicUrl; _avatarObjectKey = result.objectKey; _isUploadingAvatar = false; });
+    } on ApiException catch (e) {
+      if (e.requiresReLogin) { await AuthSessionStore.clear(); if (mounted) Navigator.of(context).pushNamedAndRemoveUntil(AuthPage.routeName, (_) => false); return; }
+      setState(() => _isUploadingAvatar = false);
+      _toast(e.message);
     } catch (_) {
-      _showSnackBar('创建 Agent 失败，请稍后重试');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
+      setState(() => _isUploadingAvatar = false);
+      _toast('头像选择失败');
     }
   }
 
-  void _showSnackBar(String message) {
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
-  }
-
-  void _syncFocus() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-
-      if (_currentStep == _AgentFormStep.gender ||
-          _currentStep == _AgentFormStep.avatar ||
-          _isSubmitting ||
-          _isUploadingAvatar) {
-        FocusScope.of(context).unfocus();
-        return;
-      }
-
-      FocusScope.of(context).requestFocus(_textFocusNode);
-    });
-  }
-
-  Future<void> _handleAvatarTap() async {
-    if (_isSubmitting || _isUploadingAvatar) {
-      return;
-    }
-
+  Future<void> _finishCreate() async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
     try {
-      final selected = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 92,
-        maxWidth: 2048,
-        requestFullMetadata: false,
+      final name = (_draft['agentName'] ?? _draft['relationToThem'] ?? '') as String;
+      final gender = _draft['gender'] as String? ?? '';
+      final agent = await AgentApi.createAgent(
+        name: name.trim(),
+        sex: gender == 'male' ? 1 : 0,
+        iCallAgent: (_draft['relationToThem'] ?? '').toString().trim(),
+        agentCallMe: (_draft['relationToMe'] ?? '').toString().trim(),
       );
-
-      if (selected == null || !mounted) {
-        return;
+      var agentSummary = agent;
+      if (_avatarObjectKey.isNotEmpty) {
+        agentSummary = await AgentApi.updateAgentAvatar(agentSummary.id, _avatarObjectKey);
       }
-
-      final uploadSource = await AvatarEditorPage.edit(context, selected);
-
-      if (uploadSource == null || !mounted) {
-        return;
-      }
-
-      setState(() {
-        _isUploadingAvatar = true;
-      });
-
-      final upload = await StorageApi.uploadImage(
-        XFile(
-          uploadSource.path,
-          mimeType: 'image/jpeg',
-          name: _buildAvatarFileName(selected),
-        ),
-        folder: 'avatars',
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _avatarPreviewUrl = upload.publicUrl;
-        _avatarObjectKey = upload.objectKey;
-      });
-    } on ApiException catch (error) {
-      if (error.requiresReLogin) {
-        await AuthSessionStore.clear();
-        if (!mounted) {
-          return;
-        }
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil(AuthPage.routeName, (_) => false);
-        return;
-      }
-
-      _showSnackBar(error.message);
+      if (!mounted) return;
+      Navigator.of(context).pop(agentSummary);
+    } on ApiException catch (e) {
+      if (e.requiresReLogin) { await AuthSessionStore.clear(); if (mounted) Navigator.of(context).pushNamedAndRemoveUntil(AuthPage.routeName, (_) => false); return; }
+      _toast(e.message);
     } catch (_) {
-      _showSnackBar('头像上传失败，请稍后重试');
+      _toast('唤醒${BrandConfig.name}失败');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isUploadingAvatar = false;
-        });
-      }
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
-  String _buildAvatarFileName(XFile selected) {
-    final name = selected.name.trim();
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2)));
+  }
 
-    if (name.isNotEmpty) {
-      return name;
+  List<_SumRow> get _summaryRows {
+    final rows = <_SumRow>[];
+    final rel = _draft['relationToThem']?.toString();
+    final nm = _draft['agentName']?.toString();
+    final rm = _draft['relationToMe']?.toString();
+    if (rel != null && rel.isNotEmpty) rows.add(_SumRow('relationToThem', '你想唤醒', rel));
+    if (nm != null && nm.isNotEmpty) rows.add(_SumRow('agentName', '智能体名称', nm));
+    if (rm != null && rm.isNotEmpty) rows.add(_SumRow('relationToMe', 'TA对你的称呼', rm));
+    return rows.where((r) => r.step != _step).toList();
+  }
+
+  bool get _canContinue {
+    if (_busy) return false;
+    if (_step == 'avatar') return true;
+    return _inputCtl.text.trim().isNotEmpty || (_draft[_step] ?? '').toString().isNotEmpty;
+  }
+
+  String get _btnLabel {
+    if (_step == 'avatar') return '确认唤醒';
+    if (_step == 'relationToThem') return '告诉小使者';
+    return '继续';
+  }
+
+  String get _hintText {
+    switch (_step) {
+      case 'relationToThem': return '例如：妈妈，也可以一起说他平时怎么称呼你';
+      case 'agentName': return '输入聊天列表中显示的名称';
+      case 'relationToMe': return '输入他对你的称呼';
+      default: return '';
     }
-
-    return 'agent_avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-    final bottomInset = mediaQuery.viewInsets.bottom;
-    final bottomSafeArea = mediaQuery.padding.bottom;
+  String get _messengerDesc {
+    if (_isThinking) return '小使者正在记下基本信息';
+    if (_isSubmitting) return '小使者正在唤醒${BrandConfig.name}';
+    return '我来帮你一步步唤醒他';
+  }
 
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: Scaffold(
-        backgroundColor: const Color(0xFF090D1A),
-        resizeToAvoidBottomInset: false,
-        body: LayoutBuilder(
-          builder: (context, constraints) {
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 393),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: constraints.maxHeight,
-                  child: Stack(
-                    children: [
-                      const Positioned.fill(child: _FlowBackground()),
-                      Positioned.fill(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.12),
-                                Colors.black.withValues(alpha: 0),
-                                Colors.black.withValues(alpha: 0.12),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      SafeArea(
-                        bottom: false,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Column(
-                            children: [
-                              _FlowHeader(onBack: _goBack),
-                              Expanded(
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 260),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeInCubic,
-                                  child: _currentStep == _AgentFormStep.avatar
-                                      ? _AvatarStepView(
-                                          key: ValueKey(
-                                            '${_currentStep.name}-$bottomInset',
-                                          ),
-                                          history: _history,
-                                          currentQuestion: _currentQuestion,
-                                          avatarUrl: _avatarPreviewUrl,
-                                          isUploading: _isUploadingAvatar,
-                                          onSelectStep: _selectStep,
-                                          onAvatarTap: _handleAvatarTap,
-                                        )
-                                      : _ConversationView(
-                                          key: ValueKey(
-                                            '${_currentStep.name}-$bottomInset',
-                                          ),
-                                          history: _history,
-                                          currentQuestion: _currentQuestion,
-                                          onSelectStep: _selectStep,
-                                        ),
-                                ),
-                              ),
-                              AnimatedPadding(
-                                duration: const Duration(milliseconds: 220),
-                                curve: Curves.easeOut,
-                                padding: EdgeInsets.only(
-                                  bottom: bottomInset > 0
-                                      ? bottomInset + 12
-                                      : bottomSafeArea + 24,
-                                ),
-                                child: _CurrentAnswerPanel(
-                                  step: _currentStep,
-                                  controller: _activeController,
-                                  focusNode: _textFocusNode,
-                                  placeholder: _currentPlaceholder,
-                                  selectedGender: _gender,
-                                  canContinue: _canContinue,
-                                  isSubmitting:
-                                      _isSubmitting || _isUploadingAvatar,
-                                  avatarUrl: _avatarPreviewUrl,
-                                  onGenderChanged: _selectGender,
-                                  onChanged: () => setState(() {}),
-                                  onAvatarTap: _handleAvatarTap,
-                                  onContinue: _goToNextStep,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
+  // ============ Build ============
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFFF6F6F8),
+    body: SafeArea(bottom: false, child: Column(children: [
+      _buildAppBar(),
+      Expanded(child: _isSubmitting ? _buildCreating() : _buildBody()),
+      if (!_isSubmitting) _buildBottom(),
+    ])),
+  );
+
+  Widget _buildAppBar() => Container(
+    height: 48,
+    padding: const EdgeInsets.symmetric(horizontal: 4),
+    decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: Color(0xFFEEEEF2)))),
+    child: Row(children: [
+      SizedBox(width: 44, child: IconButton(onPressed: _goBack, icon: const Icon(Icons.chevron_left_rounded, size: 24, color: Color(0xFF24222B)), splashRadius: 18)),
+      const Expanded(child: Text('唤醒${BrandConfig.name}', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B)))),
+      const SizedBox(width: 44),
+    ]),
+  );
+
+  Widget _buildBody() => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+    child: Column(children: [
+      _buildMessenger(),
+      const SizedBox(height: 16),
+      _buildProgress(),
+      const SizedBox(height: 14),
+      _buildPrompt(),
+      if (_summaryRows.isNotEmpty) ...[const SizedBox(height: 18), _buildSummary()],
+      const SizedBox(height: 18),
+      _buildStepContent(),
+    ]),
+  );
+
+  Widget _buildMessenger() => Column(children: [
+    const _MessengerCircle(),
+    const SizedBox(height: 8),
+    const Text('${BrandConfig.name}小使者', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
+    const SizedBox(height: 2),
+    Text(_messengerDesc, style: const TextStyle(fontSize: 13, color: Color(0xFF8A8791))),
+  ]);
+
+  Widget _buildProgress() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text('基本信息 $_stepNum/4', style: const TextStyle(fontSize: 12, color: Color(0xFF77747F))),
+    const SizedBox(height: 8),
+    Row(children: List.generate(4, (i) => Expanded(child: Container(height: 3, margin: EdgeInsets.only(right: i < 3 ? 6 : 0), decoration: BoxDecoration(borderRadius: BorderRadius.circular(2), color: i < _stepNum ? const Color(0xFF297B69) : const Color(0xFFE2E1E6)))))),
+  ]);
+
+  Widget _buildPrompt() {
+    final text = _displayedPrompt.isEmpty ? _promptText : _displayedPrompt;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+      decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE9E8ED)), bottom: BorderSide(color: Color(0xFFE9E8ED)))),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Expanded(child: _isThinking
+          ? Row(children: [Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF55515D))), const SizedBox(width: 10), _Dot(), _Dot(), _Dot()])
+          : Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF24222B), height: 1.7)),
         ),
-      ),
+        const SizedBox(width: 14),
+        Container(width: 42, height: 42, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFF0EEF5)), child: const Icon(CupertinoIcons.waveform, color: Color(0xFF77728F), size: 17)),
+      ]),
     );
   }
-}
 
-class _FlowBackground extends StatelessWidget {
-  const _FlowBackground();
-
-  @override
-  Widget build(BuildContext context) {
-    return Image.asset(
-      AgentCreateFlowPage._backgroundAsset,
-      fit: BoxFit.cover,
-      alignment: Alignment.topCenter,
-      errorBuilder: (context, error, stackTrace) {
-        return const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFF050814), Color(0xFF071222), Color(0xFF030406)],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _FlowHeader extends StatelessWidget {
-  const _FlowHeader({required this.onBack});
-
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.only(left: 2),
-          child: IconButton(
-            onPressed: onBack,
-            icon: const Icon(
-              Icons.chevron_left_rounded,
-              color: Colors.white,
-              size: 28,
-            ),
-            splashRadius: 20,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConversationView extends StatelessWidget {
-  const _ConversationView({
-    super.key,
-    required this.history,
-    required this.currentQuestion,
-    required this.onSelectStep,
-  });
-
-  final List<_ChatEntry> history;
-  final String currentQuestion;
-  final ValueChanged<_AgentFormStep> onSelectStep;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomLeft,
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        reverse: true,
-        padding: const EdgeInsets.only(bottom: 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            for (final entry in history) ...[
-              _QuestionBubble(
-                text: entry.question,
-                onTap: () => onSelectStep(entry.step),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: _AnswerBubble(text: entry.answer),
-              ),
-              const SizedBox(height: 18),
-            ],
-            _QuestionBubble(text: currentQuestion),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AvatarStepView extends StatelessWidget {
-  const _AvatarStepView({
-    super.key,
-    required this.history,
-    required this.currentQuestion,
-    required this.avatarUrl,
-    required this.isUploading,
-    required this.onSelectStep,
-    required this.onAvatarTap,
-  });
-
-  final List<_ChatEntry> history;
-  final String currentQuestion;
-  final String avatarUrl;
-  final bool isUploading;
-  final ValueChanged<_AgentFormStep> onSelectStep;
-  final Future<void> Function() onAvatarTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            reverse: true,
-            padding: const EdgeInsets.only(top: 24, bottom: 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final entry in history) ...[
-                  _QuestionBubble(
-                    text: entry.question,
-                    onTap: () => onSelectStep(entry.step),
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _AnswerBubble(text: entry.answer),
-                  ),
-                  const SizedBox(height: 18),
-                ],
-                _QuestionBubble(text: currentQuestion),
-              ],
-            ),
-          ),
-        ),
-        Expanded(
-          child: Center(
-            child: _AvatarUploadCard(
-              avatarUrl: avatarUrl,
-              isUploading: isUploading,
-              onTap: onAvatarTap,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _QuestionBubble extends StatelessWidget {
-  const _QuestionBubble({required this.text, this.onTap});
-
-  final String text;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+  Widget _buildSummary() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Row(children: [Text('小使者已经记住', style: TextStyle(fontSize: 14, color: Color(0xFF24222B))), Spacer(), Text('点击可修改', style: TextStyle(fontSize: 12, color: Color(0xFF8A8791)))]),
+    const SizedBox(height: 8),
+    ..._summaryRows.map((r) => GestureDetector(
+      onTap: () => _editStep(r.step),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.42),
-          borderRadius: BorderRadius.circular(88),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            height: 20 / 16,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        margin: const EdgeInsets.only(bottom: 6),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFEEEBF2))),
+        child: Row(children: [Expanded(child: Text('${r.label}：${r.value}', style: const TextStyle(fontSize: 14, color: Color(0xFF24222B)))), const Icon(CupertinoIcons.pencil, size: 13, color: Color(0xFF8A8791))]),
       ),
-    );
-  }
-}
+    )),
+  ]);
 
-class _AnswerBubble extends StatelessWidget {
-  const _AnswerBubble({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 220),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(88),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 15,
-          height: 20 / 15,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-}
-
-class _CurrentAnswerPanel extends StatelessWidget {
-  const _CurrentAnswerPanel({
-    required this.step,
-    required this.controller,
-    required this.focusNode,
-    required this.placeholder,
-    required this.selectedGender,
-    required this.canContinue,
-    required this.isSubmitting,
-    required this.avatarUrl,
-    required this.onGenderChanged,
-    required this.onChanged,
-    required this.onAvatarTap,
-    required this.onContinue,
-  });
-
-  final _AgentFormStep step;
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final String placeholder;
-  final _AgentGender? selectedGender;
-  final bool canContinue;
-  final bool isSubmitting;
-  final String avatarUrl;
-  final ValueChanged<_AgentGender> onGenderChanged;
-  final VoidCallback onChanged;
-  final Future<void> Function() onAvatarTap;
-  final Future<void> Function() onContinue;
-
-  Widget _buildStepChild() {
-    switch (step) {
-      case _AgentFormStep.gender:
-        return _GenderPanel(
-          key: const ValueKey('gender'),
-          selectedGender: selectedGender,
-          onChanged: onGenderChanged,
-        );
-      case _AgentFormStep.avatar:
-        return _AvatarActionPanel(
-          key: const ValueKey('avatar'),
-          canContinue: canContinue,
-          isSubmitting: isSubmitting,
-          hasAvatar: avatarUrl.trim().isNotEmpty,
-          onAvatarTap: onAvatarTap,
-          onContinue: onContinue,
-        );
-      case _AgentFormStep.memorialName:
-      case _AgentFormStep.relationToThem:
-      case _AgentFormStep.relationToMe:
-        return _TextAnswerPanel(
-          key: ValueKey(step.name),
-          controller: controller,
-          focusNode: focusNode,
-          placeholder: placeholder,
-          canContinue: canContinue,
-          isSubmitting: isSubmitting,
-          onChanged: onChanged,
-          onContinue: onContinue,
-        );
-    }
+  Widget _buildStepContent() {
+    if (_step == 'relationToThem') return _chipsWithInput('常见关系', _relations, _selectRelation);
+    if (_step == 'agentName') return _nameModeStep();
+    if (_step == 'relationToMe') return _chipsWithInput('常用称呼', _calls, _selectCall);
+    return _buildAvatarStep();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      ignoring: isSubmitting,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 240),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        child: _buildStepChild(),
+  Widget _chipsWithInput(String title, List<String> options, void Function(String) onTap) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(title, style: const TextStyle(fontSize: 13, color: Color(0xFF8A8791))),
+    const SizedBox(height: 10),
+    Wrap(spacing: 10, runSpacing: 10, children: options.map((o) => GestureDetector(
+      onTap: () => onTap(o),
+      child: Container(padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFDEDCE4))), child: Text(o, style: const TextStyle(fontSize: 15, color: Color(0xFF24222B)))),
+    )).toList()),
+    const SizedBox(height: 16),
+    _buildInputArea(),
+  ]);
+
+  Widget _nameModeStep() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('聊天中的名称', style: TextStyle(fontSize: 13, color: Color(0xFF8A8791))),
+    const SizedBox(height: 10),
+    Wrap(spacing: 10, runSpacing: 10, children: [
+      _modeChip('relation', '就叫"${_draft['relationToThem'] ?? ''}"'),
+      _modeChip('wechat', '微信昵称/备注'),
+      _modeChip('realName', '真实姓名'),
+    ]),
+    const SizedBox(height: 16),
+    _buildInputArea(),
+  ]);
+
+  Widget _modeChip(String mode, String label) => GestureDetector(
+    onTap: () => _selectNameMode(mode),
+    child: Container(padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFDEDCE4))), child: Text(label, style: const TextStyle(fontSize: 15, color: Color(0xFF24222B)))),
+  );
+
+  Widget _buildInputArea() => Container(
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE9E8ED))),
+    padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+    child: Row(children: [
+      Expanded(child: TextField(
+        controller: _inputCtl, enabled: !_busy, style: const TextStyle(fontSize: 15, color: Color(0xFF24222B)),
+        decoration: InputDecoration(hintText: _hintText, hintStyle: const TextStyle(fontSize: 14, color: Color(0xFFB0ADB8)), border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero),
+        onSubmitted: (_) => _submitText(),
+      )),
+      const SizedBox(width: 8),
+      Container(width: 40, height: 40, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFF0EEF5)), child: const Icon(CupertinoIcons.mic_fill, color: Color(0xFF77728F), size: 19)),
+    ]),
+  );
+
+  Widget _buildAvatarStep() => Column(children: [
+    GestureDetector(
+      onTap: _isUploadingAvatar ? null : _handleAvatar,
+      child: Container(
+        width: 160, height: 160,
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFE9E8ED))),
+        child: _isUploadingAvatar
+          ? const Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF297B69))))
+          : _avatarPreviewUrl.isNotEmpty
+            ? ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(_avatarPreviewUrl, fit: BoxFit.cover, errorBuilder: (_, err, st) => const Icon(Icons.photo_camera_outlined, color: Color(0xFF77728F), size: 32)))
+            : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.photo_camera_outlined, color: Color(0xFF77728F), size: 32), SizedBox(height: 8), Text('选择一张熟悉的照片', style: TextStyle(fontSize: 13, color: Color(0xFF8A8791)))]),
       ),
-    );
-  }
-}
+    ),
+    const SizedBox(height: 10),
+    TextButton(onPressed: _handleAvatar, child: Text(_avatarPreviewUrl.isNotEmpty ? '重新选择' : '从相册选择', style: const TextStyle(fontSize: 14, color: Color(0xFF8A8791)))),
+  ]);
 
-class _TextAnswerPanel extends StatelessWidget {
-  const _TextAnswerPanel({
-    super.key,
-    required this.controller,
-    required this.focusNode,
-    required this.placeholder,
-    required this.canContinue,
-    required this.isSubmitting,
-    required this.onChanged,
-    required this.onContinue,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final String placeholder;
-  final bool canContinue;
-  final bool isSubmitting;
-  final VoidCallback onChanged;
-  final Future<void> Function() onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 6, 8, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: focusNode,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              onChanged: (_) => onChanged(),
-              onSubmitted: (_) => onContinue(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-              decoration: InputDecoration(
-                hintText: placeholder,
-                hintStyle: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.6),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          _ContinueButton(
-            enabled: canContinue,
-            isLoading: isSubmitting,
-            onTap: onContinue,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GenderPanel extends StatelessWidget {
-  const _GenderPanel({
-    super.key,
-    required this.selectedGender,
-    required this.onChanged,
-  });
-
-  final _AgentGender? selectedGender;
-  final ValueChanged<_AgentGender> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _GenderOption(
-            label: '男',
-            isSelected: selectedGender == _AgentGender.male,
-            onTap: () => onChanged(_AgentGender.male),
-          ),
-        ),
+  Widget _buildBottom() => Container(
+    padding: EdgeInsets.fromLTRB(16, 10, 16, MediaQuery.of(context).padding.bottom + 8),
+    decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFEEEEF2)))),
+    child: Row(children: [
+      if (_step != 'relationToThem') ...[
+        SizedBox(width: 100, child: OutlinedButton(onPressed: _goBack, style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF77728F), side: const BorderSide(color: Color(0xFFDEDCE4)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), padding: const EdgeInsets.symmetric(vertical: 12)), child: const Text('上一步', style: TextStyle(fontSize: 15)))),
         const SizedBox(width: 12),
-        Expanded(
-          child: _GenderOption(
-            label: '女',
-            isSelected: selectedGender == _AgentGender.female,
-            onTap: () => onChanged(_AgentGender.female),
-          ),
-        ),
       ],
-    );
-  }
+      Expanded(child: ElevatedButton(
+        onPressed: _canContinue ? (_step == 'avatar' ? _finishCreate : _submitText) : null,
+        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF297B69), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFFB0ADB8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), padding: const EdgeInsets.symmetric(vertical: 14), elevation: 0),
+        child: _isThinking ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)) : Text(_btnLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      )),
+    ]),
+  );
+
+  Widget _buildCreating() => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    const _MessengerCircle(),
+    const SizedBox(height: 20),
+    Text('正在唤醒${_draft['agentName'] ?? _draft['relationToThem'] ?? 'TA'}的${BrandConfig.name}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF24222B))),
+    const SizedBox(height: 8),
+    const Text('小使者正在把基本信息轻轻放好', style: TextStyle(fontSize: 14, color: Color(0xFF8A8791))),
+  ]));
 }
 
-class _GenderOption extends StatelessWidget {
-  const _GenderOption({
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool isSelected;
-  final VoidCallback onTap;
-
+class _MessengerCircle extends StatelessWidget {
+  const _MessengerCircle();
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        height: 56,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0x33A7D2FF)
-              : Colors.black.withValues(alpha: 0.38),
-          borderRadius: BorderRadius.circular(88),
-          border: Border.all(
-            color: isSelected
-                ? Colors.white.withValues(alpha: 0.44)
-                : Colors.white.withValues(alpha: 0.08),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: isSelected ? 1 : 0.88),
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SizedBox(width: 82, height: 82, child: Stack(alignment: Alignment.center, children: [
+    Positioned.fill(child: Container(decoration: const BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [Color(0x3884A8FF), Color(0x1A9673E7), Colors.transparent], stops: [0, 0.45, 0.72])))),
+    Container(width: 82, height: 82, decoration: const BoxDecoration(shape: BoxShape.circle, boxShadow: [BoxShadow(color: Color(0x33647FDC), blurRadius: 18)]), child: ClipOval(child: Container(decoration: const BoxDecoration(gradient: RadialGradient(colors: [Color(0xFFE8D5FF), Color(0xFFA78BFA), Color(0xFF6C5CE7)], stops: [0, 0.45, 1]))))),
+  ]));
 }
 
-class _ContinueButton extends StatelessWidget {
-  const _ContinueButton({
-    required this.enabled,
-    required this.isLoading,
-    required this.onTap,
-  });
-
-  final bool enabled;
-  final bool isLoading;
-  final Future<void> Function() onTap;
-
+class _Dot extends StatelessWidget {
+  const _Dot();
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: enabled
-              ? Colors.white.withValues(alpha: 0.18)
-              : Colors.white.withValues(alpha: 0.08),
-        ),
-        child: isLoading
-            ? const Padding(
-                padding: EdgeInsets.all(12),
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : Icon(
-                Icons.arrow_forward_rounded,
-                color: Colors.white.withValues(alpha: enabled ? 1 : 0.45),
-                size: 22,
-              ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(padding: const EdgeInsets.only(right: 5), child: Container(width: 5, height: 5, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF77728F))));
 }
 
-class _AvatarUploadCard extends StatelessWidget {
-  const _AvatarUploadCard({
-    required this.avatarUrl,
-    required this.isUploading,
-    required this.onTap,
-  });
-
-  final String avatarUrl;
-  final bool isUploading;
-  final Future<void> Function() onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: isUploading ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        width: 160,
-        height: 160,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.38),
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: Colors.white.withValues(
-              alpha: avatarUrl.trim().isNotEmpty ? 0.24 : 0.1,
-            ),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 28,
-              offset: const Offset(0, 20),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              if (avatarUrl.trim().isNotEmpty)
-                AppAvatar(
-                  imageUrl: avatarUrl,
-                  size: 92,
-                  borderRadius: BorderRadius.circular(28),
-                  placeholderColor: Colors.white.withValues(alpha: 0.1),
-                )
-              else
-                Container(
-                  width: 92,
-                  height: 92,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.add_a_photo_outlined,
-                    color: Colors.white.withValues(alpha: 0.92),
-                    size: 30,
-                  ),
-                ),
-              if (isUploading)
-                Container(
-                  width: 92,
-                  height: 92,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.36),
-                    borderRadius: BorderRadius.circular(28),
-                  ),
-                  child: const Center(
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvatarActionPanel extends StatelessWidget {
-  const _AvatarActionPanel({
-    super.key,
-    required this.canContinue,
-    required this.isSubmitting,
-    required this.hasAvatar,
-    required this.onAvatarTap,
-    required this.onContinue,
-  });
-
-  final bool canContinue;
-  final bool isSubmitting;
-  final bool hasAvatar;
-  final Future<void> Function() onAvatarTap;
-  final Future<void> Function() onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextButton(
-          onPressed: isSubmitting ? null : onAvatarTap,
-          style: TextButton.styleFrom(
-            foregroundColor: Colors.white.withValues(alpha: 0.84),
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            minimumSize: const Size.fromHeight(28),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: Text(hasAvatar ? '重新选择头像' : '从相册选择头像'),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 52,
-          child: ElevatedButton(
-            onPressed: canContinue ? onContinue : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: const Color(0xFF10131E),
-              disabledBackgroundColor: Colors.white.withValues(alpha: 0.38),
-              disabledForegroundColor: const Color(
-                0xFF10131E,
-              ).withValues(alpha: 0.4),
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-            child: isSubmitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Color(0xFF10131E),
-                      ),
-                    ),
-                  )
-                : const Text(
-                    '完成创建',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChatEntry {
-  const _ChatEntry({
-    required this.step,
-    required this.question,
-    required this.answer,
-  });
-
-  final _AgentFormStep step;
-  final String question;
-  final String answer;
+class _SumRow {
+  final String step, label, value;
+  const _SumRow(this.step, this.label, this.value);
 }

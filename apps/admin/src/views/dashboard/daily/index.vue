@@ -24,12 +24,12 @@
           <strong>{{ formatNumber(report?.totals.newUsers) }}</strong>
         </article>
         <article>
-          <span>注册 3 天内用户消息</span>
-          <strong>{{ formatNumber(report?.totals.newUserMessages) }}</strong>
+          <span>本月新建智能体</span>
+          <strong>{{ formatNumber(report?.totals.newAgents) }}</strong>
         </article>
         <article>
-          <span>本月总消息数</span>
-          <strong>{{ formatNumber(report?.totals.userMessages) }}</strong>
+          <span>注册 3 天内用户消息</span>
+          <strong>{{ formatNumber(report?.totals.newUserMessages) }}</strong>
         </article>
         <article class="is-key">
           <span>本月实际收入</span>
@@ -48,7 +48,7 @@
           row-key="date"
           :data="dailyRows"
           :pagination="false"
-          :scroll="{ x: 1760 }"
+          :scroll="{ x: 1920 }"
           size="large"
           stripe
         >
@@ -62,6 +62,11 @@
             <a-table-column
               title="新增用户"
               data-index="newUsers"
+              :width="120"
+            />
+            <a-table-column
+              title="新建智能体"
+              data-index="newAgents"
               :width="120"
             />
             <a-table-column

@@ -1,7 +1,7 @@
 <template>
   <div class="app-user-page">
     <a-card class="app-user-page__card" :bordered="false">
-      <template #title>App 用户管理</template>
+      <template #title>用户与关系</template>
 
       <a-form :model="searchForm" layout="inline" class="app-user-page__search">
         <a-form-item field="keyword" label="关键词">
@@ -275,7 +275,7 @@
   }));
   const hasSearchKeyword = computed(() => Boolean(searchForm.keyword.trim()));
   const emptyDescription = computed(() =>
-    hasSearchKeyword.value ? '未找到匹配用户' : '暂无 App 用户'
+    hasSearchKeyword.value ? '未找到匹配用户' : '暂无用户'
   );
   const editModalTitle = computed(() =>
     editingUser.value

@@ -1,0 +1,37 @@
+{
+  "release": "20260831",
+  "branch": "20260830",
+  "repo": "tianzhiling",
+  "createdAt": "2026-08-31T11:54:00+08:00",
+  "baselineCommit": "470876a",
+  "baselineLabel": "20260830 已部署基线",
+  "commits": [
+    "a1898c3 feat(admin): 数据仪表盘图表优化及下载功能",
+    "ab7abc6 fix(admin): 修正仪表盘CSV导出收入金额单位（已除100的冗余计算）",
+    "1f937e3 refactor(admin): 运营菜单重构 — 每日明细+用户价值独立页面，去掉任务中心",
+    "3e7f10d feat(admin): 每日明细优化列，去掉3日内新用户消息数/付费人数/订单数，全部聊天人数前置",
+    "8dce6fa feat(admin): 每日明细增加累计收入列，基于用户注册日cohort口径聚合",
+    "69dbd8d feat(admin): 每日明细增加单客收益列（累计收入/新增用户）",
+    "95ae8e4 feat(admin): 数据仪表盘增加本月新建智能体指标",
+    "d37783b fix(admin): 新建智能体指标收尾 — 今日口径对齐、桌面卡片边框、小使者过滤测试断言",
+    "ab69ee4 fix(admin): 本月新建智能体卡片提示语补充不含小使者",
+    "d1470cf fix(release): 发布脚本构建加 --no-cache，修复 admin_web 层缓存未感知源码变更"
+  ],
+  "highlights": [
+    "数据仪表盘新增本月新建智能体指标（AI 亲人，不含内部小使者）",
+    "新建智能体指标收尾：todayTotals 口径与当日行对齐、桌面 8 列卡片边框修复、小使者过滤测试断言",
+    "每日明细累计收入列（注册日 cohort 口径）与单客收益列",
+    "运营菜单重构：每日明细+用户价值独立页面，去掉任务中心",
+    "仪表盘图表优化及 CSV 导出收入金额单位修正",
+    "发布脚本构建加 --no-cache，修复 admin_web Docker 层缓存导致前端旧代码不更新"
+  ],
+  "notes": [
+    "微信投诉直退订单标记（b9667ef）已回滚（97e70b8），净效果未上线",
+    "发布前清理服务器未跟踪 apps.bak/（移至 /opt/apps.bak.<时间戳>），备份保留",
+    "admin_web 曾因 Docker 层缓存未感知源码变更，连续两次发布后仍提供旧版前端（7 卡片）；通过发布脚本 --no-cache 强制全量重建修复"
+  ],
+  "status": "deployed",
+  "deployedAt": "2026-08-31T12:53:00+08:00",
+  "deployedCommit": "d1470cfdc94ce675d18e772015823c9eadc9d694",
+  "upstream": "20260830"
+}

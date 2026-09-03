@@ -67,7 +67,13 @@ describe('ReplyGuardrailService', () => {
         },
         objectPlan: {
           objects: [
-            { ref: 'o1', mention: '你女婿', kind: 'other_person', binding: 'unknown', confidence: 'high' },
+            {
+              ref: 'o1',
+              mention: '你女婿',
+              kind: 'other_person',
+              binding: 'unknown',
+              confidence: 'high',
+            },
           ],
           focusRefs: ['o1'],
           ambiguousMentions: [],
@@ -230,7 +236,6 @@ describe('ReplyGuardrailService', () => {
     }
   });
 
-
   it.each([
     '好，妈一直在这儿。你有空就来',
     '我在这边等你',
@@ -240,7 +245,7 @@ describe('ReplyGuardrailService', () => {
     '有空就来跟我说说话',
   ])(
     'does not catch normal emotional expression as death encouragement: %s',
-    async (reply) => {
+    async reply => {
       const service = new ReplyGuardrailService();
 
       const result = await service.validateAssistantReply({
@@ -255,7 +260,7 @@ describe('ReplyGuardrailService', () => {
       expect(result.segments).toEqual([reply]);
       expect(result.finalReviewResult).toBe('pass');
     },
-    10000,
+    10000
   );
 
   it('forces rigid-only production review onto the deterministic path', () => {
@@ -4509,7 +4514,7 @@ describe('ReplyGuardrailService', () => {
     expect(result.segments.join('')).not.toContain('别让你妈看出来');
   });
 
-  it('uses a conversational fallback for strong distress replies', async () => {
+  it('uses a relational safety fallback for explicit current danger', async () => {
     const service = new ReplyGuardrailService();
     service.openAIService = {
       isEnabled: jest.fn(() => false),
@@ -4523,10 +4528,10 @@ describe('ReplyGuardrailService', () => {
 
     expect(result.rewritten).toBe(true);
     expect(result.segments).toEqual([
-      '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
-      '别急着把话说到尽头 你把最难熬的那一句慢慢告诉我',
+      '你先别伤害自己 我听得出你是真的撑得很累',
+      '告诉我 你现在安全吗 有没有已经做了什么',
     ]);
-    expect(result.segments.join('')).not.toMatch(/报警|急救|危险物|联系/);
+    expect(result.segments.join('')).toContain('现在安全吗');
   });
 
   it('rewrites replies that encourage death reunion', async () => {
@@ -5626,9 +5631,9 @@ describe('ReplyGuardrailService', () => {
       detectRisk('你走了，我们的天塌了', '别硬扛，爸知道你们难')
     ).toContain('情绪消失');
 
-    expect(detectRisk('爸爸，我很自责', '别揪着这事熬自己，真不怪你')).toContain(
-      '情绪消失'
-    );
+    expect(
+      detectRisk('爸爸，我很自责', '别揪着这事熬自己，真不怪你')
+    ).toContain('情绪消失');
   });
 
   it('keeps dismissive wording when it is paired with presence or attunement', () => {

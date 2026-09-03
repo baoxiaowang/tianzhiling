@@ -1,0 +1,28 @@
+{
+  "release": "20260827",
+  "repo": "tianzhiling",
+  "createdAt": "2026-08-30T00:00:00+08:00",
+  "baselineCommit": "3017ee4",
+  "baselineLabel": "prod baseline 20260827",
+  "commits": [
+    "3017ee4 fix(node): harden milvus calls to prevent OOM (prod baseline 20260827)",
+    "b080e1b fix(cert): renew admin.tianzhiling.chat SSL certificate",
+    "c2dbd6a fix(chat): 撤回次日长文并恢复当轮直接回复",
+    "bd3dab1 fix(chat): restore stable production runtime",
+    "345decc feat(admin): manage fixed Doubao voice slots",
+    "1960922 feat(admin,voice): publish operations dashboard and Doubao ICL 2.0",
+    "dc5787b fix(chat): 天之灵持续倾听收缩为短时聚合",
+    "5f99bd5 fix(chat): 天之灵生产堆内存故障修复与聊天质量更新"
+  ],
+  "highlights": [
+    "milvus OOM 加固（熔断/超时/并发上限）",
+    "撤回次日长文、恢复当轮直接回复（次日长文降级为休眠代码）",
+    "管理端运营看板 + Doubao ICL 2.0 发布",
+    "持续倾听收缩为短时聚合",
+    "admin 证书续期"
+  ],
+  "status": "deployed",
+  "downstream": {
+    "weiliaoyan": "20260830 alignment based on this baseline"
+  }
+}

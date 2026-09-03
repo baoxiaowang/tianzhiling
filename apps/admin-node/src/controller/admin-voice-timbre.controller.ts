@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Del,
   Get,
   Inject,
   Param,
@@ -9,6 +10,8 @@ import {
   Query,
 } from '@midwayjs/core';
 import {
+  BindAdminDoubaoVoiceSlotDTO,
+  CreateAdminMergedVoiceTimbreDTO,
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -25,9 +28,30 @@ export class AdminVoiceTimbreController {
     return this.adminVoiceTimbreService.listVoiceTimbres(query);
   }
 
+  @Get('/doubao-slots')
+  async listDoubaoSlots() {
+    return this.adminVoiceTimbreService.listDoubaoVoiceSlots();
+  }
+
+  @Post('/doubao-slots/:timbreId/bind-agent')
+  async bindDoubaoSlotAgent(
+    @Param('timbreId') timbreId: string,
+    @Body() body: BindAdminDoubaoVoiceSlotDTO
+  ) {
+    return this.adminVoiceTimbreService.bindDoubaoVoiceSlotAgent(
+      timbreId,
+      body.agentId
+    );
+  }
+
   @Post('/')
   async create(@Body() body: CreateAdminVoiceTimbreDTO) {
     return this.adminVoiceTimbreService.createVoiceTimbre(body);
+  }
+
+  @Post('/merge-create')
+  async mergeCreate(@Body() body: CreateAdminMergedVoiceTimbreDTO) {
+    return this.adminVoiceTimbreService.mergeCreateVoiceTimbre(body);
   }
 
   @Post('/:id/retry')
@@ -46,5 +70,10 @@ export class AdminVoiceTimbreController {
     @Body() body: UpdateAdminVoiceTimbreDTO
   ) {
     return this.adminVoiceTimbreService.updateVoiceTimbre(id, body);
+  }
+
+  @Del('/:id')
+  async remove(@Param('id') id: string) {
+    return this.adminVoiceTimbreService.deleteVoiceTimbre(id);
   }
 }

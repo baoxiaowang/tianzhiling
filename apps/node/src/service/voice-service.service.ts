@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { ILogger } from '@midwayjs/logger';
 import * as bullmq from '@midwayjs/bullmq';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -1074,7 +1075,7 @@ export class VoiceServiceService {
     session.events = this.appendEvent(
       session.events,
       VoiceServiceEventType.agentSelected,
-      `选择天之灵：${agent.name || '未命名'}`,
+      `选择${brandName()}：${agent.name || '未命名'}`,
       now,
       {
         agentId: this.stringifyObjectId(agentId),
@@ -1624,13 +1625,13 @@ export class VoiceServiceService {
     session.messages = this.appendMessage(
       session.messages,
       VoiceServiceMessageRole.assistant,
-      '声音已经生成好了。你可以先试听，确认满意后再选择要使用这个声音的天之灵。',
+      `声音已经生成好了。你可以先试听，确认满意后再选择要使用这个声音的${brandName()}。`,
       now
     );
     session.events = this.appendEvent(
       session.events,
       VoiceServiceEventType.trainingCompleted,
-      '声音训练完成，等待试听和选择天之灵',
+      `声音训练完成，等待试听和选择${brandName()}`,
       now,
       {
         voiceTimbreId: this.stringifyObjectId(voiceTimbreId),
@@ -2694,16 +2695,16 @@ export class VoiceServiceService {
         maxTokens: 260,
         reasoningSplit: false,
         systemPrompt: [
-          '你是“天之灵小使者”，在声音模型训练页面担任温和、专业的客服。',
+          `你是“${brandName()}小使者”，在声音模型训练页面担任温和、专业的客服。`,
           '你的职责是解答声音素材、剪辑确认、训练、试听和使用方式的问题，并根据当前真实状态指导下一步。',
-          '天之灵的购买逻辑：声音训练和试听免费，不要求用户提前购买；用户试听后觉得效果合适，准备实际使用声音能力时，再自行考虑是否开通包含声音服务的会员。',
+          `${brandName()}的购买逻辑：声音训练和试听免费，不要求用户提前购买；用户试听后觉得效果合适，准备实际使用声音能力时，再自行考虑是否开通包含声音服务的会员。`,
           '不含声音服务的会员价格相对低一些，包含声音服务的会员价格会高一些。用户询问价格时，只能引用下方“当前一年期会员价格”的实时数据，并优先报一年期价格；不得引用其他金额或猜测价格。报价后提醒用户以“会员服务”展示的最新方案为准。',
           '当前声音技术还不是很成熟，方言或口音较重时，可能训练不出与亲人相近的声音模型。必须坦诚这种不确定性，不得保证相似度或训练效果。',
           '当用户询问收费、套餐、购买、为什么免费或效果能否保证时，要完整说明“先免费训练和试听，再考虑购买”的逻辑，不要催促购买或销售套餐。',
           '声音素材只有两种添加入口：从微信聊天选择文件，或从手机相册选择。不得虚构第三种入口。',
           '微信原生语音消息不能直接导入。用户需要先播放微信语音并录屏，录屏视频会保存到手机相册，再从手机相册选择；微信聊天入口只用于选择会话中可作为文件选择的音频或视频。',
           '支持一次添加多个素材，也可以分多次添加，单个文件不能超过 50MB。',
-          '剪辑完成后必须请用户逐段试听，只有用户确认的片段才能训练。音色生成后才选择天之灵。',
+          `剪辑完成后必须请用户逐段试听，只有用户确认的片段才能训练。音色生成后才选择${brandName()}。`,
           '用户选择“再剪一下”时，要让他填写明确时间，例如去掉开头 2 秒、只保留 3 秒到 8 秒。该片段单独处理，其他片段不受影响；无法定位的模糊描述要请用户改成具体时间。',
           '审核片段时建议精选 1 分钟以内。声音不是越多越好；素材充足时，优先保留最清楚、最自然的 1 分钟。',
           '不得编造素材数量、剪辑结果、训练进度、音色效果或付款状态。不得说自己已经完成后台未完成的工作。',
@@ -2787,7 +2788,7 @@ export class VoiceServiceService {
       return '声音正在免费训练中，完成后会先提供试听。你觉得效果合适，再到会员服务查看是否需要开通包含声音服务的会员。';
     }
 
-    return '声音生成后可以先免费试听，再选择要使用这个声音的天之灵。你觉得效果合适，准备实际使用时，再到会员服务查看包含声音服务的会员方案和最新价格。';
+    return `声音生成后可以先免费试听，再选择要使用这个声音的${brandName()}。你觉得效果合适，准备实际使用时，再到会员服务查看包含声音服务的会员方案和最新价格。`;
   }
 
   private isPricingQuestion(input: string): boolean {
@@ -3219,7 +3220,7 @@ export class VoiceServiceService {
       session.events = this.appendEvent(
         session.events,
         VoiceServiceEventType.agentVoiceBound,
-        `声音已接入天之灵：${agent.name || '未命名'}`,
+        `声音已接入${brandName()}：${agent.name || '未命名'}`,
         now,
         {
           agentId,

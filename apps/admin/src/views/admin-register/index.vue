@@ -6,7 +6,7 @@
           alt="logo"
           src="//p3-armor.byteimg.com/tos-cn-i-49unhts6dw/dfdba5317c0c20ce20e64fac803d52bc.svg~tplv-49unhts6dw-image.image"
         />
-        <span>未了言 Admin</span>
+        <span>{{ brand.name }} Admin</span>
       </div>
       <div class="admin-register__header">
         <div class="admin-register__title">初始化超级管理员</div>
@@ -102,6 +102,7 @@
   import { useRouter } from 'vue-router';
   import { Message } from '@arco-design/web-vue';
   import { useUserStore } from '@/store';
+  import { brand } from '@/config/brand';
   import { registerAdminBootstrap } from '@/api/user';
   import useLoading from '@/hooks/loading';
 

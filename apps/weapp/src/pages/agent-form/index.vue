@@ -276,9 +276,14 @@ const displaySex = computed(() => {
 })
 const avatarFallback = computed(() => displayName.value.slice(0, 1))
 const avatarFallbackClass = computed(() => {
-  return displaySex.value === 1
-    ? 'agent-form-avatar__fallback--male'
-    : 'agent-form-avatar__fallback--female'
+  if (displaySex.value === 1) {
+    return 'agent-form-avatar__fallback--male'
+  }
+  if (displaySex.value === 0) {
+    return 'agent-form-avatar__fallback--female'
+  }
+
+  return ''
 })
 const hasFallbackSnapshot = computed(() => {
   return Boolean(
@@ -310,7 +315,12 @@ const infoRows = computed<InfoRow[]>(() => {
     },
     {
       label: '性别',
-      value: displaySex.value === 1 ? '男' : '女',
+      value:
+        displaySex.value === 1
+          ? '男'
+          : displaySex.value === 0
+            ? '女'
+            : '未设置',
       field: 'sex',
     },
     {

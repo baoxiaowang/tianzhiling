@@ -16,12 +16,15 @@ import {
   AgentMemoryFactEntity,
   AgentProfileFactEntity,
   AgentSubEntity,
+  ChatTraceEntity,
+  ConversationChatImportBatchEntity,
   ConversationEmotionStateEntity,
   ConversationMessageFeedbackEntity,
   ConversationEntity,
   CouponLedgerEntity,
   MessageEntity,
   OrderEntity,
+  OrderRefundEntity,
   PostCommentEntity,
   PostCommentNotificationEntity,
   PostEntity,
@@ -31,13 +34,31 @@ import {
   UserMembershipEntity,
   VipPlanEntity,
   VoicePackageEntity,
+  VoiceServiceSessionEntity,
   VoiceTimbreEntity,
+  VoiceTimbreMaterialEntity,
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
 
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
+
+function readJsonFrom(
+  names: string[],
+  fallback: Record<string, unknown> | undefined = undefined
+): Record<string, unknown> | undefined {
+  const raw = readStringFrom(names, '').trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function readPemFrom(
   names: string[],
@@ -68,6 +89,14 @@ export default {
     ['ADMIN_API_APP_KEYS', 'NODE_APP_KEYS'],
     '1774073039411_5782'
   ),
+  brand: {
+    key: readStringFrom(['BRAND'], 'tianzhiling'),
+    name: readStringFrom(['BRAND_NAME'], '天之灵'),
+    companyName: readStringFrom(
+      ['BRAND_COMPANY'],
+      '武汉市天之灵智能技术有限公司'
+    ),
+  },
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
     globalPrefix: '/admin_api',
@@ -247,6 +276,10 @@ export default {
       ['ADMIN_API_QWEN_VOICE_BASE_URL', 'NODE_QWEN_VOICE_BASE_URL'],
       'https://dashscope.aliyuncs.com'
     ),
+    audioBaseURL: readStringFrom(
+      ['ADMIN_API_QWEN_AUDIO_BASE_URL', 'NODE_QWEN_AUDIO_BASE_URL'],
+      ''
+    ),
     defaultPreviewModel: readStringFrom(
       ['ADMIN_API_QWEN_VOICE_PREVIEW_MODEL', 'NODE_QWEN_VOICE_SPEECH_MODEL'],
       'qwen3-tts-vc-2026-01-22'
@@ -258,6 +291,87 @@ export default {
     timeoutMs: readNumberFrom(
       ['ADMIN_API_QWEN_VOICE_TIMEOUT_MS', 'NODE_QWEN_VOICE_TIMEOUT_MS'],
       120000
+    ),
+  },
+  doubaoVoice: {
+    enabled: readBooleanFrom(
+      ['ADMIN_API_DOUBAO_VOICE_ENABLED', 'NODE_DOUBAO_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_API_KEY', 'NODE_DOUBAO_VOICE_API_KEY'],
+      ''
+    ),
+    appId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_APP_ID', 'NODE_DOUBAO_VOICE_APP_ID'],
+      ''
+    ),
+    accessToken: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_ACCESS_TOKEN', 'NODE_DOUBAO_VOICE_ACCESS_TOKEN'],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_BASE_URL', 'NODE_DOUBAO_VOICE_BASE_URL'],
+      'https://openspeech.bytedance.com'
+    ),
+    resourceId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_RESOURCE_ID', 'NODE_DOUBAO_VOICE_RESOURCE_ID'],
+      'seed-icl-2.0'
+    ),
+    defaultPreviewModel: readStringFrom(
+      [
+        'ADMIN_API_DOUBAO_VOICE_PREVIEW_MODEL',
+        'NODE_DOUBAO_VOICE_SPEECH_MODEL',
+      ],
+      'seed-tts-2.0-expressive'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_TIMEOUT_MS', 'NODE_DOUBAO_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+    trainingTimeoutMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_TRAINING_TIMEOUT_MS'],
+      300000
+    ),
+    pollIntervalMs: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_POLL_INTERVAL_MS'],
+      2000
+    ),
+    maxTrainingTimes: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_MAX_TRAINING_TIMES'],
+      15
+    ),
+    knownSpeakerIds: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS'],
+      ''
+    ),
+    cloneExtraParams: readJsonFrom(
+      ['ADMIN_API_DOUBAO_VOICE_CLONE_EXTRA_PARAMS'],
+      undefined
+    ),
+    openApiAccessKeyId: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_ACCESS_KEY_ID'],
+      ''
+    ),
+    openApiSecretAccessKey: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_SECRET_ACCESS_KEY'],
+      ''
+    ),
+    openApiBaseURL: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_BASE_URL'],
+      'https://open.volcengineapi.com'
+    ),
+    openApiRegion: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_REGION'],
+      'cn-beijing'
+    ),
+    openApiService: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_SERVICE'],
+      'speech_saas_prod'
+    ),
+    openApiProjectName: readStringFrom(
+      ['ADMIN_API_DOUBAO_VOICE_OPENAPI_PROJECT_NAME'],
+      'default'
     ),
   },
   wechatPay: {
@@ -525,12 +639,15 @@ export default {
           AgentMemoryFactEntity,
           AgentProfileFactEntity,
           AgentSubEntity,
+          ChatTraceEntity,
+          ConversationChatImportBatchEntity,
           ConversationEmotionStateEntity,
           ConversationMessageFeedbackEntity,
           ConversationEntity,
           CouponLedgerEntity,
           MessageEntity,
           OrderEntity,
+          OrderRefundEntity,
           PostCommentEntity,
           PostCommentNotificationEntity,
           PostEntity,
@@ -540,7 +657,9 @@ export default {
           UserMembershipEntity,
           VipPlanEntity,
           VoicePackageEntity,
+          VoiceServiceSessionEntity,
           VoiceTimbreEntity,
+          VoiceTimbreMaterialEntity,
           VoiceTrainingTaskEntity,
         ],
       },

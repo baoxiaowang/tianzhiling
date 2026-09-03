@@ -1,5 +1,6 @@
 export default {
-  'menu.dashboard.workplace': 'Workplace',
+  'menu.dashboard.workplace': 'Operations Workplace',
+  'menu.dashboard.daily': 'Daily Data',
   'workplace.welcome': 'Welcome!',
   'workplace.balance': 'Balance (CNY)',
   'workplace.order.pending': 'Pending',

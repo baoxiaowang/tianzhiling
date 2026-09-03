@@ -3,7 +3,11 @@
     <a-card class="voice-timbre-page__card" :bordered="false">
       <template #title>音色管理</template>
       <template #extra>
-        <a-button type="primary" @click="openCreate">
+        <a-button
+          v-if="activeSection === 'timbres'"
+          type="primary"
+          @click="openCreate"
+        >
           <template #icon>
             <icon-plus />
           </template>
@@ -11,7 +15,19 @@
         </a-button>
       </template>
 
+      <div class="voice-timbre-page__sections">
+        <a-radio-group
+          v-model="activeSection"
+          type="button"
+          @change="handleSectionChange"
+        >
+          <a-radio value="timbres">音色</a-radio>
+          <a-radio value="doubao-slots">豆包槽位</a-radio>
+        </a-radio-group>
+      </div>
+
       <a-form
+        v-show="activeSection === 'timbres'"
         :model="searchForm"
         layout="inline"
         class="voice-timbre-page__search"
@@ -64,6 +80,7 @@
       </a-form>
 
       <a-table
+        v-show="activeSection === 'timbres'"
         row-key="id"
         :data="renderList"
         :loading="loading"
@@ -83,11 +100,6 @@
             <template #cell="{ record }">
               <div class="voice-timbre-page__identity">
                 <div class="voice-timbre-page__name">{{ record.name }}</div>
-                <a-tooltip :content="record.id">
-                  <a-typography-text class="voice-timbre-page__id" copyable>
-                    {{ record.id }}
-                  </a-typography-text>
-                </a-tooltip>
               </div>
             </template>
           </a-table-column>
@@ -96,22 +108,18 @@
               <a-tag>{{ formatProvider(record.provider) }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column
-            title="服务商音色ID"
-            data-index="providerVoiceId"
-            :width="240"
-          >
+          <a-table-column title="发音方言 / 合成指令" :width="300">
             <template #cell="{ record }">
-              <a-typography-text copyable>
-                {{ record.providerVoiceId || '-' }}
+              <a-typography-text
+                v-if="supportsRecordSpeechInstruction(record)"
+                ellipsis
+                :ellipsis-show-tooltip="true"
+              >
+                {{ formatSpeechInstruction(record) }}
               </a-typography-text>
+              <span v-else>-</span>
             </template>
           </a-table-column>
-          <a-table-column
-            title="复刻语言"
-            data-index="cloneLanguage"
-            :width="120"
-          />
           <a-table-column title="输出参数" :width="220">
             <template #cell="{ record }">
               <div class="voice-timbre-page__speech-params">
@@ -133,6 +141,17 @@
               </a-tooltip>
               <a-tag v-else :color="getStatusColor(record.status)">
                 {{ formatStatus(record.status) }}
+              </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="智能体绑定" :width="130">
+            <template #cell="{ record }">
+              <a-tag :color="record.boundAgentCount > 0 ? 'red' : 'gray'">
+                {{
+                  record.boundAgentCount > 0
+                    ? `已绑定 ${record.boundAgentCount}`
+                    : '未绑定'
+                }}
               </a-tag>
             </template>
           </a-table-column>
@@ -163,7 +182,7 @@
               {{ formatDate(record.updatedAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="140" fixed="right">
+          <a-table-column title="操作" :width="160" fixed="right">
             <template #cell="{ record }">
               <a-space direction="vertical" :size="4" align="start">
                 <a-button type="text" size="small" @click="openEdit(record)">
@@ -188,13 +207,42 @@
                 >
                   {{ getRetryButtonText(record) }}
                 </a-button>
+                <a-tooltip
+                  :content="
+                    record.canDelete
+                      ? record.provider === 'doubao'
+                        ? '删除本地音色与绑定，付费槽位保留可复用（火山侧音色无法删除）'
+                        : '删除服务商音色及相关声音文件'
+                      : `已绑定 ${record.boundAgentCount} 个智能体，请先解除绑定`
+                  "
+                >
+                  <span>
+                    <a-button
+                      type="text"
+                      size="small"
+                      status="danger"
+                      :disabled="!record.canDelete"
+                      :loading="isDeleting(record.id)"
+                      @click="openDelete(record)"
+                    >
+                      {{
+                        record.deletionStatus === 'partial_failed'
+                          ? '重试删除'
+                          : '删除'
+                      }}
+                    </a-button>
+                  </span>
+                </a-tooltip>
               </a-space>
             </template>
           </a-table-column>
         </template>
       </a-table>
 
-      <div class="voice-timbre-page__pagination">
+      <div
+        v-show="activeSection === 'timbres'"
+        class="voice-timbre-page__pagination"
+      >
         <span class="voice-timbre-page__total">
           共 {{ pagination.total }} 个音色
         </span>
@@ -206,6 +254,216 @@
           @change="onPageChange"
           @page-size-change="onPageSizeChange"
         />
+      </div>
+
+      <div v-show="activeSection === 'doubao-slots'">
+        <div class="voice-timbre-page__slot-toolbar">
+          <a-space wrap>
+            <a-tag color="arcoblue">总槽位 {{ doubaoSlotSummary.total }}</a-tag>
+            <a-tag color="green">
+              可训练 {{ doubaoSlotSummary.availableCount }}
+            </a-tag>
+            <a-tag color="purple">
+              本地已占用 {{ doubaoSlotSummary.boundCount }}
+            </a-tag>
+            <a-tag
+              :color="doubaoSlotSummary.expiringSoonCount ? 'red' : 'gray'"
+            >
+              7 天内到期 {{ doubaoSlotSummary.expiringSoonCount }}
+            </a-tag>
+          </a-space>
+          <a-button :loading="doubaoSlotsLoading" @click="fetchDoubaoSlots">
+            刷新槽位
+          </a-button>
+        </div>
+
+        <a-alert
+          v-if="doubaoSlotMessage"
+          :type="doubaoSlotsConfigured ? 'info' : 'warning'"
+          class="voice-timbre-page__slot-alert"
+        >
+          {{ doubaoSlotMessage }}
+        </a-alert>
+
+        <a-table
+          row-key="slotKey"
+          :data="doubaoSlots"
+          :loading="doubaoSlotsLoading"
+          :pagination="false"
+          :bordered="false"
+          :scroll="{ x: 1770 }"
+        >
+          <template #empty>
+            <a-empty
+              :description="
+                doubaoSlotsConfigured
+                  ? '账户中没有查到豆包槽位'
+                  : '槽位列表尚未配置'
+              "
+            />
+          </template>
+          <template #columns>
+            <a-table-column title="槽位" :width="90">
+              <template #cell="{ record }">
+                槽位 {{ record.slotNumber }}
+              </template>
+            </a-table-column>
+            <a-table-column title="Speaker ID" :width="270">
+              <template #cell="{ record }">
+                <a-typography-text copyable>
+                  {{ record.speakerId }}
+                </a-typography-text>
+              </template>
+            </a-table-column>
+            <a-table-column title="实例号" :width="180">
+              <template #cell="{ record }">
+                <a-typography-text v-if="record.instanceNo" copyable>
+                  {{ record.instanceNo }}
+                </a-typography-text>
+                <span v-else>-</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="平台状态" :width="120">
+              <template #cell="{ record }">
+                <a-tag :color="getDoubaoSlotStateColor(record.state)">
+                  {{ formatDoubaoSlotState(record.state) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="本地音色" :width="220">
+              <template #cell="{ record }">
+                <div v-if="record.boundTimbre">
+                  <div>{{ record.boundTimbre.name }}</div>
+                  <a-tag :color="getStatusColor(record.boundTimbre.status)">
+                    {{ formatStatus(record.boundTimbre.status) }}
+                  </a-tag>
+                </div>
+                <a-tag v-else color="gray">未占用</a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="试听" :width="230">
+              <template #cell="{ record }">
+                <audio
+                  v-if="record.boundTimbre?.previewAudioUrl"
+                  controls
+                  :src="record.boundTimbre.previewAudioUrl"
+                  class="voice-timbre-page__audio"
+                />
+                <a-tooltip
+                  v-else-if="
+                    record.boundTimbre && record.boundTimbre.status === 'failed'
+                  "
+                  :content="
+                    record.boundTimbre.errorMessage || '训练失败，可重新训练'
+                  "
+                >
+                  <a-tag color="red">训练失败</a-tag>
+                </a-tooltip>
+                <span v-else>-</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="剩余训练次数" :width="130">
+              <template #cell="{ record }">
+                {{
+                  record.availableTrainingTimes === undefined
+                    ? '-'
+                    : record.availableTrainingTimes
+                }}
+              </template>
+            </a-table-column>
+            <a-table-column title="到期时间" :width="180">
+              <template #cell="{ record }">
+                <span
+                  :class="{
+                    'voice-timbre-page__danger': isSlotExpiring(record),
+                  }"
+                >
+                  {{ formatDate(record.expireTime) }}
+                </span>
+              </template>
+            </a-table-column>
+            <a-table-column title="可用性" :width="260">
+              <template #cell="{ record }">
+                <a-tag :color="record.availableForTraining ? 'green' : 'gray'">
+                  {{ record.availableForTraining ? '可训练' : '不可训练' }}
+                </a-tag>
+                <div class="voice-timbre-page__slot-reason">
+                  {{ record.availabilityReason }}
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="210" fixed="right">
+              <template #cell="{ record }">
+                <a-space direction="vertical" :size="4" align="start">
+                  <a-button
+                    v-if="record.availableForTraining"
+                    type="text"
+                    size="small"
+                    @click="openCreateFromDoubaoSlot(record)"
+                  >
+                    添加素材并训练
+                  </a-button>
+                  <a-button
+                    v-if="canRetrySlot(record)"
+                    type="text"
+                    size="small"
+                    :status="
+                      record.boundTimbre?.status === 'failed'
+                        ? 'warning'
+                        : 'normal'
+                    "
+                    :loading="isRetrying(record.boundTimbre.id)"
+                    @click="handleRetrySlot(record)"
+                  >
+                    {{
+                      record.boundTimbre?.status === 'active'
+                        ? '重新训练'
+                        : '重试训练'
+                    }}
+                  </a-button>
+                  <a-button
+                    v-if="canValidateSlot(record)"
+                    type="text"
+                    size="small"
+                    :loading="isValidating(record.boundTimbre.id)"
+                    @click="handleValidateSlot(record)"
+                  >
+                    校验
+                  </a-button>
+                  <a-tooltip
+                    v-if="record.boundTimbre"
+                    :content="
+                      record.boundTimbre.canDelete
+                        ? '删除本地音色与绑定，付费槽位保留可复用（火山侧音色无法删除，可重新训练覆盖）'
+                        : `已绑定 ${record.boundTimbre.boundAgentCount} 个智能体，请先解除绑定`
+                    "
+                  >
+                    <span>
+                      <a-button
+                        type="text"
+                        size="small"
+                        status="danger"
+                        :disabled="!record.boundTimbre.canDelete"
+                        :loading="isDeleting(record.boundTimbre.id)"
+                        @click="openDeleteSlot(record)"
+                      >
+                        {{
+                          record.boundTimbre.deletionStatus === 'partial_failed'
+                            ? '重试删除'
+                            : '删除'
+                        }}
+                      </a-button>
+                    </span>
+                  </a-tooltip>
+                </a-space>
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+
+        <div class="voice-timbre-page__slot-sync">
+          最近同步：{{ formatDate(doubaoSlotSummary.syncedAt) }}
+        </div>
       </div>
     </a-card>
 
@@ -237,7 +495,7 @@
           />
         </a-form-item>
 
-        <a-grid v-if="!editingRecord" :cols="2" :col-gap="16">
+        <a-grid v-if="!editingRecord && !creatingFromDoubaoSlot" :cols="1">
           <a-grid-item>
             <a-form-item
               field="provider"
@@ -250,32 +508,69 @@
                 @change="onProviderChange"
               >
                 <a-option value="minimax">MiniMax</a-option>
-                <a-option value="cosyvoice">CosyVoice</a-option>
-                <a-option value="qwen">千问 Qwen3-TTS-VC</a-option>
-                <a-option value="doubao" disabled>豆包（未接入）</a-option>
-              </a-select>
-            </a-form-item>
-          </a-grid-item>
-          <a-grid-item>
-            <a-form-item field="cloneLanguage" label="复刻语言">
-              <a-select
-                v-model="editForm.cloneLanguage"
-                placeholder="请选择语言"
-              >
-                <a-option
-                  v-for="option in cloneLanguageOptions"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </a-option>
+                <a-option value="cosyvoice">CosyVoice v3.5 Plus</a-option>
+                <a-option value="qwen">千问（Qwen3 / Audio Plus）</a-option>
               </a-select>
             </a-form-item>
           </a-grid-item>
         </a-grid>
 
         <a-form-item
-          v-if="!editingRecord"
+          v-if="isQwenProvider"
+          field="previewModel"
+          label="千问音色模型"
+          :rules="[{ required: true, message: '请选择千问音色模型' }]"
+        >
+          <a-radio-group
+            v-model="editForm.previewModel"
+            type="button"
+            :disabled="Boolean(editingRecord)"
+            @change="onQwenModelChange"
+          >
+            <a-radio
+              v-for="option in qwenModelOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </a-radio>
+          </a-radio-group>
+          <a-typography-text v-if="!editingRecord" type="secondary">
+            原有 Qwen3 与新接入的 Plus 同时保留；Plus 支持手写发音方言、
+            原生语速调节，以及输出层音量和音调调节。
+          </a-typography-text>
+          <a-typography-text v-if="editingRecord" type="secondary">
+            已创建音色的模型不可切换；需要其他模型时请新建音色。
+          </a-typography-text>
+        </a-form-item>
+
+        <a-form-item
+          v-if="!editingRecord && isDoubaoProvider && !creatingFromDoubaoSlot"
+          label="豆包音色槽位"
+          required
+        >
+          <a-select
+            v-model="selectedDoubaoSlotKey"
+            allow-search
+            placeholder="请选择一个可训练槽位"
+            @change="onDoubaoSlotChange"
+          >
+            <a-option
+              v-for="slot in availableDoubaoSlots"
+              :key="slot.slotKey"
+              :value="slot.slotKey"
+            >
+              槽位 {{ slot.slotNumber }} ·
+              {{ slot.alias || slot.speakerId }}
+            </a-option>
+          </a-select>
+          <template #extra>
+            每个槽位固定对应一个已购 Speaker ID；智能体绑定统一在音色列表管理。
+          </template>
+        </a-form-item>
+
+        <a-form-item
+          v-if="!editingRecord && !isDoubaoProvider"
           field="providerVoiceId"
           :label="providerVoiceIdLabel"
         >
@@ -326,6 +621,64 @@
           />
         </a-form-item>
 
+        <div
+          v-if="supportsSpeechInstruction"
+          class="voice-timbre-page__instruction-card"
+        >
+          <div class="voice-timbre-page__instruction-title">
+            发音方言与合成要求
+          </div>
+          <a-form-item
+            field="speechDialect"
+            label="方言类型"
+            :rules="[{ required: true, message: '请选择方言类型' }]"
+          >
+            <a-select v-model="editForm.speechDialect" placeholder="请选择方言">
+              <a-option
+                v-for="option in voiceTimbreDialectOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </a-option>
+            </a-select>
+            <template #extra>
+              {{ speechDialectHelp }}
+            </template>
+          </a-form-item>
+          <a-form-item
+            field="speechInstruction"
+            label="补充要求"
+            :rules="[
+              {
+                maxLength: 50,
+                message: '补充要求不能超过 50 个字符',
+              },
+            ]"
+          >
+            <a-textarea
+              v-model="editForm.speechInstruction"
+              allow-clear
+              :max-length="50"
+              show-word-limit
+              :auto-size="{ minRows: 3, maxRows: 5 }"
+              :placeholder="speechInstructionPlaceholder"
+            />
+            <template #extra>
+              <div class="voice-timbre-page__instruction-help">
+                <span>
+                  建议填写正向、明确且不冲突的要求，例如“语气亲切自然，保留长辈说话的停顿习惯”。
+                </span>
+                <span>
+                  该内容会与所选方言合并，作为
+                  {{ speechInstructionModelName }} 的 instruction
+                  用于试听和聊天合成，不参与音色复刻训练；修改后只刷新试听。
+                </span>
+              </div>
+            </template>
+          </a-form-item>
+        </div>
+
         <div class="voice-timbre-page__speech-settings">
           <div class="voice-timbre-page__section-title">输出层调节</div>
           <a-grid :cols="1" :row-gap="14">
@@ -337,7 +690,7 @@
                     :min="0.5"
                     :max="2"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechSpeed"
                   />
                   <a-input-number
                     v-model="editForm.speechSpeed"
@@ -346,10 +699,16 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechSpeed"
                     class="voice-timbre-page__number"
                   />
                 </div>
+                <a-typography-text
+                  v-if="supportsQwenAudioSpeechSpeed"
+                  type="secondary"
+                >
+                  Plus 使用模型原生指令控制语速；1.00 为正常语速。
+                </a-typography-text>
               </a-form-item>
             </a-grid-item>
             <a-grid-item>
@@ -357,22 +716,28 @@
                 <div class="voice-timbre-page__slider-row">
                   <a-slider
                     v-model="editForm.speechVolume"
-                    :min="0"
-                    :max="10"
+                    :min="speechVolumeMin"
+                    :max="speechVolumeMax"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                   />
                   <a-input-number
                     v-model="editForm.speechVolume"
-                    :min="0"
-                    :max="10"
+                    :min="speechVolumeMin"
+                    :max="speechVolumeMax"
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                     class="voice-timbre-page__number"
                   />
                 </div>
+                <a-typography-text
+                  v-if="supportsQwenAudioOutputControls"
+                  type="secondary"
+                >
+                  Plus 在合成后调整音量；1.00 为原始音量，可调范围 0.25–2.00。
+                </a-typography-text>
               </a-form-item>
             </a-grid-item>
             <a-grid-item>
@@ -383,7 +748,7 @@
                     :min="-12"
                     :max="12"
                     :step="0.01"
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                   />
                   <a-input-number
                     v-model="editForm.speechPitch"
@@ -392,10 +757,16 @@
                     :step="0.01"
                     :precision="2"
                     hide-button
-                    :disabled="!supportsSpeechParams"
+                    :disabled="!supportsSpeechVolumeAndPitch"
                     class="voice-timbre-page__number"
                   />
                 </div>
+                <a-typography-text
+                  v-if="supportsQwenAudioOutputControls"
+                  type="secondary"
+                >
+                  Plus 在合成后调整音调；0 为原始音调，正数升高、负数降低。
+                </a-typography-text>
               </a-form-item>
             </a-grid-item>
           </a-grid>
@@ -428,6 +799,27 @@
           />
         </a-form-item>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="deleteVisible"
+      title="永久删除音色"
+      :confirm-loading="deleting"
+      :mask-closable="false"
+      :esc-to-close="false"
+      :ok-button-props="{ status: 'danger' }"
+      ok-text="确认删除"
+      @before-ok="submitDelete"
+      @cancel="closeDelete"
+    >
+      <a-alert type="warning">
+        删除后将同时清理服务商音色、复刻音频、试听音频和该音色生成的语音，无法恢复。
+      </a-alert>
+      <p v-if="deletingRecord">
+        确认删除“{{
+          deletingRecord.name
+        }}”？系统会在删除前再次检查智能体绑定；如已绑定，将拒绝删除。
+      </p>
     </a-modal>
 
     <a-modal
@@ -499,6 +891,10 @@
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue/es/form';
   import type {
+    AdminDoubaoVoiceSlotDTO,
+    AdminDoubaoVoiceSlotListDTO,
+    DoubaoVoiceSlotStateDTO,
+    VoiceTimbreDialectDTO,
     VoiceTimbreProviderDTO,
     VoiceTimbreStatusDTO,
   } from '@tzl/shared';
@@ -506,6 +902,8 @@
   import uploadAdminFile from '@/api/storage';
   import {
     createVoiceTimbre,
+    deleteVoiceTimbre,
+    queryDoubaoVoiceSlots,
     queryVoiceTimbreList,
     retryVoiceTimbre,
     updateVoiceTimbre,
@@ -515,24 +913,124 @@
   import type { ValidateVoiceTimbreRes } from '@/api/voice-model';
 
   const { loading, setLoading } = useLoading();
+  const activeSection = ref<'timbres' | 'doubao-slots'>('timbres');
   const renderList = ref<VoiceTimbreRecord[]>([]);
+  const doubaoSlots = ref<AdminDoubaoVoiceSlotDTO[]>([]);
+  const doubaoSlotsLoading = ref(false);
+  const doubaoSlotsConfigured = ref(false);
+  const doubaoSlotMessage = ref('');
+  const selectedDoubaoSlotKey = ref('');
+  const doubaoSlotSummary = reactive<
+    Pick<
+      AdminDoubaoVoiceSlotListDTO,
+      | 'total'
+      | 'availableCount'
+      | 'boundCount'
+      | 'expiringSoonCount'
+      | 'syncedAt'
+    >
+  >({
+    total: 0,
+    availableCount: 0,
+    boundCount: 0,
+    expiringSoonCount: 0,
+    syncedAt: '',
+  });
   const editVisible = ref(false);
   const validationVisible = ref(false);
   const saving = ref(false);
+  const deleting = ref(false);
+  const deleteVisible = ref(false);
   const retryingIds = ref<Set<string>>(new Set());
   const validatingIds = ref<Set<string>>(new Set());
+  const deletingId = ref('');
   const validationResult = ref<ValidateVoiceTimbreRes>();
   const editingRecord = ref<VoiceTimbreRecord>();
+  const creatingFromDoubaoSlot = ref(false);
+  const deletingRecord = ref<VoiceTimbreRecord>();
   const editFormRef = ref<FormInstance>();
   const fileInputRef = ref<HTMLInputElement>();
   const selectedAudioFile = ref<File>();
-  const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'cosyvoice';
+  const DEFAULT_VOICE_TIMBRE_PROVIDER: VoiceTimbreProviderDTO = 'qwen';
+  const QWEN3_TTS_VC_MODEL = 'qwen3-tts-vc-2026-01-22';
+  const QWEN_AUDIO_PLUS_MODEL = 'qwen-audio-3.0-tts-plus';
+  const COSYVOICE_V35_PLUS_MODEL = 'cosyvoice-v3.5-plus';
+  const DOUBAO_ICL2_EXPRESSIVE_MODEL = 'seed-tts-2.0-expressive';
+  const DEFAULT_QWEN_TIMBRE_MODEL = QWEN_AUDIO_PLUS_MODEL;
+  const QWEN_AUDIO_DIALECT_OPTIONS: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    { value: 'auto', label: '自动（跟随文本）' },
+    { value: 'mandarin', label: '普通话' },
+    { value: 'cantonese', label: '广东话' },
+    { value: 'chongqing', label: '重庆话' },
+    { value: 'northeastern', label: '东北话' },
+    { value: 'gansu', label: '甘肃话' },
+    { value: 'guizhou', label: '贵州话' },
+    { value: 'zhejiang', label: '浙江话' },
+    { value: 'hebei', label: '河北话' },
+    { value: 'henan', label: '河南话' },
+    { value: 'hubei', label: '湖北话' },
+    { value: 'hunan', label: '湖南话' },
+    { value: 'jiangxi', label: '江西话' },
+    { value: 'ningbo', label: '宁波话' },
+    { value: 'ningxia', label: '宁夏话' },
+    { value: 'qingdao', label: '青岛话' },
+    { value: 'shaanxi', label: '陕西话' },
+    { value: 'shanxi', label: '山西话' },
+    { value: 'shandong', label: '山东话' },
+    { value: 'shanghai', label: '上海话' },
+    { value: 'sichuan', label: '四川话' },
+    { value: 'yunnan', label: '云南话' },
+  ];
+  const COSYVOICE_V35_DIALECT_OPTIONS: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    { value: 'auto', label: '自动（跟随文本）' },
+    { value: 'mandarin', label: '普通话' },
+    { value: 'cantonese', label: '广东话' },
+    { value: 'northeastern', label: '东北话' },
+    { value: 'gansu', label: '甘肃话' },
+    { value: 'guizhou', label: '贵州话' },
+    { value: 'henan', label: '河南话' },
+    { value: 'hubei', label: '湖北话' },
+    { value: 'jiangxi', label: '江西话' },
+    { value: 'minnan', label: '闽南话' },
+    { value: 'ningxia', label: '宁夏话' },
+    { value: 'shanxi', label: '山西话' },
+    { value: 'shaanxi', label: '陕西话' },
+    { value: 'shandong', label: '山东话' },
+    { value: 'shanghai', label: '上海话' },
+    { value: 'sichuan', label: '四川话' },
+    { value: 'tianjin', label: '天津话' },
+    { value: 'yunnan', label: '云南话' },
+  ];
+  const VOICE_TIMBRE_DIALECT_OPTIONS: ReadonlyArray<{
+    value: VoiceTimbreDialectDTO;
+    label: string;
+  }> = [
+    ...QWEN_AUDIO_DIALECT_OPTIONS,
+    { value: 'minnan', label: '闽南话' },
+    { value: 'tianjin', label: '天津话' },
+  ];
+  const qwenModelOptions = [
+    {
+      label: 'Qwen Audio 3.0 TTS Plus（默认，支持自定义合成指令）',
+      value: QWEN_AUDIO_PLUS_MODEL,
+    },
+    { label: 'Qwen3-TTS-VC（原有）', value: QWEN3_TTS_VC_MODEL },
+  ];
   type VoiceTimbreEditForm = {
     name: string;
     provider: VoiceTimbreProviderDTO;
     audioObjectKey: string;
     audioUrl: string;
     cloneLanguage: string;
+    previewModel: string;
+    speechDialect: VoiceTimbreDialectDTO;
+    speechInstruction: string;
     providerVoiceId: string;
     previewText: string;
     speechSpeed: number;
@@ -555,7 +1053,10 @@
     provider: DEFAULT_VOICE_TIMBRE_PROVIDER,
     audioObjectKey: '',
     audioUrl: '',
-    cloneLanguage: 'auto',
+    cloneLanguage: 'zh',
+    previewModel: DEFAULT_QWEN_TIMBRE_MODEL,
+    speechDialect: 'auto',
+    speechInstruction: '',
     providerVoiceId: '',
     previewText: '',
     speechSpeed: 1,
@@ -591,59 +1092,96 @@
   );
   const isCosyVoiceProvider = computed(() => editForm.provider === 'cosyvoice');
   const isQwenProvider = computed(() => editForm.provider === 'qwen');
-  const supportsSpeechParams = computed(() => !isQwenProvider.value);
-  const cloneLanguageOptions = computed(() => {
-    if (isCosyVoiceProvider.value) {
-      return [
-        { label: '中文', value: 'zh' },
-        { label: '英语', value: 'en' },
-        { label: '法语', value: 'fr' },
-        { label: '德语', value: 'de' },
-        { label: '日语', value: 'ja' },
-        { label: '韩语', value: 'ko' },
-        { label: '俄语', value: 'ru' },
-        { label: '葡萄牙语', value: 'pt' },
-        { label: '泰语', value: 'th' },
-        { label: '印尼语', value: 'id' },
-        { label: '越南语', value: 'vi' },
-        { label: '自动识别', value: 'auto' },
-      ];
-    }
-
-    if (isQwenProvider.value) {
-      return [
-        { label: '中文', value: 'zh' },
-        { label: '英语', value: 'en' },
-        { label: '德语', value: 'de' },
-        { label: '意大利语', value: 'it' },
-        { label: '葡萄牙语', value: 'pt' },
-        { label: '西班牙语', value: 'es' },
-        { label: '日语', value: 'ja' },
-        { label: '韩语', value: 'ko' },
-        { label: '法语', value: 'fr' },
-        { label: '俄语', value: 'ru' },
-      ];
-    }
-
-    return [
-      { label: '普通话', value: 'Chinese' },
-      { label: '粤语', value: 'Chinese,Yue' },
-      { label: '英语', value: 'English' },
-      { label: '自动识别', value: 'auto' },
-    ];
-  });
-  const providerVoiceIdLabel = computed(() =>
-    isCosyVoiceProvider.value || isQwenProvider.value
-      ? '音色前缀'
-      : '服务商音色ID'
+  const isDoubaoProvider = computed(() => editForm.provider === 'doubao');
+  const availableDoubaoSlots = computed(() =>
+    doubaoSlots.value.filter((slot) => slot.availableForTraining)
   );
+  const isQwenAudioPreviewModel = (model?: string) =>
+    /^qwen-audio-/i.test(model?.trim() || '');
+  const isCosyVoiceV35PlusModel = (model?: string) =>
+    /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
+  const supportsRecordSpeechInstruction = (record: VoiceTimbreRecord) =>
+    (record.provider === 'qwen' &&
+      isQwenAudioPreviewModel(record.previewModel)) ||
+    record.provider === 'doubao' ||
+    (record.provider === 'cosyvoice' &&
+      isCosyVoiceV35PlusModel(record.previewModel));
+  const voiceTimbreDialectOptions = computed<
+    ReadonlyArray<{ value: VoiceTimbreDialectDTO; label: string }>
+  >(() => {
+    if (isDoubaoProvider.value) return VOICE_TIMBRE_DIALECT_OPTIONS;
+    if (isCosyVoiceProvider.value) return COSYVOICE_V35_DIALECT_OPTIONS;
+    return QWEN_AUDIO_DIALECT_OPTIONS;
+  });
+  const supportsSpeechInstruction = computed(
+    () =>
+      (isQwenProvider.value &&
+        isQwenAudioPreviewModel(editForm.previewModel)) ||
+      isDoubaoProvider.value ||
+      (isCosyVoiceProvider.value &&
+        isCosyVoiceV35PlusModel(editForm.previewModel))
+  );
+  const speechDialectHelp = computed(() => {
+    if (isDoubaoProvider.value) {
+      return '豆包 ICL 2.0 会优先保留训练音频中的口音；这里用于给合成阶段补充方言提示，不会替代源音频。';
+    }
+    if (isCosyVoiceProvider.value) {
+      return '这里仅展示 CosyVoice v3.5 Plus 官方支持的中文方言；有明确方言时直接选择，只有不限定时才选“自动”。';
+    }
+    return '这里仅展示 Qwen Audio Plus 支持的方言；有明确方言时直接选择，只有不限定时才选“自动”。';
+  });
+  const speechInstructionPlaceholder = computed(() => {
+    if (isDoubaoProvider.value) {
+      return '如：保留训练音频中的口音，语气亲切自然';
+    }
+    if (isCosyVoiceProvider.value) {
+      return '如：语气亲切自然，保留长辈说话的停顿习惯';
+    }
+    return '如：情绪温和，保留原音色和说话习惯';
+  });
+  const speechInstructionModelName = computed(() => {
+    if (isDoubaoProvider.value) return 'Doubao Seed ICL 2.0';
+    if (isCosyVoiceProvider.value) return 'CosyVoice v3.5 Plus';
+    return 'Qwen Audio Plus';
+  });
+  const supportsQwenAudioSpeechSpeed = computed(
+    () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
+  );
+  const supportsQwenAudioOutputControls = computed(
+    () => isQwenProvider.value && isQwenAudioPreviewModel(editForm.previewModel)
+  );
+  const supportsSpeechSpeed = computed(
+    () => !isQwenProvider.value || supportsQwenAudioSpeechSpeed.value
+  );
+  const supportsSpeechVolumeAndPitch = computed(
+    () => !isQwenProvider.value || supportsQwenAudioOutputControls.value
+  );
+  const speechVolumeMin = computed(() => {
+    if (supportsQwenAudioOutputControls.value) return 0.25;
+    if (isDoubaoProvider.value) return 0.5;
+    return 0;
+  });
+  const speechVolumeMax = computed(() =>
+    supportsQwenAudioOutputControls.value || isDoubaoProvider.value ? 2 : 10
+  );
+  const providerVoiceIdLabel = computed(() => {
+    if (isDoubaoProvider.value) return '豆包音色ID';
+    if (isCosyVoiceProvider.value || isQwenProvider.value) return '音色前缀';
+    return '服务商音色ID';
+  });
   const providerVoiceIdPlaceholder = computed(() => {
     if (isCosyVoiceProvider.value) {
       return '不填则后端自动生成，仅支持 10 位内小写字母或数字';
     }
 
     if (isQwenProvider.value) {
-      return '不填则后端自动生成，仅支持 16 位内字母、数字或下划线';
+      return isQwenAudioPreviewModel(editForm.previewModel)
+        ? '不填则后端自动生成，仅支持 10 位内字母或数字'
+        : '不填则后端自动生成，仅支持 16 位内字母、数字或下划线';
+    }
+
+    if (isDoubaoProvider.value) {
+      return '必填：请输入火山引擎已购买或续费的 S_ 开头音色ID';
     }
 
     return '不填则后端自动生成，需以英文字母开头';
@@ -654,13 +1192,17 @@
     }
 
     if (isQwenProvider.value) {
-      return 16;
+      return isQwenAudioPreviewModel(editForm.previewModel) ? 10 : 16;
+    }
+
+    if (isDoubaoProvider.value) {
+      return 130;
     }
 
     return 256;
   });
   const audioAccept = computed(() =>
-    isCosyVoiceProvider.value || isQwenProvider.value
+    isCosyVoiceProvider.value || isQwenProvider.value || isDoubaoProvider.value
       ? '.mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/wav'
       : '.mp3,.m4a,.wav,.mp4,audio/mpeg,audio/mp4,audio/wav,video/mp4'
   );
@@ -671,6 +1213,10 @@
 
     if (isQwenProvider.value) {
       return '支持 mp3、m4a、wav；音频最大 10MB，建议时长 10 到 20 秒';
+    }
+
+    if (isDoubaoProvider.value) {
+      return '建议上传 14–30 秒单人、低噪声、无背景音乐的 wav；也可上传 mp3 或 m4a，系统会转为 24kHz 单声道 wav；最大 20MB';
     }
 
     return '支持 mp3、m4a、wav、mp4；音频最大 20MB，mp4 最大 200MB，建议时长 10 秒到 5 分钟';
@@ -688,6 +1234,37 @@
       Message.error('音色列表加载失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDoubaoSlots = async () => {
+    try {
+      doubaoSlotsLoading.value = true;
+      const { data } = await queryDoubaoVoiceSlots();
+      doubaoSlots.value = data.items;
+      doubaoSlotsConfigured.value = data.configured;
+      doubaoSlotMessage.value = data.message;
+      doubaoSlotSummary.total = data.total;
+      doubaoSlotSummary.availableCount = data.availableCount;
+      doubaoSlotSummary.boundCount = data.boundCount;
+      doubaoSlotSummary.expiringSoonCount = data.expiringSoonCount;
+      doubaoSlotSummary.syncedAt = data.syncedAt;
+    } catch (error) {
+      doubaoSlotMessage.value =
+        '读取火山引擎槽位失败，请检查 OpenAPI 权限或稍后刷新。';
+      Message.error('豆包槽位加载失败');
+    } finally {
+      doubaoSlotsLoading.value = false;
+    }
+  };
+
+  const handleSectionChange = (value: string | number | boolean) => {
+    if (
+      value === 'doubao-slots' &&
+      !doubaoSlotSummary.syncedAt &&
+      !doubaoSlotsLoading.value
+    ) {
+      fetchDoubaoSlots();
     }
   };
 
@@ -720,13 +1297,145 @@
     editVisible.value = true;
   };
 
+  const openCreateFromDoubaoSlot = (slot: AdminDoubaoVoiceSlotDTO) => {
+    resetEditForm();
+    creatingFromDoubaoSlot.value = true;
+    editForm.provider = 'doubao';
+    selectedDoubaoSlotKey.value = slot.slotKey;
+    editForm.providerVoiceId = slot.speakerId || '';
+    editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
+    editForm.cloneLanguage = 'zh';
+    editForm.name = '';
+    editForm.previewText =
+      '宝贝，我好想你，你最近过的好吗？有没有好好吃饭，好好睡觉？';
+    editVisible.value = true;
+  };
+
+  const onDoubaoSlotChange = (slotKey: unknown) => {
+    const selected = availableDoubaoSlots.value.find(
+      (slot) => slot.slotKey === String(slotKey)
+    );
+    editForm.providerVoiceId = selected?.speakerId || '';
+  };
+
+  const buildSlotTimbreRecord = (
+    timbre: NonNullable<AdminDoubaoVoiceSlotDTO['boundTimbre']>
+  ): VoiceTimbreRecord =>
+    ({
+      id: timbre.id,
+      name: timbre.name,
+      provider: timbre.provider,
+      providerVoiceId: timbre.providerVoiceId ?? '',
+      audioObjectKey: '',
+      audioUrl: timbre.audioUrl ?? '',
+      cloneLanguage: 'zh',
+      speechDialect: 'auto',
+      speechInstruction: '',
+      previewText: timbre.previewText ?? '',
+      previewModel: '',
+      previewAudioUrl: timbre.previewAudioUrl ?? '',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: 0,
+      status: timbre.status,
+      errorCode: timbre.errorCode ?? '',
+      errorMessage: timbre.errorMessage ?? '',
+      remark: '',
+      boundAgentCount: timbre.boundAgentCount ?? 0,
+      canDelete: Boolean(timbre.canDelete),
+      deletionStatus: timbre.deletionStatus,
+      deletionFailureReason: timbre.deletionFailureReason,
+      createdAt: '',
+      updatedAt: '',
+    } as VoiceTimbreRecord);
+
+  const canRetrySlot = (slot: AdminDoubaoVoiceSlotDTO) =>
+    Boolean(
+      slot.boundTimbre &&
+        (slot.boundTimbre.status === 'failed' ||
+          slot.boundTimbre.status === 'active')
+    );
+
+  const canValidateSlot = (slot: AdminDoubaoVoiceSlotDTO) =>
+    Boolean(slot.boundTimbre?.providerVoiceId);
+
+  const handleRetrySlot = async (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    const nextRetryingIds = new Set(retryingIds.value);
+    nextRetryingIds.add(timbre.id);
+    retryingIds.value = nextRetryingIds;
+
+    try {
+      await retryVoiceTimbre(timbre.id);
+      Message.success('豆包音色训练任务已重新提交');
+      await fetchDoubaoSlots();
+      await fetchData();
+    } catch (error) {
+      Message.error('豆包音色重试失败');
+    } finally {
+      const latestRetryingIds = new Set(retryingIds.value);
+      latestRetryingIds.delete(timbre.id);
+      retryingIds.value = latestRetryingIds;
+    }
+  };
+
+  const handleValidateSlot = async (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    const nextValidatingIds = new Set(validatingIds.value);
+    nextValidatingIds.add(timbre.id);
+    validatingIds.value = nextValidatingIds;
+
+    try {
+      const { data } = await validateVoiceTimbre(timbre.id);
+      validationResult.value = data;
+      validationVisible.value = true;
+      Message.success('音色校验完成，已同步本地状态');
+      await fetchDoubaoSlots();
+      await fetchData();
+    } catch (error) {
+      Message.error('音色校验失败');
+    } finally {
+      const latestValidatingIds = new Set(validatingIds.value);
+      latestValidatingIds.delete(timbre.id);
+      validatingIds.value = latestValidatingIds;
+    }
+  };
+
+  const openDeleteSlot = (slot: AdminDoubaoVoiceSlotDTO) => {
+    const timbre = slot.boundTimbre;
+    if (!timbre) return;
+    if (!timbre.canDelete) {
+      Message.warning(
+        `该音色已绑定 ${timbre.boundAgentCount} 个智能体，请先解除绑定`
+      );
+      return;
+    }
+
+    deletingRecord.value = buildSlotTimbreRecord(timbre);
+    deleteVisible.value = true;
+  };
+
   const openEdit = (record: VoiceTimbreRecord) => {
     editingRecord.value = record;
+    creatingFromDoubaoSlot.value = false;
     editForm.name = record.name;
     editForm.provider = record.provider;
     editForm.audioObjectKey = record.audioObjectKey;
     editForm.audioUrl = record.audioUrl;
     editForm.cloneLanguage = record.cloneLanguage || 'auto';
+    if (record.previewModel) {
+      editForm.previewModel = record.previewModel;
+    } else if (record.provider === 'cosyvoice') {
+      editForm.previewModel = COSYVOICE_V35_PLUS_MODEL;
+    } else if (record.provider === 'doubao') {
+      editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
+    } else {
+      editForm.previewModel = QWEN3_TTS_VC_MODEL;
+    }
+    editForm.speechDialect = resolveSpeechDialect(record);
+    editForm.speechInstruction = record.speechInstruction?.trim() || '';
     editForm.providerVoiceId = record.providerVoiceId;
     editForm.previewText = record.previewText;
     editForm.speechSpeed = normalizeSpeechFormValue(record.speechSpeed, 1);
@@ -745,13 +1454,18 @@
 
   const resetEditForm = () => {
     editingRecord.value = undefined;
+    creatingFromDoubaoSlot.value = false;
     selectedAudioFile.value = undefined;
     editForm.name = '';
     editForm.provider = DEFAULT_VOICE_TIMBRE_PROVIDER;
     editForm.audioObjectKey = '';
     editForm.audioUrl = '';
-    editForm.cloneLanguage = 'auto';
+    editForm.cloneLanguage = 'zh';
+    editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
+    editForm.speechDialect = 'auto';
+    editForm.speechInstruction = '';
     editForm.providerVoiceId = '';
+    selectedDoubaoSlotKey.value = '';
     editForm.previewText = '';
     editForm.speechSpeed = 1;
     editForm.speechVolume = 1;
@@ -766,13 +1480,29 @@
 
   const onProviderChange = () => {
     editForm.providerVoiceId = '';
-    const languageValues = cloneLanguageOptions.value.map(
-      (option) => option.value
-    );
+    selectedDoubaoSlotKey.value = '';
+    if (isCosyVoiceProvider.value) {
+      editForm.previewModel = COSYVOICE_V35_PLUS_MODEL;
+    } else if (isDoubaoProvider.value) {
+      editForm.previewModel = DOUBAO_ICL2_EXPRESSIVE_MODEL;
+    } else {
+      editForm.previewModel = DEFAULT_QWEN_TIMBRE_MODEL;
+    }
+    editForm.speechDialect = 'auto';
+    editForm.speechInstruction = '';
+    editForm.cloneLanguage =
+      isCosyVoiceProvider.value ||
+      isQwenProvider.value ||
+      isDoubaoProvider.value
+        ? 'zh'
+        : 'Chinese';
 
-    if (!languageValues.includes(editForm.cloneLanguage)) {
-      editForm.cloneLanguage =
-        isCosyVoiceProvider.value || isQwenProvider.value ? 'zh' : 'auto';
+    if (
+      isDoubaoProvider.value &&
+      !doubaoSlotSummary.syncedAt &&
+      !doubaoSlotsLoading.value
+    ) {
+      fetchDoubaoSlots();
     }
 
     if (selectedAudioFile.value && !isValidAudioFile(selectedAudioFile.value)) {
@@ -781,6 +1511,24 @@
       if (fileInputRef.value) {
         fileInputRef.value.value = '';
       }
+    }
+  };
+
+  const onQwenModelChange = () => {
+    editForm.providerVoiceId = '';
+
+    if (!supportsSpeechInstruction.value) {
+      editForm.speechDialect = 'auto';
+      editForm.speechInstruction = '';
+    }
+
+    if (!supportsQwenAudioSpeechSpeed.value) {
+      editForm.speechSpeed = 1;
+    }
+
+    if (!supportsQwenAudioOutputControls.value) {
+      editForm.speechVolume = 1;
+      editForm.speechPitch = 0;
     }
   };
 
@@ -794,7 +1542,9 @@
 
     if (!isValidAudioFile(file)) {
       Message.error(
-        isCosyVoiceProvider.value || isQwenProvider.value
+        isCosyVoiceProvider.value ||
+          isQwenProvider.value ||
+          isDoubaoProvider.value
           ? '请上传 mp3、m4a 或 wav 文件'
           : '请上传 mp3、m4a、wav 或 mp4 文件'
       );
@@ -823,24 +1573,43 @@
       return false;
     }
 
+    if (
+      !editingRecord.value &&
+      isDoubaoProvider.value &&
+      !selectedDoubaoSlotKey.value
+    ) {
+      Message.error('请选择一个豆包音色槽位');
+      return false;
+    }
+
+    // Keep the user's final selection stable while the audio upload runs.
+    // Also persist a structured dialect when the free-form requirement names
+    // one, so an async form reset or an older client cannot silently save it
+    // as `auto`.
+    const formSnapshot = { ...editForm };
+    const supportsSpeechInstructionSnapshot = supportsSpeechInstruction.value;
+    const speechDialectSnapshot = resolveSpeechDialect(formSnapshot);
+
     try {
       saving.value = true;
 
       if (editingRecord.value) {
         await updateVoiceTimbre(editingRecord.value.id, {
-          name: editForm.name,
-          status: editForm.status,
-          previewText: editForm.previewText,
-          speechSpeed: editForm.speechSpeed,
-          speechVolume: editForm.speechVolume,
-          speechPitch: editForm.speechPitch,
-          remark: editForm.remark,
+          name: formSnapshot.name,
+          status: formSnapshot.status,
+          previewText: formSnapshot.previewText,
+          ...(supportsSpeechInstructionSnapshot
+            ? {
+                speechDialect: speechDialectSnapshot,
+                speechInstruction: formSnapshot.speechInstruction,
+              }
+            : {}),
+          speechSpeed: formSnapshot.speechSpeed,
+          speechVolume: formSnapshot.speechVolume,
+          speechPitch: formSnapshot.speechPitch,
+          remark: formSnapshot.remark,
         });
-        Message.success(
-          editForm.status === 'disabled'
-            ? '音色已更新'
-            : '音色已更新，重新训练任务已提交'
-        );
+        Message.success('音色已更新');
       } else {
         const uploaded = await uploadAdminFile(
           selectedAudioFile.value as File,
@@ -849,18 +1618,33 @@
           }
         );
         await createVoiceTimbre({
-          name: editForm.name,
-          provider: editForm.provider,
+          name: formSnapshot.name,
+          provider: formSnapshot.provider,
           audioObjectKey: uploaded.objectKey,
           audioUrl: uploaded.publicUrl,
-          cloneLanguage: editForm.cloneLanguage,
-          providerVoiceId: editForm.providerVoiceId || undefined,
-          previewText: editForm.previewText,
-          speechSpeed: editForm.speechSpeed,
-          speechVolume: editForm.speechVolume,
-          speechPitch: editForm.speechPitch,
-          remark: editForm.remark,
+          cloneLanguage: formSnapshot.cloneLanguage,
+          previewModel:
+            formSnapshot.provider === 'qwen' ||
+            formSnapshot.provider === 'cosyvoice' ||
+            formSnapshot.provider === 'doubao'
+              ? formSnapshot.previewModel
+              : undefined,
+          ...(supportsSpeechInstructionSnapshot
+            ? {
+                speechDialect: speechDialectSnapshot,
+                speechInstruction: formSnapshot.speechInstruction,
+              }
+            : {}),
+          providerVoiceId: formSnapshot.providerVoiceId || undefined,
+          previewText: formSnapshot.previewText,
+          speechSpeed: formSnapshot.speechSpeed,
+          speechVolume: formSnapshot.speechVolume,
+          speechPitch: formSnapshot.speechPitch,
+          remark: formSnapshot.remark,
         });
+        if (formSnapshot.provider === 'doubao') {
+          await fetchDoubaoSlots();
+        }
         Message.success('音色创建任务已提交');
       }
 
@@ -879,11 +1663,14 @@
 
   const isValidating = (id: string) => validatingIds.value.has(id);
 
+  const isDeleting = (id: string) => deletingId.value === id;
+
   const canRetry = (record: VoiceTimbreRecord) =>
     record.status === 'failed' || record.status === 'active';
 
   const canValidate = (record: VoiceTimbreRecord) =>
-    record.provider === 'cosyvoice' && Boolean(record.providerVoiceId);
+    (record.provider === 'cosyvoice' || record.provider === 'doubao') &&
+    Boolean(record.providerVoiceId);
 
   const getRetryButtonText = (record: VoiceTimbreRecord) =>
     record.status === 'active' ? '重新训练' : '重试';
@@ -926,10 +1713,66 @@
     }
   };
 
+  const openDelete = (record: VoiceTimbreRecord) => {
+    if (!record.canDelete) {
+      Message.warning(
+        `该音色已绑定 ${record.boundAgentCount} 个智能体，请先解除绑定`
+      );
+      return;
+    }
+
+    deletingRecord.value = record;
+    deleteVisible.value = true;
+  };
+
+  const closeDelete = () => {
+    if (deleting.value) {
+      return;
+    }
+
+    deleteVisible.value = false;
+    deletingRecord.value = undefined;
+  };
+
+  const submitDelete = async () => {
+    const record = deletingRecord.value;
+    if (!record) {
+      return false;
+    }
+
+    try {
+      deleting.value = true;
+      deletingId.value = record.id;
+      const { data } = await deleteVoiceTimbre(record.id);
+
+      if (data.deletionStatus === 'completed') {
+        Message.success('音色已删除');
+      } else {
+        Message.warning('音色仍有部分数据删除失败，请稍后重试');
+      }
+      await fetchData();
+      if (record.provider === 'doubao' && doubaoSlotsConfigured.value) {
+        await fetchDoubaoSlots();
+      }
+      deletingRecord.value = undefined;
+      return true;
+    } catch (error) {
+      Message.error('音色删除失败，请确认已解除全部智能体绑定');
+      return false;
+    } finally {
+      deleting.value = false;
+      deletingId.value = '';
+    }
+  };
+
   const isValidAudioFile = (file: File) => {
     const ext = getFileExt(file);
 
-    if (isCosyVoiceProvider.value || isQwenProvider.value) {
+    if (
+      isCosyVoiceProvider.value ||
+      isQwenProvider.value ||
+      isDoubaoProvider.value
+    ) {
       return ['mp3', 'm4a', 'wav'].includes(ext);
     }
 
@@ -975,6 +1818,54 @@
     return map[provider] || provider;
   };
 
+  const formatSpeechInstruction = (
+    record: Pick<VoiceTimbreRecord, 'speechInstruction' | 'speechDialect'>,
+    fallback = '未设置（跟随文本）'
+  ) => {
+    const dialect = resolveSpeechDialect(record);
+    const dialectLabel = VOICE_TIMBRE_DIALECT_OPTIONS.find(
+      (option) => option.value === dialect && option.value !== 'auto'
+    )?.label;
+    const parts = [
+      dialectLabel ? `方言：${dialectLabel}` : '',
+      record.speechInstruction?.trim()
+        ? `补充：${record.speechInstruction.trim()}`
+        : '',
+    ].filter(Boolean);
+
+    return parts.join('；') || fallback;
+  };
+
+  const resolveSpeechDialect = (
+    record: Pick<VoiceTimbreRecord, 'speechInstruction' | 'speechDialect'>
+  ): VoiceTimbreDialectDTO => {
+    if (record.speechDialect && record.speechDialect !== 'auto') {
+      return record.speechDialect;
+    }
+
+    const instruction = record.speechInstruction?.trim() || '';
+    const dialect = [...VOICE_TIMBRE_DIALECT_OPTIONS]
+      .filter(
+        (option) => option.value !== 'auto' && option.value !== 'mandarin'
+      )
+      .sort(
+        (left, right) =>
+          right.label.replace(/话$/, '').length -
+          left.label.replace(/话$/, '').length
+      )
+      .find((option) => instruction.includes(option.label.replace(/话$/, '')));
+
+    if (dialect) {
+      return dialect.value;
+    }
+
+    const requestsMandarin =
+      instruction.includes('普通话') &&
+      !/(不要|别|禁止|避免).{0,6}普通话/.test(instruction);
+
+    return requestsMandarin ? 'mandarin' : 'auto';
+  };
+
   const formatStatus = (status: VoiceTimbreStatusDTO) => {
     const map: Record<VoiceTimbreStatusDTO, string> = {
       creating: '创建中',
@@ -1008,6 +1899,38 @@
     return map[status] || 'gray';
   };
 
+  const formatDoubaoSlotState = (state: DoubaoVoiceSlotStateDTO) => {
+    const map: Record<DoubaoVoiceSlotStateDTO, string> = {
+      Unknown: '未训练',
+      Training: '训练中',
+      Success: '训练完成',
+      Active: '已固定',
+      Expired: '已到期',
+      Reclaimed: '已回收',
+    };
+
+    return map[state] || state;
+  };
+
+  const getDoubaoSlotStateColor = (state: DoubaoVoiceSlotStateDTO) => {
+    const map: Record<DoubaoVoiceSlotStateDTO, string> = {
+      Unknown: 'gray',
+      Training: 'blue',
+      Success: 'green',
+      Active: 'purple',
+      Expired: 'red',
+      Reclaimed: 'red',
+    };
+
+    return map[state] || 'gray';
+  };
+
+  const isSlotExpiring = (record: AdminDoubaoVoiceSlotDTO) => {
+    if (!record.expireTime) return false;
+    const expiry = dayjs(record.expireTime);
+    return expiry.isAfter(dayjs()) && expiry.diff(dayjs(), 'day', true) <= 7;
+  };
+
   const getProviderStatusColor = (status: string) => {
     const normalizedStatus = status.trim().toUpperCase();
 
@@ -1024,7 +1947,7 @@
     return 'red';
   };
 
-  const formatDate = (value: string) => {
+  const formatDate = (value?: string) => {
     return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
   };
 
@@ -1042,8 +1965,52 @@
       border-radius: 4px;
     }
 
+    &__sections {
+      margin-bottom: 18px;
+    }
+
     &__search {
       margin-bottom: 16px;
+    }
+
+    &__slot-toolbar {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    &__slot-alert {
+      margin-bottom: 14px;
+    }
+
+    &__slot-alias,
+    &__slot-reason,
+    &__slot-sync {
+      margin-top: 4px;
+      color: var(--color-text-3);
+      font-size: 12px;
+      line-height: 18px;
+    }
+
+    &__slot-sync {
+      text-align: right;
+    }
+
+    &__slot-agent {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      margin-top: 6px;
+      color: var(--color-text-2);
+      font-size: 12px;
+    }
+
+    &__danger {
+      color: rgb(var(--danger-6));
+      font-weight: 500;
     }
 
     &__filter {
@@ -1087,6 +2054,28 @@
       border: 1px solid var(--color-border-2);
       border-radius: 4px;
       background: var(--color-fill-1);
+    }
+
+    &__instruction-card {
+      margin-bottom: 16px;
+      padding: 14px 16px 4px;
+      border: 1px solid rgb(var(--primary-6));
+      border-radius: 6px;
+      background: var(--color-primary-light-1);
+    }
+
+    &__instruction-title {
+      margin-bottom: 12px;
+      color: var(--color-text-1);
+      font-weight: 600;
+    }
+
+    &__instruction-help {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      color: var(--color-text-3);
+      line-height: 20px;
     }
 
     &__section-title {

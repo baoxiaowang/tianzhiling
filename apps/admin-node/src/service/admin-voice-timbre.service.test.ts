@@ -59,6 +59,9 @@ function createService() {
       return timbre;
     }),
   } as any;
+  service.agentModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
   service.storageFileService = {
     normalizeForStorage: jest.fn(value => value),
     resolve: jest.fn(value => `https://cdn.example.com/${value}`),
@@ -78,6 +81,11 @@ function createService() {
   } as any;
   service.ffmpegService = {
     extractAudioToWav: jest.fn(),
+    adjustSpeechOutput: jest.fn().mockImplementation(async input => ({
+      buffer: input.buffer,
+      fileName: 'adjusted.wav',
+      contentType: 'audio/wav',
+    })),
   } as any;
   service.minimaxVoiceService = {
     getDefaultPreviewModel: jest.fn(() => 'speech-2.8-turbo'),
@@ -109,6 +117,7 @@ function createService() {
   } as any;
   service.qwenVoiceService = {
     getDefaultPreviewModel: jest.fn(() => 'qwen3-tts-vc-2026-01-22'),
+    assertModelConfigured: jest.fn(),
     cloneVoice: jest.fn().mockResolvedValue({
       providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       targetModel: 'qwen3-tts-vc-2026-01-22',
@@ -119,6 +128,15 @@ function createService() {
       audioBuffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
       mimeType: 'audio/wav',
       requestId: 'qwen-preview-001',
+    }),
+  } as any;
+  service.doubaoVoiceService = {
+    getDefaultPreviewModel: jest.fn(() => 'seed-tts-2.0-expressive'),
+    listSlots: jest.fn().mockResolvedValue({
+      items: [],
+      requestIds: [],
+      openApiSyncAttempted: false,
+      openApiSyncSucceeded: false,
     }),
   } as any;
   service.bullmqFramework = {
@@ -148,7 +166,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     expect(service.voiceTimbreModel.count).not.toHaveBeenCalled();
     expect(service.voiceTimbreModel.find).toHaveBeenCalledWith({
-      where: {},
+      where: { deletionStatus: { $ne: 'completed' } },
       order: {
         updatedAt: 'DESC',
       },
@@ -234,7 +252,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
       expect.objectContaining({
-        cloneLanguage: 'auto',
+        cloneLanguage: 'Chinese',
         previewText: DEFAULT_VOICE_TIMBRE_PREVIEW_TEXT,
       })
     );
@@ -302,17 +320,155 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     );
   });
 
-  it('rejects reserved providers that are still not connected', async () => {
+  it('persists an explicitly named dialect instead of leaving it as auto', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '陕西方言音色',
+      provider: 'qwen',
+      providerVoiceId: 'tzlvoice',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      speechDialect: 'auto',
+      speechInstruction: '陕西关中长安地区方言',
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        speechDialect: 'shaanxi',
+        speechInstruction: '陕西关中长安地区方言',
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        speechDialect: 'shaanxi',
+        speechInstruction: '陕西关中长安地区方言',
+      })
+    );
+  });
+
+  it('creates a Qwen Audio voice with the selected model and dialect controls', async () => {
+    const { service } = createService();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '千问四川话音色',
+      provider: 'qwen',
+      providerVoiceId: 'tzlvoice',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      previewModel: 'qwen-audio-3.0-tts-plus',
+      speechDialect: 'sichuan',
+      speechInstruction: '语气亲切自然',
+    });
+
+    expect(service.qwenVoiceService.assertModelConfigured).toHaveBeenCalledWith(
+      'qwen-audio-3.0-tts-plus'
+    );
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.qwen,
+        previewModel: 'qwen-audio-3.0-tts-plus',
+        speechDialect: 'sichuan',
+        speechInstruction: '语气亲切自然',
+      })
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        previewModel: 'qwen-audio-3.0-tts-plus',
+        speechDialect: 'sichuan',
+      })
+    );
+  });
+
+  it('automatically assigns the first trainable unoccupied Doubao Speaker ID', async () => {
+    const { service } = createService();
+    const occupied = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      provider: VoiceTimbreProvider.doubao,
+      providerVoiceId: 'S_OCCUPIED',
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.find).mockResolvedValue([occupied]);
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+    jest.mocked(service.doubaoVoiceService.listSlots).mockResolvedValue({
+      items: [
+        {
+          speakerId: 'S_OCCUPIED',
+          instanceNo: 'instance-1',
+          alias: '',
+          state: 'Active',
+          isActivable: true,
+          orderTime: 1,
+          availableTrainingTimes: 1,
+        },
+        {
+          speakerId: 'S_AVAILABLE',
+          instanceNo: 'instance-2',
+          alias: '',
+          state: 'Active',
+          isActivable: true,
+          orderTime: 2,
+          availableTrainingTimes: 1,
+        },
+        {
+          speakerId: 'S_MORE_REMAINING',
+          instanceNo: 'instance-3',
+          alias: '',
+          state: 'Active',
+          isActivable: true,
+          orderTime: 3,
+          availableTrainingTimes: 3,
+        },
+      ],
+      requestIds: [],
+      openApiSyncAttempted: true,
+      openApiSyncSucceeded: true,
+    });
+
+    const result = await service.createVoiceTimbre({
+      name: '豆包自动槽位音色',
+      provider: 'doubao',
+      audioObjectKey: 'voice-timbres/demo.wav',
+      previewModel: 'seed-tts-2.0-expressive',
+    });
+
+    expect(service.doubaoVoiceService.listSlots).toHaveBeenCalledWith([
+      'S_OCCUPIED',
+    ]);
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: VoiceTimbreProvider.doubao,
+        providerVoiceId: 'S_MORE_REMAINING',
+      })
+    );
+    expect(result.providerVoiceId).toBe('S_MORE_REMAINING');
+  });
+
+  it('does not automatically retry after Doubao accepted an upload', () => {
+    const { service } = createService();
+
+    expect(
+      (service as any).shouldRetryCreateError({
+        code: 'DOUBAO_VOICE_TRAINING_TIMEOUT',
+        status: 504,
+        data: { providerUploadAccepted: true },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects unknown providers that are not connected', async () => {
     const { service } = createService();
 
     await expect(
       service.createVoiceTimbre({
-        name: '豆包音色',
-        provider: 'doubao',
+        name: '未知音色',
+        provider: 'unknown',
         audioObjectKey: 'voice-timbres/demo.wav',
       })
     ).rejects.toMatchObject({
-      code: 'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
+      code: 'INVALID_VOICE_TIMBRE_PROVIDER',
     });
   });
 
@@ -464,17 +620,17 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       targetModel: 'cosyvoice-v3.5-plus',
       languageHint: 'zh',
     });
-    expect(service.cosyVoiceVoiceService.synthesizePreview).toHaveBeenCalledWith(
-      {
-        text: '今天天气很好',
-        voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
-        model: 'cosyvoice-v3.5-plus',
-        languageHint: 'zh',
-        speed: 1.08,
-        volume: 1,
-        pitch: 0,
-      }
-    );
+    expect(
+      service.cosyVoiceVoiceService.synthesizePreview
+    ).toHaveBeenCalledWith({
+      text: '今天天气很好',
+      voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      model: 'cosyvoice-v3.5-plus',
+      languageHint: 'zh',
+      speed: 1.08,
+      volume: 1,
+      pitch: 0,
+    });
     expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith({
       buffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
       fileName: expect.stringMatching(/^voice_timbre_preview_\d+\.mp3$/),
@@ -485,7 +641,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       expect.objectContaining({
         providerFileId: 'dashscope-request-001',
         providerVoiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
-        previewAudioUrl: 'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+        previewAudioUrl:
+          'https://cdn.example.com/voice-timbre-previews/preview.mp3',
         status: VoiceTimbreStatus.active,
       })
     );
@@ -520,6 +677,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.08,
     });
     expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith({
       buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
@@ -531,7 +690,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       expect.objectContaining({
         providerFileId: 'qwen-request-001',
         providerVoiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
-        previewAudioUrl: 'https://cdn.example.com/voice-timbre-previews/preview.mp3',
+        previewAudioUrl:
+          'https://cdn.example.com/voice-timbre-previews/preview.mp3',
         status: VoiceTimbreStatus.active,
       })
     );
@@ -591,14 +751,12 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     const timbre = createTimbre();
 
     jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
-    jest
-      .mocked(service.minimaxVoiceService.uploadCloneAudio)
-      .mockRejectedValue(
-        new AppError('MINIMAX_UPLOAD_FAILED', 'invalid api key', 502, {
-          status_code: 2049,
-          status_msg: 'invalid api key',
-        })
-      );
+    jest.mocked(service.minimaxVoiceService.uploadCloneAudio).mockRejectedValue(
+      new AppError('MINIMAX_UPLOAD_FAILED', 'invalid api key', 502, {
+        status_code: 2049,
+        status_msg: 'invalid api key',
+      })
+    );
 
     await expect(
       service.processCreateVoiceTimbreJob({
@@ -707,17 +865,17 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     expect(queue.addJobToQueue).not.toHaveBeenCalled();
     expect(service.cosyVoiceVoiceService.cloneVoice).not.toHaveBeenCalled();
-    expect(service.cosyVoiceVoiceService.synthesizePreview).toHaveBeenCalledWith(
-      {
-        text: '今天天气很好',
-        voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
-        model: 'cosyvoice-v3.5-plus',
-        languageHint: 'zh',
-        speed: 1.08,
-        volume: 1,
-        pitch: 0,
-      }
-    );
+    expect(
+      service.cosyVoiceVoiceService.synthesizePreview
+    ).toHaveBeenCalledWith({
+      text: '今天天气很好',
+      voiceId: 'cosyvoice-v3.5-plus-tzlvoice-abc123',
+      model: 'cosyvoice-v3.5-plus',
+      languageHint: 'zh',
+      speed: 1.08,
+      volume: 1,
+      pitch: 0,
+    });
     expect(timbre).toEqual(
       expect.objectContaining({
         status: VoiceTimbreStatus.active,
@@ -753,6 +911,8 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.08,
     });
     expect(timbre).toEqual(
       expect.objectContaining({
@@ -777,9 +937,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
 
     jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
 
-    const result = await service.validateProviderVoice(
-      TIMBRE_ID.toHexString()
-    );
+    const result = await service.validateProviderVoice(TIMBRE_ID.toHexString());
 
     expect(service.cosyVoiceVoiceService.queryVoice).toHaveBeenCalledWith(
       'cosyvoice-v3.5-plus-tzlvoice-abc123'
@@ -825,9 +983,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       requestId: 'dashscope-query-002',
     });
 
-    const result = await service.validateProviderVoice(
-      TIMBRE_ID.toHexString()
-    );
+    const result = await service.validateProviderVoice(TIMBRE_ID.toHexString());
 
     expect(timbre).toEqual(
       expect.objectContaining({
@@ -876,12 +1032,14 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
     } as VoiceTimbreEntity;
 
     jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(timbre);
-    jest.mocked(service.cosyVoiceVoiceService.synthesizePreview).mockResolvedValue({
-      audioUrl: 'https://dashscope-result.example.com/preview.mp3',
-      audioBuffer: Buffer.alloc(0),
-      mimeType: 'audio/mpeg',
-      requestId: 'dashscope-preview-002',
-    });
+    jest
+      .mocked(service.cosyVoiceVoiceService.synthesizePreview)
+      .mockResolvedValue({
+        audioUrl: 'https://dashscope-result.example.com/preview.mp3',
+        audioBuffer: Buffer.alloc(0),
+        mimeType: 'audio/mpeg',
+        requestId: 'dashscope-preview-002',
+      });
 
     const result = await service.retryVoiceTimbreCreate(
       TIMBRE_ID.toHexString()
@@ -919,6 +1077,172 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       service.retryVoiceTimbreCreate(TIMBRE_ID.toHexString())
     ).rejects.toMatchObject({
       code: 'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
+    });
+  });
+
+  it('lists timbres filtered by userId', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+    const timbre = {
+      ...createTimbre(VoiceTimbreStatus.active),
+      userId: new MongoObjectId(userId),
+    } as VoiceTimbreEntity;
+
+    jest.mocked(service.voiceTimbreModel.find).mockResolvedValue([timbre]);
+    jest.mocked(service.voiceTimbreModel.count).mockResolvedValue(1);
+
+    const result = await service.listVoiceTimbres({ userId });
+
+    expect(service.voiceTimbreModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deletionStatus: { $ne: 'completed' },
+          userId: new MongoObjectId(userId),
+        },
+      })
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].userId).toBe(userId);
+  });
+
+  it('rejects list with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.listVoiceTimbres({ userId: 'not-an-object-id' })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
+    });
+  });
+
+  it('creates a timbre with the given userId', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+
+    const result = await service.createVoiceTimbre({
+      name: '用户音色',
+      provider: 'minimax',
+      providerVoiceId: 'TestVoice_002',
+      audioObjectKey: 'voice-timbres/user.wav',
+      userId,
+    });
+
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: new MongoObjectId(userId),
+      })
+    );
+    expect(result.userId).toBe(userId);
+  });
+
+  it('rejects create with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.createVoiceTimbre({
+        name: '用户音色',
+        provider: 'minimax',
+        providerVoiceId: 'TestVoice_003',
+        audioObjectKey: 'voice-timbres/user.wav',
+        userId: 'not-an-object-id',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
+    });
+  });
+
+  it('merge-creates a timbre from multiple audio object keys', async () => {
+    const { service, queue } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    jest.mocked(service.voiceTimbreModel.findOne).mockResolvedValue(null);
+    jest.mocked(service.storageFileService.download).mockResolvedValue({
+      buffer: Buffer.from('clip-audio-bytes'),
+      fileName: 'clip-1.mp3',
+      contentType: 'audio/mpeg',
+      url: 'https://cdn.example.com/clips/clip-1.mp3',
+    });
+    service.ffmpegService = {
+      ...service.ffmpegService,
+      mergeAudios: jest.fn().mockResolvedValue({
+        buffer: Buffer.from('merged-wav-bytes'),
+        fileName: 'voice-training.wav',
+        contentType: 'audio/wav',
+      }),
+    } as any;
+    jest.mocked(service.storageService.uploadCosBuffer).mockResolvedValue({
+      provider: 'tencent-cos',
+      bucket: 'tzl-test',
+      region: 'ap-guangzhou',
+      endpoint: 'https://tzl-test.cos.ap-guangzhou.myqcloud.com',
+      objectKey: 'voice-timbre-merged/merged.wav',
+      publicUrl: 'https://cdn.example.com/voice-timbre-merged/merged.wav',
+      contentType: 'audio/wav',
+    });
+
+    const result = await service.mergeCreateVoiceTimbre({
+      userId,
+      audioObjectKeys: ['clips/clip-1.mp3', 'clips/clip-2.mp3'],
+      name: '合并音色',
+      provider: 'minimax',
+      providerVoiceId: 'TestVoice_Merged',
+    });
+
+    expect(service.storageFileService.download).toHaveBeenCalledTimes(2);
+    expect(service.ffmpegService.mergeAudios).toHaveBeenCalledWith([
+      expect.objectContaining({ buffer: Buffer.from('clip-audio-bytes') }),
+      expect.objectContaining({ buffer: Buffer.from('clip-audio-bytes') }),
+    ]);
+    expect(service.storageService.uploadCosBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buffer: Buffer.from('merged-wav-bytes'),
+        fileName: 'voice-training.wav',
+        contentType: 'audio/wav',
+        folder: 'voice-timbre-merged',
+      })
+    );
+    expect(service.voiceTimbreModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: new MongoObjectId(userId),
+        audioObjectKey: 'voice-timbre-merged/merged.wav',
+        name: '合并音色',
+        provider: VoiceTimbreProvider.minimax,
+      })
+    );
+    expect(queue.addJobToQueue).toHaveBeenCalled();
+    expect(result.userId).toBe(userId);
+  });
+
+  it('rejects merge-create when audio object keys are empty', async () => {
+    const { service } = createService();
+    const userId = new MongoObjectId('665000000000000000000999').toHexString();
+
+    await expect(
+      service.mergeCreateVoiceTimbre({
+        userId,
+        audioObjectKeys: [],
+        name: '合并音色',
+        provider: 'minimax',
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_TIMBRE_MERGED_AUDIO_REQUIRED',
+    });
+  });
+
+  it('rejects merge-create with an invalid userId', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.mergeCreateVoiceTimbre({
+        userId: 'not-an-object-id',
+        audioObjectKeys: ['clips/clip-1.mp3'],
+        name: '合并音色',
+        provider: 'minimax',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_USER_ID',
     });
   });
 });

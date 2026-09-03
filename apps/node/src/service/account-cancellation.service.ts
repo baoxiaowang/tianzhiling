@@ -1,4 +1,5 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { Framework as BullMQFramework } from '@midwayjs/bullmq';
 import type { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
@@ -21,6 +22,7 @@ import {
   ConversationEmotionStateEntity,
   ConversationEntity,
   ConversationMessageFeedbackEntity,
+  FreeChatAgentLedgerEntity,
   MessageEntity,
   MessengerCallEventEntity,
   MongoObjectId,
@@ -166,6 +168,9 @@ export class AccountCancellationService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
+  @InjectEntityModel(FreeChatAgentLedgerEntity)
+  freeChatAgentLedgerModel: MongoRepository<FreeChatAgentLedgerEntity>;
+
   @InjectEntityModel(AgentSubEntity)
   agentSubModel: MongoRepository<AgentSubEntity>;
 
@@ -246,7 +251,7 @@ export class AccountCancellationService {
       blockers,
       confirmationText: ACCOUNT_CANCELLATION_CONFIRMATION,
       consequences: [
-        '你创建的天之灵、聊天记录、记忆和导入记录将无法恢复',
+        `你创建的${brandName()}、聊天记录、记忆和导入记录将无法恢复`,
         '声音素材、剪辑结果和已训练音色将被删除并解除接入',
         '会员及未使用权益将终止，注销后不会转移到新账号',
         '订单、支付和退款凭证会依法留存，并限制为履约、审计与争议处理使用',
@@ -284,7 +289,8 @@ export class AccountCancellationService {
 
     const now = new Date();
     user.accountStatus = UserAccountStatus.canceled;
-    user.accountCancellationStatus = UserAccountCancellationStatus.processing;
+    user.accountCancellationStatus =
+      UserAccountCancellationStatus.processing;
     user.accountCancellationRequestedAt = now;
     user.canceledAt = now;
     user.updatedAt = now;
@@ -298,8 +304,10 @@ export class AccountCancellationService {
 
     const summary = await this.cleanupUserData(userId, user);
     const completedAt = new Date();
-    await this.runCleanupStage(summary, 'login_account_anonymization', () =>
-      this.anonymizeLoginAccounts(userId, completedAt)
+    await this.runCleanupStage(
+      summary,
+      'login_account_anonymization',
+      () => this.anonymizeLoginAccounts(userId, completedAt)
     );
     const cleanupCompleted = summary.failureStages.length === 0;
 
@@ -367,8 +375,10 @@ export class AccountCancellationService {
 
     const summary = await this.cleanupUserData(userId, user);
     const completedAt = new Date();
-    await this.runCleanupStage(summary, 'login_account_anonymization', () =>
-      this.anonymizeLoginAccounts(userId, completedAt)
+    await this.runCleanupStage(
+      summary,
+      'login_account_anonymization',
+      () => this.anonymizeLoginAccounts(userId, completedAt)
     );
     const previous = user.accountCancellationSummary;
     const completed = summary.failureStages.length === 0;
@@ -446,8 +456,7 @@ export class AccountCancellationService {
       blockers.push({
         code: 'ORDER_PROCESSING',
         title: '有未完成的订单或退款',
-        description:
-          '请先等待支付、权益发放或退款处理完成。待支付订单关闭后即可继续。',
+        description: '请先等待支付、权益发放或退款处理完成。待支付订单关闭后即可继续。',
         count: blockingOrders.length,
         actionText: '查看订单',
         actionPath: '/pages/my-orders/index',
@@ -578,7 +587,9 @@ export class AccountCancellationService {
     const chatTraces = await this.chatTraceModel.find({
       where: { userId: userIdText },
     });
-    const traceIds = Array.from(new Set(chatTraces.map(item => item.traceId)));
+    const traceIds = Array.from(
+      new Set(chatTraces.map(item => item.traceId))
+    );
 
     const assetValues = new Set<string>([
       user.avatar,
@@ -670,6 +681,10 @@ export class AccountCancellationService {
 
     await this.runCleanupStage(summary, 'agent_data', async () => {
       summary.deletedRecordCount += await this.deleteMany(
+        this.freeChatAgentLedgerModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
         this.agentMemoryFactModel,
         { $or: [{ userId }, this.inForeignIds('agentId', ownedAgentIds)] }
       );
@@ -734,9 +749,10 @@ export class AccountCancellationService {
           ],
         }
       );
-      summary.deletedRecordCount += await this.deleteMany(this.postLikeModel, {
-        $or: [{ userId }, this.inForeignIds('postId', postIds)],
-      });
+      summary.deletedRecordCount += await this.deleteMany(
+        this.postLikeModel,
+        { $or: [{ userId }, this.inForeignIds('postId', postIds)] }
+      );
       summary.deletedRecordCount += await this.deleteMany(
         this.postCommentModel,
         {
@@ -910,13 +926,16 @@ export class AccountCancellationService {
     const data: AccountCancellationCleanupJobData = {
       userId: String(userId),
     };
-    await queue.addJobToQueue(data, {
-      jobId: `account-cancellation:${String(userId)}`,
-      attempts: 5,
-      backoff: { type: 'exponential', delay: 60_000 },
-      removeOnComplete: true,
-      removeOnFail: 100,
-    });
+    await queue.addJobToQueue(
+      data,
+      {
+        jobId: `account-cancellation:${String(userId)}`,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 60_000 },
+        removeOnComplete: true,
+        removeOnFail: 100,
+      }
+    );
   }
 
   private async anonymizeLoginAccounts(
@@ -1023,14 +1042,16 @@ export class AccountCancellationService {
     );
   }
 
-  private ensureUserCanCancel(
-    user: UserEntity | null
-  ): asserts user is UserEntity {
+  private ensureUserCanCancel(user: UserEntity | null): asserts user is UserEntity {
     if (!user) {
       throw new AppError('USER_NOT_FOUND', 'user profile does not exist', 404);
     }
     if (user.accountStatus === UserAccountStatus.canceled) {
-      throw new AppError('ACCOUNT_ALREADY_CANCELED', '账号已注销', 410);
+      throw new AppError(
+        'ACCOUNT_ALREADY_CANCELED',
+        '账号已注销',
+        410
+      );
     }
   }
 

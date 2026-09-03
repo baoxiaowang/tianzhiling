@@ -10,6 +10,13 @@ export enum ConversationMessageFeedbackType {
   other = 'other',
 }
 
+export enum ConversationMessageFeedbackHandlingStatus {
+  pending = 'pending',
+  processing = 'processing',
+  resolved = 'resolved',
+  ignored = 'ignored',
+}
+
 @Index(['userId', 'agentId', 'createdAt'], { background: true })
 @Index(['conversationId', 'messageId', 'createdAt'], { background: true })
 @Entity(TableName.conversation_message_feedback)
@@ -34,6 +41,19 @@ export class ConversationMessageFeedbackEntity extends BaseEntity {
 
   @Column()
   assistantContent?: string;
+
+  /** Historical rows without this field are treated as pending. */
+  @Column()
+  handlingStatus?: ConversationMessageFeedbackHandlingStatus;
+
+  @Column()
+  handlingNote?: string;
+
+  @Column()
+  handledBy?: string;
+
+  @Column()
+  handledAt?: Date;
 
   @Column()
   createdAt: Date;

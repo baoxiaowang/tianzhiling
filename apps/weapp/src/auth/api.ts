@@ -21,6 +21,55 @@ export type {
   UserRegion,
 }
 
+export interface AccountCancellationBlocker {
+  code: 'ORDER_PROCESSING' | 'VOICE_PROCESSING' | 'IMPORT_PROCESSING'
+  title: string
+  description: string
+  count: number
+  actionText: string
+  actionPath: string
+}
+
+export interface AccountCancellationCheck {
+  eligible: boolean
+  blockers: AccountCancellationBlocker[]
+  consequences: string[]
+  confirmationText: string
+}
+
+export interface AccountCancellationResult {
+  canceledAt: number
+  cleanupStatus: 'completed' | 'processing'
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function asString(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+
+function parseCancellationBlocker(value: unknown): AccountCancellationBlocker {
+  const raw = asRecord(value)
+  const code = asString(raw.code)
+  const normalizedCode =
+    code === 'VOICE_PROCESSING' || code === 'IMPORT_PROCESSING'
+      ? code
+      : 'ORDER_PROCESSING'
+
+  return {
+    code: normalizedCode,
+    title: asString(raw.title),
+    description: asString(raw.description),
+    count: Math.max(0, Number(raw.count) || 0),
+    actionText: asString(raw.actionText),
+    actionPath: asString(raw.actionPath),
+  }
+}
+
 export async function sendSmsCode(phone: string) {
   const data = await post<Record<string, unknown>>('/api/user/sms-code', {
     phone,
@@ -218,4 +267,36 @@ export async function logout() {
 
     throw error
   }
+}
+
+export async function checkAccountCancellation() {
+  const data = await get<Record<string, unknown>>(
+    '/api/user/me/cancellation-check',
+  )
+
+  return {
+    eligible: data.eligible === true,
+    blockers: Array.isArray(data.blockers)
+      ? data.blockers.map(parseCancellationBlocker)
+      : [],
+    consequences: Array.isArray(data.consequences)
+      ? data.consequences.map(asString).filter(Boolean)
+      : [],
+    confirmationText: asString(data.confirmationText) || '确认注销',
+  } satisfies AccountCancellationCheck
+}
+
+export async function cancelCurrentUser(jsCode: string, confirmation: string) {
+  const data = await post<Record<string, unknown>>(
+    '/api/user/me/cancel',
+    { jsCode, confirmation },
+    { timeout: 5 * 60 * 1000 },
+  )
+  const cleanupStatus =
+    data.cleanupStatus === 'processing' ? 'processing' : 'completed'
+
+  return {
+    canceledAt: Number(data.canceledAt) || Date.now(),
+    cleanupStatus,
+  } satisfies AccountCancellationResult
 }

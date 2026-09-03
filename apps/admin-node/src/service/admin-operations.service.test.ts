@@ -29,14 +29,9 @@ describe('AdminOperationsService', () => {
     } as never;
     service.agentModel = {
       count: jest.fn().mockResolvedValue(10),
-      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
-        const serialized = JSON.stringify(pipeline);
-        return aggregateResult(
-          serialized.includes('"$count":"count"')
-            ? [{ count: 1 }]
-            : [{ _id: '2026-08-23', count: 4 }]
-        );
-      }),
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', count: 4 }])
+      ),
     } as never;
     service.messageModel = {
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
@@ -62,11 +57,11 @@ describe('AdminOperationsService', () => {
     service.orderModel = {
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
         const serialized = JSON.stringify(pipeline);
-        if (serialized.includes('"status":"refunded"')) {
-          return aggregateResult([{ _id: '2026-08-23', amount: 1800 }]);
+        if (serialized.includes('"independentRefundOrders"')) {
+          return aggregateResult([]);
         }
-        if (serialized.includes('"netAmount"')) {
-          return aggregateResult([{ payingUsers: 20, netAmount: 50000 }]);
+        if (serialized.includes('"_id":"$userId"')) {
+          return aggregateResult([{ _id: new MongoObjectId(), amount: 50000 }]);
         }
         if (serialized.includes('"isSameDayUser"')) {
           return aggregateResult([
@@ -82,6 +77,15 @@ describe('AdminOperationsService', () => {
         return aggregateResult([
           { paidUsers: 2, paidOrders: 3, paidAmount: 9900 },
         ]);
+      }),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
+        const serialized = JSON.stringify(pipeline);
+
+        return serialized.includes('"format":"%Y-%m-%d"')
+          ? aggregateResult([{ _id: '2026-08-23', amount: 1800 }])
+          : aggregateResult([]);
       }),
     } as never;
 
@@ -106,6 +110,24 @@ describe('AdminOperationsService', () => {
       hour: '12:00',
       newUsers: 2,
       userMessages: 9,
+    });
+    // 今日口径与当日行对齐：新建智能体按当天新建智能体数统计（而非“当日新注册用户数”）
+    expect(result.todayTotals).toMatchObject({
+      newUsers: 3,
+      newAgents: 4,
+    });
+    // 新建智能体口径必须排除内部小使者：查询需携带 messengerOfAgentId 过滤
+    const agentAggregateCalls = jest.mocked(service.agentModel.aggregate).mock
+      .calls;
+    expect(agentAggregateCalls).toHaveLength(1);
+    const agentMatch = agentAggregateCalls[0][0][0] as {
+      $match: Record<string, unknown>;
+    };
+    expect(agentMatch.$match).toMatchObject({
+      $or: [
+        { messengerOfAgentId: { $exists: false } },
+        { messengerOfAgentId: null },
+      ],
     });
   });
 
@@ -168,15 +190,21 @@ describe('AdminOperationsService', () => {
     expect(
       JSON.stringify(jest.mocked(service.orderModel.aggregate).mock.calls)
     ).toContain('"date":"$user.createdAt"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderModel.aggregate).mock.calls)
+    ).toContain('"occurredAt":"$requestedAt"');
   });
 
-  it('按当月创建订单计算支付成功率并展示支付日净收入', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
+  it('按购买支付日期和已完成退款的申请日期分别统计', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-25T04:30:00.000Z'));
     const service = new AdminOperationsService();
     service.orderModel = {
       count: jest.fn().mockResolvedValueOnce(10).mockResolvedValueOnce(8),
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
         const serialized = JSON.stringify(pipeline);
+        if (serialized.includes('"independentRefundOrders"')) {
+          return aggregateResult([]);
+        }
         if (serialized.includes('"status":"refunded"')) {
           return aggregateResult([{ _id: '2026-08-23', amount: 2000 }]);
         }
@@ -199,6 +227,11 @@ describe('AdminOperationsService', () => {
         ]);
       }),
     } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-24', amount: 2000 }])
+      ),
+    } as never;
 
     const result = await service.getOrderAnalytics('2026-08');
 
@@ -218,10 +251,26 @@ describe('AdminOperationsService', () => {
         paidUsers: 3,
         paidOrders: 4,
         paidRevenue: 120,
-        refundedRevenue: 20,
-        netRevenue: 100,
+        refundedRevenue: 0,
+        netRevenue: 120,
       }
     );
+    expect(result.daily.find(item => item.date === '2026-08-24')).toMatchObject(
+      {
+        paidRevenue: 0,
+        refundedRevenue: 20,
+        netRevenue: -20,
+      }
+    );
+    expect(
+      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
+    ).toContain('"date":"$requestedAt"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
+    ).toContain('"requestedAt":{"$gte":"2026-07-31T16:00:00.000Z"');
+    expect(
+      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
+    ).not.toContain('"date":"$completedAt"');
   });
 
   it('兼容旧反馈并保存处理状态和管理员记录', async () => {

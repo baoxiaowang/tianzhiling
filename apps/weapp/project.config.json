@@ -1,5 +1,5 @@
 {
-  "miniprogramRoot": "./dist",
+  "miniprogramRoot": "./dist/weapp",
   "projectname": "weapp",
   "description": "多端小程序",
   "appid": "wx726227339067c7bb",

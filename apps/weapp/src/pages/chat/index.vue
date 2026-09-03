@@ -608,6 +608,7 @@ import type { ITouchEvent } from "@tarojs/components/types/common";
 import { computed, nextTick, ref } from "vue";
 import { ApiConfig, isLocalApiEnvironment } from "../../api/api-config";
 import { ApiException } from "../../api/api-exception";
+import { brand } from "../../config/brand";
 import { getAgentDetail } from "../../apis/agent";
 import {
   convertConversationMessageVoiceToText,
@@ -924,7 +925,7 @@ const isVoiceRecording = ref(false);
 const isTranscribingVoice = ref(false);
 const isCheckingRecordPermission = ref(false);
 const isVoicePrivacyDialogVisible = ref(false);
-const voicePrivacyContractName = ref("《天之灵隐私保护指引》");
+const voicePrivacyContractName = ref(`《${brand.name}隐私保护指引》`);
 const voiceDragTarget = ref<VoiceDragTarget>("send");
 const voiceGestureStartPoint = ref<TouchPoint | null>(null);
 const recordingStartedAt = ref<number | null>(null);
@@ -1437,6 +1438,8 @@ useLoad((options) => {
     Number.parseInt(decodeRouteParam(options?.agentSex), 10) || 0;
   agentCallMe.value = decodeRouteParam(options?.agentCallMe);
   iCallAgent.value = decodeRouteParam(options?.iCallAgent);
+  isMessengerConversation.value =
+    decodeRouteParam(options?.isMessenger) === "1";
   conversationPreview.value = decodeRouteParam(options?.preview);
   conversationCreatedAt.value = decodeRouteParam(options?.createdAt);
 
@@ -1573,6 +1576,7 @@ async function refreshInitialChat() {
         agentCallMe.value =
           result.agent.agentCallMe.trim() || agentCallMe.value;
         iCallAgent.value = result.agent.iCallAgent.trim() || iCallAgent.value;
+        isMessengerConversation.value = Boolean(result.agent.isMessenger);
         isAgentHomeGuideVisible.value = Boolean(
           result.agent.hasUnreadAgentHomeGuide
         );
@@ -1705,7 +1709,7 @@ function findOldestLoadedMessage() {
 }
 
 async function refreshAgentSnapshot() {
-  if (!agentId.value) {
+  if (!agentId.value || isMessengerConversation.value) {
     return;
   }
 
@@ -2713,6 +2717,9 @@ function handleNavMenuSelect() {
 }
 
 function handleAgentAvatarTap() {
+  if (isMessengerConversation.value) {
+    return;
+  }
   if (!agentId.value) {
     showToast("缺少联系人资料，请从通讯录重新进入");
     return;

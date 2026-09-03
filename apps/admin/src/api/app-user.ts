@@ -46,6 +46,28 @@ export interface AppUserListRes {
   pageSize: number;
 }
 
+export type AppUserMembershipType = 'one_year' | 'three_year' | 'lifetime';
+
+export interface AppUserMemberRecord extends AppUserRecord {
+  membershipType: AppUserMembershipType;
+  membershipStartedAt: string;
+  membershipExpiredAt: string;
+}
+
+export interface AppUserMemberListParams extends AppUserListParams {
+  membershipType?: AppUserMembershipType;
+}
+
+export interface AppUserVoiceServiceRecord extends AppUserRecord {
+  serviceStatus: 'pending' | 'servicing' | 'refunded';
+  purchasedAmounts: number[];
+  latestPurchasedAt: string;
+}
+
+export interface AppUserVoiceServiceListParams extends AppUserListParams {
+  serviceStatus?: 'pending' | 'servicing' | 'refunded';
+}
+
 export interface UpdateAppUserData {
   name?: string;
   avatar?: string;
@@ -54,6 +76,28 @@ export interface UpdateAppUserData {
 
 export function queryAppUserList(params: AppUserListParams) {
   return axios.get<AppUserListRes>('/admin_api/app-users', { params });
+}
+
+export function queryAppUserMembers(params: AppUserMemberListParams) {
+  return axios.get<
+    Omit<AppUserListRes, 'items'> & { items: AppUserMemberRecord[] }
+  >('/admin_api/app-users/members', { params });
+}
+
+export function queryAppUserVoiceServices(
+  params: AppUserVoiceServiceListParams
+) {
+  return axios.get<
+    Omit<AppUserListRes, 'items'> & { items: AppUserVoiceServiceRecord[] }
+  >('/admin_api/app-users/voice-services', { params });
+}
+
+export function startAppUserVoiceService(userId: string) {
+  return axios.post<{
+    userId: string;
+    serviceStatus: 'servicing';
+    startedAt: string;
+  }>(`/admin_api/app-users/${userId}/voice-service/start`);
 }
 
 export function queryAppUserDetail(id: string) {

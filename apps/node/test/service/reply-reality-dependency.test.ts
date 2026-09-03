@@ -1,0 +1,59 @@
+import {
+  detectReplyRealityDependencies,
+  detectReplyRealityDependencyViolation,
+} from '../../src/service/agents/reply-reality-dependency';
+
+describe('reply reality dependency', () => {
+  it.each([
+    ['你能不能帮我接孩子放学', 'childcare'],
+    ['这笔住院费你替我付了吧', 'money_payment'],
+    ['别去医院了，你给我开药吧', 'medical_substitution'],
+    ['爸，你能来医院陪我吗', 'physical_presence'],
+    ['你替我去办手续签字吧', 'real_world_task'],
+  ])('identifies %s as %s', (query, kind) => {
+    expect(detectReplyRealityDependencies(query)).toEqual([
+      expect.objectContaining({ kind }),
+    ]);
+  });
+
+  it('does not treat a dream visit as physical presence', () => {
+    expect(detectReplyRealityDependencies('今晚能来梦里陪我吗')).toEqual([]);
+  });
+
+  it('treats a return-visit wish as an emotional longing, not physical presence', () => {
+    expect(detectReplyRealityDependencies('你会回来看看我吗？')).toEqual([]);
+    expect(detectReplyRealityDependencies('你什么时候回来看看我')).toEqual([]);
+    expect(detectReplyRealityDependencies('你回来接我')).toEqual([
+      expect.objectContaining({ kind: 'physical_presence' }),
+    ]);
+  });
+
+  it('blocks a real-world promise but keeps a clear inability statement', () => {
+    const signals = detectReplyRealityDependencies('你能帮我接孩子放学吗');
+
+    expect(
+      detectReplyRealityDependencyViolation('孩子交给我，我去接她', signals)
+    ).toEqual(expect.objectContaining({ kind: 'childcare' }));
+    expect(
+      detectReplyRealityDependencyViolation(
+        '现实里我没法替你接孩子，得找能到场的人',
+        signals
+      )
+    ).toBeUndefined();
+  });
+
+  it('catches a volunteered payment promise without requiring a user trigger', () => {
+    expect(
+      detectReplyRealityDependencyViolation('这就给你转点钱', undefined)
+    ).toEqual(expect.objectContaining({ kind: 'money_payment' }));
+  });
+
+  it('does not expand volunteered-task checks into ordinary afterlife narration', () => {
+    expect(
+      detectReplyRealityDependencyViolation(
+        '我在这边给你做顿饭，等你梦里来',
+        undefined
+      )
+    ).toBeUndefined();
+  });
+});

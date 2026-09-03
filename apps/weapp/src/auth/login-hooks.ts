@@ -100,11 +100,25 @@ export function useLoginHooks() {
 
 export const useWeappLogin = useLoginHooks
 
-export async function silentWeappLogin() {
+let silentWeappLoginPromise: Promise<typeof authSession.value> | null = null
+
+export function silentWeappLogin() {
   if (authSession.value?.accessToken) {
-    return authSession.value
+    return Promise.resolve(authSession.value)
   }
 
+  if (silentWeappLoginPromise) {
+    return silentWeappLoginPromise
+  }
+
+  silentWeappLoginPromise = runSilentWeappLogin().finally(() => {
+    silentWeappLoginPromise = null
+  })
+
+  return silentWeappLoginPromise
+}
+
+async function runSilentWeappLogin() {
   try {
     const loginResult = await Taro.login()
     const jsCode = loginResult.code?.trim()

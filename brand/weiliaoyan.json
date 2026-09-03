@@ -1,0 +1,28 @@
+{
+  "key": "weiliaoyan",
+  "name": "未了言",
+  "companyName": "武汉市未了言智能技术有限公司",
+  "domain": "voloian.cn",
+  "adminDomain": "admin.voloian.cn",
+  "weapp": {
+    "appid": "wx726227339067c7bb",
+    "navigationBarTitle": "未了言"
+  },
+  "app": {
+    "androidApplicationId": "com.tianzhiling.app",
+    "androidLabel": "未了言",
+    "iosBundleId": "com.tianzhiling.app"
+  },
+  "adminTitle": "未了言管理后台",
+  "customerService": {
+    "phone": "15129115313",
+    "wechatQr": "/weapp/service.png",
+    "email": "support@voloian.cn",
+    "wechatId": ""
+  },
+  "agreementTitles": {
+    "userAgreement": "未了言用户服务协议",
+    "privacyPolicy": "未了言隐私政策",
+    "memberAgreement": "未了言会员协议"
+  }
+}

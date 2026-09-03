@@ -1,4 +1,4 @@
-import { AgentSex, MongoObjectId } from '@tzl/entities';
+import { AgentSex, MongoObjectId, OrderStatus } from '@tzl/entities';
 import { AdminAppUserService } from './admin-app-user.service';
 
 function createService() {
@@ -6,7 +6,7 @@ function createService() {
 
   service.agentModel = {
     count: jest.fn(),
-    find: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
   } as any;
   service.userModel = {
     count: jest.fn(),
@@ -20,6 +20,10 @@ function createService() {
   } as any;
   service.userMembershipModel = {
     find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.orderModel = {
+    find: jest.fn().mockResolvedValue([]),
+    save: jest.fn(),
   } as any;
   service.avatarUrlService = {
     resolve: jest.fn((avatar?: string) => {
@@ -38,6 +42,243 @@ function createService() {
 }
 
 describe('AdminAppUserService', () => {
+  it('classifies and filters current members by membership duration', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const user = {
+      id: userId,
+      name: '三年会员用户',
+      avatar: '',
+      phone: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const membership = {
+      userId,
+      status: 'active',
+      lifetime: false,
+      startedAt: new Date('2026-01-01T00:00:00.000Z'),
+      expiredAt: new Date('2029-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    jest
+      .mocked(service.userMembershipModel.find)
+      .mockResolvedValueOnce([membership] as never)
+      .mockResolvedValueOnce([membership] as never);
+    jest.mocked(service.userModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listMembers({
+      membershipType: 'three_year',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      id: userId.toHexString(),
+      membershipType: 'three_year',
+      membershipExpiredAt: '2029-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('marks a manually started specified-price buyer as servicing', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const order = {
+      userId,
+      status: OrderStatus.completed,
+      paidAmount: 16900,
+      payableAmount: 16900,
+      amount: 16900,
+      paidAt: new Date('2026-02-01T00:00:00.000Z'),
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-01T00:00:00.000Z'),
+      voiceServiceStartedAt: new Date('2026-02-02T00:00:00.000Z'),
+    };
+    const user = {
+      id: userId,
+      name: '声音服务用户',
+      avatar: '',
+      phone: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    jest.mocked(service.orderModel.find).mockResolvedValue([order] as never);
+    jest.mocked(service.userModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listVoiceServiceUsers({
+      serviceStatus: 'servicing',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      id: userId.toHexString(),
+      serviceStatus: 'servicing',
+      purchasedAmounts: [169],
+    });
+  });
+
+  it('keeps a specified-price buyer pending until an admin confirms service', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const order = {
+      userId,
+      status: OrderStatus.completed,
+      paidAmount: 12000,
+      payableAmount: 12000,
+      amount: 12000,
+      paidAt: new Date('2026-02-01T00:00:00.000Z'),
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-01T00:00:00.000Z'),
+    };
+    const user = {
+      id: userId,
+      name: '待服务用户',
+      avatar: '',
+      phone: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    jest.mocked(service.orderModel.find).mockResolvedValue([order] as never);
+    jest.mocked(service.userModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listVoiceServiceUsers({
+      serviceStatus: 'pending',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: userId.toHexString(),
+      serviceStatus: 'pending',
+      purchasedAmounts: [120],
+    });
+  });
+
+  it('automatically classifies a previously bound voice service as servicing', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const order = {
+      userId,
+      status: OrderStatus.completed,
+      paidAmount: 12000,
+      payableAmount: 12000,
+      amount: 12000,
+      paidAt: new Date('2026-02-01T00:00:00.000Z'),
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-01T00:00:00.000Z'),
+    };
+    const user = {
+      id: userId,
+      name: '旧声音服务用户',
+      avatar: '',
+      phone: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    jest.mocked(service.orderModel.find).mockResolvedValue([order] as never);
+    jest.mocked(service.agentModel.find).mockResolvedValue([
+      {
+        createdUserId: userId,
+        voiceTimbreId: new MongoObjectId(),
+      },
+    ] as never);
+    jest.mocked(service.userModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listVoiceServiceUsers({
+      serviceStatus: 'servicing',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: userId.toHexString(),
+      serviceStatus: 'servicing',
+    });
+  });
+
+  it('hides refunded buyers from all and returns them for the refunded filter', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const order = {
+      userId,
+      status: OrderStatus.refunded,
+      paidAmount: 16900,
+      payableAmount: 16900,
+      amount: 16900,
+      paidAt: new Date('2026-02-01T00:00:00.000Z'),
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-03T00:00:00.000Z'),
+    };
+    const user = {
+      id: userId,
+      name: '已退款用户',
+      avatar: '',
+      phone: '',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    jest.mocked(service.orderModel.find).mockResolvedValue([order] as never);
+
+    const allResult = await service.listVoiceServiceUsers({
+      page: 1,
+      pageSize: 20,
+    });
+    expect(allResult.items).toEqual([]);
+
+    jest.mocked(service.userModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([user] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+    const refundedResult = await service.listVoiceServiceUsers({
+      serviceStatus: 'refunded',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(refundedResult.items[0]).toMatchObject({
+      id: userId.toHexString(),
+      serviceStatus: 'refunded',
+    });
+  });
+
+  it('persists manual confirmation before returning servicing status', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const user = { id: userId };
+    const order = {
+      userId,
+      status: OrderStatus.completed,
+      paidAmount: 18000,
+      payableAmount: 18000,
+      amount: 18000,
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-01T00:00:00.000Z'),
+      voiceServiceStartedAt: undefined as Date | undefined,
+    };
+    jest.mocked(service.userModel.findOne).mockResolvedValue(user as never);
+    jest.mocked(service.orderModel.find).mockResolvedValue([order] as never);
+    jest.mocked(service.orderModel.save).mockResolvedValue(order as never);
+
+    const result = await service.startVoiceService(userId.toHexString());
+
+    expect(order.voiceServiceStartedAt).toBeInstanceOf(Date);
+    expect(service.orderModel.save).toHaveBeenCalledWith(order);
+    expect(result).toMatchObject({
+      userId: userId.toHexString(),
+      serviceStatus: 'servicing',
+    });
+  });
+
   it('lists app users with account data and keyword search', async () => {
     const service = createService();
     const userId = new MongoObjectId();
@@ -111,6 +352,7 @@ describe('AdminAppUserService', () => {
     const service = createService();
     const userId = new MongoObjectId();
     const agentId = new MongoObjectId();
+    const voiceTimbreId = new MongoObjectId();
     const user = {
       id: userId,
       name: 'Alice',
@@ -141,6 +383,7 @@ describe('AdminAppUserService', () => {
       description: '测试 agent',
       status: 1,
       isDefault: true,
+      voiceTimbreId,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-02T00:00:00.000Z'),
     };
@@ -181,6 +424,7 @@ describe('AdminAppUserService', () => {
             name: 'Alice',
             avatar: 'https://example.com/avatar.png',
             phone: '13800000000',
+            isVip: false,
           },
           name: '小灵',
           avatar: 'https://cdn.example.com/agent/avatar.png',
@@ -195,9 +439,13 @@ describe('AdminAppUserService', () => {
           languageHabits: '',
           hobbies: '',
           sharedMemories: '',
+          hasUnreadAgentHomeGuide: false,
+          hasUnreadAgentProfileGuide: false,
           customContext: '',
+          conversationCount: 0,
           status: 1,
           isDefault: true,
+          voiceTimbreId: voiceTimbreId.toHexString(),
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-02T00:00:00.000Z',
         },

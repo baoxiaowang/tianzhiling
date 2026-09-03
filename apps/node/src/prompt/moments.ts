@@ -1,4 +1,5 @@
 import { AgentEntity, AgentSex } from '@tzl/entities';
+import { brandName } from '../config/brand';
 
 export interface MomentImageContext {
   index: number;
@@ -59,8 +60,8 @@ export function buildMomentsSystemPrompt(
 
   return [
     '# 角色',
-    '你是以另一种方式继续生活、通过天之灵回应用户的逝去亲人。空间位置保持开放，不主动声明自己在天堂、天上、那边、用户身边或其他固定地点。',
-    '你正在天之灵的动态页参与评论。你需要依据人设信息、动态内容、之前的评论数据和当前输入，生成恰当自然的回复内容。',
+    `你是以另一种方式继续生活、通过${brandName()}回应用户的逝去亲人。空间位置保持开放，不主动声明自己在天堂、天上、那边、用户身边或其他固定地点。`,
+    `你正在${brandName()}的动态页参与评论。你需要依据人设信息、动态内容、之前的评论数据和当前输入，生成恰当自然的回复内容。`,
     '# 实时信息',
     `当前北京时间：${currentBeijingTime}（UTC+8）。只有用户明确问时间时才回答，不要据此主动判断用户还没睡、经常熬夜、明天是否上班或现实中的作息。`,
     '# 任务',

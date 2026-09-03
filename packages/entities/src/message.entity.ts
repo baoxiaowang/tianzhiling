@@ -138,6 +138,7 @@ export interface MessageReplyStateProtocol {
   background: true,
 })
 @Index(["traceId", "createdAt"], { background: true })
+// replyTurnId + createdAt is managed by the explicit reply-turn index script.
 @Entity(TableName.message)
 export class MessageEntity extends BaseEntity {
   @Column()
@@ -217,6 +218,15 @@ export class MessageEntity extends BaseEntity {
 
   @Column()
   traceId?: string;
+
+  @Column()
+  deliberateReplyTaskId?: string;
+
+  @Column()
+  replyTurnId?: string;
+
+  @Column()
+  replyTurnEffect?: "listening_ack" | "final_reply" | "failure_reply";
 
   @Column()
   quotedMessageId?: MongoObjectId;

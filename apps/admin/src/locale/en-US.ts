@@ -6,7 +6,8 @@ import localeWorkplace from '@/views/dashboard/workplace/locale/en-US';
 import localeSettings from './en-US/settings';
 
 export default {
-  'menu.dashboard': 'Dashboard',
+  // Admin sidebar menu labels
+  'menu.dashboard': 'Workplace',
   'menu.server.dashboard': 'Dashboard-Server',
   'menu.server.workplace': 'Workplace-Server',
   'menu.server.monitor': 'Monitor-Server',
@@ -17,17 +18,21 @@ export default {
   'menu.profile': 'Profile',
   'menu.visualization': 'Data Visualization',
   'menu.user': 'User Center',
-  'menu.appUser': 'User Management',
-  'menu.appUser.list': 'App Users',
+  'menu.appUser': 'Users & Relationships',
+  'menu.appUser.list': 'Users',
   'menu.appUser.detail': 'User Detail',
-  'menu.agent': 'Agent Management',
-  'menu.agent.list': 'Agent List',
-  'menu.agent.detail': 'Agent Detail',
+  'menu.agent': 'AI Relatives',
+  'menu.agent.list': 'AI Relatives',
+  'menu.agent.detail': 'AI Relative Detail',
   'menu.order': 'Order Management',
   'menu.order.list': 'Orders',
   'menu.order.refund': 'Refunds',
-  'menu.post': 'Post Management',
+  'menu.post': 'Content Operations',
   'menu.post.list': 'Posts',
+  'menu.operations': 'Operations & System',
+  'menu.operations.daily': 'Daily Detail',
+  'menu.operations.userValue': 'User Value',
+
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',
   'menu.voiceModel.package': 'Voice Packages',

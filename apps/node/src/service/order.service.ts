@@ -10,9 +10,13 @@ import {
   AgentEntitlementType,
   MongoObjectId,
   OrderEntity,
+  OrderRefundEntity,
+  OrderRefundStatus,
+  OrderRefundType,
   OrderSource,
   OrderStatus,
   OrderType,
+  UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
   VirtualGoodsProvideStatus,
@@ -35,7 +39,7 @@ import type {
   OrderRecordDTO,
   UserOrderListDTO,
 } from '@tzl/shared';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { MongoRepository } from 'typeorm';
 import { AuthenticatedUserPayload } from '../interface';
 import {
@@ -49,11 +53,20 @@ import {
   isVipPlanUpgrade,
 } from './vip-upgrade-pricing';
 import type { VipUpgradePricing } from './vip-upgrade-pricing';
+import { MessengerService } from './agents/messenger.service';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
 const VIP_UPGRADE_CREDIT_PROVIDER = 'vip_upgrade_credit';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD =
+  'membershipFinancialOperationLock';
+const MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS = 60 * 1000;
 export const ORDER_PAYMENT_EXPIRE_QUEUE = 'order-payment-expire';
+
+interface MembershipFinancialOperationLease {
+  token: string;
+  userId: MongoObjectId;
+}
 
 export interface WechatVirtualPaymentNotifyPayload {
   Event?: string;
@@ -101,8 +114,14 @@ export class OrderService {
   @Inject()
   bullmqFramework: bullmq.Framework;
 
+  @Inject()
+  messengerService: MessengerService;
+
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(OrderRefundEntity)
+  orderRefundModel: MongoRepository<OrderRefundEntity>;
 
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
@@ -116,6 +135,9 @@ export class OrderService {
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
 
+  @InjectEntityModel(UserEntity)
+  userModel: MongoRepository<UserEntity>;
+
   @InjectEntityModel(AgentEntitlementEntity)
   agentEntitlementModel: MongoRepository<AgentEntitlementEntity>;
 
@@ -128,60 +150,84 @@ export class OrderService {
   ): Promise<CreateVipPlanOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
-    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+    const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
+    let openid =
+      preliminaryPricing.payableAmount > 0
+        ? await this.wechatPayService.getOpenidByJsCode(payload.jsCode)
+        : undefined;
+    let savedOrder: OrderEntity;
 
-    if (pricing.payableAmount === 0) {
-      return this.createZeroAmountVipPlanOrder(
-        userId,
-        plan,
-        pricing,
-        payload.supportsZeroAmountOrder
-      );
+    while (true) {
+      const lease = await this.acquireMembershipFinancialOperationLock(userId);
+      let needsOpenid = false;
+
+      try {
+        const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+        if (pricing.payableAmount === 0) {
+          return await this.createZeroAmountVipPlanOrder(
+            userId,
+            plan,
+            pricing,
+            payload.supportsZeroAmountOrder
+          );
+        }
+
+        if (!openid) {
+          needsOpenid = true;
+        } else {
+          const now = new Date();
+          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+          const order = new OrderEntity();
+
+          Object.assign(order, {
+            orderNo: this.generateOrderNo(),
+            userId,
+            orderType: OrderType.vipPlan,
+            targetId: plan.id,
+            targetCode: plan.code,
+            title: plan.name,
+            amount: plan.priceAmount,
+            discountAmount: Math.max(
+              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+              0
+            ),
+            couponAmount: 0,
+            payableAmount: pricing.payableAmount,
+            currency: plan.currency || 'CNY',
+            status: OrderStatus.pending,
+            source: OrderSource.weapp,
+            paymentProvider: WECHAT_PAY_PROVIDER,
+            paymentExpiredAt: expireAt,
+            payerOpenid: openid,
+            snapshot: {
+              vipPlan: this.buildVipPlanSnapshot(plan),
+              vipUpgrade: pricing,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          savedOrder = await this.orderModel.save(order);
+        }
+      } finally {
+        await this.releaseMembershipFinancialOperationLock(lease);
+      }
+
+      if (!needsOpenid) {
+        break;
+      }
+
+      openid = await this.wechatPayService.getOpenidByJsCode(payload.jsCode);
     }
 
-    const openid = await this.wechatPayService.getOpenidByJsCode(
-      payload.jsCode
-    );
-    const now = new Date();
-    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-    const order = new OrderEntity();
-
-    Object.assign(order, {
-      orderNo: this.generateOrderNo(),
-      userId,
-      orderType: OrderType.vipPlan,
-      targetId: plan.id,
-      targetCode: plan.code,
-      title: plan.name,
-      amount: plan.priceAmount,
-      discountAmount: Math.max(
-        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: pricing.payableAmount,
-      currency: plan.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
-      paymentProvider: WECHAT_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: openid,
-      snapshot: {
-        vipPlan: this.buildVipPlanSnapshot(plan),
-        vipUpgrade: pricing,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const savedOrder = await this.orderModel.save(order);
     const { prepayId, payment } =
       await this.wechatPayService.createVipPlanPrepay({
         orderNo: savedOrder.orderNo,
         title: savedOrder.title,
         amount: savedOrder.payableAmount,
-        openid,
-        expireAt,
+        openid: savedOrder.payerOpenid!,
+        expireAt: savedOrder.paymentExpiredAt!,
       });
 
     savedOrder.paymentPrepayId = prepayId;
@@ -279,63 +325,96 @@ export class OrderService {
   ): Promise<CreateVipPlanVirtualPaymentOrderResultDTO> {
     const userId = this.parseObjectId(auth.sub);
     const plan = await this.getActiveVipPlanById(payload.vipPlanId);
-    const pricing = await this.getVipPlanOrderPricing(userId, plan);
+    const preliminaryPricing = await this.getVipPlanOrderPricing(userId, plan);
+    let productId: string | undefined;
+    let session:
+      | Awaited<ReturnType<WechatPayService['getSessionByJsCode']>>
+      | undefined;
 
-    if (pricing.payableAmount === 0) {
-      return this.createZeroAmountVipPlanOrder(
-        userId,
-        plan,
-        pricing,
-        payload.supportsZeroAmountOrder
+    if (preliminaryPricing.payableAmount > 0) {
+      productId = this.requireVirtualPaymentProductId(
+        plan.virtualPaymentProductId,
+        'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
       );
+      session = await this.wechatPayService.getSessionByJsCode(payload.jsCode);
     }
 
-    const productId = this.requireVirtualPaymentProductId(
-      plan.virtualPaymentProductId,
-      'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
-    );
-    const session = await this.wechatPayService.getSessionByJsCode(
-      payload.jsCode
-    );
-    const now = new Date();
-    const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
-    const env = this.wechatPayService.getVirtualPayEnv();
-    const order = new OrderEntity();
+    let savedOrder: OrderEntity;
 
-    Object.assign(order, {
-      orderNo: this.generateOrderNo(),
-      userId,
-      orderType: OrderType.vipPlan,
-      targetId: plan.id,
-      targetCode: plan.code,
-      title: plan.name,
-      amount: plan.priceAmount,
-      discountAmount: Math.max(
-        (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
-        0
-      ),
-      couponAmount: 0,
-      payableAmount: pricing.payableAmount,
-      currency: plan.currency || 'CNY',
-      status: OrderStatus.pending,
-      source: OrderSource.weapp,
-      paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
-      paymentExpiredAt: expireAt,
-      payerOpenid: session.openid,
-      virtualPaymentProductId: productId,
-      virtualPaymentEnv: env,
-      snapshot: {
-        vipPlan: this.buildVipPlanSnapshot(plan),
-        vipUpgrade: pricing,
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
+    while (true) {
+      const lease = await this.acquireMembershipFinancialOperationLock(userId);
+      let needsPaymentSession = false;
 
-    const savedOrder = await this.orderModel.save(order);
+      try {
+        const pricing = await this.getVipPlanOrderPricing(userId, plan);
+
+        if (pricing.payableAmount === 0) {
+          return await this.createZeroAmountVipPlanOrder(
+            userId,
+            plan,
+            pricing,
+            payload.supportsZeroAmountOrder
+          );
+        }
+
+        if (!productId || !session) {
+          needsPaymentSession = true;
+        } else {
+          const now = new Date();
+          const expireAt = new Date(now.getTime() + 30 * 60 * 1000);
+          const env = this.wechatPayService.getVirtualPayEnv();
+          const order = new OrderEntity();
+
+          Object.assign(order, {
+            orderNo: this.generateOrderNo(),
+            userId,
+            orderType: OrderType.vipPlan,
+            targetId: plan.id,
+            targetCode: plan.code,
+            title: plan.name,
+            amount: plan.priceAmount,
+            discountAmount: Math.max(
+              (plan.originalPriceAmount ?? plan.priceAmount) - plan.priceAmount,
+              0
+            ),
+            couponAmount: 0,
+            payableAmount: pricing.payableAmount,
+            currency: plan.currency || 'CNY',
+            status: OrderStatus.pending,
+            source: OrderSource.weapp,
+            paymentProvider: WECHAT_VIRTUAL_PAY_PROVIDER,
+            paymentExpiredAt: expireAt,
+            payerOpenid: session.openid,
+            virtualPaymentProductId: productId,
+            virtualPaymentEnv: env,
+            snapshot: {
+              vipPlan: this.buildVipPlanSnapshot(plan),
+              vipUpgrade: pricing,
+            },
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          savedOrder = await this.orderModel.save(order);
+        }
+      } finally {
+        await this.releaseMembershipFinancialOperationLock(lease);
+      }
+
+      if (!needsPaymentSession) {
+        break;
+      }
+
+      productId = this.requireVirtualPaymentProductId(
+        plan.virtualPaymentProductId,
+        'VIP_PLAN_VIRTUAL_PAYMENT_PRODUCT_ID_MISSING'
+      );
+      session = await this.wechatPayService.getSessionByJsCode(payload.jsCode);
+    }
+
     const virtualPayment = this.wechatPayService.buildVirtualPaymentParams({
-      sessionKey: session.sessionKey,
-      productId,
+      sessionKey: session!.sessionKey,
+      productId: productId!,
       orderNo: savedOrder.orderNo,
       amount: savedOrder.payableAmount,
       attach: this.buildVirtualPaymentAttach(savedOrder),
@@ -647,7 +726,9 @@ export class OrderService {
 
     if (
       order.status === OrderStatus.completed ||
-      order.status === OrderStatus.granting
+      order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
+      order.status === OrderStatus.refunded
     ) {
       return;
     }
@@ -798,6 +879,15 @@ export class OrderService {
     this.assertVirtualRefundNotifyMatchesOrder(order, payload);
 
     if (order.status === OrderStatus.refunded) {
+      const completedAt = order.refundedAt ?? order.updatedAt;
+      const amount =
+        order.refundAmount && order.refundAmount > 0
+          ? order.refundAmount
+          : order.paidAmount ?? order.payableAmount;
+
+      if (amount > 0) {
+        await this.recordCompletedRefundOrder(order, amount, completedAt);
+      }
       return;
     }
 
@@ -921,7 +1011,9 @@ export class OrderService {
   ): Promise<void> {
     if (
       order.status === OrderStatus.completed ||
-      order.status === OrderStatus.granting
+      order.status === OrderStatus.granting ||
+      order.status === OrderStatus.refundRequested ||
+      order.status === OrderStatus.refunded
     ) {
       return;
     }
@@ -1185,10 +1277,32 @@ export class OrderService {
 
     if (order.orderType === OrderType.voicePackage) {
       await this.createVoiceTrainingTask(order);
+      await this.notifyVoicePackagePurchaseEvent(order);
       return;
     }
 
     throw new AppError('ORDER_TYPE_UNSUPPORTED', 'order type is unsupported');
+  }
+
+  /** 声音服务（普通话/方言模型）购买后的小使者提示，失败不阻塞订单发放 */
+  private async notifyVoicePackagePurchaseEvent(
+    order: OrderEntity
+  ): Promise<void> {
+    try {
+      await this.messengerService.sendEventNotice({
+        eventType: 'voice_package_purchase',
+        userId: order.userId,
+        orderId: String(order.id),
+        planName: order.title || '',
+        planGroup: VipPlanGroup.voice,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] voice package messenger event notice failed, orderId=%s reason=%s',
+        String(order.id || ''),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private async refundPaidOrder(
@@ -1269,6 +1383,7 @@ export class OrderService {
 
     const now = new Date();
     order.status = OrderStatus.refundRequested;
+    order.refundRequestedAt = order.refundRequestedAt ?? now;
     order.updatedAt = now;
     await this.orderModel.save(order);
   }
@@ -1278,6 +1393,8 @@ export class OrderService {
     refundAmount: number,
     now: Date
   ): Promise<void> {
+    await this.recordCompletedRefundOrder(order, refundAmount, now);
+
     await this.revokeOrderBenefits(order, now);
 
     order.status = OrderStatus.refunded;
@@ -1285,6 +1402,41 @@ export class OrderService {
     order.refundedAt = now;
     order.updatedAt = now;
     await this.orderModel.save(order);
+  }
+
+  private async recordCompletedRefundOrder(
+    order: OrderEntity,
+    refundAmount: number,
+    now: Date
+  ): Promise<void> {
+    const refundNo = this.generateRefundNo(order);
+
+    await this.orderRefundModel.updateOne(
+      { _id: this.buildRefundOrderId(refundNo), refundNo } as never,
+      {
+        $setOnInsert: {
+          refundNo,
+          originalOrderId: order.id,
+          originalOrderNo: order.orderNo,
+          userId: order.userId,
+          orderType: order.orderType,
+          targetCode: order.targetCode,
+          refundType: OrderRefundType.orderRefund,
+          amount: refundAmount,
+          currency: order.currency || 'CNY',
+          source: order.source,
+          paymentProvider: order.paymentProvider,
+          requestedAt: order.updatedAt ?? now,
+          createdAt: order.updatedAt ?? now,
+        },
+        $set: {
+          status: OrderRefundStatus.completed,
+          completedAt: now,
+          updatedAt: now,
+        },
+      } as never,
+      { upsert: true }
+    );
   }
 
   private async assertRefundableOrderBenefits(
@@ -1420,6 +1572,31 @@ export class OrderService {
 
     await this.userMembershipModel.save(membership);
     await this.grantVipEntitlements(order, membership, plan, snapshot, now);
+    await this.messengerService.ensureMessengersForUser(order.userId);
+
+    const eventPlanGroup =
+      plan?.planGroup ??
+      (String(order.targetCode || snapshot.code || '').startsWith('voice_')
+        ? VipPlanGroup.voice
+        : VipPlanGroup.basic);
+    try {
+      await this.messengerService.sendEventNotice({
+        eventType:
+          eventPlanGroup === VipPlanGroup.voice
+            ? 'voice_purchase'
+            : 'membership_purchase',
+        userId: order.userId,
+        orderId: String(order.id),
+        planName: plan?.name || '',
+        planGroup: eventPlanGroup,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[order] messenger event notice failed but membership granted, orderId=%s reason=%s',
+        String(order.id || ''),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   private async grantVipEntitlements(
@@ -1508,8 +1685,9 @@ export class OrderService {
     task.assigneeName = '';
     task.materialObjectKeys = materialObjectKeys;
     task.materialDurationSeconds = materialDurationSeconds;
-    task.trainingStrategy =
-      this.resolveVoiceTrainingTaskTrainingStrategy(materialDurationSeconds);
+    task.trainingStrategy = this.resolveVoiceTrainingTaskTrainingStrategy(
+      materialDurationSeconds
+    );
     task.remark = '';
     task.paidAt = now;
     task.createdAt = now;
@@ -1693,6 +1871,98 @@ export class OrderService {
     return calculateVipUpgradePricing(
       targetPlan.priceAmount,
       historicalPaidAmount
+    );
+  }
+
+  private async acquireMembershipFinancialOperationLock(
+    userId: MongoObjectId
+  ): Promise<MembershipFinancialOperationLease> {
+    const now = new Date();
+    const token = `${process.pid}:${Date.now()}:${randomBytes(8).toString(
+      'hex'
+    )}`;
+    const lock = {
+      token,
+      operation: 'vip_upgrade_order_create',
+      acquiredAt: now,
+      expiresAt: new Date(
+        now.getTime() + MEMBERSHIP_FINANCIAL_OPERATION_LOCK_TTL_MS
+      ),
+    };
+    const result = await this.userModel.updateOne(
+      {
+        _id: userId,
+        $or: [
+          {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: {
+              $exists: false,
+            },
+          },
+          {
+            [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD}.expiresAt`]: {
+              $lte: now,
+            },
+          },
+        ],
+      } as never,
+      {
+        $set: {
+          [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: lock,
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(result)) {
+      throw new AppError(
+        'MEMBERSHIP_FINANCIAL_OPERATION_BUSY',
+        '会员状态正在处理中，请稍后重试',
+        409
+      );
+    }
+
+    return { token, userId };
+  }
+
+  private async releaseMembershipFinancialOperationLock(
+    lease: MembershipFinancialOperationLease
+  ): Promise<void> {
+    try {
+      await this.userModel.updateOne(
+        {
+          _id: lease.userId,
+          [`${MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD}.token`]: lease.token,
+        } as never,
+        {
+          $unset: {
+            [MEMBERSHIP_FINANCIAL_OPERATION_LOCK_FIELD]: '',
+          },
+        } as never
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[membership-financial-lock] release failed, userId=%s, error=%s',
+        this.stringifyObjectId(lease.userId),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  private didMongoUpdate(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+
+    const value = result as {
+      matchedCount?: number;
+      modifiedCount?: number;
+      result?: { n?: number; nModified?: number };
+    };
+
+    return Boolean(
+      (value.modifiedCount ?? 0) > 0 ||
+        (value.matchedCount ?? 0) > 0 ||
+        (value.result?.nModified ?? 0) > 0 ||
+        (value.result?.n ?? 0) > 0
     );
   }
 
@@ -2061,8 +2331,8 @@ export class OrderService {
       typeof value === 'number'
         ? value
         : typeof value === 'string'
-          ? Number(value.trim())
-          : NaN;
+        ? Number(value.trim())
+        : NaN;
 
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       return undefined;
@@ -2175,6 +2445,12 @@ export class OrderService {
 
   private generateRefundNo(order: OrderEntity): string {
     return `R${order.orderNo}`;
+  }
+
+  private buildRefundOrderId(refundNo: string): MongoObjectId {
+    return new MongoObjectId(
+      createHash('sha256').update(refundNo).digest('hex').slice(0, 24)
+    );
   }
 
   private parseObjectId(value: string, code = 'INVALID_TOKEN'): MongoObjectId {

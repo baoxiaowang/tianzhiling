@@ -15,6 +15,36 @@
         </a-button>
       </template>
 
+      <section v-if="showAnalytics" class="order-page__analytics">
+        <header class="order-page__analytics-header">
+          <div>
+            <h2>订单统计</h2>
+            <span>上方看当月结果，下方核对每一笔订单</span>
+          </div>
+          <a-month-picker
+            v-model="analyticsMonth"
+            value-format="YYYY-MM"
+            :allow-clear="false"
+            @change="fetchAnalytics"
+          />
+        </header>
+        <div class="order-page__analytics-summary">
+          <article v-for="item in analyticsSummary" :key="item.label">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <small>{{ item.hint }}</small>
+          </article>
+        </div>
+        <a-card
+          class="order-page__analytics-chart"
+          title="本月每日实付趋势"
+          :bordered="false"
+          :loading="analyticsLoading"
+        >
+          <Chart height="240px" :option="analyticsChartOption" />
+        </a-card>
+      </section>
+
       <a-form :model="searchForm" layout="inline" class="order-page__search">
         <a-form-item field="keyword" label="关键词">
           <a-input
@@ -41,7 +71,7 @@
             <a-option value="grant_failed">发放失败</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item field="source" label="来源">
+        <a-form-item v-if="!refundMode" field="source" label="来源">
           <a-select
             v-model="searchForm.source"
             allow-clear
@@ -101,7 +131,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1780 }"
+        :scroll="{ x: tableScrollX }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -188,7 +218,12 @@
               </a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="来源" data-index="source" :width="100">
+          <a-table-column
+            v-if="!refundMode"
+            title="来源"
+            data-index="source"
+            :width="100"
+          >
             <template #cell="{ record }">
               {{ getSourceText(record.source) }}
             </template>
@@ -203,6 +238,7 @@
             </template>
           </a-table-column>
           <a-table-column
+            v-if="!refundMode"
             title="微信发货"
             data-index="virtualGoodsProvideStatus"
             :width="130"
@@ -254,12 +290,84 @@
               {{ formatDate(record.paidAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="280" fixed="right">
+          <a-table-column
+            v-if="refundMode"
+            title="退款申请时间"
+            data-index="refundRequestedAt"
+            :width="170"
+          >
+            <template #cell="{ record }">
+              {{ formatRefundRequestedAt(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            v-if="refundMode"
+            title="已使用时长"
+            data-index="usageDuration"
+            :width="120"
+          >
+            <template #cell="{ record }">
+              {{ formatUsageDuration(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            v-if="refundMode"
+            title="累计发消息"
+            data-index="agentUserMessageCount"
+            :width="120"
+          >
+            <template #cell="{ record }">
+              {{ formatMessageCount(record) }}
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="操作"
+            :width="refundMode ? 360 : 280"
+            fixed="right"
+          >
             <template #cell="{ record }">
               <a-space>
-                <a-button type="text" size="small" @click="openDetail(record)">
+                <a-button
+                  v-if="!refundMode"
+                  type="text"
+                  size="small"
+                  @click="openDetail(record)"
+                >
                   详情
                 </a-button>
+                <template v-if="refundMode && canRejectRefund(record)">
+                  <a-popconfirm
+                    content="确认不退这笔退款？订单将恢复为已完成，不发起退款。"
+                    ok-text="不退"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRejectRefund(record, 'not_refund')"
+                  >
+                    <a-button
+                      type="text"
+                      size="small"
+                      :loading="rejectLoadingId === record.id"
+                    >
+                      不退
+                    </a-button>
+                  </a-popconfirm>
+                  <a-popconfirm
+                    content="确认驳回这笔退款申请？订单将恢复为已完成，并记录驳回。"
+                    ok-text="退款驳回"
+                    cancel-text="取消"
+                    position="left"
+                    @ok="handleRejectRefund(record, 'rejected')"
+                  >
+                    <a-button
+                      type="text"
+                      status="danger"
+                      size="small"
+                      :loading="rejectLoadingId === record.id"
+                    >
+                      退款驳回
+                    </a-button>
+                  </a-popconfirm>
+                </template>
                 <a-button
                   v-if="canSyncPaymentStatus(record)"
                   type="text"
@@ -295,7 +403,7 @@
                 <a-popconfirm
                   v-if="canRefundOrder(record)"
                   :content="getRefundConfirmContent(record)"
-                  ok-text="退订"
+                  :ok-text="getRefundActionText(record)"
                   cancel-text="取消"
                   position="left"
                   @ok="handleRefund(record)"
@@ -306,9 +414,17 @@
                     size="small"
                     :loading="refundLoadingId === record.id"
                   >
-                    退订
+                    {{ getRefundActionText(record) }}
                   </a-button>
                 </a-popconfirm>
+                <a-tooltip
+                  v-else-if="isUnsupportedDowngradedUpgrade(record)"
+                  content="升级会员涉及历史基础会员订单，需核对原订单后处理，暂不支持自动退订"
+                >
+                  <a-button type="text" size="small" disabled>
+                    核对历史退款
+                  </a-button>
+                </a-tooltip>
                 <a-popconfirm
                   v-if="canRevokeAdminManualOrder(record)"
                   :content="getRevokeConfirmContent(record)"
@@ -398,7 +514,7 @@
         </a-descriptions-item>
         <a-descriptions-item
           v-if="!isAdminManualOrder(currentOrder)"
-          label="退款金额"
+          label="累计退款金额"
         >
           {{ formatOptionalAmount(currentOrder.refundAmount) }}
         </a-descriptions-item>
@@ -471,7 +587,7 @@
             {{ currentOrder.voiceMembershipDowngrade.sourcePlan.name }} →
             {{ currentOrder.voiceMembershipDowngrade.targetPlan.name }}
           </a-descriptions-item>
-          <a-descriptions-item label="降级退款">
+          <a-descriptions-item label="其中降级退款">
             {{
               formatAmount(currentOrder.voiceMembershipDowngrade.refundAmount)
             }}
@@ -497,6 +613,39 @@
             {{ formatDate(currentOrder.voiceMembershipDowngrade.completedAt) }}
           </a-descriptions-item>
         </template>
+        <template v-if="currentOrder.voiceMembershipFinalRefund">
+          <a-descriptions-item label="最终退款状态">
+            {{ getVoiceMembershipFinalRefundStatusText(currentOrder) }}
+          </a-descriptions-item>
+          <a-descriptions-item label="最终退款金额">
+            {{
+              formatAmount(currentOrder.voiceMembershipFinalRefund.refundAmount)
+            }}
+          </a-descriptions-item>
+          <a-descriptions-item label="最终退款单号">
+            <a-typography-text copyable>
+              {{ currentOrder.voiceMembershipFinalRefund.refundNo }}
+            </a-typography-text>
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-if="currentOrder.voiceMembershipFinalRefund.attempt > 1"
+            label="退款尝试"
+          >
+            第 {{ currentOrder.voiceMembershipFinalRefund.attempt }} 次
+          </a-descriptions-item>
+          <a-descriptions-item
+            v-if="currentOrder.voiceMembershipFinalRefund.failureReason"
+            label="最终退款异常"
+          >
+            {{ currentOrder.voiceMembershipFinalRefund.failureReason }}
+          </a-descriptions-item>
+        </template>
+        <a-descriptions-item
+          v-if="isUnsupportedDowngradedUpgrade(currentOrder)"
+          label="退款说明"
+        >
+          该会员由历史基础会员升级而来，退款涉及多笔原订单；为避免少退或错退，请先核对历史基础会员订单。
+        </a-descriptions-item>
       </a-descriptions>
     </a-drawer>
 
@@ -734,6 +883,7 @@
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
+    AdminOrderAnalyticsDTO,
     AdminOrderPaymentTypeDTO,
     OrderSourceDTO,
     OrderStatusDTO,
@@ -741,6 +891,7 @@
     VirtualGoodsProvideStatusDTO,
   } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
+  import { queryOrderAnalytics } from '@/api/operations';
   import {
     queryAppUserAgents,
     queryAppUserList,
@@ -759,6 +910,7 @@
     OrderRecord,
     queryOrderList,
     refundOrder as refundOrderApi,
+    rejectRefundOrder as rejectRefundOrderApi,
     revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
     syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
@@ -775,6 +927,7 @@
       excludeAdminManual?: boolean;
       userId?: string;
       embedded?: boolean;
+      refundMode?: boolean;
     }>(),
     {
       title: '',
@@ -785,15 +938,20 @@
       excludeAdminManual: false,
       userId: '',
       embedded: false,
+      refundMode: false,
     }
   );
 
   const { loading, setLoading } = useLoading();
   const router = useRouter();
   const renderList = ref<OrderRecord[]>([]);
+  const analytics = ref<AdminOrderAnalyticsDTO>();
+  const analyticsLoading = ref(false);
+  const analyticsMonth = ref(dayjs().format('YYYY-MM'));
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
   const refundLoadingId = ref('');
+  const rejectLoadingId = ref('');
   const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
   const downgradeSyncLoadingId = ref('');
@@ -887,6 +1045,69 @@
 
     return props.orderType ? orderTypeTitleMap[props.orderType] : '订单明细';
   });
+  const showAnalytics = computed(
+    () => !props.embedded && !props.orderType && !props.status && !props.userId
+  );
+  const analyticsSummary = computed(() => [
+    {
+      label: '本月实付金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.paidRevenue),
+      hint: `净收入 ${formatAnalyticsMoney(
+        analytics.value?.totals.netRevenue
+      )}`,
+    },
+    {
+      label: '支付订单',
+      value: formatCount(analytics.value?.totals.paidOrders),
+      hint: `支付成功率 ${formatPercent(
+        analytics.value?.totals.paymentSuccessRate
+      )}`,
+    },
+    {
+      label: '付费用户',
+      value: formatCount(analytics.value?.totals.payingUsers),
+      hint: `首次付费 ${formatCount(
+        analytics.value?.totals.firstTimePayingUsers
+      )} 人`,
+    },
+    {
+      label: '平均订单金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.averageOrderAmount),
+      hint: '实付金额 ÷ 支付订单',
+    },
+    {
+      label: '退款金额',
+      value: formatAnalyticsMoney(analytics.value?.totals.refundedRevenue),
+      hint: `退款率 ${formatPercent(analytics.value?.totals.refundRate)}`,
+    },
+  ]);
+  const analyticsChartOption = computed(() => ({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 64, right: 30, top: 28, bottom: 38 },
+    xAxis: {
+      type: 'category',
+      data: (analytics.value?.daily || []).map((item) =>
+        dayjs(item.date).format('MM-DD')
+      ),
+      axisLabel: { interval: 4 },
+    },
+    yAxis: { type: 'value', name: '元' },
+    series: [
+      {
+        name: '实付金额',
+        type: 'bar',
+        data: (analytics.value?.daily || []).map((item) => item.paidRevenue),
+        itemStyle: { color: '#8b78d9', borderRadius: [5, 5, 0, 0] },
+      },
+      {
+        name: '净收入',
+        type: 'line',
+        smooth: true,
+        data: (analytics.value?.daily || []).map((item) => item.netRevenue),
+        itemStyle: { color: '#c27b9c' },
+      },
+    ],
+  }));
   const normalizedCreatedAtRange = computed(() => {
     const [start, end] = searchForm.createdAtRange;
 
@@ -924,6 +1145,13 @@
     }
 
     return props.emptyDescription || '暂无订单数据';
+  });
+  const tableScrollX = computed(() => {
+    if (!props.refundMode) {
+      return 1780;
+    }
+
+    return 2550;
   });
   const canCreateAdminOrder = computed(
     () => !props.status && !props.orderType && !props.embedded && !props.userId
@@ -993,6 +1221,20 @@
     }
   };
 
+  const fetchAnalytics = async () => {
+    if (!showAnalytics.value) return;
+
+    try {
+      analyticsLoading.value = true;
+      const { data } = await queryOrderAnalytics(analyticsMonth.value);
+      analytics.value = data;
+    } catch (error) {
+      Message.error('订单统计加载失败');
+    } finally {
+      analyticsLoading.value = false;
+    }
+  };
+
   const handleSearch = () => {
     pagination.current = 1;
     fetchData();
@@ -1030,16 +1272,51 @@
     currentOrder.value = undefined;
   };
 
+  const getRemainingRefundAmount = (record: OrderRecord) => {
+    const paidAmount = record.paidAmount ?? record.payableAmount ?? 0;
+    const recordedRefundAmount = Math.max(
+      record.refundAmount ?? 0,
+      record.voiceMembershipDowngrade?.status === 'completed'
+        ? record.voiceMembershipDowngrade.refundAmount
+        : 0
+    );
+
+    return Math.max(paidAmount - recordedRefundAmount, 0);
+  };
+
   const canRefundOrder = (record: OrderRecord) => {
+    const downgradeCompleted =
+      !record.voiceMembershipDowngrade ||
+      record.voiceMembershipDowngrade.status === 'completed';
+    const needsBenefitRetry =
+      record.status === 'refunded' &&
+      (record.voiceMembershipFinalRefund?.status === 'benefits_failed' ||
+        record.voiceMembershipFinalRefund?.status === 'benefits_processing');
+    const unsupportedDowngradedUpgrade = Boolean(
+      record.vipUpgrade &&
+        record.voiceMembershipDowngrade?.status === 'completed'
+    );
+
     return (
       (record.orderType === 'vip_plan' ||
         record.orderType === 'voice_package') &&
       !isAdminManualOrder(record) &&
-      !record.voiceMembershipDowngrade &&
-      (record.status === 'completed' ||
+      !unsupportedDowngradedUpgrade &&
+      downgradeCompleted &&
+      (getRemainingRefundAmount(record) > 0 || needsBenefitRetry) &&
+      (needsBenefitRetry ||
+        record.status === 'completed' ||
         record.status === 'paid' ||
         record.status === 'refund_requested' ||
         record.status === 'grant_failed')
+    );
+  };
+
+  const isUnsupportedDowngradedUpgrade = (record: OrderRecord) => {
+    return Boolean(
+      record.vipUpgrade &&
+        record.voiceMembershipDowngrade?.status === 'completed' &&
+        record.status !== 'refunded'
     );
   };
 
@@ -1048,7 +1325,9 @@
       record.orderType === 'vip_plan' &&
       record.vipPlanGroup === 'voice' &&
       record.status === 'completed' &&
-      (!record.paymentProvider || record.paymentProvider === 'wechat_pay') &&
+      (!record.paymentProvider ||
+        record.paymentProvider === 'wechat_pay' ||
+        record.paymentProvider === 'wechat_virtual_pay') &&
       !record.voiceMembershipDowngrade
     );
   };
@@ -1473,9 +1752,23 @@
       const { data } = await refundOrderApi(record.id);
 
       replaceOrderRecord(data);
-
-      Message.success(getRefundSuccessText(record));
+      if (
+        data.status === 'refunded' &&
+        (data.voiceMembershipDowngrade?.status !== 'completed' ||
+          data.voiceMembershipFinalRefund?.status === 'completed')
+      ) {
+        Message.success(getRefundSuccessText(data));
+      } else if (data.status === 'refunded') {
+        Message.warning(
+          data.voiceMembershipFinalRefund?.status === 'benefits_failed'
+            ? '退款已成功，但原订单会员权益回收失败，请重试撤权'
+            : '退款已成功，原订单会员权益正在回收，请稍后刷新'
+        );
+      } else {
+        Message.warning('微信仍在处理退款，会员权益尚未收回，请稍后刷新退款');
+      }
     } catch (error) {
+      fetchData();
       Message.error(
         error instanceof Error && error.message
           ? error.message
@@ -1483,6 +1776,37 @@
       );
     } finally {
       refundLoadingId.value = '';
+    }
+  };
+
+  const handleRejectRefund = async (
+    record: OrderRecord,
+    action: 'not_refund' | 'rejected'
+  ) => {
+    if (rejectLoadingId.value) {
+      return;
+    }
+
+    rejectLoadingId.value = record.id;
+
+    try {
+      const { data } = await rejectRefundOrderApi(record.id, action);
+
+      replaceOrderRecord(data);
+      Message.success(
+        action === 'not_refund'
+          ? '已标记不退，订单恢复为已完成'
+          : '已驳回退款申请'
+      );
+    } catch (error) {
+      fetchData();
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '驳回退款失败，请稍后重试'
+      );
+    } finally {
+      rejectLoadingId.value = '';
     }
   };
 
@@ -1531,6 +1855,83 @@
     return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
   };
 
+  const formatRefundRequestedAt = (record: OrderRecord) => {
+    return formatDate(
+      record.refundRequestedAt ?? record.refundedAt ?? record.updatedAt
+    );
+  };
+
+  const formatUsageDuration = (record: OrderRecord) => {
+    const start = record.paidAt ?? record.createdAt;
+
+    if (!start) {
+      return '-';
+    }
+
+    const end =
+      record.refundRequestedAt ?? record.refundedAt ?? record.updatedAt;
+    const endTime = end ? dayjs(end) : dayjs();
+    const durationMs = Math.max(endTime.valueOf() - dayjs(start).valueOf(), 0);
+    const days = Math.floor(durationMs / (24 * 60 * 60 * 1000));
+
+    if (days > 0) {
+      return `${days}天`;
+    }
+
+    const hours = Math.floor(durationMs / (60 * 60 * 1000));
+
+    if (hours > 0) {
+      return `${hours}小时`;
+    }
+
+    const minutes = Math.floor(durationMs / (60 * 1000));
+
+    if (minutes > 0) {
+      return `${minutes}分钟`;
+    }
+
+    return durationMs > 0 ? '不足1分钟' : '-';
+  };
+
+  const formatMessageCount = (record: OrderRecord) => {
+    const count = record.agentUserMessageCount;
+
+    return count == null ? '-' : String(Number(count).toLocaleString('zh-CN'));
+  };
+
+  const canRejectRefund = (record: OrderRecord) => {
+    if (record.status !== 'refund_requested') {
+      return false;
+    }
+
+    if (isAdminManualOrder(record)) {
+      return false;
+    }
+
+    const finalRefund = record.voiceMembershipFinalRefund;
+    const downgrade = record.voiceMembershipDowngrade;
+
+    if (
+      finalRefund?.wechatRefundStatus?.toUpperCase() === 'SUCCESS' ||
+      downgrade?.wechatRefundStatus?.toUpperCase() === 'SUCCESS'
+    ) {
+      return false;
+    }
+
+    if (
+      finalRefund?.status === 'processing' ||
+      finalRefund?.status === 'benefits_processing'
+    ) {
+      return false;
+    }
+
+    if (downgrade?.status === 'processing') {
+      return false;
+    }
+
+    return true;
+  };
+
   const formatAmount = (value: number) => {
     return `¥${((value || 0) / 100).toFixed(2)}`;
   };
@@ -1561,6 +1962,35 @@
   };
 
   const getRecordStatusText = (record: OrderRecord) => {
+    const finalRefund = record.voiceMembershipFinalRefund;
+
+    if (finalRefund?.status === 'benefits_failed') {
+      return '退款成功，权益待回收';
+    }
+
+    if (finalRefund?.status === 'benefits_processing') {
+      return '退款成功，权益回收中';
+    }
+
+    if (finalRefund?.status === 'processing') {
+      return '微信退款处理中';
+    }
+
+    if (
+      finalRefund?.status === 'failed' &&
+      finalRefund.wechatRefundStatus === 'CLOSED'
+    ) {
+      return '微信退款已关闭';
+    }
+
+    if (finalRefund?.status === 'failed') {
+      return '微信退款异常';
+    }
+
+    if (record.status === 'refunded' || record.status === 'refund_requested') {
+      return getStatusText(record.status);
+    }
+
     if (record.voiceMembershipDowngrade) {
       return getVoiceMembershipDowngradeStatusText(record);
     }
@@ -1571,6 +2001,26 @@
   };
 
   const getRecordStatusColor = (record: OrderRecord) => {
+    const finalRefund = record.voiceMembershipFinalRefund;
+
+    if (
+      finalRefund?.status === 'benefits_failed' ||
+      finalRefund?.status === 'failed'
+    ) {
+      return 'red';
+    }
+
+    if (
+      finalRefund?.status === 'processing' ||
+      finalRefund?.status === 'benefits_processing'
+    ) {
+      return 'orange';
+    }
+
+    if (record.status === 'refunded' || record.status === 'refund_requested') {
+      return getStatusColor(record.status);
+    }
+
     if (record.voiceMembershipDowngrade?.status === 'completed') {
       return 'orange';
     }
@@ -1606,6 +2056,16 @@
     return status === 'processing'
       ? '降级退款中'
       : getStatusText(record.status);
+  };
+
+  const getVoiceMembershipFinalRefundStatusText = (record: OrderRecord) => {
+    const status = record.voiceMembershipFinalRefund?.status;
+
+    if (status === 'completed') return '已退款并收回权益';
+    if (status === 'benefits_processing') return '退款成功，正在收回权益';
+    if (status === 'benefits_failed') return '退款成功，权益回收失败';
+    if (status === 'failed') return '退款失败';
+    return status === 'processing' ? '微信退款处理中' : '-';
   };
 
   const getSourceText = (source: OrderSourceDTO) => {
@@ -1716,12 +2176,79 @@
   };
 
   const getRefundConfirmContent = (record: OrderRecord) => {
+    if (
+      record.orderType === 'vip_plan' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+    ) {
+      if (record.voiceMembershipFinalRefund?.status === 'benefits_failed') {
+        return '退款已经成功。确认重新收回该退款订单对应的会员身份和权益？后续新订单权益不受影响，也不会再次发起微信退款。';
+      }
+
+      if (record.voiceMembershipFinalRefund?.status === 'benefits_processing') {
+        return '退款已经成功。确认重试收回该退款订单对应的会员身份和权益？后续新订单权益不受影响，也不会再次发起微信退款。';
+      }
+
+      if (
+        record.voiceMembershipFinalRefund?.status === 'failed' &&
+        record.voiceMembershipFinalRefund.wechatRefundStatus === 'CLOSED'
+      ) {
+        return `上一笔微信退款已关闭。确认使用新的退款单号重新发起剩余 ${formatAmount(
+          getRemainingRefundAmount(record)
+        )} 退款？只有微信确认成功后才会收回会员权益。`;
+      }
+
+      if (record.voiceMembershipFinalRefund?.status === 'failed') {
+        return '微信退款状态异常。请先在微信支付商户平台完成处理，再刷新同一退款单；系统不会改用新退款单号。';
+      }
+
+      if (record.status === 'refund_requested') {
+        return '确认刷新退款状态？仅当微信确认退款成功后，系统才会收回该退款订单对应的会员身份和权益；后续新订单权益不受影响。';
+      }
+
+      return `确认退订该已降级会员？系统会继续原路退回剩余 ${formatAmount(
+        getRemainingRefundAmount(record)
+      )}，退款成功后将收回该订单对应的会员身份和权益；后续新订单权益不受影响。`;
+    }
+
     return record.orderType === 'voice_package'
       ? '确认退订该声音套餐订单？系统会发起微信退款并撤回声音训练任务。'
       : '确认退订该会员订单？系统会发起微信退款并收回会员权益。';
   };
 
+  const getRefundActionText = (record: OrderRecord) => {
+    if (record.voiceMembershipFinalRefund?.status === 'benefits_failed') {
+      return '重试撤权';
+    }
+
+    if (record.voiceMembershipFinalRefund?.status === 'benefits_processing') {
+      return '重试权益回收';
+    }
+
+    if (
+      record.voiceMembershipFinalRefund?.status === 'failed' &&
+      record.voiceMembershipFinalRefund.wechatRefundStatus === 'CLOSED'
+    ) {
+      return '重新发起退款';
+    }
+
+    if (record.voiceMembershipFinalRefund?.status === 'failed') {
+      return '商户处理后刷新';
+    }
+
+    return record.status === 'refund_requested' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+      ? '刷新退款'
+      : '退订';
+  };
+
   const getRefundSuccessText = (record: OrderRecord) => {
+    if (
+      record.orderType === 'vip_plan' &&
+      record.voiceMembershipDowngrade?.status === 'completed'
+    ) {
+      return '剩余会员费已退款，原订单会员身份和权益已收回';
+    }
+
     return record.orderType === 'voice_package'
       ? '退订退款已提交，声音训练任务已撤回'
       : '退订退款已提交，会员权益已收回';
@@ -1789,6 +2316,7 @@
   );
 
   fetchData();
+  fetchAnalytics();
 </script>
 
 <script lang="ts">
@@ -1819,6 +2347,73 @@
 
     &__search {
       margin-bottom: 16px;
+    }
+
+    &__analytics {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--color-border-2);
+    }
+
+    &__analytics-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+
+      h2 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+
+      span {
+        color: var(--color-text-3);
+      }
+    }
+
+    &__analytics-summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      overflow: hidden;
+      background: var(--color-fill-1);
+      border: 1px solid var(--color-border-2);
+      border-radius: 8px;
+
+      article {
+        min-width: 0;
+        padding: 14px;
+        border-right: 1px solid var(--color-border-2);
+
+        &:last-child {
+          border-right: 0;
+        }
+
+        span,
+        small {
+          display: block;
+          overflow: hidden;
+          color: var(--color-text-3);
+          font-size: 12px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+
+        strong {
+          display: block;
+          margin: 8px 0 4px;
+          overflow: hidden;
+          font-weight: 500;
+          font-size: 20px;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+      }
+    }
+
+    &__analytics-chart {
+      margin-top: 14px;
+      background: var(--color-fill-1);
     }
 
     &__filter {

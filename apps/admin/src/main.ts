@@ -13,6 +13,10 @@ import App from './App.vue';
 // https://arco.design/docs/designlab/use-theme-package
 import '@/assets/style/global.less';
 import '@/api/interceptor';
+import { brand } from './config/brand';
+
+// 浏览器标签页标题跟随品牌（index.html 中为静态默认值）
+document.title = brand.adminTitle;
 
 const app = createApp(App);
 

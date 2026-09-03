@@ -53,7 +53,7 @@
       <view class="post-create-option" @tap="handleAgentPickerTap">
         <view class="post-create-option__main">
           <view class="post-create-option__icon post-create-option__icon--at">@</view>
-          <text class="post-create-option__label">未了言</text>
+          <text class="post-create-option__label">{{ brand.name }}</text>
         </view>
         <view class="post-create-option__right">
           <text v-if="selectedAgentName" class="post-create-option__value">{{ selectedAgentName }}</text>
@@ -86,7 +86,7 @@
       <view class="post-agent-picker">
         <view class="post-agent-picker__header">
           <text class="post-agent-picker__cancel" @tap="closeAgentPicker">取消</text>
-          <text class="post-agent-picker__title">选择未了言</text>
+          <text class="post-agent-picker__title">选择{{ brand.name }}</text>
           <text class="post-agent-picker__confirm" @tap="confirmAgentPicker">确定</text>
         </view>
 
@@ -95,7 +95,7 @@
           <text>{{ agentsLoadError }}</text>
           <text class="post-agent-picker__retry" @tap="loadAgents">重试</text>
         </view>
-        <view v-else-if="!agents.length" class="post-agent-picker__state">暂无未了言</view>
+        <view v-else-if="!agents.length" class="post-agent-picker__state">暂无{{ brand.name }}</view>
         <scroll-view v-else scroll-y class="post-agent-picker__list">
           <view
             v-for="agent in agents"
@@ -112,7 +112,7 @@
             <view v-else class="post-agent-picker__avatar post-agent-picker__avatar--fallback">
               {{ buildAgentFallback(agent.name) }}
             </view>
-            <text class="post-agent-picker__name">{{ agent.name || '未命名未了言' }}</text>
+            <text class="post-agent-picker__name">{{ agent.name || `未命名${brand.name}` }}</text>
             <view
               class="post-agent-picker__radio"
               :class="{ 'post-agent-picker__radio--checked': draftSelectedAgentId === agent.id }"
@@ -133,7 +133,7 @@
         <view class="post-create-agent-prompt__close" @tap="closeCreateAgentPrompt">×</view>
         <view class="post-create-agent-prompt__title">温馨提示</view>
         <view class="post-create-agent-prompt__content">
-          <text>你需要先创建@天之灵</text>
+          <text>你需要先创建@{{ brand.name }}</text>
           <text>才能得到亲人的回复哦</text>
         </view>
         <view class="post-create-agent-prompt__actions">
@@ -172,6 +172,7 @@ export default {
 import { computed, ref } from 'vue'
 import Taro, { useDidHide, useDidShow, useUnload } from '@tarojs/taro'
 import { createPost } from '../../apis/post'
+import { brand } from '../../config/brand'
 import { getAgents, type AgentSummary } from '../../apis/agent'
 import { uploadLocalImage } from '../../apis/storage'
 import { ApiConfig } from '../../api/api-config'
@@ -338,7 +339,7 @@ async function loadAgents() {
 
     agentsLoadError.value = error instanceof ApiException
       ? error.message
-      : '未了言加载失败'
+      : `${brand.name}加载失败`
   } finally {
     isAgentsLoading.value = false
   }

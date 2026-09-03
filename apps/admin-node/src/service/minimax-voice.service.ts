@@ -36,6 +36,11 @@ interface MinimaxVoiceCloneResp {
   base_resp?: MinimaxBaseResp;
 }
 
+interface MinimaxDeleteVoiceResp {
+  voice_id?: string;
+  base_resp?: MinimaxBaseResp;
+}
+
 export interface MinimaxCloneVoiceInput {
   fileId: string;
   voiceId: string;
@@ -149,6 +154,44 @@ export class MinimaxVoiceService {
       providerVoiceId: input.voiceId,
       demoAudio: response?.demo_audio?.trim() || '',
     };
+  }
+
+  async deleteVoice(voiceId: string): Promise<void> {
+    this.ensureEnabled();
+
+    const normalizedVoiceId = voiceId?.trim();
+    if (!normalizedVoiceId) {
+      throw new AppError(
+        'MINIMAX_VOICE_ID_MISSING',
+        'MiniMax voice id is missing',
+        400
+      );
+    }
+
+    const body = Buffer.from(
+      JSON.stringify({
+        voice_type: 'voice_cloning',
+        voice_id: normalizedVoiceId,
+      })
+    );
+    const response = await this.requestJson<MinimaxDeleteVoiceResp>({
+      path: '/v1/delete_voice',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(body.length),
+      },
+      body,
+    });
+
+    this.assertMinimaxSuccess(
+      response?.base_resp,
+      'MINIMAX_VOICE_DELETE_FAILED'
+    );
+    this.logger?.info?.(
+      '[minimax-voice] voice deleted, voiceId=%s',
+      normalizedVoiceId
+    );
   }
 
   private ensureEnabled(): void {

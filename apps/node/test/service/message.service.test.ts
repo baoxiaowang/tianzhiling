@@ -1,7 +1,9 @@
 import {
+  ConversationChatImportItemEntity,
   ConversationEntity,
   MessageEntity,
   MessageRole,
+  MessageSource,
   MessageStatus,
   MessageType,
   MongoObjectId,
@@ -225,11 +227,9 @@ describe('MessageService listMessages', () => {
       findOne: jest.fn().mockResolvedValue(conversation),
     } as never;
     service.messageModel = {
-      find: jest.fn().mockResolvedValue([
-        newestMessage,
-        middleMessage,
-        oldestMessage,
-      ]),
+      find: jest
+        .fn()
+        .mockResolvedValue([newestMessage, middleMessage, oldestMessage]),
     } as never;
 
     const result = await service.listMessages(AUTH, CONVERSATION_ID, {
@@ -246,7 +246,10 @@ describe('MessageService listMessages', () => {
       },
       take: 3,
     });
-    expect(result.items.map(item => item.content)).toEqual(['第二条', '第三条']);
+    expect(result.items.map(item => item.content)).toEqual([
+      '第二条',
+      '第三条',
+    ]);
     expect(result.pageSize).toBe(2);
     expect(result.hasMore).toBe(true);
   });
@@ -293,7 +296,10 @@ describe('MessageService listMessages', () => {
       },
       take: 21,
     });
-    expect(result.items.map(item => item.content)).toEqual(['第一条', '第二条']);
+    expect(result.items.map(item => item.content)).toEqual([
+      '第一条',
+      '第二条',
+    ]);
     expect(result.hasMore).toBe(false);
   });
 });
@@ -315,7 +321,11 @@ describe('MessageService deleteMessage', () => {
       save: jest.fn(async item => item),
     } as never;
 
-    await service.deleteMessage(AUTH, CONVERSATION_ID, message.id.toHexString());
+    await service.deleteMessage(
+      AUTH,
+      CONVERSATION_ID,
+      message.id.toHexString()
+    );
 
     expect(message.isArchived).toBe(true);
     expect(message.archivedAt).toBeInstanceOf(Date);
@@ -341,8 +351,61 @@ describe('MessageService deleteMessage', () => {
       save: jest.fn(),
     } as never;
 
-    await service.deleteMessage(AUTH, CONVERSATION_ID, message.id.toHexString());
+    await service.deleteMessage(
+      AUTH,
+      CONVERSATION_ID,
+      message.id.toHexString()
+    );
 
     expect(service.messageModel.save).not.toHaveBeenCalled();
+  });
+
+  it('can remove an imported message and its linked memory evidence together', async () => {
+    const service = new MessageService();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId(CONVERSATION_ID);
+    conversation.userId = new MongoObjectId(USER_ID);
+    const message = createTextMessage('以前常一起去散步');
+    message.conversationId = conversation.id;
+    message.userId = conversation.userId;
+    message.agentId = new MongoObjectId('665000000000000000000010');
+    message.source = MessageSource.wechatImport;
+    message.importItemId = new MongoObjectId('665000000000000000000220');
+
+    const importItem = new ConversationChatImportItemEntity();
+    importItem.id = message.importItemId;
+    importItem.isDeleted = false;
+
+    service.conversationModel = {
+      findOne: jest.fn().mockResolvedValue(conversation),
+    } as never;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(message),
+      save: jest.fn(async item => item),
+    } as never;
+    service.chatImportItemModel = {
+      findOne: jest.fn().mockResolvedValue(importItem),
+      save: jest.fn(async item => item),
+    } as never;
+    service.agentProfileFactService = {
+      removeHistoricalSourceMessage: jest.fn().mockResolvedValue(1),
+    } as never;
+
+    const result = await service.deleteMessage(
+      AUTH,
+      CONVERSATION_ID,
+      message.id.toHexString(),
+      { deleteImportedMemory: true }
+    );
+
+    expect(result.archivedMemoryCount).toBe(1);
+    expect(
+      service.agentProfileFactService.removeHistoricalSourceMessage
+    ).toHaveBeenCalledWith({
+      userId: message.userId,
+      agentId: message.agentId,
+      sourceMessageId: message.id,
+    });
+    expect(importItem.isDeleted).toBe(true);
   });
 });

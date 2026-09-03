@@ -18,8 +18,8 @@
           mode="aspectFit"
         />
         <view class="login-prompt__copy">
-          <text class="login-prompt__title">登录后继续体验</text>
-          <text class="login-prompt__subtitle">授权后可同步资料，手机号可在个人中心绑定</text>
+          <text class="login-prompt__title">{{ titleText }}</text>
+          <text class="login-prompt__subtitle">{{ subtitleText }}</text>
         </view>
       </view>
 
@@ -28,7 +28,7 @@
         :disabled="isLoggingIn"
         @click="handleWeappLogin"
       >
-        <text>{{ isLoggingIn ? '登录中...' : '微信授权登录' }}</text>
+        <text>{{ isLoggingIn ? '登录中...' : actionText }}</text>
       </button>
 
       <view class="login-prompt__cancel" @tap="handleCancel">
@@ -44,7 +44,7 @@
         >
           我已阅读并同意
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('service')">
-            《未了言用户服务协议》
+            《{{ brand.name }}用户服务协议》
           </text>
           及
           <text class="login-prompt__link" @tap.stop="handleAgreementTap('privacy')">
@@ -65,6 +65,7 @@ export default {
 
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
+import { brand } from '../../config/brand'
 import { computed, ref } from 'vue'
 import { useLoginHooks } from '../../auth/login-hooks'
 import type { AgreementDocumentType } from '../../legal/agreement-documents'
@@ -73,6 +74,9 @@ import { resolveMediaAssetUrl } from '../../utils/public-asset'
 
 const props = defineProps<{
   visible: boolean
+  title?: string
+  subtitle?: string
+  actionText?: string
 }>()
 
 const loginLogoImage = resolveMediaAssetUrl('/weapp/logo.png')
@@ -93,6 +97,13 @@ const visible = computed({
   get: () => props.visible,
   set: value => emit('update:visible', value),
 })
+const titleText = computed(() => props.title?.trim() || '登录后继续体验')
+const subtitleText = computed(
+  () => props.subtitle?.trim() || '授权后可同步资料，手机号可在个人中心绑定'
+)
+const actionText = computed(
+  () => props.actionText?.trim() || '微信授权登录'
+)
 
 function ensureAgreed() {
   if (agreed.value) {

@@ -1,4 +1,6 @@
 export default {
-  navigationStyle: 'custom',
+  navigationStyle: "custom",
   disableScroll: true,
-}
+  backgroundColor: "#090d1a",
+  backgroundTextStyle: "light",
+};

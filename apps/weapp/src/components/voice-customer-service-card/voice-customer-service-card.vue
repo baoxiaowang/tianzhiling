@@ -33,6 +33,7 @@ export default {
 <script setup lang="ts">
 import Taro from '@tarojs/taro'
 import { buildOssMediaUrl } from '@tzl/shared'
+import { brand } from '../../config/brand'
 
 const props = withDefaults(
   defineProps<{
@@ -42,7 +43,7 @@ const props = withDefaults(
     subtitle: '支付后，可添加客服微信，进行声音定制',
   },
 )
-const customerServiceQr = buildOssMediaUrl('/weapp/service.png')
+const customerServiceQr = buildOssMediaUrl(brand.customerService.wechatQr)
 
 function handlePreviewQr() {
   void Taro.previewImage({

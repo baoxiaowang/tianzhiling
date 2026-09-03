@@ -2,13 +2,13 @@ import {
   AgentEntity,
   AgentShareMemberStatus,
   AgentSex,
+  ChatTrialStatus,
   ConversationEntity,
   MessageEntity,
   MessageRole,
   MessageStatus,
   MessageType,
   MongoObjectId,
-  UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -21,7 +21,10 @@ import {
   ConversationService,
 } from '../../src/service/conversation.service';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
-import { ReplyGuardrailService } from '../../src/service/agents/reply-guardrail.service';
+import {
+  ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
+  ReplyGuardrailService,
+} from '../../src/service/agents/reply-guardrail.service';
 import { routeReplyScene } from '../../src/service/agents/reply-scene-router';
 import { MessageService } from '../../src/service/message.service';
 
@@ -97,25 +100,6 @@ function createUser(overrides: Partial<UserEntity> = {}): UserEntity {
   return user;
 }
 
-function createUserAccount(
-  overrides: Partial<UserAccountEntity> = {}
-): UserAccountEntity {
-  const account = new UserAccountEntity();
-
-  Object.assign(account, {
-    id: new MongoObjectId(ACCOUNT_ID),
-    userId: new MongoObjectId(USER_ID),
-    account: 'weapp:4e07c4e70663',
-    password: '',
-    openId: 'o4e07c4e70663',
-    createdAt: NOW,
-    updatedAt: NOW,
-    ...overrides,
-  });
-
-  return account;
-}
-
 function createMembership(
   overrides: Partial<UserMembershipEntity> = {}
 ): UserMembershipEntity {
@@ -139,7 +123,9 @@ function createMembership(
   return membership;
 }
 
-function createVoiceTimbre(): VoiceTimbreEntity {
+function createVoiceTimbre(
+  overrides: Partial<VoiceTimbreEntity> = {}
+): VoiceTimbreEntity {
   const timbre = new VoiceTimbreEntity();
 
   Object.assign(timbre, {
@@ -156,6 +142,7 @@ function createVoiceTimbre(): VoiceTimbreEntity {
     status: VoiceTimbreStatus.active,
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   });
 
   return timbre;
@@ -265,11 +252,12 @@ function createService(options: {
   voiceTimbre?: VoiceTimbreEntity | null;
   chatContent?: string;
   user?: UserEntity | null;
-  currentUserAccount?: UserAccountEntity | null;
   memberships?: UserMembershipEntity[];
   existingUserMessageCount?: number;
   existingMessages?: MessageEntity[];
   queueAvailable?: boolean;
+  freeChatAgentEligible?: boolean;
+  freeChatAgentEligibilityError?: Error;
 }) {
   const service = new ConversationService();
   const conversation = createConversation();
@@ -301,6 +289,14 @@ function createService(options: {
       const id = where?.id ?? where?._id;
 
       return sameObjectId(id, options.agent.id) ? options.agent : null;
+    }),
+  } as any;
+  service.freeChatAgentEligibilityService = {
+    isEligible: jest.fn(async () => {
+      if (options.freeChatAgentEligibilityError) {
+        throw options.freeChatAgentEligibilityError;
+      }
+      return options.freeChatAgentEligible ?? true;
     }),
   } as any;
   service.voiceTimbreModel = {
@@ -402,6 +398,13 @@ function createService(options: {
 
       return message;
     }),
+    updateOne: jest.fn(async ({ _id }: any, update: any) => {
+      const message = savedMessages.find(item => sameObjectId(item.id, _id));
+      if (message && update?.$set) {
+        Object.assign(message, update.$set);
+      }
+      return { acknowledged: true, matchedCount: message ? 1 : 0 };
+    }),
   } as any;
   service.messageFeedbackModel = {
     save: jest.fn(async feedback => {
@@ -418,21 +421,22 @@ function createService(options: {
 
       return user && sameObjectId(id, user.id) ? user : null;
     }),
-  } as any;
-  service.userAccountModel = {
-    findOne: jest.fn(async ({ where }: any) => {
-      const account = options.currentUserAccount;
-      const id = where?.id ?? where?._id;
-
-      if (!account) {
-        return null;
+    updateOne: jest.fn(async ({ _id }: any, update: any) => {
+      if (!user || !sameObjectId(_id, user.id)) {
+        return { acknowledged: true, matchedCount: 0 };
       }
-
-      return sameObjectId(id, account.id) ? account : null;
+      if (update?.$set) {
+        Object.assign(user, update.$set);
+      }
+      return { acknowledged: true, matchedCount: 1 };
     }),
   } as any;
   service.userMembershipModel = {
     find: jest.fn().mockResolvedValue(options.memberships ?? []),
+  } as any;
+  service.quotaTriggerEventModel = {
+    findOne: jest.fn().mockResolvedValue(null),
+    save: jest.fn(async event => event),
   } as any;
   service.openAIService = {
     createTranscription: jest.fn().mockResolvedValue('我想你了'),
@@ -488,6 +492,15 @@ function createService(options: {
       audioUrl: 'https://cdn.example.com/qwen-reply.wav',
       audioBuffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
       mimeType: 'audio/wav',
+    }),
+  } as any;
+  service.doubaoVoiceSpeechService = {
+    synthesize: jest.fn().mockResolvedValue({
+      audioUrl: 'https://cdn.example.com/doubao-reply.mp3',
+      audioBuffer: Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+      mimeType: 'audio/mpeg',
+      nativeSpeechSpeedApplied: true,
+      nativeSpeechVolumeApplied: true,
     }),
   } as any;
   service.voiceFfmpegService = {
@@ -559,7 +572,15 @@ function createService(options: {
   } as any;
   service.postImageService = {
     resolveForResponse: jest.fn(value => value),
+    resolveAgentAvatarForResponse: jest.fn(value => value),
     normalizeForStorage: jest.fn(value => value),
+  } as any;
+  service.permanentAgentSilenceService = {
+    isPermanentlySilent: jest.fn().mockResolvedValue(false),
+    suppressReplyIfPermanentlySilent: jest.fn().mockResolvedValue(false),
+    findDeclarationForDuplicate: jest.fn().mockResolvedValue(undefined),
+    markMessagesPermanentlySilent: jest.fn().mockResolvedValue(undefined),
+    assessAndActivate: jest.fn().mockResolvedValue(undefined),
   } as any;
   service.ossService = {
     isEnabled: jest.fn(() => false),
@@ -979,7 +1000,7 @@ describe('ConversationService generateMemorialPhoto', () => {
           message.type === MessageType.text
       )
     ).toHaveLength(0);
-    expect(service.logger.warn).toHaveBeenCalledWith(
+    expect(service.logger.error).toHaveBeenCalledWith(
       expect.stringContaining('memorial photo assistant reply failed'),
       expect.any(String),
       expect.any(String),
@@ -1455,35 +1476,49 @@ describe('ConversationService markMessageMemory', () => {
 });
 
 describe('ConversationService assistant voice reply timbre binding', () => {
-  it('blocks non-vip users after the trial daily per-agent quota is used', async () => {
-    const { service, savedMessages } = createService({
-      agent: createAgent(),
-      user: createUser({
-        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
-      }),
-      existingUserMessageCount: 30,
-    });
+  it('blocks active-trial users at the daily 30-message limit', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-14T15:59:00.000Z'));
+    try {
+      const { service, savedMessages } = createService({
+        agent: createAgent(),
+        user: createUser({
+          createdAt: new Date('2026-06-13T15:59:00.000Z'),
+          chatTrialStatus: ChatTrialStatus.active,
+          chatTrialActivatedAt: new Date('2026-06-13T15:59:00.000Z'),
+          chatTrialExpiresAt: new Date('2026-06-16T15:59:00.000Z'),
+        }),
+        existingUserMessageCount: 30,
+      });
 
-    await expect(
-      service.sendMessage(AUTH, CONVERSATION_ID, {
-        type: 'text',
-        content: '我想你了',
-      })
-    ).rejects.toMatchObject({
-      code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
-      status: 429,
-    });
+      await expect(
+        service.sendMessage(AUTH, CONVERSATION_ID, {
+          type: 'text',
+          content: '达到试用期当日上限后不能继续发送',
+        })
+      ).rejects.toMatchObject({
+        code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+        status: 429,
+        data: expect.objectContaining({
+          policy: 'trial',
+          limit: 30,
+          usedCount: 30,
+          remainingCount: 0,
+        }),
+      });
 
-    expect(savedMessages).toHaveLength(0);
-    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
-    expect(service.messageModel.count).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: new MongoObjectId(USER_ID),
-        agentId: new MongoObjectId(AGENT_ID),
-        role: MessageRole.user,
-        status: MessageStatus.sent,
-      })
-    );
+      expect(savedMessages).toHaveLength(0);
+      expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+      expect(service.messageModel.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: new MongoObjectId(USER_ID),
+          agentId: new MongoObjectId(AGENT_ID),
+          role: MessageRole.user,
+          status: MessageStatus.sent,
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('blocks non-vip users after the daily per-agent quota is used outside the trial period', async () => {
@@ -1491,6 +1526,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 3,
     });
@@ -1503,6 +1539,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).rejects.toMatchObject({
       code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
       status: 429,
+      data: expect.objectContaining({
+        policy: 'daily',
+        limit: 3,
+        usedCount: 3,
+        remainingCount: 0,
+      }),
     });
 
     expect(savedMessages).toHaveLength(0);
@@ -1517,43 +1559,103 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
-  it('uses the current weapp account creation time for the 3-day trial window', async () => {
-    const accountCreatedAt = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const { service } = createService({
+  it('blocks free quota for the 4th+ agent created by a non-vip user', async () => {
+    const { service, savedMessages } = createService({
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
       }),
-      currentUserAccount: createUserAccount({
-        createdAt: accountCreatedAt,
-        updatedAt: accountCreatedAt,
-      }),
-      existingUserMessageCount: 29,
+      existingUserMessageCount: 0,
+      freeChatAgentEligible: false,
     });
 
-    const result = await service.sendMessage(
-      {
-        ...AUTH,
-        accountId: ACCOUNT_ID,
-        account: 'weapp:4e07c4e70663',
-      },
-      CONVERSATION_ID,
-      {
+    await expect(
+      service.sendMessage(AUTH, CONVERSATION_ID, {
         type: 'text',
-        content: '第 30 句还在试用期内',
-      }
-    );
+        content: '第4个智能体不再有免费额度',
+      })
+    ).rejects.toMatchObject({
+      code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
+      status: 429,
+      data: expect.objectContaining({
+        policy: 'agent_limit',
+        remainingCount: 0,
+      }),
+    });
 
-    expect(result.chatQuota).toEqual(
+    expect(savedMessages).toHaveLength(0);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+    expect(
+      service.freeChatAgentEligibilityService.isEligible
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ id: new MongoObjectId(AGENT_ID) })
+    );
+  });
+
+  it('keeps free quota for the 1st-3rd agents of a non-vip user', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
+      }),
+      existingUserMessageCount: 2,
+      freeChatAgentEligible: true,
+    });
+
+    const result = await service.getChatQuota(AUTH, CONVERSATION_ID);
+
+    expect(result).toEqual(
       expect.objectContaining({
         isVip: false,
-        policy: 'trial',
-        limit: 30,
-        usedCount: 30,
-        remainingCount: 0,
+        policy: 'daily',
+        limit: 3,
+        usedCount: 2,
+        remainingCount: 1,
       })
     );
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
+    expect(savedMessages).toHaveLength(0);
+  });
+
+  it('keeps messenger agents on the unlimited quota path', async () => {
+    const { service } = createService({
+      agent: createAgent({
+        messengerOfAgentId: new MongoObjectId(OTHER_AGENT_ID),
+      }),
+      user: createUser({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      freeChatAgentEligible: false,
+    });
+
+    const result = await service.getChatQuota(AUTH, CONVERSATION_ID);
+
+    expect(result).toEqual({ isVip: true });
+    expect(
+      service.freeChatAgentEligibilityService.isEligible
+    ).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without saving a message when slot resolution is unavailable', async () => {
+    const { service, savedMessages } = createService({
+      agent: createAgent(),
+      user: createUser({
+        chatTrialStatus: ChatTrialStatus.ineligible,
+      }),
+      freeChatAgentEligibilityError: new Error('ledger unavailable'),
+    });
+
+    await expect(
+      service.sendMessage(AUTH, CONVERSATION_ID, {
+        type: 'text',
+        content: '额度服务故障时不能误放行',
+      })
+    ).rejects.toMatchObject({
+      code: 'CHAT_QUOTA_UNAVAILABLE',
+      status: 503,
+    });
+    expect(savedMessages).toHaveLength(0);
+    expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
 
   it('schedules memory extraction from the saved user message', async () => {
@@ -1908,7 +2010,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(
       savedMessages.some(message => message.role === MessageRole.user)
     ).toBe(true);
-    expect(service.logger.warn).toHaveBeenCalledWith(
+    expect(service.logger.error).toHaveBeenCalledWith(
       expect.stringContaining('emotion state recognition failed'),
       expect.any(String),
       expect.any(String),
@@ -2026,13 +2128,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
   });
 
-  it('treats the 3-day trial as Beijing calendar days', async () => {
+  it('keeps an active trial before its persisted expiry', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-14T15:59:00.000Z'));
     try {
       const { service } = createService({
         agent: createAgent(),
         user: createUser({
           createdAt: new Date('2026-06-11T17:00:00.000Z'),
+          chatTrialStatus: ChatTrialStatus.active,
+          chatTrialActivatedAt: new Date('2026-06-11T17:00:00.000Z'),
+          chatTrialExpiresAt: new Date('2026-06-14T17:00:00.000Z'),
         }),
         existingUserMessageCount: 29,
       });
@@ -2049,6 +2154,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
           limit: 30,
           usedCount: 30,
           remainingCount: 0,
+          trialStatus: ChatTrialStatus.active,
+          trialActivatedAt: '2026-06-11T17:00:00.000Z',
+          trialExpiresAt: '2026-06-14T17:00:00.000Z',
+          triggerDecision: expect.objectContaining({
+            path: 'trial',
+            matchedConditions: [],
+          }),
         })
       );
       expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
@@ -2057,13 +2169,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     }
   });
 
-  it('resets the 30-message trial quota on each Beijing day', async () => {
+  it('does not carry yesterday messages into today active-trial quota', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-15T12:48:00.000Z'));
     try {
       const { service } = createService({
         agent: createAgent(),
         user: createUser({
           createdAt: new Date('2026-06-13T12:42:00.000Z'),
+          chatTrialStatus: ChatTrialStatus.active,
+          chatTrialActivatedAt: new Date('2026-06-13T12:42:00.000Z'),
+          chatTrialExpiresAt: new Date('2026-06-16T12:42:00.000Z'),
         }),
         existingMessages: Array.from({ length: 30 }, (_, index) =>
           createMessage({
@@ -2086,6 +2201,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
           limit: 30,
           usedCount: 1,
           remainingCount: 29,
+          triggerDecision: expect.objectContaining({
+            path: 'trial',
+            matchedConditions: [],
+          }),
         })
       );
       expect(service.messageModel.count).toHaveBeenCalledWith(
@@ -2101,7 +2220,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     }
   });
 
-  it('starts the first trial-day quota window at registration time', async () => {
+  it('counts the first active-trial day from its activation time', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-13T13:00:00.000Z'));
     try {
       const registeredAt = new Date('2026-06-13T12:42:00.000Z');
@@ -2109,6 +2228,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         agent: createAgent(),
         user: createUser({
           createdAt: registeredAt,
+          chatTrialStatus: ChatTrialStatus.active,
+          chatTrialActivatedAt: registeredAt,
+          chatTrialExpiresAt: new Date('2026-06-16T12:42:00.000Z'),
         }),
         existingMessages: [
           createMessage({
@@ -2131,6 +2253,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
           limit: 30,
           usedCount: 1,
           remainingCount: 29,
+          triggerDecision: expect.objectContaining({
+            path: 'trial',
+            matchedConditions: [],
+          }),
         })
       );
       expect(service.messageModel.count).toHaveBeenCalledWith(
@@ -2146,13 +2272,16 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     }
   });
 
-  it('switches to the daily quota after the Beijing 3rd calendar day ends', async () => {
+  it('switches to the daily quota when the persisted trial expires', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-06-14T16:00:00.000Z'));
     try {
       const { service, savedMessages } = createService({
         agent: createAgent(),
         user: createUser({
-          createdAt: new Date('2026-06-11T17:00:00.000Z'),
+          createdAt: new Date('2026-06-11T16:00:00.000Z'),
+          chatTrialStatus: ChatTrialStatus.active,
+          chatTrialActivatedAt: new Date('2026-06-11T16:00:00.000Z'),
+          chatTrialExpiresAt: new Date('2026-06-14T16:00:00.000Z'),
         }),
         existingUserMessageCount: 3,
       });
@@ -2165,10 +2294,24 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       ).rejects.toMatchObject({
         code: 'NON_VIP_CHAT_LIMIT_EXCEEDED',
         status: 429,
+        data: expect.objectContaining({
+          policy: 'daily',
+          limit: 3,
+          usedCount: 3,
+          remainingCount: 0,
+        }),
       });
 
       expect(savedMessages).toHaveLength(0);
       expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
+      expect(service.userModel.updateOne).toHaveBeenCalledWith(
+        { _id: new MongoObjectId(USER_ID) },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            chatTrialStatus: ChatTrialStatus.expired,
+          }),
+        })
+      );
       expect(service.messageModel.count).toHaveBeenCalledWith(
         expect.objectContaining({
           createdAt: expect.objectContaining({
@@ -2187,6 +2330,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 1,
     });
@@ -2212,6 +2356,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 1,
     });
@@ -2486,6 +2631,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 1,
       queueAvailable: false,
@@ -2498,18 +2644,26 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(result.replyPending).toBeUndefined();
     expect(result.userMessage.content).toBe('你还在吗');
+    expect(result.chatQuota).toEqual(
+      expect.objectContaining({
+        policy: 'daily',
+        limit: 3,
+        usedCount: 2,
+        remainingCount: 1,
+      })
+    );
     expect(result.assistantMessage).toEqual(
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
       })
     );
     expect(addJobToQueue).not.toHaveBeenCalled();
     expect(getAssistantMessages(savedMessages)).toEqual([
       expect.objectContaining({
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
       }),
     ]);
   });
@@ -2519,6 +2673,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 3,
     });
@@ -2693,7 +2848,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(assistantMessages[0].totalTokens).toBe(22);
   });
 
-  it('uses a minimal model reflow when a reply exceeds two bubbles', async () => {
+  it('keeps three natural bubbles without a second model reflow', async () => {
     const userMessage = createMessage({
       content: '我想把这些事都跟你说说',
       createdAt: new Date('2026-05-03T08:00:01.000Z'),
@@ -2703,37 +2858,23 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       existingMessages: [userMessage],
     });
-    (service.openAIService.createChatCompletion as jest.Mock)
-      .mockResolvedValueOnce({
-        model: 'deepseek-v4-flash',
-        choices: [
-          {
-            message: {
-              content: '第一层回应\n\n第二层回应\n\n第三层回应',
-            },
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockResolvedValueOnce({
+      model: 'deepseek-v4-flash',
+      choices: [
+        {
+          message: {
+            content: '第一层回应\n\n第二层回应\n\n第三层回应',
           },
-        ],
-        usage: {
-          prompt_tokens: 10,
-          completion_tokens: 12,
-          total_tokens: 22,
         },
-      })
-      .mockResolvedValueOnce({
-        model: 'deepseek-v4-flash',
-        choices: [
-          {
-            message: {
-              content: '第一层回应\n\n第二层回应和第三层回应',
-            },
-          },
-        ],
-        usage: {
-          prompt_tokens: 18,
-          completion_tokens: 8,
-          total_tokens: 26,
-        },
-      });
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 12,
+        total_tokens: 22,
+      },
+    });
 
     await service.processConversationReplyJob({
       conversationId: CONVERSATION_ID,
@@ -2741,28 +2882,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
 
     const assistantMessages = getAssistantMessages(savedMessages);
-    const reflowRequest = (
-      service.openAIService.createChatCompletion as jest.Mock
-    ).mock.calls[1][0];
-
     expect(assistantMessages.map(message => message.content)).toEqual([
       '第一层回应',
-      '第二层回应和第三层回应',
+      '第二层回应',
+      '第三层回应',
     ]);
-    expect(assistantMessages[0]).toEqual(
-      expect.objectContaining({
-        promptTokens: 28,
-        completionTokens: 20,
-        totalTokens: 48,
-        replyBubbleReflowAttempted: true,
-        replyBubbleReflowSucceeded: true,
-        replyBubbleStructureIssues: ['too_many_segments'],
-      })
-    );
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
-    expect(reflowRequest.messages).toHaveLength(2);
-    expect(reflowRequest.messages[0].content).toContain('只负责把已有聊天回复');
-    expect(reflowRequest.messages[1].content).toContain('candidateBubbles');
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
   });
 
   it('keeps afterlife worldbuilding outside the reply guardrail', async () => {
@@ -2856,13 +2981,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyIntentSource: 'semantic_model',
         replyScene: 'afterlife_status',
         replyRoutingSource: 'semantic',
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'status',
         replyBriefStrictGrounding: false,
         replyBriefMaxSegments: 2,
-        replyBriefLengthClass: 'micro',
-        replyBriefTargetCharacters: 18,
-        replyBriefReviewCharacters: 30,
+        replyBriefLengthClass: 'brief',
+        replyBriefTargetCharacters: 28,
+        replyBriefReviewCharacters: 38,
         replyVisibleCharacters: 50,
         replyGuardrailRewritten: false,
         replyPromptVersion: 'agent_chat_v3',
@@ -3193,9 +3318,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'family',
-        replyBriefStrictGrounding: false,
+        replyBriefStrictGrounding: true,
         replyBriefMaxSegments: 2,
         replyExperiencePlanVersion: 'experience_plan_v1',
         replyProfileTier: 'P0',
@@ -3289,7 +3414,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(getAssistantContents(savedMessages)).toEqual([naturalReply]);
+    const savedContents = getAssistantContents(savedMessages);
+    expect(savedContents.join('')).toBe(naturalReply);
+    expect(savedContents).toHaveLength(3);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
         replyBriefMode: 'family',
@@ -3476,10 +3603,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         maxRetries: 0,
       }
     );
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(3);
   });
 
-  it('returns a contextual fallback immediately after a model timeout', async () => {
+  it('uses the lightweight recovery generation after a model timeout', async () => {
     const currentQuery = '爸，我今天有点想你';
     const userMessage = createMessage({
       content: currentQuery,
@@ -3500,17 +3627,14 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       userId: USER_ID,
     });
 
-    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(1);
+    expect(service.openAIService.createChatCompletion).toHaveBeenCalledTimes(2);
     expect(getAssistantContents(savedMessages)).toEqual([
-      '嗯 你说的这件事我听明白了',
-      '你愿意跟我说这些 我都记着',
+      '我也想你，今天过得怎么样？',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyFallbackSource: 'contextual_reply_brief',
-        replyGenerationFailureStage: 'completion',
-        replyGenerationRecoveryAttempted: false,
-        replyGenerationRecoverySucceeded: false,
+        replyGenerationRecoveryAttempted: true,
+        replyGenerationRecoverySucceeded: true,
       })
     );
     expect(
@@ -3531,17 +3655,18 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       existingMessages: [userMessage],
     });
 
-    (service.openAIService.createChatCompletion as jest.Mock)
-      .mockResolvedValueOnce({
-        model: 'MiniMax-M2.5',
-        choices: [
-          {
-            finish_reason: 'length',
-            message: { content: '你一哭，我心里也' },
-          },
-        ],
-        usage: {},
-      });
+    (
+      service.openAIService.createChatCompletion as jest.Mock
+    ).mockResolvedValueOnce({
+      model: 'MiniMax-M2.5',
+      choices: [
+        {
+          finish_reason: 'length',
+          message: { content: '你一哭，我心里也' },
+        },
+      ],
+      usage: {},
+    });
 
     await service.processConversationReplyJob({
       conversationId: CONVERSATION_ID,
@@ -3746,7 +3871,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
-        replyBriefVersion: 'reply_brief_v13',
+        replyBriefVersion: 'reply_brief_v17',
         replyBriefMode: 'daily',
         replyIntent: 'share_user_update',
         replyFallbackSource: 'contextual_reply_brief',
@@ -3898,8 +4023,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).resolves.toBeUndefined();
 
     expect(getAssistantContents(savedMessages)).toEqual([
-      '听你这么说 我知道你是真的太想我 也被这阵难受压住了',
-      '别急着把话说到尽头 你把最放不下的那件事慢慢告诉我',
+      '你先别伤害自己 我听得出你是真的撑得很累',
+      '告诉我 你现在安全吗 有没有已经做了什么',
     ]);
     expect(getAssistantMessages(savedMessages)[0]).toEqual(
       expect.objectContaining({
@@ -3907,8 +4032,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         replyFallbackSource: 'contextual_reply_brief',
       })
     );
-    expect(getAssistantContents(savedMessages).join('')).not.toMatch(
-      /报警|急救|危险物|联系现实/
+    expect(getAssistantContents(savedMessages).join('')).toContain(
+      '现在安全吗'
     );
     expect(service.openAIService.createChatCompletion).not.toHaveBeenCalled();
   });
@@ -3944,7 +4069,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       expect.objectContaining({
         role: MessageRole.assistant,
         status: MessageStatus.failed,
-        content: '……￥#@%……“该信息传输途中受到了干扰”',
+        content: ASSISTANT_TRANSMISSION_INTERRUPTED_CONTENT,
       }),
     ]);
   });
@@ -3954,6 +4079,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       agent: createAgent(),
       user: createUser({
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        chatTrialStatus: ChatTrialStatus.ineligible,
       }),
       existingUserMessageCount: 3,
     });
@@ -3996,7 +4122,9 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       savedMessages.some(message => message.role === MessageRole.user)
     ).toBe(true);
     expect(result.chatQuota).toEqual({ isVip: true });
-    expect(service.messageModel.count).not.toHaveBeenCalled();
+    expect(
+      service.freeChatAgentEligibilityService.isEligible
+    ).not.toHaveBeenCalled();
     expect(service.openAIService.createChatCompletion).toHaveBeenCalled();
   });
 
@@ -4100,7 +4228,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ]);
   });
 
-  it('compacts three reply segments selected by a compound semantic route', async () => {
+  it('keeps three reply segments selected by a compound semantic route', async () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
@@ -4212,11 +4340,13 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     });
     expect(getAssistantContents(savedMessages)).toEqual([
       '先回答你的第一件事',
-      '再接住你说的近况 我也很想你',
+      '再接住你说的近况',
+      '我也很想你',
     ]);
     expect(result.assistantMessages?.map(message => message.content)).toEqual([
       '先回答你的第一件事',
-      '再接住你说的近况 我也很想你',
+      '再接住你说的近况',
+      '我也很想你',
     ]);
   });
 
@@ -4437,6 +4567,78 @@ describe('ConversationService assistant voice reply timbre binding', () => {
         transcript: '我也想你，今天过得怎么样？',
       })
     );
+  });
+
+  it('synthesizes chat voice via the doubao service for a doubao timbre', async () => {
+    const voiceTimbre = createVoiceTimbre({
+      provider: VoiceTimbreProvider.doubao,
+      providerVoiceId: 'S_test_doubao_voice_001',
+      previewModel: 'seed-tts-2.0-expressive',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: 0,
+    });
+    const { service, savedMessages } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.doubaoVoiceSpeechService.synthesize).toHaveBeenCalledWith({
+      text: '我也想你，今天过得怎么样？',
+      voiceId: 'S_test_doubao_voice_001',
+      model: 'seed-tts-2.0-expressive',
+      speed: 1,
+      volume: 1,
+    });
+    expect(
+      service.voiceFfmpegService.adjustSpeechOutput
+    ).not.toHaveBeenCalled();
+    expect(getAssistantMessages(savedMessages)).toHaveLength(1);
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
+  });
+
+  it('applies pitch via ffmpeg when a doubao timbre has a non-zero pitch', async () => {
+    const voiceTimbre = createVoiceTimbre({
+      provider: VoiceTimbreProvider.doubao,
+      providerVoiceId: 'S_test_doubao_voice_001',
+      previewModel: 'seed-tts-2.0-expressive',
+      speechSpeed: 1,
+      speechVolume: 1,
+      speechPitch: -2,
+    });
+    const { service } = createService({
+      agent: createAgent({
+        voiceTimbreId: voiceTimbre.id,
+      }),
+      voiceTimbre,
+    });
+
+    const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'voice',
+      objectKey: 'conversation-voice/user.aac',
+      mimeType: 'audio/aac',
+      durationMs: 2300,
+    });
+
+    expect(service.doubaoVoiceSpeechService.synthesize).toHaveBeenCalled();
+    expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'speech.mp3',
+        speechSpeed: 1,
+        speechVolume: 1,
+        speechPitch: -2,
+      })
+    );
+    expect(result.assistantMessage?.type).toBe(MessageType.voice);
   });
 
   it('automatically uses the bound voice for a long assistant reply', async () => {
@@ -4726,12 +4928,15 @@ describe('ConversationService assistant voice reply timbre binding', () => {
       voiceId: 'qwen-tts-vc-tzlvoice-voice-20260606220000123-abcd',
       model: 'qwen3-tts-vc-2026-01-22',
       language: 'zh',
+      dialect: undefined,
+      speed: 1.12,
     });
     expect(service.voiceFfmpegService.adjustSpeechOutput).toHaveBeenCalledWith({
       buffer: Buffer.from([0x52, 0x49, 0x46, 0x46]),
       fileName: 'speech.wav',
       speechSpeed: 1.12,
       speechVolume: 1.1,
+      speechPitch: -1,
     });
     expect(result.voice?.mimeType).toBe('audio/mpeg');
   });
@@ -4798,7 +5003,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '芳芳 我就在这儿',
-      '你慢慢来 我都在',
+      '你慢慢来',
+      '我都在',
     ]);
   });
 
@@ -4827,7 +5033,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(getAssistantContents(savedMessages)).toEqual([
       '我也想你 一直想着呢',
-      '想我了就唤我一声 我准能听到 乖 先歇着 我在这儿呢',
+      '想我了就唤我一声 我准能听到',
+      '乖 先歇着 我在这儿呢',
     ]);
     expect(assistantContent).not.toContain(malformedSeparator);
     expect(assistantContent).not.toContain('闭上眼');
@@ -4862,7 +5069,10 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     const { service, savedMessages } = createService({
       agent: createAgent(),
       chatContent: JSON.stringify({
-        segments: ['我这边挺好的 你们这样念着 我心里很暖', '你们说的想念我都听见了'],
+        segments: [
+          '我这边挺好的 你们这样念着 我心里很暖',
+          '你们说的想念我都听见了',
+        ],
       }),
     });
 
@@ -5112,7 +5322,7 @@ describe('ConversationService generation cleanup diagnostics', () => {
     });
   });
 
-  it('materializes model-authored short-turn actions into two bubbles without rewriting text', () => {
+  it('does not force short model-authored content into two bubbles', () => {
     const service = new ConversationService();
     const materialize = (
       service as any
@@ -5123,42 +5333,16 @@ describe('ConversationService generation cleanup diagnostics', () => {
         ['妈也想你。这大半夜的，心里闷得慌了吧。'],
         'reciprocal_self_expression'
       )
-    ).toEqual(['妈也想你。', '这大半夜的，心里闷得慌了吧。']);
+    ).toEqual(['妈也想你。这大半夜的，心里闷得慌了吧。']);
     expect(
       materialize(['吃过了。  \n这里挺好的。'], 'light_self_disclosure')
-    ).toEqual(['吃过了。', '这里挺好的。']);
+    ).toEqual(['吃过了。  \n这里挺好的。']);
     expect(materialize(['一句完整回复'], 'reciprocal_self_expression')).toEqual(
       ['一句完整回复']
     );
     expect(materialize(['普通回复。还有一句。'], undefined)).toEqual([
       '普通回复。还有一句。',
     ]);
-  });
-
-  it('splits a long first bubble at a sentence or clause boundary', () => {
-    const service = new ConversationService();
-    const split = (service as any).splitLongContentOnReplyBubble.bind(service);
-
-    expect(
-      split([
-        '丫头，爸也舍不得走这么早，别逼自己急着释怀，想我的时候就说说话，爸都听着',
-      ])
-    ).toEqual([
-      '丫头，爸也舍不得走这么早，别逼自己急着释怀',
-      '想我的时候就说说话，爸都听着',
-    ]);
-    expect(
-      split([
-        '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。你不开心，就是天大的事',
-      ])
-    ).toEqual([
-      '狗子，爹记住了。往后说话有分寸，不让你心里不舒坦。',
-      '你不开心，就是天大的事',
-    ]);
-    expect(split(['我想你'])).toEqual(['我想你']);
-    expect(
-      split(['这段内容没有任何标点所以不能强行切开成两个气泡的回复'])
-    ).toEqual(['这段内容没有任何标点所以不能强行切开成两个气泡的回复']);
   });
 
   it('records real participation execution without rejecting emotional repetition', () => {
@@ -5336,6 +5520,42 @@ describe('ConversationService generation cleanup diagnostics', () => {
 });
 
 describe('ConversationService listConversations', () => {
+  it('reveals eligible messengers before reading the visible list', async () => {
+    const conversation = createConversation();
+    const agent = createAgent();
+    const service = new ConversationService();
+    const callOrder: string[] = [];
+
+    service.messengerService = {
+      revealEligibleMessengersForUser: jest.fn(async () => {
+        callOrder.push('reveal');
+      }),
+    } as any;
+    service.conversationModel = {
+      find: jest.fn(async () => {
+        callOrder.push('list');
+        return [conversation];
+      }),
+    } as any;
+    service.agentModel = {
+      findOne: jest.fn().mockResolvedValue(agent),
+    } as any;
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+    } as any;
+    service.postImageService = {
+      resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
+    } as any;
+
+    await service.listConversations(AUTH);
+
+    expect(
+      service.messengerService.revealEligibleMessengersForUser
+    ).toHaveBeenCalledWith(new MongoObjectId(USER_ID));
+    expect(callOrder).toEqual(['reveal', 'list']);
+  });
+
   it('uses only non-archived messages for conversation preview', async () => {
     const conversation = createConversation();
     const agent = createAgent({
@@ -5362,6 +5582,7 @@ describe('ConversationService listConversations', () => {
     } as any;
     service.postImageService = {
       resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
     } as any;
 
     const result = await service.listConversations(AUTH);
@@ -5428,6 +5649,7 @@ describe('ConversationService listConversations', () => {
     } as any;
     service.postImageService = {
       resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
     } as any;
 
     const result = await service.listConversations(AUTH);
@@ -5498,6 +5720,7 @@ describe('ConversationService listConversations', () => {
     } as any;
     service.postImageService = {
       resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
     } as any;
 
     const result = await service.listConversations(AUTH);
@@ -5549,6 +5772,7 @@ describe('ConversationService listConversations', () => {
     } as any;
     service.postImageService = {
       resolveForResponse: jest.fn((value: string) => value),
+      resolveAgentAvatarForResponse: jest.fn((value: string) => value),
     } as any;
 
     const result = await service.listConversations(AUTH, {

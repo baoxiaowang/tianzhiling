@@ -19,7 +19,7 @@ describe('reply-prompt-layer', () => {
     expect(normalizeReplyPromptLayerMode('unknown')).toBe('hybrid');
   });
 
-  it('keeps L5 on complex turns in hybrid mode', () => {
+  it('does not treat every semantic planner call as an L5-complex turn', () => {
     const plan = resolveReplyPromptLayerPlan({
       config: { mode: 'active', modelPromptLayer: 'hybrid', l5TraceOnly: true },
       planningMode: 'semantic',
@@ -28,8 +28,8 @@ describe('reply-prompt-layer', () => {
 
     expect(plan.version).toBe(REPLY_PROMPT_LAYER_VERSION);
     expect(plan.reductionActive).toBe(true);
-    expect(plan.complex).toBe(true);
-    expect(plan.includeL5).toBe(true);
+    expect(plan.complex).toBe(false);
+    expect(plan.includeL5).toBe(false);
     expect(plan.l5TraceOnly).toBe(true);
     expect(plan.includeTools).toBe(false);
   });

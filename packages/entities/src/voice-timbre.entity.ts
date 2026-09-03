@@ -50,6 +50,9 @@ export class VoiceTimbreEntity extends BaseEntity {
   providerVoiceId: string;
 
   @Column()
+  retainedProviderVoiceId?: string;
+
+  @Column()
   providerFileId?: string;
 
   @Column()
@@ -66,6 +69,12 @@ export class VoiceTimbreEntity extends BaseEntity {
 
   @Column()
   cloneLanguage: string;
+
+  @Column()
+  speechDialect?: string;
+
+  @Column()
+  speechInstruction?: string;
 
   @Column()
   previewText?: string;

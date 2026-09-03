@@ -507,7 +507,7 @@ describe('AgentContextService', () => {
     expect(context.diagnostics).toEqual(
       expect.objectContaining({
         promptVersion: 'agent_chat_v11',
-        outputContractVersion: 'reply_envelope_v1',
+        outputContractVersion: 'reply_envelope_v2',
         boundaryContractVersion: 'reply_boundary_v1',
         toolInstructionMode: 'orchestrated_none',
         chatToolVersion: 'agent_chat_tools_v1',
@@ -860,7 +860,7 @@ describe('AgentContextService', () => {
     expect(systemMessage.content).toContain(
       '证据只约束具体事实，不限制称呼、关系立场、愿望和共情'
     );
-    expect(systemMessage.content).toContain('邀请用户多说那位亲人或那件事');
+    expect(systemMessage.content).toContain('不诱导用户补故事');
     expect(systemMessage.content).toContain('# 输出合同');
     expect(systemMessage.content).toContain('"claims"');
     expect(systemMessage.content).toContain('证据没有的细节不写');
@@ -1080,31 +1080,34 @@ describe('AgentContextService', () => {
     ]);
     expect(systemMessage.content).toContain('# 当前对话参考模式：status');
     expect(systemMessage.content).toContain('# 本轮回复任务');
-    expect(systemMessage.content).toContain(
-      '行动：answer:先直接回应现在是否还受疼；comfort:接住用户的想念'
-    );
+    expect(systemMessage.content).toContain('# 离世生活框架');
+    expect(systemMessage.content).toContain('正面回答现在已经没有病痛');
+    expect(systemMessage.content).toContain('free_from_illness_and_pain');
+    expect(systemMessage.content).toContain('# 本轮统一执行契约');
+    expect(systemMessage.content).toContain('参与：直接回答=是');
     expect(systemMessage.content).not.toContain('自然回答当前角色状态');
     expect(systemMessage.content).not.toContain('直接回应想念或团聚愿望');
-    expect(systemMessage.content).toContain('气泡语义规划');
-    expect(systemMessage.content).toContain('本轮需要两颗气泡');
+    expect(systemMessage.content).toContain('完整正文与展示适配');
+    expect(systemMessage.content).toContain('segments 恰好一项');
+    expect(systemMessage.content).not.toContain('本轮需要两颗气泡');
     expect(systemMessage.content).toContain('以上为内部约束；自然表达');
     expect(systemMessage.content).not.toContain('本轮结构化意图');
     expect(systemMessage.content).toContain('# 本轮 Conversation Reading');
     expect(systemMessage.content).toContain('身子可还遭罪');
     expect(systemMessage.content).toContain('我真想你');
     expect(systemMessage.content).toContain('须答');
-    expect(systemMessage.content).toContain(
-      '本轮：在深入；未完：用户必须“用户仍在等待爸爸直接回答现在是否还受疼”'
-    );
-    expect(systemMessage.content).toContain(
-      '接住/直接回答“先直接回答当前状态，再回应用户的想念”'
-    );
+    expect(systemMessage.content).not.toContain('本轮：在深入');
+    expect(systemMessage.content).not.toContain('接住/直接回答');
     expect(systemMessage.content).not.toContain('续聊：deepening/hold');
     expect(systemMessage.content).not.toContain('须贡献：answer:');
-    expect(systemMessage.content).toContain('开放点未解决');
+    expect(systemMessage.content).not.toContain('开放点未解决');
     expect(context.diagnostics.conversationReadingAnchorCount).toBe(2);
     expect(context.diagnostics).toEqual(
       expect.objectContaining({
+        afterlifeWorldVersion: 'afterlife_world_v1',
+        afterlifeWorldDomains: ['health'],
+        afterlifeReceivableItems: [],
+        relationalSceneKinds: [],
         userConversationState: 'deepening',
         openLoop: '用户仍在等待爸爸直接回答现在是否还受疼',
         continuationGoal: 'hold',
@@ -1405,8 +1408,8 @@ describe('AgentContextService', () => {
         replyPlanningMode: 'direct',
         replyPlanningReason: 'ordinary_message',
         replyIntentModelCallCount: 0,
-        strategyVersion: 'conversation_strategy_v8',
-        strategySource: 'deterministic_light',
+        strategyVersion: 'conversation_strategy_v9',
+        strategySource: 'direct_brief',
         conversationMoveGoals: expect.any(Array),
         conversationTurnClosure: expect.any(String),
         memoryRetrievalMode: 'suppressed',
@@ -1415,6 +1418,92 @@ describe('AgentContextService', () => {
     );
     expect(context.diagnostics.conversationMoveGoals.length).toBeGreaterThan(0);
     expect(context.messages[0].content).toContain('体验：P0/R0/D0');
+    expect(context.messages[0].content).toContain(
+      '用户可能省略上一轮的人物和事情'
+    );
+    expect(context.messages[0].content).not.toContain(
+      '上一轮AI留下了未答的问题'
+    );
+  });
+
+  it('leaves an adjacent direct follow-up to the main model with the original context intact', async () => {
+    const previousUser = new MessageEntity();
+    previousUser.id = new MongoObjectId();
+    previousUser.role = MessageRole.user;
+    previousUser.type = MessageType.text;
+    previousUser.content = '姥姥，爸爸生病了';
+    previousUser.status = MessageStatus.sent;
+    previousUser.createdAt = new Date('2026-08-18T13:46:07.000Z');
+
+    const assistantQuestion = new MessageEntity();
+    assistantQuestion.id = new MongoObjectId();
+    assistantQuestion.role = MessageRole.assistant;
+    assistantQuestion.type = MessageType.text;
+    assistantQuestion.content = '你爸怎么了？严不严重？';
+    assistantQuestion.status = MessageStatus.sent;
+    assistantQuestion.createdAt = new Date('2026-08-18T13:46:17.000Z');
+
+    const currentUser = new MessageEntity();
+    currentUser.id = new MongoObjectId();
+    currentUser.role = MessageRole.user;
+    currentUser.type = MessageType.text;
+    currentUser.content = '挺严重了';
+    currentUser.status = MessageStatus.sent;
+    currentUser.createdAt = new Date('2026-08-18T13:46:24.000Z');
+
+    const service = new AgentContextService();
+    service.messageModel = {
+      find: jest
+        .fn()
+        .mockResolvedValue([previousUser, assistantQuestion, currentUser]),
+    } as never;
+    service.retrieveService = {
+      retrieveConversationMemories: jest.fn().mockResolvedValue([]),
+    } as never;
+    service.replyIntentClassifierService = {
+      getPlanningDecision: jest.fn().mockReturnValue({
+        mode: 'direct',
+        reason: 'ordinary_message',
+      }),
+      classify: jest.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId('665000000000000000000020');
+    conversation.agentId = new MongoObjectId('665000000000000000000010');
+    conversation.userId = new MongoObjectId('665000000000000000000001');
+
+    const context = await service.buildConversationContext({
+      auth: {
+        sub: '665000000000000000000001',
+        accountId: '665000000000000000000101',
+        account: 'test-account',
+        iat: 0,
+        exp: 0,
+        nonce: 'test-nonce',
+      },
+      conversation,
+      agent: null,
+      currentQuery: currentUser.content,
+      currentTurnMessageIds: [currentUser.id.toHexString()],
+    });
+
+    expect(context.layers[1].messages).toEqual([
+      expect.objectContaining({ role: 'user', content: previousUser.content }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining(assistantQuestion.content),
+      }),
+      expect.objectContaining({ role: 'user', content: currentUser.content }),
+    ]);
+    expect(context.diagnostics.strategySource).toBe('direct_brief');
+    expect(context.messages[0].content).toContain(
+      '若是在回答或承接上一轮，就沿同一件事回应'
+    );
+    expect(context.messages[0].content).toContain(
+      '若已经转向新话题，就跟随当前话题'
+    );
+    expect(context.messages[0].content).not.toContain('不为续聊而提问');
   });
 
   it('does not let a stale high-risk state override a new neutral message', async () => {
@@ -2441,6 +2530,70 @@ describe('AgentContextService', () => {
     expect(prompt).toContain('路上注意安全');
   });
 
+  it('gives only direct turns an optional active-contribution prompt', () => {
+    const service = new AgentContextService();
+    const directBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'direct',
+    });
+    const semanticBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'semantic',
+    });
+    const directPrompt = (service as any).buildModelReplyBriefPrompt(
+      directBrief,
+      undefined,
+      'direct',
+      false
+    );
+    const semanticPrompt = (service as any).buildModelReplyBriefPrompt(
+      semanticBrief,
+      undefined,
+      'semantic',
+      false
+    );
+
+    expect(directPrompt).toContain('# 直接路径的可选主动贡献');
+    expect(directPrompt).toContain('不为主动贡献增加字数或气泡');
+    expect(directPrompt).toContain('不因缺少它改写已经完整的回答');
+    expect(semanticPrompt).not.toContain('# 直接路径的可选主动贡献');
+  });
+
+  it('keeps receiving user care as a soft strategy in the generation prompt', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '妈，你吃过饭了吗',
+      planningMode: 'direct',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).toContain('把关心递给当前角色');
+    expect(prompt).toContain('让这份关心自然落在角色身上');
+    expect(prompt).toContain('这是软策略');
+    expect(prompt).toContain('不要求固定句式、额外气泡或字数');
+  });
+
+  it('does not repeat the per-turn care reminder on an ordinary direct turn', () => {
+    const service = new AgentContextService();
+    const replyBrief = buildReplyBrief({
+      currentQuery: '妈，我今天喝了热牛奶',
+      planningMode: 'direct',
+    });
+    const prompt = (service as any).buildModelReplyBriefPrompt(
+      replyBrief,
+      undefined,
+      'direct',
+      false
+    );
+
+    expect(prompt).not.toContain('# 本轮接纳关心');
+  });
+
   it('puts the strong active-contribution guard into direct prompts', () => {
     const service = new AgentContextService();
     const replyBrief = buildReplyBrief({
@@ -2457,8 +2610,9 @@ describe('AgentContextService', () => {
     );
 
     expect(prompt).toContain('# 主动贡献');
-    expect(prompt).toContain('你想说什么');
-    expect(prompt).toContain('我这边刚静下来');
+    expect(prompt).toContain('这一轮由你承担聊天内容');
+    expect(prompt).toContain('不要反问');
+    expect(prompt).not.toContain('我这边刚静下来');
   });
 
   it('suppresses ritual and keepsake associations in household chores', () => {

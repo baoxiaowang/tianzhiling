@@ -12,6 +12,8 @@ import {
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
+  ChatTrialActivationReason,
+  ChatTrialStatus,
   ConversationMessageFeedbackEntity,
   ConversationMessageFeedbackType,
   ConversationEntity,
@@ -20,7 +22,6 @@ import {
   MessageStatus,
   MessageType,
   MongoObjectId,
-  UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -140,6 +141,7 @@ import { MilvusService } from './rag/milvus.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
+import { DoubaoVoiceSpeechService } from './doubao-voice-speech.service';
 import { VoiceTimbreLibraryService } from './voice-timbre-library.service';
 import { VoiceFfmpegService } from './voice-ffmpeg.service';
 import { BailianImageService } from './bailian-image.service';
@@ -179,6 +181,20 @@ import {
   RelationshipOpenLoopService,
 } from './agents/relationship-open-loop.service';
 import { PermanentAgentSilenceService } from './agents/permanent-agent-silence.service';
+import { FreeChatAgentEligibilityService } from './agents/free-chat-agent-eligibility.service';
+import {
+  assessDeliberateLongReplyCandidate,
+  buildDeliberateLongReplyExecutionPrompt,
+  DELIBERATE_LONG_REPLY_ENABLED,
+  DeliberateLongReplyCandidateAssessment,
+  DeliberateLongReplyModelDecision,
+  inspectDeliberateReplyCommitment,
+  recoverDeliberateLongReplyCommitment,
+} from './agents/deliberate-long-reply';
+import {
+  ConversationDeliberateReplyJobData,
+  DeliberateLongReplyService,
+} from './agents/deliberate-long-reply.service';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -187,6 +203,7 @@ const ASSISTANT_RECOVERY_TIMEOUT_MS = 15000;
 const ASSISTANT_RECOVERY_TIMEOUT_MAX_TOKENS = 300;
 const ASSISTANT_REPLY_MAX_TOKENS = 520;
 const ASSISTANT_DENSE_TURN_MAX_TOKENS = 700;
+const DELIBERATE_LONG_REPLY_MAX_TOKENS = 1200;
 const ASSISTANT_RECOVERY_MAX_TOKENS = 440;
 const ASSISTANT_BUBBLE_REFLOW_MAX_TOKENS = 280;
 const ASSISTANT_BUBBLE_REFLOW_TIMEOUT_MS = 10000;
@@ -219,38 +236,10 @@ const ASSISTANT_REPLY_FAILED_CONTENT =
 const QUOTA_CONFIG = {
   version: 'v2',
   newUserTrialDays: 3,
-  newUserSilentMessages: 15,
-  messageThreshold: 5,
-  longMessageMinChars: 60,
-  relationshipStages: ['R2', 'R3'] as string[],
-  graceMessagesAfterWarn: 2,
-  newUserHardBlockMessages: 35,
+  newUserTrialDailyLimit: 30,
+  newUserPreviewMessages: 5,
+  returnVisitGapMs: 30 * 60 * 1000,
   oldUserDailyLimit: 3,
-  naturalClosePatterns: [
-    '晚安',
-    '睡了',
-    '先睡',
-    '休息了',
-    '去睡了',
-    '我好困',
-    '困了',
-    '先忙',
-    '去忙',
-    '忙了',
-    '工作了',
-    '下次聊',
-    '改天聊',
-    '回头聊',
-    '明天聊',
-    '有空再聊',
-    '下次再聊',
-    '拜拜',
-    '再见',
-    '明天再说',
-    '先这样',
-    '早点休息',
-    '你也早点休息',
-  ],
 } as const;
 const MEMORIAL_PHOTO_MESSAGE_CONTENT = 'AI生成纪念合照';
 const MEMORIAL_PHOTO_REPLY_SYSTEM_PROMPT = [
@@ -392,6 +381,10 @@ interface BeforeReplyResult {
   immediateAssistantMessages?: MessageEntity[];
   isDuplicate?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
+  deliberateLongReplyExecution?: {
+    taskId: string;
+    prompt: string;
+  };
 }
 
 interface ReplyUsage {
@@ -405,6 +398,8 @@ interface ProcessReplyResult {
   replySegments: string[];
   usage: ReplyUsage;
   routing?: ReplyRoutingAudit;
+  deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
+  deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
 }
 
 interface ParsedAssistantReply {
@@ -412,6 +407,7 @@ interface ParsedAssistantReply {
   claims: AssistantFactClaim[];
   toolDecisions?: AgentChatToolDecision[];
   invalidToolDecisionCount?: number;
+  deliberateFollowUpDecision?: DeliberateLongReplyModelDecision;
 }
 
 interface AgentChatToolAudit {
@@ -593,6 +589,13 @@ interface ReplyRoutingAudit {
   relationshipOpenLoopSourceMessageIds?: string[];
   relationshipOpenLoopSelectionReason?: string;
   relationshipOpenLoopSelectionKind?: string;
+  deliberateLongReplyCandidate?: boolean;
+  deliberateLongReplyVisibleCharacters?: number;
+  deliberateLongReplyExclusion?: string;
+  deliberateFollowUpAction?: string;
+  deliberateFollowUpReason?: string;
+  deliberateFollowUpTaskId?: string;
+  deliberateFollowUpScheduledAt?: Date;
   strategyRepeatedMoves?: string[];
   strategyAlternative?: string;
   careMotive?: string;
@@ -636,12 +639,25 @@ interface MemorialPhotoDailyQuotaSnapshot {
 
 export interface ConversationChatQuotaSnapshot {
   isVip: boolean;
-  policy?: 'trial' | 'daily' | 'deep_trigger';
+  policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger' | 'agent_limit';
   limit?: number;
   usedCount?: number;
   remainingCount?: number;
   trialDays?: number;
+  trialStatus?: ChatTrialStatus;
+  trialActivatedAt?: string;
+  trialExpiresAt?: string;
   triggerDecision?: ReplyQuotaTriggerDecision;
+}
+
+interface ChatTrialResolution {
+  status: ChatTrialStatus;
+  activatedAt?: Date;
+  expiresAt?: Date;
+  activationReason?: ChatTrialActivationReason;
+  totalUserMessageCount: number;
+  returnVisitActivated: boolean;
+  lastMessageGapDays: number;
 }
 
 export interface ConversationChatBootstrapMetadata {
@@ -686,9 +702,6 @@ export class ConversationService {
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
-
-  @InjectEntityModel(UserAccountEntity)
-  userAccountModel: MongoRepository<UserAccountEntity>;
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
@@ -754,6 +767,9 @@ export class ConversationService {
   qwenVoiceSpeechService: QwenVoiceSpeechService;
 
   @Inject()
+  doubaoVoiceSpeechService: DoubaoVoiceSpeechService;
+
+  @Inject()
   voiceTimbreLibraryService: VoiceTimbreLibraryService;
 
   @Inject()
@@ -781,7 +797,13 @@ export class ConversationService {
   permanentAgentSilenceService: PermanentAgentSilenceService;
 
   @Inject()
+  freeChatAgentEligibilityService: FreeChatAgentEligibilityService;
+
+  @Inject()
   recognitionJourneyObserverService: RecognitionJourneyObserverService;
+
+  @Inject()
+  deliberateLongReplyService: DeliberateLongReplyService;
 
   async listConversations(
     auth: AuthenticatedUserPayload,
@@ -1257,6 +1279,230 @@ export class ConversationService {
       },
       { attempt: options.attempt }
     );
+  }
+
+  async processDeliberateLongReplyJob(
+    data: ConversationDeliberateReplyJobData,
+    options: ProcessConversationReplyJobOptions = {}
+  ): Promise<void> {
+    const taskId = this.parseObjectId(data.taskId);
+    if (!DELIBERATE_LONG_REPLY_ENABLED) {
+      await this.deliberateLongReplyService.cancel({
+        taskId,
+        reason: 'feature_disabled_direct_reply_restored',
+      });
+      return;
+    }
+    const task = await this.deliberateLongReplyService.claim(
+      taskId,
+      new Date()
+    );
+    if (!task) return;
+
+    let traceId: string | undefined;
+    try {
+      traceId = await this.chatTraceService?.ensureTrace({
+        conversationId: this.stringifyObjectId(task.conversationId),
+        userId: this.stringifyObjectId(task.userId),
+        agentId: this.stringifyObjectId(task.agentId),
+        triggerMessageIds: task.sourceMessageIds,
+        queueJobId: options.queueJobId,
+        acceptedAt: task.scheduledAt,
+        releaseVersion: process.env.RELEASE_VERSION || process.env.GIT_SHA,
+      });
+
+      // The visible messages are the delivery commit record. If a worker
+      // persisted them but stopped before updating the task, recover that
+      // transition instead of generating a duplicate morning reply.
+      const persistedDelivery = await this.messageModel.find({
+        where: {
+          conversationId: task.conversationId,
+          role: MessageRole.assistant,
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          deliberateReplyTaskId: this.stringifyObjectId(task.id),
+        } as never,
+        order: { createdAt: 'ASC' },
+      });
+      if (persistedDelivery.length) {
+        const messageIds = persistedDelivery.map(message =>
+          this.stringifyObjectId(message.id)
+        );
+        await this.deliberateLongReplyService.markDelivered({
+          taskId,
+          messageIds,
+        });
+        this.chatTraceService?.recordCompletedSpan({
+          stage: ChatTraceStage.persistReply,
+          operation: 'deliberate_long_reply.delivery_recovered',
+          startedAt: new Date(),
+          attributes: { messageCount: persistedDelivery.length },
+        });
+        if (traceId) {
+          await this.chatTraceService.markCompleted(traceId, {
+            responseCompletedAt:
+              persistedDelivery[persistedDelivery.length - 1].updatedAt ||
+              new Date(),
+            replyMessageIds: messageIds,
+            acceptedAt: task.scheduledAt,
+          });
+        }
+        return;
+      }
+
+      const cancel = async (reason: string) => {
+        await this.deliberateLongReplyService.cancel({ taskId, reason });
+        if (traceId) await this.chatTraceService?.markSkipped(traceId, reason);
+      };
+      const conversation = await this.findConversationById(
+        task.conversationId,
+        task.userId
+      );
+      if (!conversation) {
+        await cancel('conversation_not_found');
+        return;
+      }
+      const sourceObjectIds = task.sourceMessageIds.map(id =>
+        this.parseObjectId(id)
+      );
+      const sourceMessages = (
+        await this.messageModel.find({
+          where: {
+            conversationId: task.conversationId,
+            _id: { $in: sourceObjectIds },
+            role: MessageRole.user,
+            status: MessageStatus.sent,
+            isArchived: { $ne: true },
+          } as never,
+          order: { createdAt: 'ASC' },
+        })
+      ).filter(message => !message.isArchived);
+      if (!sourceMessages.length) {
+        await cancel('source_messages_unavailable');
+        return;
+      }
+
+      const laterMessagesDescending = await this.messageModel.find({
+        where: {
+          conversationId: task.conversationId,
+          role: { $in: [MessageRole.user, MessageRole.assistant] },
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+          createdAt: { $gt: task.sourceOccurredAt },
+        } as never,
+        order: { createdAt: 'DESC' },
+        take: 24,
+      });
+      const laterMessages = laterMessagesDescending.reverse();
+      const laterUserMessages = laterMessages.filter(
+        message => message.role === MessageRole.user
+      );
+      if (
+        laterUserMessages.some(message =>
+          this.deliberateLongReplyService.isExplicitlyCancelledByUser(
+            this.buildSearchableTextFromMessage(message)
+          )
+        )
+      ) {
+        await cancel('user_cancelled_follow_up');
+        return;
+      }
+      await this.deliberateLongReplyService.recordRuntimeContext({
+        taskId,
+        messageIds: laterMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+      });
+
+      const runtime: ReplyRuntime = {
+        auth: {
+          sub: this.stringifyObjectId(task.userId),
+          accountId: '',
+          account: '',
+          iat: 0,
+          exp: 0,
+          nonce: '',
+        },
+        conversation,
+        agent: await this.findAgentById(task.agentId),
+      };
+      if (
+        await this.permanentAgentSilenceService.suppressReplyIfPermanentlySilent(
+          runtime.agent,
+          sourceMessages.concat(laterUserMessages)
+        )
+      ) {
+        await cancel('permanent_agent_silence');
+        return;
+      }
+
+      const before: BeforeReplyResult = {
+        messagePayload: {
+          type: MessageType.text,
+          content: task.sourceText,
+        },
+        searchableText: task.sourceText,
+        userMessage: sourceMessages[sourceMessages.length - 1],
+        currentTurnMessages: sourceMessages,
+        deferReply: false,
+        deliberateLongReplyExecution: {
+          taskId: this.stringifyObjectId(task.id),
+          prompt: buildDeliberateLongReplyExecutionPrompt({
+            focus: task.focus,
+            sourceVisibleCharacters: task.sourceVisibleCharacters,
+          }),
+        },
+      };
+      const execute = async () => {
+        const processed = await this.processReply(runtime, before);
+        if (
+          task.deliveryWindowEndAt &&
+          task.deliveryWindowEndAt.getTime() <= Date.now()
+        ) {
+          await cancel('delivery_window_expired_during_generation');
+          return;
+        }
+        const after = await this.afterReply(runtime, before, processed);
+        if (!after.assistantMessages.length) {
+          throw new Error('DELIBERATE_REPLY_EMPTY_DELIVERY');
+        }
+        await this.deliberateLongReplyService.markDelivered({
+          taskId,
+          messageIds: after.assistantMessages.map(message =>
+            this.stringifyObjectId(message.id)
+          ),
+        });
+        if (traceId) {
+          await this.completeChatReplyTrace(
+            {
+              traceId,
+              acceptedAt: task.scheduledAt,
+              triggerMessageIds: task.sourceMessageIds,
+            },
+            processed,
+            after
+          );
+        }
+      };
+      if (traceId && this.chatTraceService) {
+        await this.chatTraceService.markRunning(traceId, {
+          attempt: options.attempt,
+          queueJobId: options.queueJobId,
+        });
+        await this.chatTraceService.runWithTrace(traceId, execute, {
+          attempt: options.attempt,
+        });
+      } else {
+        await execute();
+      }
+    } catch (error) {
+      await this.deliberateLongReplyService.releaseAfterFailure({
+        taskId,
+        error,
+        finalAttempt: options.isFinalAttempt === true,
+      });
+      throw error;
+    }
   }
 
   private async processConversationReplyJobCore(
@@ -2201,6 +2447,8 @@ export class ConversationService {
         messagePayload,
         existingUserMessage
       );
+      const isNonReplyingStoredMessage =
+        existingUserMessage.replyTrigger === false;
 
       return {
         messagePayload,
@@ -2208,8 +2456,8 @@ export class ConversationService {
           this.buildSearchableTextFromMessage(existingUserMessage),
         userMessage: existingUserMessage,
         deferReply:
+          isNonReplyingStoredMessage ||
           permanentSilence ||
-          existingUserMessage.replyTrigger === false ||
           shortTurnReception.mode !== 'reply',
         shortTurnReception,
         permanentSilence,
@@ -2249,25 +2497,18 @@ export class ConversationService {
           searchableText
         );
       } catch (error) {
-        // 防御：resolveChatQuotaForSend 内部异常（如 DI 失败/DB 断连）时，
-        // 默认采用最保守限制（3条/天），避免限制失效造成无限放行
-        if (
-          error instanceof AppError &&
-          error.code === 'NON_VIP_CHAT_LIMIT_EXCEEDED'
-        ) {
-          throw error; // 正常超限，透传
+        if (error instanceof AppError) {
+          throw error;
         }
         this.logger?.error?.(
-          '[chat-quota] unexpected error in resolveChatQuotaForSend, defaulting to conservative limit: %s',
+          '[chat-quota] unexpected error in resolveChatQuotaForSend: %s',
           (error as Error)?.message || 'unknown'
         );
-        chatQuota = {
-          isVip: false,
-          policy: 'deep_trigger',
-          limit: 0,
-          usedCount: 0,
-          remainingCount: 0,
-        };
+        throw new AppError(
+          'CHAT_QUOTA_UNAVAILABLE',
+          '额度校验暂时不可用，请稍后重试。',
+          503
+        );
       }
     }
 
@@ -2319,6 +2560,7 @@ export class ConversationService {
     }
 
     await this.touchConversation(runtime.conversation, now);
+    await this.revealMessengerAfterUserMessage(runtime, userMessage);
     if (isAutomaticChatImport) {
       try {
         await this.conversationChatImportService.startAutomaticImportFromMessage(
@@ -2332,6 +2574,7 @@ export class ConversationService {
           this.describeReplyError(error)
         );
       }
+
       return {
         messagePayload,
         searchableText,
@@ -2340,6 +2583,7 @@ export class ConversationService {
         chatQuota,
       };
     }
+
     if (alreadyPermanentlySilent) {
       await this.permanentAgentSilenceService.markMessagesPermanentlySilent([
         userMessage,
@@ -2410,6 +2654,34 @@ export class ConversationService {
       shortTurnReception,
       chatQuota,
     };
+  }
+
+  private async revealMessengerAfterUserMessage(
+    runtime: ReplyRuntime,
+    userMessage: MessageEntity
+  ): Promise<void> {
+    if (
+      !this.messengerService ||
+      !runtime.agent ||
+      this.isMessengerAgent(runtime.agent)
+    ) {
+      return;
+    }
+
+    try {
+      await this.messengerService.revealMessengerAfterUserMessage(
+        runtime.agent,
+        userMessage
+      );
+    } catch (error) {
+      this.logger?.warn?.(
+        '[conversation] messenger reveal after user message failed, userId=%s, agentId=%s, messageId=%s, reason=%s',
+        this.stringifyObjectId(userMessage.userId),
+        this.stringifyObjectId(userMessage.agentId),
+        this.stringifyObjectId(userMessage.id),
+        this.describeReplyError(error)
+      );
+    }
   }
 
   private async enrichUserMessageForReply(
@@ -2869,7 +3141,8 @@ export class ConversationService {
     const currentQuota = await this.resolveCurrentChatQuota(
       runtime,
       now,
-      currentMessageContent
+      currentMessageContent,
+      'send'
     );
 
     if (currentQuota.isVip) {
@@ -2882,8 +3155,11 @@ export class ConversationService {
       // daily policy（老用户固定每日额度）：remainingCount 表示“发送前还能发几句”，
       // 发送成功后应减 1，使前端收到“发完本条后还剩几句”，从而正确触发
       // 「剩 1 句」提醒（remainingCount === 1）与「额度用完」拦截（remainingCount === 0）。
-      const nextRemaining =
-        currentQuota.policy === 'daily' ? remainingCount - 1 : remainingCount;
+      const consumesDailyQuota =
+        currentQuota.policy === 'daily' || currentQuota.policy === 'trial';
+      const nextRemaining = consumesDailyQuota
+        ? remainingCount - 1
+        : remainingCount;
       return {
         ...currentQuota,
         usedCount: (currentQuota.usedCount ?? 0) + 1,
@@ -2969,43 +3245,74 @@ export class ConversationService {
   private async resolveCurrentChatQuota(
     runtime: ReplyRuntime,
     now: Date,
-    currentMessageContent?: string
+    _currentMessageContent?: string,
+    activationContext: 'read' | 'send' = 'read'
   ): Promise<ConversationChatQuotaSnapshot> {
     // 防御：DI 初始化失败时宁可误拦也不要放行
     if (!this.userMembershipModel || !this.userModel || !this.messageModel) {
       this.logger?.error?.(
-        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s — defaulting to conservative limit',
+        '[chat-quota] critical DI failure: userMembershipModel=%s userModel=%s messageModel=%s',
         !!this.userMembershipModel,
         !!this.userModel,
         !!this.messageModel
       );
-      return {
-        isVip: false,
-        policy: 'deep_trigger',
-        limit: 0,
-        usedCount: 0,
-        remainingCount: 0,
-      };
+      throw new AppError(
+        'CHAT_QUOTA_UNAVAILABLE',
+        '额度校验暂时不可用，请稍后重试。',
+        503
+      );
     }
 
     if (await this.isUserVip(runtime.conversation.userId, now)) {
+      await this.markChatTrialIneligibleForMember(
+        runtime.conversation.userId,
+        now
+      );
       return { isVip: true };
     }
 
     const userId = runtime.conversation.userId;
     const agentId = runtime.conversation.agentId;
 
-    // Count today's messages (Beijing time)
-    const dayStart = this.getBeijingDayStart(now);
-    const dayEnd = new Date(dayStart.getTime() + 86400000);
-    const todayMsgs = await this.countUserMessagesForAgent({
-      userId,
-      agentId,
-      windowStart: dayStart,
-      windowEnd: dayEnd,
-    });
+    // 免费资格绑定在智能体创建者的前三个真实亲友名额上。分享会话沿用
+    // 原智能体资格；小使者在更上层走无限额度通道。
+    let freeChatAgentEligible: boolean;
+    try {
+      if (!this.freeChatAgentEligibilityService) {
+        throw new Error('freeChatAgentEligibilityService is unavailable');
+      }
+      freeChatAgentEligible =
+        await this.freeChatAgentEligibilityService.isEligible(runtime.agent);
+    } catch (error) {
+      this.logger?.error?.(
+        '[chat-quota] free-chat agent eligibility unavailable, userId=%s agentId=%s reason=%s',
+        this.stringifyObjectId(userId),
+        this.stringifyObjectId(agentId),
+        error instanceof Error ? error.message : String(error)
+      );
+      throw new AppError(
+        'CHAT_QUOTA_UNAVAILABLE',
+        '额度校验暂时不可用，请稍后重试。',
+        503
+      );
+    }
 
-    // Count session and lifetime messages (for audit)
+    if (!freeChatAgentEligible) {
+      return {
+        isVip: false,
+        policy: 'agent_limit',
+        limit: 0,
+        usedCount: 0,
+        remainingCount: 0,
+      };
+    }
+
+    const trial = await this.resolveChatTrialState(
+      userId,
+      now,
+      activationContext
+    );
+
     const sessionMsgCount = await this.countSessionMessages(
       runtime.conversation.id
     );
@@ -3014,52 +3321,45 @@ export class ConversationService {
       agentId
     );
 
-    // Determine if this is a new user (within trial days)
-    const isNewUser = await this.isUserInTrialPeriod(runtime, now);
-
-    // New user silent zone: first N lifetime messages, no evaluation
-    if (isNewUser && totalLifetimeMsgs < QUOTA_CONFIG.newUserSilentMessages) {
+    if (trial.status === ChatTrialStatus.pending) {
       return this.buildQuotaResult({
         path: 'trial',
+        policy: 'trial_pending',
+        limit: QUOTA_CONFIG.newUserPreviewMessages,
         remainingCount: 99,
         totalLifetimeMsgs,
-        todayMsgs,
+        usedCount: trial.totalUserMessageCount,
+        todayMsgs: 0,
         sessionMsgCount,
         triggered: false,
         matchedConditions: [],
+        trial,
       });
     }
 
-    // New user hard block: 35 lifetime messages → blocked
-    if (
-      isNewUser &&
-      totalLifetimeMsgs >= QUOTA_CONFIG.newUserHardBlockMessages
-    ) {
-      return this.buildQuotaResult({
-        path: 'trial',
-        remainingCount: 0,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: ['hardBlock'],
-        naturalCloseExempted: false,
-        warned: false,
-        blocked: true,
-      });
-    }
+    // Count today's messages (Beijing time)
+    const dayStart = this.getBeijingDayStart(now);
+    const dayEnd = new Date(dayStart.getTime() + 86400000);
+    const trialWindowStart =
+      trial.status === ChatTrialStatus.active && trial.activatedAt
+        ? new Date(Math.max(dayStart.getTime(), trial.activatedAt.getTime()))
+        : dayStart;
+    const todayMsgs = await this.countUserMessagesForAgent({
+      userId,
+      agentId,
+      windowStart: trialWindowStart,
+      windowEnd: dayEnd,
+    });
 
-    // New user → deep-trigger evaluation (unchanged)
-    if (isNewUser) {
-      return this.evaluateDeepTriggerQuota(
+    if (trial.status === ChatTrialStatus.active) {
+      return this.evaluateActiveTrialDailyQuota(
         userId,
         agentId,
         now,
+        trial,
         totalLifetimeMsgs,
         todayMsgs,
-        sessionMsgCount,
-        currentMessageContent,
-        isNewUser
+        sessionMsgCount
       );
     }
 
@@ -3074,163 +3374,333 @@ export class ConversationService {
     );
   }
 
-  private async evaluateDeepTriggerQuota(
+  private async resolveChatTrialState(
     userId: MongoObjectId,
-    agentId: MongoObjectId,
     now: Date,
-    totalLifetimeMsgs: number,
-    todayMsgs: number,
-    sessionMsgCount: number,
-    currentMessageContent: string | undefined,
-    isNewUser: boolean
-  ): Promise<ConversationChatQuotaSnapshot> {
-    const cfg = QUOTA_CONFIG;
-    const matched: string[] = [];
+    activationContext: 'read' | 'send'
+  ): Promise<ChatTrialResolution> {
+    const user = await this.userModel.findOne({
+      where: { _id: userId },
+    } as any);
 
-    // Condition A: Effective today messages exceed threshold
-    const effectiveMsgs = isNewUser
-      ? todayMsgs - cfg.newUserSilentMessages
-      : todayMsgs;
-    if (effectiveMsgs > cfg.messageThreshold) matched.push('messageCount');
-
-    // Condition B: Long message
-    if (
-      currentMessageContent &&
-      currentMessageContent.length > cfg.longMessageMinChars
-    ) {
-      matched.push('longMessage');
+    if (!user) {
+      return {
+        status: ChatTrialStatus.ineligible,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
     }
 
-    // Condition C: Relationship stage
-    const lastStage = await this.getLastRelationshipStage(userId, agentId);
-    if (lastStage && (cfg.relationshipStages as string[]).includes(lastStage)) {
-      const freshlyPromoted = await this.isStageJustPromoted(userId, agentId);
-      if (!freshlyPromoted) matched.push('relationshipStage');
-    }
+    const membershipHistory = await this.userMembershipModel.find({
+      where: { userId },
+      order: { createdAt: 'ASC' },
+      take: 1,
+    });
 
-    // Trigger if any 2 of 3 conditions are met
-    const triggered = matched.length >= 2;
-
-    // Natural close exemption
-    const naturalClose = currentMessageContent
-      ? cfg.naturalClosePatterns.some(p => currentMessageContent.includes(p))
-      : false;
-
-    // ═══════════════════════════════════════════════════════════════
-    // GRACE/BLOCK CHECK — once warned, EVERY message counts toward
-    // the grace limit, regardless of trigger conditions.
-    // ═══════════════════════════════════════════════════════════════
-    const wasWarned = await this.wasQuotaWarningSent(userId, agentId, now);
-
-    if (wasWarned) {
-      const dayStart = this.getBeijingDayStart(now);
-      const firstWarnedMsg = (
-        await this.messageModel.find({
-          where: {
-            userId,
-            agentId,
-            role: MessageRole.user,
-            quotaWarned: true,
-            createdAt: { $gte: dayStart },
-          },
-          order: { createdAt: 'ASC' },
-          take: 1,
-        } as any)
-      )[0];
-
-      const postWarnCount = firstWarnedMsg
-        ? await this.messageModel.count({
-            userId,
-            agentId,
-            role: MessageRole.user,
-            createdAt: { $gt: firstWarnedMsg.createdAt },
-            status: MessageStatus.sent,
-          } as never)
-        : 0;
-
-      if (postWarnCount > cfg.graceMessagesAfterWarn) {
-        return this.buildQuotaResult({
-          path: isNewUser ? 'trial' : 'active',
-          remainingCount: 0,
-          totalLifetimeMsgs,
-          todayMsgs,
-          sessionMsgCount,
-          triggered: true,
-          matchedConditions: matched,
-          naturalCloseExempted: false,
-          warned: true,
-          blocked: true,
+    if (membershipHistory.length > 0) {
+      if (user.chatTrialStatus !== ChatTrialStatus.ineligible) {
+        await this.persistChatTrialState(user, {
+          chatTrialStatus: ChatTrialStatus.ineligible,
+          chatTrialPolicyVersion: 'deferred_v1',
+          chatTrialEvaluatedAt: now,
         });
       }
 
-      // Within grace period → pass through (don't re-warn)
+      return {
+        status: ChatTrialStatus.ineligible,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    const persistedActivatedAt = this.normalizeChatTrialDate(
+      user.chatTrialActivatedAt
+    );
+    const persistedExpiresAt = this.normalizeChatTrialDate(
+      user.chatTrialExpiresAt
+    );
+
+    if (
+      user.chatTrialStatus === ChatTrialStatus.active &&
+      persistedActivatedAt &&
+      persistedExpiresAt
+    ) {
+      if (persistedExpiresAt > now) {
+        return {
+          status: ChatTrialStatus.active,
+          activatedAt: persistedActivatedAt,
+          expiresAt: persistedExpiresAt,
+          activationReason: user.chatTrialActivationReason,
+          totalUserMessageCount: 0,
+          returnVisitActivated:
+            user.chatTrialActivationReason === 'return_visit',
+          lastMessageGapDays: 0,
+        };
+      }
+
+      await this.persistChatTrialState(user, {
+        chatTrialStatus: ChatTrialStatus.expired,
+        chatTrialPolicyVersion: 'deferred_v1',
+        chatTrialEvaluatedAt: now,
+      });
+
+      return {
+        status: ChatTrialStatus.expired,
+        activatedAt: persistedActivatedAt,
+        expiresAt: persistedExpiresAt,
+        activationReason: user.chatTrialActivationReason,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    if (
+      user.chatTrialStatus === ChatTrialStatus.expired ||
+      user.chatTrialStatus === ChatTrialStatus.ineligible
+    ) {
+      return {
+        status: user.chatTrialStatus,
+        activatedAt: persistedActivatedAt,
+        expiresAt: persistedExpiresAt,
+        activationReason: user.chatTrialActivationReason,
+        totalUserMessageCount: 0,
+        returnVisitActivated: false,
+        lastMessageGapDays: 0,
+      };
+    }
+
+    const totalUserMessageCount = await this.countTotalUserMessagesForUser(
+      userId
+    );
+    const firstMessages = totalUserMessageCount
+      ? await this.listFirstUserMessages(userId, 6)
+      : [];
+
+    if (totalUserMessageCount >= 6) {
+      const sixthMessageAt =
+        this.normalizeChatTrialDate(firstMessages[5]?.createdAt) ||
+        this.normalizeChatTrialDate(user.createdAt) ||
+        now;
+      return this.activateOrExpireChatTrial(user, {
+        now,
+        activatedAt: sixthMessageAt,
+        activationReason: 'historical_usage',
+        totalUserMessageCount,
+        lastMessageGapDays: 0,
+      });
+    }
+
+    const lastMessageAt = this.normalizeChatTrialDate(
+      firstMessages[firstMessages.length - 1]?.createdAt
+    );
+    const lastMessageGapMs = lastMessageAt
+      ? Math.max(now.getTime() - lastMessageAt.getTime(), 0)
+      : 0;
+    const lastMessageGapDays = lastMessageGapMs / 86400000;
+
+    if (activationContext === 'send' && totalUserMessageCount > 0) {
+      if (lastMessageGapMs >= QUOTA_CONFIG.returnVisitGapMs) {
+        return this.activateOrExpireChatTrial(user, {
+          now,
+          activatedAt: now,
+          activationReason: 'return_visit',
+          totalUserMessageCount,
+          lastMessageGapDays,
+        });
+      }
+
+      if (totalUserMessageCount >= QUOTA_CONFIG.newUserPreviewMessages) {
+        return this.activateOrExpireChatTrial(user, {
+          now,
+          activatedAt: now,
+          activationReason: 'sixth_message',
+          totalUserMessageCount,
+          lastMessageGapDays,
+        });
+      }
+    }
+
+    if (user.chatTrialStatus !== ChatTrialStatus.pending) {
+      await this.persistChatTrialState(user, {
+        chatTrialStatus: ChatTrialStatus.pending,
+        chatTrialPolicyVersion: 'deferred_v1',
+        chatTrialEvaluatedAt: now,
+      });
+    }
+
+    return {
+      status: ChatTrialStatus.pending,
+      totalUserMessageCount,
+      returnVisitActivated: false,
+      lastMessageGapDays,
+    };
+  }
+
+  private async markChatTrialIneligibleForMember(
+    userId: MongoObjectId,
+    now: Date
+  ): Promise<void> {
+    const user = await this.userModel.findOne({
+      where: { _id: userId },
+    } as any);
+
+    if (!user || user.chatTrialStatus === ChatTrialStatus.ineligible) {
+      return;
+    }
+
+    await this.persistChatTrialState(user, {
+      chatTrialStatus: ChatTrialStatus.ineligible,
+      chatTrialPolicyVersion: 'deferred_v1',
+      chatTrialEvaluatedAt: now,
+    });
+  }
+
+  private async activateOrExpireChatTrial(
+    user: UserEntity,
+    params: {
+      now: Date;
+      activatedAt: Date;
+      activationReason: ChatTrialActivationReason;
+      totalUserMessageCount: number;
+      lastMessageGapDays: number;
+    }
+  ): Promise<ChatTrialResolution> {
+    const expiresAt = new Date(
+      params.activatedAt.getTime() +
+        QUOTA_CONFIG.newUserTrialDays * 24 * 60 * 60 * 1000
+    );
+    const status =
+      expiresAt > params.now ? ChatTrialStatus.active : ChatTrialStatus.expired;
+
+    await this.persistChatTrialState(user, {
+      chatTrialStatus: status,
+      chatTrialPolicyVersion: 'deferred_v1',
+      chatTrialActivatedAt: params.activatedAt,
+      chatTrialExpiresAt: expiresAt,
+      chatTrialActivationReason: params.activationReason,
+      chatTrialEvaluatedAt: params.now,
+    });
+
+    return {
+      status,
+      activatedAt: params.activatedAt,
+      expiresAt,
+      activationReason: params.activationReason,
+      totalUserMessageCount: params.totalUserMessageCount,
+      returnVisitActivated: params.activationReason === 'return_visit',
+      lastMessageGapDays: params.lastMessageGapDays,
+    };
+  }
+
+  private async persistChatTrialState(
+    user: UserEntity,
+    updates: Partial<
+      Pick<
+        UserEntity,
+        | 'chatTrialStatus'
+        | 'chatTrialPolicyVersion'
+        | 'chatTrialActivatedAt'
+        | 'chatTrialExpiresAt'
+        | 'chatTrialActivationReason'
+        | 'chatTrialEvaluatedAt'
+      >
+    >
+  ): Promise<void> {
+    await this.userModel.updateOne({ _id: user.id }, { $set: updates } as any);
+    Object.assign(user, updates);
+  }
+
+  private normalizeChatTrialDate(value: unknown): Date | undefined {
+    const date = value instanceof Date ? value : new Date(String(value || ''));
+    return Number.isFinite(date.getTime()) ? date : undefined;
+  }
+
+  private countTotalUserMessagesForUser(
+    userId: MongoObjectId
+  ): Promise<number> {
+    return this.messageModel.count({
+      userId,
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      quotaExempt: { $ne: true },
+    } as never);
+  }
+
+  private listFirstUserMessages(
+    userId: MongoObjectId,
+    take: number
+  ): Promise<MessageEntity[]> {
+    return this.messageModel.find({
+      where: {
+        userId,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        quotaExempt: { $ne: true },
+      },
+      order: { createdAt: 'ASC' },
+      take,
+    } as any);
+  }
+
+  private evaluateActiveTrialDailyQuota(
+    userId: MongoObjectId,
+    agentId: MongoObjectId,
+    now: Date,
+    trial: ChatTrialResolution,
+    totalLifetimeMsgs: number,
+    todayMsgs: number,
+    sessionMsgCount: number
+  ): ConversationChatQuotaSnapshot {
+    const limit = QUOTA_CONFIG.newUserTrialDailyLimit;
+    const remainingBefore = limit - todayMsgs;
+
+    if (remainingBefore <= 0) {
       return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 99,
+        path: 'trial',
+        policy: 'trial',
+        limit,
+        usedCount: todayMsgs,
+        remainingCount: 0,
         totalLifetimeMsgs,
         todayMsgs,
         sessionMsgCount,
         triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: false,
+        matchedConditions: ['dailyLimit'],
         warned: true,
-        blocked: false,
+        blocked: true,
+        trial,
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // NOT WARNED YET → trigger-based evaluation
-    // ═══════════════════════════════════════════════════════════════
-
-    if (naturalClose) {
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 2,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: true,
-      });
-    }
-
-    if (triggered) {
-      // First warning
-      // Record the trigger event for return-tracking
+    if (remainingBefore === 2) {
       this.recordQuotaTriggerEvent(userId, agentId, {
         triggerType: QuotaTriggerType.warned,
         triggeredAt: now,
         dayMsgs: todayMsgs,
         lifetimeMsgs: totalLifetimeMsgs,
         triggered: true,
-        matchedConditions: matched,
+        matchedConditions: ['dailyLimit'],
         warnCount: 1,
-      });
-      return this.buildQuotaResult({
-        path: isNewUser ? 'trial' : 'active',
-        remainingCount: 1,
-        totalLifetimeMsgs,
-        todayMsgs,
-        sessionMsgCount,
-        triggered: true,
-        matchedConditions: matched,
-        naturalCloseExempted: false,
-        warned: true,
-        blocked: false,
       });
     }
 
-    // Not triggered, not warned → completely free pass
     return this.buildQuotaResult({
-      path: isNewUser ? 'trial' : 'active',
-      remainingCount: 99,
+      path: 'trial',
+      policy: 'trial',
+      limit,
+      usedCount: todayMsgs,
+      remainingCount: remainingBefore,
       totalLifetimeMsgs,
       todayMsgs,
       sessionMsgCount,
-      triggered: false,
-      matchedConditions: matched,
-      naturalCloseExempted: false,
+      triggered: remainingBefore === 2,
+      matchedConditions: remainingBefore === 2 ? ['dailyLimit'] : [],
+      warned: remainingBefore === 2,
+      blocked: false,
+      trial,
     });
   }
 
@@ -3365,16 +3835,22 @@ export class ConversationService {
     naturalCloseExempted?: boolean;
     warned?: boolean;
     blocked?: boolean;
-    policy?: 'trial' | 'daily' | 'deep_trigger';
+    policy?: 'trial_pending' | 'trial' | 'daily' | 'deep_trigger';
     limit?: number;
+    usedCount?: number;
+    trial?: ChatTrialResolution;
   }): ConversationChatQuotaSnapshot {
     const limit = params.limit ?? (params.remainingCount <= 1 ? 1 : 99);
     return {
       isVip: false,
       policy: params.policy ?? 'deep_trigger',
       limit,
-      usedCount: params.totalLifetimeMsgs,
+      usedCount: params.usedCount ?? params.totalLifetimeMsgs,
       remainingCount: Math.max(params.remainingCount, 0),
+      trialDays: QUOTA_CONFIG.newUserTrialDays,
+      trialStatus: params.trial?.status,
+      trialActivatedAt: params.trial?.activatedAt?.toISOString(),
+      trialExpiresAt: params.trial?.expiresAt?.toISOString(),
       triggerDecision: {
         version: QUOTA_CONFIG.version,
         path: params.path,
@@ -3384,41 +3860,12 @@ export class ConversationService {
         sessionMsgCount: params.sessionMsgCount,
         matchedConditions: params.matchedConditions,
         naturalCloseExempted: params.naturalCloseExempted ?? false,
-        returnVisitCount: 0,
-        lastMessageGapDays: 0,
+        returnVisitCount: params.trial?.returnVisitActivated ? 1 : 0,
+        lastMessageGapDays: params.trial?.lastMessageGapDays ?? 0,
         warned: params.warned ?? false,
         blocked: params.blocked ?? false,
       },
     };
-  }
-
-  private async isUserInTrialPeriod(
-    runtime: ReplyRuntime,
-    now: Date
-  ): Promise<boolean> {
-    const accountId = this.normalizeObjectId(runtime.auth.accountId);
-    const account = accountId
-      ? await this.userAccountModel.findOne({
-          where: {
-            _id: accountId,
-            userId: runtime.conversation.userId,
-          },
-        } as any)
-      : null;
-    const user = account?.createdAt
-      ? null
-      : await this.userModel.findOne({
-          where: { _id: runtime.conversation.userId },
-        } as any);
-    const registeredAt = account?.createdAt || user?.createdAt;
-    if (!registeredAt) return false;
-
-    const registrationDay = this.getBeijingDayStart(new Date(registeredAt));
-    const currentDay = this.getBeijingDayStart(now);
-    const daysSinceRegister = Math.floor(
-      (currentDay.getTime() - registrationDay.getTime()) / 86400000
-    );
-    return daysSinceRegister < QUOTA_CONFIG.newUserTrialDays;
   }
 
   private async countSessionMessages(
@@ -3442,80 +3889,6 @@ export class ConversationService {
       status: MessageStatus.sent,
       quotaExempt: { $ne: true },
     } as never);
-  }
-
-  private async getLastRelationshipStage(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<string | null> {
-    const lastAssistantMsg = await this.messageModel.findOne({
-      where: {
-        userId,
-        agentId,
-        role: MessageRole.assistant,
-        replyRelationshipStage: { $exists: true, $ne: null },
-      },
-      order: { createdAt: 'DESC' },
-    } as any);
-    return lastAssistantMsg?.replyRelationshipStage ?? null;
-  }
-
-  private async isStageJustPromoted(
-    userId: MongoObjectId,
-    agentId: MongoObjectId
-  ): Promise<boolean> {
-    const lastTwo = await this.messageModel.find({
-      where: {
-        userId,
-        agentId,
-        role: MessageRole.assistant,
-        replyRelationshipStage: { $exists: true, $ne: null },
-      },
-      order: { createdAt: 'DESC' },
-      take: 2,
-    } as any);
-    if (lastTwo.length < 2) return false;
-    const cur = lastTwo[0]?.replyRelationshipStage;
-    const prev = lastTwo[1]?.replyRelationshipStage;
-    if (!cur || !prev) return false;
-    const stageRank: Record<string, number> = {
-      R0: 0,
-      R1: 1,
-      R2: 2,
-      R3: 3,
-      R4: 4,
-    };
-    const curRank = stageRank[cur] ?? 0;
-    const prevRank = stageRank[prev] ?? 0;
-    return curRank > prevRank && curRank >= 2;
-  }
-
-  private async wasQuotaWarningSent(
-    userId: MongoObjectId,
-    agentId: MongoObjectId,
-    now: Date
-  ): Promise<boolean> {
-    // Check for any warned message today (not just the last one),
-    // so non-triggered messages between triggered ones don't reset the counter.
-    const dayStart = this.getBeijingDayStart(now);
-    const warnedMsg = (
-      await this.messageModel.find({
-        where: {
-          userId,
-          agentId,
-          role: MessageRole.user,
-          quotaWarned: true,
-          createdAt: { $gte: dayStart },
-        },
-        order: { createdAt: 'ASC' },
-        take: 1,
-      } as any)
-    )[0];
-
-    if (!warnedMsg) return false;
-
-    const warnedAt = new Date(warnedMsg.createdAt);
-    return now.getTime() - warnedAt.getTime() < 24 * 60 * 60 * 1000;
   }
 
   private async isUserVip(userId: MongoObjectId, now: Date): Promise<boolean> {
@@ -3626,34 +3999,68 @@ export class ConversationService {
     const containsImage = currentTurnMessages.some(
       message => message.type === MessageType.image
     );
+    const deliberateLongReplyCandidate = before.deliberateLongReplyExecution
+      ? undefined
+      : assessDeliberateLongReplyCandidate({
+          texts: currentTurnMessages.map(message =>
+            this.buildSearchableTextFromMessage(message)
+          ),
+          allMessagesAreText: currentTurnMessages.every(
+            message => message.type === MessageType.text
+          ),
+        });
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.plan,
+      operation: 'deliberate_long_reply.candidate',
+      startedAt: new Date(),
+      attributes: {
+        eligible: deliberateLongReplyCandidate?.eligible ?? false,
+        visibleCharacters: deliberateLongReplyCandidate?.visibleCharacters ?? 0,
+        exclusion: deliberateLongReplyCandidate?.exclusion,
+        typeHint: deliberateLongReplyCandidate?.typeHint,
+        executionTaskId: before.deliberateLongReplyExecution?.taskId,
+      },
+    });
 
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
-    const recognitionJourneyPlan = await this.prepareRecognitionJourneyTurn({
-      runtime,
-      before,
-      currentTurnMessages,
-    });
+    const recognitionJourneyPlan =
+      before.deliberateLongReplyExecution ||
+      deliberateLongReplyCandidate?.eligible
+        ? undefined
+        : await this.prepareRecognitionJourneyTurn({
+            runtime,
+            before,
+            currentTurnMessages,
+          });
     // Recognition owns the single actionable task slot. Current-association
     // evidence may still be loaded because it is context, not another task.
-    const relationshipOpenLoopTurn = await this.relationshipOpenLoopService
-      ?.prepareTurn({
-        conversation: runtime.conversation,
-        currentQuery: before.searchableText,
-        currentTurnMessages,
-        allowFollowUpTask: !recognitionJourneyPlan?.prompt,
-      })
-      .catch(error => {
-        this.logger?.warn?.(
-          '[conversation] relationship open loop selection skipped, conversationId=%s reason=%s',
-          this.stringifyObjectId(runtime.conversation.id),
-          this.describeReplyError(error)
-        );
-        return undefined;
-      });
+    const relationshipOpenLoopTurn = before.deliberateLongReplyExecution
+      ? undefined
+      : await this.relationshipOpenLoopService
+          ?.prepareTurn({
+            conversation: runtime.conversation,
+            currentQuery: before.searchableText,
+            currentTurnMessages,
+            allowFollowUpTask: Boolean(
+              !recognitionJourneyPlan?.prompt &&
+                !deliberateLongReplyCandidate?.eligible
+            ),
+          })
+          .catch(error => {
+            this.logger?.warn?.(
+              '[conversation] relationship open loop selection skipped, conversationId=%s reason=%s',
+              this.stringifyObjectId(runtime.conversation.id),
+              this.describeReplyError(error)
+            );
+            return undefined;
+          });
     const relationshipOpenLoopStatus =
-      relationshipOpenLoopTurn?.status || 'service_unavailable';
+      relationshipOpenLoopTurn?.status ||
+      (before.deliberateLongReplyExecution
+        ? 'suppressed_by_deliberate_execution'
+        : 'service_unavailable');
     this.chatTraceService?.recordCompletedSpan({
       stage: ChatTraceStage.contextLoad,
       operation: 'relationship_open_loop.selection',
@@ -3691,7 +4098,9 @@ export class ConversationService {
     if (
       shortTurnGeneration.mode === 'micro_model' &&
       !recognitionJourneyPlan?.prompt &&
-      !relationshipOpenLoopTurn?.prompt
+      !relationshipOpenLoopTurn?.prompt &&
+      !deliberateLongReplyCandidate?.eligible &&
+      !before.deliberateLongReplyExecution
     ) {
       try {
         return await this.processLightweightReply({
@@ -3711,10 +4120,12 @@ export class ConversationService {
       }
     }
 
-    const memoryControlResult = await this.applyExplicitMemoryControl(
-      before.userMessage,
-      before.searchableText
-    );
+    const memoryControlResult = before.deliberateLongReplyExecution
+      ? undefined
+      : await this.applyExplicitMemoryControl(
+          before.userMessage,
+          before.searchableText
+        );
 
     try {
       context = await this.withTraceSpan(
@@ -3726,15 +4137,25 @@ export class ConversationService {
             conversation: runtime.conversation,
             agent: runtime.agent,
             currentQuery: before.searchableText,
-            currentTurnMessageIds: currentTurnMessages.map(message =>
-              this.stringifyObjectId(message.id)
-            ),
+            currentTurnMessageIds: before.deliberateLongReplyExecution
+              ? []
+              : currentTurnMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                ),
             forceSemanticPlanning:
               currentTurnMessages.length > 1 || containsImage,
             memoryControlResult,
             effectiveChatModel: effectiveChatModel || undefined,
             recognitionJourneyPrompt: recognitionJourneyPlan?.prompt,
             continuityInformationCardPrompt: relationshipOpenLoopTurn?.prompt,
+            deliberateLongReplyCandidate,
+            deliberateLongReplyExecutionPrompt:
+              before.deliberateLongReplyExecution?.prompt,
+            pinnedHistoryMessageIds: before.deliberateLongReplyExecution
+              ? currentTurnMessages.map(message =>
+                  this.stringifyObjectId(message.id)
+                )
+              : undefined,
           })
       );
     } catch (error) {
@@ -3771,10 +4192,12 @@ export class ConversationService {
 
     const contextEvidence = context.evidence || [];
     let reviewEvidence = contextEvidence;
-    this.scheduleRelationshipSignals(
-      before.userMessage,
-      context.replyIntent ?? context.replyRoute?.intent
-    );
+    if (!before.deliberateLongReplyExecution) {
+      this.scheduleRelationshipSignals(
+        before.userMessage,
+        context.replyIntent ?? context.replyRoute?.intent
+      );
+    }
     const primaryIntent =
       context.replyRoute?.responseIntents?.[0] ??
       context.replyIntent?.intents?.[0];
@@ -3838,6 +4261,9 @@ export class ConversationService {
     let response;
     let replySegments: string[];
     let replyClaims: AssistantFactClaim[] = [];
+    let deliberateFollowUpDecision:
+      | DeliberateLongReplyModelDecision
+      | undefined;
     let generationUsage: ReplyUsage = {};
     let generationRecoveryAttempted = false;
     let generationRecoverySucceeded = false;
@@ -3895,6 +4321,7 @@ export class ConversationService {
         })
       );
       replyClaims = parsedReply.claims;
+      deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
       replySegments = this.normalizeAssistantReplySegments(
         plannedSegments,
         before.searchableText
@@ -3983,6 +4410,7 @@ export class ConversationService {
           })
         );
         replyClaims = parsedReply.claims;
+        deliberateFollowUpDecision = parsedReply.deliberateFollowUpDecision;
         replySegments = this.normalizeAssistantReplySegments(
           plannedSegments,
           before.searchableText
@@ -4091,6 +4519,9 @@ export class ConversationService {
         ) {
           replySegments = activeExpressionSegments;
           replyClaims = activeExpressionParsed.claims;
+          deliberateFollowUpDecision =
+            activeExpressionParsed.deliberateFollowUpDecision ||
+            deliberateFollowUpDecision;
         }
       } catch (activeExpressionRecoveryError) {
         generationAttemptTraces.push(
@@ -4329,6 +4760,25 @@ export class ConversationService {
       });
     }
 
+    const deliberateCommitment = recoverDeliberateLongReplyCommitment({
+      candidate: deliberateLongReplyCandidate,
+      decision: deliberateFollowUpDecision,
+      segments: participationResult.segments,
+    });
+    participationResult.segments = deliberateCommitment.segments;
+    deliberateFollowUpDecision = deliberateCommitment.decision;
+    if (deliberateCommitment.recovered) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.commitment_recovered',
+        startedAt: new Date(),
+        attributes: {
+          source: deliberateCommitment.source,
+          action: deliberateFollowUpDecision?.action,
+        },
+      });
+    }
+
     this.chatTraceService?.recordArtifact({
       stage: ChatTraceStage.persistReply,
       kind: ChatTraceArtifactKind.finalBubbles,
@@ -4365,6 +4815,8 @@ export class ConversationService {
     return this.attachTurnStatePlans(
       {
         replySegments: participationResult.segments,
+        deliberateLongReplyCandidate,
+        deliberateFollowUpDecision,
         usage: this.mergeReplyUsage(
           this.mergeReplyUsage(generationUsage, guarded.revisionUsage),
           finalizationUsage
@@ -4406,6 +4858,13 @@ export class ConversationService {
           evidenceCount: reviewEvidence.length,
           factClaimCount: finalClaims.length,
           unsupportedClaimCount: guarded.unsupportedClaimCount ?? 0,
+          deliberateLongReplyCandidate:
+            deliberateLongReplyCandidate?.eligible ?? false,
+          deliberateLongReplyVisibleCharacters:
+            deliberateLongReplyCandidate?.visibleCharacters,
+          deliberateLongReplyExclusion: deliberateLongReplyCandidate?.exclusion,
+          deliberateFollowUpAction: deliberateFollowUpDecision?.action,
+          deliberateFollowUpReason: deliberateFollowUpDecision?.reason,
           qualityAuditVersion: replyQualityAudit?.version,
           qualityActivatedDimensions: replyQualityAudit?.activatedDimensions,
           qualityInitialFailedDimensions:
@@ -4795,8 +5254,9 @@ export class ConversationService {
         }
         return;
       }
-      // Product milestones can only advance from the exact final visible
-      // messages that were persisted, not from a draft held in memory.
+
+      // Read back the exact final visible messages before a product milestone
+      // can advance. The generation result is not evidence of persistence.
       const persistedAssistantMessages = (
         await Promise.all(
           options.assistantMessages.map(message =>
@@ -5229,10 +5689,11 @@ export class ConversationService {
   }): Promise<PrimaryAssistantCompletionResult> {
     const plan = options.context.chatToolPlan;
     const inputProfile = options.context.replyBrief?.lengthPlan;
-    const replyMaxTokens =
-      inputProfile?.inputDensity === 'dense'
-        ? ASSISTANT_DENSE_TURN_MAX_TOKENS
-        : ASSISTANT_REPLY_MAX_TOKENS;
+    const replyMaxTokens = options.before.deliberateLongReplyExecution
+      ? DELIBERATE_LONG_REPLY_MAX_TOKENS
+      : inputProfile?.inputDensity === 'dense'
+      ? ASSISTANT_DENSE_TURN_MAX_TOKENS
+      : ASSISTANT_REPLY_MAX_TOKENS;
     const tools =
       plan?.mode === 'active'
         ? getAgentChatToolDefinitions(plan.availableTools)
@@ -5263,6 +5724,9 @@ export class ConversationService {
             inputParagraphCount: inputProfile?.inputParagraphCount || undefined,
             inputClauseCount: inputProfile?.inputClauseCount || undefined,
             replyMaxTokens,
+            deliberateLongReplyExecution: Boolean(
+              options.before.deliberateLongReplyExecution
+            ),
           },
         },
       },
@@ -5396,6 +5860,9 @@ export class ConversationService {
             inputVisibleCharacters:
               inputProfile?.inputVisibleCharacters || undefined,
             replyMaxTokens,
+            deliberateLongReplyExecution: Boolean(
+              options.before.deliberateLongReplyExecution
+            ),
           },
         },
       },
@@ -6121,25 +6588,38 @@ export class ConversationService {
       return { assistantMessages: [] };
     }
 
-    const assistantMessages =
-      (await this.createAssistantVoiceReplyMessages({
-        runtime,
-        before,
-        replySegments: processed.replySegments,
-        replyTime,
-        usage: processed.usage,
-        routing: processed.routing,
-      })) ??
-      (await this.createAssistantReplyMessages({
-        conversationId: runtime.conversation.id,
-        userId: runtime.conversation.userId,
-        agentId: runtime.conversation.agentId,
-        replySegments: processed.replySegments,
-        userQuery: before.searchableText,
-        replyTime,
-        usage: processed.usage,
-        routing: processed.routing,
-      }));
+    // A scheduled morning reply is text-only so every bubble can carry the
+    // durable task marker used to make queue retries idempotent.
+    const assistantMessages = before.deliberateLongReplyExecution
+      ? await this.createAssistantReplyMessages({
+          conversationId: runtime.conversation.id,
+          userId: runtime.conversation.userId,
+          agentId: runtime.conversation.agentId,
+          replySegments: processed.replySegments,
+          userQuery: before.searchableText,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+          deliberateReplyTaskId: before.deliberateLongReplyExecution.taskId,
+        })
+      : (await this.createAssistantVoiceReplyMessages({
+          runtime,
+          before,
+          replySegments: processed.replySegments,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+        })) ??
+        (await this.createAssistantReplyMessages({
+          conversationId: runtime.conversation.id,
+          userId: runtime.conversation.userId,
+          agentId: runtime.conversation.agentId,
+          replySegments: processed.replySegments,
+          userQuery: before.searchableText,
+          replyTime,
+          usage: processed.usage,
+          routing: processed.routing,
+        }));
 
     await this.finalizeRecognitionJourneyTurn({
       runtime,
@@ -6148,6 +6628,12 @@ export class ConversationService {
     });
     await this.finalizeRelationshipOpenLoopTurn({
       runtime,
+      processed,
+      assistantMessages,
+    });
+    await this.scheduleDeliberateLongReplyIfSelected({
+      runtime,
+      before,
       processed,
       assistantMessages,
     });
@@ -6161,6 +6647,124 @@ export class ConversationService {
     return {
       assistantMessages,
     };
+  }
+
+  private async scheduleDeliberateLongReplyIfSelected(options: {
+    runtime: ReplyRuntime;
+    before: BeforeReplyResult;
+    processed: ProcessReplyResult;
+    assistantMessages: MessageEntity[];
+  }): Promise<void> {
+    const candidate = options.processed.deliberateLongReplyCandidate;
+    const decision = options.processed.deliberateFollowUpDecision;
+    if (
+      options.before.deliberateLongReplyExecution ||
+      !candidate?.eligible ||
+      !this.deliberateLongReplyService
+    ) {
+      return;
+    }
+    if (decision?.action === 'none') {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.declined',
+        startedAt: new Date(),
+        attributes: {
+          reason: decision.reason,
+        },
+      });
+      return;
+    }
+    const visibleReply = options.assistantMessages
+      .map(message => message.mediaTranscript || message.content || '')
+      .join('\n');
+    const { hasThoughtfulPromise, hasMorningPromise } =
+      inspectDeliberateReplyCommitment(visibleReply);
+    const explicitModelSelection = decision?.action === 'schedule_next_morning';
+    if (!hasThoughtfulPromise || !hasMorningPromise) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.schedule_suppressed',
+        startedAt: new Date(),
+        attributes: {
+          reason: 'final_reply_did_not_expose_follow_up_promise',
+          action: decision?.action || 'missing',
+          hasThoughtfulPromise,
+          hasMorningPromise,
+        },
+      });
+      return;
+    }
+    const effectiveDecision: DeliberateLongReplyModelDecision =
+      explicitModelSelection
+        ? decision
+        : {
+            action: 'schedule_next_morning',
+            reason: 'other',
+            focus: [],
+          };
+    const sourceMessages = this.resolveCurrentTurnMessages(options.before);
+    if (!sourceMessages.length) return;
+    try {
+      const scheduled = await this.deliberateLongReplyService.schedule({
+        conversationId: options.runtime.conversation.id,
+        userId: options.runtime.conversation.userId,
+        agentId: options.runtime.conversation.agentId,
+        sourceMessageIds: sourceMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+        acknowledgementMessageIds: options.assistantMessages.map(message =>
+          this.stringifyObjectId(message.id)
+        ),
+        sourceText: options.before.searchableText,
+        sourceOccurredAt: sourceMessages.reduce(
+          (latest, message) =>
+            message.createdAt > latest ? message.createdAt : latest,
+          sourceMessages[0].createdAt
+        ),
+        decision: effectiveDecision,
+      });
+      if (options.processed.routing) {
+        options.processed.routing.deliberateFollowUpTaskId =
+          this.stringifyObjectId(scheduled.task.id);
+        options.processed.routing.deliberateFollowUpScheduledAt =
+          scheduled.task.scheduledAt;
+      }
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.scheduled',
+        startedAt: new Date(),
+        attributes: {
+          taskId: this.stringifyObjectId(scheduled.task.id),
+          action: scheduled.action,
+          queued: scheduled.queued,
+          readbackVerified: scheduled.readbackVerified,
+          scheduledAt: scheduled.task.scheduledAt.toISOString(),
+          deliveryWindowEndAt:
+            scheduled.task.deliveryWindowEndAt?.toISOString(),
+          sourceMessageCount: scheduled.task.sourceMessageIds.length,
+          decisionSource: explicitModelSelection
+            ? 'model_envelope'
+            : 'visible_promise_recovery',
+        },
+      });
+    } catch (error) {
+      // The current reply remains valid even when the optional future task
+      // cannot be persisted. Record the failure without turning it into a
+      // technical fallback visible to the user.
+      this.logger?.error?.(
+        '[deliberate-reply] schedule failed, conversationId=%s reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        this.describeReplyError(error)
+      );
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'deliberate_long_reply.schedule_failed',
+        startedAt: new Date(),
+        status: ChatSpanStatus.failed,
+        attributes: { reason: this.describeReplyError(error) },
+      });
+    }
   }
 
   private scheduleConversationSummaryRefresh(
@@ -7770,6 +8374,7 @@ export class ConversationService {
       totalTokens?: number;
     };
     routing?: ReplyRoutingAudit;
+    deliberateReplyTaskId?: string;
   }): Promise<MessageEntity[]> {
     const replyGroupId = new MongoObjectId().toHexString();
     const messages: MessageEntity[] = [];
@@ -7807,6 +8412,7 @@ export class ConversationService {
             ? this.buildReplyRoutingMessageFields(options.routing)
             : {}),
           traceId: this.chatTraceService?.getCurrentTraceId(),
+          deliberateReplyTaskId: options.deliberateReplyTaskId,
           createdAt: segmentTime,
           updatedAt: segmentTime,
         })
@@ -7966,6 +8572,10 @@ export class ConversationService {
         speed: input.voiceTimbre.speechSpeed,
         volume: input.voiceTimbre.speechVolume,
         pitch: input.voiceTimbre.speechPitch,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
+        dialect: input.voiceTimbre.speechDialect,
       });
     }
 
@@ -7975,6 +8585,11 @@ export class ConversationService {
         voiceId: input.voiceTimbre.providerVoiceId,
         model: input.voiceTimbre.previewModel,
         language: input.voiceTimbre.cloneLanguage,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
+        dialect: input.voiceTimbre.speechDialect,
+        speed: input.voiceTimbre.speechSpeed,
       });
       const speechSpeed = this.voiceSpeechSetting(
         input.voiceTimbre.speechSpeed,
@@ -7988,7 +8603,16 @@ export class ConversationService {
         0.25,
         2
       );
-      if (speechSpeed === 1 && speechVolume === 1) {
+      const speechPitch = this.voiceSpeechSetting(
+        input.voiceTimbre.speechPitch,
+        0,
+        -12,
+        12
+      );
+      const outputSpeechSpeed = synthesized.nativeSpeechSpeedApplied
+        ? 1
+        : speechSpeed;
+      if (outputSpeechSpeed === 1 && speechVolume === 1 && speechPitch === 0) {
         return synthesized;
       }
       const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
@@ -7996,8 +8620,47 @@ export class ConversationService {
         fileName: synthesized.mimeType.includes('mpeg')
           ? 'speech.mp3'
           : 'speech.wav',
-        speechSpeed,
+        speechSpeed: outputSpeechSpeed,
         speechVolume,
+        speechPitch,
+      });
+      return {
+        audioUrl: '',
+        audioBuffer: adjusted.buffer,
+        mimeType: adjusted.contentType,
+      };
+    }
+
+    if (input.voiceTimbre.provider === VoiceTimbreProvider.doubao) {
+      const synthesized = await this.doubaoVoiceSpeechService.synthesize({
+        text: input.text,
+        voiceId: input.voiceTimbre.providerVoiceId,
+        model: input.voiceTimbre.previewModel,
+        ...(input.voiceTimbre.speechInstruction?.trim()
+          ? { instruction: input.voiceTimbre.speechInstruction.trim() }
+          : {}),
+        dialect: input.voiceTimbre.speechDialect,
+        speed: input.voiceTimbre.speechSpeed,
+        volume: input.voiceTimbre.speechVolume,
+      });
+      // Doubao 原生已处理语速/音量；音调继续由平台 FFmpeg 输出层调整
+      const speechPitch = this.voiceSpeechSetting(
+        input.voiceTimbre.speechPitch,
+        0,
+        -12,
+        12
+      );
+      if (speechPitch === 0) {
+        return synthesized;
+      }
+      const adjusted = await this.voiceFfmpegService.adjustSpeechOutput({
+        buffer: synthesized.audioBuffer,
+        fileName: synthesized.mimeType.includes('mpeg')
+          ? 'speech.mp3'
+          : 'speech.wav',
+        speechSpeed: 1,
+        speechVolume: 1,
+        speechPitch,
       });
       return {
         audioUrl: '',
@@ -8911,6 +9574,9 @@ export class ConversationService {
     return {
       segments: this.parseAssistantReplyCandidates(content),
       claims: this.normalizeAssistantFactClaims(parsed?.claims),
+      deliberateFollowUpDecision: this.normalizeDeliberateFollowUpDecision(
+        parsed?.deliberateFollowUp
+      ),
       ...(allowedToolNames.length
         ? {
             toolDecisions: toolDecisionResult.decisions,
@@ -8918,6 +9584,46 @@ export class ConversationService {
           }
         : {}),
     };
+  }
+
+  private normalizeDeliberateFollowUpDecision(
+    value: unknown
+  ): DeliberateLongReplyModelDecision | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = value as Record<string, unknown>;
+    const action = raw.action;
+    if (action !== 'schedule_next_morning' && action !== 'none') {
+      return undefined;
+    }
+    const allowedReasons = new Set<DeliberateLongReplyModelDecision['reason']>([
+      'personal_disclosure',
+      'relationship_letter',
+      'multi_event_life_update',
+      'mixed_personal_and_quote',
+      'poetry_or_quotation',
+      'forwarded_or_reference_material',
+      'transactional_or_factual',
+      'already_complete',
+      'other',
+    ]);
+    const reason =
+      typeof raw.reason === 'string' &&
+      allowedReasons.has(
+        raw.reason as DeliberateLongReplyModelDecision['reason']
+      )
+        ? (raw.reason as DeliberateLongReplyModelDecision['reason'])
+        : 'other';
+    const focus = Array.isArray(raw.focus)
+      ? Array.from(
+          new Set(
+            raw.focus
+              .map(item => (typeof item === 'string' ? item.trim() : ''))
+              .filter(Boolean)
+              .map(item => item.slice(0, 120))
+          )
+        ).slice(0, 3)
+      : [];
+    return { action, reason, focus };
   }
 
   private normalizeAssistantFactClaims(value: unknown): AssistantFactClaim[] {
@@ -9049,7 +9755,7 @@ export class ConversationService {
     }
 
     const repairedKnownKeys = withoutFence.replace(
-      /([{,]\s*):?\s*(segments|claims|toolDecisions|text)\s*:/g,
+      /([{,]\s*):?\s*(segments|claims|toolDecisions|deliberateFollowUp|text)\s*:/g,
       '$1"$2":'
     );
     if (repairedKnownKeys !== withoutFence) {
@@ -9689,6 +10395,7 @@ export class ConversationService {
     replySegmentIndex?: number;
     clientRequestId?: string;
     traceId?: string;
+    deliberateReplyTaskId?: string;
     quotedMessageId?: MongoObjectId;
     quotedMessageRole?: MessageRole;
     quotedMessageContent?: string;
@@ -9840,6 +10547,8 @@ export class ConversationService {
     message.clientRequestId = options.clientRequestId?.trim() || undefined;
     message.traceId =
       options.traceId?.trim() || this.chatTraceService?.getCurrentTraceId();
+    message.deliberateReplyTaskId =
+      options.deliberateReplyTaskId?.trim() || undefined;
     message.quotedMessageId = options.quotedMessageId;
     message.quotedMessageRole = options.quotedMessageRole;
     message.quotedMessageContent = options.quotedMessageContent?.trim() || '';

@@ -78,6 +78,8 @@
             <text class="moments-notice__text">{{ notificationText }}</text>
           </view>
           <view v-else class="moments-notice-spacer" />
+
+          <moments-ticker />
         </view>
 
         <view v-if="shouldShowPostsFeedback" class="moments-feedback">
@@ -201,6 +203,7 @@ import Taro, { useDidHide, useDidShow, useShareAppMessage, useShareTimeline } fr
 import {
   createComment,
   deletePost,
+  getCachedPostFeed,
   getPosts,
   likePost,
   unlikePost,
@@ -208,12 +211,13 @@ import {
   type PostItem,
 } from '../../apis/post'
 import { preloadConversations } from '../../apis/conversation'
-import { preloadVipPurchaseCenter } from '../../apis/membership'
 import { ApiException } from '../../api/api-exception'
+import { brand } from '../../config/brand'
 import keyboardIconUrl from '../../assets/icon/keyboard.svg'
 import AppBar from '../../components/app-bar/app-bar.vue'
 import EmojiPickerPanel from '../../components/emoji-picker-panel/emoji-picker-panel.vue'
 import MomentCard from '../../components/moment-card/moment-card.vue'
+import MomentsTicker from '../../components/moments-ticker/moments-ticker.vue'
 import PageScaffold from '../../components/page-scaffold/page-scaffold.vue'
 import TopPromoBanner from '../../components/top-promo-banner/top-promo-banner.vue'
 import { authSession, restoreAuthSession } from '../../auth/session'
@@ -225,10 +229,15 @@ import {
   unseenPostNotificationCount,
 } from '../../post/comment-notification-state'
 import { syncCustomTabBar } from '../../utils/custom-tab-bar'
+import { reportPerformanceEvent } from '../../utils/product-analytics'
 
 interface PageScaffoldController {
   openLoginPrompt: () => void
 }
+
+const momentsPageStartedAt = Date.now()
+let hasReportedCachedContent = false
+let hasReportedFirstData = false
 
 const pageScaffoldRef = ref<PageScaffoldController | null>(null)
 const isCheckingAuth = ref(true)
@@ -259,6 +268,7 @@ let isSwitchingCommentInputMode = false
 let commentInputSwitchingTimer: ReturnType<typeof setTimeout> | null = null
 let commentBlurCloseTimer: ReturnType<typeof setTimeout> | null = null
 let commentFocusTimer: ReturnType<typeof setTimeout> | null = null
+let conversationPreloadTimer: ReturnType<typeof setTimeout> | null = null
 let lastKnownMomentsScrollTop = 0
 let isPreviewingPostImage = false
 
@@ -267,14 +277,14 @@ const TOP_PROMO_BANNER_HEIGHT = 220
 const COLLAPSED_APP_BAR_SHOW_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT + 12
 const COLLAPSED_APP_BAR_HIDE_SCROLL_TOP = TOP_PROMO_BANNER_HEIGHT - 16
 const COMMENT_BLUR_CLOSE_DELAY = 120
-const MOMENTS_SHARE_TITLE = '来未了言看看新的动态'
+const MOMENTS_SHARE_TITLE = `来${brand.name}看看新的动态`
 const MOMENTS_SHARE_PATH = '/pages/index/index'
 
 const session = computed(() => authSession.value)
-const currentUserAvatar = computed(() => session.value?.user.avatar.trim() ?? '')
+const currentUserAvatar = computed(() => normalizeText(session.value?.user?.avatar))
 const currentUserAvatarFallback = computed(() => {
-  const name = session.value?.user.name.trim()
-  const account = session.value?.user.account.trim()
+  const name = normalizeText(session.value?.user?.name)
+  const account = normalizeText(session.value?.user?.account)
   const fallback = name || account || '我'
 
   return fallback.slice(0, 1)
@@ -355,7 +365,7 @@ function getPostImages(post: PostItem) {
 }
 
 function getReplyTargetName(comment: PostCommentItem) {
-  return normalizeText(comment.replyToUserName) || normalizeText(comment.authorName) || '未了言用户'
+  return normalizeText(comment.replyToUserName) || normalizeText(comment.authorName) || `${brand.name}用户`
 }
 
 function isPostLikePending(postId: string) {
@@ -367,7 +377,9 @@ function isPostDeletePending(postId: string) {
 }
 
 function isMyPost(post: PostItem) {
-  return Boolean(session.value?.user.id && post.userId === session.value.user.id)
+  const userId = session.value?.user?.id
+
+  return Boolean(userId && post.userId === userId)
 }
 
 function setPostLikePending(postId: string, pending: boolean) {
@@ -470,6 +482,15 @@ async function refreshMomentsData(showLoading = true) {
       currentPostPage.value = postResult.page
       hasMorePosts.value = postResult.hasMore
       hasLoadedPosts.value = true
+      if (!hasReportedFirstData) {
+        hasReportedFirstData = true
+        reportPerformanceEvent(
+          'first_data',
+          'moments',
+          Date.now() - momentsPageStartedAt,
+          'network',
+        )
+      }
     })
     .catch((error) => {
       if (error instanceof ApiException) {
@@ -524,10 +545,47 @@ async function preparePage() {
     isCheckingAuth.value = true
   }
 
-  await restoreAuthSession()
-  preloadVipCenterWhenAuthenticated()
-  await refreshMomentsData(!hasLoadedPosts.value)
-  isCheckingAuth.value = false
+  try {
+    await Promise.race([
+      restoreAuthSession().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 3000)
+      }),
+    ])
+
+    if (!hasLoadedPosts.value) {
+      let cachedFeed: ReturnType<typeof getCachedPostFeed>
+      try {
+        cachedFeed = getCachedPostFeed(POST_PAGE_SIZE)
+      } catch (error) {
+        console.error('[moments] cached feed read failed', error)
+      }
+
+      if (cachedFeed?.items.length) {
+        posts.value = cachedFeed.items
+        currentPostPage.value = cachedFeed.page
+        hasMorePosts.value = cachedFeed.hasMore
+        hasLoadedPosts.value = true
+        isCheckingAuth.value = false
+        if (!hasReportedCachedContent) {
+          hasReportedCachedContent = true
+          reportPerformanceEvent(
+            'first_cached_content',
+            'moments',
+            Date.now() - momentsPageStartedAt,
+            'storage',
+          )
+        }
+      }
+    }
+
+    await refreshMomentsData(!hasLoadedPosts.value)
+    scheduleConversationPreload()
+  } catch (error) {
+    console.error('[moments] preparePage failed', error)
+  } finally {
+    isCheckingAuth.value = false
+  }
 }
 
 function handleRetry() {
@@ -1005,7 +1063,6 @@ useShareTimeline(() => ({
 useDidShow(() => {
   syncCustomTabBar('/pages/index/index')
   showMomentsShareMenu()
-  preloadVipCenterWhenAuthenticated()
   initCommentNotificationPolling()
 
   if (isPreviewingPostImage) {
@@ -1016,14 +1073,23 @@ useDidShow(() => {
   void preparePage()
 })
 
-function preloadVipCenterWhenAuthenticated() {
-  if (authSession.value) {
-    preloadVipPurchaseCenter()
-    preloadConversations()
+function scheduleConversationPreload() {
+  if (!authSession.value || conversationPreloadTimer) {
+    return
   }
+
+  conversationPreloadTimer = setTimeout(() => {
+    conversationPreloadTimer = null
+    preloadConversations()
+  }, 1500)
 }
 
 useDidHide(() => {
+  if (conversationPreloadTimer) {
+    clearTimeout(conversationPreloadTimer)
+    conversationPreloadTimer = null
+  }
+
   closeCommentComposer()
 })
 </script>
@@ -1101,7 +1167,7 @@ useDidHide(() => {
 .moments-profile-entry {
   position: absolute;
   top: 188px;
-  right: 22px;
+  left: 22px;
   z-index: 3;
   width: 64px;
   height: 64px;

@@ -17,11 +17,15 @@ import {
   ConversationChatImportBatchEntity,
   ConversationChatImportItemEntity,
   ConversationMessageFeedbackEntity,
+  ConversationDeliberateReplyTaskEntity,
+  ConversationReplyTurnEntity,
   ConversationEntity,
   CouponLedgerEntity,
+  FreeChatAgentLedgerEntity,
   MessageEntity,
   MessengerCallEventEntity,
   OrderEntity,
+  OrderRefundEntity,
   PostCommentEntity,
   PostCommentNotificationEntity,
   PostLikeEntity,
@@ -184,6 +188,14 @@ function readPemFrom(
 
 export default {
   keys: readStringFrom(['NODE_APP_KEYS'], '1774073039411_5782'),
+  brand: {
+    key: readStringFrom(['BRAND'], 'tianzhiling'),
+    name: readStringFrom(['BRAND_NAME'], '天之灵'),
+    companyName: readStringFrom(
+      ['BRAND_COMPANY'],
+      '武汉市天之灵智能技术有限公司'
+    ),
+  },
   koa: {
     port: readNumberFrom(['NODE_PORT'], 7001),
     globalPrefix: readStringFrom(['NODE_GLOBAL_PREFIX'], '/api'),
@@ -534,6 +546,17 @@ export default {
       ['NODE_QWEN_VOICE_BASE_URL', 'ADMIN_API_QWEN_VOICE_BASE_URL'],
       'https://dashscope.aliyuncs.com'
     ),
+    audioBaseURL: readStringFrom(
+      ['NODE_QWEN_AUDIO_BASE_URL', 'ADMIN_API_QWEN_AUDIO_BASE_URL'],
+      ''
+    ),
+    enrollmentModel: readStringFrom(
+      [
+        'NODE_QWEN_VOICE_ENROLLMENT_MODEL',
+        'ADMIN_API_QWEN_VOICE_ENROLLMENT_MODEL',
+      ],
+      'qwen-audio-3.0-tts-plus'
+    ),
     defaultSpeechModel: readStringFrom(
       ['NODE_QWEN_VOICE_SPEECH_MODEL', 'ADMIN_API_QWEN_VOICE_PREVIEW_MODEL'],
       'qwen3-tts-vc-2026-01-22'
@@ -544,6 +567,43 @@ export default {
     ),
     timeoutMs: readNumberFrom(
       ['NODE_QWEN_VOICE_TIMEOUT_MS', 'ADMIN_API_QWEN_VOICE_TIMEOUT_MS'],
+      120000
+    ),
+  },
+  doubaoVoice: {
+    enabled: readBooleanFrom(
+      ['NODE_DOUBAO_VOICE_ENABLED', 'ADMIN_API_DOUBAO_VOICE_ENABLED'],
+      true
+    ),
+    apiKey: readStringFrom(
+      ['NODE_DOUBAO_VOICE_API_KEY', 'ADMIN_API_DOUBAO_VOICE_API_KEY'],
+      ''
+    ),
+    appId: readStringFrom(
+      ['NODE_DOUBAO_VOICE_APP_ID', 'ADMIN_API_DOUBAO_VOICE_APP_ID'],
+      ''
+    ),
+    accessToken: readStringFrom(
+      ['NODE_DOUBAO_VOICE_ACCESS_TOKEN', 'ADMIN_API_DOUBAO_VOICE_ACCESS_TOKEN'],
+      ''
+    ),
+    baseURL: readStringFrom(
+      ['NODE_DOUBAO_VOICE_BASE_URL', 'ADMIN_API_DOUBAO_VOICE_BASE_URL'],
+      'https://openspeech.bytedance.com'
+    ),
+    resourceId: readStringFrom(
+      ['NODE_DOUBAO_VOICE_RESOURCE_ID', 'ADMIN_API_DOUBAO_VOICE_RESOURCE_ID'],
+      'seed-icl-2.0'
+    ),
+    defaultSpeechModel: readStringFrom(
+      [
+        'NODE_DOUBAO_VOICE_SPEECH_MODEL',
+        'ADMIN_API_DOUBAO_VOICE_PREVIEW_MODEL',
+      ],
+      'seed-tts-2.0-expressive'
+    ),
+    timeoutMs: readNumberFrom(
+      ['NODE_DOUBAO_VOICE_TIMEOUT_MS', 'ADMIN_API_DOUBAO_VOICE_TIMEOUT_MS'],
       120000
     ),
   },
@@ -770,11 +830,15 @@ export default {
           ConversationChatImportItemEntity,
           ConversationEmotionStateEntity,
           ConversationMessageFeedbackEntity,
+          ConversationDeliberateReplyTaskEntity,
+          ConversationReplyTurnEntity,
           ConversationEntity,
           CouponLedgerEntity,
+          FreeChatAgentLedgerEntity,
           MessageEntity,
           MessengerCallEventEntity,
           OrderEntity,
+          OrderRefundEntity,
           PostCommentEntity,
           PostCommentNotificationEntity,
           PostLikeEntity,

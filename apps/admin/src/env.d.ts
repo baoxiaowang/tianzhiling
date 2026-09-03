@@ -12,3 +12,9 @@ declare module '*.vue' {
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string;
 }
+
+// 品牌编译期注入常量（见 config/vite.config.base.ts define）
+declare const BRAND: string;
+declare const BRAND_NAME: string;
+declare const BRAND_COMPANY: string;
+declare const BRAND_ADMIN_TITLE: string;

@@ -90,6 +90,27 @@ export interface AdminVoiceMembershipDowngradeRecordDTO {
   failureReason?: string;
 }
 
+export type VoiceMembershipFinalRefundStatusDTO =
+  | 'processing'
+  | 'benefits_processing'
+  | 'benefits_failed'
+  | 'completed'
+  | 'failed';
+
+export interface AdminVoiceMembershipFinalRefundRecordDTO {
+  status: VoiceMembershipFinalRefundStatusDTO;
+  refundAmount: number;
+  refundNo: string;
+  attempt: number;
+  attemptRequestedAt?: string;
+  wechatRefundId?: string;
+  wechatRefundStatus?: string;
+  requestedAt: string;
+  completedAt?: string;
+  updatedAt: string;
+  failureReason?: string;
+}
+
 export interface AdminVoiceMembershipDowngradeTargetDTO
   extends VoiceMembershipDowngradePlanDTO {
   refundAmount: number;
@@ -117,6 +138,7 @@ export interface AdminOrderUserDTO {
   account: string;
   name: string;
   phone: string;
+  registeredAt?: string;
 }
 
 export interface AdminOrderRecordDTO extends OrderRecordDTO {
@@ -138,8 +160,19 @@ export interface AdminOrderRecordDTO extends OrderRecordDTO {
   paymentExpiredAt?: string;
   closedAt?: string;
   refundedAt?: string;
+  refundRequestedAt?: string;
+  refundRejectedAt?: string;
+  refundRejection?: {
+    action: 'not_refund' | 'rejected';
+    operatorId?: string;
+    operatorAccount?: string;
+    createdAt: string;
+  };
+  agentUserMessageCount?: number;
   vipPlanGroup?: 'basic' | 'voice';
+  vipUpgrade?: boolean;
   voiceMembershipDowngrade?: AdminVoiceMembershipDowngradeRecordDTO;
+  voiceMembershipFinalRefund?: AdminVoiceMembershipFinalRefundRecordDTO;
   updatedAt: string;
 }
 
@@ -152,6 +185,7 @@ export interface AdminOrderListParamsDTO {
   excludeAdminManual?: boolean;
   createdAtStart?: string;
   createdAtEnd?: string;
+  registeredMonth?: string;
   userId?: string;
   page?: number;
   pageSize?: number;

@@ -17,6 +17,7 @@ import {
   VoicePackageStatus,
   VoiceTrainingTaskEntity,
   VoiceTrainingTaskStatus,
+  VoiceTrainingTaskTrainingStrategy,
 } from '@tzl/entities';
 import {
   ORDER_PAYMENT_EXPIRE_QUEUE,
@@ -379,6 +380,61 @@ function createService(
   );
   const memberships = options.memberships ?? [];
   const entitlements = options.entitlements ?? [];
+  let membershipFinancialOperationLock:
+    | {
+        token: string;
+        operation: string;
+        acquiredAt: Date;
+        expiresAt: Date;
+      }
+    | undefined;
+  const userModel = {
+    updateOne: jest.fn(async (filter: any, update: any) => {
+      if (!sameObjectId(filter?._id, new MongoObjectId(USER_ID))) {
+        return { matchedCount: 0, modifiedCount: 0 };
+      }
+
+      const requestedLock = update?.$set?.membershipFinancialOperationLock;
+
+      if (requestedLock) {
+        const expiryFilter = filter?.$or?.find(
+          (candidate: any) =>
+            candidate?.['membershipFinancialOperationLock.expiresAt']?.$lte
+        )?.['membershipFinancialOperationLock.expiresAt']?.$lte;
+        const missingFilter = filter?.$or?.some(
+          (candidate: any) =>
+            candidate?.membershipFinancialOperationLock?.$exists === false
+        );
+        const canAcquire = membershipFinancialOperationLock
+          ? expiryFilter instanceof Date &&
+            membershipFinancialOperationLock.expiresAt <= expiryFilter
+          : missingFilter;
+
+        if (!canAcquire) {
+          return { matchedCount: 0, modifiedCount: 0 };
+        }
+
+        membershipFinancialOperationLock = { ...requestedLock };
+        return { matchedCount: 1, modifiedCount: 1 };
+      }
+
+      if (update?.$unset?.membershipFinancialOperationLock !== undefined) {
+        if (
+          !membershipFinancialOperationLock ||
+          filter?.['membershipFinancialOperationLock.token'] !==
+            membershipFinancialOperationLock.token
+        ) {
+          return { matchedCount: 0, modifiedCount: 0 };
+        }
+
+        membershipFinancialOperationLock = undefined;
+        return { matchedCount: 1, modifiedCount: 1 };
+      }
+
+      return { matchedCount: 0, modifiedCount: 0 };
+    }),
+    getMembershipFinancialOperationLock: () => membershipFinancialOperationLock,
+  };
   const userMembershipModel = {
     find: jest.fn(async () => memberships),
     findOne: jest.fn(async ({ where }: any) => {
@@ -436,14 +492,30 @@ function createService(
   const queue = {
     addJobToQueue: jest.fn().mockResolvedValue(undefined),
   };
+  const messengerService = {
+    ensureMessengersForUser: jest.fn().mockResolvedValue({
+      processed: 1,
+      messengersCreated: 1,
+      conversationsCreated: 1,
+    }),
+  };
+  const orderRefundModel = {
+    updateOne: jest.fn().mockResolvedValue({
+      matchedCount: 1,
+      modifiedCount: 1,
+      upsertedCount: 1,
+    }),
+  };
 
   service.logger = {
     warn: jest.fn(),
   } as any;
   service.orderModel = orderModel as any;
+  service.orderRefundModel = orderRefundModel as any;
   service.vipPlanModel = vipPlanModel as any;
   service.voicePackageModel = voicePackageModel as any;
   service.agentModel = agentModel as any;
+  service.userModel = userModel as any;
   service.userMembershipModel = userMembershipModel as any;
   service.agentEntitlementModel = agentEntitlementModel as any;
   service.voiceTrainingTaskModel = voiceTrainingTaskModel as any;
@@ -453,20 +525,24 @@ function createService(
       name === ORDER_PAYMENT_EXPIRE_QUEUE ? queue : undefined
     ),
   } as any;
+  service.messengerService = messengerService as any;
 
   return {
     service,
     order,
     orderModel,
+    orderRefundModel,
     voicePackage,
     voicePackageModel,
     agent,
     agentModel,
     voiceTrainingTaskModel,
+    userModel,
     userMembershipModel,
     agentEntitlementModel,
     wechatPayService,
     queue,
+    messengerService,
     auth: {
       sub: USER_ID,
       accountId: 'account-1',
@@ -557,6 +633,205 @@ describe('OrderService payment expiration and reconciliation', () => {
       })
     );
     expect(result.order.payableAmount).toBe(4010);
+  });
+
+  it('rechecks vip upgrade credit under the user financial lock before saving', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000021'),
+      status: OrderStatus.completed,
+      paidAmount: 990,
+    });
+    const refundClaimedOrder = createOrder({
+      id: historicalOrder.id,
+      status: OrderStatus.refundRequested,
+      paidAmount: 990,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000022'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, orderModel, userModel, wechatPayService, auth } =
+      createService(
+        {},
+        {
+          code: 'vip_voice_lifetime',
+          name: '声音永久会员',
+          planGroup: VipPlanGroup.voice,
+          priceAmount: 5000,
+          durationDays: undefined,
+          lifetime: true,
+        },
+        {
+          memberships: [membership],
+          historicalVipOrders: [historicalOrder],
+        }
+      );
+    orderModel.find
+      .mockResolvedValueOnce([historicalOrder])
+      .mockResolvedValueOnce([refundClaimedOrder]);
+
+    const result = await service.createVipPlanOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(result.order.payableAmount).toBe(5000);
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 5000 })
+    );
+    expect(orderModel.save).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        payableAmount: 5000,
+        snapshot: expect.objectContaining({
+          vipUpgrade: {
+            historicalPaidAmount: 0,
+            deductedAmount: 0,
+            payableAmount: 5000,
+          },
+        }),
+      })
+    );
+
+    const [preliminaryRead, lockedRead] =
+      orderModel.find.mock.invocationCallOrder;
+    const [acquireLock, releaseLock] =
+      userModel.updateOne.mock.invocationCallOrder;
+    const firstSave = orderModel.save.mock.invocationCallOrder[0];
+    expect(preliminaryRead).toBeLessThan(acquireLock);
+    expect(acquireLock).toBeLessThan(lockedRead);
+    expect(lockedRead).toBeLessThan(firstSave);
+    expect(firstSave).toBeLessThan(releaseLock);
+    expect(userModel.updateOne).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        _id: new MongoObjectId(USER_ID),
+        $or: expect.arrayContaining([
+          {
+            membershipFinancialOperationLock: { $exists: false },
+          },
+        ]),
+      }),
+      expect.objectContaining({
+        $set: {
+          membershipFinancialOperationLock: expect.objectContaining({
+            operation: 'vip_upgrade_order_create',
+            acquiredAt: expect.any(Date),
+            expiresAt: expect.any(Date),
+            token: expect.any(String),
+          }),
+        },
+      })
+    );
+    expect(userModel.getMembershipFinancialOperationLock()).toBeUndefined();
+  });
+
+  it('does not save a vip order when another membership financial operation holds the lock', async () => {
+    const { service, orderModel, userModel, wechatPayService, auth } =
+      createService();
+    userModel.updateOne.mockResolvedValueOnce({
+      matchedCount: 0,
+      modifiedCount: 0,
+    });
+
+    await expect(
+      service.createVipPlanOrder(auth, {
+        vipPlanId: VIP_PLAN_ID,
+        jsCode: 'wx-code',
+      })
+    ).rejects.toMatchObject({
+      code: 'MEMBERSHIP_FINANCIAL_OPERATION_BUSY',
+      status: 409,
+    });
+
+    expect(orderModel.save).not.toHaveBeenCalled();
+    expect(wechatPayService.createVipPlanPrepay).not.toHaveBeenCalled();
+  });
+
+  it('allows an expired user financial lease to be replaced without letting its stale token release the new lease', async () => {
+    const { service, userModel } = createService();
+    const firstLease = await (
+      service as any
+    ).acquireMembershipFinancialOperationLock(new MongoObjectId(USER_ID));
+
+    jest.setSystemTime(new Date(NOW.getTime() + 60 * 1000 + 1));
+    const secondLease = await (
+      service as any
+    ).acquireMembershipFinancialOperationLock(new MongoObjectId(USER_ID));
+
+    expect(secondLease.token).not.toBe(firstLease.token);
+    expect(userModel.getMembershipFinancialOperationLock()?.token).toBe(
+      secondLease.token
+    );
+
+    await (service as any).releaseMembershipFinancialOperationLock(firstLease);
+    expect(userModel.getMembershipFinancialOperationLock()?.token).toBe(
+      secondLease.token
+    );
+
+    await (service as any).releaseMembershipFinancialOperationLock(secondLease);
+    expect(userModel.getMembershipFinancialOperationLock()).toBeUndefined();
+  });
+
+  it('deducts a legacy 99 yuan payment from a 1314 yuan lifetime upgrade', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000015'),
+      status: OrderStatus.completed,
+      amount: 99,
+      payableAmount: 99,
+      paidAmount: 99,
+      paymentProvider: 'legacy_wechat',
+      snapshot: {
+        legacy: {
+          namespace: 'legacy_mysql',
+          orderId: 'legacy-vip-99',
+        },
+      },
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000016'),
+      vipPlanCode: 'legacy_year_member',
+    });
+    const { service, orderModel, wechatPayService, auth } = createService(
+      {},
+      {
+        code: 'vip_lifetime_1314',
+        name: '无限期会员',
+        planGroup: VipPlanGroup.basic,
+        priceAmount: 131400,
+        originalPriceAmount: 131400,
+        durationDays: undefined,
+        lifetime: true,
+      },
+      {
+        memberships: [membership],
+        historicalVipOrders: [historicalOrder],
+      }
+    );
+
+    const result = await service.createVipPlanOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+    });
+
+    expect(wechatPayService.createVipPlanPrepay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 121500,
+      })
+    );
+    expect(orderModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payableAmount: 121500,
+        snapshot: expect.objectContaining({
+          vipUpgrade: {
+            historicalPaidAmount: 9900,
+            deductedAmount: 9900,
+            payableAmount: 121500,
+          },
+        }),
+      })
+    );
+    expect(result.order.payableAmount).toBe(121500);
   });
 
   it('completes a zero-amount member upgrade without calling WeChat Pay', async () => {
@@ -672,6 +947,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       order,
       orderModel,
       userMembershipModel,
+      messengerService,
       wechatPayService,
     } = createService();
     const paidAt = '2026-05-01T00:10:00+08:00';
@@ -702,6 +978,9 @@ describe('OrderService payment expiration and reconciliation', () => {
         status: UserMembershipStatus.active,
         lifetime: false,
       })
+    );
+    expect(messengerService.ensureMessengersForUser).toHaveBeenCalledWith(
+      order.userId
     );
     expect(order.status).toBe(OrderStatus.completed);
     expect(order.paidAmount).toBe(990);
@@ -748,15 +1027,15 @@ describe('OrderService payment expiration and reconciliation', () => {
       }),
     });
     expect(service.logger.warn).toHaveBeenCalled();
-    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
-      'wechatTotal'
-    );
-    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
-      'wechatPayerTotal'
-    );
-    expect((error as { data?: Record<string, unknown> }).data).not.toHaveProperty(
-      'transactionId'
-    );
+    expect(
+      (error as { data?: Record<string, unknown> }).data
+    ).not.toHaveProperty('wechatTotal');
+    expect(
+      (error as { data?: Record<string, unknown> }).data
+    ).not.toHaveProperty('wechatPayerTotal');
+    expect(
+      (error as { data?: Record<string, unknown> }).data
+    ).not.toHaveProperty('transactionId');
     expect(order.status).toBe(OrderStatus.pending);
   });
 
@@ -815,6 +1094,8 @@ describe('OrderService payment expiration and reconciliation', () => {
       voicePackageId: VOICE_PACKAGE_ID,
       agentId: AGENT_ID,
       jsCode: 'wx-code',
+      materialObjectKeys: ['voice-training-materials/audio-1.m4a'],
+      materialDurationSeconds: 72,
     });
 
     expect(voiceTrainingTaskModel.find).toHaveBeenCalledWith(
@@ -848,6 +1129,10 @@ describe('OrderService payment expiration and reconciliation', () => {
             id: AGENT_ID,
             name: '奶奶',
           }),
+          voiceTrainingMaterialObjectKeys: [
+            'voice-training-materials/audio-1.m4a',
+          ],
+          voiceTrainingMaterialDurationSeconds: 72,
         }),
       })
     );
@@ -884,9 +1169,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       jsCode: 'wx-code',
     });
 
-    expect(wechatPayService.getSessionByJsCode).toHaveBeenCalledWith(
-      'wx-code'
-    );
+    expect(wechatPayService.getSessionByJsCode).toHaveBeenCalledWith('wx-code');
     expect(wechatPayService.buildVirtualPaymentParams).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: 'session-key-1',
@@ -908,6 +1191,71 @@ describe('OrderService payment expiration and reconciliation', () => {
       paySig: 'pay-sig',
       signature: 'signature',
     });
+  });
+
+  it('releases the user lock before fetching a newly required virtual payment session and then rechecks pricing again', async () => {
+    const historicalOrder = createOrder({
+      id: new MongoObjectId('665000000000000000000023'),
+      status: OrderStatus.completed,
+      paidAmount: 5000,
+    });
+    const refundClaimedOrder = createOrder({
+      id: historicalOrder.id,
+      status: OrderStatus.refundRequested,
+      paidAmount: 5000,
+    });
+    const membership = createMembership({
+      vipPlanId: new MongoObjectId('665000000000000000000024'),
+      vipPlanCode: 'vip_month',
+    });
+    const { service, orderModel, userModel, wechatPayService, auth } =
+      createService(
+        {},
+        {
+          code: 'vip_voice_lifetime',
+          name: '声音永久会员',
+          planGroup: VipPlanGroup.voice,
+          lifetime: true,
+          durationDays: undefined,
+          priceAmount: 5000,
+          virtualPaymentProductId: 'vip_voice_lifetime_goods',
+        },
+        {
+          memberships: [membership],
+          historicalVipOrders: [historicalOrder],
+        }
+      );
+    orderModel.find
+      .mockResolvedValueOnce([historicalOrder])
+      .mockResolvedValueOnce([refundClaimedOrder])
+      .mockResolvedValueOnce([refundClaimedOrder]);
+
+    const result = await service.createVipPlanVirtualPaymentOrder(auth, {
+      vipPlanId: VIP_PLAN_ID,
+      jsCode: 'wx-code',
+      supportsZeroAmountOrder: true,
+    });
+
+    expect(result.order.payableAmount).toBe(5000);
+    expect(wechatPayService.getSessionByJsCode).toHaveBeenCalledTimes(1);
+    expect(wechatPayService.buildVirtualPaymentParams).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: 'vip_voice_lifetime_goods',
+        amount: 5000,
+      })
+    );
+
+    const [, firstRelease, secondAcquire, secondRelease] =
+      userModel.updateOne.mock.invocationCallOrder;
+    const sessionFetch =
+      wechatPayService.getSessionByJsCode.mock.invocationCallOrder[0];
+    const lockedSave = orderModel.save.mock.invocationCallOrder[0];
+    expect(firstRelease).toBeLessThan(sessionFetch);
+    expect(sessionFetch).toBeLessThan(secondAcquire);
+    expect(secondAcquire).toBeLessThan(lockedSave);
+    expect(lockedSave).toBeLessThan(secondRelease);
+    expect(orderModel.find).toHaveBeenCalledTimes(3);
+    expect(userModel.getMembershipFinancialOperationLock()).toBeUndefined();
   });
 
   it('creates a voice package virtual payment order with product id', async () => {
@@ -1018,6 +1366,7 @@ describe('OrderService payment expiration and reconciliation', () => {
         status: VoiceTrainingTaskStatus.paid,
         assigneeName: '',
         materialObjectKeys: [],
+        trainingStrategy: VoiceTrainingTaskTrainingStrategy.shortSample,
         paidAt: new Date('2026-05-01T00:10:00+08:00'),
       })
     );
@@ -1026,6 +1375,60 @@ describe('OrderService payment expiration and reconciliation', () => {
       OrderStatus.completed,
     ]);
     expect(result?.status).toBe(OrderStatus.completed);
+  });
+
+  it('creates a processing voice training task with uploaded materials', async () => {
+    const { service, order, voiceTrainingTaskModel, wechatPayService } =
+      createService(
+        createVoiceOrder({
+          snapshot: {
+            voicePackage: {
+              id: VOICE_PACKAGE_ID,
+              code: 'voice_standard',
+              name: '标准声音套餐',
+            },
+            agent: {
+              id: AGENT_ID,
+              name: '奶奶',
+            },
+            voiceTrainingMaterialObjectKeys: [
+              ' voice-training-materials/audio-1.m4a ',
+              'voice-training-materials/audio-1.m4a',
+              '',
+              'voice-training-materials/wechat-screenshot-1.jpg',
+            ],
+            voiceTrainingMaterialDurationSeconds: 75,
+          },
+        })
+      );
+
+    wechatPayService.queryTransactionByOrderNo.mockResolvedValue({
+      out_trade_no: VOICE_ORDER_NO,
+      transaction_id: '420000000020260501000004',
+      trade_state: 'SUCCESS',
+      success_time: '2026-05-01T00:10:00+08:00',
+      amount: {
+        total: 12900,
+        payer_total: 12900,
+      },
+    });
+
+    await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(voiceTrainingTaskModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: order.userId,
+        agentId: new MongoObjectId(AGENT_ID),
+        orderId: order.id,
+        status: VoiceTrainingTaskStatus.processing,
+        materialObjectKeys: [
+          'voice-training-materials/audio-1.m4a',
+          'voice-training-materials/wechat-screenshot-1.jpg',
+        ],
+        materialDurationSeconds: 75,
+        trainingStrategy: VoiceTrainingTaskTrainingStrategy.longSample,
+      })
+    );
   });
 
   it('grants membership after virtual payment goods delivery notify succeeds', async () => {
@@ -1175,6 +1578,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       service,
       order,
       orderModel,
+      orderRefundModel,
       userMembershipModel,
       agentEntitlementModel,
       wechatPayService,
@@ -1227,6 +1631,21 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(order.status).toBe(OrderStatus.refunded);
     expect(order.refundAmount).toBe(990);
     expect(order.refundedAt).toEqual(new Date(1777601000 * 1000));
+    expect(orderRefundModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ refundNo: `R${ORDER_NO}` }),
+      expect.objectContaining({
+        $setOnInsert: expect.objectContaining({
+          originalOrderNo: ORDER_NO,
+          refundType: 'order_refund',
+          amount: 990,
+        }),
+        $set: expect.objectContaining({
+          status: 'completed',
+          completedAt: new Date(1777601000 * 1000),
+        }),
+      }),
+      { upsert: true }
+    );
     expect(
       orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
     ).toEqual(
@@ -1273,20 +1692,25 @@ describe('OrderService payment expiration and reconciliation', () => {
   });
 
   it('does not mark a virtual payment order refunded before xpay query_order confirms refund', async () => {
-    const { service, order, orderModel, userMembershipModel, wechatPayService } =
-      createService(
-        {
-          status: OrderStatus.completed,
-          paymentProvider: 'wechat_virtual_pay',
-          payerOpenid: 'openid-1',
-          paidAmount: 990,
-          virtualPaymentEnv: 1,
-        },
-        {},
-        {
-          memberships: [createMembership()],
-        }
-      );
+    const {
+      service,
+      order,
+      orderModel,
+      userMembershipModel,
+      wechatPayService,
+    } = createService(
+      {
+        status: OrderStatus.completed,
+        paymentProvider: 'wechat_virtual_pay',
+        payerOpenid: 'openid-1',
+        paidAmount: 990,
+        virtualPaymentEnv: 1,
+      },
+      {},
+      {
+        memberships: [createMembership()],
+      }
+    );
 
     wechatPayService.queryVirtualOrder.mockResolvedValue({
       order_id: ORDER_NO,
@@ -1310,20 +1734,25 @@ describe('OrderService payment expiration and reconciliation', () => {
   });
 
   it('does not mark a virtual payment order refunded for partial refunds', async () => {
-    const { service, order, orderModel, userMembershipModel, wechatPayService } =
-      createService(
-        {
-          status: OrderStatus.completed,
-          paymentProvider: 'wechat_virtual_pay',
-          payerOpenid: 'openid-1',
-          paidAmount: 990,
-          virtualPaymentEnv: 1,
-        },
-        {},
-        {
-          memberships: [createMembership()],
-        }
-      );
+    const {
+      service,
+      order,
+      orderModel,
+      userMembershipModel,
+      wechatPayService,
+    } = createService(
+      {
+        status: OrderStatus.completed,
+        paymentProvider: 'wechat_virtual_pay',
+        payerOpenid: 'openid-1',
+        paidAmount: 990,
+        virtualPaymentEnv: 1,
+      },
+      {},
+      {
+        memberships: [createMembership()],
+      }
+    );
 
     wechatPayService.queryVirtualOrder.mockResolvedValue({
       order_id: ORDER_NO,
@@ -1398,6 +1827,33 @@ describe('OrderService payment expiration and reconciliation', () => {
 
     expect(voiceTrainingTaskModel.save).not.toHaveBeenCalled();
   });
+
+  it.each([OrderStatus.refundRequested, OrderStatus.refunded])(
+    'does not replay membership grants for a %s order payment notification',
+    async status => {
+      const membership = createMembership();
+      const { service, order, orderModel, userMembershipModel } = createService(
+        { status },
+        {},
+        { memberships: [membership] }
+      );
+
+      await service.handleWechatPaymentSuccess({
+        out_trade_no: ORDER_NO,
+        transaction_id: '420000000020260501000099',
+        trade_state: 'SUCCESS',
+        success_time: '2026-05-01T00:10:00+08:00',
+        amount: {
+          total: 990,
+          payer_total: 990,
+        },
+      });
+
+      expect(order.status).toBe(status);
+      expect(userMembershipModel.save).not.toHaveBeenCalled();
+      expect(orderModel.save).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     OrderStatus.completed,
@@ -1606,6 +2062,7 @@ describe('OrderService payment expiration and reconciliation', () => {
       service,
       order,
       orderModel,
+      orderRefundModel,
       userMembershipModel,
       agentEntitlementModel,
       wechatPayService,
@@ -1646,6 +2103,20 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(order.status).toBe(OrderStatus.refunded);
     expect(order.refundAmount).toBe(990);
     expect(order.refundedAt).toEqual(NOW);
+    expect(orderRefundModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ refundNo: `R${ORDER_NO}` }),
+      expect.objectContaining({
+        $setOnInsert: expect.objectContaining({
+          originalOrderNo: ORDER_NO,
+          amount: 990,
+        }),
+        $set: expect.objectContaining({
+          status: 'completed',
+          completedAt: NOW,
+        }),
+      }),
+      { upsert: true }
+    );
     expect(
       orderModel.savedSnapshots[orderModel.savedSnapshots.length - 1]
     ).toEqual(

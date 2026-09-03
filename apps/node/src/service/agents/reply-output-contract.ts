@@ -1,4 +1,5 @@
 import type { ReplyEvidenceContract } from './world-boundary-policy';
+import type { DeliberateLongReplyCandidateAssessment } from './deliberate-long-reply';
 
 export const REPLY_OUTPUT_CONTRACT_VERSION = 'reply_envelope_v2' as const;
 export const REPLY_REVIEW_CONTRACT_VERSION = 'reply_review_v1' as const;
@@ -17,6 +18,7 @@ export interface BuildReplyOutputContractOptions {
   };
   toolDecisionSchema?: Record<string, unknown>;
   evidenceContract?: ReplyEvidenceContract;
+  deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
 }
 
 export function resolveReplyOutputSegmentMode(plan: {
@@ -69,6 +71,15 @@ export function buildReplyOutputContractPrompt(
     schema.toolDecisions = [options.toolDecisionSchema];
   }
 
+  if (options.deliberateLongReplyCandidate?.eligible) {
+    schema.deliberateFollowUp = {
+      action: 'schedule_next_morning|none',
+      reason:
+        'personal_disclosure|relationship_letter|multi_event_life_update|mixed_personal_and_quote|poetry_or_quotation|forwarded_or_reference_material|transactional_or_factual|already_complete|other',
+      focus: ['最多三个来自用户原文的关注点'],
+    };
+  }
+
   const segmentRule =
     options.segmentMode === 'exact_two'
       ? 'segments 恰好两项，不能合并。'
@@ -101,6 +112,9 @@ export function buildReplyOutputContractPrompt(
   const toolRule = options.toolDecisionSchema
     ? 'toolDecisions 只记录本轮确实缺少信息时的影子工具决策，无需调用就用 []；不影响 segments 正常回复。'
     : '';
+  const deliberateFollowUpRule = options.deliberateLongReplyCandidate?.eligible
+    ? 'deliberateFollowUp 是必填决策，不能省略。它只决定是否建立次日回应任务，不组织正文；action 按上面的次日慎重回应候选判断。选择 schedule_next_morning 时，segments 中也必须实际说出认真想过并在明早继续回应；focus 最多三项，只能来自用户原文。'
+    : '';
 
   return [
     '# 输出合同',
@@ -111,6 +125,7 @@ export function buildReplyOutputContractPrompt(
     evidenceContractRule,
     auditRule,
     toolRule,
+    deliberateFollowUpRule,
   ]
     .filter(Boolean)
     .join('\n');

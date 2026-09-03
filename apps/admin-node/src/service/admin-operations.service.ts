@@ -27,6 +27,9 @@ import {
   MessageStatus,
   MongoObjectId,
   OrderEntity,
+  OrderRefundEntity,
+  OrderRefundStatus,
+  OrderStatus,
   PostEntity,
   TableName,
   UserEntity,
@@ -63,7 +66,7 @@ type PeriodOrderStatsRow = {
   paidAmount: number;
 };
 type AllTimeChatStatsRow = { chatUsers: number; userMessages: number };
-type AllTimeOrderStatsRow = { payingUsers: number; netAmount: number };
+type UserAmountRow = { _id: MongoObjectId; amount: number };
 type CohortUserCountRow = { _id: string; count: number };
 type CohortOrderStatsRow = {
   _id: string;
@@ -123,6 +126,9 @@ export class AdminOperationsService {
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(OrderRefundEntity)
+  orderRefundModel: MongoRepository<OrderRefundEntity>;
 
   @InjectEntityModel(PostEntity)
   postModel: MongoRepository<PostEntity>;
@@ -410,10 +416,10 @@ export class AdminOperationsService {
       orderStats,
       periodOrderStats,
       refunded,
+      legacyRefunded,
       hourlyUsers,
       hourlyMessages,
       allTime,
-      todayNewAgentUsers,
       cohortDaily,
     ] = await Promise.all([
       this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
@@ -431,16 +437,19 @@ export class AdminOperationsService {
       this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregateDailyAmount(
-        this.orderModel,
-        this.buildRefundFlowMatch(monthStart, monthEnd, realOrderMatch),
-        { $ifNull: ['$refundedAt', '$updatedAt'] },
+        this.orderRefundModel,
         {
-          $cond: [
-            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
-            '$refundAmount',
-            '$payableAmount',
-          ],
-        }
+          ...realOrderMatch,
+          status: OrderRefundStatus.completed,
+          requestedAt: { $gte: monthStart, $lt: monthEnd },
+        },
+        '$requestedAt',
+        '$amount'
+      ),
+      this.aggregateLegacyDailyRefundAmounts(
+        monthStart,
+        monthEnd,
+        realOrderMatch
       ),
       this.aggregateHourlyCount(this.userModel, todayStart, todayEnd),
       this.aggregateHourlyCount(
@@ -450,7 +459,6 @@ export class AdminOperationsService {
         liveUserMessageMatch
       ),
       this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
-      this.aggregateTodayNewAgentUsers(todayStart, todayEnd),
       this.aggregateCohortDailyRevenue(monthStart, monthEnd, realOrderMatch),
     ]);
 
@@ -459,8 +467,10 @@ export class AdminOperationsService {
       agents: this.countMap(agents),
       messages: new Map(messageStats.map(row => [row._id, row])),
       orders: new Map(orderStats.map(row => [row._id, row])),
-      refunded: this.amountMap(refunded),
-      cohortDaily: new Map(cohortDaily.map(row => [row._id, Number(row.revenue) || 0])),
+      refunded: this.mergeAmountMaps(refunded, legacyRefunded),
+      cohortDaily: new Map(
+        cohortDaily.map(row => [row._id, Number(row.revenue) || 0])
+      ),
     };
     const daysInMonth = new Date(
       Date.UTC(year, monthIndex + 1, 0)
@@ -545,7 +555,7 @@ export class AdminOperationsService {
       totals,
       todayTotals: {
         newUsers: todayRow?.newUsers ?? 0,
-        newAgents: todayNewAgentUsers,
+        newAgents: todayRow?.newAgents ?? 0,
         newUserChatUsers: todayRow?.newUserChatUsers ?? 0,
         newUserMessages: todayRow?.newUserMessages ?? 0,
         newUserFiveMessageUsers: todayRow?.newUserFiveMessageUsers ?? 0,
@@ -711,6 +721,7 @@ export class AdminOperationsService {
       orderRows,
       periodOrderStats,
       refundedRows,
+      legacyRefundedRows,
       firstTimePayingUsers,
     ] = await Promise.all([
       this.orderModel.count({
@@ -725,21 +736,24 @@ export class AdminOperationsService {
       this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
       this.aggregateDailyAmount(
-        this.orderModel,
-        this.buildRefundFlowMatch(monthStart, monthEnd, realOrderMatch),
-        { $ifNull: ['$refundedAt', '$updatedAt'] },
+        this.orderRefundModel,
         {
-          $cond: [
-            { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
-            '$refundAmount',
-            '$payableAmount',
-          ],
-        }
+          ...realOrderMatch,
+          status: OrderRefundStatus.completed,
+          requestedAt: { $gte: monthStart, $lt: monthEnd },
+        },
+        '$requestedAt',
+        '$amount'
+      ),
+      this.aggregateLegacyDailyRefundAmounts(
+        monthStart,
+        monthEnd,
+        realOrderMatch
       ),
       this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
     ]);
     const orderMap = new Map(orderRows.map(row => [row._id, row]));
-    const refundMap = this.amountMap(refundedRows);
+    const refundMap = this.mergeAmountMaps(refundedRows, legacyRefundedRows);
     const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
     const daysInMonth = new Date(
       Date.UTC(year, monthIndex + 1, 0)
@@ -1170,39 +1184,6 @@ export class AdminOperationsService {
     return rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
   }
 
-  private async aggregateTodayNewAgentUsers(
-    start: Date,
-    end: Date
-  ): Promise<number> {
-    const rows = await this.agentModel
-      .aggregate<{ count: number }>([
-        {
-          $match: {
-            createdAt: { $gte: start, $lt: end },
-            $or: [
-              { messengerOfAgentId: { $exists: false } },
-              { messengerOfAgentId: null },
-            ],
-          },
-        },
-        { $group: { _id: '$createdUserId' } },
-        {
-          $lookup: {
-            from: TableName.user,
-            localField: '_id',
-            foreignField: '_id',
-            as: 'user',
-          },
-        },
-        { $unwind: '$user' },
-        { $match: { 'user.createdAt': { $gte: start, $lt: end } } },
-        { $count: 'count' },
-      ])
-      .toArray();
-
-    return Number(rows[0]?.count) || 0;
-  }
-
   private async getAllTimeStats(
     liveUserMessageMatch: Record<string, unknown>,
     realOrderMatch: Record<string, unknown>
@@ -1213,62 +1194,86 @@ export class AdminOperationsService {
       return this.allTimeCache.value;
     }
 
-    const [users, agents, chatRows, orderRows] = await Promise.all([
-      this.userModel.count({}),
-      this.agentModel.count({
-        $or: [
-          { messengerOfAgentId: { $exists: false } },
-          { messengerOfAgentId: null },
-        ],
-      } as never),
-      this.messageModel
-        .aggregate<AllTimeChatStatsRow>([
-          { $match: liveUserMessageMatch },
-          { $group: { _id: '$userId', messages: { $sum: 1 } } },
-          {
-            $group: {
-              _id: null,
-              chatUsers: { $sum: 1 },
-              userMessages: { $sum: '$messages' },
+    const [users, agents, chatRows, orderRows, refundRows, legacyRefundRows] =
+      await Promise.all([
+        this.userModel.count({}),
+        this.agentModel.count({
+          $or: [
+            { messengerOfAgentId: { $exists: false } },
+            { messengerOfAgentId: null },
+          ],
+        } as never),
+        this.messageModel
+          .aggregate<AllTimeChatStatsRow>([
+            { $match: liveUserMessageMatch },
+            { $group: { _id: '$userId', messages: { $sum: 1 } } },
+            {
+              $group: {
+                _id: null,
+                chatUsers: { $sum: 1 },
+                userMessages: { $sum: '$messages' },
+              },
             },
-          },
-        ])
-        .toArray(),
-      this.orderModel
-        .aggregate<AllTimeOrderStatsRow>([
-          {
-            $match: {
-              ...realOrderMatch,
-              paidAt: { $type: 'date' },
+          ])
+          .toArray(),
+        this.orderModel
+          .aggregate<UserAmountRow>([
+            {
+              $match: {
+                ...realOrderMatch,
+                paidAt: { $type: 'date' },
+              },
             },
-          },
-          {
-            $project: {
-              userId: 1,
-              netAmount: this.getNetPaidAmountExpression(),
+            {
+              $group: {
+                _id: '$userId',
+                amount: {
+                  $sum: { $ifNull: ['$paidAmount', '$payableAmount'] },
+                },
+              },
             },
-          },
-          { $group: { _id: '$userId', netAmount: { $sum: '$netAmount' } } },
-          { $match: { netAmount: { $gt: 0 } } },
-          {
-            $group: {
-              _id: null,
-              payingUsers: { $sum: 1 },
-              netAmount: { $sum: '$netAmount' },
+          ])
+          .toArray(),
+        this.orderRefundModel
+          .aggregate<UserAmountRow>([
+            {
+              $match: {
+                ...realOrderMatch,
+                status: OrderRefundStatus.completed,
+              },
             },
-          },
-        ])
-        .toArray(),
-    ]);
+            { $group: { _id: '$userId', amount: { $sum: '$amount' } } },
+          ])
+          .toArray(),
+        this.aggregateLegacyRefundAmountsByUser(realOrderMatch),
+      ]);
     const chat = chatRows[0];
-    const order = orderRows[0];
+    const refundMap = new Map<string, number>();
+
+    for (const row of [...refundRows, ...legacyRefundRows]) {
+      const userId = this.stringifyObjectId(row._id);
+
+      refundMap.set(
+        userId,
+        (refundMap.get(userId) ?? 0) + (Number(row.amount) || 0)
+      );
+    }
+    const netAmounts = orderRows.map(row =>
+      Math.max(
+        (Number(row.amount) || 0) -
+          (Number(refundMap.get(this.stringifyObjectId(row._id))) || 0),
+        0
+      )
+    );
     const value = {
       users,
       agents,
       chatUsers: Number(chat?.chatUsers) || 0,
       userMessages: Number(chat?.userMessages) || 0,
-      payingUsers: Number(order?.payingUsers) || 0,
-      netRevenue: this.centsToYuan(Number(order?.netAmount) || 0),
+      payingUsers: netAmounts.filter(amount => amount > 0).length,
+      netRevenue: this.centsToYuan(
+        netAmounts.reduce((sum, amount) => sum + amount, 0)
+      ),
     };
 
     this.allTimeCache = { expiresAt: now + 5 * 60 * 1000, value };
@@ -1293,6 +1298,81 @@ export class AdminOperationsService {
           },
         },
         {
+          $project: {
+            userId: 1,
+            occurredAt: '$paidAt',
+            signedAmount: { $ifNull: ['$paidAmount', '$payableAmount'] },
+          },
+        },
+        {
+          $unionWith: {
+            coll: TableName.order_refund,
+            pipeline: [
+              {
+                $match: {
+                  ...extraMatch,
+                  status: OrderRefundStatus.completed,
+                  requestedAt: { $type: 'date' },
+                },
+              },
+              {
+                $project: {
+                  userId: 1,
+                  occurredAt: '$requestedAt',
+                  signedAmount: { $multiply: ['$amount', -1] },
+                },
+              },
+            ],
+          },
+        },
+        {
+          $unionWith: {
+            coll: TableName.order,
+            pipeline: [
+              {
+                $match: {
+                  ...extraMatch,
+                  $or: [
+                    { refundAmount: { $gt: 0 } },
+                    { status: OrderStatus.refunded },
+                  ],
+                },
+              },
+              {
+                $lookup: {
+                  from: TableName.order_refund,
+                  localField: '_id',
+                  foreignField: 'originalOrderId',
+                  as: 'independentRefundOrders',
+                },
+              },
+              {
+                $match: {
+                  'independentRefundOrders.0': { $exists: false },
+                },
+              },
+              {
+                $project: {
+                  userId: 1,
+                  occurredAt: { $ifNull: ['$refundedAt', '$updatedAt'] },
+                  signedAmount: {
+                    $multiply: [
+                      {
+                        $cond: [
+                          { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                          '$refundAmount',
+                          { $ifNull: ['$paidAmount', '$payableAmount'] },
+                        ],
+                      },
+                      -1,
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        },
+        {
           $lookup: {
             from: TableName.user,
             localField: 'userId',
@@ -1309,7 +1389,6 @@ export class AdminOperationsService {
         {
           $project: {
             userId: 1,
-            paidAt: 1,
             userCreatedAt: '$user.createdAt',
             month: {
               $dateToString: {
@@ -1318,7 +1397,8 @@ export class AdminOperationsService {
                 timezone: '+08:00',
               },
             },
-            netAmount: this.getNetPaidAmountExpression(),
+            occurredAt: 1,
+            netAmount: '$signedAmount',
           },
         },
         {
@@ -1326,7 +1406,7 @@ export class AdminOperationsService {
             userId: 1,
             month: 1,
             netAmount: 1,
-            ageMs: { $subtract: ['$paidAt', '$userCreatedAt'] },
+            ageMs: { $subtract: ['$occurredAt', '$userCreatedAt'] },
           },
         },
         {
@@ -1393,6 +1473,77 @@ export class AdminOperationsService {
           },
         },
         {
+          $project: {
+            userId: 1,
+            signedAmount: { $ifNull: ['$paidAmount', '$payableAmount'] },
+          },
+        },
+        {
+          $unionWith: {
+            coll: TableName.order_refund,
+            pipeline: [
+              {
+                $match: {
+                  ...extraMatch,
+                  status: OrderRefundStatus.completed,
+                },
+              },
+              {
+                $project: {
+                  userId: 1,
+                  signedAmount: { $multiply: ['$amount', -1] },
+                },
+              },
+            ],
+          },
+        },
+        {
+          $unionWith: {
+            coll: TableName.order,
+            pipeline: [
+              {
+                $match: {
+                  ...extraMatch,
+                  $or: [
+                    { refundAmount: { $gt: 0 } },
+                    { status: OrderStatus.refunded },
+                  ],
+                },
+              },
+              {
+                $lookup: {
+                  from: TableName.order_refund,
+                  localField: '_id',
+                  foreignField: 'originalOrderId',
+                  as: 'independentRefundOrders',
+                },
+              },
+              {
+                $match: {
+                  'independentRefundOrders.0': { $exists: false },
+                },
+              },
+              {
+                $project: {
+                  userId: 1,
+                  signedAmount: {
+                    $multiply: [
+                      {
+                        $cond: [
+                          { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                          '$refundAmount',
+                          { $ifNull: ['$paidAmount', '$payableAmount'] },
+                        ],
+                      },
+                      -1,
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        },
+        {
           $lookup: {
             from: TableName.user,
             localField: 'userId',
@@ -1415,7 +1566,7 @@ export class AdminOperationsService {
                 timezone: '+08:00',
               },
             },
-            revenue: { $sum: this.getNetPaidAmountExpression() },
+            revenue: { $sum: '$signedAmount' },
           },
         },
       ])
@@ -1447,7 +1598,7 @@ export class AdminOperationsService {
     };
   }
 
-  private buildRefundFlowMatch(
+  private buildLegacyRefundFlowMatch(
     start: Date,
     end: Date,
     extraMatch: Record<string, unknown>
@@ -1461,7 +1612,6 @@ export class AdminOperationsService {
           refundedAt: null,
           updatedAt: { $gte: start, $lt: end },
         },
-        // 部分退款（如会员降级差价退款）：status=completed 但有 refundAmount
         {
           status: 'completed',
           refundAmount: { $gt: 0 },
@@ -1472,29 +1622,96 @@ export class AdminOperationsService {
     };
   }
 
-  private getNetPaidAmountExpression(): Record<string, unknown> {
-    const paidAmount = { $ifNull: ['$paidAmount', '$payableAmount'] };
-    const storedRefundAmount = { $ifNull: ['$refundAmount', 0] };
-    const refundAmount = {
-      $cond: [
+  private async aggregateLegacyDailyRefundAmounts(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<DailyAmountRow[]> {
+    return this.orderModel
+      .aggregate<DailyAmountRow>([
         {
-          $and: [
-            { $eq: ['$status', 'refunded'] },
-            { $lte: [storedRefundAmount, 0] },
-          ],
+          $match: this.buildLegacyRefundFlowMatch(start, end, extraMatch),
         },
-        paidAmount,
-        storedRefundAmount,
-      ],
-    };
+        {
+          $lookup: {
+            from: TableName.order_refund,
+            localField: '_id',
+            foreignField: 'originalOrderId',
+            as: 'independentRefundOrders',
+          },
+        },
+        {
+          $match: {
+            'independentRefundOrders.0': { $exists: false },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: { $ifNull: ['$refundedAt', '$updatedAt'] },
+                timezone: '+08:00',
+              },
+            },
+            amount: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                  '$refundAmount',
+                  '$payableAmount',
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
+  }
 
-    return {
-      $cond: [
-        { $gt: [{ $subtract: [paidAmount, refundAmount] }, 0] },
-        { $subtract: [paidAmount, refundAmount] },
-        0,
-      ],
-    };
+  private async aggregateLegacyRefundAmountsByUser(
+    extraMatch: Record<string, unknown>
+  ): Promise<UserAmountRow[]> {
+    return this.orderModel
+      .aggregate<UserAmountRow>([
+        {
+          $match: {
+            ...extraMatch,
+            $or: [
+              { refundAmount: { $gt: 0 } },
+              { status: OrderStatus.refunded },
+            ],
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.order_refund,
+            localField: '_id',
+            foreignField: 'originalOrderId',
+            as: 'independentRefundOrders',
+          },
+        },
+        {
+          $match: {
+            'independentRefundOrders.0': { $exists: false },
+          },
+        },
+        {
+          $group: {
+            _id: '$userId',
+            amount: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                  '$refundAmount',
+                  { $ifNull: ['$paidAmount', '$payableAmount'] },
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
   }
 
   private async aggregateDailyCount<T extends object>(
@@ -1561,7 +1778,7 @@ export class AdminOperationsService {
     repository: MongoRepository<T>,
     match: Record<string, unknown>,
     dateExpression: string | Record<string, unknown>,
-    amountExpression: Record<string, unknown>
+    amountExpression: string | Record<string, unknown>
   ): Promise<DailyAmountRow[]> {
     return repository
       .aggregate<DailyAmountRow>([
@@ -1586,8 +1803,19 @@ export class AdminOperationsService {
     return new Map(rows.map(row => [row._id, Number(row.count) || 0]));
   }
 
-  private amountMap(rows: DailyAmountRow[]) {
-    return new Map(rows.map(row => [row._id, Number(row.amount) || 0]));
+  private mergeAmountMaps(...rowGroups: DailyAmountRow[][]) {
+    const result = new Map<string, number>();
+
+    for (const rows of rowGroups) {
+      for (const row of rows) {
+        result.set(
+          row._id,
+          (result.get(row._id) ?? 0) + (Number(row.amount) || 0)
+        );
+      }
+    }
+
+    return result;
   }
 
   private centsToYuan(value: number): number {

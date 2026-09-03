@@ -158,6 +158,29 @@ export class AdminStorageService {
     };
   }
 
+  async deleteCosObject(objectKey: string): Promise<void> {
+    this.ensureCosEnabled();
+
+    const normalizedObjectKey = objectKey?.trim().replace(/^\/+/, '');
+    if (!normalizedObjectKey || normalizedObjectKey.includes('..')) {
+      throw new AppError(
+        'INVALID_OBJECT_KEY',
+        'object key is invalid for deletion',
+        400
+      );
+    }
+
+    const bucket = this.getRequiredConfig('bucket');
+    const region = this.getRequiredConfig('region');
+    const cos = this.createCosClient();
+
+    await cos.deleteObject({
+      Bucket: bucket,
+      Region: region,
+      Key: normalizedObjectKey,
+    });
+  }
+
   private createCosClient(): COS {
     const options: COS.COSOptions = {
       SecretId: this.getRequiredConfig('secretId'),

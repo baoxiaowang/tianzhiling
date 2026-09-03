@@ -1,16 +1,32 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
+import { brandName } from '../config/brand';
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { AppError } from '@tzl/shared';
+import {
+  AppError,
+  buildCosyVoiceSpeechInstruction,
+  buildDoubaoIcl2SpeechInstruction,
+  buildQwenAudioSpeechInstruction,
+  COSYVOICE_V35_DIALECT_OPTIONS,
+  QWEN_AUDIO_DIALECT_OPTIONS,
+  resolveVoiceTimbreDialect,
+  VOICE_TIMBRE_DIALECT_OPTIONS,
+} from '@tzl/shared';
 import * as bullmq from '@midwayjs/bullmq';
 import type { ILogger } from '@midwayjs/logger';
 import type {
   AdminVoiceTimbreListDTO,
+  AdminDoubaoVoiceSlotDTO,
+  AdminDoubaoVoiceSlotListDTO,
+  BindAdminDoubaoVoiceSlotResultDTO,
   AdminVoiceTimbreProviderValidationDTO,
   AdminVoiceTimbreRecordDTO,
+  DeleteAdminVoiceTimbreResultDTO,
   VoiceTimbreProviderDTO,
+  VoiceTimbreDialectDTO,
   VoiceTimbreStatusDTO,
 } from '@tzl/shared';
 import {
+  AgentEntity,
   MongoObjectId,
   VoiceTimbreEntity,
   VoiceTimbreProvider,
@@ -18,6 +34,7 @@ import {
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
+  CreateAdminMergedVoiceTimbreDTO,
   CreateAdminVoiceTimbreDTO,
   ListAdminVoiceTimbresQueryDTO,
   UpdateAdminVoiceTimbreDTO,
@@ -26,6 +43,10 @@ import { AdminFfmpegService } from './admin-ffmpeg.service';
 import { AdminStorageFileService } from './admin-storage-file.service';
 import { AdminStorageService } from './admin-storage.service';
 import { CosyVoiceVoiceService } from './cosyvoice-voice.service';
+import {
+  DoubaoVoiceService,
+  type DoubaoVoiceSlot,
+} from './doubao-voice.service';
 import { MinimaxVoiceService } from './minimax-voice.service';
 import { QwenVoiceService } from './qwen-voice.service';
 
@@ -50,6 +71,9 @@ export class AdminVoiceTimbreService {
   @InjectEntityModel(VoiceTimbreEntity)
   voiceTimbreModel: MongoRepository<VoiceTimbreEntity>;
 
+  @InjectEntityModel(AgentEntity)
+  agentModel: MongoRepository<AgentEntity>;
+
   @Inject()
   bullmqFramework: bullmq.Framework;
 
@@ -71,6 +95,9 @@ export class AdminVoiceTimbreService {
   @Inject()
   qwenVoiceService: QwenVoiceService;
 
+  @Inject()
+  doubaoVoiceService: DoubaoVoiceService;
+
   async listVoiceTimbres(
     query: ListAdminVoiceTimbresQueryDTO
   ): Promise<AdminVoiceTimbreListDTO> {
@@ -91,7 +118,7 @@ export class AdminVoiceTimbreService {
       });
 
       return {
-        items: timbres.map(timbre => this.buildRecord(timbre)),
+        items: await this.buildRecords(timbres),
         total: timbres.length,
         page: 1,
         pageSize: timbres.length,
@@ -111,10 +138,106 @@ export class AdminVoiceTimbreService {
     ]);
 
     return {
-      items: timbres.map(timbre => this.buildRecord(timbre)),
+      items: await this.buildRecords(timbres),
       total,
       page,
       pageSize,
+    };
+  }
+
+  async listDoubaoVoiceSlots(): Promise<AdminDoubaoVoiceSlotListDTO> {
+    const syncedAt = new Date();
+    const timbres = await this.voiceTimbreModel.find({
+      where: {
+        provider: VoiceTimbreProvider.doubao,
+      } as never,
+      order: { updatedAt: 'DESC' },
+    });
+    const knownSpeakerIds = this.collectDoubaoSpeakerIds(timbres);
+    const providerResult = await this.doubaoVoiceService.listSlots(
+      knownSpeakerIds
+    );
+    const boundBySpeakerId = new Map<string, VoiceTimbreEntity>();
+    for (const timbre of timbres) {
+      const speakerId = timbre.providerVoiceId?.trim();
+      if (
+        timbre.deletionStatus !== 'completed' &&
+        this.isDoubaoSpeakerId(speakerId) &&
+        !boundBySpeakerId.has(speakerId)
+      ) {
+        boundBySpeakerId.set(speakerId, timbre);
+      }
+    }
+    const boundTimbres = [...boundBySpeakerId.values()];
+    const boundTimbreIds = boundTimbres.map(timbre => timbre.id);
+    const agents = boundTimbreIds.length
+      ? await this.agentModel.find({
+          where: {
+            $or: [
+              { voiceTimbreId: { $in: boundTimbreIds } },
+              { pendingVoiceTimbreId: { $in: boundTimbreIds } },
+            ],
+          } as never,
+        })
+      : [];
+    const agentsByTimbreId = this.buildAgentsByTimbreId(agents);
+
+    const fixedSpeakerIds = this.doubaoVoiceService.getKnownSpeakerIds();
+    const fixedOrder = new Map(
+      fixedSpeakerIds.map((speakerId, index) => [speakerId, index])
+    );
+    const providerSlots = [...providerResult.items].sort((left, right) => {
+      const leftFixedIndex = fixedOrder.get(left.speakerId);
+      const rightFixedIndex = fixedOrder.get(right.speakerId);
+      if (leftFixedIndex !== undefined || rightFixedIndex !== undefined) {
+        if (leftFixedIndex === undefined) return 1;
+        if (rightFixedIndex === undefined) return -1;
+        return leftFixedIndex - rightFixedIndex;
+      }
+
+      const orderDelta = (left.orderTime || 0) - (right.orderTime || 0);
+      const createDelta = (left.createTime || 0) - (right.createTime || 0);
+      return (
+        orderDelta ||
+        createDelta ||
+        left.instanceNo.localeCompare(right.instanceNo) ||
+        left.speakerId.localeCompare(right.speakerId)
+      );
+    });
+    const items = providerSlots.map((slot, index) => {
+      const boundTimbre = boundBySpeakerId.get(slot.speakerId);
+      return this.buildDoubaoSlotRecord(
+        index + 1,
+        slot,
+        boundTimbre,
+        agentsByTimbreId.get(this.stringifyObjectId(boundTimbre?.id))
+      );
+    });
+    const soonDeadline = syncedAt.getTime() + 7 * 24 * 60 * 60 * 1000;
+    const metadataMessage = providerResult.openApiSyncSucceeded
+      ? '到期时间和剩余训练次数已从火山引擎同步。'
+      : providerResult.openApiSyncAttempted
+      ? '火山引擎元数据本次同步失败，不影响上传素材和训练。'
+      : '未配置 OpenAPI AK/SK，暂不显示到期时间和剩余训练次数。';
+
+    return {
+      configured:
+        providerResult.openApiSyncAttempted ||
+        fixedSpeakerIds.length > 0 ||
+        items.length > 0,
+      message: items.length
+        ? `已按 ${items.length} 个真实 Speaker ID 固定槽位关系；“本地音色”表示${brandName()}当前占用记录，智能体绑定请统一在音色列表管理。${metadataMessage}`
+        : `没有发现可固定的 Speaker ID；请配置已购 Speaker ID 或火山引擎 OpenAPI。${metadataMessage}`,
+      items,
+      total: items.length,
+      availableCount: items.filter(item => item.availableForTraining).length,
+      boundCount: items.filter(item => Boolean(item.boundTimbre)).length,
+      expiringSoonCount: items.filter(item => {
+        const expiry = item.expireTime ? Date.parse(item.expireTime) : 0;
+        return expiry > syncedAt.getTime() && expiry <= soonDeadline;
+      }).length,
+      syncedAt: syncedAt.toISOString(),
+      requestIds: providerResult.requestIds,
     };
   }
 
@@ -124,13 +247,23 @@ export class AdminVoiceTimbreService {
     const provider = this.normalizeProvider(payload.provider);
     this.assertCreatableProvider(provider);
 
+    const userId = this.parseOptionalUserObjectId(payload.userId);
     const audioObjectKey = this.normalizeAudioObjectKey(
       payload.audioObjectKey || payload.audioUrl
     );
-    const providerVoiceId = this.normalizeInitialProviderVoiceId(
-      provider,
-      payload.providerVoiceId
+    const previewModel = this.normalizePreviewModel(
+      payload.previewModel,
+      provider
     );
+    this.assertVoiceModelConfigured(provider, previewModel);
+    const providerVoiceId =
+      provider === VoiceTimbreProvider.doubao
+        ? await this.resolveDoubaoSpeakerId(payload.providerVoiceId)
+        : this.normalizeInitialProviderVoiceId(
+            provider,
+            payload.providerVoiceId,
+            previewModel
+          );
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
     const now = new Date();
@@ -140,12 +273,18 @@ export class AdminVoiceTimbreService {
     timbre.providerVoiceId = providerVoiceId;
     timbre.audioObjectKey = audioObjectKey;
     timbre.audioUrl = '';
-    timbre.cloneLanguage = this.normalizeCloneLanguage(payload.cloneLanguage);
-    timbre.previewText = this.normalizePreviewText(payload.previewText);
-    timbre.previewModel = this.normalizePreviewModel(
-      payload.previewModel,
-      provider
+    timbre.cloneLanguage = this.defaultCloneLanguage(provider);
+    timbre.speechInstruction = this.normalizeSpeechInstruction(
+      payload.speechInstruction
     );
+    timbre.speechDialect = this.normalizeSpeechDialect(
+      payload.speechDialect,
+      provider,
+      previewModel,
+      timbre.speechInstruction
+    );
+    timbre.previewText = this.normalizePreviewText(payload.previewText);
+    timbre.previewModel = previewModel;
     timbre.previewAudioUrl = '';
     timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
     timbre.speechVolume = this.normalizeSpeechVolume(payload.speechVolume);
@@ -154,6 +293,7 @@ export class AdminVoiceTimbreService {
     timbre.errorCode = '';
     timbre.errorMessage = '';
     timbre.remark = this.normalizeOptionalText(payload.remark, 1000);
+    timbre.userId = userId;
     timbre.createdAt = now;
     timbre.updatedAt = now;
 
@@ -161,6 +301,73 @@ export class AdminVoiceTimbreService {
     await this.enqueueCreateVoiceTimbreJob(saved);
 
     return this.buildRecord(saved);
+  }
+
+  /**
+   * 多段音频合并后创建音色（归属指定 userId）。
+   * 流程：逐段下载 → FFmpeg 合并为单段训练音频 → 上传 COS → 复用 createVoiceTimbre 创建并入队训练。
+   */
+  async mergeCreateVoiceTimbre(
+    payload: CreateAdminMergedVoiceTimbreDTO
+  ): Promise<AdminVoiceTimbreRecordDTO> {
+    const userId = this.parseRequiredUserObjectId(payload.userId);
+    const provider = this.normalizeProvider(payload.provider);
+    this.assertCreatableProvider(provider);
+    const previewModel = this.normalizePreviewModel(
+      payload.previewModel,
+      provider
+    );
+    this.assertVoiceModelConfigured(provider, previewModel);
+    const objectKeys = (payload.audioObjectKeys || []).map(objectKey =>
+      this.normalizeAudioObjectKey(objectKey)
+    );
+
+    if (!objectKeys.length) {
+      throw new AppError(
+        'VOICE_TIMBRE_MERGED_AUDIO_REQUIRED',
+        'at least one audio object key is required for a merged voice timbre',
+        400
+      );
+    }
+
+    const downloaded = await Promise.all(
+      objectKeys.map(objectKey => this.storageFileService.download(objectKey))
+    );
+    const merged = await this.ffmpegService.mergeAudios(
+      downloaded.map(item => ({
+        buffer: item.buffer,
+        fileName: item.fileName,
+      }))
+    );
+    this.validateCloneAudioFile(
+      merged.buffer,
+      merged.fileName,
+      merged.contentType
+    );
+
+    const uploaded = await this.storageService.uploadCosBuffer({
+      buffer: merged.buffer,
+      fileName: merged.fileName,
+      contentType: merged.contentType,
+      folder: 'voice-timbre-merged',
+    });
+
+    return this.createVoiceTimbre({
+      name: payload.name,
+      provider,
+      userId: userId.toHexString(),
+      audioObjectKey: uploaded.objectKey,
+      cloneLanguage: payload.cloneLanguage,
+      speechDialect: payload.speechDialect,
+      speechInstruction: payload.speechInstruction,
+      providerVoiceId: payload.providerVoiceId,
+      previewText: payload.previewText,
+      previewModel,
+      speechSpeed: payload.speechSpeed,
+      speechVolume: payload.speechVolume,
+      speechPitch: payload.speechPitch,
+      remark: payload.remark,
+    });
   }
 
   async retryVoiceTimbreCreate(
@@ -176,6 +383,17 @@ export class AdminVoiceTimbreService {
         'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
         'only failed or active voice timbre can be retrained',
         400
+      );
+    }
+
+    if (
+      timbre.provider === VoiceTimbreProvider.doubao &&
+      timbre.errorCode?.startsWith('DOUBAO_UPLOAD_ACCEPTED_')
+    ) {
+      throw new AppError(
+        'DOUBAO_RETRAIN_STATUS_UNCONFIRMED',
+        '豆包已接收上一次训练，为保护剩余训练次数，请先刷新/校验状态，确认失败后再重试',
+        409
       );
     }
 
@@ -199,6 +417,47 @@ export class AdminVoiceTimbreService {
     await this.enqueueCreateVoiceTimbreJob(saved);
 
     return this.buildRecord(saved);
+  }
+
+  async bindDoubaoVoiceSlotAgent(
+    timbreId: string,
+    agentId: string
+  ): Promise<BindAdminDoubaoVoiceSlotResultDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+    if (
+      timbre.provider !== VoiceTimbreProvider.doubao ||
+      timbre.status !== VoiceTimbreStatus.active ||
+      !this.isDoubaoSpeakerId(timbre.providerVoiceId)
+    ) {
+      throw new AppError(
+        'DOUBAO_SLOT_NOT_READY_FOR_BINDING',
+        'Doubao voice slot must finish training before binding an agent',
+        409
+      );
+    }
+
+    const agentObjectId = this.parseAgentObjectId(agentId);
+    const agent =
+      (await this.agentModel.findOne({ where: { id: agentObjectId } })) ??
+      (await this.agentModel.findOne({
+        where: { _id: agentObjectId } as never,
+      }));
+    if (!agent) {
+      throw new AppError('AGENT_NOT_FOUND', 'agent not found', 404);
+    }
+
+    agent.voiceTimbreId = timbre.id;
+    agent.pendingVoiceTimbreId = undefined;
+    agent.voiceTimbreSelectedAt = new Date();
+    agent.updatedAt = new Date();
+    const savedAgent = await this.agentModel.save(agent);
+
+    return {
+      agentId: this.stringifyObjectId(savedAgent.id),
+      agentName: savedAgent.name?.trim() || '未命名智能体',
+      timbreId: this.stringifyObjectId(timbre.id),
+      speakerId: timbre.providerVoiceId,
+    };
   }
 
   async processCreateVoiceTimbreJob(
@@ -238,6 +497,7 @@ export class AdminVoiceTimbreService {
     const timbre = await this.getVoiceTimbreById(timbreId);
     let changed = false;
     let shouldRetrain = false;
+    const previousPreviewSignature = this.buildProviderPreviewSignature(timbre);
 
     if (payload.name !== undefined) {
       timbre.name = this.normalizeName(payload.name);
@@ -250,13 +510,34 @@ export class AdminVoiceTimbreService {
     }
 
     if (payload.previewText !== undefined) {
-      timbre.previewText = this.normalizePreviewText(payload.previewText);
+      const previewText = this.normalizePreviewText(payload.previewText);
+      shouldRetrain ||=
+        previewText !== this.normalizePreviewText(timbre.previewText);
+      timbre.previewText = previewText;
       changed = true;
-      shouldRetrain = true;
+    }
+
+    if (payload.speechInstruction !== undefined) {
+      timbre.speechInstruction = this.normalizeSpeechInstruction(
+        payload.speechInstruction
+      );
+      changed = true;
+    }
+
+    if (payload.speechDialect !== undefined) {
+      const speechDialect = this.normalizeSpeechDialect(
+        payload.speechDialect,
+        timbre.provider,
+        timbre.previewModel,
+        timbre.speechInstruction
+      );
+      timbre.speechDialect = speechDialect;
+      changed = true;
     }
 
     if (payload.speechSpeed !== undefined) {
-      timbre.speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+      const speechSpeed = this.normalizeSpeechSpeed(payload.speechSpeed);
+      timbre.speechSpeed = speechSpeed;
       changed = true;
     }
 
@@ -276,8 +557,25 @@ export class AdminVoiceTimbreService {
     }
 
     if (changed) {
+      const shouldRefreshProviderPreview =
+        previousPreviewSignature !== this.buildProviderPreviewSignature(timbre);
+
       if (shouldRetrain && timbre.status !== VoiceTimbreStatus.disabled) {
         this.prepareTimbreRetrain(timbre);
+      }
+
+      if (
+        shouldRefreshProviderPreview &&
+        !shouldRetrain &&
+        timbre.status === VoiceTimbreStatus.active &&
+        this.supportsTimbreSpeechInstruction(timbre) &&
+        timbre.providerVoiceId?.trim()
+      ) {
+        timbre.previewAudioUrl = await this.createProviderPreviewAudio(
+          timbre,
+          timbre.providerVoiceId,
+          this.normalizePreviewText(timbre.previewText)
+        );
       }
 
       timbre.updatedAt = new Date();
@@ -289,6 +587,114 @@ export class AdminVoiceTimbreService {
     }
 
     return this.buildRecord(timbre);
+  }
+
+  async deleteVoiceTimbre(
+    timbreId: string
+  ): Promise<DeleteAdminVoiceTimbreResultDTO> {
+    const timbre = await this.getVoiceTimbreById(timbreId);
+
+    if (timbre.deletionStatus === 'completed') {
+      return {
+        id: timbreId,
+        deletionStatus: 'completed',
+        message: '音色已删除',
+      };
+    }
+
+    const boundAgentCount = await this.countAgentBindings(timbre.id);
+    if (boundAgentCount > 0) {
+      throw new AppError(
+        'VOICE_TIMBRE_DELETE_BOUND',
+        `该音色已绑定 ${boundAgentCount} 个智能体，请先解除绑定后再删除`,
+        409,
+        { boundAgentCount }
+      );
+    }
+
+    const previousStatus = timbre.status;
+    const now = new Date();
+    timbre.status = VoiceTimbreStatus.disabled;
+    timbre.deletionStatus = 'pending';
+    timbre.deletionRequestedAt ??= now;
+    timbre.deletionFailureReason = '';
+    timbre.updatedAt = now;
+    await this.voiceTimbreModel.save(timbre);
+
+    const lateBoundAgentCount = await this.countAgentBindings(timbre.id);
+    if (lateBoundAgentCount > 0) {
+      timbre.status = previousStatus;
+      timbre.deletionStatus = undefined;
+      timbre.deletionRequestedAt = undefined;
+      timbre.updatedAt = new Date();
+      await this.voiceTimbreModel.save(timbre);
+
+      throw new AppError(
+        'VOICE_TIMBRE_DELETE_BOUND',
+        `该音色已绑定 ${lateBoundAgentCount} 个智能体，请先解除绑定后再删除`,
+        409,
+        { boundAgentCount: lateBoundAgentCount }
+      );
+    }
+
+    const failures: string[] = [];
+    const deletedObjectKeys = new Set<string>();
+
+    await this.deleteProviderVoice(
+      timbre,
+      failures,
+      previousStatus === VoiceTimbreStatus.creating
+    );
+    await this.deleteTimbreObjects(timbre, failures, deletedObjectKeys);
+
+    if (failures.length === 0) {
+      timbre.audioObjectKey = '';
+      timbre.audioUrl = '';
+      timbre.previewAudioObjectKey = undefined;
+      timbre.previewAudioUrl = undefined;
+      timbre.generatedAudios = [];
+      timbre.providerFileId = undefined;
+      if (
+        timbre.provider === VoiceTimbreProvider.doubao &&
+        this.isDoubaoSpeakerId(timbre.providerVoiceId)
+      ) {
+        timbre.retainedProviderVoiceId = timbre.providerVoiceId;
+      }
+      timbre.providerVoiceId = `deleted_${this.stringifyObjectId(timbre.id)}`;
+      timbre.deletionStatus = 'completed';
+      timbre.deletedAt = new Date();
+      timbre.deletionFailureReason = '';
+    } else {
+      if (deletedObjectKeys.has(timbre.audioObjectKey)) {
+        timbre.audioObjectKey = '';
+        timbre.audioUrl = '';
+      }
+      const previewObjectKey = this.resolveTimbreObjectKey(
+        timbre.previewAudioObjectKey || timbre.previewAudioUrl
+      );
+      if (previewObjectKey && deletedObjectKeys.has(previewObjectKey)) {
+        timbre.previewAudioObjectKey = undefined;
+        timbre.previewAudioUrl = undefined;
+      }
+      timbre.generatedAudios = (timbre.generatedAudios ?? []).filter(
+        item => !deletedObjectKeys.has(item.objectKey)
+      );
+      timbre.deletionStatus = 'partial_failed';
+      timbre.deletionFailureReason = failures.join('；').slice(0, 1000);
+    }
+
+    timbre.updatedAt = new Date();
+    await this.voiceTimbreModel.save(timbre);
+
+    return {
+      id: timbreId,
+      deletionStatus:
+        timbre.deletionStatus === 'completed' ? 'completed' : 'partial_failed',
+      message:
+        timbre.deletionStatus === 'completed'
+          ? '音色已删除'
+          : '音色仍有部分数据删除失败，请重试',
+    };
   }
 
   async ensureActiveTimbre(timbreId: string): Promise<VoiceTimbreEntity> {
@@ -310,10 +716,13 @@ export class AdminVoiceTimbreService {
   ): Promise<AdminVoiceTimbreProviderValidationDTO> {
     const timbre = await this.getVoiceTimbreById(timbreId);
 
-    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+    if (
+      timbre.provider !== VoiceTimbreProvider.cosyvoice &&
+      timbre.provider !== VoiceTimbreProvider.doubao
+    ) {
       throw new AppError(
         'VOICE_TIMBRE_PROVIDER_VALIDATE_UNSUPPORTED',
-        'only CosyVoice timbres support provider validation now',
+        'only CosyVoice and Doubao timbres support provider validation now',
         400
       );
     }
@@ -326,6 +735,22 @@ export class AdminVoiceTimbreService {
         'provider voice id is missing',
         400
       );
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.doubao) {
+      const result = await this.doubaoVoiceService.queryVoice(providerVoiceId);
+      this.syncDoubaoProviderStatus(timbre, result.statusCode);
+      const saved = await this.voiceTimbreModel.save(timbre);
+
+      return {
+        provider: saved.provider as VoiceTimbreProviderDTO,
+        providerVoiceId: saved.providerVoiceId ?? providerVoiceId,
+        providerStatus: result.status,
+        targetModel: saved.previewModel,
+        resourceLink: result.demoAudio,
+        requestId: result.requestId,
+        record: this.buildRecord(saved),
+      };
     }
 
     const result = await this.cosyVoiceVoiceService.queryVoice(providerVoiceId);
@@ -371,6 +796,11 @@ export class AdminVoiceTimbreService {
 
     if (timbre.provider === VoiceTimbreProvider.qwen) {
       await this.createQwenProviderVoice(timbre, audio, previewText);
+      return;
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.doubao) {
+      await this.createDoubaoProviderVoice(timbre, audio, previewText);
       return;
     }
 
@@ -483,8 +913,7 @@ export class AdminVoiceTimbreService {
       audioUrl: audio.url,
       preferredName: timbre.providerVoiceId,
       targetModel:
-        timbre.previewModel ||
-        this.qwenVoiceService.getDefaultPreviewModel(),
+        timbre.previewModel || this.qwenVoiceService.getDefaultPreviewModel(),
       language: timbre.cloneLanguage,
     });
     const previewAudioUrl = await this.createQwenPreviewAudio(
@@ -508,6 +937,46 @@ export class AdminVoiceTimbreService {
     });
   }
 
+  private async createDoubaoProviderVoice(
+    timbre: VoiceTimbreEntity,
+    audio: {
+      buffer: Buffer;
+      fileName: string;
+      contentType: string;
+    },
+    previewText: string
+  ): Promise<void> {
+    const cloneAudio = await this.ffmpegService.extractAudioToWav({
+      buffer: audio.buffer,
+      fileName: audio.fileName,
+    });
+    this.validateCloneAudioFile(
+      cloneAudio.buffer,
+      cloneAudio.fileName,
+      cloneAudio.contentType
+    );
+
+    const cloneResult = await this.doubaoVoiceService.cloneVoice({
+      buffer: cloneAudio.buffer,
+      fileName: cloneAudio.fileName,
+      speakerId: timbre.providerVoiceId,
+    });
+    timbre.previewModel = cloneResult.targetModel;
+    const previewAudioUrl = await this.createDoubaoPreviewAudio(
+      timbre,
+      cloneResult.providerVoiceId,
+      previewText
+    );
+
+    await this.markProviderVoiceActive(timbre, {
+      providerFileId:
+        cloneResult.requestId ||
+        (cloneResult.version === undefined ? '' : String(cloneResult.version)),
+      providerVoiceId: cloneResult.providerVoiceId,
+      previewAudioUrl,
+    });
+  }
+
   private async createCosyVoicePreviewAudio(
     timbre: VoiceTimbreEntity,
     voiceId: string,
@@ -523,6 +992,10 @@ export class AdminVoiceTimbreService {
       speed: timbre.speechSpeed,
       volume: timbre.speechVolume,
       pitch: timbre.speechPitch,
+      ...(timbre.speechInstruction?.trim()
+        ? { instruction: timbre.speechInstruction.trim() }
+        : {}),
+      dialect: timbre.speechDialect,
     });
 
     if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
@@ -548,20 +1021,83 @@ export class AdminVoiceTimbreService {
       text: previewText,
       voiceId,
       model:
-        timbre.previewModel ||
-        this.qwenVoiceService.getDefaultPreviewModel(),
+        timbre.previewModel || this.qwenVoiceService.getDefaultPreviewModel(),
       language: timbre.cloneLanguage,
+      ...(timbre.speechInstruction?.trim()
+        ? { instruction: timbre.speechInstruction.trim() }
+        : {}),
+      dialect: timbre.speechDialect,
+      speed: timbre.speechSpeed,
     });
 
     if (!previewAudio.audioBuffer.length && previewAudio.audioUrl) {
       return previewAudio.audioUrl;
     }
 
+    const speechVolume = Math.min(
+      2,
+      Math.max(0.25, this.normalizeSpeechVolume(timbre.speechVolume))
+    );
+    const speechSpeed = this.normalizeSpeechSpeed(timbre.speechSpeed);
+    const speechPitch = this.normalizeSpeechPitch(timbre.speechPitch);
+    const qwenAudio = this.isQwenAudioModel(timbre.previewModel);
+    const outputSpeechSpeed = qwenAudio ? 1 : speechSpeed;
+    const adjustedPreview =
+      outputSpeechSpeed !== 1 || speechVolume !== 1 || speechPitch !== 0
+        ? await this.ffmpegService.adjustSpeechOutput({
+            buffer: previewAudio.audioBuffer,
+            speechSpeed: outputSpeechSpeed,
+            speechVolume,
+            speechPitch,
+          })
+        : undefined;
+    const audioBuffer = adjustedPreview?.buffer || previewAudio.audioBuffer;
+    const mimeType = adjustedPreview?.contentType || previewAudio.mimeType;
+
     const previewFile = await this.storageService.uploadCosBuffer({
-      buffer: previewAudio.audioBuffer,
-      fileName: this.buildPreviewAudioFileName(previewAudio.mimeType),
+      buffer: audioBuffer,
+      fileName: this.buildPreviewAudioFileName(mimeType),
       folder: 'voice-timbre-previews',
-      contentType: previewAudio.mimeType,
+      contentType: mimeType,
+    });
+
+    return previewFile.publicUrl;
+  }
+
+  private async createDoubaoPreviewAudio(
+    timbre: VoiceTimbreEntity,
+    voiceId: string,
+    previewText: string
+  ): Promise<string> {
+    const previewAudio = await this.doubaoVoiceService.synthesizePreview({
+      text: previewText,
+      voiceId,
+      model:
+        timbre.previewModel || this.doubaoVoiceService.getDefaultPreviewModel(),
+      ...(timbre.speechInstruction?.trim()
+        ? { instruction: timbre.speechInstruction.trim() }
+        : {}),
+      dialect: timbre.speechDialect,
+      speed: timbre.speechSpeed,
+      volume: timbre.speechVolume,
+    });
+
+    const speechPitch = this.normalizeSpeechPitch(timbre.speechPitch);
+    const adjustedPreview =
+      speechPitch !== 0
+        ? await this.ffmpegService.adjustSpeechOutput({
+            buffer: previewAudio.audioBuffer,
+            speechVolume: 1,
+            speechPitch,
+          })
+        : undefined;
+    const audioBuffer = adjustedPreview?.buffer || previewAudio.audioBuffer;
+    const mimeType = adjustedPreview?.contentType || previewAudio.mimeType;
+    const previewFile = await this.storageService.uploadCosBuffer({
+      buffer: audioBuffer,
+      fileName: this.buildPreviewAudioFileName(mimeType),
+      folder: 'voice-timbre-previews',
+      contentType: mimeType,
     });
 
     return previewFile.publicUrl;
@@ -580,6 +1116,10 @@ export class AdminVoiceTimbreService {
       return this.createQwenPreviewAudio(timbre, voiceId, previewText);
     }
 
+    if (timbre.provider === VoiceTimbreProvider.doubao) {
+      return this.createDoubaoPreviewAudio(timbre, voiceId, previewText);
+    }
+
     throw new AppError(
       'VOICE_TIMBRE_PROVIDER_UNSUPPORTED',
       'voice timbre provider is not supported for preview audio',
@@ -595,6 +1135,44 @@ export class AdminVoiceTimbreService {
       previewAudioUrl: string;
     }
   ): Promise<void> {
+    const current = await this.getVoiceTimbreById(
+      this.stringifyObjectId(timbre.id)
+    );
+
+    if (
+      current.deletionStatus === 'pending' ||
+      current.deletionStatus === 'completed' ||
+      current.status === VoiceTimbreStatus.disabled
+    ) {
+      const failures: string[] = [];
+      const deletedObjectKeys = new Set<string>();
+      current.providerFileId = input.providerFileId;
+      current.providerVoiceId = input.providerVoiceId;
+      current.previewAudioUrl = input.previewAudioUrl;
+      current.providerDeletedAt = undefined;
+      await this.deleteProviderVoice(current, failures, false);
+      await this.deleteTimbreObjects(current, failures, deletedObjectKeys);
+      current.status = VoiceTimbreStatus.disabled;
+      if (
+        current.provider === VoiceTimbreProvider.doubao &&
+        this.isDoubaoSpeakerId(current.providerVoiceId)
+      ) {
+        current.retainedProviderVoiceId = current.providerVoiceId;
+      }
+      current.providerVoiceId = `deleted_${this.stringifyObjectId(current.id)}`;
+      current.providerFileId = undefined;
+      current.previewAudioObjectKey = undefined;
+      current.previewAudioUrl = undefined;
+      current.deletionStatus =
+        failures.length === 0 ? 'completed' : 'partial_failed';
+      current.deletedAt =
+        failures.length === 0 ? new Date() : current.deletedAt;
+      current.deletionFailureReason = failures.join('；').slice(0, 1000);
+      current.updatedAt = new Date();
+      await this.voiceTimbreModel.save(current);
+      return;
+    }
+
     timbre.providerFileId = input.providerFileId;
     timbre.providerVoiceId = input.providerVoiceId;
     timbre.previewAudioUrl = input.previewAudioUrl;
@@ -606,13 +1184,18 @@ export class AdminVoiceTimbreService {
   }
 
   private prepareTimbreRetrain(timbre: VoiceTimbreEntity): void {
+    const providerVoiceId = timbre.providerVoiceId;
     timbre.status = VoiceTimbreStatus.creating;
     timbre.errorCode = '';
     timbre.errorMessage = '';
     timbre.providerFileId = '';
-    timbre.providerVoiceId = this.generateInitialProviderVoiceId(
-      timbre.provider
-    );
+    timbre.providerVoiceId =
+      timbre.provider === VoiceTimbreProvider.doubao
+        ? this.normalizeDoubaoSpeakerId(providerVoiceId)
+        : this.generateInitialProviderVoiceId(
+            timbre.provider,
+            timbre.previewModel
+          );
     timbre.previewText = this.normalizePreviewText(timbre.previewText);
     timbre.previewAudioUrl = '';
   }
@@ -693,9 +1276,26 @@ export class AdminVoiceTimbreService {
     timbre: VoiceTimbreEntity,
     error: unknown
   ): Promise<void> {
+    const current = await this.getVoiceTimbreById(
+      this.stringifyObjectId(timbre.id)
+    );
+    if (
+      current.deletionStatus === 'pending' ||
+      current.deletionStatus === 'completed' ||
+      current.status === VoiceTimbreStatus.disabled
+    ) {
+      return;
+    }
+
     timbre.status = VoiceTimbreStatus.failed;
     timbre.errorCode =
       (error as { code?: string })?.code || 'VOICE_TIMBRE_CREATE_FAILED';
+    if (
+      (error as { data?: { providerUploadAccepted?: boolean } })?.data
+        ?.providerUploadAccepted
+    ) {
+      timbre.errorCode = `DOUBAO_UPLOAD_ACCEPTED_${timbre.errorCode}`;
+    }
     timbre.errorMessage =
       error instanceof Error ? error.message : 'voice timbre create failed';
     timbre.updatedAt = new Date();
@@ -732,6 +1332,26 @@ export class AdminVoiceTimbreService {
     timbre.updatedAt = new Date();
   }
 
+  private syncDoubaoProviderStatus(
+    timbre: VoiceTimbreEntity,
+    providerStatusCode: number
+  ): void {
+    if (providerStatusCode === 2 || providerStatusCode === 4) {
+      timbre.status = VoiceTimbreStatus.active;
+      timbre.errorCode = '';
+      timbre.errorMessage = '';
+    } else if (providerStatusCode === 1) {
+      timbre.status = VoiceTimbreStatus.creating;
+      timbre.errorCode = 'DOUBAO_VOICE_TRAINING';
+      timbre.errorMessage = '豆包 Seed ICL 2.0 音色仍在训练';
+    } else {
+      timbre.status = VoiceTimbreStatus.failed;
+      timbre.errorCode = `DOUBAO_VOICE_STATUS_${providerStatusCode}`;
+      timbre.errorMessage = `豆包音色不可用：${providerStatusCode}`;
+    }
+    timbre.updatedAt = new Date();
+  }
+
   private isCosyVoiceProviderStatusActive(providerStatus: string): boolean {
     return ['OK', 'DEPLOYED', 'SUCCEEDED', 'SUCCESS'].includes(providerStatus);
   }
@@ -747,6 +1367,13 @@ export class AdminVoiceTimbreService {
     const status = (error as { status?: number })?.status;
 
     if (
+      (error as { data?: { providerUploadAccepted?: boolean } })?.data
+        ?.providerUploadAccepted
+    ) {
+      return false;
+    }
+
+    if (
       [
         'COSYVOICE_API_KEY_MISSING',
         'COSYVOICE_AUDIO_URL_MISSING',
@@ -754,6 +1381,12 @@ export class AdminVoiceTimbreService {
         'QWEN_VOICE_API_KEY_MISSING',
         'QWEN_VOICE_AUDIO_URL_MISSING',
         'INVALID_QWEN_PREFERRED_NAME',
+        'DOUBAO_VOICE_DISABLED',
+        'DOUBAO_VOICE_APP_ID_MISSING',
+        'DOUBAO_VOICE_CREDENTIAL_MISSING',
+        'DOUBAO_VOICE_AUDIO_MISSING',
+        'DOUBAO_SPEAKER_ID_REQUIRED',
+        'INVALID_DOUBAO_SPEAKER_ID',
         'MINIMAX_VOICE_API_KEY_MISSING',
         'VOICE_TIMBRE_AUDIO_FORMAT_INVALID',
         'VOICE_TIMBRE_AUDIO_TOO_LARGE',
@@ -791,17 +1424,128 @@ export class AdminVoiceTimbreService {
     timbre: VoiceTimbreEntity
   ): boolean {
     return Boolean(
-      [VoiceTimbreProvider.cosyvoice, VoiceTimbreProvider.qwen].includes(
-        timbre.provider
-      ) &&
+      [
+        VoiceTimbreProvider.cosyvoice,
+        VoiceTimbreProvider.qwen,
+        VoiceTimbreProvider.doubao,
+      ].includes(timbre.provider) &&
         timbre.status === VoiceTimbreStatus.active &&
         timbre.providerVoiceId?.trim() &&
         !timbre.previewAudioUrl?.trim()
     );
   }
 
+  private buildDoubaoSlotRecord(
+    slotNumber: number,
+    slot: DoubaoVoiceSlot,
+    boundTimbre?: VoiceTimbreEntity,
+    boundAgents: Array<{
+      id: string;
+      name: string;
+      status: 'active' | 'pending';
+    }> = []
+  ): AdminDoubaoVoiceSlotDTO {
+    const now = Date.now();
+    const expiredByTime = Boolean(slot.expireTime && slot.expireTime <= now);
+    let availabilityReason = '';
+
+    if (boundTimbre) {
+      availabilityReason = `已绑定音色“${boundTimbre.name}”`;
+    } else if (slot.state === 'Expired' || expiredByTime) {
+      availabilityReason = '槽位已到期，请先续费';
+    } else if (slot.state === 'Reclaimed') {
+      availabilityReason = '槽位已回收';
+    } else if (slot.state === 'Training') {
+      availabilityReason = '音色正在训练';
+    } else if (slot.availableTrainingTimes === 0) {
+      availabilityReason = '可训练次数已用完';
+    }
+
+    return {
+      slotKey: `doubao-slot-${slot.speakerId}`,
+      slotNumber,
+      empty: slot.state === 'Unknown' && !boundTimbre,
+      speakerId: slot.speakerId,
+      instanceNo: slot.instanceNo,
+      alias: slot.alias,
+      state: slot.state,
+      isActivable: slot.isActivable,
+      demoAudio: slot.demoAudio,
+      version: slot.version,
+      createTime: this.toOptionalIsoDate(slot.createTime),
+      orderTime: this.toOptionalIsoDate(slot.orderTime),
+      expireTime: this.toOptionalIsoDate(slot.expireTime),
+      availableTrainingTimes: slot.availableTrainingTimes,
+      availableForTraining: !availabilityReason,
+      availabilityReason:
+        availabilityReason ||
+        (slot.state === 'Active'
+          ? `已有服务商音色，可重新训练后接入${brandName()}`
+          : '空闲，可用于训练新音色'),
+      ...(boundTimbre
+        ? {
+            boundTimbre: {
+              id: this.stringifyObjectId(boundTimbre.id),
+              name: boundTimbre.name,
+              provider: boundTimbre.provider as VoiceTimbreProviderDTO,
+              status: boundTimbre.status as VoiceTimbreStatusDTO,
+              providerVoiceId: boundTimbre.providerVoiceId,
+              previewAudioUrl: boundTimbre.previewAudioUrl ?? '',
+              audioUrl: this.storageFileService.resolve(
+                boundTimbre.audioObjectKey || boundTimbre.audioUrl
+              ),
+              previewText: boundTimbre.previewText ?? '',
+              errorCode: boundTimbre.errorCode ?? '',
+              errorMessage: boundTimbre.errorMessage ?? '',
+              deletionStatus: boundTimbre.deletionStatus,
+              deletionFailureReason:
+                boundTimbre.deletionFailureReason || undefined,
+              boundAgentCount: boundAgents.length,
+              canDelete: boundAgents.length === 0,
+            },
+          }
+        : {}),
+      ...(boundAgents.length ? { boundAgents } : {}),
+    };
+  }
+
+  private buildAgentsByTimbreId(
+    agents: AgentEntity[]
+  ): Map<
+    string,
+    Array<{ id: string; name: string; status: 'active' | 'pending' }>
+  > {
+    const result = new Map<
+      string,
+      Array<{ id: string; name: string; status: 'active' | 'pending' }>
+    >();
+
+    for (const agent of agents) {
+      const activeId = this.stringifyObjectId(agent.voiceTimbreId);
+      const pendingId = this.stringifyObjectId(agent.pendingVoiceTimbreId);
+      const timbreId = pendingId || activeId;
+      if (!timbreId) continue;
+      const current = result.get(timbreId) || [];
+      current.push({
+        id: this.stringifyObjectId(agent.id),
+        name: agent.name?.trim() || '未命名智能体',
+        status: pendingId ? 'pending' : 'active',
+      });
+      result.set(timbreId, current);
+    }
+
+    return result;
+  }
+
+  private toOptionalIsoDate(value?: number): string | undefined {
+    if (!value || !Number.isFinite(value)) return undefined;
+    return new Date(value).toISOString();
+  }
+
   private buildSearchWhere(query: ListAdminVoiceTimbresQueryDTO): MongoWhere {
-    const where: MongoWhere = {};
+    const where: MongoWhere = {
+      deletionStatus: { $ne: 'completed' },
+    };
     const keyword = query?.keyword?.trim() ?? '';
     const provider = this.normalizeOptionalProvider(query?.provider);
     const status = this.normalizeOptionalStatus(query?.status);
@@ -812,6 +1556,11 @@ export class AdminVoiceTimbreService {
 
     if (status) {
       where.status = status;
+    }
+
+    const userId = query?.userId?.trim();
+    if (userId) {
+      where.userId = this.parseRequiredUserObjectId(userId);
     }
 
     if (!keyword) {
@@ -838,9 +1587,51 @@ export class AdminVoiceTimbreService {
     };
   }
 
-  private buildRecord(timbre: VoiceTimbreEntity): AdminVoiceTimbreRecordDTO {
+  private async buildRecords(
+    timbres: VoiceTimbreEntity[]
+  ): Promise<AdminVoiceTimbreRecordDTO[]> {
+    if (!timbres.length) {
+      return [];
+    }
+
+    const timbreIds = timbres.map(timbre => timbre.id);
+    const agents = await this.agentModel.find({
+      where: {
+        $or: [
+          { voiceTimbreId: { $in: timbreIds } },
+          { pendingVoiceTimbreId: { $in: timbreIds } },
+        ],
+      } as never,
+    });
+    const bindingCounts = new Map<string, number>();
+
+    for (const agent of agents) {
+      const boundTimbreIds = new Set(
+        [agent.voiceTimbreId, agent.pendingVoiceTimbreId]
+          .filter(Boolean)
+          .map(value => this.stringifyObjectId(value as MongoObjectId))
+      );
+      for (const id of boundTimbreIds) {
+        bindingCounts.set(id, (bindingCounts.get(id) || 0) + 1);
+      }
+    }
+
+    return timbres.map(timbre =>
+      this.buildRecord(
+        timbre,
+        bindingCounts.get(this.stringifyObjectId(timbre.id)) || 0
+      )
+    );
+  }
+
+  private buildRecord(
+    timbre: VoiceTimbreEntity,
+    boundAgentCount = 0
+  ): AdminVoiceTimbreRecordDTO {
     return {
       id: this.stringifyObjectId(timbre.id),
+      userId:
+        this.stringifyObjectId(timbre.userId as MongoObjectId) || undefined,
       name: timbre.name,
       provider: timbre.provider as VoiceTimbreProviderDTO,
       providerVoiceId: timbre.providerVoiceId ?? '',
@@ -850,6 +1641,8 @@ export class AdminVoiceTimbreService {
         timbre.audioObjectKey || timbre.audioUrl
       ),
       cloneLanguage: timbre.cloneLanguage || 'auto',
+      speechDialect: this.normalizeSpeechDialect(timbre.speechDialect),
+      speechInstruction: timbre.speechInstruction?.trim() || '',
       previewText: timbre.previewText ?? '',
       previewModel: timbre.previewModel ?? '',
       previewAudioUrl: timbre.previewAudioUrl ?? '',
@@ -860,9 +1653,136 @@ export class AdminVoiceTimbreService {
       errorCode: timbre.errorCode ?? '',
       errorMessage: timbre.errorMessage ?? '',
       remark: timbre.remark ?? '',
+      boundAgentCount,
+      canDelete: boundAgentCount === 0,
+      deletionStatus: timbre.deletionStatus,
+      deletionFailureReason: timbre.deletionFailureReason || undefined,
       createdAt: this.formatDate(timbre.createdAt),
       updatedAt: this.formatDate(timbre.updatedAt),
     };
+  }
+
+  private countAgentBindings(timbreId: MongoObjectId): Promise<number> {
+    return this.agentModel.count({
+      $or: [{ voiceTimbreId: timbreId }, { pendingVoiceTimbreId: timbreId }],
+    });
+  }
+
+  private async deleteProviderVoice(
+    timbre: VoiceTimbreEntity,
+    failures: string[],
+    wasCreating: boolean
+  ): Promise<void> {
+    if (timbre.providerDeletedAt) {
+      return;
+    }
+
+    const providerVoiceId = timbre.providerVoiceId?.trim();
+    if (
+      !providerVoiceId ||
+      providerVoiceId.startsWith('pending_') ||
+      providerVoiceId.startsWith('deleted_') ||
+      (wasCreating && !timbre.providerFileId)
+    ) {
+      timbre.providerDeletedAt = new Date();
+      return;
+    }
+
+    try {
+      if (timbre.provider === VoiceTimbreProvider.minimax) {
+        await this.minimaxVoiceService.deleteVoice(providerVoiceId);
+      } else if (timbre.provider === VoiceTimbreProvider.cosyvoice) {
+        await this.cosyVoiceVoiceService.deleteVoice(providerVoiceId);
+      } else if (timbre.provider === VoiceTimbreProvider.qwen) {
+        await this.qwenVoiceService.deleteVoice(
+          providerVoiceId,
+          timbre.previewModel
+        );
+      } else if (timbre.provider === VoiceTimbreProvider.doubao) {
+        await this.doubaoVoiceService.releaseVoice(providerVoiceId);
+      } else {
+        throw new AppError(
+          'VOICE_TIMBRE_PROVIDER_DELETE_UNSUPPORTED',
+          `voice provider ${timbre.provider} does not support deletion`,
+          400
+        );
+      }
+      timbre.providerDeletedAt = new Date();
+    } catch (error) {
+      if (this.isAlreadyDeletedProviderError(error)) {
+        timbre.providerDeletedAt = new Date();
+        return;
+      }
+
+      failures.push(
+        `服务商音色删除失败：${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  private async deleteTimbreObjects(
+    timbre: VoiceTimbreEntity,
+    failures: string[],
+    deletedObjectKeys: Set<string>
+  ): Promise<void> {
+    const objectKeys = new Set(
+      [
+        timbre.audioObjectKey,
+        timbre.audioUrl,
+        timbre.previewAudioObjectKey,
+        timbre.previewAudioUrl,
+        ...(timbre.generatedAudios ?? []).map(item => item.objectKey),
+      ]
+        .map(value => this.resolveTimbreObjectKey(value))
+        .filter((value): value is string => Boolean(value))
+    );
+
+    for (const objectKey of objectKeys) {
+      try {
+        await this.storageService.deleteCosObject(objectKey);
+        deletedObjectKeys.add(objectKey);
+      } catch (error) {
+        failures.push(
+          `声音文件删除失败：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+  }
+
+  private resolveTimbreObjectKey(value?: string): string | undefined {
+    const objectKey = this.storageFileService
+      .normalizeForStorage(value)
+      ?.trim()
+      .replace(/^\/+/, '');
+    const allowedPrefixes = [
+      'voice-timbres/',
+      'voice-training-ready/',
+      'voice-timbre-previews/',
+      'voice-timbre-generated/',
+    ];
+
+    return objectKey &&
+      !objectKey.includes('..') &&
+      allowedPrefixes.some(prefix => objectKey.startsWith(prefix))
+      ? objectKey
+      : undefined;
+  }
+
+  private isAlreadyDeletedProviderError(error: unknown): boolean {
+    const code = String((error as { code?: string })?.code || '').toLowerCase();
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error);
+
+    return (
+      /not[_ -]?found|not[_ -]?exist|already[_ -]?deleted/.test(code) ||
+      /not found|not exist|does not exist|already deleted|不存在|已删除/.test(
+        message
+      )
+    );
   }
 
   private async getVoiceTimbreById(
@@ -912,11 +1832,97 @@ export class AdminVoiceTimbreService {
     }
   }
 
+  private async resolveDoubaoSpeakerId(value?: string): Promise<string> {
+    const timbres = await this.voiceTimbreModel.find({
+      where: { provider: VoiceTimbreProvider.doubao } as never,
+      order: { updatedAt: 'DESC' },
+    });
+    const { items } = await this.doubaoVoiceService.listSlots(
+      this.collectDoubaoSpeakerIds(timbres)
+    );
+
+    const requestedSpeakerId = value?.trim()
+      ? this.normalizeDoubaoSpeakerId(value)
+      : '';
+    const occupiedSpeakerIds = new Set(
+      timbres
+        .filter(timbre => timbre.deletionStatus !== 'completed')
+        .map(timbre => timbre.providerVoiceId?.trim())
+        .filter((speakerId): speakerId is string =>
+          this.isDoubaoSpeakerId(speakerId)
+        )
+    );
+    const orderedSlots = [...items].sort(
+      (left, right) =>
+        (right.availableTrainingTimes || 0) -
+          (left.availableTrainingTimes || 0) ||
+        (left.orderTime || 0) - (right.orderTime || 0) ||
+        (left.createTime || 0) - (right.createTime || 0) ||
+        left.instanceNo.localeCompare(right.instanceNo) ||
+        left.speakerId.localeCompare(right.speakerId)
+    );
+    const slot = requestedSpeakerId
+      ? orderedSlots.find(item => item.speakerId === requestedSpeakerId)
+      : orderedSlots.find(
+          item =>
+            !occupiedSpeakerIds.has(item.speakerId) &&
+            this.isDoubaoSlotEligibleForAutoAllocation(item)
+        );
+
+    if (!slot) {
+      throw new AppError(
+        requestedSpeakerId
+          ? 'DOUBAO_SLOT_NOT_FOUND'
+          : 'DOUBAO_SLOT_UNAVAILABLE',
+        requestedSpeakerId
+          ? 'Doubao speaker id is not present in the purchased slot list'
+          : '没有可自动分配的豆包 Speaker ID，请检查已购槽位或剩余训练次数',
+        400
+      );
+    }
+
+    if (!this.isDoubaoSlotTrainable(slot)) {
+      throw new AppError(
+        'DOUBAO_SLOT_NOT_TRAINABLE',
+        'Doubao slot is not available for a new training job',
+        400,
+        {
+          state: slot.state,
+          expireTime: slot.expireTime,
+          availableTrainingTimes: slot.availableTrainingTimes,
+        }
+      );
+    }
+
+    return slot.speakerId;
+  }
+
+  private isDoubaoSlotTrainable(slot: DoubaoVoiceSlot): boolean {
+    const isExpired = Boolean(slot.expireTime && slot.expireTime <= Date.now());
+    const isUnavailableState = ['Training', 'Expired', 'Reclaimed'].includes(
+      slot.state
+    );
+    return (
+      !isExpired && !isUnavailableState && slot.availableTrainingTimes !== 0
+    );
+  }
+
+  private isDoubaoSlotEligibleForAutoAllocation(
+    slot: DoubaoVoiceSlot
+  ): boolean {
+    return (
+      Number.isFinite(slot.availableTrainingTimes) &&
+      Number(slot.availableTrainingTimes) > 0 &&
+      this.isDoubaoSlotTrainable(slot)
+    );
+  }
+
   private assertCreatableProvider(provider: VoiceTimbreProvider): void {
     if (
       provider === VoiceTimbreProvider.minimax ||
       provider === VoiceTimbreProvider.cosyvoice ||
-      provider === VoiceTimbreProvider.qwen
+      provider === VoiceTimbreProvider.qwen ||
+      provider === VoiceTimbreProvider.doubao
     ) {
       return;
     }
@@ -1195,7 +2201,8 @@ export class AdminVoiceTimbreService {
 
   private normalizeInitialProviderVoiceId(
     provider: VoiceTimbreProvider,
-    value?: string
+    value?: string,
+    model?: string
   ): string {
     const rawValue = value?.trim();
 
@@ -1207,7 +2214,9 @@ export class AdminVoiceTimbreService {
 
     if (provider === VoiceTimbreProvider.qwen) {
       return this.normalizeQwenPreferredName(
-        rawValue || this.generateQwenPreferredName()
+        rawValue ||
+          this.generateQwenPreferredName(this.isQwenAudioModel(model)),
+        this.isQwenAudioModel(model)
       );
     }
 
@@ -1217,14 +2226,15 @@ export class AdminVoiceTimbreService {
   }
 
   private generateInitialProviderVoiceId(
-    provider: VoiceTimbreProvider
+    provider: VoiceTimbreProvider,
+    model?: string
   ): string {
     if (provider === VoiceTimbreProvider.cosyvoice) {
       return this.generateCosyVoicePrefix();
     }
 
     if (provider === VoiceTimbreProvider.qwen) {
-      return this.generateQwenPreferredName();
+      return this.generateQwenPreferredName(this.isQwenAudioModel(model));
     }
 
     return this.generateMinimaxProviderVoiceId();
@@ -1258,18 +2268,50 @@ export class AdminVoiceTimbreService {
     return prefix;
   }
 
-  private normalizeQwenPreferredName(value: string): string {
+  private normalizeQwenPreferredName(value: string, qwenAudio = false): string {
     const preferredName = value.trim();
 
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(preferredName)) {
+    const pattern = qwenAudio ? /^[A-Za-z0-9]{1,10}$/ : /^[A-Za-z0-9_]{1,16}$/;
+    if (!pattern.test(preferredName)) {
       throw new AppError(
         'INVALID_QWEN_PREFERRED_NAME',
-        'Qwen preferred name must be 1-16 letters, digits or _',
+        qwenAudio
+          ? 'Qwen Audio prefix must be 1-10 letters or digits'
+          : 'Qwen preferred name must be 1-16 letters, digits or _',
         400
       );
     }
 
     return preferredName;
+  }
+
+  private normalizeDoubaoSpeakerId(value: string): string {
+    const speakerId = value.trim();
+    if (!/^S_[A-Za-z0-9_-]{4,128}$/.test(speakerId)) {
+      throw new AppError(
+        'INVALID_DOUBAO_SPEAKER_ID',
+        'Doubao speaker id must start with S_ and come from a purchased slot',
+        400
+      );
+    }
+    return speakerId;
+  }
+
+  private isDoubaoSpeakerId(value?: string): value is string {
+    return /^S_[A-Za-z0-9_-]{4,128}$/.test(value?.trim() || '');
+  }
+
+  private collectDoubaoSpeakerIds(timbres: VoiceTimbreEntity[]): string[] {
+    const values: string[] = [];
+    for (const timbre of timbres) {
+      if (this.isDoubaoSpeakerId(timbre.providerVoiceId)) {
+        values.push(timbre.providerVoiceId);
+      }
+      if (this.isDoubaoSpeakerId(timbre.retainedProviderVoiceId)) {
+        values.push(timbre.retainedProviderVoiceId);
+      }
+    }
+    return [...new Set(values)];
   }
 
   private generateMinimaxProviderVoiceId(): string {
@@ -1283,14 +2325,108 @@ export class AdminVoiceTimbreService {
     return `tzl${timestamp}${random}`;
   }
 
-  private generateQwenPreferredName(): string {
-    const timestamp = Date.now().toString(36).slice(-7);
-    const random = Math.random().toString(36).slice(2, 5);
-    return `tzl_${timestamp}${random}`;
+  private generateQwenPreferredName(qwenAudio = false): string {
+    if (!qwenAudio) {
+      const timestamp = Date.now().toString(36).slice(-7);
+      const random = Math.random().toString(36).slice(2, 5);
+      return `tzl_${timestamp}${random}`;
+    }
+
+    const timestamp = Date.now().toString(36).slice(-5);
+    const random = Math.random().toString(36).slice(2, 4);
+    return `tzl${timestamp}${random}`;
   }
 
-  private normalizeCloneLanguage(value?: string): string {
-    return value?.trim() || 'auto';
+  private isQwenAudioModel(model?: string): boolean {
+    return /^qwen-audio-/i.test(model?.trim() || '');
+  }
+
+  private defaultCloneLanguage(provider: VoiceTimbreProvider): string {
+    return provider === VoiceTimbreProvider.minimax ? 'Chinese' : 'zh';
+  }
+
+  private normalizeSpeechDialect(
+    value?: string,
+    provider?: VoiceTimbreProvider,
+    model?: string,
+    instruction?: string
+  ): VoiceTimbreDialectDTO {
+    const normalized = value?.trim().toLowerCase() || 'auto';
+    const options =
+      provider === VoiceTimbreProvider.qwen && this.isQwenAudioModel(model)
+        ? QWEN_AUDIO_DIALECT_OPTIONS
+        : provider === VoiceTimbreProvider.cosyvoice &&
+          this.isCosyVoiceV35PlusModel(model)
+        ? COSYVOICE_V35_DIALECT_OPTIONS
+        : VOICE_TIMBRE_DIALECT_OPTIONS;
+    return resolveVoiceTimbreDialect(normalized, instruction, options);
+  }
+
+  private normalizeSpeechInstruction(value?: string): string {
+    return this.normalizeOptionalText(value, 50);
+  }
+
+  private buildProviderPreviewSignature(timbre: VoiceTimbreEntity): string {
+    let instruction = '';
+
+    if (
+      timbre.provider === VoiceTimbreProvider.qwen &&
+      this.isQwenAudioModel(timbre.previewModel)
+    ) {
+      instruction =
+        buildQwenAudioSpeechInstruction({
+          instruction: timbre.speechInstruction,
+          dialect: timbre.speechDialect,
+          speechSpeed: timbre.speechSpeed,
+        }) || '';
+    } else if (
+      timbre.provider === VoiceTimbreProvider.cosyvoice &&
+      this.supportsTimbreSpeechInstruction(timbre)
+    ) {
+      instruction =
+        buildCosyVoiceSpeechInstruction({
+          instruction: timbre.speechInstruction,
+          dialect: timbre.speechDialect,
+        }) || '';
+    } else if (timbre.provider === VoiceTimbreProvider.doubao) {
+      instruction =
+        buildDoubaoIcl2SpeechInstruction({
+          instruction: timbre.speechInstruction,
+          dialect: timbre.speechDialect,
+        }) || '';
+    }
+
+    return [
+      instruction,
+      this.normalizeSpeechSpeed(timbre.speechSpeed),
+      this.normalizeSpeechVolume(timbre.speechVolume),
+      this.normalizeSpeechPitch(timbre.speechPitch),
+    ].join('|');
+  }
+
+  private supportsTimbreSpeechInstruction(timbre: VoiceTimbreEntity): boolean {
+    if (timbre.provider === VoiceTimbreProvider.qwen) {
+      return this.isQwenAudioModel(timbre.previewModel);
+    }
+
+    if (timbre.provider === VoiceTimbreProvider.doubao) {
+      return true;
+    }
+
+    if (timbre.provider !== VoiceTimbreProvider.cosyvoice) {
+      return false;
+    }
+
+    const voiceId = timbre.providerVoiceId?.trim().toLowerCase() || '';
+    if (voiceId.startsWith('cosyvoice-')) {
+      return voiceId.startsWith('cosyvoice-v3.5-plus-');
+    }
+
+    return this.isCosyVoiceV35PlusModel(timbre.previewModel);
+  }
+
+  private isCosyVoiceV35PlusModel(model?: string): boolean {
+    return /^cosyvoice-v3\.5-plus$/i.test(model?.trim() || '');
   }
 
   private normalizePreviewModel(
@@ -1298,7 +2434,22 @@ export class AdminVoiceTimbreService {
     provider: VoiceTimbreProvider
   ): string {
     if (value?.trim()) {
-      return value.trim();
+      const model = value.trim();
+      if (
+        provider === VoiceTimbreProvider.qwen &&
+        ![
+          'qwen3-tts-vc-2026-01-22',
+          'qwen-audio-3.0-tts-plus',
+          'qwen-audio-3.0-tts-flash',
+        ].includes(model)
+      ) {
+        throw new AppError(
+          'QWEN_VOICE_MODEL_UNSUPPORTED',
+          '不支持该千问声音模型',
+          400
+        );
+      }
+      return model;
     }
 
     if (provider === VoiceTimbreProvider.cosyvoice) {
@@ -1309,7 +2460,20 @@ export class AdminVoiceTimbreService {
       return this.qwenVoiceService.getDefaultPreviewModel();
     }
 
+    if (provider === VoiceTimbreProvider.doubao) {
+      return this.doubaoVoiceService.getDefaultPreviewModel();
+    }
+
     return this.minimaxVoiceService.getDefaultPreviewModel();
+  }
+
+  private assertVoiceModelConfigured(
+    provider: VoiceTimbreProvider,
+    model: string
+  ): void {
+    if (provider === VoiceTimbreProvider.qwen) {
+      this.qwenVoiceService.assertModelConfigured(model);
+    }
   }
 
   private normalizeSpeechSpeed(value?: number): number {
@@ -1380,6 +2544,38 @@ export class AdminVoiceTimbreService {
     }
 
     return new MongoObjectId(value);
+  }
+
+  private parseRequiredUserObjectId(value?: string): MongoObjectId {
+    const trimmed = value?.trim();
+
+    if (!trimmed) {
+      throw new AppError('INVALID_USER_ID', 'user id is required', 400);
+    }
+
+    if (!MongoObjectId.isValid(trimmed)) {
+      throw new AppError('INVALID_USER_ID', 'invalid user id', 400);
+    }
+
+    return new MongoObjectId(trimmed);
+  }
+
+  private parseOptionalUserObjectId(value?: string): MongoObjectId | undefined {
+    const trimmed = value?.trim();
+
+    if (!trimmed) {
+      return undefined;
+    }
+
+    return this.parseRequiredUserObjectId(trimmed);
+  }
+
+  private parseAgentObjectId(value: string): MongoObjectId {
+    if (!MongoObjectId.isValid(value?.trim())) {
+      throw new AppError('INVALID_AGENT_ID', 'invalid agent id', 400);
+    }
+
+    return new MongoObjectId(value.trim());
   }
 
   private stringifyObjectId(value: MongoObjectId): string {

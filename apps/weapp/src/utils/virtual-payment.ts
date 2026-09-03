@@ -2,6 +2,7 @@ import Taro from '@tarojs/taro'
 import {
   type OrderRecord,
   syncOrderPayment,
+  type WechatPaymentParams,
   type WechatVirtualPaymentParams,
 } from '../apis/order'
 
@@ -36,6 +37,11 @@ interface WechatVirtualPaymentAlert {
 interface WechatVirtualPaymentOrderResult {
   order: OrderRecord
   virtualPayment: WechatVirtualPaymentParams
+}
+
+interface WechatPaymentOrderResult {
+  order: OrderRecord
+  payment?: WechatPaymentParams
 }
 
 export class WechatVirtualPaymentError extends Error {
@@ -124,14 +130,40 @@ export async function requestWechatVirtualPayment(
   }
 }
 
-export async function requestWechatVirtualPaymentForOrder(
-  result: WechatVirtualPaymentOrderResult
+export async function requestWechatVirtualPaymentWithFallback(
+  result: WechatVirtualPaymentOrderResult,
+  createFallbackOrder: () => Promise<WechatPaymentOrderResult>
 ) {
-  await requestWechatVirtualPayment(result.virtualPayment, {
-    orderId: result.order.id,
-  })
+  try {
+    await requestWechatVirtualPayment(result.virtualPayment, {
+      orderId: result.order.id,
+    })
 
-  return result.order
+    return result.order
+  } catch (error) {
+    if (isWechatPaymentCancel(error)) {
+      throw error
+    }
+
+    console.warn(
+      '[virtual-payment] requestVirtualPayment failed, fallback to wechat payment',
+      {
+        orderId: result.order.id,
+        error,
+      }
+    )
+    const fallbackResult = await createFallbackOrder()
+
+    if (fallbackResult.order.payableAmount > 0) {
+      if (!fallbackResult.payment) {
+        throw new Error('支付参数获取失败，请稍后重试')
+      }
+
+      await Taro.requestPayment(fallbackResult.payment)
+    }
+
+    return fallbackResult.order
+  }
 }
 
 export function isWechatVirtualPaymentError(

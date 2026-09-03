@@ -1,4 +1,5 @@
 import {
+  AgentProfileFactAssertionPolicy,
   AgentProfileFactConfidence,
   AgentProfileFactEntity,
   AgentProfileFactPolarity,
@@ -34,6 +35,75 @@ function createUserMessage(content: string): MessageEntity {
 }
 
 describe('AgentProfileFactService', () => {
+  it('replaces profile-page memory sources and archives cleared fields', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.factModel = {
+      findOne: jest.fn(async ({ where }: any) => {
+        return storedFacts.get(where.key) ?? null;
+      }),
+      save: jest.fn(async fact => {
+        if (!fact.id) {
+          fact.id = new MongoObjectId();
+        }
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+
+    await service.syncAgentProfileMemorySources({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      sources: {
+        lifeExperience: '年轻时做木匠',
+        personalityTraits: '嘴硬心软',
+        languageHabits: '常说慢慢来',
+        hobbies: '下象棋',
+        sharedMemories: '夏天一起去河边散步',
+      },
+    });
+
+    expect([...storedFacts.values()]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'profile_source.life_experience',
+          value: '当前角色生平经历：年轻时做木匠',
+          status: AgentProfileFactStatus.active,
+          confidence: AgentProfileFactConfidence.confirmed,
+        }),
+        expect.objectContaining({
+          key: 'profile_source.personality_traits',
+          value: '当前角色性格特点：嘴硬心软',
+          assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+        }),
+        expect.objectContaining({
+          key: 'profile_source.shared_memories',
+          value: '用户与当前角色的共同记忆：夏天一起去河边散步',
+          assertionPolicy: AgentProfileFactAssertionPolicy.canAssert,
+        }),
+      ])
+    );
+
+    await service.syncAgentProfileMemorySources({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      sources: {
+        personalityTraits: '严厉，但关心家人',
+        sharedMemories: '',
+      },
+    });
+
+    expect(storedFacts.get('profile_source.personality_traits')).toEqual(
+      expect.objectContaining({
+        value: '当前角色性格特点：严厉，但关心家人',
+        status: AgentProfileFactStatus.active,
+      })
+    );
+    expect(storedFacts.get('profile_source.shared_memories')?.status).toBe(
+      AgentProfileFactStatus.archived
+    );
+  });
+
   it('extracts corrected role facts into active profile facts', async () => {
     const service = new AgentProfileFactService();
     const savedFacts: AgentProfileFactEntity[] = [];
@@ -150,8 +220,7 @@ describe('AgentProfileFactService', () => {
     const facts = await service.extractAndUpsertFromUserMessage({
       message: createUserMessage('我不记得了，没有这事'),
       searchableText: '我不记得了，没有这事',
-      previousAssistantContent:
-        '就是城西边那座山。你小时候我背你上去过一回。',
+      previousAssistantContent: '就是城西边那座山。你小时候我背你上去过一回。',
     });
 
     expect(facts).toEqual(
@@ -230,6 +299,125 @@ describe('AgentProfileFactService', () => {
       })
     );
     expect(storedFact?.sourceMessageIds).toHaveLength(2);
+  });
+
+  it('keeps visual appearance as context-only candidates until repeated images agree', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.factModel = {
+      findOne: jest.fn(async ({ where }: any) => {
+        return storedFacts.get(where.key) ?? null;
+      }),
+      find: jest.fn(async () => [...storedFacts.values()]),
+      save: jest.fn(async fact => {
+        if (!fact.id) {
+          fact.id = new MongoObjectId();
+        }
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+    const firstMessage = createUserMessage('[图片]');
+    firstMessage.type = MessageType.image;
+
+    await service.upsertVisualAppearanceObservations({
+      message: firstMessage,
+      observations: [
+        {
+          personId: 'P1',
+          identityTarget: 'agent',
+          identityName: '爸爸',
+          identityConfidence: 'medium',
+          traits: [
+            { kind: 'hair_color', value: '黑' },
+            { kind: 'eyewear', value: '戴眼镜' },
+            { kind: 'build', value: '不清楚' },
+          ],
+        },
+      ],
+    });
+
+    expect(storedFacts.get('visual.appearance.agent.hair_color')).toEqual(
+      expect.objectContaining({
+        value: '当前角色的视觉形象：黑',
+        status: AgentProfileFactStatus.candidate,
+        supportCount: 1,
+        assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+      })
+    );
+    expect(storedFacts.has('visual.appearance.agent.build')).toBe(false);
+
+    const secondMessage = createUserMessage('[图片]');
+    secondMessage.type = MessageType.image;
+    secondMessage.id = new MongoObjectId('665000000000000000000102');
+    await service.upsertVisualAppearanceObservations({
+      message: secondMessage,
+      observations: [
+        {
+          personId: 'P1',
+          identityTarget: 'agent',
+          identityName: '爸爸',
+          identityConfidence: 'high',
+          traits: [
+            { kind: 'hair_color', value: '黑' },
+            { kind: 'eyewear', value: '戴眼镜' },
+          ],
+        },
+      ],
+    });
+
+    expect(storedFacts.get('visual.appearance.agent.hair_color')).toEqual(
+      expect.objectContaining({
+        status: AgentProfileFactStatus.active,
+        supportCount: 2,
+        assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+      })
+    );
+    await expect(
+      service.listVisualAppearanceMemories({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+      })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'visual.appearance.agent.eyewear',
+          status: AgentProfileFactStatus.active,
+          supportCount: 2,
+        }),
+      ])
+    );
+  });
+
+  it('does not store low-confidence or unnamed-family visual guesses', async () => {
+    const service = new AgentProfileFactService();
+    service.factModel = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    } as never;
+    const message = createUserMessage('[图片]');
+    message.type = MessageType.image;
+
+    await expect(
+      service.upsertVisualAppearanceObservations({
+        message,
+        observations: [
+          {
+            personId: 'P1',
+            identityTarget: 'agent',
+            identityConfidence: 'low',
+            traits: [{ kind: 'eyewear', value: '戴眼镜' }],
+          },
+          {
+            personId: 'P2',
+            identityTarget: 'family',
+            identityConfidence: 'medium',
+            traits: [{ kind: 'hair_length', value: '长' }],
+          },
+        ],
+      })
+    ).resolves.toEqual([]);
+    expect(service.factModel.save).not.toHaveBeenCalled();
   });
 
   it('activates a model-extracted fact when the user explicitly asks to remember it', async () => {
@@ -492,5 +680,47 @@ describe('AgentProfileFactService', () => {
     ).resolves.toEqual([]);
     expect(service.openAIService.generateText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
+  });
+
+  it('archives an imported memory only after its last source message is removed', async () => {
+    const service = new AgentProfileFactService();
+    const firstSource = new MongoObjectId();
+    const secondSource = new MongoObjectId();
+    const fact = new AgentProfileFactEntity();
+    Object.assign(fact, {
+      id: new MongoObjectId(),
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      key: 'wechat_import.shared.walk',
+      value: '过去常一起散步',
+      status: AgentProfileFactStatus.active,
+      sourceMessageId: firstSource,
+      sourceMessageIds: [firstSource, secondSource],
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    service.factModel = {
+      find: jest.fn().mockResolvedValue([fact]),
+      save: jest.fn(async value => value),
+    } as never;
+
+    await expect(
+      service.removeHistoricalSourceMessage({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        sourceMessageId: firstSource,
+      })
+    ).resolves.toBe(0);
+    expect(fact.status).toBe(AgentProfileFactStatus.active);
+    expect(fact.sourceMessageIds).toEqual([secondSource]);
+
+    await expect(
+      service.removeHistoricalSourceMessage({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        sourceMessageId: secondSource,
+      })
+    ).resolves.toBe(1);
+    expect(fact.status).toBe(AgentProfileFactStatus.archived);
   });
 });

@@ -1,5 +1,6 @@
 export default {
-  'menu.dashboard.workplace': '工作台',
+  'menu.dashboard.workplace': '数据仪表盘',
+  'menu.dashboard.daily': '每日数据明细',
   'workplace.welcome': '欢迎回来！',
   'workplace.balance': '余额（元）',
   'workplace.order.pending': '待支付',

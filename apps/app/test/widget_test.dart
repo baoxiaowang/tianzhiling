@@ -12,7 +12,7 @@ void main() {
 
     expect(find.text('朋友圈'), findsOneWidget);
     expect(find.text('我'), findsOneWidget);
-    expect(find.text('快速了解未了言AI'), findsOneWidget);
+    expect(find.text('快速了解天之灵AI'), findsOneWidget);
     expect(find.text('1条新消息'), findsOneWidget);
     expect(find.text('柠檬'), findsOneWidget);
   });

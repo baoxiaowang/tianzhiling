@@ -1,4 +1,5 @@
 import { AppError } from '../common/errors';
+import { brandName } from '../config/brand';
 import {
   getRemainingTokenTtlSeconds,
   getRevokedAccessTokenRedisKey,
@@ -11,6 +12,7 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import * as https from 'https';
 import {
+  ChatTrialStatus,
   MongoObjectId,
   UserAccountStatus,
   UserAccountEntity,
@@ -140,7 +142,7 @@ export class UserService {
     return {
       uid: options.uid,
       username: 'mockedName',
-      nickname: '未了言用户',
+      nickname: `${brandName()}用户`,
       phone: '12345678901',
       email: 'xxx.xxx@xxx.com',
       avatar: '',
@@ -374,6 +376,7 @@ export class UserService {
       user.gender = 'unknown';
       user.region = null;
       user.accountStatus = UserAccountStatus.active;
+      this.initializeChatTrial(user, now);
       user.createdAt = now;
       user.updatedAt = now;
       user = await this.userModel.save(user);
@@ -512,6 +515,7 @@ export class UserService {
     user.gender = 'unknown';
     user.region = null;
     user.accountStatus = UserAccountStatus.active;
+    this.initializeChatTrial(user, now);
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -1062,7 +1066,7 @@ export class UserService {
     return {
       id: this.stringifyObjectId(user.id),
       name: user.name,
-      avatar: this.postImageService.resolveForResponse(user.avatar || ''),
+      avatar: this.postImageService.resolveUserAvatarForResponse(user.avatar),
       account,
       phone: user.phone || '',
       phoneVerified: Boolean(user.phoneVerified),
@@ -1293,6 +1297,7 @@ export class UserService {
     user.gender = 'unknown';
     user.region = null;
     user.accountStatus = UserAccountStatus.active;
+    this.initializeChatTrial(user, now);
     user.createdAt = now;
     user.updatedAt = now;
     const savedUser = await this.userModel.save(user);
@@ -1307,6 +1312,12 @@ export class UserService {
     userAccount.updatedAt = now;
 
     return this.userAccountModel.save(userAccount);
+  }
+
+  private initializeChatTrial(user: UserEntity, now: Date): void {
+    user.chatTrialStatus = ChatTrialStatus.pending;
+    user.chatTrialPolicyVersion = 'deferred_v1';
+    user.chatTrialEvaluatedAt = now;
   }
 
   private normalizePhone(rawPhone?: string): string {
@@ -1455,11 +1466,11 @@ export class UserService {
   }
 
   private buildDefaultUserName(phone: string): string {
-    return `未了言用户${phone.slice(-4)}`;
+    return `${brandName()}用户${phone.slice(-4)}`;
   }
 
   private buildDefaultWeappUserName(openid: string): string {
-    return `未了言用户${this.hashWeappOpenid(openid).slice(-4)}`;
+    return `${brandName()}用户${this.hashWeappOpenid(openid).slice(-4)}`;
   }
 
   private buildWeappAccount(openid: string): string {
