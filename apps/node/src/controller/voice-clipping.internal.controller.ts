@@ -44,7 +44,7 @@ export class VoiceClippingInternalController {
       !userId ||
       !Array.isArray(materials) ||
       !materials.length ||
-      materials.some((item) => !item?.objectKey)
+      materials.some(item => !item?.objectKey)
     ) {
       return { ok: false, error: 'MISSING_PARAMS' };
     }
@@ -76,5 +76,44 @@ export class VoiceClippingInternalController {
       platformErrors: result.platformErrors,
       metrics: result.metrics,
     };
+  }
+
+  @Post('/voice-clipping/recut')
+  async recut(
+    @Body()
+    body: {
+      objectKey?: string;
+      fileName?: string;
+      durationSeconds?: number;
+      instruction?: string;
+      sourceMaterialId?: string;
+      sourceName?: string;
+      speakerId?: string;
+    }
+  ) {
+    const secret = this.ctx.get('x-internal-secret');
+    const expected = process.env.INTERNAL_API_SECRET;
+    if (!expected || secret !== expected) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+    if (
+      !body?.objectKey ||
+      !body.fileName ||
+      !body.instruction ||
+      !Number.isFinite(Number(body.durationSeconds))
+    ) {
+      return { ok: false, error: 'MISSING_PARAMS' };
+    }
+
+    const clip = await this.voiceClippingService.recutReviewClip({
+      objectKey: body.objectKey,
+      fileName: body.fileName,
+      durationSeconds: Number(body.durationSeconds),
+      instruction: body.instruction,
+      sourceMaterialId: body.sourceMaterialId,
+      sourceName: body.sourceName,
+      speakerId: body.speakerId,
+    });
+    return { ok: true, clip };
   }
 }

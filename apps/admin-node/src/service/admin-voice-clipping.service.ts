@@ -21,6 +21,14 @@ export class AdminVoiceClippingService {
 
   /** 调 node 内部剪辑接口，触发底层声音剪辑工作流 */
   async createClips(input: AdminVoiceClippingInput) {
+    return this.callNode('/api/system/voice-clipping', input);
+  }
+
+  async recutClip(input: Record<string, unknown>) {
+    return this.callNode('/api/system/voice-clipping/recut', input);
+  }
+
+  private async callNode(path: string, input: unknown) {
     const baseUrl =
       process.env.TZL_NODE_API_URL?.trim() || 'http://tzl_node:7001';
     const secret = process.env.INTERNAL_API_SECRET?.trim();
@@ -36,7 +44,7 @@ export class AdminVoiceClippingService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120 * 1000);
     try {
-      response = await fetch(`${baseUrl}/api/system/voice-clipping`, {
+      response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

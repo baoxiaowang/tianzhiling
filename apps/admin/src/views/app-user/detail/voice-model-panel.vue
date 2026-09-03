@@ -5,19 +5,14 @@
   >
     <!-- ① 音色列表 -->
     <a-card
+      v-show="step === 3"
       class="voice-model-panel__card"
       :class="{ 'voice-model-panel__card--embedded': embedded }"
       :bordered="false"
     >
-      <template #title>
-        <div class="voice-model-panel__card-head">
-          <span class="voice-model-panel__card-title">用户音色</span>
-          <a-typography-text type="secondary">
-            训练完成后自动生效，可直接试听
-          </a-typography-text>
-        </div>
-      </template>
-
+      <div class="voice-model-panel__list-actions">
+        <a-button :loading="loading" @click="fetchList">刷新</a-button>
+      </div>
       <a-table
         row-key="id"
         :data="renderList"
@@ -64,7 +59,7 @@
                 v-if="previewUrlOf(record)"
                 :src="previewUrlOf(record)"
                 controls
-                preload="none"
+                preload="metadata"
                 class="voice-model-panel__audio"
               />
               <span v-else class="voice-model-panel__muted">暂无试听</span>
@@ -73,10 +68,58 @@
           <a-table-column
             title="绑定智能体"
             data-index="boundAgentCount"
-            :width="110"
+            :width="220"
           >
             <template #cell="{ record }">
-              {{ record.boundAgentCount ?? 0 }}
+              <div class="voice-model-panel__binding-cell">
+                <div
+                  v-if="boundAgentsOf(record.id).length"
+                  class="voice-model-panel__bound-agents"
+                >
+                  <div
+                    v-for="agent in boundAgentsOf(record.id)"
+                    :key="agent.id"
+                    class="voice-model-panel__bound-agent"
+                  >
+                    <a-tooltip :content="agent.name || '未命名 AI 亲人'">
+                      <a-avatar :size="36">
+                        <img
+                          v-if="agent.avatar"
+                          :src="agent.avatar"
+                          :alt="agent.name || 'AI 亲人头像'"
+                        />
+                        <template v-else>
+                          {{ getAgentAvatarFallback(agent.name) }}
+                        </template>
+                      </a-avatar>
+                    </a-tooltip>
+                    <a-popconfirm
+                      :content="`确认解除“${
+                        agent.name || '该智能体'
+                      }”与此音色的绑定？`"
+                      @ok="handleUnbindAgent(agent)"
+                    >
+                      <button
+                        type="button"
+                        class="voice-model-panel__unbind-button"
+                        :disabled="bindingSavingAgentId === agent.id"
+                        aria-label="解绑智能体"
+                        @click.stop
+                      >
+                        ×
+                      </button>
+                    </a-popconfirm>
+                  </div>
+                </div>
+                <a-button
+                  v-else
+                  type="text"
+                  size="mini"
+                  @click="openBinding(record)"
+                >
+                  绑定
+                </a-button>
+              </div>
             </template>
           </a-table-column>
           <a-table-column title="创建时间" :width="160">
@@ -89,14 +132,14 @@
               <a-space>
                 <a-button
                   v-if="
-                    record.status === 'failed' || record.status === 'creating'
+                    record.status === 'failed' || record.status === 'active'
                   "
                   type="text"
                   size="small"
                   :loading="retryingId === record.id"
                   @click="handleRetry(record)"
                 >
-                  重试
+                  {{ record.status === 'active' ? '重新训练' : '重试' }}
                 </a-button>
                 <a-popconfirm
                   content="删除后该用户将无法使用此音色，且对象存储中的音频会被清理，确认删除？"
@@ -129,7 +172,13 @@
         </div>
       </template>
 
-      <a-steps :current="step" type="arrow" class="voice-model-panel__steps">
+      <a-steps
+        :current="step + 1"
+        type="arrow"
+        changeable
+        class="voice-model-panel__steps"
+        @change="onNavigationStepChange"
+      >
         <a-step
           v-for="(item, idx) in stepItems"
           :key="item.title"
@@ -138,7 +187,6 @@
           <span
             class="voice-model-panel__step-link"
             :class="{ 'is-active': idx === step }"
-            @click="onStepChange(idx)"
           >
             {{ item.title }}
           </span>
@@ -166,24 +214,29 @@
             v-for="clip in uploadedClips"
             :key="clip.objectKey"
             class="voice-model-panel__clip"
+            :class="{
+              'voice-model-panel__clip--processed': clip.processed,
+              'voice-model-panel__clip--checked':
+                !clip.processed && clip.selected,
+            }"
           >
-            <a-checkbox :model-value="clip.selected" disabled>
+            <a-checkbox v-model="clip.selected" :disabled="clip.processed">
               {{ clip.name }}
             </a-checkbox>
             <audio
               :src="clip.publicUrl"
               controls
-              preload="none"
+              preload="metadata"
               class="voice-model-panel__clip-audio"
             />
-            <a-button
-              type="text"
-              size="small"
-              status="danger"
-              @click="removeClip(clip)"
+            <a-popconfirm
+              :content="`确认删除声音素材“${clip.name}”？该素材生成的声音片段也会一并删除。`"
+              @ok="removeClip(clip)"
             >
-              移除
-            </a-button>
+              <a-button type="text" size="small" status="danger">
+                删除
+              </a-button>
+            </a-popconfirm>
           </div>
         </div>
         <a-typography-text v-if="uploading" type="secondary">
@@ -203,15 +256,8 @@
       <div v-show="step === 1" class="voice-model-panel__step">
         <div class="voice-model-panel__step-head">
           <a-typography-text>
-            已剪出 {{ voiceClips.length }} 段片段，勾选用于训练的片段
+            已剪出 {{ voiceClips.length }} 段片段，请逐段确认是否用于训练
           </a-typography-text>
-          <a-checkbox
-            :model-value="allVoiceClipsSelected"
-            :indeterminate="someVoiceClipsSelected"
-            @change="onToggleAllVoiceClips"
-          >
-            全选
-          </a-checkbox>
         </div>
 
         <div v-if="clipping" class="voice-model-panel__clipping">
@@ -229,22 +275,22 @@
 
         <div v-if="voiceClips.length" class="voice-model-panel__clips">
           <div
-            v-for="clip in voiceClips"
+            v-for="(clip, index) in voiceClips"
             :key="clip.objectKey"
             class="voice-model-panel__clip"
-            :class="{ 'voice-model-panel__clip--checked': clip.selected }"
+            :class="{
+              'voice-model-panel__clip--checked':
+                clip.reviewStatus === 'accepted',
+            }"
           >
-            <a-checkbox
-              :model-value="clip.selected"
-              @change="onToggleClip(clip, $event)"
-            >
-              {{ clip.sourceName || '片段' }} ·
+            <div class="voice-model-panel__clip-title">
+              片段 {{ index + 1 }} ·
               {{ formatClipDuration(clip.durationSeconds) }}
-            </a-checkbox>
+            </div>
             <audio
               :src="clip.publicUrl"
               controls
-              preload="none"
+              preload="metadata"
               class="voice-model-panel__clip-audio"
             />
             <a-tag v-if="clip.qualityLabel" size="small" color="arcoblue">
@@ -263,8 +309,22 @@
                 {{ getVoiceClipIssueDisplayText(issue) }}
               </a-typography-text>
             </div>
+            <a-radio-group
+              :model-value="clip.reviewStatus"
+              type="button"
+              size="small"
+              @change="setClipReviewStatus(clip, $event)"
+            >
+              <a-radio value="accepted">可以使用</a-radio>
+              <a-radio value="recut">再剪一下</a-radio>
+              <a-radio value="unused">不使用</a-radio>
+            </a-radio-group>
           </div>
-          <a-button size="small" :loading="clipping" @click="startClipping">
+          <a-button
+            size="small"
+            :loading="clipping"
+            @click="startClipping(true)"
+          >
             重新剪辑
           </a-button>
         </div>
@@ -292,7 +352,7 @@
         </div>
       </div>
 
-      <!-- Step 3 填写训练信息 -->
+      <!-- Step 3 提交训练 -->
       <div v-show="step === 2" class="voice-model-panel__step">
         <a-form ref="trainFormRef" :model="form" layout="vertical">
           <a-grid :cols="2" :col-gap="16" :row-gap="4">
@@ -316,36 +376,42 @@
             </a-grid-item>
             <a-grid-item :span="{ xs: 24, md: 12 }">
               <a-form-item
-                field="provider"
-                label="服务商"
-                :rules="[{ required: true, message: '请选择服务商' }]"
+                field="previewModel"
+                label="声音模型"
+                :rules="[{ required: true, message: '请选择声音模型' }]"
               >
                 <a-select
-                  v-model="form.provider"
-                  placeholder="请选择服务商"
-                  @change="onProviderChange"
+                  v-model="form.previewModel"
+                  placeholder="请选择声音模型"
+                  @change="onVoiceModelChange"
                 >
-                  <a-option value="minimax">MiniMax</a-option>
-                  <a-option value="cosyvoice">CosyVoice v3.5 Plus</a-option>
-                  <a-option value="qwen">千问（Qwen）</a-option>
-                  <a-option value="doubao">豆包（Seed ICL 2.0）</a-option>
+                  <a-option
+                    v-for="option in voiceModelOptions"
+                    :key="option.model"
+                    :value="option.model"
+                  >
+                    {{ option.label }}
+                  </a-option>
                 </a-select>
               </a-form-item>
             </a-grid-item>
+            <a-grid-item :span="24">
+              <a-alert :type="voiceModelNotice.type" show-icon>
+                {{ voiceModelNotice.text }}
+              </a-alert>
+            </a-grid-item>
             <a-grid-item v-if="isDoubaoProvider" :span="24">
-              <a-form-item
-                field="providerVoiceId"
-                label="豆包 Speaker ID"
-                :rules="[{ required: true, message: '请填写豆包 Speaker ID' }]"
-              >
+              <a-form-item label="豆包 Speaker ID">
                 <a-input
-                  v-model="form.providerVoiceId"
-                  allow-clear
-                  placeholder="如 S_xxxxxxxx，需为已购槽位"
+                  model-value="提交时优先分配剩余训练次数最多的槽位"
+                  disabled
                 />
               </a-form-item>
             </a-grid-item>
-            <a-grid-item :span="{ xs: 24, md: 12 }">
+            <a-grid-item
+              v-if="supportsSpeechInstruction"
+              :span="{ xs: 24, md: 12 }"
+            >
               <a-form-item field="speechDialect" label="方言类型">
                 <a-select v-model="form.speechDialect" placeholder="请选择方言">
                   <a-option
@@ -358,7 +424,10 @@
                 </a-select>
               </a-form-item>
             </a-grid-item>
-            <a-grid-item :span="{ xs: 24, md: 12 }">
+            <a-grid-item
+              v-if="supportsSpeechInstruction"
+              :span="{ xs: 24, md: 12 }"
+            >
               <a-form-item
                 field="speechInstruction"
                 label="补充要求"
@@ -398,8 +467,8 @@
           </a-grid>
 
           <div class="voice-model-panel__section-title">输出层调节</div>
-          <a-grid :cols="3" :col-gap="16" :row-gap="4">
-            <a-grid-item :span="{ xs: 24, md: 8 }">
+          <a-grid :cols="24" :col-gap="16" :row-gap="4">
+            <a-grid-item :span="8">
               <a-form-item field="speechSpeed" label="语速">
                 <div class="voice-model-panel__slider-row">
                   <a-slider
@@ -418,7 +487,7 @@
                 </div>
               </a-form-item>
             </a-grid-item>
-            <a-grid-item :span="{ xs: 24, md: 8 }">
+            <a-grid-item :span="8">
               <a-form-item field="speechVolume" label="音量">
                 <div class="voice-model-panel__slider-row">
                   <a-slider
@@ -437,7 +506,7 @@
                 </div>
               </a-form-item>
             </a-grid-item>
-            <a-grid-item :span="{ xs: 24, md: 8 }">
+            <a-grid-item :span="8">
               <a-form-item field="speechPitch" label="音调">
                 <div class="voice-model-panel__slider-row">
                   <a-slider
@@ -460,8 +529,8 @@
         </a-form>
       </div>
 
-      <!-- Step 4 提交与进度 -->
-      <div v-show="step === 3" class="voice-model-panel__step">
+      <!-- 第三步确认信息 -->
+      <div v-show="step === 2" class="voice-model-panel__step">
         <a-alert type="info" show-icon class="voice-model-panel__confirm-alert">
           <template #title>
             即将为该用户创建音色并提交训练，请确认以下信息
@@ -477,8 +546,8 @@
           <a-descriptions-item label="音色名称">
             {{ form.name || '-' }}
           </a-descriptions-item>
-          <a-descriptions-item label="服务商">
-            {{ providerLabel(form.provider) }}
+          <a-descriptions-item label="声音模型">
+            {{ selectedVoiceModelLabel }}
           </a-descriptions-item>
           <a-descriptions-item label="训练片段">
             {{ selectedVoiceClips.length }} 段
@@ -487,7 +556,7 @@
             {{ dialectLabel }}
           </a-descriptions-item>
           <a-descriptions-item v-if="isDoubaoProvider" label="豆包 Speaker ID">
-            {{ form.providerVoiceId || '-' }}
+            提交时按剩余训练次数自动分配
           </a-descriptions-item>
           <a-descriptions-item label="补充要求">
             {{ form.speechInstruction || '-' }}
@@ -502,30 +571,14 @@
             </span>
           </a-descriptions-item>
         </a-descriptions>
-
-        <div v-if="submittedId" class="voice-model-panel__submitted">
-          <a-result status="success" title="训练任务已提交">
-            <template #subtitle>
-              训练进行中，完成后音色将自动生效；可在上方「用户音色」列表查看进度
-            </template>
-            <template #extra>
-              <a-space>
-                <a-button type="primary" @click="resetWizard">
-                  再训练一个
-                </a-button>
-                <a-button @click="refreshAfterSubmit">查看音色列表</a-button>
-              </a-space>
-            </template>
-          </a-result>
-        </div>
       </div>
 
       <!-- 步骤导航 -->
-      <div v-if="!submittedId" class="voice-model-panel__nav">
+      <div v-if="step < 3" class="voice-model-panel__nav">
         <a-button v-if="step > 0" @click="step -= 1">上一步</a-button>
         <div class="voice-model-panel__nav-spacer" />
         <a-button
-          v-if="step < 3"
+          v-if="step < 2"
           type="primary"
           :disabled="!canGoNext"
           @click="goNext"
@@ -533,7 +586,7 @@
           下一步
         </a-button>
         <a-button
-          v-if="step === 3"
+          v-if="step === 2"
           type="primary"
           :loading="saving"
           @click="submitTrain"
@@ -542,6 +595,84 @@
         </a-button>
       </div>
     </a-card>
+
+    <a-modal
+      v-model:visible="recutVisible"
+      title="再剪一下"
+      :confirm-loading="recutting"
+      @before-ok="submitRecut"
+    >
+      <a-typography-paragraph>
+        请写明时间范围，例如“去掉开头 2 秒”或“只保留 3 秒到 8 秒”。
+      </a-typography-paragraph>
+      <a-textarea
+        v-model="recutInstruction"
+        :max-length="100"
+        show-word-limit
+        placeholder="请输入具体剪辑要求"
+      />
+    </a-modal>
+
+    <a-modal
+      v-model:visible="bindingVisible"
+      :title="`选择绑定智能体${
+        bindingTimbre?.name ? ` · ${bindingTimbre.name}` : ''
+      }`"
+      ok-text="确认绑定"
+      cancel-text="取消"
+      :ok-loading="bindingConfirming"
+      :ok-button-props="{ disabled: !selectedBindingAgentId }"
+      width="min(680px, calc(100vw - 32px))"
+      @before-ok="confirmBinding"
+    >
+      <a-radio-group
+        v-model="selectedBindingAgentId"
+        class="voice-model-panel__agents"
+      >
+        <a-radio
+          v-for="agent in userAgents"
+          :key="agent.id"
+          :value="agent.id"
+          class="voice-model-panel__agent-option"
+        >
+          <div class="voice-model-panel__agent-card">
+            <a-avatar :size="48" class="voice-model-panel__agent-avatar">
+              <img
+                v-if="agent.avatar"
+                :src="agent.avatar"
+                :alt="agent.name || 'AI 亲人头像'"
+              />
+              <template v-else>
+                {{ getAgentAvatarFallback(agent.name) }}
+              </template>
+            </a-avatar>
+            <div class="voice-model-panel__agent-main">
+              <div class="voice-model-panel__agent-heading">
+                <strong>{{ agent.name || '未命名 AI 亲人' }}</strong>
+                <a-tag
+                  v-if="agent.voiceTimbreId === bindingTimbre?.id"
+                  color="green"
+                >
+                  当前已绑定
+                </a-tag>
+                <a-tag v-else-if="agent.voiceTimbreId" color="orange">
+                  已绑定其他音色
+                </a-tag>
+                <a-tag v-else color="gray">未绑定音色</a-tag>
+              </div>
+              <div class="voice-model-panel__agent-meta">
+                <span>用户称呼 TA：{{ agent.iCallAgent || '-' }}</span>
+                <span>TA 称呼用户：{{ agent.agentCallMe || '-' }}</span>
+              </div>
+              <div class="voice-model-panel__agent-meta">
+                创建时间：{{ formatDate(agent.createdAt) }}
+              </div>
+            </div>
+          </div>
+        </a-radio>
+      </a-radio-group>
+      <a-empty v-if="!userAgents.length" description="该用户暂无智能体" />
+    </a-modal>
   </div>
 </template>
 
@@ -556,11 +687,17 @@
     retryVoiceTimbre,
     deleteVoiceTimbre,
     createVoiceMaterial,
+    rollbackVoiceMaterialUpload,
     queryVoiceMaterials,
     deleteVoiceMaterial,
     clipVoiceMaterials,
+    recutVoiceClip,
+    saveVoiceMaterialReviewClips,
+    VoiceClipReviewStatus,
     VoiceTimbreRecord,
   } from '@/api/voice-model';
+  import { AppUserAgentRecord, queryAppUserAgents } from '@/api/app-user';
+  import { updateAgent } from '@/api/agent';
   import { VoiceTimbreProviderDTO, VoiceTimbreStatusDTO } from '@tzl/shared';
 
   // 方言选项（与 voice-model/timbre 页面保持一致，避免依赖 shared 构建产物导出）
@@ -616,6 +753,43 @@
     { value: 'tianjin', label: '天津话' },
   ] as const;
 
+  const voiceModelOptions: Array<{
+    model: string;
+    provider: VoiceTimbreProviderDTO;
+    label: string;
+  }> = [
+    {
+      model: 'qwen3-tts-vc-2026-01-22',
+      provider: 'qwen',
+      label: '千问 Qwen3 TTS VC（普通话）',
+    },
+    {
+      model: 'qwen-audio-3.0-tts-plus',
+      provider: 'qwen',
+      label: '千问 Qwen Audio 3.0 Plus（支持方言指令）',
+    },
+    {
+      model: 'qwen-audio-3.0-tts-flash',
+      provider: 'qwen',
+      label: '千问 Qwen Audio 3.0 Flash（支持方言指令）',
+    },
+    {
+      model: 'cosyvoice-v3.5-plus',
+      provider: 'cosyvoice',
+      label: 'CosyVoice v3.5 Plus（支持方言指令）',
+    },
+    {
+      model: 'seed-tts-2.0-expressive',
+      provider: 'doubao',
+      label: '豆包 Seed ICL 2.0（方言软控制）',
+    },
+    {
+      model: 'speech-2.8-turbo',
+      provider: 'minimax',
+      label: 'MiniMax Speech 2.8 Turbo（跟随原音）',
+    },
+  ];
+
   interface UploadedClip {
     /** 已保存到后端的素材记录 id，未持久化时为空 */
     id?: string;
@@ -623,6 +797,8 @@
     objectKey: string;
     publicUrl: string;
     selected: boolean;
+    /** 已经通过剪辑工作流生成过片段；处理后锁定，避免重复提交。 */
+    processed: boolean;
   }
 
   interface VoiceClip {
@@ -639,18 +815,22 @@
       severity: 'warning' | 'rejected';
       message?: string;
     }[];
-    selected: boolean;
+    reviewStatus: VoiceClipReviewStatus;
   }
 
   const props = withDefaults(
     defineProps<{
       title?: string;
       userId?: string;
+      userName?: string;
+      appellation?: string;
       embedded?: boolean;
     }>(),
     {
       title: '声音模型',
       userId: '',
+      userName: '',
+      appellation: '妈妈',
       embedded: false,
     }
   );
@@ -659,10 +839,10 @@
   const loading = ref(false);
   // 顶部导航步骤项：工作流与导航进度一一对应
   const stepItems = [
-    { title: '上传声音素材', desc: '上传多段音频' },
-    { title: '选择训练片段', desc: '勾选用于训练的片段' },
-    { title: '填写训练信息', desc: '模型与服务参数' },
-    { title: '提交与进度', desc: '确认后提交训练' },
+    { title: '上传声音素材', desc: '保存并管理原始素材' },
+    { title: '选择声音片段', desc: '试听、返工并确认片段' },
+    { title: '提交训练', desc: '填写模型与训练参数' },
+    { title: '音色管理', desc: '试听、删除与绑定智能体' },
   ];
   const pagination = reactive({
     current: 1,
@@ -675,7 +855,6 @@
   const step = ref(0);
   const saving = ref(false);
   const uploading = ref(false);
-  const submittedId = ref('');
   const trainFormRef = ref();
   const fileInputRef = ref<HTMLInputElement>();
   const uploadedClips = ref<UploadedClip[]>([]);
@@ -683,16 +862,24 @@
   const voiceClips = ref<VoiceClip[]>([]);
   const clipping = ref(false);
   const clipError = ref('');
-  /** 已剪辑的素材指纹（objectKey 组合），素材变化后需重新剪辑 */
-  const clippedMaterialFingerprint = ref('');
-
-  const materialFingerprint = () =>
-    uploadedClips.value.map((clip) => clip.objectKey).join('|');
+  const pendingSelectedMaterials = computed(() =>
+    uploadedClips.value.filter((clip) => !clip.processed && clip.selected)
+  );
 
   const selectedVoiceClips = computed(() =>
-    voiceClips.value.filter((clip) => clip.selected)
+    voiceClips.value.filter((clip) => clip.reviewStatus === 'accepted')
   );
   const retryingId = ref('');
+  const recutVisible = ref(false);
+  const recutting = ref(false);
+  const recutInstruction = ref('');
+  const recutTarget = ref<VoiceClip>();
+  const bindingVisible = ref(false);
+  const bindingConfirming = ref(false);
+  const bindingSavingAgentId = ref('');
+  const bindingTimbre = ref<VoiceTimbreRecord>();
+  const userAgents = ref<AppUserAgentRecord[]>([]);
+  const selectedBindingAgentId = ref('');
 
   /** 复用 C 端小程序「选择训练片段」的时长汇总与上限校验逻辑 */
   const VOICE_SERVICE_MAX_TRAINING_SECONDS = 60;
@@ -732,17 +919,6 @@
     )
   );
 
-  const wouldExceedSelectionLimit = (target: VoiceClip) => {
-    if (target.selected) {
-      return false;
-    }
-    const projectedSeconds =
-      acceptedClipDurationSeconds.value +
-      (selectedVoiceClips.value.length ? CLIP_SEPARATOR_SECONDS : 0) +
-      getClipDurationSeconds(target);
-    return projectedSeconds > VOICE_SERVICE_MAX_TRAINING_SECONDS;
-  };
-
   /** 片段质量提示文案（与 C 端小程序保持一致） */
   const getVoiceClipIssueDisplayText = (issue: {
     code: string;
@@ -762,9 +938,13 @@
     return messages[issue.code] ?? issue.message;
   };
 
+  const DEFAULT_PREVIEW_TEXT =
+    '宝贝，我好想你，最近过得好吗？有没有好好吃饭，好好睡觉。';
+
   const form = reactive<{
     name: string;
     provider: VoiceTimbreProviderDTO;
+    previewModel: string;
     providerVoiceId: string;
     previewText: string;
     speechDialect: string;
@@ -775,8 +955,9 @@
   }>({
     name: '',
     provider: 'qwen',
+    previewModel: 'qwen3-tts-vc-2026-01-22',
     providerVoiceId: '',
-    previewText: '',
+    previewText: DEFAULT_PREVIEW_TEXT,
     speechDialect: 'auto',
     speechInstruction: '',
     speechSpeed: 1,
@@ -784,7 +965,75 @@
     speechPitch: 0,
   });
 
+  const buildDefaultTimbreName = () => {
+    const userName = props.userName.trim() || '当前用户';
+    const appellation = props.appellation.trim() || '妈妈';
+    const prefix = `${userName} 的${appellation}`;
+    const maxVisibleSequence = renderList.value.reduce((max, item) => {
+      const itemName = item.name?.trim() || '';
+      if (!itemName.startsWith(`${prefix} `)) {
+        return max;
+      }
+      const sequence = Number(itemName.slice(prefix.length + 1));
+      return Number.isInteger(sequence) && sequence > max ? sequence : max;
+    }, 0);
+    const nextSequence = Math.max(maxVisibleSequence + 1, pagination.total + 1);
+    return `${prefix} ${nextSequence}`;
+  };
+
   const isDoubaoProvider = computed(() => form.provider === 'doubao');
+  const selectedVoiceModelLabel = computed(
+    () =>
+      voiceModelOptions.find((option) => option.model === form.previewModel)
+        ?.label || form.previewModel
+  );
+  const isQwenAudioProvider = computed(
+    () => form.provider === 'qwen' && /^qwen-audio-/i.test(form.previewModel)
+  );
+  const supportsSpeechInstruction = computed(
+    () =>
+      isQwenAudioProvider.value ||
+      form.provider === 'cosyvoice' ||
+      form.provider === 'doubao'
+  );
+  const voiceModelNotice = computed<{
+    type: 'info' | 'warning';
+    text: string;
+  }>(() => {
+    const duration = acceptedClipDurationSeconds.value;
+    if (isQwenAudioProvider.value) {
+      return {
+        type: duration > 20 ? 'warning' : 'info',
+        text: `支持复刻音色及方言指令；建议使用口音一致的 10–20 秒素材，当前约 ${Math.round(
+          duration
+        )} 秒。`,
+      };
+    }
+    if (form.provider === 'qwen') {
+      return {
+        type: 'warning',
+        text: 'Qwen3 TTS VC 支持声音复刻，但不支持方言或补充指令；中文按普通话合成。',
+      };
+    }
+    if (form.provider === 'doubao') {
+      return {
+        type: duration < 14 || duration > 30 ? 'warning' : 'info',
+        text: `方言通过自然语言指令软控制，训练素材本身应保持同一口音；官方建议 14–30 秒，当前约 ${Math.round(
+          duration
+        )} 秒。`,
+      };
+    }
+    if (form.provider === 'cosyvoice') {
+      return {
+        type: 'info',
+        text: '支持复刻音色、方言和补充指令；方言会在试听与聊天合成时持续应用。',
+      };
+    }
+    return {
+      type: 'info',
+      text: '支持声音复刻及输出层调节；不支持方言或补充指令，口音主要跟随训练素材。',
+    };
+  });
   const audioAccept = computed(() =>
     isDoubaoProvider.value
       ? 'audio/mp3,audio/mp4,audio/wav,video/mp4'
@@ -817,58 +1066,38 @@
       return selectedVoiceClips.value.length > 0;
     }
     if (step.value === 2) {
-      return (
-        Boolean(form.name.trim()) &&
-        Boolean(form.previewText.trim()) &&
-        (!isDoubaoProvider.value || Boolean(form.providerVoiceId.trim()))
-      );
+      return Boolean(form.name.trim()) && Boolean(form.previewText.trim());
     }
     return true;
   });
 
-  const allVoiceClipsSelected = computed(
-    () =>
-      voiceClips.value.length > 0 &&
-      voiceClips.value.every((clip) => clip.selected)
-  );
-
-  const someVoiceClipsSelected = computed(
-    () => selectedVoiceClips.value.length > 0 && !allVoiceClipsSelected.value
-  );
-
-  const onToggleAllVoiceClips = (
-    checked: boolean | (string | number | boolean)[]
-  ) => {
-    const next = Boolean(checked);
-    // 全选时若超过训练片段上限，提示但不强阻（运营可自行决定）
-    if (
-      next &&
-      selectedVoiceClips.value.length < voiceClips.value.length &&
-      voiceClips.value.reduce((t, c) => t + getClipDurationSeconds(c), 0) +
-        Math.max(0, voiceClips.value.length - 1) * CLIP_SEPARATOR_SECONDS >
-        VOICE_SERVICE_MAX_TRAINING_SECONDS
-    ) {
-      Message.warning(
-        `全部片段合计超过 ${VOICE_SERVICE_MAX_TRAINING_SECONDS}s 建议上限，请留意`
-      );
-    }
-    voiceClips.value.forEach((clip) => {
-      clip.selected = next;
-    });
+  const persistMaterialClips = async (materialId: string) => {
+    if (!materialId) return;
+    await saveVoiceMaterialReviewClips(
+      materialId,
+      voiceClips.value.filter((clip) => clip.sourceMaterialId === materialId)
+    );
   };
 
-  const onToggleClip = (
+  const setClipReviewStatus = async (
     clip: VoiceClip,
-    checked: boolean | (string | number | boolean)[]
+    value: string | number | boolean
   ) => {
-    const next = Boolean(checked);
-    if (next && wouldExceedSelectionLimit(clip)) {
-      Message.warning(
-        `该片段会让训练总时长超过 ${VOICE_SERVICE_MAX_TRAINING_SECONDS}s 建议上限，请先取消部分片段`
-      );
+    const status = String(value) as VoiceClipReviewStatus | 'recut';
+    if (status === 'recut') {
+      recutTarget.value = clip;
+      recutInstruction.value = '';
+      recutVisible.value = true;
       return;
     }
-    clip.selected = next;
+    const previous = clip.reviewStatus;
+    clip.reviewStatus = status;
+    try {
+      await persistMaterialClips(clip.sourceMaterialId);
+    } catch (error) {
+      clip.reviewStatus = previous;
+      Message.error('片段选择保存失败');
+    }
   };
 
   const formatClipDuration = (seconds?: number) => {
@@ -889,12 +1118,18 @@
 
     try {
       loading.value = true;
-      const { data } = await queryVoiceTimbreList({
-        userId: props.userId,
-        page: pagination.current,
-        pageSize: pagination.pageSize,
-      });
+      const [{ data }, { data: agentData }] = await Promise.all([
+        queryVoiceTimbreList({
+          userId: props.userId,
+          page: pagination.current,
+          pageSize: pagination.pageSize,
+        }),
+        queryAppUserAgents(props.userId, { page: 1, pageSize: 100 }),
+      ]);
       renderList.value = data.items;
+      userAgents.value = agentData.items.filter(
+        (agent) => !agent.messengerOfAgentId
+      );
       pagination.total = data.total;
       pagination.current = data.page;
     } catch (error) {
@@ -910,11 +1145,13 @@
   };
 
   const goNext = async () => {
-    // Step 0 → 1 时若素材有增删，触发重新剪辑
-    if (step.value === 0 && uploadedClips.value.length) {
-      if (clippedMaterialFingerprint.value !== materialFingerprint()) {
+    // 先切换内容和顶部导航，再在第二步内展示剪辑进度。
+    if (step.value === 0) {
+      step.value = 1;
+      if (pendingSelectedMaterials.value.length) {
         startClipping();
       }
+      return;
     }
     // Step 2 → 3 时先校验表单字段
     if (step.value === 2) {
@@ -923,32 +1160,53 @@
         return;
       }
     }
+    if (step.value === 1 && !form.name.trim()) {
+      form.name = buildDefaultTimbreName();
+    }
     step.value = Math.min(step.value + 1, 3);
   };
 
   /** 顶部导航步骤可点击：工作流与导航进度对齐 */
+  const onNavigationStepChange = (stepNumber: number) => {
+    onStepChange(stepNumber - 1);
+  };
+
   const onStepChange = (nextStep: number) => {
-    // 进入「选择训练片段」时若素材有增删，触发重新剪辑
-    if (nextStep === 1 && step.value === 0 && uploadedClips.value.length) {
-      if (clippedMaterialFingerprint.value !== materialFingerprint()) {
+    const previousStep = step.value;
+    if (previousStep === 3 && nextStep === 0) {
+      resetWizard();
+      return;
+    }
+    step.value = Math.min(Math.max(nextStep, 0), 3);
+    if (step.value === 2 && !form.name.trim()) {
+      form.name = buildDefaultTimbreName();
+    }
+    // 进入「选择训练片段」时，仅处理新上传且已勾选的素材。
+    if (nextStep === 1 && previousStep === 0 && uploadedClips.value.length) {
+      if (pendingSelectedMaterials.value.length) {
         startClipping();
       }
     }
-    step.value = Math.min(Math.max(nextStep, 0), 3);
   };
 
-  const onProviderChange = () => {
+  const onVoiceModelChange = (value: unknown) => {
+    const selected = voiceModelOptions.find(
+      (option) => option.model === String(value)
+    );
+    if (selected) {
+      form.provider = selected.provider;
+    }
     form.speechDialect = 'auto';
+    form.speechInstruction = '';
     form.providerVoiceId = '';
   };
 
   /** 触发底层声音剪辑工作流，把已上传素材剪成训练片段 */
-  const startClipping = async () => {
-    if (!props.userId || !uploadedClips.value.length) {
-      return;
-    }
-    const fingerprint = materialFingerprint();
-    if (clippedMaterialFingerprint.value === fingerprint) {
+  const startClipping = async (force = false) => {
+    const materialsToClip = force
+      ? uploadedClips.value
+      : pendingSelectedMaterials.value;
+    if (!props.userId || !materialsToClip.length) {
       return;
     }
     try {
@@ -956,7 +1214,7 @@
       clipError.value = '';
       const { data } = await clipVoiceMaterials({
         userId: props.userId,
-        materials: uploadedClips.value.map((clip) => ({
+        materials: materialsToClip.map((clip) => ({
           id: clip.id,
           name: clip.name,
           objectKey: clip.objectKey,
@@ -965,17 +1223,35 @@
       });
       const clips = (data?.clips ?? []).map((clip) => ({
         ...clip,
-        selected: true,
+        reviewStatus: 'pending' as VoiceClipReviewStatus,
       }));
-      voiceClips.value = clips;
-      clippedMaterialFingerprint.value = fingerprint;
+
+      const processedMaterialIds = new Set(
+        clips.map((clip) => clip.sourceMaterialId).filter(Boolean)
+      );
+      const retainedClips = voiceClips.value.filter(
+        (clip) => !processedMaterialIds.has(clip.sourceMaterialId)
+      );
+      // 正常追加剪辑时保留旧片段顺序，新片段统一追加在末尾。
+      voiceClips.value = [...retainedClips, ...clips];
+      const processedMaterials = materialsToClip.filter(
+        (material) => material.id && processedMaterialIds.has(material.id)
+      );
+      processedMaterials.forEach((material) => {
+        material.processed = true;
+        material.selected = true;
+      });
+      await Promise.all(
+        processedMaterials.map((material) =>
+          persistMaterialClips(material.id || '')
+        )
+      );
       if (!clips.length) {
         clipError.value = '未剪出可用片段，请检查素材后重试';
       }
     } catch (error: any) {
       const message = error?.response?.data?.message;
       clipError.value = message || '片段剪辑失败，请稍后重试';
-      voiceClips.value = [];
     } finally {
       clipping.value = false;
     }
@@ -995,36 +1271,34 @@
           const uploaded = await uploadAdminFile(file, {
             folder: 'voice-timbres',
           });
-          // 上传成功后持久化到服务端，刷新/离开后仍可恢复
-          let savedId = '';
-          if (props.userId) {
-            try {
-              const record = await createVoiceMaterial({
-                userId: props.userId,
-                name: file.name,
-                objectKey: uploaded.objectKey,
-                publicUrl: uploaded.publicUrl,
-              });
-              savedId = record.data.id;
-            } catch (error) {
-              // 记录保存失败不阻断上传，本次会话内仍可用
+          try {
+            if (!props.userId) {
+              throw new Error('missing user id');
             }
+            const record = await createVoiceMaterial({
+              userId: props.userId,
+              name: file.name,
+              objectKey: uploaded.objectKey,
+              publicUrl: uploaded.publicUrl,
+            });
+            return {
+              id: record.data.id,
+              name: file.name,
+              objectKey: uploaded.objectKey,
+              publicUrl: uploaded.publicUrl,
+              selected: true,
+              processed: false,
+            } as UploadedClip;
+          } catch (error) {
+            await rollbackVoiceMaterialUpload(uploaded.objectKey).catch(
+              () => undefined
+            );
+            throw error;
           }
-          return {
-            id: savedId,
-            name: file.name,
-            objectKey: uploaded.objectKey,
-            publicUrl: uploaded.publicUrl,
-            selected: true,
-          } as UploadedClip;
         })
       );
       uploadedClips.value.push(...results);
-      // 上传素材（第一步）与选择训练片段（第二步）是两个独立步骤页；
-      // 上传完成后自动进入第二步并触发底层 AI 剪辑，剪出的片段在此展示勾选
-      step.value = 1;
-      await startClipping();
-      Message.success(`已上传 ${results.length} 段音频`);
+      Message.success(`已上传并保存 ${results.length} 份声音素材`);
     } catch (error) {
       Message.error('音频上传失败');
     } finally {
@@ -1042,10 +1316,15 @@
     }
     try {
       const { data } = await queryVoiceMaterials(props.userId);
+      const orderedMaterials = [...data].sort(
+        (left, right) =>
+          new Date(left.createdAt).getTime() -
+          new Date(right.createdAt).getTime()
+      );
       const existingKeys = new Set(
         uploadedClips.value.map((clip) => clip.objectKey)
       );
-      const saved = data
+      const saved = orderedMaterials
         .filter((material) => !existingKeys.has(material.objectKey))
         .map((material) => ({
           id: material.id,
@@ -1053,9 +1332,20 @@
           objectKey: material.objectKey,
           publicUrl: material.publicUrl,
           selected: true,
+          processed: Boolean(material.reviewClips?.length),
         }));
       if (saved.length) {
         uploadedClips.value.push(...saved);
+      }
+      const restoredClips = orderedMaterials.flatMap((material) =>
+        (material.reviewClips ?? []).map((clip) => ({
+          ...clip,
+          sourceMaterialId: material.id,
+          reviewStatus: clip.reviewStatus || 'pending',
+        }))
+      );
+      if (restoredClips.length) {
+        voiceClips.value = restoredClips;
       }
     } catch (error) {
       // 素材加载失败不阻塞面板
@@ -1075,11 +1365,10 @@
     uploadedClips.value = uploadedClips.value.filter(
       (item) => item.objectKey !== clip.objectKey
     );
-    // 素材变化后，已剪辑片段失效，等待重新剪辑
-    if (clippedMaterialFingerprint.value !== materialFingerprint()) {
-      voiceClips.value = [];
-      clippedMaterialFingerprint.value = '';
-    }
+    // 删除某份素材时只删除它产出的片段，其他素材与片段保持不变。
+    voiceClips.value = voiceClips.value.filter(
+      (item) => item.sourceMaterialId !== clip.id
+    );
   };
 
   const submitTrain = async () => {
@@ -1096,24 +1385,31 @@
 
     try {
       saving.value = true;
-      const { data } = await mergeCreateVoiceTimbre({
+      await mergeCreateVoiceTimbre({
         userId: props.userId,
         audioObjectKeys: selectedVoiceClips.value.map((clip) => clip.objectKey),
         name: form.name,
         provider: form.provider,
+        previewModel: form.previewModel,
         cloneLanguage: 'zh',
-        providerVoiceId: form.providerVoiceId || undefined,
+        providerVoiceId: isDoubaoProvider.value
+          ? undefined
+          : form.providerVoiceId || undefined,
         previewText: form.previewText,
-        speechDialect: form.speechDialect,
-        speechInstruction: form.speechInstruction || undefined,
+        speechDialect: supportsSpeechInstruction.value
+          ? form.speechDialect
+          : 'auto',
+        speechInstruction: supportsSpeechInstruction.value
+          ? form.speechInstruction || undefined
+          : undefined,
         speechSpeed: form.speechSpeed,
         speechVolume: form.speechVolume,
         speechPitch: form.speechPitch,
       });
-      submittedId.value = data?.id || '';
       Message.success('训练任务已提交，训练完成后会自动生效');
       pagination.current = 1;
       await fetchList();
+      step.value = 3;
     } catch (error: any) {
       const message = error?.response?.data?.message;
       Message.error(message || '训练任务提交失败');
@@ -1122,30 +1418,112 @@
     }
   };
 
-  const refreshAfterSubmit = () => {
-    pagination.current = 1;
-    fetchList();
-  };
-
   const resetWizard = () => {
     step.value = 0;
-    submittedId.value = '';
-    voiceClips.value = [];
     clipping.value = false;
     clipError.value = '';
-    clippedMaterialFingerprint.value = '';
     form.name = '';
     form.provider = 'qwen';
+    form.previewModel = 'qwen3-tts-vc-2026-01-22';
     form.providerVoiceId = '';
-    form.previewText = '';
+    form.previewText = DEFAULT_PREVIEW_TEXT;
     form.speechDialect = 'auto';
     form.speechInstruction = '';
     form.speechSpeed = 1;
     form.speechVolume = 1;
     form.speechPitch = 0;
-    uploadedClips.value = [];
     if (fileInputRef.value) {
       fileInputRef.value.value = '';
+    }
+  };
+
+  const submitRecut = async () => {
+    const target = recutTarget.value;
+    const instruction = recutInstruction.value.trim();
+    if (!target || !instruction) {
+      Message.error('请输入具体剪辑要求');
+      return false;
+    }
+    try {
+      recutting.value = true;
+      const { data } = await recutVoiceClip({
+        objectKey: target.objectKey,
+        fileName: target.sourceName || '片段.wav',
+        durationSeconds: target.durationSeconds,
+        instruction,
+        sourceMaterialId: target.sourceMaterialId,
+        sourceName: target.sourceName,
+      });
+      const index = voiceClips.value.findIndex(
+        (clip) => clip.objectKey === target.objectKey
+      );
+      if (index >= 0) {
+        voiceClips.value[index] = {
+          ...data.clip,
+          sourceMaterialId: target.sourceMaterialId,
+          sourceName: target.sourceName,
+          reviewStatus: 'pending',
+        };
+      }
+      await persistMaterialClips(target.sourceMaterialId);
+      Message.success('片段已重新剪好，请试听后确认');
+      recutVisible.value = false;
+      return true;
+    } catch (error: any) {
+      Message.error(error?.response?.data?.message || '片段返工失败');
+      return false;
+    } finally {
+      recutting.value = false;
+    }
+  };
+
+  const boundAgentsOf = (timbreId: string) =>
+    userAgents.value.filter((agent) => agent.voiceTimbreId === timbreId);
+
+  const openBinding = async (record: VoiceTimbreRecord) => {
+    bindingTimbre.value = record;
+    selectedBindingAgentId.value = '';
+    const { data } = await queryAppUserAgents(props.userId, {
+      page: 1,
+      pageSize: 100,
+    });
+    const bindableAgents = data.items.filter(
+      (agent) => !agent.messengerOfAgentId
+    );
+    userAgents.value = bindableAgents;
+    bindingVisible.value = true;
+  };
+
+  const confirmBinding = async () => {
+    const timbre = bindingTimbre.value;
+    const agent = userAgents.value.find(
+      (item) => item.id === selectedBindingAgentId.value
+    );
+    if (!timbre || !agent) return false;
+    try {
+      bindingConfirming.value = true;
+      await updateAgent(agent.id, { voiceTimbreId: timbre.id });
+      await fetchList();
+      Message.success(`已绑定“${agent.name || '该智能体'}”`);
+      return true;
+    } catch (error: any) {
+      Message.error(error?.response?.data?.message || '智能体绑定失败');
+      return false;
+    } finally {
+      bindingConfirming.value = false;
+    }
+  };
+
+  const handleUnbindAgent = async (agent: AppUserAgentRecord) => {
+    try {
+      bindingSavingAgentId.value = agent.id;
+      await updateAgent(agent.id, { voiceTimbreId: '' });
+      await fetchList();
+      Message.success(`已解绑“${agent.name || '该智能体'}”`);
+    } catch (error: any) {
+      Message.error(error?.response?.data?.message || '智能体解绑失败');
+    } finally {
+      bindingSavingAgentId.value = '';
     }
   };
 
@@ -1179,6 +1557,9 @@
 
   const formatDate = (value?: string) =>
     value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
+
+  const getAgentAvatarFallback = (name?: string) =>
+    name?.trim().slice(0, 1) || '亲';
 
   const providerLabel = (provider: VoiceTimbreProviderDTO) => {
     const map: Record<VoiceTimbreProviderDTO, string> = {
@@ -1232,6 +1613,16 @@
     flex-direction: column;
     gap: 16px;
 
+    &__card {
+      order: 2;
+    }
+
+    &__list-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+
     &__card-head,
     &__wizard-head {
       display: flex;
@@ -1246,6 +1637,8 @@
     }
 
     &__wizard {
+      order: 1;
+
       :deep(.arco-card-body) {
         padding-top: 8px;
       }
@@ -1309,12 +1702,128 @@
         border-color: rgb(var(--primary-5));
         background: rgb(var(--primary-1));
       }
+
+      &--processed {
+        border-color: var(--color-border-1);
+        background: var(--color-fill-2);
+
+        audio,
+        :deep(.arco-checkbox) {
+          opacity: 0.65;
+        }
+      }
     }
 
     &__clip-audio {
       height: 30px;
       flex: 1;
       min-width: 160px;
+    }
+
+    &__clip-title {
+      min-width: 180px;
+      font-weight: 500;
+    }
+
+    &__agents {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    &__agent-option {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--color-border-2);
+      border-radius: 8px;
+      transition: border-color 0.2s, background-color 0.2s;
+
+      &:hover {
+        border-color: rgb(var(--primary-5));
+        background: var(--color-fill-1);
+      }
+
+      :deep(.arco-radio-label) {
+        flex: 1;
+        min-width: 0;
+      }
+    }
+
+    &__binding-cell,
+    &__bound-agents {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    &__bound-agent {
+      position: relative;
+      line-height: 1;
+    }
+
+    &__unbind-button {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 2px solid var(--color-bg-2);
+      border-radius: 50%;
+      color: #fff;
+      background: rgb(var(--red-6));
+      font-size: 15px;
+      line-height: 14px;
+      cursor: pointer;
+
+      &:hover {
+        background: rgb(var(--red-5));
+      }
+
+      &:disabled {
+        cursor: wait;
+        opacity: 0.6;
+      }
+    }
+
+    &__agent-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    &__agent-avatar {
+      flex: 0 0 auto;
+    }
+
+    &__agent-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    &__agent-heading,
+    &__agent-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    &__agent-heading {
+      margin-bottom: 6px;
+      color: var(--color-text-1);
+    }
+
+    &__agent-meta {
+      color: var(--color-text-3);
+      font-size: 12px;
+      line-height: 20px;
     }
 
     &__name-cell {

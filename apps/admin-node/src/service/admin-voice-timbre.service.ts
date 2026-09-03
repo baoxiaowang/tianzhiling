@@ -255,12 +255,15 @@ export class AdminVoiceTimbreService {
       payload.previewModel,
       provider
     );
-    const providerVoiceId = this.normalizeInitialProviderVoiceId(
-      provider,
-      payload.providerVoiceId,
-      previewModel
-    );
-    await this.assertDoubaoSlotTrainable(provider, providerVoiceId);
+    this.assertVoiceModelConfigured(provider, previewModel);
+    const providerVoiceId =
+      provider === VoiceTimbreProvider.doubao
+        ? await this.resolveDoubaoSpeakerId(payload.providerVoiceId)
+        : this.normalizeInitialProviderVoiceId(
+            provider,
+            payload.providerVoiceId,
+            previewModel
+          );
     await this.assertProviderVoiceIdAvailable(provider, providerVoiceId);
 
     const now = new Date();
@@ -308,6 +311,13 @@ export class AdminVoiceTimbreService {
     payload: CreateAdminMergedVoiceTimbreDTO
   ): Promise<AdminVoiceTimbreRecordDTO> {
     const userId = this.parseRequiredUserObjectId(payload.userId);
+    const provider = this.normalizeProvider(payload.provider);
+    this.assertCreatableProvider(provider);
+    const previewModel = this.normalizePreviewModel(
+      payload.previewModel,
+      provider
+    );
+    this.assertVoiceModelConfigured(provider, previewModel);
     const objectKeys = (payload.audioObjectKeys || []).map(objectKey =>
       this.normalizeAudioObjectKey(objectKey)
     );
@@ -344,7 +354,7 @@ export class AdminVoiceTimbreService {
 
     return this.createVoiceTimbre({
       name: payload.name,
-      provider: payload.provider,
+      provider,
       userId: userId.toHexString(),
       audioObjectKey: uploaded.objectKey,
       cloneLanguage: payload.cloneLanguage,
@@ -352,7 +362,7 @@ export class AdminVoiceTimbreService {
       speechInstruction: payload.speechInstruction,
       providerVoiceId: payload.providerVoiceId,
       previewText: payload.previewText,
-      previewModel: payload.previewModel,
+      previewModel,
       speechSpeed: payload.speechSpeed,
       speechVolume: payload.speechVolume,
       speechPitch: payload.speechPitch,
@@ -373,6 +383,17 @@ export class AdminVoiceTimbreService {
         'VOICE_TIMBRE_RETRY_NOT_ALLOWED',
         'only failed or active voice timbre can be retrained',
         400
+      );
+    }
+
+    if (
+      timbre.provider === VoiceTimbreProvider.doubao &&
+      timbre.errorCode?.startsWith('DOUBAO_UPLOAD_ACCEPTED_')
+    ) {
+      throw new AppError(
+        'DOUBAO_RETRAIN_STATUS_UNCONFIRMED',
+        '豆包已接收上一次训练，为保护剩余训练次数，请先刷新/校验状态，确认失败后再重试',
+        409
       );
     }
 
@@ -1017,12 +1038,15 @@ export class AdminVoiceTimbreService {
       2,
       Math.max(0.25, this.normalizeSpeechVolume(timbre.speechVolume))
     );
+    const speechSpeed = this.normalizeSpeechSpeed(timbre.speechSpeed);
     const speechPitch = this.normalizeSpeechPitch(timbre.speechPitch);
+    const qwenAudio = this.isQwenAudioModel(timbre.previewModel);
+    const outputSpeechSpeed = qwenAudio ? 1 : speechSpeed;
     const adjustedPreview =
-      this.isQwenAudioModel(timbre.previewModel) &&
-      (speechVolume !== 1 || speechPitch !== 0)
+      outputSpeechSpeed !== 1 || speechVolume !== 1 || speechPitch !== 0
         ? await this.ffmpegService.adjustSpeechOutput({
             buffer: previewAudio.audioBuffer,
+            speechSpeed: outputSpeechSpeed,
             speechVolume,
             speechPitch,
           })
@@ -1266,6 +1290,12 @@ export class AdminVoiceTimbreService {
     timbre.status = VoiceTimbreStatus.failed;
     timbre.errorCode =
       (error as { code?: string })?.code || 'VOICE_TIMBRE_CREATE_FAILED';
+    if (
+      (error as { data?: { providerUploadAccepted?: boolean } })?.data
+        ?.providerUploadAccepted
+    ) {
+      timbre.errorCode = `DOUBAO_UPLOAD_ACCEPTED_${timbre.errorCode}`;
+    }
     timbre.errorMessage =
       error instanceof Error ? error.message : 'voice timbre create failed';
     timbre.updatedAt = new Date();
@@ -1335,6 +1365,13 @@ export class AdminVoiceTimbreService {
   private shouldRetryCreateError(error: unknown): boolean {
     const code = (error as { code?: string })?.code || '';
     const status = (error as { status?: number })?.status;
+
+    if (
+      (error as { data?: { providerUploadAccepted?: boolean } })?.data
+        ?.providerUploadAccepted
+    ) {
+      return false;
+    }
 
     if (
       [
@@ -1795,14 +1832,7 @@ export class AdminVoiceTimbreService {
     }
   }
 
-  private async assertDoubaoSlotTrainable(
-    provider: VoiceTimbreProvider,
-    providerVoiceId: string
-  ): Promise<void> {
-    if (provider !== VoiceTimbreProvider.doubao) {
-      return;
-    }
-
+  private async resolveDoubaoSpeakerId(value?: string): Promise<string> {
     const timbres = await this.voiceTimbreModel.find({
       where: { provider: VoiceTimbreProvider.doubao } as never,
       order: { updatedAt: 'DESC' },
@@ -1811,22 +1841,47 @@ export class AdminVoiceTimbreService {
       this.collectDoubaoSpeakerIds(timbres)
     );
 
-    const slot = items.find(item => item.speakerId === providerVoiceId);
+    const requestedSpeakerId = value?.trim()
+      ? this.normalizeDoubaoSpeakerId(value)
+      : '';
+    const occupiedSpeakerIds = new Set(
+      timbres
+        .filter(timbre => timbre.deletionStatus !== 'completed')
+        .map(timbre => timbre.providerVoiceId?.trim())
+        .filter((speakerId): speakerId is string =>
+          this.isDoubaoSpeakerId(speakerId)
+        )
+    );
+    const orderedSlots = [...items].sort(
+      (left, right) =>
+        (right.availableTrainingTimes || 0) -
+          (left.availableTrainingTimes || 0) ||
+        (left.orderTime || 0) - (right.orderTime || 0) ||
+        (left.createTime || 0) - (right.createTime || 0) ||
+        left.instanceNo.localeCompare(right.instanceNo) ||
+        left.speakerId.localeCompare(right.speakerId)
+    );
+    const slot = requestedSpeakerId
+      ? orderedSlots.find(item => item.speakerId === requestedSpeakerId)
+      : orderedSlots.find(
+          item =>
+            !occupiedSpeakerIds.has(item.speakerId) &&
+            this.isDoubaoSlotEligibleForAutoAllocation(item)
+        );
 
     if (!slot) {
       throw new AppError(
-        'DOUBAO_SLOT_NOT_FOUND',
-        'Doubao speaker id is not present in the purchased slot list',
+        requestedSpeakerId
+          ? 'DOUBAO_SLOT_NOT_FOUND'
+          : 'DOUBAO_SLOT_UNAVAILABLE',
+        requestedSpeakerId
+          ? 'Doubao speaker id is not present in the purchased slot list'
+          : '没有可自动分配的豆包 Speaker ID，请检查已购槽位或剩余训练次数',
         400
       );
     }
 
-    const isExpired = Boolean(slot.expireTime && slot.expireTime <= Date.now());
-    const isUnavailableState = ['Training', 'Expired', 'Reclaimed'].includes(
-      slot.state
-    );
-
-    if (isExpired || isUnavailableState || slot.availableTrainingTimes === 0) {
+    if (!this.isDoubaoSlotTrainable(slot)) {
       throw new AppError(
         'DOUBAO_SLOT_NOT_TRAINABLE',
         'Doubao slot is not available for a new training job',
@@ -1838,6 +1893,28 @@ export class AdminVoiceTimbreService {
         }
       );
     }
+
+    return slot.speakerId;
+  }
+
+  private isDoubaoSlotTrainable(slot: DoubaoVoiceSlot): boolean {
+    const isExpired = Boolean(slot.expireTime && slot.expireTime <= Date.now());
+    const isUnavailableState = ['Training', 'Expired', 'Reclaimed'].includes(
+      slot.state
+    );
+    return (
+      !isExpired && !isUnavailableState && slot.availableTrainingTimes !== 0
+    );
+  }
+
+  private isDoubaoSlotEligibleForAutoAllocation(
+    slot: DoubaoVoiceSlot
+  ): boolean {
+    return (
+      Number.isFinite(slot.availableTrainingTimes) &&
+      Number(slot.availableTrainingTimes) > 0 &&
+      this.isDoubaoSlotTrainable(slot)
+    );
   }
 
   private assertCreatableProvider(provider: VoiceTimbreProvider): void {
@@ -2143,17 +2220,6 @@ export class AdminVoiceTimbreService {
       );
     }
 
-    if (provider === VoiceTimbreProvider.doubao) {
-      if (!rawValue) {
-        throw new AppError(
-          'DOUBAO_SLOT_SPEAKER_ID_REQUIRED',
-          'Doubao voice creation requires a fixed purchased Speaker ID',
-          400
-        );
-      }
-      return this.normalizeDoubaoSpeakerId(rawValue);
-    }
-
     return this.normalizeMinimaxProviderVoiceId(
       rawValue || this.generateMinimaxProviderVoiceId()
     );
@@ -2368,7 +2434,22 @@ export class AdminVoiceTimbreService {
     provider: VoiceTimbreProvider
   ): string {
     if (value?.trim()) {
-      return value.trim();
+      const model = value.trim();
+      if (
+        provider === VoiceTimbreProvider.qwen &&
+        ![
+          'qwen3-tts-vc-2026-01-22',
+          'qwen-audio-3.0-tts-plus',
+          'qwen-audio-3.0-tts-flash',
+        ].includes(model)
+      ) {
+        throw new AppError(
+          'QWEN_VOICE_MODEL_UNSUPPORTED',
+          '不支持该千问声音模型',
+          400
+        );
+      }
+      return model;
     }
 
     if (provider === VoiceTimbreProvider.cosyvoice) {
@@ -2384,6 +2465,15 @@ export class AdminVoiceTimbreService {
     }
 
     return this.minimaxVoiceService.getDefaultPreviewModel();
+  }
+
+  private assertVoiceModelConfigured(
+    provider: VoiceTimbreProvider,
+    model: string
+  ): void {
+    if (provider === VoiceTimbreProvider.qwen) {
+      this.qwenVoiceService.assertModelConfigured(model);
+    }
   }
 
   private normalizeSpeechSpeed(value?: number): number {

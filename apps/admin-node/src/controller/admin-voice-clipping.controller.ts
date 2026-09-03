@@ -11,4 +11,9 @@ export class AdminVoiceClippingController {
   async clip(@Body() body: AdminVoiceClippingDTO) {
     return this.adminVoiceClippingService.createClips(body);
   }
+
+  @Post('/recut')
+  async recut(@Body() body: Record<string, unknown>) {
+    return this.adminVoiceClippingService.recutClip(body);
+  }
 }

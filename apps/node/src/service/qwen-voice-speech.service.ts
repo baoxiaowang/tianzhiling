@@ -14,6 +14,7 @@ interface QwenVoiceConfig {
   enabled?: boolean;
   apiKey?: string;
   baseURL?: string;
+  audioBaseURL?: string;
   defaultSpeechModel?: string;
   defaultLanguageType?: string;
   timeoutMs?: number;
@@ -145,6 +146,7 @@ export class QwenVoiceSpeechService {
         'Content-Length': String(body.length),
       },
       body,
+      model,
     });
     const audio = response?.output?.audio;
     const audioUrl = audio?.url?.trim() || '';
@@ -207,8 +209,9 @@ export class QwenVoiceSpeechService {
     method: 'POST';
     headers: Record<string, string>;
     body: Buffer;
+    model?: string;
   }): Promise<T> {
-    const baseURL = this.normalizeBaseURL();
+    const baseURL = this.resolveBaseURL(input.model);
     const url = new URL(input.path, baseURL);
     const response = await this.requestBinary({
       url: url.toString(),
@@ -400,10 +403,21 @@ export class QwenVoiceSpeechService {
     });
   }
 
-  private normalizeBaseURL(): string {
-    const raw =
+  private resolveBaseURL(model?: string): string {
+    const standardBaseURL =
       this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
-    return raw.replace(/\/+$/, '');
+    if (!this.isQwenAudioModel(model)) {
+      return standardBaseURL.replace(/\/+$/, '');
+    }
+
+    const audioBaseURL = this.config?.audioBaseURL?.trim();
+    const compatibleLegacyBaseURL = /\.maas\.aliyuncs\.com/i.test(
+      standardBaseURL
+    )
+      ? standardBaseURL
+      : '';
+    const resolved = audioBaseURL || compatibleLegacyBaseURL || standardBaseURL;
+    return resolved.replace(/\/+$/, '');
   }
 
   private normalizeRate(value?: number): number {

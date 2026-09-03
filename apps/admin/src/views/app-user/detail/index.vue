@@ -298,7 +298,12 @@
           <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
         </a-tab-pane>
         <a-tab-pane key="voice" title="声音模型">
-          <voice-model-panel :user-id="userId || ''" embedded />
+          <voice-model-panel
+            :user-id="userId || ''"
+            :user-name="user?.name || ''"
+            :appellation="agentList[0]?.iCallAgent || '妈妈'"
+            embedded
+          />
         </a-tab-pane>
       </a-tabs>
     </a-card>

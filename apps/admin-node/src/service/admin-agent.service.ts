@@ -338,9 +338,12 @@ export class AdminAgentService {
     }
 
     if (payload.voiceTimbreId !== undefined) {
-      agent.voiceTimbreId = await this.normalizeVoiceTimbreId(
-        payload.voiceTimbreId
+      const voiceTimbreId = await this.normalizeVoiceTimbreId(
+        payload.voiceTimbreId,
+        agent.createdUserId
       );
+      agent.voiceTimbreId = voiceTimbreId ?? (null as never);
+      agent.pendingVoiceTimbreId = null as never;
       changed = true;
     }
 
@@ -920,7 +923,8 @@ export class AdminAgentService {
   }
 
   private async normalizeVoiceTimbreId(
-    rawValue?: string
+    rawValue?: string,
+    ownerUserId?: MongoObjectId
   ): Promise<MongoObjectId | undefined> {
     const value = rawValue?.trim() ?? '';
 
@@ -956,6 +960,19 @@ export class AdminAgentService {
         'VOICE_TIMBRE_NOT_FOUND',
         'active voice timbre not found',
         404
+      );
+    }
+
+    if (
+      timbre.userId &&
+      ownerUserId &&
+      this.stringifyObjectId(timbre.userId) !==
+        this.stringifyObjectId(ownerUserId)
+    ) {
+      throw new AppError(
+        'VOICE_TIMBRE_OWNER_MISMATCH',
+        'voice timbre does not belong to the agent owner',
+        409
       );
     }
 

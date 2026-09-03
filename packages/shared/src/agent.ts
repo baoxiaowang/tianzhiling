@@ -213,6 +213,7 @@ export interface AdminAgentOwnerDTO {
 export interface AdminAgentRecordDTO extends AgentProfileDTO {
   createdUserId: string;
   createdUser: AdminAgentOwnerDTO | null;
+  messengerOfAgentId?: string;
   customContext: string;
   conversationCount: number;
 }

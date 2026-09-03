@@ -9,6 +9,7 @@ interface QwenVoiceConfig {
   enabled?: boolean;
   apiKey?: string;
   baseURL?: string;
+  audioBaseURL?: string;
   enrollmentModel?: string;
   defaultSpeechModel?: string;
   timeoutMs?: number;
@@ -116,7 +117,8 @@ export class QwenVoiceEnrollmentService {
     );
     const response = await this.requestJson<QwenEnrollmentResponse>(
       '/api/v1/services/audio/tts/customization',
-      body
+      body,
+      targetModel
     );
     const providerVoiceId = (
       response.output?.voice_id || response.output?.voice
@@ -177,7 +179,8 @@ export class QwenVoiceEnrollmentService {
     );
     const response = await this.requestJson<QwenEnrollmentResponse>(
       '/api/v1/services/audio/tts/customization',
-      body
+      body,
+      model
     );
 
     this.logger.info(
@@ -189,9 +192,12 @@ export class QwenVoiceEnrollmentService {
     };
   }
 
-  private requestJson<T>(path: string, body: Buffer): Promise<T> {
-    const baseURL =
-      this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
+  private requestJson<T>(
+    path: string,
+    body: Buffer,
+    model?: string
+  ): Promise<T> {
+    const baseURL = this.resolveBaseURL(model);
     const url = new URL(path, `${baseURL.replace(/\/+$/, '')}/`);
     const requester = url.protocol === 'http:' ? httpRequest : httpsRequest;
 
@@ -275,6 +281,23 @@ export class QwenVoiceEnrollmentService {
       );
       req.end(body);
     });
+  }
+
+  private resolveBaseURL(model?: string): string {
+    const standardBaseURL =
+      this.config?.baseURL?.trim() || 'https://dashscope.aliyuncs.com';
+    if (!this.isQwenAudioModel(model)) {
+      return standardBaseURL;
+    }
+
+    const audioBaseURL = this.config?.audioBaseURL?.trim();
+    const compatibleLegacyBaseURL = /\.maas\.aliyuncs\.com/i.test(
+      standardBaseURL
+    )
+      ? standardBaseURL
+      : '';
+    const resolved = audioBaseURL || compatibleLegacyBaseURL || standardBaseURL;
+    return resolved;
   }
 
   private ensureEnabled(): void {

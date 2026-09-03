@@ -91,9 +91,13 @@ export interface VoiceTimbreMaterialRecord {
   name: string;
   objectKey: string;
   publicUrl: string;
+  reviewClips: VoiceClipDTO[];
+  clippedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type VoiceClipReviewStatus = 'pending' | 'accepted' | 'unused';
 
 /** 列出某用户已保存的声音素材 */
 export function queryVoiceMaterials(userId: string) {
@@ -112,6 +116,14 @@ export function createVoiceMaterial(data: {
   return axios.post<VoiceTimbreMaterialRecord>(
     '/admin_api/voice-materials',
     data
+  );
+}
+
+/** 素材记录保存失败时，回收刚上传的孤儿文件。 */
+export function rollbackVoiceMaterialUpload(objectKey: string) {
+  return axios.post<{ deleted: true }>(
+    '/admin_api/voice-materials/rollback-upload',
+    { objectKey }
   );
 }
 
@@ -134,6 +146,18 @@ export interface VoiceClipDTO {
     severity: 'warning' | 'rejected';
     message?: string;
   }[];
+  reviewStatus?: VoiceClipReviewStatus;
+  reviewedAt?: string;
+}
+
+export function saveVoiceMaterialReviewClips(
+  materialId: string,
+  clips: VoiceClipDTO[]
+) {
+  return axios.put<VoiceTimbreMaterialRecord>(
+    `/admin_api/voice-materials/${materialId}/review-clips`,
+    { clips }
+  );
 }
 
 /** 触发底层声音剪辑工作流，把素材剪成训练片段 */
@@ -153,4 +177,18 @@ export function clipVoiceMaterials(data: {
     errors?: unknown[];
     platformErrors?: unknown[];
   }>('/admin_api/voice-clipping', data);
+}
+
+export function recutVoiceClip(data: {
+  objectKey: string;
+  fileName: string;
+  durationSeconds: number;
+  instruction: string;
+  sourceMaterialId?: string;
+  sourceName?: string;
+}) {
+  return axios.post<{ ok: boolean; clip: VoiceClipDTO }>(
+    '/admin_api/voice-clipping/recut',
+    data
+  );
 }

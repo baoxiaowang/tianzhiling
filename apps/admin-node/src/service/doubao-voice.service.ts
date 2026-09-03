@@ -22,6 +22,7 @@ interface DoubaoVoiceConfig {
   timeoutMs?: number;
   trainingTimeoutMs?: number;
   pollIntervalMs?: number;
+  maxTrainingTimes?: number;
   knownSpeakerIds?: string;
   openApiAccessKeyId?: string;
   openApiSecretAccessKey?: string;
@@ -264,6 +265,7 @@ export class DoubaoVoiceService {
             alias: '',
             state: 'Unknown',
             isActivable: true,
+            availableTrainingTimes: this.maxTrainingTimes,
           });
           return;
         }
@@ -277,6 +279,7 @@ export class DoubaoVoiceService {
           version:
             status.version === undefined ? undefined : String(status.version),
           createTime: status.createTime,
+          availableTrainingTimes: this.remainingTrainingTimes(status.version),
         });
         if (status.requestId) requestIds.push(status.requestId);
         return;
@@ -352,7 +355,19 @@ export class DoubaoVoiceService {
       requestId
     );
     this.assertProviderSuccess(uploaded, 'DOUBAO_VOICE_UPLOAD_FAILED');
-    const status = await this.waitUntilReady(speakerId, baselineStatus);
+    let status: DoubaoVoiceStatusResult;
+    try {
+      status = await this.waitUntilReady(speakerId, baselineStatus);
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw new AppError(error.code, error.message, error.status, {
+          ...(error.data && typeof error.data === 'object' ? error.data : {}),
+          providerUploadAccepted: true,
+          requestId: uploaded.request_id || requestId,
+        });
+      }
+      throw error;
+    }
 
     return {
       providerVoiceId: speakerId,
@@ -387,7 +402,9 @@ export class DoubaoVoiceService {
     }
 
     const demoAudio =
-      response.speaker_status?.find(item => item.demo_audio)?.demo_audio?.trim() ||
+      response.speaker_status
+        ?.find(item => item.demo_audio)
+        ?.demo_audio?.trim() ||
       response.demo_audio?.trim() ||
       undefined;
 
@@ -941,9 +958,7 @@ export class DoubaoVoiceService {
     if (failed) {
       const code = String(v3Code ?? v1Code ?? fallbackCode);
       const message =
-        response?.message ||
-        response?.BaseResp?.StatusMessage ||
-        fallbackCode;
+        response?.message || response?.BaseResp?.StatusMessage || fallbackCode;
       throw new AppError(code, message, 502, response);
     }
   }
@@ -972,6 +987,21 @@ export class DoubaoVoiceService {
         500
       );
     }
+  }
+
+  private get maxTrainingTimes(): number {
+    const configured = Number(this.config?.maxTrainingTimes);
+    return Number.isFinite(configured) && configured > 0
+      ? Math.floor(configured)
+      : 15;
+  }
+
+  private remainingTrainingTimes(version?: number): number | undefined {
+    const trainedTimes = Number(version);
+    if (!Number.isFinite(trainedTimes) || trainedTimes < 0) {
+      return undefined;
+    }
+    return Math.max(0, this.maxTrainingTimes - Math.floor(trainedTimes));
   }
 
   private ensureEnabled(): void {

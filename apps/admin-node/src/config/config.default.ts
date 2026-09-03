@@ -276,6 +276,10 @@ export default {
       ['ADMIN_API_QWEN_VOICE_BASE_URL', 'NODE_QWEN_VOICE_BASE_URL'],
       'https://dashscope.aliyuncs.com'
     ),
+    audioBaseURL: readStringFrom(
+      ['ADMIN_API_QWEN_AUDIO_BASE_URL', 'NODE_QWEN_AUDIO_BASE_URL'],
+      ''
+    ),
     defaultPreviewModel: readStringFrom(
       ['ADMIN_API_QWEN_VOICE_PREVIEW_MODEL', 'NODE_QWEN_VOICE_SPEECH_MODEL'],
       'qwen3-tts-vc-2026-01-22'
@@ -332,6 +336,10 @@ export default {
     pollIntervalMs: readNumberFrom(
       ['ADMIN_API_DOUBAO_VOICE_POLL_INTERVAL_MS'],
       2000
+    ),
+    maxTrainingTimes: readNumberFrom(
+      ['ADMIN_API_DOUBAO_VOICE_MAX_TRAINING_TIMES'],
+      15
     ),
     knownSpeakerIds: readStringFrom(
       ['ADMIN_API_DOUBAO_VOICE_KNOWN_SPEAKER_IDS'],
