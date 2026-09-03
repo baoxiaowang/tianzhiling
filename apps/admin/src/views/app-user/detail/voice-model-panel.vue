@@ -130,10 +130,19 @@
       </template>
 
       <a-steps :current="step" type="arrow" class="voice-model-panel__steps">
-        <a-step title="上传声音素材" description="上传多段音频" />
-        <a-step title="选择训练片段" description="勾选用于训练的片段" />
-        <a-step title="填写训练信息" description="模型与服务参数" />
-        <a-step title="提交与进度" description="确认后提交训练" />
+        <a-step
+          v-for="(item, idx) in stepItems"
+          :key="item.title"
+          :description="item.desc"
+        >
+          <span
+            class="voice-model-panel__step-link"
+            :class="{ 'is-active': idx === step }"
+            @click="onStepChange(idx)"
+          >
+            {{ item.title }}
+          </span>
+        </a-step>
       </a-steps>
 
       <!-- Step 1 上传声音素材 -->
@@ -648,6 +657,13 @@
 
   const renderList = ref<VoiceTimbreRecord[]>([]);
   const loading = ref(false);
+  // 顶部导航步骤项：工作流与导航进度一一对应
+  const stepItems = [
+    { title: '上传声音素材', desc: '上传多段音频' },
+    { title: '选择训练片段', desc: '勾选用于训练的片段' },
+    { title: '填写训练信息', desc: '模型与服务参数' },
+    { title: '提交与进度', desc: '确认后提交训练' },
+  ];
   const pagination = reactive({
     current: 1,
     pageSize: 10,
@@ -908,6 +924,17 @@
       }
     }
     step.value = Math.min(step.value + 1, 3);
+  };
+
+  /** 顶部导航步骤可点击：工作流与导航进度对齐 */
+  const onStepChange = (nextStep: number) => {
+    // 进入「选择训练片段」时若素材有增删，触发重新剪辑
+    if (nextStep === 1 && step.value === 0 && uploadedClips.value.length) {
+      if (clippedMaterialFingerprint.value !== materialFingerprint()) {
+        startClipping();
+      }
+    }
+    step.value = Math.min(Math.max(nextStep, 0), 3);
   };
 
   const onProviderChange = () => {
@@ -1226,6 +1253,20 @@
 
     &__steps {
       margin-bottom: 20px;
+    }
+
+    &__step-link {
+      cursor: pointer;
+      transition: opacity 0.2s;
+
+      &:hover {
+        opacity: 0.75;
+      }
+
+      &.is-active {
+        cursor: default;
+        opacity: 1;
+      }
     }
 
     &__step {
