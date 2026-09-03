@@ -890,6 +890,7 @@
     return Number.isFinite(seconds) && seconds > 0 ? seconds : 12;
   };
 
+  // 历史片段可能没有持久化时长，再剪前从媒体元数据补齐真实值。
   const readAudioDurationSeconds = (publicUrl: string) =>
     new Promise<number>((resolve, reject) => {
       if (!publicUrl) {

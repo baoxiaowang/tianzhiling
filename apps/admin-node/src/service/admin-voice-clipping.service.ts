@@ -92,6 +92,7 @@ export class AdminVoiceClippingService {
         : data;
 
     if (!response.ok || inner?.ok !== true) {
+      // 保留 node 端的校验原因，避免管理后台只看到笼统的 HTTP 状态码。
       const downstreamCode =
         typeof envelope.code === 'string' && envelope.code.trim()
           ? envelope.code.trim()
