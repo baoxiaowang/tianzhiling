@@ -77,7 +77,12 @@ export class AdminVoiceClippingService {
 
     // node 端全局响应信封：{ success, code, message, data, timestamp }，
     // 业务结果在 data 字段内，先解包再判断
-    const envelope = data as { success?: boolean; data?: unknown };
+    const envelope = data as {
+      success?: boolean;
+      code?: unknown;
+      message?: unknown;
+      data?: unknown;
+    };
     const inner =
       envelope &&
       typeof envelope.data === 'object' &&
@@ -87,11 +92,28 @@ export class AdminVoiceClippingService {
         : data;
 
     if (!response.ok || inner?.ok !== true) {
+      const downstreamCode =
+        typeof envelope.code === 'string' && envelope.code.trim()
+          ? envelope.code.trim()
+          : 'VOICE_CLIPPING_FAILED';
       const message =
         typeof inner?.error === 'string'
           ? inner.error
+          : typeof inner?.message === 'string' && inner.message.trim()
+          ? inner.message.trim()
+          : typeof envelope.message === 'string' && envelope.message.trim()
+          ? envelope.message.trim()
           : `剪辑服务返回异常 status=${response.status}`;
-      throw new AppError('VOICE_CLIPPING_FAILED', message, 502);
+      const status =
+        response.status >= 400 && response.status < 500 ? response.status : 502;
+      this.logger.warn(
+        '[admin-voice-clipping] node rejected request, path=%s, status=%s, code=%s, message=%s',
+        path,
+        response.status,
+        downstreamCode,
+        message
+      );
+      throw new AppError(downstreamCode, message, status);
     }
 
     return inner;

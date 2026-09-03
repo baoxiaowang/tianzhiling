@@ -890,6 +890,41 @@
     return Number.isFinite(seconds) && seconds > 0 ? seconds : 12;
   };
 
+  const readAudioDurationSeconds = (publicUrl: string) =>
+    new Promise<number>((resolve, reject) => {
+      if (!publicUrl) {
+        reject(new Error('暂时无法读取这个片段的时长'));
+        return;
+      }
+      const audio = new Audio();
+      const timer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('读取片段时长超时，请稍后重试'));
+      }, 10000);
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        audio.onloadedmetadata = null;
+        audio.onerror = null;
+        audio.removeAttribute('src');
+        audio.load();
+      };
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () => {
+        const seconds = Number(audio.duration);
+        cleanup();
+        if (Number.isFinite(seconds) && seconds > 0) {
+          resolve(seconds);
+        } else {
+          reject(new Error('暂时无法读取这个片段的时长'));
+        }
+      };
+      audio.onerror = () => {
+        cleanup();
+        reject(new Error('暂时无法读取这个片段的时长'));
+      };
+      audio.src = publicUrl;
+    });
+
   const acceptedClipDurationSeconds = computed(() => {
     const contentSeconds = selectedVoiceClips.value.reduce(
       (total, clip) => total + getClipDurationSeconds(clip),
@@ -1446,10 +1481,15 @@
     }
     try {
       recutting.value = true;
+      const savedDuration = Number(target.durationSeconds);
+      const durationSeconds =
+        Number.isFinite(savedDuration) && savedDuration > 0
+          ? savedDuration
+          : await readAudioDurationSeconds(target.publicUrl);
       const { data } = await recutVoiceClip({
         objectKey: target.objectKey,
         fileName: target.sourceName || '片段.wav',
-        durationSeconds: target.durationSeconds,
+        durationSeconds,
         instruction,
         sourceMaterialId: target.sourceMaterialId,
         sourceName: target.sourceName,
@@ -1470,7 +1510,9 @@
       recutVisible.value = false;
       return true;
     } catch (error: any) {
-      Message.error(error?.response?.data?.message || '片段返工失败');
+      Message.error(
+        error?.response?.data?.message || error?.message || '片段返工失败'
+      );
       return false;
     } finally {
       recutting.value = false;
