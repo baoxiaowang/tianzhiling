@@ -84,3 +84,73 @@ export function validateVoiceTimbre(id: string) {
     `/admin_api/voice-timbres/${id}/validate`
   );
 }
+
+export interface VoiceTimbreMaterialRecord {
+  id: string;
+  userId: string;
+  name: string;
+  objectKey: string;
+  publicUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 列出某用户已保存的声音素材 */
+export function queryVoiceMaterials(userId: string) {
+  return axios.get<VoiceTimbreMaterialRecord[]>('/admin_api/voice-materials', {
+    params: { userId },
+  });
+}
+
+/** 保存一条声音素材（同一用户同一 objectKey 自动去重） */
+export function createVoiceMaterial(data: {
+  userId: string;
+  name: string;
+  objectKey: string;
+  publicUrl?: string;
+}) {
+  return axios.post<VoiceTimbreMaterialRecord>(
+    '/admin_api/voice-materials',
+    data
+  );
+}
+
+/** 删除一条已保存的声音素材记录 */
+export function deleteVoiceMaterial(id: string) {
+  return axios.delete<{ deleted: boolean }>(`/admin_api/voice-materials/${id}`);
+}
+
+export interface VoiceClipDTO {
+  sourceMaterialId: string;
+  sourceName: string;
+  objectKey: string;
+  publicUrl: string;
+  durationSeconds: number;
+  transcript?: string;
+  qualityScore?: number;
+  qualityLabel?: string;
+  qualityIssues?: {
+    code: string;
+    severity: 'warning' | 'rejected';
+    message?: string;
+  }[];
+}
+
+/** 触发底层声音剪辑工作流，把素材剪成训练片段 */
+export function clipVoiceMaterials(data: {
+  userId: string;
+  materials: {
+    id?: string;
+    name?: string;
+    objectKey: string;
+    publicUrl?: string;
+    durationSeconds?: number;
+  }[];
+}) {
+  return axios.post<{
+    ok: boolean;
+    clips: VoiceClipDTO[];
+    errors?: unknown[];
+    platformErrors?: unknown[];
+  }>('/admin_api/voice-clipping', data);
+}
