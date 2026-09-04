@@ -929,7 +929,6 @@ describe('AgentProfileFactService', () => {
       expect.objectContaining({
         value: '当前角色正式姓名是赵浩杰',
         status: AgentProfileFactStatus.active,
-        validFrom: expect.any(Date),
       })
     );
     expect(
@@ -938,11 +937,9 @@ describe('AgentProfileFactService', () => {
       )
     ).toEqual(
       expect.objectContaining({
-        value: '当前角色历史正式姓名是赵浩帅；不是当前姓名',
+        value: '当前角色历史正式姓名是赵浩帅；当前姓名已变更为赵浩杰',
         status: AgentProfileFactStatus.active,
         assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
-        validTo: expect.any(Date),
-        supersededByValue: '当前角色正式姓名是赵浩杰',
       })
     );
   });

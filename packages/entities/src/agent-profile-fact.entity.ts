@@ -101,16 +101,6 @@ export class AgentProfileFactEntity extends BaseEntity {
   @Column()
   lastUsedAt?: Date;
 
-  /** Validity window for facts whose current value can change. */
-  @Column()
-  validFrom?: Date;
-
-  @Column()
-  validTo?: Date;
-
-  @Column()
-  supersededByValue?: string;
-
   @Column()
   createdAt: Date;
 

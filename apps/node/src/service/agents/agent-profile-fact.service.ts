@@ -173,12 +173,6 @@ interface ExtractedProfileFact {
   forceCandidate?: boolean;
 }
 
-type VersionedAgentProfileFactEntity = AgentProfileFactEntity & {
-  validFrom?: Date;
-  validTo?: Date;
-  supersededByValue?: string;
-};
-
 const DEFAULT_FACT_LIMIT = 32;
 const VISUAL_APPEARANCE_KEY_PREFIX = 'visual.appearance.';
 const VISUAL_APPEARANCE_TRAIT_KINDS = new Set<AgentVisualAppearanceTraitKind>([
@@ -1193,11 +1187,7 @@ export class AgentProfileFactService {
         key: input.key,
       },
     });
-    const fact = (existing ??
-      new AgentProfileFactEntity()) as VersionedAgentProfileFactEntity;
-    const versionedExisting = existing as
-      | VersionedAgentProfileFactEntity
-      | undefined;
+    const fact = existing ?? new AgentProfileFactEntity();
     const previousValue = existing?.value?.trim();
     const sameValue = existing?.value?.trim() === input.value.trim();
     const sourceMessageIds = this.appendSourceMessageId(
@@ -1260,12 +1250,6 @@ export class AgentProfileFactService {
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
     fact.supportCount = nextSupportCount;
-    if (isCanonicalName) {
-      fact.validFrom =
-        existing && !sameValue ? now : versionedExisting?.validFrom ?? now;
-      fact.validTo = undefined;
-      fact.supersededByValue = undefined;
-    }
     fact.assertionPolicy =
       input.assertionPolicy ??
       this.resolveAssertionPolicy(input.type, input.key);
@@ -1292,8 +1276,7 @@ export class AgentProfileFactService {
 
     if (!previousName) return;
 
-    const history =
-      new AgentProfileFactEntity() as VersionedAgentProfileFactEntity;
+    const history = new AgentProfileFactEntity();
     history.userId = input.userId;
     history.agentId = input.agentId;
     history.type = AgentProfileFactType.identity;
@@ -1302,9 +1285,12 @@ export class AgentProfileFactService {
         ? USER_REAL_NAME_HISTORY_FACT_PREFIX
         : AGENT_REAL_NAME_HISTORY_FACT_PREFIX
     }${this.hashKey(`${previousName}|${now.toISOString()}`)}`;
+    const nextName = input.value.trim().startsWith(valuePrefix)
+      ? input.value.trim().slice(valuePrefix.length).trim()
+      : input.value.trim();
     history.value = isUserName
-      ? `用户历史正式姓名是${previousName}；不是当前姓名`
-      : `当前角色历史正式姓名是${previousName}；不是当前姓名`;
+      ? `用户历史正式姓名是${previousName}；当前姓名已变更为${nextName}`
+      : `当前角色历史正式姓名是${previousName}；当前姓名已变更为${nextName}`;
     history.polarity = AgentProfileFactPolarity.positive;
     history.confidence = existing.confidence;
     history.status = AgentProfileFactStatus.active;
@@ -1314,12 +1300,7 @@ export class AgentProfileFactService {
     history.sourceText = existing.sourceText;
     history.supportCount = existing.supportCount;
     history.assertionPolicy = AgentProfileFactAssertionPolicy.contextOnly;
-    history.validFrom =
-      (existing as VersionedAgentProfileFactEntity).validFrom ??
-      existing.createdAt;
-    history.validTo = now;
-    history.supersededByValue = input.value;
-    history.createdAt = now;
+    history.createdAt = existing.createdAt ?? now;
     history.updatedAt = now;
     await this.factModel.save(history);
   }
