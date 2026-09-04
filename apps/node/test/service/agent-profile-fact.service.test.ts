@@ -782,6 +782,7 @@ describe('AgentProfileFactService', () => {
       '我叫啥知道不',
       '梦里我不停地叫你的名字',
       '我叫儿子，儿子马上有回应',
+      '我叫老妹',
     ]) {
       const message = createUserMessage(content);
       await expect(

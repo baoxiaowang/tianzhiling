@@ -60,6 +60,10 @@ const NON_NAME_EXACT = new Set([
   '丈夫',
   '妻子',
   '宝贝',
+  '老哥',
+  '老姐',
+  '老弟',
+  '老妹',
 ]);
 
 export function extractAgentNameMemory(
