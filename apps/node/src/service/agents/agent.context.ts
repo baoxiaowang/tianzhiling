@@ -393,7 +393,10 @@ export class AgentContextService {
       'context.profile_facts',
       () => this.listProfileFacts(options)
     );
-    const identity = buildAgentIdentityContract({ agent: options.agent });
+    const identity = buildAgentIdentityContract({
+      agent: options.agent,
+      profileFacts,
+    });
     const knownObjects = buildKnownConversationObjects({
       identity,
       profileFacts,
@@ -1323,7 +1326,13 @@ export class AgentContextService {
       agentId: options.agent?.id ?? options.conversation.agentId,
     });
 
-    return facts.filter(fact => !fact.key.startsWith('safety_signal.'));
+    return facts.filter(
+      fact =>
+        !fact.key.startsWith('safety_signal.') &&
+        // Legacy identity.name mixed display names, real names and malformed
+        // question extractions. New typed name facts are the only prompt source.
+        fact.key !== 'identity.name'
+    );
   }
 
   private async listRelationshipSignals(
@@ -2421,10 +2430,18 @@ export class AgentContextService {
     };
 
     addProfileAtom({
-      factKey: 'identity.name',
-      text: `当前角色姓名是${name}`,
+      factKey: 'identity.display_name',
+      text: `当前角色显示名或角色称呼是${name}`,
       subjectRef: 'agent',
     });
+    const realName = agent.realName?.trim();
+    if (realName) {
+      addProfileAtom({
+        factKey: 'identity.real_name',
+        text: `当前角色正式姓名是${realName}`,
+        subjectRef: 'agent',
+      });
+    }
     if (
       /称呼|叫我|叫你|怎么叫|你是谁|我是你|你是我|什么关系/.test(currentQuery)
     ) {
@@ -2722,17 +2739,17 @@ export class AgentContextService {
       }
     }
 
-    // 注入角色名字证据：identity contract 中的 displayName 始终可确认
+    // 显示名只表示角色入口名或关系称呼，不得覆盖正式姓名。
     if (options.agent) {
       const displayName = (options.agent.name || '').trim();
       if (displayName) {
         addEvidence({
           id: 'E_IDENTITY',
           source: 'system_action',
-          text: `角色名称为${displayName}`,
+          text: `角色显示名或称呼为${displayName}`,
           assertionPolicy: 'can_assert',
           subjectRef: 'agent',
-          factKey: 'agent.identity.name',
+          factKey: 'agent.identity.display_name',
           useMode: 'uptake',
           status: 'active',
           confidence: 1,
@@ -2792,6 +2809,19 @@ export class AgentContextService {
     const visualSubject = factKey.match(/^visual\.appearance\.([^.]+)/)?.[1];
     if (visualSubject) {
       return visualSubject;
+    }
+
+    if (/^identity\./.test(factKey)) {
+      return 'agent';
+    }
+    if (factKey === 'relationship.preferred_agent_name') {
+      return 'agent';
+    }
+    if (
+      /^user\.identity\./.test(factKey) ||
+      factKey === 'relationship.preferred_user_name'
+    ) {
+      return 'user';
     }
 
     const objectRefs = this.resolveMentionedObjectRefs(text, objectPlan);

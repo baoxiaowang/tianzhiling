@@ -3,6 +3,7 @@ import {
   AgentProfileFactAssertionPolicy,
   AgentProfileFactConfidence,
   AgentProfileFactPolarity,
+  AgentProfileFactStatus,
   AgentProfileFactType,
   AgentSex,
 } from '@tzl/entities';
@@ -70,7 +71,8 @@ describe('agent identity contract', () => {
         {
           ...baseFact,
           key: 'family.shared_member.秀兰',
-          value: '秀兰是用户与当前角色共同的重要家人；具体亲属关系尚未确认，禁止猜测',
+          value:
+            '秀兰是用户与当前角色共同的重要家人；具体亲属关系尚未确认，禁止猜测',
           assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
         },
       ],
@@ -92,5 +94,77 @@ describe('agent identity contract', () => {
       assertionPolicy: 'context_only',
     });
     expect(objects[3]).not.toHaveProperty('relationToUser');
+  });
+
+  it('keeps display names separate from formal names and relationship preferences', () => {
+    const baseFact = {
+      type: AgentProfileFactType.identity,
+      polarity: AgentProfileFactPolarity.positive,
+      confidence: AgentProfileFactConfidence.confirmed,
+      priority: 3,
+      status: AgentProfileFactStatus.active,
+      assertionPolicy: AgentProfileFactAssertionPolicy.canAssert,
+    };
+    const profileFacts = [
+      {
+        ...baseFact,
+        key: 'identity.real_name',
+        value: '当前角色正式姓名是赵浩帅',
+      },
+      {
+        ...baseFact,
+        key: 'relationship.preferred_agent_name',
+        value: '当前用户偏好称呼当前角色为浩浩',
+      },
+      {
+        ...baseFact,
+        key: 'user.identity.real_name',
+        value: '用户正式姓名是赵浩洁',
+      },
+      {
+        ...baseFact,
+        key: 'relationship.preferred_user_name',
+        value: '当前用户希望当前角色称呼其为洁洁',
+      },
+    ];
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '弟弟',
+        iCallAgent: '弟弟',
+        agentCallMe: '姐姐',
+      } as AgentEntity,
+      profileFacts,
+    });
+
+    expect(identity).toMatchObject({
+      agent: {
+        displayName: '弟弟',
+        realName: '赵浩帅',
+        aliases: ['浩帅', '浩浩', '帅帅'],
+        preferredName: '浩浩',
+      },
+      user: {
+        addressedAs: '洁洁',
+        realName: '赵浩洁',
+        aliases: ['浩洁', '浩浩', '洁洁'],
+        preferredName: '洁洁',
+      },
+      addresses: {
+        userCallsAgent: '浩浩',
+        agentCallsUser: '洁洁',
+      },
+    });
+    expect(buildAgentIdentityPrompt(identity)).toContain('"realName":"赵浩帅"');
+
+    const knownObjects = buildKnownConversationObjects({
+      identity,
+      profileFacts,
+    });
+    expect(knownObjects[0].aliases).toEqual(
+      expect.arrayContaining(['弟弟', '赵浩帅', '浩帅', '浩浩', '帅帅'])
+    );
+    expect(knownObjects[1].aliases).toEqual(
+      expect.arrayContaining(['赵浩洁', '浩洁', '洁洁'])
+    );
   });
 });

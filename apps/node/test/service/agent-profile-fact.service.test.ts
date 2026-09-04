@@ -723,4 +723,368 @@ describe('AgentProfileFactService', () => {
     ).resolves.toBe(1);
     expect(fact.status).toBe(AgentProfileFactStatus.archived);
   });
+
+  it('stores explicit agent and user formal names without treating questions as facts', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(
+        async ({ where }: any) => storedFacts.get(where.key) ?? null
+      ),
+      save: jest.fn(async fact => {
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+
+    for (const content of [
+      '你叫赵浩帅',
+      '你的名字叫赵浩帅',
+      '你全名是赵浩帅',
+      '我叫赵浩洁',
+      '我的名字叫赵浩洁',
+      '我全名是赵浩洁',
+    ]) {
+      await service.extractAndUpsertFromUserMessage({
+        message: createUserMessage(content),
+        searchableText: content,
+      });
+    }
+
+    expect(storedFacts.get('identity.real_name')).toEqual(
+      expect.objectContaining({
+        value: '当前角色正式姓名是赵浩帅',
+        status: AgentProfileFactStatus.active,
+      })
+    );
+    expect(storedFacts.get('user.identity.real_name')).toEqual(
+      expect.objectContaining({
+        value: '用户正式姓名是赵浩洁',
+        status: AgentProfileFactStatus.active,
+      })
+    );
+
+    const saveCount = (service.factModel.save as jest.Mock).mock.calls.length;
+    for (const content of [
+      '你叫什么名字',
+      '我叫什么名字',
+      '你叫赵浩帅吗',
+      '你叫赵浩帅吗不是',
+      '你到底叫什么',
+      '你是不是叫赵浩帅',
+      '不是说你叫赵浩帅吗',
+      '以前你上大学的时候，不在家，我恍惚好像还听见你叫妈妈',
+      '我等着你叫我上车，却没有',
+      '我想听你叫我的名字',
+      '我叫啥知道不',
+      '梦里我不停地叫你的名字',
+      '我叫儿子，儿子马上有回应',
+    ]) {
+      const message = createUserMessage(content);
+      await expect(
+        service.extractAndUpsertFromUserMessage({
+          message,
+          searchableText: content,
+        })
+      ).resolves.toEqual([]);
+    }
+    expect(service.factModel.save).toHaveBeenCalledTimes(saveCount);
+  });
+
+  it('keeps formal names stable while storing relationship-scoped preferred names', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(
+        async ({ where }: any) => storedFacts.get(where.key) ?? null
+      ),
+      save: jest.fn(async fact => {
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+
+    for (const content of [
+      '你叫赵浩帅',
+      '以后我就叫你浩浩',
+      '我叫赵浩洁',
+      '以后你就叫我洁洁',
+    ]) {
+      const message = createUserMessage(content);
+      await service.extractAndUpsertFromUserMessage({
+        message,
+        searchableText: content,
+      });
+    }
+
+    expect(storedFacts.get('identity.real_name')?.value).toBe(
+      '当前角色正式姓名是赵浩帅'
+    );
+    expect(storedFacts.get('relationship.preferred_agent_name')?.value).toBe(
+      '当前用户偏好称呼当前角色为浩浩'
+    );
+    expect(storedFacts.get('user.identity.real_name')?.value).toBe(
+      '用户正式姓名是赵浩洁'
+    );
+    expect(storedFacts.get('relationship.preferred_user_name')?.value).toBe(
+      '当前用户希望当前角色称呼其为洁洁'
+    );
+  });
+
+  it('does not replace a confirmed formal name without explicit change language', async () => {
+    const service = new AgentProfileFactService();
+    let storedFact: AgentProfileFactEntity | null = null;
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(async ({ where }: any) =>
+        where.key === 'identity.real_name' ? storedFact : null
+      ),
+      save: jest.fn(async fact => {
+        if (fact.key === 'identity.real_name') storedFact = fact;
+        return fact;
+      }),
+    } as never;
+
+    for (const content of ['你叫赵浩帅', '你叫赵浩杰']) {
+      const message = createUserMessage(content);
+      await service.extractAndUpsertFromUserMessage({
+        message,
+        searchableText: content,
+      });
+    }
+    expect(storedFact?.value).toBe('当前角色正式姓名是赵浩帅');
+    expect(storedFact?.conflictingValues).toContain('当前角色正式姓名是赵浩杰');
+
+    const correction = createUserMessage('更正一下，你现在叫赵浩杰');
+    await service.extractAndUpsertFromUserMessage({
+      message: correction,
+      searchableText: correction.content,
+    });
+    expect(storedFact?.value).toBe('当前角色正式姓名是赵浩杰');
+    expect(storedFact?.conflictingValues).toContain('当前角色正式姓名是赵浩帅');
+  });
+
+  it('does not treat the other subject changing names as permission to replace the agent name', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.openAIService = { isEnabled: jest.fn(() => false) } as never;
+    service.factModel = {
+      findOne: jest.fn(
+        async ({ where }: any) => storedFacts.get(where.key) ?? null
+      ),
+      save: jest.fn(async fact => {
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+
+    for (const content of ['你叫赵浩帅', '我改成李四，你叫王五']) {
+      await service.extractAndUpsertFromUserMessage({
+        message: createUserMessage(content),
+        searchableText: content,
+      });
+    }
+
+    expect(storedFacts.get('identity.real_name')?.value).toBe(
+      '当前角色正式姓名是赵浩帅'
+    );
+    expect(storedFacts.get('user.identity.real_name')?.value).toBe(
+      '用户正式姓名是李四'
+    );
+  });
+
+  it('preserves a time-bounded history record when a formal name explicitly changes', async () => {
+    const service = new AgentProfileFactService();
+    const storedFacts = new Map<string, AgentProfileFactEntity>();
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(
+        async ({ where }: any) => storedFacts.get(where.key) ?? null
+      ),
+      save: jest.fn(async fact => {
+        if (!fact.id) fact.id = new MongoObjectId();
+        storedFacts.set(fact.key, fact);
+        return fact;
+      }),
+    } as never;
+
+    for (const content of ['你叫赵浩帅', '更正一下，你现在叫赵浩杰']) {
+      await service.extractAndUpsertFromUserMessage({
+        message: createUserMessage(content),
+        searchableText: content,
+      });
+    }
+
+    expect(storedFacts.get('identity.real_name')).toEqual(
+      expect.objectContaining({
+        value: '当前角色正式姓名是赵浩杰',
+        status: AgentProfileFactStatus.active,
+        validFrom: expect.any(Date),
+      })
+    );
+    expect(
+      [...storedFacts.values()].find(fact =>
+        fact.key.startsWith('identity.real_name_history.')
+      )
+    ).toEqual(
+      expect.objectContaining({
+        value: '当前角色历史正式姓名是赵浩帅；不是当前姓名',
+        status: AgentProfileFactStatus.active,
+        assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
+        validTo: expect.any(Date),
+        supersededByValue: '当前角色正式姓名是赵浩杰',
+      })
+    );
+  });
+
+  it('extracts a name declaration from a mixed message ending in a question', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+    const content = '你叫赵浩帅，我原来的名字是赵浩洁，你忘了吗';
+
+    await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage(content),
+      searchableText: content,
+    });
+
+    expect(savedFacts).toEqual([
+      expect.objectContaining({
+        key: 'identity.real_name',
+        value: '当前角色正式姓名是赵浩帅',
+      }),
+    ]);
+  });
+
+  it('rejects model-produced name facts that are not backed by a valid declaration', async () => {
+    const service = new AgentProfileFactService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'identity',
+            key: 'identity.name',
+            value: '用户补充当前角色名字是赵浩帅吗不是',
+            polarity: 'positive',
+            confidence: 'user_corrected',
+            priority: 3,
+          },
+          {
+            type: 'identity',
+            key: 'identity.real_name',
+            value: '当前角色正式姓名是赵浩帅',
+            polarity: 'positive',
+            confidence: 'confirmed',
+            priority: 3,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    } as never;
+    const content = '你叫赵浩帅吗不是';
+
+    await expect(
+      service.extractAndUpsertFromUserMessage({
+        message: createUserMessage(content),
+        searchableText: content,
+      })
+    ).resolves.toEqual([]);
+    expect(service.factModel.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps a safely validated model-only name interpretation as a candidate', async () => {
+    const service = new AgentProfileFactService();
+    let storedFact: AgentProfileFactEntity | null = null;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'identity',
+            key: 'identity.real_name',
+            value: '当前角色正式姓名是赵浩帅',
+            polarity: 'positive',
+            confidence: 'confirmed',
+            priority: 3,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(async () => storedFact),
+      save: jest.fn(async fact => {
+        storedFact = fact;
+        return fact;
+      }),
+    } as never;
+    const content = '你身份证上的全名一直都是赵浩帅';
+
+    for (let index = 0; index < 2; index += 1) {
+      await service.extractAndUpsertFromUserMessage({
+        message: createUserMessage(content),
+        searchableText: content,
+      });
+    }
+
+    expect(storedFact).toEqual(
+      expect.objectContaining({
+        key: 'identity.real_name',
+        value: '当前角色正式姓名是赵浩帅',
+        status: AgentProfileFactStatus.candidate,
+        supportCount: 2,
+      })
+    );
+  });
+
+  it('accepts an explicit user rename from the observed production wording', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.openAIService = {
+      isEnabled: jest.fn(() => false),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+    const content = '我改成赵皓洁了弟弟';
+
+    await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage(content),
+      searchableText: content,
+    });
+
+    expect(savedFacts).toEqual([
+      expect.objectContaining({
+        key: 'user.identity.real_name',
+        value: '用户正式姓名是赵皓洁',
+        status: AgentProfileFactStatus.active,
+      }),
+    ]);
+  });
 });

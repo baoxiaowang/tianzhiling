@@ -8,6 +8,10 @@ import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type { ConversationKnownObject } from './reply-intent';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
+import {
+  resolveAgentNameMemory,
+  resolveUserNameMemory,
+} from './agent-name-memory';
 
 export type AgentIdentityRelationshipGeneration =
   | 'elder'
@@ -32,11 +36,16 @@ export interface AgentIdentityContract {
     objectId: 'agent';
     displayName: string;
     realName?: string;
+    aliases: string[];
+    preferredName?: string;
     sex: '男性' | '女性' | '未知';
   };
   user: {
     objectId: 'user';
     addressedAs: string;
+    realName?: string;
+    aliases: string[];
+    preferredName?: string;
   };
   relationship: {
     label: string;
@@ -52,8 +61,11 @@ export interface AgentIdentityContract {
 
 export function buildAgentIdentityContract(options: {
   agent: AgentEntity | null;
+  profileFacts?: AgentProfileFactSummary[];
 }): AgentIdentityContract {
   const agent = options.agent;
+  const nameMemory = resolveAgentNameMemory(options.profileFacts);
+  const userNameMemory = resolveUserNameMemory(options.profileFacts);
   const explicitRelationship = clean(agent?.iCallAgent, 24);
   const profileRelationship = clean(
     agent?.personaProfile?.demographics?.relationshipType,
@@ -63,7 +75,8 @@ export function buildAgentIdentityContract(options: {
     explicitRelationship || profileRelationship || '亲人';
   const displayName =
     clean(agent?.name, 24) || clean(agent?.realName, 24) || relationshipLabel;
-  const realName = clean(agent?.realName, 24);
+  const realName =
+    clean(agent?.realName, 24) || clean(nameMemory.canonicalName, 24);
   const agentCallsUser = clean(agent?.agentCallMe, 24) || '你';
 
   return {
@@ -72,11 +85,22 @@ export function buildAgentIdentityContract(options: {
       objectId: 'agent',
       displayName,
       ...(realName && realName !== displayName ? { realName } : {}),
+      aliases: unique(nameMemory.aliases),
+      ...(nameMemory.preferredName
+        ? { preferredName: nameMemory.preferredName }
+        : {}),
       sex: resolveSex(agent?.sex),
     },
     user: {
       objectId: 'user',
-      addressedAs: agentCallsUser,
+      addressedAs: userNameMemory.preferredName || agentCallsUser,
+      ...(userNameMemory.canonicalName
+        ? { realName: userNameMemory.canonicalName }
+        : {}),
+      aliases: unique(userNameMemory.aliases),
+      ...(userNameMemory.preferredName
+        ? { preferredName: userNameMemory.preferredName }
+        : {}),
     },
     relationship: {
       label: relationshipLabel,
@@ -89,8 +113,11 @@ export function buildAgentIdentityContract(options: {
         : 'fallback',
     },
     addresses: {
-      userCallsAgent: explicitRelationship || relationshipLabel,
-      agentCallsUser,
+      userCallsAgent:
+        clean(nameMemory.preferredName, 24) ||
+        explicitRelationship ||
+        relationshipLabel,
+      agentCallsUser: userNameMemory.preferredName || agentCallsUser,
     },
   };
 }
@@ -108,6 +135,8 @@ export function buildKnownConversationObjects(options: {
       aliases: unique([
         identity.agent.displayName,
         identity.agent.realName,
+        ...identity.agent.aliases,
+        identity.agent.preferredName,
         identity.addresses.userCallsAgent,
         '你',
         '您',
@@ -119,7 +148,15 @@ export function buildKnownConversationObjects(options: {
       id: 'user',
       kind: 'user',
       label: identity.user.addressedAs,
-      aliases: unique([identity.user.addressedAs, '我', '我们', '咱们']),
+      aliases: unique([
+        identity.user.addressedAs,
+        identity.user.realName,
+        ...identity.user.aliases,
+        identity.user.preferredName,
+        '我',
+        '我们',
+        '咱们',
+      ]),
       relationToAgent: identity.user.addressedAs,
       assertionPolicy: 'can_assert',
     },
@@ -146,6 +183,8 @@ export function buildAgentIdentityPrompt(
     id: identity.agent.objectId,
     name: identity.agent.displayName,
     realName: identity.agent.realName || '未知',
+    aliases: identity.agent.aliases,
+    preferredName: identity.agent.preferredName || '未设置',
     sex: identity.agent.sex,
     relationToUser: identity.relationship.label,
     userCallsAgent: identity.addresses.userCallsAgent,
@@ -153,6 +192,9 @@ export function buildAgentIdentityPrompt(
   const user = {
     id: identity.user.objectId,
     agentCallsUser: identity.addresses.agentCallsUser,
+    realName: identity.user.realName || '未知',
+    aliases: identity.user.aliases,
+    preferredName: identity.user.preferredName || '未设置',
   };
 
   return [

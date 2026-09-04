@@ -25,6 +25,21 @@ import {
   isForgetMemoryRequest,
   shouldArchiveMemoryValue,
 } from './agent-memory-control';
+import {
+  AGENT_REAL_NAME_FACT_KEY,
+  AGENT_REAL_NAME_HISTORY_FACT_PREFIX,
+  AGENT_EXPLICIT_ALIAS_FACT_PREFIX,
+  AGENT_PREFERRED_NAME_FACT_KEY,
+  USER_REAL_NAME_FACT_KEY,
+  USER_REAL_NAME_HISTORY_FACT_PREFIX,
+  USER_EXPLICIT_ALIAS_FACT_PREFIX,
+  USER_PREFERRED_NAME_FACT_KEY,
+  extractAgentNameMemory,
+  extractUserNameMemory,
+  isNameMemoryFactKey,
+  isExplicitCanonicalNameReplacement,
+  isValidatedNameFactForSource,
+} from './agent-name-memory';
 
 export interface AgentProfileFactSummary {
   id?: string;
@@ -149,12 +164,20 @@ interface UpsertProfileFactInput
   sourceFeedbackId?: MongoObjectId;
   sourceText?: string;
   trustedSource: boolean;
+  forceCandidate?: boolean;
 }
 
 interface ExtractedProfileFact {
   fact: AgentProfileFactSummary;
   trustedSource: boolean;
+  forceCandidate?: boolean;
 }
+
+type VersionedAgentProfileFactEntity = AgentProfileFactEntity & {
+  validFrom?: Date;
+  validTo?: Date;
+  supersededByValue?: string;
+};
 
 const DEFAULT_FACT_LIMIT = 32;
 const VISUAL_APPEARANCE_KEY_PREFIX = 'visual.appearance.';
@@ -240,9 +263,11 @@ export class AgentProfileFactService {
         sourceMessageId: options.message.id,
         sourceText,
         trustedSource:
-          options.explicitlyConfirmed === true ||
-          isExplicitRememberRequest(sourceText) ||
-          extracted.trustedSource,
+          !extracted.forceCandidate &&
+          (options.explicitlyConfirmed === true ||
+            isExplicitRememberRequest(sourceText) ||
+            extracted.trustedSource),
+        forceCandidate: extracted.forceCandidate,
       });
     }
 
@@ -629,8 +654,15 @@ export class AgentProfileFactService {
       previousAssistantContent?: string;
     } = {}
   ): Promise<ExtractedProfileFact[]> {
+    const fallbackFacts = this.extractFactsWithRules(sourceText, options);
+
+    // Mixed messages may end with a question while still containing a clear
+    // name declaration in an earlier clause. Preserve only the strictly
+    // validated name facts in that case; ordinary questions still write none.
     if (!options.fromFeedback && this.isQuestionOnly(sourceText)) {
-      return [];
+      return fallbackFacts
+        .filter(fact => isNameMemoryFactKey(fact.key))
+        .map(fact => ({ fact, trustedSource: true }));
     }
 
     // 事实性信号预筛：无信号的短消息跳过 LLM，只走规则抽取
@@ -641,16 +673,27 @@ export class AgentProfileFactService {
     const llmFacts = skipLLM
       ? []
       : await this.extractFactsWithLLM(sourceText, options);
-    const fallbackFacts = this.extractFactsWithRules(sourceText, options);
+    const validatedLLMFacts = llmFacts.filter(fact =>
+      isValidatedNameFactForSource(fact.key, fact.value, sourceText)
+    );
     const ruleFactKeys = new Set(fallbackFacts.map(fact => fact.key));
 
-    return this.dedupeFacts([...llmFacts, ...fallbackFacts]).map(fact => ({
-      fact,
-      trustedSource:
-        options.fromFeedback === true ||
-        ruleFactKeys.has(fact.key) ||
-        this.isCorrectionText(sourceText),
-    }));
+    return this.dedupeFacts([...validatedLLMFacts, ...fallbackFacts]).map(
+      fact => {
+        const modelOnlyNameCandidate =
+          isNameMemoryFactKey(fact.key) && !ruleFactKeys.has(fact.key);
+
+        return {
+          fact,
+          trustedSource:
+            !modelOnlyNameCandidate &&
+            (options.fromFeedback === true ||
+              ruleFactKeys.has(fact.key) ||
+              this.isCorrectionText(sourceText)),
+          forceCandidate: modelOnlyNameCandidate,
+        };
+      }
+    );
   }
 
   private isQuestionOnly(sourceText: string): boolean {
@@ -692,7 +735,7 @@ export class AgentProfileFactService {
 
     // 3. 身份/状态声明
     if (
-      /(?:我是|我叫|我姓|我在.{0,6}(?:工作|上班|住|生活)|我有|我.{0,4}岁|我.{0,4}年|我的.{1,8}是|我家.{0,6}在)/.test(
+      /(?:我是|我叫|我姓|我.{0,8}(?:名字|姓名|全名)|你.{0,8}(?:名字|姓名|全名)|你(?:现在|如今)?(?:叫|名叫)|我在.{0,6}(?:工作|上班|住|生活)|我有|我.{0,4}岁|我.{0,4}年|我的.{1,8}是|我家.{0,6}在)/.test(
         text
       )
     )
@@ -764,7 +807,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
@@ -895,17 +938,75 @@ export class AgentProfileFactService {
       });
     }
 
-    const nameMatch = text.match(
-      /(?:你|他|她)(?:叫|名字叫|全名叫)([\u4e00-\u9fa5A-Za-z·]{2,16})/
-    );
+    const nameMemory = extractAgentNameMemory(text);
+    const nameConfidence =
+      confidence === AgentProfileFactConfidence.extracted
+        ? AgentProfileFactConfidence.confirmed
+        : confidence;
 
-    if (nameMatch?.[1]) {
+    if (nameMemory.canonicalName) {
       facts.push({
         type: AgentProfileFactType.identity,
-        key: 'identity.name',
-        value: `用户补充当前角色名字是${nameMatch[1]}`,
+        key: AGENT_REAL_NAME_FACT_KEY,
+        value: `当前角色正式姓名是${nameMemory.canonicalName}`,
         polarity: AgentProfileFactPolarity.positive,
-        confidence,
+        confidence: nameConfidence,
+        priority: 3,
+      });
+    }
+
+    for (const alias of nameMemory.explicitAliases) {
+      facts.push({
+        type: AgentProfileFactType.identity,
+        key: `${AGENT_EXPLICIT_ALIAS_FACT_PREFIX}${this.hashKey(alias)}`,
+        value: `当前角色别名或昵称是${alias}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
+        priority: 2,
+      });
+    }
+
+    if (nameMemory.preferredName) {
+      facts.push({
+        type: AgentProfileFactType.relationship,
+        key: AGENT_PREFERRED_NAME_FACT_KEY,
+        value: `当前用户偏好称呼当前角色为${nameMemory.preferredName}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
+        priority: 3,
+      });
+    }
+
+    const userNameMemory = extractUserNameMemory(text);
+    if (userNameMemory.canonicalName) {
+      facts.push({
+        type: AgentProfileFactType.identity,
+        key: USER_REAL_NAME_FACT_KEY,
+        value: `用户正式姓名是${userNameMemory.canonicalName}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
+        priority: 3,
+      });
+    }
+
+    for (const alias of userNameMemory.explicitAliases) {
+      facts.push({
+        type: AgentProfileFactType.identity,
+        key: `${USER_EXPLICIT_ALIAS_FACT_PREFIX}${this.hashKey(alias)}`,
+        value: `用户别名或昵称是${alias}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
+        priority: 2,
+      });
+    }
+
+    if (userNameMemory.preferredName) {
+      facts.push({
+        type: AgentProfileFactType.relationship,
+        key: USER_PREFERRED_NAME_FACT_KEY,
+        value: `当前用户希望当前角色称呼其为${userNameMemory.preferredName}`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence: nameConfidence,
         priority: 3,
       });
     }
@@ -1092,7 +1193,12 @@ export class AgentProfileFactService {
         key: input.key,
       },
     });
-    const fact = existing ?? new AgentProfileFactEntity();
+    const fact = (existing ??
+      new AgentProfileFactEntity()) as VersionedAgentProfileFactEntity;
+    const versionedExisting = existing as
+      | VersionedAgentProfileFactEntity
+      | undefined;
+    const previousValue = existing?.value?.trim();
     const sameValue = existing?.value?.trim() === input.value.trim();
     const sourceMessageIds = this.appendSourceMessageId(
       existing?.sourceMessageIds,
@@ -1103,8 +1209,21 @@ export class AgentProfileFactService {
     const nextSupportCount = sameValue
       ? Math.max(existing?.supportCount ?? 1, 1) + (existing ? 1 : 0)
       : 1;
+    const isCanonicalName =
+      input.key === AGENT_REAL_NAME_FACT_KEY ||
+      input.key === USER_REAL_NAME_FACT_KEY;
+    const canonicalNameReplacementIsAllowed =
+      !isCanonicalName ||
+      !existing ||
+      sameValue ||
+      isExplicitCanonicalNameReplacement(
+        input.sourceText || '',
+        input.key === USER_REAL_NAME_FACT_KEY ? 'user' : 'agent'
+      );
     const shouldActivate =
-      input.trustedSource || (sameValue && nextSupportCount >= 2);
+      !input.forceCandidate &&
+      canonicalNameReplacementIsAllowed &&
+      (input.trustedSource || (sameValue && nextSupportCount >= 2));
 
     if (existing && !sameValue && !shouldActivate) {
       fact.sourceMessageIds = sourceMessageIds;
@@ -1119,6 +1238,10 @@ export class AgentProfileFactService {
       fact.updatedAt = now;
       await this.factModel.save(fact);
       return fact;
+    }
+
+    if (existing && !sameValue && isCanonicalName && shouldActivate) {
+      await this.saveSupersededRealNameHistory(input, existing, now);
     }
 
     fact.userId = input.userId;
@@ -1137,20 +1260,68 @@ export class AgentProfileFactService {
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
     fact.supportCount = nextSupportCount;
+    if (isCanonicalName) {
+      fact.validFrom =
+        existing && !sameValue ? now : versionedExisting?.validFrom ?? now;
+      fact.validTo = undefined;
+      fact.supersededByValue = undefined;
+    }
     fact.assertionPolicy =
       input.assertionPolicy ??
       this.resolveAssertionPolicy(input.type, input.key);
     fact.conflictingValues =
       existing && !sameValue
-        ? this.appendConflictingValue(
-            existing.conflictingValues,
-            existing.value
-          )
+        ? this.appendConflictingValue(existing.conflictingValues, previousValue)
         : existing?.conflictingValues || [];
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
     return this.factModel.save(fact);
+  }
+
+  private async saveSupersededRealNameHistory(
+    input: UpsertProfileFactInput,
+    existing: AgentProfileFactEntity,
+    now: Date
+  ): Promise<void> {
+    const isUserName = input.key === USER_REAL_NAME_FACT_KEY;
+    const valuePrefix = isUserName ? '用户正式姓名是' : '当前角色正式姓名是';
+    const previousName = existing.value?.trim().startsWith(valuePrefix)
+      ? existing.value.trim().slice(valuePrefix.length).trim()
+      : '';
+
+    if (!previousName) return;
+
+    const history =
+      new AgentProfileFactEntity() as VersionedAgentProfileFactEntity;
+    history.userId = input.userId;
+    history.agentId = input.agentId;
+    history.type = AgentProfileFactType.identity;
+    history.key = `${
+      isUserName
+        ? USER_REAL_NAME_HISTORY_FACT_PREFIX
+        : AGENT_REAL_NAME_HISTORY_FACT_PREFIX
+    }${this.hashKey(`${previousName}|${now.toISOString()}`)}`;
+    history.value = isUserName
+      ? `用户历史正式姓名是${previousName}；不是当前姓名`
+      : `当前角色历史正式姓名是${previousName}；不是当前姓名`;
+    history.polarity = AgentProfileFactPolarity.positive;
+    history.confidence = existing.confidence;
+    history.status = AgentProfileFactStatus.active;
+    history.priority = 1;
+    history.sourceMessageId = existing.sourceMessageId;
+    history.sourceMessageIds = existing.sourceMessageIds;
+    history.sourceText = existing.sourceText;
+    history.supportCount = existing.supportCount;
+    history.assertionPolicy = AgentProfileFactAssertionPolicy.contextOnly;
+    history.validFrom =
+      (existing as VersionedAgentProfileFactEntity).validFrom ??
+      existing.createdAt;
+    history.validTo = now;
+    history.supersededByValue = input.value;
+    history.createdAt = now;
+    history.updatedAt = now;
+    await this.factModel.save(history);
   }
 
   private appendSourceMessageId(
