@@ -4,6 +4,7 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import * as bullmq from '@midwayjs/bullmq';
 import { RedisService } from '@midwayjs/redis';
 import { MongoRepository } from 'typeorm';
+import { createHash } from 'crypto';
 import { AppError } from '../common/errors';
 import {
   AgentEntity,
@@ -2156,7 +2157,11 @@ export class ConversationService {
     const message = await this.messageModel.findOne({
       where: { _id: task.messageId } as never,
     });
-    if (!message || message.isArchived || message.status !== MessageStatus.sent) {
+    if (
+      !message ||
+      message.isArchived ||
+      message.status !== MessageStatus.sent
+    ) {
       return 'skipped';
     }
 
@@ -2165,6 +2170,20 @@ export class ConversationService {
 
     if (task.kind === MemoryPipelineTaskKind.structuredMemory) {
       await this.enrichUserMessageForReply(message, searchableText);
+      const personUnits =
+        (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
+          {
+            userId: message.userId,
+            sourceMessageId: message.id,
+          }
+        )) || [];
+      if (personUnits.length) {
+        await this.memoryPipelineTaskService.enqueueForMessage(
+          message,
+          searchableText,
+          [MemoryPipelineTaskKind.personSemanticIndex]
+        );
+      }
       if (message.traceId) {
         await this.chatTraceService?.markBackgroundCompleted(
           message.traceId,
@@ -2190,6 +2209,69 @@ export class ConversationService {
       });
       if (!indexed) {
         throw new Error('Milvus semantic indexing is currently unavailable');
+      }
+      return 'completed';
+    }
+
+    if (task.kind === MemoryPipelineTaskKind.personSemanticIndex) {
+      let units =
+        (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
+          {
+            userId: message.userId,
+            sourceMessageId: message.id,
+          }
+        )) || [];
+      if (!units.length) {
+        await this.userIdentityMemoryService?.recordFromUserMessage(
+          message,
+          searchableText
+        );
+        await this.relativeMemoryExtractorService?.captureFromUserMessage(
+          message,
+          searchableText
+        );
+        units =
+          (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
+            {
+              userId: message.userId,
+              sourceMessageId: message.id,
+            }
+          )) || [];
+      }
+      if (!units.length) return 'skipped';
+
+      for (const unit of units) {
+        const memoryId = createHash('sha256')
+          .update(
+            [
+              this.stringifyObjectId(message.id),
+              this.stringifyObjectId(unit.personId),
+              unit.memoryKind,
+              unit.stableKey,
+            ].join(':')
+          )
+          .digest('hex');
+        const indexed = await this.milvusService.indexConversationMessage({
+          messageId: this.stringifyObjectId(message.id),
+          memoryId,
+          sourceMessageId: this.stringifyObjectId(message.id),
+          userId: this.stringifyObjectId(message.userId),
+          conversationId: this.stringifyObjectId(message.conversationId),
+          agentId: this.stringifyObjectId(message.agentId),
+          role: message.role,
+          type: message.type,
+          searchableText: unit.searchableText,
+          createdAt: message.createdAt,
+          updatedAt: message.updatedAt,
+          personId: this.stringifyObjectId(unit.personId),
+          memoryKind: unit.memoryKind,
+          sourceHash: createHash('sha256')
+            .update(unit.searchableText)
+            .digest('hex'),
+        });
+        if (!indexed) {
+          throw new Error('Milvus person semantic indexing is unavailable');
+        }
       }
       return 'completed';
     }
@@ -4865,6 +4947,37 @@ export class ConversationService {
         id => /^(?:F|L)\d+$/.test(id) || toolEvidenceIds.has(id)
       )
     ).length;
+    if (toolEvidenceIds.size > 0) {
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'memory.evidence_usage',
+        startedAt: new Date(),
+        attributes: {
+          retrievedEvidenceCount: toolEvidenceIds.size,
+          usedEvidenceCount: memoryUsedEvidenceIds.filter(id =>
+            toolEvidenceIds.has(id)
+          ).length,
+          usedClaimCount: memoryUsedClaimCount,
+        },
+      });
+      for (const item of reviewEvidence.filter(
+        evidence =>
+          evidence.source === 'retrieved_user' &&
+          typeof evidence.retrievalScore === 'number'
+      )) {
+        this.chatTraceService?.recordCompletedSpan({
+          stage: ChatTraceStage.persistReply,
+          operation: 'memory.evidence_item_usage',
+          startedAt: new Date(),
+          attributes: {
+            score: item.retrievalScore,
+            used: memoryUsedEvidenceIds.includes(item.id),
+            personScoped: Boolean(item.personId),
+            memoryKind: item.memoryKind || 'raw_episode',
+          },
+        });
+      }
+    }
     return this.attachTurnStatePlans(
       {
         replySegments: participationResult.segments,
@@ -5908,6 +6021,17 @@ export class ConversationService {
             : {},
         result,
       });
+      if (result.diagnostics) {
+        this.chatTraceService?.recordCompletedSpan({
+          stage: ChatTraceStage.memoryRetrieve,
+          operation: 'memory.retrieve_evidence_result',
+          startedAt: new Date(),
+          attributes: {
+            ...result.diagnostics,
+            toolStatus: result.status,
+          },
+        });
+      }
     }
 
     const continuationMessages: ChatCompletionMessageParam[] = [
@@ -6024,6 +6148,10 @@ export class ConversationService {
             useMode: 'recall' as const,
             status: 'active' as const,
             confidence: item.confidence,
+            sourceMessageId: item.sourceMessageId,
+            retrievalScore: item.relevanceScore,
+            personId: item.personId,
+            memoryKind: item.memoryKind,
           });
           continue;
         }

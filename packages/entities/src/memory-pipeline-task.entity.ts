@@ -6,6 +6,7 @@ export const MEMORY_PIPELINE_TASK_VERSION = "memory_pipeline_task_v1" as const;
 export enum MemoryPipelineTaskKind {
   structuredMemory = "structured_memory",
   semanticIndex = "semantic_index",
+  personSemanticIndex = "person_semantic_index",
 }
 
 export enum MemoryPipelineTaskStatus {

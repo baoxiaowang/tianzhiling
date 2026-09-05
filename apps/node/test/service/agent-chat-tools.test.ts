@@ -66,6 +66,18 @@ describe('agent chat tools', () => {
     expect(plan.availableTools).toEqual(['lookup_chat_evidence']);
   });
 
+  it('does not expose active tools when the semantic planner says context is complete', () => {
+    const plan = buildPlan({
+      config: { mode: 'active', activeSampleRate: 1 },
+      plannerMemoryRequested: false,
+    });
+
+    expect(plan.mode).toBe('off');
+    expect(plan.eligible).toBe(false);
+    expect(plan.reason).toBe('planner_context_complete');
+    expect(plan.availableTools).toEqual([]);
+  });
+
   it('rejects missing or extra tool arguments instead of repairing them', () => {
     expect(
       normalizeAgentChatToolArguments('lookup_chat_evidence', {

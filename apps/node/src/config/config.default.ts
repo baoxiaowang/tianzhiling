@@ -667,14 +667,13 @@ export default {
     ),
     analyzer: readStringFrom(['NODE_MILVUS_ANALYZER'], 'chinese'),
     writeEnabled: readBooleanFrom(['NODE_MILVUS_WRITE_ENABLED'], true),
-    retrievalMode: readStringFrom(
-      ['NODE_MILVUS_RETRIEVAL_MODE'],
-      'off'
-    ),
+    retrievalMode: readStringFrom(['NODE_MILVUS_RETRIEVAL_MODE'], 'off'),
     maxTextLength: readNumberFrom(['NODE_MILVUS_MAX_TEXT_LENGTH'], 4096),
     topK: readNumberFrom(['NODE_MILVUS_TOP_K'], 6),
     searchEf: readNumberFrom(['NODE_MILVUS_SEARCH_EF'], 64),
     minScore: readOptionalNumberFrom(['NODE_MILVUS_MIN_SCORE']),
+    minPersonScore: readOptionalNumberFrom(['NODE_MILVUS_MIN_PERSON_SCORE']),
+    minRawScore: readOptionalNumberFrom(['NODE_MILVUS_MIN_RAW_SCORE']),
     timeoutMs: readNumberFrom(['NODE_MILVUS_TIMEOUT_MS'], 10000),
   },
   oss: {

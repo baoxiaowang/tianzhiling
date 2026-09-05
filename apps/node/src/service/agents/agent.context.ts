@@ -309,10 +309,14 @@ export interface AgentContextDiagnostics {
 
 export interface RetrievedContextSnippet {
   id?: string;
+  sourceMessageId?: string;
   content: string;
   role?: MessageRole;
   createdAt?: string;
   score?: number;
+  personId?: string;
+  memoryKind?: string;
+  rank?: number;
 }
 
 // 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
@@ -589,6 +593,9 @@ export class AgentContextService {
       config: this.chatToolConfig,
       stableKey: chatToolStableKey,
       currentQuery: options.currentQuery || '',
+      plannerMemoryRequested: this.isPlannerMemoryRequested(
+        replyIntent?.memoryPlan
+      ),
     });
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode = 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
@@ -3433,6 +3440,16 @@ export class AgentContextService {
         `用户发送了一条语音消息。\n语音转写：${transcript}\n` +
         '请把这段转写内容当作用户刚刚说的话，自然回复，不要强调这是转写结果，除非用户自己提到识别错误或转写问题。',
     };
+  }
+
+  private isPlannerMemoryRequested(plan?: ConversationMemoryPlan): boolean {
+    if (!plan || plan.contextCoverage !== 'missing') return false;
+
+    return (
+      plan.need === 'retrieve' ||
+      (plan.missingConcepts?.length || 0) > 0 ||
+      (plan.queries?.length || 0) > 0
+    );
   }
 
   private stringifyObjectId(value: unknown): string {

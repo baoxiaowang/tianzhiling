@@ -318,8 +318,7 @@ export class UserIdentityMemoryService {
         ...declaration.aliases,
       ]).filter(value => value !== declaration.realName);
       existing.realName = declaration.realName || existing.realName;
-      existing.preferredName =
-        declaration.aliases[0] || existing.preferredName;
+      existing.preferredName = declaration.aliases[0] || existing.preferredName;
       existing.aliases = aliases;
       existing.relationToUser = declaration.relationToUser;
       existing.sourceAgentId = options.agentId;
@@ -387,6 +386,55 @@ export class UserIdentityMemoryService {
       return nameMatched && relationMatched;
     });
     return matches.length === 1 ? matches[0] : null;
+  }
+
+  async resolveKnownPersonMention(options: {
+    userId: MongoObjectId;
+    mention: string;
+  }): Promise<UserKnownPersonEntity | null> {
+    const mention = options.mention?.trim().toLowerCase();
+    if (!mention) return null;
+    const people = await this.knownPersonModel.find({
+      where: {
+        userId: options.userId,
+        status: UserKnownPersonStatus.active,
+      },
+      order: { updatedAt: 'DESC' },
+      take: 128,
+    });
+    const ranked = people
+      .map(person => {
+        const names = this.unique([
+          person.realName,
+          person.preferredName,
+          ...(person.aliases || []),
+        ]).map(value => value.toLowerCase());
+        const relation = (person.relationToUser || '').trim().toLowerCase();
+        const exactName = names.some(name => name === mention);
+        const containedName = names.some(
+          name => name.length >= 2 && mention.includes(name)
+        );
+        const exactRelation = Boolean(relation && relation === mention);
+        const containedRelation = Boolean(
+          relation && relation.length >= 2 && mention.includes(relation)
+        );
+        const score = exactName
+          ? 100
+          : containedName
+          ? 80
+          : exactRelation
+          ? 60
+          : containedRelation
+          ? 40
+          : 0;
+        return { person, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((left, right) => right.score - left.score);
+    if (!ranked.length) return null;
+    const best = ranked[0].score;
+    const bestMatches = ranked.filter(item => item.score === best);
+    return bestMatches.length === 1 ? bestMatches[0].person : null;
   }
 
   async countKnownPeopleByRelation(

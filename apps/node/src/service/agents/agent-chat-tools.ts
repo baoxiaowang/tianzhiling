@@ -52,10 +52,31 @@ export interface AgentChatToolEvidenceItem {
   sourceAt: string;
   confidence: number;
   relevanceScore?: number;
+  sourceMessageId?: string;
+  personId?: string;
+  memoryKind?: string;
+  rank?: number;
   conflictStatus: AgentChatToolConflictStatus;
   subjectRef?: string;
   factKey?: string;
   value: string;
+}
+
+export interface AgentChatToolDiagnostics {
+  policyVersion: 'person_first_v1';
+  requestCount: number;
+  candidateCount: number;
+  selectedCount: number;
+  personResolvedCount: number;
+  personUnresolvedCount: number;
+  wrongPersonCount: number;
+  personScopedCount: number;
+  rawFallbackCount: number;
+  retrievalFailureCount: number;
+  lazyBackfillQueued: number;
+  maxScore?: number;
+  minScore?: number;
+  scoreGap?: number;
 }
 
 export interface AgentChatToolResult {
@@ -65,6 +86,7 @@ export interface AgentChatToolResult {
   items: AgentChatToolEvidenceItem[];
   truncated: boolean;
   errorCode?: string;
+  diagnostics?: AgentChatToolDiagnostics;
 }
 
 const DEFAULT_MAX_CALLS = 1;
@@ -132,7 +154,13 @@ export function resolveAgentChatToolTurnPlan(options: {
 }): AgentChatToolTurnPlan {
   const configuredMode = normalizeConfiguredMode(options.config?.mode);
   const enabledMode: AgentChatToolTurnMode = configuredMode;
-  const eligible = Boolean(options.currentQuery.trim());
+  const hasCurrentQuery = Boolean(options.currentQuery.trim());
+  // The semantic planner is the sole eligibility signal in active mode. This
+  // keeps keyword heuristics out of tool exposure and avoids charging every
+  // ordinary turn for a tool schema that cannot add useful evidence.
+  const eligible =
+    hasCurrentQuery &&
+    (configuredMode === 'shadow' || Boolean(options.plannerMemoryRequested));
   const sampleRate =
     configuredMode === 'active'
       ? normalizeSampleRate(options.config?.activeSampleRate, 1)
@@ -153,8 +181,10 @@ export function resolveAgentChatToolTurnPlan(options: {
     sampled,
     availableTools:
       mode === 'active' || mode === 'shadow' ? [...AGENT_CHAT_TOOL_NAMES] : [],
-    reason: !eligible
+    reason: !hasCurrentQuery
       ? 'empty_turn'
+      : !eligible
+      ? 'planner_context_complete'
       : !sampled
       ? 'not_sampled'
       : configuredMode === 'shadow'

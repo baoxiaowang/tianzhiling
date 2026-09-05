@@ -186,6 +186,40 @@ describe('UserIdentityMemoryService', () => {
 
     expect(save).not.toHaveBeenCalled();
   });
+
+  it('resolves a contained formal name or nickname but rejects ambiguous relations', async () => {
+    const service = new UserIdentityMemoryService();
+    const first = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000201'),
+      userId: USER_ID,
+      realName: '赵浩帅',
+      preferredName: '浩浩',
+      aliases: ['帅帅'],
+      relationToUser: '儿子',
+      status: 'active',
+    });
+    const second = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000202'),
+      userId: USER_ID,
+      realName: '赵安宁',
+      preferredName: '安安',
+      relationToUser: '儿子',
+      status: 'active',
+    });
+    service.knownPersonModel = {
+      find: jest.fn(async () => [first, second]),
+    } as never;
+
+    await expect(
+      service.resolveKnownPersonMention({
+        userId: USER_ID,
+        mention: '我的儿子浩浩',
+      })
+    ).resolves.toBe(first);
+    await expect(
+      service.resolveKnownPersonMention({ userId: USER_ID, mention: '儿子' })
+    ).resolves.toBeNull();
+  });
 });
 
 function createMessage(content: string): MessageEntity {

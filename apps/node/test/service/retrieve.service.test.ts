@@ -176,9 +176,14 @@ describe('RetrieveService', () => {
       ]),
     } as never;
     service.messageModel = {
-      find: jest.fn().mockResolvedValue([
-        Object.assign(new MessageEntity(), { id: messageId, isArchived: false }),
-      ]),
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          Object.assign(new MessageEntity(), {
+            id: messageId,
+            isArchived: false,
+          }),
+        ]),
     } as never;
 
     await expect(
@@ -192,5 +197,71 @@ describe('RetrieveService', () => {
         createdAt: '2016-09-05',
       }),
     ]);
+  });
+
+  it('returns person-scoped units before raw fallback and applies separate score floors', async () => {
+    const service = new RetrieveService();
+    const sourceA = new MongoObjectId('665000000000000000000401');
+    const sourceB = new MongoObjectId('665000000000000000000402');
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      hasEmbeddingConfig: jest.fn().mockReturnValue(true),
+      createEmbedding: jest.fn().mockResolvedValue([0.1, 0.2]),
+    } as never;
+    service.milvusService = {
+      getRelevancePolicy: jest.fn().mockReturnValue({
+        personMinScore: 0.02,
+        rawMinScore: 0.025,
+      }),
+      searchConversationMemories: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 'person-unit-1',
+            sourceMessageId: sourceA.toString(),
+            personId: 'person-1',
+            memoryKind: 'health_update',
+            searchableText: '安安：最近退烧了',
+            role: MessageRole.user,
+            type: MessageType.text,
+            createdAtTs: Date.now(),
+            score: 0.03,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: sourceB.toString(),
+            sourceMessageId: sourceB.toString(),
+            memoryKind: 'raw_episode',
+            searchableText: '安安以前发烧了',
+            role: MessageRole.user,
+            type: MessageType.text,
+            createdAtTs: Date.now(),
+            score: 0.026,
+          },
+        ]),
+    } as never;
+    service.messageModel = {
+      find: jest.fn(async ({ where }) =>
+        where.id.$in.map((id: MongoObjectId) =>
+          Object.assign(new MessageEntity(), { id, isArchived: false })
+        )
+      ),
+    } as never;
+
+    const result = await service.retrieveConversationMemoriesDetailed({
+      query: '安安身体怎么样',
+      userId: 'user-1',
+      personId: 'person-1',
+      limit: 2,
+    });
+
+    expect(result.items.map(item => item.memoryKind)).toEqual([
+      'health_update',
+      'raw_episode',
+    ]);
+    expect(result.diagnostics).toEqual(
+      expect.objectContaining({ personScopedCount: 1, rawFallbackCount: 1 })
+    );
   });
 });

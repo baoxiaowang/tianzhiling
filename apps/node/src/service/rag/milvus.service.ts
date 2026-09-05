@@ -26,6 +26,8 @@ export interface MilvusServiceConfig {
   topK?: number;
   searchEf?: number;
   minScore?: number;
+  minPersonScore?: number;
+  minRawScore?: number;
   timeoutMs?: number;
   schemaVersion?: string;
   analyzer?: string;
@@ -35,6 +37,8 @@ export interface MilvusServiceConfig {
 
 export interface IndexConversationMessageOptions {
   messageId: string;
+  memoryId?: string;
+  sourceMessageId?: string;
   userId: string;
   conversationId: string;
   agentId?: string;
@@ -53,6 +57,9 @@ export interface SearchConversationMemoriesOptions {
   queryEmbedding?: number[];
   userId: string;
   agentId?: string;
+  personId?: string;
+  personScope?: 'exact' | 'unscoped' | 'any';
+  memoryKinds?: string[];
   excludeMessageIds?: string[];
   createdBeforeTs?: number;
   limit?: number;
@@ -60,6 +67,7 @@ export interface SearchConversationMemoriesOptions {
 
 export interface RetrievedConversationMemory {
   id: string;
+  sourceMessageId: string;
   conversationId: string;
   userId: string;
   agentId?: string;
@@ -162,6 +170,24 @@ export class MilvusService {
       consecutiveFailures: this.consecutiveFailures,
       inflightCalls: this.inflightCalls,
       endpointReachable: this.endpointReachable,
+      relevancePolicy: this.getRelevancePolicy(),
+    };
+  }
+
+  getRelevancePolicy(): {
+    personMinScore?: number;
+    rawMinScore?: number;
+  } {
+    const legacy = this.resolveMinScore();
+    return {
+      personMinScore: this.resolveOptionalScore(
+        this.milvusConfig?.minPersonScore,
+        legacy
+      ),
+      rawMinScore: this.resolveOptionalScore(
+        this.milvusConfig?.minRawScore,
+        legacy
+      ),
     };
   }
 
@@ -245,8 +271,9 @@ export class MilvusService {
           timeout: this.resolveTimeoutMs(),
           data: [
             {
-              id: options.messageId,
-              sourceMessageId: options.messageId,
+              id: options.memoryId?.trim() || options.messageId,
+              sourceMessageId:
+                options.sourceMessageId?.trim() || options.messageId,
               userId: options.userId,
               conversationId: options.conversationId,
               agentId: options.agentId?.trim() || '',
@@ -283,7 +310,10 @@ export class MilvusService {
   async searchConversationMemories(
     options: SearchConversationMemoriesOptions
   ): Promise<RetrievedConversationMemory[]> {
-    if (!this.isRetrievalEnabled() || !this.openAIService.hasEmbeddingConfig()) {
+    if (
+      !this.isRetrievalEnabled() ||
+      !this.openAIService.hasEmbeddingConfig()
+    ) {
       return [];
     }
 
@@ -456,7 +486,9 @@ export class MilvusService {
     this.sharedCircuitOpen = false;
     this.sharedCircuitCheckedAt = Date.now();
     if (this.redisService) {
-      void this.redisService.del(this.sharedCircuitKey()).catch(() => undefined);
+      void this.redisService
+        .del(this.sharedCircuitKey())
+        .catch(() => undefined);
     }
   }
 
@@ -492,9 +524,7 @@ export class MilvusService {
   }
 
   private sharedCircuitKey(): string {
-    return `milvus:circuit:${
-      this.milvusConfig?.address?.trim() || 'unknown'
-    }`;
+    return `milvus:circuit:${this.milvusConfig?.address?.trim() || 'unknown'}`;
   }
 
   private withMilvusTimeout<T>(
@@ -504,11 +534,7 @@ export class MilvusService {
     const timeoutMs = this.resolveTimeoutMs();
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(
-          new Error(
-            `milvus ${context} timed out after ${timeoutMs}ms`
-          )
-        );
+        reject(new Error(`milvus ${context} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
       promise.then(
@@ -866,6 +892,25 @@ export class MilvusService {
       filters.push(`agentId == "${this.escapeFilterValue(options.agentId)}"`);
     }
 
+    if (options.personScope === 'exact' && options.personId?.trim()) {
+      filters.push(
+        `personId == "${this.escapeFilterValue(options.personId.trim())}"`
+      );
+    } else if (options.personScope === 'unscoped') {
+      filters.push('personId == ""');
+    }
+
+    const memoryKinds = (options.memoryKinds || [])
+      .map(value => value?.trim())
+      .filter(Boolean);
+    if (memoryKinds.length) {
+      filters.push(
+        `memoryKind in [${memoryKinds
+          .map(value => `"${this.escapeFilterValue(value)}"`)
+          .join(',')}]`
+      );
+    }
+
     if (
       typeof options.createdBeforeTs === 'number' &&
       Number.isFinite(options.createdBeforeTs) &&
@@ -881,7 +926,9 @@ export class MilvusService {
         continue;
       }
 
-      filters.push(`id != "${this.escapeFilterValue(normalized)}"`);
+      filters.push(
+        `sourceMessageId != "${this.escapeFilterValue(normalized)}"`
+      );
     }
 
     return filters.join(' and ');
@@ -889,6 +936,7 @@ export class MilvusService {
 
   private buildRetrievedConversationMemory(result: {
     id?: unknown;
+    sourceMessageId?: unknown;
     conversationId?: unknown;
     userId?: unknown;
     agentId?: unknown;
@@ -906,6 +954,9 @@ export class MilvusService {
   }): RetrievedConversationMemory {
     return {
       id: this.normalizeString(result.id),
+      sourceMessageId:
+        this.normalizeString(result.sourceMessageId) ||
+        this.normalizeString(result.id),
       conversationId: this.normalizeString(result.conversationId),
       userId: this.normalizeString(result.userId),
       agentId: this.normalizeString(result.agentId) || undefined,
@@ -1097,6 +1148,15 @@ export class MilvusService {
     }
 
     return minScore;
+  }
+
+  private resolveOptionalScore(
+    value: number | undefined,
+    fallback?: number
+  ): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fallback;
   }
 
   private resolveTimeoutMs(): number {

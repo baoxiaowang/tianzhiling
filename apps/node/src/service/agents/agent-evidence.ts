@@ -30,6 +30,9 @@ export interface AgentEvidenceItem {
   supersedes?: string[];
   confidence?: number;
   sourceMessageId?: string;
+  retrievalScore?: number;
+  personId?: string;
+  memoryKind?: string;
 }
 
 export type AssistantFactClaimKind =

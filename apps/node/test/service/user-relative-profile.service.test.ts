@@ -186,14 +186,14 @@ describe('UserRelativeProfileService', () => {
         facts: [
           {
             domain: UserRelativeFactDomain.education,
-              key: 'education.school_stage',
-              value: '安安已经上小学',
-              status: UserRelativeFactStatus.current,
-              occurredAt: undefined,
-              confidence: 'extracted',
-            },
-          ],
-          needsName: false,
+            key: 'education.school_stage',
+            value: '安安已经上小学',
+            status: UserRelativeFactStatus.current,
+            occurredAt: undefined,
+            confidence: 'extracted',
+          },
+        ],
+        needsName: false,
       },
     ]);
     expect(
@@ -248,5 +248,51 @@ describe('UserRelativeProfileService', () => {
       query: '孩子最近怎么样',
     });
     expect(prompt[0].needsName).toBe(false);
+  });
+
+  it('builds independent semantic units for each person fact in one source message', async () => {
+    const service = new UserRelativeProfileService();
+    const messageId = new MongoObjectId('665000000000000000000501');
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: PERSON_ID,
+      userId: USER_ID,
+      realName: '赵安宁',
+      preferredName: '安安',
+      relationToUser: '女儿',
+      aliases: ['二宝'],
+      status: 'active',
+      sourceMessageId: messageId,
+    });
+    const fact = Object.assign(new UserRelativeFactEntity(), {
+      id: new MongoObjectId('665000000000000000000502'),
+      userId: USER_ID,
+      personId: PERSON_ID,
+      domain: UserRelativeFactDomain.health,
+      key: 'health.fever',
+      value: '今天已经退烧',
+      status: UserRelativeFactStatus.current,
+      sourceMessageId: messageId,
+      updatedAt: new Date(),
+    });
+    service.relativeFactModel = {
+      find: jest.fn(async () => [fact]),
+    } as never;
+    service.knownPersonModel = {
+      find: jest.fn(async () => [person]),
+    } as never;
+
+    await expect(
+      service.listSemanticUnitsForSourceMessage({
+        userId: USER_ID,
+        sourceMessageId: messageId,
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        personId: PERSON_ID,
+        memoryKind: 'health_update',
+        stableKey: 'health:health.fever',
+        searchableText: '安安、赵安宁、女儿、二宝：今天已经退烧',
+      }),
+    ]);
   });
 });

@@ -42,6 +42,13 @@ export interface UserRelativePromptProfile {
   needsName?: boolean;
 }
 
+export interface PersonSemanticMemoryUnit {
+  personId: MongoObjectId;
+  memoryKind: string;
+  stableKey: string;
+  searchableText: string;
+}
+
 export interface EnsureRelativeProfileOptions {
   userId: MongoObjectId;
   personId: MongoObjectId;
@@ -286,8 +293,7 @@ export class UserRelativeProfileService {
       key,
       value,
       status,
-      confidence:
-        options.confidence || UserRelativeFactConfidence.extracted,
+      confidence: options.confidence || UserRelativeFactConfidence.extracted,
       supportCount: 1,
       sources: this.appendFactSource([], options, now),
       effectiveAt: options.effectiveAt,
@@ -302,6 +308,86 @@ export class UserRelativeProfileService {
     });
     await this.relativeFactModel.save(fact);
     return fact;
+  }
+
+  async listSemanticUnitsForSourceMessage(options: {
+    userId: MongoObjectId;
+    sourceMessageId: MongoObjectId;
+  }): Promise<PersonSemanticMemoryUnit[]> {
+    const facts = await this.relativeFactModel.find({
+      where: {
+        userId: options.userId,
+        sourceMessageId: options.sourceMessageId,
+      },
+      order: { updatedAt: 'DESC' },
+      take: 32,
+    });
+    const declaredPeople = await this.knownPersonModel.find({
+      where: {
+        userId: options.userId,
+        sourceMessageId: options.sourceMessageId,
+        status: UserKnownPersonStatus.active,
+      },
+      take: 16,
+    });
+    const personIds = Array.from(
+      new Map(
+        [
+          ...facts.map(fact => fact.personId),
+          ...declaredPeople.map(p => p.id),
+        ].map(id => [id.toString(), id])
+      ).values()
+    );
+    if (!personIds.length) return [];
+
+    const people = await this.knownPersonModel.find({
+      where: {
+        userId: options.userId,
+        _id: { $in: personIds },
+        status: UserKnownPersonStatus.active,
+      } as never,
+    });
+    const byId = new Map(people.map(person => [person.id.toString(), person]));
+    const units: PersonSemanticMemoryUnit[] = facts
+      .filter(fact => byId.has(fact.personId.toString()))
+      .map(fact => {
+        const person = byId.get(fact.personId.toString())!;
+        const subject = this.unique([
+          person.preferredName,
+          person.realName,
+          person.relationToUser,
+          ...(person.aliases || []),
+        ]).join('、');
+        return {
+          personId: fact.personId,
+          memoryKind: this.memoryKindForDomain(fact.domain),
+          stableKey: `${fact.domain}:${fact.key}`,
+          searchableText: [subject, fact.value].filter(Boolean).join('：'),
+        };
+      });
+
+    for (const person of declaredPeople) {
+      if (
+        units.some(unit => unit.personId.toString() === person.id.toString())
+      ) {
+        continue;
+      }
+      const subject = this.unique([
+        person.preferredName,
+        person.realName,
+        person.relationToUser,
+        ...(person.aliases || []),
+      ]).join('、');
+      if (subject) {
+        units.push({
+          personId: person.id,
+          memoryKind: 'person_identity',
+          stableKey: 'identity',
+          searchableText: subject,
+        });
+      }
+    }
+    return units;
   }
 
   async listRelevantForPrompt(options: {
@@ -429,8 +515,7 @@ export class UserRelativeProfileService {
             value: fact.value,
             status: fact.status,
             occurredAt: fact.occurredAt,
-            confidence:
-              fact.confidence || UserRelativeFactConfidence.extracted,
+            confidence: fact.confidence || UserRelativeFactConfidence.extracted,
           })),
         needsName:
           !Boolean(
@@ -464,7 +549,9 @@ export class UserRelativeProfileService {
       })
     ).filter(item => item.needsName);
     if (candidates.length !== 1) return false;
-    const personId = new MongoObjectId(candidates[0].id.replace(/^person:/, ''));
+    const personId = new MongoObjectId(
+      candidates[0].id.replace(/^person:/, '')
+    );
     const profile = await this.relativeProfileModel.findOne({
       where: { userId: options.userId, personId },
     });
@@ -480,6 +567,22 @@ export class UserRelativeProfileService {
     return Array.from(
       new Set(values.map(value => value?.trim()).filter(Boolean) as string[])
     );
+  }
+
+  private memoryKindForDomain(domain: UserRelativeFactDomain): string {
+    const kinds: Record<UserRelativeFactDomain, string> = {
+      [UserRelativeFactDomain.health]: 'health_update',
+      [UserRelativeFactDomain.growth]: 'growth_update',
+      [UserRelativeFactDomain.education]: 'education_update',
+      [UserRelativeFactDomain.work]: 'work_update',
+      [UserRelativeFactDomain.care]: 'care_update',
+      [UserRelativeFactDomain.relationship]: 'relationship_event',
+      [UserRelativeFactDomain.life_event]: 'family_event',
+      [UserRelativeFactDomain.preference]: 'preference',
+      [UserRelativeFactDomain.routine]: 'routine',
+      [UserRelativeFactDomain.other]: 'person_episode',
+    };
+    return kinds[domain] || 'person_episode';
   }
 
   private cleanSource(value?: string): string | undefined {
