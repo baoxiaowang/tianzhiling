@@ -51,7 +51,7 @@ const redisDb = readNumberFrom(['NODE_REDIS_DB'], 0);
 
 export default {
   milvus: {
-    enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], true),
+    enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(['NODE_MILVUS_ADDRESS'], 'standalone:19530'),
   },
   redis: {

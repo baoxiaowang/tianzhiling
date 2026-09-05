@@ -1,5 +1,7 @@
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { promises as dns } from 'dns';
+import { isIP } from 'net';
 import {
   DataType,
   FunctionType,
@@ -100,11 +102,15 @@ export class MilvusService {
   private circuitOpenSince = 0;
   private consecutiveFailures = 0;
   private inflightCalls = 0;
+  private endpointReachable: boolean | undefined;
+  private endpointCheckPromise: Promise<boolean> | null = null;
+  private runtimeDisabledReason = '';
 
   isEnabled(): boolean {
     return (
       this.milvusConfig?.enabled !== false &&
-      Boolean(this.milvusConfig?.address?.trim())
+      Boolean(this.milvusConfig?.address?.trim()) &&
+      !this.runtimeDisabledReason
     );
   }
 
@@ -118,6 +124,10 @@ export class MilvusService {
     const searchableText = this.normalizeSearchableText(options.searchableText);
 
     if (!searchableText) {
+      return;
+    }
+
+    if (!(await this.ensureEndpointReachable())) {
       return;
     }
 
@@ -167,7 +177,7 @@ export class MilvusService {
       );
       this.recordMilvusSuccess();
     } catch (error) {
-      this.recordMilvusFailure('index');
+      this.recordMilvusFailure('index', error);
       throw error;
     } finally {
       this.inflightCalls -= 1;
@@ -184,6 +194,10 @@ export class MilvusService {
     const query = this.normalizeSearchableText(options.query);
 
     if (!query) {
+      return [];
+    }
+
+    if (!(await this.ensureEndpointReachable())) {
       return [];
     }
 
@@ -265,7 +279,7 @@ export class MilvusService {
             (typeof minScore !== 'number' || item.score >= minScore)
         );
     } catch (error) {
-      this.recordMilvusFailure('search');
+      this.recordMilvusFailure('search', error);
       this.logger.error(
         '[milvus] search degraded, userId=%s, reason=%s',
         options.userId,
@@ -305,12 +319,15 @@ export class MilvusService {
     return true;
   }
 
-  private recordMilvusFailure(context: string): void {
+  private recordMilvusFailure(context: string, error?: unknown): void {
     this.consecutiveFailures += 1;
 
-    if (
-      this.consecutiveFailures >= MilvusService.CIRCUIT_FAILURE_THRESHOLD
-    ) {
+    if (this.isUnrecoverableEndpointFailure(error)) {
+      this.disableForProcess(context, error);
+      return;
+    }
+
+    if (this.consecutiveFailures >= MilvusService.CIRCUIT_FAILURE_THRESHOLD) {
       if (!this.circuitOpen) {
         this.circuitOpen = true;
         this.circuitOpenSince = Date.now();
@@ -356,6 +373,97 @@ export class MilvusService {
         }
       );
     });
+  }
+
+  private async ensureEndpointReachable(): Promise<boolean> {
+    if (!this.isEnabled()) {
+      return false;
+    }
+    if (this.endpointReachable === true) {
+      return true;
+    }
+    if (this.endpointReachable === false) {
+      return false;
+    }
+    if (this.endpointCheckPromise) {
+      return this.endpointCheckPromise;
+    }
+
+    this.endpointCheckPromise = this.checkEndpointHostname();
+    try {
+      return await this.endpointCheckPromise;
+    } finally {
+      this.endpointCheckPromise = null;
+    }
+  }
+
+  private async checkEndpointHostname(): Promise<boolean> {
+    const hostname = this.resolveEndpointHostname();
+    if (!hostname) {
+      this.disableForProcess(
+        'endpoint_preflight',
+        new Error('invalid address')
+      );
+      return false;
+    }
+    if (hostname === 'localhost' || isIP(hostname)) {
+      this.endpointReachable = true;
+      return true;
+    }
+
+    try {
+      await dns.lookup(hostname);
+      this.endpointReachable = true;
+      return true;
+    } catch (error) {
+      this.disableForProcess('endpoint_preflight', error);
+      return false;
+    }
+  }
+
+  private resolveEndpointHostname(): string {
+    const address = this.milvusConfig?.address?.trim() || '';
+    if (!address) return '';
+    try {
+      return new URL(address.includes('://') ? address : `tcp://${address}`)
+        .hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  private isUnrecoverableEndpointFailure(error: unknown): boolean {
+    const message =
+      error instanceof Error ? error.message : String(error || '');
+    return /(?:Name resolution failed|ENOTFOUND|EAI_AGAIN|timed out)/iu.test(
+      message
+    );
+  }
+
+  private disableForProcess(context: string, error: unknown): void {
+    if (this.runtimeDisabledReason) return;
+    const reason = error instanceof Error ? error.message : String(error || '');
+    this.runtimeDisabledReason = `${context}:${reason}`;
+    this.endpointReachable = false;
+    this.circuitOpen = true;
+    this.circuitOpenSince = Date.now();
+    this.logger.error(
+      '[milvus] disabled for current process, context=%s, reason=%s',
+      context,
+      reason
+    );
+
+    const client = this.client;
+    this.client = null;
+    this.ensureCollectionPromise = null;
+    if (client) {
+      void client.closeConnection().catch(closeError => {
+        this.logger.warn(
+          '[milvus] failed to close disabled client, reason=%s',
+          closeError instanceof Error ? closeError.message : String(closeError)
+        );
+      });
+    }
   }
 
   private getClient(): MilvusClient {
