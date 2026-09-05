@@ -76,7 +76,10 @@ const INDEXES = {
       {
         name: 'idx_message_temporal_semantic_cache',
         partialFilterExpression: {
-          temporalMemorySemanticHash: { $exists: true, $type: 'string' },
+          // The field is typed as string by the application. Keep the storage
+          // contract compatible with the already deployed partial index while
+          // still excluding messages that have no semantic cache key.
+          temporalMemorySemanticHash: { $exists: true },
         },
       },
     ],
@@ -107,10 +110,14 @@ async function main() {
     }
     if (missing.length) {
       throw new Error(
-        `[memory-system-indexes] missing=${missing.join(',')} no changes made; rerun with --apply after approval`
+        `[memory-system-indexes] missing=${missing.join(
+          ','
+        )} no changes made; rerun with --apply after approval`
       );
     }
-    console.log(`[memory-system-indexes] mode=${mode} ready=${ready.join(',')}`);
+    console.log(
+      `[memory-system-indexes] mode=${mode} ready=${ready.join(',')}`
+    );
   } finally {
     await client.close();
   }
@@ -120,9 +127,16 @@ function buildMongoConnectionString() {
   const host = readEnv(['NODE_MONGO_HOST', 'MONGO_HOST'], '127.0.0.1');
   const port = readEnv(['NODE_MONGO_PORT', 'MONGO_PORT'], '17271');
   const database = readEnv(['NODE_MONGO_DB', 'MONGO_DB'], 'tzl');
-  const authSource = readEnv(['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'], 'admin');
-  const username = encodeURIComponent(readEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'], 'admin'));
-  const password = encodeURIComponent(readEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], ''));
+  const authSource = readEnv(
+    ['NODE_MONGO_AUTH_SOURCE', 'MONGO_AUTH_SOURCE'],
+    'admin'
+  );
+  const username = encodeURIComponent(
+    readEnv(['NODE_MONGO_USERNAME', 'MONGO_USERNAME'], 'admin')
+  );
+  const password = encodeURIComponent(
+    readEnv(['NODE_MONGO_PASSWORD', 'MONGO_PASSWORD'], '')
+  );
   if (!username || !password) throw new Error('Mongo credentials are required');
   return `mongodb://${username}:${password}@${host}:${port}/${database}?authSource=${authSource}`;
 }
