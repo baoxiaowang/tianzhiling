@@ -52,12 +52,6 @@ function assertSuccessful(label, response) {
   return response;
 }
 
-function rowCount(response) {
-  return Number(
-    response?.stats?.find(item => item.key === 'row_count')?.value || 0
-  );
-}
-
 function normalizeString(value, maximumLength) {
   return String(value ?? '').slice(0, maximumLength);
 }
@@ -127,12 +121,19 @@ function vectorDimension(description) {
 }
 
 async function getRowCount(client, collectionName) {
-  return rowCount(
-    assertSuccessful(
-      `statistics ${collectionName}`,
-      await client.getCollectionStatistics({ collection_name: collectionName })
-    )
+  const response = assertSuccessful(
+    `count ${collectionName}`,
+    await client.count({
+      collection_name: collectionName,
+      expr: '',
+      consistency_level: 'Strong',
+    })
   );
+  const count = Number(response?.data);
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error(`count ${collectionName} returned an invalid value`);
+  }
+  return count;
 }
 
 async function main() {
