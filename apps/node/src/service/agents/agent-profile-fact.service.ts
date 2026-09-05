@@ -13,6 +13,7 @@ import {
   MongoObjectId,
 } from '@tzl/entities';
 import { OpenAIService } from './openai';
+import { UserIdentityMemoryService } from './user-identity-memory.service';
 import {
   buildSharedFamilyMemberFactKey,
   extractSharedFamilyMemberDeclarations,
@@ -236,6 +237,9 @@ export class AgentProfileFactService {
   @Inject()
   openAIService: OpenAIService;
 
+  @Inject()
+  userIdentityMemoryService: UserIdentityMemoryService;
+
   async extractAndUpsertFromUserMessage(
     options: ExtractProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
@@ -249,7 +253,29 @@ export class AgentProfileFactService {
       previousAssistantContent: options.previousAssistantContent,
     });
 
+    let userIdentityWriteSucceeded = false;
+    try {
+      if (this.userIdentityMemoryService) {
+        await this.userIdentityMemoryService.recordFromUserMessage(
+          options.message,
+          sourceText
+        );
+        userIdentityWriteSucceeded = true;
+      }
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent-profile-fact] user identity write failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
     for (const extracted of extractedFacts) {
+      if (
+        userIdentityWriteSucceeded &&
+        this.isGlobalUserIdentityFactKey(extracted.fact.key)
+      ) {
+        continue;
+      }
       await this.upsertFact({
         ...extracted.fact,
         userId: options.message.userId,
@@ -266,6 +292,14 @@ export class AgentProfileFactService {
     }
 
     return extractedFacts.map(item => item.fact);
+  }
+
+  private isGlobalUserIdentityFactKey(key: string): boolean {
+    return (
+      key === USER_REAL_NAME_FACT_KEY ||
+      key.startsWith(USER_REAL_NAME_HISTORY_FACT_PREFIX) ||
+      key === 'user.identity.aliases.derived'
+    );
   }
 
   async extractAndUpsertFromFeedback(

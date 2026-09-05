@@ -727,6 +727,10 @@ describe('AgentProfileFactService', () => {
   it('stores explicit agent and user formal names without treating questions as facts', async () => {
     const service = new AgentProfileFactService();
     const storedFacts = new Map<string, AgentProfileFactEntity>();
+    const recordUserIdentity = jest.fn().mockResolvedValue(undefined);
+    service.userIdentityMemoryService = {
+      recordFromUserMessage: recordUserIdentity,
+    } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => false),
     } as never;
@@ -760,11 +764,10 @@ describe('AgentProfileFactService', () => {
         status: AgentProfileFactStatus.active,
       })
     );
-    expect(storedFacts.get('user.identity.real_name')).toEqual(
-      expect.objectContaining({
-        value: '用户正式姓名是赵浩洁',
-        status: AgentProfileFactStatus.active,
-      })
+    expect(storedFacts.get('user.identity.real_name')).toBeUndefined();
+    expect(recordUserIdentity).toHaveBeenCalledWith(
+      expect.any(MessageEntity),
+      '我全名是赵浩洁'
     );
 
     const saveCount = (service.factModel.save as jest.Mock).mock.calls.length;
@@ -798,6 +801,10 @@ describe('AgentProfileFactService', () => {
   it('keeps formal names stable while storing relationship-scoped preferred names', async () => {
     const service = new AgentProfileFactService();
     const storedFacts = new Map<string, AgentProfileFactEntity>();
+    const recordUserIdentity = jest.fn().mockResolvedValue(undefined);
+    service.userIdentityMemoryService = {
+      recordFromUserMessage: recordUserIdentity,
+    } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => false),
     } as never;
@@ -830,8 +837,10 @@ describe('AgentProfileFactService', () => {
     expect(storedFacts.get('relationship.preferred_agent_name')?.value).toBe(
       '当前用户偏好称呼当前角色为浩浩'
     );
-    expect(storedFacts.get('user.identity.real_name')?.value).toBe(
-      '用户正式姓名是赵浩洁'
+    expect(storedFacts.get('user.identity.real_name')).toBeUndefined();
+    expect(recordUserIdentity).toHaveBeenCalledWith(
+      expect.any(MessageEntity),
+      '我叫赵浩洁'
     );
     expect(storedFacts.get('relationship.preferred_user_name')?.value).toBe(
       '当前用户希望当前角色称呼其为洁洁'
@@ -876,6 +885,10 @@ describe('AgentProfileFactService', () => {
   it('does not treat the other subject changing names as permission to replace the agent name', async () => {
     const service = new AgentProfileFactService();
     const storedFacts = new Map<string, AgentProfileFactEntity>();
+    const recordUserIdentity = jest.fn().mockResolvedValue(undefined);
+    service.userIdentityMemoryService = {
+      recordFromUserMessage: recordUserIdentity,
+    } as never;
     service.openAIService = { isEnabled: jest.fn(() => false) } as never;
     service.factModel = {
       findOne: jest.fn(
@@ -897,8 +910,10 @@ describe('AgentProfileFactService', () => {
     expect(storedFacts.get('identity.real_name')?.value).toBe(
       '当前角色正式姓名是赵浩帅'
     );
-    expect(storedFacts.get('user.identity.real_name')?.value).toBe(
-      '用户正式姓名是李四'
+    expect(storedFacts.get('user.identity.real_name')).toBeUndefined();
+    expect(recordUserIdentity).toHaveBeenCalledWith(
+      expect.any(MessageEntity),
+      '我改成李四，你叫王五'
     );
   });
 
@@ -1060,6 +1075,10 @@ describe('AgentProfileFactService', () => {
   it('accepts an explicit user rename from the observed production wording', async () => {
     const service = new AgentProfileFactService();
     const savedFacts: AgentProfileFactEntity[] = [];
+    const recordUserIdentity = jest.fn().mockResolvedValue(undefined);
+    service.userIdentityMemoryService = {
+      recordFromUserMessage: recordUserIdentity,
+    } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => false),
     } as never;
@@ -1071,6 +1090,34 @@ describe('AgentProfileFactService', () => {
       }),
     } as never;
     const content = '我改成赵皓洁了弟弟';
+
+    await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage(content),
+      searchableText: content,
+    });
+
+    expect(savedFacts).toEqual([]);
+    expect(recordUserIdentity).toHaveBeenCalledWith(
+      expect.any(MessageEntity),
+      content
+    );
+  });
+
+  it('falls back to the relationship fact when the global identity write fails', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.openAIService = { isEnabled: jest.fn(() => false) } as never;
+    service.userIdentityMemoryService = {
+      recordFromUserMessage: jest.fn().mockRejectedValue(new Error('offline')),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+    const content = '我叫赵皓洁';
 
     await service.extractAndUpsertFromUserMessage({
       message: createUserMessage(content),

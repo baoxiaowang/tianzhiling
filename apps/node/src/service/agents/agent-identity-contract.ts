@@ -7,8 +7,14 @@ import {
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type { ConversationKnownObject } from './reply-intent';
+import type {
+  UserIdentityPromptProfile,
+  UserKnownPersonPromptProfile,
+} from './user-identity-memory.service';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
+  USER_EXPLICIT_ALIAS_FACT_PREFIX,
+  USER_PREFERRED_NAME_FACT_KEY,
   resolveAgentNameMemory,
   resolveUserNameMemory,
 } from './agent-name-memory';
@@ -57,15 +63,27 @@ export interface AgentIdentityContract {
     userCallsAgent: string;
     agentCallsUser: string;
   };
+  knownPeople?: UserKnownPersonPromptProfile[];
 }
 
 export function buildAgentIdentityContract(options: {
   agent: AgentEntity | null;
   profileFacts?: AgentProfileFactSummary[];
+  userIdentity?: UserIdentityPromptProfile | null;
+  knownPeople?: UserKnownPersonPromptProfile[];
 }): AgentIdentityContract {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
-  const userNameMemory = resolveUserNameMemory(options.profileFacts);
+  const globalUserIdentity = options.userIdentity;
+  const userNameMemory = resolveUserNameMemory(
+    globalUserIdentity
+      ? (options.profileFacts || []).filter(
+          fact =>
+            fact.key === USER_PREFERRED_NAME_FACT_KEY ||
+            fact.key.startsWith(USER_EXPLICIT_ALIAS_FACT_PREFIX)
+        )
+      : options.profileFacts
+  );
   const explicitRelationship = clean(agent?.iCallAgent, 24);
   const profileRelationship = clean(
     agent?.personaProfile?.demographics?.relationshipType,
@@ -94,10 +112,17 @@ export function buildAgentIdentityContract(options: {
     user: {
       objectId: 'user',
       addressedAs: userNameMemory.preferredName || agentCallsUser,
-      ...(userNameMemory.canonicalName
-        ? { realName: userNameMemory.canonicalName }
+      ...(globalUserIdentity?.realName || userNameMemory.canonicalName
+        ? {
+            realName:
+              globalUserIdentity?.realName || userNameMemory.canonicalName,
+          }
         : {}),
-      aliases: unique(userNameMemory.aliases),
+      aliases: unique([
+        ...(globalUserIdentity?.formerNames || []),
+        ...(globalUserIdentity?.aliases || []),
+        ...userNameMemory.aliases,
+      ]),
       ...(userNameMemory.preferredName
         ? { preferredName: userNameMemory.preferredName }
         : {}),
@@ -119,6 +144,9 @@ export function buildAgentIdentityContract(options: {
         relationshipLabel,
       agentCallsUser: userNameMemory.preferredName || agentCallsUser,
     },
+    ...(options.knownPeople?.length
+      ? { knownPeople: options.knownPeople.slice(0, 8) }
+      : {}),
   };
 }
 
@@ -173,6 +201,24 @@ export function buildKnownConversationObjects(options: {
     }
   }
 
+  for (const person of identity.knownPeople || []) {
+    if (objects.some(object => object.id === person.id)) continue;
+    objects.push({
+      id: person.id,
+      kind: /爸爸|妈妈|父亲|母亲|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|家人|亲人/.test(
+        person.relationToUser || ''
+      )
+        ? 'family'
+        : 'other_person',
+      label: person.realName || person.aliases[0] || '相关人物',
+      aliases: unique([person.realName, ...person.aliases]),
+      ...(person.relationToUser
+        ? { relationToUser: person.relationToUser }
+        : {}),
+      assertionPolicy: 'can_assert',
+    });
+  }
+
   return objects;
 }
 
@@ -196,13 +242,24 @@ export function buildAgentIdentityPrompt(
     aliases: identity.user.aliases,
     preferredName: identity.user.preferredName || '未设置',
   };
+  const knownPeople = (identity.knownPeople || []).map(person => ({
+    id: person.id,
+    realName: person.realName || '未知',
+    aliases: person.aliases,
+    relationToUser: person.relationToUser || '未确认',
+  }));
 
   return [
     '# 当前角色与关系',
     `身份：${JSON.stringify({ agent, user })}`,
+    knownPeople.length
+      ? `本轮相关其他人物：${JSON.stringify(knownPeople)}`
+      : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function buildAgentIdentityClassifierContext(

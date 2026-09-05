@@ -167,4 +167,67 @@ describe('agent identity contract', () => {
       expect.arrayContaining(['赵浩洁', '浩洁', '洁洁'])
     );
   });
+
+  it('uses one global user identity across agents while retaining relationship address', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '妈妈',
+        iCallAgent: '妈妈',
+        agentCallMe: '女儿',
+      } as AgentEntity,
+      userIdentity: {
+        realName: '赵皓洁',
+        formerNames: ['赵浩洁'],
+        aliases: ['皓洁', '皓皓', '洁洁'],
+      },
+      profileFacts: [
+        {
+          type: AgentProfileFactType.identity,
+          key: 'user.identity.real_name',
+          value: '用户正式姓名是旧关系画像姓名',
+          polarity: AgentProfileFactPolarity.positive,
+          confidence: AgentProfileFactConfidence.confirmed,
+          priority: 3,
+        },
+      ],
+    });
+
+    expect(identity.user).toMatchObject({
+      realName: '赵皓洁',
+      addressedAs: '女儿',
+    });
+    expect(identity.user.aliases).toEqual(
+      expect.arrayContaining(['赵浩洁', '皓洁', '皓皓', '洁洁'])
+    );
+    expect(identity.user.realName).not.toBe('旧关系画像姓名');
+  });
+
+  it('injects only relevant known people as stable person objects', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '弟弟',
+        iCallAgent: '弟弟',
+        agentCallMe: '姐姐',
+      } as AgentEntity,
+      knownPeople: [
+        {
+          id: 'person:665000000000000000000201',
+          realName: '李雨桐',
+          aliases: ['大宝'],
+          relationToUser: '女儿',
+        },
+      ],
+    });
+    const objects = buildKnownConversationObjects({ identity });
+
+    expect(objects[2]).toEqual({
+      id: 'person:665000000000000000000201',
+      kind: 'family',
+      label: '李雨桐',
+      aliases: ['李雨桐', '大宝'],
+      relationToUser: '女儿',
+      assertionPolicy: 'can_assert',
+    });
+    expect(buildAgentIdentityPrompt(identity)).toContain('本轮相关其他人物');
+  });
 });

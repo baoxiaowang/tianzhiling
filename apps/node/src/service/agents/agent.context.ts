@@ -33,6 +33,7 @@ import {
   AgentProfileFactService,
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
+import { UserIdentityMemoryService } from './user-identity-memory.service';
 import {
   AgentRelationshipSignalService,
   AgentRelationshipSignalSummary,
@@ -340,6 +341,9 @@ export class AgentContextService {
   agentProfileFactService: AgentProfileFactService;
 
   @Inject()
+  userIdentityMemoryService: UserIdentityMemoryService;
+
+  @Inject()
   agentRelationshipSignalService: AgentRelationshipSignalService;
 
   @Inject()
@@ -388,14 +392,38 @@ export class AgentContextService {
       RECENT_HISTORY_MESSAGE_LIMIT,
       options.pinnedHistoryMessageIds
     );
-    const profileFacts = await this.withTraceSpan(
-      ChatTraceStage.contextLoad,
-      'context.profile_facts',
-      () => this.listProfileFacts(options)
-    );
+    const [profileFacts, userIdentity, knownPeople] = await Promise.all([
+      this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.profile_facts',
+        () => this.listProfileFacts(options)
+      ),
+      this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.user_identity',
+        () =>
+          this.userIdentityMemoryService?.getUserIdentity(
+            options.conversation.userId
+          ) || Promise.resolve(null)
+      ),
+      this.withTraceSpan(
+        ChatTraceStage.contextLoad,
+        'context.known_people',
+        () =>
+          this.userIdentityMemoryService?.listRelevantKnownPeople({
+            userId: options.conversation.userId,
+            query: options.currentQuery || '',
+            recentTexts: routingHistoryMessages
+              .filter(message => message.role === MessageRole.user)
+              .map(message => this.buildUserEvidenceText(message)),
+          }) || Promise.resolve([])
+      ),
+    ]);
     const identity = buildAgentIdentityContract({
       agent: options.agent,
       profileFacts,
+      userIdentity,
+      knownPeople,
     });
     const knownObjects = buildKnownConversationObjects({
       identity,
