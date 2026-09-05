@@ -53,6 +53,20 @@ export default {
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(['NODE_MILVUS_ADDRESS'], 'standalone:19530'),
+    collectionName: readStringFrom(
+      ['NODE_MILVUS_COLLECTION_NAME'],
+      'conversation_message_memory_v2'
+    ),
+    schemaVersion: readStringFrom(
+      ['NODE_MILVUS_SCHEMA_VERSION'],
+      'conversation_message_memory_v2'
+    ),
+    analyzer: readStringFrom(['NODE_MILVUS_ANALYZER'], 'chinese'),
+    writeEnabled: readBooleanFrom(['NODE_MILVUS_WRITE_ENABLED'], true),
+    retrievalMode: readStringFrom(
+      ['NODE_MILVUS_RETRIEVAL_MODE'],
+      'off'
+    ),
   },
   redis: {
     client: {

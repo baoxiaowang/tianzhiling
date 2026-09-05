@@ -22,12 +22,9 @@ describe('agent chat tools', () => {
       ...overrides,
     });
 
-  it('uses strict schemas for the four narrowly scoped tools', () => {
+  it('uses one strict, batched evidence lookup tool', () => {
     expect(Object.keys(AGENT_CHAT_TOOL_DEFINITIONS)).toEqual([
-      'search_relationship_memory',
-      'get_family_facts',
-      'get_persona_evidence',
-      'record_user_correction',
+      'lookup_chat_evidence',
     ]);
 
     for (const tool of Object.values(AGENT_CHAT_TOOL_DEFINITIONS)) {
@@ -53,11 +50,11 @@ describe('agent chat tools', () => {
         plannerMemoryRequested: true,
       })
     );
-    expect(plan.availableTools).toHaveLength(4);
+    expect(plan.availableTools).toEqual(['lookup_chat_evidence']);
     expect(buildAgentChatToolDecisionSchema(plan)).toBeDefined();
   });
 
-  it('keeps difficult active scenes on the planner fallback', () => {
+  it('keeps active mode explicit and independently sampled', () => {
     const riskyBrief = buildReplyBrief({ currentQuery: '我真的不想活了' });
     riskyBrief.riskLevel = 'high';
     const plan = buildPlan({
@@ -65,23 +62,26 @@ describe('agent chat tools', () => {
       replyBrief: riskyBrief,
     });
 
-    expect(plan.mode).toBe('planner_fallback');
-    expect(plan.availableTools).toEqual([]);
+    expect(plan.mode).toBe('active');
+    expect(plan.availableTools).toEqual(['lookup_chat_evidence']);
   });
 
   it('rejects missing or extra tool arguments instead of repairing them', () => {
     expect(
-      normalizeAgentChatToolArguments('search_relationship_memory', {
-        missingConcepts: ['西山'],
-        subjectRef: '爸爸',
-        limit: 3,
+      normalizeAgentChatToolArguments('lookup_chat_evidence', {
+        requests: [
+          {
+            subjectRef: '爸爸',
+            need: '西山',
+            sources: ['relationship_memory'],
+          },
+        ],
         triggerWord: '记得',
       })
     ).toBeNull();
     expect(
-      normalizeAgentChatToolArguments('search_relationship_memory', {
-        missingConcepts: ['西山'],
-        subjectRef: '爸爸',
+      normalizeAgentChatToolArguments('lookup_chat_evidence', {
+        requests: [],
       })
     ).toBeNull();
   });
@@ -89,11 +89,15 @@ describe('agent chat tools', () => {
   it('keeps at most two valid shadow decisions and counts invalid items', () => {
     const parsed = normalizeAgentChatToolDecisions([
       {
-        name: 'search_relationship_memory',
+        name: 'lookup_chat_evidence',
         arguments: {
-          missingConcepts: ['西山', '秋天'],
-          subjectRef: '爸爸',
-          limit: 4,
+          requests: [
+            {
+              subjectRef: '爸爸',
+              need: '西山和秋天',
+              sources: ['relationship_memory'],
+            },
+          ],
         },
         reason: '上下文缺少共同地点',
       },
@@ -105,7 +109,7 @@ describe('agent chat tools', () => {
     ]);
 
     expect(parsed.decisions).toHaveLength(1);
-    expect(parsed.decisions[0].name).toBe('search_relationship_memory');
+    expect(parsed.decisions[0].name).toBe('lookup_chat_evidence');
     expect(parsed.invalidCount).toBe(1);
   });
 });

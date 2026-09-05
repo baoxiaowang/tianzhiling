@@ -186,12 +186,14 @@ describe('UserRelativeProfileService', () => {
         facts: [
           {
             domain: UserRelativeFactDomain.education,
-            key: 'education.school_stage',
-            value: '安安已经上小学',
-            status: UserRelativeFactStatus.current,
-            occurredAt: undefined,
-          },
-        ],
+              key: 'education.school_stage',
+              value: '安安已经上小学',
+              status: UserRelativeFactStatus.current,
+              occurredAt: undefined,
+              confidence: 'extracted',
+            },
+          ],
+          needsName: false,
       },
     ]);
     expect(
@@ -200,5 +202,51 @@ describe('UserRelativeProfileService', () => {
         query: '今天天气怎么样',
       })
     ).toEqual([]);
+  });
+
+  it('persists a cooldown after the assistant asks one unnamed child for a name', async () => {
+    const service = new UserRelativeProfileService();
+    const profile = Object.assign(new UserRelativeProfileEntity(), {
+      id: new MongoObjectId('665000000000000000000302'),
+      userId: USER_ID,
+      personId: PERSON_ID,
+      status: UserRelativeProfileStatus.active,
+      lifeStage: 'newborn',
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: PERSON_ID,
+      userId: USER_ID,
+      relationToUser: '女儿',
+      status: 'active',
+    });
+    service.relativeProfileModel = {
+      find: jest.fn(async () => [profile]),
+      findOne: jest.fn(async () => profile),
+      save: jest.fn(async value => value),
+    } as never;
+    service.knownPersonModel = {
+      find: jest.fn(async () => [person]),
+    } as never;
+    service.relativeFactModel = {
+      find: jest.fn(async () => []),
+    } as never;
+
+    await expect(
+      service.recordAssistantNameInquiry({
+        userId: USER_ID,
+        agentId: AGENT_ID,
+        userText: '孩子今天满月了',
+        assistantText: '真快呀，孩子叫什么名字呢？',
+      })
+    ).resolves.toBe(true);
+    expect(profile.nameInquiryCount).toBe(1);
+    expect(profile.nameInquiryLastAskedAt).toBeInstanceOf(Date);
+    const prompt = await service.listRelevantForPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      query: '孩子最近怎么样',
+    });
+    expect(prompt[0].needsName).toBe(false);
   });
 });

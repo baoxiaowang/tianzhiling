@@ -9,6 +9,7 @@ import {
   MessageRole,
   MessageSource,
   MessageType,
+  MongoObjectId,
   AgentProfileFactAssertionPolicy,
   ChatSpanAttributeValue,
   ChatSpanStatus,
@@ -35,6 +36,10 @@ import {
 } from './agent-profile-fact.service';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
 import { UserRelativeProfileService } from './user-relative-profile.service';
+import {
+  PersonTemporalMemoryService,
+  PersonTemporalPromptFact,
+} from './person-temporal-memory.service';
 import {
   AgentRelationshipSignalService,
   AgentRelationshipSignalSummary,
@@ -348,6 +353,9 @@ export class AgentContextService {
   userRelativeProfileService: UserRelativeProfileService;
 
   @Inject()
+  personTemporalMemoryService: PersonTemporalMemoryService;
+
+  @Inject()
   agentRelationshipSignalService: AgentRelationshipSignalService;
 
   @Inject()
@@ -437,6 +445,15 @@ export class AgentContextService {
             }) || Promise.resolve([])
         ),
       ]);
+    const temporalProfiles =
+      (await this.personTemporalMemoryService?.listProfilesForPrompt({
+        userId: options.conversation.userId,
+        agentId: options.conversation.agentId,
+        relativeIds: relatives
+          .map(relative => relative.id.replace(/^person:/, ''))
+          .filter(id => MongoObjectId.isValid(id))
+          .map(id => new MongoObjectId(id)),
+      })) || [];
     const identity = buildAgentIdentityContract({
       agent: options.agent,
       profileFacts,
@@ -703,6 +720,7 @@ export class AgentContextService {
           replyBrief,
           persona,
           identity,
+          temporalProfiles,
           chatToolPlan,
           replyPlanningDecision.mode
         ),
@@ -1000,6 +1018,7 @@ export class AgentContextService {
     replyBrief?: ReplyBrief,
     persona?: AgentPersonaPromptResult,
     identity?: AgentIdentityContract,
+    temporalProfiles: PersonTemporalPromptFact[] = [],
     chatToolPlan?: AgentChatToolTurnPlan,
     planningMode?: ReplyPlanningMode
   ): AgentContextLayer {
@@ -1038,6 +1057,13 @@ export class AgentContextService {
       companionCorePrompt,
       basePrompt + doubaoAdaptation,
       persona?.prompt,
+      temporalProfiles.length
+        ? [
+            '# 已确认的人物时间事实',
+            JSON.stringify(temporalProfiles),
+            'exactDate可按日期使用；estimatedStart/estimatedEnd和模糊精度只能按范围表达，不得说成精确日期。',
+          ].join('\n')
+        : '',
       plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
     ];
@@ -1047,11 +1073,17 @@ export class AgentContextService {
       this.isConsecutiveInputQuery(options.currentQuery || '')
         ? this.buildConversationReadingPrompt(replyBrief, options.currentQuery)
         : '';
-    // 当前原话已经在 user message 中；外部人物/关系/记忆事实由主模型按需调用
-    // lookup_chat_evidence 获取。这里只注入主模型无法自行获知的系统执行结果。
-    const systemActionEvidence = evidence.filter(
-      item => item.source === 'system_action'
-    );
+    // 身份、关系和已确认纠正属于小而稳定的硬事实，必须直接可见；
+    // 原始共同经历仍由 lookup_chat_evidence 按需检索。
+    const systemActionEvidence = evidence
+      .filter(
+        item =>
+          item.source === 'system_action' ||
+          ((item.source === 'confirmed_fact' ||
+            item.source === 'agent_profile') &&
+            item.assertionPolicy === 'can_assert')
+      )
+      .slice(0, 8);
     const evidencePrompt =
       plan.includeEvidence && systemActionEvidence.length
         ? this.buildEvidencePrompt(systemActionEvidence)

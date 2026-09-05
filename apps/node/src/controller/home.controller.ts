@@ -8,6 +8,8 @@ import { Context } from '@midwayjs/koa';
 import { AgentMemoryInheritanceService } from '../service/agents/agent-memory-inheritance.service';
 import { MessengerService } from '../service/agents/messenger.service';
 import { MongoObjectId } from '@tzl/entities';
+import { MemoryPipelineTaskService } from '../service/memory-pipeline-task.service';
+import { MilvusService } from '../service/rag/milvus.service';
 
 @Controller('/system')
 export class SystemController {
@@ -16,6 +18,12 @@ export class SystemController {
 
   @Inject()
   ctx: Context;
+
+  @Inject()
+  memoryPipelineTaskService: MemoryPipelineTaskService;
+
+  @Inject()
+  milvusService: MilvusService;
 
   @Get('/health')
   async health() {
@@ -61,6 +69,10 @@ export class SystemController {
       relationshipOpenLoopBackfill,
       continuityCardBackfill: relationshipOpenLoopBackfill,
       memoryInheritanceBackfill,
+      memoryPipeline: await this.memoryPipelineTaskService
+        .getHealthSnapshot()
+        .catch(() => ({ status: 'unavailable' })),
+      milvus: this.milvusService.getRuntimeStatus(),
     };
   }
 

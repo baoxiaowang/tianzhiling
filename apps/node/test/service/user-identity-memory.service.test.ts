@@ -135,6 +135,40 @@ describe('UserIdentityMemoryService', () => {
     );
   });
 
+  it('keeps one stable person when a nickname is later linked to a formal name', async () => {
+    const service = new UserIdentityMemoryService();
+    const people: UserKnownPersonEntity[] = [];
+    service.identityModel = {
+      findOne: jest.fn(async () => null),
+      save: jest.fn(async value => value),
+    } as never;
+    service.knownPersonModel = {
+      find: jest.fn(async () => people),
+      save: jest.fn(async value => {
+        value.id ||= new MongoObjectId('665000000000000000000221');
+        if (!people.includes(value)) people.push(value);
+        return value;
+      }),
+    } as never;
+    service.userRelativeProfileService = {
+      ensureForKnownPerson: jest.fn(async () => null),
+    } as never;
+
+    const nickname = createMessage('浩浩是我儿子');
+    await service.recordFromUserMessage(nickname, nickname.content);
+    const formal = createMessage('浩浩名字叫赵浩帅，是我儿子');
+    formal.id = new MongoObjectId('665000000000000000000222');
+    await service.recordFromUserMessage(formal, formal.content);
+
+    expect(people).toHaveLength(1);
+    expect(people[0].identityKey).toMatch(/^person:/);
+    expect(people[0]).toMatchObject({
+      realName: '赵浩帅',
+      preferredName: '浩浩',
+      aliases: ['浩浩'],
+    });
+  });
+
   it('keeps an agent-specific preferred address out of global aliases', async () => {
     const service = new UserIdentityMemoryService();
     const save = jest.fn(async value => value);

@@ -88,4 +88,20 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.source).toBe('relationship_defaults');
     expect(result.evidenceSnippetCount).toBe(0);
   });
+
+  it('keeps admin custom context alongside a usable chat-derived profile', () => {
+    const result = buildAgentPersonaPrompt({
+      agent: {
+        iCallAgent: '弟弟',
+        customContext: '除简单问候外，多说几句把回应表达完整。',
+        personaProfile: {
+          version: 'chat_derived_persona_v1',
+          careStyle: '先接住姐姐说的重点',
+        },
+      } as AgentEntity,
+    });
+
+    expect(result.prompt).toContain('先接住姐姐说的重点');
+    expect(result.prompt).toContain('多说几句把回应表达完整');
+  });
 });

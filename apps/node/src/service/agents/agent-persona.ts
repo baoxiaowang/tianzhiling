@@ -55,7 +55,9 @@ export function buildAgentPersonaPrompt(options: {
   const profile = agent?.personaProfile;
   const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
   const hasUsableProfile = profileLines.length > 0;
-  const explicitProfile = hasUsableProfile ? [] : buildExplicitProfile(agent);
+  // Admin custom context and chat-derived style are complementary sources.
+  // Keep both; factual claims are still governed by the identity/evidence layer.
+  const explicitProfile = buildExplicitProfile(agent);
   const source = hasUsableProfile
     ? 'chat_derived_profile'
     : explicitProfile.length
@@ -115,7 +117,11 @@ export function buildAgentPersonaPrompt(options: {
       generation,
       source,
       styleAnchors: Array.from(
-        new Set([relationshipVoiceAnchor, ...profileLines.slice(0, 5)])
+        new Set([
+          relationshipVoiceAnchor,
+          ...profileLines.slice(0, 5),
+          ...explicitProfile.slice(0, 2),
+        ])
       ).slice(0, 6),
       factualBoundary:
         '人格画像只决定表达方式；人物事实、共同往事、偏好和现实经历仍须证据。',

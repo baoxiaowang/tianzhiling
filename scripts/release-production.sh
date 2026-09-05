@@ -423,6 +423,10 @@ if service_selected tzl_node; then
   )" == 'false' ]]
   docker compose --profile prod run --rm --no-deps tzl_node \
     node ./scripts/ensure-conversation-reply-turn-indexes.js --check
+  docker compose --profile prod run --rm --no-deps tzl_node \
+    node ./scripts/ensure-memory-system-indexes.js --check
+  docker compose --profile prod run --rm --no-deps tzl_node \
+    node ./scripts/ensure-milvus-v2-collection.js --check
 fi
 
 set_phase replace-backends

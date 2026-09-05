@@ -154,4 +154,43 @@ describe('RetrieveService', () => {
     ]);
     expect(JSON.stringify(memories)).not.toContain('归档掉的错误消息');
   });
+
+  it('keeps relevant long-term memories older than ninety days', async () => {
+    const service = new RetrieveService();
+    const messageId = new MongoObjectId('665000000000000000000301');
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      hasEmbeddingConfig: jest.fn().mockReturnValue(true),
+      createEmbedding: jest.fn().mockResolvedValue([0.1, 0.2]),
+    } as never;
+    service.milvusService = {
+      searchConversationMemories: jest.fn().mockResolvedValue([
+        {
+          id: messageId.toHexString(),
+          searchableText: '十年前你告诉我最喜欢院子里的桂花树',
+          role: MessageRole.user,
+          type: MessageType.text,
+          createdAtTs: new Date('2016-09-05T00:00:00.000Z').getTime(),
+          score: 0.02,
+        },
+      ]),
+    } as never;
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue([
+        Object.assign(new MessageEntity(), { id: messageId, isArchived: false }),
+      ]),
+    } as never;
+
+    await expect(
+      service.retrieveConversationMemories({
+        query: '院子里的树',
+        userId: '665000000000000000000001',
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: messageId.toHexString(),
+        createdAt: '2016-09-05',
+      }),
+    ]);
+  });
 });

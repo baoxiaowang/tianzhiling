@@ -24,8 +24,11 @@ import {
   ConversationMessageFeedbackEntity,
   FreeChatAgentLedgerEntity,
   MessageEntity,
+  MemoryPipelineTaskEntity,
   MessengerCallEventEntity,
   MongoObjectId,
+  PersonTemporalAssertionEntity,
+  PersonTemporalProfileEntity,
   OrderEntity,
   OrderStatus,
   PostCommentEntity,
@@ -37,6 +40,10 @@ import {
   UserAccountEntity,
   UserAccountStatus,
   UserEntity,
+  UserIdentityProfileEntity,
+  UserKnownPersonEntity,
+  UserRelativeFactEntity,
+  UserRelativeProfileEntity,
   UserLoginAccountStatus,
   UserMembershipEntity,
   UserMembershipStatus,
@@ -58,6 +65,7 @@ import { AuthenticatedUserPayload } from '../interface';
 import { TencentCosService } from './tencent-cos.service';
 import { VoiceServiceDataDeletionService } from './voice-service-data-deletion.service';
 import { WechatPayService } from './wechat-pay.service';
+import { MilvusService } from './rag/milvus.service';
 
 const ACCOUNT_CANCELLATION_CONFIRMATION = '确认注销';
 export const ACCOUNT_CANCELLATION_CLEANUP_QUEUE =
@@ -150,6 +158,9 @@ export class AccountCancellationService {
   @Inject()
   voiceServiceDataDeletionService: VoiceServiceDataDeletionService;
 
+  @Inject()
+  milvusService: MilvusService;
+
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
@@ -194,6 +205,27 @@ export class AccountCancellationService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(MemoryPipelineTaskEntity)
+  memoryPipelineTaskModel: MongoRepository<MemoryPipelineTaskEntity>;
+
+  @InjectEntityModel(UserIdentityProfileEntity)
+  userIdentityProfileModel: MongoRepository<UserIdentityProfileEntity>;
+
+  @InjectEntityModel(UserKnownPersonEntity)
+  userKnownPersonModel: MongoRepository<UserKnownPersonEntity>;
+
+  @InjectEntityModel(UserRelativeProfileEntity)
+  userRelativeProfileModel: MongoRepository<UserRelativeProfileEntity>;
+
+  @InjectEntityModel(UserRelativeFactEntity)
+  userRelativeFactModel: MongoRepository<UserRelativeFactEntity>;
+
+  @InjectEntityModel(PersonTemporalAssertionEntity)
+  personTemporalAssertionModel: MongoRepository<PersonTemporalAssertionEntity>;
+
+  @InjectEntityModel(PersonTemporalProfileEntity)
+  personTemporalProfileModel: MongoRepository<PersonTemporalProfileEntity>;
 
   @InjectEntityModel(MessengerCallEventEntity)
   messengerCallEventModel: MongoRepository<MessengerCallEventEntity>;
@@ -640,7 +672,19 @@ export class AccountCancellationService {
       summary.expiredEntitlementCount += result.entitlements;
     });
 
+    await this.runCleanupStage(summary, 'semantic_memory', async () => {
+      if (!this.milvusService) return;
+      const deleted = await this.milvusService.deleteUserMemories(
+        userId.toString()
+      );
+      if (!deleted) throw new Error('milvus user memories could not be deleted');
+    });
+
     await this.runCleanupStage(summary, 'conversation_data', async () => {
+      summary.deletedRecordCount += await this.deleteMany(
+        this.memoryPipelineTaskModel,
+        { userId }
+      );
       summary.deletedRecordCount += await this.deleteMany(
         this.messengerCallEventModel,
         { userId }
@@ -680,6 +724,30 @@ export class AccountCancellationService {
     });
 
     await this.runCleanupStage(summary, 'agent_data', async () => {
+      summary.deletedRecordCount += await this.deleteMany(
+        this.userIdentityProfileModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.userKnownPersonModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.userRelativeProfileModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.userRelativeFactModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.personTemporalAssertionModel,
+        { userId }
+      );
+      summary.deletedRecordCount += await this.deleteMany(
+        this.personTemporalProfileModel,
+        { userId }
+      );
       summary.deletedRecordCount += await this.deleteMany(
         this.freeChatAgentLedgerModel,
         { userId }

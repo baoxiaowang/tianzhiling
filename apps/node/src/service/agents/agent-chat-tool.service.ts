@@ -161,7 +161,10 @@ export class AgentChatToolService {
                 `relationship_memory_${requestIndex + 1}_${index + 1}`,
               source: 'conversation_memory',
               sourceAt: memory.createdAt || '',
-              confidence: this.normalizeScore(memory.score, 0.65),
+              // RRF is retrieval relevance, not factual certainty. Raw user
+              // utterances remain attributed evidence until separately confirmed.
+              confidence: 0.65,
+              relevanceScore: this.normalizeScore(memory.score, 0),
               conflictStatus: 'unknown',
               ...(request.subjectRef ? { subjectRef: request.subjectRef } : {}),
               value: this.clean(memory.content, 260),

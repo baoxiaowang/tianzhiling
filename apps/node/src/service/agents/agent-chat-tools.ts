@@ -51,6 +51,7 @@ export interface AgentChatToolEvidenceItem {
   source: string;
   sourceAt: string;
   confidence: number;
+  relevanceScore?: number;
   conflictStatus: AgentChatToolConflictStatus;
   subjectRef?: string;
   factKey?: string;
@@ -125,19 +126,18 @@ export function resolveAgentChatToolTurnPlan(options: {
   stableKey: string;
   currentQuery: string;
   plannerMemoryRequested?: boolean;
+  replyBrief?: unknown;
+  planningMode?: string;
+  planningReason?: string;
 }): AgentChatToolTurnPlan {
   const configuredMode = normalizeConfiguredMode(options.config?.mode);
-  // `shadow` is retained only as a backward-compatible configuration value.
-  // The previous planner-owned shadow route has been retired: any enabled
-  // tool mode now gives the main model one optional evidence lookup.
-  const enabledMode: AgentChatToolTurnMode =
-    configuredMode === 'off' ? 'off' : 'active';
+  const enabledMode: AgentChatToolTurnMode = configuredMode;
   const eligible = Boolean(options.currentQuery.trim());
   const sampleRate =
     configuredMode === 'active'
       ? normalizeSampleRate(options.config?.activeSampleRate, 1)
       : configuredMode === 'shadow'
-      ? 1
+      ? normalizeSampleRate(options.config?.shadowSampleRate, 0.2)
       : 0;
   const sampled =
     enabledMode !== 'off' &&
@@ -151,15 +151,16 @@ export function resolveAgentChatToolTurnPlan(options: {
     mode,
     eligible,
     sampled,
-    availableTools: mode === 'active' ? [...AGENT_CHAT_TOOL_NAMES] : [],
+    availableTools:
+      mode === 'active' || mode === 'shadow' ? [...AGENT_CHAT_TOOL_NAMES] : [],
     reason: !eligible
       ? 'empty_turn'
       : !sampled
       ? 'not_sampled'
       : configuredMode === 'shadow'
-      ? 'legacy_shadow_promoted_to_active'
+      ? 'shadow_observation'
       : 'available',
-    plannerMemoryRequested: false,
+    plannerMemoryRequested: Boolean(options.plannerMemoryRequested),
     maxCalls: normalizeInteger(
       options.config?.maxCallsPerTurn,
       DEFAULT_MAX_CALLS,

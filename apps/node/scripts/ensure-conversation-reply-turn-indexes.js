@@ -93,7 +93,10 @@ async function ensureIndex(collection, keys, options, { apply = false } = {}) {
     const sameKeys = JSON.stringify(index.key) === expectedKeys;
     const sameUnique = Boolean(index.unique) === Boolean(options.unique);
     const sameSparse = Boolean(index.sparse) === Boolean(options.sparse);
-    return sameName && sameKeys && sameUnique && sameSparse;
+    const samePartial =
+      JSON.stringify(index.partialFilterExpression || null) ===
+      JSON.stringify(options.partialFilterExpression || null);
+    return sameName && sameKeys && sameUnique && sameSparse && samePartial;
   });
   if (exact) return 'existing';
 
@@ -109,6 +112,7 @@ async function ensureIndex(collection, keys, options, { apply = false } = {}) {
       key: index.key,
       unique: Boolean(index.unique),
       sparse: Boolean(index.sparse),
+      partialFilterExpression: index.partialFilterExpression,
     }));
     throw new Error(
       `[conversation-reply-turn-indexes] conflict collection=${

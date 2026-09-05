@@ -73,7 +73,7 @@ export class AdminMilvusService {
   private getCollectionName(): string {
     return (
       this.milvusConfig?.collectionName?.trim() ||
-      'conversation_message_memory'
+      'conversation_message_memory_v2'
     );
   }
 

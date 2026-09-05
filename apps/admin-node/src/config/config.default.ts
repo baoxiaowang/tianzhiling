@@ -587,7 +587,7 @@ export default {
     ),
     collectionName: readStringFrom(
       ['ADMIN_API_MILVUS_COLLECTION_NAME', 'NODE_MILVUS_COLLECTION_NAME'],
-      'conversation_message_memory'
+      'conversation_message_memory_v2'
     ),
     timeoutMs: readNumberFrom(
       ['ADMIN_API_MILVUS_TIMEOUT_MS', 'NODE_MILVUS_TIMEOUT_MS'],

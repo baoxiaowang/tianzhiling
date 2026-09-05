@@ -1,5 +1,6 @@
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
+import { RedisService } from '@midwayjs/redis';
 import { promises as dns } from 'dns';
 import { isIP } from 'net';
 import {
@@ -26,6 +27,10 @@ export interface MilvusServiceConfig {
   searchEf?: number;
   minScore?: number;
   timeoutMs?: number;
+  schemaVersion?: string;
+  analyzer?: string;
+  writeEnabled?: boolean;
+  retrievalMode?: 'off' | 'shadow' | 'active';
 }
 
 export interface IndexConversationMessageOptions {
@@ -37,6 +42,10 @@ export interface IndexConversationMessageOptions {
   type: MessageType;
   searchableText: string;
   createdAt: Date;
+  updatedAt?: Date;
+  personId?: string;
+  memoryKind?: string;
+  sourceHash?: string;
 }
 
 export interface SearchConversationMemoriesOptions {
@@ -58,6 +67,12 @@ export interface RetrievedConversationMemory {
   type: MessageType;
   searchableText: string;
   createdAtTs: number;
+  updatedAtTs: number;
+  personId?: string;
+  memoryKind: string;
+  sourceHash?: string;
+  embeddingModel?: string;
+  embeddingVersion?: string;
   score: number;
 }
 
@@ -65,6 +80,8 @@ const DENSE_VECTOR_FIELD_NAME = 'vector';
 const SPARSE_VECTOR_FIELD_NAME = 'sparseVector';
 const TEXT_FIELD_NAME = 'searchableText';
 const BM25_FUNCTION_NAME = 'searchableTextBm25';
+const ACTIVE_MEMORY_STATUS = 'active';
+const DEFAULT_SCHEMA_VERSION = 'conversation_message_memory_v2';
 
 @Provide()
 export class MilvusService {
@@ -77,10 +94,14 @@ export class MilvusService {
   @Config('openai')
   openAIConfig: {
     embeddingDimensions?: number;
+    embeddingModel?: string;
   };
 
   @Inject()
   openAIService: OpenAIService;
+
+  @Inject()
+  redisService: RedisService;
 
   private client: MilvusClient | null = null;
   private ensureCollectionPromise: Promise<void> | null = null;
@@ -95,7 +116,6 @@ export class MilvusService {
   // 本保护策略：连接失败熔断降级 + 应用层请求超时 + 并发上限 + 关闭 SDK 重试。
   private static readonly CIRCUIT_FAILURE_THRESHOLD = 5;
   private static readonly CIRCUIT_COOLDOWN_MS = 60_000;
-  private static readonly REQUEST_TIMEOUT_MS = 15_000;
   private static readonly MAX_CONCURRENT_CALLS = 8;
 
   private circuitOpen = false;
@@ -103,8 +123,11 @@ export class MilvusService {
   private consecutiveFailures = 0;
   private inflightCalls = 0;
   private endpointReachable: boolean | undefined;
+  private endpointRetryAt = 0;
   private endpointCheckPromise: Promise<boolean> | null = null;
   private runtimeDisabledReason = '';
+  private sharedCircuitOpen = false;
+  private sharedCircuitCheckedAt = 0;
 
   isEnabled(): boolean {
     return (
@@ -114,26 +137,88 @@ export class MilvusService {
     );
   }
 
+  isIndexingEnabled(): boolean {
+    return this.isEnabled() && this.milvusConfig?.writeEnabled !== false;
+  }
+
+  isRetrievalEnabled(): boolean {
+    return this.isEnabled() && this.getRetrievalMode() !== 'off';
+  }
+
+  getRetrievalMode(): 'off' | 'shadow' | 'active' {
+    const mode = this.milvusConfig?.retrievalMode;
+    return mode === 'shadow' || mode === 'active' ? mode : 'off';
+  }
+
+  getRuntimeStatus(): Record<string, unknown> {
+    return {
+      enabled: this.isEnabled(),
+      indexingEnabled: this.isIndexingEnabled(),
+      retrievalMode: this.getRetrievalMode(),
+      collectionName: this.getCollectionName(),
+      schemaVersion: this.resolveSchemaVersion(),
+      analyzer: this.resolveAnalyzer(),
+      circuitOpen: this.circuitOpen || this.sharedCircuitOpen,
+      consecutiveFailures: this.consecutiveFailures,
+      inflightCalls: this.inflightCalls,
+      endpointReachable: this.endpointReachable,
+    };
+  }
+
+  async deleteUserMemories(userId: string): Promise<boolean> {
+    const normalizedUserId = userId?.trim();
+    if (!normalizedUserId || !this.milvusConfig?.address?.trim()) return true;
+    try {
+      const client = this.getClient();
+      await this.withMilvusTimeout(client.connectPromise, 'connectForDelete');
+      const hasCollection = await this.withMilvusTimeout(
+        client.hasCollection({
+          collection_name: this.getCollectionName(),
+          timeout: this.resolveTimeoutMs(),
+        }),
+        'hasCollectionForDelete'
+      );
+      if (!hasCollection?.value) return true;
+      await this.withMilvusTimeout(
+        client.delete({
+          collection_name: this.getCollectionName(),
+          filter: `userId == "${this.escapeFilterValue(normalizedUserId)}"`,
+        }),
+        'deleteUserMemories'
+      );
+      this.recordMilvusSuccess();
+      return true;
+    } catch (error) {
+      this.recordMilvusFailure('delete_user_memories', error);
+      this.logger.error(
+        '[milvus] user memory deletion failed, userId=%s reason=%s',
+        normalizedUserId,
+        error instanceof Error ? error.message : String(error)
+      );
+      return false;
+    }
+  }
+
   async indexConversationMessage(
     options: IndexConversationMessageOptions
-  ): Promise<void> {
-    if (!this.isEnabled() || !this.openAIService.hasEmbeddingConfig()) {
-      return;
+  ): Promise<boolean> {
+    if (!this.isIndexingEnabled() || !this.openAIService.hasEmbeddingConfig()) {
+      return false;
     }
 
     const searchableText = this.normalizeSearchableText(options.searchableText);
 
     if (!searchableText) {
-      return;
+      return false;
     }
 
     if (!(await this.ensureEndpointReachable())) {
-      return;
+      return false;
     }
 
     if (this.isCircuitOpen()) {
       this.logger.warn('[milvus] index skipped, circuit is open');
-      return;
+      return false;
     }
 
     if (this.inflightCalls >= MilvusService.MAX_CONCURRENT_CALLS) {
@@ -141,17 +226,15 @@ export class MilvusService {
         '[milvus] index skipped, too many inflight calls (%s)',
         this.inflightCalls
       );
-      return;
+      return false;
     }
-
-    const vector = await this.openAIService.createEmbedding({
-      input: searchableText,
-      dimensions: this.openAIConfig?.embeddingDimensions,
-    });
-
     this.inflightCalls += 1;
 
     try {
+      const vector = await this.openAIService.createEmbedding({
+        input: searchableText,
+        dimensions: this.openAIConfig?.embeddingDimensions,
+      });
       await this.withMilvusTimeout(
         this.ensureCollection(vector.length),
         'ensureCollection'
@@ -159,16 +242,28 @@ export class MilvusService {
       await this.withMilvusTimeout(
         this.getClient().upsert({
           collection_name: this.getCollectionName(),
+          timeout: this.resolveTimeoutMs(),
           data: [
             {
               id: options.messageId,
+              sourceMessageId: options.messageId,
               userId: options.userId,
               conversationId: options.conversationId,
               agentId: options.agentId?.trim() || '',
               role: options.role,
               type: options.type,
+              personId: options.personId?.trim() || '',
+              memoryKind: options.memoryKind?.trim() || 'raw_episode',
+              status: ACTIVE_MEMORY_STATUS,
+              schemaVersion: this.resolveSchemaVersion(),
+              embeddingModel: this.openAIConfig?.embeddingModel?.trim() || '',
+              embeddingVersion: this.resolveEmbeddingVersion(),
+              sourceHash: options.sourceHash?.trim() || '',
               [TEXT_FIELD_NAME]: this.truncateText(searchableText),
               createdAtTs: this.normalizeCreatedAtTs(options.createdAt),
+              updatedAtTs: this.normalizeCreatedAtTs(
+                options.updatedAt || options.createdAt
+              ),
               [DENSE_VECTOR_FIELD_NAME]: vector,
             },
           ],
@@ -176,6 +271,7 @@ export class MilvusService {
         'upsert'
       );
       this.recordMilvusSuccess();
+      return true;
     } catch (error) {
       this.recordMilvusFailure('index', error);
       throw error;
@@ -187,7 +283,7 @@ export class MilvusService {
   async searchConversationMemories(
     options: SearchConversationMemoriesOptions
   ): Promise<RetrievedConversationMemory[]> {
-    if (!this.isEnabled() || !this.openAIService.hasEmbeddingConfig()) {
+    if (!this.isRetrievalEnabled() || !this.openAIService.hasEmbeddingConfig()) {
       return [];
     }
 
@@ -211,6 +307,7 @@ export class MilvusService {
       const hasCollection = await this.withMilvusTimeout(
         client.hasCollection({
           collection_name: this.getCollectionName(),
+          timeout: this.resolveTimeoutMs(),
         }),
         'hasCollection'
       );
@@ -233,6 +330,7 @@ export class MilvusService {
       const results = await this.withMilvusTimeout(
         client.hybridSearch({
           collection_name: this.getCollectionName(),
+          timeout: this.resolveTimeoutMs(),
           data: [
             {
               anns_field: DENSE_VECTOR_FIELD_NAME,
@@ -253,13 +351,20 @@ export class MilvusService {
           filter: this.buildSearchFilter(options),
           output_fields: [
             'id',
+            'sourceMessageId',
             'userId',
             'conversationId',
             'agentId',
             'role',
             'type',
+            'personId',
+            'memoryKind',
+            'sourceHash',
+            'embeddingModel',
+            'embeddingVersion',
             TEXT_FIELD_NAME,
             'createdAtTs',
+            'updatedAtTs',
           ],
           rerank: RRFRanker(60),
         }),
@@ -337,6 +442,7 @@ export class MilvusService {
           context,
           MilvusService.CIRCUIT_COOLDOWN_MS
         );
+        this.openSharedCircuit();
       }
     }
   }
@@ -347,20 +453,63 @@ export class MilvusService {
     }
 
     this.consecutiveFailures = 0;
+    this.sharedCircuitOpen = false;
+    this.sharedCircuitCheckedAt = Date.now();
+    if (this.redisService) {
+      void this.redisService.del(this.sharedCircuitKey()).catch(() => undefined);
+    }
+  }
+
+  private async isSharedCircuitUnavailable(): Promise<boolean> {
+    if (!this.redisService) return false;
+    if (Date.now() - this.sharedCircuitCheckedAt < 1000) {
+      return this.sharedCircuitOpen;
+    }
+    this.sharedCircuitCheckedAt = Date.now();
+    try {
+      this.sharedCircuitOpen = Boolean(
+        await this.redisService.get(this.sharedCircuitKey())
+      );
+    } catch {
+      this.sharedCircuitOpen = false;
+    }
+    return this.sharedCircuitOpen;
+  }
+
+  private openSharedCircuit(): void {
+    this.sharedCircuitOpen = true;
+    this.sharedCircuitCheckedAt = Date.now();
+    if (this.redisService) {
+      void this.redisService
+        .set(
+          this.sharedCircuitKey(),
+          String(Date.now()),
+          'PX',
+          MilvusService.CIRCUIT_COOLDOWN_MS
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  private sharedCircuitKey(): string {
+    return `milvus:circuit:${
+      this.milvusConfig?.address?.trim() || 'unknown'
+    }`;
   }
 
   private withMilvusTimeout<T>(
     promise: Promise<T>,
     context: string
   ): Promise<T> {
+    const timeoutMs = this.resolveTimeoutMs();
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(
           new Error(
-            `milvus ${context} timed out after ${MilvusService.REQUEST_TIMEOUT_MS}ms`
+            `milvus ${context} timed out after ${timeoutMs}ms`
           )
         );
-      }, MilvusService.REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
 
       promise.then(
         value => {
@@ -379,11 +528,13 @@ export class MilvusService {
     if (!this.isEnabled()) {
       return false;
     }
+    if (await this.isSharedCircuitUnavailable()) return false;
     if (this.endpointReachable === true) {
       return true;
     }
     if (this.endpointReachable === false) {
-      return false;
+      if (Date.now() < this.endpointRetryAt) return false;
+      this.endpointReachable = undefined;
     }
     if (this.endpointCheckPromise) {
       return this.endpointCheckPromise;
@@ -416,7 +567,9 @@ export class MilvusService {
       this.endpointReachable = true;
       return true;
     } catch (error) {
-      this.disableForProcess('endpoint_preflight', error);
+      this.endpointReachable = false;
+      this.endpointRetryAt = Date.now() + 30_000;
+      this.recordMilvusFailure('endpoint_preflight', error);
       return false;
     }
   }
@@ -435,9 +588,7 @@ export class MilvusService {
   private isUnrecoverableEndpointFailure(error: unknown): boolean {
     const message =
       error instanceof Error ? error.message : String(error || '');
-    return /(?:Name resolution failed|ENOTFOUND|EAI_AGAIN|timed out)/iu.test(
-      message
-    );
+    return /invalid address/iu.test(message);
   }
 
   private disableForProcess(context: string, error: unknown): void {
@@ -519,6 +670,7 @@ export class MilvusService {
     const collectionName = this.getCollectionName();
     const hasCollection = await client.hasCollection({
       collection_name: collectionName,
+      timeout: this.resolveTimeoutMs(),
     });
 
     if (!hasCollection?.value) {
@@ -528,6 +680,7 @@ export class MilvusService {
 
       await client.createCollection({
         collection_name: collectionName,
+        timeout: this.resolveTimeoutMs(),
         fields: [
           {
             name: 'id',
@@ -537,6 +690,12 @@ export class MilvusService {
           },
           {
             name: 'userId',
+            data_type: DataType.VarChar,
+            max_length: 64,
+            is_partition_key: true,
+          },
+          {
+            name: 'sourceMessageId',
             data_type: DataType.VarChar,
             max_length: 64,
           },
@@ -561,14 +720,54 @@ export class MilvusService {
             max_length: 16,
           },
           {
+            name: 'personId',
+            data_type: DataType.VarChar,
+            max_length: 64,
+          },
+          {
+            name: 'memoryKind',
+            data_type: DataType.VarChar,
+            max_length: 32,
+          },
+          {
+            name: 'status',
+            data_type: DataType.VarChar,
+            max_length: 16,
+          },
+          {
+            name: 'schemaVersion',
+            data_type: DataType.VarChar,
+            max_length: 64,
+          },
+          {
+            name: 'embeddingModel',
+            data_type: DataType.VarChar,
+            max_length: 128,
+          },
+          {
+            name: 'embeddingVersion',
+            data_type: DataType.VarChar,
+            max_length: 160,
+          },
+          {
+            name: 'sourceHash',
+            data_type: DataType.VarChar,
+            max_length: 64,
+          },
+          {
             name: TEXT_FIELD_NAME,
             data_type: DataType.VarChar,
             max_length: this.resolveMaxTextLength(),
             enable_analyzer: true,
             enable_match: true,
+            analyzer_params: { type: this.resolveAnalyzer() },
           },
           {
             name: 'createdAtTs',
+            data_type: DataType.Int64,
+          },
+          {
+            name: 'updatedAtTs',
             data_type: DataType.Int64,
           },
           {
@@ -622,6 +821,7 @@ export class MilvusService {
     } else {
       const description = await client.describeCollection({
         collection_name: collectionName,
+        timeout: this.resolveTimeoutMs(),
       });
       this.assertHybridCollectionSchema(description);
       const vectorField = description?.schema?.fields?.find(
@@ -648,6 +848,7 @@ export class MilvusService {
 
     await client.loadCollection({
       collection_name: collectionName,
+      timeout: this.resolveTimeoutMs(),
     });
 
     this.collectionLoaded = true;
@@ -656,7 +857,10 @@ export class MilvusService {
   private buildSearchFilter(
     options: SearchConversationMemoriesOptions
   ): string {
-    const filters = [`userId == "${this.escapeFilterValue(options.userId)}"`];
+    const filters = [
+      `userId == "${this.escapeFilterValue(options.userId)}"`,
+      `status == "${ACTIVE_MEMORY_STATUS}"`,
+    ];
 
     if (options.agentId?.trim()) {
       filters.push(`agentId == "${this.escapeFilterValue(options.agentId)}"`);
@@ -692,6 +896,12 @@ export class MilvusService {
     type?: unknown;
     searchableText?: unknown;
     createdAtTs?: unknown;
+    updatedAtTs?: unknown;
+    personId?: unknown;
+    memoryKind?: unknown;
+    sourceHash?: unknown;
+    embeddingModel?: unknown;
+    embeddingVersion?: unknown;
     score?: unknown;
   }): RetrievedConversationMemory {
     return {
@@ -703,6 +913,13 @@ export class MilvusService {
       type: this.normalizeMessageType(result.type),
       searchableText: this.normalizeString(result[TEXT_FIELD_NAME]),
       createdAtTs: this.normalizeNumber(result.createdAtTs),
+      updatedAtTs: this.normalizeNumber(result.updatedAtTs),
+      personId: this.normalizeString(result.personId) || undefined,
+      memoryKind: this.normalizeString(result.memoryKind) || 'raw_episode',
+      sourceHash: this.normalizeString(result.sourceHash) || undefined,
+      embeddingModel: this.normalizeString(result.embeddingModel) || undefined,
+      embeddingVersion:
+        this.normalizeString(result.embeddingVersion) || undefined,
       score: this.normalizeNumber(result.score),
     };
   }
@@ -729,13 +946,22 @@ export class MilvusService {
     );
     const requiredFields = [
       'id',
+      'sourceMessageId',
       'userId',
       'conversationId',
       'agentId',
       'role',
       'type',
+      'personId',
+      'memoryKind',
+      'status',
+      'schemaVersion',
+      'embeddingModel',
+      'embeddingVersion',
+      'sourceHash',
       TEXT_FIELD_NAME,
       'createdAtTs',
+      'updatedAtTs',
       DENSE_VECTOR_FIELD_NAME,
       SPARSE_VECTOR_FIELD_NAME,
     ];
@@ -810,8 +1036,23 @@ export class MilvusService {
 
   private getCollectionName(): string {
     return (
-      this.milvusConfig?.collectionName?.trim() || 'conversation_message_memory'
+      this.milvusConfig?.collectionName?.trim() ||
+      'conversation_message_memory_v2'
     );
+  }
+
+  private resolveSchemaVersion(): string {
+    return this.milvusConfig?.schemaVersion?.trim() || DEFAULT_SCHEMA_VERSION;
+  }
+
+  private resolveAnalyzer(): string {
+    return this.milvusConfig?.analyzer?.trim() || 'chinese';
+  }
+
+  private resolveEmbeddingVersion(): string {
+    const model = this.openAIConfig?.embeddingModel?.trim() || 'unknown';
+    const dimensions = this.openAIConfig?.embeddingDimensions || 'default';
+    return `${model}:${dimensions}`.slice(0, 160);
   }
 
   private resolveMaxTextLength(): number {

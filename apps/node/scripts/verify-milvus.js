@@ -5,7 +5,7 @@
 const { MilvusClient, RRFRanker } = require('@zilliz/milvus2-sdk-node');
 
 const COLLECTION_NAME =
-  process.env.NODE_MILVUS_COLLECTION_NAME || 'conversation_message_memory';
+  process.env.NODE_MILVUS_COLLECTION_NAME || 'conversation_message_memory_v2';
 const ADDRESS = process.env.NODE_MILVUS_ADDRESS || 'standalone:19530';
 const TIMEOUT_MS = Number(process.env.NODE_MILVUS_TIMEOUT_MS || 15000);
 const WRITE_CANARY_APPROVAL = 'milvus-production-canary-v1';
@@ -14,13 +14,22 @@ const approvalId = readArgument('--approval-id=');
 
 const REQUIRED_FIELDS = [
   'id',
+  'sourceMessageId',
   'userId',
   'conversationId',
   'agentId',
   'role',
   'type',
+  'personId',
+  'memoryKind',
+  'status',
+  'schemaVersion',
+  'embeddingModel',
+  'embeddingVersion',
+  'sourceHash',
   'searchableText',
   'createdAtTs',
+  'updatedAtTs',
   'vector',
   'sparseVector',
 ];
@@ -77,9 +86,8 @@ function resolveVectorDimension(description) {
 }
 
 function assertCollectionContract(description) {
-  const fields = new Set(
-    (description?.schema?.fields || []).map(field => field.name)
-  );
+  const schemaFields = description?.schema?.fields || [];
+  const fields = new Set(schemaFields.map(field => field.name));
   const missingFields = REQUIRED_FIELDS.filter(field => !fields.has(field));
   if (missingFields.length) {
     throw new Error(`collection fields missing: ${missingFields.join(',')}`);
@@ -90,6 +98,14 @@ function assertCollectionContract(description) {
   );
   if (!functions.has('searchableTextBm25')) {
     throw new Error('collection BM25 function searchableTextBm25 is missing');
+  }
+  const userField = schemaFields.find(field => field.name === 'userId');
+  if (!userField?.is_partition_key) {
+    throw new Error('collection userId is not the partition key');
+  }
+  const textField = schemaFields.find(field => field.name === 'searchableText');
+  if (!textField?.enable_analyzer || !textField?.enable_match) {
+    throw new Error('collection searchableText analyzer or match is disabled');
   }
 }
 
@@ -114,13 +130,25 @@ async function runWriteCanary(client, vectorDimension) {
           data: [
             {
               id: canaryId,
+              sourceMessageId: canaryId,
               userId: '__tzl_system_canary__',
               conversationId: '__tzl_system_canary__',
               agentId: '',
               role: 'user',
               type: 'text',
+              personId: '',
+              memoryKind: 'acceptance_canary',
+              status: 'active',
+              schemaVersion: 'conversation_message_memory_v2',
+              embeddingModel: 'deterministic-canary',
+              embeddingVersion: 'acceptance-v1',
+              sourceHash: canaryId
+                .replace('__tzl_milvus_canary_', '')
+                .padEnd(64, '0')
+                .slice(0, 64),
               searchableText: '天之灵 Milvus 生产读写检索验收',
               createdAtTs: Date.now(),
+              updatedAtTs: Date.now(),
               vector,
             },
           ],

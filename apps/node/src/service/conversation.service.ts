@@ -21,6 +21,8 @@ import {
   MessageRole,
   MessageStatus,
   MessageType,
+  MemoryPipelineTaskEntity,
+  MemoryPipelineTaskKind,
   MongoObjectId,
   UserEntity,
   UserMembershipEntity,
@@ -138,6 +140,10 @@ import { PostImageService } from './post-image.service';
 import { OssService } from './oss.service';
 import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
+import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
+import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
+import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
+import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
 import { QwenVoiceSpeechService } from './qwen-voice-speech.service';
@@ -762,6 +768,18 @@ export class ConversationService {
   milvusService: MilvusService;
 
   @Inject()
+  memoryPipelineTaskService: MemoryPipelineTaskService;
+
+  @Inject()
+  userIdentityMemoryService: UserIdentityMemoryService;
+
+  @Inject()
+  relativeMemoryExtractorService: RelativeMemoryExtractorService;
+
+  @Inject()
+  userRelativeProfileService: UserRelativeProfileService;
+
+  @Inject()
   minimaxVoiceSpeechService: MinimaxVoiceSpeechService;
 
   @Inject()
@@ -944,7 +962,7 @@ export class ConversationService {
 
     if (!before.isDuplicate && !before.permanentSilence) {
       if (!this.isExplicitMemoryControlRequest(before.searchableText)) {
-        this.scheduleUserMessageEnrichment(
+        await this.scheduleUserMessageEnrichment(
           before.userMessage,
           before.searchableText
         );
@@ -1086,7 +1104,7 @@ export class ConversationService {
 
     if (!before.isDuplicate && !before.permanentSilence) {
       if (!this.isExplicitMemoryControlRequest(before.searchableText)) {
-        this.scheduleUserMessageEnrichment(
+        await this.scheduleUserMessageEnrichment(
           before.userMessage,
           before.searchableText
         );
@@ -2121,16 +2139,62 @@ export class ConversationService {
       );
     }
 
-    this.queueMilvusIndexForMessage({
+    await this.queueMilvusIndexForMessage({
       message,
       conversation,
       userId: auth.sub,
       searchableText,
     });
-    await this.extractMemoryFactsForUserMessage(message, searchableText);
     await this.extractProfileFactsForUserMessage(message, searchableText, true);
 
     return { remembered: true };
+  }
+
+  async processMemoryPipelineTask(
+    task: MemoryPipelineTaskEntity
+  ): Promise<'completed' | 'skipped'> {
+    const message = await this.messageModel.findOne({
+      where: { _id: task.messageId } as never,
+    });
+    if (!message || message.isArchived || message.status !== MessageStatus.sent) {
+      return 'skipped';
+    }
+
+    const searchableText = this.buildSearchableTextFromMessage(message);
+    if (!searchableText) return 'skipped';
+
+    if (task.kind === MemoryPipelineTaskKind.structuredMemory) {
+      await this.enrichUserMessageForReply(message, searchableText);
+      if (message.traceId) {
+        await this.chatTraceService?.markBackgroundCompleted(
+          message.traceId,
+          new Date(),
+          message.createdAt
+        );
+      }
+      return 'completed';
+    }
+
+    if (task.kind === MemoryPipelineTaskKind.semanticIndex) {
+      const indexed = await this.milvusService.indexConversationMessage({
+        messageId: this.stringifyObjectId(message.id),
+        userId: this.stringifyObjectId(message.userId),
+        conversationId: this.stringifyObjectId(message.conversationId),
+        agentId: this.stringifyObjectId(message.agentId),
+        role: message.role,
+        type: message.type,
+        searchableText,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+        sourceHash: task.sourceHash,
+      });
+      if (!indexed) {
+        throw new Error('Milvus semantic indexing is currently unavailable');
+      }
+      return 'completed';
+    }
+
+    return 'skipped';
   }
 
   async generateMemorialPhoto(
@@ -2624,7 +2688,7 @@ export class ConversationService {
       userMessage,
       messagePayload.visualAppearanceObservations
     );
-    this.queueMilvusIndexForMessage({
+    await this.queueMilvusIndexForMessage({
       message: userMessage,
       conversation: runtime.conversation,
       userId: runtime.auth.sub,
@@ -2703,7 +2767,10 @@ export class ConversationService {
     const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
         this.recognizeEmotionStateForUserMessage(message, searchableText),
-        this.extractMemoryFactsForUserMessage(message, searchableText),
+        // Legacy agent_memory_fact remains read-compatible but is no longer a
+        // writer. New structured facts have one owner: agent_profile_fact or
+        // the account-level person/temporal stores.
+        Promise.resolve({ succeeded: true, count: 0 }),
         this.extractProfileFactsForUserMessage(
           message,
           searchableText,
@@ -2723,6 +2790,19 @@ export class ConversationService {
           }
         ),
       ]);
+    // The strict parser may establish the person first. Let the semantic
+    // extractor enrich that stable person instead of racing to create another.
+    const relativeFactCount =
+      (await this.relativeMemoryExtractorService
+        ?.captureFromUserMessage(message, searchableText)
+        .catch(error => {
+          this.logger.warn(
+            '[conversation] relative memory extraction skipped, messageId=%s, reason=%s',
+            this.stringifyObjectId(message.id),
+            this.describeReplyError(error)
+          );
+          return 0;
+        })) || 0;
     if (openLoopAudit) {
       this.chatTraceService?.recordCompletedSpan({
         stage: ChatTraceStage.asyncWrite,
@@ -2749,7 +2829,10 @@ export class ConversationService {
       });
     }
     const writtenCount =
-      memoryFacts.count + profileFacts.count + temporalFacts.count;
+      memoryFacts.count +
+      profileFacts.count +
+      temporalFacts.count +
+      relativeFactCount;
     message.memoryWriteStatus =
       memoryFacts.succeeded && profileFacts.succeeded && temporalFacts.succeeded
         ? writtenCount > 0
@@ -2778,57 +2861,15 @@ export class ConversationService {
     });
   }
 
-  private scheduleUserMessageEnrichment(
+  private async scheduleUserMessageEnrichment(
     message: MessageEntity,
     searchableText: string
-  ): void {
-    const traceId = message.traceId;
-    const enrich = async () => {
-      if (!traceId || !this.chatTraceService) {
-        return this.enrichUserMessageForReply(message, searchableText);
-      }
-
-      return this.chatTraceService.runDetachedWithTrace(traceId, () =>
-        this.chatTraceService.withSpan(
-          ChatTraceStage.asyncWrite,
-          'async_write.user_enrichment',
-          async recorder => {
-            await this.enrichUserMessageForReply(message, searchableText);
-            recorder.setAttribute(
-              'memoryWriteStatus',
-              message.memoryWriteStatus
-            );
-            recorder.setAttribute(
-              'legacyFactCount',
-              message.memoryWriteLegacyFactCount
-            );
-            recorder.setAttribute(
-              'profileFactCount',
-              message.memoryWriteProfileFactCount
-            );
-          }
-        )
-      );
-    };
-
-    void enrich()
-      .catch(error => {
-        this.logger.error(
-          '[conversation] background user message enrichment failed, conversationId=%s, messageId=%s, reason=%s',
-          this.stringifyObjectId(message.conversationId),
-          this.stringifyObjectId(message.id),
-          this.describeReplyError(error)
-        );
-      })
-      .finally(() => {
-        if (traceId) {
-          void this.chatTraceService?.markBackgroundCompleted(
-            traceId,
-            new Date(),
-            message.createdAt
-          );
-        }
-      });
+  ): Promise<void> {
+    await this.memoryPipelineTaskService.enqueueForMessage(
+      message,
+      searchableText,
+      [MemoryPipelineTaskKind.structuredMemory]
+    );
   }
 
   private scheduleVisualAppearanceMemory(
@@ -2880,36 +2921,6 @@ export class ConversationService {
         this.stringifyObjectId(message.userId),
         this.describeReplyError(error)
       );
-    }
-  }
-
-  private async extractMemoryFactsForUserMessage(
-    message: MessageEntity,
-    searchableText: string
-  ): Promise<MemoryFactExtractionAudit> {
-    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
-      return { succeeded: true, count: 0 };
-    }
-    if (!this.agentMemoryFactService) {
-      return { succeeded: true, count: 0 };
-    }
-
-    try {
-      const facts =
-        await this.agentMemoryFactService.extractAndUpsertFromUserMessage({
-          message,
-          searchableText,
-        });
-      return { succeeded: true, count: facts.length };
-    } catch (error) {
-      this.logger.error(
-        '[conversation] memory fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
-        this.stringifyObjectId(message.conversationId),
-        this.stringifyObjectId(message.id),
-        this.stringifyObjectId(message.userId),
-        this.describeReplyError(error)
-      );
-      return { succeeded: false, count: 0 };
     }
   }
 
@@ -5667,8 +5678,20 @@ export class ConversationService {
     systemPromptCharacters: number;
     historyMessageCount: number;
   }> {
+    const [userIdentity, profileFacts] = await Promise.all([
+      this.userIdentityMemoryService?.getUserIdentity(
+        options.runtime.conversation.userId
+      ) || Promise.resolve(null),
+      this.agentProfileFactService?.listFactsForPrompt({
+        userId: options.runtime.conversation.userId,
+        agentId: options.runtime.conversation.agentId,
+        limit: 16,
+      }) || Promise.resolve([]),
+    ]);
     const identity = buildAgentIdentityContract({
       agent: options.runtime.agent,
+      userIdentity,
+      profileFacts,
     });
     const categoryLabel: Record<LightweightReplyCategory, string> = {
       good_night: '晚安或休息收尾',
@@ -6712,6 +6735,22 @@ export class ConversationService {
       processed,
       assistantMessages,
     });
+    await this.userRelativeProfileService
+      ?.recordAssistantNameInquiry({
+        userId: runtime.conversation.userId,
+        agentId: runtime.conversation.agentId,
+        userText: before.searchableText,
+        assistantText: assistantMessages
+          .map(message => message.mediaTranscript || message.content || '')
+          .join('\n'),
+      })
+      .catch(error => {
+        this.logger.warn(
+          '[conversation] relative name inquiry audit skipped, conversationId=%s reason=%s',
+          this.stringifyObjectId(runtime.conversation.id),
+          this.describeReplyError(error)
+        );
+      });
     await this.scheduleDeliberateLongReplyIfSelected({
       runtime,
       before,
@@ -10907,12 +10946,12 @@ export class ConversationService {
     return this.messageModel.save(message);
   }
 
-  private queueMilvusIndexForMessage(options: {
+  private async queueMilvusIndexForMessage(options: {
     message: MessageEntity;
     conversation: ConversationEntity;
     userId: string;
     searchableText: string;
-  }): void {
+  }): Promise<void> {
     if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
       return;
     }
@@ -10922,26 +10961,11 @@ export class ConversationService {
       return;
     }
 
-    void this.milvusService
-      .indexConversationMessage({
-        messageId: this.stringifyObjectId(options.message.id),
-        userId: options.userId,
-        conversationId: this.stringifyObjectId(options.conversation.id),
-        agentId: this.stringifyObjectId(options.conversation.agentId),
-        role: options.message.role,
-        type: options.message.type,
-        searchableText,
-        createdAt: options.message.createdAt,
-      })
-      .catch(error => {
-        this.logger.error(
-          '[conversation] memory index failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
-          this.stringifyObjectId(options.conversation.id),
-          this.stringifyObjectId(options.message.id),
-          options.userId,
-          this.describeReplyError(error)
-        );
-      });
+    await this.memoryPipelineTaskService.enqueueForMessage(
+      options.message,
+      searchableText,
+      [MemoryPipelineTaskKind.semanticIndex]
+    );
   }
 
   private async touchConversation(

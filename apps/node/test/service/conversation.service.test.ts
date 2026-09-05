@@ -596,6 +596,15 @@ function createService(options: {
   service.milvusService = {
     indexConversationMessage: jest.fn().mockResolvedValue(undefined),
   } as any;
+  service.memoryPipelineTaskService = {
+    enqueueForMessage: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.relativeMemoryExtractorService = {
+    captureFromUserMessage: jest.fn().mockResolvedValue(0),
+  } as any;
+  service.userRelativeProfileService = {
+    recordAssistantNameInquiry: jest.fn().mockResolvedValue(false),
+  } as any;
   service.bullmqFramework = {
     getQueue: jest.fn(() =>
       options.queueAvailable === false ? undefined : { addJobToQueue, getJob }
@@ -633,11 +642,15 @@ describe('ConversationService main-model tools', () => {
                   id: 'call-1',
                   type: 'function',
                   function: {
-                    name: 'search_relationship_memory',
+                    name: 'lookup_chat_evidence',
                     arguments: JSON.stringify({
-                      missingConcepts: ['共同去过的地方'],
-                      subjectRef: '奶奶',
-                      limit: 3,
+                      requests: [
+                        {
+                          subjectRef: '奶奶',
+                          need: '共同去过的地方',
+                          sources: ['relationship_memory'],
+                        },
+                      ],
                     }),
                   },
                 },
@@ -663,7 +676,7 @@ describe('ConversationService main-model tools', () => {
     service.agentChatToolService = {
       execute: jest.fn().mockResolvedValue({
         version: 'agent_chat_tools_v1',
-        tool: 'search_relationship_memory',
+        tool: 'lookup_chat_evidence',
         status: 'ok',
         items: [
           {
@@ -697,12 +710,7 @@ describe('ConversationService main-model tools', () => {
           mode: 'active',
           eligible: true,
           sampled: true,
-          availableTools: [
-            'search_relationship_memory',
-            'get_family_facts',
-            'get_persona_evidence',
-            'record_user_correction',
-          ],
+          availableTools: ['lookup_chat_evidence'],
           reason: 'memory_candidate',
           plannerMemoryRequested: true,
           maxCalls: 4,
@@ -712,7 +720,7 @@ describe('ConversationService main-model tools', () => {
     });
 
     expect(createChatCompletion).toHaveBeenCalledTimes(2);
-    expect(createChatCompletion.mock.calls[0][0].tools).toHaveLength(4);
+    expect(createChatCompletion.mock.calls[0][0].tools).toHaveLength(1);
     expect(createChatCompletion.mock.calls[1][0].tool_choice).toBe('none');
     expect(createChatCompletion.mock.calls[1][0].messages).toEqual(
       expect.arrayContaining([
@@ -724,7 +732,7 @@ describe('ConversationService main-model tools', () => {
     );
     expect(result.toolAudit).toEqual(
       expect.objectContaining({
-        decisionNames: ['search_relationship_memory'],
+        decisionNames: ['lookup_chat_evidence'],
         executionCount: 1,
         resultItemCount: 1,
         plannerMemoryAgreement: 'both_query',
@@ -1425,19 +1433,15 @@ describe('ConversationService markMessageMemory', () => {
       )
     ).resolves.toEqual({ remembered: true });
 
-    expect(service.milvusService.indexConversationMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messageId: userMessage.id.toHexString(),
-        userId: USER_ID,
-        conversationId: CONVERSATION_ID,
-        agentId: AGENT_ID,
-        role: MessageRole.user,
-        type: MessageType.text,
-        searchableText: '我小时候最喜欢和你一起包饺子',
-      })
+    expect(
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      userMessage,
+      '我小时候最喜欢和你一起包饺子',
+      ['semantic_index']
     );
     expect(
-      service.agentMemoryFactService.extractAndUpsertFromUserMessage
+      service.agentProfileFactService.extractAndUpsertFromUserMessage
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         message: userMessage,
@@ -1684,11 +1688,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(
-      service.agentMemoryFactService.extractAndUpsertFromUserMessage
-    ).toHaveBeenCalledWith({
-      message: userMessage,
-      searchableText: '你不记得我是男生女生了吗？我是女生呀。',
-    });
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      userMessage,
+      '你不记得我是男生女生了吗？我是女生呀。',
+      ['structured_memory']
+    );
     expect(
       service.agentContextService.buildConversationContext
     ).toHaveBeenCalled();
@@ -1709,17 +1714,8 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     );
 
     expect(
-      service.agentEmotionStateService.recognizeAndUpsertFromUserMessage
-    ).toHaveBeenCalledWith({
-      message: userMessage,
-      searchableText: '我好想你',
-    });
-    expect(
-      service.agentMemoryFactService.extractAndUpsertFromUserMessage
-    ).toHaveBeenCalledWith({
-      message: userMessage,
-      searchableText: '我好想你',
-    });
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(userMessage, '我好想你', ['structured_memory']);
   });
 
   it('uses visual memory to guess image identity and records stable appearance candidates', async () => {
@@ -2010,27 +2006,19 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(
       savedMessages.some(message => message.role === MessageRole.user)
     ).toBe(true);
-    expect(service.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('emotion state recognition failed'),
+    expect(
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ role: MessageRole.user }),
       expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.stringContaining('emotion unavailable')
+      ['structured_memory']
     );
   });
 
-  it('does not wait for background memory extraction before returning a reply', async () => {
-    let resolveProfileExtraction: () => void = () => undefined;
-    const pendingProfileExtraction = new Promise<void>(resolve => {
-      resolveProfileExtraction = resolve;
-    });
+  it('persists a background memory task without waiting for extraction', async () => {
     const { service } = createService({
       agent: createAgent(),
     });
-    (
-      service.agentProfileFactService
-        .extractAndUpsertFromUserMessage as jest.Mock
-    ).mockReturnValueOnce(pendingProfileExtraction);
 
     const result = await service.sendMessage(AUTH, CONVERSATION_ID, {
       type: 'text',
@@ -2039,11 +2027,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
 
     expect(result.assistantMessage?.content).toBeTruthy();
     expect(
-      service.agentProfileFactService.extractAndUpsertFromUserMessage
-    ).toHaveBeenCalled();
-
-    resolveProfileExtraction();
-    await pendingProfileExtraction;
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ role: MessageRole.user }),
+      '我今天只是想聊聊天',
+      ['structured_memory']
+    );
   });
 
   it('executes an explicit forget request before building reply context', async () => {
@@ -2414,8 +2403,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(result.replyPending).toBe(true);
     expect(addJobToQueue).toHaveBeenCalled();
     expect(
-      service.agentEmotionStateService.recognizeAndUpsertFromUserMessage
-    ).toHaveBeenCalled();
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ role: MessageRole.user }),
+      '这条消息要先入队',
+      ['structured_memory']
+    );
 
     resolveEmotionRecognition();
     await emotionRecognition;
@@ -2452,8 +2445,12 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).toHaveLength(1);
     expect(addJobToQueue).toHaveBeenCalledTimes(2);
     expect(
-      service.agentProfileFactService.extractAndUpsertFromUserMessage
-    ).toHaveBeenCalledTimes(1);
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ role: MessageRole.user }),
+      '网络重试也只能保存一次',
+      ['structured_memory']
+    );
   });
 
   it('saves voice and enqueues async reply without generating assistant inline', async () => {
@@ -4487,7 +4484,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(message).toEqual(
       expect.objectContaining({
         memoryWriteStatus: 'written',
-        memoryWriteLegacyFactCount: 1,
+        memoryWriteLegacyFactCount: 0,
         memoryWriteProfileFactCount: 2,
         memoryWriteCompletedAt: expect.any(Date),
       })

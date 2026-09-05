@@ -21,6 +21,19 @@ export enum UserRelativeFactStatus {
   uncertain = "uncertain",
 }
 
+export enum UserRelativeFactConfidence {
+  extracted = "extracted",
+  confirmed = "confirmed",
+  userCorrected = "user_corrected",
+}
+
+export interface UserRelativeFactSource {
+  messageId: MongoObjectId;
+  agentId?: MongoObjectId;
+  sourceText?: string;
+  observedAt: Date;
+}
+
 @Index(["userId", "personId", "status", "updatedAt"], {
   background: true,
 })
@@ -47,6 +60,21 @@ export class UserRelativeFactEntity extends BaseEntity {
 
   @Column()
   status: UserRelativeFactStatus;
+
+  @Column()
+  confidence: UserRelativeFactConfidence;
+
+  @Column()
+  supportCount: number;
+
+  @Column()
+  sources?: UserRelativeFactSource[];
+
+  @Column()
+  effectiveAt?: Date;
+
+  @Column()
+  validUntil?: Date;
 
   @Column()
   occurredAt?: Date;

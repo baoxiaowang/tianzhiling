@@ -59,6 +59,13 @@ export class UserRelativeProfileEntity extends BaseEntity {
   @Column()
   relationshipsToAgents?: UserRelativeAgentRelationship[];
 
+  /** Prevents repeated name questions when the user has not answered yet. */
+  @Column()
+  nameInquiryLastAskedAt?: Date;
+
+  @Column()
+  nameInquiryCount?: number;
+
   @Column()
   version: typeof USER_RELATIVE_PROFILE_VERSION;
 

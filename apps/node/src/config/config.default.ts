@@ -23,6 +23,7 @@ import {
   CouponLedgerEntity,
   FreeChatAgentLedgerEntity,
   MessageEntity,
+  MemoryPipelineTaskEntity,
   MessengerCallEventEntity,
   OrderEntity,
   OrderRefundEntity,
@@ -658,7 +659,17 @@ export default {
     ),
     collectionName: readStringFrom(
       ['NODE_MILVUS_COLLECTION_NAME'],
-      'conversation_message_memory'
+      'conversation_message_memory_v2'
+    ),
+    schemaVersion: readStringFrom(
+      ['NODE_MILVUS_SCHEMA_VERSION'],
+      'conversation_message_memory_v2'
+    ),
+    analyzer: readStringFrom(['NODE_MILVUS_ANALYZER'], 'chinese'),
+    writeEnabled: readBooleanFrom(['NODE_MILVUS_WRITE_ENABLED'], true),
+    retrievalMode: readStringFrom(
+      ['NODE_MILVUS_RETRIEVAL_MODE'],
+      'off'
     ),
     maxTextLength: readNumberFrom(['NODE_MILVUS_MAX_TEXT_LENGTH'], 4096),
     topK: readNumberFrom(['NODE_MILVUS_TOP_K'], 6),
@@ -842,6 +853,7 @@ export default {
           CouponLedgerEntity,
           FreeChatAgentLedgerEntity,
           MessageEntity,
+          MemoryPipelineTaskEntity,
           MessengerCallEventEntity,
           OrderEntity,
           OrderRefundEntity,

@@ -321,7 +321,9 @@ export function buildAgentIdentityPrompt(
       value: clean(fact.value, 240),
       status: fact.status,
       occurredAt: fact.occurredAt,
+      confidence: fact.confidence,
     })),
+    needsName: relative.needsName,
   }));
 
   return [
@@ -331,6 +333,9 @@ export function buildAgentIdentityPrompt(
       ? `本轮相关其他人物：${JSON.stringify(knownPeople)}`
       : '',
     relatives.length ? `本轮相关亲人档案：${JSON.stringify(relatives)}` : '',
+    relatives.some(relative => relative.needsName)
+      ? '若用户正在具体谈论姓名尚未确认的孩子，且当前话题适合，可以自然问一次孩子叫什么；不要脱离话题盘问，也不要把关系称呼当作姓名。'
+      : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
   ]

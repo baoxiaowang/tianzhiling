@@ -8,9 +8,12 @@ import {
   MongoObjectId,
   PERSON_TEMPORAL_PROFILE_VERSION,
   PersonTemporalAssertionEntity,
+  PersonTemporalAssertionConfidence,
   PersonTemporalAssertionStatus,
+  PersonTemporalCalendar,
   PersonTemporalConflictStatus,
   PersonTemporalEventType,
+  PersonTemporalExpressionKind,
   PersonTemporalPrecision,
   PersonTemporalProfileEntity,
   PersonTemporalResolutionCertainty,
@@ -35,6 +38,31 @@ export interface RecordAgentDepartureTimeResult {
   assertion: PersonTemporalAssertionEntity;
   profile: PersonTemporalProfileEntity;
   projectionUpdated: boolean;
+}
+
+export interface RecordExplicitPersonDateOptions {
+  message: MessageEntity;
+  subjectType: PersonTemporalSubjectType;
+  subjectId: MongoObjectId;
+  eventType: PersonTemporalEventType;
+  exactDate?: Date;
+  year?: number;
+  month?: number;
+  day?: number;
+  calendar?: PersonTemporalCalendar;
+  isCorrection?: boolean;
+  rawText?: string;
+}
+
+export interface PersonTemporalPromptFact {
+  subjectRef: string;
+  eventType: PersonTemporalEventType;
+  exactDate?: string;
+  estimatedStart?: string;
+  estimatedEnd?: string;
+  precision: PersonTemporalPrecision;
+  resolutionCertainty: PersonTemporalResolutionCertainty;
+  sourceText?: string;
 }
 
 export interface DepartureTimeSemanticDecision {
@@ -207,6 +235,191 @@ export class PersonTemporalMemoryService {
     );
 
     return { assertion, profile, projectionUpdated };
+  }
+
+  async recordExplicitPersonDate(
+    options: RecordExplicitPersonDateOptions
+  ): Promise<PersonTemporalProfileEntity | null> {
+    const exactDate =
+      options.exactDate instanceof Date &&
+      Number.isFinite(options.exactDate.getTime())
+        ? options.exactDate
+        : undefined;
+    const year = exactDate?.getUTCFullYear() || options.year;
+    const month = exactDate ? exactDate.getUTCMonth() + 1 : options.month;
+    const day = exactDate?.getUTCDate() || options.day;
+    const isRecurringBirthday =
+      options.eventType === PersonTemporalEventType.birthdayObservance;
+    if (
+      (!year && !isRecurringBirthday) ||
+      (year && (year < 1900 || year > new Date().getUTCFullYear() + 2))
+    ) {
+      return null;
+    }
+    if (!year && (!month || !day)) return null;
+    if (month && (month < 1 || month > 12)) return null;
+    if (day && (day < 1 || day > 31)) return null;
+    if (
+      month &&
+      day &&
+      !this.isValidMonthDay(
+        year,
+        month,
+        day,
+        options.calendar || PersonTemporalCalendar.gregorian
+      )
+    ) {
+      return null;
+    }
+
+    const precision = exactDate
+      ? PersonTemporalPrecision.exactDay
+      : month && day
+      ? PersonTemporalPrecision.monthDay
+      : month
+      ? PersonTemporalPrecision.yearMonth
+      : PersonTemporalPrecision.year;
+    const rawText = (options.rawText || options.message.content || '')
+      .trim()
+      .slice(0, 500);
+    const semanticKey = [
+      options.subjectType,
+      options.subjectId.toString(),
+      options.eventType,
+      year || 0,
+      month || 0,
+      day || 0,
+    ].join(':');
+    let assertion = await this.assertionModel.findOne({
+      where: {
+        userId: options.message.userId,
+        sourceMessageId: options.message.id,
+        semanticKey,
+      },
+    });
+    const now = new Date();
+    if (!assertion) {
+      assertion = new PersonTemporalAssertionEntity();
+      Object.assign(assertion, {
+        userId: options.message.userId,
+        subjectType: options.subjectType,
+        subjectId: options.subjectId,
+        eventType: options.eventType,
+        expressionKind: exactDate
+          ? PersonTemporalExpressionKind.exactDate
+          : PersonTemporalExpressionKind.partialDate,
+        calendar: options.calendar || PersonTemporalCalendar.gregorian,
+        rawText,
+        referenceAt: options.message.createdAt,
+        normalizedExactDate: exactDate,
+        normalizedStart: exactDate,
+        normalizedEnd: exactDate,
+        normalizedYear: year,
+        normalizedMonth: month,
+        normalizedDay: day,
+        precision,
+        confidence: PersonTemporalAssertionConfidence.confirmed,
+        resolutionCertainty: exactDate
+          ? PersonTemporalResolutionCertainty.explicitExact
+          : PersonTemporalResolutionCertainty.unresolved,
+        status: PersonTemporalAssertionStatus.active,
+        semanticKey,
+        derivationRule: 'person_date_semantic_v1',
+        isCorrection: Boolean(options.isCorrection),
+        sourceAgentId: options.message.agentId,
+        sourceMessageId: options.message.id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await this.assertionModel.save(assertion);
+    }
+
+    const profile = await this.getOrCreateProfile({
+      userId: options.message.userId,
+      subjectId: options.subjectId,
+      subjectType: options.subjectType,
+      eventType: options.eventType,
+    });
+    const parsed: ParsedDepartureTimeAssertion = {
+      expressionKind: assertion.expressionKind,
+      calendar: assertion.calendar,
+      precision: assertion.precision,
+      confidence: assertion.confidence,
+      resolutionCertainty: assertion.resolutionCertainty,
+      normalizedExactDate: assertion.normalizedExactDate,
+      normalizedStart: assertion.normalizedStart,
+      normalizedEnd: assertion.normalizedEnd,
+      normalizedYear: assertion.normalizedYear,
+      normalizedMonth: assertion.normalizedMonth,
+      normalizedDay: assertion.normalizedDay,
+      approximate: false,
+      isCorrection: Boolean(assertion.isCorrection),
+      derivationRule: assertion.derivationRule || 'person_date_semantic_v1',
+    };
+    await this.applyAssertionToProfile({ assertion, parsed, profile });
+    return profile;
+  }
+
+  async listProfilesForPrompt(options: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    relativeIds?: MongoObjectId[];
+  }): Promise<PersonTemporalPromptFact[]> {
+    const subjectClauses: Array<Record<string, unknown>> = [
+      {
+        subjectType: PersonTemporalSubjectType.user,
+        subjectId: options.userId,
+      },
+      {
+        subjectType: PersonTemporalSubjectType.agent,
+        subjectId: options.agentId,
+      },
+    ];
+    if (options.relativeIds?.length) {
+      subjectClauses.push({
+        subjectType: PersonTemporalSubjectType.relative,
+        subjectId: { $in: options.relativeIds },
+      });
+    }
+    const profiles = await this.profileModel.find({
+      where: {
+        userId: options.userId,
+        $or: subjectClauses,
+      } as never,
+      order: { updatedAt: 'DESC' },
+      take: 16,
+    });
+    const assertionIds = profiles
+      .map(profile => profile.bestAssertionId)
+      .filter((id): id is MongoObjectId => Boolean(id));
+    const assertions = assertionIds.length
+      ? await this.assertionModel.find({
+          where: { _id: { $in: assertionIds } } as never,
+        })
+      : [];
+    const assertionsById = new Map(
+      assertions.map(assertion => [assertion.id.toString(), assertion])
+    );
+    return profiles.map(profile => {
+      const assertion = profile.bestAssertionId
+        ? assertionsById.get(profile.bestAssertionId.toString())
+        : undefined;
+      return {
+        subjectRef:
+          profile.subjectType === PersonTemporalSubjectType.agent
+            ? 'agent'
+            : profile.subjectType === PersonTemporalSubjectType.user
+            ? 'user'
+            : `person:${profile.subjectId.toString()}`,
+        eventType: profile.eventType,
+        exactDate: this.dateOnly(profile.exactDate),
+        estimatedStart: this.dateOnly(profile.estimatedStart),
+        estimatedEnd: this.dateOnly(profile.estimatedEnd),
+        precision: profile.precision,
+        resolutionCertainty: profile.resolutionCertainty,
+        sourceText: assertion?.rawText?.trim().slice(0, 160),
+      };
+    });
   }
 
   private async extractDepartureTimeWithModel(
@@ -532,13 +745,17 @@ export class PersonTemporalMemoryService {
     userId: MongoObjectId;
     subjectId: MongoObjectId;
     legacyExactDate?: Date;
+    subjectType?: PersonTemporalSubjectType;
+    eventType?: PersonTemporalEventType;
   }): Promise<PersonTemporalProfileEntity> {
+    const subjectType = options.subjectType || PersonTemporalSubjectType.agent;
+    const eventType = options.eventType || PersonTemporalEventType.death;
     const existing = await this.profileModel.findOne({
       where: {
         userId: options.userId,
-        subjectType: PersonTemporalSubjectType.agent,
+        subjectType,
         subjectId: options.subjectId,
-        eventType: PersonTemporalEventType.death,
+        eventType,
       },
     });
     if (existing) return existing;
@@ -547,9 +764,9 @@ export class PersonTemporalMemoryService {
     const profile = new PersonTemporalProfileEntity();
     Object.assign(profile, {
       userId: options.userId,
-      subjectType: PersonTemporalSubjectType.agent,
+      subjectType,
       subjectId: options.subjectId,
-      eventType: PersonTemporalEventType.death,
+      eventType,
       ...(options.legacyExactDate
         ? {
             exactDate: options.legacyExactDate,
@@ -579,9 +796,9 @@ export class PersonTemporalMemoryService {
       const concurrentlyCreated = await this.profileModel.findOne({
         where: {
           userId: options.userId,
-          subjectType: PersonTemporalSubjectType.agent,
+          subjectType,
           subjectId: options.subjectId,
-          eventType: PersonTemporalEventType.death,
+          eventType,
         },
       });
       if (concurrentlyCreated) return concurrentlyCreated;
@@ -716,6 +933,30 @@ export class PersonTemporalMemoryService {
       left.getUTCFullYear() === right.getUTCFullYear() &&
       left.getUTCMonth() === right.getUTCMonth() &&
       left.getUTCDate() === right.getUTCDate()
+    );
+  }
+
+  private dateOnly(value?: Date): string | undefined {
+    return value instanceof Date && Number.isFinite(value.getTime())
+      ? value.toISOString().slice(0, 10)
+      : undefined;
+  }
+
+  private isValidMonthDay(
+    year: number | undefined,
+    month: number,
+    day: number,
+    calendar: PersonTemporalCalendar
+  ): boolean {
+    if (calendar === PersonTemporalCalendar.lunar) {
+      return month <= 12 && day <= 30;
+    }
+    const validationYear = year || 2000;
+    const date = new Date(Date.UTC(validationYear, month - 1, day));
+    return (
+      date.getUTCFullYear() === validationYear &&
+      date.getUTCMonth() + 1 === month &&
+      date.getUTCDate() === day
     );
   }
 }

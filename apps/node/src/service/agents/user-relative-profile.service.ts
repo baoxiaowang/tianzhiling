@@ -5,6 +5,7 @@ import {
   USER_RELATIVE_PROFILE_VERSION,
   UserRelativeAgentRelationship,
   UserRelativeFactDomain,
+  UserRelativeFactConfidence,
   UserRelativeFactEntity,
   UserRelativeFactStatus,
   UserRelativeLifeStage,
@@ -22,6 +23,7 @@ export interface UserRelativePromptFact {
   value: string;
   status: UserRelativeFactStatus;
   occurredAt?: Date;
+  confidence?: UserRelativeFactConfidence;
 }
 
 export interface UserRelativePromptProfile {
@@ -37,6 +39,7 @@ export interface UserRelativePromptProfile {
   birthDate?: Date;
   birthYear?: number;
   facts: UserRelativePromptFact[];
+  needsName?: boolean;
 }
 
 export interface EnsureRelativeProfileOptions {
@@ -59,13 +62,19 @@ export interface RecordRelativeFactOptions {
   sourceAgentId?: MongoObjectId;
   sourceMessageId?: MongoObjectId;
   sourceText?: string;
+  confidence?: UserRelativeFactConfidence;
+  effectiveAt?: Date;
+  validUntil?: Date;
 }
 
 const RELATIVE_REFERENCE_PATTERN =
   /亲人|家人|爸爸|父亲|妈妈|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|爱人|伴侣|哥哥|姐姐|弟弟|妹妹|兄弟|姐妹|孩子|宝宝|宝贝|儿子|女儿|闺女|小子|老大|老二|二宝|孙子|孙女|外孙|外孙女|重孙|重孙女|外甥|外甥女|侄子|侄女|叔叔|伯伯|舅舅|姑姑|姨妈|阿姨/;
 const RELATIVE_RELATION_PATTERN =
-  /^(?:爸爸|父亲|妈妈|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|爱人|伴侣|哥哥|姐姐|弟弟|妹妹|兄弟|姐妹|儿子|女儿|孩子|孙子|孙女|外孙|外孙女|重孙|重孙女|外甥|外甥女|侄子|侄女|叔叔|伯伯|舅舅|姑姑|姨妈|阿姨|家人|亲人)$/;
+  /^(?:爸爸|父亲|妈妈|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|爱人|伴侣|哥哥|姐姐|弟弟|妹妹|兄弟|姐妹|儿子|女儿|闺女|孩子|宝宝|宝贝|老大|老二|二宝|孙子|孙女|外孙|外孙女|重孙|重孙女|外甥|外甥女|侄子|侄女|叔叔|伯伯|舅舅|姑姑|姨妈|阿姨|家人|亲人)$/;
 const MAX_FACTS_PER_RELATIVE = 4;
+const NAME_INQUIRY_COOLDOWN_MS = 90 * 24 * 60 * 60 * 1000;
+const ASSISTANT_NAME_INQUIRY_PATTERN =
+  /(?:孩子|宝宝|宝贝|儿子|女儿|闺女|小家伙).{0,8}(?:叫什么名字|名字叫什么|名字是什么|名字呢)|(?:叫什么名字|怎么称呼)(?:[呀呢啊吗？?]|$)/u;
 
 @Provide()
 export class UserRelativeProfileService {
@@ -251,6 +260,14 @@ export class UserRelativeProfileService {
         current.sourceText =
           this.cleanSource(options.sourceText) || current.sourceText;
         current.updatedAt = now;
+        current.supportCount = Math.max(1, current.supportCount || 1) + 1;
+        current.confidence =
+          options.confidence ||
+          current.confidence ||
+          UserRelativeFactConfidence.extracted;
+        current.sources = this.appendFactSource(current.sources, options, now);
+        current.effectiveAt = options.effectiveAt || current.effectiveAt;
+        current.validUntil = options.validUntil || current.validUntil;
         await this.relativeFactModel.save(current);
         return current;
       }
@@ -269,6 +286,12 @@ export class UserRelativeProfileService {
       key,
       value,
       status,
+      confidence:
+        options.confidence || UserRelativeFactConfidence.extracted,
+      supportCount: 1,
+      sources: this.appendFactSource([], options, now),
+      effectiveAt: options.effectiveAt,
+      validUntil: options.validUntil,
       occurredAt: options.occurredAt,
       resolvedAt: options.resolvedAt,
       sourceAgentId: options.sourceAgentId,
@@ -406,9 +429,51 @@ export class UserRelativeProfileService {
             value: fact.value,
             status: fact.status,
             occurredAt: fact.occurredAt,
+            confidence:
+              fact.confidence || UserRelativeFactConfidence.extracted,
           })),
+        needsName:
+          !Boolean(
+            person.preferredName || person.realName || person.aliases?.length
+          ) &&
+          (!profile.nameInquiryLastAskedAt ||
+            profile.nameInquiryLastAskedAt.getTime() <=
+              Date.now() - NAME_INQUIRY_COOLDOWN_MS),
       };
     });
+  }
+
+  async recordAssistantNameInquiry(options: {
+    userId: MongoObjectId;
+    agentId: MongoObjectId;
+    userText: string;
+    assistantText: string;
+  }): Promise<boolean> {
+    if (
+      !RELATIVE_REFERENCE_PATTERN.test(options.userText) ||
+      !ASSISTANT_NAME_INQUIRY_PATTERN.test(options.assistantText)
+    ) {
+      return false;
+    }
+    const candidates = (
+      await this.listRelevantForPrompt({
+        userId: options.userId,
+        agentId: options.agentId,
+        query: options.userText,
+        limit: 4,
+      })
+    ).filter(item => item.needsName);
+    if (candidates.length !== 1) return false;
+    const personId = new MongoObjectId(candidates[0].id.replace(/^person:/, ''));
+    const profile = await this.relativeProfileModel.findOne({
+      where: { userId: options.userId, personId },
+    });
+    if (!profile) return false;
+    profile.nameInquiryLastAskedAt = new Date();
+    profile.nameInquiryCount = Math.max(0, profile.nameInquiryCount || 0) + 1;
+    profile.updatedAt = profile.nameInquiryLastAskedAt;
+    await this.relativeProfileModel.save(profile);
+    return true;
   }
 
   private unique(values: Array<string | undefined>): string[] {
@@ -420,6 +485,26 @@ export class UserRelativeProfileService {
   private cleanSource(value?: string): string | undefined {
     const clean = value?.trim();
     return clean ? clean.slice(0, 500) : undefined;
+  }
+
+  private appendFactSource(
+    sources: UserRelativeFactEntity['sources'],
+    options: RecordRelativeFactOptions,
+    observedAt: Date
+  ): NonNullable<UserRelativeFactEntity['sources']> {
+    if (!options.sourceMessageId) return sources || [];
+    const messageId = options.sourceMessageId.toString();
+    return [
+      ...(sources || []).filter(
+        source => source.messageId?.toString() !== messageId
+      ),
+      {
+        messageId: options.sourceMessageId,
+        agentId: options.sourceAgentId,
+        sourceText: this.cleanSource(options.sourceText),
+        observedAt,
+      },
+    ].slice(-8);
   }
 }
 

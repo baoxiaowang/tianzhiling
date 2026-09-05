@@ -22,6 +22,11 @@ import {
   VOICE_TIMBRE_CLEANUP_QUEUE,
   VOICE_TIMBRE_CLEANUP_JOB_ID,
 } from './service/voice-timbre-library.service';
+import {
+  MEMORY_PIPELINE_QUEUE,
+  MEMORY_PIPELINE_RECONCILE_INTERVAL_MS,
+  MEMORY_PIPELINE_RECONCILE_JOB_ID,
+} from './service/memory-pipeline-task.service';
 
 @Configuration({
   imports: [
@@ -58,6 +63,28 @@ export class MainConfiguration {
   }
 
   async onServerReady() {
+    try {
+      const memoryQueue = this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE);
+      if (!memoryQueue) {
+        this.logger.warn('[memory-pipeline] reconciliation queue is unavailable');
+      } else {
+        await memoryQueue.addJobToQueue(
+          { reconcile: true },
+          {
+            jobId: MEMORY_PIPELINE_RECONCILE_JOB_ID,
+            repeat: { every: MEMORY_PIPELINE_RECONCILE_INTERVAL_MS },
+            removeOnComplete: true,
+            removeOnFail: 30,
+          }
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] reconciliation scheduling failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
     try {
       const cleanupQueue = this.bullmqFramework?.getQueue(
         VOICE_TIMBRE_CLEANUP_QUEUE

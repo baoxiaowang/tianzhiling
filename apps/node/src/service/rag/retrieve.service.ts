@@ -17,8 +17,8 @@ export interface RetrieveConversationMemoriesOptions {
   limit?: number;
 }
 
-// RRF 分数区分度阈值：top1 跟第 3 名的差距低于此值视为噪声
-const MIN_RRF_GAP = 0.0006;
+const DEFAULT_CANDIDATE_LIMIT = 20;
+const DEFAULT_RESULT_LIMIT = 5;
 
 @Provide()
 export class RetrieveService {
@@ -43,10 +43,13 @@ export class RetrieveService {
       return [];
     }
 
-    if (
-      typeof this.milvusService?.isEnabled === 'function' &&
-      !this.milvusService.isEnabled()
-    ) {
+    const retrievalEnabled =
+      typeof this.milvusService?.isRetrievalEnabled === 'function'
+        ? this.milvusService.isRetrievalEnabled()
+        : typeof this.milvusService?.isEnabled === 'function'
+        ? this.milvusService.isEnabled()
+        : true;
+    if (!retrievalEnabled) {
       return [];
     }
 
@@ -59,17 +62,30 @@ export class RetrieveService {
         agentId: options.agentId?.trim() || undefined,
         excludeMessageIds: options.excludeMessageIds,
         createdBeforeTs: options.createdBeforeTs,
-        limit: options.limit,
+        limit: Math.max(DEFAULT_CANDIDATE_LIMIT, options.limit || 0),
       });
 
       const activeUserMemories = await this.filterArchivedMemories(
         memories.filter(memory => memory.role === MessageRole.user)
       );
 
-      const relevantMemories = this.filterByScoreGap(activeUserMemories);
-      const freshMemories = this.applyMemoryTimeDecay(relevantMemories);
+      const relevantMemories = this.selectRelevantMemories(
+        activeUserMemories,
+        options.limit || DEFAULT_RESULT_LIMIT
+      );
 
-      return freshMemories.map(memory => ({
+      if (this.milvusService.getRetrievalMode?.() === 'shadow') {
+        this.logger.info?.(
+          '[retrieve] shadow result, conversationId=%s, userId=%s, candidates=%s, selected=%s',
+          options.conversationId || '',
+          options.userId,
+          activeUserMemories.length,
+          relevantMemories.length
+        );
+        return [];
+      }
+
+      return relevantMemories.map(memory => ({
         id: memory.id,
         content: memory.searchableText,
         role: memory.role,
@@ -87,45 +103,32 @@ export class RetrieveService {
     }
   }
 
-  // 时间衰减：超过 90 天的记忆不注入，30-90 天降权
-  private applyMemoryTimeDecay(
-    memories: RetrievedConversationMemory[]
+  private selectRelevantMemories(
+    memories: RetrievedConversationMemory[],
+    limit: number
   ): RetrievedConversationMemory[] {
-    if (!memories.length) return [];
+    const selected: RetrievedConversationMemory[] = [];
+    const seenMessages = new Set<string>();
+    const seenTexts = new Set<string>();
 
-    const now = Date.now();
-    const DAY_MS = 86400000;
-
-    return memories.filter(m => {
-      const ageDays = (now - (m.createdAtTs || 0)) / DAY_MS;
-      return ageDays <= 90; // 超过 90 天直接丢弃
-    });
-  }
-
-  // RRF 分数区分度门控：top1 跟第 3 名的差距太小说明没有真正命中
-  private filterByScoreGap(
-    memories: RetrievedConversationMemory[]
-  ): RetrievedConversationMemory[] {
-    if (memories.length < 3) {
-      return memories.slice(0, 2);
+    for (const memory of memories) {
+      const normalizedText = memory.searchableText
+        .replace(/\s+/g, '')
+        .toLowerCase();
+      if (
+        !normalizedText ||
+        seenMessages.has(memory.id) ||
+        seenTexts.has(normalizedText)
+      ) {
+        continue;
+      }
+      seenMessages.add(memory.id);
+      seenTexts.add(normalizedText);
+      selected.push(memory);
+      if (selected.length >= Math.max(1, Math.min(limit, 8))) break;
     }
 
-    const scores = memories.map(m => m.score || 0);
-    const top1 = scores[0];
-    const top3 = scores[2];
-
-    // 区分度不足 → 噪声，不注入
-    if (top1 - top3 < MIN_RRF_GAP) {
-      return [];
-    }
-
-    // 有区分度：取明显高于中位数的
-    const median = scores[Math.floor(scores.length / 2)];
-    const relevant = memories.filter(
-      m => (m.score || 0) - median >= MIN_RRF_GAP / 2
-    );
-
-    return relevant.slice(0, 2);
+    return selected;
   }
 
 

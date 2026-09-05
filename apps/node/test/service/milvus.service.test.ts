@@ -19,6 +19,7 @@ describe('MilvusService endpoint protection', () => {
     service.milvusConfig = {
       enabled: true,
       address: 'standalone:19530',
+      retrievalMode: 'active',
     };
     service.openAIConfig = {};
     service.openAIService = {
@@ -52,7 +53,7 @@ describe('MilvusService endpoint protection', () => {
 
     expect(mockedLookup).toHaveBeenCalledTimes(1);
     expect(service.openAIService.createEmbedding).not.toHaveBeenCalled();
-    expect(service.isEnabled()).toBe(false);
+    expect(service.isEnabled()).toBe(true);
 
     await service.searchConversationMemories({
       query: '再次查询',
@@ -87,10 +88,10 @@ describe('MilvusService endpoint protection', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([[], []]);
     expect(mockedLookup).toHaveBeenCalledTimes(1);
-    expect(service.isEnabled()).toBe(false);
+    expect(service.isEnabled()).toBe(true);
   });
 
-  it('permanently disables the process after an SDK timeout', () => {
+  it('keeps a worker recoverable after one SDK timeout', () => {
     (
       service as unknown as {
         recordMilvusFailure(context: string, error: Error): void;
@@ -100,6 +101,45 @@ describe('MilvusService endpoint protection', () => {
       new Error('milvus hasCollection timed out after 15000ms')
     );
 
-    expect(service.isEnabled()).toBe(false);
+    expect(service.isEnabled()).toBe(true);
+  });
+
+  it('deletes all semantic memories for one user with a scoped filter', async () => {
+    const deleteEntities = jest.fn().mockResolvedValue({});
+    (service as any).client = {
+      connectPromise: Promise.resolve(),
+      hasCollection: jest.fn().mockResolvedValue({ value: true }),
+      delete: deleteEntities,
+    };
+
+    await expect(service.deleteUserMemories('user-1')).resolves.toBe(true);
+    expect(deleteEntities).toHaveBeenCalledWith({
+      collection_name: 'conversation_message_memory_v2',
+      filter: 'userId == "user-1"',
+    });
+  });
+
+  it('creates v2 storage with a user partition and Chinese analyzer', async () => {
+    const createCollection = jest.fn().mockResolvedValue({});
+    (service as any).client = {
+      connectPromise: Promise.resolve(),
+      hasCollection: jest.fn().mockResolvedValue({ value: false }),
+      createCollection,
+      loadCollection: jest.fn().mockResolvedValue({}),
+    };
+
+    await (service as any).doEnsureCollection(1536);
+    const definition = createCollection.mock.calls[0][0];
+    expect(definition.collection_name).toBe('conversation_message_memory_v2');
+    expect(definition.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'userId', is_partition_key: true }),
+        expect.objectContaining({
+          name: 'searchableText',
+          enable_analyzer: true,
+          analyzer_params: { type: 'chinese' },
+        }),
+      ])
+    );
   });
 });
