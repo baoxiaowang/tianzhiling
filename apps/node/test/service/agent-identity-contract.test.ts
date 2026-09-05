@@ -36,6 +36,8 @@ describe('agent identity contract', () => {
           relationToAgent: '外孙女',
           personCallsAgent: '外婆',
           lifeStage: 'school_age',
+          nameKnown: true,
+          nameInquiryCount: 0,
           facts: [
             {
               domain: UserRelativeFactDomain.health,
@@ -55,12 +57,43 @@ describe('agent identity contract', () => {
     expect(prompt).toContain('安安今天发烧');
     expect(prompt).not.toContain('必须询问');
     expect(prompt).not.toContain('应该追问');
+    expect(prompt).not.toContain('可以自然问一次');
     expect(objects[2]).toMatchObject({
       id: 'person:665000000000000000000201',
       label: '安安',
       relationToUser: '女儿',
       relationToAgent: '外孙女',
     });
+  });
+
+  it('exposes an unnamed child and prior inquiry as facts without directing a question', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        name: '弟弟',
+        iCallAgent: '弟弟',
+        agentCallMe: '姐姐',
+      } as AgentEntity,
+      relatives: [
+        {
+          id: 'person:665000000000000000000202',
+          aliases: [],
+          relationToUser: '女儿',
+          lifeStage: 'newborn',
+          facts: [],
+          nameKnown: false,
+          nameInquiryLastAskedAt: new Date('2026-09-01T00:00:00.000Z'),
+          nameInquiryCount: 1,
+        },
+      ],
+    });
+
+    const prompt = buildAgentIdentityPrompt(identity);
+
+    expect(prompt).toContain('"nameKnown":false');
+    expect(prompt).toContain('"nameInquiryCount":1');
+    expect(prompt).toContain('2026-09-01T00:00:00.000Z');
+    expect(prompt).not.toContain('孩子叫什么');
+    expect(prompt).not.toContain('可以自然问');
   });
 
   it('keeps explicit role identity ahead of a conflicting derived persona', () => {

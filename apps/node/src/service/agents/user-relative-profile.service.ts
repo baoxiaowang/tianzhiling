@@ -39,7 +39,9 @@ export interface UserRelativePromptProfile {
   birthDate?: Date;
   birthYear?: number;
   facts: UserRelativePromptFact[];
-  needsName?: boolean;
+  nameKnown: boolean;
+  nameInquiryLastAskedAt?: Date;
+  nameInquiryCount: number;
 }
 
 export interface PersonSemanticMemoryUnit {
@@ -79,7 +81,6 @@ const RELATIVE_REFERENCE_PATTERN =
 const RELATIVE_RELATION_PATTERN =
   /^(?:爸爸|父亲|妈妈|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|爱人|伴侣|哥哥|姐姐|弟弟|妹妹|兄弟|姐妹|儿子|女儿|闺女|孩子|宝宝|宝贝|老大|老二|二宝|孙子|孙女|外孙|外孙女|重孙|重孙女|外甥|外甥女|侄子|侄女|叔叔|伯伯|舅舅|姑姑|姨妈|阿姨|家人|亲人)$/;
 const MAX_FACTS_PER_RELATIVE = 4;
-const NAME_INQUIRY_COOLDOWN_MS = 90 * 24 * 60 * 60 * 1000;
 const ASSISTANT_NAME_INQUIRY_PATTERN =
   /(?:孩子|宝宝|宝贝|儿子|女儿|闺女|小家伙).{0,8}(?:叫什么名字|名字叫什么|名字是什么|名字呢)|(?:叫什么名字|怎么称呼)(?:[呀呢啊吗？?]|$)/u;
 
@@ -517,13 +518,11 @@ export class UserRelativeProfileService {
             occurredAt: fact.occurredAt,
             confidence: fact.confidence || UserRelativeFactConfidence.extracted,
           })),
-        needsName:
-          !Boolean(
-            person.preferredName || person.realName || person.aliases?.length
-          ) &&
-          (!profile.nameInquiryLastAskedAt ||
-            profile.nameInquiryLastAskedAt.getTime() <=
-              Date.now() - NAME_INQUIRY_COOLDOWN_MS),
+        nameKnown: Boolean(
+          person.preferredName || person.realName || person.aliases?.length
+        ),
+        nameInquiryLastAskedAt: profile.nameInquiryLastAskedAt,
+        nameInquiryCount: Math.max(0, profile.nameInquiryCount || 0),
       };
     });
   }
@@ -547,7 +546,7 @@ export class UserRelativeProfileService {
         query: options.userText,
         limit: 4,
       })
-    ).filter(item => item.needsName);
+    ).filter(item => !item.nameKnown);
     if (candidates.length !== 1) return false;
     const personId = new MongoObjectId(
       candidates[0].id.replace(/^person:/, '')
