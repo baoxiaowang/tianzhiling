@@ -193,7 +193,9 @@ describe('UserRelativeProfileService', () => {
             confidence: 'extracted',
           },
         ],
-        needsName: false,
+        nameKnown: true,
+        nameInquiryLastAskedAt: undefined,
+        nameInquiryCount: 0,
       },
     ]);
     expect(
@@ -204,7 +206,7 @@ describe('UserRelativeProfileService', () => {
     ).toEqual([]);
   });
 
-  it('persists a cooldown after the assistant asks one unnamed child for a name', async () => {
+  it('records an assistant name inquiry without deciding when another inquiry is allowed', async () => {
     const service = new UserRelativeProfileService();
     const profile = Object.assign(new UserRelativeProfileEntity(), {
       id: new MongoObjectId('665000000000000000000302'),
@@ -247,7 +249,11 @@ describe('UserRelativeProfileService', () => {
       agentId: AGENT_ID,
       query: '孩子最近怎么样',
     });
-    expect(prompt[0].needsName).toBe(false);
+    expect(prompt[0]).toMatchObject({
+      nameKnown: false,
+      nameInquiryCount: 1,
+    });
+    expect(prompt[0].nameInquiryLastAskedAt).toBeInstanceOf(Date);
   });
 
   it('builds independent semantic units for each person fact in one source message', async () => {
