@@ -55,6 +55,82 @@ describe('parseAgentDepartureTime', () => {
     });
   });
 
+  it('keeps directional and fuzzy durations as explicit ranges', () => {
+    expect(
+      parseAgentDepartureTime({
+        text: '你是十年前走的',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericValue: 10,
+      numericMin: 9,
+      numericMax: 11,
+      normalizedStart: new Date('2015-01-01T00:00:00.000Z'),
+      normalizedEnd: new Date('2017-12-31T00:00:00.000Z'),
+      resolutionCertainty: PersonTemporalResolutionCertainty.estimatedRange,
+    });
+    expect(
+      parseAgentDepartureTime({
+        text: '你离开十几年了',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericMin: 11,
+      numericMax: 19,
+      normalizedStart: new Date('2007-01-01T00:00:00.000Z'),
+      normalizedEnd: new Date('2015-12-31T00:00:00.000Z'),
+      precision: PersonTemporalPrecision.yearRange,
+    });
+  });
+
+  it('uses qualifier direction instead of making every estimate symmetric', () => {
+    expect(
+      parseAgentDepartureTime({
+        text: '你离开快20年了',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericMin: 18,
+      numericMax: 20,
+      normalizedStart: new Date('2006-01-01T00:00:00.000Z'),
+      normalizedEnd: new Date('2008-12-31T00:00:00.000Z'),
+    });
+    expect(
+      parseAgentDepartureTime({
+        text: '你离开超过20年了',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericMin: 20,
+      numericMax: 22,
+      normalizedStart: new Date('2004-01-01T00:00:00.000Z'),
+      normalizedEnd: new Date('2006-12-31T00:00:00.000Z'),
+    });
+  });
+
+  it('derives exact dates from explicitly exact month and week durations', () => {
+    expect(
+      parseAgentDepartureTime({
+        text: '到今天你正好离开3个月',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericValue: 3,
+      normalizedExactDate: new Date('2026-06-05T00:00:00.000Z'),
+      resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+    });
+    expect(
+      parseAgentDepartureTime({
+        text: '到今天你正好离开3周',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      numericValue: 21,
+      normalizedExactDate: new Date('2026-08-15T00:00:00.000Z'),
+      resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
+    });
+  });
+
   it('preserves head-seven as a ritual range instead of an exact date', () => {
     expect(
       parseAgentDepartureTime({

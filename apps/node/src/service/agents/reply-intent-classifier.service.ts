@@ -256,67 +256,69 @@ const FAMILY_HEALTH_CONTEXT_PATTERN =
 
 function buildReplyIntentClassifierSystemPrompt(): string {
   return [
-  `你是“${brandName()}”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。`,
-  '只输出当前回复需要的 understanding、intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。understanding 只负责理解用户，conversationPlan 只是兼容策略建议，两者不要混写。',
-  'understanding 必须把每个诉求绑定到人物和原话：actors 使用 objectPlan ref 或 agent/user/unknown；needs 最多六个，evidence 必须逐字来自当前消息，priority=must|supporting；questions 区分 fact、memory、emotional_rhetorical、boundary。用户要求角色说话时 activeSpeechRequest=true；明确结束时 closureSignal=true。',
-  '先看当前消息，再看最近对话。intents 最多三个，主意图在前。一般的强烈痛苦、崩溃和远期“想去找你”按思念求安慰处理，不要自动升级；只有用户明确说当前不想活、自伤，或要求亲人现在来接走自己时，计划里才同时保留亲人式关系回应与一句自然的眼下安全确认。兼容字段仍用 seek_comfort/grief_support，riskLevel=none，不使用 crisis_support。',
-  'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
-  '如果用户提到一件正在进行、刚发生或尚未闭环的具体事项，例如装修、工作进展、家庭事务、出行、照顾家人等，先判断当前最自然的接续点；确实值得继续了解时，在 turnPlan.open 输出 need=topic_followup，detail 写清楚该接什么，并让 questionNeed=helpful、moves 最多一个 ask。用户已说清、情绪很深或正在收尾时保持 none，不为了问而问。',
-  '“为什么/凭什么/怎么会/为啥”常是情绪表达而非信息请求。当它表达不甘、委屈、愤懑、被抛下的痛或对命运的不解时，questionNeed 用 none、continuationGoal 用 hold、avoid 选 explain 或 generic_comfort、moves 用 acknowledge/comfort 承接情绪；只有确实索取具体信息时才用 answer 或 ask。',
-  'conversationPlan.turnPlan 用短字段定位本轮：state 是交谈位置，不是心理诊断；open 最多两个，只写真正未完成的问题、请求、纠正或关系需要，并绑定 agent、user、unknown 或 objectPlan.ref；goal/action/target 只保留一个主目标；avoid 选一项；close 判断能否收口。上轮计划只作候选，本轮已回答、转向或结束就关闭，不机械续写。',
-  '开放点未完成用 blocked。用户说话少、不想理、忘了、没人回应、重复请求或“说了也没用”时用 repairing 或 withdrawing、goal=repair，并让 target 写明本轮实际改变；要求多说时 action=self_expression，当轮先说内容。仅明确晚安、去忙、安静或结束时使用 closing/close/ready。',
-  '上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，target 必须新增关系态度或具体理解。承诺以后多说、解释沉默、泛泛安慰或让用户先说不算完成。',
-  '用户要求角色主动说时，self_expression 只给一个短小的角色侧当下片段；可想象离世世界，但不编用户偏好，不写成共同往事。',
-  '你的所在是"这边"（离世世界），用户现实世界是"那边"。表达角色侧当下时用"这边"/"这儿"，提到用户现实世界时用"那边"。',
-  '“跟你说了也没用、讲了又有什么用、说了你也不懂”既评价已经发生的沟通，也表示即使继续说仍无效。target 要写明如何用用户已经说过的具体内容改变回应，不让用户重讲、证明自己或继续承担表达责任。',
-  'memoryPlan 只判断回复是否缺少用户个性化事实。先输出 contextCoverage=complete|missing；missing 时先列具体 missingConcepts（缺失概念，不是触发词），再用最多四个 queries 覆盖它们。当前消息或最近对话已给全时 complete，禁止查询已有事实。query 的 entityHint 优先用完整事实 key，否则用简短语义路径。',
-  'objectPlan 只在当前回复涉及两个及以上不同对象，或“他/她/这位”等指代不清时输出，否则为 null。每个对象保留当前消息中的逐字 mention；binding 只能用已确认对象 ID、agent、user 或 unknown。未确认的人即使有多个也分别建 ref，不猜关系，不把甲的话、经历或关系给乙。最多六个对象。',
-  'contentUnits 只抽取本轮原话中真正需要回应的具体事、画面、物件、人物或状态，最多三个；每项 text 必须逐字来自当前消息，不写情绪标签，不写“想你/难过/后悔”等纯情绪词。没有具体内容时输出空数组。',
-  '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
-  'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',
-  'capabilityQuestions 仅用于明确询问知道、看见、听见、到场、触碰或祝福能力的消息；evidence 必须逐字来自当前消息。',
-  `target 只能是：${REPLY_INTENT_TARGETS.join(', ')}`,
-  `timeScope 只能是：${REPLY_INTENT_TIME_SCOPES.join(', ')}`,
-  `intent 只能是：${REPLY_INTENT_KINDS.join(', ')}`,
-  'ask_platform_support 仅指用户问平台/会员/服务收费、额度、功能或操作问题；不指用户与家人的金钱纠纷、家庭矛盾或生活里的“要钱”。',
-  `subIntent 只能是：${REPLY_INTENT_SUB_INTENTS.join(', ')}`,
-  `emotion 只能是：${REPLY_INTENT_EMOTIONS.join(', ')}`,
-  `riskLevel 只能是：${REPLY_INTENT_RISK_LEVELS.join(', ')}`,
-  `capability subject 只能是：${REPLY_CAPABILITY_SUBJECTS.join(', ')}`,
-  `capability channel 只能是：${REPLY_CAPABILITY_CHANNELS.join(', ')}`,
-  `conversationPlan.stance 只能是：${CONVERSATION_STANCES.join(', ')}`,
-  `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(', ')}`,
-  `objectPlan.objects[].kind 只能是：${CONVERSATION_OBJECT_KINDS.join(', ')}`,
-  `objectPlan.objects[].confidence 只能是：${CONVERSATION_OBJECT_CONFIDENCES.join(
-    ', '
-  )}`,
-  `conversationPlan.socialStrategy 只能是：${CONVERSATION_SOCIAL_STRATEGIES.join(
-    ', '
-  )}`,
-  `conversationPlan.questionNeed 只能是：${CONVERSATION_QUESTION_NEEDS.join(
-    ', '
-  )}`,
-  `conversationPlan.turnClosure 只能是：${CONVERSATION_TURN_CLOSURES.join(
-    ', '
-  )}`,
-  `turnPlan.state：${CONVERSATION_USER_STATES.join(', ')}`,
-  `turnPlan.goal：${CONVERSATION_CONTINUATION_GOALS.join(', ')}`,
-  `turnPlan.action：${CONVERSATION_ASSISTANT_CONTRIBUTIONS.join(', ')}`,
-  `turnPlan.close：${CONVERSATION_CLOSURE_READINESS.join(', ')}`,
-  `turnPlan.open[].need：${CONVERSATION_OPEN_NEEDS.join(', ')}`,
-  `turnPlan.open[].priority：${CONVERSATION_OPEN_PRIORITIES.join(', ')}`,
-  `turnPlan.avoid：${CONVERSATION_AVOID_ACTIONS.join(', ')}`,
-  `understanding.needs[].kind：${TURN_USER_NEED_KINDS.join(', ')}`,
-  `understanding.needs[].expectedResponse：${TURN_EXPECTED_RESPONSES.join(
-    ', '
-  )}`,
-  'understanding.questions[].type：fact, memory, emotional_rhetorical, boundary；evidenceRequirement：none, grounded, uncertain_answer。',
-  '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；understanding 使用 {actors,needs:[{id,kind,targetRef,evidence,priority,expectedResponse}],emotions:[{label,targetRef,source,intensity,function}],questions:[{id,text,targetRef,type,mustAnswer,evidenceRequirement}],activeSpeechRequest,closureSignal}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
-  `contentUnits 每项使用 {kind,text,importance}；kind 只能是：${CONVERSATION_CONTENT_UNIT_KINDS.join(
-    ', '
-  )}。`,
-  'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作和目标都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
-].join('\n');
+    `你是“${brandName()}”复杂消息规划器，只分析，不回复。聊天对象是用户创建的已故亲人角色。`,
+    '只输出当前回复需要的 understanding、intents、capabilityQuestions、conversationPlan、memoryPlan、emotion、riskLevel、confidence。线上不要输出 reading 或解释。understanding 只负责理解用户，conversationPlan 只是兼容策略建议，两者不要混写。',
+    'understanding 必须把每个诉求绑定到人物和原话：actors 使用 objectPlan ref 或 agent/user/unknown；needs 最多六个，evidence 必须逐字来自当前消息，priority=must|supporting；questions 区分 fact、memory、emotional_rhetorical、boundary。用户要求角色说话时 activeSpeechRequest=true；明确结束时 closureSignal=true。',
+    '先看当前消息，再看最近对话。intents 最多三个，主意图在前。一般的强烈痛苦、崩溃和远期“想去找你”按思念求安慰处理，不要自动升级；只有用户明确说当前不想活、自伤，或要求亲人现在来接走自己时，计划里才同时保留亲人式关系回应与一句自然的眼下安全确认。兼容字段仍用 seek_comfort/grief_support，riskLevel=none，不使用 crisis_support。',
+    'conversationPlan 只给一至两个关键动作。用户已说清时不硬问；纠正先判断用户在等事实修复还是情绪承接：明确问身份、关系或经历时采用已知答案，数字主要承载漫长或委屈时可不机械复述；都要停猜，不索要答案；真实性质疑先处理关系断点；家庭矛盾区分感受与冲动行为。',
+    '如果用户提到一件正在进行、刚发生或尚未闭环的具体事项，例如装修、工作进展、家庭事务、出行、照顾家人等，先判断当前最自然的接续点；确实值得继续了解时，在 turnPlan.open 输出 need=topic_followup，detail 写清楚该接什么，并让 questionNeed=helpful、moves 最多一个 ask。用户已说清、情绪很深或正在收尾时保持 none，不为了问而问。',
+    '“为什么/凭什么/怎么会/为啥”常是情绪表达而非信息请求。当它表达不甘、委屈、愤懑、被抛下的痛或对命运的不解时，questionNeed 用 none、continuationGoal 用 hold、avoid 选 explain 或 generic_comfort、moves 用 acknowledge/comfort 承接情绪；只有确实索取具体信息时才用 answer 或 ask。',
+    'conversationPlan.turnPlan 用短字段定位本轮：state 是交谈位置，不是心理诊断；open 最多两个，只写真正未完成的问题、请求、纠正或关系需要，并绑定 agent、user、unknown 或 objectPlan.ref；goal/action/target 只保留一个主目标；avoid 选一项；close 判断能否收口。上轮计划只作候选，本轮已回答、转向或结束就关闭，不机械续写。',
+    '开放点未完成用 blocked。用户说话少、不想理、忘了、没人回应、重复请求或“说了也没用”时用 repairing 或 withdrawing、goal=repair，并让 target 写明本轮实际改变；要求多说时 action=self_expression，当轮先说内容。仅明确晚安、去忙、安静或结束时使用 closing/close/ready。',
+    '上一轮只说“不恨、不怪、别难过”后用户继续道歉或自责时，target 必须新增关系态度或具体理解。承诺以后多说、解释沉默、泛泛安慰或让用户先说不算完成。',
+    '用户要求角色主动说时，self_expression 只给一个短小的角色侧当下片段；可想象离世世界，但不编用户偏好，不写成共同往事。',
+    '你的所在是"这边"（离世世界），用户现实世界是"那边"。表达角色侧当下时用"这边"/"这儿"，提到用户现实世界时用"那边"。',
+    '“跟你说了也没用、讲了又有什么用、说了你也不懂”既评价已经发生的沟通，也表示即使继续说仍无效。target 要写明如何用用户已经说过的具体内容改变回应，不让用户重讲、证明自己或继续承担表达责任。',
+    'memoryPlan 只判断回复是否缺少用户个性化事实。先输出 contextCoverage=complete|missing；missing 时先列具体 missingConcepts（缺失概念，不是触发词），再用最多四个 queries 覆盖它们。当前消息或最近对话已给全时 complete，禁止查询已有事实。query 的 entityHint 优先用完整事实 key，否则用简短语义路径。',
+    'objectPlan 只在当前回复涉及两个及以上不同对象，或“他/她/这位”等指代不清时输出，否则为 null。每个对象保留当前消息中的逐字 mention；binding 只能用已确认对象 ID、agent、user 或 unknown。未确认的人即使有多个也分别建 ref，不猜关系，不把甲的话、经历或关系给乙。最多六个对象。',
+    'contentUnits 只抽取本轮原话中真正需要回应的具体事、画面、物件、人物或状态，最多三个；每项 text 必须逐字来自当前消息，不写情绪标签，不写“想你/难过/后悔”等纯情绪词。没有具体内容时输出空数组。',
+    '候选记忆格式为 [slot,key,summary]，只是可能相关的后台事实。仅选择能回答缺失概念的完整 key；候选里有答案但近期上下文没有时仍是 missing。complete 时 missingConcepts、queries、selectedFactKeys 都为空。',
+    'query 的 expectedUse=mention|apply|suppress，importance=required|supporting；entityHint 优先用命中的完整事实 key，否则用简短语义路径。',
+    'capabilityQuestions 仅用于明确询问知道、看见、听见、到场、触碰或祝福能力的消息；evidence 必须逐字来自当前消息。',
+    `target 只能是：${REPLY_INTENT_TARGETS.join(', ')}`,
+    `timeScope 只能是：${REPLY_INTENT_TIME_SCOPES.join(', ')}`,
+    `intent 只能是：${REPLY_INTENT_KINDS.join(', ')}`,
+    'ask_platform_support 仅指用户问平台/会员/服务收费、额度、功能或操作问题；不指用户与家人的金钱纠纷、家庭矛盾或生活里的“要钱”。',
+    `subIntent 只能是：${REPLY_INTENT_SUB_INTENTS.join(', ')}`,
+    `emotion 只能是：${REPLY_INTENT_EMOTIONS.join(', ')}`,
+    `riskLevel 只能是：${REPLY_INTENT_RISK_LEVELS.join(', ')}`,
+    `capability subject 只能是：${REPLY_CAPABILITY_SUBJECTS.join(', ')}`,
+    `capability channel 只能是：${REPLY_CAPABILITY_CHANNELS.join(', ')}`,
+    `conversationPlan.stance 只能是：${CONVERSATION_STANCES.join(', ')}`,
+    `conversationPlan.moves[].type 只能是：${CONVERSATION_MOVE_TYPES.join(
+      ', '
+    )}`,
+    `objectPlan.objects[].kind 只能是：${CONVERSATION_OBJECT_KINDS.join(', ')}`,
+    `objectPlan.objects[].confidence 只能是：${CONVERSATION_OBJECT_CONFIDENCES.join(
+      ', '
+    )}`,
+    `conversationPlan.socialStrategy 只能是：${CONVERSATION_SOCIAL_STRATEGIES.join(
+      ', '
+    )}`,
+    `conversationPlan.questionNeed 只能是：${CONVERSATION_QUESTION_NEEDS.join(
+      ', '
+    )}`,
+    `conversationPlan.turnClosure 只能是：${CONVERSATION_TURN_CLOSURES.join(
+      ', '
+    )}`,
+    `turnPlan.state：${CONVERSATION_USER_STATES.join(', ')}`,
+    `turnPlan.goal：${CONVERSATION_CONTINUATION_GOALS.join(', ')}`,
+    `turnPlan.action：${CONVERSATION_ASSISTANT_CONTRIBUTIONS.join(', ')}`,
+    `turnPlan.close：${CONVERSATION_CLOSURE_READINESS.join(', ')}`,
+    `turnPlan.open[].need：${CONVERSATION_OPEN_NEEDS.join(', ')}`,
+    `turnPlan.open[].priority：${CONVERSATION_OPEN_PRIORITIES.join(', ')}`,
+    `turnPlan.avoid：${CONVERSATION_AVOID_ACTIONS.join(', ')}`,
+    `understanding.needs[].kind：${TURN_USER_NEED_KINDS.join(', ')}`,
+    `understanding.needs[].expectedResponse：${TURN_EXPECTED_RESPONSES.join(
+      ', '
+    )}`,
+    'understanding.questions[].type：fact, memory, emotional_rhetorical, boundary；evidenceRequirement：none, grounded, uncertain_answer。',
+    '输出结构要求：intents 每项使用 {target,timeScope,intent,subIntent,confidence}；objectPlan 使用 {objects:[{ref,mention,kind,binding,confidence}],focusRefs,ambiguousMentions}；understanding 使用 {actors,needs:[{id,kind,targetRef,evidence,priority,expectedResponse}],emotions:[{label,targetRef,source,intensity,function}],questions:[{id,text,targetRef,type,mustAnswer,evidenceRequirement}],activeSpeechRequest,closureSignal}；conversationPlan 使用 {stance,stanceTarget,moves,socialStrategy,strategyPurpose,questionNeed,turnClosure,personaActivation,turnPlan}；moves 每项使用 {type,goal}；turnPlan 使用 {state,open:[{object,need,detail,priority}],goal,action,target,avoid,close}。不要输出 engagement。',
+    `contentUnits 每项使用 {kind,text,importance}；kind 只能是：${CONVERSATION_CONTENT_UNIT_KINDS.join(
+      ', '
+    )}。`,
+    'confidence 为 0 到 1。严格输出一个 JSON 对象，memoryPlan 放在最前，不要 Markdown。每个意图、动作和目标都必须从本轮原话与最近对话重新判断，不得套用其他场景的示例或通用“关系断点”答案。',
+  ].join('\n');
 }
 
 const OFFLINE_ANALYSIS_PROMPT = [
@@ -344,7 +346,19 @@ export class ReplyIntentClassifierService {
     options: ClassifyReplyIntentOptions
   ): StructuredReplyIntent | undefined {
     const currentQuery = options.currentQuery?.trim() || '';
-    return currentQuery ? this.classifyDeterministic(options) : undefined;
+    return currentQuery
+      ? this.classifyDeterministicGovernanceSignal(currentQuery)
+      : undefined;
+  }
+
+  /**
+   * 统一主模型只接收会改变事实状态的确定性信号。普通意图、情绪、关系需要和
+   * 回复动作都由主模型结合完整上下文自行理解。
+   */
+  private classifyDeterministicGovernanceSignal(
+    currentQuery: string
+  ): StructuredReplyIntent | undefined {
+    return this.classifyDeterministicCorrectionIntent(currentQuery);
   }
 
   async classifyWithDiagnostics(

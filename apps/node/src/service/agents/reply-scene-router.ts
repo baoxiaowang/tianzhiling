@@ -84,6 +84,11 @@ export interface RouteReplySceneOptions {
   emotionState?: ConversationEmotionStateSummary | null;
   knownFamilyMembers?: string[];
   intent?: StructuredReplyIntent;
+  /**
+   * 统一主模型链路关闭普通关键词场景路由。正则只保留事实、能力与安全治理，
+   * 不再替主模型判断日常语义、情绪或关系动作。
+   */
+  allowLegacyResponseStrategyRouting?: boolean;
 }
 
 interface ReplySceneStrategy {
@@ -96,6 +101,16 @@ interface ReplySceneStrategy {
 
 const MAX_SCENE_STRATEGIES = 3;
 const SEMANTIC_INTENT_MIN_CONFIDENCE = 0.62;
+const GOVERNANCE_SCENES = new Set<ReplyScene>([
+  'grief_crisis',
+  'correction',
+  'source_challenge',
+  'reality_presence_boundary',
+  'family_care_boundary',
+  'identity_fact',
+  'memory_recall',
+  'business_support',
+]);
 const LEADING_VOCATIVE_PATTERN =
   /^(?:(?:我的|俺的|咱的)?(?:傻)?(?:妈妈|妈|爸爸|爸|爷爷|奶奶|姥姥|姥爷|外婆|外公|哥哥|姐姐|弟弟|妹妹|老公|老婆|宝贝|乖乖))[呀啊呢哦嘛]*(?:\s*[，,、：:]\s*|\s+|(?=你|您|我|俺|咱))(?=\S)/;
 const AGENT_CURRENT_ROUTINE_PATTERNS = [
@@ -476,6 +491,8 @@ export function routeReplyScene(
   options: RouteReplySceneOptions
 ): ReplySceneRoute {
   const currentQuery = normalizeRouteMessage(options.currentQuery || '');
+  const allowLegacyResponseStrategyRouting =
+    options.allowLegacyResponseStrategyRouting !== false;
   const asksAboutAgentCurrentRoutine = isAgentCurrentRoutineQuery(currentQuery);
   const asksAboutAgentCurrentSuffering =
     isAgentCurrentSufferingQuery(currentQuery);
@@ -488,8 +505,11 @@ export function routeReplyScene(
     currentQuery,
     options.knownFamilyMembers || []
   );
-  const currentTextMatched = REPLY_SCENE_STRATEGIES.filter(strategy =>
-    strategy.patterns.some(pattern => pattern.test(currentQuery))
+  const currentTextMatched = REPLY_SCENE_STRATEGIES.filter(
+    strategy =>
+      (allowLegacyResponseStrategyRouting ||
+        GOVERNANCE_SCENES.has(strategy.scene)) &&
+      strategy.patterns.some(pattern => pattern.test(currentQuery))
   ).filter(strategy => {
     if (
       strategy.scene === 'grief_crisis' &&
@@ -538,15 +558,17 @@ export function routeReplyScene(
           strategy.scene === 'grief_crisis'
       )
     : currentTextMatched;
-  const familyMatched = mentionsKnownFamilyMember
-    ? [findSceneStrategy('family_life')]
+  const familyMatched =
+    allowLegacyResponseStrategyRouting && mentionsKnownFamilyMember
+      ? [findSceneStrategy('family_life')]
+      : [];
+  const emotionMatched = allowLegacyResponseStrategyRouting
+    ? resolveEmotionSceneStrategies(options.emotionState).filter(
+        strategy =>
+          (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') &&
+          true
+      )
     : [];
-  const emotionMatched = resolveEmotionSceneStrategies(
-    options.emotionState
-  ).filter(
-    strategy =>
-      (!hasAuthenticityChallenge || strategy.scene === 'grief_crisis') && true
-  );
   const semanticIntentItems = prioritizeExplicitPresenceConfirmation(
     currentQuery,
     resolveSemanticIntentItems(options.intent)
@@ -579,7 +601,9 @@ export function routeReplyScene(
     explicitSpecificMatches.length > 0 &&
     (semanticRouteIsOnlyGeneric || hasExplicitCurrentCrisis);
   const familyEmotionAsFamilyLife =
-    mentionsKnownFamilyMember && familyEmotionOnly;
+    allowLegacyResponseStrategyRouting &&
+    mentionsKnownFamilyMember &&
+    familyEmotionOnly;
   const routingSource: ReplySceneRoute['routingSource'] =
     semanticMatched.length > 0 ? 'semantic' : 'legacy';
   const matched = familyEmotionAsFamilyLife
@@ -632,7 +656,9 @@ export function routeReplyScene(
 
   const effectiveMatched = matched.length
     ? matched
-    : [findSceneStrategy('smalltalk')];
+    : allowLegacyResponseStrategyRouting
+    ? [findSceneStrategy('smalltalk')]
+    : [];
 
   const [primaryScene, ...secondaryScenes] = effectiveMatched.map(strategy => ({
     scene: strategy.scene,
@@ -644,12 +670,11 @@ export function routeReplyScene(
     replyMoveCount: responseIntents.length,
   });
   const directIdentityAnswer = requiresDirectIdentityAnswer(options);
-  const relationshipContinuity = resolveRelationshipContinuityPlan(
-    currentQuery,
-    {
-      directAiIdentity: directIdentityAnswer,
-    }
-  );
+  const relationshipContinuity = allowLegacyResponseStrategyRouting
+    ? resolveRelationshipContinuityPlan(currentQuery, {
+        directAiIdentity: directIdentityAnswer,
+      })
+    : undefined;
 
   return {
     primaryScene,

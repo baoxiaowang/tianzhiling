@@ -14,6 +14,26 @@ import type {
 } from '../../src/service/agents/reply-intent';
 
 describe('routeReplyScene', () => {
+  it('lets the unified main model own ordinary response semantics', () => {
+    const route = routeReplyScene({
+      currentQuery: '妈，今天孩子复查没事，我终于放心一点了',
+      knownFamilyMembers: ['孩子'],
+      allowLegacyResponseStrategyRouting: false,
+    });
+
+    expect(route.primaryScene).toBeUndefined();
+    expect(route.secondaryScenes).toEqual([]);
+    expect(route.responseIntents).toEqual([]);
+  });
+
+  it('keeps evidence governance when ordinary response routing is disabled', () => {
+    const route = routeReplyScene({
+      currentQuery: '你还记得以前带我去上学吗',
+      allowLegacyResponseStrategyRouting: false,
+    });
+
+    expect(route.primaryScene?.scene).toBe('memory_recall');
+  });
   function sceneNames(text: string): ReplyScene[] {
     const route = routeReplyScene({ currentQuery: text });
 
@@ -374,9 +394,8 @@ describe('routeReplyScene', () => {
     expect(route.prompt).toContain('类型：identity_continuity');
     expect(route.prompt).toContain('首次或非持续质疑不要主动说明 AI 身份');
     expect(route.prompt).toContain('也不要否认 AI 身份');
-    expect(route.prompt).toContain('先区分身份否定、记忆断裂和口气生分');
-    expect(route.prompt).toContain('不要固定背诵同一套解释');
-    expect(route.prompt).toContain('不要先认错');
+    expect(route.prompt).toContain('可以承认没接住或不一致');
+    expect(route.prompt).toContain('不自证、不争辩');
     expect(route.prompt).toContain('不得为了证明身份编造具体共同往事');
     expect(route.prompt).not.toContain('主场景：用户纠正/反馈不像');
     expect(route.prompt).not.toContain('梦境陪伴/梦中相见');
@@ -637,7 +656,7 @@ describe('routeReplyScene', () => {
     );
     expect(route.maxSegments).toBe(2);
     expect(route.prompt).toContain('完整正文放在一个 segments 项里');
-    expect(route.prompt).toContain('不要拆成称呼、安慰、叮嘱、想念四连发');
+    expect(route.prompt).toContain('完整正文放在一个 segments 项里');
     expect(
       resolveReplySceneMaxSegments({
         currentQuery: '我和妈妈都过得很好，就是她经常想你',

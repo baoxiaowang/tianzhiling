@@ -105,7 +105,17 @@ interface ResolveRelationalSceneFrameworkOptions {
   isDeceased?: boolean;
   conversationMessages?: MessageEntity[];
   evidence?: FrameworkEvidence[];
+  boundaryOnly?: boolean;
 }
+
+const BOUNDARY_SCENE_KINDS = new Set<RelationalSceneKind>([
+  'real_world_signs',
+  'death_facts',
+  'memorial_rituals',
+  'shared_memories',
+  'reunion_future',
+  'anniversary_time',
+]);
 
 interface SceneDefinition {
   label: string;
@@ -298,9 +308,17 @@ export function resolveRelationalSceneFramework(
     return undefined;
   }
 
-  const matchedKinds = RELATIONAL_SCENE_KINDS.filter(kind =>
-    isSceneActive(kind, currentQuery, options.primaryScene, options.isDeceased)
+  const matchedKinds = RELATIONAL_SCENE_KINDS.filter(
+    kind => !options.boundaryOnly || BOUNDARY_SCENE_KINDS.has(kind)
   )
+    .filter(kind =>
+      isSceneActive(
+        kind,
+        currentQuery,
+        options.primaryScene,
+        options.isDeceased
+      )
+    )
     .sort(
       (left, right) =>
         SCENE_DEFINITIONS[right].priority - SCENE_DEFINITIONS[left].priority

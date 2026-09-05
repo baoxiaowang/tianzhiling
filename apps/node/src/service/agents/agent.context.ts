@@ -542,6 +542,7 @@ export class AgentContextService {
       emotionState,
       knownFamilyMembers,
       intent: replyIntent,
+      allowLegacyResponseStrategyRouting: false,
     });
     const chatToolStableKey = [
       options.auth.sub,

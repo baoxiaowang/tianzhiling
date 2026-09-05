@@ -8,6 +8,23 @@ import {
 } from '../../src/service/agents/relational-scene-framework';
 
 describe('relational scene framework', () => {
+  it('does not turn ordinary family or relationship language into model instructions in boundary-only mode', () => {
+    expect(
+      resolveRelationalSceneFramework({
+        currentQuery: '孩子今天复查没事，我们都放心了',
+        isDeceased: true,
+        boundaryOnly: true,
+      })
+    ).toBeUndefined();
+
+    expect(
+      resolveRelationalSceneFramework({
+        currentQuery: '你到底是因为什么去世的',
+        isDeceased: true,
+        boundaryOnly: true,
+      })?.cards.map(card => card.kind)
+    ).toContain('death_facts');
+  });
   test.each<[RelationalSceneKind, string, string]>([
     [
       'real_world_signs',
@@ -57,7 +74,7 @@ describe('relational scene framework', () => {
       'reunion_future',
     ]);
     expect(context?.cards).toHaveLength(2);
-    expect(prompt).toContain('只加载当前卡片');
+    expect(prompt).toContain('只提供可信锚点、证据规则和产品硬边界');
     expect(prompt).not.toContain('家庭人物与关系图谱');
   });
 

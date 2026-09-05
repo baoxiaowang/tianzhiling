@@ -7,7 +7,7 @@ const path = require('path');
 const { MongoClient } = require('../apps/node/node_modules/mongodb');
 const dotenv = require('../apps/node/node_modules/dotenv');
 
-const APPROVAL_ID = 'user-identity-indexes-v3';
+const APPROVAL_ID = 'user-identity-indexes-v4';
 const apply = process.argv.includes('--apply');
 const approvalId = readArgument('--approval-id=');
 const planned = [
@@ -108,6 +108,22 @@ const planned = [
     options: {
       name: 'idx_person_temporal_profile_event',
       background: true,
+    },
+  },
+  {
+    collection: 'message',
+    key: {
+      userId: 1,
+      agentId: 1,
+      temporalMemorySemanticHash: 1,
+      temporalMemoryVersion: 1,
+    },
+    options: {
+      name: 'idx_message_temporal_semantic_cache',
+      background: true,
+      partialFilterExpression: {
+        temporalMemorySemanticHash: { $exists: true },
+      },
     },
   },
 ];

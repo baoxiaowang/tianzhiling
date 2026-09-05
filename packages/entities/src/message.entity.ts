@@ -268,6 +268,27 @@ export class MessageEntity extends BaseEntity {
   totalTokens?: number;
 
   @Column()
+  temporalMemoryStatus?: "written" | "not_applicable";
+
+  @Column()
+  temporalMemoryVersion?: string;
+
+  @Column()
+  temporalMemorySemanticSource?: "deterministic" | "fallback";
+
+  @Column()
+  temporalMemoryCheckedAt?: Date;
+
+  @Column()
+  temporalMemorySemanticHash?: string;
+
+  @Column()
+  temporalMemoryEvidence?: string;
+
+  @Column()
+  temporalMemorySpeechAct?: "assertion" | "correction";
+
+  @Column()
   replyVisibleCharacters?: number;
 
   @Column()

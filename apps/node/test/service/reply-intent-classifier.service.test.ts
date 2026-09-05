@@ -22,6 +22,20 @@ describe('ReplyIntentClassifierService', () => {
     return service;
   }
 
+  it('exposes only fact-governance signals to the unified main model', () => {
+    const service = createService('{}');
+
+    expect(
+      service.classifyDeterministicOnly({
+        currentQuery: '妈，孩子复查没事，我终于放心了',
+      })
+    ).toBeUndefined();
+    expect(
+      service.classifyDeterministicOnly({ currentQuery: '不对，你记错了' })
+        ?.intents[0].intent
+    ).toBe('correct_assistant');
+  });
+
   it('includes the previous reply strategy when planning a repeated need', () => {
     const service = createService('{}');
     const assistant = new MessageEntity();
@@ -121,21 +135,26 @@ describe('ReplyIntentClassifierService', () => {
     ['凭什么好人没好报', 'unanswerable_question'],
     ['为什么抛下我们', 'unanswerable_question'],
     ['你怎么会走', 'unanswerable_question'],
-  ])('routes an unanswerable emotional question through semantic planning: %s', (currentQuery, reason) => {
-    const service = createService('{}');
-    service.config.hybridEnabled = true;
+  ])(
+    'routes an unanswerable emotional question through semantic planning: %s',
+    (currentQuery, reason) => {
+      const service = createService('{}');
+      service.config.hybridEnabled = true;
 
-    expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
-      mode: 'semantic',
-      reason,
-    });
-  });
+      expect(service.getPlanningDecision({ currentQuery })).toMatchObject({
+        mode: 'semantic',
+        reason,
+      });
+    }
+  );
 
   it('keeps a dream-related “why” on the existing dream scene', () => {
     const service = createService('{}');
     service.config.hybridEnabled = true;
 
-    expect(service.getPlanningDecision({ currentQuery: '为啥不来我梦里' })).toMatchObject({
+    expect(
+      service.getPlanningDecision({ currentQuery: '为啥不来我梦里' })
+    ).toMatchObject({
       mode: 'semantic',
       reason: 'complex_scene',
     });
@@ -1102,7 +1121,8 @@ describe('ReplyIntentClassifierService', () => {
 
     expect(
       service.getPlanningDecision({
-        currentQuery: '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了',
+        currentQuery:
+          '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了',
       })
     ).toEqual({ mode: 'semantic', reason: 'ongoing_topic' });
   });
@@ -1361,7 +1381,11 @@ describe('ReplyIntentClassifierService', () => {
         ],
         capabilityQuestions: [],
         contentUnits: [
-          { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+          {
+            kind: 'event',
+            text: '前两天下班回家莫名眼眶红了',
+            importance: 'high',
+          },
           { kind: 'person', text: '你女婿', importance: 'high' },
           { kind: 'state', text: '我哭着说想爸爸', importance: 'medium' },
         ],
@@ -1403,7 +1427,11 @@ describe('ReplyIntentClassifierService', () => {
           turnClosure: 'continue',
           personaActivation: [],
           contentUnits: [
-            { kind: 'event', text: '前两天下班回家莫名眼眶红了', importance: 'high' },
+            {
+              kind: 'event',
+              text: '前两天下班回家莫名眼眶红了',
+              importance: 'high',
+            },
             { kind: 'person', text: '你女婿', importance: 'high' },
           ],
         },
@@ -1457,7 +1485,8 @@ describe('ReplyIntentClassifierService', () => {
   });
 
   it('derives a question action when the model marks an open topic_followup', async () => {
-    const currentQuery = '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了';
+    const currentQuery =
+      '家里的石头房拆掉重新盖了，现在盖了三层楼，还没装修，也快装修了';
     const service = createService(
       JSON.stringify({
         intents: [
@@ -1471,7 +1500,11 @@ describe('ReplyIntentClassifierService', () => {
         ],
         capabilityQuestions: [],
         contentUnits: [
-          { kind: 'event', text: '家里的石头房拆掉重新盖了', importance: 'high' },
+          {
+            kind: 'event',
+            text: '家里的石头房拆掉重新盖了',
+            importance: 'high',
+          },
         ],
         conversationPlan: {
           stance: 'tender',

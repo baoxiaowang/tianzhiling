@@ -373,6 +373,7 @@ export function buildReplyBrief(options: BuildReplyBriefOptions): ReplyBrief {
     conversationMessages:
       options.conversationMessages ?? options.recentMessages,
     evidence,
+    boundaryOnly: options.planningMode === 'direct',
   });
   const afterlifeWorld = resolveAfterlifeWorldContext({
     currentQuery,

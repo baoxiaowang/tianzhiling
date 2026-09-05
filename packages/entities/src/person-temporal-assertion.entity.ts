@@ -113,6 +113,12 @@ export class PersonTemporalAssertionEntity extends BaseEntity {
   numericValue?: number;
 
   @Column()
+  numericMin?: number;
+
+  @Column()
+  numericMax?: number;
+
+  @Column()
   durationUnit?: PersonTemporalDurationUnit;
 
   @Column()
