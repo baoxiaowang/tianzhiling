@@ -67,5 +67,6 @@ COPY --from=build /workspace/apps/node/scripts/ensure-memory-system-indexes.js .
 COPY --from=build /workspace/apps/node/scripts/ensure-milvus-v2-collection.js ./scripts/ensure-milvus-v2-collection.js
 COPY --from=build /workspace/apps/node/scripts/migrate-milvus-history-to-v2.js ./scripts/migrate-milvus-history-to-v2.js
 COPY --from=build /workspace/apps/node/scripts/verify-milvus.js ./scripts/verify-milvus.js
+COPY --from=build /workspace/apps/node/scripts/calibrate-milvus-relevance.js ./scripts/calibrate-milvus-relevance.js
 
 CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "apibest-node", "-i", "4"]
