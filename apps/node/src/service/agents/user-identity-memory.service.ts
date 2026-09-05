@@ -63,6 +63,19 @@ const NON_PERSON_NAMES = new Set([
   '她们',
 ]);
 
+function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
+  const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  const matches: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    matches.push(match);
+    if (!match[0]) regex.lastIndex += 1;
+  }
+  return matches;
+}
+
 @Provide()
 export class UserIdentityMemoryService {
   @InjectEntityModel(UserIdentityProfileEntity)
@@ -348,20 +361,20 @@ export function extractKnownPersonDeclarations(
     'g'
   );
 
-  for (const match of text.matchAll(aliasNameRelation)) {
+  for (const match of collectRegexMatches(text, aliasNameRelation)) {
     declarations.push({
       alias: normalizePersonName(match[1]),
       realName: normalizePersonName(match[2]),
       relationToUser: match[3],
     });
   }
-  for (const match of text.matchAll(relationName)) {
+  for (const match of collectRegexMatches(text, relationName)) {
     declarations.push({
       realName: normalizePersonName(match[2]),
       relationToUser: match[1],
     });
   }
-  for (const match of text.matchAll(nameRelation)) {
+  for (const match of collectRegexMatches(text, nameRelation)) {
     declarations.push({
       realName: normalizePersonName(match[1]),
       relationToUser: match[2],

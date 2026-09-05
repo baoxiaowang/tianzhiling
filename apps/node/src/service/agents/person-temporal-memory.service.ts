@@ -47,6 +47,19 @@ export interface DepartureTimeSemanticDecision {
 
 export const PERSON_TEMPORAL_SEMANTIC_VERSION = 'departure_semantic_v2';
 
+function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
+  const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  const matches: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    matches.push(match);
+    if (!match[0]) regex.lastIndex += 1;
+  }
+  return matches;
+}
+
 @Provide()
 export class PersonTemporalMemoryService {
   @Logger()
@@ -498,14 +511,16 @@ export class PersonTemporalMemoryService {
   private extractTemporalEvidenceTokens(value: string): string[] {
     const compact = value.replace(/\s+/g, '');
     const tokens: string[] = [];
-    for (const match of compact.matchAll(
+    for (const match of collectRegexMatches(
+      compact,
       /([0-9零〇一二两三四五六七八九十百千]+)(?:个)?(年头|年|个月|月|周|星期|天|日|号)/g
     )) {
       const unit =
         match[2] === '年头' ? '年' : match[2] === '个月' ? '月' : match[2];
       tokens.push(`${match[1]}${unit}`);
     }
-    for (const match of compact.matchAll(
+    for (const match of collectRegexMatches(
+      compact,
       /头七|头7|一七|二七|2七|三七|3七|五七|5七|七七|7七|百日|百天|100天|昨天|前天|去年|今年/g
     )) {
       tokens.push(match[0]);

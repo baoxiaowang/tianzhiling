@@ -55,6 +55,19 @@ export const AGENT_DEPARTURE_TIME_SIGNAL_PATTERN =
 export const IMPLICIT_DEPARTURE_TIME_SIGNAL_PATTERN =
   /(?:已经|都有|有|差不多|大约|大概|整整|正好|恰好|将近|快|超过|不到)?\s*[0-9零〇一二两三四五六七八九十百千]+\s*(?:年|个?月|周|星期|天|年头)|头\s*7|头七|一七|二七|三七|五七|七七|百日|百天/;
 
+function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
+  const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  const matches: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    matches.push(match);
+    if (!match[0]) regex.lastIndex += 1;
+  }
+  return matches;
+}
+
 export function hasAgentDepartureTimeSignal(options: {
   text: string;
   implicitCurrentAgent?: boolean;
@@ -173,16 +186,14 @@ function parseExactGregorianDate(
   referenceAt: Date,
   isCorrection: boolean
 ): ParsedDepartureTimeAssertion | null {
-  const matches = [
-    ...text.matchAll(
-      /((?:19|20)\d{2}|\d{2})\s*[年./-]\s*(1[0-2]|0?[1-9])\s*[月./-]\s*(3[01]|[12]\d|0?[1-9])\s*[日号]?/g
-    ),
-  ].filter(match => isDepartureDateMatch(text, match));
-  const relativeYearMatches = [
-    ...text.matchAll(
-      /(今年|去年)\s*(1[0-2]|0?[1-9])\s*月\s*(3[01]|[12]\d|0?[1-9])\s*[日号]/g
-    ),
-  ];
+  const matches = collectRegexMatches(
+    text,
+    /((?:19|20)\d{2}|\d{2})\s*[年./-]\s*(1[0-2]|0?[1-9])\s*[月./-]\s*(3[01]|[12]\d|0?[1-9])\s*[日号]?/g
+  ).filter(match => isDepartureDateMatch(text, match));
+  const relativeYearMatches = collectRegexMatches(
+    text,
+    /(今年|去年)\s*(1[0-2]|0?[1-9])\s*月\s*(3[01]|[12]\d|0?[1-9])\s*[日号]/g
+  );
   let year: number | undefined;
   let month: number | undefined;
   let day: number | undefined;
@@ -285,11 +296,10 @@ function parsePartialGregorianDate(
 ): ParsedDepartureTimeAssertion | null {
   if (/(?:农历|阴历)/.test(text)) return null;
 
-  const yearMonthMatches = [
-    ...text.matchAll(
-      /((?:19|20)\d{2}|今年|去年)\s*年?\s*(1[0-2]|0?[1-9])\s*月(?!\s*(?:3[01]|[12]\d|0?[1-9])\s*[日号])/g
-    ),
-  ].filter(match => isDepartureDateMatch(text, match));
+  const yearMonthMatches = collectRegexMatches(
+    text,
+    /((?:19|20)\d{2}|今年|去年)\s*年?\s*(1[0-2]|0?[1-9])\s*月(?!\s*(?:3[01]|[12]\d|0?[1-9])\s*[日号])/g
+  ).filter(match => isDepartureDateMatch(text, match));
   if (yearMonthMatches.length) {
     const match = yearMonthMatches[yearMonthMatches.length - 1];
     const referenceYear = toShanghaiParts(referenceAt).year;
@@ -317,11 +327,10 @@ function parsePartialGregorianDate(
     };
   }
 
-  const monthDayMatches = [
-    ...text.matchAll(
-      /(1[0-2]|0?[1-9])\s*月\s*(3[01]|[12]\d|0?[1-9])\s*[日号]/g
-    ),
-  ].filter(match => isDepartureDateMatch(text, match));
+  const monthDayMatches = collectRegexMatches(
+    text,
+    /(1[0-2]|0?[1-9])\s*月\s*(3[01]|[12]\d|0?[1-9])\s*[日号]/g
+  ).filter(match => isDepartureDateMatch(text, match));
   if (monthDayMatches.length) {
     const match = monthDayMatches[monthDayMatches.length - 1];
     const month = Number(match[1]);
@@ -341,9 +350,10 @@ function parsePartialGregorianDate(
     };
   }
 
-  const monthMatches = [
-    ...text.matchAll(/(1[0-2]|0?[1-9])\s*月(?!个|\s*\d)/g),
-  ].filter(match => isDepartureDateMatch(text, match));
+  const monthMatches = collectRegexMatches(
+    text,
+    /(1[0-2]|0?[1-9])\s*月(?!个|\s*\d)/g
+  ).filter(match => isDepartureDateMatch(text, match));
   if (!monthMatches.length) return null;
   const month = Number(monthMatches[monthMatches.length - 1][1]);
   return {
@@ -365,14 +375,15 @@ function parseRelativeDuration(
   isCorrection: boolean,
   implicitCurrentAgent = false
 ): ParsedDepartureTimeAssertion | null {
-  const matches: RegExpMatchArray[] = [
-    ...text.matchAll(
-      /(?:离开|走了|去世|离世|过世|不在了)[^，。！？!?]{0,12}?([0-9零〇一二两三四五六七八九十百千]+)\s*(?:个)?(年头|年|个?月|周|星期|天)(?:前|了|啦|左右|多|来)?/g
-    ),
-    ...text.matchAll(
+  const matches: RegExpMatchArray[] = collectRegexMatches(
+    text,
+    /(?:离开|走了|去世|离世|过世|不在了)[^，。！？!?]{0,12}?([0-9零〇一二两三四五六七八九十百千]+)\s*(?:个)?(年头|年|个?月|周|星期|天)(?:前|了|啦|左右|多|来)?/g
+  ).concat(
+    collectRegexMatches(
+      text,
       /([0-9零〇一二两三四五六七八九十百千]+)\s*(?:个)?(年头|年|个?月|周|星期|天)(?:前|了|啦|左右|多|来)?[^，。！？!?]{0,12}?(?:离开|走|去世|离世|过世|不在)/g
-    ),
-  ];
+    )
+  );
   if (implicitCurrentAgent && !matches.length) {
     const implicitMatch = text.match(
       /(?:已经|都|有|差不多|大约|大概|将近|快)?\s*([0-9零〇一二两三四五六七八九十百千]+)\s*(?:个)?(年头|年|个?月|周|星期|天)(?:前|了|啦|左右|多|来)?(?:[，。！？!?]|$)/
@@ -518,11 +529,10 @@ function parsePartialYear(
   isCorrection: boolean,
   referenceAt = new Date()
 ): ParsedDepartureTimeAssertion | null {
-  const matches = [
-    ...text.matchAll(
-      /((?:19|20)\d{2}|\d{2})\s*年[^，。！？!?]{0,12}(?:离开|走|去世|离世|过世)|(?:离开|走|去世|离世|过世)[^，。！？!?]{0,12}((?:19|20)\d{2}|\d{2})\s*年/g
-    ),
-  ];
+  const matches = collectRegexMatches(
+    text,
+    /((?:19|20)\d{2}|\d{2})\s*年[^，。！？!?]{0,12}(?:离开|走|去世|离世|过世)|(?:离开|走|去世|离世|过世)[^，。！？!?]{0,12}((?:19|20)\d{2}|\d{2})\s*年/g
+  );
   if (!matches.length) return null;
   const match = matches[matches.length - 1];
   const token = match[1] || match[2];
