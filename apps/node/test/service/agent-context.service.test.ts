@@ -20,6 +20,23 @@ import {
 } from '@tzl/entities';
 
 describe('AgentContextService', () => {
+  it('adds cross-time contact as facts without prescribing a reunion response', () => {
+    const service = new AgentContextService();
+    const prompt = (service as any).buildConversationReturnContextPrompt({
+      version: 'conversation_return_context_v1',
+      currentTurnAt: '2026-09-05T12:00:00.000Z',
+      previousContactAt: '2026-06-05T12:00:00.000Z',
+      previousUserContactAt: '2026-06-05T12:00:00.000Z',
+      previousAssistantContactAt: '2026-06-05T12:01:00.000Z',
+      elapsedHours: 2207.98,
+      elapsedDays: 92,
+    });
+
+    expect(prompt).toContain('# 本轮跨时段联系事实');
+    expect(prompt).toContain('"elapsedDays":92');
+    expect(prompt).not.toMatch(/请|必须|应该|重逢|问候|表达/);
+  });
+
   it('adds the compact tool decision contract only to sampled shadow turns', () => {
     const service = new AgentContextService();
     const replyBrief = buildReplyBrief({

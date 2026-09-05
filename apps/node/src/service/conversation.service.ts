@@ -20,6 +20,7 @@ import {
   ConversationEntity,
   MessageEntity,
   MessageRole,
+  MessageSource,
   MessageStatus,
   MessageType,
   MemoryPipelineTaskEntity,
@@ -203,6 +204,10 @@ import {
   ConversationDeliberateReplyJobData,
   DeliberateLongReplyService,
 } from './agents/deliberate-long-reply.service';
+import {
+  ConversationReturnContext,
+  resolveConversationReturnContext,
+} from './agents/conversation-return-context';
 
 const ASSISTANT_REPLY_TEMPERATURE = 0.2;
 const ASSISTANT_REPLY_TOP_P = 0.8;
@@ -4160,6 +4165,30 @@ export class ConversationService {
     const effectiveChatModel =
       this.resolveChatModelForAB(runtime.auth.sub) || undefined;
 
+    const conversationReturnContext = before.deliberateLongReplyExecution
+      ? undefined
+      : await this.loadConversationReturnContext({
+          conversation: runtime.conversation,
+          currentTurnMessages,
+        }).catch(error => {
+          this.logger?.warn?.(
+            '[conversation] return context skipped, conversationId=%s reason=%s',
+            this.stringifyObjectId(runtime.conversation.id),
+            this.describeReplyError(error)
+          );
+          return undefined;
+        });
+    this.chatTraceService?.recordCompletedSpan({
+      stage: ChatTraceStage.contextLoad,
+      operation: 'conversation_return_context.selection',
+      startedAt: new Date(),
+      attributes: {
+        included: Boolean(conversationReturnContext),
+        version: conversationReturnContext?.version,
+        elapsedHours: conversationReturnContext?.elapsedHours,
+      },
+    });
+
     const recognitionJourneyPlan =
       before.deliberateLongReplyExecution ||
       deliberateLongReplyCandidate?.eligible
@@ -4232,6 +4261,7 @@ export class ConversationService {
     });
     if (
       shortTurnGeneration.mode === 'micro_model' &&
+      !conversationReturnContext &&
       !recognitionJourneyPlan?.prompt &&
       !relationshipOpenLoopTurn?.prompt &&
       !deliberateLongReplyCandidate?.eligible &&
@@ -4291,6 +4321,7 @@ export class ConversationService {
                   this.stringifyObjectId(message.id)
                 )
               : undefined,
+            conversationReturnContext,
           })
       );
     } catch (error) {
@@ -5054,6 +5085,55 @@ export class ConversationService {
       recognitionJourneyPlan,
       relationshipOpenLoopTurn
     );
+  }
+
+  private async loadConversationReturnContext(options: {
+    conversation: ConversationEntity;
+    currentTurnMessages: MessageEntity[];
+  }): Promise<ConversationReturnContext | undefined> {
+    const currentTurnAt = options.currentTurnMessages
+      .map(message => message.createdAt)
+      .filter(
+        (value): value is Date =>
+          value instanceof Date && Number.isFinite(value.getTime())
+      )
+      .sort((left, right) => left.getTime() - right.getTime())[0];
+
+    if (!currentTurnAt) {
+      return undefined;
+    }
+
+    const commonWhere = {
+      conversationId: options.conversation.id,
+      status: MessageStatus.sent,
+      source: { $ne: MessageSource.wechatImport },
+      isArchived: { $ne: true },
+      createdAt: { $lt: currentTurnAt },
+    };
+    const [previousUserMessage, previousAssistantMessage] = await Promise.all([
+      this.messageModel.findOne({
+        where: {
+          ...commonWhere,
+          role: MessageRole.user,
+          quotaExempt: { $ne: true },
+          replyTrigger: { $ne: false },
+        } as never,
+        order: { createdAt: 'DESC' },
+      }),
+      this.messageModel.findOne({
+        where: {
+          ...commonWhere,
+          role: MessageRole.assistant,
+        } as never,
+        order: { createdAt: 'DESC' },
+      }),
+    ]);
+
+    return resolveConversationReturnContext({
+      currentTurnAt,
+      previousUserContactAt: previousUserMessage?.createdAt,
+      previousAssistantContactAt: previousAssistantMessage?.createdAt,
+    });
   }
 
   private async processLightweightReply(options: {

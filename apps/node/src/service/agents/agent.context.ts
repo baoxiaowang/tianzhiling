@@ -137,6 +137,7 @@ import {
   buildDeliberateLongReplyCandidatePrompt,
   DeliberateLongReplyCandidateAssessment,
 } from './deliberate-long-reply';
+import type { ConversationReturnContext } from './conversation-return-context';
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -153,6 +154,7 @@ export interface BuildConversationContextOptions {
   deliberateLongReplyCandidate?: DeliberateLongReplyCandidateAssessment;
   deliberateLongReplyExecutionPrompt?: string;
   pinnedHistoryMessageIds?: string[];
+  conversationReturnContext?: ConversationReturnContext;
 }
 
 export interface AgentContextLayer {
@@ -304,6 +306,9 @@ export interface AgentContextDiagnostics {
   relationalSceneFrameworkVersion?: string;
   relationalSceneKinds: string[];
   directActiveContributionMode?: string;
+  conversationReturnContextVersion?: string;
+  conversationReturnContextIncluded: boolean;
+  conversationReturnElapsedHours?: number;
 }
 
 export interface RetrievedContextSnippet {
@@ -1001,6 +1006,13 @@ export class AgentContextService {
         relationalSceneKinds:
           replyBrief.sceneFramework?.cards.map(card => card.kind) || [],
         directActiveContributionMode: replyBrief.directActiveContribution?.mode,
+        conversationReturnContextVersion:
+          options.conversationReturnContext?.version,
+        conversationReturnContextIncluded: Boolean(
+          options.conversationReturnContext
+        ),
+        conversationReturnElapsedHours:
+          options.conversationReturnContext?.elapsedHours,
       },
       replyIntent: replyRoute.intent,
       replyRoute,
@@ -1060,6 +1072,10 @@ export class AgentContextService {
         options.conversation,
         options.agent
       );
+    const conversationReturnContextPrompt =
+      this.buildConversationReturnContextPrompt(
+        options.conversationReturnContext
+      );
     const doubaoAdaptation = options.effectiveChatModel?.includes('doubao')
       ? '\n不用呀、啦、哟、呢等轻飘语气词。情感沉重时不收束为乐观结尾。不声称在现实世界看护、盯着、守着用户。'
       : '';
@@ -1078,6 +1094,7 @@ export class AgentContextService {
         : '',
       plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
+      conversationReturnContextPrompt,
     ];
 
     const conversationReadingPrompt =
@@ -1168,6 +1185,26 @@ export class AgentContextService {
       '# 会话连续感',
       '当前回复不是孤立的第一句。结合最近的用户消息、连续性摘要和本轮原话判断未说完的事、关系状态和开放点；不要重复追问用户已经说清的内容。',
       '连续性摘要只用于理解此前聊到哪里，不是事实证据。涉及人物、关系、现实事件和共同记忆时，仍必须由本轮证据包中的可陈述证据支持。',
+    ].join('\n');
+  }
+
+  private buildConversationReturnContextPrompt(
+    context?: ConversationReturnContext
+  ): string {
+    if (!context) {
+      return '';
+    }
+
+    return [
+      '# 本轮跨时段联系事实',
+      JSON.stringify({
+        currentTurnAt: context.currentTurnAt,
+        previousContactAt: context.previousContactAt,
+        previousUserContactAt: context.previousUserContactAt,
+        previousAssistantContactAt: context.previousAssistantContactAt,
+        elapsedHours: context.elapsedHours,
+        elapsedDays: context.elapsedDays,
+      }),
     ].join('\n');
   }
 
