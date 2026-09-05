@@ -34,6 +34,7 @@ import {
   AgentProfileFactSummary,
 } from './agent-profile-fact.service';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
+import { UserRelativeProfileService } from './user-relative-profile.service';
 import {
   AgentRelationshipSignalService,
   AgentRelationshipSignalSummary,
@@ -344,6 +345,9 @@ export class AgentContextService {
   userIdentityMemoryService: UserIdentityMemoryService;
 
   @Inject()
+  userRelativeProfileService: UserRelativeProfileService;
+
+  @Inject()
   agentRelationshipSignalService: AgentRelationshipSignalService;
 
   @Inject()
@@ -392,38 +396,53 @@ export class AgentContextService {
       RECENT_HISTORY_MESSAGE_LIMIT,
       options.pinnedHistoryMessageIds
     );
-    const [profileFacts, userIdentity, knownPeople] = await Promise.all([
-      this.withTraceSpan(
-        ChatTraceStage.contextLoad,
-        'context.profile_facts',
-        () => this.listProfileFacts(options)
-      ),
-      this.withTraceSpan(
-        ChatTraceStage.contextLoad,
-        'context.user_identity',
-        () =>
-          this.userIdentityMemoryService?.getUserIdentity(
-            options.conversation.userId
-          ) || Promise.resolve(null)
-      ),
-      this.withTraceSpan(
-        ChatTraceStage.contextLoad,
-        'context.known_people',
-        () =>
-          this.userIdentityMemoryService?.listRelevantKnownPeople({
-            userId: options.conversation.userId,
-            query: options.currentQuery || '',
-            recentTexts: routingHistoryMessages
-              .filter(message => message.role === MessageRole.user)
-              .map(message => this.buildUserEvidenceText(message)),
-          }) || Promise.resolve([])
-      ),
-    ]);
+    const [profileFacts, userIdentity, knownPeople, relatives] =
+      await Promise.all([
+        this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.profile_facts',
+          () => this.listProfileFacts(options)
+        ),
+        this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.user_identity',
+          () =>
+            this.userIdentityMemoryService?.getUserIdentity(
+              options.conversation.userId
+            ) || Promise.resolve(null)
+        ),
+        this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.known_people',
+          () =>
+            this.userIdentityMemoryService?.listRelevantKnownPeople({
+              userId: options.conversation.userId,
+              query: options.currentQuery || '',
+              recentTexts: routingHistoryMessages
+                .filter(message => message.role === MessageRole.user)
+                .map(message => this.buildUserEvidenceText(message)),
+            }) || Promise.resolve([])
+        ),
+        this.withTraceSpan(
+          ChatTraceStage.contextLoad,
+          'context.relative_profiles',
+          () =>
+            this.userRelativeProfileService?.listRelevantForPrompt({
+              userId: options.conversation.userId,
+              agentId: options.conversation.agentId,
+              query: options.currentQuery || '',
+              recentTexts: routingHistoryMessages
+                .filter(message => message.role === MessageRole.user)
+                .map(message => this.buildUserEvidenceText(message)),
+            }) || Promise.resolve([])
+        ),
+      ]);
     const identity = buildAgentIdentityContract({
       agent: options.agent,
       profileFacts,
       userIdentity,
       knownPeople,
+      relatives,
     });
     const knownObjects = buildKnownConversationObjects({
       identity,

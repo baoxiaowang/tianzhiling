@@ -1,5 +1,5 @@
 import { InjectEntityModel } from '@midwayjs/typeorm';
-import { Provide } from '@midwayjs/core';
+import { Inject, Provide } from '@midwayjs/core';
 import {
   MessageEntity,
   MongoObjectId,
@@ -15,6 +15,7 @@ import {
   extractUserNameMemory,
   isExplicitCanonicalNameReplacement,
 } from './agent-name-memory';
+import { UserRelativeProfileService } from './user-relative-profile.service';
 
 export interface UserIdentityPromptProfile {
   realName?: string;
@@ -24,6 +25,7 @@ export interface UserIdentityPromptProfile {
 
 export interface UserKnownPersonPromptProfile {
   id: string;
+  preferredName?: string;
   realName?: string;
   aliases: string[];
   relationToUser?: string;
@@ -38,7 +40,7 @@ export interface KnownPersonDeclaration {
 
 const PERSON_NAME = '[\\u4e00-\\u9fa5A-Za-z·]{1,12}';
 const RELATION =
-  '爸爸|妈妈|父亲|母亲|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|朋友|同事|家人|亲人';
+  '爸爸|妈妈|父亲|母亲|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|爱人|伴侣|孙子|孙女|外孙|外孙女|重孙|重孙女|外甥|外甥女|侄子|侄女|叔叔|伯伯|舅舅|姑姑|姨妈|阿姨|朋友|同事|家人|亲人';
 const NON_PERSON_NAMES = new Set([
   '爸爸',
   '妈妈',
@@ -68,6 +70,9 @@ export class UserIdentityMemoryService {
 
   @InjectEntityModel(UserKnownPersonEntity)
   knownPersonModel: MongoRepository<UserKnownPersonEntity>;
+
+  @Inject()
+  userRelativeProfileService: UserRelativeProfileService;
 
   async recordFromUserMessage(
     message: MessageEntity,
@@ -136,6 +141,9 @@ export class UserIdentityMemoryService {
       .slice(0, Math.max(1, Math.min(options.limit || 4, 8)))
       .map(person => ({
         id: `person:${person.id.toString()}`,
+        ...(person.preferredName?.trim()
+          ? { preferredName: person.preferredName.trim() }
+          : {}),
         realName: person.realName?.trim() || undefined,
         aliases: this.unique(person.aliases || []),
         relationToUser: person.relationToUser?.trim() || undefined,
@@ -274,6 +282,13 @@ export class UserIdentityMemoryService {
             },
           } as never
         );
+        await this.userRelativeProfileService?.ensureForKnownPerson({
+          userId: options.userId,
+          personId: existing.id,
+          relationToUser: declaration.relationToUser,
+          sourceMessageId: options.messageId,
+          sourceText: options.sourceText,
+        });
         continue;
       }
 
@@ -292,6 +307,13 @@ export class UserIdentityMemoryService {
         updatedAt: now,
       });
       await this.knownPersonModel.save(person);
+      await this.userRelativeProfileService?.ensureForKnownPerson({
+        userId: options.userId,
+        personId: person.id,
+        relationToUser: declaration.relationToUser,
+        sourceMessageId: options.messageId,
+        sourceText: options.sourceText,
+      });
     }
   }
 

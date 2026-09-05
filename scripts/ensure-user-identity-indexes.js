@@ -7,7 +7,7 @@ const path = require('path');
 const { MongoClient } = require('../apps/node/node_modules/mongodb');
 const dotenv = require('../apps/node/node_modules/dotenv');
 
-const APPROVAL_ID = 'user-identity-indexes-v1';
+const APPROVAL_ID = 'user-identity-indexes-v2';
 const apply = process.argv.includes('--apply');
 const approvalId = readArgument('--approval-id=');
 const planned = [
@@ -34,6 +34,39 @@ const planned = [
     options: {
       name: 'uniq_user_known_person_identity',
       unique: true,
+      background: true,
+    },
+  },
+  {
+    collection: 'user_relative_profile',
+    key: { userId: 1, status: 1 },
+    options: {
+      name: 'idx_user_relative_profile_status',
+      background: true,
+    },
+  },
+  {
+    collection: 'user_relative_profile',
+    key: { userId: 1, personId: 1 },
+    options: {
+      name: 'uniq_user_relative_profile_person',
+      unique: true,
+      background: true,
+    },
+  },
+  {
+    collection: 'user_relative_fact',
+    key: { userId: 1, personId: 1, status: 1, updatedAt: -1 },
+    options: {
+      name: 'idx_user_relative_fact_current',
+      background: true,
+    },
+  },
+  {
+    collection: 'user_relative_fact',
+    key: { userId: 1, personId: 1, domain: 1, key: 1, status: 1 },
+    options: {
+      name: 'idx_user_relative_fact_semantic_key',
       background: true,
     },
   },

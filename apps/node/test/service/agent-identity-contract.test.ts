@@ -6,6 +6,9 @@ import {
   AgentProfileFactStatus,
   AgentProfileFactType,
   AgentSex,
+  MongoObjectId,
+  UserRelativeFactDomain,
+  UserRelativeFactStatus,
 } from '@tzl/entities';
 import {
   buildAgentIdentityContract,
@@ -14,6 +17,52 @@ import {
 } from '../../src/service/agents/agent-identity-contract';
 
 describe('agent identity contract', () => {
+  it('adds an account-level relative profile as facts rather than reply instructions', () => {
+    const identity = buildAgentIdentityContract({
+      agent: {
+        id: new MongoObjectId('665000000000000000000010'),
+        name: '妈妈',
+        sex: AgentSex.woman,
+        iCallAgent: '妈妈',
+        agentCallMe: '女儿',
+      } as AgentEntity,
+      relatives: [
+        {
+          id: 'person:665000000000000000000201',
+          preferredName: '安安',
+          realName: '赵安宁',
+          aliases: ['二宝'],
+          relationToUser: '女儿',
+          relationToAgent: '外孙女',
+          personCallsAgent: '外婆',
+          lifeStage: 'school_age',
+          facts: [
+            {
+              domain: UserRelativeFactDomain.health,
+              key: 'health.fever',
+              value: '安安今天发烧',
+              status: UserRelativeFactStatus.current,
+            },
+          ],
+        },
+      ],
+    });
+
+    const prompt = buildAgentIdentityPrompt(identity);
+    const objects = buildKnownConversationObjects({ identity });
+
+    expect(prompt).toContain('本轮相关亲人档案');
+    expect(prompt).toContain('安安今天发烧');
+    expect(prompt).not.toContain('必须询问');
+    expect(prompt).not.toContain('应该追问');
+    expect(objects[2]).toMatchObject({
+      id: 'person:665000000000000000000201',
+      label: '安安',
+      relationToUser: '女儿',
+      relationToAgent: '外孙女',
+    });
+  });
+
   it('keeps explicit role identity ahead of a conflicting derived persona', () => {
     const agent = {
       name: '王建国',

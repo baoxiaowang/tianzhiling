@@ -8,6 +8,8 @@ export enum TableName {
   user_account = "user_account",
   user_identity_profile = "user_identity_profile",
   user_known_person = "user_known_person",
+  user_relative_profile = "user_relative_profile",
+  user_relative_fact = "user_relative_fact",
   admin_user = "admin_user",
   admin_account = "admin_account",
   agent = "agent",

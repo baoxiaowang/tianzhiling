@@ -20,6 +20,10 @@ export class UserKnownPersonEntity extends BaseEntity {
   @Column()
   realName?: string;
 
+  /** Name currently preferred in conversation; it need not be a formal name. */
+  @Column()
+  preferredName?: string;
+
   @Column()
   aliases?: string[];
 

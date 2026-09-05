@@ -11,6 +11,7 @@ import type {
   UserIdentityPromptProfile,
   UserKnownPersonPromptProfile,
 } from './user-identity-memory.service';
+import type { UserRelativePromptProfile } from './user-relative-profile.service';
 import { getSharedFamilyMemberNameFromFactKey } from './shared-family-member';
 import {
   USER_EXPLICIT_ALIAS_FACT_PREFIX,
@@ -64,6 +65,7 @@ export interface AgentIdentityContract {
     agentCallsUser: string;
   };
   knownPeople?: UserKnownPersonPromptProfile[];
+  relatives?: UserRelativePromptProfile[];
 }
 
 export function buildAgentIdentityContract(options: {
@@ -71,6 +73,7 @@ export function buildAgentIdentityContract(options: {
   profileFacts?: AgentProfileFactSummary[];
   userIdentity?: UserIdentityPromptProfile | null;
   knownPeople?: UserKnownPersonPromptProfile[];
+  relatives?: UserRelativePromptProfile[];
 }): AgentIdentityContract {
   const agent = options.agent;
   const nameMemory = resolveAgentNameMemory(options.profileFacts);
@@ -147,6 +150,9 @@ export function buildAgentIdentityContract(options: {
     ...(options.knownPeople?.length
       ? { knownPeople: options.knownPeople.slice(0, 8) }
       : {}),
+    ...(options.relatives?.length
+      ? { relatives: options.relatives.slice(0, 8) }
+      : {}),
   };
 }
 
@@ -210,10 +216,58 @@ export function buildKnownConversationObjects(options: {
       )
         ? 'family'
         : 'other_person',
-      label: person.realName || person.aliases[0] || '相关人物',
-      aliases: unique([person.realName, ...person.aliases]),
+      label:
+        person.preferredName ||
+        person.realName ||
+        person.aliases[0] ||
+        '相关人物',
+      aliases: unique([
+        person.preferredName,
+        person.realName,
+        ...person.aliases,
+      ]),
       ...(person.relationToUser
         ? { relationToUser: person.relationToUser }
+        : {}),
+      assertionPolicy: 'can_assert',
+    });
+  }
+
+  for (const relative of identity.relatives || []) {
+    const existing = objects.find(object => object.id === relative.id);
+    if (existing) {
+      existing.aliases = unique([
+        ...existing.aliases,
+        relative.preferredName,
+        relative.realName,
+        ...relative.aliases,
+      ]);
+      existing.relationToUser =
+        relative.relationToUser || existing.relationToUser;
+      existing.relationToAgent =
+        relative.relationToAgent || existing.relationToAgent;
+      continue;
+    }
+    objects.push({
+      id: relative.id,
+      kind: 'family',
+      label:
+        relative.preferredName ||
+        relative.realName ||
+        relative.aliases[0] ||
+        relative.relationToUser ||
+        '亲人',
+      aliases: unique([
+        relative.preferredName,
+        relative.realName,
+        ...relative.aliases,
+        relative.relationToUser,
+      ]),
+      ...(relative.relationToUser
+        ? { relationToUser: relative.relationToUser }
+        : {}),
+      ...(relative.relationToAgent
+        ? { relationToAgent: relative.relationToAgent }
         : {}),
       assertionPolicy: 'can_assert',
     });
@@ -244,9 +298,30 @@ export function buildAgentIdentityPrompt(
   };
   const knownPeople = (identity.knownPeople || []).map(person => ({
     id: person.id,
+    preferredName: person.preferredName || '未设置',
     realName: person.realName || '未知',
     aliases: person.aliases,
     relationToUser: person.relationToUser || '未确认',
+  }));
+  const relatives = (identity.relatives || []).map(relative => ({
+    id: relative.id,
+    preferredName: clean(relative.preferredName, 24) || '未设置',
+    realName: clean(relative.realName, 24) || '未知',
+    aliases: unique(relative.aliases),
+    relationToUser: clean(relative.relationToUser, 24) || '未确认',
+    relationToAgent: clean(relative.relationToAgent, 24) || '未确认',
+    personCallsAgent: clean(relative.personCallsAgent, 24) || '未确认',
+    lifeStage: relative.lifeStage,
+    sex: relative.sex || 'unknown',
+    birthDate: relative.birthDate,
+    birthYear: relative.birthYear,
+    facts: relative.facts.map(fact => ({
+      domain: fact.domain,
+      key: clean(fact.key, 120),
+      value: clean(fact.value, 240),
+      status: fact.status,
+      occurredAt: fact.occurredAt,
+    })),
   }));
 
   return [
@@ -255,6 +330,7 @@ export function buildAgentIdentityPrompt(
     knownPeople.length
       ? `本轮相关其他人物：${JSON.stringify(knownPeople)}`
       : '',
+    relatives.length ? `本轮相关亲人档案：${JSON.stringify(relatives)}` : '',
     'agent 始终是正在回复的当前角色，user 始终是聊天用户；其他人物、地点和物品必须另建对象，不得互换说话者、经历或关系。',
     '称呼只用于确定关系位置，不证明用户现实、其他家人或共同过去。',
   ]

@@ -105,6 +105,36 @@ describe('UserIdentityMemoryService', () => {
     ).toEqual([]);
   });
 
+  it('creates an account-level relative profile for an explicitly named relative', async () => {
+    const service = new UserIdentityMemoryService();
+    const ensureForKnownPerson = jest.fn(async () => null);
+    service.identityModel = {
+      findOne: jest.fn(async () => null),
+      save: jest.fn(async value => value),
+    } as never;
+    service.knownPersonModel = {
+      findOne: jest.fn(async () => null),
+      save: jest.fn(async value => {
+        value.id = new MongoObjectId('665000000000000000000201');
+        return value;
+      }),
+    } as never;
+    service.userRelativeProfileService = {
+      ensureForKnownPerson,
+    } as never;
+    const message = createMessage('李雨桐是我女儿');
+
+    await service.recordFromUserMessage(message, message.content);
+
+    expect(ensureForKnownPerson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        personId: new MongoObjectId('665000000000000000000201'),
+        relationToUser: '女儿',
+      })
+    );
+  });
+
   it('keeps an agent-specific preferred address out of global aliases', async () => {
     const service = new UserIdentityMemoryService();
     const save = jest.fn(async value => value);
