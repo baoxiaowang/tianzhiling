@@ -613,6 +613,9 @@ export class MessageEntity extends BaseEntity {
   memoryWriteProfileFactCount?: number;
 
   @Column()
+  memoryWriteTemporalFactCount?: number;
+
+  @Column()
   memoryWriteCompletedAt?: Date;
 
   @Column()

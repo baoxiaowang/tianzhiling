@@ -176,6 +176,7 @@ import {
   serializeRecognitionJourney,
 } from './agents/recognition-journey';
 import { RecognitionJourneyObserverService } from './agents/recognition-journey-observer.service';
+import { PersonTemporalMemoryService } from './agents/person-temporal-memory.service';
 import {
   PreparedRelationshipOpenLoopTurn,
   RelationshipOpenLoopService,
@@ -729,6 +730,9 @@ export class ConversationService {
 
   @Inject()
   agentProfileFactService: AgentProfileFactService;
+
+  @Inject()
+  personTemporalMemoryService: PersonTemporalMemoryService;
 
   @Inject()
   agentRelationshipSignalService: AgentRelationshipSignalService;
@@ -2696,25 +2700,29 @@ export class ConversationService {
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
 
-    const [, memoryFacts, profileFacts, openLoopAudit] = await Promise.all([
-      this.recognizeEmotionStateForUserMessage(message, searchableText),
-      this.extractMemoryFactsForUserMessage(message, searchableText),
-      this.extractProfileFactsForUserMessage(
-        message,
-        searchableText,
-        false,
-        previousAssistantContent
-      ),
-      this.captureRelationshipOpenLoop(message, searchableText).catch(error => {
-        this.logger.warn(
-          '[conversation] relationship open loop capture skipped, conversationId=%s, messageId=%s, reason=%s',
-          this.stringifyObjectId(message.conversationId),
-          this.stringifyObjectId(message.id),
-          this.describeReplyError(error)
-        );
-        return undefined;
-      }),
-    ]);
+    const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
+      await Promise.all([
+        this.recognizeEmotionStateForUserMessage(message, searchableText),
+        this.extractMemoryFactsForUserMessage(message, searchableText),
+        this.extractProfileFactsForUserMessage(
+          message,
+          searchableText,
+          false,
+          previousAssistantContent
+        ),
+        this.extractTemporalFactsForUserMessage(message, searchableText),
+        this.captureRelationshipOpenLoop(message, searchableText).catch(
+          error => {
+            this.logger.warn(
+              '[conversation] relationship open loop capture skipped, conversationId=%s, messageId=%s, reason=%s',
+              this.stringifyObjectId(message.conversationId),
+              this.stringifyObjectId(message.id),
+              this.describeReplyError(error)
+            );
+            return undefined;
+          }
+        ),
+      ]);
     if (openLoopAudit) {
       this.chatTraceService?.recordCompletedSpan({
         stage: ChatTraceStage.asyncWrite,
@@ -2740,17 +2748,21 @@ export class ConversationService {
         },
       });
     }
-    const writtenCount = memoryFacts.count + profileFacts.count;
+    const writtenCount =
+      memoryFacts.count + profileFacts.count + temporalFacts.count;
     message.memoryWriteStatus =
-      memoryFacts.succeeded && profileFacts.succeeded
+      memoryFacts.succeeded && profileFacts.succeeded && temporalFacts.succeeded
         ? writtenCount > 0
           ? 'written'
           : 'none'
-        : memoryFacts.succeeded || profileFacts.succeeded
+        : memoryFacts.succeeded ||
+          profileFacts.succeeded ||
+          temporalFacts.succeeded
         ? 'partial'
         : 'failed';
     message.memoryWriteLegacyFactCount = memoryFacts.count;
     message.memoryWriteProfileFactCount = profileFacts.count;
+    message.memoryWriteTemporalFactCount = temporalFacts.count;
     message.memoryWriteCompletedAt = new Date();
     await this.messageModel.save(message);
   }
@@ -2926,6 +2938,36 @@ export class ConversationService {
     } catch (error) {
       this.logger.error(
         '[conversation] profile fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
+        this.stringifyObjectId(message.conversationId),
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(message.userId),
+        this.describeReplyError(error)
+      );
+      return { succeeded: false, count: 0 };
+    }
+  }
+
+  private async extractTemporalFactsForUserMessage(
+    message: MessageEntity,
+    searchableText: string
+  ): Promise<MemoryFactExtractionAudit> {
+    if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
+      return { succeeded: true, count: 0 };
+    }
+    if (!this.personTemporalMemoryService) {
+      return { succeeded: true, count: 0 };
+    }
+
+    try {
+      const result =
+        await this.personTemporalMemoryService.recordAgentDepartureFromMessage({
+          message,
+          searchableText,
+        });
+      return { succeeded: true, count: result ? 1 : 0 };
+    } catch (error) {
+      this.logger.error(
+        '[conversation] temporal fact extraction failed, conversationId=%s, messageId=%s, userId=%s, reason=%s',
         this.stringifyObjectId(message.conversationId),
         this.stringifyObjectId(message.id),
         this.stringifyObjectId(message.userId),
@@ -5363,6 +5405,45 @@ export class ConversationService {
         userMessageId: plan.currentUserMessageId,
         now: latestAssistantMessage.createdAt,
       });
+      const departureBefore = deliveredJourney.tasks.find(
+        task => task.id === 'departure_interval'
+      );
+      const departureAfter = updated.tasks.find(
+        task => task.id === 'departure_interval'
+      );
+      if (
+        departureBefore?.status !== 'completed' &&
+        departureAfter?.status === 'completed' &&
+        departureAfter.answerMessageId &&
+        this.personTemporalMemoryService
+      ) {
+        try {
+          const answerMessage = await this.findMessageById(
+            this.parseObjectId(departureAfter.answerMessageId),
+            options.runtime.conversation.id
+          );
+          if (answerMessage?.role === MessageRole.user) {
+            await this.personTemporalMemoryService.recordAgentDepartureFromMessage(
+              {
+                message: answerMessage,
+                searchableText:
+                  answerMessage.mediaTranscript ||
+                  answerMessage.content ||
+                  plan.currentUserText ||
+                  '',
+                implicitCurrentAgent: true,
+              }
+            );
+          }
+        } catch (error) {
+          this.logger?.warn?.(
+            '[conversation] recognition departure time write skipped, conversationId=%s, messageId=%s, reason=%s',
+            this.stringifyObjectId(options.runtime.conversation.id),
+            departureAfter.answerMessageId,
+            this.describeReplyError(error)
+          );
+        }
+      }
       const nextState = serializeRecognitionJourney(updated);
       this.chatTraceService?.recordArtifact({
         stage: ChatTraceStage.review,

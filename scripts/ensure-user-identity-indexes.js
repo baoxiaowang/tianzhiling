@@ -7,7 +7,7 @@ const path = require('path');
 const { MongoClient } = require('../apps/node/node_modules/mongodb');
 const dotenv = require('../apps/node/node_modules/dotenv');
 
-const APPROVAL_ID = 'user-identity-indexes-v2';
+const APPROVAL_ID = 'user-identity-indexes-v3';
 const apply = process.argv.includes('--apply');
 const approvalId = readArgument('--approval-id=');
 const planned = [
@@ -67,6 +67,46 @@ const planned = [
     key: { userId: 1, personId: 1, domain: 1, key: 1, status: 1 },
     options: {
       name: 'idx_user_relative_fact_semantic_key',
+      background: true,
+    },
+  },
+  {
+    collection: 'person_temporal_assertion',
+    key: {
+      userId: 1,
+      subjectType: 1,
+      subjectId: 1,
+      eventType: 1,
+      status: 1,
+    },
+    options: {
+      name: 'idx_person_temporal_assertion_subject',
+      background: true,
+    },
+  },
+  {
+    collection: 'person_temporal_assertion',
+    key: { userId: 1, sourceMessageId: 1, semanticKey: 1 },
+    options: {
+      name: 'uniq_person_temporal_assertion_source',
+      unique: true,
+      background: true,
+    },
+  },
+  {
+    collection: 'person_temporal_profile',
+    key: { userId: 1, subjectType: 1, subjectId: 1, eventType: 1 },
+    options: {
+      name: 'uniq_person_temporal_profile_subject_event',
+      unique: true,
+      background: true,
+    },
+  },
+  {
+    collection: 'person_temporal_profile',
+    key: { userId: 1, eventType: 1, updatedAt: -1 },
+    options: {
+      name: 'idx_person_temporal_profile_event',
       background: true,
     },
   },
