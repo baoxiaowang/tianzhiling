@@ -105,7 +105,6 @@ import type { AgentMemoryControlResult } from './agent-memory-control';
 import {
   AgentPersonaPromptResult,
   buildAgentPersonaPrompt,
-  hasUsableAgentPersonaProfile,
 } from './agent-persona';
 import {
   AGENT_CHAT_TOOL_VERSION,
@@ -321,6 +320,8 @@ export interface RetrievedContextSnippet {
 
 // 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
 const RECENT_HISTORY_MESSAGE_LIMIT = 16;
+// 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
+const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
 const RELEVANCE_TOKEN_LIMIT = 48;
 const HARD_FACT_RELEVANCE_CANDIDATE_LIMIT = 48;
 const MEMORY_PLAN_CANDIDATE_LIMIT = 10;
@@ -392,7 +393,11 @@ export class AgentContextService {
     const conversationMessages = await this.withTraceSpan(
       ChatTraceStage.contextLoad,
       'context.messages',
-      () => this.listConversationMessages(options.conversation)
+      () =>
+        this.listConversationMessages(options.conversation, [
+          ...(options.currentTurnMessageIds || []),
+          ...(options.pinnedHistoryMessageIds || []),
+        ])
     );
     const currentTurnMessages = this.selectCurrentTurnMessages(
       conversationMessages,
@@ -2566,16 +2571,14 @@ export class AgentContextService {
       }
     }
 
-    const styleCandidates = hasUsableAgentPersonaProfile(agent.personaProfile)
-      ? []
-      : [
-          {
-            key: 'customContext',
-            value: agent.customContext,
-            assertionPolicy: 'context_only' as const,
-            baseScore: 6,
-          },
-        ];
+    const styleCandidates = [
+      {
+        key: 'customContext',
+        value: agent.customContext,
+        assertionPolicy: 'context_only' as const,
+        baseScore: 6,
+      },
+    ];
     const detailCandidates = [
       ...styleCandidates,
       {
@@ -3194,16 +3197,37 @@ export class AgentContextService {
   }
 
   private async listConversationMessages(
-    conversation: ConversationEntity
+    conversation: ConversationEntity,
+    requiredMessageIds: string[] = []
   ): Promise<MessageEntity[]> {
-    const messages = await this.messageModel.find({
+    // 最近 N 条（倒序取，再正序排），避免长会话全量加载顶爆 V8 堆
+    const recentMessages = await this.messageModel.find({
       where: {
         conversationId: conversation.id,
       },
       order: {
-        createdAt: 'ASC',
+        createdAt: 'DESC',
       },
+      take: CONVERSATION_MESSAGE_LOAD_LIMIT,
     });
+
+    let messages = recentMessages.reverse();
+
+    // 补全必加载消息（当前轮 + 置顶），它们可能不在最近 N 条内
+    const validRequiredIds = requiredMessageIds
+      .map(id => id.trim())
+      .filter(Boolean);
+
+    if (validRequiredIds.length) {
+      const loadedIds = new Set(
+        messages.map(message => this.stringifyObjectId(message.id))
+      );
+      const missingIds = validRequiredIds.filter(id => !loadedIds.has(id));
+      if (missingIds.length) {
+        const requiredMessages = await this.messageModel.findByIds(missingIds);
+        messages = [...messages, ...requiredMessages];
+      }
+    }
 
     return messages
       .filter(
