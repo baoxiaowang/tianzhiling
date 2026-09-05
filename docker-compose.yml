@@ -1,5 +1,10 @@
-services:
+x-milvus-logging: &milvus-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "5"
 
+services:
   # tzl_web:
   #   profiles: ["prod"]  # 这个配置表示该服务只在运行 docker-compose --profile prod up 命令时才会启动，用于区分开发和生产环境
   #   build:
@@ -13,7 +18,7 @@ services:
   #     - tzl-network
 
   tzl_node:
-    profiles: ["prod"]  # 这个配置表示该服务只在运行 docker-compose --profile prod up 命令时才会启动，用于区分开发和生产环境
+    profiles: ["prod"] # 这个配置表示该服务只在运行 docker-compose --profile prod up 命令时才会启动，用于区分开发和生产环境
     container_name: tzl_node
     build:
       context: .
@@ -43,7 +48,6 @@ services:
     depends_on:
       - tzl_redis
       - tzl_mongo
-      - standalone
     networks:
       - tzl-network
     restart: always
@@ -174,7 +178,6 @@ services:
   #   depends_on:
   #     - tzl_mongo
 
-
   etcd:
     container_name: tzl-etcd
     image: quay.io/coreos/etcd:v3.5.18
@@ -187,44 +190,50 @@ services:
       - tzl-network
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 30s
       timeout: 20s
       retries: 3
     ports:
-      - ${ETCD_PORT:-17239}:2379
+      - 127.0.0.1:${ETCD_PORT:-17239}:2379
+    restart: unless-stopped
+    logging: *milvus-logging
 
   minio:
     container_name: tzl_minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_CONSOLE_PORT:-17902}:9002"
-      - "${MINIO_API_PORT:-17900}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-17902}:9002"
+      - "127.0.0.1:${MINIO_API_PORT:-17900}:9000"
     networks:
       - tzl-network
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
     command: minio server /minio_data --console-address ":9002"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
+    logging: *milvus-logging
 
   standalone:
     container_name: tzl-milvus-standalone
-    image: milvusdb/milvus:v2.6.7
+    image: milvusdb/milvus:v2.6.22
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
     healthcheck:
@@ -234,15 +243,17 @@ services:
       timeout: 20s
       retries: 3
     ports:
-      - "${MILVUS_PORT:-17953}:19530"
-      - "${MILVUS_HEALTH_PORT:-19091}:9091"
+      - "127.0.0.1:${MILVUS_PORT:-17953}:19530"
+      - "127.0.0.1:${MILVUS_HEALTH_PORT:-19091}:9091"
     networks:
       - tzl-network
     depends_on:
-      - "etcd"
-      - "minio"
-
-
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *milvus-logging
 
 volumes:
   redis_data:
