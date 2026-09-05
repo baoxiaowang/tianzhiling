@@ -106,7 +106,10 @@ export class AdminVoiceTimbreMaterialService {
 
     await Promise.all(
       [...previousKeys]
-        .filter(objectKey => !nextKeys.has(objectKey))
+        .filter(
+          objectKey =>
+            objectKey !== material.objectKey && !nextKeys.has(objectKey)
+        )
         .map(objectKey => this.deleteObjectSafely(objectKey))
     );
     return this.toRecord(saved);
@@ -129,11 +132,7 @@ export class AdminVoiceTimbreMaterialService {
     const objectKeys = new Set([
       this.normalizeVoiceMaterialObjectKey(material.objectKey),
       ...(material.reviewClips ?? []).map(item =>
-        this.normalizeObjectKey(
-          item.objectKey,
-          'voice-service-clips/',
-          'INVALID_VOICE_REVIEW_CLIP'
-        )
+        this.normalizeReviewClipObjectKey(material, item.objectKey)
       ),
     ]);
 
@@ -192,11 +191,6 @@ export class AdminVoiceTimbreMaterialService {
     const allowedStatuses = new Set(['pending', 'accepted', 'unused']);
 
     return clips.map(item => {
-      const objectKey = this.normalizeObjectKey(
-        item.objectKey,
-        'voice-service-clips/',
-        'INVALID_VOICE_REVIEW_CLIP'
-      );
       const durationSeconds = Number(item.durationSeconds);
       if (
         item.sourceMaterialId !== materialId ||
@@ -211,6 +205,10 @@ export class AdminVoiceTimbreMaterialService {
           400
         );
       }
+      const objectKey = this.normalizeReviewClipObjectKey(
+        material,
+        item.objectKey
+      );
 
       return {
         ...item,
@@ -238,6 +236,24 @@ export class AdminVoiceTimbreMaterialService {
       throw new AppError(errorCode, 'voice object key is invalid', 400);
     }
     return normalizedObjectKey;
+  }
+
+  private normalizeReviewClipObjectKey(
+    material: VoiceTimbreMaterialEntity,
+    objectKey: string
+  ): string {
+    const normalizedObjectKey = objectKey?.trim().replace(/^\/+/, '');
+    const materialObjectKey = this.normalizeVoiceMaterialObjectKey(
+      material.objectKey
+    );
+    if (normalizedObjectKey === materialObjectKey) {
+      return materialObjectKey;
+    }
+    return this.normalizeObjectKey(
+      normalizedObjectKey,
+      'voice-service-clips/',
+      'INVALID_VOICE_REVIEW_CLIP'
+    );
   }
 
   private normalizeVoiceMaterialObjectKey(objectKey: string): string {

@@ -91,6 +91,8 @@ export interface AdminOperationsDailyPointDTO {
   refundedRevenue: number;
   netRevenue: number;
   cohortRevenue: number;
+  promotionExpense?: number;
+  profit?: number;
 }
 
 export interface AdminOperationsHourlyPointDTO {

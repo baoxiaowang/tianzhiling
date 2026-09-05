@@ -28,3 +28,22 @@ export class RollbackAdminVoiceTimbreMaterialUploadDTO {
   @Rule(RuleType.string().trim().min(1).max(2000).required())
   objectKey: string;
 }
+
+export class AnalyzeAdminVoiceTimbreDTO {
+  @Rule(
+    RuleType.array()
+      .items(RuleType.string().trim().min(1).max(2000))
+      .min(1)
+      .max(8)
+      .required()
+  )
+  objectKeys: string[];
+
+  @Rule(
+    RuleType.array()
+      .items(RuleType.string().allow('').max(300))
+      .max(8)
+      .optional()
+  )
+  transcripts?: string[];
+}

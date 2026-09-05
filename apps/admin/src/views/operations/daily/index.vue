@@ -3,7 +3,7 @@
     <header class="daily-detail-page__header">
       <div>
         <h1>每日明细</h1>
-        <p>每日用户活跃、订单和收入数据</p>
+        <p>每日用户活跃、订单、收入与推广费用</p>
       </div>
       <a-space>
         <a-month-picker
@@ -21,7 +21,7 @@
         row-key="date"
         :data="daily"
         :pagination="false"
-        :scroll="{ x: 1480 }"
+        :scroll="{ x: 1740 }"
       >
         <template #columns>
           <a-table-column title="日期" data-index="date" :width="130" />
@@ -51,6 +51,16 @@
               {{ formatMoney(record.cohortRevenue) }}
             </template>
           </a-table-column>
+          <a-table-column title="推广费用" :width="130">
+            <template #cell="{ record }">
+              {{ formatMoney(promotionExpenseFor(record)) }}
+            </template>
+          </a-table-column>
+          <a-table-column title="盈利" :width="130">
+            <template #cell="{ record }">
+              <strong>{{ formatMoney(profitFor(record)) }}</strong>
+            </template>
+          </a-table-column>
           <a-table-column title="单客收益" :width="110">
             <template #cell="{ record }">
               {{
@@ -70,8 +80,12 @@
   import { computed, onMounted, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
-  import type { AdminOperationsReportDTO } from '@tzl/shared';
+  import type {
+    AdminOperationsDailyPointDTO,
+    AdminOperationsReportDTO,
+  } from '@tzl/shared';
   import { queryOperationsReport } from '@/api/operations';
+  import { getDouyinPromotionExpense } from '@tzl/shared/src/douyin-promotion-expenses';
 
   const month = ref(dayjs().format('YYYY-MM'));
   const loading = ref(false);
@@ -84,6 +98,13 @@
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+
+  const promotionExpenseFor = (record: AdminOperationsDailyPointDTO) =>
+    record.promotionExpense ?? getDouyinPromotionExpense(record.date);
+
+  const profitFor = (record: AdminOperationsDailyPointDTO) =>
+    record.profit ??
+    Number((record.cohortRevenue - promotionExpenseFor(record)).toFixed(2));
 
   const fetch = async () => {
     try {

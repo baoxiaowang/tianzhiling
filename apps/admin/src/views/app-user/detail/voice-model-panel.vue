@@ -61,6 +61,7 @@
                 controls
                 preload="metadata"
                 class="voice-model-panel__audio"
+                @play="pauseOtherAudio"
               />
               <span v-else class="voice-model-panel__muted">暂无试听</span>
             </template>
@@ -228,6 +229,7 @@
               controls
               preload="metadata"
               class="voice-model-panel__clip-audio"
+              @play="pauseOtherAudio"
             />
             <a-popconfirm
               :content="`确认删除声音素材“${clip.name}”？该素材生成的声音片段也会一并删除。`"
@@ -258,6 +260,24 @@
           <a-typography-text>
             已剪出 {{ voiceClips.length }} 段片段，请逐段确认是否用于训练
           </a-typography-text>
+          <div>
+            <input
+              ref="manualClipInputRef"
+              type="file"
+              :accept="audioAccept"
+              multiple
+              class="voice-model-panel__hidden-input"
+              @change="onManualClipFilesChange"
+            />
+            <a-button
+              type="primary"
+              size="small"
+              :loading="addingManualClips"
+              @click="manualClipInputRef?.click()"
+            >
+              手动添加声音片段
+            </a-button>
+          </div>
         </div>
 
         <div v-if="clipping" class="voice-model-panel__clipping">
@@ -292,10 +312,8 @@
               controls
               preload="metadata"
               class="voice-model-panel__clip-audio"
+              @play="pauseOtherAudio"
             />
-            <a-tag v-if="clip.qualityLabel" size="small" color="arcoblue">
-              {{ clip.qualityLabel }}
-            </a-tag>
             <div
               v-if="clip.qualityIssues?.length"
               class="voice-model-panel__clip-issues"
@@ -409,7 +427,9 @@
               </a-form-item>
             </a-grid-item>
             <a-grid-item
-              v-if="supportsSpeechInstruction"
+              v-if="
+                supportsSpeechInstruction && form.useVoiceDescriptionInstruction
+              "
               :span="{ xs: 24, md: 12 }"
             >
               <a-form-item field="speechDialect" label="方言类型">
@@ -430,9 +450,9 @@
             >
               <a-form-item
                 field="speechInstruction"
-                label="补充要求"
+                label="声音效果指令"
                 :rules="[
-                  { maxLength: 50, message: '补充要求不能超过 50 个字符' },
+                  { maxLength: 50, message: '声音效果指令不能超过 50 个字符' },
                 ]"
               >
                 <a-textarea
@@ -441,8 +461,58 @@
                   :max-length="50"
                   show-word-limit
                   :auto-size="{ minRows: 1, maxRows: 3 }"
-                  placeholder="例如：语气亲切自然，保留长辈说话的停顿习惯"
+                  placeholder="AI 识别后自动写入，也可以手动修改"
                 />
+                <template #extra>
+                  该指令会在试听和后续聊天语音合成时持续生效
+                </template>
+              </a-form-item>
+            </a-grid-item>
+            <a-grid-item :span="24">
+              <a-form-item
+                field="voiceDescription"
+                label="AI 识别的音色描述"
+                :rules="[
+                  { maxLength: 500, message: '音色描述不能超过 500 个字符' },
+                ]"
+              >
+                <div class="voice-model-panel__description-editor">
+                  <a-textarea
+                    v-model="form.voiceDescription"
+                    allow-clear
+                    :max-length="500"
+                    show-word-limit
+                    :auto-size="{ minRows: 2, maxRows: 5 }"
+                    placeholder="进入本步骤后由 AI 自动分析，也可以手动修改"
+                  />
+                  <a-button
+                    :loading="analyzingVoiceDescription"
+                    :disabled="!selectedVoiceClips.length"
+                    @click="analyzeSelectedVoiceDescription(true)"
+                  >
+                    重新识别
+                  </a-button>
+                </div>
+                <template #extra>
+                  AI 根据已选片段汇总稳定的声音听感，并提炼声音效果指令
+                </template>
+              </a-form-item>
+            </a-grid-item>
+            <a-grid-item :span="24">
+              <a-form-item label="使用 AI 音色描述">
+                <a-switch
+                  v-model="form.useVoiceDescriptionInstruction"
+                  :disabled="!supportsSpeechInstruction"
+                  checked-text="使用"
+                  unchecked-text="不使用"
+                />
+                <template #extra>
+                  {{
+                    supportsSpeechInstruction
+                      ? '开启后，AI 提炼的声音效果指令会用于试听和后续聊天语音；关闭后仅保存音色描述，不影响声音生成'
+                      : '当前声音模型不支持文字效果指令，音色描述仅用于查看和存档'
+                  }}
+                </template>
               </a-form-item>
             </a-grid-item>
             <a-grid-item :span="24">
@@ -558,8 +628,15 @@
           <a-descriptions-item v-if="isDoubaoProvider" label="豆包 Speaker ID">
             提交时按剩余训练次数自动分配
           </a-descriptions-item>
-          <a-descriptions-item label="补充要求">
-            {{ form.speechInstruction || '-' }}
+          <a-descriptions-item label="声音效果指令">
+            {{
+              supportsSpeechInstruction && form.useVoiceDescriptionInstruction
+                ? form.speechInstruction || '已启用，暂无指令'
+                : '未启用'
+            }}
+          </a-descriptions-item>
+          <a-descriptions-item label="音色描述" :span="2">
+            {{ form.voiceDescription || '尚未识别' }}
           </a-descriptions-item>
           <a-descriptions-item label="语速 / 音量 / 音调">
             {{ form.speechSpeed }} / {{ form.speechVolume }} /
@@ -677,7 +754,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import uploadAdminFile from '@/api/storage';
@@ -693,6 +770,7 @@
     clipVoiceMaterials,
     recutVoiceClip,
     saveVoiceMaterialReviewClips,
+    analyzeVoiceTimbreDescription,
     VoiceClipReviewStatus,
     VoiceTimbreRecord,
   } from '@/api/voice-model';
@@ -855,8 +933,12 @@
   const step = ref(0);
   const saving = ref(false);
   const uploading = ref(false);
+  const addingManualClips = ref(false);
+  const analyzingVoiceDescription = ref(false);
+  const lastAiSpeechInstruction = ref('');
   const trainFormRef = ref();
   const fileInputRef = ref<HTMLInputElement>();
+  const manualClipInputRef = ref<HTMLInputElement>();
   const uploadedClips = ref<UploadedClip[]>([]);
   /** 剪辑出的训练片段（底层声音剪辑工作流产出） */
   const voiceClips = ref<VoiceClip[]>([]);
@@ -985,6 +1067,8 @@
     previewText: string;
     speechDialect: string;
     speechInstruction: string;
+    voiceDescription: string;
+    useVoiceDescriptionInstruction: boolean;
     speechSpeed: number;
     speechVolume: number;
     speechPitch: number;
@@ -996,6 +1080,8 @@
     previewText: DEFAULT_PREVIEW_TEXT,
     speechDialect: 'auto',
     speechInstruction: '',
+    voiceDescription: '',
+    useVoiceDescriptionInstruction: true,
     speechSpeed: 1,
     speechVolume: 1,
     speechPitch: 0,
@@ -1048,7 +1134,7 @@
     if (form.provider === 'qwen') {
       return {
         type: 'warning',
-        text: 'Qwen3 TTS VC 支持声音复刻，但不支持方言或补充指令；中文按普通话合成。',
+        text: 'Qwen3 TTS VC 支持声音复刻，但不支持方言或声音效果指令；中文按普通话合成。',
       };
     }
     if (form.provider === 'doubao') {
@@ -1107,6 +1193,59 @@
     return true;
   });
 
+  const analyzeSelectedVoiceDescription = async (force = false) => {
+    if (
+      !selectedVoiceClips.value.length ||
+      (form.voiceDescription.trim() && !force)
+    ) {
+      return;
+    }
+    try {
+      analyzingVoiceDescription.value = true;
+      const { data } = await analyzeVoiceTimbreDescription({
+        objectKeys: selectedVoiceClips.value.map((clip) => clip.objectKey),
+        transcripts: selectedVoiceClips.value
+          .map((clip) => clip.transcript?.trim() || '')
+          .filter(Boolean),
+      });
+      const previousAiSpeechInstruction = lastAiSpeechInstruction.value;
+      form.voiceDescription = data.description;
+      if (
+        supportsSpeechInstruction.value &&
+        (force ||
+          !form.speechInstruction.trim() ||
+          form.speechInstruction === previousAiSpeechInstruction)
+      ) {
+        form.speechInstruction = data.instruction;
+      }
+      lastAiSpeechInstruction.value = data.instruction;
+      if (force) {
+        Message.success(
+          supportsSpeechInstruction.value
+            ? '音色描述与声音效果指令已重新识别'
+            : '音色描述已重新识别；当前模型不支持声音效果指令'
+        );
+      }
+    } catch (error: any) {
+      Message.warning(
+        error?.response?.data?.message ||
+          'AI 音色分析失败，可手动填写描述与声音效果指令'
+      );
+    } finally {
+      analyzingVoiceDescription.value = false;
+    }
+  };
+
+  watch(supportsSpeechInstruction, (supported) => {
+    if (
+      supported &&
+      !form.speechInstruction.trim() &&
+      lastAiSpeechInstruction.value
+    ) {
+      form.speechInstruction = lastAiSpeechInstruction.value;
+    }
+  });
+
   const persistMaterialClips = async (materialId: string) => {
     if (!materialId) return;
     await saveVoiceMaterialReviewClips(
@@ -1143,6 +1282,134 @@
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  const pauseOtherAudio = (event: Event) => {
+    const playingAudio = event.currentTarget as HTMLAudioElement;
+    document
+      .querySelectorAll<HTMLAudioElement>('.voice-model-panel audio')
+      .forEach((audio) => {
+        if (audio !== playingAudio && !audio.paused) {
+          audio.pause();
+        }
+      });
+  };
+
+  const readAudioDuration = (file: File) =>
+    new Promise<number>((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const audio = new Audio();
+      let timeoutId = 0;
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        audio.onloadedmetadata = null;
+        audio.onerror = null;
+        audio.removeAttribute('src');
+        audio.load();
+        URL.revokeObjectURL(objectUrl);
+      };
+      audio.onloadedmetadata = () => {
+        const duration = Number(audio.duration);
+        cleanup();
+        if (Number.isFinite(duration) && duration > 0) {
+          resolve(duration);
+          return;
+        }
+        reject(new Error('invalid audio duration'));
+      };
+      audio.onerror = () => {
+        cleanup();
+        reject(new Error('audio metadata load failed'));
+      };
+      audio.preload = 'metadata';
+      audio.src = objectUrl;
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('audio metadata load timeout'));
+      }, 10000);
+    });
+
+  const addManualClipFile = async (file: File) => {
+    let uploadedObjectKey = '';
+    let materialId = '';
+    try {
+      const durationSeconds = await readAudioDuration(file);
+      const uploaded = await uploadAdminFile(file, {
+        folder: 'voice-timbres',
+      });
+      uploadedObjectKey = uploaded.objectKey;
+      const { data: material } = await createVoiceMaterial({
+        userId: props.userId,
+        name: file.name,
+        objectKey: uploaded.objectKey,
+        publicUrl: uploaded.publicUrl,
+      });
+      materialId = material.id;
+      const voiceClip: VoiceClip = {
+        sourceMaterialId: material.id,
+        sourceName: file.name,
+        objectKey: uploaded.objectKey,
+        publicUrl: uploaded.publicUrl,
+        durationSeconds,
+        reviewStatus: 'accepted',
+      };
+      await saveVoiceMaterialReviewClips(material.id, [voiceClip]);
+      return {
+        uploadedClip: {
+          id: material.id,
+          name: file.name,
+          objectKey: uploaded.objectKey,
+          publicUrl: uploaded.publicUrl,
+          selected: true,
+          processed: true,
+        } as UploadedClip,
+        voiceClip,
+      };
+    } catch (error) {
+      if (materialId) {
+        await deleteVoiceMaterial(materialId).catch(() => undefined);
+      } else if (uploadedObjectKey) {
+        await rollbackVoiceMaterialUpload(uploadedObjectKey).catch(
+          () => undefined
+        );
+      }
+      return undefined;
+    }
+  };
+
+  const onManualClipFilesChange = async (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    const files = Array.from(target.files ?? []);
+    if (!files.length) return;
+    if (!props.userId) {
+      Message.error('缺少用户信息');
+      target.value = '';
+      return;
+    }
+
+    try {
+      addingManualClips.value = true;
+      const results = (await Promise.all(files.map(addManualClipFile))).filter(
+        (
+          result
+        ): result is {
+          uploadedClip: UploadedClip;
+          voiceClip: VoiceClip;
+        } => Boolean(result)
+      );
+      uploadedClips.value.push(...results.map((item) => item.uploadedClip));
+      voiceClips.value.push(...results.map((item) => item.voiceClip));
+      const addedCount = results.length;
+      if (addedCount) {
+        Message.success(`已手动添加 ${addedCount} 段声音片段`);
+      }
+      if (addedCount < files.length) {
+        Message.error(`${files.length - addedCount} 段声音片段添加失败`);
+      }
+    } finally {
+      addingManualClips.value = false;
+      target.value = '';
+    }
   };
 
   const fetchList = async () => {
@@ -1200,6 +1467,9 @@
       form.name = buildDefaultTimbreName();
     }
     step.value = Math.min(step.value + 1, 3);
+    if (step.value === 2) {
+      analyzeSelectedVoiceDescription();
+    }
   };
 
   /** 顶部导航步骤可点击：工作流与导航进度对齐 */
@@ -1216,6 +1486,9 @@
     step.value = Math.min(Math.max(nextStep, 0), 3);
     if (step.value === 2 && !form.name.trim()) {
       form.name = buildDefaultTimbreName();
+    }
+    if (step.value === 2) {
+      analyzeSelectedVoiceDescription();
     }
     // 进入「选择训练片段」时，仅处理新上传且已勾选的素材。
     if (nextStep === 1 && previousStep === 0 && uploadedClips.value.length) {
@@ -1435,12 +1708,14 @@
         speechDialect: supportsSpeechInstruction.value
           ? form.speechDialect
           : 'auto',
-        speechInstruction: supportsSpeechInstruction.value
-          ? form.speechInstruction || undefined
-          : undefined,
+        speechInstruction:
+          supportsSpeechInstruction.value && form.useVoiceDescriptionInstruction
+            ? form.speechInstruction || undefined
+            : undefined,
         speechSpeed: form.speechSpeed,
         speechVolume: form.speechVolume,
         speechPitch: form.speechPitch,
+        voiceDescription: form.voiceDescription || undefined,
       });
       Message.success('训练任务已提交，训练完成后会自动生效');
       pagination.current = 1;
@@ -1465,6 +1740,9 @@
     form.previewText = DEFAULT_PREVIEW_TEXT;
     form.speechDialect = 'auto';
     form.speechInstruction = '';
+    form.voiceDescription = '';
+    form.useVoiceDescriptionInstruction = true;
+    lastAiSpeechInstruction.value = '';
     form.speechSpeed = 1;
     form.speechVolume = 1;
     form.speechPitch = 0;
@@ -1723,6 +2001,21 @@
       flex-direction: column;
       gap: 8px;
       margin-bottom: 12px;
+    }
+
+    &__hidden-input {
+      display: none;
+    }
+
+    &__description-editor {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      width: 100%;
+
+      :deep(.arco-textarea-wrapper) {
+        flex: 1;
+      }
     }
 
     &__clips {

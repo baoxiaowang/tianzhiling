@@ -511,6 +511,7 @@ export interface AdminVoiceTimbreRecordDTO {
   cloneLanguage: string;
   speechDialect: VoiceTimbreDialectDTO;
   speechInstruction: string;
+  voiceDescription?: string;
   previewText: string;
   previewModel: string;
   previewAudioUrl: string;
@@ -645,6 +646,7 @@ export interface CreateAdminVoiceTimbreDTO {
   cloneLanguage?: string;
   speechDialect?: VoiceTimbreDialectDTO;
   speechInstruction?: string;
+  voiceDescription?: string;
   providerVoiceId?: string;
   previewText?: string;
   previewModel?: string;
@@ -660,6 +662,7 @@ export interface UpdateAdminVoiceTimbreDTO {
   previewText?: string;
   speechDialect?: VoiceTimbreDialectDTO;
   speechInstruction?: string;
+  voiceDescription?: string;
   speechSpeed?: number;
   speechVolume?: number;
   speechPitch?: number;

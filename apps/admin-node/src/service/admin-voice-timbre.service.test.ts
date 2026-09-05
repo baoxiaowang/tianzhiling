@@ -196,6 +196,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
       audioObjectKey: 'voice-timbres/demo.wav',
       cloneLanguage: 'Chinese',
       previewText: '今天天气很好',
+      voiceDescription: '声音温暖偏低，语速舒缓，整体听感亲切平和。',
       speechSpeed: 1.08,
       speechVolume: 1,
       speechPitch: 0,
@@ -208,6 +209,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         speechSpeed: 1.08,
         speechVolume: 1,
         speechPitch: 0,
+        voiceDescription: '声音温暖偏低，语速舒缓，整体听感亲切平和。',
         status: VoiceTimbreStatus.creating,
         audioObjectKey: 'voice-timbres/demo.wav',
         audioUrl: '',
@@ -233,6 +235,7 @@ describe('AdminVoiceTimbreService voice timbre create queue', () => {
         speechSpeed: 1.08,
         speechVolume: 1,
         speechPitch: 0,
+        voiceDescription: '声音温暖偏低，语速舒缓，整体听感亲切平和。',
         status: VoiceTimbreStatus.creating,
       })
     );

@@ -12,7 +12,7 @@ import type {
   AdminUserValueReportDTO,
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
-import { AppError } from '@tzl/shared';
+import { AppError, getDouyinPromotionExpense } from '@tzl/shared';
 import {
   AgentEntity,
   ChatTraceEntity,
@@ -487,6 +487,10 @@ export class AdminOperationsService {
       const refundedRevenue = this.centsToYuan(
         dailyMaps.refunded.get(date) ?? 0
       );
+      const cohortRevenue = this.centsToYuan(
+        dailyMaps.cohortDaily.get(date) ?? 0
+      );
+      const promotionExpense = getDouyinPromotionExpense(date);
       return {
         date,
         newUsers: dailyMaps.users.get(date) ?? 0,
@@ -502,7 +506,9 @@ export class AdminOperationsService {
         paidRevenue,
         refundedRevenue,
         netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
-        cohortRevenue: this.centsToYuan(dailyMaps.cohortDaily.get(date) ?? 0),
+        cohortRevenue,
+        promotionExpense,
+        profit: this.roundMoney(cohortRevenue - promotionExpense),
       };
     });
     const hourlyUserMap = this.countMap(hourlyUsers);

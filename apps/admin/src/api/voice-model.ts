@@ -49,6 +49,7 @@ export interface MergeCreateVoiceTimbreData {
   cloneLanguage?: string;
   speechDialect?: string;
   speechInstruction?: string;
+  voiceDescription?: string;
   providerVoiceId?: string;
   previewText?: string;
   previewModel?: string;
@@ -158,6 +159,18 @@ export function saveVoiceMaterialReviewClips(
     `/admin_api/voice-materials/${materialId}/review-clips`,
     { clips }
   );
+}
+
+export function analyzeVoiceTimbreDescription(data: {
+  objectKeys: string[];
+  transcripts?: string[];
+}) {
+  return axios.post<{
+    description: string;
+    instruction: string;
+    model: string;
+    requestId?: string;
+  }>('/admin_api/voice-materials/analyze-timbre', data);
 }
 
 /** 触发底层声音剪辑工作流，把素材剪成训练片段 */

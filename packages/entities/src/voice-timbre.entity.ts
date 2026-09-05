@@ -77,6 +77,9 @@ export class VoiceTimbreEntity extends BaseEntity {
   speechInstruction?: string;
 
   @Column()
+  voiceDescription?: string;
+
+  @Column()
   previewText?: string;
 
   @Column()

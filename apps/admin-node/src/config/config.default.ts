@@ -293,6 +293,34 @@ export default {
       120000
     ),
   },
+  voiceTimbreAnalysis: {
+    enabled: readBooleanFrom(['ADMIN_API_VOICE_TIMBRE_ANALYSIS_ENABLED'], true),
+    apiKey: readStringFrom(
+      [
+        'ADMIN_API_VOICE_TIMBRE_ANALYSIS_API_KEY',
+        'ADMIN_API_QWEN_VOICE_API_KEY',
+        'NODE_QWEN_VOICE_API_KEY',
+        'DASHSCOPE_API_KEY',
+      ],
+      ''
+    ),
+    baseURL: readStringFrom(
+      [
+        'ADMIN_API_VOICE_TIMBRE_ANALYSIS_BASE_URL',
+        'ADMIN_API_QWEN_VOICE_BASE_URL',
+        'NODE_QWEN_VOICE_BASE_URL',
+      ],
+      'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    ),
+    model: readStringFrom(
+      ['ADMIN_API_VOICE_TIMBRE_ANALYSIS_MODEL'],
+      'qwen3.5-omni-plus'
+    ),
+    timeoutMs: readNumberFrom(
+      ['ADMIN_API_VOICE_TIMBRE_ANALYSIS_TIMEOUT_MS'],
+      120000
+    ),
+  },
   doubaoVoice: {
     enabled: readBooleanFrom(
       ['ADMIN_API_DOUBAO_VOICE_ENABLED', 'NODE_DOUBAO_VOICE_ENABLED'],

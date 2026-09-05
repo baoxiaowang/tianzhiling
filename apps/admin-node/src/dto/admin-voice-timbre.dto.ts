@@ -69,6 +69,9 @@ export class CreateAdminVoiceTimbreDTO {
   @Rule(RuleType.string().allow('').trim().max(50).optional())
   speechInstruction?: string;
 
+  @Rule(RuleType.string().allow('').trim().max(500).optional())
+  voiceDescription?: string;
+
   @Rule(RuleType.string().allow('').max(256).optional())
   providerVoiceId?: string;
 
@@ -119,6 +122,9 @@ export class CreateAdminMergedVoiceTimbreDTO {
   @Rule(RuleType.string().allow('').trim().max(50).optional())
   speechInstruction?: string;
 
+  @Rule(RuleType.string().allow('').trim().max(500).optional())
+  voiceDescription?: string;
+
   @Rule(RuleType.string().allow('').max(256).optional())
   providerVoiceId?: string;
 
@@ -161,6 +167,9 @@ export class UpdateAdminVoiceTimbreDTO {
 
   @Rule(RuleType.string().allow('').trim().max(50).optional())
   speechInstruction?: string;
+
+  @Rule(RuleType.string().allow('').trim().max(500).optional())
+  voiceDescription?: string;
 
   @Rule(speechSpeedRule.optional())
   speechSpeed?: number;

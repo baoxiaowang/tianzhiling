@@ -123,6 +123,34 @@ describe('AdminVoiceTimbreMaterialService', () => {
     );
   });
 
+  it('allows the saved source itself to be used as a manual review clip', async () => {
+    const service = createService();
+    const id = new MongoObjectId();
+    jest.mocked(service.materialRepo.findOne).mockResolvedValue({
+      id,
+      userId: new MongoObjectId(),
+      name: 'manual.wav',
+      objectKey: 'voice-timbres/manual.wav',
+      reviewClips: [],
+      createdAt: new Date('2026-09-05T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-05T00:00:00.000Z'),
+    } as never);
+
+    const result = await service.saveReviewClips(id.toHexString(), [
+      {
+        sourceMaterialId: id.toHexString(),
+        sourceName: 'manual.wav',
+        objectKey: 'voice-timbres/manual.wav',
+        publicUrl: 'https://cdn.example.com/voice-timbres/manual.wav',
+        durationSeconds: 12,
+        reviewStatus: 'accepted',
+      },
+    ]);
+
+    expect(result.reviewClips[0].objectKey).toBe('voice-timbres/manual.wav');
+    expect(service.storageService.deleteCosObject).not.toHaveBeenCalled();
+  });
+
   it('rejects review clips that do not belong to the material', async () => {
     const service = createService();
     const id = new MongoObjectId();

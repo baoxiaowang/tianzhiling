@@ -2,6 +2,7 @@ import {
   ConversationMessageFeedbackHandlingStatus,
   MongoObjectId,
 } from '@tzl/entities';
+import { getDouyinPromotionExpense } from '@tzl/shared';
 import { AdminOperationsService } from './admin-operations.service';
 
 const aggregateResult = (rows: unknown[]) => ({
@@ -11,6 +12,14 @@ const aggregateResult = (rows: unknown[]) => ({
 describe('AdminOperationsService', () => {
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('按抖评记录返回天之灵每日推广费用', () => {
+    expect(getDouyinPromotionExpense('2026-02-28')).toBe(1166);
+    expect(getDouyinPromotionExpense('2026-08-31')).toBe(230);
+    expect(getDouyinPromotionExpense('2026-09-02')).toBe(440);
+    expect(getDouyinPromotionExpense('2026-09-06')).toBe(0);
+    expect(getDouyinPromotionExpense('invalid')).toBe(0);
   });
 
   it('按北京时间生成日报并统计实时用户消息和净收入', async () => {
@@ -57,6 +66,12 @@ describe('AdminOperationsService', () => {
     service.orderModel = {
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
         const serialized = JSON.stringify(pipeline);
+        if (
+          serialized.includes('"date":"$user.createdAt"') &&
+          serialized.includes('"signedAmount"')
+        ) {
+          return aggregateResult([{ _id: '2026-08-23', revenue: 50000 }]);
+        }
         if (serialized.includes('"independentRefundOrders"')) {
           return aggregateResult([]);
         }
@@ -105,6 +120,9 @@ describe('AdminOperationsService', () => {
       paidRevenue: 99,
       refundedRevenue: 18,
       netRevenue: 81,
+      cohortRevenue: 500,
+      promotionExpense: 310,
+      profit: 190,
     });
     expect(result.hourly[12]).toMatchObject({
       hour: '12:00',

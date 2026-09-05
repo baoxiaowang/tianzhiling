@@ -277,6 +277,10 @@ export class AdminVoiceTimbreService {
     timbre.speechInstruction = this.normalizeSpeechInstruction(
       payload.speechInstruction
     );
+    timbre.voiceDescription = this.normalizeOptionalText(
+      payload.voiceDescription,
+      500
+    );
     timbre.speechDialect = this.normalizeSpeechDialect(
       payload.speechDialect,
       provider,
@@ -360,6 +364,7 @@ export class AdminVoiceTimbreService {
       cloneLanguage: payload.cloneLanguage,
       speechDialect: payload.speechDialect,
       speechInstruction: payload.speechInstruction,
+      voiceDescription: payload.voiceDescription,
       providerVoiceId: payload.providerVoiceId,
       previewText: payload.previewText,
       previewModel,
@@ -520,6 +525,14 @@ export class AdminVoiceTimbreService {
     if (payload.speechInstruction !== undefined) {
       timbre.speechInstruction = this.normalizeSpeechInstruction(
         payload.speechInstruction
+      );
+      changed = true;
+    }
+
+    if (payload.voiceDescription !== undefined) {
+      timbre.voiceDescription = this.normalizeOptionalText(
+        payload.voiceDescription,
+        500
       );
       changed = true;
     }
@@ -1643,6 +1656,7 @@ export class AdminVoiceTimbreService {
       cloneLanguage: timbre.cloneLanguage || 'auto',
       speechDialect: this.normalizeSpeechDialect(timbre.speechDialect),
       speechInstruction: timbre.speechInstruction?.trim() || '',
+      voiceDescription: timbre.voiceDescription?.trim() || '',
       previewText: timbre.previewText ?? '',
       previewModel: timbre.previewModel ?? '',
       previewAudioUrl: timbre.previewAudioUrl ?? '',
