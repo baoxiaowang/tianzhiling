@@ -15,6 +15,14 @@ const INDEXES = {
       { userId: 1, identityKey: 1 },
       { name: 'uniq_user_known_person_identity', unique: true },
     ],
+    [
+      { userId: 1, linkedAgentId: 1 },
+      {
+        name: 'uniq_user_known_person_linked_agent',
+        unique: true,
+        sparse: true,
+      },
+    ],
     [{ userId: 1, status: 1 }, { name: 'idx_user_known_person_active' }],
   ],
   user_relative_profile: [

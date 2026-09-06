@@ -8,6 +8,11 @@ export enum UserKnownPersonStatus {
 
 @Index(["userId", "status"], { background: true })
 @Index(["userId", "identityKey"], { unique: true, background: true })
+@Index(["userId", "linkedAgentId"], {
+  unique: true,
+  sparse: true,
+  background: true,
+})
 @Entity(TableName.user_known_person)
 export class UserKnownPersonEntity extends BaseEntity {
   @Column()
@@ -29,6 +34,10 @@ export class UserKnownPersonEntity extends BaseEntity {
 
   @Column()
   relationToUser?: string;
+
+  /** The same real person represented by one of this account's AI agents. */
+  @Column()
+  linkedAgentId?: MongoObjectId;
 
   @Column()
   status: UserKnownPersonStatus;

@@ -37,6 +37,7 @@ export interface KnownPersonDeclaration {
   aliases: string[];
   relationToUser: string;
   identityKey: string;
+  linkedAgentId?: MongoObjectId;
 }
 
 // Lazy matching is important before markers such as “名字叫”; otherwise the
@@ -303,7 +304,14 @@ export class UserIdentityMemoryService {
         ...(person.aliases || []),
       ]).some(name => incomingNames.has(name.toLowerCase()))
     );
-    let existing = nameMatches.find(
+    let existing = declaration.linkedAgentId
+      ? people.find(
+          person =>
+            person.linkedAgentId?.toString() ===
+            declaration.linkedAgentId?.toString()
+        )
+      : undefined;
+    existing ||= nameMatches.find(
       person => normalizeRelation(person.relationToUser || '') === relation
     );
     if (!existing && nameMatches.length === 1) existing = nameMatches[0];
@@ -321,6 +329,9 @@ export class UserIdentityMemoryService {
       existing.preferredName = declaration.aliases[0] || existing.preferredName;
       existing.aliases = aliases;
       existing.relationToUser = declaration.relationToUser;
+      if (!existing.linkedAgentId && declaration.linkedAgentId) {
+        existing.linkedAgentId = declaration.linkedAgentId;
+      }
       existing.sourceAgentId = options.agentId;
       existing.sourceMessageId = options.messageId;
       existing.sourceText = options.sourceText.slice(0, 500);
@@ -337,6 +348,7 @@ export class UserIdentityMemoryService {
           value => value !== declaration.realName
         ),
         relationToUser: declaration.relationToUser,
+        linkedAgentId: declaration.linkedAgentId,
         status: UserKnownPersonStatus.active,
         sourceAgentId: options.agentId,
         sourceMessageId: options.messageId,

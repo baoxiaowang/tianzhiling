@@ -249,6 +249,7 @@ function matchesMemorialPhotoCountQuery(
 
 function createService(options: {
   agent: AgentEntity;
+  additionalAgents?: AgentEntity[];
   voiceTimbre?: VoiceTimbreEntity | null;
   chatContent?: string;
   user?: UserEntity | null;
@@ -288,7 +289,11 @@ function createService(options: {
     findOne: jest.fn(async ({ where }: any) => {
       const id = where?.id ?? where?._id;
 
-      return sameObjectId(id, options.agent.id) ? options.agent : null;
+      return (
+        [options.agent, ...(options.additionalAgents || [])].find(agent =>
+          sameObjectId(id, agent.id)
+        ) ?? null
+      );
     }),
   } as any;
   service.freeChatAgentEligibilityService = {
@@ -532,6 +537,7 @@ function createService(options: {
   } as any;
   service.agentProfileFactService = {
     extractAndUpsertFromUserMessage: jest.fn().mockResolvedValue([]),
+    extractAndUpsertFromMessengerMessage: jest.fn().mockResolvedValue([]),
     archiveMatchingFacts: jest.fn().mockResolvedValue(0),
     listVisualAppearanceMemories: jest.fn().mockResolvedValue([]),
     upsertVisualAppearanceObservations: jest.fn().mockResolvedValue([]),
@@ -601,6 +607,9 @@ function createService(options: {
   } as any;
   service.relativeMemoryExtractorService = {
     captureFromUserMessage: jest.fn().mockResolvedValue(0),
+  } as any;
+  service.userIdentityMemoryService = {
+    recordFromUserMessage: jest.fn().mockResolvedValue(undefined),
   } as any;
   service.userRelativeProfileService = {
     recordAssistantNameInquiry: jest.fn().mockResolvedValue(false),
@@ -1435,11 +1444,9 @@ describe('ConversationService markMessageMemory', () => {
 
     expect(
       service.memoryPipelineTaskService.enqueueForMessage
-    ).toHaveBeenCalledWith(
-      userMessage,
-      '我小时候最喜欢和你一起包饺子',
-      ['semantic_index']
-    );
+    ).toHaveBeenCalledWith(userMessage, '我小时候最喜欢和你一起包饺子', [
+      'semantic_index',
+    ]);
     expect(
       service.agentProfileFactService.extractAndUpsertFromUserMessage
     ).toHaveBeenCalledWith(
@@ -1697,6 +1704,105 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(
       service.agentContextService.buildConversationContext
     ).toHaveBeenCalled();
+  });
+
+  it('schedules independent structured memory for a messenger interview', async () => {
+    const parentAgent = createAgent({
+      id: new MongoObjectId(OTHER_AGENT_ID),
+      name: '妈妈',
+      iCallAgent: '妈妈',
+    });
+    const messengerAgent = createAgent({
+      name: '妈妈的小使者',
+      messengerOfAgentId: parentAgent.id,
+    });
+    const { service, savedMessages } = createService({
+      agent: messengerAgent,
+      additionalAgents: [parentAgent],
+    });
+    service.messengerService = {
+      runInterviewTurn: jest.fn().mockResolvedValue('我记下来了。'),
+      buildMemoryTaskPlan: jest.fn().mockReturnValue(undefined),
+    } as any;
+
+    await service.sendMessage(AUTH, CONVERSATION_ID, {
+      type: 'text',
+      content: '妈妈以前在粮库做重体力活，供我们兄妹读书。',
+    });
+
+    const userMessage = savedMessages.find(
+      message => message.role === MessageRole.user
+    );
+    expect(
+      service.memoryPipelineTaskService.enqueueForMessage
+    ).toHaveBeenCalledWith(
+      userMessage,
+      '妈妈以前在粮库做重体力活，供我们兄妹读书。',
+      ['structured_memory']
+    );
+    expect(service.messengerService.runInterviewTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: parentAgent })
+    );
+  });
+
+  it('writes messenger facts to the bound parent and account people', async () => {
+    const parentAgent = createAgent({
+      id: new MongoObjectId(OTHER_AGENT_ID),
+      name: '妈妈',
+      iCallAgent: '妈妈',
+    });
+    const messengerMessage = createMessage({
+      content: '妈妈以前在粮库工作，爸爸后来生病去世了。',
+    });
+    const { service } = createService({ agent: createAgent() });
+    (
+      service.agentProfileFactService
+        .extractAndUpsertFromMessengerMessage as jest.Mock
+    ).mockResolvedValue([{ key: 'occupation.grain_depot' }]);
+    (
+      service.relativeMemoryExtractorService.captureFromUserMessage as jest.Mock
+    ).mockResolvedValue(2);
+
+    await (service as any).enrichMessengerUserMessage(
+      messengerMessage,
+      messengerMessage.content,
+      parentAgent
+    );
+
+    const parentWrite = (
+      service.agentProfileFactService
+        .extractAndUpsertFromMessengerMessage as jest.Mock
+    ).mock.calls[0][0];
+    const relativeWrite = (
+      service.relativeMemoryExtractorService.captureFromUserMessage as jest.Mock
+    ).mock.calls[0];
+    expect(parentWrite).toEqual(
+      expect.objectContaining({
+        parentAgent,
+        message: expect.objectContaining({
+          id: messengerMessage.id,
+          agentId: parentAgent.id,
+        }),
+      })
+    );
+    expect(relativeWrite[0]).toEqual(
+      expect.objectContaining({
+        id: messengerMessage.id,
+        agentId: parentAgent.id,
+      })
+    );
+    expect(relativeWrite[2]).toEqual({ messengerParent: parentAgent });
+    expect(messengerMessage.agentId).toEqual(new MongoObjectId(AGENT_ID));
+    expect(messengerMessage).toEqual(
+      expect.objectContaining({
+        memoryWriteStatus: 'written',
+        memoryWriteProfileFactCount: 1,
+        memoryWriteTemporalFactCount: 0,
+      })
+    );
+    expect(
+      service.agentEmotionStateService.recognizeAndUpsertFromUserMessage
+    ).not.toHaveBeenCalled();
   });
 
   it('schedules emotion recognition and memory extraction together', async () => {
