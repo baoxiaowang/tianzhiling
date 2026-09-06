@@ -20,7 +20,9 @@ const INDEXES = {
       {
         name: 'uniq_user_known_person_linked_agent',
         unique: true,
-        sparse: true,
+        partialFilterExpression: {
+          linkedAgentId: { $type: 'objectId' },
+        },
       },
     ],
     [{ userId: 1, status: 1 }, { name: 'idx_user_known_person_active' }],
