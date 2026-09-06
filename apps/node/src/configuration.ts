@@ -27,6 +27,7 @@ import {
   MEMORY_PIPELINE_RECONCILE_INTERVAL_MS,
   MEMORY_PIPELINE_RECONCILE_JOB_ID,
 } from './service/memory-pipeline-task.service';
+import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
 @Configuration({
   imports: [
@@ -63,12 +64,15 @@ export class MainConfiguration {
   }
 
   async onServerReady() {
+    const runtimeRole = resolveNodeRuntimeRole();
     try {
       const instanceId = process.env.NODE_APP_INSTANCE?.trim();
-      const ownsMemorySchedule = !instanceId || instanceId === '0';
+      const ownsMemorySchedule =
+        runtimeRole !== 'web' && (!instanceId || instanceId === '0');
       if (ownsMemorySchedule) {
-        const memoryQueue =
-          this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE);
+        const memoryQueue = this.bullmqFramework?.getQueue(
+          MEMORY_PIPELINE_QUEUE
+        );
         if (!memoryQueue) {
           this.logger.warn(
             '[memory-pipeline] reconciliation queue is unavailable'
@@ -113,6 +117,8 @@ export class MainConfiguration {
         error instanceof Error ? error.message : String(error)
       );
     }
+
+    if (runtimeRole === 'memory-worker') return;
 
     try {
       const cleanupQueue = this.bullmqFramework?.getQueue(

@@ -2,8 +2,9 @@
 
 set -Eeuo pipefail
 
-SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
+SERVICES=(tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web tzl_nginx)
 SELECTED_tzl_node=0
+SELECTED_tzl_memory_worker=0
 SELECTED_tzl_admin_node=0
 SELECTED_tzl_admin_web=0
 SELECTED_tzl_nginx=0
@@ -11,6 +12,7 @@ SELECTED_tzl_nginx=0
 select_service() {
   case "$1" in
     tzl_node) SELECTED_tzl_node=1 ;;
+    tzl_memory_worker) SELECTED_tzl_memory_worker=1 ;;
     tzl_admin_node) SELECTED_tzl_admin_node=1 ;;
     tzl_admin_web) SELECTED_tzl_admin_web=1 ;;
     tzl_nginx) SELECTED_tzl_nginx=1 ;;
@@ -31,6 +33,7 @@ classify_path() {
   case "$path" in
     apps/node/*)
       select_service tzl_node
+      select_service tzl_memory_worker
       ;;
     apps/admin-node/*)
       select_service tzl_admin_node
@@ -43,15 +46,18 @@ classify_path() {
       ;;
     packages/entities/*)
       select_service tzl_node
+      select_service tzl_memory_worker
       select_service tzl_admin_node
       ;;
     packages/shared/*)
       select_service tzl_node
+      select_service tzl_memory_worker
       select_service tzl_admin_node
       select_service tzl_admin_web
       ;;
     package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.npmrc|.dockerignore)
       select_service tzl_node
+      select_service tzl_memory_worker
       select_service tzl_admin_node
       select_service tzl_admin_web
       ;;
@@ -88,6 +94,7 @@ fi
 for service in "${SERVICES[@]}"; do
   case "$service" in
     tzl_node) selected="$SELECTED_tzl_node" ;;
+    tzl_memory_worker) selected="$SELECTED_tzl_memory_worker" ;;
     tzl_admin_node) selected="$SELECTED_tzl_admin_node" ;;
     tzl_admin_web) selected="$SELECTED_tzl_admin_web" ;;
     tzl_nginx) selected="$SELECTED_tzl_nginx" ;;

@@ -1,13 +1,14 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import type { Job } from 'bullmq';
 import {
   CONVERSATION_REPLY_QUEUE,
   ConversationReplyJobData,
   ConversationService,
 } from '../service/conversation.service';
+import { RuntimeProcessor } from './runtime-processor';
 
-@Processor(CONVERSATION_REPLY_QUEUE)
+@RuntimeProcessor(CONVERSATION_REPLY_QUEUE)
 export class ConversationReplyProcessor implements IProcessor {
   @Inject()
   conversationService: ConversationService;

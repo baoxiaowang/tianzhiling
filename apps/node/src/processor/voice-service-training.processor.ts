@@ -1,13 +1,14 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import type { Job } from 'bullmq';
 import {
   VOICE_SERVICE_TRAINING_QUEUE,
   VoiceServiceService,
   type VoiceServiceTrainingJobData,
 } from '../service/voice-service.service';
+import { RuntimeProcessor } from './runtime-processor';
 
-@Processor(VOICE_SERVICE_TRAINING_QUEUE)
+@RuntimeProcessor(VOICE_SERVICE_TRAINING_QUEUE)
 export class VoiceServiceTrainingProcessor implements IProcessor {
   @Inject()
   voiceServiceService: VoiceServiceService;

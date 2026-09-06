@@ -10,6 +10,11 @@ import { MessengerService } from '../service/agents/messenger.service';
 import { MongoObjectId } from '@tzl/entities';
 import { MemoryPipelineTaskService } from '../service/memory-pipeline-task.service';
 import { MilvusService } from '../service/rag/milvus.service';
+import { Framework as BullMQFramework } from '@midwayjs/bullmq';
+import {
+  resolveMemoryWorkerConcurrency,
+  resolveNodeRuntimeRole,
+} from '../processor/runtime-processor';
 
 @Controller('/system')
 export class SystemController {
@@ -24,6 +29,9 @@ export class SystemController {
 
   @Inject()
   milvusService: MilvusService;
+
+  @Inject()
+  bullmqFramework: BullMQFramework;
 
   @Get('/health')
   async health() {
@@ -72,6 +80,16 @@ export class SystemController {
       memoryPipeline: await this.memoryPipelineTaskService
         .getHealthSnapshot()
         .catch(() => ({ status: 'unavailable' })),
+      runtime: {
+        role: resolveNodeRuntimeRole(),
+        memoryWorkerConcurrency: resolveMemoryWorkerConcurrency(),
+        workers: {
+          memoryPipeline:
+            this.bullmqFramework?.getWorkers('memory-pipeline')?.length || 0,
+          conversationReply:
+            this.bullmqFramework?.getWorkers('conversation-reply')?.length || 0,
+        },
+      },
       milvus: this.milvusService.getRuntimeStatus(),
     };
   }

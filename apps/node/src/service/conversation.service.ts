@@ -2164,6 +2164,64 @@ export class ConversationService {
   async processMemoryPipelineTask(
     task: MemoryPipelineTaskEntity
   ): Promise<'completed' | 'skipped'> {
+    const startedAt = Date.now();
+    const before = process.memoryUsage();
+    const attribution = this.openAIService?.createModelCallAttribution?.() || {
+      chatCompletions: 0,
+      providerAttempts: 0,
+      embeddings: 0,
+      visionCompletions: 0,
+    };
+    let outcome: 'completed' | 'skipped' | 'failed' = 'failed';
+    try {
+      const execute = () => this.executeMemoryPipelineTask(task);
+      const result = this.openAIService?.runWithModelCallAttribution
+        ? await this.openAIService.runWithModelCallAttribution(
+            attribution,
+            execute
+          )
+        : await execute();
+      outcome = result;
+      return result;
+    } finally {
+      const after = process.memoryUsage();
+      this.logger?.info?.(
+        '[memory-pipeline-metrics] taskId=%s kind=%s outcome=%s durationMs=%s modelCalls=%s chatCompletions=%s providerAttempts=%s embeddings=%s visionCompletions=%s rssBefore=%s rssAfter=%s rssDelta=%s heapUsedBefore=%s heapUsedAfter=%s heapUsedDelta=%s heapTotalBefore=%s heapTotalAfter=%s externalBefore=%s externalAfter=%s arrayBuffersBefore=%s arrayBuffersAfter=%s activeResources=%s',
+        this.stringifyObjectId(task.id),
+        task.kind,
+        outcome,
+        Date.now() - startedAt,
+        attribution.providerAttempts +
+          attribution.embeddings +
+          attribution.visionCompletions,
+        attribution.chatCompletions,
+        attribution.providerAttempts,
+        attribution.embeddings,
+        attribution.visionCompletions,
+        before.rss,
+        after.rss,
+        after.rss - before.rss,
+        before.heapUsed,
+        after.heapUsed,
+        after.heapUsed - before.heapUsed,
+        before.heapTotal,
+        after.heapTotal,
+        before.external,
+        after.external,
+        before.arrayBuffers,
+        after.arrayBuffers,
+        (
+          process as NodeJS.Process & {
+            getActiveResourcesInfo?: () => string[];
+          }
+        ).getActiveResourcesInfo?.().length ?? 0
+      );
+    }
+  }
+
+  private async executeMemoryPipelineTask(
+    task: MemoryPipelineTaskEntity
+  ): Promise<'completed' | 'skipped'> {
     const message = await this.messageModel.findOne({
       where: { _id: task.messageId } as never,
     });

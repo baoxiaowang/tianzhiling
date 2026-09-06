@@ -9,6 +9,7 @@ import type {
   ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
+import { AsyncLocalStorage } from 'async_hooks';
 import { URL } from 'url';
 import { extractTranscriptionContent } from '../../common/asr-utils';
 import { AppError } from '../../common/errors';
@@ -92,6 +93,13 @@ export interface OpenAIRequestOptions {
   providerOverride?: { client: OpenAI; model: string };
 }
 
+export interface OpenAIModelCallAttribution {
+  chatCompletions: number;
+  providerAttempts: number;
+  embeddings: number;
+  visionCompletions: number;
+}
+
 export interface OpenAITextRequest {
   prompt: string;
   systemPrompt?: string;
@@ -163,6 +171,24 @@ export class OpenAIService {
   private visionClient: OpenAI | null = null;
   private speechToTextClient: OpenAI | null = null;
   private embeddingClient: OpenAI | null = null;
+  private readonly modelCallAttribution =
+    new AsyncLocalStorage<OpenAIModelCallAttribution>();
+
+  createModelCallAttribution(): OpenAIModelCallAttribution {
+    return {
+      chatCompletions: 0,
+      providerAttempts: 0,
+      embeddings: 0,
+      visionCompletions: 0,
+    };
+  }
+
+  runWithModelCallAttribution<T>(
+    attribution: OpenAIModelCallAttribution,
+    task: () => Promise<T>
+  ): Promise<T> {
+    return this.modelCallAttribution.run(attribution, task);
+  }
 
   isEnabled(): boolean {
     return this.openAIConfig?.enabled !== false;
@@ -243,6 +269,8 @@ export class OpenAIService {
     request: OpenAIChatRequest,
     options?: OpenAIRequestOptions
   ): Promise<ChatCompletion> {
+    const attribution = this.modelCallAttribution.getStore();
+    if (attribution) attribution.chatCompletions += 1;
     if (!request?.messages?.length) {
       throw new AppError(
         'MINIMAX_INVALID_REQUEST',
@@ -267,6 +295,7 @@ export class OpenAIService {
       body: ChatCompletionCreateParamsNonStreaming,
       providerLabel: string
     ) => {
+      if (attribution) attribution.providerAttempts += 1;
       this.logger.info(
         '[openai] provider request, provider=%s, model=%s',
         providerLabel,
@@ -532,6 +561,8 @@ export class OpenAIService {
   async createVisionChatCompletion(
     request: OpenAIChatRequest
   ): Promise<ChatCompletion> {
+    const attribution = this.modelCallAttribution.getStore();
+    if (attribution) attribution.visionCompletions += 1;
     if (!request?.messages?.length) {
       throw new AppError(
         'MINIMAX_INVALID_REQUEST',
@@ -635,6 +666,9 @@ export class OpenAIService {
         'embedding input is required'
       );
     }
+
+    const attribution = this.modelCallAttribution.getStore();
+    if (attribution) attribution.embeddings += 1;
 
     const client = this.getEmbeddingClient();
     const dimensions = this.normalizeEmbeddingDimensions(

@@ -25,8 +25,12 @@ assert_services \
   $'apps/admin-node/src/service/voice.ts\napps/admin/src/views/voice.vue\ndocs/voice.md'
 assert_services \
   'shared package change' \
-  'tzl_node tzl_admin_node tzl_admin_web' \
+  'tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web' \
   'packages/shared/src/index.ts'
+assert_services \
+  'node change includes memory worker' \
+  'tzl_node tzl_memory_worker' \
+  'apps/node/src/service/conversation.service.ts'
 assert_services \
   'gateway-only change' \
   'tzl_nginx' \
@@ -37,7 +41,7 @@ assert_services \
   $'docs/release.md\nREADME.md'
 assert_services \
   'unknown production path falls back safely' \
-  'tzl_node tzl_admin_node tzl_admin_web tzl_nginx' \
+  'tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web tzl_nginx' \
   'infrastructure/new-runtime.conf'
 
 printf 'release service resolver tests passed\n'

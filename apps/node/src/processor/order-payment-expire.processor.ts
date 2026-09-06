@@ -1,12 +1,13 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import {
   ORDER_PAYMENT_EXPIRE_QUEUE,
   OrderPaymentExpireJobData,
   OrderService,
 } from '../service/order.service';
+import { RuntimeProcessor } from './runtime-processor';
 
-@Processor(ORDER_PAYMENT_EXPIRE_QUEUE)
+@RuntimeProcessor(ORDER_PAYMENT_EXPIRE_QUEUE)
 export class OrderPaymentExpireProcessor implements IProcessor {
   @Inject()
   orderService: OrderService;
