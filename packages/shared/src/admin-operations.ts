@@ -175,6 +175,12 @@ export interface AdminOrderAnalyticsDailyPointDTO {
   netRevenue: number;
 }
 
+export interface AdminOrderAnalyticsDistributionItemDTO {
+  label: string;
+  count: number;
+  percentage: number;
+}
+
 export interface AdminOrderAnalyticsDTO {
   generatedAt: string;
   timezone: "Asia/Shanghai";
@@ -192,6 +198,78 @@ export interface AdminOrderAnalyticsDTO {
     refundRate: number;
   };
   daily: AdminOrderAnalyticsDailyPointDTO[];
+  productDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  relationshipDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  statusDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  snapshot: {
+    persisted: boolean;
+    calculationVersion: number;
+    updatedAt: string;
+  };
+}
+
+export interface AdminMonthlyOrderRecordDTO {
+  id: string;
+  orderNo: string;
+  orderedAt: string;
+  productName: string;
+  amount: number;
+  agentNames: string;
+  userName: string;
+  relationship: string;
+  relationshipSource: string;
+  interactionCount: number;
+  agentCreatedAt: string;
+  paymentCycleDays: number;
+  status: string;
+  statusLabel: string;
+  abnormalTypes: string[];
+  abnormalReason: string;
+  paymentProvider: string;
+  source: string;
+}
+
+export interface AdminMonthlyRefundRecordDTO {
+  id: string;
+  refundNo: string;
+  originalOrderNo: string;
+  occurredAt: string;
+  refundType: string;
+  refundTypeLabel: string;
+  amount: number;
+  userName: string;
+  productName: string;
+  paymentProvider: string;
+  source: string;
+  status: string;
+}
+
+export interface AdminMonthlyOrderReportDTO {
+  month: string;
+  timezone: "Asia/Shanghai";
+  generatedAt: string;
+  snapshot: {
+    persisted: boolean;
+    calculationVersion: number;
+    updatedAt: string;
+  };
+  totals: {
+    allOrders: number;
+    validOrders: number;
+    abnormalOrders: number;
+    validAmount: number;
+    completedRefunds: number;
+    refundedAmount: number;
+    netAmount: number;
+  };
+  validOrders: AdminMonthlyOrderRecordDTO[];
+  abnormalOrders: AdminMonthlyOrderRecordDTO[];
+  refundOrders: AdminMonthlyRefundRecordDTO[];
+  statusDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  productDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  relationshipDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  abnormalTypeDistribution: AdminOrderAnalyticsDistributionItemDTO[];
+  refundTypeDistribution: AdminOrderAnalyticsDistributionItemDTO[];
 }
 
 export interface AdminOperationsTaskDTO {

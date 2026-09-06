@@ -41,7 +41,9 @@ interface AuditedOrder {
 loadEnvFileIfExists(resolve(__dirname, '../../../../.env'));
 
 function sameDate(left: Date | undefined, right: Date): boolean {
-  return Boolean(left && new Date(left).getTime() === right.getTime());
+  return Boolean(
+    left && Math.abs(new Date(left).getTime() - right.getTime()) <= 1000
+  );
 }
 
 function existingRecordMatches(

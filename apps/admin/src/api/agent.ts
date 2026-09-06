@@ -6,8 +6,11 @@ import type {
   AdminAgentConversationMessageListParamsDTO,
   AdminAgentConversationMessageRecordDTO,
   AdminAgentConversationRecordDTO,
-  AdminAgentListDTO,
+  AdminAgentSummaryListDTO,
+  AdminAgentSummaryRecordDTO,
   AdminAgentListParamsDTO,
+  AdminAgentMemoryListDTO,
+  AdminAgentMemoryRecordDTO,
   AdminAgentOwnerDTO,
   AdminAgentRecordDTO,
   UpdateAdminAgentDTO,
@@ -15,10 +18,13 @@ import type {
 
 export type AgentOwner = AdminAgentOwnerDTO;
 export type AgentRecord = AdminAgentRecordDTO;
+export type AgentSummaryRecord = AdminAgentSummaryRecordDTO;
 export type AgentListParams = AdminAgentListParamsDTO;
-export type AgentListRes = AdminAgentListDTO;
+export type AgentListRes = AdminAgentSummaryListDTO;
 export type UpdateAgentData = UpdateAdminAgentDTO;
 export type AgentConversationRecord = AdminAgentConversationRecordDTO;
+export type AgentMemoryRecord = AdminAgentMemoryRecordDTO;
+export type AgentMemoryListRes = AdminAgentMemoryListDTO;
 export type AgentConversationListParams = AdminAgentConversationListParamsDTO;
 export type AgentConversationListRes = AdminAgentConversationListDTO;
 export type AgentConversationMessageRecord =
@@ -34,6 +40,10 @@ export function queryAgentList(params: AgentListParams) {
 
 export function queryAgentDetail(id: string) {
   return axios.get<AgentRecord>(`/admin_api/agents/${id}`);
+}
+
+export function queryAgentMemories(id: string) {
+  return axios.get<AgentMemoryListRes>(`/admin_api/agents/${id}/memories`);
 }
 
 export function queryAgentConversations(

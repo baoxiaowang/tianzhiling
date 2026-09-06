@@ -1,4 +1,9 @@
-import { AgentSex, MongoObjectId, OrderStatus } from '@tzl/entities';
+import {
+  AgentSex,
+  MessageRole,
+  MongoObjectId,
+  OrderStatus,
+} from '@tzl/entities';
 import { AdminAppUserService } from './admin-app-user.service';
 
 function createService() {
@@ -6,6 +11,15 @@ function createService() {
 
   service.agentModel = {
     count: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.conversationModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.messageModel = {
+    aggregate: jest.fn().mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([]),
+    }),
     find: jest.fn().mockResolvedValue([]),
   } as any;
   service.userModel = {
@@ -19,6 +33,18 @@ function createService() {
     findOne: jest.fn(),
   } as any;
   service.userMembershipModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.userIdentityProfileModel = {
+    findOne: jest.fn().mockResolvedValue(null),
+  } as any;
+  service.userKnownPersonModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.userRelativeProfileModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
+  service.userRelativeFactModel = {
     find: jest.fn().mockResolvedValue([]),
   } as any;
   service.orderModel = {
@@ -443,6 +469,7 @@ describe('AdminAppUserService', () => {
           hasUnreadAgentProfileGuide: false,
           customContext: '',
           conversationCount: 0,
+          messengerConversationCount: 0,
           status: 1,
           isDefault: true,
           voiceTimbreId: voiceTimbreId.toHexString(),
@@ -455,6 +482,138 @@ describe('AdminAppUserService', () => {
       pageSize: 10,
     });
     expect(JSON.stringify(result)).not.toContain('hidden');
+  });
+
+  it('counts user messages for every relationship agent', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const agentId = new MongoObjectId();
+    const user = {
+      id: userId,
+      name: 'Alice',
+      avatar: '',
+      phone: '',
+    };
+    const agent: any = {
+      id: agentId,
+      createdUserId: userId,
+      name: '小灵',
+      sex: AgentSex.woman,
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest.mocked(service.userModel.findOne).mockResolvedValue(user as never);
+    jest.mocked(service.userAccountModel.findOne).mockResolvedValue(null);
+    jest.mocked(service.agentModel.count).mockResolvedValue(1 as never);
+    jest.mocked(service.agentModel.find).mockResolvedValue([agent] as never);
+    jest.mocked(service.messageModel.aggregate).mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([{ _id: agentId, count: 3 }]),
+    } as never);
+
+    const result = await service.listUserAgents(userId.toHexString(), {
+      page: 1,
+      pageSize: 10,
+    });
+
+    expect(result.items[0].conversationCount).toBe(3);
+    expect(service.messageModel.aggregate).toHaveBeenCalledWith([
+      {
+        $match: {
+          agentId: { $in: [agentId] },
+          role: MessageRole.user,
+        },
+      },
+      { $group: { _id: '$agentId', count: { $sum: 1 } } },
+    ]);
+  });
+
+  it('returns account-level identity, people and relative facts', async () => {
+    const service = createService();
+    const userId = new MongoObjectId();
+    const personId = new MongoObjectId();
+    const agentId = new MongoObjectId();
+    const factId = new MongoObjectId();
+    jest.mocked(service.userModel.findOne).mockResolvedValue({
+      id: userId,
+      name: 'Alice',
+    } as never);
+    jest.mocked(service.userIdentityProfileModel.findOne).mockResolvedValue({
+      userId,
+      realName: '张文祥',
+      formerNames: [{ value: '张小祥' }],
+      aliases: ['文祥'],
+      source: 'explicit_chat_statement',
+      sourceText: '我叫张文祥',
+      updatedAt: new Date('2026-09-06T12:00:00.000Z'),
+    } as never);
+    jest.mocked(service.userKnownPersonModel.find).mockResolvedValue([
+      {
+        id: personId,
+        userId,
+        realName: '周叔叔',
+        preferredName: '叔叔',
+        aliases: ['老周'],
+        relationToUser: '叔叔',
+        sourceText: '我叔叔叫周叔叔',
+        updatedAt: new Date('2026-09-06T12:01:00.000Z'),
+      },
+    ] as never);
+    jest.mocked(service.userRelativeProfileModel.find).mockResolvedValue([
+      {
+        personId,
+        lifeStage: 'adult',
+        sex: 'male',
+        relationshipsToAgents: [
+          { agentId, relationToAgent: '弟弟', personCallsAgent: '哥哥' },
+        ],
+      },
+    ] as never);
+    jest.mocked(service.userRelativeFactModel.find).mockResolvedValue([
+      {
+        id: factId,
+        personId,
+        domain: 'health',
+        key: 'health.recovery',
+        value: '正在康复',
+        status: 'current',
+        confidence: 'confirmed',
+        supportCount: 2,
+        sourceText: '叔叔恢复得不错',
+        updatedAt: new Date('2026-09-06T12:02:00.000Z'),
+      },
+    ] as never);
+
+    const result = await service.getAccountMemory(userId.toHexString());
+
+    expect(result.identity).toMatchObject({
+      realName: '张文祥',
+      formerNames: ['张小祥'],
+      aliases: ['文祥'],
+    });
+    expect(result.people[0]).toMatchObject({
+      id: personId.toHexString(),
+      preferredName: '叔叔',
+      profile: {
+        lifeStage: 'adult',
+        sex: 'male',
+        relationshipsToAgents: [
+          {
+            agentId: agentId.toHexString(),
+            relationToAgent: '弟弟',
+            personCallsAgent: '哥哥',
+          },
+        ],
+      },
+      facts: [
+        {
+          id: factId.toHexString(),
+          domain: 'health',
+          value: '正在康复',
+        },
+      ],
+    });
   });
 
   it('filters user agents by name', async () => {

@@ -59,7 +59,7 @@
         :loading="loading"
         :pagination="false"
         :bordered="false"
-        :scroll="{ x: 1120 }"
+        :scroll="{ x: 1300 }"
       >
         <template #empty>
           <a-empty :description="emptyDescription">
@@ -77,6 +77,8 @@
                     v-if="isRenderableAvatar(record.avatar)"
                     :src="record.avatar"
                     alt="agent avatar"
+                    loading="lazy"
+                    decoding="async"
                   />
                   <template v-else>
                     {{ getAvatarFallback(record.name, 'A') }}
@@ -105,6 +107,8 @@
                     v-if="isRenderableAvatar(record.createdUser.avatar)"
                     :src="record.createdUser.avatar"
                     alt="user avatar"
+                    loading="lazy"
+                    decoding="async"
                   />
                   <template v-else>
                     {{ getAvatarFallback(record.createdUser.name, 'U') }}
@@ -170,6 +174,15 @@
               >
                 {{ record.conversationCount ?? 0 }}
               </a-link>
+            </template>
+          </a-table-column>
+          <a-table-column
+            title="关联小使者对话次数"
+            data-index="messengerConversationCount"
+            :width="180"
+          >
+            <template #cell="{ record }">
+              {{ record.messengerConversationCount ?? 0 }}
             </template>
           </a-table-column>
           <a-table-column title="创建时间" data-index="createdAt" :width="180">
@@ -421,12 +434,18 @@
   import { Message } from '@arco-design/web-vue';
   import type { FormInstance } from '@arco-design/web-vue/es/form';
   import useLoading from '@/hooks/loading';
-  import { AgentRecord, queryAgentList, updateAgent } from '@/api/agent';
+  import {
+    AgentRecord,
+    AgentSummaryRecord,
+    queryAgentDetail,
+    queryAgentList,
+    updateAgent,
+  } from '@/api/agent';
   import { queryVoiceTimbreList, VoiceTimbreRecord } from '@/api/voice-model';
 
   const router = useRouter();
   const { loading, setLoading } = useLoading();
-  const renderList = ref<AgentRecord[]>([]);
+  const renderList = ref<AgentSummaryRecord[]>([]);
   const activeVoiceTimbres = ref<VoiceTimbreRecord[]>([]);
   const editVisible = ref(false);
   const saving = ref(false);
@@ -460,6 +479,7 @@
     pageSize: 20,
     total: 0,
   });
+  const pageCursors = new Map<number, string>();
 
   const requestParams = computed(() => ({
     keyword: searchForm.keyword.trim() || undefined,
@@ -467,6 +487,7 @@
     memberStatus: searchForm.memberStatus,
     page: pagination.current,
     pageSize: pagination.pageSize,
+    cursor: pageCursors.get(pagination.current),
   }));
   const hasSearch = computed(
     () =>
@@ -491,6 +512,9 @@
       pagination.total = data.total;
       pagination.current = data.page;
       pagination.pageSize = data.pageSize;
+      if (data.nextCursor) {
+        pageCursors.set(data.page + 1, data.nextCursor);
+      }
     } catch (error) {
       Message.error('智能体列表加载失败');
     } finally {
@@ -513,6 +537,7 @@
 
   const handleSearch = () => {
     pagination.current = 1;
+    pageCursors.clear();
     fetchData();
   };
 
@@ -521,6 +546,7 @@
     searchForm.relation = undefined;
     searchForm.memberStatus = undefined;
     pagination.current = 1;
+    pageCursors.clear();
     fetchData();
   };
 
@@ -532,10 +558,11 @@
   const onPageSizeChange = (pageSize: number) => {
     pagination.pageSize = pageSize;
     pagination.current = 1;
+    pageCursors.clear();
     fetchData();
   };
 
-  const openDetail = (record: AgentRecord) => {
+  const openDetail = (record: AgentSummaryRecord) => {
     router.push({
       name: 'AgentDetail',
       params: {
@@ -544,21 +571,31 @@
     });
   };
 
-  const openEdit = (record: AgentRecord) => {
-    editingAgent.value = record;
-    editingAgentId.value = record.id;
-    editForm.name = record.name;
-    editForm.avatar = record.avatar;
-    editForm.sex = record.sex;
-    editForm.agentCallMe = record.agentCallMe;
-    editForm.iCallAgent = record.iCallAgent;
-    editForm.birthday = formatDateValue(record.birthday);
-    editForm.deathDate = formatDateValue(record.deathDate);
-    editForm.description = record.description;
-    editForm.customContext = record.customContext || '';
-    editForm.status = record.status;
-    editForm.voiceTimbreId = record.voiceTimbreId || '';
-    editVisible.value = true;
+  const openEdit = async (record: AgentSummaryRecord) => {
+    try {
+      const [{ data }] = await Promise.all([
+        queryAgentDetail(record.id),
+        activeVoiceTimbres.value.length
+          ? Promise.resolve()
+          : fetchActiveVoiceTimbres(),
+      ]);
+      editingAgent.value = data;
+      editingAgentId.value = data.id;
+      editForm.name = data.name;
+      editForm.avatar = data.avatar;
+      editForm.sex = data.sex;
+      editForm.agentCallMe = data.agentCallMe;
+      editForm.iCallAgent = data.iCallAgent;
+      editForm.birthday = formatDateValue(data.birthday);
+      editForm.deathDate = formatDateValue(data.deathDate);
+      editForm.description = data.description;
+      editForm.customContext = data.customContext || '';
+      editForm.status = data.status;
+      editForm.voiceTimbreId = data.voiceTimbreId || '';
+      editVisible.value = true;
+    } catch (error) {
+      Message.error('智能体资料加载失败');
+    }
   };
 
   const closeEdit = () => {
@@ -632,7 +669,6 @@
   };
 
   fetchData();
-  fetchActiveVoiceTimbres();
 </script>
 
 <script lang="ts">

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   AdminChatQualityDTO,
+  AdminMonthlyOrderReportDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
@@ -50,6 +51,25 @@ export function queryOrderAnalytics(month?: string) {
   return axios.get<AdminOrderAnalyticsDTO>(
     '/admin_api/operations/order-analytics',
     { params: { month } }
+  );
+}
+
+export function refreshOrderAnalytics(month: string) {
+  return axios.put<AdminOrderAnalyticsDTO>(
+    `/admin_api/operations/order-analytics/${month}/refresh`
+  );
+}
+
+export function queryMonthlyOrderReport(month?: string) {
+  return axios.get<AdminMonthlyOrderReportDTO>(
+    '/admin_api/operations/monthly-order-report',
+    { params: { month } }
+  );
+}
+
+export function refreshMonthlyOrderReport(month: string) {
+  return axios.put<AdminMonthlyOrderReportDTO>(
+    `/admin_api/operations/monthly-order-report/${month}/refresh`
   );
 }
 

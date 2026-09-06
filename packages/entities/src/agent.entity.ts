@@ -57,6 +57,7 @@ export interface AgentMemoryProfileFactSnapshot {
 
 @Index(["createdUserId", "updatedAt"], { background: true })
 @Index(["createdUserId", "isDefault"], { background: true })
+@Index(["messengerOfAgentId", "createdAt"], { background: true })
 @Index(["voiceTimbreId"], { sparse: true, background: true })
 @Index(["pendingVoiceTimbreId"], { sparse: true, background: true })
 @Entity(TableName.agent)
@@ -88,11 +89,11 @@ export class AgentEntity extends BaseEntity {
   @Column()
   deathDate?: Date;
 
-  @Column({ type: 'json', nullable: true })
+  @Column({ type: "json", nullable: true })
   timeMarkers?: Array<{
     monthDay: string; // mm-dd format
     label: string;
-    source: 'deathDate' | 'birthday' | 'user_mentioned';
+    source: "deathDate" | "birthday" | "user_mentioned";
   }>;
 
   @Column()
@@ -168,6 +169,13 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   pendingVoiceTimbreId?: MongoObjectId;
+
+  /** Materialized count of user-authored messages for admin reporting. */
+  @Column()
+  userMessageCount?: number;
+
+  @Column()
+  userMessageCountBackfilledAt?: Date;
 
   @Column()
   voiceTimbreSelectedAt?: Date;

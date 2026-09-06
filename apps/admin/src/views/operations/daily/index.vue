@@ -18,50 +18,45 @@
 
     <a-spin :loading="loading">
       <a-table
+        class="daily-detail-page__table"
         row-key="date"
         :data="daily"
         :pagination="false"
-        :scroll="{ x: 1740 }"
       >
         <template #columns>
-          <a-table-column title="日期" data-index="date" :width="130" />
-          <a-table-column title="新增用户" data-index="newUsers" :width="110" />
+          <a-table-column title="序号" :width="56">
+            <template #cell="{ rowIndex }">{{ rowIndex + 1 }}</template>
+          </a-table-column>
+          <a-table-column title="日期" data-index="date" :width="96" />
+          <a-table-column title="新增用户" data-index="newUsers" />
+          <a-table-column title="聊天人数" data-index="allChatUsers" />
           <a-table-column
-            title="全部聊天人数"
-            data-index="allChatUsers"
-            :width="130"
-          />
-          <a-table-column
-            title="3 日内新用户聊天人数"
+            title="3 日新客聊天"
             data-index="newUserChatUsers"
-            :width="140"
+            :width="116"
           />
-          <a-table-column
-            title="全部消息数"
-            data-index="userMessages"
-            :width="120"
-          />
-          <a-table-column title="净收入" :width="130">
+          <a-table-column title="用户消息" data-index="userMessages" />
+          <a-table-column title="净收入">
             <template #cell="{ record }">
               <strong>{{ formatMoney(record.netRevenue) }}</strong>
             </template>
           </a-table-column>
-          <a-table-column title="累计收入" :width="130">
+          <a-table-column title="累计收入">
             <template #cell="{ record }">
               {{ formatMoney(record.cohortRevenue) }}
             </template>
           </a-table-column>
-          <a-table-column title="推广费用" :width="130">
+          <a-table-column title="推广费">
             <template #cell="{ record }">
               {{ formatMoney(promotionExpenseFor(record)) }}
             </template>
           </a-table-column>
-          <a-table-column title="盈利" :width="130">
+          <a-table-column title="盈利">
             <template #cell="{ record }">
               <strong>{{ formatMoney(profitFor(record)) }}</strong>
             </template>
           </a-table-column>
-          <a-table-column title="单客收益" :width="110">
+          <a-table-column title="单客收益">
             <template #cell="{ record }">
               {{
                 record.newUsers > 0
@@ -123,7 +118,10 @@
 
 <style lang="less" scoped>
   .daily-detail-page {
+    width: 100%;
+    min-width: 0;
     min-height: 100%;
+    box-sizing: border-box;
     padding: 24px;
     background: var(--color-fill-2);
 
@@ -142,6 +140,37 @@
       p {
         margin: 0;
         color: var(--color-text-3);
+      }
+    }
+
+    &__table {
+      width: 100%;
+      min-width: 0;
+
+      :deep(.arco-table-th) {
+        white-space: normal;
+        line-height: 1.35;
+      }
+
+      :deep(.arco-table-td) {
+        white-space: nowrap;
+      }
+    }
+
+    @media (max-width: 900px) {
+      padding: 16px;
+
+      &__header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      &__table {
+        overflow-x: auto;
+
+        :deep(.arco-table) {
+          min-width: 860px;
+        }
       }
     }
   }

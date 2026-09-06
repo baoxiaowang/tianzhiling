@@ -41,6 +41,8 @@ export enum TableName {
   vip_plan = "vip_plan",
   order = "order",
   order_refund = "order_refund",
+  order_analytics_snapshot = "order_analytics_snapshot",
+  order_monthly_report_snapshot = "order_monthly_report_snapshot",
   user_membership = "user_membership",
   agent_entitlement = "agent_entitlement",
   free_chat_agent_ledger = "free_chat_agent_ledger",

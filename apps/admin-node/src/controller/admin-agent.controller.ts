@@ -34,6 +34,11 @@ export class AdminAgentController {
     return this.adminAgentService.listAgentConversations(id, query);
   }
 
+  @Get('/:id/memories')
+  async memories(@Param('id') id: string) {
+    return this.adminAgentService.listAgentMemories(id);
+  }
+
   @Get('/:id/conversations/:conversationId/messages')
   async conversationMessages(
     @Param('id') id: string,

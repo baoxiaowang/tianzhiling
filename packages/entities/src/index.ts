@@ -24,6 +24,8 @@ export * from "./memory-pipeline-task.entity";
 export * from "./messenger-call-event.entity";
 export * from "./order.entity";
 export * from "./order-refund.entity";
+export * from "./order-analytics-snapshot.entity";
+export * from "./order-monthly-report-snapshot.entity";
 export * from "./post.entity";
 export * from "./post-comment.entity";
 export * from "./post-comment-notification.entity";

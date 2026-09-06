@@ -47,6 +47,7 @@ import {
   VoiceTimbreEntity,
   VoiceTrainingTaskEntity,
 } from '@tzl/entities';
+import { MessageUserCountSubscriber } from '../subscriber/message-user-count.subscriber';
 
 const PROJECT_ROOT = resolve(__dirname, '../../../..');
 
@@ -876,6 +877,7 @@ export default {
           VoiceTimbreEntity,
           VoiceTrainingTaskEntity,
         ],
+        subscribers: [MessageUserCountSubscriber],
       },
     },
   },

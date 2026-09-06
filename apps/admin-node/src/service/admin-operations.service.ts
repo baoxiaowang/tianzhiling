@@ -27,6 +27,7 @@ import {
   MessageStatus,
   MongoObjectId,
   OrderEntity,
+  OrderAnalyticsSnapshotEntity,
   OrderRefundEntity,
   OrderRefundStatus,
   OrderStatus,
@@ -75,10 +76,23 @@ type CohortOrderStatsRow = {
   revenue7Day: number;
   revenue30Day: number;
 };
+type OrderDistributionRow = { _id: string; count: number };
+type RelationshipOrderRow = {
+  _id: MongoObjectId;
+  targetCode?: string;
+  agents?: Array<{
+    name?: string;
+    iCallAgent?: string;
+    agentCallMe?: string;
+    description?: string;
+  }>;
+};
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
 const NEW_USER_CHAT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+const ORDER_ANALYTICS_CALCULATION_VERSION = 1;
+const ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
 
 const ACTIVE_IMPORT_STATUSES = [
   ConversationChatImportStatus.uploading,
@@ -129,6 +143,9 @@ export class AdminOperationsService {
 
   @InjectEntityModel(OrderRefundEntity)
   orderRefundModel: MongoRepository<OrderRefundEntity>;
+
+  @InjectEntityModel(OrderAnalyticsSnapshotEntity)
+  orderAnalyticsSnapshotModel?: MongoRepository<OrderAnalyticsSnapshotEntity>;
 
   @InjectEntityModel(PostEntity)
   postModel: MongoRepository<PostEntity>;
@@ -441,9 +458,9 @@ export class AdminOperationsService {
         {
           ...realOrderMatch,
           status: OrderRefundStatus.completed,
-          requestedAt: { $gte: monthStart, $lt: monthEnd },
+          completedAt: { $gte: monthStart, $lt: monthEnd },
         },
-        '$requestedAt',
+        '$completedAt',
         '$amount'
       ),
       this.aggregateLegacyDailyRefundAmounts(
@@ -701,14 +718,50 @@ export class AdminOperationsService {
     return result;
   }
 
-  async getOrderAnalytics(month?: string): Promise<AdminOrderAnalyticsDTO> {
+  async getOrderAnalytics(
+    month?: string,
+    forceRefresh = false
+  ): Promise<AdminOrderAnalyticsDTO> {
     const now = new Date();
     const currentMonth = this.getBeijingMonth(now);
     const normalizedMonth = this.normalizeMonth(month, currentMonth);
     const cached = this.orderAnalyticsCache.get(normalizedMonth);
 
-    if (cached && cached.expiresAt > now.getTime()) {
+    if (!forceRefresh && cached && cached.expiresAt > now.getTime()) {
       return cached.value;
+    }
+
+    const persistedSnapshot = this.orderAnalyticsSnapshotModel
+      ? await this.orderAnalyticsSnapshotModel.findOne({
+          where: { month: normalizedMonth },
+        })
+      : null;
+    const persistedIsFresh = Boolean(
+      persistedSnapshot &&
+        persistedSnapshot.calculationVersion ===
+          ORDER_ANALYTICS_CALCULATION_VERSION &&
+        (normalizedMonth !== currentMonth ||
+          now.getTime() - new Date(persistedSnapshot.updatedAt).getTime() <
+            ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS)
+    );
+
+    if (!forceRefresh && persistedSnapshot && persistedIsFresh) {
+      const persisted =
+        persistedSnapshot.payload as unknown as AdminOrderAnalyticsDTO;
+      const value: AdminOrderAnalyticsDTO = {
+        ...persisted,
+        snapshot: {
+          persisted: true,
+          calculationVersion: persistedSnapshot.calculationVersion,
+          updatedAt: new Date(persistedSnapshot.updatedAt).toISOString(),
+        },
+      };
+
+      this.orderAnalyticsCache.set(normalizedMonth, {
+        expiresAt: now.getTime() + ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS,
+        value,
+      });
+      return value;
     }
 
     const [yearText, monthText] = normalizedMonth.split('-');
@@ -729,6 +782,9 @@ export class AdminOperationsService {
       refundedRows,
       legacyRefundedRows,
       firstTimePayingUsers,
+      productRows,
+      statusRows,
+      relationshipOrders,
     ] = await Promise.all([
       this.orderModel.count({
         ...realOrderMatch,
@@ -746,9 +802,9 @@ export class AdminOperationsService {
         {
           ...realOrderMatch,
           status: OrderRefundStatus.completed,
-          requestedAt: { $gte: monthStart, $lt: monthEnd },
+          completedAt: { $gte: monthStart, $lt: monthEnd },
         },
-        '$requestedAt',
+        '$completedAt',
         '$amount'
       ),
       this.aggregateLegacyDailyRefundAmounts(
@@ -757,6 +813,19 @@ export class AdminOperationsService {
         realOrderMatch
       ),
       this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
+      this.aggregateOrderDistribution(
+        monthStart,
+        monthEnd,
+        { ...realOrderMatch, status: OrderStatus.completed },
+        '$targetCode'
+      ),
+      this.aggregateOrderDistribution(
+        monthStart,
+        monthEnd,
+        { targetCode: { $ne: 'voice_one' } },
+        '$status'
+      ),
+      this.aggregateRelationshipOrders(monthStart, monthEnd, realOrderMatch),
     ]);
     const orderMap = new Map(orderRows.map(row => [row._id, row]));
     const refundMap = this.mergeAmountMaps(refundedRows, legacyRefundedRows);
@@ -787,6 +856,14 @@ export class AdminOperationsService {
       daily.reduce((sum, item) => sum + item.refundedRevenue, 0)
     );
     const paidRevenue = this.centsToYuan(periodOrderStats.paidAmount);
+    const relationshipFacts = relationshipOrders.map(order => {
+      const relationship = this.inferOrderRelationship(order.agents ?? []);
+      return {
+        orderId: this.stringifyObjectId(order._id),
+        relationship: relationship.label,
+        source: relationship.source,
+      };
+    });
     const result: AdminOrderAnalyticsDTO = {
       generatedAt: now.toISOString(),
       timezone: BEIJING_TIMEZONE,
@@ -807,7 +884,46 @@ export class AdminOperationsService {
         refundRate: this.roundRate(refundedRevenue, paidRevenue),
       },
       daily,
+      productDistribution: this.buildDistribution(
+        this.mergeLabelCounts(
+          productRows.map(row => ({
+            label: this.formatOrderProduct(row._id),
+            count: Number(row.count) || 0,
+          }))
+        )
+      ),
+      relationshipDistribution: this.buildDistribution(
+        this.countLabels(relationshipFacts.map(item => item.relationship))
+      ),
+      statusDistribution: this.buildDistribution(
+        statusRows.map(row => ({
+          label: this.formatOrderStatus(row._id),
+          count: Number(row.count) || 0,
+        }))
+      ),
+      snapshot: {
+        persisted: Boolean(this.orderAnalyticsSnapshotModel),
+        calculationVersion: ORDER_ANALYTICS_CALCULATION_VERSION,
+        updatedAt: now.toISOString(),
+      },
     };
+
+    if (this.orderAnalyticsSnapshotModel) {
+      await this.orderAnalyticsSnapshotModel.updateOne(
+        { month: normalizedMonth },
+        {
+          $set: {
+            calculationVersion: ORDER_ANALYTICS_CALCULATION_VERSION,
+            payload: result,
+            relationshipFacts,
+            generatedAt: now,
+            updatedAt: now,
+          },
+          $setOnInsert: { createdAt: now },
+        } as never,
+        { upsert: true }
+      );
+    }
 
     this.orderAnalyticsCache.set(normalizedMonth, {
       expiresAt: now.getTime() + 5 * 60 * 1000,
@@ -1318,13 +1434,13 @@ export class AdminOperationsService {
                 $match: {
                   ...extraMatch,
                   status: OrderRefundStatus.completed,
-                  requestedAt: { $type: 'date' },
+                  completedAt: { $type: 'date' },
                 },
               },
               {
                 $project: {
                   userId: 1,
-                  occurredAt: '$requestedAt',
+                  occurredAt: '$completedAt',
                   signedAmount: { $multiply: ['$amount', -1] },
                 },
               },
@@ -1594,6 +1710,205 @@ export class AdminOperationsService {
       .toArray();
 
     return Number(rows[0]?.count) || 0;
+  }
+
+  private async aggregateOrderDistribution(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>,
+    field: '$targetCode' | '$status'
+  ): Promise<OrderDistributionRow[]> {
+    return this.orderModel
+      .aggregate<OrderDistributionRow>([
+        {
+          $match: {
+            ...extraMatch,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        { $group: { _id: field, count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+      ])
+      .toArray();
+  }
+
+  private async aggregateRelationshipOrders(
+    start: Date,
+    end: Date,
+    extraMatch: Record<string, unknown>
+  ): Promise<RelationshipOrderRow[]> {
+    return this.orderModel
+      .aggregate<RelationshipOrderRow>([
+        {
+          $match: {
+            ...extraMatch,
+            status: OrderStatus.completed,
+            createdAt: { $gte: start, $lt: end },
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.agent,
+            localField: 'userId',
+            foreignField: 'createdUserId',
+            as: 'agents',
+          },
+        },
+        {
+          $project: {
+            targetCode: 1,
+            'agents.name': 1,
+            'agents.iCallAgent': 1,
+            'agents.agentCallMe': 1,
+            'agents.description': 1,
+          },
+        },
+      ])
+      .toArray();
+  }
+
+  private inferOrderRelationship(agents: RelationshipOrderRow['agents']): {
+    label: string;
+    source: string;
+  } {
+    for (const agent of agents ?? []) {
+      const called = this.firstRelationshipSegment(agent.iCallAgent);
+      const callsUser = this.firstRelationshipSegment(agent.agentCallMe);
+      const searchable = `${called} ${agent.name ?? ''} ${
+        agent.description ?? ''
+      }`;
+      const childIsMale = /儿子|弟弟|小宝|男/.test(callsUser);
+      const childIsFemale = /女儿|闺女|妹妹|姑娘/.test(callsUser);
+
+      if (/爸爸|父亲|老爸|老爹|爹/.test(searchable)) {
+        return {
+          label: childIsMale ? '父子' : '父女',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/妈妈|母亲|老妈|妈咪|娘/.test(searchable)) {
+        return {
+          label: childIsMale ? '母子' : '母女',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/爷爷|姥爷|外公|外姥/.test(searchable)) {
+        return {
+          label: '爷孙',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/奶奶|姥姥|外婆|姑姑|阿姨|二姨|小姑/.test(searchable)) {
+        return {
+          label: '奶孙',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/老公|老婆|丈夫|妻子|先生|夫人|爱人/.test(searchable)) {
+        return {
+          label: '夫妻',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/前任|男朋友|女朋友|恋人/.test(searchable)) {
+        return {
+          label: '恋人',
+          source: called ? 'iCallAgent' : 'agentProfile',
+        };
+      }
+      if (/哥哥|哥/.test(called)) {
+        return {
+          label: /弟弟|弟/.test(callsUser) ? '兄弟' : '兄妹',
+          source: 'iCallAgent',
+        };
+      }
+      if (/姐姐|姐/.test(called)) {
+        return {
+          label: /弟弟|弟/.test(callsUser) ? '姐弟' : '姐妹',
+          source: 'iCallAgent',
+        };
+      }
+      if (childIsMale) {
+        return { label: '母子', source: 'agentCallMe' };
+      }
+      if (childIsFemale) {
+        return { label: '母女', source: 'agentCallMe' };
+      }
+    }
+
+    return { label: '未识别', source: 'unresolved' };
+  }
+
+  private firstRelationshipSegment(value?: string): string {
+    return (
+      String(value ?? '')
+        .split(/[，,、/]/)
+        .map(item => item.trim())
+        .find(Boolean) ?? ''
+    );
+  }
+
+  private countLabels(
+    labels: string[]
+  ): Array<{ label: string; count: number }> {
+    const counts = new Map<string, number>();
+    for (const label of labels) {
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([label, count]) => ({ label, count }));
+  }
+
+  private mergeLabelCounts(
+    rows: Array<{ label: string; count: number }>
+  ): Array<{ label: string; count: number }> {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      counts.set(row.label, (counts.get(row.label) ?? 0) + row.count);
+    }
+    return [...counts.entries()].map(([label, count]) => ({ label, count }));
+  }
+
+  private buildDistribution(
+    rows: Array<{ label: string; count: number }>
+  ): AdminOrderAnalyticsDTO['productDistribution'] {
+    const total = rows.reduce((sum, row) => sum + row.count, 0);
+    return rows
+      .map(row => ({
+        ...row,
+        percentage: total > 0 ? this.roundRate(row.count, total) : 0,
+      }))
+      .sort(
+        (left, right) =>
+          right.count - left.count || left.label.localeCompare(right.label)
+      );
+  }
+
+  private formatOrderProduct(value?: string): string {
+    const labels: Record<string, string> = {
+      vip_year: '一年会员',
+      vip_infinity: '永久会员',
+      vip_master: '三年会员+声音模型',
+      voice_putonghua: '声音模型',
+      voice_fanyan: '声音模型',
+      voice_vip_year: '一年声音会员',
+      voice_vip_master: '三年声音会员',
+      voice_vip_infinity: '永久声音会员',
+    };
+    return labels[value ?? ''] ?? value ?? '未知';
+  }
+
+  private formatOrderStatus(value?: string): string {
+    const labels: Record<string, string> = {
+      pending: '待支付',
+      paid: '已支付',
+      granting: '发放中',
+      completed: '已完成',
+      closed: '未付款',
+      refund_requested: '退款申请中',
+      refunded: '已退款',
+      grant_failed: '发放失败',
+    };
+    return labels[value ?? ''] ?? value ?? '未知';
   }
 
   private buildRealOrderMatch(): Record<string, unknown> {

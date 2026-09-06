@@ -5,105 +5,114 @@
         <a-breadcrumb-item>
           <a-link @click="goBack">智能体管理</a-link>
         </a-breadcrumb-item>
-        <a-breadcrumb-item>智能体详情</a-breadcrumb-item>
+        <a-breadcrumb-item>智能体主页</a-breadcrumb-item>
       </a-breadcrumb>
     </a-card>
 
     <div class="agent-detail-page__content">
       <a-card class="agent-detail-page__info-card" :bordered="false">
-        <template #title>人设与关系</template>
         <a-spin :loading="loading">
-          <div v-if="agent" class="agent-detail-page__profile">
-            <a-avatar :size="72">
-              <img
-                v-if="isRenderableAvatar(agent.avatar)"
-                :src="agent.avatar"
-                alt="agent avatar"
-              />
-              <template v-else>
-                {{ getAvatarFallback(agent.name, 'A') }}
-              </template>
-            </a-avatar>
+          <div v-if="agent" class="agent-detail-page__overview">
+            <section class="agent-detail-page__hero">
+              <a-avatar :size="64">
+                <img
+                  v-if="isRenderableAvatar(agent.avatar)"
+                  :src="agent.avatar"
+                  alt="agent avatar"
+                />
+                <template v-else>
+                  {{ getAvatarFallback(agent.name, 'A') }}
+                </template>
+              </a-avatar>
+              <div class="agent-detail-page__identity">
+                <div class="agent-detail-page__identity-line">
+                  <h2 class="agent-detail-page__name">
+                    {{ agent.name || '-' }}
+                  </h2>
+                  <a-tag :color="agent.status === 1 ? 'green' : 'gray'">
+                    {{ formatStatus(agent.status) }}
+                  </a-tag>
+                </div>
+                <a-typography-text class="agent-detail-page__id" copyable>
+                  {{ agent.id }}
+                </a-typography-text>
+                <a-space class="agent-detail-page__tags" size="mini" wrap>
+                  <a-tag>{{ formatSex(agent.sex) }}</a-tag>
+                  <a-tag :color="agent.voiceTimbreId ? 'arcoblue' : 'orange'">
+                    {{ agent.voiceTimbreId ? '已配置音色' : '未配置音色' }}
+                  </a-tag>
+                  <a-tag>用户称呼：{{ agent.iCallAgent || '-' }}</a-tag>
+                  <a-tag>称呼用户：{{ agent.agentCallMe || '-' }}</a-tag>
+                </a-space>
+              </div>
+              <a-button
+                class="agent-detail-page__memory-button"
+                type="primary"
+                :loading="memoriesLoading"
+                @click="openMemories"
+              >
+                查看已梳理记忆
+              </a-button>
+            </section>
 
-            <div class="agent-detail-page__name">{{ agent.name || '-' }}</div>
-            <a-typography-text class="agent-detail-page__id" copyable>
-              {{ agent.id }}
-            </a-typography-text>
-            <a-space class="agent-detail-page__tags">
-              <a-tag :color="agent.sex === 1 ? 'blue' : 'magenta'">
-                {{ formatSex(agent.sex) }}
+            <section class="agent-detail-page__profile-details">
+              <div class="agent-detail-page__section-label">角色信息</div>
+              <a-descriptions
+                class="agent-detail-page__descriptions"
+                :column="{ xs: 1, md: 2, lg: 4 }"
+                size="small"
+              >
+                <a-descriptions-item label="生日">
+                  {{ formatDate(agent.birthday, 'YYYY-MM-DD') }}
+                </a-descriptions-item>
+                <a-descriptions-item label="忌日">
+                  {{ formatDate(agent.deathDate, 'YYYY-MM-DD') }}
+                </a-descriptions-item>
+                <a-descriptions-item label="创建时间">
+                  {{ formatDate(agent.createdAt) }}
+                </a-descriptions-item>
+                <a-descriptions-item label="更新时间">
+                  {{ formatDate(agent.updatedAt) }}
+                </a-descriptions-item>
+              </a-descriptions>
+              <div class="agent-detail-page__description-row">
+                <span>人物描述</span>
+                <a-typography-paragraph
+                  class="agent-detail-page__description"
+                  :ellipsis="{ rows: 2, expandable: true }"
+                >
+                  {{ agent.description || '-' }}
+                </a-typography-paragraph>
+              </div>
+            </section>
+
+            <section
+              v-if="agent.createdUser"
+              class="agent-detail-page__owner-section"
+            >
+              <span class="agent-detail-page__owner-label">所属用户</span>
+              <a-avatar :size="24">
+                <img
+                  v-if="isRenderableAvatar(agent.createdUser.avatar)"
+                  :src="agent.createdUser.avatar"
+                  alt="user avatar"
+                />
+                <template v-else>
+                  {{ getAvatarFallback(agent.createdUser.name, 'U') }}
+                </template>
+              </a-avatar>
+              <a-link @click="goUserDetail(agent.createdUser.id)">
+                {{ agent.createdUser.name || '-' }}
+              </a-link>
+              <span>{{ agent.createdUser.account || '-' }}</span>
+              <span>{{ agent.createdUser.phone || '-' }}</span>
+              <a-tag v-if="agent.createdUser.isVip" color="gold" size="small">
+                VIP
               </a-tag>
-              <a-tag :color="agent.status === 1 ? 'green' : 'gray'">
-                {{ formatStatus(agent.status) }}
-              </a-tag>
-              <a-tag :color="agent.voiceTimbreId ? 'green' : 'orange'">
-                {{ agent.voiceTimbreId ? '已配置音色' : '未配置音色' }}
-              </a-tag>
-            </a-space>
+            </section>
           </div>
 
-          <a-descriptions
-            v-if="agent"
-            class="agent-detail-page__descriptions"
-            :column="1"
-            size="small"
-            bordered
-          >
-            <a-descriptions-item label="归属用户">
-              <template v-if="agent.createdUser">
-                <a-link @click="goUserDetail(agent.createdUser.id)">
-                  {{ agent.createdUser.name || '-' }}
-                </a-link>
-                <a-tag v-if="agent.createdUser.isVip" color="gold" size="small">
-                  VIP
-                </a-tag>
-                <span v-if="agent.createdUser.account">
-                  / {{ agent.createdUser.account }}
-                </span>
-              </template>
-              <template v-else>-</template>
-            </a-descriptions-item>
-            <a-descriptions-item label="用户称呼TA">
-              {{ agent.iCallAgent || '-' }}
-            </a-descriptions-item>
-            <a-descriptions-item label="TA称呼用户">
-              {{ agent.agentCallMe || '-' }}
-            </a-descriptions-item>
-            <a-descriptions-item label="音色配置">
-              <a-space v-if="agent.voiceTimbreId">
-                <a-tag color="green">已配置</a-tag>
-                <a-typography-text
-                  class="agent-detail-page__timbre-id"
-                  copyable
-                >
-                  {{ agent.voiceTimbreId }}
-                </a-typography-text>
-              </a-space>
-              <a-tag v-else color="orange">未配置</a-tag>
-            </a-descriptions-item>
-            <a-descriptions-item label="生日">
-              {{ formatDate(agent.birthday, 'YYYY-MM-DD') }}
-            </a-descriptions-item>
-            <a-descriptions-item label="忌日">
-              {{ formatDate(agent.deathDate, 'YYYY-MM-DD') }}
-            </a-descriptions-item>
-            <a-descriptions-item label="创建时间">
-              {{ formatDate(agent.createdAt) }}
-            </a-descriptions-item>
-            <a-descriptions-item label="更新时间">
-              {{ formatDate(agent.updatedAt) }}
-            </a-descriptions-item>
-            <a-descriptions-item label="描述">
-              <a-typography-paragraph
-                class="agent-detail-page__description"
-                :ellipsis="{ rows: 5, expandable: true }"
-              >
-                {{ agent.description || '-' }}
-              </a-typography-paragraph>
-            </a-descriptions-item>
-          </a-descriptions>
-
-          <a-empty v-else description="暂无智能体信息" />
+          <a-empty v-if="!agent" description="暂无智能体信息" />
         </a-spin>
       </a-card>
 
@@ -114,79 +123,78 @@
             v-if="conversationList.length > 0"
             class="agent-detail-page__chat-layout"
           >
-            <aside class="agent-detail-page__conversation-list">
-              <button
-                v-for="conversation in conversationList"
-                :key="conversation.id"
-                class="agent-detail-page__conversation-item"
-                :class="{
-                  'agent-detail-page__conversation-item--active':
-                    conversation.id === selectedConversationId,
-                }"
-                type="button"
-                @click="selectConversation(conversation)"
-              >
-                <a-avatar :size="36">
-                  <img
-                    v-if="isRenderableAvatar(conversation.user?.avatar || '')"
-                    :src="conversation.user?.avatar"
-                    alt="user avatar"
-                  />
-                  <template v-else>
-                    {{ getAvatarFallback(conversation.user?.name || '', 'U') }}
-                  </template>
-                </a-avatar>
-                <span class="agent-detail-page__conversation-main">
-                  <span class="agent-detail-page__conversation-title">
-                    {{ formatConversationTitle(conversation) }}
-                  </span>
-                  <span class="agent-detail-page__conversation-preview">
-                    {{ formatLatestPreview(conversation) }}
-                  </span>
-                </span>
-                <span class="agent-detail-page__conversation-extra">
-                  <span>{{ conversation.messageCount }} 条</span>
-                  <span>{{
-                    formatDate(conversation.updatedAt, 'MM-DD HH:mm')
-                  }}</span>
-                </span>
-              </button>
-
-              <div class="agent-detail-page__conversation-pagination">
-                <span class="agent-detail-page__total">
-                  共 {{ conversationPagination.total }} 条对话
-                </span>
-                <a-pagination
-                  simple
-                  :current="conversationPagination.current"
-                  :page-size="conversationPagination.pageSize"
-                  :total="conversationPagination.total"
-                  @change="onConversationPageChange"
-                />
-              </div>
-            </aside>
-
             <section class="agent-detail-page__chat-panel">
               <header class="agent-detail-page__chat-header">
-                <div>
-                  <div class="agent-detail-page__chat-title">
-                    {{ selectedConversationTitle }}
-                  </div>
-                  <div class="agent-detail-page__chat-subtitle">
-                    {{
-                      selectedConversation?.user?.account ||
-                      selectedConversation?.userId
-                    }}
+                <div class="agent-detail-page__chat-user">
+                  <a-avatar :size="36">
+                    <img
+                      v-if="
+                        isRenderableAvatar(
+                          selectedConversation?.user?.avatar || ''
+                        )
+                      "
+                      :src="selectedConversation?.user?.avatar"
+                      alt="user avatar"
+                    />
+                    <template v-else>
+                      {{
+                        getAvatarFallback(
+                          selectedConversation?.user?.name || '',
+                          'U'
+                        )
+                      }}
+                    </template>
+                  </a-avatar>
+                  <div>
+                    <div class="agent-detail-page__chat-title">
+                      {{ selectedConversationTitle }}
+                    </div>
+                    <div class="agent-detail-page__chat-subtitle">
+                      {{
+                        selectedConversation?.user?.account ||
+                        selectedConversation?.userId
+                      }}
+                      · {{ selectedConversation?.messageCount || 0 }} 条消息
+                    </div>
                   </div>
                 </div>
-                <a-button
-                  v-if="selectedConversation?.user"
-                  type="text"
-                  size="small"
-                  @click="goUserDetail(selectedConversation.user.id)"
-                >
-                  查看用户
-                </a-button>
+                <div class="agent-detail-page__chat-actions">
+                  <a-select
+                    v-if="conversationPagination.total > 1"
+                    :model-value="selectedConversationId"
+                    class="agent-detail-page__conversation-select"
+                    size="small"
+                    @change="selectConversationById"
+                  >
+                    <a-option
+                      v-for="conversation in conversationList"
+                      :key="conversation.id"
+                      :value="conversation.id"
+                    >
+                      {{ formatConversationTitle(conversation) }} ·
+                      {{ conversation.messageCount }} 条
+                    </a-option>
+                  </a-select>
+                  <a-pagination
+                    v-if="
+                      conversationPagination.total >
+                      conversationPagination.pageSize
+                    "
+                    simple
+                    :current="conversationPagination.current"
+                    :page-size="conversationPagination.pageSize"
+                    :total="conversationPagination.total"
+                    @change="onConversationPageChange"
+                  />
+                  <a-button
+                    v-if="selectedConversation?.user"
+                    type="outline"
+                    size="small"
+                    @click="goUserDetail(selectedConversation.user.id)"
+                  >
+                    查看用户
+                  </a-button>
+                </div>
               </header>
 
               <a-spin :loading="messagesLoading">
@@ -247,9 +255,19 @@
                           </a-button>
                         </a-popconfirm>
                       </div>
-                      <div class="agent-detail-page__message-bubble">
+                      <div
+                        v-if="message.role !== 'system'"
+                        class="agent-detail-page__message-bubble"
+                      >
                         {{ formatMessageContent(message) }}
                       </div>
+                      <a-typography-paragraph
+                        v-else
+                        class="agent-detail-page__message-bubble agent-detail-page__message-bubble--system"
+                        :ellipsis="{ rows: 2, expandable: true }"
+                      >
+                        {{ formatMessageContent(message) }}
+                      </a-typography-paragraph>
                     </div>
                   </div>
                 </div>
@@ -275,6 +293,70 @@
         </a-spin>
       </a-card>
     </div>
+
+    <a-drawer
+      :visible="memoriesVisible"
+      :width="760"
+      title="已梳理记忆"
+      unmount-on-close
+      @cancel="memoriesVisible = false"
+    >
+      <a-spin :loading="memoriesLoading">
+        <a-alert class="agent-detail-page__memory-tip">
+          展示当前有效、候选或待确认的结构化记忆；已归档记忆不在此处显示。
+        </a-alert>
+        <a-table
+          v-if="memoryList.length"
+          :data="memoryList"
+          :pagination="false"
+          :bordered="false"
+          :scroll="{ x: 860, y: 'calc(100vh - 190px)' }"
+          size="small"
+        >
+          <template #columns>
+            <a-table-column title="类型" :width="100">
+              <template #cell="{ record }">
+                {{ formatMemoryType(record.type) }}
+              </template>
+            </a-table-column>
+            <a-table-column title="记忆内容" :width="280">
+              <template #cell="{ record }">
+                <div class="agent-detail-page__memory-value">
+                  {{ record.value || '-' }}
+                </div>
+                <div class="agent-detail-page__memory-key">
+                  {{ record.key }}
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="状态" :width="100">
+              <template #cell="{ record }">
+                <a-tag :color="getMemoryStatusColor(record.status)">
+                  {{ formatMemoryStatus(record.status) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="优先级" data-index="priority" :width="80" />
+            <a-table-column title="依据" :width="220">
+              <template #cell="{ record }">
+                <a-typography-paragraph
+                  class="agent-detail-page__memory-source"
+                  :ellipsis="{ rows: 2, expandable: true }"
+                >
+                  {{ record.sourceText || '-' }}
+                </a-typography-paragraph>
+              </template>
+            </a-table-column>
+            <a-table-column title="更新时间" :width="160">
+              <template #cell="{ record }">
+                {{ formatDate(record.updatedAt) }}
+              </template>
+            </a-table-column>
+          </template>
+        </a-table>
+        <a-empty v-else description="暂无已梳理记忆" />
+      </a-spin>
+    </a-drawer>
   </div>
 </template>
 
@@ -287,11 +369,13 @@
   import {
     AgentConversationMessageRecord,
     AgentConversationRecord,
+    AgentMemoryRecord,
     AgentRecord,
     archiveAgentConversationMessage,
     queryAgentConversationMessages,
     queryAgentConversations,
     queryAgentDetail,
+    queryAgentMemories,
   } from '@/api/agent';
 
   type MessageLike = {
@@ -309,6 +393,10 @@
   const selectedConversationId = ref('');
   const conversationsLoading = ref(false);
   const messagesLoading = ref(false);
+  const memoriesVisible = ref(false);
+  const memoriesLoading = ref(false);
+  const memoryList = ref<AgentMemoryRecord[]>([]);
+  const memoriesLoadedAgentId = ref('');
   const archivingMessageIds = ref<Set<string>>(new Set());
   const conversationPagination = reactive({
     current: 1,
@@ -401,6 +489,29 @@
     }
   };
 
+  const openMemories = async () => {
+    memoriesVisible.value = true;
+    if (
+      !agentId.value ||
+      memoriesLoadedAgentId.value === agentId.value ||
+      memoriesLoading.value
+    ) {
+      return;
+    }
+
+    try {
+      memoriesLoading.value = true;
+      const { data } = await queryAgentMemories(agentId.value);
+      memoryList.value = data.items;
+      memoriesLoadedAgentId.value = agentId.value;
+    } catch (error) {
+      memoryList.value = [];
+      Message.error('智能体记忆加载失败');
+    } finally {
+      memoriesLoading.value = false;
+    }
+  };
+
   const fetchConversationMessages = async (
     id?: string,
     conversationId?: string
@@ -458,6 +569,20 @@
     selectedConversationId.value = conversation.id;
     messagePagination.current = 1;
     fetchConversationMessages(agentId.value, conversation.id);
+  };
+
+  const selectConversationById = (conversationId: unknown) => {
+    if (typeof conversationId !== 'string') {
+      return;
+    }
+
+    const conversation = conversationList.value.find(
+      (item) => item.id === conversationId
+    );
+
+    if (conversation) {
+      selectConversation(conversation);
+    }
   };
 
   const onMessagePageChange = (page: number) => {
@@ -522,14 +647,6 @@
     );
   };
 
-  const formatLatestPreview = (conversation: AgentConversationRecord) => {
-    if (!conversation.latestMessage) {
-      return '暂无消息';
-    }
-
-    return formatMessageContent(conversation.latestMessage);
-  };
-
   const formatDate = (value: string, pattern = 'YYYY-MM-DD HH:mm') => {
     return value ? dayjs(value).format(pattern) : '-';
   };
@@ -578,6 +695,48 @@
     return '文本';
   };
 
+  const formatMemoryType = (value: string) => {
+    const labels: Record<string, string> = {
+      identity: '身份',
+      relationship: '关系',
+      age: '年龄',
+      occupation: '职业',
+      family: '家庭',
+      preference: '偏好',
+      correction: '纠正',
+      promise: '承诺',
+      keepsake: '纪念物',
+      grief_trigger: '哀伤触发',
+      safety_signal: '安全信号',
+      style: '表达风格',
+      memory: '共同记忆',
+      taboo: '禁忌',
+    };
+    return labels[value] || value || '-';
+  };
+
+  const formatMemoryStatus = (value: string) => {
+    const labels: Record<string, string> = {
+      active: '有效',
+      candidate: '候选',
+      conflicted: '有冲突',
+      pending: '待确认',
+      rejected: '已拒绝',
+    };
+    return labels[value] || value || '-';
+  };
+
+  const getMemoryStatusColor = (value: string) => {
+    const colors: Record<string, string> = {
+      active: 'green',
+      candidate: 'arcoblue',
+      conflicted: 'red',
+      pending: 'orange',
+      rejected: 'gray',
+    };
+    return colors[value] || 'gray';
+  };
+
   const formatMessageContent = (message: MessageLike) => {
     if (message.type === 'voice') {
       return (
@@ -605,6 +764,9 @@
       messagePagination.current = 1;
       selectedConversationId.value = '';
       messageList.value = [];
+      memoryList.value = [];
+      memoriesLoadedAgentId.value = '';
+      memoriesVisible.value = false;
       fetchAgentDetail(id);
       fetchAgentConversations(id);
     },
@@ -621,9 +783,8 @@
 <style lang="less" scoped>
   .agent-detail-page {
     box-sizing: border-box;
-    height: calc(100vh - 60px);
+    min-height: calc(100vh - 60px);
     padding: 16px 20px;
-    overflow: hidden;
     background: var(--color-fill-2);
     display: flex;
     flex-direction: column;
@@ -632,14 +793,7 @@
     &__info-card,
     &__conversation-card {
       min-height: 0;
-      border-radius: 4px;
-    }
-
-    &__info-card,
-    &__conversation-card {
-      :deep(.arco-card-body) {
-        min-height: 0;
-      }
+      border-radius: 8px;
     }
 
     &__info-card {
@@ -647,25 +801,24 @@
       flex-direction: column;
 
       :deep(.arco-card-body) {
-        flex: 1;
-        overflow: auto;
-        scrollbar-width: none;
-
-        &::-webkit-scrollbar {
-          display: none;
-        }
+        min-height: 0;
+        padding: 18px 20px 14px;
       }
     }
 
     &__conversation-card {
       display: flex;
+      flex: none;
+      height: calc(100vh - 140px);
       min-width: 0;
+      min-height: 640px;
       flex-direction: column;
 
       :deep(.arco-card-body) {
         flex: 1;
         display: flex;
         flex-direction: column;
+        min-height: 0;
         overflow: hidden;
       }
 
@@ -683,30 +836,44 @@
     }
 
     &__content {
-      flex: 1;
-      display: grid;
-      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      display: flex;
+      flex-direction: column;
       gap: 16px;
-      min-height: 0;
       margin-top: 16px;
     }
 
-    &__profile {
+    &__overview {
       display: flex;
       flex-direction: column;
+      min-width: 0;
+    }
+
+    &__hero {
+      display: flex;
+      min-width: 0;
+      gap: 16px;
       align-items: center;
-      margin-bottom: 20px;
-      text-align: center;
+    }
+
+    &__identity {
+      min-width: 0;
+      flex: 1;
+    }
+
+    &__identity-line {
+      display: flex;
+      gap: 10px;
+      align-items: center;
     }
 
     &__name {
       max-width: 100%;
-      margin-top: 12px;
+      margin: 0;
       overflow: hidden;
       color: var(--color-text-1);
-      font-weight: 500;
-      font-size: 20px;
-      line-height: 28px;
+      font-weight: 600;
+      font-size: 22px;
+      line-height: 30px;
       white-space: nowrap;
       text-overflow: ellipsis;
     }
@@ -729,133 +896,105 @@
     }
 
     &__tags {
-      margin-top: 12px;
+      margin-top: 8px;
+    }
+
+    &__memory-button {
+      flex: 0 0 auto;
+    }
+
+    &__profile-details {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border: 1px solid var(--color-border-1);
+      border-radius: 6px;
+      background: var(--color-fill-1);
+    }
+
+    &__section-label {
+      margin-bottom: 9px;
+      color: var(--color-text-2);
+      font-weight: 500;
+      font-size: 13px;
     }
 
     &__descriptions {
       :deep(.arco-descriptions-item-label) {
-        width: 92px;
         color: var(--color-text-3);
       }
+
+      :deep(.arco-descriptions-item-value) {
+        color: var(--color-text-2);
+      }
+    }
+
+    &__description-row {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 12px;
+      margin-top: 6px;
+      color: var(--color-text-3);
+      font-size: 13px;
+      line-height: 20px;
     }
 
     &__description {
       margin-bottom: 0;
+      color: var(--color-text-2);
+      font-size: 13px;
     }
 
-    &__user-identity {
+    &__memory-tip {
+      margin-bottom: 12px;
+    }
+
+    &__memory-value {
+      color: var(--color-text-1);
+      line-height: 20px;
+      word-break: break-word;
+    }
+
+    &__memory-key {
+      margin-top: 3px;
+      color: var(--color-text-3);
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    &__memory-source {
+      margin-bottom: 0;
+      color: var(--color-text-2);
+    }
+
+    &__owner-section {
+      display: flex;
       min-width: 0;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+      padding: 0 4px;
+      color: var(--color-text-3);
+      font-size: 12px;
     }
 
-    &__user-name {
-      display: block;
-      max-width: 142px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
+    &__owner-label {
+      flex: 0 0 auto;
+      font-size: 12px;
     }
 
     &__chat-layout {
       flex: 1;
-      display: grid;
-      grid-template-columns: 260px minmax(0, 1fr);
+      display: flex;
       min-height: 0;
       overflow: hidden;
       border: 1px solid var(--color-border-2);
-      border-radius: 4px;
+      border-radius: 6px;
       background: var(--color-bg-1);
-    }
-
-    &__conversation-list {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-      border-right: 1px solid var(--color-border-2);
-      background: var(--color-fill-1);
-      scrollbar-width: none;
-
-      &::-webkit-scrollbar {
-        display: none;
-      }
-    }
-
-    &__conversation-item {
-      display: grid;
-      grid-template-columns: 36px minmax(0, 1fr) auto;
-      gap: 10px;
-      align-items: center;
-      width: 100%;
-      padding: 12px;
-      border: 0;
-      border-bottom: 1px solid var(--color-border-1);
-      background: transparent;
-      color: inherit;
-      text-align: left;
-      cursor: pointer;
-
-      &:hover,
-      &--active {
-        background: var(--color-fill-2);
-      }
-
-      &--active {
-        box-shadow: inset 3px 0 0 rgb(var(--primary-6));
-      }
-    }
-
-    &__conversation-main,
-    &__conversation-extra {
-      display: flex;
-      min-width: 0;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    &__conversation-title,
-    &__conversation-preview {
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    &__conversation-title {
-      color: var(--color-text-1);
-      font-weight: 500;
-      line-height: 20px;
-    }
-
-    &__conversation-preview,
-    &__conversation-extra {
-      color: var(--color-text-3);
-      font-size: 12px;
-      line-height: 18px;
-    }
-
-    &__conversation-extra {
-      align-items: flex-end;
-      white-space: nowrap;
-    }
-
-    &__conversation-pagination {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
-      margin-top: auto;
-      padding: 12px;
-      border-top: 1px solid var(--color-border-1);
-      background: var(--color-fill-1);
-    }
-
-    &__total {
-      color: var(--color-text-2);
-      font-size: 14px;
     }
 
     &__chat-panel {
       display: flex;
+      flex: 1;
       min-width: 0;
       min-height: 0;
       flex-direction: column;
@@ -866,10 +1005,26 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      min-height: 64px;
-      padding: 12px 16px;
+      min-height: 60px;
+      padding: 10px 16px;
       border-bottom: 1px solid var(--color-border-2);
       background: var(--color-bg-1);
+    }
+
+    &__chat-user,
+    &__chat-actions {
+      display: flex;
+      min-width: 0;
+      gap: 10px;
+      align-items: center;
+    }
+
+    &__chat-actions {
+      flex: 0 0 auto;
+    }
+
+    &__conversation-select {
+      width: 210px;
     }
 
     &__chat-title {
@@ -949,6 +1104,14 @@
       line-height: 22px;
       white-space: pre-wrap;
       word-break: break-word;
+
+      &--system {
+        margin-bottom: 0;
+        border-style: dashed;
+        background: var(--color-fill-2);
+        color: var(--color-text-3);
+        font-size: 12px;
+      }
     }
 
     &__message-pagination {
@@ -962,17 +1125,13 @@
 
   @media (max-width: 991px) {
     .agent-detail-page {
-      &__content {
-        grid-template-columns: 1fr;
+      &__chat-header {
+        align-items: flex-start;
       }
 
-      &__chat-layout {
-        grid-template-columns: 1fr;
-      }
-
-      &__conversation-list {
-        border-right: 0;
-        border-bottom: 1px solid var(--color-border-2);
+      &__chat-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }
     }
   }
@@ -980,6 +1139,25 @@
   @media (max-width: 575px) {
     .agent-detail-page {
       padding: 12px;
+
+      &__hero,
+      &__owner-section,
+      &__chat-header {
+        flex-wrap: wrap;
+      }
+
+      &__identity {
+        flex-basis: calc(100% - 80px);
+      }
+
+      &__memory-button,
+      &__chat-actions {
+        width: 100%;
+      }
+
+      &__chat-actions {
+        justify-content: flex-start;
+      }
 
       &__message-body {
         max-width: calc(100% - 42px);

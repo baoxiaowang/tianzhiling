@@ -12,7 +12,7 @@ function createService() {
 
   service.agentModel = {
     count: jest.fn(),
-    find: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
     save: jest.fn(),
   } as any;
@@ -22,10 +22,16 @@ function createService() {
     findOne: jest.fn(),
   } as any;
   service.messageModel = {
+    aggregate: jest.fn().mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([]),
+    }),
     count: jest.fn(),
     find: jest.fn(),
     findOne: jest.fn(),
     save: jest.fn(async (message: unknown) => message),
+  } as any;
+  service.agentProfileFactModel = {
+    find: jest.fn().mockResolvedValue([]),
   } as any;
   service.userModel = {
     find: jest.fn(),
@@ -115,7 +121,9 @@ describe('AdminAgentService', () => {
       .mockResolvedValueOnce([account] as never)
       .mockResolvedValueOnce([account] as never);
     jest.mocked(service.agentModel.count).mockResolvedValue(1 as never);
-    jest.mocked(service.agentModel.find).mockResolvedValue([agent] as never);
+    jest
+      .mocked(service.agentModel.find)
+      .mockResolvedValueOnce([agent] as never);
 
     const result = await service.listAgents({
       keyword: 'Alice',
@@ -140,6 +148,7 @@ describe('AdminAgentService', () => {
       expect.objectContaining({
         order: {
           createdAt: 'DESC',
+          id: 'DESC',
         },
       })
     );
@@ -160,26 +169,11 @@ describe('AdminAgentService', () => {
           },
           name: '小灵',
           avatar: 'https://cdn.example.com/agent/avatar.png',
-          sex: AgentSex.woman,
           agentCallMe: '主人',
           iCallAgent: '小灵',
-          birthday: '2020-01-01T00:00:00.000Z',
-          deathDate: '',
-          description: '测试 agent',
-          lifeExperience: '',
-          personalityTraits: '',
-          languageHabits: '',
-          hobbies: '',
-          sharedMemories: '',
-          hasUnreadAgentHomeGuide: true,
-          hasUnreadAgentProfileGuide: false,
-          customContext: '客户要求：回复要更短一点',
-          voiceTimbreId: '',
           conversationCount: 0,
-          status: 1,
-          isDefault: true,
+          messengerConversationCount: 0,
           createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-02T00:00:00.000Z',
         },
       ],
       total: 1,
@@ -187,6 +181,103 @@ describe('AdminAgentService', () => {
       pageSize: 10,
     });
     expect(JSON.stringify(result)).not.toContain('hidden');
+  });
+
+  it('counts user messages sent to linked messenger agents', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const messengerId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const agent: any = {
+      id: agentId,
+      createdUserId: userId,
+      name: '妈妈',
+      sex: AgentSex.woman,
+      status: 1,
+      userMessageCount: 4,
+      userMessageCountBackfilledAt: new Date('2026-01-02T00:00:00.000Z'),
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const messenger: any = {
+      id: messengerId,
+      createdUserId: userId,
+      messengerOfAgentId: agentId,
+      userMessageCount: 2,
+      userMessageCountBackfilledAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+
+    jest.mocked(service.agentModel.count).mockResolvedValue(1 as never);
+    jest
+      .mocked(service.agentModel.find)
+      .mockResolvedValueOnce([agent] as never)
+      .mockResolvedValueOnce([messenger] as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.listAgents({ page: 1, pageSize: 20 });
+
+    expect(result.items[0].conversationCount).toBe(4);
+    expect(result.items[0].messengerConversationCount).toBe(2);
+    expect(service.messageModel.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('lists current structured memories for an agent', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const userId = new MongoObjectId();
+    const factId = new MongoObjectId();
+    jest.mocked(service.agentModel.findOne).mockResolvedValue({
+      id: agentId,
+      createdUserId: userId,
+    } as never);
+    jest.mocked(service.agentProfileFactModel.find).mockResolvedValue([
+      {
+        id: factId,
+        type: 'memory',
+        key: 'family.home',
+        value: '家里的房子正在修建',
+        polarity: 'positive',
+        confidence: 'confirmed',
+        status: 'active',
+        assertionPolicy: 'can_assert',
+        priority: 3,
+        supportCount: 2,
+        sourceText: '家里房子今年应该能做好',
+        updatedAt: new Date('2026-09-06T12:00:00.000Z'),
+      },
+    ] as never);
+
+    const result = await service.listAgentMemories(agentId.toHexString());
+
+    expect(result).toEqual({
+      items: [
+        {
+          id: factId.toHexString(),
+          type: 'memory',
+          key: 'family.home',
+          value: '家里的房子正在修建',
+          polarity: 'positive',
+          confidence: 'confirmed',
+          status: 'active',
+          assertionPolicy: 'can_assert',
+          priority: 3,
+          supportCount: 2,
+          sourceText: '家里房子今年应该能做好',
+          updatedAt: '2026-09-06T12:00:00.000Z',
+        },
+      ],
+      total: 1,
+    });
+    expect(service.agentProfileFactModel.find).toHaveBeenCalledWith({
+      where: {
+        userId,
+        agentId,
+        status: { $ne: 'archived' },
+      },
+      order: { priority: 'DESC', updatedAt: 'DESC' },
+      take: 500,
+    });
   });
 
   it('updates allowed profile and status fields', async () => {
@@ -382,10 +473,15 @@ describe('AdminAgentService', () => {
     jest
       .mocked(service.userAccountModel.find)
       .mockResolvedValue([account] as never);
-    jest
-      .mocked(service.messageModel.findOne)
-      .mockResolvedValue(latestMessage as never);
-    jest.mocked(service.messageModel.count).mockResolvedValue(2 as never);
+    jest.mocked(service.messageModel.aggregate).mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([
+        {
+          _id: conversationId,
+          latestMessage,
+          messageCount: 2,
+        },
+      ]),
+    } as never);
 
     const result = await service.listAgentConversations(agentId.toHexString(), {
       page: '2',

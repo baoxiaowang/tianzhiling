@@ -32,6 +32,16 @@ const OPERATIONS: AppRouteRecordRaw = {
         roles: ['*'],
       },
     },
+    {
+      path: 'order-statistics',
+      name: 'OperationsOrderStatistics',
+      component: () => import('@/views/operations/order-statistics/index.vue'),
+      meta: {
+        locale: 'menu.operations.orderStatistics',
+        requiresAuth: true,
+        roles: ['*'],
+      },
+    },
   ],
 };
 

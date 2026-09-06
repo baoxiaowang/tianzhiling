@@ -78,77 +78,7 @@
     </a-card>
 
     <a-card class="app-user-detail-page__tabs-card" :bordered="false">
-      <a-tabs v-model:active-key="activeTab">
-        <a-tab-pane key="overview" title="用户概览">
-          <div class="app-user-detail-page__overview">
-            <a-grid :cols="24" :col-gap="16" :row-gap="16">
-              <a-grid-item :span="{ xs: 24, md: 8 }">
-                <div class="app-user-detail-page__summary-card">
-                  <span>关系智能体</span>
-                  <strong>{{ agentPagination.total }}</strong>
-                  <a-link @click="activeTab = 'agents'">查看关系结构</a-link>
-                </div>
-              </a-grid-item>
-              <a-grid-item :span="{ xs: 24, md: 8 }">
-                <div class="app-user-detail-page__summary-card">
-                  <span>账号状态</span>
-                  <strong>{{
-                    user?.isRiskControlled ? '需关注' : '正常'
-                  }}</strong>
-                  <a-typography-text type="secondary">
-                    {{ user ? getRiskControlStatusText(user) : '-' }}
-                  </a-typography-text>
-                </div>
-              </a-grid-item>
-              <a-grid-item :span="{ xs: 24, md: 8 }">
-                <div class="app-user-detail-page__summary-card">
-                  <span>内容记录</span>
-                  <strong>动态</strong>
-                  <a-link @click="activeTab = 'posts'">查看用户动态</a-link>
-                </div>
-              </a-grid-item>
-              <a-grid-item :span="24">
-                <a-card title="关系速览" :bordered="false">
-                  <a-list
-                    v-if="agentList.length"
-                    :data="agentList.slice(0, 5)"
-                    :bordered="false"
-                  >
-                    <template #item="{ item }">
-                      <a-list-item>
-                        <a-list-item-meta
-                          :title="item.name || '未命名智能体'"
-                          :description="`用户称呼TA：${
-                            item.iCallAgent || '-'
-                          }；TA称呼用户：${item.agentCallMe || '-'}`"
-                        >
-                          <template #avatar>
-                            <a-avatar :size="40">
-                              <img
-                                v-if="isRenderableAvatar(item.avatar)"
-                                :src="item.avatar"
-                                alt="智能体头像"
-                              />
-                              <template v-else>
-                                {{ getAvatarFallback(item.name, 'A') }}
-                              </template>
-                            </a-avatar>
-                          </template>
-                        </a-list-item-meta>
-                        <template #actions>
-                          <a-link @click="goAgentDetail(item.id)">
-                            查看聊天与人设
-                          </a-link>
-                        </template>
-                      </a-list-item>
-                    </template>
-                  </a-list>
-                  <a-empty v-else description="该用户尚未创建智能体" />
-                </a-card>
-              </a-grid-item>
-            </a-grid>
-          </div>
-        </a-tab-pane>
+      <a-tabs v-model:active-key="activeTab" @change="handleTabChange">
         <a-tab-pane key="agents" title="关系智能体">
           <a-card :bordered="false">
             <a-form
@@ -252,16 +182,22 @@
                     </div>
                   </template>
                 </a-table-column>
+                <a-table-column
+                  title="聊天次数"
+                  data-index="conversationCount"
+                  :width="110"
+                >
+                  <template #cell="{ record }">
+                    <a-link @click="goAgentDetail(record.id)">
+                      {{ record.conversationCount ?? 0 }}
+                    </a-link>
+                  </template>
+                </a-table-column>
                 <a-table-column title="状态" data-index="status" :width="100">
                   <template #cell="{ record }">
                     <a-tag :color="record.status === 1 ? 'green' : 'gray'">
                       {{ formatStatus(record.status) }}
                     </a-tag>
-                  </template>
-                </a-table-column>
-                <a-table-column title="生日" data-index="birthday" :width="140">
-                  <template #cell="{ record }">
-                    {{ formatDate(record.birthday, 'YYYY-MM-DD') }}
                   </template>
                 </a-table-column>
                 <a-table-column
@@ -291,14 +227,127 @@
             </div>
           </a-card>
         </a-tab-pane>
+        <a-tab-pane key="memory" title="账号级记忆">
+          <a-spin :loading="accountMemoryLoading">
+            <div class="app-user-detail-page__memory-layout">
+              <a-card title="用户身份记忆" :bordered="false">
+                <a-descriptions
+                  v-if="accountMemory?.identity"
+                  :column="{ xs: 1, md: 2 }"
+                  bordered
+                  size="small"
+                >
+                  <a-descriptions-item label="真实姓名">
+                    {{ accountMemory.identity.realName || '-' }}
+                  </a-descriptions-item>
+                  <a-descriptions-item label="别名">
+                    {{ accountMemory.identity.aliases.join('、') || '-' }}
+                  </a-descriptions-item>
+                  <a-descriptions-item label="曾用名">
+                    {{ accountMemory.identity.formerNames.join('、') || '-' }}
+                  </a-descriptions-item>
+                  <a-descriptions-item label="更新时间">
+                    {{ formatDate(accountMemory.identity.updatedAt) }}
+                  </a-descriptions-item>
+                  <a-descriptions-item label="记忆来源" :span="2">
+                    {{ accountMemory.identity.sourceText || '-' }}
+                  </a-descriptions-item>
+                </a-descriptions>
+                <a-empty v-else description="暂无用户身份记忆" />
+              </a-card>
+
+              <a-card
+                :title="`已识别人物（${accountMemory?.people.length ?? 0}）`"
+                :bordered="false"
+              >
+                <a-collapse v-if="accountMemory?.people.length">
+                  <a-collapse-item
+                    v-for="person in accountMemory.people"
+                    :key="person.id"
+                    :header="formatMemoryPersonTitle(person)"
+                  >
+                    <a-space wrap class="app-user-detail-page__memory-tags">
+                      <a-tag v-if="person.relationToUser" color="arcoblue">
+                        {{ person.relationToUser }}
+                      </a-tag>
+                      <a-tag v-for="alias in person.aliases" :key="alias">
+                        {{ alias }}
+                      </a-tag>
+                    </a-space>
+                    <a-descriptions
+                      :column="{ xs: 1, md: 3 }"
+                      size="small"
+                      class="app-user-detail-page__memory-person"
+                    >
+                      <a-descriptions-item label="人物ID">
+                        <a-typography-text copyable>
+                          {{ person.id }}
+                        </a-typography-text>
+                      </a-descriptions-item>
+                      <a-descriptions-item label="生命阶段">
+                        {{ formatLifeStage(person.profile?.lifeStage) }}
+                      </a-descriptions-item>
+                      <a-descriptions-item label="更新时间">
+                        {{ formatDate(person.updatedAt) }}
+                      </a-descriptions-item>
+                      <a-descriptions-item label="识别来源" :span="3">
+                        {{ person.sourceText || '-' }}
+                      </a-descriptions-item>
+                    </a-descriptions>
+                    <a-table
+                      :data="person.facts"
+                      :pagination="false"
+                      size="small"
+                      :bordered="false"
+                    >
+                      <template #empty>
+                        <a-empty description="暂无人物事实" />
+                      </template>
+                      <template #columns>
+                        <a-table-column title="领域" :width="110">
+                          <template #cell="{ record }">
+                            {{ formatMemoryDomain(record.domain) }}
+                          </template>
+                        </a-table-column>
+                        <a-table-column title="记忆内容" data-index="value" />
+                        <a-table-column title="状态" :width="100">
+                          <template #cell="{ record }">
+                            {{ formatMemoryStatus(record.status) }}
+                          </template>
+                        </a-table-column>
+                        <a-table-column title="更新时间" :width="170">
+                          <template #cell="{ record }">
+                            {{ formatDate(record.updatedAt) }}
+                          </template>
+                        </a-table-column>
+                      </template>
+                    </a-table>
+                  </a-collapse-item>
+                </a-collapse>
+                <a-empty v-else description="暂无账号级人物记忆" />
+              </a-card>
+            </div>
+          </a-spin>
+        </a-tab-pane>
         <a-tab-pane key="posts" title="用户动态">
-          <post-list-panel title="用户动态" :user-id="userId || ''" embedded />
+          <post-list-panel
+            v-if="activeTab === 'posts'"
+            title="用户动态"
+            :user-id="userId || ''"
+            embedded
+          />
         </a-tab-pane>
         <a-tab-pane key="orders" title="用户订单">
-          <order-list-panel title="用户订单" :user-id="userId || ''" embedded />
+          <order-list-panel
+            v-if="activeTab === 'orders'"
+            title="用户订单"
+            :user-id="userId || ''"
+            embedded
+          />
         </a-tab-pane>
         <a-tab-pane key="voice" title="声音模型">
           <voice-model-panel
+            v-if="activeTab === 'voice'"
             :user-id="userId || ''"
             :user-name="user?.name || ''"
             :appellation="agentList[0]?.iCallAgent || '妈妈'"
@@ -317,8 +366,10 @@
   import { Message } from '@arco-design/web-vue';
   import useLoading from '@/hooks/loading';
   import {
+    AppUserAccountMemory,
     AppUserAgentRecord,
     AppUserRecord,
+    queryAppUserAccountMemory,
     queryAppUserAgents,
     queryAppUserDetail,
   } from '@/api/app-user';
@@ -332,7 +383,10 @@
   const user = ref<AppUserRecord | null>(null);
   const agentList = ref<AppUserAgentRecord[]>([]);
   const agentsLoading = ref(false);
-  const activeTab = ref('overview');
+  const accountMemory = ref<AppUserAccountMemory | null>(null);
+  const accountMemoryLoading = ref(false);
+  const accountMemoryLoadedUserId = ref('');
+  const activeTab = ref('agents');
   const agentSearchForm = reactive<{
     keyword: string;
   }>({
@@ -394,6 +448,30 @@
     }
   };
 
+  const fetchAccountMemory = async (id?: string) => {
+    if (!id || accountMemoryLoadedUserId.value === id) {
+      return;
+    }
+
+    try {
+      accountMemoryLoading.value = true;
+      const { data } = await queryAppUserAccountMemory(id);
+      accountMemory.value = data;
+      accountMemoryLoadedUserId.value = id;
+    } catch (error) {
+      accountMemory.value = null;
+      Message.error('账号级记忆加载失败');
+    } finally {
+      accountMemoryLoading.value = false;
+    }
+  };
+
+  const handleTabChange = (key: string | number) => {
+    if (key === 'memory') {
+      fetchAccountMemory(userId.value);
+    }
+  };
+
   const goBack = () => {
     router.push({ name: 'AppUserList' });
   };
@@ -444,6 +522,54 @@
     return status === 1 ? '启用' : '禁用';
   };
 
+  const formatMemoryPersonTitle = (
+    person: AppUserAccountMemory['people'][number]
+  ) => {
+    const name = person.preferredName || person.realName || '未命名人物';
+    return person.relationToUser ? `${name} · ${person.relationToUser}` : name;
+  };
+
+  const formatLifeStage = (value?: string) => {
+    const labels: Record<string, string> = {
+      newborn: '新生儿',
+      infant: '婴儿',
+      toddler: '幼儿',
+      preschool: '学龄前',
+      school_age: '学龄期',
+      adolescent: '青少年',
+      adult: '成年人',
+      older_adult: '老年人',
+      unknown: '未知',
+    };
+    return labels[value || 'unknown'] || value || '未知';
+  };
+
+  const formatMemoryDomain = (value: string) => {
+    const labels: Record<string, string> = {
+      health: '健康',
+      growth: '成长',
+      education: '教育',
+      work: '工作',
+      care: '照护',
+      relationship: '关系',
+      life_event: '人生事件',
+      preference: '偏好',
+      routine: '日常',
+      other: '其他',
+    };
+    return labels[value] || value || '-';
+  };
+
+  const formatMemoryStatus = (value: string) => {
+    const labels: Record<string, string> = {
+      current: '当前',
+      resolved: '已解决',
+      historical: '历史',
+      uncertain: '待确认',
+    };
+    return labels[value] || value || '-';
+  };
+
   const getRiskControlStatusText = (record: AppUserRecord) => {
     if (record.isRiskControlled) {
       return '风控中';
@@ -480,8 +606,13 @@
     userId,
     (id) => {
       agentPagination.current = 1;
+      accountMemory.value = null;
+      accountMemoryLoadedUserId.value = '';
       fetchUserDetail(id);
       fetchUserAgents(id);
+      if (activeTab.value === 'memory') {
+        fetchAccountMemory(id);
+      }
     },
     { immediate: true }
   );
@@ -568,30 +699,22 @@
       min-width: 0;
     }
 
-    &__overview {
-      padding: 8px;
-    }
-
-    &__summary-card {
-      display: flex;
-      min-height: 126px;
-      flex-direction: column;
-      gap: 10px;
-      padding: 18px;
-      background: var(--color-fill-1);
-      border-radius: 8px;
-
-      > span {
-        color: var(--color-text-3);
-      }
-
-      > strong {
-        font-size: 24px;
-      }
-    }
-
     &__agent-search {
       margin-bottom: 16px;
+    }
+
+    &__memory-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    &__memory-tags {
+      margin-bottom: 12px;
+    }
+
+    &__memory-person {
+      margin-bottom: 12px;
     }
 
     &__agent-avatar {

@@ -62,6 +62,23 @@ export class AdminAvatarUrlService {
     );
   }
 
+  resolveThumbnail(rawAvatar?: string, size = 80): string {
+    const avatar = rawAvatar?.trim() ?? '';
+    const safeSize = Math.max(32, Math.min(Math.round(size), 320));
+    const resolved = this.resolve(avatar);
+
+    if (!resolved || resolved.includes('?')) {
+      return resolved;
+    }
+    if (this.extractObjectKeyByHosts(resolved, this.getTencentKnownHosts())) {
+      return `${resolved}?imageMogr2/thumbnail/${safeSize}x${safeSize}`;
+    }
+    if (this.extractObjectKeyByHosts(resolved, this.getOssKnownHosts())) {
+      return `${resolved}?x-oss-process=image/resize,m_fill,w_${safeSize},h_${safeSize}`;
+    }
+    return resolved;
+  }
+
   normalizeForStorage(rawAvatar?: string): string {
     const avatar = rawAvatar?.trim() ?? '';
 

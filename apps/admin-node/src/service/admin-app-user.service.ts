@@ -8,13 +8,22 @@ import type {
 } from '@tzl/shared';
 import {
   AgentEntity,
+  ConversationEntity,
+  MessageEntity,
+  MessageRole,
   MongoObjectId,
   OrderEntity,
   OrderStatus,
   UserAccountEntity,
   UserEntity,
+  UserIdentityProfileEntity,
+  UserKnownPersonEntity,
+  UserKnownPersonStatus,
   UserMembershipEntity,
   UserMembershipStatus,
+  UserRelativeFactEntity,
+  UserRelativeProfileEntity,
+  UserRelativeProfileStatus,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -61,6 +70,48 @@ export interface AdminAppUserVoiceServiceItem extends AdminAppUserItem {
   latestPurchasedAt: string;
 }
 
+export interface AdminAppUserAccountMemory {
+  identity: {
+    realName: string;
+    formerNames: string[];
+    aliases: string[];
+    source: string;
+    sourceText: string;
+    updatedAt: string;
+  } | null;
+  people: Array<{
+    id: string;
+    realName: string;
+    preferredName: string;
+    aliases: string[];
+    relationToUser: string;
+    sourceText: string;
+    updatedAt: string;
+    profile: {
+      lifeStage: string;
+      sex: string;
+      birthDate: string;
+      birthYear?: number;
+      relationshipsToAgents: Array<{
+        agentId: string;
+        relationToAgent: string;
+        personCallsAgent: string;
+      }>;
+    } | null;
+    facts: Array<{
+      id: string;
+      domain: string;
+      key: string;
+      value: string;
+      status: string;
+      confidence: string;
+      supportCount: number;
+      sourceText: string;
+      updatedAt: string;
+    }>;
+  }>;
+}
+
 export type AdminAppUserAgentItem = AdminAgentRecordDTO;
 export type AdminAppUserAgentListResult = AdminAgentListDTO;
 
@@ -71,6 +122,12 @@ export class AdminAppUserService {
   @InjectEntityModel(AgentEntity)
   agentModel: MongoRepository<AgentEntity>;
 
+  @InjectEntityModel(ConversationEntity)
+  conversationModel: MongoRepository<ConversationEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
+
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
 
@@ -79,6 +136,18 @@ export class AdminAppUserService {
 
   @InjectEntityModel(UserMembershipEntity)
   userMembershipModel: MongoRepository<UserMembershipEntity>;
+
+  @InjectEntityModel(UserIdentityProfileEntity)
+  userIdentityProfileModel: MongoRepository<UserIdentityProfileEntity>;
+
+  @InjectEntityModel(UserKnownPersonEntity)
+  userKnownPersonModel: MongoRepository<UserKnownPersonEntity>;
+
+  @InjectEntityModel(UserRelativeProfileEntity)
+  userRelativeProfileModel: MongoRepository<UserRelativeProfileEntity>;
+
+  @InjectEntityModel(UserRelativeFactEntity)
+  userRelativeFactModel: MongoRepository<UserRelativeFactEntity>;
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
@@ -321,6 +390,21 @@ export class AdminAppUserService {
       this.agentModel.count(where),
       this.agentModel.find({
         where: where as never,
+        select: [
+          'id',
+          'createdUserId',
+          'name',
+          'avatar',
+          'sex',
+          'agentCallMe',
+          'iCallAgent',
+          'status',
+          'messengerOfAgentId',
+          'userMessageCount',
+          'userMessageCountBackfilledAt',
+          'createdAt',
+          'updatedAt',
+        ],
         order: {
           updatedAt: 'DESC',
         },
@@ -329,11 +413,112 @@ export class AdminAppUserService {
       }),
     ]);
 
+    const messageCountMap = await this.getMessageCountMap(agents);
+
     return {
-      items: agents.map(agent => this.buildAgentItem(agent, owner)),
+      items: agents.map(agent =>
+        this.buildAgentItem(
+          agent,
+          owner,
+          messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
+        )
+      ),
       total,
       page,
       pageSize,
+    };
+  }
+
+  async getAccountMemory(userId: string): Promise<AdminAppUserAccountMemory> {
+    const user = await this.getUserById(userId);
+    const [identity, people, profiles, facts] = await Promise.all([
+      this.userIdentityProfileModel.findOne({ where: { userId: user.id } }),
+      this.userKnownPersonModel.find({
+        where: {
+          userId: user.id,
+          status: UserKnownPersonStatus.active,
+        },
+        order: { updatedAt: 'DESC' },
+        take: 100,
+      }),
+      this.userRelativeProfileModel.find({
+        where: {
+          userId: user.id,
+          status: UserRelativeProfileStatus.active,
+        },
+        order: { updatedAt: 'DESC' },
+        take: 100,
+      }),
+      this.userRelativeFactModel.find({
+        where: { userId: user.id },
+        order: { updatedAt: 'DESC' },
+        take: 500,
+      }),
+    ]);
+    const profileMap = new Map(
+      profiles.map(profile => [
+        this.stringifyObjectId(profile.personId),
+        profile,
+      ])
+    );
+    const factsMap = new Map<string, UserRelativeFactEntity[]>();
+
+    for (const fact of facts) {
+      const personId = this.stringifyObjectId(fact.personId);
+      factsMap.set(personId, [...(factsMap.get(personId) ?? []), fact]);
+    }
+
+    return {
+      identity: identity
+        ? {
+            realName: identity.realName ?? '',
+            formerNames: (identity.formerNames ?? []).map(item => item.value),
+            aliases: identity.aliases ?? [],
+            source: identity.source ?? '',
+            sourceText: identity.sourceText ?? '',
+            updatedAt: this.formatDate(identity.updatedAt),
+          }
+        : null,
+      people: people.map(person => {
+        const personId = this.stringifyObjectId(person.id);
+        const profile = profileMap.get(personId);
+
+        return {
+          id: personId,
+          realName: person.realName ?? '',
+          preferredName: person.preferredName ?? '',
+          aliases: person.aliases ?? [],
+          relationToUser: person.relationToUser ?? '',
+          sourceText: person.sourceText ?? '',
+          updatedAt: this.formatDate(person.updatedAt),
+          profile: profile
+            ? {
+                lifeStage: profile.lifeStage ?? 'unknown',
+                sex: profile.sex ?? 'unknown',
+                birthDate: this.formatDate(profile.birthDate),
+                ...(profile.birthYear ? { birthYear: profile.birthYear } : {}),
+                relationshipsToAgents: (
+                  profile.relationshipsToAgents ?? []
+                ).map(relationship => ({
+                  agentId: this.stringifyObjectId(relationship.agentId),
+                  relationToAgent: relationship.relationToAgent ?? '',
+                  personCallsAgent: relationship.personCallsAgent ?? '',
+                })),
+              }
+            : null,
+          facts: (factsMap.get(personId) ?? []).map(fact => ({
+            id: this.stringifyObjectId(fact.id),
+            domain: fact.domain,
+            key: fact.key ?? '',
+            value: fact.value ?? '',
+            status: fact.status,
+            confidence: fact.confidence,
+            supportCount: fact.supportCount ?? 0,
+            sourceText: fact.sourceText ?? '',
+            updatedAt: this.formatDate(fact.updatedAt),
+          })),
+        };
+      }),
     };
   }
 
@@ -611,7 +796,8 @@ export class AdminAppUserService {
 
   private buildAgentItem(
     agent: AgentEntity,
-    owner: AdminAgentOwnerDTO
+    owner: AdminAgentOwnerDTO,
+    conversationCount = 0
   ): AdminAppUserAgentItem {
     const agentId = this.stringifyObjectId(agent.id);
 
@@ -639,7 +825,8 @@ export class AdminAppUserService {
         agent.profileCompletionGuideCreatedAt && !agent.agentProfileGuideSeenAt
       ),
       customContext: agent.customContext ?? '',
-      conversationCount: 0,
+      conversationCount,
+      messengerConversationCount: 0,
       status: agent.status,
       isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
@@ -653,6 +840,57 @@ export class AdminAppUserService {
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
     };
+  }
+
+  private async getMessageCountMap(
+    agents: AgentEntity[]
+  ): Promise<Map<string, number>> {
+    if (agents.length === 0) {
+      return new Map();
+    }
+
+    const countMap = new Map<string, number>();
+    const agentsWithoutMaterializedCount = agents.filter(agent => {
+      if (
+        agent.userMessageCountBackfilledAt &&
+        Number.isFinite(agent.userMessageCount)
+      ) {
+        countMap.set(
+          this.stringifyObjectId(agent.id),
+          Math.max(0, Number(agent.userMessageCount))
+        );
+        return false;
+      }
+      return true;
+    });
+
+    if (agentsWithoutMaterializedCount.length === 0) {
+      return countMap;
+    }
+
+    const rows = (await this.messageModel
+      .aggregate([
+        {
+          $match: {
+            agentId: {
+              $in: agentsWithoutMaterializedCount.map(agent => agent.id),
+            },
+            role: MessageRole.user,
+          },
+        },
+        {
+          $group: {
+            _id: '$agentId',
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray()) as Array<{ _id: MongoObjectId; count: number }>;
+
+    rows.forEach(row =>
+      countMap.set(this.stringifyObjectId(row._id), row.count)
+    );
+    return countMap;
   }
 
   private resolveAvatar(value?: string): string {

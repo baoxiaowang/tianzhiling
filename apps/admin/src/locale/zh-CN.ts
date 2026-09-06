@@ -30,9 +30,10 @@ export default {
   'menu.order.refund': '退款管理',
   'menu.post': '内容运营',
   'menu.post.list': '动态管理',
-  'menu.operations': '运营与系统',
+  'menu.operations': '运营与统计',
   'menu.operations.daily': '每日明细',
   'menu.operations.userValue': '用户价值',
+  'menu.operations.orderStatistics': '订单统计',
 
   'menu.voiceModel': '声音模型',
   'menu.voiceModel.timbre': '音色管理',

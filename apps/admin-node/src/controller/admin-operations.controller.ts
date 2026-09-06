@@ -13,6 +13,7 @@ import type {
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
 import { AdminOperationsService } from '../service/admin-operations.service';
+import { AdminOrderStatisticsService } from '../service/admin-order-statistics.service';
 
 @Controller('/operations')
 export class AdminOperationsController {
@@ -21,6 +22,9 @@ export class AdminOperationsController {
 
   @Inject()
   adminOperationsService: AdminOperationsService;
+
+  @Inject()
+  adminOrderStatisticsService: AdminOrderStatisticsService;
 
   @Get('/overview')
   async overview() {
@@ -60,6 +64,21 @@ export class AdminOperationsController {
   @Get('/order-analytics')
   async orderAnalytics(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getOrderAnalytics(query?.month);
+  }
+
+  @Put('/order-analytics/:month/refresh')
+  async refreshOrderAnalytics(@Param('month') month: string) {
+    return this.adminOperationsService.getOrderAnalytics(month, true);
+  }
+
+  @Get('/monthly-order-report')
+  async monthlyOrderReport(@Query() query: Record<string, string>) {
+    return this.adminOrderStatisticsService.getMonthlyReport(query?.month);
+  }
+
+  @Put('/monthly-order-report/:month/refresh')
+  async refreshMonthlyOrderReport(@Param('month') month: string) {
+    return this.adminOrderStatisticsService.getMonthlyReport(month, true);
   }
 
   @Get('/tasks')

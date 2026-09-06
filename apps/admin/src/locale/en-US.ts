@@ -29,9 +29,10 @@ export default {
   'menu.order.refund': 'Refunds',
   'menu.post': 'Content Operations',
   'menu.post.list': 'Posts',
-  'menu.operations': 'Operations & System',
+  'menu.operations': 'Operations & Analytics',
   'menu.operations.daily': 'Daily Detail',
   'menu.operations.userValue': 'User Value',
+  'menu.operations.orderStatistics': 'Order Statistics',
 
   'menu.voiceModel': 'Voice Models',
   'menu.voiceModel.timbre': 'Timbre Management',

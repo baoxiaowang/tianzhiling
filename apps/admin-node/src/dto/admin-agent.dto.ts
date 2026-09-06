@@ -21,6 +21,9 @@ export class ListAdminAgentsQueryDTO {
 
   @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
   pageSize?: number | string;
+
+  @Rule(RuleType.string().allow('').max(256).optional())
+  cursor?: string;
 }
 
 export class ListAdminAgentConversationsQueryDTO {

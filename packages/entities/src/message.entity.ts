@@ -63,7 +63,7 @@ export interface MessageReplyDreamPlan {
 
 export interface ReplyQuotaTriggerDecision {
   version: string;
-  path: 'trial' | 'active';
+  path: "trial" | "active";
   triggered: boolean;
   totalLifetimeMsgs: number;
   todayMsgs: number;
@@ -133,6 +133,8 @@ export interface MessageReplyStateProtocol {
 @Index(["conversationId", "createdAt"], { background: true })
 @Index(["userId", "createdAt"], { background: true })
 @Index(["agentId", "userId", "createdAt"], { background: true })
+@Index(["agentId", "role"], { background: true })
+@Index(["conversationId", "role"], { background: true })
 @Index(["conversationId", "isArchived", "createdAt"], { background: true })
 @Index(["conversationId", "replyGroupId", "replySegmentIndex"], {
   background: true,

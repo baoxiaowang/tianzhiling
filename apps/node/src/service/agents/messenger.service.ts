@@ -735,6 +735,8 @@ export class MessengerService {
 
     const messenger = new AgentEntity();
     messenger.createdUserId = parentAgent.createdUserId;
+    messenger.userMessageCount = 0;
+    messenger.userMessageCountBackfilledAt = now;
     messenger.name = messengerName;
     messenger.realName = '';
     messenger.avatar = MESSENGER_DEFAULT_AVATAR_KEY;

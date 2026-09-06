@@ -60,6 +60,11 @@ export class AdminAppUserController {
     return this.adminPostService.listUserPosts(id, query);
   }
 
+  @Get('/:id/account-memory')
+  async accountMemory(@Param('id') id: string) {
+    return this.adminAppUserService.getAccountMemory(id);
+  }
+
   @Get('/:id')
   async detail(@Param('id') id: string) {
     return this.adminAppUserService.getUserDetail(id);

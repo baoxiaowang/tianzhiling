@@ -7,12 +7,16 @@ import type {
   AdminAgentConversationMessageListDTO,
   AdminAgentConversationMessageRecordDTO,
   AdminAgentConversationRecordDTO,
-  AdminAgentListDTO,
+  AdminAgentSummaryListDTO,
+  AdminAgentSummaryRecordDTO,
+  AdminAgentMemoryListDTO,
   AdminAgentOwnerDTO,
   AdminAgentRecordDTO,
 } from '@tzl/shared';
 import {
   AgentEntity,
+  AgentProfileFactEntity,
+  AgentProfileFactStatus,
   ConversationEntity,
   MessageEntity,
   AgentSex,
@@ -36,7 +40,7 @@ import { AdminStorageFileService } from './admin-storage-file.service';
 
 export type AdminAgentOwner = AdminAgentOwnerDTO;
 export type AdminAgentItem = AdminAgentRecordDTO;
-export type AdminAgentListResult = AdminAgentListDTO;
+export type AdminAgentListResult = AdminAgentSummaryListDTO;
 export type AdminAgentConversationItem = AdminAgentConversationRecordDTO;
 export type AdminAgentConversationListResult = AdminAgentConversationListDTO;
 export type AdminAgentConversationMessageItem =
@@ -48,6 +52,11 @@ type MongoWhere = Record<string, unknown>;
 
 @Provide()
 export class AdminAgentService {
+  private readonly agentTotalCache = new Map<
+    string,
+    { value: number; expiresAt: number }
+  >();
+
   @Logger()
   logger: ILogger;
 
@@ -59,6 +68,9 @@ export class AdminAgentService {
 
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
+
+  @InjectEntityModel(AgentProfileFactEntity)
+  agentProfileFactModel: MongoRepository<AgentProfileFactEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -90,49 +102,101 @@ export class AdminAgentService {
       100
     );
     const keyword = query?.keyword?.trim() ?? '';
-    const where = await this.buildAgentSearchWhere(keyword, {
+    const baseWhere = await this.buildAgentSearchWhere(keyword, {
       sex: this.normalizeOptionalNumber(query?.sex),
       status: this.normalizeOptionalNumber(query?.status),
       relation: query?.relation?.trim(),
       memberStatus: query?.memberStatus?.trim(),
     });
+    const cursor = this.parseAgentCursor(query?.cursor);
+    const where = cursor
+      ? {
+          $and: [
+            baseWhere,
+            {
+              $or: [
+                { createdAt: { $lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, _id: { $lt: cursor.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
     const [total, agents] = await Promise.all([
-      this.agentModel.count(where),
+      this.countAgentsCached(baseWhere),
       this.agentModel.find({
         where: where as never,
+        select: [
+          'id',
+          'createdUserId',
+          'name',
+          'avatar',
+          'agentCallMe',
+          'iCallAgent',
+          'userMessageCount',
+          'userMessageCountBackfilledAt',
+          'createdAt',
+        ],
         order: {
           createdAt: 'DESC',
+          id: 'DESC',
         },
-        skip: (page - 1) * pageSize,
+        skip: cursor ? 0 : (page - 1) * pageSize,
         take: pageSize,
       }),
     ]);
-    const ownerMap = await this.getOwnerMapByAgents(agents);
-    const messageCountMap = await this.getMessageCountMap(agents);
+    const [ownerMap, messengers] = await Promise.all([
+      this.getOwnerMapByAgents(agents),
+      this.getLinkedMessengers(agents),
+    ]);
+    const messageCountMap = await this.getMessageCountMap([
+      ...agents,
+      ...messengers,
+    ]);
+    const messengerMessageCountMap = this.buildMessengerMessageCountMap(
+      messengers,
+      messageCountMap
+    );
 
     return {
       items: agents.map(agent =>
-        this.buildAgentItem(
+        this.buildAgentSummaryItem(
           agent,
           ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
-          messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
+          messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0,
+          messengerMessageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
         )
       ),
       total,
       page,
       pageSize,
+      nextCursor:
+        agents.length === pageSize
+          ? this.encodeAgentCursor(agents[agents.length - 1])
+          : undefined,
     };
   }
 
   async getAgentDetail(agentId: string): Promise<AdminAgentItem> {
     const agent = await this.getAgentById(agentId);
-    const ownerMap = await this.getOwnerMapByAgents([agent]);
-    const messageCountMap = await this.getMessageCountMap([agent]);
+    const [ownerMap, messengers] = await Promise.all([
+      this.getOwnerMapByAgents([agent]),
+      this.getLinkedMessengers([agent]),
+    ]);
+    const messageCountMap = await this.getMessageCountMap([
+      agent,
+      ...messengers,
+    ]);
+    const messengerMessageCountMap = this.buildMessengerMessageCountMap(
+      messengers,
+      messageCountMap
+    );
 
     return this.buildAgentItem(
       agent,
       ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
-      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
+      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0,
+      messengerMessageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
     );
   }
 
@@ -153,6 +217,7 @@ export class AdminAgentService {
       this.conversationModel.count(where),
       this.conversationModel.find({
         where: where as never,
+        select: ['id', 'agentId', 'userId', 'createdAt', 'updatedAt'],
         order: {
           updatedAt: 'DESC',
         },
@@ -163,32 +228,64 @@ export class AdminAgentService {
     const ownerMap = await this.getOwnerMapByUserIds(
       conversations.map(conversation => conversation.userId).filter(Boolean)
     );
-    const items = await Promise.all(
-      conversations.map(async conversation => {
-        const [latestMessage, messageCount] = await Promise.all([
-          this.findLatestMessage(conversation.id),
-          this.messageModel.count({
-            role: MessageRole.user,
-            conversationId: conversation.id,
-          }),
-        ]);
-
-        return this.buildConversationItem(
-          conversation,
-          this.buildConversationOwner(
-            ownerMap.get(this.stringifyObjectId(conversation.userId))
-          ),
-          latestMessage,
-          messageCount
-        );
-      })
+    const messageSummaryMap = await this.getConversationMessageSummaryMap(
+      conversations
     );
+    const items = conversations.map(conversation => {
+      const summary = messageSummaryMap.get(
+        this.stringifyObjectId(conversation.id)
+      );
+
+      return this.buildConversationItem(
+        conversation,
+        this.buildConversationOwner(
+          ownerMap.get(this.stringifyObjectId(conversation.userId))
+        ),
+        summary?.latestMessage,
+        summary?.messageCount ?? 0
+      );
+    });
 
     return {
       items,
       total,
       page,
       pageSize,
+    };
+  }
+
+  async listAgentMemories(agentId: string): Promise<AdminAgentMemoryListDTO> {
+    const agent = await this.getAgentById(agentId);
+    const facts = await this.agentProfileFactModel.find({
+      where: {
+        userId: MongoObjectId.isValid(
+          this.stringifyObjectId(agent.createdUserId)
+        )
+          ? new MongoObjectId(this.stringifyObjectId(agent.createdUserId))
+          : agent.createdUserId,
+        agentId: agent.id,
+        status: { $ne: AgentProfileFactStatus.archived },
+      } as never,
+      order: { priority: 'DESC', updatedAt: 'DESC' },
+      take: 500,
+    });
+
+    return {
+      items: facts.map(fact => ({
+        id: this.stringifyObjectId(fact.id),
+        type: fact.type,
+        key: fact.key ?? '',
+        value: fact.value ?? '',
+        polarity: fact.polarity,
+        confidence: fact.confidence,
+        status: fact.status,
+        assertionPolicy: fact.assertionPolicy ?? '',
+        priority: fact.priority ?? 0,
+        supportCount: fact.supportCount ?? 0,
+        sourceText: fact.sourceText ?? '',
+        updatedAt: this.formatDate(fact.updatedAt),
+      })),
+      total: facts.length,
     };
   }
 
@@ -214,6 +311,23 @@ export class AdminAgentService {
       this.messageModel.count(where),
       this.messageModel.find({
         where: where as never,
+        select: [
+          'id',
+          'conversationId',
+          'role',
+          'type',
+          'content',
+          'status',
+          'isArchived',
+          'archivedAt',
+          'mediaObjectKey',
+          'mediaUrl',
+          'mediaMimeType',
+          'mediaTranscript',
+          'mediaDurationMs',
+          'createdAt',
+          'updatedAt',
+        ],
         order: {
           createdAt: 'ASC',
         },
@@ -352,13 +466,24 @@ export class AdminAgentService {
       await this.agentModel.save(agent);
     }
 
-    const ownerMap = await this.getOwnerMapByAgents([agent]);
-    const messageCountMap = await this.getMessageCountMap([agent]);
+    const [ownerMap, messengers] = await Promise.all([
+      this.getOwnerMapByAgents([agent]),
+      this.getLinkedMessengers([agent]),
+    ]);
+    const messageCountMap = await this.getMessageCountMap([
+      agent,
+      ...messengers,
+    ]);
+    const messengerMessageCountMap = this.buildMessengerMessageCountMap(
+      messengers,
+      messageCountMap
+    );
 
     return this.buildAgentItem(
       agent,
       ownerMap.get(this.stringifyObjectId(agent.createdUserId)),
-      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
+      messageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0,
+      messengerMessageCountMap.get(this.stringifyObjectId(agent.id)) ?? 0
     );
   }
 
@@ -423,6 +548,14 @@ export class AdminAgentService {
       return clauses.length === 1 ? clauses[0] : { $and: clauses };
     }
 
+    if (MongoObjectId.isValid(keyword)) {
+      const objectId = new MongoObjectId(keyword);
+      clauses.push({
+        $or: [{ id: objectId }, { _id: objectId }, { createdUserId: objectId }],
+      });
+      return { $and: clauses };
+    }
+
     const escapedKeyword = this.escapeRegExp(keyword);
     const keywordFilters: MongoWhere[] = [
       { name: { $regex: escapedKeyword, $options: 'i' } },
@@ -431,18 +564,10 @@ export class AdminAgentService {
       { description: { $regex: escapedKeyword, $options: 'i' } },
       { customContext: { $regex: escapedKeyword, $options: 'i' } },
     ];
-    const ownerIds = await this.findOwnerIdsByKeyword(escapedKeyword);
+    const ownerIds = await this.findOwnerIdsByKeyword(keyword, escapedKeyword);
 
     if (ownerIds.length > 0) {
       keywordFilters.push({ createdUserId: { $in: ownerIds } });
-    }
-
-    if (MongoObjectId.isValid(keyword)) {
-      const objectId = new MongoObjectId(keyword);
-
-      keywordFilters.push({ id: objectId });
-      keywordFilters.push({ _id: objectId });
-      keywordFilters.push({ createdUserId: objectId });
     }
 
     clauses.push({ $or: keywordFilters });
@@ -451,8 +576,20 @@ export class AdminAgentService {
   }
 
   private async findOwnerIdsByKeyword(
+    keyword: string,
     escapedKeyword: string
   ): Promise<MongoObjectId[]> {
+    const [exactUsers, exactAccounts] = await Promise.all([
+      this.userModel.find({
+        where: { $or: [{ name: keyword }, { phone: keyword }] } as never,
+        take: 200,
+      }),
+      this.userAccountModel.find({ where: { account: keyword }, take: 200 }),
+    ]);
+    if (exactUsers.length > 0 || exactAccounts.length > 0) {
+      return this.uniqueOwnerIds(exactUsers, exactAccounts);
+    }
+
     const [matchedUsers, matchedAccounts] = await Promise.all([
       this.userModel.find({
         where: {
@@ -470,9 +607,16 @@ export class AdminAgentService {
         take: 200,
       }),
     ]);
+    return this.uniqueOwnerIds(matchedUsers, matchedAccounts);
+  }
+
+  private uniqueOwnerIds(
+    users: UserEntity[],
+    accounts: UserAccountEntity[]
+  ): MongoObjectId[] {
     const ids = [
-      ...matchedUsers.map(user => user.id),
-      ...matchedAccounts.map(account => account.userId),
+      ...users.map(user => user.id),
+      ...accounts.map(account => account.userId),
     ].filter(Boolean);
     const uniqueIds = new Map<string, MongoObjectId>();
 
@@ -499,23 +643,38 @@ export class AdminAgentService {
       return new Map();
     }
 
+    const normalizedUserIds = [
+      ...new Map(
+        userIds
+          .map(userId => this.stringifyObjectId(userId))
+          .filter(userId => MongoObjectId.isValid(userId))
+          .map(userId => [userId, new MongoObjectId(userId)])
+      ).values(),
+    ];
+    if (normalizedUserIds.length === 0) {
+      return new Map();
+    }
+
     const [users, accounts, activeMemberships] = await Promise.all([
       this.userModel.find({
         where: {
-          id: { $in: userIds },
+          _id: { $in: normalizedUserIds },
         } as never,
+        select: ['id', 'name', 'avatar', 'phone'],
       }),
       this.userAccountModel.find({
         where: {
-          userId: { $in: userIds },
+          userId: { $in: normalizedUserIds },
         } as never,
+        select: ['id', 'userId', 'account'],
       }),
       this.userMembershipModel.find({
         where: {
-          userId: { $in: userIds },
+          userId: { $in: normalizedUserIds },
           status: 'active',
           $or: [{ lifetime: true }, { expiredAt: { $gt: new Date() } }],
         } as never,
+        select: ['id', 'userId', 'lifetime', 'expiredAt', 'updatedAt'],
       }),
     ]);
     const accountMap = new Map(
@@ -559,19 +718,6 @@ export class AdminAgentService {
         ];
       })
     );
-  }
-
-  private async findLatestMessage(
-    conversationId: MongoObjectId
-  ): Promise<MessageEntity | null> {
-    return this.messageModel.findOne({
-      where: {
-        conversationId,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    });
   }
 
   private async getConversationForAgent(
@@ -658,40 +804,185 @@ export class AdminAgentService {
       return new Map();
     }
 
-    const agentIds = agents.map(agent => agent.id);
-    const conversations = await this.conversationModel.find({
-      where: { agentId: { $in: agentIds } as never } as never,
+    const countMap = new Map<string, number>();
+    const agentsWithoutMaterializedCount = agents.filter(agent => {
+      if (
+        agent.userMessageCountBackfilledAt &&
+        Number.isFinite(agent.userMessageCount)
+      ) {
+        countMap.set(
+          this.stringifyObjectId(agent.id),
+          Math.max(0, Number(agent.userMessageCount))
+        );
+        return false;
+      }
+      return true;
     });
 
+    if (agentsWithoutMaterializedCount.length === 0) {
+      return countMap;
+    }
+
+    const rows = (await this.messageModel
+      .aggregate([
+        {
+          $match: {
+            agentId: {
+              $in: agentsWithoutMaterializedCount.map(agent => agent.id),
+            },
+            role: MessageRole.user,
+          },
+        },
+        {
+          $group: {
+            _id: '$agentId',
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray()) as Array<{ _id: MongoObjectId; count: number }>;
+
+    rows.forEach(row =>
+      countMap.set(this.stringifyObjectId(row._id), row.count)
+    );
+    return countMap;
+  }
+
+  private async getConversationMessageSummaryMap(
+    conversations: ConversationEntity[]
+  ): Promise<
+    Map<string, { latestMessage: MessageEntity | null; messageCount: number }>
+  > {
     if (conversations.length === 0) {
       return new Map();
     }
 
-    const conversationIds = conversations.map(c => c.id);
-    const messages = await this.messageModel.find({
-      where: {
-        conversationId: { $in: conversationIds } as never,
-        role: MessageRole.user,
-      } as never,
-    });
+    const rows = (await this.messageModel
+      .aggregate([
+        {
+          $match: {
+            conversationId: {
+              $in: conversations.map(conversation => conversation.id),
+            },
+          },
+        },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: '$conversationId',
+            latestMessage: { $first: '$$ROOT' },
+            messageCount: {
+              $sum: {
+                $cond: [{ $eq: ['$role', MessageRole.user] }, 1, 0],
+              },
+            },
+          },
+        },
+      ])
+      .toArray()) as Array<{
+      _id: MongoObjectId;
+      latestMessage: MessageEntity | null;
+      messageCount: number;
+    }>;
 
-    // Map conversationId -> agentId
-    const convAgentMap = new Map<string, string>();
-    for (const c of conversations) {
-      convAgentMap.set(
-        this.stringifyObjectId(c.id),
-        this.stringifyObjectId(c.agentId)
-      );
+    return new Map(
+      rows.map(row => [
+        this.stringifyObjectId(row._id),
+        {
+          latestMessage: row.latestMessage,
+          messageCount: row.messageCount,
+        },
+      ])
+    );
+  }
+
+  private async getLinkedMessengers(
+    agents: AgentEntity[]
+  ): Promise<AgentEntity[]> {
+    if (agents.length === 0) {
+      return [];
     }
 
-    const countMap = new Map<string, number>();
-    for (const m of messages) {
-      const agentId = convAgentMap.get(
-        this.stringifyObjectId(m.conversationId)
-      );
-      if (agentId) {
-        countMap.set(agentId, (countMap.get(agentId) ?? 0) + 1);
+    return this.agentModel.find({
+      where: {
+        messengerOfAgentId: {
+          $in: agents.map(agent => agent.id),
+        } as never,
+      } as never,
+      select: [
+        'id',
+        'messengerOfAgentId',
+        'userMessageCount',
+        'userMessageCountBackfilledAt',
+      ],
+    });
+  }
+
+  private async countAgentsCached(where: MongoWhere): Promise<number> {
+    const key = JSON.stringify(where);
+    const now = Date.now();
+    const cached = this.agentTotalCache.get(key);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const value = await this.agentModel.count(where);
+    if (this.agentTotalCache.size >= 200) {
+      this.agentTotalCache.clear();
+    }
+    this.agentTotalCache.set(key, { value, expiresAt: now + 30_000 });
+    return value;
+  }
+
+  private parseAgentCursor(
+    rawCursor?: string
+  ): { createdAt: Date; id: MongoObjectId } | null {
+    if (!rawCursor) {
+      return null;
+    }
+    try {
+      const value = JSON.parse(
+        Buffer.from(rawCursor, 'base64url').toString('utf8')
+      ) as { createdAt?: string; id?: string };
+      if (!value.createdAt || !value.id || !MongoObjectId.isValid(value.id)) {
+        return null;
       }
+      const createdAt = new Date(value.createdAt);
+      return Number.isFinite(createdAt.getTime())
+        ? { createdAt, id: new MongoObjectId(value.id) }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private encodeAgentCursor(agent: AgentEntity): string {
+    return Buffer.from(
+      JSON.stringify({
+        createdAt: this.formatDate(agent.createdAt),
+        id: this.stringifyObjectId(agent.id),
+      })
+    ).toString('base64url');
+  }
+
+  private buildMessengerMessageCountMap(
+    messengers: AgentEntity[],
+    messageCountMap: Map<string, number>
+  ): Map<string, number> {
+    const countMap = new Map<string, number>();
+
+    for (const messenger of messengers) {
+      if (!messenger.messengerOfAgentId) {
+        continue;
+      }
+
+      const agentId = this.stringifyObjectId(messenger.messengerOfAgentId);
+      const messengerId = this.stringifyObjectId(messenger.id);
+      countMap.set(
+        agentId,
+        (countMap.get(agentId) ?? 0) + (messageCountMap.get(messengerId) ?? 0)
+      );
     }
 
     return countMap;
@@ -700,14 +991,24 @@ export class AdminAgentService {
   private buildAgentItem(
     agent: AgentEntity,
     owner?: AdminAgentOwner | null,
-    conversationCount = 0
+    conversationCount = 0,
+    messengerConversationCount = 0
   ): AdminAgentItem {
     return {
       id: this.stringifyObjectId(agent.id),
       createdUserId: this.stringifyObjectId(agent.createdUserId),
-      createdUser: owner ?? null,
+      createdUser: owner
+        ? {
+            ...owner,
+            avatar:
+              this.avatarUrlService?.resolveThumbnail?.(owner.avatar, 64) ??
+              owner.avatar,
+          }
+        : null,
       name: agent.name ?? '',
-      avatar: this.resolveAvatar(agent.avatar),
+      avatar:
+        this.avatarUrlService?.resolveThumbnail?.(agent.avatar, 80) ??
+        this.resolveAvatar(agent.avatar),
       sex: agent.sex,
       agentCallMe: agent.agentCallMe ?? '',
       iCallAgent: agent.iCallAgent ?? '',
@@ -730,8 +1031,29 @@ export class AdminAgentService {
       isDefault: Boolean(agent.isDefault),
       voiceTimbreId: this.stringifyOptionalObjectId(agent.voiceTimbreId),
       conversationCount,
+      messengerConversationCount,
       createdAt: this.formatDate(agent.createdAt),
       updatedAt: this.formatDate(agent.updatedAt),
+    };
+  }
+
+  private buildAgentSummaryItem(
+    agent: AgentEntity,
+    owner?: AdminAgentOwner | null,
+    conversationCount = 0,
+    messengerConversationCount = 0
+  ): AdminAgentSummaryRecordDTO {
+    return {
+      id: this.stringifyObjectId(agent.id),
+      createdUserId: this.stringifyObjectId(agent.createdUserId),
+      createdUser: owner ?? null,
+      name: agent.name ?? '',
+      avatar: this.resolveAvatar(agent.avatar),
+      agentCallMe: agent.agentCallMe ?? '',
+      iCallAgent: agent.iCallAgent ?? '',
+      conversationCount,
+      messengerConversationCount,
+      createdAt: this.formatDate(agent.createdAt),
     };
   }
 

@@ -557,6 +557,8 @@ export class AgentService {
 
     const agent = new AgentEntity();
     agent.createdUserId = createdUserId;
+    agent.userMessageCount = 0;
+    agent.userMessageCountBackfilledAt = now;
     agent.name = name;
     agent.realName = realName;
     agent.avatar = '';

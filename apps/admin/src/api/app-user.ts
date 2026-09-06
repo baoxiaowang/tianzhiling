@@ -46,6 +46,48 @@ export interface AppUserListRes {
   pageSize: number;
 }
 
+export interface AppUserAccountMemory {
+  identity: {
+    realName: string;
+    formerNames: string[];
+    aliases: string[];
+    source: string;
+    sourceText: string;
+    updatedAt: string;
+  } | null;
+  people: Array<{
+    id: string;
+    realName: string;
+    preferredName: string;
+    aliases: string[];
+    relationToUser: string;
+    sourceText: string;
+    updatedAt: string;
+    profile: {
+      lifeStage: string;
+      sex: string;
+      birthDate: string;
+      birthYear?: number;
+      relationshipsToAgents: Array<{
+        agentId: string;
+        relationToAgent: string;
+        personCallsAgent: string;
+      }>;
+    } | null;
+    facts: Array<{
+      id: string;
+      domain: string;
+      key: string;
+      value: string;
+      status: string;
+      confidence: string;
+      supportCount: number;
+      sourceText: string;
+      updatedAt: string;
+    }>;
+  }>;
+}
+
 export type AppUserMembershipType = 'one_year' | 'three_year' | 'lifetime';
 
 export interface AppUserMemberRecord extends AppUserRecord {
@@ -108,6 +150,12 @@ export function queryAppUserAgents(id: string, params: AppUserAgentListParams) {
   return axios.get<AppUserAgentListRes>(`/admin_api/app-users/${id}/agents`, {
     params,
   });
+}
+
+export function queryAppUserAccountMemory(id: string) {
+  return axios.get<AppUserAccountMemory>(
+    `/admin_api/app-users/${id}/account-memory`
+  );
 }
 
 export function queryAppUserPosts(id: string, params: AppUserPostListParams) {

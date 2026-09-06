@@ -216,6 +216,7 @@ export interface AdminAgentRecordDTO extends AgentProfileDTO {
   messengerOfAgentId?: string;
   customContext: string;
   conversationCount: number;
+  messengerConversationCount: number;
 }
 
 export interface AdminAgentListParamsDTO {
@@ -226,6 +227,7 @@ export interface AdminAgentListParamsDTO {
   memberStatus?: "vip" | "non_vip";
   page?: number;
   pageSize?: number;
+  cursor?: string;
 }
 
 export interface AdminAgentListDTO {
@@ -233,6 +235,48 @@ export interface AdminAgentListDTO {
   total: number;
   page: number;
   pageSize: number;
+}
+
+export type AdminAgentSummaryRecordDTO = Pick<
+  AdminAgentRecordDTO,
+  | "id"
+  | "createdUserId"
+  | "createdUser"
+  | "name"
+  | "avatar"
+  | "agentCallMe"
+  | "iCallAgent"
+  | "conversationCount"
+  | "messengerConversationCount"
+  | "createdAt"
+>;
+
+export interface AdminAgentSummaryListDTO {
+  items: AdminAgentSummaryRecordDTO[];
+  total: number;
+  page: number;
+  pageSize: number;
+  nextCursor?: string;
+}
+
+export interface AdminAgentMemoryRecordDTO {
+  id: string;
+  type: string;
+  key: string;
+  value: string;
+  polarity: string;
+  confidence: string;
+  status: string;
+  assertionPolicy: string;
+  priority: number;
+  supportCount: number;
+  sourceText: string;
+  updatedAt: string;
+}
+
+export interface AdminAgentMemoryListDTO {
+  items: AdminAgentMemoryRecordDTO[];
+  total: number;
 }
 
 export type AdminAgentConversationUserDTO = AdminAgentOwnerDTO;
