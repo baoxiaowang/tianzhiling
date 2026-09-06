@@ -806,6 +806,27 @@ describe('AgentMemoryProfileService', () => {
     expect(agent.memoryProfileGenerationCount).toBe(1);
   });
 
+  it('forces an immediate synthesis for independently extracted messenger memory', async () => {
+    const facts = [
+      createFact(
+        'memory.childhood_story_under_tree',
+        '小时候常坐在家门口树下听太太讲故事',
+        3
+      ),
+    ];
+    const agent = createAgent();
+    const { service, generateText } = createService(facts);
+
+    const generated = await service.refreshFromMemoryNow({
+      agent,
+      userId: USER_ID,
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generated.sharedMemories).toBe('和闺女一起去过河边散步。');
+    expect(generated.memoryProfileGenerationCount).toBe(1);
+  });
+
   it('aligns manual edits with memory without calling profile generation', async () => {
     const facts = [
       createFact('profile_source.hobbies', '当前角色兴趣爱好：下象棋、听戏', 2),

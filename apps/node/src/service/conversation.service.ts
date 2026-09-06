@@ -65,6 +65,7 @@ import {
 import { AgentConversationSummaryService } from './agents/agent-conversation-summary.service';
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
+import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
 import { buildAgentPersonaPrompt } from './agents/agent-persona';
 import { buildAgentIdentityContract } from './agents/agent-identity-contract';
 import {
@@ -744,6 +745,9 @@ export class ConversationService {
 
   @Inject()
   agentProfileFactService: AgentProfileFactService;
+
+  @Inject()
+  agentMemoryProfileService: AgentMemoryProfileService;
 
   @Inject()
   personTemporalMemoryService: PersonTemporalMemoryService;
@@ -3023,71 +3027,99 @@ export class ConversationService {
   ): Promise<void> {
     if (message.type === MessageType.image) return;
 
-    // Preserve the original messenger message as evidence while assigning all
-    // durable facts to the bound parent agent. The clone is never persisted.
-    const memoryMessage = Object.assign(new MessageEntity(), message, {
-      agentId: parentAgent.id,
-    });
-    let profileSucceeded = true;
-    let profileCount = 0;
-    let relativeSucceeded = true;
-    let relativeCount = 0;
-
+    message.memoryWriteTargetAgentId = parentAgent.id;
     try {
+      // Preserve the original messenger message as evidence while assigning
+      // every durable fact to the bound parent. The clone is never persisted.
+      const memoryMessage = Object.assign(new MessageEntity(), message, {
+        agentId: parentAgent.id,
+      });
+      const profileFields = [
+        'lifeExperience',
+        'personalityTraits',
+        'languageHabits',
+        'hobbies',
+        'sharedMemories',
+      ] as const;
+      const beforeProfile = Object.fromEntries(
+        profileFields.map(field => [field, parentAgent[field]?.trim() || ''])
+      );
+
+      const recentMessages = await this.messageModel.find({
+        where: {
+          conversationId: message.conversationId,
+          isArchived: { $ne: true },
+        } as never,
+        order: { createdAt: 'DESC' },
+        take: 12,
+      });
+      const contextMessages = recentMessages
+        .filter(
+          item =>
+            item.id?.toString() !== message.id?.toString() &&
+            (item.role === MessageRole.user ||
+              item.role === MessageRole.assistant) &&
+            Boolean(item.content?.trim())
+        )
+        .slice(0, 10)
+        .reverse()
+        .map(item => ({
+          role:
+            item.role === MessageRole.user
+              ? ('user' as const)
+              : ('assistant' as const),
+          content: item.content?.trim() || '',
+        }));
+
+      await this.userIdentityMemoryService?.recordFromUserMessage(
+        memoryMessage,
+        searchableText
+      );
+      const relativeCount =
+        (await this.relativeMemoryExtractorService?.captureFromUserMessage(
+          memoryMessage,
+          searchableText,
+          { messengerParent: parentAgent }
+        )) || 0;
+
       const facts =
         (await this.agentProfileFactService?.extractAndUpsertFromMessengerMessage?.(
           {
             message: memoryMessage,
             searchableText,
             parentAgent,
+            contextMessages,
           }
         )) || [];
-      profileCount = facts.length;
-    } catch (error) {
-      profileSucceeded = false;
-      this.logger.error(
-        '[conversation] messenger parent fact extraction failed, messageId=%s, parentAgentId=%s, reason=%s',
-        this.stringifyObjectId(message.id),
-        this.stringifyObjectId(parentAgent.id),
-        this.describeReplyError(error)
-      );
-    }
+      if (facts.length > 0) {
+        await this.agentMemoryProfileService.refreshFromMemoryNow({
+          agent: parentAgent,
+          userId: message.userId,
+        });
+      }
 
-    try {
-      await this.userIdentityMemoryService?.recordFromUserMessage(
-        memoryMessage,
-        searchableText
+      const writtenCount = facts.length + relativeCount;
+      message.memoryWriteStatus = writtenCount > 0 ? 'written' : 'none';
+      message.memoryWriteReason =
+        writtenCount > 0
+          ? 'messenger_parent_memory_written'
+          : 'no_durable_fact';
+      message.memoryWriteChangedFields = profileFields.filter(
+        field => (parentAgent[field]?.trim() || '') !== beforeProfile[field]
       );
-      relativeCount =
-        (await this.relativeMemoryExtractorService?.captureFromUserMessage(
-          memoryMessage,
-          searchableText,
-          { messengerParent: parentAgent }
-        )) || 0;
+      message.memoryWriteLegacyFactCount = 0;
+      message.memoryWriteProfileFactCount = facts.length;
+      message.memoryWriteTemporalFactCount = 0;
+      message.memoryWriteCompletedAt = new Date();
+      await this.messageModel.save(message);
     } catch (error) {
-      relativeSucceeded = false;
-      this.logger.error(
-        '[conversation] messenger account person extraction failed, messageId=%s, parentAgentId=%s, reason=%s',
-        this.stringifyObjectId(message.id),
-        this.stringifyObjectId(parentAgent.id),
-        this.describeReplyError(error)
-      );
+      message.memoryWriteStatus = 'failed';
+      message.memoryWriteReason = 'messenger_memory_pipeline_failed';
+      message.memoryWriteChangedFields = [];
+      message.memoryWriteCompletedAt = new Date();
+      await this.messageModel.save(message);
+      throw error;
     }
-
-    const writtenCount = profileCount + relativeCount;
-    message.memoryWriteStatus =
-      profileSucceeded && relativeSucceeded
-        ? writtenCount > 0
-          ? 'written'
-          : 'none'
-        : profileSucceeded || relativeSucceeded
-        ? 'partial'
-        : 'failed';
-    message.memoryWriteLegacyFactCount = 0;
-    message.memoryWriteProfileFactCount = profileCount;
-    message.memoryWriteTemporalFactCount = 0;
-    message.memoryWriteCompletedAt = new Date();
-    await this.messageModel.save(message);
   }
 
   private async captureRelationshipOpenLoop(

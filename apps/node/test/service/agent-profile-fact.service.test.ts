@@ -215,6 +215,9 @@ describe('AgentProfileFactService', () => {
       message,
       searchableText: message.content,
       parentAgent: parent,
+      contextMessages: [
+        { role: 'assistant', content: '说说妈妈以前做过什么吧。' },
+      ],
     });
 
     expect(facts).toHaveLength(1);
@@ -228,9 +231,103 @@ describe('AgentProfileFactService', () => {
     ]);
     expect(service.openAIService.generateText).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining('指定AI亲人：妈妈'),
+        prompt: expect.stringMatching(
+          /指定AI亲人：妈妈[\s\S]*最近连续对话：[\s\S]*说说妈妈以前做过什么吧/
+        ),
       })
     );
+  });
+
+  it('uses messenger conversation context to resolve a pronoun to the bound parent', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'memory',
+            key: 'memory.childhood_story_under_tree',
+            value: '小时候常坐在家门口树下听太太讲故事',
+            polarity: 'positive',
+            confidence: 'confirmed',
+            priority: 3,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+    const parent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000112'),
+      name: '太太',
+      iCallAgent: '太太',
+    });
+    const message = createUserMessage(
+      '我小时候最喜欢听她讲故事了，就坐在家门口的树下'
+    );
+
+    const facts = await service.extractAndUpsertFromMessengerMessage({
+      message,
+      searchableText: message.content,
+      parentAgent: parent,
+      contextMessages: [
+        { role: 'assistant', content: '你最想让太太想起来的是？' },
+      ],
+    });
+
+    expect(facts).toHaveLength(1);
+    expect(savedFacts[0]).toEqual(
+      expect.objectContaining({
+        agentId: parent.id,
+        key: 'memory.childhood_story_under_tree',
+        sourceMessageId: message.id,
+      })
+    );
+    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringMatching(
+          /指定AI亲人：太太[\s\S]*你最想让太太想起来的是[\s\S]*我小时候最喜欢听她讲故事/
+        ),
+      })
+    );
+  });
+
+  it('rejects malformed messenger extraction output so the memory worker can retry', async () => {
+    const service = new AgentProfileFactService();
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({ content: '稍后再试' }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn(),
+      save: jest.fn(),
+    } as never;
+    const parent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000113'),
+      name: '太太',
+      iCallAgent: '太太',
+    });
+    const message = createUserMessage('她以前经常给我讲故事。');
+
+    await expect(
+      service.extractAndUpsertFromMessengerMessage({
+        message,
+        searchableText: message.content,
+        parentAgent: parent,
+        contextMessages: [
+          { role: 'assistant', content: '太太平时会给你讲故事吗？' },
+        ],
+      })
+    ).rejects.toThrow('invalid JSON');
+
+    expect(service.factModel.save).not.toHaveBeenCalled();
   });
 
   it('adds feedback-derived guardrail facts', async () => {

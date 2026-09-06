@@ -630,6 +630,15 @@ export class MessageEntity extends BaseEntity {
   memoryWriteStatus?: string;
 
   @Column()
+  memoryWriteReason?: string;
+
+  @Column()
+  memoryWriteTargetAgentId?: MongoObjectId;
+
+  @Column()
+  memoryWriteChangedFields?: string[];
+
+  @Column()
   memoryWriteLegacyFactCount?: number;
 
   @Column()

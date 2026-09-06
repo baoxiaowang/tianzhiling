@@ -346,7 +346,7 @@ describe('MessengerService', () => {
     expect(result.revealed).toBe(0);
   });
 
-  it('runs an interview turn and persists the draft to the parent agent', async () => {
+  it('runs a reply-only interview turn without coupling reply generation to persistence', async () => {
     const {
       service,
       messageModel,
@@ -400,7 +400,7 @@ describe('MessengerService', () => {
     });
 
     expect(reply).toBe('听得出来，她把很多温柔留在了这些小事里。');
-    expect(parent.lifeExperience).toBe('做过老师');
+    expect(parent.lifeExperience).toBe('');
     expect(buildInterviewTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         focusField: 'languageHabits',
@@ -409,15 +409,10 @@ describe('MessengerService', () => {
           '妈妈平时怎么说话，有没有常说的一句话？',
           '一想到妈妈，你最先想起 TA 怎样的性格？',
         ],
+        replyOnly: true,
       })
     );
-    expect(alignManualProfileEdits).toHaveBeenCalledWith({
-      agent: parent,
-      userId: parent.createdUserId,
-      sources: draft,
-      sourceMessageId,
-      sourceText: '她以前做过老师',
-    });
+    expect(alignManualProfileEdits).not.toHaveBeenCalled();
   });
 
   it('keeps the visible outcome confirmation when profile persistence fails', async () => {
@@ -724,8 +719,8 @@ describe('MessengerService', () => {
         promptTokens: 120,
         completionTokens: 30,
         totalTokens: 150,
-        profileSaved: true,
-        changedProfileFields: ['hobbies'],
+        profileSaved: false,
+        changedProfileFields: [],
         releaseVersion: '0123456789abcdef0123456789abcdef01234567',
       })
     );

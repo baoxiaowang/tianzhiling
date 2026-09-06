@@ -1249,43 +1249,18 @@ export class MessengerService {
         previousTurns,
         taskField: memoryTaskPlan.currentTaskKey || '',
         turnCount: userMessageCount,
+        replyOnly: true,
         onTelemetry: value => {
           telemetry = value;
         },
       });
-      const changedSources = this.buildChangedDraft(draft, result.draft);
-      const changedProfileFields = Object.keys(
-        changedSources
-      ) as AgentProfileMemoryField[];
-      let profileSaved = false;
-
-      if (changedProfileFields.length) {
-        try {
-          this.applyDraft(options.agent, result.draft);
-          await this.agentMemoryProfileService.alignManualProfileEdits({
-            agent: options.agent,
-            userId: options.agent.createdUserId,
-            sources: changedSources,
-            sourceMessageId: sourceMessage?.id,
-            sourceText: options.input,
-          });
-          profileSaved = true;
-        } catch (error) {
-          this.logger?.warn?.(
-            '[messenger] profile save failed without replacing visible reply, conversationId=%s, reason=%s',
-            String(options.conversation.id || ''),
-            this.describeCallError(error)
-          );
-        }
-      }
-
       await this.recordCallEvent(options, {
         status: MessengerCallStatus.completed,
         sourceMessageId: sourceMessage?.id,
         durationMs: Date.now() - startedAt,
         telemetry,
-        changedProfileFields,
-        profileSaved,
+        changedProfileFields: [],
+        profileSaved: false,
       });
       return result.reply || this.buildFallbackReply(options.agent);
     } catch (error) {
@@ -1554,28 +1529,6 @@ export class MessengerService {
       result[field] = agent[field]?.trim() || '';
       return result;
     }, {} as AgentProfileInterviewDraftDTO);
-  }
-
-  private applyDraft(
-    agent: AgentEntity,
-    draft: AgentProfileInterviewDraftDTO
-  ): void {
-    for (const field of PROFILE_MEMORY_FIELDS) {
-      agent[field] = draft[field];
-    }
-    agent.updatedAt = new Date();
-  }
-
-  private buildChangedDraft(
-    previous: AgentProfileInterviewDraftDTO,
-    current: AgentProfileInterviewDraftDTO
-  ): Partial<AgentProfileInterviewDraftDTO> {
-    return PROFILE_MEMORY_FIELDS.reduce((result, field) => {
-      if ((previous[field]?.trim() || '') !== (current[field]?.trim() || '')) {
-        result[field] = current[field];
-      }
-      return result;
-    }, {} as Partial<AgentProfileInterviewDraftDTO>);
   }
 
   private isMeaningfulInterviewInput(input: string): boolean {

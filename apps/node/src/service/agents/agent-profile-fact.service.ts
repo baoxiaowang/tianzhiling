@@ -79,6 +79,10 @@ interface ExtractMessengerProfileFactsOptions {
   message: MessageEntity;
   searchableText: string;
   parentAgent: AgentEntity;
+  contextMessages?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
 }
 
 interface ExtractProfileFactsFromFeedbackOptions {
@@ -322,6 +326,13 @@ export class AgentProfileFactService {
       .map(value => value?.trim())
       .filter(Boolean)
       .join('、');
+    const contextMessages = (options.contextMessages || [])
+      .map(item => ({
+        role: item.role,
+        content: this.normalizeSourceText(item.content).slice(0, 320),
+      }))
+      .filter(item => Boolean(item.content))
+      .slice(-10);
 
     try {
       const result = await this.openAIService.generateText({
@@ -332,7 +343,8 @@ export class AgentProfileFactService {
         systemPrompt: [
           '你是独立的角色事实记忆抽取器，不生成聊天回复。只输出严格JSON数组。',
           '本轮来自小使者访谈，文本可能同时谈到多位家人。只抽取属于指定AI亲人本人的明确、稳定事实；用户本人和其他亲人的事实一律不要输出。',
-          '第三人称称呼只有明确指向指定AI亲人时才可归入；指代不明、疑问、否定、猜测不写入，不根据常识补全。',
+          '结合最近连续对话解析“他、她、老人家、太太”等自然指代；只有上下文能唯一指向指定AI亲人时才可归入。指代仍不明确、疑问、否定、猜测不写入，不根据常识补全。',
+          '最近连续对话只用于消解当前用户原话的指代，不得把助手提出但用户未确认的内容当成事实。',
           '字段：type、key、value、polarity、confidence、priority。type只能是identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity只能是positive/negative；confidence只能是extracted/confirmed/user_corrected；priority为1-3。',
           'key使用稳定短键，value写成可独立理解的事实。正式姓名仅在原文明示且无疑问、无否定时使用identity.real_name。',
           '没有可确认事实输出[]。',
@@ -342,10 +354,11 @@ export class AgentProfileFactService {
           `用户如何称呼该亲人：${
             options.parentAgent.iCallAgent?.trim() || '未提供'
           }`,
+          `最近连续对话：${JSON.stringify(contextMessages)}`,
           `用户原话：${sourceText.slice(0, 1000)}`,
         ].join('\n'),
       });
-      const facts = this.parseLLMFacts(result.content, sourceText)
+      const facts = this.parseMessengerLLMFacts(result.content, sourceText)
         .filter(fact => !this.isGlobalUserIdentityFactKey(fact.key))
         .filter(
           fact =>
@@ -369,7 +382,7 @@ export class AgentProfileFactService {
         '[agent-profile-fact] messenger extraction failed, reason=%s',
         error instanceof Error ? error.message : String(error)
       );
-      return [];
+      throw error;
     }
   }
 
@@ -1562,6 +1575,34 @@ export class AgentProfileFactService {
     } catch {
       return [];
     }
+  }
+
+  private parseMessengerLLMFacts(
+    value: string,
+    sourceText: string
+  ): AgentProfileFactSummary[] {
+    const jsonText = this.extractJsonArrayText(value);
+    if (!jsonText) {
+      throw new Error('Messenger memory extraction returned invalid JSON');
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error('Messenger memory extraction returned invalid JSON');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        'Messenger memory extraction returned a non-array result'
+      );
+    }
+
+    const facts = this.parseLLMFacts(jsonText, sourceText);
+    if (parsed.length > 0 && facts.length === 0) {
+      throw new Error('Messenger memory extraction returned invalid facts');
+    }
+    return facts;
   }
 
   private shouldRejectBroadFamilyQuestionFact(

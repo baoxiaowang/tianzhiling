@@ -542,6 +542,12 @@ function createService(options: {
     listVisualAppearanceMemories: jest.fn().mockResolvedValue([]),
     upsertVisualAppearanceObservations: jest.fn().mockResolvedValue([]),
   } as any;
+  service.agentMemoryProfileService = {
+    refreshFromMemoryNow: jest.fn(async ({ agent }) => {
+      agent.lifeExperience = '以前在粮库工作';
+      return agent;
+    }),
+  } as any;
   service.agentRelationshipSignalService = {
     upsertFromUserMessage: jest.fn().mockResolvedValue([]),
   } as any;
@@ -1779,6 +1785,7 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(parentWrite).toEqual(
       expect.objectContaining({
         parentAgent,
+        contextMessages: expect.any(Array),
         message: expect.objectContaining({
           id: messengerMessage.id,
           agentId: parentAgent.id,
@@ -1796,12 +1803,89 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     expect(messengerMessage).toEqual(
       expect.objectContaining({
         memoryWriteStatus: 'written',
+        memoryWriteReason: 'messenger_parent_memory_written',
+        memoryWriteTargetAgentId: parentAgent.id,
+        memoryWriteChangedFields: ['lifeExperience'],
         memoryWriteProfileFactCount: 1,
         memoryWriteTemporalFactCount: 0,
       })
     );
     expect(
       service.agentEmotionStateService.recognizeAndUpsertFromUserMessage
+    ).not.toHaveBeenCalled();
+    expect(
+      service.agentMemoryProfileService.refreshFromMemoryNow
+    ).toHaveBeenCalledWith({
+      agent: parentAgent,
+      userId: messengerMessage.userId,
+    });
+  });
+
+  it('marks a messenger memory write failed and rethrows so the worker can retry', async () => {
+    const parentAgent = createAgent({
+      id: new MongoObjectId(OTHER_AGENT_ID),
+      name: '太太',
+      iCallAgent: '太太',
+    });
+    const messengerMessage = createMessage({
+      content: '我小时候最喜欢听她讲故事了。',
+    });
+    const { service } = createService({ agent: createAgent() });
+    (
+      service.agentProfileFactService
+        .extractAndUpsertFromMessengerMessage as jest.Mock
+    ).mockRejectedValue(new Error('memory model unavailable'));
+
+    await expect(
+      (service as any).enrichMessengerUserMessage(
+        messengerMessage,
+        messengerMessage.content,
+        parentAgent
+      )
+    ).rejects.toThrow('memory model unavailable');
+
+    expect(messengerMessage).toEqual(
+      expect.objectContaining({
+        memoryWriteStatus: 'failed',
+        memoryWriteReason: 'messenger_memory_pipeline_failed',
+        memoryWriteTargetAgentId: parentAgent.id,
+        memoryWriteChangedFields: [],
+        memoryWriteCompletedAt: expect.any(Date),
+      })
+    );
+  });
+
+  it('does not synthesize a parent profile when messenger input has no durable fact', async () => {
+    const parentAgent = createAgent({
+      id: new MongoObjectId(OTHER_AGENT_ID),
+      name: '太太',
+      iCallAgent: '太太',
+    });
+    const messengerMessage = createMessage({ content: '你觉得她会想我吗？' });
+    const { service } = createService({ agent: createAgent() });
+    (
+      service.agentProfileFactService
+        .extractAndUpsertFromMessengerMessage as jest.Mock
+    ).mockResolvedValue([]);
+    (
+      service.relativeMemoryExtractorService.captureFromUserMessage as jest.Mock
+    ).mockResolvedValue(0);
+
+    await (service as any).enrichMessengerUserMessage(
+      messengerMessage,
+      messengerMessage.content,
+      parentAgent
+    );
+
+    expect(messengerMessage).toEqual(
+      expect.objectContaining({
+        memoryWriteStatus: 'none',
+        memoryWriteReason: 'no_durable_fact',
+        memoryWriteTargetAgentId: parentAgent.id,
+      })
+    );
+    expect(
+      service.agentMemoryProfileService.refreshFromMemoryNow
     ).not.toHaveBeenCalled();
   });
 
