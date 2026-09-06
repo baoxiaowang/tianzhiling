@@ -21,6 +21,8 @@ const MAX_SUMMARY_LENGTH = 500;
 
 @Provide()
 export class AgentConversationSummaryService {
+  private readonly refreshTasks = new Map<string, Promise<void>>();
+
   @Logger()
   logger: ILogger;
 
@@ -33,26 +35,61 @@ export class AgentConversationSummaryService {
   @Inject()
   openAIService: OpenAIService;
 
-  async refresh(conversation: ConversationEntity): Promise<void> {
+  refresh(conversation: ConversationEntity): Promise<void> {
     if (!this.openAIService?.isEnabled?.()) {
-      return;
+      return Promise.resolve();
     }
 
+    const conversationId = this.stringifyObjectId(conversation.id);
+    const activeTask = this.refreshTasks.get(conversationId);
+
+    if (activeTask) {
+      return activeTask;
+    }
+
+    const task = this.refreshOnce(conversation).finally(() => {
+      if (this.refreshTasks.get(conversationId) === task) {
+        this.refreshTasks.delete(conversationId);
+      }
+    });
+    this.refreshTasks.set(conversationId, task);
+
+    return task;
+  }
+
+  private async refreshOnce(conversation: ConversationEntity): Promise<void> {
     const messages = (
       await this.messageModel.find({
         where: {
           conversationId: conversation.id,
-        },
+          role: { $in: [MessageRole.user, MessageRole.assistant] },
+          status: MessageStatus.sent,
+          isArchived: { $ne: true },
+        } as never,
         order: {
-          createdAt: 'ASC',
+          createdAt: 'DESC',
         },
+        take: RECENT_MESSAGES_TO_EXCLUDE + MAX_SUMMARY_SOURCE_MESSAGES,
       })
-    ).filter(
-      message =>
-        !message.isArchived &&
-        message.status === MessageStatus.sent &&
-        Boolean(this.buildMessageText(message))
-    );
+    )
+      .filter(
+        message =>
+          !message.isArchived &&
+          message.status === MessageStatus.sent &&
+          (message.role === MessageRole.user ||
+            message.role === MessageRole.assistant) &&
+          Boolean(this.buildMessageText(message))
+      )
+      .sort((left, right) => {
+        const createdAtDelta =
+          left.createdAt.getTime() - right.createdAt.getTime();
+
+        return createdAtDelta !== 0
+          ? createdAtDelta
+          : this.stringifyObjectId(left.id).localeCompare(
+              this.stringifyObjectId(right.id)
+            );
+      });
     const summaryEndIndex = messages.length - RECENT_MESSAGES_TO_EXCLUDE;
 
     if (summaryEndIndex < MIN_NEW_MESSAGES_TO_SUMMARIZE) {

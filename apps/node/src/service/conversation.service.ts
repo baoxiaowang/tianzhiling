@@ -242,6 +242,7 @@ const CONVERSATION_REPLY_JOB_DELAY_MS = 2500;
 const CONVERSATION_REPLY_MAX_DEBOUNCE_MS = 8000;
 const CONVERSATION_REPLY_SLOW_QUEUE_WAIT_MS = 10000;
 const CONVERSATION_REPLY_LOCK_TTL_MS = 2 * 60 * 1000;
+const PENDING_USER_MESSAGE_LOAD_LIMIT = 50;
 const MEMORIAL_PHOTO_LOCK_TTL_MS = 10 * 60 * 1000;
 export const CONVERSATION_REPLY_QUEUE = 'conversation-reply';
 const ASSISTANT_REPLY_FAILED_CONTENT =
@@ -7505,41 +7506,74 @@ export class ConversationService {
     conversationId: MongoObjectId;
     afterUserCreatedAt?: Date;
   }): Promise<MessageEntity[]> {
+    const latestAssistant = options.afterUserCreatedAt
+      ? null
+      : await this.messageModel.findOne({
+          where: {
+            conversationId: options.conversationId,
+            role: MessageRole.assistant,
+            isArchived: { $ne: true },
+          } as never,
+          order: {
+            createdAt: 'DESC',
+          },
+        });
+    const createdAtCondition = options.afterUserCreatedAt
+      ? { createdAt: { $gt: options.afterUserCreatedAt } }
+      : latestAssistant
+      ? {
+          $or: [
+            { createdAt: { $gt: latestAssistant.createdAt } },
+            {
+              createdAt: latestAssistant.createdAt,
+              _id: { $gt: latestAssistant.id },
+            },
+          ],
+        }
+      : {};
     const messages = await this.messageModel.find({
       where: {
         conversationId: options.conversationId,
+        role: MessageRole.user,
+        status: MessageStatus.sent,
+        replyTrigger: { $ne: false },
         isArchived: { $ne: true },
+        ...createdAtCondition,
       } as never,
       order: {
         createdAt: 'ASC',
       },
+      take: PENDING_USER_MESSAGE_LOAD_LIMIT,
     });
-    const activeMessages = messages.filter(message => !message.isArchived);
 
-    if (options.afterUserCreatedAt) {
-      return activeMessages.filter(
-        message =>
-          message.role === MessageRole.user &&
-          message.status === MessageStatus.sent &&
-          message.replyTrigger !== false &&
-          message.createdAt > options.afterUserCreatedAt!
+    return messages.filter(message => {
+      if (
+        message.isArchived ||
+        message.role !== MessageRole.user ||
+        message.status !== MessageStatus.sent ||
+        message.replyTrigger === false
+      ) {
+        return false;
+      }
+
+      if (options.afterUserCreatedAt) {
+        return message.createdAt > options.afterUserCreatedAt;
+      }
+
+      if (!latestAssistant) {
+        return true;
+      }
+
+      const createdAtDelta =
+        message.createdAt.getTime() - latestAssistant.createdAt.getTime();
+
+      return (
+        createdAtDelta > 0 ||
+        (createdAtDelta === 0 &&
+          this.stringifyObjectId(message.id) >
+            this.stringifyObjectId(latestAssistant.id))
       );
-    }
-
-    const latestAssistantIndex = activeMessages.reduce(
-      (latestIndex, message, index) =>
-        message.role === MessageRole.assistant ? index : latestIndex,
-      -1
-    );
-
-    return activeMessages
-      .slice(latestAssistantIndex + 1)
-      .filter(
-        message =>
-          message.role === MessageRole.user &&
-          message.status === MessageStatus.sent &&
-          message.replyTrigger !== false
-      );
+    });
   }
 
   private async hasUserMessageAfter(

@@ -2812,6 +2812,42 @@ describe('ConversationService assistant voice reply timbre binding', () => {
     ).toHaveLength(0);
   });
 
+  it('loads only bounded user messages after the latest assistant reply', async () => {
+    const service = new ConversationService();
+    const latestAssistant = createMessage({
+      role: MessageRole.assistant,
+      content: '上一句回复',
+      createdAt: new Date('2026-05-03T08:00:01.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:01.000Z'),
+    });
+    const pendingUser = createMessage({
+      content: '后续消息',
+      createdAt: new Date('2026-05-03T08:00:02.000Z'),
+      updatedAt: new Date('2026-05-03T08:00:02.000Z'),
+    });
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(latestAssistant),
+      find: jest.fn().mockResolvedValue([pendingUser]),
+    } as never;
+
+    const result = await (service as any).findPendingUserMessagesForReply({
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result).toEqual([pendingUser]);
+    expect(service.messageModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          conversationId: CONVERSATION_ID,
+          role: MessageRole.user,
+          status: MessageStatus.sent,
+          $or: expect.any(Array),
+        }),
+        take: 50,
+      })
+    );
+  });
+
   it('saves queued assistant replies as real text segments without auto voice', async () => {
     const voiceTimbre = createVoiceTimbre();
     const userMessage = createMessage({

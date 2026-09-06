@@ -64,6 +64,14 @@ describe('AgentConversationSummaryService', () => {
 
     await service.refresh(conversation);
 
+    expect(service.messageModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 52,
+        order: {
+          createdAt: 'DESC',
+        },
+      })
+    );
     expect(service.openAIService.generateText).toHaveBeenCalledWith(
       expect.objectContaining({
         temperature: 0,
@@ -79,5 +87,46 @@ describe('AgentConversationSummaryService', () => {
     );
     expect(conversation.continuitySummaryEvidenceMessageIds?.length).toBe(4);
     expect(service.conversationModel.save).toHaveBeenCalledWith(conversation);
+  });
+
+  it('shares one in-flight refresh for the same conversation', async () => {
+    const service = new AgentConversationSummaryService();
+    const conversation = new ConversationEntity();
+    Object.assign(conversation, {
+      id: CONVERSATION_ID,
+      userId: USER_ID,
+      agentId: AGENT_ID,
+    });
+    const messages = Array.from({ length: 20 }, (_, index) =>
+      createMessage(index + 1)
+    );
+    let completeGeneration: (value: { content: string }) => void;
+    const generation = new Promise<{ content: string }>(resolve => {
+      completeGeneration = resolve;
+    });
+    service.messageModel = {
+      find: jest.fn().mockResolvedValue(messages),
+    } as never;
+    service.conversationModel = {
+      save: jest.fn(async value => value),
+    } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn(() => generation),
+    } as never;
+
+    const first = service.refresh(conversation);
+    const second = service.refresh(conversation);
+
+    expect(second).toBe(first);
+    expect(service.messageModel.find).toHaveBeenCalledTimes(1);
+
+    completeGeneration!({
+      content: JSON.stringify({ topic: '近况' }),
+    });
+    await Promise.all([first, second]);
+
+    await service.refresh(conversation);
+    expect(service.messageModel.find).toHaveBeenCalledTimes(2);
   });
 });
