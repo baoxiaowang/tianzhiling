@@ -202,6 +202,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '听起来他很温和。忙完工作后，他最喜欢做什么？',
         nextFocusField: 'hobbies',
         lifeExperience: '在工厂做设备维修。',
@@ -237,6 +238,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '明白，是自己的小事业，后来开了诊所。',
         nextFocusField: '',
         changedFields: ['lifeExperience'],
@@ -267,6 +269,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'other',
         reply: '听得出来，你很希望爸爸快乐。',
         nextFocusField: '',
         changedFields: ['lifeExperience'],
@@ -289,12 +292,40 @@ describe('AgentMemoryProfileService', () => {
     expect(result.draft.lifeExperience).toBe(original);
   });
 
+  it('blocks profile changes whenever the active task is not memory assistance', async () => {
+    const agent = createAgent();
+    const { service, generateText } = createService([]);
+    generateText.mockResolvedValue({
+      content: JSON.stringify({
+        taskState: 'product_guide',
+        reply: '试用期是 3 天。',
+        nextFocusField: '',
+        changedFields: ['sharedMemories'],
+        changeEvidence: { sharedMemories: '妈妈以前也替我付费' },
+        lifeExperience: '',
+        personalityTraits: '',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '妈妈以前也替我付费。',
+      }),
+    });
+
+    const result = await service.buildInterviewTurn({
+      agent,
+      input: '试用期几天？妈妈以前也替我付费。',
+      draft: { sharedMemories: '' },
+    });
+
+    expect(result.draft.sharedMemories).toBe('');
+  });
+
   it('removes internal user and TA placeholders from accepted memories', async () => {
     const agent = createAgent();
     agent.agentCallMe = '爱人';
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '初中就认识，这段感情走了很久。',
         nextFocusField: '',
         changedFields: ['lifeExperience', 'sharedMemories'],
@@ -326,6 +357,7 @@ describe('AgentMemoryProfileService', () => {
     const onTelemetry = jest.fn();
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '这份耐心很珍贵。',
         nextFocusField: '',
         lifeExperience: '',
@@ -366,6 +398,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '她爽朗又说一不二，听着就是很有主心骨的人。',
         nextFocusField: '',
         lifeExperience: '',
@@ -395,6 +428,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '原来她真的给你做过五柳蛋，这个味道很具体。',
         nextFocusField: '',
         lifeExperience: '',
@@ -423,6 +457,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '那段经历后来又发生了什么？',
         nextFocusField: 'lifeExperience',
         lifeExperience: '',
@@ -453,6 +488,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '爸爸爱下象棋这点真鲜活，他平时会约谁一起下吗？',
         nextFocusField: 'sharedMemories',
         lifeExperience: '',
@@ -483,6 +519,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '我已经认识他了。哪件小事最能看出他的性格？',
         nextFocusField: 'personalityTraits',
         lifeExperience: '年轻时在工厂工作。',
@@ -511,6 +548,7 @@ describe('AgentMemoryProfileService', () => {
 
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '他下棋时还会做些什么？',
         nextFocusField: 'hobbies',
         ...firstDepth.draft,
@@ -537,6 +575,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '再想想，他有没有常说的话？',
         nextFocusField: 'languageHabits',
         lifeExperience: '年轻时在工厂工作。',
@@ -572,6 +611,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '他平时有没有常说的一句话？',
         nextFocusField: 'languageHabits',
         lifeExperience: '年轻时在工厂工作。',
@@ -609,6 +649,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: '谢谢，我记住了。爸爸平时喜欢做什么？',
         nextFocusField: 'hobbies',
         lifeExperience: '年轻时在工厂工作。',
@@ -636,6 +677,7 @@ describe('AgentMemoryProfileService', () => {
     const { service, generateText } = createService([]);
     generateText.mockResolvedValue({
       content: JSON.stringify({
+        taskState: 'memory_assistant',
         reply: repeatedReply,
         nextFocusField: 'hobbies',
         lifeExperience: '在工厂做设备维修。',

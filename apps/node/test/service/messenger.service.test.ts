@@ -157,10 +157,13 @@ describe('MessengerService', () => {
     expect(conversation.accessRole).toBe('owner');
     expect(messageModel.save).toHaveBeenCalledWith([
       expect.objectContaining({
-        content: '你好，我是妈妈的小使者，可以帮妈妈找回记忆。',
+        content: expect.stringContaining('整理和补全妈妈的经历'),
       }),
       expect.objectContaining({
-        content: '你最想让妈妈想起来的是？',
+        content: expect.stringContaining('图片入口发送截图'),
+      }),
+      expect.objectContaining({
+        content: expect.stringContaining('常用语气、表达方式和回复节奏'),
       }),
     ]);
   });
@@ -190,7 +193,7 @@ describe('MessengerService', () => {
     expect(messageModel.save).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
-          content: '你最想让妈妈想起来的是？',
+          content: expect.stringContaining('图片入口发送截图'),
         }),
       ])
     );
@@ -417,6 +420,55 @@ describe('MessengerService', () => {
     });
   });
 
+  it('keeps the visible outcome confirmation when profile persistence fails', async () => {
+    const {
+      service,
+      messageModel,
+      buildInterviewTurn,
+      alignManualProfileEdits,
+      messengerCallEventModel,
+    } = createService();
+    const parent = buildAgent();
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    messageModel.find.mockResolvedValue([
+      {
+        id: new MongoObjectId(),
+        role: MessageRole.user,
+        content: '妈妈以前在粮管所抬粮供我和哥哥读书。',
+      },
+    ]);
+    buildInterviewTurn.mockResolvedValue({
+      reply:
+        '这些我已经帮妈妈记下了，会用来把她的记忆补得更完整。她肯吃苦、一心托着孩子往前走的样子更清楚了。',
+      draft: {
+        lifeExperience: '以前在粮管所抬粮，供两个孩子读书。',
+        personalityTraits: '肯吃苦，一心托着孩子往前走。',
+        languageHabits: '',
+        hobbies: '',
+        sharedMemories: '',
+      },
+      coveredFields: ['lifeExperience', 'personalityTraits'],
+      nextFocusField: '',
+      isComplete: false,
+    });
+    alignManualProfileEdits.mockRejectedValue(new Error('PROFILE_DB_DOWN'));
+
+    const reply = await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '妈妈以前在粮管所抬粮供我和哥哥读书。',
+    });
+
+    expect(reply).toContain('这些我已经帮妈妈记下了');
+    expect(reply).not.toContain('AI');
+    expect(messengerCallEventModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({ profileSaved: false })
+    );
+  });
+
   it('asks for the concrete phrase after a bare yes instead of advancing fields', async () => {
     const {
       service,
@@ -513,6 +565,86 @@ describe('MessengerService', () => {
       expect(buildInterviewTurn).not.toHaveBeenCalled();
     }
   );
+
+  it('answers a product-guide question without entering memory collection', async () => {
+    const {
+      service,
+      messageModel,
+      buildInterviewTurn,
+      alignManualProfileEdits,
+      messengerCallEventModel,
+    } = createService();
+    const parent = buildAgent({ name: '妈妈' });
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    messageModel.find.mockResolvedValue([
+      {
+        id: new MongoObjectId(),
+        role: MessageRole.user,
+        content: '导入聊天记录有什么用？',
+      },
+    ]);
+
+    const reply = await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '导入聊天记录有什么用？',
+    });
+
+    expect(reply).toContain('亲人聊天框最上方');
+    expect(buildInterviewTurn).not.toHaveBeenCalled();
+    expect(alignManualProfileEdits).not.toHaveBeenCalled();
+    expect(messengerCallEventModel.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skipReason: 'product_guide_task',
+        profileSaved: false,
+        changedProfileFields: [],
+      })
+    );
+  });
+
+  it('keeps a product follow-up in guide mode and switches after import completion', async () => {
+    const {
+      service,
+      messageModel,
+      buildInterviewTurn,
+      alignManualProfileEdits,
+    } = createService();
+    const parent = buildAgent({ name: '妈妈' });
+    const conversation = new ConversationEntity();
+    conversation.id = new MongoObjectId();
+    conversation.agentId = new MongoObjectId();
+    conversation.userId = parent.createdUserId;
+    messageModel.find.mockResolvedValue([
+      {
+        id: new MongoObjectId(),
+        role: MessageRole.user,
+        content: '我已经导入好了',
+      },
+      {
+        role: MessageRole.assistant,
+        content: '导入后会接着以前的对话聊。',
+      },
+      {
+        role: MessageRole.user,
+        content: '导入聊天记录有什么用？',
+      },
+    ]);
+
+    const reply = await service.runInterviewTurn({
+      agent: parent,
+      conversation,
+      input: '我已经导入好了',
+    });
+
+    expect(reply).toContain('过去的对话会帮助妈妈延续以前的说话习惯');
+    expect(reply).toContain('接下来我也可以帮你补全妈妈的记忆');
+    expect(reply).toContain('\n');
+    expect(buildInterviewTurn).not.toHaveBeenCalled();
+    expect(alignManualProfileEdits).not.toHaveBeenCalled();
+  });
 
   it('records dedicated model, token, latency, and profile-save telemetry', async () => {
     const {
@@ -790,7 +922,9 @@ describe('MessengerService', () => {
       expect(saved.length).toBe(1);
       expect(saved[0].content).toContain('爸爸');
       expect(saved[0].content).not.toContain('我是');
-      expect(saved[0].traceId).toContain('event_notice:membership_purchase:order-1');
+      expect(saved[0].traceId).toContain(
+        'event_notice:membership_purchase:order-1'
+      );
     });
 
     it('声音版购买：追加客服二维码图片消息', async () => {
@@ -850,12 +984,8 @@ describe('MessengerService', () => {
     });
 
     it('模型生成成功时使用模型输出并做护栏替换', async () => {
-      const {
-        service,
-        messageModel,
-        openAIService,
-        parent,
-      } = buildNoticeService();
+      const { service, messageModel, openAIService, parent } =
+        buildNoticeService();
       openAIService.generateText.mockResolvedValue({
         content:
           '["你的会员已经开通好了，以后和{{relation}}聊天不再限额度。","有需要随时找我。"]',
@@ -876,12 +1006,8 @@ describe('MessengerService', () => {
     });
 
     it('幂等：redis 已占用时跳过且不写消息', async () => {
-      const {
-        service,
-        redisService,
-        messageModel,
-        parent,
-      } = buildNoticeService();
+      const { service, redisService, messageModel, parent } =
+        buildNoticeService();
       redisService.set.mockResolvedValue(null);
 
       const result = await service.sendEventNotice({

@@ -115,7 +115,8 @@ const SOFT_DELIVERY_BOUNDARY_PATTERN = /[，,；;]+/gu;
  * 找不到自然语义边界时保持原泡；长内容最多适配为三泡。
  */
 export function splitReplyContentForDelivery(
-  inputSegments: string[]
+  inputSegments: string[],
+  maxSegments: number = MAX_ASSISTANT_REPLY_SEGMENTS
 ): string[] {
   // 上游最终治理已经完成清理与三泡上限校验；这里复制数组后只移动边界。
   const segments = [...inputSegments];
@@ -124,9 +125,9 @@ export function splitReplyContentForDelivery(
   );
   const deliverySegmentLimit =
     completedContentCharacters >= DELIVERY_THREE_BUBBLE_MIN_CHARACTERS
-      ? MAX_ASSISTANT_REPLY_SEGMENTS
+      ? Math.max(1, Math.min(MAX_ASSISTANT_REPLY_SEGMENTS, maxSegments))
       : completedContentCharacters >= DELIVERY_TWO_BUBBLE_MIN_CHARACTERS
-      ? 2
+      ? Math.min(2, Math.max(1, maxSegments))
       : 1;
 
   while (segments.length < deliverySegmentLimit) {

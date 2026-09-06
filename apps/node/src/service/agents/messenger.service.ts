@@ -28,6 +28,11 @@ import {
   AgentMemoryProfileService,
   MessengerInterviewTelemetry,
 } from './agent-memory-profile.service';
+import {
+  buildMessengerProductGuideContextQuery,
+  buildMessengerProductGuideDirectReply,
+  findMessengerProductGuideCards,
+} from './messenger-product-guide-knowledge';
 
 export const MESSENGER_DEFAULT_AVATAR_KEY =
   'weapp/messenger-avatar-20260818-5c48467a.png';
@@ -1168,14 +1173,34 @@ export class MessengerService {
         options.agent,
         previousReplies[0] || ''
       );
-      const directReply = this.buildDirectCapabilityReply(
-        options.agent,
-        options.input
+      const productGuideQuery = buildMessengerProductGuideContextQuery(
+        options.input,
+        previousTurns
       );
+      const productGuideActive =
+        findMessengerProductGuideCards(productGuideQuery, 1).length > 0;
+      const productGuideTransitionReply = this.buildProductGuideTransitionReply(
+        options.agent,
+        options.input,
+        previousTurns
+      );
+      const productGuideReply = productGuideActive
+        ? this.personalizeProductGuideReply(
+            options.agent,
+            buildMessengerProductGuideDirectReply(productGuideQuery)
+          )
+        : undefined;
+      const directReply =
+        productGuideTransitionReply ||
+        productGuideReply ||
+        this.buildDirectCapabilityReply(options.agent, options.input);
       if (directReply) {
         await this.recordCallEvent(options, {
           status: MessengerCallStatus.skipped,
-          skipReason: 'direct_capability_reply',
+          skipReason:
+            productGuideActive || productGuideTransitionReply
+              ? 'product_guide_task'
+              : 'direct_capability_reply',
           sourceMessageId: sourceMessage?.id,
           durationMs: Date.now() - startedAt,
           telemetry,
@@ -1233,15 +1258,23 @@ export class MessengerService {
       let profileSaved = false;
 
       if (changedProfileFields.length) {
-        this.applyDraft(options.agent, result.draft);
-        await this.agentMemoryProfileService.alignManualProfileEdits({
-          agent: options.agent,
-          userId: options.agent.createdUserId,
-          sources: changedSources,
-          sourceMessageId: sourceMessage?.id,
-          sourceText: options.input,
-        });
-        profileSaved = true;
+        try {
+          this.applyDraft(options.agent, result.draft);
+          await this.agentMemoryProfileService.alignManualProfileEdits({
+            agent: options.agent,
+            userId: options.agent.createdUserId,
+            sources: changedSources,
+            sourceMessageId: sourceMessage?.id,
+            sourceText: options.input,
+          });
+          profileSaved = true;
+        } catch (error) {
+          this.logger?.warn?.(
+            '[messenger] profile save failed without replacing visible reply, conversationId=%s, reason=%s',
+            String(options.conversation.id || ''),
+            this.describeCallError(error)
+          );
+        }
       }
 
       await this.recordCallEvent(options, {
@@ -1407,6 +1440,44 @@ export class MessengerService {
     }
 
     return undefined;
+  }
+
+  private buildProductGuideTransitionReply(
+    agent: AgentEntity,
+    input: string,
+    previousTurns: Array<{ role: 'user' | 'assistant'; content: string }>
+  ): string | undefined {
+    if (
+      !/(?:已经|刚刚|刚才)?(?:导入|传|发)(?:完成|好了|完了)|(?:已经|刚刚|刚才)?弄好(?:了)?|导完了/.test(
+        input.trim()
+      )
+    ) {
+      return undefined;
+    }
+    const previousImportQuery = [...previousTurns]
+      .reverse()
+      .find(
+        turn =>
+          turn.role === 'user' &&
+          findMessengerProductGuideCards(turn.content).some(
+            card => card.id === 'chat_import.features'
+          )
+      );
+    if (!previousImportQuery) {
+      return undefined;
+    }
+    const parentName = this.normalizeParentDisplayName(agent.name);
+    return `导入完成后，过去的对话会帮助${parentName}延续以前的说话习惯。\n接下来我也可以帮你补全${parentName}的记忆——你最先想到${parentName}平时常说的哪句话？`;
+  }
+
+  private personalizeProductGuideReply(
+    agent: AgentEntity,
+    reply: string | undefined
+  ): string | undefined {
+    if (!reply) {
+      return undefined;
+    }
+    return reply.replace(/TA/g, this.normalizeParentDisplayName(agent.name));
   }
 
   private isMemoryReceiptQuestion(query: string): boolean {
@@ -1603,8 +1674,9 @@ export class MessengerService {
     messengerName: string
   ): string[] {
     return [
-      `你好，我是${messengerName}，可以帮${parentName}找回记忆。`,
-      `你最想让${parentName}想起来的是？`,
+      `你好，我是${messengerName}。我可以帮你整理和补全${parentName}的经历、性格、习惯和你们的共同回忆，也可以回答产品功能和使用问题。`,
+      `你现在刚开始用，推荐你导入你和${parentName}过去的微信聊天记录。通过亲人聊天里的图片入口发送截图，导入后，过去的对话会显示在${parentName}聊天框的最上方，就像从微信里的那段聊天接着聊。`,
+      `导入的记录还会帮助${parentName}学习以前的常用语气、表达方式和回复节奏，让之后的回应更贴近你记忆中的${parentName}。`,
     ];
   }
 

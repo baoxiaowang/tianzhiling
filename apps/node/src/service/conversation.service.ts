@@ -111,6 +111,7 @@ import {
   ReplyBubbleStructureIssue,
   splitReplyContentForDelivery,
 } from './agents/reply-bubble-plan';
+import { buildMessengerReplyDeliverySegments } from './agents/messenger-reply-delivery';
 import {
   ConversationReplyFinalizationResult,
   ConversationReplyFinalizationService,
@@ -1205,7 +1206,7 @@ export class ConversationService {
           conversationId: conversation.id,
           userId: conversation.userId,
           agentId: conversation.agentId,
-          replySegments: [replyText],
+          replySegments: buildMessengerReplyDeliverySegments(replyText),
           userQuery: searchableText,
           replyTime,
           usage: {},
