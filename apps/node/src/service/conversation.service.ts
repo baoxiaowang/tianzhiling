@@ -3041,9 +3041,13 @@ export class ConversationService {
         'hobbies',
         'sharedMemories',
       ] as const;
-      const beforeProfile = Object.fromEntries(
-        profileFields.map(field => [field, parentAgent[field]?.trim() || ''])
-      );
+      const beforeProfile = {} as Record<
+        (typeof profileFields)[number],
+        string
+      >;
+      for (const field of profileFields) {
+        beforeProfile[field] = parentAgent[field]?.trim() || '';
+      }
 
       const recentMessages = await this.messageModel.find({
         where: {
