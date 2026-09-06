@@ -11,4 +11,20 @@ describe('memory system index contract', () => {
       temporalMemorySemanticHash: { $exists: true },
     });
   });
+
+  it('excludes legacy null person links from the unique agent index', () => {
+    const [, options] = INDEXES.user_known_person.find(
+      ([, definition]) =>
+        definition.name === 'uniq_user_known_person_linked_agent'
+    );
+
+    expect(options).toEqual(
+      expect.objectContaining({
+        unique: true,
+        partialFilterExpression: {
+          linkedAgentId: { $type: 'objectId' },
+        },
+      })
+    );
+  });
 });

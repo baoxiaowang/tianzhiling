@@ -1,4 +1,6 @@
 import {
+  AgentEntity,
+  AgentSex,
   MessageEntity,
   MongoObjectId,
   UserKnownPersonEntity,
@@ -128,5 +130,118 @@ describe('RelativeMemoryExtractorService', () => {
     expect(service.userRelativeProfileService.recordFact).toHaveBeenCalledWith(
       expect.objectContaining({ domain: UserRelativeFactDomain.health })
     );
+  });
+
+  it('links another unambiguous AI relative locally without exposing the agent list', async () => {
+    const service = new RelativeMemoryExtractorService();
+    const parent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000601'),
+      createdUserId: new MongoObjectId('665000000000000000000603'),
+      name: '妈妈',
+      iCallAgent: '妈妈',
+      sex: AgentSex.woman,
+      status: 1,
+    });
+    const father = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000602'),
+      createdUserId: parent.createdUserId,
+      name: '爸爸',
+      iCallAgent: '爸爸',
+      sex: AgentSex.man,
+      status: 1,
+    });
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000604'),
+    });
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify({
+          people: [
+            {
+              referenceName: '爸爸',
+              relationToUser: '爸爸',
+              facts: [
+                {
+                  domain: 'health',
+                  key: 'health.illness_before_death',
+                  value: '爸爸生前患病',
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    } as never;
+    service.agentModel = {
+      find: jest.fn().mockResolvedValue([parent, father]),
+    } as never;
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      upsertKnownPersonDeclaration: jest.fn().mockResolvedValue(person),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn().mockResolvedValue({}),
+      recordFact: jest.fn().mockResolvedValue({}),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000605'),
+      userId: parent.createdUserId,
+      agentId: parent.id,
+      content: '爸爸生前患病，后来去世了。',
+      createdAt: new Date('2026-09-05T00:00:00.000Z'),
+    });
+
+    await service.captureFromUserMessage(message, message.content, {
+      messengerParent: parent,
+    });
+
+    expect(
+      service.userIdentityMemoryService.upsertKnownPersonDeclaration
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        declaration: expect.objectContaining({
+          relationToUser: '爸爸',
+          linkedAgentId: father.id,
+        }),
+      })
+    );
+    const modelPrompt = (service.openAIService.generateText as jest.Mock).mock
+      .calls[0][0].prompt;
+    expect(modelPrompt).not.toContain(father.id.toString());
+  });
+
+  it('does not link an ambiguous relative to either AI agent', async () => {
+    const service = new RelativeMemoryExtractorService();
+    const userId = new MongoObjectId('665000000000000000000611');
+    const parent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000612'),
+    });
+    const candidates = [
+      '665000000000000000000613',
+      '665000000000000000000614',
+    ].map(id =>
+      Object.assign(new AgentEntity(), {
+        id: new MongoObjectId(id),
+        name: '爷爷',
+        iCallAgent: '爷爷',
+      })
+    );
+    service.agentModel = {
+      find: jest.fn().mockResolvedValue(candidates),
+    } as never;
+
+    await expect(
+      (service as any).resolveUniqueLinkedAgent(
+        Object.assign(new MessageEntity(), { userId }),
+        parent,
+        ['爷爷']
+      )
+    ).resolves.toBeUndefined();
   });
 });

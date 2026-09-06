@@ -1194,6 +1194,10 @@ export class ConversationService {
       throw new AppError('AGENT_NOT_FOUND', 'associated agent not found', 404);
     }
 
+    if (!this.isExplicitMemoryControlRequest(searchableText)) {
+      await this.scheduleUserMessageEnrichment(userMessage, searchableText);
+    }
+
     const replyText = await this.messengerService.runInterviewTurn({
       agent: parentAgent,
       conversation,
@@ -2161,6 +2165,64 @@ export class ConversationService {
   async processMemoryPipelineTask(
     task: MemoryPipelineTaskEntity
   ): Promise<'completed' | 'skipped'> {
+    const startedAt = Date.now();
+    const before = process.memoryUsage();
+    const attribution = this.openAIService?.createModelCallAttribution?.() || {
+      chatCompletions: 0,
+      providerAttempts: 0,
+      embeddings: 0,
+      visionCompletions: 0,
+    };
+    let outcome: 'completed' | 'skipped' | 'failed' = 'failed';
+    try {
+      const execute = () => this.executeMemoryPipelineTask(task);
+      const result = this.openAIService?.runWithModelCallAttribution
+        ? await this.openAIService.runWithModelCallAttribution(
+            attribution,
+            execute
+          )
+        : await execute();
+      outcome = result;
+      return result;
+    } finally {
+      const after = process.memoryUsage();
+      this.logger?.info?.(
+        '[memory-pipeline-metrics] taskId=%s kind=%s outcome=%s durationMs=%s modelCalls=%s chatCompletions=%s providerAttempts=%s embeddings=%s visionCompletions=%s rssBefore=%s rssAfter=%s rssDelta=%s heapUsedBefore=%s heapUsedAfter=%s heapUsedDelta=%s heapTotalBefore=%s heapTotalAfter=%s externalBefore=%s externalAfter=%s arrayBuffersBefore=%s arrayBuffersAfter=%s activeResources=%s',
+        this.stringifyObjectId(task.id),
+        task.kind,
+        outcome,
+        Date.now() - startedAt,
+        attribution.providerAttempts +
+          attribution.embeddings +
+          attribution.visionCompletions,
+        attribution.chatCompletions,
+        attribution.providerAttempts,
+        attribution.embeddings,
+        attribution.visionCompletions,
+        before.rss,
+        after.rss,
+        after.rss - before.rss,
+        before.heapUsed,
+        after.heapUsed,
+        after.heapUsed - before.heapUsed,
+        before.heapTotal,
+        after.heapTotal,
+        before.external,
+        after.external,
+        before.arrayBuffers,
+        after.arrayBuffers,
+        (
+          process as NodeJS.Process & {
+            getActiveResourcesInfo?: () => string[];
+          }
+        ).getActiveResourcesInfo?.().length ?? 0
+      );
+    }
+  }
+
+  private async executeMemoryPipelineTask(
+    task: MemoryPipelineTaskEntity
+  ): Promise<'completed' | 'skipped'> {
     const message = await this.messageModel.findOne({
       where: { _id: task.messageId } as never,
     });
@@ -2176,7 +2238,22 @@ export class ConversationService {
     if (!searchableText) return 'skipped';
 
     if (task.kind === MemoryPipelineTaskKind.structuredMemory) {
-      await this.enrichUserMessageForReply(message, searchableText);
+      const sourceAgent = await this.findAgentById(message.agentId);
+      if (sourceAgent?.messengerOfAgentId) {
+        const parentAgent = await this.findAgentById(
+          sourceAgent.messengerOfAgentId
+        );
+        if (!parentAgent) {
+          throw new Error('Messenger parent agent is unavailable');
+        }
+        await this.enrichMessengerUserMessage(
+          message,
+          searchableText,
+          parentAgent
+        );
+      } else {
+        await this.enrichUserMessageForReply(message, searchableText);
+      }
       const personUnits =
         (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
           {
@@ -2935,6 +3012,80 @@ export class ConversationService {
     message.memoryWriteLegacyFactCount = memoryFacts.count;
     message.memoryWriteProfileFactCount = profileFacts.count;
     message.memoryWriteTemporalFactCount = temporalFacts.count;
+    message.memoryWriteCompletedAt = new Date();
+    await this.messageModel.save(message);
+  }
+
+  private async enrichMessengerUserMessage(
+    message: MessageEntity,
+    searchableText: string,
+    parentAgent: AgentEntity
+  ): Promise<void> {
+    if (message.type === MessageType.image) return;
+
+    // Preserve the original messenger message as evidence while assigning all
+    // durable facts to the bound parent agent. The clone is never persisted.
+    const memoryMessage = Object.assign(new MessageEntity(), message, {
+      agentId: parentAgent.id,
+    });
+    let profileSucceeded = true;
+    let profileCount = 0;
+    let relativeSucceeded = true;
+    let relativeCount = 0;
+
+    try {
+      const facts =
+        (await this.agentProfileFactService?.extractAndUpsertFromMessengerMessage?.(
+          {
+            message: memoryMessage,
+            searchableText,
+            parentAgent,
+          }
+        )) || [];
+      profileCount = facts.length;
+    } catch (error) {
+      profileSucceeded = false;
+      this.logger.error(
+        '[conversation] messenger parent fact extraction failed, messageId=%s, parentAgentId=%s, reason=%s',
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(parentAgent.id),
+        this.describeReplyError(error)
+      );
+    }
+
+    try {
+      await this.userIdentityMemoryService?.recordFromUserMessage(
+        memoryMessage,
+        searchableText
+      );
+      relativeCount =
+        (await this.relativeMemoryExtractorService?.captureFromUserMessage(
+          memoryMessage,
+          searchableText,
+          { messengerParent: parentAgent }
+        )) || 0;
+    } catch (error) {
+      relativeSucceeded = false;
+      this.logger.error(
+        '[conversation] messenger account person extraction failed, messageId=%s, parentAgentId=%s, reason=%s',
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(parentAgent.id),
+        this.describeReplyError(error)
+      );
+    }
+
+    const writtenCount = profileCount + relativeCount;
+    message.memoryWriteStatus =
+      profileSucceeded && relativeSucceeded
+        ? writtenCount > 0
+          ? 'written'
+          : 'none'
+        : profileSucceeded || relativeSucceeded
+        ? 'partial'
+        : 'failed';
+    message.memoryWriteLegacyFactCount = 0;
+    message.memoryWriteProfileFactCount = profileCount;
+    message.memoryWriteTemporalFactCount = 0;
     message.memoryWriteCompletedAt = new Date();
     await this.messageModel.save(message);
   }

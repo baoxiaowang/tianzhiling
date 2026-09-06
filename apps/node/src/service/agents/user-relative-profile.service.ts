@@ -444,13 +444,28 @@ export class UserRelativeProfileService {
         const relationMatched = Boolean(
           person.relationToUser && mentionText.includes(person.relationToUser)
         );
-        if (!nameMatched && !relationMatched && !genericRelativeReference) {
+        const linkedAgentMatched = Boolean(
+          options.agentId &&
+            person.linkedAgentId?.toString() === options.agentId.toString()
+        );
+        if (
+          !linkedAgentMatched &&
+          !nameMatched &&
+          !relationMatched &&
+          !genericRelativeReference
+        ) {
           return null;
         }
         return {
           profile,
           person,
-          score: nameMatched ? 100 : relationMatched ? 50 : 10,
+          score: linkedAgentMatched
+            ? 120
+            : nameMatched
+            ? 100
+            : relationMatched
+            ? 50
+            : 10,
         };
       })
       .filter(

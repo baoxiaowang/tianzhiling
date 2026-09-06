@@ -1,4 +1,5 @@
 import {
+  AgentEntity,
   AgentProfileFactAssertionPolicy,
   AgentProfileFactConfidence,
   AgentProfileFactEntity,
@@ -164,6 +165,71 @@ describe('AgentProfileFactService', () => {
           status: AgentProfileFactStatus.active,
         }),
       ])
+    );
+  });
+
+  it('stores only model facts assigned to the messenger parent agent', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify([
+          {
+            type: 'occupation',
+            key: 'occupation.grain_depot',
+            value: '当前角色以前在粮库做重体力工作',
+            polarity: 'positive',
+            confidence: 'extracted',
+            priority: 3,
+          },
+          {
+            type: 'identity',
+            key: 'user.identity.real_name',
+            value: '用户正式姓名是赵小明',
+            polarity: 'positive',
+            confidence: 'extracted',
+            priority: 3,
+          },
+        ]),
+      }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+    const parent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000111'),
+      name: '妈妈',
+      iCallAgent: '妈妈',
+    });
+    const message = createUserMessage(
+      '妈妈以前在粮库做重体力活，爸爸后来生病了。'
+    );
+
+    const facts = await service.extractAndUpsertFromMessengerMessage({
+      message,
+      searchableText: message.content,
+      parentAgent: parent,
+    });
+
+    expect(facts).toHaveLength(1);
+    expect(savedFacts).toEqual([
+      expect.objectContaining({
+        agentId: parent.id,
+        key: 'occupation.grain_depot',
+        status: AgentProfileFactStatus.active,
+        sourceMessageId: message.id,
+      }),
+    ]);
+    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('指定AI亲人：妈妈'),
+      })
     );
   });
 

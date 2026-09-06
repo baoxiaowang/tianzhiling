@@ -206,6 +206,55 @@ describe('UserRelativeProfileService', () => {
     ).toEqual([]);
   });
 
+  it('always loads the account person linked to the current AI relative', async () => {
+    const service = new UserRelativeProfileService();
+    const profile = Object.assign(new UserRelativeProfileEntity(), {
+      id: new MongoObjectId('665000000000000000000311'),
+      userId: USER_ID,
+      personId: PERSON_ID,
+      status: UserRelativeProfileStatus.active,
+      lifeStage: 'older_adult',
+      updatedAt: new Date(),
+    });
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: PERSON_ID,
+      userId: USER_ID,
+      relationToUser: '爸爸',
+      linkedAgentId: AGENT_ID,
+      status: 'active',
+    });
+    const fact = Object.assign(new UserRelativeFactEntity(), {
+      personId: PERSON_ID,
+      domain: UserRelativeFactDomain.work,
+      key: 'work.grain_depot',
+      value: '以前在粮库工作',
+      status: UserRelativeFactStatus.current,
+      updatedAt: new Date(),
+    });
+    service.relativeProfileModel = {
+      find: jest.fn().mockResolvedValue([profile]),
+    } as never;
+    service.knownPersonModel = {
+      find: jest.fn().mockResolvedValue([person]),
+    } as never;
+    service.relativeFactModel = {
+      find: jest.fn().mockResolvedValue([fact]),
+    } as never;
+
+    const result = await service.listRelevantForPrompt({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      query: '你以前在哪里工作？',
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        relationToUser: '爸爸',
+        facts: [expect.objectContaining({ value: '以前在粮库工作' })],
+      }),
+    ]);
+  });
+
   it('records an assistant name inquiry without deciding when another inquiry is allowed', async () => {
     const service = new UserRelativeProfileService();
     const profile = Object.assign(new UserRelativeProfileEntity(), {

@@ -1,13 +1,14 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import type { Job } from 'bullmq';
 import {
   CONVERSATION_DELIBERATE_REPLY_QUEUE,
   ConversationDeliberateReplyJobData,
 } from '../service/agents/deliberate-long-reply.service';
 import { ConversationService } from '../service/conversation.service';
+import { RuntimeProcessor } from './runtime-processor';
 
-@Processor(CONVERSATION_DELIBERATE_REPLY_QUEUE)
+@RuntimeProcessor(CONVERSATION_DELIBERATE_REPLY_QUEUE)
 export class ConversationDeliberateReplyProcessor implements IProcessor {
   @Inject()
   conversationService: ConversationService;

@@ -83,9 +83,15 @@ export class MemoryPipelineTaskService {
     oldestPendingAgeMs: number;
   }> {
     const [pending, processing, failed, oldest] = await Promise.all([
-      this.taskModel.count({ status: MemoryPipelineTaskStatus.pending } as never),
-      this.taskModel.count({ status: MemoryPipelineTaskStatus.processing } as never),
-      this.taskModel.count({ status: MemoryPipelineTaskStatus.failed } as never),
+      this.taskModel.count({
+        status: MemoryPipelineTaskStatus.pending,
+      } as never),
+      this.taskModel.count({
+        status: MemoryPipelineTaskStatus.processing,
+      } as never),
+      this.taskModel.count({
+        status: MemoryPipelineTaskStatus.failed,
+      } as never),
       this.taskModel.findOne({
         where: {
           status: {
@@ -147,8 +153,9 @@ export class MemoryPipelineTaskService {
 
   async markCompleted(
     task: MemoryPipelineTaskEntity,
-    status: MemoryPipelineTaskStatus.completed | MemoryPipelineTaskStatus.skipped =
-      MemoryPipelineTaskStatus.completed
+    status:
+      | MemoryPipelineTaskStatus.completed
+      | MemoryPipelineTaskStatus.skipped = MemoryPipelineTaskStatus.completed
   ): Promise<void> {
     const now = new Date();
     await this.taskModel.updateOne(
@@ -231,9 +238,13 @@ export class MemoryPipelineTaskService {
     ) {
       return;
     }
-    const queue = this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE);
+    const queue =
+      this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE) ||
+      this.bullmqFramework?.createQueue(MEMORY_PIPELINE_QUEUE);
     if (!queue) {
-      this.logger.warn('[memory-pipeline] queue unavailable, task remains pending');
+      this.logger.warn(
+        '[memory-pipeline] queue unavailable, task remains pending'
+      );
       return;
     }
     try {

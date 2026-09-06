@@ -21,11 +21,12 @@ fi
 PUBLIC_HEALTH="${TIANZHILING_PUBLIC_HEALTH:-https://tianzhiling.chat/api/system/health}"
 ADMIN_HEALTH="${TIANZHILING_ADMIN_HEALTH:-https://admin.tianzhiling.chat/admin_api/system/health}"
 STABILITY_SECONDS="${TIANZHILING_STABILITY_SECONDS:-120}"
-ALL_SERVICES=(tzl_node tzl_admin_node tzl_admin_web tzl_nginx)
+ALL_SERVICES=(tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web tzl_nginx)
 SERVICES=()
 DEPLOY_STARTED=0
 PREVIOUS_COMMIT=""
 ADMIN_ASSET_SNAPSHOT=""
+PROTECTED_DIRTY_BASELINE=""
 PHASE=""
 PHASE_STARTED_AT=0
 
@@ -33,6 +34,7 @@ declare -A OLD_IMAGES=()
 declare -A COMPOSE_IMAGES=()
 declare -A OLD_REVISIONS=()
 declare -A SELECTED_SERVICES=()
+declare -A SERVICE_EXISTED=()
 
 write_progress() {
   local state="$1"
@@ -95,6 +97,7 @@ select_release_services() {
         ;;
       apps/node/*)
         select_service tzl_node
+        select_service tzl_memory_worker
         ;;
       apps/admin-node/*)
         select_service tzl_admin_node
@@ -107,10 +110,12 @@ select_release_services() {
         ;;
       packages/entities/*)
         select_service tzl_node
+        select_service tzl_memory_worker
         select_service tzl_admin_node
         ;;
       packages/shared/*)
         select_service tzl_node
+        select_service tzl_memory_worker
         select_service tzl_admin_node
         select_service tzl_admin_web
         ;;
@@ -136,6 +141,11 @@ cleanup_admin_asset_snapshot() {
     -d "$ADMIN_ASSET_SNAPSHOT" ]]; then
     rm -rf -- "$ADMIN_ASSET_SNAPSHOT"
   fi
+  if [[ -n "$PROTECTED_DIRTY_BASELINE" && \
+    "$PROTECTED_DIRTY_BASELINE" == /var/tmp/tzl-protected-dirty.* && \
+    -f "$PROTECTED_DIRTY_BASELINE" ]]; then
+    rm -f -- "$PROTECTED_DIRTY_BASELINE"
+  fi
 }
 
 trap cleanup_admin_asset_snapshot EXIT
@@ -147,29 +157,89 @@ fail() {
   exit 1
 }
 
+capture_protected_dirty_manifest() {
+  local output="$1"
+  local line status path digest
+
+  : >"$output"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    status="${line:0:2}"
+    path="${line:3}"
+    case "$status" in
+      ' M'|'??') ;;
+      *) fail "unsupported production worktree change: $status $path" ;;
+    esac
+    case "$path" in
+      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat.key|\
+      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat_bundle.crt|\
+      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat.key.bak.[0-9]*|\
+      apps/gateway/ssl/admin.tianzhiling.chat_nginx/admin.tianzhiling.chat_bundle.crt.bak.[0-9]*|\
+      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat.key|\
+      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat_bundle.crt|\
+      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat.key.bak.[0-9]*|\
+      apps/gateway/ssl/tianzhiling.chat_nginx/tianzhiling.chat_bundle.crt.bak.[0-9]*) ;;
+      *) fail "production worktree has a non-certificate change: $path" ;;
+    esac
+    [[ -f "$path" ]] || fail "protected production file is missing: $path"
+    digest="$(sha256sum "$path" | awk '{print $1}')"
+    printf '%s\t%s\t%s\n' "$status" "$path" "$digest" >>"$output"
+  done < <(git -c core.quotepath=false status --porcelain --untracked-files=all)
+  sort -o "$output" "$output"
+}
+
+verify_protected_dirty_unchanged() {
+  local current
+
+  [[ -n "$PROTECTED_DIRTY_BASELINE" ]] || return 0
+  current="$(mktemp /var/tmp/tzl-protected-dirty-current.XXXXXX)"
+  capture_protected_dirty_manifest "$current"
+  if ! cmp -s "$PROTECTED_DIRTY_BASELINE" "$current"; then
+    rm -f -- "$current"
+    fail 'protected certificate worktree state changed during release'
+  fi
+  rm -f -- "$current"
+}
+
 rollback_runtime() {
   local service
   local rollback_ok=1
+  local rollback_services=()
 
   [[ "$DEPLOY_STARTED" -eq 1 ]] || return 0
   set +e
   printf '[ROLLBACK_BEGIN] previous=%s\n' "${PREVIOUS_COMMIT:-unknown}" >&2
   for service in "${SERVICES[@]}"; do
+    if [[ "${SERVICE_EXISTED[$service]:-0}" == '1' ]]; then
+      rollback_services+=("$service")
+    fi
     if [[ -n "${OLD_IMAGES[$service]:-}" && -n "${COMPOSE_IMAGES[$service]:-}" ]]; then
       docker image tag "${OLD_IMAGES[$service]}" "${COMPOSE_IMAGES[$service]}"
     fi
   done
-  docker compose --profile prod up -d --no-deps --force-recreate "${SERVICES[@]}"
+  if [[ "${#rollback_services[@]}" -gt 0 ]]; then
+    docker compose --profile prod up -d --no-deps --force-recreate "${rollback_services[@]}"
+  fi
+  for service in "${SERVICES[@]}"; do
+    if [[ "${SERVICE_EXISTED[$service]:-0}" != '1' ]]; then
+      docker compose --profile prod rm -sf "$service"
+    fi
+  done
   if service_selected tzl_node || service_selected tzl_admin_node; then
     docker exec tzl_nginx nginx -t || rollback_ok=0
     docker exec tzl_nginx nginx -s reload || rollback_ok=0
   fi
   for service in "${SERVICES[@]}"; do
+    if [[ "${SERVICE_EXISTED[$service]:-0}" != '1' ]]; then continue; fi
     check_container "$service" || rollback_ok=0
   done
   if service_selected tzl_node; then
     wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
     check_pm2_processes tzl_node 4 0 || rollback_ok=0
+  fi
+  if service_selected tzl_memory_worker && [[ "${SERVICE_EXISTED[tzl_memory_worker]:-0}" == '1' ]]; then
+    wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
+    check_pm2_processes tzl_memory_worker 1 0 || rollback_ok=0
   fi
   if service_selected tzl_admin_node; then
     wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health' || rollback_ok=0
@@ -299,20 +369,68 @@ check_internal_health() {
     >/dev/null 2>&1
 }
 
+check_node_runtime_contract() {
+  local service="$1"
+  local expected_role="$2"
+  local expected_memory_workers="$3"
+  local expected_reply_workers="$4"
+  local expected_concurrency="$5"
+
+  docker exec "$service" node -e '
+const [url, expectedRole, expectedMemory, expectedReply, expectedConcurrency] = process.argv.slice(1);
+fetch(url).then(async response => {
+  const body = await response.json();
+  const data = body.data || body;
+  const runtime = data.runtime || {};
+  const workers = runtime.workers || {};
+  const actual = {
+    role: runtime.role,
+    memoryWorkers: Number(workers.memoryPipeline || 0),
+    replyWorkers: Number(workers.conversationReply || 0),
+    concurrency: Number(runtime.memoryWorkerConcurrency || 0),
+  };
+  if (!response.ok ||
+      actual.role !== expectedRole ||
+      actual.memoryWorkers !== Number(expectedMemory) ||
+      actual.replyWorkers !== Number(expectedReply) ||
+      actual.concurrency !== Number(expectedConcurrency)) {
+    console.error(JSON.stringify({ expected: {
+      role: expectedRole,
+      memoryWorkers: Number(expectedMemory),
+      replyWorkers: Number(expectedReply),
+      concurrency: Number(expectedConcurrency),
+    }, actual }));
+    process.exit(1);
+  }
+}).catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
+' 'http://127.0.0.1:7001/api/system/health' \
+    "$expected_role" "$expected_memory_workers" "$expected_reply_workers" \
+    "$expected_concurrency"
+}
+
 wait_for_release_stability() {
   local required_seconds="$1"
   local elapsed=0
-  local node_restart_baseline='' admin_restart_baseline=''
+  local node_restart_baseline='' memory_restart_baseline='' admin_restart_baseline=''
 
   if service_selected tzl_node; then node_restart_baseline="$(pm2_restart_signature tzl_node)"; fi
+  if service_selected tzl_memory_worker; then memory_restart_baseline="$(pm2_restart_signature tzl_memory_worker)"; fi
   if service_selected tzl_admin_node; then admin_restart_baseline="$(pm2_restart_signature tzl_admin_node)"; fi
-  if ! service_selected tzl_node && ! service_selected tzl_admin_node; then return 0; fi
+  if ! service_selected tzl_node && ! service_selected tzl_memory_worker && ! service_selected tzl_admin_node; then return 0; fi
 
   while (( elapsed < required_seconds )); do
     if service_selected tzl_node; then
       check_container tzl_node
       check_pm2_processes tzl_node 4 0
       check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+    fi
+    if service_selected tzl_memory_worker; then
+      check_container tzl_memory_worker
+      check_pm2_processes tzl_memory_worker 1 0
+      check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
     fi
     if service_selected tzl_admin_node; then
       check_container tzl_admin_node
@@ -328,6 +446,11 @@ wait_for_release_stability() {
     check_pm2_processes tzl_node 4 "$((required_seconds * 1000))"
     [[ "$(pm2_restart_signature tzl_node)" == "$node_restart_baseline" ]]
     check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+  fi
+  if service_selected tzl_memory_worker; then
+    check_pm2_processes tzl_memory_worker 1 "$((required_seconds * 1000))"
+    [[ "$(pm2_restart_signature tzl_memory_worker)" == "$memory_restart_baseline" ]]
+    check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
   fi
   if service_selected tzl_admin_node; then
     check_pm2_processes tzl_admin_node 2 "$((required_seconds * 1000))"
@@ -356,7 +479,14 @@ if [[ "$PLAN_ONLY" -eq 0 ]]; then [[ "$EUID" -eq 0 ]] || fail 'run as root'; fi
 set_phase preflight
 cd "$REPO"
 [[ "$(git symbolic-ref --short HEAD)" == "$BRANCH" ]] || fail 'server branch mismatch'
-[[ -z "$(git status --porcelain)" ]] || fail 'server worktree is dirty'
+if [[ -n "$(git status --porcelain)" ]]; then
+  [[ "${TIANZHILING_ALLOW_PROTECTED_CERT_DIRTY:-0}" == '1' ]] || \
+    fail 'server worktree is dirty'
+  PROTECTED_DIRTY_BASELINE="$(mktemp /var/tmp/tzl-protected-dirty.XXXXXX)"
+  capture_protected_dirty_manifest "$PROTECTED_DIRTY_BASELINE"
+  printf '[PROTECTED_DIRTY_ACCEPTED] certificate files=%s\n' \
+    "$(wc -l <"$PROTECTED_DIRTY_BASELINE" | tr -d ' ')"
+fi
 
 PREVIOUS_COMMIT="$(git rev-parse HEAD)"
 git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
@@ -375,6 +505,11 @@ if [[ "$PLAN_ONLY" -eq 1 ]]; then
 fi
 
 for service in "${SERVICES[@]}"; do
+  if ! docker inspect "$service" >/dev/null 2>&1; then
+    SERVICE_EXISTED[$service]=0
+    continue
+  fi
+  SERVICE_EXISTED[$service]=1
   OLD_IMAGES[$service]="$(docker inspect -f '{{.Image}}' "$service")"
   COMPOSE_IMAGES[$service]="$(docker inspect -f '{{.Config.Image}}' "$service")"
   OLD_REVISIONS[$service]="$(
@@ -404,6 +539,7 @@ export RELEASE_VERSION="$TARGET"
 
 set_phase production-build
 for service in "${SERVICES[@]}"; do
+  if [[ "$service" == 'tzl_memory_worker' ]]; then continue; fi
   BUILD_STARTED_AT="$(date +%s)"
   release_event service_begin "service=$service"
   if [[ "$service" == 'tzl_admin_web' ]]; then
@@ -433,12 +569,18 @@ set_phase replace-backends
 DEPLOY_STARTED=1
 BACKEND_SERVICES=()
 if service_selected tzl_node; then BACKEND_SERVICES+=(tzl_node); fi
+if service_selected tzl_memory_worker; then BACKEND_SERVICES+=(tzl_memory_worker); fi
 if service_selected tzl_admin_node; then BACKEND_SERVICES+=(tzl_admin_node); fi
 if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
   docker compose --profile prod up -d --no-deps "${BACKEND_SERVICES[@]}"
 fi
 if service_selected tzl_node; then
   wait_for_node_health tzl_node 'http://127.0.0.1:7001/api/system/health'
+  check_node_runtime_contract tzl_node web 0 1 1
+fi
+if service_selected tzl_memory_worker; then
+  wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
+  check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1
 fi
 if service_selected tzl_admin_node; then
   wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
@@ -483,6 +625,9 @@ for service in "${SERVICES[@]}"; do
   check_container "$service"
 done
 if service_selected tzl_node; then check_pm2_processes tzl_node 4 0; fi
+if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 1 0; fi
+if service_selected tzl_node; then check_node_runtime_contract tzl_node web 0 1 1; fi
+if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1; fi
 if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 2 0; fi
 for service in "${SERVICES[@]}"; do
   [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
@@ -510,7 +655,11 @@ for service in "${LOG_SERVICES[@]}"; do
 done
 
 set_phase final
-[[ -z "$(git status --porcelain)" ]]
+if [[ -n "$PROTECTED_DIRTY_BASELINE" ]]; then
+  verify_protected_dirty_unchanged
+else
+  [[ -z "$(git status --porcelain)" ]]
+fi
 [[ "$(git rev-parse HEAD)" == "$TARGET" ]]
 DEPLOY_STARTED=0
 trap - ERR
@@ -523,9 +672,10 @@ printf 'release_version=%s\n' "$TARGET"
 printf 'services=%s\n' "${SERVICES[*]}"
 for service in "${SERVICES[@]}"; do
   docker inspect -f 'service={{.Name}} state={{.State.Status}} restarts={{.RestartCount}} image={{.Image}}' "$service"
-  printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]}"
+  printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]:-none}"
 done
 if service_selected tzl_node; then printf 'voice_runtime=ready\n'; fi
+if service_selected tzl_memory_worker; then printf 'memory_worker=ready concurrency=1\n'; fi
 printf 'public_health=ok\nadmin_health=ok\n'
 if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then printf 'pm2_stability_seconds=%s\n' "$STABILITY_SECONDS"; fi
 if service_selected tzl_admin_web; then printf 'admin_legacy_assets=retained_30d\n'; fi

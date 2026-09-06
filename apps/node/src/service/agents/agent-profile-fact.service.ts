@@ -9,6 +9,7 @@ import {
   AgentProfileFactPolarity,
   AgentProfileFactStatus,
   AgentProfileFactType,
+  AgentEntity,
   MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
@@ -72,6 +73,12 @@ interface ExtractProfileFactsOptions {
   searchableText: string;
   explicitlyConfirmed?: boolean;
   previousAssistantContent?: string;
+}
+
+interface ExtractMessengerProfileFactsOptions {
+  message: MessageEntity;
+  searchableText: string;
+  parentAgent: AgentEntity;
 }
 
 interface ExtractProfileFactsFromFeedbackOptions {
@@ -292,6 +299,78 @@ export class AgentProfileFactService {
     }
 
     return extractedFacts.map(item => item.fact);
+  }
+
+  /**
+   * Messenger interviews describe several people in the third person. They
+   * therefore cannot use the ordinary "current agent" parser: doing so can
+   * turn a fact about 爸爸 into a fact about 妈妈. Give the memory model the
+   * bound parent identity and only accept facts it assigns to that person.
+   */
+  async extractAndUpsertFromMessengerMessage(
+    options: ExtractMessengerProfileFactsOptions
+  ): Promise<AgentProfileFactSummary[]> {
+    const sourceText = this.normalizeSourceText(options.searchableText);
+    if (!sourceText || isForgetMemoryRequest(sourceText)) return [];
+    if (!this.openAIService?.isEnabled?.()) return [];
+
+    const parentReferences = [
+      options.parentAgent.name,
+      options.parentAgent.realName,
+      options.parentAgent.iCallAgent,
+    ]
+      .map(value => value?.trim())
+      .filter(Boolean)
+      .join('、');
+
+    try {
+      const result = await this.openAIService.generateText({
+        temperature: 0,
+        topP: 0.1,
+        reasoningSplit: false,
+        maxTokens: 600,
+        systemPrompt: [
+          '你是独立的角色事实记忆抽取器，不生成聊天回复。只输出严格JSON数组。',
+          '本轮来自小使者访谈，文本可能同时谈到多位家人。只抽取属于指定AI亲人本人的明确、稳定事实；用户本人和其他亲人的事实一律不要输出。',
+          '第三人称称呼只有明确指向指定AI亲人时才可归入；指代不明、疑问、否定、猜测不写入，不根据常识补全。',
+          '字段：type、key、value、polarity、confidence、priority。type只能是identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity只能是positive/negative；confidence只能是extracted/confirmed/user_corrected；priority为1-3。',
+          'key使用稳定短键，value写成可独立理解的事实。正式姓名仅在原文明示且无疑问、无否定时使用identity.real_name。',
+          '没有可确认事实输出[]。',
+        ].join('\n'),
+        prompt: [
+          `指定AI亲人：${parentReferences || options.parentAgent.name}`,
+          `用户如何称呼该亲人：${
+            options.parentAgent.iCallAgent?.trim() || '未提供'
+          }`,
+          `用户原话：${sourceText.slice(0, 1000)}`,
+        ].join('\n'),
+      });
+      const facts = this.parseLLMFacts(result.content, sourceText)
+        .filter(fact => !this.isGlobalUserIdentityFactKey(fact.key))
+        .filter(
+          fact =>
+            !isNameMemoryFactKey(fact.key) ||
+            isValidatedNameFactForSource(fact.key, fact.value, sourceText)
+        );
+
+      for (const fact of facts) {
+        await this.upsertFact({
+          ...fact,
+          userId: options.message.userId,
+          agentId: options.parentAgent.id,
+          sourceMessageId: options.message.id,
+          sourceText,
+          trustedSource: true,
+        });
+      }
+      return facts;
+    } catch (error) {
+      this.logger?.warn?.(
+        '[agent-profile-fact] messenger extraction failed, reason=%s',
+        error instanceof Error ? error.message : String(error)
+      );
+      return [];
+    }
   }
 
   private isGlobalUserIdentityFactKey(key: string): boolean {

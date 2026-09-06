@@ -40,6 +40,7 @@ services:
       NODE_MONGO_USERNAME: ${MONGO_USERNAME:-admin}
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
+      NODE_RUNTIME_ROLE: web
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     expose:
       - "7001"
@@ -48,6 +49,49 @@ services:
     depends_on:
       - tzl_redis
       - tzl_mongo
+    networks:
+      - tzl-network
+    restart: always
+
+  tzl_memory_worker:
+    profiles: ["prod"]
+    container_name: tzl_memory_worker
+    image: tianzhiling-tzl_node
+    env_file:
+      - .env
+    environment:
+      NODE_PORT: 7001
+      NODE_REDIS_HOST: tzl_redis
+      NODE_REDIS_PORT: 6379
+      NODE_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      NODE_REDIS_DB: ${REDIS_DB:-0}
+      NODE_MONGO_HOST: tzl_mongo
+      NODE_MONGO_PORT: 27017
+      NODE_MONGO_DB: ${MONGO_DB:-tzl}
+      NODE_MONGO_AUTH_SOURCE: ${MONGO_AUTH_SOURCE:-admin}
+      NODE_MONGO_USERNAME: ${MONGO_USERNAME:-admin}
+      NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
+      NODE_MILVUS_ADDRESS: standalone:19530
+      NODE_RUNTIME_ROLE: memory-worker
+      NODE_MEMORY_WORKER_CONCURRENCY: 1
+      NODE_OPTIONS: ${NODE_MEMORY_WORKER_NODE_OPTIONS:---heapsnapshot-signal=SIGUSR2}
+      RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
+    command:
+      [
+        "pm2-runtime",
+        "start",
+        "./bootstrap.js",
+        "--name",
+        "tzl-memory-worker",
+        "-i",
+        "1",
+      ]
+    volumes:
+      - ./resource/cert:/workspace/resource/cert:ro
+    depends_on:
+      - tzl_redis
+      - tzl_mongo
+      - standalone
     networks:
       - tzl-network
     restart: always

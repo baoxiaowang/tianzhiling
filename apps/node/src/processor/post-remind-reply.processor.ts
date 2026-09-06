@@ -1,12 +1,13 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import {
   POST_REMIND_REPLY_QUEUE,
   PostRemindReplyJobData,
   PostService,
 } from '../service/post.service';
+import { RuntimeProcessor } from './runtime-processor';
 
-@Processor(POST_REMIND_REPLY_QUEUE)
+@RuntimeProcessor(POST_REMIND_REPLY_QUEUE)
 export class PostRemindReplyProcessor implements IProcessor {
   @Inject()
   postService: PostService;

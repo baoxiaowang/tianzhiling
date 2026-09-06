@@ -1,5 +1,5 @@
 import { Inject } from '@midwayjs/core';
-import { IProcessor, Processor } from '@midwayjs/bullmq';
+import { IProcessor } from '@midwayjs/bullmq';
 import { MemoryPipelineTaskStatus } from '@tzl/entities';
 import { ConversationService } from '../service/conversation.service';
 import {
@@ -7,8 +7,14 @@ import {
   MemoryPipelineJobData,
   MemoryPipelineTaskService,
 } from '../service/memory-pipeline-task.service';
+import {
+  resolveMemoryWorkerConcurrency,
+  RuntimeProcessor,
+} from './runtime-processor';
 
-@Processor(MEMORY_PIPELINE_QUEUE)
+@RuntimeProcessor(MEMORY_PIPELINE_QUEUE, undefined, {
+  concurrency: resolveMemoryWorkerConcurrency(),
+})
 export class MemoryPipelineProcessor implements IProcessor {
   @Inject()
   memoryPipelineTaskService: MemoryPipelineTaskService;

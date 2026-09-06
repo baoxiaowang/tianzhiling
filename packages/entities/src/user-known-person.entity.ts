@@ -30,6 +30,10 @@ export class UserKnownPersonEntity extends BaseEntity {
   @Column()
   relationToUser?: string;
 
+  /** The same real person represented by one of this account's AI agents. */
+  @Column()
+  linkedAgentId?: MongoObjectId;
+
   @Column()
   status: UserKnownPersonStatus;
 
