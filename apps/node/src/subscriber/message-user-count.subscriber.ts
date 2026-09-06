@@ -4,6 +4,7 @@ import {
   InsertEvent,
   RemoveEvent,
 } from 'typeorm';
+import { Provide } from '@midwayjs/core';
 import {
   AgentEntity,
   MessageEntity,
@@ -12,6 +13,7 @@ import {
 } from '@tzl/entities';
 
 @EventSubscriber()
+@Provide()
 export class MessageUserCountSubscriber
   implements EntitySubscriberInterface<MessageEntity>
 {
