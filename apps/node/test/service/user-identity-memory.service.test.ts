@@ -169,6 +169,44 @@ describe('UserIdentityMemoryService', () => {
     });
   });
 
+  it('links a later AI relative to the existing account person with the same title', async () => {
+    const service = new UserIdentityMemoryService();
+    const linkedAgentId = new MongoObjectId('665000000000000000000231');
+    const existing = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000232'),
+      userId: USER_ID,
+      identityKey: 'person:existing-grandpa',
+      relationToUser: '爷爷',
+      status: 'active',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    service.knownPersonModel = {
+      find: jest.fn().mockResolvedValue([existing]),
+      save: jest.fn(async value => value),
+    } as never;
+    service.userRelativeProfileService = {
+      ensureForKnownPerson: jest.fn().mockResolvedValue(null),
+    } as never;
+
+    const result = await service.upsertKnownPersonDeclaration({
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      messageId: new MongoObjectId('665000000000000000000233'),
+      sourceText: '这是我爷爷',
+      declaration: {
+        identityKey: '',
+        aliases: [],
+        relationToUser: '爷爷',
+        linkedAgentId,
+      },
+    });
+
+    expect(result.id).toEqual(existing.id);
+    expect(result.linkedAgentId).toEqual(linkedAgentId);
+    expect(service.knownPersonModel.save).toHaveBeenCalledWith(existing);
+  });
+
   it('keeps an agent-specific preferred address out of global aliases', async () => {
     const service = new UserIdentityMemoryService();
     const save = jest.fn(async value => value);

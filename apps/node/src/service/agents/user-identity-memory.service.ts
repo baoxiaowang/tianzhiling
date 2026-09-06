@@ -315,6 +315,18 @@ export class UserIdentityMemoryService {
       person => normalizeRelation(person.relationToUser || '') === relation
     );
     if (!existing && nameMatches.length === 1) existing = nameMatches[0];
+    if (!existing && declaration.linkedAgentId) {
+      const sameRelation = people.filter(
+        person => normalizeRelation(person.relationToUser || '') === relation
+      );
+      const compatible = sameRelation.filter(
+        person =>
+          !declaration.realName ||
+          !person.realName ||
+          person.realName === declaration.realName
+      );
+      if (compatible.length) existing = compatible[0];
+    }
 
     const now = new Date();
     if (existing) {
@@ -329,7 +341,7 @@ export class UserIdentityMemoryService {
       existing.preferredName = declaration.aliases[0] || existing.preferredName;
       existing.aliases = aliases;
       existing.relationToUser = declaration.relationToUser;
-      if (!existing.linkedAgentId && declaration.linkedAgentId) {
+      if (!existing.linkedAgentId) {
         existing.linkedAgentId = declaration.linkedAgentId;
       }
       existing.sourceAgentId = options.agentId;

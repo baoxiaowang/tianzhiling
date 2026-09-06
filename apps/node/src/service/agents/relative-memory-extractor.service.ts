@@ -175,7 +175,10 @@ export class RelativeMemoryExtractorService {
             },
           });
       }
-      if (!person && (realName || aliases.length || relationCount === 0)) {
+      if (
+        !person &&
+        (realName || aliases.length || relationCount === 0 || linkedAgentId)
+      ) {
         const declaration: KnownPersonDeclaration = {
           identityKey: '',
           realName,
