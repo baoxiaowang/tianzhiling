@@ -1,6 +1,8 @@
 import { MainConfiguration } from '../src/configuration';
 import { MEMORY_PIPELINE_QUEUE } from '../src/service/memory-pipeline-task.service';
 
+const ORIGINAL_NODE_APP_INSTANCE = process.env.NODE_APP_INSTANCE;
+
 describe('memory pipeline startup reconciliation', () => {
   it('recreates a stale scheduler and dispatches an immediate reconciliation', async () => {
     const now = 1_788_659_800_000;
@@ -57,7 +59,24 @@ describe('memory pipeline startup reconciliation', () => {
     expect(queue.addJobToQueue).toHaveBeenCalledTimes(2);
   });
 
+  it('lets only PM2 instance zero own scheduler repair', async () => {
+    process.env.NODE_APP_INSTANCE = '2';
+    const getQueue = jest.fn();
+    const configuration = new MainConfiguration();
+    configuration.logger = { warn: jest.fn() } as never;
+    configuration.bullmqFramework = { getQueue } as never;
+
+    await configuration.onServerReady();
+
+    expect(getQueue).not.toHaveBeenCalledWith(MEMORY_PIPELINE_QUEUE);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
+    if (ORIGINAL_NODE_APP_INSTANCE === undefined) {
+      delete process.env.NODE_APP_INSTANCE;
+    } else {
+      process.env.NODE_APP_INSTANCE = ORIGINAL_NODE_APP_INSTANCE;
+    }
   });
 });
