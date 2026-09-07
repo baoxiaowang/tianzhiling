@@ -82,17 +82,30 @@
                     :key="agent.id"
                     class="voice-model-panel__bound-agent"
                   >
-                    <a-tooltip :content="agent.name || '未命名 AI 亲人'">
-                      <a-avatar :size="36">
-                        <img
-                          v-if="agent.avatar"
-                          :src="agent.avatar"
-                          :alt="agent.name || 'AI 亲人头像'"
-                        />
-                        <template v-else>
-                          {{ getAgentAvatarFallback(agent.name) }}
-                        </template>
-                      </a-avatar>
+                    <a-tooltip
+                      :content="`${
+                        agent.name || '未命名 AI 亲人'
+                      } · 点击更换绑定`"
+                    >
+                      <button
+                        type="button"
+                        class="voice-model-panel__bound-agent-button"
+                        :aria-label="`已绑定${
+                          agent.name || '未命名 AI 亲人'
+                        }，点击更换绑定`"
+                        @click="openBinding(record)"
+                      >
+                        <a-avatar :size="36">
+                          <img
+                            v-if="agent.avatar"
+                            :src="agent.avatar"
+                            :alt="agent.name || 'AI 亲人头像'"
+                          />
+                          <template v-else>
+                            {{ getAgentAvatarFallback(agent.name) }}
+                          </template>
+                        </a-avatar>
+                      </button>
                     </a-tooltip>
                     <a-popconfirm
                       :content="`确认解除“${
@@ -1812,6 +1825,9 @@
       (agent) => !agent.messengerOfAgentId
     );
     userAgents.value = bindableAgents;
+    selectedBindingAgentId.value =
+      bindableAgents.find((agent) => agent.voiceTimbreId === record.id)?.id ||
+      '';
     bindingVisible.value = true;
   };
 
@@ -1824,6 +1840,9 @@
     try {
       bindingConfirming.value = true;
       await updateAgent(agent.id, { voiceTimbreId: timbre.id });
+      userAgents.value = userAgents.value.map((item) =>
+        item.id === agent.id ? { ...item, voiceTimbreId: timbre.id } : item
+      );
       await fetchList();
       Message.success(`已绑定“${agent.name || '该智能体'}”`);
       return true;
@@ -1839,6 +1858,9 @@
     try {
       bindingSavingAgentId.value = agent.id;
       await updateAgent(agent.id, { voiceTimbreId: '' });
+      userAgents.value = userAgents.value.map((item) =>
+        item.id === agent.id ? { ...item, voiceTimbreId: '' } : item
+      );
       await fetchList();
       Message.success(`已解绑“${agent.name || '该智能体'}”`);
     } catch (error: any) {
@@ -2097,6 +2119,31 @@
     &__bound-agent {
       position: relative;
       line-height: 1;
+    }
+
+    &__bound-agent-button {
+      display: block;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      line-height: 0;
+      cursor: pointer;
+
+      :deep(.arco-avatar) {
+        box-shadow: 0 0 0 2px rgb(var(--primary-6));
+        transition: box-shadow 0.2s, transform 0.2s;
+      }
+
+      &:hover :deep(.arco-avatar),
+      &:focus-visible :deep(.arco-avatar) {
+        box-shadow: 0 0 0 3px rgb(var(--primary-4));
+        transform: translateY(-1px);
+      }
+
+      &:focus-visible {
+        outline: none;
+      }
     }
 
     &__unbind-button {
