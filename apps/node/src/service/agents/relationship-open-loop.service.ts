@@ -1,4 +1,12 @@
-import { Destroy, Init, Inject, Logger, Provide } from '@midwayjs/core';
+import {
+  Destroy,
+  Init,
+  Inject,
+  Logger,
+  Provide,
+  Scope,
+  ScopeEnum,
+} from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { InjectEntityModel } from '@midwayjs/typeorm';
@@ -181,6 +189,7 @@ const STORAGE_QUEUES = new Map<string, Promise<unknown>>();
 let backfillRunning = false;
 
 @Provide()
+@Scope(ScopeEnum.Singleton)
 export class RelationshipOpenLoopService {
   private backfillTimer?: ReturnType<typeof setInterval>;
 
