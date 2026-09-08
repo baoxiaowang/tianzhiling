@@ -85,9 +85,6 @@ export class UserIdentityMemoryService {
   @InjectEntityModel(UserIdentityProfileEntity)
   identityModel: MongoRepository<UserIdentityProfileEntity>;
 
-  @InjectEntityModel(MessageEntity)
-  messageModel: MongoRepository<MessageEntity>;
-
   @InjectEntityModel(UserKnownPersonEntity)
   knownPersonModel: MongoRepository<UserKnownPersonEntity>;
 
@@ -110,11 +107,6 @@ export class UserIdentityMemoryService {
       messageId: message.id,
       sourceText,
     });
-  }
-
-  /** Project only the approved user's identity; do not re-extract other people. */
-  async recordApprovedUserIdentity(message: MessageEntity, sourceText: string, identity: { realName?: string; aliases?: string[] }, isCorrection = false): Promise<void> {
-    await this.recordUserIdentity({ userId: message.userId, agentId: message.agentId, messageId: message.id, sourceText, sourceOccurredAt: message.createdAt, validatedIdentity: identity, validatedSource: isCorrection ? 'explicit_chat_correction' : 'explicit_chat_statement' });
   }
 
   async getUserIdentity(
@@ -180,16 +172,8 @@ export class UserIdentityMemoryService {
     agentId: MongoObjectId;
     messageId: MongoObjectId;
     sourceText: string;
-    sourceOccurredAt?: Date;
-    validatedIdentity?: { realName?: string; aliases?: string[] };
-    validatedSource?: UserIdentityNameSource;
   }): Promise<void> {
-    const extracted = options.validatedIdentity ? {
-      canonicalName: options.validatedIdentity.realName,
-      explicitAliases: options.validatedIdentity.aliases || [],
-      derivedAliases: [],
-      preferredName: undefined,
-    } : extractUserNameMemory(options.sourceText);
+    const extracted = extractUserNameMemory(options.sourceText);
     const globalExplicitAliases = extracted.explicitAliases.filter(
       alias => alias !== extracted.preferredName
     );
@@ -197,35 +181,22 @@ export class UserIdentityMemoryService {
     if (!extracted.canonicalName && !globalExplicitAliases.length) return;
 
     const now = new Date();
-    const source: UserIdentityNameSource = options.validatedSource || (isExplicitCanonicalNameReplacement(
+    const source: UserIdentityNameSource = isExplicitCanonicalNameReplacement(
       options.sourceText,
       'user'
     )
       ? 'explicit_chat_correction'
-      : 'explicit_chat_statement');
+      : 'explicit_chat_statement';
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const existing = await this.identityModel.findOne({
         where: { userId: options.userId },
       });
-      if (existing && options.sourceOccurredAt) {
-        const sameSource = String(existing.sourceMessageId || '') === String(options.messageId);
-        if (sameSource) {
-          // One message may contain separate approved name and alias decisions.
-          // Deduplicate the payload, not the whole message.
-          if ((!extracted.canonicalName || extracted.canonicalName === existing.realName) &&
-              globalExplicitAliases.every(alias => alias === existing.realName || existing.aliases?.includes(alias))) return;
-        } else {
-          const source = existing.sourceMessageId ? await this.messageModel.findOne({ where: { _id: existing.sourceMessageId, userId: options.userId } as never }) : null;
-          // Compare event times inside the CAS retry, not the time a backfill ran.
-          if ((source?.createdAt || existing.updatedAt) > options.sourceOccurredAt) return;
-        }
-      }
       const nextAliases = this.unique([
         ...(existing?.aliases || []),
         ...extracted.derivedAliases,
         ...globalExplicitAliases,
-      ]).filter(name => name !== (extracted.canonicalName || existing?.realName));
+      ]).filter(name => name !== extracted.canonicalName);
 
       if (!existing) {
         const profile = new UserIdentityProfileEntity();

@@ -1,5 +1,4 @@
 import { Inject } from '@midwayjs/core';
-import { memoryBudgetSnapshot } from '../service/memory-resource-budget';
 import { IProcessor } from '@midwayjs/bullmq';
 import { MemoryPipelineTaskStatus } from '@tzl/entities';
 import { ConversationService } from '../service/conversation.service';
@@ -40,8 +39,6 @@ export class MemoryPipelineProcessor implements IProcessor {
   }
 
   private async processTask(taskId: string): Promise<void> {
-    // Leave unclaimed work durable; the existing reconciler retries it later.
-    if (!memoryBudgetSnapshot().allowed) return;
     const task = await this.memoryPipelineTaskService.claimTask(taskId);
     if (!task) return;
     try {

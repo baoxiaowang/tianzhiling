@@ -63,7 +63,6 @@ export class MemoryPipelineTaskService {
                 MemoryPipelineTaskStatus.failed,
               ],
             },
-            attemptCount: { $lt: 6 },
             nextAttemptAt: { $lte: new Date() },
           },
           {

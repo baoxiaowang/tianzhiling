@@ -32,7 +32,6 @@ interface RefreshMemoryProfileOptions {
   agent: AgentEntity;
   userId: MongoObjectId;
   force?: boolean;
-  deduplicateByFacts?: boolean;
   rethrow?: boolean;
 }
 
@@ -741,11 +740,6 @@ export class AgentMemoryProfileService {
       const facts = await this.listSynthesisFacts(options);
       const snapshots = this.buildSnapshots(facts);
 
-      // A replay may request refresh again after facts committed but a later
-      // stage failed. Identical inputs must not spend another model call.
-      if (options.deduplicateByFacts && options.force && options.agent.memoryProfileGeneratedAt &&
-          this.calculateChangeScore(options.agent.memoryProfileFactSnapshot || [], snapshots) === 0) return options.agent;
-
       if (facts.length === 0) {
         return options.agent.memoryProfileFactSnapshot?.length
           ? this.clearProfileAfterMemoryReset(options.agent)
@@ -807,7 +801,6 @@ export class AgentMemoryProfileService {
       userId: options.userId,
       agentId: options.agent.id,
       limit: MEMORY_FACT_LIMIT,
-      durableOnly: true,
     });
   }
 

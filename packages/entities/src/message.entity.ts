@@ -650,13 +650,6 @@ export class MessageEntity extends BaseEntity {
   @Column()
   memoryWriteCompletedAt?: Date;
 
-  // Persisted decisions are reused after worker retries; do not re-extract them.
-  @Column()
-  memoryValueAudit?: Record<string, unknown>;
-
-  @Column()
-  memoryValuePriorAudits?: Record<string, unknown>[];
-
   @Column()
   createdAt: Date;
 
