@@ -7,6 +7,9 @@ import {
 } from '@tzl/entities';
 import { MemoryPipelineTaskService } from '../../src/service/memory-pipeline-task.service';
 import { MemoryPipelineProcessor } from '../../src/processor/memory-pipeline.processor';
+import { memoryBudgetSnapshot } from '../../src/service/memory-resource-budget';
+
+jest.mock('../../src/service/memory-resource-budget', () => ({ memoryBudgetSnapshot: jest.fn(() => ({ allowed: true })) }));
 
 describe('MemoryPipelineTaskService', () => {
   it('persists an idempotent task before dispatching it', async () => {
@@ -55,6 +58,16 @@ describe('MemoryPipelineTaskService', () => {
 });
 
 describe('MemoryPipelineProcessor', () => {
+  beforeEach(() => (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: true }));
+  it('leaves durable work unclaimed when the memory budget is exhausted', async () => {
+    (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: false });
+    const processor = new MemoryPipelineProcessor();
+    processor.memoryPipelineTaskService = { claimTask: jest.fn() } as any;
+    processor.conversationService = { processMemoryPipelineTask: jest.fn() } as any;
+    await processor.execute({ taskId: '665000000000000000000411' });
+    expect(processor.memoryPipelineTaskService.claimTask).not.toHaveBeenCalled();
+    expect(processor.conversationService.processMemoryPipelineTask).not.toHaveBeenCalled();
+  });
   it('continues a reconciliation batch after one task fails', async () => {
     const processor = new MemoryPipelineProcessor();
     const first = Object.assign(new MemoryPipelineTaskEntity(), {

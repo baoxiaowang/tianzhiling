@@ -15,6 +15,9 @@ import {
 } from '@tzl/entities';
 import { OpenAIService } from './openai';
 import { UserIdentityMemoryService } from './user-identity-memory.service';
+import { isMemoryCurrent, isCanonicalUserNameEvidence } from './memory-value';
+import { MemoryValueService } from './memory-value.service';
+import { memoryValueModeForUser } from './memory-value-rollout';
 import {
   buildSharedFamilyMemberFactKey,
   extractSharedFamilyMemberDeclarations,
@@ -99,6 +102,7 @@ interface ListProfileFactsOptions {
   userId: MongoObjectId;
   agentId: MongoObjectId;
   limit?: number;
+  durableOnly?: boolean;
 }
 
 export type AgentVisualIdentityTarget = 'agent' | 'user' | 'family' | 'unknown';
@@ -251,9 +255,13 @@ export class AgentProfileFactService {
   @Inject()
   userIdentityMemoryService: UserIdentityMemoryService;
 
+  @Inject()
+  memoryValueService: MemoryValueService;
+
   async extractAndUpsertFromUserMessage(
     options: ExtractProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
+    if (this.memoryValueService?.active(options.message.userId)) return this.extractGovernedMessage(options.message, options.searchableText);
     const sourceText = this.normalizeSourceText(options.searchableText);
 
     if (!sourceText || isForgetMemoryRequest(sourceText)) {
@@ -314,6 +322,7 @@ export class AgentProfileFactService {
   async extractAndUpsertFromMessengerMessage(
     options: ExtractMessengerProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
+    if (this.memoryValueService?.active(options.message.userId)) return this.extractGovernedMessage(options.message, options.searchableText, options.parentAgent);
     const sourceText = this.normalizeSourceText(options.searchableText);
     if (!sourceText || isForgetMemoryRequest(sourceText)) return [];
     if (!this.openAIService?.isEnabled?.()) return [];
@@ -392,6 +401,15 @@ export class AgentProfileFactService {
       key.startsWith(USER_REAL_NAME_HISTORY_FACT_PREFIX) ||
       key === 'user.identity.aliases.derived'
     );
+  }
+
+  private async extractGovernedMessage(message: MessageEntity, text: string, parent?: AgentEntity): Promise<AgentProfileFactSummary[]> {
+    let agent = parent || await this.memoryValueService.agentModel.findOne({ where: { _id: message.agentId } as never });
+    if (agent?.messengerOfAgentId) agent = await this.memoryValueService.agentModel.findOne({ where: { _id: agent.messengerOfAgentId } as never });
+    if (!agent) throw new Error('Memory subject unavailable');
+    await this.memoryValueService.process(message, text, agent);
+    const facts = await this.factModel.find({ where: { userId: message.userId, sourceMessageId: message.id, status: 'active', 'governance.version': 'memory_value_v1' } as never, take: 16 });
+    return facts.map(f => this.buildSummary(f)).filter((f): f is AgentProfileFactSummary => !!f);
   }
 
   async extractAndUpsertFromFeedback(
@@ -498,11 +516,14 @@ export class AgentProfileFactService {
   async listFactsForPrompt(
     options: ListProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
+    const valueActive = memoryValueModeForUser(options.userId) === 'active';
     const facts = await this.factModel.find({
       where: {
         userId: options.userId,
-        agentId: options.agentId,
+        agentId: valueActive && !options.durableOnly ? { $in: [options.agentId, options.userId] } as never : options.agentId,
         status: AgentProfileFactStatus.active,
+        ...(valueActive ? { $or: [{ 'governance.validUntil': null }, { 'governance.validUntil': { $gt: new Date().toISOString() } }] } : {}),
+        ...(options.durableOnly ? { 'governance.retention': { $ne: 'session' } } : {}),
       },
       order: {
         priority: 'DESC',
@@ -512,6 +533,7 @@ export class AgentProfileFactService {
     });
 
     return facts
+      .filter(fact => !isCanonicalUserNameEvidence(fact) && isMemoryCurrent(fact.governance) && (!options.durableOnly || fact.governance?.retention !== 'session'))
       .map(fact => this.buildSummary(fact))
       .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
   }
@@ -1673,6 +1695,10 @@ export class AgentProfileFactService {
         .filter(Boolean),
       updatedAt: fact.updatedAt,
     };
+    if (fact.governance?.subjectRef.startsWith('user:')) {
+      summary.value = `用户本人：${value}`;
+      if (summary.key.startsWith('identity.')) summary.key = `user.${summary.key}`;
+    }
     const id = this.stringifyObjectId(fact.id);
     const sourceMessageId = this.stringifyObjectId(
       fact.sourceMessageId || fact.sourceMessageIds?.[0]

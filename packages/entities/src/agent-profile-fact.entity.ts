@@ -44,6 +44,23 @@ export enum AgentProfileFactAssertionPolicy {
   contextOnly = "context_only",
 }
 
+export interface MemoryGovernance {
+  version: "memory_value_v1";
+  subjectRef: string;
+  participants: string[];
+  kind: "person" | "relationship" | "event" | "temporal";
+  retention: "session" | "durable" | "core";
+  certainty: "explicit" | "context_resolved" | "uncertain";
+  timeKind: "current" | "historical" | "stable" | "plan" | "wish";
+  validUntil?: string;
+  reason: string;
+  evidence: Array<{ messageId: string; quote: string }>;
+  revision: number;
+  decisionId: string;
+  sourceOccurredAt: string;
+  protected: boolean;
+}
+
 @Index(["userId", "agentId", "key"], { unique: true, background: true })
 @Index(["userId", "agentId", "status", "priority", "updatedAt"], {
   background: true,
@@ -100,6 +117,9 @@ export class AgentProfileFactEntity extends BaseEntity {
 
   @Column()
   lastUsedAt?: Date;
+
+  @Column()
+  governance?: MemoryGovernance;
 
   @Column()
   createdAt: Date;

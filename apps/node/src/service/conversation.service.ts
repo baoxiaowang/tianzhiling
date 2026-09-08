@@ -66,6 +66,7 @@ import { AgentConversationSummaryService } from './agents/agent-conversation-sum
 import { AgentEmotionStateService } from './agents/agent-emotion-state.service';
 import { AgentMemoryFactService } from './agents/agent-memory-fact.service';
 import { AgentMemoryProfileService } from './agents/agent-memory-profile.service';
+import { MemoryValueService } from './agents/memory-value.service';
 import { buildAgentPersonaPrompt } from './agents/agent-persona';
 import { buildAgentIdentityContract } from './agents/agent-identity-contract';
 import {
@@ -748,6 +749,9 @@ export class ConversationService {
 
   @Inject()
   agentMemoryProfileService: AgentMemoryProfileService;
+
+  @Inject()
+  memoryValueService: MemoryValueService;
 
   @Inject()
   personTemporalMemoryService: PersonTemporalMemoryService;
@@ -2178,8 +2182,13 @@ export class ConversationService {
       visionCompletions: 0,
     };
     let outcome: 'completed' | 'skipped' | 'failed' = 'failed';
+    const memoryModel = this.memoryValueService?.openAIService;
+    const memoryAttribution = memoryModel !== this.openAIService ? memoryModel?.createModelCallAttribution?.() : undefined;
     try {
-      const execute = () => this.executeMemoryPipelineTask(task);
+      const executeTask = () => this.executeMemoryPipelineTask(task);
+      const execute = () => memoryAttribution && memoryModel?.runWithModelCallAttribution
+        ? memoryModel.runWithModelCallAttribution(memoryAttribution, executeTask)
+        : executeTask();
       const result = this.openAIService?.runWithModelCallAttribution
         ? await this.openAIService.runWithModelCallAttribution(
             attribution,
@@ -2189,6 +2198,9 @@ export class ConversationService {
       outcome = result;
       return result;
     } finally {
+      if (memoryAttribution) {
+        for (const key of ['chatCompletions', 'providerAttempts', 'embeddings', 'visionCompletions'] as const) attribution[key] += memoryAttribution[key];
+      }
       const after = process.memoryUsage();
       this.logger?.info?.(
         '[memory-pipeline-metrics] taskId=%s kind=%s outcome=%s durationMs=%s modelCalls=%s chatCompletions=%s providerAttempts=%s embeddings=%s visionCompletions=%s rssBefore=%s rssAfter=%s rssDelta=%s heapUsedBefore=%s heapUsedAfter=%s heapUsedDelta=%s heapTotalBefore=%s heapTotalAfter=%s externalBefore=%s externalAfter=%s arrayBuffersBefore=%s arrayBuffersAfter=%s activeResources=%s',
@@ -2243,6 +2255,38 @@ export class ConversationService {
 
     if (task.kind === MemoryPipelineTaskKind.structuredMemory) {
       const sourceAgent = await this.findAgentById(message.agentId);
+      if (this.memoryValueService?.enabled(message.userId)) {
+        const target = sourceAgent?.messengerOfAgentId
+          ? await this.findAgentById(sourceAgent.messengerOfAgentId)
+          : sourceAgent;
+        if (!target) throw new Error('Memory subject agent unavailable');
+        if (!this.memoryValueService.active(message.userId)) {
+          // Shadow is advisory: even its failure must not bypass legacy writes.
+          try {
+            await this.memoryValueService.process(message, searchableText, target, { shadow: true });
+          } catch (error) {
+            this.logger.warn('[memory-value] shadow failed; continuing legacy memory: %s', this.describeReplyError(error));
+          }
+        } else {
+          const result = await this.memoryValueService.process(message, searchableText, target);
+          if (!sourceAgent?.messengerOfAgentId) {
+            await this.recognizeEmotionStateForUserMessage(message, searchableText);
+            await this.captureRelationshipOpenLoop(message, searchableText).catch(error => {
+              this.logger.warn('[memory-value] relationship task capture deferred: %s', this.describeReplyError(error));
+            });
+          }
+          // Summary is a derived view. Its retry does not repeat extraction.
+          for (const id of result.changedAgents) {
+            const changedAgent = await this.findAgentById(new MongoObjectId(id));
+            if (changedAgent) await this.agentMemoryProfileService.refreshFromMemoryNow({ agent: changedAgent, userId: message.userId, deduplicateByFacts: true });
+          }
+          await this.memoryPipelineTaskService.enqueueForMessage(message, searchableText, [MemoryPipelineTaskKind.personSemanticIndex]);
+          if (message.traceId) {
+            await this.chatTraceService?.markBackgroundCompleted(message.traceId, new Date(), message.createdAt);
+          }
+          return 'completed';
+        }
+      }
       if (sourceAgent?.messengerOfAgentId) {
         const parentAgent = await this.findAgentById(
           sourceAgent.messengerOfAgentId
@@ -2302,6 +2346,10 @@ export class ConversationService {
     }
 
     if (task.kind === MemoryPipelineTaskKind.personSemanticIndex) {
+      if (this.memoryValueService?.active(message.userId)) {
+        await this.memoryValueService.indexMessage(message, this.milvusService);
+        return 'completed';
+      }
       let units =
         (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
           {
