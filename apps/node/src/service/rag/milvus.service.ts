@@ -1,4 +1,8 @@
 import { Config, Inject, Logger, Provide } from '@midwayjs/core';
+import { InjectEntityModel } from '@midwayjs/typeorm';
+import { MongoRepository } from 'typeorm';
+import { AgentProfileFactEntity, MongoObjectId } from '@tzl/entities';
+import { isMemoryCurrent, isCanonicalUserNameEvidence } from '../agents/memory-value';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { promises as dns } from 'dns';
@@ -93,6 +97,8 @@ const DEFAULT_SCHEMA_VERSION = 'conversation_message_memory_v2';
 
 @Provide()
 export class MilvusService {
+  @InjectEntityModel(AgentProfileFactEntity)
+  governedFactModel: MongoRepository<AgentProfileFactEntity>;
   @Logger()
   logger: ILogger;
 
@@ -405,7 +411,7 @@ export class MilvusService {
 
       const minScore = this.resolveMinScore();
 
-      return (results.results || [])
+      const candidates = (results.results || [])
         .map(item => this.buildRetrievedConversationMemory(item))
         .filter(
           item =>
@@ -413,6 +419,7 @@ export class MilvusService {
             item.searchableText &&
             (typeof minScore !== 'number' || item.score >= minScore)
         );
+      return await this.filterGovernedEvidence(candidates, options.userId);
     } catch (error) {
       this.recordMilvusFailure('search', error);
       this.logger.error(
@@ -421,6 +428,34 @@ export class MilvusService {
         error instanceof Error ? error.message : String(error)
       );
       return [];
+    }
+  }
+
+  private async filterGovernedEvidence(
+    candidates: RetrievedConversationMemory[],
+    userId: string
+  ): Promise<RetrievedConversationMemory[]> {
+    const governed = candidates.filter(item => item.memoryKind === 'governed_fact');
+    if (!governed.length) return candidates;
+    const fallback = candidates.filter(item => item.memoryKind !== 'governed_fact');
+    if (!MongoObjectId.isValid(userId)) return fallback;
+    const ids = governed.filter(item => MongoObjectId.isValid(item.id)).map(item => new MongoObjectId(item.id));
+    try {
+      const current = ids.length ? await this.governedFactModel.find({
+        where: { _id: { $in: ids }, userId: new MongoObjectId(userId), status: 'active' } as never,
+        take: ids.length,
+      }) : [];
+      const valid = new Map(current.filter(f => f.governance?.version === 'memory_value_v1' && !isCanonicalUserNameEvidence(f) && isMemoryCurrent(f.governance)).map(f => [String(f.id), f]));
+      return candidates.filter(item => {
+        if (item.memoryKind !== 'governed_fact') return true;
+        const fact = valid.get(item.id);
+        return !!fact && String(fact.governance!.revision) === item.sourceHash && fact.value === item.searchableText && String(fact.agentId) === item.personId;
+      });
+    } catch (error) {
+      // A source-store outage is not a Milvus outage. Never trust unverified
+      // derived facts, but keep the independently retrieved original messages.
+      this.logger.warn('[memory] governed evidence verification unavailable');
+      return fallback;
     }
   }
 

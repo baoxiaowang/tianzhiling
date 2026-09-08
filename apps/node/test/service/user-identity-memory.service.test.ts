@@ -13,6 +13,47 @@ const USER_ID = new MongoObjectId('665000000000000000000001');
 const AGENT_ID = new MongoObjectId('665000000000000000000010');
 
 describe('UserIdentityMemoryService', () => {
+  it('applies separate approved name and alias payloads from one message idempotently', async () => {
+    const service = new UserIdentityMemoryService();
+    let stored: any = null;
+    service.identityModel = {
+      findOne: jest.fn(async () => stored),
+      save: jest.fn(async value => { stored = { ...value, id: new MongoObjectId() }; return stored; }),
+      updateOne: jest.fn(async (_filter, update) => { Object.assign(stored, update.$set); return { modifiedCount: 1 }; }),
+    } as any;
+    const message = createMessage('我叫赵浩帅，小名浩浩');
+    message.createdAt = new Date('2026-09-08T00:00:00Z');
+    await service.recordApprovedUserIdentity(message, message.content, { realName: '赵浩帅' });
+    await service.recordApprovedUserIdentity(message, message.content, { aliases: ['浩浩'] });
+    await service.recordApprovedUserIdentity(message, message.content, { aliases: ['浩浩'] });
+    expect(stored).toMatchObject({ realName: '赵浩帅', aliases: ['浩浩'] });
+    expect(service.identityModel.save).toHaveBeenCalledTimes(1);
+    expect(service.identityModel.updateOne).toHaveBeenCalledTimes(1);
+  });
+  it('projects a model-confirmed bare name without reinterpreting it with a regex', async () => {
+    const service = new UserIdentityMemoryService();
+    service.identityModel = { findOne: jest.fn().mockResolvedValue(null), save: jest.fn(async value => value) } as any;
+    service.knownPersonModel = { save: jest.fn() } as any;
+    const message = createMessage('赵浩帅'); message.createdAt = new Date('2026-09-08T00:00:00Z');
+    await service.recordApprovedUserIdentity(message, message.content, { realName: '赵浩帅' });
+    expect(service.identityModel.save).toHaveBeenCalledWith(expect.objectContaining({ realName: '赵浩帅', sourceMessageId: message.id }));
+    expect(service.knownPersonModel.save).not.toHaveBeenCalled();
+  });
+  it('does not let a delayed approved message overwrite a newer global name', async () => {
+    const service = new UserIdentityMemoryService();
+    service.identityModel = { findOne: jest.fn().mockResolvedValue({ realName: '新名字', sourceMessageId: new MongoObjectId('665000000000000000000999'), updatedAt: new Date('2026-09-09T00:00:00Z') }), updateOne: jest.fn() } as any;
+    service.messageModel = { findOne: jest.fn().mockResolvedValue({ createdAt: new Date('2026-09-09T00:00:00Z') }) } as any;
+    const message = createMessage('赵浩帅'); message.createdAt = new Date('2026-09-08T00:00:00Z');
+    await service.recordApprovedUserIdentity(message, message.content, { realName: '赵浩帅' });
+    expect(service.identityModel.updateOne).not.toHaveBeenCalled();
+  });
+  it('keeps a more recent settings name when the old source has no message', async () => {
+    const service = new UserIdentityMemoryService();
+    service.identityModel = { findOne: jest.fn().mockResolvedValue({ realName: '设置姓名', source: 'settings', updatedAt: new Date('2026-09-09T00:00:00Z') }), updateOne: jest.fn() } as any;
+    const message = createMessage('赵浩帅'); message.createdAt = new Date('2026-09-08T00:00:00Z');
+    await service.recordApprovedUserIdentity(message, message.content, { realName: '赵浩帅' });
+    expect(service.identityModel.updateOne).not.toHaveBeenCalled();
+  });
   it('extracts explicit people but refuses questions and keeps relation in identity key', () => {
     expect(extractKnownPersonDeclarations('大宝叫李雨桐，是我女儿。')).toEqual([
       {

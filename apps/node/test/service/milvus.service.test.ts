@@ -1,5 +1,5 @@
 import { promises as dns } from 'dns';
-import { MessageRole, MessageType } from '@tzl/entities';
+import { MessageRole, MessageType, MongoObjectId } from '@tzl/entities';
 import { MilvusService } from '../../src/service/rag/milvus.service';
 
 jest.mock('dns', () => ({
@@ -31,6 +31,29 @@ describe('MilvusService endpoint protection', () => {
       warn: jest.fn(),
       info: jest.fn(),
     } as never;
+  });
+
+  it('suppresses revoked, expired, stale and wrong-person derived memories', async () => {
+    const userId = '665000000000000000000001';
+    const personId = '665000000000000000000002';
+    const factId = '665000000000000000000003';
+    const expiredId = '665000000000000000000004';
+    const current = { id: new MongoObjectId(factId), agentId: new MongoObjectId(personId), value: '具体共同经历', governance: { version: 'memory_value_v1', revision: 2 } };
+    service.governedFactModel = { find: jest.fn().mockResolvedValue([current, { ...current, id: new MongoObjectId(expiredId), governance: { ...current.governance, validUntil: '2000-01-01T00:00:00.000Z' } }]) } as any;
+    const valid = { id: factId, personId, memoryKind: 'governed_fact', searchableText: current.value, sourceHash: '2' };
+    const raw = { id: 'raw-message', memoryKind: 'raw_episode', searchableText: '原始消息' };
+    const candidates = [raw, valid, { ...valid, sourceHash: '1' }, { ...valid, searchableText: '已过时的内容' }, { ...valid, personId: userId }, { ...valid, id: expiredId }, { ...valid, id: '665000000000000000000005' }];
+    expect(await (service as any).filterGovernedEvidence(candidates, userId)).toEqual([raw, valid]);
+    expect(service.governedFactModel.find).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ userId: new MongoObjectId(userId), status: 'active' }), take: 6 }));
+  });
+
+  it('does not trip the vector circuit when source verification is unavailable', async () => {
+    service.governedFactModel = { find: jest.fn().mockRejectedValue(new Error('source unavailable')) } as any;
+    const raw = { id: 'raw-message', memoryKind: 'raw_episode', searchableText: '原始消息' };
+    const derived = { id: '665000000000000000000003', memoryKind: 'governed_fact' };
+    const failure = jest.spyOn(service as any, 'recordMilvusFailure');
+    expect(await (service as any).filterGovernedEvidence([raw, derived], '665000000000000000000001')).toEqual([raw]);
+    expect(failure).not.toHaveBeenCalled();
   });
 
   it('fails closed before creating embeddings or a Milvus client when DNS is unavailable', async () => {

@@ -20,6 +20,8 @@ RUN npx -y pnpm@9.15.9 install --frozen-lockfile --lockfile-dir=/workspace --con
 
 FROM deps AS build
 
+ENV NODE_OPTIONS="--max-old-space-size=1536"
+
 COPY packages/entities /workspace/packages/entities
 COPY packages/shared /workspace/packages/shared
 COPY apps/node ./
@@ -27,7 +29,8 @@ COPY apps/node ./
 RUN npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/entities build \
   && npx -y pnpm@9.15.9 --dir /workspace --filter @tzl/shared build \
   && npx -y pnpm@9.15.9 build \
-  && test -f dist/configuration.js
+  && test -f dist/configuration.js \
+  && node scripts/check-memory-runtime-init.js
 
 FROM base AS prod-deps
 
@@ -68,5 +71,7 @@ COPY --from=build /workspace/apps/node/scripts/ensure-milvus-v2-collection.js ./
 COPY --from=build /workspace/apps/node/scripts/migrate-milvus-history-to-v2.js ./scripts/migrate-milvus-history-to-v2.js
 COPY --from=build /workspace/apps/node/scripts/verify-milvus.js ./scripts/verify-milvus.js
 COPY --from=build /workspace/apps/node/scripts/calibrate-milvus-relevance.js ./scripts/calibrate-milvus-relevance.js
+COPY --from=build /workspace/apps/node/scripts/memory-value-maintenance.js ./scripts/memory-value-maintenance.js
+COPY --from=build /workspace/apps/node/scripts/check-memory-runtime-init.js ./scripts/check-memory-runtime-init.js
 
 CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "apibest-node", "-i", "4"]

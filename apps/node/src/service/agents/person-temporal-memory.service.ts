@@ -32,6 +32,8 @@ export interface RecordAgentDepartureTimeOptions {
   message: MessageEntity;
   searchableText: string;
   implicitCurrentAgent?: boolean;
+  /** A single memory decision already established subject and assertion semantics. */
+  semanticApproved?: boolean;
 }
 
 export interface RecordAgentDepartureTimeResult {
@@ -129,7 +131,7 @@ export class PersonTemporalMemoryService {
     let semanticSource: MessageEntity['temporalMemorySemanticSource'] =
       deterministicResult ? 'deterministic' : undefined;
     let parsed = deterministicResult;
-    if (!parsed) {
+    if (!parsed && !options.semanticApproved) {
       parsed = await this.extractDepartureTimeWithModel(options);
       if (parsed) semanticSource = 'fallback';
     }
