@@ -72,6 +72,7 @@ COPY --from=build /workspace/apps/node/scripts/migrate-milvus-history-to-v2.js .
 COPY --from=build /workspace/apps/node/scripts/verify-milvus.js ./scripts/verify-milvus.js
 COPY --from=build /workspace/apps/node/scripts/calibrate-milvus-relevance.js ./scripts/calibrate-milvus-relevance.js
 COPY --from=build /workspace/apps/node/scripts/memory-value-maintenance.js ./scripts/memory-value-maintenance.js
+COPY --from=build /workspace/apps/node/scripts/rebuild-memory-history.js ./scripts/rebuild-memory-history.js
 COPY --from=build /workspace/apps/node/scripts/check-memory-runtime-init.js ./scripts/check-memory-runtime-init.js
 
 CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "apibest-node", "-i", "4"]

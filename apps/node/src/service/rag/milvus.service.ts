@@ -3,6 +3,7 @@ import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AgentProfileFactEntity, MongoObjectId } from '@tzl/entities';
 import { isMemoryCurrent, isCanonicalUserNameEvidence } from '../agents/memory-value';
+import { memoryValueModeForUser } from '../agents/memory-value-rollout';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
 import { promises as dns } from 'dns';
@@ -435,6 +436,12 @@ export class MilvusService {
     candidates: RetrievedConversationMemory[],
     userId: string
   ): Promise<RetrievedConversationMemory[]> {
+    if (memoryValueModeForUser(userId) === 'active') {
+      // Rebuilt accounts may retain old vector rows for rollback. Only original
+      // episodes or Mongo-verified governed facts can enter the new read path.
+      candidates = candidates.filter(item => !item.memoryKind ||
+        item.memoryKind === 'raw_episode' || item.memoryKind === 'governed_fact');
+    }
     const governed = candidates.filter(item => item.memoryKind === 'governed_fact');
     if (!governed.length) return candidates;
     const fallback = candidates.filter(item => item.memoryKind !== 'governed_fact');

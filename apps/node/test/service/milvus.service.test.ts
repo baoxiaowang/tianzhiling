@@ -56,6 +56,20 @@ describe('MilvusService endpoint protection', () => {
     expect(failure).not.toHaveBeenCalled();
   });
 
+  it('excludes legacy derived rows only for an explicitly enabled account', async () => {
+    const userId='665000000000000000000001';
+    const mode=process.env.NODE_MEMORY_VALUE_MODE, users=process.env.NODE_MEMORY_VALUE_USER_IDS;
+    const raw={id:'raw',memoryKind:'raw_episode'}, legacy={id:'old',memoryKind:'relative_health'};
+    try {
+      process.env.NODE_MEMORY_VALUE_MODE='active';process.env.NODE_MEMORY_VALUE_USER_IDS=userId;
+      expect(await (service as any).filterGovernedEvidence([raw,legacy],userId)).toEqual([raw]);
+      expect(await (service as any).filterGovernedEvidence([raw,legacy],'665000000000000000000099')).toEqual([raw,legacy]);
+    } finally {
+      if(mode===undefined)delete process.env.NODE_MEMORY_VALUE_MODE;else process.env.NODE_MEMORY_VALUE_MODE=mode;
+      if(users===undefined)delete process.env.NODE_MEMORY_VALUE_USER_IDS;else process.env.NODE_MEMORY_VALUE_USER_IDS=users;
+    }
+  });
+
   it('fails closed before creating embeddings or a Milvus client when DNS is unavailable', async () => {
     mockedLookup.mockRejectedValueOnce(
       Object.assign(new Error('getaddrinfo ENOTFOUND standalone'), {
