@@ -108,32 +108,38 @@ const FAILED_IMPORT_STATUSES = [
   ConversationChatImportStatus.partialFailed,
 ];
 
+/**
+ * 缓存统一放在模块级而非 service 实例上：
+ * 无论 Midway 以何种 scope 创建 service 实例，缓存都全局共享，
+ * 避免每次请求重建实例导致缓存失效、重复做全表聚合。
+ */
+const reportCache = new Map<
+  string,
+  { expiresAt: number; value: AdminOperationsReportDTO }
+>();
+const userValueCache = new Map<
+  string,
+  { expiresAt: number; value: AdminUserValueReportDTO }
+>();
+const orderAnalyticsCache = new Map<
+  string,
+  { expiresAt: number; value: AdminOrderAnalyticsDTO }
+>();
+let allTimeCache: {
+  expiresAt: number;
+  value: AdminOperationsReportDTO['allTime'];
+} | undefined;
+const hourlyCountCache = new Map<
+  string,
+  { expiresAt: number; value: HourlyCountRow[] }
+>();
+const periodOrderStatsCache = new Map<
+  string,
+  { expiresAt: number; value: PeriodOrderStatsRow }
+>();
+
 @Provide()
 export class AdminOperationsService {
-  private readonly reportCache = new Map<
-    string,
-    { expiresAt: number; value: AdminOperationsReportDTO }
-  >();
-  private readonly userValueCache = new Map<
-    string,
-    { expiresAt: number; value: AdminUserValueReportDTO }
-  >();
-  private readonly orderAnalyticsCache = new Map<
-    string,
-    { expiresAt: number; value: AdminOrderAnalyticsDTO }
-  >();
-  private allTimeCache?: {
-    expiresAt: number;
-    value: AdminOperationsReportDTO['allTime'];
-  };
-  private readonly hourlyCountCache = new Map<
-    string,
-    { expiresAt: number; value: HourlyCountRow[] }
-  >();
-  private readonly periodOrderStatsCache = new Map<
-    string,
-    { expiresAt: number; value: PeriodOrderStatsRow }
-  >();
 
   @InjectEntityModel(AdminDailyStatsEntity)
   statsModel: MongoRepository<AdminDailyStatsEntity>;
@@ -403,7 +409,7 @@ export class AdminOperationsService {
     const normalizedMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? '')
       ? (month as string)
       : currentMonth;
-    const cached = this.reportCache.get(normalizedMonth);
+    const cached = reportCache.get(normalizedMonth);
     if (cached && cached.expiresAt > now.getTime()) {
       return cached.value;
     }
@@ -519,7 +525,7 @@ export class AdminOperationsService {
       daily,
       hourly,
     };
-    this.reportCache.set(normalizedMonth, {
+    reportCache.set(normalizedMonth, {
       expiresAt: now.getTime() + 5 * 60 * 1000,
       value: result,
     });
@@ -759,7 +765,7 @@ export class AdminOperationsService {
       requestedEndMonth > currentMonth ? currentMonth : requestedEndMonth;
     const months = Math.min(this.normalizePositiveInteger(rawMonths, 6), 24);
     const cacheKey = `${normalizedEndMonth}:${months}`;
-    const cached = this.userValueCache.get(cacheKey);
+    const cached = userValueCache.get(cacheKey);
 
     if (cached && cached.expiresAt > now.getTime()) {
       return cached.value;
@@ -852,7 +858,7 @@ export class AdminOperationsService {
       items,
     };
 
-    this.userValueCache.set(cacheKey, {
+    userValueCache.set(cacheKey, {
       expiresAt: now.getTime() + 5 * 60 * 1000,
       value: result,
     });
@@ -867,7 +873,7 @@ export class AdminOperationsService {
     const now = new Date();
     const currentMonth = this.getBeijingMonth(now);
     const normalizedMonth = this.normalizeMonth(month, currentMonth);
-    const cached = this.orderAnalyticsCache.get(normalizedMonth);
+    const cached = orderAnalyticsCache.get(normalizedMonth);
 
     if (!forceRefresh && cached && cached.expiresAt > now.getTime()) {
       return cached.value;
@@ -899,7 +905,7 @@ export class AdminOperationsService {
         },
       };
 
-      this.orderAnalyticsCache.set(normalizedMonth, {
+      orderAnalyticsCache.set(normalizedMonth, {
         expiresAt: now.getTime() + ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS,
         value,
       });
@@ -1026,7 +1032,7 @@ export class AdminOperationsService {
       );
     }
 
-    this.orderAnalyticsCache.set(normalizedMonth, {
+    orderAnalyticsCache.set(normalizedMonth, {
       expiresAt: now.getTime() + 5 * 60 * 1000,
       value: result,
     });
@@ -1379,7 +1385,7 @@ export class AdminOperationsService {
     // 月度去重付费口径 5 分钟缓存
     const cacheKey = `${start.getTime()}-${end.getTime()}|${JSON.stringify(extraMatch)}`;
     const now = Date.now();
-    const cached = this.periodOrderStatsCache.get(cacheKey);
+    const cached = periodOrderStatsCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
@@ -1411,7 +1417,7 @@ export class AdminOperationsService {
       ])
       .toArray();
     const value = rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
-    this.periodOrderStatsCache.set(cacheKey, {
+    periodOrderStatsCache.set(cacheKey, {
       expiresAt: now + 5 * 60 * 1000,
       value,
     });
@@ -1424,8 +1430,8 @@ export class AdminOperationsService {
   ): Promise<AdminOperationsReportDTO['allTime']> {
     const now = Date.now();
 
-    if (this.allTimeCache && this.allTimeCache.expiresAt > now) {
-      return this.allTimeCache.value;
+    if (allTimeCache && allTimeCache.expiresAt > now) {
+      return allTimeCache.value;
     }
 
     const [users, agents, chatRows, orderRows, refundRows, legacyRefundRows] =
@@ -1510,7 +1516,7 @@ export class AdminOperationsService {
       ),
     };
 
-    this.allTimeCache = { expiresAt: now + 5 * 60 * 1000, value };
+    allTimeCache = { expiresAt: now + 5 * 60 * 1000, value };
 
     return value;
   }
@@ -2187,7 +2193,7 @@ export class AdminOperationsService {
     const tableName = (repository.metadata?.tableName ?? 'unknown') as string;
     const cacheKey = `${tableName}|${start.getTime()}|${end.getTime()}|${JSON.stringify(extraMatch)}`;
     const now = Date.now();
-    const cached = this.hourlyCountCache.get(cacheKey);
+    const cached = hourlyCountCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
@@ -2213,7 +2219,7 @@ export class AdminOperationsService {
         },
       ])
       .toArray();
-    this.hourlyCountCache.set(cacheKey, {
+    hourlyCountCache.set(cacheKey, {
       expiresAt: now + 60_000,
       value: rows,
     });
