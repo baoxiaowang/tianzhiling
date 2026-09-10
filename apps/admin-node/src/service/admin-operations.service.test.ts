@@ -49,8 +49,9 @@ describe('AdminOperationsService', () => {
         profit: isToday ? 190 : 0,
       };
     });
-    service.adminDailyStats = {
-      getMonthDaily: jest.fn().mockResolvedValue(mockDaily),
+    service.statsModel = {
+      aggregate: jest.fn(() => aggregateResult(mockDaily)),
+      updateOne: jest.fn().mockResolvedValue({}),
     } as never;
     service.userModel = {
       count: jest.fn().mockResolvedValue(100),
@@ -162,7 +163,7 @@ describe('AdminOperationsService', () => {
       newAgents: 4,
     });
     // daily 数据来自预计算汇总表
-    expect(service.adminDailyStats.getMonthDaily).toHaveBeenCalledWith('2026-08');
+    expect(service.statsModel.aggregate).toHaveBeenCalled();
   });
 
   it('computeDailyStats 排除内部小使者并计算单日统计', async () => {
@@ -275,6 +276,16 @@ describe('AdminOperationsService', () => {
         ])
       ),
     } as never;
+    // 预计算汇总表按月返回新增用户数（与仪表盘共用同一份数据）
+    service.statsModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          { date: '2026-06-30', newUsers: 100 },
+          { date: '2026-07-31', newUsers: 80 },
+        ])
+      ),
+      updateOne: jest.fn().mockResolvedValue({}),
+    } as never;
 
     const result = await service.getUserValueReport('2026-07', 2);
 
@@ -345,6 +356,42 @@ describe('AdminOperationsService', () => {
         aggregateResult([{ _id: '2026-08-24', amount: 2000 }])
       ),
     } as never;
+    // 预计算汇总表返回当月每日行（8-23 有收入、8-24 有退款，其余为 0）
+    const mockDailyRows = Array.from({ length: 25 }, (_, i) => {
+      const date = `2026-08-${String(i + 1).padStart(2, '0')}`;
+      if (date === '2026-08-23') {
+        return {
+          date,
+          paidUsers: 3,
+          paidOrders: 4,
+          paidRevenue: 120,
+          refundedRevenue: 0,
+          netRevenue: 120,
+        };
+      }
+      if (date === '2026-08-24') {
+        return {
+          date,
+          paidUsers: 0,
+          paidOrders: 0,
+          paidRevenue: 0,
+          refundedRevenue: 20,
+          netRevenue: -20,
+        };
+      }
+      return {
+        date,
+        paidUsers: 0,
+        paidOrders: 0,
+        paidRevenue: 0,
+        refundedRevenue: 0,
+        netRevenue: 0,
+      };
+    });
+    service.statsModel = {
+      aggregate: jest.fn(() => aggregateResult(mockDailyRows)),
+      updateOne: jest.fn().mockResolvedValue({}),
+    } as never;
 
     const result = await service.getOrderAnalytics('2026-08');
 
@@ -375,15 +422,8 @@ describe('AdminOperationsService', () => {
         netRevenue: -20,
       }
     );
-    expect(
-      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
-    ).toContain('"date":"$completedAt"');
-    expect(
-      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
-    ).toContain('"completedAt":{"$gte":"2026-07-31T16:00:00.000Z"');
-    expect(
-      JSON.stringify(jest.mocked(service.orderRefundModel.aggregate).mock.calls)
-    ).not.toContain('"date":"$requestedAt"');
+    // 退款数据来自预计算汇总表（与仪表盘共用同一份数据）
+    expect(service.statsModel.aggregate).toHaveBeenCalled();
   });
 
   it('兼容旧反馈并保存处理状态和管理员记录', async () => {

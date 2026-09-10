@@ -40,6 +40,8 @@ export class AdminDailyStatsService {
           refundedRevenue: point.refundedRevenue,
           netRevenue: point.netRevenue,
           cohortRevenue: point.cohortRevenue,
+          promotionExpense: point.promotionExpense,
+          profit: point.profit,
           computedAt: new Date(),
         },
       },

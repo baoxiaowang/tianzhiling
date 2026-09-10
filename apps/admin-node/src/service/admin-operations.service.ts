@@ -1,4 +1,4 @@
-import { Provide, Inject } from '@midwayjs/core';
+import { Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminAuthenticatedPayload,
@@ -15,6 +15,7 @@ import type {
 } from '@tzl/shared';
 import { AppError, getDouyinPromotionExpense } from '@tzl/shared';
 import {
+  AdminDailyStatsEntity,
   AgentEntity,
   ChatTraceEntity,
   ChatTraceStatus,
@@ -37,7 +38,6 @@ import {
   UserEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
-import { AdminDailyStatsService } from './admin-daily-stats.service';
 
 type TaskQuery = {
   page?: string | number;
@@ -127,8 +127,8 @@ export class AdminOperationsService {
     value: AdminOperationsReportDTO['allTime'];
   };
 
-  @Inject()
-  adminDailyStats: AdminDailyStatsService;
+  @InjectEntityModel(AdminDailyStatsEntity)
+  statsModel: MongoRepository<AdminDailyStatsEntity>;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -434,7 +434,7 @@ export class AdminOperationsService {
     // 只保留 periodOrderStats（月度去重付费口径）、hourly（今日实时）、allTime（累计缓存）。
     const [daily, periodOrderStats, hourlyUsers, hourlyMessages, allTime] =
       await Promise.all([
-        this.adminDailyStats.getMonthDaily(normalizedMonth),
+        this.getMonthDailyFromStats(normalizedMonth),
         this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
         this.aggregateHourlyCount(this.userModel, todayStart, todayEnd),
         this.aggregateHourlyCount(
@@ -604,6 +604,142 @@ export class AdminOperationsService {
     };
   }
 
+  /** 获取今天的北京时间日期字符串 */
+  private getTodayBeijing(): string {
+    const now = new Date();
+    const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
+    return `${beijingNow.getUTCFullYear()}-${String(
+      beijingNow.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(beijingNow.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  /** 从汇总表读取日期范围的数据（仅读已有行，不补算） */
+  private async getDaysFromStats(
+    startDate: string,
+    endDate: string
+  ): Promise<Map<string, AdminOperationsDailyPointDTO>> {
+    const rows = await this.statsModel
+      .aggregate<AdminDailyStatsEntity>([
+        { $match: { date: { $gte: startDate, $lte: endDate } } },
+        { $sort: { date: 1 } },
+      ])
+      .toArray();
+    const map = new Map<string, AdminOperationsDailyPointDTO>();
+    for (const row of rows) {
+      map.set(row.date, {
+        date: row.date,
+        newUsers: row.newUsers,
+        newAgents: row.newAgents,
+        newUserChatUsers: row.newUserChatUsers,
+        newUserMessages: row.newUserMessages,
+        newUserFiveMessageUsers: row.newUserFiveMessageUsers,
+        allChatUsers: row.allChatUsers,
+        userMessages: row.userMessages,
+        paidUsers: row.paidUsers,
+        paidOrders: row.paidOrders,
+        sameDayPayingUsers: row.sameDayPayingUsers,
+        paidRevenue: row.paidRevenue,
+        refundedRevenue: row.refundedRevenue,
+        netRevenue: row.netRevenue,
+        cohortRevenue: row.cohortRevenue,
+        promotionExpense: row.promotionExpense,
+        profit: row.profit,
+      });
+    }
+    return map;
+  }
+
+  /** 计算单日数据并 upsert 到汇总表。幂等，可重复调用。 */
+  private async computeDayIntoStats(
+    date: string
+  ): Promise<AdminOperationsDailyPointDTO> {
+    const point = await this.computeDailyStats(date);
+    await this.statsModel.updateOne(
+      { date },
+      {
+        $set: {
+          newUsers: point.newUsers,
+          newAgents: point.newAgents,
+          newUserChatUsers: point.newUserChatUsers,
+          newUserMessages: point.newUserMessages,
+          newUserFiveMessageUsers: point.newUserFiveMessageUsers,
+          allChatUsers: point.allChatUsers,
+          userMessages: point.userMessages,
+          paidUsers: point.paidUsers,
+          paidOrders: point.paidOrders,
+          sameDayPayingUsers: point.sameDayPayingUsers,
+          paidRevenue: point.paidRevenue,
+          refundedRevenue: point.refundedRevenue,
+          netRevenue: point.netRevenue,
+          cohortRevenue: point.cohortRevenue,
+          promotionExpense: point.promotionExpense,
+          profit: point.profit,
+          computedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+    return point;
+  }
+
+  /** 实时补算天数上限：超出部分依赖定时任务/回填，避免请求时补算大量历史数据 */
+  private static readonly MAX_LIVE_BACKFILL_DAYS = 7;
+
+  /**
+   * 确保指定日期都有汇总数据。缺失的日期实时补算并写入。
+   * 返回完整的 date -> point 映射。
+   */
+  private async ensureDaysFromStats(
+    dates: string[]
+  ): Promise<Map<string, AdminOperationsDailyPointDTO>> {
+    if (dates.length === 0) return new Map();
+    const sorted = [...dates].sort();
+    const cached = await this.getDaysFromStats(
+      sorted[0],
+      sorted[sorted.length - 1]
+    );
+    const missing = dates.filter(d => !cached.has(d));
+    if (missing.length > 0) {
+      const toBackfill = missing.slice(
+        -AdminOperationsService.MAX_LIVE_BACKFILL_DAYS
+      );
+      const CONCURRENCY = 3;
+      for (let i = 0; i < toBackfill.length; i += CONCURRENCY) {
+        const batch = toBackfill.slice(i, i + CONCURRENCY);
+        const points = await Promise.all(
+          batch.map(date => this.computeDayIntoStats(date))
+        );
+        batch.forEach((date, idx) => cached.set(date, points[idx]));
+      }
+    }
+    return cached;
+  }
+
+  /**
+   * 获取整月的每日统计数据（优先读汇总表，缺失日期实时补算并写入）。
+   * 当前月只返回到今天为止的数据；历史月返回整月。
+   */
+  private async getMonthDailyFromStats(
+    month: string
+  ): Promise<AdminOperationsDailyPointDTO[]> {
+    const [yearText, monthText] = month.split('-');
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const daysInMonth = new Date(
+      Date.UTC(year, monthIndex + 1, 0)
+    ).getUTCDate();
+    const today = this.getTodayBeijing();
+    const isCurrentMonth = today.startsWith(month);
+    const lastDay = isCurrentMonth
+      ? Math.min(Number(today.split('-')[2]), daysInMonth)
+      : daysInMonth;
+    const dates = Array.from({ length: lastDay }, (_, i) =>
+      `${month}-${String(i + 1).padStart(2, '0')}`
+    );
+    const map = await this.ensureDaysFromStats(dates);
+    return dates.map(d => map.get(d)!).filter(Boolean);
+  }
+
   async getUserValueReport(
     endMonth?: string,
     rawMonths?: string | number
@@ -640,7 +776,7 @@ export class AdminOperationsService {
     const endDateObj = new Date(rangeEnd.getTime() - 24 * 60 * 60 * 1000);
     const endDateStr = toDateStr(endDateObj);
     const [dailyStatsMap, orderRows] = await Promise.all([
-      this.adminDailyStats.getDays(startDateStr, endDateStr),
+      this.getDaysFromStats(startDateStr, endDateStr),
       this.aggregateCohortOrderStats(rangeStart, rangeEnd, realOrderMatch),
     ]);
     const userMap = new Map<string, number>();
@@ -775,7 +911,7 @@ export class AdminOperationsService {
     // daily 订单/收入数据优先从预计算汇总表读取，与仪表盘共用同一份数据。
     const [dailyStats, createdOrders, paidCreatedOrders, periodOrderStats, firstTimePayingUsers, productRows, statusRows, relationshipOrders] =
       await Promise.all([
-        this.adminDailyStats.getMonthDaily(normalizedMonth),
+        this.getMonthDailyFromStats(normalizedMonth),
         this.orderModel.count({
           ...realOrderMatch,
           createdAt: { $gte: monthStart, $lt: monthEnd },
