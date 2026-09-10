@@ -2245,8 +2245,40 @@ export class ConversationService {
   private async executeMemoryPipelineTask(
     task: MemoryPipelineTaskEntity
   ): Promise<'completed' | 'skipped'> {
+    // 第二轮修复：批量录入 bug——原代码只处理 task.messageId 单条，
+    // 忽略 task.messageIds 中的其余消息，导致 10 条消息只有 1 条进入记忆抽取。
+    // 现在：messageIds 非空时批量查出所有消息，逐条独立处理（try/catch 隔离）。
+    const batchIds = task.messageIds?.filter(Boolean) || [];
+    if (batchIds.length > 1) {
+      const messages = await this.messageModel.find({
+        where: { _id: { $in: batchIds } as never } as never,
+      });
+      const validMessages = messages
+        .filter(m => m && !m.isArchived && m.status === MessageStatus.sent)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+      if (!validMessages.length) return 'skipped';
+
+      let anyCompleted = false;
+      for (const message of validMessages) {
+        try {
+          const result = await this.processSingleMemoryPipelineMessage(task, message);
+          if (result === 'completed') anyCompleted = true;
+        } catch (error) {
+          this.logger.warn(
+            '[memory-pipeline] batch message failed, continuing: messageId=%s error=%s',
+            this.stringifyObjectId(message.id),
+            this.describeReplyError(error)
+          );
+        }
+      }
+      return anyCompleted ? 'completed' : 'skipped';
+    }
+
+    // 单条路径（messageIds 为空或只有 1 条）
+    const singleMessageId = batchIds[0] || task.messageId;
     const message = await this.messageModel.findOne({
-      where: { _id: task.messageId } as never,
+      where: { _id: singleMessageId } as never,
     });
     if (
       !message ||
@@ -2255,7 +2287,13 @@ export class ConversationService {
     ) {
       return 'skipped';
     }
+    return this.processSingleMemoryPipelineMessage(task, message);
+  }
 
+  private async processSingleMemoryPipelineMessage(
+    task: MemoryPipelineTaskEntity,
+    message: MessageEntity
+  ): Promise<'completed' | 'skipped'> {
     const searchableText = this.buildSearchableTextFromMessage(message);
     if (!searchableText) return 'skipped';
 

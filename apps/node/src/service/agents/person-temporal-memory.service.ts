@@ -818,6 +818,25 @@ export class PersonTemporalMemoryService {
   }> {
     const { assertion, parsed, profile } = options;
     const existingExactDate = profile.exactDate || options.legacyExactDate;
+
+    // P1-4: 无年份更正（如"其实是8月15日"）直接覆盖旧日期——
+    // 识别 isCorrection 且无 exactDate 但有月日，沿用既有年份重建 exactDate，
+    // 避免"我明明改过，怎么没变"。
+    const isNoYearCorrection =
+      parsed.isCorrection &&
+      !parsed.normalizedExactDate &&
+      Boolean(parsed.normalizedMonth) &&
+      Boolean(parsed.normalizedDay);
+    if (isNoYearCorrection && existingExactDate) {
+      const rebuiltYear = parsed.normalizedYear ?? existingExactDate.getFullYear();
+      const rebuilt = new Date(rebuiltYear, (parsed.normalizedMonth ?? 1) - 1, parsed.normalizedDay ?? 1);
+      if (!Number.isNaN(rebuilt.getTime())) {
+        parsed.normalizedExactDate = rebuilt;
+        parsed.normalizedYear = rebuiltYear;
+        parsed.precision = PersonTemporalPrecision.exactDay;
+      }
+    }
+
     if (
       parsed.normalizedExactDate &&
       existingExactDate &&

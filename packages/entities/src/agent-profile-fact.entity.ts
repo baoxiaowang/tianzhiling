@@ -97,6 +97,13 @@ export class AgentProfileFactEntity extends BaseEntity {
   @Column()
   sourceMessageId?: MongoObjectId;
 
+  // P1-2: sourceMessageId 不可变 provenance——首次来源与最新来源分别记录
+  @Column()
+  firstSourceMessageId?: MongoObjectId;
+
+  @Column()
+  latestSourceMessageId?: MongoObjectId;
+
   @Column()
   sourceMessageIds?: MongoObjectId[];
 

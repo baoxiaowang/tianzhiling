@@ -139,6 +139,13 @@ export function parseAgentDepartureTime(options: {
   if (NEGATION_PATTERN.test(text) && !isCorrection) return null;
   if (THIRD_PERSON_DEPARTURE_PATTERN.test(text) && !isCorrection) return null;
   if (AGENT_RELATIVE_DEPARTURE_PATTERN.test(text) && !isCorrection) return null;
+
+  // P0-1: implicit 通道加信号前置门——必须有显式离世词或数字+时长信号才继续，
+  // 避免"昨天他没吃饭"这类含时间词但无离世含义的句子被写成离世日期。
+  if (options.implicitCurrentAgent && !hasAgentDepartureTimeSignal(options)) {
+    return null;
+  }
+
   if (
     !options.implicitCurrentAgent &&
     !DIRECT_AGENT_PATTERN.test(text) &&

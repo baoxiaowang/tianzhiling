@@ -11,6 +11,7 @@ import {
   MessageType,
   MongoObjectId,
   AgentProfileFactAssertionPolicy,
+  AgentProfileFactStatus,
   ChatSpanAttributeValue,
   ChatSpanStatus,
   ChatTraceStage,
@@ -2746,26 +2747,36 @@ export class AgentContextService {
         continue;
       }
 
+      // 三级证据注入：candidate 事实弱注入——
+      // 文本前缀【待确认】，assertionPolicy=context_only，useMode=hypothesis，
+      // 只能当话题引子/委婉猜测，不能当作确凿事实直接断言。
+      const isCandidate = fact.status === AgentProfileFactStatus.candidate;
+      const effectiveAssertionPolicy = isCandidate
+        ? 'context_only'
+        : fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
+          ? 'context_only'
+          : 'can_assert';
+      const effectiveUseMode = isCandidate
+        ? 'hypothesis'
+        : fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
+          ? 'recall'
+          : 'assert';
+      const effectiveText = isCandidate ? `【待确认】${value}` : value;
+
       profileFactKeys.add(fact.key);
       factIndex += 1;
       addEvidence({
         id: `F${factIndex}`,
         source: 'confirmed_fact',
-        text: value,
-        assertionPolicy:
-          fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
-            ? 'context_only'
-            : 'can_assert',
+        text: effectiveText,
+        assertionPolicy: effectiveAssertionPolicy as AgentEvidenceAssertionPolicy,
         subjectRef: this.resolveFactSubjectRef(
           fact.key,
           value,
           options.objectPlan
         ),
         factKey: fact.key,
-        useMode:
-          fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
-            ? 'recall'
-            : 'assert',
+        useMode: effectiveUseMode,
         status: 'active',
         confidence: this.resolveProfileFactConfidence(fact),
         sourceMessageId: fact.sourceMessageId,

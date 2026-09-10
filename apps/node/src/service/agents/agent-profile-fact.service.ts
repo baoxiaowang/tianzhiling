@@ -521,7 +521,8 @@ export class AgentProfileFactService {
       where: {
         userId: options.userId,
         agentId: valueActive && !options.durableOnly ? { $in: [options.agentId, options.userId] } as never : options.agentId,
-        status: AgentProfileFactStatus.active,
+        // 三级证据注入：active 可断言，candidate 弱注入（context_only + hypothesis + 【待确认】前缀）
+        status: { $in: [AgentProfileFactStatus.active, AgentProfileFactStatus.candidate] },
         ...(valueActive ? { $or: [{ 'governance.validUntil': null }, { 'governance.validUntil': { $gt: new Date().toISOString() } }] } : {}),
         ...(options.durableOnly ? { 'governance.retention': { $ne: 'session' } } : {}),
       },
@@ -595,6 +596,9 @@ export class AgentProfileFactService {
           assertionPolicy: AgentProfileFactAssertionPolicy.contextOnly,
         };
 
+        // P1-7: 视觉外貌特征恒 trustedSource:false——单次观察只进入 candidate，
+        // 必须同一特征被多次观察（sameValue && supportCount>=2）才由通用 upsertFact 激活为 active。
+        // 避免"看图猜出的外貌特征太容易转正"。
         await this.upsertFact({
           ...fact,
           userId: options.message.userId,
@@ -840,6 +844,11 @@ export class AgentProfileFactService {
 
   private isQuestionOnly(sourceText: string): boolean {
     const text = this.normalizeCompactText(sourceText);
+
+    // 收窄：含数字类陈述的混合句（如"我今年38岁，你记得吗？"）放行给 LLM，
+    // 只有纯问句（无数字陈述信号）才早退。
+    const hasNumericStatement = /\d/.test(text) && /(?:岁|年|月|日|号|个|只|条|次|米|厘米|公斤|斤|块|元|分)/.test(text);
+    if (hasNumericStatement) return false;
 
     return (
       /[?？]/.test(text) ||
@@ -1344,9 +1353,21 @@ export class AgentProfileFactService {
       input.sourceMessageId,
       input.sourceMessageIds
     );
+
+    // P1-1: supportCount 幂等——同来源不重复递增（避免任务重试/重复"记住"把未验证候选升为 active）
+    const nextSourceIdStr = this.stringifyObjectId(input.sourceMessageId);
+    const sourceAlreadyExists =
+      nextSourceIdStr &&
+      sourceMessageIds.some(id => this.stringifyObjectId(id) === nextSourceIdStr && id !== input.sourceMessageId);
+    const shouldIncrementSupport = sameValue && existing && !sourceAlreadyExists;
     const nextSupportCount = sameValue
-      ? Math.max(existing?.supportCount ?? 1, 1) + (existing ? 1 : 0)
+      ? Math.max(existing?.supportCount ?? 1, 1) + (shouldIncrementSupport ? 1 : 0)
       : 1;
+
+    // P1-3: 用户明确重述同值（trustedSource 或纠正语气）→ 冲突已解决，清空 conflictingValues 并激活
+    const userReconfirmsValue =
+      sameValue && existing && (input.trustedSource || this.isCorrectionText(input.sourceText || ''));
+    const effectiveTrustedSource = input.trustedSource || userReconfirmsValue;
     const isCanonicalName =
       input.key === AGENT_REAL_NAME_FACT_KEY ||
       input.key === USER_REAL_NAME_FACT_KEY;
@@ -1361,7 +1382,7 @@ export class AgentProfileFactService {
     const shouldActivate =
       !input.forceCandidate &&
       canonicalNameReplacementIsAllowed &&
-      (input.trustedSource || (sameValue && nextSupportCount >= 2));
+      (effectiveTrustedSource || (sameValue && nextSupportCount >= 2));
 
     if (existing && !sameValue && !shouldActivate) {
       fact.sourceMessageIds = sourceMessageIds;
@@ -1393,7 +1414,14 @@ export class AgentProfileFactService {
       ? AgentProfileFactStatus.active
       : AgentProfileFactStatus.candidate;
     fact.priority = this.normalizePriority(input.priority);
-    fact.sourceMessageId = input.sourceMessageId;
+    // P1-2: sourceMessageId 仅首次创建设置（不可变 provenance），后续更新不覆盖
+    if (!existing) {
+      fact.sourceMessageId = input.sourceMessageId;
+      fact.firstSourceMessageId = input.sourceMessageId;
+    } else {
+      fact.firstSourceMessageId = existing.firstSourceMessageId || existing.sourceMessageId;
+    }
+    fact.latestSourceMessageId = input.sourceMessageId || existing?.latestSourceMessageId;
     fact.sourceMessageIds = sourceMessageIds;
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
@@ -1401,10 +1429,13 @@ export class AgentProfileFactService {
     fact.assertionPolicy =
       input.assertionPolicy ??
       this.resolveAssertionPolicy(input.type, input.key);
+    // P1-3: 用户明确重述同值时清空 conflictingValues（冲突已解决）
     fact.conflictingValues =
-      existing && !sameValue
-        ? this.appendConflictingValue(existing.conflictingValues, previousValue)
-        : existing?.conflictingValues || [];
+      userReconfirmsValue
+        ? []
+        : existing && !sameValue
+          ? this.appendConflictingValue(existing.conflictingValues, previousValue)
+          : existing?.conflictingValues || [];
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
@@ -1474,7 +1505,7 @@ export class AgentProfileFactService {
       }
     }
 
-    return [...byId.values()].slice(-8);
+    return [...byId.values()].slice(-50);
   }
 
   private appendConflictingValue(
@@ -1757,7 +1788,9 @@ export class AgentProfileFactService {
   }
 
   private isCorrectionText(text: string): boolean {
-    return /(不是|记错|说错|纠正|别瞎编|瞎编|胡编|乱造|从来没|从没|没有)/.test(
+    // 收紧：去掉裸词"没有"（"我今天没有吃饭"不应触发纠正）
+    // 只保留明确的纠正结构，以及"没有这(回)?事/根本没这回事"这类对具体断言的否认
+    return /(不对|记错|说错|纠正|别瞎编|瞎编|胡编|乱造|从来没|从没|没有这(回)?事|根本没这回事|不是.{0,8}而是|其实是|不叫|更正)/.test(
       text
     );
   }

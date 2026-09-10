@@ -238,6 +238,31 @@ function isAttributableUserEvidence(item: AgentEvidenceItem): boolean {
   );
 }
 
+// 第二轮修复：证据匹配升级——从"任意一个 bigram 共享"改为"至少 2 个非停用词 bigram + 极性校验 + 主语校验"
+const EVIDENCE_STOP_WORDS = new Set([
+  '的', '了', '是', '在', '我', '你', '他', '她', '它', '们', '这', '那',
+  '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到',
+  '说', '要', '去', '会', '着', '没有', '看', '好', '自己', '这', '那',
+  '什么', '怎么', '为什么', '可以', '已经', '还是', '或者', '因为', '所以',
+  '但是', '如果', '虽然', '然后', '现在', '以前', '以后', '时候', '地方',
+]);
+
+const NEGATION_WORDS = ['不', '没', '无', '非', '未', '否', '别', '莫'];
+
+const KINSHIP_TERMS = [
+  '爸爸', '妈妈', '父亲', '母亲', '儿子', '女儿', '哥哥', '姐姐', '弟弟', '妹妹',
+  '爷爷', '奶奶', '外公', '外婆', '姥姥', '姥爷', '老公', '老婆', '丈夫', '妻子',
+  '孙子', '孙女', '外孙', '外孙女', '叔叔', '伯伯', '舅舅', '姑姑', '姨妈', '阿姨',
+];
+
+function hasNegation(text: string): boolean {
+  return NEGATION_WORDS.some(word => text.includes(word));
+}
+
+function extractKinship(text: string): string[] {
+  return KINSHIP_TERMS.filter(term => text.includes(term));
+}
+
 export function evidenceTextSupportsClaim(
   evidenceText: string,
   claimText: string
@@ -249,12 +274,34 @@ export function evidenceTextSupportsClaim(
     return false;
   }
 
+  // 极性校验：否定词不一致时不匹配（"不喜欢吃辣" vs "喜欢吃辣"不算匹配）
+  if (hasNegation(evidence) !== hasNegation(claim)) {
+    return false;
+  }
+
+  // 主语校验：断言含称谓时，证据必须含相同称谓
+  const claimKinship = extractKinship(claim);
+  if (claimKinship.length > 0) {
+    const evidenceKinship = extractKinship(evidence);
+    const hasCommonKinship = claimKinship.some(term => evidenceKinship.includes(term));
+    if (!hasCommonKinship) return false;
+  }
+
   if (evidence.includes(claim) || claim.includes(evidence)) {
     return true;
   }
 
+  // 至少 2 个非停用词 bigram 共享（避免"腊月初八"与"正月初八"共享"月初"/"初八"即判匹配）
   const evidenceTerms = buildEvidenceTerms(evidence);
-  return [...buildEvidenceTerms(claim)].some(term => evidenceTerms.has(term));
+  const claimTerms = buildEvidenceTerms(claim);
+  let sharedNonStopWordCount = 0;
+  for (const term of claimTerms) {
+    if (evidenceTerms.has(term) && !EVIDENCE_STOP_WORDS.has(term)) {
+      sharedNonStopWordCount += 1;
+      if (sharedNonStopWordCount >= 2) return true;
+    }
+  }
+  return false;
 }
 
 function evidenceSubjectMatchesClaim(
