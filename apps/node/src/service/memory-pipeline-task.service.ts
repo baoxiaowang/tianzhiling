@@ -2,6 +2,7 @@ import { Inject, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
 import { Framework as BullMQFramework } from '@midwayjs/bullmq';
 import { InjectEntityModel } from '@midwayjs/typeorm';
+import { RedisService } from '@midwayjs/redis';
 import {
   MEMORY_PIPELINE_TASK_VERSION,
   MemoryPipelineTaskEntity,
@@ -34,6 +35,9 @@ export class MemoryPipelineTaskService {
   @Inject()
   bullmqFramework: BullMQFramework;
 
+  @Inject()
+  redisService: RedisService;
+
   async enqueueForMessage(
     message: MessageEntity,
     searchableText: string,
@@ -41,6 +45,11 @@ export class MemoryPipelineTaskService {
   ): Promise<MemoryPipelineTaskEntity[]> {
     const cleanText = searchableText?.replace(/\s+/g, ' ').trim();
     if (!cleanText || !message?.id) return [];
+
+    // 采样：每个 conversation 每 N 条用户消息触发一次记忆任务，降低积压
+    if (!(await this.shouldEnqueueBySample(message.conversationId?.toString()))) {
+      return [];
+    }
 
     const tasks: MemoryPipelineTaskEntity[] = [];
     for (const kind of Array.from(new Set(kinds))) {
@@ -270,5 +279,38 @@ export class MemoryPipelineTaskService {
 
   private describeError(error: unknown): string {
     return error instanceof Error ? error.message : String(error || 'unknown');
+  }
+
+  /**
+   * 采样控制：每个 conversation 每 N 条消息触发一次记忆任务
+   * 通过环境变量 MEMORY_PIPELINE_SAMPLE_RATE 配置，默认 10
+   * Redis 不可用时返回 true（不采样，避免丢失任务）
+   */
+  private async shouldEnqueueBySample(conversationId?: string): Promise<boolean> {
+    const sampleRate = Number(process.env.MEMORY_PIPELINE_SAMPLE_RATE || 10);
+    if (sampleRate <= 1 || !conversationId) return true;
+
+    const key = `memory-pipeline:sample:${conversationId}`;
+    try {
+      const count = await this.redisService?.incr(key);
+      if (count === 1) {
+        await this.redisService?.expire(key, 24 * 60 * 60); // 24小时过期
+      }
+      const shouldEnqueue = (count || 0) % sampleRate === 0;
+      this.logger.info(
+        '[memory-pipeline] sample check, conversationId=%s, count=%s, sampleRate=%s, enqueue=%s',
+        conversationId,
+        count,
+        sampleRate,
+        shouldEnqueue
+      );
+      return shouldEnqueue;
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] sample check failed, enqueue anyway. error=%s',
+        this.describeError(error)
+      );
+      return true;
+    }
   }
 }
