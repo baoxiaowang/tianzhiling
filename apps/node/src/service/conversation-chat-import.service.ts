@@ -809,6 +809,14 @@ export class ConversationChatImportService {
         : '没有从截图中识别到可导入的两人聊天文字';
       await this.batchModel.save(batch);
 
+      // 自动导入失败时，将源消息恢复为普通图片（避免误判的普通照片在聊天框中消失）
+      if (
+        this.isAutomaticImportBatch(batch) &&
+        batch.status === ConversationChatImportStatus.failed
+      ) {
+        await this.revertAutomaticImportToNormalImage(batch);
+      }
+
       if (
         this.isAutomaticImportBatch(batch) &&
         batch.status === ConversationChatImportStatus.needsReview
@@ -821,6 +829,10 @@ export class ConversationChatImportService {
       batch.errorDetail = this.describeError(error).slice(0, 1000);
       batch.updatedAt = new Date();
       await this.batchModel.save(batch);
+      // 自动导入异常失败时，同样恢复源消息为普通图片
+      if (this.isAutomaticImportBatch(batch)) {
+        await this.revertAutomaticImportToNormalImage(batch);
+      }
       throw error;
     }
   }
@@ -1049,6 +1061,10 @@ export class ConversationChatImportService {
       batch.errorDetail = '没有识别到可导入的两人聊天文字';
       batch.updatedAt = new Date();
       await this.batchModel.save(batch);
+      // 自动导入失败时，恢复源消息为普通图片
+      if (this.isAutomaticImportBatch(batch)) {
+        await this.revertAutomaticImportToNormalImage(batch);
+      }
       return;
     }
 
@@ -2060,6 +2076,47 @@ export class ConversationChatImportService {
     return Boolean(
       batch.clientRequestId?.startsWith(AUTOMATIC_CHAT_IMPORT_REQUEST_PREFIX)
     );
+  }
+
+  /**
+   * 自动导入失败时，将源消息恢复为普通图片消息。
+   * 被误判为聊天截图的普通照片，自动导入失败后应恢复在聊天框中显示。
+   */
+  private async revertAutomaticImportToNormalImage(
+    batch: ConversationChatImportBatchEntity
+  ): Promise<void> {
+    if (!this.isAutomaticImportBatch(batch)) return;
+
+    const messageIdHex = batch.clientRequestId?.slice(
+      AUTOMATIC_CHAT_IMPORT_REQUEST_PREFIX.length
+    );
+    if (!messageIdHex) return;
+
+    try {
+      const messageId = this.parseObjectId(messageIdHex);
+      const message = await this.messageModel.findOne({ where: { id: messageId } });
+      if (!message) return;
+
+      // 清除自动导入标记，恢复为普通图片消息
+      message.importBatchId = undefined;
+      message.quotaExempt = undefined;
+      message.replyTrigger = undefined;
+      message.updatedAt = new Date();
+      await this.messageModel.save(message);
+
+      this.logger.info(
+        '[chat-import] automatic import reverted to normal image, batchId=%s, messageId=%s, errorCode=%s',
+        this.stringifyObjectId(batch.id),
+        messageIdHex,
+        batch.errorCode || 'unknown'
+      );
+    } catch (error) {
+      this.logger.warn(
+        '[chat-import] failed to revert automatic import to normal image, batchId=%s, reason=%s',
+        this.stringifyObjectId(batch.id),
+        this.describeError(error)
+      );
+    }
   }
 
   private describeError(error: unknown): string {

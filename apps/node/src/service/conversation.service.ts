@@ -272,7 +272,13 @@ const MEMORIAL_PHOTO_DAILY_LIMIT_POLICY = {
 } as const;
 const CONVERSATION_IMAGE_ANALYSIS_SYSTEM_PROMPT = [
   '理解聊天图片，严格输出JSON：{"imageType":"chat_screenshot|normal_image","summary":"可见画面摘要","people":[{"id":"P1","visible":"人物可见特征","identity":{"target":"agent|user|family|unknown","name":"","confidence":"high|medium|low","basis":"匹配依据"},"stableTraits":[{"kind":"hair_color|hair_length|face_shape|eyewear|facial_hair|build|distinctive","value":"短标准词"}]}]}。',
-  'imageType只有两个值：只有明确可见左右双方聊天气泡、适合导入为两人历史聊天的截图才是chat_screenshot；普通照片、群聊、文章、网页、支付页、设置页、识别不确定的图片一律是normal_image。',
+  'imageType判定规则（必须同时满足以下全部条件才是chat_screenshot，缺一条就是normal_image）：',
+  '1. 必须是微信聊天界面截图（顶部有对方昵称/状态栏，底部有输入框）；',
+  '2. 必须有左右两侧的聊天气泡（左灰右绿或左白右绿），且至少一方气泡内含可辨认的文字内容；',
+  '3. 必须是两人私聊界面，不是群聊（群聊有多人昵称/头像）；',
+  '4. 画面主体是聊天对话内容，不是其他页面嵌在聊天里的卡片/链接预览。',
+  '以下情况一律判定normal_image（即使包含文字或界面元素）：普通照片（人物/风景/物品/美食/自拍）、视频截图、小程序页面截图（倒数日/悼念/纪念类等）、文章/网页/公众号截图、支付/转账/红包页面、设置页/个人主页/朋友圈、表情包/梗图、证件/票据/菜单/路牌/招牌、任何识别不确定的图片。',
+  '拿不准时选normal_image，宁可漏判聊天截图也不要把普通照片误判为chat_screenshot。',
   'summary只写主体、场景、动作、文字和情绪，80字内；people最多4人。',
   '这是用户在亲人聊天框里发来的图片。可结合当前角色姓名、用户称呼、最近对话、参考头像和历史视觉记忆做关系候选；第一次没有历史视觉记忆时，根据聊天对象关系与人物年龄/性别/年代感只能给low置信候选。',
   '不要因为聊天对象是谁就默认图中是TA；只有参考头像、历史视觉记忆、用户文字说明或照片文字能支持时，才可给medium/high。仅凭“用户称呼/当前角色/年龄阶段/关系推测”不能给medium/high。',
@@ -8725,7 +8731,7 @@ export class ConversationService {
       };
     }
 
-    const imageType = this.normalizeConversationImageType(parsed.imageType);
+    let imageType = this.normalizeConversationImageType(parsed.imageType);
     const summary = this.normalizeImageAnalysisText(parsed.summary, 120);
     const people = (Array.isArray(parsed.people) ? parsed.people : [])
       .slice(0, 4)
@@ -8733,6 +8739,12 @@ export class ConversationService {
       .filter((person): person is ConversationImagePersonAnalysis =>
         Boolean(person)
       );
+
+    // 防御性降级：模型输出 chat_screenshot 但缺少有效摘要时，视为不确定，降级为 normal_image
+    // 避免普通照片因模型误判而被当作聊天截图处理
+    if (imageType === 'chat_screenshot' && !summary) {
+      imageType = 'normal_image';
+    }
     const mediaAnalysis = this.formatConversationImageAnalysis(
       summary,
       people,
