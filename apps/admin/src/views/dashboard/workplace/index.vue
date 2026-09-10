@@ -44,6 +44,7 @@
               <a-space>
                 <a-radio-group v-model="trendMetric" type="button" size="small">
                   <a-radio value="newUsers">新增用户</a-radio>
+                  <a-radio value="newAgents">新建智能体</a-radio>
                   <a-radio value="netRevenue">当天收入</a-radio>
                   <a-radio value="userMessages">总消息数</a-radio>
                 </a-radio-group>
@@ -150,6 +151,7 @@
   const trendMeta = computed(() => {
     const map = {
       newUsers: { name: '新增用户', color: '#7662cf', money: false },
+      newAgents: { name: '新建智能体', color: '#d97757', money: false },
       netRevenue: { name: '当天收入', color: '#36a375', money: true },
       userMessages: { name: '总消息数', color: '#5f91bd', money: false },
     };
