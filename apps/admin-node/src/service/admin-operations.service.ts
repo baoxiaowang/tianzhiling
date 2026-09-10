@@ -622,29 +622,23 @@ export class AdminOperationsService {
       Date.UTC(endYear, endMonthIndex + 1, 1) - BEIJING_OFFSET_MS
     );
     const realOrderMatch = this.buildRealOrderMatch();
-    const [userRows, orderRows] = await Promise.all([
-      this.userModel
-        .aggregate<CohortUserCountRow>([
-          { $match: { createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
-          {
-            $group: {
-              _id: {
-                $dateToString: {
-                  format: '%Y-%m',
-                  date: '$createdAt',
-                  timezone: '+08:00',
-                },
-              },
-              count: { $sum: 1 },
-            },
-          },
-        ])
-        .toArray(),
+    // 新增用户数从预计算汇总表按月汇总，与仪表盘共用同一份数据。
+    const toDateStr = (d: Date) => {
+      const bj = new Date(d.getTime() + BEIJING_OFFSET_MS);
+      return `${bj.getUTCFullYear()}-${String(bj.getUTCMonth() + 1).padStart(2, '0')}-${String(bj.getUTCDate()).padStart(2, '0')}`;
+    };
+    const startDateStr = toDateStr(rangeStart);
+    const endDateObj = new Date(rangeEnd.getTime() - 24 * 60 * 60 * 1000);
+    const endDateStr = toDateStr(endDateObj);
+    const [dailyStatsMap, orderRows] = await Promise.all([
+      this.adminDailyStats.getDays(startDateStr, endDateStr),
       this.aggregateCohortOrderStats(rangeStart, rangeEnd, realOrderMatch),
     ]);
-    const userMap = new Map(
-      userRows.map(row => [row._id, Number(row.count) || 0])
-    );
+    const userMap = new Map<string, number>();
+    for (const [date, point] of dailyStatsMap) {
+      const month = date.slice(0, 7);
+      userMap.set(month, (userMap.get(month) ?? 0) + point.newUsers);
+    }
     const orderMap = new Map(orderRows.map(row => [row._id, row]));
     const items = Array.from({ length: months }, (_, index) => {
       const monthDate = new Date(
@@ -733,74 +727,43 @@ export class AdminOperationsService {
       Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS
     );
     const realOrderMatch = this.buildRealOrderMatch();
-    const [
-      createdOrders,
-      paidCreatedOrders,
-      orderRows,
-      periodOrderStats,
-      refundedRows,
-      legacyRefundedRows,
-      firstTimePayingUsers,
-      refundedOrders,
-    ] = await Promise.all([
-      this.orderModel.count({
-        ...realOrderMatch,
-        createdAt: { $gte: monthStart, $lt: monthEnd },
-      } as never),
-      this.orderModel.count({
-        ...realOrderMatch,
-        createdAt: { $gte: monthStart, $lt: monthEnd },
-        paidAt: { $type: 'date' },
-      } as never),
-      this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
-      this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
-      this.aggregateDailyAmount(
-        this.orderRefundModel,
-        {
+    // daily 订单/收入数据优先从预计算汇总表读取，与仪表盘共用同一份数据。
+    const [dailyStats, createdOrders, paidCreatedOrders, periodOrderStats, firstTimePayingUsers, productRows, statusRows, relationshipOrders] =
+      await Promise.all([
+        this.adminDailyStats.getMonthDaily(normalizedMonth),
+        this.orderModel.count({
           ...realOrderMatch,
-          status: OrderRefundStatus.completed,
-          requestedAt: { $gte: monthStart, $lt: monthEnd },
-        },
-        '$requestedAt',
-        '$amount'
-      ),
-      this.aggregateLegacyDailyRefundAmounts(
-        monthStart,
-        monthEnd,
-        realOrderMatch
-      ),
-      this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
-      this.orderModel.count({
-        ...realOrderMatch,
-        status: OrderStatus.refunded,
-        paidAt: { $gte: monthStart, $lt: monthEnd },
-      } as never),
-    ]);
-    const orderMap = new Map(orderRows.map(row => [row._id, row]));
-    const refundMap = this.mergeAmountMaps(refundedRows, legacyRefundedRows);
-    const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
-    const daysInMonth = new Date(
-      Date.UTC(year, monthIndex + 1, 0)
-    ).getUTCDate();
-    const lastDay =
-      normalizedMonth === currentMonth
-        ? Math.min(beijingNow.getUTCDate(), daysInMonth)
-        : daysInMonth;
-    const daily = Array.from({ length: lastDay }, (_, index) => {
-      const date = `${normalizedMonth}-${String(index + 1).padStart(2, '0')}`;
-      const orderRow = orderMap.get(date);
-      const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
-      const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
-
-      return {
-        date,
-        paidUsers: orderRow?.paidUsers ?? 0,
-        paidOrders: orderRow?.paidOrders ?? 0,
-        paidRevenue,
-        refundedRevenue,
-        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
-      };
-    });
+          createdAt: { $gte: monthStart, $lt: monthEnd },
+        } as never),
+        this.orderModel.count({
+          ...realOrderMatch,
+          createdAt: { $gte: monthStart, $lt: monthEnd },
+          paidAt: { $type: 'date' },
+        } as never),
+        this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
+        this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
+        this.aggregateOrderDistribution(
+          monthStart,
+          monthEnd,
+          { ...realOrderMatch, status: OrderStatus.completed },
+          '$targetCode'
+        ),
+        this.aggregateOrderDistribution(
+          monthStart,
+          monthEnd,
+          { targetCode: { $ne: 'voice_one' } },
+          '$status'
+        ),
+        this.aggregateRelationshipOrders(monthStart, monthEnd, realOrderMatch),
+      ]);
+    const daily = dailyStats.map(item => ({
+      date: item.date,
+      paidUsers: item.paidUsers,
+      paidOrders: item.paidOrders,
+      paidRevenue: item.paidRevenue,
+      refundedRevenue: item.refundedRevenue,
+      netRevenue: item.netRevenue,
+    }));
     const refundedRevenue = this.roundMoney(
       daily.reduce((sum, item) => sum + item.refundedRevenue, 0)
     );
