@@ -2861,6 +2861,22 @@ export class ConversationService {
         );
       }
 
+      // 写一条空内容的 assistant 占位消息：旧版小程序 resumePendingReplyPollingFromMessages
+      // 发现"用户最新消息比 AI 最新消息新"会自动恢复"正在输入"轮询；空 content 的 text 消息
+      // 前端不渲染（textSegments=[]），但 status=sent 会被 findLatestMessageCreatedAt 计入，
+      // 从而终止轮询。纯服务端修复，不依赖小程序发版。
+      await this.saveMessage({
+        conversationId: runtime.conversation.id,
+        userId: runtime.conversation.userId,
+        agentId: runtime.conversation.agentId,
+        role: MessageRole.assistant,
+        type: MessageType.text,
+        content: '',
+        status: MessageStatus.sent,
+        createdAt: new Date(now.getTime() + 1),
+        updatedAt: new Date(now.getTime() + 1),
+      });
+
       return {
         messagePayload,
         searchableText,
