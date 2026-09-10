@@ -489,7 +489,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 PREVIOUS_COMMIT="$(git rev-parse HEAD)"
-git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+git fetch --force origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 [[ "$(git rev-parse "origin/$BRANCH")" == "$TARGET" ]] || fail 'remote tip mismatch'
 git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET" || fail 'target is not a fast-forward'
 select_release_services
