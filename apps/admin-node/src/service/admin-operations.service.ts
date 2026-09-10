@@ -1,4 +1,4 @@
-import { Provide } from '@midwayjs/core';
+import { Provide, Inject } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type {
   AdminAuthenticatedPayload,
@@ -7,6 +7,7 @@ import type {
   AdminOrderAnalyticsDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
+  AdminOperationsDailyPointDTO,
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
   AdminUserValueReportDTO,
@@ -36,6 +37,7 @@ import {
   UserEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
+import { AdminDailyStatsService } from './admin-daily-stats.service';
 
 type TaskQuery = {
   page?: string | number;
@@ -125,6 +127,9 @@ export class AdminOperationsService {
     expiresAt: number;
     value: AdminOperationsReportDTO['allTime'];
   };
+
+  @Inject()
+  adminDailyStats: AdminDailyStatsService;
 
   @InjectEntityModel(UserEntity)
   userModel: MongoRepository<UserEntity>;
@@ -426,108 +431,22 @@ export class AdminOperationsService {
       paymentProvider: { $ne: 'admin_manual' },
     };
 
-    const [
-      users,
-      agents,
-      messageStats,
-      orderStats,
-      periodOrderStats,
-      refunded,
-      legacyRefunded,
-      hourlyUsers,
-      hourlyMessages,
-      allTime,
-      cohortDaily,
-    ] = await Promise.all([
-      this.aggregateDailyCount(this.userModel, monthStart, monthEnd),
-      this.aggregateDailyCount(this.agentModel, monthStart, monthEnd, {
-        $or: [
-          { messengerOfAgentId: { $exists: false } },
-          { messengerOfAgentId: null },
-        ],
-      }),
-      this.aggregateDailyMessageStats(
-        monthStart,
-        monthEnd,
-        liveUserMessageMatch
-      ),
-      this.aggregateDailyOrderStats(monthStart, monthEnd, realOrderMatch),
-      this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
-      this.aggregateDailyAmount(
-        this.orderRefundModel,
-        {
-          ...realOrderMatch,
-          status: OrderRefundStatus.completed,
-          completedAt: { $gte: monthStart, $lt: monthEnd },
-        },
-        '$completedAt',
-        '$amount'
-      ),
-      this.aggregateLegacyDailyRefundAmounts(
-        monthStart,
-        monthEnd,
-        realOrderMatch
-      ),
-      this.aggregateHourlyCount(this.userModel, todayStart, todayEnd),
-      this.aggregateHourlyCount(
-        this.messageModel,
-        todayStart,
-        todayEnd,
-        liveUserMessageMatch
-      ),
-      this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
-      this.aggregateCohortDailyRevenue(monthStart, monthEnd, realOrderMatch),
-    ]);
+    // daily 数据优先从预计算汇总表读取，缺失日期实时补算并写入。
+    // 只保留 periodOrderStats（月度去重付费口径）、hourly（今日实时）、allTime（累计缓存）。
+    const [daily, periodOrderStats, hourlyUsers, hourlyMessages, allTime] =
+      await Promise.all([
+        this.adminDailyStats.getMonthDaily(normalizedMonth),
+        this.aggregatePeriodOrderStats(monthStart, monthEnd, realOrderMatch),
+        this.aggregateHourlyCount(this.userModel, todayStart, todayEnd),
+        this.aggregateHourlyCount(
+          this.messageModel,
+          todayStart,
+          todayEnd,
+          liveUserMessageMatch
+        ),
+        this.getAllTimeStats(liveUserMessageMatch, realOrderMatch),
+      ]);
 
-    const dailyMaps = {
-      users: this.countMap(users),
-      agents: this.countMap(agents),
-      messages: new Map(messageStats.map(row => [row._id, row])),
-      orders: new Map(orderStats.map(row => [row._id, row])),
-      refunded: this.mergeAmountMaps(refunded, legacyRefunded),
-      cohortDaily: new Map(
-        cohortDaily.map(row => [row._id, Number(row.revenue) || 0])
-      ),
-    };
-    const daysInMonth = new Date(
-      Date.UTC(year, monthIndex + 1, 0)
-    ).getUTCDate();
-    const lastDay =
-      normalizedMonth === currentMonth
-        ? Math.min(beijingNow.getUTCDate(), daysInMonth)
-        : daysInMonth;
-    const daily = Array.from({ length: lastDay }, (_, index) => {
-      const date = `${normalizedMonth}-${String(index + 1).padStart(2, '0')}`;
-      const messageRow = dailyMaps.messages.get(date);
-      const orderRow = dailyMaps.orders.get(date);
-      const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
-      const refundedRevenue = this.centsToYuan(
-        dailyMaps.refunded.get(date) ?? 0
-      );
-      const cohortRevenue = this.centsToYuan(
-        dailyMaps.cohortDaily.get(date) ?? 0
-      );
-      const promotionExpense = getDouyinPromotionExpense(date);
-      return {
-        date,
-        newUsers: dailyMaps.users.get(date) ?? 0,
-        newAgents: dailyMaps.agents.get(date) ?? 0,
-        newUserChatUsers: messageRow?.newUserChatUsers ?? 0,
-        newUserMessages: messageRow?.newUserMessages ?? 0,
-        newUserFiveMessageUsers: messageRow?.newUserFiveMessageUsers ?? 0,
-        allChatUsers: messageRow?.allChatUsers ?? 0,
-        userMessages: messageRow?.userMessages ?? 0,
-        paidUsers: orderRow?.paidUsers ?? 0,
-        paidOrders: orderRow?.paidOrders ?? 0,
-        sameDayPayingUsers: orderRow?.sameDayPayingUsers ?? 0,
-        paidRevenue,
-        refundedRevenue,
-        netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
-        cohortRevenue,
-        promotionExpense,
-        profit: this.roundMoney(cohortRevenue - promotionExpense),
-      };
-    });
     const hourlyUserMap = this.countMap(hourlyUsers);
     const hourlyMessageMap = this.countMap(hourlyMessages);
     const hourly = Array.from({ length: 24 }, (_, hour) => {
@@ -598,6 +517,88 @@ export class AdminOperationsService {
       value: result,
     });
     return result;
+  }
+
+  /**
+   * 计算单日统计数据（北京时间）。供预计算汇总表写入使用。
+   * 与 getReport 中 daily 行的口径完全一致。
+   */
+  async computeDailyStats(date: string): Promise<AdminOperationsDailyPointDTO> {
+    if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
+      throw new AppError(`invalid date: ${date}`, 'INVALID_DATE');
+    }
+    const [yearText, monthText, dayText] = date.split('-');
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const day = Number(dayText);
+    const dayStart = new Date(Date.UTC(year, monthIndex, day) - BEIJING_OFFSET_MS);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    const liveUserMessageMatch = {
+      role: MessageRole.user,
+      status: MessageStatus.sent,
+      $or: [{ source: { $exists: false } }, { source: 'live' }],
+    };
+    const realOrderMatch = {
+      targetCode: { $ne: 'voice_one' },
+      source: { $ne: 'admin' },
+      paymentProvider: { $ne: 'admin_manual' },
+    };
+
+    const [users, agents, messageStats, orderStats, refunded, legacyRefunded, cohortDaily] =
+      await Promise.all([
+        this.aggregateDailyCount(this.userModel, dayStart, dayEnd),
+        this.aggregateDailyCount(this.agentModel, dayStart, dayEnd, {
+          $or: [
+            { messengerOfAgentId: { $exists: false } },
+            { messengerOfAgentId: null },
+          ],
+        }),
+        this.aggregateDailyMessageStats(dayStart, dayEnd, liveUserMessageMatch),
+        this.aggregateDailyOrderStats(dayStart, dayEnd, realOrderMatch),
+        this.aggregateDailyAmount(
+          this.orderRefundModel,
+          {
+            ...realOrderMatch,
+            status: OrderRefundStatus.completed,
+            requestedAt: { $gte: dayStart, $lt: dayEnd },
+          },
+          '$requestedAt',
+          '$amount'
+        ),
+        this.aggregateLegacyDailyRefundAmounts(dayStart, dayEnd, realOrderMatch),
+        this.aggregateCohortDailyRevenue(dayStart, dayEnd, realOrderMatch),
+      ]);
+
+    const userMap = this.countMap(users);
+    const agentMap = this.countMap(agents);
+    const messageMap = new Map(messageStats.map(row => [row._id, row]));
+    const orderMap = new Map(orderStats.map(row => [row._id, row]));
+    const refundMap = this.mergeAmountMaps(refunded, legacyRefunded);
+    const cohortMap = new Map(cohortDaily.map(row => [row._id, Number(row.revenue) || 0]));
+
+    const messageRow = messageMap.get(date);
+    const orderRow = orderMap.get(date);
+    const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
+    const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
+
+    return {
+      date,
+      newUsers: userMap.get(date) ?? 0,
+      newAgents: agentMap.get(date) ?? 0,
+      newUserChatUsers: messageRow?.newUserChatUsers ?? 0,
+      newUserMessages: messageRow?.newUserMessages ?? 0,
+      newUserFiveMessageUsers: messageRow?.newUserFiveMessageUsers ?? 0,
+      allChatUsers: messageRow?.allChatUsers ?? 0,
+      userMessages: messageRow?.userMessages ?? 0,
+      paidUsers: orderRow?.paidUsers ?? 0,
+      paidOrders: orderRow?.paidOrders ?? 0,
+      sameDayPayingUsers: orderRow?.sameDayPayingUsers ?? 0,
+      paidRevenue,
+      refundedRevenue,
+      netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
+      cohortRevenue: this.centsToYuan(cohortMap.get(date) ?? 0),
+    };
   }
 
   async getUserValueReport(

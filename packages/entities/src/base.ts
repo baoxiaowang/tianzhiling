@@ -53,6 +53,7 @@ export enum TableName {
   voice_timbre = "voice_timbre",
   voice_timbre_material = "voice_timbre_material",
   quota_trigger_event = "quota_trigger_event",
+  admin_daily_stats = "admin_daily_stats",
 }
 
 export class BaseEntity {

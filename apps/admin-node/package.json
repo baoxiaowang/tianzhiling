@@ -47,8 +47,13 @@
     "init:admin": "node ./dist/scripts/init-admin.js",
     "recover:voice-membership-downgrade": "node ./dist/scripts/recover-voice-membership-downgrade-claim.js",
     "audit:order-refunds": "node ./dist/scripts/backfill-order-refunds.js",
+<<<<<<< HEAD
     "backfill:agent-message-counts": "node ./dist/scripts/backfill-agent-user-message-counts.js",
     "indexes:admin-performance": "node ./dist/scripts/ensure-admin-performance-indexes.js",
     "backfill:voice-timbre-relations": "node ./dist/scripts/backfill-voice-timbre-user-materials.js"
+=======
+    "backfill:voice-timbre-relations": "node ./dist/scripts/backfill-voice-timbre-user-materials.js",
+    "backfill:daily-stats": "node ./dist/scripts/backfill-daily-stats.js"
+>>>>>>> e7b4131 (feat(admin): 仪表盘每日统计预计算 — 汇总表+定时任务+缺失补算，解决打开慢)
   }
 }

@@ -7,6 +7,7 @@ export * from "./agent-share-member.entity";
 export * from "./agent.entity";
 export * from "./agent-sub.entity";
 export * from "./admin-account.entity";
+export * from "./admin-daily-stats.entity";
 export * from "./admin-user.entity";
 export * from "./base";
 export * from "./chat-span.entity";

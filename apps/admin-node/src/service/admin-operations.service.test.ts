@@ -25,6 +25,31 @@ describe('AdminOperationsService', () => {
   it('按北京时间生成日报并统计实时用户消息和净收入', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
     const service = new AdminOperationsService();
+    // daily 数据优先从预计算汇总表读取；mock 返回整月数据
+    const mockDaily = Array.from({ length: 23 }, (_, i) => {
+      const date = `2026-08-${String(i + 1).padStart(2, '0')}`;
+      const isToday = date === '2026-08-23';
+      return {
+        date,
+        newUsers: isToday ? 3 : 0,
+        newAgents: isToday ? 4 : 0,
+        newUserChatUsers: isToday ? 2 : 0,
+        newUserMessages: isToday ? 5 : 0,
+        newUserFiveMessageUsers: isToday ? 1 : 0,
+        allChatUsers: isToday ? 6 : 0,
+        userMessages: isToday ? 12 : 0,
+        paidUsers: isToday ? 2 : 0,
+        paidOrders: isToday ? 3 : 0,
+        sameDayPayingUsers: isToday ? 1 : 0,
+        paidRevenue: isToday ? 99 : 0,
+        refundedRevenue: isToday ? 18 : 0,
+        netRevenue: isToday ? 81 : 0,
+        cohortRevenue: 0,
+      };
+    });
+    service.adminDailyStats = {
+      getMonthDaily: jest.fn().mockResolvedValue(mockDaily),
+    } as never;
     service.userModel = {
       count: jest.fn().mockResolvedValue(100),
       aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
@@ -129,12 +154,80 @@ describe('AdminOperationsService', () => {
       newUsers: 2,
       userMessages: 9,
     });
-    // 今日口径与当日行对齐：新建智能体按当天新建智能体数统计（而非“当日新注册用户数”）
+    // 今日口径与当日行对齐：新建智能体按当天新建智能体数统计
     expect(result.todayTotals).toMatchObject({
       newUsers: 3,
       newAgents: 4,
     });
-    // 新建智能体口径必须排除内部小使者：查询需携带 messengerOfAgentId 过滤
+    // daily 数据来自预计算汇总表
+    expect(service.adminDailyStats.getMonthDaily).toHaveBeenCalledWith('2026-08');
+  });
+
+  it('computeDailyStats 排除内部小使者并计算单日统计', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
+    const service = new AdminOperationsService();
+    service.userModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', count: 3 }])
+      ),
+    } as never;
+    service.agentModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', count: 4 }])
+      ),
+    } as never;
+    service.messageModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          {
+            _id: '2026-08-23',
+            allChatUsers: 6,
+            userMessages: 12,
+            newUserChatUsers: 2,
+            newUserMessages: 5,
+            newUserFiveMessageUsers: 1,
+          },
+        ])
+      ),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn((pipeline: Record<string, unknown>[]) => {
+        const serialized = JSON.stringify(pipeline);
+        if (serialized.includes('"independentRefundOrders"')) {
+          return aggregateResult([]);
+        }
+        return aggregateResult([
+          {
+            _id: '2026-08-23',
+            paidUsers: 2,
+            paidOrders: 3,
+            paidAmount: 9900,
+            sameDayPayingUsers: 1,
+          },
+        ]);
+      }),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([{ _id: '2026-08-23', amount: 1800 }])
+      ),
+    } as never;
+
+    const result = await service.computeDailyStats('2026-08-23');
+
+    expect(result).toMatchObject({
+      date: '2026-08-23',
+      newUsers: 3,
+      newAgents: 4,
+      allChatUsers: 6,
+      userMessages: 12,
+      paidUsers: 2,
+      paidOrders: 3,
+      paidRevenue: 99,
+      refundedRevenue: 18,
+      netRevenue: 81,
+    });
+    // 新建智能体口径必须排除内部小使者
     const agentAggregateCalls = jest.mocked(service.agentModel.aggregate).mock
       .calls;
     expect(agentAggregateCalls).toHaveLength(1);
