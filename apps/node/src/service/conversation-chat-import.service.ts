@@ -840,7 +840,9 @@ export class ConversationChatImportService {
             '输出严格 JSON 对象，不要 Markdown：{"chatType":"two_person|group|unknown","messages":[]}.',
             'messages 自上而下，每项字段：side(left/right/center)、type(text/image/voice/system/recalled)、content、rawTimeText、occurredAt、timePrecision(minute/day/month/unknown)、timeConfidence(high/medium/low)、textConfidence(0-1)、speakerConfidence(0-1)、bubbleSequence。',
             '时间分隔条不是说话内容；应把它作为后续气泡的 rawTimeText。只有截图明确出现完整日期时才输出 occurredAt 的 ISO 时间。昨天、星期几等相对时间没有确定参照时 occurredAt 必须为 null。',
-            '如果是群聊，chatType 输出 group，仍可识别文字，但不要推断具体人员身份。语音、图片、表情、转账只写简短占位内容。',
+            '微信两人私聊中常见的转账/红包、语音通话、位置、图片、表情、小程序卡片、对方昵称与头像、时间分隔条等元素，均不构成群聊特征，chatType 一律输出 two_person。',
+            '只有截图明确出现三个及以上不同发言人、群聊名称、群成员列表或 @多人 等特征时，才输出 group；群聊仍要完整识别 messages，side 按左右气泡判断。',
+            '无法判断是否为群聊时输出 unknown，仍要尽力识别 messages。语音、图片、表情、转账只写简短占位内容。',
           ].join('\n'),
         },
         {
@@ -857,15 +859,19 @@ export class ConversationChatImportService {
         ? response.choices[0].message.content
         : '';
     const parsed = this.parseJsonObject(content);
-    if (parsed.chatType === 'group') {
-      throw new AppError(
-        'CHAT_IMPORT_GROUP_UNSUPPORTED',
-        '暂时只支持两个人的微信聊天截图'
-      );
-    }
-    return Array.isArray(parsed.messages)
+    const messages = Array.isArray(parsed.messages)
       ? (parsed.messages as RecognizedScreenshotMessage[])
       : [];
+
+    // 群聊不再一刀切拒绝：保留左右气泡消息按两人流程导入
+    // （center/unknown 消息因 speaker 无法推断会在导入时被过滤），
+    // 没有可用消息时由上层按识别失败处理。
+    if (parsed.chatType === 'group') {
+      return messages.filter(
+        message => message.side === 'left' || message.side === 'right'
+      );
+    }
+    return messages;
   }
 
   private buildRecognizedItem(

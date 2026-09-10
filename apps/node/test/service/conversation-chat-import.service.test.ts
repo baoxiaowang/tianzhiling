@@ -207,4 +207,83 @@ describe('ConversationChatImportService', () => {
     expect(availableItem.memoryFactIds?.[0]).toEqual(factId);
     expect(result.batch.status).toBe(ConversationChatImportStatus.completed);
   });
+
+  describe('recognizeScreenshot group handling', () => {
+    function buildServiceWithVisionContent(content: string) {
+      const service = new ConversationChatImportService();
+      service.openAIService = {
+        getVisionModel: jest.fn().mockReturnValue('qwen-vl-plus'),
+        createVisionChatCompletion: jest
+          .fn()
+          .mockResolvedValue({
+            choices: [{ message: { content } }],
+          }),
+      } as never;
+      service.tencentCosService = {
+        isEnabled: jest.fn().mockReturnValue(false),
+      } as never;
+      return service as unknown as {
+        recognizeScreenshot: (asset: {
+          publicUrl?: string;
+          screenshotSequence: number;
+        }) => Promise<Array<{ side?: string; content?: string }>>;
+      };
+    }
+
+    it('keeps left/right messages when model reports group', async () => {
+      const service = buildServiceWithVisionContent(
+        JSON.stringify({
+          chatType: 'group',
+          messages: [
+            { side: 'left', type: 'text', content: '左边的话', bubbleSequence: 0 },
+            { side: 'right', type: 'text', content: '右边的话', bubbleSequence: 1 },
+            { side: 'center', type: 'system', content: '时间分隔条', bubbleSequence: 2 },
+          ],
+        })
+      );
+
+      const result = await service.recognizeScreenshot({
+        publicUrl: 'https://example.com/shot.png',
+        screenshotSequence: 0,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result.map(item => item.side)).toEqual(['left', 'right']);
+    });
+
+    it('returns empty when group screenshot has no side messages', async () => {
+      const service = buildServiceWithVisionContent(
+        JSON.stringify({
+          chatType: 'group',
+          messages: [{ side: 'center', type: 'system', content: '只有系统消息' }],
+        })
+      );
+
+      const result = await service.recognizeScreenshot({
+        publicUrl: 'https://example.com/shot.png',
+        screenshotSequence: 0,
+      });
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('returns all messages for two_person screenshots', async () => {
+      const service = buildServiceWithVisionContent(
+        JSON.stringify({
+          chatType: 'two_person',
+          messages: [
+            { side: 'left', type: 'text', content: '你好', bubbleSequence: 0 },
+            { side: 'right', type: 'text', content: '在呢', bubbleSequence: 1 },
+          ],
+        })
+      );
+
+      const result = await service.recognizeScreenshot({
+        publicUrl: 'https://example.com/shot.png',
+        screenshotSequence: 0,
+      });
+
+      expect(result).toHaveLength(2);
+    });
+  });
 });
