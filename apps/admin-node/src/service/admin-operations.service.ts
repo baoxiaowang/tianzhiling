@@ -126,6 +126,14 @@ export class AdminOperationsService {
     expiresAt: number;
     value: AdminOperationsReportDTO['allTime'];
   };
+  private readonly hourlyCountCache = new Map<
+    string,
+    { expiresAt: number; value: HourlyCountRow[] }
+  >();
+  private readonly periodOrderStatsCache = new Map<
+    string,
+    { expiresAt: number; value: PeriodOrderStatsRow }
+  >();
 
   @InjectEntityModel(AdminDailyStatsEntity)
   statsModel: MongoRepository<AdminDailyStatsEntity>;
@@ -1368,6 +1376,13 @@ export class AdminOperationsService {
     end: Date,
     extraMatch: Record<string, unknown>
   ): Promise<PeriodOrderStatsRow> {
+    // 月度去重付费口径 5 分钟缓存
+    const cacheKey = `${start.getTime()}-${end.getTime()}|${JSON.stringify(extraMatch)}`;
+    const now = Date.now();
+    const cached = this.periodOrderStatsCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
     const rows = await this.orderModel
       .aggregate<PeriodOrderStatsRow>([
         {
@@ -1395,8 +1410,12 @@ export class AdminOperationsService {
         },
       ])
       .toArray();
-
-    return rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
+    const value = rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
+    this.periodOrderStatsCache.set(cacheKey, {
+      expiresAt: now + 5 * 60 * 1000,
+      value,
+    });
+    return value;
   }
 
   private async getAllTimeStats(
@@ -2164,7 +2183,15 @@ export class AdminOperationsService {
     end: Date,
     extraMatch: Record<string, unknown> = {}
   ): Promise<HourlyCountRow[]> {
-    return repository
+    // 今日实时分布 60 秒缓存，避免每次打开仪表盘重复聚合大表
+    const tableName = (repository.metadata?.tableName ?? 'unknown') as string;
+    const cacheKey = `${tableName}|${start.getTime()}|${end.getTime()}|${JSON.stringify(extraMatch)}`;
+    const now = Date.now();
+    const cached = this.hourlyCountCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    const rows = await repository
       .aggregate<HourlyCountRow>([
         {
           $match: {
@@ -2186,6 +2213,11 @@ export class AdminOperationsService {
         },
       ])
       .toArray();
+    this.hourlyCountCache.set(cacheKey, {
+      expiresAt: now + 60_000,
+      value: rows,
+    });
+    return rows;
   }
 
   private async aggregateDailyAmount<T extends object>(

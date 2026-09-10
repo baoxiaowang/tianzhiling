@@ -62,4 +62,4 @@ COPY --from=build /workspace/apps/admin-node/package.json ./package.json
 COPY --from=build /workspace/apps/admin-node/bootstrap.js ./bootstrap.js
 COPY --from=build /workspace/apps/admin-node/dist ./dist
 
-CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "tzl-admin-node", "-i", "2"]
+CMD ["pm2-runtime", "start", "./bootstrap.js", "--name", "tzl-admin-node", "-i", "1"]
