@@ -1,6 +1,8 @@
 import { Controller, Get, Inject } from '@midwayjs/core';
 import { AdminDailyStatsService } from '../service/admin-daily-stats.service';
 
+// 健康检查与调试入口
+
 @Controller('/system')
 export class AdminSystemController {
   @Inject()
