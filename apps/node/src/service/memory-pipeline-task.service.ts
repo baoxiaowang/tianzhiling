@@ -46,18 +46,64 @@ export class MemoryPipelineTaskService {
     const cleanText = searchableText?.replace(/\s+/g, ' ').trim();
     if (!cleanText || !message?.id) return [];
 
-    // 采样：每个 conversation 每 N 条用户消息触发一次记忆任务，降低积压
-    if (!(await this.shouldEnqueueBySample(message.conversationId?.toString()))) {
-      return [];
-    }
+    const conversationId = message.conversationId?.toString();
+    if (!conversationId) return [];
 
-    const tasks: MemoryPipelineTaskEntity[] = [];
-    for (const kind of Array.from(new Set(kinds))) {
-      const task = await this.ensureTask(message, cleanText, kind);
-      tasks.push(task);
-      await this.enqueueTaskJob(task);
+    // 批量合并：每 N 条消息创建一个批量任务，避免丢失消息
+    const batchSize = Number(process.env.MEMORY_PIPELINE_BATCH_SIZE || 10);
+    const batchKey = `memory-pipeline:batch:${conversationId}`;
+
+    try {
+      // 把当前消息 ID 加入批量队列
+      await this.redisService?.rpush(batchKey, message.id.toString());
+      // 设置过期时间，避免异常情况下队列永久残留
+      await this.redisService?.expire(batchKey, 24 * 60 * 60);
+
+      const batchLen = await this.redisService?.llen(batchKey);
+      if ((batchLen || 0) < batchSize) {
+        this.logger.info(
+          '[memory-pipeline] batch accumulate, conversationId=%s, count=%s/%s',
+          conversationId,
+          batchLen,
+          batchSize
+        );
+        return [];
+      }
+
+      // 达到批量大小，取出所有消息 ID
+      const messageIds = await this.redisService?.lrange(batchKey, 0, -1);
+      await this.redisService?.del(batchKey);
+
+      if (!messageIds || messageIds.length === 0) return [];
+
+      this.logger.info(
+        '[memory-pipeline] batch trigger, conversationId=%s, messageCount=%s',
+        conversationId,
+        messageIds.length
+      );
+
+      // 为每种 kind 创建一个批量任务
+      const tasks: MemoryPipelineTaskEntity[] = [];
+      for (const kind of Array.from(new Set(kinds))) {
+        const task = await this.ensureBatchTask(message, cleanText, kind, messageIds);
+        tasks.push(task);
+        await this.enqueueTaskJob(task);
+      }
+      return tasks;
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] batch enqueue failed, fallback to single. error=%s',
+        this.describeError(error)
+      );
+      // Redis 异常时降级为单条任务
+      const tasks: MemoryPipelineTaskEntity[] = [];
+      for (const kind of Array.from(new Set(kinds))) {
+        const task = await this.ensureTask(message, cleanText, kind);
+        tasks.push(task);
+        await this.enqueueTaskJob(task);
+      }
+      return tasks;
     }
-    return tasks;
   }
 
   async getDueTasks(limit = 25): Promise<MemoryPipelineTaskEntity[]> {
@@ -233,6 +279,40 @@ export class MemoryPipelineTaskService {
     }
   }
 
+  /**
+   * 创建批量任务：合并多条消息为一个任务
+   * messageId 设为第一条消息的 ID（用于唯一索引兼容）
+   * messageIds 存储所有消息的 ID
+   */
+  private async ensureBatchTask(
+    firstMessage: MessageEntity,
+    searchableText: string,
+    kind: MemoryPipelineTaskKind,
+    messageIds: string[]
+  ): Promise<MemoryPipelineTaskEntity> {
+    const now = new Date();
+    const task = new MemoryPipelineTaskEntity();
+    Object.assign(task, {
+      schemaVersion: MEMORY_PIPELINE_TASK_VERSION,
+      pipelineVersion: MEMORY_PIPELINE_VERSION,
+      kind,
+      status: MemoryPipelineTaskStatus.pending,
+      messageId: firstMessage.id,
+      messageIds: messageIds.map(id => new MongoObjectId(id)),
+      conversationId: firstMessage.conversationId,
+      userId: firstMessage.userId,
+      agentId: firstMessage.agentId,
+      sourceHash: createHash('sha256')
+        .update(searchableText + ':' + messageIds.join(','))
+        .digest('hex'),
+      attemptCount: 0,
+      nextAttemptAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return await this.taskModel.save(task);
+  }
+
   private async enqueueTaskJob(task: MemoryPipelineTaskEntity): Promise<void> {
     if (
       task.status === MemoryPipelineTaskStatus.completed ||
@@ -267,38 +347,5 @@ export class MemoryPipelineTaskService {
 
   private describeError(error: unknown): string {
     return error instanceof Error ? error.message : String(error || 'unknown');
-  }
-
-  /**
-   * 采样控制：每个 conversation 每 N 条消息触发一次记忆任务
-   * 通过环境变量 MEMORY_PIPELINE_SAMPLE_RATE 配置，默认 10
-   * Redis 不可用时返回 true（不采样，避免丢失任务）
-   */
-  private async shouldEnqueueBySample(conversationId?: string): Promise<boolean> {
-    const sampleRate = Number(process.env.MEMORY_PIPELINE_SAMPLE_RATE || 10);
-    if (sampleRate <= 1 || !conversationId) return true;
-
-    const key = `memory-pipeline:sample:${conversationId}`;
-    try {
-      const count = await this.redisService?.incr(key);
-      if (count === 1) {
-        await this.redisService?.expire(key, 24 * 60 * 60); // 24小时过期
-      }
-      const shouldEnqueue = (count || 0) % sampleRate === 0;
-      this.logger.info(
-        '[memory-pipeline] sample check, conversationId=%s, count=%s, sampleRate=%s, enqueue=%s',
-        conversationId,
-        count,
-        sampleRate,
-        shouldEnqueue
-      );
-      return shouldEnqueue;
-    } catch (error) {
-      this.logger.warn(
-        '[memory-pipeline] sample check failed, enqueue anyway. error=%s',
-        this.describeError(error)
-      );
-      return true;
-    }
   }
 }

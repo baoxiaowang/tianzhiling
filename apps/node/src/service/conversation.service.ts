@@ -306,6 +306,8 @@ export interface SendConversationMessageResult {
   chatQuota?: ConversationChatQuotaSnapshot;
   messengerTaskPlan?: MessengerMemoryTaskPlan;
   replyPending?: boolean;
+  /** 图片消息被判定为自动导入聊天记录：AI 不回复，前端不应进入"正在输入"等待 */
+  isAutomaticImport?: boolean;
 }
 
 export interface ConversationReplyJobData {
@@ -388,6 +390,8 @@ interface BeforeReplyResult {
   permanentSilence?: boolean;
   immediateAssistantMessages?: MessageEntity[];
   isDuplicate?: boolean;
+  /** 图片被判定为自动导入聊天记录：AI 不回复，前端不应进入"正在输入"等待 */
+  isAutomaticImport?: boolean;
   chatQuota?: ConversationChatQuotaSnapshot;
   deliberateLongReplyExecution?: {
     taskId: string;
@@ -2154,6 +2158,42 @@ export class ConversationService {
   async processMemoryPipelineTask(
     task: MemoryPipelineTaskEntity
   ): Promise<'completed' | 'skipped'> {
+    // 批量任务：遍历所有消息逐条处理
+    if (task.messageIds && task.messageIds.length > 0) {
+      this.logger.info(
+        '[memory-pipeline] batch task start, taskId=%s, messageCount=%s, kind=%s',
+        task.id,
+        task.messageIds.length,
+        task.kind
+      );
+      let anyCompleted = false;
+      for (const messageId of task.messageIds) {
+        try {
+          const singleTask = { ...task, messageId, messageIds: undefined };
+          const outcome = await this.processSingleMemoryPipelineTask(singleTask);
+          if (outcome === 'completed') anyCompleted = true;
+        } catch (error) {
+          this.logger.warn(
+            '[memory-pipeline] batch single message failed, messageId=%s, error=%s',
+            messageId.toString(),
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      }
+      this.logger.info(
+        '[memory-pipeline] batch task complete, taskId=%s, anyCompleted=%s',
+        task.id,
+        anyCompleted
+      );
+      return anyCompleted ? 'completed' : 'skipped';
+    }
+
+    return this.processSingleMemoryPipelineTask(task);
+  }
+
+  async processSingleMemoryPipelineTask(
+    task: MemoryPipelineTaskEntity
+  ): Promise<'completed' | 'skipped'> {
     const message = await this.messageModel.findOne({
       where: { _id: task.messageId } as never,
     });
@@ -2725,11 +2765,28 @@ export class ConversationService {
         );
       }
 
+      // 写一条空内容的 assistant 占位消息：旧版小程序 resumePendingReplyPollingFromMessages
+      // 发现"用户最新消息比 AI 最新消息新"会自动恢复"正在输入"轮询；空 content 的 text 消息
+      // 前端不渲染（textSegments=[]），但 status=sent 会被 findLatestMessageCreatedAt 计入，
+      // 从而终止轮询。纯服务端修复，不依赖小程序发版。
+      await this.saveMessage({
+        conversationId: runtime.conversation.id,
+        userId: runtime.conversation.userId,
+        agentId: runtime.conversation.agentId,
+        role: MessageRole.assistant,
+        type: MessageType.text,
+        content: '',
+        status: MessageStatus.sent,
+        createdAt: new Date(now.getTime() + 1),
+        updatedAt: new Date(now.getTime() + 1),
+      });
+
       return {
         messagePayload,
         searchableText,
         userMessage,
         deferReply: true,
+        isAutomaticImport: true,
         chatQuota,
       };
     }
