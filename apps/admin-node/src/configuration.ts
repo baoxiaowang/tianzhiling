@@ -46,6 +46,34 @@ export class MainConfiguration {
     this.app.useFilter([NotFoundFilter, DefaultErrorFilter]);
 
     this.startDailyStatsPrecompute();
+    this.backfillHistoricalDailyStats();
+  }
+
+  /**
+   * 启动时异步回填历史每日统计数据。
+   * 回填过去 180 天的数据到汇总表，幂等 upsert。
+   * 延迟 30 秒执行，避免与启动流程竞争资源。
+   */
+  private backfillHistoricalDailyStats() {
+    const BACKFILL_DAYS = 180;
+    setTimeout(() => {
+      (async () => {
+        try {
+          const adminDailyStats = await this.app
+            .getApplicationContext()
+            .getAsync(AdminDailyStatsService);
+          const today = adminDailyStats.getTodayBeijing();
+          const startDate = this.subtractDays(today, BACKFILL_DAYS);
+          this.app.getLogger().info('[daily-stats] backfill start: %s ~ %s', startDate, today);
+          await adminDailyStats.computeRange(startDate, today);
+          this.app.getLogger().info('[daily-stats] backfill done: %s ~ %s', startDate, today);
+        } catch (err) {
+          this.app
+            .getLogger()
+            .error('[daily-stats] backfill failed: %s', (err as Error).message);
+        }
+      })().catch(() => {});
+    }, 30_000);
   }
 
   async onStop() {
@@ -88,8 +116,12 @@ export class MainConfiguration {
   }
 
   private subtractOneDay(dateStr: string): string {
+    return this.subtractDays(dateStr, 1);
+  }
+
+  private subtractDays(dateStr: string, days: number): string {
     const [y, m, d] = dateStr.split('-').map(Number);
-    const date = new Date(Date.UTC(y, m - 1, d) - 24 * 60 * 60 * 1000);
+    const date = new Date(Date.UTC(y, m - 1, d) - days * 24 * 60 * 60 * 1000);
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
       2,
       '0'
