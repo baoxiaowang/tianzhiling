@@ -13,6 +13,7 @@ import type {
 } from '@tzl/shared';
 import {
   AgentEntity,
+  buildCustomContextPersonaProfile,
   ConversationEntity,
   MessageEntity,
   AgentSex,
@@ -329,6 +330,9 @@ export class AdminAgentService {
 
     if (payload.customContext !== undefined) {
       agent.customContext = this.normalizeCustomContext(payload.customContext);
+      agent.manualPersonaProfile =
+        buildCustomContextPersonaProfile(agent.customContext) ??
+        (null as never);
       changed = true;
     }
 

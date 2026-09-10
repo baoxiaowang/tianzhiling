@@ -1,7 +1,4 @@
-import {
-  AgentEntity,
-  AgentSex,
-} from '@tzl/entities';
+import { AgentEntity, AgentSex } from '@tzl/entities';
 import { buildAgentPersonaPrompt } from '../../src/service/agents/agent-persona';
 
 describe('buildAgentPersonaPrompt', () => {
@@ -38,7 +35,9 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.source).toBe('chat_derived_profile');
     expect(result.ageAtDeath).toBe(76);
     expect(result.generation).toBe('elder');
-    expect(result.classifierContext).toContain('agent=父亲（用户称爸爸，elder）');
+    expect(result.classifierContext).toContain(
+      'agent=父亲（用户称爸爸，elder）'
+    );
     expect(result.classifierContext).toContain('离世年龄约76岁');
     expect(result.prompt).not.toContain('用户称你为“爸爸”');
     expect(result.prompt).toContain('晚辈情绪或行为明显过激时');
@@ -89,19 +88,43 @@ describe('buildAgentPersonaPrompt', () => {
     expect(result.evidenceSnippetCount).toBe(0);
   });
 
-  it('keeps admin custom context alongside a usable chat-derived profile', () => {
+  it('merges custom-context persona guidance over chat-derived style', () => {
     const result = buildAgentPersonaPrompt({
       agent: {
+        name: '弟弟',
         iCallAgent: '弟弟',
-        customContext: '除简单问候外，多说几句把回应表达完整。',
+        agentCallMe: '姐姐',
         personaProfile: {
-          version: 'chat_derived_persona_v1',
-          careStyle: '先接住姐姐说的重点',
+          careStyle: '关心时只简单问一句',
+          languageProfile: {
+            sentenceLength: '习惯很短的回复',
+            directness: '表达直接',
+          },
         },
+        customContext:
+          '除简单问候外，不要总用一两句话结束；回应倾诉时，先接住重点，再补充自己的感受。',
       } as AgentEntity,
     });
 
-    expect(result.prompt).toContain('先接住姐姐说的重点');
-    expect(result.prompt).toContain('多说几句把回应表达完整');
+    expect(result.source).toBe('combined_profile');
+    expect(result.prompt).toContain('聊天画像与人工画像补丁已合并');
+    expect(result.prompt).toContain('不要总用一两句话结束');
+    expect(result.prompt).toContain('表达直接');
+    expect(result.prompt).not.toContain('习惯很短的回复');
+    expect(result.prompt).toContain('定制上下文原文');
+  });
+
+  it('derives a manual persona patch for existing custom context records', () => {
+    const result = buildAgentPersonaPrompt({
+      agent: {
+        iCallAgent: '弟弟',
+        agentCallMe: '姐姐',
+        customContext: '回应倾诉时多说一些，也要补充自己的感受。',
+      } as AgentEntity,
+    });
+
+    expect(result.source).toBe('explicit_profile');
+    expect(result.prompt).toContain('人工画像补丁');
+    expect(result.prompt).toContain('回应倾诉时多说一些');
   });
 });

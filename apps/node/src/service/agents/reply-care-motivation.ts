@@ -1,4 +1,4 @@
-import type { AgentEntity } from '@tzl/entities';
+import { resolveManualPersonaProfile, type AgentEntity } from '@tzl/entities';
 import type {
   ConversationMovePlan,
   ReplyIntentRiskLevel,
@@ -105,9 +105,13 @@ export function resolveReplyCareMotivationPlan(
     motive,
     focus: focusForMotive(motive),
     initiative: 'proactive',
-    styleSource: options.agent?.personaProfile?.careStyle
-      ? 'persona'
-      : 'relationship_default',
+    styleSource:
+      resolveManualPersonaProfile(
+        options.agent?.customContext,
+        options.agent?.manualPersonaProfile
+      )?.careStyle || options.agent?.personaProfile?.careStyle
+        ? 'persona'
+        : 'relationship_default',
   };
 }
 

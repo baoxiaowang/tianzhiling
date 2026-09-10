@@ -239,10 +239,54 @@ describe('AdminAgentService', () => {
     expect(agent.deathDate).toBeUndefined();
     expect(agent.description).toBe('新描述');
     expect(agent.customContext).toBe('客户要求：不要主动提春节');
+    expect(agent.manualPersonaProfile).toBeNull();
     expect(agent.status).toBe(0);
     expect(agent.updatedAt).toBeInstanceOf(Date);
     expect(service.agentModel.save).toHaveBeenCalledWith(agent);
     expect(result.createdUser).toBeNull();
+  });
+
+  it('distills style guidance when custom context is updated', async () => {
+    const service = createService();
+    const agentId = new MongoObjectId();
+    const agent: any = {
+      id: agentId,
+      createdUserId: new MongoObjectId(),
+      name: '弟弟',
+      avatar: '',
+      sex: AgentSex.man,
+      description: '',
+      customContext: '',
+      status: 1,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    jest
+      .mocked(service.agentModel.findOne)
+      .mockResolvedValueOnce(agent as never);
+    jest.mocked(service.agentModel.save).mockResolvedValue(agent as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    await service.updateAgent(agentId.toHexString(), {
+      customContext:
+        '除简单问候外，不要总用一两句话结束；回应倾诉时，先接住重点，再补充自己的感受。不要重复安慰、堆套话或编造经历。',
+    });
+
+    expect(agent.manualPersonaProfile?.version).toBe(
+      'custom_context_persona_v1'
+    );
+    expect(
+      agent.manualPersonaProfile?.profile.languageProfile?.sentenceLength
+    ).toContain('一两句话');
+    expect(agent.manualPersonaProfile?.profile.careStyle).toContain('倾诉');
+    expect(agent.manualPersonaProfile?.profile.highEqStrategies).toEqual(
+      expect.arrayContaining(['避免重复安慰', '避免堆砌套话'])
+    );
+    expect(JSON.stringify(agent.manualPersonaProfile?.profile)).not.toContain(
+      '编造经历'
+    );
   });
 
   it('binds an active voice timbre when updating agent', async () => {

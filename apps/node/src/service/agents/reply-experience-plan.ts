@@ -1,10 +1,12 @@
 import {
   AgentEntity,
+  AgentPersonaProfile,
   AgentProfileFactAssertionPolicy,
   AgentProfileFactConfidence,
   AgentProfileFactType,
   MessageEntity,
   MessageRole,
+  resolveManualPersonaProfile,
 } from '@tzl/entities';
 import type { AgentProfileFactSummary } from './agent-profile-fact.service';
 import type {
@@ -248,7 +250,14 @@ function resolveProfileQuality(
     addTextDimension('preference', agent.hobbies);
     addTextDimension('shared_memory', agent.sharedMemories);
     addTextDimension('background', agent.customContext);
-    addPersonaDimensions(dimensions, agent);
+    addPersonaDimensions(dimensions, agent.personaProfile);
+    addPersonaDimensions(
+      dimensions,
+      resolveManualPersonaProfile(
+        agent.customContext,
+        agent.manualPersonaProfile
+      )
+    );
   }
 
   const trustedFacts = profileFacts.filter(isTrustedProfileFact);
@@ -291,9 +300,8 @@ function resolveProfileQuality(
 
 function addPersonaDimensions(
   dimensions: Set<string>,
-  agent: AgentEntity
+  profile?: AgentPersonaProfile
 ): void {
-  const profile = agent.personaProfile;
   if (!profile) {
     return;
   }

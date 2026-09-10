@@ -1,4 +1,9 @@
-import { AgentEntity, AgentPersonaProfile } from '@tzl/entities';
+import {
+  AgentEntity,
+  AgentPersonaProfile,
+  mergeAgentPersonaProfiles,
+  resolveManualPersonaProfile,
+} from '@tzl/entities';
 import { stripPromptLeakageContent } from '../../common/message-content-safety';
 import {
   AgentCanonicalRelationship,
@@ -15,6 +20,7 @@ export const AGENT_PERSONA_CONTINUITY_VERSION =
 
 export type AgentPersonaSource =
   | 'chat_derived_profile'
+  | 'combined_profile'
   | 'explicit_profile'
   | 'relationship_defaults';
 
@@ -52,17 +58,36 @@ export function buildAgentPersonaPrompt(options: {
   const relationshipType = identity.relationship.label;
   const generation = identity.relationship.generation;
   const ageAtDeath = calculateAgeAtDeath(agent?.birthday, agent?.deathDate);
-  const profile = agent?.personaProfile;
-  const profileLines = profile ? buildChatDerivedProfileLines(profile) : [];
-  const hasUsableProfile = profileLines.length > 0;
-  // Admin custom context and chat-derived style are complementary sources.
-  // Keep both; factual claims are still governed by the identity/evidence layer.
+  const chatProfile = agent?.personaProfile;
+  const chatProfileLines = chatProfile
+    ? buildChatDerivedProfileLines(chatProfile)
+    : [];
+  const manualProfile = resolveManualPersonaProfile(
+    agent?.customContext,
+    agent?.manualPersonaProfile
+  );
+  const manualProfileLines = manualProfile
+    ? buildChatDerivedProfileLines(manualProfile)
+    : [];
+  const effectiveProfile = mergeAgentPersonaProfiles(
+    chatProfileLines.length ? chatProfile : undefined,
+    manualProfileLines.length ? manualProfile : undefined
+  );
+  const profileLines = effectiveProfile
+    ? buildChatDerivedProfileLines(effectiveProfile)
+    : [];
   const explicitProfile = buildExplicitProfile(agent);
-  const source = hasUsableProfile
-    ? 'chat_derived_profile'
-    : explicitProfile.length
-    ? 'explicit_profile'
-    : 'relationship_defaults';
+  const hasChatProfile = chatProfileLines.length > 0;
+  const hasManualProfile = manualProfileLines.length > 0;
+  const hasExplicitProfile = explicitProfile.length > 0;
+  const source =
+    hasChatProfile && (hasManualProfile || hasExplicitProfile)
+      ? 'combined_profile'
+      : hasChatProfile
+      ? 'chat_derived_profile'
+      : hasManualProfile || hasExplicitProfile
+      ? 'explicit_profile'
+      : 'relationship_defaults';
 
   const classifierIdentity = [
     buildAgentIdentityClassifierContext(identity),
@@ -81,8 +106,8 @@ export function buildAgentPersonaPrompt(options: {
     classifierIdentity,
     generationGuidance,
     canonicalGuidance,
-    ...profileLines.slice(0, 5),
     ...explicitProfile.slice(0, 2),
+    ...profileLines.slice(0, 5),
   ].filter(Boolean);
 
   const identityAnchor = identity.agent.displayName
@@ -99,12 +124,22 @@ export function buildAgentPersonaPrompt(options: {
       '关系、年龄和性别只影响称呼与分寸，不套刻板印象。',
       '离世后少控制怨怼，多理解疼惜；仍保留个人棱角、偏好和关系位置。',
       ...(profileLines.length
-        ? ['聊天画像（只管表达，不作事实）：', ...profileLines]
+        ? [
+            hasChatProfile && hasManualProfile
+              ? '有效画像（聊天画像与人工画像补丁已合并；同项冲突时人工补丁优先，只管表达，不作事实）：'
+              : hasManualProfile
+              ? '人工画像补丁（只管表达，不作事实）：'
+              : '聊天画像（只管表达，不作事实）：',
+            ...profileLines,
+          ]
         : []),
       ...(explicitProfile.length
-        ? ['角色描述（只管表达，不作事实）：', ...explicitProfile]
+        ? [
+            '定制上下文原文（人工配置；与聊天画像冲突时优先，不得覆盖安全和事实边界）：',
+            ...explicitProfile,
+          ]
         : []),
-      ...(!hasUsableProfile && !explicitProfile.length
+      ...(!profileLines.length && !explicitProfile.length
         ? ['画像不足：保守延续已接受的称呼和语气，不要临时编造稳定性格。']
         : []),
       '画像只管怎么说，不覆盖事实、能力和本轮原话。',
@@ -119,8 +154,8 @@ export function buildAgentPersonaPrompt(options: {
       styleAnchors: Array.from(
         new Set([
           relationshipVoiceAnchor,
+          ...manualProfileLines.slice(0, 5),
           ...profileLines.slice(0, 5),
-          ...explicitProfile.slice(0, 2),
         ])
       ).slice(0, 6),
       factualBoundary:

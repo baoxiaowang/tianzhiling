@@ -49,6 +49,12 @@ export interface AgentPersonaProfile {
   confidence?: number;
 }
 
+export interface AgentManualPersonaProfile {
+  version: "custom_context_persona_v1";
+  sourceFingerprint: string;
+  profile: AgentPersonaProfile;
+}
+
 export interface AgentMemoryProfileFactSnapshot {
   key: string;
   signature: string;
@@ -88,11 +94,11 @@ export class AgentEntity extends BaseEntity {
   @Column()
   deathDate?: Date;
 
-  @Column({ type: 'json', nullable: true })
+  @Column({ type: "json", nullable: true })
   timeMarkers?: Array<{
     monthDay: string; // mm-dd format
     label: string;
-    source: 'deathDate' | 'birthday' | 'user_mentioned';
+    source: "deathDate" | "birthday" | "user_mentioned";
   }>;
 
   @Column()
@@ -141,6 +147,14 @@ export class AgentEntity extends BaseEntity {
 
   @Column()
   customContext?: string;
+
+  /**
+   * Structured style guidance distilled from customContext. The original text
+   * remains the audit source; this patch overrides chat-derived style fields
+   * without turning custom facts or safety instructions into persona claims.
+   */
+  @Column()
+  manualPersonaProfile?: AgentManualPersonaProfile;
 
   /**
    * Optional chat-derived style profile. It guides expression only and never
