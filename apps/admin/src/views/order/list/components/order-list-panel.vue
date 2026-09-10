@@ -1052,9 +1052,7 @@
     {
       label: '本月实付金额',
       value: formatAnalyticsMoney(analytics.value?.totals.paidRevenue),
-      hint: `净收入 ${formatAnalyticsMoney(
-        analytics.value?.totals.netRevenue
-      )}`,
+      hint: '',
     },
     {
       label: '支付订单',
@@ -1078,7 +1076,7 @@
     {
       label: '退款金额',
       value: formatAnalyticsMoney(analytics.value?.totals.refundedRevenue),
-      hint: `退款率 ${formatPercent(analytics.value?.totals.refundRate)}`,
+      hint: `${formatCount(analytics.value?.totals.refundedOrders)} 笔`,
     },
   ]);
   const analyticsChartOption = computed(() => ({
@@ -1123,6 +1121,7 @@
     source: searchForm.source || undefined,
     paymentType: searchForm.paymentType || undefined,
     excludeAdminManual: props.excludeAdminManual || undefined,
+    excludeMessenger: showAnalytics.value || undefined,
     createdAtStart: normalizedCreatedAtRange.value.createdAtStart,
     createdAtEnd: normalizedCreatedAtRange.value.createdAtEnd,
     registeredMonth: searchForm.registeredMonth || undefined,

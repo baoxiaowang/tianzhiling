@@ -80,6 +80,13 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
 const NEW_USER_CHAT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
+/**
+ * 批量退款风险告警：15 分钟内达到阈值的退款标记/完成即上报，
+ * 用于在用户反馈前发现“批量误标退款”类事故（见 docs/事故记录-20260830）。
+ */
+const BULK_REFUND_ALERT_WINDOW_MS = 15 * 60 * 1000;
+const BULK_REFUND_ALERT_THRESHOLD = 3;
+
 const ACTIVE_IMPORT_STATUSES = [
   ConversationChatImportStatus.uploading,
   ConversationChatImportStatus.queued,
@@ -723,6 +730,7 @@ export class AdminOperationsService {
       refundedRows,
       legacyRefundedRows,
       firstTimePayingUsers,
+      refundedOrders,
     ] = await Promise.all([
       this.orderModel.count({
         ...realOrderMatch,
@@ -751,6 +759,11 @@ export class AdminOperationsService {
         realOrderMatch
       ),
       this.aggregateFirstTimePayingUsers(monthStart, monthEnd, realOrderMatch),
+      this.orderModel.count({
+        ...realOrderMatch,
+        status: OrderStatus.refunded,
+        paidAt: { $gte: monthStart, $lt: monthEnd },
+      } as never),
     ]);
     const orderMap = new Map(orderRows.map(row => [row._id, row]));
     const refundMap = this.mergeAmountMaps(refundedRows, legacyRefundedRows);
@@ -792,6 +805,7 @@ export class AdminOperationsService {
         firstTimePayingUsers,
         paidRevenue,
         refundedRevenue,
+        refundedOrders,
         netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
         averageOrderAmount: this.roundAverage(
           paidRevenue,
@@ -895,7 +909,8 @@ export class AdminOperationsService {
   }
 
   private async getRecentAlerts(): Promise<AdminOperationsAlertDTO[]> {
-    const [feedback, traces, imports] = await Promise.all([
+    const now = new Date();
+    const [feedback, traces, imports, billingRisks] = await Promise.all([
       this.feedbackModel.find({
         where: {
           $or: [
@@ -924,6 +939,7 @@ export class AdminOperationsService {
         order: { updatedAt: 'DESC' },
         take: 4,
       }),
+      this.getBillingRiskAlerts(now),
     ]);
 
     return [
@@ -958,9 +974,60 @@ export class AdminOperationsService {
         targetType: 'agent' as const,
         targetId: this.stringifyObjectId(item.agentId),
       })),
+      ...billingRisks,
     ]
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
       .slice(0, 8);
+  }
+
+  /**
+   * 侦测短时间内的批量退款标记/完成。20260830 事故是直接写库造成，
+   * 代码层无法阻止写入，但可在运营总览提前暴露，供人工在用户反馈前核对微信账单。
+   */
+  private async getBillingRiskAlerts(
+    now: Date
+  ): Promise<AdminOperationsAlertDTO[]> {
+    const since = new Date(now.getTime() - BULK_REFUND_ALERT_WINDOW_MS);
+    const [refundedOrders, completedRefunds] = await Promise.all([
+      this.orderModel.find({
+        where: {
+          status: OrderStatus.refunded,
+          refundedAt: { $gte: since },
+        } as never,
+        order: { refundedAt: 'DESC' },
+        take: BULK_REFUND_ALERT_THRESHOLD,
+      }),
+      this.orderRefundModel.find({
+        where: {
+          status: OrderRefundStatus.completed,
+          updatedAt: { $gte: since },
+        } as never,
+        order: { updatedAt: 'DESC' },
+        take: BULK_REFUND_ALERT_THRESHOLD,
+      }),
+    ]);
+
+    const alerts: AdminOperationsAlertDTO[] = [];
+    const windowMinutes = BULK_REFUND_ALERT_WINDOW_MS / 60000;
+    if (refundedOrders.length >= BULK_REFUND_ALERT_THRESHOLD) {
+      alerts.push({
+        id: `billing:bulk-refund:${since.toISOString()}`,
+        category: 'billing',
+        title: '短时间内批量订单被标记退款',
+        description: `近 ${windowMinutes} 分钟内 ${refundedOrders.length} 笔订单被标记退款，请核对操作来源与微信账单。`,
+        occurredAt: this.formatDate(now),
+      });
+    }
+    if (completedRefunds.length >= BULK_REFUND_ALERT_THRESHOLD) {
+      alerts.push({
+        id: `billing:bulk-refund-completed:${since.toISOString()}`,
+        category: 'billing',
+        title: '短时间内批量退款完成',
+        description: `近 ${windowMinutes} 分钟内 ${completedRefunds.length} 笔退款完成，请核对操作来源与微信账单。`,
+        occurredAt: this.formatDate(now),
+      });
+    }
+    return alerts;
   }
 
   private async getUserNameMap(
@@ -1084,6 +1151,7 @@ export class AdminOperationsService {
         {
           $match: {
             ...extraMatch,
+            status: { $ne: OrderStatus.refunded },
             paidAt: { $gte: start, $lt: end },
           },
         },
@@ -1101,7 +1169,7 @@ export class AdminOperationsService {
             },
             paidOrders: { $sum: 1 },
             paidAmount: {
-              $sum: { $ifNull: ['$paidAmount', '$payableAmount'] },
+              $sum: this.buildEffectivePaidAmountExpression(),
             },
           },
         },
@@ -1158,6 +1226,7 @@ export class AdminOperationsService {
         {
           $match: {
             ...extraMatch,
+            status: { $ne: OrderStatus.refunded },
             paidAt: { $gte: start, $lt: end },
           },
         },
@@ -1166,7 +1235,7 @@ export class AdminOperationsService {
             _id: '$userId',
             paidOrders: { $sum: 1 },
             paidAmount: {
-              $sum: { $ifNull: ['$paidAmount', '$payableAmount'] },
+              $sum: this.buildEffectivePaidAmountExpression(),
             },
           },
         },
@@ -1595,6 +1664,27 @@ export class AdminOperationsService {
       targetCode: { $ne: 'voice_one' },
       source: { $ne: 'admin' },
       paymentProvider: { $ne: 'admin_manual' },
+    };
+  }
+
+  /**
+   * 有效实付金额：已降级订单按降级后金额统计（原实付 - 降级退款），
+   * 未降级订单按实付金额（缺省取应付金额）。
+   */
+  private buildEffectivePaidAmountExpression(): Record<string, unknown> {
+    return {
+      $cond: {
+        if: {
+          $eq: ['$snapshot.voiceMembershipDowngrade.status', 'completed'],
+        },
+        then: {
+          $subtract: [
+            { $ifNull: ['$paidAmount', '$payableAmount'] },
+            { $ifNull: ['$snapshot.voiceMembershipDowngrade.refundAmount', 0] },
+          ],
+        },
+        else: { $ifNull: ['$paidAmount', '$payableAmount'] },
+      },
     };
   }
 

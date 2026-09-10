@@ -426,6 +426,12 @@ function createService() {
       applyMongoUpdate(refundOrder, update);
       return { matchedCount: 1, modifiedCount: 1 };
     }),
+    findOne: jest.fn(async (options: any) => {
+      const filter = options?.where ?? options;
+      return (
+        refundOrders.find(item => matchesMongoFilter(item, filter)) ?? null
+      );
+    }),
   } as any;
   service.userModel = {
     find: jest.fn(),
@@ -1653,6 +1659,27 @@ describe('AdminOrderService', () => {
     expect(result.status).toBe(OrderStatus.closed);
     expect(result.refundAmount).toBeUndefined();
     expect(result.closedAt).toBe(ORDER_CREATED_AT.toISOString());
+  });
+
+  it('refuses to revoke benefits without completed refund proof (fail-closed)', async () => {
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder();
+    order.status = OrderStatus.paid;
+    order.refundAmount = undefined;
+    orders.push(order);
+
+    await expect(
+      (
+        service as unknown as {
+          revokeOrderBenefits(item: unknown, at: Date): Promise<void>;
+        }
+      ).revokeOrderBenefits(order, new Date())
+    ).rejects.toMatchObject({
+      code: 'ORDER_REFUND_PROOF_MISSING',
+      status: 409,
+    });
+
+    expect(service.userMembershipModel.updateOne).not.toHaveBeenCalled();
   });
 
   it('rejects revoke for payment orders', async () => {

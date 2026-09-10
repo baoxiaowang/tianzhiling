@@ -2,6 +2,7 @@ import {
   ConversationMessageFeedbackHandlingStatus,
   MongoObjectId,
 } from '@tzl/entities';
+import type { AdminOperationsAlertDTO } from '@tzl/shared';
 import { AdminOperationsService } from './admin-operations.service';
 
 const aggregateResult = (rows: unknown[]) => ({
@@ -309,5 +310,49 @@ describe('AdminOperationsService', () => {
       })
     );
     expect(result.handlingStatus).toBe('resolved');
+  });
+
+  it('对短时间内的批量退款标记/完成产生 billing 风险告警，阈值以下不告警', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-30T07:38:00.000Z'));
+    const now = new Date('2026-08-30T07:38:00.000Z');
+    const service = new AdminOperationsService();
+    const callBillingRiskAlerts = () =>
+      (
+        service as unknown as {
+          getBillingRiskAlerts(at: Date): Promise<AdminOperationsAlertDTO[]>;
+        }
+      ).getBillingRiskAlerts(now);
+
+    service.orderModel = {
+      find: jest.fn().mockResolvedValue([
+        { id: new MongoObjectId() },
+        { id: new MongoObjectId() },
+        { id: new MongoObjectId() },
+      ]),
+    } as never;
+    service.orderRefundModel = {
+      find: jest.fn().mockResolvedValue([{ id: new MongoObjectId() }]),
+    } as never;
+
+    const alerts = await callBillingRiskAlerts();
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ category: 'billing' });
+    expect(alerts[0].title).toContain('批量订单被标记退款');
+    expect(alerts[0].description).toContain('请核对操作来源与微信账单');
+    expect(jest.mocked(service.orderModel.find).mock.calls[0][0]).toMatchObject({
+      order: { refundedAt: 'DESC' },
+      take: 3,
+    });
+
+    // 阈值以下（各 1 笔）不产生风险告警
+    service.orderModel = {
+      find: jest.fn().mockResolvedValue([{ id: new MongoObjectId() }]),
+    } as never;
+    service.orderRefundModel = {
+      find: jest.fn().mockResolvedValue([{ id: new MongoObjectId() }]),
+    } as never;
+
+    expect(await callBillingRiskAlerts()).toHaveLength(0);
   });
 });

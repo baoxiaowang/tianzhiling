@@ -56,6 +56,9 @@ export class ListAdminOrdersQueryDTO {
   @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
   excludeAdminManual?: boolean | string;
 
+  @Rule(RuleType.alternatives(RuleType.boolean(), RuleType.string()).optional())
+  excludeMessenger?: boolean | string;
+
   @Rule(RuleType.string().allow('').optional())
   createdAtStart?: string;
 

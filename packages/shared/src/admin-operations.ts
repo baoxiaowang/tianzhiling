@@ -8,7 +8,7 @@ export interface AdminOperationsMetricDTO {
 
 export interface AdminOperationsAlertDTO {
   id: string;
-  category: "feedback" | "chat" | "import" | "content";
+  category: "feedback" | "chat" | "import" | "content" | "billing";
   title: string;
   description: string;
   occurredAt: string;
@@ -184,6 +184,7 @@ export interface AdminOrderAnalyticsDTO {
     firstTimePayingUsers: number;
     paidRevenue: number;
     refundedRevenue: number;
+    refundedOrders: number;
     netRevenue: number;
     averageOrderAmount: number;
     paymentSuccessRate: number;

@@ -2331,8 +2331,11 @@ export class AdminOrderService {
 
     await this.assertRefundableOrderBenefits(order);
 
+    // 手工订单没有外部退款凭证，显式豁免 fail-closed 校验（类型与状态已在上方校验）。
     const now = new Date();
-    await this.revokeOrderBenefits(order, now);
+    await this.revokeOrderBenefits(order, now, {
+      allowWithoutRefundProof: true,
+    });
 
     order.status = OrderStatus.closed;
     order.closedAt = now;
@@ -2745,8 +2748,13 @@ export class AdminOrderService {
 
   private async revokeOrderBenefits(
     order: OrderEntity,
-    now: Date
+    now: Date,
+    options: { allowWithoutRefundProof?: boolean } = {}
   ): Promise<void> {
+    if (!options.allowWithoutRefundProof) {
+      await this.assertRefundProofForRevocation(order);
+    }
+
     if (order.orderType === OrderType.vipPlan) {
       await this.revokeVipBenefits(order, now);
       return;
@@ -2755,6 +2763,38 @@ export class AdminOrderService {
     if (order.orderType === OrderType.voicePackage) {
       await this.revokeVoicePackageBenefits(order, now);
     }
+  }
+
+  /**
+   * 撤销会员/权益前的 fail-closed 校验：必须有退款凭证，否则拒绝执行。
+   * 防止对账/同步类路径在缺少凭证时误撤销会员（20260830 事故根因）。
+   */
+  private async assertRefundProofForRevocation(
+    order: OrderEntity
+  ): Promise<void> {
+    if (
+      order.status === OrderStatus.refunded &&
+      (order.refundAmount ?? 0) > 0
+    ) {
+      return;
+    }
+
+    const completedRefund = await this.orderRefundModel.findOne({
+      where: {
+        originalOrderId: order.id,
+        status: OrderRefundStatus.completed,
+      } as never,
+    });
+
+    if (completedRefund) {
+      return;
+    }
+
+    throw new AppError(
+      'ORDER_REFUND_PROOF_MISSING',
+      '未查到已完成的退款凭证，已拒绝撤销会员/权益',
+      409
+    );
   }
 
   private async revokeVipBenefits(
@@ -3117,6 +3157,7 @@ export class AdminOrderService {
     const source = this.normalizeOptionalSource(query?.source);
     const paymentType = this.normalizeOptionalPaymentType(query?.paymentType);
     const excludeAdminManual = this.normalizeBoolean(query?.excludeAdminManual);
+    const excludeMessenger = this.normalizeBoolean(query?.excludeMessenger);
     const createdAtStart = this.normalizeOptionalDate(query?.createdAtStart);
     const createdAtEnd = this.normalizeOptionalDate(query?.createdAtEnd);
     const registeredMonth = query?.registeredMonth?.trim();
@@ -3163,6 +3204,13 @@ export class AdminOrderService {
 
     if (userId) {
       where.userId = userId;
+    }
+
+    if (excludeMessenger) {
+      const messengerAgentIds = await this.findMessengerAgentIds();
+      if (messengerAgentIds.length > 0) {
+        where.agentId = { $nin: messengerAgentIds };
+      }
     }
 
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(registeredMonth ?? '')) {
@@ -3215,6 +3263,16 @@ export class AdminOrderService {
     return {
       $and: [where, { $or: keywordFilters }],
     };
+  }
+
+  private async findMessengerAgentIds(): Promise<MongoObjectId[]> {
+    const agents = await this.agentModel.find({
+      where: {
+        messengerOfAgentId: { $exists: true, $ne: null },
+      } as never,
+      select: ['id'],
+    });
+    return agents.map(agent => agent.id);
   }
 
   private async findUserIdsByKeyword(
