@@ -36,7 +36,9 @@ describe('AdminOperationsService', () => {
         paidRevenue: isToday ? 99 : 0,
         refundedRevenue: isToday ? 18 : 0,
         netRevenue: isToday ? 81 : 0,
-        cohortRevenue: 0,
+        cohortRevenue: isToday ? 500 : 0,
+        promotionExpense: isToday ? 310 : 0,
+        profit: isToday ? 190 : 0,
       };
     });
     service.adminDailyStats = {

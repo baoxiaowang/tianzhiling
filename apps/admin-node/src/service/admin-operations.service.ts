@@ -551,9 +551,9 @@ export class AdminOperationsService {
           {
             ...realOrderMatch,
             status: OrderRefundStatus.completed,
-            requestedAt: { $gte: dayStart, $lt: dayEnd },
+            completedAt: { $gte: dayStart, $lt: dayEnd },
           },
-          '$requestedAt',
+          '$completedAt',
           '$amount'
         ),
         this.aggregateLegacyDailyRefundAmounts(dayStart, dayEnd, realOrderMatch),
@@ -571,6 +571,8 @@ export class AdminOperationsService {
     const orderRow = orderMap.get(date);
     const paidRevenue = this.centsToYuan(orderRow?.paidAmount ?? 0);
     const refundedRevenue = this.centsToYuan(refundMap.get(date) ?? 0);
+    const cohortRevenue = this.centsToYuan(cohortMap.get(date) ?? 0);
+    const promotionExpense = getDouyinPromotionExpense(date);
 
     return {
       date,
@@ -587,7 +589,9 @@ export class AdminOperationsService {
       paidRevenue,
       refundedRevenue,
       netRevenue: this.roundMoney(paidRevenue - refundedRevenue),
-      cohortRevenue: this.centsToYuan(cohortMap.get(date) ?? 0),
+      cohortRevenue,
+      promotionExpense,
+      profit: this.roundMoney(cohortRevenue - promotionExpense),
     };
   }
 
