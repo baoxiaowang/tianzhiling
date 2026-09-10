@@ -70,7 +70,6 @@ type PeriodOrderStatsRow = {
 };
 type AllTimeChatStatsRow = { chatUsers: number; userMessages: number };
 type UserAmountRow = { _id: MongoObjectId; amount: number };
-type CohortUserCountRow = { _id: string; count: number };
 type CohortOrderStatsRow = {
   _id: string;
   payingUsers: number;
