@@ -542,8 +542,8 @@ for service in "${SERVICES[@]}"; do
   if [[ "$service" == 'tzl_memory_worker' ]]; then continue; fi
   BUILD_STARTED_AT="$(date +%s)"
   release_event service_begin "service=$service"
-  if [[ "$service" == 'tzl_admin_web' ]]; then
-    # The admin bundle previously remained stale under Docker layer caching.
+  if [[ "$service" == 'tzl_admin_web' || "$service" == 'tzl_admin_node' ]]; then
+    # The admin bundle and admin-node previously remained stale under Docker layer caching.
     docker compose --profile prod build --no-cache "$service"
   else
     docker compose --profile prod build "$service"
