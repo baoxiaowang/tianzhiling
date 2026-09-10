@@ -41,6 +41,10 @@ export class MemoryPipelineTaskEntity extends BaseEntity {
   @Column()
   messageId: MongoObjectId;
 
+  /** 批量任务：合并多条消息为一个任务，messageId 为第一条消息的 ID */
+  @Column()
+  messageIds?: MongoObjectId[];
+
   @Column()
   conversationId: MongoObjectId;
 
