@@ -829,12 +829,20 @@ export class AgentProfileFactService {
         const modelOnlyNameCandidate =
           isNameMemoryFactKey(fact.key) && !ruleFactKeys.has(fact.key);
 
+        // LLM 增强：trustedSource 优先看 LLM 输出的 confidence——
+        // 只有 user_corrected（用户明确纠正/否认）直接信任，
+        // confirmed/extracted 仍走正常的 candidate→active 升级路径，
+        // 否则回退 isCorrectionText 正则加速通道。
+        const llmMarkedCorrection =
+          fact.confidence === AgentProfileFactConfidence.userCorrected;
+
         return {
           fact,
           trustedSource:
             !modelOnlyNameCandidate &&
             (options.fromFeedback === true ||
               ruleFactKeys.has(fact.key) ||
+              llmMarkedCorrection ||
               this.isCorrectionText(sourceText)),
           forceCandidate: modelOnlyNameCandidate,
         };
@@ -958,7 +966,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。没有明确事实输出 []。禁止根据常识推断。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',

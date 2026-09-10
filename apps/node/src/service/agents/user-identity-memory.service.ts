@@ -17,6 +17,7 @@ import {
   isExplicitCanonicalNameReplacement,
 } from './agent-name-memory';
 import { UserRelativeProfileService } from './user-relative-profile.service';
+import { OpenAIService } from './openai';
 
 export interface UserIdentityPromptProfile {
   realName?: string;
@@ -142,6 +143,9 @@ export class UserIdentityMemoryService {
 
   @Inject()
   userRelativeProfileService: UserRelativeProfileService;
+
+  @Inject()
+  openAIService: OpenAIService;
 
   async recordFromUserMessage(
     message: MessageEntity,
@@ -346,8 +350,67 @@ export class UserIdentityMemoryService {
     sourceText: string;
   }): Promise<void> {
     const declarations = extractKnownPersonDeclarations(options.sourceText);
-    for (const declaration of declarations) {
+    // LLM 增强：正则粗筛出候选 realName 后，批量调一次 LLM 判断
+    // "是人名还是职业/身份/角色"，只有判定为人名才落库。
+    // 第一轮已加的 NON_PERSON_OCCUPATION_BLACKLIST 保留作为 LLM 不可用时的兜底。
+    const filtered = await this.filterPersonNamesWithLLM(declarations, options.sourceText);
+    for (const declaration of filtered) {
       await this.upsertKnownPersonDeclaration({ ...options, declaration });
+    }
+  }
+
+  /**
+   * LLM 姓名区分层：批量判断候选 realName 是人名还是职业/身份/角色。
+   * 只有判定为人名的 declaration 才保留。LLM 不可用时回退到原列表（黑名单已在 normalizePersonName 中过滤）。
+   */
+  private async filterPersonNamesWithLLM(
+    declarations: KnownPersonDeclaration[],
+    sourceText: string
+  ): Promise<KnownPersonDeclaration[]> {
+    if (!declarations.length) return declarations;
+    if (!this.openAIService?.isEnabled?.()) return declarations;
+
+    const candidates = declarations
+      .map(d => d.realName)
+      .filter((name): name is string => Boolean(name && name.trim()));
+    if (!candidates.length) return declarations;
+
+    try {
+      const result = await this.openAIService.generateText({
+        temperature: 0,
+        topP: 0.1,
+        reasoningSplit: false,
+        maxTokens: 400,
+        systemPrompt:
+          '你是人名判断器。判断给定的候选词是"真实人名"还是"职业/身份/角色/官职/动物/自然物/时间/地点"。输出严格 JSON 对象，格式：{"results":[{"name":"候选词","isPersonName":true/false}]}。只判断，不解释。中文两字及以上的常见姓氏+名字组合通常是人名；"老师/医生/班长/经理/司机/厨师/护士/警察/律师/会计/工程师/程序员/设计师/作家/画家/歌手/演员/导演/主持人/记者/编辑/翻译/导游/保安/保洁/快递员/外卖员/理发师/美容师/健身教练/瑜伽老师/钢琴老师/英语老师/数学老师"等是职业不是人名。',
+        prompt: `原文：${sourceText.slice(0, 300)}\n候选词：${JSON.stringify(candidates)}`,
+      });
+
+      const jsonText = result.content
+        ?.trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, '');
+      if (!jsonText) return declarations;
+
+      const parsed = JSON.parse(jsonText);
+      if (!parsed?.results || !Array.isArray(parsed.results)) return declarations;
+
+      const nonPersonNames = new Set(
+        parsed.results
+          .filter((r: { name?: string; isPersonName?: boolean }) => r?.isPersonName === false)
+          .map((r: { name?: string }) => r?.name?.trim())
+          .filter(Boolean)
+      );
+
+      if (nonPersonNames.size === 0) return declarations;
+
+      return declarations.filter(d => {
+        if (!d.realName) return true;
+        return !nonPersonNames.has(d.realName.trim());
+      });
+    } catch {
+      // LLM 调用失败时回退到原列表（黑名单已在 normalizePersonName 中过滤）
+      return declarations;
     }
   }
 

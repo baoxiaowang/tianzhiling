@@ -73,6 +73,14 @@ export interface DepartureTimeSemanticDecision {
   speechAct: 'assertion' | 'correction' | 'question' | 'negation' | 'uncertain';
   canonicalStatement?: string;
   confidence: 'high' | 'medium' | 'low';
+  /** LLM 输出的标准化时间解析（可选，规则解析失败时优先使用） */
+  normalizedTime?: {
+    exactDate?: string;
+    year?: number;
+    month?: number;
+    day?: number;
+    precision?: string;
+  };
 }
 
 export const PERSON_TEMPORAL_SEMANTIC_VERSION = 'departure_semantic_v2';
@@ -465,7 +473,8 @@ export class PersonTemporalMemoryService {
           '判定用户是否在陈述/纠正当前智能体的离世时间。只输出JSON。',
           '无歧义陈述/纠正才a=1；提问、否定、猜测、第三人、对象不明均a=0。',
           'e必须原样截取原话时间片段；不计算日期，不新增数字或单位。',
-          '{"a":0,"s":"current_agent|other|unknown","t":"assertion|correction|question|negation|uncertain","e":"原文片段","c":0}',
+          '时间解析：如果a=1且能从原话中解析出标准化时间，输出d字段：{"exactDate":"YYYY-MM-DD或空","year":年份或0,"month":月份或0,"day":日期或0,"precision":"exact_day|month_day|year_month|year|approximate_duration|unknown"}。无法精确解析时d.exactDate为空、precision为unknown。不要凭空编造日期。',
+          '{"a":0,"s":"current_agent|other|unknown","t":"assertion|correction|question|negation|uncertain","e":"原文片段","c":0,"d":{"exactDate":"","year":0,"month":0,"day":0,"precision":"unknown"}}',
         ].join('\n'),
         prompt: [
           `当前智能体指代是否已由相认任务确定：${
@@ -549,6 +558,18 @@ export class PersonTemporalMemoryService {
                   | DepartureTimeSemanticDecision['confidence']
                   | undefined),
         };
+        // LLM 时间解析增强：解析 d 字段（标准化时间）
+        const normalizedTimeValue = value.normalizedTime ?? value.d;
+        if (normalizedTimeValue && typeof normalizedTimeValue === 'object') {
+          const nt = normalizedTimeValue as Record<string, unknown>;
+          parsed.normalizedTime = {
+            exactDate: typeof nt.exactDate === 'string' ? nt.exactDate : undefined,
+            year: typeof nt.year === 'number' ? nt.year : undefined,
+            month: typeof nt.month === 'number' ? nt.month : undefined,
+            day: typeof nt.day === 'number' ? nt.day : undefined,
+            precision: typeof nt.precision === 'string' ? nt.precision : undefined,
+          };
+        }
         if (
           typeof parsed.applies === 'boolean' &&
           ['current_agent', 'other', 'unknown'].includes(
@@ -663,11 +684,19 @@ export class PersonTemporalMemoryService {
 
     const evidence = decision.canonicalStatement.trim().slice(0, 120);
     if (!this.preservesTemporalEvidence(sourceText, evidence)) return null;
-    const parsed = parseAgentDepartureTime({
+    let parsed = parseAgentDepartureTime({
       text: evidence,
       referenceAt,
       implicitCurrentAgent: true,
     });
+    // LLM 时间解析增强：规则解析失败时，优先用 LLM 输出的标准化时间重试
+    if (!parsed && decision.normalizedTime?.exactDate) {
+      parsed = parseAgentDepartureTime({
+        text: decision.normalizedTime.exactDate,
+        referenceAt,
+        implicitCurrentAgent: true,
+      });
+    }
     if (!parsed) return null;
 
     return {
