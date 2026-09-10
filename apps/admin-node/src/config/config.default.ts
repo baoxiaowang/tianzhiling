@@ -10,6 +10,7 @@ import {
 } from '@tzl/shared';
 import {
   AdminAccountEntity,
+  AdminDailyStatsEntity,
   AdminUserEntity,
   AgentEntitlementEntity,
   AgentEntity,
@@ -667,6 +668,7 @@ export default {
         logging: readBooleanFrom(['ADMIN_API_DB_LOGGING'], false),
         entities: [
           AdminAccountEntity,
+          AdminDailyStatsEntity,
           AdminUserEntity,
           AgentEntitlementEntity,
           AgentEntity,

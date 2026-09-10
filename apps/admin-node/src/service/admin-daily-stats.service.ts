@@ -89,6 +89,8 @@ export class AdminDailyStatsService {
         refundedRevenue: row.refundedRevenue,
         netRevenue: row.netRevenue,
         cohortRevenue: row.cohortRevenue,
+        promotionExpense: row.promotionExpense,
+        profit: row.profit,
       });
     }
     return map;
