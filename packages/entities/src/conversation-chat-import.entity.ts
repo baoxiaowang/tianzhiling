@@ -184,6 +184,12 @@ export class ConversationChatImportBatchEntity extends BaseEntity {
   memoryReviewCompletedAt?: Date;
 
   @Column()
+  voiceOnlyCount?: number;
+
+  @Column()
+  importHints?: string[];
+
+  @Column()
   createdAt: Date;
 
   @Column()

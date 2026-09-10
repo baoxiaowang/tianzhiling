@@ -728,6 +728,7 @@ export class ConversationChatImportService {
 
       const recognizedItems: ConversationChatImportItemEntity[] = [];
       let failedCount = 0;
+      let voiceOnlyCount = 0;
       const assets = [...(batch.assets || [])].sort(
         (left, right) => left.screenshotSequence - right.screenshotSequence
       );
@@ -736,6 +737,12 @@ export class ConversationChatImportService {
         try {
           const messages = await this.recognizeScreenshot(asset);
           for (const raw of messages.slice(0, MAX_IMPORT_ITEMS)) {
+            // 统计纯语音条（无转文字），用于生成导入提示
+            const rawType = this.normalizeItemType(raw.type);
+            const rawContent = normalizeChatImportText(raw.content);
+            if (rawType === ConversationChatImportItemType.voice && !rawContent) {
+              voiceOnlyCount += 1;
+            }
             const item = this.buildRecognizedItem(batch, asset, raw);
             if (item) {
               recognizedItems.push(item);
@@ -780,6 +787,15 @@ export class ConversationChatImportService {
       batch.latestOccurredAt = occurredTimes.length
         ? new Date(Math.max(...occurredTimes))
         : undefined;
+      batch.voiceOnlyCount = voiceOnlyCount;
+      if (voiceOnlyCount > 0) {
+        const hints = batch.importHints || [];
+        const voiceHint = `检测到${voiceOnlyCount}条语音消息未转文字，建议在微信中长按语音条选择"转文字"后再截图导入`;
+        if (!hints.includes(voiceHint)) {
+          hints.push(voiceHint);
+        }
+        batch.importHints = hints;
+      }
       batch.recognizedAt = new Date();
       batch.updatedAt = batch.recognizedAt;
       batch.status = recognizedItems.length
@@ -842,7 +858,8 @@ export class ConversationChatImportService {
             '时间分隔条不是说话内容；应把它作为后续气泡的 rawTimeText。只有截图明确出现完整日期时才输出 occurredAt 的 ISO 时间。昨天、星期几等相对时间没有确定参照时 occurredAt 必须为 null。',
             '微信两人私聊中常见的转账/红包、语音通话、位置、图片、表情、小程序卡片、对方昵称与头像、时间分隔条等元素，均不构成群聊特征，chatType 一律输出 two_person。',
             '只有截图明确出现三个及以上不同发言人、群聊名称、群成员列表或 @多人 等特征时，才输出 group；群聊仍要完整识别 messages，side 按左右气泡判断。',
-            '无法判断是否为群聊时输出 unknown，仍要尽力识别 messages。语音、图片、表情、转账只写简短占位内容。',
+            '无法判断是否为群聊时输出 unknown，仍要尽力识别 messages。图片、表情、转账只写简短占位内容。',
+            '语音消息处理规则：如果语音条下方有语音转文字内容，type=text，content=转写的完整文字；如果只有语音条没有转文字，type=voice，content 留空字符串（不要写[语音]或语音时长等占位内容）。',
           ].join('\n'),
         },
         {
@@ -881,7 +898,8 @@ export class ConversationChatImportService {
   ): ConversationChatImportItemEntity | null {
     const content = normalizeChatImportText(raw.content);
     const type = this.normalizeItemType(raw.type);
-    if (!content && type === ConversationChatImportItemType.text) {
+    // 空文本和纯语音条（无转文字）都不生成导入条目
+    if (!content && (type === ConversationChatImportItemType.text || type === ConversationChatImportItemType.voice)) {
       return null;
     }
 
@@ -1182,6 +1200,37 @@ export class ConversationChatImportService {
         }))
       )
     );
+
+    // 增强：单条消息精确匹配去重（content + speaker，内容长度 >= 6）
+    // 补充连续序列匹配未覆盖的分散重复内容
+    const existingContentSet = new Set<string>();
+    for (const group of groups.values()) {
+      for (const message of group) {
+        const speaker =
+          message.role === MessageRole.user
+            ? ConversationChatImportSpeaker.user
+            : ConversationChatImportSpeaker.agent;
+        const content = normalizeChatImportText(message.content);
+        if (content.length >= 6) {
+          existingContentSet.add(`${speaker}|${content}`);
+        }
+      }
+    }
+
+    for (const item of items) {
+      if (item.isDuplicate) continue;
+      const content = normalizeChatImportText(item.content);
+      if (content.length < 6) continue;
+      const key = `${item.speaker}|${content}`;
+      if (existingContentSet.has(key)) {
+        item.isDuplicate = true;
+        this.logger?.debug?.(
+          '[chat-import] single-message duplicate detected, batchId=%s, content=%s',
+          this.stringifyObjectId(batch.id),
+          content.substring(0, 30)
+        );
+      }
+    }
   }
 
   private async linkAutomaticSourceMessage(
