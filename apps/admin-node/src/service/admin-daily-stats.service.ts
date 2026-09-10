@@ -99,8 +99,11 @@ export class AdminDailyStatsService {
   /**
    * 确保指定日期都有汇总数据。缺失的日期实时补算并写入。
    * 返回完整的 date -> point 映射。
-   * 缺失日期并行补算（并发数 3），避免串行等待过久导致请求超时。
+   * 限制：实时补算最多 7 天，超出部分不补算（依赖定时任务/回填预先计算），
+   * 避免请求时补算大量历史数据导致超时。
    */
+  private static readonly MAX_LIVE_BACKFILL_DAYS = 7;
+
   async ensureDays(
     dates: string[]
   ): Promise<Map<string, AdminOperationsDailyPointDTO>> {
@@ -109,9 +112,11 @@ export class AdminDailyStatsService {
     const cached = await this.getDays(sorted[0], sorted[sorted.length - 1]);
     const missing = dates.filter(d => !cached.has(d));
     if (missing.length > 0) {
+      // 只补算最近的 N 天，超出部分留给定时任务/回填
+      const toBackfill = missing.slice(-AdminDailyStatsService.MAX_LIVE_BACKFILL_DAYS);
       const CONCURRENCY = 3;
-      for (let i = 0; i < missing.length; i += CONCURRENCY) {
-        const batch = missing.slice(i, i + CONCURRENCY);
+      for (let i = 0; i < toBackfill.length; i += CONCURRENCY) {
+        const batch = toBackfill.slice(i, i + CONCURRENCY);
         const points = await Promise.all(
           batch.map(date => this.computeDay(date))
         );
