@@ -113,7 +113,7 @@ import VoicePackageSheet from '../../components/voice-package-sheet/voice-packag
 import { ensureAuthenticatedSession, redirectToAuthPage } from '../../utils/auth-guard'
 import {
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPayment,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 
@@ -325,21 +325,10 @@ async function handlePay() {
         agentId: agentId.value,
         jsCode: code,
       })
-      const paidOrder = await requestWechatVirtualPaymentWithFallback(result, async () => {
-        const fallbackLoginResult = await Taro.login()
-        const fallbackCode = fallbackLoginResult.code?.trim()
-
-        if (!fallbackCode) {
-          throw new Error('微信登录失败，请稍后重试')
-        }
-
-        return createVoicePackageOrder({
-          voicePackageId: voicePackage.id,
-          agentId: agentId.value,
-          jsCode: fallbackCode,
-        })
+      await requestWechatVirtualPayment(result.virtualPayment, {
+        orderId: result.order.id,
       })
-      paidOrderId = paidOrder.id
+      paidOrderId = result.order.id
     } else {
       const result = await createVoicePackageOrder({
         voicePackageId: voicePackage.id,

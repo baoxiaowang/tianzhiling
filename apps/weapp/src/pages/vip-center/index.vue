@@ -90,7 +90,7 @@ import {
 } from '../../utils/auth-guard'
 import {
   isWechatPaymentCancel,
-  requestWechatVirtualPaymentWithFallback,
+  requestWechatVirtualPayment,
   showWechatVirtualPaymentError,
 } from '../../utils/virtual-payment'
 import VipMemberView from './components/vip-member-view.vue'
@@ -353,26 +353,9 @@ async function handlePurchaseTap() {
           throw new Error('支付参数获取失败，请稍后重试')
         }
 
-        const paidOrder = await requestWechatVirtualPaymentWithFallback(
-          {
-            order: result.order,
-            virtualPayment: result.virtualPayment,
-          },
-          async () => {
-            const fallbackLoginResult = await Taro.login()
-            const fallbackJsCode = fallbackLoginResult.code?.trim()
-
-            if (!fallbackJsCode) {
-              throw new Error('微信登录凭证获取失败，请稍后重试')
-            }
-
-            return createVipPlanOrder({
-              vipPlanId,
-              jsCode: fallbackJsCode,
-            })
-          }
-        )
-        paidOrderId = paidOrder.id
+        await requestWechatVirtualPayment(result.virtualPayment, {
+          orderId: result.order.id,
+        })
       }
     } else {
       const result = await createVipPlanOrder({
