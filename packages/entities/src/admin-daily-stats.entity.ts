@@ -59,6 +59,14 @@ export class AdminDailyStatsEntity extends BaseEntity {
   @Column()
   cohortRevenue!: number;
 
+  /** 推广费用（元） */
+  @Column()
+  promotionExpense!: number;
+
+  /** 利润（元）= netRevenue - promotionExpense */
+  @Column()
+  profit!: number;
+
   /** 本条记录计算完成时间 */
   @Column()
   computedAt!: Date;
