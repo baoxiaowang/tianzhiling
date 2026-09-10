@@ -99,6 +99,7 @@ export class AdminDailyStatsService {
   /**
    * 确保指定日期都有汇总数据。缺失的日期实时补算并写入。
    * 返回完整的 date -> point 映射。
+   * 缺失日期并行补算（并发数 3），避免串行等待过久导致请求超时。
    */
   async ensureDays(
     dates: string[]
@@ -107,9 +108,15 @@ export class AdminDailyStatsService {
     const sorted = [...dates].sort();
     const cached = await this.getDays(sorted[0], sorted[sorted.length - 1]);
     const missing = dates.filter(d => !cached.has(d));
-    for (const date of missing) {
-      const point = await this.computeDay(date);
-      cached.set(date, point);
+    if (missing.length > 0) {
+      const CONCURRENCY = 3;
+      for (let i = 0; i < missing.length; i += CONCURRENCY) {
+        const batch = missing.slice(i, i + CONCURRENCY);
+        const points = await Promise.all(
+          batch.map(date => this.computeDay(date))
+        );
+        batch.forEach((date, idx) => cached.set(date, points[idx]));
+      }
     }
     return cached;
   }
