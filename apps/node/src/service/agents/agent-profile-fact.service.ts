@@ -1238,9 +1238,11 @@ export class AgentProfileFactService {
     // 代词所有格："我的爸爸"、"你的老师"（这里"你的老师"可能是职业，但"我的朝思暮想的爸爸"不是）
     if (/(我的|你的|他的|她的|我们的|你们的|他们的)/.test(text)) return true;
     // 亲属称呼
-    if (/(爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|丈夫|妻子|老公|老婆|叔叔|阿姨|舅舅|舅妈|姑姑|姑父|姨夫|姨妈)/.test(text)) return true;
+    if (/(爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|丈夫|妻子|老公|老婆|叔叔|阿姨|舅舅|舅妈|姑姑|姑父|姨夫|姨妈|宝贝|乖宝|宝宝)/.test(text)) return true;
     // 形容词/修饰词短语
-    if (/(朝思暮想|亲爱的|可爱的|敬爱的|伟大的|最爱的|想念的|思念的|心疼的|骄傲的|自豪的)/.test(text)) return true;
+    if (/(朝思暮想|亲爱的|可爱的|敬爱的|伟大的|最爱的|想念的|思念的|心疼的|骄傲的|自豪的|好好活着|愿意|看得清|捧在手上|嘴上说|AI|假的|支柱)/.test(text)) return true;
+    // 动词短语（职业是名词，不应包含动词）
+    if (/(是|做|干|当|有|在|去|来|要|想|爱|喜欢|希望|愿意|能够|可以|应该|必须)/.test(text)) return true;
     // 长度超过 6 字，大概率不是职业（职业一般 2-4 字，最多如"软件工程师"5字）
     if (text.length > 6) return true;
     return false;
@@ -1758,6 +1760,17 @@ export class AgentProfileFactService {
 
     if (!type || !key || !factValue) {
       return null;
+    }
+
+    // P0-2: LLM 抽取的职业也必须经过"不像职业"过滤，
+    // 避免"朝思暮想的爸爸""AI妈妈""好好活着的"等描述性短语被当成职业。
+    if (type === AgentProfileFactType.occupation) {
+      // 从 value 中提取实际职业词（去掉"当前角色以前的职业或工作是"前缀）
+      const occupationMatch = factValue.match(/是(.+?)$/);
+      const occupationWord = occupationMatch?.[1]?.trim() || factValue;
+      if (this.isLikelyNotOccupation(occupationWord)) {
+        return null;
+      }
     }
 
     return {

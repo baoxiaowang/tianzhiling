@@ -53,7 +53,7 @@ const EXACT_DURATION_PATTERN = /整整|正好|恰好|到今天|周年|一天不�
 export const AGENT_DEPARTURE_TIME_SIGNAL_PATTERN =
   /离开|走了|走的|去世|离世|过世|不在了|忌日|祭日|头\s*7|头七|一七|二七|三七|五七|七七|百日|百天|周年|年头/;
 export const IMPLICIT_DEPARTURE_TIME_SIGNAL_PATTERN =
-  /(?:已经|都有|有|差不多|大约|大概|整整|正好|恰好|将近|快|超过|不到)?\s*[0-9零〇一二两三四五六七八九十百千]+\s*(?:年|个?月|周|星期|天|年头)|头\s*7|头七|一七|二七|三七|五七|七七|百日|百天/;
+  /(?:离开|走了|去世|离世|过世|不在了|没了|走的|去了|走啦)\s*(?:已经|都有|有|差不多|大约|大概|整整|正好|恰好|将近|快|超过|不到)?\s*[0-9零〇一二两三四五六七八九十百千]+\s*(?:年|个?月|周|星期|天|年头)|(?:已经|都有|有|差不多|大约|大概|整整|正好|恰好|将近|快|超过|不到)?\s*[0-9零〇一二两三四五六七八九十百千]+\s*(?:年|个?月|周|星期|天|年头)\s*(?:了|多|没看到|没见|没看见|不在|没有回来|没有回家|看不到你|见不到你)|头\s*7|头七|一七|二七|三七|五七|七七|百日|百天/;
 
 function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
   const flags = pattern.global ? pattern.flags : `${pattern.flags}g`;
