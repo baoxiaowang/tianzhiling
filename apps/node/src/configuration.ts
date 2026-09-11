@@ -27,6 +27,7 @@ import {
   MEMORY_PIPELINE_RECONCILE_INTERVAL_MS,
   MEMORY_PIPELINE_RECONCILE_JOB_ID,
 } from './service/memory-pipeline-task.service';
+import { Queue as BullQueue } from 'bullmq';
 import { DEPARTURE_DURATION_QUEUE } from './service/agents/departure-duration.service';
 import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
@@ -119,46 +120,71 @@ export class MainConfiguration {
         }
 
         // 离世时长预计算：每天凌晨3点增量（活跃用户），每月1号全量
+        // 注意：不能使用 bullmqFramework.getQueue().addJobToQueue() 注册 repeat——
+        // MidwayJS 封装将队列名作为 jobSchedulerId（忽略 repeat.jobId），
+        // daily 与 monthly 会相互覆盖，导致其中一个丢失。
+        // 因此这里直接用原生 BullMQ Queue 注册，jobSchedulerId 各不相同可共存。
         try {
-          const durationQueue = this.bullmqFramework?.getQueue(
-            DEPARTURE_DURATION_QUEUE
+          const connection = {
+            host:
+              process.env.NODE_BULLMQ_HOST ||
+              process.env.NODE_REDIS_HOST ||
+              '127.0.0.1',
+            port: Number(
+              process.env.NODE_BULLMQ_PORT ||
+                process.env.NODE_REDIS_PORT ||
+                17380
+            ),
+            password:
+              process.env.NODE_BULLMQ_PASSWORD ||
+              process.env.NODE_REDIS_PASSWORD ||
+              '',
+            db: Number(
+              process.env.NODE_BULLMQ_DB ||
+                process.env.NODE_REDIS_DB ||
+                0
+            ),
+          };
+          const prefix =
+            process.env.NODE_BULLMQ_PREFIX || '{tzl-bullmq}';
+          const durationQueue = new BullQueue(DEPARTURE_DURATION_QUEUE, {
+            connection,
+            prefix,
+          });
+          // 每天凌晨3点：增量计算活跃用户
+          await durationQueue.upsertJobScheduler(
+            'departure-duration-daily',
+            { pattern: '0 3 * * *' },
+            {
+              name: DEPARTURE_DURATION_QUEUE,
+              data: { type: 'daily' },
+              opts: { removeOnComplete: true, removeOnFail: 30 },
+            }
           );
-          if (durationQueue) {
-            // 每天凌晨3点：增量计算活跃用户
-            // 注意：repeat.jobId 用于区分 repeat 去重键，必须为 daily/monthly 指定不同值，
-            // 否则两个 repeat 的 repeatJobKey 相同（默认取 jobName），后者会被前者覆盖
-            await durationQueue.addJobToQueue(
-              { type: 'daily' },
-              {
-                jobId: 'departure-duration-daily',
-                repeat: { pattern: '0 3 * * *', jobId: 'departure-duration-daily' },
-                removeOnComplete: true,
-                removeOnFail: 30,
-              }
-            );
-            // 每月1号凌晨3点：全量计算所有用户
-            await durationQueue.addJobToQueue(
-              { type: 'monthly' },
-              {
-                jobId: 'departure-duration-monthly',
-                repeat: { pattern: '0 3 1 * *', jobId: 'departure-duration-monthly' },
-                removeOnComplete: true,
-                removeOnFail: 30,
-              }
-            );
-            // 启动时立即跑一次增量，避免重启后当天不执行
-            await durationQueue.addJobToQueue(
-              { type: 'daily' },
-              {
-                jobId: `departure-duration-startup-${Date.now()}`,
-                removeOnComplete: true,
-                removeOnFail: 30,
-              }
-            );
-            this.logger.info(
-              '[departure-duration] scheduled daily(03:00) and monthly(1st 03:00) computation'
-            );
-          }
+          // 每月1号凌晨3点：全量计算所有用户
+          await durationQueue.upsertJobScheduler(
+            'departure-duration-monthly',
+            { pattern: '0 3 1 * *' },
+            {
+              name: DEPARTURE_DURATION_QUEUE,
+              data: { type: 'monthly' },
+              opts: { removeOnComplete: true, removeOnFail: 30 },
+            }
+          );
+          // 启动时立即跑一次增量，避免重启后当天不执行
+          await durationQueue.add(
+            DEPARTURE_DURATION_QUEUE,
+            { type: 'daily' },
+            {
+              jobId: `departure-duration-startup-${Date.now()}`,
+              removeOnComplete: true,
+              removeOnFail: 30,
+            }
+          );
+          await durationQueue.close();
+          this.logger.info(
+            '[departure-duration] scheduled daily(03:00) and monthly(1st 03:00) computation'
+          );
         } catch (error) {
           this.logger.warn(
             '[departure-duration] scheduling failed, reason=%s',
