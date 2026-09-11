@@ -89,6 +89,28 @@ export class AgentEntity extends BaseEntity {
   @Column()
   deathDate?: Date;
 
+  /**
+   * 预计算的离世时长字符串，每轮聊天直接注入，不需要实时计算。
+   * 由每日凌晨3点的批量预计算任务更新，修改 deathDate 时即时更新。
+   * 示例："3个月" / "大约一周前" / "二十多年前"
+   */
+  @Column()
+  departureDuration?: string;
+
+  /**
+   * 节点提醒，未来7天内有重要节点（头七/百日/周年）时填写，否则为 null。
+   * 由每日预计算任务更新。
+   * 示例："明天是头七" / "3天后是百日"
+   */
+  @Column()
+  nodeReminder?: string;
+
+  /**
+   * 上次预计算时间，用于监控和健康检查。
+   */
+  @Column()
+  departureDurationComputedAt?: Date;
+
   @Column({ type: "json", nullable: true })
   timeMarkers?: Array<{
     monthDay: string; // mm-dd format

@@ -2081,6 +2081,12 @@ export class AgentContextService {
       }
     };
 
+    // 常驻领域：每轮都包含，不受查询关键词影响
+    // 性格基调：只作表达倾向参考，防滥用约束在事实注入层处理
+    domains.push(['profile.personality']);
+    // 语言习惯：直接影响输出语言，必须常驻
+    domains.push(['profile.language']);
+
     addDomain(/称呼|叫我|叫法|怎么喊|喊我/.test(query), [
       'address.current',
       'address.forbidden',
@@ -2167,6 +2173,34 @@ export class AgentContextService {
       'compound.supplement',
       'compound.policy',
     ]);
+    // 健康/身体状况
+    addDomain(
+      /身体|健康|生病|住院|手术|吃药|体检|血压|血糖|心脏|胃|腰|腿|失眠|睡眠|康复|复查/.test(
+        query
+      ),
+      ['health.current', 'health.history', 'health.medication', 'health.preference']
+    );
+    // 工作/职业
+    addDomain(
+      /工作|上班|加班|辞职|退休|同事|领导|老板|项目|开会|出差|工资|升职|失业/.test(
+        query
+      ),
+      ['occupation.primary', 'occupation.history', 'occupation.preference']
+    );
+    // 节日/季节/天气
+    addDomain(
+      /春节|过年|中秋|端午|清明|国庆|元旦|圣诞|情人节|母亲节|父亲节|冬至|腊八|小年|春天|夏天|秋天|冬天|下雨|下雪|冷|热/.test(
+        query
+      ),
+      ['ritual.date', 'ritual.action', 'ritual.boundary']
+    );
+    // 出行/旅行
+    addDomain(
+      /旅行|旅游|出差|回家|回老家|坐飞机|坐火车|高铁|机票|酒店|景点|爬山|散步|出门|逛街/.test(
+        query
+      ),
+      ['life.travel', 'life.daily', 'life.preference']
+    );
 
     if (domains.length <= 1) {
       return domains[0] || [];
@@ -2326,6 +2360,19 @@ export class AgentContextService {
     }
     if (key.startsWith('memory_test.policy.')) {
       return 'compound.policy';
+    }
+
+    // 健康相关
+    if (key.startsWith('health.')) {
+      return key.split('.').slice(0, 2).join('.');
+    }
+    // 工作/职业相关
+    if (key.startsWith('occupation.')) {
+      return key.split('.').slice(0, 2).join('.');
+    }
+    // 生活/出行相关
+    if (key.startsWith('life.')) {
+      return key.split('.').slice(0, 2).join('.');
     }
 
     return key.split('.').slice(0, 2).join('.');
@@ -2564,6 +2611,29 @@ export class AgentContextService {
       text: `当前角色显示名或角色称呼是${name}`,
       subjectRef: 'agent',
     });
+
+    // 离世时长常驻注入：预计算好的字符串，每轮直接用，不需要实时计算
+    const departureDuration = agent.departureDuration?.trim();
+    if (departureDuration) {
+      addProfileAtom({
+        factKey: 'identity.departure_duration',
+        text: `当前角色已离世${departureDuration}`,
+        subjectRef: 'agent',
+        confidence: 0.9,
+      });
+    }
+
+    // 节点提醒：未来7天内有重要节点（头七/百日/周年）时注入
+    const nodeReminder = agent.nodeReminder?.trim();
+    if (nodeReminder) {
+      addProfileAtom({
+        factKey: 'identity.node_reminder',
+        text: `近期节点：${nodeReminder}`,
+        subjectRef: 'agent',
+        confidence: 0.95,
+      });
+    }
+
     const realName = agent.realName?.trim();
     if (realName) {
       addProfileAtom({

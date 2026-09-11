@@ -27,6 +27,7 @@ import {
   MEMORY_PIPELINE_RECONCILE_INTERVAL_MS,
   MEMORY_PIPELINE_RECONCILE_JOB_ID,
 } from './service/memory-pipeline-task.service';
+import { DEPARTURE_DURATION_QUEUE } from './service/agents/departure-duration.service';
 import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
 @Configuration({
@@ -108,6 +109,52 @@ export class MainConfiguration {
               removeOnComplete: true,
               removeOnFail: 30,
             }
+          );
+        }
+
+        // 离世时长预计算：每天凌晨3点增量（活跃用户），每月1号全量
+        try {
+          const durationQueue = this.bullmqFramework?.getQueue(
+            DEPARTURE_DURATION_QUEUE
+          );
+          if (durationQueue) {
+            // 每天凌晨3点：增量计算活跃用户
+            await durationQueue.addJobToQueue(
+              { type: 'daily' },
+              {
+                jobId: 'departure-duration-daily',
+                repeat: { pattern: '0 3 * * *' },
+                removeOnComplete: true,
+                removeOnFail: 30,
+              }
+            );
+            // 每月1号凌晨3点：全量计算所有用户
+            await durationQueue.addJobToQueue(
+              { type: 'monthly' },
+              {
+                jobId: 'departure-duration-monthly',
+                repeat: { pattern: '0 3 1 * *' },
+                removeOnComplete: true,
+                removeOnFail: 30,
+              }
+            );
+            // 启动时立即跑一次增量，避免重启后当天不执行
+            await durationQueue.addJobToQueue(
+              { type: 'daily' },
+              {
+                jobId: `departure-duration-startup-${Date.now()}`,
+                removeOnComplete: true,
+                removeOnFail: 30,
+              }
+            );
+            this.logger.info(
+              '[departure-duration] scheduled daily(03:00) and monthly(1st 03:00) computation'
+            );
+          }
+        } catch (error) {
+          this.logger.warn(
+            '[departure-duration] scheduling failed, reason=%s',
+            error instanceof Error ? error.message : String(error)
           );
         }
       }

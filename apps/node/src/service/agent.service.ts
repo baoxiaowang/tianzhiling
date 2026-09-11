@@ -53,6 +53,7 @@ import { WechatPayService } from './wechat-pay.service';
 import { MessengerService } from './agents/messenger.service';
 import { OpenAIService } from './agents/openai';
 import { FreeChatAgentEligibilityService } from './agents/free-chat-agent-eligibility.service';
+import { DepartureDurationService } from './agents/departure-duration.service';
 import {
   buildInitialRecognitionJourney,
   serializeRecognitionJourney,
@@ -128,6 +129,9 @@ export class AgentService {
 
   @Inject()
   openAIService: OpenAIService;
+
+  @Inject()
+  departureDurationService: DepartureDurationService;
 
   async interviewAgentCreation(
     _auth: AuthenticatedUserPayload,
@@ -705,11 +709,22 @@ export class AgentService {
       );
     }
 
+    let deathDateChanged = false;
     if (payload?.deathDate !== undefined) {
-      agent.deathDate = this.normalizeOptionalDate(
+      const newDeathDate = this.normalizeOptionalDate(
         payload.deathDate,
         'INVALID_AGENT_DEATH_DATE'
       );
+      if (
+        (agent.deathDate && !newDeathDate) ||
+        (!agent.deathDate && newDeathDate) ||
+        (agent.deathDate &&
+          newDeathDate &&
+          agent.deathDate.getTime() !== newDeathDate.getTime())
+      ) {
+        deathDateChanged = true;
+      }
+      agent.deathDate = newDeathDate;
     }
 
     if (payload?.description !== undefined) {
@@ -766,6 +781,21 @@ export class AgentService {
     agent.updatedAt = new Date();
 
     let savedAgent = await this.agentModel.save(agent);
+
+    // deathDate 变更时异步触发离世时长预计算，不阻塞返回
+    if (deathDateChanged && savedAgent.deathDate) {
+      const agentIdStr = this.stringifyObjectId(savedAgent.id);
+      this.departureDurationService
+        .computeForAgent(agentIdStr)
+        .catch(err => {
+          this.logger.warn(
+            '[agent] departure duration recompute failed, agentId=%s, reason=%s',
+            agentIdStr,
+            err instanceof Error ? err.message : String(err)
+          );
+        });
+    }
+
     if (Object.keys(profileMemorySources).length) {
       savedAgent = await this.agentMemoryProfileService.alignManualProfileEdits(
         {
