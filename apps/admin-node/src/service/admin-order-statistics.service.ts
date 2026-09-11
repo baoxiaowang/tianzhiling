@@ -18,7 +18,7 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-const CALCULATION_VERSION = 2;
+const CALCULATION_VERSION = 3;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -44,6 +44,12 @@ type RawMonthlyOrder = {
     createdAt?: Date;
   }>;
   interactionCount?: number;
+  relationshipFacts?: Array<{
+    key?: string;
+    value?: string;
+    confidence?: string;
+    updatedAt?: Date;
+  }>;
 };
 
 type RawMonthlyRefund = {
@@ -222,6 +228,28 @@ export class AdminOrderStatisticsService {
         },
         {
           $lookup: {
+            from: TableName.agent_profile_fact,
+            let: { userId: '$userId', agentIds: '$agents._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$userId', '$$userId'] },
+                      { $in: ['$agentId', '$$agentIds'] },
+                      { $eq: ['$status', 'active'] },
+                      { $eq: ['$type', 'relationship'] },
+                    ],
+                  },
+                },
+              },
+              { $sort: { updatedAt: -1 } },
+            ],
+            as: 'relationshipFacts',
+          },
+        },
+        {
+          $lookup: {
             from: TableName.message,
             let: {
               userId: '$userId',
@@ -263,6 +291,7 @@ export class AdminOrderStatisticsService {
             user: { $arrayElemAt: ['$userRows', 0] },
             directAgent: { $arrayElemAt: ['$directAgentRows', 0] },
             agents: 1,
+            relationshipFacts: 1,
             interactionCount: {
               $ifNull: [{ $arrayElemAt: ['$interactionRows.count', 0] }, 0],
             },
@@ -339,7 +368,14 @@ export class AdminOrderStatisticsService {
     const agents = (row.agents ?? []).filter(
       agent => !/小使者|小天使/.test(agent.name ?? '')
     );
-    const relationship = this.inferRelationship(agents);
+    // 先用关键词推断；失败后回退到记忆系统的关系事实（触发式识别）
+    let relationship = this.inferRelationship(agents);
+    if (relationship.label === '未识别' && row.relationshipFacts?.length) {
+      const fromFact = this.inferRelationshipFromFacts(row.relationshipFacts);
+      if (fromFact) {
+        relationship = { label: fromFact, source: '记忆事实' };
+      }
+    }
     const agentCreatedAt = agents
       .map(agent => agent.createdAt)
       .filter((value): value is Date => value instanceof Date)
@@ -475,6 +511,38 @@ export class AdminOrderStatisticsService {
         return { label: '母女', source: '反向称呼' };
     }
     return { label: '未识别', source: '待人工确认' };
+  }
+
+  /**
+   * 从记忆系统的关系事实中推断关系（触发式识别，关键词失败后的回退）。
+   * 优先用"用户与逝去亲人的关系"直接标签（含用户手动修正的高置信度数据），
+   * 其次用"称呼"字段映射。
+   */
+  private inferRelationshipFromFacts(
+    facts: NonNullable<RawMonthlyOrder['relationshipFacts']>
+  ): string | null {
+    const direct = facts.find(f => f.key === '用户与逝去亲人的关系');
+    if (direct?.value) {
+      const first = direct.value.split(/[\/／、,，\s]/)[0]?.trim();
+      if (first && first !== '未知' && first.length <= 4) return first;
+    }
+    const call = facts.find(f => f.key === '称呼');
+    if (call?.value) {
+      return this.relationshipFromCall(call.value);
+    }
+    return null;
+  }
+
+  /** 用户称呼智能体 → 关系标签（无法判断子女性别时默认女性侧） */
+  private relationshipFromCall(call: string): string | null {
+    if (/爸爸|父亲|老爸|老爹|爹|爸/.test(call)) return '父女';
+    if (/妈妈|母亲|老妈|妈咪|娘|妈/.test(call)) return '母女';
+    if (/爷爷|姥爷|外公|外姥|姨爹|嗲嗲/.test(call)) return '爷孙';
+    if (/奶奶|姥姥|外婆|婆婆/.test(call)) return '奶孙';
+    if (/老公|老婆|丈夫|妻子|先生|夫人|爱人/.test(call)) return '夫妻';
+    if (/哥哥|哥/.test(call)) return '兄妹';
+    if (/姐姐|姐/.test(call)) return '姐妹';
+    return null;
   }
 
   private distribution(
