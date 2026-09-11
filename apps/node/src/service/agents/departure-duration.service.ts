@@ -2,7 +2,7 @@ import { Provide, Logger } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
-import { AgentEntity, AgentProfileFactEntity } from '@tzl/entities';
+import { AgentEntity, AgentProfileFactEntity, MongoObjectId } from '@tzl/entities';
 
 /**
  * 离世时长预计算队列名
@@ -174,8 +174,8 @@ export class DepartureDurationService {
   async computeForAgent(agentId: string): Promise<boolean> {
     try {
       const agent = await this.agentModel.findOne({
-        where: { _id: new (Object as any)(agentId) } as any,
-      } as any);
+        where: { _id: new MongoObjectId(agentId) } as never,
+      });
       if (!agent || !agent.deathDate) {
         return false;
       }
