@@ -2740,7 +2740,7 @@ export class AgentContextService {
     let factIndex = 0;
     const profileFactKeys = new Set<string>();
 
-    for (const fact of options.profileFacts.slice(0, 8)) {
+    for (const fact of options.profileFacts.slice(0, 5)) {
       const value = fact.value?.trim();
 
       if (!value) {
