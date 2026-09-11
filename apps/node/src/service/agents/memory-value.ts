@@ -211,7 +211,7 @@ export const MEMORY_VALUE_PROMPT = [
   '用户正式姓名提案还必须提供identity:{realName:"原话中的正式姓名"}；明确的账户通用别名可用identity:{aliases:["原话中的别名"]}。身份字段仅填姓名本身，不填说明句。需要结合问答判断姓名时，由你判断，程序不再用正则重新理解原话；专属亲人的称呼不要写成账户通用别名。',
   '事实拆分以独立用途为准，不把同一事件拆成泛化碎片。不要输出用户未说的长期病史、关系或心理特征。',
   'date仅用于出生、离世、预产期的日期线索，其他事实（包括年龄和普通往事）必须省略date。date:{event:birth|death|expected_birth,year,month,day,expression}。expression必须逐字截取用户证据，不得改写。year/month/day仅填写用户明确说出的日历数字；相对时间不填日历数字，程序负责计算。referenceAt只是消息时间，绝不是事件日期。模糊时间保留模糊性，不自行换算准确日期。',
-  '只输出JSON对象{"newPeople":[],"decisions":[]}，最多6个新人物、8项决定；没有值得保存或待确认的信息可返回空数组。',
+  '只输出JSON对象{"newPeople":[],"decisions":[]}，最多6个新人物、8项决定；确实没有任何稳定事实或待确认信息时才返回空数组（先完成上一条的逐条盘点再决定）。',
   '每项字段：subjectRef,participants,kind(person|relationship|event|temporal),type(identity|relationship|age|occupation|family|preference|correction|promise|keepsake|grief_trigger|style|memory|taboo),key(稳定短键),value,retention(discard|session|durable|core),certainty(explicit|context_resolved|uncertain),timeKind(current|historical|stable|plan|wish),validUntil(ISO时间或省略),operation(add|merge|replace|conflict|noop|archive),targetId(修改时必填),reason(简短保存或放弃原因),evidence:[{messageId,quote}],protected(布尔),salience(1-3)。',
   '严格遵守字段枚举，不得自造type如health_state/pride/wish；健康可选memory，情感关系可选relationship，愿望可选promise配合timeKind=wish。value与reason使用中文，protected不可遗漏。',
   'value必须是完整中文字符串，包括数字事实也必须写成“离世时18岁”这样的事实句，年龄用kind=person,type=age，不从年龄猜测离世日期。离世多久、生日、日期线索用kind=temporal,type=memory，并提供date，不能归为grief_trigger，也不存在type=death/birth/temporal。',
@@ -228,6 +228,7 @@ export const MEMORY_VALUE_PROMPT = [
   '完整覆盖：一条消息可能包含多个互相独立的稳定事实（例如“34年前做过手术、今年5月复发、刚做了病检”是三个事实），必须分别成条，不得只保留其中一条；用户提到的亲属（在世或已故）都要作为独立对象登记，不要只记其中一位。',
   '代际口径：用户是对着亲人说话的，用户说的“你外孙/你孙女”指的是用户自己的孩子，“你女婿/你儿媳”指的是用户的丈夫/妻子。因此以用户为主体记录时要写成“孩子/儿子/女儿”“丈夫/妻子”，不要照抄“外孙/女婿”。',
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
+  '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
 ].join('\n');
 
 const PURE_EMOTION_PATTERN =
