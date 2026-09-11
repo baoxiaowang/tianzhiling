@@ -125,6 +125,10 @@ export class OrderEntity extends BaseEntity {
   @Column()
   paidAt?: Date;
 
+  /** 付款时快照的用户与逝去亲人关系（如"父女"/"母子"/"夫妻"），识别后稳定不变 */
+  @Column()
+  relationship?: string;
+
   @Column()
   closedAt?: Date;
 

@@ -54,6 +54,7 @@ import {
 } from './vip-upgrade-pricing';
 import type { VipUpgradePricing } from './vip-upgrade-pricing';
 import { MessengerService } from './agents/messenger.service';
+import { OrderRelationshipService } from './order-relationship.service';
 
 const WECHAT_PAY_PROVIDER = 'wechat_pay';
 const WECHAT_VIRTUAL_PAY_PROVIDER = 'wechat_virtual_pay';
@@ -116,6 +117,9 @@ export class OrderService {
 
   @Inject()
   messengerService: MessengerService;
+
+  @Inject()
+  orderRelationshipService: OrderRelationshipService;
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
@@ -788,6 +792,10 @@ export class OrderService {
       ? new Date(transaction.success_time)
       : now;
     order.updatedAt = now;
+    order.relationship = await this.orderRelationshipService.inferRelationship(
+      order.userId,
+      order.agentId
+    );
     await this.orderModel.save(order);
 
     try {
@@ -1048,6 +1056,10 @@ export class OrderService {
           )
         : now;
     order.updatedAt = now;
+    order.relationship = await this.orderRelationshipService.inferRelationship(
+      order.userId,
+      order.agentId
+    );
     await this.orderModel.save(order);
 
     try {
@@ -2012,6 +2024,10 @@ export class OrderService {
       updatedAt: now,
     });
 
+    order.relationship = await this.orderRelationshipService.inferRelationship(
+      userId,
+      order.agentId
+    );
     const savedOrder = await this.orderModel.save(order);
 
     try {
