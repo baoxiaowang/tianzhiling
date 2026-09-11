@@ -120,14 +120,13 @@ export class AdminOrderStatisticsService {
     const abnormalOrders = records.filter(
       record => record.abnormalTypes.length > 0
     );
-    // 月度净额 = 当月有效订单净额 - 上月付款订单在本月的退款
+    // 月度净额 = 当月有效订单净额 - 本月之前付款的订单在本月的退款
     // （当月付款订单的退款已在 validOrders.amount 中扣除，不重复减）
-    const priorMonthRefundAmount = refundRows
+    const priorOrderRefundAmount = refundRows
       .filter(row => {
         const paidAt = row.originalOrderPaidAt;
         if (!paidAt) return true; // 查不到原订单的，按非当月付款处理
-        const t = new Date(paidAt).getTime();
-        return t < start.getTime() || t >= end.getTime();
+        return new Date(paidAt).getTime() < start.getTime();
       })
       .reduce((sum, row) => sum + (Number(row.amount) || 0) / 100, 0);
     const validOrderAmount = validOrders.reduce(
@@ -152,7 +151,7 @@ export class AdminOrderStatisticsService {
         refundedAmount: this.roundMoney(
           refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
         ),
-        netAmount: this.roundMoney(validOrderAmount - priorMonthRefundAmount),
+        netAmount: this.roundMoney(validOrderAmount - priorOrderRefundAmount),
       },
       validOrders,
       abnormalOrders,
