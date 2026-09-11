@@ -27,7 +27,7 @@ async function main() {
   const factRepo = dataSource.getMongoRepository(AgentProfileFactEntity);
 
   // 导入 DepartureDurationService 并手动创建实例
-  const { DepartureDurationService } = require('./dist/service/agents/departure-duration.service');
+  const { DepartureDurationService } = require('../dist/service/agents/departure-duration.service');
   const service = new DepartureDurationService();
   service.agentModel = agentRepo;
   service.factModel = factRepo;
