@@ -52,7 +52,8 @@ const SPECS = [
   for (const [name, filter] of SPECS) {
     out.collections[name] = await db.collection(name).find(filter).toArray();
   }
-  const path = '/tmp/memory-eval-mirror.json';
+  // 并行评测时每个槽位需要各自的导出文件，避免互相覆盖。
+  const path = process.env.MIRROR_OUT || '/tmp/memory-eval-mirror.json';
   fs.writeFileSync(path, BSON.EJSON.stringify(out, { relaxed: false }));
   console.log(
     'EXPORT_OK bytes=' +

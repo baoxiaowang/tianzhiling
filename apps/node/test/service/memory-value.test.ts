@@ -601,8 +601,23 @@ describe('memory value contract', () => {
       expect(isContextOnlyNamespace(key)).toBe(false);
     }
   });
-  it('downgrades feeling-shaped facts to short-lived, non-assertable memory', () => {
+  it('rewrites listener-relative kin terms when the user is the subject', () => {
+    const text = '就想着你小外孙刚高一都忍了，你女婿也不管';
     const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        value: '用户因小外孙刚高一而忍耐，女婿不管事',
+        evidence: [{ messageId: 'm1', quote: '就想着你小外孙刚高一都忍了' }],
+      } as any,
+      '2026-09-08T00:00:00.000Z',
+      text
+    );
+    expect(graded.value).toContain('孩子');
+    expect(graded.value).toContain('丈夫');
+    expect(graded.value).not.toContain('外孙');
+    expect(graded.value).not.toContain('女婿');
+  });
+  it('downgrades feeling-shaped facts to short-lived, non-assertable memory', () => {    const graded = gradeMemoryDecision(
       {
         ...decision(),
         key: 'grief.shock_on_hearing_news',

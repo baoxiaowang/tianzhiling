@@ -271,6 +271,7 @@ export const MEMORY_VALUE_PROMPT = [
   '代际口径：用户是对着亲人说话的，用户说的“你外孙/你孙女”指的是用户自己的孩子，“你女婿/你儿媳”指的是用户的丈夫/妻子。因此以用户为主体记录时要写成“孩子/儿子/女儿”“丈夫/妻子”，不要照抄“外孙/女婿”。',
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
   '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
+  '并列成分逐个记：一句话里的并列人物、并列时间、并列病因都要分别成条，不能只留最显眼的那半句。例如“我和强还有嫂子搬完了”含三个人；“嗲嗲都30几年了，婆婆也快30年了”含两位已故祖辈和两个时长；“这也是上班坐太久没运动的原因”含医生给出的病因，不能只记“久坐”而丢掉病因。',
 ].join('\n');
 
 const PURE_EMOTION_PATTERN =
@@ -334,6 +335,14 @@ const OVERSTATEMENT_REPLACEMENTS: Array<[RegExp, string]> = [
   [/确诊为?/g, '自述'],
   [/绝症/g, '治不好的病'],
   [/\bterminal\b/gi, 'untreatable'],
+];
+// 用户对亲人说“你外孙/你女婿”时，指的其实是用户自己的孩子/丈夫。
+const ADDRESSEE_KINSHIP_PATTERN = /你的?(?:小?外孙|外孙女|女婿)/;
+const ADDRESSEE_KINSHIP_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/小外孙/g, '孩子'],
+  [/外孙女/g, '女儿'],
+  [/外孙/g, '孩子'],
+  [/女婿/g, '丈夫'],
 ];
 // 主体为 AI 亲人时，键名里的婚姻类亲属标签会把“太太”误编码成配偶。
 const KINSHIP_KEY_REPLACEMENTS: Array<[RegExp, string]> = [
@@ -450,6 +459,17 @@ export function gradeMemoryDecision(
   }
   for (const [pattern, replacement] of OVERSTATEMENT_REPLACEMENTS) {
     d.value = d.value.replace(pattern, replacement);
+  }
+  // 代际口径纠正：用户是对着逝去的亲人说话的，用户说的“你外孙/你女婿”其实指
+  // 用户自己的孩子/丈夫。以用户为主体记录时必须换回用户视角，否则就是错一代的
+  // 亲属称谓（第 8 轮那 4 条“小外孙”全部出自这里）。只改 value，不改 key。
+  if (
+    d.subjectRef.startsWith('user:') &&
+    ADDRESSEE_KINSHIP_PATTERN.test(userText)
+  ) {
+    for (const [pattern, replacement] of ADDRESSEE_KINSHIP_REPLACEMENTS) {
+      d.value = d.value.replace(pattern, replacement);
+    }
   }
   if (d.subjectRef.startsWith('agent:')) {
     for (const [pattern, replacement] of KINSHIP_KEY_REPLACEMENTS) {
