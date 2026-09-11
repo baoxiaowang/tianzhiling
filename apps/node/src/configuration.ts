@@ -28,7 +28,6 @@ import {
   MEMORY_PIPELINE_RECONCILE_JOB_ID,
 } from './service/memory-pipeline-task.service';
 import { DEPARTURE_DURATION_QUEUE } from './service/agents/departure-duration.service';
-import { DepartureDurationProcessor } from './processor/departure-duration.processor';
 import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
 @Configuration({
@@ -64,51 +63,11 @@ export class MainConfiguration {
     this.app.useMiddleware([FormatMiddleware]);
     this.app.useFilter([NotFoundFilter, DefaultErrorFilter]);
 
-    // 手动为 departure-duration 队列创建 worker
-    // 解决 MidwayJS @RuntimeProcessor 在 memory-worker 角色下未自动创建 worker 的问题
-    const runtimeRole = resolveNodeRuntimeRole();
-    if (runtimeRole === 'memory-worker') {
-      try {
-        const durationQueue = this.bullmqFramework?.getQueue(
-          DEPARTURE_DURATION_QUEUE
-        );
-        if (durationQueue) {
-          this.bullmqFramework?.createWorker(
-            DEPARTURE_DURATION_QUEUE,
-            async (job: any) => {
-              const ctx = this.app.createAnonymousContext({
-                jobId: job.id,
-                job,
-                from: DepartureDurationProcessor,
-              });
-              try {
-                const processor = await ctx.requestContext.getAsync(
-                  DepartureDurationProcessor
-                );
-                await processor.execute(job.data);
-              } catch (err) {
-                ctx.logger.error(
-                  '[departure-duration] manual worker job failed, jobId=%s, reason=%s',
-                  job.id,
-                  err instanceof Error ? err.message : String(err)
-                );
-                throw err;
-              }
-            },
-            { concurrency: 1 }
-          );
-          this.logger.info(
-            '[departure-duration] manual worker created for queue %s',
-            DEPARTURE_DURATION_QUEUE
-          );
-        }
-      } catch (error) {
-        this.logger.warn(
-          '[departure-duration] manual worker creation failed, reason=%s',
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-    }
+    // 注意：departure-duration 队列的消费者由独立 worker 脚本承担
+    // （scripts/departure-duration-worker.js，memory_worker 容器经 memory-worker-bootstrap.js 启动）。
+    // MidwayJS @RuntimeProcessor 在 memory-worker 角色下不会自动创建该队列的 worker；
+    // 而 bullmqFramework.createWorker 创建的 worker 处理完 job 后无法正确标记完成（job 长期滞留 active 状态），
+    // 因此不再在此处手动创建 worker，统一交由独立 worker 消费。
   }
 
   async onServerReady() {
@@ -166,11 +125,13 @@ export class MainConfiguration {
           );
           if (durationQueue) {
             // 每天凌晨3点：增量计算活跃用户
+            // 注意：repeat.jobId 用于区分 repeat 去重键，必须为 daily/monthly 指定不同值，
+            // 否则两个 repeat 的 repeatJobKey 相同（默认取 jobName），后者会被前者覆盖
             await durationQueue.addJobToQueue(
               { type: 'daily' },
               {
                 jobId: 'departure-duration-daily',
-                repeat: { pattern: '0 3 * * *' },
+                repeat: { pattern: '0 3 * * *', jobId: 'departure-duration-daily' },
                 removeOnComplete: true,
                 removeOnFail: 30,
               }
@@ -180,7 +141,7 @@ export class MainConfiguration {
               { type: 'monthly' },
               {
                 jobId: 'departure-duration-monthly',
-                repeat: { pattern: '0 3 1 * *' },
+                repeat: { pattern: '0 3 1 * *', jobId: 'departure-duration-monthly' },
                 removeOnComplete: true,
                 removeOnFail: 30,
               }

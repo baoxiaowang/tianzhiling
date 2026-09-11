@@ -4,6 +4,9 @@ const { DataSource } = require('typeorm');
 const { AgentEntity, AgentProfileFactEntity } = require('@tzl/entities');
 
 const connection = { host: 'tzl_redis', port: 6379 };
+// 必须与应用队列的前缀一致（MidwayJS bullmq 框架配置的 prefix 为 {tzl-bullmq}），
+// 否则独立 worker 会监听错误的队列（默认 bull: 前缀），永远收不到应用入队的 job。
+const queuePrefix = '{tzl-bullmq}';
 
 async function main() {
   // 初始化 TypeORM 连接
@@ -59,7 +62,7 @@ async function main() {
         throw err;
       }
     },
-    { connection, concurrency: 1 }
+    { connection, prefix: queuePrefix, concurrency: 1 }
   );
 
   worker.on('ready', () => console.log('[departure-duration-worker] worker ready'));
