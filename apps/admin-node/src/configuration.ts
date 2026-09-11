@@ -13,6 +13,7 @@ import { AdminAuthMiddleware } from './middleware/admin-auth.middleware';
 import { FormatMiddleware } from './middleware/format.middleware';
 import { AdminPerformanceMiddleware } from './middleware/admin-performance.middleware';
 import { AdminDailyStatsService } from './service/admin-daily-stats.service';
+import { AdminOperationsService } from './service/admin-operations.service';
 
 const DAILY_STATS_INTERVAL_MS = 30 * 60 * 1000; // 30 分钟
 
@@ -97,6 +98,19 @@ export class MainConfiguration {
         await adminDailyStats.computeDay(yesterday);
         await adminDailyStats.computeDay(today);
         this.app.getLogger().info('[daily-stats] precompute done: %s, %s', yesterday, today);
+
+        // 预热仪表盘 reports 缓存，避免用户打开时冷启动全表聚合（~5s）
+        try {
+          const adminOperations = await this.app
+            .getApplicationContext()
+            .getAsync(AdminOperationsService);
+          await adminOperations.getReport();
+          this.app.getLogger().info('[daily-stats] reports cache warmed');
+        } catch (warmErr) {
+          this.app
+            .getLogger()
+            .warn('[daily-stats] reports warm failed: %s', (warmErr as Error).message);
+        }
       } catch (err) {
         this.app
           .getLogger()

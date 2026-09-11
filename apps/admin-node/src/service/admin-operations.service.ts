@@ -93,7 +93,7 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const BEIJING_TIMEZONE = 'Asia/Shanghai' as const;
 const NEW_USER_CHAT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 const ORDER_ANALYTICS_CALCULATION_VERSION = 1;
-const ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
+const ORDER_ANALYTICS_CURRENT_MONTH_TTL_MS = 30 * 60 * 1000;
 
 const ACTIVE_IMPORT_STATUSES = [
   ConversationChatImportStatus.uploading,
@@ -526,7 +526,7 @@ export class AdminOperationsService {
       hourly,
     };
     reportCache.set(normalizedMonth, {
-      expiresAt: now.getTime() + 5 * 60 * 1000,
+      expiresAt: now.getTime() + 30 * 60 * 1000,
       value: result,
     });
     return result;
@@ -859,7 +859,7 @@ export class AdminOperationsService {
     };
 
     userValueCache.set(cacheKey, {
-      expiresAt: now.getTime() + 5 * 60 * 1000,
+      expiresAt: now.getTime() + 30 * 60 * 1000,
       value: result,
     });
 
@@ -1033,7 +1033,7 @@ export class AdminOperationsService {
     }
 
     orderAnalyticsCache.set(normalizedMonth, {
-      expiresAt: now.getTime() + 5 * 60 * 1000,
+      expiresAt: now.getTime() + 30 * 60 * 1000,
       value: result,
     });
 
@@ -1418,7 +1418,7 @@ export class AdminOperationsService {
       .toArray();
     const value = rows[0] ?? { paidUsers: 0, paidOrders: 0, paidAmount: 0 };
     periodOrderStatsCache.set(cacheKey, {
-      expiresAt: now + 5 * 60 * 1000,
+      expiresAt: now + 30 * 60 * 1000,
       value,
     });
     return value;
@@ -1516,7 +1516,7 @@ export class AdminOperationsService {
       ),
     };
 
-    allTimeCache = { expiresAt: now + 5 * 60 * 1000, value };
+    allTimeCache = { expiresAt: now + 30 * 60 * 1000, value };
 
     return value;
   }
