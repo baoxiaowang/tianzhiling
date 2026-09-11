@@ -18,7 +18,7 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-const CALCULATION_VERSION = 4;
+const CALCULATION_VERSION = 5;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -51,6 +51,7 @@ type RawMonthlyRefund = {
   _id: { toString(): string };
   refundNo?: string;
   originalOrderNo?: string;
+  originalOrderPaidAt?: Date;
   requestedAt?: Date;
   completedAt?: Date;
   refundType?: string;
@@ -119,6 +120,20 @@ export class AdminOrderStatisticsService {
     const abnormalOrders = records.filter(
       record => record.abnormalTypes.length > 0
     );
+    // 月度净额 = 当月有效订单净额 - 上月付款订单在本月的退款
+    // （当月付款订单的退款已在 validOrders.amount 中扣除，不重复减）
+    const priorMonthRefundAmount = refundRows
+      .filter(row => {
+        const paidAt = row.originalOrderPaidAt;
+        if (!paidAt) return true; // 查不到原订单的，按非当月付款处理
+        const t = new Date(paidAt).getTime();
+        return t < start.getTime() || t >= end.getTime();
+      })
+      .reduce((sum, row) => sum + (Number(row.amount) || 0) / 100, 0);
+    const validOrderAmount = validOrders.reduce(
+      (sum, order) => sum + order.amount,
+      0
+    );
     const report: AdminMonthlyOrderReportDTO = {
       month: normalizedMonth,
       timezone: 'Asia/Shanghai',
@@ -132,17 +147,12 @@ export class AdminOrderStatisticsService {
         allOrders: records.length,
         validOrders: validOrders.length,
         abnormalOrders: abnormalOrders.length,
-        validAmount: this.roundMoney(
-          validOrders.reduce((sum, order) => sum + order.amount, 0)
-        ),
+        validAmount: this.roundMoney(validOrderAmount),
         completedRefunds: refundOrders.length,
         refundedAmount: this.roundMoney(
           refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
         ),
-        netAmount: this.roundMoney(
-          validOrders.reduce((sum, order) => sum + order.amount, 0) -
-            refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
-        ),
+        netAmount: this.roundMoney(validOrderAmount - priorMonthRefundAmount),
       },
       validOrders,
       abnormalOrders,
@@ -299,9 +309,18 @@ export class AdminOrderStatisticsService {
           },
         },
         {
+          $lookup: {
+            from: TableName.order,
+            localField: 'originalOrderId',
+            foreignField: '_id',
+            as: 'originalOrderRows',
+          },
+        },
+        {
           $project: {
             refundNo: 1,
             originalOrderNo: 1,
+            originalOrderPaidAt: { $arrayElemAt: ['$originalOrderRows.paidAt', 0] },
             requestedAt: 1,
             completedAt: 1,
             refundType: 1,
