@@ -5,6 +5,8 @@ import {
   isMemoryCurrent,
   isCanonicalUserNameEvidence,
   withMemorySpeakers,
+  gradeMemoryDecision,
+  memoryValueSimilarity,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -283,5 +285,89 @@ describe('memory value contract', () => {
     expect(() =>
       parseMemoryValueOutput(JSON.stringify({ decisions: [invalid] }), input)
     ).toThrow();
+  });
+  it('grades a durable emotion expression down to a transient, non-assertable fact', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        key: 'current_state.exhaustion',
+        value: '用户当前感到极度疲惫',
+        retention: 'durable',
+        validUntil: undefined,
+      } as any,
+      input.referenceAt
+    );
+    expect(graded.retention).toBe('session');
+    expect(graded.certainty).toBe('uncertain');
+    expect(Date.parse(graded.validUntil!)).toBeGreaterThan(
+      Date.parse(input.referenceAt)
+    );
+  });
+  it('drops a psychologically inferred decision', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'current_state.inferred',
+          value: '用户以“嗯…”回应，体现自我保护性情感疏离',
+        } as any,
+        input.referenceAt
+      )
+    ).toThrow('MEMORY_VALUE_INFERENCE');
+  });
+  it('keeps an explicit grief trigger durable instead of grading it down', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        key: 'grief_trigger.scene.hospital',
+        value: '用户听到医院两个字会发抖',
+        retention: 'durable',
+        validUntil: undefined,
+      } as any,
+      input.referenceAt
+    );
+    expect(graded.retention).toBe('durable');
+  });
+  it('measures near-duplicate values for dedup', () => {
+    expect(
+      memoryValueSimilarity(
+        '用户当前感到身体疼痛，疼得睡不着',
+        '用户当前感到身体疼痛'
+      )
+    ).toBeGreaterThanOrEqual(0.6);
+    expect(
+      memoryValueSimilarity('用户当前感到身体疼痛', '太太在门口树下讲故事')
+    ).toBeLessThan(0.6);
+  });
+  it('drops inferred decisions but keeps valid ones in the same message', () => {
+    const inferred = {
+      ...decision(),
+      key: 'current_state.inferred',
+      value: '用户以“嗯…”回应，体现自我保护性情感疏离',
+    };
+    const out = parseMemoryValueOutput(
+      JSON.stringify({ decisions: [inferred, decision()] }),
+      input
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].key).toBe('health.back_pain');
+  });
+  it('merges near-duplicate decisions inside one proposal', () => {
+    const short = {
+      ...decision(),
+      key: 'health.pain.short',
+      value: '用户当前感到身体疼痛',
+    };
+    const long = {
+      ...decision(),
+      key: 'health.pain.long',
+      value: '用户当前感到身体疼痛，疼得睡不着',
+    };
+    const out = parseMemoryValueOutput(
+      JSON.stringify({ decisions: [short, long] }),
+      input
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].value).toContain('疼得睡不着');
   });
 });

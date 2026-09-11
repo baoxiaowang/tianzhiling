@@ -14,6 +14,7 @@ function setup(current: any = null) {
   const service = new MemoryValueService();
   service.factModel = {
     findOne: jest.fn(async () => current),
+    find: jest.fn(async () => []),
     updateOne: jest.fn(async () => ({ modifiedCount: 1 })),
     insertOne: jest.fn(async d => {
       current = { ...d, id: d._id };
@@ -235,6 +236,52 @@ describe('memory value writes', () => {
       )
     ).toBe(false);
     expect(service.factModel.updateOne).not.toHaveBeenCalled();
+  });
+  it('merges a new near-duplicate fact into the existing record instead of inserting', async () => {
+    const existing = {
+      id: new MongoObjectId('665000000000000000000077'),
+      userId,
+      agentId: userId,
+      type: 'memory',
+      key: 'health.pain.old',
+      value: '用户当前感到身体疼痛',
+      status: 'active',
+      updatedAt: new Date('2026-09-07T00:00:00.000Z'),
+      governance: {
+        subjectRef: `user:${userId}`,
+        retention: 'session',
+        protected: false,
+      },
+      sourceMessageIds: [],
+    };
+    const { service } = setup(null);
+    (service.factModel.find as jest.Mock).mockResolvedValue([existing]);
+    const decision = {
+      subjectRef: `user:${userId}`,
+      participants: [],
+      kind: 'person',
+      type: 'memory',
+      key: 'health.pain.new',
+      value: '用户当前感到身体疼痛，疼得睡不着',
+      retention: 'session',
+      certainty: 'uncertain',
+      timeKind: 'current',
+      validUntil: '2026-09-20T00:00:00.000Z',
+      operation: 'add',
+      reason: '身体不适',
+      evidence: [{ messageId: String(messageId), quote: '树下听故事' }],
+      protected: false,
+      salience: 2,
+    };
+
+    const changed = await (service as any).apply(message, decision, 0, {
+      before: [],
+      rejected: [],
+    });
+
+    expect(changed).toBe(true);
+    expect(service.factModel.insertOne).not.toHaveBeenCalled();
+    expect(service.factModel.updateOne).toHaveBeenCalled();
   });
 });
 

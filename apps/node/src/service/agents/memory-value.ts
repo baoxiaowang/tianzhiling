@@ -120,7 +120,74 @@ export const MEMORY_VALUE_PROMPT = [
   '不要从“怎么忍心扔下我”等当下抒情推导被抛弃感、核心哀伤叙事、心理状态或性格；不保存这种心理解释。具体事件也不能附会坚韧、家庭协作等用户未说出的特征。',
   '结构示例（替换为实际人物和证据，勿照存示例）：{"newPeople":[],"decisions":[{"subjectRef":"user:输入中的ID","participants":[],"kind":"person","type":"memory","key":"health.back_pain","value":"用户当前腰疼再次发作","retention":"session","certainty":"explicit","timeKind":"current","validUntil":"2026-09-10T00:00:00Z","operation":"add","reason":"近期身体变化便于后续关心","evidence":[{"messageId":"当前消息ID","quote":"妈妈腰疼又犯了"}],"protected":false,"salience":2}]}',
   '输出契约的可选载荷同样属于每项decision，不放在顶层：identity:{realName?:string,aliases?:string[]}；date:{event,year?,month?,day?,expression?}。一旦选择保存用户正式姓名，identity.realName必填且只填姓名；用户否认某个昵称是正式姓名不提供正式姓名事实，只能记录已明示的昵称/称呼，不能用real_name键记录“不是正式姓名”。',
+  '情绪分级：单纯的情绪表达（难受、痛苦、累、想你、不开心、敏感、害怕、孤独、委屈、崩溃等）只能 retention=session 且 certainty=uncertain，并给出较短 validUntil；不得标 durable/core，也不得成为可断言的长期事实。只有用户明确陈述的稳定身份、关系、偏好、经历和承诺才可 durable/core。',
+  '禁止心理臆测：不得从一个词、一句短回应或语气推断心理状态、性格、动机、关系模式或所谓“隐含”含义（如“体现自我保护”“沉默式承认”“隐含反讽”“情感退缩”）。只保存用户原话直接说出的内容；用户没说的心理结论一律不写。',
+  '亲属称谓锚定：人物称谓必须来自subjects中已有对象或用户原话。不得把“太太”写成“母亲”，不得把“小雅”写成其他关系，不得用“母亲/爸爸”等泛称替换用户实际称谓。键名与value中的称谓必须一致。',
+  '去重合并：同一主题的多条内容应合并为一条（尤其病痛、情绪、思念）。不要为同一件事创建多个近义key；已有记录能表达同一含义时用merge/noop，而不是再add一条近义记录。',
+  '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
 ].join('\n');
+
+const EMOTION_EXPRESSION_PATTERN =
+  /(?:难受|痛苦|好累|很累|疲惫|想你|想他|想她|想您|思念|不开心|难过|崩溃|敏感|害怕|孤独|委屈|心慌|泪失禁|撑不住|熬不住|不想活|没意思|不好玩|抑郁|焦虑)/;
+const INFERENCE_MARKER_PATTERN =
+  /(?:体现|表明|说明其|隐含|暗示|折射|意味着|自我保护|沉默式|防御性|情感退缩|心理(?:状态|结论)|临界状态|情感疏离)/;
+const SENSITIVE_MENTAL_PATTERN =
+  /(?:抑郁|焦虑症|自残|轻生|自杀|幻觉|妄想|双相|精神病|精神分裂|失眠症)/;
+// 用户明确说出的哀伤触发场景（“听到X我会Y”）属于稳定事实，不做情绪降级。
+const DECLARED_TRIGGER_PATTERN =
+  /(?:听到|看到|闻到|路过|每到|一到|一提到|一提).{0,24}(?:会|就).{0,12}(?:难过|痛|想|崩|哭|发抖|心慌)/;
+const EMOTION_SESSION_DAYS = 7;
+
+/**
+ * 情绪分级与臆测拦截：
+ * - 含心理臆测措辞的提案直接丢弃（由调用方按非法项处理）；
+ * - 单纯情绪表达与敏感心理标签强制降级为 session + uncertain，并给出短期有效期，
+ *   使其只服务当下、不会成为可断言的长期事实。
+ */
+export function gradeMemoryDecision(
+  d: MemoryValueDecision,
+  referenceAt: string
+): MemoryValueDecision {
+  const text = `${d.key} ${d.value} ${d.reason}`;
+  if (INFERENCE_MARKER_PATTERN.test(text)) {
+    throw new Error('MEMORY_VALUE_INFERENCE');
+  }
+  const declaredTrigger = DECLARED_TRIGGER_PATTERN.test(text);
+  const emotionOnly = EMOTION_EXPRESSION_PATTERN.test(text) && !declaredTrigger;
+  const sensitive = SENSITIVE_MENTAL_PATTERN.test(text);
+  if (emotionOnly || sensitive) {
+    d.retention = 'session';
+    d.certainty = 'uncertain';
+    const until = Date.parse(referenceAt) + EMOTION_SESSION_DAYS * 86400000;
+    if (Number.isFinite(until)) d.validUntil = new Date(until).toISOString();
+  }
+  return d;
+}
+
+function normalizeForSimilarity(value: string): string {
+  return value
+    .replace(/\s+/g, '')
+    .replace(/[，。！？、,.!?；;：:'"“”‘’（）()【】[\]]/g, '')
+    .replace(/(?:用户|当前|陈述|表达|感到|状态|情绪)/g, '');
+}
+
+function bigramsOf(value: string): Set<string> {
+  const tokens = new Set<string>();
+  for (let index = 0; index < value.length - 1; index += 1) {
+    tokens.add(value.slice(index, index + 2));
+  }
+  return tokens;
+}
+
+/** 值的重叠系数（0-1），用于同一主题的合并去重。 */
+export function memoryValueSimilarity(a: string, b: string): number {
+  const left = bigramsOf(normalizeForSimilarity(a));
+  const right = bigramsOf(normalizeForSimilarity(b));
+  if (!left.size || !right.size) return 0;
+  let intersection = 0;
+  for (const token of left) if (right.has(token)) intersection += 1;
+  return intersection / Math.min(left.size, right.size);
+}
 
 export function parseMemoryValueOutput(
   content: string,
@@ -306,7 +373,7 @@ export function parseMemoryValueOutput(
       )
         throw new Error('MEMORY_VALUE_DATE_EVIDENCE');
     }
-    return d;
+    return gradeMemoryDecision(d, input.referenceAt);
   };
 
   // 单条不合规不应丢掉整条消息的有效记忆：逐条校验，只丢弃非法项。
@@ -321,7 +388,28 @@ export function parseMemoryValueOutput(
     }
   }
   if (!decisions.length && failures.length) throw failures[0];
-  return decisions;
+
+  // 同一轮内同一人物的近义记录合并为一条，避免病痛/情绪被拆成多条碎片。
+  const merged: MemoryValueDecision[] = [];
+  for (const d of decisions) {
+    const duplicate = merged.find(
+      item =>
+        item.subjectRef === d.subjectRef &&
+        item.type === d.type &&
+        item.key !== d.key &&
+        memoryValueSimilarity(item.value, d.value) >= 0.6
+    );
+    if (duplicate) {
+      if (d.value.length > duplicate.value.length) duplicate.value = d.value;
+      duplicate.salience = Math.max(duplicate.salience, d.salience) as
+        | 1
+        | 2
+        | 3;
+      continue;
+    }
+    merged.push(d);
+  }
+  return merged;
 }
 
 export function needsMemoryReview(

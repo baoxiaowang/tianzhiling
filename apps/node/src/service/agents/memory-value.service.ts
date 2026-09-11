@@ -40,6 +40,7 @@ import {
   MemoryValueInput,
   parseMemoryValueOutput,
   needsMemoryReview,
+  memoryValueSimilarity,
 } from './memory-value';
 
 interface MemoryValueAudit {
@@ -463,7 +464,8 @@ export class MemoryValueService {
    * 模型不可用、鉴权等基础设施错误不可恢复，必须向上抛出。
    */
   private isRecoverableProposalError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error || '');
+    const message =
+      error instanceof Error ? error.message : String(error || '');
     if (message.includes('MEMORY_VALUE_MODEL_DISABLED')) return false;
     if (message.includes('MEMORY_VALUE_ACCOUNT_NOT_ENABLED')) return false;
     return /^MEMORY_VALUE_/.test(message) || error instanceof SyntaxError;
@@ -940,6 +942,23 @@ export class MemoryValueService {
       if (current.value === d.value) return false;
       throw new Error('MEMORY_VALUE_ADD_CONFLICT');
     }
+    // 跨消息去重：同一人物、同一类型的近义记录合并到已有记录，
+    // 避免病痛/情绪在多次对话中被拆成多条近义碎片。
+    // 仅处理普通记忆类，避免影响身份/关系/日期投影。
+    if (
+      !d.targetId &&
+      !current &&
+      !d.date &&
+      !d.identity &&
+      !['identity', 'relationship'].includes(d.type)
+    ) {
+      const similar = await this.findSimilarExistingFact(
+        message.userId,
+        ownerId,
+        d
+      );
+      if (similar) return this.mergeIntoSimilarFact(message, d, similar);
+    }
     // Historical replay cannot silently replace a newer assertion.
     if (
       current?.governance?.sourceOccurredAt &&
@@ -1058,6 +1077,73 @@ export class MemoryValueService {
         ...new Set([...(audit.appliedIndexes || []), index]),
       ];
     return !pending;
+  }
+
+  /**
+   * 查找同一人物、同一类型下与提案含义高度重叠的既有记录。
+   * 仅用于合并近义碎片，不触碰人工资料与受保护记录。
+   */
+  private async findSimilarExistingFact(
+    userId: MongoObjectId,
+    ownerId: MongoObjectId,
+    d: MemoryValueDecision
+  ): Promise<AgentProfileFactEntity | undefined> {
+    const candidates = await this.factModel.find({
+      where: {
+        userId,
+        agentId: ownerId,
+        type: d.type,
+        status: {
+          $in: [
+            AgentProfileFactStatus.active,
+            AgentProfileFactStatus.candidate,
+          ],
+        },
+      } as never,
+      order: { updatedAt: 'DESC' },
+      take: 32,
+    });
+    let best: AgentProfileFactEntity | undefined;
+    let bestScore = 0.6;
+    for (const fact of candidates) {
+      if (fact.key === d.key || fact.key.startsWith('profile_source.'))
+        continue;
+      if (fact.governance?.protected) continue;
+      const score = memoryValueSimilarity(fact.value, d.value);
+      if (score > bestScore) {
+        best = fact;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  /** 把新提案并入近义既有记录：补齐更完整的内容与证据，不新建碎片。 */
+  private async mergeIntoSimilarFact(
+    message: MessageEntity,
+    d: MemoryValueDecision,
+    fact: AgentProfileFactEntity
+  ): Promise<boolean> {
+    const now = new Date();
+    const evidenceIds = d.evidence.map(e => String(e.messageId));
+    const sourceMessageIds = Array.from(
+      new Set([...(fact.sourceMessageIds || []).map(String), ...evidenceIds])
+    )
+      .slice(-16)
+      .map(id => new MongoObjectId(id));
+    const valueChanged = d.value.length > (fact.value || '').length;
+    const result = await this.factModel.updateOne(
+      { _id: fact.id, userId: message.userId, updatedAt: fact.updatedAt },
+      {
+        $set: {
+          ...(valueChanged ? { value: d.value } : {}),
+          sourceMessageIds,
+          supportCount: sourceMessageIds.length,
+          updatedAt: now,
+        },
+      } as never
+    );
+    return result.modifiedCount === 1 && valueChanged;
   }
 
   private async projectAcceptedDecision(
