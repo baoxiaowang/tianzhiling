@@ -581,6 +581,12 @@ describe('memory value contract', () => {
       'need.unacknowledged_distress',
       'regret.self_blame',
       'social_support.absence_of_check_in',
+      // 模型会不断发明新的前缀：白名单之外一律降级。
+      'security_through_protection',
+      'emotional_regulation_style',
+      'home_as_mothered_space',
+      'absence_of_emotional_support',
+      'perception.external_validation_misalignment',
     ]) {
       expect(isContextOnlyNamespace(key)).toBe(true);
     }
@@ -588,8 +594,9 @@ describe('memory value contract', () => {
       'health.foot_swelling_recent',
       'relationship.marital_disengagement_with_spouse',
       'occupation.sedentary_work_pattern',
-      'perception.external_validation_misalignment',
-      'emotional_resilience.self_regulation_pattern',
+      'family.child_high_school_grade_1',
+      'time_since_passing',
+      'preference.not_disclosing_marital_strain_to_family',
     ]) {
       expect(isContextOnlyNamespace(key)).toBe(false);
     }

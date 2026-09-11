@@ -144,30 +144,70 @@ export function resolveNewPeople(
   return { refs, accepted };
 }
 
-// 情绪/心理类记忆的键名类别：这些内容真实，但只能作为对话背景，
-// 不能被断言成客观事实。按类别降级比逐条列举情绪词更稳。
-export const CONTEXT_ONLY_NAMESPACES = new Set([
-  'grief',
-  'grief_trigger',
-  'emotion',
-  'emotional_state',
-  'need',
-  'regret',
-  'social_support',
+// 只有这些类别的记忆才允许被当作客观事实引用（可断言）。方向取"白名单 +
+// 其余一律降级"，因为模型会不断发明新的键名前缀（security_through_protection、
+// home_as_mothered_space、emotional_regulation_style…），黑名单永远滞后。
+// 降级只影响“能不能被断言”，记录本身仍会保留，因此不会牺牲召回。
+export const ASSERTABLE_NAMESPACES = new Set([
+  'identity',
+  'user',
+  'name',
+  'age',
+  'gender',
+  'family',
+  'relative',
+  'relationship',
+  'children',
+  'parent',
+  'spouse',
+  'marriage',
+  'marital_state',
+  'health',
+  'medical',
+  'diet',
+  'sleep',
+  'exercise',
+  'occupation',
+  'work',
+  'career',
+  'business',
+  'finance',
+  'property',
+  'education',
+  'study',
+  'skill',
+  'hobby',
+  'hobbies',
+  'interest',
+  'childhood',
+  'milestone',
+  'preference',
+  'habit',
+  'time',
+  'date',
+  'plan',
+  'promise',
+  'goal',
+  'location',
+  'residence',
+  'travel',
+  'event',
+  'experience',
+  'memory',
+  'keepsake',
+  'pet',
+  'language',
+  'religion',
+  'ritual',
 ]);
-// 只有出现在“第二段”时才代表情绪（behavior.emotional_masking）；
-// 放在首段会误伤 emotional_resilience 这类稳定的自我描述。
-const CONTEXT_ONLY_INNER_TOKENS = new Set(['emotion', 'emotional', 'grief']);
+// 首段命中白名单即为可断言；首段是 grief_trigger/emotional_state 这类组合词时，
+// 用下划线切出的首词判断，避免把 grief_trigger 误当成可断言类别。
 export function isContextOnlyNamespace(key: string): boolean {
-  const segments = key.split('.');
-  const head = segments[0];
-  if (head) {
-    if (CONTEXT_ONLY_NAMESPACES.has(head)) return true;
-    if (CONTEXT_ONLY_NAMESPACES.has(head.split('_')[0])) return true;
-  }
-  const inner = segments[1];
-  if (inner && CONTEXT_ONLY_INNER_TOKENS.has(inner.split('_')[0])) return true;
-  return false;
+  const head = key.split('.')[0] || '';
+  if (!head) return false;
+  if (ASSERTABLE_NAMESPACES.has(head)) return false;
+  const token = head.split('_')[0];
+  return !ASSERTABLE_NAMESPACES.has(token);
 }
 
 export function withMemorySpeakers(input: MemoryValueInput): MemoryValueInput {
@@ -223,6 +263,8 @@ export const MEMORY_VALUE_PROMPT = [
   '亲属称谓锚定：人物称谓必须来自subjects中已有对象或用户原话。不得把“太太”写成“母亲”，不得把“小雅”写成其他关系，不得用“母亲/爸爸”等泛称替换用户实际称谓。键名与value中的称谓必须一致。',
   '主体绑定：用户提到的亲友只要不在subjects里，就必须先用newPeople建立该人物，再用它的ref记录；严禁把某位亲友的事挂到另一位已有亲人的ref上。不同称谓是不同的人（“爸爸”与“嗲嗲/婆婆”不是同一人，在世的父亲与已故祖辈更不能合并），禁止写成“甲（乙）”这种把两人并作一人的写法。',
   '说话方向：用户对“你”说的话、许的愿、叫的称呼，不能反写成这位亲人说过的话或做过的安排（例如用户祝妈妈保重身体，不等于妈妈叮嘱过用户保重身体）。',
+  '第一人称归属：用户用“我”说的愿望、悔意、打算（“我也好早点回来陪你说说话”）属于用户自己，不得写成亲人的愿望、承诺或期待；只有用户明确转述（“妈妈说她想…”）时才可归属亲人。',
+  '关系不得推断：只有用户明确说出的关系才能记为亲属关系。仅凭并列出现或上下文猜不出关系时（例如“我和强还有嫂子搬玉米”里的“强”），只记这个人和共同经历，不要断言他是丈夫、哥哥或其他关系；不确定就不写关系，也不要因此断言婚姻状况。',
   '情绪路由：纯情绪、心理状态、心理推断（心疼、无助、强颜欢笑、谁都靠不住之类）不写成可断言的事实；只有在用户明确说出稳定处境（长期关系失衡、长期压抑不告诉家人）时才作为事实保存，且用用户原话的措辞。',
   '去重合并：同一主题的多条内容应合并为一条（尤其病痛、情绪、思念）。不要为同一件事创建多个近义key；已有记录能表达同一含义时用merge/noop，而不是再add一条近义记录。',
   '完整覆盖：一条消息可能包含多个互相独立的稳定事实（例如“34年前做过手术、今年5月复发、刚做了病检”是三个事实），必须分别成条，不得只保留其中一条；用户提到的亲属（在世或已故）都要作为独立对象登记，不要只记其中一位。',
