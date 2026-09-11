@@ -238,17 +238,23 @@ export class MemoryValueService {
     if (!this.openAIService?.isEnabled())
       throw new Error('MEMORY_VALUE_MODEL_DISABLED');
     input = withMemorySpeakers(input);
+    const isBatch = (input.currentMessageIds?.length || 0) > 1;
     const original = structuredClone(input);
     const result = await this.openAIService.generateText({
       temperature: 0,
       topP: 0.1,
       reasoningSplit: false,
-      maxTokens: 2400,
+      maxTokens: isBatch ? 4000 : 2400,
       systemPrompt:
         (input.sourceFactIds?.length
           ? '本轮任务是核对sourceFactIds指定的旧记录是否忠实于当前这条用户原话，不是发现新的聊天记忆。保留正确条目，纠正错误的主体、类型或含义，或撤销无依据的旧条目；仅在修复原条目确有需要时另存原文真实内容。历史仅供理解本条原话，不提取历史中的其他话题。\n'
+          : isBatch
+          ? '本轮任务是批量识别这一批用户原话中新出现、值得保存的信息，并与已有记录合并。先判断每条内容谈论的人是谁；当前聊天对象不等于每一条事实的主体。\n'
           : '本轮任务是识别当前用户原话中新出现、值得保存的信息，并与已有记录合并。先判断谈论的人是谁；当前聊天对象不等于每一条事实的主体。\n') +
-        MEMORY_VALUE_PROMPT,
+        MEMORY_VALUE_PROMPT +
+        (isBatch
+          ? '\n本次批量任务：输入包含多条当前用户消息（见currentMessageIds），currentMessageId只是其中最新一条。每项决定的证据必须逐字引用这些消息中的至少一条；不要处理更早历史中的其他话题，也不要把多条消息合并成一条与原文不符的陈述。'
+          : ''),
       prompt: JSON.stringify(
         repair
           ? {
@@ -289,7 +295,11 @@ export class MemoryValueService {
           p.relationToUser.length > 24 ||
           !Array.isArray(p.evidence) ||
           !p.evidence.length ||
-          !p.evidence.some(e => e.messageId === input.currentMessageId) ||
+          !p.evidence.some(e =>
+            input.currentMessageIds?.length
+              ? input.currentMessageIds.includes(e.messageId)
+              : e.messageId === input.currentMessageId
+          ) ||
           p.evidence.some(
             e =>
               !e.quote?.trim() ||
@@ -553,6 +563,217 @@ export class MemoryValueService {
       }
     );
     return { count, changedAgents: [...changedAgents], audit };
+  }
+
+  /**
+   * 批量录入：一次为多条用户消息构建输入，复用同一批 subjects/existing，
+   * 让一次模型调用覆盖整个对话片段，避免逐条重复调用。
+   */
+  private async buildBatchInput(
+    messages: MessageEntity[],
+    texts: string[],
+    agent: AgentEntity
+  ): Promise<{ input: MemoryValueInput; before: AgentProfileFactEntity[] }> {
+    const anchor = messages[messages.length - 1];
+    const earliest = messages[0];
+    const batchIds = messages.map(message => message.id);
+    const [history, agents, people, sourceFacts] = await Promise.all([
+      this.messageModel.find({
+        where: {
+          userId: anchor.userId,
+          conversationId: anchor.conversationId,
+          isArchived: { $ne: true },
+          createdAt: { $lt: earliest.createdAt },
+        } as never,
+        order: { createdAt: 'DESC', _id: 'DESC' } as never,
+        take: 10,
+      }),
+      this.agentModel.find({
+        where: {
+          createdUserId: anchor.userId,
+          isArchived: { $ne: true },
+        } as never,
+        take: 64,
+      }),
+      this.personModel.find({
+        where: { userId: anchor.userId, status: 'active' } as never,
+        take: 64,
+      }),
+      this.factModel.find({
+        where: {
+          userId: anchor.userId,
+          sourceMessageId: { $in: batchIds },
+        } as never,
+        take: 32,
+      }),
+    ]);
+    const subjects: MemoryValueInput['subjects'] = [
+      { ref: `user:${anchor.userId}`, label: '当前讲述者/用户本人' },
+    ];
+    const parentAgents = agents.filter(a => !a.messengerOfAgentId);
+    if (
+      !parentAgents.some(a => String(a.id) === String(agent.id)) &&
+      String(agent.createdUserId) === String(anchor.userId)
+    )
+      parentAgents.push(agent);
+    for (const a of parentAgents)
+      subjects.push({
+        ref: `agent:${a.id}`,
+        label: `${a.name || ''}；用户称呼：${a.iCallAgent || ''}；亲人称用户：${
+          a.agentCallMe || ''
+        }`,
+        relation:
+          String(a.id) === String(agent.id)
+            ? '当前交谈/小使者所服务的亲人'
+            : '账户中的其他亲人',
+      });
+    for (const p of people) {
+      if (
+        p.linkedAgentId &&
+        parentAgents.some(a => String(a.id) === String(p.linkedAgentId))
+      )
+        continue;
+      subjects.push({
+        ref: `relative:${p.id}`,
+        label: [p.realName, p.preferredName, ...(p.aliases || [])]
+          .filter(Boolean)
+          .join('、'),
+        relation: p.relationToUser,
+      });
+    }
+    const scopes = subjects.map(s => new MongoObjectId(s.ref.split(':')[1]));
+    const recentFacts = await this.factModel.find({
+      where: {
+        userId: anchor.userId,
+        agentId: { $in: scopes },
+        status: { $in: ['active', 'candidate', 'conflicted'] },
+      } as never,
+      order: { priority: 'DESC', updatedAt: 'DESC' },
+      take: 24,
+    });
+    const before = sourceFacts.length ? sourceFacts : recentFacts;
+    const input: MemoryValueInput = {
+      currentMessageId: String(anchor.id),
+      currentMessageIds: messages.map(message => String(message.id)),
+      conversationAgentRef: `agent:${agent.id}`,
+      sourceFactIds: sourceFacts.map(f => String(f.id)),
+      referenceAt: anchor.createdAt.toISOString(),
+      subjects,
+      messages: [
+        ...history
+          .reverse()
+          .filter(m => ['user', 'assistant'].includes(m.role))
+          .map(m => ({
+            id: String(m.id),
+            role: m.role,
+            content: (m.content || '').slice(0, 800),
+          })),
+        ...messages.map((message, index) => ({
+          id: String(message.id),
+          role: 'user',
+          content: (texts[index] || message.content || '').slice(0, 6000),
+        })),
+      ],
+      existing: before.map(f => ({
+        id: String(f.id),
+        subjectRef: f.governance?.subjectRef || `agent:${f.agentId}`,
+        value: f.value,
+        key: f.key,
+        type: f.type,
+        status: f.status,
+        revision: f.governance?.revision || 0,
+        protected:
+          f.governance?.protected ||
+          f.type === 'identity' ||
+          f.type === 'relationship',
+        sourceText: f.sourceText?.slice(0, 400),
+      })),
+    };
+    return { input: withMemorySpeakers(input), before };
+  }
+
+  /**
+   * 一次模型调用处理一批用户消息，并按证据所属消息分别落库。
+   * 调用方负责在异常时回退到逐条 process()。
+   */
+  async processBatch(
+    messages: MessageEntity[],
+    texts: string[],
+    agent: AgentEntity
+  ): Promise<{ count: number; changedAgents: string[] }> {
+    if (!messages.length) return { count: 0, changedAgents: [] };
+    if (!this.openAIService?.isEnabled())
+      throw new Error('MEMORY_VALUE_MODEL_DISABLED');
+
+    const { input, before } = await this.buildBatchInput(
+      messages,
+      texts,
+      agent
+    );
+    const proposal = await this.propose(input);
+    const audit: MemoryValueAudit = {
+      version: MEMORY_VALUE_VERSION,
+      status: 'completed',
+      input,
+      before,
+      decisions: proposal.decisions,
+      approved: proposal.approved,
+      rejected: proposal.rejected,
+      modelCalls: proposal.modelCalls,
+      modelTokens: proposal.modelTokens,
+      newPeople: proposal.newPeople,
+      reviewReasons: proposal.reviewReasons,
+    };
+
+    const changedAgents = new Set<string>();
+    let count = 0;
+    for (let i = 0; i < proposal.decisions.length; i++) {
+      const d = proposal.decisions[i];
+      if (
+        (d.retention === 'discard' && d.operation !== 'archive') ||
+        d.operation === 'noop'
+      )
+        continue;
+      const message = this.resolveDecisionMessage(d, messages);
+      if (!message) continue;
+      const changed = await this.apply(message, d, i, audit);
+      if (changed) {
+        count++;
+        if (d.subjectRef.startsWith('agent:') && d.retention !== 'session')
+          changedAgents.add(d.subjectRef.slice(6));
+      }
+    }
+    count = audit.appliedIndexes?.length || count;
+
+    // 每条参与批次的消息都记录同一份审计，便于追溯与重放。
+    const touched = new Map<string, MessageEntity>();
+    for (const message of messages) touched.set(String(message.id), message);
+    for (const message of touched.values()) {
+      await this.messageModel.updateOne(
+        { _id: message.id, userId: message.userId },
+        {
+          $set: {
+            memoryValueAudit: audit,
+            memoryWriteStatus: count ? 'written' : 'none',
+            memoryWriteReason: 'memory_value_batch_decided',
+            memoryWriteProfileFactCount: count,
+            memoryWriteCompletedAt: new Date(),
+          },
+        }
+      );
+    }
+    return { count, changedAgents: [...changedAgents] };
+  }
+
+  private resolveDecisionMessage(
+    d: MemoryValueDecision,
+    messages: MessageEntity[]
+  ): MessageEntity | undefined {
+    const evidenceIds = new Set(d.evidence.map(e => e.messageId));
+    return (
+      messages.find(message => evidenceIds.has(String(message.id))) ||
+      messages[messages.length - 1]
+    );
   }
 
   private changedAgentIds(audit: MemoryValueAudit): string[] {

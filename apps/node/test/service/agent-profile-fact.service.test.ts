@@ -1295,4 +1295,86 @@ describe('AgentProfileFactService', () => {
       }),
     ]);
   });
+
+  it('#10 用户主动说自己的年龄会被记住，且归属用户', async () => {
+    const service = new AgentProfileFactService();
+    const savedFacts: AgentProfileFactEntity[] = [];
+    service.factModel = {
+      findOne: jest.fn(async () => null),
+      save: jest.fn(async fact => {
+        if (!fact.id) fact.id = new MongoObjectId();
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+
+    const facts = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我今年38岁'),
+      searchableText: '我今年38岁',
+    });
+
+    expect(facts.map(fact => fact.key)).toContain('user.age.current_or_stated');
+    expect(
+      savedFacts.find(fact => fact.key === 'user.age.current_or_stated')?.value
+    ).toBe('用户今年38岁');
+  });
+
+  it('#10 亲属的年龄不会误记成用户本人的年龄', async () => {
+    const service = new AgentProfileFactService();
+    service.factModel = {
+      findOne: jest.fn(async () => null),
+      save: jest.fn(async fact => fact),
+    } as never;
+
+    const facts = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我爸爸今年60岁'),
+      searchableText: '我爸爸今年60岁',
+    });
+
+    expect(facts.map(fact => fact.key)).not.toContain(
+      'user.age.current_or_stated'
+    );
+  });
+
+  it('#17 同一语义槽位并发写入撞唯一键时收敛重试，不抛错、不重复插入', async () => {
+    const service = new AgentProfileFactService();
+    const concurrent = Object.assign(new AgentProfileFactEntity(), {
+      id: new MongoObjectId('665000000000000000000301'),
+      userId: USER_ID,
+      agentId: AGENT_ID,
+      key: 'user.age.current_or_stated',
+      value: '用户今年37岁',
+      status: AgentProfileFactStatus.active,
+      createdAt: new Date('2026-07-26T07:00:00.000Z'),
+      updatedAt: new Date('2026-07-26T07:00:00.000Z'),
+      supportCount: 1,
+    });
+    let findCalls = 0;
+    let saveCalls = 0;
+    service.factModel = {
+      findOne: jest.fn(async () => {
+        findCalls += 1;
+        return findCalls === 1 ? null : concurrent;
+      }),
+      save: jest.fn(async () => {
+        saveCalls += 1;
+        if (saveCalls === 1) {
+          const error = new Error('E11000 duplicate key error');
+          (error as { code?: number }).code = 11000;
+          throw error;
+        }
+        return concurrent;
+      }),
+    } as never;
+
+    const facts = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我今年38岁'),
+      searchableText: '我今年38岁',
+    });
+
+    expect(facts.map(fact => fact.key)).toContain('user.age.current_or_stated');
+    // 第一次撞唯一键、第二次成功合并，且没有新建第二条记录。
+    expect(saveCalls).toBe(2);
+    expect(concurrent.value).toBe('用户今年38岁');
+  });
 });

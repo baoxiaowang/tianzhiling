@@ -660,11 +660,14 @@ export class AgentMemoryFactService {
     facts: AgentMemoryFactSummary[],
     text: string
   ): void {
-    if (
-      /怕.{0,8}(?:忘记|忘了|记不住).{0,10}(?:你|您)?(?:的)?(?:声音|说话的语气|语气|样子|脸|模样)|快不记得(?:你|您)?(?:的)?(?:声音|说话的语气|语气|样子|脸|模样)|担心(?:你|您)?(?:的)?(?:样子|脸|模样).{0,8}(?:淡了|模糊)/.test(
-        text
-      )
-    ) {
+    const fearForgettingPattern =
+      /怕.{0,8}(?:忘记|忘了|记不住).{0,10}(?:你|您)?(?:的)?(?:声音|说话的语气|语气|样子|脸|模样)|快不记得(?:你|您)?(?:的)?(?:声音|说话的语气|语气|样子|脸|模样)|担心(?:你|您)?(?:的)?(?:样子|脸|模样).{0,8}(?:淡了|模糊)/;
+    // #4 修复：否定句不能记成正面恐惧。
+    // "我不怕忘记你的声音了"表示已经释怀，原正则仍命中"怕…忘记"，会写成
+    // "用户害怕忘记当前角色的声音或样子"，语义完全反转。出现否定前缀时不再生成。
+    const negatedFearPattern =
+      /(?:不|没|不再|不会|没那么|不怎么|别)(?:再)?(?:那么)?怕.{0,8}(?:忘记|忘了|记不住)|不(?:再)?担心.{0,8}(?:样子|脸|模样).{0,8}(?:淡了|模糊)/;
+    if (!negatedFearPattern.test(text) && fearForgettingPattern.test(text)) {
       facts.push({
         type: AgentMemoryFactType.griefTrigger,
         key: 'grief_trigger.fear_forgetting_agent',

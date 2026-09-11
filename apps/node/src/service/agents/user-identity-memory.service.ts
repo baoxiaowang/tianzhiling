@@ -71,50 +71,337 @@ const NON_PERSON_NAMES = new Set([
 // 职业/官职/神话/动物/自然词黑名单——整词精确匹配，避免误伤"牛建国"类真实名
 const NON_PERSON_OCCUPATION_BLACKLIST = new Set([
   // 职业
-  '老师', '教师', '医生', '护士', '工程师', '程序员', '设计师', '律师', '法官',
-  '警察', '消防员', '厨师', '司机', '飞行员', '空乘', '服务员', '收银员',
-  '会计', '审计', '销售', '经理', '总监', '总裁', 'CEO', 'CTO', 'CFO',
-  '老板', '店长', '厂长', '主任', '科长', '处长', '局长', '部长',
-  '工人', '农民', '渔夫', '猎人', '木匠', '铁匠', '裁缝', '理发师',
-  '画家', '作家', '诗人', '歌手', '演员', '导演', '编剧', '摄影师',
-  '记者', '编辑', '主播', '主持人', '翻译', '导游', '保安', '保洁',
-  '学生', '大学生', '研究生', '博士生', '教授', '讲师', '助教',
-  '科学家', '研究员', '学者', '专家', '顾问', '教练', '裁判',
-  '农民', '农民工', '个体户', '自由职业', '无业', '退休',
+  '老师',
+  '教师',
+  '医生',
+  '护士',
+  '工程师',
+  '程序员',
+  '设计师',
+  '律师',
+  '法官',
+  '警察',
+  '消防员',
+  '厨师',
+  '司机',
+  '飞行员',
+  '空乘',
+  '服务员',
+  '收银员',
+  '会计',
+  '审计',
+  '销售',
+  '经理',
+  '总监',
+  '总裁',
+  'CEO',
+  'CTO',
+  'CFO',
+  '老板',
+  '店长',
+  '厂长',
+  '主任',
+  '科长',
+  '处长',
+  '局长',
+  '部长',
+  '工人',
+  '农民',
+  '渔夫',
+  '猎人',
+  '木匠',
+  '铁匠',
+  '裁缝',
+  '理发师',
+  '画家',
+  '作家',
+  '诗人',
+  '歌手',
+  '演员',
+  '导演',
+  '编剧',
+  '摄影师',
+  '记者',
+  '编辑',
+  '主播',
+  '主持人',
+  '翻译',
+  '导游',
+  '保安',
+  '保洁',
+  '学生',
+  '大学生',
+  '研究生',
+  '博士生',
+  '教授',
+  '讲师',
+  '助教',
+  '科学家',
+  '研究员',
+  '学者',
+  '专家',
+  '顾问',
+  '教练',
+  '裁判',
+  '农民',
+  '农民工',
+  '个体户',
+  '自由职业',
+  '无业',
+  '退休',
   // 官职/身份
-  '主席', '总理', '总统', '国王', '女王', '皇帝', '皇后', '太子', '公主',
-  '王子', '公爵', '侯爵', '伯爵', '子爵', '男爵', '骑士',
-  '书记', '市长', '省长', '县长', '镇长', '村长', '乡长',
-  '代表', '委员', '议员', '大使', '领事', '将军', '上校', '中校', '少校',
-  '上尉', '中尉', '少尉', '士兵', '班长', '排长', '连长', '营长', '团长',
-  '旅长', '师长', '军长', '司令', '政委', '参谋长',
+  '主席',
+  '总理',
+  '总统',
+  '国王',
+  '女王',
+  '皇帝',
+  '皇后',
+  '太子',
+  '公主',
+  '王子',
+  '公爵',
+  '侯爵',
+  '伯爵',
+  '子爵',
+  '男爵',
+  '骑士',
+  '书记',
+  '市长',
+  '省长',
+  '县长',
+  '镇长',
+  '村长',
+  '乡长',
+  '代表',
+  '委员',
+  '议员',
+  '大使',
+  '领事',
+  '将军',
+  '上校',
+  '中校',
+  '少校',
+  '上尉',
+  '中尉',
+  '少尉',
+  '士兵',
+  '班长',
+  '排长',
+  '连长',
+  '营长',
+  '团长',
+  '旅长',
+  '师长',
+  '军长',
+  '司令',
+  '政委',
+  '参谋长',
   // 神话/宗教
-  '神仙', '菩萨', '佛祖', '上帝', '天使', '魔鬼', '妖怪', '妖精', '精灵',
-  '龙王', '阎王', '判官', '小鬼', '僵尸', '吸血鬼', '狼人',
+  '神仙',
+  '菩萨',
+  '佛祖',
+  '上帝',
+  '天使',
+  '魔鬼',
+  '妖怪',
+  '妖精',
+  '精灵',
+  '龙王',
+  '阎王',
+  '判官',
+  '小鬼',
+  '僵尸',
+  '吸血鬼',
+  '狼人',
   // 动物
-  '猫', '狗', '猪', '牛', '羊', '马', '鸡', '鸭', '鹅', '鱼', '鸟',
-  '老虎', '狮子', '豹子', '狼', '狐狸', '兔子', '老鼠', '猴子', '大象',
-  '熊猫', '熊', '鹿', '长颈鹿', '斑马', '河马', '鳄鱼', '蛇', '乌龟',
-  '青蛙', '蝴蝶', '蜜蜂', '蚂蚁', '蜘蛛', '蝎子', '蜈蚣',
+  '猫',
+  '狗',
+  '猪',
+  '牛',
+  '羊',
+  '马',
+  '鸡',
+  '鸭',
+  '鹅',
+  '鱼',
+  '鸟',
+  '老虎',
+  '狮子',
+  '豹子',
+  '狼',
+  '狐狸',
+  '兔子',
+  '老鼠',
+  '猴子',
+  '大象',
+  '熊猫',
+  '熊',
+  '鹿',
+  '长颈鹿',
+  '斑马',
+  '河马',
+  '鳄鱼',
+  '蛇',
+  '乌龟',
+  '青蛙',
+  '蝴蝶',
+  '蜜蜂',
+  '蚂蚁',
+  '蜘蛛',
+  '蝎子',
+  '蜈蚣',
   // 自然/抽象
-  '春天', '夏天', '秋天', '冬天', '早上', '中午', '晚上', '昨天', '今天', '明天',
-  '晴天', '阴天', '雨天', '雪天', '风', '雨', '雪', '雷', '电',
-  '山', '水', '河', '湖', '海', '江', '云', '雾', '霜', '露',
-  '花', '草', '树', '木', '叶', '根', '果', '种子',
-  '红', '橙', '黄', '绿', '青', '蓝', '紫', '黑', '白', '灰',
-  '大', '小', '高', '矮', '胖', '瘦', '长', '短', '宽', '窄',
-  '快', '慢', '早', '晚', '多', '少', '新', '旧', '好', '坏',
+  '春天',
+  '夏天',
+  '秋天',
+  '冬天',
+  '早上',
+  '中午',
+  '晚上',
+  '昨天',
+  '今天',
+  '明天',
+  '晴天',
+  '阴天',
+  '雨天',
+  '雪天',
+  '风',
+  '雨',
+  '雪',
+  '雷',
+  '电',
+  '山',
+  '水',
+  '河',
+  '湖',
+  '海',
+  '江',
+  '云',
+  '雾',
+  '霜',
+  '露',
+  '花',
+  '草',
+  '树',
+  '木',
+  '叶',
+  '根',
+  '果',
+  '种子',
+  '红',
+  '橙',
+  '黄',
+  '绿',
+  '青',
+  '蓝',
+  '紫',
+  '黑',
+  '白',
+  '灰',
+  '大',
+  '小',
+  '高',
+  '矮',
+  '胖',
+  '瘦',
+  '长',
+  '短',
+  '宽',
+  '窄',
+  '快',
+  '慢',
+  '早',
+  '晚',
+  '多',
+  '少',
+  '新',
+  '旧',
+  '好',
+  '坏',
   // 常见地名
-  '北京', '上海', '广州', '深圳', '武汉', '成都', '重庆', '杭州', '南京',
-  '西安', '苏州', '天津', '长沙', '郑州', '青岛', '大连', '厦门', '宁波',
-  '无锡', '合肥', '福州', '济南', '沈阳', '长春', '哈尔滨', '昆明', '贵阳',
-  '南昌', '太原', '石家庄', '兰州', '西宁', '银川', '乌鲁木齐', '拉萨',
-  '呼和浩特', '南宁', '海口', '三亚', '香港', '澳门', '台湾',
-  '中国', '美国', '日本', '韩国', '英国', '法国', '德国', '俄罗斯', '加拿大',
-  '澳大利亚', '印度', '巴西', '阿根廷', '意大利', '西班牙', '荷兰', '瑞士',
-  '瑞典', '挪威', '丹麦', '芬兰', '波兰', '奥地利', '比利时', '葡萄牙',
-  '希腊', '土耳其', '埃及', '南非', '墨西哥', '泰国', '越南', '新加坡',
-  '马来西亚', '印度尼西亚', '菲律宾', '缅甸', '柬埔寨', '老挝', '尼泊尔',
+  '北京',
+  '上海',
+  '广州',
+  '深圳',
+  '武汉',
+  '成都',
+  '重庆',
+  '杭州',
+  '南京',
+  '西安',
+  '苏州',
+  '天津',
+  '长沙',
+  '郑州',
+  '青岛',
+  '大连',
+  '厦门',
+  '宁波',
+  '无锡',
+  '合肥',
+  '福州',
+  '济南',
+  '沈阳',
+  '长春',
+  '哈尔滨',
+  '昆明',
+  '贵阳',
+  '南昌',
+  '太原',
+  '石家庄',
+  '兰州',
+  '西宁',
+  '银川',
+  '乌鲁木齐',
+  '拉萨',
+  '呼和浩特',
+  '南宁',
+  '海口',
+  '三亚',
+  '香港',
+  '澳门',
+  '台湾',
+  '中国',
+  '美国',
+  '日本',
+  '韩国',
+  '英国',
+  '法国',
+  '德国',
+  '俄罗斯',
+  '加拿大',
+  '澳大利亚',
+  '印度',
+  '巴西',
+  '阿根廷',
+  '意大利',
+  '西班牙',
+  '荷兰',
+  '瑞士',
+  '瑞典',
+  '挪威',
+  '丹麦',
+  '芬兰',
+  '波兰',
+  '奥地利',
+  '比利时',
+  '葡萄牙',
+  '希腊',
+  '土耳其',
+  '埃及',
+  '南非',
+  '墨西哥',
+  '泰国',
+  '越南',
+  '新加坡',
+  '马来西亚',
+  '印度尼西亚',
+  '菲律宾',
+  '缅甸',
+  '柬埔寨',
+  '老挝',
+  '尼泊尔',
 ]);
 
 function collectRegexMatches(text: string, pattern: RegExp): RegExpExecArray[] {
@@ -166,8 +453,23 @@ export class UserIdentityMemoryService {
   }
 
   /** Project only the approved user's identity; do not re-extract other people. */
-  async recordApprovedUserIdentity(message: MessageEntity, sourceText: string, identity: { realName?: string; aliases?: string[] }, isCorrection = false): Promise<void> {
-    await this.recordUserIdentity({ userId: message.userId, agentId: message.agentId, messageId: message.id, sourceText, sourceOccurredAt: message.createdAt, validatedIdentity: identity, validatedSource: isCorrection ? 'explicit_chat_correction' : 'explicit_chat_statement' });
+  async recordApprovedUserIdentity(
+    message: MessageEntity,
+    sourceText: string,
+    identity: { realName?: string; aliases?: string[] },
+    isCorrection = false
+  ): Promise<void> {
+    await this.recordUserIdentity({
+      userId: message.userId,
+      agentId: message.agentId,
+      messageId: message.id,
+      sourceText,
+      sourceOccurredAt: message.createdAt,
+      validatedIdentity: identity,
+      validatedSource: isCorrection
+        ? 'explicit_chat_correction'
+        : 'explicit_chat_statement',
+    });
   }
 
   async getUserIdentity(
@@ -237,12 +539,14 @@ export class UserIdentityMemoryService {
     validatedIdentity?: { realName?: string; aliases?: string[] };
     validatedSource?: UserIdentityNameSource;
   }): Promise<void> {
-    const extracted = options.validatedIdentity ? {
-      canonicalName: options.validatedIdentity.realName,
-      explicitAliases: options.validatedIdentity.aliases || [],
-      derivedAliases: [],
-      preferredName: undefined,
-    } : extractUserNameMemory(options.sourceText);
+    const extracted = options.validatedIdentity
+      ? {
+          canonicalName: options.validatedIdentity.realName,
+          explicitAliases: options.validatedIdentity.aliases || [],
+          derivedAliases: [],
+          preferredName: undefined,
+        }
+      : extractUserNameMemory(options.sourceText);
     const globalExplicitAliases = extracted.explicitAliases.filter(
       alias => alias !== extracted.preferredName
     );
@@ -250,35 +554,54 @@ export class UserIdentityMemoryService {
     if (!extracted.canonicalName && !globalExplicitAliases.length) return;
 
     const now = new Date();
-    const source: UserIdentityNameSource = options.validatedSource || (isExplicitCanonicalNameReplacement(
-      options.sourceText,
-      'user'
-    )
-      ? 'explicit_chat_correction'
-      : 'explicit_chat_statement');
+    const source: UserIdentityNameSource =
+      options.validatedSource ||
+      (isExplicitCanonicalNameReplacement(options.sourceText, 'user')
+        ? 'explicit_chat_correction'
+        : 'explicit_chat_statement');
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const existing = await this.identityModel.findOne({
         where: { userId: options.userId },
       });
       if (existing && options.sourceOccurredAt) {
-        const sameSource = String(existing.sourceMessageId || '') === String(options.messageId);
+        const sameSource =
+          String(existing.sourceMessageId || '') === String(options.messageId);
         if (sameSource) {
           // One message may contain separate approved name and alias decisions.
           // Deduplicate the payload, not the whole message.
-          if ((!extracted.canonicalName || extracted.canonicalName === existing.realName) &&
-              globalExplicitAliases.every(alias => alias === existing.realName || existing.aliases?.includes(alias))) return;
+          if (
+            (!extracted.canonicalName ||
+              extracted.canonicalName === existing.realName) &&
+            globalExplicitAliases.every(
+              alias =>
+                alias === existing.realName || existing.aliases?.includes(alias)
+            )
+          )
+            return;
         } else {
-          const source = existing.sourceMessageId ? await this.messageModel.findOne({ where: { _id: existing.sourceMessageId, userId: options.userId } as never }) : null;
+          const source = existing.sourceMessageId
+            ? await this.messageModel.findOne({
+                where: {
+                  _id: existing.sourceMessageId,
+                  userId: options.userId,
+                } as never,
+              })
+            : null;
           // Compare event times inside the CAS retry, not the time a backfill ran.
-          if ((source?.createdAt || existing.updatedAt) > options.sourceOccurredAt) return;
+          if (
+            (source?.createdAt || existing.updatedAt) > options.sourceOccurredAt
+          )
+            return;
         }
       }
       const nextAliases = this.unique([
         ...(existing?.aliases || []),
         ...extracted.derivedAliases,
         ...globalExplicitAliases,
-      ]).filter(name => name !== (extracted.canonicalName || existing?.realName));
+      ]).filter(
+        name => name !== (extracted.canonicalName || existing?.realName)
+      );
 
       if (!existing) {
         const profile = new UserIdentityProfileEntity();
@@ -353,7 +676,10 @@ export class UserIdentityMemoryService {
     // LLM 增强：正则粗筛出候选 realName 后，批量调一次 LLM 判断
     // "是人名还是职业/身份/角色"，只有判定为人名才落库。
     // 第一轮已加的 NON_PERSON_OCCUPATION_BLACKLIST 保留作为 LLM 不可用时的兜底。
-    const filtered = await this.filterPersonNamesWithLLM(declarations, options.sourceText);
+    const filtered = await this.filterPersonNamesWithLLM(
+      declarations,
+      options.sourceText
+    );
     for (const declaration of filtered) {
       await this.upsertKnownPersonDeclaration({ ...options, declaration });
     }
@@ -383,7 +709,9 @@ export class UserIdentityMemoryService {
         maxTokens: 400,
         systemPrompt:
           '你是人名判断器。判断给定的候选词是"真实人名"还是"职业/身份/角色/官职/动物/自然物/时间/地点"。输出严格 JSON 对象，格式：{"results":[{"name":"候选词","isPersonName":true/false}]}。只判断，不解释。中文两字及以上的常见姓氏+名字组合通常是人名；"老师/医生/班长/经理/司机/厨师/护士/警察/律师/会计/工程师/程序员/设计师/作家/画家/歌手/演员/导演/主持人/记者/编辑/翻译/导游/保安/保洁/快递员/外卖员/理发师/美容师/健身教练/瑜伽老师/钢琴老师/英语老师/数学老师"等是职业不是人名。',
-        prompt: `原文：${sourceText.slice(0, 300)}\n候选词：${JSON.stringify(candidates)}`,
+        prompt: `原文：${sourceText.slice(0, 300)}\n候选词：${JSON.stringify(
+          candidates
+        )}`,
       });
 
       const jsonText = result.content
@@ -393,11 +721,15 @@ export class UserIdentityMemoryService {
       if (!jsonText) return declarations;
 
       const parsed = JSON.parse(jsonText);
-      if (!parsed?.results || !Array.isArray(parsed.results)) return declarations;
+      if (!parsed?.results || !Array.isArray(parsed.results))
+        return declarations;
 
       const nonPersonNames = new Set(
         parsed.results
-          .filter((r: { name?: string; isPersonName?: boolean }) => r?.isPersonName === false)
+          .filter(
+            (r: { name?: string; isPersonName?: boolean }) =>
+              r?.isPersonName === false
+          )
           .map((r: { name?: string }) => r?.name?.trim())
           .filter(Boolean)
       );
@@ -438,6 +770,10 @@ export class UserIdentityMemoryService {
       )
     );
     const relation = normalizeRelation(declaration.relationToUser);
+    // #7 修复：身份编号改为稳定键（关系+首选名）。此前使用随机 UUID，
+    // 使 user_known_person 的 (userId, identityKey) 唯一索引形同虚设，
+    // 并发或重放会为同一个人反复创建新记录，事实被拆散且无法合并。
+    const stableIdentityKey = this.buildKnownPersonIdentityKey(declaration);
     const nameMatches = people.filter(person =>
       this.unique([
         person.realName,
@@ -469,6 +805,11 @@ export class UserIdentityMemoryService {
       );
       if (compatible.length) existing = compatible[0];
     }
+    // 稳定身份键命中已有记录时直接复用，避免唯一索引冲突与重复人物。
+    if (!existing)
+      existing = people.find(
+        person => person.identityKey === stableIdentityKey
+      );
 
     const now = new Date();
     if (existing) {
@@ -495,7 +836,7 @@ export class UserIdentityMemoryService {
       existing = new UserKnownPersonEntity();
       Object.assign(existing, {
         userId: options.userId,
-        identityKey: `person:${randomUUID()}`,
+        identityKey: stableIdentityKey,
         realName: declaration.realName,
         preferredName: declaration.aliases[0],
         aliases: this.unique(declaration.aliases).filter(
@@ -510,7 +851,19 @@ export class UserIdentityMemoryService {
         createdAt: now,
         updatedAt: now,
       });
-      await this.knownPersonModel.save(existing);
+      try {
+        await this.knownPersonModel.save(existing);
+      } catch (error) {
+        if (!this.isDuplicateKeyError(error)) throw error;
+        const concurrent = await this.knownPersonModel.findOne({
+          where: {
+            userId: options.userId,
+            identityKey: stableIdentityKey,
+          } as never,
+        });
+        if (!concurrent) throw error;
+        existing = concurrent;
+      }
     }
 
     await this.userRelativeProfileService?.ensureForKnownPerson({
@@ -615,6 +968,28 @@ export class UserIdentityMemoryService {
     return people.filter(
       person => normalizeRelation(person.relationToUser || '') === relation
     ).length;
+  }
+
+  /** #7：稳定身份键——优先用正则/上层算出的键，否则用"关系+首选名"，都缺失时兜底随机。 */
+  private buildKnownPersonIdentityKey(
+    declaration: KnownPersonDeclaration
+  ): string {
+    const provided = declaration.identityKey?.trim();
+    if (provided) return provided.slice(0, 160);
+    const relation = normalizeRelation(declaration.relationToUser);
+    const anchor = (declaration.realName || declaration.aliases?.[0] || '')
+      .trim()
+      .toLowerCase();
+    return anchor
+      ? `${relation}|${anchor}`.slice(0, 160)
+      : `person:${randomUUID()}`;
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    const code = (error as { code?: unknown })?.code;
+    const message =
+      error instanceof Error ? error.message : String(error || '');
+    return code === 11000 || /E11000|duplicate key/i.test(message);
   }
 
   private unique(values: Array<string | undefined>): string[] {

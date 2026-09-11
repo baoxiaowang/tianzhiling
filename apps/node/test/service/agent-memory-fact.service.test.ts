@@ -600,9 +600,9 @@ describe('AgentMemoryFactService', () => {
         expect.objectContaining({ key: 'correction.never_had.那条狗' }),
       ])
     );
-    expect(facts.some(fact => fact.key === 'relationship.user_calls_agent')).toBe(
-      false
-    );
+    expect(
+      facts.some(fact => fact.key === 'relationship.user_calls_agent')
+    ).toBe(false);
     expect(
       facts.some(fact =>
         fact.key.startsWith('relationship.forbidden_user_address.')
@@ -641,8 +641,32 @@ describe('AgentMemoryFactService', () => {
         }),
       ])
     );
-    expect(facts.some(fact => fact.key.startsWith('compound.supplement.'))).toBe(
-      false
+    expect(
+      facts.some(fact => fact.key.startsWith('compound.supplement.'))
+    ).toBe(false);
+  });
+
+  it('#4 否定句不会被记成"害怕忘记"的哀伤触发点', async () => {
+    const service = new AgentMemoryFactService();
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => fact),
+    } as never;
+
+    const expressed = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我怕忘记你的声音'),
+      searchableText: '我怕忘记你的声音',
+    });
+    expect(expressed.map(fact => fact.key)).toContain(
+      'grief_trigger.fear_forgetting_agent'
+    );
+
+    const negated = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('我现在不怕忘记你的声音了'),
+      searchableText: '我现在不怕忘记你的声音了',
+    });
+    expect(negated.map(fact => fact.key)).not.toContain(
+      'grief_trigger.fear_forgetting_agent'
     );
   });
 });

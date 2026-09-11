@@ -41,6 +41,11 @@ export interface MemoryValueDecision {
 
 export interface MemoryValueInput {
   currentMessageId: string;
+  /**
+   * 批量录入时一次性处理的多条用户消息。存在时，证据可来自其中任意一条；
+   * `currentMessageId` 保留为向后兼容，等于其中最新一条。
+   */
+  currentMessageIds?: string[];
   conversationAgentRef?: string;
   currentUserRef?: string;
   sourceFactIds?: string[];
@@ -126,10 +131,14 @@ export function parseMemoryValueOutput(
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '');
   const parsed = JSON.parse(clean);
+  const currentMessageIds = input.currentMessageIds?.length
+    ? input.currentMessageIds
+    : [input.currentMessageId];
+  const maxDecisions = currentMessageIds.length > 1 ? 24 : 8;
   if (
     !parsed ||
     !Array.isArray(parsed.decisions) ||
-    parsed.decisions.length > 8
+    parsed.decisions.length > maxDecisions
   )
     throw new Error('MEMORY_VALUE_SCHEMA');
   const subjects = new Set(input.subjects.map(s => s.ref));
@@ -185,9 +194,13 @@ export function parseMemoryValueOutput(
       d.evidence.some(e => !e || typeof e.messageId !== 'string')
     )
       throw new Error('MEMORY_VALUE_EVIDENCE_SCHEMA');
-    if (!d.evidence.some(e => e.messageId === input.currentMessageId))
+    if (!d.evidence.some(e => currentMessageIds.includes(e.messageId)))
       throw new Error(
-        `MEMORY_VALUE_EVIDENCE_CURRENT: ${d.key} needs current user message ${input.currentMessageId}; unrelated history is out of scope`
+        `MEMORY_VALUE_EVIDENCE_CURRENT: ${
+          d.key
+        } needs current user message ${currentMessageIds.join(
+          ','
+        )}; unrelated history is out of scope`
       );
     for (const e of d.evidence) {
       const source = input.messages.find(m => m.id === e.messageId);

@@ -36,6 +36,14 @@ export class MemoryPipelineProcessor implements IProcessor {
       }
       return;
     }
+    // 攒批超时兜底：把不足一批的消息也提交处理。
+    if (data?.flushBatch && data.flushKind && data.flushConversationId) {
+      await this.memoryPipelineTaskService.flushBatch(
+        data.flushKind,
+        data.flushConversationId
+      );
+      return;
+    }
     if (data?.taskId) await this.processTask(data.taskId);
   }
 

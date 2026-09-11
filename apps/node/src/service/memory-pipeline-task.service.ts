@@ -18,10 +18,46 @@ export const MEMORY_PIPELINE_QUEUE = 'memory-pipeline';
 export const MEMORY_PIPELINE_RECONCILE_JOB_ID = 'memory-pipeline-reconcile-v1';
 export const MEMORY_PIPELINE_RECONCILE_INTERVAL_MS = 60_000;
 export const MEMORY_PIPELINE_VERSION = 'memory_pipeline_20260905_v1';
+export const MEMORY_PIPELINE_BATCH_FLUSH_JOB_PREFIX = 'memory-flush';
 
 export interface MemoryPipelineJobData {
   taskId?: string;
   reconcile?: true;
+  /** 攒批超时兜底：把不足一批的消息也处理掉，避免短会话永不入库。 */
+  flushBatch?: true;
+  flushKind?: MemoryPipelineTaskKind;
+  flushConversationId?: string;
+}
+
+/** 只有真正会调用大模型的抽取任务才攒批；索引类任务必须逐条即时处理。 */
+const MEMORY_PIPELINE_BATCHED_KINDS = new Set<MemoryPipelineTaskKind>([
+  MemoryPipelineTaskKind.structuredMemory,
+]);
+
+function readPositiveInt(
+  value: string | undefined,
+  fallback: number,
+  max: number
+): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function resolveBatchSize(): number {
+  return readPositiveInt(process.env.MEMORY_PIPELINE_BATCH_SIZE, 10, 100);
+}
+
+function resolveFlushDelayMs(): number {
+  return readPositiveInt(
+    process.env.MEMORY_PIPELINE_FLUSH_DELAY_MS,
+    120_000,
+    3_600_000
+  );
+}
+
+function resolveBatchMax(): number {
+  return readPositiveInt(process.env.MEMORY_PIPELINE_BATCH_MAX, 50, 200);
 }
 
 @Provide()
@@ -31,6 +67,9 @@ export class MemoryPipelineTaskService {
 
   @InjectEntityModel(MemoryPipelineTaskEntity)
   taskModel: MongoRepository<MemoryPipelineTaskEntity>;
+
+  @InjectEntityModel(MessageEntity)
+  messageModel: MongoRepository<MessageEntity>;
 
   @Inject()
   bullmqFramework: BullMQFramework;
@@ -49,20 +88,70 @@ export class MemoryPipelineTaskService {
     const conversationId = message.conversationId?.toString();
     if (!conversationId) return [];
 
-    // 批量合并：每 N 条消息创建一个批量任务，避免丢失消息
-    const batchSize = Number(process.env.MEMORY_PIPELINE_BATCH_SIZE || 10);
-    const batchKey = `memory-pipeline:batch:${conversationId}`;
+    // 索引类任务逐条即时处理；只有需要调用大模型的抽取任务才攒批。
+    // 历史缺陷：所有 kind 共用一个攒批 key，导致互相计数、索引类任务永不触发、
+    // 不足一批的消息在 24 小时过期后被静默丢弃。现在按 kind 隔离并加超时兜底。
+    const tasks: MemoryPipelineTaskEntity[] = [];
+    for (const kind of Array.from(new Set(kinds))) {
+      if (MEMORY_PIPELINE_BATCHED_KINDS.has(kind)) {
+        tasks.push(
+          ...(await this.enqueueBatched(
+            message,
+            cleanText,
+            kind,
+            conversationId
+          ))
+        );
+      } else {
+        tasks.push(await this.enqueueSingle(message, cleanText, kind));
+      }
+    }
+    return tasks;
+  }
+
+  private async enqueueSingle(
+    message: MessageEntity,
+    cleanText: string,
+    kind: MemoryPipelineTaskKind
+  ): Promise<MemoryPipelineTaskEntity> {
+    const task = await this.ensureTask(message, cleanText, kind);
+    await this.enqueueTaskJob(task);
+    return task;
+  }
+
+  private batchKey(
+    kind: MemoryPipelineTaskKind,
+    conversationId: string
+  ): string {
+    return `memory-pipeline:batch:${kind}:${conversationId}`;
+  }
+
+  private async enqueueBatched(
+    message: MessageEntity,
+    cleanText: string,
+    kind: MemoryPipelineTaskKind,
+    conversationId: string
+  ): Promise<MemoryPipelineTaskEntity[]> {
+    if (!this.redisService) {
+      // 无 Redis 时无法攒批，降级为逐条任务，保证不丢。
+      return [await this.enqueueSingle(message, cleanText, kind)];
+    }
+
+    const batchSize = resolveBatchSize();
+    const batchKey = this.batchKey(kind, conversationId);
 
     try {
-      // 把当前消息 ID 加入批量队列
-      await this.redisService?.rpush(batchKey, message.id.toString());
-      // 设置过期时间，避免异常情况下队列永久残留
-      await this.redisService?.expire(batchKey, 24 * 60 * 60);
+      await this.redisService.rpush(batchKey, message.id.toString());
+      // 过期时间只作为异常兜底；正常清理由触发或超时兜底完成。
+      await this.redisService.expire(batchKey, 24 * 60 * 60);
 
-      const batchLen = await this.redisService?.llen(batchKey);
-      if ((batchLen || 0) < batchSize) {
+      const batchLen = Number(await this.redisService.llen(batchKey)) || 0;
+      if (batchLen < batchSize) {
+        // 不足一批：登记一次超时兜底，避免短会话永不入库。
+        await this.scheduleBatchFlush(kind, conversationId);
         this.logger.info(
-          '[memory-pipeline] batch accumulate, conversationId=%s, count=%s/%s',
+          '[memory-pipeline] batch accumulate, kind=%s, conversationId=%s, count=%s/%s',
+          kind,
           conversationId,
           batchLen,
           batchSize
@@ -70,39 +159,143 @@ export class MemoryPipelineTaskService {
         return [];
       }
 
-      // 达到批量大小，取出所有消息 ID
-      const messageIds = await this.redisService?.lrange(batchKey, 0, -1);
-      await this.redisService?.del(batchKey);
-
-      if (!messageIds || messageIds.length === 0) return [];
+      const messageIds =
+        (await this.redisService.lrange(batchKey, 0, -1)) || [];
+      await this.redisService.del(batchKey);
 
       this.logger.info(
-        '[memory-pipeline] batch trigger, conversationId=%s, messageCount=%s',
+        '[memory-pipeline] batch trigger, kind=%s, conversationId=%s, messageCount=%s',
+        kind,
         conversationId,
         messageIds.length
       );
 
-      // 为每种 kind 创建一个批量任务
-      const tasks: MemoryPipelineTaskEntity[] = [];
-      for (const kind of Array.from(new Set(kinds))) {
-        const task = await this.ensureBatchTask(message, cleanText, kind, messageIds);
-        tasks.push(task);
-        await this.enqueueTaskJob(task);
-      }
-      return tasks;
+      return await this.createBatchTasks(
+        kind,
+        conversationId,
+        messageIds,
+        message,
+        cleanText
+      );
     } catch (error) {
       this.logger.warn(
-        '[memory-pipeline] batch enqueue failed, fallback to single. error=%s',
+        '[memory-pipeline] batch enqueue failed, fallback to single. kind=%s error=%s',
+        kind,
         this.describeError(error)
       );
-      // Redis 异常时降级为单条任务
-      const tasks: MemoryPipelineTaskEntity[] = [];
-      for (const kind of Array.from(new Set(kinds))) {
-        const task = await this.ensureTask(message, cleanText, kind);
-        tasks.push(task);
-        await this.enqueueTaskJob(task);
-      }
-      return tasks;
+      return [await this.enqueueSingle(message, cleanText, kind)];
+    }
+  }
+
+  /** 超时兜底：把不足一批的消息也做成批量任务。 */
+  async flushBatch(
+    kind: MemoryPipelineTaskKind,
+    conversationId: string
+  ): Promise<MemoryPipelineTaskEntity | null> {
+    if (!this.redisService) return null;
+    const batchKey = this.batchKey(kind, conversationId);
+    let messageIds: string[] = [];
+    try {
+      messageIds = (await this.redisService.lrange(batchKey, 0, -1)) || [];
+      if (!messageIds.length) return null;
+      await this.redisService.del(batchKey);
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] batch flush failed, kind=%s, conversationId=%s, error=%s',
+        kind,
+        conversationId,
+        this.describeError(error)
+      );
+      return null;
+    }
+
+    this.logger.info(
+      '[memory-pipeline] batch flush, kind=%s, conversationId=%s, messageCount=%s',
+      kind,
+      conversationId,
+      messageIds.length
+    );
+    const tasks = await this.createBatchTasks(kind, conversationId, messageIds);
+    return tasks[0] || null;
+  }
+
+  private async createBatchTasks(
+    kind: MemoryPipelineTaskKind,
+    conversationId: string,
+    messageIds: string[],
+    anchorMessage?: MessageEntity,
+    cleanText = ''
+  ): Promise<MemoryPipelineTaskEntity[]> {
+    const uniqueIds = Array.from(
+      new Set(
+        messageIds
+          .map(id => id?.trim())
+          .filter(
+            (id): id is string =>
+              Boolean(id) && MongoObjectId.isValid(id as string)
+          )
+      )
+    );
+    if (!uniqueIds.length) return [];
+
+    const max = resolveBatchMax();
+    const tasks: MemoryPipelineTaskEntity[] = [];
+    for (let offset = 0; offset < uniqueIds.length; offset += max) {
+      const chunk = uniqueIds.slice(offset, offset + max);
+      const anchor =
+        offset === 0 && anchorMessage
+          ? anchorMessage
+          : await this.findExistingMessage(chunk);
+      if (!anchor) continue;
+      const task = await this.ensureBatchTask(anchor, cleanText, kind, chunk);
+      await this.enqueueTaskJob(task);
+      tasks.push(task);
+    }
+    return tasks;
+  }
+
+  private async findExistingMessage(
+    ids: string[]
+  ): Promise<MessageEntity | undefined> {
+    if (!this.messageModel) return undefined;
+    for (const id of ids) {
+      const found = await this.messageModel.findOne({
+        where: { _id: new MongoObjectId(id) } as never,
+      });
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  private async scheduleBatchFlush(
+    kind: MemoryPipelineTaskKind,
+    conversationId: string
+  ): Promise<void> {
+    const queue =
+      this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE) ||
+      this.bullmqFramework?.createQueue(MEMORY_PIPELINE_QUEUE);
+    if (!queue) return;
+    try {
+      await queue.addJobToQueue(
+        {
+          flushBatch: true,
+          flushKind: kind,
+          flushConversationId: conversationId,
+        } as MemoryPipelineJobData,
+        {
+          jobId: `${MEMORY_PIPELINE_BATCH_FLUSH_JOB_PREFIX}-${kind}-${conversationId}`,
+          delay: resolveFlushDelayMs(),
+          removeOnComplete: true,
+          removeOnFail: 10,
+        }
+      );
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] schedule flush failed, kind=%s, conversationId=%s, error=%s',
+        kind,
+        conversationId,
+        this.describeError(error)
+      );
     }
   }
 
@@ -298,6 +491,14 @@ export class MemoryPipelineTaskService {
     kind: MemoryPipelineTaskKind,
     messageIds: string[]
   ): Promise<MemoryPipelineTaskEntity> {
+    const where = {
+      messageId: firstMessage.id,
+      kind,
+      pipelineVersion: MEMORY_PIPELINE_VERSION,
+    };
+    const existing = await this.taskModel.findOne({ where });
+    if (existing) return existing;
+
     const now = new Date();
     const task = new MemoryPipelineTaskEntity();
     Object.assign(task, {
@@ -318,7 +519,14 @@ export class MemoryPipelineTaskService {
       createdAt: now,
       updatedAt: now,
     });
-    return await this.taskModel.save(task);
+    try {
+      return await this.taskModel.save(task);
+    } catch (error) {
+      // 并发触发时唯一索引兜底：复用已经落库的那条任务。
+      const concurrentlyCreated = await this.taskModel.findOne({ where });
+      if (concurrentlyCreated) return concurrentlyCreated;
+      throw error;
+    }
   }
 
   private async enqueueTaskJob(task: MemoryPipelineTaskEntity): Promise<void> {

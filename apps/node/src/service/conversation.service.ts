@@ -2192,9 +2192,13 @@ export class ConversationService {
     const memoryAttribution = memoryModel?.createModelCallAttribution?.();
     try {
       const executeTask = () => this.executeMemoryPipelineTask(task);
-      const execute = () => memoryAttribution && memoryModel?.runWithModelCallAttribution
-        ? memoryModel.runWithModelCallAttribution(memoryAttribution, executeTask)
-        : executeTask();
+      const execute = () =>
+        memoryAttribution && memoryModel?.runWithModelCallAttribution
+          ? memoryModel.runWithModelCallAttribution(
+              memoryAttribution,
+              executeTask
+            )
+          : executeTask();
       const result = this.openAIService?.runWithModelCallAttribution
         ? await this.openAIService.runWithModelCallAttribution(
             attribution,
@@ -2205,7 +2209,13 @@ export class ConversationService {
       return result;
     } finally {
       if (memoryAttribution) {
-        for (const key of ['chatCompletions', 'providerAttempts', 'embeddings', 'visionCompletions'] as const) attribution[key] += memoryAttribution[key];
+        for (const key of [
+          'chatCompletions',
+          'providerAttempts',
+          'embeddings',
+          'visionCompletions',
+        ] as const)
+          attribution[key] += memoryAttribution[key];
       }
       const after = process.memoryUsage();
       this.logger?.info?.(
@@ -2251,7 +2261,11 @@ export class ConversationService {
     const batchIds = task.messageIds?.filter(Boolean) || [];
     if (batchIds.length > 1) {
       const messages = await this.messageModel.find({
-        where: { _id: { $in: batchIds } as never } as never,
+        where: {
+          _id: { $in: batchIds } as never,
+          isArchived: { $ne: true },
+          status: MessageStatus.sent,
+        } as never,
       });
       const validMessages = messages
         .filter(m => m && !m.isArchived && m.status === MessageStatus.sent)
@@ -2259,10 +2273,21 @@ export class ConversationService {
 
       if (!validMessages.length) return 'skipped';
 
+      // 抽取类任务在 active 灰度下用一次模型调用覆盖整批，失败再逐条回退。
+      if (
+        task.kind === MemoryPipelineTaskKind.structuredMemory &&
+        this.memoryValueService?.active(validMessages[0].userId)
+      ) {
+        return this.executeBatchStructuredMemory(validMessages);
+      }
+
       let anyCompleted = false;
       for (const message of validMessages) {
         try {
-          const result = await this.processSingleMemoryPipelineMessage(task, message);
+          const result = await this.processSingleMemoryPipelineMessage(
+            task,
+            message
+          );
           if (result === 'completed') anyCompleted = true;
         } catch (error) {
           this.logger.warn(
@@ -2290,6 +2315,99 @@ export class ConversationService {
     return this.processSingleMemoryPipelineMessage(task, message);
   }
 
+  /**
+   * 批量抽取：一次模型调用处理一批用户消息。失败时回退到逐条 process，
+   * 保证批量能力不可用时不会丢失这一批记忆。
+   */
+  private async executeBatchStructuredMemory(
+    messages: MessageEntity[]
+  ): Promise<'completed' | 'skipped'> {
+    const entries = messages
+      .map(message => ({
+        message,
+        text: this.buildSearchableTextFromMessage(message),
+      }))
+      .filter(entry => Boolean(entry.text));
+    if (!entries.length) return 'skipped';
+
+    const anchor = entries[entries.length - 1].message;
+    const sourceAgent = await this.findAgentById(anchor.agentId);
+    const target = sourceAgent?.messengerOfAgentId
+      ? await this.findAgentById(sourceAgent.messengerOfAgentId)
+      : sourceAgent;
+    if (!target) return 'skipped';
+
+    try {
+      const result = await this.memoryValueService.processBatch(
+        entries.map(entry => entry.message),
+        entries.map(entry => entry.text),
+        target
+      );
+      for (const id of result.changedAgents) {
+        const changedAgent = await this.findAgentById(new MongoObjectId(id));
+        if (changedAgent)
+          await this.agentMemoryProfileService.refreshFromMemoryNow({
+            agent: changedAgent,
+            userId: anchor.userId,
+            deduplicateByFacts: true,
+          });
+      }
+      for (const entry of entries) {
+        if (!sourceAgent?.messengerOfAgentId) {
+          await this.recognizeEmotionStateForUserMessage(
+            entry.message,
+            entry.text
+          );
+          await this.captureRelationshipOpenLoop(
+            entry.message,
+            entry.text
+          ).catch(error => {
+            this.logger.warn(
+              '[memory-value] relationship task capture deferred: %s',
+              this.describeReplyError(error)
+            );
+          });
+        }
+        await this.memoryPipelineTaskService.enqueueForMessage(
+          entry.message,
+          entry.text,
+          [MemoryPipelineTaskKind.personSemanticIndex]
+        );
+        if (entry.message.traceId) {
+          await this.chatTraceService?.markBackgroundCompleted(
+            entry.message.traceId,
+            new Date(),
+            entry.message.createdAt
+          );
+        }
+      }
+      return 'completed';
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] batch extraction failed, fallback to per-message: %s',
+        this.describeReplyError(error)
+      );
+      let anyCompleted = false;
+      for (const entry of entries) {
+        try {
+          const result = await this.memoryValueService.process(
+            entry.message,
+            entry.text,
+            target
+          );
+          if (result.count > 0) anyCompleted = true;
+        } catch (perMessageError) {
+          this.logger.warn(
+            '[memory-pipeline] per-message extraction failed, messageId=%s error=%s',
+            this.stringifyObjectId(entry.message.id),
+            this.describeReplyError(perMessageError)
+          );
+        }
+      }
+      return anyCompleted ? 'completed' : 'skipped';
+    }
+  }
+
   private async processSingleMemoryPipelineMessage(
     task: MemoryPipelineTaskEntity,
     message: MessageEntity
@@ -2307,26 +2425,62 @@ export class ConversationService {
         if (!this.memoryValueService.active(message.userId)) {
           // Shadow is advisory: even its failure must not bypass legacy writes.
           try {
-            await this.memoryValueService.process(message, searchableText, target, { shadow: true });
+            await this.memoryValueService.process(
+              message,
+              searchableText,
+              target,
+              { shadow: true }
+            );
           } catch (error) {
-            this.logger.warn('[memory-value] shadow failed; continuing legacy memory: %s', this.describeReplyError(error));
+            this.logger.warn(
+              '[memory-value] shadow failed; continuing legacy memory: %s',
+              this.describeReplyError(error)
+            );
           }
         } else {
-          const result = await this.memoryValueService.process(message, searchableText, target);
+          const result = await this.memoryValueService.process(
+            message,
+            searchableText,
+            target
+          );
           if (!sourceAgent?.messengerOfAgentId) {
-            await this.recognizeEmotionStateForUserMessage(message, searchableText);
-            await this.captureRelationshipOpenLoop(message, searchableText).catch(error => {
-              this.logger.warn('[memory-value] relationship task capture deferred: %s', this.describeReplyError(error));
+            await this.recognizeEmotionStateForUserMessage(
+              message,
+              searchableText
+            );
+            await this.captureRelationshipOpenLoop(
+              message,
+              searchableText
+            ).catch(error => {
+              this.logger.warn(
+                '[memory-value] relationship task capture deferred: %s',
+                this.describeReplyError(error)
+              );
             });
           }
           // Summary is a derived view. Its retry does not repeat extraction.
           for (const id of result.changedAgents) {
-            const changedAgent = await this.findAgentById(new MongoObjectId(id));
-            if (changedAgent) await this.agentMemoryProfileService.refreshFromMemoryNow({ agent: changedAgent, userId: message.userId, deduplicateByFacts: true });
+            const changedAgent = await this.findAgentById(
+              new MongoObjectId(id)
+            );
+            if (changedAgent)
+              await this.agentMemoryProfileService.refreshFromMemoryNow({
+                agent: changedAgent,
+                userId: message.userId,
+                deduplicateByFacts: true,
+              });
           }
-          await this.memoryPipelineTaskService.enqueueForMessage(message, searchableText, [MemoryPipelineTaskKind.personSemanticIndex]);
+          await this.memoryPipelineTaskService.enqueueForMessage(
+            message,
+            searchableText,
+            [MemoryPipelineTaskKind.personSemanticIndex]
+          );
           if (message.traceId) {
-            await this.chatTraceService?.markBackgroundCompleted(message.traceId, new Date(), message.createdAt);
+            await this.chatTraceService?.markBackgroundCompleted(
+              message.traceId,
+              new Date(),
+              message.createdAt
+            );
           }
           return 'completed';
         }

@@ -261,7 +261,11 @@ export class AgentProfileFactService {
   async extractAndUpsertFromUserMessage(
     options: ExtractProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
-    if (this.memoryValueService?.active(options.message.userId)) return this.extractGovernedMessage(options.message, options.searchableText);
+    if (this.memoryValueService?.active(options.message.userId))
+      return this.extractGovernedMessage(
+        options.message,
+        options.searchableText
+      );
     const sourceText = this.normalizeSourceText(options.searchableText);
 
     if (!sourceText || isForgetMemoryRequest(sourceText)) {
@@ -322,7 +326,12 @@ export class AgentProfileFactService {
   async extractAndUpsertFromMessengerMessage(
     options: ExtractMessengerProfileFactsOptions
   ): Promise<AgentProfileFactSummary[]> {
-    if (this.memoryValueService?.active(options.message.userId)) return this.extractGovernedMessage(options.message, options.searchableText, options.parentAgent);
+    if (this.memoryValueService?.active(options.message.userId))
+      return this.extractGovernedMessage(
+        options.message,
+        options.searchableText,
+        options.parentAgent
+      );
     const sourceText = this.normalizeSourceText(options.searchableText);
     if (!sourceText || isForgetMemoryRequest(sourceText)) return [];
     if (!this.openAIService?.isEnabled?.()) return [];
@@ -403,13 +412,34 @@ export class AgentProfileFactService {
     );
   }
 
-  private async extractGovernedMessage(message: MessageEntity, text: string, parent?: AgentEntity): Promise<AgentProfileFactSummary[]> {
-    let agent = parent || await this.memoryValueService.agentModel.findOne({ where: { _id: message.agentId } as never });
-    if (agent?.messengerOfAgentId) agent = await this.memoryValueService.agentModel.findOne({ where: { _id: agent.messengerOfAgentId } as never });
+  private async extractGovernedMessage(
+    message: MessageEntity,
+    text: string,
+    parent?: AgentEntity
+  ): Promise<AgentProfileFactSummary[]> {
+    let agent =
+      parent ||
+      (await this.memoryValueService.agentModel.findOne({
+        where: { _id: message.agentId } as never,
+      }));
+    if (agent?.messengerOfAgentId)
+      agent = await this.memoryValueService.agentModel.findOne({
+        where: { _id: agent.messengerOfAgentId } as never,
+      });
     if (!agent) throw new Error('Memory subject unavailable');
     await this.memoryValueService.process(message, text, agent);
-    const facts = await this.factModel.find({ where: { userId: message.userId, sourceMessageId: message.id, status: 'active', 'governance.version': 'memory_value_v1' } as never, take: 16 });
-    return facts.map(f => this.buildSummary(f)).filter((f): f is AgentProfileFactSummary => !!f);
+    const facts = await this.factModel.find({
+      where: {
+        userId: message.userId,
+        sourceMessageId: message.id,
+        status: 'active',
+        'governance.version': 'memory_value_v1',
+      } as never,
+      take: 16,
+    });
+    return facts
+      .map(f => this.buildSummary(f))
+      .filter((f): f is AgentProfileFactSummary => !!f);
   }
 
   async extractAndUpsertFromFeedback(
@@ -520,11 +550,28 @@ export class AgentProfileFactService {
     const facts = await this.factModel.find({
       where: {
         userId: options.userId,
-        agentId: valueActive && !options.durableOnly ? { $in: [options.agentId, options.userId] } as never : options.agentId,
+        agentId:
+          valueActive && !options.durableOnly
+            ? ({ $in: [options.agentId, options.userId] } as never)
+            : options.agentId,
         // 三级证据注入：active 可断言，candidate 弱注入（context_only + hypothesis + 【待确认】前缀）
-        status: { $in: [AgentProfileFactStatus.active, AgentProfileFactStatus.candidate] },
-        ...(valueActive ? { $or: [{ 'governance.validUntil': null }, { 'governance.validUntil': { $gt: new Date().toISOString() } }] } : {}),
-        ...(options.durableOnly ? { 'governance.retention': { $ne: 'session' } } : {}),
+        status: {
+          $in: [
+            AgentProfileFactStatus.active,
+            AgentProfileFactStatus.candidate,
+          ],
+        },
+        ...(valueActive
+          ? {
+              $or: [
+                { 'governance.validUntil': null },
+                { 'governance.validUntil': { $gt: new Date().toISOString() } },
+              ],
+            }
+          : {}),
+        ...(options.durableOnly
+          ? { 'governance.retention': { $ne: 'session' } }
+          : {}),
       },
       order: {
         priority: 'DESC',
@@ -534,7 +581,12 @@ export class AgentProfileFactService {
     });
 
     return facts
-      .filter(fact => !isCanonicalUserNameEvidence(fact) && isMemoryCurrent(fact.governance) && (!options.durableOnly || fact.governance?.retention !== 'session'))
+      .filter(
+        fact =>
+          !isCanonicalUserNameEvidence(fact) &&
+          isMemoryCurrent(fact.governance) &&
+          (!options.durableOnly || fact.governance?.retention !== 'session')
+      )
       .map(fact => this.buildSummary(fact))
       .filter((fact): fact is AgentProfileFactSummary => Boolean(fact));
   }
@@ -855,7 +907,9 @@ export class AgentProfileFactService {
 
     // 收窄：含数字类陈述的混合句（如"我今年38岁，你记得吗？"）放行给 LLM，
     // 只有纯问句（无数字陈述信号）才早退。
-    const hasNumericStatement = /\d/.test(text) && /(?:岁|年|月|日|号|个|只|条|次|米|厘米|公斤|斤|块|元|分)/.test(text);
+    const hasNumericStatement =
+      /\d/.test(text) &&
+      /(?:岁|年|月|日|号|个|只|条|次|米|厘米|公斤|斤|块|元|分)/.test(text);
     if (hasNumericStatement) return false;
 
     return (
@@ -879,9 +933,10 @@ export class AgentProfileFactService {
       const hasTimeSignal =
         /[0-9零〇一二两三四五六七八九十百千]/.test(text) &&
         /[年月日岁天周]/.test(text);
-      const hasRitualSignal = /(头七|头7|一七|二七|三七|五七|七七|百日|百天|周年|祭日|忌日)/.test(
-        text
-      );
+      const hasRitualSignal =
+        /(头七|头7|一七|二七|三七|五七|七七|百日|百天|周年|祭日|忌日)/.test(
+          text
+        );
       if (!hasTimeSignal && !hasRitualSignal) return false;
     }
 
@@ -918,7 +973,11 @@ export class AgentProfileFactService {
       return true;
 
     // 5. 生命事件（出生、离世、去世、走了、离开）
-    if (/(?:出生|离世|去世|走了.{0,4}年|不在了.{0,4}年|过世|离开.{0,6}(?:多少|多久|几天|几年)|你离开)/.test(text))
+    if (
+      /(?:出生|离世|去世|走了.{0,4}年|不在了.{0,4}年|过世|离开.{0,6}(?:多少|多久|几天|几年)|你离开)/.test(
+        text
+      )
+    )
       return true;
 
     // 6. 地点变动
@@ -1084,6 +1143,23 @@ export class AgentProfileFactService {
       /(?:你|他|她|我爸|我妈|爸爸|妈妈)(?:不是\d{1,3}岁[,，。]*)?(?:是|才)?(\d{1,3})岁/
     );
 
+    // #10 修复：用户主动说自己的年龄（"我今年38岁"）此前不会入库。
+    // 归属必须是用户本人，因此使用 user.* 事实键，避免被当成角色的年龄。
+    // 前缀不匹配亲属称谓，"我爸爸今年60岁"不会误判为用户的年龄。
+    const userAge = text.match(
+      /(?:^|[，,。；;！？!?\s])我(?:今年|已经|都|快|马上)?(\d{1,3})\s*岁/
+    );
+    if (userAge?.[1]) {
+      facts.push({
+        type: AgentProfileFactType.age,
+        key: 'user.age.current_or_stated',
+        value: `用户今年${userAge[1]}岁`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence,
+        priority: 2,
+      });
+    }
+
     const age = ageAtDeath?.[1] || directAge?.[1];
 
     if (!age) {
@@ -1238,11 +1314,26 @@ export class AgentProfileFactService {
     // 代词所有格："我的爸爸"、"你的老师"（这里"你的老师"可能是职业，但"我的朝思暮想的爸爸"不是）
     if (/(我的|你的|他的|她的|我们的|你们的|他们的)/.test(text)) return true;
     // 亲属称呼
-    if (/(爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|丈夫|妻子|老公|老婆|叔叔|阿姨|舅舅|舅妈|姑姑|姑父|姨夫|姨妈|宝贝|乖宝|宝宝)/.test(text)) return true;
+    if (
+      /(爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|丈夫|妻子|老公|老婆|叔叔|阿姨|舅舅|舅妈|姑姑|姑父|姨夫|姨妈|宝贝|乖宝|宝宝)/.test(
+        text
+      )
+    )
+      return true;
     // 形容词/修饰词短语
-    if (/(朝思暮想|亲爱的|可爱的|敬爱的|伟大的|最爱的|想念的|思念的|心疼的|骄傲的|自豪的|好好活着|愿意|看得清|捧在手上|嘴上说|AI|假的|支柱)/.test(text)) return true;
+    if (
+      /(朝思暮想|亲爱的|可爱的|敬爱的|伟大的|最爱的|想念的|思念的|心疼的|骄傲的|自豪的|好好活着|愿意|看得清|捧在手上|嘴上说|AI|假的|支柱)/.test(
+        text
+      )
+    )
+      return true;
     // 动词短语（职业是名词，不应包含动词）
-    if (/(是|做|干|当|有|在|去|来|要|想|爱|喜欢|希望|愿意|能够|可以|应该|必须)/.test(text)) return true;
+    if (
+      /(是|做|干|当|有|在|去|来|要|想|爱|喜欢|希望|愿意|能够|可以|应该|必须)/.test(
+        text
+      )
+    )
+      return true;
     // 长度超过 6 字，大概率不是职业（职业一般 2-4 字，最多如"软件工程师"5字）
     if (text.length > 6) return true;
     return false;
@@ -1407,7 +1498,8 @@ export class AgentProfileFactService {
   }
 
   private async upsertFact(
-    input: UpsertProfileFactInput
+    input: UpsertProfileFactInput,
+    retryAttempt = 0
   ): Promise<AgentProfileFactEntity> {
     const now = new Date();
     const existing = await this.factModel.findOne({
@@ -1431,15 +1523,23 @@ export class AgentProfileFactService {
     const nextSourceIdStr = this.stringifyObjectId(input.sourceMessageId);
     const sourceAlreadyExists =
       nextSourceIdStr &&
-      sourceMessageIds.some(id => this.stringifyObjectId(id) === nextSourceIdStr && id !== input.sourceMessageId);
-    const shouldIncrementSupport = sameValue && existing && !sourceAlreadyExists;
+      sourceMessageIds.some(
+        id =>
+          this.stringifyObjectId(id) === nextSourceIdStr &&
+          id !== input.sourceMessageId
+      );
+    const shouldIncrementSupport =
+      sameValue && existing && !sourceAlreadyExists;
     const nextSupportCount = sameValue
-      ? Math.max(existing?.supportCount ?? 1, 1) + (shouldIncrementSupport ? 1 : 0)
+      ? Math.max(existing?.supportCount ?? 1, 1) +
+        (shouldIncrementSupport ? 1 : 0)
       : 1;
 
     // P1-3: 用户明确重述同值（trustedSource 或纠正语气）→ 冲突已解决，清空 conflictingValues 并激活
     const userReconfirmsValue =
-      sameValue && existing && (input.trustedSource || this.isCorrectionText(input.sourceText || ''));
+      sameValue &&
+      existing &&
+      (input.trustedSource || this.isCorrectionText(input.sourceText || ''));
     const effectiveTrustedSource = input.trustedSource || userReconfirmsValue;
     const isCanonicalName =
       input.key === AGENT_REAL_NAME_FACT_KEY ||
@@ -1492,9 +1592,11 @@ export class AgentProfileFactService {
       fact.sourceMessageId = input.sourceMessageId;
       fact.firstSourceMessageId = input.sourceMessageId;
     } else {
-      fact.firstSourceMessageId = existing.firstSourceMessageId || existing.sourceMessageId;
+      fact.firstSourceMessageId =
+        existing.firstSourceMessageId || existing.sourceMessageId;
     }
-    fact.latestSourceMessageId = input.sourceMessageId || existing?.latestSourceMessageId;
+    fact.latestSourceMessageId =
+      input.sourceMessageId || existing?.latestSourceMessageId;
     fact.sourceMessageIds = sourceMessageIds;
     fact.sourceFeedbackId = input.sourceFeedbackId;
     fact.sourceText = input.sourceText?.trim().slice(0, 1000) || '';
@@ -1503,16 +1605,30 @@ export class AgentProfileFactService {
       input.assertionPolicy ??
       this.resolveAssertionPolicy(input.type, input.key);
     // P1-3: 用户明确重述同值时清空 conflictingValues（冲突已解决）
-    fact.conflictingValues =
-      userReconfirmsValue
-        ? []
-        : existing && !sameValue
-          ? this.appendConflictingValue(existing.conflictingValues, previousValue)
-          : existing?.conflictingValues || [];
+    fact.conflictingValues = userReconfirmsValue
+      ? []
+      : existing && !sameValue
+      ? this.appendConflictingValue(existing.conflictingValues, previousValue)
+      : existing?.conflictingValues || [];
     fact.createdAt = existing?.createdAt ?? now;
     fact.updatedAt = now;
 
-    return this.factModel.save(fact);
+    // #17 并发原子化：同一 (userId, agentId, key) 的并发写入由唯一索引兜底。
+    // 两个请求同时发现"不存在"时会有一个撞唯一键，这里收敛重试一次：
+    // 重试时 findOne 必然能读到并发写入的记录，走合并分支，不再重复插入。
+    try {
+      return await this.factModel.save(fact);
+    } catch (error) {
+      if (retryAttempt >= 1 || !this.isDuplicateKeyError(error)) throw error;
+      return this.upsertFact(input, retryAttempt + 1);
+    }
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    const code = (error as { code?: unknown })?.code;
+    const message =
+      error instanceof Error ? error.message : String(error || '');
+    return code === 11000 || /E11000|duplicate key/i.test(message);
   }
 
   private async saveSupersededRealNameHistory(
@@ -1812,7 +1928,8 @@ export class AgentProfileFactService {
     };
     if (fact.governance?.subjectRef.startsWith('user:')) {
       summary.value = `用户本人：${value}`;
-      if (summary.key.startsWith('identity.')) summary.key = `user.${summary.key}`;
+      if (summary.key.startsWith('identity.'))
+        summary.key = `user.${summary.key}`;
     }
     const id = this.stringifyObjectId(fact.id);
     const sourceMessageId = this.stringifyObjectId(
