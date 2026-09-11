@@ -8,6 +8,7 @@ import {
   gradeMemoryDecision,
   memoryValueSimilarity,
   resolveNewPeople,
+  isContextOnlyNamespace,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -569,5 +570,46 @@ describe('memory value contract', () => {
       source
     );
     expect(accepted).toHaveLength(1);
+  });
+  it('routes feeling-shaped memory namespaces to context-only', () => {
+    for (const key of [
+      'grief.shock_on_hearing_news',
+      'grief_trigger.absence_of_mother_at_home',
+      'emotion.response_to_father_s_grief',
+      'emotional_state.forced_smile_fatigue',
+      'behavior.emotional_masking',
+      'need.unacknowledged_distress',
+      'regret.self_blame',
+      'social_support.absence_of_check_in',
+    ]) {
+      expect(isContextOnlyNamespace(key)).toBe(true);
+    }
+    for (const key of [
+      'health.foot_swelling_recent',
+      'relationship.marital_disengagement_with_spouse',
+      'occupation.sedentary_work_pattern',
+      'perception.external_validation_misalignment',
+      'emotional_resilience.self_regulation_pattern',
+    ]) {
+      expect(isContextOnlyNamespace(key)).toBe(false);
+    }
+  });
+  it('downgrades feeling-shaped facts to short-lived, non-assertable memory', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        key: 'grief.shock_on_hearing_news',
+        value: '用户接到电话时难以相信',
+        retention: 'durable',
+        timeKind: 'historical',
+      } as any,
+      '2026-09-08T00:00:00.000Z',
+      '接到电话真的不能相信'
+    );
+    expect(graded.retention).toBe('session');
+    expect(graded.timeKind).toBe('current');
+    expect(Date.parse(graded.validUntil!)).toBeGreaterThan(
+      Date.parse('2026-09-08T00:00:00.000Z')
+    );
   });
 });

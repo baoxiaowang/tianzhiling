@@ -144,6 +144,32 @@ export function resolveNewPeople(
   return { refs, accepted };
 }
 
+// 情绪/心理类记忆的键名类别：这些内容真实，但只能作为对话背景，
+// 不能被断言成客观事实。按类别降级比逐条列举情绪词更稳。
+export const CONTEXT_ONLY_NAMESPACES = new Set([
+  'grief',
+  'grief_trigger',
+  'emotion',
+  'emotional_state',
+  'need',
+  'regret',
+  'social_support',
+]);
+// 只有出现在“第二段”时才代表情绪（behavior.emotional_masking）；
+// 放在首段会误伤 emotional_resilience 这类稳定的自我描述。
+const CONTEXT_ONLY_INNER_TOKENS = new Set(['emotion', 'emotional', 'grief']);
+export function isContextOnlyNamespace(key: string): boolean {
+  const segments = key.split('.');
+  const head = segments[0];
+  if (head) {
+    if (CONTEXT_ONLY_NAMESPACES.has(head)) return true;
+    if (CONTEXT_ONLY_NAMESPACES.has(head.split('_')[0])) return true;
+  }
+  const inner = segments[1];
+  if (inner && CONTEXT_ONLY_INNER_TOKENS.has(inner.split('_')[0])) return true;
+  return false;
+}
+
 export function withMemorySpeakers(input: MemoryValueInput): MemoryValueInput {
   const currentUserRef =
     input.currentUserRef ||
@@ -363,6 +389,21 @@ export function gradeMemoryDecision(
   const important = IMPORTANT_SITUATION_PATTERN.test(text);
   if (PURE_EMOTION_PATTERN.test(text) && !declaredTrigger && !important) {
     throw new Error('MEMORY_VALUE_EMOTION_ONLY');
+  }
+  // 情绪/心理类记忆降级为“短期、不可断言”，而不是继续扩充情绪词黑名单：
+  // 真实模型的措辞换得比词表快（“强颜欢笑”“心里难受”“不知所措”都能绕过），
+  // 但一条记忆的类别不会变。降级后这些内容仍留在库里作为对话背景，
+  // 只是不能被当成客观事实引用，因此不会牺牲召回。
+  // 用户明确说出的哀伤触发场景（“听到X我会Y”）是刻意要长期保存的稳定事实，
+  // 不参与降级。
+  if (isContextOnlyNamespace(d.key) && !declaredTrigger) {
+    d.retention = 'session';
+    d.timeKind = 'current';
+    if (!d.validUntil) {
+      const until = Date.parse(referenceAt);
+      if (Number.isFinite(until))
+        d.validUntil = new Date(until + 30 * 86400000).toISOString();
+    }
   }
   for (const [pattern, replacement] of OVERSTATEMENT_REPLACEMENTS) {
     d.value = d.value.replace(pattern, replacement);

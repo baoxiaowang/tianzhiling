@@ -42,6 +42,7 @@ import {
   needsMemoryReview,
   memoryValueSimilarity,
   resolveNewPeople,
+  isContextOnlyNamespace,
 } from './memory-value';
 
 interface MemoryValueAudit {
@@ -979,7 +980,9 @@ export class MemoryValueService {
       priority: d.salience,
       polarity: AgentProfileFactPolarity.positive,
       assertionPolicy:
-        pending || ['wish', 'plan'].includes(d.timeKind)
+        pending ||
+        ['wish', 'plan'].includes(d.timeKind) ||
+        isContextOnlyNamespace(d.key)
           ? AgentProfileFactAssertionPolicy.contextOnly
           : AgentProfileFactAssertionPolicy.canAssert,
       sourceMessageId: message.id,
