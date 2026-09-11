@@ -873,8 +873,17 @@ export class AgentProfileFactService {
     const text = sourceText.trim();
     if (!text) return false;
 
-    // 很短的消息几乎不可能含事实
-    if (text.length <= 4) return false;
+    // 很短的消息几乎不可能含事实，但含时间/数字的短消息除外
+    // （如"六年多了"、"3个月"、"头七"、"百日"——这些可能是离世时长或关键日期）
+    if (text.length <= 4) {
+      const hasTimeSignal =
+        /[0-9零〇一二两三四五六七八九十百千]/.test(text) &&
+        /[年月日岁天周]/.test(text);
+      const hasRitualSignal = /(头七|头7|一七|二七|三七|五七|七七|百日|百天|周年|祭日|忌日)/.test(
+        text
+      );
+      if (!hasTimeSignal && !hasRitualSignal) return false;
+    }
 
     // 纯情绪/问候模式（完整匹配）
     if (
@@ -1190,6 +1199,11 @@ export class AgentProfileFactService {
       return;
     }
 
+    // 职业过滤：排除代词所有格、亲属称呼、形容词短语、过长文本
+    if (this.isLikelyNotOccupation(occupation)) {
+      return;
+    }
+
     facts.push({
       type: AgentProfileFactType.occupation,
       key: 'occupation.primary',
@@ -1198,6 +1212,22 @@ export class AgentProfileFactService {
       confidence,
       priority: 3,
     });
+  }
+
+  /**
+   * 判断匹配到的词是否"不像职业"。
+   * 职业一般是 2-6 字纯名词，不包含代词所有格、亲属称呼、形容词修饰。
+   */
+  private isLikelyNotOccupation(text: string): boolean {
+    // 代词所有格："我的爸爸"、"你的老师"（这里"你的老师"可能是职业，但"我的朝思暮想的爸爸"不是）
+    if (/(我的|你的|他的|她的|我们的|你们的|他们的)/.test(text)) return true;
+    // 亲属称呼
+    if (/(爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|丈夫|妻子|老公|老婆|叔叔|阿姨|舅舅|舅妈|姑姑|姑父|姨夫|姨妈)/.test(text)) return true;
+    // 形容词/修饰词短语
+    if (/(朝思暮想|亲爱的|可爱的|敬爱的|伟大的|最爱的|想念的|思念的|心疼的|骄傲的|自豪的)/.test(text)) return true;
+    // 长度超过 6 字，大概率不是职业（职业一般 2-4 字，最多如"软件工程师"5字）
+    if (text.length > 6) return true;
+    return false;
   }
 
   private addFamilyFacts(
@@ -1240,6 +1270,23 @@ export class AgentProfileFactService {
         polarity: AgentProfileFactPolarity.positive,
         confidence,
         priority: 3,
+      });
+    }
+
+    // 晚辈出生/添丁："家里添了一个外孙女"、"给你生了个大胖孙子"
+    const newbornMatch = text.match(
+      /(?:家里|给你|给您|我|我们)(?:添了|添个|添一个|生了|生个|生了个|有了)(?:一个|个)?(大胖)?(外孙女|外孙|孙子|孙女|外甥|外甥女|侄子|侄女|儿子|女儿|孩子)/
+    );
+
+    if (newbornMatch?.[2]) {
+      const relative = newbornMatch[2];
+      facts.push({
+        type: AgentProfileFactType.family,
+        key: `family.newborn.${this.normalizeFamilyKey(relative)}`,
+        value: `用户家里添了${relative}（当前角色的晚辈）`,
+        polarity: AgentProfileFactPolarity.positive,
+        confidence,
+        priority: 2,
       });
     }
   }

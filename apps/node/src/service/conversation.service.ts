@@ -3358,6 +3358,9 @@ export class ConversationService {
         await this.personTemporalMemoryService.recordAgentDepartureFromMessage({
           message,
           searchableText,
+          // 普通消息路径也启用隐式模式："六年多了"、"走了三年"这类
+          // 不含"离开/去世"显式关键词的表达，也能被识别为离世时间信号。
+          implicitCurrentAgent: true,
         });
       return { succeeded: true, count: result ? 1 : 0 };
     } catch (error) {
