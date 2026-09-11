@@ -3,6 +3,11 @@ import { Processor } from '@midwayjs/bullmq';
 import type { JobsOptions, QueueOptions, WorkerOptions } from 'bullmq';
 
 export const MEMORY_PIPELINE_RUNTIME_QUEUE = 'memory-pipeline';
+// memory-worker 角色下需要注册的队列白名单
+const MEMORY_WORKER_QUEUES = new Set([
+  MEMORY_PIPELINE_RUNTIME_QUEUE,
+  'departure-duration', // 离世时长预计算
+]);
 
 export type NodeRuntimeRole = 'combined' | 'web' | 'memory-worker';
 
@@ -20,9 +25,8 @@ export function shouldRegisterQueueProcessor(
   queueName: string,
   role = resolveNodeRuntimeRole()
 ): boolean {
-  const isMemoryPipeline = queueName === MEMORY_PIPELINE_RUNTIME_QUEUE;
-  if (role === 'web') return !isMemoryPipeline;
-  if (role === 'memory-worker') return isMemoryPipeline;
+  if (role === 'web') return queueName !== MEMORY_PIPELINE_RUNTIME_QUEUE;
+  if (role === 'memory-worker') return MEMORY_WORKER_QUEUES.has(queueName);
   return true;
 }
 
