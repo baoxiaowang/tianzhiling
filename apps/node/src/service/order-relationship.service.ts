@@ -1,4 +1,4 @@
-import { Inject, Logger, Provide } from '@midwayjs/core';
+import { Logger, Provide } from '@midwayjs/core';
 import { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import {
