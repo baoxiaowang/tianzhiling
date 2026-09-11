@@ -1,5 +1,5 @@
 // 独立的 departure-duration worker，绕过 MidwayJS 生命周期问题
-const { Worker } = require('bullmq');
+const { Worker, Queue } = require('bullmq');
 const { DataSource } = require('typeorm');
 const { AgentEntity, AgentProfileFactEntity } = require('@tzl/entities');
 
@@ -7,6 +7,36 @@ const connection = { host: 'tzl_redis', port: 6379 };
 // 必须与应用队列的前缀一致（MidwayJS bullmq 框架配置的 prefix 为 {tzl-bullmq}），
 // 否则独立 worker 会监听错误的队列（默认 bull: 前缀），永远收不到应用入队的 job。
 const queuePrefix = '{tzl-bullmq}';
+
+// 注册 daily/monthly 定时任务（原生 BullMQ upsertJobScheduler）。
+// 不依赖 MidwayJS 生命周期（其 addJobToQueue 将队列名作为 jobSchedulerId，
+// 导致 daily/monthly 相互覆盖丢失），worker 启动时必然执行，保证每次部署后定时任务就位。
+async function ensureRepeatJobs() {
+  const queue = new Queue('departure-duration', { connection, prefix: queuePrefix });
+  try {
+    await queue.upsertJobScheduler(
+      'departure-duration-daily',
+      { pattern: '0 3 * * *' },
+      {
+        name: 'departure-duration',
+        data: { type: 'daily' },
+        opts: { removeOnComplete: true, removeOnFail: 30 },
+      }
+    );
+    await queue.upsertJobScheduler(
+      'departure-duration-monthly',
+      { pattern: '0 3 1 * *' },
+      {
+        name: 'departure-duration',
+        data: { type: 'monthly' },
+        opts: { removeOnComplete: true, removeOnFail: 30 },
+      }
+    );
+    console.log('[departure-duration-worker] repeat jobs ensured: daily(03:00), monthly(1st 03:00)');
+  } finally {
+    await queue.close();
+  }
+}
 
 async function main() {
   // 初始化 TypeORM 连接
@@ -41,6 +71,9 @@ async function main() {
     error: (...args) => console.error('[departure-duration-service]', ...args),
     debug: (...args) => console.debug('[departure-duration-service]', ...args),
   };
+
+  // 注册 daily/monthly 定时任务（不依赖 MidwayJS 生命周期）
+  await ensureRepeatJobs();
 
   // 创建 worker
   const worker = new Worker(
