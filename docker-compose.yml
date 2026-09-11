@@ -78,13 +78,8 @@ services:
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     command:
       [
-        "pm2-runtime",
-        "start",
-        "./bootstrap.js",
-        "--name",
-        "tzl-memory-worker",
-        "-i",
-        "1",
+        "node",
+        "./scripts/memory-worker-bootstrap.js",
       ]
     volumes:
       - ./resource/cert:/workspace/resource/cert:ro
