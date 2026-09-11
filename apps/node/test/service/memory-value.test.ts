@@ -286,22 +286,102 @@ describe('memory value contract', () => {
       parseMemoryValueOutput(JSON.stringify({ decisions: [invalid] }), input)
     ).toThrow();
   });
-  it('grades a durable emotion expression down to a transient, non-assertable fact', () => {
+  it('drops a pure emotion expression instead of storing it', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'current_state.exhaustion',
+          value: '用户当前感到极度疲惫',
+          retention: 'durable',
+          validUntil: undefined,
+        } as any,
+        input.referenceAt
+      )
+    ).toThrow('MEMORY_VALUE_EMOTION_ONLY');
+  });
+  it('drops a value that quotes a term absent from the user message', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'user_to_agent_address',
+          value: '该亲人称用户为‘囡囡’',
+        } as any,
+        input.referenceAt,
+        '树下听故事'
+      )
+    ).toThrow('MEMORY_VALUE_UNSOURCED_QUOTE');
+  });
+  it('downgrades diagnostic overstatement to a self report', () => {
     const graded = gradeMemoryDecision(
       {
         ...decision(),
-        key: 'current_state.exhaustion',
-        value: '用户当前感到极度疲惫',
-        retention: 'durable',
-        validUntil: undefined,
+        key: 'current_depression',
+        value: '用户被诊断为抑郁症',
       } as any,
-      input.referenceAt
+      input.referenceAt,
+      '我抑郁了'
     );
-    expect(graded.retention).toBe('session');
-    expect(graded.certainty).toBe('uncertain');
-    expect(Date.parse(graded.validUntil!)).toBeGreaterThan(
-      Date.parse(input.referenceAt)
+    expect(graded.value).toContain('自述');
+    expect(graded.value).not.toContain('被诊断');
+  });
+  it('normalizes a spouse kinship label on an agent subject', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        subjectRef: 'agent:2',
+        key: 'address_label_for_spouse',
+        value: '该亲人的称呼记录',
+      } as any,
+      input.referenceAt,
+      ''
     );
+    expect(graded.key).toBe('address_label_for_agent');
+  });
+  it('drops a decision sourced only by a one-character reply', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'current_state.acknowledgement',
+          value: '用户确认日子难捱',
+          evidence: [{ messageId: 'm1', quote: '对' }],
+        } as any,
+        input.referenceAt,
+        '对'
+      )
+    ).toThrow('MEMORY_VALUE_WEAK_EVIDENCE');
+  });
+  it('drops an agent kinship term absent from the user words', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          subjectRef: 'agent:2',
+          key: 'relation.current',
+          value: '用户与母亲相依为命',
+          evidence: [{ messageId: 'm1', quote: '太太我想你' }],
+        } as any,
+        input.referenceAt,
+        '太太我想你'
+      )
+    ).toThrow('MEMORY_VALUE_UNSOURCED_KINSHIP');
+  });
+  it('drops an agent departure duration without a departure term in evidence', () => {
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          subjectRef: 'agent:2',
+          key: 'disappearance_timing.five_years_ago',
+          value: '该亲人离世至今已五年',
+          evidence: [{ messageId: 'm1', quote: '已经有五年了' }],
+        } as any,
+        input.referenceAt,
+        '已经有五年了'
+      )
+    ).toThrow('MEMORY_VALUE_UNSOURCED_DEPARTURE');
   });
   it('drops a psychologically inferred decision', () => {
     expect(() =>

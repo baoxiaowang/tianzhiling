@@ -127,40 +127,112 @@ export const MEMORY_VALUE_PROMPT = [
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
 ].join('\n');
 
-const EMOTION_EXPRESSION_PATTERN =
-  /(?:难受|痛苦|好累|很累|疲惫|想你|想他|想她|想您|思念|不开心|难过|崩溃|敏感|害怕|孤独|委屈|心慌|泪失禁|撑不住|熬不住|不想活|没意思|不好玩|抑郁|焦虑)/;
+const PURE_EMOTION_PATTERN =
+  /(?:难受|痛苦|好累|很累|疲惫|想你|想他|想她|想您|思念|不开心|难过|崩溃|敏感|害怕|孤独|委屈|心慌|泪失禁|撑不住|熬不住|不想活|没意思|不好玩)/;
+const IMPORTANT_SITUATION_PATTERN =
+  /(?:生病|疾病|治不好|抑郁|焦虑症|住院|手术|诊断|自杀|自残|轻生)/;
 const INFERENCE_MARKER_PATTERN =
-  /(?:体现|表明|说明其|隐含|暗示|折射|意味着|自我保护|沉默式|防御性|情感退缩|心理(?:状态|结论)|临界状态|情感疏离)/;
-const SENSITIVE_MENTAL_PATTERN =
-  /(?:抑郁|焦虑症|自残|轻生|自杀|幻觉|妄想|双相|精神病|精神分裂|失眠症)/;
-// 用户明确说出的哀伤触发场景（“听到X我会Y”）属于稳定事实，不做情绪降级。
+  /(?:体现|表明|说明其|隐含|暗示|折射|意味着|自我保护|沉默式|防御性|情感退缩|心理(?:状态|结论)|临界状态|情感疏离|存在性倦怠|担忧|念头|动机|阻滞|耗竭|启动困难|即时否认|回避|羞耻|叙事)/;
+// 用户明确说出的哀伤触发场景（“听到X我会Y”）属于稳定事实，不做情绪丢弃。
 const DECLARED_TRIGGER_PATTERN =
   /(?:听到|看到|闻到|路过|每到|一到|一提到|一提).{0,24}(?:会|就).{0,12}(?:难过|痛|想|崩|哭|发抖|心慌)/;
-const EMOTION_SESSION_DAYS = 7;
+// 过度医疗化/心理诊断措辞 → 降格为用户自述，避免把原话升级成医学结论。
+const OVERSTATEMENT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/被?诊断为([^。；，,\s]{1,20})/g, '自述$1'],
+  [/确诊为?/g, '自述'],
+  [/绝症/g, '治不好的病'],
+  [/\bterminal\b/gi, 'untreatable'],
+];
+// 主体为 AI 亲人时，键名里的婚姻类亲属标签会把“太太”误编码成配偶。
+const KINSHIP_KEY_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/_?spouse\b/gi, '_agent'],
+  [/_?husband\b/gi, '_agent'],
+  [/_?wife\b/gi, '_agent'],
+  [/_?partner\b/gi, '_agent'],
+];
+// 单字/寒暄类证据不足以支撑一条事实记忆（“对”“好”“嗯”“他们好得很”等）。
+const FILLER_EVIDENCE_PATTERN =
+  /^(?:嗯+|哦+|对+|好+|是+|行+|好的?|啊+|呀+|呢+|吧+|我|你|他|她|他们|挺好的|好得很|他们好得很|没有啊?|没有啊太太|不行|不要|您不能|可以)$/;
+// 具体亲属称谓：出现在 AI 亲人相关 value 里却不在用户原话中，即为关系误标。
+const SPECIFIC_KINSHIP_PATTERN =
+  /(?:爸爸|妈妈|父亲|母亲|儿子|女儿|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|配偶|爱人|伴侣)/g;
+// 亲人离开时长：证据里必须出现离开类词，否则多为时间归属错误。
+const DEPARTURE_TERMS = /(?:离开|走了|去世|离世|过世|消失|不在了)/;
+const DEPARTURE_DURATION_PATTERN =
+  /(?:离世|去世|离开|消失|走了).{0,20}(?:年|个月|天)|(?:年|个月|天).{0,6}(?:离世|去世|离开|消失)/;
 
 /**
- * 情绪分级与臆测拦截：
- * - 含心理臆测措辞的提案直接丢弃（由调用方按非法项处理）；
- * - 单纯情绪表达与敏感心理标签强制降级为 session + uncertain，并给出短期有效期，
- *   使其只服务当下、不会成为可断言的长期事实。
+ * 记忆安全分级：
+ * - 心理臆测 → 丢弃；
+ * - 纯情绪（除非用户明确说出哀伤触发场景，或属于疾病等重要处境）→ 丢弃，不再存条；
+ * - 单字/寒暄证据、引号或亲属称谓无出处 → 丢弃；
+ * - 亲人离开时长的证据里没有离开类词（时间归属可疑）→ 丢弃；
+ * - 医疗/心理措辞降格为用户自述；亲人主体键名中的婚姻类标签归一化。
  */
 export function gradeMemoryDecision(
   d: MemoryValueDecision,
-  referenceAt: string
+  referenceAt: string,
+  userText = ''
 ): MemoryValueDecision {
   const text = `${d.key} ${d.value} ${d.reason}`;
   if (INFERENCE_MARKER_PATTERN.test(text)) {
     throw new Error('MEMORY_VALUE_INFERENCE');
   }
-  const declaredTrigger = DECLARED_TRIGGER_PATTERN.test(text);
-  const emotionOnly = EMOTION_EXPRESSION_PATTERN.test(text) && !declaredTrigger;
-  const sensitive = SENSITIVE_MENTAL_PATTERN.test(text);
-  if (emotionOnly || sensitive) {
-    d.retention = 'session';
-    d.certainty = 'uncertain';
-    const until = Date.parse(referenceAt) + EMOTION_SESSION_DAYS * 86400000;
-    if (Number.isFinite(until)) d.validUntil = new Date(until).toISOString();
+  const evidenceQuotes = (d.evidence || [])
+    .map(item => (item.quote || '').trim())
+    .filter(Boolean);
+  const strongestQuote = evidenceQuotes.reduce(
+    (longest, quote) => (quote.length > longest.length ? quote : longest),
+    ''
+  );
+  if (
+    strongestQuote &&
+    strongestQuote.length < 3 &&
+    !d.value.includes(strongestQuote)
+  ) {
+    throw new Error('MEMORY_VALUE_WEAK_EVIDENCE');
   }
+  if (
+    evidenceQuotes.length &&
+    evidenceQuotes.every(quote => FILLER_EVIDENCE_PATTERN.test(quote))
+  ) {
+    throw new Error('MEMORY_VALUE_FILLER_REPLY');
+  }
+  const quoted = Array.from(d.value.matchAll(/[‘“「]([^’”」]{1,24})[’”」]/g)).map(
+    match => match[1]
+  );
+  for (const term of quoted) {
+    if (!userText.includes(term)) {
+      throw new Error('MEMORY_VALUE_UNSOURCED_QUOTE');
+    }
+  }
+  if (d.subjectRef.startsWith('agent:')) {
+    for (const match of d.value.matchAll(SPECIFIC_KINSHIP_PATTERN)) {
+      if (!userText.includes(match[0])) {
+        throw new Error('MEMORY_VALUE_UNSOURCED_KINSHIP');
+      }
+    }
+    if (
+      DEPARTURE_DURATION_PATTERN.test(d.value) &&
+      !evidenceQuotes.some(quote => DEPARTURE_TERMS.test(quote))
+    ) {
+      throw new Error('MEMORY_VALUE_UNSOURCED_DEPARTURE');
+    }
+  }
+  const declaredTrigger = DECLARED_TRIGGER_PATTERN.test(text);
+  const important = IMPORTANT_SITUATION_PATTERN.test(text);
+  if (PURE_EMOTION_PATTERN.test(text) && !declaredTrigger && !important) {
+    throw new Error('MEMORY_VALUE_EMOTION_ONLY');
+  }
+  for (const [pattern, replacement] of OVERSTATEMENT_REPLACEMENTS) {
+    d.value = d.value.replace(pattern, replacement);
+  }
+  if (d.subjectRef.startsWith('agent:')) {
+    for (const [pattern, replacement] of KINSHIP_KEY_REPLACEMENTS) {
+      d.key = d.key.replace(pattern, replacement);
+    }
+  }
+  void referenceAt;
   return d;
 }
 
@@ -213,6 +285,10 @@ export function parseMemoryValueOutput(
     input.messages.filter(m => m.role === 'user').map(m => [m.id, m.content])
   );
   const allowed = (value: unknown, values: unknown[]) => values.includes(value);
+  const userText = input.messages
+    .filter(m => m.role === 'user')
+    .map(m => m.content)
+    .join('\n');
   const validateDecision = (d: MemoryValueDecision): MemoryValueDecision => {
     if (
       !d ||
@@ -373,7 +449,7 @@ export function parseMemoryValueOutput(
       )
         throw new Error('MEMORY_VALUE_DATE_EVIDENCE');
     }
-    return gradeMemoryDecision(d, input.referenceAt);
+    return gradeMemoryDecision(d, input.referenceAt, userText);
   };
 
   // 单条不合规不应丢掉整条消息的有效记忆：逐条校验，只丢弃非法项。
@@ -397,7 +473,7 @@ export function parseMemoryValueOutput(
         item.subjectRef === d.subjectRef &&
         item.type === d.type &&
         item.key !== d.key &&
-        memoryValueSimilarity(item.value, d.value) >= 0.6
+        memoryValueSimilarity(item.value, d.value) >= 0.5
     );
     if (duplicate) {
       if (d.value.length > duplicate.value.length) duplicate.value = d.value;

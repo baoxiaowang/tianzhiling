@@ -1104,7 +1104,7 @@ export class MemoryValueService {
       take: 32,
     });
     let best: AgentProfileFactEntity | undefined;
-    let bestScore = 0.6;
+    let bestScore = 0.5;
     for (const fact of candidates) {
       if (fact.key === d.key || fact.key.startsWith('profile_source.'))
         continue;

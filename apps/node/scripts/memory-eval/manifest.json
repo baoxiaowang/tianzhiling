@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "frozenAt": "2026-09-12",
+  "note": "评测集冻结后不得更改；新增账号只能作为下一版评测集（version+1）。",
+  "accounts": [
+    { "role": "canary", "userId": "6a9d6a9a46ba9a0940d46b7a", "messages": 37 },
+    { "role": "holdout-a", "userId": "6a5618fd01cfd6255edea622", "messages": 8 },
+    { "role": "holdout-b", "userId": "6a661f40df2676ad3adc3efa", "messages": 8 }
+  ],
+  "mirrorSource": ".task-evidence/memory-eval/mirror.json",
+  "rubric": "RUBRIC.md",
+  "thresholds": {
+    "emotionAsFactRate": 0.15,
+    "kinshipErrorRate": 0,
+    "duplicateRate": 0.15,
+    "stableFactRecall": 0.8
+  },
+  "regressionRule": "任一指标相对上一轮基线恶化即本轮不通过"
+}
