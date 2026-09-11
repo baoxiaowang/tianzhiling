@@ -269,7 +269,7 @@ describe('bounded model repair', () => {
     );
     expect(service.factModel.insertOne).not.toHaveBeenCalled();
   });
-  it('rejects a second invalid proposal without an unbounded retry loop', async () => {
+  it('degrades a second invalid proposal to no memory without an unbounded retry loop', async () => {
     const { service, d } = setup();
     const generateText = jest.fn().mockResolvedValue({
       content: JSON.stringify({
@@ -282,9 +282,11 @@ describe('bounded model repair', () => {
       }),
     });
     service.openAIService = { isEnabled: () => true, generateText } as any;
-    await expect(service.propose(structuredClone(input))).rejects.toThrow(
-      'EVIDENCE'
-    );
+    // 一次修复后仍不合规时不再抛错，而是视为本条消息没有可保存的记忆；
+    // 模型调用仍然有界（首轮 + 一次修复）。
+    const result = await service.propose(structuredClone(input));
+    expect(result.decisions).toEqual([]);
+    expect(result.modelCalls).toBe(2);
     expect(generateText).toHaveBeenCalledTimes(2);
     expect(service.factModel.insertOne).not.toHaveBeenCalled();
   });

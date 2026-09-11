@@ -345,7 +345,23 @@ export class MemoryValueService {
       decisions = parseMemoryValueOutput(JSON.stringify(raw), input);
     } catch (error) {
       // One bounded semantic repair; never silently coerce a type or fabricate evidence.
-      if (repair) throw error;
+      if (repair) {
+        // 一次修复后仍无法通过校验时，视为本条消息没有可保存的记忆，
+        // 而不是让整条消息、整个任务乃至整个账号回填失败。
+        // 模型不可用等基础设施错误仍然向上抛出。
+        if (this.isRecoverableProposalError(error)) {
+          return {
+            decisions: [],
+            approved: [],
+            rejected: [],
+            modelCalls,
+            modelTokens,
+            newPeople: [],
+            reviewReasons: [],
+          };
+        }
+        throw error;
+      }
       return this.propose(original, {
         output: result.content,
         error: error instanceof Error ? error.message : 'MEMORY_VALUE_INVALID',
@@ -439,6 +455,18 @@ export class MemoryValueService {
       newPeople,
       reviewReasons,
     };
+  }
+
+  /**
+   * 模型输出层面的校验失败（枚举、字段、目标、证据等）是可恢复的：
+   * 一次修复后仍不合规时按"本条消息没有可保存的记忆"处理。
+   * 模型不可用、鉴权等基础设施错误不可恢复，必须向上抛出。
+   */
+  private isRecoverableProposalError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error || '');
+    if (message.includes('MEMORY_VALUE_MODEL_DISABLED')) return false;
+    if (message.includes('MEMORY_VALUE_ACCOUNT_NOT_ENABLED')) return false;
+    return /^MEMORY_VALUE_/.test(message) || error instanceof SyntaxError;
   }
 
   async process(
