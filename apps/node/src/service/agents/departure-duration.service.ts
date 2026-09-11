@@ -146,7 +146,7 @@ export class DepartureDurationService {
     try {
       const fact = await this.factModel.findOne({
         where: {
-          agentId: new (Object as any)(agentId),
+          agentId: new MongoObjectId(agentId),
           key: 'departure_time',
           status: 'active',
         },
