@@ -146,7 +146,7 @@ export function parseMemoryValueOutput(
     input.messages.filter(m => m.role === 'user').map(m => [m.id, m.content])
   );
   const allowed = (value: unknown, values: unknown[]) => values.includes(value);
-  return parsed.decisions.map((d: MemoryValueDecision) => {
+  const validateDecision = (d: MemoryValueDecision): MemoryValueDecision => {
     if (
       !d ||
       !subjects.has(d.subjectRef) ||
@@ -307,7 +307,21 @@ export function parseMemoryValueOutput(
         throw new Error('MEMORY_VALUE_DATE_EVIDENCE');
     }
     return d;
-  });
+  };
+
+  // 单条不合规不应丢掉整条消息的有效记忆：逐条校验，只丢弃非法项。
+  // 仅当全部项都不合规时才抛错，触发 propose 的一次模型修复重试。
+  const decisions: MemoryValueDecision[] = [];
+  const failures: Error[] = [];
+  for (const d of parsed.decisions as MemoryValueDecision[]) {
+    try {
+      decisions.push(validateDecision(d));
+    } catch (error) {
+      failures.push(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  if (!decisions.length && failures.length) throw failures[0];
+  return decisions;
 }
 
 export function needsMemoryReview(

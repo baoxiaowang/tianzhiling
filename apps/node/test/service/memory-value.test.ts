@@ -259,4 +259,29 @@ describe('memory value contract', () => {
     expect(parseMemoryValueOutput('{"decisions":[]}', input)).toEqual([]);
     expect(() => parseMemoryValueOutput('稍后再试', input)).toThrow();
   });
+  it('drops only invalid decisions instead of losing the whole message', () => {
+    const valid = decision();
+    // 非法项：operation=replace 却没有 targetId，按旧行为会让整条消息作废。
+    const invalid = {
+      ...decision(),
+      key: 'health.other',
+      operation: 'replace',
+      value: '用户换了别的情况',
+    };
+    const decisions = parseMemoryValueOutput(
+      JSON.stringify({ decisions: [invalid, valid] }),
+      input
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].key).toBe('health.back_pain');
+  });
+  it('still throws when every decision is invalid so repair can run', () => {
+    const invalid = {
+      ...decision(),
+      operation: 'replace',
+    };
+    expect(() =>
+      parseMemoryValueOutput(JSON.stringify({ decisions: [invalid] }), input)
+    ).toThrow();
+  });
 });
