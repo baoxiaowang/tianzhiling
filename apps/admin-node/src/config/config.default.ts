@@ -104,6 +104,16 @@ export default {
       '武汉市天之灵智能技术有限公司'
     ),
   },
+  llm: {
+    enabled: readBooleanFrom(['ADMIN_LLM_ENABLED', 'NODE_ENABLED'], true),
+    apiKey: readStringFrom(['ADMIN_LLM_API_KEY', 'NODE_CHAT_API_KEY', 'NODE_MINIMAX_API_KEY'], ''),
+    baseURL: readStringFrom(
+      ['ADMIN_LLM_BASE_URL', 'NODE_CHAT_BASE_URL', 'NODE_MINIMAX_BASE_URL'],
+      'https://api.minimax.io/v1'
+    ),
+    model: readStringFrom(['ADMIN_LLM_MODEL', 'NODE_CHAT_MODEL'], 'MiniMax-M2.5'),
+    timeoutMs: readNumberFrom(['ADMIN_LLM_TIMEOUT_MS'], 30000),
+  },
   koa: {
     port: readNumberFrom(['ADMIN_API_PORT'], 7101),
     globalPrefix: '/admin_api',

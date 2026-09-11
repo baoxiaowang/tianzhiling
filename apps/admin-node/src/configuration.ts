@@ -14,8 +14,10 @@ import { FormatMiddleware } from './middleware/format.middleware';
 import { AdminPerformanceMiddleware } from './middleware/admin-performance.middleware';
 import { AdminDailyStatsService } from './service/admin-daily-stats.service';
 import { AdminOperationsService } from './service/admin-operations.service';
+import { AdminRelationshipLlmBackfillService } from './service/admin-relationship-llm-backfill.service';
 
 const DAILY_STATS_INTERVAL_MS = 30 * 60 * 1000; // 30 分钟
+const RELATIONSHIP_BACKFILL_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 每小时检查一次
 
 @Configuration({
   imports: [
@@ -37,6 +39,8 @@ export class MainConfiguration {
   app: koa.Application;
 
   private dailyStatsTimer?: NodeJS.Timeout;
+  private relationshipBackfillTimer?: NodeJS.Timeout;
+  private relationshipBackfillLastRunDate = '';
 
   async onReady() {
     this.app.useMiddleware([AdminPerformanceMiddleware]);
@@ -46,6 +50,7 @@ export class MainConfiguration {
 
     this.startDailyStatsPrecompute();
     this.backfillHistoricalDailyStats();
+    this.startRelationshipLlmBackfillScheduler();
   }
 
   /**
@@ -79,6 +84,10 @@ export class MainConfiguration {
     if (this.dailyStatsTimer) {
       clearInterval(this.dailyStatsTimer);
       this.dailyStatsTimer = undefined;
+    }
+    if (this.relationshipBackfillTimer) {
+      clearInterval(this.relationshipBackfillTimer);
+      this.relationshipBackfillTimer = undefined;
     }
   }
 
@@ -138,5 +147,59 @@ export class MainConfiguration {
       2,
       '0'
     )}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * 每月最后一天凌晨执行订单关系 LLM 回填。
+   * 每小时检查一次：如果今天是当月最后一天且今天还没执行过，则运行。
+   */
+  private startRelationshipLlmBackfillScheduler() {
+    const checkAndRun = async () => {
+      try {
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+        // 判断今天是否是当月最后一天（明天是下个月1号）
+        const tomorrow = new Date(now);
+        tomorrow.setDate(now.getDate() + 1);
+        const isLastDayOfMonth = tomorrow.getDate() === 1;
+
+        if (!isLastDayOfMonth) return;
+        if (this.relationshipBackfillLastRunDate === todayStr) return;
+
+        // 只在凌晨 1-5 点之间执行，避免影响白天业务
+        const hour = now.getHours();
+        if (hour < 1 || hour > 5) return;
+
+        this.relationshipBackfillLastRunDate = todayStr;
+        this.app.getLogger().info('[relationship-llm] last day of month, start backfill');
+
+        const service = await this.app
+          .getApplicationContext()
+          .getAsync(AdminRelationshipLlmBackfillService);
+        const result = await service.run();
+
+        this.app
+          .getLogger()
+          .info(
+            '[relationship-llm] backfill done: pairs=%d identified=%d ordersUpdated=%d',
+            result.pairsTotal,
+            result.pairsIdentified,
+            result.ordersUpdated
+          );
+      } catch (err) {
+        this.app
+          .getLogger()
+          .error('[relationship-llm] scheduler failed: %s', (err as Error).message);
+      }
+    };
+
+    // 启动 5 分钟后检查一次，之后每小时检查
+    setTimeout(() => {
+      checkAndRun().catch(() => {});
+    }, 5 * 60 * 1000);
+    this.relationshipBackfillTimer = setInterval(() => {
+      checkAndRun().catch(() => {});
+    }, RELATIONSHIP_BACKFILL_CHECK_INTERVAL_MS);
   }
 }
