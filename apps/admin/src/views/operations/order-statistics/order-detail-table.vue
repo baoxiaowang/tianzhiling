@@ -1,12 +1,12 @@
 <template>
   <a-table
     :data="data"
-    :pagination="{ pageSize: 20, showTotal: true, showPageSize: true }"
-    :scroll="{ x: abnormal ? 1880 : 1500 }"
+    :pagination="false"
+    :scroll="{ x: abnormal ? 1880 : 1500, y: 600 }"
     row-key="id"
   >
     <template #columns>
-      <a-table-column title="下单时间" :width="170">
+      <a-table-column title="付款时间" :width="170">
         <template #cell="{ record }">{{
           formatDate(record.orderedAt)
         }}</template>

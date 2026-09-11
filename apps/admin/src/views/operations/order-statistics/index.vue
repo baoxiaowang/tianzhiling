@@ -22,7 +22,7 @@
       月度快照更新于
       {{
         formatDateTime(report.snapshot.updatedAt)
-      }}。购买按下单月份归集；退款按退款申请月份单独归集，不回写原购买月份。
+      }}。购买按付款月份归集；退款按退款完成月份单独归集，不回写原购买月份。
     </a-alert>
 
     <a-spin :loading="loading">
@@ -42,10 +42,10 @@
         >
         <article
           ><span>退款流水</span
-          ><strong>{{ formatCount(report?.totals.completedRefunds) }}</strong
-          ><small>{{
-            formatMoney(report?.totals.refundedAmount)
-          }}</small></article
+          ><strong>{{ formatMoney(report?.totals.refundedAmount) }}</strong
+          ><small
+            >{{ formatCount(report?.totals.completedRefunds) }} 笔</small
+          ></article
         >
         <article
           ><span>月度净额</span
@@ -55,10 +55,17 @@
       </div>
 
       <a-tabs default-active-key="valid" lazy-load>
-        <a-tab-pane
-          key="valid"
-          :title="`有效订单明细（${report?.validOrders.length || 0}）`"
-        >
+        <a-tab-pane key="valid">
+          <template #title>
+            <span>有效订单明细（{{ report?.validOrders.length || 0 }}）</span>
+            <a-button
+              size="mini"
+              type="text"
+              style="margin-left: 8px"
+              @click="downloadValidCsv"
+              >下载 CSV</a-button
+            >
+          </template>
           <order-detail-table :data="report?.validOrders || []" />
         </a-tab-pane>
         <a-tab-pane
@@ -211,6 +218,54 @@
     } finally {
       refreshing.value = false;
     }
+  };
+  const downloadValidCsv = () => {
+    const rows = report.value?.validOrders || [];
+    const header = [
+      '付款时间',
+      '购买产品',
+      '价格',
+      '智能体名',
+      '用户名',
+      '关系',
+      '下单互动数',
+      '智能体创建时间',
+      '付款周期(天)',
+      '订单号',
+    ];
+    const escape = (value: unknown) => {
+      const text = String(value ?? '');
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const lines = [header.join(',')];
+    rows.forEach((row) => {
+      lines.push(
+        [
+          formatDateTime(row.orderedAt),
+          row.productName,
+          `¥${Number(row.amount || 0).toFixed(2)}`,
+          row.agentNames,
+          row.userName,
+          row.relationship,
+          row.interactionCount,
+          formatDateTime(row.agentCreatedAt),
+          row.paymentCycleDays,
+          row.orderNo,
+        ]
+          .map(escape)
+          .join(',')
+      );
+    });
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + lines.join('\n')], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `有效订单明细_${month.value}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
   onMounted(fetch);
 </script>

@@ -18,14 +18,17 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-const CALCULATION_VERSION = 1;
+const CALCULATION_VERSION = 2;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
   orderNo?: string;
   createdAt?: Date;
+  paidAt?: Date;
   targetCode?: string;
   payableAmount?: number;
+  paidAmount?: number;
+  refundAmount?: number;
   status?: string;
   source?: string;
   paymentProvider?: string;
@@ -188,7 +191,7 @@ export class AdminOrderStatisticsService {
       .aggregate<RawMonthlyOrder>([
         {
           $match: {
-            createdAt: { $gte: start, $lt: end },
+            paidAt: { $gte: start, $lt: end },
             targetCode: { $ne: 'voice_one' },
           },
         },
@@ -248,8 +251,11 @@ export class AdminOrderStatisticsService {
           $project: {
             orderNo: 1,
             createdAt: 1,
+            paidAt: 1,
             targetCode: 1,
             payableAmount: 1,
+            paidAmount: 1,
+            refundAmount: 1,
             status: 1,
             source: 1,
             paymentProvider: 1,
@@ -329,13 +335,16 @@ export class AdminOrderStatisticsService {
   }
 
   private toRecord(row: RawMonthlyOrder): AdminMonthlyOrderRecordDTO {
-    const agents = row.agents ?? [];
+    // 过滤系统创建的"小使者/小天使"智能体，只保留用户创建的亲人智能体
+    const agents = (row.agents ?? []).filter(
+      agent => !/小使者|小天使/.test(agent.name ?? '')
+    );
     const relationship = this.inferRelationship(agents);
     const agentCreatedAt = agents
       .map(agent => agent.createdAt)
       .filter((value): value is Date => value instanceof Date)
       .sort((left, right) => left.getTime() - right.getTime())[0];
-    const orderTime = row.createdAt ? new Date(row.createdAt) : undefined;
+    const orderTime = row.paidAt ? new Date(row.paidAt) : row.createdAt ? new Date(row.createdAt) : undefined;
     const userCreatedAt = row.user?.createdAt
       ? new Date(row.user.createdAt)
       : undefined;
@@ -348,12 +357,17 @@ export class AdminOrderStatisticsService {
     const agentNames =
       row.snapshot?.agent?.name || row.directAgent?.name || fallbackAgentNames;
 
+    // 降级订单按降级后实际收入计：实付金额 − 累计退款（含降级差价）
+    const grossAmount = Number(row.paidAmount ?? row.payableAmount ?? 0);
+    const refunded = Number(row.refundAmount ?? 0);
+    const netOrderAmount = Math.max(0, grossAmount - refunded);
+
     return {
       id: row._id.toString(),
       orderNo: row.orderNo ?? '',
       orderedAt: orderTime?.toISOString() ?? '',
       productName: this.productName(row.targetCode),
-      amount: this.roundMoney((Number(row.payableAmount) || 0) / 100),
+      amount: this.roundMoney(netOrderAmount / 100),
       agentNames: agentNames || '-',
       userName: this.userName(row.user),
       relationship: relationship.label,
@@ -427,19 +441,19 @@ export class AdminOrderStatisticsService {
       const callsUser = this.firstSegment(agent.agentCallMe);
       const text = `${called} ${agent.name ?? ''} ${agent.description ?? ''}`;
       const maleChild = /儿子|弟弟|小宝/.test(callsUser);
-      if (/爸爸|父亲|老爸|老爹|爹/.test(text))
+      if (/爸爸|父亲|老爸|老爹|爹|爸/.test(text))
         return {
           label: maleChild ? '父子' : '父女',
           source: called ? '称呼' : '档案',
         };
-      if (/妈妈|母亲|老妈|妈咪|娘/.test(text))
+      if (/妈妈|母亲|老妈|妈咪|娘|妈/.test(text))
         return {
           label: maleChild ? '母子' : '母女',
           source: called ? '称呼' : '档案',
         };
-      if (/爷爷|姥爷|外公|外姥|姨爹/.test(text))
+      if (/爷爷|姥爷|外公|外姥|姨爹|嗲嗲/.test(text))
         return { label: '爷孙', source: called ? '称呼' : '档案' };
-      if (/奶奶|姥姥|外婆|阿姨|姑姑|二姨|小姑|姨夫/.test(text))
+      if (/奶奶|姥姥|外婆|阿姨|姑姑|二姨|小姑|姨夫|婆婆/.test(text))
         return { label: '奶孙', source: called ? '称呼' : '档案' };
       if (/老公|老婆|丈夫|妻子|先生|夫人|爱人/.test(text))
         return { label: '夫妻', source: called ? '称呼' : '档案' };

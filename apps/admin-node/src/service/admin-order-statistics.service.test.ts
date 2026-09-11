@@ -123,7 +123,7 @@ describe('AdminOrderStatisticsService', () => {
     service.snapshotModel = {
       findOne: jest.fn().mockResolvedValue({
         month: '2026-08',
-        calculationVersion: 1,
+        calculationVersion: 2,
         payload: {
           month: '2026-08',
           timezone: 'Asia/Shanghai',
