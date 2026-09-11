@@ -28,6 +28,7 @@ import {
   MEMORY_PIPELINE_RECONCILE_JOB_ID,
 } from './service/memory-pipeline-task.service';
 import { DEPARTURE_DURATION_QUEUE } from './service/agents/departure-duration.service';
+import { DepartureDurationProcessor } from './processor/departure-duration.processor';
 import { resolveNodeRuntimeRole } from './processor/runtime-processor';
 
 @Configuration({
@@ -163,6 +164,51 @@ export class MainConfiguration {
         '[memory-pipeline] reconciliation scheduling failed, reason=%s',
         error instanceof Error ? error.message : String(error)
       );
+    }
+
+    // 手动为 departure-duration 队列创建 worker
+    // 解决 MidwayJS @RuntimeProcessor 在 memory-worker 角色下未自动创建 worker 的问题
+    if (runtimeRole === 'memory-worker') {
+      try {
+        const durationQueue = this.bullmqFramework?.getQueue(
+          DEPARTURE_DURATION_QUEUE
+        );
+        if (durationQueue) {
+          this.bullmqFramework?.createWorker(
+            DEPARTURE_DURATION_QUEUE,
+            async (job: any) => {
+              const ctx = this.app.createAnonymousContext({
+                jobId: job.id,
+                job,
+                from: DepartureDurationProcessor,
+              });
+              try {
+                const processor = await ctx.requestContext.getAsync(
+                  DepartureDurationProcessor
+                );
+                await processor.execute(job.data);
+              } catch (err) {
+                ctx.logger.error(
+                  '[departure-duration] manual worker job failed, jobId=%s, reason=%s',
+                  job.id,
+                  err instanceof Error ? err.message : String(err)
+                );
+                throw err;
+              }
+            },
+            { concurrency: 1 }
+          );
+          this.logger.info(
+            '[departure-duration] manual worker created for queue %s',
+            DEPARTURE_DURATION_QUEUE
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          '[departure-duration] manual worker creation failed, reason=%s',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
     }
 
     if (runtimeRole === 'memory-worker') return;
