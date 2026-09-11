@@ -7,6 +7,7 @@ import {
   withMemorySpeakers,
   gradeMemoryDecision,
   memoryValueSimilarity,
+  resolveNewPeople,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -524,5 +525,49 @@ describe('memory value contract', () => {
         'EMOTION_ONLY'
       );
     }
+  });
+  it('keeps valid facts when one declared person is malformed', () => {
+    const source: MemoryValueInput = {
+      ...input,
+      messages: [
+        { id: 'm1', role: 'user', content: '爸爸每天喝酒不吃饭，妈妈走了' },
+      ],
+    };
+    const good = {
+      ref: 'new:father',
+      label: '爸爸',
+      relationToUser: '父亲',
+      evidence: [{ messageId: 'm1', quote: '爸爸每天喝酒不吃饭' }],
+    };
+    const bad = {
+      ref: 'not-a-new-ref',
+      label: '强',
+      relationToUser: '哥哥',
+      evidence: [{ messageId: 'm1', quote: '爸爸每天喝酒不吃饭' }],
+    };
+    const { refs, accepted } = resolveNewPeople([good, bad], source);
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].ref.startsWith('relative:')).toBe(true);
+    expect(refs.get('new:father')?.startsWith('relative:')).toBe(true);
+    expect(source.subjects.some(s => s.label.includes('爸爸'))).toBe(true);
+    expect(source.subjects.some(s => s.label.includes('强'))).toBe(false);
+  });
+  it('accepts a declared person whose reference is not ASCII', () => {
+    const source: MemoryValueInput = {
+      ...input,
+      messages: [{ id: 'm1', role: 'user', content: '爸爸每天喝酒不吃饭' }],
+    };
+    const { accepted } = resolveNewPeople(
+      [
+        {
+          ref: 'new:爸爸',
+          label: '爸爸',
+          relationToUser: '父亲',
+          evidence: [{ messageId: 'm1', quote: '爸爸每天喝酒不吃饭' }],
+        },
+      ],
+      source
+    );
+    expect(accepted).toHaveLength(1);
   });
 });
