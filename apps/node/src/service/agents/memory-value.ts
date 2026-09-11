@@ -113,7 +113,7 @@ export const MEMORY_VALUE_PROMPT = [
   '用户正式姓名提案还必须提供identity:{realName:"原话中的正式姓名"}；明确的账户通用别名可用identity:{aliases:["原话中的别名"]}。身份字段仅填姓名本身，不填说明句。需要结合问答判断姓名时，由你判断，程序不再用正则重新理解原话；专属亲人的称呼不要写成账户通用别名。',
   '事实拆分以独立用途为准，不把同一事件拆成泛化碎片。不要输出用户未说的长期病史、关系或心理特征。',
   'date仅用于出生、离世、预产期的日期线索，其他事实（包括年龄和普通往事）必须省略date。date:{event:birth|death|expected_birth,year,month,day,expression}。expression必须逐字截取用户证据，不得改写。year/month/day仅填写用户明确说出的日历数字；相对时间不填日历数字，程序负责计算。referenceAt只是消息时间，绝不是事件日期。模糊时间保留模糊性，不自行换算准确日期。',
-  '只输出JSON对象{"newPeople":[],"decisions":[]}，最多2个新人物、8项决定；没有值得保存或待确认的信息可返回空数组。',
+  '只输出JSON对象{"newPeople":[],"decisions":[]}，最多6个新人物、8项决定；没有值得保存或待确认的信息可返回空数组。',
   '每项字段：subjectRef,participants,kind(person|relationship|event|temporal),type(identity|relationship|age|occupation|family|preference|correction|promise|keepsake|grief_trigger|style|memory|taboo),key(稳定短键),value,retention(discard|session|durable|core),certainty(explicit|context_resolved|uncertain),timeKind(current|historical|stable|plan|wish),validUntil(ISO时间或省略),operation(add|merge|replace|conflict|noop|archive),targetId(修改时必填),reason(简短保存或放弃原因),evidence:[{messageId,quote}],protected(布尔),salience(1-3)。',
   '严格遵守字段枚举，不得自造type如health_state/pride/wish；健康可选memory，情感关系可选relationship，愿望可选promise配合timeKind=wish。value与reason使用中文，protected不可遗漏。',
   'value必须是完整中文字符串，包括数字事实也必须写成“离世时18岁”这样的事实句，年龄用kind=person,type=age，不从年龄猜测离世日期。离世多久、生日、日期线索用kind=temporal,type=memory，并提供date，不能归为grief_trigger，也不存在type=death/birth/temporal。',
@@ -123,16 +123,66 @@ export const MEMORY_VALUE_PROMPT = [
   '情绪分级：单纯的情绪表达（难受、痛苦、累、想你、不开心、敏感、害怕、孤独、委屈、崩溃等）只能 retention=session 且 certainty=uncertain，并给出较短 validUntil；不得标 durable/core，也不得成为可断言的长期事实。只有用户明确陈述的稳定身份、关系、偏好、经历和承诺才可 durable/core。',
   '禁止心理臆测：不得从一个词、一句短回应或语气推断心理状态、性格、动机、关系模式或所谓“隐含”含义（如“体现自我保护”“沉默式承认”“隐含反讽”“情感退缩”）。只保存用户原话直接说出的内容；用户没说的心理结论一律不写。',
   '亲属称谓锚定：人物称谓必须来自subjects中已有对象或用户原话。不得把“太太”写成“母亲”，不得把“小雅”写成其他关系，不得用“母亲/爸爸”等泛称替换用户实际称谓。键名与value中的称谓必须一致。',
+  '主体绑定：用户提到的亲友只要不在subjects里，就必须先用newPeople建立该人物，再用它的ref记录；严禁把某位亲友的事挂到另一位已有亲人的ref上。不同称谓是不同的人（“爸爸”与“嗲嗲/婆婆”不是同一人，在世的父亲与已故祖辈更不能合并），禁止写成“甲（乙）”这种把两人并作一人的写法。',
+  '说话方向：用户对“你”说的话、许的愿、叫的称呼，不能反写成这位亲人说过的话或做过的安排（例如用户祝妈妈保重身体，不等于妈妈叮嘱过用户保重身体）。',
+  '情绪路由：纯情绪、心理状态、心理推断（心疼、无助、强颜欢笑、谁都靠不住之类）不写成可断言的事实；只有在用户明确说出稳定处境（长期关系失衡、长期压抑不告诉家人）时才作为事实保存，且用用户原话的措辞。',
   '去重合并：同一主题的多条内容应合并为一条（尤其病痛、情绪、思念）。不要为同一件事创建多个近义key；已有记录能表达同一含义时用merge/noop，而不是再add一条近义记录。',
+  '完整覆盖：一条消息可能包含多个互相独立的稳定事实（例如“34年前做过手术、今年5月复发、刚做了病检”是三个事实），必须分别成条，不得只保留其中一条；用户提到的亲属（在世或已故）都要作为独立对象登记，不要只记其中一位。',
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
 ].join('\n');
 
 const PURE_EMOTION_PATTERN =
-  /(?:难受|痛苦|好累|很累|疲惫|想你|想他|想她|想您|思念|不开心|难过|崩溃|敏感|害怕|孤独|委屈|心慌|泪失禁|撑不住|熬不住|不想活|没意思|不好玩)/;
+  /(?:难受|痛苦|心(?:好)?疼|好累|很累|疲惫|想你|想他|想她|想您|思念|不开心|难过|崩溃|敏感|害怕|孤独|委屈|心慌|无助|泪|撑不住|熬不住|不想活|没意思|不好玩|笑嘻嘻)/;
 const IMPORTANT_SITUATION_PATTERN =
   /(?:生病|疾病|治不好|抑郁|焦虑症|住院|手术|诊断|自杀|自残|轻生)/;
 const INFERENCE_MARKER_PATTERN =
-  /(?:体现|表明|说明其|隐含|暗示|折射|意味着|自我保护|沉默式|防御性|情感退缩|心理(?:状态|结论)|临界状态|情感疏离|存在性倦怠|担忧|念头|动机|阻滞|耗竭|启动困难|即时否认|回避|羞耻|叙事)/;
+  /(?:体现|表明|说明其|隐含|暗示|折射|反映|凸显|锚定|源于|归因|驱动|意味着|自我保护|沉默式|防御性|情感退缩|心理(?:状态|结论)|临界状态|情感疏离|存在性倦怠|担忧|念头|动机|阻滞|耗竭|启动困难|即时否认|回避|羞耻|叙事)/;
+// 断言"某位亲人说了/叮嘱了/问了什么"时，证据必须来自该亲人本人发言。
+// 用户自己的消息里，说话人只有用户；AI 生成的消息本就不能作证据。
+const SPEECH_ACT_PATTERN =
+  /(?:叮嘱|嘱咐|嘱托|告诉|询问|问到|问道|回答|承认|承诺|要求|劝|对.{0,6}说)/;
+// 亲属称谓同义组：同一组内互相替换不算换人（爸爸=父亲），跨组即为不同的人。
+const KINSHIP_SYNONYM_GROUPS: string[][] = [
+  ['爸爸', '父亲', '爸', '爹', '老爸'],
+  ['妈妈', '母亲', '妈', '娘', '老妈'],
+  ['爷爷', '祖父', '嗲嗲'],
+  ['奶奶', '祖母'],
+  ['外公', '姥爷', '外祖父', '公公'],
+  ['外婆', '姥姥', '外祖母', '婆婆'],
+  ['老公', '丈夫', '先生'],
+  ['老婆', '妻子', '太太', '爱人'],
+  ['儿子'],
+  ['女儿'],
+  ['哥哥', '哥'],
+  ['姐姐', '姐'],
+  ['弟弟'],
+  ['妹妹'],
+  ['女婿'],
+  ['儿媳', '嫂子', '嫂嫂'],
+];
+const KINSHIP_GROUP_OF = new Map<string, number>();
+KINSHIP_SYNONYM_GROUPS.forEach((group, index) => {
+  for (const term of group) KINSHIP_GROUP_OF.set(term, index);
+});
+const KINSHIP_TERM_PATTERN = new RegExp(
+  [...KINSHIP_GROUP_OF.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|'),
+  'g'
+);
+/** 一段文字里出现的所有亲属称谓所属的同义组。 */
+export function kinshipGroupsIn(text: string): Set<number> {
+  const groups = new Set<number>();
+  for (const match of text.matchAll(KINSHIP_TERM_PATTERN)) {
+    const group = KINSHIP_GROUP_OF.get(match[0]);
+    if (group !== undefined) groups.add(group);
+  }
+  return groups;
+}
+// “甲（乙）”式括注：模型用它把两个称谓并成同一人。两侧同组是解释，跨组就是把两个人合并。
+const KINSHIP_APPOSITION_PATTERN =
+  /([\u4e00-\u9fa5]{1,4})[（(]([\u4e00-\u9fa5]{1,4})[）)]/g;
 // 用户明确说出的哀伤触发场景（“听到X我会Y”）属于稳定事实，不做情绪丢弃。
 const DECLARED_TRIGGER_PATTERN =
   /(?:听到|看到|闻到|路过|每到|一到|一提到|一提).{0,24}(?:会|就).{0,12}(?:难过|痛|想|崩|哭|发抖|心慌)/;
@@ -212,12 +262,29 @@ export function gradeMemoryDecision(
         throw new Error('MEMORY_VALUE_UNSOURCED_KINSHIP');
       }
     }
+  }
+  // 亲属合并：value 里出现“甲（乙）”且甲乙的称谓组完全不相交，等于把两个人
+  // 当成同一个人（第 6 轮把在世的“爸爸”并进已故的“嗲嗲婆婆”）。
+  for (const match of `${d.key} ${d.value}`.matchAll(
+    KINSHIP_APPOSITION_PATTERN
+  )) {
+    const left = kinshipGroupsIn(match[1]);
+    const right = kinshipGroupsIn(match[2]);
     if (
-      DEPARTURE_DURATION_PATTERN.test(d.value) &&
-      !evidenceQuotes.some(quote => DEPARTURE_TERMS.test(quote))
+      left.size &&
+      right.size &&
+      ![...left].some(group => right.has(group))
     ) {
-      throw new Error('MEMORY_VALUE_UNSOURCED_DEPARTURE');
+      throw new Error('MEMORY_VALUE_KINSHIP_CONFLATION');
     }
+  }
+  // 任何主体的“亲人离开 + 时长”都必须由含离开词的证据支撑，避免把病程时长
+  // 误挂到离世上（canary 的“五年”、user5 的“五个月”都是这个模式）。
+  if (
+    DEPARTURE_DURATION_PATTERN.test(d.value) &&
+    !evidenceQuotes.some(quote => DEPARTURE_TERMS.test(quote))
+  ) {
+    throw new Error('MEMORY_VALUE_UNSOURCED_DEPARTURE');
   }
   const declaredTrigger = DECLARED_TRIGGER_PATTERN.test(text);
   const important = IMPORTANT_SITUATION_PATTERN.test(text);
@@ -364,9 +431,20 @@ export function parseMemoryValueOutput(
           `MEMORY_VALUE_EVIDENCE_QUOTE: ${d.key} must copy an exact substring of user message ${e.messageId}`
         );
     }
-    if (d.validUntil && !Number.isFinite(Date.parse(d.validUntil)))
-      throw new Error('MEMORY_VALUE_EXPIRY');
+    // 说话方向：断言“某位亲人说了/叮嘱了/问了什么”时，必须有该亲人本人
+    // 发言的证据。用户消息的说话人只有用户本人，AI 生成的消息不能作证据，
+    // 因此把用户的祝愿、呼唤反写成亲人的表态一律驳回。
     if (
+      !d.subjectRef.startsWith('user:') &&
+      SPEECH_ACT_PATTERN.test(`${d.key} ${d.value}`) &&
+      !d.evidence.some(e => {
+        const source = input.messages.find(m => m.id === e.messageId);
+        return source?.speakerRef === d.subjectRef;
+      })
+    )
+      throw new Error('MEMORY_VALUE_SPEAKER_DIRECTION');
+    if (d.validUntil && !Number.isFinite(Date.parse(d.validUntil)))
+      throw new Error('MEMORY_VALUE_EXPIRY');    if (
       d.retention === 'session' &&
       (!d.validUntil ||
         Date.parse(d.validUntil) <= Date.parse(input.referenceAt) ||
@@ -454,6 +532,8 @@ export function parseMemoryValueOutput(
 
   // 单条不合规不应丢掉整条消息的有效记忆：逐条校验，只丢弃非法项。
   // 仅当全部项都不合规时才抛错，触发 propose 的一次模型修复重试。
+  // 同一批内再做一次近义去重：模型常把同一件事拆成 2~3 条近义 key
+  // （如抽血淤青 / 出血疼痛 / 并发症），只保留最先出现的一条。
   const decisions: MemoryValueDecision[] = [];
   const failures: Error[] = [];
   for (const d of parsed.decisions as MemoryValueDecision[]) {
@@ -466,14 +546,19 @@ export function parseMemoryValueOutput(
   if (!decisions.length && failures.length) throw failures[0];
 
   // 同一轮内同一人物的近义记录合并为一条，避免病痛/情绪被拆成多条碎片。
+  // 同一 key 重复出现同样是碎片（第 6 轮把抽血后出血、疼痛、并发症拆成三条）。
+  // 只合并新增项：带 targetId 的改写/撤销各有所指，不能互相吞并。
   const merged: MemoryValueDecision[] = [];
   for (const d of decisions) {
     const duplicate = merged.find(
       item =>
         item.subjectRef === d.subjectRef &&
         item.type === d.type &&
-        item.key !== d.key &&
-        memoryValueSimilarity(item.value, d.value) >= 0.5
+        !item.targetId &&
+        !d.targetId &&
+        item.operation === d.operation &&
+        (item.key === d.key ||
+          memoryValueSimilarity(item.value, d.value) >= 0.5)
     );
     if (duplicate) {
       if (d.value.length > duplicate.value.length) duplicate.value = d.value;

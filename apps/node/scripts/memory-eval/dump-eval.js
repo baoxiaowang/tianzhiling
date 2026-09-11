@@ -81,7 +81,10 @@ const uri = `mongodb://${encodeURIComponent(username)}:${encodeURIComponent(
   };
   const outPath = path.resolve(
     __dirname,
-    '../../../../.task-evidence/memory-eval/results-' + userId + '.json'
+    '../../../../.task-evidence/memory-eval/results-' +
+      (runId ? runId + '-' : '') +
+      userId +
+      '.json'
   );
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(out, null, 2));

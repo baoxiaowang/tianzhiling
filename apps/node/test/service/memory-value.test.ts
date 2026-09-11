@@ -450,4 +450,79 @@ describe('memory value contract', () => {
     expect(out).toHaveLength(1);
     expect(out[0].value).toContain('疼得睡不着');
   });
+  it('collapses same-key fragments inside one proposal', () => {
+    const short = {
+      ...decision(),
+      key: 'health.phlebotomy',
+      value: '用户抽血后手臂淤青',
+    };
+    const long = {
+      ...decision(),
+      key: 'health.phlebotomy',
+      value: '用户抽血后手臂淤青，夜间被痛醒',
+    };
+    const out = parseMemoryValueOutput(
+      JSON.stringify({ decisions: [short, long] }),
+      input
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].value).toContain('痛醒');
+  });
+  it('rejects merging two different relatives into one person', () => {
+    const source = {
+      ...input,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: '看爸爸每天喝了酒不吃饭，妈妈身体也不舒服',
+        },
+      ],
+    };
+    const conflated = {
+      ...decision(),
+      subjectRef: 'agent:2',
+      key: 'family.father_drinking',
+      value: '嗲嗲婆婆（爸爸）每天喝酒不吃饭',
+      evidence: [{ messageId: 'm1', quote: '看爸爸每天喝了酒不吃饭' }],
+    };
+    expect(() => parse(conflated as any, source)).toThrow(
+      'KINSHIP_CONFLATION'
+    );
+    const samePerson = {
+      ...decision(),
+      value: '用户提到妈妈（母亲）身体不舒服',
+      evidence: [{ messageId: 'm1', quote: '妈妈身体也不舒服' }],
+    };
+    expect(parse(samePerson as any, source)).toHaveLength(1);
+  });
+  it('rejects attributing speech to a relative when only the user spoke', () => {
+    const d = {
+      ...decision(),
+      subjectRef: 'agent:2',
+      key: 'communication.advice',
+      value: '该亲人曾叮嘱用户按时吃饭',
+    };
+    expect(() => parse(d as any)).toThrow('SPEAKER_DIRECTION');
+  });
+  it('drops psychosocial inference wording beyond the original list', () => {
+    for (const value of [
+      '用户在疼痛时渴望母亲在场，凸显母女依恋的锚定作用',
+      '该提问反映用户与亲人当前处于不同物理空间',
+      '用户的远嫁认知源于接到电话后的自责',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow('INFERENCE');
+    }
+  });
+  it('drops plain heartache and helplessness as emotions, not facts', () => {
+    for (const value of [
+      '用户想起母亲时感到心疼',
+      '用户探视时感到无助',
+      '用户人前笑嘻嘻，人后独自难过',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow(
+        'EMOTION_ONLY'
+      );
+    }
+  });
 });

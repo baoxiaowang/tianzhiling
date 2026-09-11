@@ -280,7 +280,7 @@ export class MemoryValueService {
           .replace(/\s*```$/, '')
       );
       newPeople = raw.newPeople || [];
-      if (!Array.isArray(newPeople) || newPeople.length > 2)
+      if (!Array.isArray(newPeople) || newPeople.length > 6)
         throw new Error('MEMORY_VALUE_NEW_PERSON');
       const refs = new Map<string, string>();
       for (const p of newPeople) {
