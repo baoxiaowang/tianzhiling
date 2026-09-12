@@ -15,13 +15,37 @@ ROOT="$(cd "$HERE/../../../.." && pwd)"
 LOG_DIR="$ROOT/.task-evidence/memory-eval/logs"
 mkdir -p "$LOG_DIR"
 
+# 批清单：记录本批使用的代码版本与工作区是否干净。
+# 目的是让"批次运行期间改代码"这件事可被发现——同一批用户必须用同一份代码，
+# 否则结果不可比（这条曾经踩过坑：一轮内每批各自重编译，批次之间没法比）。
+COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# 只检查会影响记忆抽取的路径：仓库里还有与本任务无关的改动，
+# 用全仓库状态会把每一批都误判成 dirty。
+TRACKED_DIRTY="$(git -C "$ROOT" status --porcelain -- \
+  apps/node/src/service/agents \
+  apps/node/src/service/memory-pipeline-task.service.ts \
+  apps/node/src/service/conversation.service.ts \
+  apps/node/scripts/rebuild-memory-history.js \
+  apps/node/scripts/memory-eval 2>/dev/null)"
+if [ -n "$TRACKED_DIRTY" ]; then
+  DIRTY="true"
+  echo "[parallel $NAME] ⚠ 记忆相关代码未提交：本批数据标记为 dirty，结论需谨慎"
+  echo "$TRACKED_DIRTY" | sed 's/^/    /'
+else
+  DIRTY="false"
+fi
+USERS_JSON="$(node -e 'console.log(JSON.stringify(process.argv.slice(1)))' "$@")"
+printf '{"batch":"%s","commit":"%s","dirty":%s,"startedAt":"%s","users":%s}\n' \
+  "$NAME" "$COMMIT" "$DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$USERS_JSON" \
+  >"$LOG_DIR/${NAME}-manifest.json"
+
 # 编译只做一次，避免多槽位同时写同一份 dist。
 # SKIP_BUILD=1 时沿用调用方已编译的产物：整轮必须只用一份代码，
 # 否则同一轮里不同批次会用到不同版本的代码，批次之间就不可比了。
 if [ "${SKIP_BUILD:-0}" = "1" ]; then
-  echo "[parallel $NAME] build skipped (SKIP_BUILD=1)"
+  echo "[parallel $NAME] build skipped (SKIP_BUILD=1) commit=$COMMIT dirty=$DIRTY"
 else
-  echo "[parallel $NAME] build once"
+  echo "[parallel $NAME] build once commit=$COMMIT dirty=$DIRTY"
   "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/entities/tsconfig.json"
   "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/shared/tsconfig.json"
   "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/apps/node/tsconfig.json"
