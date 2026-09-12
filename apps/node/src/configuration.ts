@@ -6,10 +6,17 @@ import * as info from '@midwayjs/info';
 import * as jwt from '@midwayjs/jwt';
 import * as busboy from '@midwayjs/busboy';
 import { join } from 'path';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import * as orm from '@midwayjs/typeorm';
 import * as redis from '@midwayjs/redis';
 import * as bullmq from '@midwayjs/bullmq';
 import { DefaultErrorFilter } from './filter/default.filter';
+
+/** 运行时看门狗：事件循环 p99 超过该值、或 RSS 超过该值才告警。 */
+const RUNTIME_WATCHDOG_INTERVAL_MS = 60_000;
+const RUNTIME_WATCHDOG_LOG_COOLDOWN_MS = 10 * 60_000;
+const RUNTIME_WATCHDOG_LAG_MS = 300;
+const RUNTIME_WATCHDOG_RSS_MB = 1_500;
 import { NotFoundFilter } from './filter/notfound.filter';
 import { AuthMiddleware } from './middleware/auth.middleware';
 import { ReportMiddleware } from './middleware/report.middleware';
@@ -140,13 +147,10 @@ export class MainConfiguration {
               process.env.NODE_REDIS_PASSWORD ||
               '',
             db: Number(
-              process.env.NODE_BULLMQ_DB ||
-                process.env.NODE_REDIS_DB ||
-                0
+              process.env.NODE_BULLMQ_DB || process.env.NODE_REDIS_DB || 0
             ),
           };
-          const prefix =
-            process.env.NODE_BULLMQ_PREFIX || '{tzl-bullmq}';
+          const prefix = process.env.NODE_BULLMQ_PREFIX || '{tzl-bullmq}';
           const durationQueue = new BullQueue(DEPARTURE_DURATION_QUEUE, {
             connection,
             prefix,
@@ -248,5 +252,42 @@ export class MainConfiguration {
         error instanceof Error ? error.message : String(error)
       );
     }
+
+    this.startRuntimeWatchdog();
+  }
+
+  /**
+   * 运行时看门狗：只在高位时打日志，用于定位"跑久了 CPU 逐渐升高"。
+   *
+   * 生产上这类问题过去只能靠"重启缓解 + 人工猜"，没有留证据。看门狗每 60 秒采一次
+   * 事件循环延迟与内存，超过阈值才打一行结构化日志（带角色、RSS、堆、事件循环
+   * p99、uptime），并把队列深度一并带上；正常时不产生任何输出。
+   */
+  private startRuntimeWatchdog(): void {
+    if (process.env.NODE_RUNTIME_WATCHDOG === '0') return;
+    const histogram = monitorEventLoopDelay({ resolution: 20 });
+    histogram.enable();
+    let lastLoggedAt = 0;
+    const timer = setInterval(() => {
+      const p99Ms = histogram.percentile(99) / 1e6;
+      histogram.reset();
+      const usage = process.memoryUsage();
+      const rssMb = Math.round(usage.rss / (1024 * 1024));
+      const heapUsedMb = Math.round(usage.heapUsed / (1024 * 1024));
+      const lagHigh = p99Ms > RUNTIME_WATCHDOG_LAG_MS;
+      const rssHigh = rssMb > RUNTIME_WATCHDOG_RSS_MB;
+      if (!lagHigh && !rssHigh) return;
+      if (Date.now() - lastLoggedAt < RUNTIME_WATCHDOG_LOG_COOLDOWN_MS) return;
+      lastLoggedAt = Date.now();
+      this.logger.warn(
+        '[runtime-watchdog] role=%s rssMb=%d heapUsedMb=%d eventLoopP99Ms=%d uptimeMin=%d',
+        resolveNodeRuntimeRole(),
+        rssMb,
+        heapUsedMb,
+        Math.round(p99Ms),
+        Math.round(process.uptime() / 60)
+      );
+    }, RUNTIME_WATCHDOG_INTERVAL_MS);
+    timer.unref?.();
   }
 }
