@@ -10,6 +10,74 @@ const message = {
   agentId,
   createdAt: new Date('2026-09-08T00:00:00Z'),
 };
+describe('buildFamilyStructureDecision', () => {
+  const build = (mentioned: any[], existing: any[] = []) => {
+    const service = new MemoryValueService();
+    const input = {
+      currentMessageId: String(messageId),
+      referenceAt: '2026-09-11T00:00:00Z',
+      subjects: [{ ref: `user:${userId}`, label: '当前讲述者/用户本人' }],
+      messages: [{ id: String(messageId), role: 'user', content: '妈妈' }],
+      existing,
+    } as any;
+    return (service as any).buildFamilyStructureDecision(input, mentioned);
+  };
+
+  it('keeps each family fragment as the user verbatim words', () => {
+    const decision = build([
+      {
+        label: '妈妈',
+        relation: '母亲',
+        evidence: [{ messageId: String(messageId), quote: '妈妈身体一时好一时坏' }],
+      },
+    ]);
+    expect(decision.value).toContain('家人关系说明');
+    expect(decision.value).toContain('妈妈（母亲）');
+    expect(decision.value).toContain('妈妈身体一时好一时坏');
+  });
+
+  it('accumulates new relatives without rewriting the existing lines', () => {
+    const decision = build(
+      [
+        {
+          label: '妹妹',
+          relation: '妹妹',
+          evidence: [{ messageId: String(messageId), quote: '妹妹今年考上大学' }],
+        },
+      ],
+      [
+        {
+          id: new MongoObjectId('665000000000000000000701'),
+          subjectRef: `user:${userId}`,
+          key: 'family.structure',
+          value: '家人关系说明：\n- 妈妈（母亲）：用户原话“妈妈身体一时好一时坏”',
+        },
+      ]
+    );
+    expect(decision.value).toContain('妈妈（母亲）');
+    // 称呼和关系是同一个词时不重复写「妹妹（妹妹）」。
+    expect(decision.value).toContain('妹妹：用户原话“妹妹今年考上大学”');
+    expect(decision.operation).toBe('merge');
+  });
+
+  it('does not merge two grandchildren whose names differ', () => {
+    const decision = build([
+      {
+        label: '大孙子',
+        relation: '孙子',
+        evidence: [{ messageId: String(messageId), quote: '大孙子读小学了' }],
+      },
+      {
+        label: '小孙子',
+        relation: '孙子',
+        evidence: [{ messageId: String(messageId), quote: '小孙子刚会走路' }],
+      },
+    ]);
+    expect(decision.value).toContain('大孙子');
+    expect(decision.value).toContain('小孙子');
+  });
+});
+
 describe('buildDepartureDateDecision', () => {
   const mkMessage = (content: string, at: string) => ({
     id: new MongoObjectId('665000000000000000000101'),

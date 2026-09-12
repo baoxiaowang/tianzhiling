@@ -722,6 +722,12 @@ export class MemoryValueService {
    * 用本批的点名清单生成/合并一条 family.structure，作为“有哪些家人”的总体记录。
    * 这样既有总体记录，又不必为只被顺带提到的远亲各建一条事实。
    */
+  /**
+   * 家人关系说明：把用户在不同对话里说过的家人碎片串成一段累积的说明。
+   * 只串联、不推断——每一句都用用户的原话（逐字），所以前后矛盾时两句话都会
+   * 留着，不会被系统"统一"掉；同一个人这次叫"孙子"、下次叫"毛璟琨"，是两条
+   * 出现记录，不合并成一个人也不新建一个人。
+   */
   private buildFamilyStructureDecision(
     input: MemoryValueInput,
     mentioned: Array<{
@@ -730,85 +736,81 @@ export class MemoryValueService {
       evidence?: unknown;
     }>
   ): MemoryValueDecision | null {
-    const entries: string[] = [];
+    const entries: Array<{ label: string; text: string }> = [];
     const evidence: Array<{ messageId: string; quote: string }> = [];
-    const seen = new Set<string>();
-    const seenRelations = new Set<string>();
+    const seenLabels = new Set<string>();
     for (const person of mentioned || []) {
       const label =
         typeof person?.label === 'string' ? person.label.trim() : '';
-      if (!label || label.length > 24 || seen.has(label)) continue;
-      // “家里/家人/大家”说的是住处或一群人，不是某位亲属；把它们当家人
-      // 会让总览出现“家庭成员：家里（用户当前住所）”这种自相矛盾的条目。
+      if (!label || label.length > 24 || seenLabels.has(label)) continue;
+      // “家里/家人/大家”说的是住处或一群人，不是某位亲属。
       if (NON_PERSON_FAMILY_LABEL.test(label)) continue;
-      // 只有称呼或关系里含亲属词才算家人：挡住把动漫角色、只有名字的熟人
-      // （“名扬”“程小时”“陆光”）写进家人总览。
       const relation =
         typeof person?.relation === 'string' ? person.relation.trim() : '';
       if (!KINSHIP_VOCABULARY.test(label) && !KINSHIP_VOCABULARY.test(relation))
         continue;
-      seen.add(label);
-      // 一个人只登记一次：模型常把同一位亲人写成“丈夫/鹏鹏/唐鹏”三种称呼，
-      // 全列进去会让总览出现“配偶（丈夫/鹏鹏）、丈夫（配偶）、唐鹏（配偶）”。
-      const relationKey = normalizeRelationKey(relation || label);
-      if (relationKey) {
-        if (seenRelations.has(relationKey)) continue;
-        seenRelations.add(relationKey);
-      }
-      entries.push(relation ? `${label}（${relation}）` : label);
-      if (Array.isArray(person?.evidence)) {
-        // 证据必须真的提到这个人：不能拿“你喜欢抽烟”去支撑一条“家人结构”。
-        const quotes = (
-          person.evidence as Array<{
-            messageId?: unknown;
-            quote?: unknown;
-          }>
-        ).filter(
+      // 证据必须真的提到这个人：不能拿"你喜欢抽烟"去支撑一条家人说明。
+      const quotes = (Array.isArray(person?.evidence) ? person.evidence : [])
+        .map(item => item as { messageId?: unknown; quote?: unknown })
+        .filter(
           item =>
             typeof item?.messageId === 'string' &&
             typeof item?.quote === 'string' &&
-            item.quote.trim()
-        );
-        const mentioning = quotes.filter(
-          item =>
-            String(item.quote).includes(label) ||
-            (relation && String(item.quote).includes(relation))
-        );
-        for (const item of mentioning.length ? mentioning : quotes) {
-          const messageId = String(item.messageId);
-          const quote = String(item.quote);
-          if (
-            evidence.some(x => x.messageId === messageId && x.quote === quote)
-          )
-            continue;
-          evidence.push({ messageId, quote });
-        }
+            String(item.quote).trim() &&
+            (String(item.quote).includes(label) ||
+              (relation && String(item.quote).includes(relation)))
+        )
+        .slice(0, 2);
+      if (!quotes.length) continue;
+      seenLabels.add(label);
+      const spoken = quotes.map(item => String(item.quote).trim()).join('｜');
+      entries.push({
+        label,
+        text: `${label}${
+          relation && relation !== label ? `（${relation}）` : ''
+        }：用户原话“${spoken}”`,
+      });
+      for (const item of quotes) {
+        const messageId = String(item.messageId);
+        const quote = String(item.quote);
+        if (evidence.some(x => x.messageId === messageId && x.quote === quote))
+          continue;
+        evidence.push({ messageId, quote });
       }
     }
-    if (!entries.length || !evidence.length) return null;
+    if (!entries.length) return null;
     const subjectRef = input.subjects[0].ref;
     const existing = input.existing.find(
       f => f.key === 'family.structure' && f.subjectRef === subjectRef
     );
-    const previous = (existing?.value || '')
+    // 累积：沿用已有的说明行（含旧格式的顿号清单），新家人只追加，不重写。
+    const previousLines = (existing?.value || '')
+      .replace(/^家人关系说明[：:]\s*/, '')
       .replace(/^用户提到的家人[：:]\s*/, '')
-      .split(/[、；;]/)
-      .map(value => value.trim())
+      .split(/[\n；;]/)
+      .map(line => line.replace(/^\s*[-•]\s*/, '').trim())
       .filter(Boolean);
-    const merged = [...new Set([...previous, ...entries])].slice(0, 24);
+    const previousLabels = new Set(
+      previousLines.map(line => line.split(/[（(:：—-]/)[0].trim())
+    );
+    const appended = entries
+      .filter(entry => !previousLabels.has(entry.label))
+      .map(entry => entry.text);
+    const merged = [...previousLines, ...appended].slice(-16);
+    if (!merged.length) return null;
     return {
       subjectRef,
       participants: [],
       kind: 'person',
       type: 'relationship',
       key: 'family.structure',
-      value: `用户提到的家人：${merged.join('、')}`,
+      value: `家人关系说明：\n${merged.map(line => `- ${line}`).join('\n')}`,
       retention: 'durable',
       certainty: 'explicit',
       timeKind: 'current',
       operation: existing ? 'merge' : 'add',
       targetId: existing?.id,
-      reason: '维护家人总览，替代为只被提到的远亲各建一条',
+      reason: '累积用户说过的家人碎片，每句都来自原话，不做身份合并',
       evidence,
       protected: true,
       salience: 2,
