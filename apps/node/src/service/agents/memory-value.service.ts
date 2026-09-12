@@ -50,6 +50,7 @@ import {
   kinshipGroupsIn,
   KINSHIP_GROUP_OF,
   isEmotionalValue,
+  isCoreRelative,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -246,7 +247,11 @@ export class MemoryValueService {
     modelCalls: number;
     modelTokens: number;
     newPeople: NewMemoryPerson[];
-    mentionedPeople: Array<{ label?: unknown; relation?: unknown; evidence?: unknown }>;
+    mentionedPeople: Array<{
+      label?: unknown;
+      relation?: unknown;
+      evidence?: unknown;
+    }>;
     reviewReasons: Array<{ index: number; reason: string }>;
   }> {
     if (!this.openAIService?.isEnabled())
@@ -431,7 +436,10 @@ export class MemoryValueService {
     // 两类遗漏都触发补漏：①点名了却没记的家人；②整类事实一条没记（健康、工作、
     // 时间、计划…）。后者实测出现在 19/24 个用户身上，是最大的质量缺口。
     if (isBatch) {
-      const uncovered = this.uncoveredMentionedPeople(mentionedPeople, decisions);
+      const uncovered = this.uncoveredMentionedPeople(
+        mentionedPeople,
+        decisions
+      );
       const batchUserText = input.messages
         .filter(m => m.role === 'user')
         .map(m => m.content || '')
@@ -461,6 +469,63 @@ export class MemoryValueService {
       mentionedPeople,
       reviewReasons,
     };
+  }
+
+  /**
+   * 人物建档：用户提到的每位**核心亲属**都必须有一个可检索、可纠正的人物实体。
+   * 原来建档只依赖模型临时声明 newPeople，模型不填就一个都没有——实测 14/30 个
+   * 用户 knownPeople 为空、30 人合计只有 21 个实体（人均 0.7）。建档是"用户说过
+   * 的话能不能被复用"的前提，不能靠模型自觉。
+   */
+  private async registerFamilyPeople(
+    input: MemoryValueInput,
+    mentioned: Array<{ label?: unknown; relation?: unknown }>,
+    message: MessageEntity
+  ): Promise<void> {
+    const userRef = input.subjects[0]?.ref;
+    if (!userRef || !mentioned?.length) return;
+    const seen = new Set<string>();
+    for (const person of mentioned) {
+      const label =
+        typeof person?.label === 'string' ? person.label.trim() : '';
+      const relation =
+        typeof person?.relation === 'string' ? person.relation.trim() : '';
+      if (!label || label.length > 24 || seen.has(label)) continue;
+      if (!isCoreRelative(label, relation)) continue;
+      seen.add(label);
+      // 这个人本来就是独立主体（正在对话的那位亲人），不必再造一份重复身份。
+      const matchedSubject = input.subjects.find(subject =>
+        [subject.relation, subject.label]
+          .map(key => normalizeRelationKey(key || ''))
+          .filter(Boolean)
+          .some(
+            key =>
+              key === normalizeRelationKey(relation) ||
+              (label && key === normalizeRelationKey(label))
+          )
+      );
+      if (matchedSubject?.ref?.startsWith('agent:')) continue;
+      const relationToUser = relation || label;
+      // 身份键只按关系归并：同一个人的“妈妈/妈/母亲”“小孙子/毛璟琨”必须落到
+      // 同一条记录上，否则用户每换一个叫法就会多出一个人，事实被拆散。
+      // 这与人物主体的既有约定一致（relativeRefFor 也只按关系取哈希）。
+      const identityKey = normalizeRelationKey(relationToUser) || label;
+      try {
+        await this.userIdentityMemoryService.upsertKnownPersonDeclaration({
+          userId: message.userId,
+          agentId: message.agentId,
+          messageId: message.id,
+          sourceText: label,
+          declaration: {
+            identityKey,
+            aliases: [label],
+            relationToUser,
+          },
+        });
+      } catch {
+        // 建档失败不影响本批已经写入的记忆。
+      }
+    }
   }
 
   /**
@@ -540,14 +605,19 @@ export class MemoryValueService {
    */
   private buildFamilyStructureDecision(
     input: MemoryValueInput,
-    mentioned: Array<{ label?: unknown; relation?: unknown; evidence?: unknown }>
+    mentioned: Array<{
+      label?: unknown;
+      relation?: unknown;
+      evidence?: unknown;
+    }>
   ): MemoryValueDecision | null {
     const entries: string[] = [];
     const evidence: Array<{ messageId: string; quote: string }> = [];
     const seen = new Set<string>();
     const seenRelations = new Set<string>();
     for (const person of mentioned || []) {
-      const label = typeof person?.label === 'string' ? person.label.trim() : '';
+      const label =
+        typeof person?.label === 'string' ? person.label.trim() : '';
       if (!label || label.length > 24 || seen.has(label)) continue;
       // “家里/家人/大家”说的是住处或一群人，不是某位亲属；把它们当家人
       // 会让总览出现“家庭成员：家里（用户当前住所）”这种自相矛盾的条目。
@@ -556,10 +626,7 @@ export class MemoryValueService {
       // （“名扬”“程小时”“陆光”）写进家人总览。
       const relation =
         typeof person?.relation === 'string' ? person.relation.trim() : '';
-      if (
-        !KINSHIP_VOCABULARY.test(label) &&
-        !KINSHIP_VOCABULARY.test(relation)
-      )
+      if (!KINSHIP_VOCABULARY.test(label) && !KINSHIP_VOCABULARY.test(relation))
         continue;
       seen.add(label);
       // 一个人只登记一次：模型常把同一位亲人写成“丈夫/鹏鹏/唐鹏”三种称呼，
@@ -572,10 +639,12 @@ export class MemoryValueService {
       entries.push(relation ? `${label}（${relation}）` : label);
       if (Array.isArray(person?.evidence)) {
         // 证据必须真的提到这个人：不能拿“你喜欢抽烟”去支撑一条“家人结构”。
-        const quotes = (person.evidence as Array<{
-          messageId?: unknown;
-          quote?: unknown;
-        }>).filter(
+        const quotes = (
+          person.evidence as Array<{
+            messageId?: unknown;
+            quote?: unknown;
+          }>
+        ).filter(
           item =>
             typeof item?.messageId === 'string' &&
             typeof item?.quote === 'string' &&
@@ -590,9 +659,7 @@ export class MemoryValueService {
           const messageId = String(item.messageId);
           const quote = String(item.quote);
           if (
-            evidence.some(
-              x => x.messageId === messageId && x.quote === quote
-            )
+            evidence.some(x => x.messageId === messageId && x.quote === quote)
           )
             continue;
           evidence.push({ messageId, quote });
@@ -1045,6 +1112,20 @@ export class MemoryValueService {
       }
     }
     count = audit.appliedIndexes?.length || count;
+
+    // 建档：确保本批提到的核心亲属都有人物实体，不依赖模型是否声明 newPeople。
+    const registerMessage = messages[messages.length - 1];
+    if (registerMessage) {
+      try {
+        await this.registerFamilyPeople(
+          input,
+          proposal.mentionedPeople || [],
+          registerMessage
+        );
+      } catch {
+        // 建档失败不影响本批已经写入的记忆。
+      }
+    }
 
     // 每条参与批次的消息都记录同一份审计，便于追溯与重放。
     const touched = new Map<string, MessageEntity>();

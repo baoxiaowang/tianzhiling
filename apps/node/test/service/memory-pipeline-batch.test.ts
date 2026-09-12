@@ -488,6 +488,52 @@ describe('MemoryValueService.processBatch', () => {
     expect(service.factModel.insertOne).toHaveBeenCalledTimes(2);
   });
 
+  it('registers mentioned core relatives as known people', async () => {
+    const msgId1 = '665000000000000000000301';
+    const llmResponse = JSON.stringify({
+      newPeople: [],
+      mentionedPeople: [
+        { label: '妈妈', relation: '母亲', evidence: [] },
+        { label: '儿子', relation: '儿子', evidence: [] },
+        { label: '爷爷的姐姐', relation: '爷爷的姐姐', evidence: [] },
+      ],
+      decisions: [],
+    });
+
+    const { service, agent, userId: uid } = setupBatchService(llmResponse);
+    const upsert = jest.fn(async (_options: any) => ({}));
+    service.userIdentityMemoryService = {
+      recordApprovedUserIdentity: jest.fn(),
+      upsertKnownPersonDeclaration: upsert,
+    };
+    const msg1 = new MessageEntity();
+    Object.assign(msg1, {
+      id: new MongoObjectId(msgId1),
+      userId: uid,
+      agentId: agent.id,
+      conversationId: new MongoObjectId('665000000000000000000003'),
+      content: '妈妈最近还好，儿子也上幼儿园了',
+      createdAt: new Date('2026-09-08T00:00:00Z'),
+    });
+
+    await service.processBatch([msg1], ['妈妈最近还好，儿子也上幼儿园了'], agent);
+
+    const relations = upsert.mock.calls.map(
+      call => (call[0] as any).declaration.relationToUser
+    );
+    expect(relations).toContain('母亲');
+    expect(relations).toContain('儿子');
+    // 第三方关系（“爷爷的姐姐”）不是用户本人的核心亲人，不建档。
+    expect(relations).not.toContain('爷爷的姐姐');
+    // 同一个人的不同叫法必须落到同一个身份键上。
+    const motherKeys = upsert.mock.calls
+      .filter(call => (call[0] as any).declaration.relationToUser === '母亲')
+      .map(call => (call[0] as any).declaration.identityKey);
+    expect(new Set(motherKeys).size).toBe(motherKeys.length);
+    // “妈妈”“母亲”“妈”必须归到同一个身份键上（母亲）。
+    expect(motherKeys[0]).toBe('母亲');
+  });
+
   it('throws when LLM is disabled so caller can fall back', async () => {
     const { service, agent, userId: uid } = setupBatchService('{}');
     service.openAIService.isEnabled = jest.fn(() => false);
