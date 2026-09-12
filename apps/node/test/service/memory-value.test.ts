@@ -587,14 +587,13 @@ describe('memory value contract', () => {
       parse({ ...decision(), value: '奶奶身体挺好' } as any)
     ).toHaveLength(1);
   });
-  it('flags mentioned family with no decision so they can be re-asked', () => {
+  it('only re-asks for core relatives, not distant ones', () => {
     const decisions = [
       {
         key: 'family.grandmother_granddaughter',
         value: '用户是奶奶的孙女',
         participants: [],
       },
-      { key: 'wedding.attire', value: '婚礼穿秀禾服', participants: [] },
     ];
     expect(
       uncoveredMentionedPeople(
@@ -602,12 +601,20 @@ describe('memory value contract', () => {
           { label: '奶奶' },
           { label: '弟弟' },
           { label: '妈妈' },
-          { label: '爷爷的三姐' },
+          { label: '爷爷的三姐', relation: '爷爷的姐姐' },
+          { label: '老舅', relation: '舅舅' },
           { label: '弟弟' },
         ],
         decisions
       )
-    ).toEqual(['弟弟', '妈妈', '爷爷的三姐']);
+    ).toEqual(['弟弟', '妈妈']);
+    // 以“名字”出现时靠 relation 判档：孙辈是核心亲人。
+    expect(
+      uncoveredMentionedPeople(
+        [{ label: '毛璟琨', relation: '小孙子' }],
+        decisions
+      )
+    ).toEqual(['毛璟琨']);
     expect(uncoveredMentionedPeople(undefined, decisions)).toEqual([]);
     expect(uncoveredMentionedPeople([{ label: '' }], decisions)).toEqual([]);
   });

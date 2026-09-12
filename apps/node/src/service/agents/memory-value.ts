@@ -211,11 +211,59 @@ export function isContextOnlyNamespace(key: string): boolean {
 }
 
 /**
- * 点名清单里没有任何决定承载的家人。用来触发一次定向补漏：
- * 模型在长篇倾诉里常只记聊天对象这条主线，把顺带提到的其他家人整句丢掉。
+ * 亲人分档。核心亲人（直系与同胞）只要被提到就值得专门记忆——哪怕这次只是
+ * 顺带一提，比如用户自己的孩子、孙辈。旁系亲属（叔伯舅姑姨婶等）通常不值得
+ * 单独成条，只有在承担了具体的事或影响时才升级为专门记忆。其余只进家人总览。
+ */
+export const CORE_RELATIVE_TERMS = [
+  '爸爸',
+  '父亲',
+  '爸',
+  '爹',
+  '妈妈',
+  '母亲',
+  '妈',
+  '娘',
+  '儿子',
+  '女儿',
+  '孩子',
+  '孙子',
+  '孙儿',
+  '孙女',
+  '外孙',
+  '外孙女',
+  '哥哥',
+  '姐姐',
+  '弟弟',
+  '妹妹',
+  '丈夫',
+  '妻子',
+  '老公',
+  '老婆',
+  '配偶',
+  '太太',
+];
+export function isCoreRelative(...labels: Array<string | undefined>): boolean {
+  return labels.some(raw => {
+    const label = (raw || '').trim();
+    if (!label) return false;
+    // 关系必须相对用户本人。像“爷爷的姐姐”这种“某人的某人”，描述的是
+    // 第三方之间的关系，不能因为字面含“姐姐”就当成用户的核心亲人。
+    const own = label.replace(/^(?:用户|我)的?/, '');
+    if (own.includes('的')) return false;
+    return CORE_RELATIVE_TERMS.some(term => own.includes(term));
+  });
+}
+
+/**
+ * 点名清单里没有任何决定承载、且属于核心亲人的家人。用来触发一次定向补漏：
+ * 模型在长篇倾诉里常只记聊天对象这条主线，把顺带提到的其他核心亲人整句
+ * 丢掉。旁系亲属不触发补漏——他们只进家人总览，不值得为每位远亲单独调用。
  */
 export function uncoveredMentionedPeople(
-  mentioned: Array<{ label?: unknown }> | undefined,
+  mentioned:
+    | Array<{ label?: unknown; relation?: unknown }>
+    | undefined,
   decisions: Array<{
     key: string;
     value: string;
@@ -229,6 +277,9 @@ export function uncoveredMentionedPeople(
     const label = typeof person?.label === 'string' ? person.label.trim() : '';
     if (!label || label.length > 24 || seen.has(label)) continue;
     seen.add(label);
+    const relation =
+      typeof person?.relation === 'string' ? person.relation.trim() : '';
+    if (!isCoreRelative(label, relation)) continue;
     const covered = decisions.some(
       d =>
         (d.key || '').includes(label) ||
@@ -303,7 +354,9 @@ export const MEMORY_VALUE_PROMPT = [
   '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
   '并列成分逐个记：一句话里的并列人物、并列时间、并列病因都要分别成条，不能只留最显眼的那半句。例如“我和强还有嫂子搬完了”含三个人；“嗲嗲都30几年了，婆婆也快30年了”含两位已故祖辈和两个时长；“这也是上班坐太久没运动的原因”含医生给出的病因，不能只记“久坐”而丢掉病因。',
   '顺带提到的家人同样要记：用户在长篇倾诉里常顺手带出其他家人和他们的近况（“奶奶挺好的，我经常按电视给她看”“老舅跟妈妈借钱不还”“姥爷几年前也走了”）。这些是稳定的家庭事实，必须各自成条，不能因为主题是思念聊天对象就整句丢掉。判断标准是“用户是否明确说了”，而不是“是否与聊天对象有关”。',
-  '点名清单：输出里必须带 mentionedPeople，列出本批消息中用户提到的**每一位**家人（在世与已故、主要与顺带都算，例如“弟弟”“妈妈”“爷爷的三姐”），每项形如{label:"称呼",evidence:[{messageId,quote}]}。这份清单是自查用的：列进来的人必须在 decisions 里至少有一条关于他的事实（确实没有稳定事实的纯称呼除外）。宁可多列，不可漏列。',
+  '亲人分档（决定谁值得专门成条）：①核心亲人——父母、配偶、子女、孙辈（含外孙/外孙女）、同胞兄弟姐妹——只要被提到就要专门记忆，哪怕这次只是顺带一提，因为关系本身重要；②旁系亲属——叔伯舅姑姨婶、嫂媳、堂表亲、祖辈的兄弟姐妹等——通常不单独成条，只有当他在用户的话里承担了具体的事、角色或影响时才升级为专门记忆（如“老舅跟妈妈借钱不还”“爷爷的三姐让用户忍让”）；③仅被称呼、没有任何具体信息的亲属，不单独成条。',
+  '家人总览：用一条 family.structure 维护用户提到过的家人名单（包含只被顺带提到、按上一条不单独成条的那些人），新提到的人 merge 进这一条，写清称呼与关系。这样既有总体记录，又不会为每位远亲各建一条事实。',
+  '点名清单：输出里必须带 mentionedPeople，列出本批消息中用户提到的**每一位**家人（在世与已故、核心与旁系都算，例如“弟弟”“妈妈”“爷爷的三姐”），每项形如{label:"称呼",relation:"这位家人与用户本人的关系",evidence:[{messageId,quote}]}。relation 必须相对用户本人写（写“舅舅”，不要写“爷爷的姐姐”这种第三方关系）。这份清单是自查用的：核心亲人列进来后必须在 decisions 里至少有一条关于他的事实；旁系亲属按分档规则处理（无具体事由的只进 family.structure）。宁可多列，不可漏列。',
 ].join('\n');
 
 const PURE_EMOTION_PATTERN =
