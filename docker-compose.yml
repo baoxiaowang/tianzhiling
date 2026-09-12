@@ -41,9 +41,6 @@ services:
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
       NODE_RUNTIME_ROLE: web
-      # 线上反复出现"跑久了 CPU 逐渐升高、重启缓解"：保留堆快照信号，
-      # 下次复发可以直接 kill -USR2 拿到堆快照定位，不必再靠猜。
-      NODE_OPTIONS: ${NODE_WEB_NODE_OPTIONS:---heapsnapshot-signal=SIGUSR2}
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     expose:
       - "7001"
