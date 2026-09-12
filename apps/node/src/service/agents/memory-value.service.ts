@@ -252,7 +252,9 @@ export class MemoryValueService {
       temperature: 0,
       topP: 0.1,
       reasoningSplit: false,
-      maxTokens: isBatch ? 2500 : 1600,
+      // 输出上限不能压：压到 2500 时实测 completion 正好卡在上限、JSON 被截断，
+      // 同一用户存下的记忆从 26 条掉到 12 条。速度不能拿记忆换。
+      maxTokens: isBatch ? 4000 : 2400,
       systemPrompt:
         (input.sourceFactIds?.length
           ? '本轮任务是核对sourceFactIds指定的旧记录是否忠实于当前这条用户原话，不是发现新的聊天记忆。保留正确条目，纠正错误的主体、类型或含义，或撤销无依据的旧条目；仅在修复原条目确有需要时另存原文真实内容。历史仅供理解本条原话，不提取历史中的其他话题。\n'
@@ -418,6 +420,8 @@ export class MemoryValueService {
     // （弟弟、妈妈、爷爷的三姐、妹妹不愿嫁人…）整句丢掉。若点名清单里有家人没有
     // 任何决定承载，就再问一次，只针对这些人补记忆。补漏只增不减，任何失败都当
     // 没发生，绝不会影响已经通过校验的部分。
+    // 补漏要多花一次模型调用（实测约 30–45 秒），但它确实换来了更多稳定事实，
+    // 因此不做“只在提取偏少时才跑”的节流——省时间不能省记忆。
     if (isBatch && mentionedPeople.length) {
       const uncovered = this.uncoveredMentionedPeople(mentionedPeople, decisions);
       if (uncovered.length) {
