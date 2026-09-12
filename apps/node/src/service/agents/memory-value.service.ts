@@ -1532,7 +1532,9 @@ export class MemoryValueService {
         pending ||
         ['wish', 'plan'].includes(d.timeKind) ||
         isContextOnlyNamespace(d.key) ||
-        isEmotionalValue(d.value)
+        // 家人关系说明里逐字引用了用户原话（"每天都好想你"），不能被"情绪词"
+        // 规则误判成情绪条——它是可追溯的家人说明，不是情绪记录。
+        (d.key !== 'family.structure' && isEmotionalValue(d.value))
           ? AgentProfileFactAssertionPolicy.contextOnly
           : AgentProfileFactAssertionPolicy.canAssert,
       sourceMessageId: message.id,
