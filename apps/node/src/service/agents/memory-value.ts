@@ -148,11 +148,7 @@ export function resolveNewPeople(
       );
     })?.ref;
     const ref =
-      existingRef ||
-      `relative:${createHash('sha256')
-        .update(`${input.subjects[0].ref}:${relationKey}`)
-        .digest('hex')
-        .slice(0, 24)}`;
+      existingRef || relativeRefFor(input.subjects[0].ref, p.relationToUser);
     refs.set(p.ref, ref);
     if (!existingRef) {
       p.ref = ref;
@@ -163,7 +159,9 @@ export function resolveNewPeople(
       });
     } else {
       // 复用已有主体时把新称呼并进它的别名，便于后续批次继续命中。
-      const target = input.subjects.find(subject => subject.ref === existingRef);
+      const target = input.subjects.find(
+        subject => subject.ref === existingRef
+      );
       if (target && p.label && !target.label.includes(p.label))
         target.label = `${target.label}、${p.label}`.slice(0, 48);
     }
@@ -385,9 +383,11 @@ export function computeDateFromDuration(
 }
 
 // 离开类用词：只有和时长出现在**同一个分句**里，才说明这个时长讲的是“走了多久”。
-const DEPARTURE_CUE_PATTERN = /(走了|去世|离世|不在了|下葬|过世|离开我|离开我们)/;
+const DEPARTURE_CUE_PATTERN =
+  /(走了|去世|离世|不在了|下葬|过世|离开我|离开我们)/;
 // 近似时长：这些词出现时只记宽泛表述，不换算确切日期。
-const APPROXIMATE_DURATION_PATTERN = /(马上|快要|将近|就要|差不多|快[一二三四五六七八九十两\d]|大概|左右)/;
+const APPROXIMATE_DURATION_PATTERN =
+  /(马上|快要|将近|就要|差不多|快[一二三四五六七八九十两\d]|大概|左右)/;
 // “已经过去了多久”的时长：必须带“了”，否则“前两天”“这几天”会被误当成时长。
 const ELAPSED_DURATION_PATTERN =
   /(?:已经|都|整整|快|差不多|就)?\s*(\d+|[一二三四五六七八九十两]{1,4})\s*(天|年|个?月)\s*了/;
@@ -548,9 +548,7 @@ export function isCoreRelative(...labels: Array<string | undefined>): boolean {
  * 丢掉。旁系亲属不触发补漏——他们只进家人总览，不值得为每位远亲单独调用。
  */
 export function uncoveredMentionedPeople(
-  mentioned:
-    | Array<{ label?: unknown; relation?: unknown }>
-    | undefined,
+  mentioned: Array<{ label?: unknown; relation?: unknown }> | undefined,
   decisions: Array<{
     key: string;
     value: string;
@@ -706,6 +704,14 @@ const KINSHIP_TERM_PATTERN = new RegExp(
     .join('|'),
   'g'
 );
+/** 按“与用户的关系”算出稳定的人物 id，供建档与去重共用。 */
+export function relativeRefFor(userRef: string, relation: string): string {
+  return `relative:${createHash('sha256')
+    .update(`${userRef}:${normalizeRelationKey(relation)}`)
+    .digest('hex')
+    .slice(0, 24)}`;
+}
+
 /** 一段文字里出现的所有亲属称谓所属的同义组。 */
 export function kinshipGroupsIn(text: string): Set<number> {
   const groups = new Set<number>();
@@ -799,9 +805,9 @@ export function gradeMemoryDecision(
   ) {
     throw new Error('MEMORY_VALUE_FILLER_REPLY');
   }
-  const quoted = Array.from(d.value.matchAll(/[‘“「]([^’”」]{1,24})[’”」]/g)).map(
-    match => match[1]
-  );
+  const quoted = Array.from(
+    d.value.matchAll(/[‘“「]([^’”」]{1,24})[’”」]/g)
+  ).map(match => match[1]);
   for (const term of quoted) {
     if (!userText.includes(term)) {
       throw new Error('MEMORY_VALUE_UNSOURCED_QUOTE');
@@ -821,11 +827,7 @@ export function gradeMemoryDecision(
   )) {
     const left = kinshipGroupsIn(match[1]);
     const right = kinshipGroupsIn(match[2]);
-    if (
-      left.size &&
-      right.size &&
-      ![...left].some(group => right.has(group))
-    ) {
+    if (left.size && right.size && ![...left].some(group => right.has(group))) {
       throw new Error('MEMORY_VALUE_KINSHIP_CONFLATION');
     }
   }
@@ -1080,7 +1082,8 @@ export function parseMemoryValueOutput(
     )
       throw new Error('MEMORY_VALUE_SPEAKER_DIRECTION');
     if (d.validUntil && !Number.isFinite(Date.parse(d.validUntil)))
-      throw new Error('MEMORY_VALUE_EXPIRY');    if (
+      throw new Error('MEMORY_VALUE_EXPIRY');
+    if (
       d.retention === 'session' &&
       (!d.validUntil ||
         Date.parse(d.validUntil) <= Date.parse(input.referenceAt) ||
