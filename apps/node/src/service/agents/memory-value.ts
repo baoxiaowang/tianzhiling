@@ -128,22 +128,36 @@ export function resolveNewPeople(
         !p.evidence.some((e: any) => e.quote.includes(p.realName)))
     )
       delete p.realName;
-    const ref = `relative:${createHash('sha256')
-      .update(
-        `${input.subjects[0].ref}:${p.label.trim()}|${p.relationToUser.trim()}`
-      )
-      .digest('hex')
-      .slice(0, 24)}`;
-    // 人物 id 必须跨消息稳定：同一个人在不同批次被提到时要落到同一个人，
-    // 否则会出现同一人被拆成两个 relative id（round17 用户的“孤儿孙辈”）。
-    // 因此只按“称呼 + 与用户的关系”定身份，不掺入当前消息 id。
+    // 同一个人只允许一个身份：模型常把同一位亲人这次写成“小孙子”、下次写成
+    // 名字“毛璟琨”，如果每次都按称呼算哈希，同一个人就会被拆成多个 relative id
+    // （round18 出现同一人横跨 3 个 id、7 条事实挂错人）。因此先按“与用户的关系”
+    // 复用已有主体，实在没有才新建。
+    const relationKey = normalizeRelationKey(p.relationToUser);
+    const existingRef = input.subjects.find(
+      subject =>
+        subject.ref.startsWith('relative:') &&
+        normalizeRelationKey(subject.relation || '') === relationKey
+    )?.ref;
+    const ref =
+      existingRef ||
+      `relative:${createHash('sha256')
+        .update(`${input.subjects[0].ref}:${relationKey}`)
+        .digest('hex')
+        .slice(0, 24)}`;
     refs.set(p.ref, ref);
-    p.ref = ref;
-    input.subjects.push({
-      ref,
-      label: `${p.label} ${p.realName || ''}`,
-      relation: `新介绍的人物：${p.relationToUser}`,
-    });
+    if (!existingRef) {
+      p.ref = ref;
+      input.subjects.push({
+        ref,
+        label: `${p.label} ${p.realName || ''}`,
+        relation: p.relationToUser,
+      });
+    } else {
+      // 复用已有主体时把新称呼并进它的别名，便于后续批次继续命中。
+      const target = input.subjects.find(subject => subject.ref === existingRef);
+      if (target && p.label && !target.label.includes(p.label))
+        target.label = `${target.label}、${p.label}`.slice(0, 48);
+    }
     accepted.push(p);
   }
   return { refs, accepted };
@@ -213,6 +227,32 @@ export function isContextOnlyNamespace(key: string): boolean {
   if (ASSERTABLE_NAMESPACES.has(head)) return false;
   const token = head.split('_')[0];
   return !ASSERTABLE_NAMESPACES.has(token);
+}
+
+/** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
+export function normalizeRelationKey(relation: string): string {
+  const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
+  if (!value) return '';
+  const groups: Array<[RegExp, string]> = [
+    [/孙(子|儿)|外孙(子)?/, '孙辈'],
+    [/孙女|外孙女/, '孙女辈'],
+    [/儿子|男孩/, '儿子'],
+    [/女儿/, '女儿'],
+    [/爸爸|父亲/, '父亲'],
+    [/妈妈|母亲/, '母亲'],
+    [/爷爷/, '祖父'],
+    [/奶奶/, '祖母'],
+    [/外公|姥爷|外祖父/, '外祖父'],
+    [/外婆|姥姥|外祖母/, '外祖母'],
+    [/哥哥/, '哥哥'],
+    [/姐姐/, '姐姐'],
+    [/弟弟/, '弟弟'],
+    [/妹妹/, '妹妹'],
+    [/丈夫|老公|配偶/, '配偶'],
+    [/妻子|老婆/, '配偶'],
+  ];
+  for (const [pattern, key] of groups) if (pattern.test(value)) return key;
+  return value;
 }
 
 /**

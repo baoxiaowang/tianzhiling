@@ -614,7 +614,7 @@ describe('memory value contract', () => {
       [
         {
           ref: 'new:grandson_again',
-          label: '小孙子',
+          label: '毛璟琨',
           relationToUser: '孙子',
           evidence: [{ messageId: 'm2', quote: '小孙子很调皮' }],
         },
@@ -623,8 +623,11 @@ describe('memory value contract', () => {
     );
     expect(a.accepted).toHaveLength(1);
     expect(b.accepted).toHaveLength(1);
-    // 同一个人的身份不能因为“在哪条消息里被提到”而改变。
-    expect(a.accepted[0].ref).toBe(b.accepted[0].ref);
+    // 同一个人换个称呼也要落到同一个主体：先按关系复用已有人物。
+    expect(a.refs.get('new:grandson')).toBeDefined();
+    expect(b.refs.get('new:grandson_again')).toBe(
+      a.refs.get('new:grandson')
+    );
   });
   it('only re-asks for core relatives, not distant ones', () => {
     const decisions = [
