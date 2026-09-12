@@ -47,6 +47,7 @@ import {
   uncoveredFactCategories,
   computeDateFromDuration,
   findDepartureDates,
+  DepartureDateHit,
   kinshipGroupsIn,
   KINSHIP_GROUP_OF,
   isEmotionalValue,
@@ -568,7 +569,11 @@ export class MemoryValueService {
     const fallbackRef =
       input.conversationAgentRef ||
       input.subjects.find(s => s.ref.startsWith('agent:'))?.ref;
-    const out: MemoryValueDecision[] = [];
+    // 同一批里可能多次说到同一个人走了多久（先说“13 年了”、后说“13 年零 2 个月”）。
+    // 第一层参数只能有一个值：按主体分组后**取最细的那次**；如果最细的两次
+    // 互相矛盾（同一个人又是“走了 13 年”又是“走了 8 年”），参数层不猜、直接不写——
+    // 原话仍在第二层里，模型看得见两句，由它判断。
+    const groups = new Map<string, DepartureDateHit[]>();
     for (const hit of hits) {
       const source = userMessages.find(m =>
         (m.content || '').includes(hit.quote)
@@ -589,6 +594,25 @@ export class MemoryValueService {
         : undefined;
       const subjectRef = otherNamed || fallbackRef;
       if (!subjectRef) continue;
+      groups.set(subjectRef, [...(groups.get(subjectRef) || []), hit]);
+    }
+    const precisionRank = (hit: DepartureDateHit) =>
+      hit.day ? 3 : hit.month ? 2 : 1;
+    const out: MemoryValueDecision[] = [];
+    for (const [subjectRef, subjectHits] of groups) {
+      const finest = Math.max(...subjectHits.map(precisionRank));
+      const candidates = subjectHits.filter(
+        hit => precisionRank(hit) === finest
+      );
+      const distinct = new Set(
+        candidates.map(hit => `${hit.year}-${hit.month || 0}-${hit.day || 0}`)
+      );
+      if (distinct.size > 1) continue;
+      const hit = candidates[candidates.length - 1];
+      const source = userMessages.find(m =>
+        (m.content || '').includes(hit.quote)
+      );
+      if (!source) continue;
       out.push({
         subjectRef,
         participants: [],
@@ -615,7 +639,8 @@ export class MemoryValueService {
         certainty: 'explicit',
         timeKind: 'historical',
         operation: 'add',
-        reason: '从用户陈述的时长换算去世时间（精度到用户给出的粒度为止）',
+        reason:
+          '从用户陈述的时长换算去世时间（精度到用户给出的粒度为止，同人多次说法取最细）',
         evidence: [{ messageId: source.id, quote: hit.quote }],
         protected: true,
         salience: 3,

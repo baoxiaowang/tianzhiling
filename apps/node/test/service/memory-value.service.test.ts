@@ -10,6 +10,55 @@ const message = {
   agentId,
   createdAt: new Date('2026-09-08T00:00:00Z'),
 };
+describe('buildDepartureDateDecision', () => {
+  const mkMessage = (content: string, at: string) => ({
+    id: new MongoObjectId('665000000000000000000101'),
+    userId,
+    agentId,
+    role: 'user',
+    content,
+    createdAt: new Date(at),
+  });
+  const run = (contents: Array<[string, string]>) => {
+    const service = new MemoryValueService();
+    const messages = contents.map(([content, at]) => mkMessage(content, at));
+    const input = {
+      currentMessageId: String(messages[0].id),
+      currentMessageIds: messages.map(m => String(m.id)),
+      referenceAt: '2026-09-11T00:00:00Z',
+      subjects: [{ ref: `agent:${agentId}`, label: '爸爸', relation: '父亲' }],
+      conversationAgentRef: `agent:${agentId}`,
+      messages: messages.map(m => ({
+        id: String(m.id),
+        role: 'user',
+        content: m.content,
+      })),
+      existing: [],
+    } as any;
+    return (service as any).buildDepartureDateDecision(input, messages);
+  };
+
+  it('keeps only the finest precision when the same person is mentioned twice', () => {
+    const decisions = run([
+      ['你离开我13年了', '2026-09-01T00:00:00Z'],
+      ['你已经走了13年零2个月了', '2026-09-02T00:00:00Z'],
+    ]);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].date.month).toBeDefined();
+    expect(decisions[0].date.day).toBeUndefined();
+  });
+
+  it('writes no parameter when two equally precise statements conflict', () => {
+    // 参数层不猜：两句都留在第二层的原话里，由模型判断。
+    expect(
+      run([
+        ['你离开我13年了', '2026-09-01T00:00:00Z'],
+        ['你离开我8年了', '2026-09-02T00:00:00Z'],
+      ])
+    ).toHaveLength(0);
+  });
+});
+
 function setup(current: any = null) {
   const service = new MemoryValueService();
   service.factModel = {
