@@ -386,6 +386,12 @@ class Rebuild {
     const memory = services(this.source, this.stage, model);
     let cursor = a.messageCursor;
     const userId = a._id;
+    // 批量大小必须与线上一致：线上记忆抽取走的是 processBatch（一次模型调用覆盖
+    // 一批消息），逐条 process 既慢（每条一次调用）又测不到线上真实路径。
+    const batchSize = Math.max(
+      1,
+      Number(process.env.REBUILD_BATCH_SIZE || 10)
+    );
     for (;;) {
       await this.waitTurn();
       const q = scope(userId, r.historyUntil || r.until);
@@ -394,36 +400,61 @@ class Rebuild {
           { createdAt: { $gt: cursor.at } },
           { createdAt: cursor.at, _id: { $gt: cursor.id } },
         ];
-      const raw = await this.source
+      const raws = await this.source
         .collection('message')
-        .findOne(q, { sort: { createdAt: 1, _id: 1 }, maxTimeMS: 15000 });
-      if (!raw) break;
-      let target = await memory.agentModel.findOne({
-        where: { _id: raw.agentId, createdUserId: userId },
-      });
-      if (target?.messengerOfAgentId)
-        target = await memory.agentModel.findOne({
-          where: { _id: target.messengerOfAgentId, createdUserId: userId },
+        .find(q, { sort: { createdAt: 1, _id: 1 }, maxTimeMS: 15000 })
+        .limit(batchSize)
+        .toArray();
+      if (!raws.length) break;
+
+      const entries = [];
+      let batchTarget = null;
+      for (const raw of raws) {
+        let target = await memory.agentModel.findOne({
+          where: { _id: raw.agentId, createdUserId: userId },
         });
-      if (!target) throw new Error('REBUILD_MISSING_OWNED_SUBJECT');
-      const text = (
-        raw.type === 'voice'
-          ? raw.mediaTranscript || raw.content
-          : raw.content || ''
-      ).trim();
-      // Never silently truncate a source and then claim a complete account rebuild.
-      if (text.length > 6000)
-        throw new Error('REBUILD_SOURCE_REQUIRES_CHUNKING');
-      if (text) {
-        const result = await memory.process(hydrate(raw), text, target);
-        await this.stage.collection('message_audit').updateOne(
-          { _id: raw._id },
-          {
-            $set: {
-              userId,
-              sourceHash: createHash('sha256').update(text).digest('hex'),
-            },
-          }
+        if (target?.messengerOfAgentId)
+          target = await memory.agentModel.findOne({
+            where: { _id: target.messengerOfAgentId, createdUserId: userId },
+          });
+        if (!target) throw new Error('REBUILD_MISSING_OWNED_SUBJECT');
+        // 同一批必须服务于同一位亲人，否则本批到此为止，余下留给下一轮。
+        if (batchTarget && String(batchTarget.id) !== String(target.id)) break;
+        batchTarget = target;
+        const text = (
+          raw.type === 'voice'
+            ? raw.mediaTranscript || raw.content
+            : raw.content || ''
+        ).trim();
+        // Never silently truncate a source and then claim a complete account rebuild.
+        if (text.length > 6000)
+          throw new Error('REBUILD_SOURCE_REQUIRES_CHUNKING');
+        entries.push({ raw, text });
+      }
+      if (!entries.length) break;
+
+      const usable = entries.filter(entry => entry.text);
+      if (usable.length > 1) {
+        try {
+          await memory.processBatch(
+            usable.map(entry => hydrate(entry.raw)),
+            usable.map(entry => entry.text),
+            batchTarget
+          );
+        } catch (error) {
+          // 一条坏消息不该拖垮整批：退化为逐条，与线上失败回退一致。
+          for (const entry of usable)
+            await memory.process(
+              hydrate(entry.raw),
+              entry.text,
+              batchTarget
+            );
+        }
+      } else if (usable.length === 1) {
+        const result = await memory.process(
+          hydrate(usable[0].raw),
+          usable[0].text,
+          batchTarget
         );
         if (
           result.audit.status !== 'completed' ||
@@ -431,12 +462,31 @@ class Rebuild {
         )
           throw new Error('REBUILD_UNRESOLVED_AUDIT');
       }
-      cursor = { at: raw.createdAt, id: raw._id };
+
+      for (const entry of entries) {
+        await this.stage.collection('message_audit').updateOne(
+          { _id: entry.raw._id },
+          {
+            $set: {
+              userId,
+              sourceHash: createHash('sha256')
+                .update(entry.text)
+                .digest('hex'),
+            },
+          }
+        );
+      }
+      const last = entries[entries.length - 1].raw;
+      cursor = { at: last.createdAt, id: last._id };
+      const mediaWithoutText = entries.filter(entry => !entry.text).length;
       await this.accounts.updateOne(
         { _id: userId },
         {
           $set: { messageCursor: cursor, updatedAt: new Date() },
-          $inc: { processed: 1, ...(!text ? { mediaWithoutText: 1 } : {}) },
+          $inc: {
+            processed: entries.length,
+            ...(mediaWithoutText ? { mediaWithoutText } : {}),
+          },
         }
       );
       await sleep(this.options.delayMs ?? 5000);
