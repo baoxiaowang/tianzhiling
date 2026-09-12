@@ -6,6 +6,20 @@ import {
 } from '@tzl/entities';
 import { MemoryPipelineTaskService } from '../../src/service/memory-pipeline-task.service';
 
+// 本文件测的是攒批机制本身，固定用 10 条触发，不依赖生产默认值（生产默认为 5）。
+// 批量大小对记忆覆盖的影响见 memory-pipeline-task.service.ts 里的实测注释。
+const TEST_BATCH_SIZE = '10';
+let previousBatchSize: string | undefined;
+beforeAll(() => {
+  previousBatchSize = process.env.MEMORY_PIPELINE_BATCH_SIZE;
+  process.env.MEMORY_PIPELINE_BATCH_SIZE = TEST_BATCH_SIZE;
+});
+afterAll(() => {
+  if (previousBatchSize === undefined)
+    delete process.env.MEMORY_PIPELINE_BATCH_SIZE;
+  else process.env.MEMORY_PIPELINE_BATCH_SIZE = previousBatchSize;
+});
+
 const CONVERSATION_ID = new MongoObjectId('665000000000000000000800');
 const USER_ID = new MongoObjectId('665000000000000000000801');
 const AGENT_ID = new MongoObjectId('665000000000000000000802');

@@ -256,7 +256,9 @@ export class MemoryValueService {
           : '本轮任务是识别当前用户原话中新出现、值得保存的信息，并与已有记录合并。先判断谈论的人是谁；当前聊天对象不等于每一条事实的主体。\n') +
         MEMORY_VALUE_PROMPT +
         (isBatch
-          ? '\n本次批量任务：输入包含多条当前用户消息（见currentMessageIds），currentMessageId只是其中最新一条。每项决定的证据必须逐字引用这些消息中的至少一条；不要处理更早历史中的其他话题，也不要把多条消息合并成一条与原文不符的陈述。'
+          ? `\n本次批量任务：输入包含 ${
+              input.currentMessageIds?.length || 0
+            } 条当前用户消息（见currentMessageIds），currentMessageId只是其中最新一条。每项决定的证据必须逐字引用这些消息中的至少一条；不要处理更早历史中的其他话题，也不要把多条消息合并成一条与原文不符的陈述。请按消息顺序逐条过一遍：每条消息里用户明确说过的稳定事实都要有对应决定，决定总数通常应接近或超过消息条数；明显少于消息条数就说明漏提取了，需要回头补全。`
           : ''),
       prompt: JSON.stringify(
         repair
