@@ -23,6 +23,61 @@ describe('person semantic memory pipeline', () => {
     updatedAt: new Date('2026-09-05T00:00:00.000Z'),
   });
 
+  it('indexes raw part, person anchors and governed facts in one semantic_index pass', async () => {
+    // 三种任务合并成两种：semantic_index 一次做完原话入库、人物标签、结构化事实。
+    const service = new ConversationService();
+    const personId = new MongoObjectId('665000000000000000000301');
+    service.messageModel = {
+      findOne: jest.fn().mockResolvedValue(message),
+    } as never;
+    service.logger = { warn: jest.fn(), info: jest.fn() } as never;
+    (service as any).buildSearchableTextFromMessage = () => message.content;
+    service.userIdentityMemoryService = {
+      listRelevantKnownPeople: jest.fn().mockResolvedValue([
+        {
+          id: `person:${personId.toString()}`,
+          realName: '安安',
+          aliases: ['安安'],
+          relationToUser: '女儿',
+        },
+      ]),
+    } as never;
+    service.memoryValueService = {
+      active: jest.fn(() => true),
+      indexMessage: jest.fn().mockResolvedValue(undefined),
+    } as never;
+    service.milvusService = {
+      indexConversationMessage: jest.fn().mockResolvedValue(true),
+    } as never;
+
+    const task = Object.assign(new MemoryPipelineTaskEntity(), {
+      kind: MemoryPipelineTaskKind.semanticIndex,
+      messageId: message.id,
+      sourceHash: 'source-hash',
+    });
+    await expect(service.processMemoryPipelineTask(task)).resolves.toBe(
+      'completed'
+    );
+    const calls = (service.milvusService.indexConversationMessage as jest.Mock)
+      .mock.calls.map(call => call[0]);
+    // ① 原话（不区分人物）
+    expect(calls.some(call => !call.personId)).toBe(true);
+    // ② 按人物标签
+    expect(
+      calls.some(
+        call =>
+          call.personId === personId.toString() &&
+          call.memoryKind === 'raw_episode' &&
+          call.searchableText === message.content
+      )
+    ).toBe(true);
+    // ③ 结构化事实（第一层）
+    expect(service.memoryValueService.indexMessage).toHaveBeenCalledWith(
+      message,
+      service.milvusService
+    );
+  });
+
   it('writes a deterministic person-scoped row without replacing the raw row', async () => {
     const service = new ConversationService();
     const personId = new MongoObjectId('665000000000000000000201');

@@ -402,10 +402,13 @@ export class AgentChatToolService {
         } as never,
       });
       if (!message?.content?.trim()) continue;
+      // 统一走 semantic_index：它在一次索引里同时完成原话入库、人物标签与
+      // 结构化事实入库（过去这里另派 person_semantic_index，等于同一条消息
+      // 多一个任务）。
       await this.memoryPipelineTaskService.enqueueForMessage(
         message,
         message.content,
-        [MemoryPipelineTaskKind.personSemanticIndex]
+        [MemoryPipelineTaskKind.semanticIndex]
       );
       queued += 1;
     }

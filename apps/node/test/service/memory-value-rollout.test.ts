@@ -100,9 +100,11 @@ describe('account memory rollout and shadow isolation', () => {
           ? (service as any).enrichMessengerUserMessage
           : (service as any).enrichUserMessageForReply
       ).toHaveBeenCalledTimes(1);
+      // 索引任务已经在消息落库时派发过一次（semantic_index 里同时完成原话入库、
+      // 人物标签与结构化事实入库），这里不应再为同一条消息另派任务。
       expect(
         service.memoryPipelineTaskService.enqueueForMessage
-      ).toHaveBeenCalledTimes(1);
+      ).not.toHaveBeenCalled();
     }
   );
 });

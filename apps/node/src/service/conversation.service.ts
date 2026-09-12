@@ -2369,11 +2369,6 @@ export class ConversationService {
             );
           });
         }
-        await this.memoryPipelineTaskService.enqueueForMessage(
-          entry.message,
-          entry.text,
-          [MemoryPipelineTaskKind.personSemanticIndex]
-        );
         if (entry.message.traceId) {
           await this.chatTraceService?.markBackgroundCompleted(
             entry.message.traceId,
@@ -2471,11 +2466,6 @@ export class ConversationService {
                 deduplicateByFacts: true,
               });
           }
-          await this.memoryPipelineTaskService.enqueueForMessage(
-            message,
-            searchableText,
-            [MemoryPipelineTaskKind.personSemanticIndex]
-          );
           if (message.traceId) {
             await this.chatTraceService?.markBackgroundCompleted(
               message.traceId,
@@ -2501,20 +2491,6 @@ export class ConversationService {
       } else {
         await this.enrichUserMessageForReply(message, searchableText);
       }
-      const personUnits =
-        (await this.userRelativeProfileService?.listSemanticUnitsForSourceMessage(
-          {
-            userId: message.userId,
-            sourceMessageId: message.id,
-          }
-        )) || [];
-      if (personUnits.length) {
-        await this.memoryPipelineTaskService.enqueueForMessage(
-          message,
-          searchableText,
-          [MemoryPipelineTaskKind.personSemanticIndex]
-        );
-      }
       if (message.traceId) {
         await this.chatTraceService?.markBackgroundCompleted(
           message.traceId,
@@ -2526,6 +2502,12 @@ export class ConversationService {
     }
 
     if (task.kind === MemoryPipelineTaskKind.semanticIndex) {
+      // 第二层（原文检索）的唯一入口：一次索引里做完三件事，不再为同一条消息
+      // 另派"按人物索引"任务——
+      //   ① 原话入库（不区分人物，全量语义检索用）；
+      //   ② 按"这段原话谈到了谁"补人物标签（按人物检索用，只做标签不做身份判定）；
+      //   ③ 抽取出来的结构化事实入库（第一层参数，供断言与时间线使用）。
+      // 这样每条消息只派生一个索引任务 + 一个抽取任务，队列任务量直接少三分之一。
       const indexed = await this.milvusService.indexConversationMessage({
         messageId: this.stringifyObjectId(message.id),
         userId: this.stringifyObjectId(message.userId),
@@ -2540,6 +2522,10 @@ export class ConversationService {
       });
       if (!indexed) {
         throw new Error('Milvus semantic indexing is currently unavailable');
+      }
+      await this.indexPersonAnchorsForMessage(message, searchableText, task);
+      if (this.memoryValueService?.active(message.userId)) {
+        await this.memoryValueService.indexMessage(message, this.milvusService);
       }
       return 'completed';
     }
@@ -11772,6 +11758,57 @@ export class ConversationService {
         userId,
       } as never,
     });
+  }
+
+  /**
+   * 按"这段原话谈到了谁"补检索锚：用已建档的家人名字/称呼扫一遍原话，命中就为该
+   * 人物写一条原文单元。只做标签、不做身份判定；失败不影响已经入好的原话。
+   */
+  private async indexPersonAnchorsForMessage(
+    message: MessageEntity,
+    searchableText: string,
+    task: MemoryPipelineTaskEntity
+  ): Promise<void> {
+    const identity = this.userIdentityMemoryService;
+    if (!identity?.listRelevantKnownPeople || !searchableText?.trim()) return;
+    try {
+      const people =
+        (await identity.listRelevantKnownPeople({
+          userId: message.userId,
+          query: searchableText,
+          limit: 8,
+        })) || [];
+      for (const person of people) {
+        const personId = String(person.id || '').replace(/^person:/, '');
+        if (!MongoObjectId.isValid(personId)) continue;
+        await this.milvusService.indexConversationMessage({
+          messageId: this.stringifyObjectId(message.id),
+          memoryId: createHash('sha256')
+            .update(
+              `${this.stringifyObjectId(message.id)}:${personId}:raw_episode`
+            )
+            .digest('hex'),
+          sourceMessageId: this.stringifyObjectId(message.id),
+          userId: this.stringifyObjectId(message.userId),
+          conversationId: this.stringifyObjectId(message.conversationId),
+          agentId: this.stringifyObjectId(message.agentId),
+          role: message.role,
+          type: message.type,
+          searchableText,
+          createdAt: message.createdAt,
+          updatedAt: message.updatedAt,
+          personId,
+          memoryKind: 'raw_episode',
+          sourceHash: task.sourceHash,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] person anchor indexing skipped, messageId=%s, reason=%s',
+        this.stringifyObjectId(message.id),
+        this.describeReplyError(error)
+      );
+    }
   }
 
   private async findAgentById(

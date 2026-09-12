@@ -16,7 +16,9 @@ import { MongoRepository } from 'typeorm';
 
 export const MEMORY_PIPELINE_QUEUE = 'memory-pipeline';
 export const MEMORY_PIPELINE_RECONCILE_JOB_ID = 'memory-pipeline-reconcile-v1';
-export const MEMORY_PIPELINE_RECONCILE_INTERVAL_MS = 60_000;
+// 协调任务现在只负责"把到期任务重新入队"（不自己执行），成本与积压量几乎无关，
+// 因此从每分钟放宽到每 5 分钟：既不再造成堆叠，也省掉每分钟一次的全表扫描。
+export const MEMORY_PIPELINE_RECONCILE_INTERVAL_MS = 300_000;
 export const MEMORY_PIPELINE_VERSION = 'memory_pipeline_20260905_v1';
 export const MEMORY_PIPELINE_BATCH_FLUSH_JOB_PREFIX = 'memory-flush';
 
