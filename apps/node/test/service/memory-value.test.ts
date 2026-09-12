@@ -573,6 +573,37 @@ describe('memory value contract', () => {
     );
     expect(accepted).toHaveLength(1);
   });
+  it('requires a naming cue before storing a formal name', () => {
+    // 只是被提到（“名扬开始挣钱了”），不算介绍姓名。
+    const mentioned: MemoryValueInput = {
+      ...input,
+      subjects: [...input.subjects, { ref: 'relative:9', label: '名扬' }],
+      messages: [{ id: 'm1', role: 'user', content: '名扬现在也开始挣钱了' }],
+    };
+    const bare = {
+      ...decision(),
+      subjectRef: 'relative:9',
+      type: 'identity',
+      key: 'identity.real_name',
+      value: '名扬正式姓名是名扬',
+      identity: { realName: '名扬' },
+      evidence: [{ messageId: 'm1', quote: '名扬现在也开始挣钱了' }],
+    };
+    expect(() => parse(bare as any, mentioned)).toThrow('NAMING_CUE');
+    // 被明确介绍（“他叫名扬”）时才写入。
+    const introduced: MemoryValueInput = {
+      ...input,
+      messages: [{ id: 'm1', role: 'user', content: '他叫名扬' }],
+    };
+    const named = {
+      ...bare,
+      subjectRef: 'user:1',
+      key: 'user.identity.real_name',
+      value: '该人名叫名扬',
+      evidence: [{ messageId: 'm1', quote: '他叫名扬' }],
+    };
+    expect(parse(named as any, introduced)).toHaveLength(1);
+  });
   it('drops momentary activity states', () => {
     for (const value of [
       '用户当前正在休息',

@@ -45,6 +45,8 @@ import {
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
   NON_PERSON_FAMILY_LABEL,
+  KINSHIP_VOCABULARY,
+  normalizeRelationKey,
 } from './memory-value';
 
 interface MemoryValueAudit {
@@ -449,15 +451,30 @@ export class MemoryValueService {
     const entries: string[] = [];
     const evidence: Array<{ messageId: string; quote: string }> = [];
     const seen = new Set<string>();
+    const seenRelations = new Set<string>();
     for (const person of mentioned || []) {
       const label = typeof person?.label === 'string' ? person.label.trim() : '';
       if (!label || label.length > 24 || seen.has(label)) continue;
       // “家里/家人/大家”说的是住处或一群人，不是某位亲属；把它们当家人
       // 会让总览出现“家庭成员：家里（用户当前住所）”这种自相矛盾的条目。
       if (NON_PERSON_FAMILY_LABEL.test(label)) continue;
-      seen.add(label);
+      // 只有称呼或关系里含亲属词才算家人：挡住把动漫角色、只有名字的熟人
+      // （“名扬”“程小时”“陆光”）写进家人总览。
       const relation =
         typeof person?.relation === 'string' ? person.relation.trim() : '';
+      if (
+        !KINSHIP_VOCABULARY.test(label) &&
+        !KINSHIP_VOCABULARY.test(relation)
+      )
+        continue;
+      seen.add(label);
+      // 一个人只登记一次：模型常把同一位亲人写成“丈夫/鹏鹏/唐鹏”三种称呼，
+      // 全列进去会让总览出现“配偶（丈夫/鹏鹏）、丈夫（配偶）、唐鹏（配偶）”。
+      const relationKey = normalizeRelationKey(relation || label);
+      if (relationKey) {
+        if (seenRelations.has(relationKey)) continue;
+        seenRelations.add(relationKey);
+      }
       entries.push(relation ? `${label}（${relation}）` : label);
       if (Array.isArray(person?.evidence)) {
         // 证据必须真的提到这个人：不能拿“你喜欢抽烟”去支撑一条“家人结构”。
@@ -1065,14 +1082,14 @@ export class MemoryValueService {
       throw new Error('MEMORY_VALUE_ADD_CONFLICT');
     }
     // 跨消息去重：同一人物、同一类型的近义记录合并到已有记录，
-    // 避免病痛/情绪在多次对话中被拆成多条近义碎片。
-    // 仅处理普通记忆类，避免影响身份/关系/日期投影。
+    // 避免病痛/情绪/关系在多次对话中被拆成多条近义碎片。
+    // 身份与日期投影仍单独处理（它们有各自的唯一键与投影路径）。
     if (
       !d.targetId &&
       !current &&
       !d.date &&
       !d.identity &&
-      !['identity', 'relationship'].includes(d.type)
+      d.type !== 'identity'
     ) {
       const similar = await this.findSimilarExistingFact(
         message.userId,

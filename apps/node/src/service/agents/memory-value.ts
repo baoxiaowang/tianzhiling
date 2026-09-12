@@ -244,6 +244,14 @@ export function isContextOnlyNamespace(key: string): boolean {
 // 不是某位亲属的“家人”标签：说的是住处或一群人，不该出现在家人总览里。
 export const NON_PERSON_FAMILY_LABEL =
   /^(?:家里|家人|家里其他|全家人?|大家|他们|她们|我们|自己|其他人|亲属|亲戚|家里人)$/;
+// 姓名必须是被“介绍”出来的措辞，才能当作正式姓名入库。
+export const NAMING_CUE_PATTERN =
+  /(?:名叫|名字叫|名字是|姓名|全名|叫[做什]?|名叫|小名|大名|称呼为|自称)/;
+
+// 亲属词汇：只有称呼或关系里出现这些词，才算“家人”。用来挡住把动漫角色、
+// 只有名字的熟人（“名扬”“程小时”“陆光”）写进家人总览。
+export const KINSHIP_VOCABULARY =
+  /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|祖父|祖母|外祖父|外祖母|公公|婆婆|舅舅|舅父|舅妈|叔叔|伯伯|姑姑|姑妈|姨妈|姨父|婶|嫂子|嫂嫂|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|孙子|孙儿|孙女|外孙|外孙女|丈夫|妻子|老公|老婆|配偶|太太|儿媳|女婿|侄子|侄女|外甥|外甥女|堂|表|亲人|家属)/;
 
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
@@ -844,6 +852,24 @@ export function parseMemoryValueOutput(
         )
       )
         throw new Error('MEMORY_VALUE_IDENTITY_EVIDENCE');
+    }
+    // 姓名必须是被“介绍”出来的，不能从一次普通提及里推断：否则会写出
+    // “名扬正式姓名是名扬”这种零信息、却可断言的事实。
+    // 只看用户原话（证据），不看模型自己写的 value——value 里本来就会带“姓名”字样。
+    // 例外：用户本人用整个消息报出自己的姓名（回答“你叫什么”），这本身就是介绍。
+    if (d.identity?.realName) {
+      const quotes = (d.evidence || []).map(e => e.quote || '').join('；');
+      const selfIntroduction =
+        d.subjectRef.startsWith('user:') &&
+        (d.evidence || []).some(e => {
+          const source = input.messages.find(m => m.id === e.messageId);
+          return (
+            source?.role === 'user' &&
+            (source.content || '').trim() === (e.quote || '').trim()
+          );
+        });
+      if (!NAMING_CUE_PATTERN.test(quotes) && !selfIntroduction)
+        throw new Error('MEMORY_VALUE_IDENTITY_NAMING_CUE');
     }
     if (
       d.subjectRef.startsWith('user:') &&
