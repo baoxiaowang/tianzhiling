@@ -252,7 +252,7 @@ export class MemoryValueService {
       temperature: 0,
       topP: 0.1,
       reasoningSplit: false,
-      maxTokens: isBatch ? 4000 : 2400,
+      maxTokens: isBatch ? 2500 : 1600,
       systemPrompt:
         (input.sourceFactIds?.length
           ? '本轮任务是核对sourceFactIds指定的旧记录是否忠实于当前这条用户原话，不是发现新的聊天记忆。保留正确条目，纠正错误的主体、类型或含义，或撤销无依据的旧条目；仅在修复原条目确有需要时另存原文真实内容。历史仅供理解本条原话，不提取历史中的其他话题。\n'
@@ -905,7 +905,24 @@ export class MemoryValueService {
         continue;
       const message = this.resolveDecisionMessage(d, messages);
       if (!message) continue;
-      const changed = await this.apply(message, d, i, audit);
+      // 单条失败只丢这一条，绝不作废整批。同批内先后改同一条记录会触发
+      // MEMORY_VALUE_STALE_VERSION；整批抛出会让回放退化成“每条消息各调一次
+      // 模型”，一次批量变成十次调用（实测每次 37–55 秒），代价是十倍。
+      let changed = false;
+      try {
+        changed = await this.apply(message, d, i, audit);
+      } catch (error) {
+        audit.rejected = [...new Set([...(audit.rejected || []), i])];
+        if (process.env.MEMORY_MODEL_DEBUG === '1') {
+          // eslint-disable-next-line no-console
+          console.log(
+            `MEMORY_DECISION_SKIPPED key=${d.key} reason=${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        continue;
+      }
       if (changed) {
         count++;
         if (d.subjectRef.startsWith('agent:') && d.retention !== 'session')

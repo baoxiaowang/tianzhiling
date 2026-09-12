@@ -434,6 +434,9 @@ class Rebuild {
       if (!entries.length) break;
 
       const usable = entries.filter(entry => entry.text);
+      console.log(
+        `REBUILD_BATCH begin messages=${entries.length} usable=${usable.length}`
+      );
       if (usable.length > 1) {
         try {
           await memory.processBatch(
@@ -443,6 +446,12 @@ class Rebuild {
           );
         } catch (error) {
           // 一条坏消息不该拖垮整批：退化为逐条，与线上失败回退一致。
+          // 批量回退代价很大（一次批量变成 N 次单条调用），所以记一行日志便于统计。
+          console.log(
+            `REBUILD_BATCH_FALLBACK size=${usable.length} reason=${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
           for (const entry of usable)
             await memory.process(
               hydrate(entry.raw),
@@ -1026,10 +1035,21 @@ async function main() {
         model.openAIConfig.model !== 'qwen-plus'
       )
         throw new Error('REBUILD_UNAUTHORIZED_MODEL_DESTINATION');
+      let callSeq = 0;
       const generate = model.generateText.bind(model);
       model.generateText = async options => {
         await job.waitTurn();
+        const label = options.memoryReview
+          ? 'review'
+          : `extract${options.maxTokens || 0}`;
+        const seq = (callSeq += 1);
+        const t0 = Date.now();
         const out = await generate(options);
+        console.log(
+          `REBUILD_CALL seq=${seq} kind=${label} ms=${Date.now() - t0} tokens=${
+            out.response?.usage?.total_tokens || 0
+          }`
+        );
         await job.runs.updateOne(
           { _id: runId },
           {

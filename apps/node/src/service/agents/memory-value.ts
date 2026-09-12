@@ -423,6 +423,7 @@ export const MEMORY_VALUE_PROMPT = [
   '去重合并：同一主题的多条内容应合并为一条（尤其病痛、情绪、思念）。不要为同一件事创建多个近义key；已有记录能表达同一含义时用merge/noop，而不是再add一条近义记录。',
   '完整覆盖：一条消息可能包含多个互相独立的稳定事实（例如“34年前做过手术、今年5月复发、刚做了病检”是三个事实），必须分别成条，不得只保留其中一条；用户提到的亲属（在世或已故）都要作为独立对象登记，不要只记其中一位。',
   '代际口径：用户是对着亲人说话的，用户说的“你外孙/你孙女”指的是用户自己的孩子，“你女婿/你儿媳”指的是用户的丈夫/妻子。因此以用户为主体记录时要写成“孩子/儿子/女儿”“丈夫/妻子”，不要照抄“外孙/女婿”。',
+  '输出从简：value 用一句短陈述（不超过 40 字），reason 不超过 20 字，evidence 只给 1 条最短且足以支撑的原话片段。不要复述整段原文，不要解释推理过程，不要写“可推定”“表明”之类的话。写得越长越慢，而且不会更准确。',
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
   '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
   '并列成分逐个记：一句话里的并列人物、并列时间、并列病因都要分别成条，不能只留最显眼的那半句。例如“我和强还有嫂子搬完了”含三个人；“嗲嗲都30几年了，婆婆也快30年了”含两位已故祖辈和两个时长；“这也是上班坐太久没运动的原因”含医生给出的病因，不能只记“久坐”而丢掉病因。',
@@ -697,12 +698,12 @@ export function parseMemoryValueOutput(
     ? input.currentMessageIds
     : [input.currentMessageId];
   const maxDecisions = currentMessageIds.length > 1 ? 24 : 8;
-  if (
-    !parsed ||
-    !Array.isArray(parsed.decisions) ||
-    parsed.decisions.length > maxDecisions
-  )
+  if (!parsed || !Array.isArray(parsed.decisions))
     throw new Error('MEMORY_VALUE_SCHEMA');
+  // 超出上限时截断而不是整批作废：整批作废会让回放退化成“每条消息各调一次”，
+  // 一次批量变成 5 次单条调用（实测每次 37 秒），代价是 5 倍。
+  if (parsed.decisions.length > maxDecisions)
+    parsed.decisions = parsed.decisions.slice(0, maxDecisions);
   const subjects = new Set(input.subjects.map(s => s.ref));
   const messages = new Map(
     input.messages.filter(m => m.role === 'user').map(m => [m.id, m.content])

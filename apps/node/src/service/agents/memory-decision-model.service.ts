@@ -83,6 +83,10 @@ export class MemoryDecisionModelService {
       attribution.chatCompletions++;
       attribution.providerAttempts++;
     }
+    const startedAt = Date.now();
+    const label = request.memoryReview
+      ? 'review'
+      : `${request.maxTokens || 0}`;
     const response = await this.client.chat.completions.create({
       messages: [
         {
@@ -98,6 +102,15 @@ export class MemoryDecisionModelService {
       ...({ thinking: { type: 'disabled' } } as object),
       response_format: { type: 'json_object' },
     });
+    if (process.env.MEMORY_MODEL_DEBUG === '1') {
+      // 评测期定位耗时用：按调用类型打印耗时与 token，便于统计时间去向。
+      // eslint-disable-next-line no-console
+      console.log(
+        `MEMORY_MODEL_CALL kind=${label} ms=${Date.now() - startedAt} tokens=${
+          response.usage?.total_tokens || 0
+        } promptChars=${(request.prompt || '').length}`
+      );
+    }
     return {
       content: response.choices?.[0]?.message?.content?.trim() || '',
       reasoning: [],
