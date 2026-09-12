@@ -541,6 +541,39 @@ describe('MemoryValueService.processBatch', () => {
     expect(motherKeys[0]).toBe('母亲');
   });
 
+  it('links the agent-backed relative into the person roster', async () => {
+    const msgId1 = '665000000000000000000401';
+    // agent 的 iCallAgent 是"爸爸"，用户消息里也提到爸爸：这是同一个人。
+    const llmResponse = JSON.stringify({
+      newPeople: [],
+      mentionedPeople: [{ label: '爸爸', relation: '父亲', evidence: [] }],
+      decisions: [],
+    });
+    const { service, agent, userId: uid } = setupBatchService(llmResponse);
+    const upsert = jest.fn(async (_options: any) => ({}));
+    service.userIdentityMemoryService = {
+      recordApprovedUserIdentity: jest.fn(),
+      upsertKnownPersonDeclaration: upsert,
+    };
+    const msg1 = new MessageEntity();
+    Object.assign(msg1, {
+      id: new MongoObjectId(msgId1),
+      userId: uid,
+      agentId: agent.id,
+      conversationId: new MongoObjectId('665000000000000000000003'),
+      content: '爸爸我好想你',
+      createdAt: new Date('2026-09-08T00:00:00Z'),
+    });
+
+    await service.processBatch([msg1], ['爸爸我好想你'], agent);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const declaration = (upsert.mock.calls[0][0] as any).declaration;
+    // 人物实体必须存在，并挂到对应 agent 上，避免同一个人两副面孔。
+    expect(declaration.relationToUser).toBe('父亲');
+    expect(String(declaration.linkedAgentId)).toBe(String(agent.id));
+  });
+
   it('throws when LLM is disabled so caller can fall back', async () => {
     const { service, agent, userId: uid } = setupBatchService('{}');
     service.openAIService.isEnabled = jest.fn(() => false);

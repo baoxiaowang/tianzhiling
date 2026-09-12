@@ -509,7 +509,17 @@ export class MemoryValueService {
               (label && key === normalizeRelationKey(label))
           )
       );
-      if (matchedSubject?.ref?.startsWith('agent:')) continue;
+      // 正在对话的那位亲人本身就是 agent 主体。这类人的属性会记在 agent 名下，
+      // 但用户的人物表里同样必须有他——否则"爸爸是谁、何时不在"永远检索不到，
+      // 而且同一个人会以 agent / relative 两副面孔并存。这里把人物实体挂到
+      // 对应 agent 上（linkedAgentId），一个人一份身份。
+      const agentRef = matchedSubject?.ref?.startsWith('agent:')
+        ? matchedSubject.ref.slice(6)
+        : '';
+      const linkedAgentId =
+        agentRef && MongoObjectId.isValid(agentRef)
+          ? new MongoObjectId(agentRef)
+          : undefined;
       const relationToUser = relation || label;
       // 身份键只按关系归并：同一个人的“妈妈/妈/母亲”“小孙子/毛璟琨”必须落到
       // 同一条记录上，否则用户每换一个叫法就会多出一个人，事实被拆散。
@@ -525,6 +535,7 @@ export class MemoryValueService {
             identityKey,
             aliases: [label],
             relationToUser,
+            ...(linkedAgentId ? { linkedAgentId } : {}),
           },
         });
       } catch {
