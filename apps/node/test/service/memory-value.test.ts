@@ -719,8 +719,19 @@ describe('memory value contract', () => {
     expect(hit).not.toBeNull();
     expect(hit!.year).toBe(2026);
     expect(hit!.quote).toContain('226');
-    // “相处了七八年”不是去世时间，不能被采纳。
+    // “相处了七八年”不是去世时间，不能被采纳（没有离开语义）。
     expect(computeDepartureDate(['我们相处了七八年'], ref)).toBeNull();
+    // 关键回归：整条长消息里“前两天梦见你……离开我们了”不能把“两天”当成去世时长。
+    expect(
+      computeDepartureDate(
+        ['我前两天梦见你了 梦见你来看我了 你还在 你就永远的离开我们了'],
+        ref
+      )
+    ).toBeNull();
+    // 确实说“离开我快一年了”时才采纳。
+    const elapsed = computeDepartureDate(['你离开我都快一年了'], ref);
+    expect(elapsed).not.toBeNull();
+    expect(elapsed!.year).toBe(2025);
     // 没有时长就算不出，返回 null（保留宽泛记录，不伪造精确度）。
     expect(computeDepartureDate(['妈妈你还好吗'], ref)).toBeNull();
   });

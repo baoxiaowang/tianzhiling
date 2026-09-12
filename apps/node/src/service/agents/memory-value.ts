@@ -384,27 +384,53 @@ export function computeDateFromDuration(
   return null;
 }
 
-// 离开类用词：只有和时长出现在同一句里，才说明这个时长讲的是“走了多久”，
-// 而不是“相处了多久”“生病多久”。
+// 离开类用词：只有和时长出现在**同一个分句**里，才说明这个时长讲的是“走了多久”。
 const DEPARTURE_CUE_PATTERN = /(走了|去世|离世|不在了|下葬|过世|离开我|离开我们)/;
+// “已经过去了多久”的时长：必须带“了”，否则“前两天”“这几天”会被误当成时长。
+const ELAPSED_DURATION_PATTERN =
+  /(?:已经|都|整整|快|差不多|就)?\s*(\d+|[一二三四五六七八九十两]{1,4})\s*(天|年|个?月)\s*了/;
 
 /**
- * 从用户原话里找出“离开 + 时长”的句子并换算成确切日期。
- * 只在同一句同时出现离开语义与时长时才采纳，避免把“我们相处七八年”
- * 误当成去世时间。算不出返回 null，此时保持宽泛记录，不伪造精确度。
+ * 从用户原话里找出“离开 + 时长”并换算成确切日期。
+ *
+ * 正确性优先：只在**离开语词附近的一个分句窗口内**找时长，且时长必须是
+ * “……了”这种已过去的跨度。实测踩过的坑：整条长消息被当成一个句子，于是
+ * “前两天梦见你……离开我们了”里的“两天”被算成去世时长，得出了一个错误的
+ * 确切日期——比不记更糟。算不出就返回 null，保留宽泛记录。
  */
 export function computeDepartureDate(
   texts: Array<string | undefined>,
   referenceAt: string
 ): { year: number; month: number; day: number; expression: string; quote: string } | null {
-  const sentences = texts
-    .flatMap(text => (text || '').split(/[\n。！？；]/))
-    .map(s => s.trim())
-    .filter(Boolean);
-  for (const sentence of sentences) {
-    if (!DEPARTURE_CUE_PATTERN.test(sentence)) continue;
-    const computed = computeDateFromDuration([sentence], referenceAt);
-    if (computed) return { ...computed, quote: sentence };
+  const ref = new Date(referenceAt);
+  if (!Number.isFinite(ref.getTime())) return null;
+  for (const text of texts) {
+    const content = text || '';
+    const cues = Array.from(content.matchAll(new RegExp(DEPARTURE_CUE_PATTERN, 'g')));
+    for (const cue of cues) {
+      const at = cue.index ?? 0;
+      // 只在该分句附近找时长：向前 12 字、向后 24 字，并在标点处截断。
+      const window = content.slice(Math.max(0, at - 12), at + 24);
+      const clause = window.split(/[。！？；，,\n]/).find(part =>
+        DEPARTURE_CUE_PATTERN.test(part) && ELAPSED_DURATION_PATTERN.test(part)
+      );
+      if (!clause) continue;
+      const match = ELAPSED_DURATION_PATTERN.exec(clause);
+      if (!match) continue;
+      const amount = chineseNumberToArabic(match[1]);
+      if (amount === null || amount <= 0) continue;
+      const date = new Date(ref.getTime());
+      if (match[2] === '天') date.setDate(date.getDate() - amount);
+      else if (match[2] === '年') date.setFullYear(date.getFullYear() - amount);
+      else date.setMonth(date.getMonth() - amount);
+      return {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1,
+        day: date.getDate(),
+        expression: match[0].trim(),
+        quote: clause.trim(),
+      };
+    }
   }
   return null;
 }
