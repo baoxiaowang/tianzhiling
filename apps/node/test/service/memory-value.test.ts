@@ -295,6 +295,12 @@ describe('memory value contract', () => {
       parseMemoryValueOutput(JSON.stringify({ decisions: [invalid] }), input)
     ).toThrow();
   });
+  it('treats a death status as assertable even though status.* is not a whitelisted prefix', () => {
+    expect(isContextOnlyNamespace('status.deceased')).toBe(false);
+    expect(isContextOnlyNamespace('status.deceased_since')).toBe(false);
+    // 前缀太宽，不能整段放开：status 下的其他键仍按原规则。
+    expect(isContextOnlyNamespace('status.mood')).toBe(true);
+  });
   it('keeps a stable fact durable even when the model writes session', () => {
     const withRelative: MemoryValueInput = {
       ...input,
