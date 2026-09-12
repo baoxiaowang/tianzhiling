@@ -711,6 +711,12 @@ describe('memory value contract', () => {
       'family.child_high_school_grade_1',
       'time_since_passing',
       'preference.not_disclosing_marital_strain_to_family',
+      // 稳定的人生事实不能被降级成“不可断言”。
+      'profile_source.life_experience',
+      'work.guangdong_employment',
+      'personal_history.childhood_care_by_grandmother',
+      'sibling.younger_sister',
+      'daily_life.food_access.local_market',
     ]) {
       expect(isContextOnlyNamespace(key)).toBe(false);
     }
