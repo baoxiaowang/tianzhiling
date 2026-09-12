@@ -202,6 +202,40 @@ class Rebuild {
     Object.assign(this, { source, stage, backup, runId, options });
     this.accounts = stage.collection('accounts');
     this.runs = stage.collection('runs');
+    // 第二层（原文检索）的锚：线上写向量库，本地评测没有向量库，就把"本该入库的
+    // 原话条目"记到镜像库里，用来核对"每句原话有没有被留下、有没有带人物标签"。
+    this.anchorUnits = stage.collection('eval_anchor_unit');
+  }
+
+  /**
+   * 本地替代向量库的记录器：接口与 MilvusService.indexConversationMessage 一致。
+   * 只写本地镜像库，不写生产、不接触网络。
+   */
+  anchorRecorder() {
+    const collection = this.anchorUnits;
+    return {
+      indexConversationMessage: async options => {
+        const memoryId = options.memoryId || options.messageId;
+        await collection.updateOne(
+          { _id: memoryId },
+          {
+            $set: {
+              sourceMessageId: String(
+                options.sourceMessageId || options.messageId
+              ),
+              userId: String(options.userId || ''),
+              personId: options.personId || '',
+              memoryKind: options.memoryKind || 'raw_episode',
+              searchableText: String(options.searchableText || '').slice(0, 2000),
+              role: options.role || '',
+              createdAt: options.createdAt || null,
+            },
+          },
+          { upsert: true }
+        );
+        return true;
+      },
+    };
   }
   async init() {
     for (const name of [...tables, 'agent']) {
@@ -442,7 +476,8 @@ class Rebuild {
           await memory.processBatch(
             usable.map(entry => hydrate(entry.raw)),
             usable.map(entry => entry.text),
-            batchTarget
+            batchTarget,
+            this.anchorRecorder()
           );
         } catch (error) {
           // 一条坏消息不该拖垮整批：退化为逐条，与线上失败回退一致。
