@@ -12,6 +12,9 @@ const authSource = process.env.NODE_MONGO_AUTH_SOURCE || 'admin';
 const DAYS = Number(process.env.CANDIDATE_DAYS || 30);
 // 默认按回放口径统计全部历史（回放只受 createdAt < until 限制）。
 const FULL_HISTORY = process.env.CANDIDATE_FULL_HISTORY !== '0';
+// 但回放窗口是最近 activeDays(默认30) 天：最后发言早于窗口的用户会被计划成
+// accounts:0，整轮跑出 0 条记忆（曾因此白白跑掉 6 个用户）。故必须要求近期活跃。
+const MAX_AGE_DAYS = Number(process.env.CANDIDATE_MAX_AGE_DAYS || 30);
 const MIN = Number(process.env.CANDIDATE_MIN || 25);
 const MAX = Number(process.env.CANDIDATE_MAX || 60);
 const uri = `mongodb://${encodeURIComponent(username)}:${encodeURIComponent(
@@ -43,7 +46,12 @@ const uri = `mongodb://${encodeURIComponent(username)}:${encodeURIComponent(
           last: { $max: '$createdAt' },
         },
       },
-      { $match: { messages: { $gte: MIN, $lte: MAX } } },
+      {
+        $match: {
+          messages: { $gte: MIN, $lte: MAX },
+          last: { $gte: new Date(Date.now() - MAX_AGE_DAYS * 86400000) },
+        },
+      },
       { $sort: { messages: -1 } },
       { $limit: 40 },
     ])
