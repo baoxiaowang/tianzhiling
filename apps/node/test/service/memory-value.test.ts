@@ -15,6 +15,7 @@ import {
   computeDateFromDuration,
   chineseNumberToArabic,
   computeDepartureDate,
+  isEmotionalValue,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -786,6 +787,27 @@ describe('memory value contract', () => {
     // 确切的时长才算得出日期。
     expect(computeDepartureDate(['你走了226天了'], ref)).not.toBeNull();
     expect(computeDepartureDate(['你离开我13年了'], ref)).not.toBeNull();
+  });
+  it('flags emotional content so it is not treated as an assertable fact', () => {
+    // 纯情绪与心理推断在这之前已被守卫丢弃；这里覆盖的是"措辞擦边、
+    // 没被丢弃"的那些，服务端据此把它们降为对话背景。
+    expect(isEmotionalValue('用户非常思念母亲')).toBe(true);
+    expect(isEmotionalValue('用户感到孤独无助')).toBe(true);
+    expect(isEmotionalValue('该说法体现了自我保护')).toBe(true);
+    expect(isEmotionalValue('用户父亲在广东工作')).toBe(false);
+    expect(isEmotionalValue('用户已结婚并育有一儿一女')).toBe(false);
+  });
+  it('rejects a memory that crams several relatives into one entry', () => {
+    expect(
+      () =>
+        parse({
+          ...decision(),
+          value: '用户家里有爸爸、妈妈、哥哥和妹妹',
+        } as any)
+    ).toThrow('AGGREGATE');
+    expect(
+      parse({ ...decision(), value: '用户有一个妹妹' } as any)
+    ).toHaveLength(1);
   });
   it('rejects people the user never mentioned', () => {
     expect(

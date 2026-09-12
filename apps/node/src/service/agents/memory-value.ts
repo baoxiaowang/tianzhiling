@@ -663,6 +663,17 @@ const INFERENCE_MARKER_PATTERN =
 // 用户自己的消息里，说话人只有用户；AI 生成的消息本就不能作证据。
 const SPEECH_ACT_PATTERN =
   /(?:叮嘱|嘱咐|嘱托|告诉|询问|问到|问道|回答|承认|承诺|要求|劝|对.{0,6}说)/;
+/**
+ * 内容是不是情绪/心理。仅靠 key 命名空间判断会被模型绕开（它每次发明一个新前缀，
+ * 实测 28% 的记忆落在情绪桶、其中多条还是 can_assert+durable）。所以再看内容：
+ * 白名单类别的 key 若写的是情绪或心理结论，也要降级为短期背景。
+ */
+export function isEmotionalValue(value: string): boolean {
+  return (
+    PURE_EMOTION_PATTERN.test(value) || INFERENCE_MARKER_PATTERN.test(value)
+  );
+}
+
 // 疑问句：用户是在发问，不是陈述事实（“你在汪星过得好吗”曾被存成一条承诺）。
 const QUESTION_VALUE_PATTERN = /[吗呢？?]$|是不是|有没有|好不好|对不对|行不行/;
 // 亲属称谓同义组：同一组内互相替换不算换人（爸爸=父亲），跨组即为不同的人。
@@ -846,6 +857,17 @@ export function gradeMemoryDecision(
   // 疑问句不是事实：用户问“你在那边过得好吗”不能被存成一条承诺或状态。
   if (QUESTION_VALUE_PATTERN.test(d.value)) {
     throw new Error('MEMORY_VALUE_QUESTION_AS_FACT');
+  }
+  // 拆聚合：一条记忆只回答一个实体一个属性。模型常把整份家谱塞进一条
+  // （实测 16/30 的家人总览一条装 ≥3 位亲属，600 字且无出处），不可检索、
+  // 不可单条修正。系统自己生成的家人总览不走这里，不受影响。
+  const valueKin = new Set(
+    Array.from(d.value.matchAll(new RegExp(SPECIFIC_KINSHIP_PATTERN, 'g'))).map(
+      m => m[0]
+    )
+  );
+  if (valueKin.size >= 3) {
+    throw new Error('MEMORY_VALUE_AGGREGATE');
   }
   // 关系一致性：这位亲属已经有确定关系时，value 不得再给他安一个别的关系
   // （实测同一个人既是“丈夫”又是“儿子”、既是“孩子”又是“小外孙”）。

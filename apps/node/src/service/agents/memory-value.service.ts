@@ -49,6 +49,7 @@ import {
   findDepartureDates,
   kinshipGroupsIn,
   KINSHIP_GROUP_OF,
+  isEmotionalValue,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -1318,10 +1319,14 @@ export class MemoryValueService {
           : AgentProfileFactConfidence.extracted,
       priority: d.salience,
       polarity: AgentProfileFactPolarity.positive,
+      // 情绪不得固化：类别不在白名单，或写的是情绪/心理内容，都只做对话背景。
+      // 反转默认很重要——模型每次发明新 key 前缀就能绕过名单（实测 28% 的记忆
+      // 落在情绪桶、其中多条仍被标为可断言+长期）。
       assertionPolicy:
         pending ||
         ['wish', 'plan'].includes(d.timeKind) ||
-        isContextOnlyNamespace(d.key)
+        isContextOnlyNamespace(d.key) ||
+        isEmotionalValue(d.value)
           ? AgentProfileFactAssertionPolicy.contextOnly
           : AgentProfileFactAssertionPolicy.canAssert,
       sourceMessageId: message.id,
