@@ -595,6 +595,37 @@ describe('memory value contract', () => {
       parse({ ...decision(), value: '奶奶身体挺好' } as any)
     ).toHaveLength(1);
   });
+  it('gives one person the same id across different messages', () => {
+    const message = { id: 'm1', role: 'user', content: '小孙子快四岁了' };
+    const first: MemoryValueInput = { ...input, messages: [message] };
+    const second: MemoryValueInput = {
+      ...input,
+      currentMessageId: 'm2',
+      messages: [{ id: 'm2', role: 'user', content: '小孙子很调皮' }],
+    };
+    const person = {
+      ref: 'new:grandson',
+      label: '小孙子',
+      relationToUser: '孙子',
+      evidence: [{ messageId: 'm1', quote: '小孙子快四岁了' }],
+    };
+    const a = resolveNewPeople([{ ...person }], first);
+    const b = resolveNewPeople(
+      [
+        {
+          ref: 'new:grandson_again',
+          label: '小孙子',
+          relationToUser: '孙子',
+          evidence: [{ messageId: 'm2', quote: '小孙子很调皮' }],
+        },
+      ],
+      second
+    );
+    expect(a.accepted).toHaveLength(1);
+    expect(b.accepted).toHaveLength(1);
+    // 同一个人的身份不能因为“在哪条消息里被提到”而改变。
+    expect(a.accepted[0].ref).toBe(b.accepted[0].ref);
+  });
   it('only re-asks for core relatives, not distant ones', () => {
     const decisions = [
       {
