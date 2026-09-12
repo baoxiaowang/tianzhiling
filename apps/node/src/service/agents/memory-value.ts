@@ -454,9 +454,7 @@ export function findDepartureDates(
   const seen = new Set<string>();
   for (const text of texts) {
     const content = text || '';
-    const cues = Array.from(
-      content.matchAll(new RegExp(DEPARTURE_CUE_PATTERN, 'g'))
-    );
+    const cues = matchAllGlobal(content, DEPARTURE_CUE_PATTERN);
     for (const cue of cues) {
       const at = cue.index ?? 0;
       const window = content.slice(Math.max(0, at - 12), at + 24);
@@ -755,10 +753,33 @@ export function relativeRefFor(userRef: string, relation: string): string {
     .slice(0, 24)}`;
 }
 
+/**
+ * 逐次匹配的全局正则匹配（等价于 String.prototype.matchAll，ES2020 才有）。
+ * 线上镜像的 lib 只到 es2018，直接用 matchAll 会在构建期报 TS2550；这里用
+ * exec 循环实现，行为一致且不共享 lastIndex。
+ */
+export function matchAllGlobal(
+  text: string,
+  pattern: RegExp
+): RegExpExecArray[] {
+  const flags = pattern.flags.includes('g')
+    ? pattern.flags
+    : `${pattern.flags}g`;
+  const regex = new RegExp(pattern.source, flags);
+  const matches: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null = regex.exec(text);
+  while (match) {
+    matches.push(match);
+    if (match.index === regex.lastIndex) regex.lastIndex += 1;
+    match = regex.exec(text);
+  }
+  return matches;
+}
+
 /** 一段文字里出现的所有亲属称谓所属的同义组。 */
 export function kinshipGroupsIn(text: string): Set<number> {
   const groups = new Set<number>();
-  for (const match of text.matchAll(KINSHIP_TERM_PATTERN)) {
+  for (const match of matchAllGlobal(text, KINSHIP_TERM_PATTERN)) {
     const group = KINSHIP_GROUP_OF.get(match[0]);
     if (group !== undefined) groups.add(group);
   }
@@ -845,16 +866,16 @@ export function gradeMemoryDecision(
   ) {
     throw new Error('MEMORY_VALUE_FILLER_REPLY');
   }
-  const quoted = Array.from(
-    d.value.matchAll(/[‘“「]([^’”」]{1,24})[’”」]/g)
-  ).map(match => match[1]);
+  const quoted = matchAllGlobal(d.value, /[‘“「]([^’”」]{1,24})[’”」]/g).map(
+    match => match[1]
+  );
   for (const term of quoted) {
     if (!userText.includes(term)) {
       throw new Error('MEMORY_VALUE_UNSOURCED_QUOTE');
     }
   }
   if (d.subjectRef.startsWith('agent:')) {
-    for (const match of d.value.matchAll(SPECIFIC_KINSHIP_PATTERN)) {
+    for (const match of matchAllGlobal(d.value, SPECIFIC_KINSHIP_PATTERN)) {
       if (!userText.includes(match[0])) {
         throw new Error('MEMORY_VALUE_UNSOURCED_KINSHIP');
       }
@@ -862,7 +883,8 @@ export function gradeMemoryDecision(
   }
   // 亲属合并：value 里出现“甲（乙）”且甲乙的称谓组完全不相交，等于把两个人
   // 当成同一个人（第 6 轮把在世的“爸爸”并进已故的“嗲嗲婆婆”）。
-  for (const match of `${d.key} ${d.value}`.matchAll(
+  for (const match of matchAllGlobal(
+    `${d.key} ${d.value}`,
     KINSHIP_APPOSITION_PATTERN
   )) {
     const left = kinshipGroupsIn(match[1]);
@@ -889,7 +911,7 @@ export function gradeMemoryDecision(
   // 但它不是情绪词，躲得过上面的情绪护栏，所以单独拦一次。
   if (
     VAGUE_AGGREGATE_STATUS_PATTERN.test(d.value) &&
-    !Array.from(d.value.matchAll(SPECIFIC_KINSHIP_PATTERN)).length
+    !matchAllGlobal(d.value, SPECIFIC_KINSHIP_PATTERN).length
   ) {
     throw new Error('MEMORY_VALUE_VAGUE_STATUS');
   }
@@ -905,9 +927,7 @@ export function gradeMemoryDecision(
   // （实测 16/30 的家人总览一条装 ≥3 位亲属，600 字且无出处），不可检索、
   // 不可单条修正。系统自己生成的家人总览不走这里，不受影响。
   const valueKin = new Set(
-    Array.from(d.value.matchAll(new RegExp(SPECIFIC_KINSHIP_PATTERN, 'g'))).map(
-      m => m[0]
-    )
+    matchAllGlobal(d.value, SPECIFIC_KINSHIP_PATTERN).map(m => m[0])
   );
   if (valueKin.size >= 3) {
     throw new Error('MEMORY_VALUE_AGGREGATE');
