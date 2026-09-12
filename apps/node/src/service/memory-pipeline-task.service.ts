@@ -45,13 +45,13 @@ function readPositiveInt(
 }
 
 function resolveBatchSize(): number {
-  // 实测（同一用户、同一模型，证据见 .task-evidence/memory-eval/history.jsonl）：
-  // 一批消息越多，模型一次给出的稳定事实越少，而且损失因用户而异、可能过半。
-  //   冻结用户: batch=1 → 38 条；batch=5 → 28 条；batch=10 → 24 条
-  //   真实用户A: batch=1 → 27 条、召回 0.846；batch=5 → 13 条、召回 0.538
-  // 记忆完整性优先于省调用，因此在批量抽取的完整性被解决之前，默认逐条处理。
-  // 想重新启用攒批时用 MEMORY_PIPELINE_BATCH_SIZE 显式设置并重新评测。
-  return readPositiveInt(process.env.MEMORY_PIPELINE_BATCH_SIZE, 1, 100);
+  // 固定用 5 条一批（评测与线上一致）。批量越大越快，但模型一次给出的稳定
+  // 事实越少；5 条是当前采用的平衡点，代价已记录在案：
+  //   冻结用户 batch=1 → 38 条；batch=5 → 28 条；batch=10 → 24 条
+  //   真实用户A batch=1 召回 0.846；batch=5 召回 0.538
+  // 改善批量下的抽取完整度是后续优化项；在此之前不再改动批量大小，
+  // 以保持各轮评测可比。
+  return readPositiveInt(process.env.MEMORY_PIPELINE_BATCH_SIZE, 5, 100);
 }
 
 function resolveFlushDelayMs(): number {
