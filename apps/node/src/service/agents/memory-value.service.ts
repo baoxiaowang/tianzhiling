@@ -46,6 +46,7 @@ import {
   uncoveredMentionedPeople,
   uncoveredFactCategories,
   computeDateFromDuration,
+  computeDepartureDate,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -457,6 +458,56 @@ export class MemoryValueService {
       mentionedPeople,
       reviewReasons,
     };
+  }
+
+  /**
+   * 去世日期由系统自己维护：用户说“你走了 226 天了”“离开我二十三年了”时，
+   * 能按消息时间反推出确切日期。模型几乎不主动输出 date，靠它就会整类丢失。
+   * 只在同一句同时出现“离开”语义与时长时才采纳；算不出就不建条，
+   * 保留模型给出的宽泛表达，不伪造精确度。
+   */
+  private buildDepartureDateDecision(
+    input: MemoryValueInput,
+    messages: MessageEntity[]
+  ): MemoryValueDecision | null {
+    const userMessages = input.messages.filter(m => m.role === 'user');
+    const computed = computeDepartureDate(
+      userMessages.map(m => m.content),
+      input.referenceAt
+    );
+    if (!computed) return null;
+    const source = userMessages.find(m => (m.content || '').includes(computed.quote));
+    if (!source) return null;
+    const subjectRef =
+      input.conversationAgentRef ||
+      input.subjects.find(s => s.ref.startsWith('agent:'))?.ref;
+    if (!subjectRef) return null;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return {
+      subjectRef,
+      participants: [],
+      kind: 'temporal',
+      type: 'memory',
+      key: 'status.deceased_since',
+      value: `该亲人约于 ${computed.year}-${pad(computed.month)}-${pad(
+        computed.day
+      )} 去世（用户原话“${computed.quote}”）`,
+      date: {
+        event: 'death',
+        year: computed.year,
+        month: computed.month,
+        day: computed.day,
+        expression: computed.expression,
+      },
+      retention: 'durable',
+      certainty: 'explicit',
+      timeKind: 'historical',
+      operation: 'add',
+      reason: '从用户陈述的时长换算出确切去世日期',
+      evidence: [{ messageId: source.id, quote: computed.quote }],
+      protected: true,
+      salience: 3,
+    } as MemoryValueDecision;
   }
 
   /**
@@ -917,6 +968,10 @@ export class MemoryValueService {
       proposal.mentionedPeople
     );
     if (familyOverview) proposal.decisions.push(familyOverview);
+    // 去世时间也由系统维护：模型几乎不主动输出 date，导致“走了226天了”
+    // 这类能算出确切日期的事实整类丢失。这里直接从用户原话换算。
+    const departureDate = this.buildDepartureDateDecision(input, messages);
+    if (departureDate) proposal.decisions.push(departureDate);
     const audit: MemoryValueAudit = {
       version: MEMORY_VALUE_VERSION,
       status: 'completed',

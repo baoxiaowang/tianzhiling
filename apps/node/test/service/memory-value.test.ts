@@ -14,6 +14,7 @@ import {
   uncoveredFactCategories,
   computeDateFromDuration,
   chineseNumberToArabic,
+  computeDepartureDate,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -711,6 +712,17 @@ describe('memory value contract', () => {
     expect(chineseNumberToArabic('二十三')).toBe(23);
     expect(chineseNumberToArabic('11')).toBe(11);
     expect(chineseNumberToArabic('不知道')).toBeNull();
+  });
+  it('derives the departure date only from a departure sentence', () => {
+    const ref = '2026-09-11T00:00:00.000Z';
+    const hit = computeDepartureDate(['妈妈，你走了226天了'], ref);
+    expect(hit).not.toBeNull();
+    expect(hit!.year).toBe(2026);
+    expect(hit!.quote).toContain('226');
+    // “相处了七八年”不是去世时间，不能被采纳。
+    expect(computeDepartureDate(['我们相处了七八年'], ref)).toBeNull();
+    // 没有时长就算不出，返回 null（保留宽泛记录，不伪造精确度）。
+    expect(computeDepartureDate(['妈妈你还好吗'], ref)).toBeNull();
   });
   it('rejects people the user never mentioned', () => {
     expect(

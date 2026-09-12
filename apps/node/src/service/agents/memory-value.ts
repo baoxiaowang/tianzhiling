@@ -384,6 +384,31 @@ export function computeDateFromDuration(
   return null;
 }
 
+// 离开类用词：只有和时长出现在同一句里，才说明这个时长讲的是“走了多久”，
+// 而不是“相处了多久”“生病多久”。
+const DEPARTURE_CUE_PATTERN = /(走了|去世|离世|不在了|下葬|过世|离开我|离开我们)/;
+
+/**
+ * 从用户原话里找出“离开 + 时长”的句子并换算成确切日期。
+ * 只在同一句同时出现离开语义与时长时才采纳，避免把“我们相处七八年”
+ * 误当成去世时间。算不出返回 null，此时保持宽泛记录，不伪造精确度。
+ */
+export function computeDepartureDate(
+  texts: Array<string | undefined>,
+  referenceAt: string
+): { year: number; month: number; day: number; expression: string; quote: string } | null {
+  const sentences = texts
+    .flatMap(text => (text || '').split(/[\n。！？；]/))
+    .map(s => s.trim())
+    .filter(Boolean);
+  for (const sentence of sentences) {
+    if (!DEPARTURE_CUE_PATTERN.test(sentence)) continue;
+    const computed = computeDateFromDuration([sentence], referenceAt);
+    if (computed) return { ...computed, quote: sentence };
+  }
+  return null;
+}
+
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
 export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
