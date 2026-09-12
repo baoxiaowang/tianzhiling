@@ -16,10 +16,16 @@ LOG_DIR="$ROOT/.task-evidence/memory-eval/logs"
 mkdir -p "$LOG_DIR"
 
 # 编译只做一次，避免多槽位同时写同一份 dist。
-echo "[parallel $NAME] build once"
-"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/entities/tsconfig.json"
-"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/shared/tsconfig.json"
-"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/apps/node/tsconfig.json"
+# SKIP_BUILD=1 时沿用调用方已编译的产物：整轮必须只用一份代码，
+# 否则同一轮里不同批次会用到不同版本的代码，批次之间就不可比了。
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+  echo "[parallel $NAME] build skipped (SKIP_BUILD=1)"
+else
+  echo "[parallel $NAME] build once"
+  "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/entities/tsconfig.json"
+  "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/shared/tsconfig.json"
+  "$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/apps/node/tsconfig.json"
+fi
 
 pids=()
 index=0

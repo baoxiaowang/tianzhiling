@@ -20,6 +20,13 @@ mkdir -p "$LOG_DIR"
 SUMMARY="$LOG_DIR/${ROUND}-round.log"
 
 : >"$SUMMARY"
+# 整轮只编译一次：同一轮的所有批次必须用同一份代码，否则批次之间不可比。
+ROOT="$(cd "$HERE/../../../.." && pwd)"
+echo "=== [$ROUND] build once $(date +%H:%M:%S)" | tee -a "$SUMMARY"
+"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/entities/tsconfig.json"
+"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/packages/shared/tsconfig.json"
+"$ROOT/apps/node/node_modules/.bin/tsc" -p "$ROOT/apps/node/tsconfig.json"
+export SKIP_BUILD=1
 users=("$@")
 batch=0
 for ((i = 0; i < ${#users[@]}; i += 3)); do
