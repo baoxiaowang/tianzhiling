@@ -237,6 +237,7 @@ export class MemoryValueService {
     modelCalls: number;
     modelTokens: number;
     newPeople: NewMemoryPerson[];
+    mentionedPeople: Array<{ label?: unknown; relation?: unknown; evidence?: unknown }>;
     reviewReasons: Array<{ index: number; reason: string }>;
   }> {
     if (!this.openAIService?.isEnabled())
@@ -320,6 +321,7 @@ export class MemoryValueService {
             modelCalls,
             modelTokens,
             newPeople: [],
+            mentionedPeople: [],
             reviewReasons: [],
           };
         }
@@ -429,8 +431,78 @@ export class MemoryValueService {
       modelCalls,
       modelTokens,
       newPeople,
+      mentionedPeople,
       reviewReasons,
     };
+  }
+
+  /**
+   * 家人总览由系统自己维护，不依赖模型是否愿意输出：
+   * 用本批的点名清单生成/合并一条 family.structure，作为“有哪些家人”的总体记录。
+   * 这样既有总体记录，又不必为只被顺带提到的远亲各建一条事实。
+   */
+  private buildFamilyStructureDecision(
+    input: MemoryValueInput,
+    mentioned: Array<{ label?: unknown; relation?: unknown; evidence?: unknown }>
+  ): MemoryValueDecision | null {
+    const entries: string[] = [];
+    const evidence: Array<{ messageId: string; quote: string }> = [];
+    const seen = new Set<string>();
+    for (const person of mentioned || []) {
+      const label = typeof person?.label === 'string' ? person.label.trim() : '';
+      if (!label || label.length > 24 || seen.has(label)) continue;
+      seen.add(label);
+      const relation =
+        typeof person?.relation === 'string' ? person.relation.trim() : '';
+      entries.push(relation ? `${label}（${relation}）` : label);
+      if (Array.isArray(person?.evidence))
+        for (const item of person.evidence as Array<{
+          messageId?: unknown;
+          quote?: unknown;
+        }>) {
+          if (
+            typeof item?.messageId !== 'string' ||
+            typeof item?.quote !== 'string' ||
+            !item.quote.trim()
+          )
+            continue;
+          if (
+            evidence.some(
+              x => x.messageId === item.messageId && x.quote === item.quote
+            )
+          )
+            continue;
+          evidence.push({ messageId: item.messageId, quote: item.quote });
+        }
+    }
+    if (!entries.length || !evidence.length) return null;
+    const subjectRef = input.subjects[0].ref;
+    const existing = input.existing.find(
+      f => f.key === 'family.structure' && f.subjectRef === subjectRef
+    );
+    const previous = (existing?.value || '')
+      .replace(/^用户提到的家人[：:]\s*/, '')
+      .split(/[、；;]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+    const merged = [...new Set([...previous, ...entries])].slice(0, 24);
+    return {
+      subjectRef,
+      participants: [],
+      kind: 'person',
+      type: 'relationship',
+      key: 'family.structure',
+      value: `用户提到的家人：${merged.join('、')}`,
+      retention: 'durable',
+      certainty: 'explicit',
+      timeKind: 'current',
+      operation: existing ? 'merge' : 'add',
+      targetId: existing?.id,
+      reason: '维护家人总览，替代为只被提到的远亲各建一条',
+      evidence,
+      protected: true,
+      salience: 2,
+    } as MemoryValueDecision;
   }
 
   /** 点名清单里没有任何决定承载的家人。 */
@@ -772,6 +844,12 @@ export class MemoryValueService {
       agent
     );
     const proposal = await this.propose(input);
+    // 家人总览由系统维护，不依赖模型输出（三次提示词要求都没落地）。
+    const familyOverview = this.buildFamilyStructureDecision(
+      input,
+      proposal.mentionedPeople
+    );
+    if (familyOverview) proposal.decisions.push(familyOverview);
     const audit: MemoryValueAudit = {
       version: MEMORY_VALUE_VERSION,
       status: 'completed',
