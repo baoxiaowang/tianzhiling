@@ -36,12 +36,36 @@ fi
 
 if [ ! -f "$LEDGER" ]; then
   problems+=("没有 batch-ledger.jsonl")
-elif ! grep -q "\"batch\":\"$BATCH\"" "$LEDGER" 2>/dev/null; then
-  problems+=("台账里没有本批记录")
 else
-  opt=$(grep "\"batch\":\"$BATCH\"" "$LEDGER" | tail -1 \
-    | python3 -c 'import sys,json;print((json.loads(sys.stdin.read()).get("optimization") or "").strip())' 2>/dev/null || echo "")
-  if [ -z "$opt" ]; then
+  # 台账是 JSONL，且不同时期写入的空格风格不一致，不能按字面 grep；统一用 JSON 解析。
+  read -r found opt <<EOF
+$(BATCH="$BATCH" LEDGER="$LEDGER" python3 - <<'PYEOF'
+import json, os
+found = 0
+opt = ""
+path = os.environ["LEDGER"]
+want = os.environ["BATCH"]
+with open(path, encoding="utf-8") as handle:
+    for line in handle:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("batch") != want:
+            continue
+        found += 1
+        value = row.get("optimization") or ""
+        opt = json.dumps(value, ensure_ascii=False) if value else ""
+print(found, "1" if opt.strip() and opt.strip() != '""' else "0")
+PYEOF
+)
+EOF
+  if [ "${found:-0}" -eq 0 ]; then
+    problems+=("台账里没有本批记录")
+  elif [ "${opt:-0}" -eq 0 ]; then
     problems+=("台账里本批的 optimization 为空——本批还没做优化")
   fi
 fi
