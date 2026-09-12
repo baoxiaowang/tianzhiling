@@ -242,14 +242,19 @@ export const ASSERTABLE_NAMESPACES = new Set([
   'religion',
   'ritual',
 ]);
-// 少数键的前缀太宽（status.* 里既有"已去世"也有"当前心情"），不能整段放进
-// 白名单，但键本身是硬事实，必须可断言。实测三位用户的"奶奶/爸爸/妈妈已去世"
-// 全部因为这些前缀被降级成"只作对话背景"——最重要的丧亲事实反而不能当事实用。
-const ASSERTABLE_KEYS = new Set(['status.deceased', 'status.deceased_since']);
+// 亲人去世这件事是必须长期记住的硬事实：它落进"只作对话背景"之后会被连带
+// 加 30 天有效期，一个月后从角色已知的信息里消失，用户得再说一遍；角色自己
+// 说"你已经走了 13 年"也拿不到依据，只能现编日期（实测编出过 2013-09-02）。
+// 但 status.* 前缀太宽（同一个前缀下还有"当前心情"这类确实只该作背景的），
+// 所以按"前缀 + 离世语义"放行，不整段开放。模型写过 status.deceased、
+// status.deceased_since、status.died、status.since_passing 等多种写法。
+const DEATH_STATUS_KEY_PATTERN =
+  /^(?:status|life_status)\.(?:deceased|died|die|dead|death|decease|passed_away|passing|since_passing|deceased_since|deceased_at|death_date|death_time)/;
 // 首段命中白名单即为可断言；首段是 grief_trigger/emotional_state 这类组合词时，
 // 用下划线切出的首词判断，避免把 grief_trigger 误当成可断言类别。
 export function isContextOnlyNamespace(key: string): boolean {
-  if (ASSERTABLE_KEYS.has((key || '').trim().toLowerCase())) return false;
+  const normalized = (key || '').trim().toLowerCase();
+  if (DEATH_STATUS_KEY_PATTERN.test(normalized)) return false;
   const head = key.split('.')[0] || '';
   if (!head) return false;
   if (ASSERTABLE_NAMESPACES.has(head)) return false;

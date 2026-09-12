@@ -296,10 +296,35 @@ describe('memory value contract', () => {
     ).toThrow();
   });
   it('treats a death status as assertable even though status.* is not a whitelisted prefix', () => {
-    expect(isContextOnlyNamespace('status.deceased')).toBe(false);
-    expect(isContextOnlyNamespace('status.deceased_since')).toBe(false);
+    for (const key of [
+      'status.deceased',
+      'status.deceased_since',
+      'status.died',
+      'status.since_passing',
+      'life_status.passed_away',
+    ]) {
+      expect(isContextOnlyNamespace(key)).toBe(false);
+    }
     // 前缀太宽，不能整段放开：status 下的其他键仍按原规则。
     expect(isContextOnlyNamespace('status.mood')).toBe(true);
+  });
+  it('does not give a death fact a 30-day expiry', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        subjectRef: 'user:1',
+        key: 'status.deceased',
+        value: '用户的奶奶已去世',
+        retention: 'context_only' as any,
+        certainty: 'explicit',
+        timeKind: 'stable',
+        validUntil: undefined,
+      } as any,
+      input.referenceAt,
+      '奶奶已经走了'
+    );
+    expect(graded.retention).not.toBe('session');
+    expect(graded.validUntil).toBeUndefined();
   });
   it('keeps a stable fact durable even when the model writes session', () => {
     const withRelative: MemoryValueInput = {
