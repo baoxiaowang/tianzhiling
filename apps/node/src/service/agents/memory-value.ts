@@ -210,6 +210,36 @@ export function isContextOnlyNamespace(key: string): boolean {
   return !ASSERTABLE_NAMESPACES.has(token);
 }
 
+/**
+ * 点名清单里没有任何决定承载的家人。用来触发一次定向补漏：
+ * 模型在长篇倾诉里常只记聊天对象这条主线，把顺带提到的其他家人整句丢掉。
+ */
+export function uncoveredMentionedPeople(
+  mentioned: Array<{ label?: unknown }> | undefined,
+  decisions: Array<{
+    key: string;
+    value: string;
+    participants?: string[];
+  }>
+): string[] {
+  if (!Array.isArray(mentioned)) return [];
+  const seen = new Set<string>();
+  const uncovered: string[] = [];
+  for (const person of mentioned) {
+    const label = typeof person?.label === 'string' ? person.label.trim() : '';
+    if (!label || label.length > 24 || seen.has(label)) continue;
+    seen.add(label);
+    const covered = decisions.some(
+      d =>
+        (d.key || '').includes(label) ||
+        (d.value || '').includes(label) ||
+        (d.participants || []).some(p => String(p).includes(label))
+    );
+    if (!covered) uncovered.push(label);
+  }
+  return uncovered.slice(0, 8);
+}
+
 export function withMemorySpeakers(input: MemoryValueInput): MemoryValueInput {
   const currentUserRef =
     input.currentUserRef ||
@@ -251,7 +281,7 @@ export const MEMORY_VALUE_PROMPT = [
   '用户正式姓名提案还必须提供identity:{realName:"原话中的正式姓名"}；明确的账户通用别名可用identity:{aliases:["原话中的别名"]}。身份字段仅填姓名本身，不填说明句。需要结合问答判断姓名时，由你判断，程序不再用正则重新理解原话；专属亲人的称呼不要写成账户通用别名。',
   '事实拆分以独立用途为准，不把同一事件拆成泛化碎片。不要输出用户未说的长期病史、关系或心理特征。',
   'date仅用于出生、离世、预产期的日期线索，其他事实（包括年龄和普通往事）必须省略date。date:{event:birth|death|expected_birth,year,month,day,expression}。expression必须逐字截取用户证据，不得改写。year/month/day仅填写用户明确说出的日历数字；相对时间不填日历数字，程序负责计算。referenceAt只是消息时间，绝不是事件日期。模糊时间保留模糊性，不自行换算准确日期。',
-  '只输出JSON对象{"newPeople":[],"decisions":[]}，最多6个新人物、8项决定；确实没有任何稳定事实或待确认信息时才返回空数组（先完成上一条的逐条盘点再决定）。',
+  '只输出JSON对象{"newPeople":[],"mentionedPeople":[],"decisions":[]}，最多6个新人物、8项决定；确实没有任何稳定事实或待确认信息时才返回空数组（先完成上一条的逐条盘点再决定）。',
   '每项字段：subjectRef,participants,kind(person|relationship|event|temporal),type(identity|relationship|age|occupation|family|preference|correction|promise|keepsake|grief_trigger|style|memory|taboo),key(稳定短键),value,retention(discard|session|durable|core),certainty(explicit|context_resolved|uncertain),timeKind(current|historical|stable|plan|wish),validUntil(ISO时间或省略),operation(add|merge|replace|conflict|noop|archive),targetId(修改时必填),reason(简短保存或放弃原因),evidence:[{messageId,quote}],protected(布尔),salience(1-3)。',
   '严格遵守字段枚举，不得自造type如health_state/pride/wish；健康可选memory，情感关系可选relationship，愿望可选promise配合timeKind=wish。value与reason使用中文，protected不可遗漏。',
   'value必须是完整中文字符串，包括数字事实也必须写成“离世时18岁”这样的事实句，年龄用kind=person,type=age，不从年龄猜测离世日期。离世多久、生日、日期线索用kind=temporal,type=memory，并提供date，不能归为grief_trigger，也不存在type=death/birth/temporal。',
@@ -273,6 +303,7 @@ export const MEMORY_VALUE_PROMPT = [
   '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
   '并列成分逐个记：一句话里的并列人物、并列时间、并列病因都要分别成条，不能只留最显眼的那半句。例如“我和强还有嫂子搬完了”含三个人；“嗲嗲都30几年了，婆婆也快30年了”含两位已故祖辈和两个时长；“这也是上班坐太久没运动的原因”含医生给出的病因，不能只记“久坐”而丢掉病因。',
   '顺带提到的家人同样要记：用户在长篇倾诉里常顺手带出其他家人和他们的近况（“奶奶挺好的，我经常按电视给她看”“老舅跟妈妈借钱不还”“姥爷几年前也走了”）。这些是稳定的家庭事实，必须各自成条，不能因为主题是思念聊天对象就整句丢掉。判断标准是“用户是否明确说了”，而不是“是否与聊天对象有关”。',
+  '点名清单：输出里必须带 mentionedPeople，列出本批消息中用户提到的**每一位**家人（在世与已故、主要与顺带都算，例如“弟弟”“妈妈”“爷爷的三姐”），每项形如{label:"称呼",evidence:[{messageId,quote}]}。这份清单是自查用的：列进来的人必须在 decisions 里至少有一条关于他的事实（确实没有稳定事实的纯称呼除外）。宁可多列，不可漏列。',
 ].join('\n');
 
 const PURE_EMOTION_PATTERN =

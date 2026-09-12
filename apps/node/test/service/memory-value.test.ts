@@ -9,6 +9,7 @@ import {
   memoryValueSimilarity,
   resolveNewPeople,
   isContextOnlyNamespace,
+  uncoveredMentionedPeople,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -570,6 +571,30 @@ describe('memory value contract', () => {
       source
     );
     expect(accepted).toHaveLength(1);
+  });
+  it('flags mentioned family with no decision so they can be re-asked', () => {
+    const decisions = [
+      {
+        key: 'family.grandmother_granddaughter',
+        value: '用户是奶奶的孙女',
+        participants: [],
+      },
+      { key: 'wedding.attire', value: '婚礼穿秀禾服', participants: [] },
+    ];
+    expect(
+      uncoveredMentionedPeople(
+        [
+          { label: '奶奶' },
+          { label: '弟弟' },
+          { label: '妈妈' },
+          { label: '爷爷的三姐' },
+          { label: '弟弟' },
+        ],
+        decisions
+      )
+    ).toEqual(['弟弟', '妈妈', '爷爷的三姐']);
+    expect(uncoveredMentionedPeople(undefined, decisions)).toEqual([]);
+    expect(uncoveredMentionedPeople([{ label: '' }], decisions)).toEqual([]);
   });
   it('routes feeling-shaped memory namespaces to context-only', () => {
     for (const key of [

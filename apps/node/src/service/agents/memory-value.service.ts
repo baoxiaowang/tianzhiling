@@ -43,6 +43,7 @@ import {
   memoryValueSimilarity,
   resolveNewPeople,
   isContextOnlyNamespace,
+  uncoveredMentionedPeople,
 } from './memory-value';
 
 interface MemoryValueAudit {
@@ -276,6 +277,8 @@ export class MemoryValueService {
       (repair?.priorTokens || 0) + (result.response?.usage?.total_tokens || 0);
     let decisions: MemoryValueDecision[];
     let newPeople: NewMemoryPerson[];
+    // 模型对本批消息里出现过的家人的点名清单（含顺带提到的），用于补漏。
+    let mentionedPeople: Array<{ label?: string; evidence?: unknown }> = [];
     try {
       const raw = JSON.parse(
         result.content
@@ -283,6 +286,9 @@ export class MemoryValueService {
           .replace(/^```(?:json)?\s*/i, '')
           .replace(/\s*```$/, '')
       );
+      mentionedPeople = Array.isArray(raw.mentionedPeople)
+        ? raw.mentionedPeople
+        : [];
       newPeople = raw.newPeople || [];
       if (!Array.isArray(newPeople) || newPeople.length > 6)
         throw new Error('MEMORY_VALUE_NEW_PERSON');
@@ -403,6 +409,19 @@ export class MemoryValueService {
         priorTokens: modelTokens,
       });
     }
+    // 覆盖补漏：模型在长篇倾诉里常只记聊天对象这条主线，把顺带提到的其他家人
+    // （弟弟、妈妈、爷爷的三姐、妹妹不愿嫁人…）整句丢掉。若点名清单里有家人没有
+    // 任何决定承载，就再问一次，只针对这些人补记忆。补漏只增不减，任何失败都当
+    // 没发生，绝不会影响已经通过校验的部分。
+    if (isBatch && mentionedPeople.length) {
+      const uncovered = this.uncoveredMentionedPeople(mentionedPeople, decisions);
+      if (uncovered.length) {
+        const extra = await this.extractUncoveredPeople(input, uncovered);
+        modelCalls += extra.calls;
+        modelTokens += extra.tokens;
+        for (const d of extra.decisions) decisions.push(d);
+      }
+    }
     return {
       decisions,
       approved,
@@ -412,6 +431,62 @@ export class MemoryValueService {
       newPeople,
       reviewReasons,
     };
+  }
+
+  /** 点名清单里没有任何决定承载的家人。 */
+  private uncoveredMentionedPeople(
+    mentioned: Array<{ label?: unknown }>,
+    decisions: MemoryValueDecision[]
+  ): string[] {
+    return uncoveredMentionedPeople(mentioned, decisions);
+  }
+
+  /** 针对被整体漏掉的家人做一次定向补漏，只增不减，失败即返回空。 */
+  private async extractUncoveredPeople(
+    input: MemoryValueInput,
+    uncovered: string[]
+  ): Promise<{
+    decisions: MemoryValueDecision[];
+    calls: number;
+    tokens: number;
+  }> {
+    try {
+      const result = await this.openAIService.generateText({
+        temperature: 0,
+        reasoningSplit: false,
+        maxTokens: 2000,
+        systemPrompt:
+          MEMORY_PRODUCT_CONTEXT +
+          '\n' +
+          MEMORY_VALUE_PROMPT +
+          '\n这是同一批消息的补漏任务：上一次只记了主要人物，把下面这些家人整句丢掉了。只针对这些家人给出记忆决定，不要重复上一次已经记过的内容；他们确实没有稳定事实时才返回空数组。',
+        prompt: JSON.stringify({
+          uncoveredPeople: uncovered,
+          messages: input.messages,
+          subjects: input.subjects,
+          existing: input.existing,
+        }),
+      });
+      const raw = JSON.parse(
+        result.content
+          .trim()
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, '')
+      );
+      const { refs } = resolveNewPeople(raw.newPeople, input);
+      if (Array.isArray(raw.decisions))
+        for (const d of raw.decisions) {
+          if (refs.has(d.subjectRef)) d.subjectRef = refs.get(d.subjectRef)!;
+        }
+      return {
+        decisions: parseMemoryValueOutput(JSON.stringify(raw), input),
+        calls: 1,
+        tokens: result.response?.usage?.total_tokens || 0,
+      };
+    } catch {
+      // 补漏是锦上添花：任何失败都不影响已通过校验的记忆。
+      return { decisions: [], calls: 0, tokens: 0 };
+    }
   }
 
   /**
