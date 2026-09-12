@@ -241,6 +241,25 @@ export const ASSERTABLE_NAMESPACES = new Set([
   'language',
   'religion',
   'ritual',
+  // 以下前缀是实测出现过、并且确实是"用户说过的事"（不是情绪也不是当下状态），
+  // 过去因为不在名单里被存成"短期背景"，现在归入可记录类型。
+  'parenting',
+  'lifestyle',
+  'social_activity',
+  'behavior',
+  'wedding',
+  'food',
+  'appearance',
+  'marital_status',
+  'support',
+  'life_event',
+  'wish',
+  'festival',
+  'celebration',
+  'household',
+  'topic',
+  'conversation',
+  'shared',
 ]);
 // 亲人去世这件事是必须长期记住的硬事实：它落进"只作对话背景"之后会被连带
 // 加 30 天有效期，一个月后从角色已知的信息里消失，用户得再说一遍；角色自己
@@ -744,9 +763,6 @@ export function kinshipGroupsIn(text: string): Set<number> {
 // “甲（乙）”式括注：模型用它把两个称谓并成同一人。两侧同组是解释，跨组就是把两个人合并。
 const KINSHIP_APPOSITION_PATTERN =
   /([\u4e00-\u9fa5]{1,4})[（(]([\u4e00-\u9fa5]{1,4})[）)]/g;
-// 用户明确说出的哀伤触发场景（“听到X我会Y”）属于稳定事实，不做情绪丢弃。
-const DECLARED_TRIGGER_PATTERN =
-  /(?:听到|看到|闻到|路过|每到|一到|一提到|一提).{0,24}(?:会|就).{0,12}(?:难过|痛|想|崩|哭|发抖|心慌)/;
 // 过度医疗化/心理诊断措辞 → 降格为用户自述，避免把原话升级成医学结论。
 const OVERSTATEMENT_REPLACEMENTS: Array<[RegExp, string]> = [
   [/被?诊断为([^。；，,\s]{1,20})/g, '自述$1'],
@@ -859,9 +875,10 @@ export function gradeMemoryDecision(
   ) {
     throw new Error('MEMORY_VALUE_UNSOURCED_DEPARTURE');
   }
-  const declaredTrigger = DECLARED_TRIGGER_PATTERN.test(text);
   const important = IMPORTANT_SITUATION_PATTERN.test(text);
-  if (PURE_EMOTION_PATTERN.test(text) && !declaredTrigger && !important) {
+  // 情绪一律不记。原来给"哀伤触发场景"和"疾病"留了例外：疾病属于用户本人的
+  // 健康情况，继续保留；带时间/场景的哀伤表达按产品口径也不记（不再例外）。
+  if (PURE_EMOTION_PATTERN.test(text) && !important) {
     throw new Error('MEMORY_VALUE_EMOTION_ONLY');
   }
   // 空泛的整体状态（“家里其他人都还好”）没有具体人也没有具体事，属客套；
@@ -923,20 +940,12 @@ export function gradeMemoryDecision(
   if (thirdParty.some(term => !userText.includes(term))) {
     throw new Error('MEMORY_VALUE_UNSOURCED_PERSON');
   }
-  // 情绪/心理类记忆降级为“短期、不可断言”，而不是继续扩充情绪词黑名单：
-  // 真实模型的措辞换得比词表快（“强颜欢笑”“心里难受”“不知所措”都能绕过），
-  // 但一条记忆的类别不会变。降级后这些内容仍留在库里作为对话背景，
-  // 只是不能被当成客观事实引用，因此不会牺牲召回。
-  // 用户明确说出的哀伤触发场景（“听到X我会Y”）是刻意要长期保存的稳定事实，
-  // 不参与降级。
-  if (isContextOnlyNamespace(d.key) && !declaredTrigger) {
-    d.retention = 'session';
-    d.timeKind = 'current';
-    if (!d.validUntil) {
-      const until = Date.parse(referenceAt);
-      if (Number.isFinite(until))
-        d.validUntil = new Date(until + 30 * 86400000).toISOString();
-    }
+  // 产品口径（记忆类型方案）：只记有内容的类型——用户本人的情况、AI 亲人的经历、
+  // 其他家人的关系与出现记录、离世与时间、话题与事件、提到的承诺心愿。
+  // 情绪、当下状态、带场景的哀伤表达一律不记；过去把它们存成"短期背景"的做法
+  // 取消——那既占检索位置，又要靠过期机制清理，还让"背景"变成什么都往里装的桶。
+  if (isContextOnlyNamespace(d.key)) {
+    throw new Error('MEMORY_VALUE_NOT_RECORDED_TYPE');
   }
   for (const [pattern, replacement] of OVERSTATEMENT_REPLACEMENTS) {
     d.value = d.value.replace(pattern, replacement);

@@ -393,7 +393,7 @@ describe('memory value contract', () => {
     const graded = gradeMemoryDecision(
       {
         ...decision(),
-        key: 'current_depression',
+        key: 'health.depression',
         value: '用户被诊断为抑郁症',
       } as any,
       input.referenceAt,
@@ -407,13 +407,13 @@ describe('memory value contract', () => {
       {
         ...decision(),
         subjectRef: 'agent:2',
-        key: 'address_label_for_spouse',
+        key: 'relative.address_label_for_spouse',
         value: '该亲人的称呼记录',
       } as any,
       input.referenceAt,
       ''
     );
-    expect(graded.key).toBe('address_label_for_agent');
+    expect(graded.key).toBe('relative.address_label_for_agent');
   });
   it('drops a decision sourced only by a one-character reply', () => {
     expect(() =>
@@ -471,18 +471,20 @@ describe('memory value contract', () => {
       )
     ).toThrow('MEMORY_VALUE_INFERENCE');
   });
-  it('keeps an explicit grief trigger durable instead of grading it down', () => {
-    const graded = gradeMemoryDecision(
-      {
-        ...decision(),
-        key: 'grief_trigger.scene.hospital',
-        value: '用户听到医院两个字会发抖',
-        retention: 'durable',
-        validUntil: undefined,
-      } as any,
-      input.referenceAt
-    );
-    expect(graded.retention).toBe('durable');
+  it('does not record a scene-bound grief trigger', () => {
+    // 记忆类型方案：带时间/场景的哀伤表达不记（过去是例外保留为长期事实）。
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'grief_trigger.scene.hospital',
+          value: '用户听到医院两个字会发抖',
+          retention: 'durable',
+          validUntil: undefined,
+        } as any,
+        input.referenceAt
+      )
+    ).toThrow('MEMORY_VALUE_NOT_RECORDED_TYPE');
   });
   it('measures near-duplicate values for dedup', () => {
     expect(
@@ -973,7 +975,6 @@ describe('memory value contract', () => {
       'grief_trigger.absence_of_mother_at_home',
       'emotion.response_to_father_s_grief',
       'emotional_state.forced_smile_fatigue',
-      'behavior.emotional_masking',
       'need.unacknowledged_distress',
       'regret.self_blame',
       'social_support.absence_of_check_in',
@@ -1019,21 +1020,20 @@ describe('memory value contract', () => {
     expect(graded.value).not.toContain('外孙');
     expect(graded.value).not.toContain('女婿');
   });
-  it('downgrades feeling-shaped facts to short-lived, non-assertable memory', () => {    const graded = gradeMemoryDecision(
-      {
-        ...decision(),
-        key: 'grief.shock_on_hearing_news',
-        value: '用户接到电话时难以相信',
-        retention: 'durable',
-        timeKind: 'historical',
-      } as any,
-      '2026-09-08T00:00:00.000Z',
-      '接到电话真的不能相信'
-    );
-    expect(graded.retention).toBe('session');
-    expect(graded.timeKind).toBe('current');
-    expect(Date.parse(graded.validUntil!)).toBeGreaterThan(
-      Date.parse('2026-09-08T00:00:00.000Z')
-    );
+  it('does not record feeling-shaped memory at all', () => {
+    // 记忆类型方案：情绪不再"降级为短期背景"，而是根本不记。
+    expect(() =>
+      gradeMemoryDecision(
+        {
+          ...decision(),
+          key: 'grief.shock_on_hearing_news',
+          value: '用户接到电话时难以相信',
+          retention: 'durable',
+          timeKind: 'historical',
+        } as any,
+        '2026-09-08T00:00:00.000Z',
+        '接到电话真的不能相信'
+      )
+    ).toThrow('MEMORY_VALUE_NOT_RECORDED_TYPE');
   });
 });

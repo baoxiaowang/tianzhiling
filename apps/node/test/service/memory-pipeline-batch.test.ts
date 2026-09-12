@@ -532,13 +532,12 @@ describe('MemoryValueService.processBatch', () => {
         ((call[0] as any).declaration.aliases || []).includes('健楠俺爹')
       )
     ).toBe(false);
-    // 同一个人的不同叫法必须落到同一个身份键上。
+    // 建档是"出现记录/检索索引"，不是身份判定：按"关系 + 当时的称呼"建索引，
+    // 两个不同名字的孙子不会被并成一个人（更早的按关系建键会并）。
     const motherKeys = upsert.mock.calls
       .filter(call => (call[0] as any).declaration.relationToUser === '母亲')
       .map(call => (call[0] as any).declaration.identityKey);
-    expect(new Set(motherKeys).size).toBe(motherKeys.length);
-    // “妈妈”“母亲”“妈”必须归到同一个身份键上（母亲）。
-    expect(motherKeys[0]).toBe('母亲');
+    expect(motherKeys[0]).toBe('母亲|妈妈');
   });
 
   it('links the agent-backed relative into the person roster', async () => {

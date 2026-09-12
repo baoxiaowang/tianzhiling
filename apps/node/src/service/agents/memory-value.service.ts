@@ -521,10 +521,14 @@ export class MemoryValueService {
           ? new MongoObjectId(agentRef)
           : undefined;
       const relationToUser = relation || label;
-      // 身份键只按关系归并：同一个人的“妈妈/妈/母亲”“小孙子/毛璟琨”必须落到
-      // 同一条记录上，否则用户每换一个叫法就会多出一个人，事实被拆散。
-      // 这与人物主体的既有约定一致（relativeRefFor 也只按关系取哈希）。
-      const identityKey = normalizeRelationKey(relationToUser) || label;
+      // 这是一个"出现记录/检索索引"，不是身份判定：
+      // 按"关系 + 用户当时用的那个称呼"建索引，于是
+      //   - 两个不同名字的孙子 → 两条索引（不会被并成一个人）；
+      //   - 同一个人的不同叫法 → 各自有索引（谁是谁由模型看着原话判断）。
+      // 系统不再做身份合并/拆分，避免把甲的话记到乙头上。
+      const identityKey = `${
+        normalizeRelationKey(relationToUser) || '亲属'
+      }|${label.toLowerCase()}`;
       try {
         await this.userIdentityMemoryService.upsertKnownPersonDeclaration({
           userId: message.userId,
