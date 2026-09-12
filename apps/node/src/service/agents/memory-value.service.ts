@@ -44,6 +44,7 @@ import {
   resolveNewPeople,
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
+  uncoveredFactCategories,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -422,10 +423,24 @@ export class MemoryValueService {
     // 没发生，绝不会影响已经通过校验的部分。
     // 补漏要多花一次模型调用（实测约 30–45 秒），但它确实换来了更多稳定事实，
     // 因此不做“只在提取偏少时才跑”的节流——省时间不能省记忆。
-    if (isBatch && mentionedPeople.length) {
+    // 两类遗漏都触发补漏：①点名了却没记的家人；②整类事实一条没记（健康、工作、
+    // 时间、计划…）。后者实测出现在 19/24 个用户身上，是最大的质量缺口。
+    if (isBatch) {
       const uncovered = this.uncoveredMentionedPeople(mentionedPeople, decisions);
-      if (uncovered.length) {
-        const extra = await this.extractUncoveredPeople(input, uncovered);
+      const batchUserText = input.messages
+        .filter(m => m.role === 'user')
+        .map(m => m.content || '')
+        .join('\n');
+      const uncoveredCategories = uncoveredFactCategories(
+        batchUserText,
+        decisions
+      );
+      if (uncovered.length || uncoveredCategories.length) {
+        const extra = await this.extractUncoveredPeople(
+          input,
+          uncovered,
+          uncoveredCategories
+        );
         modelCalls += extra.calls;
         modelTokens += extra.tokens;
         for (const d of extra.decisions) decisions.push(d);
@@ -550,13 +565,22 @@ export class MemoryValueService {
   /** 针对被整体漏掉的家人做一次定向补漏，只增不减，失败即返回空。 */
   private async extractUncoveredPeople(
     input: MemoryValueInput,
-    uncovered: string[]
+    uncovered: string[],
+    uncoveredCategories: string[] = []
   ): Promise<{
     decisions: MemoryValueDecision[];
     calls: number;
     tokens: number;
   }> {
     try {
+      const scope = [
+        uncovered.length ? `这些家人整句被丢掉了：${uncovered.join('、')}` : '',
+        uncoveredCategories.length
+          ? `这些类别的稳定事实一条都没记：${uncoveredCategories.join('、')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('；');
       const result = await this.openAIService.generateText({
         temperature: 0,
         reasoningSplit: false,
@@ -565,9 +589,10 @@ export class MemoryValueService {
           MEMORY_PRODUCT_CONTEXT +
           '\n' +
           MEMORY_VALUE_PROMPT +
-          '\n这是同一批消息的补漏任务：上一次只记了主要人物，把下面这些家人整句丢掉了。只针对这些家人给出记忆决定，不要重复上一次已经记过的内容；他们确实没有稳定事实时才返回空数组。',
+          `\n这是同一批消息的补漏任务：上一次只记了主要人物与情绪，把下面这些内容丢掉了。${scope}。只针对这些缺口给出记忆决定，不要重复上一次已经记过的内容；确实没有稳定事实时才返回空数组。`,
         prompt: JSON.stringify({
           uncoveredPeople: uncovered,
+          uncoveredCategories,
           messages: input.messages,
           subjects: input.subjects,
           existing: input.existing,

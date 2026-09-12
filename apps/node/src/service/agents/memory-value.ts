@@ -130,14 +130,23 @@ export function resolveNewPeople(
       delete p.realName;
     // 同一个人只允许一个身份：模型常把同一位亲人这次写成“小孙子”、下次写成
     // 名字“毛璟琨”，如果每次都按称呼算哈希，同一个人就会被拆成多个 relative id
-    // （round18 出现同一人横跨 3 个 id、7 条事实挂错人）。因此先按“与用户的关系”
-    // 复用已有主体，实在没有才新建。
+    // （实测 22/24 个用户都有这个问题）。因此先按“与用户的关系”复用已有主体，
+    // 实在没有才新建。
+    // 关键：要连 agent 主体一起匹配——用户正在对话的那位亲人同样是一个主体，
+    // 模型却常为同一个人另建 relative，导致“爸爸”与“爸爸醬”、“婆婆”与
+    // “母亲（已故）”这类同人双身份。
     const relationKey = normalizeRelationKey(p.relationToUser);
-    const existingRef = input.subjects.find(
-      subject =>
-        subject.ref.startsWith('relative:') &&
-        normalizeRelationKey(subject.relation || '') === relationKey
-    )?.ref;
+    const labelKey = normalizeRelationKey(p.label);
+    const existingRef = input.subjects.find(subject => {
+      const subjectKeys = [
+        normalizeRelationKey(subject.relation || ''),
+        normalizeRelationKey(subject.label || ''),
+      ].filter(Boolean);
+      if (!subjectKeys.length) return false;
+      return subjectKeys.some(
+        key => key === relationKey || (labelKey && key === labelKey)
+      );
+    })?.ref;
     const ref =
       existingRef ||
       `relative:${createHash('sha256')
@@ -263,6 +272,37 @@ const THIRD_PARTY_TERM_PATTERN = /(?:朋友|同事|同学|邻居|闺蜜|工友)/
 export const KINSHIP_VOCABULARY =
   /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|祖父|祖母|外祖父|外祖母|公公|婆婆|舅舅|舅父|舅妈|叔叔|伯伯|姑姑|姑妈|姨妈|姨父|婶|嫂子|嫂嫂|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|孙子|孙儿|孙女|外孙|外孙女|丈夫|妻子|老公|老婆|配偶|太太|儿媳|女婿|侄子|侄女|外甥|外甥女|堂|表|亲人|家属)/;
 
+/**
+ * 用户明确说过的稳定事实类别。用来发现"整类内容丢失"——实测 19/24 个用户
+ * 都有某一整类事实一条都没记（健康、工作、时间、计划最常见），而模型把
+ * 决定名额花在了情绪碎片上。命中即触发一次按类别的定向补漏。
+ */
+export const FACT_CATEGORY_PATTERNS: Array<[string, RegExp]> = [
+  [
+    '健康与就医',
+    /(生病|住院|手术|化疗|放疗|透析|高血压|癌症|吃药|医院|病痛|褥疮|起搏器|复发|体检|卧床)/,
+  ],
+  [
+    '工作与生活常态',
+    /(上班|工作|生意|辞职|工资|夜班|退休|干活|摆摊|开店|加班|下岗)/,
+  ],
+  ['时间与时长', /(\d+\s*(天|年|个月|周年)|忌日|纪念日|第\d+天)/],
+  ['计划与承诺', /(下次|过年|明年|以后|到时候|打算|答应|我会给你|来看你)/],
+  ['居所与地点', /(老家|住在|搬到|村里|县城|城市)/],
+  ['财产与金钱', /(房子|买车|存款|欠|借|彩礼|房贷|工资)/],
+];
+
+/** 用户原话里有、但所有决定都没覆盖到的稳定事实类别。 */
+export function uncoveredFactCategories(
+  userText: string,
+  decisions: Array<{ key: string; value: string }>
+): string[] {
+  const covered = decisions.map(d => `${d.key} ${d.value}`).join(' ');
+  return FACT_CATEGORY_PATTERNS.filter(
+    ([, pattern]) => pattern.test(userText) && !pattern.test(covered)
+  ).map(([name]) => name);
+}
+
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
 export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
@@ -275,12 +315,13 @@ export function normalizeRelationKey(relation: string): string {
     [/孙女|外孙女/, '孙女辈'],
     [/儿子|男孩/, '儿子'],
     [/女儿/, '女儿'],
-    [/爸爸|父亲|^爸$/, '父亲'],
-    [/妈妈|母亲|^妈$/, '母亲'],
-    [/爷爷/, '祖父'],
+    [/爸爸|父亲|^爸$|^爹$|老爹/, '父亲'],
+    [/妈妈|母亲|^妈$|^娘$/, '母亲'],
+    [/爷爷|^嗲嗲$/, '祖父'],
     [/奶奶/, '祖母'],
     [/外公|姥爷|外祖父/, '外祖父'],
     [/外婆|姥姥|外祖母/, '外祖母'],
+    [/婆婆|公公/, '姻亲长辈'],
     [/哥哥|^哥$/, '哥哥'],
     [/姐姐|^姐$/, '姐姐'],
     [/弟弟|^弟$/, '弟弟'],
