@@ -1491,11 +1491,13 @@ export class MemoryValueService {
     ownerId: MongoObjectId,
     d: MemoryValueDecision
   ): Promise<AgentProfileFactEntity | undefined> {
+    // 不按 type 过滤：实测重复写入常常是同一件事被模型换了 type（婚姻/子女被
+    // 分别写成 relationship、family、user 三种），按 type 过滤正好漏掉它们。
+    // 主体（agentId）仍然是硬边界——绝不把甲的属性并到乙身上。
     const candidates = await this.factModel.find({
       where: {
         userId,
         agentId: ownerId,
-        type: d.type,
         status: {
           $in: [
             AgentProfileFactStatus.active,
@@ -1512,8 +1514,10 @@ export class MemoryValueService {
       if (fact.key === d.key || fact.key.startsWith('profile_source.'))
         continue;
       if (fact.governance?.protected) continue;
+      // 跨类别合并要有更高的文字重合度，避免把健康事实并进关系事实。
+      const threshold = fact.type === d.type ? 0.5 : 0.65;
       const score = memoryValueSimilarity(fact.value, d.value);
-      if (score > bestScore) {
+      if (score > threshold && score > bestScore) {
         best = fact;
         bestScore = score;
       }
