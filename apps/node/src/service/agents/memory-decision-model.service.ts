@@ -57,7 +57,9 @@ export class MemoryDecisionModelService {
       frequencyPenalty: 0,
       reasoningSplit: false,
       maxRetries: 0,
-      timeoutMs: 60000,
+      // 批量抽取实测要 55 秒左右，60 秒的超时会让它频繁超时；
+      // 一旦超时整批作废、退化成逐条重跑，一次批量变成十次调用。
+      timeoutMs: 180000,
     };
     this.client = undefined;
   }
@@ -74,7 +76,7 @@ export class MemoryDecisionModelService {
       this.client = new OpenAI({
         apiKey: this.openAIConfig.apiKey,
         baseURL: this.openAIConfig.baseURL,
-        timeout: 60000,
+        timeout: 180000,
         maxRetries: 0,
       });
     }
