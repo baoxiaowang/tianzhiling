@@ -1,6 +1,6 @@
 import { Inject, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
-import { Framework as BullMQFramework } from '@midwayjs/bullmq';
+import { Framework as BullMQFramework, BullMQQueue } from '@midwayjs/bullmq';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { RedisService } from '@midwayjs/redis';
 import {
@@ -33,6 +33,9 @@ export interface MemoryPipelineJobData {
 const MEMORY_PIPELINE_BATCHED_KINDS = new Set<MemoryPipelineTaskKind>([
   MemoryPipelineTaskKind.structuredMemory,
 ]);
+
+/** 队列解析失败后的冷却时间：避免每条消息都尝试新建队列。 */
+const QUEUE_RESOLVE_COOLDOWN_MS = 30_000;
 
 function readPositiveInt(
   value: string | undefined,
@@ -79,6 +82,10 @@ export class MemoryPipelineTaskService {
 
   @Inject()
   bullmqFramework: BullMQFramework;
+
+  /** 队列句柄缓存（见 resolveMemoryPipelineQueue）。 */
+  private memoryPipelineQueue?: BullMQQueue;
+  private memoryPipelineQueueMissAt = 0;
 
   @Inject()
   redisService: RedisService;
@@ -273,13 +280,42 @@ export class MemoryPipelineTaskService {
     return undefined;
   }
 
+  /**
+   * 队列句柄只解析一次并缓存。
+   *
+   * 为什么必须缓存：Midway 的 createQueue 每次都会 new 一个 BullMQQueue 并覆盖
+   * queueMap——旧的队列实例（连同它的 Redis 连接、事件监听与内部定时器）不会被
+   * 关闭。这个函数处在上报每条消息的路径上，一旦走到 createQueue 分支，就会随着
+   * 消息量不断新建连接和定时器，表现为"服务跑得越久 CPU 越高、重启就恢复"。
+   * 解析不到时留一个冷却窗口，避免在队列确实不可用时每条消息都重试创建。
+   */
+  private resolveMemoryPipelineQueue(): BullMQQueue | undefined {
+    if (this.memoryPipelineQueue) return this.memoryPipelineQueue;
+    const now = Date.now();
+    if (now - this.memoryPipelineQueueMissAt < QUEUE_RESOLVE_COOLDOWN_MS) {
+      return undefined;
+    }
+    const queue =
+      this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE) ||
+      this.bullmqFramework?.createQueue(MEMORY_PIPELINE_QUEUE);
+    if (!queue) {
+      this.memoryPipelineQueueMissAt = now;
+      return undefined;
+    }
+    this.memoryPipelineQueue = queue;
+    return queue;
+  }
+
+  /** 把到期的任务重新入队（协调任务只入队、不自己执行）。 */
+  async requeueDueTask(task: MemoryPipelineTaskEntity): Promise<void> {
+    await this.enqueueTaskJob(task);
+  }
+
   private async scheduleBatchFlush(
     kind: MemoryPipelineTaskKind,
     conversationId: string
   ): Promise<void> {
-    const queue =
-      this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE) ||
-      this.bullmqFramework?.createQueue(MEMORY_PIPELINE_QUEUE);
+    const queue = this.resolveMemoryPipelineQueue();
     if (!queue) return;
     try {
       await queue.addJobToQueue(
@@ -542,9 +578,7 @@ export class MemoryPipelineTaskService {
     ) {
       return;
     }
-    const queue =
-      this.bullmqFramework?.getQueue(MEMORY_PIPELINE_QUEUE) ||
-      this.bullmqFramework?.createQueue(MEMORY_PIPELINE_QUEUE);
+    const queue = this.resolveMemoryPipelineQueue();
     if (!queue) {
       this.logger.warn(
         '[memory-pipeline] queue unavailable, task remains pending'

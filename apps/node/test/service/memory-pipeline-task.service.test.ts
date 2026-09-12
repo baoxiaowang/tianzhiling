@@ -57,6 +57,32 @@ describe('MemoryPipelineTaskService', () => {
   });
 });
 
+describe('MemoryPipelineTaskService queue resolution', () => {
+  it('resolves the queue once and reuses it', async () => {
+    // createQueue 每次都会 new 一个队列并覆盖缓存，旧实例的连接与定时器不会关闭；
+    // 这条路径在每条消息上，所以必须只解析一次。
+    const service = new MemoryPipelineTaskService();
+    const addJobToQueue = jest.fn().mockResolvedValue(undefined);
+    const queue = { addJobToQueue };
+    const createQueue = jest.fn(() => queue);
+    service.logger = { warn: jest.fn() } as never;
+    service.bullmqFramework = {
+      getQueue: jest.fn(() => undefined),
+      createQueue,
+    } as never;
+    const task = Object.assign(new MemoryPipelineTaskEntity(), {
+      id: new MongoObjectId('665000000000000000000421'),
+      status: MemoryPipelineTaskStatus.pending,
+    });
+
+    await service.requeueDueTask(task);
+    await service.requeueDueTask(task);
+
+    expect(createQueue).toHaveBeenCalledTimes(1);
+    expect(addJobToQueue).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('MemoryPipelineProcessor', () => {
   beforeEach(() => (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: true }));
   it('leaves durable work unclaimed when the memory budget is exhausted', async () => {
@@ -68,7 +94,9 @@ describe('MemoryPipelineProcessor', () => {
     expect(processor.memoryPipelineTaskService.claimTask).not.toHaveBeenCalled();
     expect(processor.conversationService.processMemoryPipelineTask).not.toHaveBeenCalled();
   });
-  it('continues a reconciliation batch after one task fails', async () => {
+  it('re-enqueues due tasks during reconciliation instead of running them inline', async () => {
+    // 协调任务必须只入队：过去它在这里逐个 await 处理（25 个任务 × 3–5 秒），
+    // 一次协调要跑 1–2 分钟，超过它自己 60 秒的周期，于是互相堆叠、CPU 打满。
     const processor = new MemoryPipelineProcessor();
     const first = Object.assign(new MemoryPipelineTaskEntity(), {
       id: new MongoObjectId('665000000000000000000411'),
@@ -76,30 +104,30 @@ describe('MemoryPipelineProcessor', () => {
     const second = Object.assign(new MemoryPipelineTaskEntity(), {
       id: new MongoObjectId('665000000000000000000412'),
     });
+    const requeueDueTask = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('queue hiccup'))
+      .mockResolvedValueOnce(undefined);
     processor.memoryPipelineTaskService = {
       getDueTasks: jest.fn().mockResolvedValue([first, second]),
-      claimTask: jest
-        .fn()
-        .mockResolvedValueOnce(first)
-        .mockResolvedValueOnce(second),
-      markFailed: jest.fn().mockResolvedValue(undefined),
-      markCompleted: jest.fn().mockResolvedValue(undefined),
+      requeueDueTask,
+      claimTask: jest.fn(),
     } as never;
     processor.conversationService = {
-      processMemoryPipelineTask: jest
-        .fn()
-        .mockRejectedValueOnce(new Error('poison message'))
-        .mockResolvedValueOnce('completed'),
+      processMemoryPipelineTask: jest.fn(),
     } as never;
 
-    await expect(processor.execute({ reconcile: true })).resolves.toBeUndefined();
+    await expect(
+      processor.execute({ reconcile: true })
+    ).resolves.toBeUndefined();
+    expect(requeueDueTask).toHaveBeenCalledTimes(2);
+    // 一个坏任务不影响其余任务重排。
+    expect(requeueDueTask).toHaveBeenNthCalledWith(1, first);
+    expect(requeueDueTask).toHaveBeenNthCalledWith(2, second);
+    // 协调任务自己不执行任何任务。
+    expect(processor.memoryPipelineTaskService.claimTask).not.toHaveBeenCalled();
     expect(
       processor.conversationService.processMemoryPipelineTask
-    ).toHaveBeenCalledTimes(2);
-    expect(processor.memoryPipelineTaskService.markFailed).toHaveBeenCalled();
-    expect(processor.memoryPipelineTaskService.markCompleted).toHaveBeenCalledWith(
-      second,
-      MemoryPipelineTaskStatus.completed
-    );
+    ).not.toHaveBeenCalled();
   });
 });
