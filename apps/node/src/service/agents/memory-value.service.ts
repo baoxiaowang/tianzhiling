@@ -591,21 +591,27 @@ export class MemoryValueService {
         kind: 'temporal',
         type: 'memory',
         key: 'status.deceased_since',
-        value: `该亲人约于 ${hit.year}-${pad(hit.month)}-${pad(
-          hit.day
-        )} 去世（用户原话“${hit.quote}”）`,
+        value: `该亲人约于 ${[
+          String(hit.year),
+          hit.month ? pad(hit.month) : '',
+          hit.day ? pad(hit.day) : '',
+        ]
+          .filter(Boolean)
+          .join('-')} ${hit.day ? '' : hit.month ? '' : '年'}去世（用户原话“${
+          hit.quote
+        }”）`.replace(/\s+/g, ' '),
         date: {
           event: 'death',
           year: hit.year,
-          month: hit.month,
-          day: hit.day,
+          ...(hit.month ? { month: hit.month } : {}),
+          ...(hit.day ? { day: hit.day } : {}),
           expression: hit.expression,
         },
         retention: 'durable',
         certainty: 'explicit',
         timeKind: 'historical',
         operation: 'add',
-        reason: '从用户陈述的时长换算出确切去世日期',
+        reason: '从用户陈述的时长换算去世时间（精度到用户给出的粒度为止）',
         evidence: [{ messageId: source.id, quote: hit.quote }],
         protected: true,
         salience: 3,

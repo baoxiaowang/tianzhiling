@@ -295,6 +295,42 @@ describe('memory value contract', () => {
       parseMemoryValueOutput(JSON.stringify({ decisions: [invalid] }), input)
     ).toThrow();
   });
+  it('keeps a stable fact durable even when the model writes session', () => {
+    const withRelative: MemoryValueInput = {
+      ...input,
+      subjects: [...input.subjects, { ref: 'relative:9', label: '孙子' }],
+      messages: [{ id: 'm1', role: 'user', content: '孙子四周岁多了' }],
+    };
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        subjectRef: 'relative:9',
+        key: 'family.grandson.age_approx',
+        value: '孙子四周岁多',
+        retention: 'session',
+        timeKind: 'stable',
+        validUntil: undefined,
+        evidence: [{ messageId: 'm1', quote: '孙子四周岁多了' }],
+      } as any,
+      withRelative.referenceAt,
+      '孙子四周岁多了',
+      '孙子'
+    );
+    expect(graded.retention).toBe('durable');
+  });
+  it('does not extend a momentary state that carries an expiry', () => {
+    const graded = gradeMemoryDecision(
+      {
+        ...decision(),
+        retention: 'session',
+        timeKind: 'current',
+        validUntil: '2026-09-10T00:00:00.000Z',
+      } as any,
+      input.referenceAt,
+      '妈妈腰疼又犯了'
+    );
+    expect(graded.retention).toBe('session');
+  });
   it('drops a pure emotion expression instead of storing it', () => {
     expect(() =>
       gradeMemoryDecision(
@@ -733,6 +769,14 @@ describe('memory value contract', () => {
     const elapsed = computeDepartureDate(['你离开我13年了'], ref);
     expect(elapsed).not.toBeNull();
     expect(elapsed!.year).toBe(2013);
+    // 用户只说“13 年”，精度就只能到年：补上月日就是伪造精确度
+    // （独立评测把“约于 2013-09-02 去世”这类算硬错误）。
+    expect(elapsed!.month).toBeUndefined();
+    expect(elapsed!.day).toBeUndefined();
+    // 说“N 天”时才允许到日——用户给的就是日级信息。
+    const days = computeDepartureDate(['你走了226天了'], ref);
+    expect(days!.month).toBeDefined();
+    expect(days!.day).toBeDefined();
     expect(computeDepartureDate(['你离开我都快一年了'], ref)).toBeNull();
     // 没有时长就算不出，返回 null（保留宽泛记录，不伪造精确度）。
     expect(computeDepartureDate(['妈妈你还好吗'], ref)).toBeNull();

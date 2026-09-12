@@ -358,7 +358,7 @@ export function chineseNumberToArabic(text: string): number | null {
 export function computeDateFromDuration(
   quotes: Array<string | undefined>,
   referenceAt: string
-): { year: number; month: number; day: number; expression: string } | null {
+): { year: number; month?: number; day?: number; expression: string } | null {
   const ref = new Date(referenceAt);
   if (!Number.isFinite(ref.getTime())) return null;
   for (const quote of quotes) {
@@ -369,13 +369,15 @@ export function computeDateFromDuration(
     const amount = chineseNumberToArabic(match[1]);
     if (amount === null || amount <= 0) continue;
     const date = new Date(ref.getTime());
-    if (match[2] === '天') date.setDate(date.getDate() - amount);
-    else if (match[2] === '年') date.setFullYear(date.getFullYear() - amount);
+    const unit = match[2];
+    if (unit === '天') date.setDate(date.getDate() - amount);
+    else if (unit === '年') date.setFullYear(date.getFullYear() - amount);
     else date.setMonth(date.getMonth() - amount);
     return {
       year: date.getFullYear(),
-      month: date.getMonth() + 1,
-      day: date.getDate(),
+      // 同 findDepartureDates：粒度到哪，就只记到哪。
+      ...(unit === '年' ? {} : { month: date.getMonth() + 1 }),
+      ...(unit === '天' ? { day: date.getDate() } : {}),
       expression: match[0],
     };
   }
@@ -402,8 +404,9 @@ const ELAPSED_DURATION_PATTERN =
  */
 export interface DepartureDateHit {
   year: number;
-  month: number;
-  day: number;
+  /** 只在用户给的粒度支持时才有值：说“13 年”就只到年，不补月份和日子。 */
+  month?: number;
+  day?: number;
   expression: string;
   quote: string;
 }
@@ -445,13 +448,20 @@ export function findDepartureDates(
       if (match[2] === '天') date.setDate(date.getDate() - amount);
       else if (match[2] === '年') date.setFullYear(date.getFullYear() - amount);
       else date.setMonth(date.getMonth() - amount);
-      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+      // 精度必须忠实于用户给的粒度：“13 年了”只到年，把消息时间的月日一起
+      // 写成“约于 2013-09-02 去世”就是伪造精确度（独立评测把这类算作硬错误，
+      // 因为用户从没说过具体哪一天）。
+      const unit = match[2];
+      const year = date.getFullYear();
+      const month = unit === '年' ? undefined : date.getMonth() + 1;
+      const day = unit === '天' ? date.getDate() : undefined;
+      const key = `${year}-${month || 0}-${day || 0}`;
       if (seen.has(key)) continue;
       seen.add(key);
       hits.push({
-        year: date.getFullYear(),
-        month: date.getMonth() + 1,
-        day: date.getDate(),
+        year,
+        ...(month ? { month } : {}),
+        ...(day ? { day } : {}),
         expression: match[0].trim(),
         quote: clause.trim(),
       });
@@ -936,6 +946,20 @@ export function gradeMemoryDecision(
     for (const [pattern, replacement] of KINSHIP_KEY_REPLACEMENTS) {
       d.key = d.key.replace(pattern, replacement);
     }
+  }
+  // 稳定事实不得因为模型随手写了 session 就丢掉：类别可断言、内容不是情绪、
+  // 也不是带明确失效期的当下状态时，保留期至少是 durable。独立对照里
+  // “孙子四周岁多”“长得像爸爸”这两条本该长期记住的事实，只因模型写了 session
+  // 就从严格召回里消失；记忆内容本身已被逐字校验，恢复保留期不引入新内容。
+  if (
+    d.retention === 'session' &&
+    !d.validUntil &&
+    ['historical', 'stable'].includes(d.timeKind) &&
+    !isContextOnlyNamespace(d.key) &&
+    !isEmotionalValue(d.value) &&
+    d.certainty !== 'uncertain'
+  ) {
+    d.retention = 'durable';
   }
   void referenceAt;
   return d;
