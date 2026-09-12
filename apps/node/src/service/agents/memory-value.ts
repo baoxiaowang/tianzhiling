@@ -252,12 +252,19 @@ export const NON_PERSON_FAMILY_LABEL =
 export const NAMING_CUE_PATTERN =
   /(?:名叫|名字叫|名字是|姓名|全名|叫[做什]?|名叫|小名|大名|称呼为|自称)/;
 
+// 主体归属：以用户为主体的记忆，不应以“亲人称谓”开头来描述亲人自身的属性
+// （“妹妹已长大成人”的主体是妹妹，不是用户）。
+const RELATIVE_LED_VALUE_PATTERN =
+  /^(?:爸爸|妈妈|父亲|母亲|儿子|女儿|孩子|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|姥姥|姥爷|外公|外婆|舅舅|叔叔|伯伯|姑姑|姨|婶|嫂子|孙子|孙女|外孙|外孙女|丈夫|妻子|老公|老婆)/;
+// 用户原话里没出现过的“他人”词：模型有时会补出原话没有的人。
+const THIRD_PARTY_TERM_PATTERN = /(?:朋友|同事|同学|邻居|闺蜜|工友)/g;
 // 亲属词汇：只有称呼或关系里出现这些词，才算“家人”。用来挡住把动漫角色、
 // 只有名字的熟人（“名扬”“程小时”“陆光”）写进家人总览。
 export const KINSHIP_VOCABULARY =
   /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|祖父|祖母|外祖父|外祖母|公公|婆婆|舅舅|舅父|舅妈|叔叔|伯伯|姑姑|姑妈|姨妈|姨父|婶|嫂子|嫂嫂|哥哥|姐姐|弟弟|妹妹|儿子|女儿|孩子|孙子|孙儿|孙女|外孙|外孙女|丈夫|妻子|老公|老婆|配偶|太太|儿媳|女婿|侄子|侄女|外甥|外甥女|堂|表|亲人|家属)/;
 
-/** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */export function normalizeRelationKey(relation: string): string {
+/** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
+export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
   if (!value) return '';
   // “母亲的兄弟”“爷爷的姐姐”描述的是**别人的**亲属，不能因为字面含“母亲/爷爷”
@@ -625,6 +632,22 @@ export function gradeMemoryDecision(
   // 瞬时状态不是记忆（“用户当前正在休息”“用户刚吃完饭”）。
   if (MOMENTARY_STATE_PATTERN.test(d.value)) {
     throw new Error('MEMORY_VALUE_MOMENTARY_STATE');
+  }
+  // 主体归属：以用户为主体、却用亲人称谓开头讲这位亲人自己的属性，说明主体挂错了
+  // （“妹妹已长大成人”“孙子快四岁了”都不该记在用户名下）。用户与亲人的关系类
+  // 事实用的是“用户有一个妹妹”这种写法，不受影响。
+  if (
+    d.subjectRef.startsWith('user:') &&
+    RELATIVE_LED_VALUE_PATTERN.test(d.value)
+  ) {
+    throw new Error('MEMORY_VALUE_SUBJECT_MISMATCH');
+  }
+  // 无出处的人：原话里从没出现过的“朋友/同事/邻居”，不能由模型补进记忆。
+  const thirdParty = Array.from(
+    new Set(d.value.match(THIRD_PARTY_TERM_PATTERN) || [])
+  );
+  if (thirdParty.some(term => !userText.includes(term))) {
+    throw new Error('MEMORY_VALUE_UNSOURCED_PERSON');
   }
   // 情绪/心理类记忆降级为“短期、不可断言”，而不是继续扩充情绪词黑名单：
   // 真实模型的措辞换得比词表快（“强颜欢笑”“心里难受”“不知所措”都能绕过），

@@ -637,9 +637,22 @@ describe('memory value contract', () => {
         'VAGUE_STATUS'
       );
     }
-    // 对具体的人说“挺好”是有效事实，不能误杀。
+    // 对具体的人说“挺好”是有效事实，但主体必须是这位亲人本人，不能记在用户名下。
     expect(
-      parse({ ...decision(), value: '奶奶身体挺好' } as any)
+      () => parse({ ...decision(), value: '奶奶身体挺好' } as any)
+    ).toThrow('SUBJECT_MISMATCH');
+    // 用户与亲人的关系类事实不受影响。
+    expect(
+      parse({ ...decision(), value: '用户有一个妹妹' } as any)
+    ).toHaveLength(1);
+  });
+  it('rejects people the user never mentioned', () => {
+    expect(
+      () =>
+        parse({ ...decision(), value: '用户是和朋友一起去KTV的' } as any)
+    ).toThrow('UNSOURCED_PERSON');
+    expect(
+      parse({ ...decision(), value: '用户独自去了KTV' } as any)
     ).toHaveLength(1);
   });
   it('gives one person the same id across different messages', () => {
