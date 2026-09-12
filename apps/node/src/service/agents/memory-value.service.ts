@@ -261,7 +261,7 @@ export class MemoryValueService {
         (isBatch
           ? `\n本次批量任务：输入包含 ${
               input.currentMessageIds?.length || 0
-            } 条当前用户消息（见currentMessageIds），currentMessageId只是其中最新一条。每项决定的证据必须逐字引用这些消息中的至少一条；不要处理更早历史中的其他话题，也不要把多条消息合并成一条与原文不符的陈述。请按消息顺序逐条过一遍：每条消息里用户明确说过的稳定事实都要有对应决定，决定总数通常应接近或超过消息条数；明显少于消息条数就说明漏提取了，需要回头补全。`
+            } 条当前用户消息（见currentMessageIds），currentMessageId只是其中最新一条。每项决定的证据必须逐字引用这些消息中的至少一条；不要处理更早历史中的其他话题，也不要把多条消息合并成一条与原文不符的陈述。请按消息顺序逐条过一遍：每条消息里用户明确说过的稳定事实都要有对应决定，决定总数通常应接近或超过消息条数；明显少于消息条数就说明漏提取了，需要回头补全。本批最多可给 12 项决定：先把用户明确说出的事实（时间与时长、地点、金额、健康与就医、重要经历、工作与生活常态、偏好习惯、计划与承诺）各安排一条，剩余名额再给情绪与心理类。宁可少写情绪，也不能漏掉用户白纸黑字说出的经历。`
           : ''),
       prompt: JSON.stringify(
         repair
@@ -459,25 +459,34 @@ export class MemoryValueService {
       const relation =
         typeof person?.relation === 'string' ? person.relation.trim() : '';
       entries.push(relation ? `${label}（${relation}）` : label);
-      if (Array.isArray(person?.evidence))
-        for (const item of person.evidence as Array<{
+      if (Array.isArray(person?.evidence)) {
+        // 证据必须真的提到这个人：不能拿“你喜欢抽烟”去支撑一条“家人结构”。
+        const quotes = (person.evidence as Array<{
           messageId?: unknown;
           quote?: unknown;
-        }>) {
-          if (
-            typeof item?.messageId !== 'string' ||
-            typeof item?.quote !== 'string' ||
-            !item.quote.trim()
-          )
-            continue;
+        }>).filter(
+          item =>
+            typeof item?.messageId === 'string' &&
+            typeof item?.quote === 'string' &&
+            item.quote.trim()
+        );
+        const mentioning = quotes.filter(
+          item =>
+            String(item.quote).includes(label) ||
+            (relation && String(item.quote).includes(relation))
+        );
+        for (const item of mentioning.length ? mentioning : quotes) {
+          const messageId = String(item.messageId);
+          const quote = String(item.quote);
           if (
             evidence.some(
-              x => x.messageId === item.messageId && x.quote === item.quote
+              x => x.messageId === messageId && x.quote === quote
             )
           )
             continue;
-          evidence.push({ messageId: item.messageId, quote: item.quote });
+          evidence.push({ messageId, quote });
         }
+      }
     }
     if (!entries.length || !evidence.length) return null;
     const subjectRef = input.subjects[0].ref;
