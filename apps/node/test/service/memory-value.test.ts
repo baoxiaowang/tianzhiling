@@ -572,6 +572,14 @@ describe('memory value contract', () => {
     );
     expect(accepted).toHaveLength(1);
   });
+  it('drops psychology inferred from emoji or punctuation', () => {
+    for (const value of [
+      '用户通过连续哭泣表情符号表达强烈悲痛',
+      '用户借助叹号强调其绝望心理状态',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow('INFERENCE');
+    }
+  });
   it('drops vague aggregate family status but keeps named relatives', () => {
     for (const value of [
       '家里其他人都还好',
