@@ -496,6 +496,7 @@ describe('MemoryValueService.processBatch', () => {
         { label: '妈妈', relation: '母亲', evidence: [] },
         { label: '儿子', relation: '儿子', evidence: [] },
         { label: '爷爷的姐姐', relation: '爷爷的姐姐', evidence: [] },
+        { label: '健楠俺爹', relation: '父亲', evidence: [] },
       ],
       decisions: [],
     });
@@ -525,6 +526,12 @@ describe('MemoryValueService.processBatch', () => {
     expect(relations).toContain('儿子');
     // 第三方关系（“爷爷的姐姐”）不是用户本人的核心亲人，不建档。
     expect(relations).not.toContain('爷爷的姐姐');
+    // 把用户名字加训斥语误读成的“称谓”不能当别名建档。
+    expect(
+      upsert.mock.calls.some(call =>
+        ((call[0] as any).declaration.aliases || []).includes('健楠俺爹')
+      )
+    ).toBe(false);
     // 同一个人的不同叫法必须落到同一个身份键上。
     const motherKeys = upsert.mock.calls
       .filter(call => (call[0] as any).declaration.relationToUser === '母亲')

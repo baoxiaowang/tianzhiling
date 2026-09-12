@@ -492,6 +492,11 @@ export class MemoryValueService {
         typeof person?.relation === 'string' ? person.relation.trim() : '';
       if (!label || label.length > 24 || seen.has(label)) continue;
       if (!isCoreRelative(label, relation)) continue;
+      // 称谓里夹着代词/说话人，说明模型把一句话切成了"称谓"（实测把用户自己的
+      // 名字加训斥语"健楠俺爹"当成父亲）。这种字符串不能当别名，否则以后用户
+      // 提起自己名字会错误命中别人。
+      const bareLabel = label.replace(/^(?:用户|我|俺)的?/, '');
+      if (/[我俺你他她]/.test(bareLabel)) continue;
       seen.add(label);
       // 这个人本来就是独立主体（正在对话的那位亲人），不必再造一份重复身份。
       const matchedSubject = input.subjects.find(subject =>
