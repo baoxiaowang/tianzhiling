@@ -573,6 +573,21 @@ describe('memory value contract', () => {
     );
     expect(accepted).toHaveLength(1);
   });
+  it('drops momentary activity states', () => {
+    for (const value of [
+      '用户当前正在休息',
+      '用户刚吃完饭',
+      '用户现在在上班',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow(
+        'MOMENTARY_STATE'
+      );
+    }
+    // 长期生活常态要保留。
+    expect(
+      parse({ ...decision(), value: '用户每天六点下班' } as any)
+    ).toHaveLength(1);
+  });
   it('drops psychology inferred from emoji or punctuation', () => {
     for (const value of [
       '用户通过连续哭泣表情符号表达强烈悲痛',
