@@ -10,6 +10,8 @@ const username = process.env.NODE_MONGO_USERNAME || 'admin';
 const password = process.env.NODE_MONGO_PASSWORD || 'qwerasdf';
 const authSource = process.env.NODE_MONGO_AUTH_SOURCE || 'admin';
 const DAYS = Number(process.env.CANDIDATE_DAYS || 30);
+// 默认按回放口径统计全部历史（回放只受 createdAt < until 限制）。
+const FULL_HISTORY = process.env.CANDIDATE_FULL_HISTORY !== '0';
 const MIN = Number(process.env.CANDIDATE_MIN || 25);
 const MAX = Number(process.env.CANDIDATE_MAX || 60);
 const uri = `mongodb://${encodeURIComponent(username)}:${encodeURIComponent(
@@ -21,14 +23,17 @@ const uri = `mongodb://${encodeURIComponent(username)}:${encodeURIComponent(
   await client.connect();
   const db = client.db(dbName);
   const since = new Date(Date.now() - DAYS * 86400000);
+  // 口径必须与回放的 scope() 一致：role=user、status=sent、未归档；
+  // 回放不限起始时间，只看 createdAt < until，所以这里也统计全部历史。
   const rows = await db
     .collection('message')
     .aggregate([
       {
         $match: {
           role: 'user',
+          status: 'sent',
           isArchived: { $ne: true },
-          createdAt: { $gte: since },
+          ...(FULL_HISTORY ? {} : { createdAt: { $gte: since } }),
         },
       },
       {
