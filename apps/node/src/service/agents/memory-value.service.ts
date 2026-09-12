@@ -46,7 +46,9 @@ import {
   uncoveredMentionedPeople,
   uncoveredFactCategories,
   computeDateFromDuration,
-  computeDepartureDate,
+  findDepartureDates,
+  kinshipGroupsIn,
+  KINSHIP_GROUP_OF,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -469,45 +471,65 @@ export class MemoryValueService {
   private buildDepartureDateDecision(
     input: MemoryValueInput,
     messages: MessageEntity[]
-  ): MemoryValueDecision | null {
+  ): MemoryValueDecision[] {
     const userMessages = input.messages.filter(m => m.role === 'user');
-    const computed = computeDepartureDate(
+    const hits = findDepartureDates(
       userMessages.map(m => m.content),
       input.referenceAt
     );
-    if (!computed) return null;
-    const source = userMessages.find(m => (m.content || '').includes(computed.quote));
-    if (!source) return null;
-    const subjectRef =
+    if (!hits.length) return [];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fallbackRef =
       input.conversationAgentRef ||
       input.subjects.find(s => s.ref.startsWith('agent:'))?.ref;
-    if (!subjectRef) return null;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return {
-      subjectRef,
-      participants: [],
-      kind: 'temporal',
-      type: 'memory',
-      key: 'status.deceased_since',
-      value: `该亲人约于 ${computed.year}-${pad(computed.month)}-${pad(
-        computed.day
-      )} 去世（用户原话“${computed.quote}”）`,
-      date: {
-        event: 'death',
-        year: computed.year,
-        month: computed.month,
-        day: computed.day,
-        expression: computed.expression,
-      },
-      retention: 'durable',
-      certainty: 'explicit',
-      timeKind: 'historical',
-      operation: 'add',
-      reason: '从用户陈述的时长换算出确切去世日期',
-      evidence: [{ messageId: source.id, quote: computed.quote }],
-      protected: true,
-      salience: 3,
-    } as MemoryValueDecision;
+    const out: MemoryValueDecision[] = [];
+    for (const hit of hits) {
+      const source = userMessages.find(m =>
+        (m.content || '').includes(hit.quote)
+      );
+      if (!source) continue;
+      // 分句里点名了哪位亲属就落到那位身上（对着爷爷说“妈妈走了 13 年了”
+      // 属于妈妈，不是爷爷）；分句里没有别的称谓时才默认当前对话对象。
+      const namedGroups = kinshipGroupsIn(hit.quote);
+      const otherNamed = namedGroups.size
+        ? input.subjects.find(subject => {
+            const group = KINSHIP_GROUP_OF.get(
+              normalizeRelationKey(
+                `${subject.relation || ''} ${subject.label || ''}`
+              )
+            );
+            return group !== undefined && namedGroups.has(group);
+          })?.ref
+        : undefined;
+      const subjectRef = otherNamed || fallbackRef;
+      if (!subjectRef) continue;
+      out.push({
+        subjectRef,
+        participants: [],
+        kind: 'temporal',
+        type: 'memory',
+        key: 'status.deceased_since',
+        value: `该亲人约于 ${hit.year}-${pad(hit.month)}-${pad(
+          hit.day
+        )} 去世（用户原话“${hit.quote}”）`,
+        date: {
+          event: 'death',
+          year: hit.year,
+          month: hit.month,
+          day: hit.day,
+          expression: hit.expression,
+        },
+        retention: 'durable',
+        certainty: 'explicit',
+        timeKind: 'historical',
+        operation: 'add',
+        reason: '从用户陈述的时长换算出确切去世日期',
+        evidence: [{ messageId: source.id, quote: hit.quote }],
+        protected: true,
+        salience: 3,
+      } as MemoryValueDecision);
+    }
+    return out;
   }
 
   /**
@@ -970,8 +992,8 @@ export class MemoryValueService {
     if (familyOverview) proposal.decisions.push(familyOverview);
     // 去世时间也由系统维护：模型几乎不主动输出 date，导致“走了226天了”
     // 这类能算出确切日期的事实整类丢失。这里直接从用户原话换算。
-    const departureDate = this.buildDepartureDateDecision(input, messages);
-    if (departureDate) proposal.decisions.push(departureDate);
+    for (const departure of this.buildDepartureDateDecision(input, messages))
+      proposal.decisions.push(departure);
     const audit: MemoryValueAudit = {
       version: MEMORY_VALUE_VERSION,
       status: 'completed',

@@ -386,6 +386,8 @@ export function computeDateFromDuration(
 
 // 离开类用词：只有和时长出现在**同一个分句**里，才说明这个时长讲的是“走了多久”。
 const DEPARTURE_CUE_PATTERN = /(走了|去世|离世|不在了|下葬|过世|离开我|离开我们)/;
+// 近似时长：这些词出现时只记宽泛表述，不换算确切日期。
+const APPROXIMATE_DURATION_PATTERN = /(马上|快要|将近|就要|差不多|快[一二三四五六七八九十两\d]|大概|左右)/;
 // “已经过去了多久”的时长：必须带“了”，否则“前两天”“这几天”会被误当成时长。
 const ELAPSED_DURATION_PATTERN =
   /(?:已经|都|整整|快|差不多|就)?\s*(\d+|[一二三四五六七八九十两]{1,4})\s*(天|年|个?月)\s*了/;
@@ -398,41 +400,71 @@ const ELAPSED_DURATION_PATTERN =
  * “前两天梦见你……离开我们了”里的“两天”被算成去世时长，得出了一个错误的
  * 确切日期——比不记更糟。算不出就返回 null，保留宽泛记录。
  */
-export function computeDepartureDate(
+export interface DepartureDateHit {
+  year: number;
+  month: number;
+  day: number;
+  expression: string;
+  quote: string;
+}
+
+/**
+ * 找出用户原话里**所有**“离开 + 确切时长”的分句。同一批消息里可能有多位逝者
+ * （对着爷爷说“妈妈走了 13 年了”），调用方按分句里的人称谓分别落到对应主体。
+ */
+export function findDepartureDates(
   texts: Array<string | undefined>,
   referenceAt: string
-): { year: number; month: number; day: number; expression: string; quote: string } | null {
+): DepartureDateHit[] {
   const ref = new Date(referenceAt);
-  if (!Number.isFinite(ref.getTime())) return null;
+  if (!Number.isFinite(ref.getTime())) return [];
+  const hits: DepartureDateHit[] = [];
+  const seen = new Set<string>();
   for (const text of texts) {
     const content = text || '';
-    const cues = Array.from(content.matchAll(new RegExp(DEPARTURE_CUE_PATTERN, 'g')));
+    const cues = Array.from(
+      content.matchAll(new RegExp(DEPARTURE_CUE_PATTERN, 'g'))
+    );
     for (const cue of cues) {
       const at = cue.index ?? 0;
-      // 只在该分句附近找时长：向前 12 字、向后 24 字，并在标点处截断。
       const window = content.slice(Math.max(0, at - 12), at + 24);
-      const clause = window.split(/[。！？；，,\n]/).find(part =>
-        DEPARTURE_CUE_PATTERN.test(part) && ELAPSED_DURATION_PATTERN.test(part)
-      );
+      const clause = window
+        .split(/[。！？；，,\n]/)
+        .find(
+          part =>
+            DEPARTURE_CUE_PATTERN.test(part) &&
+            ELAPSED_DURATION_PATTERN.test(part)
+        );
       if (!clause) continue;
       const match = ELAPSED_DURATION_PATTERN.exec(clause);
       if (!match) continue;
+      if (APPROXIMATE_DURATION_PATTERN.test(clause)) continue;
       const amount = chineseNumberToArabic(match[1]);
       if (amount === null || amount <= 0) continue;
       const date = new Date(ref.getTime());
       if (match[2] === '天') date.setDate(date.getDate() - amount);
       else if (match[2] === '年') date.setFullYear(date.getFullYear() - amount);
       else date.setMonth(date.getMonth() - amount);
-      return {
+      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hits.push({
         year: date.getFullYear(),
         month: date.getMonth() + 1,
         day: date.getDate(),
         expression: match[0].trim(),
         quote: clause.trim(),
-      };
+      });
     }
   }
-  return null;
+  return hits;
+}
+
+export function computeDepartureDate(
+  texts: Array<string | undefined>,
+  referenceAt: string
+): DepartureDateHit | null {
+  return findDepartureDates(texts, referenceAt)[0] || null;
 }
 
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
@@ -631,6 +663,8 @@ const INFERENCE_MARKER_PATTERN =
 // 用户自己的消息里，说话人只有用户；AI 生成的消息本就不能作证据。
 const SPEECH_ACT_PATTERN =
   /(?:叮嘱|嘱咐|嘱托|告诉|询问|问到|问道|回答|承认|承诺|要求|劝|对.{0,6}说)/;
+// 疑问句：用户是在发问，不是陈述事实（“你在汪星过得好吗”曾被存成一条承诺）。
+const QUESTION_VALUE_PATTERN = /[吗呢？?]$|是不是|有没有|好不好|对不对|行不行/;
 // 亲属称谓同义组：同一组内互相替换不算换人（爸爸=父亲），跨组即为不同的人。
 const KINSHIP_SYNONYM_GROUPS: string[][] = [
   ['爸爸', '父亲', '爸', '爹', '老爸'],
@@ -650,7 +684,7 @@ const KINSHIP_SYNONYM_GROUPS: string[][] = [
   ['女婿'],
   ['儿媳', '嫂子', '嫂嫂'],
 ];
-const KINSHIP_GROUP_OF = new Map<string, number>();
+export const KINSHIP_GROUP_OF = new Map<string, number>();
 KINSHIP_SYNONYM_GROUPS.forEach((group, index) => {
   for (const term of group) KINSHIP_GROUP_OF.set(term, index);
 });
@@ -727,7 +761,8 @@ const DEPARTURE_DURATION_PATTERN =
 export function gradeMemoryDecision(
   d: MemoryValueDecision,
   referenceAt: string,
-  userText = ''
+  userText = '',
+  subjectRelation = ''
 ): MemoryValueDecision {
   const text = `${d.key} ${d.value} ${d.reason}`;
   if (INFERENCE_MARKER_PATTERN.test(text)) {
@@ -807,6 +842,26 @@ export function gradeMemoryDecision(
   // 瞬时状态不是记忆（“用户当前正在休息”“用户刚吃完饭”）。
   if (MOMENTARY_STATE_PATTERN.test(d.value)) {
     throw new Error('MEMORY_VALUE_MOMENTARY_STATE');
+  }
+  // 疑问句不是事实：用户问“你在那边过得好吗”不能被存成一条承诺或状态。
+  if (QUESTION_VALUE_PATTERN.test(d.value)) {
+    throw new Error('MEMORY_VALUE_QUESTION_AS_FACT');
+  }
+  // 关系一致性：这位亲属已经有确定关系时，value 不得再给他安一个别的关系
+  // （实测同一个人既是“丈夫”又是“儿子”、既是“孩子”又是“小外孙”）。
+  // 只比对关系称谓语所属的同义组，不做语义推断。
+  if (subjectRelation) {
+    const declaredGroup = KINSHIP_GROUP_OF.get(
+      normalizeRelationKey(subjectRelation)
+    );
+    const groups = kinshipGroupsIn(d.value);
+    if (
+      declaredGroup !== undefined &&
+      groups.size &&
+      !groups.has(declaredGroup)
+    ) {
+      throw new Error('MEMORY_VALUE_RELATION_CONFLICT');
+    }
   }
   // 主体归属：以用户为主体、却用亲人称谓开头讲这位亲人自己的属性，说明主体挂错了
   // （“妹妹已长大成人”“孙子快四岁了”都不该记在用户名下）。用户与亲人的关系类
@@ -1104,7 +1159,9 @@ export function parseMemoryValueOutput(
       )
         throw new Error('MEMORY_VALUE_DATE_EVIDENCE');
     }
-    return gradeMemoryDecision(d, input.referenceAt, userText);
+    const subjectRelation =
+      input.subjects.find(s => s.ref === d.subjectRef)?.relation || '';
+    return gradeMemoryDecision(d, input.referenceAt, userText, subjectRelation);
   };
 
   // 单条不合规不应丢掉整条消息的有效记忆：逐条校验，只丢弃非法项。

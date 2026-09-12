@@ -728,12 +728,64 @@ describe('memory value contract', () => {
         ref
       )
     ).toBeNull();
-    // 确实说“离开我快一年了”时才采纳。
-    const elapsed = computeDepartureDate(['你离开我都快一年了'], ref);
+    // 确切的“离开我13年了”才采纳；“快一年”属近似，只留宽泛表述。
+    const elapsed = computeDepartureDate(['你离开我13年了'], ref);
     expect(elapsed).not.toBeNull();
-    expect(elapsed!.year).toBe(2025);
+    expect(elapsed!.year).toBe(2013);
+    expect(computeDepartureDate(['你离开我都快一年了'], ref)).toBeNull();
     // 没有时长就算不出，返回 null（保留宽泛记录，不伪造精确度）。
     expect(computeDepartureDate(['妈妈你还好吗'], ref)).toBeNull();
+  });
+  it('rejects a relation that contradicts the person on file', () => {
+    const source: MemoryValueInput = {
+      ...input,
+      subjects: [
+        { ref: 'user:1', label: '当前讲述者/用户本人' },
+        { ref: 'relative:5', label: '傅英傑', relation: '儿子' },
+      ],
+      messages: [{ id: 'm1', role: 'user', content: '傅英傑是我丈夫' }],
+    };
+    const conflicting = {
+      ...decision(),
+      subjectRef: 'relative:5',
+      key: 'identity.spouse_name',
+      value: '用户的丈夫名叫傅英傑',
+      evidence: [{ messageId: 'm1', quote: '傅英傑是我丈夫' }],
+    };
+    expect(() => parse(conflicting as any, source)).toThrow(
+      'RELATION_CONFLICT'
+    );
+    // 与已登记关系一致时正常通过。
+    const consistent = {
+      ...conflicting,
+      value: '用户的儿子名叫傅英傑',
+    };
+    expect(parse(consistent as any, source)).toHaveLength(1);
+  });
+  it('does not store a question as a fact', () => {
+    for (const value of [
+      '用户在询问亲人在那边过得好吗',
+      '用户想知道亲人有没有收到纸钱',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow(
+        'QUESTION_AS_FACT'
+      );
+    }
+  });
+  it('never turns an approximate duration into an exact date', () => {
+    const ref = '2026-09-11T00:00:00.000Z';
+    // “马上 4 年”“快一年”“将近三年”只留宽泛表述。
+    for (const text of [
+      '马上你走了4年了',
+      '你离开我快一年了',
+      '你走了将近三年了',
+      '你离开我差不多五年了',
+    ]) {
+      expect(computeDepartureDate([text], ref)).toBeNull();
+    }
+    // 确切的时长才算得出日期。
+    expect(computeDepartureDate(['你走了226天了'], ref)).not.toBeNull();
+    expect(computeDepartureDate(['你离开我13年了'], ref)).not.toBeNull();
   });
   it('rejects people the user never mentioned', () => {
     expect(
