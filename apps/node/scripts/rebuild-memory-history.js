@@ -390,7 +390,7 @@ class Rebuild {
     // 一批消息），逐条 process 既慢（每条一次调用）又测不到线上真实路径。
     const batchSize = Math.max(
       1,
-      Number(process.env.REBUILD_BATCH_SIZE || 5)
+      Number(process.env.REBUILD_BATCH_SIZE || 1)
     );
     for (;;) {
       await this.waitTurn();
