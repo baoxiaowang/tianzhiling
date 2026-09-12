@@ -8,6 +8,7 @@ import {
   gradeMemoryDecision,
   memoryValueSimilarity,
   resolveNewPeople,
+  normalizeRelationKey,
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
 } from '../../src/service/agents/memory-value';
@@ -628,6 +629,15 @@ describe('memory value contract', () => {
     expect(b.refs.get('new:grandson_again')).toBe(
       a.refs.get('new:grandson')
     );
+  });
+  it('does not fold a third party relation into a core relative', () => {
+    // “母亲的兄弟”是舅舅，不能归到母亲身份上（否则出现“妈妈是妈妈的兄弟”）。
+    expect(normalizeRelationKey('母亲的兄弟')).toBe('母亲的兄弟');
+    expect(normalizeRelationKey('爷爷的姐姐')).toBe('爷爷的姐姐');
+    expect(normalizeRelationKey('用户的舅舅')).toBe('舅舅');
+    expect(normalizeRelationKey('小孙子')).toBe('孙辈');
+    expect(normalizeRelationKey('外孙')).toBe('孙辈');
+    expect(normalizeRelationKey('孙子')).toBe('孙辈');
   });
   it('only re-asks for core relatives, not distant ones', () => {
     const decisions = [

@@ -229,10 +229,16 @@ export function isContextOnlyNamespace(key: string): boolean {
   return !ASSERTABLE_NAMESPACES.has(token);
 }
 
-/** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
-export function normalizeRelationKey(relation: string): string {
+// 不是某位亲属的“家人”标签：说的是住处或一群人，不该出现在家人总览里。
+export const NON_PERSON_FAMILY_LABEL =
+  /^(?:家里|家人|家里其他|全家人?|大家|他们|她们|我们|自己|其他人|亲属|亲戚|家里人)$/;
+
+/** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
   if (!value) return '';
+  // “母亲的兄弟”“爷爷的姐姐”描述的是**别人的**亲属，不能因为字面含“母亲/爷爷”
+  // 就归到母亲/爷爷身份上——否则会把舅舅并进妈妈，出现“妈妈是妈妈的兄弟”。
+  if (value.includes('的')) return value;
   const groups: Array<[RegExp, string]> = [
     [/孙(子|儿)|外孙(子)?/, '孙辈'],
     [/孙女|外孙女/, '孙女辈'],

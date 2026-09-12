@@ -44,6 +44,7 @@ import {
   resolveNewPeople,
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
+  NON_PERSON_FAMILY_LABEL,
 } from './memory-value';
 
 interface MemoryValueAudit {
@@ -451,6 +452,9 @@ export class MemoryValueService {
     for (const person of mentioned || []) {
       const label = typeof person?.label === 'string' ? person.label.trim() : '';
       if (!label || label.length > 24 || seen.has(label)) continue;
+      // “家里/家人/大家”说的是住处或一群人，不是某位亲属；把它们当家人
+      // 会让总览出现“家庭成员：家里（用户当前住所）”这种自相矛盾的条目。
+      if (NON_PERSON_FAMILY_LABEL.test(label)) continue;
       seen.add(label);
       const relation =
         typeof person?.relation === 'string' ? person.relation.trim() : '';
