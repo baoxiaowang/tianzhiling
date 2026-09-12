@@ -12,6 +12,8 @@ import {
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
   uncoveredFactCategories,
+  computeDateFromDuration,
+  chineseNumberToArabic,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -693,6 +695,22 @@ describe('memory value contract', () => {
     ]).map(g => g.category);
     expect(covered).not.toContain('健康与就医');
     expect(covered).not.toContain('工作与生活常态');
+  });
+  it('turns a stated duration into an exact date, and never invents one', () => {
+    const ref = '2026-09-11T00:00:00.000Z';
+    // 用户说“你走了226天了” → 能算出确切日期。
+    const exact = computeDateFromDuration(['妈妈，你走了226天了'], ref);
+    expect(exact).not.toBeNull();
+    expect(exact!.year).toBe(2026);
+    expect(exact!.expression).toContain('226');
+    // 中文数字时长同样能算。
+    const years = computeDateFromDuration(['你离开我二十三年了'], ref);
+    expect(years!.year).toBe(2003);
+    // 没有时长就不编：返回 null，让上层保留宽泛记录。
+    expect(computeDateFromDuration(['妈妈你还好吗'], ref)).toBeNull();
+    expect(chineseNumberToArabic('二十三')).toBe(23);
+    expect(chineseNumberToArabic('11')).toBe(11);
+    expect(chineseNumberToArabic('不知道')).toBeNull();
   });
   it('rejects people the user never mentioned', () => {
     expect(

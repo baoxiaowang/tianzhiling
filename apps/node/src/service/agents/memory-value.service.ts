@@ -45,6 +45,7 @@ import {
   isContextOnlyNamespace,
   uncoveredMentionedPeople,
   uncoveredFactCategories,
+  computeDateFromDuration,
   NON_PERSON_FAMILY_LABEL,
   KINSHIP_VOCABULARY,
   normalizeRelationKey,
@@ -1091,20 +1092,43 @@ export class MemoryValueService {
     if (newPerson) {
       if (pending) return false;
       const now = new Date();
+      // 人物的姓名、别名、关系必须可更新：原来全写在 $setOnInsert 里，
+      // 一旦建成就再也改不了——用户后来确认或更正姓名、或换个叫法都不生效，
+      // 于是同一个人被当成新人（"一个亲人的姓名确认、修改、多个称呼"）。
+      const existingPerson = await this.personModel.findOne({
+        where: { _id: ownerId, userId: message.userId } as never,
+      });
+      const previousAliases: string[] =
+        (existingPerson as { aliases?: string[] } | null)?.aliases || [];
+      const aliases = Array.from(
+        new Set(
+          [
+            ...previousAliases,
+            newPerson.label,
+            ...(newPerson.realName ? [newPerson.realName] : []),
+          ].filter(Boolean) as string[]
+        )
+      ).slice(0, 12);
       await this.personModel.updateOne(
         { _id: ownerId, userId: message.userId },
         {
           $setOnInsert: {
             userId: message.userId,
             identityKey: `governed:${ownerId}`,
-            aliases: [newPerson.label],
-            realName: newPerson.realName || undefined,
-            relationToUser: newPerson.relationToUser,
             status: 'active',
+            createdAt: now,
+          },
+          $set: {
+            aliases,
+            // 用户明确给出姓名时按更正处理；没给就沿用原有的。
+            ...(newPerson.realName ? { realName: newPerson.realName } : {}),
+            relationToUser:
+              newPerson.relationToUser ||
+              (existingPerson as { relationToUser?: string } | null)
+                ?.relationToUser,
             sourceAgentId: message.agentId,
             sourceMessageId: message.id,
             sourceText: newPerson.evidence.map(e => e.quote).join('；'),
-            createdAt: now,
             updatedAt: now,
           },
         },
@@ -1375,7 +1399,24 @@ export class MemoryValueService {
         : kind === 'agent'
         ? PersonTemporalSubjectType.agent
         : PersonTemporalSubjectType.relative;
-    if (d.date.year || d.date.month || d.date.day) {
+    // 能算出准确日期就给准确日期：用户说“你走了226天了”这类时长时，
+    // 用消息时间往前推得到确切日期。算不出就保持模型给的宽泛表达，
+    // 不伪造精确度。
+    let year = d.date.year;
+    let month = d.date.month;
+    let day = d.date.day;
+    if (!year && !month && !day) {
+      const computed = computeDateFromDuration(
+        d.evidence.map(e => e.quote),
+        new Date(message.createdAt).toISOString()
+      );
+      if (computed) {
+        year = computed.year;
+        month = computed.month;
+        day = computed.day;
+      }
+    }
+    if (year || month || day) {
       await this.personTemporalMemoryService.recordExplicitPersonDate({
         message,
         subjectType,
@@ -1386,9 +1427,9 @@ export class MemoryValueService {
             : d.date.event === 'expected_birth'
             ? PersonTemporalEventType.expectedBirth
             : PersonTemporalEventType.birth,
-        year: d.date.year,
-        month: d.date.month,
-        day: d.date.day,
+        year,
+        month,
+        day,
         isCorrection: d.operation === 'replace',
         rawText: d.evidence.map(e => e.quote).join('；'),
       });

@@ -318,6 +318,72 @@ export function uncoveredFactCategories(
   return out;
 }
 
+// 时长表达：用于把“你走了226天了”“离开我23年”换算成可回溯的日期。
+const DURATION_PATTERN = /(\d+|[一二三四五六七八九十两]{1,4})\s*(天|年|个?月)/;
+
+/** “二十三”→“23”；无法解析返回 null。 */
+export function chineseNumberToArabic(text: string): number | null {
+  if (/^\d+$/.test(text)) return Number(text);
+  const digits: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  let total = 0;
+  let section = 0;
+  let current = 0;
+  for (const ch of text) {
+    if (ch === '十') {
+      section += (current || 1) * 10;
+      current = 0;
+    } else if (digits[ch]) {
+      current = digits[ch];
+    } else return null;
+  }
+  total = section + current;
+  return total > 0 ? total : null;
+}
+
+/**
+ * 从用户原话里的时长换算出确切日期：能算准就算准。
+ * 例如用户在 2026-09-11 说“你走了 226 天了”，去世日 ≈ 2026-01-28。
+ * 算不出（没写时长、或不是时长句）返回 null——此时如实保留宽泛记录，
+ * 绝不伪造精确度。
+ */
+export function computeDateFromDuration(
+  quotes: Array<string | undefined>,
+  referenceAt: string
+): { year: number; month: number; day: number; expression: string } | null {
+  const ref = new Date(referenceAt);
+  if (!Number.isFinite(ref.getTime())) return null;
+  for (const quote of quotes) {
+    const text = (quote || '').trim();
+    if (!text) continue;
+    const match = DURATION_PATTERN.exec(text);
+    if (!match) continue;
+    const amount = chineseNumberToArabic(match[1]);
+    if (amount === null || amount <= 0) continue;
+    const date = new Date(ref.getTime());
+    if (match[2] === '天') date.setDate(date.getDate() - amount);
+    else if (match[2] === '年') date.setFullYear(date.getFullYear() - amount);
+    else date.setMonth(date.getMonth() - amount);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      expression: match[0],
+    };
+  }
+  return null;
+}
+
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */
 export function normalizeRelationKey(relation: string): string {
   const value = (relation || '').trim().replace(/^(?:用户|我)的?/, '');
@@ -491,6 +557,8 @@ export const MEMORY_VALUE_PROMPT = [
   '完整覆盖：一条消息可能包含多个互相独立的稳定事实（例如“34年前做过手术、今年5月复发、刚做了病检”是三个事实），必须分别成条，不得只保留其中一条；用户提到的亲属（在世或已故）都要作为独立对象登记，不要只记其中一位。',
   '代际口径：用户是对着亲人说话的，用户说的“你外孙/你孙女”指的是用户自己的孩子，“你女婿/你儿媳”指的是用户的丈夫/妻子。因此以用户为主体记录时要写成“孩子/儿子/女儿”“丈夫/妻子”，不要照抄“外孙/女婿”。',
   '输出从简：value 用一句短陈述（不超过 40 字），reason 不超过 20 字，evidence 只给 1 条最短且足以支撑的原话片段。不要复述整段原文，不要解释推理过程，不要写“可推定”“表明”之类的话。写得越长越慢，而且不会更准确。',
+  '人物身份唯一：一个人只有一个身份，称呼可以有很多个。同一个人的小名、方言称呼、正式姓名都是这一个人的别名，不要再建一个新人物；用户后来确认或更正姓名时，用 replace 改同一个人，不要新建。',
+  '时间要如实：亲人去世、出生这类时间，能从用户原话算出确切日期就给出 date:{event:"death"|"birth",year,month,day}；只能给到“大概几年”“二十三年了”“226 天”这种程度时，只填 expression，不要编造年月日。宽泛的如实记录，胜过一个精确的错误日期。',
   '事实优先：只保存未来对话真正需要、且用户明确说过的稳定信息。客套回应（“挺好的”“他们好得很”“嗯”）不单独建记忆。',
   '逐条盘点，不得整体省略：给出决定前先逐条通读本批每条消息，按类别盘点其中的稳定事实——人物与亲属关系（在世与已故都算）、健康与疾病（长期病、近期症状、就医结论与医生说法）、重要经历与时间、工作与生活常态、婚姻与家庭关系、明确的计划与承诺。每一类里用户明确说过的都要有一条决定承载。宁可给出可被复核驳回的提案，也不要因为怕出错而把一整类稳定事实全部省略；只有纯情绪、客套与推测量才不建条。',
   '并列成分逐个记：一句话里的并列人物、并列时间、并列病因都要分别成条，不能只留最显眼的那半句。例如“我和强还有嫂子搬完了”含三个人；“嗲嗲都30几年了，婆婆也快30年了”含两位已故祖辈和两个时长；“这也是上班坐太久没运动的原因”含医生给出的病因，不能只记“久坐”而丢掉病因。',
