@@ -174,7 +174,10 @@ describe('memory-pipeline batch consumer (conversation.service)', () => {
       expect(processBatch).toHaveBeenCalledWith(
         messages,
         ['第一条用户消息', '第二条用户消息'],
-        expect.any(AgentEntity)
+        expect.any(AgentEntity),
+        // 第四个参数是向量库：第二层（原文检索）用它把原话按人物标签入库。
+        // 这个用例没有装配向量库，因此是 undefined。
+        undefined
       );
     });
 
@@ -538,6 +541,83 @@ describe('MemoryValueService.processBatch', () => {
       .filter(call => (call[0] as any).declaration.relationToUser === '母亲')
       .map(call => (call[0] as any).declaration.identityKey);
     expect(motherKeys[0]).toBe('母亲|妈妈');
+    // 详细档案门槛：这批没有任何关于妈妈的具体事实，只留出现记录。
+    for (const call of upsert.mock.calls)
+      expect((call[0] as any).createProfile).toBe(false);
+  });
+
+  it('indexes the raw utterance under each mentioned person as an anchor', async () => {
+    const msgId1 = '665000000000000000000501';
+    const llmResponse = JSON.stringify({
+      newPeople: [],
+      mentionedPeople: [{ label: '妈妈', relation: '母亲', evidence: [] }],
+      decisions: [
+        {
+          subjectRef: `agent:665000000000000000000002`,
+          participants: [],
+          kind: 'person',
+          type: 'memory',
+          key: 'family.mother_health',
+          value: '妈妈的身体一时好一时坏',
+          retention: 'durable',
+          certainty: 'explicit',
+          timeKind: 'stable',
+          operation: 'add',
+          reason: '用户说了妈妈的身体情况',
+          evidence: [{ messageId: msgId1, quote: '妈妈身体一时好一时坏' }],
+          protected: false,
+          salience: 2,
+        },
+      ],
+    });
+    const { service, agent, userId: uid } = setupBatchService(llmResponse);
+    // 只有一条决定，评审返回的下标必须在范围内。
+    service.openAIService.generateText = jest
+      .fn()
+      .mockResolvedValueOnce({
+        content: llmResponse,
+        response: { usage: { total_tokens: 100 } },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ approved: [0], reasons: [] }),
+        response: { usage: { total_tokens: 50 } },
+      });
+    const personId = new MongoObjectId('665000000000000000000601');
+    const upsert = jest.fn(async (_options: any) => ({ id: personId }));
+    service.userIdentityMemoryService = {
+      recordApprovedUserIdentity: jest.fn(),
+      upsertKnownPersonDeclaration: upsert,
+    };
+    const milvus = {
+      indexConversationMessage: jest.fn(async (_options: any) => true),
+    };
+    const msg1 = new MessageEntity();
+    Object.assign(msg1, {
+      id: new MongoObjectId(msgId1),
+      userId: uid,
+      agentId: agent.id,
+      conversationId: new MongoObjectId('665000000000000000000003'),
+      content: '妈妈身体一时好一时坏',
+      createdAt: new Date('2026-09-08T00:00:00Z'),
+      role: 'user',
+      type: MessageType.text,
+    });
+
+    await service.processBatch(
+      [msg1],
+      ['妈妈身体一时好一时坏'],
+      agent,
+      milvus as any
+    );
+
+    // 第二层补锚：原话（不是抽取结论）按人物标签入库。
+    expect(milvus.indexConversationMessage).toHaveBeenCalledTimes(1);
+    const indexed = milvus.indexConversationMessage.mock.calls[0][0] as any;
+    expect(indexed.memoryKind).toBe('raw_episode');
+    expect(indexed.searchableText).toBe('妈妈身体一时好一时坏');
+    expect(indexed.personId).toBe(String(personId));
+    // 有具体事实的家人 → 建详细档案。
+    expect((upsert.mock.calls[0][0] as any).createProfile).toBe(true);
   });
 
   it('links the agent-backed relative into the person roster', async () => {

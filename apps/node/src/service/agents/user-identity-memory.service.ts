@@ -752,6 +752,12 @@ export class UserIdentityMemoryService {
     messageId: MongoObjectId;
     sourceText: string;
     declaration: KnownPersonDeclaration;
+    /**
+     * 是否同时建立亲属详细档案。记忆方案 v3：详细档案要有门槛——只有"这位就是
+     * 当前对话对象"或"用户确实说了关于他的一件具体事"才建；只是一句提及的人
+     * 只留出现记录（检索标签），不建详细档案。
+     */
+    createProfile?: boolean;
   }): Promise<UserKnownPersonEntity> {
     const { declaration } = options;
     const people = this.knownPersonModel.find
@@ -866,13 +872,15 @@ export class UserIdentityMemoryService {
       }
     }
 
-    await this.userRelativeProfileService?.ensureForKnownPerson({
-      userId: options.userId,
-      personId: existing.id,
-      relationToUser: declaration.relationToUser,
-      sourceMessageId: options.messageId,
-      sourceText: options.sourceText,
-    });
+    if (options.createProfile !== false) {
+      await this.userRelativeProfileService?.ensureForKnownPerson({
+        userId: options.userId,
+        personId: existing.id,
+        relationToUser: declaration.relationToUser,
+        sourceMessageId: options.messageId,
+        sourceText: options.sourceText,
+      });
+    }
     return existing;
   }
 

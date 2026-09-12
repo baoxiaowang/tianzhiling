@@ -481,10 +481,12 @@ export class MemoryValueService {
   private async registerFamilyPeople(
     input: MemoryValueInput,
     mentioned: Array<{ label?: unknown; relation?: unknown }>,
-    message: MessageEntity
-  ): Promise<void> {
+    message: MessageEntity,
+    decisions: MemoryValueDecision[] = []
+  ): Promise<Array<{ label: string; personId: string }>> {
     const userRef = input.subjects[0]?.ref;
-    if (!userRef || !mentioned?.length) return;
+    const resolved: Array<{ label: string; personId: string }> = [];
+    if (!userRef || !mentioned?.length) return resolved;
     const seen = new Set<string>();
     for (const person of mentioned) {
       const label =
@@ -530,21 +532,87 @@ export class MemoryValueService {
       const identityKey = `${
         normalizeRelationKey(relationToUser) || '亲属'
       }|${label.toLowerCase()}`;
+      // 详细档案门槛：只有"用户确实说了关于他的一件具体事"或"他就是当前对话
+      // 对象"才建亲属档案；仅仅被点名的家人只留出现记录（检索标签）。
+      const relationKey = normalizeRelationKey(relationToUser);
+      const hasConcreteFact = decisions.some(decision => {
+        const mentionedInValue =
+          (decision.value || '').includes(label) ||
+          (decision.participants || []).some(participant =>
+            String(participant).includes(label)
+          );
+        if (mentionedInValue) return true;
+        const subjectRelation = input.subjects.find(
+          subject => subject.ref === decision.subjectRef
+        );
+        return Boolean(
+          relationKey &&
+            subjectRelation &&
+            normalizeRelationKey(
+              subjectRelation.relation || subjectRelation.label || ''
+            ) === relationKey
+        );
+      });
       try {
-        await this.userIdentityMemoryService.upsertKnownPersonDeclaration({
-          userId: message.userId,
-          agentId: message.agentId,
-          messageId: message.id,
-          sourceText: label,
-          declaration: {
-            identityKey,
-            aliases: [label],
-            relationToUser,
-            ...(linkedAgentId ? { linkedAgentId } : {}),
-          },
-        });
+        const person =
+          await this.userIdentityMemoryService.upsertKnownPersonDeclaration({
+            userId: message.userId,
+            agentId: message.agentId,
+            messageId: message.id,
+            sourceText: label,
+            createProfile: hasConcreteFact || Boolean(linkedAgentId),
+            declaration: {
+              identityKey,
+              aliases: [label],
+              relationToUser,
+              ...(linkedAgentId ? { linkedAgentId } : {}),
+            },
+          });
+        if (person?.id) resolved.push({ label, personId: String(person.id) });
       } catch {
         // 建档失败不影响本批已经写入的记忆。
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * 第二层（原文检索）补锚：把用户的原话按"谈到了谁"入库，而不是只把抽取出来的
+   * 结论入库。这样"用户到底怎么说的"永远找得回来，人物标签也用于检索时优先取回
+   * 相关的旧话。只做标签，不做身份判定。
+   */
+  private async indexUtterancesByPerson(
+    messages: MessageEntity[],
+    people: Array<{ label: string; personId: string }>,
+    milvus?: MilvusService
+  ): Promise<void> {
+    if (!milvus || !people.length) return;
+    for (const message of messages) {
+      if (message.role !== 'user' || !message.content?.trim()) continue;
+      for (const person of people) {
+        if (!message.content.includes(person.label)) continue;
+        try {
+          await milvus.indexConversationMessage({
+            messageId: String(message.id),
+            memoryId: createHash('sha256')
+              .update(`${message.id}:${person.personId}:raw_episode`)
+              .digest('hex'),
+            sourceMessageId: String(message.id),
+            userId: String(message.userId),
+            conversationId: String(message.conversationId),
+            agentId: String(message.agentId),
+            role: message.role,
+            type: message.type,
+            searchableText: message.content,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+            personId: person.personId,
+            memoryKind: 'raw_episode',
+            sourceHash: String(message.id),
+          });
+        } catch {
+          // 检索索引失败不影响本批已经写入的记忆。
+        }
       }
     }
   }
@@ -1091,7 +1159,8 @@ export class MemoryValueService {
   async processBatch(
     messages: MessageEntity[],
     texts: string[],
-    agent: AgentEntity
+    agent: AgentEntity,
+    milvus?: MilvusService
   ): Promise<{ count: number; changedAgents: string[] }> {
     if (!messages.length) return { count: 0, changedAgents: [] };
     if (!this.openAIService?.isEnabled())
@@ -1168,11 +1237,14 @@ export class MemoryValueService {
     const registerMessage = messages[messages.length - 1];
     if (registerMessage) {
       try {
-        await this.registerFamilyPeople(
+        const people = await this.registerFamilyPeople(
           input,
           proposal.mentionedPeople || [],
-          registerMessage
+          registerMessage,
+          proposal.decisions
         );
+        // 第二层补锚：用户原话按人物标签入库（只做标签，不做身份判定）。
+        await this.indexUtterancesByPerson(messages, people, milvus);
       } catch {
         // 建档失败不影响本批已经写入的记忆。
       }

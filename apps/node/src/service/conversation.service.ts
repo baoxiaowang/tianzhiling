@@ -2341,7 +2341,8 @@ export class ConversationService {
       const result = await this.memoryValueService.processBatch(
         entries.map(entry => entry.message),
         entries.map(entry => entry.text),
-        target
+        target,
+        this.milvusService
       );
       for (const id of result.changedAgents) {
         const changedAgent = await this.findAgentById(new MongoObjectId(id));
