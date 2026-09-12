@@ -572,6 +572,21 @@ describe('memory value contract', () => {
     );
     expect(accepted).toHaveLength(1);
   });
+  it('drops vague aggregate family status but keeps named relatives', () => {
+    for (const value of [
+      '家里其他人都还好',
+      '家里人也都很好',
+      '他们过得都不错',
+    ]) {
+      expect(() => parse({ ...decision(), value } as any)).toThrow(
+        'VAGUE_STATUS'
+      );
+    }
+    // 对具体的人说“挺好”是有效事实，不能误杀。
+    expect(
+      parse({ ...decision(), value: '奶奶身体挺好' } as any)
+    ).toHaveLength(1);
+  });
   it('flags mentioned family with no decision so they can be re-asked', () => {
     const decisions = [
       {

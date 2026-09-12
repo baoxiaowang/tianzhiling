@@ -389,6 +389,10 @@ const FILLER_EVIDENCE_PATTERN =
 // 具体亲属称谓：出现在 AI 亲人相关 value 里却不在用户原话中，即为关系误标。
 const SPECIFIC_KINSHIP_PATTERN =
   /(?:爸爸|妈妈|父亲|母亲|儿子|女儿|哥哥|姐姐|弟弟|妹妹|爷爷|奶奶|外公|外婆|姥姥|姥爷|老公|老婆|丈夫|妻子|配偶|爱人|伴侣)/g;
+// 空泛的“一家人都挺好”式陈述：指代整体、不含具体人，属于客套，不建事实。
+// 注意只针对“整体”措辞；对具体的人说“挺好的”（奶奶挺好的）是有效事实。
+const VAGUE_AGGREGATE_STATUS_PATTERN =
+  /(?:家里|全家|家人|其他人|大家|他们)[^，。；]{0,8}(?:好|不错|平安|顺利)/;
 // 亲人离开时长：证据里必须出现离开类词，否则多为时间归属错误。
 const DEPARTURE_TERMS = /(?:离开|走了|去世|离世|过世|消失|不在了)/;
 const DEPARTURE_DURATION_PATTERN =
@@ -473,6 +477,14 @@ export function gradeMemoryDecision(
   const important = IMPORTANT_SITUATION_PATTERN.test(text);
   if (PURE_EMOTION_PATTERN.test(text) && !declaredTrigger && !important) {
     throw new Error('MEMORY_VALUE_EMOTION_ONLY');
+  }
+  // 空泛的整体状态（“家里其他人都还好”）没有具体人也没有具体事，属客套；
+  // 但它不是情绪词，躲得过上面的情绪护栏，所以单独拦一次。
+  if (
+    VAGUE_AGGREGATE_STATUS_PATTERN.test(d.value) &&
+    !Array.from(d.value.matchAll(SPECIFIC_KINSHIP_PATTERN)).length
+  ) {
+    throw new Error('MEMORY_VALUE_VAGUE_STATUS');
   }
   // 情绪/心理类记忆降级为“短期、不可断言”，而不是继续扩充情绪词黑名单：
   // 真实模型的措辞换得比词表快（“强颜欢笑”“心里难受”“不知所措”都能绕过），
