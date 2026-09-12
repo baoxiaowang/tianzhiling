@@ -39,6 +39,15 @@ const MEMORY_PIPELINE_BATCHED_KINDS = new Set<MemoryPipelineTaskKind>([
 /** 队列解析失败后的冷却时间：避免每条消息都尝试新建队列。 */
 const QUEUE_RESOLVE_COOLDOWN_MS = 30_000;
 
+/**
+ * 任务优先级（BullMQ：数字越小越先处理）。
+ * 线上积压曾经到两万条，而队列是先进先出——用户刚说的话排在几千条旧任务后面，
+ * 要等几小时才入库。现在新消息的任务走高优先级、协调任务重排的积压走低优先级，
+ * 保证"刚说的话先被记住"；积压只在没有新消息时被处理。
+ */
+const MEMORY_TASK_PRIORITY_NEW = 1;
+const MEMORY_TASK_PRIORITY_BACKLOG = 1_000;
+
 function readPositiveInt(
   value: string | undefined,
   fallback: number,
@@ -310,7 +319,8 @@ export class MemoryPipelineTaskService {
 
   /** 把到期的任务重新入队（协调任务只入队、不自己执行）。 */
   async requeueDueTask(task: MemoryPipelineTaskEntity): Promise<void> {
-    await this.enqueueTaskJob(task);
+    // 积压重排走低优先级：新消息永远排在它前面。
+    await this.enqueueTaskJob(task, MEMORY_TASK_PRIORITY_BACKLOG);
   }
 
   private async scheduleBatchFlush(
@@ -329,6 +339,7 @@ export class MemoryPipelineTaskService {
         {
           jobId: `${MEMORY_PIPELINE_BATCH_FLUSH_JOB_PREFIX}-${kind}-${conversationId}`,
           delay: resolveFlushDelayMs(),
+          priority: MEMORY_TASK_PRIORITY_NEW,
           removeOnComplete: true,
           removeOnFail: 10,
         }
@@ -573,7 +584,10 @@ export class MemoryPipelineTaskService {
     }
   }
 
-  private async enqueueTaskJob(task: MemoryPipelineTaskEntity): Promise<void> {
+  private async enqueueTaskJob(
+    task: MemoryPipelineTaskEntity,
+    priority: number = MEMORY_TASK_PRIORITY_NEW
+  ): Promise<void> {
     if (
       task.status === MemoryPipelineTaskStatus.completed ||
       task.status === MemoryPipelineTaskStatus.skipped
@@ -594,6 +608,7 @@ export class MemoryPipelineTaskService {
           jobId: `memory-${task.id.toString()}`,
           attempts: 5,
           backoff: { type: 'exponential', delay: 5_000 },
+          priority,
           removeOnComplete: 1000,
           removeOnFail: 1000,
         }

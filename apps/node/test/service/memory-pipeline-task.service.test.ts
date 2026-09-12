@@ -80,6 +80,40 @@ describe('MemoryPipelineTaskService queue resolution', () => {
 
     expect(createQueue).toHaveBeenCalledTimes(1);
     expect(addJobToQueue).toHaveBeenCalledTimes(2);
+    // 积压重排走低优先级（数字越大越靠后）。
+    expect(addJobToQueue.mock.calls[0][1].priority).toBe(1000);
+  });
+
+  it('enqueues a fresh message task with the highest priority', async () => {
+    const service = new MemoryPipelineTaskService();
+    const addJobToQueue = jest.fn().mockResolvedValue(undefined);
+    service.logger = { warn: jest.fn() } as never;
+    let stored: MemoryPipelineTaskEntity | null = null;
+    service.taskModel = {
+      findOne: jest.fn(async () => stored),
+      save: jest.fn(async value => {
+        value.id = new MongoObjectId('665000000000000000000431');
+        stored = value;
+        return value;
+      }),
+    } as never;
+    service.bullmqFramework = {
+      getQueue: jest.fn(() => ({ addJobToQueue })),
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000432'),
+      conversationId: new MongoObjectId('665000000000000000000433'),
+      userId: new MongoObjectId('665000000000000000000434'),
+      agentId: new MongoObjectId('665000000000000000000435'),
+    });
+
+    await service.enqueueForMessage(message, '刚说的一句话', [
+      MemoryPipelineTaskKind.semanticIndex,
+    ]);
+
+    expect(addJobToQueue).toHaveBeenCalledTimes(1);
+    // 新消息的任务优先级最高，保证"刚说的话"排到积压之前。
+    expect(addJobToQueue.mock.calls[0][1].priority).toBe(1);
   });
 });
 

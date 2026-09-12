@@ -7,9 +7,7 @@ export const MEMORY_PIPELINE_RUNTIME_QUEUE = 'memory-pipeline';
 // 注意：departure-duration 不在白名单中。@RuntimeProcessor 创建的 worker
 // 处理完 job 后无法正确标记完成（job 长期滞留 active 状态），
 // 该队列统一由独立 worker 脚本（scripts/departure-duration-worker.js）消费。
-const MEMORY_WORKER_QUEUES = new Set([
-  MEMORY_PIPELINE_RUNTIME_QUEUE,
-]);
+const MEMORY_WORKER_QUEUES = new Set([MEMORY_PIPELINE_RUNTIME_QUEUE]);
 
 export type NodeRuntimeRole = 'combined' | 'web' | 'memory-worker';
 
@@ -36,7 +34,8 @@ export function resolveMemoryWorkerConcurrency(
   value = process.env.NODE_MEMORY_WORKER_CONCURRENCY
 ): number {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 2) : 1;
+  // 上限从 2 放宽到 3：积压清淤时可以临时抬到 3，平时仍由环境变量控制（默认 1）。
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 3) : 1;
 }
 
 export function RuntimeProcessor(

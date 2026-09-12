@@ -37,6 +37,9 @@ describe('runtime processor isolation', () => {
   it('starts at concurrency one and caps future configuration at two', () => {
     expect(resolveMemoryWorkerConcurrency(undefined)).toBe(1);
     expect(resolveMemoryWorkerConcurrency('1')).toBe(1);
-    expect(resolveMemoryWorkerConcurrency('8')).toBe(2);
+    // 上限放宽到 3：积压清淤时可临时抬到 3。
+    expect(resolveMemoryWorkerConcurrency('8')).toBe(3);
+    expect(resolveMemoryWorkerConcurrency('3')).toBe(3);
+    expect(resolveMemoryWorkerConcurrency('2')).toBe(2);
   });
 });
