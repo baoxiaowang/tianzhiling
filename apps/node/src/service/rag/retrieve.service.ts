@@ -34,8 +34,10 @@ export interface RetrieveConversationMemoriesResult {
   };
 }
 
-const DEFAULT_CANDIDATE_LIMIT = 20;
-const DEFAULT_RESULT_LIMIT = 5;
+const DEFAULT_CANDIDATE_LIMIT = 40;
+// 记忆方案 v3：第二层（原文检索）的目标是"宁多勿漏"——记忆的职责是把用户说过的
+// 原话递到模型面前，漏掉比多给几条严重得多。因此候选与最终条数都放宽。
+const DEFAULT_RESULT_LIMIT = 10;
 
 @Provide()
 export class RetrieveService {
@@ -107,14 +109,15 @@ export class RetrieveService {
         activePersonMemories,
         resultLimit
       );
-      const rawCandidates =
-        personSelected.length >= resultLimit
-          ? []
-          : await this.milvusService.searchConversationMemories({
-              ...common,
-              personScope: 'unscoped',
-              memoryKinds: ['raw_episode'],
-            });
+      // 原文是第二层的主要来源，不能因为"人物范围内已经凑够条数"就跳过——
+      // 过去凑够就跳过，等于把用户原话挡在外面（抽取结论优先于原话）。
+      const rawCandidates = await this.milvusService.searchConversationMemories(
+        {
+          ...common,
+          personScope: 'unscoped',
+          memoryKinds: ['raw_episode'],
+        }
+      );
       const activeRawMemories = this.filterByScore(
         await this.filterArchivedMemories(
           rawCandidates.filter(memory => memory.role === MessageRole.user)
@@ -126,8 +129,17 @@ export class RetrieveService {
         ...activeRawMemories,
       ];
 
+      // 原话优先于抽取结论：同一个来源消息既有原话又有抽取条时，保留原话。
+      const preferredRaw = activeRawMemories.filter(
+        memory =>
+          !personSelected.some(
+            selected =>
+              String(selected.sourceMessageId) ===
+              String(memory.sourceMessageId)
+          )
+      );
       const relevantMemories = this.selectRelevantMemories(
-        [...personSelected, ...activeRawMemories],
+        [...personSelected, ...preferredRaw],
         resultLimit
       );
       const diagnostics = this.buildDiagnostics(
