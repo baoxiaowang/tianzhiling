@@ -43,5 +43,11 @@ for ((i = 0; i < ${#users[@]}; i += 3)); do
   else
     echo "=== [$ROUND] batch $batch FAILED $(date +%H:%M:%S)" | tee -a "$SUMMARY"
   fi
+  # 闭卡关卡：本批必须「诊断完 + 优化完」才允许开下一批。
+  # 这是为了把"每批结束做一轮优化"变成强制节奏，而不是靠自觉。
+  if ! bash "$HERE/check-batch-closed.sh" "${ROUND}_b${batch}" 2>&1 | tee -a "$SUMMARY"; then
+    echo "=== [$ROUND] 停在 batch $batch：请先完成本批的独立诊断与一轮优化，再继续" | tee -a "$SUMMARY"
+    exit 1
+  fi
 done
 echo "=== [$ROUND] round done $(date +%H:%M:%S), batches=$batch" | tee -a "$SUMMARY"
