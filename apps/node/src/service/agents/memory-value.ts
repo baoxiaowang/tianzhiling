@@ -280,27 +280,42 @@ export const KINSHIP_VOCABULARY =
 export const FACT_CATEGORY_PATTERNS: Array<[string, RegExp]> = [
   [
     '健康与就医',
-    /(生病|住院|手术|化疗|放疗|透析|高血压|癌症|吃药|医院|病痛|褥疮|起搏器|复发|体检|卧床)/,
+    /(生病|住院|手术|化疗|放疗|透析|高血压|癌症|吃药|病痛|褥疮|起搏器|复发|体检|卧床|医院)/,
   ],
   [
     '工作与生活常态',
     /(上班|工作|生意|辞职|工资|夜班|退休|干活|摆摊|开店|加班|下岗)/,
   ],
-  ['时间与时长', /(\d+\s*(天|年|个月|周年)|忌日|纪念日|第\d+天)/],
-  ['计划与承诺', /(下次|过年|明年|以后|到时候|打算|答应|我会给你|来看你)/],
+  [
+    '时间与时长',
+    /(\d+\s*(天|年|个月|周年)|忌日|纪念日|第\d+天|头七|四七|中元|周年)/,
+  ],
+  ['计划与承诺', /(下次|过年|明年|以后|到时候|打算|答应|承诺|我会给你|来看你)/],
   ['居所与地点', /(老家|住在|搬到|村里|县城|城市)/],
-  ['财产与金钱', /(房子|买车|存款|欠|借|彩礼|房贷|工资)/],
+  ['财产与金钱', /(房子|买车|存款|欠|借|彩礼|房贷)/],
 ];
 
-/** 用户原话里有、但所有决定都没覆盖到的稳定事实类别。 */
+/**
+ * 用户原话里有、但所有决定都没覆盖到的稳定事实类别。
+ * 同时把**触发该类别的原话**一起返回：只说"健康类缺了"，模型补不出来；
+ * 把这些句子原样给它，它才知道要记什么。
+ */
 export function uncoveredFactCategories(
   userText: string,
   decisions: Array<{ key: string; value: string }>
-): string[] {
+): Array<{ category: string; quotes: string[] }> {
   const covered = decisions.map(d => `${d.key} ${d.value}`).join(' ');
-  return FACT_CATEGORY_PATTERNS.filter(
-    ([, pattern]) => pattern.test(userText) && !pattern.test(covered)
-  ).map(([name]) => name);
+  const sentences = userText
+    .split(/[\n。！？；]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  const out: Array<{ category: string; quotes: string[] }> = [];
+  for (const [category, pattern] of FACT_CATEGORY_PATTERNS) {
+    if (!pattern.test(userText) || pattern.test(covered)) continue;
+    const quotes = sentences.filter(s => pattern.test(s)).slice(0, 3);
+    if (quotes.length) out.push({ category, quotes });
+  }
+  return out;
 }
 
 /** 把“小孙子/孙子/外孙”这类说法归一到可比对的关系键，用于人物去重。 */

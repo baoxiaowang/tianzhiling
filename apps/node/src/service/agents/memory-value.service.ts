@@ -566,7 +566,7 @@ export class MemoryValueService {
   private async extractUncoveredPeople(
     input: MemoryValueInput,
     uncovered: string[],
-    uncoveredCategories: string[] = []
+    uncoveredCategories: Array<{ category: string; quotes: string[] }> = []
   ): Promise<{
     decisions: MemoryValueDecision[];
     calls: number;
@@ -576,7 +576,14 @@ export class MemoryValueService {
       const scope = [
         uncovered.length ? `这些家人整句被丢掉了：${uncovered.join('、')}` : '',
         uncoveredCategories.length
-          ? `这些类别的稳定事实一条都没记：${uncoveredCategories.join('、')}`
+          ? `这些类别的稳定事实一条都没记：\n${uncoveredCategories
+              .map(
+                item =>
+                  `- ${item.category}（用户原话：${item.quotes
+                    .map(q => `“${q}”`)
+                    .join('、')}）`
+              )
+              .join('\n')}`
           : '',
       ]
         .filter(Boolean)

@@ -678,16 +678,19 @@ describe('memory value contract', () => {
   });
   it('flags a whole fact category that no decision covered', () => {
     const text = '我爸爸住院了，做了手术，这几天生意也没顾上';
-    expect(
-      uncoveredFactCategories(text, [
-        { key: 'grief.miss_father', value: '用户很想念爸爸' },
-      ])
-    ).toEqual(expect.arrayContaining(['健康与就医', '工作与生活常态']));
+    const gaps = uncoveredFactCategories(text, [
+      { key: 'grief.miss_father', value: '用户很想念爸爸' },
+    ]);
+    const names = gaps.map(g => g.category);
+    expect(names).toEqual(expect.arrayContaining(['健康与就医', '工作与生活常态']));
+    // 必须把触发该类别的原话一起带出来，否则模型不知道该补什么。
+    const health = gaps.find(g => g.category === '健康与就医');
+    expect(health && health.quotes.join('')).toContain('住院');
     // 类别已被某个决定覆盖时不再报缺。
     const covered = uncoveredFactCategories(text, [
       { key: 'health.hospitalized', value: '爸爸住院并做了手术' },
       { key: 'work.business', value: '用户这几天生意很忙' },
-    ]);
+    ]).map(g => g.category);
     expect(covered).not.toContain('健康与就医');
     expect(covered).not.toContain('工作与生活常态');
   });
