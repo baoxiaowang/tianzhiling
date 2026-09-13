@@ -27,7 +27,7 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
-import { memoryValueSimilarity } from './memory-value';
+import { matchAllGlobal, memoryValueSimilarity } from './memory-value';
 import { ChatTraceArtifactKind, ChatTraceService } from '../chat-trace.service';
 import {
   AgentMemoryFactService,
@@ -447,11 +447,13 @@ export function buildMemoryRetrievalQuery(query: string): string {
   for (const term of KINSHIP_LIKE_TERMS) {
     if (text.includes(term)) keys.add(term);
   }
-  for (const match of text.matchAll(
+  for (const match of matchAllGlobal(
+    text,
     /\d{1,4}\s*(?:年|月|日|号|岁|天)|[一二三四五六七八九十]{1,3}\s*(?:年|月|日|岁|天)|以前|当年|小时候|上个月|去年|今年|多久/gu
   ))
     keys.add(match[0].replace(/\s+/g, ''));
-  for (const match of text.matchAll(
+  for (const match of matchAllGlobal(
+    text,
     /去世|过世|离世|走了|走后|走的时候|离开|住院|手术|生病|结婚|离婚|怀孕|出生|上学|幼儿园|工作|上班|搬家|买房|纪念日|生日|忌日|祭日|走/gu
   ))
     keys.add(match[0]);
