@@ -1091,6 +1091,10 @@ export class AgentService {
     const fallback = this.buildInitialRecognitionOpeningFallback(
       options.callMe
     );
+    // 开场白以"稳定"为先：默认直接用固定文案，不调模型（用户反馈模型措辞
+    // 忽好忽坏、还出现过"我等了好久""心里踏实了"这类不合身份的句子）。
+    // 需要模型个性化时显式打开 NODE_INITIAL_OPENING_MODEL=1，且仍走同一套校验。
+    if (process.env.NODE_INITIAL_OPENING_MODEL !== '1') return fallback;
     if (!this.openAIService) return fallback;
 
     try {

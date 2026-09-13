@@ -979,6 +979,22 @@ describe('initial recognition opening', () => {
     );
   });
 
+  it('uses the fixed opening by default without calling the model', async () => {
+    const service = new AgentService();
+    const createChatCompletion = jest.fn();
+    service.openAIService = { createChatCompletion } as any;
+    const content = await (service as any).createInitialRecognitionOpeningContent(
+      {
+        agent: { iCallAgent: '奶奶', name: '奶奶' } as any,
+        callMe: '小宝',
+      }
+    );
+    expect(content).toBe(
+      '小宝，终于能和你说上话了！这些日子，你过得怎么样？'
+    );
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
   it('does not use the relationship term as a self reference', () => {
     const service = new AgentService();
     const withCallName = (service as any).buildInitialRecognitionOpeningFallback(
