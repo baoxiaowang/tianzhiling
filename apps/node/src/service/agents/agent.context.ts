@@ -332,7 +332,8 @@ export interface RetrievedContextSnippet {
 // 自动检索先取一小批候选，随后仍按会话模式的限额筛选注入。
 const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
 // 实际注入上限：实测 8 条里多数是重复碎片，3 条足够且省 token。
-const AUTO_MEMORY_INJECT_LIMIT = 3;
+// 自动注入只给 1 条：实测 3 条里通常只有 1 条有信息量，其余是问题碎片。
+const AUTO_MEMORY_INJECT_LIMIT = 1;
 // 与最近对话（本来就注入上下文）重合到这个程度，就不再重复注入。
 const MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD = 0.5;
 // 注入的每条至少要有 6 个实义字符，否则只是占位碎片。
@@ -398,6 +399,9 @@ export function isInjectableMemoryEvidence(
   const core = memoryEvidenceCore(content);
   if (core.length < AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS) return false;
   if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
+  // 问句不是证据：检索经常把用户过去的提问当成"相关记忆"，对回答毫无帮助。
+  if (/[？?]\s*$/u.test(content.trim())) return false;
+  if (/(?:吗|呢|吧)[。！!]?\s*$/u.test(content.trim())) return false;
   const normalize = (value: string) => memoryEvidenceCore(value).toLowerCase();
   if (core && normalize(content) === normalize(currentQuery)) return false;
   return true;

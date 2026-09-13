@@ -2696,6 +2696,9 @@ describe('memory evidence injection filter', () => {
     expect(isInjectableMemoryEvidence('我会好好的', query)).toBe(false);
     expect(isInjectableMemoryEvidence(query, query)).toBe(false);
     expect(isInjectableMemoryEvidence('行带着你的照片一起去', query)).toBe(true);
+    // 问句不是证据，不注入。
+    expect(isInjectableMemoryEvidence('你知道她是谁吗', query)).toBe(false);
+    expect(isInjectableMemoryEvidence('冷气跟着谁？', query)).toBe(false);
   });
 
   it('ignores laughter when judging whether retrieval is worth it', () => {
