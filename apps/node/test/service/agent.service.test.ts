@@ -456,7 +456,7 @@ describe('AgentService default agent', () => {
     expect(savedMessage.type).toBe(MessageType.text);
     expect(savedContent).toContain('小宝');
     expect(savedContent).toContain('过得怎么样');
-    expect(savedContent).toMatch(/。.*[？?]$/u);
+    expect(savedContent).toMatch(/[。！].*[？?]$/u);
     expect(
       openingMessages.every(
         message => message.status === MessageStatus.sent
@@ -954,11 +954,11 @@ describe('initial recognition opening', () => {
   it('splits the opening into two segments at the first full stop', () => {
     expect(
       splitInitialRecognitionOpeningSegments(
-        '妈，我终于又能和你说上话了。最近过得怎么样，这些日子还好吗？'
+        '小宝，终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
       )
     ).toEqual([
-      '妈，我终于又能和你说上话了。',
-      '最近过得怎么样，这些日子还好吗？',
+      '小宝，终于能和你说上话了！',
+      '你最近过得怎么样，这些日子还好吗？',
     ]);
   });
 
@@ -975,7 +975,7 @@ describe('initial recognition opening', () => {
     );
     expect(fallback.startsWith('我，')).toBe(false);
     expect(fallback).toBe(
-      '终于又能和你说上话了。最近过得怎么样，这些日子还好吗？'
+      '终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
     );
   });
 
@@ -985,7 +985,7 @@ describe('initial recognition opening', () => {
       '小宝'
     );
     expect(withCallName).toBe(
-      '小宝，终于又能和你说上话了。最近过得怎么样，这些日子还好吗？'
+      '小宝，终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
     );
     expect(withCallName).not.toMatch(/奶奶|妈妈|爸爸|儿子/u);
   });
@@ -997,7 +997,7 @@ describe('initial recognition opening', () => {
     );
     // 稳定两句：第一句句号收尾，第二句问句收尾。
     expect(
-      /^[^。！？]{4,60}。[^。！？]{4,60}[？?]$/u.test(fallback)
+      /^[^。！？!?]{4,60}[。！][^。！？!?]{4,60}[？?]$/u.test(fallback)
     ).toBe(true);
     // 不再出现"等了好久""心里踏实"这类听着怪的表述。
     expect(fallback).not.toMatch(/等(?:了|着)?[^。，]{0,6}(?:好久|很久|这么久)/u);
