@@ -624,6 +624,7 @@ export class AgentContextService {
         : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
     let retrievalFailureCount = 0;
+    let retrievalDiagnostics: Record<string, unknown> = {};
     if (effectiveMemoryRetrievalMode === 'active') {
       try {
         const retrieved =
@@ -639,6 +640,20 @@ export class AgentContextService {
             limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
           });
         retrievedMemories.push(...(retrieved.items || []));
+        // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
+        // 是没候选、候选被过滤，还是内部失败被吞掉。
+        const diag = (retrieved as { diagnostics?: Record<string, unknown> })
+          .diagnostics;
+        if (diag)
+          retrievalDiagnostics = {
+            candidateCount: diag.candidateCount,
+            selectedCount: diag.selectedCount,
+            rawFallbackCount: diag.rawFallbackCount,
+            personScopedCount: diag.personScopedCount,
+            retrievalFailureCount: diag.retrievalFailureCount,
+            errorCode: diag.errorCode,
+            maxScore: diag.maxScore,
+          };
       } catch (error) {
         retrievalFailureCount = 1;
         this.logger?.warn?.(
@@ -661,6 +676,7 @@ export class AgentContextService {
         conceptCount: retrievedMemories.length,
         plannerRetrievalBypassed: true,
         retrievalFailureCount,
+        ...retrievalDiagnostics,
       },
     });
     const replyBriefOptions = {
