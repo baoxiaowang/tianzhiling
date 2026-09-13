@@ -10,6 +10,77 @@ const aggregateResult = (rows: unknown[]) => ({
   toArray: jest.fn().mockResolvedValue(rows),
 });
 
+const OVERRIDE_COLLECTION = 'admin_daily_promotion_expense';
+
+/**
+ * 内存模拟 admin_daily_stats 汇总表 + admin_daily_promotion_expense 覆盖集合。
+ * 覆盖值通过 MongoEntityManager.mongoQueryRunner 的原生命令读写。
+ */
+const createPromotionExpenseStore = () => {
+  const stats = new Map<string, Record<string, unknown>>();
+  const overrides = new Map<string, number>();
+  const queryRunner = {
+    updateOne: jest.fn(
+      async (
+        collection: string,
+        filter: { _id: string },
+        update: { $set?: Record<string, unknown> }
+      ) => {
+        if (
+          collection === OVERRIDE_COLLECTION &&
+          update?.$set?.promotionExpense !== undefined
+        ) {
+          overrides.set(
+            String(filter._id),
+            Number(update.$set.promotionExpense)
+          );
+        }
+        return {};
+      }
+    ),
+    deleteOne: jest.fn(async (collection: string, filter: { _id: string }) => {
+      if (collection === OVERRIDE_COLLECTION) {
+        overrides.delete(String(filter._id));
+      }
+      return {};
+    }),
+    cursor: jest.fn((collection: string, filter: { _id?: unknown }) => ({
+      toArray: async () => {
+        if (collection !== OVERRIDE_COLLECTION) return [];
+        const key = filter?._id;
+        if (typeof key === 'string') {
+          return overrides.has(key)
+            ? [{ _id: key, promotionExpense: overrides.get(key) }]
+            : [];
+        }
+        const range = (key ?? {}) as { $gte?: string; $lte?: string };
+        return [...overrides.entries()]
+          .filter(
+            ([date]) =>
+              (!range.$gte || date >= range.$gte) &&
+              (!range.$lte || date <= range.$lte)
+          )
+          .map(([date, promotionExpense]) => ({ _id: date, promotionExpense }));
+      },
+    })),
+  };
+  const statsModel = {
+    updateOne: jest.fn(
+      async (
+        filter: { date: string },
+        update: { $set?: Record<string, unknown> }
+      ) => {
+        const current = stats.get(filter.date) ?? { date: filter.date };
+        stats.set(filter.date, { ...current, ...(update.$set ?? {}) });
+        return {};
+      }
+    ),
+    aggregate: jest.fn(() => aggregateResult([...stats.values()])),
+    manager: { mongoQueryRunner: queryRunner },
+  };
+  return { stats, overrides, statsModel, queryRunner };
+};
+
 describe('AdminOperationsService', () => {
   afterEach(() => {
     jest.useRealTimers();
@@ -451,11 +522,9 @@ describe('AdminOperationsService', () => {
     service.orderRefundModel = {
       aggregate: jest.fn(() => aggregateResult([])),
     } as never;
-    const updateOne = jest.fn().mockResolvedValue({});
-    service.statsModel = {
-      findOne: jest.fn().mockResolvedValue({ promotionExpenseOverride: 250 }),
-      updateOne,
-    } as never;
+    const { overrides, statsModel } = createPromotionExpenseStore();
+    overrides.set('2026-08-23', 250);
+    service.statsModel = statsModel as never;
 
     const point = await service.computeAndPersistDailyStats('2026-08-23');
 
@@ -466,7 +535,7 @@ describe('AdminOperationsService', () => {
       profit: 250,
       promotionExpenseManual: true,
     });
-    expect(updateOne).toHaveBeenCalledWith(
+    expect(statsModel.updateOne).toHaveBeenCalledWith(
       { date: '2026-08-23' },
       expect.objectContaining({
         $set: expect.objectContaining({
@@ -480,33 +549,28 @@ describe('AdminOperationsService', () => {
 
   it('保存每日推广费手动覆盖并支持恢复默认', async () => {
     const service = new AdminOperationsService();
-    const updateOne = jest.fn().mockResolvedValue({});
-    service.statsModel = {
-      aggregate: jest.fn(() =>
-        aggregateResult([
-          {
-            date: '2026-08-23',
-            newUsers: 3,
-            newAgents: 4,
-            newUserChatUsers: 2,
-            newUserMessages: 5,
-            newUserFiveMessageUsers: 1,
-            allChatUsers: 6,
-            userMessages: 12,
-            paidUsers: 2,
-            paidOrders: 3,
-            sameDayPayingUsers: 1,
-            paidRevenue: 99,
-            refundedRevenue: 18,
-            netRevenue: 81,
-            cohortRevenue: 500,
-            promotionExpense: 310,
-            profit: 190,
-          },
-        ])
-      ),
-      updateOne,
-    } as never;
+    const { stats, overrides, statsModel, queryRunner } =
+      createPromotionExpenseStore();
+    stats.set('2026-08-23', {
+      date: '2026-08-23',
+      newUsers: 3,
+      newAgents: 4,
+      newUserChatUsers: 2,
+      newUserMessages: 5,
+      newUserFiveMessageUsers: 1,
+      allChatUsers: 6,
+      userMessages: 12,
+      paidUsers: 2,
+      paidOrders: 3,
+      sameDayPayingUsers: 1,
+      paidRevenue: 99,
+      refundedRevenue: 18,
+      netRevenue: 81,
+      cohortRevenue: 500,
+      promotionExpense: 310,
+      profit: 190,
+    });
+    service.statsModel = statsModel as never;
 
     const saved = await service.updateDailyPromotionExpense('2026-08-23', {
       promotionExpense: 250,
@@ -518,65 +582,53 @@ describe('AdminOperationsService', () => {
       profit: 250,
       promotionExpenseManual: true,
     });
-    expect(updateOne).toHaveBeenCalledWith(
-      { date: '2026-08-23' },
-      {
-        $set: expect.objectContaining({
-          promotionExpense: 250,
-          profit: 250,
-          promotionExpenseOverride: 250,
-        }),
-      },
+    expect(overrides.get('2026-08-23')).toBe(250);
+    expect(queryRunner.updateOne).toHaveBeenCalledWith(
+      OVERRIDE_COLLECTION,
+      { _id: '2026-08-23' },
+      { $set: expect.objectContaining({ promotionExpense: 250 }) },
       { upsert: true }
     );
+    expect(statsModel.updateOne).toHaveBeenCalledWith(
+      { date: '2026-08-23' },
+      { $set: expect.objectContaining({ promotionExpense: 250, profit: 250 }) },
+      { upsert: true }
+    );
+    const savedUpdate = statsModel.updateOne.mock.calls[0][1];
+    expect(savedUpdate.$set).not.toHaveProperty('promotionExpenseOverride');
 
-    updateOne.mockClear();
+    statsModel.updateOne.mockClear();
+    queryRunner.updateOne.mockClear();
     const reset = await service.updateDailyPromotionExpense('2026-08-23', {
       promotionExpense: null,
     });
 
+    expect(overrides.has('2026-08-23')).toBe(false);
+    expect(queryRunner.deleteOne).toHaveBeenCalledWith(OVERRIDE_COLLECTION, {
+      _id: '2026-08-23',
+    });
     expect(reset).toMatchObject({
       promotionExpense: getDouyinPromotionExpense('2026-08-23'),
       promotionExpenseManual: false,
     });
-    expect(updateOne).toHaveBeenCalledWith(
+    expect(statsModel.updateOne).toHaveBeenCalledWith(
       { date: '2026-08-23' },
       {
         $set: expect.objectContaining({
           promotionExpense: getDouyinPromotionExpense('2026-08-23'),
-          promotionExpenseOverride: null,
         }),
       },
       { upsert: true }
     );
   });
 
-  it('人工推广费保存后经多次重算仍保留，并能从汇总表读回', async () => {
+  it('人工推广费保存后经多次重算仍保留，并能从覆盖集合读回', async () => {
     const service = new AdminOperationsService();
     const date = '2026-08-10';
-    // 用内存 Map 模拟 admin_daily_stats 集合，只实现本链路用到的仓储方法
-    const store = new Map<string, Record<string, unknown>>();
-    const statsModel = {
-      updateOne: jest.fn(
-        async (
-          filter: { date: string },
-          update: { $set: Record<string, unknown> }
-        ) => {
-          const current = store.get(filter.date) ?? { date: filter.date };
-          store.set(filter.date, { ...current, ...update.$set });
-          return {};
-        }
-      ),
-      findOne: jest.fn(async (options: { where: { date: string } }) => {
-        return store.get(options.where.date) ?? null;
-      }),
-      aggregate: jest.fn(() => aggregateResult([...store.values()])),
-    };
+    const { overrides, statsModel } = createPromotionExpenseStore();
     service.statsModel = statsModel as never;
     service.userModel = {
-      aggregate: jest.fn(() =>
-        aggregateResult([{ _id: date, count: 3 }])
-      ),
+      aggregate: jest.fn(() => aggregateResult([{ _id: date, count: 3 }])),
     } as never;
     service.agentModel = {
       aggregate: jest.fn(() => aggregateResult([])),
@@ -601,7 +653,7 @@ describe('AdminOperationsService', () => {
       promotionExpenseManual: false,
     });
 
-    // 2. 管理员手动保存
+    // 2. 管理员手动保存 → 写入独立覆盖集合
     const saved = await service.updateDailyPromotionExpense(date, {
       promotionExpense: 123.45,
     });
@@ -610,7 +662,7 @@ describe('AdminOperationsService', () => {
       profit: 376.55,
       promotionExpenseManual: true,
     });
-    expect(store.get(date)?.promotionExpenseOverride).toBe(123.45);
+    expect(overrides.get(date)).toBe(123.45);
 
     // 3. 模拟定时任务/回填再次重算：覆盖值必须保留
     const afterRecompute = await service.computeAndPersistDailyStats(date);
@@ -619,12 +671,14 @@ describe('AdminOperationsService', () => {
       profit: 376.55,
       promotionExpenseManual: true,
     });
-    expect(store.get(date)?.promotionExpenseOverride).toBe(123.45);
+    expect(overrides.get(date)).toBe(123.45);
 
     // 4. 汇总表读取路径同样返回人工值
     const dailyStats = new AdminDailyStatsService();
     (dailyStats as unknown as { statsModel: unknown }).statsModel =
       statsModel as never;
+    (dailyStats as unknown as { adminOperations: unknown }).adminOperations =
+      service;
     const map = await dailyStats.getDays(date, date);
     expect(map.get(date)).toMatchObject({
       promotionExpense: 123.45,
@@ -632,9 +686,9 @@ describe('AdminOperationsService', () => {
       promotionExpenseManual: true,
     });
 
-    // 5. 恢复默认后覆盖值清空
+    // 5. 恢复默认后覆盖文档删除
     await service.updateDailyPromotionExpense(date, { promotionExpense: null });
-    expect(store.get(date)?.promotionExpenseOverride).toBeNull();
+    expect(overrides.has(date)).toBe(false);
     const reset = await service.computeAndPersistDailyStats(date);
     expect(reset.promotionExpenseManual).toBe(false);
     expect(reset.promotionExpense).toBe(getDouyinPromotionExpense(date));

@@ -49,14 +49,15 @@ export class AdminDailyStatsService {
         { $sort: { date: 1 } },
       ])
       .toArray();
+    const overrides = this.adminOperations
+      ? await this.adminOperations.loadPromotionExpenseOverrides(
+          startDate,
+          endDate
+        )
+      : new Map<string, number>();
     const map = new Map<string, AdminOperationsDailyPointDTO>();
     for (const row of rows) {
-      const override =
-        typeof row.promotionExpenseOverride === 'number' &&
-        Number.isFinite(row.promotionExpenseOverride) &&
-        row.promotionExpenseOverride >= 0
-          ? row.promotionExpenseOverride
-          : undefined;
+      const override = overrides.get(row.date);
       const promotionExpense =
         override ??
         (Number.isFinite(row.promotionExpense)

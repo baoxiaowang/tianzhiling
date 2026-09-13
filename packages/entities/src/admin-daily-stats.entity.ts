@@ -59,18 +59,11 @@ export class AdminDailyStatsEntity extends BaseEntity {
   @Column()
   cohortRevenue!: number;
 
-  /** 推广费用（元），默认取抖评记录口径 */
+  /** 推广费用（元） */
   @Column()
   promotionExpense!: number;
 
-  /**
-   * 管理员手动录入的推广费（元）。
-   * 存在时优先于抖评记录默认值，且不会被定时任务/回填覆盖。
-   */
-  @Column({ nullable: true })
-  promotionExpenseOverride?: number;
-
-  /** 利润（元）= cohortRevenue - promotionExpense */
+  /** 利润（元）= netRevenue - promotionExpense */
   @Column()
   profit!: number;
 

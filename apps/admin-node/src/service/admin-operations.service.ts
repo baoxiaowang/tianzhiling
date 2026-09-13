@@ -139,6 +139,31 @@ const periodOrderStatsCache = new Map<
   { expiresAt: number; value: PeriodOrderStatsRow }
 >();
 
+/**
+ * 人工推广费覆盖值集合。刻意与 admin_daily_stats 分表存储：
+ * 通过 Mongo 原生命令读写，不新增/修改 TypeORM 实体，避免触碰汇总表实体定义。
+ * 文档结构：{ _id: 'YYYY-MM-DD', promotionExpense: number, updatedAt: Date }
+ */
+const PROMOTION_EXPENSE_OVERRIDE_COLLECTION = 'admin_daily_promotion_expense';
+
+/** 覆盖值读写所需的最小 Mongo query runner 能力 */
+type PromotionExpenseOverrideQueryRunner = {
+  updateOne(
+    collection: string,
+    filter: Record<string, unknown>,
+    update: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<unknown>;
+  deleteOne(
+    collection: string,
+    filter: Record<string, unknown>
+  ): Promise<unknown>;
+  cursor(
+    collection: string,
+    filter: Record<string, unknown>
+  ): { toArray(): Promise<Array<Record<string, unknown>>> };
+};
+
 @Provide()
 export class AdminOperationsService {
 
@@ -434,13 +459,14 @@ export class AdminOperationsService {
       (point?.cohortRevenue ?? 0) - promotionExpense
     );
 
+    // 先写覆盖值集合（null 表示恢复默认 → 删除覆盖文档），再回写汇总行的有效值。
+    await this.savePromotionExpenseOverride(date, override);
     await this.statsModel.updateOne(
       { date },
       {
         $set: {
           promotionExpense,
           profit,
-          promotionExpenseOverride: override ?? null,
           computedAt: new Date(),
         },
       },
@@ -456,6 +482,87 @@ export class AdminOperationsService {
       profit,
       promotionExpenseManual: override !== undefined,
     };
+  }
+
+  /**
+   * 批量读取日期范围内的人工推广费覆盖值（date -> 金额）。
+   * 供每日明细读取路径与其它服务复用。
+   */
+  async loadPromotionExpenseOverrides(
+    startDate: string,
+    endDate: string
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const runner = this.getPromotionExpenseOverrideQueryRunner();
+    if (!runner) return result;
+    const rows = await runner
+      .cursor(PROMOTION_EXPENSE_OVERRIDE_COLLECTION, {
+        _id: { $gte: startDate, $lte: endDate },
+      })
+      .toArray();
+    for (const row of rows) {
+      const date = String(row._id ?? '');
+      const value = this.normalizePromotionExpenseOverride(
+        row.promotionExpense
+      );
+      if (date && value !== undefined) result.set(date, value);
+    }
+    return result;
+  }
+
+  /** 读取单日人工推广费覆盖值（不存在返回 undefined） */
+  private async getPromotionExpenseOverride(
+    date: string
+  ): Promise<number | undefined> {
+    const runner = this.getPromotionExpenseOverrideQueryRunner();
+    if (!runner) return undefined;
+    const rows = await runner
+      .cursor(PROMOTION_EXPENSE_OVERRIDE_COLLECTION, { _id: date })
+      .toArray();
+    return this.normalizePromotionExpenseOverride(rows[0]?.promotionExpense);
+  }
+
+  /** 写入/清除人工推广费覆盖值。undefined 表示恢复默认。 */
+  private async savePromotionExpenseOverride(
+    date: string,
+    value: number | undefined
+  ): Promise<void> {
+    const runner = this.getPromotionExpenseOverrideQueryRunner();
+    if (!runner) return;
+    if (value === undefined) {
+      await runner.deleteOne(PROMOTION_EXPENSE_OVERRIDE_COLLECTION, {
+        _id: date,
+      });
+      return;
+    }
+    await runner.updateOne(
+      PROMOTION_EXPENSE_OVERRIDE_COLLECTION,
+      { _id: date },
+      { $set: { promotionExpense: value, updatedAt: new Date() } },
+      { upsert: true }
+    );
+  }
+
+  /**
+   * 取覆盖值集合的原生 query runner。
+   * 借道已注入 statsModel 的 MongoEntityManager，无需注册任何新实体。
+   */
+  private getPromotionExpenseOverrideQueryRunner():
+    | PromotionExpenseOverrideQueryRunner
+    | undefined {
+    const manager = this.statsModel?.manager as unknown as
+      | { mongoQueryRunner?: PromotionExpenseOverrideQueryRunner }
+      | undefined;
+    return manager?.mongoQueryRunner;
+  }
+
+  private normalizePromotionExpenseOverride(
+    value: unknown
+  ): number | undefined {
+    if (value === null || value === undefined || value === '') return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return this.roundMoney(parsed);
   }
 
   async getReport(month?: string): Promise<AdminOperationsReportDTO> {
@@ -697,11 +804,13 @@ export class AdminOperationsService {
         { $sort: { date: 1 } },
       ])
       .toArray();
+    const overrides = await this.loadPromotionExpenseOverrides(
+      startDate,
+      endDate
+    );
     const map = new Map<string, AdminOperationsDailyPointDTO>();
     for (const row of rows) {
-      const override = this.normalizePromotionExpenseOverride(
-        row.promotionExpenseOverride
-      );
+      const override = overrides.get(row.date);
       const promotionExpense =
         override ??
         (Number.isFinite(row.promotionExpense)
@@ -775,26 +884,6 @@ export class AdminOperationsService {
       profit,
       promotionExpenseManual: override !== undefined,
     };
-  }
-
-  /** 读取某日的人工推广费覆盖值（无覆盖/非法值返回 undefined） */
-  private async getPromotionExpenseOverride(
-    date: string
-  ): Promise<number | undefined> {
-    if (!this.statsModel) return undefined;
-    const row = await this.statsModel.findOne({ where: { date } } as never);
-    return this.normalizePromotionExpenseOverride(
-      row?.promotionExpenseOverride
-    );
-  }
-
-  private normalizePromotionExpenseOverride(
-    value: unknown
-  ): number | undefined {
-    if (value === null || value === undefined || value === '') return undefined;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-    return this.roundMoney(parsed);
   }
 
   /** 实时补算天数上限：超出部分依赖定时任务/回填，避免请求时补算大量历史数据 */
