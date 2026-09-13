@@ -27,6 +27,7 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
+import { memoryValueSimilarity } from './memory-value';
 import { ChatTraceArtifactKind, ChatTraceService } from '../chat-trace.service';
 import {
   AgentMemoryFactService,
@@ -330,6 +331,8 @@ export interface RetrievedContextSnippet {
 const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
 // 实际注入上限：实测 8 条里多数是重复碎片，3 条足够且省 token。
 const AUTO_MEMORY_INJECT_LIMIT = 3;
+// 与最近对话（本来就注入上下文）重合到这个程度，就不再重复注入。
+const MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD = 0.5;
 // 注入的每条至少要有 6 个实义字符，否则只是占位碎片。
 const AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS = 6;
 // 纯应答类原话（"我会好好的""我知道了"）字数够但没有信息量，不注入。
@@ -339,12 +342,32 @@ const MEMORY_EVIDENCE_ACK_PATTERN =
 const AUTO_MEMORY_MIN_CORE_CHARACTERS = 6;
 const AUTO_MEMORY_MIN_QUERY_CHARACTERS = 4;
 
+// 只有"在问具体事实/回忆具体往事"时才检索长期记忆。
+// 情绪倾诉不检索：实测检索出来的都是与当前这句高度相似的另一句情绪原话，
+// 而最近 16 条对话本来就在上下文里，等于重复信息。
+const LONG_TERM_RECALL_QUESTION_PATTERN =
+  /谁|哪(?:一)?(?:个|位|天|年|月|日|儿)|什么时候|几号|几年|几岁|多大|多久|在哪里|在哪儿|在什么地方|叫什么|名字|全名|生日|忌日|祭日|记不记得|还记得|认得|见过|说过什么|怎么走的|为什么走|什么时候走|以前|那次|当年|小时候|共同|一起|在那边|过得好|找到|有没有|是不是|真的吗/u;
+
 /**
  * 是否值得为这句话检索长期记忆。
- * 实测噪声来源：用户只发"😭😭"时，检索会命中 8 条一样的表情碎片，纯浪费。
- * 规则：去掉表情/标点/空白后至少 6 个字，且整句不短于 4 个字。
+ * 实测噪声：情绪倾诉会检索出与当前句高度相似的另一句情绪原话，属于重复信息
+ * （最近对话本来就在上下文里）；纯表情/寒暄更是纯浪费。因此只在这句是在
+ * "问具体事实或回忆具体往事"时才检索。
  */
 export function needsLongTermMemoryRetrieval(query: string): boolean {
+  if (!isFactOrRecallSeeking(query)) return false;
+  return hasEnoughSubstance(query);
+}
+
+/** 这句话是不是在问具体事实/回忆具体往事。 */
+export function isFactOrRecallSeeking(query: string): boolean {
+  const text = (query || '').trim();
+  if (!text) return false;
+  return LONG_TERM_RECALL_QUESTION_PATTERN.test(text);
+}
+
+/** 文字本身是否够实（去掉表情标点、折叠重复填充之后）。 */
+function hasEnoughSubstance(query: string): boolean {
   const text = (query || '').trim();
   if (text.length < AUTO_MEMORY_MIN_QUERY_CHARACTERS) return false;
   // 只保留汉字/字母/数字：表情、标点、空白一并去掉（避免在字符类里写 emoji 范围）。
@@ -692,6 +715,11 @@ export class AgentContextService {
           });
         // 只注入最相关的少数几条：先丢掉碎片与"当前这轮原话自己"，
         // 再取前 3 条（实测 8 条里多数是重复碎片，白耗检索与 token）。
+        // 与最近对话高度相似的条目不再注入：那些内容本来就在上下文里，
+        // 属于重复信息（用户反馈"检索基本都是相似性、意义不大"）。
+        const recentTexts = routingHistoryMessages.map(
+          message => message.content || ''
+        );
         retrievedMemories.push(
           ...(retrieved.items || [])
             .filter(item =>
@@ -699,6 +727,14 @@ export class AgentContextService {
                 item.content || '',
                 options.currentQuery || ''
               )
+            )
+            .filter(
+              item =>
+                !recentTexts.some(
+                  text =>
+                    memoryValueSimilarity(text, item.content || '') >=
+                    MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD
+                )
             )
             .slice(0, AUTO_MEMORY_INJECT_LIMIT)
         );

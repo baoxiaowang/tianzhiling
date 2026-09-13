@@ -2,6 +2,7 @@ import { AgentContextService } from '../../src/service/agents/agent.context';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
 import {
+  isFactOrRecallSeeking,
   isInjectableMemoryEvidence,
   needsLongTermMemoryRetrieval,
 } from '../../src/service/agents/agent.context';
@@ -2680,11 +2681,12 @@ describe('long-term memory retrieval gate', () => {
     expect(needsLongTermMemoryRetrieval('好的好的好的好的')).toBe(false);
   });
 
-  it('retrieves when the user is talking about a real thing', () => {
-    expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(true);
+  it('no longer retrieves for emotional venting by design', () => {
+    // 口径调整（用户反馈"检索都是相似性、重复信息"）：情绪倾诉不再检索。
+    expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(false);
     expect(
       needsLongTermMemoryRetrieval('我们过的都很好，我妈在你走后的第三年也跟着你去了')
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 describe('memory evidence injection filter', () => {
@@ -2699,8 +2701,23 @@ describe('memory evidence injection filter', () => {
   it('ignores laughter when judging whether retrieval is worth it', () => {
     expect(needsLongTermMemoryRetrieval('哈哈哈哈哈')).toBe(false);
     expect(needsLongTermMemoryRetrieval('哈哈哈哈哈哈哈哈哈哈哈哈')).toBe(false);
+    // 纯情绪祝福不是事实/回忆提问，不触发检索。
     expect(
       needsLongTermMemoryRetrieval('哈哈哈哈哈 你小子 一定要幸福 多和别的小猫玩')
-    ).toBe(true);
+    ).toBe(false);
+  });
+});
+describe('retrieval only for fact or recall seeking turns', () => {
+  it('does not retrieve for emotional venting', () => {
+    expect(needsLongTermMemoryRetrieval('反正你不爱我')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('每天都在承受抽筋剥骨的痛')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('心里真难过')).toBe(false);
+  });
+
+  it('retrieves when the turn is about a concrete fact or past event', () => {
+    expect(needsLongTermMemoryRetrieval('奶奶是哪一年走的')).toBe(true);
+    expect(needsLongTermMemoryRetrieval('你还记得我们以前去过哪里吗')).toBe(true);
+    expect(needsLongTermMemoryRetrieval('我的生日你还记得吗')).toBe(true);
+    expect(isFactOrRecallSeeking('爷爷，其实我心里好恨你们')).toBe(false);
   });
 });
