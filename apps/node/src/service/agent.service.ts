@@ -98,6 +98,9 @@ const AWKWARD_INITIAL_RECOGNITION_PATTERN =
 // 结尾的emoji由上面的 QUESTION_END 规则单独校验，这里不重复 emoji 字符类。
 const OPEN_INITIAL_RECOGNITION_TWO_SENTENCE_PATTERN =
   /^[^。！？!?]{4,60}。[^。！？!?]{4,60}[？?]/u;
+// 关系称谓自称（"奶奶终于又能和你说上话了"）读着怪，用户明确不要。
+const SELF_REFERENCE_INITIAL_RECOGNITION_PATTERN =
+  /(?:爸爸|妈妈|父亲|母亲|爷爷|奶奶|外公|外婆|姥姥|姥爷|儿子|女儿|哥哥|姐姐|弟弟|妹妹|丈夫|妻子|老公|老婆|孙子|孙女|外孙|外孙女)(?:我|自己)?(?:终于|又)?(?:能|可以)?(?:和|跟)?(?:你|您)(?:说|聊|联系|通话)/u;
 
 type AgentAccessRole = 'owner' | 'shared';
 
@@ -1082,7 +1085,6 @@ export class AgentService {
     callMe: string;
   }): Promise<string> {
     const fallback = this.buildInitialRecognitionOpeningFallback(
-      options.agent,
       options.callMe
     );
     if (!this.openAIService) return fallback;
@@ -1109,6 +1111,7 @@ export class AgentService {
                 '用户还没有发言，所以不能说“终于听见你喊我”、不能假装看到用户，也不能引用用户尚未说过的话。',
                 '时间保持中性，不确定离开了多久。只使用给定关系、称呼、性格和语言习惯；不编造任何共同往事、现实物品、地点、家人现状或具体经历。',
                 '不要身份验证，不要解释产品或AI。先表达终于重新联系上的感受，再自然问用户最近好吗、这些日子过得怎么样，让聊天继续打开。',
+                '不要用“奶奶”“儿子”“爸爸”这类关系称谓自称或自我介绍，直接以第一人称说感受和问句。',
                 '固定写成两句：第一句以句号结尾，第二句以问句结尾，中间不再多写句子；第二句就是关心问句本身。',
                 '不要写“我等了好久”“等了很久”“心里踏实了/放心了”这类等待与释然的说法，也不要用“你好好的我就放心了”“照顾好自己”“你别挂心”等祝愿提前收尾。两句合计20—60字。',
                 '严格输出JSON：{"content":"正文"}',
@@ -1152,6 +1155,7 @@ export class AgentService {
         UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content) ||
         CLOSING_INITIAL_RECOGNITION_PATTERN.test(content) ||
         AWKWARD_INITIAL_RECOGNITION_PATTERN.test(content) ||
+        SELF_REFERENCE_INITIAL_RECOGNITION_PATTERN.test(content) ||
         !OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN.test(content) ||
         // 必须是稳定的两句（第一句句号收尾、第二句问句收尾），否则退回模板。
         !OPEN_INITIAL_RECOGNITION_TWO_SENTENCE_PATTERN.test(content)
@@ -1168,18 +1172,13 @@ export class AgentService {
     }
   }
 
-  private buildInitialRecognitionOpeningFallback(
-    agent: AgentEntity,
-    callMe: string
-  ): string {
-    const role = agent.iCallAgent?.trim() || agent.name?.trim() || '我';
-    // 称呼自适应：有真实称呼才加前缀；上游在缺称呼时会填占位符"我"，
-    // 直接拼出来会变成"我，奶奶终于…"，所以这里把占位符当作没有称呼。
+  private buildInitialRecognitionOpeningFallback(callMe: string): string {
+    // 称呼自适应：有真实称呼才加前缀；上游在缺称呼时会填占位符"我"。
+    // 不用关系称谓自称（"奶奶终于…"）——用户反馈读着怪。
     const callName = callMe && callMe !== '我' ? callMe : '';
     // 稳定两句：第一句句号收尾，第二句问句收尾（展示层按句号拆成两条）。
-    return callName
-      ? `${callName}，${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`
-      : `${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`;
+    const opening = '终于又能和你说上话了。最近过得怎么样，这些日子还好吗？';
+    return callName ? `${callName}，${opening}` : opening;
   }
 
   private async buildAgentProfile(
