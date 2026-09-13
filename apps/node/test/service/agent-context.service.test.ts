@@ -1,6 +1,7 @@
 import { AgentContextService } from '../../src/service/agents/agent.context';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
+import { needsLongTermMemoryRetrieval } from '../../src/service/agents/agent.context';
 import type { StructuredReplyIntent } from '../../src/service/agents/reply-intent';
 import {
   AgentEntity,
@@ -2666,5 +2667,20 @@ describe('AgentContextService', () => {
     );
 
     expect(selected[0].key).toBe('compound.update.家务');
+  });
+});
+describe('long-term memory retrieval gate', () => {
+  it('skips retrieval for emoji-only or tiny fragments', () => {
+    expect(needsLongTermMemoryRetrieval('😭😭')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('在吗')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('啊啊啊啊啊啊啊啊')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('好的好的好的好的')).toBe(false);
+  });
+
+  it('retrieves when the user is talking about a real thing', () => {
+    expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(true);
+    expect(
+      needsLongTermMemoryRetrieval('我们过的都很好，我妈在你走后的第三年也跟着你去了')
+    ).toBe(true);
   });
 });

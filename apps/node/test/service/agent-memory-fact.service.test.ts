@@ -34,6 +34,38 @@ function createUserMessage(content: string): MessageEntity {
 }
 
 describe('AgentMemoryFactService', () => {
+
+  it('captures a requested call name and a forbidden one from the same message', async () => {
+    const service = new AgentMemoryFactService();
+    const savedFacts: AgentMemoryFactEntity[] = [];
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(async fact => {
+        savedFacts.push(fact);
+        return fact;
+      }),
+    } as never;
+
+    const text = '我要你叫我老婆，不叫丫头';
+    const facts = await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage(text),
+      searchableText: text,
+    });
+
+    expect(facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'relationship.agent_calls_user',
+          value: '用户希望当前角色称呼用户为老婆',
+        }),
+        expect.objectContaining({
+          key: 'relationship.forbidden_user_address.丫头',
+          value: '用户不希望当前角色称呼用户为丫头',
+        }),
+      ])
+    );
+  });
+
   it('extracts high-priority profile, family, preference, and correction facts', async () => {
     const service = new AgentMemoryFactService();
     const savedFacts: AgentMemoryFactEntity[] = [];

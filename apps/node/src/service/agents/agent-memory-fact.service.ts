@@ -570,33 +570,63 @@ export class AgentMemoryFactService {
     facts: AgentMemoryFactSummary[],
     text: string
   ): void {
-    if (
-      /(?:以后|今后|往后)?(?:别|不要)(?:再)?叫我|(?:别|不要)(?:再)?用[\u4e00-\u9fa5A-Za-z·]{1,12}(?:这个叫法|来夸我|来叫我)/.test(
-        text
-      )
-    ) {
-      return;
+    // 正向与负向独立解析：用户可能一句话同时给（"我要你叫我老婆，不叫丫头"）。
+    // 旧实现只要出现"别/不要叫我"就整体 return，且正向只认"以后/今后…叫我X吧"
+    // 这类句式，于是"我要你叫我老婆"被漏掉、只能靠检索兜底。
+    const KINSHIP_WORD = '[\u4e00-\u9fa5A-Za-z·]{1,12}';
+    const forbidden: string[] = [];
+    const forbiddenPatterns = [
+      new RegExp(
+        `(?:以后|今后|往后)?(?:别|不要|不用|不准)(?:再)?(?:叫我|喊我|称呼我)(${KINSHIP_WORD})`
+      ),
+      new RegExp(`(?:不叫|别叫|不要叫|不用叫)(${KINSHIP_WORD})`),
+      new RegExp(`(${KINSHIP_WORD})这个叫法先别用了`),
+      new RegExp(`(?:别|不要)(?:再)?用(${KINSHIP_WORD})来(?:夸我|叫我)`),
+    ];
+    for (const pattern of forbiddenPatterns) {
+      const match = text.match(pattern);
+      const word = match?.[1]?.trim();
+      if (word && !forbidden.includes(word)) forbidden.push(word);
     }
 
-    const callMeMatch = text.match(
-      /(?:以后|以后都|你以后|今后|往后).{0,4}(?:叫我|喊我)([\u4e00-\u9fa5A-Za-z·]{1,12})|(?:叫我|喊我)([\u4e00-\u9fa5A-Za-z·]{1,12})(?:就好|吧|好吗|行吗)/
-    );
-    const callMe = (callMeMatch?.[1] || callMeMatch?.[2])?.replace(
-      /(?:就好|好吗|行吗|吧)$/,
-      ''
-    );
+    // 正向必须有"请求"语气（我要/想/希望/以后…，或"叫我X吧/好吗"），
+    // 否则"你叫我的语气"这种叙述也会被误当成改称呼。
+    const positivePatterns = [
+      /(?:我要|我想|我希望|希望你|以后|今后|往后|请你|麻烦你)(?:都)?(?:你)?(?:叫我|喊我|称呼我)([^\s，,。！!？?的]{1,6})/,
+      /(?:叫我|喊我|称呼我)([^\s，,。！!？?的]{1,6})(?:就好|吧|好吗|行吗|可以吗)/,
+    ];
+    let callMe = '';
+    for (const pattern of positivePatterns) {
+      const match = text.match(pattern);
+      const word = match?.[1]
+        ?.trim()
+        .replace(/(?:就好|好吗|行吗|可以吗|可以|吧)$/u, '');
+      if (word && !/(?:语气|名字|声音|称呼|一声|时候|什么|怎么)/u.test(word)) {
+        callMe = word;
+        break;
+      }
+    }
+    if (callMe && forbidden.includes(callMe)) callMe = '';
 
-    if (!callMe) {
-      return;
+    if (callMe) {
+      facts.push({
+        type: AgentMemoryFactType.relationship,
+        key: 'relationship.agent_calls_user',
+        value: `用户希望当前角色称呼用户为${callMe}`,
+        polarity: AgentMemoryFactPolarity.positive,
+        priority: 3,
+      });
     }
 
-    facts.push({
-      type: AgentMemoryFactType.relationship,
-      key: 'relationship.agent_calls_user',
-      value: `用户希望当前角色称呼用户为${callMe}`,
-      polarity: AgentMemoryFactPolarity.positive,
-      priority: 3,
-    });
+    for (const word of forbidden) {
+      facts.push({
+        type: AgentMemoryFactType.relationship,
+        key: `relationship.forbidden_user_address.${word}`,
+        value: `用户不希望当前角色称呼用户为${word}`,
+        polarity: AgentMemoryFactPolarity.negative,
+        priority: 3,
+      });
+    }
   }
 
   private addAddressBoundaryFacts(

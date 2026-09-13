@@ -328,6 +328,27 @@ export interface RetrievedContextSnippet {
 // 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
 // 自动检索先取一小批候选，随后仍按会话模式的限额筛选注入。
 const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
+// 实际注入上限：实测 8 条里多数是重复碎片，3 条足够且省 token。
+const AUTO_MEMORY_INJECT_LIMIT = 3;
+// 只有"像在说事/记事"的话才值得检索长期记忆；纯表情、寒暄、极短碎片一律不检索。
+const AUTO_MEMORY_MIN_CORE_CHARACTERS = 6;
+const AUTO_MEMORY_MIN_QUERY_CHARACTERS = 4;
+
+/**
+ * 是否值得为这句话检索长期记忆。
+ * 实测噪声来源：用户只发"😭😭"时，检索会命中 8 条一样的表情碎片，纯浪费。
+ * 规则：去掉表情/标点/空白后至少 6 个字，且整句不短于 4 个字。
+ */
+export function needsLongTermMemoryRetrieval(query: string): boolean {
+  const text = (query || '').trim();
+  if (text.length < AUTO_MEMORY_MIN_QUERY_CHARACTERS) return false;
+  // 只保留汉字/字母/数字：表情、标点、空白一并去掉（避免在字符类里写 emoji 范围）。
+  const core = text.replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
+  if (core.length < AUTO_MEMORY_MIN_CORE_CHARACTERS) return false;
+  // 同一字符重复（"啊啊啊啊啊啊""哈哈哈哈哈哈"）也不算有效信息。
+  if (new Set(core).size < 3) return false;
+  return true;
+}
 const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 // 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
 const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
@@ -619,7 +640,7 @@ export class AgentContextService {
     // 就完全没有记忆；现在恢复为按模式限额注入。
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       this.retrieveService?.retrieveConversationMemoriesDetailed &&
-      options.currentQuery?.trim()
+      needsLongTermMemoryRetrieval(options.currentQuery || '')
         ? 'active'
         : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
@@ -639,7 +660,10 @@ export class AgentContextService {
             // 与对话 agentId 不是同一套；先走全量原话检索拿证据。
             limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
           });
-        retrievedMemories.push(...(retrieved.items || []));
+        // 只注入最相关的少数几条：实测 8 条里多数是重复碎片，白耗检索与 token。
+        retrievedMemories.push(
+          ...(retrieved.items || []).slice(0, AUTO_MEMORY_INJECT_LIMIT)
+        );
         // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
         // 是没候选、候选被过滤，还是内部失败被吞掉。
         const diag = (retrieved as { diagnostics?: Record<string, unknown> })
