@@ -143,6 +143,10 @@ export const AGENT_CHAT_TOOL_DEFINITIONS: Record<
   },
 };
 
+// 事实回忆类提问：命中就给模型证据工具，不必等语义规划器（短消息不走规划器）。
+const FACTUAL_RECALL_QUESTION_PATTERN =
+  /谁|哪个|哪位|哪一天|哪一年|哪年|哪月|几号|几岁|多大年纪|多少岁|什么时候|几时|多久|几年|几个月|多少年|在哪里|在哪儿|在什么地方|叫什么|名字|全名|生日|忌日|祭日|走了多久|离开多久|去世多久|记不记得|还记得|认不认识|见过吗|说过什么|怎么走的|为什么走|什么时候走/u;
+
 export function resolveAgentChatToolTurnPlan(options: {
   config?: AgentChatToolConfig;
   stableKey: string;
@@ -158,9 +162,16 @@ export function resolveAgentChatToolTurnPlan(options: {
   // The semantic planner is the sole eligibility signal in active mode. This
   // keeps keyword heuristics out of tool exposure and avoids charging every
   // ordinary turn for a tool schema that cannot add useful evidence.
+  // 短消息里的"问具体事实"不经过语义规划器，过去因此永远拿不到工具。
+  // 这里补一条确定性入口：命中事实回忆类提问（谁/哪天/几岁/叫什么/生日…）就给。
+  const factualRecallQuestion =
+    hasCurrentQuery &&
+    FACTUAL_RECALL_QUESTION_PATTERN.test(options.currentQuery);
   const eligible =
     hasCurrentQuery &&
-    (configuredMode === 'shadow' || Boolean(options.plannerMemoryRequested));
+    (configuredMode === 'shadow' ||
+      Boolean(options.plannerMemoryRequested) ||
+      factualRecallQuestion);
   const sampleRate =
     configuredMode === 'active'
       ? normalizeSampleRate(options.config?.activeSampleRate, 1)

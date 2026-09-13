@@ -22,6 +22,30 @@ describe('agent chat tools', () => {
       ...overrides,
     });
 
+  it('exposes the tool for short factual questions without the semantic planner', () => {
+    const plan = resolveAgentChatToolTurnPlan({
+      config: { mode: 'active', activeSampleRate: 1 },
+      stableKey: 'user:conversation:message-factual',
+      currentQuery: '奶奶是哪一年走的',
+      plannerMemoryRequested: false,
+    });
+    expect(plan.mode).toBe('active');
+    expect(plan.reason).toBe('available');
+    expect(plan.availableTools).toEqual(['lookup_chat_evidence']);
+  });
+
+  it('keeps the tool off for ordinary short messages', () => {
+    const plan = resolveAgentChatToolTurnPlan({
+      config: { mode: 'active', activeSampleRate: 1 },
+      stableKey: 'user:conversation:message-plain',
+      currentQuery: '今天有点想你了',
+      plannerMemoryRequested: false,
+    });
+    expect(plan.mode).toBe('off');
+    expect(plan.reason).toBe('planner_context_complete');
+    expect(plan.availableTools).toEqual([]);
+  });
+
   it('uses one strict, batched evidence lookup tool', () => {
     expect(Object.keys(AGENT_CHAT_TOOL_DEFINITIONS)).toEqual([
       'lookup_chat_evidence',
@@ -67,8 +91,11 @@ describe('agent chat tools', () => {
   });
 
   it('does not expose active tools when the semantic planner says context is complete', () => {
+    // 普通短消息（非事实回忆提问）仍不暴露工具，避免每轮白付 schema 成本。
     const plan = buildPlan({
       config: { mode: 'active', activeSampleRate: 1 },
+      currentQuery: '今天有点累，不太想说话',
+      replyBrief: buildReplyBrief({ currentQuery: '今天有点累，不太想说话' }),
       plannerMemoryRequested: false,
     });
 

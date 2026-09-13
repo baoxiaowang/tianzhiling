@@ -1,4 +1,5 @@
-import { Config, Inject, Provide } from '@midwayjs/core';
+import { Config, Inject, Logger, Provide } from '@midwayjs/core';
+import type { ILogger } from '@midwayjs/logger';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { MongoRepository } from 'typeorm';
@@ -325,6 +326,8 @@ export interface RetrievedContextSnippet {
 }
 
 // 连续亲人聊天需要覆盖约八轮；各模式仍可在这个总上限内主动收缩。
+// 自动检索先取一小批候选，随后仍按会话模式的限额筛选注入。
+const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
 const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 // 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
 const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
@@ -336,7 +339,7 @@ const MEMORY_PLAN_FALLBACK_MIN_AVERAGE_RELEVANCE = 13;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_FACT_RELEVANCE = 18;
 const MEMORY_PLAN_RECENT_CONTEXT_MIN_AVERAGE_RELEVANCE = 24;
 
-type MemoryRetrievalMode = 'suppressed';
+type MemoryRetrievalMode = 'suppressed' | 'active';
 
 interface MemoryRetrievalDecision {
   mode: MemoryRetrievalMode;
@@ -345,6 +348,9 @@ interface MemoryRetrievalDecision {
 
 @Provide()
 export class AgentContextService {
+  @Logger()
+  logger: ILogger;
+
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
@@ -608,17 +614,53 @@ export class AgentContextService {
         replyIntent?.memoryPlan
       ),
     });
-    const effectiveMemoryRetrievalMode: MemoryRetrievalMode = 'suppressed';
+    // 自动长时记忆检索：对话前先取一小批相关原话证据注入上下文。
+    // 过去这里硬编码 suppressed（只看工具按需检索），短消息拿不到规划器信号时
+    // 就完全没有记忆；现在恢复为按模式限额注入。
+    const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
+      this.retrieveService?.retrieveConversationMemoriesDetailed &&
+      options.currentQuery?.trim()
+        ? 'active'
+        : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
+    let retrievalFailureCount = 0;
+    if (effectiveMemoryRetrievalMode === 'active') {
+      try {
+        const retrieved =
+          await this.retrieveService!.retrieveConversationMemoriesDetailed({
+            query: options.currentQuery || '',
+            userId: this.stringifyObjectId(options.conversation.userId),
+            conversationId: this.stringifyObjectId(options.conversation.id),
+            agentId: this.stringifyObjectId(
+              options.agent?.id ?? options.conversation.agentId
+            ),
+            // 不传 personId：人物范围检索要的是"已知人物"的 id（建档时生成的），
+            // 与对话 agentId 不是同一套；先走全量原话检索拿证据。
+            limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
+          });
+        retrievedMemories.push(...(retrieved.items || []));
+      } catch (error) {
+        retrievalFailureCount = 1;
+        this.logger?.warn?.(
+          '[context] long-term memory retrieval failed, conversationId=%s reason=%s',
+          this.stringifyObjectId(options.conversation.id),
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
     this.chatTraceService?.recordCompletedSpan({
       stage: ChatTraceStage.memoryRetrieve,
       operation: 'memory.retrieve_long_term',
       startedAt: new Date(),
-      status: ChatSpanStatus.skipped,
+      status:
+        effectiveMemoryRetrievalMode === 'active'
+          ? ChatSpanStatus.completed
+          : ChatSpanStatus.skipped,
       attributes: {
         retrievalMode: effectiveMemoryRetrievalMode,
-        conceptCount: 0,
-        plannerRetrievalBypassed: false,
+        conceptCount: retrievedMemories.length,
+        plannerRetrievalBypassed: true,
+        retrievalFailureCount,
       },
     });
     const replyBriefOptions = {
@@ -2178,7 +2220,12 @@ export class AgentContextService {
       /身体|健康|生病|住院|手术|吃药|体检|血压|血糖|心脏|胃|腰|腿|失眠|睡眠|康复|复查/.test(
         query
       ),
-      ['health.current', 'health.history', 'health.medication', 'health.preference']
+      [
+        'health.current',
+        'health.history',
+        'health.medication',
+        'health.preference',
+      ]
     );
     // 工作/职业
     addDomain(
@@ -2824,13 +2871,13 @@ export class AgentContextService {
       const effectiveAssertionPolicy = isCandidate
         ? 'context_only'
         : fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
-          ? 'context_only'
-          : 'can_assert';
+        ? 'context_only'
+        : 'can_assert';
       const effectiveUseMode = isCandidate
         ? 'hypothesis'
         : fact.assertionPolicy === AgentProfileFactAssertionPolicy.contextOnly
-          ? 'recall'
-          : 'assert';
+        ? 'recall'
+        : 'assert';
       const effectiveText = isCandidate ? `【待确认】${value}` : value;
 
       profileFactKeys.add(fact.key);
@@ -2839,7 +2886,8 @@ export class AgentContextService {
         id: `F${factIndex}`,
         source: 'confirmed_fact',
         text: effectiveText,
-        assertionPolicy: effectiveAssertionPolicy as AgentEvidenceAssertionPolicy,
+        assertionPolicy:
+          effectiveAssertionPolicy as AgentEvidenceAssertionPolicy,
         subjectRef: this.resolveFactSubjectRef(
           fact.key,
           value,
