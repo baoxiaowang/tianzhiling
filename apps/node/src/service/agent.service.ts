@@ -1202,7 +1202,7 @@ export class AgentService {
     // 不用关系称谓自称（"奶奶终于…"）——用户反馈读着怪。
     const callName = callMe && callMe !== '我' ? callMe : '';
     // 稳定两句：第一句句号收尾，第二句问句收尾（展示层按句号拆成两条）。
-    const opening = '终于能和你说上话了！你最近过得怎么样，这些日子还好吗？';
+    const opening = '终于能和你说上话了！这些日子，你过得怎么样？';
     // 称呼正常一定存在；万一没有，也宁可不要在句首留下突兀的空称呼。
     return callName ? `${callName}，${opening}` : opening;
   }

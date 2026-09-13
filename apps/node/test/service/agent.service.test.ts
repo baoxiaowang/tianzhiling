@@ -954,11 +954,11 @@ describe('initial recognition opening', () => {
   it('splits the opening into two segments at the first full stop', () => {
     expect(
       splitInitialRecognitionOpeningSegments(
-        '小宝，终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
+        '小宝，终于能和你说上话了！这些日子，你过得怎么样？'
       )
     ).toEqual([
       '小宝，终于能和你说上话了！',
-      '你最近过得怎么样，这些日子还好吗？',
+      '这些日子，你过得怎么样？',
     ]);
   });
 
@@ -975,7 +975,7 @@ describe('initial recognition opening', () => {
     );
     expect(fallback.startsWith('我，')).toBe(false);
     expect(fallback).toBe(
-      '终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
+      '终于能和你说上话了！这些日子，你过得怎么样？'
     );
   });
 
@@ -985,7 +985,7 @@ describe('initial recognition opening', () => {
       '小宝'
     );
     expect(withCallName).toBe(
-      '小宝，终于能和你说上话了！你最近过得怎么样，这些日子还好吗？'
+      '小宝，终于能和你说上话了！这些日子，你过得怎么样？'
     );
     expect(withCallName).not.toMatch(/奶奶|妈妈|爸爸|儿子/u);
   });
