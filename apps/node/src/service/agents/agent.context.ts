@@ -330,6 +330,11 @@ export interface RetrievedContextSnippet {
 const AUTO_MEMORY_RETRIEVAL_CANDIDATES = 10;
 // 实际注入上限：实测 8 条里多数是重复碎片，3 条足够且省 token。
 const AUTO_MEMORY_INJECT_LIMIT = 3;
+// 注入的每条至少要有 6 个实义字符，否则只是占位碎片。
+const AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS = 6;
+// 纯应答类原话（"我会好好的""我知道了"）字数够但没有信息量，不注入。
+const MEMORY_EVIDENCE_ACK_PATTERN =
+  /^(?:好(?:的|吧|啊)?|嗯+|哦+|是(?:的|啊)?|对(?:的)?|行|可以|知道了|我知道了|我明白了|我会的|我会好好的|好好的|没事|不要紧|谢谢你?)$/u;
 // 只有"像在说事/记事"的话才值得检索长期记忆；纯表情、寒暄、极短碎片一律不检索。
 const AUTO_MEMORY_MIN_CORE_CHARACTERS = 6;
 const AUTO_MEMORY_MIN_QUERY_CHARACTERS = 4;
@@ -343,10 +348,33 @@ export function needsLongTermMemoryRetrieval(query: string): boolean {
   const text = (query || '').trim();
   if (text.length < AUTO_MEMORY_MIN_QUERY_CHARACTERS) return false;
   // 只保留汉字/字母/数字：表情、标点、空白一并去掉（避免在字符类里写 emoji 范围）。
-  const core = text.replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
-  if (core.length < AUTO_MEMORY_MIN_CORE_CHARACTERS) return false;
-  // 同一字符重复（"啊啊啊啊啊啊""哈哈哈哈哈哈"）也不算有效信息。
-  if (new Set(core).size < 3) return false;
+  const core = memoryEvidenceCore(text);
+  // 先折叠三连以上的重复字符："哈哈哈哈哈""啊啊啊啊"这类填充不该把门槛撑过去。
+  const collapsed = core.replace(/(.)\1{2,}/gu, '$1');
+  if (collapsed.length < AUTO_MEMORY_MIN_CORE_CHARACTERS) return false;
+  if (new Set(collapsed).size < 3) return false;
+  return true;
+}
+
+/** 只保留汉字/字母/数字，用于比较记忆与当前这轮原话的实际内容。 */
+export function memoryEvidenceCore(text: string): string {
+  return (text || '').replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
+}
+
+/**
+ * 这条检索结果值不值得注入：
+ * - 核心字数 < 4 的碎片（"不好""我会好好的"）没有信息量，丢弃；
+ * - 与当前这轮原话内容相同的条目（检索常把当前消息自己带回来）丢弃。
+ */
+export function isInjectableMemoryEvidence(
+  content: string,
+  currentQuery: string
+): boolean {
+  const core = memoryEvidenceCore(content);
+  if (core.length < AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS) return false;
+  if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
+  const normalize = (value: string) => memoryEvidenceCore(value).toLowerCase();
+  if (core && normalize(content) === normalize(currentQuery)) return false;
   return true;
 }
 const RECENT_HISTORY_MESSAGE_LIMIT = 16;
@@ -658,11 +686,21 @@ export class AgentContextService {
             ),
             // 不传 personId：人物范围检索要的是"已知人物"的 id（建档时生成的），
             // 与对话 agentId 不是同一套；先走全量原话检索拿证据。
+            // 排除当前这轮消息：否则检索永远把用户刚说的这句自己带回来。
+            excludeMessageIds: options.currentTurnMessageIds || [],
             limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
           });
-        // 只注入最相关的少数几条：实测 8 条里多数是重复碎片，白耗检索与 token。
+        // 只注入最相关的少数几条：先丢掉碎片与"当前这轮原话自己"，
+        // 再取前 3 条（实测 8 条里多数是重复碎片，白耗检索与 token）。
         retrievedMemories.push(
-          ...(retrieved.items || []).slice(0, AUTO_MEMORY_INJECT_LIMIT)
+          ...(retrieved.items || [])
+            .filter(item =>
+              isInjectableMemoryEvidence(
+                item.content || '',
+                options.currentQuery || ''
+              )
+            )
+            .slice(0, AUTO_MEMORY_INJECT_LIMIT)
         );
         // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
         // 是没候选、候选被过滤，还是内部失败被吞掉。

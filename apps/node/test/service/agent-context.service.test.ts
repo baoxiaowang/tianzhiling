@@ -1,7 +1,10 @@
 import { AgentContextService } from '../../src/service/agents/agent.context';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
-import { needsLongTermMemoryRetrieval } from '../../src/service/agents/agent.context';
+import {
+  isInjectableMemoryEvidence,
+  needsLongTermMemoryRetrieval,
+} from '../../src/service/agents/agent.context';
 import type { StructuredReplyIntent } from '../../src/service/agents/reply-intent';
 import {
   AgentEntity,
@@ -2681,6 +2684,23 @@ describe('long-term memory retrieval gate', () => {
     expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(true);
     expect(
       needsLongTermMemoryRetrieval('我们过的都很好，我妈在你走后的第三年也跟着你去了')
+    ).toBe(true);
+  });
+});
+describe('memory evidence injection filter', () => {
+  it('drops short fragments and the current utterance itself', () => {
+    const query = '你好好的 别太惦记我们';
+    expect(isInjectableMemoryEvidence('不好', query)).toBe(false);
+    expect(isInjectableMemoryEvidence('我会好好的', query)).toBe(false);
+    expect(isInjectableMemoryEvidence(query, query)).toBe(false);
+    expect(isInjectableMemoryEvidence('行带着你的照片一起去', query)).toBe(true);
+  });
+
+  it('ignores laughter when judging whether retrieval is worth it', () => {
+    expect(needsLongTermMemoryRetrieval('哈哈哈哈哈')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('哈哈哈哈哈哈哈哈哈哈哈哈')).toBe(false);
+    expect(
+      needsLongTermMemoryRetrieval('哈哈哈哈哈 你小子 一定要幸福 多和别的小猫玩')
     ).toBe(true);
   });
 });
