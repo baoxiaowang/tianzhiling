@@ -54,17 +54,18 @@
         >
       </div>
 
-      <a-tabs default-active-key="valid" lazy-load>
+      <a-tabs v-model:active-key="activeTab" lazy-load>
+        <template #extra>
+          <a-button
+            v-if="activeTab === 'valid'"
+            size="small"
+            @click="downloadValidCsv"
+            >下载 CSV</a-button
+          >
+        </template>
         <a-tab-pane key="valid">
           <template #title>
             <span>有效订单明细（{{ report?.validOrders.length || 0 }}）</span>
-            <a-button
-              size="mini"
-              type="text"
-              style="margin-left: 8px"
-              @click="downloadValidCsv"
-              >下载 CSV</a-button
-            >
           </template>
           <order-detail-table :data="report?.validOrders || []" />
         </a-tab-pane>
@@ -169,6 +170,7 @@
   import OrderDetailTable from './order-detail-table.vue';
 
   const month = ref(dayjs().format('YYYY-MM'));
+  const activeTab = ref('valid');
   const loading = ref(false);
   const refreshing = ref(false);
   const report = ref<AdminMonthlyOrderReportDTO>();
@@ -229,7 +231,7 @@
       '用户名',
       '关系',
       '下单互动数',
-      '智能体创建时间',
+      '账号注册时间',
       '付款周期(天)',
       '订单号',
     ];
@@ -248,7 +250,7 @@
           row.userName,
           row.relationship,
           row.interactionCount,
-          formatDateTime(row.agentCreatedAt),
+          formatDateTime(row.userCreatedAt || row.agentCreatedAt),
           row.paymentCycleDays,
           row.orderNo,
         ]

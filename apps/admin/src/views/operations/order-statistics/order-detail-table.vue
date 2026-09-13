@@ -42,9 +42,9 @@
         data-index="interactionCount"
         :width="120"
       />
-      <a-table-column title="智能体创建时间" :width="170">
+      <a-table-column title="账号注册时间" :width="170">
         <template #cell="{ record }">{{
-          formatDate(record.agentCreatedAt)
+          formatDate(record.userCreatedAt || record.agentCreatedAt)
         }}</template>
       </a-table-column>
       <a-table-column title="付款周期" :width="110">

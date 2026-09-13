@@ -227,6 +227,8 @@ export interface AdminMonthlyOrderRecordDTO {
   relationshipSource: string;
   interactionCount: number;
   agentCreatedAt: string;
+  /** 用户账号注册时间（北京时间 ISO）；旧快照可能缺失 */
+  userCreatedAt?: string;
   paymentCycleDays: number;
   status: string;
   statusLabel: string;

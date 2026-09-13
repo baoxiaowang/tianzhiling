@@ -1,5 +1,8 @@
 import { OrderRefundStatus, OrderRefundType, OrderStatus } from '@tzl/entities';
-import { AdminOrderStatisticsService } from './admin-order-statistics.service';
+import {
+  AdminOrderStatisticsService,
+  CALCULATION_VERSION,
+} from './admin-order-statistics.service';
 
 const aggregateResult = (rows: unknown[]) => ({
   toArray: jest.fn().mockResolvedValue(rows),
@@ -97,6 +100,7 @@ describe('AdminOrderStatisticsService', () => {
       amount: 199,
       interactionCount: 36,
       paymentCycleDays: 31,
+      userCreatedAt: '2026-08-01T02:00:00.000Z',
     });
     expect(service.snapshotModel.updateOne).toHaveBeenCalledWith(
       { month: '2026-09' },
@@ -123,7 +127,7 @@ describe('AdminOrderStatisticsService', () => {
     service.snapshotModel = {
       findOne: jest.fn().mockResolvedValue({
         month: '2026-08',
-        calculationVersion: 3,
+        calculationVersion: CALCULATION_VERSION,
         payload: {
           month: '2026-08',
           timezone: 'Asia/Shanghai',

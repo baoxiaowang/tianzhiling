@@ -18,7 +18,7 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-const CALCULATION_VERSION = 5;
+export const CALCULATION_VERSION = 6;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -401,6 +401,7 @@ export class AdminOrderStatisticsService {
       relationshipSource: relationship.source,
       interactionCount: Number(row.interactionCount) || 0,
       agentCreatedAt: agentCreatedAt?.toISOString() ?? '',
+      userCreatedAt: userCreatedAt?.toISOString() ?? '',
       paymentCycleDays:
         orderTime && userCreatedAt
           ? Math.max(
