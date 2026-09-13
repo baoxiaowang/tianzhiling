@@ -1173,9 +1173,12 @@ export class AgentService {
     callMe: string
   ): string {
     const role = agent.iCallAgent?.trim() || agent.name?.trim() || '我';
+    // 称呼自适应：有真实称呼才加前缀；上游在缺称呼时会填占位符"我"，
+    // 直接拼出来会变成"我，奶奶终于…"，所以这里把占位符当作没有称呼。
+    const callName = callMe && callMe !== '我' ? callMe : '';
     // 稳定两句：第一句句号收尾，第二句问句收尾（展示层按句号拆成两条）。
-    return callMe
-      ? `${callMe}，${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`
+    return callName
+      ? `${callName}，${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`
       : `${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`;
   }
 

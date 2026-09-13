@@ -968,6 +968,18 @@ describe('initial recognition opening', () => {
     ).toEqual(['只有一句话没有句号']);
   });
 
+  it('omits the call-name prefix when it is the placeholder', () => {
+    const service = new AgentService();
+    const fallback = (service as any).buildInitialRecognitionOpeningFallback(
+      { iCallAgent: '奶奶', name: '奶奶' } as any,
+      '我'
+    );
+    expect(fallback.startsWith('我，')).toBe(false);
+    expect(fallback).toBe(
+      '奶奶终于又能和你说上话了。最近过得怎么样，这些日子还好吗？'
+    );
+  });
+
   it('falls back to a two-sentence template without awkward wording', () => {
     const service = new AgentService();
     const fallback = (service as any).buildInitialRecognitionOpeningFallback(
