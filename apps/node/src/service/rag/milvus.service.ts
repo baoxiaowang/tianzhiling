@@ -225,16 +225,6 @@ export class MilvusService {
         'deleteUserMemories'
       );
       this.recordMilvusSuccess();
-      this.lastSearchSkipReason = '';
-      this.logger.info(
-        '[milvus] search done, userId=%s agentId=%s scope=%s kinds=%s queryLen=%d rows=%d',
-        options.userId,
-        options.agentId || '-',
-        options.personScope || '-',
-        (options.memoryKinds || []).join('|') || '-',
-        query.length,
-        (results.results || []).length
-      );
       return true;
     } catch (error) {
       this.recordMilvusFailure('delete_user_memories', error);
@@ -429,6 +419,16 @@ export class MilvusService {
       );
 
       this.recordMilvusSuccess();
+      this.lastSearchSkipReason = '';
+      this.logger.info(
+        '[milvus] search done, userId=%s agentId=%s scope=%s kinds=%s queryLen=%d rows=%d',
+        options.userId,
+        options.agentId || '-',
+        options.personScope || '-',
+        (options.memoryKinds || []).join('|') || '-',
+        query.length,
+        (results.results || []).length
+      );
 
       const minScore = this.resolveMinScore();
 
