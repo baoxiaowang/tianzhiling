@@ -13,7 +13,10 @@ import {
   MongoObjectId,
   UserEntity,
 } from '@tzl/entities';
-import { AgentService } from '../../src/service/agent.service';
+import {
+  AgentService,
+  splitInitialRecognitionOpeningSegments,
+} from '../../src/service/agent.service';
 
 const USER_ID = '665000000000000000000001';
 const SHARED_USER_ID = '665000000000000000000002';
@@ -427,9 +430,22 @@ describe('AgentService default agent', () => {
     ).toHaveBeenCalledWith(agents[0]);
     expect(service.conversationModel.save).toHaveBeenCalledTimes(1);
 
-    const savedMessage = (service.messageModel.save as jest.Mock).mock.calls
+    const openingMessages = (service.messageModel.save as jest.Mock).mock.calls
       .map(call => call[0] as MessageEntity)
-      .find(message => message.role === MessageRole.assistant)!;
+      .filter(message => message.role === MessageRole.assistant);
+    // 开场白固定两条：第一句句号收尾，第二句问句收尾。
+    expect(openingMessages).toHaveLength(2);
+    expect(openingMessages.map(message => message.replySegmentIndex)).toEqual([
+      0, 1,
+    ]);
+    expect(openingMessages[0].replyGroupId).toBeTruthy();
+    expect(openingMessages[1].replyGroupId).toBe(
+      openingMessages[0].replyGroupId
+    );
+    const savedMessage = openingMessages[0];
+    const savedContent = openingMessages
+      .map(message => message.content)
+      .join('');
     expect(savedMessage).toBeDefined();
     expect(savedMessage.conversationId).toBeInstanceOf(MongoObjectId);
     expect(sameObjectId(savedMessage.userId, new MongoObjectId(USER_ID))).toBe(
@@ -438,9 +454,14 @@ describe('AgentService default agent', () => {
     expect(sameObjectId(savedMessage.agentId, agents[0].id)).toBe(true);
     expect(savedMessage.role).toBe(MessageRole.assistant);
     expect(savedMessage.type).toBe(MessageType.text);
-    expect(savedMessage.content).toContain('小宝');
-    expect(savedMessage.content).toContain('过得怎么样');
-    expect(savedMessage.status).toBe(MessageStatus.sent);
+    expect(savedContent).toContain('小宝');
+    expect(savedContent).toContain('过得怎么样');
+    expect(savedContent).toMatch(/。.*[？?]$/u);
+    expect(
+      openingMessages.every(
+        message => message.status === MessageStatus.sent
+      )
+    ).toBe(true);
     expect(savedMessage.createdAt).toBeInstanceOf(Date);
     expect(savedMessage.updatedAt).toBeInstanceOf(Date);
   });
@@ -779,13 +800,14 @@ describe('AgentService default agent', () => {
     expect(shareMembers).toHaveLength(1);
     expect(shareMembers[0].status).toBe(AgentShareMemberStatus.active);
     const visibleMessages = messages.filter(message => !message.isArchived);
-    expect(visibleMessages).toHaveLength(1);
-    expect(visibleMessages[0]).toEqual(
-      expect.objectContaining({
-        role: MessageRole.assistant,
-        content: expect.stringContaining('过得怎么样'),
-      })
-    );
+    // 开场白是两条（按句号拆）。
+    expect(visibleMessages).toHaveLength(2);
+    expect(
+      visibleMessages.map(message => message.content).join('')
+    ).toContain('过得怎么样');
+    expect(
+      visibleMessages.every(message => message.role === MessageRole.assistant)
+    ).toBe(true);
 
     const sharedDetail = await service.getAgentDetail(SHARED_AUTH, AGENT_A_ID);
     expect(sharedDetail.id).toBe(AGENT_A_ID);
@@ -817,7 +839,7 @@ describe('AgentService default agent', () => {
     expect(second.conversationId).toBe(first.conversationId);
     expect(conversations).toHaveLength(1);
     expect(shareMembers).toHaveLength(1);
-    expect(messages.filter(message => !message.isArchived)).toHaveLength(1);
+    expect(messages.filter(message => !message.isArchived)).toHaveLength(2);
     expect(shareInvites[0].acceptedCount).toBe(1);
   });
 
@@ -925,5 +947,41 @@ describe('AgentService default agent', () => {
       code: 'AGENT_SHARE_INVITE_EXPIRED',
       status: 410,
     });
+  });
+});
+
+describe('initial recognition opening', () => {
+  it('splits the opening into two segments at the first full stop', () => {
+    expect(
+      splitInitialRecognitionOpeningSegments(
+        '妈，我终于又能和你说上话了。最近过得怎么样，这些日子还好吗？'
+      )
+    ).toEqual([
+      '妈，我终于又能和你说上话了。',
+      '最近过得怎么样，这些日子还好吗？',
+    ]);
+  });
+
+  it('keeps a single segment when there is no sentence break', () => {
+    expect(
+      splitInitialRecognitionOpeningSegments('只有一句话没有句号')
+    ).toEqual(['只有一句话没有句号']);
+  });
+
+  it('falls back to a two-sentence template without awkward wording', () => {
+    const service = new AgentService();
+    const fallback = (service as any).buildInitialRecognitionOpeningFallback(
+      { iCallAgent: '儿子', name: '儿子' } as any,
+      '妈'
+    );
+    // 稳定两句：第一句句号收尾，第二句问句收尾。
+    expect(
+      /^[^。！？]{4,60}。[^。！？]{4,60}[？?]$/u.test(fallback)
+    ).toBe(true);
+    // 不再出现"等了好久""心里踏实"这类听着怪的表述。
+    expect(fallback).not.toMatch(/等(?:了|着)?[^。，]{0,6}(?:好久|很久|这么久)/u);
+    expect(fallback).not.toMatch(/踏实/u);
+    // 按句号拆出来正好两条。
+    expect(splitInitialRecognitionOpeningSegments(fallback)).toHaveLength(2);
   });
 });

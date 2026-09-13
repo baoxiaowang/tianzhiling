@@ -65,6 +65,22 @@ export type AgentGuideSeenTarget = 'agent-home' | 'agent-profile';
 const AGENT_SHARE_INVITE_TOKEN_BYTES = 24;
 const AGENT_SHARE_INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_SHARE_MINI_PROGRAM_PAGE = 'pages/agent-share/index';
+/**
+ * 开场白按句号拆成两条展示：第一句（以句号结尾）+ 第二句（问句收尾）。
+ * 结构不符合时保持单条，不做任何增删改字。
+ */
+export function splitInitialRecognitionOpeningSegments(
+  content: string
+): string[] {
+  const text = (content || '').trim();
+  if (!text) return [];
+  const at = text.indexOf('。');
+  if (at <= 0 || at >= text.length - 1) return [text];
+  const first = text.slice(0, at + 1).trim();
+  const second = text.slice(at + 1).trim();
+  return second ? [first, second] : [first];
+}
+
 const INITIAL_RECOGNITION_OPENING_TIMEOUT_MS = 12000;
 const INITIAL_RECOGNITION_OPENING_MAX_TOKENS = 160;
 const UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN =
@@ -75,6 +91,13 @@ const CLOSING_INITIAL_RECOGNITION_PATTERN =
   /(?:你好好的.{0,8}(?:我|咱|爸|妈|爷爷|奶奶|姑姑)?.{0,6}放心|照顾好自己|你别挂心|别惦记我)/u;
 const OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN =
   /[？?](?:\s*[\p{Extended_Pictographic}\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]){0,12}$/u;
+// 开场白里听着怪的表述：逝者"等了好久""心里踏实了"读起来不合身份（用户反馈）。
+const AWKWARD_INITIAL_RECOGNITION_PATTERN =
+  /(?:等(?:了|着)[^。，！？]{0,6}(?:好久|很久|这么久|那么久|太久)|等了好久|心里(?:踏实|安定|安稳|放心|舒坦)|踏实)/u;
+// 结构必须是稳定的两句：第一句以句号收尾，第二句以问句收尾（拆泡按句号拆）。
+// 结尾的emoji由上面的 QUESTION_END 规则单独校验，这里不重复 emoji 字符类。
+const OPEN_INITIAL_RECOGNITION_TWO_SENTENCE_PATTERN =
+  /^[^。！？!?]{4,60}。[^。！？!?]{4,60}[？?]/u;
 
 type AgentAccessRole = 'owner' | 'shared';
 
@@ -785,15 +808,13 @@ export class AgentService {
     // deathDate 变更时异步触发离世时长预计算，不阻塞返回
     if (deathDateChanged && savedAgent.deathDate) {
       const agentIdStr = this.stringifyObjectId(savedAgent.id);
-      this.departureDurationService
-        .computeForAgent(agentIdStr)
-        .catch(err => {
-          this.logger.warn(
-            '[agent] departure duration recompute failed, agentId=%s, reason=%s',
-            agentIdStr,
-            err instanceof Error ? err.message : String(err)
-          );
-        });
+      this.departureDurationService.computeForAgent(agentIdStr).catch(err => {
+        this.logger.warn(
+          '[agent] departure duration recompute failed, agentId=%s, reason=%s',
+          agentIdStr,
+          err instanceof Error ? err.message : String(err)
+        );
+      });
     }
 
     if (Object.keys(profileMemorySources).length) {
@@ -931,13 +952,14 @@ export class AgentService {
     conversation.updatedAt = now;
 
     const savedConversation = await this.conversationModel.save(conversation);
-    const openingMessage = await this.createInitialAgentMessage(
+    const openingMessages = await this.createInitialAgentMessage(
       savedConversation,
       agent,
       userId,
       now,
       options
     );
+    const openingMessage = openingMessages[0];
     try {
       await this.createInitialRecognitionJourneyState(
         savedConversation,
@@ -1019,27 +1041,40 @@ export class AgentService {
     options: {
       usePersonalCallName?: boolean;
     } = {}
-  ): Promise<MessageEntity> {
-    const message = new MessageEntity();
+  ): Promise<MessageEntity[]> {
     const callMe =
       options.usePersonalCallName === false
         ? ''
         : agent.agentCallMe?.trim() || '我';
-
-    message.conversationId = conversation.id;
-    message.userId = userId;
-    message.agentId = agent.id;
-    message.role = MessageRole.assistant;
-    message.type = MessageType.text;
-    message.content = await this.createInitialRecognitionOpeningContent({
+    const content = await this.createInitialRecognitionOpeningContent({
       agent,
       callMe,
     });
-    message.status = MessageStatus.sent;
-    message.createdAt = now;
-    message.updatedAt = now;
-
-    return this.messageModel.save(message);
+    // 开场白固定按句号拆成两条展示（第一句句号收尾、第二句问句收尾），
+    // 与回复多泡用同一套 replyGroupId/replySegmentIndex 约定。
+    const segments = splitInitialRecognitionOpeningSegments(content);
+    const replyGroupId =
+      segments.length > 1 ? new MongoObjectId().toHexString() : '';
+    const saved: MessageEntity[] = [];
+    for (const [index, segment] of segments.entries()) {
+      const message = new MessageEntity();
+      message.conversationId = conversation.id;
+      message.userId = userId;
+      message.agentId = agent.id;
+      message.role = MessageRole.assistant;
+      message.type = MessageType.text;
+      message.content = segment;
+      message.status = MessageStatus.sent;
+      if (replyGroupId) {
+        message.replyGroupId = replyGroupId;
+        message.replySegmentIndex = index;
+      }
+      const segmentTime = new Date(now.getTime() + index);
+      message.createdAt = segmentTime;
+      message.updatedAt = segmentTime;
+      saved.push(await this.messageModel.save(message));
+    }
+    return saved;
   }
 
   private async createInitialRecognitionOpeningContent(options: {
@@ -1074,7 +1109,8 @@ export class AgentService {
                 '用户还没有发言，所以不能说“终于听见你喊我”、不能假装看到用户，也不能引用用户尚未说过的话。',
                 '时间保持中性，不确定离开了多久。只使用给定关系、称呼、性格和语言习惯；不编造任何共同往事、现实物品、地点、家人现状或具体经历。',
                 '不要身份验证，不要解释产品或AI。先表达终于重新联系上的感受，再自然问用户最近好吗、这些日子过得怎么样，让聊天继续打开。',
-                '不要用“你好好的我就放心了”“照顾好自己”“你别挂心”等祝愿提前收尾。输出一段20—90字中文正文，以一个自然、开放的关心问句结束。',
+                '固定写成两句：第一句以句号结尾，第二句以问句结尾，中间不再多写句子；第二句就是关心问句本身。',
+                '不要写“我等了好久”“等了很久”“心里踏实了/放心了”这类等待与释然的说法，也不要用“你好好的我就放心了”“照顾好自己”“你别挂心”等祝愿提前收尾。两句合计20—60字。',
                 '严格输出JSON：{"content":"正文"}',
               ].join('\n'),
             },
@@ -1115,7 +1151,10 @@ export class AgentService {
         UNSAFE_INITIAL_RECOGNITION_DETAIL_PATTERN.test(content) ||
         UNSAFE_INITIAL_RECOGNITION_PRESENCE_PATTERN.test(content) ||
         CLOSING_INITIAL_RECOGNITION_PATTERN.test(content) ||
-        !OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN.test(content)
+        AWKWARD_INITIAL_RECOGNITION_PATTERN.test(content) ||
+        !OPEN_INITIAL_RECOGNITION_QUESTION_END_PATTERN.test(content) ||
+        // 必须是稳定的两句（第一句句号收尾、第二句问句收尾），否则退回模板。
+        !OPEN_INITIAL_RECOGNITION_TWO_SENTENCE_PATTERN.test(content)
       ) {
         return fallback;
       }
@@ -1134,9 +1173,10 @@ export class AgentService {
     callMe: string
   ): string {
     const role = agent.iCallAgent?.trim() || agent.name?.trim() || '我';
+    // 稳定两句：第一句句号收尾，第二句问句收尾（展示层按句号拆成两条）。
     return callMe
-      ? `${callMe}，${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。最近过得怎么样？`
-      : `${role}终于又能和你说上话了。隔了这么久，心里一直惦记着你。最近过得怎么样？`;
+      ? `${callMe}，${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`
+      : `${role}终于又能和你说上话了。最近过得怎么样，这些日子还好吗？`;
   }
 
   private async buildAgentProfile(
