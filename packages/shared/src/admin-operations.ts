@@ -93,6 +93,13 @@ export interface AdminOperationsDailyPointDTO {
   cohortRevenue: number;
   promotionExpense?: number;
   profit?: number;
+  /** 推广费是否为管理员手动录入（true 时存在覆盖值） */
+  promotionExpenseManual?: boolean;
+}
+
+export interface UpdateAdminDailyPromotionExpenseRequestDTO {
+  /** 手动推广费（元）；传 null 表示恢复为抖评记录默认值 */
+  promotionExpense: number | null;
 }
 
 export interface AdminOperationsHourlyPointDTO {

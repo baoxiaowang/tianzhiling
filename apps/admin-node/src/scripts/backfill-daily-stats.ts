@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     dataSource.getMongoRepository(OrderEntity);
   (adminOps as unknown as { orderRefundModel: unknown }).orderRefundModel =
     dataSource.getMongoRepository(OrderRefundEntity);
+  (adminOps as unknown as { statsModel: unknown }).statsModel =
+    dataSource.getMongoRepository(AdminDailyStatsEntity);
 
   const adminDailyStats = new AdminDailyStatsService();
   (adminDailyStats as unknown as { statsModel: unknown }).statsModel =

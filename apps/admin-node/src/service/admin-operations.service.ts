@@ -11,6 +11,7 @@ import type {
   AdminOperationsTaskListDTO,
   AdminSystemRuntimeDTO,
   AdminUserValueReportDTO,
+  UpdateAdminDailyPromotionExpenseRequestDTO,
   UpdateAdminChatFeedbackRequestDTO,
 } from '@tzl/shared';
 import { AppError, getDouyinPromotionExpense } from '@tzl/shared';
@@ -400,6 +401,63 @@ export class AdminOperationsService {
     };
   }
 
+  /**
+   * 手动设置某日推广费。覆盖值持久化到汇总表，优先级高于抖评记录默认值，
+   * 且不会被定时任务/回填覆盖。传 null 可恢复默认值。
+   */
+  async updateDailyPromotionExpense(
+    date: string,
+    payload: UpdateAdminDailyPromotionExpenseRequestDTO
+  ): Promise<AdminOperationsDailyPointDTO> {
+    if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
+      throw new AppError('INVALID_DATE', `invalid date: ${date}`, 400);
+    }
+
+    const raw = payload?.promotionExpense;
+    let override: number | undefined;
+    if (raw !== null && raw !== undefined) {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0 || value > 100000000) {
+        throw new AppError(
+          'INVALID_PROMOTION_EXPENSE',
+          'invalid promotion expense',
+          400
+        );
+      }
+      override = this.roundMoney(value);
+    }
+
+    const dayMap = await this.ensureDaysFromStats([date]);
+    const point = dayMap.get(date);
+    const promotionExpense = override ?? getDouyinPromotionExpense(date);
+    const profit = this.roundMoney(
+      (point?.cohortRevenue ?? 0) - promotionExpense
+    );
+
+    await this.statsModel.updateOne(
+      { date },
+      {
+        $set: {
+          promotionExpense,
+          profit,
+          promotionExpenseOverride: override ?? null,
+          computedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+    // 报表缓存包含旧推广费，编辑后立即失效，保证刷新可见。
+    reportCache.clear();
+
+    return {
+      ...(point ?? this.emptyDailyPoint(date)),
+      date,
+      promotionExpense,
+      profit,
+      promotionExpenseManual: override !== undefined,
+    };
+  }
+
   async getReport(month?: string): Promise<AdminOperationsReportDTO> {
     const now = new Date();
     const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
@@ -615,6 +673,7 @@ export class AdminOperationsService {
       cohortRevenue,
       promotionExpense,
       profit: this.roundMoney(cohortRevenue - promotionExpense),
+      promotionExpenseManual: false,
     };
   }
 
@@ -640,6 +699,14 @@ export class AdminOperationsService {
       .toArray();
     const map = new Map<string, AdminOperationsDailyPointDTO>();
     for (const row of rows) {
+      const override = this.normalizePromotionExpenseOverride(
+        row.promotionExpenseOverride
+      );
+      const promotionExpense =
+        override ??
+        (Number.isFinite(row.promotionExpense)
+          ? Number(row.promotionExpense)
+          : getDouyinPromotionExpense(row.date));
       map.set(row.date, {
         date: row.date,
         newUsers: row.newUsers,
@@ -656,18 +723,27 @@ export class AdminOperationsService {
         refundedRevenue: row.refundedRevenue,
         netRevenue: row.netRevenue,
         cohortRevenue: row.cohortRevenue,
-        promotionExpense: row.promotionExpense,
-        profit: row.profit,
+        promotionExpense,
+        profit: this.roundMoney(
+          (Number(row.cohortRevenue) || 0) - promotionExpense
+        ),
+        promotionExpenseManual: override !== undefined,
       });
     }
     return map;
   }
 
-  /** 计算单日数据并 upsert 到汇总表。幂等，可重复调用。 */
-  private async computeDayIntoStats(
+  /**
+   * 计算单日数据并 upsert 到汇总表。幂等，可重复调用。
+   * 若存有人工推广费覆盖，则保留覆盖值并据此回写利润，避免定时任务/回填覆盖人工数据。
+   */
+  async computeAndPersistDailyStats(
     date: string
   ): Promise<AdminOperationsDailyPointDTO> {
     const point = await this.computeDailyStats(date);
+    const override = await this.getPromotionExpenseOverride(date);
+    const promotionExpense = override ?? point.promotionExpense;
+    const profit = this.roundMoney(point.cohortRevenue - promotionExpense);
     await this.statsModel.updateOne(
       { date },
       {
@@ -686,14 +762,39 @@ export class AdminOperationsService {
           refundedRevenue: point.refundedRevenue,
           netRevenue: point.netRevenue,
           cohortRevenue: point.cohortRevenue,
-          promotionExpense: point.promotionExpense,
-          profit: point.profit,
+          promotionExpense,
+          profit,
           computedAt: new Date(),
         },
       },
       { upsert: true }
     );
-    return point;
+    return {
+      ...point,
+      promotionExpense,
+      profit,
+      promotionExpenseManual: override !== undefined,
+    };
+  }
+
+  /** 读取某日的人工推广费覆盖值（无覆盖/非法值返回 undefined） */
+  private async getPromotionExpenseOverride(
+    date: string
+  ): Promise<number | undefined> {
+    if (!this.statsModel) return undefined;
+    const row = await this.statsModel.findOne({ where: { date } } as never);
+    return this.normalizePromotionExpenseOverride(
+      row?.promotionExpenseOverride
+    );
+  }
+
+  private normalizePromotionExpenseOverride(
+    value: unknown
+  ): number | undefined {
+    if (value === null || value === undefined || value === '') return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return this.roundMoney(parsed);
   }
 
   /** 实时补算天数上限：超出部分依赖定时任务/回填，避免请求时补算大量历史数据 */
@@ -721,7 +822,7 @@ export class AdminOperationsService {
       for (let i = 0; i < toBackfill.length; i += CONCURRENCY) {
         const batch = toBackfill.slice(i, i + CONCURRENCY);
         const points = await Promise.all(
-          batch.map(date => this.computeDayIntoStats(date))
+          batch.map(date => this.computeAndPersistDailyStats(date))
         );
         batch.forEach((date, idx) => cached.set(date, points[idx]));
       }
@@ -2268,6 +2369,26 @@ export class AdminOperationsService {
     }
 
     return result;
+  }
+
+  private emptyDailyPoint(date: string): AdminOperationsDailyPointDTO {
+    return {
+      date,
+      newUsers: 0,
+      newAgents: 0,
+      newUserChatUsers: 0,
+      newUserMessages: 0,
+      newUserFiveMessageUsers: 0,
+      allChatUsers: 0,
+      userMessages: 0,
+      paidUsers: 0,
+      paidOrders: 0,
+      sameDayPayingUsers: 0,
+      paidRevenue: 0,
+      refundedRevenue: 0,
+      netRevenue: 0,
+      cohortRevenue: 0,
+    };
   }
 
   private centsToYuan(value: number): number {

@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AdminChatQualityDTO,
   AdminMonthlyOrderReportDTO,
+  AdminOperationsDailyPointDTO,
   AdminOperationsOverviewDTO,
   AdminOperationsReportDTO,
   AdminOperationsTaskListDTO,
@@ -38,6 +39,16 @@ export function queryOperationsReport(month?: string) {
   return axios.get<AdminOperationsReportDTO>('/admin_api/operations/reports', {
     params: { month },
   });
+}
+
+export function updateDailyPromotionExpense(
+  date: string,
+  promotionExpense: number | null
+) {
+  return axios.put<AdminOperationsDailyPointDTO>(
+    `/admin_api/operations/reports/daily/${date}/promotion-expense`,
+    { promotionExpense }
+  );
 }
 
 export function queryUserValueReport(endMonth?: string, months = 6) {

@@ -46,9 +46,41 @@
               {{ formatMoney(record.cohortRevenue) }}
             </template>
           </a-table-column>
-          <a-table-column title="推广费">
+          <a-table-column title="推广费" :width="240">
             <template #cell="{ record }">
-              {{ formatMoney(promotionExpenseFor(record)) }}
+              <div class="daily-detail-page__promotion">
+                <a-input-number
+                  :model-value="promotionDraft(record)"
+                  :min="0"
+                  :precision="2"
+                  :step="0.01"
+                  size="small"
+                  :disabled="!!savingDates[record.date]"
+                  @change="(value) => onPromotionChange(record, value)"
+                  @press-enter="savePromotion(record)"
+                />
+                <a-link
+                  v-if="isPromotionDirty(record)"
+                  :loading="!!savingDates[record.date]"
+                  @click="savePromotion(record)"
+                >
+                  保存
+                </a-link>
+                <a-link
+                  v-else-if="record.promotionExpenseManual"
+                  :loading="!!savingDates[record.date]"
+                  @click="resetPromotion(record)"
+                >
+                  恢复默认
+                </a-link>
+                <a-tag
+                  v-if="record.promotionExpenseManual"
+                  size="small"
+                  color="arcoblue"
+                >
+                  手动
+                </a-tag>
+              </div>
             </template>
           </a-table-column>
           <a-table-column title="盈利">
@@ -72,19 +104,24 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, onMounted, ref } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
     AdminOperationsDailyPointDTO,
     AdminOperationsReportDTO,
   } from '@tzl/shared';
-  import { queryOperationsReport } from '@/api/operations';
+  import {
+    queryOperationsReport,
+    updateDailyPromotionExpense,
+  } from '@/api/operations';
   import { getDouyinPromotionExpense } from '@tzl/shared/src/douyin-promotion-expenses';
 
   const month = ref(dayjs().format('YYYY-MM'));
   const loading = ref(false);
   const report = ref<AdminOperationsReportDTO>();
+  const promotionDrafts = reactive<Record<string, number | undefined>>({});
+  const savingDates = reactive<Record<string, boolean>>({});
 
   const daily = computed(() => report.value?.daily || []);
 
@@ -101,11 +138,76 @@
     record.profit ??
     Number((record.cohortRevenue - promotionExpenseFor(record)).toFixed(2));
 
+  const promotionDraft = (record: AdminOperationsDailyPointDTO) =>
+    promotionDrafts[record.date] ?? promotionExpenseFor(record);
+
+  const onPromotionChange = (
+    record: AdminOperationsDailyPointDTO,
+    value: number | undefined
+  ) => {
+    promotionDrafts[record.date] =
+      typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  };
+
+  const isPromotionDirty = (record: AdminOperationsDailyPointDTO) => {
+    const draft = promotionDrafts[record.date];
+    return (
+      draft !== undefined &&
+      Number(draft) !== Number(promotionExpenseFor(record))
+    );
+  };
+
+  const applySavedPoint = (
+    record: AdminOperationsDailyPointDTO,
+    point: AdminOperationsDailyPointDTO
+  ) => {
+    record.promotionExpense = point.promotionExpense;
+    record.profit = point.profit;
+    record.promotionExpenseManual = point.promotionExpenseManual;
+    delete promotionDrafts[record.date];
+  };
+
+  const savePromotion = async (record: AdminOperationsDailyPointDTO) => {
+    const draft = promotionDrafts[record.date];
+    if (draft === undefined || savingDates[record.date]) return;
+    try {
+      savingDates[record.date] = true;
+      const { data } = await updateDailyPromotionExpense(record.date, draft);
+      applySavedPoint(record, data);
+      Message.success('推广费已保存');
+    } catch {
+      Message.error('推广费保存失败');
+    } finally {
+      savingDates[record.date] = false;
+    }
+  };
+
+  const resetPromotion = async (record: AdminOperationsDailyPointDTO) => {
+    if (savingDates[record.date]) return;
+    try {
+      savingDates[record.date] = true;
+      const { data } = await updateDailyPromotionExpense(record.date, null);
+      applySavedPoint(record, data);
+      Message.success('已恢复默认推广费');
+    } catch {
+      Message.error('恢复默认推广费失败');
+    } finally {
+      savingDates[record.date] = false;
+    }
+  };
+
+  const clearPromotionDrafts = () => {
+    Object.keys(promotionDrafts).forEach((key) => {
+      delete promotionDrafts[key];
+    });
+  };
+
   const fetch = async () => {
     try {
       loading.value = true;
       const { data } = await queryOperationsReport(month.value);
       report.value = data;
+      clearPromotionDrafts();
     } catch {
       Message.error('每日明细加载失败');
     } finally {
@@ -154,6 +256,16 @@
 
       :deep(.arco-table-td) {
         white-space: nowrap;
+      }
+    }
+
+    &__promotion {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      :deep(.arco-input-number) {
+        width: 120px;
       }
     }
 

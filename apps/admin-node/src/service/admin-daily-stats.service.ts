@@ -5,6 +5,7 @@ import {
   AdminDailyStatsEntity,
 } from '@tzl/entities';
 import type { AdminOperationsDailyPointDTO } from '@tzl/shared';
+import { getDouyinPromotionExpense } from '@tzl/shared';
 import { AdminOperationsService } from './admin-operations.service';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -19,35 +20,10 @@ export class AdminDailyStatsService {
 
   /**
    * 计算单日数据并 upsert 到汇总表。幂等，可重复调用。
+   * 委托 AdminOperationsService，统一保留人工推广费覆盖。
    */
   async computeDay(date: string): Promise<AdminOperationsDailyPointDTO> {
-    const point = await this.adminOperations.computeDailyStats(date);
-    await this.statsModel.updateOne(
-      { date },
-      {
-        $set: {
-          newUsers: point.newUsers,
-          newAgents: point.newAgents,
-          newUserChatUsers: point.newUserChatUsers,
-          newUserMessages: point.newUserMessages,
-          newUserFiveMessageUsers: point.newUserFiveMessageUsers,
-          allChatUsers: point.allChatUsers,
-          userMessages: point.userMessages,
-          paidUsers: point.paidUsers,
-          paidOrders: point.paidOrders,
-          sameDayPayingUsers: point.sameDayPayingUsers,
-          paidRevenue: point.paidRevenue,
-          refundedRevenue: point.refundedRevenue,
-          netRevenue: point.netRevenue,
-          cohortRevenue: point.cohortRevenue,
-          promotionExpense: point.promotionExpense,
-          profit: point.profit,
-          computedAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
-    return point;
+    return this.adminOperations.computeAndPersistDailyStats(date);
   }
 
   /**
@@ -75,6 +51,17 @@ export class AdminDailyStatsService {
       .toArray();
     const map = new Map<string, AdminOperationsDailyPointDTO>();
     for (const row of rows) {
+      const override =
+        typeof row.promotionExpenseOverride === 'number' &&
+        Number.isFinite(row.promotionExpenseOverride) &&
+        row.promotionExpenseOverride >= 0
+          ? row.promotionExpenseOverride
+          : undefined;
+      const promotionExpense =
+        override ??
+        (Number.isFinite(row.promotionExpense)
+          ? row.promotionExpense
+          : getDouyinPromotionExpense(row.date));
       map.set(row.date, {
         date: row.date,
         newUsers: row.newUsers,
@@ -91,8 +78,12 @@ export class AdminDailyStatsService {
         refundedRevenue: row.refundedRevenue,
         netRevenue: row.netRevenue,
         cohortRevenue: row.cohortRevenue,
-        promotionExpense: row.promotionExpense,
-        profit: row.profit,
+        promotionExpense,
+        profit:
+          Math.round(
+            ((Number(row.cohortRevenue) || 0) - promotionExpense) * 100
+          ) / 100,
+        promotionExpenseManual: override !== undefined,
       });
     }
     return map;

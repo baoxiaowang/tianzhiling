@@ -11,6 +11,7 @@ import { Context } from '@midwayjs/koa';
 import type {
   AdminAuthenticatedPayload,
   UpdateAdminChatFeedbackRequestDTO,
+  UpdateAdminDailyPromotionExpenseRequestDTO,
 } from '@tzl/shared';
 import { AdminOperationsService } from '../service/admin-operations.service';
 import { AdminOrderStatisticsService } from '../service/admin-order-statistics.service';
@@ -51,6 +52,14 @@ export class AdminOperationsController {
   @Get('/reports')
   async reports(@Query() query: Record<string, string>) {
     return this.adminOperationsService.getReport(query?.month);
+  }
+
+  @Put('/reports/daily/:date/promotion-expense')
+  async updateDailyPromotionExpense(
+    @Param('date') date: string,
+    @Body() body: UpdateAdminDailyPromotionExpenseRequestDTO
+  ) {
+    return this.adminOperationsService.updateDailyPromotionExpense(date, body);
   }
 
   @Get('/user-value')
