@@ -237,9 +237,12 @@ export class RetrieveService {
     }
 
     const objectIds = ids.map(id => new MongoObjectId(id));
+    // 必须用 _id：本项目的 TypeORM MongoDB 版本不会把 where.id 映射成 _id，
+    // 写成 id:{$in} 会静默返回空数组，导致所有候选被当成已归档而丢掉
+    // （线上表现：检索"成功"但 0 条，工具 22 万轮只命中过 11 条）。
     const messages = await this.messageModel.find({
       where: {
-        id: { $in: objectIds },
+        _id: { $in: objectIds },
         isArchived: { $ne: true },
       } as never,
     });

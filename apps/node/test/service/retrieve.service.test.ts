@@ -139,7 +139,8 @@ describe('RetrieveService', () => {
 
     expect(service.messageModel.find).toHaveBeenCalledWith({
       where: {
-        id: {
+        // 必须用 _id：where.id 在本项目的 TypeORM MongoDB 下静默匹配不到。
+        _id: {
           $in: [activeMessageId, archivedMessageId],
         },
         isArchived: {
@@ -199,6 +200,51 @@ describe('RetrieveService', () => {
     ]);
   });
 
+  it('filters archived messages with the raw _id field', async () => {
+    // 回归：本项目 TypeORM MongoDB 不把 where.id 映射成 _id，写成 id:{$in}
+    // 会静默返回空数组，导致检索"成功"但 0 条（线上 22 万轮工具只命中 11 条）。
+    const service = new RetrieveService();
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      hasEmbeddingConfig: jest.fn().mockReturnValue(true),
+      createEmbedding: jest.fn().mockResolvedValue([0.1, 0.2]),
+    } as never;
+    const sourceMessageId = '665000000000000000000201';
+    service.milvusService = {
+      isEnabled: jest.fn().mockReturnValue(true),
+      isRetrievalEnabled: jest.fn().mockReturnValue(true),
+      getRelevancePolicy: jest.fn().mockReturnValue({}),
+      searchConversationMemories: jest.fn().mockResolvedValue([
+        {
+          id: sourceMessageId,
+          sourceMessageId,
+          searchableText: '奶奶去年走了',
+          role: MessageRole.user,
+          score: 0.9,
+          memoryKind: 'raw_episode',
+        },
+      ]),
+    } as never;
+    const where = jest.fn().mockResolvedValue([
+      Object.assign(new MessageEntity(), {
+        id: new MongoObjectId(sourceMessageId),
+      }),
+    ]);
+    service.messageModel = { find: where } as never;
+
+    const result = await service.retrieveConversationMemoriesDetailed({
+      query: '奶奶的事',
+      userId: '665000000000000000000001',
+    });
+
+    expect(where).toHaveBeenCalledTimes(1);
+    const filter = (where.mock.calls[0][0] as { where: Record<string, unknown> })
+      .where;
+    expect(Object.keys(filter)).toContain('_id');
+    expect(Object.keys(filter)).not.toContain('id');
+    expect(result.items).toHaveLength(1);
+  });
+
   it('returns person-scoped units before raw fallback and applies separate score floors', async () => {
     const service = new RetrieveService();
     const sourceA = new MongoObjectId('665000000000000000000401');
@@ -243,7 +289,7 @@ describe('RetrieveService', () => {
     } as never;
     service.messageModel = {
       find: jest.fn(async ({ where }) =>
-        where.id.$in.map((id: MongoObjectId) =>
+        (where._id?.$in || where.id.$in || []).map((id: MongoObjectId) =>
           Object.assign(new MessageEntity(), { id, isArchived: false })
         )
       ),
