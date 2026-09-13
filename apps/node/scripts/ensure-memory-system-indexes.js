@@ -75,6 +75,31 @@ const INDEXES = {
     ],
     [{ userId: 1, createdAt: -1 }, { name: 'idx_memory_pipeline_task_user' }],
   ],
+  memory_event_group: [
+    [
+      { userId: 1, engine: 1, topicKey: 1, status: 1 },
+      { name: 'idx_memory_event_group_topic' },
+    ],
+    [
+      { userId: 1, engine: 1, spanTo: -1 },
+      { name: 'idx_memory_event_group_recent' },
+    ],
+    [
+      { conversationId: 1, updatedAt: -1 },
+      { name: 'idx_memory_event_group_conversation' },
+    ],
+  ],
+  memory_open_item: [
+    [
+      { userId: 1, engine: 1, state: 1 },
+      { name: 'idx_memory_open_item_state' },
+    ],
+    [{ userId: 1, engine: 1, dueAt: 1 }, { name: 'idx_memory_open_item_due' }],
+    [
+      { fingerprint: 1, engine: 1 },
+      { name: 'uniq_memory_open_item_fingerprint', unique: true },
+    ],
+  ],
   message: [
     [
       {

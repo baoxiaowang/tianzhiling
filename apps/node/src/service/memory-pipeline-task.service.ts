@@ -48,6 +48,25 @@ const QUEUE_RESOLVE_COOLDOWN_MS = 30_000;
 const MEMORY_TASK_PRIORITY_NEW = 1;
 const MEMORY_TASK_PRIORITY_BACKLOG = 1_000;
 
+/**
+ * 未了结清单的离线抽取：每用户每天最多跑几次。
+ * 同一段聊天里连续发消息时，用"最后一次消息 + 延迟"来合并成一次调用。
+ */
+const OPEN_ITEM_EXTRACTION_DEBOUNCE_MS = 30 * 60 * 1000;
+const OPEN_ITEM_EXTRACTION_MAX_RUNS_PER_DAY = 3;
+
+/** 北京时间的日期键（YYYY-MM-DD）：任务按"这个用户的这一天"去重。 */
+export function resolveBeijingDayKey(value: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const map = new Map(parts.map(part => [part.type, part.value]));
+  return `${map.get('year')}-${map.get('month')}-${map.get('day')}`;
+}
+
 function readPositiveInt(
   value: string | undefined,
   fallback: number,
@@ -131,6 +150,71 @@ export class MemoryPipelineTaskService {
       }
     }
     return tasks;
+  }
+
+  /**
+   * 排一次"未了结清单"的离线抽取（每用户每天一条任务）。
+   * 任务用 userId 当 messageId，配合 (messageId, kind, pipelineVersion) 唯一索引天然去重；
+   * dayKey 进 pipelineVersion，所以一天一条；不直接入队，交给每 5 分钟的协调任务按 nextAttemptAt 拾取。
+   */
+  async enqueueOpenItemExtraction(options: {
+    userId: MongoObjectId;
+    conversationId: MongoObjectId;
+    agentId: MongoObjectId;
+    now?: Date;
+  }): Promise<MemoryPipelineTaskEntity | undefined> {
+    if (!options?.userId) return undefined;
+    const now = options.now || new Date();
+    const dayKey = resolveBeijingDayKey(now);
+    const pipelineVersion = `${MEMORY_PIPELINE_VERSION}:open-item:${dayKey}`;
+    const where = {
+      messageId: options.userId,
+      kind: MemoryPipelineTaskKind.openItemExtraction,
+      pipelineVersion,
+    };
+    const existing = await this.taskModel.findOne({ where });
+    const dueAt = new Date(now.getTime() + OPEN_ITEM_EXTRACTION_DEBOUNCE_MS);
+
+    if (!existing) {
+      const task = new MemoryPipelineTaskEntity();
+      Object.assign(task, {
+        schemaVersion: MEMORY_PIPELINE_TASK_VERSION,
+        pipelineVersion,
+        kind: MemoryPipelineTaskKind.openItemExtraction,
+        status: MemoryPipelineTaskStatus.pending,
+        messageId: options.userId,
+        conversationId: options.conversationId,
+        userId: options.userId,
+        agentId: options.agentId,
+        sourceHash: createHash('sha256').update(dayKey).digest('hex'),
+        attemptCount: 0,
+        nextAttemptAt: dueAt,
+        createdAt: now,
+        updatedAt: now,
+      });
+      try {
+        return await this.taskModel.save(task);
+      } catch {
+        const concurrentlyCreated = await this.taskModel.findOne({ where });
+        return concurrentlyCreated || undefined;
+      }
+    }
+
+    // 当天已经跑过：只在还有额度时重开一次，并顺延合并窗口。
+    if (
+      existing.status === MemoryPipelineTaskStatus.completed ||
+      existing.status === MemoryPipelineTaskStatus.skipped
+    ) {
+      if (existing.attemptCount >= OPEN_ITEM_EXTRACTION_MAX_RUNS_PER_DAY) {
+        return existing;
+      }
+      existing.status = MemoryPipelineTaskStatus.pending;
+    }
+    if (existing.status === MemoryPipelineTaskStatus.pending) {
+      existing.nextAttemptAt = dueAt;
+      existing.updatedAt = now;
+    }
+    return this.taskModel.save(existing);
   }
 
   private async enqueueSingle(

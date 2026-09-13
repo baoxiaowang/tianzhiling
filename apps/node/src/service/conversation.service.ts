@@ -148,6 +148,9 @@ import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
 import { isFactBearingUtterance } from './agents/memory-value';
+import { MemoryModuleService } from './memory/memory-module.service';
+import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
+import { matchRaisedOpenItem } from './memory/memory-return-turn';
 import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
 import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
@@ -759,6 +762,14 @@ export class ConversationService {
 
   @Inject()
   memoryValueService: MemoryValueService;
+
+  /** 记忆模块门面：影子/生效时才写入事件组合，未配置时完全不动。 */
+  @Inject()
+  memoryModuleService?: MemoryModuleService;
+
+  /** 未了结清单的离线模型抽取：由记忆管线的日任务触发。 */
+  @Inject()
+  memoryOpenItemExtractorService?: MemoryOpenItemExtractorService;
 
   @Inject()
   personTemporalMemoryService: PersonTemporalMemoryService;
@@ -2256,6 +2267,19 @@ export class ConversationService {
   private async executeMemoryPipelineTask(
     task: MemoryPipelineTaskEntity
   ): Promise<'completed' | 'skipped'> {
+    // 未了结清单的日任务：messageId 存的是 userId（合成键），没有对应的消息，
+    // 所以必须在"按消息查库"之前分流，否则会被当成消息不存在而跳过。
+    if (task.kind === MemoryPipelineTaskKind.openItemExtraction) {
+      if (!this.memoryOpenItemExtractorService) return 'skipped';
+      const outcome = await this.memoryOpenItemExtractorService.extractForUser({
+        userId: this.stringifyObjectId(task.userId),
+        windowDays: 30,
+      });
+      return outcome.status === 'ok' || outcome.status === 'empty'
+        ? 'completed'
+        : 'skipped';
+    }
+
     // 第二轮修复：批量录入 bug——原代码只处理 task.messageId 单条，
     // 忽略 task.messageIds 中的其余消息，导致 10 条消息只有 1 条进入记忆抽取。
     // 现在：messageIds 非空时批量查出所有消息，逐条独立处理（try/catch 隔离）。
@@ -2532,6 +2556,56 @@ export class ConversationService {
       await this.indexPersonAnchorsForMessage(message, searchableText, task);
       if (this.memoryValueService?.active(message.userId)) {
         await this.memoryValueService.indexMessage(message, this.milvusService);
+      }
+      // 记忆模块（影子/生效）：事件组合与未了结清单的内部过滤由模块自己负责。
+      // 失败只记日志，不能影响索引任务本身。
+      if (
+        message.role === MessageRole.user &&
+        this.memoryModuleService?.describeSelection(
+          this.stringifyObjectId(message.userId)
+        ).mode !== 'off'
+      ) {
+        try {
+          // 每用户每天排一次"待跟进的事"的离线模型判定（延迟合并同一段聊天）。
+          await this.memoryPipelineTaskService.enqueueOpenItemExtraction({
+            userId: message.userId,
+            conversationId: message.conversationId,
+            agentId: message.agentId,
+          });
+        } catch (error) {
+          this.logger?.warn?.(
+            '[memory] open item extraction enqueue skipped, userId=%s reason=%s',
+            this.stringifyObjectId(message.userId),
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      }
+      if (
+        message.role === MessageRole.user &&
+        this.memoryModuleService?.describeSelection(
+          this.stringifyObjectId(message.userId)
+        ).mode !== 'off'
+      ) {
+        try {
+          await this.memoryModuleService?.ingest({
+            userId: this.stringifyObjectId(message.userId),
+            conversationId: this.stringifyObjectId(message.conversationId),
+            agentId: this.stringifyObjectId(message.agentId),
+            messages: [
+              {
+                messageId: this.stringifyObjectId(message.id),
+                content: searchableText,
+                occurredAt: message.createdAt,
+              },
+            ],
+          });
+        } catch (error) {
+          this.logger?.warn?.(
+            '[memory] module ingest skipped, messageId=%s reason=%s',
+            this.stringifyObjectId(message.id),
+            error instanceof Error ? error.message : String(error)
+          );
+        }
       }
       return 'completed';
     }
@@ -4708,7 +4782,7 @@ export class ConversationService {
     });
     if (
       shortTurnGeneration.mode === 'micro_model' &&
-      !conversationReturnContext &&
+      !conversationReturnContext?.isReunion &&
       !recognitionJourneyPlan?.prompt &&
       !relationshipOpenLoopTurn?.prompt &&
       !deliberateLongReplyCandidate?.eligible &&
@@ -6130,6 +6204,69 @@ export class ConversationService {
     }
   }
 
+  /**
+   * 提问记账：这一轮回复里提到了清单里的哪一条，就写回"上次提起时间 +1"。
+   * 只记一条、阈值偏高；失败只记日志，绝不影响回复。
+   */
+  private async finalizeReturnTurnRaise(options: {
+    runtime: ReplyRuntime;
+    assistantMessages: MessageEntity[];
+  }): Promise<void> {
+    if (!this.memoryModuleService) return;
+    const userId = this.stringifyObjectId(options.runtime.conversation.userId);
+    if (
+      this.memoryModuleService.describeSelection(userId).mode === 'off' ||
+      !options.assistantMessages.length
+    ) {
+      return;
+    }
+    const replyText = options.assistantMessages
+      .map(message => message.mediaTranscript || message.content || '')
+      .join('\n')
+      .trim();
+    if (!replyText) return;
+
+    try {
+      const listed = await this.memoryModuleService.listOpenItems({
+        userId,
+        conversationId: this.stringifyObjectId(options.runtime.conversation.id),
+        agentId: this.stringifyObjectId(options.runtime.conversation.agentId),
+      });
+      const matched = matchRaisedOpenItem({
+        replyText,
+        items: listed.items || [],
+      });
+      if (!matched) return;
+
+      const lastMessage =
+        options.assistantMessages[options.assistantMessages.length - 1];
+      await this.memoryModuleService.updateOpenItem({
+        userId,
+        itemId: matched.item.id,
+        raised: true,
+        evidenceMessageId: this.stringifyObjectId(lastMessage.id),
+        now: lastMessage.createdAt || new Date(),
+      });
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.persistReply,
+        operation: 'memory.return_turn_raise',
+        startedAt: new Date(),
+        status: ChatSpanStatus.completed,
+        attributes: {
+          itemId: matched.item.id,
+          topicKey: matched.item.topicKey,
+          score: Number(matched.score.toFixed(3)),
+        },
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[memory] return turn raise accounting skipped, conversationId=%s reason=%s',
+        this.stringifyObjectId(options.runtime.conversation.id),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
   private async finalizeRelationshipOpenLoopTurn(options: {
     runtime: ReplyRuntime;
     processed: ProcessReplyResult;
@@ -7391,6 +7528,10 @@ export class ConversationService {
     await this.finalizeRelationshipOpenLoopTurn({
       runtime,
       processed,
+      assistantMessages,
+    });
+    await this.finalizeReturnTurnRaise({
+      runtime,
       assistantMessages,
     });
     await this.userRelativeProfileService

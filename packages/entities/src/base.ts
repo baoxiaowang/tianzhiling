@@ -32,6 +32,8 @@ export enum TableName {
   chat_span = "chat_span",
   message = "message",
   memory_pipeline_task = "memory_pipeline_task",
+  memory_event_group = "memory_event_group",
+  memory_open_item = "memory_open_item",
   messenger_call_event = "messenger_call_event",
   post = "post",
   post_comment = "post_comment",

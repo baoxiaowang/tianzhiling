@@ -2000,12 +2000,28 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     // 明确标注来源：这是用户过去说过的话，不是系统结论，也不是亲人说过的。
     retrieved_user: '用户过去说过的话（原话，不是结论）',
   };
+  // 只有用户当前这句、没有任何"过去的事实"时，必须点明：线上实测这种情形下
+  // 模型会自己补写亲人的性格、往事（"你奶奶性子急，以前总嫌我抠门"），
+  // 用户听到的是编出来的细节。
+  const factBearingSources: ReplyBriefEvidenceSource[] = [
+    'confirmed_fact',
+    'recent_user',
+    'retrieved_user',
+  ];
+  const hasPastFactEvidence = brief.evidence.some(item =>
+    factBearingSources.includes(item.source)
+  );
+  const noPastFactHint =
+    '（这轮没有用户过去说过的事实依据：可以表达关系与情感，但不要补写亲人的性格、往事、物品位置或第三方的说法。）';
   const evidenceLines = brief.evidence.length
-    ? brief.evidence.map(
-        (item, index) =>
-          `${index + 1}. [${sourceLabels[item.source]}] ${item.text}`
-      )
-    : ['1. 当前没有可用于扩写具体事实的证据'];
+    ? [
+        ...brief.evidence.map(
+          (item, index) =>
+            `${index + 1}. [${sourceLabels[item.source]}] ${item.text}`
+        ),
+        ...(hasPastFactEvidence ? [] : [noPastFactHint]),
+      ]
+    : ['1. 当前没有可用于扩写具体事实的证据', '2. ' + noPastFactHint];
   const relationshipLines = brief.relationshipContext.length
     ? [
         '',

@@ -5,11 +5,17 @@ import {
   MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
-import { MemoryPipelineTaskService } from '../../src/service/memory-pipeline-task.service';
+import {
+  MemoryPipelineTaskService,
+  resolveBeijingDayKey,
+} from '../../src/service/memory-pipeline-task.service';
 import { MemoryPipelineProcessor } from '../../src/processor/memory-pipeline.processor';
 import { memoryBudgetSnapshot } from '../../src/service/memory-resource-budget';
+import { ConversationService } from '../../src/service/conversation.service';
 
-jest.mock('../../src/service/memory-resource-budget', () => ({ memoryBudgetSnapshot: jest.fn(() => ({ allowed: true })) }));
+jest.mock('../../src/service/memory-resource-budget', () => ({
+  memoryBudgetSnapshot: jest.fn(() => ({ allowed: true })),
+}));
 
 describe('MemoryPipelineTaskService', () => {
   it('persists an idempotent task before dispatching it', async () => {
@@ -118,15 +124,23 @@ describe('MemoryPipelineTaskService queue resolution', () => {
 });
 
 describe('MemoryPipelineProcessor', () => {
-  beforeEach(() => (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: true }));
+  beforeEach(() =>
+    (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: true })
+  );
   it('leaves durable work unclaimed when the memory budget is exhausted', async () => {
     (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: false });
     const processor = new MemoryPipelineProcessor();
     processor.memoryPipelineTaskService = { claimTask: jest.fn() } as any;
-    processor.conversationService = { processMemoryPipelineTask: jest.fn() } as any;
+    processor.conversationService = {
+      processMemoryPipelineTask: jest.fn(),
+    } as any;
     await processor.execute({ taskId: '665000000000000000000411' });
-    expect(processor.memoryPipelineTaskService.claimTask).not.toHaveBeenCalled();
-    expect(processor.conversationService.processMemoryPipelineTask).not.toHaveBeenCalled();
+    expect(
+      processor.memoryPipelineTaskService.claimTask
+    ).not.toHaveBeenCalled();
+    expect(
+      processor.conversationService.processMemoryPipelineTask
+    ).not.toHaveBeenCalled();
   });
   it('re-enqueues due tasks during reconciliation instead of running them inline', async () => {
     // 协调任务必须只入队：过去它在这里逐个 await 处理（25 个任务 × 3–5 秒），
@@ -159,9 +173,166 @@ describe('MemoryPipelineProcessor', () => {
     expect(requeueDueTask).toHaveBeenNthCalledWith(1, first);
     expect(requeueDueTask).toHaveBeenNthCalledWith(2, second);
     // 协调任务自己不执行任何任务。
-    expect(processor.memoryPipelineTaskService.claimTask).not.toHaveBeenCalled();
+    expect(
+      processor.memoryPipelineTaskService.claimTask
+    ).not.toHaveBeenCalled();
     expect(
       processor.conversationService.processMemoryPipelineTask
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe('未了结清单的日任务排期', () => {
+  function buildService() {
+    const service = new MemoryPipelineTaskService();
+    const rows: MemoryPipelineTaskEntity[] = [];
+    let seq = 0;
+    const matches = (
+      row: MemoryPipelineTaskEntity,
+      where: Record<string, unknown>
+    ) =>
+      Object.keys(where).every(
+        key =>
+          String((row as never as Record<string, unknown>)[key]) ===
+          String(where[key])
+      );
+    service.logger = { warn: jest.fn() } as never;
+    service.taskModel = {
+      findOne: jest.fn(async (options: { where: Record<string, unknown> }) =>
+        rows.find(row => matches(row, options.where))
+      ),
+      save: jest.fn(async (value: MemoryPipelineTaskEntity) => {
+        if (!value.id) {
+          seq += 1;
+          value.id = new MongoObjectId(
+            `${String(seq).padStart(24, '0')}`
+          ) as never;
+        }
+        const index = rows.findIndex(
+          row => String(row.id) === String(value.id)
+        );
+        if (index === -1) rows.push(value);
+        else rows[index] = value;
+        return value;
+      }),
+    } as never;
+    return {
+      service,
+      getStored: () => rows[0],
+      count: () => rows.length,
+    };
+  }
+
+  const userId = new MongoObjectId('665000000000000000000601');
+  const conversationId = new MongoObjectId('665000000000000000000602');
+  const agentId = new MongoObjectId('665000000000000000000603');
+
+  it('同一天同一用户只排一条，并把合并窗口顺延到"最后一条消息 + 30 分钟"', async () => {
+    const { service, getStored } = buildService();
+    const morning = new Date('2026-09-13T01:00:00.000Z');
+    const first = await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: morning,
+    });
+    expect(first?.kind).toBe(MemoryPipelineTaskKind.openItemExtraction);
+    expect(first?.status).toBe(MemoryPipelineTaskStatus.pending);
+    // 用 userId 当合成 messageId，配合唯一索引天然去重
+    expect(String(first?.messageId)).toBe(String(userId));
+    expect(first?.nextAttemptAt?.toISOString()).toBe(
+      new Date(morning.getTime() + 30 * 60_000).toISOString()
+    );
+
+    const evening = new Date('2026-09-13T12:00:00.000Z');
+    const second = await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: evening,
+    });
+    expect(second?.pipelineVersion).toBe(first?.pipelineVersion);
+    expect(getStored()?.nextAttemptAt?.toISOString()).toBe(
+      new Date(evening.getTime() + 30 * 60_000).toISOString()
+    );
+  });
+
+  it('日期键按北京时间算（UTC 15:00 之后就是第二天）', () => {
+    expect(resolveBeijingDayKey(new Date('2026-09-13T15:30:00.000Z'))).toBe(
+      '2026-09-13'
+    );
+    expect(resolveBeijingDayKey(new Date('2026-09-13T16:30:00.000Z'))).toBe(
+      '2026-09-14'
+    );
+  });
+
+  it('第二天是新的一条任务（日期进了任务版本）', async () => {
+    const { service } = buildService();
+    const day1 = await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: new Date('2026-09-13T01:00:00.000Z'),
+    });
+    const day2 = await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: new Date('2026-09-13T17:00:00.000Z'),
+    });
+    expect(day2?.pipelineVersion).not.toBe(day1?.pipelineVersion);
+  });
+
+  it('当天跑过之后最多再重开两次，避免聊天多时反复调用模型', async () => {
+    const { service, getStored } = buildService();
+    await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: new Date('2026-09-13T01:00:00.000Z'),
+    });
+    const stored = getStored()!;
+    stored.status = MemoryPipelineTaskStatus.completed;
+    stored.attemptCount = 3;
+    const again = await service.enqueueOpenItemExtraction({
+      userId,
+      conversationId,
+      agentId,
+      now: new Date('2026-09-13T08:00:00.000Z'),
+    });
+    expect(again?.status).toBe(MemoryPipelineTaskStatus.completed);
+  });
+});
+
+describe('未了结清单任务的分流', () => {
+  it('日任务直接交给离线抽取，不按 messageId 去查消息', async () => {
+    const service = new ConversationService();
+    const extractForUser = jest.fn().mockResolvedValue({ status: 'ok' });
+    const findOne = jest.fn();
+    service.memoryOpenItemExtractorService = { extractForUser } as never;
+    service.messageModel = { findOne } as never;
+
+    const task = Object.assign(new MemoryPipelineTaskEntity(), {
+      id: new MongoObjectId('665000000000000000000701'),
+      kind: MemoryPipelineTaskKind.openItemExtraction,
+      userId: new MongoObjectId('665000000000000000000702'),
+      messageId: new MongoObjectId('665000000000000000000702'),
+      conversationId: new MongoObjectId('665000000000000000000703'),
+      agentId: new MongoObjectId('665000000000000000000704'),
+    });
+
+    const outcome = await (
+      service as never as {
+        executeMemoryPipelineTask: (
+          task: MemoryPipelineTaskEntity
+        ) => Promise<string>;
+      }
+    ).executeMemoryPipelineTask(task);
+
+    expect(outcome).toBe('completed');
+    expect(extractForUser).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: '665000000000000000000702' })
+    );
+    expect(findOne).not.toHaveBeenCalled();
   });
 });

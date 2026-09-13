@@ -29,18 +29,47 @@ describe('AgentContextService', () => {
   it('adds cross-time contact as facts without prescribing a reunion response', () => {
     const service = new AgentContextService();
     const prompt = (service as any).buildConversationReturnContextPrompt({
-      version: 'conversation_return_context_v1',
+      version: 'conversation_return_context_v2',
       currentTurnAt: '2026-09-05T12:00:00.000Z',
       previousContactAt: '2026-06-05T12:00:00.000Z',
       previousUserContactAt: '2026-06-05T12:00:00.000Z',
       previousAssistantContactAt: '2026-06-05T12:01:00.000Z',
       elapsedHours: 2207.98,
       elapsedDays: 92,
+      isReunion: true,
     });
 
-    expect(prompt).toContain('# 本轮跨时段联系事实');
-    expect(prompt).toContain('"elapsedDays":92');
+    expect(prompt).toContain('# 当前时间与联系间隔');
+    expect(prompt).toContain('现在：2026年9月5日（周六）20:00');
+    expect(prompt).toContain('用户上一次说话：2026年6月5日（周五）20:00');
+    expect(prompt).toContain('距上一次联系：约 3 个月');
     expect(prompt).not.toMatch(/请|必须|应该|重逢|问候|表达/);
+  });
+
+  it('gives the current time even when there is no previous contact', () => {
+    const service = new AgentContextService();
+    const prompt = (service as any).buildConversationReturnContextPrompt();
+
+    expect(prompt).toContain('# 当前时间与联系间隔');
+    expect(prompt).toContain('现在：');
+    expect(prompt).not.toContain('距上一次联系');
+  });
+
+  it('hides the elapsed line for continuous chat inside 6 hours', () => {
+    const service = new AgentContextService();
+    const prompt = (service as any).buildConversationReturnContextPrompt({
+      version: 'conversation_return_context_v2',
+      currentTurnAt: '2026-09-05T12:00:00.000Z',
+      previousContactAt: '2026-09-05T09:00:00.000Z',
+      previousUserContactAt: '2026-09-05T09:00:00.000Z',
+      elapsedHours: 3,
+      elapsedDays: 0.13,
+      isReunion: false,
+    });
+
+    expect(prompt).toContain('现在：2026年9月5日（周六）20:00');
+    expect(prompt).not.toContain('距上一次联系');
+    expect(prompt).not.toContain('用户上一次说话');
   });
 
   it('adds the compact tool decision contract only to sampled shadow turns', () => {
@@ -2684,9 +2713,13 @@ describe('long-term memory retrieval gate', () => {
 
   it('no longer retrieves for emotional venting by design', () => {
     // 口径调整（用户反馈"检索都是相似性、重复信息"）：情绪倾诉不再检索。
-    expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('爷爷，其实我心里好恨你们')).toBe(
+      false
+    );
     expect(
-      needsLongTermMemoryRetrieval('我们过的都很好，我妈在你走后的第三年也跟着你去了')
+      needsLongTermMemoryRetrieval(
+        '我们过的都很好，我妈在你走后的第三年也跟着你去了'
+      )
     ).toBe(false);
   });
 });
@@ -2696,7 +2729,9 @@ describe('memory evidence injection filter', () => {
     expect(isInjectableMemoryEvidence('不好', query)).toBe(false);
     expect(isInjectableMemoryEvidence('我会好好的', query)).toBe(false);
     expect(isInjectableMemoryEvidence(query, query)).toBe(false);
-    expect(isInjectableMemoryEvidence('行带着你的照片一起去', query)).toBe(true);
+    expect(isInjectableMemoryEvidence('行带着你的照片一起去', query)).toBe(
+      true
+    );
     // 问句不是证据，不注入。
     expect(isInjectableMemoryEvidence('你知道她是谁吗', query)).toBe(false);
     expect(isInjectableMemoryEvidence('冷气跟着谁？', query)).toBe(false);
@@ -2704,31 +2739,43 @@ describe('memory evidence injection filter', () => {
 
   it('ignores laughter when judging whether retrieval is worth it', () => {
     expect(needsLongTermMemoryRetrieval('哈哈哈哈哈')).toBe(false);
-    expect(needsLongTermMemoryRetrieval('哈哈哈哈哈哈哈哈哈哈哈哈')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('哈哈哈哈哈哈哈哈哈哈哈哈')).toBe(
+      false
+    );
     // 纯情绪祝福不是事实/回忆提问，不触发检索。
     expect(
-      needsLongTermMemoryRetrieval('哈哈哈哈哈 你小子 一定要幸福 多和别的小猫玩')
+      needsLongTermMemoryRetrieval(
+        '哈哈哈哈哈 你小子 一定要幸福 多和别的小猫玩'
+      )
     ).toBe(false);
   });
 });
 describe('retrieval only for fact or recall seeking turns', () => {
   it('does not retrieve for emotional venting', () => {
     expect(needsLongTermMemoryRetrieval('反正你不爱我')).toBe(false);
-    expect(needsLongTermMemoryRetrieval('每天都在承受抽筋剥骨的痛')).toBe(false);
+    expect(needsLongTermMemoryRetrieval('每天都在承受抽筋剥骨的痛')).toBe(
+      false
+    );
     expect(needsLongTermMemoryRetrieval('心里真难过')).toBe(false);
   });
 
   it('retrieves when the turn is about a concrete fact or past event', () => {
     expect(needsLongTermMemoryRetrieval('奶奶是哪一年走的')).toBe(true);
-    expect(needsLongTermMemoryRetrieval('你还记得我们以前去过哪里吗')).toBe(true);
+    expect(needsLongTermMemoryRetrieval('你还记得我们以前去过哪里吗')).toBe(
+      true
+    );
     expect(needsLongTermMemoryRetrieval('我的生日你还记得吗')).toBe(true);
     expect(isFactOrRecallSeeking('爷爷，其实我心里好恨你们')).toBe(false);
   });
 });
 describe('memory retrieval query keys', () => {
   it('turns an utterance into person/time/event keys', () => {
-    expect(buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')).toContain('妈');
-    expect(buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')).toContain('走后');
+    expect(
+      buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')
+    ).toContain('妈');
+    expect(
+      buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')
+    ).toContain('走后');
     expect(buildMemoryRetrievalQuery('奶奶是哪一年走的')).toContain('奶奶');
     expect(buildMemoryRetrievalQuery('你看看谁买的奶茶')).toBe('');
     expect(buildMemoryRetrievalQuery('反正你不爱我')).toBe('');
@@ -2737,6 +2784,8 @@ describe('memory retrieval query keys', () => {
   it('does not inject self-harm signals as evidence', () => {
     expect(isInjectableMemoryEvidence('妈妈，我想去找您', '妈妈')).toBe(false);
     expect(isInjectableMemoryEvidence('我活不下去了', '妈妈')).toBe(false);
-    expect(isInjectableMemoryEvidence('妈妈今年清明我去看您了', '妈妈')).toBe(true);
+    expect(isInjectableMemoryEvidence('妈妈今年清明我去看您了', '妈妈')).toBe(
+      true
+    );
   });
 });

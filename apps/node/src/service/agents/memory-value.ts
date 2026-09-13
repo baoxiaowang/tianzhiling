@@ -781,7 +781,7 @@ const BARE_ACK_PATTERN =
   /^(?:好(?:的|吧|啊)?|嗯+|哦+|是(?:的|啊)?|对(?:的)?|行|可以|知道了|我知道了|我明白了|我会的|我会好好的|好好的|没事|不要紧|谢谢你?|在吗|在不在)$/u;
 // 事实信号：有人物/时间/地点/事件或数量，才算"可检索的事实型原话"。
 const FACT_SIGNAL_PATTERN =
-  /\d|岁|年|月|日|天|号|点|生日|忌日|祭日|清明|中元|中秋|春节|过年|走|去世|过世|离世|走了|不在|住院|手术|生病|病|结婚|离婚|怀孕|出生|上学|幼儿园|小学|中学|大学|工作|上班|开店|生意|搬|住|楼房|院子|阳台|买房|盖房|退休|坟|墓|出国|回国|飞机|火车|电话|视频|照片|礼物|工资|存款|借|还|买了|去了|来了|回来|认识|见过|说过|答应|承诺|打算|计划|名字|叫/u;
+  /\d|岁|年|月|日|天|号|点|生日|忌日|祭日|清明|中元|中秋|春节|过年|走|去世|过世|离世|走了|不在|住院|手术|生病|病|结婚|离婚|怀孕|出生|上学|幼儿园|小学|中学|大学|工作|上班|开店|生意|搬|住|楼房|院子|阳台|买房|盖房|退休|坟|墓|出国|回国|飞机|火车|电话|视频|照片|礼物|工资|存款|借|还|买了|去了|来了|回来|认识|见过|说过|答应|承诺|打算|计划|名字|叫|抽烟|吸烟|戒[烟了]|复吸|烟|抽|酒|吃药|服药|失眠|睡不着|睡眠|锻炼|运动|体检/u;
 
 /**
  * 这条原话值不值得进检索索引：只有"事实型"原话才进（人物/时间/地点/事件/数量），
@@ -794,9 +794,27 @@ export function isFactBearingUtterance(text: string): boolean {
   if (core.length < 6) return false;
   if (BARE_ACK_PATTERN.test(core)) return false;
   if (/[？?]\s*$/u.test(value)) return false;
-  if (/(?:吗|呢|吧)[。！!]?\s*$/u.test(value)) return false;
+  if (/(?:吗|吧)[。！!]?\s*$/u.test(value)) return false;
+  // "呢"结尾只有在真发问时才排除："你在干嘛呢"是问句，而"今天一颗烟都没有抽呢"
+  // 是陈述事实——后者曾被整句丢掉，导致用户长期在讲的事一直进不了检索索引。
+  if (
+    /呢[。！!]?\s*$/u.test(value) &&
+    /(?:什么|怎么|为啥|为什么|哪|谁|多少|多久|干嘛|干吗|好不好|是不是|有没有)/u.test(
+      value
+    )
+  )
+    return false;
   if (isEmotionalValue(value)) return false;
   return FACT_SIGNAL_PATTERN.test(value);
+}
+
+/** 一段文字里出现的所有亲属称谓（按出现顺序，含同义写法）。 */
+export function kinshipTermsIn(text: string): string[] {
+  const terms: string[] = [];
+  for (const match of matchAllGlobal(text, KINSHIP_TERM_PATTERN)) {
+    terms.push(match[0]);
+  }
+  return terms;
 }
 
 /** 一段文字里出现的所有亲属称谓所属的同义组。 */

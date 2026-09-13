@@ -8,6 +8,8 @@ export enum MemoryPipelineTaskKind {
   semanticIndex = "semantic_index",
   /** Builds idempotent person-scoped Milvus units; raw message indexing stays separate. */
   personSemanticIndex = "person_semantic_index",
+  /** 每用户每天一次：离线模型判定"待跟进的事"与"日子"。 */
+  openItemExtraction = "open_item_extraction",
 }
 
 export enum MemoryPipelineTaskStatus {

@@ -27,7 +27,12 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
-import { matchAllGlobal, memoryValueSimilarity } from './memory-value';
+import {
+  isEmotionalValue,
+  kinshipGroupsIn,
+  memoryValueSimilarity,
+} from './memory-value';
+import { HABIT_TOPIC_KEYS } from './memory-topics';
 import { ChatTraceArtifactKind, ChatTraceService } from '../chat-trace.service';
 import {
   AgentMemoryFactService,
@@ -140,7 +145,16 @@ import {
   buildDeliberateLongReplyCandidatePrompt,
   DeliberateLongReplyCandidateAssessment,
 } from './deliberate-long-reply';
+import {
+  CONVERSATION_TIME_MATERIAL_MIN_GAP_MS,
+  describeElapsedTime,
+  formatBeijingDateTime,
+} from './conversation-return-context';
 import type { ConversationReturnContext } from './conversation-return-context';
+import type { ReturnTurnPlan } from '../memory/memory-return-turn';
+
+/** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
+type ReturnPlanLike = ReturnTurnPlan;
 
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
@@ -391,79 +405,87 @@ export function memoryEvidenceCore(text: string): string {
 const SELF_HARM_SIGNAL_PATTERN =
   /(?:去找(?:你|您|他|她|妈|爸|奶奶|爷爷|你们|他们)|想去找(?:你|您)|不想活|活不下去|活够了|自杀|轻生|带我走|陪你(?:一起)?走|去陪(?:你|您)|了结)/u;
 
-const KINSHIP_LIKE_TERMS = [
-  '妈',
-  '爸',
-  '爹',
-  '娘',
-  '哥',
-  '姐',
-  '弟',
-  '妹',
-  '爸爸',
-  '妈妈',
-  '父亲',
-  '母亲',
-  '爷爷',
-  '奶奶',
-  '外公',
-  '外婆',
-  '姥姥',
-  '姥爷',
-  '哥哥',
-  '姐姐',
-  '弟弟',
-  '妹妹',
-  '儿子',
-  '女儿',
-  '孩子',
-  '孙子',
-  '孙女',
-  '外孙',
-  '外孙女',
-  '丈夫',
-  '妻子',
-  '老公',
-  '老婆',
-  '舅舅',
-  '叔叔',
-  '伯伯',
-  '姑姑',
-  '姨妈',
-  '阿姨',
-  '嫂子',
-  '女婿',
-  '儿媳',
+import { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
+import {
+  buildElapsedFeelingInstruction,
+  buildReturnTurnMaterialPrompt,
+  resolveReturnTurnHistoryLimit,
+  resolveReturnTurnPlan,
+  selectReturnTurnItems,
+} from '../memory/memory-return-turn';
+import { MemoryModuleService } from '../memory/memory-module.service';
+
+export { buildMemoryRetrievalQuery } from '../memory/memory-retrieval-keys';
+
+// 寒暄/泛问句：这类原话只有问候、没有事实，但语义上和"想念、过得好不好"高度相似，
+// 检索最爱把它们当相关记忆捞回来（实测：用户问"您想我奶奶吗"，注入的却是
+// "爷爷，你在那边过的怎么样"）。它们对回答零帮助，一律不注入。
+// 注意不只看句尾："过得好不好""你在哪"这类问句常夹在句子中间、句尾是句号或没有标点。
+const MEMORY_EVIDENCE_QUESTION_PATTERN =
+  /(?:怎么样|怎么|为什么|为啥|什么|哪(?:里|儿|个|些|位|天|年)?|谁|多少|多久|怎么办|好不好|是不是|有没有|在不在|行不行|对不对|要不要|想不想|干啥|干嘛|干吗)/u;
+
+/**
+ * 候选记忆是不是在说"当前这轮问的那位亲人"。
+ * 只按"人"对齐：这轮提到了某位亲人（奶奶），而候选通篇在说另一位亲人（爷爷），
+ * 就算语义再像，也不是用户要的那段记忆，直接丢弃。
+ * 这轮没提亲人、或候选本身没点名任何亲人（只是旁白）时不做限制，避免误杀。
+ */
+export function isPersonAlignedEvidence(
+  content: string,
+  currentQuery: string
+): boolean {
+  const focusGroups = kinshipGroupsIn(currentQuery);
+  if (focusGroups.size === 0) return true;
+  const contentGroups = kinshipGroupsIn(content);
+  if (contentGroups.size === 0) return true;
+  for (const group of contentGroups) {
+    if (focusGroups.has(group)) return true;
+  }
+  return false;
+}
+
+// 检索键的常见换词：用户换一种说法讲同一件事（"没抽"对"捡起来了"），
+// 不能因为字面不相等就判成不相关。
+const RETRIEVAL_KEY_ALTERNATIVES: Array<[RegExp, string[]]> = [
+  [/走|离开|去世|过世|离世|不在|没了|没在/u, ['走', '走了']],
+  [/住院|手术|开刀|动手术/u, ['住院', '手术']],
+  [/坟|墓|下葬|烧纸/u, ['坟', '墓']],
 ];
 
 /**
- * 把用户这一轮原话抽成检索键：人物/时间/事件词，用它们去检索，
- * 而不是拿整句情绪原话撞相似度（那样只会捞回情绪与问句）。抽不出键就不检索。
+ * 候选记忆必须和这一轮的检索键挂上钩才留。
+ * 检索是按相似度打分的，实测会把"比以前方便多了"这种语义相近、但和当前问题
+ * 毫无关系的老话也捞回来；只要它一个检索键都不含，就不注入。
+ * 这一轮根本抽不出键时（不会触发检索）不做限制。
  */
-export function buildMemoryRetrievalQuery(query: string): string {
-  const text = (query || '').trim();
-  if (!text) return '';
-  const keys = new Set<string>();
-  for (const term of KINSHIP_LIKE_TERMS) {
-    if (text.includes(term)) keys.add(term);
+export function isKeyLinkedEvidence(
+  content: string,
+  currentQuery: string
+): boolean {
+  const keys = buildMemoryRetrievalQuery(currentQuery);
+  if (!keys) return true;
+  const text = content || '';
+  for (const key of keys.split(/\s+/u)) {
+    if (!key) continue;
+    if (text.includes(key)) return true;
+    // 习惯类话题是"合并说法"键：候选命中同一话题的任一写法也算挂钩。
+    for (const [pattern, habitKey] of HABIT_TOPIC_KEYS) {
+      if (habitKey === key && pattern.test(text)) return true;
+    }
+    for (const [pattern, aliasKeys] of RETRIEVAL_KEY_ALTERNATIVES) {
+      if (aliasKeys.includes(key) && pattern.test(text)) return true;
+    }
   }
-  for (const match of matchAllGlobal(
-    text,
-    /\d{1,4}\s*(?:年|月|日|号|岁|天)|[一二三四五六七八九十]{1,3}\s*(?:年|月|日|岁|天)|以前|当年|小时候|上个月|去年|今年|多久/gu
-  ))
-    keys.add(match[0].replace(/\s+/g, ''));
-  for (const match of matchAllGlobal(
-    text,
-    /去世|过世|离世|走了|走后|走的时候|离开|住院|手术|生病|结婚|离婚|怀孕|出生|上学|幼儿园|工作|上班|搬家|买房|纪念日|生日|忌日|祭日|走/gu
-  ))
-    keys.add(match[0]);
-  return [...keys].join(' ');
+  return false;
 }
 
 /**
  * 这条检索结果值不值得注入：
  * - 核心字数 < 4 的碎片（"不好""我会好好的"）没有信息量，丢弃；
- * - 与当前这轮原话内容相同的条目（检索常把当前消息自己带回来）丢弃。
+ * - 纯情绪（"大姐我想你了"）与问句（含夹在句子中间的问句）丢弃；
+ * - 纯应答丢弃；
+ * - 一个检索键都不含的（只靠相似度撞上的）丢弃；
+ * - 问的是这位亲人、候选说的是另一位亲人，丢弃。
  */
 export function isInjectableMemoryEvidence(
   content: string,
@@ -475,6 +497,13 @@ export function isInjectableMemoryEvidence(
   // 问句不是证据：检索经常把用户过去的提问当成"相关记忆"，对回答毫无帮助。
   if (/[？?]\s*$/u.test(content.trim())) return false;
   if (/(?:吗|呢|吧)[。！!]?\s*$/u.test(content.trim())) return false;
+  if (MEMORY_EVIDENCE_QUESTION_PATTERN.test(content)) return false;
+  // 情绪原话不是事实证据："大姐我想你了"答不了"她是什么样的人"。
+  if (isEmotionalValue(content)) return false;
+  // 必须和这一轮的检索键挂钩，只靠相似度撞上的一律不要。
+  if (!isKeyLinkedEvidence(content, currentQuery)) return false;
+  // 人不对的回答一律不用："问奶奶却注入爷爷的话"。
+  if (!isPersonAlignedEvidence(content, currentQuery)) return false;
   // 危险信号不当话题素材。
   if (SELF_HARM_SIGNAL_PATTERN.test(content)) return false;
   const normalize = (value: string) => memoryEvidenceCore(value).toLowerCase();
@@ -509,6 +538,10 @@ export class AgentContextService {
 
   @Inject()
   retrieveService: RetrieveService;
+
+  /** 记忆模块门面：未注入时（单测）回退到直接调用检索服务。 */
+  @Inject()
+  memoryModuleService?: MemoryModuleService;
 
   @Inject()
   agentMemoryFactService: AgentMemoryFactService;
@@ -776,30 +809,25 @@ export class AgentContextService {
       options.currentUserText?.trim() || options.currentQuery || '';
     // 不用当前句原文去检索：先抽成"检索键"（人物/时间/事件），按键检索。
     const memoryRetrievalQuery = buildMemoryRetrievalQuery(memoryGateText);
+    // 记忆模块门面：未配置（off）或未注入时，走原来的检索服务，行为与今天完全一致。
+    const memorySelection = this.memoryModuleService?.describeSelection(
+      this.stringifyObjectId(options.conversation.userId)
+    );
+    const useMemoryModule =
+      Boolean(this.memoryModuleService) && memorySelection?.mode !== 'off';
+    const memoryRetrievalReady = useMemoryModule
+      ? Boolean(memoryRetrievalQuery)
+      : Boolean(
+          this.retrieveService?.retrieveConversationMemoriesDetailed &&
+            memoryRetrievalQuery
+        );
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
-      this.retrieveService?.retrieveConversationMemoriesDetailed &&
-      Boolean(memoryRetrievalQuery)
-        ? 'active'
-        : 'suppressed';
+      memoryRetrievalReady ? 'active' : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
     let retrievalFailureCount = 0;
     let retrievalDiagnostics: Record<string, unknown> = {};
     if (effectiveMemoryRetrievalMode === 'active') {
       try {
-        const retrieved =
-          await this.retrieveService!.retrieveConversationMemoriesDetailed({
-            query: memoryRetrievalQuery,
-            userId: this.stringifyObjectId(options.conversation.userId),
-            conversationId: this.stringifyObjectId(options.conversation.id),
-            agentId: this.stringifyObjectId(
-              options.agent?.id ?? options.conversation.agentId
-            ),
-            // 不传 personId：人物范围检索要的是"已知人物"的 id（建档时生成的），
-            // 与对话 agentId 不是同一套；先走全量原话检索拿证据。
-            // 排除当前这轮消息：否则检索永远把用户刚说的这句自己带回来。
-            excludeMessageIds: options.currentTurnMessageIds || [],
-            limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
-          });
         // 只注入最相关的少数几条：先丢掉碎片与"当前这轮原话自己"，
         // 再取前 3 条（实测 8 条里多数是重复碎片，白耗检索与 token）。
         // 与最近对话高度相似的条目不再注入：那些内容本来就在上下文里，
@@ -807,35 +835,121 @@ export class AgentContextService {
         const recentTexts = routingHistoryMessages.map(
           message => message.content || ''
         );
-        retrievedMemories.push(
-          ...(retrieved.items || [])
-            .filter(item =>
-              isInjectableMemoryEvidence(item.content || '', memoryGateText)
-            )
+        const keepInjectable = (item: RetrievedContextSnippet) =>
+          isInjectableMemoryEvidence(item.content || '', memoryGateText) &&
+          !recentTexts.some(
+            text =>
+              memoryValueSimilarity(text, item.content || '') >=
+              MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD
+          );
+
+        if (useMemoryModule) {
+          const recalled = await this.memoryModuleService!.recall({
+            userId: this.stringifyObjectId(options.conversation.userId),
+            conversationId: this.stringifyObjectId(options.conversation.id),
+            agentId: this.stringifyObjectId(
+              options.agent?.id ?? options.conversation.agentId
+            ),
+            currentUserText: memoryGateText,
+            currentTurnMessageIds: options.currentTurnMessageIds || [],
+            recentMessages: routingHistoryMessages.map(message => ({
+              messageId: this.stringifyObjectId(message.id),
+              role:
+                message.role === MessageRole.user
+                  ? ('user' as const)
+                  : ('assistant' as const),
+              content: message.content || '',
+            })),
+            limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
+          });
+          // 只有"可按原话引用"的证据才进上下文：组合摘要只能当背景，不能当用户说过的话。
+          const snippets: RetrievedContextSnippet[] = recalled.evidence
             .filter(
               item =>
-                !recentTexts.some(
-                  text =>
-                    memoryValueSimilarity(text, item.content || '') >=
-                    MEMORY_EVIDENCE_RECENT_DUPLICATE_THRESHOLD
-                )
+                item.assertPolicy === 'quote' &&
+                item.role === MessageRole.user &&
+                (item.text || '').trim()
             )
-            .slice(0, AUTO_MEMORY_INJECT_LIMIT)
-        );
-        // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
-        // 是没候选、候选被过滤，还是内部失败被吞掉。
-        const diag = (retrieved as { diagnostics?: Record<string, unknown> })
-          .diagnostics;
-        if (diag)
+            .map(item => ({
+              id: item.id,
+              sourceMessageId: item.sourceMessageIds[0],
+              content: item.text,
+              role: MessageRole.user,
+              createdAt: item.occurredAt,
+              score: item.score,
+              personId: item.personRef,
+              memoryKind: item.kind,
+            }));
+          retrievedMemories.push(
+            ...snippets
+              .filter(keepInjectable)
+              .slice(0, AUTO_MEMORY_INJECT_LIMIT)
+          );
           retrievalDiagnostics = {
-            candidateCount: diag.candidateCount,
-            selectedCount: diag.selectedCount,
-            rawFallbackCount: diag.rawFallbackCount,
-            personScopedCount: diag.personScopedCount,
-            retrievalFailureCount: diag.retrievalFailureCount,
-            errorCode: diag.errorCode,
-            maxScore: diag.maxScore,
+            memoryEngine: recalled.diagnostics.engine,
+            memoryModuleMode: recalled.diagnostics.mode,
+            candidateCount: recalled.diagnostics.candidateCount,
+            selectedCount: recalled.diagnostics.selectedCount,
+            groupCount: recalled.diagnostics.groupCount,
+            skipReason: recalled.diagnostics.skipReason,
+            errorCode: recalled.diagnostics.errorCode,
           };
+          if (recalled.shadow) {
+            // 影子引擎只记录、不注入：对照用，正文仍按 id 回原话取。
+            this.chatTraceService?.recordArtifact({
+              stage: ChatTraceStage.memoryRetrieve,
+              kind: ChatTraceArtifactKind.externalEvidence,
+              operation: 'artifact.memory.shadow_recall',
+              payload: recalled.shadow,
+              attributes: {
+                engine: recalled.shadow.engine,
+                status: recalled.shadow.status,
+                selectedCount: recalled.shadow.selectedCount,
+              },
+            });
+            retrievalDiagnostics = {
+              ...retrievalDiagnostics,
+              shadowEngine: recalled.shadow.engine,
+              shadowSelectedCount: recalled.shadow.selectedCount,
+              shadowErrorCode: recalled.shadow.errorCode,
+            };
+          }
+          if (recalled.status === 'failed') retrievalFailureCount = 1;
+        } else {
+          const retrieved =
+            await this.retrieveService!.retrieveConversationMemoriesDetailed({
+              query: memoryRetrievalQuery,
+              userId: this.stringifyObjectId(options.conversation.userId),
+              conversationId: this.stringifyObjectId(options.conversation.id),
+              agentId: this.stringifyObjectId(
+                options.agent?.id ?? options.conversation.agentId
+              ),
+              // 不传 personId：人物范围检索要的是"已知人物"的 id（建档时生成的），
+              // 与对话 agentId 不是同一套；先走全量原话检索拿证据。
+              // 排除当前这轮消息：否则检索永远把用户刚说的这句自己带回来。
+              excludeMessageIds: options.currentTurnMessageIds || [],
+              limit: AUTO_MEMORY_RETRIEVAL_CANDIDATES,
+            });
+          retrievedMemories.push(
+            ...(retrieved.items || [])
+              .filter(keepInjectable)
+              .slice(0, AUTO_MEMORY_INJECT_LIMIT)
+          );
+          // 把检索内部诊断带进轨迹：之前只记条数，线上"调用成功但 0 条"无法区分
+          // 是没候选、候选被过滤，还是内部失败被吞掉。
+          const diag = (retrieved as { diagnostics?: Record<string, unknown> })
+            .diagnostics;
+          if (diag)
+            retrievalDiagnostics = {
+              candidateCount: diag.candidateCount,
+              selectedCount: diag.selectedCount,
+              rawFallbackCount: diag.rawFallbackCount,
+              personScopedCount: diag.personScopedCount,
+              retrievalFailureCount: diag.retrievalFailureCount,
+              errorCode: diag.errorCode,
+              maxScore: diag.maxScore,
+            };
+        }
       } catch (error) {
         retrievalFailureCount = 1;
         this.logger?.warn?.(
@@ -876,11 +990,25 @@ export class AgentContextService {
     const chatToolPlan = preflightChatToolPlan;
     const toolInstructionMode = this.resolveToolInstructionMode(chatToolPlan);
     const modePolicy = resolveAgentChatModePolicy(replyBrief);
+    // 回归轮：按间隔把上一段的尾巴裁短，把位置让给"你记得的事"。
+    const returnTurnPlan = resolveReturnTurnPlan({
+      elapsedHours: options.conversationReturnContext?.elapsedHours,
+      elapsedDays: options.conversationReturnContext?.elapsedDays,
+    });
+    const effectiveHistoryLimit = resolveReturnTurnHistoryLimit({
+      plan: returnTurnPlan,
+      modeLimit: modePolicy.historyMessageLimit,
+    });
     const recentHistoryMessages = this.buildRecentHistoryMessages(
       historicalConversationMessages,
-      modePolicy.historyMessageLimit,
+      effectiveHistoryLimit,
       options.pinnedHistoryMessageIds
     );
+    const returnTurnMaterialPrompt = await this.buildReturnTurnMaterial({
+      options,
+      plan: returnTurnPlan,
+      recentHistoryMessages,
+    });
     const relevanceText = this.buildFactRelevanceText(
       options.currentQuery || '',
       recentHistoryMessages,
@@ -980,7 +1108,8 @@ export class AgentContextService {
           identity,
           temporalProfiles,
           chatToolPlan,
-          replyPlanningDecision.mode
+          replyPlanningDecision.mode,
+          returnTurnMaterialPrompt
         ),
       {
         evidenceCount: evidence.length,
@@ -1285,7 +1414,8 @@ export class AgentContextService {
     identity?: AgentIdentityContract,
     temporalProfiles: PersonTemporalPromptFact[] = [],
     chatToolPlan?: AgentChatToolTurnPlan,
-    planningMode?: ReplyPlanningMode
+    planningMode?: ReplyPlanningMode,
+    returnTurnMaterialPrompt = ''
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1336,6 +1466,7 @@ export class AgentContextService {
       plan.includeContinuity ? continuitySummaryPrompt : '',
       sessionContinuityPrompt,
       conversationReturnContextPrompt,
+      returnTurnMaterialPrompt,
     ];
 
     const conversationReadingPrompt =
@@ -1429,24 +1560,143 @@ export class AgentContextService {
     ].join('\n');
   }
 
-  private buildConversationReturnContextPrompt(
-    context?: ConversationReturnContext
-  ): string {
-    if (!context) {
+  /**
+   * 回归轮材料：把"还没完的事"和"临近的日子"摆给模型，让它在第一句里自己挑合适的。
+   * 只给事实、不排名次；尾巴里已经有的、最近刚问过的一律不给；普通轮不生成。
+   */
+  private async buildReturnTurnMaterial(options: {
+    options: BuildConversationContextOptions;
+    plan: ReturnPlanLike;
+    recentHistoryMessages: MessageEntity[];
+  }): Promise<string> {
+    const { plan, recentHistoryMessages } = options;
+    if (
+      !plan.includeItems ||
+      !this.memoryModuleService?.listOpenItems ||
+      this.memoryModuleService.describeSelection(
+        this.stringifyObjectId(options.options.conversation.userId)
+      ).mode === 'off'
+    ) {
       return '';
     }
 
-    return [
-      '# 本轮跨时段联系事实',
-      JSON.stringify({
-        currentTurnAt: context.currentTurnAt,
-        previousContactAt: context.previousContactAt,
-        previousUserContactAt: context.previousUserContactAt,
-        previousAssistantContactAt: context.previousAssistantContactAt,
-        elapsedHours: context.elapsedHours,
-        elapsedDays: context.elapsedDays,
-      }),
-    ].join('\n');
+    const request = {
+      userId: this.stringifyObjectId(options.options.conversation.userId),
+      conversationId: this.stringifyObjectId(options.options.conversation.id),
+      agentId: this.stringifyObjectId(
+        options.options.agent?.id ?? options.options.conversation.agentId
+      ),
+    };
+    try {
+      const [followUps, calendar] = await Promise.all([
+        this.memoryModuleService.listOpenItems(request),
+        this.memoryModuleService.listOpenItems({
+          ...request,
+          includeCalendar: true,
+        }),
+      ]);
+      const now = new Date();
+      const historyMessageIds = recentHistoryMessages.map(message =>
+        this.stringifyObjectId(message.id)
+      );
+      const historyTexts = recentHistoryMessages.map(
+        message => message.content || ''
+      );
+      const selected = selectReturnTurnItems({
+        items: followUps.items || [],
+        historyMessageIds,
+        historyTexts,
+        now,
+      });
+      const calendarItems = selectReturnTurnItems({
+        items: (calendar.items || []).filter(
+          item => item.topicKey === '纪念日'
+        ),
+        historyMessageIds,
+        historyTexts,
+        now,
+        maxItems: 2,
+      }).items;
+
+      this.chatTraceService?.recordCompletedSpan({
+        stage: ChatTraceStage.memoryRetrieve,
+        operation: 'memory.return_turn_material',
+        startedAt: now,
+        status: ChatSpanStatus.completed,
+        attributes: {
+          tier: plan.tier,
+          historyLimit: recentHistoryMessages.length,
+          itemCount: selected.items.length,
+          calendarCount: calendarItems.length,
+          excludedInHistory:
+            selected.exclusion.inHistory.length +
+            selected.exclusion.mentionedInHistory.length,
+          excludedRecentlyRaised: selected.exclusion.recentlyRaised.length,
+        },
+      });
+
+      return buildReturnTurnMaterialPrompt({
+        plan,
+        items: selected.items,
+        calendarItems,
+        now,
+      });
+    } catch (error) {
+      this.logger?.warn?.(
+        '[context] return turn material skipped, conversationId=%s reason=%s',
+        this.stringifyObjectId(options.options.conversation.id),
+        error instanceof Error ? error.message : String(error)
+      );
+      return '';
+    }
+  }
+
+  private buildConversationReturnContextPrompt(
+    context?: ConversationReturnContext
+  ): string {
+    // 时间是常态参考材料：每一轮都告诉模型"现在是什么时候"；有上一次联系时，
+    // 再给出上一次双方说话的时间和中间隔了多久。上一次聊了什么本来就在最近的
+    // 历史消息里，这里只补时间，不替模型判断"这算不算重逢、要不要提"。
+    const nowAt = context ? new Date(context.currentTurnAt) : new Date();
+    const lines = [
+      '# 当前时间与联系间隔',
+      `现在：${formatBeijingDateTime(nowAt)}`,
+    ];
+
+    if (context) {
+      const previousAt = new Date(context.previousContactAt);
+      const previousUserAt = new Date(context.previousUserContactAt);
+      const elapsedMs = nowAt.getTime() - previousAt.getTime();
+      // 超过 6 小时才提"上一次"；连着聊的时间材料是噪声。
+      if (
+        Number.isFinite(elapsedMs) &&
+        elapsedMs >= CONVERSATION_TIME_MATERIAL_MIN_GAP_MS
+      ) {
+        lines.push(`用户上一次说话：${formatBeijingDateTime(previousUserAt)}`);
+        if (context.previousAssistantContactAt) {
+          lines.push(
+            `你上一次说话：${formatBeijingDateTime(
+              new Date(context.previousAssistantContactAt)
+            )}`
+          );
+        }
+
+        const elapsed = describeElapsedTime(previousAt, nowAt);
+        if (elapsed) {
+          lines.push(`距上一次联系：${elapsed}`);
+        }
+
+        lines.push('上一次联系的对话结尾在最近的历史消息里。');
+      }
+    }
+
+    // 隔了一段时间才回来：把时间跨度告诉模型，让它用自己的话说一句感受（不给固定句式）。
+    const elapsedFeeling = buildElapsedFeelingInstruction({
+      elapsedHours: context?.elapsedHours,
+    });
+    if (elapsedFeeling) lines.push('', elapsedFeeling);
+
+    return lines.join('\n');
   }
 
   private buildConversationReadingPrompt(
