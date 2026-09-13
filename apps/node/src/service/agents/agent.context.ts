@@ -354,8 +354,8 @@ export class AgentContextService {
   @InjectEntityModel(MessageEntity)
   messageModel: MongoRepository<MessageEntity>;
 
-  // 仅保留类型兼容；在线上下文不再提前调用长期记忆检索。
-  retrieveService?: RetrieveService;
+  @Inject()
+  retrieveService: RetrieveService;
 
   @Inject()
   agentMemoryFactService: AgentMemoryFactService;
