@@ -1046,10 +1046,13 @@ export class AgentService {
       usePersonalCallName?: boolean;
     } = {}
   ): Promise<MessageEntity[]> {
-    const callMe =
-      options.usePersonalCallName === false
-        ? ''
-        : agent.agentCallMe?.trim() || '我';
+    // 开场白总是带称呼：本人会话用 role 对用户的称呼；共享会话用被邀请人
+    // 自己设定的称呼（分享成员上的 agentCallsUser），再退回 role 的称呼。
+    const callMe = await this.resolveInitialOpeningCallName(
+      agent,
+      userId,
+      options
+    );
     const content = await this.createInitialRecognitionOpeningContent({
       agent,
       callMe,
@@ -1173,12 +1176,34 @@ export class AgentService {
     }
   }
 
+  /** 开场白的称呼：本人/共享两种情况都尽量取到真实称呼。 */
+  private async resolveInitialOpeningCallName(
+    agent: AgentEntity,
+    userId: MongoObjectId,
+    options: { usePersonalCallName?: boolean } = {}
+  ): Promise<string> {
+    const ownerCallName = agent.agentCallMe?.trim() || '';
+    if (options.usePersonalCallName !== false) return ownerCallName;
+    try {
+      const member = await this.findActiveShareMemberByAgentAndUser(
+        agent.id,
+        userId
+      );
+      const sharedCallName = member?.agentCallsUser?.trim() || '';
+      if (sharedCallName) return sharedCallName;
+    } catch {
+      // 查不到分享成员时退回 role 的称呼，绝不生成没有称呼的开场白。
+    }
+    return ownerCallName;
+  }
+
   private buildInitialRecognitionOpeningFallback(callMe: string): string {
-    // 称呼自适应：有真实称呼才加前缀；上游在缺称呼时会填占位符"我"。
+    // 称呼正常一定有；占位符"我"或空值只在极端情况下出现，此时才省略前缀。
     // 不用关系称谓自称（"奶奶终于…"）——用户反馈读着怪。
     const callName = callMe && callMe !== '我' ? callMe : '';
     // 稳定两句：第一句句号收尾，第二句问句收尾（展示层按句号拆成两条）。
     const opening = '终于能和你说上话了！你最近过得怎么样，这些日子还好吗？';
+    // 称呼正常一定存在；万一没有，也宁可不要在句首留下突兀的空称呼。
     return callName ? `${callName}，${opening}` : opening;
   }
 
