@@ -147,6 +147,8 @@ export interface BuildConversationContextOptions {
   conversation: ConversationEntity;
   agent: AgentEntity | null;
   currentQuery?: string;
+  /** 当前这一轮用户原话（用于检索门槛判断，避免用拼接后的检索文本误判）。 */
+  currentUserText?: string;
   currentTurnMessageIds?: string[];
   forceSemanticPlanning?: boolean;
   classifyIntent?: boolean;
@@ -689,9 +691,13 @@ export class AgentContextService {
     // 自动长时记忆检索：对话前先取一小批相关原话证据注入上下文。
     // 过去这里硬编码 suppressed（只看工具按需检索），短消息拿不到规划器信号时
     // 就完全没有记忆；现在恢复为按模式限额注入。
+    // 门槛只按"用户这一轮说的那句话"判断：currentQuery 是拼接后的检索文本，
+    // 会把前几轮的提问带进来，导致"嗯"这种单字也触发检索。
+    const memoryGateText =
+      options.currentUserText?.trim() || options.currentQuery || '';
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       this.retrieveService?.retrieveConversationMemoriesDetailed &&
-      needsLongTermMemoryRetrieval(options.currentQuery || '')
+      needsLongTermMemoryRetrieval(memoryGateText)
         ? 'active'
         : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
@@ -723,10 +729,7 @@ export class AgentContextService {
         retrievedMemories.push(
           ...(retrieved.items || [])
             .filter(item =>
-              isInjectableMemoryEvidence(
-                item.content || '',
-                options.currentQuery || ''
-              )
+              isInjectableMemoryEvidence(item.content || '', memoryGateText)
             )
             .filter(
               item =>

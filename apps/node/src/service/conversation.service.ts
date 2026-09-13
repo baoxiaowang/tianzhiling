@@ -4743,6 +4743,9 @@ export class ConversationService {
             conversation: runtime.conversation,
             agent: runtime.agent,
             currentQuery: before.searchableText,
+            currentUserText: [...currentTurnMessages]
+              .reverse()
+              .find(message => message.role === MessageRole.user)?.content,
             currentTurnMessageIds: before.deliberateLongReplyExecution
               ? []
               : currentTurnMessages.map(message =>
