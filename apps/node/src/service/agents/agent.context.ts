@@ -387,6 +387,77 @@ export function memoryEvidenceCore(text: string): string {
   return (text || '').replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
 }
 
+// 自伤/轻生倾向的原话不得作为"相关记忆"注入，避免被当成话题素材。
+const SELF_HARM_SIGNAL_PATTERN =
+  /(?:去找(?:你|您|他|她|妈|爸|奶奶|爷爷|你们|他们)|想去找(?:你|您)|不想活|活不下去|活够了|自杀|轻生|带我走|陪你(?:一起)?走|去陪(?:你|您)|了结)/u;
+
+const KINSHIP_LIKE_TERMS = [
+  '妈',
+  '爸',
+  '爹',
+  '娘',
+  '哥',
+  '姐',
+  '弟',
+  '妹',
+  '爸爸',
+  '妈妈',
+  '父亲',
+  '母亲',
+  '爷爷',
+  '奶奶',
+  '外公',
+  '外婆',
+  '姥姥',
+  '姥爷',
+  '哥哥',
+  '姐姐',
+  '弟弟',
+  '妹妹',
+  '儿子',
+  '女儿',
+  '孩子',
+  '孙子',
+  '孙女',
+  '外孙',
+  '外孙女',
+  '丈夫',
+  '妻子',
+  '老公',
+  '老婆',
+  '舅舅',
+  '叔叔',
+  '伯伯',
+  '姑姑',
+  '姨妈',
+  '阿姨',
+  '嫂子',
+  '女婿',
+  '儿媳',
+];
+
+/**
+ * 把用户这一轮原话抽成检索键：人物/时间/事件词，用它们去检索，
+ * 而不是拿整句情绪原话撞相似度（那样只会捞回情绪与问句）。抽不出键就不检索。
+ */
+export function buildMemoryRetrievalQuery(query: string): string {
+  const text = (query || '').trim();
+  if (!text) return '';
+  const keys = new Set<string>();
+  for (const term of KINSHIP_LIKE_TERMS) {
+    if (text.includes(term)) keys.add(term);
+  }
+  for (const match of text.matchAll(
+    /\d{1,4}\s*(?:年|月|日|号|岁|天)|[一二三四五六七八九十]{1,3}\s*(?:年|月|日|岁|天)|以前|当年|小时候|上个月|去年|今年|多久/gu
+  ))
+    keys.add(match[0].replace(/\s+/g, ''));
+  for (const match of text.matchAll(
+    /去世|过世|离世|走了|走后|走的时候|离开|住院|手术|生病|结婚|离婚|怀孕|出生|上学|幼儿园|工作|上班|搬家|买房|纪念日|生日|忌日|祭日|走/gu
+  ))
+    keys.add(match[0]);
+  return [...keys].join(' ');
+}
+
 /**
  * 这条检索结果值不值得注入：
  * - 核心字数 < 4 的碎片（"不好""我会好好的"）没有信息量，丢弃；
@@ -402,6 +473,8 @@ export function isInjectableMemoryEvidence(
   // 问句不是证据：检索经常把用户过去的提问当成"相关记忆"，对回答毫无帮助。
   if (/[？?]\s*$/u.test(content.trim())) return false;
   if (/(?:吗|呢|吧)[。！!]?\s*$/u.test(content.trim())) return false;
+  // 危险信号不当话题素材。
+  if (SELF_HARM_SIGNAL_PATTERN.test(content)) return false;
   const normalize = (value: string) => memoryEvidenceCore(value).toLowerCase();
   if (core && normalize(content) === normalize(currentQuery)) return false;
   return true;
@@ -699,9 +772,11 @@ export class AgentContextService {
     // 会把前几轮的提问带进来，导致"嗯"这种单字也触发检索。
     const memoryGateText =
       options.currentUserText?.trim() || options.currentQuery || '';
+    // 不用当前句原文去检索：先抽成"检索键"（人物/时间/事件），按键检索。
+    const memoryRetrievalQuery = buildMemoryRetrievalQuery(memoryGateText);
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       this.retrieveService?.retrieveConversationMemoriesDetailed &&
-      needsLongTermMemoryRetrieval(memoryGateText)
+      Boolean(memoryRetrievalQuery)
         ? 'active'
         : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
@@ -711,7 +786,7 @@ export class AgentContextService {
       try {
         const retrieved =
           await this.retrieveService!.retrieveConversationMemoriesDetailed({
-            query: options.currentQuery || '',
+            query: memoryRetrievalQuery,
             userId: this.stringifyObjectId(options.conversation.userId),
             conversationId: this.stringifyObjectId(options.conversation.id),
             agentId: this.stringifyObjectId(

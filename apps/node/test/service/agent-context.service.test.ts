@@ -2,6 +2,7 @@ import { AgentContextService } from '../../src/service/agents/agent.context';
 import { buildReplyBrief } from '../../src/service/agents/reply-brief.service';
 import { resolveAgentChatToolTurnPlan } from '../../src/service/agents/agent-chat-tools';
 import {
+  buildMemoryRetrievalQuery,
   isFactOrRecallSeeking,
   isInjectableMemoryEvidence,
   needsLongTermMemoryRetrieval,
@@ -2722,5 +2723,20 @@ describe('retrieval only for fact or recall seeking turns', () => {
     expect(needsLongTermMemoryRetrieval('你还记得我们以前去过哪里吗')).toBe(true);
     expect(needsLongTermMemoryRetrieval('我的生日你还记得吗')).toBe(true);
     expect(isFactOrRecallSeeking('爷爷，其实我心里好恨你们')).toBe(false);
+  });
+});
+describe('memory retrieval query keys', () => {
+  it('turns an utterance into person/time/event keys', () => {
+    expect(buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')).toContain('妈');
+    expect(buildMemoryRetrievalQuery('我妈在你走后的第三年也跟着你去了')).toContain('走后');
+    expect(buildMemoryRetrievalQuery('奶奶是哪一年走的')).toContain('奶奶');
+    expect(buildMemoryRetrievalQuery('你看看谁买的奶茶')).toBe('');
+    expect(buildMemoryRetrievalQuery('反正你不爱我')).toBe('');
+  });
+
+  it('does not inject self-harm signals as evidence', () => {
+    expect(isInjectableMemoryEvidence('妈妈，我想去找您', '妈妈')).toBe(false);
+    expect(isInjectableMemoryEvidence('我活不下去了', '妈妈')).toBe(false);
+    expect(isInjectableMemoryEvidence('妈妈今年清明我去看您了', '妈妈')).toBe(true);
   });
 });

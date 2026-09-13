@@ -147,6 +147,7 @@ import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
+import { isFactBearingUtterance } from './agents/memory-value';
 import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
 import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
@@ -2508,20 +2509,25 @@ export class ConversationService {
       //   ② 按"这段原话谈到了谁"补人物标签（按人物检索用，只做标签不做身份判定）；
       //   ③ 抽取出来的结构化事实入库（第一层参数，供断言与时间线使用）。
       // 这样每条消息只派生一个索引任务 + 一个抽取任务，队列任务量直接少三分之一。
-      const indexed = await this.milvusService.indexConversationMessage({
-        messageId: this.stringifyObjectId(message.id),
-        userId: this.stringifyObjectId(message.userId),
-        conversationId: this.stringifyObjectId(message.conversationId),
-        agentId: this.stringifyObjectId(message.agentId),
-        role: message.role,
-        type: message.type,
-        searchableText,
-        createdAt: message.createdAt,
-        updatedAt: message.updatedAt,
-        sourceHash: task.sourceHash,
-      });
-      if (!indexed) {
-        throw new Error('Milvus semantic indexing is currently unavailable');
+      // 只把"事实型"原话写进检索索引：问句、情绪、纯应答不入库，
+      // 否则相似检索只会捞回情绪与问句碎片（用户反馈"检索意义不大"）。
+      const factBearing = isFactBearingUtterance(searchableText);
+      if (factBearing) {
+        const indexed = await this.milvusService.indexConversationMessage({
+          messageId: this.stringifyObjectId(message.id),
+          userId: this.stringifyObjectId(message.userId),
+          conversationId: this.stringifyObjectId(message.conversationId),
+          agentId: this.stringifyObjectId(message.agentId),
+          role: message.role,
+          type: message.type,
+          searchableText,
+          createdAt: message.createdAt,
+          updatedAt: message.updatedAt,
+          sourceHash: task.sourceHash,
+        });
+        if (!indexed) {
+          throw new Error('Milvus semantic indexing is currently unavailable');
+        }
       }
       await this.indexPersonAnchorsForMessage(message, searchableText, task);
       if (this.memoryValueService?.active(message.userId)) {
@@ -11781,6 +11787,7 @@ export class ConversationService {
           query: searchableText,
           limit: 8,
         })) || [];
+      if (!isFactBearingUtterance(searchableText)) return;
       for (const person of people) {
         const personId = String(person.id || '').replace(/^person:/, '');
         if (!MongoObjectId.isValid(personId)) continue;
@@ -11797,7 +11804,12 @@ export class ConversationService {
           agentId: this.stringifyObjectId(message.agentId),
           role: message.role,
           type: message.type,
-          searchableText,
+          // 入库补上下文：带上是谁的原话与日期，避免检索出"不好"这类碎片。
+          searchableText: `【${
+            person.preferredName || person.realName || '家人'
+          }·${new Date(message.createdAt)
+            .toISOString()
+            .slice(0, 10)}】${searchableText}`,
           createdAt: message.createdAt,
           updatedAt: message.updatedAt,
           personId,

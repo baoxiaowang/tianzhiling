@@ -776,6 +776,29 @@ export function matchAllGlobal(
   return matches;
 }
 
+// 纯应答/寒暄：字数可能够但没有任何可检索内容。
+const BARE_ACK_PATTERN =
+  /^(?:好(?:的|吧|啊)?|嗯+|哦+|是(?:的|啊)?|对(?:的)?|行|可以|知道了|我知道了|我明白了|我会的|我会好好的|好好的|没事|不要紧|谢谢你?|在吗|在不在)$/u;
+// 事实信号：有人物/时间/地点/事件或数量，才算"可检索的事实型原话"。
+const FACT_SIGNAL_PATTERN =
+  /\d|岁|年|月|日|天|号|点|生日|忌日|祭日|清明|中元|中秋|春节|过年|走|去世|过世|离世|走了|不在|住院|手术|生病|病|结婚|离婚|怀孕|出生|上学|幼儿园|小学|中学|大学|工作|上班|开店|生意|搬|住|楼房|院子|阳台|买房|盖房|退休|坟|墓|出国|回国|飞机|火车|电话|视频|照片|礼物|工资|存款|借|还|买了|去了|来了|回来|认识|见过|说过|答应|承诺|打算|计划|名字|叫/u;
+
+/**
+ * 这条原话值不值得进检索索引：只有"事实型"原话才进（人物/时间/地点/事件/数量），
+ * 问句、情绪、纯应答一律不进——否则相似检索只会捞回情绪与问句碎片。
+ */
+export function isFactBearingUtterance(text: string): boolean {
+  const value = (text || '').trim();
+  if (!value) return false;
+  const core = value.replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
+  if (core.length < 6) return false;
+  if (BARE_ACK_PATTERN.test(core)) return false;
+  if (/[？?]\s*$/u.test(value)) return false;
+  if (/(?:吗|呢|吧)[。！!]?\s*$/u.test(value)) return false;
+  if (isEmotionalValue(value)) return false;
+  return FACT_SIGNAL_PATTERN.test(value);
+}
+
 /** 一段文字里出现的所有亲属称谓所属的同义组。 */
 export function kinshipGroupsIn(text: string): Set<number> {
   const groups = new Set<number>();

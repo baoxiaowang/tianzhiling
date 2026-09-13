@@ -1997,7 +1997,8 @@ function buildReplyBriefPrompt(brief: Omit<ReplyBrief, 'prompt'>): string {
     current_user: '当前用户原话',
     confirmed_fact: '已确认事实',
     recent_user: '近期用户原话',
-    retrieved_user: '长期用户原话',
+    // 明确标注来源：这是用户过去说过的话，不是系统结论，也不是亲人说过的。
+    retrieved_user: '用户过去说过的话（原话，不是结论）',
   };
   const evidenceLines = brief.evidence.length
     ? brief.evidence.map(
