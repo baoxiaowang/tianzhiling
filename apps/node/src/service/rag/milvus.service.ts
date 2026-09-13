@@ -2,7 +2,10 @@ import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import { InjectEntityModel } from '@midwayjs/typeorm';
 import { MongoRepository } from 'typeorm';
 import { AgentProfileFactEntity, MongoObjectId } from '@tzl/entities';
-import { isMemoryCurrent, isCanonicalUserNameEvidence } from '../agents/memory-value';
+import {
+  isMemoryCurrent,
+  isCanonicalUserNameEvidence,
+} from '../agents/memory-value';
 import { memoryValueModeForUser } from '../agents/memory-value-rollout';
 import { ILogger } from '@midwayjs/logger';
 import { RedisService } from '@midwayjs/redis';
@@ -141,6 +144,7 @@ export class MilvusService {
   private endpointRetryAt = 0;
   private endpointCheckPromise: Promise<boolean> | null = null;
   private runtimeDisabledReason = '';
+  private lastSearchSkipReason = '';
   private sharedCircuitOpen = false;
   private sharedCircuitCheckedAt = 0;
 
@@ -177,6 +181,7 @@ export class MilvusService {
       consecutiveFailures: this.consecutiveFailures,
       inflightCalls: this.inflightCalls,
       endpointReachable: this.endpointReachable,
+      lastSearchSkipReason: this.lastSearchSkipReason,
       relevancePolicy: this.getRelevancePolicy(),
     };
   }
@@ -220,6 +225,7 @@ export class MilvusService {
         'deleteUserMemories'
       );
       this.recordMilvusSuccess();
+      this.lastSearchSkipReason = '';
       return true;
     } catch (error) {
       this.recordMilvusFailure('delete_user_memories', error);
@@ -317,26 +323,31 @@ export class MilvusService {
   async searchConversationMemories(
     options: SearchConversationMemoriesOptions
   ): Promise<RetrievedConversationMemory[]> {
-    if (
-      !this.isRetrievalEnabled() ||
-      !this.openAIService.hasEmbeddingConfig()
-    ) {
+    // 静默返回点是"调用成功但 0 条"的常见原因，必须留下原因，否则线上无法定位。
+    const skip = (reason: string) => {
+      this.lastSearchSkipReason = reason;
+      this.logger.warn('[milvus] search skipped, reason=%s', reason);
       return [];
+    };
+    if (!this.isRetrievalEnabled()) {
+      return skip('retrieval_disabled');
+    }
+    if (!this.openAIService.hasEmbeddingConfig()) {
+      return skip('no_embedding_config');
     }
 
     const query = this.normalizeSearchableText(options.query);
 
     if (!query) {
-      return [];
+      return skip('empty_query');
     }
 
     if (!(await this.ensureEndpointReachable())) {
-      return [];
+      return skip('endpoint_unreachable');
     }
 
     if (this.isCircuitOpen()) {
-      this.logger.warn('[milvus] search skipped, circuit is open');
-      return [];
+      return skip('circuit_open');
     }
 
     try {
@@ -350,7 +361,7 @@ export class MilvusService {
       );
 
       if (!hasCollection?.value) {
-        return [];
+        return skip('collection_missing');
       }
 
       await this.withMilvusTimeout(
@@ -361,7 +372,7 @@ export class MilvusService {
       const vector = this.resolveQueryEmbedding(options.queryEmbedding);
 
       if (!vector?.length) {
-        return [];
+        return skip('empty_query_vector');
       }
 
       const results = await this.withMilvusTimeout(
@@ -439,24 +450,54 @@ export class MilvusService {
     if (memoryValueModeForUser(userId) === 'active') {
       // Rebuilt accounts may retain old vector rows for rollback. Only original
       // episodes or Mongo-verified governed facts can enter the new read path.
-      candidates = candidates.filter(item => !item.memoryKind ||
-        item.memoryKind === 'raw_episode' || item.memoryKind === 'governed_fact');
+      candidates = candidates.filter(
+        item =>
+          !item.memoryKind ||
+          item.memoryKind === 'raw_episode' ||
+          item.memoryKind === 'governed_fact'
+      );
     }
-    const governed = candidates.filter(item => item.memoryKind === 'governed_fact');
+    const governed = candidates.filter(
+      item => item.memoryKind === 'governed_fact'
+    );
     if (!governed.length) return candidates;
-    const fallback = candidates.filter(item => item.memoryKind !== 'governed_fact');
+    const fallback = candidates.filter(
+      item => item.memoryKind !== 'governed_fact'
+    );
     if (!MongoObjectId.isValid(userId)) return fallback;
-    const ids = governed.filter(item => MongoObjectId.isValid(item.id)).map(item => new MongoObjectId(item.id));
+    const ids = governed
+      .filter(item => MongoObjectId.isValid(item.id))
+      .map(item => new MongoObjectId(item.id));
     try {
-      const current = ids.length ? await this.governedFactModel.find({
-        where: { _id: { $in: ids }, userId: new MongoObjectId(userId), status: 'active' } as never,
-        take: ids.length,
-      }) : [];
-      const valid = new Map(current.filter(f => f.governance?.version === 'memory_value_v1' && !isCanonicalUserNameEvidence(f) && isMemoryCurrent(f.governance)).map(f => [String(f.id), f]));
+      const current = ids.length
+        ? await this.governedFactModel.find({
+            where: {
+              _id: { $in: ids },
+              userId: new MongoObjectId(userId),
+              status: 'active',
+            } as never,
+            take: ids.length,
+          })
+        : [];
+      const valid = new Map(
+        current
+          .filter(
+            f =>
+              f.governance?.version === 'memory_value_v1' &&
+              !isCanonicalUserNameEvidence(f) &&
+              isMemoryCurrent(f.governance)
+          )
+          .map(f => [String(f.id), f])
+      );
       return candidates.filter(item => {
         if (item.memoryKind !== 'governed_fact') return true;
         const fact = valid.get(item.id);
-        return !!fact && String(fact.governance!.revision) === item.sourceHash && fact.value === item.searchableText && String(fact.agentId) === item.personId;
+        return (
+          !!fact &&
+          String(fact.governance!.revision) === item.sourceHash &&
+          fact.value === item.searchableText &&
+          String(fact.agentId) === item.personId
+        );
       });
     } catch (error) {
       // A source-store outage is not a Milvus outage. Never trust unverified
