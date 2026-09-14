@@ -308,8 +308,13 @@ check_pm2_processes() {
   local expected="$2"
   local minimum_uptime_ms="${3:-0}"
   local maximum_restart_time="${4:-5}"
+  local attempt
 
-  docker exec "$service" node -e '
+  # A freshly recreated container may not have its PM2 daemon socket ready yet;
+  # pm2 then prints a "[PM2] Spawning PM2 daemon" banner to stdout, so retry
+  # until the daemon responds with a parseable process list.
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if docker exec "$service" node -e '
 const { execFileSync } = require("child_process");
 const expected = Number(process.argv[1]);
 const minimumUptimeMs = Number(process.argv[2]);
@@ -318,13 +323,22 @@ const rawList = execFileSync("pm2", ["jlist"], {
   encoding: "utf8",
   stdio: ["ignore", "pipe", "ignore"],
 });
-const jsonStart = rawList.indexOf("[");
-const jsonEnd = rawList.lastIndexOf("]");
-const processes = JSON.parse(
-  jsonStart >= 0 && jsonEnd > jsonStart
-    ? rawList.slice(jsonStart, jsonEnd + 1)
-    : rawList
-);
+function parsePm2List(raw) {
+  const jsonEnd = raw.lastIndexOf("]");
+  if (jsonEnd > 0) {
+    for (let jsonStart = 0; jsonStart < jsonEnd; jsonStart += 1) {
+      if (raw[jsonStart] !== "[") continue;
+      try {
+        const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Skip PM2 banner text until the JSON payload parses.
+      }
+    }
+  }
+  throw new Error(`pm2 jlist did not return JSON: ${raw.slice(0, 160)}`);
+}
+const processes = parsePm2List(rawList);
 const failures = [];
 if (processes.length !== expected) {
   failures.push(`count=${processes.length}/${expected}`);
@@ -348,7 +362,15 @@ if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
-' "$expected" "$minimum_uptime_ms" "$maximum_restart_time"
+' "$expected" "$minimum_uptime_ms" "$maximum_restart_time"; then
+      return 0
+    fi
+    if (( attempt < 8 )); then
+      printf '[PM2_RETRY] service=%s attempt=%s\n' "$service" "$attempt"
+      sleep 5
+    fi
+  done
+  return 1
 }
 
 pm2_restart_signature() {
@@ -360,13 +382,22 @@ const rawList = execFileSync("pm2", ["jlist"], {
   encoding: "utf8",
   stdio: ["ignore", "pipe", "ignore"],
 });
-const jsonStart = rawList.indexOf("[");
-const jsonEnd = rawList.lastIndexOf("]");
-const processes = JSON.parse(
-  jsonStart >= 0 && jsonEnd > jsonStart
-    ? rawList.slice(jsonStart, jsonEnd + 1)
-    : rawList
-);
+function parsePm2List(raw) {
+  const jsonEnd = raw.lastIndexOf("]");
+  if (jsonEnd > 0) {
+    for (let jsonStart = 0; jsonStart < jsonEnd; jsonStart += 1) {
+      if (raw[jsonStart] !== "[") continue;
+      try {
+        const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Skip PM2 banner text until the JSON payload parses.
+      }
+    }
+  }
+  throw new Error(`pm2 jlist did not return JSON: ${raw.slice(0, 160)}`);
+}
+const processes = parsePm2List(rawList);
 console.log(processes
   .map(processInfo => `${processInfo.pm_id}:${Number(processInfo.pm2_env?.restart_time || 0)}`)
   .sort()
