@@ -1525,7 +1525,7 @@ export class AgentContextService {
       returnTurnRequired
         ? [
             '# 本轮必须用上的一件事（在上面「你记得的事」里）',
-            '用户这次是隔了一段时间回来的。请从上面挑一件，在这条回复里自然用上：先接住他这句话，再顺口带出来，像家里人聊天。',
+            '这些是用户以前说过、还没了结的事。请从上面挑一件，在这条回复里自然用上：先接住他这句话，再顺口带出来，像家里人聊天。',
             '不要只用一句客套回应；除非他这轮正在说极重的痛苦或有危险的话，那就先接住他。',
           ].join('\n')
         : '',
@@ -1582,7 +1582,6 @@ export class AgentContextService {
   }): Promise<{ prompt: string; hasItems: boolean }> {
     const { plan, recentHistoryMessages } = options;
     if (
-      !plan.includeItems ||
       !this.memoryModuleService?.listOpenItems ||
       this.memoryModuleService.describeSelection(
         this.stringifyObjectId(options.options.conversation.userId)
@@ -1653,7 +1652,8 @@ export class AgentContextService {
           calendarItems,
           now,
         }),
-        hasItems: selected.items.length > 0,
+        // 只有"还没提过"的条目才要求这一轮用掉一件；已经问过、还在冷却期的不会再被催。
+        hasItems: selected.items.some(item => (item.raisedCount || 0) === 0),
       };
     } catch (error) {
       this.logger?.warn?.(

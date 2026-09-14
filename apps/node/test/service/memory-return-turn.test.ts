@@ -28,13 +28,9 @@ function item(overrides: Partial<MemoryOpenItemView> = {}): MemoryOpenItemView {
 }
 
 describe('回归轮的尾巴长度', () => {
-  it('6 小时以内不裁也不给清单', () => {
+  it('清单不再看间隔：不足 6 小时也能拿到，只是不裁尾巴', () => {
     const plan = resolveReturnTurnPlan({ elapsedHours: 3 });
-    expect(plan).toEqual({
-      tier: 'none',
-      historyLimit: 0,
-      includeItems: false,
-    });
+    expect(plan).toEqual({ tier: 'none', historyLimit: 0, includeItems: true });
     expect(resolveReturnTurnHistoryLimit({ plan, modeLimit: 16 })).toBe(16);
   });
 
@@ -161,14 +157,15 @@ describe('回归轮材料的渲染', () => {
     expect(prompt).not.toMatch(/建议|应该问|必须/);
   });
 
-  it('普通轮不渲染任何材料', () => {
+  it('普通轮只要有未了结的事也给材料（不再看间隔）', () => {
     const prompt = buildReturnTurnMaterialPrompt({
       plan: resolveReturnTurnPlan({ elapsedHours: 2 }),
       items: [item()],
       calendarItems: [],
       now: NOW,
     });
-    expect(prompt).toBe('');
+    expect(prompt).toContain('# 你记得的事');
+    expect(prompt).toContain('我挂了明早的号');
   });
 
   it('问过的会标出来', () => {

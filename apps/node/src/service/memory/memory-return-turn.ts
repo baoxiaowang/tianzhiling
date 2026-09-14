@@ -26,7 +26,12 @@ export interface ReturnTurnPlan {
   tier: ReturnTurnTier;
   /** 这一轮实际保留多少条历史消息（0 表示由调用方沿用模式默认值）。 */
   historyLimit: number;
-  /** 是否要把清单/日子材料摆给模型。 */
+  /**
+   * 是否要把清单/日子材料摆给模型。
+   * 注意：这不再由"隔了多久"决定——间隔只是时间材料的事；
+   * 清单该不该给，只看有没有未了结的事、以及是不是刚问过/已经在上下文里。
+   * 保留这个字段只为兼容调用方与被测代码。
+   */
   includeItems: boolean;
 }
 
@@ -43,8 +48,9 @@ export function resolveReturnTurnPlan(options: {
   elapsedDays?: number;
 }): ReturnTurnPlan {
   const hours = Number(options.elapsedHours);
+  // 清单不再看间隔：任何一轮都可以拿到（是否合适由模型判断，重复由冷却规则挡）。
   if (!Number.isFinite(hours) || hours < RETURN_BRIEF_MIN_HOURS) {
-    return { tier: 'none', historyLimit: 0, includeItems: false };
+    return { tier: 'none', historyLimit: 0, includeItems: true };
   }
   if (hours < RETURN_SHORT_MIN_HOURS) {
     return { tier: 'brief', historyLimit: 0, includeItems: true };
