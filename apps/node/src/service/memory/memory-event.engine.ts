@@ -79,23 +79,35 @@ function isSameOpenItemMatter(left: string, right: string): boolean {
 
 /**
  * 新提取的这一句，是不是已有条目那件事：
- * 话题必须相同——同一句话被归到"纪念日"和"家人"两边，是清单里两条不同的记忆，
- * 不能因为文字一样就并成一条（并了就会把日子从"记得的日子"里抹掉）；
- * 主体相同就直接算；换了说法、或者有一边没提主体时，才看内容像不像，
+ * 日子类单独一套——"纪念日"只跟"纪念日"比，同一句话被归到"纪念日"和"家人"两边时
+ * 两边各自留在自己的清单里（并了就会把日子从"记得的日子"里抹掉）；
+ * 其余类别之间：主体相同就直接算同一件，主体没提或换了说法时看内容像不像，
  * 而且两边都明确说了不同的人（"我"和"妈妈"）时不算同一件。
+ * 跨类别也要并能比：同一句话可能会被抽成"家人"和"关系矛盾"两条，那是同一件事，
+ * 留在清单里就会被问两遍。
  */
 function isSameOpenItem(
   item: Pick<MemoryOpenItemEntity, 'topicKey' | 'subjectRef' | 'summary'>,
   candidate: Pick<OpenItemCandidate, 'topicKey' | 'subjectRef'>,
   summary: string
 ): boolean {
-  if (item.topicKey !== candidate.topicKey) return false;
-  if (
-    normalizeSubject(item.subjectRef) === normalizeSubject(candidate.subjectRef)
-  ) {
-    return true;
+  const itemIsCalendar = item.topicKey === '纪念日';
+  const candidateIsCalendar = candidate.topicKey === '纪念日';
+  if (itemIsCalendar || candidateIsCalendar) {
+    return (
+      itemIsCalendar &&
+      candidateIsCalendar &&
+      isSameOpenItemMatter(summary, item.summary)
+    );
   }
-  if (item.subjectRef && candidate.subjectRef) return false;
+  const sameSubject =
+    normalizeSubject(item.subjectRef) ===
+    normalizeSubject(candidate.subjectRef);
+  // 同类同主体：一定是同一件（哪怕这句话换了说法）
+  if (item.topicKey === candidate.topicKey && sameSubject) return true;
+  // 两边都点了不同的人：不是同一件，不再往下比内容
+  if (item.subjectRef && candidate.subjectRef && !sameSubject) return false;
+  // 其余情况看内容：换说法、少了个称呼、被抽到两个类别，都要能认出来
   return isSameOpenItemMatter(summary, item.summary);
 }
 
@@ -801,7 +813,7 @@ export class MemoryEventEngine implements MemoryModule {
         continue;
       }
 
-      if (!isCalendar && active.length + created >= MAX_ACTIVE_OPEN_ITEMS) {
+      if (!isCalendar && active.length >= MAX_ACTIVE_OPEN_ITEMS) {
         skipped += 1;
         continue;
       }
@@ -822,10 +834,10 @@ export class MemoryEventEngine implements MemoryModule {
         // 不再另起一条，否则同一件事有两份冷却，模型会把它反复端上来问。
         const duplicatedIsActive =
           OPEN_ITEM_ACTIVE_STATES.indexOf(duplicated.state) !== -1;
-        const canReopen =
-          isCalendar || active.length + created < MAX_ACTIVE_OPEN_ITEMS;
+        const canReopen = isCalendar || active.length < MAX_ACTIVE_OPEN_ITEMS;
         if (duplicatedIsActive || canReopen) {
           await this.mergeOpenItemCandidate(duplicated, candidate, now);
+          if (active.indexOf(duplicated) === -1) active.push(duplicated);
           updated += 1;
           continue;
         }
@@ -859,7 +871,10 @@ export class MemoryEventEngine implements MemoryModule {
         updatedAt: now,
       } as MemoryOpenItemEntity;
 
-      await this.itemModel.save(entity);
+      // 用 save 的返回值：它带上了落库后的 id，同一批里的下一条才能认出
+      // "这就是刚才写的那条"，不然同一件事会被写两遍。
+      const saved = await this.itemModel.save(entity);
+      active.push(saved);
       created += 1;
     }
 

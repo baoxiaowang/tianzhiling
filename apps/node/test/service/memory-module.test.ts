@@ -1296,6 +1296,36 @@ describe('模型判定结果的写入', () => {
     expect(await items.count()).toBe(2);
   });
 
+  it('同一句话被抽成"家人"和"关系矛盾"：是同一件事，并成一条', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我好久没有见到她了，妈妈，我真的好害怕不敢见我姐姐',
+          topicKey: '家人',
+          subjectRef: '姐姐',
+          state: 'awaiting_result',
+          importance: 2,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我好久没有见到她了，妈妈，我真的好害怕不敢见我姐姐',
+          topicKey: '关系矛盾',
+          subjectRef: '姐姐',
+          state: 'action_committed',
+          importance: 2,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(await items.count()).toBe(1);
+  });
+
   it('两边都说了不同的人：说的是同一句话也不并（不是同一件事）', async () => {
     const { engine, items } = buildEngine();
     await engine.applyExtractedOpenItems({
