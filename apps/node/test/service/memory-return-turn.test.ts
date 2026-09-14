@@ -220,16 +220,19 @@ describe('回归轮材料接进上下文', () => {
 
   it('模块关闭时一个字都不给', async () => {
     const { service } = buildService({ mode: 'off', items: [item()] });
-    const prompt = await (
+    const result = await (
       service as never as {
-        buildReturnTurnMaterial: (options: unknown) => Promise<string>;
+        buildReturnTurnMaterial: (
+          options: unknown
+        ) => Promise<{ prompt: string; hasItems: boolean }>;
       }
     ).buildReturnTurnMaterial({
       options: contextOptions,
       plan: resolveReturnTurnPlan({ elapsedHours: 72 }),
       recentHistoryMessages: [],
     });
-    expect(prompt).toBe('');
+    expect(result.prompt).toBe('');
+    expect(result.hasItems).toBe(false);
   });
 
   it('尾巴里已经有的不给，剩下的渲染成材料', async () => {
@@ -251,9 +254,11 @@ describe('回归轮材料接进上下文', () => {
         }),
       ],
     });
-    const prompt = await (
+    const result = await (
       service as never as {
-        buildReturnTurnMaterial: (options: unknown) => Promise<string>;
+        buildReturnTurnMaterial: (
+          options: unknown
+        ) => Promise<{ prompt: string; hasItems: boolean }>;
       }
     ).buildReturnTurnMaterial({
       options: contextOptions,
@@ -265,9 +270,10 @@ describe('回归轮材料接进上下文', () => {
         },
       ],
     });
-    expect(prompt).toContain('明天儿子又要复查了');
-    expect(prompt).not.toContain('我挂了明早的号');
-    expect(prompt).toContain('烧六七');
+    expect(result.hasItems).toBe(true);
+    expect(result.prompt).toContain('明天儿子又要复查了');
+    expect(result.prompt).not.toContain('我挂了明早的号');
+    expect(result.prompt).toContain('烧六七');
   });
 });
 

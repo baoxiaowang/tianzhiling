@@ -1004,11 +1004,12 @@ export class AgentContextService {
       effectiveHistoryLimit,
       options.pinnedHistoryMessageIds
     );
-    const returnTurnMaterialPrompt = await this.buildReturnTurnMaterial({
+    const returnTurnMaterial = await this.buildReturnTurnMaterial({
       options,
       plan: returnTurnPlan,
       recentHistoryMessages,
     });
+    const returnTurnMaterialPrompt = returnTurnMaterial.prompt;
     const relevanceText = this.buildFactRelevanceText(
       options.currentQuery || '',
       recentHistoryMessages,
@@ -1109,7 +1110,8 @@ export class AgentContextService {
           temporalProfiles,
           chatToolPlan,
           replyPlanningDecision.mode,
-          returnTurnMaterialPrompt
+          returnTurnMaterialPrompt,
+          returnTurnMaterial.hasItems
         ),
       {
         evidenceCount: evidence.length,
@@ -1415,7 +1417,8 @@ export class AgentContextService {
     temporalProfiles: PersonTemporalPromptFact[] = [],
     chatToolPlan?: AgentChatToolTurnPlan,
     planningMode?: ReplyPlanningMode,
-    returnTurnMaterialPrompt = ''
+    returnTurnMaterialPrompt = '',
+    returnTurnRequired = false
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1518,6 +1521,14 @@ export class AgentContextService {
       deliberateLongReplyPrompt,
       evidencePrompt,
       replyBriefPrompt,
+      // 回归轮清单非空时，把"必须用上一件"放到靠后的任务层，避免埋在系统层里被忽略。
+      returnTurnRequired
+        ? [
+            '# 本轮必须用上的一件事（在上面「你记得的事」里）',
+            '用户这次是隔了一段时间回来的。请从上面挑一件，在这条回复里自然用上：先接住他这句话，再顺口带出来，像家里人聊天。',
+            '不要只用一句客套回应；除非他这轮正在说极重的痛苦或有危险的话，那就先接住他。',
+          ].join('\n')
+        : '',
     ];
     const compiled = this.replyPromptCompilerService
       ? this.replyPromptCompilerService.compile({
@@ -1568,7 +1579,7 @@ export class AgentContextService {
     options: BuildConversationContextOptions;
     plan: ReturnPlanLike;
     recentHistoryMessages: MessageEntity[];
-  }): Promise<string> {
+  }): Promise<{ prompt: string; hasItems: boolean }> {
     const { plan, recentHistoryMessages } = options;
     if (
       !plan.includeItems ||
@@ -1577,7 +1588,7 @@ export class AgentContextService {
         this.stringifyObjectId(options.options.conversation.userId)
       ).mode === 'off'
     ) {
-      return '';
+      return { prompt: '', hasItems: false };
     }
 
     const request = {
@@ -1635,19 +1646,22 @@ export class AgentContextService {
         },
       });
 
-      return buildReturnTurnMaterialPrompt({
-        plan,
-        items: selected.items,
-        calendarItems,
-        now,
-      });
+      return {
+        prompt: buildReturnTurnMaterialPrompt({
+          plan,
+          items: selected.items,
+          calendarItems,
+          now,
+        }),
+        hasItems: selected.items.length > 0,
+      };
     } catch (error) {
       this.logger?.warn?.(
         '[context] return turn material skipped, conversationId=%s reason=%s',
         this.stringifyObjectId(options.options.conversation.id),
         error instanceof Error ? error.message : String(error)
       );
-      return '';
+      return { prompt: '', hasItems: false };
     }
   }
 
