@@ -31,6 +31,7 @@ import {
   resolveItemTopicKey,
   resolveOpenItemObservation,
 } from './memory-open-item.rules';
+import { isPastOnlyStatement } from './memory-open-item-extraction';
 import type {
   OpenItemCandidate,
   OpenItemTopicKey,
@@ -128,7 +129,8 @@ export class MemoryEventEngine implements MemoryModule {
       if (!messageId || !text) continue;
       // 进门过滤：组合只收事实型原话；未了结清单另走自己的信号判断
       // （"下周去复查"未必命中事实信号，但它确实是一件没完的事）。
-      const factBearing = isFactBearingUtterance(text);
+      const factBearing =
+        isFactBearingUtterance(text) && !isPastOnlyStatement(text);
       const observation = resolveOpenItemObservation(text);
       if (!factBearing && !observation) continue;
 
@@ -159,19 +161,23 @@ export class MemoryEventEngine implements MemoryModule {
             : undefined;
         if (groupId) groupIds.push(groupId);
         if (groupId || observation) processed += 1;
-        // 未了结清单：建条目与状态判定都走离线抽取（这里），回复链路只读。
-        await this.applyOpenItemObservation({
-          userId,
-          conversationId,
-          agentId,
-          itemTopicKey,
-          subjectRef,
-          text,
-          messageId,
-          occurredAt: message.occurredAt || now,
-          groupId,
-          now,
-        });
+        // 未了结清单只由离线模型判定写入（applyExtractedOpenItems）；
+        // v1 的规则路径实测噪声高（把回忆、别人状态当成待办），默认关闭，用
+        // NODE_MEMORY_OPEN_ITEM_RULES=1 可临时打开做对照。
+        if (process.env.NODE_MEMORY_OPEN_ITEM_RULES === '1') {
+          await this.applyOpenItemObservation({
+            userId,
+            conversationId,
+            agentId,
+            itemTopicKey,
+            subjectRef,
+            text,
+            messageId,
+            occurredAt: message.occurredAt || now,
+            groupId,
+            now,
+          });
+        }
       } catch (error) {
         this.logger?.warn?.(
           '[memory] event group ingest failed, userId=%s messageId=%s reason=%s',

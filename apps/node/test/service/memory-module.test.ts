@@ -5,6 +5,7 @@ import {
 } from '@tzl/entities';
 import { MemoryEventEngine } from '../../src/service/memory/memory-event.engine';
 import {
+  isPastOnlyStatement,
   parseOpenItemExtractionOutput,
   selectOpenItemExtractionWindow,
 } from '../../src/service/memory/memory-open-item-extraction';
@@ -724,6 +725,37 @@ describe('记忆模块门面', () => {
 });
 
 describe('未了结清单的离线抽取', () => {
+  // v1 的规则路径默认关闭（只由离线模型判定写入清单）；这里显式打开，验证规则本身。
+  beforeEach(() => {
+    process.env.NODE_MEMORY_OPEN_ITEM_RULES = '1';
+  });
+  afterEach(() => {
+    delete process.env.NODE_MEMORY_OPEN_ITEM_RULES;
+  });
+
+  it('规则路径默认关闭：ingest 不再凭规则往清单里写条目', async () => {
+    delete process.env.NODE_MEMORY_OPEN_ITEM_RULES;
+    const { engine } = buildEngine();
+    await engine.ingest({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      messages: [
+        {
+          messageId: 'fffffffffffffffffffffff1',
+          content: '爸爸，我下周要去医院复查',
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const items = await engine.listOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+    });
+    expect(items.items).toHaveLength(0);
+  });
+
   it('说"还没出结果"会建条目，说"没事了"会了结并留证据', async () => {
     const { engine } = buildEngine();
     const first = await engine.ingest({
@@ -1224,5 +1256,96 @@ describe('候选窗口的选择（实测结论固化）', () => {
       isFactBearing: isFact,
     });
     expect(picked).toHaveLength(1);
+  });
+});
+
+describe('过去时与已完成的排除', () => {
+  it('判定函数本身：有将来动作就不算过去时', () => {
+    expect(isPastOnlyStatement('我后悔那天没再多劝劝你')).toBe(true);
+    expect(isPastOnlyStatement('今天送闺女上大学回来了')).toBe(true);
+    expect(isPastOnlyStatement('咱妈前两天摔了一跤，脚肿了')).toBe(false);
+    expect(isPastOnlyStatement('我明天带妈妈去体检')).toBe(false);
+  });
+
+  const rows = [
+    {
+      messageId: 'gggggggggggggggggggggg1',
+      content:
+        '我好想你，我后悔那天没再多劝劝你，让你继续检查，你说预约的第二天早上的彩超',
+      occurredAt: '2026-09-01T10:00:00.000Z',
+    },
+    {
+      messageId: 'gggggggggggggggggggggg2',
+      content: '应该是我七八岁的时候吧 那会哥还没结婚',
+      occurredAt: '2026-09-01T10:00:00.000Z',
+    },
+    {
+      messageId: 'gggggggggggggggggggggg3',
+      content: '今天送闺女上大学回来了',
+      occurredAt: '2026-09-01T10:00:00.000Z',
+    },
+    {
+      messageId: 'gggggggggggggggggggggg4',
+      content: '咱妈前两天摔了一跤，脚肿了',
+      occurredAt: '2026-09-01T10:00:00.000Z',
+    },
+    {
+      messageId: 'gggggggggggggggggggggg5',
+      content: '我明天带妈妈去体检',
+      occurredAt: '2026-09-01T10:00:00.000Z',
+    },
+  ];
+  it('回忆、已完成、没有将来动作的都不收；有当前状态或将来动作的收', () => {
+    const parsed = parseOpenItemExtractionOutput(
+      JSON.stringify({
+        items: [
+          {
+            messageId: 'gggggggggggggggggggggg1',
+            quote: '我后悔那天没再多劝劝你，让你继续检查',
+            topicKey: '就医',
+            state: 'awaiting_result',
+            importance: 3,
+          },
+          {
+            messageId: 'gggggggggggggggggggggg2',
+            quote: '我七八岁的时候吧 那会哥还没结婚',
+            topicKey: '婚育',
+            state: 'awaiting_result',
+            importance: 2,
+          },
+          {
+            messageId: 'gggggggggggggggggggggg3',
+            quote: '今天送闺女上大学回来了',
+            topicKey: '学业',
+            state: 'awaiting_result',
+            importance: 2,
+          },
+          {
+            messageId: 'gggggggggggggggggggggg4',
+            quote: '咱妈前两天摔了一跤，脚肿了',
+            topicKey: '家人',
+            state: 'awaiting_result',
+            importance: 2,
+          },
+          {
+            messageId: 'gggggggggggggggggggggg5',
+            quote: '我明天带妈妈去体检',
+            topicKey: '就医',
+            state: 'action_committed',
+            importance: 3,
+          },
+        ],
+      }),
+      rows
+    );
+    expect(parsed.candidates.map(item => item.messageId)).toEqual([
+      'gggggggggggggggggggggg4',
+      'gggggggggggggggggggggg5',
+    ]);
+    expect(parsed.rejected.map(item => item.reason)).toEqual([
+      'past_only_statement',
+      'past_only_statement',
+      'past_only_statement',
+    ]);
   });
 });

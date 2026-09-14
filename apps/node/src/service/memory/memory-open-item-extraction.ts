@@ -53,6 +53,7 @@ export const OPEN_ITEM_EXTRACTION_SYSTEM_PROMPT = [
   '',
   '以下一律不收（这是本任务最容易犯的错）：',
   '- 回忆过去的事（"以前""那时候""去年还做了手术"）；',
+  '- **已经做完、只有回忆语气、或者没有明确将来动作的**（"我后悔那天没多劝你去检查""我七八岁的时候，那会哥还没结婚""今天送闺女上大学回来了"）——这类即使里面有日期、有检查、有结婚，也不是要跟进的事；',
   '- 情绪与思念（"我感觉你没走""我想你了""我好痛苦"）；',
   '- 日常作息与当下动作（"准备去上班了""明天还要上班""我休息一会儿"）；',
   '- 已经了结或已有结果的（"没事了""考完了""已经出院了""检查完了，有点焦虑"）；',
@@ -104,6 +105,27 @@ export function buildOpenItemExtractionPrompt(
     })),
     task: '从上面的用户原话里挑出少数真正需要以后再跟进的事件型内容；没有就返回空数组。',
   });
+}
+
+/** 回忆/往事信号：只有这类信号、又没有明确的将来动作时，不是未了结的事。 */
+const RETROSPECT_PATTERN =
+  /(?:那时候|那时|当时|以前|去年|前年|当年|小时候|\d{1,2}岁|几岁|年轻时|曾经|后来|后悔|没来得及|想起|回想|那会|那天)/u;
+/** 明确的将来/待办信号：只要它是"将来要做的"，就算过去时描述也值得跟进。 */
+const STRONG_FUTURE_PATTERN =
+  /(?:下周|下个星期|下个月|明天|后天|过几天|到时候|要去|得去|打算|准备去|计划去|约好|答应|要开始|开始戒|在戒|还没去|还没做|还没办|还没出|还没定|等结果|等消息)/u;
+/** 已经做完的信号：没有将来动作时，不算待跟进。 */
+const COMPLETED_PATTERN =
+  /(?:已经[^，。]{0,6}了|回来了|办完了|送完了|考完了|做完了|出院了|好了|看完了|办好了)/u;
+
+/** 只有回忆/已经做完、没有明确将来动作的原话：不是未了结的事。 */
+export function isPastOnlyStatement(text: string): boolean {
+  const value = (text || '').trim();
+  if (!value) return false;
+  const looksBack =
+    RETROSPECT_PATTERN.test(value) || COMPLETED_PATTERN.test(value);
+  if (!looksBack) return false;
+  // 例外：里面还带着"将来要去做"的动作（"那天没去成，下周再去"）。
+  return !STRONG_FUTURE_PATTERN.test(value);
 }
 
 /** 原话里出现"人"或"时间/日子"才算能看出主事的一句话。 */
@@ -176,6 +198,11 @@ export function parseOpenItemExtractionOutput(
     // 原话里至少要有"人"或"时间/日子"，否则是看不出主事的片段。
     if (!PERSON_OR_TIME_MARKER_PATTERN.test(quote) && topicKey !== '纪念日') {
       rejected.push({ reason: 'quote_without_subject_or_time', raw: item });
+      continue;
+    }
+    // 只有回忆、或者已经做完、没有明确将来动作的，不收。
+    if (isPastOnlyStatement(quote)) {
+      rejected.push({ reason: 'past_only_statement', raw: item });
       continue;
     }
     // 只有症状、没有就医/用药/治疗在跟进的不收。
