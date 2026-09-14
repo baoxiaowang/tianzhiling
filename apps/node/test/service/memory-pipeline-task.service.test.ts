@@ -227,7 +227,7 @@ describe('未了结清单的日任务排期', () => {
   const conversationId = new MongoObjectId('665000000000000000000602');
   const agentId = new MongoObjectId('665000000000000000000603');
 
-  it('同一天同一用户只排一条，并把合并窗口顺延到"最后一条消息 + 30 分钟"', async () => {
+  it('同一天同一用户只排一条，并把兜底窗口顺延到"最后一条消息 + 5 分钟"', async () => {
     const { service, getStored } = buildService();
     const morning = new Date('2026-09-13T01:00:00.000Z');
     const first = await service.enqueueOpenItemExtraction({
@@ -240,8 +240,9 @@ describe('未了结清单的日任务排期', () => {
     expect(first?.status).toBe(MemoryPipelineTaskStatus.pending);
     // 用 userId 当合成 messageId，配合唯一索引天然去重
     expect(String(first?.messageId)).toBe(String(userId));
+    // 兜底任务的合并窗口已从 30 分钟缩到 5 分钟（在线即时抽取是主力）
     expect(first?.nextAttemptAt?.toISOString()).toBe(
-      new Date(morning.getTime() + 30 * 60_000).toISOString()
+      new Date(morning.getTime() + 5 * 60_000).toISOString()
     );
 
     const evening = new Date('2026-09-13T12:00:00.000Z');
@@ -253,7 +254,7 @@ describe('未了结清单的日任务排期', () => {
     });
     expect(second?.pipelineVersion).toBe(first?.pipelineVersion);
     expect(getStored()?.nextAttemptAt?.toISOString()).toBe(
-      new Date(evening.getTime() + 30 * 60_000).toISOString()
+      new Date(evening.getTime() + 5 * 60_000).toISOString()
     );
   });
 

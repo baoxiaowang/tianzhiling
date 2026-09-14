@@ -52,6 +52,9 @@ export class MemoryOpenItemExtractorService {
 
   private dedicatedProvider?: { client: OpenAI; model: string } | null;
 
+  /** 在线即时抽取的节流：同一用户 90 秒内只跑一次，避免一句话一次模型调用。 */
+  private readonly lastInlineRunAt = new Map<string, number>();
+
   /**
    * 这个任务可以单独指定模型。
    * 没配专用 key 时，回落到项目已有的向量服务（DashScope 兼容接口）——实测默认的
@@ -81,6 +84,24 @@ export class MemoryOpenItemExtractorService {
         ? { client: new OpenAI({ apiKey, baseURL }), model }
         : null;
     return this.dedicatedProvider || undefined;
+  }
+
+  /**
+   * 在线即时抽取：用户说话时调用，让条目在下一次开口之前就存在。
+   * 节流 90 秒；失败不影响任何流程。
+   */
+  async extractForUserInline(options: {
+    userId: string;
+    windowDays?: number;
+    now?: Date;
+  }): Promise<OpenItemExtractionOutcome | undefined> {
+    const key = String(options.userId || '').toLowerCase();
+    if (!key) return undefined;
+    const now = (options.now || new Date()).getTime();
+    const last = this.lastInlineRunAt.get(key) || 0;
+    if (now - last < 90 * 1000) return undefined;
+    this.lastInlineRunAt.set(key, now);
+    return this.extractForUser(options);
   }
 
   async extractForUser(options: {

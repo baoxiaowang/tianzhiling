@@ -52,7 +52,7 @@ const MEMORY_TASK_PRIORITY_BACKLOG = 1_000;
  * 未了结清单的离线抽取：每用户每天最多跑几次。
  * 同一段聊天里连续发消息时，用"最后一次消息 + 延迟"来合并成一次调用。
  */
-const OPEN_ITEM_EXTRACTION_DEBOUNCE_MS = 30 * 60 * 1000;
+const OPEN_ITEM_EXTRACTION_DEBOUNCE_MS = 5 * 60 * 1000;
 const OPEN_ITEM_EXTRACTION_MAX_RUNS_PER_DAY = 3;
 
 /** 北京时间的日期键（YYYY-MM-DD）：任务按"这个用户的这一天"去重。 */

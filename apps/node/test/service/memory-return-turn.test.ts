@@ -154,7 +154,8 @@ describe('回归轮材料的渲染', () => {
     expect(prompt).not.toContain('还没结果');
     expect(prompt).not.toContain('已经答应要做');
     expect(prompt).toContain('不要用"结果""进展""跟进"这类词');
-    expect(prompt).toContain('就从下面挑一件自然开口');
+    expect(prompt).toContain('从下面挑一件自然用上');
+    expect(prompt).toContain('只有一种情况可以不用');
     expect(prompt).toContain('# 你记得的日子');
     expect(prompt).toContain('烧六七');
     expect(prompt).not.toMatch(/建议|应该问|必须/);

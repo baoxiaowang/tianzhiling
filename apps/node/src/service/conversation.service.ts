@@ -2579,6 +2579,20 @@ export class ConversationService {
             error instanceof Error ? error.message : String(error)
           );
         }
+        try {
+          // 在线即时抽取：用户刚说的话立刻变成条目，这样"下一次开口"就能用上；
+          // 内部有 90 秒节流，同一段聊天只跑一次。
+          await this.memoryOpenItemExtractorService?.extractForUserInline({
+            userId: this.stringifyObjectId(message.userId),
+            windowDays: 30,
+          });
+        } catch (error) {
+          this.logger?.warn?.(
+            '[memory] inline open item extraction skipped, userId=%s reason=%s',
+            this.stringifyObjectId(message.userId),
+            error instanceof Error ? error.message : String(error)
+          );
+        }
       }
       if (
         message.role === MessageRole.user &&
