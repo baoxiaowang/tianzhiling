@@ -114,7 +114,7 @@
               :loading="agentsLoading"
               :pagination="false"
               :bordered="false"
-              :scroll="{ x: 1080 }"
+              :scroll="{ x: 1220 }"
             >
               <template #empty>
                 <a-empty description="暂无关系智能体" />
@@ -207,6 +207,22 @@
                 >
                   <template #cell="{ record }">
                     {{ formatDate(record.updatedAt) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  title="操作"
+                  :width="120"
+                  fixed="right"
+                  align="center"
+                >
+                  <template #cell="{ record }">
+                    <a-link
+                      v-if="record.messengerOfAgentId"
+                      @click="openMessenger(record)"
+                    >
+                      发消息
+                    </a-link>
+                    <span v-else>—</span>
                   </template>
                 </a-table-column>
               </template>
@@ -356,14 +372,108 @@
         </a-tab-pane>
       </a-tabs>
     </a-card>
+
+    <a-drawer
+      v-model:visible="messengerVisible"
+      :width="520"
+      :title="
+        messengerAgent
+          ? `通过小使者发消息 · ${messengerAgent.name || ''}`
+          : '通过小使者发消息'
+      "
+      :footer="false"
+      unmount-on-close
+    >
+      <div class="app-user-detail-page__messenger">
+        <a-alert type="info" :show-icon="false">
+          发送内容会以小使者「{{
+            messengerAgent?.name || ''
+          }}」的身份出现在用户聊天里。
+        </a-alert>
+        <div
+          ref="messengerListRef"
+          class="app-user-detail-page__messenger-list"
+        >
+          <a-spin :loading="messengerLoading" style="width: 100%">
+            <div
+              v-if="messengerHasMore"
+              class="app-user-detail-page__messenger-more"
+            >
+              <a-link
+                :loading="messengerLoadingMore"
+                @click="loadOlderMessengerMessages"
+              >
+                加载更早消息
+              </a-link>
+            </div>
+            <a-empty
+              v-if="!messengerMessages.length"
+              description="还没有消息，发一条试试"
+            />
+            <div
+              v-for="message in messengerMessages"
+              :key="message.id"
+              class="app-user-detail-page__messenger-item"
+              :class="{ 'is-user': message.role === 'user' }"
+            >
+              <div class="app-user-detail-page__messenger-bubble">
+                <img
+                  v-if="message.type === 'image' && message.mediaUrl"
+                  :src="message.mediaUrl"
+                  class="app-user-detail-page__messenger-image"
+                  alt="message image"
+                />
+                <span v-if="message.content">{{ message.content }}</span>
+                <span v-else-if="message.type === 'image'">[图片]</span>
+                <span v-else-if="message.type === 'voice'">[语音]</span>
+                <span v-else>[消息]</span>
+              </div>
+              <span class="app-user-detail-page__messenger-time">
+                {{ formatDate(message.createdAt) }}
+              </span>
+            </div>
+          </a-spin>
+        </div>
+
+        <div class="app-user-detail-page__messenger-editor">
+          <a-textarea
+            v-model="messengerContent"
+            placeholder="输入要发送给用户的文字"
+            :auto-size="{ minRows: 2, maxRows: 4 }"
+            :max-length="1000"
+          />
+          <div class="app-user-detail-page__messenger-actions">
+            <a-upload
+              :show-file-list="false"
+              accept="image/*"
+              :custom-request="handleMessengerImageUpload"
+            >
+              <a-button :loading="messengerSending">发送图片</a-button>
+            </a-upload>
+            <a-button
+              type="primary"
+              :loading="messengerSending"
+              @click="sendMessengerText"
+            >
+              发送
+            </a-button>
+          </div>
+        </div>
+      </div>
+    </a-drawer>
   </div>
 </template>
 
 <script lang="ts" setup>
-  import { computed, reactive, ref, watch } from 'vue';
+  import { computed, nextTick, reactive, ref, watch } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
+  import axios from 'axios';
   import { Message } from '@arco-design/web-vue';
+  import type {
+    AdminAppUserMessengerMessageDTO,
+    SendAdminAppUserMessengerMessageRequestDTO,
+  } from '@tzl/shared';
   import useLoading from '@/hooks/loading';
   import {
     AppUserAccountMemory,
@@ -372,7 +482,10 @@
     queryAppUserAccountMemory,
     queryAppUserAgents,
     queryAppUserDetail,
+    queryAppUserMessengerMessages,
+    sendAppUserMessengerMessage,
   } from '@/api/app-user';
+  import uploadAdminFile from '@/api/storage';
   import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
   import VoiceModelPanel from './voice-model-panel.vue';
@@ -397,6 +510,16 @@
     pageSize: 10,
     total: 0,
   });
+
+  const messengerVisible = ref(false);
+  const messengerAgent = ref<AppUserAgentRecord | null>(null);
+  const messengerMessages = ref<AdminAppUserMessengerMessageDTO[]>([]);
+  const messengerLoading = ref(false);
+  const messengerLoadingMore = ref(false);
+  const messengerHasMore = ref(false);
+  const messengerSending = ref(false);
+  const messengerContent = ref('');
+  const messengerListRef = ref<HTMLElement | null>(null);
 
   const userId = computed(() => {
     const { id } = route.params;
@@ -446,6 +569,134 @@
     } finally {
       agentsLoading.value = false;
     }
+  };
+
+  const scrollMessengerToBottom = async () => {
+    await nextTick();
+    const el = messengerListRef.value;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  };
+
+  const loadMessengerMessages = async () => {
+    if (!userId.value || !messengerAgent.value) return;
+    try {
+      messengerLoading.value = true;
+      const { data } = await queryAppUserMessengerMessages(
+        userId.value,
+        messengerAgent.value.id,
+        { pageSize: 50 }
+      );
+      messengerMessages.value = data.items;
+      messengerHasMore.value = data.hasMore;
+      await scrollMessengerToBottom();
+    } catch {
+      Message.error('小使者消息加载失败');
+    } finally {
+      messengerLoading.value = false;
+    }
+  };
+
+  const loadOlderMessengerMessages = async () => {
+    if (
+      !userId.value ||
+      !messengerAgent.value ||
+      !messengerHasMore.value ||
+      messengerLoadingMore.value
+    ) {
+      return;
+    }
+    const earliest = messengerMessages.value[0];
+    if (!earliest) return;
+    try {
+      messengerLoadingMore.value = true;
+      const { data } = await queryAppUserMessengerMessages(
+        userId.value,
+        messengerAgent.value.id,
+        { pageSize: 50, before: earliest.createdAt }
+      );
+      messengerMessages.value = [...data.items, ...messengerMessages.value];
+      messengerHasMore.value = data.hasMore;
+    } catch {
+      Message.error('更早消息加载失败');
+    } finally {
+      messengerLoadingMore.value = false;
+    }
+  };
+
+  const openMessenger = async (record: AppUserAgentRecord) => {
+    if (!userId.value) return;
+    messengerAgent.value = record;
+    messengerContent.value = '';
+    messengerMessages.value = [];
+    messengerHasMore.value = false;
+    messengerVisible.value = true;
+    await loadMessengerMessages();
+  };
+
+  const sendMessenger = async (
+    payload: SendAdminAppUserMessengerMessageRequestDTO
+  ): Promise<boolean> => {
+    if (!userId.value || !messengerAgent.value) return false;
+    try {
+      messengerSending.value = true;
+      const { data } = await sendAppUserMessengerMessage(
+        userId.value,
+        messengerAgent.value.id,
+        payload
+      );
+      messengerMessages.value.push(data);
+      await scrollMessengerToBottom();
+      return true;
+    } catch (error) {
+      Message.error((error as Error).message || '消息发送失败');
+      return false;
+    } finally {
+      messengerSending.value = false;
+    }
+  };
+
+  const sendMessengerText = async () => {
+    const content = messengerContent.value.trim();
+    if (!content) {
+      Message.warning('请输入要发送的文字');
+      return;
+    }
+    const sent = await sendMessenger({ type: 'text', content });
+    if (sent) {
+      messengerContent.value = '';
+    }
+  };
+
+  const uploadAndSendMessengerImage = async (file: File) => {
+    const contentType = file.type || 'image/jpeg';
+    try {
+      messengerSending.value = true;
+      const { objectKey, publicUrl } = await uploadAdminFile(file, {
+        folder: 'admin/messenger-message',
+        contentType,
+      });
+      messengerSending.value = false;
+      await sendMessenger({
+        type: 'image',
+        mediaObjectKey: objectKey,
+        mediaUrl: publicUrl,
+        mediaMimeType: contentType,
+      });
+    } catch (error) {
+      messengerSending.value = false;
+      Message.error((error as Error).message || '图片发送失败');
+    }
+  };
+
+  const handleMessengerImageUpload = (option: {
+    fileItem?: { file?: File };
+  }) => {
+    const file = option?.fileItem?.file;
+    if (!file) return {};
+    uploadAndSendMessengerImage(file).catch(() => undefined);
+    return {};
   };
 
   const fetchAccountMemory = async (id?: string) => {
@@ -772,6 +1023,84 @@
     &__agent-total {
       color: var(--color-text-2);
       font-size: 14px;
+    }
+
+    &__messenger {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: calc(100vh - 140px);
+    }
+
+    &__messenger-list {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 12px;
+      border-radius: 8px;
+      background: var(--color-fill-2);
+    }
+
+    &__messenger-more {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+
+    &__messenger-item {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+
+      &.is-user {
+        align-items: flex-end;
+      }
+    }
+
+    &__messenger-bubble {
+      max-width: 78%;
+      padding: 8px 12px;
+      color: var(--color-text-1);
+      line-height: 1.5;
+      word-break: break-word;
+      white-space: pre-wrap;
+      background: var(--color-bg-2);
+      border-radius: 8px;
+
+      .is-user & {
+        color: #fff;
+        background: rgb(var(--primary-6));
+      }
+    }
+
+    &__messenger-image {
+      display: block;
+      max-width: 200px;
+      max-height: 260px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+
+    &__messenger-time {
+      color: var(--color-text-3);
+      font-size: 12px;
+    }
+
+    &__messenger-editor {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    &__messenger-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
     }
   }
 

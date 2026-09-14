@@ -772,4 +772,84 @@ describe('AdminAppUserService', () => {
       code: 'INVALID_APP_USER_NAME',
     });
   });
+
+  describe('messenger message channel', () => {
+    afterEach(() => {
+      delete process.env.INTERNAL_API_SECRET;
+      delete (global as { fetch?: unknown }).fetch;
+    });
+
+    it('returns empty list when the messenger conversation does not exist', async () => {
+      const service = createService();
+      const userId = new MongoObjectId().toHexString();
+      const agentId = new MongoObjectId().toHexString();
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: new MongoObjectId(agentId),
+        createdUserId: new MongoObjectId(userId),
+        messengerOfAgentId: new MongoObjectId(),
+      });
+      (service.conversationModel as any).findOne = jest
+        .fn()
+        .mockResolvedValue(null);
+
+      const result = await service.listMessengerMessages(userId, agentId);
+
+      expect(result).toEqual({ conversationId: '', hasMore: false, items: [] });
+    });
+
+    it('sends a text message through the node internal endpoint', async () => {
+      const service = createService();
+      const userId = new MongoObjectId().toHexString();
+      const agentId = new MongoObjectId().toHexString();
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: new MongoObjectId(agentId),
+        createdUserId: new MongoObjectId(userId),
+        messengerOfAgentId: new MongoObjectId(),
+      });
+      process.env.INTERNAL_API_SECRET = 'test-secret';
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          result: {
+            conversationId: 'conv-1',
+            messageId: 'msg-1',
+            type: 'text',
+            content: '你好',
+            createdAt: '2026-09-14T00:00:00.000Z',
+          },
+        }),
+      });
+      (global as { fetch?: unknown }).fetch = fetchMock;
+
+      const result = await service.sendMessengerMessage(userId, agentId, {
+        type: 'text',
+        content: '你好',
+      });
+
+      expect(result).toMatchObject({
+        id: 'msg-1',
+        type: 'text',
+        content: '你好',
+        role: MessageRole.assistant,
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/system/messenger-message'),
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
+
+    it('rejects text without content', async () => {
+      const service = createService();
+
+      await expect(
+        service.sendMessengerMessage(
+          new MongoObjectId().toHexString(),
+          new MongoObjectId().toHexString(),
+          { type: 'text' }
+        )
+      ).rejects.toThrow('content is required');
+    });
+  });
 });

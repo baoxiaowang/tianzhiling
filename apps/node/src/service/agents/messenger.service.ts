@@ -150,6 +150,32 @@ export interface SendEventNoticeResult {
   skippedDuplicate: boolean;
 }
 
+/** 管理端通过小使者给用户发消息 */
+export interface SendAdminMessengerMessageOptions {
+  /** 消息接收用户 */
+  userId: MongoObjectId;
+  /** 小使者智能体 ID（messengerOfAgentId 存在的那一方） */
+  messengerAgentId: MongoObjectId;
+  /** 消息类型 */
+  type: 'text' | 'image';
+  /** 文本内容；图片消息可作为图片说明 */
+  content?: string;
+  mediaObjectKey?: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+}
+
+export interface SendAdminMessengerMessageResult {
+  conversationId: string;
+  messageId: string;
+  type: string;
+  content: string;
+  mediaObjectKey?: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+  createdAt: string;
+}
+
 interface EventNoticeContext {
   eventType: MessengerEventNoticeType;
   /** 用户对亲人的日常称呼，如"爸爸" */
@@ -1114,6 +1140,96 @@ export class MessengerService {
       now
     );
     return saved;
+  }
+
+  /**
+   * 管理端通过小使者给用户发送文本/图片消息。
+   * 复用 ensureMessengerConversation，保证会话存在且用户能在小使者会话里看到。
+   */
+  async sendAdminMessage(
+    options: SendAdminMessengerMessageOptions
+  ): Promise<SendAdminMessengerMessageResult> {
+    const messenger = await this.agentModel.findOne({
+      where: { id: options.messengerAgentId },
+    });
+
+    if (!messenger?.messengerOfAgentId) {
+      throw new Error('messenger agent not found');
+    }
+
+    if (
+      String(messenger.createdUserId || '') !== String(options.userId || '')
+    ) {
+      throw new Error('messenger agent does not belong to user');
+    }
+
+    const parentAgent = await this.agentModel.findOne({
+      where: { id: messenger.messengerOfAgentId },
+    });
+
+    if (!parentAgent) {
+      throw new Error('parent agent not found');
+    }
+
+    const type =
+      options.type === 'image' ? MessageType.image : MessageType.text;
+    const content = (options.content ?? '').toString();
+
+    if (type === MessageType.text && !content.trim()) {
+      throw new Error('content is required');
+    }
+
+    if (
+      type === MessageType.image &&
+      !options.mediaObjectKey &&
+      !options.mediaUrl
+    ) {
+      throw new Error('image is required');
+    }
+
+    const conversation = await this.ensureMessengerConversation(
+      parentAgent,
+      messenger
+    );
+    const now = new Date();
+    const message = new MessageEntity();
+    message.conversationId = conversation.id;
+    message.userId = conversation.userId;
+    message.agentId = messenger.id;
+    message.role = MessageRole.assistant;
+    message.type = type;
+    message.content = content;
+    message.status = MessageStatus.sent;
+    message.source = MessageSource.live;
+    message.traceId = `admin_message:${now.getTime()}`;
+
+    if (type === MessageType.image) {
+      message.mediaObjectKey = options.mediaObjectKey;
+      message.mediaUrl =
+        options.mediaUrl ||
+        (options.mediaObjectKey
+          ? buildOssMediaUrl(options.mediaObjectKey)
+          : undefined);
+      message.mediaMimeType = options.mediaMimeType || 'image/jpeg';
+    }
+
+    message.createdAt = now;
+    message.updatedAt = now;
+    await this.messageModel.save(message);
+
+    conversation.updatedAt = now;
+    await this.conversationModel.save(conversation);
+
+    return {
+      conversationId: String(conversation.id),
+      messageId: String(message.id),
+      type: message.type,
+      content: message.content,
+      mediaObjectKey: message.mediaObjectKey,
+      mediaUrl: message.mediaUrl,
+      mediaMimeType: message.mediaMimeType,
+      createdAt: now.toISOString(),
+    };
   }
 
   async runInterviewTurn(

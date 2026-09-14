@@ -1015,4 +1015,127 @@ describe('MessengerService', () => {
       expect(messageModel.save).not.toHaveBeenCalled();
     });
   });
+
+  describe('sendAdminMessage', () => {
+    function buildMessengerContext() {
+      const { service, agentModel, conversationModel, messageModel } =
+        createService();
+      const userId = new MongoObjectId();
+      const parentAgent = buildAgent({
+        id: new MongoObjectId(),
+        createdUserId: userId,
+      });
+      const messenger = buildAgent({
+        id: new MongoObjectId(),
+        createdUserId: userId,
+        messengerOfAgentId: parentAgent.id,
+      });
+      const conversation = {
+        id: new MongoObjectId(),
+        agentId: messenger.id,
+        userId,
+      } as ConversationEntity;
+      agentModel.findOne.mockResolvedValue(messenger);
+      jest
+        .spyOn(service, 'ensureMessengerConversation')
+        .mockResolvedValue(conversation);
+      messageModel.save.mockImplementation(async value => value);
+      conversationModel.save.mockImplementation(async value => value);
+
+      return {
+        service,
+        userId,
+        messenger,
+        conversation,
+        messageModel,
+        conversationModel,
+      };
+    }
+
+    it('sends a text message as the messenger to the user', async () => {
+      const { service, userId, messenger, conversation, messageModel } =
+        buildMessengerContext();
+
+      const result = await service.sendAdminMessage({
+        userId,
+        messengerAgentId: messenger.id,
+        type: 'text',
+        content: '你好',
+      });
+
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('你好');
+      expect(result.conversationId).toBe(String(conversation.id));
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity;
+      expect(saved.role).toBe(MessageRole.assistant);
+      expect(saved.agentId).toBe(messenger.id);
+      expect(saved.type).toBe('text');
+      expect(saved.status).toBe('sent');
+    });
+
+    it('sends an image message with media fields', async () => {
+      const { service, userId, messenger, messageModel } =
+        buildMessengerContext();
+
+      const result = await service.sendAdminMessage({
+        userId,
+        messengerAgentId: messenger.id,
+        type: 'image',
+        mediaObjectKey: 'admin/messenger-message/a.png',
+        mediaUrl: 'https://example.com/a.png',
+        mediaMimeType: 'image/png',
+      });
+
+      expect(result.type).toBe('image');
+      expect(result.mediaUrl).toBe('https://example.com/a.png');
+
+      const saved = messageModel.save.mock.calls[0][0] as MessageEntity;
+      expect(saved.type).toBe('image');
+      expect(saved.mediaObjectKey).toBe('admin/messenger-message/a.png');
+      expect(saved.mediaUrl).toBe('https://example.com/a.png');
+      expect(saved.mediaMimeType).toBe('image/png');
+    });
+
+    it('rejects a messenger agent that does not belong to the user', async () => {
+      const { service, agentModel } = createService();
+      agentModel.findOne.mockResolvedValueOnce(
+        buildAgent({
+          id: new MongoObjectId(),
+          createdUserId: new MongoObjectId(),
+          messengerOfAgentId: new MongoObjectId(),
+        })
+      );
+
+      await expect(
+        service.sendAdminMessage({
+          userId: new MongoObjectId(),
+          messengerAgentId: new MongoObjectId(),
+          type: 'text',
+          content: '你好',
+        })
+      ).rejects.toThrow('does not belong');
+    });
+
+    it('rejects empty text and image without media', async () => {
+      const { service, userId, messenger } = buildMessengerContext();
+
+      await expect(
+        service.sendAdminMessage({
+          userId,
+          messengerAgentId: messenger.id,
+          type: 'text',
+          content: '   ',
+        })
+      ).rejects.toThrow('content is required');
+
+      await expect(
+        service.sendAdminMessage({
+          userId,
+          messengerAgentId: messenger.id,
+          type: 'image',
+        })
+      ).rejects.toThrow('image is required');
+    });
+  });
 });

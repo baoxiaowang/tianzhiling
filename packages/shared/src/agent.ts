@@ -237,6 +237,36 @@ export interface AdminAgentListDTO {
   pageSize: number;
 }
 
+/** 小使者会话消息（管理端发消息通道） */
+export interface AdminAppUserMessengerMessageDTO {
+  id: string;
+  conversationId: string;
+  role: string;
+  type: string;
+  content: string;
+  mediaObjectKey: string;
+  mediaUrl: string;
+  mediaMimeType: string;
+  createdAt: string;
+}
+
+export interface AdminAppUserMessengerMessageListDTO {
+  conversationId: string;
+  /** 是否还有更早的消息可加载 */
+  hasMore: boolean;
+  items: AdminAppUserMessengerMessageDTO[];
+}
+
+export interface SendAdminAppUserMessengerMessageRequestDTO {
+  /** 消息类型：文本或图片 */
+  type: "text" | "image";
+  /** 文本内容；图片消息可作为图片说明 */
+  content?: string;
+  mediaObjectKey?: string;
+  mediaUrl?: string;
+  mediaMimeType?: string;
+}
+
 export type AdminAgentSummaryRecordDTO = Pick<
   AdminAgentRecordDTO,
   | "id"

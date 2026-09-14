@@ -5,6 +5,9 @@ import type {
   AdminAgentListDTO,
   AdminAgentOwnerDTO,
   AdminAgentRecordDTO,
+  AdminAppUserMessengerMessageDTO,
+  AdminAppUserMessengerMessageListDTO,
+  SendAdminAppUserMessengerMessageRequestDTO,
 } from '@tzl/shared';
 import {
   AgentEntity,
@@ -953,6 +956,180 @@ export class AdminAppUserService {
 
   private isRiskControlled(riskControlUntilAt?: Date): boolean {
     return Boolean(riskControlUntilAt && riskControlUntilAt > new Date());
+  }
+
+  /**
+   * 读取用户与小使者之间的消息（管理端发消息通道）。
+   * 游标分页：按 createdAt 倒序取一页，返回升序消息；`before` 传上一页最早时间可继续往前翻。
+   */
+  async listMessengerMessages(
+    userId: string,
+    agentId: string,
+    query?: { before?: string; pageSize?: string | number }
+  ): Promise<AdminAppUserMessengerMessageListDTO> {
+    const userObjectId = this.parseObjectId(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+
+    await this.assertUserMessengerAgent(userObjectId, agentObjectId);
+
+    const pageSize = Math.min(
+      Math.max(this.normalizePositiveInteger(query?.pageSize, 30), 1),
+      100
+    );
+    const before = query?.before?.trim() ? new Date(query.before) : undefined;
+
+    const where: Record<string, unknown> = {
+      agentId: agentObjectId,
+      userId: userObjectId,
+    };
+    if (before && !Number.isNaN(before.getTime())) {
+      where.createdAt = { $lt: before };
+    }
+
+    const messages = await this.messageModel.find({
+      where: where as never,
+      order: { createdAt: 'DESC' },
+      take: pageSize + 1,
+    });
+    const hasMore = messages.length > pageSize;
+    const items = messages
+      .slice(0, pageSize)
+      .reverse()
+      .map(message => this.buildMessengerMessageItem(message));
+
+    return {
+      conversationId: items[0]?.conversationId ?? '',
+      hasMore,
+      items,
+    };
+  }
+
+  /**
+   * 管理端通过小使者给用户发送文本/图片消息。
+   * 转交主服务写入消息，保证会话与消息口径一致。
+   */
+  async sendMessengerMessage(
+    userId: string,
+    agentId: string,
+    payload: SendAdminAppUserMessengerMessageRequestDTO
+  ): Promise<AdminAppUserMessengerMessageDTO> {
+    const userObjectId = this.parseObjectId(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+
+    const type = payload?.type;
+    if (type !== 'text' && type !== 'image') {
+      throw new AppError('INVALID_MESSAGE_TYPE', 'invalid message type', 400);
+    }
+    const content = payload?.content?.trim() ?? '';
+    if (type === 'text' && !content) {
+      throw new AppError(
+        'MESSAGE_CONTENT_REQUIRED',
+        'content is required',
+        400
+      );
+    }
+    if (type === 'image' && !payload?.mediaObjectKey && !payload?.mediaUrl) {
+      throw new AppError('MESSAGE_IMAGE_REQUIRED', 'image is required', 400);
+    }
+
+    await this.assertUserMessengerAgent(userObjectId, agentObjectId);
+
+    const baseUrl =
+      process.env.TZL_NODE_API_URL?.trim() || 'http://tzl_node:7001';
+    const secret = process.env.INTERNAL_API_SECRET?.trim();
+    if (!secret) {
+      throw new AppError(
+        'INTERNAL_API_SECRET_MISSING',
+        'internal api secret missing',
+        500
+      );
+    }
+
+    const response = await fetch(`${baseUrl}/api/system/messenger-message`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-secret': secret,
+      },
+      body: JSON.stringify({
+        userId,
+        messengerAgentId: agentId,
+        type,
+        content,
+        mediaObjectKey: payload?.mediaObjectKey,
+        mediaUrl: payload?.mediaUrl,
+        mediaMimeType: payload?.mediaMimeType,
+      }),
+    });
+    const result = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      result?: {
+        conversationId: string;
+        messageId: string;
+        type: string;
+        content: string;
+        mediaObjectKey?: string;
+        mediaUrl?: string;
+        mediaMimeType?: string;
+        createdAt: string;
+      };
+    } | null;
+
+    if (!response.ok || !result?.ok || !result.result) {
+      throw new AppError(
+        'MESSENGER_MESSAGE_SEND_FAILED',
+        result?.error || 'failed to send messenger message',
+        502
+      );
+    }
+
+    return {
+      id: result.result.messageId,
+      conversationId: result.result.conversationId,
+      role: MessageRole.assistant,
+      type: result.result.type,
+      content: result.result.content,
+      mediaObjectKey: result.result.mediaObjectKey ?? '',
+      mediaUrl: result.result.mediaUrl ?? '',
+      mediaMimeType: result.result.mediaMimeType ?? '',
+      createdAt: result.result.createdAt,
+    };
+  }
+
+  private async assertUserMessengerAgent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId
+  ): Promise<void> {
+    const agent = await this.agentModel.findOne({ where: { id: agentId } });
+
+    if (
+      !agent?.messengerOfAgentId ||
+      this.stringifyObjectId(agent.createdUserId) !==
+        this.stringifyObjectId(userId)
+    ) {
+      throw new AppError(
+        'MESSENGER_AGENT_NOT_FOUND',
+        'messenger agent not found',
+        404
+      );
+    }
+  }
+
+  private buildMessengerMessageItem(
+    message: MessageEntity
+  ): AdminAppUserMessengerMessageDTO {
+    return {
+      id: this.stringifyObjectId(message.id),
+      conversationId: this.stringifyObjectId(message.conversationId),
+      role: message.role ?? '',
+      type: message.type ?? '',
+      content: message.content ?? '',
+      mediaObjectKey: message.mediaObjectKey ?? '',
+      mediaUrl: message.mediaUrl ?? '',
+      mediaMimeType: message.mediaMimeType ?? '',
+      createdAt: this.formatDate(message.createdAt),
+    };
   }
 
   private normalizePositiveInteger(

@@ -16,6 +16,7 @@ import {
   UpdateAdminAppUserDTO,
 } from '../dto/admin-app-user.dto';
 import { ListAdminPostsQueryDTO } from '../dto/admin-post.dto';
+import type { SendAdminAppUserMessengerMessageRequestDTO } from '@tzl/shared';
 import { AdminAppUserService } from '../service/admin-app-user.service';
 import { AdminPostService } from '../service/admin-post.service';
 
@@ -53,6 +54,24 @@ export class AdminAppUserController {
     @Query() query: ListAdminAppUserAgentsQueryDTO
   ) {
     return this.adminAppUserService.listUserAgents(id, query);
+  }
+
+  @Get('/:id/agents/:agentId/messenger-messages')
+  async messengerMessages(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string,
+    @Query() query: { before?: string; pageSize?: string }
+  ) {
+    return this.adminAppUserService.listMessengerMessages(id, agentId, query);
+  }
+
+  @Post('/:id/agents/:agentId/messenger-messages')
+  async sendMessengerMessage(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string,
+    @Body() body: SendAdminAppUserMessengerMessageRequestDTO
+  ) {
+    return this.adminAppUserService.sendMessengerMessage(id, agentId, body);
   }
 
   @Get('/:id/posts')

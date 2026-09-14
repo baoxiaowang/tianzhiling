@@ -3,8 +3,11 @@ import type {
   AdminAgentListDTO,
   AdminAgentListParamsDTO,
   AdminAgentRecordDTO,
+  AdminAppUserMessengerMessageDTO,
+  AdminAppUserMessengerMessageListDTO,
   AdminPostListDTO,
   AdminPostListParamsDTO,
+  SendAdminAppUserMessengerMessageRequestDTO,
 } from '@tzl/shared';
 
 export type AppUserAgentRecord = AdminAgentRecordDTO;
@@ -155,6 +158,28 @@ export function queryAppUserAgents(id: string, params: AppUserAgentListParams) {
 export function queryAppUserAccountMemory(id: string) {
   return axios.get<AppUserAccountMemory>(
     `/admin_api/app-users/${id}/account-memory`
+  );
+}
+
+export function queryAppUserMessengerMessages(
+  userId: string,
+  agentId: string,
+  params?: { before?: string; pageSize?: number }
+) {
+  return axios.get<AdminAppUserMessengerMessageListDTO>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/messenger-messages`,
+    { params }
+  );
+}
+
+export function sendAppUserMessengerMessage(
+  userId: string,
+  agentId: string,
+  data: SendAdminAppUserMessengerMessageRequestDTO
+) {
+  return axios.post<AdminAppUserMessengerMessageDTO>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/messenger-messages`,
+    data
   );
 }
 

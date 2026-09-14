@@ -153,4 +153,64 @@ export class SystemController {
     });
     return { ok: true, result };
   }
+
+  /**
+   * 内部接口：管理端通过小使者给用户发送文本/图片消息。
+   * 需携带与 .env INTERNAL_API_SECRET 一致的 x-internal-secret 请求头。
+   */
+  @Post('/messenger-message')
+  async messengerMessage(
+    @Body()
+    body: {
+      userId?: string;
+      messengerAgentId?: string;
+      type?: string;
+      content?: string;
+      mediaObjectKey?: string;
+      mediaUrl?: string;
+      mediaMimeType?: string;
+    }
+  ) {
+    const secret = this.ctx.get('x-internal-secret');
+    const expected = process.env.INTERNAL_API_SECRET;
+    if (!expected || secret !== expected) {
+      return { ok: false, error: 'UNAUTHORIZED' };
+    }
+
+    if (body?.type !== 'text' && body?.type !== 'image') {
+      return { ok: false, error: 'INVALID_TYPE' };
+    }
+
+    if (!body?.userId || !body?.messengerAgentId) {
+      return { ok: false, error: 'MISSING_PARAMS' };
+    }
+
+    let userId: MongoObjectId;
+    let messengerAgentId: MongoObjectId;
+    try {
+      userId = new MongoObjectId(body.userId);
+      messengerAgentId = new MongoObjectId(body.messengerAgentId);
+    } catch {
+      return { ok: false, error: 'INVALID_ID' };
+    }
+
+    const service = await this.ctx.requestContext.getAsync(MessengerService);
+    try {
+      const result = await service.sendAdminMessage({
+        userId,
+        messengerAgentId,
+        type: body.type,
+        content: body.content,
+        mediaObjectKey: body.mediaObjectKey,
+        mediaUrl: body.mediaUrl,
+        mediaMimeType: body.mediaMimeType,
+      });
+      return { ok: true, result };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'SEND_FAILED',
+      };
+    }
+  }
 }
