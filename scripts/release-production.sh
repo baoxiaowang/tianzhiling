@@ -243,7 +243,7 @@ rollback_runtime() {
   fi
   if service_selected tzl_admin_node; then
     wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health' || rollback_ok=0
-    check_pm2_processes tzl_admin_node 2 0 || rollback_ok=0
+    check_pm2_processes tzl_admin_node 1 0 || rollback_ok=0
   fi
   if [[ "$rollback_ok" -eq 1 ]]; then
     printf '[ROLLBACK_DONE] runtime restored and verified; git remains at %s\n' "$TARGET" >&2
@@ -434,7 +434,7 @@ wait_for_release_stability() {
     fi
     if service_selected tzl_admin_node; then
       check_container tzl_admin_node
-      check_pm2_processes tzl_admin_node 2 0
+      check_pm2_processes tzl_admin_node 1 0
       check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
     fi
     sleep 10
@@ -453,7 +453,7 @@ wait_for_release_stability() {
     check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
   fi
   if service_selected tzl_admin_node; then
-    check_pm2_processes tzl_admin_node 2 "$((required_seconds * 1000))"
+    check_pm2_processes tzl_admin_node 1 "$((required_seconds * 1000))"
     [[ "$(pm2_restart_signature tzl_admin_node)" == "$admin_restart_baseline" ]]
     check_internal_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
   fi
@@ -628,7 +628,7 @@ if service_selected tzl_node; then check_pm2_processes tzl_node 4 0; fi
 if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 1 0; fi
 if service_selected tzl_node; then check_node_runtime_contract tzl_node web 0 1 1; fi
 if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1; fi
-if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 2 0; fi
+if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 1 0; fi
 for service in "${SERVICES[@]}"; do
   [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
 done
