@@ -77,16 +77,20 @@ export function buildGroupKey(options: {
 }
 
 /**
- * 未了结条目的稳定指纹：同一用户 + 同一话题 + 同一主体，**不含日期**。
+ * 未了结条目的稳定指纹：同一用户 + 同一话题 + 同一主体 + 这件事说的是什么，**不含日期**。
  * 早先指纹里带了来源日期，于是"我刚做完手术"隔两天再说一次就成了第二条：
  * 两条各有各的 3 天冷却，模型就会把同一件事反复端上来问。
  * 日期是这件事什么时候说的，不是它是不是同一件事。
+ * 内容必须参与：日子类的（三七、五七、百天、中元节）本来就是一件一件不同的日子，
+ * 只看话题+主体会把它们并成一条，等于把日子丢了。
  */
 export function buildOpenItemFingerprint(options: {
   engine: string;
   userId: string;
   topicKey: string;
   subjectRef?: string;
+  /** 原话正文，参与指纹；不传时退化为"话题+主体"一条。 */
+  content?: string;
   /** 兼容旧调用：不参与指纹。 */
   occurredAt?: Date;
 }): string {
@@ -97,6 +101,7 @@ export function buildOpenItemFingerprint(options: {
       options.userId,
       options.topicKey,
       normalizeSubject(options.subjectRef) || '-',
+      openItemContentKey(options.content),
     ].join('|')
   );
 }
@@ -118,6 +123,18 @@ export function hashMessageText(text: string): string {
 
 function normalizeSubject(value?: string): string {
   return (value || '').trim().toLowerCase();
+}
+
+/**
+ * 参与指纹的内容键：去掉标点，只取前面一段。
+ * 截断是为了让"同一句话被抽取成两条记录"能撞上；要保留的差异都在前半句，
+ * 例如"今天是您的三七"和"今天是您的五七"，所以只看前 48 个字就够。
+ */
+export function openItemContentKey(value?: string): string {
+  const text = (value || '')
+    .replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '')
+    .toLowerCase();
+  return text ? text.slice(0, 48) : '-';
 }
 
 function hash(value: string): string {

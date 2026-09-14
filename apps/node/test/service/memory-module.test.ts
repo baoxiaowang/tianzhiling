@@ -225,35 +225,41 @@ describe('事件分组纯逻辑', () => {
     expect(buildGroupKey(input)).toBe(buildGroupKey(input));
   });
 
-  it('未了结条目的指纹不含日期：隔几天再说是同一条', () => {
+  it('未了结条目的指纹不含日期，但认得出是不是同一个日子', () => {
     const base = {
       engine: 'event_v1',
       userId: USER_ID,
       topicKey: '就医',
       subjectRef: '爸爸',
+      content: '我下周要去医院复查',
     };
-    expect(
+    const fingerprintAt = (day: string, overrides: Record<string, unknown>) =>
       buildOpenItemFingerprint({
         ...base,
-        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
-      })
-    ).toBe(
-      buildOpenItemFingerprint({
-        ...base,
-        occurredAt: new Date('2026-09-10T18:00:00.000Z'),
-      })
+        ...overrides,
+        occurredAt: new Date(`${day}T10:00:00.000Z`),
+      });
+    // 同一句话隔几天再说，还是同一条
+    expect(fingerprintAt('2026-09-07', {})).toBe(
+      fingerprintAt('2026-09-10', {})
     );
-    // 主体不同、话题不同，仍然是两件事
+    // 主体不同、内容不同，都是两件事
+    expect(fingerprintAt('2026-09-07', {})).not.toBe(
+      fingerprintAt('2026-09-07', { subjectRef: '妈妈' })
+    );
+    expect(fingerprintAt('2026-09-07', {})).not.toBe(
+      fingerprintAt('2026-09-07', { content: '我要去拿体检报告' })
+    );
+    // 日子类：句子里只有日子不同，也必须是两条（否则等于把日子丢了）
     expect(
-      buildOpenItemFingerprint({
-        ...base,
-        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+      fingerprintAt('2026-09-07', {
+        topicKey: '纪念日',
+        content: '明天是您的三七',
       })
     ).not.toBe(
-      buildOpenItemFingerprint({
-        ...base,
-        subjectRef: '妈妈',
-        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+      fingerprintAt('2026-09-07', {
+        topicKey: '纪念日',
+        content: '明天是您的五七',
       })
     );
   });
@@ -1262,7 +1268,37 @@ describe('模型判定结果的写入', () => {
     expect(await items.count()).toBe(1);
   });
 
-  it('已经了结的同一件事再被提起：重新开工，不新增条目', async () => {
+  it('两边都说了不同的人：说的是同一句话也不并（不是同一件事）', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我下周要去医院复查',
+          topicKey: '就医',
+          subjectRef: '妈妈',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我下周要去医院复查',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(await items.count()).toBe(2);
+  });
+
+  it('已经了结的同一件事原话再提一次：重新开工，不新增条目', async () => {
     const { engine, items } = buildEngine();
     await engine.applyExtractedOpenItems({
       userId: USER_ID,
@@ -1299,7 +1335,7 @@ describe('模型判定结果的写入', () => {
       candidates: [
         {
           messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
-          quote: '我又要去医院复查了',
+          quote: '我下周要去医院复查',
           topicKey: '就医',
           state: 'awaiting_result',
           importance: 3,
@@ -1318,6 +1354,93 @@ describe('模型判定结果的写入', () => {
     expect(reopened.state).toBe('awaiting_result');
     expect(reopened.raisedCount).toBe(0);
     expect(reopened.stateHistory).toHaveLength(3);
+  });
+
+  it('了结后换了说法再提：按新的一件事记，旧的那条保持已了结', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我下周要去医院复查',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const stored = (await items.find())[0] as unknown as { id: string };
+    await engine.updateOpenItem({
+      userId: USER_ID,
+      itemId: String(stored.id),
+      state: 'resolved',
+      source: 'user_request',
+      now: new Date('2026-09-08T10:00:00.000Z'),
+    });
+    const again = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我又要去医院复查了',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-12T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(again.created).toBe(1);
+    expect(await items.count()).toBe(2);
+    const states = (await items.find()).map(
+      row => (row as unknown as { state: string }).state
+    );
+    expect(states.sort()).toEqual(['awaiting_result', 'resolved']);
+  });
+
+  it('日子类：不同的日子各是一条，同一个日子说两次还是一条', async () => {
+    const { engine, items } = buildEngine();
+    const addCalendar = (messageId: string, quote: string, day: string) =>
+      engine.applyExtractedOpenItems({
+        userId: USER_ID,
+        conversationId: CONVERSATION_ID,
+        agentId: AGENT_ID,
+        candidates: [
+          {
+            messageId,
+            quote,
+            topicKey: '纪念日',
+            state: 'awaiting_result',
+            importance: 3,
+            occurredAt: new Date(`${day}T10:00:00.000Z`),
+          },
+        ],
+      });
+    await addCalendar(
+      'ccccccccccccccccccccccc1',
+      '明天是您的三七',
+      '2026-09-07'
+    );
+    await addCalendar(
+      'ccccccccccccccccccccccc2',
+      '明天是您的五七',
+      '2026-09-12'
+    );
+    expect(await items.count()).toBe(2);
+    const same = await addCalendar(
+      'ccccccccccccccccccccccc3',
+      '明天是您的三七',
+      '2026-09-14'
+    );
+    expect(same.created).toBe(0);
+    expect(same.updated).toBe(1);
+    expect(await items.count()).toBe(2);
   });
 
   it('纪念日单独存放：不占待跟进清单的名额，也不出现在默认清单里', async () => {

@@ -693,6 +693,7 @@ export class MemoryEventEngine implements MemoryModule {
       userId: stringifyObjectId(options.userId),
       topicKey: options.itemTopicKey || '其他',
       subjectRef: options.subjectRef,
+      content: options.text,
       occurredAt: options.occurredAt,
     });
     const duplicated = await this.itemModel.findOne({
@@ -760,15 +761,29 @@ export class MemoryEventEngine implements MemoryModule {
 
     for (const candidate of options.candidates || []) {
       const summary = buildOpenItemSummary(candidate.quote);
+      // 纪念日是"日子"，不是待跟进的事：照常存，但不占待跟进清单的名额。
+      const isCalendar = candidate.topicKey === '纪念日';
       // 同一件事只留一条。先比"同类同主体"，再比"两句话说的是不是同一件事"——
       // 主体没提出来（模型没给 subjectRef）、或者同一件事换了说法时，光比前者会漏。
-      const existing =
-        active.find(
-          item =>
-            item.topicKey === candidate.topicKey &&
-            normalizeSubject(item.subjectRef) ===
-              normalizeSubject(candidate.subjectRef)
-        ) || active.find(item => isSameOpenItemMatter(summary, item.summary));
+      // 但两边都明确说了不同的人（"我"和"妈妈"），就不是同一件事，不能并。
+      // 日子类不按话题+主体并：三七、五七、百天、生日本来就是一件一件不同的日子，
+      // 只有"说的是同一个日子"（指纹相同）才算同一条，否则等于把日子丢了。
+      const existing = isCalendar
+        ? undefined
+        : active.find(
+            item =>
+              item.topicKey === candidate.topicKey &&
+              normalizeSubject(item.subjectRef) ===
+                normalizeSubject(candidate.subjectRef)
+          ) ||
+          active.find(
+            item =>
+              isSameOpenItemMatter(summary, item.summary) &&
+              (!item.subjectRef ||
+                !candidate.subjectRef ||
+                normalizeSubject(item.subjectRef) ===
+                  normalizeSubject(candidate.subjectRef))
+          );
 
       if (existing) {
         await this.mergeOpenItemCandidate(existing, candidate, now);
@@ -776,8 +791,6 @@ export class MemoryEventEngine implements MemoryModule {
         continue;
       }
 
-      // 纪念日是"日子"，不是待跟进的事：照常存，但不占待跟进清单的名额。
-      const isCalendar = candidate.topicKey === '纪念日';
       if (!isCalendar && active.length + created >= MAX_ACTIVE_OPEN_ITEMS) {
         skipped += 1;
         continue;
@@ -788,20 +801,20 @@ export class MemoryEventEngine implements MemoryModule {
         userId: options.userId,
         topicKey: candidate.topicKey,
         subjectRef: candidate.subjectRef,
+        content: summary,
         occurredAt: candidate.occurredAt,
       });
       const duplicated = await this.itemModel.findOne({
         where: { fingerprint, engine: EVENT_MEMORY_ENGINE } as never,
       });
       if (duplicated) {
-        // 指纹相同就是同一件事，只是那一条已经了结或者过期了。
-        // 让它重新开工（状态历史里留一笔），而不是再长一条：
-        // 长出第二条就等于这件事有两份冷却，模型会把它反复端上来问。
+        // 指纹相同就是同一件事：活跃的补证据，已经了结/过期的重新开工（状态历史留痕）。
+        // 不再另起一条，否则同一件事有两份冷却，模型会把它反复端上来问。
         const duplicatedIsActive =
           OPEN_ITEM_ACTIVE_STATES.indexOf(duplicated.state) !== -1;
         const canReopen =
           isCalendar || active.length + created < MAX_ACTIVE_OPEN_ITEMS;
-        if (!duplicatedIsActive && canReopen) {
+        if (duplicatedIsActive || canReopen) {
           await this.mergeOpenItemCandidate(duplicated, candidate, now);
           updated += 1;
           continue;
