@@ -52,16 +52,30 @@ export class MemoryOpenItemExtractorService {
 
   private dedicatedProvider?: { client: OpenAI; model: string } | null;
 
-  /** 这个任务可以单独指定模型；没配就用默认对话模型。 */
+  /**
+   * 这个任务可以单独指定模型。
+   * 没配专用 key 时，回落到项目已有的向量服务（DashScope 兼容接口）——实测默认的
+   * 人物扮演对话模型做这种结构化判定不听话，而这个接口上的指令模型明显更准。
+   */
   private resolveDedicatedProvider():
     | { client: OpenAI; model: string }
     | undefined {
     if (this.dedicatedProvider !== undefined) {
       return this.dedicatedProvider || undefined;
     }
-    const apiKey = (process.env.NODE_MEMORY_OPEN_ITEM_API_KEY || '').trim();
-    const baseURL = (process.env.NODE_MEMORY_OPEN_ITEM_BASE_URL || '').trim();
-    const model = (process.env.NODE_MEMORY_OPEN_ITEM_MODEL || '').trim();
+    const apiKey = (
+      process.env.NODE_MEMORY_OPEN_ITEM_API_KEY ||
+      process.env.NODE_EMBEDDING_API_KEY ||
+      ''
+    ).trim();
+    const baseURL = (
+      process.env.NODE_MEMORY_OPEN_ITEM_BASE_URL ||
+      process.env.NODE_EMBEDDING_BASE_URL ||
+      ''
+    ).trim();
+    const model = (
+      process.env.NODE_MEMORY_OPEN_ITEM_MODEL || 'qwen-plus'
+    ).trim();
     this.dedicatedProvider =
       apiKey && baseURL && model
         ? { client: new OpenAI({ apiKey, baseURL }), model }
