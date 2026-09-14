@@ -239,7 +239,7 @@ rollback_runtime() {
   fi
   if service_selected tzl_memory_worker && [[ "${SERVICE_EXISTED[tzl_memory_worker]:-0}" == '1' ]]; then
     wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health' || rollback_ok=0
-    check_pm2_processes tzl_memory_worker 1 0 || rollback_ok=0
+    check_pm2_processes tzl_memory_worker 0 0 || rollback_ok=0
   fi
   if service_selected tzl_admin_node; then
     wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health' || rollback_ok=0
@@ -314,10 +314,17 @@ const { execFileSync } = require("child_process");
 const expected = Number(process.argv[1]);
 const minimumUptimeMs = Number(process.argv[2]);
 const maximumRestartTime = Number(process.argv[3]);
-const processes = JSON.parse(execFileSync("pm2", ["jlist"], {
+const rawList = execFileSync("pm2", ["jlist"], {
   encoding: "utf8",
   stdio: ["ignore", "pipe", "ignore"],
-}));
+});
+const jsonStart = rawList.indexOf("[");
+const jsonEnd = rawList.lastIndexOf("]");
+const processes = JSON.parse(
+  jsonStart >= 0 && jsonEnd > jsonStart
+    ? rawList.slice(jsonStart, jsonEnd + 1)
+    : rawList
+);
 const failures = [];
 if (processes.length !== expected) {
   failures.push(`count=${processes.length}/${expected}`);
@@ -349,10 +356,17 @@ pm2_restart_signature() {
 
   docker exec "$service" node -e '
 const { execFileSync } = require("child_process");
-const processes = JSON.parse(execFileSync("pm2", ["jlist"], {
+const rawList = execFileSync("pm2", ["jlist"], {
   encoding: "utf8",
   stdio: ["ignore", "pipe", "ignore"],
-}));
+});
+const jsonStart = rawList.indexOf("[");
+const jsonEnd = rawList.lastIndexOf("]");
+const processes = JSON.parse(
+  jsonStart >= 0 && jsonEnd > jsonStart
+    ? rawList.slice(jsonStart, jsonEnd + 1)
+    : rawList
+);
 console.log(processes
   .map(processInfo => `${processInfo.pm_id}:${Number(processInfo.pm2_env?.restart_time || 0)}`)
   .sort()
@@ -429,7 +443,7 @@ wait_for_release_stability() {
     fi
     if service_selected tzl_memory_worker; then
       check_container tzl_memory_worker
-      check_pm2_processes tzl_memory_worker 1 0
+      check_pm2_processes tzl_memory_worker 0 0
       check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
     fi
     if service_selected tzl_admin_node; then
@@ -448,7 +462,7 @@ wait_for_release_stability() {
     check_internal_health tzl_node 'http://127.0.0.1:7001/api/system/health'
   fi
   if service_selected tzl_memory_worker; then
-    check_pm2_processes tzl_memory_worker 1 "$((required_seconds * 1000))"
+    check_pm2_processes tzl_memory_worker 0 "$((required_seconds * 1000))"
     [[ "$(pm2_restart_signature tzl_memory_worker)" == "$memory_restart_baseline" ]]
     check_internal_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
   fi
@@ -625,7 +639,7 @@ for service in "${SERVICES[@]}"; do
   check_container "$service"
 done
 if service_selected tzl_node; then check_pm2_processes tzl_node 4 0; fi
-if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 1 0; fi
+if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 0 0; fi
 if service_selected tzl_node; then check_node_runtime_contract tzl_node web 0 1 1; fi
 if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1; fi
 if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 1 0; fi
