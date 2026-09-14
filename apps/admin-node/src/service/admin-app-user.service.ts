@@ -1101,7 +1101,9 @@ export class AdminAppUserService {
     userId: MongoObjectId,
     agentId: MongoObjectId
   ): Promise<void> {
-    const agent = await this.agentModel.findOne({ where: { id: agentId } });
+    const agent =
+      (await this.agentModel.findOne({ where: { id: agentId } })) ??
+      (await this.agentModel.findOne({ where: { _id: agentId } as never }));
 
     if (
       !agent?.messengerOfAgentId ||

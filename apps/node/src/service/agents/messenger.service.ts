@@ -1149,9 +1149,13 @@ export class MessengerService {
   async sendAdminMessage(
     options: SendAdminMessengerMessageOptions
   ): Promise<SendAdminMessengerMessageResult> {
-    const messenger = await this.agentModel.findOne({
-      where: { id: options.messengerAgentId },
-    });
+    const messenger =
+      (await this.agentModel.findOne({
+        where: { id: options.messengerAgentId },
+      })) ??
+      (await this.agentModel.findOne({
+        where: { _id: options.messengerAgentId } as never,
+      }));
 
     if (!messenger?.messengerOfAgentId) {
       throw new Error('messenger agent not found');
@@ -1163,9 +1167,13 @@ export class MessengerService {
       throw new Error('messenger agent does not belong to user');
     }
 
-    const parentAgent = await this.agentModel.findOne({
-      where: { id: messenger.messengerOfAgentId },
-    });
+    const parentAgent =
+      (await this.agentModel.findOne({
+        where: { id: messenger.messengerOfAgentId },
+      })) ??
+      (await this.agentModel.findOne({
+        where: { _id: messenger.messengerOfAgentId } as never,
+      }));
 
     if (!parentAgent) {
       throw new Error('parent agent not found');
