@@ -46,41 +46,19 @@
               {{ formatMoney(record.cohortRevenue) }}
             </template>
           </a-table-column>
-          <a-table-column title="推广费" :width="240">
+          <a-table-column title="推广费" :width="170">
             <template #cell="{ record }">
-              <div class="daily-detail-page__promotion">
-                <a-input-number
-                  :model-value="promotionDraft(record)"
-                  :min="0"
-                  :precision="2"
-                  :step="0.01"
-                  size="small"
-                  :disabled="!!savingDates[record.date]"
-                  @change="(value) => onPromotionChange(record, value)"
-                  @press-enter="savePromotion(record)"
-                />
-                <a-link
-                  v-if="isPromotionDirty(record)"
-                  :loading="!!savingDates[record.date]"
-                  @click="savePromotion(record)"
-                >
-                  保存
-                </a-link>
-                <a-link
-                  v-else-if="record.promotionExpenseManual"
-                  :loading="!!savingDates[record.date]"
-                  @click="resetPromotion(record)"
-                >
-                  恢复默认
-                </a-link>
-                <a-tag
-                  v-if="record.promotionExpenseManual"
-                  size="small"
-                  color="arcoblue"
-                >
-                  手动
-                </a-tag>
-              </div>
+              <a-input-number
+                class="daily-detail-page__promotion-input"
+                :model-value="promotionDraft(record)"
+                :min="0"
+                :precision="2"
+                :step="0.01"
+                size="small"
+                @change="(value) => onPromotionChange(record, value)"
+                @press-enter="flushPromotion(record)"
+                @blur="flushPromotion(record)"
+              />
             </template>
           </a-table-column>
           <a-table-column title="盈利">
@@ -104,7 +82,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, onMounted, reactive, ref } from 'vue';
+  import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
   import dayjs from 'dayjs';
   import { Message } from '@arco-design/web-vue';
   import type {
@@ -122,6 +100,7 @@
   const report = ref<AdminOperationsReportDTO>();
   const promotionDrafts = reactive<Record<string, number | undefined>>({});
   const savingDates = reactive<Record<string, boolean>>({});
+  const promotionTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
   const daily = computed(() => report.value?.daily || []);
 
@@ -141,66 +120,84 @@
   const promotionDraft = (record: AdminOperationsDailyPointDTO) =>
     promotionDrafts[record.date] ?? promotionExpenseFor(record);
 
+  const clearPromotionTimer = (date: string) => {
+    const timer = promotionTimers[date];
+    if (timer) {
+      clearTimeout(timer);
+      delete promotionTimers[date];
+    }
+  };
+
+  const schedulePromotionSave = (record: AdminOperationsDailyPointDTO) => {
+    clearPromotionTimer(record.date);
+    promotionTimers[record.date] = setTimeout(() => {
+      delete promotionTimers[record.date];
+      savePromotion(record);
+    }, 600);
+  };
+
+  const savePromotion = async (record: AdminOperationsDailyPointDTO) => {
+    const draft = promotionDrafts[record.date];
+    if (draft === undefined) return;
+    if (Number(draft) === Number(promotionExpenseFor(record))) {
+      delete promotionDrafts[record.date];
+      return;
+    }
+    if (savingDates[record.date]) {
+      // 已有请求在途，稍后再保存最新值
+      schedulePromotionSave(record);
+      return;
+    }
+    savingDates[record.date] = true;
+    try {
+      const { data } = await updateDailyPromotionExpense(record.date, draft);
+      record.promotionExpense = data.promotionExpense;
+      record.profit = data.profit;
+      record.promotionExpenseManual = data.promotionExpenseManual;
+      if (
+        Number(promotionDrafts[record.date]) === Number(data.promotionExpense)
+      ) {
+        delete promotionDrafts[record.date];
+      }
+    } catch {
+      Message.error('推广费保存失败');
+      delete promotionDrafts[record.date];
+    } finally {
+      savingDates[record.date] = false;
+      const pending = promotionDrafts[record.date];
+      if (
+        pending !== undefined &&
+        Number(pending) !== Number(promotionExpenseFor(record))
+      ) {
+        schedulePromotionSave(record);
+      }
+    }
+  };
+
   const onPromotionChange = (
     record: AdminOperationsDailyPointDTO,
     value: number | undefined
   ) => {
     promotionDrafts[record.date] =
       typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    schedulePromotionSave(record);
   };
 
-  const isPromotionDirty = (record: AdminOperationsDailyPointDTO) => {
-    const draft = promotionDrafts[record.date];
-    return (
-      draft !== undefined &&
-      Number(draft) !== Number(promotionExpenseFor(record))
-    );
-  };
-
-  const applySavedPoint = (
-    record: AdminOperationsDailyPointDTO,
-    point: AdminOperationsDailyPointDTO
-  ) => {
-    record.promotionExpense = point.promotionExpense;
-    record.profit = point.profit;
-    record.promotionExpenseManual = point.promotionExpenseManual;
-    delete promotionDrafts[record.date];
-  };
-
-  const savePromotion = async (record: AdminOperationsDailyPointDTO) => {
-    const draft = promotionDrafts[record.date];
-    if (draft === undefined || savingDates[record.date]) return;
-    try {
-      savingDates[record.date] = true;
-      const { data } = await updateDailyPromotionExpense(record.date, draft);
-      applySavedPoint(record, data);
-      Message.success('推广费已保存');
-    } catch {
-      Message.error('推广费保存失败');
-    } finally {
-      savingDates[record.date] = false;
-    }
-  };
-
-  const resetPromotion = async (record: AdminOperationsDailyPointDTO) => {
-    if (savingDates[record.date]) return;
-    try {
-      savingDates[record.date] = true;
-      const { data } = await updateDailyPromotionExpense(record.date, null);
-      applySavedPoint(record, data);
-      Message.success('已恢复默认推广费');
-    } catch {
-      Message.error('恢复默认推广费失败');
-    } finally {
-      savingDates[record.date] = false;
-    }
+  const flushPromotion = (record: AdminOperationsDailyPointDTO) => {
+    clearPromotionTimer(record.date);
+    savePromotion(record);
   };
 
   const clearPromotionDrafts = () => {
     Object.keys(promotionDrafts).forEach((key) => {
+      clearPromotionTimer(key);
       delete promotionDrafts[key];
     });
   };
+
+  onUnmounted(() => {
+    Object.keys(promotionTimers).forEach((key) => clearPromotionTimer(key));
+  });
 
   const fetch = async () => {
     try {
@@ -259,14 +256,8 @@
       }
     }
 
-    &__promotion {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-
-      :deep(.arco-input-number) {
-        width: 120px;
-      }
+    &__promotion-input {
+      width: 120px;
     }
 
     @media (max-width: 900px) {
