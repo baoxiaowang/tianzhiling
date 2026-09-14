@@ -76,6 +76,29 @@ function isSameOpenItemMatter(left: string, right: string): boolean {
   if (!left || !right) return false;
   return scoreOpenItemMention(left, right) >= SAME_MATTER_MENTION_SCORE;
 }
+
+/**
+ * 新提取的这一句，是不是已有条目那件事：
+ * 话题必须相同——同一句话被归到"纪念日"和"家人"两边，是清单里两条不同的记忆，
+ * 不能因为文字一样就并成一条（并了就会把日子从"记得的日子"里抹掉）；
+ * 主体相同就直接算；换了说法、或者有一边没提主体时，才看内容像不像，
+ * 而且两边都明确说了不同的人（"我"和"妈妈"）时不算同一件。
+ */
+function isSameOpenItem(
+  item: Pick<MemoryOpenItemEntity, 'topicKey' | 'subjectRef' | 'summary'>,
+  candidate: Pick<OpenItemCandidate, 'topicKey' | 'subjectRef'>,
+  summary: string
+): boolean {
+  if (item.topicKey !== candidate.topicKey) return false;
+  if (
+    normalizeSubject(item.subjectRef) === normalizeSubject(candidate.subjectRef)
+  ) {
+    return true;
+  }
+  if (item.subjectRef && candidate.subjectRef) return false;
+  return isSameOpenItemMatter(summary, item.summary);
+}
+
 const OPEN_ITEM_ACTIVE_STATES: MemoryOpenItemState[] = [
   'reported',
   'awaiting_result',
@@ -770,20 +793,7 @@ export class MemoryEventEngine implements MemoryModule {
       // 只有"说的是同一个日子"（指纹相同）才算同一条，否则等于把日子丢了。
       const existing = isCalendar
         ? undefined
-        : active.find(
-            item =>
-              item.topicKey === candidate.topicKey &&
-              normalizeSubject(item.subjectRef) ===
-                normalizeSubject(candidate.subjectRef)
-          ) ||
-          active.find(
-            item =>
-              isSameOpenItemMatter(summary, item.summary) &&
-              (!item.subjectRef ||
-                !candidate.subjectRef ||
-                normalizeSubject(item.subjectRef) ===
-                  normalizeSubject(candidate.subjectRef))
-          );
+        : active.find(item => isSameOpenItem(item, candidate, summary));
 
       if (existing) {
         await this.mergeOpenItemCandidate(existing, candidate, now);

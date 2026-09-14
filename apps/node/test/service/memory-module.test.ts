@@ -1268,6 +1268,34 @@ describe('模型判定结果的写入', () => {
     expect(await items.count()).toBe(1);
   });
 
+  it('同一句话被归到两个话题：各自留在自己的清单里，不并', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '下周六小宝办周岁酒',
+          topicKey: '纪念日',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '下周六小宝办周岁酒',
+          topicKey: '家人',
+          state: 'action_committed',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(await items.count()).toBe(2);
+  });
+
   it('两边都说了不同的人：说的是同一句话也不并（不是同一件事）', async () => {
     const { engine, items } = buildEngine();
     await engine.applyExtractedOpenItems({
