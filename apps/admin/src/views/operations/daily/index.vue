@@ -249,15 +249,26 @@
       :deep(.arco-table-th) {
         white-space: normal;
         line-height: 1.35;
+        text-align: center;
       }
 
       :deep(.arco-table-td) {
         white-space: nowrap;
+        text-align: center;
+      }
+
+      :deep(.arco-table-cell) {
+        justify-content: center;
+        text-align: center;
       }
     }
 
     &__promotion-input {
       width: 120px;
+
+      :deep(input) {
+        text-align: center;
+      }
     }
 
     @media (max-width: 900px) {

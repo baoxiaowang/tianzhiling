@@ -13,7 +13,9 @@
           :allow-clear="false"
           @change="fetchData"
         />
-        <a-button :loading="loading" @click="fetchData">刷新</a-button>
+        <a-button type="primary" :loading="loading" @click="fetchData"
+          >刷新</a-button
+        >
       </a-space>
     </header>
 
@@ -44,7 +46,6 @@
               <a-space>
                 <a-radio-group v-model="trendMetric" type="button" size="small">
                   <a-radio value="newUsers">新增用户</a-radio>
-                  <a-radio value="newAgents">新建智能体</a-radio>
                   <a-radio value="netRevenue">当天收入</a-radio>
                   <a-radio value="userMessages">总消息数</a-radio>
                 </a-radio-group>
@@ -151,47 +152,66 @@
   const trendMeta = computed(() => {
     const map = {
       newUsers: { name: '新增用户', color: '#7662cf', money: false },
-      newAgents: { name: '新建智能体', color: '#d97757', money: false },
       netRevenue: { name: '当天收入', color: '#36a375', money: true },
       userMessages: { name: '总消息数', color: '#5f91bd', money: false },
     };
 
     return map[trendMetric.value];
   });
-  const trendChartOption = computed(() => ({
-    tooltip: {
-      trigger: 'axis',
-      valueFormatter: (value: number) =>
-        trendMeta.value.money ? formatMoney(value) : formatNumber(value),
-    },
-    grid: { left: 66, right: 28, top: 34, bottom: 38 },
-    xAxis: {
-      type: 'category',
-      data: (report.value?.daily || []).map((item) => formatDay(item.date)),
-      axisLabel: { interval: 4 },
-    },
-    yAxis: {
-      type: 'value',
-      minInterval: trendMeta.value.money ? undefined : 1,
-      name: trendMeta.value.money ? '元' : '',
-    },
-    series: [
+  const trendChartOption = computed(() => {
+    const daily = report.value?.daily || [];
+    const showAgents = trendMetric.value === 'newUsers';
+    const series = [
       {
         name: trendMeta.value.name,
         type: 'line',
         smooth: true,
         symbolSize: 8,
-        data: (report.value?.daily || []).map(
-          (item) => item[trendMetric.value]
-        ),
+        data: daily.map((item) => item[trendMetric.value]),
         itemStyle: {
           color: trendMeta.value.color,
         },
         lineStyle: { width: 3 },
         areaStyle: { opacity: 0.1 },
       },
-    ],
-  }));
+    ];
+    // 「新建智能体」并入「新增用户」图，作为第二条曲线展示，不再单独切换
+    if (showAgents) {
+      series.push({
+        name: '新建智能体',
+        type: 'line',
+        smooth: true,
+        symbolSize: 8,
+        data: daily.map((item) => item.newAgents),
+        itemStyle: { color: '#d97757' },
+        lineStyle: { width: 3 },
+        areaStyle: { opacity: 0.1 },
+      });
+    }
+
+    return {
+      tooltip: {
+        trigger: 'axis',
+        valueFormatter: (value: number) =>
+          trendMeta.value.money ? formatMoney(value) : formatNumber(value),
+      },
+      legend: showAgents
+        ? { top: 0, left: 'center', data: ['新增用户', '新建智能体'] }
+        : undefined,
+      grid: { left: 66, right: 28, top: showAgents ? 50 : 34, bottom: 38 },
+      xAxis: {
+        type: 'category',
+        data: daily.map((item) => formatDay(item.date)),
+        axisLabel: { interval: 4 },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: trendMeta.value.money ? undefined : 1,
+        name: trendMeta.value.money ? '元' : '',
+      },
+      series,
+    };
+  });
 
   const userTypeChartOption = computed(() => {
     const newUserMessages = report.value?.totals.newUserMessages || 0;
