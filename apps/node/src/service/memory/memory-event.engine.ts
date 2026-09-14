@@ -32,6 +32,10 @@ import {
   resolveOpenItemObservation,
 } from './memory-open-item.rules';
 import { isPastOnlyStatement } from './memory-open-item-extraction';
+import {
+  SAME_MATTER_MENTION_SCORE,
+  scoreOpenItemMention,
+} from './memory-return-turn';
 import type {
   OpenItemCandidate,
   OpenItemTopicKey,
@@ -63,6 +67,15 @@ const RECALL_BUDGET_MS = 1200;
 const REBUILD_MESSAGE_LIMIT = 3000;
 /** 每人最多保留 5 条活跃的未了结事项：清单要像"最近惦记的几件事"，不能是流水账。 */
 const MAX_ACTIVE_OPEN_ITEMS = 5;
+/**
+ * 两句话是不是同一件事（同一件事的不同说法、或其中一条没带主体时靠它兜底）。
+ * 主体没提到（模型没给 subjectRef）或者换了个说法时，光比话题+主体会漏，
+ * 于是同一件事长出好几条。门槛与回复记账用的是同一个，避免两边判断不一致。
+ */
+function isSameOpenItemMatter(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  return scoreOpenItemMention(left, right) >= SAME_MATTER_MENTION_SCORE;
+}
 const OPEN_ITEM_ACTIVE_STATES: MemoryOpenItemState[] = [
   'reported',
   'awaiting_result',
@@ -746,37 +759,19 @@ export class MemoryEventEngine implements MemoryModule {
     let skipped = 0;
 
     for (const candidate of options.candidates || []) {
-      const existing = active.find(
-        item =>
-          item.topicKey === candidate.topicKey &&
-          normalizeSubject(item.subjectRef) ===
-            normalizeSubject(candidate.subjectRef)
-      );
+      const summary = buildOpenItemSummary(candidate.quote);
+      // 同一件事只留一条。先比"同类同主体"，再比"两句话说的是不是同一件事"——
+      // 主体没提出来（模型没给 subjectRef）、或者同一件事换了说法时，光比前者会漏。
+      const existing =
+        active.find(
+          item =>
+            item.topicKey === candidate.topicKey &&
+            normalizeSubject(item.subjectRef) ===
+              normalizeSubject(candidate.subjectRef)
+        ) || active.find(item => isSameOpenItemMatter(summary, item.summary));
 
       if (existing) {
-        const sources = (existing.sourceMessageIds || []).map(
-          stringifyObjectId
-        );
-        if (sources.indexOf(candidate.messageId) === -1) {
-          existing.sourceMessageIds = [
-            ...(existing.sourceMessageIds || []),
-            toObjectId(candidate.messageId) || userId,
-          ];
-        }
-        if (existing.state !== candidate.state) {
-          existing.state = candidate.state;
-          existing.stateHistory = [
-            ...(existing.stateHistory || []),
-            {
-              state: candidate.state,
-              changedAt: now,
-              evidenceMessageId: toObjectId(candidate.messageId),
-              source: 'offline_extraction' as const,
-            },
-          ];
-        }
-        existing.updatedAt = now;
-        await this.itemModel.save(existing);
+        await this.mergeOpenItemCandidate(existing, candidate, now);
         updated += 1;
         continue;
       }
@@ -799,6 +794,18 @@ export class MemoryEventEngine implements MemoryModule {
         where: { fingerprint, engine: EVENT_MEMORY_ENGINE } as never,
       });
       if (duplicated) {
+        // 指纹相同就是同一件事，只是那一条已经了结或者过期了。
+        // 让它重新开工（状态历史里留一笔），而不是再长一条：
+        // 长出第二条就等于这件事有两份冷却，模型会把它反复端上来问。
+        const duplicatedIsActive =
+          OPEN_ITEM_ACTIVE_STATES.indexOf(duplicated.state) !== -1;
+        const canReopen =
+          isCalendar || active.length + created < MAX_ACTIVE_OPEN_ITEMS;
+        if (!duplicatedIsActive && canReopen) {
+          await this.mergeOpenItemCandidate(duplicated, candidate, now);
+          updated += 1;
+          continue;
+        }
         skipped += 1;
         continue;
       }
@@ -834,6 +841,43 @@ export class MemoryEventEngine implements MemoryModule {
     }
 
     return { created, updated, skipped };
+  }
+
+  /**
+   * 把新提取到的一句话并进已有条目：证据只追加，状态变了才写历史。
+   * 已经了结/过期的条目被重新提起时，等于这件事新开一轮：
+   * 提起次数清零（否则它带着上一轮的账，算不出"还没问过"），状态历史留痕。
+   */
+  private async mergeOpenItemCandidate(
+    item: MemoryOpenItemEntity,
+    candidate: OpenItemCandidate & { occurredAt: Date },
+    now: Date
+  ): Promise<void> {
+    const sources = (item.sourceMessageIds || []).map(stringifyObjectId);
+    if (sources.indexOf(candidate.messageId) === -1) {
+      item.sourceMessageIds = [
+        ...(item.sourceMessageIds || []),
+        toObjectId(candidate.messageId) || item.userId,
+      ];
+    }
+    if (item.state !== candidate.state) {
+      const wasActive = OPEN_ITEM_ACTIVE_STATES.indexOf(item.state) !== -1;
+      const nextActive =
+        OPEN_ITEM_ACTIVE_STATES.indexOf(candidate.state) !== -1;
+      item.state = candidate.state;
+      item.stateHistory = [
+        ...(item.stateHistory || []),
+        {
+          state: candidate.state,
+          changedAt: now,
+          evidenceMessageId: toObjectId(candidate.messageId),
+          source: 'offline_extraction' as const,
+        },
+      ];
+      if (!wasActive && nextActive) item.raisedCount = 0;
+    }
+    item.updatedAt = now;
+    await this.itemModel.save(item);
   }
 
   private async rebuild(

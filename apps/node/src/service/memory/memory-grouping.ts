@@ -76,22 +76,27 @@ export function buildGroupKey(options: {
   );
 }
 
-/** 未了结条目的稳定指纹：同一用户 + 同一话题 + 同一主体 + 同一时间片。 */
+/**
+ * 未了结条目的稳定指纹：同一用户 + 同一话题 + 同一主体，**不含日期**。
+ * 早先指纹里带了来源日期，于是"我刚做完手术"隔两天再说一次就成了第二条：
+ * 两条各有各的 3 天冷却，模型就会把同一件事反复端上来问。
+ * 日期是这件事什么时候说的，不是它是不是同一件事。
+ */
 export function buildOpenItemFingerprint(options: {
   engine: string;
   userId: string;
   topicKey: string;
   subjectRef?: string;
-  occurredAt: Date;
+  /** 兼容旧调用：不参与指纹。 */
+  occurredAt?: Date;
 }): string {
-  const day = options.occurredAt.toISOString().slice(0, 10);
+  void options.occurredAt;
   return hash(
     [
       options.engine,
       options.userId,
       options.topicKey,
       normalizeSubject(options.subjectRef) || '-',
-      day,
     ].join('|')
   );
 }

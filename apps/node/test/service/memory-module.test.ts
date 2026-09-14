@@ -19,6 +19,7 @@ import { MemoryModuleService } from '../../src/service/memory/memory-module.serv
 import {
   EVENT_GROUP_MAX_GAP_MS,
   buildGroupKey,
+  buildOpenItemFingerprint,
   resolveGroupAssignment,
 } from '../../src/service/memory/memory-grouping';
 import type {
@@ -222,6 +223,39 @@ describe('事件分组纯逻辑', () => {
       spanFrom: spanTo,
     };
     expect(buildGroupKey(input)).toBe(buildGroupKey(input));
+  });
+
+  it('未了结条目的指纹不含日期：隔几天再说是同一条', () => {
+    const base = {
+      engine: 'event_v1',
+      userId: USER_ID,
+      topicKey: '就医',
+      subjectRef: '爸爸',
+    };
+    expect(
+      buildOpenItemFingerprint({
+        ...base,
+        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+      })
+    ).toBe(
+      buildOpenItemFingerprint({
+        ...base,
+        occurredAt: new Date('2026-09-10T18:00:00.000Z'),
+      })
+    );
+    // 主体不同、话题不同，仍然是两件事
+    expect(
+      buildOpenItemFingerprint({
+        ...base,
+        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+      })
+    ).not.toBe(
+      buildOpenItemFingerprint({
+        ...base,
+        subjectRef: '妈妈',
+        occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+      })
+    );
   });
 });
 
@@ -1147,6 +1181,145 @@ describe('模型判定结果的写入', () => {
     expect(listed.items[0].stateHistory).toHaveLength(2);
   });
 
+  it('隔几天再说同一件事，还是同一条（指纹不带日期）', async () => {
+    const { engine, items } = buildEngine();
+    const first = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我刚做完手术，在家躺着',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(first.created).toBe(1);
+
+    const later = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我刚做完手术，在家躺着',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-10T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(later.updated).toBe(1);
+    expect(later.created).toBe(0);
+    expect(await items.count()).toBe(1);
+    const stored = (await items.find())[0] as unknown as {
+      sourceMessageIds: unknown[];
+    };
+    expect(stored.sourceMessageIds).toHaveLength(2);
+  });
+
+  it('同一天里换了说法、或者没带主体，也并成同一条', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '爸爸，我刚做完手术，在家躺着',
+          topicKey: '就医',
+          subjectRef: '爸爸',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const second = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我刚做完手术，在家躺着',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T12:00:00.000Z'),
+        },
+      ],
+    });
+    expect(second.updated).toBe(1);
+    expect(second.created).toBe(0);
+    expect(await items.count()).toBe(1);
+  });
+
+  it('已经了结的同一件事再被提起：重新开工，不新增条目', async () => {
+    const { engine, items } = buildEngine();
+    await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa1',
+          quote: '我下周要去医院复查',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-07T10:00:00.000Z'),
+        },
+      ],
+    });
+    const stored = (await items.find())[0] as unknown as { id: string };
+    await engine.updateOpenItem({
+      userId: USER_ID,
+      itemId: String(stored.id),
+      raised: true,
+      state: 'resolved',
+      source: 'user_request',
+      now: new Date('2026-09-08T10:00:00.000Z'),
+    });
+    expect(
+      ((await items.find())[0] as unknown as { state: string }).state
+    ).toBe('resolved');
+
+    const again = await engine.applyExtractedOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      candidates: [
+        {
+          messageId: 'aaaaaaaaaaaaaaaaaaaaaaa2',
+          quote: '我又要去医院复查了',
+          topicKey: '就医',
+          state: 'awaiting_result',
+          importance: 3,
+          occurredAt: new Date('2026-09-12T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(again.created).toBe(0);
+    expect(again.updated).toBe(1);
+    expect(await items.count()).toBe(1);
+    const reopened = (await items.find())[0] as unknown as {
+      state: string;
+      raisedCount: number;
+      stateHistory: unknown[];
+    };
+    expect(reopened.state).toBe('awaiting_result');
+    expect(reopened.raisedCount).toBe(0);
+    expect(reopened.stateHistory).toHaveLength(3);
+  });
+
   it('纪念日单独存放：不占待跟进清单的名额，也不出现在默认清单里', async () => {
     const { engine } = buildEngine();
     await engine.applyExtractedOpenItems({
@@ -1193,8 +1366,15 @@ describe('模型判定结果的写入', () => {
 
   it('每人最多 5 条活跃条目，超出丢弃', async () => {
     const { engine, items } = buildEngine();
-    const topics = ['就医', '身体', '学业', '工作', '居住', '钱财'] as const;
-    for (let index = 0; index < topics.length; index += 1) {
+    const matters = [
+      { topicKey: '就医', quote: '我下周要去医院复查' },
+      { topicKey: '身体', quote: '奶奶最近总说腰疼' },
+      { topicKey: '学业', quote: '下个月要交毕业论文' },
+      { topicKey: '工作', quote: '公司说过完年要给我调岗' },
+      { topicKey: '居住', quote: '房租到期了得找地方搬' },
+      { topicKey: '钱财', quote: '还差朋友一笔钱没还上' },
+    ] as const;
+    for (let index = 0; index < matters.length; index += 1) {
       await engine.applyExtractedOpenItems({
         userId: USER_ID,
         conversationId: CONVERSATION_ID,
@@ -1202,8 +1382,8 @@ describe('模型判定结果的写入', () => {
         candidates: [
           {
             messageId: `aaaaaaaaaaaaaaaaaaaaaa${index}b`,
-            quote: `第${index}件没完的事`,
-            topicKey: topics[index],
+            quote: matters[index].quote,
+            topicKey: matters[index].topicKey,
             state: 'awaiting_result',
             importance: 2,
             occurredAt: new Date(`2026-09-0${index + 1}T10:00:00.000Z`),

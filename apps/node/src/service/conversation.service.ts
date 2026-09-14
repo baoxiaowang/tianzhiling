@@ -150,7 +150,7 @@ import { UserIdentityMemoryService } from './agents/user-identity-memory.service
 import { isFactBearingUtterance } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
-import { matchRaisedOpenItem } from './memory/memory-return-turn';
+import { listRaisedOpenItems } from './memory/memory-return-turn';
 import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
 import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
@@ -6246,32 +6246,36 @@ export class ConversationService {
         conversationId: this.stringifyObjectId(options.runtime.conversation.id),
         agentId: this.stringifyObjectId(options.runtime.conversation.agentId),
       });
-      const matched = matchRaisedOpenItem({
+      const matchedItems = listRaisedOpenItems({
         replyText,
         items: listed.items || [],
       });
-      if (!matched) return;
+      if (!matchedItems.length) return;
 
       const lastMessage =
         options.assistantMessages[options.assistantMessages.length - 1];
-      await this.memoryModuleService.updateOpenItem({
-        userId,
-        itemId: matched.item.id,
-        raised: true,
-        evidenceMessageId: this.stringifyObjectId(lastMessage.id),
-        now: lastMessage.createdAt || new Date(),
-      });
-      this.chatTraceService?.recordCompletedSpan({
-        stage: ChatTraceStage.persistReply,
-        operation: 'memory.return_turn_raise',
-        startedAt: new Date(),
-        status: ChatSpanStatus.completed,
-        attributes: {
+      // 命中几条就记几条：同一件事要是被拆成了两条，只记最像的那一条时
+      // 另一条永远不算"问过"，下一轮又被端上来问。
+      for (const matched of matchedItems) {
+        await this.memoryModuleService.updateOpenItem({
+          userId,
           itemId: matched.item.id,
-          topicKey: matched.item.topicKey,
-          score: Number(matched.score.toFixed(3)),
-        },
-      });
+          raised: true,
+          evidenceMessageId: this.stringifyObjectId(lastMessage.id),
+          now: lastMessage.createdAt || new Date(),
+        });
+        this.chatTraceService?.recordCompletedSpan({
+          stage: ChatTraceStage.persistReply,
+          operation: 'memory.return_turn_raise',
+          startedAt: new Date(),
+          status: ChatSpanStatus.completed,
+          attributes: {
+            itemId: matched.item.id,
+            topicKey: matched.item.topicKey,
+            score: Number(matched.score.toFixed(3)),
+          },
+        });
+      }
     } catch (error) {
       this.logger?.warn?.(
         '[memory] return turn raise accounting skipped, conversationId=%s reason=%s',

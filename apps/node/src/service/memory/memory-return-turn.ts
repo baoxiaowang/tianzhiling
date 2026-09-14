@@ -294,7 +294,49 @@ export function scoreOpenItemMention(
 }
 
 /**
- * 这一轮回复到底提了哪一条（最多一条）。
+ * 两条清单算不算"同一件事"的门槛（也用于写入侧合并条目）。
+ * 换个说法、少了个称呼都算同一件；只是恰好都提了"复查"这种同一个词不算。
+ */
+export const SAME_MATTER_MENTION_SCORE = 0.8;
+
+/**
+ * 这一轮回复提到了哪几条清单。主条按 0.5 的老阈值选出来；
+ * 其余的只有"跟主条本来就是同一件事"（几乎原文撞上）才一起记账——
+ * 一句话里出现两个字的词太容易巧合（"复查""手术"这种词谁都可能说），
+ * 不能拿来给一堆不同的条目记"已经问过"，否则它们会一起进 3 天冷却，
+ * 反而该问的都不问了。
+ * 早先只记最像的那一条：同一件事被拆成两条时，另一条永远不算"问过"，
+ * 下一轮又被端上来问一遍。
+ */
+export function listRaisedOpenItems(options: {
+  replyText: string;
+  items: MemoryOpenItemView[];
+  minScore?: number;
+  sameMatterScore?: number;
+  limit?: number;
+}): Array<{ item: MemoryOpenItemView; score: number }> {
+  const minScore = options.minScore ?? 0.5;
+  const sameMatterScore = options.sameMatterScore ?? SAME_MATTER_MENTION_SCORE;
+  const limit = options.limit ?? 3;
+  const scored = (options.items || []).map(item => ({
+    item,
+    score: scoreOpenItemMention(options.replyText, item.summary),
+  }));
+  const matched = scored.filter(entry => entry.score >= minScore);
+  if (!matched.length) return [];
+  matched.sort((left, right) => right.score - left.score);
+  const primary = matched[0];
+  const rest = matched.filter(
+    entry =>
+      entry.item.id !== primary.item.id &&
+      scoreOpenItemMention(primary.item.summary, entry.item.summary) >=
+        sameMatterScore
+  );
+  return [primary, ...rest].slice(0, limit);
+}
+
+/**
+ * 这一轮回复到底提了哪一条（最像的一条）。
  * 阈值刻意偏高：宁可少记一次，也不要把无关的话记成"已经问过"，
  * 否则以后该问的就不问了。
  */
@@ -303,14 +345,7 @@ export function matchRaisedOpenItem(options: {
   items: MemoryOpenItemView[];
   minScore?: number;
 }): { item: MemoryOpenItemView; score: number } | undefined {
-  const minScore = options.minScore ?? 0.5;
-  let best: { item: MemoryOpenItemView; score: number } | undefined;
-  for (const item of options.items || []) {
-    const score = scoreOpenItemMention(options.replyText, item.summary);
-    if (score < minScore) continue;
-    if (!best || score > best.score) best = { item, score };
-  }
-  return best;
+  return listRaisedOpenItems({ ...options, limit: 1 })[0];
 }
 
 /**

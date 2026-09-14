@@ -3,6 +3,7 @@ import { MongoObjectId } from '@tzl/entities';
 import {
   buildElapsedFeelingInstruction,
   buildReturnTurnMaterialPrompt,
+  listRaisedOpenItems,
   matchRaisedOpenItem,
   scoreOpenItemMention,
   resolveReturnTurnHistoryLimit,
@@ -306,6 +307,30 @@ describe('回复里提到了哪一条（提问记账）', () => {
     });
     expect(matched?.item.id).toBe('target');
     expect(matched?.score).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('同一件事被拆成两条时，两条都记"问过"（不能只记最像的一条）', () => {
+    const matched = listRaisedOpenItems({
+      replyText: '手术还顺利吗？',
+      items: [
+        item({ id: 'a', summary: '爸爸，我刚做完手术，在家躺着' }),
+        item({ id: 'b', summary: '我刚做完手术，在家躺着' }),
+        item({ id: 'c', summary: '我下周要去医院复查' }),
+      ],
+    });
+    expect(matched.map(entry => entry.item.id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('顺带记账有更高门槛：只共有一个词不算（否则一堆条目一起进冷却）', () => {
+    const matched = listRaisedOpenItems({
+      replyText: '明天记得去复查，别耽误了',
+      items: [
+        item({ id: 'a', summary: '明天儿子要去复查' }),
+        item({ id: 'b', summary: '我下周也要复查' }),
+        item({ id: 'c', summary: '复查单子记得带' }),
+      ],
+    });
+    expect(matched.map(entry => entry.item.id)).toEqual(['a']);
   });
 
   it('都不像就不记（宁可少记，也不要把无关的话记成问过）', () => {
