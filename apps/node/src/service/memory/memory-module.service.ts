@@ -288,6 +288,9 @@ export class MemoryModuleService {
         LEGACY_MEMORY_ENGINE
       ),
       scope: {
+        all:
+          process.env.NODE_MEMORY_MODULE_SCOPE === 'all' &&
+          readMode(process.env.NODE_MEMORY_MODULE_MODE) !== 'off',
         userIds: (process.env.NODE_MEMORY_MODULE_USER_IDS || '')
           .split(',')
           .map(value => value.trim().toLowerCase())
@@ -306,6 +309,8 @@ export class MemoryModuleService {
 
   private inScope(config: MemorySwitchConfig, userId?: string): boolean {
     if (config.mode === 'off') return false;
+    // 全量开启：NODE_MEMORY_MODULE_SCOPE=all 时不再看名单（真实流量验证用）。
+    if (config.scope.all) return true;
     const id = String(userId || '').toLowerCase();
     if (!/^[a-f0-9]{24}$/.test(id)) return false;
     // 空名单 = 关闭：绝不因为配置缺失而对全部用户开启。

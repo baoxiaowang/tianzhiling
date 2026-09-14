@@ -455,6 +455,7 @@ describe('事件组合引擎', () => {
 
 describe('记忆模块门面', () => {
   const envKeys = [
+    'NODE_MEMORY_MODULE_SCOPE',
     'NODE_MEMORY_MODULE_MODE',
     'NODE_MEMORY_MODULE_PRIMARY',
     'NODE_MEMORY_MODULE_RECALL_ENGINE',
@@ -566,6 +567,37 @@ describe('记忆模块门面', () => {
       agentId: AGENT_ID,
     });
     expect(eventList).toHaveBeenCalled();
+  });
+
+  it('SCOPE=all 时对全部用户生效（真实流量验证）', async () => {
+    process.env.NODE_MEMORY_MODULE_MODE = 'active';
+    process.env.NODE_MEMORY_MODULE_SCOPE = 'all';
+    process.env.NODE_MEMORY_MODULE_PRIMARY = 'event_v1';
+    const eventList = jest.fn().mockResolvedValue({
+      items: [],
+      status: 'empty',
+      diagnostics: { engine: 'event_v1', total: 0 },
+    });
+    const service = buildService({
+      legacy: {},
+      event: { listOpenItems: eventList },
+    });
+
+    const selection = service.describeSelection(USER_ID);
+    expect(selection.mode).toBe('active');
+    await service.listOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+    });
+    expect(eventList).toHaveBeenCalled();
+  });
+
+  it('SCOPE=all 但 MODE=off 时仍然不动', () => {
+    process.env.NODE_MEMORY_MODULE_MODE = 'off';
+    process.env.NODE_MEMORY_MODULE_SCOPE = 'all';
+    const service = buildService({ legacy: {}, event: {} });
+    expect(service.describeSelection(USER_ID).mode).toBe('off');
   });
 
   it('名单外用户即使配置了也不生效', async () => {

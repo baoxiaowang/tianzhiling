@@ -224,6 +224,8 @@ export interface MemorySwitchConfig {
   recallEngine: string;
   shadow?: string;
   scope: {
+    /** 全量开启（真实流量验证用）；为 false 时只看 userIds，空名单即关闭。 */
+    all: boolean;
     userIds: string[];
     cohortSha256?: string;
   };
