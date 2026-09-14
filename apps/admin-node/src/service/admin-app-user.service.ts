@@ -1061,7 +1061,7 @@ export class AdminAppUserService {
         mediaMimeType: payload?.mediaMimeType,
       }),
     });
-    const result = (await response.json().catch(() => null)) as {
+    const responseBody = (await response.json().catch(() => null)) as {
       ok?: boolean;
       error?: string;
       result?: {
@@ -1074,7 +1074,18 @@ export class AdminAppUserService {
         mediaMimeType?: string;
         createdAt: string;
       };
+      // node 端全局响应信封：{ success, code, message, data, timestamp }
+      success?: boolean;
+      data?: unknown;
     } | null;
+    // 业务结果位于信封的 data 字段内，先解包再判断；兼容未包装的裸结构
+    const result =
+      responseBody &&
+      typeof responseBody.data === 'object' &&
+      responseBody.data !== null &&
+      'ok' in responseBody.data
+        ? (responseBody.data as typeof responseBody)
+        : responseBody;
 
     if (!response.ok || !result?.ok || !result.result) {
       throw new AppError(

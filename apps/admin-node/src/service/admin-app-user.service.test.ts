@@ -811,13 +811,18 @@ describe('AdminAppUserService', () => {
         ok: true,
         status: 200,
         json: async () => ({
-          ok: true,
-          result: {
-            conversationId: 'conv-1',
-            messageId: 'msg-1',
-            type: 'text',
-            content: '你好',
-            createdAt: '2026-09-14T00:00:00.000Z',
+          success: true,
+          code: 'OK',
+          message: 'OK',
+          data: {
+            ok: true,
+            result: {
+              conversationId: 'conv-1',
+              messageId: 'msg-1',
+              type: 'text',
+              content: '你好',
+              createdAt: '2026-09-14T00:00:00.000Z',
+            },
           },
         }),
       });
@@ -850,6 +855,35 @@ describe('AdminAppUserService', () => {
           { type: 'text' }
         )
       ).rejects.toThrow('content is required');
+    });
+
+    it('propagates the node error from the response envelope', async () => {
+      const service = createService();
+      const userId = new MongoObjectId().toHexString();
+      const agentId = new MongoObjectId().toHexString();
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: new MongoObjectId(agentId),
+        createdUserId: new MongoObjectId(userId),
+        messengerOfAgentId: new MongoObjectId(),
+      });
+      process.env.INTERNAL_API_SECRET = 'test-secret';
+      (global as { fetch?: unknown }).fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          code: 'OK',
+          message: 'OK',
+          data: { ok: false, error: 'messenger agent not found' },
+        }),
+      });
+
+      await expect(
+        service.sendMessengerMessage(userId, agentId, {
+          type: 'text',
+          content: '你好',
+        })
+      ).rejects.toThrow('messenger agent not found');
     });
   });
 });
