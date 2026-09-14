@@ -771,6 +771,15 @@ describe('ConversationService generateMemorialPhoto', () => {
       agent: createAgent({ name: '外婆' }),
     });
 
+    (
+      service.bailianImageService.generateMemorialPhoto as jest.Mock
+    ).mockResolvedValueOnce({
+      imageUrl: '',
+      imageBuffer: Buffer.from('memorial-image'),
+      mimeType: 'image/png',
+      contentId: 'tzl-memorial-test-id',
+    });
+
     (service.tencentCosService.getPublicUrl as jest.Mock).mockImplementation(
       (objectKey: string) => `https://cdn.example.com/${objectKey}`
     );
@@ -798,7 +807,9 @@ describe('ConversationService generateMemorialPhoto', () => {
       Buffer.from('memorial-image'),
       expect.objectContaining({
         folder: 'memorial-photos',
-        fileName: expect.stringMatching(/^memorial-photo-\d+\.png$/),
+        fileName: expect.stringMatching(
+          /^memorial-photo-\d+-tzl-memorial-test-id\.png$/
+        ),
         contentType: 'image/png',
       })
     );

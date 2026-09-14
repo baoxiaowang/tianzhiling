@@ -24,6 +24,7 @@
     "cos-nodejs-sdk-v5": "^2.15.4",
     "mongodb": "^7.1.0",
     "openai": "^6.33.0",
+    "sharp": "^0.35.4",
     "typeorm": "~0.3.0",
     "wechatpay-axios-plugin": "0.8.13"
   },

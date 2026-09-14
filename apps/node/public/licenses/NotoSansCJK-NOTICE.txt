@@ -1,0 +1,7 @@
+The four embedded glyph outlines (A, I, 生, 成) in ai-content-label.service.ts
+are derived from Noto Sans CJK SC Regular Version 2.004.
+Copyright 2014-2021 Adobe (http://www.adobe.com/).
+Noto is a trademark of Google Inc.
+Source: https://github.com/notofonts/noto-cjk/tree/main/Sans
+Licensed under SIL Open Font License 1.1; see NotoSansCJK-OFL.txt.
+The full font is not required or distributed in the runtime image.

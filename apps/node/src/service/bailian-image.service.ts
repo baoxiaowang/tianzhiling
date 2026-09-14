@@ -1,4 +1,4 @@
-import { Config, Logger, Provide } from '@midwayjs/core';
+import { Config, Inject, Logger, Provide } from '@midwayjs/core';
 import type { ILogger } from '@midwayjs/logger';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
@@ -8,6 +8,7 @@ import {
   buildMemorialPhotoPrompt,
   normalizeMemorialPhotoCustomPrompt,
 } from '../prompt/memorial-photo';
+import { AiContentLabelService } from './ai-content-label.service';
 
 interface BailianImageConfig {
   enabled?: boolean;
@@ -44,6 +45,7 @@ export interface BailianMemorialPhotoInput {
 }
 
 export interface BailianMemorialPhotoResult {
+  contentId?: string;
   imageUrl: string;
   imageBuffer: Buffer;
   mimeType: string;
@@ -57,6 +59,9 @@ export class BailianImageService {
 
   @Config('bailianImage')
   config: BailianImageConfig;
+
+  @Inject()
+  aiContentLabelService: AiContentLabelService;
 
   async generateMemorialPhoto(
     input: BailianMemorialPhotoInput
@@ -80,6 +85,7 @@ export class BailianImageService {
     }
 
     this.ensureEnabled();
+    this.aiContentLabelService.assertEnabled();
 
     const model = this.config?.model?.trim() || 'wan2.7-image-pro';
     const body = Buffer.from(
@@ -128,16 +134,37 @@ export class BailianImageService {
     });
     const imageUrl = this.extractGeneratedImageUrl(response);
     const downloaded = await this.downloadImage(imageUrl);
+    const mimeType = this.resolveImageMimeType(
+      downloaded.headers['content-type'],
+      imageUrl
+    );
+    const requestId =
+      response.requestId?.trim() || response.request_id?.trim() || undefined;
+    const contentId = this.aiContentLabelService.buildContentId(requestId);
+    const labeled = await this.aiContentLabelService.applyContentLabel({
+      buffer: downloaded.body,
+      mimeType,
+      modelName: model,
+      contentId,
+      createdAt: new Date(),
+    });
+
+    if (labeled.labeled) {
+      this.logger.info(
+        '[bailian-image] ai content label applied, requestId=%s, model=%s, contentId=%s',
+        requestId || 'n/a',
+        model,
+        contentId
+      );
+    }
 
     return {
-      imageUrl,
-      imageBuffer: downloaded.body,
-      mimeType: this.resolveImageMimeType(
-        downloaded.headers['content-type'],
-        imageUrl
-      ),
-      requestId:
-        response.requestId?.trim() || response.request_id?.trim() || undefined,
+      // Only the stored, labeled object may be used downstream.
+      imageUrl: '',
+      imageBuffer: labeled.buffer,
+      mimeType: labeled.mimeType,
+      contentId,
+      requestId,
     };
   }
 

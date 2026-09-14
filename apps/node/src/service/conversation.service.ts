@@ -2794,7 +2794,11 @@ export class ConversationService {
       generatedPhoto.imageBuffer,
       {
         folder: 'memorial-photos',
-        fileName: this.buildMemorialPhotoFileName(generatedPhoto.mimeType, now),
+        fileName: this.buildMemorialPhotoFileName(
+          generatedPhoto.mimeType,
+          now,
+          generatedPhoto.contentId
+        ),
         contentType: generatedPhoto.mimeType,
       }
     );
@@ -8832,9 +8836,14 @@ export class ConversationService {
 
   private buildMemorialPhotoFileName(
     mimeType: string,
-    createdAt: Date
+    createdAt: Date,
+    contentId?: string
   ): string {
-    return `memorial-photo-${createdAt.getTime()}${this.resolveImageExtension(
+    const identifier =
+      contentId && /^[a-zA-Z0-9_-]{1,180}$/.test(contentId)
+        ? `-${contentId}`
+        : '';
+    return `memorial-photo-${createdAt.getTime()}${identifier}${this.resolveImageExtension(
       mimeType
     )}`;
   }

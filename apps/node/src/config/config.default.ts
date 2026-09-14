@@ -647,6 +647,13 @@ export default {
       180000
     ),
   },
+  aiContentLabel: {
+    enabled: readBooleanFrom(['NODE_AI_CONTENT_LABEL_ENABLED'], true),
+    providerName: readStringFrom(
+      ['NODE_AI_CONTENT_LABEL_PROVIDER'],
+      '武汉市天之灵智能技术有限公司'
+    ),
+  },
   milvus: {
     enabled: readBooleanFrom(['NODE_MILVUS_ENABLED'], false),
     address: readStringFrom(
