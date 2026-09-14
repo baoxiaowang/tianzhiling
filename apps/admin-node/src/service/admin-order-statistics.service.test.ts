@@ -121,6 +121,105 @@ describe('AdminOrderStatisticsService', () => {
     jest.useRealTimers();
   });
 
+  it('月度净额按当月已付款减当月退款（含已退款/退款申请中订单，与仪表盘同口径）', async () => {
+    const service = new AdminOrderStatisticsService();
+    service.snapshotModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      updateOne: jest.fn().mockResolvedValue({}),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          {
+            _id: { toString: () => 'completed-1' },
+            orderNo: 'A',
+            createdAt: new Date('2026-09-02T04:00:00.000Z'),
+            paidAt: new Date('2026-09-02T04:00:00.000Z'),
+            targetCode: 'vip_year',
+            paidAmount: 10000,
+            status: OrderStatus.completed,
+            source: 'wechat',
+            paymentProvider: 'wechat_pay',
+            user: { name: '甲' },
+            agents: [],
+            interactionCount: 0,
+          },
+          {
+            _id: { toString: () => 'refunded-1' },
+            orderNo: 'B',
+            createdAt: new Date('2026-09-03T04:00:00.000Z'),
+            paidAt: new Date('2026-09-03T04:00:00.000Z'),
+            targetCode: 'vip_year',
+            paidAmount: 16900,
+            refundAmount: 16900,
+            status: OrderStatus.refunded,
+            source: 'wechat',
+            paymentProvider: 'wechat_pay',
+            user: { name: '乙' },
+            agents: [],
+            interactionCount: 0,
+          },
+          {
+            _id: { toString: () => 'requested-1' },
+            orderNo: 'C',
+            createdAt: new Date('2026-09-04T04:00:00.000Z'),
+            paidAt: new Date('2026-09-04T04:00:00.000Z'),
+            targetCode: 'vip_year',
+            paidAmount: 9900,
+            status: 'refund_requested',
+            source: 'wechat',
+            paymentProvider: 'wechat_pay',
+            user: { name: '丙' },
+            agents: [],
+            interactionCount: 0,
+          },
+          {
+            _id: { toString: () => 'admin-1' },
+            orderNo: 'D',
+            createdAt: new Date('2026-09-05T04:00:00.000Z'),
+            paidAt: new Date('2026-09-05T04:00:00.000Z'),
+            targetCode: 'vip_year',
+            paidAmount: 50000,
+            status: OrderStatus.completed,
+            source: 'admin',
+            paymentProvider: 'admin_manual',
+            user: { name: '丁' },
+            agents: [],
+            interactionCount: 0,
+          },
+        ])
+      ),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() =>
+        aggregateResult([
+          {
+            _id: { toString: () => 'refund-1' },
+            refundNo: 'R1',
+            originalOrderNo: 'B',
+            requestedAt: new Date('2026-09-03T04:00:00.000Z'),
+            completedAt: new Date('2026-09-03T05:00:00.000Z'),
+            refundType: OrderRefundType.voiceMembershipFinalRefund,
+            amount: 16900,
+            status: OrderRefundStatus.completed,
+            source: 'wechat',
+            paymentProvider: 'wechat_pay',
+            targetCode: 'vip_year',
+            user: { name: '乙' },
+          },
+        ])
+      ),
+    } as never;
+
+    const result = await service.getMonthlyReport('2026-09', true);
+
+    // 有效订单只有 A（100 元）；B/C 因非 completed 被剔除，D 为管理端手动单
+    expect(result.totals.validAmount).toBe(100);
+    expect(result.totals.refundedAmount).toBe(169);
+    // 净额 = (100 + 169 + 99 − 管理端 500) − 169 = 199
+    expect(result.totals.netAmount).toBe(199);
+  });
+
   it('历史月份命中已保存快照时不重复扫描订单', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-06T12:00:00.000Z'));
     const service = new AdminOrderStatisticsService();

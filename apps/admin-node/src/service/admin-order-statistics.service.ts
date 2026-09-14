@@ -18,7 +18,7 @@ import { MongoRepository } from 'typeorm';
 
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const CURRENT_MONTH_TTL_MS = 5 * 60 * 1000;
-export const CALCULATION_VERSION = 6;
+export const CALCULATION_VERSION = 7;
 
 type RawMonthlyOrder = {
   _id: { toString(): string };
@@ -51,7 +51,6 @@ type RawMonthlyRefund = {
   _id: { toString(): string };
   refundNo?: string;
   originalOrderNo?: string;
-  originalOrderPaidAt?: Date;
   requestedAt?: Date;
   completedAt?: Date;
   refundType?: string;
@@ -108,9 +107,10 @@ export class AdminOrderStatisticsService {
     const monthIndex = Number(monthText) - 1;
     const start = new Date(Date.UTC(year, monthIndex, 1) - BEIJING_OFFSET_MS);
     const end = new Date(Date.UTC(year, monthIndex + 1, 1) - BEIJING_OFFSET_MS);
-    const [rows, refundRows] = await Promise.all([
+    const [rows, refundRows, legacyRefundAmount] = await Promise.all([
       this.loadMonthlyOrders(start, end),
       this.loadMonthlyRefunds(start, end),
+      this.loadMonthlyLegacyRefundAmount(start, end),
     ]);
     const records = rows.map(row => this.toRecord(row));
     const refundOrders = refundRows.map(row => this.toRefundRecord(row));
@@ -120,15 +120,25 @@ export class AdminOrderStatisticsService {
     const abnormalOrders = records.filter(
       record => record.abnormalTypes.length > 0
     );
-    // 月度净额 = 当月有效订单净额 - 本月之前付款的订单在本月的退款
-    // （当月付款订单的退款已在 validOrders.amount 中扣除，不重复减）
-    const priorOrderRefundAmount = refundRows
-      .filter(row => {
-        const paidAt = row.originalOrderPaidAt;
-        if (!paidAt) return true; // 查不到原订单的，按非当月付款处理
-        return new Date(paidAt).getTime() < start.getTime();
-      })
-      .reduce((sum, row) => sum + (Number(row.amount) || 0) / 100, 0);
+    // 月度净额与仪表盘「本月收入」同口径：当月已付款总额（排除 voice_one、
+    // 管理端手动单，不限订单状态）− 当月已完成退款（order_refund + 旧退款路径）。
+    // 不能再按「有效订单 − 上月及更早订单本月退款」计算：订单稍后退款会被
+    // 从付款月剔除，且退款完成月又扣一次，导致重复扣减/漏计。
+    const netPaidAmount = rows
+      .filter(
+        row => row.source !== 'admin' && row.paymentProvider !== 'admin_manual'
+      )
+      .reduce(
+        (sum, row) => sum + (Number(row.paidAmount ?? row.payableAmount) || 0),
+        0
+      );
+    const netRefundAmount = refundRows.reduce(
+      (sum, row) => sum + (Number(row.amount) || 0),
+      0
+    );
+    const netAmount = this.roundMoney(
+      (netPaidAmount - netRefundAmount - legacyRefundAmount) / 100
+    );
     const validOrderAmount = validOrders.reduce(
       (sum, order) => sum + order.amount,
       0
@@ -151,7 +161,7 @@ export class AdminOrderStatisticsService {
         refundedAmount: this.roundMoney(
           refundOrders.reduce((sum, refund) => sum + refund.amount, 0)
         ),
-        netAmount: this.roundMoney(validOrderAmount - priorOrderRefundAmount),
+        netAmount,
       },
       validOrders,
       abnormalOrders,
@@ -308,18 +318,9 @@ export class AdminOrderStatisticsService {
           },
         },
         {
-          $lookup: {
-            from: TableName.order,
-            localField: 'originalOrderId',
-            foreignField: '_id',
-            as: 'originalOrderRows',
-          },
-        },
-        {
           $project: {
             refundNo: 1,
             originalOrderNo: 1,
-            originalOrderPaidAt: { $arrayElemAt: ['$originalOrderRows.paidAt', 0] },
             requestedAt: 1,
             completedAt: 1,
             refundType: 1,
@@ -333,6 +334,66 @@ export class AdminOrderStatisticsService {
         },
       ])
       .toArray();
+  }
+
+  /**
+   * 旧退款路径：订单文档上直接记录 `refundAmount`（无独立 order_refund 记录）
+   * 且退款时间在本月的冲抵金额（分）。口径与仪表盘
+   * `aggregateLegacyDailyRefundAmounts` 保持一致。
+   */
+  private async loadMonthlyLegacyRefundAmount(
+    start: Date,
+    end: Date
+  ): Promise<number> {
+    const rows = await this.orderModel
+      .aggregate<{ amount: number }>([
+        {
+          $match: {
+            targetCode: { $ne: 'voice_one' },
+            source: { $ne: 'admin' },
+            paymentProvider: { $ne: 'admin_manual' },
+            $or: [
+              { refundedAt: { $gte: start, $lt: end } },
+              {
+                status: 'refunded',
+                refundedAt: null,
+                updatedAt: { $gte: start, $lt: end },
+              },
+              {
+                status: 'completed',
+                refundAmount: { $gt: 0 },
+                refundedAt: null,
+                updatedAt: { $gte: start, $lt: end },
+              },
+            ],
+          },
+        },
+        {
+          $lookup: {
+            from: TableName.order_refund,
+            localField: '_id',
+            foreignField: 'originalOrderId',
+            as: 'independentRefundOrders',
+          },
+        },
+        { $match: { 'independentRefundOrders.0': { $exists: false } } },
+        {
+          $group: {
+            _id: null,
+            amount: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $ifNull: ['$refundAmount', 0] }, 0] },
+                  '$refundAmount',
+                  '$payableAmount',
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .toArray();
+    return Number(rows[0]?.amount) || 0;
   }
 
   private toRefundRecord(row: RawMonthlyRefund): AdminMonthlyRefundRecordDTO {

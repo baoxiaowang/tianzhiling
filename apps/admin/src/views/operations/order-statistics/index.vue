@@ -50,7 +50,7 @@
         <article
           ><span>月度净额</span
           ><strong>{{ formatMoney(report?.totals.netAmount) }}</strong
-          ><small>有效订单金额 − 当月退款</small></article
+          ><small>当月已付款 − 当月退款（同「本月收入」）</small></article
         >
       </div>
 
