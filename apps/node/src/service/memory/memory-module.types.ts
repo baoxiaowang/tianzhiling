@@ -218,7 +218,10 @@ export interface MemoryModule {
 
 export interface MemorySwitchConfig {
   mode: MemorySwitchMode;
+  /** 生效引擎：未了结清单、写入、维护走它。 */
   primary: string;
+  /** 检索引擎：默认旧引擎，独立配置，避免开启新模块时换掉召回。 */
+  recallEngine: string;
   shadow?: string;
   scope: {
     userIds: string[];

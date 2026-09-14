@@ -457,6 +457,7 @@ describe('记忆模块门面', () => {
   const envKeys = [
     'NODE_MEMORY_MODULE_MODE',
     'NODE_MEMORY_MODULE_PRIMARY',
+    'NODE_MEMORY_MODULE_RECALL_ENGINE',
     'NODE_MEMORY_MODULE_SHADOW',
     'NODE_MEMORY_MODULE_USER_IDS',
   ];
@@ -518,6 +519,53 @@ describe('记忆模块门面', () => {
     expect(result.diagnostics.skipReason).toBe('module_off');
     expect(legacyRecall).not.toHaveBeenCalled();
     expect(eventRecall).not.toHaveBeenCalled();
+  });
+
+  it('检索与未了结清单分开选引擎：开启新模块不会顺带换掉召回', async () => {
+    process.env.NODE_MEMORY_MODULE_MODE = 'active';
+    // 未了结清单走新引擎，检索仍然走旧引擎（默认）
+    process.env.NODE_MEMORY_MODULE_PRIMARY = 'event_v1';
+    process.env.NODE_MEMORY_MODULE_USER_IDS = USER_ID;
+
+    const legacyRecall = jest.fn().mockResolvedValue({
+      evidence: [],
+      status: 'ok',
+      diagnostics: {
+        engine: 'legacy_v1',
+        mode: 'active',
+        candidateCount: 1,
+        selectedCount: 0,
+      },
+    });
+    const eventRecall = jest.fn();
+    const eventList = jest.fn().mockResolvedValue({
+      items: [],
+      status: 'empty',
+      diagnostics: { engine: 'event_v1', total: 0 },
+    });
+    const service = buildService({
+      legacy: { recall: legacyRecall },
+      event: { recall: eventRecall, listOpenItems: eventList },
+    });
+
+    const recalled = await service.recall({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+      currentUserText: '爸爸，大儿今天没忍住又抽烟了',
+      currentTurnMessageIds: [],
+      limit: 5,
+    });
+    expect(recalled.diagnostics.engine).toBe('legacy_v1');
+    expect(legacyRecall).toHaveBeenCalled();
+    expect(eventRecall).not.toHaveBeenCalled();
+
+    await service.listOpenItems({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      agentId: AGENT_ID,
+    });
+    expect(eventList).toHaveBeenCalled();
   });
 
   it('名单外用户即使配置了也不生效', async () => {
@@ -621,6 +669,7 @@ describe('记忆模块门面', () => {
   it('引擎报错时降级为空证据，不把异常抛给回复链路', async () => {
     process.env.NODE_MEMORY_MODULE_MODE = 'active';
     process.env.NODE_MEMORY_MODULE_PRIMARY = 'event_v1';
+    process.env.NODE_MEMORY_MODULE_RECALL_ENGINE = 'event_v1';
     process.env.NODE_MEMORY_MODULE_USER_IDS = USER_ID;
     const service = buildService({
       legacy: {},

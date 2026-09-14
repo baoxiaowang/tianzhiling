@@ -25,7 +25,10 @@ import type {
 
 export interface MemoryModuleSelection {
   mode: MemorySwitchMode;
+  /** 生效引擎：未了结清单、写入、维护走它。 */
   primary: string;
+  /** 检索引擎：默认仍旧是旧引擎，避免开启新模块时顺带换掉召回质量。 */
+  recallEngine: string;
   shadow?: string;
   /** 配置里声明的生效名单，便于诊断"为什么这轮没走新引擎"。 */
   scopedUserIds: number;
@@ -62,6 +65,7 @@ export class MemoryModuleService {
     return {
       mode: scoped ? config.mode : 'off',
       primary: config.primary,
+      recallEngine: config.recallEngine,
       ...(config.shadow ? { shadow: config.shadow } : {}),
       scopedUserIds: config.scope.userIds.length,
     };
@@ -119,7 +123,9 @@ export class MemoryModuleService {
       };
     }
 
-    const primary = this.resolveEngine(selection.primary) || this.legacyEngine;
+    // 检索单独走 recallEngine：默认旧引擎，开启新模块不会顺带把召回换成窄得多的事件引擎。
+    const primary =
+      this.resolveEngine(selection.recallEngine) || this.legacyEngine;
     const shadow =
       selection.mode === 'shadow'
         ? this.resolveEngine(selection.shadow)
@@ -277,6 +283,10 @@ export class MemoryModuleService {
       mode,
       primary,
       ...(shadow && shadow !== primary ? { shadow } : {}),
+      recallEngine: readEngineName(
+        process.env.NODE_MEMORY_MODULE_RECALL_ENGINE,
+        LEGACY_MEMORY_ENGINE
+      ),
       scope: {
         userIds: (process.env.NODE_MEMORY_MODULE_USER_IDS || '')
           .split(',')
