@@ -11,9 +11,9 @@
           v-model="month"
           value-format="YYYY-MM"
           :allow-clear="false"
-          @change="fetchData"
+          @change="handleMonthChange"
         />
-        <a-button :loading="loading" @click="fetchData">刷新</a-button>
+        <a-button :loading="loading" @click="refreshData">刷新</a-button>
       </a-space>
     </header>
 
@@ -155,16 +155,35 @@
     }))
   );
 
-  const fetchData = async () => {
+  const fetchData = async (options?: {
+    refresh?: boolean;
+  }): Promise<boolean> => {
     try {
       loading.value = true;
-      const { data } = await queryOperationsReport(month.value);
+      const { data } = await queryOperationsReport(
+        month.value,
+        options?.refresh ? { refresh: true } : undefined
+      );
       report.value = data;
       router.replace({ query: { month: month.value } });
+      return true;
     } catch (error) {
       Message.error('每日数据明细加载失败');
+      return false;
     } finally {
       loading.value = false;
+    }
+  };
+
+  const handleMonthChange = () => {
+    fetchData();
+  };
+
+  // 手动刷新：绕过后端 30 分钟缓存并重算最近汇总
+  const refreshData = async () => {
+    const refreshed = await fetchData({ refresh: true });
+    if (refreshed) {
+      Message.success('数据已刷新');
     }
   };
 

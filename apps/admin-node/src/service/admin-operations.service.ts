@@ -565,7 +565,10 @@ export class AdminOperationsService {
     return this.roundMoney(parsed);
   }
 
-  async getReport(month?: string): Promise<AdminOperationsReportDTO> {
+  async getReport(
+    month?: string,
+    options?: { refresh?: boolean }
+  ): Promise<AdminOperationsReportDTO> {
     const now = new Date();
     const beijingNow = new Date(now.getTime() + BEIJING_OFFSET_MS);
     const currentMonth = `${beijingNow.getUTCFullYear()}-${String(
@@ -574,9 +577,14 @@ export class AdminOperationsService {
     const normalizedMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? '')
       ? (month as string)
       : currentMonth;
-    const cached = reportCache.get(normalizedMonth);
-    if (cached && cached.expiresAt > now.getTime()) {
-      return cached.value;
+    if (options?.refresh) {
+      // 手动刷新：绕过 30 分钟缓存并重算最近汇总，立即读取最新数据。
+      await this.refreshReportData(normalizedMonth);
+    } else {
+      const cached = reportCache.get(normalizedMonth);
+      if (cached && cached.expiresAt > now.getTime()) {
+        return cached.value;
+      }
     }
     const [yearText, monthText] = normalizedMonth.split('-');
     const year = Number(yearText);
@@ -695,6 +703,32 @@ export class AdminOperationsService {
       value: result,
     });
     return result;
+  }
+
+  /**
+   * 手动刷新仪表盘数据：清空报表相关缓存，并重算今天/昨天的每日汇总，
+   * 使管理端点击“刷新”后立即看到最新数据，而不必等待 30 分钟定时任务。
+   */
+  private async refreshReportData(month: string): Promise<void> {
+    reportCache.delete(month);
+    allTimeCache = undefined;
+    hourlyCountCache.clear();
+    periodOrderStatsCache.clear();
+
+    const today = this.getTodayBeijing();
+    const [year, monthNumber, day] = today.split('-').map(Number);
+    const yesterdayDate = new Date(
+      Date.UTC(year, monthNumber - 1, day) - 24 * 60 * 60 * 1000
+    );
+    const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(
+      yesterdayDate.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(yesterdayDate.getUTCDate()).padStart(2, '0')}`;
+
+    for (const date of [yesterday, today]) {
+      if (date.startsWith(month)) {
+        await this.computeAndPersistDailyStats(date);
+      }
+    }
   }
 
   /**

@@ -51,7 +51,9 @@ export class AdminOperationsController {
 
   @Get('/reports')
   async reports(@Query() query: Record<string, string>) {
-    return this.adminOperationsService.getReport(query?.month);
+    return this.adminOperationsService.getReport(query?.month, {
+      refresh: query?.refresh === '1' || query?.refresh === 'true',
+    });
   }
 
   @Put('/reports/daily/:date/promotion-expense')

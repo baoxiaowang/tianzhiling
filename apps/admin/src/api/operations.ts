@@ -35,9 +35,12 @@ export function updateChatFeedback(
   return axios.put(`/admin_api/operations/feedback/${id}`, data);
 }
 
-export function queryOperationsReport(month?: string) {
+export function queryOperationsReport(
+  month?: string,
+  options?: { refresh?: boolean }
+) {
   return axios.get<AdminOperationsReportDTO>('/admin_api/operations/reports', {
-    params: { month },
+    params: { month, refresh: options?.refresh ? 1 : undefined },
   });
 }
 

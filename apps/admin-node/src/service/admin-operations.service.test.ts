@@ -238,6 +238,53 @@ describe('AdminOperationsService', () => {
     expect(service.statsModel.aggregate).toHaveBeenCalled();
   });
 
+  it('refresh=true 绕过缓存并重算今天与昨天的汇总', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-14T04:00:00.000Z'));
+    const service = new AdminOperationsService();
+    const { statsModel } = createPromotionExpenseStore();
+    service.statsModel = statsModel as never;
+    service.userModel = {
+      count: jest.fn().mockResolvedValue(0),
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.agentModel = {
+      count: jest.fn().mockResolvedValue(0),
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.messageModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    service.orderRefundModel = {
+      aggregate: jest.fn(() => aggregateResult([])),
+    } as never;
+    const recompute = jest
+      .spyOn(service, 'computeAndPersistDailyStats')
+      .mockResolvedValue({ date: '2026-09-14' } as never);
+
+    await service.getReport('2026-09');
+    const countAfterFirst = (service.userModel.count as jest.Mock).mock.calls
+      .length;
+    recompute.mockClear();
+
+    // 不传 refresh：命中 30 分钟缓存，不再查询
+    await service.getReport('2026-09');
+    expect(recompute).not.toHaveBeenCalled();
+    expect((service.userModel.count as jest.Mock).mock.calls.length).toBe(
+      countAfterFirst
+    );
+
+    // 传 refresh：绕过缓存并重算今天/昨天
+    await service.getReport('2026-09', { refresh: true });
+    expect(recompute).toHaveBeenCalledWith('2026-09-14');
+    expect(recompute).toHaveBeenCalledWith('2026-09-13');
+    expect(
+      (service.userModel.count as jest.Mock).mock.calls.length
+    ).toBeGreaterThan(countAfterFirst);
+  });
+
   it('computeDailyStats 排除内部小使者并计算单日统计', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-23T04:30:00.000Z'));
     const service = new AdminOperationsService();
