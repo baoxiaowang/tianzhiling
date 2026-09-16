@@ -140,7 +140,7 @@ select_release_services() {
       scripts/backfill-*.js)
         select_service tzl_node
         ;;
-      scripts/release-production.sh|scripts/classify-compose-services.sh|scripts/test-*.sh|scripts/dev-*|scripts/docker-*|scripts/prd-*|scripts/check-brand-sync.mjs)
+      scripts/release-production.sh|scripts/resolve-release-services.sh|scripts/classify-compose-services.sh|scripts/test-*.sh|scripts/dev-*|scripts/docker-*|scripts/prd-*|scripts/check-brand-sync.mjs)
         ;;
       apps/node/*)
         select_service tzl_node
