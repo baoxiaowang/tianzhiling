@@ -1331,6 +1331,49 @@ describe('OrderService payment expiration and reconciliation', () => {
     expect(wechatPayService.getOpenidByJsCode).not.toHaveBeenCalled();
   });
 
+  it('虚拟支付未支付且已过期时按本地超时关单', async () => {
+    const { service, order, wechatPayService } = createService({
+      status: OrderStatus.pending,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+      paymentExpiredAt: new Date(Date.now() - 60 * 1000),
+    });
+
+    // 微信侧仍是「已创建未支付」(status=1)，不会自动关闭
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 1,
+    });
+
+    const result = await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(order.status).toBe(OrderStatus.closed);
+    expect(result?.status).toBe(OrderStatus.closed);
+  });
+
+  it('虚拟支付未支付但未过期时保持待支付', async () => {
+    const { service, order, wechatPayService } = createService({
+      status: OrderStatus.pending,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentProductId: 'vip_month_goods',
+      virtualPaymentEnv: 1,
+      paymentExpiredAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    wechatPayService.queryVirtualOrder.mockResolvedValue({
+      order_id: ORDER_NO,
+      status: 1,
+    });
+
+    const result = await service.closeExpiredWechatOrder(ORDER_ID);
+
+    expect(order.status).toBe(OrderStatus.pending);
+    expect(result?.status).toBe(OrderStatus.pending);
+  });
+
   it('creates a voice training task after voice package payment succeeds', async () => {
     const {
       service,

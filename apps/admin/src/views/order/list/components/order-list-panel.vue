@@ -35,14 +35,6 @@
             <small>{{ item.hint }}</small>
           </article>
         </div>
-        <a-card
-          class="order-page__analytics-chart"
-          title="本月每日实付趋势"
-          :bordered="false"
-          :loading="analyticsLoading"
-        >
-          <Chart height="240px" :option="analyticsChartOption" />
-        </a-card>
       </section>
 
       <a-form :model="searchForm" layout="inline" class="order-page__search">
@@ -943,7 +935,6 @@
   const router = useRouter();
   const renderList = ref<OrderRecord[]>([]);
   const analytics = ref<AdminOrderAnalyticsDTO>();
-  const analyticsLoading = ref(false);
   const analyticsMonth = ref(dayjs().format('YYYY-MM'));
   const detailVisible = ref(false);
   const currentOrder = ref<OrderRecord>();
@@ -1079,33 +1070,6 @@
       hint: `退款率 ${formatPercent(analytics.value?.totals.refundRate)}`,
     },
   ]);
-  const analyticsChartOption = computed(() => ({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 64, right: 30, top: 28, bottom: 38 },
-    xAxis: {
-      type: 'category',
-      data: (analytics.value?.daily || []).map((item) =>
-        dayjs(item.date).format('MM-DD')
-      ),
-      axisLabel: { interval: 4 },
-    },
-    yAxis: { type: 'value', name: '元' },
-    series: [
-      {
-        name: '实付金额',
-        type: 'bar',
-        data: (analytics.value?.daily || []).map((item) => item.paidRevenue),
-        itemStyle: { color: '#8b78d9', borderRadius: [5, 5, 0, 0] },
-      },
-      {
-        name: '净收入',
-        type: 'line',
-        smooth: true,
-        data: (analytics.value?.daily || []).map((item) => item.netRevenue),
-        itemStyle: { color: '#c27b9c' },
-      },
-    ],
-  }));
   const normalizedCreatedAtRange = computed(() => {
     const [start, end] = searchForm.createdAtRange;
 
@@ -1223,13 +1187,10 @@
     if (!showAnalytics.value) return;
 
     try {
-      analyticsLoading.value = true;
       const { data } = await queryOrderAnalytics(analyticsMonth.value);
       analytics.value = data;
     } catch (error) {
       Message.error('订单统计加载失败');
-    } finally {
-      analyticsLoading.value = false;
     }
   };
 
@@ -2458,11 +2419,6 @@
           text-overflow: ellipsis;
         }
       }
-    }
-
-    &__analytics-chart {
-      margin-top: 14px;
-      background: var(--color-fill-1);
     }
 
     &__filter {
