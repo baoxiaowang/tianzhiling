@@ -1401,7 +1401,11 @@ export class AdminOrderService {
       return;
     }
 
-    if (this.isVirtualPaymentClosed(virtualOrder.status)) {
+    // 微信侧虚拟支付订单不会自动关闭：未支付且已过我方支付有效期时，必须按本地超时关单。
+    if (
+      this.isVirtualPaymentClosed(virtualOrder.status) ||
+      this.isPaymentExpired(order)
+    ) {
       await this.closeOrder(order);
     }
   }

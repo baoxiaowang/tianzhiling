@@ -1358,6 +1358,31 @@ describe('AdminOrderService', () => {
     expect(service.logger.warn).toHaveBeenCalled();
   });
 
+  it('同步虚拟支付时按本地超时关闭未支付的过期订单', async () => {
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      status: OrderStatus.pending,
+      paymentProvider: 'wechat_virtual_pay',
+      payerOpenid: 'openid-1',
+      virtualPaymentEnv: 0,
+      paymentExpiredAt: new Date(ORDER_CREATED_AT.getTime() - 60 * 1000),
+    });
+    orders.push(order);
+    jest
+      .mocked(service.adminWechatPayService.queryVirtualOrder)
+      .mockResolvedValue({
+        order_id: 'VIP202605020001',
+        status: 1,
+      } as never);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.syncPaymentStatus(ORDER_ID.toHexString());
+
+    expect(result.status).toBe(OrderStatus.closed);
+    expect((order as any).status).toBe(OrderStatus.closed);
+  });
+
   it('notifies virtual goods delivery for a completed local order when WeChat is still pending provide', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders } = createService();
