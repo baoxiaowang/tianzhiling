@@ -7,12 +7,19 @@ import {
   MEMORY_PIPELINE_TASK_VERSION,
   MemoryPipelineTaskEntity,
   MemoryPipelineTaskKind,
+  MemoryPipelineTaskScheduleClass,
   MemoryPipelineTaskStatus,
   MessageEntity,
   MongoObjectId,
 } from '@tzl/entities';
 import { createHash } from 'crypto';
 import { MongoRepository } from 'typeorm';
+import {
+  backgroundAdmissionKey,
+  backgroundWindowEnd,
+  backgroundWindowStart,
+  resolveBackgroundThrottleConfig,
+} from './memory-background-throttle';
 
 export const MEMORY_PIPELINE_QUEUE = 'memory-pipeline';
 export const MEMORY_PIPELINE_RECONCILE_JOB_ID = 'memory-pipeline-reconcile-v1';
@@ -47,6 +54,28 @@ const QUEUE_RESOLVE_COOLDOWN_MS = 30_000;
  */
 const MEMORY_TASK_PRIORITY_NEW = 1;
 const MEMORY_TASK_PRIORITY_BACKLOG = 1_000;
+
+/** 资源守卫拒绝后的有界冷却：不反复立即出队/入队空转，也不长时间停摆。 */
+const MEMORY_RESOURCE_DEFER_COOLDOWN_MS = 60_000;
+
+export type MemoryTaskDeferReason =
+  | 'background_paused'
+  | 'background_quota'
+  | 'resource_guard'
+  | 'queue_unavailable';
+
+export interface MemoryBackgroundAdmission {
+  allowed: boolean;
+  used: number;
+  limit: number;
+  nextEligibleAt?: Date;
+}
+
+export interface MemoryTaskExecutionStart {
+  task: MemoryPipelineTaskEntity | null;
+  deferredReason?: MemoryTaskDeferReason;
+  nextEligibleAt?: Date;
+}
 
 /**
  * 未了结清单的离线抽取：每用户每天最多跑几次。
@@ -403,8 +432,16 @@ export class MemoryPipelineTaskService {
 
   /** 把到期的任务重新入队（协调任务只入队、不自己执行）。 */
   async requeueDueTask(task: MemoryPipelineTaskEntity): Promise<void> {
-    // 积压重排走低优先级：新消息永远排在它前面。
-    await this.enqueueTaskJob(task, MEMORY_TASK_PRIORITY_BACKLOG);
+    // 优先级由持久化的调度类别决定：realtime 重排后仍是高优先级，
+    // 不因重试/协调器重排/等待变长而降级为 background。
+    await this.enqueueTaskJob(task, this.priorityForTask(task));
+  }
+
+  /** realtime（含其重试与 flush）走高优先级；background 与 legacy 走低优先级。 */
+  priorityForTask(task: MemoryPipelineTaskEntity): number {
+    return task.scheduleClass === MemoryPipelineTaskScheduleClass.realtime
+      ? MEMORY_TASK_PRIORITY_NEW
+      : MEMORY_TASK_PRIORITY_BACKLOG;
   }
 
   private async scheduleBatchFlush(
@@ -539,6 +576,182 @@ export class MemoryPipelineTaskService {
     return this.taskModel.findOne({ where: { _id: task.id } as never });
   }
 
+  /** 读取任务（不领取、不改状态）。 */
+  async getTask(taskId: string): Promise<MemoryPipelineTaskEntity | null> {
+    if (!MongoObjectId.isValid(taskId)) return null;
+    return this.taskModel.findOne({
+      where: { _id: new MongoObjectId(taskId) } as never,
+    });
+  }
+
+  /** 与 claimTask 相同的到期判定，用于在准入前排除"被提前投递/已耗尽"的任务。 */
+  private isTaskDue(task: MemoryPipelineTaskEntity, now: Date): boolean {
+    if (task.status === MemoryPipelineTaskStatus.processing) {
+      return Boolean(
+        task.processingStartedAt &&
+          task.processingStartedAt.getTime() <= now.getTime() - 10 * 60_000
+      );
+    }
+    if (task.status === MemoryPipelineTaskStatus.pending) {
+      return task.nextAttemptAt
+        ? task.nextAttemptAt.getTime() <= now.getTime()
+        : true;
+    }
+    if (task.status === MemoryPipelineTaskStatus.failed) {
+      return Boolean(
+        task.nextAttemptAt && task.nextAttemptAt.getTime() <= now.getTime()
+      );
+    }
+    return false;
+  }
+
+  /**
+   * 执行前准入 + 领取。顺序：到期与未耗尽 → 资源守卫 → 后台开关/额度 → 领取。
+   * 任一不满足都把任务可靠延期：不改 attemptCount、不标 completed/skipped、不调用模型。
+   * realtime/legacy 不受后台额度与后台开关约束（资源守卫仍生效）。
+   */
+  async beginTaskExecution(
+    taskId: string,
+    options: { budgetAllowed: boolean; now?: Date; maxAttempts?: number }
+  ): Promise<MemoryTaskExecutionStart> {
+    const task = await this.getTask(taskId);
+    if (!task) return { task: null };
+
+    const now = options.now || new Date();
+    const maxAttempts =
+      typeof options.maxAttempts === 'number' && options.maxAttempts > 0
+        ? options.maxAttempts
+        : 6;
+    if (
+      task.status === MemoryPipelineTaskStatus.completed ||
+      task.status === MemoryPipelineTaskStatus.skipped ||
+      Number(task.attemptCount || 0) >= maxAttempts ||
+      !this.isTaskDue(task, now)
+    ) {
+      return { task: null };
+    }
+
+    if (!options.budgetAllowed) {
+      const nextEligibleAt = new Date(
+        now.getTime() + MEMORY_RESOURCE_DEFER_COOLDOWN_MS
+      );
+      await this.deferTask(task, 'resource_guard', nextEligibleAt, now);
+      return { task: null, deferredReason: 'resource_guard', nextEligibleAt };
+    }
+
+    const admission = await this.admitBackgroundStart(task, now);
+    if (!admission.allowed) {
+      const reason: MemoryTaskDeferReason = this.currentThrottle().enabled
+        ? 'background_quota'
+        : 'background_paused';
+      const nextEligibleAt =
+        admission.nextEligibleAt ||
+        new Date(now.getTime() + MEMORY_RESOURCE_DEFER_COOLDOWN_MS);
+      await this.deferTask(task, reason, nextEligibleAt, now);
+      return { task: null, deferredReason: reason, nextEligibleAt };
+    }
+
+    const claimed = await this.claimTask(taskId);
+    return { task: claimed };
+  }
+
+  private currentThrottle() {
+    return resolveBackgroundThrottleConfig();
+  }
+
+  /** 仅 background 类别受后台开关与准入额度约束。 */
+  private async admitBackgroundStart(
+    task: MemoryPipelineTaskEntity,
+    now: Date
+  ): Promise<MemoryBackgroundAdmission> {
+    if (task.scheduleClass !== MemoryPipelineTaskScheduleClass.background) {
+      return { allowed: true, used: 0, limit: 0 };
+    }
+    const config = this.currentThrottle();
+    if (!config.enabled) {
+      return {
+        allowed: false,
+        used: 0,
+        limit: config.maxStarts,
+        nextEligibleAt: backgroundWindowEnd(now, config.windowMs),
+      };
+    }
+    return this.tryAcquireBackgroundStart(now, config);
+  }
+
+  /**
+   * 后台准入额度：Redis 固定窗口原子自增，跨 worker 重启与重复协调不重置。
+   * 单位是"任务启动次数"；semantic/structured 共享同一额度，失败重试计入。
+   */
+  async tryAcquireBackgroundStart(
+    now: Date,
+    config = this.currentThrottle()
+  ): Promise<MemoryBackgroundAdmission> {
+    const windowStart = backgroundWindowStart(now, config.windowMs);
+    const key = backgroundAdmissionKey(windowStart);
+    try {
+      const client = this.redisService as never as {
+        incr(key: string): Promise<number>;
+        pexpire(key: string, ms: number): Promise<number>;
+      };
+      const used = Number(await client.incr(key));
+      if (used === 1) {
+        await client.pexpire(key, config.windowMs * 2);
+      }
+      if (used <= config.maxStarts) {
+        return { allowed: true, used, limit: config.maxStarts };
+      }
+      return {
+        allowed: false,
+        used,
+        limit: config.maxStarts,
+        nextEligibleAt: backgroundWindowEnd(now, config.windowMs),
+      };
+    } catch (error) {
+      this.logger?.warn?.(
+        '[memory-pipeline] background admission unavailable, reason=%s',
+        this.describeError(error)
+      );
+      return {
+        allowed: false,
+        used: 0,
+        limit: config.maxStarts,
+        nextEligibleAt: backgroundWindowEnd(now, config.windowMs),
+      };
+    }
+  }
+
+  /** 延期：保留 pending，只改 nextAttemptAt/nextEligibleAt 与延期计数。 */
+  async deferTask(
+    task: MemoryPipelineTaskEntity,
+    reason: MemoryTaskDeferReason,
+    nextEligibleAt: Date,
+    now: Date = new Date()
+  ): Promise<void> {
+    await this.taskModel.updateOne(
+      {
+        _id: task.id,
+        status: {
+          $in: [
+            MemoryPipelineTaskStatus.pending,
+            MemoryPipelineTaskStatus.failed,
+          ],
+        },
+      } as never,
+      {
+        $set: {
+          status: MemoryPipelineTaskStatus.pending,
+          nextAttemptAt: nextEligibleAt,
+          nextEligibleAt,
+          lastDeferReason: reason,
+          lastDeferredAt: now,
+          updatedAt: now,
+        },
+        $inc: { deferCount: 1 },
+      } as never
+    );
+  }
+
   async markCompleted(
     task: MemoryPipelineTaskEntity,
     status:
@@ -607,6 +820,8 @@ export class MemoryPipelineTaskService {
       sourceHash: createHash('sha256').update(searchableText).digest('hex'),
       attemptCount: 0,
       nextAttemptAt: now,
+      scheduleClass: MemoryPipelineTaskScheduleClass.realtime,
+      deferCount: 0,
       createdAt: now,
       updatedAt: now,
     });
@@ -655,6 +870,8 @@ export class MemoryPipelineTaskService {
         .digest('hex'),
       attemptCount: 0,
       nextAttemptAt: now,
+      scheduleClass: MemoryPipelineTaskScheduleClass.realtime,
+      deferCount: 0,
       createdAt: now,
       updatedAt: now,
     });
@@ -666,6 +883,61 @@ export class MemoryPipelineTaskService {
       if (concurrentlyCreated) return concurrentlyCreated;
       throw error;
     }
+  }
+
+  /**
+   * 显式补处理批次：写入 background 类别并带批次来源，走低优先级。
+   * 不进入实时消息的攒批缓冲池；既有任务不覆盖其类别。
+   */
+  async enqueueBackgroundTask(options: {
+    message: MessageEntity;
+    searchableText: string;
+    kind: MemoryPipelineTaskKind;
+    batchId: string;
+    now?: Date;
+  }): Promise<MemoryPipelineTaskEntity | null> {
+    const cleanText = options.searchableText?.replace(/\s+/g, ' ').trim();
+    const batchId = options.batchId?.trim();
+    if (!cleanText || !options.message?.id || !batchId) return null;
+
+    const where = {
+      messageId: options.message.id,
+      kind: options.kind,
+      pipelineVersion: MEMORY_PIPELINE_VERSION,
+    };
+    const existing = await this.taskModel.findOne({ where });
+    if (existing) return existing;
+
+    const now = options.now || new Date();
+    const task = new MemoryPipelineTaskEntity();
+    Object.assign(task, {
+      schemaVersion: MEMORY_PIPELINE_TASK_VERSION,
+      pipelineVersion: MEMORY_PIPELINE_VERSION,
+      kind: options.kind,
+      status: MemoryPipelineTaskStatus.pending,
+      messageId: options.message.id,
+      conversationId: options.message.conversationId,
+      userId: options.message.userId,
+      agentId: options.message.agentId,
+      sourceHash: createHash('sha256').update(cleanText).digest('hex'),
+      attemptCount: 0,
+      nextAttemptAt: now,
+      scheduleClass: MemoryPipelineTaskScheduleClass.background,
+      backgroundBatchId: batchId,
+      deferCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    let stored: MemoryPipelineTaskEntity;
+    try {
+      stored = await this.taskModel.save(task);
+    } catch (error) {
+      const concurrentlyCreated = await this.taskModel.findOne({ where });
+      if (concurrentlyCreated) return concurrentlyCreated;
+      throw error;
+    }
+    await this.enqueueTaskJob(stored, MEMORY_TASK_PRIORITY_BACKLOG);
+    return stored;
   }
 
   private async enqueueTaskJob(
@@ -685,11 +957,44 @@ export class MemoryPipelineTaskService {
       );
       return;
     }
+    const jobId = `memory-${task.id.toString()}`;
+    try {
+      // 固定 jobId 下，已完成/失败的终态记录会阻挡后续合法重排；
+      // 先清掉终态记录，waiting/active/delayed 则视为已在队列、不重复创建。
+      const queueWithJob = queue as never as {
+        getJob?(id: string): Promise<
+          | {
+              getState?(): Promise<string>;
+              remove?(): Promise<void>;
+            }
+          | undefined
+        >;
+      };
+      const existingJob = queueWithJob.getJob
+        ? await queueWithJob.getJob(jobId)
+        : undefined;
+      if (existingJob) {
+        const state = existingJob.getState
+          ? await existingJob.getState()
+          : '';
+        if (state === 'completed' || state === 'failed') {
+          await existingJob.remove?.();
+        } else {
+          return;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        '[memory-pipeline] job recovery check failed, taskId=%s, reason=%s',
+        task.id.toString(),
+        this.describeError(error)
+      );
+    }
     try {
       await queue.addJobToQueue(
         { taskId: task.id.toString() } as MemoryPipelineJobData,
         {
-          jobId: `memory-${task.id.toString()}`,
+          jobId,
           attempts: 5,
           backoff: { type: 'exponential', delay: 5_000 },
           priority,

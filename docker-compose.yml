@@ -57,6 +57,9 @@ services:
     profiles: ["prod"]
     container_name: tzl_memory_worker
     image: tianzhiling-tzl_node
+    # 记忆后台的 CPU 保护上限（候选值，不是吞吐目标）。生产此前无有效上限才新增；
+    # 并发仍由 NODE_MEMORY_WORKER_CONCURRENCY 控制，保持 1。
+    cpus: "1.5"
     env_file:
       - .env
     environment:

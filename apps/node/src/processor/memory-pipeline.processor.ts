@@ -59,10 +59,14 @@ export class MemoryPipelineProcessor implements IProcessor {
   }
 
   private async processTask(taskId: string): Promise<void> {
-    // Leave unclaimed work durable; the existing reconciler retries it later.
-    if (!memoryBudgetSnapshot().allowed) return;
-    const task = await this.memoryPipelineTaskService.claimTask(taskId);
-    if (!task) return;
+    // 执行前准入：资源守卫 + 后台开关/额度都在领取前检查，已排队的后台任务同样遵守。
+    // 未获准的任务只做可靠延期，不改失败次数、不标完成、不调用模型。
+    const start = await this.memoryPipelineTaskService.beginTaskExecution(
+      taskId,
+      { budgetAllowed: memoryBudgetSnapshot().allowed }
+    );
+    if (!start.task) return;
+    const task = start.task;
     try {
       const outcome = await this.conversationService.processMemoryPipelineTask(
         task

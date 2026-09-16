@@ -127,17 +127,23 @@ describe('MemoryPipelineProcessor', () => {
   beforeEach(() =>
     (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: true })
   );
-  it('leaves durable work unclaimed when the memory budget is exhausted', async () => {
+  it('leaves durable work deferred when the memory budget is exhausted', async () => {
     (memoryBudgetSnapshot as jest.Mock).mockReturnValue({ allowed: false });
     const processor = new MemoryPipelineProcessor();
-    processor.memoryPipelineTaskService = { claimTask: jest.fn() } as any;
+    const beginTaskExecution = jest.fn().mockResolvedValue({
+      task: null,
+      deferredReason: 'resource_guard',
+    });
+    processor.memoryPipelineTaskService = { beginTaskExecution } as any;
     processor.conversationService = {
       processMemoryPipelineTask: jest.fn(),
     } as any;
     await processor.execute({ taskId: '665000000000000000000411' });
-    expect(
-      processor.memoryPipelineTaskService.claimTask
-    ).not.toHaveBeenCalled();
+    // 执行前检查资源守卫：未获准只延期，不领取、不调用模型
+    expect(beginTaskExecution).toHaveBeenCalledWith(
+      '665000000000000000000411',
+      { budgetAllowed: false }
+    );
     expect(
       processor.conversationService.processMemoryPipelineTask
     ).not.toHaveBeenCalled();
