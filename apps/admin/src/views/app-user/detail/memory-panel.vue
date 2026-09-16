@@ -8,7 +8,7 @@
     </div>
 
     <a-alert type="info" :show-icon="false" class="memory-panel__notice">
-      这里只展示该账号已保存的结构化记忆与账号级共享信息，不代表该对象的全部可检索原话，也不代表模型在某一轮对话里实际使用过。
+      这里只展示三类信息：已保存的结构化记忆、已进入检索索引且来源有效的原话、账号级共享信息。可检索原话不代表模型在某一轮对话里实际使用过。
     </a-alert>
 
     <div class="memory-panel__body">
@@ -103,6 +103,113 @@
         </template>
       </a-spin>
 
+      <div class="memory-panel__indexed">
+        <a-divider orientation="left" class="memory-panel__divider">
+          可检索原话（已进检索索引，来源有效）
+        </a-divider>
+        <div class="memory-panel__indexed-note">
+          仅表示这些原话已进入检索索引，来源消息仍然有效；不代表某一轮对话里模型实际使用过。不展示向量数值。
+        </div>
+        <a-spin :loading="indexedLoading" class="memory-panel__spin">
+          <a-result
+            v-if="indexedError"
+            status="error"
+            title="可检索原话加载失败"
+            :subtitle="indexedError"
+            class="memory-panel__state"
+          >
+            <template #extra>
+              <a-button size="small" @click="reloadIndexed">重试</a-button>
+            </template>
+          </a-result>
+          <template v-else>
+            <a-alert
+              v-if="!indexedAvailable"
+              type="warning"
+              :show-icon="false"
+              class="memory-panel__state--small"
+            >
+              检索索引暂不可用（{{
+                indexedUnavailableText
+              }}），这不是“没有可检索原话”。
+              <a-link @click="reloadIndexed">重试</a-link>
+            </a-alert>
+            <template v-else>
+              <div class="memory-panel__indexed-count">
+                索引内共 {{ indexedTotal }} 条（全量口径，含来源失效）；本页有效
+                {{ indexedPageValidCount }} 条、来源失效
+                {{ indexedPageInvalidCount }} 条。
+              </div>
+              <a-empty
+                v-if="!indexedItems.length"
+                description="该聊天对象本页暂无可检索原话"
+                class="memory-panel__state memory-panel__state--small"
+              />
+              <div v-else class="memory-panel__list">
+                <a-card
+                  v-for="evidence in indexedItems"
+                  :key="evidence.id"
+                  class="memory-panel__card"
+                  :bordered="false"
+                  size="small"
+                >
+                  <div class="memory-panel__card-head">
+                    <a-space size="mini" wrap>
+                      <a-tag color="cyan" size="small">可检索原话</a-tag>
+                      <a-tag size="small">
+                        {{ evidence.role === 'user' ? '用户' : '角色' }}
+                      </a-tag>
+                    </a-space>
+                    <span class="memory-panel__scope">
+                      {{
+                        formatDate(
+                          evidence.createdAt || evidence.sourceCreatedAt
+                        )
+                      }}
+                    </span>
+                  </div>
+                  <div class="memory-panel__value">
+                    {{ evidence.text || evidence.sourceContent || '-' }}
+                  </div>
+                  <div
+                    v-if="
+                      evidence.sourceContent &&
+                      evidence.sourceContent !== evidence.text
+                    "
+                    class="memory-panel__source-text"
+                  >
+                    原文：{{ evidence.sourceContent }}
+                  </div>
+                  <div class="memory-panel__meta">
+                    <span>来源消息：{{ evidence.sourceMessageId }}</span>
+                    <span>来源有效</span>
+                  </div>
+                  <div class="memory-panel__source">
+                    <a-link @click="emitLocateById(evidence.sourceMessageId)">
+                      定位左侧原话
+                    </a-link>
+                  </div>
+                </a-card>
+              </div>
+              <div
+                v-if="indexedTotal > indexedPageSize"
+                class="memory-panel__pagination"
+              >
+                <a-pagination
+                  size="small"
+                  :current="indexedPage"
+                  :page-size="indexedPageSize"
+                  :total="indexedTotal"
+                  show-page-size
+                  @change="onIndexedPageChange"
+                  @page-size-change="onIndexedPageSizeChange"
+                />
+              </div>
+            </template>
+          </template>
+        </a-spin>
+      </div>
+
       <div class="memory-panel__shared">
         <a-divider orientation="left" class="memory-panel__divider">
           账号级共享记忆（跨聊天对象）
@@ -141,11 +248,13 @@
 </template>
 
 <script lang="ts" setup>
-  import { onBeforeUnmount, ref, watch } from 'vue';
+  import { computed, onBeforeUnmount, ref, watch } from 'vue';
   import {
     AppUserAccountSharedMemoryItem,
     AppUserAgentMemoryItem,
+    AppUserIndexedEvidenceItem,
     queryAppUserAgentMemories,
+    queryAppUserIndexedEvidence,
   } from '@/api/app-user';
 
   const props = defineProps<{
@@ -167,11 +276,37 @@
   const accountSharedItems = ref<AppUserAccountSharedMemoryItem[]>([]);
   const accountSharedTotal = ref(0);
 
+  const indexedLoading = ref(false);
+  const indexedError = ref('');
+  const indexedAvailable = ref(true);
+  const indexedUnavailableReason = ref('');
+  const indexedItems = ref<AppUserIndexedEvidenceItem[]>([]);
+  const indexedTotal = ref(0);
+  const indexedPageValidCount = ref(0);
+  const indexedPageInvalidCount = ref(0);
+  const indexedPage = ref(1);
+  const indexedPageSize = ref(20);
+
+  const indexedUnavailableText = computed(() => {
+    if (indexedUnavailableReason.value === 'disabled') {
+      return '检索索引未启用';
+    }
+    if (indexedUnavailableReason.value === 'collection_missing') {
+      return '检索索引集合不存在';
+    }
+    if (indexedUnavailableReason.value === 'query_failed') {
+      return '检索索引查询失败';
+    }
+    return '检索索引暂不可用';
+  });
+
   // 请求序号：切换对象或关闭面板后，旧请求（含分页）的响应一律丢弃，避免覆盖新结果。
   let requestSeq = 0;
+  let indexedSeq = 0;
 
   onBeforeUnmount(() => {
     requestSeq += 1;
+    indexedSeq += 1;
   });
 
   const reset = () => {
@@ -181,6 +316,17 @@
     accountSharedItems.value = [];
     accountSharedTotal.value = 0;
     error.value = '';
+  };
+
+  const resetIndexed = () => {
+    indexedItems.value = [];
+    indexedTotal.value = 0;
+    indexedPageValidCount.value = 0;
+    indexedPageInvalidCount.value = 0;
+    indexedPage.value = 1;
+    indexedError.value = '';
+    indexedAvailable.value = true;
+    indexedUnavailableReason.value = '';
   };
 
   const load = async () => {
@@ -252,11 +398,88 @@
     emit('locateSource', { messageId: item.sourceMessageId });
   };
 
+  const emitLocateById = (sourceMessageId: string) => {
+    if (!sourceMessageId) {
+      return;
+    }
+    emit('locateSource', { messageId: sourceMessageId });
+  };
+
+  const loadIndexed = async () => {
+    if (!props.userId || !props.agentId) {
+      resetIndexed();
+      return;
+    }
+
+    indexedSeq += 1;
+    const seq = indexedSeq;
+    const targetUserId = props.userId;
+    const targetAgentId = props.agentId;
+    indexedLoading.value = true;
+    indexedError.value = '';
+
+    try {
+      const { data } = await queryAppUserIndexedEvidence(
+        targetUserId,
+        targetAgentId,
+        { page: indexedPage.value, pageSize: indexedPageSize.value }
+      );
+
+      if (seq !== indexedSeq) {
+        return;
+      }
+
+      indexedAvailable.value = data.available;
+      indexedUnavailableReason.value = data.unavailableReason;
+      indexedItems.value = data.available ? data.items : [];
+      indexedTotal.value = data.available ? data.total : 0;
+      indexedPageValidCount.value = data.available ? data.pageValidCount : 0;
+      indexedPageInvalidCount.value = data.available
+        ? data.pageInvalidCount
+        : 0;
+      indexedPage.value = data.page;
+      indexedPageSize.value = data.pageSize;
+    } catch (err) {
+      if (seq !== indexedSeq) {
+        return;
+      }
+      indexedAvailable.value = false;
+      indexedUnavailableReason.value = 'query_failed';
+      indexedItems.value = [];
+      indexedTotal.value = 0;
+      indexedPageValidCount.value = 0;
+      indexedPageInvalidCount.value = 0;
+      indexedError.value = (err as Error)?.message || '请稍后重试';
+    } finally {
+      if (seq === indexedSeq) {
+        indexedLoading.value = false;
+      }
+    }
+  };
+
+  const reloadIndexed = () => {
+    indexedPage.value = 1;
+    loadIndexed();
+  };
+
+  const onIndexedPageChange = (current: number) => {
+    indexedPage.value = current;
+    loadIndexed();
+  };
+
+  const onIndexedPageSizeChange = (size: number) => {
+    indexedPageSize.value = size;
+    indexedPage.value = 1;
+    loadIndexed();
+  };
+
   watch(
     () => [props.userId, props.agentId],
     () => {
       reset();
+      resetIndexed();
       load();
+      loadIndexed();
     },
     { immediate: true }
   );
@@ -426,6 +649,25 @@
       display: flex;
       justify-content: flex-end;
       padding: 4px 0 12px;
+    }
+
+    &__indexed {
+      margin-top: 8px;
+      border-top: 1px dashed var(--color-border-2);
+      padding-top: 8px;
+    }
+
+    &__indexed-note {
+      margin: 0 0 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--color-text-3);
+    }
+
+    &__indexed-count {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--color-text-3);
     }
 
     &__shared {

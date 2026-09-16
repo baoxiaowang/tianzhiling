@@ -86,6 +86,16 @@ export class AdminAppUserController {
     return this.adminAppUserService.listAgentMemories(id, agentId, query);
   }
 
+  /** 只读：按用户 + 聊天对象分页读取“可检索原话”（已入索引且来源有效）。 */
+  @Get('/:id/agents/:agentId/indexed-evidence')
+  async indexedEvidence(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string,
+    @Query() query: ListAdminAppUserMemoriesQueryDTO
+  ) {
+    return this.adminAppUserService.listIndexedEvidence(id, agentId, query);
+  }
+
   @Post('/:id/agents/:agentId/messenger-messages')
   async sendMessengerMessage(
     @Param('id') id: string,

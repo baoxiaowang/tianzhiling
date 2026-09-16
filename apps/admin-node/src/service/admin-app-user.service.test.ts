@@ -67,6 +67,15 @@ function createService() {
     }),
     normalizeForStorage: jest.fn((avatar?: string) => avatar?.trim() ?? ''),
   } as any;
+  service.adminMilvusService = {
+    listConversationMessageMemories: jest.fn().mockResolvedValue({
+      available: true,
+      unavailableReason: '',
+      total: 0,
+      pageIndexRows: 0,
+      items: [],
+    }),
+  } as any;
 
   return service;
 }
@@ -1077,6 +1086,161 @@ describe('AdminAppUserService', () => {
       expect((service.agentProfileFactModel as any).find).toHaveBeenCalledWith(
         expect.objectContaining({ take: 50 })
       );
+    });
+
+    it('returns only indexed evidence whose source message is still valid', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+      const conversationId = new MongoObjectId();
+      const validId = new MongoObjectId();
+      const archivedId = new MongoObjectId();
+      const missingId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: userId,
+      });
+      (service.adminMilvusService as any).listConversationMessageMemories = jest
+        .fn()
+        .mockResolvedValue({
+          available: true,
+          unavailableReason: '',
+          total: 3,
+          pageIndexRows: 3,
+          items: [
+            {
+              id: String(validId),
+              sourceMessageId: validId.toHexString(),
+              conversationId: conversationId.toHexString(),
+              agentId: agentId.toHexString(),
+              role: 'user',
+              memoryKind: 'raw_episode',
+              text: '我明天监考美术',
+              createdAt: '2026-09-15T01:00:00.000Z',
+            },
+            {
+              id: String(archivedId),
+              sourceMessageId: archivedId.toHexString(),
+              conversationId: conversationId.toHexString(),
+              agentId: agentId.toHexString(),
+              role: 'user',
+              memoryKind: 'raw_episode',
+              text: '已归档原话',
+              createdAt: '2026-09-15T01:01:00.000Z',
+            },
+            {
+              id: 'missing',
+              sourceMessageId: missingId.toHexString(),
+              conversationId: conversationId.toHexString(),
+              agentId: agentId.toHexString(),
+              role: 'user',
+              memoryKind: 'raw_episode',
+              text: '来源已删除',
+              createdAt: '2026-09-15T01:02:00.000Z',
+            },
+          ],
+        });
+      (service.messageModel as any).find = jest.fn().mockResolvedValue([
+        {
+          id: validId,
+          userId,
+          agentId,
+          conversationId,
+          role: MessageRole.user,
+          content: '我明天监考美术',
+          isArchived: false,
+          createdAt: new Date('2026-09-15T01:00:00.000Z'),
+        },
+        {
+          id: archivedId,
+          userId,
+          agentId,
+          conversationId,
+          role: MessageRole.user,
+          content: '已归档原话',
+          isArchived: true,
+          createdAt: new Date('2026-09-15T01:01:00.000Z'),
+        },
+      ]);
+
+      const result = await service.listIndexedEvidence(
+        userId.toHexString(),
+        agentId.toHexString()
+      );
+
+      expect(result.available).toBe(true);
+      expect(result.total).toBe(3);
+      expect(result.items).toHaveLength(1);
+      expect(result.pageValidCount).toBe(1);
+      expect(result.pageInvalidCount).toBe(2);
+      expect(result.pageIndexRows).toBe(3);
+      expect(result.items[0]).toMatchObject({
+        sourceMessageId: validId.toHexString(),
+        text: '我明天监考美术',
+        sourceValid: true,
+      });
+      expect(
+        (service.adminMilvusService as any).listConversationMessageMemories
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: userId.toHexString(),
+          agentId: agentId.toHexString(),
+        })
+      );
+    });
+
+    it('rejects indexed evidence for an agent outside the user scope', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: new MongoObjectId(),
+      });
+
+      await expect(
+        service.listIndexedEvidence(userId.toHexString(), agentId.toHexString())
+      ).rejects.toThrow('app user agent not found');
+    });
+
+    it('reports indexed evidence as disabled when milvus is unavailable', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: userId,
+      });
+      (service.adminMilvusService as any).listConversationMessageMemories = jest
+        .fn()
+        .mockResolvedValue({
+          available: false,
+          unavailableReason: 'disabled',
+          total: 0,
+          pageIndexRows: 0,
+          items: [],
+        });
+
+      const result = await service.listIndexedEvidence(
+        userId.toHexString(),
+        agentId.toHexString()
+      );
+
+      expect(result.available).toBe(false);
+      expect(result.unavailableReason).toBe('disabled');
+      expect(result.items).toEqual([]);
     });
   });
 });

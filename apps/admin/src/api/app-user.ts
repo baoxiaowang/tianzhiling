@@ -241,6 +241,47 @@ export function queryAppUserAgentMemories(
   );
 }
 
+/** 后台“可检索原话”：已进检索索引、且来源仍有效的聊天证据。 */
+export interface AppUserIndexedEvidenceItem {
+  id: string;
+  sourceMessageId: string;
+  conversationId: string;
+  role: string;
+  text: string;
+  createdAt: string;
+  sourceValid: boolean;
+  sourceContent: string;
+  sourceCreatedAt: string;
+}
+
+export interface AppUserIndexedEvidenceListRes {
+  /** 索引是否可用；false 时前端显示“暂不可用”，不能显示“没有记忆”。 */
+  available: boolean;
+  unavailableReason: string;
+  items: AppUserIndexedEvidenceItem[];
+  /** 索引内匹配总条数（全量口径，含来源后续失效的行）。 */
+  total: number;
+  /** 本页索引行数（来源校验前）。 */
+  pageIndexRows: number;
+  /** 本页有效来源条数。 */
+  pageValidCount: number;
+  /** 本页来源失效条数。 */
+  pageInvalidCount: number;
+  page: number;
+  pageSize: number;
+}
+
+export function queryAppUserIndexedEvidence(
+  userId: string,
+  agentId: string,
+  params?: { page?: number; pageSize?: number }
+) {
+  return axios.get<AppUserIndexedEvidenceListRes>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/indexed-evidence`,
+    { params }
+  );
+}
+
 export function sendAppUserMessengerMessage(
   userId: string,
   agentId: string,

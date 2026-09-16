@@ -39,6 +39,7 @@ import {
   UpdateAdminAppUserDTO,
 } from '../dto/admin-app-user.dto';
 import { AdminAvatarUrlService } from './admin-avatar-url.service';
+import { AdminMilvusService } from './admin-milvus.service';
 
 export interface AdminAppUserItem {
   id: string;
@@ -170,6 +171,36 @@ export interface AdminAppUserAgentMemoryListResult {
   accountSharedTotal: number;
 }
 
+/** 后台“可检索原话”：已进入检索索引、且来源仍有效的聊天证据。 */
+export interface AdminAppUserIndexedEvidenceItem {
+  id: string;
+  sourceMessageId: string;
+  conversationId: string;
+  role: string;
+  text: string;
+  createdAt: string;
+  sourceValid: boolean;
+  sourceContent: string;
+  sourceCreatedAt: string;
+}
+
+export interface AdminAppUserIndexedEvidenceListResult {
+  /** 索引是否可用；false 时前端必须显示“暂不可用”，不能显示“没有记忆”。 */
+  available: boolean;
+  unavailableReason: string;
+  items: AdminAppUserIndexedEvidenceItem[];
+  /** 索引内匹配总条数（全量口径，含来源后续失效的行）。 */
+  total: number;
+  /** 本页从索引取到的行数（来源校验前）。 */
+  pageIndexRows: number;
+  /** 本页有效来源条数。 */
+  pageValidCount: number;
+  /** 本页来源失效（缺失/归档/归属不符）条数。 */
+  pageInvalidCount: number;
+  page: number;
+  pageSize: number;
+}
+
 type MongoWhere = Record<string, unknown>;
 
 @Provide()
@@ -212,6 +243,9 @@ export class AdminAppUserService {
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
+
+  @Inject()
+  adminMilvusService: AdminMilvusService;
 
   async listUsers(
     query: ListAdminAppUsersQueryDTO
@@ -657,6 +691,104 @@ export class AdminAppUserService {
     await this.assertUserOwnedAgent(user.id, agentObjectId);
 
     return this.queryUserAgentMessages(user.id, agentObjectId, query);
+  }
+
+  /**
+   * 后台“可检索原话”：查询检索索引中的 raw_episode 证据，并只保留来源仍有效的条目。
+   * 只读；不代表模型在某轮用过；不返回向量数值。
+   */
+  async listIndexedEvidence(
+    userId: string,
+    agentId: string,
+    query?: { page?: string | number; pageSize?: string | number }
+  ): Promise<AdminAppUserIndexedEvidenceListResult> {
+    const user = await this.getUserById(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+
+    await this.assertUserOwnedAgent(user.id, agentObjectId);
+
+    const page = this.normalizePositiveInteger(query?.page, 1);
+    const pageSize = Math.min(
+      this.normalizePositiveInteger(query?.pageSize, 20),
+      50
+    );
+
+    const result =
+      await this.adminMilvusService.listConversationMessageMemories({
+        userId: this.stringifyObjectId(user.id),
+        agentId: this.stringifyObjectId(agentObjectId),
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      });
+
+    if (!result.available) {
+      return {
+        available: false,
+        unavailableReason: result.unavailableReason,
+        items: [],
+        total: 0,
+        pageIndexRows: 0,
+        pageValidCount: 0,
+        pageInvalidCount: 0,
+        page,
+        pageSize,
+      };
+    }
+
+    const sourceIds = result.items
+      .map(item => item.sourceMessageId)
+      .filter(id => Boolean(id) && MongoObjectId.isValid(id))
+      .map(id => new MongoObjectId(id));
+    const messages = sourceIds.length
+      ? await this.messageModel.find({
+          where: { _id: { $in: sourceIds } } as never,
+        })
+      : [];
+    const messageMap = new Map(
+      messages.map(message => [this.stringifyObjectId(message.id), message])
+    );
+    const expectedUserId = this.stringifyObjectId(user.id);
+    const expectedAgentId = this.stringifyObjectId(agentObjectId);
+    const items: AdminAppUserIndexedEvidenceItem[] = [];
+    let pageInvalidCount = 0;
+
+    for (const row of result.items) {
+      const message = messageMap.get(row.sourceMessageId);
+      const valid =
+        Boolean(message) &&
+        message.isArchived !== true &&
+        this.stringifyObjectId(message.userId) === expectedUserId &&
+        this.stringifyObjectId(message.agentId) === expectedAgentId;
+
+      if (!valid || !message) {
+        pageInvalidCount += 1;
+        continue;
+      }
+
+      items.push({
+        id: row.id,
+        sourceMessageId: row.sourceMessageId,
+        conversationId: row.conversationId,
+        role: row.role,
+        text: row.text,
+        createdAt: row.createdAt,
+        sourceValid: true,
+        sourceContent: message.content ?? '',
+        sourceCreatedAt: this.formatDate(message.createdAt),
+      });
+    }
+
+    return {
+      available: true,
+      unavailableReason: '',
+      items,
+      total: result.total,
+      pageIndexRows: result.pageIndexRows,
+      pageValidCount: items.length,
+      pageInvalidCount,
+      page,
+      pageSize,
+    };
   }
 
   async updateUser(
