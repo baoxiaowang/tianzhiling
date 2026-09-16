@@ -89,6 +89,17 @@ export interface AppUserAccountMemory {
       updatedAt: string;
     }>;
   }>;
+  selfFacts: Array<{
+    id: string;
+    domain: string;
+    key: string;
+    value: string;
+    status: string;
+    confidence: string;
+    supportCount: number;
+    sourceText: string;
+    updatedAt: string;
+  }>;
 }
 
 export type AppUserMembershipType = 'one_year' | 'three_year' | 'lifetime';

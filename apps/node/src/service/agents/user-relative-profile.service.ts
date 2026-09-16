@@ -16,6 +16,7 @@ import {
   UserKnownPersonStatus,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
+import { kinshipTermsIn } from './memory-value';
 
 export interface UserRelativePromptFact {
   domain: UserRelativeFactDomain;
@@ -625,6 +626,21 @@ export class UserRelativeProfileService {
   }
 }
 
+/**
+ * 明确称谓都算关系，含排行/修饰前缀（"二奶奶""幺爹""大爸爸""三叔"）。
+ * 固定枚举用于常见关系；不在枚举但含已知亲属称谓的短称谓不再整条丢弃，
+ * 保留用户原称谓（不做更近的亲属映射）。
+ */
+const RELATIVE_APPELLATION_PATTERN =
+  /(?:爸爸|父亲|爸|爹|妈妈|母亲|妈|娘|爷爷|奶奶|外公|外婆|姥姥|姥爷|公公|婆婆|哥|姐|弟|妹|叔|伯|舅|姨|姑|婶|嫂|侄|甥|孙|儿媳|媳妇|女婿|丈夫|妻子|老公|老婆|爱人|伴侣|家人|亲人)/;
+
 export function isRelativeRelation(value?: string): boolean {
-  return RELATIVE_RELATION_PATTERN.test((value || '').trim());
+  const relation = (value || '').trim();
+  if (!relation) return false;
+  if (RELATIVE_RELATION_PATTERN.test(relation)) return true;
+  if (relation.length > 8) return false;
+  return (
+    RELATIVE_APPELLATION_PATTERN.test(relation) ||
+    kinshipTermsIn(relation).length > 0
+  );
 }

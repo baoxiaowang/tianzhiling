@@ -28,6 +28,7 @@ import {
   UserRelativeFactEntity,
   UserRelativeProfileEntity,
   UserRelativeProfileStatus,
+  UserSelfFactEntity,
 } from '@tzl/entities';
 import { MongoRepository } from 'typeorm';
 import {
@@ -115,6 +116,18 @@ export interface AdminAppUserAccountMemory {
       sourceText: string;
       updatedAt: string;
     }>;
+  }>;
+  /** 用户本人近况（用户自己说出的处境/偏好/打算），与家人事实分开。 */
+  selfFacts: Array<{
+    id: string;
+    domain: string;
+    key: string;
+    value: string;
+    status: string;
+    confidence: string;
+    supportCount: number;
+    sourceText: string;
+    updatedAt: string;
   }>;
 }
 
@@ -234,6 +247,9 @@ export class AdminAppUserService {
 
   @InjectEntityModel(UserRelativeFactEntity)
   userRelativeFactModel: MongoRepository<UserRelativeFactEntity>;
+
+  @InjectEntityModel(UserSelfFactEntity)
+  userSelfFactModel: MongoRepository<UserSelfFactEntity>;
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
@@ -523,7 +539,7 @@ export class AdminAppUserService {
 
   async getAccountMemory(userId: string): Promise<AdminAppUserAccountMemory> {
     const user = await this.getUserById(userId);
-    const [identity, people, profiles, facts] = await Promise.all([
+    const [identity, people, profiles, facts, selfFacts] = await Promise.all([
       this.userIdentityProfileModel.findOne({ where: { userId: user.id } }),
       this.userKnownPersonModel.find({
         where: {
@@ -545,6 +561,11 @@ export class AdminAppUserService {
         where: { userId: user.id },
         order: { updatedAt: 'DESC' },
         take: 500,
+      }),
+      this.userSelfFactModel.find({
+        where: { userId: user.id },
+        order: { updatedAt: 'DESC' },
+        take: 200,
       }),
     ]);
     const profileMap = new Map(
@@ -611,6 +632,17 @@ export class AdminAppUserService {
           })),
         };
       }),
+      selfFacts: selfFacts.map(fact => ({
+        id: this.stringifyObjectId(fact.id),
+        domain: fact.domain,
+        key: fact.key ?? '',
+        value: fact.value ?? '',
+        status: fact.status,
+        confidence: fact.confidence,
+        supportCount: fact.supportCount ?? 0,
+        sourceText: fact.sourceText ?? '',
+        updatedAt: this.formatDate(fact.updatedAt),
+      })),
     };
   }
 
@@ -1577,6 +1609,20 @@ export class AdminAppUserService {
         confidence: 'confirmed',
         sourceText: person.sourceText,
         updatedAt: person.updatedAt,
+      });
+    }
+
+    for (const fact of account.selfFacts) {
+      items.push({
+        id: fact.id,
+        scope: 'account',
+        type: 'self_situation',
+        key: `account.self.${fact.key}`,
+        value: fact.value,
+        status: fact.status,
+        confidence: fact.confidence,
+        sourceText: fact.sourceText,
+        updatedAt: fact.updatedAt,
       });
     }
 

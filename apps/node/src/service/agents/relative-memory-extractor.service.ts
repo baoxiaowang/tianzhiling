@@ -15,7 +15,11 @@ import {
   UserRelativeSex,
 } from '@tzl/entities';
 import { OpenAIService } from './openai';
-import { isSearchableDialogueEvidence, kinshipTermsIn } from './memory-value';
+import {
+  isSearchableDialogueEvidence,
+  kinshipGroupsIn,
+  kinshipTermsIn,
+} from './memory-value';
 import {
   KnownPersonDeclaration,
   UserIdentityMemoryService,
@@ -458,9 +462,24 @@ export class RelativeMemoryExtractorService {
     },
     parentReferences: string[]
   ): boolean {
-    return [item.referenceName, item.realName, item.relation]
-      .filter((value): value is string => Boolean(value))
-      .some(value => parentReferences.includes(value));
+    const values = [item.referenceName, item.realName, item.relation]
+      .map(value => value?.trim())
+      .filter((value): value is string => Boolean(value));
+    if (!values.length) return false;
+    if (values.some(value => parentReferences.includes(value))) return true;
+    // 同义称谓也要排除：把"爹/爸/老爸"当成另一个用户亲属，就是把当前 AI
+    // 亲人本人误记成账号亲属。按亲属同义组比较，而不是字面相等。
+    const parentGroups = new Set<number>();
+    for (const reference of parentReferences) {
+      for (const group of kinshipGroupsIn(reference)) parentGroups.add(group);
+    }
+    if (!parentGroups.size) return false;
+    return values.some(value => {
+      for (const group of kinshipGroupsIn(value)) {
+        if (parentGroups.has(group)) return true;
+      }
+      return false;
+    });
   }
 
   private async resolveUniqueLinkedAgent(

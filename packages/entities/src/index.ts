@@ -38,6 +38,7 @@ export * from "./user.entity";
 export * from "./user-account.entity";
 export * from "./user-relative-fact.entity";
 export * from "./user-relative-profile.entity";
+export * from "./user-self-fact.entity";
 export * from "./person-temporal-assertion.entity";
 export * from "./person-temporal-profile.entity";
 export * from "./user-identity-profile.entity";

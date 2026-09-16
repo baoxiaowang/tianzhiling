@@ -152,6 +152,7 @@ import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
 import { listRaisedOpenItems } from './memory/memory-return-turn';
 import { RelativeMemoryExtractorService } from './agents/relative-memory-extractor.service';
+import { UserSelfMemoryService } from './agents/user-self-memory.service';
 import { UserRelativeProfileService } from './agents/user-relative-profile.service';
 import { CosyVoiceSpeechService } from './cosyvoice-speech.service';
 import { MinimaxVoiceSpeechService } from './minimax-voice-speech.service';
@@ -809,6 +810,9 @@ export class ConversationService {
 
   @Inject()
   relativeMemoryExtractorService: RelativeMemoryExtractorService;
+
+  @Inject()
+  userSelfMemoryService: UserSelfMemoryService;
 
   @Inject()
   userRelativeProfileService: UserRelativeProfileService;
@@ -3322,6 +3326,17 @@ export class ConversationService {
           );
           return 0;
         })) || 0;
+    // 用户本人近况独立主体：与亲属入口分开，亲属相关消息交给亲属入口。
+    await this.userSelfMemoryService
+      ?.extractFromUserMessage(message, searchableText, { contextMessages })
+      .catch(error => {
+        this.logger.warn(
+          '[conversation] user self memory extraction skipped, messageId=%s, reason=%s',
+          this.stringifyObjectId(message.id),
+          this.describeReplyError(error)
+        );
+        return 0;
+      });
     if (openLoopAudit) {
       this.chatTraceService?.recordCompletedSpan({
         stage: ChatTraceStage.asyncWrite,

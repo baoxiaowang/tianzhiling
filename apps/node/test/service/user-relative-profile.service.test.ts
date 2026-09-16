@@ -53,6 +53,25 @@ describe('UserRelativeProfileService', () => {
     expect(isRelativeRelation('朋友')).toBe(false);
   });
 
+  it('accepts explicit appellations with rank or modifier prefixes', () => {
+    for (const relation of [
+      '二奶奶',
+      '大爸爸',
+      '幺爹',
+      '三叔',
+      '婶子',
+      '嫂子',
+      '孙子',
+      '外孙女',
+    ]) {
+      expect(isRelativeRelation(relation)).toBe(true);
+    }
+    // 不是亲属称谓的短词仍然拒绝。
+    for (const relation of ['朋友', '同事', '邻居', '医生']) {
+      expect(isRelativeRelation(relation)).toBe(false);
+    }
+  });
+
   it('keeps changed current facts as history instead of overwriting them', async () => {
     const service = new UserRelativeProfileService();
     const profile = Object.assign(new UserRelativeProfileEntity(), {

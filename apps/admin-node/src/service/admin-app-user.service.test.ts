@@ -47,6 +47,9 @@ function createService() {
   service.userRelativeFactModel = {
     find: jest.fn().mockResolvedValue([]),
   } as any;
+  service.userSelfFactModel = {
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
   service.orderModel = {
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn(),

@@ -499,6 +499,7 @@
     style: '表达风格',
     memory: '记忆',
     taboo: '忌讳',
+    self_situation: '本人近况',
   };
 
   const STATUS_LABELS: Record<string, string> = {

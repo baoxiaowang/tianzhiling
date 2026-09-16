@@ -10,6 +10,7 @@ export enum TableName {
   user_known_person = "user_known_person",
   user_relative_profile = "user_relative_profile",
   user_relative_fact = "user_relative_fact",
+  user_self_fact = "user_self_fact",
   person_temporal_assertion = "person_temporal_assertion",
   person_temporal_profile = "person_temporal_profile",
   admin_user = "admin_user",

@@ -386,4 +386,21 @@ describe('RelativeMemoryExtractorService', () => {
     ).resolves.toBe(0);
     expect(upsertKnownPerson).not.toHaveBeenCalled();
   });
+
+  it('excludes the bound AI relative through kinship synonyms, not exact names', () => {
+    const service = new RelativeMemoryExtractorService();
+    const isParent = (item: {
+      referenceName?: string;
+      realName?: string;
+      relation?: string;
+    }) => (service as any).isMessengerParent(item, ['爸爸']);
+
+    // “爹/爸/父亲”与“爸爸”同组，都指当前对话对象本人。
+    expect(isParent({ referenceName: '爹', relation: '父亲' })).toBe(true);
+    expect(isParent({ referenceName: '爸' })).toBe(true);
+    expect(isParent({ relation: '父亲' })).toBe(true);
+    // 不同组的人不是当前角色。
+    expect(isParent({ referenceName: '妈妈', relation: '母亲' })).toBe(false);
+    expect(isParent({ referenceName: '二奶奶', relation: '奶奶' })).toBe(false);
+  });
 });
