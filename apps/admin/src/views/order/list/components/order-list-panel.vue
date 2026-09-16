@@ -181,18 +181,6 @@
               {{ formatRegisteredMonth(record.user?.registeredAt) }}
             </template>
           </a-table-column>
-          <a-table-column title="智能体ID" data-index="agentId" :width="220">
-            <template #cell="{ record }">
-              <a-typography-text
-                v-if="record.agentId"
-                class="order-page__mono order-page__agent-id"
-                copyable
-              >
-                {{ record.agentId }}
-              </a-typography-text>
-              <span v-else>-</span>
-            </template>
-          </a-table-column>
           <a-table-column title="金额" data-index="payableAmount" :width="150">
             <template #cell="{ record }">
               <div>{{ formatAmount(record.payableAmount) }}</div>
@@ -237,29 +225,20 @@
               {{ getPaymentProviderText(record.paymentProvider) }}
             </template>
           </a-table-column>
-          <a-table-column
-            v-if="!refundMode"
-            title="微信发货"
-            data-index="virtualGoodsProvideStatus"
-            :width="130"
-          >
+          <a-table-column title="平台" :width="110">
             <template #cell="{ record }">
-              <template v-if="getVirtualGoodsProvideStatus(record)">
-                <a-tooltip
-                  v-if="getVirtualGoodsProvideError(record)"
-                  :content="getVirtualGoodsProvideError(record)"
-                >
-                  <a-tag :color="getVirtualGoodsProvideStatusColor(record)">
-                    {{ getVirtualGoodsProvideStatusText(record) }}
-                  </a-tag>
-                </a-tooltip>
-                <a-tag
-                  v-else
-                  :color="getVirtualGoodsProvideStatusColor(record)"
-                >
-                  {{ getVirtualGoodsProvideStatusText(record) }}
-                </a-tag>
-              </template>
+              <a-tooltip
+                v-if="getVirtualPayPlatform(record) === 'ios'"
+                content="iOS 虚拟支付订单，微信侧不支持开发者发起退款"
+              >
+                <a-tag color="red">iOS</a-tag>
+              </a-tooltip>
+              <a-tag
+                v-else-if="getVirtualPayPlatform(record) === 'android'"
+                color="arcoblue"
+              >
+                安卓
+              </a-tag>
               <span v-else>-</span>
             </template>
           </a-table-column>
@@ -2139,6 +2118,27 @@
 
   const isVirtualPaymentOrder = (record: OrderRecord) => {
     return record.paymentProvider === 'wechat_virtual_pay';
+  };
+
+  /**
+   * 微信虚拟支付订单的客户端平台：安卓走微信支付，交易号 28 位且以 4500 开头；
+   * iOS 走 Apple 渠道，为较短的渠道交易号（微信侧不支持开发者发起退款）。
+   * 未支付/无交易号时返回空，无法判断。
+   */
+  const getVirtualPayPlatform = (
+    record: OrderRecord
+  ): 'ios' | 'android' | '' => {
+    if (!isVirtualPaymentOrder(record)) {
+      return '';
+    }
+
+    const tradeNo = (record.paymentTradeNo || '').trim();
+
+    if (!tradeNo) {
+      return '';
+    }
+
+    return tradeNo.startsWith('4500') ? 'android' : 'ios';
   };
 
   const isAdminManualOrder = (record: OrderRecord) => {
