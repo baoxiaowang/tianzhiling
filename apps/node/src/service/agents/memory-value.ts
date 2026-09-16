@@ -808,10 +808,69 @@ export function isFactBearingUtterance(text: string): boolean {
   return FACT_SIGNAL_PATTERN.test(value);
 }
 
+/** 称呼/语气词：只用于判"整句是否再无别的内容"，不参与事实判断。 */
+const VOCATIVE_FILLER_PATTERN = /[啊呀呢吧哦嗯哈嘛哎哟]/g;
+const KINSHIP_STRIP_PATTERN = new RegExp(KINSHIP_TERM_PATTERN.source, 'g');
+/** 纯自我状态安抚："我很好/我没事/我挺好的"。 */
+const SELF_PLATITUDE_ONLY_PATTERN =
+  /^我(?:真的|也|都|现在|最近)?(?:很|挺|还|一切都)?(?:好|很好|还好|挺好|挺好的|没事|平安|顺利|一切都好)(?:的|啦|了|啊|哦|吧|呢)*$/u;
+const REASSURANCE_MARKER_PATTERN =
+  /(?:你|您)?(?:就)?放心(?:吧|啊|哦|了|的)?|(?:别|不用|不要)(?:再)?(?:担心|挂念|惦记|操心)/gu;
+const SELF_PLATITUDE_PATTERN =
+  /(?:我|我们|家里|大家|全家|一切|全都)?(?:很|都|也|挺|真的|一切都)?(?:好|很好|还好|挺好|没事|平安|顺利|一切都好)(?:的|啦|了|啊|哦|吧|呢)*/gu;
+
+/** 去掉亲属称呼与语气词后剩下的话；空 = 整句只有称呼。 */
+function stripAddressForIndex(core: string): string {
+  return core
+    .replace(KINSHIP_STRIP_PATTERN, '')
+    .replace(VOCATIVE_FILLER_PATTERN, '');
+}
+
+/** 整句只剩称呼（含重复称呼），没有别的内容。 */
+function isPureVocative(original: string, stripped: string): boolean {
+  return stripped.length === 0 && kinshipTermsIn(original).length > 0;
+}
+
+/** 整句只剩"想你/思念你"这类表达，没有别的内容。 */
+function isPureLonging(stripped: string): boolean {
+  const trimmed = stripped
+    .replace(
+      /^(?:但是|可是|不过|就是|只是|其实|而且|然后|所以|因为|唉|哎|嗯|哦)+/u,
+      ''
+    )
+    .replace(/^我(?:自己|真的|真)?/u, '')
+    .replace(/[了啦的啊呀呢吧哦嗯嘛]+$/u, '');
+  const withoutYou = trimmed.replace(/(?:你|您|你们|你俩)$/u, '');
+  if (!/(?:想|想念|思念|怀念|惦记|牵挂)/u.test(withoutYou)) return false;
+  const leftover = withoutYou.replace(
+    /(?:真的|真|好|很|特别|非常|太|超级|一直|总是|天天|每天|无时无刻|越发|那么|这么)?(?:想|想念|思念|怀念|惦记|牵挂)/gu,
+    ''
+  );
+  return leftover.replace(VOCATIVE_FILLER_PATTERN, '').length === 0;
+}
+
+/** 整句只是"你放心，我很好"式安抚或裸自我状态，没有具体人/事。 */
+function isEmptyReassurance(stripped: string): boolean {
+  if (SELF_PLATITUDE_ONLY_PATTERN.test(stripped)) return true;
+  const hadReassurance = REASSURANCE_MARKER_PATTERN.test(stripped);
+  REASSURANCE_MARKER_PATTERN.lastIndex = 0;
+  if (!hadReassurance) return false;
+  const leftover = stripped
+    .replace(REASSURANCE_MARKER_PATTERN, '')
+    .replace(SELF_PLATITUDE_PATTERN, '')
+    .replace(VOCATIVE_FILLER_PATTERN, '');
+  return leftover.length === 0;
+}
+
 /**
  * 候选：这条原话是否作为"可搜索的对话证据"进原话索引。
  * 与"值得长期保存的结构化事实"（isFactBearingUtterance）分开：
- * 不再因为句中出现思念/祈愿/问号就整句排除其中的事实；纯应答与空串仍不入索引。
+ * 不再因为句中出现思念/祈愿/问号就整句排除其中的事实。
+ *
+ * 准入过滤保持"最小"，只排除整句确无检索内容的：
+ * 空串、独立纯应答、独立表情、纯称呼（含重复称呼）、纯思念、
+ * "你放心，我很好"式空泛安抚。事实夹情绪、问句、致谢、
+ * 任何含具体人/事/时间的句子都保留。
  */
 export function isSearchableDialogueEvidence(text: string): boolean {
   const value = (text || '').trim();
@@ -819,6 +878,10 @@ export function isSearchableDialogueEvidence(text: string): boolean {
   const core = value.replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
   if (core.length < 2) return false;
   if (BARE_ACK_PATTERN.test(core)) return false;
+  const stripped = stripAddressForIndex(core);
+  if (isPureVocative(core, stripped)) return false;
+  if (isPureLonging(stripped)) return false;
+  if (isEmptyReassurance(stripped)) return false;
   return true;
 }
 

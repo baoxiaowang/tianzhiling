@@ -1045,7 +1045,8 @@ describe('isSearchableDialogueEvidence', () => {
       '嗓子好多了；明天监考美术',
       '明天去复查，爸我好想你',
       '头发剪短了，和初中一样',
-      '爸爸，我很想你',
+      '你放心，哥哥嫂子和你孙子孙女都很好',
+      '爹啊，二奶奶昨天去世了，今天火化',
       '你过的好吗',
       '爱你🥰',
       '不聊了，工作了',
@@ -1054,15 +1055,43 @@ describe('isSearchableDialogueEvidence', () => {
     }
   });
 
-  it('drops only empty text, symbol-only text, and standalone bare acks', () => {
+  it('drops empty text, symbol-only text, and standalone bare acks', () => {
     for (const text of ['', '   ', '？', '好的', '嗯', '哦', '谢谢你']) {
       expect(isSearchableDialogueEvidence(text)).toBe(false);
     }
   });
 
-  it('does not gate on fact keywords or kinship terms', () => {
-    // 纯思念/寒暄没有事实关键词，仍作为可搜索对话证据保留（召回优先）。
+  it('drops messages whose whole content is a pure address', () => {
+    for (const text of ['爸爸', '爸爸。爸爸', '爸爸，爸爸', '爸', '爸爸！']) {
+      expect(isSearchableDialogueEvidence(text)).toBe(false);
+    }
+  });
+
+  it('drops messages whose whole content is pure longing', () => {
+    for (const text of [
+      '爸爸，我好想好想你',
+      '我好想你',
+      '爸爸，我很想你',
+      '但是我真的很想你',
+      '想你了',
+    ]) {
+      expect(isSearchableDialogueEvidence(text)).toBe(false);
+    }
+  });
+
+  it('drops empty reassurance without concrete people or events', () => {
+    for (const text of ['你放心，我很好', '我很好', '我没事', '爸爸，你放心']) {
+      expect(isSearchableDialogueEvidence(text)).toBe(false);
+    }
+  });
+
+  it('does not drop a sentence that keeps any concrete content', () => {
+    // 有具体人或事就不算空泛：情绪/安抚只作背景。
     expect(isSearchableDialogueEvidence('某个瞬间总是想起你')).toBe(true);
     expect(isSearchableDialogueEvidence('好想你回来哦')).toBe(true);
+    expect(isSearchableDialogueEvidence('妈妈身体很好')).toBe(true);
+    expect(isSearchableDialogueEvidence('你放心，我很好，今年没养猪了')).toBe(
+      true
+    );
   });
 });
