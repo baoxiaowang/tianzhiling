@@ -2355,6 +2355,100 @@ describe('AdminOrderService', () => {
     expect(membership.vipPlanId).toEqual(BASIC_VIP_PLAN_ID);
   });
 
+  it('撤回失败的降级任务后清空记录并保留审计', async () => {
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'failed',
+          sourcePlan: {
+            id: 'plan-voice',
+            code: 'voice_vip_year',
+            name: '一年+声音',
+            planGroup: VipPlanGroup.voice,
+            priceAmount: 16900,
+            currency: 'CNY',
+            durationDays: 365,
+            lifetime: false,
+          },
+          targetPlan: {
+            id: 'plan-basic',
+            code: 'vip_year',
+            name: '一年会员',
+            planGroup: VipPlanGroup.basic,
+            priceAmount: 9900,
+            currency: 'CNY',
+            durationDays: 365,
+            lifetime: false,
+          },
+          targetPlanSnapshot: {},
+          refundAmount: 7000,
+          refundNo: 'VDVIP1',
+          requestedAt: '2026-09-16T15:12:39.840Z',
+          updatedAt: '2026-09-16T15:12:41.300Z',
+          failureReason:
+            'iOS 虚拟支付订单不支持管理端主动退款，请引导用户通过 Apple/App Store 申请退款。',
+        },
+      },
+    });
+    orders.push(order);
+    jest.mocked(service.userModel.find).mockResolvedValue([] as never);
+    jest.mocked(service.userAccountModel.find).mockResolvedValue([] as never);
+
+    const result = await service.withdrawVoiceMembershipDowngrade(
+      ORDER_ID.toHexString(),
+      {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      }
+    );
+
+    expect(result.voiceMembershipDowngrade).toBeUndefined();
+    expect(order.snapshot.voiceMembershipDowngrade).toBeUndefined();
+    expect(order.snapshot.voiceMembershipDowngradeWithdrawn).toMatchObject({
+      status: 'failed',
+      refundNo: 'VDVIP1',
+      refundAmount: 7000,
+      withdrawnBy: 'admin-1',
+      withdrawnByAccount: 'operator',
+    });
+  });
+
+  it('拒绝撤回非失败状态的降级任务', async () => {
+    const { service, orders } = createService();
+    const order = createCompletedVipOrder({
+      snapshot: {
+        voiceMembershipDowngrade: {
+          status: 'completed',
+          refundAmount: 7000,
+          refundNo: 'VDVIP2',
+          requestedAt: '2026-09-16T15:12:39.840Z',
+          updatedAt: '2026-09-16T15:12:41.300Z',
+        },
+      },
+    });
+    orders.push(order);
+
+    await expect(
+      service.withdrawVoiceMembershipDowngrade(ORDER_ID.toHexString(), {
+        sub: 'admin-1',
+        account: 'operator',
+        roles: ['admin'],
+        iat: 0,
+        exp: 1,
+        nonce: 'nonce',
+      })
+    ).rejects.toMatchObject({
+      code: 'VOICE_MEMBERSHIP_DOWNGRADE_NOT_WITHDRAWABLE',
+      status: 409,
+    });
+    expect(order.snapshot.voiceMembershipDowngrade).toBeDefined();
+  });
+
   it('refunds the remaining amount after a completed downgrade and revokes membership', async () => {
     jest.useFakeTimers().setSystemTime(ORDER_CREATED_AT);
     const { service, orders, memberships, entitlements } = createService();

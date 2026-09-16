@@ -73,4 +73,11 @@ export class AdminOrderController {
 
     return this.adminOrderService.syncVoiceMembershipDowngrade(id, auth);
   }
+
+  @Post('/:id/voice-membership-downgrade/withdraw')
+  async withdrawVoiceMembershipDowngrade(@Param('id') id: string) {
+    const auth = this.ctx.state.adminAuth as AdminAuthenticatedPayload;
+
+    return this.adminOrderService.withdrawVoiceMembershipDowngrade(id, auth);
+  }
 }

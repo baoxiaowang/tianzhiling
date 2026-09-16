@@ -401,6 +401,23 @@
                   刷新降级
                 </a-button>
                 <a-popconfirm
+                  v-if="canWithdrawVoiceMembershipDowngrade(record)"
+                  content="确认撤回这次失败的降级任务？撤回后可重新发起退款或降级。"
+                  ok-text="撤回"
+                  cancel-text="取消"
+                  position="left"
+                  @ok="handleWithdrawVoiceMembershipDowngrade(record)"
+                >
+                  <a-button
+                    type="text"
+                    status="danger"
+                    size="small"
+                    :loading="downgradeWithdrawLoadingId === record.id"
+                  >
+                    撤回降级
+                  </a-button>
+                </a-popconfirm>
+                <a-popconfirm
                   v-if="canRefundOrder(record)"
                   :content="getRefundConfirmContent(record)"
                   :ok-text="getRefundActionText(record)"
@@ -914,6 +931,7 @@
     revokeAdminManualOrder as revokeAdminManualOrderApi,
     syncOrderPaymentStatus as syncOrderPaymentStatusApi,
     syncVoiceMembershipDowngrade as syncVoiceMembershipDowngradeApi,
+    withdrawVoiceMembershipDowngrade as withdrawVoiceMembershipDowngradeApi,
     type VoiceMembershipDowngradePreview,
   } from '@/api/order';
 
@@ -955,6 +973,7 @@
   const revokeLoadingId = ref('');
   const syncLoadingId = ref('');
   const downgradeSyncLoadingId = ref('');
+  const downgradeWithdrawLoadingId = ref('');
   const downgradeVisible = ref(false);
   const downgradePreviewLoading = ref(false);
   const downgradeSubmitting = ref(false);
@@ -1335,8 +1354,14 @@
   const canSyncVoiceMembershipDowngrade = (record: OrderRecord) => {
     return Boolean(
       record.voiceMembershipDowngrade &&
-        record.voiceMembershipDowngrade.status !== 'completed'
+        record.voiceMembershipDowngrade.status !== 'completed' &&
+        record.voiceMembershipDowngrade.status !== 'failed'
     );
+  };
+
+  // 仅失败的降级任务可撤回（退款已成功的 benefits_failed 不允许）
+  const canWithdrawVoiceMembershipDowngrade = (record: OrderRecord) => {
+    return record.voiceMembershipDowngrade?.status === 'failed';
   };
 
   const canRevokeAdminManualOrder = (record: OrderRecord) => {
@@ -1532,6 +1557,30 @@
       );
     } finally {
       downgradeSyncLoadingId.value = '';
+    }
+  };
+
+  const handleWithdrawVoiceMembershipDowngrade = async (
+    record: OrderRecord
+  ) => {
+    if (downgradeWithdrawLoadingId.value) {
+      return;
+    }
+
+    try {
+      downgradeWithdrawLoadingId.value = record.id;
+      const { data } = await withdrawVoiceMembershipDowngradeApi(record.id);
+
+      replaceOrderRecord(data);
+      Message.success('已撤回降级任务，订单恢复可退款/可重新降级');
+    } catch (error) {
+      Message.error(
+        error instanceof Error && error.message
+          ? error.message
+          : '撤回降级失败，请稍后重试'
+      );
+    } finally {
+      downgradeWithdrawLoadingId.value = '';
     }
   };
 

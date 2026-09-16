@@ -96,3 +96,13 @@ export function syncVoiceMembershipDowngrade(id: string) {
     } as TzlAxiosRequestConfig
   );
 }
+
+export function withdrawVoiceMembershipDowngrade(id: string) {
+  return axios.post<OrderRecord>(
+    `/admin_api/orders/${id}/voice-membership-downgrade/withdraw`,
+    undefined,
+    {
+      hideErrorMessage: true,
+    } as TzlAxiosRequestConfig
+  );
+}

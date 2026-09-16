@@ -595,6 +595,75 @@ export class AdminOrderService {
     return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
   }
 
+  /**
+   * 撤回失败的会员降级任务：清空降级记录，使订单恢复可退款/可重新降级。
+   * 仅允许撤回 status=failed 的降级（退款已成功的 benefits_failed 不允许），
+   * 原记录转入 snapshot.voiceMembershipDowngradeWithdrawn 保留审计。
+   */
+  async withdrawVoiceMembershipDowngrade(
+    orderId: string,
+    operator: AdminAuthenticatedPayload
+  ): Promise<AdminOrderRecordDTO> {
+    const order = await this.getOrderById(orderId);
+    const downgrade = this.getVoiceMembershipDowngrade(order);
+
+    if (!downgrade) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_NOT_FOUND',
+        '该订单没有声音版降级记录',
+        404
+      );
+    }
+
+    if (downgrade.status !== 'failed') {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_NOT_WITHDRAWABLE',
+        '只有失败的降级任务才能撤回',
+        409
+      );
+    }
+
+    const now = new Date();
+    const withdrawn = {
+      ...downgrade,
+      withdrawnAt: now.toISOString(),
+      withdrawnBy: operator?.sub,
+      withdrawnByAccount: operator?.account,
+    };
+
+    const result = await this.orderModel.updateOne(
+      {
+        _id: order.id,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.refundNo`]:
+          downgrade.refundNo,
+        [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}.status`]:
+          'failed',
+      } as never,
+      {
+        $set: {
+          'snapshot.voiceMembershipDowngradeWithdrawn': withdrawn,
+          updatedAt: now,
+        },
+        $unset: {
+          [`snapshot.${VOICE_MEMBERSHIP_DOWNGRADE_SNAPSHOT_KEY}`]: '',
+        },
+      } as never
+    );
+
+    if (!this.didMongoUpdate(result)) {
+      throw new AppError(
+        'VOICE_MEMBERSHIP_DOWNGRADE_STATE_CONFLICT',
+        '降级状态已变化，请刷新后重试',
+        409
+      );
+    }
+
+    const refreshedOrder = await this.refreshOrderEntity(order);
+    const userMap = await this.getOrderUserMap([refreshedOrder]);
+
+    return this.buildOrderRecordWithUsage(refreshedOrder, userMap);
+  }
+
   private async applyVoiceMembershipDowngradeRefundStatus(
     order: OrderEntity,
     downgrade: VoiceMembershipDowngradeSnapshot,
