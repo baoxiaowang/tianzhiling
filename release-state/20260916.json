@@ -1,0 +1,32 @@
+{
+  "release": "20260916",
+  "branch": "20260916",
+  "repo": "tianzhiling",
+  "createdAt": "2026-09-16T15:47:00+08:00",
+  "baselineCommit": "a237b35",
+  "baselineLabel": "20260912 已部署基线",
+  "commits": [
+    "f03e2ee feat(memory): integrate production memory-retrieval candidate (patch sha256 87bfc500)",
+    "39b8609 feat(admin): chat + retained-memory side-by-side panel"
+  ],
+  "highlights": [
+    "记忆检索增强：检索候选上限 10、原话优先于抽取结论、人物范围不再挤掉原话检索、检索门槛与查询解析修复",
+    "有界连续片段：以命中为中心前后各 2 条、6h 断点、单片段 ≤5 条/≤300 估算、合计 ≤12 条/≤600 估算；合并只取双方已保留集合，不把已截断消息带回",
+    "最终材料块按渲染后字符 ≤1200 整行装入：不截断来源标记或原话，截断提示计入预算",
+    "失败降级：检索失败返回空候选并记录 retrieval_failure，聊天不阻断",
+    "管理后台：用户详情「聊天与记忆」左右联查，右侧已留存结构化记忆 + 账号级共享记忆单独标识；来源点击定位左侧原话并区分「搜索达到上限 / 来源不存在」；切换对象/关闭抽屉丢弃旧请求；窄屏抽屉宽度跟随视口"
+  ],
+  "notes": [
+    "整合基线为实际部署 a237b35（branch 20260912，dirty 0）；记忆候选补丁 sha256 87bfc500009745dc7d812a4e9a231a1718865b33792a981ca416eb1a8b7c32d2 已核对；后台补丁基于 411fb8b 编写，在 a237b35 上零冲突应用，未覆盖 0f0edd0/96e3c8c/a237b35 三个已上线提交",
+    "服务闭包 tzl_node、tzl_memory_worker、tzl_admin_node、tzl_admin_web（tzl_nginx 不在闭包内，仅重解析地址并 reload）",
+    "无配置/环境变量/包依赖/schema 变化；无迁移、无回填、无重新索引；database-contract 阶段均为 --check",
+    "编译：node tsc exit 0、admin-node build、admin type:check+build 通过；node 受影响四套件基线 21F/104P vs 整合 21F/104P（新增 0）；admin-node 18 套件/191 通过",
+    "离线聊天入口检查 6/6 通过（片段送达、近期去重、失败降级、材料长度上限、合并不越界、同源原话优先且请求 10 给 10）",
+    "发布：2026-09-16 15:59 完成，tzl_node/tzl_memory_worker/tzl_admin_node/tzl_admin_web 全部 running、restarts=0、镜像 revision=39b8609；public/admin health ok；pm2 稳定窗口 120s 通过；nginx 未重建",
+    "回滚：代码回滚到 a237b35；本次无 schema 变更，代码回滚不删除新版期间新增的索引记录，旧代码按既有字段读取保持兼容"
+  ],
+  "status": "deployed",
+  "deployedAt": "2026-09-16T15:59:29+08:00",
+  "deployedCommit": "39b8609896092b89328cf1a9b882949229808806",
+  "upstream": "20260912"
+}
