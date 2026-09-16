@@ -808,6 +808,20 @@ export function isFactBearingUtterance(text: string): boolean {
   return FACT_SIGNAL_PATTERN.test(value);
 }
 
+/**
+ * 候选：这条原话是否作为"可搜索的对话证据"进原话索引。
+ * 与"值得长期保存的结构化事实"（isFactBearingUtterance）分开：
+ * 不再因为句中出现思念/祈愿/问号就整句排除其中的事实；纯应答与空串仍不入索引。
+ */
+export function isSearchableDialogueEvidence(text: string): boolean {
+  const value = (text || '').trim();
+  if (!value) return false;
+  const core = value.replace(/[^\p{Script=Han}\p{L}\p{N}]/gu, '');
+  if (core.length < 2) return false;
+  if (BARE_ACK_PATTERN.test(core)) return false;
+  return true;
+}
+
 /** 一段文字里出现的所有亲属称谓（按出现顺序，含同义写法）。 */
 export function kinshipTermsIn(text: string): string[] {
   const terms: string[] = [];

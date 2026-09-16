@@ -27,6 +27,7 @@ import {
   buildDepartedSystemPrompt,
 } from '../../prompt/departed';
 import { RetrieveService } from '../rag/retrieve.service';
+import { buildContiguousFragments } from '../rag/memory-fragments';
 import {
   isEmotionalValue,
   kinshipGroupsIn,
@@ -156,6 +157,28 @@ import type { ReturnTurnPlan } from '../memory/memory-return-turn';
 /** 结构性类型别名：避免在私有方法签名里写一大串内联类型。 */
 type ReturnPlanLike = ReturnTurnPlan;
 
+export interface LocalMemoryCandidateInput {
+  sourceMessageId: string;
+  text: string;
+  occurredAt?: string;
+  role?: string;
+  score?: number;
+  memoryKind?: string;
+  adjacent?: Array<{
+    sourceMessageId: string;
+    role: string;
+    occurredAt: string;
+    text: string;
+  }>;
+  /** 有界连续片段（含命中，按原始顺序）；优先于 adjacent 渲染。 */
+  fragment?: Array<{
+    sourceMessageId: string;
+    role: string;
+    occurredAt: string;
+    text: string;
+  }>;
+}
+
 export interface BuildConversationContextOptions {
   auth: AuthenticatedUserPayload;
   conversation: ConversationEntity;
@@ -174,6 +197,11 @@ export interface BuildConversationContextOptions {
   deliberateLongReplyExecutionPrompt?: string;
   pinnedHistoryMessageIds?: string[];
   conversationReturnContext?: ConversationReturnContext;
+  /**
+   * 本地记忆候选（隔离工作副本）：由入口传入材料，上下文构造负责去重、渲染与来源/时间标注。
+   * 这些是“候选”而不是已确认事实：assertionPolicy=context_only、useMode=hypothesis。
+   */
+  localMemoryCandidates?: LocalMemoryCandidateInput[];
 }
 
 export interface AgentContextLayer {
@@ -510,6 +538,51 @@ export function isInjectableMemoryEvidence(
   if (core && normalize(content) === normalize(currentQuery)) return false;
   return true;
 }
+/**
+ * 候选：查询保留完整表达。抽到关键词也不丢掉句中的具体事情（"爸爸我明天坐高铁回去读书"
+ * 不能再只拿"爸 爸爸"去查）；抽不出关键词时也保留原话做语义检索。
+ */
+export function resolveSemanticRetrievalQuery(
+  extractedKeys: string,
+  currentUserText: string
+): string {
+  const text = (currentUserText || '').trim();
+  return text || (extractedKeys || '').trim();
+}
+
+/**
+ * 候选：是否值得发起一次自动检索。
+ * - 规划器已要求记忆 → 检索；
+ * - 有关键词 → 检索；
+ * - 否则只要不是纯应答/空白就检索（不再用"至少六个字"判事实，短表达如"嗓子好多了"也检索）。
+ */
+export function shouldTriggerMemoryRetrieval(
+  extractedKeys: string,
+  currentUserText: string,
+  plannerMemoryRequested = false
+): boolean {
+  if (plannerMemoryRequested) return true;
+  if ((extractedKeys || '').trim()) return true;
+  const core = memoryEvidenceCore(currentUserText || '');
+  if (core.length < 2) return false;
+  if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
+  return true;
+}
+
+/** 候选：只做最少的内容层守卫，不因缺少字面检索键、人物不一致、问句或情绪而整条删除；
+ *  相关性交给主模型结合原话判断；用户隔离、归档/删除与来源核验仍由上游严格执行。 */
+export function isInjectableMemoryEvidenceLoose(
+  content: string,
+  currentQuery: string
+): boolean {
+  const core = memoryEvidenceCore(content);
+  if (core.length < AUTO_MEMORY_MIN_EVIDENCE_CHARACTERS) return false;
+  if (MEMORY_EVIDENCE_ACK_PATTERN.test(core)) return false;
+  if (SELF_HARM_SIGNAL_PATTERN.test(content)) return false;
+  const normalize = (value: string) => memoryEvidenceCore(value).toLowerCase();
+  if (core && normalize(content) === normalize(currentQuery)) return false;
+  return true;
+}
 const RECENT_HISTORY_MESSAGE_LIMIT = 16;
 // 上下文构建只需要最近若干轮；长会话不再全量加载，避免 V8 堆顶满。
 const CONVERSATION_MESSAGE_LOAD_LIMIT = 50;
@@ -815,12 +888,26 @@ export class AgentContextService {
     );
     const useMemoryModule =
       Boolean(this.memoryModuleService) && memorySelection?.mode !== 'off';
-    const memoryRetrievalReady = useMemoryModule
-      ? Boolean(memoryRetrievalQuery)
-      : Boolean(
-          this.retrieveService?.retrieveConversationMemoriesDetailed &&
-            memoryRetrievalQuery
-        );
+    // 候选：查询用完整表达；是否检索由"规划器要求 / 有关键词 / 非纯应答"决定。
+    const plannerMemoryRequested = this.isPlannerMemoryRequested(
+      replyIntent?.memoryPlan
+    );
+    const semanticRetrievalQuery = resolveSemanticRetrievalQuery(
+      memoryRetrievalQuery,
+      memoryGateText
+    );
+    const memoryRetrievalReady =
+      shouldTriggerMemoryRetrieval(
+        memoryRetrievalQuery,
+        memoryGateText,
+        plannerMemoryRequested
+      ) &&
+      (useMemoryModule
+        ? Boolean(semanticRetrievalQuery)
+        : Boolean(
+            this.retrieveService?.retrieveConversationMemoriesDetailed &&
+              semanticRetrievalQuery
+          ));
     const effectiveMemoryRetrievalMode: MemoryRetrievalMode =
       memoryRetrievalReady ? 'active' : 'suppressed';
     const retrievedMemories: RetrievedContextSnippet[] = [];
@@ -836,7 +923,7 @@ export class AgentContextService {
           message => message.content || ''
         );
         const keepInjectable = (item: RetrievedContextSnippet) =>
-          isInjectableMemoryEvidence(item.content || '', memoryGateText) &&
+          isInjectableMemoryEvidenceLoose(item.content || '', memoryGateText) &&
           !recentTexts.some(
             text =>
               memoryValueSimilarity(text, item.content || '') >=
@@ -918,7 +1005,7 @@ export class AgentContextService {
         } else {
           const retrieved =
             await this.retrieveService!.retrieveConversationMemoriesDetailed({
-              query: memoryRetrievalQuery,
+              query: semanticRetrievalQuery,
               userId: this.stringifyObjectId(options.conversation.userId),
               conversationId: this.stringifyObjectId(options.conversation.id),
               agentId: this.stringifyObjectId(
@@ -1080,16 +1167,36 @@ export class AgentContextService {
       currentUserCanAssert: Boolean(replyBrief.correctionPolicy),
       objectPlan: replyBrief.objectPlan,
     });
+    // 本地记忆候选：优先用入口显式传入的材料（测试/特殊调用）；生产路径没有传，
+    // 就由**本函数自己的自动预取结果**（retrievedMemories）生成有界片段——不依赖任何试用入口。
+    const effectiveLocalCandidates: LocalMemoryCandidateInput[] =
+      options.localMemoryCandidates && options.localMemoryCandidates.length
+        ? options.localMemoryCandidates
+        : this.buildLocalCandidatesFromAutoPrefetch(
+            retrievedMemories,
+            historicalConversationMessages
+          );
+    // 去重（对最近历史、候选之间）并转成“候选”证据：
+    // assertionPolicy=context_only + useMode=hypothesis，避免把检索结果升级成确认事实。
+    const localCandidateEvidence = this.buildLocalMemoryCandidateEvidence(
+      effectiveLocalCandidates,
+      recentHistoryMessages,
+      options.currentQuery || ''
+    );
+    const acceptedLocalCandidateIds = new Set(
+      localCandidateEvidence.map(item => String(item.sourceMessageId || ''))
+    );
+    const resolvedCandidates = [...evidenceCandidates, ...localCandidateEvidence];
     const evidencePack = this.evidenceResolverService
       ? this.evidenceResolverService.resolve({
-          candidates: evidenceCandidates,
+          candidates: resolvedCandidates,
           currentQuery: options.currentQuery || '',
           strictGrounding: replyBrief.strictGrounding,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
           correctionMode: replyBrief.correctionPolicy?.mode,
         })
       : buildEvidencePackFallback({
-          candidates: evidenceCandidates,
+          candidates: resolvedCandidates,
           currentQuery: options.currentQuery || '',
           strictGrounding: replyBrief.strictGrounding,
           suppressPriorFacts: Boolean(replyBrief.correctionPolicy),
@@ -1111,7 +1218,10 @@ export class AgentContextService {
           chatToolPlan,
           replyPlanningDecision.mode,
           returnTurnMaterialPrompt,
-          returnTurnMaterial.hasItems
+          returnTurnMaterial.hasItems,
+          acceptedLocalCandidateIds,
+          recentHistoryMessages.map(message => memoryEvidenceCore(message.content || '').toLowerCase()).filter(Boolean),
+          effectiveLocalCandidates
         ),
       {
         evidenceCount: evidence.length,
@@ -1418,7 +1528,10 @@ export class AgentContextService {
     chatToolPlan?: AgentChatToolTurnPlan,
     planningMode?: ReplyPlanningMode,
     returnTurnMaterialPrompt = '',
-    returnTurnRequired = false
+    returnTurnRequired = false,
+    localCandidateIds?: Set<string>,
+    localCandidateVisibleTexts?: string[],
+    localCandidates?: LocalMemoryCandidateInput[]
   ): AgentContextLayer {
     const plan = resolveReplyPromptLayerPlan({
       config: this.chatProgramReductionConfig,
@@ -1492,6 +1605,23 @@ export class AgentContextService {
       plan.includeEvidence && systemActionEvidence.length
         ? this.buildEvidencePrompt(systemActionEvidence)
         : '';
+    // 去重只依据“已经实际进入最终请求”的内容：本轮会渲染的 system_action/confirmed/agent_profile
+    // 证据文本 + 最近历史（历史层会发出）+ 当前用户话。未渲染的证据对象不占去重名额。
+    const renderedEvidenceTexts = systemActionEvidence.map(item =>
+      memoryEvidenceCore(item.text || '').toLowerCase()
+    );
+    const localMemoryCandidatePrompt = plan.includeEvidence
+      ? this.buildLocalMemoryCandidatePrompt(
+          localCandidates,
+          evidence,
+          localCandidateIds,
+          [
+            ...renderedEvidenceTexts,
+            ...(localCandidateVisibleTexts || []),
+            memoryEvidenceCore(options.currentQuery || '').toLowerCase(),
+          ]
+        )
+      : '';
     const replyBriefPrompt = this.buildModelReplyBriefPrompt(
       replyBrief,
       plan.includeTools ? chatToolPlan : undefined,
@@ -1520,6 +1650,7 @@ export class AgentContextService {
       initiativeResource.prompt,
       deliberateLongReplyPrompt,
       evidencePrompt,
+      localMemoryCandidatePrompt,
       replyBriefPrompt,
       // 回归轮清单非空时，把"必须用上一件"放到靠后的任务层，避免埋在系统层里被忽略。
       returnTurnRequired
@@ -3605,6 +3736,195 @@ export class AgentContextService {
       summary,
       '摘要只用于理解此前聊到哪里，不是事实证据。涉及人物、关系、现实事件和共同记忆时，仍必须由本轮证据包中的“可陈述”证据支持。',
     ].join('\n');
+  }
+
+  /**
+   * 从本函数的自动预取结果生成有界连续片段（生产默认路径，不需要任何外部入口传参）。
+   * 只按原始顺序取上下文；来源/角色/时间/用户范围由检索与消息查询保证。
+   */
+  private buildLocalCandidatesFromAutoPrefetch(
+    retrievedMemories: RetrievedContextSnippet[],
+    historicalConversationMessages: MessageEntity[]
+  ): LocalMemoryCandidateInput[] {
+    const userMemories = (retrievedMemories || []).filter(
+      memory => memory.role === MessageRole.user && (memory.content || '').trim()
+    );
+    if (!userMemories.length) return [];
+    const timeline = historicalConversationMessages
+      .filter(
+        message =>
+          (message.role === MessageRole.user ||
+            message.role === MessageRole.assistant) &&
+          (message.content || '').trim()
+      )
+      .map(message => ({
+        sourceMessageId: this.stringifyObjectId(message.id),
+        role: message.role,
+        occurredAt: (message.createdAt || new Date()).toISOString(),
+        text: message.content || '',
+      }));
+    if (!timeline.length) return [];
+    const ranked = userMemories.map(memory => ({
+      sourceMessageId: String(memory.sourceMessageId || memory.id || ''),
+      score: typeof memory.score === 'number' ? memory.score : null,
+    }));
+    const pack = buildContiguousFragments(ranked, timeline, {});
+    const result: LocalMemoryCandidateInput[] = [];
+    for (const fragment of pack.fragments) {
+      const hit =
+        fragment.messages.find(message =>
+          fragment.hitIds.includes(message.sourceMessageId)
+        ) || fragment.messages[0];
+      const source = userMemories.find(
+        memory => String(memory.sourceMessageId || memory.id || '') === hit.sourceMessageId
+      );
+      result.push({
+        sourceMessageId: hit.sourceMessageId,
+        text: hit.text,
+        occurredAt: hit.occurredAt,
+        role: hit.role,
+        ...(source && typeof source.score === 'number'
+          ? { score: source.score }
+          : {}),
+        ...(source?.memoryKind ? { memoryKind: source.memoryKind } : {}),
+        fragment: fragment.messages.map(message => ({
+          sourceMessageId: message.sourceMessageId,
+          role: message.role,
+          occurredAt: message.occurredAt,
+          text: message.text,
+        })),
+      });
+    }
+    return result;
+  }
+
+  /**
+   * 本地记忆候选 → 证据项（隔离工作副本）。
+   * 只保留“还没在最近对话里出现过”的候选，避免重复注入；
+   * assertionPolicy=context_only、useMode=hypothesis：候选不是确认事实，是否采用由模型判断。
+   */
+  private buildLocalMemoryCandidateEvidence(
+    candidates: LocalMemoryCandidateInput[] | undefined,
+    recentMessages: MessageEntity[],
+    currentQuery: string
+  ): AgentEvidenceItem[] {
+    if (!candidates?.length) return [];
+    const recentTexts = new Set<string>();
+    for (const message of recentMessages) {
+      const core = memoryEvidenceCore(message.content || '').toLowerCase();
+      if (core) recentTexts.add(core);
+    }
+    const currentCore = memoryEvidenceCore(currentQuery).toLowerCase();
+    const seenIds = new Set<string>();
+    const seenTexts = new Set<string>();
+    const evidence: AgentEvidenceItem[] = [];
+    let index = 0;
+    for (const candidate of candidates) {
+      const text = (candidate.text || '').trim();
+      if (!text) continue;
+      const sourceId = (candidate.sourceMessageId || '').trim();
+      if (!sourceId || seenIds.has(sourceId)) continue;
+      const core = memoryEvidenceCore(text).toLowerCase();
+      if (!core) continue;
+      if (recentTexts.has(core)) continue;
+      if (currentCore && core === currentCore) continue;
+      if (seenTexts.has(core)) continue;
+      seenIds.add(sourceId);
+      seenTexts.add(core);
+      index += 1;
+      evidence.push({
+        id: `LC${index}`,
+        source: 'retrieved_user',
+        text,
+        assertionPolicy: 'context_only',
+        subjectRef: 'user',
+        factKey: `memory.local.${sourceId}`,
+        useMode: 'hypothesis',
+        status: 'active',
+        ...(typeof candidate.score === 'number'
+          ? { confidence: candidate.score, retrievalScore: candidate.score }
+          : {}),
+        sourceMessageId: sourceId,
+        ...(candidate.memoryKind ? { memoryKind: candidate.memoryKind } : {}),
+      } as AgentEvidenceItem);
+    }
+    return evidence;
+  }
+
+  /** 渲染本地候选材料：带来源/时间/角色，标注“候选、非事实、可忽略”；相邻原话去重后有限加入。 */
+  private buildLocalMemoryCandidatePrompt(
+    candidates: LocalMemoryCandidateInput[] | undefined,
+    evidence: AgentEvidenceItem[],
+    acceptedIds?: Set<string>,
+    visibleSeenTexts?: string[]
+  ): string {
+    if (!candidates?.length) return '';
+    // 是否渲染由“入口去重后的候选集”决定，不依赖证据包是否保留 LC 项：
+    // 证据包可能因与生产自动预取项同文而只保留其中一条，但片段仍应进入请求（标注为候选）。
+    // 渲染范围只由“入口去重后接受的候选”决定；传了空集合就是“全部被去重”，不要回退成全部候选。
+    const renderedIds = acceptedIds ?? new Set(candidates.map(c => String(c.sourceMessageId)));
+    if (!renderedIds.size) return '';
+    // 只把“实际可见”的内容当重复依据（未渲染的证据不占名额）。
+    const seen = new Set<string>((visibleSeenTexts || []).filter(Boolean));
+    const lines: string[] = [];
+    let adjacentAdded = 0;
+    const MAX_ADJACENT = 16; // 片段由入口按消息数/估算 token 上限构造，这里只做去重与总量护栏
+    for (const candidate of candidates) {
+      if (!renderedIds.has(candidate.sourceMessageId)) continue;
+      const role = candidate.role || 'user';
+      const occurredAt = candidate.occurredAt || '未知时间';
+      // 有界连续片段：按原始顺序整段呈现（命中行标 [命中]，同段其它行标 [同段]）。
+      if (candidate.fragment?.length) {
+        lines.push('- [同一段对话，按原始顺序]');
+        for (const message of candidate.fragment) {
+          if (adjacentAdded >= MAX_ADJACENT) break;
+          const core = memoryEvidenceCore(message.text || '').toLowerCase();
+          if (!core) continue;
+          if (seen.has(core)) continue;
+          seen.add(core);
+          adjacentAdded += 1;
+          const hit = message.sourceMessageId === candidate.sourceMessageId;
+          lines.push(
+            `  - [${hit ? '命中' : '同段'} ${message.sourceMessageId}｜${message.role}｜${message.occurredAt}] ${message.text.trim()}`
+          );
+        }
+        continue;
+      }
+      lines.push(
+        `- [来源 ${candidate.sourceMessageId}｜${role}｜${occurredAt}｜候选] ${candidate.text.trim()}`
+      );
+      for (const adjacent of candidate.adjacent || []) {
+        if (adjacentAdded >= MAX_ADJACENT) break;
+        const core = memoryEvidenceCore(adjacent.text || '').toLowerCase();
+        if (!core || seen.has(core)) continue;
+        seen.add(core);
+        adjacentAdded += 1;
+        lines.push(
+          `- [相邻 ${adjacent.sourceMessageId}｜${adjacent.role}｜${adjacent.occurredAt}] ${adjacent.text.trim()}`
+        );
+      }
+    }
+    if (!lines.length) return '';
+    // 最终完整材料块的预算按“实际渲染文本”控制：标题 + 来源/角色/时间等标记都计入。
+    const title: string[] = [
+      '# 本地候选材料（检索到的候选，不是已确认事实；与当前话题无关时可以忽略）',
+      '下列材料带来源、角色与时间，只作参考；不要把它们升级成未确认的事实。',
+    ];
+    const MAX_LOCAL_MATERIAL_CHARS = 1200;
+    // 只按“整行”决定装入或整条不装入：绝不截断来源标记或原话制造半句。
+    // 截断提示本身也计入 1200 字符；若连提示都放不下，返回空字符串。
+    const noticeFor = (n: number) => `- （材料超出预算，已截断 ${n} 行）`;
+    const renderPrefix = (keep: number): string => {
+      const dropped = lines.length - keep;
+      const parts = [...title, ...lines.slice(0, keep)];
+      if (dropped > 0) parts.push(noticeFor(dropped));
+      return parts.join('\n');
+    };
+    for (let keep = lines.length; keep >= 0; keep -= 1) {
+      const block = renderPrefix(keep);
+      if (block.length <= MAX_LOCAL_MATERIAL_CHARS) return keep > 0 ? block : '';
+    }
+    return '';
   }
 
   private buildEvidencePrompt(evidence: AgentEvidenceItem[]): string {

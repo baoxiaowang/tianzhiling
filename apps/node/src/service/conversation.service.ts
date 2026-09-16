@@ -147,7 +147,7 @@ import { TencentCosService } from './tencent-cos.service';
 import { MilvusService } from './rag/milvus.service';
 import { MemoryPipelineTaskService } from './memory-pipeline-task.service';
 import { UserIdentityMemoryService } from './agents/user-identity-memory.service';
-import { isFactBearingUtterance } from './agents/memory-value';
+import { isSearchableDialogueEvidence } from './agents/memory-value';
 import { MemoryModuleService } from './memory/memory-module.service';
 import { MemoryOpenItemExtractorService } from './memory/memory-open-item-extractor.service';
 import { listRaisedOpenItems } from './memory/memory-return-turn';
@@ -2535,8 +2535,8 @@ export class ConversationService {
       // 这样每条消息只派生一个索引任务 + 一个抽取任务，队列任务量直接少三分之一。
       // 只把"事实型"原话写进检索索引：问句、情绪、纯应答不入库，
       // 否则相似检索只会捞回情绪与问句碎片（用户反馈"检索意义不大"）。
-      const factBearing = isFactBearingUtterance(searchableText);
-      if (factBearing) {
+      const searchableDialogueEvidence = isSearchableDialogueEvidence(searchableText);
+      if (searchableDialogueEvidence) {
         const indexed = await this.milvusService.indexConversationMessage({
           messageId: this.stringifyObjectId(message.id),
           userId: this.stringifyObjectId(message.userId),
@@ -11955,7 +11955,7 @@ export class ConversationService {
           query: searchableText,
           limit: 8,
         })) || [];
-      if (!isFactBearingUtterance(searchableText)) return;
+      if (!isSearchableDialogueEvidence(searchableText)) return;
       for (const person of people) {
         const personId = String(person.id || '').replace(/^person:/, '');
         if (!MongoObjectId.isValid(personId)) continue;

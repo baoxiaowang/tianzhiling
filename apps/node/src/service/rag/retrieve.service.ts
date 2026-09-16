@@ -18,6 +18,63 @@ export interface RetrieveConversationMemoriesOptions {
   limit?: number;
 }
 
+// 候选：与请求条数一致的上限（原实现内部硬封顶 8，和请求 10 条不一致）。
+export const MAX_SELECTED_MEMORIES = 10;
+
+/**
+ * 候选：同一来源优先保留原话，但**不把所有 raw 排到最前**——按分数走，避免
+ * 人物精确命中（其它来源）在限额前被挤掉；同来源则用 raw 替换抽取条。
+ */
+export function mergeMemoriesPreferRaw<
+  T extends { id?: unknown; sourceMessageId?: unknown; score?: number }
+>(personSelected: T[], activeRawMemories: T[]): T[] {
+  const rawBySource = new Map<string, T>();
+  for (const memory of activeRawMemories) {
+    rawBySource.set(String(memory.sourceMessageId || memory.id), memory);
+  }
+  const combined = [...personSelected, ...activeRawMemories].sort(
+    (a, b) => (b.score || 0) - (a.score || 0)
+  );
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (const memory of combined) {
+    const key = String(memory.sourceMessageId || memory.id);
+    if (seen.has(key)) continue;
+    const raw = rawBySource.get(key);
+    if (raw) {
+      out.push(raw);
+    } else {
+      out.push(memory);
+    }
+    seen.add(key);
+  }
+  return out;
+}
+
+/** 候选：按来源与文本去重后取前 N 条；上限与请求一致（默认 10）。 */
+export function selectRelevantMemoriesPure<
+  T extends { id?: unknown; sourceMessageId?: unknown; searchableText: string }
+>(memories: T[], limit: number, maxSelected: number = MAX_SELECTED_MEMORIES): T[] {
+  const selected: T[] = [];
+  const seenMessages = new Set<string>();
+  const seenTexts = new Set<string>();
+  for (const memory of memories) {
+    const normalizedText = memory.searchableText.replace(/\s+/g, '').toLowerCase();
+    if (
+      !normalizedText ||
+      seenMessages.has(String(memory.sourceMessageId || memory.id)) ||
+      seenTexts.has(normalizedText)
+    ) {
+      continue;
+    }
+    seenMessages.add(String(memory.sourceMessageId || memory.id));
+    seenTexts.add(normalizedText);
+    selected.push(memory);
+    if (selected.length >= Math.max(1, Math.min(limit, maxSelected))) break;
+  }
+  return selected;
+}
+
 export interface RetrieveConversationMemoriesResult {
   items: RetrievedContextSnippet[];
   diagnostics: {
@@ -130,16 +187,9 @@ export class RetrieveService {
       ];
 
       // 原话优先于抽取结论：同一个来源消息既有原话又有抽取条时，保留原话。
-      const preferredRaw = activeRawMemories.filter(
-        memory =>
-          !personSelected.some(
-            selected =>
-              String(selected.sourceMessageId) ===
-              String(memory.sourceMessageId)
-          )
-      );
+      // 候选：同来源保留原话，但不把所有 raw 提前；其他来源的人物精确命中按分数保留。
       const relevantMemories = this.selectRelevantMemories(
-        [...personSelected, ...preferredRaw],
+        mergeMemoriesPreferRaw(personSelected, activeRawMemories),
         resultLimit
       );
       const diagnostics = this.buildDiagnostics(
@@ -187,28 +237,7 @@ export class RetrieveService {
     memories: RetrievedConversationMemory[],
     limit: number
   ): RetrievedConversationMemory[] {
-    const selected: RetrievedConversationMemory[] = [];
-    const seenMessages = new Set<string>();
-    const seenTexts = new Set<string>();
-
-    for (const memory of memories) {
-      const normalizedText = memory.searchableText
-        .replace(/\s+/g, '')
-        .toLowerCase();
-      if (
-        !normalizedText ||
-        seenMessages.has(memory.sourceMessageId || memory.id) ||
-        seenTexts.has(normalizedText)
-      ) {
-        continue;
-      }
-      seenMessages.add(memory.sourceMessageId || memory.id);
-      seenTexts.add(normalizedText);
-      selected.push(memory);
-      if (selected.length >= Math.max(1, Math.min(limit, 8))) break;
-    }
-
-    return selected;
+    return selectRelevantMemoriesPure(memories, limit);
   }
 
   private filterByScore(
