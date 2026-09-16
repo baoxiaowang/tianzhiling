@@ -216,13 +216,7 @@
                   align="center"
                 >
                   <template #cell="{ record }">
-                    <a-link
-                      v-if="record.messengerOfAgentId"
-                      @click="openMessenger(record)"
-                    >
-                      发消息
-                    </a-link>
-                    <span v-else>—</span>
+                    <a-link @click="openMessenger(record)">聊天与记忆</a-link>
                   </template>
                 </a-table-column>
               </template>
@@ -375,97 +369,127 @@
 
     <a-drawer
       v-model:visible="messengerVisible"
-      :width="520"
-      :title="
-        messengerAgent
-          ? `通过小使者发消息 · ${messengerAgent.name || ''}`
-          : '通过小使者发消息'
-      "
+      class="app-user-detail-page__chat-drawer"
+      :width="chatDrawerWidth"
+      :title="chatDrawerTitle"
       :footer="false"
       unmount-on-close
     >
-      <div class="app-user-detail-page__messenger">
-        <a-alert type="info" :show-icon="false">
-          发送内容会以小使者「{{
-            messengerAgent?.name || ''
-          }}」的身份出现在用户聊天里。
-        </a-alert>
-        <div
-          ref="messengerListRef"
-          class="app-user-detail-page__messenger-list"
-        >
-          <a-spin :loading="messengerLoading" style="width: 100%">
-            <div
-              v-if="messengerHasMore"
-              class="app-user-detail-page__messenger-more"
-            >
-              <a-link
-                :loading="messengerLoadingMore"
-                @click="loadOlderMessengerMessages"
+      <div class="app-user-detail-page__chat-layout">
+        <section class="app-user-detail-page__chat-left">
+          <a-alert
+            v-if="messengerAgent?.messengerOfAgentId"
+            type="info"
+            :show-icon="false"
+          >
+            发送内容会以小使者「{{
+              messengerAgent?.name || ''
+            }}」的身份出现在用户聊天里。
+          </a-alert>
+          <a-alert v-else type="normal" :show-icon="false">
+            只读查看该用户与「{{ messengerAgent?.name || '' }}」的聊天记录。
+          </a-alert>
+          <div
+            ref="messengerListRef"
+            class="app-user-detail-page__messenger-list"
+          >
+            <a-spin :loading="messengerLoading" style="width: 100%">
+              <div
+                v-if="messengerHasMore"
+                class="app-user-detail-page__messenger-more"
               >
-                加载更早消息
-              </a-link>
-            </div>
-            <a-empty
-              v-if="!messengerMessages.length"
-              description="还没有消息，发一条试试"
-            />
-            <div
-              v-for="message in messengerMessages"
-              :key="message.id"
-              class="app-user-detail-page__messenger-item"
-              :class="{ 'is-user': message.role === 'user' }"
-            >
-              <div class="app-user-detail-page__messenger-bubble">
-                <img
-                  v-if="message.type === 'image' && message.mediaUrl"
-                  :src="message.mediaUrl"
-                  class="app-user-detail-page__messenger-image"
-                  alt="message image"
-                />
-                <span v-if="message.content">{{ message.content }}</span>
-                <span v-else-if="message.type === 'image'">[图片]</span>
-                <span v-else-if="message.type === 'voice'">[语音]</span>
-                <span v-else>[消息]</span>
+                <a-link
+                  :loading="messengerLoadingMore"
+                  @click="loadOlderMessengerMessages()"
+                >
+                  加载更早消息
+                </a-link>
               </div>
-              <span class="app-user-detail-page__messenger-time">
-                {{ formatDate(message.createdAt) }}
-              </span>
-            </div>
-          </a-spin>
-        </div>
-
-        <div class="app-user-detail-page__messenger-editor">
-          <a-textarea
-            v-model="messengerContent"
-            placeholder="输入要发送给用户的文字"
-            :auto-size="{ minRows: 2, maxRows: 4 }"
-            :max-length="1000"
-          />
-          <div class="app-user-detail-page__messenger-actions">
-            <a-upload
-              :show-file-list="false"
-              accept="image/*"
-              :custom-request="handleMessengerImageUpload"
-            >
-              <a-button :loading="messengerSending">发送图片</a-button>
-            </a-upload>
-            <a-button
-              type="primary"
-              :loading="messengerSending"
-              @click="sendMessengerText"
-            >
-              发送
-            </a-button>
+              <a-empty
+                v-if="!messengerMessages.length"
+                description="暂无聊天记录"
+              />
+              <div
+                v-for="message in messengerMessages"
+                :key="message.id"
+                :data-message-id="message.id"
+                class="app-user-detail-page__messenger-item"
+                :class="{
+                  'is-user': message.role === 'user',
+                  'is-highlight': message.id === highlightMessageId,
+                }"
+              >
+                <div class="app-user-detail-page__messenger-bubble">
+                  <img
+                    v-if="message.type === 'image' && message.mediaUrl"
+                    :src="message.mediaUrl"
+                    class="app-user-detail-page__messenger-image"
+                    alt="message image"
+                  />
+                  <span v-if="message.content">{{ message.content }}</span>
+                  <span v-else-if="message.type === 'image'">[图片]</span>
+                  <span v-else-if="message.type === 'voice'">[语音]</span>
+                  <span v-else>[消息]</span>
+                </div>
+                <span class="app-user-detail-page__messenger-time">
+                  {{ formatDate(message.createdAt) }}
+                </span>
+              </div>
+            </a-spin>
           </div>
-        </div>
+
+          <div
+            v-if="messengerAgent?.messengerOfAgentId"
+            class="app-user-detail-page__messenger-editor"
+          >
+            <a-textarea
+              v-model="messengerContent"
+              placeholder="输入要发送给用户的文字"
+              :auto-size="{ minRows: 2, maxRows: 4 }"
+              :max-length="1000"
+            />
+            <div class="app-user-detail-page__messenger-actions">
+              <a-upload
+                :show-file-list="false"
+                accept="image/*"
+                :custom-request="handleMessengerImageUpload"
+              >
+                <a-button :loading="messengerSending">发送图片</a-button>
+              </a-upload>
+              <a-button
+                type="primary"
+                :loading="messengerSending"
+                @click="sendMessengerText"
+              >
+                发送
+              </a-button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="app-user-detail-page__chat-right">
+          <memory-panel
+            :user-id="userId || ''"
+            :agent-id="messengerAgent?.id || ''"
+            :agent-name="messengerAgent?.name || ''"
+            @locate-source="handleLocateSource"
+          />
+        </aside>
       </div>
     </a-drawer>
   </div>
 </template>
 
 <script lang="ts" setup>
-  import { computed, nextTick, reactive, ref, watch } from 'vue';
+  import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    reactive,
+    ref,
+    watch,
+  } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import dayjs from 'dayjs';
   import axios from 'axios';
@@ -480,15 +504,16 @@
     AppUserAgentRecord,
     AppUserRecord,
     queryAppUserAccountMemory,
+    queryAppUserAgentMessages,
     queryAppUserAgents,
     queryAppUserDetail,
-    queryAppUserMessengerMessages,
     sendAppUserMessengerMessage,
   } from '@/api/app-user';
   import uploadAdminFile from '@/api/storage';
   import OrderListPanel from '@/views/order/list/components/order-list-panel.vue';
   import PostListPanel from '@/views/post/components/post-list-panel.vue';
   import VoiceModelPanel from './voice-model-panel.vue';
+  import MemoryPanel from './memory-panel.vue';
 
   const route = useRoute();
   const router = useRouter();
@@ -520,6 +545,37 @@
   const messengerSending = ref(false);
   const messengerContent = ref('');
   const messengerListRef = ref<HTMLElement | null>(null);
+  const highlightMessageId = ref('');
+  // 聊天请求序号：切换聊天对象或关闭抽屉后丢弃旧响应，防止覆盖新结果。
+  let messengerRequestSeq = 0;
+  // 定位来源时最多向前查找的页数，超过则提示「搜索达到上限」而非「来源不存在」。
+  const LOCATE_MAX_PAGES = 8;
+
+  // 抽屉实际宽度跟随视口，窄屏不再固定 1120px 溢出。
+  const viewportWidth = ref(
+    typeof window === 'undefined' ? 1440 : window.innerWidth
+  );
+  const chatDrawerWidth = computed(() =>
+    viewportWidth.value < 1120 ? '100%' : 1120
+  );
+  const syncViewportWidth = () => {
+    viewportWidth.value = window.innerWidth;
+  };
+  onMounted(() => {
+    window.addEventListener('resize', syncViewportWidth);
+  });
+  onBeforeUnmount(() => {
+    window.removeEventListener('resize', syncViewportWidth);
+    // 页面卸载后丢弃聊天侧在途结果
+    messengerRequestSeq += 1;
+  });
+
+  const chatDrawerTitle = computed(() => {
+    const name = messengerAgent.value?.name || '';
+    return messengerAgent.value?.messengerOfAgentId
+      ? `聊天与已留存记忆 · 小使者「${name}」`
+      : `聊天与已留存记忆 · ${name}`;
+  });
 
   const userId = computed(() => {
     const { id } = route.params;
@@ -581,56 +637,165 @@
 
   const loadMessengerMessages = async () => {
     if (!userId.value || !messengerAgent.value) return;
+    messengerRequestSeq += 1;
+    const seq = messengerRequestSeq;
+    const targetUserId = userId.value;
+    const targetAgentId = messengerAgent.value.id;
     try {
       messengerLoading.value = true;
-      const { data } = await queryAppUserMessengerMessages(
-        userId.value,
-        messengerAgent.value.id,
+      const { data } = await queryAppUserAgentMessages(
+        targetUserId,
+        targetAgentId,
         { pageSize: 50 }
       );
+      if (seq !== messengerRequestSeq) {
+        return;
+      }
       messengerMessages.value = data.items;
       messengerHasMore.value = data.hasMore;
       await scrollMessengerToBottom();
     } catch {
-      Message.error('小使者消息加载失败');
+      if (seq !== messengerRequestSeq) {
+        return;
+      }
+      messengerMessages.value = [];
+      messengerHasMore.value = false;
+      Message.error('聊天记录加载失败');
     } finally {
-      messengerLoading.value = false;
+      if (seq === messengerRequestSeq) {
+        messengerLoading.value = false;
+      }
     }
   };
 
-  const loadOlderMessengerMessages = async () => {
+  /**
+   * 加载更早消息。
+   * expectedSeq 由调用方（定位流程）传入，绑定「发起时的对象与请求版本」；
+   * 期间切换对象或关闭抽屉会使序号变化，此时丢弃结果、不再写入。
+   */
+  const loadOlderMessengerMessages = async (
+    expectedSeq?: number
+  ): Promise<boolean> => {
     if (
       !userId.value ||
       !messengerAgent.value ||
       !messengerHasMore.value ||
       messengerLoadingMore.value
     ) {
-      return;
+      return false;
     }
+    const seq = messengerRequestSeq;
+    if (expectedSeq !== undefined && expectedSeq !== seq) {
+      return false;
+    }
+    const targetUserId = userId.value;
+    const targetAgentId = messengerAgent.value.id;
     const earliest = messengerMessages.value[0];
-    if (!earliest) return;
+    if (!earliest) return false;
     try {
       messengerLoadingMore.value = true;
-      const { data } = await queryAppUserMessengerMessages(
-        userId.value,
-        messengerAgent.value.id,
+      const { data } = await queryAppUserAgentMessages(
+        targetUserId,
+        targetAgentId,
         { pageSize: 50, before: earliest.createdAt }
       );
+      if (seq !== messengerRequestSeq) {
+        return false;
+      }
       messengerMessages.value = [...data.items, ...messengerMessages.value];
       messengerHasMore.value = data.hasMore;
+      return true;
     } catch {
-      Message.error('更早消息加载失败');
+      if (seq === messengerRequestSeq) {
+        Message.error('更早消息加载失败');
+      }
+      return false;
     } finally {
-      messengerLoadingMore.value = false;
+      if (seq === messengerRequestSeq) {
+        messengerLoadingMore.value = false;
+      }
+    }
+  };
+
+  const scrollMessageIntoView = async (messageId: string) => {
+    await nextTick();
+    const container = messengerListRef.value;
+    if (!container) return;
+    const target = container.querySelector<HTMLElement>(
+      `[data-message-id="${messageId}"]`
+    );
+    if (target) {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  };
+
+  /**
+   * 点击记忆来源定位左侧原话。
+   * 绑定发起时的用户、聊天对象与请求版本：期间切换对象/关闭抽屉即放弃。
+   * 找不到时区分两种情况：
+   * - 已按现有分页能力向前查找达到上限（仍有更早历史）：提示可能更早；
+   * - 历史已全部加载完仍没有：说明来源不在该用户与对象的聊天记录中。
+   */
+  const handleLocateSource = async ({ messageId }: { messageId: string }) => {
+    const seq = messengerRequestSeq;
+    const targetUserId = userId.value;
+    const targetAgentId = messengerAgent.value?.id ?? '';
+    const isSameTarget = () =>
+      seq === messengerRequestSeq &&
+      targetUserId === userId.value &&
+      targetAgentId === messengerAgent.value?.id;
+
+    highlightMessageId.value = messageId;
+    const hasMessage = () =>
+      messengerMessages.value.some((message) => message.id === messageId);
+
+    if (hasMessage()) {
+      await scrollMessageIntoView(messageId);
+      return;
+    }
+
+    let attempts = 0;
+    while (
+      !hasMessage() &&
+      messengerHasMore.value &&
+      attempts < LOCATE_MAX_PAGES
+    ) {
+      if (!isSameTarget()) {
+        return;
+      }
+      attempts += 1;
+      // eslint-disable-next-line no-await-in-loop
+      const advanced = await loadOlderMessengerMessages(seq);
+      if (!advanced) break;
+    }
+
+    if (!isSameTarget()) {
+      return;
+    }
+
+    if (hasMessage()) {
+      await scrollMessageIntoView(messageId);
+      return;
+    }
+
+    if (messengerHasMore.value) {
+      Message.warning(
+        `已向前查找 ${LOCATE_MAX_PAGES} 页仍未定位到来源，来源可能更早；可先「加载更早消息」后重试`
+      );
+    } else {
+      Message.warning('该来源不在当前用户与聊天对象的聊天记录中');
     }
   };
 
   const openMessenger = async (record: AppUserAgentRecord) => {
     if (!userId.value) return;
+    messengerRequestSeq += 1;
     messengerAgent.value = record;
     messengerContent.value = '';
     messengerMessages.value = [];
     messengerHasMore.value = false;
+    messengerLoadingMore.value = false;
+    highlightMessageId.value = '';
     messengerVisible.value = true;
     await loadMessengerMessages();
   };
@@ -853,9 +1018,25 @@
     return Boolean(value && /^(https?:)?\/\//i.test(value));
   };
 
+  watch(messengerVisible, (visible) => {
+    if (!visible) {
+      // 关闭抽屉后丢弃聊天侧与定位流程的在途结果
+      messengerRequestSeq += 1;
+      highlightMessageId.value = '';
+      messengerLoadingMore.value = false;
+    }
+  });
+
   watch(
     userId,
     (id) => {
+      // 切换用户：关闭聊天抽屉并丢弃旧对象/旧请求的结果
+      messengerRequestSeq += 1;
+      messengerVisible.value = false;
+      messengerMessages.value = [];
+      messengerHasMore.value = false;
+      messengerLoadingMore.value = false;
+      highlightMessageId.value = '';
       agentPagination.current = 1;
       accountMemory.value = null;
       accountMemoryLoadedUserId.value = '';
@@ -1025,11 +1206,32 @@
       font-size: 14px;
     }
 
-    &__messenger {
+    &__chat-layout {
       display: flex;
+      gap: 16px;
+      height: calc(100vh - 120px);
+      min-height: 0;
+    }
+
+    &__chat-left {
+      display: flex;
+      flex: 1 1 58%;
       flex-direction: column;
       gap: 12px;
-      height: calc(100vh - 140px);
+      min-width: 0;
+      min-height: 0;
+    }
+
+    &__chat-right {
+      display: flex;
+      flex: 0 0 40%;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      padding: 12px;
+      overflow: hidden;
+      border-radius: 8px;
+      background: var(--color-fill-2);
     }
 
     &__messenger-list {
@@ -1058,6 +1260,12 @@
 
       &.is-user {
         align-items: flex-end;
+      }
+
+      &.is-highlight {
+        .app-user-detail-page__messenger-bubble {
+          box-shadow: 0 0 0 2px rgb(var(--warning-6));
+        }
       }
     }
 
@@ -1101,6 +1309,28 @@
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+    }
+  }
+
+  @media (max-width: 991px) {
+    .app-user-detail-page {
+      &__chat-layout {
+        flex-direction: column;
+        height: auto;
+      }
+
+      &__chat-left {
+        flex: 1 1 auto;
+      }
+
+      &__chat-right {
+        flex: 1 1 auto;
+        max-height: 60vh;
+      }
+
+      &__messenger-list {
+        max-height: 50vh;
+      }
     }
   }
 

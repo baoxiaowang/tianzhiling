@@ -11,6 +11,7 @@ import type {
 } from '@tzl/shared';
 import {
   AgentEntity,
+  AgentProfileFactEntity,
   ConversationEntity,
   MessageEntity,
   MessageRole,
@@ -31,6 +32,7 @@ import {
 import { MongoRepository } from 'typeorm';
 import {
   ListAdminAppUserAgentsQueryDTO,
+  ListAdminAppUserMemoriesQueryDTO,
   ListAdminAppUserMembersQueryDTO,
   ListAdminAppUsersQueryDTO,
   ListAdminAppUserVoiceServicesQueryDTO,
@@ -118,6 +120,56 @@ export interface AdminAppUserAccountMemory {
 export type AdminAppUserAgentItem = AdminAgentRecordDTO;
 export type AdminAppUserAgentListResult = AdminAgentListDTO;
 
+/**
+ * 后台「聊天与已留存记忆」右侧面板使用的一条结构化记忆。
+ * 只来自确实落库的 agent_profile_fact，不包含抽取/索引任务与事件分组。
+ */
+export interface AdminAppUserAgentMemoryItem {
+  id: string;
+  scope: 'agent';
+  type: string;
+  key: string;
+  value: string;
+  polarity: string;
+  status: string;
+  confidence: string;
+  assertionPolicy: string;
+  priority: number;
+  sourceMessageId: string;
+  sourceMessageIds: string[];
+  sourceConversationId: string;
+  sourceText: string;
+  retention: string;
+  certainty: string;
+  timeKind: string;
+  validUntil: string;
+  sourceOccurredAt: string;
+  recordedAt: string;
+  updatedAt: string;
+}
+
+/** 账号级共享记忆：归属于用户账号、不随聊天对象变化。 */
+export interface AdminAppUserAccountSharedMemoryItem {
+  id: string;
+  scope: 'account';
+  type: string;
+  key: string;
+  value: string;
+  status: string;
+  confidence: string;
+  sourceText: string;
+  updatedAt: string;
+}
+
+export interface AdminAppUserAgentMemoryListResult {
+  items: AdminAppUserAgentMemoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  accountSharedItems: AdminAppUserAccountSharedMemoryItem[];
+  accountSharedTotal: number;
+}
+
 type MongoWhere = Record<string, unknown>;
 
 @Provide()
@@ -154,6 +206,9 @@ export class AdminAppUserService {
 
   @InjectEntityModel(OrderEntity)
   orderModel: MongoRepository<OrderEntity>;
+
+  @InjectEntityModel(AgentProfileFactEntity)
+  agentProfileFactModel: MongoRepository<AgentProfileFactEntity>;
 
   @Inject()
   avatarUrlService: AdminAvatarUrlService;
@@ -523,6 +578,85 @@ export class AdminAppUserService {
         };
       }),
     };
+  }
+
+  /**
+   * 后台「聊天与已留存记忆」右侧面板：按 用户 + 聊天对象 分页读取确实落库的结构化记忆。
+   * 只读；只查 agent_profile_fact，不触发抽取 / embedding / 索引 / 回填，也不把
+   * memory_pipeline_task（处理任务）或 memory_event_group（事件分组）当作记忆正文。
+   * 账号级共享记忆（用户身份、已识别人物）单独返回，与角色独有记忆分开标识。
+   */
+  async listAgentMemories(
+    userId: string,
+    agentId: string,
+    query?: ListAdminAppUserMemoriesQueryDTO
+  ): Promise<AdminAppUserAgentMemoryListResult> {
+    const user = await this.getUserById(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+
+    await this.assertUserOwnedAgent(user.id, agentObjectId);
+
+    const page = this.normalizePositiveInteger(query?.page, 1);
+    const pageSize = Math.min(
+      this.normalizePositiveInteger(query?.pageSize, 20),
+      50
+    );
+    const where: MongoWhere = {
+      userId: user.id,
+      agentId: agentObjectId,
+    };
+
+    const [total, facts] = await Promise.all([
+      this.agentProfileFactModel.count(where as never),
+      this.agentProfileFactModel.find({
+        where: where as never,
+        order: { updatedAt: 'DESC' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    const sourceIdSet = new Set<string>();
+    for (const fact of facts) {
+      for (const id of this.collectFactSourceIds(fact)) {
+        sourceIdSet.add(id);
+      }
+    }
+    const conversationMap = await this.getSourceConversationMap([
+      ...sourceIdSet,
+    ]);
+    const accountShared = await this.buildAccountSharedMemories(
+      this.stringifyObjectId(user.id)
+    );
+
+    return {
+      items: facts.map(fact =>
+        this.buildAgentMemoryItem(fact, conversationMap)
+      ),
+      total,
+      page,
+      pageSize,
+      accountSharedItems: accountShared.items,
+      accountSharedTotal: accountShared.total,
+    };
+  }
+
+  /**
+   * 读取用户与某个聊天对象的聊天记录（只读）。
+   * 与 messenger-messages 的区别：这里允许该用户创建的任何智能体，用于左右联查；
+   * 发送通道仍然只对「小使者」开放。
+   */
+  async listAgentMessages(
+    userId: string,
+    agentId: string,
+    query?: { before?: string; pageSize?: string | number }
+  ): Promise<AdminAppUserMessengerMessageListDTO> {
+    const user = await this.getUserById(userId);
+    const agentObjectId = this.parseObjectId(agentId);
+
+    await this.assertUserOwnedAgent(user.id, agentObjectId);
+
+    return this.queryUserAgentMessages(user.id, agentObjectId, query);
   }
 
   async updateUser(
@@ -972,6 +1106,18 @@ export class AdminAppUserService {
 
     await this.assertUserMessengerAgent(userObjectId, agentObjectId);
 
+    return this.queryUserAgentMessages(userObjectId, agentObjectId, query);
+  }
+
+  /**
+   * 按 用户 + 聊天对象 游标分页读取消息。
+   * 游标：按 createdAt 倒序取一页，返回升序消息；`before` 传上一页最早时间可继续往前翻。
+   */
+  private async queryUserAgentMessages(
+    userObjectId: MongoObjectId,
+    agentObjectId: MongoObjectId,
+    query?: { before?: string; pageSize?: string | number }
+  ): Promise<AdminAppUserMessengerMessageListDTO> {
     const pageSize = Math.min(
       Math.max(this.normalizePositiveInteger(query?.pageSize, 30), 1),
       100
@@ -1142,6 +1288,169 @@ export class AdminAppUserService {
       mediaUrl: message.mediaUrl ?? '',
       mediaMimeType: message.mediaMimeType ?? '',
       createdAt: this.formatDate(message.createdAt),
+    };
+  }
+
+  /** 校验聊天对象确实属于该用户（不限小使者），用于只读联查。 */
+  private async assertUserOwnedAgent(
+    userId: MongoObjectId,
+    agentId: MongoObjectId
+  ): Promise<AgentEntity> {
+    const agent =
+      (await this.agentModel.findOne({ where: { id: agentId } })) ??
+      (await this.agentModel.findOne({ where: { _id: agentId } as never }));
+
+    if (
+      !agent ||
+      this.stringifyObjectId(agent.createdUserId) !==
+        this.stringifyObjectId(userId)
+    ) {
+      throw new AppError(
+        'APP_USER_AGENT_NOT_FOUND',
+        'app user agent not found',
+        404
+      );
+    }
+
+    return agent;
+  }
+
+  private collectFactSourceIds(fact: AgentProfileFactEntity): string[] {
+    const ids: string[] = [];
+    if (fact.sourceMessageId) {
+      const primary = this.stringifyObjectId(fact.sourceMessageId);
+      if (primary) {
+        ids.push(primary);
+      }
+    }
+    for (const id of fact.sourceMessageIds ?? []) {
+      if (!id) {
+        continue;
+      }
+      const value = this.stringifyObjectId(id);
+      if (value) {
+        ids.push(value);
+      }
+    }
+
+    return ids;
+  }
+
+  private async getSourceConversationMap(
+    sourceIds: string[]
+  ): Promise<Map<string, string>> {
+    if (!sourceIds.length) {
+      return new Map();
+    }
+
+    const objectIds = sourceIds
+      .filter(id => MongoObjectId.isValid(id))
+      .map(id => new MongoObjectId(id));
+
+    if (!objectIds.length) {
+      return new Map();
+    }
+
+    const messages = await this.messageModel.find({
+      where: { _id: { $in: objectIds } } as never,
+    });
+
+    return new Map(
+      messages.map(message => [
+        this.stringifyObjectId(message.id),
+        this.stringifyObjectId(message.conversationId),
+      ])
+    );
+  }
+
+  private buildAgentMemoryItem(
+    fact: AgentProfileFactEntity,
+    conversationMap: Map<string, string>
+  ): AdminAppUserAgentMemoryItem {
+    const governance = fact.governance;
+    const sourceMessageIds = this.collectFactSourceIds(fact);
+    const sourceMessageId = sourceMessageIds[0] ?? '';
+    const sourceConversationId = sourceMessageId
+      ? conversationMap.get(sourceMessageId) ?? ''
+      : '';
+
+    return {
+      id: this.stringifyObjectId(fact.id),
+      scope: 'agent',
+      type: fact.type ?? '',
+      key: fact.key ?? '',
+      value: fact.value ?? '',
+      polarity: fact.polarity ?? '',
+      status: fact.status ?? '',
+      confidence: fact.confidence ?? '',
+      assertionPolicy: fact.assertionPolicy ?? '',
+      priority: typeof fact.priority === 'number' ? fact.priority : 0,
+      sourceMessageId,
+      sourceMessageIds,
+      sourceConversationId,
+      sourceText: fact.sourceText ?? '',
+      retention: governance?.retention ?? '',
+      certainty: governance?.certainty ?? '',
+      timeKind: governance?.timeKind ?? '',
+      validUntil: governance?.validUntil ?? '',
+      sourceOccurredAt: governance?.sourceOccurredAt ?? '',
+      recordedAt: this.formatDate(fact.createdAt),
+      updatedAt: this.formatDate(fact.updatedAt),
+    };
+  }
+
+  /**
+   * 账号级共享记忆：复用现有账号级记忆读取结果，压缩为可单独标识的条目。
+   * 这些记忆归属用户账号，跨聊天对象共享，不冒充角色独有记忆。
+   */
+  private async buildAccountSharedMemories(userId: string): Promise<{
+    items: AdminAppUserAccountSharedMemoryItem[];
+    total: number;
+  }> {
+    const account = await this.getAccountMemory(userId);
+    const items: AdminAppUserAccountSharedMemoryItem[] = [];
+
+    if (
+      account.identity &&
+      (account.identity.realName || account.identity.aliases.length)
+    ) {
+      const aliasSuffix = account.identity.aliases.length
+        ? `（别名：${account.identity.aliases.join('、')}）`
+        : '';
+      items.push({
+        id: 'account-identity',
+        scope: 'account',
+        type: 'identity',
+        key: 'account.identity',
+        value: `${account.identity.realName || '未命名'}${aliasSuffix}`,
+        status: 'active',
+        confidence: 'confirmed',
+        sourceText: account.identity.sourceText,
+        updatedAt: account.identity.updatedAt,
+      });
+    }
+
+    for (const person of account.people) {
+      const name = person.realName || person.preferredName || '未命名';
+      const relationSuffix = person.relationToUser
+        ? `（${person.relationToUser}）`
+        : '';
+      items.push({
+        id: person.id,
+        scope: 'account',
+        type: 'relationship',
+        key: `account.person.${person.id}`,
+        value: `${name}${relationSuffix}`,
+        status: 'active',
+        confidence: 'confirmed',
+        sourceText: person.sourceText,
+        updatedAt: person.updatedAt,
+      });
+    }
+
+    return {
+      items: items.slice(0, 50),
+      total: items.length,
     };
   }
 

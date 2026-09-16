@@ -172,6 +172,75 @@ export function queryAppUserMessengerMessages(
   );
 }
 
+/** 只读：按用户 + 聊天对象读取聊天记录（含非小使者的角色智能体）。 */
+export function queryAppUserAgentMessages(
+  userId: string,
+  agentId: string,
+  params?: { before?: string; pageSize?: number }
+) {
+  return axios.get<AdminAppUserMessengerMessageListDTO>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/messages`,
+    { params }
+  );
+}
+
+export interface AppUserAgentMemoryItem {
+  id: string;
+  scope: 'agent';
+  type: string;
+  key: string;
+  value: string;
+  polarity: string;
+  status: string;
+  confidence: string;
+  assertionPolicy: string;
+  priority: number;
+  sourceMessageId: string;
+  sourceMessageIds: string[];
+  sourceConversationId: string;
+  sourceText: string;
+  retention: string;
+  certainty: string;
+  timeKind: string;
+  validUntil: string;
+  sourceOccurredAt: string;
+  recordedAt: string;
+  updatedAt: string;
+}
+
+export interface AppUserAccountSharedMemoryItem {
+  id: string;
+  scope: 'account';
+  type: string;
+  key: string;
+  value: string;
+  status: string;
+  confidence: string;
+  sourceText: string;
+  updatedAt: string;
+}
+
+export interface AppUserAgentMemoryListRes {
+  items: AppUserAgentMemoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  accountSharedItems: AppUserAccountSharedMemoryItem[];
+  accountSharedTotal: number;
+}
+
+/** 只读：按用户 + 聊天对象分页读取已留存记忆。 */
+export function queryAppUserAgentMemories(
+  userId: string,
+  agentId: string,
+  params?: { page?: number; pageSize?: number }
+) {
+  return axios.get<AppUserAgentMemoryListRes>(
+    `/admin_api/app-users/${userId}/agents/${agentId}/memories`,
+    { params }
+  );
+}
+
 export function sendAppUserMessengerMessage(
   userId: string,
   agentId: string,

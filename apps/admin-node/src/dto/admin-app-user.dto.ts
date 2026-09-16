@@ -42,6 +42,14 @@ export class ListAdminAppUserAgentsQueryDTO {
   pageSize?: number | string;
 }
 
+export class ListAdminAppUserMemoriesQueryDTO {
+  @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
+  page?: number | string;
+
+  @Rule(RuleType.alternatives(RuleType.number(), RuleType.string()).optional())
+  pageSize?: number | string;
+}
+
 export class UpdateAdminAppUserDTO {
   @Rule(RuleType.string().trim().min(1).max(50).optional())
   name?: string;

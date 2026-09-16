@@ -10,6 +10,7 @@ import {
 } from '@midwayjs/core';
 import {
   ListAdminAppUserAgentsQueryDTO,
+  ListAdminAppUserMemoriesQueryDTO,
   ListAdminAppUserMembersQueryDTO,
   ListAdminAppUsersQueryDTO,
   ListAdminAppUserVoiceServicesQueryDTO,
@@ -63,6 +64,26 @@ export class AdminAppUserController {
     @Query() query: { before?: string; pageSize?: string }
   ) {
     return this.adminAppUserService.listMessengerMessages(id, agentId, query);
+  }
+
+  /** 只读：按用户 + 聊天对象读取聊天记录（含非小使者的角色智能体）。 */
+  @Get('/:id/agents/:agentId/messages')
+  async agentMessages(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string,
+    @Query() query: { before?: string; pageSize?: string }
+  ) {
+    return this.adminAppUserService.listAgentMessages(id, agentId, query);
+  }
+
+  /** 只读：按用户 + 聊天对象分页读取已留存记忆，账号级共享记忆单独返回。 */
+  @Get('/:id/agents/:agentId/memories')
+  async agentMemories(
+    @Param('id') id: string,
+    @Param('agentId') agentId: string,
+    @Query() query: ListAdminAppUserMemoriesQueryDTO
+  ) {
+    return this.adminAppUserService.listAgentMemories(id, agentId, query);
   }
 
   @Post('/:id/agents/:agentId/messenger-messages')

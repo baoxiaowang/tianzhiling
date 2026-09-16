@@ -51,6 +51,10 @@ function createService() {
     find: jest.fn().mockResolvedValue([]),
     save: jest.fn(),
   } as any;
+  service.agentProfileFactModel = {
+    count: jest.fn().mockResolvedValue(0),
+    find: jest.fn().mockResolvedValue([]),
+  } as any;
   service.avatarUrlService = {
     resolve: jest.fn((avatar?: string) => {
       const value = avatar?.trim() ?? '';
@@ -884,6 +888,195 @@ describe('AdminAppUserService', () => {
           content: '你好',
         })
       ).rejects.toThrow('messenger agent not found');
+    });
+  });
+
+  describe('agent memory and chat read', () => {
+    it('returns stored agent memories with source conversation and account shared memories', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+      const sourceMessageId = new MongoObjectId();
+      const conversationId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+        name: '测试用户',
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: userId,
+      });
+      (service.agentProfileFactModel as any).count = jest
+        .fn()
+        .mockResolvedValue(1);
+      (service.agentProfileFactModel as any).find = jest
+        .fn()
+        .mockResolvedValue([
+          {
+            id: new MongoObjectId(),
+            userId,
+            agentId,
+            type: 'preference',
+            key: 'user.preference.spicy',
+            value: '用户不爱吃辣',
+            polarity: 'negative',
+            status: 'active',
+            confidence: 'confirmed',
+            assertionPolicy: 'can_assert',
+            priority: 3,
+            sourceMessageId,
+            sourceMessageIds: [sourceMessageId],
+            sourceText: '我不吃辣',
+            governance: {
+              retention: 'durable',
+              certainty: 'explicit',
+              timeKind: 'stable',
+              sourceOccurredAt: '2026-07-28T06:49:31.905Z',
+            },
+            createdAt: new Date('2026-07-28T06:49:33.718Z'),
+            updatedAt: new Date('2026-07-28T06:49:33.718Z'),
+          },
+        ]);
+      (service.messageModel as any).find = jest
+        .fn()
+        .mockResolvedValue([{ id: sourceMessageId, conversationId }]);
+      (service.userIdentityProfileModel as any).findOne = jest
+        .fn()
+        .mockResolvedValue({
+          userId,
+          realName: '张三',
+          aliases: ['小张'],
+          sourceText: '我叫张三',
+          updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        });
+      (service.userKnownPersonModel as any).find = jest.fn().mockResolvedValue([
+        {
+          id: new MongoObjectId(),
+          userId,
+          realName: '李四',
+          preferredName: '',
+          aliases: [],
+          relationToUser: '母亲',
+          sourceText: '我妈叫李四',
+          updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.listAgentMemories(
+        userId.toHexString(),
+        agentId.toHexString(),
+        { page: '1', pageSize: '20' }
+      );
+
+      expect(result.total).toBe(1);
+      expect(result.page).toBe(1);
+      expect(result.pageSize).toBe(20);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({
+        scope: 'agent',
+        type: 'preference',
+        value: '用户不爱吃辣',
+        status: 'active',
+        sourceMessageId: sourceMessageId.toHexString(),
+        sourceConversationId: conversationId.toHexString(),
+        retention: 'durable',
+        sourceOccurredAt: '2026-07-28T06:49:31.905Z',
+      });
+      expect(result.accountSharedItems).toHaveLength(2);
+      expect(result.accountSharedTotal).toBe(2);
+      expect(result.accountSharedItems[0]).toMatchObject({
+        scope: 'account',
+        type: 'identity',
+      });
+      expect(result.accountSharedItems[1]).toMatchObject({
+        scope: 'account',
+        type: 'relationship',
+      });
+    });
+
+    it('rejects reading memories for an agent outside the user scope', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: new MongoObjectId(),
+      });
+
+      await expect(
+        service.listAgentMemories(userId.toHexString(), agentId.toHexString(), {
+          pageSize: '999',
+        })
+      ).rejects.toThrow('app user agent not found');
+    });
+
+    it('reads chat messages of a non-messenger agent for the same user', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+      const conversationId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: userId,
+      });
+      (service.messageModel as any).find = jest.fn().mockResolvedValue([
+        {
+          id: new MongoObjectId(),
+          conversationId,
+          userId,
+          agentId,
+          role: 'assistant',
+          type: 'text',
+          content: '闺女，好想你啊',
+          createdAt: new Date('2026-08-01T06:51:49.626Z'),
+        },
+      ]);
+
+      const result = await service.listAgentMessages(
+        userId.toHexString(),
+        agentId.toHexString()
+      );
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({
+        content: '闺女，好想你啊',
+        conversationId: conversationId.toHexString(),
+      });
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('caps agent memory page size at 50', async () => {
+      const service = createService();
+      const userId = new MongoObjectId();
+      const agentId = new MongoObjectId();
+
+      (service.userModel as any).findOne = jest.fn().mockResolvedValue({
+        id: userId,
+      });
+      (service.agentModel as any).findOne = jest.fn().mockResolvedValue({
+        id: agentId,
+        createdUserId: userId,
+      });
+
+      const result = await service.listAgentMemories(
+        userId.toHexString(),
+        agentId.toHexString(),
+        { pageSize: '999' }
+      );
+
+      expect(result.pageSize).toBe(50);
+      expect((service.agentProfileFactModel as any).find).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 50 })
+      );
     });
   });
 });
