@@ -244,4 +244,146 @@ describe('RelativeMemoryExtractorService', () => {
       )
     ).resolves.toBeUndefined();
   });
+
+  it('reaches the model for a bare relative mention and keeps propositions separate', async () => {
+    const service = new RelativeMemoryExtractorService();
+    const person = Object.assign(new UserKnownPersonEntity(), {
+      id: new MongoObjectId('665000000000000000000701'),
+    });
+    const boundAgent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000702'),
+      name: '爸爸',
+      iCallAgent: '爸爸',
+    });
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify({
+          people: [
+            {
+              referenceName: '妈妈',
+              relationToUser: '母亲',
+              facts: [
+                {
+                  domain: 'work',
+                  key: 'work.pension',
+                  value: '妈妈已经领了养老保险',
+                  status: 'current',
+                },
+                {
+                  domain: 'work',
+                  key: 'work.busy',
+                  value: '妈妈很忙，还是到处打工',
+                  status: 'current',
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    } as never;
+    service.agentModel = {
+      findOne: jest.fn().mockResolvedValue(boundAgent),
+    } as never;
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn().mockResolvedValue(null),
+      countKnownPeopleByRelation: jest.fn().mockResolvedValue(0),
+      upsertKnownPersonDeclaration: jest.fn().mockResolvedValue(person),
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn().mockResolvedValue({}),
+      recordFact: jest.fn().mockResolvedValue({}),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000703'),
+      userId: new MongoObjectId('665000000000000000000704'),
+      agentId: boundAgent.id,
+      createdAt: new Date('2026-09-16T09:33:36.136Z'),
+    });
+    const text = '妈妈已经领了养老保险了，就是挺忙，还是到处打工';
+
+    await expect(
+      service.captureFromUserMessage(message, text, {
+        contextMessages: [
+          { role: 'assistant', content: '家里其他人现在怎么样？' },
+        ],
+      })
+    ).resolves.toBe(2);
+    expect(service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    // 记录最终实际请求：系统提示含主体边界与命题键要求；用户提示含参考时间与近期上下文。
+    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('用户本人的处境'),
+        prompt: expect.stringMatching(
+          /参考时间（消息发生时间）：2026-09-16T09:33:36\.136Z[\s\S]*最近连续对话[^：]*：[\s\S]*家里其他人现在怎么样/
+        ),
+      })
+    );
+    const recordFact = service.userRelativeProfileService
+      .recordFact as jest.Mock;
+    expect(recordFact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'work.pension',
+        effectiveAt: message.createdAt,
+        occurredAt: undefined,
+      })
+    );
+    expect(recordFact).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'work.busy' })
+    );
+  });
+
+  it('excludes the bound AI relative itself from account-level relatives', async () => {
+    const service = new RelativeMemoryExtractorService();
+    const boundAgent = Object.assign(new AgentEntity(), {
+      id: new MongoObjectId('665000000000000000000711'),
+      name: '爸爸',
+      iCallAgent: '爸爸',
+    });
+    service.logger = { warn: jest.fn() } as never;
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({
+        content: JSON.stringify({
+          people: [
+            {
+              referenceName: '爸爸',
+              relationToUser: '爸爸',
+              facts: [{ domain: 'other', key: 'x', value: '爸爸很好' }],
+            },
+          ],
+        }),
+      }),
+    } as never;
+    service.agentModel = {
+      findOne: jest.fn().mockResolvedValue(boundAgent),
+    } as never;
+    const upsertKnownPerson = jest.fn();
+    service.userIdentityMemoryService = {
+      resolveKnownPersonReference: jest.fn(),
+      upsertKnownPersonDeclaration: upsertKnownPerson,
+    } as never;
+    service.userRelativeProfileService = {
+      setProfileState: jest.fn(),
+      recordFact: jest.fn(),
+    } as never;
+    service.personTemporalMemoryService = {
+      recordExplicitPersonDate: jest.fn(),
+    } as never;
+    const message = Object.assign(new MessageEntity(), {
+      id: new MongoObjectId('665000000000000000000712'),
+      userId: new MongoObjectId('665000000000000000000713'),
+      agentId: boundAgent.id,
+      createdAt: new Date('2026-09-16T09:21:33.726Z'),
+    });
+
+    await expect(
+      service.captureFromUserMessage(message, '爸爸，我很想你')
+    ).resolves.toBe(0);
+    expect(upsertKnownPerson).not.toHaveBeenCalled();
+  });
 });

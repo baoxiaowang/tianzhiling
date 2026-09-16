@@ -76,6 +76,10 @@ interface ExtractProfileFactsOptions {
   searchableText: string;
   explicitlyConfirmed?: boolean;
   previousAssistantContent?: string;
+  contextMessages?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
 }
 
 interface ExtractMessengerProfileFactsOptions {
@@ -274,6 +278,7 @@ export class AgentProfileFactService {
 
     const extractedFacts = await this.extractFacts(sourceText, {
       previousAssistantContent: options.previousAssistantContent,
+      contextMessages: options.contextMessages,
     });
 
     let userIdentityWriteSucceeded = false;
@@ -850,6 +855,10 @@ export class AgentProfileFactService {
       fromFeedback?: boolean;
       feedbackType?: string;
       previousAssistantContent?: string;
+      contextMessages?: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+      }>;
     } = {}
   ): Promise<ExtractedProfileFact[]> {
     const fallbackFacts = this.extractFactsWithRules(sourceText, options);
@@ -1037,6 +1046,10 @@ export class AgentProfileFactService {
       fromFeedback?: boolean;
       feedbackType?: string;
       previousAssistantContent?: string;
+      contextMessages?: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+      }>;
     }
   ): Promise<AgentProfileFactSummary[]> {
     if (!this.openAIService?.isEnabled?.()) {
@@ -1050,7 +1063,7 @@ export class AgentProfileFactService {
         reasoningSplit: false,
         maxTokens: 600,
         systemPrompt:
-          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。',
+          '你是角色事实抽取器。只抽取用户明确纠正或补充的“当前智能体/逝去亲人角色”稳定事实，不抽取普通临时情绪，也不抽取轻生、自伤或危险风险标签。输出严格 JSON 数组，不要解释。字段：type、key、value、polarity、confidence、priority。type 只能是 identity/relationship/age/occupation/family/preference/correction/promise/keepsake/grief_trigger/style/memory/taboo；polarity 只能是 positive/negative；confidence 只能是 extracted/confirmed/user_corrected/feedback；priority 为 1-3。confidence 使用规则：用户首次陈述新事实用 extracted；用户明确确认/重述已有事实用 confirmed；用户在纠正/否认/修正之前的说法（含“不对/不是/其实是/我记错了/没有这回事”等）用 user_corrected；用户反馈渠道来的用 feedback。没有明确事实输出 []。禁止根据常识推断。姓名只能在用户作无疑问、无否定的明确陈述时提取：当前角色正式姓名用 identity.real_name，值为“当前角色正式姓名是姓名”；用户正式姓名用 user.identity.real_name，值为“用户正式姓名是姓名”。禁止输出 identity.name，禁止从提问、反问、否定、猜测或第三人信息中提取姓名。上一条助手回复的唯一用途是判断用户是否在否认其中的说法；用户没有在本轮消息中明确确认的内容，即使是助手说过的也不得提取为正向事实。指代式否认要记为 negative correction 或 memory。仅出现“大宝想你、某某哭了”等第三人称情绪，不足以确认其家庭关系，不得抽取；只有用户明确说某人是双方共同的家人、孩子、儿子或女儿时才抽取 family。关系不明确时只写共同家人，禁止猜测具体亲属关系。主体归属：只输出当前角色（用户正在对话的逝去亲人）本人的稳定事实。用户本人的处境（工作、收入、养育、健康、情绪）和用户其他亲属（母亲、爷奶、叔伯舅姨等）的近况，不是当前角色的事实，禁止输出。第三人称提到的人（“我妈妈”“爷爷奶奶”）默认不属于当前角色，除非用户明确表示其与当前角色同一人，或明确说是双方共同经历。时间性质：带时间的表达先判断这件事指什么；不得把时间短语（如“元旦迎新的日子”）单独作为事实输出，离开/纪念的时间锚点归时间记忆处理。表达性质：纯思念、寒暄、疑问、愿望、祈使、假设不输出；具体纪念或触发情境只有原话给出明确场景时才保留，并写清场景，不得仅凭情绪强度生成思念触发类标签。',
         prompt: [
           `来源：${options.fromFeedback ? '用户反馈' : '用户消息'}`,
           options.feedbackType ? `反馈类型：${options.feedbackType}` : '',
@@ -1058,6 +1071,14 @@ export class AgentProfileFactService {
             ? `上一条助手回复（仅作被否认对象）：${options.previousAssistantContent
                 .trim()
                 .slice(0, 300)}`
+            : '',
+          options.contextMessages?.length
+            ? `最近连续对话（只用于解析指代，不当作事实）：${JSON.stringify(
+                options.contextMessages.slice(-8).map(item => ({
+                  role: item.role,
+                  content: item.content.slice(0, 200),
+                }))
+              )}`
             : '',
           `文本：${sourceText}`,
         ]
@@ -1081,6 +1102,10 @@ export class AgentProfileFactService {
       fromFeedback?: boolean;
       feedbackType?: string;
       previousAssistantContent?: string;
+      contextMessages?: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+      }>;
     }
   ): AgentProfileFactSummary[] {
     const text = this.normalizeCompactText(sourceText);

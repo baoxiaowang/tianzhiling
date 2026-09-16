@@ -1377,4 +1377,32 @@ describe('AgentProfileFactService', () => {
     expect(saveCalls).toBe(2);
     expect(concurrent.value).toBe('用户今年38岁');
   });
+
+  it('scopes the model to the current role and passes bounded recent context', async () => {
+    const service = new AgentProfileFactService();
+    service.openAIService = {
+      isEnabled: jest.fn(() => true),
+      generateText: jest.fn().mockResolvedValue({ content: '[]' }),
+    } as never;
+    service.factModel = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn(),
+    } as never;
+
+    await service.extractAndUpsertFromUserMessage({
+      message: createUserMessage('现在我工作压力很大，心里难受的紧'),
+      searchableText: '现在我工作压力很大，心里难受的紧',
+      contextMessages: [
+        { role: 'assistant', content: '最近怎么样？' },
+        { role: 'user', content: '家里一切都好' },
+      ],
+    });
+
+    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('用户本人的处境'),
+        prompt: expect.stringContaining('最近连续对话'),
+      })
+    );
+  });
 });

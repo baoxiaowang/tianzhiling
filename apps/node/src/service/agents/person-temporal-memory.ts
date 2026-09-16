@@ -170,6 +170,7 @@ export function parseAgentDepartureTime(options: {
       options.implicitCurrentAgent
     ) ||
     parseRitualMilestone(text, options.referenceAt, isCorrection) ||
+    parseFestivalDate(text, options.referenceAt, isCorrection) ||
     parsePartialGregorianDate(text, options.referenceAt, isCorrection) ||
     parseFuzzyRelativeDuration(
       text,
@@ -294,6 +295,94 @@ function parseExactRelativeDay(
     resolutionCertainty: PersonTemporalResolutionCertainty.derivedExact,
     derivationRule: 'reference_date_minus_exact_days_v1',
   };
+}
+
+// 公历固定日期的节日：只给月日，年份未知（不推断具体年份）。
+const GREGORIAN_FESTIVALS: Array<{
+  pattern: RegExp;
+  month: number;
+  day: number;
+}> = [
+  { pattern: /元旦/, month: 1, day: 1 },
+  { pattern: /国庆(?:节)?/, month: 10, day: 1 },
+  { pattern: /劳动节|五一/, month: 5, day: 1 },
+  { pattern: /儿童节|六一/, month: 6, day: 1 },
+];
+// 农历节日：保留“节日 + 农历”性质，不把农历月日写成公历日期。
+const LUNAR_FESTIVAL_PATTERN =
+  /春节|过年|除夕|元宵|端午|七夕|中元|中秋|重阳|腊八/;
+
+/**
+ * 节日时间：公历节日给月日、年未知；农历节日只标农历与不确定精度。
+ * 必须紧邻离世语，避免把“元旦放假”这类无关日期写成离世时间。
+ */
+function parseFestivalDate(
+  text: string,
+  referenceAt: Date,
+  isCorrection: boolean
+): ParsedDepartureTimeAssertion | null {
+  for (const festival of GREGORIAN_FESTIVALS) {
+    const match = festival.pattern.exec(text);
+    if (!match || !isDepartureDateMatch(text, match)) continue;
+    const year = resolveFestivalYear(text, match.index ?? -1, referenceAt);
+    const exactDate = year
+      ? makeDateOnly(year, festival.month, festival.day)
+      : undefined;
+    return {
+      expressionKind: PersonTemporalExpressionKind.partialDate,
+      calendar: PersonTemporalCalendar.gregorian,
+      approximate: false,
+      isCorrection,
+      normalizedExactDate: exactDate || undefined,
+      normalizedStart: exactDate || undefined,
+      normalizedEnd: exactDate || undefined,
+      normalizedYear: year,
+      normalizedMonth: festival.month,
+      normalizedDay: festival.day,
+      precision: exactDate
+        ? PersonTemporalPrecision.exactDay
+        : PersonTemporalPrecision.monthDay,
+      confidence: PersonTemporalAssertionConfidence.confirmed,
+      resolutionCertainty: exactDate
+        ? PersonTemporalResolutionCertainty.explicitExact
+        : PersonTemporalResolutionCertainty.unresolved,
+      derivationRule: exactDate
+        ? 'explicit_gregorian_festival_with_year_v1'
+        : 'explicit_gregorian_festival_month_day_v1',
+    };
+  }
+
+  const lunar = LUNAR_FESTIVAL_PATTERN.exec(text);
+  if (lunar && isDepartureDateMatch(text, lunar)) {
+    return {
+      expressionKind: PersonTemporalExpressionKind.partialDate,
+      calendar: PersonTemporalCalendar.lunar,
+      approximate: true,
+      isCorrection,
+      precision: PersonTemporalPrecision.unknown,
+      confidence: PersonTemporalAssertionConfidence.candidate,
+      resolutionCertainty: PersonTemporalResolutionCertainty.unresolved,
+      derivationRule: 'explicit_lunar_festival_unknown_date_v1',
+    };
+  }
+
+  return null;
+}
+
+/** 只认紧邻节日之前的明确年份：“2026年元旦”“今年元旦”；否则年未知。 */
+function resolveFestivalYear(
+  text: string,
+  festivalIndex: number,
+  referenceAt: Date
+): number | undefined {
+  if (festivalIndex < 0) return undefined;
+  const before = text.slice(Math.max(0, festivalIndex - 8), festivalIndex);
+  const match = /((?:19|20)\d{2}|今年|去年)\s*年?$/.exec(before);
+  if (!match) return undefined;
+  if (match[1] === '今年') return toShanghaiParts(referenceAt).year;
+  if (match[1] === '去年') return toShanghaiParts(referenceAt).year - 1;
+  const year = Number(match[1]);
+  return year >= 1900 && year <= 2200 ? year : undefined;
 }
 
 function parsePartialGregorianDate(

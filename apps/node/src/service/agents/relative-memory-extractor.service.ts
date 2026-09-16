@@ -15,6 +15,7 @@ import {
   UserRelativeSex,
 } from '@tzl/entities';
 import { OpenAIService } from './openai';
+import { isSearchableDialogueEvidence, kinshipTermsIn } from './memory-value';
 import {
   KnownPersonDeclaration,
   UserIdentityMemoryService,
@@ -59,11 +60,19 @@ interface ExtractedRelativeMemory {
     key?: string;
     value?: string;
     status?: UserRelativeFactStatus;
+    /** 事件发生时间（只在原话给出可确定的完整日期时填写），与来源消息时间分开。 */
+    occurredAt?: string;
   }>;
 }
 
 interface RelativeMemoryCaptureContext {
   messengerParent?: AgentEntity;
+  /** 普通对话里与用户对话的当前 AI 亲人本身；它不算用户的“其他亲友”，需排除。 */
+  boundAgent?: AgentEntity;
+  contextMessages?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
 }
 
 @Provide()
@@ -100,21 +109,36 @@ export class RelativeMemoryExtractorService {
         !/^(?:我|我的|本人|自己|你|你的|他|她|他们|她们)/u.test(namedDetail)
     );
     const messengerInterview = Boolean(context.messengerParent);
+    // 召回优先的最小入口：只要原话出现已知亲属称谓且该句本身是对话证据，
+    // 就把这条消息交给模型判断（是否亲友、什么关系、哪些事实）。这里只决定
+    // “要不要调模型”，不用关键词决定事实内容；是否成立仍由模型判断。
+    // 这一条补齐了“妈妈…打工”“回家看妈”这类不含“我+亲属+细节”的漏召回。
+    const hasKinshipSubject =
+      kinshipTermsIn(text).length > 0 && isSearchableDialogueEvidence(text);
     if (
       !(
         RELATIVE_SUBJECT_SIGNAL.test(text) && RELATIVE_DETAIL_SIGNAL.test(text)
       ) &&
       !hasNamedRelativeDetail &&
+      !hasKinshipSubject &&
       !(messengerInterview && MESSENGER_FAMILY_SIGNAL.test(text))
     ) {
       return written;
     }
     if (!this.openAIService?.isEnabled?.()) return written;
 
+    // 只有走到这里（已确认值得调模型）才解析当前对话对象，用于排除它自己。
+    const boundAgent = context.messengerParent
+      ? undefined
+      : context.boundAgent || (await this.resolveBoundAgent(message));
     const excludedParentReferences = this.parentReferences(
-      context.messengerParent
+      context.messengerParent || boundAgent
     );
-    const extracted = await this.extract(text, context);
+    const extracted = await this.extract(
+      text,
+      { ...context, boundAgent },
+      message.createdAt
+    );
     for (const item of extracted.slice(0, 4)) {
       const relation = item.relationToUser?.trim();
       if (!relation || !isRelativeRelation(relation)) continue;
@@ -127,7 +151,7 @@ export class RelativeMemoryExtractorService {
         .slice(0, 8);
       const referenceName = this.cleanName(item.referenceName);
       if (
-        messengerInterview &&
+        excludedParentReferences.length > 0 &&
         this.isMessengerParent(
           { referenceName, realName, relation },
           excludedParentReferences
@@ -286,7 +310,9 @@ export class RelativeMemoryExtractorService {
           sourceAgentId: message.agentId,
           sourceMessageId: message.id,
           sourceText: text,
+          // 来源时间=消息发生时间；事件时间另填 occurredAt（可确定时）。
           effectiveAt: message.createdAt,
+          occurredAt: this.parseExactDate(fact.occurredAt),
         });
         written += 1;
       }
@@ -338,7 +364,8 @@ export class RelativeMemoryExtractorService {
 
   private async extract(
     sourceText: string,
-    context: RelativeMemoryCaptureContext
+    context: RelativeMemoryCaptureContext,
+    referenceAt?: Date
   ): Promise<ExtractedRelativeMemory[]> {
     try {
       const result = await this.openAIService.generateText({
@@ -351,16 +378,31 @@ export class RelativeMemoryExtractorService {
           '只抽取用户明确陈述或纠正的现实亲友信息；疑问、否定、猜测、角色虚构不写入。',
           context.messengerParent
             ? '这是小使者访谈。指定AI亲人本人的事实由另一个存储器负责，本次people中必须排除该人，只抽取用户本人以外的其他亲友。'
+            : context.boundAgent
+            ? '本次对话对象是当前AI亲人本人，它不属于用户的其他亲友，必须排除；只抽取用户本人以外的其他亲友。'
             : '',
-          '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。',
-          '日期只抄原话可确定的年月日，不推测缺失值。不能形成结构化日期的模糊离世时间，可作为life_event事实保留原意。健康、成长、教育、工作、照护等写facts。',
-          '{"people":[{"referenceName":"","realName":"","aliases":[],"relationToUser":"","lifeStage":"unknown|newborn|infant|toddler|preschool|school_age|adolescent|adult|older_adult","sex":"male|female|unknown","dates":[{"eventType":"birth|expected_birth|death","date":"YYYY-MM-DD","year":0,"month":0,"day":0,"calendar":"gregorian|lunar|unknown","correction":false}],"facts":[{"domain":"health|growth|education|work|care|relationship|life_event|preference|routine|other","key":"稳定短键","value":"原话事实","status":"current|resolved|historical|uncertain"}]}]}',
+          '只抽取用户本人以外的亲友；不要抽取用户本人的处境（工作、收入、养育、健康、情绪）。',
+          '同一人物输出一项。referenceName是原话中的称呼；正式姓名与昵称分开。保留用户在原话中的称谓，不要把它映射成另一种亲属关系（如把“大爸爸/二爸/幺爹”改成父亲/叔叔），也不要判断多个称谓是否同一人。',
+          '同一人物可有多个事实，按命题分别放入facts；每个事实用能区分命题的稳定短键（如work.pension、work.busy、plan.mid_autumn_visit），不同事实不得共用同一个key互相覆盖。',
+          '疑问、否定、假设、祈愿不写成已发生的事实；愿望与计划写status=uncertain并保留原意。“团聚/重逢”类问句不得写成已经团聚；关系称谓本身若明确可记，但未明确说某人已故时不要写成已故事实。',
+          '日期只抄原话可确定的年月日，不推测缺失值。不能形成结构化日期的模糊离世时间，可作为life_event事实保留原意。',
+          'occurredAt只在原话给出可确定的完整日期(YYYY-MM-DD)时填写，表示事件发生时间；不要把消息时间当作事件时间。健康、成长、教育、工作、照护等写facts。',
+          '{"people":[{"referenceName":"","realName":"","aliases":[],"relationToUser":"","lifeStage":"unknown|newborn|infant|toddler|preschool|school_age|adolescent|adult|older_adult","sex":"male|female|unknown","dates":[{"eventType":"birth|expected_birth|death","date":"YYYY-MM-DD","year":0,"month":0,"day":0,"calendar":"gregorian|lunar|unknown","correction":false}],"facts":[{"domain":"health|growth|education|work|care|relationship|life_event|preference|routine|other","key":"稳定短键","value":"原话事实","status":"current|resolved|historical|uncertain","occurredAt":""}]}]}',
         ].join('\n'),
         prompt: [
           context.messengerParent
             ? `需排除的指定AI亲人：${this.parentReferences(
                 context.messengerParent
               ).join('、')}`
+            : '',
+          `参考时间（消息发生时间）：${referenceAt?.toISOString?.() || ''}`,
+          context.contextMessages?.length
+            ? `最近连续对话（只用于解析指代，不当作事实）：${JSON.stringify(
+                context.contextMessages.slice(-8).map(item => ({
+                  role: item.role,
+                  content: item.content.slice(0, 200),
+                }))
+              )}`
             : '',
           `用户原话：${sourceText.slice(0, 1000)}`,
         ]
@@ -384,6 +426,17 @@ export class RelativeMemoryExtractorService {
       );
       return [];
     }
+  }
+
+  private async resolveBoundAgent(
+    message: MessageEntity
+  ): Promise<AgentEntity | undefined> {
+    if (!this.agentModel?.findOne) return undefined;
+    return (
+      (await this.agentModel.findOne({
+        where: { _id: message.agentId } as never,
+      })) || undefined
+    );
   }
 
   private parentReferences(parent?: AgentEntity): string[] {

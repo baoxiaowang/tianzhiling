@@ -3280,6 +3280,7 @@ export class ConversationService {
     const previousAssistantContent = this.isDeicticFactRejection(searchableText)
       ? (await this.findPreviousAssistantMessage(message))?.content?.trim()
       : undefined;
+    const contextMessages = await this.loadBoundedDialogueContext(message);
 
     const [, memoryFacts, profileFacts, temporalFacts, openLoopAudit] =
       await Promise.all([
@@ -3292,7 +3293,8 @@ export class ConversationService {
           message,
           searchableText,
           false,
-          previousAssistantContent
+          previousAssistantContent,
+          contextMessages
         ),
         this.extractTemporalFactsForUserMessage(message, searchableText),
         this.captureRelationshipOpenLoop(message, searchableText).catch(
@@ -3311,7 +3313,7 @@ export class ConversationService {
     // extractor enrich that stable person instead of racing to create another.
     const relativeFactCount =
       (await this.relativeMemoryExtractorService
-        ?.captureFromUserMessage(message, searchableText)
+        ?.captureFromUserMessage(message, searchableText, { contextMessages })
         .catch(error => {
           this.logger.warn(
             '[conversation] relative memory extraction skipped, messageId=%s, reason=%s',
@@ -3551,7 +3553,8 @@ export class ConversationService {
     message: MessageEntity,
     searchableText: string,
     explicitlyConfirmed = false,
-    previousAssistantContent?: string
+    previousAssistantContent?: string,
+    contextMessages?: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<MemoryFactExtractionAudit> {
     if (process.env.CHAT_SKIP_MEMORY_WRITE === 'true') {
       return { succeeded: true, count: 0 };
@@ -3567,6 +3570,7 @@ export class ConversationService {
           searchableText,
           explicitlyConfirmed,
           previousAssistantContent,
+          contextMessages,
         });
       return { succeeded: true, count: facts.length };
     } catch (error) {
@@ -12174,6 +12178,42 @@ export class ConversationService {
         createdAt: 'DESC',
       },
     });
+  }
+
+  /**
+   * 有界近期对话上下文：只取当前消息之前、同一会话、未归档的用户/助手文本，
+   * 最多 10 条、每条由调用方再截断。用于消解指代，不当作事实证据本身。
+   */
+  private async loadBoundedDialogueContext(
+    message: MessageEntity
+  ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+    if (!this.messageModel?.find) return [];
+    const recentMessages = await this.messageModel.find({
+      where: {
+        conversationId: message.conversationId,
+        isArchived: { $ne: true },
+        createdAt: { $lt: message.createdAt },
+      } as never,
+      order: { createdAt: 'DESC' },
+      take: 12,
+    });
+    return recentMessages
+      .filter(
+        item =>
+          item.id?.toString() !== message.id?.toString() &&
+          (item.role === MessageRole.user ||
+            item.role === MessageRole.assistant) &&
+          Boolean(item.content?.trim())
+      )
+      .slice(0, 10)
+      .reverse()
+      .map(item => ({
+        role:
+          item.role === MessageRole.user
+            ? ('user' as const)
+            : ('assistant' as const),
+        content: item.content?.trim() || '',
+      }));
   }
 
   private async findMessageById(

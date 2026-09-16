@@ -16,6 +16,7 @@ import {
   chineseNumberToArabic,
   computeDepartureDate,
   isEmotionalValue,
+  isSearchableDialogueEvidence,
 } from '../../src/service/agents/memory-value';
 
 const input: MemoryValueInput = {
@@ -1035,5 +1036,33 @@ describe('memory value contract', () => {
         '接到电话真的不能相信'
       )
     ).toThrow('MEMORY_VALUE_NOT_RECORDED_TYPE');
+  });
+});
+
+describe('isSearchableDialogueEvidence', () => {
+  it('keeps short facts mixed with emotion, questions, or address', () => {
+    for (const text of [
+      '嗓子好多了；明天监考美术',
+      '明天去复查，爸我好想你',
+      '头发剪短了，和初中一样',
+      '爸爸，我很想你',
+      '你过的好吗',
+      '爱你🥰',
+      '不聊了，工作了',
+    ]) {
+      expect(isSearchableDialogueEvidence(text)).toBe(true);
+    }
+  });
+
+  it('drops only empty text, symbol-only text, and standalone bare acks', () => {
+    for (const text of ['', '   ', '？', '好的', '嗯', '哦', '谢谢你']) {
+      expect(isSearchableDialogueEvidence(text)).toBe(false);
+    }
+  });
+
+  it('does not gate on fact keywords or kinship terms', () => {
+    // 纯思念/寒暄没有事实关键词，仍作为可搜索对话证据保留（召回优先）。
+    expect(isSearchableDialogueEvidence('某个瞬间总是想起你')).toBe(true);
+    expect(isSearchableDialogueEvidence('好想你回来哦')).toBe(true);
   });
 });

@@ -230,4 +230,46 @@ describe('parseAgentDepartureTime', () => {
       normalizedExactDate: new Date('2025-05-18T00:00:00.000Z'),
     });
   });
+
+  it('keeps a year-less Gregorian festival as month/day without inventing a year', () => {
+    const parsed = parseAgentDepartureTime({
+      text: '元旦迎新的日子，你却永远离开我，现在回过神真的好难受',
+      referenceAt: REFERENCE,
+    });
+    expect(parsed).toMatchObject({
+      calendar: PersonTemporalCalendar.gregorian,
+      normalizedMonth: 1,
+      normalizedDay: 1,
+      precision: PersonTemporalPrecision.monthDay,
+      resolutionCertainty: PersonTemporalResolutionCertainty.unresolved,
+    });
+    expect(parsed?.normalizedYear).toBeUndefined();
+    expect(parsed?.normalizedExactDate).toBeUndefined();
+  });
+
+  it('accepts an explicit year on a Gregorian festival', () => {
+    expect(
+      parseAgentDepartureTime({
+        text: '你是2026年元旦走的',
+        referenceAt: REFERENCE,
+      })
+    ).toMatchObject({
+      calendar: PersonTemporalCalendar.gregorian,
+      normalizedExactDate: new Date('2026-01-01T00:00:00.000Z'),
+      precision: PersonTemporalPrecision.exactDay,
+    });
+  });
+
+  it('keeps a lunar festival as lunar and does not convert it to a Gregorian date', () => {
+    const parsed = parseAgentDepartureTime({
+      text: '春节那天你走的',
+      referenceAt: REFERENCE,
+    });
+    expect(parsed).toMatchObject({
+      calendar: PersonTemporalCalendar.lunar,
+      precision: PersonTemporalPrecision.unknown,
+    });
+    expect(parsed?.normalizedExactDate).toBeUndefined();
+    expect(parsed?.normalizedMonth).toBeUndefined();
+  });
 });
