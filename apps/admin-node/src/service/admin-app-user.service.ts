@@ -508,6 +508,7 @@ export class AdminAppUserService {
           'iCallAgent',
           'status',
           'messengerOfAgentId',
+          'voiceTimbreId',
           'userMessageCount',
           'userMessageCountBackfilledAt',
           'createdAt',

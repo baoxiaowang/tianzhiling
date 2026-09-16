@@ -451,6 +451,8 @@ describe('AdminAppUserService', () => {
         where: {
           createdUserId: userId,
         },
+        // 音色绑定依赖列表返回 voiceTimbreId，缺失会导致绑定头像不显示
+        select: expect.arrayContaining(['voiceTimbreId']),
         skip: 0,
         take: 10,
       })
