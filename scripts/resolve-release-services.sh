@@ -2,6 +2,9 @@
 
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLASSIFY_COMPOSE="${SCRIPT_DIR}/classify-compose-services.sh"
+
 SERVICES=(tzl_node tzl_memory_worker tzl_admin_node tzl_admin_web tzl_nginx)
 SELECTED_tzl_node=0
 SELECTED_tzl_memory_worker=0
@@ -75,6 +78,35 @@ classify_path() {
   esac
 }
 
+# 两个提交之间需要按内容判断 compose 的服务归属；--stdin 只有路径，保守走全部。
+classify_compose_file() {
+  local prev="$1"
+  local target="$2"
+  local path="$3"
+  local compose_tmp diff_tmp classified=''
+
+  if [[ ! -f "$CLASSIFY_COMPOSE" ]]; then
+    select_all
+    return
+  fi
+
+  compose_tmp="$(mktemp)"
+  diff_tmp="$(mktemp)"
+  if git show "$target:$path" >"$compose_tmp" 2>/dev/null \
+    && git -c core.quotepath=false diff -U0 "$prev" "$target" -- "$path" >"$diff_tmp" 2>/dev/null; then
+    classified="$(bash "$CLASSIFY_COMPOSE" "$compose_tmp" "$diff_tmp" 2>/dev/null || true)"
+  fi
+  rm -f -- "$compose_tmp" "$diff_tmp"
+
+  if [[ -z "$classified" || "$classified" == 'ALL' ]]; then
+    select_all
+    return
+  fi
+  while IFS= read -r service; do
+    [[ -n "$service" ]] && select_service "$service"
+  done <<< "$classified"
+}
+
 if [[ "${1:-}" == '--stdin' ]]; then
   while IFS= read -r path; do
     [[ -n "$path" ]] && classify_path "$path"
@@ -85,9 +117,13 @@ else
     printf '   or: %s --stdin < changed-paths.txt\n' "$0" >&2
     exit 2
   }
-  CHANGED_PATHS="$(git diff --name-only "$1" "$2")"
+  CHANGED_PATHS="$(git -c core.quotepath=false diff --name-only "$1" "$2")"
   while IFS= read -r path; do
-    [[ -n "$path" ]] && classify_path "$path"
+    [[ -n "$path" ]] || continue
+    case "$path" in
+      docker-compose*.yml) classify_compose_file "$1" "$2" "$path" ;;
+      *) classify_path "$path" ;;
+    esac
   done <<< "$CHANGED_PATHS"
 fi
 

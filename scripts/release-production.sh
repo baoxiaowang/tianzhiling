@@ -3,6 +3,11 @@
 set -Eeuo pipefail
 
 REPO="${TIANZHILING_REPO_ROOT:-/opt/tianzhiling}"
+# 分类器与脚本放在一起（也支持用候选提交里的脚本从临时目录引导运行）；
+# 找不到时回退到仓库内路径。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLASSIFY_COMPOSE="${SCRIPT_DIR}/classify-compose-services.sh"
+[[ -f "$CLASSIFY_COMPOSE" ]] || CLASSIFY_COMPOSE="${REPO}/scripts/classify-compose-services.sh"
 COMMAND="${1:-release}"
 PROGRESS_FILE="${TIANZHILING_RELEASE_PROGRESS_FILE:-/var/tmp/tianzhiling-release-progress.env}"
 if [[ "$COMMAND" == 'progress' ]]; then
@@ -79,9 +84,51 @@ service_selected() {
   [[ "${SELECTED_SERVICES[$1]:-0}" == '1' ]]
 }
 
+# 只按 docker-compose 文件里实际改动的服务选择；顶层/全局改动或无法归属时回退到全部服务。
+select_services_from_compose_change() {
+  local path="$1"
+  local service candidate
+  local compose_tmp diff_tmp
+  local classified=''
+
+  if [[ ! -f "$CLASSIFY_COMPOSE" ]]; then
+    printf '[RELEASE_SCOPE_FALLBACK] classifier_missing=%s action=build_all\n' \
+      "$CLASSIFY_COMPOSE" >&2
+    for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
+    return
+  fi
+
+  compose_tmp="$(mktemp /var/tmp/tzl-compose-target.XXXXXX)"
+  diff_tmp="$(mktemp /var/tmp/tzl-compose-diff.XXXXXX)"
+  if git show "$TARGET:$path" >"$compose_tmp" 2>/dev/null \
+    && git -c core.quotepath=false diff -U0 "$PREVIOUS_COMMIT" "$TARGET" -- "$path" >"$diff_tmp" 2>/dev/null; then
+    classified="$(bash "$CLASSIFY_COMPOSE" "$compose_tmp" "$diff_tmp" 2>/dev/null || true)"
+  fi
+  rm -f -- "$compose_tmp" "$diff_tmp"
+
+  if [[ "$classified" == 'ALL' || -z "$classified" ]]; then
+    printf '[RELEASE_SCOPE] compose=%s changed=global_or_unknown action=build_all\n' \
+      "$path" >&2
+    for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
+    return
+  fi
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ " ${ALL_SERVICES[*]} " == *" $candidate "* ]]; then
+      printf '[RELEASE_SCOPE] compose=%s service=%s\n' "$path" "$candidate" >&2
+      select_service "$candidate"
+    else
+      printf '[RELEASE_SCOPE_FALLBACK] compose=%s unknown_service=%s action=build_all\n' \
+        "$path" "$candidate" >&2
+      for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
+      return
+    fi
+  done <<<"$classified"
+}
+
 select_release_services() {
   local path service
-
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     case "$path" in
@@ -93,7 +140,7 @@ select_release_services() {
       scripts/backfill-*.js)
         select_service tzl_node
         ;;
-      scripts/release-production.sh|scripts/dev-*|scripts/docker-*|scripts/prd-*|scripts/check-brand-sync.mjs)
+      scripts/release-production.sh|scripts/classify-compose-services.sh|scripts/test-*.sh|scripts/dev-*|scripts/docker-*|scripts/prd-*|scripts/check-brand-sync.mjs)
         ;;
       apps/node/*)
         select_service tzl_node
@@ -119,7 +166,10 @@ select_release_services() {
         select_service tzl_admin_node
         select_service tzl_admin_web
         ;;
-      package.json|pnpm-lock.yaml|pnpm-workspace.yaml|docker-compose*.yml|.dockerignore|tsconfig*.json)
+      docker-compose*.yml)
+        select_services_from_compose_change "$path"
+        ;;
+      package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.dockerignore|tsconfig*.json)
         for service in "${ALL_SERVICES[@]}"; do select_service "$service"; done
         ;;
       *)
@@ -206,6 +256,9 @@ rollback_runtime() {
   local rollback_ok=1
   local rollback_services=()
 
+  # 注意：回滚只还原旧镜像，并用"当前 compose"重建容器；因此候选里新增的
+  # 资源配置（如 tzl_memory_worker 的 cpus 上限）会保留，不会被自动撤销。
+  # 需要连同资源上限一起回退时，必须显式用旧 compose 重建对应服务。
   [[ "$DEPLOY_STARTED" -eq 1 ]] || return 0
   set +e
   printf '[ROLLBACK_BEGIN] previous=%s\n' "${PREVIOUS_COMMIT:-unknown}" >&2
@@ -226,6 +279,7 @@ rollback_runtime() {
     fi
   done
   if service_selected tzl_node || service_selected tzl_admin_node; then
+    wait_for_exec_ready tzl_nginx 15 || rollback_ok=0
     docker exec tzl_nginx nginx -t || rollback_ok=0
     docker exec tzl_nginx nginx -s reload || rollback_ok=0
   fi
@@ -301,6 +355,26 @@ check_container() {
     docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$service"
   )
   [[ "$state" == 'running' && "$restarts" == '0' ]]
+}
+
+# 有界等待容器可被 exec：抵消"重建后立即 docker exec"的 setns/EINVAL 抖动。
+# 超时返回非零，交由调用方 fail/回滚；不做无限重试。
+wait_for_exec_ready() {
+  local service="$1"
+  local timeout_seconds="${2:-30}"
+  local elapsed=0
+  local running=''
+
+  while (( elapsed < timeout_seconds )); do
+    running="$(docker inspect -f '{{.State.Running}}' "$service" 2>/dev/null || echo false)"
+    if [[ "$running" == 'true' ]] \
+      && docker exec "$service" sh -lc 'true' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  return 1
 }
 
 check_pm2_processes() {
@@ -646,23 +720,27 @@ fi
 set_phase replace-web-and-gateway
 if service_selected tzl_admin_web; then
   docker compose --profile prod up -d --no-deps tzl_admin_web
+  wait_for_exec_ready tzl_admin_web 30 || fail 'tzl_admin_web not ready for exec'
   docker cp \
     "$ADMIN_ASSET_SNAPSHOT/." \
     tzl_admin_web:/usr/share/nginx/html/assets/
   docker exec tzl_admin_web find \
     /usr/share/nginx/html/assets \
-    -type f -mtime +30 -delete
+    -type f -mtime +30 -delete || fail 'admin asset cleanup failed'
   check_container tzl_admin_web
-  docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health
+  docker exec tzl_admin_web wget -q -O /dev/null http://127.0.0.1/health \
+    || fail 'admin web health check failed'
 fi
 if service_selected tzl_nginx; then
   docker compose --profile prod up -d --no-deps tzl_nginx
-  docker exec tzl_nginx nginx -t
-  docker exec tzl_nginx nginx -s reload
+  wait_for_exec_ready tzl_nginx 30 || fail 'tzl_nginx not ready for exec'
+  docker exec tzl_nginx nginx -t || fail 'nginx config check failed'
+  docker exec tzl_nginx nginx -s reload || fail 'nginx reload failed'
 elif [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then
   # Re-resolve backend container addresses without rebuilding the gateway image.
-  docker exec tzl_nginx nginx -t
-  docker exec tzl_nginx nginx -s reload
+  wait_for_exec_ready tzl_nginx 15 || fail 'tzl_nginx not ready for exec'
+  docker exec tzl_nginx nginx -t || fail 'nginx config check failed'
+  docker exec tzl_nginx nginx -s reload || fail 'nginx reload failed'
 fi
 
 set_phase container-health
