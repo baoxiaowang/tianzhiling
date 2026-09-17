@@ -174,7 +174,7 @@ describe('AgentProfileFactService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'occupation',
@@ -229,7 +229,7 @@ describe('AgentProfileFactService', () => {
         sourceMessageId: message.id,
       }),
     ]);
-    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+    expect(service.openAIService.generateMemoryText).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: expect.stringMatching(
           /指定AI亲人：妈妈[\s\S]*最近连续对话：[\s\S]*说说妈妈以前做过什么吧/
@@ -243,7 +243,7 @@ describe('AgentProfileFactService', () => {
     const savedFacts: AgentProfileFactEntity[] = [];
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'memory',
@@ -289,7 +289,7 @@ describe('AgentProfileFactService', () => {
         sourceMessageId: message.id,
       })
     );
-    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+    expect(service.openAIService.generateMemoryText).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: expect.stringMatching(
           /指定AI亲人：太太[\s\S]*你最想让太太想起来的是[\s\S]*我小时候最喜欢听她讲故事/
@@ -303,7 +303,7 @@ describe('AgentProfileFactService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({ content: '稍后再试' }),
+      generateMemoryText: jest.fn().mockResolvedValue({ content: '稍后再试' }),
     } as never;
     service.factModel = {
       findOne: jest.fn(),
@@ -408,7 +408,7 @@ describe('AgentProfileFactService', () => {
     let storedFact: AgentProfileFactEntity | null = null;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'occupation',
@@ -588,7 +588,7 @@ describe('AgentProfileFactService', () => {
     let storedFact: AgentProfileFactEntity | null = null;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'preference',
@@ -775,7 +775,7 @@ describe('AgentProfileFactService', () => {
     const service = new AgentProfileFactService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'family',
@@ -799,7 +799,7 @@ describe('AgentProfileFactService', () => {
         searchableText: '你为什么这么放心我会照顾你爸爸',
       })
     ).resolves.toEqual([]);
-    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.openAIService.generateMemoryText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
   });
 
@@ -807,7 +807,7 @@ describe('AgentProfileFactService', () => {
     const service = new AgentProfileFactService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn(),
+      generateMemoryText: jest.fn(),
     } as never;
     service.factModel = {
       findOne: jest.fn(),
@@ -820,7 +820,7 @@ describe('AgentProfileFactService', () => {
         searchableText: '那你呢？现在身上还疼吗？',
       })
     ).resolves.toEqual([]);
-    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.openAIService.generateMemoryText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
   });
 
@@ -828,7 +828,7 @@ describe('AgentProfileFactService', () => {
     const service = new AgentProfileFactService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn(),
+      generateMemoryText: jest.fn(),
     } as never;
     service.factModel = {
       findOne: jest.fn(),
@@ -841,7 +841,7 @@ describe('AgentProfileFactService', () => {
         searchableText: '你以前是木匠吗？',
       })
     ).resolves.toEqual([]);
-    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.openAIService.generateMemoryText).not.toHaveBeenCalled();
     expect(service.factModel.save).not.toHaveBeenCalled();
   });
 
@@ -1155,7 +1155,7 @@ describe('AgentProfileFactService', () => {
     const service = new AgentProfileFactService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'identity',
@@ -1196,7 +1196,7 @@ describe('AgentProfileFactService', () => {
     let storedFact: AgentProfileFactEntity | null = null;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify([
           {
             type: 'identity',
@@ -1382,7 +1382,7 @@ describe('AgentProfileFactService', () => {
     const service = new AgentProfileFactService();
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({ content: '[]' }),
+      generateMemoryText: jest.fn().mockResolvedValue({ content: '[]' }),
     } as never;
     service.factModel = {
       findOne: jest.fn().mockResolvedValue(null),
@@ -1398,7 +1398,7 @@ describe('AgentProfileFactService', () => {
       ],
     });
 
-    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+    expect(service.openAIService.generateMemoryText).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining('用户本人的处境'),
         prompt: expect.stringContaining('最近连续对话'),

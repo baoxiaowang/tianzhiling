@@ -850,7 +850,7 @@ export class AgentMemoryProfileService {
     agent: AgentEntity,
     facts: AgentProfileFactSummary[]
   ): Promise<GeneratedMemoryProfile | null> {
-    const result = await this.openAIService.generateText({
+    const result = await this.openAIService.generateMemoryText({
       temperature: 0.2,
       topP: 0.3,
       reasoningSplit: false,

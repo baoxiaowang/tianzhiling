@@ -358,7 +358,7 @@ export class AgentProfileFactService {
       .slice(-10);
 
     try {
-      const result = await this.openAIService.generateText({
+      const result = await this.openAIService.generateMemoryText({
         temperature: 0,
         topP: 0.1,
         reasoningSplit: false,
@@ -1057,7 +1057,7 @@ export class AgentProfileFactService {
     }
 
     try {
-      const result = await this.openAIService.generateText({
+      const result = await this.openAIService.generateMemoryText({
         temperature: 0,
         topP: 0.1,
         reasoningSplit: false,

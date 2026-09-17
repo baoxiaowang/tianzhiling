@@ -392,6 +392,21 @@ export default {
         'qwen-plus'
       ),
     },
+    // 记忆抽取专用模型：与聊天回复分开；未单独配置时回落聊天 fallback。
+    memory: {
+      apiKey: readStringFrom(
+        ['NODE_MEMORY_API_KEY', 'NODE_CHAT_FALLBACK_API_KEY'],
+        ''
+      ),
+      baseURL: readStringFrom(
+        ['NODE_MEMORY_BASE_URL', 'NODE_CHAT_FALLBACK_BASE_URL'],
+        'https://api.deepseek.com'
+      ),
+      model: readStringFrom(
+        ['NODE_MEMORY_MODEL', 'NODE_CHAT_FALLBACK_MODEL'],
+        'deepseek-flash'
+      ),
+    },
 
     // 视觉理解模型
     visionModel: readStringFrom(['NODE_VISION_MODEL'], ''),

@@ -372,7 +372,7 @@ export class RelativeMemoryExtractorService {
     referenceAt?: Date
   ): Promise<ExtractedRelativeMemory[]> {
     try {
-      const result = await this.openAIService.generateText({
+      const result = await this.openAIService.generateMemoryText({
         temperature: 0,
         topP: 0.1,
         reasoningSplit: false,

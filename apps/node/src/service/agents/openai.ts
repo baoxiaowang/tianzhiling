@@ -30,6 +30,12 @@ export interface OpenAIServiceConfig {
     baseURL?: string;
     model?: string;
   };
+  /** 记忆抽取专用 Provider：与聊天回复分开，默认回落聊天 fallback（DeepSeek flash）。 */
+  memory?: {
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+  };
   baseURL?: string;
   model?: string;
   visionModel?: string;
@@ -168,6 +174,7 @@ export class OpenAIService {
   chatTraceService: ChatTraceService;
 
   private client: OpenAI | null = null;
+  private memoryClient: OpenAI | null = null;
   private visionClient: OpenAI | null = null;
   private speechToTextClient: OpenAI | null = null;
   private embeddingClient: OpenAI | null = null;
@@ -413,6 +420,39 @@ export class OpenAIService {
     };
   }
 
+  /** 记忆抽取专用 Provider：与聊天回复分开，未单独配置时回落聊天 fallback。 */
+  private resolveMemoryProvider(): { client: OpenAI; model: string } | null {
+    const apiKey = this.openAIConfig?.memory?.apiKey?.trim();
+    const baseURL = this.openAIConfig?.memory?.baseURL?.trim();
+    const model = this.openAIConfig?.memory?.model?.trim();
+    if (!apiKey || !baseURL || !model) {
+      return null;
+    }
+    if (!this.memoryClient) {
+      this.memoryClient = new OpenAI({
+        apiKey,
+        baseURL,
+        maxRetries: 0,
+        timeout: 120000,
+      });
+    }
+    return {
+      client: this.memoryClient,
+      model,
+    };
+  }
+
+  isMemoryModelEnabled(): boolean {
+    const model = this.openAIConfig?.memory?.model?.trim();
+    const apiKey = this.openAIConfig?.memory?.apiKey?.trim();
+    const baseURL = this.openAIConfig?.memory?.baseURL?.trim();
+    return Boolean(model && apiKey && baseURL);
+  }
+
+  getMemoryModel(): string {
+    return this.openAIConfig?.memory?.model?.trim() || '';
+  }
+
   private resolveSecondaryFallbackProvider(): {
     client: OpenAI;
     model: string;
@@ -649,6 +689,73 @@ export class OpenAIService {
     const content =
       typeof message?.content === 'string' ? message.content.trim() : '';
     const reasoning = this.extractReasoning(message);
+
+    return {
+      content,
+      reasoning,
+      response,
+    };
+  }
+
+  /**
+   * 记忆抽取专用文本生成：走独立 Provider（默认 DeepSeek flash），与聊天回复分开。
+   * 只发 DeepSeek 已验证接受的字段；显式关闭思考，否则推理会吃掉 max_tokens、
+   * 让抽取结果为空。
+   */
+  async generateMemoryText(
+    request: OpenAITextRequest
+  ): Promise<OpenAITextResult> {
+    const prompt = request?.prompt?.trim();
+
+    if (!prompt) {
+      throw new AppError(
+        'MEMORY_MODEL_INVALID_PROMPT',
+        'memory prompt is required'
+      );
+    }
+
+    const provider = this.resolveMemoryProvider();
+    if (!provider) {
+      throw new AppError(
+        'MEMORY_MODEL_NOT_CONFIGURED',
+        'memory model is not configured',
+        500
+      );
+    }
+
+    const messages: ChatCompletionMessageParam[] = [];
+    const systemPrompt = request.systemPrompt?.trim();
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const attribution = this.modelCallAttribution.getStore();
+    if (attribution) {
+      attribution.chatCompletions += 1;
+      attribution.providerAttempts += 1;
+    }
+
+    const body = {
+      model: request.model?.trim() || provider.model,
+      messages,
+      temperature: this.normalizeTemperature(request.temperature),
+      top_p: this.normalizeTopP(request.topP),
+      max_tokens: request.maxTokens,
+      thinking: { type: 'disabled' },
+    } as unknown as ChatCompletionCreateParamsNonStreaming;
+
+    const response = await provider.client.chat.completions.create(body);
+    const message = response.choices?.[0]?.message;
+    const content =
+      typeof message?.content === 'string' ? message.content.trim() : '';
+    const reasoning = this.extractReasoning(message);
+    this.logger?.info?.(
+      '[openai] memory provider request, model=%s, promptChars=%s, contentChars=%s',
+      body.model,
+      prompt.length,
+      content.length
+    );
 
     return {
       content,

@@ -104,7 +104,7 @@ function createHarness(
   } as never;
   service.openAIService = {
     isEnabled: jest.fn(() => Boolean(options.semanticResponse)),
-    generateText: jest.fn().mockResolvedValue({
+    generateMemoryText: jest.fn().mockResolvedValue({
       content: JSON.stringify(options.semanticResponse || {}),
     }),
   } as never;
@@ -254,7 +254,7 @@ describe('PersonTemporalMemoryService', () => {
       searchableText: message.content,
     });
 
-    expect(harness.service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    expect(harness.service.openAIService.generateMemoryText).toHaveBeenCalledTimes(1);
     expect(result?.assertion).toMatchObject({
       rawText: message.content,
       numericValue: 10,
@@ -292,7 +292,7 @@ describe('PersonTemporalMemoryService', () => {
       message,
       searchableText: message.content,
     });
-    expect(harness.service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    expect(harness.service.openAIService.generateMemoryText).toHaveBeenCalledTimes(1);
     expect(message.temporalMemoryStatus).toBe('not_applicable');
   });
 
@@ -318,7 +318,7 @@ describe('PersonTemporalMemoryService', () => {
       searchableText: second.content,
     });
 
-    expect(harness.service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    expect(harness.service.openAIService.generateMemoryText).toHaveBeenCalledTimes(1);
     expect(second.temporalMemoryStatus).toBe('not_applicable');
   });
 
@@ -347,7 +347,7 @@ describe('PersonTemporalMemoryService', () => {
       searchableText: second.content,
     });
 
-    expect(harness.service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    expect(harness.service.openAIService.generateMemoryText).toHaveBeenCalledTimes(1);
     expect(firstResult?.assertion.normalizedStart).toEqual(
       new Date('2015-01-01T00:00:00.000Z')
     );
@@ -388,7 +388,7 @@ describe('PersonTemporalMemoryService', () => {
       searchableText: message.content,
     });
 
-    expect(harness.service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(harness.service.openAIService.generateMemoryText).not.toHaveBeenCalled();
     expect(message.temporalMemorySemanticSource).toBe('deterministic');
   });
 
@@ -411,7 +411,7 @@ describe('PersonTemporalMemoryService', () => {
       searchableText: message.content,
     });
 
-    const request = (harness.service.openAIService.generateText as jest.Mock)
+    const request = (harness.service.openAIService.generateMemoryText as jest.Mock)
       .mock.calls[0][0];
     expect(request.maxTokens).toBe(80);
     expect(request.prompt).toContain('差不多十个年头');

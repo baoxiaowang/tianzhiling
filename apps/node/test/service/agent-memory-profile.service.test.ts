@@ -88,6 +88,8 @@ function createService(
   service.openAIService = {
     isEnabled: jest.fn().mockReturnValue(true),
     generateText,
+    // 记忆画像整理改走记忆专用模型通道；测试里与聊天回复共用同一 mock。
+    generateMemoryText: generateText,
   } as any;
   service.minimaxVoiceSpeechService = {
     hasConfig: jest.fn().mockReturnValue(true),

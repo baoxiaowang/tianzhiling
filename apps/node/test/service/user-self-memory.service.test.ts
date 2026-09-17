@@ -52,7 +52,7 @@ describe('UserSelfMemoryService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify({
           facts: [
             {
@@ -104,11 +104,11 @@ describe('UserSelfMemoryService', () => {
 
   it('does not call the model for a kinship-only situation message', async () => {
     const service = new UserSelfMemoryService();
-    const generateText = jest.fn();
+    const generateMemoryText = jest.fn();
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText,
+      generateMemoryText,
     } as never;
     const message = Object.assign(new MessageEntity(), {
       id: new MongoObjectId('665000000000000000000804'),
@@ -120,7 +120,7 @@ describe('UserSelfMemoryService', () => {
     await expect(
       service.extractFromUserMessage(message, '妈妈已经领了养老保险了')
     ).resolves.toBe(0);
-    expect(generateText).not.toHaveBeenCalled();
+    expect(generateMemoryText).not.toHaveBeenCalled();
   });
 
   it('keeps the previous current fact as history when the value changes', async () => {

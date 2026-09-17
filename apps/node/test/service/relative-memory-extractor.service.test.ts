@@ -14,7 +14,7 @@ describe('RelativeMemoryExtractorService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn(),
+      generateMemoryText: jest.fn(),
     } as never;
     service.personTemporalMemoryService = {
       recordExplicitPersonDate: jest.fn().mockResolvedValue({}),
@@ -42,7 +42,7 @@ describe('RelativeMemoryExtractorService', () => {
         day: 1,
       })
     );
-    expect(service.openAIService.generateText).not.toHaveBeenCalled();
+    expect(service.openAIService.generateMemoryText).not.toHaveBeenCalled();
   });
 
   it('does not record a birthday question or negation', async () => {
@@ -75,7 +75,7 @@ describe('RelativeMemoryExtractorService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify({
           people: [
             {
@@ -156,7 +156,7 @@ describe('RelativeMemoryExtractorService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify({
           people: [
             {
@@ -211,7 +211,7 @@ describe('RelativeMemoryExtractorService', () => {
         }),
       })
     );
-    const modelPrompt = (service.openAIService.generateText as jest.Mock).mock
+    const modelPrompt = (service.openAIService.generateMemoryText as jest.Mock).mock
       .calls[0][0].prompt;
     expect(modelPrompt).not.toContain(father.id.toString());
   });
@@ -258,7 +258,7 @@ describe('RelativeMemoryExtractorService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify({
           people: [
             {
@@ -313,9 +313,9 @@ describe('RelativeMemoryExtractorService', () => {
         ],
       })
     ).resolves.toBe(2);
-    expect(service.openAIService.generateText).toHaveBeenCalledTimes(1);
+    expect(service.openAIService.generateMemoryText).toHaveBeenCalledTimes(1);
     // 记录最终实际请求：系统提示含主体边界与命题键要求；用户提示含参考时间与近期上下文。
-    expect(service.openAIService.generateText).toHaveBeenCalledWith(
+    expect(service.openAIService.generateMemoryText).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining('用户本人的处境'),
         prompt: expect.stringMatching(
@@ -347,7 +347,7 @@ describe('RelativeMemoryExtractorService', () => {
     service.logger = { warn: jest.fn() } as never;
     service.openAIService = {
       isEnabled: jest.fn(() => true),
-      generateText: jest.fn().mockResolvedValue({
+      generateMemoryText: jest.fn().mockResolvedValue({
         content: JSON.stringify({
           people: [
             {
