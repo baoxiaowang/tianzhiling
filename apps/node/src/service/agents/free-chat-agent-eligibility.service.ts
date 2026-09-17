@@ -22,7 +22,7 @@ const SLOT_WRITE_MAX_ATTEMPTS = 8;
  * overridable so the boundary is testable without hard-coding behavior.
  */
 export const SUBSEQUENT_RELATIVE_MODE_ACTIVATED_AT = new Date(
-  '2026-09-18T00:00:00.000Z'
+  '2026-09-17T17:00:00.000Z'
 );
 
 /**
