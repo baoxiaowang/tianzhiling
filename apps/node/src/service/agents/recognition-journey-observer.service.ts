@@ -74,6 +74,7 @@ export class RecognitionJourneyObserverService {
                 '在 task_response 检查点，以及 task_proposal 中标记的 observedTasks，只判断用户是否确实提供了对应信息。老宅拆除、房产争议等无关信息不等于“家人近况”。',
                 '如果候选任务是 relativeMentionGreeting，只判断最终回复是否自然表达了“另一位亲人刚刚提到用户，且当前亲人见到用户很高兴”这层意思，不要求逐字，不因缺少具体引述而否定；只回应用户当前话题而没有带出这层意思，必须是 not_observed。不要在 relativeMentionGreeting 检查点顺手判断 opening/familyStatus/departureInterval 的推进。',
                 '同时判断 relativeMentionGreetingRefusal：仅当用户在本轮明确表示不要再提这位亲人或这类话题（例如“别再提爸爸”“不想聊他”“别跟我说他的事”）时为 refused；用户只是拒绝聊别的事情（如工作、钱）、转述别人的话、或当轮不想继续时，一律为 not_refused，不得据此永久跳过任务。',
+                '在 relativeMentionGreeting 检查点，opening/familyStatus/departureInterval 可以原样回显当前状态，程序会忽略这三个字段。',
                 '严格输出 JSON：{"opening":"not_observed|shallow_acknowledgement|emotionally_opened|emotionally_received","familyStatus":"not_observed|proposed|provided","departureInterval":"not_observed|proposed|provided","relativeMentionGreeting":"not_observed|expressed","relativeMentionGreetingRefusal":"not_refused|refused","evidence":"最多80字的观察依据"}',
               ].join('\n'),
             },
@@ -114,8 +115,16 @@ export class RecognitionJourneyObserverService {
         { timeout: OBSERVER_TIMEOUT_MS }
       );
       const content = response.choices?.[0]?.message?.content;
+      const cardTask = SUBSEQUENT_RELATIVE_GREETING_TASK_ID;
+      const greetingCheckpoint =
+        options.journey.mode === 'subsequent_relative' &&
+        (options.plan.suggestedTaskId === cardTask ||
+          options.plan.observedTaskId === cardTask ||
+          (options.plan.observedTaskIds || []).includes(cardTask) ||
+          Boolean(options.plan.reobserveAssistantMessageId));
       const observation = parseObservation(
-        typeof content === 'string' ? content : ''
+        typeof content === 'string' ? content : '',
+        greetingCheckpoint
       );
       if (!observation) return { status: 'unavailable' };
       return {
@@ -148,13 +157,11 @@ export class RecognitionJourneyObserverService {
 }
 
 function parseObservation(
-  content: string
+  content: string,
+  greetingCheckpoint = false
 ): RecognitionJourneyObservation | undefined {
   try {
     const raw = JSON.parse(content.trim()) as Record<string, unknown>;
-    const opening = String(raw.opening);
-    const familyStatus = String(raw.familyStatus);
-    const departureInterval = String(raw.departureInterval);
     // Older observer outputs may omit the later-relative card fields.
     const relativeMentionGreeting =
       raw.relativeMentionGreeting === undefined
@@ -165,6 +172,38 @@ function parseObservation(
         ? 'not_refused'
         : String(raw.relativeMentionGreetingRefusal);
     if (
+      !['not_observed', 'expressed'].includes(relativeMentionGreeting) ||
+      !['not_refused', 'refused'].includes(relativeMentionGreetingRefusal)
+    ) {
+      return undefined;
+    }
+    const evidence =
+      typeof raw.evidence === 'string' && raw.evidence
+        ? { evidence: raw.evidence.slice(0, 160) }
+        : {};
+    // At the later-relative card checkpoint the observer is told not to judge
+    // the released milestones, so it echoes their current state (实测为
+    // "settled_success"/"skipped"). Those fields are irrelevant there and must
+    // not invalidate an otherwise valid card judgement.
+    if (greetingCheckpoint) {
+      return {
+        opening: 'not_observed',
+        familyStatus: 'not_observed',
+        departureInterval: 'not_observed',
+        relativeMentionGreeting: relativeMentionGreeting as NonNullable<
+          RecognitionJourneyObservation['relativeMentionGreeting']
+        >,
+        relativeMentionGreetingRefusal:
+          relativeMentionGreetingRefusal as NonNullable<
+            RecognitionJourneyObservation['relativeMentionGreetingRefusal']
+          >,
+        ...evidence,
+      };
+    }
+    const opening = String(raw.opening);
+    const familyStatus = String(raw.familyStatus);
+    const departureInterval = String(raw.departureInterval);
+    if (
       ![
         'not_observed',
         'shallow_acknowledgement',
@@ -172,9 +211,7 @@ function parseObservation(
         'emotionally_received',
       ].includes(opening) ||
       !['not_observed', 'proposed', 'provided'].includes(familyStatus) ||
-      !['not_observed', 'proposed', 'provided'].includes(departureInterval) ||
-      !['not_observed', 'expressed'].includes(relativeMentionGreeting) ||
-      !['not_refused', 'refused'].includes(relativeMentionGreetingRefusal)
+      !['not_observed', 'proposed', 'provided'].includes(departureInterval)
     ) {
       return undefined;
     }
@@ -190,9 +227,7 @@ function parseObservation(
       relativeMentionGreetingRefusal: relativeMentionGreetingRefusal as NonNullable<
         RecognitionJourneyObservation['relativeMentionGreetingRefusal']
       >,
-      ...(typeof raw.evidence === 'string' && raw.evidence
-        ? { evidence: raw.evidence.slice(0, 160) }
-        : {}),
+      ...evidence,
     };
   } catch {
     return undefined;

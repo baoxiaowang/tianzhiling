@@ -1222,6 +1222,57 @@ describe('observer reuse for the later-relative card', () => {
     expect(userPayload.journeyState.mentionCallName).toBe('你爸爸');
   });
 
+  it('accepts a real-shaped observer reply that echoes the released milestones', async () => {
+    // Real production model output at the card checkpoint: the observer is told
+    // not to judge the released milestones, so it echoes their current state
+    // ("settled_success"/"skipped"). That must not invalidate the card verdict.
+    const service = new RecognitionJourneyObserverService();
+    (service as any).logger = { warn() {} };
+    (service as any).openAIService = {
+      createChatCompletion: async () => ({
+        model: 'fake-observer',
+        usage: { total_tokens: 150 },
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                opening: 'settled_success',
+                familyStatus: 'skipped',
+                departureInterval: 'skipped',
+                relativeMentionGreeting: 'expressed',
+                relativeMentionGreetingRefusal: 'not_refused',
+                evidence: '助手提到刚刚你爸说到你并表达高兴',
+              }),
+            },
+          },
+        ],
+      }),
+    };
+    const journey = buildInitialRecognitionJourney({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+      openingAssistantMessageId: 'opening-1',
+      now: BASE_TIME,
+    });
+    const plan = planRecognitionJourneyTurn({
+      journey,
+      currentQuery: '妈，我今天有点累。',
+      userTurnNumber: 3,
+    }).plan;
+    const result = await service.observe({
+      journey,
+      plan,
+      currentUserText: '妈，我今天有点累。',
+      assistantText: '累了就歇着。刚刚你爸还跟我说到你，你能来找我真是太高兴了。',
+    });
+    expect(result.status).toBe('observed');
+    expect(result.observation?.relativeMentionGreeting).toBe('expressed');
+    expect(result.observation?.relativeMentionGreetingRefusal).toBe(
+      'not_refused'
+    );
+    expect(result.observation?.opening).toBe('not_observed');
+  });
+
   it('accepts older observer outputs that omit the new field', async () => {
     const service = new RecognitionJourneyObserverService();
     (service as any).logger = { warn() {} };
