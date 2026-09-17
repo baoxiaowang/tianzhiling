@@ -88,6 +88,7 @@ export interface PostItem {
   images: string[]
   imageThumbnails?: string[]
   remindAgentIds: string[]
+  visibility?: 'public' | 'private'
   moderationStatus?: PostModerationStatus
   moderationReason?: string
   isRiskControlled?: boolean
@@ -509,11 +510,13 @@ export async function createPost(payload: {
   content: string
   images: string[]
   remindAgentIds?: string[]
+  visibility?: 'public' | 'private'
 }) {
   return post<PostItem>('/api/post', {
     content: normalizeEmojiText(payload.content),
     images: payload.images,
     remindAgentIds: payload.remindAgentIds ?? [],
+    visibility: payload.visibility ?? 'public',
   })
 }
 

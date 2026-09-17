@@ -6,6 +6,12 @@ export enum PostModerationStatus {
   riskControlled = "risk_controlled",
 }
 
+/** 动态可见范围：公开 / 私密（私密仅作者本人可见） */
+export enum PostVisibility {
+  public = "public",
+  private = "private",
+}
+
 /** 按发布时间排序的索引 */
 @Index(["createdAt"], { background: true })
 /** 按用户与时间查询动态列表的复合索引 */
@@ -34,6 +40,10 @@ export class PostEntity extends BaseEntity {
   /** 发帖时要提醒回复的天之灵 Agent ID 列表，用于触发自动评论 */
   @Column()
   remindAgentIds: string[];
+
+  /** 可见范围：public 公开 / private 私密（仅作者本人可见）；历史数据缺省按公开处理 */
+  @Column()
+  visibility?: PostVisibility;
 
   /** 风控状态 */
   @Column()

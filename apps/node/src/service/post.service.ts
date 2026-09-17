@@ -21,6 +21,7 @@ import {
   PostNotificationType,
   PostEntity,
   PostModerationStatus,
+  PostVisibility,
   UserAccountEntity,
   UserEntity,
   UserMembershipEntity,
@@ -61,6 +62,7 @@ export interface PostItem {
   images: string[];
   imageThumbnails: string[];
   remindAgentIds: string[];
+  visibility: PostVisibility;
   moderationStatus: PostModerationStatus;
   moderationReason: string;
   isRiskControlled: boolean;
@@ -1058,6 +1060,7 @@ export class PostService {
       userId,
       payload?.remindAgentIds
     );
+    const visibility = this.normalizePostVisibility(payload?.visibility);
 
     if (!content && images.length === 0) {
       throw new AppError(
@@ -1088,6 +1091,7 @@ export class PostService {
     post.content = content;
     post.images = images;
     post.remindAgentIds = remindAgentIds;
+    post.visibility = visibility;
     post.moderationStatus = PostModerationStatus.normal;
     post.isDeleted = false;
     post.createdAt = now;
@@ -1514,7 +1518,21 @@ export class PostService {
       $ne: PostModerationStatus.riskControlled,
     };
 
-    return where;
+    // 私密动态仅作者本人可见：公共动态流中过滤掉他人的私密动态
+    const publicOnly = {
+      visibility: {
+        $ne: PostVisibility.private,
+      },
+    };
+
+    if (currentUserId) {
+      return {
+        ...where,
+        $or: [publicOnly, { userId: currentUserId }],
+      };
+    }
+
+    return { ...where, ...publicOnly };
   }
 
   private assertPostViewable(
@@ -1534,11 +1552,23 @@ export class PostService {
     }
 
     if (
-      this.isPostRiskControlled(post) &&
+      (this.isPostRiskControlled(post) || this.isPostPrivate(post)) &&
       !this.isPostOwner(post, currentUserId)
     ) {
       throw new AppError('POST_NOT_FOUND', 'post not found', 404);
     }
+  }
+
+  private normalizePostVisibility(value?: string): PostVisibility {
+    return value?.trim().toLowerCase() === PostVisibility.private
+      ? PostVisibility.private
+      : PostVisibility.public;
+  }
+
+  private isPostPrivate(post: PostEntity): boolean {
+    return (
+      this.normalizePostVisibility(post.visibility) === PostVisibility.private
+    );
   }
 
   private isPostOwner(
@@ -1709,6 +1739,7 @@ export class PostService {
             .map(agentId => agentId.trim())
             .filter(Boolean)
         : [],
+      visibility: this.normalizePostVisibility(post.visibility),
       moderationStatus,
       moderationReason: post.moderationReason?.trim() || '',
       isRiskControlled:

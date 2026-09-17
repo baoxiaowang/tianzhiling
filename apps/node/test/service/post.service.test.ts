@@ -10,6 +10,7 @@ import {
   PostModerationStatus,
   PostNotificationEntity,
   PostNotificationType,
+  PostVisibility,
   UserEntity,
   UserAccountEntity,
   UserMembershipEntity,
@@ -287,6 +288,32 @@ function createService(
         );
       }
 
+      if (where?.visibility?.$ne !== undefined) {
+        result = result.filter(
+          post => post.visibility !== where.visibility.$ne
+        );
+      }
+
+      // 仅处理“私密可见性”的 $or，其它 $or（如重复发帖检测）保持原行为
+      if (
+        Array.isArray(where?.$or) &&
+        where.$or.some(
+          (condition: any) => condition?.visibility?.$ne !== undefined
+        )
+      ) {
+        result = result.filter(post =>
+          where.$or.some((condition: any) => {
+            if (condition?.userId !== undefined) {
+              return sameObjectId(post.userId, condition.userId);
+            }
+            if (condition?.visibility?.$ne !== undefined) {
+              return post.visibility !== condition.visibility.$ne;
+            }
+            return false;
+          })
+        );
+      }
+
       if (order?.createdAt === 'DESC') {
         result = result.sort(
           (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
@@ -410,6 +437,10 @@ function createService(
     normalizeForStorage: jest.fn((value: string) => value),
     resolveForResponse: jest.fn((value: string) =>
       /^https?:\/\//i.test(value) ? value : `https://cdn.example.com/${value}`
+    ),
+    resolveFeedThumbnailForResponse: jest.fn((value: string) => value),
+    resolveUserAvatarForResponse: jest.fn((value?: string | null) =>
+      value ? `/avatar/${value}` : ''
     ),
   } as any;
   service.bullmqFramework = {
@@ -1834,6 +1865,90 @@ describe('PostService post pagination', () => {
         isRiskControlled: true,
       })
     );
+  });
+
+  it('创建私密动态时保存并返回 private', async () => {
+    const { service, savedPosts } = createService();
+
+    const result = await service.createPost(AUTH, {
+      content: '只给自己看',
+      visibility: PostVisibility.private,
+    });
+
+    expect(result.visibility).toBe(PostVisibility.private);
+    expect(savedPosts[0].visibility).toBe(PostVisibility.private);
+  });
+
+  it('缺省或非法 visibility 按公开处理', async () => {
+    const { service, savedPosts } = createService();
+
+    const result = await service.createPost(AUTH, {
+      content: '公开动态',
+      visibility: 'unknown',
+    });
+
+    expect(result.visibility).toBe(PostVisibility.public);
+    expect(savedPosts[0].visibility).toBe(PostVisibility.public);
+  });
+
+  it('私密动态仅作者本人可见', async () => {
+    const post = createPost({ visibility: PostVisibility.private });
+    const { service } = createService([], { posts: [post] });
+
+    await expect(
+      service.getPostDetail(POST_ID, OTHER_AUTH)
+    ).rejects.toMatchObject({
+      code: 'POST_NOT_FOUND',
+      status: 404,
+    });
+
+    const result = await service.getPostDetail(POST_ID, AUTH);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: POST_ID,
+        visibility: PostVisibility.private,
+      })
+    );
+  });
+
+  it('公开动态流过滤他人的私密动态，但保留本人的私密动态', async () => {
+    const minePrivate = createPost({
+      id: new MongoObjectId('665000000000000000000101'),
+      userId: new MongoObjectId(USER_ID),
+      visibility: PostVisibility.private,
+      createdAt: new Date('2026-05-13T08:00:03.000Z'),
+    });
+    const otherPublic = createPost({
+      id: new MongoObjectId('665000000000000000000102'),
+      userId: new MongoObjectId(OTHER_USER_ID),
+      visibility: PostVisibility.public,
+      createdAt: new Date('2026-05-13T08:00:02.000Z'),
+    });
+    const otherPrivate = createPost({
+      id: new MongoObjectId('665000000000000000000103'),
+      userId: new MongoObjectId(OTHER_USER_ID),
+      visibility: PostVisibility.private,
+      createdAt: new Date('2026-05-13T08:00:01.000Z'),
+    });
+    const { service } = createService([], {
+      posts: [minePrivate, otherPublic, otherPrivate],
+    });
+
+    const mine = await service.listPosts(AUTH, { page: 1, pageSize: 10 });
+    const mineIds = mine.items.map(item => item.id);
+    expect(mineIds).toContain('665000000000000000000101');
+    expect(mineIds).toContain('665000000000000000000102');
+    expect(mineIds).not.toContain('665000000000000000000103');
+
+    const anonymous = await service.listPosts(undefined, {
+      page: 1,
+      pageSize: 10,
+    });
+    const anonymousIds = anonymous.items.map(item => item.id);
+    expect(anonymousIds).toContain('665000000000000000000102');
+    expect(anonymousIds).not.toContain('665000000000000000000101');
+    expect(anonymousIds).not.toContain('665000000000000000000103');
   });
 });
 

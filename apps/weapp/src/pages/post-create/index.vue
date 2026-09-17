@@ -462,6 +462,7 @@ async function handleSubmit() {
       content: normalizeEmojiText(content.value).trim(),
       images: images.value,
       remindAgentIds: selectedAgentId.value ? [selectedAgentId.value] : [],
+      visibility: visibility.value,
     })
 
     await Taro.showToast({
