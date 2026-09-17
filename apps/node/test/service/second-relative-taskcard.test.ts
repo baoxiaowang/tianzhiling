@@ -459,6 +459,32 @@ describe('second-relative recognition journey state machine', () => {
     expect(prompt).not.toContain('聊天记录');
   });
 
+  it('makes the card mandatory inside the turns 3-5 window', () => {
+    const soft = buildSubsequentRelativeGreetingPrompt('我的爸爸');
+    const mandatory = buildSubsequentRelativeGreetingPrompt('我的爸爸', {
+      mandatory: true,
+    });
+    // 强制版本仍保留同一句意图，但改为“必须先回应、再带出、不要省略”。
+    expect(mandatory).toContain('刚刚你爸爸跟我说到你');
+    expect(mandatory).toContain('本轮必须先自然回应用户当前说的话');
+    expect(mandatory).toContain('不要省略');
+    expect(mandatory).toContain('只有用户本轮明确拒绝提这位亲人');
+    expect(soft).toContain('可以不执行');
+    // 规划出的第 3 轮 prompt 必须是强制版本。
+    const journey = buildInitialRecognitionJourney({
+      mode: 'subsequent_relative',
+      mentionCallName: '我的爸爸',
+      openingAssistantMessageId: 'opening-1',
+    });
+    const turn3 = planRecognitionJourneyTurn({
+      journey,
+      currentQuery: '妈，我今天有点累',
+      userTurnNumber: 3,
+    }).plan;
+    expect(turn3.prompt).toContain('本轮必须先自然回应用户当前说的话');
+    expect(turn3.prompt).toContain('不要省略');
+  });
+
   it('skips the card when no call name can be confirmed', () => {
     const journey = buildInitialRecognitionJourney({
       mode: 'subsequent_relative',
