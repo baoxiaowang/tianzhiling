@@ -58,7 +58,8 @@ services:
     container_name: tzl_memory_worker
     image: tianzhiling-tzl_node
     # 记忆后台的 CPU 保护上限（候选值，不是吞吐目标）。生产此前无有效上限才新增；
-    # 并发仍由 NODE_MEMORY_WORKER_CONCURRENCY 控制，保持 1。
+    # 并发由 NODE_MEMORY_WORKER_CONCURRENCY 控制：2026-09-17 起为 3，用于消化
+    # Mongo COLLSCAN 期间积压的 pending 任务；清完可回落到 2。
     cpus: "1.5"
     env_file:
       - .env
@@ -76,7 +77,7 @@ services:
       NODE_MONGO_PASSWORD: ${MONGO_PASSWORD:-qwerasdf}
       NODE_MILVUS_ADDRESS: standalone:19530
       NODE_RUNTIME_ROLE: memory-worker
-      NODE_MEMORY_WORKER_CONCURRENCY: 1
+      NODE_MEMORY_WORKER_CONCURRENCY: 3
       NODE_OPTIONS: ${NODE_MEMORY_WORKER_NODE_OPTIONS:---heapsnapshot-signal=SIGUSR2}
       RELEASE_VERSION: ${RELEASE_VERSION:-unknown}
     command:
