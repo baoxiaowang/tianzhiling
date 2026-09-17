@@ -488,6 +488,18 @@ check_internal_health() {
     >/dev/null 2>&1
 }
 
+# 期望的 memory worker 并发取自目标提交的 compose，避免把并发数写死在发布脚本里。
+expected_memory_worker_concurrency() {
+  local compose_tmp value
+  compose_tmp="$(mktemp /var/tmp/tzl-compose-conc.XXXXXX)"
+  value=''
+  if git show "$TARGET:docker-compose.yml" >"$compose_tmp" 2>/dev/null; then
+    value="$(awk -F: '/NODE_MEMORY_WORKER_CONCURRENCY:/ {gsub(/[^0-9]/, "", $2); print $2; exit}' "$compose_tmp")"
+  fi
+  rm -f -- "$compose_tmp"
+  printf '%s' "${value:-1}"
+}
+
 check_node_runtime_contract() {
   local service="$1"
   local expected_role="$2"
@@ -699,7 +711,7 @@ if service_selected tzl_node; then
 fi
 if service_selected tzl_memory_worker; then
   wait_for_node_health tzl_memory_worker 'http://127.0.0.1:7001/api/system/health'
-  check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1
+  check_node_runtime_contract tzl_memory_worker memory-worker 1 0 "$(expected_memory_worker_concurrency)"
 fi
 if service_selected tzl_admin_node; then
   wait_for_node_health tzl_admin_node 'http://127.0.0.1:7101/admin_api/system/health'
@@ -750,7 +762,7 @@ done
 if service_selected tzl_node; then check_pm2_processes tzl_node 4 0; fi
 if service_selected tzl_memory_worker; then check_pm2_processes tzl_memory_worker 0 0; fi
 if service_selected tzl_node; then check_node_runtime_contract tzl_node web 0 1 1; fi
-if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 1; fi
+if service_selected tzl_memory_worker; then check_node_runtime_contract tzl_memory_worker memory-worker 1 0 "$(expected_memory_worker_concurrency)"; fi
 if service_selected tzl_admin_node; then check_pm2_processes tzl_admin_node 1 0; fi
 for service in "${SERVICES[@]}"; do
   [[ "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$service")" == "$TARGET" ]]
@@ -798,7 +810,7 @@ for service in "${SERVICES[@]}"; do
   printf 'previous_runtime_%s=%s\n' "$service" "${OLD_REVISIONS[$service]:-none}"
 done
 if service_selected tzl_node; then printf 'voice_runtime=ready\n'; fi
-if service_selected tzl_memory_worker; then printf 'memory_worker=ready concurrency=1\n'; fi
+if service_selected tzl_memory_worker; then printf 'memory_worker=ready concurrency=%s\n' "$(expected_memory_worker_concurrency)"; fi
 printf 'public_health=ok\nadmin_health=ok\n'
 if [[ "${#BACKEND_SERVICES[@]}" -gt 0 ]]; then printf 'pm2_stability_seconds=%s\n' "$STABILITY_SECONDS"; fi
 if service_selected tzl_admin_web; then printf 'admin_legacy_assets=retained_30d\n'; fi
